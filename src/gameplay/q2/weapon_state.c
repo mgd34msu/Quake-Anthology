@@ -261,9 +261,6 @@ bool q2_change_weapon(q2_weapon_call *c, qa_error *e) {
             return false;
         if (!q2_actor_live(c->game, c->actor->id))
             return true;
-        if (c->game->hooks.ammo_changed != NULL &&
-            !c->game->hooks.ammo_changed(c->game->hooks.context, c->actor->id, item, e))
-            return false;
         if (!q2_actor_live(c->game, c->actor->id))
             return true;
     }

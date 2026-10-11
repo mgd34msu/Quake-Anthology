@@ -84,8 +84,7 @@ static bool reserve(q2_weapon_call *c, bool *reserved, qa_error *e) {
     if (c->rerelease && before > c->definition->warning && before - 1 <= c->definition->warning &&
         !q2_sound(c, QA_Q2_SFX_WEAPONS_LOWAMMO, 0, 1, e))
         return false;
-    return c->game->hooks.ammo_changed == NULL ||
-           c->game->hooks.ammo_changed(c->game->hooks.context, c->actor->id, item, e);
+    return true;
 }
 bool q2_throw(q2_weapon_call *c, bool held, qa_error *e) {
     if (!q2_actor_live(c->game, c->actor->id))

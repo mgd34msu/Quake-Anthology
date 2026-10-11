@@ -343,39 +343,34 @@ bool q2_grapple_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
             return false;
     } else {
         s->hook_state = 2;
-        if (g->hooks.grapple_can_damage == NULL ||
-            g->hooks.grapple_can_damage(g->hooks.context, owner_id, contact->other, kind)) {
-            uint64_t frame =
-                g->now_ns / (100 * Q2_MS) + (g->now_ns % (100 * Q2_MS) >= 50 * Q2_MS ? 1u : 0u);
-            bool repeated = qa_actor_id_equal(qa_actor_reference_resolve(qa_session_actors(g->services.session), hook->projectile.enemy), contact->other);
-            if (!repeated || (frame % 7 == 0 && frame != hook->projectile.effect_ns)) {
-                bool player = false;
-                if (!q2_target_creature(g, contact->other, NULL, &player, e))
-                    return false;
-                if (g->hooks.grapple_player_hit != NULL)
-                    player = g->hooks.grapple_player_hit(g->hooks.context, contact->other);
-                if (player &&
-                    !sound(g, hook_id, owner_id,
-                           repeated ? QA_Q2_SFX_WEAPONS_GRAPPLE_GKILLING : QA_Q2_SFX_WEAPONS_GRAPPLE_GHIT,
-                           0, 1, false, e))
-                    return false;
-                if (!player && !repeated &&
-                    !sound(g, hook_id, owner_id, QA_Q2_SFX_WEAPONS_GRAPPLE_GHITWALL, 0, 0.8f, false, e))
+        uint64_t frame =
+            g->now_ns / (100 * Q2_MS) + (g->now_ns % (100 * Q2_MS) >= 50 * Q2_MS ? 1u : 0u);
+        bool repeated = qa_actor_id_equal(qa_actor_reference_resolve(qa_session_actors(g->services.session), hook->projectile.enemy), contact->other);
+        if (!repeated || (frame % 7 == 0 && frame != hook->projectile.effect_ns)) {
+            bool player = false;
+            if (!q2_target_creature(g, contact->other, NULL, &player, e))
+                return false;
+            if (player &&
+                !sound(g, hook_id, owner_id,
+                       repeated ? QA_Q2_SFX_WEAPONS_GRAPPLE_GKILLING : QA_Q2_SFX_WEAPONS_GRAPPLE_GHIT,
+                       0, 1, false, e))
+                return false;
+            if (!player && !repeated &&
+                !sound(g, hook_id, owner_id, QA_Q2_SFX_WEAPONS_GRAPPLE_GHITWALL, 0, 0.8f, false, e))
+                return false;
+            if (!q2_actor_live(g, hook_id) || !q2_actor_live(g, owner_id))
+                return true;
+            if (q2_target_damageable(g, contact->other)) {
+                qa_attack attack = q2_projectile_attack(g, hook_id, &hook->projectile, 60, 4);
+                float amount = repeated ? 1 : 8;
+                if (!q2_damage(g, &attack, contact->other, amount, amount, qa_v3(0, 0, 0),
+                               body.origin, normal, false, e))
                     return false;
                 if (!q2_actor_live(g, hook_id) || !q2_actor_live(g, owner_id))
                     return true;
-                if (q2_target_damageable(g, contact->other)) {
-                    qa_attack attack = q2_projectile_attack(g, hook_id, &hook->projectile, 60, 4);
-                    float amount = repeated ? 1 : 8;
-                    if (!q2_damage(g, &attack, contact->other, amount, amount, qa_v3(0, 0, 0),
-                                   body.origin, normal, false, e))
-                        return false;
-                    if (!q2_actor_live(g, hook_id) || !q2_actor_live(g, owner_id))
-                        return true;
-                }
-                if (repeated)
-                    hook->projectile.effect_ns = frame;
             }
+            if (repeated)
+                hook->projectile.effect_ns = frame;
         }
         if (dead(g, contact->other))
             return reset_hook(g, hook, e);
@@ -721,9 +716,7 @@ static bool pull_ctf(qa_q2_game *g, q2_actor *a, bool damage_pulse, qa_error *e)
         if (!qa_world_body_write(g->services.world, hook_id, &hook_body, e) ||
             !qa_world_link(g->services.world, hook_id, NULL, e))
             return false;
-        if (!rr && damage_pulse && q2_target_damageable(g, target) &&
-            (g->hooks.grapple_can_damage == NULL ||
-             g->hooks.grapple_can_damage(g->hooks.context, a->id, target, QA_Q2_CTF_GRAPPLE))) {
+        if (!rr && damage_pulse && q2_target_damageable(g, target)) {
             qa_attack attack = q2_projectile_attack(g, hook_id, &hook->projectile, 56, 0);
             if (!q2_damage(g, &attack, target, 1, 1, hook_body.velocity, hook_body.origin,
                            qa_v3(0, 0, 0), false, e))

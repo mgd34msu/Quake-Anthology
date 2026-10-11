@@ -130,20 +130,14 @@ bool q2_reverse_animation(q2_weapon_call *c, qa_error *e) {
 bool q2_power_sound(q2_weapon_call *c, qa_error *e) {
     if (!q2_actor_live(c->game, c->actor->id))
         return true;
-    bool handled = false, ctf = c->input.source_rules == QA_Q2_WEAPON_RULES_CTF;
-    if (ctf && c->game->hooks.ctf_strength_sound != NULL &&
-        !c->game->hooks.ctf_strength_sound(c->game->hooks.context, c->actor->id, &handled, e))
-        return false;
     bool quad = c->input.quad_until_ns > c->now_ns, twice = c->input.double_until_ns > c->now_ns;
     q2_runtime_name path = quad && twice && c->rerelease ? QA_Q2_SFX_CTF_TECH2X
                        : quad                        ? QA_Q2_SFX_ITEMS_DAMAGE3
                        : twice                       ? QA_Q2_SFX_MISC_DDAMAGE3
                                                      : Q2_NAME_NONE;
-    if (!handled && path != Q2_NAME_NONE && !q2_sound(c, path, 3, 1, e))
+    if (path != Q2_NAME_NONE && !q2_sound(c, path, 3, 1, e))
         return false;
-    return !q2_actor_live(c->game, c->actor->id) || !ctf ||
-           c->game->hooks.ctf_haste_sound == NULL ||
-           c->game->hooks.ctf_haste_sound(c->game->hooks.context, c->actor->id, e);
+    return true;
 }
 bool q2_multiplier(q2_weapon_call *c, float *out, qa_error *e) {
     if (c->game->hooks.source_damage_factor != NULL) {

@@ -164,9 +164,6 @@ bool q2_lmctf_plasma_fire(q2_weapon_call *c, qa_error *e) {
             return false;
         if (!q2_actor_live(g, c->actor->id))
             return true;
-        if (g->hooks.ammo_changed != NULL &&
-            !g->hooks.ammo_changed(g->hooks.context, c->actor->id, cells, e))
-            return false;
         if (!q2_actor_live(g, c->actor->id))
             return true;
         if (c->actor->client != NULL &&

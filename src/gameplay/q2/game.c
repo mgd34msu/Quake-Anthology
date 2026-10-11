@@ -598,8 +598,7 @@ bool q2_consume(q2_weapon_call *c, int quantity, bool honor_infinite, qa_error *
     if (c->rerelease && before > c->definition->warning && after <= c->definition->warning &&
         !q2_sound(c, QA_Q2_SFX_WEAPONS_LOWAMMO, 0, 1, e))
         return false;
-    return !q2_actor_live(g, c->actor->id) || g->hooks.ammo_changed == NULL ||
-           g->hooks.ammo_changed(g->hooks.context, c->actor->id, ammo, e);
+    return true;
 }
 qa_attack q2_attack(q2_weapon_call *c, int mod, uint32_t flags) {
     qa_attack attack = {.time_ns = c->now_ns,

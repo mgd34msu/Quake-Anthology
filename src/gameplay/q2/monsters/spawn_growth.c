@@ -85,33 +85,9 @@ bool q2m_rerelease_growth_tick(qa_q2_game *game, q2_actor *actor, qa_error *erro
     return true;
 }
 
-static bool admit_part(qa_q2_game *game, q2_runtime_name classname, qa_body_state body, q2_actor **out,
-                       qa_error *error) {
-    qa_string_id definition=game->runtime_names[classname];
-    qa_builtin_spawn spawn = {.owner = game->options.owner, .definition = definition, .body = body};
-    qa_actor_id id;
-    if (!qa_builtin_spawn_actor(&game->services, &spawn, &id, error))
-        return false;
-    q2_actor *actor = q2_actor_get(game, id, true, error);
-    if (!actor) {
-        (void)qa_session_release(game->services.session, id, NULL);
-        return false;
-    }
-    actor->projectile.classname = definition;
-    actor->projectile.visible = true;
-    actor->projectile.alpha = 1;
-    actor->physics = qa_physics_properties_default(QA_GAME_Q2);
-    actor->physics.q2_rerelease = true;
-    actor->physics.motion = QA_PHYSICS_STATIONARY;
-    actor->physics.solid = QA_PHYSICS_NOT_SOLID;
-    actor->physics_bound = true;
-    *out = actor;
-    return true;
-}
-
 bool q2m_rerelease_spawn_growth(qa_q2_game *game, qa_vec3 origin, float radius, qa_error *error) {
     q2_actor *growth;
-    if (!admit_part(game, Q2_NAME_SPAWNGRO, (qa_body_state){0}, &growth, error))
+    if (!q2_admit_growth_part(game, Q2_NAME_RESOURCE_SPAWNGRO, (qa_body_state){0}, &growth, true, error))
         return false;
     qa_actor_id id = growth->id;
     qa_vec3 angles;
@@ -146,7 +122,7 @@ bool q2m_rerelease_spawn_growth(qa_q2_game *game, qa_vec3 origin, float radius, 
     if (!q2_actor_live(game, id))
         return true;
     q2_actor *beam;
-    if (!admit_part(game, Q2_NAME_SPAWNGRO_BEAM, (qa_body_state){.origin = origin}, &beam, error))
+    if (!q2_admit_growth_part(game, Q2_NAME_SPAWNGRO_BEAM, (qa_body_state){.origin = origin}, &beam, true, error))
         goto failed;
     if (!q2_actor_live(game, id))
         return qa_session_release(game->services.session, beam->id, error);

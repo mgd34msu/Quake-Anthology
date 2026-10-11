@@ -269,7 +269,6 @@ typedef struct qa_q2_hooks {
     bool (*rotation_changed)(void *, const qa_string_id *, size_t, qa_error *);
     bool (*weapon_view)(void *, const qa_q2_weapon_presentation *, qa_error *);
     bool (*noise)(void *, qa_actor_id, qa_vec3, bool secondary, qa_error *);
-    bool (*ammo_changed)(void *, qa_actor_id, qa_item_id, qa_error *);
     bool (*equipment_animation)(void *, qa_actor_id, bool reverse, bool *handled, qa_error *);
     /* One completed source shot or throw, with its registered weapon item. */
     bool (*fired)(void *, qa_actor_id, qa_item_id, qa_error *);
@@ -287,13 +286,9 @@ typedef struct qa_q2_hooks {
     bool (*food_cube)(void *, qa_actor_id source, qa_vec3 origin, float scale, int health,
                       qa_vec3 velocity, qa_error *);
     bool (*nuke_blind)(void *, qa_actor_id, uint64_t until_ns, bool inside_radius, qa_error *);
-    bool (*ctf_strength_sound)(void *, qa_actor_id, bool *handled, qa_error *);
-    bool (*ctf_haste_sound)(void *, qa_actor_id, qa_error *);
     bool (*grapple_pose)(void *, qa_actor_id, qa_q2_grapple_kind, qa_q2_grapple_pose *, qa_error *);
     bool (*grapple_motion)(void *, qa_actor_id, const qa_q2_grapple_motion *, qa_error *);
     bool (*grapple_can_attach)(void *, qa_actor_id owner, qa_actor_id target, qa_q2_grapple_kind);
-    bool (*grapple_can_damage)(void *, qa_actor_id owner, qa_actor_id target, qa_q2_grapple_kind);
-    bool (*grapple_player_hit)(void *, qa_actor_id);
     /* A successful begin must be paired with end, including failure paths. */
     bool (*lag_begin)(void *, qa_actor_id, qa_vec3, qa_vec3, qa_error *);
     bool (*lag_end)(void *, qa_error *);

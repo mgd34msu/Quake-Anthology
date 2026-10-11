@@ -180,7 +180,6 @@
     X(LASER_SPARKS, "q2:laser-sparks") \
     X(NOCLASS, "noclass") \
     X(GRAPPLE, "grapple") \
-    X(SPAWNGRO, "spawngro") \
     X(SPAWNGRO_BEAM, "spawngro_beam") \
     X(PLASMA_BOUNCE_MESSAGE, "bounce plasma\n") \
     X(PLASMA_SPREAD_MESSAGE, "spread plasma\n") \
@@ -783,6 +782,7 @@ bool q2_spawn_gib(qa_q2_game *, qa_actor_id source, q2_runtime_name model, float
 bool q2_spawn_debris(qa_q2_game *, qa_actor_id source, qa_error *);
 bool q2_spawn_model_debris(qa_q2_game *, qa_actor_id source, q2_runtime_name model, float speed,
                            qa_vec3 origin, qa_error *);
+bool q2_admit_growth_part(qa_q2_game *, q2_runtime_name, qa_body_state, q2_actor **, bool, qa_error *);
 bool q2_spawn_growth(qa_q2_game *, qa_vec3 origin, unsigned size, qa_error *);
 bool q2_gib_think(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_gib_touch(qa_q2_game *, const qa_touch_contact *, qa_error *);

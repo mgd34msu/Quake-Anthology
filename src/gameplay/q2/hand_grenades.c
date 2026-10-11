@@ -2,7 +2,6 @@
 #include "internal.h"
 
 typedef enum hand_effect_kind {
-    HAND_AMMO,
     HAND_COCK,
     HAND_COOK_START,
     HAND_COOK_STOP,
@@ -298,7 +297,6 @@ static bool advance(hand_step *step, qa_error *e) {
             if (!qa_inventory_configure(c->game->services.inventory, c->actor->id, &entry, NULL,
                                         NULL, e))
                 return false;
-            effect(step, HAND_AMMO);
         }
         if (action.kind == QA_Q2_HAND_COOKING || action.kind == QA_Q2_HAND_RELEASING) {
             uint64_t expires = action.kind == QA_Q2_HAND_COOKING
@@ -323,8 +321,6 @@ static bool advance(hand_step *step, qa_error *e) {
             if (!qa_inventory_consume(c->game->services.inventory, c->actor->id, ammo, 1, &consumed,
                                       e))
                 return false;
-            if (consumed)
-                effect(step, HAND_AMMO);
         }
         if (consumed) {
             uint64_t next;
@@ -381,11 +377,7 @@ static bool dispatch(hand_step *step, uint64_t revision, qa_error *e) {
         if (!q2_actor_live(g, c->actor->id) || c->actor->hand_revision != revision)
             break;
         const hand_effect *pending = &step->effects[i];
-        if (pending->kind == HAND_AMMO) {
-            if (g->hooks.ammo_changed != NULL &&
-                !g->hooks.ammo_changed(g->hooks.context, c->actor->id, g->ammo[QA_Q2_GRENADES], e))
-                return false;
-        } else if (pending->kind == HAND_EMIT) {
+        if (pending->kind == HAND_EMIT) {
             float multiplier;
             if (!q2_multiplier(c, &multiplier, e)) return false;
             float damage = 125 * multiplier;

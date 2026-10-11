@@ -288,20 +288,6 @@ static bool clock_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
         display->entity->message = QA_STRING_NONE;
         if (!qa_q2_entity_use(g, display->id, a->id, a->id, e))
             return false;
-    } else {
-        qa_q2_entity_services *services = &g->entity_runtime->services;
-        if (!services->set_message || !services->invoke_use) {
-            qa_error_set(e, QA_ERROR_UNSUPPORTED, 0,
-                         "Q2 clock requires shared target message/use services");
-            return false;
-        }
-        if (!services->set_message(services->context, s->enemy, s->clock_text, e))
-            return false;
-        if (!q2_actor_live(g, a->id))
-            return true;
-        if (q2_actor_live(g, s->enemy) &&
-            !services->invoke_use(services->context, s->enemy, a->id, a->id, e))
-            return false;
     }
     if (!q2_actor_live(g, a->id))
         return true;

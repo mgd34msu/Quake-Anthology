@@ -106,7 +106,6 @@ typedef struct qa_q2_entity_services {
     bool (*target_anger)(void *, qa_actor_id actor, qa_actor_id target, qa_error *);
     bool (*mark_monster_target)(void *, qa_actor_id, qa_error *);
     bool (*local_time)(void *, int *hour, int *minute, int *second, qa_error *);
-    bool (*set_message)(void *, qa_actor_id, const char *, qa_error *);
     bool (*invoke_use)(void *, qa_actor_id, qa_actor_id other, qa_actor_id activator, qa_error *);
     bool (*flashlight)(void *, qa_actor_id, bool enabled, qa_error *);
     bool (*player_fog)(void *, qa_actor_id, const qa_q2_fog *, unsigned affected, float transition,

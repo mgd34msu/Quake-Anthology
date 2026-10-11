@@ -348,17 +348,37 @@ bool q2_gib_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
     }
     return true;
 }
-bool q2_spawn_growth(qa_q2_game *g, qa_vec3 origin, unsigned size, qa_error *e) {
-    qa_actor_definition definition;
-    definition=g->runtime_names[Q2_NAME_RESOURCE_SPAWNGRO];
-    qa_body_state body = {.origin = origin, .angles = growth_angles(g)};
-    qa_builtin_spawn spawn = {.owner = g->options.owner, .definition = definition, .body = body};
+bool q2_admit_growth_part(qa_q2_game *game, q2_runtime_name classname, qa_body_state body, q2_actor **out, bool rerelease,
+                       qa_error *error) {
+    qa_string_id definition=game->runtime_names[classname];
+    qa_builtin_spawn spawn = {.owner = game->options.owner, .definition = definition, .body = body};
     qa_actor_id id;
-    if (!qa_builtin_spawn_actor(&g->services, &spawn, &id, e))
+    if (!qa_builtin_spawn_actor(&game->services, &spawn, &id, error))
         return false;
-    q2_actor *a = q2_actor_get(g, id, true, e);
-    if (a == NULL)
+    q2_actor *actor = q2_actor_get(game, id, true, error);
+    if (!actor) {
+        (void)qa_session_release(game->services.session, id, NULL);
         return false;
+    }
+    if (rerelease) {
+        actor->projectile.classname = definition;
+        actor->projectile.visible = true;
+        actor->projectile.alpha = 1;
+    }
+    actor->physics = qa_physics_properties_default(QA_GAME_Q2);
+    actor->physics.q2_rerelease = rerelease;
+    actor->physics.motion = QA_PHYSICS_STATIONARY;
+    actor->physics.solid = QA_PHYSICS_NOT_SOLID;
+    actor->physics_bound = true;
+    *out = actor;
+    return true;
+}
+
+bool q2_spawn_growth(qa_q2_game *g, qa_vec3 origin, unsigned size, qa_error *e) {
+    qa_body_state body = {.origin = origin, .angles = growth_angles(g)};
+    q2_actor *a;
+    if (!q2_admit_growth_part(g, Q2_NAME_RESOURCE_SPAWNGRO, body, &a, false, e)) return false;
+    qa_actor_id id=a->id;
     a->projectile =
         (q2_projectile){.kind = Q2_SPAWN_GROWTH,
                         .visible = true,
@@ -368,10 +388,6 @@ bool q2_spawn_growth(qa_q2_game *g, qa_vec3 origin, unsigned size, qa_error *e) 
                         .effect_ns = q2_deadline(g->now_ns, (size == 2 ? 2000 : 300) * Q2_MS),
                         .next_ns = q2_deadline(g->now_ns, 100 * Q2_MS),
                         .expire_ns = UINT64_MAX};
-    a->physics_bound = true;
-    a->physics = qa_physics_properties_default(QA_GAME_Q2);
-    a->physics.motion = QA_PHYSICS_STATIONARY;
-    a->physics.solid = QA_PHYSICS_NOT_SOLID;
     return qa_world_link(g->services.world, id, NULL, e) &&
            q2_projectile_event(g, id, QA_BUILTIN_ANIMATION,
                                size <= 1   ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_ITEMS_SPAWNGRO2_TRIS_MD2]
