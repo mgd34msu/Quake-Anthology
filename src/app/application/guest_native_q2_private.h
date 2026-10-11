@@ -5,6 +5,7 @@
 #include "qa/binary.h"
 #include "qa/json.h"
 #include "qa/lightstyles.h"
+#include "qa/q2_config_changes.h"
 #include "qa/network_q2_messages.h"
 #include <stdlib.h>
 #include <string.h>
@@ -83,8 +84,8 @@ struct application_native_q2 {
     unsigned calls;
     uint32_t current_client, disconnect_client;
     uint64_t current_command_sequence;
-    uint64_t config_revision, hud_config_revision;
-    uint64_t hud_names_revision;
+    qa_q2_config_changes config_changes;
+    uint64_t hud_config_revision;
     qa_lightstyles lightstyles;
     struct qa_network_runtime *network_recipient_runtime;
     void *network_recipient_context;
@@ -100,6 +101,19 @@ struct application_native_q2 {
     qa_bytes restore_record;
     qa_error activation_error;
 };
+
+static inline void application_native_q2_config_update(struct application_native_q2 *engine,
+    uint32_t index, qa_string_id name)
+{
+    if (engine->configstrings[index] == name) return;
+    engine->configstrings[index] = name;
+    qa_q2_config_changed(&engine->config_changes, index);
+}
+static inline void application_native_q2_config_clear(struct application_native_q2 *engine)
+{
+    for (uint32_t i = 0; i < engine->configstring_count; ++i)
+        application_native_q2_config_update(engine, i, QA_STRING_NONE);
+}
 
 bool application_construct_native_q2(qa_application *, application_provider *, qa_world *,
                                        const qa_product *, const qa_launch_choices *, qa_error *);

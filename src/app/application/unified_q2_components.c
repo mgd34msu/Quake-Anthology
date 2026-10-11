@@ -74,7 +74,7 @@ bool application_unified_q2_source_documents_current(qa_application *app,
     struct application_native_q2 *native;
     qa_q2_player state;
     return qa_application_native_q2_presentation_current(app, &v->physical) &&
-        physical_player(app, v, &native, &state, NULL) && native->config_revision == v->config_revision &&
+        physical_player(app, v, &native, &state, NULL) && native->config_changes.revision == v->config_revision &&
         native->clients[v->player.source_slot].layout_revision == v->layout_revision &&
         native->clients[v->player.source_slot].inventory_revision == v->inventory_revision &&
         state_equal(&state, &v->player_state);
@@ -140,7 +140,7 @@ bool application_unified_q2_source_documents_build(qa_application *app,
         return application_fail(e, QA_ERROR_ARGUMENT, "Unified Q2 documents differ from their primary physical Source");
     struct application_native_q2 *native;
     if (!physical_player(app, &v, &native, &v.player_state, e)) return false;
-    v.config_revision = native->config_revision;
+    v.config_revision = native->config_changes.revision;
     const application_native_q2_client *client = native->clients + player->source_slot;
     v.layout_revision = client->layout_revision; v.inventory_revision = client->inventory_revision;
     v.layout = client->layout; v.inventory = client->inventory;

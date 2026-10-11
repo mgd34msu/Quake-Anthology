@@ -7,6 +7,7 @@
 #include "qa/game_q2_wire.h"
 #include "qa/native_host_q2_wire.h"
 #include "qa/hud_controls.h"
+#include "qa/q2_config_changes.h"
 
 typedef enum qa_application_native_q2_source_kind {
     QA_APPLICATION_NATIVE_Q2_BUILTIN,
@@ -101,6 +102,7 @@ typedef struct qa_application_native_q2_hud_source {
     const char *statusbar;
     const qa_strings *strings;
     const qa_string_id *configstrings;
+    const qa_q2_config_changes *config_changes;
     uint32_t configstring_count;
 } qa_application_native_q2_hud_source;
 /* Selects the actor's actual HUD/data owners without reading mutable player state. */
@@ -121,6 +123,7 @@ typedef struct qa_application_native_q2_hud {
     uint64_t layout_revision;
     const qa_strings *strings;
     const qa_string_id *configstrings;
+    const qa_q2_config_changes *config_changes;
     uint32_t configstring_count;
     int16_t stats[64];
     int32_t inventory[256];

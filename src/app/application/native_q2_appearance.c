@@ -68,7 +68,7 @@ bool application_native_q2_appearance_read(qa_application *app,
         out->models[3] || out->skin_path)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 appearance requires its returned physical Source");
     application_native_q2_appearance value = {.source = *source,
-        .config_revision = engine->config_revision, .source_slot = slot};
+        .config_revision = engine->config_changes.revision, .source_slot = slot};
     if (!qa_native_host_q2_wire_entity((qa_native_host *)source->source.original.host,
             slot, &value.entity, error)) return false;
     const qa_q2_entity *state = &value.entity.state;
@@ -119,7 +119,7 @@ bool application_native_q2_appearance_current(qa_application *app,
 {
     struct application_native_q2 *engine = view ? engine_read(app, &view->source) : NULL;
     qa_native_host_q2_entity row;
-    return engine && engine->config_revision == view->config_revision &&
+    return engine && engine->config_changes.revision == view->config_revision &&
         qa_native_host_q2_wire_entity((qa_native_host *)view->source.source.original.host,
             view->source_slot, &row, NULL) &&
         qa_actor_id_equal(row.binding.actor, view->entity.binding.actor) &&

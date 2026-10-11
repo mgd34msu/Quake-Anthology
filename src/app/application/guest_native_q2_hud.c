@@ -153,20 +153,22 @@ bool application_native_q2_draw_hud(application_provider *provider, uint32_t sea
         if (ok) ok = qa_native_call(qa_native_host_instance(provider->state.native.host),
             "TouchPics", NULL, 0, NULL, error);
     }
-    bool changed = engine->hud_source_owner != source->provider->owner ||
-        engine->hud_config_revision != source->config_revision;
-    for (uint32_t i = 0; ok && changed && i < engine->configstring_count; ++i) {
+    bool rebound = engine->hud_source_owner != source->provider->owner;
+    uint32_t link = rebound ? 1 : qa_q2_config_changes_begin(&source->config_changes, engine->hud_config_revision);
+    while (ok && link && link <= engine->configstring_count) {
+        uint32_t i = link - 1;
         qa_string_id value = source->configstrings[i], prior = engine->configstrings[i];
         qa_strings *strings = qa_session_strings(engine->provider->application->session);
-        if (value == prior || (!qa_strings_text(strings, value).size &&
-            !qa_strings_text(strings, prior).size)) continue;
-        const char *text = value ? qa_strings_cstr(strings, value) : "";
-        ok = parse_config(engine, (int32_t)i, text, error);
-        if (ok) engine->configstrings[i] = value;
+        if (value != prior && (qa_strings_text(strings, value).size || qa_strings_text(strings, prior).size)) {
+            const char *text = value ? qa_strings_cstr(strings, value) : "";
+            ok = parse_config(engine, (int32_t)i, text, error);
+            if (ok) engine->configstrings[i] = value;
+        }
+        link = rebound ? link + 1 : source->config_changes.slots[i].newer;
     }
     if (ok) {
         engine->hud_source_owner = source->provider->owner;
-        engine->hud_config_revision = source->config_revision;
+        engine->hud_config_revision = source->config_changes.revision;
     }
     qa_buffer player = {0}; qa_native_host_q2_hud_view view;
     uint8_t data[1536] = {0};

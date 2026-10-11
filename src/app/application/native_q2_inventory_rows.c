@@ -210,7 +210,7 @@ static bool player_current(application_native_q2_inventory_rows *owner,
     uint64_t map_revision, uint64_t config_revision, qa_error *error) {
     if (!owner_current(owner, error)) return false;
     qa_application *app = owner->engine->provider->application;
-    if (app->map_revision != map_revision || owner->engine->config_revision != config_revision ||
+    if (app->map_revision != map_revision || owner->engine->config_changes.revision != config_revision ||
         application_provider_for(app, source->actor, QA_ROLE_ARSENAL, "") != arsenal ||
         !arsenal || !arsenal->constructed || !arsenal->attached || arsenal->close_pending ||
         application_native_q2_attack_declaration_read(owner->engine) != owner->document)
@@ -437,7 +437,7 @@ static bool rows(void *context, qa_actor_id actor,
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
     application_native_q2_inventory_source source;
     if (!application_native_q2_inventory_source_read(owner->engine, actor, &source, error)) return false;
-    uint64_t map_revision = app->map_revision, config_revision = owner->engine->config_revision;
+    uint64_t map_revision = app->map_revision, config_revision = owner->engine->config_changes.revision;
     if (!player_current(owner, &source, arsenal, map_revision, config_revision, error)) return false;
     qa_inventory_source_snapshot snapshot = {0};
     selected_catalog catalog = {0};
@@ -610,7 +610,7 @@ static bool use(void *context, qa_actor_id actor, qa_item_id item, qa_error *err
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
     application_native_q2_inventory_source source;
     if (!application_native_q2_inventory_source_read(owner->engine, actor, &source, error)) return false;
-    uint64_t map_revision = app->map_revision, config_revision = owner->engine->config_revision;
+    uint64_t map_revision = app->map_revision, config_revision = owner->engine->config_changes.revision;
     if (!player_current(owner, &source, arsenal, map_revision, config_revision, error)) return false;
     ++owner->calls; ++owner->engine->calls;
     qa_item_definition component = {0};

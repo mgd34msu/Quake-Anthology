@@ -198,6 +198,7 @@ typedef struct frontend_seat {
     uint32_t q2_hud_image_count;
     const char *q2_hud_status_text;
     uint64_t q2_hud_config_revision, q2_hud_layout_revision;
+    qa_actor_owner q2_hud_config_provider;
     qa_hud_value q1_monsters;
     char q1_monster_label[80];
     char *q2_help_text[2];

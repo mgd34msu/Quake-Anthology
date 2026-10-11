@@ -84,12 +84,10 @@ static bool config_set(void *opaque, int32_t index, const char *value, qa_error 
     qa_string_id name;
     if (!qa_strings_intern_cstr(qa_session_strings(engine->provider->application->session),
         value, &name, error)) return false;
-    engine->configstrings[index] = name;
-    ++engine->config_revision;
+    application_native_q2_config_update(engine, (uint32_t)index, name);
     uint32_t styles = engine->resource_base[QA_NATIVE_HOST_IMAGE] + engine->resource_limit[QA_NATIVE_HOST_IMAGE];
     if ((uint32_t)index >= styles && (uint32_t)index - styles < 256)
         qa_lightstyles_set(&engine->lightstyles, (uint32_t)index - styles, name);
-    else ++engine->hud_names_revision;
     if (!engine->map_ready) return true;
     qa_q2_server_event event = {.kind = QA_Q2_SVC_CONFIGSTRING,
         .data.config = {.index = (uint16_t)index, .value = qa_strings_cstr(

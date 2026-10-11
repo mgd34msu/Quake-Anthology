@@ -75,9 +75,10 @@ static bool hud_select(qa_application *app, qa_actor_id actor, hud_selection *ou
         if (application_native_q2_client_admitted(engine, actor))
             selected.slot = application_native_q2_client_slot(engine, actor);
         if (!selected.slot) return true;
-        value->data_provider = selected.original->owner; value->config_revision = engine->hud_names_revision;
+        value->data_provider = selected.original->owner; value->config_revision = engine->config_changes.revision;
         value->original = true; value->strings = qa_session_strings(app->session);
         value->configstrings = engine->configstrings;
+        value->config_changes = &engine->config_changes;
         value->configstring_count = engine->configstring_count;
         value->edition = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_Q2_CLASSIC : QA_Q2_RERELEASE;
         value->statusbar_id = value->configstring_count > 5 ? value->configstrings[5] : QA_STRING_NONE;
@@ -118,7 +119,7 @@ bool qa_application_native_q2_hud_read(qa_application *app, qa_actor_id actor,
         .config_revision = source->config_revision, .edition = source->edition,
         .deathmatch = source->deathmatch, .cooperative = source->cooperative, .original = source->original,
         .game = source->game, .statusbar_id = source->statusbar_id, .statusbar = source->statusbar, .strings = source->strings,
-        .configstrings = source->configstrings,
+        .configstrings = source->configstrings, .config_changes = source->config_changes,
         .configstring_count = source->configstring_count, .layout = ""};
     application_provider *clock_owner = original ? original : hud;
     qa_clock_state clock;

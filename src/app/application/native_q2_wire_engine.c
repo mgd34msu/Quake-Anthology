@@ -166,13 +166,12 @@ bool application_native_q2_wire_resource(struct application_native_q2 *engine, u
     }
     if (!free_index) return application_fail(error, QA_ERROR_FORMAT, "Original Q2 Engine resource namespace is full");
     size_t length = strlen(path);
-    if (length >= 2048 || engine->config_revision == UINT64_MAX)
+    if (length >= 2048 || engine->config_changes.revision == UINT64_MAX)
         return application_fail(error, QA_ERROR_FORMAT, "Original Q2 Engine resource leaves its real configstring profile");
     qa_string_id name;
     if (!qa_strings_intern_cstr(qa_session_strings(engine->provider->application->session),
         path, &name, error)) return false;
-    engine->configstrings[base + free_index] = name;
-    ++engine->config_revision;
+    application_native_q2_config_update(engine, base + free_index, name);
     *out = free_index; return true;
 }
 

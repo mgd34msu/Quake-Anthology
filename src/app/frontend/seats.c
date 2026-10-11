@@ -234,14 +234,21 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
     qa_net_protocol_id protocol = {.kind = source->edition == QA_Q2_RERELEASE ? QA_NET_Q2KEX_2023 : QA_NET_Q2_34};
     if(!qa_hud_q2_names_configure(&seat->q2_hud_names,protocol,error)) return false;
     hud.config=seat->q2_hud_names.layout;
-    if(seat->q2_hud_status_text!=source->statusbar||seat->q2_hud_config_revision!=source->config_revision) {
+    if(seat->q2_hud_status_text!=source->statusbar||seat->q2_hud_config_revision!=source->config_revision||
+        seat->q2_hud_config_provider!=source->data_provider) {
         if(source->original) {
-            for(uint32_t i=0;i<source->configstring_count;++i)
+            bool rebound=seat->q2_hud_config_revision==UINT64_MAX || seat->q2_hud_config_provider!=source->data_provider;
+            uint32_t link=rebound?1:qa_q2_config_changes_begin(source->config_changes,seat->q2_hud_config_revision);
+            while(link && link<=source->configstring_count) {
+                uint32_t i=link-1;
                 if(!qa_hud_q2_names_set(&seat->q2_hud_names,i,source->configstrings[i],error)) return false;
+                link=rebound?link+1:source->config_changes->slots[i].newer;
+            }
         } else {
             if(!qa_hud_q2_names_set(&seat->q2_hud_names,5,source->statusbar_id,error)) return false;
         }
         seat->q2_hud_status_text=source->statusbar;seat->q2_hud_config_revision=source->config_revision;
+        seat->q2_hud_config_provider=source->data_provider;
     }
     if(seat->q2_hud_layout_revision!=source->layout_revision) {
         if(!qa_hud_q2_program_update(seat->q2_hud_layout,source->layout,source->edition==QA_Q2_RERELEASE,error))return false;
