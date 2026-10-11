@@ -152,6 +152,12 @@ typedef struct qa_net_udp_policy { qa_net_address bound; bool ipv6_only; } qa_ne
 bool qa_net_udp_policy_read(const qa_net_transport *, qa_net_udp_policy *, bool *present, qa_error *);
 bool qa_net_loopback_create(qa_net_limits, qa_net_loopback **, qa_error *);
 bool qa_net_loopback_bind(qa_net_loopback *, const char *, qa_net_transport **, qa_error *);
+/* Tunnel decoders use the same fixed FIFO with their real endpoint addresses.
+ * Full refuses the new packet and leaves every admitted packet unchanged. */
+bool qa_net_loopback_bind_address(qa_net_loopback *, const qa_net_address *, qa_net_transport **, qa_error *);
+qa_net_send_result qa_net_loopback_packet(qa_net_loopback *, const qa_net_address *to,
+    const qa_net_datagram *, qa_error *);
+bool qa_net_loopback_receive_ready(const qa_net_loopback *, const qa_net_address *to);
 /* Combines an optional external transport and an existing local server endpoint
  * into one host stream. Both handles transfer only on success; the caller keeps
  * the local endpoint's hub alive. Bound address and UDP policy use the external

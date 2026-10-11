@@ -7,16 +7,11 @@ enum { DOSBOX_WIRE_BYTES = 1424, DOSBOX_PAYLOAD_BYTES = 1394,
        DOSBOX_SOCKETS = 150, DOSBOX_QUEUE = 256, DOSBOX_PUMP_BUDGET = 256 };
 
 typedef enum dosbox_phase { DOSBOX_REGISTERING, DOSBOX_READY, DOSBOX_FAILED, DOSBOX_CLOSED } dosbox_phase;
-typedef struct dosbox_packet {
-    qa_net_address from;
-    uint64_t received_ns;
-    size_t size;
-    uint8_t data[DOSBOX_PAYLOAD_BYTES];
-} dosbox_packet;
 typedef struct dosbox_socket dosbox_socket;
 
 struct qa_net_dosbox {
     qa_net_transport *udp;
+    qa_net_loopback *deliveries;
     qa_net_address server, address;
     dosbox_socket *sockets[DOSBOX_SOCKETS];
     size_t references, socket_count;
@@ -27,12 +22,10 @@ struct qa_net_dosbox {
 
 struct dosbox_socket {
     qa_net_dosbox *network;
-    qa_net_address address, dropped_from;
+    qa_net_address address;
+    qa_net_transport *deliveries;
     uint8_t packet_type;
-    size_t slot, head, count;
-    bool dropped;
-    dosbox_packet packets[DOSBOX_QUEUE];
-    uint8_t borrowed[DOSBOX_PAYLOAD_BYTES];
+    size_t slot;
 };
 
 static bool dosbox_node_is(const qa_net_address *address, uint8_t byte) {
@@ -41,7 +34,7 @@ static bool dosbox_node_is(const qa_net_address *address, uint8_t byte) {
 }
 
 static void dosbox_release(qa_net_dosbox *network) {
-    if (--network->references == 0) free(network);
+    if (--network->references == 0) { qa_net_loopback_close(network->deliveries);free(network); }
 }
 
 static bool dosbox_fail(qa_net_dosbox *network, qa_status code, const char *message, qa_error *error) {
@@ -68,34 +61,22 @@ static dosbox_socket *dosbox_find(qa_net_dosbox *network, uint16_t port) {
     return NULL;
 }
 
-static void dosbox_accept(dosbox_socket *socket, const qa_net_ipx_packet *packet, uint64_t now_ns) {
-    if (packet->payload.size > DOSBOX_PAYLOAD_BYTES) {
-        socket->dropped = true;
-        socket->dropped_from = packet->from;
-        return;
-    }
-    if (socket->count == DOSBOX_QUEUE) {
-        socket->dropped_from = socket->packets[socket->head].from;
-        socket->head = (socket->head + 1) % DOSBOX_QUEUE;
-        --socket->count;
-        socket->dropped = true;
-    }
-    dosbox_packet *queued = &socket->packets[(socket->head + socket->count) % DOSBOX_QUEUE];
-    queued->from = packet->from;
-    queued->received_ns = now_ns;
-    queued->size = packet->payload.size;
-    if (queued->size) memcpy(queued->data, packet->payload.data, queued->size);
-    ++socket->count;
+static qa_net_send_result dosbox_accept(dosbox_socket *socket,const qa_net_ipx_packet *packet,
+    uint64_t received_ns,qa_error *error)
+{
+    const qa_net_datagram datagram={.kind=QA_NET_POLL_PACKET,.from=packet->from,
+        .received_ns=received_ns,.payload=packet->payload};
+    return qa_net_loopback_packet(socket->network->deliveries,&socket->address,&datagram,error);
 }
 
-static bool dosbox_udp_packet(qa_net_dosbox *network, const qa_net_ipx_packet *packet,
+static qa_net_send_result dosbox_udp_packet(qa_net_dosbox *network, const qa_net_ipx_packet *packet,
                               qa_error *error) {
     uint8_t buffer[DOSBOX_WIRE_BYTES];
     qa_net_writer writer;
     qa_net_writer_init(&writer, buffer, sizeof(buffer), error);
     if (!qa_net_ipx_encode(packet, &writer)) return false;
     return qa_net_transport_send(network->udp, &network->server,
-                                 (qa_bytes){buffer, qa_net_writer_size(&writer)}, error) == QA_NET_SEND_ACCEPTED;
+                                 (qa_bytes){buffer, qa_net_writer_size(&writer)}, error);
 }
 
 static void dosbox_deliver(qa_net_dosbox *network, const qa_net_ipx_packet *packet,
@@ -113,7 +94,7 @@ static void dosbox_deliver(qa_net_dosbox *network, const qa_net_ipx_packet *pack
         return;
     }
     dosbox_socket *socket = dosbox_find(network, packet->to.port);
-    if (socket) dosbox_accept(socket, packet, received_ns);
+    if (socket) (void)dosbox_accept(socket,packet,received_ns,NULL);
 }
 
 bool qa_net_dosbox_create(qa_net_transport *udp, const qa_net_address *server,
@@ -130,6 +111,8 @@ bool qa_net_dosbox_create(qa_net_transport *udp, const qa_net_address *server,
         qa_error_set(error, QA_ERROR_MEMORY, 0, "DOSBox IPX network allocation failed");
         return false;
     }
+    if(!qa_net_loopback_create((qa_net_limits){DOSBOX_PAYLOAD_BYTES,DOSBOX_QUEUE},
+        &network->deliveries,error)) { free(network);return false; }
     network->udp = udp;
     network->server = *server;
     network->address.kind = QA_NET_IPX;
@@ -139,7 +122,8 @@ bool qa_net_dosbox_create(qa_net_transport *udp, const qa_net_address *server,
     network->timeout_ns = timeout_ns;
     network->phase = DOSBOX_REGISTERING;
     qa_net_ipx_packet request = {network->address, network->address, 0, 0, {NULL, 0}};
-    if (!dosbox_udp_packet(network, &request, error)) {
+    if (dosbox_udp_packet(network, &request, error)!=QA_NET_SEND_ACCEPTED) {
+        qa_net_loopback_close(network->deliveries);
         free(network);
         return false;
     }
@@ -151,6 +135,8 @@ bool qa_net_dosbox_collect(qa_net_dosbox *network, uint64_t now_ns,
     qa_net_transport_event *out, qa_error *error) {
     if (network->phase == DOSBOX_FAILED || network->phase == DOSBOX_CLOSED)
         return dosbox_ready(network, error);
+    *out=(qa_net_transport_event){0};
+    if(!qa_net_loopback_receive_ready(network->deliveries,NULL)) return true;
     if (!qa_net_transport_collect(network->udp, now_ns, out, error))
         return dosbox_fail(network, QA_ERROR_IO, "DOSBox IPX UDP transport failed", error);
     return true;
@@ -197,13 +183,18 @@ bool qa_net_dosbox_maintenance(qa_net_dosbox *network, uint64_t now_ns, qa_error
     return true;
 }
 
-static void dosbox_queue_local(qa_net_dosbox *network, const qa_net_ipx_packet *packet) {
-    bool local = qa_net_address_equal(&packet->to, &network->address, false);
-    bool broadcast = dosbox_node_is(&packet->to, 255) &&
-        (!packet->to.host.ipx.network || packet->to.host.ipx.network == network->address.host.ipx.network);
-    if (!local && !broadcast) return;
-    dosbox_socket *socket = dosbox_find(network, packet->to.port);
-    if (socket) dosbox_accept(socket, packet, network->now_ns);
+static dosbox_socket *dosbox_local(qa_net_dosbox *network,const qa_net_address *to)
+{
+    bool local=qa_net_address_equal(to,&network->address,false);
+    bool broadcast=dosbox_node_is(to,255) &&
+        (!to->host.ipx.network || to->host.ipx.network==network->address.host.ipx.network);
+    return local || broadcast ? dosbox_find(network,to->port) : NULL;
+}
+static bool dosbox_send_ready(const void *opaque,const qa_net_address *to)
+{
+    const dosbox_socket *socket=opaque;
+    dosbox_socket *target=to && to->kind==QA_NET_IPX ? dosbox_local(socket->network,to) : NULL;
+    return !target || qa_net_loopback_receive_ready(socket->network->deliveries,&target->address);
 }
 
 static qa_net_send_result dosbox_send(void *opaque, const qa_net_address *to, qa_bytes bytes, qa_error *error) {
@@ -217,35 +208,29 @@ static qa_net_send_result dosbox_send(void *opaque, const qa_net_address *to, qa
     }
     qa_net_ipx_packet packet = {socket->address, *to, socket->packet_type, 0, bytes};
     bool local = qa_net_address_equal(to, &network->address, false);
-    bool sent = local || dosbox_udp_packet(network, &packet, error);
-    if (local || dosbox_node_is(to, 255)) dosbox_queue_local(network, &packet);
-    return sent;
+    dosbox_socket *target=dosbox_local(network,to);
+    if(target && !qa_net_loopback_receive_ready(network->deliveries,&target->address)) return QA_NET_SEND_FULL;
+    if(!local) {
+        qa_net_send_result sent=dosbox_udp_packet(network,&packet,error);
+        if(sent!=QA_NET_SEND_ACCEPTED) return sent;
+    }
+    return target ? dosbox_accept(target,&packet,network->now_ns,error) : QA_NET_SEND_ACCEPTED;
 }
 
-static bool dosbox_take(dosbox_socket *socket, uint64_t now_ns, qa_net_datagram *out) {
-    *out = (qa_net_datagram){.kind = QA_NET_POLL_EMPTY};
-    if (socket->dropped) {
-        socket->dropped = false;
-        out->kind = QA_NET_POLL_DROPPED;
-        out->from = socket->dropped_from;
-        out->received_ns = now_ns;
-        return true;
-    }
-    if (!socket->count) return false;
-    dosbox_packet *packet = &socket->packets[socket->head];
-    socket->head = (socket->head + 1) % DOSBOX_QUEUE;
-    --socket->count;
-    if (packet->size) memcpy(socket->borrowed, packet->data, packet->size);
-    *out = (qa_net_datagram){QA_NET_POLL_PACKET, packet->from,
-                           {socket->borrowed, packet->size}, packet->received_ns};
+static bool dosbox_take(dosbox_socket *socket,uint64_t now_ns,qa_net_datagram *out,bool *present,qa_error *error)
+{
+    qa_net_transport_event event;
+    if(!qa_net_transport_collect(socket->deliveries,now_ns,&event,error)) return false;
+    *out=event.packet;*present=out->kind!=QA_NET_POLL_EMPTY;
     return true;
 }
 
 static bool dosbox_collect(void *opaque, uint64_t now_ns, qa_net_transport_event *out, qa_error *error) {
     dosbox_socket *socket = opaque;
     *out = (qa_net_transport_event){0};
-    if (socket->dropped || socket->count) {
-        (void)dosbox_take(socket, now_ns, &out->packet);
+    bool present;
+    if(!dosbox_take(socket,now_ns,&out->packet,&present,error)) return false;
+    if(present) {
         out->source = 1;
         return true;
     }
@@ -263,7 +248,7 @@ static bool dosbox_dispatch(void *opaque, const qa_net_transport_event *event,
     for (size_t i = 0; i < (event ? 1U : DOSBOX_PUMP_BUDGET); ++i) {
         bool processed;
         if (!dosbox_dispatch_body(socket->network, event ? &child : NULL, &processed, error)) return false;
-        *present = dosbox_take(socket, socket->network->now_ns, out);
+        if(!dosbox_take(socket,socket->network->now_ns,out,present,error)) return false;
         if (*present || event || !processed) return true;
     }
     *present = false;
@@ -280,6 +265,7 @@ static void dosbox_close_socket(void *opaque) {
     qa_net_dosbox *network = socket->network;
     network->sockets[socket->slot] = NULL;
     --network->socket_count;
+    qa_net_transport_close(socket->deliveries);
     free(socket);
     dosbox_release(network);
 }
@@ -318,13 +304,17 @@ bool qa_net_dosbox_bind(qa_net_dosbox *network, uint16_t port, uint8_t packet_ty
     socket->address.port = port;
     socket->packet_type = packet_type;
     while (network->sockets[socket->slot]) ++socket->slot;
+    if(!qa_net_loopback_bind_address(network->deliveries,&socket->address,&socket->deliveries,error)) {
+        free(socket);return false;
+    }
     const qa_net_transport_ops ops = {
         .send = dosbox_send, .collect = dosbox_collect, .dispatch = dosbox_dispatch,
         .maintenance = dosbox_maintenance, .close = dosbox_close_socket,
-        .ready = dosbox_socket_ready
+        .ready = dosbox_socket_ready,.send_ready=dosbox_send_ready
     };
     if (!qa_net_transport_create(&socket->address, (qa_net_limits){DOSBOX_PAYLOAD_BYTES, DOSBOX_QUEUE},
                                  &ops, socket, out, error)) {
+        qa_net_transport_close(socket->deliveries);
         free(socket);
         return false;
     }

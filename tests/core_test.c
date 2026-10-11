@@ -1610,6 +1610,58 @@ static void test_q2_command_angles(void)
     }
 }
 
+static qa_net_send_result dosbox_test_send(void *context,const qa_net_address *to,qa_bytes bytes,qa_error *error)
+{ (void)to;(void)bytes;(void)error;++*(size_t *)context;return QA_NET_SEND_ACCEPTED; }
+static bool dosbox_test_collect(void *context,uint64_t now,qa_net_transport_event *event,qa_error *error)
+{ (void)context;(void)now;(void)error;*event=(qa_net_transport_event){0};return true; }
+static void dosbox_test_close(void *context) { (void)context; }
+static void test_dosbox_loopback(void)
+{
+    qa_error error={0};qa_net_dosbox *network=NULL;qa_net_transport *udp=NULL,*a=NULL,*b=NULL;
+    size_t sends=0;
+    qa_net_address server={.kind=QA_NET_IPV4,.port=213,.host.ipv4={127,0,0,1}};
+    qa_net_address local_udp=server;local_udp.port=214;
+    qa_net_transport_ops ops={.send=dosbox_test_send,.collect=dosbox_test_collect,.close=dosbox_test_close};
+    CHECK(qa_net_transport_create(&local_udp,(qa_net_limits){1424,256},&ops,&sends,&udp,&error));
+    CHECK(qa_net_dosbox_create(udp,&server,17,1000000,&network,&error) && sends==1);
+    qa_net_address node={.kind=QA_NET_IPX,.port=2,.host.ipx={.network=1,.node={1,2,3,4,5,6}}};
+    qa_net_ipx_packet packet={.from=node,.to=node};
+    uint8_t bytes[1424];qa_net_writer writer;qa_net_writer_init(&writer,bytes,sizeof(bytes),&error);
+    CHECK(qa_net_ipx_encode(&packet,&writer));
+    qa_net_transport_event event={.packet={.kind=QA_NET_POLL_PACKET,.from=server,
+        .received_ns=18,.payload={bytes,qa_net_writer_size(&writer)}}};
+    bool registered=false;CHECK(qa_net_dosbox_dispatch(network,&event,&registered,&error) && registered);
+    CHECK(qa_net_dosbox_bind(network,4000,4,&a,&error));
+    CHECK(qa_net_dosbox_bind(network,4001,4,&b,&error));
+    for(uint32_t i=0;i<256;++i)
+        CHECK(qa_net_transport_send(a,qa_net_transport_address(b),(qa_bytes){(const uint8_t *)&i,4},&error)==QA_NET_SEND_ACCEPTED);
+    uint32_t extra=256;
+    CHECK(!qa_net_transport_send_ready(a,qa_net_transport_address(b)));
+    CHECK(qa_net_transport_send(a,qa_net_transport_address(b),(qa_bytes){(const uint8_t *)&extra,4},&error)==QA_NET_SEND_FULL);
+    qa_net_address broadcast=*qa_net_transport_address(b);memset(broadcast.host.ipx.node,255,6);
+    CHECK(qa_net_transport_send(a,&broadcast,(qa_bytes){(const uint8_t *)&extra,4},&error)==QA_NET_SEND_FULL && sends==1);
+    for(uint32_t i=0;i<256;++i) {
+        qa_net_transport_event received;qa_net_datagram data;bool present=false;
+        CHECK(qa_net_transport_collect(b,20+i,&received,&error));
+        CHECK(qa_net_transport_dispatch(b,&received,&data,&present,&error) && present);
+        uint32_t value=UINT32_MAX;CHECK(data.kind==QA_NET_POLL_PACKET && data.payload.size==4);
+        memcpy(&value,data.payload.data,4);
+        CHECK(value==i && data.received_ns==18 && qa_net_address_equal(&data.from,qa_net_transport_address(a),true));
+    }
+    CHECK(qa_net_transport_send(a,&broadcast,(qa_bytes){(const uint8_t *)&extra,4},&error)==QA_NET_SEND_ACCEPTED && sends==2);
+    qa_net_transport_event received;CHECK(qa_net_transport_collect(b,1000,&received,&error));
+    uint32_t value=0;memcpy(&value,received.packet.payload.data,4);CHECK(value==256);
+    /* Tunnel packets route to the same endpoint and retain the physical stamp. */
+    packet.to=*qa_net_transport_address(b);packet.from=*qa_net_transport_address(a);
+    packet.from.host.ipx.node[5]=7;packet.payload=(qa_bytes){(const uint8_t *)&extra,4};
+    qa_net_writer_init(&writer,bytes,sizeof(bytes),&error);CHECK(qa_net_ipx_encode(&packet,&writer));
+    event.packet.payload=(qa_bytes){bytes,qa_net_writer_size(&writer)};event.packet.received_ns=1234;
+    CHECK(qa_net_dosbox_dispatch(network,&event,&registered,&error));
+    CHECK(qa_net_transport_collect(b,2000,&received,&error) && received.packet.received_ns==1234);
+    CHECK(qa_net_address_equal(&received.packet.from,&packet.from,true));
+    qa_net_transport_close(a);qa_net_transport_close(b);qa_net_dosbox_destroy(network);
+}
+
 static void test_loopback_admission(void)
 {
     qa_error error = {0};
@@ -2159,6 +2211,7 @@ int main(int argc, char **argv)
     test_platform_event_retirement();
     test_q2_command_angles();
     test_loopback_admission();
+    test_dosbox_loopback();
     test_loopback_nq_signon();
     test_kex_send_admission();
     test_kex_direct_delivery();

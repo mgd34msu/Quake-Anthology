@@ -633,7 +633,13 @@ io_error:
     return false;
 }
 
-typedef struct loop_packet { qa_net_address from; uint8_t *bytes; size_t size; } loop_packet;
+typedef struct loop_packet {
+    qa_net_address from;
+    uint8_t *bytes;
+    size_t size;
+    uint64_t received_ns;
+    bool stamped;
+} loop_packet;
 typedef struct loop_endpoint loop_endpoint;
 struct qa_net_loopback { qa_net_limits limits; loop_endpoint *head; size_t references; bool closed; };
 struct loop_endpoint {
@@ -655,23 +661,37 @@ static void loop_clear(loop_endpoint *endpoint)
     endpoint->count = 0;
 }
 
-static qa_net_send_result loop_send(void *context, const qa_net_address *to, qa_bytes bytes, qa_error *error)
+static qa_net_send_result loop_admit(qa_net_loopback *hub,const qa_net_address *to,
+    const qa_net_datagram *datagram,bool stamped,qa_error *error)
 {
-    loop_endpoint *endpoint = context;
-    if (endpoint->closed || endpoint->hub->closed) return fail(error, QA_ERROR_IO, "Loopback endpoint is closed");
-    if (to->kind != QA_NET_LOOPBACK) return fail(error, QA_ERROR_ARGUMENT, "Loopback destination has the wrong family");
-    loop_endpoint *peer = endpoint->hub->head;
-    while (peer != NULL && !qa_net_address_equal(&peer->address, to, true)) peer = peer->next;
-    if (peer == NULL || peer->closed) return fail(error, QA_ERROR_NOT_FOUND, "Loopback peer is not bound");
-    size_t capacity = endpoint->hub->limits.queue_packets;
-    if (peer->count == capacity) return QA_NET_SEND_FULL;
-    size_t tail = (peer->head + peer->count) % capacity;
-    loop_packet *packet = &peer->packets[tail];
-    if (bytes.size != 0) memmove(packet->bytes, bytes.data, bytes.size);
-    packet->from = endpoint->address;
-    packet->size = bytes.size;
+    if(hub->closed) return fail(error,QA_ERROR_IO,"Loopback endpoint is closed");
+    loop_endpoint *peer=hub->head;
+    while(peer && !qa_net_address_equal(&peer->address,to,true)) peer=peer->next;
+    if(!peer || peer->closed) return fail(error,QA_ERROR_NOT_FOUND,"Loopback peer is not bound");
+    size_t capacity=hub->limits.queue_packets;
+    if(peer->count==capacity) return QA_NET_SEND_FULL;
+    loop_packet *packet=&peer->packets[(peer->head+peer->count)%capacity];
+    if(datagram->payload.size) memmove(packet->bytes,datagram->payload.data,datagram->payload.size);
+    packet->from=datagram->from;packet->size=datagram->payload.size;
+    packet->received_ns=datagram->received_ns;packet->stamped=stamped;
     ++peer->count;
-    return true;
+    return QA_NET_SEND_ACCEPTED;
+}
+qa_net_send_result qa_net_loopback_packet(qa_net_loopback *hub,const qa_net_address *to,
+    const qa_net_datagram *packet,qa_error *error)
+{
+    if(!hub || !to || !packet || packet->kind!=QA_NET_POLL_PACKET ||
+        packet->payload.size>hub->limits.datagram_bytes ||
+        (packet->payload.size && !packet->payload.data))
+        return fail(error,QA_ERROR_ARGUMENT,"Invalid loopback packet");
+    return loop_admit(hub,to,packet,true,error);
+}
+static qa_net_send_result loop_send(void *context,const qa_net_address *to,qa_bytes bytes,qa_error *error)
+{
+    loop_endpoint *endpoint=context;
+    if(endpoint->closed) return fail(error,QA_ERROR_IO,"Loopback endpoint is closed");
+    const qa_net_datagram packet={.kind=QA_NET_POLL_PACKET,.from=endpoint->address,.payload=bytes};
+    return loop_admit(endpoint->hub,to,&packet,false,error);
 }
 
 static bool loop_receive(void *context, uint64_t now_ns, qa_net_transport_event *event, qa_error *error)
@@ -687,7 +707,7 @@ static bool loop_receive(void *context, uint64_t now_ns, qa_net_transport_event 
     --endpoint->count;
     if (packet.size != 0) memcpy(endpoint->borrowed, packet.bytes, packet.size);
     *out = (qa_net_datagram){ .kind = QA_NET_POLL_PACKET, .from = packet.from,
-        .payload = { endpoint->borrowed, packet.size }, .received_ns = now_ns };
+        .payload = { endpoint->borrowed, packet.size }, .received_ns = packet.stamped ? packet.received_ns : now_ns };
     return true;
 }
 
@@ -710,14 +730,15 @@ static bool loop_ready(const void *context)
     const loop_endpoint *endpoint = context;
     return !endpoint->closed && !endpoint->hub->closed;
 }
-static bool loop_send_ready(const void *context, const qa_net_address *to)
+bool qa_net_loopback_receive_ready(const qa_net_loopback *hub,const qa_net_address *to)
 {
-    const loop_endpoint *endpoint = context;
-    for (const loop_endpoint *peer = endpoint->hub->head; peer; peer = peer->next)
-        if (qa_net_address_equal(&peer->address, to, true))
-            return peer->count < endpoint->hub->limits.queue_packets;
+    for(const loop_endpoint *peer=hub->head;peer;peer=peer->next)
+        if(!to || qa_net_address_equal(&peer->address,to,true))
+            if(peer->count==hub->limits.queue_packets) return false;
     return true; /* Let send report an invalid or unbound destination. */
 }
+static bool loop_send_ready(const void *context,const qa_net_address *to)
+{ return qa_net_loopback_receive_ready(((const loop_endpoint *)context)->hub,to); }
 
 bool qa_net_loopback_create(qa_net_limits limits, qa_net_loopback **out, qa_error *error)
 {
@@ -733,14 +754,21 @@ bool qa_net_loopback_create(qa_net_limits limits, qa_net_loopback **out, qa_erro
     return true;
 }
 
-bool qa_net_loopback_bind(qa_net_loopback *hub, const char *name, qa_net_transport **out, qa_error *error)
+bool qa_net_loopback_bind(qa_net_loopback *hub,const char *name,qa_net_transport **out,qa_error *error)
 {
-    if (hub == NULL || hub->closed || name == NULL || *name == '\0' || out == NULL)
-        return fail(error, QA_ERROR_ARGUMENT, "Invalid loopback binding");
-    qa_net_address address = { .kind = QA_NET_LOOPBACK };
-    size_t size = strlen(name);
-    if (size >= sizeof(address.host.loopback)) return fail(error, QA_ERROR_ARGUMENT, "Loopback name is too long");
-    memcpy(address.host.loopback, name, size + 1);
+    if(!name || !*name) return fail(error,QA_ERROR_ARGUMENT,"Invalid loopback binding");
+    qa_net_address address={.kind=QA_NET_LOOPBACK};
+    size_t size=strlen(name);
+    if(size>=sizeof(address.host.loopback)) return fail(error,QA_ERROR_ARGUMENT,"Loopback name is too long");
+    memcpy(address.host.loopback,name,size+1);
+    return qa_net_loopback_bind_address(hub,&address,out,error);
+}
+bool qa_net_loopback_bind_address(qa_net_loopback *hub,const qa_net_address *bound,
+    qa_net_transport **out,qa_error *error)
+{
+    if(!hub || hub->closed || !bound || !valid_address(bound) || !out)
+        return fail(error,QA_ERROR_ARGUMENT,"Invalid loopback binding");
+    qa_net_address address=*bound;
     for (loop_endpoint *entry = hub->head; entry != NULL; entry = entry->next)
         if (qa_net_address_equal(&entry->address, &address, true)) return fail(error, QA_ERROR_ARGUMENT, "Loopback name is already bound");
     if (hub->references == SIZE_MAX) return fail(error, QA_ERROR_MEMORY, "Loopback endpoint count overflow");
