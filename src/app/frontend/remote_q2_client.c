@@ -76,11 +76,16 @@ bool frontend_remote_q2_wire_seat(const frontend_remote_q2 *row, uint32_t *out, 
 }
 bool remote_q2_float_movement(const frontend_remote_q2 *row)
 {
-    return qa_q2_protocol_rerelease(row->options.domain.protocol);
+    return row->movement_rules == QA_RULESET_Q2_RERELEASE;
 }
 bool remote_q2_rerelease_presentation(const frontend_remote_q2 *row)
 {
-    return row->hud_names.rerelease;
+    return row->presentation_rules == QA_RULESET_Q2_RERELEASE;
+}
+static void rules_bind(frontend_remote_q2 *row)
+{
+    row->movement_rules = qa_ruleset_q2_from_tag(qa_q2_protocol_rerelease(row->options.domain.protocol));
+    row->presentation_rules = qa_ruleset_q2_from_tag(row->hud_names.rerelease);
 }
 bool remote_q2_layout_adopt(frontend_remote_q2 *row, const qa_q2_serverdata *data, qa_error *error)
 {
@@ -107,8 +112,9 @@ bool remote_q2_layout_adopt(frontend_remote_q2 *row, const qa_q2_serverdata *dat
         free(row->flare_standard); row->flare_standard=flags;
     }
     qa_strings *strings = qa_session_strings(qa_application_session(row->options.domain.application));
-    return qa_hud_q2_names_configure(&row->hud_names,protocol,&layout,error) &&
-        (row->hud_overlay || qa_hud_q2_program_create(strings, &row->hud_overlay, error));
+    if (!qa_hud_q2_names_configure(&row->hud_names,protocol,&layout,error)) return false;
+    rules_bind(row);
+    return row->hud_overlay || qa_hud_q2_program_create(strings, &row->hud_overlay, error);
 }
 const char *frontend_remote_q2_config(const frontend_remote_q2 *row, uint32_t index)
 {
@@ -229,6 +235,7 @@ bool frontend_remote_q2_create(qa_frontend *f, const frontend_remote_q2_options 
         !qa_hud_q2_names_configure(&row->hud_names,d->protocol,NULL,error)) {
         qa_hud_q2_names_destroy(&row->hud_names); free(row); return false;
     }
+    rules_bind(row);
     remote_q2_cvars_bind(row);
     row->events = qa_event_ring_create(65536, 16384, 2, error);
     row->model_slots = calloc(row->hud_names.layout.max_models, sizeof(*row->model_slots));
@@ -251,7 +258,7 @@ bool frontend_remote_q2_bind(frontend_remote_q2 *row, const frontend_remote_q2_d
     if (!remote_q2_domain_equal(&expected, actual) ||
         qa_network_epoch(actual->runtime, actual->client) != actual->epoch ||
         !row->options.current(row->options.context, actual, error)) return false;
-    row->options.domain = *actual; remote_q2_cvars_bind(row); row->bound = true; return true;
+    row->options.domain = *actual; rules_bind(row); remote_q2_cvars_bind(row); row->bound = true; return true;
 }
 static bool hook_current(void *context, qa_net_client_id id, qa_error *error)
 {
@@ -770,7 +777,7 @@ bool frontend_remote_q2_rebind_ready(const frontend_remote_q2 *row, qa_frontend 
     return options->current(options->context, &options->domain, error);
 }
 void frontend_remote_q2_rebind(frontend_remote_q2 *row, qa_frontend *f, const frontend_remote_q2_options *options)
-{ if (row && f && options) { row->frontend = f; row->options = *options; remote_q2_cvars_bind(row); } }
+{ if (row && f && options) { row->frontend = f; row->options = *options; rules_bind(row); remote_q2_cvars_bind(row); } }
 
 static bool demo_append(qa_net_writer *writer, const frontend_demo_sink *sink, qa_error *error)
 {

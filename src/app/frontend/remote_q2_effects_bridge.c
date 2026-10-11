@@ -26,7 +26,7 @@ static bool source_current(void *context, const frontend_remote_q2_effects_sourc
     bool retained = row && row->importing ? frontend_remote_q2_import_read(row, &view, error) :
         frontend_remote_q2_metadata_read(row, &view, error);
     if (!retained || !source || source->context != row || row->frontend->application != row->options.domain.application ||
-        source->rules != qa_ruleset_q2_from_tag(remote_q2_rerelease_presentation(row)) ||
+        source->rules != row->presentation_rules ||
         source->current != source_current || source->actor != actor || source->actor_pose != actor_pose || source->actor_live != NULL ||
         source->video_frame != frontend_material_movies_frontend_resolve || source->video_context != row->frontend ||
         source->model != model || source->sound != remote_q2_effect_sound || source->hit_marker != hit_marker ||
@@ -243,7 +243,7 @@ bool remote_q2_effects_source_read(frontend_remote_q2 *row, frontend_remote_q2_e
     *out = (frontend_remote_q2_effects_source){.session = qa_application_session(row->options.domain.application),
         .actor_capacity = qa_actors_capacity(qa_session_actor_registry(qa_application_session(row->options.domain.application))),
         .identity = row->identity, .content_generation = row->content_generation, .protocol = row->options.domain.protocol,
-        .rules = qa_ruleset_q2_from_tag(remote_q2_rerelease_presentation(row)),
+        .rules = row->presentation_rules,
         .map = row->map, .files = row->content.mounts, .sounds = row->sounds, .images = row->images, .materials = row->materials, .world = row->world,
         .white = row->white, .context = row, .current = source_current, .actor = actor, .actor_pose = actor_pose, .viewer = viewer,
         .video_frame = frontend_material_movies_frontend_resolve, .video_context = row->frontend,

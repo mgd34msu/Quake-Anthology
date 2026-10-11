@@ -139,6 +139,8 @@ bool frontend_unified_media_create(qa_frontend *frontend, qa_executable_recipe *
     owner->strings = qa_session_strings(qa_application_session(frontend->application)); qa_strings_retain(owner->strings);
     const qa_recipe_choices *choices = qa_executable_recipe_choices(recipe);
     const qa_product *product = qa_catalog_product(qa_executable_recipe_catalog(recipe), choices->world.geometry);
+    const qa_product *presentation = qa_catalog_product(qa_executable_recipe_catalog(recipe), choices->world.presentation);
+    if (presentation) owner->world_rules = qa_product_ruleset(presentation, presentation->family);
     qa_resource *map = qa_executable_recipe_map(recipe); qa_bsp_view bsp;
     bool okay = product && map && bank(owner, qa_application_content_name(frontend->application, qa_executable_recipe_catalog(recipe), product->id), &owner->world_bank, error) &&
         qa_bsp_open(qa_resource_bytes(map), &bsp, error) && qa_bsp_validate(&bsp, error);
@@ -345,6 +347,8 @@ bool frontend_unified_media_importing(const frontend_unified_media *owner)
 { return owner && owner->importing; }
 qa_scene_world *frontend_unified_media_world(const frontend_unified_media *owner)
 { return owner ? owner->world : NULL; }
+qa_ruleset_id frontend_unified_media_world_rules(const frontend_unified_media *owner)
+{ return owner->world_rules; }
 void frontend_unified_media_world_scratch(const frontend_unified_media *owner, qa_scene_world_input *input)
 {
     input->scratch=owner->world_scratch.view;

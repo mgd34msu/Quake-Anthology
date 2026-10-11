@@ -1393,3 +1393,31 @@ cover 131 decoded commands, big configstrings, independent cursors, retirement,
 the 64-command window, cursor moves, and module-command retention across event
 store restore. No live installation is claimed. Remaining primitive adoption
 from the foundation list is still open.
+
+## TA-3196 family-rule adoption
+
+The six family entries in the current primitive-adoption list use the shared
+`qa_ruleset_id` from `include/qa/ruleset.h`. `src/core/ruleset.c` owns the descriptor
+and legacy-tag conversions.
+
+| Entry | Migrated callers and retained state |
+| --- | --- |
+| 1 | Q2 gameplay, application, combat, native client and checkpoint observations use the common ID. `qa_q2_options.rules` and transient weapon calls retain the selected rules, including the explicit LMCTF classic override. |
+| 2 | Q1 gameplay options retain source rules. Provider/bot admission, clocks, console, wire, authored targets and checkpoints use that ID. |
+| 3 | Local and received world owners retain presentation rules at admission/rebind. Q1 HUD and view motion read retained source rules; WORLD presentation and CLIENT scalar settings remain separate. |
+| 4 | `qa_physics_properties.rules` is the physics selector. Movement, control, Q1/Q2/Q3/QC and mode constructors supply it; traces index `qa_trace_behaviors` directly. |
+| 5 | `qa_mode_rules.ruleset` replaces the rerelease selector in defaults, configuration, object physics and persistence. Legacy import recovers QW association from the enclosing source. |
+| 6 | Remote Q2 effects use the common ID. Legacy receivers retain separate movement and presentation rules at admission because protocol movement and HUD layout can differ. |
+
+Deleted copies include `qa_q2_edition`, the frontend Q2 effects-profile enum,
+Q1 options' QuakeWorld boolean, physics' family/rerelease pair, mode rules'
+rerelease boolean and the control-local movement-family helper. Remaining legacy
+boolean/tag fields are save and protocol boundary encodings; their field order
+and widths remain unchanged. Q1 edition and cooperative flags still represent
+original content/game rules, rather than an alternate shared family identity.
+
+Each implementation slice passed the normal production build and the existing
+platform_services, core, archive, VFS, BSP, image and model suites. The final
+world/remote-retention slice passed all seven suites. This is source and core-test
+evidence; it does not establish live play or complete the remaining stamps,
+spatial, identity and heap entries.

@@ -52,7 +52,7 @@ bool frontend_remote_q2_initial_clear(qa_frontend *frontend, uint32_t seat,
     if (!frame_player(row, &row->frame)) return true;
     const qa_product *product = qa_catalog_product(row->content.catalog, row->content.selected);
     frontend_legacy_render_policy policy;
-    if (!frontend_legacy_render_policy_read_controls(row->options.domain.cvars, &row->cvar_handles.legacy, product, product ? qa_product_ruleset(product, product->family) : QA_RULESET_NETQUAKE, &policy, error) ||
+    if (!frontend_legacy_render_policy_read_controls(row->options.domain.cvars, &row->cvar_handles.legacy, product, row->presentation_rules, &policy, error) ||
         !remote_q2_live(row, error)) return false;
     *active = true; *clear = policy.lighting.clear;
     return true;
@@ -349,7 +349,7 @@ bool frontend_remote_q2_input(qa_frontend *f, uint32_t seat, const qa_seat_input
     const qa_q2_frame_player *frame = frame_player(row, &row->frame);
     if (!remote_q2_live(row, error)) return false;
     if (!row->media_ready || !frame) return true;
-    qa_ruleset_id kind = qa_ruleset_q2_from_tag(remote_q2_float_movement(row));
+    qa_ruleset_id kind = row->movement_rules;
     qa_input_command_tuning tuning;
     if (!qa_input_settings_read(row->options.domain.cvars, row->options.domain.cvars, &row->input_tuning, kind, &tuning, error)) return false;
     qa_vec3 delta = frame->player.pmove.float_delta_angles ? vector(frame->player.pmove.delta_angles_f) :
@@ -410,7 +410,7 @@ static bool submit_model(frontend_remote_q2 *row, uint32_t model_index, const ch
     const qa_scene_image_options *model_options = qa_scene_model_image_options(model->scene);
     qa_scene_model_input input = {.view = *view, .transform = transform,
         .previous_origin = current->renderfx & (64u | 128u) ? vector(current->old_origin) : origin,
-        .model_beam = qa_q2_model_beam(qa_ruleset_q2_from_tag(remote_q2_rerelease_presentation(row)),
+        .model_beam = qa_q2_model_beam(row->presentation_rules,
             current->renderfx, current->modelindex > 1),
         .beam_segment_length = (float)current->frame,
         .color = color, .family = QA_GAME_Q2,
@@ -479,7 +479,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
     const qa_q2_frame_player *before = frame_player(row, &row->previous);
     const qa_product *product = qa_catalog_product(row->content.catalog, row->content.selected);
     frontend_legacy_render_policy policy;
-    if (!frontend_legacy_render_policy_read_controls(row->options.domain.cvars, &row->cvar_handles.legacy, product, product ? qa_product_ruleset(product, product->family) : QA_RULESET_NETQUAKE, &policy, error) ||
+    if (!frontend_legacy_render_policy_read_controls(row->options.domain.cvars, &row->cvar_handles.legacy, product, row->presentation_rules, &policy, error) ||
         !remote_q2_live(row, error)) return false;
     size_t scene_first = f->frame.command_count;
     qa_vec3 origin = player_origin(row, &frame->player), offset = vector(frame->player.viewoffset), angles = vector(frame->player.viewangles);
@@ -501,7 +501,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
             (double)(row->sample_ns - row->prediction_step_ns) / 1000000 : 100;
         if (elapsed < 100) origin.z -= row->prediction_step * (1 - (float)elapsed * .01f);
     }
-    bool angular=frontend_q2_lerp_live_angles(qa_ruleset_q2_from_tag(remote_q2_float_movement(row)),
+    bool angular=frontend_q2_lerp_live_angles(row->movement_rules,
         frame->player.pmove.type,(uint32_t)frame->player.pmove.flags);
     qa_vec3 local = row->input.angles; bool local_set = row->input_set;
     if (!local_set && row->sent_set) {
@@ -586,7 +586,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
             continue;
         }
         if (current->renderfx & 128) {
-            if (qa_q2_model_beam(qa_ruleset_q2_from_tag(remote_q2_rerelease_presentation(row)),
+            if (qa_q2_model_beam(row->presentation_rules,
                 current->renderfx, current->modelindex > 1)) {
                 if (current->modelindex < row->hud_names.layout.max_models) {
                     const char *path = frontend_remote_q2_config(row,

@@ -4,6 +4,7 @@
 #include "q1_sky.h"
 #include "config_store.h"
 #include "view_settings.h"
+#include "root_resources.h"
 #include "remote_unified_private.h"
 #include "remote_unified_presentation.h"
 #include "qa/scene_effects.h"
@@ -95,13 +96,13 @@ void frontend_legacy_cvars_bind(const qa_cvars *registry, frontend_legacy_cvar_h
     qa_hud_cvars_bind(registry, QA_HUD_CVAR_DEATHMATCH | QA_HUD_CVAR_SWAP | QA_HUD_CVAR_TEAMPLAY | QA_HUD_CVAR_USE_FONT, &out->hud);
 }
 
-bool frontend_legacy_render_policy_read(const qa_frontend *frontend, const qa_product *product,
+bool frontend_legacy_render_policy_read(const qa_frontend *frontend, const qa_product *product, qa_ruleset_id rules,
     frontend_legacy_render_policy *out, qa_error *error)
 {
     if (!frontend || !frontend->application || !product || !out)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy rendering requires its actual selected product");
     const qa_cvars *registry = qa_application_cvars(frontend->application);
-    return frontend_legacy_render_policy_read_controls(registry, &frontend->engine_cvars.legacy, product, qa_product_ruleset(product, product->family), out, error);
+    return frontend_legacy_render_policy_read_controls(registry, &frontend->engine_cvars.legacy, product, rules, out, error);
 }
 
 bool frontend_legacy_render_policy_read_controls(const qa_cvars *registry,
@@ -348,14 +349,15 @@ static bool local_policy(const qa_frontend *frontend, const qa_product *product,
         /* The explicit WORLD presentation selects the sky/water traversal;
          * the entered Source owns its scalar renderer settings. */
         out->family = product->family;
-        out->rules = qa_ruleset_read(actual_source->rules)->family == out->family ?
-            actual_source->rules : qa_product_ruleset(product, product->family);
+        qa_ruleset_id world_rules = frontend_root_world_rules(frontend);
+        out->rules = world_rules == QA_RULESET_QUAKEWORLD ? world_rules :
+            qa_ruleset_read(actual_source->rules)->family == out->family ? actual_source->rules : world_rules;
         if (out->family != QA_GAME_Q1 || out->lighting.source_family != QA_GAME_Q1) out->texture_sort = false;
         if (!out->texture_sort || out->rules == QA_RULESET_QUAKEWORLD) out->mirror_alpha = 1;
         if (out->rules == QA_RULESET_QUAKEWORLD) out->lighting.fullbright = out->lighting.lightmap = false;
         return frontend_config_store_primary_legacy_current(frontend->config_store, actual_source);
     }
-    return frontend_legacy_render_policy_read(frontend, product, out, error);
+    return frontend_legacy_render_policy_read(frontend, product, frontend_root_world_rules(frontend), out, error);
 }
 
 bool frontend_legacy_local_policy_read(const qa_frontend *frontend, uint32_t seat,
@@ -393,7 +395,7 @@ bool frontend_remote_unified_initial_clear(qa_frontend *frontend, uint32_t seat,
     const frontend_remote_unified_domain *domain = frontend_remote_unified_domain_read(selected);
     frontend_legacy_render_policy policy;
     if (!domain || frontend_unified_media_recipe(children.media) != recipe ||
-        !frontend_legacy_render_policy_read_controls(domain->cvars, &selected->legacy_cvars, product, product ? qa_product_ruleset(product, product->family) : QA_RULESET_NETQUAKE, &policy, error) ||
+        !frontend_legacy_render_policy_read_controls(domain->cvars, &selected->legacy_cvars, product, frontend_unified_media_world_rules(children.media), &policy, error) ||
         !frontend_remote_unified_current(selected, error)) return false;
     if (policy.lighting.present) { *active = true; *clear = policy.lighting.clear; }
     return true;
@@ -479,7 +481,7 @@ bool frontend_legacy_scene_submit_product(qa_frontend *frontend, qa_scene_world 
     if (!scene_current(services, error)) return false;
     frontend_legacy_render_policy policy;
     if (!(services->policy ? services->policy(services->context, product, &policy, error) :
-        frontend_legacy_render_policy_read(frontend, product, &policy, error)) ||
+        frontend_legacy_render_policy_read(frontend, product, frontend_root_world_rules(frontend), &policy, error)) ||
         !scene_current(services, error)) return false;
     qa_scene_world_input input = *world;
     if (policy.family == QA_GAME_Q1 && input.q1_sky_environment) {

@@ -54,6 +54,7 @@ struct frontend_unified_media {
     unified_media_bank *banks;
     unified_media_model *models;
     qa_scene_world *world;
+    qa_ruleset_id world_rules;
     unified_media_bank *world_bank;
     frontend_world_scratch world_scratch;
     uint64_t saved_world;

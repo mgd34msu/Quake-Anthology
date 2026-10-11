@@ -86,6 +86,7 @@ typedef struct q1_group {
     const char *content;
     q1_activation *activation;
     const qa_product *product;
+    qa_ruleset_id rules;
     qa_vfs *files;
     qa_scene_resources *images;
     qa_material_library *materials;
@@ -330,6 +331,7 @@ static bool group(frontend_unified_q1 *o,qa_string_id name,q1_activation *owner,
     g->content=qa_strings_cstr(o->replica->strings,g->content_name);
     if(!g->content || !frontend_unified_media_files(o->media,name,&files,&g->product,e) || g->product->family!=QA_GAME_Q1 ||
         !frontend_unified_media_bank(o->media,g->content_name,&g->images,&g->materials,&fonts,&g->sounds,e)) {free(g);return false;}
+    g->rules=qa_product_ruleset(g->product,QA_GAME_Q1);
     const qa_application_ui_names *names=qa_application_ui_names_read(o->frontend->application);
     qa_scene_image_options images=model_options();
     for(size_t i=0;i<QA_Q1_BEAM_MODELS;++i) {
@@ -937,8 +939,8 @@ bool frontend_unified_q1_world_dlights(frontend_unified_q1 *o,const qa_scene_wor
         frontend_legacy_render_policy policy;qa_vec4 blend={0};
         if(count){const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
             ok=world->legacy_policy.present && world->legacy_policy.source_family==QA_GAME_Q1?
-                frontend_legacy_render_policy_read_controls(domain->cvars,&o->replica->legacy_cvars,g->product, g->product ? qa_product_ruleset(g->product, g->product->family) : QA_RULESET_NETQUAKE,&policy,e):
-                frontend_legacy_render_policy_read(o->frontend,g->product,&policy,e);
+                frontend_legacy_render_policy_read_controls(domain->cvars,&o->replica->legacy_cvars,g->product,g->rules,&policy,e):
+                frontend_legacy_render_policy_read(o->frontend,g->product,g->rules,&policy,e);
             if(ok && policy.flashblend)ok=qa_scene_legacy_dlights(frame,&world->view,QA_GAME_Q1,
                 policy.rules == QA_RULESET_QUAKEWORLD,lights,count,&blend,e);}
         if(ok && blend.w>0){float alpha=overlay->w+(1-overlay->w)*blend.w,weight=blend.w/alpha;

@@ -3,6 +3,7 @@
 #include "internal.h"
 #include "material_movies.h"
 typedef struct frontend_root_resources frontend_root_resources;
+qa_ruleset_id frontend_root_world_rules(const qa_frontend *);
 bool frontend_root_resources_sync(qa_frontend *,qa_error *);
 bool frontend_root_resources_destroy(qa_frontend *,qa_error *);
 bool frontend_root_resources_prepare_restored(qa_frontend *,qa_error *);

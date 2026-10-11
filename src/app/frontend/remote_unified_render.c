@@ -513,7 +513,7 @@ static bool unified_scene_policy(void *context,const qa_product *product,fronten
     unified_scene_context *c=context;
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(c->renderer->replica);
     return domain && unified_scene_current(c) &&
-        frontend_legacy_render_policy_read_controls(domain->cvars,&c->renderer->replica->legacy_cvars,product, product ? qa_product_ruleset(product, product->family) : QA_RULESET_NETQUAKE,out,e) && unified_scene_current(c);
+        frontend_legacy_render_policy_read_controls(domain->cvars,&c->renderer->replica->legacy_cvars,product,frontend_unified_media_world_rules(c->renderer->media),out,e) && unified_scene_current(c);
 }
 static bool unified_sky_environment(frontend_unified_render *r,const qa_scene_world_input *world,
     qa_scene_q1_sky_environment *out,qa_error *e)
@@ -687,7 +687,7 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
             unified_scene_current(&context);
     if (okay && r->feedback_blend.w>0 && !r->preferences.reduced_flashes) {
         frontend_legacy_render_policy policy;
-        okay=frontend_legacy_render_policy_read_controls(d->cvars,&r->replica->legacy_cvars,product, product ? qa_product_ruleset(product, product->family) : QA_RULESET_NETQUAKE,&policy,e);
+        okay=frontend_legacy_render_policy_read_controls(d->cvars,&r->replica->legacy_cvars,product,frontend_unified_media_world_rules(r->media),&policy,e);
         if (okay && policy.lighting.polyblend)
             okay=qa_scene_frame_picture(&r->frontend->frame,qa_scene_white(r->frontend->ui_images),
                 view.viewport,view.viewport,(qa_vec4){0,0,1,1},r->feedback_blend,e);

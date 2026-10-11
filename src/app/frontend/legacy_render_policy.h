@@ -20,7 +20,7 @@ typedef struct frontend_legacy_render_policy {
 } frontend_legacy_render_policy;
 
 /* Borrow the reached canonical ENGINE values; QACV owns their continuation. */
-bool frontend_legacy_render_policy_read(const qa_frontend *, const qa_product *,
+bool frontend_legacy_render_policy_read(const qa_frontend *, const qa_product *, qa_ruleset_id,
     frontend_legacy_render_policy *, qa_error *);
 typedef struct frontend_q1_motion_refs {
     const qa_cvars *registry;

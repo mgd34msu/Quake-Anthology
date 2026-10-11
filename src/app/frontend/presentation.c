@@ -424,7 +424,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         if (local_product && local_product->family == QA_GAME_Q1) {
             frontend_q1_view_settings settings;
             if (!frontend_view_settings_q1_sample(frontend->view_settings,
-                qa_product_ruleset(local_product, QA_GAME_Q1),
+                frontend_root_world_rules(frontend),
                 &settings, error)) return false;
             if (!local_q1_view(frontend, i, actor, &camera, &settings, &view, error)) return false;
             view.viewport = q1_view_rectangle(rect, &settings, camera.cutscene, preferences.hud_scale);

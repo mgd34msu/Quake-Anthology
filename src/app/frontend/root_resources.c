@@ -36,6 +36,7 @@ struct frontend_root_resources {
     qa_media_library *media;
     frontend_material_movies *movies;
     qa_scene_world *world;
+    qa_ruleset_id world_rules;
     frontend_world_scratch scratch[4];
     qa_application_visual_visibility *visibility[4][2];
     qa_audio_bank *sounds;
@@ -121,6 +122,9 @@ bool frontend_root_movie_source_read(qa_frontend *f,frontend_material_movie_sour
     *out=source_view(owner);
     return current(owner,out) || frontend_fail(error,QA_ERROR_ARGUMENT,"Root movie provider left its actual namespace");
 }
+qa_ruleset_id frontend_root_world_rules(const qa_frontend *f)
+{ return f && f->root_resources ? f->root_resources->world_rules : QA_RULESET_NETQUAKE; }
+
 bool frontend_root_resources_prepare_restored(qa_frontend *f,qa_error *error)
 {
     if (!f || !f->source_restoring || f->root_resources || f->root_resources_pending ||
@@ -130,6 +134,11 @@ bool frontend_root_resources_prepare_restored(qa_frontend *f,qa_error *error)
     if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining imported root media provider");
     owner->frontend=f; owner->application=f->application; owner->mounts=f->mounts;
     owner->images=f->images; owner->materials=f->materials; owner->installed=true;
+    qa_application_map_view map;
+    if (qa_application_map_read(f->application,&map)) {
+        const qa_product *presentation=qa_catalog_product(qa_application_catalog(f->application),map.presentation);
+        if (presentation) owner->world_rules=qa_product_ruleset(presentation,presentation->family);
+    }
     if (f->scene_world) {
         for (unsigned i=0;i<f->options.seats;++i)
             if (!frontend_world_scratch_create(f->scene_world,owner->scratch+i,error) ||
@@ -160,6 +169,11 @@ bool frontend_root_sidecars_bind_restored(qa_frontend *f,qa_error *error)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Restored root sidecars lost their actual detached parent");
     const qa_map_sidecars *sidecars=qa_application_map_sidecars(f->application);
     if (!f->map_resource) return !sidecars && !owner->sidecars;
+    qa_application_map_view map;
+    if (qa_application_map_read(f->application,&map)) {
+        const qa_product *presentation=qa_catalog_product(qa_application_catalog(f->application),map.presentation);
+        if (presentation) owner->world_rules=qa_product_ruleset(presentation,presentation->family);
+    }
     if (!sidecars || !qa_map_sidecars_current(sidecars) || qa_map_sidecars_map(sidecars)!=f->map_resource ||
         (owner->sidecars && owner->sidecars!=sidecars))
         return frontend_fail(error,QA_ERROR_FORMAT,"Restored root sidecars differ from the prepared application map");
@@ -183,6 +197,8 @@ bool frontend_root_resources_sync(qa_frontend *f,qa_error *error)
     if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining root world construction");
     owner->frontend=f; owner->application=f->application; owner->configuration=configuration;
     owner->revision=map.revision; owner->map=map.resource; qa_resource_retain(owner->map);
+    const qa_product *presentation=qa_catalog_product(qa_launch_snapshot_catalog(snapshot),map.presentation);
+    if (presentation) owner->world_rules=qa_product_ruleset(presentation,presentation->family);
     f->root_resources_pending=owner;
     const qa_map_sidecars *sidecars=qa_application_map_sidecars(f->application);
     if (!sidecars || !qa_map_sidecars_current(sidecars) || qa_map_sidecars_map(sidecars)!=map.resource ||

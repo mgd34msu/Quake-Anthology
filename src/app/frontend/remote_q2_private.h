@@ -71,6 +71,7 @@ struct frontend_remote_q2 {
     frontend_remote_q2 *next;
     qa_frontend *frontend;
     frontend_remote_q2_options options;
+    qa_ruleset_id movement_rules, presentation_rules;
     remote_q2_cvar_handles cvar_handles;
     struct {
         remote_q2_clientinfo value;
