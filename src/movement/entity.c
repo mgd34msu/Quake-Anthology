@@ -8,15 +8,15 @@ qa_actor_id qa_physics_actor_reference(const qa_physics *physics,
     return qa_actor_reference_resolve(qa_world_actors(physics->world), reference);
 }
 
-qa_physics_properties qa_physics_properties_default(qa_game_family family) {
+qa_physics_properties qa_physics_properties_default(qa_ruleset_id rules) {
     qa_physics_properties p = {0};
-    p.family = family;
+    p.rules = rules;
     p.motion = QA_PHYSICS_STATIONARY;
     p.solid = QA_PHYSICS_NOT_SOLID;
     p.gravity_direction = qa_v3(0, 0, -1);
     p.gravity_scale = 1;
     p.yaw_speed = 20;
-    p.water_type = family == QA_GAME_Q1 ? -1 : 0;
+    p.water_type = qa_ruleset_read(rules)->family == QA_GAME_Q1 ? -1 : 0;
     return p;
 }
 
@@ -68,13 +68,10 @@ bool ph_link(qa_physics *p, qa_actor_id actor, bool triggers, qa_error *error) {
 
 static qa_trace_policy ph_policy(const qa_physics_properties *props, uint32_t mask,
                                  qa_q1_move_kind move) {
-    qa_trace_policy policy = qa_collision_default_policy(props->family);
-    policy.contents_mask = qa_collision_contents_mask(mask,props->family);
-    policy.q1_move = move;
-    policy.q1_hull = -1;
-    policy.behavior = &qa_trace_behaviors[props->family == QA_GAME_Q2 && props->q2_rerelease ?
-        QA_RULESET_Q2_RERELEASE : qa_collision_source_rules(props->family)];
-    policy.curves = policy.player_curve_clip = true;
+    const qa_trace_behavior *behavior = &qa_trace_behaviors[props->rules];
+    qa_trace_policy policy = {.behavior = behavior,
+        .contents_mask = qa_collision_contents_mask(mask, behavior->contents_format),
+        .q1_move = move, .q1_hull = -1, .curves = true, .player_curve_clip = true};
     return policy;
 }
 
@@ -109,7 +106,7 @@ bool ph_contents(qa_physics *p, qa_actor_id actor, const qa_physics_properties *
         .policy = ph_policy(props, UINT32_MAX, QA_Q1_MOVE_NORMAL)};
     qa_point_contents contents;
     if (!qa_world_point_contents(p->world, &query, &contents, error)) return false;
-    *out = qa_collision_point_contents_export(contents.contents,props->family,contents.q1_opaque_token);
+    *out = qa_collision_point_contents_export(contents.contents,qa_ruleset_read(props->rules)->family,contents.q1_opaque_token);
     return true;
 }
 
@@ -145,7 +142,7 @@ bool ph_ground(qa_physics *p, qa_actor_id actor, qa_actor_id ground, qa_error *e
     qa_physics_properties props;
     int read = ph_read(p, actor, &body, &props, error);
     if (read <= 0) return read == 0;
-    if (ground.registry || props.family != QA_GAME_Q1)
+    if (ground.registry || qa_ruleset_read(props.rules)->family != QA_GAME_Q1)
         body.ground = ph_reference(p, actor, ground);
     if (!ph_write(p, actor, &body, error)) return false;
     if (!ph_live(p, actor) || !p->services.read(p->services.context, actor, &props)) return true;
@@ -206,9 +203,9 @@ static bool touch_triggers(qa_physics *p, qa_actor_id actor,
             if (local.code != QA_OK) { if (error) *error = local; return false; }
             return true;
         }
-        props = qa_physics_properties_default(collision.family);
+        props = qa_physics_properties_default(qa_collision_source_rules(collision.family));
     }
-    if (!source) family = props.family;
+    if (!source) family = qa_ruleset_read(props.rules)->family;
     if (family != QA_GAME_Q1 && (props.flags & QA_PHYSICS_DEAD) &&
         (props.flags & (QA_PHYSICS_PLAYER | QA_PHYSICS_MONSTER))) return true;
     ph_trigger_context call = {.physics = p, .error = error, .ok = true};
@@ -240,7 +237,7 @@ bool qa_physics_impact(qa_physics *p, qa_actor_id actor,
     if (!other.registry) return true;
     qa_physics_properties self_props;
     if (!p->services.read(p->services.context, actor, &self_props)) return true;
-    bool rerelease = self_props.family == QA_GAME_Q2 && self_props.q2_rerelease &&
+    bool rerelease = self_props.rules == QA_RULESET_Q2_RERELEASE &&
                      trace->family == QA_GAME_Q2;
     qa_touch_contact contact = {.self = actor, .other = other, .has_plane = true,
         .plane = trace->contact ? trace->contact_plane : trace->plane,
@@ -270,7 +267,7 @@ bool qa_physics_impact(qa_physics *p, qa_actor_id actor,
             if (local.code != QA_OK) { if (error) *error = local; return false; }
             return true;
         }
-        other_props = qa_physics_properties_default(collision.family);
+        other_props = qa_physics_properties_default(qa_collision_source_rules(collision.family));
         other_props.solid = collision.role == QA_COLLISION_TRIGGER ? QA_PHYSICS_TRIGGER : QA_PHYSICS_BOX;
     }
     if (other_props.solid == QA_PHYSICS_NOT_SOLID &&
@@ -309,7 +306,7 @@ bool qa_physics_push_entity(qa_physics *p, qa_actor_id actor, qa_vec3 displaceme
         if (out->fraction != 1) {
             qa_actor_id hit = ph_hit(p, out);
             if (!qa_physics_impact(p, actor, out, error)) return false;
-            if (props.family != QA_GAME_Q1 && hit.registry && !ph_live(p, hit) && ph_live(p, actor)) {
+            if (qa_ruleset_read(props.rules)->family != QA_GAME_Q1 && hit.registry && !ph_live(p, hit) && ph_live(p, actor)) {
                 read = ph_read(p, actor, &current, &props, error);
                 if (read < 0) return false;
                 if (!read) return true;
@@ -338,7 +335,7 @@ bool qa_physics_water_transition(qa_physics *p, qa_actor_id actor,
     if (read <= 0) return read == 0;
     int32_t value;
     if (!ph_contents(p, actor, &props, body.origin, &value, error)) return false;
-    bool wet = ph_wet(props.family, value), was_wet = props.water_level != 0;
+    bool wet = ph_wet(qa_ruleset_read(props.rules)->family, value), was_wet = props.water_level != 0;
     props.water_level = wet ? 1 : 0;
     props.water_type = value;
     if (!ph_properties(p, actor, &props, error)) return false;
@@ -432,7 +429,7 @@ bool qa_physics_fly_move(qa_physics *p, qa_actor_id actor, float seconds,
     if (read < 0) return false;
     if (!read) { result->status = ph_live(p, actor) ? QA_PHYSICS_UNMANAGED : QA_PHYSICS_REMOVED; return true; }
     if (!ph_ground(p, actor, ph_none(), error)) return false;
-    if (props.family == QA_GAME_Q2 && props.q2_rerelease)
+    if (props.rules == QA_RULESET_Q2_RERELEASE)
         return ph_q2r_fly(p, actor, body, seconds, exact, result, error);
     qa_vec3 primal = body.velocity, original = body.velocity, planes[5];
     size_t plane_count = 0;
@@ -479,7 +476,7 @@ bool qa_physics_fly_move(qa_physics *p, qa_actor_id actor, float seconds,
             qa_vec3 candidate = qa_physics_clip_velocity(original, planes[i], 1);
             bool good = true;
             for (size_t j = 0; j < plane_count; ++j) {
-                bool same = i == j || (props.family != QA_GAME_Q1 && ph_equal_vec(planes[i], planes[j]));
+                bool same = i == j || (qa_ruleset_read(props.rules)->family != QA_GAME_Q1 && ph_equal_vec(planes[i], planes[j]));
                 if (!same && qa_vec_dot(candidate, planes[j]) < 0) { good = false; break; }
             }
             if (good) { velocity = candidate; accepted = true; break; }
@@ -575,11 +572,11 @@ static bool ph_new_toss(qa_physics *p, qa_actor_id actor, float seconds,
     }
     qa_vec3 old_origin = body.origin, velocity = body.velocity;
     float speed = qa_vec_length(velocity);
-    if (props.q2_rerelease) {
+    if (props.rules == QA_RULESET_Q2_RERELEASE) {
         if (speed > p->max_velocity) velocity = qa_vec_scale(qa_vec_scale(velocity, 1/speed), p->max_velocity);
     } else velocity = ph_limit(velocity, p->max_velocity);
     float gravity = props.gravity_scale*p->gravity*seconds;
-    if (props.q2_rerelease || props.gravity_direction.z > 0)
+    if (props.rules == QA_RULESET_Q2_RERELEASE || props.gravity_direction.z > 0)
         velocity = qa_vec_add(velocity, qa_vec_scale(props.gravity_direction, gravity));
     else velocity.z -= gravity;
     read = ph_read(p, actor, &body, &props, error);
@@ -655,7 +652,7 @@ static bool physics_step(qa_physics *p, qa_actor_id actor, const qa_source_frame
         return ph_write(p, actor, &body, error) && ph_link(p, actor, false, error);
     }
     if (motion == QA_PHYSICS_NEW_TOSS) return ph_new_toss(p, actor, seconds, result, error);
-    if (props.family != QA_GAME_Q1 && motion != QA_PHYSICS_STEP &&
+    if (qa_ruleset_read(props.rules)->family != QA_GAME_Q1 && motion != QA_PHYSICS_STEP &&
         ph_grounded(&body, &props) && (!ph_live(p, qa_physics_actor_reference(p, body.ground)) ||
         qa_vec_dot(body.velocity, props.gravity_direction) < 0)) {
         if (!ph_ground(p, actor, ph_none(), error)) return false;
@@ -663,7 +660,7 @@ static bool physics_step(qa_physics *p, qa_actor_id actor, const qa_source_frame
     }
     qa_vec3 velocity = ph_limit(body.velocity, p->max_velocity);
     if (motion == QA_PHYSICS_STEP) {
-        if (props.family == QA_GAME_Q1) {
+        if (qa_ruleset_read(props.rules)->family == QA_GAME_Q1) {
             if (ph_grounded(&body, &props) || (props.flags & (QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING))) return true;
             bool sound = body.velocity.z < -p->gravity*0.1f;
             body.velocity = ph_limit(qa_vec_add(body.velocity,
@@ -675,7 +672,7 @@ static bool physics_step(qa_physics *p, qa_actor_id actor, const qa_source_frame
             if (!read) { result->status = QA_PHYSICS_REMOVED; return true; }
             return !sound || !ph_grounded(&body, &props) || ph_event(p, actor, QA_PHYSICS_LAND, body.origin, error);
         }
-        if (props.family != QA_GAME_Q2 && !ph_grounded(&body, &props) &&
+        if (qa_ruleset_read(props.rules)->family != QA_GAME_Q2 && !ph_grounded(&body, &props) &&
             qa_vec_dot(velocity, props.gravity_direction) >= -100) {
             qa_trace_result floor;
             if (!ph_body_trace(p, actor, &body, &props, body.origin,
@@ -686,7 +683,7 @@ static bool physics_step(qa_physics *p, qa_actor_id actor, const qa_source_frame
             }
         }
         bool was_grounded = ph_grounded(&body, &props);
-        bool falling_fast = (props.family != QA_GAME_Q2 ||
+        bool falling_fast = (qa_ruleset_read(props.rules)->family != QA_GAME_Q2 ||
             (!was_grounded && !(props.flags & QA_PHYSICS_FLYING) &&
              !((props.flags & QA_PHYSICS_SWIMMING) && props.water_level > 2))) &&
             qa_vec_dot(body.velocity, props.gravity_direction) > p->gravity*0.1f;
@@ -730,7 +727,7 @@ static bool physics_step(qa_physics *p, qa_actor_id actor, const qa_source_frame
     if (props.motion != QA_PHYSICS_FLY && props.motion != QA_PHYSICS_FLY_MISSILE && props.motion != QA_PHYSICS_WALL_BOUNCE)
         velocity = qa_vec_add(velocity, qa_vec_scale(props.gravity_direction, props.gravity_scale*p->gravity*seconds));
     qa_vec3 old_origin = body.origin;
-    qa_game_family family = props.family;
+    qa_game_family family = qa_ruleset_read(props.rules)->family;
     body.velocity = velocity;
     body.angles = qa_vec_add(body.angles, qa_vec_scale(props.angular_velocity, seconds));
     if (!ph_write(p, actor, &body, error)) return false;

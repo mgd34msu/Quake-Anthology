@@ -101,8 +101,7 @@ static bool launch(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, bool bou
                             .scale = 1,
                             .visible = true};
         a->physics_bound = true;
-        a->physics = qa_physics_properties_default(QA_GAME_Q2);
-        a->physics.q2_rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
+        a->physics = qa_physics_properties_default(g->options.rules);
         a->physics.motion = bounce ? QA_PHYSICS_WALL_BOUNCE : QA_PHYSICS_FLY_MISSILE;
         a->physics.solid = QA_PHYSICS_BOX;
         a->physics.clip_mask = Q2_SHOT_MASK;

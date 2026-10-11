@@ -92,7 +92,7 @@ static bool clock(qa_source_save_io *io, qa_clock_config *value)
     F(u64,value,initial_time_ns); F(u64,value,interval_ns); F(u64,value,minimum_frame_ns);
     F(u64,value,maximum_frame_ns); F(u64,value,initial_lead_ns); F(u32,value,maximum_steps); return true;
 }
-static bool rules(qa_source_save_io *io, qa_mode_rules *value)
+static bool rules(qa_source_save_io *io, qa_mode_rules *value, const qa_launch_provider *source)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
 #define MODE_FIELD(kind,member) MODE_##kind(member)
@@ -100,6 +100,15 @@ static bool rules(qa_source_save_io *io, qa_mode_rules *value)
 #define MODE_I(member) F(i32,value,member);
 #define MODE_F(member) F(f32,value,member);
 #define MODE_B(member) F(bool,value,member);
+#define MODE_R(member) do { \
+    bool rerelease = qa_ruleset_q2_tag(value->member) != 0; \
+    if (!qa_source_save_bool(io, &rerelease)) return false; \
+    if (reading) { \
+        value->member = source ? source->clock.kind : qa_mode_defaults(value->source, value->kind).ruleset; \
+        if (value->member == QA_RULESET_Q2_CLASSIC || value->member == QA_RULESET_Q2_RERELEASE) \
+            value->member = qa_ruleset_q2_from_tag(rerelease); \
+    } \
+} while (0);
 #define MODE_W(member) F(u64,value,member);
     QA_LAUNCH_MODE_RULE_FIELDS(MODE_FIELD)
 #undef MODE_FIELD
@@ -107,6 +116,7 @@ static bool rules(qa_source_save_io *io, qa_mode_rules *value)
 #undef MODE_I
 #undef MODE_F
 #undef MODE_B
+#undef MODE_R
 #undef MODE_W
     return true;
 }
@@ -152,7 +162,8 @@ static bool mode(qa_source_save_io *io, qa_launch_draft *draft, const qa_actor_r
     (void)registry; T(value,instance); T(value,forced_team);
     for (size_t i=0;i<3;++i) if (!string(io,draft,&value->teams[i]) || !value->teams[i]) return false;
     F(bool,value,primary_score);
-    return value->instance && *value->instance && value->forced_team && rules(io,&value->rules);
+    return value->instance && *value->instance && value->forced_team &&
+        rules(io,&value->rules,launch_provider(&draft->choices,value->instance));
 }
 static bool equipment(qa_source_save_io *io, qa_launch_draft *draft, const qa_actor_registry *registry, qa_launch_equipment *value)
 {

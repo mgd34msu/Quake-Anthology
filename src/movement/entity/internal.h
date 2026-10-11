@@ -48,7 +48,7 @@ bool ph_event(qa_physics *, qa_actor_id, qa_physics_event_kind, qa_vec3, qa_erro
 qa_actor_id ph_hit(const qa_physics *, const qa_trace_result *);
 qa_actor_reference ph_reference(const qa_physics *, qa_actor_id, qa_actor_id);
 static inline bool ph_grounded(const qa_body_state *body, const qa_physics_properties *props) {
-    return props->family == QA_GAME_Q1 ? (props->flags & QA_PHYSICS_ONGROUND) != 0 :
+    return qa_ruleset_read(props->rules)->family == QA_GAME_Q1 ? (props->flags & QA_PHYSICS_ONGROUND) != 0 :
         qa_actor_reference_present(body->ground);
 }
 qa_vec3 ph_normal(const qa_trace_result *);

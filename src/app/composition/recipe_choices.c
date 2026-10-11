@@ -135,7 +135,7 @@ static qa_clock_config clock_read(recipe_reader *r)
     result.initial_lead_ns = recipe_word(&c); result.maximum_steps = recipe_unsigned(&c);
     r->failed |= c.failed; return result;
 }
-static qa_mode_rules rules_read(recipe_reader *r)
+static qa_mode_rules rules_read(recipe_reader *r, const qa_launch_provider *source)
 {
     recipe_reader s = *r; qa_mode_rules v = {0};
     if (!recipe_record(&s, recipe_take(r), QA_LAUNCH_MODE_RULE_FIELD_COUNT)) { r->failed = true; return v; }
@@ -143,6 +143,12 @@ static qa_mode_rules rules_read(recipe_reader *r)
 #define I(member) v.member = recipe_signed(&s);
 #define F(member) v.member = recipe_float(&s);
 #define B(member) v.member = recipe_boolean(&s);
+#define R(member) do { \
+    bool rerelease = recipe_boolean(&s); \
+    v.member = source ? source->clock.kind : qa_mode_defaults(v.source, v.kind).ruleset; \
+    if (v.member == QA_RULESET_Q2_CLASSIC || v.member == QA_RULESET_Q2_RERELEASE) \
+        v.member = qa_ruleset_q2_from_tag(rerelease); \
+} while (0);
 #define W(member) v.member = recipe_word(&s);
 #define FIELD(kind, member) kind(member)
     QA_LAUNCH_MODE_RULE_FIELDS(FIELD)
@@ -151,6 +157,7 @@ static qa_mode_rules rules_read(recipe_reader *r)
 #undef I
 #undef F
 #undef B
+#undef R
 #undef W
     r->failed |= s.failed; return v;
 }
@@ -278,7 +285,7 @@ bool recipe_choices_read(qa_executable_recipe *recipe, const qa_json_document *j
         v->instance = recipe_text(&r); v->component = recipe_text(&r); v->enabled = recipe_boolean(&r);
     END;
     EACH("modes", modes, mode_count, qa_launch_mode, 7);
-        v->instance = recipe_text(&r); v->rules = rules_read(&r); for (size_t j = 0; j < 3; ++j) v->teams[j] = recipe_text(&r);
+        v->instance = recipe_text(&r); v->rules = rules_read(&r, provider(c, v->instance)); for (size_t j = 0; j < 3; ++j) v->teams[j] = recipe_text(&r);
         v->forced_team = recipe_text(&r); v->primary_score = recipe_boolean(&r);
     END;
     EACH("equipment", equipment, equipment_count, qa_recipe_equipment, 13);

@@ -97,7 +97,7 @@ bool qa_ui_library_select_mode(qa_ui_library *m,qa_mode_kind kind,qa_error *erro
     qa_launch_mode mode=v->modes[0];
     mode.rules=qa_mode_defaults(mode.rules.source,kind);
     const qa_product *p=qa_catalog_product(m->catalog,v->world.preset);
-    mode.rules.q2_rerelease=p && p->family==QA_GAME_Q2 && p->edition==QA_EDITION_RERELEASE;
+    if (p) mode.rules.ruleset=qa_product_ruleset(p,p->family);
     if (!qa_launch_set_mode(m->draft,&mode,error)) return false;
     m->mode_preference=kind; return true;
 }

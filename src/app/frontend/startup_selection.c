@@ -777,7 +777,7 @@ static bool select_rule(qa_ui_library *library, const char *id, qa_mode_kind bas
     }
     if (ok) {
         selected.instance = instance; selected.rules = qa_mode_defaults(source, kind);
-        selected.rules.q2_rerelease = p->family == QA_GAME_Q2 && p->edition == QA_EDITION_RERELEASE;
+        selected.rules.ruleset = qa_product_ruleset(p, p->family);
         for (size_t i = 0; i < 3; ++i) selected.teams[i] = teams[i];
         selected.forced_team = forced;
         /* Replacing the mode's source keeps one primary mode in the draft. */

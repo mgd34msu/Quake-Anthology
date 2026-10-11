@@ -36,7 +36,7 @@
     FIELD(B, relics) \
     FIELD(B, single_player_active) \
     FIELD(B, tournament_restart) \
-    FIELD(B, q2_rerelease) \
+    FIELD(R, ruleset) \
     FIELD(B, start_map) \
     FIELD(B, force_balance) \
     FIELD(B, voting_disabled) \

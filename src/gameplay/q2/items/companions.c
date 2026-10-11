@@ -113,11 +113,10 @@ static bool launch(qa_q2_game *g, qa_actor_id owner, q2_companion_kind kind, boo
     a->item->visual.models[0]=model;
     if (kind==Q2_SPHERE_DEFENDER)
         a->item->visual.models[1]=g->runtime_names[Q2_NAME_RESOURCE_MODELS_ITEMS_SHELL_TRIS_MD2];
-    a->physics = qa_physics_properties_default(QA_GAME_Q2);
+    a->physics = qa_physics_properties_default(g->options.rules);
     a->physics_bound = true;
-    a->physics.q2_rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
     a->physics.motion = QA_PHYSICS_FLY_MISSILE;
-    a->physics.clip_mask = a->physics.q2_rerelease ? Q2_PROJECTILE_MASK : Q2_SHOT_MASK;
+    a->physics.clip_mask = a->physics.rules == QA_RULESET_Q2_RERELEASE ? Q2_PROJECTILE_MASK : Q2_SHOT_MASK;
     if (kind == Q2_SPHERE_VENGEANCE)
         a->physics.angular_velocity = qa_v3(30, 30, 0);
     if (!q2_item_change_collision(g, a, QA_PHYSICS_BOX, e) || !q2_actor_live(g, id))
@@ -250,10 +249,9 @@ static bool decoy(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_definition 
     a->item->owner = owner_reference;
     a->item->visible = false;
     a->item->visual = (qa_entity_visual){.render_flags = 0x8000, .scale = g->options.rules == QA_RULESET_Q2_RERELEASE ? 0 : 1, .alpha = 1};
-    a->physics = qa_physics_properties_default(QA_GAME_Q2);
+    a->physics = qa_physics_properties_default(g->options.rules);
     a->physics_bound = true;
     a->physics.motion = QA_PHYSICS_TOSS;
-    a->physics.q2_rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
     if (!q2_item_change_collision(g, a, QA_PHYSICS_BOX, e) || !q2_item_visual(g, a, e))
         goto fail;
     if (!q2_actor_live(g, id) || !q2_actor_live(g, owner)) {

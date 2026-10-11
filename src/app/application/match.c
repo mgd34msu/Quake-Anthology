@@ -28,10 +28,7 @@ static qa_game_family mode_family(qa_application *application,
     qa_mode_view view;
     if (application->modes != NULL &&
         qa_modes_read(application->modes, mode, &view, NULL)) {
-        if (view.rules.source <= QA_MODE_Q1_HORDE)
-            return QA_GAME_Q1;
-        if (view.rules.source < QA_MODE_Q3)
-            return QA_GAME_Q2;
+        return qa_ruleset_read(view.rules.ruleset)->family;
     }
     return QA_GAME_Q3;
 }
@@ -202,9 +199,30 @@ static bool restore_player_binding(void *opaque, qa_mode_id mode, qa_actor_id ac
         mode, actor, owner, out, error);
 }
 
+static qa_ruleset_id mode_source_ruleset(void *opaque, qa_mode_id mode,
+    qa_mode_origin origin, qa_actor_owner source_owner, qa_mode_source source)
+{
+    qa_application *app = opaque;
+    if (origin == QA_MODE_NATIVE_Q1_COMPOSITION) {
+        qa_clock_state clock;
+        if (qa_session_clock(app->session, source_owner, &clock)) return clock.frame.kind;
+    } else {
+        for (size_t i = 0; i < app->mode_count; ++i) {
+            if (app->mode_ids[i].slot != mode.slot ||
+                app->mode_ids[i].generation != mode.generation) continue;
+            const qa_launch_mode *choice = application_mode_choice(app, i);
+            if (choice) return choice->rules.ruleset;
+        }
+        const qa_launch_mode *choice = application_mode_choice(app, mode.slot);
+        if (choice) return choice->rules.ruleset;
+    }
+    return qa_mode_defaults(source, QA_MODE_FFA).ruleset;
+}
+
 static qa_modes_hooks mode_hooks(qa_application *application)
 {
     return (qa_modes_hooks){.context = application,
+                            .source_ruleset = mode_source_ruleset,
                             .q1_composition_expected = application_native_q1_composition_expected,
                             .q1_composition_current = application_native_q1_composition_current,
                             .q1_composition_player_current = application_native_q1_composition_player_current,

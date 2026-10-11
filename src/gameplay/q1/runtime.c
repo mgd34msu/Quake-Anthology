@@ -984,7 +984,7 @@ static bool create_state(qa_q1_game *g, qa_string_id classname, q1_entity_kind k
     entity->classname = classname;
     entity->kind = kind;
     entity->native = true;
-    entity->physics = qa_physics_properties_default(QA_GAME_Q1);
+    entity->physics = qa_physics_properties_default(g->options.rules);
     if (!q1_map_bind_target(g, entity, error)) {
         (void)q1_remove(g, entity, NULL);
         return false;
@@ -1449,7 +1449,7 @@ static bool spawn_actor(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_s
     entity->classname = name;
     entity->native = true;
     entity->initial_angles = spawn->angles;
-    entity->physics = qa_physics_properties_default(QA_GAME_Q1);
+    entity->physics = qa_physics_properties_default(g->options.rules);
     entity->spawnflags = spawn->spawnflags;
     entity->source_movement_flags = spawn->source_movement_flags;
     entity->max_health = spawn->health;

@@ -9,7 +9,7 @@ static bool monster_trace(qa_physics *p, qa_actor_id actor,
                            const qa_physics_properties *props, qa_vec3 start,
                            qa_vec3 end, const qa_bounds *bounds,
                            qa_trace_result *trace, qa_error *error) {
-    uint32_t mask = PH_MONSTER_MASK | (props->family == QA_GAME_Q2 && props->q2_rerelease ? UINT32_C(0x40000000) : 0);
+    uint32_t mask = PH_MONSTER_MASK | (props->rules == QA_RULESET_Q2_RERELEASE ? UINT32_C(0x40000000) : 0);
     return ph_trace(p, actor, props, start, end, bounds, mask,
                      bounds ? QA_Q1_MOVE_NORMAL : QA_Q1_MOVE_NO_MONSTERS,
                      NULL, 0, trace, error);
@@ -26,7 +26,7 @@ static bool monster_bottom_state(qa_physics *p, qa_actor_id actor,
     bool *supported, qa_error *error) {
     *supported = false;
     qa_bounds box = qa_bounds_translate(body.bounds, origin);
-    bool q1 = props.family == QA_GAME_Q1;
+    bool q1 = qa_ruleset_read(props.rules)->family == QA_GAME_Q1;
     float direction = !q1 && props.gravity_direction.z > 0 ? 1 : -1;
     float support = direction > 0 ? box.maxs.z : box.mins.z;
     float xs[2] = {box.mins.x, box.maxs.x}, ys[2] = {box.mins.y, box.maxs.y};
@@ -38,7 +38,7 @@ static bool monster_bottom_state(qa_physics *p, qa_actor_id actor,
     }
     if (easy) { *supported = true; return true; }
     qa_vec3 center = qa_v3((box.mins.x+box.maxs.x)*0.5f, (box.mins.y+box.maxs.y)*0.5f, support);
-    bool rerelease = !q1 && props.q2_rerelease;
+    bool rerelease = props.rules == QA_RULESET_Q2_RERELEASE;
     qa_vec3 start = rerelease ? qa_v3(origin.x, origin.y, support) : center;
     qa_vec3 end = start; end.z += direction*36;
     qa_bounds flat = body.bounds;
@@ -110,20 +110,20 @@ bool qa_physics_categorize_water(qa_physics *p, qa_actor_id actor, qa_error *err
     int32_t contents;
     if (!monster_contents(p, actor, &props, feet, &contents, error)) return false;
     int32_t level = 0;
-    if (ph_wet(props.family, contents)) {
+    if (ph_wet(qa_ruleset_read(props.rules)->family, contents)) {
         level = 1;
         qa_vec3 point = feet; point.z += 26;
         int32_t deeper;
         if (!monster_contents(p, actor, &props, point, &deeper, error)) return false;
-        if (ph_wet(props.family, deeper)) {
+        if (ph_wet(qa_ruleset_read(props.rules)->family, deeper)) {
             level = 2;
             point.z = feet.z+48;
             if (!monster_contents(p, actor, &props, point, &deeper, error)) return false;
-            if (ph_wet(props.family, deeper)) level = 3;
+            if (ph_wet(qa_ruleset_read(props.rules)->family, deeper)) level = 3;
         }
     }
     props.water_level = level;
-    props.water_type = level ? contents : props.family == QA_GAME_Q1 ? -1 : 0;
+    props.water_type = level ? contents : qa_ruleset_read(props.rules)->family == QA_GAME_Q1 ? -1 : 0;
     return ph_properties(p, actor, &props, error);
 }
 
@@ -138,10 +138,10 @@ bool qa_physics_drop_to_floor(qa_physics *p, qa_actor_id actor, float distance,
     int read = ph_read(p, actor, &body, &props, error);
     if (read <= 0) return read == 0;
     qa_vec3 start = body.origin;
-    bool q1 = props.family == QA_GAME_Q1;
+    bool q1 = qa_ruleset_read(props.rules)->family == QA_GAME_Q1;
     float direction = !q1 && props.gravity_direction.z > 0 ? 1 : -1;
     if (!q1) {
-        bool offset = !props.q2_rerelease;
+        bool offset = props.rules != QA_RULESET_Q2_RERELEASE;
         if (!offset) {
             qa_trace_result position;
             if (!monster_trace(p, actor, &props, start, start, &body.bounds, &position, error)) return false;
@@ -173,9 +173,9 @@ static bool commit_monster(qa_physics *p, qa_actor_id actor, qa_vec3 origin,
     int read = ph_read(p, actor, &body, &props, error);
     if (read <= 0) return read == 0;
     body.origin = origin;
-    if (change_ground && props.family == QA_GAME_Q1) body.ground = ph_reference(p, actor, ground);
+    if (change_ground && qa_ruleset_read(props.rules)->family == QA_GAME_Q1) body.ground = ph_reference(p, actor, ground);
     if (!ph_write(p, actor, &body, error)) return false;
-    if (change_ground && props.family != QA_GAME_Q1 && !ph_ground(p, actor, ground, error)) return false;
+    if (change_ground && qa_ruleset_read(props.rules)->family != QA_GAME_Q1 && !ph_ground(p, actor, ground, error)) return false;
     if (clear_partial && ph_live(p, actor) && p->services.read(p->services.context, actor, &props)) {
         props.flags &= ~(uint32_t)QA_PHYSICS_PARTIAL_GROUND;
         if (!ph_properties(p, actor, &props, error)) return false;
@@ -187,7 +187,7 @@ static bool monster_step_state(qa_physics *p, qa_actor_id actor, qa_vec3 move,
     float elapsed, bool commit, bool relink, qa_body_state body,
     qa_physics_properties props, qa_body_state *detached_body,
     qa_physics_properties *detached_props, bool *moved, qa_error *error) {
-    bool q1 = props.family == QA_GAME_Q1;
+    bool q1 = qa_ruleset_read(props.rules)->family == QA_GAME_Q1;
     if (!q1 && p->services.before_monster_step) {
         bool handled;
         if (!p->services.before_monster_step(p->services.context, actor, &move, &handled, error)) return false;
@@ -227,7 +227,7 @@ static bool monster_step_state(qa_physics *p, qa_actor_id actor, qa_vec3 move,
                 if (ph_live(p, goal)) {
                     if (!qa_world_body_read(p->world, goal, &target, error)) return false;
                     float dz = body.origin.z-target.origin.z;
-                    float stride = !q1 && props.q2_rerelease ? elapsed*80 : 8;
+                    float stride = props.rules == QA_RULESET_Q2_RERELEASE ? elapsed*80 : 8;
                     qa_physics_properties target_props;
                     bool player = !detached_body && p->services.read(p->services.context, goal, &target_props) &&
                                   (target_props.flags & QA_PHYSICS_PLAYER);
@@ -268,7 +268,7 @@ static bool monster_step_state(qa_physics *p, qa_actor_id actor, qa_vec3 move,
     if (trace.all_solid) return true;
     if (trace.start_solid) {
         qa_vec3 retry = destination;
-        if (!q1 && !props.q2_rerelease) { retry = start; retry.z -= 18; }
+        if (!q1 && props.rules != QA_RULESET_Q2_RERELEASE) { retry = start; retry.z -= 18; }
         if (!monster_trace(p, actor, &props, retry, end, &body.bounds, &trace, error)) return false;
         if (trace.all_solid || trace.start_solid) return true;
     }
@@ -356,7 +356,7 @@ bool qa_physics_monster_walk_detached(qa_physics *p, qa_actor_id actor,
     float yaw, float distance, qa_body_state *out,
     qa_physics_properties *out_source, bool *moved, qa_error *error) {
     if (!p || !p->world || !initial || !initial_source || !out || !out_source || !moved ||
-        initial_source->family != QA_GAME_Q1 || !isfinite(yaw) || !isfinite(distance) ||
+        qa_ruleset_read(initial_source->rules)->family != QA_GAME_Q1 || !isfinite(yaw) || !isfinite(distance) ||
         !qa_vec_finite(initial->origin) || !qa_vec_finite(initial->angles) ||
         !qa_vec_finite(initial->velocity) || !qa_vec_finite(initial->bounds.mins) ||
         !qa_vec_finite(initial->bounds.maxs) || initial->bounds.mins.x > initial->bounds.maxs.x ||
@@ -390,7 +390,7 @@ bool qa_physics_walk_move(qa_physics *p, qa_actor_id actor, float yaw, float dis
     qa_physics_properties props;
     int read = ph_read(p, actor, &body, &props, error);
     if (read <= 0) return read == 0;
-    if (props.family == QA_GAME_Q1) {
+    if (qa_ruleset_read(props.rules)->family == QA_GAME_Q1) {
         if (!(props.flags & (QA_PHYSICS_ONGROUND | QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING))) return true;
     } else if (props.motion == QA_PHYSICS_STATIONARY ||
         (!qa_actor_reference_present(body.ground) && !(props.flags & (QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING)))) return true;
@@ -407,7 +407,7 @@ bool qa_physics_change_yaw(qa_physics *p, qa_actor_id actor, float elapsed, qa_e
     qa_physics_properties props;
     int read = ph_read(p, actor, &body, &props, error);
     if (read <= 0) return read == 0;
-    bool q1 = props.family == QA_GAME_Q1;
+    bool q1 = qa_ruleset_read(props.rules)->family == QA_GAME_Q1;
     float current = q1 ? qa_angle_mod(body.angles.y,QA_ANGLE_WORD_PRECISE) : qa_angle_wrap(body.angles.y);
     float move = props.ideal_yaw-current;
     if (q1) {
@@ -417,7 +417,7 @@ bool qa_physics_change_yaw(qa_physics *p, qa_actor_id actor, float elapsed, qa_e
         if (move > 180) move -= 360;
         if (move < -180) move += 360;
     }
-    float speed = props.yaw_speed*(!q1 && props.q2_rerelease ? elapsed*10 : 1);
+    float speed = props.yaw_speed*(props.rules == QA_RULESET_Q2_RERELEASE ? elapsed*10 : 1);
     move = fmaxf(-speed, fminf(speed, move));
     body.angles.y = q1 ? qa_angle_mod(current+move,QA_ANGLE_WORD_PRECISE) : qa_angle_wrap(current+move);
     return ph_write(p, actor, &body, error);
@@ -437,7 +437,7 @@ bool qa_physics_step_direction(qa_physics *p, qa_actor_id actor, float yaw,
     if (!ph_properties(p, actor, &props, error) || !qa_physics_change_yaw(p, actor, elapsed, error)) return false;
     read = ph_read(p, actor, &body, &props, error);
     if (read <= 0) return read == 0;
-    bool q1 = props.family == QA_GAME_Q1;
+    bool q1 = qa_ruleset_read(props.rules)->family == QA_GAME_Q1;
     qa_vec3 original = body.origin;
     float radians = yaw*0.01745329251994329577f;
     if (q1) {

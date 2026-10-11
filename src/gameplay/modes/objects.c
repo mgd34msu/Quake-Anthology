@@ -1,9 +1,7 @@
 #include "internal.h"
 
 static qa_game_family family(mode_instance *v) {
-    return v->value.rules.source <= QA_MODE_Q1_HORDE ? QA_GAME_Q1
-           : v->value.rules.source < QA_MODE_Q3      ? QA_GAME_Q2
-                                                     : QA_GAME_Q3;
+    return qa_ruleset_read(v->value.rules.ruleset)->family;
 }
 static bool native_objective_read(void *context, qa_objective_state *out, qa_error *e) {
     mode_object *o = context;
@@ -319,14 +317,13 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
                                  .visible = true,
                                  .phase = QA_OBJECTIVE_HOME}};
     o->spec.actor = actor;
-    o->physics = qa_physics_properties_default(family(v));
-    o->physics.q2_rerelease = v->value.rules.q2_rerelease;
+    o->physics = qa_physics_properties_default(v->value.rules.ruleset);
     o->physics.motion =
         spec->kind == QA_MODE_OBJECT_BALL ? QA_PHYSICS_NEW_TOSS : QA_PHYSICS_STATIONARY;
     o->physics.clip_mask = family(v) == QA_GAME_Q3 ? 1 : 3;
     if (spec->kind == QA_MODE_OBJECT_BALL)
         o->physics.clip_mask =
-            UINT32_C(0x2020003) | (v->value.rules.q2_rerelease ? UINT32_C(0x40000000) : 0);
+            UINT32_C(0x2020003) | (v->value.rules.ruleset == QA_RULESET_Q2_RERELEASE ? UINT32_C(0x40000000) : 0);
     const char *model = object_model(v, spec), *item = object_item(v, spec);
     if (model && !qa_builtin_resource(&m->options.services, model, &o->value.model, e))
         goto rollback;

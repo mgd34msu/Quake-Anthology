@@ -629,7 +629,7 @@ bool application_native_q2_source_mode_rules(application_provider *provider, qa_
         rules->auto_lock = automatic != 0;
     }
     rules->friendly_fire = (qa_q2_source_deathmatch_flags(cvars) & 256u) == 0;
-    rules->q2_rerelease = dialect(provider) == QA_RULESET_Q2_RERELEASE;
+    rules->ruleset = dialect(provider);
     return true;
 }
 bool application_native_q2_source_modes_refresh(application_provider *provider, qa_error *error) {
@@ -650,7 +650,7 @@ bool application_native_q2_source_modes_refresh(application_provider *provider, 
             rules.flags != view.rules.flags || rules.referee_flags != view.rules.referee_flags ||
             rules.rune_mask != view.rules.rune_mask || rules.countdown_seconds != view.rules.countdown_seconds ||
             rules.auto_lock != view.rules.auto_lock ||
-            rules.friendly_fire != view.rules.friendly_fire || rules.q2_rerelease != view.rules.q2_rerelease)
+            rules.friendly_fire != view.rules.friendly_fire || rules.ruleset != view.rules.ruleset)
             if (!qa_modes_configure(app->modes, id, &rules, error)) return false;
     }
     return true;

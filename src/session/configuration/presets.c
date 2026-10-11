@@ -107,7 +107,7 @@ bool launch_defaults(qa_launch_draft *d, qa_product_id product, const char *map,
     qa_mode_kind kind = ctf || lm ? QA_MODE_CTF : campaign ? QA_MODE_SINGLE_PLAYER : QA_MODE_FFA;
     qa_launch_mode mode = {.instance = provider.instance, .rules = qa_mode_defaults(source, kind),
         .teams = {"team:red", "team:blue", "team:neutral"}, .primary_score = true};
-    mode.rules.q2_rerelease = p->family == QA_GAME_Q2 && p->edition == QA_EDITION_RERELEASE;
+    mode.rules.ruleset = qa_product_ruleset(p, p->family);
     if (!qa_launch_set_mode(d, &mode, error)) return false;
     qa_launch_equipment equipment = {.scope = {.kind = QA_SCOPE_DEFAULT_PLAYER}, .instance = provider.instance,
         .grapple_source = provider.instance, .grenade_source = "",

@@ -127,6 +127,7 @@ bool application_native_q1_composition_prepare(qa_application *app,
     qa_mode_kind game = kind == QA_MODE_THREEWAVE || options.teamplay == 4 || options.teamplay == 6
         ? QA_MODE_CTF : options.teamplay == 5 ? QA_MODE_TAG : QA_MODE_TEAM_DEATHMATCH;
     qa_mode_rules rules = qa_mode_defaults(kind, game);
+    rules.ruleset = options.rules;
     rules.teamplay = options.teamplay;
     rules.flags = options.gamecfg;
     rules.rogue_deathmatch = options.deathmatch != 0;

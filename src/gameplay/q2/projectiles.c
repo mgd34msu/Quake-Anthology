@@ -451,8 +451,7 @@ static bool bfg_laser_spawn(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_er
     uint32_t skin = UINT32_C(0xd0d0d0d0);
     memcpy(&laser->projectile.skin, &skin, sizeof(skin));
     laser->physics_bound = true;
-    laser->physics = qa_physics_properties_default(QA_GAME_Q2);
-    laser->physics.q2_rerelease = true;
+    laser->physics = qa_physics_properties_default(QA_RULESET_Q2_RERELEASE);
     laser->physics.motion = QA_PHYSICS_STATIONARY;
     laser->physics.solid = QA_PHYSICS_NOT_SOLID;
     if (qa_world_link(g->services.world, laser_id, NULL, e))
@@ -500,7 +499,7 @@ static bool tracker_daemon(qa_q2_game *g, const q2_projectile *p, qa_actor_refer
     a->projectile.next_ns =
         g->options.rules == QA_RULESET_Q2_RERELEASE ? g->now_ns : q2_deadline(g->now_ns, interval);
     a->physics_bound = true;
-    a->physics = qa_physics_properties_default(QA_GAME_Q2);
+    a->physics = qa_physics_properties_default(QA_RULESET_Q2_CLASSIC);
     a->physics.motion = QA_PHYSICS_STATIONARY;
     a->physics.solid = QA_PHYSICS_NOT_SOLID;
     return true;
@@ -1089,8 +1088,7 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
     if (kind == Q2_GRENADE && c->rules == QA_RULESET_Q2_RERELEASE && monster && !hand)
         a->projectile.effects |= UINT64_C(1) << 37;
     a->physics_bound = true;
-    a->physics = qa_physics_properties_default(QA_GAME_Q2);
-    a->physics.q2_rerelease = c->rules == QA_RULESET_Q2_RERELEASE;
+    a->physics = qa_physics_properties_default(c->rules);
     a->physics.motion = kind == Q2_GRENADE ? QA_PHYSICS_BOUNCE
                         : kind == Q2_ION   ? QA_PHYSICS_WALL_BOUNCE
                                            : QA_PHYSICS_FLY_MISSILE;

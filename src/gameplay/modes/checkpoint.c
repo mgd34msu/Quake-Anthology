@@ -214,7 +214,7 @@ static bool reference(qa_modes *m, qa_actor_id actor) {
     return !actor.registry || mode_live(m, actor);
 }
 static bool physics_valid(qa_modes *m, const qa_physics_properties *p) {
-    return p->family >= QA_GAME_Q1 && p->family <= QA_GAME_Q3 &&
+    return (unsigned)p->rules <= QA_RULESET_Q3 &&
            p->motion >= QA_PHYSICS_STATIONARY && p->motion <= QA_PHYSICS_STEP &&
            p->solid >= QA_PHYSICS_NOT_SOLID && p->solid <= QA_PHYSICS_CORPSE &&
            qa_vec_finite(p->angular_velocity) && qa_vec_finite(p->gravity_direction) &&

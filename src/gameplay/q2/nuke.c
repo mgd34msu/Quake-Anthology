@@ -340,8 +340,7 @@ bool q2_fire_nuke(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 direc
                                     .expire_ns = q2_deadline(g->now_ns, 10 * Q2_NS),
                                     .next_ns = q2_deadline(g->now_ns, g->frame_ns)};
     a->physics_bound = true;
-    a->physics = qa_physics_properties_default(QA_GAME_Q2);
-    a->physics.q2_rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
+    a->physics = qa_physics_properties_default(g->options.rules);
     a->physics.motion = QA_PHYSICS_BOUNCE;
     a->physics.solid = QA_PHYSICS_BOX;
     a->physics.clip_mask =

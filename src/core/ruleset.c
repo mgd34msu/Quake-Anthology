@@ -29,3 +29,12 @@ qa_ruleset_id qa_ruleset_q2_from_tag(unsigned tag)
 {
     return tag ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC;
 }
+
+qa_ruleset_id qa_ruleset_from_family_tag(unsigned family, bool q2_rerelease, qa_ruleset_id q1_rules)
+{
+    if (family == QA_GAME_Q1)
+        return q1_rules == QA_RULESET_QUAKEWORLD ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE;
+    if (family == QA_GAME_Q2)
+        return qa_ruleset_q2_from_tag(q2_rerelease);
+    return QA_RULESET_Q3;
+}

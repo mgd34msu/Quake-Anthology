@@ -41,12 +41,16 @@ bool q1_save_attack(q1_save_io *io, qa_attack *attack) {
 }
 
 bool q1_save_physics(q1_save_io *io, qa_physics_properties *physics) {
-    Q1_SAVE_ENUM(io, physics->family, QA_GAME_Q3);
-    if (physics->family < QA_GAME_Q1)
+    qa_game_family family = qa_ruleset_read(physics->rules)->family;
+    bool q2_rerelease = physics->rules == QA_RULESET_Q2_RERELEASE;
+    Q1_SAVE_ENUM(io, family, QA_GAME_Q3);
+    if (family < QA_GAME_Q1)
         return q1_save_fail(io, "Invalid Q1 checkpoint collision family");
     Q1_SAVE_ENUM(io, physics->motion, QA_PHYSICS_STEP);
     Q1_SAVE_ENUM(io, physics->solid, QA_PHYSICS_CORPSE);
-    Q1_SAVE(io, bool, physics->q2_rerelease);
+    Q1_SAVE(io, bool, q2_rerelease);
+    if (io->values.direction == QA_SOURCE_SAVE_READ)
+        physics->rules = qa_ruleset_from_family_tag(family, q2_rerelease, io->game->options.rules);
     Q1_SAVE(io, u32, physics->flags);
     Q1_SAVE(io, u32, physics->clip_mask);
     Q1_SAVE(io, vector, physics->angular_velocity);

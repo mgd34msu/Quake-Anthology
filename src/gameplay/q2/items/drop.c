@@ -71,8 +71,7 @@ bool q2_item_drop_definition(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_
                                   .effects = d->rotate ? 1 : 0,
                                   .render_flags = 512 | 0x8000};
     item->visual.models[0] = d->model_id;
-    a->physics = qa_physics_properties_default(QA_GAME_Q2);
-    a->physics.q2_rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
+    a->physics = qa_physics_properties_default(g->options.rules);
     a->physics.motion = QA_PHYSICS_TOSS;
     a->physics_bound = true;
     if (item->temporary) {

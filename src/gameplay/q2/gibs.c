@@ -132,8 +132,7 @@ bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, q2_runtime_name model, floa
         .expire_ns = q2_deadline(g->now_ns, lifetime)};
     a->character_no_damage_effects = rr;
     a->physics_bound = true;
-    a->physics = qa_physics_properties_default(QA_GAME_Q2);
-    a->physics.q2_rerelease = rr;
+    a->physics = qa_physics_properties_default(g->options.rules);
     a->physics.motion = metal ? QA_PHYSICS_BOUNCE : QA_PHYSICS_TOSS;
     a->physics.solid = QA_PHYSICS_NOT_SOLID;
     a->physics.clip_mask = 3;
@@ -175,8 +174,7 @@ static bool debris(qa_q2_game *g, qa_body_state body, q2_runtime_name model, flo
     if (a == NULL)
         return false;
     a->physics_bound = true;
-    a->physics = qa_physics_properties_default(QA_GAME_Q2);
-    a->physics.q2_rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
+    a->physics = qa_physics_properties_default(g->options.rules);
     a->physics.motion = QA_PHYSICS_BOUNCE;
     a->physics.solid = QA_PHYSICS_NOT_SOLID;
     a->physics.angular_velocity.x = q2_random(g) * 600;
@@ -344,7 +342,7 @@ bool q2_gib_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
     }
     return true;
 }
-bool q2_admit_growth_part(qa_q2_game *game, q2_runtime_name classname, qa_body_state body, q2_actor **out, bool rerelease,
+bool q2_admit_growth_part(qa_q2_game *game, q2_runtime_name classname, qa_body_state body, q2_actor **out, qa_ruleset_id rules,
                        qa_error *error) {
     qa_string_id definition=game->runtime_names[classname];
     qa_builtin_spawn spawn = {.owner = game->options.owner, .definition = definition, .body = body};
@@ -356,13 +354,12 @@ bool q2_admit_growth_part(qa_q2_game *game, q2_runtime_name classname, qa_body_s
         (void)qa_session_release(game->services.session, id, NULL);
         return false;
     }
-    if (rerelease) {
+    if (rules == QA_RULESET_Q2_RERELEASE) {
         actor->projectile.classname = definition;
         actor->projectile.visible = true;
         actor->projectile.alpha = 1;
     }
-    actor->physics = qa_physics_properties_default(QA_GAME_Q2);
-    actor->physics.q2_rerelease = rerelease;
+    actor->physics = qa_physics_properties_default(rules);
     actor->physics.motion = QA_PHYSICS_STATIONARY;
     actor->physics.solid = QA_PHYSICS_NOT_SOLID;
     actor->physics_bound = true;
@@ -373,7 +370,7 @@ bool q2_admit_growth_part(qa_q2_game *game, q2_runtime_name classname, qa_body_s
 bool q2_spawn_growth(qa_q2_game *g, qa_vec3 origin, unsigned size, qa_error *e) {
     qa_body_state body = {.origin = origin, .angles = growth_angles(g)};
     q2_actor *a;
-    if (!q2_admit_growth_part(g, Q2_NAME_RESOURCE_SPAWNGRO, body, &a, false, e)) return false;
+    if (!q2_admit_growth_part(g, Q2_NAME_RESOURCE_SPAWNGRO, body, &a, QA_RULESET_Q2_CLASSIC, e)) return false;
     qa_actor_id id=a->id;
     a->projectile =
         (q2_projectile){.kind = Q2_SPAWN_GROWTH,

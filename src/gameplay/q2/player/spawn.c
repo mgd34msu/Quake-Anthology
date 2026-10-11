@@ -254,9 +254,8 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
         return true;
     if (movement.animate_q2) {
         s->rule.visual.models[0]=s->source_model_resource;
-        a->physics = qa_physics_properties_default(QA_GAME_Q2);
+        a->physics = qa_physics_properties_default(g->options.rules);
         a->physics_bound = true;
-        a->physics.q2_rerelease = rr;
         a->physics.motion = QA_PHYSICS_STATIONARY;
         a->physics.flags = QA_PHYSICS_PLAYER;
         a->physics.solid = s->info.spectator ? QA_PHYSICS_NOT_SOLID : QA_PHYSICS_BOX;

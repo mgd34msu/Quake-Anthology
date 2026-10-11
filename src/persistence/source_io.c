@@ -117,7 +117,9 @@ bool qa_persistence_physics(qa_source_save_io *io, qa_physics_properties *value)
 {
     if (!io || !value) return persistence_io_fail(io, QA_ERROR_ARGUMENT, "missing physics continuation field");
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint32_t family = reading ? 0 : qa_persistence_family_tag(value->family);
+    uint32_t family = reading ? 0 : qa_persistence_family_tag(qa_ruleset_read(value->rules)->family);
+    bool rerelease = value->rules == QA_RULESET_Q2_RERELEASE;
+    qa_ruleset_id q1_rules = value->rules;
     uint32_t motion = reading ? 0 : (uint32_t)value->motion;
     uint32_t solid = reading ? 0 : (uint32_t)value->solid;
     if (!qa_source_save_u32(io, &family) || !qa_source_save_u32(io, &motion) ||
@@ -126,11 +128,13 @@ bool qa_persistence_physics(qa_source_save_io *io, qa_physics_properties *value)
         motion > QA_PHYSICS_STEP || solid > QA_PHYSICS_CORPSE)
         return persistence_io_fail(io, QA_ERROR_FORMAT, "invalid physics continuation enum");
     if (reading) {
-        value->family = qa_persistence_family_from_tag(family); value->motion = (qa_physics_motion)motion;
+        value->motion = (qa_physics_motion)motion;
         value->solid = (qa_physics_solid)solid;
     }
-    return qa_source_save_bool(io, &value->q2_rerelease) &&
-        qa_source_save_u32(io, &value->flags) && qa_source_save_u32(io, &value->clip_mask) &&
+    if (!qa_source_save_bool(io, &rerelease)) return false;
+    if (reading)
+        value->rules = qa_ruleset_from_family_tag(qa_persistence_family_from_tag(family), rerelease, q1_rules);
+    return qa_source_save_u32(io, &value->flags) && qa_source_save_u32(io, &value->clip_mask) &&
         qa_source_save_vec3(io, &value->angular_velocity) && qa_source_save_vec3(io, &value->gravity_direction) &&
         qa_source_save_f32(io, &value->gravity_scale) && qa_source_save_f32(io, &value->delta_yaw) &&
         qa_source_save_f32(io, &value->ideal_yaw) && qa_source_save_f32(io, &value->yaw_speed) &&

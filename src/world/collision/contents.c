@@ -31,10 +31,7 @@ const qa_collision_role_rules qa_collision_roles[QA_RULESET_Q3 + 1] = {
 
 qa_ruleset_id qa_collision_source_rules(qa_game_family family)
 {
-    static const qa_ruleset_id source_rules[] = {
-        [QA_GAME_Q1] = QA_RULESET_NETQUAKE, [QA_GAME_Q2] = QA_RULESET_Q2_CLASSIC, [QA_GAME_Q3] = QA_RULESET_Q3
-    };
-    return source_rules[family];
+    return qa_ruleset_from_family_tag(family, false, QA_RULESET_NETQUAKE);
 }
 
 void qa_collision_pose_basis(const qa_collision_target *target, bool transformed, qa_vec3 basis[3])

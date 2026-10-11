@@ -479,10 +479,9 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
                                        .next_ns = lm ? q2_deadline(g->now_ns, Q2_NS) : UINT64_MAX};
     hook->character_no_damage_effects = rr;
     hook->physics_bound = true;
-    hook->physics = qa_physics_properties_default(QA_GAME_Q2);
+    hook->physics = qa_physics_properties_default(rules);
     hook->physics.motion = QA_PHYSICS_FLY_MISSILE;
     hook->physics.solid = QA_PHYSICS_BOX;
-    hook->physics.q2_rerelease = rr;
     hook->physics.clip_mask =
         rr ? (g->grapple_options.players_collide ? Q2_PROJECTILE_MASK
                                                  : Q2_PROJECTILE_MASK & ~Q2_PLAYER_CONTENTS)

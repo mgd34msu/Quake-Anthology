@@ -51,7 +51,7 @@ static bool actual(application_bots_npc *owner,qa_actor_id actor,qa_body_state *
     bool physical;
     if(!application_npc_physics_read(owner->source,actor,properties,&physical,error)) return false;
     if(!physical) return true;
-    if(!(properties->flags&QA_PHYSICS_MONSTER) || properties->family!=QA_GAME_Q1) return true;
+    if(!(properties->flags&QA_PHYSICS_MONSTER) || qa_ruleset_read(properties->rules)->family!=QA_GAME_Q1) return true;
     if(!qa_world_body_read(owner->world,actor,body,error)) return false;
     *found=true;return true;
 }

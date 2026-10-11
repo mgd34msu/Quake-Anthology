@@ -35,10 +35,9 @@ typedef struct qa_q1_pusher_clock {
  * clocks remain owned by the shared world and session. Defaults are explicit;
  * a zero clip_mask is significant for NEW_TOSS. */
 typedef struct qa_physics_properties {
-    qa_game_family family;
+    qa_ruleset_id rules;
     qa_physics_motion motion;
     qa_physics_solid solid;
-    bool q2_rerelease;
     uint32_t flags, clip_mask;
     qa_vec3 angular_velocity, gravity_direction;
     float gravity_scale, delta_yaw, ideal_yaw, yaw_speed;
@@ -117,7 +116,7 @@ typedef struct qa_physics_result {
     uint32_t collisions;
 } qa_physics_result;
 
-qa_physics_properties qa_physics_properties_default(qa_game_family);
+qa_physics_properties qa_physics_properties_default(qa_ruleset_id);
 /* Initialize fresh storage; dispose retained scratch before reinitializing. */
 bool qa_physics_init(qa_physics *, qa_world *, qa_actor_id world_actor,
                      const qa_physics_services *, qa_error *);

@@ -193,6 +193,8 @@ bool mode_visible(qa_modes *m, qa_actor_id a, qa_actor_id b, bool pvs) {
 qa_mode_rules qa_mode_defaults(qa_mode_source source, qa_mode_kind kind) {
     return (qa_mode_rules){.source = source,
                            .kind = kind,
+                           .ruleset = source >= QA_MODE_Q3 ? QA_RULESET_Q3 :
+                               source >= QA_MODE_Q2 ? QA_RULESET_Q2_CLASSIC : QA_RULESET_NETQUAKE,
                            .enabled = true,
                            .teamplay = source == QA_MODE_ROGUE && kind == QA_MODE_TAG ? 3 : 0,
                            .relics = source == QA_MODE_THREEWAVE || source == QA_MODE_Q2_CTF ||

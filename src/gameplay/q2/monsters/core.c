@@ -1419,8 +1419,7 @@ static bool initialize_body(qa_q2_game *game, q2_actor *actor,
   }
   if (!q2m_alive(&context))
     return true;
-  actor->physics = qa_physics_properties_default(QA_GAME_Q2);
-  actor->physics.q2_rerelease = game->options.rules == QA_RULESET_Q2_RERELEASE;
+  actor->physics = qa_physics_properties_default(game->options.rules);
   actor->physics.motion = monster->definition->locomotion == Q2M_STATIONARY
                               ? QA_PHYSICS_STATIONARY
                               : QA_PHYSICS_STEP;

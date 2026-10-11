@@ -120,8 +120,7 @@ bool qa_q2_entity_spawn(qa_q2_game *g, qa_actor_id id, const qa_q2_map_fields *f
             return true;
     }
     if (!a->physics_bound) {
-        a->physics = qa_physics_properties_default(QA_GAME_Q2);
-        a->physics.q2_rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
+        a->physics = qa_physics_properties_default(g->options.rules);
     }
     if (!q2_entity_bind(g, a, e))
         return false;

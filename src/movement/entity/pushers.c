@@ -213,7 +213,7 @@ static bool q1_push(qa_physics *p, const qa_physics_push *input,
         if (!read || props.motion == QA_PHYSICS_PUSH || props.motion == QA_PHYSICS_STOP ||
             props.motion == QA_PHYSICS_STATIONARY || props.motion == QA_PHYSICS_NOCLIP) continue;
         bool rider = qa_actor_id_equal(qa_physics_actor_reference(p, body.ground), input->actor) &&
-                     (props.family != QA_GAME_Q1 || (props.flags & QA_PHYSICS_ONGROUND));
+                     (qa_ruleset_read(props.rules)->family != QA_GAME_Q1 || (props.flags & QA_PHYSICS_ONGROUND));
         if (!rider) {
             if (!qa_world_linked(p->world, actor, &linked) || !qa_bounds_overlap_strict(linked.absolute_bounds, bounds)) continue;
             bool blocked;
@@ -222,7 +222,7 @@ static bool q1_push(qa_physics *p, const qa_physics_push *input,
         }
         if (!(props.flags & QA_PHYSICS_PLAYER)) {
             props.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
-            if (props.family != QA_GAME_Q1) body.ground = (qa_actor_reference){0};
+            if (qa_ruleset_read(props.rules)->family != QA_GAME_Q1) body.ground = (qa_actor_reference){0};
             if (!ph_properties(p, actor, &props, error) || !ph_write(p, actor, &body, error)) { ok = false; break; }
         }
         if (!save_push(saved, actor, &body, &props, error)) { ok = false; break; }
@@ -390,7 +390,7 @@ bool qa_physics_push_pusher(qa_physics *p, const qa_physics_push *input,
     struct qa_physics_push_frame *frame = ph_push_frame(p, error);
     if (!frame) return false;
     bool ok;
-    if (props.family == QA_GAME_Q1) ok = q1_push(p, input, frame, result, error);
+    if (qa_ruleset_read(props.rules)->family == QA_GAME_Q1) ok = q1_push(p, input, frame, result, error);
     else {
         struct qa_physics_transaction *saved = p->push_transaction ? p->push_transaction : &frame->pushed;
         ok = q2_push(p, input, frame, saved, !p->push_transaction, result, error);

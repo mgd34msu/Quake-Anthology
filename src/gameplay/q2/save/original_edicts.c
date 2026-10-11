@@ -246,9 +246,8 @@ static bool physics_record(qa_q2_game *game, q2_original_record_io *io, q2_actor
     if (io->reading) {
         if (movetype < 0 || (size_t)movetype >= sizeof(motion) / sizeof(motion[0]) || solid < 0 || solid > 3)
             return malformed(io, 260, "Original Q2 physics has an invalid movetype or solid");
-        physics->family = QA_GAME_Q2;
+        physics->rules = io->edition;
         physics->yaw_speed = yaw_speed;
-        physics->q2_rerelease = io->edition == QA_RULESET_Q2_RERELEASE;
         physics->motion = motion[movetype];
         physics->solid = solid == 1 ? QA_PHYSICS_TRIGGER : solid == 2 ? QA_PHYSICS_BOX :
             solid == 3 ? QA_PHYSICS_BRUSH : QA_PHYSICS_NOT_SOLID;

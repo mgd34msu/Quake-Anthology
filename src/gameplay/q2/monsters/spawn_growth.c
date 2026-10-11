@@ -87,7 +87,7 @@ bool q2m_rerelease_growth_tick(qa_q2_game *game, q2_actor *actor, qa_error *erro
 
 bool q2m_rerelease_spawn_growth(qa_q2_game *game, qa_vec3 origin, float radius, qa_error *error) {
     q2_actor *growth;
-    if (!q2_admit_growth_part(game, Q2_NAME_RESOURCE_SPAWNGRO, (qa_body_state){0}, &growth, true, error))
+    if (!q2_admit_growth_part(game, Q2_NAME_RESOURCE_SPAWNGRO, (qa_body_state){0}, &growth, QA_RULESET_Q2_RERELEASE, error))
         return false;
     qa_actor_id id = growth->id;
     qa_vec3 angles;
@@ -122,7 +122,7 @@ bool q2m_rerelease_spawn_growth(qa_q2_game *game, qa_vec3 origin, float radius, 
     if (!q2_actor_live(game, id))
         return true;
     q2_actor *beam;
-    if (!q2_admit_growth_part(game, Q2_NAME_SPAWNGRO_BEAM, (qa_body_state){.origin = origin}, &beam, true, error))
+    if (!q2_admit_growth_part(game, Q2_NAME_SPAWNGRO_BEAM, (qa_body_state){.origin = origin}, &beam, QA_RULESET_Q2_RERELEASE, error))
         goto failed;
     if (!q2_actor_live(game, id))
         return qa_session_release(game->services.session, beam->id, error);

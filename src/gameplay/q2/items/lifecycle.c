@@ -223,8 +223,7 @@ bool qa_q2_item_spawn_actor(qa_q2_game *g, qa_actor_id id, const qa_q2_item_spaw
     if ((d->rule_flags & QA_Q2_ITEM_COMMANDER_HEAD))
         item->visual.effects |= 2;
     item->visual.models[0] = d->model_id;
-    a->physics = qa_physics_properties_default(QA_GAME_Q2);
-    a->physics.q2_rerelease = rr;
+    a->physics = qa_physics_properties_default(g->options.rules);
     a->physics_bound = true;
     if (d->kind == QA_Q2_ITEM_FOOD)
         item->spawn.spawnflags |= 0x10000;

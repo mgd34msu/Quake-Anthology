@@ -1,3 +1,4 @@
+#include "internal.h"
 #include "qa/launch_identity.h"
 #include "qa/launch_identity_fields.h"
 #include "qa/arena.h"
@@ -65,6 +66,7 @@ static void rules_write(qa_json_writer *w, const qa_mode_rules *v)
 #define I(member) number(w, v->member);
 #define F(member) number(w, v->member);
 #define B(member) boolean(w, v->member);
+#define R(member) boolean(w, qa_ruleset_q2_tag(v->member) != 0);
 #define W(member) word(w, v->member);
 #define FIELD(kind, member) kind(member)
     QA_LAUNCH_MODE_RULE_FIELDS(FIELD)
@@ -73,6 +75,7 @@ static void rules_write(qa_json_writer *w, const qa_mode_rules *v)
 #undef I
 #undef F
 #undef B
+#undef R
 #undef W
     qa_json_writer_end(w);
 }
@@ -334,7 +337,7 @@ static qa_clock_config read_clock(identity_reader *r)
     v.minimum_frame_ns = read_word(&s); v.maximum_frame_ns = read_word(&s); v.initial_lead_ns = read_word(&s);
     v.maximum_steps = read_unsigned(&s); r->failed |= s.failed; return v;
 }
-static qa_mode_rules read_rules(identity_reader *r)
+static qa_mode_rules read_rules(identity_reader *r, const qa_launch_provider *source)
 {
     identity_reader s = *r; qa_mode_rules v = {0};
     if (!record(&s, take(r), QA_LAUNCH_MODE_RULE_FIELD_COUNT)) { r->failed = true; return v; }
@@ -342,6 +345,12 @@ static qa_mode_rules read_rules(identity_reader *r)
 #define I(member) v.member = read_signed(&s);
 #define F(member) v.member = read_float(&s);
 #define B(member) v.member = read_bool(&s);
+#define R(member) do { \
+    bool rerelease = read_bool(&s); \
+    v.member = source ? source->clock.kind : qa_mode_defaults(v.source, v.kind).ruleset; \
+    if (v.member == QA_RULESET_Q2_CLASSIC || v.member == QA_RULESET_Q2_RERELEASE) \
+        v.member = qa_ruleset_q2_from_tag(rerelease); \
+} while (0);
 #define W(member) v.member = read_word(&s);
 #define FIELD(kind, member) kind(member)
     QA_LAUNCH_MODE_RULE_FIELDS(FIELD)
@@ -350,6 +359,7 @@ static qa_mode_rules read_rules(identity_reader *r)
 #undef I
 #undef F
 #undef B
+#undef R
 #undef W
     r->failed |= s.failed; return v;
 }
@@ -460,7 +470,8 @@ bool qa_launch_identity_decode(qa_catalog *catalog, const qa_actor_registry *reg
         qa_launch_mod_selection v = {0}; v.instance = read_text(&r); v.component = read_text(&r); v.enabled = read_bool(&r);
         DONE(qa_launch_set_mod(draft, &v, error));
     if (ok) EACH("modes", 7)
-        qa_launch_mode v = {0}; v.instance = read_text(&r); v.rules = read_rules(&r);
+        qa_launch_mode v = {0}; v.instance = read_text(&r);
+        v.rules = read_rules(&r, launch_provider(qa_launch_draft_choices(draft), v.instance));
         for (size_t j = 0; j < 3; ++j) v.teams[j] = read_text(&r);
         v.forced_team = read_text(&r); v.primary_score = read_bool(&r);
         DONE(qa_launch_set_mode(draft, &v, error));

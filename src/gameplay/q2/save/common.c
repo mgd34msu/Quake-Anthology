@@ -59,7 +59,13 @@ static bool input(q2_save_io *io, qa_q2_weapon_input *s) {
     Q2T(quad_until_ns); Q2T(double_until_ns); Q2T(quad_fire_until_ns); return true;
 }
 static bool physics(q2_save_io *io, qa_physics_properties *s) {
-    Q2U(family); Q2U(motion); Q2U(solid); Q2B(q2_rerelease);
+    uint32_t family = qa_ruleset_read(s->rules)->family;
+    bool rerelease = s->rules == QA_RULESET_Q2_RERELEASE;
+    if (!q2_save_u32(io, &family)) return false;
+    Q2U(motion); Q2U(solid);
+    if (!q2_save_bool(io, &rerelease)) return false;
+    if (io->reading)
+        s->rules = qa_ruleset_from_family_tag(family, rerelease, io->game->options.rules);
     Q2U(flags); Q2U(clip_mask); Q2V(angular_velocity); Q2V(gravity_direction);
     Q2F(gravity_scale); Q2F(delta_yaw); Q2F(ideal_yaw); Q2F(yaw_speed);
     Q2I(water_level); Q2I(water_type);

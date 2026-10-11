@@ -213,7 +213,7 @@ static bool spawn_beam(q2m_context *context, qa_actor_id target,
   beam->initialized = true;
   actor->monster = beam;
   actor->physics_bound = true;
-  actor->physics = qa_physics_properties_default(QA_GAME_Q2);
+  actor->physics = qa_physics_properties_default(QA_RULESET_Q2_CLASSIC);
   actor->physics.motion = QA_PHYSICS_STATIONARY;
   actor->physics.solid = QA_PHYSICS_NOT_SOLID;
   actor->physics.clip_mask = 0;
@@ -572,7 +572,7 @@ bool q2m_spawn_boss_exploder(q2m_context *context, qa_error *error) {
   controller->initialized = true;
   actor->monster = controller;
   actor->physics_bound = true;
-  actor->physics = qa_physics_properties_default(QA_GAME_Q2);
+  actor->physics = qa_physics_properties_default(QA_RULESET_Q2_CLASSIC);
   actor->physics.motion = QA_PHYSICS_STATIONARY;
   actor->physics.solid = QA_PHYSICS_NOT_SOLID;
   actor->physics.clip_mask = 0;
@@ -653,7 +653,7 @@ bool q2m_schedule_makron_spawn(q2m_context *context, qa_error *error) {
   controller->initialized = true;
   actor->monster = controller;
   actor->physics_bound = true;
-  actor->physics = qa_physics_properties_default(QA_GAME_Q2);
+  actor->physics = qa_physics_properties_default(QA_RULESET_Q2_CLASSIC);
   actor->physics.motion = QA_PHYSICS_STATIONARY;
   actor->physics.solid = QA_PHYSICS_NOT_SOLID;
   actor->physics.clip_mask = 0;

@@ -65,7 +65,11 @@ static bool rules(qa_source_save_io *io, qa_mode_rules *p) {
     FIELD(bool, p->enabled); FIELD(bool, p->friendly_fire); FIELD(bool, p->force_join);
     FIELD(bool, p->match_lock); FIELD(bool, p->paused); FIELD(bool, p->auto_lock);
     FIELD(bool, p->relics); FIELD(bool, p->single_player_active); FIELD(bool, p->tournament_restart);
-    FIELD(bool, p->q2_rerelease); FIELD(bool, p->start_map); FIELD(bool, p->force_balance);
+    bool rerelease = qa_ruleset_q2_tag(p->ruleset) != 0;
+    FIELD(bool, rerelease);
+    if (io->direction == QA_SOURCE_SAVE_READ)
+        p->ruleset = rerelease ? qa_ruleset_q2_from_tag(rerelease) : qa_mode_defaults(p->source, p->kind).ruleset;
+    FIELD(bool, p->start_map); FIELD(bool, p->force_balance);
     FIELD(bool, p->voting_disabled); FIELD(bool, p->rogue_deathmatch); return true;
 }
 static bool statistics(qa_source_save_io *io, qa_mode_statistics *p) {
@@ -176,6 +180,12 @@ static bool instance(qa_source_save_io *io, qa_modes *m, qa_mode_checkpoint *p) 
     if (!mode_id(io, &p->id) || !rules(io, &p->value.rules)) return false;
     ENUM(p->value.origin, QA_MODE_NATIVE_Q1_COMPOSITION);
     FIELD(string, p->value.source_owner);
+    if (io->direction == QA_SOURCE_SAVE_READ && m->options.hooks.source_ruleset) {
+        qa_ruleset_id source = m->options.hooks.source_ruleset(m->options.hooks.context,
+            p->id, p->value.origin, p->value.source_owner, p->value.rules.source);
+        p->value.rules.ruleset = source == QA_RULESET_Q2_CLASSIC || source == QA_RULESET_Q2_RERELEASE
+            ? qa_ruleset_q2_from_tag(qa_ruleset_q2_tag(p->value.rules.ruleset)) : source;
+    }
     ENUM(p->value.phase, QA_MODE_FINISHED);
     FIELD(u64, p->value.time_ns); FIELD(u64, p->value.started_ns); FIELD(u64, p->value.deadline_ns);
     for (size_t i = 0; i < 3; ++i) {
@@ -234,7 +244,7 @@ static bool object_spec(qa_source_save_io *io, qa_mode_object_spec *p) {
     FIELD(bool, p->authored); FIELD(bool, p->suspended); FIELD(bool, p->has_bounds);
     FIELD(bool, p->retain_body); FIELD(bool, p->command_created); return true;
 }
-static bool object(qa_source_save_io *io, qa_mode_object_checkpoint *p) {
+static bool object(qa_source_save_io *io, const qa_modes_checkpoint *saved, qa_mode_object_checkpoint *p) {
     FIELD(actor, p->actor);
     if (!mode_id(io, &p->mode) || !object_spec(io, &p->spec) || !mode_id(io, &p->value.mode)) return false;
     ENUM(p->value.kind, QA_MODE_OBJECT_FLAG_BASE); FIELD(string, p->value.team);
@@ -243,6 +253,12 @@ static bool object(qa_source_save_io *io, qa_mode_object_checkpoint *p) {
     FIELD(u64, p->value.effects); FIELD(u64, p->value.deadline_ns); FIELD(i32, p->value.frame);
     FIELD(i32, p->value.skin); FIELD(i32, p->value.health_fraction); FIELD(bool, p->value.visible);
     FIELD(vec3, p->home); FIELD(actor, p->base); FIELD(actor, p->dropped_actor);
+    if (io->direction == QA_SOURCE_SAVE_READ)
+        for (size_t i = 0; i < saved->mode_count; ++i)
+            if (saved->modes[i].id.slot == p->mode.slot && saved->modes[i].id.generation == p->mode.generation) {
+                p->physics.rules = saved->modes[i].value.rules.ruleset;
+                break;
+            }
     if (!qa_persistence_collision(io, &p->collision) || !qa_persistence_physics(io, &p->physics)) return false;
     FIELD(u64, p->next_ns); FIELD(u64, p->owner_until_ns); FIELD(u64, p->animation_ns);
     FIELD(u64, p->expire_ns); FIELD(u64, p->born_ns); FIELD(i32, p->tag_stage);
@@ -263,7 +279,7 @@ static bool checkpoint(qa_source_save_io *io, qa_modes *m, qa_modes_checkpoint *
     ARRAY(p->modes, p->mode_count, m->mode_capacity);
     for (size_t i = 0; i < p->mode_count; ++i) if (!instance(io, m, &p->modes[i])) return false;
     ARRAY(p->objects, p->object_count, m->actor_capacity);
-    for (size_t i = 0; i < p->object_count; ++i) if (!object(io, &p->objects[i])) return false;
+    for (size_t i = 0; i < p->object_count; ++i) if (!object(io, p, &p->objects[i])) return false;
     ARRAY(p->external_objectives, p->external_objective_count, m->objective_capacity);
     for (size_t i = 0; i < p->external_objective_count; ++i) {
         qa_mode_objective_checkpoint *v = &p->external_objectives[i];

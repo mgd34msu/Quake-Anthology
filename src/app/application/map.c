@@ -1554,7 +1554,8 @@ static bool monster_started(void *opaque, qa_actor_id actor, qa_error *error)
     if (!qa_world_body_read(app->world, actor, &query.body, error) ||
         !app->physics->services.read(app->physics->services.context, actor, &query.movement))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Selected monster has no physical Source body");
-    query.policy = qa_collision_default_policy(query.movement.family);
+    query.policy = qa_collision_default_policy(qa_ruleset_read(query.movement.rules)->family);
+    query.policy.behavior = &qa_trace_behaviors[query.movement.rules];
     if (query.policy.behavior->contents_format == QA_GAME_Q2)
         query.policy.contents_mask = qa_collision_contents_mask(1, QA_GAME_Q2);
     qa_trace_result trace;

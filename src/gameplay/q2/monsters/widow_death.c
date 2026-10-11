@@ -102,8 +102,7 @@ static bool gib(qa_q2_game *game, qa_actor_id source, q2_runtime_name model,
                    (sized ? Q2_GIB_WIDOW_SIZED : 0) |
                    (hit_sound ? Q2_GIB_WIDOW_HIT_SOUND : 0)};
   actor->physics_bound = true;
-  actor->physics = qa_physics_properties_default(QA_GAME_Q2);
-  actor->physics.q2_rerelease = game->options.rules == QA_RULESET_Q2_RERELEASE;
+  actor->physics = qa_physics_properties_default(game->options.rules);
   actor->physics.motion = organic ? QA_PHYSICS_TOSS : QA_PHYSICS_BOUNCE;
   actor->physics.solid = sized ? QA_PHYSICS_BOX : QA_PHYSICS_NOT_SOLID;
   actor->physics.angular_velocity = angular;
@@ -152,7 +151,7 @@ static bool spawn_legs(q2m_context *context, qa_error *error) {
       .gib_flags = Q2_GIB_WIDOW_LEGS,
       .next_ns = q2_deadline(context->game->now_ns, 100 * Q2_MS), .expire_ns = UINT64_MAX};
   actor->physics_bound = true;
-  actor->physics = qa_physics_properties_default(QA_GAME_Q2);
+  actor->physics = qa_physics_properties_default(QA_RULESET_Q2_CLASSIC);
   actor->physics.motion = QA_PHYSICS_STATIONARY;
   actor->physics.solid = QA_PHYSICS_NOT_SOLID;
   actor->physics.clip_mask = 0;

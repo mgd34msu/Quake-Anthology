@@ -152,7 +152,7 @@ static bool field(qa_q2_game *g, q2_actor *mine, q2_projectile_kind kind, qa_bou
     child->projectile = (q2_projectile){.kind = kind,
         .owner = qa_actor_reference_source(g->options.owner, mine->wire_slot)};
     child->physics_bound = true;
-    child->physics = qa_physics_properties_default(QA_GAME_Q2);
+    child->physics = qa_physics_properties_default(QA_RULESET_Q2_CLASSIC);
     child->physics.motion = QA_PHYSICS_STATIONARY;
     child->physics.solid = QA_PHYSICS_TRIGGER;
     mine->projectile.child = qa_actor_reference_source(g->options.owner, child->wire_slot);
@@ -390,7 +390,7 @@ static bool trap_gibs(qa_q2_game *g, q2_actor *a, const qa_body_state *body, qa_
         gib->projectile =
             (q2_projectile){.kind = Q2_TRAP_GIB, .expire_ns = q2_deadline(g->now_ns, 100 * Q2_MS)};
         gib->physics_bound = true;
-        gib->physics = qa_physics_properties_default(QA_GAME_Q2);
+        gib->physics = qa_physics_properties_default(QA_RULESET_Q2_CLASSIC);
         gib->physics.motion = QA_PHYSICS_TOSS;
         gib->physics.solid = QA_PHYSICS_NOT_SOLID;
         gib->projectile.effects = (a->projectile.gekk ? 26u : 1u) | 2u;
@@ -876,8 +876,7 @@ bool q2_mine_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 start, qa
                                    : kind == Q2_TESLA ? 3 * Q2_NS
                                                       : Q2_NS)};
     a->physics_bound = true;
-    a->physics = qa_physics_properties_default(QA_GAME_Q2);
-    a->physics.q2_rerelease = c->rules == QA_RULESET_Q2_RERELEASE;
+    a->physics = qa_physics_properties_default(c->rules);
     a->physics.motion = QA_PHYSICS_BOUNCE;
     a->physics.solid = QA_PHYSICS_BOX;
     a->physics.clip_mask =
@@ -1022,7 +1021,7 @@ bool qa_q2_spawn_bad_area(qa_q2_game *g, qa_bounds absolute, uint64_t lifespan, 
                         .owner = owner_reference,
                         .expire_ns = lifespan == 0 ? 0 : q2_deadline(g->now_ns, lifespan)};
     a->physics_bound = true;
-    a->physics = qa_physics_properties_default(QA_GAME_Q2);
+    a->physics = qa_physics_properties_default(QA_RULESET_Q2_CLASSIC);
     a->physics.motion = QA_PHYSICS_STATIONARY;
     a->physics.solid = QA_PHYSICS_TRIGGER;
     *out = id;

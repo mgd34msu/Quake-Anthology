@@ -358,8 +358,7 @@ static bool create_part(q2m_context *context, bool segment, qa_vec3 from, qa_vec
                     .cause = qa_q2_damage_cause(game->options.rules, game->options.product, 0, 0)}};
     actor->character_no_damage_effects = !segment;
     actor->physics_bound = true;
-    actor->physics = qa_physics_properties_default(QA_GAME_Q2);
-    actor->physics.q2_rerelease = true;
+    actor->physics = qa_physics_properties_default(QA_RULESET_Q2_RERELEASE);
     actor->physics.motion = segment ? QA_PHYSICS_STATIONARY : QA_PHYSICS_FLY_MISSILE;
     actor->physics.solid = segment ? QA_PHYSICS_NOT_SOLID : QA_PHYSICS_BOX;
     actor->physics.clip_mask = UINT32_C(0x42000003);

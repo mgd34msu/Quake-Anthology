@@ -216,7 +216,7 @@ static bool physics_read(void *context, qa_actor_id actor, qa_physics_properties
     qa_q3_game *game = context;
     if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
         return false;
-    *out = qa_physics_properties_default(QA_GAME_Q3);
+    *out = qa_physics_properties_default(QA_RULESET_Q3);
     out->clip_mask = Q3_MASK_SHOT;
     q3_actor *entry = q3_actor_get(game, actor);
     if (entry && entry->kind == Q3_ACTOR_PLAYER)

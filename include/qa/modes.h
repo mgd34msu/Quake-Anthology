@@ -121,6 +121,7 @@ typedef struct qa_match_intent {
 typedef struct qa_mode_rules {
     qa_mode_source source;
     qa_mode_kind kind;
+    qa_ruleset_id ruleset;
     qa_team_id teams[3];
     qa_team_id forced_team;
     int32_t frag_limit, capture_limit, warmup_seconds, competition;
@@ -130,7 +131,7 @@ typedef struct qa_mode_rules {
     float time_limit_minutes, obelisk_health, obelisk_regen;
     uint64_t obelisk_regen_ns, obelisk_respawn_ns;
     bool enabled, friendly_fire, force_join, match_lock, paused, auto_lock;
-    bool relics, single_player_active, tournament_restart, q2_rerelease, start_map, force_balance,
+    bool relics, single_player_active, tournament_restart, start_map, force_balance,
         voting_disabled;
     /* Actual Rogue source deathmatch gate for damage effects. relics separately
      * admits the gamecfg bit-1 startup; carried runes survive that bit changing. */
@@ -292,6 +293,10 @@ typedef struct qa_mode_loot_spawn {
 } qa_mode_loot_spawn;
 typedef struct qa_modes_hooks {
     void *context;
+    /* Legacy mode records retain only the Q2 edition bit. Import borrows the
+     * enclosing source's full ruleset without adding a saved selector. */
+    qa_ruleset_id (*source_ruleset)(void *, qa_mode_id, qa_mode_origin, qa_actor_owner,
+        qa_mode_source);
     /* Physical Q1 composition exists independently of chosen match rules. */
     bool (*q1_composition_expected)(void *, qa_modes *, bool *present, qa_actor_owner *,
         qa_mode_source *, qa_error *);

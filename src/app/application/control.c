@@ -254,12 +254,7 @@ void application_control_publish_motion(application_control_record *control,
     control->player.water_type = result->water_type;
 }
 
-static qa_game_family movement_family(qa_ruleset_id kind)
-{
-    if (kind == QA_RULESET_NETQUAKE || kind == QA_RULESET_QUAKEWORLD)
-        return QA_GAME_Q1;
-    return kind == QA_RULESET_Q3 ? QA_GAME_Q3 : QA_GAME_Q2;
-}
+
 
 static const qa_launch_snapshot *active_snapshot(const qa_application *application)
 {
@@ -4335,7 +4330,7 @@ bool application_control_physics_read(const qa_application *application,
         &application->controls[actor.slot];
     if (!record->active || !qa_actor_id_equal(record->player.actor, actor))
         return false;
-    *out = qa_physics_properties_default(movement_family(record->player.state.kind));
+    *out = qa_physics_properties_default(record->player.state.kind);
     out->motion = record->player.cutscene ? QA_PHYSICS_STATIONARY : QA_PHYSICS_STEP;
     out->solid = QA_PHYSICS_BOX;
     out->flags = QA_PHYSICS_PLAYER;
@@ -4345,7 +4340,6 @@ bool application_control_physics_read(const qa_application *application,
         out->flags |= QA_PHYSICS_ONGROUND;
     if (record->player.flight)
         out->flags |= QA_PHYSICS_FLYING;
-    out->q2_rerelease = record->player.state.kind == QA_RULESET_Q2_RERELEASE;
     out->water_level = record->player.water_level;
     out->water_type = record->player.water_type;
     out->gravity_scale = record->player.gravity_multiplier;

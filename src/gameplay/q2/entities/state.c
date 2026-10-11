@@ -446,8 +446,7 @@ bool q2_entity_native_spawn(qa_q2_game *g, const char *name, const qa_body_state
     a->entity->kind = kind;
     a->entity->visual.scale = g->options.rules == QA_RULESET_Q2_RERELEASE ? 0 : 1;
     a->entity->visual.alpha = 1;
-    a->physics = qa_physics_properties_default(QA_GAME_Q2);
-    a->physics.q2_rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
+    a->physics = qa_physics_properties_default(g->options.rules);
     if (!q2_entity_bind(g, a, e)) {
         qa_session_release(g->services.session, id, NULL);
         return false;
