@@ -5,6 +5,7 @@
 #include "guest_q3_component_clients.h"
 #include "qa/collision.h"
 #include "qa/catalog_write.h"
+#include "qa/network_unified_frame_pool.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -30,6 +31,7 @@ typedef struct component_game_row {
     char *presentation_runtime;
     qa_unified_component_identity identity;
     component_scene_row *scenes;
+    qa_unified_frame_lease *scene_storage;
     bool attached,initialized,initializing,activated,registered,destroying;
     qa_source_frame retirement_clock;
     bool retirement_clock_held,events_retired;

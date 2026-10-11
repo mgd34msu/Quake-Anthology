@@ -5,6 +5,7 @@
 #include "qa/json.h"
 #include "qa/application_q3_components.h"
 #include "guest_q3_components_video.h"
+#include "control_frame.h"
 #include <stdio.h>
 
 struct component_scene_row {
@@ -73,14 +74,16 @@ static qa_command_result console_command(void *context,const qa_command_invocati
 }
 static bool scene_identity(component_scene_row *row,qa_error *e)
 {
+    if(row->services) return true;
     qa_strings *strings=qa_session_strings(row->game->roster->options.application->session);
     const char *owner=qa_strings_cstr(strings,row->game->publication.owner);
     if(!owner) return application_fail(e,QA_ERROR_FORMAT,"Component scene lost its actual GAME namespace");
-    size_t size=strlen(owner)+128; char *name=malloc(size);
-    if(!name) return application_fail(e,QA_ERROR_MEMORY,"Retaining real component viewer namespace");
+    size_t size=strlen(owner)+128;
+    char *name=qa_unified_frame_lease_alloc(row->game->scene_storage,size,sizeof(*name),_Alignof(char),e);
+    if(!name) return false;
     int count=snprintf(name,size,"%s:client:%u:%llu:%llu:%u",owner,row->seat,(unsigned long long)row->viewer.registry,(unsigned long long)row->viewer.generation,row->viewer.slot);
     bool ok=count>=0&&(size_t)count<size&&qa_strings_intern_cstr(strings,name,&row->services,e);
-    free(name); return ok;
+    return ok;
 }
 static bool open_scene(component_scene_row *row,qa_error *e)
 {
@@ -149,7 +152,10 @@ bool application_q3_components_scene_prepare(application_q3_components *owner,si
     component_game_row *game=owner->rows[index]; component_scene_row *row=game->scenes;
     while(row&&(row->seat!=seat||!qa_actor_id_equal(row->viewer,viewer))) row=row->next;
     if(!row) {
-        row=calloc(1,sizeof(*row)); if(!row) return application_fail(e,QA_ERROR_MEMORY,"Retaining actual component viewer scene");
+        if(!game->scene_storage) game->scene_storage=application_control_storage_acquire(owner->options.application,e);
+        if(!game->scene_storage) return false;
+        row=qa_unified_frame_lease_alloc(game->scene_storage,1,sizeof(*row),_Alignof(component_scene_row),e);
+        if(!row) return false;
         row->game=game; row->viewer=viewer; row->seat=seat;
         row->event_cursor=qa_application_events_local_first(owner->options.application);
         row->next=game->scenes; game->scenes=row;
@@ -215,8 +221,9 @@ bool q3components_scenes_destroy(component_game_row *game,qa_error *e)
         qa_cvars_detach_callbacks(row->cvars); qa_cvars_destroy(row->cvars);
         application_q3_scene_profile_destroy(row->profile); qa_qvm_image_release(row->image);
         qa_resource_release(row->artifact); qa_vfs_acquisition_dispose(&row->acquisition);
-        game->scenes=row->next; free(row);
+        game->scenes=row->next;
     }
+    qa_unified_frame_lease_release(game->scene_storage); game->scene_storage=NULL;
     return true;
 }
 size_t qa_application_q3_component_scene_count(const qa_application *app)
