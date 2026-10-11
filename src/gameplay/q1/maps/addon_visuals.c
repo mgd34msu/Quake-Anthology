@@ -55,13 +55,9 @@ static bool ramp_tick(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return true;
     if (!isfinite(style) || floor(style) != style || style < INT32_MIN || style > INT32_MAX)
         return q1_map_fail(error, "Invalid Q1 light ramp style");
-    char pattern[2] = {(char)('a' + (fraction <= 0 ? 0 : fraction >= 1 ? maximum
-                                            : (unsigned)floor(fraction * (maximum + 1)))), 0};
-    qa_string_id value;
-    if (!qa_builtin_resource(&g->services, pattern, &value, error))
-        return false;
-    if (!visual(g, id))
-        return true;
+    unsigned letter = 'a' + (fraction <= 0 ? 0 : fraction >= 1 ? maximum
+                             : (unsigned)floor(fraction * (maximum + 1)));
+    qa_string_id value=g->lightstyle_bytes[letter];
     if (!q1_actor_lightstyle(g, id, (int32_t)style, value, error))
         return false;
     e = visual(g, id);

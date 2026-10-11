@@ -718,6 +718,7 @@ bool qa_q1_game_create(const qa_builtin_services *services, const qa_q1_options 
     for (unsigned i = 0; i < Q1_NAME_COUNT; ++i)
         if (!qa_strings_intern_cstr(qa_session_strings(services->session), q1_runtime_names[i], &g->runtime_names[i], error))
             goto fail;
+    if (!qa_strings_bind_bytes(qa_session_strings(services->session), &g->lightstyle_bytes, error)) goto fail;
     if (!qa_builtin_resource(services, q1_body_queue_classname(g), &g->body_queue_class, error)) goto fail;
     if (!qa_targets_bind_field_keys(qa_session_strings(services->session), g->field_keys, error))
         goto fail;

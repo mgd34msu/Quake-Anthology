@@ -1026,8 +1026,7 @@ static bool emit_light(application_provider *p, const qa_builtin_event *event, q
         if (!qa_q1_wire_enabled(p->state.q1)) return true;
     } else {
         struct application_qc_state *engine = p->state.qc.engine;
-        if (engine->lightstyles[event->code] != event->resource) ++engine->lightstyle_revision;
-        engine->lightstyles[event->code] = event->resource;
+        qa_lightstyles_set(&engine->lightstyles, (uint32_t)event->code, event->resource);
     }
     qa_nq_message message = {.op = QA_NQ_LIGHTSTYLE,
         .data.indexed_text = {.index = (uint8_t)event->code,

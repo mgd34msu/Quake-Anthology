@@ -499,7 +499,7 @@ struct qa_q2_game {
     const struct q2m_definition *medic_definitions[7];
     qa_builtin_services services;
     const qa_string_id *runtime_names;
-    qa_string_id lightstyle_bytes[256];
+    const qa_string_id *lightstyle_bytes;
     qa_string_id temporary_effects[256];
     qa_string_id field_keys[QA_TARGET_KEY_TOTAL];
     const qa_cvars *source_cvars;
@@ -547,8 +547,7 @@ struct qa_q2_game {
     size_t wire_reference_count, wire_reference_capacity;
     uint32_t wire_capacity, wire_extent, wire_clients;
     uint64_t wire_frame;
-    qa_string_id wire_lightstyles[256];
-    uint64_t wire_lightstyle_revision;
+    qa_lightstyles wire_lightstyles;
     qa_q2_wire_shadow_light wire_shadows[256];
     uint32_t wire_shadow_count;
     qa_string_id wire_music;

@@ -144,6 +144,7 @@ bool qa_q1_wire_begin_world(qa_q1_game *g, const char *path, uint32_t inline_mod
         state_free(wire);
         return false;
     }
+    wire->lightstyles.count = 64;
     wire->loading = true;
     wire->id1 = id1(g);
     if (g->options.max_clients) {
@@ -378,25 +379,17 @@ bool qa_q1_wire_lightstyle(qa_q1_game *g, int32_t style, qa_string_id pattern, q
         !qa_strings_cstr(qa_session_strings(g->services.session), pattern))
         return fail(error, "Q1 lightstyle requires its actual source pattern");
     if (!g->wire) return true;
-    if (g->wire->lightstyles[style] != pattern) ++g->wire->lightstyle_revision;
-    g->wire->lightstyles[style] = pattern;
+    qa_lightstyles_set(&g->wire->lightstyles, (uint32_t)style, pattern);
     q1_wire_changed(g->wire);
     return true;
 }
-bool qa_q1_source_lightstyle_read(const qa_q1_game *g, uint32_t style,
-    qa_string_id *out, qa_error *error) {
-    if (!g || !out || style >= 64 || g->destroy_pending || g->observation_depth ||
-        !g->wire || g->wire->loading || !qa_session_safe(g->services.session))
-        return fail(error, "Q1 lightstyle observation requires its returned native map owner");
-    *out = g->wire->lightstyles[style];
-    return true;
-}
-bool qa_q1_source_lightstyle_revision(const qa_q1_game *g, uint64_t *out, qa_error *error) {
-    if (!g || !out || g->destroy_pending || g->observation_depth ||
-        !g->wire || g->wire->loading || !qa_session_safe(g->services.session))
-        return fail(error, "Q1 lightstyle revision requires its returned native map owner");
-    *out = g->wire->lightstyle_revision;
-    return true;
+const qa_lightstyles *qa_q1_source_lightstyles(const qa_q1_game *g, qa_error *error) {
+    if (!g || g->destroy_pending || g->observation_depth ||
+        !g->wire || g->wire->loading || !qa_session_safe(g->services.session)) {
+        fail(error, "Q1 lightstyle observation requires its returned native map owner");
+        return NULL;
+    }
+    return &g->wire->lightstyles;
 }
 bool qa_q1_wire_world_read(const qa_q1_wire_receipt *receipt, qa_q1_wire_world *out) {
     if (!out || !qa_q1_wire_receipt_current(receipt)) return false;
@@ -409,7 +402,7 @@ bool qa_q1_wire_world_read(const qa_q1_wire_receipt *receipt, qa_q1_wire_world *
         .total_monsters = g->total_monsters, .killed_monsters = g->killed_monsters,
         .server_flags = *g->maps->options.server_flags,
         .cd_track = (uint8_t)(uint32_t)(world->map ? world->map->sounds : 0)};
-    memcpy(out->lightstyles, g->wire->lightstyles, sizeof(out->lightstyles));
+    memcpy(out->lightstyles, g->wire->lightstyles.patterns, sizeof(out->lightstyles));
     return true;
 }
 void q1_wire_player_items(qa_q1_program program,qa_q1_weapon weapon,

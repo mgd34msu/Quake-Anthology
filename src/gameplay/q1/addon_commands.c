@@ -10,16 +10,14 @@ static bool oldnew_credits(qa_q1_game *g, qa_error *error) {
                               .family = QA_GAME_Q1,
                               .provider = g->options.provider,
                               .code = 3, .count = 3, .time_ns = g->time_ns};
-    qa_string_id pattern;
-    if (!qa_builtin_resource(&g->services, "music", &music.resource, error) ||
-        !qa_builtin_emit(&g->services, &music, error))
+    music.resource=g->runtime_names[Q1_NAME_MUSIC];
+    if (!qa_builtin_emit(&g->services, &music, error))
         return false;
     if (g->destroy_pending)
         return true;
     if (!g->maps)
         return q1_map_fail(error, "Q1 omnicide credits require authored lighting owner");
-    if (!qa_builtin_resource(&g->services, "m", &pattern, error) ||
-        !q1_actor_lightstyle(g, g->maps->world_actor, 0, pattern, error))
+    if (!q1_actor_lightstyle(g, g->maps->world_actor, 0, g->runtime_names[Q1_NAME_RESOURCE_M], error))
         return false;
     return g->destroy_pending || qa_q1_game_map_finish_addon(g, QA_Q1_MAP_END_DOPA, error);
 }

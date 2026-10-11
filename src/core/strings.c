@@ -17,6 +17,8 @@ struct qa_strings {
     string_entry *entries;
     qa_string_id *buckets;
     size_t count, capacity, bucket_count, references;
+    qa_string_id byte_names[256];
+    bool bytes_bound;
 };
 
 static uint64_t string_hash(qa_bytes text) {
@@ -35,6 +37,17 @@ bool qa_strings_create(qa_strings **out, qa_error *error) {
 }
 void qa_strings_retain(qa_strings *strings) {
     if (strings) ++strings->references;
+}
+bool qa_strings_bind_bytes(qa_strings *strings, const qa_string_id **out, qa_error *error) {
+    if (!strings->bytes_bound) {
+        for (unsigned i=0;i<256;++i) {
+            uint8_t byte=(uint8_t)i;
+            if (!qa_strings_intern(strings,(qa_bytes){&byte,i?1:0},strings->byte_names+i,error)) return false;
+        }
+        strings->bytes_bound=true;
+    }
+    *out=strings->byte_names;
+    return true;
 }
 void qa_strings_destroy(qa_strings *strings) {
     if (!strings || --strings->references) return;

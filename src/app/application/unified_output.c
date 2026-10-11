@@ -223,6 +223,19 @@ static bool configurations(qa_application *app, const application_unified_source
     return true;
 }
 
+static bool retained_lightstyles(qa_application *app, application_provider *p,
+    const qa_lightstyles **out, qa_error *error)
+{
+    *out=NULL;
+    if (p->kind==APPLICATION_PROVIDER_Q1) *out=qa_q1_source_lightstyles(p->state.q1,error);
+    else if (p->kind==APPLICATION_PROVIDER_Q2) *out=qa_q2_wire_lightstyles(p->state.q2,error);
+    else if (p->kind==APPLICATION_PROVIDER_QC) {
+        struct application_qc_state *qc=application_network_q1_qc_observation(app,p->owner,error);
+        if (qc) *out=&qc->lightstyles;
+    } else return true;
+    return *out!=NULL;
+}
+
 static bool metadata_revision(qa_application *app, const application_unified_source *source,
     uint32_t epoch, application_unified_metadata_receipt *out, qa_error *error)
 {
@@ -232,15 +245,10 @@ static bool metadata_revision(qa_application *app, const application_unified_sou
     application_provider *p = application_world_provider(app, QA_ROLE_ENTITIES, "");
     if (!p || p->owner != source->owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified metadata lost its actual primary Source");
-    if (p->kind == APPLICATION_PROVIDER_Q1)
-        return qa_q1_source_lightstyle_revision(p->state.q1, &out->style_revision, error);
-    if (p->kind == APPLICATION_PROVIDER_Q2)
-        return qa_q2_wire_lightstyle_revision(p->state.q2, &out->style_revision, error);
-    if (p->kind == APPLICATION_PROVIDER_QC) {
-        struct application_qc_state *engine = application_network_q1_qc_observation(app, p->owner, error);
-        if (!engine) return false;
-        out->style_revision = engine->lightstyle_revision;
-    } else if (p->kind == APPLICATION_PROVIDER_NATIVE && source->family == QA_GAME_Q2) {
+    const qa_lightstyles *table;
+    if (!retained_lightstyles(app,p,&table,error)) return false;
+    if (table) out->style_revision=table->revision;
+    else if (p->kind == APPLICATION_PROVIDER_NATIVE && source->family == QA_GAME_Q2) {
         if (!p->state.native.q2_engine) return application_fail(error, QA_ERROR_ARGUMENT, "Unified metadata lost its original Q2 Source");
         out->style_revision = p->state.native.q2_engine->lightstyle_revision;
     }
@@ -255,9 +263,8 @@ static bool styles(qa_application *app, const application_unified_source *source
     size_t extent = source->family == QA_GAME_Q1 ? 64 : source->family == QA_GAME_Q2 ? 256 : 0;
     out->styles = extent ? application_unified_frame_alloc(lease, extent, sizeof(*out->styles), error) : NULL;
     if (extent && !out->styles) return application_fail(error, QA_ERROR_MEMORY, "Retaining changed Source lightstyle patterns");
-    struct application_qc_state *qc = p->kind == APPLICATION_PROVIDER_QC ?
-        application_network_q1_qc_observation(app, p->owner, error) : NULL;
-    if (p->kind == APPLICATION_PROVIDER_QC && !qc) return false;
+    const qa_lightstyles *table;
+    if (!retained_lightstyles(app,p,&table,error)) return false;
     struct application_native_q2 *native = p->kind == APPLICATION_PROVIDER_NATIVE && source->family == QA_GAME_Q2 ?
         p->state.native.q2_engine : NULL;
     uint32_t base = native ? native->resource_base[QA_NATIVE_HOST_IMAGE] + native->resource_limit[QA_NATIVE_HOST_IMAGE] : 0;
@@ -265,15 +272,8 @@ static bool styles(qa_application *app, const application_unified_source *source
         return application_fail(error, QA_ERROR_FORMAT, "Original Q2 lightstyles leave actual configstrings");
     for (size_t i = 0; i < extent; ++i) {
         const char *pattern = NULL;
-        qa_string_id id = 0;
-        if (p->kind == APPLICATION_PROVIDER_Q1) {
-            if (!qa_q1_source_lightstyle_read(p->state.q1, (uint32_t)i, &id, error)) return false;
-            if (id) pattern = qa_strings_cstr(strings, id);
-        } else if (p->kind == APPLICATION_PROVIDER_Q2) {
-            if (!qa_q2_wire_lightstyle_read(p->state.q2, (uint32_t)i, &id, error)) return false;
-            if (id) pattern = qa_strings_cstr(strings, id);
-        } else if (qc) { id = qc->lightstyles[i]; if (id) pattern = qa_strings_cstr(strings, id); }
-        else if (native) pattern = qa_strings_cstr(qa_session_strings(native->provider->application->session), native->configstrings[base + i]);
+        if (table && table->patterns[i]) pattern=qa_strings_cstr(strings,table->patterns[i]);
+        else if (native) pattern=qa_strings_cstr(strings,native->configstrings[base+i]);
         qa_unified_style_pattern *row = out->styles + out->style_count++;
         row->family = source->family; row->index = (uint32_t)i;
         if (!application_unified_frame_string(lease, &row->pattern, pattern ? pattern : "", error)) return false;

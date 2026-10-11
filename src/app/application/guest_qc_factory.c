@@ -42,6 +42,7 @@ bool application_qc_console_prepare(qa_application *app, application_provider *p
     }
     engine = calloc(1, sizeof(*engine));
     if (!engine) return application_fail(error, QA_ERROR_MEMORY, "Allocating prepared QC source owner");
+    engine->lightstyles.count=64;
     provider->state.qc.engine = engine;
     engine->provider = provider; engine->world = world; engine->loading = true; engine->check_cluster = -1;
     engine->field_bindings = qa_qc_program_resolved_fields(provider->state.qc.program);

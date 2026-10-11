@@ -93,8 +93,9 @@ bool q1_save_wire(q1_save_io *io, qa_q1_game *g) {
     Q1_SAVE(io, u32, wire->inline_models);
     Q1_SAVE(io, bool, wire->loading);
     Q1_SAVE(io, bool, wire->id1);
+    wire->lightstyles.count=64;
     for (size_t i = 0; i < 64; ++i)
-        Q1_SAVE(io, string, wire->lightstyles[i]);
+        Q1_SAVE(io, string, wire->lightstyles.patterns[i]);
     bool id1 = g->options.program == QA_Q1_ID1 && g->options.edition == QA_Q1_CLASSIC &&
                !g->options.quakeworld;
     if (!wire->generation || !wire->map_path || !wire->authored_entities || wire->id1 != id1 ||

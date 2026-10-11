@@ -953,7 +953,7 @@ bool qa_q1_game_original_capture(qa_q1_game *game, const qa_qc_program *program,
     bool okay = save->entities != NULL;
     if (!okay) qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating original physical Source edicts");
     for (unsigned i = 0; okay && i < 64; ++i) {
-        const char *pattern = qa_strings_cstr(qa_session_strings(game->services.session), game->wire->lightstyles[i]);
+        const char *pattern = qa_strings_cstr(qa_session_strings(game->services.session), game->wire->lightstyles.patterns[i]);
         if (!pattern || !*pattern) pattern = "m";
         size_t size = strlen(pattern); save->lightstyles[i] = malloc(size + 1);
         if (!save->lightstyles[i]) { qa_error_set(error, QA_ERROR_MEMORY, i, "Retaining Source lightstyle"); okay = false; }
@@ -2366,7 +2366,7 @@ bool qa_q1_game_original_restore(qa_q1_game *game, const qa_qc_program *program,
         }
     }
     for (unsigned i=0; okay && i<64; ++i)
-        okay=qa_strings_intern_cstr(qa_session_strings(game->services.session),save->lightstyles[i],&game->wire->lightstyles[i],error);
-    if (okay) { ++game->wire->lightstyle_revision; q1_wire_changed(game->wire); }
+        okay=qa_strings_intern_cstr(qa_session_strings(game->services.session),save->lightstyles[i],&game->wire->lightstyles.patterns[i],error);
+    if (okay) { ++game->wire->lightstyles.revision; q1_wire_changed(game->wire); }
     free(slots); return okay;
 }

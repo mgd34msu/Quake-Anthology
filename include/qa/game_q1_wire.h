@@ -2,8 +2,9 @@
 #define QA_GAME_Q1_WIRE_H
 
 #include "qa/game_q1.h"
+#include "qa/lightstyles.h"
 
-bool qa_q1_source_lightstyle_revision(const qa_q1_game *, uint64_t *, qa_error *);
+const qa_lightstyles *qa_q1_source_lightstyles(const qa_q1_game *, qa_error *);
 
 /* A receipt holds the actual native source owner through every dependent read.
  * Model and sound zero are empty; all other rows retain declaration order. */
@@ -71,7 +72,6 @@ bool qa_q1_wire_enabled(const qa_q1_game *);
 bool qa_q1_wire_registration_state(const qa_q1_game *, uint64_t *generation, bool *loading);
 bool qa_q1_wire_lightstyle(qa_q1_game *, int32_t, qa_string_id, qa_error *);
 /* Observe the actual source pattern table independently of transport admission. */
-bool qa_q1_source_lightstyle_read(const qa_q1_game *, uint32_t, qa_string_id *, qa_error *);
 bool qa_q1_wire_world_read(const qa_q1_wire_receipt *, qa_q1_wire_world *);
 bool qa_q1_wire_player_read(const qa_q1_wire_receipt *, qa_actor_id, qa_q1_wire_player *, qa_error *);
 /* QW physical edicts retain source stats after their canonical actor retires.

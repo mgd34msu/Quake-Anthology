@@ -2,6 +2,7 @@
 #define APPLICATION_GUEST_QC_INTERNAL_H
 #include "internal.h"
 #include "client_outputs.h"
+#include "qa/lightstyles.h"
 #include "qa/qc_host.h"
 #include "qa/network_q1_nq.h"
 #include "qa/network_q1_qw.h"
@@ -110,8 +111,7 @@ struct application_qc_state {
     qa_buffer original_extension;
     qa_buffer npc_restore;
     struct application_qc_rerelease *rerelease;
-    qa_string_id lightstyles[64];
-    uint64_t lightstyle_revision;
+    qa_lightstyles lightstyles;
     application_qc_message *messages;
     size_t message_count, message_capacity;
     qa_builtin_actor_snapshot observations;

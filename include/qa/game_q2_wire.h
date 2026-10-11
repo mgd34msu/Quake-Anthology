@@ -3,8 +3,9 @@
 
 #include "qa/game_q2_player.h"
 #include "qa/movement.h"
+#include "qa/lightstyles.h"
 
-bool qa_q2_wire_lightstyle_revision(const qa_q2_game *, uint64_t *, qa_error *);
+const qa_lightstyles *qa_q2_wire_lightstyles(const qa_q2_game *, qa_error *);
 
 typedef struct qa_q2_wire_binding {
     qa_actor_id actor;
@@ -86,8 +87,6 @@ bool qa_q2_wire_entity_read(qa_q2_game *, uint32_t,
     qa_q2_wire_source_entity *, qa_error *);
 bool qa_q2_wire_view_read(const qa_q2_game *, qa_actor_id,
     qa_q2_wire_view *, qa_error *);
-bool qa_q2_wire_lightstyle_read(const qa_q2_game *, uint32_t,
-    qa_string_id *, qa_error *);
 /* Original PM fields are a temporary projection of common movement and the
  * Source-only rule tail. No second current movement record is retained. */
 bool qa_q2_player_movement_read(const qa_q2_game *, qa_actor_id,

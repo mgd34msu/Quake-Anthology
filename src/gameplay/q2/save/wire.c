@@ -128,7 +128,7 @@ bool q2_save_wire(q2_save_io *io)
     if (!q2_save_u32(io, &capacity) || !q2_save_u32(io, &clients) ||
         !q2_save_u32(io, &extent) || !q2_save_u64(io, &frame)) return false;
     qa_string_id styles[256];
-    memcpy(styles, g->wire_lightstyles, sizeof(styles));
+    memcpy(styles, g->wire_lightstyles.patterns, sizeof(styles));
     for (size_t i = 0; i < 256; ++i)
         if (!q2_save_string(io, &styles[i])) return false;
     qa_string_id music = g->wire_music;
@@ -265,7 +265,7 @@ bool q2_save_wire(q2_save_io *io)
         g->wire_actors = actors; g->wire_freed_ns = freed;
         g->wire_capacity = capacity; g->wire_clients = clients; g->wire_extent = extent;
         g->wire_frame = frame;
-        memcpy(g->wire_lightstyles, styles, sizeof(styles));
+        memcpy(g->wire_lightstyles.patterns, styles, sizeof(styles));
         g->wire_music = music; g->wire_music_present = music_present;
         memcpy(g->wire_shadows, shadows, sizeof(shadows)); g->wire_shadow_count = shadow_count;
     } else if (io->reading) { free(actors); free(freed); free(references); }

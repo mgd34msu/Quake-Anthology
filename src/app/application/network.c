@@ -312,7 +312,7 @@ bool qa_application_network_q1_world_read(qa_application *app, qa_actor_owner ow
     for (size_t i = 0; i < 4; ++i)
         if (!q1_wire_global(engine, names[i], &number, error) ||
             !q1_wire_integer(number, INT32_MIN, INT32_MAX, stats[i], error)) return false;
-    for (size_t i = 0; i < 64; ++i) value.lightstyles[i] = engine->lightstyles[i] ? qa_strings_cstr(qa_session_strings(engine->services.session), engine->lightstyles[i]) : "";
+    for (size_t i = 0; i < 64; ++i) value.lightstyles[i] = engine->lightstyles.patterns[i] ? qa_strings_cstr(qa_session_strings(engine->services.session), engine->lightstyles.patterns[i]) : "";
     *out = value; return true;
 }
 bool qa_application_network_q1_clientdata(qa_application *app, qa_actor_id player,

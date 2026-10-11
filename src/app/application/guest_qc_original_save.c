@@ -193,7 +193,7 @@ bool qa_application_q1_save_capture(qa_application *app,const qa_q1_save_client 
                 ok=application_fail(error,QA_ERROR_FORMAT,"Source spawn parameters are nonfinite");
         }
         for (size_t i=0;ok && i<64;++i) {
-            const char *style=qa_strings_cstr(qa_session_strings(engine->services.session),engine->lightstyles[i]);
+            const char *style=qa_strings_cstr(qa_session_strings(engine->services.session),engine->lightstyles.patterns[i]);
             save->lightstyles[i]=duplicate(style && *style?style:"m",error);ok=save->lightstyles[i]!=NULL;
         }
         if (ok) {

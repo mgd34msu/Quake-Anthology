@@ -1464,7 +1464,7 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
             memset((void *)engine->model_fields.entries,0,
                    (size_t)engine->model_fields.count*sizeof(*engine->model_fields.entries));
         application_qc_messages_reset(engine);
-        memset(engine->lightstyles, 0, sizeof(engine->lightstyles));
+        memset(engine->lightstyles.patterns, 0, sizeof(engine->lightstyles.patterns));
     }
     if (engine == NULL || entities == NULL || map == NULL || entities->count == 0 || !engine->loading)
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC map is missing its world entity");

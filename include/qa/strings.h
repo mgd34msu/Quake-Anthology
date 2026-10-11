@@ -27,6 +27,7 @@ bool qa_strings_intern_cstr(qa_strings *strings, const char *text, qa_string_id 
  * for the string table lifetime. The returned IDs are owned by strings. */
 bool qa_strings_bind_names(qa_strings *, const char *const *, size_t count,
     const qa_string_id **out, qa_error *);
+bool qa_strings_bind_bytes(qa_strings *, const qa_string_id **out, qa_error *);
 qa_string_id qa_strings_find(const qa_strings *strings, qa_bytes text);
 /* Data addresses remain stable until destruction. An extra trailing NUL is
  * stored for native APIs, but embedded NUL bytes retain their counted identity. */

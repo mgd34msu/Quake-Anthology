@@ -1166,6 +1166,7 @@ struct qa_q1_game {
     qa_q1_options options;
     qa_q1_host host;
     qa_string_id runtime_names[Q1_NAME_COUNT];
+    const qa_string_id *lightstyle_bytes;
     qa_string_id body_queue_class;
     qa_string_id field_keys[QA_TARGET_KEY_TOTAL];
     qa_cvar_handle source_settings[QA_Q1_SOURCE_SETTING_COUNT];

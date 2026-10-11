@@ -159,7 +159,7 @@ void q2_wire_reset(qa_q2_game *g)
     memset(g->wire_freed_ns, 0, g->wire_capacity * sizeof(*g->wire_freed_ns));
     g->wire_extent = g->wire_clients + 1; g->wire_frame = 0;
     g->wire_reference_count = 0;
-    memset(g->wire_lightstyles, 0, sizeof(g->wire_lightstyles));
+    memset(g->wire_lightstyles.patterns, 0, sizeof(g->wire_lightstyles.patterns));
     memset(g->wire_shadows, 0, sizeof(g->wire_shadows)); g->wire_shadow_count = 0;
     g->wire_music = 0; g->wire_music_present = false;
 }
@@ -338,19 +338,8 @@ bool qa_q2_wire_linked(qa_q2_game *g, const qa_linked_body *linked, qa_error *er
     return true;
 }
 
-bool qa_q2_wire_lightstyle_revision(const qa_q2_game *g, uint64_t *out, qa_error *error) {
-    if (!out || !idle(g, error)) return false;
-    *out = g->wire_lightstyle_revision;
-    return true;
-}
-bool qa_q2_wire_lightstyle_read(const qa_q2_game *g, uint32_t style,
-    qa_string_id *out, qa_error *error)
-{
-    if (!out || !idle(g, error)) return false;
-    uint32_t count = 256;
-    if (style >= count) { qa_error_set(error, QA_ERROR_ARGUMENT, style, "Q2 lightstyle leaves its actual Source table"); return false; }
-    *out = g->wire_lightstyles[style];
-    return true;
+const qa_lightstyles *qa_q2_wire_lightstyles(const qa_q2_game *g, qa_error *error) {
+    return idle(g,error) ? &g->wire_lightstyles : NULL;
 }
 
 bool qa_q2_wire_map_read(const qa_q2_game *g, qa_q2_wire_map *out, qa_error *error)

@@ -720,11 +720,10 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
                 !application_network_q2_config(owner, 3, axis, error) ||
                 !application_network_q2_config(owner, 4, rotation, error)) return false;
         }
-        for (uint32_t style = 0; style < 256; ++style) {
-            qa_string_id pattern;
-            if (!qa_q2_wire_lightstyle_read(game, style, &pattern, error) ||
-                !application_network_q2_config(owner, owner->light_base + style, source_text(owner, pattern), error)) return false;
-        }
+        const qa_lightstyles *styles=qa_q2_wire_lightstyles(game,error);
+        if (!styles) return false;
+        for (uint32_t style = 0; style < styles->count; ++style)
+            if (!application_network_q2_config_id(owner, owner->light_base + style, styles->patterns[style], error)) return false;
         if (owner->host.source.edition == QA_Q2_RERELEASE && owner->item_base - owner->light_base >= 512) {
             for (uint32_t index = 0; index < 256; ++index) {
                 qa_q2_wire_shadow_light light;
