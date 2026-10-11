@@ -95,8 +95,7 @@ struct qa_qc_instance {
     uint8_t *globals, *entities;
     uint8_t *string_fields;
     qc_slot *slots;
-    uint32_t *actor_slots;
-    uint32_t actor_capacity;
+    qa_actor_index actor_index;
     qc_body_context *bodies;
     qa_entity_references references;
     uint64_t *projected_words;
@@ -211,7 +210,8 @@ bool qc_global_range(const qa_qc_instance *instance, uint32_t word,
                      uint32_t count, qa_error *error);
 bool qc_entity_slot(const qa_qc_instance *instance, int32_t reference,
                     uint32_t *slot, qa_error *error);
-void qc_actor_slots_rebuild(qa_qc_instance *);
+uint32_t qc_actor_slot(const qa_qc_instance *, qa_actor_id);
+void qc_actor_index_rebuild(qa_qc_instance *);
 uint8_t *qc_entity_words(qa_qc_instance *instance, uint32_t slot);
 const uint8_t *qc_entity_words_const(const qa_qc_instance *instance,
                                      uint32_t slot);

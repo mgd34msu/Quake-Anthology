@@ -488,7 +488,7 @@ bool qa_qc_checkpoint_restore(qa_qc_instance *instance,
     instance->strings = strings;
     strings = (qc_strings){0};
     instance->entity_count = checkpoint->entity_count;
-    qc_actor_slots_rebuild(instance);
+    qc_actor_index_rebuild(instance);
     instance->random_state = checkpoint->random_state;
     for (uint32_t slot = 0; slot < instance->entity_count; ++slot)
         if (!qc_prepare_string_fields(instance, slot, 0,

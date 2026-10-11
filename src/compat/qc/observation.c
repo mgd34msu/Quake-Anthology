@@ -6,16 +6,9 @@ bool qa_qc_actor_observation_slot(const qa_qc_instance *vm, qa_actor_id actor,
 {
     if (!vm || !out || vm->destroying)
         return qc_fail(error, QA_ERROR_ARGUMENT, 0, "QC observation requires its retained instance");
-    bool found = false; uint32_t physical = 0;
-    for (uint32_t slot = 0; slot < vm->entity_count; ++slot) {
-        const qc_slot *binding = &vm->slots[slot];
-        if ((binding->kind != QA_QC_SLOT_OWNED && binding->kind != QA_QC_SLOT_BORROWED) ||
-            !qa_actor_id_equal(binding->actor, actor)) continue;
-        if (found || !qc_retained_actor(vm, slot, actor, error))
-            return qc_fail(error, QA_ERROR_FORMAT, slot, "QC observation has no unique retained actor binding");
-        found = true; physical = slot;
-    }
-    if (!found) return qc_fail(error, QA_ERROR_NOT_FOUND, 0, "QC observation actor has no retained projection");
+    uint32_t physical = qc_actor_slot(vm, actor);
+    if (!physical) return qc_fail(error, QA_ERROR_NOT_FOUND, 0, "QC observation actor has no retained projection");
+    if (!qc_retained_actor(vm, physical, actor, error)) return false;
     *out = physical; return true;
 }
 

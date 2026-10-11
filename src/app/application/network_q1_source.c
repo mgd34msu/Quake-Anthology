@@ -2,6 +2,7 @@
 #include "native_q1_wire.h"
 #include "qa/application_network.h"
 #include "qa/application_qc_presentation.h"
+#include "qa/qc_observation.h"
 
 struct application_qc_state *application_network_q1_qc_observation(qa_application *app,
     qa_actor_owner expected_owner, qa_error *error)
@@ -84,23 +85,17 @@ bool application_network_q1_qc_entity(struct application_qc_state *engine,
     if (!engine || !reference)
         return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 physical entity owner");
     qa_qc_instance *vm = engine->provider->state.qc.instance;
-    uint32_t count = qa_qc_entity_count(vm), slot = 0;
-    for (uint32_t i = 1; i < count; ++i) {
-        qa_qc_slot_binding binding;
-        if (!qa_qc_slot(vm, i, &binding))
-            return application_fail(error, QA_ERROR_FORMAT, "Q1 source entity allocation disappeared");
-        if (binding.kind == QA_QC_SLOT_FREE || !qa_actor_id_equal(binding.actor, actor)) continue;
-        if (slot) return application_fail(error, QA_ERROR_FORMAT, "Q1 actor aliases multiple source edicts");
-        if (!binding_current(engine, i, actor, &binding, error)) return false;
-        if (binding.kind == QA_QC_SLOT_BORROWED) {
-            uint32_t client;
-            if (!application_network_q1_qc_client(engine, actor, &client, error) || client != i)
-                return application_fail(error, QA_ERROR_ARGUMENT, "Q1 borrowed edict has no admitted source client");
-        } else if (binding.kind != QA_QC_SLOT_OWNED || binding.owner != engine->provider->owner ||
-            binding.source_slot != i)
-            return application_fail(error, QA_ERROR_ARGUMENT, "Q1 owned edict differs from its source namespace");
-        slot = i;
-    }
+    uint32_t slot;
+    qa_qc_slot_binding binding;
+    if (!qa_qc_actor_observation_slot(vm, actor, &slot, error) ||
+        !binding_current(engine, slot, actor, &binding, error)) return false;
+    if (binding.kind == QA_QC_SLOT_BORROWED) {
+        uint32_t client;
+        if (!application_network_q1_qc_client(engine, actor, &client, error) || client != slot)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Q1 borrowed edict has no admitted source client");
+    } else if (binding.kind != QA_QC_SLOT_OWNED || binding.owner != engine->provider->owner ||
+        binding.source_slot != slot)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 owned edict differs from its source namespace");
     if (!slot || slot > UINT16_MAX)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 entity has no representable physical source edict");
     if (!qa_qc_actor_reference(vm, actor, false, reference, error)) return false;

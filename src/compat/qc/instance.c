@@ -220,13 +220,11 @@ static bool copy_inline_regions(qa_qc_instance *instance, qa_error *error)
     return true;
 }
 
-static uint32_t actor_slot(const qa_qc_instance *instance, qa_actor_id actor)
+uint32_t qc_actor_slot(const qa_qc_instance *instance, qa_actor_id actor)
 {
-    if (actor.slot >= instance->actor_capacity) return 0;
-    uint32_t slot = instance->actor_slots[actor.slot];
-    return slot && slot < instance->entity_count &&
-        (instance->slots[slot].kind == QA_QC_SLOT_OWNED || instance->slots[slot].kind == QA_QC_SLOT_BORROWED) &&
-        qa_actor_id_equal(instance->slots[slot].actor, actor) ? slot : 0;
+    size_t slot;
+    return qa_actor_index_find(&instance->actor_index, actor, &slot)
+        ? (uint32_t)slot : 0;
 }
 
 static void binding_set(qa_qc_instance *instance, uint32_t slot, qc_slot binding)
@@ -235,23 +233,21 @@ static void binding_set(qa_qc_instance *instance, uint32_t slot, qc_slot binding
     instance->bodies[slot].projection_revision = 0;
     instance->bodies[slot].body_revision = 0;
     qc_slot previous = instance->slots[slot];
-    if ((previous.kind == QA_QC_SLOT_OWNED || previous.kind == QA_QC_SLOT_BORROWED) &&
-        instance->actor_slots[previous.actor.slot] == slot)
-        instance->actor_slots[previous.actor.slot] = 0;
+    if (previous.kind == QA_QC_SLOT_OWNED || previous.kind == QA_QC_SLOT_BORROWED)
+        qa_actor_index_remove(&instance->actor_index, previous.actor);
     instance->slots[slot] = binding;
     if (binding.kind == QA_QC_SLOT_OWNED || binding.kind == QA_QC_SLOT_BORROWED)
-        instance->actor_slots[binding.actor.slot] = slot;
+        qa_actor_index_put(&instance->actor_index, binding.actor, slot);
 }
 
-void qc_actor_slots_rebuild(qa_qc_instance *instance)
+void qc_actor_index_rebuild(qa_qc_instance *instance)
 {
     qc_projection_invalidate(instance);
-    if (!instance->actor_capacity) return;
-    memset(instance->actor_slots, 0, (size_t)instance->actor_capacity * sizeof(*instance->actor_slots));
+    qa_actor_index_clear(&instance->actor_index);
     for (uint32_t slot = 1; slot < instance->entity_count; ++slot) {
         qc_slot binding = instance->slots[slot];
         if (binding.kind == QA_QC_SLOT_OWNED || binding.kind == QA_QC_SLOT_BORROWED)
-            instance->actor_slots[binding.actor.slot] = slot;
+            qa_actor_index_put(&instance->actor_index, binding.actor, slot);
     }
 }
 
@@ -271,7 +267,7 @@ static void free_instance(qa_qc_instance *instance)
     qa_arena_destroy(&instance->findradius_storage);
     free(instance->globals); free(instance->entities); free(instance->slots);
     free(instance->string_fields);
-    free(instance->actor_slots);
+    qa_actor_index_destroy(&instance->actor_index);
     free(instance->projected_words);
     free(instance->bodies); free(instance->profiles); free(instance->frames);
     free(instance->locals); free(instance);
@@ -338,9 +334,6 @@ bool qa_qc_instance_create(const qa_qc_program *program,
     if (options->host.session != NULL && instance->layout.field_words != 0)
         instance->string_fields = calloc(instance->layout.field_words, 1u);
     instance->slots = calloc(instance->options.entity_capacity, sizeof(*instance->slots));
-    instance->actor_capacity = options->host.session ? qa_actors_capacity(qa_session_actors(options->host.session)) : 0;
-    if (instance->actor_capacity)
-        instance->actor_slots = calloc(instance->actor_capacity, sizeof(*instance->actor_slots));
     instance->bodies = calloc(instance->options.entity_capacity, sizeof(*instance->bodies));
     if (instance->projection_stride)
         instance->projected_words = calloc(instance->options.entity_capacity,
@@ -351,7 +344,7 @@ bool qa_qc_instance_create(const qa_qc_program *program,
     instance->locals = calloc(instance->options.local_word_limit, sizeof(*instance->locals));
     if (instance->globals == NULL || instance->entities == NULL || instance->slots == NULL
         || instance->bodies == NULL || instance->profiles == NULL || instance->frames == NULL
-        || instance->locals == NULL || (instance->actor_capacity && !instance->actor_slots)
+        || instance->locals == NULL
         || (options->host.session != NULL && instance->layout.field_words != 0
             && instance->string_fields == NULL)
         || (instance->projection_stride && !instance->projected_words)) {
@@ -359,6 +352,10 @@ bool qa_qc_instance_create(const qa_qc_program *program,
         return qc_fail(error, QA_ERROR_MEMORY, 0, "Cannot allocate QuakeC private state");
     }
     memcpy(instance->globals, program->initial_globals, global_bytes);
+    if (options->host.session != NULL && !qa_actor_index_create(&instance->actor_index,
+            qa_session_actors(options->host.session), NULL, error)) {
+        free_instance(instance); return false;
+    }
     if (instance->string_fields != NULL)
         for (uint32_t i = 0; i < program->info.field_count; ++i)
             if (program->fields[i].type == QA_QC_STRING)
@@ -370,15 +367,15 @@ bool qa_qc_instance_create(const qa_qc_program *program,
     qa_arena_seal(&instance->scratch);
     qa_arena_init(&instance->findradius_storage, 0);
     size_t snapshot_item_bytes = sizeof(qa_actor_id) + sizeof(int32_t);
-    if (instance->actor_capacity > SIZE_MAX / snapshot_item_bytes) {
+    if (instance->actor_index.capacity > SIZE_MAX / snapshot_item_bytes) {
         free_instance(instance);
         return qc_fail(error, QA_ERROR_MEMORY, 0,
                        "findradius actor snapshot is too large");
     }
-    size_t snapshot_bytes = (size_t)instance->actor_capacity * snapshot_item_bytes;
+    size_t snapshot_bytes = instance->actor_index.capacity * snapshot_item_bytes;
     if (!qa_pool_reserve_pages(&instance->findradius_snapshots,
             &instance->findradius_storage,
-            instance->actor_capacity ? instance->options.call_limit : 0,
+            instance->actor_index.capacity ? instance->options.call_limit : 0,
             snapshot_bytes ? snapshot_bytes : 1, _Alignof(qa_actor_id), error)) {
         free_instance(instance); return false;
     }
@@ -849,7 +846,7 @@ bool qa_qc_bind_actor(qa_qc_instance *instance, uint32_t slot,
         return qc_fail(error, QA_ERROR_NOT_FOUND, slot, "QuakeC actor is not live");
     if (instance->slots[slot].kind != QA_QC_SLOT_FREE)
         return qc_fail(error, QA_ERROR_ARGUMENT, slot, "QuakeC entity slot is occupied");
-    if (actor_slot(instance, actor))
+    if (qc_actor_slot(instance, actor))
         return qc_fail(error, QA_ERROR_ARGUMENT, slot, "Actor already has a QuakeC projection");
     if (kind == QA_QC_SLOT_OWNED && (record->owner != instance->options.host.owner
         || !record->has_source || record->source_slot != slot))
@@ -901,7 +898,7 @@ bool qa_qc_rebind_reserved_actor(qa_qc_instance *instance, uint32_t slot,
     if (kind == QA_QC_SLOT_OWNED && (record->owner != instance->options.host.owner ||
         !record->has_source || record->source_slot != slot))
         return qc_fail(error, QA_ERROR_ARGUMENT, slot, "Reserved QuakeC handoff differs from its source owner");
-    uint32_t existing = actor_slot(instance, actor);
+    uint32_t existing = qc_actor_slot(instance, actor);
     if (existing && existing != slot)
         return qc_fail(error, QA_ERROR_ARGUMENT, slot, "Reserved QuakeC actor already owns another source row");
     binding_set(instance, slot, (qc_slot){kind, actor, record->owner,
@@ -958,7 +955,7 @@ bool qa_qc_actor_movement_flags_read(const qa_qc_instance *instance, qa_actor_id
     if (!actor_live(instance, actor, &record))
         return qc_fail(error, QA_ERROR_NOT_FOUND, actor.slot,
             "QuakeC flags actor is not live");
-    uint32_t slot = actor_slot(instance, actor);
+    uint32_t slot = qc_actor_slot(instance, actor);
     if (slot) {
         qc_slot binding = instance->slots[slot];
         if (binding.owner != record->owner || (binding.kind == QA_QC_SLOT_OWNED &&
@@ -985,7 +982,7 @@ bool qa_qc_actor_reference(qa_qc_instance *instance, qa_actor_id actor,
 {
     if (instance == NULL || out == NULL || !actor_live(instance, actor, NULL))
         return qc_fail(error, QA_ERROR_NOT_FOUND, 0, "Cannot reference a stale actor from QuakeC");
-    uint32_t slot = actor_slot(instance, actor);
+    uint32_t slot = qc_actor_slot(instance, actor);
     if (slot) {
         if (instance->slots[slot].kind == QA_QC_SLOT_BORROWED
             && !qc_refresh_borrowed(instance, slot, error)) return false;
@@ -1014,7 +1011,7 @@ bool qa_qc_reference_actor(const qa_qc_instance *instance, int32_t reference,
 void qa_qc_actor_released(qa_qc_instance *instance, qa_actor_record released)
 {
     if (instance == NULL) return;
-    uint32_t slot = actor_slot(instance, released.id);
+    uint32_t slot = qc_actor_slot(instance, released.id);
     if (slot) mark_slot_freed(instance, slot);
 }
 
@@ -1482,7 +1479,7 @@ static bool findradius(qa_qc_instance *instance, qa_error *error)
                                        &snapshot_slot);
     if (snapshot == NULL)
         return qc_fail(error, QA_ERROR_MEMORY, 0, "Cannot snapshot findradius actors");
-    int32_t *references = (int32_t *)(snapshot + instance->actor_capacity);
+    int32_t *references = (int32_t *)(snapshot + instance->actor_index.capacity);
     bool ok = false;
     size_t written = 0;
     uint32_t cursor = 0;
