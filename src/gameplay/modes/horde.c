@@ -617,9 +617,7 @@ static bool check_wave(qa_modes *m, mode_instance *v, horde_state *h, qa_error *
             continue;
         if (m->options.services.actor_traits)
             m->options.services.actor_traits(m->options.services.context, actor, &traits);
-        const char *name =
-            qa_strings_cstr(qa_session_strings(m->options.services.session), traits.classname);
-        if (traits.monster && (!name || strcmp(name, "monster_zombie")))
+        if (traits.monster && traits.classname != m->runtime_names[MODE_NAME_MONSTER_ZOMBIE])
             ++monsters;
     }
     if (monsters > (h->value.wave % 3 == 0 || h->value.wave < 3 ? 0u : 5u))
@@ -1088,9 +1086,7 @@ bool qa_modes_horde_count_monster(qa_modes *m, qa_mode_id id, qa_actor_id actor)
     if (!m->options.services.actor_traits ||
         !m->options.services.actor_traits(m->options.services.context, actor, &traits))
         return true;
-    const char *name =
-        qa_strings_cstr(qa_session_strings(m->options.services.session), traits.classname);
-    return !name || strcmp(name, "monster_zombie") != 0;
+    return traits.classname != m->runtime_names[MODE_NAME_MONSTER_ZOMBIE];
 }
 void mode_horde_checkpoint_free(qa_horde_checkpoint *checkpoint) {
     if (!checkpoint)

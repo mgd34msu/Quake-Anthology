@@ -3,8 +3,36 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define Q1_LEVEL_NAME_LIST(X) \
+    X(E1M1, "e1m1") \
+    X(E1M4, "e1m4") \
+    X(E1M7, "e1m7") \
+    X(E1M8, "e1m8") \
+    X(E2M1, "e2m1") \
+    X(E2M3, "e2m3") \
+    X(E2M6, "e2m6") \
+    X(E2M7, "e2m7") \
+    X(E3M1, "e3m1") \
+    X(E3M4, "e3m4") \
+    X(E3M6, "e3m6") \
+    X(E3M7, "e3m7") \
+    X(E4M1, "e4m1") \
+    X(E4M5, "e4m5") \
+    X(E4M6, "e4m6") \
+    X(E4M7, "e4m7") \
+    X(E4M8, "e4m8") \
+    X(START, "start")
+
+typedef enum q1_level_name {
+#define Q1_LEVEL_NAME_ENUM(key, text) Q1_LEVEL_NAME_##key,
+    Q1_LEVEL_NAME_LIST(Q1_LEVEL_NAME_ENUM)
+#undef Q1_LEVEL_NAME_ENUM
+    Q1_LEVEL_NAME_COUNT
+} q1_level_name;
+
 struct qa_q1_level {
     qa_q1_level_options options;
+    qa_string_id runtime_names[Q1_LEVEL_NAME_COUNT];
     qa_q1_intermission_rule *rules;
     qa_q1_level_state state;
     qa_q1_level_player *players;
@@ -20,10 +48,6 @@ static qa_strings *strings(const qa_q1_level *level) {
 static bool valid_map(const qa_q1_level *level, qa_string_id id) {
     const char *value = qa_strings_cstr(strings(level), id);
     return value && *value;
-}
-static bool named(const qa_q1_level *level, qa_string_id id, const char *text) {
-    const char *value = qa_strings_cstr(strings(level), id);
-    return value && !strcmp(value, text);
 }
 static bool live(const qa_q1_level *level, qa_actor_id actor) {
     return qa_actors_get(qa_session_actors(level->options.services.session), actor) != NULL;
@@ -49,6 +73,17 @@ qa_q1_level *qa_q1_level_create(const qa_q1_level_options *options, qa_error *er
         return NULL;
     }
     level->options = *options;
+    static const char *const runtime_names[] = {
+#define Q1_LEVEL_NAME_TEXT(key, text) text,
+        Q1_LEVEL_NAME_LIST(Q1_LEVEL_NAME_TEXT)
+#undef Q1_LEVEL_NAME_TEXT
+    };
+    for (unsigned i = 0; i < Q1_LEVEL_NAME_COUNT; ++i)
+        if (!qa_strings_intern_cstr(strings(level), runtime_names[i],
+                                    &level->runtime_names[i], error)) {
+            qa_q1_level_destroy(level);
+            return NULL;
+        }
     if (!valid_map(level, options->current_map)) {
         qa_q1_level_destroy(level);
         fail(error, "Missing Q1 current map");
@@ -156,14 +191,14 @@ static bool achievements(qa_q1_level *level, qa_string_id next, qa_error *error)
     if (!level->options.rerelease)
         return true;
     qa_q1_level_options *options = &level->options;
-    if (options->skill == 3 && (named(level, options->current_map, "e1m1") ||
-                                named(level, options->current_map, "e4m6"))) {
+    if (options->skill == 3 && ((options->current_map == level->runtime_names[Q1_LEVEL_NAME_E1M1]) ||
+                                (options->current_map == level->runtime_names[Q1_LEVEL_NAME_E4M6]))) {
         qa_builtin_actor_snapshot roster = {0};
         if (!qa_builtin_players(&options->services, &roster, error)) {
             qa_builtin_snapshot_free(&roster);
             return false;
         }
-        const bool pacifist = named(level, options->current_map, "e1m1");
+        const bool pacifist = (options->current_map == level->runtime_names[Q1_LEVEL_NAME_E1M1]);
         bool ok = true;
         for (size_t i = 0; ok && i < roster.count; ++i) {
             qa_actor_id actor = roster.ids[i];
@@ -181,25 +216,27 @@ static bool achievements(qa_q1_level *level, qa_string_id next, qa_error *error)
             return false;
     }
     static const struct {
-        const char *map, *id;
-    } completed[] = {{"e1m7", "ACH_COMPLETE_E1M7"},
-                     {"e2m6", "ACH_COMPLETE_E2M6"},
-                     {"e3m6", "ACH_COMPLETE_E3M6"},
-                     {"e4m7", "ACH_COMPLETE_E4M7"}};
+        q1_level_name map;
+        const char *id;
+    } completed[] = {{Q1_LEVEL_NAME_E1M7, "ACH_COMPLETE_E1M7"},
+                     {Q1_LEVEL_NAME_E2M6, "ACH_COMPLETE_E2M6"},
+                     {Q1_LEVEL_NAME_E3M6, "ACH_COMPLETE_E3M6"},
+                     {Q1_LEVEL_NAME_E4M7, "ACH_COMPLETE_E4M7"}};
     if (options->official_campaign)
         for (size_t i = 0; i < sizeof(completed) / sizeof(*completed); ++i)
-            if (named(level, options->current_map, completed[i].map) &&
+            if (options->current_map == level->runtime_names[completed[i].map] &&
                 !options->achievement(options->context, (qa_actor_id){0}, completed[i].id, error))
                 return false;
     static const struct {
-        const char *from, *to, *id;
-    } secret[] = {{"e1m4", "e1m8", "ACH_FIND_E1M8"},
-                  {"e2m3", "e2m7", "ACH_FIND_E2M7"},
-                  {"e3m4", "e3m7", "ACH_FIND_E3M7"},
-                  {"e4m5", "e4m8", "ACH_FIND_E4M8"}};
+        q1_level_name from, to;
+        const char *id;
+    } secret[] = {{Q1_LEVEL_NAME_E1M4, Q1_LEVEL_NAME_E1M8, "ACH_FIND_E1M8"},
+                  {Q1_LEVEL_NAME_E2M3, Q1_LEVEL_NAME_E2M7, "ACH_FIND_E2M7"},
+                  {Q1_LEVEL_NAME_E3M4, Q1_LEVEL_NAME_E3M7, "ACH_FIND_E3M7"},
+                  {Q1_LEVEL_NAME_E4M5, Q1_LEVEL_NAME_E4M8, "ACH_FIND_E4M8"}};
     for (size_t i = 0; i < sizeof(secret) / sizeof(*secret); ++i)
-        if (named(level, options->current_map, secret[i].from) &&
-            named(level, next, secret[i].to) &&
+        if (options->current_map == level->runtime_names[secret[i].from] &&
+            next == level->runtime_names[secret[i].to] &&
             !options->achievement(options->context, (qa_actor_id){0}, secret[i].id, error))
             return false;
     return true;
@@ -253,7 +290,7 @@ bool qa_q1_level_check_limits(qa_q1_level *level, double seconds, const float *s
     qa_string_id next = level->options.current_map;
     uint32_t flags = *level->options.server_flags;
     const char *episode = NULL;
-    if (named(level, next, "start")) {
+    if ((next == level->runtime_names[Q1_LEVEL_NAME_START])) {
         if (!level->options.registered)
             episode = "e1m1";
         else if (!(flags & 1u)) {
@@ -340,11 +377,11 @@ bool qa_q1_level_request_exit(qa_q1_level *level, double seconds, bool pressed, 
     if (level->state.stage == 2) {
         qa_string_id map = level->options.current_map;
         const char *key =
-            named(level, map, "e1m7")
+            (map == level->runtime_names[Q1_LEVEL_NAME_E1M7])
                 ? (level->options.registered ? "$qc_finale_e1" : "$qc_finale_e1_shareware")
-            : named(level, map, "e2m6") ? "$qc_finale_e2"
-            : named(level, map, "e3m6") ? "$qc_finale_e3"
-            : named(level, map, "e4m7") ? "$qc_finale_e4"
+            : (map == level->runtime_names[Q1_LEVEL_NAME_E2M6]) ? "$qc_finale_e2"
+            : (map == level->runtime_names[Q1_LEVEL_NAME_E3M6]) ? "$qc_finale_e3"
+            : (map == level->runtime_names[Q1_LEVEL_NAME_E4M7]) ? "$qc_finale_e4"
                                         : NULL;
         if (key)
             return finale(level, key, out, error);

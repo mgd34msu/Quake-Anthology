@@ -339,12 +339,11 @@ static bool validate_instance(qa_modes *m, const qa_mode_checkpoint *v, qa_error
             (v->value.rules.source != QA_MODE_THREEWAVE && v->value.rules.source != QA_MODE_ROGUE) ||
             (i == 3 && v->value.rules.source != QA_MODE_THREEWAVE))
             return mode_fail(e, "saved source spawn cursor has no actual owner");
-        const char *expected = i == 0 ? "info_player_team1" : i == 1 ? "info_player_team2" :
-            i == 2 ? "info_player_deathmatch" : "info_vote_destination";
+        qa_string_id expected = i == 0 ? m->runtime_names[MODE_NAME_INFO_PLAYER_TEAM1] : i == 1 ? m->runtime_names[MODE_NAME_INFO_PLAYER_TEAM2] :
+            i == 2 ? m->runtime_names[MODE_NAME_INFO_PLAYER_DEATHMATCH] : m->runtime_names[MODE_NAME_INFO_VOTE_DESTINATION];
         bool found = false;
         for (size_t j = 0; j < v->spawn_count; ++j) {
-            const char *name = qa_strings_cstr(strings, v->spawns[j].classname);
-            if (qa_actor_id_equal(v->spawns[j].actor, cursor) && name && !strcmp(name, expected))
+            if (qa_actor_id_equal(v->spawns[j].actor, cursor) && v->spawns[j].classname == expected)
                 found = true;
         }
         if (!found) return mode_fail(e, "saved source cursor is not its authored spawn class");
@@ -352,9 +351,8 @@ static bool validate_instance(qa_modes *m, const qa_mode_checkpoint *v, qa_error
     if (v->rogue_spawn_spot.registry) {
         bool found = false;
         for (size_t i = 0; i < v->spawn_count; ++i) {
-            const char *name = qa_strings_cstr(strings, v->spawns[i].classname);
             if (qa_actor_id_equal(v->spawns[i].actor, v->rogue_spawn_spot) &&
-                name && !strcmp(name, "info_player_deathmatch")) found = true;
+                v->spawns[i].classname == m->runtime_names[MODE_NAME_INFO_PLAYER_DEATHMATCH]) found = true;
         }
         if (!found) return mode_fail(e, "saved Rogue rune cursor is not a deathmatch spawn");
     }

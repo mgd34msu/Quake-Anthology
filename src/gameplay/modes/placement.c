@@ -40,10 +40,8 @@ static float distance_to_players(qa_modes *m, mode_instance *v, qa_vec3 point, q
     }
     return best;
 }
-static bool classname(qa_modes *m, const qa_mode_spawnpoint *p, const char *name) {
-    const char *actual =
-        qa_strings_cstr(qa_session_strings(m->options.services.session), p->classname);
-    return actual && !strcmp(actual, name);
+static bool classname(const qa_mode_spawnpoint *p, qa_string_id name) {
+    return p->classname == name;
 }
 static bool spawn_group(const qa_mode_spawnpoint *p, qa_team_id team) { return p->team == team; }
 static size_t q2_choose(qa_modes *m, mode_instance *v, qa_team_id team, bool farthest,
@@ -52,7 +50,7 @@ static size_t q2_choose(qa_modes *m, mode_instance *v, qa_team_id team, bool far
     float first_range = 99999.0f * 99999.0f, second_range = first_range, farthest_range = 0;
     for (size_t i = 0; i < v->spawn_count; ++i) {
         const qa_mode_spawnpoint *p = &v->spawns[i];
-        if (!spawn_group(p, team) || (!team && !classname(m, p, "info_player_deathmatch")))
+        if (!spawn_group(p, team) || (!team && !classname(p, m->runtime_names[MODE_NAME_INFO_PLAYER_DEATHMATCH])))
             continue;
         if (fallback == SIZE_MAX)
             fallback = i;
@@ -82,7 +80,7 @@ static size_t q2_choose(qa_modes *m, mode_instance *v, qa_team_id team, bool far
     size_t selected = (size_t)(mode_random_float(m) * (float)choices);
     for (size_t i = 0; i < v->spawn_count; ++i) {
         const qa_mode_spawnpoint *p = &v->spawns[i];
-        if (!spawn_group(p, team) || (!team && !classname(m, p, "info_player_deathmatch")))
+        if (!spawn_group(p, team) || (!team && !classname(p, m->runtime_names[MODE_NAME_INFO_PLAYER_DEATHMATCH])))
             continue;
         if (count > 2 && (i == first || i == second))
             continue;
@@ -131,19 +129,20 @@ static bool q3_choose(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_team_
         return false;
     mode_player *roster = mode_player_get(m, actor);
     int team_index = mode_team_index(v, team);
-    const char *native = team_index == 0 ? (initial ? "team_CTF_redplayer" : "team_CTF_redspawn")
-                                         : (initial ? "team_CTF_blueplayer" : "team_CTF_bluespawn");
+    qa_string_id native = m->runtime_names[team_index == 0
+        ? (initial ? MODE_NAME_TEAM_CTF_REDPLAYER : MODE_NAME_TEAM_CTF_REDSPAWN)
+        : (initial ? MODE_NAME_TEAM_CTF_BLUEPLAYER : MODE_NAME_TEAM_CTF_BLUESPAWN)];
     bool native_team = false;
     if (team)
         for (size_t i = 0; i < v->spawn_count; ++i)
-            if (classname(m, &v->spawns[i], native))
+            if (classname(&v->spawns[i], native))
                 native_team = true;
     for (size_t i = 0; i < v->spawn_count; ++i) {
         qa_mode_spawnpoint *p = &v->spawns[i];
         if (filter_player && roster && (roster->identity->bot ? p->no_bots : p->no_humans))
             continue;
-        if (team ? (p->team != team || (native_team && !classname(m, p, native)))
-                 : (p->team || !classname(m, p, "info_player_deathmatch")))
+        if (team ? (p->team != team || (native_team && !classname(p, native)))
+                 : (p->team || !classname(p, m->runtime_names[MODE_NAME_INFO_PLAYER_DEATHMATCH])))
             continue;
         if (fallback == SIZE_MAX)
             fallback = i;
@@ -203,7 +202,7 @@ static bool q1_spawnpoint(qa_modes *m, mode_instance *v, mode_member *member,
     *selected = false;
     for (size_t i = 0; i < v->spawn_count; ++i)
         if ((!physical || mode_live(m, v->spawns[i].actor)) &&
-            classname(m, &v->spawns[i], "testplayerstart")) {
+            classname(&v->spawns[i], m->runtime_names[MODE_NAME_TESTPLAYERSTART])) {
             if (!q1_spawn_pose(m, &v->spawns[i], physical, out, e)) return false;
             *selected = true;
             return true;
@@ -245,17 +244,18 @@ static bool q1_spawnpoint(qa_modes *m, mode_instance *v, mode_member *member,
     size_t cursor = side == 0 ? 0 : side == 1 ? 1 : 2;
     if (v->value.rules.source == QA_MODE_THREEWAVE && v->value.rules.start_map &&
         member && killed != 0) cursor = 3;
-    const char *wanted = cursor == 0 ? "info_player_team1" : cursor == 1 ? "info_player_team2" :
-        cursor == 2 ? "info_player_deathmatch" : "info_vote_destination";
+    qa_string_id wanted = m->runtime_names[cursor == 0 ? MODE_NAME_INFO_PLAYER_TEAM1
+        : cursor == 1 ? MODE_NAME_INFO_PLAYER_TEAM2
+        : cursor == 2 ? MODE_NAME_INFO_PLAYER_DEATHMATCH : MODE_NAME_INFO_VOTE_DESTINATION];
     size_t last = SIZE_MAX;
     for (size_t i = 0; i < v->spawn_count; ++i)
         if (qa_actor_id_equal(v->spawns[i].actor, v->last_spawns[cursor]) &&
-            classname(m, &v->spawns[i], wanted)) last = i;
+            classname(&v->spawns[i], wanted)) last = i;
     for (size_t step = 1; step <= v->spawn_count; ++step) {
         size_t index = last == SIZE_MAX ? step - 1 :
             step < v->spawn_count - last ? last + step : step - (v->spawn_count - last);
         const qa_mode_spawnpoint *point = &v->spawns[index];
-        if ((physical && !mode_live(m, point->actor)) || !classname(m, point, wanted)) continue;
+        if ((physical && !mode_live(m, point->actor)) || !classname(point, wanted)) continue;
         qa_mode_spawnpoint pose;
         if (!q1_spawn_pose(m, point, physical, &pose, e)) return false;
         bool occupied = false;
@@ -287,8 +287,8 @@ static bool q1_spawnpoint(qa_modes *m, mode_instance *v, mode_member *member,
     if (v->value.rules.source == QA_MODE_THREEWAVE)
         for (unsigned pass = 0; pass < 2; ++pass)
             for (size_t i = 0; i < v->spawn_count; ++i)
-                if ((!physical || mode_live(m, v->spawns[i].actor)) && classname(m, &v->spawns[i],
-                    pass == 0 ? "info_player_deathmatch" : "info_player_start")) {
+                if ((!physical || mode_live(m, v->spawns[i].actor)) && classname(&v->spawns[i],
+                    pass == 0 ? m->runtime_names[MODE_NAME_INFO_PLAYER_DEATHMATCH] : m->runtime_names[MODE_NAME_INFO_PLAYER_START])) {
                     if (!q1_spawn_pose(m, &v->spawns[i], physical, out, e)) return false;
                     *selected = true;
                     return true;
@@ -380,8 +380,8 @@ bool qa_modes_spawnpoint(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool far
         }
     if (selected == SIZE_MAX)
         for (size_t i = 0; i < v->spawn_count; ++i)
-            if (classname(m, &v->spawns[i], "info_player_deathmatch") ||
-                classname(m, &v->spawns[i], "info_player_start")) {
+            if (classname(&v->spawns[i], m->runtime_names[MODE_NAME_INFO_PLAYER_DEATHMATCH]) ||
+                classname(&v->spawns[i], m->runtime_names[MODE_NAME_INFO_PLAYER_START])) {
                 selected = i;
                 break;
             }

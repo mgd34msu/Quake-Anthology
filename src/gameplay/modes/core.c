@@ -234,6 +234,17 @@ bool qa_modes_create(const qa_modes_options *options, qa_modes **out, qa_error *
         return false;
     }
     m->options = *options;
+    static const char *const runtime_names[] = {
+#define MODE_NAME_TEXT(key, text) text,
+        MODE_NAME_LIST(MODE_NAME_TEXT)
+#undef MODE_NAME_TEXT
+    };
+    for (unsigned i = 0; i < MODE_NAME_COUNT; ++i)
+        if (!qa_strings_intern_cstr(qa_session_strings(options->services.session), runtime_names[i],
+                                    &m->runtime_names[i], e)) {
+            qa_modes_destroy(m);
+            return false;
+        }
     m->actor_capacity = qa_actors_capacity(qa_session_actors(options->services.session));
     m->mode_capacity = options->mode_capacity ? options->mode_capacity : 16;
     m->objective_capacity = options->objective_capacity ? options->objective_capacity : 256;

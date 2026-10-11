@@ -92,8 +92,33 @@ typedef struct mode_objective {
     uint64_t serial;
     bool active, reserved;
 } mode_objective;
+#define MODE_NAME_LIST(X) \
+    X(MONSTER_ZOMBIE, "monster_zombie") \
+    X(ITEM_HEALTH, "item_health") \
+    X(ITEM_HEALTH_SMALL, "item_health_small") \
+    X(ITEM_HEALTH_LARGE, "item_health_large") \
+    X(BODYQUE, "bodyque") \
+    X(INFO_PLAYER_DEATHMATCH, "info_player_deathmatch") \
+    X(INFO_PLAYER_START, "info_player_start") \
+    X(INFO_PLAYER_TEAM1, "info_player_team1") \
+    X(INFO_PLAYER_TEAM2, "info_player_team2") \
+    X(INFO_VOTE_DESTINATION, "info_vote_destination") \
+    X(TESTPLAYERSTART, "testplayerstart") \
+    X(TEAM_CTF_REDPLAYER, "team_CTF_redplayer") \
+    X(TEAM_CTF_REDSPAWN, "team_CTF_redspawn") \
+    X(TEAM_CTF_BLUEPLAYER, "team_CTF_blueplayer") \
+    X(TEAM_CTF_BLUESPAWN, "team_CTF_bluespawn")
+
+typedef enum mode_name {
+#define MODE_NAME_ENUM(key, text) MODE_NAME_##key,
+    MODE_NAME_LIST(MODE_NAME_ENUM)
+#undef MODE_NAME_ENUM
+    MODE_NAME_COUNT
+} mode_name;
+
 struct qa_modes {
     qa_modes_options options;
+    qa_string_id runtime_names[MODE_NAME_COUNT];
     uint32_t actor_capacity, mode_capacity, objective_capacity;
     mode_player *players;
     mode_object *objects;

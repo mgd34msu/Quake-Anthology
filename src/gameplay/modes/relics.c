@@ -20,12 +20,12 @@ static bool rogue_message(qa_modes *m, mode_instance *v, qa_actor_id actor,
                ? m->options.hooks.emit(m->options.hooks.context, v->id, &event, e)
                : qa_builtin_emit(&m->options.services, &event, e));
 }
-static const char *actor_class(qa_modes *m, qa_actor_id actor) {
+static qa_string_id actor_class(qa_modes *m, qa_actor_id actor) {
     qa_builtin_actor_traits traits = {0};
     if (!m->options.services.actor_traits ||
         !m->options.services.actor_traits(m->options.services.context, actor, &traits))
-        return NULL;
-    return qa_strings_cstr(qa_session_strings(m->options.services.session), traits.classname);
+        return 0;
+    return traits.classname;
 }
 static bool relic_spot(qa_modes *m, mode_instance *v, bool initial, qa_vec3 *origin, qa_error *e) {
     if (v->value.rules.source == QA_MODE_LMCTF) {
@@ -34,8 +34,8 @@ static bool relic_spot(qa_modes *m, mode_instance *v, bool initial, qa_vec3 *ori
         if (initial)
             for (size_t i = 0; i < m->observations.count; ++i) {
                 qa_actor_id actor = m->observations.ids[i];
-                const char *name = actor_class(m, actor);
-                if (!name || strcmp(name, "item_health"))
+                qa_string_id name = actor_class(m, actor);
+                if (name != m->runtime_names[MODE_NAME_ITEM_HEALTH])
                     continue;
                 qa_body_state health;
                 if (!qa_world_body_read(m->options.services.world, actor, &health, e))
@@ -59,13 +59,13 @@ static bool relic_spot(qa_modes *m, mode_instance *v, bool initial, qa_vec3 *ori
                     selected = actor;
                 }
             }
-        static const char *health_classes[] = {"item_health_small", "item_health_large",
-                                               "item_health"};
+        static const mode_name health_classes[] = {MODE_NAME_ITEM_HEALTH_SMALL, MODE_NAME_ITEM_HEALTH_LARGE,
+                                                  MODE_NAME_ITEM_HEALTH};
         for (size_t kind = 0; !selected.registry && kind < 3; ++kind) {
             size_t count = 0;
             for (size_t i = 0; i < m->observations.count; ++i) {
-                const char *name = actor_class(m, m->observations.ids[i]);
-                if (name && !strcmp(name, health_classes[kind]))
+                qa_string_id name = actor_class(m, m->observations.ids[i]);
+                if (name == m->runtime_names[health_classes[kind]])
                     ++count;
             }
             if (!count)
@@ -76,8 +76,8 @@ static bool relic_spot(qa_modes *m, mode_instance *v, bool initial, qa_vec3 *ori
             if (chosen)
                 --chosen;
             for (size_t i = 0; i < m->observations.count; ++i) {
-                const char *name = actor_class(m, m->observations.ids[i]);
-                if (name && !strcmp(name, health_classes[kind]) && !chosen--) {
+                qa_string_id name = actor_class(m, m->observations.ids[i]);
+                if (name == m->runtime_names[health_classes[kind]] && !chosen--) {
                     selected = m->observations.ids[i];
                     break;
                 }
@@ -93,9 +93,7 @@ static bool relic_spot(qa_modes *m, mode_instance *v, bool initial, qa_vec3 *ori
             return true;
         }
     }
-    qa_string_id classname;
-    if (!qa_builtin_resource(&m->options.services, "info_player_deathmatch", &classname, e))
-        return false;
+    qa_string_id classname = m->runtime_names[MODE_NAME_INFO_PLAYER_DEATHMATCH];
     if (v->value.rules.source == QA_MODE_ROGUE) {
         size_t previous = SIZE_MAX, first = SIZE_MAX, next = SIZE_MAX;
         for (size_t i = 0; i < v->spawn_count; ++i) {
@@ -370,12 +368,7 @@ bool qa_modes_after_damage(qa_modes *m, qa_mode_id id, const qa_damage_outcome *
     if (m->options.services.actor_traits)
         m->options.services.actor_traits(m->options.services.context, outcome->request.target,
                                          &traits);
-    bool body = false;
-    if (traits.classname) {
-        const char *name =
-            qa_strings_cstr(qa_session_strings(m->options.services.session), traits.classname);
-        body = name && strcmp(name, "bodyque") == 0;
-    }
+    bool body = traits.classname == m->runtime_names[MODE_NAME_BODYQUE];
     if (!traits.player && !body)
         return true;
     qa_combat_state state;

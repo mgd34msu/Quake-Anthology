@@ -361,6 +361,16 @@ are unchanged. Normal build and seven core suites pass:
 `/tmp/qa-ta3196-q2-classnames-20261011-{build,core}.log`. Mode, campaign and
 bot-goal classname sites plus authored traversal in finding 3 remain.
 
+Names finding 3, modes/campaign slice: mode and Q1 campaign constructors retain
+their classname/map rule constants in the shared session table. Horde counting,
+relic placement, spawn selection, saved spawn cursors, achievements and finale
+selection compare IDs. The actor-class observer returns the existing trait ID;
+mode placement and both campaign named-text helpers are deleted or narrowed to
+ID comparison. Original names, selection order and output text are unchanged.
+Normal build and seven core suites pass:
+`/tmp/qa-ta3196-mode-campaign-names-20261011-{build,core}.log`. The shared target
+router, authored traversal callers and bot-goal selectors remain in finding 3.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's
