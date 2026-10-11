@@ -10,18 +10,7 @@ static bool gib(qa_q1_game *g, q1_actor *entity, float damage, qa_error *error) 
         return true;
     if (!q1_gib_head(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_H_GREM_MDL], damage, error))
         return false;
-    for (unsigned i = 0; i < 3; ++i) {
-        if (!q1_entity(g, id))
-            return true;
-        qa_body_state body;
-        if (!qa_world_body_read(g->services.world, id, &body, error))
-            return false;
-        if (!q1_entity(g, id))
-            return true;
-        if (!q1_gib_at(g, id, body.origin, damage, g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB1_MDL], error))
-            return false;
-    }
-    return true;
+    return q1_gib_burst(g, id, NULL, &damage, 0, NULL, error);
 }
 static bool resume(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_monster *m = &entity->state.monster;

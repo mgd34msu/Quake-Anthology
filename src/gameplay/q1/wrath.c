@@ -59,9 +59,7 @@ bool q1_wrath_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, qa
             return false;
         float health = q1_health(g, entity->id);
         static const q1_runtime_name models[] = {Q1_NAME_RESOURCE_PROGS_WRTHGIB1_MDL, Q1_NAME_RESOURCE_PROGS_WRTHGIB2_MDL, Q1_NAME_RESOURCE_PROGS_WRTHGIB3_MDL};
-        for (unsigned i = 0; i < 3; ++i)
-            if (!q1_gib_at(g, entity->id, body.origin, health, g->runtime_names[models[i]], error))
-                return false;
+        if (!q1_gib_burst(g, entity->id, &body.origin, &health, -1, models, error)) return false;
         qa_actor_id world =
             g->services.physics ? g->services.physics->world_actor : (qa_actor_id){0};
         if (!q1_radius(g, entity->id, entity->id, 80, world, QA_Q1_WEAPON_COUNT, error))

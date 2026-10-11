@@ -109,7 +109,7 @@ bool q1_map_sacrifice_gib(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return false;
     if (!sacrifice(g, id)) return true;
     const float health=-10;
-    if (!q1_gib_burst(g, id, NULL, &health, -1, error)) return false;
+    if (!q1_gib_burst(g, id, NULL, &health, -1, NULL, error)) return false;
     if (!sacrifice(g, id)) return true;
     if (!q1_sound_resource(g, id, q1_random(g) < .5f ? g->runtime_names[Q1_NAME_RESOURCE_PLAYER_GIB_WAV] : g->runtime_names[Q1_NAME_RESOURCE_PLAYER_UDEATH_WAV], 2, 0, 1, error))
         return false;

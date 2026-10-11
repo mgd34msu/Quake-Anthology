@@ -625,7 +625,7 @@ bool q1_heavy_die(qa_q1_game *g, q1_actor *e, qa_error *error) {
         qa_body_state value;
         if (!body(g, e, &value, error))
             return false;
-        return q1_gib_burst(g, e->id, &value.origin, &health, -1, error);
+        return q1_gib_burst(g, e->id, &value.origin, &health, -1, NULL, error);
     }
     if (!q1_sound_resource(g, e->id, shambler             ? g->runtime_names[Q1_NAME_RESOURCE_SHAMBLER_SDEATH_WAV]
                   : q1_random(g) < .5f ? g->runtime_names[Q1_NAME_RESOURCE_RKNIGHT_DEATH_01_WAV]

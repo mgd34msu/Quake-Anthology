@@ -409,7 +409,7 @@ bool q1_mission_monster_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_PLAYER_UDEATH_WAV], 2, 1, 1, error) ||
             !q1_gib(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_H_SCOURG_MDL], true, error))
             return false;
-        return q1_gib_burst(g, entity->id, NULL, NULL, -1, error);
+        return q1_gib_burst(g, entity->id, NULL, NULL, -1, NULL, error);
     }
     if (m->species->species == QA_Q1_SWORD) {
         entity->effects = 0;
@@ -430,17 +430,14 @@ bool q1_mission_monster_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         entity->effects = 0;
         if (!q1_gib(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_EELGIB_MDL], true, error))
             return false;
-        for (unsigned i = 0; i < 3; ++i)
-            if (!q1_gib(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB1_MDL], false, error))
-                return false;
-        return true;
+        return q1_gib_burst(g, entity->id, NULL, NULL, 0, NULL, error);
     }
     if (m->species->species == QA_Q1_MUMMY) {
         if (!qa_combat_set_health(g->services.combat, entity->id, -35, error) ||
             !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_GIB_WAV], 2, 1, 1, error) ||
             !q1_gib(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_H_ZOMBIE_MDL], true, error))
             return false;
-        return q1_gib_burst(g, entity->id, NULL, NULL, -1, error);
+        return q1_gib_burst(g, entity->id, NULL, NULL, -1, NULL, error);
     }
     qa_error_set(error, QA_ERROR_UNSUPPORTED, m->species->species,
                  "Q1 mission monster death is not implemented");

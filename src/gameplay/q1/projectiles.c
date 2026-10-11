@@ -410,11 +410,11 @@ bool q1_gib(qa_q1_game *g, q1_actor *source, qa_string_id model, bool head, qa_e
     return !q1_entity(g, id) || q1_gib_at(g, id, body.origin, health, model, error);
 }
 bool q1_gib_burst(qa_q1_game *g, qa_actor_id owner, const qa_vec3 *origin,
-    const float *health, int model_index, qa_error *error) {
+    const float *health, int model_index, const q1_runtime_name models[3], qa_error *error) {
     for (unsigned i=0;i<3;++i) {
         q1_actor *entity=q1_entity(g,owner);
         if (!entity) return true;
-        qa_string_id model=g->runtime_names[q1_gib_models[model_index<0?i:(unsigned)model_index]];
+        qa_string_id model=g->runtime_names[models?models[i]:q1_gib_models[model_index<0?i:(unsigned)model_index]];
         if (!origin && !health) {
             if (!q1_gib(g,entity,model,false,error)) return false;
         } else {

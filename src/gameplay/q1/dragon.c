@@ -288,9 +288,8 @@ static bool explode(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (qa_vec_length(body.velocity) < 100 || (entity->physics.flags & QA_PHYSICS_PLAYER)) {
         m->source.dragon.death_state = 3;
         static const q1_runtime_name models[] = {Q1_NAME_RESOURCE_PROGS_DRGGIB01_MDL, Q1_NAME_RESOURCE_PROGS_DRGGIB02_MDL, Q1_NAME_RESOURCE_PROGS_DRGGIB03_MDL};
-        for (unsigned i = 0; i < 3; ++i)
-            if (!q1_gib_at(g, entity->id, body.origin, -100, g->runtime_names[models[i]], error))
-                return false;
+        float health = -100;
+        if (!q1_gib_burst(g, entity->id, &body.origin, &health, -1, models, error)) return false;
         if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_PLAYER_TORNOFF2_WAV], 4, 0, 1, error))
             return false;
         m->next_frame = (Q1_FRAME_dragon_boom2);

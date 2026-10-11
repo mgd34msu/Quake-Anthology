@@ -309,7 +309,7 @@ static bool die(qa_q1_game *g, q1_player *player, const qa_damage_outcome *outco
         body.bounds = (qa_bounds){{-16, -16, 0}, {16, 16, 56}};
         if (!qa_world_body_write(g->services.world, actor, &body, error))
             return false;
-        if (!q1_gib_burst(g, actor, &gib_origin, &health, -1, error))
+        if (!q1_gib_burst(g, actor, &gib_origin, &health, -1, NULL, error))
             return false;
         bool teledeath = q1_classnamed(g, outcome->request.attack.attacker, g->runtime_names[Q1_NAME_TELEDEATH]) ||
                          q1_classnamed(g, outcome->request.attack.attacker, g->runtime_names[Q1_NAME_TELEDEATH2]);

@@ -378,7 +378,7 @@ bool q1_armagon_think(qa_q1_game *g, q1_actor *part, q1_think_kind kind, qa_erro
         if (count < 25) {
             if ((float)count > part->count) {
                 const float health=-100;
-                if (!q1_gib_burst(g, part->id, &body.origin, &health, -1, error)) return false;
+                if (!q1_gib_burst(g, part->id, &body.origin, &health, -1, NULL, error)) return false;
                 if (!q1_alive(g, part->id)) return true;
                 part->count = (float)(count + 1);
             }
@@ -392,7 +392,7 @@ bool q1_armagon_think(qa_q1_game *g, q1_actor *part, q1_think_kind kind, qa_erro
         return false;
     const float health=-200;
     for (unsigned i=0;i<3;++i)
-        if (!q1_gib_burst(g, part->id, &body.origin, &health, -1, error)) return false;
+        if (!q1_gib_burst(g, part->id, &body.origin, &health, -1, NULL, error)) return false;
     if (!q1_alive(g, part->id)) return true;
     part->physics.motion = QA_PHYSICS_STATIONARY;
     part->physics.solid = QA_PHYSICS_NOT_SOLID;

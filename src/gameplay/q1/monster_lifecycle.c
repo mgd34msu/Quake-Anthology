@@ -305,7 +305,7 @@ static bool gib_monster(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return false;
     int model_index=spec->species==QA_Q1_DOG || spec->species==QA_Q1_OGRE ? 2
         : spec->species==QA_Q1_DEMON ? 0 : spec->species==QA_Q1_WIZARD ? 1 : -1;
-    if (!q1_gib_burst(g, source, NULL, foundation?&health:NULL, model_index, error))
+    if (!q1_gib_burst(g, source, NULL, foundation?&health:NULL, model_index, NULL, error))
         return false;
     entity = q1_entity(g, source);
     if (!entity || (foundation && spec->species == QA_Q1_ARMY))

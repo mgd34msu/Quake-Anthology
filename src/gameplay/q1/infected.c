@@ -73,7 +73,7 @@ bool q1_infected_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action,
 
 static bool gibs(qa_q1_game *g, q1_actor *entity, qa_vec3 origin, float health, bool demon,
                  qa_error *error) {
-    return q1_gib_burst(g, entity->id, &origin, &health, demon?0:-1, error);
+    return q1_gib_burst(g, entity->id, &origin, &health, demon?0:-1, NULL, error);
 }
 static bool retarget(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_monster *m = &entity->state.monster;

@@ -158,7 +158,7 @@ bool q1_boss_die(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, qa_error *err
     if (!body(g, e, &value, error) || !q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_GIB_WAV], 2, 1, 1, error))
         return false;
     float health = q1_health(g, e->id);
-    if (!q1_gib_burst(g, e->id, &value.origin, &health, -1, error))
+    if (!q1_gib_burst(g, e->id, &value.origin, &health, -1, NULL, error))
         return false;
     return !q1_alive(g, e->id) || q1_remove(g, e, error);
 }

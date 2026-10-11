@@ -120,12 +120,9 @@ bool q1_demodog_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
-    for (unsigned i = 0; i < 3; ++i) {
-        if (!q1_gib_at(g, entity->id, body.origin, -50, g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB3_MDL], error))
-            return false;
-        if (!q1_alive(g, entity->id))
-            return true;
-    }
+    float health = -50;
+    if (!q1_gib_burst(g, entity->id, &body.origin, &health, 2, NULL, error)) return false;
+    if (!q1_alive(g, entity->id)) return true;
     return q1_gib_head(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_H_DOG_MDL], -50, error);
 }
 bool q1_demodog_explode(qa_q1_game *g, q1_actor *entity, qa_actor_id ignore, qa_error *error) {

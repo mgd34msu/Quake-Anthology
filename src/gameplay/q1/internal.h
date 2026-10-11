@@ -1425,7 +1425,7 @@ bool q1_gib_head(qa_q1_game *, q1_actor *, qa_string_id, float damage, qa_error 
 /* NULL origin/health read the live owner for each gib. A negative model index
  * selects the standard sequence; 0..2 repeat one model. */
 bool q1_gib_burst(qa_q1_game *, qa_actor_id, const qa_vec3 *origin, const float *health,
-    int model_index, qa_error *);
+    int model_index, const q1_runtime_name models[3], qa_error *);
 bool q1_gib_at(qa_q1_game *, qa_actor_id owner, qa_vec3, float health, qa_string_id, qa_error *);
 bool q1_meat_spray(qa_q1_game *, q1_actor *, qa_vec3 origin, qa_vec3 velocity, qa_error *);
 bool q1_monster_spawn(qa_q1_game *, q1_actor *, const q1_species *, qa_error *);
