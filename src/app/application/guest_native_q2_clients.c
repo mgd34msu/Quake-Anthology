@@ -13,9 +13,8 @@
 
 uint32_t application_native_q2_client_slot(const struct application_native_q2 *engine, qa_actor_id actor)
 {
-    if (!engine || !engine->client_slots || !actor.registry || actor.slot >= engine->client_actor_capacity) return 0;
-    uint32_t slot = engine->client_slots[actor.slot];
-    return slot && qa_actor_id_equal(engine->clients[slot].actor, actor) ? slot : 0;
+    size_t slot;
+    return engine && qa_actor_index_find(&engine->client_index, actor, &slot) ? (uint32_t)slot : 0;
 }
 
 bool application_native_q2_client_admitted(const struct application_native_q2 *engine, qa_actor_id actor)
@@ -33,7 +32,7 @@ bool application_native_q2_client_begun(const struct application_native_q2 *engi
 
 void application_native_q2_client_unbind(struct application_native_q2 *engine, qa_actor_id actor)
 {
-    if (application_native_q2_client_slot(engine, actor)) engine->client_slots[actor.slot] = 0;
+    qa_actor_index_remove(&engine->client_index, actor);
 }
 
 static uint32_t source_client_slot(const application_provider *provider, qa_actor_id actor)
@@ -495,7 +494,7 @@ bool application_native_q2_client_admit(application_provider *provider, uint32_t
     if (client->connected || (client->actor.registry && !qa_actor_id_equal(client->actor, actor)) ||
         (prior_slot && prior_slot != slot))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 source client slot is occupied");
-    engine->client_slots[actor.slot] = (uint16_t)slot;
+    qa_actor_index_put(&engine->client_index, actor, slot);
     client->actor = actor; client->bot = bot; client->disconnect_started = false;
     if (client->layout[0]) ++client->layout_revision;
     for (size_t i = 0; i < sizeof(client->inventory) / sizeof(*client->inventory); ++i)

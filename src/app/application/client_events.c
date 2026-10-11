@@ -197,29 +197,23 @@ static bool provider_listener(application_provider *p, qa_actor_id actor,
         struct application_qc_state *engine = p->state.qc.engine;
         if (!engine || !engine->clients) return true;
         row.kind = CLIENT_LISTENER_QC; row.engine = engine;
-        for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
-            if (!engine->clients[slot].connected ||
-                !qa_actor_id_equal(engine->clients[slot].actor, actor)) continue;
-            if (*found) return application_fail(error, QA_ERROR_FORMAT, "QC client actor has duplicate physical slots");
-            row.slot = slot; *found = true;
+        const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+        if (client && client->connected) {
+            row.slot = (uint32_t)(client - engine->clients); *found = true;
         }
     } else if (p->kind == APPLICATION_PROVIDER_NATIVE && p->state.native.q2_engine) {
         struct application_native_q2 *engine = p->state.native.q2_engine;
         row.kind = CLIENT_LISTENER_NATIVE_Q2; row.engine = engine;
-        for (uint32_t slot = 1; slot < 257; ++slot) {
-            if (!engine->clients[slot].connected ||
-                !qa_actor_id_equal(engine->clients[slot].actor, actor)) continue;
-            if (*found) return application_fail(error, QA_ERROR_FORMAT, "Native Q2 client actor has duplicate physical slots");
-            row.slot = slot; *found = true;
-        }
+        uint32_t slot = application_native_q2_client_slot(engine, actor);
+        if (slot && engine->clients[slot].connected) { row.slot = slot; *found = true; }
     } else if (p->kind == APPLICATION_PROVIDER_QVM || p->kind == APPLICATION_PROVIDER_NATIVE) {
         struct application_q3_guest *engine = q3g_engine(p);
         if (!engine || !engine->game) return true;
         row.kind = CLIENT_LISTENER_Q3; row.engine = engine;
-        for (uint32_t slot = 0; slot < 64; ++slot) {
-            if (!engine->clients[slot].connected ||
-                !qa_actor_id_equal(engine->clients[slot].actor, actor)) continue;
-            if (*found) return application_fail(error, QA_ERROR_FORMAT, "Q3 client actor has duplicate physical slots");
+        uint32_t slot;
+        if (qa_q3_host_actor_slot(engine->game->host, actor, &slot, NULL) &&
+            slot < sizeof(engine->clients)/sizeof(*engine->clients) && engine->clients[slot].connected &&
+            qa_actor_id_equal(engine->clients[slot].actor, actor)) {
             row.slot = slot; *found = true;
         }
     }

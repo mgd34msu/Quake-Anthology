@@ -350,14 +350,9 @@ bool application_native_q2_inventory_source_read(struct application_native_q2 *e
     if (!engine || !out || !engine->primary_inventory || !engine->map_ready ||
         engine->shutting_down || !engine->provider->state.native.host)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native inventory source requires its retained map and declaration");
-    uint32_t slot = 0;
-    for (uint32_t i = 1; i < 257; ++i) {
-        const application_native_q2_client *client = &engine->clients[i];
-        if (!client->reserved || !client->connected || client->disconnect_started ||
-            !qa_actor_id_equal(client->actor, actor)) continue;
-        if (slot) return application_fail(error, QA_ERROR_FORMAT, "Native inventory actor repeats a source client slot");
-        slot = i;
-    }
+    uint32_t slot = application_native_q2_client_slot(engine, actor);
+    if (slot && (!engine->clients[slot].reserved || !engine->clients[slot].connected ||
+        engine->clients[slot].disconnect_started)) slot = 0;
     if (!slot || !resolve(engine, error))
         return slot ? false : application_fail(error, QA_ERROR_NOT_FOUND, "Native inventory source client is absent");
     struct application_native_q2_inventory *p = engine->primary_inventory;
@@ -538,14 +533,10 @@ bool application_native_q2_inventory_binding(application_provider *provider, qa_
         !saved_serial || !engine->map_ready ||
         application_provider_for(provider->application, actor, QA_ROLE_INVENTORY, NULL) != provider)
         return application_fail(error, QA_ERROR_ARGUMENT, "Restored native Q2 inventory requires its live qualified source owner");
-    application_native_q2_client *client = NULL;
-    uint32_t slot = 0;
-    for (uint32_t i = 1; i < 257; ++i) {
-        application_native_q2_client *candidate = &engine->clients[i];
-        if (candidate->reserved && candidate->connected && candidate->begun &&
-            qa_actor_id_equal(candidate->actor, actor)) { client = candidate; slot = i; break; }
-    }
-    if (!client) return application_fail(error, QA_ERROR_NOT_FOUND, "Restored native Q2 inventory client is absent");
+    uint32_t slot = application_native_q2_client_slot(engine, actor);
+    application_native_q2_client *client = slot ? &engine->clients[slot] : NULL;
+    if (!client || !client->reserved || !client->connected || !client->begun)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Restored native Q2 inventory client is absent");
     if (client->inventory_bound && (client->inventory_lease.serial != saved_serial ||
         !qa_actor_id_equal(client->inventory_lease.actor, actor)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Restored native Q2 inventory lease differs from its live source lease");

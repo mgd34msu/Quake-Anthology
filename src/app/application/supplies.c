@@ -309,6 +309,7 @@ typedef struct supply_pair {
     qa_supply *supply;
     qa_pickup_rule *pickup_rules;
     size_t pickup_rule_count;
+    qa_actor_index actors;
     bool native;
 } supply_pair;
 typedef struct supply_timer {
@@ -318,6 +319,7 @@ typedef struct supply_timer {
 } supply_timer;
 typedef struct supply_actor {
     struct supply_actor *next;
+    struct supply_actor **previous;
     supply_pair *pair;
     qa_actor_id actor;
     supply_timer *timers;
@@ -658,47 +660,50 @@ static supply_pair *pair_find(application_supplies *owner, application_provider 
     return NULL;
 }
 static supply_actor *actor_find(application_supplies *owner, supply_pair *pair, qa_actor_id actor) {
-    for (supply_actor *entry = owner->actors; entry; entry = entry->next)
-        if (entry->pair == pair && qa_actor_id_equal(entry->actor, actor)) return entry;
-    return NULL;
+    (void)owner;
+    size_t row;
+    return qa_actor_index_find(&pair->actors, actor, &row) ? (supply_actor *)(uintptr_t)row : NULL;
+}
+static void actor_link(application_supplies *owner, supply_actor *entry) {
+    entry->next = owner->actors; entry->previous = &owner->actors;
+    if (entry->next) entry->next->previous = &entry->next;
+    owner->actors = entry;
+    qa_actor_index_put(&entry->pair->actors, entry->actor, (size_t)(uintptr_t)entry);
 }
 static bool original_player_current(application_provider *provider, qa_actor_id actor,
     qa_error *error) {
     if (provider->kind == APPLICATION_PROVIDER_QC) {
         struct application_qc_state *engine = provider->state.qc.engine;
         if (engine && engine->provider == provider && engine->initialized && engine->clients &&
-            provider->state.qc.instance && !engine->loading)
-            for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
-                const application_qc_client *client = engine->clients + slot;
-                qa_qc_slot_binding binding;
-                const qa_actor_record *record = qa_actors_get(qa_session_actors(engine->services.session), actor);
-                if (client->connected && qa_actor_id_equal(client->actor, actor) && record &&
-                    qa_qc_slot(provider->state.qc.instance, slot, &binding) &&
-                    qa_actor_id_equal(binding.actor, actor) && binding.owner == record->owner &&
-                    binding.source_slot == (record->has_source ? record->source_slot : 0) &&
-                    (binding.kind == QA_QC_SLOT_BORROWED || binding.kind == QA_QC_SLOT_OWNED)) return true;
-            }
+            provider->state.qc.instance && !engine->loading) {
+            const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+            qa_qc_slot_binding binding;
+            const qa_actor_record *record = qa_actors_get(qa_session_actors(engine->services.session), actor);
+            if (client && client->connected && record &&
+                qa_qc_slot(provider->state.qc.instance, (uint32_t)(client - engine->clients), &binding) &&
+                qa_actor_id_equal(binding.actor, actor) && binding.owner == record->owner &&
+                binding.source_slot == (record->has_source ? record->source_slot : 0) &&
+                (binding.kind == QA_QC_SLOT_BORROWED || binding.kind == QA_QC_SLOT_OWNED)) return true;
+        }
     } else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine) {
         struct application_native_q2 *engine = provider->state.native.q2_engine;
-        if (engine->provider == provider && engine->initialized && !engine->shutting_down)
-            for (size_t slot = 0; slot < sizeof(engine->clients)/sizeof(*engine->clients); ++slot) {
-                const application_native_q2_client *client = engine->clients + slot;
-                if (client->connected && !client->disconnect_started &&
-                    qa_actor_id_equal(client->actor, actor)) return true;
-            }
+        uint32_t slot = application_native_q2_client_slot(engine, actor);
+        if (engine->provider == provider && engine->initialized && !engine->shutting_down && slot) {
+            const application_native_q2_client *client = engine->clients + slot;
+            if (client->connected && !client->disconnect_started) return true;
+        }
     } else {
         struct application_q3_guest *engine = q3g_engine(provider);
+        uint32_t slot;
         if (engine && engine->provider == provider && engine->game && engine->game->primary &&
-            engine->game->initialized && !engine->game->retired && engine->game->host)
-            for (size_t slot = 0; slot < sizeof(engine->clients)/sizeof(*engine->clients); ++slot) {
-                const q3g_client *client = engine->clients + slot;
-                uint32_t actual;
-                if (client->allocated && client->connected && !client->disconnect_pending &&
-                    !client->disconnect_started && !client->pending_retirement &&
-                    qa_actor_id_equal(client->actor, actor) &&
-                    qa_q3_host_actor_slot(engine->game->host, actor, &actual, error) && actual == slot)
-                    return true;
-            }
+            engine->game->initialized && !engine->game->retired && engine->game->host &&
+            qa_q3_host_actor_slot(engine->game->host, actor, &slot, NULL) &&
+            slot < sizeof(engine->clients)/sizeof(*engine->clients)) {
+            const q3g_client *client = engine->clients + slot;
+            if (client->allocated && client->connected && !client->disconnect_pending &&
+                !client->disconnect_started && !client->pending_retirement &&
+                qa_actor_id_equal(client->actor, actor)) return true;
+        }
     }
     return application_fail(error, QA_ERROR_ARGUMENT, "Native source supply has no actual original player binding");
 }
@@ -932,10 +937,13 @@ bool application_supplies_destroy(application_supplies *owner, qa_error *error) 
         supply_actor *entry = owner->actors;
         if (entry->pickups.serial && !qa_pickups_close(owner->application->pickups, entry->pickups, error)) return false;
         owner->actors = entry->next;
+        if (owner->actors) owner->actors->previous = &owner->actors;
+        qa_actor_index_remove(&entry->pair->actors, entry->actor);
         free(entry->timers); free(entry);
     }
     while (owner->pairs) {
         supply_pair *pair = owner->pairs; owner->pairs = pair->next;
+        qa_actor_index_destroy(&pair->actors);
         qa_supply_destroy(pair->supply); pickup_rules_free(pair); profile_free(&pair->profile); free(pair);
     }
     free(owner); return true;
@@ -952,6 +960,9 @@ bool application_supplies_prepare(application_supplies *owner, application_provi
     if (pair_find(owner, source, arsenal)) return true;
     supply_pair *pair = calloc(1, sizeof(*pair));
     if (!pair) return application_fail(error, QA_ERROR_MEMORY, "Allocating selected supply pair");
+    if (!qa_actor_index_create(&pair->actors, qa_session_actors(owner->application->session), error)) {
+        free(pair); return false;
+    }
     pair->owner = owner; pair->source = source; pair->arsenal = arsenal;
     pair->native = source == arsenal ||
         (source->kind == APPLICATION_PROVIDER_Q3 && arsenal->kind == APPLICATION_PROVIDER_Q3);
@@ -965,7 +976,7 @@ bool application_supplies_prepare(application_supplies *owner, application_provi
             pickup_rules_build(pair, error);
     }
     --owner->calls;
-    if (!ok) { qa_supply_destroy(pair->supply); pickup_rules_free(pair); profile_free(&pair->profile); free(pair); return false; }
+    if (!ok) { qa_actor_index_destroy(&pair->actors); qa_supply_destroy(pair->supply); pickup_rules_free(pair); profile_free(&pair->profile); free(pair); return false; }
     pair->next = owner->pairs; owner->pairs = pair; return true;
 }
 static bool destination_metadata(supply_pair *pair, qa_item_id item,
@@ -1075,7 +1086,7 @@ bool application_supplies_admit(application_supplies *owner, application_provide
         pair_current(pair, actor, error) && qa_inventory_admission_commit(admission, error));
     if (ok) admission = NULL;
     qa_inventory_admission_abort(admission); free(entries);
-    if (ok) { entry->next = owner->actors; owner->actors = entry;
+    if (ok) { actor_link(owner, entry);
         ok = pickup_actor_bind(entry, error); }
     else free(entry);
     owner->admitting = false;
@@ -1118,7 +1129,7 @@ bool application_supplies_pickup_rule(application_supplies *owner,qa_actor_id ac
     if (!entry) {
         entry = calloc(1, sizeof(*entry));
         if (!entry) return application_fail(error, QA_ERROR_MEMORY, "Retaining restored selected pickup recipient");
-        entry->pair = pair; entry->actor = actor; entry->next = owner->actors; owner->actors = entry;
+        entry->pair = pair; entry->actor = actor; actor_link(owner, entry);
     }
     if (entry->pickup_imported && entry->pickups.serial != serial)
         return application_fail(error, QA_ERROR_FORMAT, "Saved selected pickup changed its actual registration identity");
@@ -1128,13 +1139,13 @@ bool application_supplies_pickup_rule(application_supplies *owner,qa_actor_id ac
 }
 void application_supplies_actor_released(application_supplies *owner, qa_actor_record actor) {
     if (!owner) return;
-    supply_actor **cursor = &owner->actors;
-    while (*cursor) {
-        supply_actor *entry = *cursor;
-        if (qa_actor_id_equal(entry->actor, actor.id)) {
-            *cursor = entry->next; free(entry->timers); free(entry);
-        }
-        else cursor = &entry->next;
+    for (supply_pair *pair = owner->pairs; pair; pair = pair->next) {
+        supply_actor *entry = actor_find(owner, pair, actor.id);
+        if (!entry) continue;
+        qa_actor_index_remove(&pair->actors, actor.id);
+        *entry->previous = entry->next;
+        if (entry->next) entry->next->previous = entry->previous;
+        free(entry->timers); free(entry);
     }
 }
 bool application_supplies_ammo_destination(application_supplies *owner,
@@ -1907,25 +1918,32 @@ static void actor_list_free(supply_actor *head) {
 }
 static bool roster_matches(application_supplies *owner, const supply_actor *saved, qa_error *error) {
     const struct application_player_roster *roster = owner->application->players;
+    qa_actor_index index = {0};
+    if (!qa_actor_index_create(&index, qa_session_actors(owner->application->session), error)) return false;
     size_t expected = 0, actual = 0;
-    for (const supply_actor *row = saved; row; row = row->next) {
+    bool ok = true;
+    for (const supply_actor *row = saved; ok && row; row = row->next) {
         ++actual;
-        if (!pair_current(row->pair, row->actor, error)) return false;
-        for (const supply_actor *prior = saved; prior != row; prior = prior->next)
-            if (qa_actor_id_equal(prior->actor, row->actor))
-                return application_fail(error, QA_ERROR_FORMAT, "Duplicate saved supply actor admission");
+        if (!pair_current(row->pair, row->actor, error)) { ok = false; break; }
+        size_t prior;
+        if (qa_actor_index_find(&index, row->actor, &prior))
+            ok = application_fail(error, QA_ERROR_FORMAT, "Duplicate saved supply actor admission");
+        else qa_actor_index_put(&index, row->actor, (size_t)(uintptr_t)row);
     }
-    for (size_t i = 0; roster && i < roster->count; ++i) {
+    for (size_t i = 0; ok && roster && i < roster->count; ++i) {
         const application_player_record *player = roster->records + i;
         if (!player->actor.registry || player->retiring) continue;
         ++expected;
-        const supply_actor *row = saved;
-        while (row && !qa_actor_id_equal(row->actor, player->actor)) row = row->next;
+        size_t value;
+        const supply_actor *row = qa_actor_index_find(&index, player->actor, &value)
+            ? (const supply_actor *)(uintptr_t)value : NULL;
         if (!row || row->pair->source != roster->map_provider)
-            return application_fail(error, QA_ERROR_FORMAT, "Saved supply admission omits an actual source player");
+            ok = application_fail(error, QA_ERROR_FORMAT, "Saved supply admission omits an actual source player");
     }
-    return expected == actual || application_fail(error, QA_ERROR_FORMAT,
+    if (ok && expected != actual) ok = application_fail(error, QA_ERROR_FORMAT,
         "Saved supply admission contains a player outside the actual source roster");
+    qa_actor_index_destroy(&index);
+    return ok;
 }
 static bool timers_valid(supply_actor *row, qa_error *error) {
     supply_pair *pair = row->pair;
@@ -2121,6 +2139,13 @@ bool qa_application_supplies_restore(qa_application *app, qa_bytes bytes, qa_err
         }
         actor_list_free(owner->actors);
         owner->actors = decoded; decoded = NULL;
+        for (supply_pair *pair = owner->pairs; pair; pair = pair->next) qa_actor_index_clear(&pair->actors);
+        supply_actor **link = &owner->actors;
+        for (supply_actor *row = owner->actors; row; row = row->next) {
+            row->previous = link;
+            qa_actor_index_put(&row->pair->actors, row->actor, (size_t)(uintptr_t)row);
+            link = &row->next;
+        }
     }
     actor_list_free(decoded);
     --owner->calls;

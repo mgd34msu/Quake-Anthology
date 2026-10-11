@@ -76,8 +76,7 @@ struct application_native_q2 {
     qa_actor_id world_actor;
     qa_actor_definition definition;
     application_native_q2_client clients[257];
-    uint16_t *client_slots;
-    uint32_t client_actor_capacity;
+    qa_actor_index client_index;
     qa_q2_messages *event_decoder;
     qa_net_protocol_id protocol;
     qa_hud_q2_names hud_names;
