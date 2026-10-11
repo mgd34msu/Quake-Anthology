@@ -304,12 +304,10 @@ static bool gib_monster(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         !q1_gib_head(g, entity, (spec->head==Q1_NAME_COUNT?0:g->runtime_names[spec->head]), health, error))
         return false;
     for (unsigned i = 0; i < 3; ++i) {
-        qa_string_id model = spec->species == QA_Q1_DOG || spec->species == QA_Q1_OGRE ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB3_MDL]
-                            : spec->species == QA_Q1_DEMON                            ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB1_MDL]
-                            : spec->species == QA_Q1_WIZARD                           ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB2_MDL]
-                            : i == 0                                                  ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB1_MDL]
-                            : i == 1                                                  ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB2_MDL]
-                                                                                      : g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB3_MDL];
+        unsigned model_index = spec->species == QA_Q1_DOG || spec->species == QA_Q1_OGRE ? 2
+                               : spec->species == QA_Q1_DEMON ? 0
+                               : spec->species == QA_Q1_WIZARD ? 1 : i;
+        qa_string_id model = g->runtime_names[q1_gib_models[model_index]];
         if (!q1_entity(g, source))
             return true;
         qa_body_state body;

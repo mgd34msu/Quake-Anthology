@@ -1316,6 +1316,7 @@ bool q1_inventory_attach(qa_q1_game_operation *, q1_player *, qa_error *);
 void q1_inventory_close(qa_q1_game *, q1_player *);
 bool q1_alive(qa_q1_game *, qa_actor_id);
 float q1_random(qa_q1_game *);
+qa_string_id q1_random_gib_model(qa_q1_game *, float choice);
 float q1_health(qa_q1_game *, qa_actor_id);
 bool q1_damageable(qa_q1_game *, qa_actor_id);
 float q1_actor_view_height(const q1_actor *, bool player);

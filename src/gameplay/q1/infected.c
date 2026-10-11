@@ -75,10 +75,7 @@ static bool gibs(qa_q1_game *g, q1_actor *entity, qa_vec3 origin, float health, 
                  qa_error *error) {
     for (unsigned i = 0; i < 3; ++i) {
         if (!q1_gib_at(g, entity->id, origin, health,
-                       demon    ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB1_MDL]
-                       : i == 0 ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB1_MDL]
-                       : i == 1 ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB2_MDL]
-                                : g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB3_MDL],
+                       g->runtime_names[q1_gib_models[demon ? 0 : i]],
                        error))
             return false;
         if (!q1_alive(g, entity->id))

@@ -212,9 +212,7 @@ static bool finale_finish(qa_q1_game *g, q1_actor *oldone, qa_error *error) {
                 float random = q1_random(g);
                 if (!q1_gib_at(g, oldone->id,
                                qa_vec_add(body.origin, qa_v3((float)x, (float)y, (float)z)), -999,
-                               random < .3f   ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB1_MDL]
-                               : random < .6f ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB2_MDL]
-                                              : g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB3_MDL],
+                               q1_random_gib_model(g, random),
                                error))
                     return false;
             }

@@ -6,6 +6,10 @@
 #include <float.h>
 
 const q1_runtime_name q1_gib_models[3]={Q1_NAME_RESOURCE_PROGS_GIB1_MDL,Q1_NAME_RESOURCE_PROGS_GIB2_MDL,Q1_NAME_RESOURCE_PROGS_GIB3_MDL};
+
+qa_string_id q1_random_gib_model(qa_q1_game *g, float choice) {
+    return g->runtime_names[q1_gib_models[choice < .3f ? 0 : choice < .6f ? 1 : 2]];
+}
 const q1_runtime_name q1_rune_models[4]={Q1_NAME_RESOURCE_PROGS_END1_MDL,Q1_NAME_RESOURCE_PROGS_END2_MDL,Q1_NAME_RESOURCE_PROGS_END3_MDL,Q1_NAME_RESOURCE_PROGS_END4_MDL};
 const q1_runtime_name q1_mg1_rune_models[6]={Q1_NAME_RESOURCE_PROGS_MG1_RUNE1_MDL,Q1_NAME_RESOURCE_PROGS_MG1_RUNE2_MDL,Q1_NAME_RESOURCE_PROGS_MG1_RUNE3_MDL,Q1_NAME_RESOURCE_PROGS_MG1_RUNE4_MDL,Q1_NAME_RESOURCE_PROGS_MG1_RUNE5_MDL,Q1_NAME_RESOURCE_PROGS_MG1_RUNE6_MDL};
 

@@ -297,9 +297,7 @@ bool q1_boss_gib_vectors(qa_q1_game *g, q1_actor *source, qa_error *error) {
         gib->physics.angular_velocity = qa_v3(x, y, z);
         if (!q1_think_deadline(g->time, 0, &gib->physics.q1_pusher.local_seconds, error) ||
             !q1_model(g, gib,
-                      choice < .3f   ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB1_MDL]
-                      : choice < .6f ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB2_MDL]
-                                     : g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB3_MDL],
+                      q1_random_gib_model(g, choice),
                       error) ||
             !qa_world_body_write(g->services.world, gib->id, &body, error) ||
             !q1_schedule(g, gib, 10 + q1_random(g) * 10, Q1_THINK_REMOVE, error) ||

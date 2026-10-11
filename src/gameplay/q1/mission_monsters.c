@@ -1,6 +1,13 @@
 #include "internal.h"
 #include <stdio.h>
 
+static bool standard_gibs(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    for (unsigned i = 0; i < 3; ++i)
+        if (!q1_gib(g, entity, g->runtime_names[q1_gib_models[i]], false, error))
+            return false;
+    return true;
+}
+
 bool q1_monster_drop_floor(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
@@ -408,8 +415,7 @@ bool q1_mission_monster_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_PLAYER_UDEATH_WAV], 2, 1, 1, error) ||
             !q1_gib(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_H_SCOURG_MDL], true, error))
             return false;
-        return q1_gib(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB1_MDL], false, error) && q1_gib(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB2_MDL], false, error) &&
-               q1_gib(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB3_MDL], false, error);
+        return standard_gibs(g, entity, error);
     }
     if (m->species->species == QA_Q1_SWORD) {
         entity->effects = 0;
@@ -440,8 +446,7 @@ bool q1_mission_monster_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_GIB_WAV], 2, 1, 1, error) ||
             !q1_gib(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_H_ZOMBIE_MDL], true, error))
             return false;
-        return q1_gib(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB1_MDL], false, error) && q1_gib(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB2_MDL], false, error) &&
-               q1_gib(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB3_MDL], false, error);
+        return standard_gibs(g, entity, error);
     }
     qa_error_set(error, QA_ERROR_UNSUPPORTED, m->species->species,
                  "Q1 mission monster death is not implemented");
