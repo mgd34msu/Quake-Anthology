@@ -58,7 +58,8 @@ bool application_ui_names_prepare(qa_application *app, qa_error *error)
     static const char *const q2[] = {"q2:item_quad", "q2:item_quadfire", "q2:item_double", "q2:item_invulnerability",
         "q2:item_enviro", "q2:item_breather", "q2:item_ir_goggles"};
     static const char *const q3[] = {"q3:item_quad", "q3:item_enviro", "q3:item_haste", "q3:item_invis", "q3:item_regen", "q3:item_flight"};
-    return ui_names_admit(strings, names->q1_keys, keys, sizeof(keys) / sizeof(*keys), error) &&
+    return qa_strings_intern_cstr(strings, "", &names->empty_model, error) &&
+        ui_names_admit(strings, names->q1_keys, keys, sizeof(keys) / sizeof(*keys), error) &&
         ui_names_admit(strings, names->q1_powers, q1, sizeof(q1) / sizeof(*q1), error) &&
         ui_names_admit(strings, names->q2_powers, q2, sizeof(q2) / sizeof(*q2), error) &&
         ui_names_admit(strings, names->q3_powers, q3, sizeof(q3) / sizeof(*q3), error) &&

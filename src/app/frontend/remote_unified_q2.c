@@ -31,7 +31,7 @@
 
 typedef struct q2_model {
     struct q2_model *next;
-    char *path;
+    qa_string_id path;
     qa_scene_model *scene;
 } q2_model;
 typedef struct q2_alias { uint32_t number; qa_actor_id actor; } q2_alias;
@@ -273,6 +273,7 @@ static bool visual_prepare(frontend_unified_q2 *o,const qa_unified_presentation_
 static bool bank(frontend_unified_q2 *,const char *,q2_activation *,const char *,frontend_remote_q2_effects_profile,bool,q2_bank **,qa_error *);
 static bool source_bank(frontend_unified_q2 *,const qa_unified_presentation_event *,bool,q2_bank **,qa_error *);
 static bool model(void *,const char *,bool,qa_scene_model **,qa_error *);
+static bool model_name(q2_bank *,qa_string_id,bool,qa_scene_model **,qa_error *);
 static bool source_profile(const qa_unified_presentation_event *row,bool required,frontend_remote_q2_effects_profile *profile,qa_error *e)
 {
     *profile=(frontend_remote_q2_effects_profile)row->q2_profile;
@@ -302,14 +303,14 @@ static bool visual_apply(frontend_unified_q2 *o,const qa_unified_presentation_ev
     if (is_model) {
         qa_scene_model *scene=NULL;
         if (!m->path || !bank(o,row->content,NULL,NULL,0,false,&b,e) ||
-            !model(b,m->path,true,&scene,e)) return false;
+            !model_name(b,m->path,true,&scene,e)) return false;
         for (size_t i=0;i<m->attachment_count;++i)
             if (!model(b,m->attachments[i].path,true,&scene,e)) return false;
     }
     if (row->q2_profile && !source_bank(o,row,true,&b,e)) return false;
-    const char *content,*provider,*path=NULL;
-    if (!record_name(o,row->content,&content,e) || !record_name(o,row->q2_profile?row->provider:NULL,&provider,e) ||
-        (is_model && !record_name(o,m->path,&path,e))) return false;
+    const char *content,*provider;
+    const char *path=is_model?qa_strings_cstr(o->replica->strings,m->path):NULL;
+    if (!record_name(o,row->content,&content,e) || !record_name(o,row->q2_profile?row->provider:NULL,&provider,e)) return false;
     if (is_model && !qa_unified_document_retain(frontend_unified_events_document(o->events),&document,e)) return false;
     if (v->source_provider!=provider || v->content!=content) {
         qa_unified_document_destroy(v->model_document);v->model_document=NULL;v->model=NULL;v->path=NULL;
@@ -362,22 +363,27 @@ bool frontend_unified_q2_owner_retire(frontend_unified_q2 *o,const qa_unified_pr
     for (q2_bank *b=o->banks;b;b=b->next) if (b->activation==a && !frontend_received_music_destroy(&b->music,e)) { o->music_retiring=false;return false; }
     o->music_retiring=false;a->retired=true;return true;
 }
-static bool model(void *ctx,const char *path,bool acquire,qa_scene_model **out,qa_error *e)
+static bool model_name(q2_bank *b,qa_string_id path,bool acquire,qa_scene_model **out,qa_error *e)
 {
-    q2_bank *b=ctx;
-    for (q2_model *m=b->models;m;m=m->next) if (!strcmp(m->path,path)) { *out=m->scene; return true; }
+    for (q2_model *m=b->models;m;m=m->next) if (m->path==path) { *out=m->scene; return true; }
     if (!acquire) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified Q2 cold model is absent from its actual media cache");
     q2_model *m=calloc(1,sizeof(*m));
     if (!m) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q2 effect model admission");
-    m->path=malloc(strlen(path)+1);
-    if (!m->path) { free(m); return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q2 model path"); }
-    strcpy(m->path,path);
+    m->path=path;
     frontend_unified_model actual;
     qa_scene_image_options options={.family=QA_GAME_Q2,.usage=QA_IMAGE_USAGE_SKIN,.wrap=QA_SCENE_REPEAT,
         .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=255};
     bool okay=frontend_unified_media_model(b->owner->media,b->content,path,QA_GAME_Q2,&options,&actual,e);
-    if (!okay) { free(m->path); free(m); return false; }
+    if (!okay) { free(m); return false; }
     m->scene=actual.scene; m->next=b->models; b->models=m; *out=m->scene; return true;
+}
+static bool model(void *ctx,const char *path,bool acquire,qa_scene_model **out,qa_error *e)
+{
+    q2_bank *b=ctx; qa_string_id name;
+    if (acquire) {
+        if (!qa_strings_intern_cstr(b->owner->replica->strings,path,&name,e)) return false;
+    } else name=qa_strings_find(b->owner->replica->strings,(qa_bytes){(const uint8_t *)path,strlen(path)});
+    return model_name(b,name,acquire,out,e);
 }
 static bool pose_actor(q2_bank *b,qa_actor_id id,frontend_remote_q2_effects_pose *out,qa_error *e)
 {
@@ -1559,7 +1565,7 @@ bool frontend_unified_q2_model_after(frontend_unified_q2 *o,qa_actor_id a,const 
         const char *name=model_state->attachments[i].path;qa_scene_model *scene=NULL;
         bool okay=model(b,name,false,&scene,e);
         if (okay && scene) {qa_scene_model_input child=*input;
-            for (q2_model *m=b->models;m;m=m->next)if (!strcmp(m->path,name)){child.source_path=m->path;break;}
+            child.source_path=name;
             child.attachments=NULL;child.attachment_count=0;child.skin=0;
             child.material_library=frontend_unified_model_materials(scene);
             okay=qa_scene_model_submit(scene,&child,frame,e);}
@@ -1922,7 +1928,7 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
         q2_bank *b=o->banks;
         if (!frontend_remote_q2_effects_destroy(&b->effects,e)) return false;
         if (!frontend_q2_footsteps_destroy(&b->footsteps,e)) return false;
-        while (b->models) { q2_model *m=b->models; b->models=m->next; free(m->path); free(m); }
+        while (b->models) { q2_model *m=b->models; b->models=m->next; free(m); }
         q2_native_picture *picture=b->native_pictures;
         while (picture){q2_native_picture *next=picture->next;qa_scene_image_release(picture->image);free(picture->name);free(picture);picture=next;}
         o->banks=b->next; free(b->aliases); free(b->source_provider); free(b->content); free(b);

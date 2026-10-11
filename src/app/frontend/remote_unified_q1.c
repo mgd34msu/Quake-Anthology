@@ -23,6 +23,7 @@
 #include <string.h>
 
 enum { Q1_LIGHTS=64, Q1_BEAMS=32, Q1_POWERS=9, Q1_PROMPT_CHOICES=65536 };
+static const uint8_t q1_beam_types[]={5,6,9,13};
 typedef enum q1_event_kind {
     Q1_PARTICLES,Q1_EFFECT,Q1_COLORS,Q1_BEAM,Q1_STYLE,Q1_STATIC,Q1_WEAPON,
     Q1_POWER,Q1_MESSAGE,Q1_STOP,Q1_AMBIENT,Q1_SOUND,Q1_CTF_STATUS,Q1_CTF_CAPTURE,
@@ -103,6 +104,7 @@ typedef struct q1_group {
     qa_scene_image *particle_image;
     q1_light lights[Q1_LIGHTS];
     q1_beam beams[Q1_BEAMS];
+    qa_string_id beam_models[4];
     q1_static *statics;
     q1_ambient *ambient;
     const char *styles[256];
@@ -332,6 +334,7 @@ static bool group(frontend_unified_q1 *o,const char *content,q1_activation *owne
     g->content=malloc(strlen(content)+1);if(g->content) strcpy(g->content,content);
     if(!g->content || !qa_executable_recipe_content(frontend_remote_unified_recipe(o->replica),content,&files,&g->product,e) || g->product->family!=QA_GAME_Q1 ||
         !frontend_unified_media_bank(o->media,content,&g->images,&g->materials,&fonts,&g->sounds,e)) {free(g->content);free(g);return false;}
+    for (size_t i=0;i<4;++i) if (!qa_strings_intern_cstr(o->replica->strings,frontend_fx_q1_beam_model(q1_beam_types[i]),&g->beam_models[i],e)) {free(g->content);free(g);return false;}
     g->parent=o;g->activation=owner;g->particles.family=QA_GAME_Q1;q1_group **tail=&o->groups;while(*tail) tail=&(*tail)->next;*tail=g;*out=g;
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     frontend_q1_help_bind_source(o->frontend->seats+domain->physical_seat,g->images);return true;
@@ -661,7 +664,8 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
     case Q1_STYLE:g->styles[(uint32_t)p.a]=(char *)p.text.data;g->style_sequences[(uint32_t)p.a]=p.sequence;p.text=(qa_bytes){0};break;
     case Q1_STATIC: {if(!p.text.size)break;
         q1_static *s=calloc(1,sizeof(*s));qa_scene_image_options images=model_options();
-        ok=s && frontend_unified_media_model(o->media,g->content,(char *)p.text.data,QA_GAME_Q1,&images,&s->model,e);
+        qa_string_id path;
+        ok=s && qa_strings_intern(o->replica->strings,p.text,&path,e) && frontend_unified_media_model(o->media,g->content,path,QA_GAME_Q1,&images,&s->model,e);
         if(ok) {s->path=(char *)p.text.data;p.text=(qa_bytes){0};s->origin=p.origin;s->angles=p.angles;s->frame=(uint32_t)p.a;s->skin=(uint32_t)p.b;
             q1_static **tail=&g->statics;while(*tail) tail=&(*tail)->next;*tail=s;}else free(s);break;}
     case Q1_WEAPON: {q1_continuation next={0};ok=retain_row(o,row,&next,e);if(ok) {continuation_replace(&o->weapon,&next);o->weapon_activation=owner;}break;}
@@ -902,16 +906,15 @@ bool frontend_unified_q1_world_models(frontend_unified_q1 *o,const qa_scene_worl
             else {ok=qa_scene_world_sample_light_input(frontend_unified_media_world(o->media),world,s->origin,&input.ambient,&input.directed,&input.light_direction,e) &&
                 frontend_legacy_model_input(frontend_unified_media_world(o->media),world,&input,e) && qa_scene_model_submit(s->model.scene,&input,frame,e);}
         }
-        static const uint8_t types[]={5,6,9,13};
         for(size_t i=0;ok && i<Q1_BEAMS;++i) {q1_beam *b=g->beams+i;if(b->until<=world->seconds)continue;qa_actor_id actual;
             ok=frontend_remote_unified_source_actor(o->replica,qa_unified_document_frame(frontend_remote_unified_frame(o->replica)),b->actor,false,&actual,e);if(!ok)break;
-            frontend_unified_model model;qa_scene_image_options images=model_options();ok=frontend_unified_media_model(o->media,g->content,frontend_fx_q1_beam_model(types[b->kind]),QA_GAME_Q1,&images,&model,e);if(!ok)break;
+            frontend_unified_model model;qa_scene_image_options images=model_options();ok=frontend_unified_media_model(o->media,g->content,g->beam_models[b->kind],QA_GAME_Q1,&images,&model,e);if(!ok)break;
             frontend_fx_q1_beam_cursor cursor;frontend_fx_q1_beam_begin(&cursor,b->start,b->end);
             qa_builtin_random roll;qa_builtin_random_seed(&roll,b->roll_seed);
             qa_model_transform placement;
             while(ok && frontend_fx_q1_beam_next(&cursor,&roll,&placement)) {
                 qa_scene_model_input input={.view=*view,.transform=placement,.family=QA_GAME_Q1,
-                    .source_path=frontend_fx_q1_beam_model(types[b->kind]),.material_library=frontend_unified_model_materials(model.scene),
+                    .source_path=frontend_fx_q1_beam_model(q1_beam_types[b->kind]),.material_library=frontend_unified_model_materials(model.scene),
                     .seconds=world->seconds,.identity_light=world->identity_light,.color={1,1,1,1},.ambient={1,1,1},.entity=actual.slot,
                     .video_frame=world->video_frame,.video_context=world->video_context};
                 ok=frontend_legacy_model_input(frontend_unified_media_world(o->media),world,&input,e) && qa_scene_model_submit(model.scene,&input,frame,e);}

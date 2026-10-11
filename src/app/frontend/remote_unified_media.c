@@ -192,9 +192,10 @@ qa_material_library *frontend_unified_model_materials(const qa_scene_model *mode
     return options && options->family == QA_GAME_Q3 ? qa_scene_model_material_owner(model) : NULL;
 }
 bool frontend_unified_media_model(frontend_unified_media *owner, const char *content,
-    const char *path, qa_game_family family, const qa_scene_image_options *options,
+    qa_string_id path_name, qa_game_family family, const qa_scene_image_options *options,
     frontend_unified_model *out, qa_error *error)
 {
+    const char *path = owner ? qa_strings_cstr(qa_session_strings(qa_application_session(owner->frontend->application)), path_name) : NULL;
     if (!owner || owner->importing || owner->busy || !path || !*path || !options || !out || options->family != family ||
         (options->translation.size && !options->translation.data) ||
         (options->palette_rgb.size && !options->palette_rgb.data) || options->source_q3)
@@ -217,7 +218,7 @@ bool frontend_unified_media_model(frontend_unified_media *owner, const char *con
     unified_media_bank *files;
     if (!bank(owner, content, &files, error)) return false;
     for (unified_media_model *row = owner->models; row; row = row->next)
-        if (row->bank == files && row->family == family && !strcmp(row->path, path) && same_options(&row->options, options)) {
+        if (row->bank == files && row->family == family && row->path == path_name && same_options(&row->options, options)) {
             *out = (frontend_unified_model){.resource=row->resource,.opening=&row->opening,
                 .model=row->world?NULL:(row->source?row->source:&row->decoded),.scene=row->scene,.brush_world=row->world}; return true;
         }
@@ -225,8 +226,7 @@ bool frontend_unified_media_model(frontend_unified_media *owner, const char *con
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified model creation overlaps retained resource inventory");
     unified_media_model *row = calloc(1, sizeof(*row));
     if (!row) return frontend_unified_fail(error, QA_ERROR_MEMORY, "Retaining unified model geometry");
-    row->path = malloc(strlen(path) + 1);
-    if (row->path) strcpy(row->path, path);
+    row->path = path_name;
     row->bank = files; row->family = family; row->options = *options; owner->busy = true;
     if (options->palette_rgb.size) { row->palette = malloc(options->palette_rgb.size);
         if (row->palette) { memcpy(row->palette, options->palette_rgb.data, options->palette_rgb.size);
@@ -262,7 +262,7 @@ bool frontend_unified_media_model(frontend_unified_media *owner, const char *con
     if (!okay) {
         qa_scene_world_destroy(row->world); qa_scene_model_destroy(row->scene); qa_model_free(&row->decoded);
         qa_resource_release(row->resource); qa_vfs_acquisition_dispose(&row->opening);
-        free(row->palette); free(row->translation); free(row->path); free(row); return false;
+        free(row->palette); free(row->translation); free(row); return false;
     }
     row->next = owner->models; owner->models = row;
     *out = (frontend_unified_model){.resource=row->resource,.opening=&row->opening,
@@ -297,7 +297,7 @@ bool frontend_unified_media_model_read(const frontend_unified_media *owner,size_
     size_t ordinal=0;
     for (const unified_media_bank *bank_row=owner->banks;bank_row;bank_row=bank_row->next,++ordinal)
         if (bank_row==row->bank) {
-            *out=(frontend_unified_model_view){ordinal,row->path,row->family,&row->options,row->resource,&row->opening,
+            *out=(frontend_unified_model_view){ordinal,qa_strings_cstr(qa_session_strings(qa_application_session(owner->frontend->application)),row->path),row->family,&row->options,row->resource,&row->opening,
                 row->world||row->saved_world?NULL:(row->source?row->source:row->scene?&row->decoded:NULL),row->scene,row->world};
             return true;
         }
@@ -406,7 +406,7 @@ bool frontend_unified_media_destroy(frontend_unified_media *owner, qa_error *err
         qa_scene_world_destroy(row->world); qa_scene_model_destroy(row->scene); qa_model_free(&row->decoded);
         frontend_model_release(row->source_lease);
         qa_resource_release(row->resource); qa_vfs_acquisition_dispose(&row->opening);
-        free(row->palette); free(row->translation); free(row->path); free(row);
+        free(row->palette); free(row->translation); free(row);
     }
     while (owner->banks) {
         unified_media_bank *row = owner->banks; owner->banks = row->next;

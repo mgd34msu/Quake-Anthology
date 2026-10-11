@@ -473,7 +473,7 @@ static const qa_unified_field qa_unified_model_state_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_model_state, family, QA_UNIFIED_FIELD_I32),
     QA_UNIFIED_RECORD(qa_unified_model_state, visual, entity_visual_layout),
     QA_UNIFIED_FIELD(qa_unified_model_state, content, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_model_state, path, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_model_state, path, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_FIELD(qa_unified_model_state, skin_path, QA_UNIFIED_FIELD_STRING),
     QA_UNIFIED_FIELD(qa_unified_model_state, weapon_item, QA_UNIFIED_FIELD_STRING),
     QA_UNIFIED_FIELD(qa_unified_model_state, q1_effects, QA_UNIFIED_FIELD_U32),

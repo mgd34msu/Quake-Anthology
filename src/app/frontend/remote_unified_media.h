@@ -62,7 +62,7 @@ bool frontend_unified_media_q3_assets(frontend_unified_media *, const char *cont
 bool frontend_unified_media_q3_assets_read(const frontend_unified_media *, const qa_product *,
     qa_q3_presentation_assets **);
 bool frontend_unified_media_model(frontend_unified_media *, const char *content,
-    const char *path, qa_game_family, const qa_scene_image_options *,
+    qa_string_id path, qa_game_family, const qa_scene_image_options *,
     frontend_unified_model *, qa_error *);
 qa_material_library *frontend_unified_model_materials(const qa_scene_model *);
 qa_scene_world *frontend_unified_media_world(const frontend_unified_media *);

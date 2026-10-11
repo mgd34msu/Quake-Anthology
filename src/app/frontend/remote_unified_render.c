@@ -163,7 +163,7 @@ static bool model_read(frontend_unified_render *r,const qa_unified_model_state *
     unified_render_model *m,qa_error *e)
 {
     m->source=source;
-    m->flat_beam=source->family==QA_GAME_Q2 && (source->visual.render_flags&128u) && source->path && !*source->path;
+    m->flat_beam=source->family==QA_GAME_Q2 && (source->visual.render_flags&128u) && source->path && !qa_strings_text(r->replica->strings, source->path).size;
     qa_game_family kind=source->family==QA_GAME_Q1?QA_GAME_Q1:source->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;
     m->source_client=source->render_source!=NULL;
     if(m->source_client) {
@@ -195,7 +195,7 @@ static bool model_read(frontend_unified_render *r,const qa_unified_model_state *
     if (okay) okay=qa_executable_recipe_content(frontend_remote_unified_recipe(r->replica),source->content,&files,&m->product,e) &&
         frontend_unified_media_bank(r->media,source->content,&bank,&materials,&fonts,&sounds,e) &&
         (m->flat_beam || frontend_unified_media_model(r->media,source->content,source->path,kind,&images,&m->media,e));
-    m->path=source->path;
+    m->path=qa_strings_cstr(r->replica->strings,source->path);
     if (okay) {
         m->input.family=kind; m->input.skin=source->visual.skin<0 && !m->flat_beam?0:(uint32_t)source->visual.skin;
         m->input.flags=source->visual.render_flags;

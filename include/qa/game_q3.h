@@ -82,7 +82,7 @@ const qa_q3_item *qa_q3_items(qa_q3_product, size_t *count);
 /* Canonical names bound once in the actual Source session at admission. */
 typedef struct qa_q3_model_names {
     qa_q3_product product;
-    qa_string_id items[52][2], weapons[QA_Q3_WEAPON_COUNT], weapon_items[QA_Q3_WEAPON_COUNT], portals[2];
+    qa_string_id items[52][2], weapons[QA_Q3_WEAPON_COUNT], weapon_items[QA_Q3_WEAPON_COUNT], portals[2], missiles[QA_Q3_WEAPON_COUNT];
 } qa_q3_model_names;
 bool qa_q3_model_names_bind(qa_strings *, qa_q3_product, qa_q3_model_names *, qa_error *);
 qa_string_id qa_q3_model_names_weapon(const qa_q3_model_names *, qa_q3_weapon);

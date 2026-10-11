@@ -554,7 +554,7 @@ bool frontend_unified_q3_selected_weapon(frontend_unified_q3 *o,const qa_unified
                 okay=q3n_weapons_selected_view(b->weapons,&media,&state->view_state,&request,&camera,submitted,e);}
         } else {
             media=(q3n_selected_weapon_media){.assets=b->assets};
-            okay=qa_q3_register_model(b->assets,model->path,&media.gun,e) &&
+            okay=qa_q3_register_model(b->assets,qa_strings_cstr(o->replica->strings,model->path),&media.gun,e) &&
                 qa_q3_register_model(b->assets,model->anchor->path,&media.hands,e);
             q3n_selected_weapon_attachment *attachments=okay && model->attachment_count?
                 qa_arena_alloc(&scene->storage,model->attachment_count*sizeof(*attachments),_Alignof(q3n_selected_weapon_attachment),e):NULL;

@@ -355,6 +355,19 @@ production build and seven core suites pass
 (`/tmp/qa-ta3192-hud-names-20261011-{build,core}.log`). The separate Unified media
 callers remain open; this is not live HUD or protocol-session proof.
 
+TA-3192 Unified model paths now carry `qa_string_id` through the NAME codec.
+Generic visual and equipment publishers pass their existing IDs, as do native
+Q2 appearances and Q2 model events. Native Q3 reads item/model configstring IDs
+and the admitted brush model from its map actor; its missile names bind once in
+the existing model-name bundle. The former per-frame model path copies and
+inline-path formatting are deleted. Unified media and Q2 effect caches compare
+IDs and no longer allocate private path copies. Q1 static and beam paths admit
+at receipt/group creation. Text adapters remain at the Q2 effects interface and
+resource/register boundaries. The normal build and seven core suites pass
+(`/tmp/qa-ta3192-media-paths-20261011-{build,core}.log`). Content-bank identity and
+inline-world content comparisons remain open. No live model/mod, protocol-session
+or timing claim is made by these checks.
+
 `include/qa/ruleset.h` / `src/core/ruleset.c` replace the three former identical
 movement/console/clock enums and 47 bridges. Each role retains its independent
 selection. Numeric/save/command components preserve 125 role combinations and

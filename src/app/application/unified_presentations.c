@@ -10,6 +10,7 @@
 #include "qa/application_q3_asset_selection.h"
 #include "qa/game_q3_configstrings.h"
 #include "qa/game_q3_source.h"
+#include "qa/game_q3_map.h"
 #include "qa/game_q1_bots.h"
 
 #include <math.h>
@@ -32,7 +33,7 @@ static bool stable(qa_application *app, const application_unified_source *source
 }
 
 static bool model(qa_unified_frame *frame, size_t *capacity,
-    const qa_application_visual_view *v, const char *path, const char *content,
+    const qa_application_visual_view *v, qa_string_id path, const char *content,
     const application_provider *render_source, bool view_weapon,
     const qa_application_equipment_view *equipment, const qa_launch_instance *equipment_source,
     qa_error *error)
@@ -56,8 +57,8 @@ static bool model(qa_unified_frame *frame, size_t *capacity,
         .view_weapon = view_weapon, .has_previous_origin = (v->visual.render_flags & 128u) && v->family == QA_GAME_Q2,
         .previous_origin = v->previous_origin, .has_alpha = v->family != QA_GAME_Q3 && !view_weapon};
     if (row->visual.old_frame < 0) row->visual.old_frame = row->visual.frame;
+    row->path = path;
     if (!application_unified_frame_string(frame->lease, &row->content, content, error) ||
-        !application_unified_frame_string(frame->lease, &row->path, path, error) ||
         !application_unified_frame_string(frame->lease, &row->skin_path, v->skin_path, error)) return false;
     if (render_source) {
         row->render_source = application_unified_frame_alloc(frame->lease, 1, sizeof(*row->render_source), error);
@@ -90,18 +91,6 @@ static qa_trajectory trajectory(const qa_q3_trajectory *t)
         .delta = qa_v3(t->delta[0], t->delta[1], t->delta[2])};
 }
 
-static const char *missile(int32_t weapon)
-{
-    switch (weapon) {
-    case QA_Q3_W_GRAPPLE: case QA_Q3_W_ROCKET: return "models/ammo/rocket/rocket.md3";
-    case QA_Q3_W_GRENADE: return "models/ammo/grenade1.md3";
-    case QA_Q3_W_PROX: return "models/weaphits/proxmine.md3";
-    case QA_Q3_W_NAIL: return "models/weaphits/nail.md3";
-    case QA_Q3_W_BFG: return "models/weaphits/bfg.md3";
-    default: return NULL;
-    }
-}
-
 static bool q3_provider_models(qa_application *app, const application_unified_source *source,
     application_provider *provider, const qa_application_visual_visibility *visibility,
     uint64_t actors, qa_unified_frame *frame,
@@ -119,7 +108,8 @@ static bool q3_provider_models(qa_application *app, const application_unified_so
         !qa_q3_source_clock(game, &time, error) ||
         !qa_q3_source_entity_count(game, &count, error)) return false;
     size_t item_count;
-    const qa_q3_item *items = qa_q3_items(edition, &item_count);
+    qa_q3_items(edition, &item_count);
+    const qa_q3_model_names *names = qa_q3_game_model_names(game);
     for (uint32_t slot = 0; slot < count; ++slot) {
         struct { qa_q3_source_binding binding; qa_q3_entity state; qa_q3_wire_visibility visibility; } row;
         if (!qa_q3_source_binding_read(game, slot, &row.binding, error)) return false;
@@ -130,31 +120,26 @@ static bool q3_provider_models(qa_application *app, const application_unified_so
         bool visible;
         if (!qa_application_visual_visibility_actor(visibility, row.binding.actor, NULL, &visible, error)) return false;
         if (!visible) continue;
-        const char *paths[2] = {0};
-        char inline_path[32];
+        qa_string_id paths[2] = {0};
         if (row.state.eType == 2) {
             if (row.state.modelindex < 0 || (size_t)row.state.modelindex >= item_count)
                 return application_fail(error, QA_ERROR_FORMAT, "Unified native item has an invalid real source index");
-            paths[0] = items[row.state.modelindex].model;
-            paths[1] = items[row.state.modelindex].secondary_model;
-        } else if (row.state.eType == 3) paths[0] = missile(row.state.weapon);
+            paths[0] = names->items[row.state.modelindex][0];
+            paths[1] = names->items[row.state.modelindex][1];
+        } else if (row.state.eType == 3) paths[0] = (unsigned)row.state.weapon < QA_Q3_WEAPON_COUNT ? names->missiles[row.state.weapon] : QA_STRING_NONE;
         else {
             if (row.state.eType == 4 && row.state.solid == 0xffffff) {
-                int written = snprintf(inline_path, sizeof(inline_path), "*%u", (uint32_t)row.state.modelindex);
-                if (written < 0 || (size_t)written >= sizeof(inline_path))
-                    return application_fail(error, QA_ERROR_FORMAT, "Unified native inline model exceeds its authored path");
-                paths[0] = inline_path;
+                qa_q3_map_actor_state brush;
+                if (qa_q3_map_actor_capture(game, row.binding.actor, &brush)) paths[0] = brush.model;
             } else if (row.state.modelindex > 0) {
                 if ((uint32_t)row.state.modelindex >= 256)
                     return application_fail(error, QA_ERROR_FORMAT, "Unified native model exceeds the source model configstrings");
-                if (!qa_q3_configstring_read(game, 32u + (uint32_t)row.state.modelindex,
-                        &paths[0], error)) return false;
+                paths[0] = qa_q3_configstring_name(game, 32u + (uint32_t)row.state.modelindex);
             }
             if (row.state.eType == 4 && row.state.modelindex2 > 0) {
                 if ((uint32_t)row.state.modelindex2 >= 256)
                     return application_fail(error, QA_ERROR_FORMAT, "Unified native model exceeds the source model configstrings");
-                if (!qa_q3_configstring_read(game, 32u + (uint32_t)row.state.modelindex2,
-                        &paths[1], error)) return false;
+                paths[1] = qa_q3_configstring_name(game, 32u + (uint32_t)row.state.modelindex2);
             }
         }
         qa_application_visual_view v = {.actor = row.binding.actor, .family = QA_GAME_Q3,
@@ -165,7 +150,7 @@ static bool q3_provider_models(qa_application *app, const application_unified_so
             !qa_trajectory_position(&angular, time, 800, &v.body.angles, error) ||
             !stable(app, source, actors, error)) return false;
         for (unsigned i = 0; i < 2; ++i)
-            if (paths[i] && paths[i][0] && !model(frame, capacity, &v, paths[i], product->identity, provider, false,NULL,NULL,error)) return false;
+            if (qa_strings_text(qa_session_strings(app->session), paths[i]).size && !model(frame, capacity, &v, paths[i], product->identity, provider, false,NULL,NULL,error)) return false;
     }
     int32_t after; uint32_t extent;
     return (stable(app, source, actors, error) && provider->constructed && provider->attached &&
@@ -253,7 +238,7 @@ static bool equipment(qa_application *app, const application_unified_source *sou
             !qa_world_body_read(source->world, actor, &body, error))
             return application_fail(error, QA_ERROR_NOT_FOUND, "Unified Q3 weapon lost its actual command or motion owner");
         bool firing = (control.buttons & 1u) != 0 && combat.health > 0;
-        if (!model(frame, capacity, &v, model_name, product->identity, NULL, true, &e, equipment_source, error)) return false;
+        if (!model(frame, capacity, &v, e.view_model, product->identity, NULL, true, &e, equipment_source, error)) return false;
         qa_unified_model_state *row = out->models + out->model_count - 1;
         row->q3_weapon = application_unified_frame_alloc(frame->lease, 1, sizeof(*row->q3_weapon), error);
         if (!row->q3_weapon) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual Q3 weapon presentation");
@@ -288,7 +273,7 @@ static bool equipment(qa_application *app, const application_unified_source *sou
         return true;
     }
 
-    return model(frame, capacity, &v, model_name, product->identity, NULL, true,&e,equipment_source,error);
+    return model(frame, capacity, &v, e.view_model, product->identity, NULL, true,&e,equipment_source,error);
 }
 
 bool application_unified_presentations_build(qa_application *app, const application_unified_source *source,
@@ -375,14 +360,14 @@ bool application_unified_presentations_build(qa_application *app, const applicat
                 qa_application_map_view map;
                 if (!qa_application_map_read(app, &map)) { ok = false; break; }
                 if (v.family == QA_GAME_Q2 && (v.visual.render_flags & 128u) && !v.model_beam)
-                    ok = model(frame, &model_capacity, &v, "", content->identity, NULL, false,NULL,NULL,error);
+                    ok = model(frame, &model_capacity, &v, app->ui_names.empty_model, content->identity, NULL, false,NULL,NULL,error);
                 else for (unsigned i = 0; ok && i < 4; ++i) {
                     const char *path = qa_strings_cstr(qa_session_strings(app->session), v.visual.models[i]);
                     if (path && *path && strcmp(path, qa_resource_path(map.resource)))
-                        ok = model(frame, &model_capacity, &v, path, content->identity, NULL, false,NULL,NULL,error);
+                        ok = model(frame, &model_capacity, &v, v.visual.models[i], content->identity, NULL, false,NULL,NULL,error);
                 }
                 if (ok && v.has_flare)
-                    ok = model(frame, &model_capacity, &v, "", content->identity, NULL, false,NULL,NULL,error);
+                    ok = model(frame, &model_capacity, &v, app->ui_names.empty_model, content->identity, NULL, false,NULL,NULL,error);
             }
         }
         if (ok && admitted) ok = equipment(app, source, id, player->actor, frame, &model_capacity, error);

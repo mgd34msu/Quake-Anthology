@@ -14,6 +14,8 @@ static char *copy_text(const char *text, qa_error *error) {
     memcpy(copy, text, length + 1);
     return copy;
 }
+qa_string_id qa_q3_configstring_name(const qa_q3_game *game, uint32_t index)
+{ return game->configstrings[index]; }
 bool qa_q3_configstring_read(const qa_q3_game *game, uint32_t index,
                             const char **out, qa_error *error) {
     if (!game || !out || index >= QA_Q3_NATIVE_CONFIGSTRINGS)

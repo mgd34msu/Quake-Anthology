@@ -166,6 +166,12 @@ bool qa_q3_model_names_bind(qa_strings *strings, qa_q3_product product,
     }
     if (!qa_strings_intern_cstr(strings, "models/powerups/teleporter/tele_exit.md3", &names.portals[0], error) ||
         !qa_strings_intern_cstr(strings, "models/powerups/teleporter/tele_enter.md3", &names.portals[1], error)) return false;
+    static const struct { qa_q3_weapon weapon; const char *path; } missiles[] = {
+        {QA_Q3_W_GRAPPLE, "models/ammo/rocket/rocket.md3"}, {QA_Q3_W_ROCKET, "models/ammo/rocket/rocket.md3"},
+        {QA_Q3_W_GRENADE, "models/ammo/grenade1.md3"}, {QA_Q3_W_PROX, "models/weaphits/proxmine.md3"},
+        {QA_Q3_W_NAIL, "models/weaphits/nail.md3"}, {QA_Q3_W_BFG, "models/weaphits/bfg.md3"}};
+    for (size_t i = 0; i < sizeof(missiles) / sizeof(*missiles); ++i)
+        if (!qa_strings_intern_cstr(strings, missiles[i].path, &names.missiles[missiles[i].weapon], error)) return false;
     *out = names;
     return true;
 }

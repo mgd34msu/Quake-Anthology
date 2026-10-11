@@ -7,6 +7,7 @@
 
 /* The source engine's authoritative slot value. Borrowed text lasts until
  * that slot changes, the normal map resets or the native owner closes. */
+qa_string_id qa_q3_configstring_name(const qa_q3_game *, uint32_t index);
 bool qa_q3_configstring_read(const qa_q3_game *, uint32_t index,
                             const char **out, qa_error *);
 /* A source write's transient identity qualifies callback continuations even

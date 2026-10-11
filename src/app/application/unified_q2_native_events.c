@@ -94,7 +94,7 @@ static bool model(application_provider *p, qa_actor_id id, const qa_entity_visua
         if (v->models[i]) attachments[count++].path = alias(p->application, v->models[i]);
     qa_unified_presentation_payload payload = {.kind = QA_UNIFIED_PRESENTATION_MODEL};
     payload.value.model = (qa_unified_model_state){.actor = id, .family = QA_GAME_Q2, .visual = *v,
-        .path = alias(p->application, v->models[0]), .has_alpha = true,
+        .path = v->models[0], .has_alpha = true,
         .attachments = attachments, .attachment_count = count};
     return emit(p, &payload, NULL, id, (qa_actor_id){0}, time, audience, e);
 }
