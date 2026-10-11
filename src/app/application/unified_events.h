@@ -71,6 +71,14 @@ typedef struct application_unified_persistent_event {
     qa_event_lease *lease;
 } application_unified_persistent_event;
 
+typedef struct application_unified_persistent_cursor {
+    qa_actor_owner provider;
+    qa_unified_presentation_kind kind;
+    size_t next;
+} application_unified_persistent_cursor;
+const application_unified_event_record *application_unified_persistent_next(
+    const qa_application *, application_unified_persistent_cursor *);
+
 void application_unified_persistent_key(qa_application *,
     const application_unified_event_record *, application_persistent_key *, bool *remove);
 bool application_unified_persistent_key_equal(const application_persistent_key *,

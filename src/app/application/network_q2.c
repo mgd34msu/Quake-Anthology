@@ -753,35 +753,46 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
     }
     if (owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN) {
         qa_q2_game *game = (qa_q2_game *)owner->host.source.source.game;
-        if (!owner->builtin_metadata_ready) {
-            for(size_t i=0;i<owner->app->unified_persistent_count;++i) {
-                const application_unified_event_record *record=&owner->app->unified_persistent[i].event;
-                if(record->provider==owner->host.source.source_owner && record->presentation &&
-                    record->presentation->kind==QA_UNIFIED_PRESENTATION_Q2_MAP &&
-                    !map_config_event(owner,&record->presentation->value.q2_map,error)) return false;
-            }
-            owner->builtin_metadata_ready=true;
-        }
         uint64_t events_next = qa_application_events_next(owner->app);
-        for (uint64_t i = qa_application_events_local_first(owner->app); i < events_next; ++i) {
+        uint64_t first = qa_application_events_local_first(owner->app);
+        if (owner->output_events_next > first) first = owner->output_events_next;
+        if (!owner->builtin_metadata_ready) {
+            application_unified_persistent_cursor cursor = {
+                .provider = owner->host.source.source_owner, .kind = QA_UNIFIED_PRESENTATION_Q2_MAP};
+            const application_unified_event_record *record;
+            while ((record = application_unified_persistent_next(owner->app, &cursor)))
+                if (!map_config_event(owner, &record->presentation->value.q2_map, error)) return false;
+            owner->builtin_metadata_ready = true;
+            /* Configs through this point were replayed. Still admit transient
+             * sound/entity events from the current server frame on first bind. */
+            owner->output_events_next = events_next;
+        }
+        for (uint64_t i = first; i < events_next; ++i) {
             qa_application_event_view output;
-            if (!qa_application_event_read(owner->app, &(qa_application_event_cursor){.id = i, .projection = 0}, &output) ||
-                output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
-            const qa_builtin_event event = *output.value.builtin;
-            if (event.family != QA_GAME_Q2 ||
-                event.provider != owner->host.source.source_owner || event.time_ns != owner->host.source.server_time_ns) continue;
-            uint32_t ignored;
-            if (event.kind == QA_BUILTIN_SOUND &&
-                !application_network_q2_resource_id(owner, 1, event.resource, &ignored, error)) return false;
-            if (event.kind == QA_BUILTIN_Q2_ENTITY_EVENT) {
-                qa_q2_wire_binding binding;
-                if (qa_q2_wire_actor(game, event.actor, &binding, NULL)) {
-                    if (event.code < 0 || event.code > 255) return application_fail(error, QA_ERROR_FORMAT, "Q2 Source entity event exceeds its literal wire byte");
-                    owner->event_actors[binding.source_slot] = event.actor;
-                    owner->events[binding.source_slot] = (uint32_t)event.code;
+            if (!qa_application_event_read(owner->app, &(qa_application_event_cursor){.id = i}, &output)) continue;
+            if (output.kind == QA_APPLICATION_EVENT_Q2_MAP) {
+                const qa_application_q2_map_event *record = output.value.q2_map;
+                if (i >= owner->output_events_next && record->provider == owner->host.source.source_owner &&
+                    !map_config_event(owner, &record->event, error)) return false;
+            } else if (output.kind == QA_APPLICATION_EVENT_BUILTIN) {
+                const qa_builtin_event *event = output.value.builtin;
+                if (event->family != QA_GAME_Q2 || event->provider != owner->host.source.source_owner ||
+                    event->time_ns != owner->host.source.server_time_ns) continue;
+                uint32_t ignored;
+                if (event->kind == QA_BUILTIN_SOUND &&
+                    !application_network_q2_resource_id(owner, 1, event->resource, &ignored, error)) return false;
+                if (event->kind == QA_BUILTIN_Q2_ENTITY_EVENT) {
+                    qa_q2_wire_binding binding;
+                    if (qa_q2_wire_actor(game, event->actor, &binding, NULL)) {
+                        if (event->code < 0 || event->code > 255)
+                            return application_fail(error, QA_ERROR_FORMAT, "Q2 Source entity event exceeds its literal wire byte");
+                        owner->event_actors[binding.source_slot] = event->actor;
+                        owner->events[binding.source_slot] = (uint32_t)event->code;
+                    }
                 }
             }
         }
+        owner->output_events_next = events_next;
         for (size_t slot = 1; slot < owner->entity_capacity; ++slot) {
             if (!owner->event_actors[slot].registry) continue;
             qa_q2_wire_binding binding;
@@ -792,17 +803,6 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
             } else if (binding.source_slot != slot)
                 return application_fail(error, QA_ERROR_FORMAT, "Q2 retained event changed its physical Source edict");
         }
-        uint64_t first=qa_application_events_local_first(owner->app);
-        if(owner->map_events_next>first) first=owner->map_events_next;
-        for(uint64_t i=first;i<events_next;++i) {
-            qa_application_event_view output;
-            if (!qa_application_event_read(owner->app,&(qa_application_event_cursor){.id=i},&output) ||
-                output.kind!=QA_APPLICATION_EVENT_Q2_MAP) continue;
-            const qa_application_q2_map_event *record=output.value.q2_map;
-            if(record->provider==owner->host.source.source_owner &&
-                !map_config_event(owner,&record->event,error)) return false;
-        }
-        owner->map_events_next=events_next;
         struct application_player_roster *roster = owner->app->players;
         for (size_t i = 0; roster && i < roster->count; ++i) {
             application_player_record *row = &roster->records[i];

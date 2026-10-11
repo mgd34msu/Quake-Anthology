@@ -754,14 +754,15 @@ bool application_q1_music_cue(qa_application *application, bool fresh, qa_error 
 {
     application_provider *source = application_world_provider(application, QA_ROLE_ENTITIES, "");
     if (!source || !source->product || source->product->family != QA_GAME_Q1) return true;
-    if (!fresh) for (size_t i = 0; i < application->unified_persistent_count; ++i) {
-        const application_unified_event_record *row = &application->unified_persistent[i].event;
-        const qa_unified_presentation_payload *payload = row->presentation;
-        if (row->provider != source->owner || row->recipient.registry ||
-            !payload || payload->kind != QA_UNIFIED_PRESENTATION_BUILTIN) continue;
-        const qa_builtin_event *event = &payload->value.builtin;
-        if (event->family == QA_GAME_Q1 && event->kind == QA_BUILTIN_EFFECT &&
-            event->resource == application->ui_names.music) return true;
+    if (!fresh) {
+        application_unified_persistent_cursor cursor = {
+            .provider = source->owner, .kind = QA_UNIFIED_PRESENTATION_BUILTIN};
+        const application_unified_event_record *row;
+        while ((row = application_unified_persistent_next(application, &cursor))) {
+            const qa_builtin_event *event = &row->presentation->value.builtin;
+            if (!row->recipient.registry && event->family == QA_GAME_Q1 &&
+                event->kind == QA_BUILTIN_EFFECT && event->resource == application->ui_names.music) return true;
+        }
     }
     uint8_t cd_track;
     if (source->kind == APPLICATION_PROVIDER_Q1) {

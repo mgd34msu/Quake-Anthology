@@ -99,7 +99,7 @@ struct qa_application_network_q2 {
     uint64_t observed_map_revision;
     uint32_t observed_client_slots;
     bool map_configs_ready, builtin_metadata_ready;
-    uint64_t map_events_next;
+    uint64_t output_events_next;
     qa_string_id *configs;
     qa_hud_q2_stat_references status_references;
     qa_arena layout_scratch;

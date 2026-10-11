@@ -642,6 +642,17 @@ bool application_unified_persistent_key_equal(const application_persistent_key *
         a->provider == b->provider && a->domain == b->domain && a->actor_slot == b->actor_slot &&
         a->recipient_slot == b->recipient_slot && a->channel == b->channel && a->resource == b->resource;
 }
+const application_unified_event_record *application_unified_persistent_next(
+    const qa_application *app, application_unified_persistent_cursor *cursor)
+{
+    while (cursor->next < app->unified_persistent_count) {
+        const application_unified_event_record *record = &app->unified_persistent[cursor->next++].event;
+        if (record->provider == cursor->provider && record->presentation &&
+            record->presentation->kind == cursor->kind) return record;
+    }
+    return NULL;
+}
+
 void application_unified_persistent_dispose(qa_application *app)
 {
     for (size_t i = 0; i < app->unified_persistent_count; ++i) {
