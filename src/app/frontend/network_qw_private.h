@@ -1,20 +1,9 @@
 #ifndef QA_FRONTEND_NETWORK_QW_PRIVATE_H
 #define QA_FRONTEND_NETWORK_QW_PRIVATE_H
 #include "network_qw.h"
-#include "qa/pool.h"
 #include "qa/network_q1_connection_save.h"
 #include "../../network/event_receipts.h"
-enum { QW_CLIENTS = 32, QW_MESSAGE = 1450, QW_SIGNON = 1400, QW_ACTIONS = 256 };
-typedef struct qw_source_action {
-    struct qw_source_action *next;
-    qa_net_client_id client;
-    qa_net_seat_id seat;
-    qa_actor_id actor;
-    uint64_t epoch;
-    uint64_t received_ns;
-    size_t slot;
-    char text[QW_MESSAGE];
-} qw_source_action;
+enum { QW_CLIENTS = 32, QW_MESSAGE = 1450, QW_SIGNON = 1400 };
 typedef struct qw_frontend_peer {
     struct frontend_qw_host *host;
     qa_net_client_id client;
@@ -57,10 +46,7 @@ struct frontend_qw_host {
     qa_buffer *signon;
     qa_bytes *signon_views;
     size_t signon_count;
-    qw_source_action *first_action, *last_action;
-    size_t action_count;
-    qa_arena action_storage;
-    qa_pool actions;
+    qa_application_event_subscription commands;
     bool previous_pause, action_active;
     unsigned busy;
 };

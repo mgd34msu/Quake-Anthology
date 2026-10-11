@@ -1306,6 +1306,24 @@ bool qa_application_q3_effect_emit(qa_application *app,const qa_application_q3_e
     write.envelope->raw.q3_effect=*event;
     return application_event_stream_commit(app,&write,error) || application_event_stream_decline(app,&write,true,error);
 }
+bool qa_application_qw_command_emit(qa_application *app,const qa_application_qw_command_event *event,
+    bool *overflow,qa_error *error)
+{
+    *overflow=false;
+    application_event_write write;
+    if(!application_event_stream_begin(app,QA_APPLICATION_EVENT_QW_COMMAND,&write,error)) goto blocked;
+    size_t bytes=strlen(event->text)+1;
+    char *text=application_event_stream_alloc(app,bytes,1,error);
+    if(!text) { application_event_stream_abort(app,&write,error); goto blocked; }
+    memcpy(text,event->text,bytes);
+    write.envelope->raw.qw_command=*event;
+    write.envelope->raw.qw_command.text=text;
+    if(application_event_stream_commit(app,&write,error)) return true;
+blocked:
+    if(error && error->code!=QA_OK) return false;
+    *overflow=true;
+    return true;
+}
 uint64_t qa_application_events_audio_first(const qa_application *app)
 { return app->event_audio_cursor; }
 void qa_application_events_audio_consume(qa_application *app, uint64_t next)
@@ -1425,6 +1443,7 @@ bool qa_application_event_read(const qa_application *app, qa_application_event_c
     case QA_APPLICATION_EVENT_AUDIO: out->value.audio=&record->raw.audio; break;
     case QA_APPLICATION_EVENT_Q3_EFFECT: out->value.q3_effect=&record->raw.q3_effect; break;
     case QA_APPLICATION_EVENT_Q3_COMMAND: out->value.q3_command=&record->raw.q3_command; break;
+    case QA_APPLICATION_EVENT_QW_COMMAND: out->value.qw_command=&record->raw.qw_command; break;
     case QA_APPLICATION_EVENT_LOG: out->value.log=&record->raw.log; break;
     case QA_APPLICATION_EVENT_UNIFIED: case QA_APPLICATION_EVENT_PROTOCOL:
     case QA_APPLICATION_EVENT_EQUIPMENT: break;
