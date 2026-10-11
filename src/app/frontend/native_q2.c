@@ -398,14 +398,17 @@ static bool application_import_body(void *context, const qa_native_host_q2_appli
     }
     return frontend_fail(error, QA_ERROR_UNSUPPORTED, "native Q2 platform import is not bound");
 }
-static void platform_print_body(void *context, const qa_native_host_print *print)
+void frontend_native_q2_print_output(qa_frontend *frontend, const qa_application_protocol_event *event)
 {
-    frontend_native_q2 *source = context; qa_frontend *frontend = source->frontend;
+    const qa_q2_server_event *print = event->q2;
+    if (!print || (print->kind != QA_Q2_SVC_PRINT && print->kind != QA_Q2_SVC_CENTERPRINT)) return;
     if (frontend->native_print) {
-        frontend->native_print(frontend->native_output_context, print); return;
+        qa_native_host_print output = {.kind = print->kind == QA_Q2_SVC_CENTERPRINT ?
+            QA_NATIVE_HOST_PRINT_CENTER : event->recipient.registry ? QA_NATIVE_HOST_PRINT_CLIENT : QA_NATIVE_HOST_PRINT_BROADCAST,
+            .client = event->recipient, .level = print->data.print.level, .text = print->data.print.text};
+        frontend->native_print(frontend->native_output_context, &output); return;
     }
-    if (!print || !print->text || print->kind == QA_NATIVE_HOST_PRINT_DEBUG) return;
-    fputs(print->text, stdout);
+    fputs(print->data.print.text, stdout);
 }
 void frontend_native_q2_print_event(qa_frontend *frontend, qa_actor_owner owner,
     const qa_unified_q2_protocol_event *print, qa_actor_id recipient)
@@ -488,13 +491,6 @@ static bool application_import(void *context, const qa_native_host_q2_applicatio
     bool ok = application_import_body(context, call, result, error);
     --source->active_imports;
     return ok;
-}
-static void platform_print(void *context, const qa_native_host_print *print)
-{
-    frontend_native_q2 *source = context;
-    ++source->active_imports;
-    platform_print_body(context, print);
-    --source->active_imports;
 }
 static bool platform_hud_view(void *context, uint32_t seat,
     qa_native_host_q2_hud_view *out, qa_error *error)
@@ -619,7 +615,7 @@ bool frontend_native_q2_services(void *context, qa_application *application, qa_
     source->cvars = engine->cvars; source->prepared = false;
     qa_hud_cvars_bind(source->cvars,
         QA_HUD_CVAR_LANGUAGE | QA_HUD_CVAR_USE_FONT | QA_HUD_CVAR_CENTER_TIME, &source->hud_cvars);
-    engine->context = source; engine->print = platform_print; engine->sound = NULL;
+    engine->context = source;
     engine->hud_view = platform_hud_view;
     engine->resource_precache = platform_resource_precache;
     engine->frontend_lifetime = source; engine->release_frontend = release_source;

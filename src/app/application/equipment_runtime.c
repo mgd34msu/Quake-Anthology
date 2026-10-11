@@ -202,8 +202,7 @@ static bool server_command(void *context, int32_t index, const char *text, qa_er
 static void print(void *context, const char *text)
 {
     equipment_source *source = context;
-    qa_command_context command = {.owner = source->view.gear_owner, .dialect = QA_RULESET_Q3, .origin = QA_COMMAND_SERVER};
-    application_console_print(source->runtime->options.application, &command, text);
+    (void)application_source_log(source->provider, text, true, NULL);
 }
 
 static bool admit(void *context, qa_actor_id actor, qa_error *error)

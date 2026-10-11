@@ -11,7 +11,9 @@ bool frontend_native_q2_messages(qa_frontend *frontend, qa_error *error)
         if (!qa_application_event_read(frontend->application, &(qa_application_event_cursor){.id = id, .projection = 0}, &output) || !output.protocol) continue;
         const qa_application_protocol_event *record = output.protocol;
         const qa_application_q2_protocol_delivery *delivery = output.q2_delivery;
-        if (!delivery->original || !delivery->audience.captured || !delivery->audience.count) continue;
+        if (!delivery->original) continue;
+        frontend_native_q2_print_output(frontend, record);
+        if (!delivery->audience.captured || !delivery->audience.count) continue;
         qa_application_event_view projected;
         qa_application_event_cursor event_cursor = {.id = id};
         while ( qa_application_event_read(frontend->application, &event_cursor, &projected)) {

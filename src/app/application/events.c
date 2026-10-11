@@ -91,12 +91,12 @@ static bool valid_event(qa_application *application,
          (event->family!=QA_GAME_Q2 || !event->provider)))
         return application_fail(error,QA_ERROR_ARGUMENT,"Gameplay event has invalid Source multicast input");
     if (event->kind == QA_BUILTIN_LOG &&
-        (event->family != QA_GAME_Q3 || !event->provider ||
+        (!event->provider ||
          event->text == QA_STRING_NONE || event->argument_count ||
          !qa_actor_id_equal(event->actor, (qa_actor_id){0}) ||
          !qa_actor_id_equal(event->other, (qa_actor_id){0})))
         return application_fail(error, QA_ERROR_ARGUMENT,
-                                "Q3 source log requires provider-owned text");
+                                "Source log requires provider-owned text");
     if (event->has_muzzle_pose &&
         (event->family != QA_GAME_Q2 || event->kind != QA_BUILTIN_MUZZLE ||
          !event->provider || !qa_actors_get(qa_session_actors(application->session), event->actor) ||
@@ -749,6 +749,26 @@ bool application_emit(void *opaque, const qa_builtin_event *event, qa_error *err
         emit_event(application,event,&audience,error);
     application_native_q2_delivery_dispose(&audience);
     return ok;
+}
+
+bool application_source_log(application_provider *provider, const char *text,
+    bool console, qa_error *error)
+{
+    qa_application *app = provider->application;
+    if (console && qa_console_output_redirected(app->console)) {
+        qa_command_context context = {.owner = provider->owner,
+            .dialect = qa_product_ruleset(provider->product, provider->product->family), .origin = QA_COMMAND_SERVER};
+        qa_console_emit(app->console, &context, text);
+        return true;
+    }
+    qa_clock_state clock = {0};
+    qa_session_clock(app->session, provider->owner, &clock);
+    qa_builtin_event event = {.kind = QA_BUILTIN_LOG,
+        .family = provider->product->family, .provider = provider->owner,
+        .time_ns = clock.frame.time_ns,
+        .code = console ? QA_BUILTIN_LOG_CONSOLE : 0};
+    return qa_strings_intern_cstr(qa_session_strings(app->session), text,
+        &event.text, error) && application_emit(app, &event, error);
 }
 
 bool application_q1_music_cue(qa_application *application, bool fresh, qa_error *error)

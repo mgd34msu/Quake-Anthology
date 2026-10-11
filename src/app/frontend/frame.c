@@ -509,7 +509,14 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
         if (!qa_application_event_read(frontend->application, &(qa_application_event_cursor){.id = i, .projection = 0}, &output) ||
             output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
         qa_builtin_event event = *output.value.builtin;
-        if (event.kind == QA_BUILTIN_LOG) continue;
+        if (event.kind == QA_BUILTIN_LOG) {
+            if (event.code & QA_BUILTIN_LOG_CONSOLE) {
+                qa_command_context context = {.owner = event.provider, .origin = QA_COMMAND_SERVER};
+                qa_console_emit(qa_application_console(frontend->application), &context,
+                    qa_strings_cstr(strings, event.text));
+            }
+            continue;
+        }
         if (!frontend_ranking_event(frontend,&event,error)) return false;
         const char *text = qa_strings_cstr(strings, event.text);
         if ((event.kind == QA_BUILTIN_MESSAGE || event.kind == QA_BUILTIN_CENTERPRINT) && text) {

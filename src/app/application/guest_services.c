@@ -84,10 +84,7 @@ bool application_console_create(qa_application *application, qa_error *error)
 static void guest_print(void *context, const char *text)
 {
     application_provider *provider = context;
-    qa_command_context command = {.owner = provider->owner, .dialect = QA_RULESET_Q3,
-        .origin = QA_COMMAND_SERVER};
-    qa_console *console = application_guest_q3_console_owner(provider);
-    qa_console_emit(console ? console : provider->application->console, &command, text);
+    (void)application_source_log(provider, text, true, NULL);
 }
 
 static uint32_t guest_milliseconds(void *context)

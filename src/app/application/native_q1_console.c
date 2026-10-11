@@ -271,9 +271,7 @@ static void cvar_print(void *opaque, const char *text)
 void application_native_q1_source_console_print(void *opaque, const char *text)
 {
     application_provider *provider = opaque;
-    struct application_native_q1_console *owner = provider ? provider->native_q1_console : NULL;
-    if (owner && provider->kind == APPLICATION_PROVIDER_Q1 && text)
-        qa_console_emit(owner->console, NULL, text);
+    (void)application_source_log(provider, text, true, NULL);
 }
 static const qa_launch_instance *source_descriptor(application_provider *provider)
 {

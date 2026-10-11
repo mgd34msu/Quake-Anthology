@@ -34,22 +34,21 @@ static bool protocol(struct application_native_q2 *engine, const qa_q2_server_ev
 static void print(void *opaque, const qa_native_host_print *source)
 {
     struct application_native_q2 *engine = opaque;
-    qa_command_context context = engine->command_context;
-    context.actor = source->client;
-    if (source->kind == QA_NATIVE_HOST_PRINT_DEBUG ||
-        qa_console_output_redirected(engine->provider->application->console))
-        qa_console_emit(engine->provider->application->console, &context, source->text);
+    qa_application *app = engine->provider->application;
+    if (qa_console_output_redirected(app->console)) {
+        qa_command_context context = engine->command_context;
+        context.actor = source->client;
+        qa_console_emit(app->console, &context, source->text);
+    } else if (source->kind == QA_NATIVE_HOST_PRINT_DEBUG)
+        (void)application_source_log(engine->provider, source->text, true, NULL);
     if (source->kind != QA_NATIVE_HOST_PRINT_DEBUG) {
         qa_q2_server_event event = {.kind = source->kind == QA_NATIVE_HOST_PRINT_CENTER ?
             QA_Q2_SVC_CENTERPRINT : QA_Q2_SVC_PRINT,
             .data.print = {.level = (uint8_t)source->level, .text = source->text}};
         qa_error error = {0};
         if (!protocol(engine, &event, source->client, true, &error))
-            application_fault(engine->provider->application, &error);
+            application_fault(app, &error);
     }
-    if (source->kind != QA_NATIVE_HOST_PRINT_DEBUG &&
-        !qa_console_output_redirected(engine->provider->application->console) && engine->platform.print)
-        engine->platform.print(engine->platform.context, source);
 }
 
 static bool config_get(void *opaque, int32_t index, qa_string_id *out, qa_error *error)
@@ -207,7 +206,7 @@ static bool message(void *opaque, const qa_native_host_message *source, qa_error
         engine->provider->owner, source->client, delivery.dupe_key, true, &duplicate, error);
     application_native_q2_delivery_dispose(&delivery.audience);
     if (!emitted) return false;
-    return !engine->platform.message || engine->platform.message(engine->platform.context, source, error);
+    return true;
 }
 
 static bool sound(void *opaque, const qa_native_host_sound *source, qa_error *error)
@@ -217,7 +216,6 @@ static bool sound(void *opaque, const qa_native_host_sound *source, qa_error *er
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 sound references an unregistered source index");
     const char *name = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->hud_names.values[application_native_q2_resource_range(engine, QA_NATIVE_HOST_SOUND).base + (uint32_t)source->index]);
     if (!name || !*name) return application_fail(error, QA_ERROR_FORMAT, "Native Q2 sound has no admitted source resource");
-    qa_native_host_sound named = *source; named.name = name;
     bool rerelease = engine->profile == QA_NATIVE_Q2_GAME_API2023;
     if (!isfinite(source->volume) || source->volume < 0 || source->volume > 1 ||
         !isfinite(source->attenuation) || source->attenuation < 0 || source->attenuation > 4 ||
@@ -289,28 +287,11 @@ static bool sound(void *opaque, const qa_native_host_sound *source, qa_error *er
         application_native_q2_delivery_dispose(&delivery.audience); return false;
     }
     if (duplicate) { application_native_q2_delivery_dispose(&delivery.audience); return true; }
-    qa_unified_frame_lease *sound_storage = NULL;
-    qa_actor_id *recipients = NULL;
-    if (engine->platform.sound && delivery.audience.count) {
-        sound_storage = application_control_storage_acquire(engine->provider->application, error);
-        if (sound_storage) recipients = qa_unified_frame_lease_alloc(sound_storage, delivery.audience.count,
-            sizeof(*recipients), _Alignof(qa_actor_id), error);
-        if (!recipients) {
-            qa_unified_frame_lease_release(sound_storage);
-            application_native_q2_delivery_dispose(&delivery.audience); return false;
-        }
-    }
-    for (size_t i = 0; recipients && i < delivery.audience.count; ++i) recipients[i] = delivery.audience.recipients[i].actor;
-    named.origin = origin; named.positioned = positioned; named.reliable = reliable;
-    named.channel = event.data.sound.channel; named.recipients = recipients;
-    named.recipient_count = delivery.audience.count; named.audience_captured = delivery.audience.captured;
     qa_q2_server_record record = {.event = event};
     bool ok = application_emit_q2_protocol(engine->provider, &publication, &delivery, NULL, &record, error);
     if (ok && keyed) ok = qa_application_network_q2_unicast(engine->provider->application,
         engine->provider->owner, source->client, delivery.dupe_key, true, &duplicate, error);
-    if (ok && named.audience_captured && engine->platform.sound)
-        ok = engine->platform.sound(engine->platform.context, &named, error);
-    qa_unified_frame_lease_release(sound_storage); application_native_q2_delivery_dispose(&delivery.audience);
+    application_native_q2_delivery_dispose(&delivery.audience);
     return ok;
 }
 

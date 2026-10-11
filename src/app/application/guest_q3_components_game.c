@@ -45,8 +45,7 @@ static bool visible(void *context,int32_t a,int32_t b)
 static void print(void *context,const char *text)
 {
     component_game_row *row=context;
-    qa_command_context command={.owner=row->publication.owner,.dialect=QA_RULESET_Q3,.origin=QA_COMMAND_SERVER};
-    application_console_print(row->roster->options.application,&command,text);
+    (void)application_source_log(row->provider, text, true, NULL);
 }
 static int32_t calendar(void *context,qa_q3_host_calendar *out)
 {

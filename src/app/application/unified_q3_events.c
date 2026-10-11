@@ -75,8 +75,8 @@ bool application_unified_q3_text(application_provider *p, application_unified_q3
 {
     if ((unsigned)kind > APPLICATION_Q3_SOURCE_DROP || !value || !source(p, e))
         return application_fail(e, QA_ERROR_ARGUMENT, "Q3 engine event lost its authored text");
-    static const qa_unified_q3_event_kind kinds[] = {QA_UNIFIED_Q3_PRINT, QA_UNIFIED_Q3_LOG,
-        QA_UNIFIED_Q3_SERVER_COMMAND, QA_UNIFIED_Q3_DROP_CLIENT};
+    static const qa_unified_q3_event_kind kinds[] = {QA_UNIFIED_Q3_SERVER_COMMAND,
+        QA_UNIFIED_Q3_DROP_CLIENT};
     int32_t time;
     if (!qa_q3_source_clock(p->state.q3, &time, e)) return false;
     qa_unified_q3_event event = {.kind = kinds[kind], .client = client, .text = (char *)value};
