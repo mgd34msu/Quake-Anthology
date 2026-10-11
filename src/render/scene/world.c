@@ -1161,7 +1161,7 @@ bool qa_scene_world_source_prepare_view(qa_scene_world *world, qa_scene_world_in
             i & 2 ? view->bounds.mins.y : view->bounds.maxs.y,
             i & 4 ? view->bounds.mins.z : view->bounds.maxs.z);
         qa_vec3 delta = qa_vec_sub(corner, input->view.origin);
-        float distance = delta.x * delta.x + delta.y * delta.y + delta.z * delta.z;
+        float distance = qa_vec_dot(delta,delta);
         if (distance > maximum) maximum = distance;
     }
     input->source_far_clip = input->no_world ? 2048 : sqrtf(maximum);

@@ -168,7 +168,7 @@ static bool same_vec(qa_vec3 a,qa_vec3 b) { return a.x==b.x && a.y==b.y && a.z==
 static void native_result(const qa_trace_query *query,const native_trace *trace,qa_vec3 origin,const qa_vec3 basis[3],qa_trace_result *out) {
     qa_trace_result result=qa_collision_empty_trace(query,QA_GAME_Q1);
     result.fraction=trace->fraction;
-    result.end=trace->fraction==1?query->end:qa_vec_add(qa_collision_from_local(trace->end,basis),origin);
+    result.end=trace->fraction==1?query->end:qa_vec_add(qa_axis_from_local(trace->end,basis),origin);
     result.start_solid=trace->start_solid; result.all_solid=trace->all_solid;
     result.in_open=trace->in_open; result.in_water=trace->in_water;
     result.plane=qa_collision_make_plane(qa_collision_pose_normal(trace->plane.normal,&query->target,query->target.inline_model,basis),trace->plane.distance,trace->plane.type);
@@ -450,8 +450,8 @@ static bool arbitrary_trace(const q1state *state,q1scratch *scratch,q1work *w,co
     }
     q1hull point_hull=model_hull(state,model,0); native_trace environment;
     qa_vec3 reached=qa_vec_lerp(query->start,query->end,(float)fraction);
-    if(!trace_hull(scratch->frames,&point_hull,qa_collision_to_local(qa_vec_sub(query->start,origin),basis),
-        qa_collision_to_local(qa_vec_sub(reached,origin),basis),NULL,&environment,w->error)) return false;
+    if(!trace_hull(scratch->frames,&point_hull,qa_axis_to_local(qa_vec_sub(query->start,origin),basis),
+        qa_axis_to_local(qa_vec_sub(reached,origin),basis),NULL,&environment,w->error)) return false;
     bool all_solid=start_solid && covered>=1;
     if(all_solid && (rules.zero_all_solid || (rules.zero_stationary && same_vec(query->start,query->end)))) fraction=0;
     reached=qa_vec_lerp(query->start,query->end,(float)fraction);
@@ -531,8 +531,8 @@ static bool q1_trace(const void *opaque,void *workspace,const qa_trace_query *qu
         q1hull hull=model_hull(state,model,(unsigned)hull_index);
         qa_vec3 offset=qa_vec_add(origin,qa_vec_sub(hull_bounds[hull_index].mins,bounds.mins));
         native_trace trace;
-        if(!trace_hull(scratch->frames,&hull,qa_collision_to_local(qa_vec_sub(query->start,offset),basis),
-            qa_collision_to_local(qa_vec_sub(query->end,offset),basis),&query->policy,&trace,error)) return false;
+        if(!trace_hull(scratch->frames,&hull,qa_axis_to_local(qa_vec_sub(query->start,offset),basis),
+            qa_axis_to_local(qa_vec_sub(query->end,offset),basis),&query->policy,&trace,error)) return false;
         qa_trace_result result;
         native_result(query,&trace,offset,basis,&result);
         if(hull_index==0 && trace.fraction<1 && !trace.all_solid
@@ -546,7 +546,7 @@ static bool q1_point_contents(const void *opaque,void *workspace,const qa_point_
     size_t model; qa_vec3 origin,basis[3];
     if(!select_model(state,&query->target,&model,&origin,basis,error)) return false;
     q1hull hull=model_hull(state,model,0); qa_collision_terminal contents;
-    if(!hull_contents(&hull,qa_collision_to_local(qa_vec_sub(query->point,origin),basis),hull.root,&contents,error)) return false;
+    if(!hull_contents(&hull,qa_axis_to_local(qa_vec_sub(query->point,origin),basis),hull.root,&contents,error)) return false;
     *out=(qa_point_contents){.family=QA_GAME_Q1,.contents=contents.bits,.stored=contents.bits,.merged=contents.bits,
         .q1_opaque_token=contents.opaque_token}; return true;
 }

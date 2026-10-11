@@ -159,7 +159,7 @@ static bool trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, 
     bool rotated = target_kind == QA_SHAPE_CAPSULE && qa_collision_pose_rotates(&query->target);
     if (rotated) {
         qa_collision_pose_basis(&query->target, true, basis);
-        start = qa_collision_to_local(start, basis); end = qa_collision_to_local(end, basis);
+        start = qa_axis_to_local(start, basis); end = qa_axis_to_local(end, basis);
         q3_rotate_capsule(&shape, basis);
     }
     bool stationary = transformed ? q3_same_point(start, end) : q3_same_point(query->start, query->end);

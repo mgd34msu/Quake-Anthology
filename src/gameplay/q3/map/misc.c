@@ -113,25 +113,6 @@ bool q3_map_spawn_misc(qa_q3_game *game, qa_q3_map_actor_state *state,
     return true;
 }
 
-static qa_vec3 shooter_normalize(qa_vec3 value) {
-    float length = (float)sqrt((double)qa_vec_dot(value, value));
-    return length == 0 ? value : qa_vec_scale(value, (1 / length));
-}
-static qa_vec3 perpendicular(qa_vec3 direction) {
-    qa_vec3 axis = qa_v3(1, 0, 0);
-    float minimum = 1;
-    if (fabsf(direction.x) < minimum) minimum = fabsf(direction.x);
-    if (fabsf(direction.y) < minimum) {
-        minimum = fabsf(direction.y);
-        axis = qa_v3(0, 1, 0);
-    }
-    if (fabsf(direction.z) < minimum) axis = qa_v3(0, 0, 1);
-    float inverse = (1 / qa_vec_dot(direction, direction));
-    float distance = (qa_vec_dot(axis, direction) * inverse);
-    qa_vec3 normal = qa_vec_scale(direction, inverse);
-    return shooter_normalize(qa_vec_sub(axis, qa_vec_scale(normal, distance)));
-}
-
 static bool use_shooter(qa_q3_game *game, qa_q3_map_actor_state *state,
                         qa_error *error) {
     qa_actor_id actor = state->actor;
@@ -143,7 +124,7 @@ static bool use_shooter(qa_q3_game *game, qa_q3_map_actor_state *state,
         qa_body_state enemy;
         qa_error local = {0};
         if (qa_world_body_read(game->options.services.world, state->enemy, &enemy, &local))
-            direction = shooter_normalize(qa_vec_sub(enemy.origin, origin));
+            direction = qa_vec_normalize(qa_vec_sub(enemy.origin, origin));
         else if (local.code != QA_ERROR_NOT_FOUND) {
             if (error)
                 *error = local;
@@ -152,10 +133,10 @@ static bool use_shooter(qa_q3_game *game, qa_q3_map_actor_state *state,
         if (!q3_map_get(game, actor))
             return true;
     }
-    qa_vec3 up = perpendicular(direction);
+    qa_vec3 up = qa_vec_perpendicular(direction);
     qa_vec3 right = qa_vec_cross(up, direction);
     direction = qa_vec_add(direction, qa_vec_scale(up, (q3_crandom(game) * spread)));
-    direction = shooter_normalize(
+    direction = qa_vec_normalize(
         qa_vec_add(direction, qa_vec_scale(right, (q3_crandom(game) * spread))));
     if (!q3_launch(game, actor, weapon, origin, direction, right, up, 1, NULL, error))
         return false;

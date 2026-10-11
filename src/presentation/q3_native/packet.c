@@ -14,46 +14,14 @@ static int32_t sum(int32_t a, int32_t b) { return word((uint32_t)a + (uint32_t)b
 static int32_t difference(int32_t a, int32_t b) { return word((uint32_t)a - (uint32_t)b); }
 static int32_t integer(float v) { return isfinite(v) && v >= -2147483648.0f && v < 2147483648.0f ? (int32_t)truncf(v) : INT32_MIN; }
 static qa_vec3 vector(const float v[3]) { return qa_v3(v[0], v[1], v[2]); }
-static qa_vec3 plus(qa_vec3 a, qa_vec3 b) { return qa_v3((a.x + b.x),(a.y + b.y),(a.z + b.z)); }
-static qa_vec3 scale(qa_vec3 a, float s) { return qa_v3((a.x * s),(a.y * s),(a.z * s)); }
-static float dot(qa_vec3 a, qa_vec3 b) { return (((a.x * b.x) + (a.y * b.y)) + (a.z * b.z)); }
-static qa_vec3 cross(qa_vec3 a, qa_vec3 b) {
-    return qa_v3(((a.y * b.z) + -(a.z * b.y)),((a.z * b.x) + -(a.x * b.z)),((a.x * b.y) + -(a.y * b.x)));
-}
-static qa_vec3 normalize(qa_vec3 v) {
-    float length=(float)sqrt((double)dot(v,v)); return length==0 ? v : scale(v,(1 / length));
-}
-static qa_vec3 perpendicular(qa_vec3 v) {
-    float minimum=1; qa_vec3 axis={1,0,0};
-    if (fabsf(v.x)<minimum) { minimum=fabsf(v.x); axis=qa_v3(1,0,0); }
-    if (fabsf(v.y)<minimum) { minimum=fabsf(v.y); axis=qa_v3(0,1,0); }
-    if (fabsf(v.z)<minimum) axis=qa_v3(0,0,1);
-    float inverse=(1 / dot(v,v)), distance=(dot(v,axis) * inverse);
-    qa_vec3 normal=scale(v,inverse);
-    return normalize(plus(axis,scale(normal,-distance)));
-}
-static void matrix(const qa_vec3 a[3], const qa_vec3 b[3], qa_vec3 out[3]) {
-    qa_vec3 columns[3]={{b[0].x,b[1].x,b[2].x},{b[0].y,b[1].y,b[2].y},{b[0].z,b[1].z,b[2].z}}, result[3];
-    for(unsigned i=0;i<3;++i) result[i]=qa_v3(dot(a[i],columns[0]),dot(a[i],columns[1]),dot(a[i],columns[2]));
-    memcpy(out,result,sizeof(result));
-}
-static qa_vec3 rotate(qa_vec3 direction, qa_vec3 point, float degrees) {
-    qa_vec3 radial=perpendicular(direction), vertical=cross(radial,direction);
-    float radians=((degrees * 3.14159265358979323846f) / 180);
-    float cosine=(float)cos((double)radians), sine=(float)sin((double)radians);
-    qa_vec3 basis[3]={{radial.x,vertical.x,direction.x},{radial.y,vertical.y,direction.y},{radial.z,vertical.z,direction.z}};
-    qa_vec3 inverse[3]={radial,vertical,direction}, turn[3]={{cosine,sine,0},{-sine,cosine,0},{0,0,1}}, first[3], result[3];
-    matrix(basis,turn,first); matrix(first,inverse,result);
-    return qa_v3(dot(result[0],point),dot(result[1],point),dot(result[2],point));
-}
 static qa_vec3 missile_direction(const qa_q3_trajectory *t) {
-    qa_vec3 direction=vector(t->delta); return dot(direction,direction)==0 ? qa_v3(0,0,1) : normalize(direction);
+    qa_vec3 direction=vector(t->delta); return qa_vec_dot(direction,direction)==0 ? qa_v3(0,0,1) : qa_vec_normalize(direction);
 }
 static void direction_axis(qa_vec3 direction, int32_t yaw, qa_vec3 axis[3]) {
-    qa_vec3 side=perpendicular(direction); if(yaw) side=rotate(direction,side,(float)yaw);
-    axis[0]=direction; axis[1]=side; axis[2]=cross(direction,side);
+    qa_vec3 side=qa_vec_perpendicular(direction); if(yaw) side=qa_vec_rotate_around(direction,side,(float)yaw);
+    axis[0]=direction; axis[1]=side; axis[2]=qa_vec_cross(direction,side);
 }
-static void scale_axis(qa_vec3 axis[3], float amount) { for(unsigned i=0;i<3;++i) axis[i]=scale(axis[i],amount); }
+static void scale_axis(qa_vec3 axis[3], float amount) { for(unsigned i=0;i<3;++i) axis[i]=qa_vec_scale(axis[i],amount); }
 static bool range(int32_t index, size_t count, const char *kind, qa_error *error) {
     if(index>=0 && (size_t)index<count) return true;
     qa_error_set(error,QA_ERROR_FORMAT,0,"Native Q3 %s index %d is outside its actual registry",kind,index); return false;
@@ -119,7 +87,7 @@ static bool sound_position(const q3n_frame *f,const packet_source *source,
     const q3n_media_view *media=q3n_media_read(f->media); qa_vec3 origin=entity->lerp_origin;
     if(source->state->solid==0xffffff) {
         if(!range(source->state->modelindex,media->inline_count,"inline model",error)) return false;
-        origin=plus(origin,media->inline_models[source->state->modelindex].midpoint);
+        origin=qa_vec_add(origin,media->inline_models[source->state->modelindex].midpoint);
     }
     return qa_q3_presentation_sound_position(f->presentation,source->state->number,origin,error) && current(f,source,error);
 }
@@ -157,8 +125,8 @@ static bool item(const q3n_frame *f,const packet_source *source,q3n_entity *enti
         if(!range(definition->tag,16,"weapon",error)) return false;
         weapon=&media->weapons[definition->tag];
         qa_vec3 midpoint=weapon->weapon_midpoint;
-        qa_vec3 offset=plus(plus(scale(ref.axis[0],midpoint.x),scale(ref.axis[1],midpoint.y)),scale(ref.axis[2],midpoint.z));
-        entity->lerp_origin=plus(entity->lerp_origin,scale(offset,-1)); entity->lerp_origin.z=(entity->lerp_origin.z + 8);
+        qa_vec3 offset=qa_vec_add(qa_vec_add(qa_vec_scale(ref.axis[0],midpoint.x),qa_vec_scale(ref.axis[1],midpoint.y)),qa_vec_scale(ref.axis[2],midpoint.z));
+        entity->lerp_origin=qa_vec_add(entity->lerp_origin,qa_vec_scale(offset,-1)); entity->lerp_origin.z=(entity->lerp_origin.z + 8);
     }
     ref.origin=ref.old_origin=entity->lerp_origin;
     int32_t elapsed=difference(f->time,entity->misc_time); float fraction=1;
@@ -299,7 +267,7 @@ static bool packet_entity(const q3n_frame *f,const packet_source *source,q3n_ent
     case 6: {
         ref.kind=QA_Q3_REF_PORTAL; ref.origin=entity->lerp_origin; ref.old_origin=vector(s->origin2);
         qa_vec3 forward={0}; if(s->eventParm>=0 && s->eventParm<(int32_t)QA_BYTE_NORMAL_COUNT) qa_byte_normal((uint8_t)s->eventParm,&forward);
-        qa_vec3 side=scale(perpendicular(forward),-1); ref.axis[0]=forward; ref.axis[1]=side; ref.axis[2]=cross(forward,side);
+        qa_vec3 side=qa_vec_scale(qa_vec_perpendicular(forward),-1); ref.axis[0]=forward; ref.axis[1]=side; ref.axis[2]=qa_vec_cross(forward,side);
         ref.old_frame=s->powerups; ref.frame=s->frame; ref.skin=integer((((float)s->clientNum / 256) * 360));
         return body(f,source,entity,imports,&ref,error);
     }
@@ -415,7 +383,7 @@ static bool lerp(const q3n_frame *f,const packet_source *source,const q3n_packet
         qa_vec3 a,b;
         if(!q3n_trajectory(&pos,snapshot->server_time,&a,error) ||
             !q3n_trajectory(&next_pos,next->server_time,&b,error)) return false;
-        entity->lerp_origin=plus(a,scale(plus(b,scale(a,-1)),fraction));
+        entity->lerp_origin=qa_vec_add(a,qa_vec_scale(qa_vec_add(b,qa_vec_scale(a,-1)),fraction));
         if(!q3n_trajectory(&s->apos,snapshot->server_time,&a,error) ||
             !q3n_trajectory(&next_state->apos,next->server_time,&b,error)) return false;
         entity->lerp_angles=qa_v3(lerp_angle(a.x,b.x,fraction),lerp_angle(a.y,b.y,fraction),lerp_angle(a.z,b.z,fraction));
@@ -436,7 +404,7 @@ static bool lerp(const q3n_frame *f,const packet_source *source,const q3n_packet
                 !q3n_trajectory(&mover->apos,snapshot->server_time,&discarded,error) ||
                 !q3n_trajectory(&mover->pos,f->time,&position,error) ||
                 !q3n_trajectory(&mover->apos,f->time,&discarded,error)) return false;
-            entity->lerp_origin=plus(entity->lerp_origin,plus(position,scale(previous,-1)));
+            entity->lerp_origin=qa_vec_add(entity->lerp_origin,qa_vec_add(position,qa_vec_scale(previous,-1)));
         }
     }
     return true;

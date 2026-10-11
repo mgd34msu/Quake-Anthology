@@ -6,8 +6,6 @@
 float qa_material_noise(float x, float y, float z, float time);
 float qa_material_sine(unsigned index);
 unsigned qa_material_table_index(float value);
-float qa_material_inverse_sqrt(float square);
-qa_vec3 qa_material_fast_normalize(qa_vec3 value);
 qa_vec2 qa_material_fog_coordinates(const qa_material_context *, qa_vec3 local_position);
 typedef struct material_color_state {
     qa_vec4 entity;

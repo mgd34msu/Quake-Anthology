@@ -1029,20 +1029,6 @@ static bool build_world(frontend_equipment_source *owner, qa_error *error)
     return true;
 }
 
-static qa_vec3 companion_vector(const qa_vec3 source[3], const qa_vec3 destination[3], qa_vec3 vector)
-{
-    qa_vec3 result = {0};
-    for (size_t i = 0; i < 3; ++i)
-        result = qa_vec_add(result, qa_vec_scale(destination[i], qa_vec_dot(vector, source[i])));
-    return result;
-}
-
-static qa_vec3 companion_point(const qa_q3_refdef *definition, const qa_scene_view *view, qa_vec3 point)
-{
-    return qa_vec_add(view->origin, companion_vector(definition->axis, view->axis,
-        qa_vec_sub(point, definition->origin)));
-}
-
 static bool companion_lights_prepare(frontend_equipment_source *owner,
     qa_q3_scene_options *options, qa_error *error)
 {
@@ -1075,7 +1061,7 @@ static bool companion_lights_prepare(frontend_equipment_source *owner,
         const equipment_companion_light *captured = owner->companion_lights + i;
         if (captured->view && !owner->companion_view_requested) continue;
         qa_scene_light light = captured->light;
-        if (captured->view) light.origin = companion_point(&captured->definition, &options->world.view, light.origin);
+        if (captured->view) light.origin = qa_axis_remap_point(captured->definition.origin,captured->definition.axis,options->world.view.origin,options->world.view.axis,light.origin);
         lights[at++] = light;
         if (emitted < added) projected_lights[projected + emitted] = light;
         ++emitted;
@@ -1139,11 +1125,11 @@ static bool companion_submit(frontend_equipment_source *owner,
         if (captured->view && !owner->companion_view_requested) continue;
         qa_q3_ref_entity ref = captured->ref;
         if (captured->view) {
-            ref.origin = companion_point(&captured->definition, &options->world.view, ref.origin);
-            ref.old_origin = companion_point(&captured->definition, &options->world.view, ref.old_origin);
-            ref.lighting_origin = companion_point(&captured->definition, &options->world.view, ref.lighting_origin);
+            ref.origin = qa_axis_remap_point(captured->definition.origin,captured->definition.axis,options->world.view.origin,options->world.view.axis,ref.origin);
+            ref.old_origin = qa_axis_remap_point(captured->definition.origin,captured->definition.axis,options->world.view.origin,options->world.view.axis,ref.old_origin);
+            ref.lighting_origin = qa_axis_remap_point(captured->definition.origin,captured->definition.axis,options->world.view.origin,options->world.view.axis,ref.lighting_origin);
             for (size_t j = 0; j < 3; ++j)
-                ref.axis[j] = companion_vector(captured->definition.axis, options->world.view.axis, ref.axis[j]);
+                ref.axis[j] = qa_axis_remap(captured->definition.axis,options->world.view.axis,ref.axis[j]);
         }
         if (!frontend_source_companion_current(owner->options.frontend, &owner->companion) ||
             !qa_q3_presentation_source_component_entity(owner->options.presentation, owner->companion.assets,
@@ -1159,7 +1145,7 @@ static bool companion_submit(frontend_equipment_source *owner,
             if (!transformed) return frontend_fail(error, QA_ERROR_MEMORY, "Transforming genuine Source view weapon polygon");
             memcpy(transformed, vertices, captured->polygon.count * sizeof(*transformed));
             for (size_t j = 0; j < captured->polygon.count; ++j)
-                transformed[j].position = companion_point(&captured->definition, &options->world.view, transformed[j].position);
+                transformed[j].position = qa_axis_remap_point(captured->definition.origin,captured->definition.axis,options->world.view.origin,options->world.view.axis,transformed[j].position);
             vertices = transformed;
         }
         bool okay = frontend_source_companion_current(owner->options.frontend, &owner->companion) &&

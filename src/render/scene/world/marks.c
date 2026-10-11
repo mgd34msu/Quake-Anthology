@@ -24,19 +24,6 @@ static bool mark_fail(qa_error *error, const char *message)
     return false;
 }
 
-static qa_vec3 mark_fast_normalize(qa_vec3 value)
-{
-    float square = qa_vec_dot(value, value), inverse;
-    uint32_t bits;
-    memcpy(&bits, &square, sizeof(bits));
-    bits = UINT32_C(0x5f3759df) - (bits >> 1);
-    memcpy(&inverse, &bits, sizeof(inverse));
-    float product = (square * 0.5f) * inverse;
-    product *= inverse;
-    inverse *= 1.5f - product;
-    return qa_vec_scale(value, inverse);
-}
-
 static unsigned mark_box_side(qa_bounds bounds, qa_scene_plane plane)
 {
     qa_vec3 n = plane.normal;
@@ -227,7 +214,7 @@ bool qa_scene_world_mark_fragments(const qa_scene_world *world,
     for (size_t i = 0; i < count; ++i) {
         qa_vec3 edge = qa_vec_sub(points[(i + 1) % count], points[i]);
         qa_vec3 reverse = qa_vec_sub(points[i], qa_vec_add(points[i], projection));
-        qa_vec3 normal = mark_fast_normalize(qa_vec_cross(edge, reverse));
+        qa_vec3 normal = qa_vec_fast_normalize(qa_vec_cross(edge, reverse));
         planes[i] = (qa_scene_plane){normal, qa_vec_dot(normal, points[i])};
     }
     planes[count] = (qa_scene_plane){marks.direction, qa_vec_dot(marks.direction, points[0]) - 32};
@@ -249,7 +236,7 @@ bool qa_scene_world_mark_fragments(const qa_scene_world *world,
                         const qa_scene_vertex *vertex = &vertices[indices[t][j]];
                         triangle[j] = qa_vec_add(vertex->position, qa_vec_scale(vertex->normal, 0));
                     }
-                    qa_vec3 normal = mark_fast_normalize(qa_vec_cross(
+                    qa_vec3 normal = qa_vec_fast_normalize(qa_vec_cross(
                         qa_vec_sub(triangle[0], triangle[1]), qa_vec_sub(triangle[2], triangle[1])));
                     if (qa_vec_dot(normal, marks.direction) >= (t == 0 ? -0.1f : -0.05f)) continue;
                     mark_append(triangle, planes, count + 2, point_buffer, max_points, fragment_buffer, &result);

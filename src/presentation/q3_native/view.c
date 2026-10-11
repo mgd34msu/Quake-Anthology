@@ -95,13 +95,13 @@ static void first_person(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,con
         f->view_angles=qa_v3(-15,(float)snapshot->stats[q3nh_dead_yaw_stat(o->product)],40);
         r->origin.z=(r->origin.z + (float)p->viewheight); return;
     }
-    qa_vec3 angles=q3ne_sum(f->view_angles,v->kick_angles);
+    qa_vec3 angles=qa_vec_add(f->view_angles,v->kick_angles);
     q3n_damage_feedback damage={.time=g->damage_time,.pitch=g->damage_pitch,.roll=g->damage_roll};
     angles=q3n_damage_feedback_angles(&damage,f->time,angles);
     /* Source refdef axes are still zero here, before AnglesToAxis. */
     qa_vec3 velocity=q3ne_array(p->velocity);
-    angles.x=(angles.x + (q3ne_dot(velocity,r->axis[0]) * s->run_pitch));
-    angles.z=(angles.z + -(q3ne_dot(velocity,r->axis[1]) * s->run_roll));
+    angles.x=(angles.x + (qa_vec_dot(velocity,r->axis[0]) * s->run_pitch));
+    angles.z=(angles.z + -(qa_vec_dot(velocity,r->axis[1]) * s->run_roll));
     float speed=fmaxf(v->xy_speed,200),pitch=((v->bob_fraction_sin * s->bob_pitch) * speed);
     float roll=((v->bob_fraction_sin * s->bob_roll) * speed);
     if(p->pmFlags&1) { pitch=(pitch * 3); roll=(roll * 3); }
@@ -116,7 +116,7 @@ static void first_person(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,con
     else if(delta<450)height=(height + (events->land_change * (1 + -((float)q3ne_sub(delta,150) / 300))));
     delta=q3ne_sub(f->time,events->step_time);
     if(delta<200)height=(height + -((events->step_change * (float)q3ne_sub(200,delta)) / 200));
-    r->origin=q3ne_sum(qa_v3(r->origin.x,r->origin.y,height),v->kick_origin);
+    r->origin=qa_vec_add(qa_v3(r->origin.x,r->origin.y,height),v->kick_origin);
 }
 static bool third_person(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,float angle,qa_error *e)
 {
@@ -125,11 +125,11 @@ static bool third_person(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,flo
     if(p->stats[0]<=0)focus_angles.y=f->view_angles.y=(float)p->stats[q3nh_dead_yaw_stat(o->product)];
     if(focus_angles.x>45)focus_angles.x=45;
     qa_vec3 forward,right; qa_angle_vectors(focus_angles,&forward,NULL,NULL,QA_ANGLE_VM_MATH);
-    qa_vec3 focus=q3ne_sum(r->origin,q3ne_scale(forward,512)),view=r->origin; view.z=(view.z + 8);
+    qa_vec3 focus=qa_vec_add(r->origin,qa_vec_scale(forward,512)),view=r->origin; view.z=(view.z + 8);
     f->view_angles.x=(f->view_angles.x * 0.5f); qa_angle_vectors(f->view_angles,&forward,&right,NULL,QA_ANGLE_VM_MATH);
     float radians=((angle / 180) * 3.14159274101257324219f);
-    view=q3ne_sum(view,q3ne_scale(forward,(-s->third_person_range * (float)cos((double)radians))));
-    view=q3ne_sum(view,q3ne_scale(right,(-s->third_person_range * (float)sin((double)radians))));
+    view=qa_vec_add(view,qa_vec_scale(forward,(-s->third_person_range * (float)cos((double)radians))));
+    view=qa_vec_add(view,qa_vec_scale(right,(-s->third_person_range * (float)sin((double)radians))));
     if(!s->camera_mode) {
         qa_trace_result trace; qa_bounds bounds={qa_v3(-4,-4,-4),qa_v3(4,4,4)};
         if(!q3n_events_trace(f,r->origin,view,bounds,p->clientNum,1,&trace,e))return false;
@@ -139,7 +139,7 @@ static bool third_person(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,flo
             view=trace.end;
         }
     }
-    r->origin=view; focus=q3ne_difference(focus,view);
+    r->origin=view; focus=qa_vec_sub(focus,view);
     float distance=fmaxf(1,(sqrtf(((focus.x * focus.x) + (focus.y * focus.y)))));
     f->view_angles.x=(-57.295780181884765625f * (float)atan2((double)focus.z,(double)distance));
     f->view_angles.y=(f->view_angles.y + -angle); return true;
@@ -203,7 +203,7 @@ bool q3n_view_frame(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,const q3
             int32_t error_time=f->compiled?f->compiled->prediction_error_time:f->remote?f->remote->prediction.prediction_error_time:v->predicted_error_time;
             qa_vec3 error=f->compiled?f->compiled->prediction_error:f->remote?f->remote->prediction.prediction_error:v->predicted_error;
             float factor=((s->error_decay + -(float)q3ne_sub(f->time,error_time)) / s->error_decay);
-            if(factor>0 && factor<1)r->origin=q3ne_sum(r->origin,q3ne_scale(error,factor));
+            if(factor>0 && factor<1)r->origin=qa_vec_add(r->origin,qa_vec_scale(error,factor));
             else if(f->compiled) {
                 if(ok)ok=q3n_compiled_frame_prediction_error_clear(f->compiled,e) && q3ne_current(f,e);
             } else if(f->remote) {
@@ -235,9 +235,9 @@ bool q3n_view_damage_blob(q3n_view *o,const q3n_frame *f,const q3n_view_settings
     int32_t elapsed=q3ne_int(((float)f->time + -g->damage_time));
     if(g->damage_value==0.0f || s->ragepro || elapsed<=0 || elapsed>=500 || f->third_person)return true;
     qa_q3_ref_entity r={.kind=QA_Q3_REF_SPRITE,.flags=4,.custom_shader=q3n_media_read(f->media)->graphics[Q3N_G_VIEW_BLOOD]};
-    r.origin=q3ne_sum(f->refdef.origin,q3ne_scale(f->refdef.axis[0],8));
-    r.origin=q3ne_sum(r.origin,q3ne_scale(f->refdef.axis[1],(g->damage_x * -8)));
-    r.origin=q3ne_sum(r.origin,q3ne_scale(f->refdef.axis[2],(g->damage_y * 8)));
+    r.origin=qa_vec_add(f->refdef.origin,qa_vec_scale(f->refdef.axis[0],8));
+    r.origin=qa_vec_add(r.origin,qa_vec_scale(f->refdef.axis[1],(g->damage_x * -8)));
+    r.origin=qa_vec_add(r.origin,qa_vec_scale(f->refdef.axis[2],(g->damage_y * 8)));
     r.radius=(g->damage_value * 3); r.color[0]=r.color[1]=r.color[2]=255;
     r.color[3]=q3ne_byte((200 * (1 + -((float)elapsed / 500))));
     o->busy=true; bool ok=qa_q3_presentation_entity(f->presentation,&r,e) && q3ne_current(f,e); o->busy=false; return ok;
@@ -254,7 +254,7 @@ bool q3n_view_test_model(q3n_view *o,const q3n_frame *f,const char *name,const f
         if(ok && back_lerp) { o->test_model.back_lerp=*back_lerp; o->test_model.frame=1; }
         if(ok && !o->test_model.model)o->options.print(o->options.context,"Can't register model\n");
         else if(ok) {
-            o->test_model.origin=q3ne_sum(f->refdef.origin,q3ne_scale(f->refdef.axis[0],100));
+            o->test_model.origin=qa_vec_add(f->refdef.origin,qa_vec_scale(f->refdef.axis[0],100));
             qa_angle_axis(qa_v3(0,(180 + f->view_angles.y),0),o->test_model.axis,QA_ANGLE_VM_MATH);
             o->state.test_gun=false;
         }
@@ -278,9 +278,9 @@ bool q3n_view_test_submit(q3n_view *o,const q3n_frame *f,const q3n_view_settings
     else if(ok) {
         if(o->state.test_gun) {
             memcpy(o->test_model.axis,f->refdef.axis,sizeof(o->test_model.axis));
-            o->test_model.origin=q3ne_sum(f->refdef.origin,q3ne_scale(f->refdef.axis[0],s->gun_x));
-            o->test_model.origin=q3ne_sum(o->test_model.origin,q3ne_scale(f->refdef.axis[1],s->gun_y));
-            o->test_model.origin=q3ne_sum(o->test_model.origin,q3ne_scale(f->refdef.axis[2],s->gun_z));
+            o->test_model.origin=qa_vec_add(f->refdef.origin,qa_vec_scale(f->refdef.axis[0],s->gun_x));
+            o->test_model.origin=qa_vec_add(o->test_model.origin,qa_vec_scale(f->refdef.axis[1],s->gun_y));
+            o->test_model.origin=qa_vec_add(o->test_model.origin,qa_vec_scale(f->refdef.axis[2],s->gun_z));
         }
         ok=qa_q3_presentation_entity(f->presentation,&o->test_model,e) && q3ne_current(f,e);
     }

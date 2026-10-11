@@ -32,12 +32,6 @@ static qa_vec3 scale_double(qa_vec3 value, double scale)
                  (float)((double)value.z * scale));
 }
 
-static qa_vec3 normalize(qa_vec3 value)
-{
-    float length = qa_vec_length(value);
-    return length == 0.0f ? value : qa_vec_scale(value, 1.0f / length);
-}
-
 static bool allocate_geometry(qa_scene_frame *frame, size_t vertex_count,
                               size_t index_count, deform_mesh *out,
                               qa_error *error)
@@ -203,7 +197,7 @@ static bool autosprite2(deform_mesh *geometry, const qa_material_context *contex
             midpoints[i] = qa_vec_scale(qa_vec_add(geometry->vertices[start + a].position,
                                                     geometry->vertices[start + b].position), 0.5f);
         }
-        qa_vec3 minor = normalize(qa_vec_cross(qa_vec_sub(midpoints[1], midpoints[0]), forward));
+        qa_vec3 minor = qa_vec_normalize(qa_vec_cross(qa_vec_sub(midpoints[1], midpoints[0]), forward));
         size_t index_start = start / 4u * 6u;
         for (unsigned i = 0; i < 2; ++i) {
             unsigned a = edges[selected[i]][0], b = edges[selected[i]][1];
@@ -348,7 +342,7 @@ static void normal_deform(deform_mesh *geometry, const qa_material_deform *defor
             deform->wave.amplitude * qa_material_noise(point.x, point.y, point.z, sample_time),
             deform->wave.amplitude * qa_material_noise(100.0f + point.x, point.y, point.z, sample_time),
             deform->wave.amplitude * qa_material_noise(200.0f + point.x, point.y, point.z, sample_time));
-        vertex->normal = qa_material_fast_normalize(qa_vec_add(vertex->normal, offset));
+        vertex->normal = qa_vec_fast_normalize(qa_vec_add(vertex->normal, offset));
     }
 }
 

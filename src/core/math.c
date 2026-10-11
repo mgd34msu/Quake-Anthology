@@ -1,4 +1,5 @@
 #include "qa/math.h"
+#include <string.h>
 
 void qa_angle_vectors(qa_vec3 angles,qa_vec3 *forward,qa_vec3 *right,qa_vec3 *up,qa_angle_math_rule rule)
 {
@@ -28,4 +29,39 @@ void qa_angle_axis(qa_vec3 angles,qa_vec3 axis[3],qa_angle_math_rule rule)
 {
     qa_angle_vectors(angles,axis,axis+1,axis+2,rule);
     axis[1]=qa_vec_scale(axis[1],-1);
+}
+
+void qa_axis_multiply(const qa_vec3 left[3],const qa_vec3 right[3],qa_vec3 out[3])
+{
+    qa_vec3 columns[3]={{right[0].x,right[1].x,right[2].x},
+        {right[0].y,right[1].y,right[2].y},{right[0].z,right[1].z,right[2].z}},result[3];
+    for(unsigned i=0;i<3;++i) result[i]=qa_axis_to_local(left[i],columns);
+    memcpy(out,result,sizeof(result));
+}
+qa_vec3 qa_vec_perpendicular(qa_vec3 v)
+{
+    float minimum=1;qa_vec3 axis={1,0,0};
+    if(fabsf(v.x)<minimum) minimum=fabsf(v.x);
+    if(fabsf(v.y)<minimum) { minimum=fabsf(v.y);axis=qa_v3(0,1,0); }
+    if(fabsf(v.z)<minimum) axis=qa_v3(0,0,1);
+    float inverse=1/qa_vec_dot(v,v),distance=qa_vec_dot(v,axis)*inverse;
+    return qa_vec_normalize(qa_vec_sub(axis,qa_vec_scale(qa_vec_scale(v,inverse),distance)));
+}
+qa_vec3 qa_vec_rotate_around(qa_vec3 axis,qa_vec3 point,float degrees)
+{
+    qa_vec3 radial=qa_vec_perpendicular(axis),vertical=qa_vec_cross(radial,axis);
+    float radians=(degrees*3.14159274101257324219f)/180;
+    float cosine=(float)cos((double)radians),sine=(float)sin((double)radians);
+    qa_vec3 basis[3]={{radial.x,vertical.x,axis.x},{radial.y,vertical.y,axis.y},{radial.z,vertical.z,axis.z}};
+    qa_vec3 rotation[3]={{cosine,sine,0},{-sine,cosine,0},{0,0,1}},inverse[3]={radial,vertical,axis},first[3],last[3];
+    qa_axis_multiply(basis,rotation,first);qa_axis_multiply(first,inverse,last);
+    return qa_axis_to_local(point,last);
+}
+float qa_inverse_sqrt(float square)
+{
+    uint32_t bits;memcpy(&bits,&square,sizeof(bits));
+    bits=UINT32_C(0x5f3759df)-(bits>>1);
+    float inverse;memcpy(&inverse,&bits,sizeof(inverse));
+    float product=(square*.5f)*inverse;product*=inverse;
+    return inverse*(1.5f-product);
 }

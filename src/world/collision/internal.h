@@ -105,7 +105,4 @@ qa_vec3 qa_collision_pose_normal(qa_vec3, const qa_collision_target *, bool tran
 
 /* Quake angle basis: forward, negative-right, up. */
 
-static inline qa_vec3 qa_collision_to_local(qa_vec3 v,const qa_vec3 basis[3]) { return qa_v3(qa_vec_dot(v,basis[0]),qa_vec_dot(v,basis[1]),qa_vec_dot(v,basis[2])); }
-static inline qa_vec3 qa_collision_from_local(qa_vec3 v,const qa_vec3 basis[3]) { return qa_vec_add(qa_vec_add(qa_vec_scale(basis[0],v.x),qa_vec_scale(basis[1],v.y)),qa_vec_scale(basis[2],v.z)); }
-
 #endif

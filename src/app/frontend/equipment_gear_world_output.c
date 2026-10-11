@@ -16,11 +16,6 @@ struct frontend_equipment_gear_world_output {
     bool (*current)(void *);
     bool projectile_present;
 };
-static float length(qa_vec3 vector)
-{
-    float square = (((vector.x * vector.x) + (vector.y * vector.y)) + (vector.z * vector.z));
-    return ((float)(sqrt((double)square)));
-}
 static qa_vec3 scaled(qa_vec3 vector, double scale)
 { return qa_v3(((float)(vector.x * scale)), ((float)(vector.y * scale)), ((float)(vector.z * scale))); }
 
@@ -147,7 +142,7 @@ bool frontend_equipment_gear_world_prepare(qa_frontend *frontend,
         if (okay && !output->beam)
             okay = frontend_fail(error, QA_ERROR_FORMAT, "World gear shader cable has no retained named material");
     } else if (okay) {
-        qa_vec3 delta = qa_vec_sub(output->start, output->end); float distance = length(delta);
+        qa_vec3 delta = qa_vec_sub(output->start, output->end); float distance = qa_vec_length(delta);
         uint32_t segment = definition->presentation.cable_segment_length;
         double count = segment ? floor((double)distance / segment) : INFINITY;
         if (!isfinite(distance) || !isfinite(count) || count < 0 || count > 65536)

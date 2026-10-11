@@ -111,6 +111,27 @@ static void test_shared_bounds_and_transform(void)
     CHECK(projected.x==point.x && projected.y==point.y && projected.z==point.z && projected.w==1);
     CHECK(qa_vec_dot_wide(qa_v3(1,2,3),qa_v3(4,5,6))==32);
 }
+static void test_shared_vector_geometry(void)
+{
+    qa_vec3 v=qa_v3(3,4,0);
+    CHECK(qa_vec_normalize_length(&v)==5 && v.x==3.f/5 && v.y==4.f/5 && v.z==0);
+    v=qa_v3(0,-0.f,0);
+    CHECK(qa_vec_normalize_length(&v)==0 && signbit(v.y));
+    qa_vec3 axis[3],identity[3]={{1,0,0},{0,1,0},{0,0,1}},product[3];
+    qa_angle_axis(qa_v3(12,37,21),axis,QA_ANGLE_VM_MATH);
+    qa_vec3 world=qa_axis_from_local(qa_v3(3,-4,5),axis);
+    CHECK(qa_vec_length(qa_vec_sub(qa_axis_to_local(world,axis),qa_v3(3,-4,5)))<2e-6f);
+    qa_axis_multiply(axis,identity,product);
+    CHECK(!memcmp(product,axis,sizeof(axis)));
+    qa_axis_multiply(product,identity,product);
+    CHECK(!memcmp(product,axis,sizeof(axis)));
+    qa_vec3 normal=qa_vec_normalize(qa_v3(1,2,3)),side=qa_vec_perpendicular(normal);
+    CHECK(fabsf(qa_vec_dot(normal,side))<1e-6f && fabsf(qa_vec_length(side)-1)<1e-6f);
+    qa_vec3 rotated=qa_vec_rotate_around(qa_v3(0,0,1),qa_v3(1,0,0),90);
+    CHECK(fabsf(rotated.x)<1e-6f && fabsf(rotated.y-1)<1e-6f && rotated.z==0);
+    CHECK(fabsf(qa_inverse_sqrt(4)-.5f)<.001f);
+    CHECK(fabsf(qa_vec_length(qa_vec_fast_normalize(qa_v3(3,4,0)))-1)<.002f);
+}
 static void test_source_text(void)
 {
     uint8_t source[256],roundtrip[257];char utf8[513];size_t size,restored;qa_error error={0};
@@ -2323,6 +2344,7 @@ int main(int argc, char **argv)
     test_compiled_sound_names();
     test_shared_angle_basis();
     test_shared_bounds_and_transform();
+    test_shared_vector_geometry();
     test_native_import_slot_identity();
     test_q2_weapon_names();
     test_q2_player_media();

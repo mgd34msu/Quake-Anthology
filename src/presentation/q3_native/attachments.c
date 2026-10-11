@@ -2,18 +2,6 @@
 
 #include <string.h>
 
-static float dot(qa_vec3 a, qa_vec3 b) {
-    return (((a.x * b.x) + (a.y * b.y)) + (a.z * b.z));
-}
-static void multiply(const qa_vec3 *left, const qa_vec3 *right, qa_vec3 *out) {
-    qa_vec3 columns[3] = {{right[0].x, right[1].x, right[2].x},
-        {right[0].y, right[1].y, right[2].y}, {right[0].z, right[1].z, right[2].z}};
-    qa_vec3 result[3];
-    for (unsigned i = 0; i < 3; ++i)
-        result[i] = qa_v3(dot(left[i], columns[0]), dot(left[i], columns[1]), dot(left[i], columns[2]));
-    memcpy(out, result, sizeof(result));
-}
-
 bool q3n_attach(const qa_q3_presentation_assets *assets, qa_q3_ref_entity *child,
     const qa_q3_ref_entity *parent, const char *name, bool rotated, qa_error *error) {
     qa_model_tag tag; bool found;
@@ -29,10 +17,10 @@ bool q3n_attach(const qa_q3_presentation_assets *assets, qa_q3_ref_entity *child
     }
     child->origin = origin;
     if (rotated) {
-        qa_vec3 local[3]; multiply(child->axis, axes, local);
-        multiply(local, parent->axis, child->axis);
+        qa_vec3 local[3]; qa_axis_multiply(child->axis, axes, local);
+        qa_axis_multiply(local, parent->axis, child->axis);
     } else {
-        multiply(axes, parent->axis, child->axis);
+        qa_axis_multiply(axes, parent->axis, child->axis);
         child->back_lerp = parent->back_lerp;
     }
     return true;

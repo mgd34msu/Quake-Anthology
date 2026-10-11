@@ -9,9 +9,6 @@ static bool q3n_particles_load_received(q3n_particles *,const q3n_frame *,qa_err
 static int32_t word(uint32_t v) { return v <= INT32_MAX ? (int32_t)v : -1 - (int32_t)(UINT32_MAX - v); }
 static int32_t integer(float v)
 { return v >= -2147483648.0f && v < 2147483648.0f ? (int32_t)v : INT32_MIN; }
-static qa_vec3 scale(qa_vec3 v, float n) { return qa_v3((v.x * n),(v.y * n),(v.z * n)); }
-static qa_vec3 sum(qa_vec3 a, qa_vec3 b) { return qa_v3((a.x + b.x),(a.y + b.y),(a.z + b.z)); }
-static qa_vec3 ma(qa_vec3 a, float n, qa_vec3 v) { return sum(a,scale(v,n)); }
 bool q3np_fail(qa_error *error, qa_status code, const char *message)
 { qa_error_set(error,code,0,"%s",message); return false; }
 static bool current(const q3n_frame *f, qa_error *error)
@@ -204,8 +201,8 @@ static bool draw(const q3n_frame *f, q3n_particle *p, qa_vec3 origin, qa_error *
     float height=(p->height + (ratio * (p->end_height + -p->height)));
     const qa_q3_player *player=q3n_frame_snapshot_player(f);
     qa_vec3 eye=f->unified_effects ? f->refdef.origin : qa_v3(player->origin[0],player->origin[1],player->origin[2]);
-    qa_vec3 distance=sum(eye,scale(origin,-1));
-    float length=(float)sqrt((double)(((distance.x * distance.x) + (distance.y * distance.y)) + (distance.z * distance.z)));
+    qa_vec3 distance=qa_vec_add(eye,qa_vec_scale(origin,-1));
+    float length=qa_vec_length(distance);
     if (length<(width / 1.5f)) return true;
     int32_t index=integer((float)floor((double)(ratio * (float)Q3N_PARTICLE_FRAMES)));
     if (index<0 || index>=Q3N_PARTICLE_FRAMES) return q3np_fail(error,QA_ERROR_FORMAT,"Particle animation frame outside source range");
@@ -213,13 +210,13 @@ static bool draw(const q3n_frame *f, q3n_particle *p, qa_vec3 origin, qa_error *
     qa_vec3 right=f->refdef.axis[1],up=f->refdef.axis[2];
     if (p->roll) {
         qa_vec3 angles=vector_angles(f->refdef.axis[0]),axis[3]; angles.z=(angles.z + (float)p->roll);
-        qa_angle_axis(angles,axis,QA_ANGLE_VM_MATH); right=scale(axis[1],-1); up=axis[2];
+        qa_angle_axis(angles,axis,QA_ANGLE_VM_MATH); right=qa_vec_scale(axis[1],-1); up=axis[2];
     }
     qa_q3_poly_vertex vertices[4]={0};
-    vertices[0].position=ma(ma(origin,-height,up),-width,right);
-    vertices[1].position=ma(vertices[0].position,(2 * height),up);
-    vertices[2].position=ma(vertices[1].position,(2 * width),right);
-    vertices[3].position=ma(vertices[2].position,(-2 * height),up);
+    vertices[0].position=qa_vec_ma(qa_vec_ma(origin,-height,up),-width,right);
+    vertices[1].position=qa_vec_ma(vertices[0].position,(2 * height),up);
+    vertices[2].position=qa_vec_ma(vertices[1].position,(2 * width),right);
+    vertices[3].position=qa_vec_ma(vertices[2].position,(-2 * height),up);
     const qa_vec2 uv[4]={{0,0},{0,1},{1,1},{1,0}};
     for (size_t i=0;i<4;++i) { vertices[i].texcoord=uv[i]; memset(vertices[i].color,255,4); }
     return !p->shader || (qa_q3_presentation_poly(f->presentation,p->shader,vertices,4,error) && current(f,error));
@@ -232,7 +229,7 @@ bool q3n_particles_add(const q3n_frame *f, qa_error *error)
     qa_vec3 angles=vector_angles(o->view_axes[0]);
     o->view_roll=(o->view_roll + (((float)f->time + -o->old_time) * 0.1f));
     angles.z=(angles.z + (o->view_roll * 0.9f)); qa_angle_axis(angles,o->rotated_axes,QA_ANGLE_VM_MATH);
-    o->rotated_axes[1]=scale(o->rotated_axes[1],-1); o->old_time=(float)f->time;
+    o->rotated_axes[1]=qa_vec_scale(o->rotated_axes[1],-1); o->old_time=(float)f->time;
     bool ok=true; int32_t *link=&o->active;
     while (*link!=-1 && ok) {
         int32_t index=*link; q3n_particle *p=&o->slots[index];
@@ -240,7 +237,7 @@ bool q3n_particles_add(const q3n_frame *f, qa_error *error)
         if ((p->alpha + (elapsed * p->alpha_velocity))<=0 || (float)f->time>p->end_time) {
             *link=p->next; p->next=o->free; o->free=index; p->type=0; p->alpha=0; --o->count; continue;
         }
-        qa_vec3 origin=sum(sum(p->origin,scale(p->velocity,elapsed)),scale(p->acceleration,(elapsed * elapsed)));
+        qa_vec3 origin=qa_vec_add(qa_vec_add(p->origin,qa_vec_scale(p->velocity,elapsed)),qa_vec_scale(p->acceleration,(elapsed * elapsed)));
         ok=draw(f,p,origin,error); link=&p->next;
     }
     if (ok) ok=current(f,error);

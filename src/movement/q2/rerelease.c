@@ -47,13 +47,6 @@ typedef struct rr_move {
     rr_touches touches;
 } rr_move;
 
-static float rr_normalize(qa_vec3 *vector)
-{
-    float length = qa_vec_length(*vector);
-    if (length != 0.0f) *vector = qa_vec_scale(*vector, 1.0f / length);
-    return length;
-}
-
 static bool rr_grounded(const rr_move *p)
 {
     return p->result->ground.hit != QA_TRACE_HIT_NONE;
@@ -347,7 +340,7 @@ static void rr_add_currents(rr_move *p, qa_vec3 *wish)
             if (cmd->side_move != 0) {
                 float speed = fminf(fmaxf((float)cmd->side_move, -150.0f), 150.0f);
                 if (p->result->water_level < 2) speed *= 0.5f;
-                qa_vec3 flat = p->forward; flat.z = 0.0f; rr_normalize(&flat);
+                qa_vec3 flat = p->forward; flat.z = 0.0f; qa_vec_normalize_length(&flat);
                 qa_trace_result trace = rr_trace(p, *p->origin, qa_vec_add(*p->origin, flat),
                                                  p->bounds, RR_CONTENTS_LADDER);
                 if (trace.fraction != 1.0f &&
@@ -387,7 +380,7 @@ static void rr_water_move(rr_move *p)
     else if (cmd->buttons & RR_JUMP_BUTTON) wish.z += 200.0f * p->speed;
     rr_add_currents(p, &wish);
     if (p->move->failed) return;
-    float speed = rr_normalize(&wish);
+    float speed = qa_vec_normalize_length(&wish);
     if (speed > p->max_speed) speed = p->max_speed;
     speed *= 0.5f;
     if ((p->state->flags & RR_DUCKED) && speed > p->duck_speed) speed = p->duck_speed;
@@ -401,7 +394,7 @@ static void rr_air_move(rr_move *p)
     rr_add_currents(p, &wish);
     if (p->move->failed) return;
     float vertical = wish.z;
-    float speed = rr_normalize(&wish);
+    float speed = qa_vec_normalize_length(&wish);
     float limit = p->state->flags & RR_DUCKED ? p->duck_speed : p->max_speed;
     if (speed > limit) {
         vertical *= limit / speed;
@@ -517,7 +510,7 @@ static void rr_special(rr_move *p)
 {
     if (p->state->time_ms != 0) return;
     p->state->flags &= ~(uint32_t)RR_LADDER;
-    qa_vec3 flat = p->forward; flat.z = 0.0f; rr_normalize(&flat);
+    qa_vec3 flat = p->forward; flat.z = 0.0f; qa_vec_normalize_length(&flat);
     qa_trace_result trace = rr_trace(p, *p->origin, qa_vec_add(*p->origin, flat),
                                      p->bounds, RR_CONTENTS_LADDER);
     if (trace.fraction < 1.0f &&
@@ -560,11 +553,11 @@ static void rr_fly(rr_move *p, bool clip)
         float drop = fmaxf(speed, 100.0f) * 9.0f * p->dt;
         p->velocity = qa_vec_scale(p->velocity, fmaxf(0.0f, speed - drop) / speed);
     }
-    rr_normalize(&p->forward); rr_normalize(&p->right);
+    qa_vec_normalize_length(&p->forward); qa_vec_normalize_length(&p->right);
     qa_vec3 wish = rr_wish(p);
     if (p->command.buttons & RR_JUMP_BUTTON) wish.z += 200.0f * p->speed;
     if (p->command.buttons & RR_CROUCH_BUTTON) wish.z -= 200.0f * p->speed;
-    speed = rr_normalize(&wish);
+    speed = qa_vec_normalize_length(&wish);
     if (speed > p->max_speed) speed = p->max_speed;
     rr_accelerate(p, wish, speed * 2.0f, 10.0f, false);
     if (clip) rr_step_slide(p);
@@ -739,7 +732,7 @@ static void rr_pmove(rr_move *p)
     if (p->state->type == RR_DEAD && rr_grounded(p)) {
         float speed = qa_vec_length(p->velocity) - 20.0f;
         if (speed <= 0.0f) p->velocity = qa_v3(0,0,0);
-        else { rr_normalize(&p->velocity); p->velocity = qa_vec_scale(p->velocity, speed); }
+        else { qa_vec_normalize_length(&p->velocity); p->velocity = qa_vec_scale(p->velocity, speed); }
     }
     rr_special(p);
     if (p->move->failed) return;

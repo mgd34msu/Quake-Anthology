@@ -358,8 +358,6 @@ static bool poi_apply(frontend_unified_q2_rr_hud *o, rr_record *r, qa_error *e)
     if (index==o->poi_count) ++o->poi_count;
     record_replace(o->pois+index,r); return true;
 }
-static qa_vec3 normalize(qa_vec3 value)
-{ float length=qa_vec_length(value); return length>0?qa_vec_scale(value,1/length):value; }
 static bool damage_apply(frontend_unified_q2_rr_hud *o, rr_record *r, double lifetime, qa_error *e)
 {
     double now=r->seconds*1000; size_t index=SIZE_MAX; bool retain=false;
@@ -371,11 +369,11 @@ static bool damage_apply(frontend_unified_q2_rr_hud *o, rr_record *r, double lif
     if (index==SIZE_MAX) index=o->damage_count<32?o->damage_count:0;
     if (!picture(o,r,"pics/damage_indicator.pcx",e)) return false;
     rr_damage *entry=o->damage+index;
-    qa_vec3 color=normalize(qa_v3((float)(r->value.damage.health+r->value.damage.armor),
+    qa_vec3 color=qa_vec_normalize(qa_v3((float)(r->value.damage.health+r->value.damage.armor),
         (float)(r->value.damage.shield+r->value.damage.armor),(float)r->value.damage.armor));
     double amount=r->value.damage.amount+(retain?entry->amount:0);
     if (!isfinite(amount)) return fail(e,"Accumulated RR directional damage exceeds finite storage");
-    if (retain) color=normalize(qa_vec_add(color,entry->color));
+    if (retain) color=qa_vec_normalize(qa_vec_add(color,entry->color));
     bool health=r->value.damage.health || (retain && entry->health),
         armor=r->value.damage.armor || (retain && entry->armor), shield=r->value.damage.shield || (retain && entry->shield);
     if (!isfinite(now+lifetime)) return fail(e,"RR damage deadline exceeds finite storage");

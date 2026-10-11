@@ -377,7 +377,7 @@ bool qa_q3_trace_model_source(const void *state, void *scratch_state, const qa_t
         work.start = qa_vec_sub(work.start, query->target.origin);
         work.end = qa_vec_sub(work.end, query->target.origin);
         if (rotated) {
-            work.start = qa_collision_to_local(work.start, basis); work.end = qa_collision_to_local(work.end, basis);
+            work.start = qa_axis_to_local(work.start, basis); work.end = qa_axis_to_local(work.end, basis);
             if (work.shape.kind == QA_SHAPE_CAPSULE) q3_rotate_capsule(&work.shape, basis);
         }
         work.stationary = q3_same_point(work.start, work.end);
@@ -434,7 +434,7 @@ static bool q3_point_contents(const void *state, void *scratch, const qa_point_q
         point = qa_vec_sub(point, query->target.origin);
         if (qa_collision_pose_rotates(&query->target)) {
             qa_vec3 basis[3]; qa_collision_pose_basis(&query->target, true, basis);
-            point = qa_collision_to_local(point, basis);
+            point = qa_axis_to_local(point, basis);
         }
     }
     qa_collision_bits contents = {0};

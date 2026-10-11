@@ -154,7 +154,7 @@ static void hologram(frontend_q2_entity_effects *o,qa_vec3 origin,double time)
     qa_vec3 axis[3]={qa_v3((float)(cp*cp),(float)(cp*sp),(float)-sp),qa_v3((float)-sp,(float)cp,0),qa_v3((float)(sp*cp),(float)(sp*sp),(float)cp)};
     for (unsigned i=0;i<QA_BYTE_NORMAL_COUNT && o->particles->count<FRONTEND_FX_PARTICLE_CAPACITY;++i) {
         qa_vec3 n; if (!qa_byte_normal((uint8_t)i,&n)) return;
-        qa_vec3 dir=qa_vec_add(qa_vec_add(qa_vec_scale(axis[0],n.x),qa_vec_scale(axis[1],n.y)),qa_vec_scale(axis[2],n.z));
+        qa_vec3 dir=qa_axis_from_local(n,axis);
         append(o,(frontend_fx_q2_particle){.spawn_milliseconds=time,.origin=qa_vec_add(origin,qa_vec_scale(dir,100)),.color=0xd0,.alpha=1,.alpha_velocity=-10000});
     }
 }

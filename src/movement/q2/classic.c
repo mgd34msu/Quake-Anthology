@@ -46,13 +46,6 @@ static qa_vec3 q2_advance(qa_vec3 origin, float time, qa_vec3 velocity)
     return qa_vec_add(origin, qa_vec_scale(velocity, time));
 }
 
-static float q2_normalize(qa_vec3 *v)
-{
-    float length = qa_vec_length(*v);
-    if (length != 0.0f) *v = qa_vec_scale(*v, 1.0f / length);
-    return length;
-}
-
 static bool q2_grounded(const q2_classic_move *pm)
 {
     return pm->ground.hit != QA_TRACE_HIT_NONE;
@@ -251,7 +244,7 @@ static bool q2_water_move(q2_classic_move *pm)
     else
         wish.z += (float)pm->command.up_move * pm->speed_multiplier;
     wish = q2_add_currents(pm, wish);
-    float speed = fminf(q2_normalize(&wish), 300.0f * pm->speed_multiplier) * 0.5f;
+    float speed = fminf(qa_vec_normalize_length(&wish), 300.0f * pm->speed_multiplier) * 0.5f;
     q2_accelerate(pm, wish, speed, 10.0f, false);
     return q2_step_slide(pm);
 }
@@ -263,7 +256,7 @@ static bool q2_air_move(q2_classic_move *pm)
     wish = q2_add_currents(pm, wish);
     float wish_z = wish.z;
     float max_speed = ((pm->state->flags & Q2_DUCKED) ? 100.0f : 300.0f) * pm->speed_multiplier;
-    float speed = q2_normalize(&wish);
+    float speed = qa_vec_normalize_length(&wish);
     if (speed > max_speed) {
         wish_z *= max_speed / speed;
         speed = max_speed;
@@ -363,7 +356,7 @@ static bool q2_check_special(q2_classic_move *pm)
     if (q2_time(pm->state) != 0) return true;
     pm->ladder = false;
     qa_vec3 flat = qa_v3(pm->forward.x, pm->forward.y, 0);
-    q2_normalize(&flat);
+    qa_vec_normalize_length(&flat);
     qa_trace_result trace;
     if (!q2_trace(pm, pm->origin, qa_vec_add(pm->origin, flat), &trace)) return false;
     pm->ladder = trace.fraction < 1.0f &&
@@ -393,11 +386,11 @@ static bool q2_fly_move(q2_classic_move *pm, bool collide)
         float drop = fmaxf(speed, 100.0f) * 9.0f * pm->dt;
         pm->velocity = qa_vec_scale(pm->velocity, fmaxf(speed - drop, 0.0f) / speed);
     }
-    q2_normalize(&pm->forward);
-    q2_normalize(&pm->right);
+    qa_vec_normalize_length(&pm->forward);
+    qa_vec_normalize_length(&pm->right);
     qa_vec3 wish = q2_wish_velocity(pm);
     wish.z += (float)pm->command.up_move * pm->speed_multiplier;
-    float wish_speed = fminf(q2_normalize(&wish), 300.0f * pm->speed_multiplier);
+    float wish_speed = fminf(qa_vec_normalize_length(&wish), 300.0f * pm->speed_multiplier);
     float add = wish_speed - qa_vec_dot(pm->velocity, wish);
     if (add <= 0.0f && !collide) return true;
     float acceleration = fmaxf(0.0f, fminf(10.0f * pm->dt * wish_speed, add));

@@ -75,30 +75,6 @@ void q3n_events_round(q3n_events *o) { if(o && !o->busy) {
     q3ne_local_reset(o);o->mark_count=0;
 } }
 
-qa_vec3 q3ne_perpendicular(qa_vec3 v)
-{
-    float a[3]={fabsf(v.x),fabsf(v.y),fabsf(v.z)}; unsigned index=0;
-    for(unsigned i=1;i<3;++i)if(a[i]<a[index])index=i;
-    qa_vec3 temp=index==0?qa_v3(1,0,0):index==1?qa_v3(0,1,0):qa_v3(0,0,1);
-    float inverse=(1 / q3ne_dot(v,v));
-    float distance=(q3ne_dot(v,temp) * inverse);
-    return q3ne_normalize(q3ne_difference(temp,q3ne_scale(q3ne_scale(v,inverse),distance)));
-}
-static void multiply(const qa_vec3 a[3], const qa_vec3 b[3], qa_vec3 out[3])
-{
-    qa_vec3 columns[3]={{b[0].x,b[1].x,b[2].x},{b[0].y,b[1].y,b[2].y},{b[0].z,b[1].z,b[2].z}};
-    for(unsigned i=0;i<3;++i)out[i]=qa_v3(q3ne_dot(a[i],columns[0]),q3ne_dot(a[i],columns[1]),q3ne_dot(a[i],columns[2]));
-}
-qa_vec3 q3ne_rotate(qa_vec3 forward, qa_vec3 point, float degrees)
-{
-    qa_vec3 radial=q3ne_perpendicular(forward), vertical=q3ne_cross(radial,forward);
-    float radians=((degrees * 3.14159274101257324219f) / 180);
-    float c=(float)cos((double)radians), s=(float)sin((double)radians);
-    qa_vec3 basis[3]={{radial.x,vertical.x,forward.x},{radial.y,vertical.y,forward.y},{radial.z,vertical.z,forward.z}};
-    qa_vec3 rotation[3]={{c,s,0},{-s,c,0},{0,0,1}},inverse[3]={radial,vertical,forward},first[3],last[3];
-    multiply(basis,rotation,first); multiply(first,inverse,last);
-    return qa_v3(q3ne_dot(last[0],point),q3ne_dot(last[1],point),q3ne_dot(last[2],point));
-}
 bool q3ne_current(const q3n_frame *f, qa_error *error)
 {
     const q3n_media_view *media=f && f->media?q3n_media_read(f->media):NULL;
@@ -665,7 +641,7 @@ bool q3n_events_apply(const q3n_frame *f, const qa_application_native_q3_entity 
     if(s.solid==0xffffff) {
         const q3n_media_view *m=q3n_media_read(f->media);
         if(s.modelindex<0 || (size_t)s.modelindex>=m->inline_count) { ok=q3ne_fail(error,QA_ERROR_FORMAT,"Event sound has no actual inline midpoint"); goto end; }
-        sound_origin=q3ne_sum(sound_origin,m->inline_models[s.modelindex].midpoint);
+        sound_origin=qa_vec_add(sound_origin,m->inline_models[s.modelindex].midpoint);
     }
     ok=event_publish(f,&s,cent,cent->lerp_origin,&sound_origin,NULL,error);
 end:
@@ -692,7 +668,7 @@ bool q3n_events_apply_remote(const q3n_frame *f,const q3n_remote_entity *actual,
         const q3n_media_view *m=q3n_media_read(f->media);
         if(scratch.modelindex<0 || (size_t)scratch.modelindex>=m->inline_count)
             ok=q3ne_fail(error,QA_ERROR_FORMAT,"Remote event sound has no actual inline midpoint");
-        else sound_origin=q3ne_sum(sound_origin,m->inline_models[scratch.modelindex].midpoint);
+        else sound_origin=qa_vec_add(sound_origin,m->inline_models[scratch.modelindex].midpoint);
     }
     if(ok)ok=event_publish(f,&scratch,actual->presentation,position,&sound_origin,actual,error) &&
         q3n_remote_entity_current(actual);
@@ -717,7 +693,7 @@ bool q3n_events_apply_compiled(const q3n_frame *f,const q3n_compiled_entity *act
         const q3n_media_view *m=q3n_media_read(f->media);
         if (scratch.modelindex<0 || (size_t)scratch.modelindex>=m->inline_count)
             ok=q3ne_fail(error,QA_ERROR_FORMAT,"Compiled event has no actual inline sound midpoint");
-        else sound_origin=q3ne_sum(sound_origin,m->inline_models[scratch.modelindex].midpoint);
+        else sound_origin=qa_vec_add(sound_origin,m->inline_models[scratch.modelindex].midpoint);
     }
     if (ok) ok=event_publish(f,&scratch,actual->presentation,position,&sound_origin,NULL,error) &&
         q3n_compiled_entity_current(actual);

@@ -378,7 +378,7 @@ bool qa_world_point_contents(qa_world *world,const qa_point_query *query,qa_poin
                 qa_collision_target target={.angles=state.angles,
                     .pose_rules=qa_collision_source_rules(collision.family)};
                 qa_collision_pose_basis(&target,true,basis);
-                point=qa_collision_to_local(point,basis);
+                point=qa_axis_to_local(point,basis);
             }
             if(!qa_bounds_contains(state.bounds,point)) continue;
             added=source_temporary?qa_collision_bit(QA_CONTENT_BODY):qa_world_actor_contents(&collision);

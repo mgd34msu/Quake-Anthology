@@ -87,7 +87,7 @@ bool material_texcoord_generate(const qa_material_stage *stage, const qa_scene_v
                                 qa_vec_dot(vertex->position, stage->tc_vectors[1])};
         break;
     case QA_TC_ENVIRONMENT: {
-        qa_vec3 viewer = qa_material_fast_normalize(qa_vec_sub(context->local_view_origin, vertex->position));
+        qa_vec3 viewer = qa_vec_fast_normalize(qa_vec_sub(context->local_view_origin, vertex->position));
         float dot = qa_vec_dot(vertex->normal, viewer);
         float reflected_y = (vertex->normal.y * 2.0f) * dot - viewer.y;
         float reflected_z = (vertex->normal.z * 2.0f) * dot - viewer.z;

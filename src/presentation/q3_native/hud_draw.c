@@ -145,7 +145,7 @@ bool q3nh_head(q3n_hud_draw *d,float x,float y,float w,float h,int32_t client,qa
     if(d->settings->draw_3d_icons) {
         if(!ci->models[2])return true;
         qa_bounds b; if(!qa_q3_presentation_model_bounds(d->frame->assets,ci->models[2],&b,d->error))return false;
-        qa_vec3 origin=q3ne_sum(icon_origin(b,0.7f),q3ne_array(ci->animations.head_offset));
+        qa_vec3 origin=qa_vec_add(icon_origin(b,0.7f),q3ne_array(ci->animations.head_offset));
         if(!q3nh_model(d,x,y,w,h,ci->models[2],ci->skins[2],origin,angles))return false;
     } else if(d->settings->draw_icons && !q3nh_picture(d,x,y,w,h,ci->icon))return false;
     return !ci->deferred || q3nh_picture(d,x,y,w,h,q3n_media_read(d->frame->media)->graphics[Q3N_G_DEFER]);

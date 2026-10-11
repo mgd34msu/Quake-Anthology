@@ -48,9 +48,9 @@ qa_vec3 qa_collision_pose_normal(qa_vec3 normal, const qa_collision_target *targ
     if (transformed && qa_collision_roles[target->pose_rules].inverse_normal) {
         qa_vec3 inverse[3];
         qa_angle_axis(qa_vec_scale(target->angles, -1), inverse,QA_ANGLE_FLOAT_MATH);
-        return qa_collision_to_local(normal, inverse);
+        return qa_axis_to_local(normal, inverse);
     }
-    return qa_collision_from_local(normal, basis);
+    return qa_axis_from_local(normal, basis);
 }
 
 qa_bounds qa_collision_link_bounds(qa_bounds bounds, qa_vec3 origin, qa_vec3 angles,

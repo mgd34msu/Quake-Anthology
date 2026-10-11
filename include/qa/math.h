@@ -20,6 +20,10 @@ typedef enum qa_angle_math_rule {
  * compiled VM code uses a float product. FLOAT retains sinf/cosf consumers. */
 void qa_angle_vectors(qa_vec3,qa_vec3 *forward,qa_vec3 *right,qa_vec3 *up,qa_angle_math_rule);
 void qa_angle_axis(qa_vec3,qa_vec3 axis[3],qa_angle_math_rule);
+void qa_axis_multiply(const qa_vec3 left[3],const qa_vec3 right[3],qa_vec3 out[3]);
+qa_vec3 qa_vec_perpendicular(qa_vec3);
+qa_vec3 qa_vec_rotate_around(qa_vec3 axis,qa_vec3 point,float degrees);
+float qa_inverse_sqrt(float);
 
 #define QA_BYTE_NORMAL_COUNT 162u
 extern const qa_vec3 qa_byte_normals[QA_BYTE_NORMAL_COUNT];
@@ -38,15 +42,31 @@ static inline qa_vec3 qa_v3(float x, float y, float z) { return (qa_vec3){x, y, 
 static inline qa_vec3 qa_vec_add(qa_vec3 a, qa_vec3 b) { return qa_v3(a.x+b.x, a.y+b.y, a.z+b.z); }
 static inline qa_vec3 qa_vec_sub(qa_vec3 a, qa_vec3 b) { return qa_v3(a.x-b.x, a.y-b.y, a.z-b.z); }
 static inline qa_vec3 qa_vec_scale(qa_vec3 a, float b) { return qa_v3(a.x*b, a.y*b, a.z*b); }
+static inline qa_vec3 qa_vec_ma(qa_vec3 a,float scale,qa_vec3 b) { return qa_vec_add(a,qa_vec_scale(b,scale)); }
 static inline float qa_vec_dot(qa_vec3 a, qa_vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
 static inline double qa_vec_dot_wide(qa_vec3 a,qa_vec3 b) { return (double)a.x*b.x+(double)a.y*b.y+(double)a.z*b.z; }
 static inline qa_vec3 qa_vec_cross(qa_vec3 a, qa_vec3 b) {
     return qa_v3(a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x);
 }
 static inline float qa_vec_length(qa_vec3 v) { return sqrtf(qa_vec_dot(v, v)); }
-static inline qa_vec3 qa_vec_normalize(qa_vec3 v) {
-    float length = qa_vec_length(v);
-    return length > 0.0f ? qa_vec_scale(v, 1.0f/length) : qa_v3(0, 0, 0);
+static inline float qa_vec_normalize_length(qa_vec3 *v) {
+    float length=qa_vec_length(*v);
+    if(length!=0.0f) *v=qa_vec_scale(*v,1.0f/length);
+    return length;
+}
+static inline qa_vec3 qa_vec_normalize(qa_vec3 v) { qa_vec_normalize_length(&v);return v; }
+static inline qa_vec3 qa_vec_fast_normalize(qa_vec3 v) { return qa_vec_scale(v,qa_inverse_sqrt(qa_vec_dot(v,v))); }
+static inline qa_vec3 qa_axis_to_local(qa_vec3 v,const qa_vec3 axis[3]) {
+    return qa_v3(qa_vec_dot(v,axis[0]),qa_vec_dot(v,axis[1]),qa_vec_dot(v,axis[2]));
+}
+static inline qa_vec3 qa_axis_from_local(qa_vec3 v,const qa_vec3 axis[3]) {
+    return qa_vec_add(qa_vec_add(qa_vec_scale(axis[0],v.x),qa_vec_scale(axis[1],v.y)),qa_vec_scale(axis[2],v.z));
+}
+static inline qa_vec3 qa_axis_remap(const qa_vec3 from[3],const qa_vec3 to[3],qa_vec3 v) {
+    return qa_axis_from_local(qa_axis_to_local(v,from),to);
+}
+static inline qa_vec3 qa_axis_remap_point(qa_vec3 from_origin,const qa_vec3 from[3],qa_vec3 to_origin,const qa_vec3 to[3],qa_vec3 point) {
+    return qa_vec_add(to_origin,qa_axis_remap(from,to,qa_vec_sub(point,from_origin)));
 }
 static inline qa_vec3 qa_axes_angles(const qa_vec3 axis[3]) {
     const float degrees = 57.29577951308232f;

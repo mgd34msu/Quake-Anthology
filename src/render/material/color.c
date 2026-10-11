@@ -47,11 +47,11 @@ static bool source_color(qa_vec4 input, qa_vec4 *out, qa_error *error)
 }
 static float specular(const qa_scene_vertex *vertex, const qa_material_context *context)
 {
-    qa_vec3 light = qa_material_fast_normalize(qa_vec_sub(qa_v3(-960.0f, 1980.0f, 96.0f), vertex->position));
+    qa_vec3 light = qa_vec_fast_normalize(qa_vec_sub(qa_v3(-960.0f, 1980.0f, 96.0f), vertex->position));
     float d = qa_vec_dot(vertex->normal, light);
     qa_vec3 reflected = qa_vec_sub(qa_vec_scale(qa_vec_scale(vertex->normal, 2.0f), d), light);
     qa_vec3 viewer = qa_vec_sub(context->local_view_origin, vertex->position);
-    float amount = qa_vec_dot(reflected, viewer) * qa_material_inverse_sqrt(qa_vec_dot(viewer, viewer));
+    float amount = qa_vec_dot(reflected, viewer) * qa_inverse_sqrt(qa_vec_dot(viewer, viewer));
     if (amount < 0.0f) return 0.0f;
     amount *= amount;
     amount *= amount;

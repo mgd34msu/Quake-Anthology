@@ -613,8 +613,7 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
     else view.origin.z+=height;
     qa_angle_axis(angles,view.axis,QA_ANGLE_FLOAT_MATH); qa_vec3 local[3],basis[3]; memcpy(basis,view.axis,sizeof(basis));
     qa_angle_axis(kick,local,QA_ANGLE_FLOAT_MATH);
-    for (unsigned i=0;i<3;++i) view.axis[i]=qa_vec_add(qa_vec_add(qa_vec_scale(basis[0],local[i].x),
-        qa_vec_scale(basis[1],local[i].y)),qa_vec_scale(basis[2],local[i].z));
+    for (unsigned i=0;i<3;++i) view.axis[i]=qa_axis_from_local(local[i],basis);
     if (!(fov>0 && fov<180) || !view.viewport.width || !view.viewport.height)
         return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified received camera has no finite projection");
     float vertical=2*atanf(tanf((float)fov*.008726646259971648f)*(float)view.viewport.height/(float)view.viewport.width)*57.29577951308232f;

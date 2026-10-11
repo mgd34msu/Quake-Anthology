@@ -109,10 +109,6 @@ static void swing(float destination, float tolerance, float clamp, float speed,
 static qa_vec3 subtract_angles(qa_vec3 a, qa_vec3 b) {
     return qa_v3(angle_subtract(a.x, b.x), angle_subtract(a.y, b.y), angle_subtract(a.z, b.z));
 }
-static float dot(qa_vec3 a, qa_vec3 b) {
-    return (((a.x * b.x) + (a.y * b.y)) + (a.z * b.z));
-}
-
 bool q3n_player_angles_pose(q3n_player_pose *state, const qa_player_animation_config *config,
     const q3n_pose_entity *entity, qa_vec3 angles, int32_t time, int32_t milliseconds,
     float speed, q3n_pose_axes *out, qa_error *error) {
@@ -134,14 +130,14 @@ bool q3n_player_angles_pose(q3n_player_pose *state, const qa_player_animation_co
     float pitch = ((head.x > 180 ? (-360 + head.x) : head.x) * 0.75f);
     swing(pitch, 15, 30, 0.1f, milliseconds, &state->torso.pitch_angle, &state->torso.pitching);
     torso.x = config->fixed_torso ? 0 : state->torso.pitch_angle;
-    float velocity_length = (float)sqrt((double)dot(source_velocity, source_velocity));
+    float velocity_length = (float)sqrt((double)qa_vec_dot(source_velocity, source_velocity));
     if (velocity_length != 0) {
         float inverse_length = (1 / velocity_length);
         qa_vec3 velocity = qa_v3((source_velocity.x * inverse_length),
             (source_velocity.y * inverse_length), (source_velocity.z * inverse_length));
         float lean = (velocity_length * 0.05f); qa_vec3 axis[3]; qa_angle_axis(legs, axis,QA_ANGLE_VM_MATH);
-        legs.x = (legs.x + (lean * dot(velocity, axis[0])));
-        legs.z = (legs.z + -(lean * dot(velocity, axis[1])));
+        legs.x = (legs.x + (lean * qa_vec_dot(velocity, axis[0])));
+        legs.z = (legs.z + -(lean * qa_vec_dot(velocity, axis[1])));
     }
     if (config->fixed_legs) legs = qa_v3(0, torso.y, 0);
     int32_t elapsed = difference(time, state->pain_time);

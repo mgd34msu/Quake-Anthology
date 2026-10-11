@@ -826,27 +826,15 @@ static bool selected_effect_ready(qa_q3_presentation *p, const qa_q3_presentatio
     return true;
 }
 
-static qa_vec3 weapon_vector(const qa_q3_scene_options *options,qa_vec3 value)
-{
-    const qa_q3_refdef *source=options->weapon_camera;
-    qa_vec3 local=qa_v3(qa_vec_dot(value,source->axis[0]),qa_vec_dot(value,source->axis[1]),
-        qa_vec_dot(value,source->axis[2]));
-    return qa_vec_add(qa_vec_add(qa_vec_scale(options->world.view.axis[0],local.x),
-        qa_vec_scale(options->world.view.axis[1],local.y)),qa_vec_scale(options->world.view.axis[2],local.z));
-}
-static qa_vec3 weapon_point(const qa_q3_scene_options *options,qa_vec3 value)
-{
-    return qa_vec_add(options->world.view.origin,weapon_vector(options,qa_vec_sub(value,options->weapon_camera->origin)));
-}
 static void place_view_weapon(const qa_q3_scene_options *options,qa_q3_ref_entity *entity)
 {
     if(options->world.no_world || !(entity->flags&4))return;
     if(options->weapon_camera) {
         float previous_z=entity->origin.z;
-        entity->origin=weapon_point(options,entity->origin);
-        entity->old_origin=weapon_point(options,entity->old_origin);
-        entity->lighting_origin=weapon_point(options,entity->lighting_origin);
-        for(size_t i=0;i<3;++i)entity->axis[i]=weapon_vector(options,entity->axis[i]);
+        entity->origin=qa_axis_remap_point(options->weapon_camera->origin,options->weapon_camera->axis,options->world.view.origin,options->world.view.axis,entity->origin);
+        entity->old_origin=qa_axis_remap_point(options->weapon_camera->origin,options->weapon_camera->axis,options->world.view.origin,options->world.view.axis,entity->old_origin);
+        entity->lighting_origin=qa_axis_remap_point(options->weapon_camera->origin,options->weapon_camera->axis,options->world.view.origin,options->world.view.axis,entity->lighting_origin);
+        for(size_t i=0;i<3;++i)entity->axis[i]=qa_axis_remap(options->weapon_camera->axis,options->world.view.axis,entity->axis[i]);
         entity->shadow_plane+=entity->origin.z-previous_z;
     }
     entity->origin=qa_vec_add(entity->origin,options->weapon_offset);

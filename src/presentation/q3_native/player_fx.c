@@ -71,7 +71,7 @@ static bool sprite(player_fx *p,int32_t shader,qa_error *e)
 {
     qa_q3_ref_entity r=reference(QA_Q3_REF_SPRITE,shader);
     memset(r.color,255,sizeof(r.color));
-    r.origin=q3ne_sum(p->cent->lerp_origin,qa_v3(0,0,48)); r.radius=10;
+    r.origin=qa_vec_add(p->cent->lerp_origin,qa_v3(0,0,48)); r.radius=10;
     if(p->state->number==q3n_frame_snapshot_player(p->frame)->clientNum && !p->frame->third_person)r.flags=2;
     return emit(p,&r,e);
 }
@@ -93,7 +93,7 @@ static bool shadow(player_fx *p,float *plane,bool *visible,qa_error *e)
     if(!p->settings->shadow_mode || powered(p,4))return true;
     qa_vec3 origin=p->cent->lerp_origin; qa_trace_result tr;
     qa_bounds bounds={{-15,-15,0},{15,15,2}};
-    if(!world_trace(p,origin,q3ne_sum(origin,qa_v3(0,0,-128)),bounds,FX_PLAYERSOLID,&tr,e))return false;
+    if(!world_trace(p,origin,qa_vec_add(origin,qa_v3(0,0,-128)),bounds,FX_PLAYERSOLID,&tr,e))return false;
     if(tr.fraction==1 || tr.start_solid || tr.all_solid)return true;
     *plane=(tr.end.z + 1); *visible=true;
     if(p->settings->shadow_mode!=1)return true;
@@ -106,7 +106,7 @@ static bool shadow(player_fx *p,float *plane,bool *visible,qa_error *e)
 static bool splash(player_fx *p,qa_error *e)
 {
     if(!p->settings->shadow_mode)return true;
-    qa_vec3 origin=p->cent->lerp_origin,end=q3ne_sum(origin,qa_v3(0,0,-24)),start=q3ne_sum(origin,qa_v3(0,0,32));
+    qa_vec3 origin=p->cent->lerp_origin,end=qa_vec_add(origin,qa_v3(0,0,-24)),start=qa_vec_add(origin,qa_v3(0,0,32));
     uint32_t c; if(!contents(p,end,&c,e))return false;
     if(!(c&FX_WATER))return true;
     if(!contents(p,start,&c,e))return false;
@@ -115,10 +115,10 @@ static bool splash(player_fx *p,qa_error *e)
     if(!world_trace(p,start,end,(qa_bounds){0},FX_WATER,&tr,e))return false;
     if(tr.fraction==1)return true;
     qa_q3_poly_vertex vertices[4]={
-        {.position=q3ne_sum(tr.end,qa_v3(-32,-32,0)),.texcoord={0,0},.color={255,255,255,255}},
-        {.position=q3ne_sum(tr.end,qa_v3(-32,32,0)),.texcoord={0,1},.color={255,255,255,255}},
-        {.position=q3ne_sum(tr.end,qa_v3(32,32,0)),.texcoord={1,1},.color={255,255,255,255}},
-        {.position=q3ne_sum(tr.end,qa_v3(32,-32,0)),.texcoord={1,0},.color={255,255,255,255}}};
+        {.position=qa_vec_add(tr.end,qa_v3(-32,-32,0)),.texcoord={0,0},.color={255,255,255,255}},
+        {.position=qa_vec_add(tr.end,qa_v3(-32,32,0)),.texcoord={0,1},.color={255,255,255,255}},
+        {.position=qa_vec_add(tr.end,qa_v3(32,32,0)),.texcoord={1,1},.color={255,255,255,255}},
+        {.position=qa_vec_add(tr.end,qa_v3(32,-32,0)),.texcoord={1,0},.color={255,255,255,255}}};
     return qa_q3_presentation_poly(p->frame->presentation,p->media->graphics[Q3N_G_WAKE_MARK],vertices,4,e) && current(p,e);
 }
 static bool body_pass(player_fx *p,uint32_t part,qa_q3_ref_entity *r,bool base,qa_error *e)
@@ -167,7 +167,7 @@ static bool breath(player_fx *p,const qa_q3_ref_entity *head,qa_error *e)
     if(!ci || !ci->info_valid || ci->configstring_revision!=config_revision || ci->media_revision!=media_revision)
         return q3ne_fail(e,QA_ERROR_ARGUMENT,"Native breath has a superseded physical client continuation");
     if((c&FX_WATER) || ci->dynamic.breath_puff_time>f->time)return true;
-    q3n_smoke smoke={.origin=q3ne_sum(q3ne_sum(head->origin,q3ne_scale(head->axis[0],8)),q3ne_scale(head->axis[2],-4)),
+    q3n_smoke smoke={.origin=qa_vec_add(qa_vec_add(head->origin,qa_vec_scale(head->axis[0],8)),qa_vec_scale(head->axis[2],-4)),
         .velocity={0,0,8},.radius=16,.color={1,1,1,0.66f},.duration=1500,
         .start_time=f->time,.fade_in_time=q3ne_plus(f->time,400),.flags=Q3N_LE_DONT_SCALE,
         .shader=p->media->graphics[Q3N_G_SHOTGUN_SMOKE]};
@@ -190,9 +190,9 @@ static bool dust(player_fx *p,qa_error *e)
     cent->dust_trail_time=q3ne_plus(cent->dust_trail_time,40);
     if(cent->dust_trail_time<f->time)cent->dust_trail_time=f->time;
     qa_vec3 origin=q3ne_array(p->state->pos.base); qa_trace_result tr;
-    if(!q3n_events_trace(f,origin,q3ne_sum(origin,qa_v3(0,0,-64)),(qa_bounds){0},p->state->number,FX_PLAYERSOLID,&tr,e) || !current(p,e))return false;
+    if(!q3n_events_trace(f,origin,qa_vec_add(origin,qa_v3(0,0,-64)),(qa_bounds){0},p->state->number,FX_PLAYERSOLID,&tr,e) || !current(p,e))return false;
     if(!((uint32_t)qa_collision_surface_export(tr.surface_flags,QA_GAME_Q3)&0x40000))return true;
-    q3n_smoke smoke={.origin=q3ne_sum(origin,qa_v3(0,0,-16)),.velocity={0,0,-30},.radius=24,
+    q3n_smoke smoke={.origin=qa_vec_add(origin,qa_v3(0,0,-16)),.velocity={0,0,-30},.radius=24,
         .color={0.8f,0.8f,0.7f,0.33f},.duration=500,.start_time=f->time,.shader=p->media->graphics[Q3N_G_DUST_PUFF]};
     q3n_effect_smoke(f,&smoke); return true;
 }
@@ -212,18 +212,18 @@ static bool tokens(player_fx *p,int32_t flags,qa_error *e)
     }
     state->skull_count=(uint32_t)count; qa_vec3 origin=p->cent->lerp_origin;
     for(uint32_t i=0;i<state->skull_count;++i) {
-        qa_vec3 delta=q3ne_difference(state->skull_positions[i],origin);
-        if(q3ne_length(delta)>30)state->skull_positions[i]=q3ne_sum(origin,q3ne_scale(q3ne_normalize(delta),30));
+        qa_vec3 delta=qa_vec_sub(state->skull_positions[i],origin);
+        if(qa_vec_length(delta)>30)state->skull_positions[i]=qa_vec_add(origin,qa_vec_scale(qa_vec_normalize(delta),30));
         origin=state->skull_positions[i];
     }
     qa_q3_ref_entity skull=reference(QA_Q3_REF_MODEL,p->media->graphics[p->client.team==2?Q3N_G_RED_CUBE:Q3N_G_BLUE_CUBE]);
     skull.flags=flags; origin=p->cent->lerp_origin;
     for(uint32_t i=0;i<state->skull_count;++i) {
-        qa_vec3 position=state->skull_positions[i],delta=q3ne_difference(origin,position);
-        skull.axis[0]=q3ne_normalize(qa_v3(delta.x,delta.y,0)); skull.axis[2]=qa_v3(0,0,1);
-        skull.axis[1]=q3ne_cross(skull.axis[0],skull.axis[2]);
+        qa_vec3 position=state->skull_positions[i],delta=qa_vec_sub(origin,position);
+        skull.axis[0]=qa_vec_normalize(qa_v3(delta.x,delta.y,0)); skull.axis[2]=qa_v3(0,0,1);
+        skull.axis[1]=qa_vec_cross(skull.axis[0],skull.axis[2]);
         float angle=sphere_angle(q3ne_plus(p->frame->time,5000-(int32_t)i*500),16);
-        skull.origin=q3ne_sum(position,qa_v3(0,0,((float)sin((double)angle) * 10)));
+        skull.origin=qa_vec_add(position,qa_v3(0,0,((float)sin((double)angle) * 10)));
         if(!emit(p,&skull,e))return false;
         origin=position;
     }
@@ -231,13 +231,13 @@ static bool tokens(player_fx *p,int32_t flags,qa_error *e)
 }
 static void orbit_axis(qa_q3_ref_entity *skull,qa_vec3 direction)
 {
-    skull->axis[1]=q3ne_normalize(qa_v3(direction.x,direction.y,0)); skull->axis[2]=qa_v3(0,0,1);
-    skull->axis[0]=q3ne_cross(skull->axis[1],skull->axis[2]);
+    skull->axis[1]=qa_vec_normalize(qa_v3(direction.x,direction.y,0)); skull->axis[2]=qa_v3(0,0,1);
+    skull->axis[0]=qa_vec_cross(skull->axis[1],skull->axis[2]);
 }
 static bool skull_pair(player_fx *p,qa_q3_ref_entity *skull,bool flip,qa_error *e)
 {
     skull->model=p->media->graphics[Q3N_G_KAMIKAZE_HEAD]; if(!emit(p,skull,e))return false;
-    if(flip)skull->axis[1]=q3ne_scale(skull->axis[1],-1);
+    if(flip)skull->axis[1]=qa_vec_scale(skull->axis[1],-1);
     skull->model=p->media->graphics[Q3N_G_KAMIKAZE_TRAIL]; return emit(p,skull,e);
 }
 static bool kamikaze(player_fx *p,const qa_q3_ref_entity *torso,qa_error *e)
@@ -250,23 +250,23 @@ static bool kamikaze(player_fx *p,const qa_q3_ref_entity *torso,qa_error *e)
         angle=sphere_angle(time,7); if(angle>two_pi)angle=(angle + -two_pi);
         float x=((float)sin((double)angle) * 20),y=((float)cos((double)angle) * 20);
         angle=sphere_angle(time,4); direction=qa_v3(x,y,(15 + ((float)sin((double)angle) * 8)));
-        skull.origin=q3ne_sum(torso->origin,direction); orbit_axis(&skull,direction); return skull_pair(p,&skull,false,e);
+        skull.origin=qa_vec_add(torso->origin,direction); orbit_axis(&skull,direction); return skull_pair(p,&skull,false,e);
     }
     angle=sphere_angle(time,4);
     direction=qa_v3(((float)cos((double)angle) * 20),((float)sin((double)angle) * 20),((float)cos((double)angle) * 20));
-    skull.origin=q3ne_sum(torso->origin,direction);
+    skull.origin=qa_vec_add(torso->origin,direction);
     float yaw=(((angle * 180) / pi) + 90); if(yaw>360)yaw=(yaw + -360);
     qa_angle_axis(qa_v3(((float)sin((double)angle) * 30),yaw,0),skull.axis,QA_ANGLE_VM_MATH);
     if(!skull_pair(p,&skull,true,e))return false;
     angle=(sphere_angle(time,4) + pi); if(angle>two_pi)angle=(angle + -two_pi);
     direction=qa_v3(((float)sin((double)angle) * 20),((float)cos((double)angle) * 20),((float)cos((double)angle) * 20));
-    skull.origin=q3ne_sum(torso->origin,direction);
+    skull.origin=qa_vec_add(torso->origin,direction);
     yaw=(360 + -((angle * 180) / pi)); if(yaw>360)yaw=(yaw + -360);
     qa_angle_axis(qa_v3(((float)cos((double)(angle + -(0.5f * pi))) * 30),yaw,0),skull.axis,QA_ANGLE_VM_MATH);
     if(!skull_pair(p,&skull,false,e))return false;
     angle=(sphere_angle(time,3) + (0.5f * pi)); if(angle>two_pi)angle=(angle + -two_pi);
     direction=qa_v3(((float)sin((double)angle) * 20),((float)cos((double)angle) * 20),0);
-    skull.origin=q3ne_sum(torso->origin,direction); orbit_axis(&skull,direction); return skull_pair(p,&skull,false,e);
+    skull.origin=qa_vec_add(torso->origin,direction); orbit_axis(&skull,direction); return skull_pair(p,&skull,false,e);
 }
 static bool mission(player_fx *p,const qa_q3_ref_entity *torso,qa_error *e)
 {
@@ -293,7 +293,7 @@ static bool mission(player_fx *p,const qa_q3_ref_entity *torso,qa_error *e)
     int32_t elapsed=q3ne_sub(time,dynamic.medkit_usage_time);
     if(dynamic.medkit_usage_time && elapsed<500) {
         qa_q3_ref_entity r=*torso; r.model=p->media->graphics[Q3N_G_MEDKIT_USAGE]; r.custom_skin=0; r.flags&=~2;
-        q3ne_identity(r.axis); r.origin=q3ne_sum(p->cent->lerp_origin,qa_v3(0,0,(-24 + (((float)elapsed * 80) / 500))));
+        q3ne_identity(r.axis); r.origin=qa_vec_add(p->cent->lerp_origin,qa_v3(0,0,(-24 + (((float)elapsed * 80) / 500))));
         uint8_t color=elapsed>400?q3ne_byte((255 + -(((float)q3ne_sub(elapsed,1000) * 255) / 100))):255;
         memset(r.color,color,4); if(!emit(p,&r,e))return false;
     }
@@ -325,11 +325,11 @@ static bool flag(player_fx *p,int32_t skin,const qa_q3_ref_entity *torso,qa_erro
     bool idle=animation==22 || animation==23,walk=animation==13 || animation==14;
     q3n_player_fx_state *s=&p->cent->player_fx;
     if(!idle) {
-        qa_vec3 d=q3ne_normalize(q3ne_sum(q3ne_array(p->state->pos.delta),qa_v3(0,0,100)));
-        if(fabsf(q3ne_dot(pole.axis[2],d))<0.9f) {
-            float a=((float)acos((double)fmaxf(-1,fminf(1,q3ne_dot(pole.axis[0],d)))));
+        qa_vec3 d=qa_vec_normalize(qa_vec_add(q3ne_array(p->state->pos.delta),qa_v3(0,0,100)));
+        if(fabsf(qa_vec_dot(pole.axis[2],d))<0.9f) {
+            float a=((float)acos((double)fmaxf(-1,fminf(1,qa_vec_dot(pole.axis[0],d)))));
             float degrees=((a * 180) / 3.14159265358979323846f);
-            float yaw=q3ne_dot(pole.axis[1],d)<0?(360 + -degrees):degrees;
+            float yaw=qa_vec_dot(pole.axis[1],d)<0?(360 + -degrees):degrees;
             if(yaw<0)yaw=(yaw + 360);
             if(yaw>360)yaw=(yaw + -360);
             flag_swing(s,yaw,p->frame->frame_milliseconds);
@@ -360,7 +360,7 @@ static bool powerups(player_fx *p,const qa_q3_ref_entity *torso,qa_error *e)
         else {
             qa_q3_ref_entity r=reference(QA_Q3_REF_MODEL,p->media->graphics[models[i]]); qa_vec3 axis[3];
             qa_angle_axis(qa_v3(0,p->cent->lerp_angles.y,0),axis,QA_ANGLE_VM_MATH);
-            r.origin=q3ne_sum(q3ne_sum(p->cent->lerp_origin,q3ne_scale(axis[0],-16)),qa_v3(0,0,16));
+            r.origin=qa_vec_add(qa_vec_add(p->cent->lerp_origin,qa_vec_scale(axis[0],-16)),qa_v3(0,0,16));
             qa_angle_axis(qa_v3(0,(p->cent->lerp_angles.y + 90),0),r.axis,QA_ANGLE_VM_MATH);
             if(!emit(p,&r,e))return false;
         }
@@ -371,7 +371,7 @@ static bool powerups(player_fx *p,const qa_q3_ref_entity *torso,qa_error *e)
         if(animation==15 || animation==16) {
             p->cent->trail_time=q3ne_plus(p->cent->trail_time,100);
             if(p->cent->trail_time<p->frame->time)p->cent->trail_time=p->frame->time;
-            q3n_smoke smoke={.origin=q3ne_sum(p->cent->lerp_origin,qa_v3(0,0,-16)),.velocity={0,0,0},.radius=8,
+            q3n_smoke smoke={.origin=qa_vec_add(p->cent->lerp_origin,qa_v3(0,0,-16)),.velocity={0,0,0},.radius=8,
                 .color={1,1,1,1},.duration=500,.start_time=p->frame->time,.shader=p->media->graphics[Q3N_G_HASTE_PUFF]};
             q3n_effect_smoke(p->frame,&smoke)->type=Q3N_LE_SCALE_FADE;
         }

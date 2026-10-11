@@ -8,14 +8,14 @@ static bool impact(const q3n_frame *f, const q3n_impact_mark *r, qa_error *error
     if(!isfinite(r->radius) || r->radius<=0 || !qa_vec_finite(r->origin) ||
        !qa_vec_finite(r->direction) || !isfinite(r->orientation))
         return q3ne_fail(error,QA_ERROR_ARGUMENT,"CG_ImpactMark requires finite geometry and positive radius");
-    if(q3ne_dot(r->direction,r->direction)==0)return true;
+    if(qa_vec_dot(r->direction,r->direction)==0)return true;
     for(unsigned i=0;i<4;++i)if(!isfinite(r->color[i]) || r->color[i]<0 || r->color[i]>1)
         return q3ne_fail(error,QA_ERROR_ARGUMENT,"CG_ImpactMark requires unit source colors");
-    qa_vec3 normal=q3ne_normalize(r->direction), axis2=q3ne_rotate(normal,q3ne_perpendicular(normal),r->orientation);
-    qa_vec3 axis1=q3ne_cross(normal,axis2), points[4], output[384]; q3n_mark_fragment fragments[128]; size_t count=0;
+    qa_vec3 normal=qa_vec_normalize(r->direction), axis2=qa_vec_rotate_around(normal,qa_vec_perpendicular(normal),r->orientation);
+    qa_vec3 axis1=qa_vec_cross(normal,axis2), points[4], output[384]; q3n_mark_fragment fragments[128]; size_t count=0;
     const float signs[4][2]={{-1,-1},{1,-1},{1,1},{-1,1}};
-    for(unsigned i=0;i<4;++i)points[i]=q3ne_sum(q3ne_sum(r->origin,q3ne_scale(q3ne_scale(axis1,r->radius),signs[i][0])),q3ne_scale(q3ne_scale(axis2,r->radius),signs[i][1]));
-    if(!o->options.mark_fragments(o->options.context,f,points,4,q3ne_scale(r->direction,-20),output,384,fragments,128,&count,error) ||
+    for(unsigned i=0;i<4;++i)points[i]=qa_vec_add(qa_vec_add(r->origin,qa_vec_scale(qa_vec_scale(axis1,r->radius),signs[i][0])),qa_vec_scale(qa_vec_scale(axis2,r->radius),signs[i][1]));
+    if(!o->options.mark_fragments(o->options.context,f,points,4,qa_vec_scale(r->direction,-20),output,384,fragments,128,&count,error) ||
        !q3ne_current(f,error))return false;
     if(count>128)return q3ne_fail(error,QA_ERROR_FORMAT,"Actual mark projector exceeded its source fragment destination");
     float scale=(0.5f / r->radius);
@@ -27,8 +27,8 @@ static bool impact(const q3n_frame *f, const q3n_impact_mark *r, qa_error *error
         memcpy(mark.color,r->color,sizeof(mark.color));
         for(uint32_t j=0;j<vertices;++j) {
             qa_q3_poly_vertex *v=&mark.vertices[j]; v->position=output[fragment.first+j];
-            qa_vec3 delta=q3ne_difference(v->position,r->origin);
-            v->texcoord=(qa_vec2){(0.5f + (q3ne_dot(delta,axis1) * scale)),(0.5f + (q3ne_dot(delta,axis2) * scale))};
+            qa_vec3 delta=qa_vec_sub(v->position,r->origin);
+            v->texcoord=(qa_vec2){(0.5f + (qa_vec_dot(delta,axis1) * scale)),(0.5f + (qa_vec_dot(delta,axis2) * scale))};
             for(unsigned k=0;k<4;++k)v->color[k]=q3ne_byte((r->color[k] * 255));
         }
         if(r->temporary) {

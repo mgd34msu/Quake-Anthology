@@ -293,26 +293,6 @@ static bool lightning(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry 
     }
     return true;
 }
-static qa_vec3 source_normalize(qa_vec3 value) {
-    float length = (float)sqrt((double)qa_vec_dot(value, value));
-    return length == 0 ? value : qa_vec_scale(value, (1 / length));
-}
-static qa_vec3 perpendicular(qa_vec3 direction) {
-    qa_vec3 axis = qa_v3(1, 0, 0);
-    float minimum = 1;
-    if (fabsf(direction.x) < minimum)
-        minimum = fabsf(direction.x);
-    if (fabsf(direction.y) < minimum) {
-        axis = qa_v3(0, 1, 0);
-        minimum = fabsf(direction.y);
-    }
-    if (fabsf(direction.z) < minimum)
-        axis = qa_v3(0, 0, 1);
-    float inverse = (1 / qa_vec_dot(direction, direction));
-    float distance = (qa_vec_dot(axis, direction) * inverse);
-    qa_vec3 normal = qa_vec_scale(direction, inverse);
-    return source_normalize(qa_vec_sub(axis, qa_vec_scale(normal, distance)));
-}
 static float seeded_crandom(uint32_t *seed) {
     *seed = *seed * UINT32_C(69069) + 1;
     return 2.0f * ((float)(*seed & 65535u) / 65536.0f - 0.5f);
@@ -331,7 +311,7 @@ static bool shotgun(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry at
     if (!q3_event(game, shooter, (qa_actor_id){0}, QA_BUILTIN_SHOT, 54, (int32_t)seed,
                   attack.muzzle, direction, qa_v3(0, 0, 0), error))
         return false;
-    qa_vec3 forward = source_normalize(direction), right = perpendicular(forward),
+    qa_vec3 forward = qa_vec_normalize(direction), right = qa_vec_perpendicular(forward),
             up = qa_vec_cross(forward, right);
     bool credited = false;
     for (unsigned pellet = 0; pellet < 11; ++pellet) {

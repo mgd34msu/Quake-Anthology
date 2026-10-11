@@ -31,10 +31,10 @@ bool q3n_effect_bubbles(const q3n_frame *f, qa_vec3 start, qa_vec3 end, float sp
     if(f->event_settings->no_projectile_trail) return true;
     if(!isfinite(spacing) || spacing<1 || spacing>=2147483648.0f)
         return q3ne_fail(error,QA_ERROR_ARGUMENT,"Bubble spacing requires a positive source integer divisor");
-    qa_vec3 difference=q3ne_difference(end,start), direction=q3ne_normalize(difference);
-    float length=q3ne_length(difference);
+    qa_vec3 difference=qa_vec_sub(end,start), direction=qa_vec_normalize(difference);
+    float length=qa_vec_length(difference);
     int32_t i=q3n_events_rand(o)%(int32_t)spacing;
-    qa_vec3 move=q3ne_sum(start,q3ne_scale(direction,(float)i)), step=q3ne_scale(direction,spacing);
+    qa_vec3 move=qa_vec_add(start,qa_vec_scale(direction,(float)i)), step=qa_vec_scale(direction,spacing);
     for(; (float)i<length; i=q3ne_int(((float)i + spacing))) {
         q3n_local_entity *v=q3n_local_allocate(o,Q3N_LE_MOVE_SCALE_FADE,QA_Q3_REF_SPRITE);
         v->flags=Q3N_LE_DONT_SCALE; v->start_time=f->time;
@@ -47,7 +47,7 @@ bool q3n_effect_bubbles(const q3n_frame *f, qa_vec3 start, qa_vec3 end, float sp
         v->pos.delta[0]=(q3n_events_crandom(o) * 5);
         v->pos.delta[1]=(q3n_events_crandom(o) * 5);
         v->pos.delta[2]=((q3n_events_crandom(o) * 5) + 6);
-        move=q3ne_sum(move,step);
+        move=qa_vec_add(move,step);
     }
     return true;
 }
@@ -74,15 +74,15 @@ q3n_local_entity *q3n_effect_explosion(const q3n_frame *f, const q3n_explosion *
         s->sprite?QA_Q3_REF_SPRITE:QA_Q3_REF_MODEL);
     if(s->sprite) {
         v->ref.rotation=(float)(q3n_events_rand(f->events)%360);
-        v->ref.origin=q3ne_sum(s->origin,q3ne_scale(s->direction,16));
+        v->ref.origin=qa_vec_add(s->origin,qa_vec_scale(s->direction,16));
     } else {
         if(!s->has_direction)q3ne_identity(v->ref.axis);
         else {
             int32_t angle=q3n_events_rand(f->events)%360;
             v->ref.axis[0]=s->direction;
-            qa_vec3 p=q3ne_perpendicular(s->direction);
-            v->ref.axis[1]=angle?q3ne_rotate(s->direction,p,(float)angle):p;
-            v->ref.axis[2]=q3ne_cross(v->ref.axis[0],v->ref.axis[1]);
+            qa_vec3 p=qa_vec_perpendicular(s->direction);
+            v->ref.axis[1]=angle?qa_vec_rotate_around(s->direction,p,(float)angle):p;
+            v->ref.axis[2]=qa_vec_cross(v->ref.axis[0],v->ref.axis[1]);
         }
         v->ref.origin=s->origin;
     }

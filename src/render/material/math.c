@@ -52,22 +52,6 @@ float qa_material_sine(unsigned index)
     initialize_tables();
     return sine_table[index & 1023u];
 }
-float qa_material_inverse_sqrt(float square)
-{
-    uint32_t bits;
-    memcpy(&bits, &square, sizeof(bits));
-    bits = UINT32_C(0x5f3759df) - (bits >> 1);
-    float inverse;
-    memcpy(&inverse, &bits, sizeof(inverse));
-    float half = square * 0.5f;
-    float product = half * inverse;
-    product *= inverse;
-    return inverse * (1.5f - product);
-}
-qa_vec3 qa_material_fast_normalize(qa_vec3 value)
-{
-    return qa_vec_scale(value, qa_material_inverse_sqrt(qa_vec_dot(value, value)));
-}
 static unsigned noise_cell(float value)
 {
     return (unsigned)(uint32_t)qa_source_float_to_i32(floorf(value)) & 255u;

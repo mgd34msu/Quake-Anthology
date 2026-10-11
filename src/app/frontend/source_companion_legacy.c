@@ -13,14 +13,6 @@ struct frontend_source_companion_legacy {
     qa_q3_scene_options options;
     qa_scene_light *lights,*projected;
 };
-static qa_vec3 vector(const qa_vec3 source[3],const qa_vec3 target[3],qa_vec3 value)
-{
-    qa_vec3 result={0};
-    for (size_t i=0;i<3;++i) result=qa_vec_add(result,qa_vec_scale(target[i],qa_vec_dot(value,source[i])));
-    return result;
-}
-static qa_vec3 point(const qa_q3_refdef *source,const qa_scene_view *target,qa_vec3 value)
-{ return qa_vec_add(target->origin,vector(source->axis,target->axis,qa_vec_sub(value,source->origin))); }
 static bool owned(const frontend_source_companion_legacy *owner,const frontend_source_companion_packet *packet,
     size_t ordinal,bool *view)
 {
@@ -103,7 +95,7 @@ bool frontend_source_companion_legacy_prepare(qa_frontend *f,uint32_t physical,q
             bool view=packet.light_views && packet.light_views[j];
             if (view && input->view.clip_enabled) continue;
             qa_scene_light light=packet.lights[j];
-            if (view) light.origin=point(&packet.definition,&input->view,light.origin);
+            if (view) light.origin=qa_axis_remap_point(packet.definition.origin,packet.definition.axis,input->view.origin,input->view.axis,light.origin);
             owner->lights[at++]=light;
             if (projected_at<projected_added) owner->projected[input->projected_light_count+projected_at]=light;
             ++projected_at;
@@ -131,10 +123,10 @@ bool frontend_source_companion_legacy_submit(frontend_source_companion_legacy *o
             if (!owned(owner,&packet,j,&view) || (view && owner->options.world.view.clip_enabled)) continue;
             qa_q3_ref_entity ref=packet.entities[j];
             if (view) {
-                ref.origin=point(&packet.definition,&owner->options.world.view,ref.origin);
-                ref.old_origin=point(&packet.definition,&owner->options.world.view,ref.old_origin);
-                ref.lighting_origin=point(&packet.definition,&owner->options.world.view,ref.lighting_origin);
-                for (size_t k=0;k<3;++k) ref.axis[k]=vector(packet.definition.axis,owner->options.world.view.axis,ref.axis[k]);
+                ref.origin=qa_axis_remap_point(packet.definition.origin,packet.definition.axis,owner->options.world.view.origin,owner->options.world.view.axis,ref.origin);
+                ref.old_origin=qa_axis_remap_point(packet.definition.origin,packet.definition.axis,owner->options.world.view.origin,owner->options.world.view.axis,ref.old_origin);
+                ref.lighting_origin=qa_axis_remap_point(packet.definition.origin,packet.definition.axis,owner->options.world.view.origin,owner->options.world.view.axis,ref.lighting_origin);
+                for (size_t k=0;k<3;++k) ref.axis[k]=qa_axis_remap(packet.definition.axis,owner->options.world.view.axis,ref.axis[k]);
             }
             if (!qa_q3_presentation_completed_entity(owner->presentation,owner->capture.assets,owner->world,
                 &ref,packet.definition.time,&owner->options,order++,frame,error)) return false;
@@ -153,7 +145,7 @@ bool frontend_source_companion_legacy_submit(frontend_source_companion_legacy *o
                 if (!transformed) return frontend_fail(error,QA_ERROR_MEMORY,"Transforming actual Source view polygon");
                 memcpy(transformed,vertices,polygon->count*sizeof(*transformed));
                 for (size_t k=0;k<polygon->count;++k)
-                    transformed[k].position=point(&packet.definition,&owner->options.world.view,transformed[k].position);
+                    transformed[k].position=qa_axis_remap_point(packet.definition.origin,packet.definition.axis,owner->options.world.view.origin,owner->options.world.view.axis,transformed[k].position);
                 vertices=transformed;
             }
             bool okay=qa_q3_presentation_completed_poly(owner->presentation,owner->capture.assets,owner->world,

@@ -63,7 +63,7 @@ static bool scale_fade(const q3n_frame *f, int32_t index, qa_error *error)
         if(!q3n_trajectory(&v->pos,f->time,&r->origin,error))return false;
     } else if(v->type==Q3N_LE_FALL_SCALE_FADE)
         r->origin.z=(v->pos.base[2] + -((1 + -c) * v->pos.delta[2]));
-    if(q3ne_length(q3ne_difference(r->origin,f->refdef.origin))<v->radius) { q3ne_local_free(o,index); return true; }
+    if(qa_vec_length(qa_vec_sub(r->origin,f->refdef.origin))<v->radius) { q3ne_local_free(o,index); return true; }
     return entity(f,r,error);
 }
 static bool blood_trail(const q3n_frame *f, int32_t index, qa_error *error)
@@ -128,7 +128,7 @@ static bool fragment(const q3n_frame *f, int32_t index, qa_error *error)
     int32_t hit_time=q3ne_int(((float)q3ne_sub(f->time,f->frame_milliseconds) + ((float)f->frame_milliseconds * tr.fraction)));
     qa_vec3 velocity;
     if(!q3n_trajectory_delta(&v->pos,hit_time,&velocity,error))return false;
-    qa_vec3 delta=q3ne_scale(q3ne_sum(velocity,q3ne_scale(normal,(-2 * q3ne_dot(velocity,normal)))),v->bounce_factor);
+    qa_vec3 delta=qa_vec_scale(qa_vec_add(velocity,qa_vec_scale(normal,(-2 * qa_vec_dot(velocity,normal)))),v->bounce_factor);
     if(tr.all_solid || (normal.z>0 && (delta.z<40 || delta.z<(-(float)f->frame_milliseconds * delta.z))))v->pos.type=0;
     q3ne_store(v->pos.base,tr.end); q3ne_store(v->pos.delta,delta); v->pos.time=f->time;
     return entity(f,r,error);
@@ -142,15 +142,15 @@ static bool score_plum(const q3n_frame *f, int32_t index, qa_error *error)
     if(c<0.25f)r->color[3]=q3ne_byte((1020 * c));
     r->radius=4;
     qa_vec3 origin=q3ne_array(v->pos.base); origin.z=(origin.z + (110 + -(c * 100)));
-    qa_vec3 dir=q3ne_normalize(q3ne_cross(q3ne_difference(f->refdef.origin,origin),qa_v3(0,0,1)));
+    qa_vec3 dir=qa_vec_normalize(qa_vec_cross(qa_vec_sub(f->refdef.origin,origin),qa_v3(0,0,1)));
     float phase=((c * 2) * 3.14159274101257324219f);
-    origin=q3ne_sum(origin,q3ne_scale(dir,(-10 + (20 * (float)sin((double)phase)))));
-    if(q3ne_length(q3ne_difference(origin,f->refdef.origin))<20) { q3ne_local_free(f->events,index); return true; }
+    origin=qa_vec_add(origin,qa_vec_scale(dir,(-10 + (20 * (float)sin((double)phase)))));
+    if(qa_vec_length(qa_vec_sub(origin,f->refdef.origin))<20) { q3ne_local_free(f->events,index); return true; }
     uint32_t magnitude=score<0?0u-(uint32_t)score:(uint32_t)score, digits[11],count=0;
     do { digits[count++]=magnitude%10; magnitude/=10; } while(magnitude);
     if(score<0)digits[count++]=10;
     for(uint32_t i=0;i<count;++i) {
-        r->origin=q3ne_sum(origin,q3ne_scale(dir,((((float)count/2) + -(float)i) * 8)));
+        r->origin=qa_vec_add(origin,qa_vec_scale(dir,((((float)count/2) + -(float)i) * 8)));
         r->custom_shader=q3n_media_read(f->media)->number_shaders[digits[count-1-i]];
         if(!entity(f,r,error))return false;
     }
@@ -162,7 +162,7 @@ static bool shockwave(const q3n_frame *f, q3n_local_entity *v, const qa_vec3 axi
     qa_q3_ref_entity ref={.kind=QA_Q3_REF_MODEL,.model=q3n_media_read(f->media)->graphics[Q3N_G_KAMIKAZE_SHOCKWAVE],
         .shader_time=v->ref.shader_time,.origin=v->ref.origin,.non_normalized_axes=true};
     float c=((float)q3ne_sub(time,start) / (float)q3ne_sub(end,start)), scale=((c * radius) / 88);
-    for(unsigned i=0;i<3;++i)ref.axis[i]=q3ne_scale(axis[i],scale);
+    for(unsigned i=0;i<3;++i)ref.axis[i]=qa_vec_scale(axis[i],scale);
     float alpha=time>fade?((float)q3ne_sub(time,fade) / (float)q3ne_sub(end,fade)):0;
     memset(ref.color,q3ne_byte((255 + -(alpha * 255))),4);
     return entity(f,&ref,error);
@@ -190,7 +190,7 @@ static bool kamikaze(const q3n_frame *f, q3n_local_entity *v, qa_error *error)
             }
             c=((float)q3ne_sub(2250,t) / 250);
         }
-        for(unsigned i=0;i<3;++i)v->ref.axis[i]=q3ne_scale(axis[i],((c * 720) / 72));
+        for(unsigned i=0;i<3;++i)v->ref.axis[i]=qa_vec_scale(axis[i],((c * 720) / 72));
         v->ref.non_normalized_axes=true;
         if(!entity(f,&v->ref,error))return false;
         if(!f->preferences.reduced_flashes && (!qa_q3_presentation_light(f->presentation,v->ref.origin,(c * 1000),qa_v3(1,1,c),false,error) || !q3ne_current(f,error)))return false;

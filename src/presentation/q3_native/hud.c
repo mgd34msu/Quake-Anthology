@@ -224,7 +224,7 @@ static bool crosshair_names(q3n_hud_draw *d)
 {
     if(!d->frame->preferences.crosshair || !d->settings->crosshair || !d->settings->draw_crosshair_names || d->frame->third_person)return true;
     q3nh_anchor(d,320,240);
-    qa_vec3 start=d->frame->refdef.origin,end=q3ne_sum(start,q3ne_scale(d->frame->refdef.axis[0],131072));
+    qa_vec3 start=d->frame->refdef.origin,end=qa_vec_add(start,qa_vec_scale(d->frame->refdef.axis[0],131072));
     qa_trace_result trace; qa_bounds zero={0}; int32_t number;
     if(!q3n_events_trace(d->frame,start,end,zero,q3n_frame_snapshot_player(d->frame)->clientNum,1|0x2000000,&trace,d->error) ||
        !q3n_events_trace_number(d->frame,&trace,&number,d->error))return false;

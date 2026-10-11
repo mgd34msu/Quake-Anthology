@@ -275,7 +275,7 @@ static uint32_t q2_target(const qa_collision_target *target, qa_vec3 basis[3])
 static qa_vec3 q2_local(qa_vec3 point, const qa_collision_target *target, const qa_vec3 basis[3])
 {
     return target->inline_model
-        ? qa_collision_to_local(qa_vec_sub(point, target->origin), basis) : point;
+        ? qa_axis_to_local(qa_vec_sub(point, target->origin), basis) : point;
 }
 
 static bool q2_point_contents(const void *opaque, void *opaque_scratch, const qa_point_query *query,
