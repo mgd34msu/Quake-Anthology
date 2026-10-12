@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `c1c02b87`.
+Follow-up source changes were reviewed through main `c512bc6b`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 145 have source fixes
+There are **374 overlapping source-review observations**: 146 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 226 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 225 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -290,3 +290,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 | `03-17` | `ef299e52` | Q1 muzzle projection indexes authoritative ring records; abort, reused actor slots and retirement cases pass. Normal build/seven suites passed; no live protocol or speed claim. |
 
 | `03-13` | `c1c02b87` | Native command/name adapters use common ASCII equality; private folds deleted and original authentication/recipient rules retained. Normal build/seven suites passed; no live command or speed claim. |
+
+| `02-23` | `c512bc6b` | Q3 pose and roster readers use common direction/finiteness/equality primitives; original rounding and boundary rejection retained. Normal build/seven suites and cardinal cases passed; no live or speed claim. |

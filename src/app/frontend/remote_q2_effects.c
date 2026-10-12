@@ -144,7 +144,8 @@ bool q2fx_source_valid(const frontend_remote_q2_effects_source *s)
     void *context = NULL;
     return s && s->identity && s->content_generation && s->map && s->files &&
         (s->rules==QA_RULESET_Q2_CLASSIC || s->rules==QA_RULESET_Q2_RERELEASE) &&
-        s->images && s->materials && s->world && s->white && s->current && s->actor && s->model && s->sound && s->controls && s->render_clock &&
+        s->images && s->materials && s->world && s->white && s->current && (s->protocol.kind ? s->actor != NULL : s->actor_pose != NULL) &&
+        s->model && s->sound && s->controls && s->render_clock &&
         (!s->video_context || s->video_frame) &&
         qa_material_library_video_start_read(s->materials,&start,&context) && (!start || s->video_frame) &&
         (s->rules!=QA_RULESET_Q2_RERELEASE || (s->controls && s->viewer && s->frame_milliseconds && s->render_clock));

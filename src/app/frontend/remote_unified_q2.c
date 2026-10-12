@@ -36,7 +36,6 @@ typedef struct q2_model {
     qa_string_id path;
     qa_scene_model *scene;
 } q2_model;
-typedef struct q2_alias { uint32_t number; qa_actor_id actor; } q2_alias;
 typedef struct q2_activation {
     struct q2_activation *next;
     size_t storage_slot;
@@ -97,8 +96,6 @@ typedef struct q2_bank {
     qa_unified_document *hud_name_document;
     qa_hud_q2_picture_names picture_names;
     const qa_font *native_font;
-    q2_alias *aliases;
-    size_t alias_count;
     qa_lightstyles styles;
 } q2_bank;
 typedef struct q2_native {
@@ -433,15 +430,6 @@ static bool pose_actor(q2_bank *b,qa_actor_id id,frontend_remote_q2_effects_pose
     *out=(frontend_remote_q2_effects_pose){.actor=id,.origin=body.origin,.angles=body.angles,.bounds=body.bounds,.scale=1};
     return true;
 }
-static bool pose(void *ctx,uint32_t number_id,frontend_remote_q2_effects_pose *out,qa_error *e)
-{
-    q2_bank *b=ctx;
-    for (size_t i=0;i<b->alias_count;++i) if (b->aliases[i].number==number_id) {
-        if (!pose_actor(b,b->aliases[i].actor,out,e)) return false;
-        out->number=number_id; return true;
-    }
-    return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 effect source number has no received full actor witness");
-}
 static bool full_pose(void *ctx,qa_actor_id actor_id,frontend_remote_q2_effects_pose *out,qa_error *e)
 { return pose_actor(ctx,actor_id,out,e); }
 static bool actor_live(void *ctx,qa_actor_id id,bool *out,qa_error *e)
@@ -593,7 +581,7 @@ static frontend_remote_q2_effects_source source(q2_bank *b)
         .map=qa_executable_recipe_map(frontend_remote_unified_recipe(b->owner->replica)),.files=b->files,.sounds=b->sounds,
         .images=b->images,.materials=b->materials,.world=frontend_unified_media_world(b->owner->media),.white=qa_scene_white(b->images),.context=b,
         .video_frame=frontend_material_movies_frontend_resolve,.video_context=b->owner->frontend,
-        .current=source_current,.actor=pose,.actor_pose=full_pose,.actor_live=actor_live,.viewer=viewer,.model=model,.sound=sound,.hit_marker=hit,
+        .current=source_current,.actor_pose=full_pose,.actor_live=actor_live,.viewer=viewer,.model=model,.sound=sound,.hit_marker=hit,
         .controls=controls,.frame_milliseconds=frame_milliseconds,.render_clock=render_clock,.trace=trace,.footstep=footstep};
 }
 static bool bank_name(frontend_unified_q2 *o,qa_string_id content_name,q2_activation *activation_owner,qa_string_id source_provider,
@@ -1010,17 +998,6 @@ bool frontend_unified_q2_status_replacement(const frontend_unified_q2 *o,bool *o
     for (size_t i=0;i<o->native_count;++i) if (o->native[i].replace_status) *out=true;
     return true;
 }
-static bool alias(q2_bank *b,int32_t number_id,qa_actor_id actor_id,qa_error *e)
-{
-    if (number_id<0 || !actor_id.registry) return true;
-    for (size_t i=0;i<b->alias_count;++i) if (b->aliases[i].number==(uint32_t)number_id) {
-        b->aliases[i].actor=actor_id; return true;
-    }
-    if (b->alias_count==SIZE_MAX/sizeof(*b->aliases)) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Q2 received number ledger overflow");
-    void *rows=realloc(b->aliases,(b->alias_count+1)*sizeof(*b->aliases));
-    if (!rows) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual Q2 source number witness");
-    b->aliases=rows; b->aliases[b->alias_count++]=(q2_alias){(uint32_t)number_id,actor_id}; return true;
-}
 static bool temporary(frontend_unified_q2 *o,const qa_unified_q2_temporary *event,qa_q2_temp_entity *t,qa_actor_id actors[7],qa_error *e)
 {
     if (event->field_count>7) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 temporary exceeds its native field capacity");
@@ -1040,9 +1017,6 @@ static bool temporary_receive(frontend_unified_q2 *o,const qa_unified_presentati
     if (!temporary(o,event,&t,actors,e) || !source_bank(o,row,true,&b,e)) return false;
     if (event->rerelease!=(b->rules==QA_RULESET_Q2_RERELEASE))
         return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 temporary protocol differs from its actual Source");
-    for (size_t i=0;i<t.field_count;++i)
-        if ((t.fields[i].name==QA_Q2_TEMP_ENTITY1 || t.fields[i].name==QA_Q2_TEMP_ENTITY2) && actors[i].registry &&
-            !alias(b,t.fields[i].value.integer,actors[i],e)) return false;
     ++o->busy;bool okay=frontend_remote_q2_effects_temporary(b->effects,&t,actors,row->seconds*1000,row->seconds*1000,e);--o->busy;
     return okay;
 }
@@ -1224,8 +1198,8 @@ static bool effect_replace(frontend_unified_q2 *o,q2_bank *bank_value,qa_actor_i
 static bool muzzle_receive(frontend_unified_q2 *o,const qa_unified_presentation_event *row,
     const qa_unified_q2_muzzle *m,qa_error *e)
 {
-    qa_actor_id a;q2_bank *b=NULL;int32_t number_id=row->has_source_entity?row->source_entity:(int32_t)m->entity;
-    if (!source_actor(o,m->actor,&a,e) || !a.registry || !source_bank(o,row,true,&b,e) || !alias(b,number_id,a,e)) return false;
+    qa_actor_id a;q2_bank *b=NULL;
+    if (!source_actor(o,m->actor,&a,e) || !a.registry || !source_bank(o,row,true,&b,e)) return false;
     double ms=row->seconds*1000;++o->busy;bool okay;
     if (!m->monster)okay=frontend_remote_q2_effects_actor_muzzle(b->effects,a,m->flash,false,m->silenced,ms,ms,e);
     else if (m->has_pose)okay=frontend_remote_q2_effects_monster_muzzle_pose(b->effects,a,m->flash,m->origin,m->angles,m->scale,ms,ms,e);
@@ -1926,7 +1900,7 @@ static bool bank_destroy(q2_bank *b,qa_error *e)
         while (b->models) { q2_model *m=b->models; b->models=m->next; free(m); }
         qa_unified_document_destroy(b->hud_name_document);
         qa_hud_q2_names_destroy(&b->hud_names);
-    free(b->aliases);return true;
+    return true;
 }
 bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
 {
