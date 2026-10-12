@@ -45,7 +45,6 @@ typedef struct qa_mixer_voice {
     double volume, attenuation, distance_offset, stereo_scale;
     bool unattenuated_mono;
     qa_mixer_gain gain;
-    size_t next_free;
     size_t start_event, stop_event;
 } qa_mixer_voice;
 
@@ -86,9 +85,9 @@ struct qa_audio_mixer {
     qa_audio_transmission_checked_fn transmission_checked;
     void *transmission_user;
     qa_mixer_voice *voices;
-    size_t voice_count, voice_capacity, free_head;
+    size_t voice_count;
     qa_arena prepared_storage;
-    qa_pool prepared_records;
+    qa_pool prepared_records, voice_records, notification_records;
     qa_mixer_prepared **prepared_index;
     size_t prepared_index_capacity;
     qa_mixer_loop *loops;
@@ -100,7 +99,7 @@ struct qa_audio_mixer {
     qa_mixer_transmission *transmissions;
     size_t transmission_count, transmission_capacity;
     qa_mixer_event *events;
-    size_t event_count, event_capacity, event_free_count, event_free, event_head, event_tail;
+    size_t event_head, event_tail;
     char *diagnostic_message;
     size_t diagnostic_capacity;
     union {

@@ -1399,26 +1399,29 @@ static void test_shared_audio_preparation(void)
         CHECK(qa_audio_asset_resample(asset, 32000, families[i], &changed, &error));
         CHECK(changed != first && changed->sample_rate == 32000 && first->sample_rate == 44100);
         CHECK(!memcmp(first->samples, expected->samples, (size_t)first->frame_count * sizeof(int16_t)));
-        qa_audio_mixer *mixer = NULL;
-        audio_notification_counts counts = {0};
-        qa_audio_mixer_options options = {.sample_rate = 44100, .output_channels = 2,
-            .initial_voices = 8, .prepared_capacity = 1, .workspace_capacity = 8,
-            .observer = count_audio_notification, .observer_user = &counts};
-        CHECK(qa_audio_mixer_create(&options, &mixer, &error));
         qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset,
             .family = families[i], .actor = QA_AUDIO_NO_ACTOR, .owner = QA_AUDIO_NO_OWNER,
             .audience = QA_AUDIO_WORLD, .origin_kind = QA_AUDIO_LOCAL, .volume = 1};
-        for (size_t turn = 0; turn < 16; ++turn) {
-            bool accepted = false;
-            CHECK(qa_audio_mixer_play(mixer, &sound, 0, &accepted, &error) && accepted);
-            CHECK(qa_audio_mixer_play(mixer, &sound, 100, &accepted, &error) && accepted);
-            int16_t output[32]; CHECK(qa_audio_mixer_mix(mixer, output, 16, &error));
-            qa_audio_mixer_stop_all(mixer);
+        const size_t initial_voices[] = {0, 2, 8};
+        for (size_t initial = 0; initial < sizeof(initial_voices) / sizeof(*initial_voices); ++initial) {
+            qa_audio_mixer *mixer = NULL;
+            audio_notification_counts counts = {0};
+            qa_audio_mixer_options options = {.sample_rate = 44100, .output_channels = 2,
+                .initial_voices = initial_voices[initial], .prepared_capacity = 1, .workspace_capacity = 8,
+                .observer = count_audio_notification, .observer_user = &counts};
+            CHECK(qa_audio_mixer_create(&options, &mixer, &error));
+            for (size_t turn = 0; turn < 16; ++turn) {
+                bool accepted = false;
+                CHECK(qa_audio_mixer_play(mixer, &sound, 0, &accepted, &error) && accepted);
+                CHECK(qa_audio_mixer_play(mixer, &sound, 100, &accepted, &error) && accepted);
+                int16_t output[32]; CHECK(qa_audio_mixer_mix(mixer, output, 16, &error));
+                qa_audio_mixer_stop_all(mixer);
+            }
+            CHECK(counts.starts && counts.starts == counts.stops);
+            qa_audio_mixer_destroy(mixer);
         }
-        CHECK(counts.starts && counts.starts == counts.stops);
-        qa_audio_mixer_destroy(mixer);
         qa_audio_engine *engine=NULL;
-        counts=(audio_notification_counts){0};
+        audio_notification_counts counts={0};
         qa_application app={0};CHECK(application_event_stream_create(&app,16,&error));
         qa_audio_engine_options engine_options={.sample_rate=44100,.output_channels=2,
             .mix_frames=16,.initial_voices=8,.observer=count_audio_notification,.observer_user=&counts};
