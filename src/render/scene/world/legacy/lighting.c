@@ -591,22 +591,17 @@ static qa_vec3 snapshot_style(const qa_scene_world *world,const qa_scene_world_i
 
 enum { QAWL_POINT_NONE, QAWL_POINT_FLOOR, QAWL_POINT_GRID };
 
-static bool same_point(qa_vec3 a, qa_vec3 b)
-{
-    return a.x == b.x && a.y == b.y && a.z == b.z;
-}
-
 static qawl_point_light *point_light_entry(const qa_scene_world *world, qa_vec3 point)
 {
     qawl_world *data = world->legacy_data;
     if (!data || !data->point_light_count) return NULL;
     qawl_point_light *entry = data->last_point_light;
-    if (entry && same_point(entry->origin, point)) return entry;
+    if (entry && qa_vec_equal(entry->origin, point)) return entry;
     qa_collision_leaf leaf;
     if (!qa_collision_point_leaf(world->options.geometry, point, QA_LEAF_Q1, &leaf, NULL)
         || leaf.leaf >= data->point_light_count) return NULL;
     entry = &data->point_lights[leaf.leaf];
-    if (!entry->keyed || !same_point(entry->origin, point))
+    if (!entry->keyed || !qa_vec_equal(entry->origin, point))
         *entry = (qawl_point_light){.origin = point, .keyed = true};
     data->last_point_light = entry;
     return entry;

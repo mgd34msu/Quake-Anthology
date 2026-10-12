@@ -1468,7 +1468,7 @@ static bool admit_vector(original_admission *admission,const char *name,
     qa_vec3 expected,qa_error *error) {
     qa_vec3 actual;
     if (!saved_vector(saved(admission->record,name),&actual,error)) return false;
-    if (actual.x!=expected.x || actual.y!=expected.y || actual.z!=expected.z)
+    if (!qa_vec_equal(actual,expected))
         return unsupported(error,"Source vector differs from the native derived state");
     admitted_key(admission,name);return true;
 }

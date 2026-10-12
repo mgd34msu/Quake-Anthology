@@ -42,16 +42,10 @@ static bool valid_link_state(const qa_body_link_state *saved)
         && qa_world_body_state_valid(&saved->state,QA_ENTITY_BODY_ALL) && qa_bounds_valid(saved->absolute_bounds)));
 }
 
-static bool same_vector(qa_vec3 left,qa_vec3 right)
-{ return left.x==right.x && left.y==right.y && left.z==right.z; }
-
-static bool same_bounds(qa_bounds left,qa_bounds right)
-{ return same_vector(left.mins,right.mins) && same_vector(left.maxs,right.maxs); }
-
 static bool same_state(const qa_body_state *left,const qa_body_state *right)
 {
-    return same_vector(left->origin,right->origin) && same_vector(left->angles,right->angles)
-        && same_vector(left->velocity,right->velocity) && same_bounds(left->bounds,right->bounds)
+    return qa_vec_equal(left->origin,right->origin) && qa_vec_equal(left->angles,right->angles)
+        && qa_vec_equal(left->velocity,right->velocity) && qa_bounds_equal(left->bounds,right->bounds)
         && qa_actor_reference_equal(left->ground,right->ground);
 }
 
@@ -91,7 +85,7 @@ static bool prepare_visibility_storage(qa_world *world,qa_collision_geometry *ge
     }
     qa_arena_seal(arena);return true;
 }
-static bool prepare_release_storage(qa_world *world,size_t depth,qa_error *error)
+static bool prepare_release_storage(qa_world *world,qa_error *error)
 {
     size_t bytes=(size_t)world->capacity*sizeof(*world->release_tickets);
     if(bytes/sizeof(*world->release_tickets)!=world->capacity)
@@ -100,11 +94,7 @@ static bool prepare_release_storage(qa_world *world,size_t depth,qa_error *error
         _Alignof(qa_world_release_ticket),error);
     if(world->release_tickets==NULL) return false;
     memset(world->release_tickets,0,bytes);
-    size_t stride=2*sizeof(qa_actor_id)+sizeof(qa_attachment_transport);
-    if(world->capacity>SIZE_MAX/stride)
-        return fail(error,QA_ERROR_MEMORY,"Attachment traversal size overflow");
-    return qa_pool_prepare(&world->attachment_transports,&world->snapshot_storage,
-        depth,(size_t)world->capacity*stride,_Alignof(qa_attachment_transport),error);
+    return true;
 }
 
 bool qa_world_create(qa_actor_registry *actors, qa_collision_geometry *geometry,
@@ -126,7 +116,7 @@ bool qa_world_create(qa_actor_registry *actors, qa_collision_geometry *geometry,
     world->visibility_stride=world->cluster_bytes+world->area_bytes;
     if(!qa_trace_scratch_create(geometry,&world->trace_scratch,error)) { qa_arena_destroy(&world->visibility_storage);free(world);return false; }
     size_t depth=snapshot_frame_capacity?snapshot_frame_capacity:QA_WORLD_SNAPSHOT_DEFAULT_FRAMES;
-    if(!prepare_release_storage(world,depth,error)) {
+    if(!prepare_release_storage(world,error)) {
         qa_arena_destroy(&world->visibility_storage);
         qa_arena_destroy(&world->snapshot_storage);
         qa_trace_scratch_destroy(world->trace_scratch); free(world); return false;
@@ -621,19 +611,6 @@ bool qa_world_attachment(const qa_world *world,qa_actor_id actor,qa_body_attachm
     *out=body->attachment; return true;
 }
 
-bool qa_world_next_attachment(const qa_world *world,uint64_t *cursor,qa_actor_id *actor,qa_body_attachment *out)
-{
-    if(world==NULL || cursor==NULL || actor==NULL || out==NULL) return false;
-    const qa_world_body *next=NULL;
-    for(uint32_t slot=0;slot<world->capacity;++slot) {
-        qa_world_body *body=qa_world_raw_body(world,slot);
-        if(body!=NULL && body->present && body->attached && body->attachment_order>*cursor
-            && qa_actors_get(world->actors,body->actor)!=NULL && (next==NULL || body->attachment_order<next->attachment_order)) next=body;
-    }
-    if(next==NULL) return false;
-    *cursor=next->attachment_order; *actor=next->actor; *out=next->attachment; return true;
-}
-
 typedef enum body_link_policy { BODY_LINK_COMMIT, BODY_LINK_EXPLICIT, BODY_LINK_RESTORE } body_link_policy;
 
 static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_body *linked,
@@ -649,7 +626,7 @@ static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_bod
         collision.family=qa_collision_geometry_family(world->geometry);
     }
     if(policy==BODY_LINK_COMMIT && body->linked && spatial->linked && same_state(&body->linked_state,&linked->state)
-        && same_bounds(spatial->bounds,linked->absolute_bounds)
+        && qa_bounds_equal(spatial->bounds,linked->absolute_bounds)
         && same_collision(&body->linked_collision,&collision)) return true;
     qa_linked_body snapshot=*linked;
     if(policy!=BODY_LINK_RESTORE) {
@@ -921,57 +898,4 @@ bool qa_world_restore_link_state(qa_world *world,qa_actor_id actor,const qa_body
     }
     qa_linked_body linked={actor,saved->state,saved->absolute_bounds,saved->link_count};
     return publish_link(world,body,&linked,BODY_LINK_RESTORE,error);
-}
-
-static bool same_float(float left,float right)
-{ return left==right && (left!=0.0f || signbit(left)==signbit(right)); }
-
-bool qa_world_transport_attachments(qa_world *world,qa_error *error)
-{
-    if(world==NULL) return fail(error,QA_ERROR_ARGUMENT,"Missing world");
-    size_t capacity=world->capacity,transport_slot;
-    qa_actor_id *visited=qa_pool_take(&world->attachment_transports,&transport_slot);
-    if(visited==NULL) return fail(error,QA_ERROR_MEMORY,"Attachment traversal capacity exhausted");
-    qa_actor_id *visiting=visited+capacity;
-    qa_attachment_transport *chain=(qa_attachment_transport *)(visiting+capacity);
-    memset(visited,0,2*capacity*sizeof(*visited));
-    bool ok=true;
-    uint64_t last_order=0;
-    while(ok) {
-        qa_world_body *body=NULL;
-        for(uint32_t slot=0;slot<world->capacity;++slot) {
-            qa_world_body *candidate=qa_world_raw_body(world,slot);
-            if(candidate!=NULL && candidate->present && candidate->attached && candidate->attachment_order>last_order
-                && (body==NULL || candidate->attachment_order<body->attachment_order)) body=candidate;
-        }
-        if(body==NULL) break;
-        last_order=body->attachment_order;
-        if(qa_actor_id_equal(visited[body->actor.slot],body->actor)) continue;
-        size_t depth=0;
-        while(body!=NULL && body->attached && !qa_actor_id_equal(visited[body->actor.slot],body->actor)) {
-            if(qa_actor_id_equal(visiting[body->actor.slot],body->actor)) { ok=fail(error,QA_ERROR_ARGUMENT,"Body attachment cycle during transport"); break; }
-            visiting[body->actor.slot]=body->actor;
-            chain[depth++]=(qa_attachment_transport){body->actor,body->attachment};
-            body=qa_world_find_body(world,body->attachment.anchor);
-        }
-        while(depth>0 && ok) {
-            qa_attachment_transport entry=chain[--depth];
-            qa_actor_id actor=entry.actor; visited[actor.slot]=actor; visiting[actor.slot]=(qa_actor_id){0};
-            body=qa_world_find_body(world,actor);
-            if(body==NULL) continue;
-            /* Match the source capture before transporting the anchor. A
-             * nested link can change the next transport's attachment only. */
-            qa_body_attachment follow=entry.attachment;
-            if(qa_world_find_body(world,follow.anchor)==NULL) continue;
-            qa_body_state anchor,current;
-            if(!qa_world_body_read(world,follow.anchor,&anchor,error) || !qa_world_body_read(world,actor,&current,error)) { ok=false; break; }
-            qa_vec3 offset=follow.follow==QA_BODY_FOLLOW_CENTER?qa_vec_scale(qa_vec_add(anchor.bounds.mins,anchor.bounds.maxs),0.5f)
-                :follow.follow==QA_BODY_FOLLOW_BOUNDS_MIN?qa_vec_add(anchor.bounds.mins,follow.offset):follow.offset;
-            qa_vec3 origin=qa_vec_add(anchor.origin,offset);
-            if(same_float(origin.x,current.origin.x) && same_float(origin.y,current.origin.y) && same_float(origin.z,current.origin.z)) continue;
-            current.origin=origin;
-            if(!qa_world_body_write(world,actor,&current,error) || !qa_world_link(world,actor,NULL,error)) ok=false;
-        }
-    }
-    qa_pool_release(&world->attachment_transports,transport_slot); return ok;
 }

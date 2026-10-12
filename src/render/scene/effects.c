@@ -143,9 +143,7 @@ bool qa_scene_portal_view(const qa_scene_view *view, qa_scene_plane plane,
     if (fabsf(distance) > 64.0f) return false;
     qa_vec3 surface[3] = {plane.normal, qa_effect_perpendicular(plane.normal), {0, 0, 0}};
     surface[2] = qa_vec_cross(surface[0], surface[1]);
-    bool mirror = portal->mirror ||
-        (portal->origin.x == portal->old_origin.x && portal->origin.y == portal->old_origin.y &&
-         portal->origin.z == portal->old_origin.z);
+    bool mirror = portal->mirror || qa_vec_equal(portal->origin, portal->old_origin);
     qa_vec3 camera[3], surface_origin, camera_origin;
     if (mirror) {
         surface_origin = qa_vec_scale(plane.normal, plane.distance);

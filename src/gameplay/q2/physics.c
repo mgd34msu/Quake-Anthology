@@ -145,7 +145,7 @@ static bool recover_step_origin(qa_q2_game *g, qa_actor_id id, qa_vec3 previous,
     if (!a || a->physics.motion != QA_PHYSICS_STEP) return true;
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, id, &body, e)) return false;
-    if (body.origin.x == previous.x && body.origin.y == previous.y && body.origin.z == previous.z)
+    if (qa_vec_equal(body.origin, previous))
         return true;
     bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
     uint32_t mask = UINT32_C(0x02010003);

@@ -75,8 +75,6 @@ static bool touches(const qa_qvm_committed_write *event, uint32_t at, size_t siz
     }
     return false;
 }
-static bool same_velocity(qa_vec3 a, qa_vec3 b)
-{ return a.x == b.x && a.y == b.y && a.z == b.z; }
 static bool reaction_enter(void *context, const qa_qvm_call *call, qa_error *error)
 {
     reaction_watch *watch = context; application_q3_damage_frame *frame = watch->frame;
@@ -159,7 +157,7 @@ static bool store_publish(void *context, qa_qvm *vm,
     if (touches(event, velocity_at, 12)) {
         qa_vec3 before = frame->velocity;
         if (!application_q3_combat_velocity(&frame->source, &frame->velocity, error)) goto failed;
-        if (!same_velocity(before, frame->velocity)) changes[count++] = (damage_change){velocity_at,
+        if (!qa_vec_equal(before, frame->velocity)) changes[count++] = (damage_change){velocity_at,
             {.kind = QA_MUTATION_SOURCE_VELOCITY,
                 .value.velocity = {before, frame->velocity, frame->request->attack.movement_provider}}};
     }

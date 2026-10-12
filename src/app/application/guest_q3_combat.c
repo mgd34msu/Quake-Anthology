@@ -171,8 +171,6 @@ typedef struct entered_damage {
     qa_damage_result *result;
     qa_damage_request original;
 } entered_damage;
-static bool same_vector(qa_vec3 a, qa_vec3 b)
-{ return a.x == b.x && a.y == b.y && a.z == b.z; }
 static bool proceed_damage(void *context, const int32_t *words, size_t count, qa_error *error)
 {
     entered_damage *entered = context;
@@ -185,8 +183,8 @@ static bool proceed_damage(void *context, const int32_t *words, size_t count, qa
     for (size_t i = 0; ok && i < Q3_DAMAGE_WORDS; ++i) {
         uint32_t position = d->damage_call.positions[i];
         ok = qa_qvm_call_argument(entered->call, position, prior + i, error);
-        bool preserve = (i == Q3_DAMAGE_DIRECTION && same_vector(entered->effective->direction, entered->original.direction)) ||
-            (i == Q3_DAMAGE_POINT && same_vector(entered->effective->point, entered->original.point)) ||
+        bool preserve = (i == Q3_DAMAGE_DIRECTION && qa_vec_equal(entered->effective->direction, entered->original.direction)) ||
+            (i == Q3_DAMAGE_POINT && qa_vec_equal(entered->effective->point, entered->original.point)) ||
             (i == Q3_DAMAGE_ATTACKER && qa_actor_id_equal(entered->effective->attack.attacker, entered->original.attack.attacker)) ||
             (i == Q3_DAMAGE_INFLICTOR && qa_actor_id_equal(entered->effective->attack.inflictor, entered->original.attack.inflictor));
         if (ok) { ++saved; if (!preserve) ok = qa_qvm_call_set_argument(entered->call, position, words[position], error); }

@@ -818,8 +818,7 @@ bool frontend_unified_events_sound_mirrored(frontend_unified_events *o,const qa_
         if (same_path && seconds==row->seconds && sound_event->channel==emitted.channel &&
             sound_event->volume==emitted.volume && sound_event->attenuation==emitted.attenuation &&
             sound_event->delay_seconds==emitted.delay_seconds &&
-            sound_event->origin.x==emitted.origin.x && sound_event->origin.y==emitted.origin.y &&
-            sound_event->origin.z==emitted.origin.z && qa_actor_id_equal(sound_event->actor,emitted.actor)) {
+            qa_vec_equal(sound_event->origin,emitted.origin) && qa_actor_id_equal(sound_event->actor,emitted.actor)) {
             *out=true; return true;
         }
     }

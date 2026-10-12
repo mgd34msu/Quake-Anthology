@@ -255,10 +255,6 @@ bool qa_world_collision_validate(qa_world *, const qa_actor_collision *, qa_erro
 bool qa_world_attach(qa_world *, qa_actor_id, const qa_body_attachment *, qa_error *);
 bool qa_world_detach(qa_world *, qa_actor_id, qa_error *);
 bool qa_world_attachment(const qa_world *, qa_actor_id, qa_body_attachment *);
-/* Start cursor at zero. Ordered iteration supports checkpointing attachment
- * insertion order independently of actor host-slot allocation. */
-bool qa_world_next_attachment(const qa_world *, uint64_t *cursor, qa_actor_id *, qa_body_attachment *);
-bool qa_world_transport_attachments(qa_world *, qa_error *);
 /* An override affects this link snapshot only; movement precision remains in
  * the authoritative body. Link never dispatches trigger callbacks implicitly. */
 bool qa_world_link(qa_world *, qa_actor_id, const qa_vec3 *origin_override, qa_error *);

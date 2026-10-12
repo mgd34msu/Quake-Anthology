@@ -250,12 +250,10 @@ static bool make_signature(shadow_candidate *candidate, const qa_scene_light *li
     return true;
 }
 
-static bool equal_vec(qa_vec3 a, qa_vec3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
-
 static bool same_signature(const shadow_cache *a, const shadow_cache *b)
 {
     if (!a->valid || !b->valid || a->light_identity != b->light_identity || a->light_revision != b->light_revision ||
-        !equal_vec(a->origin, b->origin) || !equal_vec(a->direction, b->direction) || a->radius != b->radius ||
+        !qa_vec_equal(a->origin, b->origin) || !qa_vec_equal(a->direction, b->direction) || a->radius != b->radius ||
         a->cos_half_angle != b->cos_half_angle || a->spot != b->spot || a->rect.x != b->rect.x ||
         a->rect.y != b->rect.y || a->rect.width != b->rect.width || a->rect.height != b->rect.height ||
         a->token_count != b->token_count) return false;
@@ -264,8 +262,8 @@ static bool same_signature(const shadow_cache *a, const shadow_cache *b)
         if (x->caster_identity != y->caster_identity || x->caster_revision != y->caster_revision ||
             x->mesh_identity != y->mesh_identity || x->mesh_revision != y->mesh_revision ||
             x->vertex_count != y->vertex_count || x->index_count != y->index_count ||
-            x->world_geometry != y->world_geometry || !equal_vec(x->bounds.mins, y->bounds.mins) ||
-            !equal_vec(x->bounds.maxs, y->bounds.maxs)) return false;
+            x->world_geometry != y->world_geometry || !qa_vec_equal(x->bounds.mins, y->bounds.mins) ||
+            !qa_vec_equal(x->bounds.maxs, y->bounds.maxs)) return false;
         for (size_t j = 0; j < 16; ++j) if (x->transform.m[j] != y->transform.m[j]) return false;
     }
     return true;

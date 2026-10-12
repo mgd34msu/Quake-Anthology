@@ -1,7 +1,5 @@
 #include "guest_q3_mod_actors_private.h"
 
-static bool same_vector(qa_vec3 a,qa_vec3 b)
-{ return a.x==b.x&&a.y==b.y&&a.z==b.z; }
 static bool velocity(application_q3_mod_actors *o,qa_actor_id actor,qa_vec3 *out,bool *found,qa_error *e)
 {
     *found=qa_world_body_storage_serial(o->options.world,actor)!=0;
@@ -27,7 +25,7 @@ bool q3mod_actors_flush(application_q3_mod_actors *o,mod_actor_damage_frame *fra
         mutation=(qa_damage_mutation){.kind=QA_MUTATION_HEALTH,.value.health={before.health,after.health}};
         if(!qa_damage_observe(frame->observer,&mutation,e)) return false;
     }
-    if(had_velocity&&has_velocity&&!same_vector(previous,current)) {
+    if(had_velocity&&has_velocity&&!qa_vec_equal(previous,current)) {
         mutation=(qa_damage_mutation){.kind=QA_MUTATION_SOURCE_VELOCITY,.value.velocity={previous,current,frame->request.attack.movement_provider}};
         if(!qa_damage_observe(frame->observer,&mutation,e)) return false;
     }
@@ -98,7 +96,7 @@ static bool lower_scratch(void *context,qa_qvm *vm,uint32_t address,qa_error *e)
     int32_t saved[8]; size_t changed=0; bool ok=true;
     for(size_t i=0;ok&&i<8;++i) {
         uint32_t at=layout->roles[i]; ok=qa_qvm_call_argument(r->call,at,saved+i,e);
-        bool preserve=(i==3&&same_vector(request->direction,r->original.direction))||(i==4&&same_vector(request->point,r->original.point))||
+        bool preserve=(i==3&&qa_vec_equal(request->direction,r->original.direction))||(i==4&&qa_vec_equal(request->point,r->original.point))||
             (i==1&&qa_actor_id_equal(request->attack.inflictor,r->original.attack.inflictor))||(i==2&&qa_actor_id_equal(request->attack.attacker,r->original.attack.attacker));
         if(ok) { ++changed; if(!preserve) ok=qa_qvm_call_set_argument(r->call,at,words[at],e); }
     }

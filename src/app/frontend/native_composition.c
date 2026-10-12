@@ -114,7 +114,7 @@ static bool effect_pose_current(void *context)
 {
     effect_pose_scope *scope = context; qa_vec3 actual; bool found;
     return captured_origin(scope->owner, scope->actor, &actual, &found, NULL) && found &&
-        actual.x == scope->origin.x && actual.y == scope->origin.y && actual.z == scope->origin.z;
+        qa_vec_equal(actual, scope->origin);
 }
 static bool effects_roster_current(const native_composition *owner)
 {

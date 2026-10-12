@@ -501,7 +501,7 @@ bool qa_application_native_q2_presentation_sample(qa_application *app,
                 solid=source_solid_part(bounds.maxs.x/8,1,31) |
                     (source_solid_part(-bounds.mins.z/8,1,31)<<5) |
                     (source_solid_part((bounds.maxs.z+32)/8,1,63)<<10);
-            else if (bounds.mins.x!=bounds.maxs.x || bounds.mins.y!=bounds.maxs.y || bounds.mins.z!=bounds.maxs.z) {
+            else if (!qa_vec_equal(bounds.mins,bounds.maxs)) {
                 solid=source_solid_part(bounds.maxs.x,1,255) |
                     (source_solid_part(bounds.maxs.y,1,255)<<8) |
                     (source_solid_part(-bounds.mins.z,0,255)<<16) |

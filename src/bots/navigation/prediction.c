@@ -43,9 +43,7 @@ bool qa_bot_navigation_predict_movement(qa_bot_navigation *n,
         const qa_aas_view *aas = qa_nav_asset_aas(qa_navigation_graph(n->runtime)->asset);
         if (aas) for (size_t i = 0; i < aas->count[QA_AAS_PLANES]; ++i) {
             const qa_aas_plane *p = &aas->planes[i];
-            if (p->distance == trace->plane.distance &&
-                p->normal.x == trace->plane.normal.x && p->normal.y == trace->plane.normal.y &&
-                p->normal.z == trace->plane.normal.z) {
+            if (p->distance == trace->plane.distance && qa_vec_equal(p->normal, trace->plane.normal)) {
                 value.trace.plane = (uint32_t)i;
                 break;
             }

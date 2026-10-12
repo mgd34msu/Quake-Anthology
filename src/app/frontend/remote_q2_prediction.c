@@ -287,8 +287,7 @@ bool remote_q2_prediction_replay(frontend_remote_q2 *row, qa_error *error)
                 ((received->pmove.flags & 4) || result->step_clip) && state.data.q2r.type <= 1 &&
                 (row->prediction_ground.hit != result->ground.hit || row->prediction_ground.model != result->ground.model ||
                     !qa_actor_id_equal(row->prediction_ground.actor, result->ground.actor) ||
-                    row->prediction_plane.normal.x != plane.normal.x || row->prediction_plane.normal.y != plane.normal.y ||
-                    row->prediction_plane.normal.z != plane.normal.z || row->prediction_plane.distance != plane.distance) :
+                    !qa_vec_equal(row->prediction_plane.normal, plane.normal) || row->prediction_plane.distance != plane.distance) :
                 change > 63.0f / 8 && change < 20;
             if (stepped) {
                 double elapsed = row->sample_ns >= row->prediction_step_ns ?

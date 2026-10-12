@@ -211,6 +211,10 @@ static void test_shared_vector_geometry(void)
 }
 static void test_shared_angle_wrapping(void)
 {
+    CHECK(qa_vec_equal(qa_v3(0,1,2),qa_v3(-0.f,1,2)));
+    CHECK(!qa_vec_equal(qa_v3(NAN,1,2),qa_v3(NAN,1,2)));
+    CHECK(qa_bounds_equal((qa_bounds){{0,1,2},{3,4,5}},(qa_bounds){{-0.f,1,2},{3,4,5}}));
+    CHECK(!qa_bounds_equal((qa_bounds){{0,1,2},{3,4,5}},(qa_bounds){{0,1,2},{3,4,6}}));
     for(int rule=QA_ANGLE_WORD_NATIVE;rule<=QA_ANGLE_WORD_ROUNDED;++rule) {
         CHECK(qa_angle_to_word(90,(qa_angle_word_rule)rule)==16384);
         CHECK(qa_angle_to_word(-90,(qa_angle_word_rule)rule)==49152);

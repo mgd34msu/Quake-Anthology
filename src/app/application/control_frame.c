@@ -443,12 +443,6 @@ static bool body_base_owner(const application_provider *source, qa_ruleset_id ki
         source->component.clock.kind == QA_RULESET_QUAKEWORLD);
 }
 
-static bool bounds_equal(qa_bounds a, qa_bounds b)
-{
-    return a.mins.x == b.mins.x && a.mins.y == b.mins.y && a.mins.z == b.mins.z &&
-        a.maxs.x == b.maxs.x && a.maxs.y == b.maxs.y && a.maxs.z == b.maxs.z;
-}
-
 bool application_control_body_request(qa_application *app, qa_actor_id actor, qa_bounds current,
     application_client_outputs *outputs, qa_error *error)
 {
@@ -475,7 +469,7 @@ bool application_control_body_request(qa_application *app, qa_actor_id actor, qa
         if (!input->has_body_base) { input->body_base = current; input->has_body_base = true; }
     } else if (input->has_body_base) {
         outputs->has_body_bounds = true; outputs->body_bounds = input->body_base;
-        if (bounds_equal(current, input->body_base)) input->has_body_base = false;
+        if (qa_bounds_equal(current, input->body_base)) input->has_body_base = false;
     }
     if (!input->has_body_base && !input->seen && !input->retained) {
         input->actor = (qa_actor_id){0}; input->provider = 0;

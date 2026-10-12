@@ -56,18 +56,23 @@ void qa_spatial_remove(qa_world *world,uint32_t slot)
     link->previous=link->next=QA_SPATIAL_NONE;
 }
 
-void qa_spatial_publish(qa_world *world,uint32_t slot)
+uint32_t qa_spatial_sector_for_bounds(const qa_world *world,qa_bounds bounds)
 {
-    qa_spatial_remove(world,slot);
-    qa_spatial_link *link=qa_actors_link(world->actors->links,slot);
     uint32_t index=0;
-    qa_bounds bounds=link->bounds;
     while(world->sectors[index].axis>=0) {
-        qa_spatial_sector *sector=&world->sectors[index]; unsigned axis=(unsigned)sector->axis;
+        const qa_spatial_sector *sector=&world->sectors[index]; unsigned axis=(unsigned)sector->axis;
         if(qa_vec_component(bounds.mins,axis)>sector->distance) index=sector->front;
         else if(qa_vec_component(bounds.maxs,axis)<sector->distance) index=sector->back;
         else break;
     }
+    return index;
+}
+
+void qa_spatial_publish(qa_world *world,uint32_t slot)
+{
+    qa_spatial_remove(world,slot);
+    qa_spatial_link *link=qa_actors_link(world->actors->links,slot);
+    uint32_t index=qa_spatial_sector_for_bounds(world,link->bounds);
     qa_spatial_sector *sector=&world->sectors[index]; link->sector=index;
     if(qa_actors_body(world->actors->pages,slot)->linked_collision.family==QA_GAME_Q3) {
         link->previous=QA_SPATIAL_NONE;

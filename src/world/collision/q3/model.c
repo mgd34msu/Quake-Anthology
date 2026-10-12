@@ -162,7 +162,7 @@ static bool trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, 
         start = qa_axis_to_local(start, basis); end = qa_axis_to_local(end, basis);
         q3_rotate_capsule(&shape, basis);
     }
-    bool stationary = transformed ? q3_same_point(start, end) : q3_same_point(query->start, query->end);
+    bool stationary = transformed ? qa_vec_equal(start, end) : qa_vec_equal(query->start, query->end);
     if (transformed) {
         center = qa_vec_scale(qa_vec_add(shape.mins, shape.extents), 0.5f);
         shape.mins = qa_vec_sub(shape.mins, center); shape.extents = qa_vec_sub(shape.extents, center);
@@ -177,7 +177,7 @@ static bool trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, 
         if (shape.kind != QA_SHAPE_CAPSULE) {
             if (replacement_map != NULL) {
                 qa_bounds original = {qa_vec_add(start, shape.mins), qa_vec_add(start, shape.extents)};
-                bool point_trace = q3_same_point(shape.mins, qa_v3(0, 0, 0));
+                bool point_trace = qa_vec_equal(shape.mins, qa_v3(0, 0, 0));
                 shape.kind = QA_SHAPE_CAPSULE;
                 shape.radius = target.radius;
                 shape.offset = target.offset;

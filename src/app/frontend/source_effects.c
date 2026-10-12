@@ -73,7 +73,7 @@ static bool pose_current(void *context)
 {
     source_pose *pose = context; qa_vec3 origin; bool found;
     return pose_origin(pose->scope, pose->actor, &origin, &found, NULL) && found &&
-        origin.x == pose->origin.x && origin.y == pose->origin.y && origin.z == pose->origin.z;
+        qa_vec_equal(origin, pose->origin);
 }
 
 bool frontend_source_effects_begin(qa_frontend *frontend, const qa_q3_host *host,

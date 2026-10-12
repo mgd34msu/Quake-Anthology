@@ -228,13 +228,12 @@ static void text(const qa_entities *entities, int32_t id, const char *key, char 
     if (count) memcpy(out, bytes.data, count);
     out[count] = 0;
 }
-static bool same_vector(qa_vec3 a, qa_vec3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
 static bool move(qa_bot_goals *g, uint32_t id, qa_vec3 origin,
                   qa_bot_navigation *n, qa_error *e) {
     bot_level_item value;
     if (!bot_goal_level_read(g, id, &value, e)) return false;
     const bot_level_item *item = &value;
-    if (same_vector(item->origin, origin)) return true;
+    if (qa_vec_equal(item->origin, origin)) return true;
     const qa_bot_items_view *items;
     if (!qa_bot_items_view_read(g->items, &items, e)) return false;
     if (item->info >= items->count) return bot_goal_fail(e, "Level item info index exceeds its source configuration");
@@ -472,7 +471,7 @@ static bool update(qa_bot_goals *g, qa_bot_navigation *n, const qa_bot_goal_enti
     const qa_bot_items_view *items;
     for (size_t i = 0; i < count; ++i) {
         const qa_bot_goal_entity *entity = &entities[i];
-        if (entity->type != 2 || !entity->model_index || !same_vector(entity->origin, entity->last_visible_origin)) continue;
+        if (entity->type != 2 || !entity->model_index || !qa_vec_equal(entity->origin, entity->last_visible_origin)) continue;
         if (!qa_bot_items_view_read(g->items, &items, e)) return false;
         uint32_t linked = 0;
         size_t steps = 0;
@@ -577,7 +576,7 @@ bool qa_bot_goals_find_entity(qa_bot_goals *g, int32_t number, qa_error *e) {
             if (!ok) break;
             if (value.info >= items->count) {ok=bot_goal_fail(e, "Invalid level-item source info index");break;}
             if (entities[i].model_index && entities[i].model_index == items->items[value.info].model_index &&
-                same_vector(entities[i].origin, entities[i].last_visible_origin) &&
+                qa_vec_equal(entities[i].origin, entities[i].last_visible_origin) &&
                 qa_vec_length(qa_vec_sub(value.origin, entities[i].origin)) < 30)
                 ok = bot_goal_level_word(g, id, 44, (uint32_t)entities[i].number, e);
         }

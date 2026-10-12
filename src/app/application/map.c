@@ -1184,8 +1184,7 @@ static bool monster_active(void *opaque, qa_actor_id actor, qa_monster_activatio
             if (!qa_q2_entity_mover_read(map->state.q2, row->barriers[i].actor, &view, NULL, 0, &count, &found, error) ||
                 !qa_world_body_read(map->application->world, row->barriers[i].actor, &body, error)) return false;
             if (found && (view.navigation.locked || view.navigation.has_destination ||
-                (body.origin.x == row->barriers[i].origin.x && body.origin.y == row->barriers[i].origin.y &&
-                    body.origin.z == row->barriers[i].origin.z))) return true;
+                qa_vec_equal(body.origin, row->barriers[i].origin))) return true;
         }
         if (!monster_started(map, actor, error)) return false;
         row = qa_targets_monster(map->application->targets, actor);
@@ -1196,8 +1195,7 @@ static bool monster_active(void *opaque, qa_actor_id actor, qa_monster_activatio
     if (row->placement == QA_MONSTER_TELEPORT) {
         qa_body_state body;
         if (!qa_world_body_read(map->application->world, actor, &body, error)) return false;
-        if (body.origin.x != row->placement_origin.x || body.origin.y != row->placement_origin.y ||
-            body.origin.z != row->placement_origin.z) {
+        if (!qa_vec_equal(body.origin, row->placement_origin)) {
             row->authored_origin = body.origin;
             if (!monster_started(map, actor, error)) return false;
             row = qa_targets_monster(map->application->targets, actor);

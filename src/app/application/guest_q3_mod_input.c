@@ -78,8 +78,7 @@ static bool field_read(application_q3_mod_capture *c, const mod_output *d,
 static bool same(application_q3_mod_output a, application_q3_mod_output b)
 {
     if (a.input!=b.input) return false;
-    return a.input==Q3_MOD_VIEW_ANGLES?a.value.angles.x==b.value.angles.x &&
-        a.value.angles.y==b.value.angles.y && a.value.angles.z==b.value.angles.z:a.value.scalar==b.value.scalar;
+    return a.input==Q3_MOD_VIEW_ANGLES?qa_vec_equal(a.value.angles,b.value.angles):a.value.scalar==b.value.scalar;
 }
 static double command_scalar(const qa_q3_usercmd *c, application_q3_mod_input input)
 {

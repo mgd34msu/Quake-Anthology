@@ -104,9 +104,6 @@ bool qa_application_selected_q3_character_read(qa_application *app, qa_actor_id 
     return true;
 }
 
-static bool same_vector(qa_vec3 a, qa_vec3 b)
-{ return a.x == b.x && a.y == b.y && a.z == b.z; }
-
 bool qa_application_selected_q3_character_current(qa_application *app,
     const qa_application_selected_q3_character *saved)
 {
@@ -117,8 +114,8 @@ bool qa_application_selected_q3_character_current(qa_application *app,
         actual.product == saved->product && actual.publication_generation == saved->publication_generation &&
         actual.map_revision == saved->map_revision && actual.application_frame == saved->application_frame &&
         actual.control_sequence == saved->control_sequence && actual.source_time_ms == saved->source_time_ms &&
-        same_vector(actual.body.origin, saved->body.origin) && same_vector(actual.body.velocity, saved->body.velocity) &&
-        same_vector(actual.view_angles, saved->view_angles) && actual.movement_direction == saved->movement_direction &&
+        qa_vec_equal(actual.body.origin, saved->body.origin) && qa_vec_equal(actual.body.velocity, saved->body.velocity) &&
+        qa_vec_equal(actual.view_angles, saved->view_angles) && actual.movement_direction == saved->movement_direction &&
         actual.legs_animation == saved->legs_animation && actual.torso_animation == saved->torso_animation &&
         actual.source_flags == saved->source_flags && actual.scale == saved->scale && actual.opacity == saved->opacity &&
         actual.present == saved->present &&

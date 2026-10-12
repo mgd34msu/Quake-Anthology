@@ -22,10 +22,6 @@ typedef struct qa_world_snapshot_frame {
     qa_actor_id *actors;
     size_t capacity, slot;
 } qa_world_snapshot_frame;
-typedef struct qa_attachment_transport {
-    qa_actor_id actor;
-    qa_body_attachment attachment;
-} qa_attachment_transport;
 typedef struct qa_world_release_frame {
     uint32_t head, tail;
 } qa_world_release_frame;
@@ -64,7 +60,7 @@ struct qa_world {
     uint8_t *visibility_bits;
     size_t cluster_bytes, area_bytes, visibility_stride;
     qa_arena snapshot_storage;
-    qa_pool snapshot_pool, attachment_transports;
+    qa_pool snapshot_pool;
     qa_world_release_ticket *release_tickets;
     size_t release_pending, release_peak;
     qa_world_query_rules query_rules;
@@ -140,6 +136,7 @@ static inline qa_linked_body qa_world_published_body(const qa_world *world, cons
         qa_actors_link(world->actors->links,body->actor.slot)->bounds, body->link_count};
 }
 bool qa_spatial_initialize(qa_world *, qa_bounds, qa_error *);
+uint32_t qa_spatial_sector_for_bounds(const qa_world *, qa_bounds);
 void qa_spatial_publish(qa_world *, uint32_t);
 void qa_spatial_remove(qa_world *, uint32_t);
 void qa_spatial_clear(qa_world *);

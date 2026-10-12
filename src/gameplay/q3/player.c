@@ -26,8 +26,7 @@ bool qa_q3_selected_client_effects_publish(qa_q3_game *game, qa_actor_id actor,
     if (!before || !qa_q3_selected_client_effects_read(game, actor, &after, error)) return false;
     bool changed = before->teleport_bit != after.teleport_bit || before->pm_flags != after.pm_flags ||
         before->pm_time_ms != after.pm_time_ms || before->invulnerability_time_ms != after.invulnerability_time_ms ||
-        before->max_health != after.max_health || before->view_angles.x != after.view_angles.x ||
-        before->view_angles.y != after.view_angles.y || before->view_angles.z != after.view_angles.z;
+        before->max_health != after.max_health || !qa_vec_equal(before->view_angles, after.view_angles);
     for (unsigned i = 0; i < 3; ++i)
         changed |= before->delta_angle_words[i] != after.delta_angle_words[i];
     return !changed || !game->options.hooks.selected_client_effects ||

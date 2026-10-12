@@ -11,11 +11,6 @@ typedef struct qw_move {
     size_t touched_count, touched_capacity;
 } qw_move;
 
-static bool qw_bounds_equal(qa_bounds a, qa_bounds b) {
-    return a.mins.x == b.mins.x && a.mins.y == b.mins.y && a.mins.z == b.mins.z &&
-        a.maxs.x == b.maxs.x && a.maxs.y == b.maxs.y && a.maxs.z == b.maxs.z;
-}
-
 static bool qw_posture(qw_move *m) {
     qa_move_context *c = m->base.c;
     const qa_movement_environment *e = &c->input->environment;
@@ -42,7 +37,7 @@ static bool qw_posture(qw_move *m) {
         }
     }
     float height = crouched ? c->input->crouched.view_height : c->input->standing.view_height;
-    bool publish = !m->posture_published || !qw_bounds_equal(previous, requested) || height != c->result->view_height;
+    bool publish = !m->posture_published || !qa_bounds_equal(previous, requested) || height != c->result->view_height;
     m->base.crouch_animation = crouched;
     c->result->bounds = requested;
     c->result->view_height = height;

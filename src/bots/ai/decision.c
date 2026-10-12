@@ -691,8 +691,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                         if(!bot_ai_activation_top(s,&index,&have,e)) return false;
                         if(!have) continue;
                         activation=bot_ai_activation_read(s,index);
-                        if(activation.origin.x!=target_info.state.origin.x ||
-                           activation.origin.y!=target_info.state.origin.y || activation.origin.z!=target_info.state.origin.z)
+                        if(!qa_vec_equal(activation.origin,target_info.state.origin))
                             bot_ai_activation_time_set(s,index,0);
                     }
                 } else {

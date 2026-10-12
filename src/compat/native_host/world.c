@@ -641,8 +641,7 @@ static uint32_t solid_byte(float value, uint32_t minimum)
 
 static uint32_t pack_rerelease_solid(qa_bounds bounds)
 {
-    if (bounds.mins.x == bounds.maxs.x && bounds.mins.y == bounds.maxs.y &&
-        bounds.mins.z == bounds.maxs.z)
+    if (qa_vec_equal(bounds.mins, bounds.maxs))
         return 0;
     uint32_t x = solid_byte(bounds.maxs.x, 1);
     uint32_t y = solid_byte(bounds.maxs.y, 1);

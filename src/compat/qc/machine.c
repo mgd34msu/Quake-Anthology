@@ -308,7 +308,7 @@ static bool execute_statement(qa_qc_instance *instance,
         return store_float(instance, s->c, af, error);
     case QA_QC_EQ_V: case QA_QC_NE_V:
         if (!read_vector(instance, s->a, &av, error) || !read_vector(instance, s->b, &bv, error)) return false;
-        ai = av.x == bv.x && av.y == bv.y && av.z == bv.z;
+        ai = qa_vec_equal(av, bv);
         return store_float(instance, s->c,
                            (float)(s->opcode == QA_QC_EQ_V ? ai : !ai), error);
     case QA_QC_EQ_S: case QA_QC_NE_S:

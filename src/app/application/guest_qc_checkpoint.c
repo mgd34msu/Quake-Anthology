@@ -100,8 +100,7 @@ static bool resource_ready(struct application_qc_state *engine,const application
         if (ok) actual=(qa_bounds){world.bounds.min,world.bounds.max};
     } else ok=qa_collision_model_bounds(qa_world_geometry(engine->world),model,&actual,error);
     return ok &&
-        ((b.mins.x==actual.mins.x && b.mins.y==actual.mins.y && b.mins.z==actual.mins.z &&
-          b.maxs.x==actual.maxs.x && b.maxs.y==actual.maxs.y && b.maxs.z==actual.maxs.z) ||
+        (qa_bounds_equal(b,actual) ||
          application_fail(error,QA_ERROR_FORMAT,"Saved source bounds differ from their retained physical model"));
 }
 static void openings_free(qa_buffer *openings,size_t count)

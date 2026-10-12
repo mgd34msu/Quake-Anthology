@@ -233,7 +233,7 @@ static bool committed_velocity(void *opaque, qa_native_instance *instance,
     qa_vec3 before = qa_v3(qa_load_f32le(event->before.data), qa_load_f32le(event->before.data + 4), qa_load_f32le(event->before.data + 8)),
         after = qa_v3(qa_load_f32le(event->after.data), qa_load_f32le(event->after.data + 4), qa_load_f32le(event->after.data + 8));
     if (!qa_vec_finite(before) || !qa_vec_finite(after) ||
-        before.x != frame->velocity.x || before.y != frame->velocity.y || before.z != frame->velocity.z)
+        !qa_vec_equal(before, frame->velocity))
         return application_fail(error, QA_ERROR_FORMAT, "Native velocity store differs from its observed source vector");
     frame->velocity = after;
     if (frame->owner->current != frame) return true;

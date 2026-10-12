@@ -243,8 +243,8 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
         if (applied.buttons & 2u) updated.upmove = 127;
         else if (updated.upmove > 0) updated.upmove = 0;
     }
-    bool aim_changed = applied.angles.x != command.angles.x || applied.angles.y != command.angles.y ||
-        applied.angles.z != command.angles.z || memcmp(applied.angle_words, command.angle_words, sizeof(command.angle_words));
+    bool aim_changed = !qa_vec_equal(applied.angles, command.angles) ||
+        memcmp(applied.angle_words, command.angle_words, sizeof(command.angle_words));
     if (aim_changed) memcpy(updated.angles, projected.angle_words, sizeof(updated.angles));
     if (memcmp(&updated, &source, sizeof(source)) != 0 &&
         !qa_qvm_write_usercmd(input->role->vm, (int32_t)(scope->movement + 4), true, &updated, error))

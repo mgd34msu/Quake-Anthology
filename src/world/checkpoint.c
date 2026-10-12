@@ -356,14 +356,7 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
         if(!empty_link && !qa_world_collision_validate(world,&retained,error)) { ok=false; break; }
         published[i] = retained;
         qa_bounds bounds = qa_actors_link(world->actors->links,body->actor.slot)->bounds;
-        uint32_t sector = 0;
-        while (world->sectors[sector].axis >= 0) {
-            const qa_spatial_sector *split = world->sectors + sector;
-            unsigned axis = (unsigned)split->axis;
-            if (qa_vec_component(bounds.mins, axis) > split->distance) sector = split->front;
-            else if (qa_vec_component(bounds.maxs, axis) < split->distance) sector = split->back;
-            else break;
-        }
+        uint32_t sector = qa_spatial_sector_for_bounds(world,bounds);
         if (sector != saved->sector)
             ok = checkpoint_fail(error, QA_ERROR_FORMAT, "Saved spatial sector differs from restored geometry");
     }

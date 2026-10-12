@@ -75,6 +75,10 @@ static inline float qa_angle_lerp(float from,float to,float fraction,qa_angle_le
 }
 
 static inline qa_vec3 qa_v3(float x, float y, float z) { return (qa_vec3){x, y, z}; }
+static inline bool qa_vec_equal(qa_vec3 a, qa_vec3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
+static inline bool qa_bounds_equal(qa_bounds a, qa_bounds b) {
+    return qa_vec_equal(a.mins, b.mins) && qa_vec_equal(a.maxs, b.maxs);
+}
 static inline qa_vec3 qa_vec_add(qa_vec3 a, qa_vec3 b) { return qa_v3(a.x+b.x, a.y+b.y, a.z+b.z); }
 static inline qa_vec3 qa_vec_sub(qa_vec3 a, qa_vec3 b) { return qa_v3(a.x-b.x, a.y-b.y, a.z-b.z); }
 static inline qa_vec3 qa_vec_scale(qa_vec3 a, float b) { return qa_v3(a.x*b, a.y*b, a.z*b); }

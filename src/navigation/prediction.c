@@ -193,9 +193,6 @@ static bool command(nav_prediction *p, qa_vec3 target, qa_nav_travel mode, qa_er
                                                                                         : 0);
     return command_vector(p, move, 16, e);
 }
-static bool same_vector(qa_vec3 a, qa_vec3 b) {
-    return a.x == b.x && a.y == b.y && a.z == b.z;
-}
 static bool same_q2_prediction(const qa_movement_result *a, const qa_movement_result *b) {
     if (a->state.kind != QA_RULESET_Q2_CLASSIC || b->state.kind != QA_RULESET_Q2_CLASSIC)
         return false;
@@ -215,10 +212,9 @@ static bool same_q2_prediction(const qa_movement_result *a, const qa_movement_re
     for (unsigned channel = 0; channel < 4; ++channel)
         if (a->screen_blend[channel] != b->screen_blend[channel]) return false;
     return a->state.kind == b->state.kind && qa_actor_id_equal(a->actor, b->actor) &&
-        same_vector(a->bounds.mins, b->bounds.mins) &&
-        same_vector(a->bounds.maxs, b->bounds.maxs) &&
-        same_vector(a->view_angles, b->view_angles) &&
-        same_vector(a->view_offset, b->view_offset) &&
+        qa_bounds_equal(a->bounds, b->bounds) &&
+        qa_vec_equal(a->view_angles, b->view_angles) &&
+        qa_vec_equal(a->view_offset, b->view_offset) &&
         a->view_height == b->view_height && a->horizontal_speed == b->horizontal_speed &&
         a->ground.hit == b->ground.hit && a->ground.model == b->ground.model &&
         qa_actor_id_equal(a->ground.actor, b->ground.actor) &&
@@ -230,7 +226,7 @@ static bool same_q2_prediction(const qa_movement_result *a, const qa_movement_re
 }
 static bool same_q2_command(const qa_usercmd *a, const qa_usercmd *b) {
     if (a->kind != b->kind || a->milliseconds != b->milliseconds ||
-        !same_vector(a->angles, b->angles) || a->forward_move != b->forward_move ||
+        !qa_vec_equal(a->angles, b->angles) || a->forward_move != b->forward_move ||
         a->side_move != b->side_move || a->up_move != b->up_move ||
         a->buttons != b->buttons || a->impulse != b->impulse ||
         a->light_level != b->light_level || a->weapon != b->weapon)

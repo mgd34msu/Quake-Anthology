@@ -476,7 +476,7 @@ bool qa_physics_fly_move(qa_physics *p, qa_actor_id actor, float seconds,
             qa_vec3 candidate = qa_physics_clip_velocity(original, planes[i], 1);
             bool good = true;
             for (size_t j = 0; j < plane_count; ++j) {
-                bool same = i == j || (qa_ruleset_read(props.rules)->family != QA_GAME_Q1 && ph_equal_vec(planes[i], planes[j]));
+                bool same = i == j || (qa_ruleset_read(props.rules)->family != QA_GAME_Q1 && qa_vec_equal(planes[i], planes[j]));
                 if (!same && qa_vec_dot(candidate, planes[j]) < 0) { good = false; break; }
             }
             if (good) { velocity = candidate; accepted = true; break; }

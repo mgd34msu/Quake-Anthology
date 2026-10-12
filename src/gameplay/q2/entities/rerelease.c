@@ -38,11 +38,10 @@ static qa_q2_fog fog_lerp(qa_q2_fog a, qa_q2_fog b, float t) {
 #undef VECTOR
     return a;
 }
-static bool vector_equal(qa_vec3 a, qa_vec3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
 static bool fog_equal(qa_q2_fog a, qa_q2_fog b) {
     return a.density == b.density && a.sky_factor == b.sky_factor &&
-           vector_equal(a.color, b.color) && vector_equal(a.start_color, b.start_color) &&
-           vector_equal(a.end_color, b.end_color) && a.start_distance == b.start_distance &&
+           qa_vec_equal(a.color, b.color) && qa_vec_equal(a.start_color, b.start_color) &&
+           qa_vec_equal(a.end_color, b.end_color) && a.start_distance == b.start_distance &&
            a.end_distance == b.end_distance && a.height_density == b.height_density &&
            a.falloff == b.falloff;
 }

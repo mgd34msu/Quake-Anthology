@@ -1079,12 +1079,9 @@ bool frontend_unified_q3_world(frontend_unified_q3 *o,const qa_scene_view *view,
         o->sampled_view.mirror!=view->mirror || o->sampled_view.seat!=view->seat || o->sampled_view.depth!=view->depth ||
         o->sampled_view.color.x!=view->color.x || o->sampled_view.color.y!=view->color.y ||
         o->sampled_view.color.z!=view->color.z || o->sampled_view.color.w!=view->color.w ||
-        o->sampled_view.clip_plane.normal.x!=view->clip_plane.normal.x ||
-        o->sampled_view.clip_plane.normal.y!=view->clip_plane.normal.y ||
-        o->sampled_view.clip_plane.normal.z!=view->clip_plane.normal.z ||
+        !qa_vec_equal(o->sampled_view.clip_plane.normal,view->clip_plane.normal) ||
         o->sampled_view.clip_plane.distance!=view->clip_plane.distance ||
-        o->sampled_view.origin.x!=view->origin.x || o->sampled_view.origin.y!=view->origin.y ||
-        o->sampled_view.origin.z!=view->origin.z || !enter(o,(qa_actor_id){0},e)) return false;
+        !qa_vec_equal(o->sampled_view.origin,view->origin) || !enter(o,(qa_actor_id){0},e)) return false;
     qa_game_family family=qa_collision_geometry_family(frontend_remote_unified_geometry(o->replica));
     qa_q3_scene_options options={.world=*world,.world_family=family==QA_GAME_Q1?QA_GAME_Q1:family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3,.lod_scale=5,
         .ambient_scale=.6f,.directed_scale=1,.near_clip=4,.rail={.core_width=6,.ring_width=16,.segment_length=32}};

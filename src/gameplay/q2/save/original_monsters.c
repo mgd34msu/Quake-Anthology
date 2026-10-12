@@ -679,9 +679,7 @@ static bool reinforcement_record(qa_q2_game *game, q2_original_record_io *io,
 static bool reinforcement_equal(const q2m_reinforcement *a, const q2m_reinforcement *b)
 {
     return a->definition == b->definition && a->strength == b->strength &&
-        a->bounds.mins.x == b->bounds.mins.x && a->bounds.mins.y == b->bounds.mins.y &&
-        a->bounds.mins.z == b->bounds.mins.z && a->bounds.maxs.x == b->bounds.maxs.x &&
-        a->bounds.maxs.y == b->bounds.maxs.y && a->bounds.maxs.z == b->bounds.maxs.z;
+        qa_bounds_equal(a->bounds, b->bounds);
 }
 
 static bool summons_record(qa_q2_game *game, q2_original_record_io *io,

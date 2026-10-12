@@ -222,8 +222,7 @@ static bool merged(const qaw_surface *surface, patch_edge e) {
 }
 
 static bool same_group(const qaw_patch *a, const qaw_patch *b) {
-    return a->lod_radius == b->lod_radius && a->lod_origin.x == b->lod_origin.x &&
-           a->lod_origin.y == b->lod_origin.y && a->lod_origin.z == b->lod_origin.z;
+    return a->lod_radius == b->lod_radius && qa_vec_equal(a->lod_origin, b->lod_origin);
 }
 
 static bool insert(qaw_surface *target, patch_edge e, unsigned index, qa_vec3 anchor,

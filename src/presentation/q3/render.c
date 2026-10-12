@@ -676,8 +676,7 @@ static bool body_material_equal(const qa_q3_presentation_assets *assets,
     if (memcmp(a->color, b->color, sizeof(a->color)) ||
         a->shader_texcoord.x != b->shader_texcoord.x || a->shader_texcoord.y != b->shader_texcoord.y ||
         a->shader_time != b->shader_time || a->flags != b->flags ||
-        a->lighting_origin.x != b->lighting_origin.x || a->lighting_origin.y != b->lighting_origin.y ||
-        a->lighting_origin.z != b->lighting_origin.z || a->shadow_plane != b->shadow_plane ||
+        !qa_vec_equal(a->lighting_origin, b->lighting_origin) || a->shadow_plane != b->shadow_plane ||
         a->non_normalized_axes != b->non_normalized_axes) return true;
     const qa_material *first, *second;
     if (!q3p_shader_get(assets, a->custom_shader, &first, error) ||

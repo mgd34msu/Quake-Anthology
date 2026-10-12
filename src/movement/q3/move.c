@@ -362,11 +362,6 @@ static void q3_water_level(qa_q3_step *step) {
     }
 }
 
-static bool q3_bounds_equal(qa_bounds a, qa_bounds b) {
-    return a.mins.x == b.mins.x && a.mins.y == b.mins.y && a.mins.z == b.mins.z &&
-           a.maxs.x == b.maxs.x && a.maxs.y == b.maxs.y && a.maxs.z == b.maxs.z;
-}
-
 static void q3_duck(qa_q3_step *step) {
     qa_move_context *context = step->context;
     const qa_movement_input *input = context->input;
@@ -405,7 +400,7 @@ static void q3_duck(qa_q3_step *step) {
     qa_bounds accepted;
     if (!qa_move_bounds(context, requested, step->mask, &accepted)) return;
     context->result->bounds = accepted;
-    if (!q3_bounds_equal(accepted, requested)) {
+    if (!qa_bounds_equal(accepted, requested)) {
         state->movement_flags = (state->movement_flags & ~(uint32_t)Q3_DUCKED) | previous_duck;
         state->view_height = previous_duck ? input->crouched.view_height : input->standing.view_height;
     }

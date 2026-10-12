@@ -14,11 +14,6 @@
 #include <stdio.h>
 
 
-static bool same_vector(qa_vec3 a, qa_vec3 b)
-{
-    return a.x == b.x && a.y == b.y && a.z == b.z;
-}
-
 static struct application_map_state *map_state(qa_application *application,
                                                qa_error *error)
 {
@@ -416,9 +411,9 @@ static bool queue_travel(qa_application *application,
                     state->route.count - state->cursor == route.count;
         if (same && request->landmark != NULL)
             same = state->landmark.name == request->landmark->name &&
-                   same_vector(state->landmark.relative_origin, request->landmark->relative_origin) &&
-                   same_vector(state->landmark.relative_velocity, request->landmark->relative_velocity) &&
-                   same_vector(state->landmark.relative_view_angles, request->landmark->relative_view_angles);
+                   qa_vec_equal(state->landmark.relative_origin, request->landmark->relative_origin) &&
+                   qa_vec_equal(state->landmark.relative_velocity, request->landmark->relative_velocity) &&
+                   qa_vec_equal(state->landmark.relative_view_angles, request->landmark->relative_view_angles);
         for (size_t i = 0; same && i < route.count; ++i) {
             old = &state->route.targets[state->cursor + i];
             next = &route.targets[i];

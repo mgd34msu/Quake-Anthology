@@ -145,8 +145,7 @@ static qa_bounds swept_bounds(const qa_trace_query *query)
 
 static bool has_volume(qa_trace_shape shape)
 {
-    return shape.kind!=QA_SHAPE_POINT && (shape.bounds.mins.x!=shape.bounds.maxs.x
-        || shape.bounds.mins.y!=shape.bounds.maxs.y || shape.bounds.mins.z!=shape.bounds.maxs.z);
+    return shape.kind!=QA_SHAPE_POINT && !qa_vec_equal(shape.bounds.mins,shape.bounds.maxs);
 }
 
 static bool owner_matches_actor(const qa_actor_registry *actors,qa_actor_reference owner,qa_actor_id actor)

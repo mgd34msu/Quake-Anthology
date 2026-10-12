@@ -55,7 +55,6 @@ qa_vec3 ph_normal(const qa_trace_result *);
 bool ph_ground(qa_physics *, qa_actor_id, qa_actor_id ground, qa_error *);
 bool ph_test_position(qa_physics *, qa_actor_id, bool *blocked, qa_error *);
 static inline bool ph_moving(qa_vec3 v) { return v.x != 0 || v.y != 0 || v.z != 0; }
-static inline bool ph_equal_vec(qa_vec3 a, qa_vec3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
 static inline qa_actor_id ph_none(void) { return (qa_actor_id){0}; }
 static inline bool ph_wet(qa_game_family family, int32_t contents) {
     return family == QA_GAME_Q1 ?

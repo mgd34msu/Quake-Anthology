@@ -452,7 +452,6 @@ static void advance_cursors(qa_combat *combat, qa_actor_id actor, const qa_damag
         }
     }
 }
-static bool vector_equal(qa_vec3 a, qa_vec3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
 static bool observe_store(qa_combat *combat, qa_combat_cursor *cursor, const qa_damage_mutation *mutation, qa_error *error) {
     qa_combat_record *entry = record(combat, cursor->outcome->request.target);
     if (!cursor->active || !entry || entry->serial != cursor->binding_serial || cursor->reaction_seen)
@@ -471,7 +470,7 @@ static bool observe_store(qa_combat *combat, qa_combat_cursor *cursor, const qa_
         break;
     case QA_MUTATION_SOURCE_VELOCITY:
         if (!qa_vec_finite(mutation->value.velocity.before) || !qa_vec_finite(mutation->value.velocity.after) ||
-            (cursor->has_velocity && !vector_equal(cursor->velocity, mutation->value.velocity.before)))
+            (cursor->has_velocity && !qa_vec_equal(cursor->velocity, mutation->value.velocity.before)))
             return qa_combat_argument(error, "invalid observed source velocity");
         break;
     default: return qa_combat_argument(error, "source observation cannot replay an impulse");

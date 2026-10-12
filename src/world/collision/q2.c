@@ -526,7 +526,7 @@ static bool q2_trace(const void *opaque, void *opaque_scratch, const qa_trace_qu
         scratch->expanded_kind = query->shape.kind;
         scratch->expanded_bounds = work.bounds;
     }
-    work.stationary = work.start.x == work.end.x && work.start.y == work.end.y && work.start.z == work.end.z;
+    work.stationary = qa_vec_equal(work.start, work.end);
     work.merged = query->policy.behavior->contents_format != QA_GAME_Q2 || query->policy.behavior->merged_contents;
     work.mask = query->policy.contents_mask;
     work.extents = qa_v3(fmaxf(-work.bounds.mins.x, work.bounds.maxs.x),

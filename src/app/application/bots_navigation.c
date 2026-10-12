@@ -379,7 +379,7 @@ static bool activation_construct(const source_activation_call *call,int32_t bloc
         if(!qa_bot_bsp_integer(call->entities,bsp,"spawnflags",&flags,&present,error)) return false;
         if(flags&1) return true;
         if(!qa_bot_bsp_vector(call->entities,bsp,"origin",&origin,&present,error)) return false;
-        if(origin.x!=cached.state.origin.x || origin.y!=cached.state.origin.y || origin.z!=cached.state.origin.z) return true;
+        if(!qa_vec_equal(origin,cached.state.origin)) return true;
         activation_string(call->entities,bsp,"model",model,sizeof(model));
         int32_t number;
         if(!activation_model(call->entities,bsp,1024,&number,error)) return false;

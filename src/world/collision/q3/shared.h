@@ -11,9 +11,6 @@ bool qa_q3_trace_capsule_replacement(const void *map, void *scratch, const qa_tr
                                      qa_bounds position_bounds, bool stationary,
                                      bool point_trace, qa_trace_result *, qa_error *);
 
-static inline bool q3_same_point(qa_vec3 a, qa_vec3 b) {
-    return a.x == b.x && a.y == b.y && a.z == b.z;
-}
 static inline qa_q3_shape q3_prepare_shape(qa_trace_shape input, qa_vec3 *center) {
     qa_q3_shape shape = {0};
     shape.kind = input.kind;
@@ -57,7 +54,7 @@ static inline qa_bounds q3_shape_bounds(const qa_q3_shape *shape, qa_vec3 point)
 static inline void q3_finish_trace(const qa_trace_query *query, qa_trace_result *result) {
     result->end = result->fraction == 1.0f ? query->end : qa_vec_lerp(query->start, query->end, result->fraction);
     result->contact = !result->all_solid && result->fraction != 1.0f
-        && !q3_same_point(result->plane.normal, qa_v3(0, 0, 0));
+        && !qa_vec_equal(result->plane.normal, qa_v3(0, 0, 0));
     if (result->contact) result->contact_plane = result->plane;
     result->hit = result->fraction < 1.0f || result->start_solid ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_NONE;
 }

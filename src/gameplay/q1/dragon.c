@@ -122,7 +122,7 @@ static bool move(qa_q1_game *g, q1_actor *entity, float distance, qa_error *erro
         return true;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
-    if (body.origin.x == before.x && body.origin.y == before.y && body.origin.z == before.z &&
+    if (qa_vec_equal(body.origin, before) &&
         q1_alive(g, q1_ref_actor(g, entity->physics.goal)) &&
         !qa_physics_q1_move_to_goal(g->services.physics, entity->id, q1_ref_actor(g, entity->physics.goal), distance,
                                     false, error))

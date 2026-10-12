@@ -164,7 +164,6 @@ static q1hull model_hull(const q1state *state,size_t model,unsigned index) {
     return (q1hull){index==0?state->drawing:state->clip,index==0?state->drawing_count:state->clip_count,
         state->planes,state->plane_count,state->terminals,index==0?state->models[model].drawing_root:state->models[model].clip_roots[index-1]};
 }
-static bool same_vec(qa_vec3 a,qa_vec3 b) { return a.x==b.x && a.y==b.y && a.z==b.z; }
 static void native_result(const qa_trace_query *query,const native_trace *trace,qa_vec3 origin,const qa_vec3 basis[3],qa_trace_result *out) {
     qa_trace_result result=qa_collision_empty_trace(query,QA_GAME_Q1);
     result.fraction=trace->fraction;
@@ -177,7 +176,7 @@ static void native_result(const qa_trace_query *query,const native_trace *trace,
     result.contents=trace->contents.bits; result.q1_opaque_token=trace->contents.opaque_token; result.contact=trace->fraction<1;
     result.hit=trace->fraction<1||trace->start_solid?QA_TRACE_HIT_WORLD:QA_TRACE_HIT_NONE;
     const qa_collision_brush_rules rules=qa_collision_rules(&query->policy).brush;
-    if(trace->all_solid && (rules.zero_all_solid || (rules.zero_stationary && same_vec(query->start,query->end)))) {
+    if(trace->all_solid && (rules.zero_all_solid || (rules.zero_stationary && qa_vec_equal(query->start,query->end)))) {
         result.fraction=0; result.end=query->start; result.contact=false;
     }
     *out=result;
@@ -453,7 +452,7 @@ static bool arbitrary_trace(const q1state *state,q1scratch *scratch,q1work *w,co
     if(!trace_hull(scratch->frames,&point_hull,qa_axis_to_local(qa_vec_sub(query->start,origin),basis),
         qa_axis_to_local(qa_vec_sub(reached,origin),basis),NULL,&environment,w->error)) return false;
     bool all_solid=start_solid && covered>=1;
-    if(all_solid && (rules.zero_all_solid || (rules.zero_stationary && same_vec(query->start,query->end)))) fraction=0;
+    if(all_solid && (rules.zero_all_solid || (rules.zero_stationary && qa_vec_equal(query->start,query->end)))) fraction=0;
     reached=qa_vec_lerp(query->start,query->end,(float)fraction);
     qa_trace_result result=qa_collision_empty_trace(query,QA_GAME_Q1);
     result.fraction=(float)fraction; result.end=fraction==1?query->end:reached;
@@ -494,7 +493,7 @@ static bool surface_at_contact(const q1state *state,size_t model,qa_vec3 point,q
     size_t index=m->face_buckets[plane_hash(plane)%m->bucket_count];
     while(index!=SIZE_MAX) {
         const q1contactface *candidate=&m->contact_faces[index]; index=candidate->next;
-        if(!same_vec(candidate->plane.normal,plane.normal)||candidate->plane.distance!=plane.distance) continue;
+        if(!qa_vec_equal(candidate->plane.normal,plane.normal)||candidate->plane.distance!=plane.distance) continue;
         const qa_bsp_face *face=&candidate->face;
         bool positive=false,negative=false;
         for(size_t i=0;i<face->edges.count;i++) {

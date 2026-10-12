@@ -405,17 +405,6 @@ static void state_body(application_control_record *record,
     }
 }
 
-static bool same_vector(qa_vec3 left, qa_vec3 right)
-{
-    return left.x == right.x && left.y == right.y && left.z == right.z;
-}
-
-static bool same_bounds(qa_bounds left, qa_bounds right)
-{
-    return same_vector(left.mins, right.mins) &&
-           same_vector(left.maxs, right.maxs);
-}
-
 static qa_actor_reference result_ground(qa_application *app, qa_actor_id actor,
     const qa_movement_ground *ground)
 {
@@ -576,9 +565,7 @@ static void character_fixed_pose(qa_movement_input *input)
     if (!input->environment.fixed_pose || !input->environment.fixed_crouched) return;
     qa_bounds bounds = input->environment.pose.bounds;
     qa_bounds expanded = input->invulnerability_bounds;
-    bool is_expanded = bounds.mins.x == expanded.mins.x && bounds.mins.y == expanded.mins.y &&
-        bounds.mins.z == expanded.mins.z && bounds.maxs.x == expanded.maxs.x &&
-        bounds.maxs.y == expanded.maxs.y && bounds.maxs.z == expanded.maxs.z;
+    bool is_expanded = qa_bounds_equal(bounds, expanded);
     input->environment.pose = input->crouched;
     if (is_expanded) input->environment.pose.bounds = expanded;
 }
@@ -1112,7 +1099,7 @@ bool application_control_mod_usercmd(void *context, qa_actor_id actor,
     for (unsigned i = 0; i < Q3_MOD_INPUT_COUNT; ++i) {
         const application_q3_mod_value *left = &current.values[i], *right = &inputs->values[i];
         if (left->kind != right->kind || (left->kind == Q3_MOD_VALUE_SCALAR && left->as.scalar != right->as.scalar) ||
-            (left->kind == Q3_MOD_VALUE_VECTOR && !same_vector(left->as.vector, right->as.vector)))
+            (left->kind == Q3_MOD_VALUE_VECTOR && !qa_vec_equal(left->as.vector, right->as.vector)))
             return application_fail(error, QA_ERROR_ARGUMENT, "Component usercmd input is not the current command projection");
     }
     const qa_usercmd *command = scope->command;
@@ -1246,7 +1233,7 @@ static bool qc_input_body(application_move_call *move, qa_movement_state *state,
         source_owners_clear(scope);
         scope->count = 0; scope->actor = (qa_actor_id){0}; scope->slice = false;
     }
-    bool changed_aim = !same_vector(original_aim, semantic.angles);
+    bool changed_aim = !qa_vec_equal(original_aim, semantic.angles);
     if (changed_aim && command->kind == state->kind &&
         (state->kind == QA_RULESET_Q3 || state->kind == QA_RULESET_Q2_CLASSIC)) {
         qa_usercmd converted;
@@ -4251,8 +4238,8 @@ bool application_control_source_spawn(qa_application *application,
     qa_movement_input postures = qa_movement_input_default(
         character->component.clock.kind == QA_RULESET_Q3 ? QA_RULESET_Q3 : QA_RULESET_NETQUAKE,
         actor);
-    if (!same_bounds(body.bounds, postures.standing.bounds) || record->player.ground.hit != QA_TRACE_HIT_NONE ||
-        !same_vector(body.angles, view_angles))
+    if (!qa_bounds_equal(body.bounds, postures.standing.bounds) || record->player.ground.hit != QA_TRACE_HIT_NONE ||
+        !qa_vec_equal(body.angles, view_angles))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Source spawn must follow its committed standing body");
     qa_movement_state *active = application_control_frames_state_current(application, actor);

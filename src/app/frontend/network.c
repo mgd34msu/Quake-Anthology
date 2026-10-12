@@ -3603,10 +3603,8 @@ static bool client_input_source_current(void *context, const frontend_remote_inp
         source->frame.attack_allowed == now.frame.attack_allowed &&
         source->frame.has_pitch_drift == now.frame.has_pitch_drift && source->frame.grounded == now.frame.grounded &&
         source->frame.drift_disabled == now.frame.drift_disabled && source->frame.ideal_pitch == now.frame.ideal_pitch &&
-        source->frame.delta_angles.x == now.frame.delta_angles.x && source->frame.delta_angles.y == now.frame.delta_angles.y &&
-        source->frame.delta_angles.z == now.frame.delta_angles.z && source->has_initial_angles == now.has_initial_angles &&
-        source->initial_angles.x == now.initial_angles.x && source->initial_angles.y == now.initial_angles.y &&
-        source->initial_angles.z == now.initial_angles.z;
+        qa_vec_equal(source->frame.delta_angles, now.frame.delta_angles) && source->has_initial_angles == now.has_initial_angles &&
+        qa_vec_equal(source->initial_angles, now.initial_angles);
 }
 static frontend_remote_input_options client_input_options(frontend_q3_client *n)
 { return (frontend_remote_input_options){n, client_input_source_read, client_input_source_current}; }

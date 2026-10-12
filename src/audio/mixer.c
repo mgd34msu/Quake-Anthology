@@ -263,8 +263,7 @@ static bool transmit(qa_audio_mixer *mixer, qa_vec3 origin, qa_mixer_gain gain,
     size_t i;
     for (i = 0; i < mixer->transmission_count; i++) {
         qa_mixer_transmission *cached = &mixer->transmissions[i];
-        if (cached->origin.x == origin.x && cached->origin.y == origin.y &&
-            cached->origin.z == origin.z) {
+        if (qa_vec_equal(cached->origin, origin)) {
             transmission = cached->gain;
             break;
         }

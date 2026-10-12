@@ -17,8 +17,7 @@ bool q2_laser_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
             qa_vec_add(target.origin,
                        qa_vec_scale(qa_vec_add(target.bounds.mins, target.bounds.maxs), .5f)),
             body.origin));
-        if (direction.x != s->direction.x || direction.y != s->direction.y ||
-            direction.z != s->direction.z)
+        if (!qa_vec_equal(direction, s->direction))
             s->spawnflags |= 0x80000000u;
         s->direction = direction;
     }

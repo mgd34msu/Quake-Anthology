@@ -164,7 +164,7 @@ static bool trace_q2_box(const qa_trace_query *query,qa_bounds target,qa_vec3 or
     q2_box_trace box={{qa_vec_sub(target.mins,moving.maxs),qa_vec_sub(target.maxs,moving.mins)},
         qa_vec_sub(query->start,origin),qa_vec_sub(query->end,origin)};
     qa_trace_result result=qa_collision_empty_trace(query,QA_GAME_Q2);
-    bool stationary=query->start.x==query->end.x && query->start.y==query->end.y && query->start.z==query->end.z;
+    bool stationary=qa_vec_equal(query->start,query->end);
     const qa_collision_brush_rules rules=qa_collision_rules(&query->policy).brush;
     qa_collision_brush_contact contact;
     if(qa_collision_trace_brush(&box,q2_box_distances,0,6,stationary,&rules,contents,&result,&contact)) {

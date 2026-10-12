@@ -336,7 +336,7 @@ bool qa_q3_trace_model_source(const void *state, void *scratch_state, const qa_t
     qa_vec3 center, basis[3];
     work.shape = q3_prepare_shape(query->shape, &center);
     work.start = qa_vec_add(query->start, center); work.end = qa_vec_add(query->end, center);
-    work.stationary = q3_same_point(query->start, query->end);
+    work.stationary = qa_vec_equal(query->start, query->end);
     bool rotated = transformed && qa_collision_pose_rotates(&query->target);
     if (rotated) qa_collision_pose_basis(&query->target, true, basis);
     if (transformed) {
@@ -346,12 +346,12 @@ bool qa_q3_trace_model_source(const void *state, void *scratch_state, const qa_t
             work.start = qa_axis_to_local(work.start, basis); work.end = qa_axis_to_local(work.end, basis);
             if (work.shape.kind == QA_SHAPE_CAPSULE) q3_rotate_capsule(&work.shape, basis);
         }
-        work.stationary = q3_same_point(work.start, work.end);
+        work.stationary = qa_vec_equal(work.start, work.end);
         center = qa_vec_scale(qa_vec_add(work.shape.mins, work.shape.extents), 0.5f);
         work.shape.mins = qa_vec_sub(work.shape.mins, center); work.shape.extents = qa_vec_sub(work.shape.extents, center);
         work.start = qa_vec_add(work.start, center); work.end = qa_vec_add(work.end, center);
     }
-    work.point_trace = !work.stationary && q3_same_point(work.shape.mins, qa_v3(0, 0, 0));
+    work.point_trace = !work.stationary && qa_vec_equal(work.shape.mins, qa_v3(0, 0, 0));
     work.position_bounds = q3_shape_bounds(&work.shape, work.start);
     work.mask = query->policy.contents_mask;
     work.curves = query->policy.curves;
