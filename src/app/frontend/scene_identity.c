@@ -260,27 +260,39 @@ bool frontend_scene_namespace_capture_world(frontend_scene_namespace *space, uin
         return fail(error, QA_ERROR_ARGUMENT, "Scene world inventory requires its actual idle owner");
     return world_rows(space, owner, world, true, error);
 }
-typedef struct scene_models { const qa_scene_model **nodes; size_t count; } scene_models;
-static bool model_nodes(scene_models *nodes, const qa_scene_model *root, qa_error *error)
+bool frontend_scene_model_walk(const qa_scene_model *root, qa_arena *storage, qa_status overflow_error,
+    bool (*visit)(void *, const qa_scene_model *, const qa_scene_model *, qa_error *),
+    void *context, const qa_scene_model ***out, size_t *out_count, qa_error *error)
 {
-    if (!qa_scene_model_observation_ready(root) || qa_scene_model_replacement_next(root))
-        return fail(error, QA_ERROR_ARGUMENT, "Scene model inventory requires an idle graph root");
-    nodes->nodes = malloc(sizeof(*nodes->nodes));
-    if (!nodes->nodes) return fail(error, QA_ERROR_MEMORY, "Indexing actual scene model graph");
-    nodes->nodes[nodes->count++] = root;
-    for (size_t i = 0; i < nodes->count; ++i) {
-        const qa_scene_model *parent = nodes->nodes[i];
+    const qa_scene_model **nodes = qa_arena_alloc(storage, sizeof(*nodes), _Alignof(const qa_scene_model *), error);
+    if (!nodes) return false;
+    size_t count = 1, capacity = 1;
+    nodes[0] = root;
+    for (size_t i = 0; i < count; ++i) {
+        const qa_scene_model *parent = nodes[i];
+        if (visit && !visit(context, root, parent, error)) return false;
         for (const qa_scene_model *child = qa_scene_model_replacement_first(parent); child;
             child = qa_scene_model_replacement_next(child)) {
-            for (size_t j = 0; j < nodes->count; ++j) if (nodes->nodes[j] == child)
+            for (size_t j = 0; j < count; ++j) if (nodes[j] == child)
                 return fail(error, QA_ERROR_FORMAT, "Actual scene model graph aliases or cycles");
-            if (nodes->count >= SIZE_MAX / sizeof(*nodes->nodes))
-                return fail(error, QA_ERROR_MEMORY, "Scene model graph exceeds addressable storage");
-            const qa_scene_model **grown = realloc(nodes->nodes, (nodes->count + 1) * sizeof(*grown));
-            if (!grown) return fail(error, QA_ERROR_MEMORY, "Indexing scene model replacement graph");
-            nodes->nodes = grown; nodes->nodes[nodes->count++] = child;
+            size_t maximum = SIZE_MAX / sizeof(*nodes);
+            if (count >= maximum) {
+                if (overflow_error != QA_OK)
+                    fail(error, overflow_error, "Scene model graph exceeds addressable storage");
+                return false;
+            }
+            if (count == capacity) {
+                size_t next = capacity > maximum / 2 ? maximum : capacity * 2;
+                const qa_scene_model **grown = qa_arena_grow(storage, nodes, count * sizeof(*nodes),
+                    next * sizeof(*nodes), _Alignof(const qa_scene_model *), error);
+                if (!grown) return false;
+                nodes = grown; capacity = next;
+            }
+            nodes[count++] = child;
         }
     }
+    if (out) *out = nodes;
+    if (out_count) *out_count = count;
     return true;
 }
 static bool model_rows(frontend_scene_namespace *space, uint64_t owner, const qa_scene_model *root,
@@ -580,9 +592,12 @@ static bool world_rows(frontend_scene_namespace *space, uint64_t owner, const qa
 static bool model_rows(frontend_scene_namespace *space, uint64_t owner, const qa_scene_model *root,
     bool capture, qa_error *error)
 {
-    scene_models nodes = {0}; bool ok = model_nodes(&nodes, root, error);
-    for (size_t node = 0; ok && node < nodes.count; ++node) {
-        const qa_scene_model *model = nodes.nodes[node]; const qa_model *source = qa_scene_model_source(model);
+    if (!qa_scene_model_observation_ready(root) || qa_scene_model_replacement_next(root))
+        return fail(error, QA_ERROR_ARGUMENT, "Scene model inventory requires an idle graph root");
+    qa_arena storage = {0}; const qa_scene_model **nodes = NULL; size_t count = 0;
+    bool ok = frontend_scene_model_walk(root, &storage, QA_ERROR_MEMORY, NULL, NULL, &nodes, &count, error);
+    for (size_t node = 0; ok && node < count; ++node) {
+        const qa_scene_model *model = nodes[node]; const qa_model *source = qa_scene_model_source(model);
         ok = source && graph_number(space, capture, SCENE_MODEL, SCENE_MODEL_OWNER, owner, node, 0,
             qa_scene_model_identity(model), error);
         for (size_t i = 0; ok && i < source->mesh_count; ++i) {
@@ -591,7 +606,7 @@ static bool model_rows(frontend_scene_namespace *space, uint64_t owner, const qa
                 graph_geometry(space, capture, SCENE_MODEL_OWNER, owner, node, i, mesh->geometry, error);
         }
     }
-    free(nodes.nodes);
+    qa_arena_destroy(&storage);
     if (!ok && error && error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Actual model owner graph is incomplete");
     return ok;
 }

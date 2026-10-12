@@ -1,4 +1,5 @@
 #include "capture.h"
+#include "scene_identity.h"
 #include "settings_devices.h"
 #include "startup_menus.h"
 #include "content_library_services.h"
@@ -827,6 +828,19 @@ static bool remote_capture_heaps(frontend_capture *capture,qa_error *error)
     }
     return unified_heaps(capture->frontend,capture_add,capture,error);
 }
+static bool model_bank(void *context,const qa_scene_model *root,const qa_scene_model *node,qa_error *error)
+{
+    frontend_resource_inventory *inventory=context;
+    if (inventory->model_count==SIZE_MAX/sizeof(*inventory->models))
+        return frontend_fail(error,QA_ERROR_MEMORY,"Replacement metadata exceeds address space");
+    resource_model *models=realloc(inventory->models,(inventory->model_count+1)*sizeof(*models));
+    if (!models) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual replacement links");
+    inventory->models=models;
+    models[inventory->model_count++]=(resource_model){root,node,
+        qa_scene_model_replacement_first(node),qa_scene_model_replacement_next(node)};
+    return resource_add(inventory,CAPTURE_IMAGES,qa_scene_model_resource_owner(node),error) &&
+        resource_add(inventory,CAPTURE_LIBRARY,qa_scene_model_material_owner(node),error);
+}
 static bool model_banks(frontend_resource_inventory *inventory,const qa_scene_model *root,qa_error *error)
 {
     if (inventory->checking) {
@@ -843,35 +857,9 @@ static bool model_banks(frontend_resource_inventory *inventory,const qa_scene_mo
         }
         return found;
     }
-    const qa_scene_model **nodes=malloc(sizeof(*nodes)); size_t count=1;
-    if (!nodes) return frontend_fail(error,QA_ERROR_MEMORY,"Observing actual replacement resource owners");
-    nodes[0]=root; bool ok=true;
-    for (size_t i=0;ok && i<count;++i) {
-        if (inventory->model_count==SIZE_MAX/sizeof(*inventory->models)) {
-            ok=frontend_fail(error,QA_ERROR_MEMORY,"Replacement metadata exceeds address space"); break;
-        }
-        resource_model *models=realloc(inventory->models,(inventory->model_count+1)*sizeof(*models));
-        if (!models) { ok=frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual replacement links"); break; }
-        inventory->models=models;
-        models[inventory->model_count++]=(resource_model){root,nodes[i],
-            qa_scene_model_replacement_first(nodes[i]),qa_scene_model_replacement_next(nodes[i])};
-        ok=resource_add(inventory,CAPTURE_IMAGES,qa_scene_model_resource_owner(nodes[i]),error) &&
-            resource_add(inventory,CAPTURE_LIBRARY,qa_scene_model_material_owner(nodes[i]),error);
-        for (const qa_scene_model *child=ok?qa_scene_model_replacement_first(nodes[i]):NULL;
-            child && ok;child=qa_scene_model_replacement_next(child)) {
-            for (size_t j=0;j<count;++j) if (nodes[j]==child) {
-                ok=frontend_fail(error,QA_ERROR_FORMAT,"Resource metadata replacement tree aliases or cycles"); break;
-            }
-            if (!ok) break;
-            if (count==SIZE_MAX/sizeof(*nodes)) {
-                ok=frontend_fail(error,QA_ERROR_MEMORY,"Replacement resource roster exceeds address space"); break;
-            }
-            const qa_scene_model **grown=realloc(nodes,(count+1)*sizeof(*nodes));
-            if (!grown) { ok=frontend_fail(error,QA_ERROR_MEMORY,"Observing replacement bank dependencies"); break; }
-            nodes=grown; nodes[count++]=child;
-        }
-    }
-    free(nodes); return ok;
+    qa_arena storage={0};
+    bool ok=frontend_scene_model_walk(root,&storage,QA_ERROR_MEMORY,model_bank,inventory,NULL,NULL,error);
+    qa_arena_destroy(&storage); return ok;
 }
 static bool resource_collect(frontend_resource_inventory *inventory,qa_error *error)
 {

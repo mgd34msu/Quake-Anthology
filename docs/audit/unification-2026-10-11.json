@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "4ed20da4950a53352afc4ee397ebd3c80155fe22",
+  "verified_main": "385eee464c9f98ee631a5f3e92c5ec1cd8107061",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 138,
-    "open_source_observation": 233,
+    "fixed_source_build_core": 139,
+    "open_source_observation": 232,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -35763,8 +35763,9 @@
       "severity": "medium",
       "job": "31",
       "area": "render_presentation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Private presentation float/decimal conversion and wrapped arithmetic replaced by common numeric primitives; all scoped callers migrated and old symbols deleted. Matching normal build and seven existing core suites passed, including signed wrap boundary cases. No live presentation or performance claim.",
+      "fixed_commit": "385eee464c9f98ee631a5f3e92c5ec1cd8107061"
     },
     {
       "id": "31-09",
@@ -40845,7 +40846,7 @@
         "src/app/frontend/unified_q3_client.h",
         "src/app/frontend/remote_unified_prediction.c",
         "include/qa/actors.h",
-        "src/core/actor_index.c"
+        "src/world/actors.c"
       ],
       "build_exit": 0,
       "core_exit": 0,
@@ -40860,6 +40861,57 @@
       ],
       "record_directory": "/tmp/qa-ta3196-q3-historical-index-20261012",
       "conclusion": "Each of 33 historical snapshot slots owns a cold-reserved common retained actor index. Receive clears/rebuilds that slot from original forward bindings; full registry/generation, first ordinal, validity, restart and WORLD/NONE semantics remain. Both prediction and presentation use the existing inverse API. Original snapshot storage, wire and save fields unchanged. Normal production build and seven core suites passed; no dedicated live history/prediction or timing proof."
+    },
+    {
+      "commit": "385eee464c9f98ee631a5f3e92c5ec1cd8107061",
+      "source_tree": "e527f58161f4c7601aeff8c905202c2a18f1ec6f",
+      "finding_ids": [
+        "31-08"
+      ],
+      "files_rechecked": [
+        "src/presentation/q3_native/packet.c",
+        "src/presentation/q3_native/pose.c",
+        "src/presentation/q3_native/weapon.c",
+        "src/presentation/q3_native/particles.c",
+        "src/presentation/q3_native/events_internal.h",
+        "src/presentation/q3_native/native.c",
+        "src/presentation/q3_native/server_commands.c",
+        "src/presentation/q3_native/server_commands_internal.h",
+        "src/presentation/q3_native/effects.c",
+        "src/presentation/q3_native/events.c",
+        "src/presentation/q3_native/hud.c",
+        "src/presentation/q3_native/hud_corners.c",
+        "src/presentation/q3_native/hud_draw.c",
+        "src/presentation/q3_native/hud_scoreboard.c",
+        "src/presentation/q3_native/local_entities.c",
+        "src/presentation/q3_native/marks.c",
+        "src/presentation/q3_native/mission_hud_menu.c",
+        "src/presentation/q3_native/mission_hud_owner.c",
+        "src/presentation/q3_native/player_fx.c",
+        "src/presentation/q3_native/player_state.c",
+        "src/presentation/q3_native/view.c",
+        "src/presentation/q3_native/voice.c",
+        "src/app/frontend/remote_unified_q3.c",
+        "src/app/frontend/selected_effects.c",
+        "src/app/frontend/unified_q3_runtime_services.c",
+        "include/qa/binary.h",
+        "include/qa/text.h",
+        "src/core/number.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-q3-numeric-20261012",
+      "conclusion": "Twenty-five presentation callers use common binary32-to-int, signed-byte decimal-wrap parsing and defined signed32 wrap operations. Old numeric bodies/declarations and callers removed; three already-migrated audit paths unchanged. Common add/sub boundary cases exercise integer wrap without signed overflow. Normal production build and seven existing core suites passed; no live game, frame timing or full-foundation claim."
     }
   ],
   "verification_limits": [

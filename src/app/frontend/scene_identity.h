@@ -11,6 +11,13 @@ typedef struct frontend_scene_identity_scope {
     uint64_t owner;
 } frontend_scene_identity_scope;
 
+/* Walks retained child order breadth-first, visiting a node before its children
+ * are admitted. Optional outputs borrow caller storage. QA_OK leaves address
+ * overflow to the caller's existing fallback; other overflow errors are set. */
+bool frontend_scene_model_walk(const qa_scene_model *, qa_arena *, qa_status overflow_error,
+    bool (*visit)(void *, const qa_scene_model *root, const qa_scene_model *node, qa_error *),
+    void *context, const qa_scene_model ***, size_t *, qa_error *);
+
 /* The aggregate holds its actual frontend/content lifetime lease throughout
  * collection, all component codecs, qualification and disposal. Owner keys
  * are the aggregate's qualified physical owner ordinals, shared by capture

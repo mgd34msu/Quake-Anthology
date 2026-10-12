@@ -198,8 +198,10 @@ static bool producers(frontend_scene_inventory *inventory,sources *rows,qa_error
     }
     return true;
 }
-static bool node_sources(const qa_scene_model *model,sources *rows,qa_error *error)
+static bool node_sources(void *context,const qa_scene_model *root,const qa_scene_model *model,qa_error *error)
 {
+    (void)root;
+    sources *rows=context;
     frontend_model_source source;
     if (frontend_scene_model_source_read(model,QA_SCENE_MODEL_CONTENT_SOURCE,&source)) {
         if (!model_add(rows,source,error)) return false;
@@ -219,27 +221,12 @@ static bool node_sources(const qa_scene_model *model,sources *rows,qa_error *err
 }
 static bool nodes(frontend_scene_inventory *inventory,sources *rows,qa_error *error)
 {
-    for (size_t i=0;i<inventory->root_count;++i) {
-        const qa_scene_model **queue=malloc(sizeof(*queue)); size_t count=1;
-        if (!queue) return frontend_fail(error,QA_ERROR_MEMORY,"Collecting the actual scene replacement tree");
-        queue[0]=inventory->roots[i]; bool ok=true;
-        for (size_t j=0;ok && j<count;++j) {
-            ok=node_sources(queue[j],rows,error);
-            for (const qa_scene_model *child=ok?qa_scene_model_replacement_first(queue[j]):NULL;child && ok;
-                child=qa_scene_model_replacement_next(child)) {
-                for (size_t k=0;k<count;++k) if (queue[k]==child) {
-                    ok=frontend_fail(error,QA_ERROR_FORMAT,"Actual replacement tree aliases or cycles"); break;
-                }
-                if (!ok) break;
-                if (count==SIZE_MAX/sizeof(*queue)) { ok=false; break; }
-                const qa_scene_model **grown=realloc(queue,(count+1)*sizeof(*grown));
-                if (!grown) { ok=frontend_fail(error,QA_ERROR_MEMORY,"Collecting actual replacement children"); break; }
-                queue=grown; queue[count++]=child;
-            }
-        }
-        free(queue); if (!ok) return false;
+    qa_arena storage={0}; bool ok=true;
+    for (size_t i=0;ok && i<inventory->root_count;++i) {
+        qa_arena_reset(&storage);
+        ok=frontend_scene_model_walk(inventory->roots[i],&storage,QA_OK,node_sources,rows,NULL,NULL,error);
     }
-    return true;
+    qa_arena_destroy(&storage); return ok;
 }
 void frontend_scene_inventory_destroy(frontend_scene_inventory *inventory)
 {
