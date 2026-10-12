@@ -4,6 +4,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+struct qa_combat_policy_admission {
+    qa_combat *combat;
+    qa_combat_policy policy;
+    qa_combat_policy_admission *previous, *next;
+    size_t storage_slot;
+};
+
 static size_t team_decimal(qa_team_ref team, char text[12]) {
     return (size_t)snprintf(text, 12, "%d", team.number.value);
 }
@@ -246,6 +253,13 @@ bool qa_combat_create(qa_actor_registry *actors, qa_strings *strings, const qa_c
         free(combat->records); free(combat);
         return allocation_failed ? memory_error(error) : false;
     }
+    if (!qa_pool_prepare(&combat->policy_admissions, &combat->policy_storage, 1,
+            sizeof(qa_combat_policy_admission), _Alignof(qa_combat_policy_admission), error)) {
+        (void)qa_operation_destroy(combat->damage, NULL);
+        journal_store_destroy(combat->journals);
+        qa_arena_destroy(&combat->policy_storage);
+        free(combat->records); free(combat); return false;
+    }
     combat->actors = actors; combat->strings = strings; combat->next_serial = 1;
     if (hooks) combat->hooks = *hooks;
     *out = combat; return true;
@@ -258,7 +272,8 @@ bool qa_combat_destroy(qa_combat *combat, qa_error *error) {
     if (!qa_operation_destroy(combat->damage, error)) return false;
     combat->journals->retired = true;
     if (!combat->journals->outcomes) journal_store_destroy(combat->journals);
-    free(combat->records); free(combat->policies); free(combat); return true;
+    qa_arena_destroy(&combat->policy_storage);
+    free(combat->records); free(combat); return true;
 }
 void qa_combat_actor_released(qa_combat *combat, qa_actor_record released) {
     if (!combat || released.id.slot >= qa_actors_capacity(combat->actors)) return;
@@ -269,12 +284,6 @@ static bool next_serial(qa_combat *combat, uint64_t *out, qa_error *error) {
     if (combat->next_serial == UINT64_MAX) return qa_combat_argument(error, "combat ownership identity exhausted");
     *out = combat->next_serial++; return true;
 }
-struct qa_combat_policy_admission {
-    qa_combat *combat;
-    qa_combat_policy policy;
-    qa_combat_policy_admission *previous, *next;
-};
-
 bool qa_combat_prepare_policy(qa_combat *combat, const qa_combat_policy *policy, bool replace_owner,
                                qa_combat_policy_admission **out, qa_error *error) {
     if (!combat || !policy || !out || !policy->describe || policy->family < QA_GAME_Q1 || policy->family > QA_GAME_Q3)
@@ -293,13 +302,19 @@ bool qa_combat_prepare_policy(qa_combat *combat, const qa_combat_policy *policy,
         size_t capacity = combat->policy_capacity > limit / 2 ? limit : combat->policy_capacity * 2;
         if (capacity < required) capacity = required;
         if (capacity < 8 && limit >= 8) capacity = 8;
-        qa_combat_policy *policies = realloc(combat->policies, capacity * sizeof(*policies));
+        qa_combat_policy *policies = qa_arena_grow(&combat->policy_storage, combat->policies,
+            combat->policy_capacity * sizeof(*policies), capacity * sizeof(*policies),
+            _Alignof(qa_combat_policy), error);
         if (!policies) return memory_error(error);
         combat->policies = policies; combat->policy_capacity = capacity;
     }
-    qa_combat_policy_admission *token = malloc(sizeof(*token));
+    if (combat->policy_admissions.head == SIZE_MAX &&
+        !qa_pool_extend(&combat->policy_admissions, &combat->policy_storage, 1, error)) return false;
+    size_t slot;
+    qa_combat_policy_admission *token = qa_pool_take(&combat->policy_admissions, &slot);
     if (!token) return memory_error(error);
-    *token = (qa_combat_policy_admission){.combat = combat, .policy = *policy, .next = combat->admissions};
+    *token = (qa_combat_policy_admission){.combat = combat, .policy = *policy,
+        .next = combat->admissions, .storage_slot = slot};
     if (token->next) token->next->previous = token;
     combat->admissions = token;
     ++combat->admission_count;
@@ -321,7 +336,7 @@ void qa_combat_policy_admission_abort(qa_combat_policy_admission *token) {
     else token->combat->admissions = token->next;
     if (token->next) token->next->previous = token->previous;
     --token->combat->admission_count;
-    free(token);
+    qa_pool_release(&token->combat->policy_admissions, token->storage_slot);
 }
 
 bool qa_combat_policy_admission_commit(qa_combat_policy_admission *token, qa_error *error) {

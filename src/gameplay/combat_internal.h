@@ -41,6 +41,8 @@ struct qa_combat {
     qa_combat_record *records;
     qa_damage_journal_store *journals;
     qa_combat_hooks hooks;
+    qa_arena policy_storage;
+    qa_pool policy_admissions;
     qa_combat_policy *policies;
     size_t policy_count, policy_capacity;
     qa_combat_policy_admission *admissions;
