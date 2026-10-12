@@ -107,11 +107,21 @@ bool qa_audio_bank_create(qa_vfs *view, qa_strings *strings, qa_audio_bank **out
 
 static qa_game_family bank_entry_family(const bank_entry *entry)
 { return entry->asset ? entry->asset->family : entry->missing_family; }
+static uint64_t bank_resource_discriminator(uint64_t resource_id, qa_game_family family)
+{
+    /* Name rows use family 0..2. Resource rows use 3..5 beneath the ID's
+     * upper word; its lower word is the index key. */
+    return (resource_id & UINT64_C(0xffffffff00000000)) |
+        ((uint32_t)family + (uint32_t)QA_GAME_Q3 + UINT32_C(1));
+}
 static void bank_index_bind(qa_audio_bank *bank, size_t index)
 {
     const bank_entry *entry=bank->entries+index;
     for (size_t i=0;i<3;++i)
         if (entry->aliases[i]) qa_id_index_insert(&bank->names,entry->aliases[i],bank_entry_family(entry),index);
+    if (entry->asset)
+        qa_id_index_insert(&bank->names, (qa_string_id)entry->asset->resource_id,
+            bank_resource_discriminator(entry->asset->resource_id, entry->asset->family), index);
 }
 static void bank_index_reset(qa_audio_bank *bank)
 {
@@ -120,13 +130,13 @@ static void bank_index_reset(qa_audio_bank *bank)
 }
 static bool bank_index_prepare(qa_audio_bank *bank, size_t count, qa_error *error)
 {
-    if (count>SIZE_MAX/3) {qa_error_set(error,QA_ERROR_MEMORY,0,"Audio name index overflows storage");return false;}
-    size_t required=count*3;
+    if (count>SIZE_MAX/4) {qa_error_set(error,QA_ERROR_MEMORY,0,"Audio name index overflows storage");return false;}
+    size_t required=count*4;
     return qa_id_index_reserve(&bank->names,required>bank->names.count?required-bank->names.count:0,error);
 }
 static bank_entry *bank_find_name(const qa_audio_bank *bank, qa_string_id id, qa_game_family family)
 {
-    if (!id) return NULL;
+    if (!id || (unsigned)family > QA_GAME_Q3) return NULL;
     qa_id_index_cursor cursor=qa_id_index_begin(&bank->names,id,family);size_t row;
     return qa_id_index_next(&bank->names,&cursor,&row)?bank->entries+row:NULL;
 }
@@ -213,14 +223,12 @@ void qa_audio_bank_end(qa_audio_bank *bank) {
 
 static bank_entry *bank_find(const qa_audio_bank *bank, uint64_t resource_id,
                              qa_game_family family) {
-    if (bank == NULL)
+    if (bank == NULL || (unsigned)family > QA_GAME_Q3)
         return NULL;
-    for (size_t i = 0; i < bank->count; ++i) {
-        qa_audio_asset *asset = bank->entries[i].asset;
-        if (asset && asset->resource_id == resource_id && asset->family == family)
-            return &bank->entries[i];
-    }
-    return NULL;
+    qa_id_index_cursor cursor = qa_id_index_begin(&bank->names, (qa_string_id)resource_id,
+        bank_resource_discriminator(resource_id, family));
+    size_t row;
+    return qa_id_index_next(&bank->names, &cursor, &row) ? bank->entries + row : NULL;
 }
 
 qa_audio_asset *qa_audio_bank_get(const qa_audio_bank *bank, uint64_t resource_id,

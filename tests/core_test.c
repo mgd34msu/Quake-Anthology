@@ -1384,6 +1384,10 @@ static void test_shared_audio_preparation(void)
     for (size_t i = 0; i < sizeof(families) / sizeof(*families); ++i) {
         qa_audio_asset *asset = NULL; qa_audio_sample *first = NULL, *again = NULL, *expected = NULL, *changed = NULL;
         CHECK(qa_audio_bank_register(bank, "test.wav", families[i], &asset, &error) && asset);
+        uint64_t resource_id = qa_resource_id(qa_audio_asset_resource(asset));
+        CHECK(qa_audio_bank_get(bank, resource_id, families[i]) == asset);
+        CHECK(!qa_audio_bank_get(bank, resource_id, (qa_game_family)-1));
+        CHECK(!qa_audio_bank_get(bank, resource_id ^ UINT64_C(0x100000000), families[i]));
         const char *aliases[] = {"test.wav", "sound/test.wav", "#sound/test.wav"};
         for (size_t j = 0; j < 3; ++j) {
             qa_string_id id = qa_strings_find(names, (qa_bytes){(const uint8_t *)aliases[j], strlen(aliases[j])});
@@ -1516,6 +1520,17 @@ static void test_shared_audio_preparation(void)
     CHECK(qa_player_skin_bind(names,"custom/other",false,&skin,&model,&error));
     CHECK(qa_audio_bank_sexed_id(bank,sound,model,&again,&error) && again==first);
     qa_audio_asset_release(first);qa_audio_asset_release(again);
+    qa_audio_bank_begin(bank);
+    qa_audio_asset *kept = NULL;
+    CHECK(qa_audio_bank_register(bank, "optional.wav", QA_GAME_Q2, &kept, &error) && kept);
+    uint64_t kept_id = qa_resource_id(qa_audio_asset_resource(kept));
+    qa_audio_bank_end(bank);
+    CHECK(qa_audio_bank_get(bank, kept_id, QA_GAME_Q2) == kept);
+    CHECK(!qa_audio_bank_get(bank, kept_id, QA_GAME_Q1));
+    qa_audio_bank_begin(bank); qa_audio_bank_end(bank);
+    CHECK(!qa_audio_bank_get(bank, kept_id, QA_GAME_Q2));
+    CHECK(qa_audio_asset_sample(kept)->frame_count != 0);
+    qa_audio_asset_release(kept);
     const char environment_json[] = "{\"environments\":[{\"reverbs\":["
         "{\"materials\":[\"WOOD\"],\"preset\":\"room\"},"
         "{\"materials\":[\"wood\"],\"preset\":\"generic\"},"
