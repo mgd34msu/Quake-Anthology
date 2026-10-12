@@ -1,4 +1,4 @@
-#include "qa/network_q2_kex.h"
+#include "kex_discovery_owner_internal.h"
 #include "qa/text.h"
 #include <ctype.h>
 #include <stdio.h>
@@ -100,7 +100,22 @@ bool qa_kex_mdns_announce(qa_net_writer*w,const char*host,uint16_t port,const qa
     }
     return !w->failed&&!r.failed;
 }
-static bool dns_name(qa_net_reader*r,size_t position,bool advance,bool fold,qa_buffer*out) {
+bool qa_kex_mdns_scratch_prepare(qa_arena *storage,qa_error *e) {
+    if(!qa_arena_reserve(storage,QA_KEX_DNS_NAME_BYTES+QA_KEX_DNS_FOLDED_BYTES+2u,e))return false;
+    qa_arena_seal(storage);
+    return true;
+}
+static bool retain_name(qa_buffer name,qa_buffer*out,qa_error*e) {
+    uint8_t*owned=malloc(name.size+1);
+    if(!owned) {
+        qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining mDNS name");
+        return false;
+    }
+    memcpy(owned,name.data,name.size+1);
+    *out=(qa_buffer){owned,name.size};
+    return true;
+}
+static bool dns_name(qa_net_reader*r,size_t position,bool advance,bool fold,qa_arena*temporary,qa_buffer*out) {
     uint8_t text[QA_KEX_DNS_NAME_BYTES];
     size_t seen[128],count=0,labels=0,used=0,end=SIZE_MAX;
     for(;;) {
@@ -110,12 +125,9 @@ static bool dns_name(qa_net_reader*r,size_t position,bool advance,bool fold,qa_b
         uint8_t n=r->bytes.data[position++];
         if(!n) {
             if(advance)r->bit=(end==SIZE_MAX?position:end)*8;
-            if(fold)return qa_utf8_lower((qa_bytes){text,used},out,r->error);
-            uint8_t *owned=malloc(used+1);
-            if(!owned) {
-                qa_error_set(r->error,QA_ERROR_MEMORY,0,"Retaining mDNS name");
-                return false;
-            }
+            if(fold)return qa_utf8_lower_arena((qa_bytes){text,used},temporary,out,r->error);
+            uint8_t *owned=qa_arena_alloc(temporary,used+1,1,r->error);
+            if(!owned)return false;
             if(used)memcpy(owned,text,used);
             owned[used]=0;
             *out=(qa_buffer){owned,used};
@@ -159,7 +171,7 @@ void qa_kex_mdns_result_free(qa_kex_mdns_result *r)
     for(size_t i=0;i<r->address_count;i++)qa_buffer_free(&r->addresses[i].target);
     *r=(qa_kex_mdns_result){0};
 }
-bool qa_kex_mdns_read(qa_bytes b,qa_kex_mdns_result*out,qa_error*e) {
+bool qa_kex_mdns_read_scratch(qa_bytes b,qa_arena*temporary,qa_kex_mdns_result*out,qa_error*e) {
     if(!out||!b.data||b.size<12||b.size>9000) {
         qa_error_set(e,QA_ERROR_FORMAT,0,"Invalid mDNS packet size");
         return false;
@@ -173,17 +185,19 @@ bool qa_kex_mdns_read(qa_bytes b,qa_kex_mdns_result*out,qa_error*e) {
     records+=read_word(&r);
     if(questions+records>256)return qa_net_reader_fail(&r,"Too many mDNS records");
     *out=(qa_kex_mdns_result){0};
+    qa_arena_reset(temporary);
+    if(!qa_kex_mdns_scratch_prepare(temporary,e))goto failed;
     for(uint32_t i=0;i<questions;i++) {
         qa_buffer name={0};
-        if(!dns_name(&r,r.bit/8,true,true,&name))goto failed;
+        if(!dns_name(&r,r.bit/8,true,true,temporary,&name))goto failed;
         uint16_t type=read_word(&r);
         read_word(&r);
         if(name.size==16&&!memcmp(name.data,"_game._udp.local",16)&&(type==12||type==255))out->question=true;
-        qa_buffer_free(&name);
+        qa_arena_reset(temporary);
     }
     for(uint32_t i=0;i<records;i++) {
         qa_buffer name={0};
-        if(!dns_name(&r,r.bit/8,true,false,&name))goto failed;
+        if(!dns_name(&r,r.bit/8,true,false,temporary,&name))goto failed;
         uint16_t type=read_word(&r);
         read_word(&r);
         read_word(&r);
@@ -191,7 +205,6 @@ bool qa_kex_mdns_read(qa_bytes b,qa_kex_mdns_result*out,qa_error*e) {
         uint16_t length=read_word(&r);
         size_t start=r.bit/8;
         if(r.failed||length>qa_net_reader_remaining(&r)) {
-            qa_buffer_free(&name);
             qa_net_reader_fail(&r,"Truncated mDNS record");goto failed;
         }
         if(type==33&&service_suffix(name)&&length>=7) {
@@ -200,24 +213,36 @@ bool qa_kex_mdns_read(qa_bytes b,qa_kex_mdns_result*out,qa_error*e) {
             };
             r.bit=(start+4)*8;
             ep.port=read_word(&r);
-            if(!dns_name(&r,start+6,false,true,&ep.target)) { qa_buffer_free(&name);goto failed; }
-            ep.instance=name;name=(qa_buffer){0};
-            if(ep.port)out->endpoints[out->endpoint_count++]=ep;
-            else { qa_buffer_free(&ep.instance);qa_buffer_free(&ep.target); }
+            qa_buffer target={0};
+            if(!dns_name(&r,start+6,false,true,temporary,&target))goto failed;
+            if(ep.port) {
+                if(!retain_name(target,&ep.target,e))goto failed;
+                if(!retain_name(name,&ep.instance,e)) { qa_buffer_free(&ep.target);goto failed; }
+                out->endpoints[out->endpoint_count++]=ep;
+            }
         }  else if((type==1&&length==4)||(type==28&&length==16)) {
             qa_kex_mdns_address*a=&out->addresses[out->address_count++];
             memset(a,0,sizeof(*a));
-            if(!qa_utf8_lower((qa_bytes){name.data,name.size},&a->target,e)) { qa_buffer_free(&name);goto failed; }
+            qa_buffer target={0};
+            if(!qa_utf8_lower_arena((qa_bytes){name.data,name.size},temporary,&target,e)||
+                !retain_name(target,&a->target,e))goto failed;
             a->address.kind=type==1?QA_NET_IPV4:QA_NET_IPV6;
             a->address.port=QA_KEX_LAN_PORT;
             if(type==1)memcpy(a->address.host.ipv4,b.data+start,4);
             else memcpy(a->address.host.ipv6.bytes,b.data+start,16);
         }
-        qa_buffer_free(&name);
+        qa_arena_reset(temporary);
         r.bit=(start+length)*8;
     }
     if(!r.failed)return true;
 failed:
     qa_kex_mdns_result_free(out);
+    qa_arena_reset(temporary);
     return false;
+}
+bool qa_kex_mdns_read(qa_bytes b,qa_kex_mdns_result*out,qa_error*e) {
+    qa_arena temporary={0};
+    bool ok=qa_kex_mdns_read_scratch(b,&temporary,out,e);
+    qa_arena_destroy(&temporary);
+    return ok;
 }

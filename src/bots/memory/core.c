@@ -22,7 +22,7 @@ bool bot_memory_mutable(qa_bot_memory *memory,qa_error *error)
 bot_memory_record *bot_memory_record_get(const qa_bot_memory *memory,qa_bot_memory_allocation allocation)
 {
     if(!memory || allocation.owner!=memory->owner || allocation.slot>=memory->slots) return NULL;
-    bot_memory_record *record=&memory->records[allocation.slot];
+    bot_memory_record *record=qa_pool_at(&memory->records,allocation.slot);
     return record->live && record->generation==allocation.generation?record:NULL;
 }
 bool bot_memory_owned(const qa_bot_memory *memory,qa_bot_memory_allocation allocation)
@@ -31,21 +31,21 @@ bool bot_memory_owned(const qa_bot_memory *memory,qa_bot_memory_allocation alloc
 }
 qa_bot_memory_allocation bot_memory_handle(const qa_bot_memory *memory,uint32_t slot)
 {
-    return (qa_bot_memory_allocation){memory->owner,memory->records[slot].generation,slot};
+    const bot_memory_record *record=qa_pool_at(&memory->records,slot);
+    return (qa_bot_memory_allocation){memory->owner,record->generation,slot};
 }
 static bool reserve_slot(qa_bot_memory *memory,qa_error *error)
 {
-    if(memory->free_head || memory->slots<memory->capacity) return true;
-    if(memory->capacity==UINT32_MAX)
+    if(memory->records.active<memory->records.capacity) return true;
+    if(memory->records.capacity==UINT32_MAX)
         return bot_memory_fail(error,QA_ERROR_MEMORY,"Bot allocation slots exhausted");
-    uint32_t capacity=memory->capacity?memory->capacity:16;
-    if(memory->capacity) capacity=capacity>UINT32_MAX/2?UINT32_MAX:capacity*2;
-    if((uint64_t)capacity*sizeof(*memory->records)>SIZE_MAX)
-        return bot_memory_fail(error,QA_ERROR_MEMORY,"Bot allocation slot size overflow");
-    bot_memory_record *records=realloc(memory->records,(size_t)capacity*sizeof(*records));
-    if(!records) return bot_memory_fail(error,QA_ERROR_MEMORY,"Growing bot allocation slots");
-    memset(records+memory->capacity,0,(size_t)(capacity-memory->capacity)*sizeof(*records));
-    memory->records=records;memory->capacity=capacity;return true;
+    size_t capacity=memory->records.capacity?memory->records.capacity:16;
+    if(memory->records.capacity) capacity=capacity>UINT32_MAX/2?UINT32_MAX:capacity*2;
+    if(!memory->records.stride)
+        return qa_pool_prepare(&memory->records,&memory->record_storage,capacity,
+            sizeof(bot_memory_record),_Alignof(bot_memory_record),error);
+    return qa_pool_extend(&memory->records,&memory->record_storage,
+        capacity-memory->records.capacity,error);
 }
 static char *text_copy(const char *text,qa_error *error)
 {
@@ -109,13 +109,15 @@ bool bot_memory_allocate(qa_bot_memory *memory,uint32_t size,qa_bot_memory_kind 
     qa_store_u32le(backing.bytes,kind==QA_BOT_MEMORY_HEAP?HEAP_ID:HUNK_ID);
     if(clear && size) memset(backing.bytes+PREFIX_BYTES,0,size);
     record->backing=backing.bytes;record->host_allocation=backing.token;record->live=true;
-    uint32_t slot;
-    if(memory->free_head) {slot=memory->free_head-1;memory->free_head=memory->records[slot].free_next;}
-    else slot=memory->slots++;
+    size_t pool_slot;
+    bot_memory_record *stored=qa_pool_take(&memory->records,&pool_slot);
+    uint32_t slot=(uint32_t)pool_slot;
+    if(slot>=memory->slots) memory->slots=slot+1;
     record->generation=memory->next_generation++;
     record->previous=memory->last;
-    if(memory->last) memory->records[memory->last-1].next=slot+1;else memory->first=slot+1;
-    memory->last=slot+1;memory->records[slot]=*record;
+    if(memory->last) ((bot_memory_record *)qa_pool_at(&memory->records,memory->last-1))->next=slot+1;
+    else memory->first=slot+1;
+    memory->last=slot+1;*stored=*record;
     ++memory->live_count;memory->allocated_bytes+=size;
     *out=bot_memory_handle(memory,slot);return true;
 }
@@ -159,11 +161,13 @@ bool bot_memory_release(qa_bot_memory *memory,qa_bot_memory_allocation allocatio
     qa_bot_memory_backing backing={record->backing,record->size+PREFIX_BYTES,record->host_allocation};
     if(memory->options.host.release) memory->options.host.release(memory->options.host.context,&backing,record->kind);
     else {memset(record->backing,0xaa,(size_t)record->size+PREFIX_BYTES);free(record->backing);}
-    if(record->previous) memory->records[record->previous-1].next=record->next;else memory->first=record->next;
-    if(record->next) memory->records[record->next-1].previous=record->previous;else memory->last=record->previous;
+    if(record->previous) ((bot_memory_record *)qa_pool_at(&memory->records,record->previous-1))->next=record->next;
+    else memory->first=record->next;
+    if(record->next) ((bot_memory_record *)qa_pool_at(&memory->records,record->next-1))->previous=record->previous;
+    else memory->last=record->previous;
     --memory->live_count;memory->allocated_bytes-=record->size;
     free(record->file);free(record->label);memset(record,0,sizeof(*record));
-    record->free_next=memory->free_head;memory->free_head=allocation.slot+1;
+    qa_pool_release(&memory->records,allocation.slot);
     return true;
 }
 bool qa_bot_memory_free(qa_bot_memory *memory,qa_bot_memory_allocation allocation,qa_error *error)
@@ -180,7 +184,7 @@ bool qa_bot_memory_reset_hunk(qa_bot_memory *memory,qa_error *error)
     uint32_t link=memory->first;
     bool ok=true;
     while(ok && link) {
-        bot_memory_record *record=&memory->records[link-1];uint32_t next=record->next;
+        bot_memory_record *record=qa_pool_at(&memory->records,link-1);uint32_t next=record->next;
         if(record->kind==QA_BOT_MEMORY_HUNK) ok=bot_memory_release(memory,bot_memory_handle(memory,link-1),true,error);
         link=next;
     }
@@ -189,9 +193,9 @@ bool qa_bot_memory_reset_hunk(qa_bot_memory *memory,qa_error *error)
 void bot_memory_clear(qa_bot_memory *memory)
 {
     while(memory->first) (void)bot_memory_release(memory,bot_memory_handle(memory,memory->first-1),true,NULL);
-    free(memory->records);memory->records=NULL;
+    qa_arena_destroy(&memory->record_storage);memory->records=(qa_pool){0};
     free(memory->script_restored);memory->script_restored=NULL;memory->script_restored_count=0;
-    memory->first=memory->last=memory->free_head=memory->slots=memory->capacity=0;
+    memory->first=memory->last=memory->slots=0;
 }
 bool qa_bot_memory_dispose(qa_bot_memory *memory,qa_error *error)
 {
@@ -276,7 +280,7 @@ static bool labels(qa_bot_memory *memory,qa_error *error)
     if(memory->options.profile!=QA_BOT_MEMORY_DEBUG) return true;
     size_t index=0;
     for(uint32_t link=memory->last;link;++index) {
-        const bot_memory_record *record=&memory->records[link-1];link=record->previous;
+        const bot_memory_record *record=qa_pool_at(&memory->records,link-1);link=record->previous;
         const char *file=record->has_provenance?record->file:"<unattributed>";
         const char *label=record->has_provenance?record->label:"";
         size_t file_size=strlen(file),label_size=strlen(label);
@@ -313,7 +317,8 @@ bool qa_bot_memory_dump(qa_bot_memory *memory,qa_error *error)
     memory->busy=true;bool ok=true;
     uint32_t link=memory->last;
     while(ok && link) {
-        uint32_t previous=memory->records[link-1].previous;
+        const bot_memory_record *record=qa_pool_at(&memory->records,link-1);
+        uint32_t previous=record->previous;
         ok=bot_memory_release(memory,bot_memory_handle(memory,link-1),false,error);link=previous;
     }
     memory->busy=false;return ok;

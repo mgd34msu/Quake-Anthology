@@ -22,6 +22,9 @@ typedef struct item_group {
     qa_item_admission *items;
     size_t count;
     size_t order;
+    qa_inventory *storage_owner;
+    size_t storage_slot;
+    qa_arena payload_storage;
     qa_arena index_storage;
     qa_id_index item_index;
     inventory_source_index *source_index, *source_candidate;
@@ -78,7 +81,7 @@ struct qa_inventory {
     size_t calls;
     qa_operation *operations[4];
     qa_arena record_storage;
-    qa_pool store_records, admission_pages, source_records, pickup_records;
+    qa_pool store_records, admission_pages, source_records, pickup_records, group_records;
     qa_arena scratch_storage;
     qa_pool scratch_pages;
     size_t storage_leases;
@@ -107,6 +110,8 @@ void qa_inventory_hold(qa_inventory *);
 void qa_inventory_unhold(qa_inventory *);
 bool qa_inventory_store_reserve_entries(qa_inventory *, inventory_store *, size_t, qa_error *);
 inventory_store *qa_inventory_store_create(qa_inventory *, qa_error *);
+item_group *qa_inventory_group_create(inventory_store *, qa_error *);
+bool qa_inventory_group_items_prepare(item_group *, size_t, qa_error *);
 void qa_inventory_store_drop(inventory_store *);
 inventory_store *qa_inventory_checkpoint_acquire(qa_inventory *, qa_actor_id);
 void qa_inventory_checkpoint_release(qa_inventory *, inventory_store *);

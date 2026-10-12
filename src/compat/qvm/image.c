@@ -118,6 +118,10 @@ bool qa_qvm_image_load(qa_bytes bytes, qa_qvm_image **out, qa_error *error)
     image->initialized.size = initialized;
     if (initialized > 0) memcpy(image->initialized.data,bytes.data + data_offset,initialized);
     image->source_bytes = bytes.size;
+    image->regions = qa_arena_alloc(&image->region_storage, sizeof(*image->regions),
+        _Alignof(qa_id_index), error);
+    if (!image->regions) goto failed;
+    *image->regions = (qa_id_index){.storage = &image->region_storage};
     *out = image;
     return true;
 failed:
@@ -152,6 +156,8 @@ void qa_qvm_image_retain(qa_qvm_image *image)
 void qa_qvm_image_release(qa_qvm_image *image)
 {
     if (image == NULL || --image->references != 0) return;
+    if (image->regions) qa_id_index_destroy(image->regions);
+    qa_arena_destroy(&image->region_storage);
     free(image->instructions); free(image->code); qa_buffer_free(&image->initialized); free(image);
 }
 

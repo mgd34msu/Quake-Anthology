@@ -288,6 +288,8 @@ struct qa_gl_renderer {
     qa_render_resource_index mesh_index;
     gl_stream_buffers stream;
     qa_arena work_storage;
+    uint8_t *overdraw_pixels;
+    size_t overdraw_capacity;
     GLuint skin_palette_buffer;
     size_t skin_palette_bytes, skin_palette_cursor, skin_palette_alignment;
     gl_skin_palette *skin_palettes;

@@ -340,15 +340,6 @@ static bool visual_owner(qa_frontend *frontend, const qa_application_visual_view
     owner->next = frontend->visuals; frontend->visuals = owner; *out = owner;
     return true;
 }
-static void player_translation(uint8_t colors, uint8_t out[256])
-{
-    for (unsigned i = 0; i < 256; ++i) out[i] = (uint8_t)i;
-    unsigned top = colors & 240u, bottom = (colors & 15u) << 4;
-    for (unsigned i = 0; i < 16; ++i) {
-        out[16 + i] = (uint8_t)(top < 128 ? top + i : top + 15 - i);
-        out[96 + i] = (uint8_t)(bottom < 128 ? bottom + i : bottom + 15 - i);
-    }
-}
 static bool opening_rank(const qa_vfs *files, const qa_vfs_acquisition *opening, int64_t *out, qa_error *error)
 {
     if (!files || !opening || !opening->path || !opening->lookup_path || !opening->link_source || !opening->link_target)
@@ -535,7 +526,7 @@ static frontend_model *model_cached(const frontend_visual_owner *owner, qa_strin
     const qa_resource *source, bool colored, uint8_t colors)
 {
     uint8_t translation[256];
-    if (colored) player_translation(colors, translation);
+    if (colored) (void)qa_image_player_translation(colors >> 4, colors & 15u, translation, NULL);
     qa_id_index_cursor cursor = qa_id_index_begin(&owner->model_index, path_name,
         source ? qa_resource_id(source) : 0);
     size_t value;
@@ -559,7 +550,7 @@ static bool model_read(qa_frontend *frontend, frontend_visual_owner *owner, qa_s
     if (!frontend_visuals_idle(frontend))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Decoded appearance requires idle admission owners");
     uint8_t translation[256];
-    if (colored) player_translation(colors, translation);
+    if (colored) (void)qa_image_player_translation(colors >> 4, colors & 15u, translation, NULL);
     const char *path=qa_strings_cstr(owner->strings,path_name);
     frontend_model *model = qa_arena_alloc(&owner->storage, sizeof(*model), _Alignof(frontend_model), error);
     if (!model) return frontend_fail(error, QA_ERROR_MEMORY, "allocating decoded appearance");

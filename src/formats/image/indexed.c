@@ -185,8 +185,8 @@ bool qa_image_decode_colormap(qa_bytes b, qa_buffer *out, unsigned *first, qa_er
     return true;
 }
 bool qa_image_player_translation(unsigned top, unsigned bottom, uint8_t table[256], qa_error *e) {
-    if (!table || top > 13 || bottom > 13)
-        return qa_img_fail(e, QA_ERROR_ARGUMENT, 0, "Player colors require indices 0..13");
+    if (!table || top > 15 || bottom > 15)
+        return qa_img_fail(e, QA_ERROR_ARGUMENT, 0, "Player colors require indices 0..15");
     for (unsigned i = 0; i < 256; i++)
         table[i] = (uint8_t)i;
     for (unsigned i = 0; i < 16; i++) {

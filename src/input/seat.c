@@ -152,21 +152,26 @@ static bool context_ready(const qa_input_seat_options *options,
     }
     return true;
 }
+qa_input_seat *qa_input_seat_bindings_create(qa_error *error) {
+    qa_input_seat *s = calloc(1, sizeof(*s));
+    if (!s) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating input seat");
+        return NULL;
+    }
+    s->focused = true;
+    s->next_ui = 1;
+    qa_arena_seal(&s->binding_text);
+    return s;
+}
 qa_input_seat *qa_input_seat_create(const qa_input_seat_options *o, qa_error *error) {
     if (!o || !o->console || !qa_gamepad_tuning_valid(&o->gamepad)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid local input seat");
         return NULL;
     }
     if (!context_ready(o, &o->context, error)) return NULL;
-    qa_input_seat *s = calloc(1, sizeof(*s));
-    if (!s) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating input seat");
-        return NULL;
-    }
+    qa_input_seat *s = qa_input_seat_bindings_create(error);
+    if (!s) return NULL;
     s->options = *o;
-    s->focused = true;
-    s->next_ui = 1;
-    qa_arena_seal(&s->binding_text);
     if (!qa_strings_create(&s->command_sources, error) ||
         !binding_sources_prepare(s, NULL, NULL, error) ||
         !qa_input_reserve((void **)&s->ui, &s->ui_capacity, 1, sizeof(*s->ui), error)) {
@@ -538,8 +543,10 @@ bool qa_input_seat_configuration_clone(const qa_input_seat *source,qa_input_seat
     for (size_t i=0;i<source->binding_count;++i) if (source->bindings[i]->references==SIZE_MAX) {
         qa_error_set(error,QA_ERROR_MEMORY,0,"Input binding reference count exceeds storage"); return false;
     }
-    qa_input_seat *copy=qa_input_seat_create(&source->options,error);
+    qa_input_seat *copy=source->options.console?qa_input_seat_create(&source->options,error):
+        qa_input_seat_bindings_create(error);
     if (!copy) return false;
+    copy->options=source->options;
     if (source->binding_count) {
         copy->bindings=malloc(source->binding_count*sizeof(*copy->bindings));
         if (!copy->bindings) {
@@ -743,6 +750,7 @@ static bool binding_text_bound(const qa_binding_record *record, const char *tail
 }
 static bool binding_text_prepare(qa_input_seat *seat, const qa_input_seat *other,
                                  const qa_binding_record *extra, qa_error *error) {
+    if (!seat->options.console) return true;
     char tail[BINDING_TAIL_CAPACITY];
     int written = snprintf(tail, sizeof(tail), " %llu %.0f\n",
                            (unsigned long long)UINT64_MAX, DBL_MAX);

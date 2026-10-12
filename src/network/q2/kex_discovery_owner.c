@@ -62,6 +62,15 @@ static bool send_bytes(qa_kex_mdns_owner *o, qa_bytes bytes, qa_error *e)
     return qa_kex_mdns_native_send(o->socket, bytes, e);
 }
 
+bool qa_kex_mdns_owner_storage_prepare(qa_kex_mdns_owner *o, qa_error *e)
+{
+    if (!qa_kex_mdns_scratch_prepare(&o->name_storage, e) ||
+        !qa_arena_reserve(&o->announcement_storage,
+            65507u + 253u * sizeof(qa_net_address) + _Alignof(qa_net_address) - 1, e)) return false;
+    qa_arena_seal(&o->announcement_storage);
+    return true;
+}
+
 static bool announce(qa_kex_mdns_owner *o, uint32_t ttl, qa_error *e)
 {
     if (!o->advertised_port) return true;
@@ -78,10 +87,12 @@ static bool announce(qa_kex_mdns_owner *o, uint32_t ttl, qa_error *e)
         qa_net_interfaces_destroy(interfaces);
         return fail(e, QA_ERROR_FORMAT, "KEX mDNS native interface count exceeds DNS packet limits");
     }
-    qa_net_address *addresses = count ? calloc(count, sizeof(*addresses)) : NULL;
+    qa_net_address *addresses = count ? qa_arena_alloc(&o->announcement_storage,
+        count * sizeof(*addresses), _Alignof(qa_net_address), e) : NULL;
     if (count && !addresses) {
         qa_net_interfaces_destroy(interfaces);
-        return fail(e, QA_ERROR_MEMORY, "Allocating KEX mDNS native addresses");
+        qa_arena_reset(&o->announcement_storage);
+        return false;
     }
     size_t at = 0;
     for (size_t i = 0; i < qa_net_interfaces_count(interfaces); ++i) {
@@ -92,12 +103,14 @@ static bool announce(qa_kex_mdns_owner *o, uint32_t ttl, qa_error *e)
         ++at;
     }
     qa_net_interfaces_destroy(interfaces);
-    uint8_t bytes[65507];
+    uint8_t *bytes = qa_arena_alloc(&o->announcement_storage, 65507, 1, e);
+    if (!bytes) { qa_arena_reset(&o->announcement_storage); return false; }
     qa_net_writer w;
-    qa_net_writer_init(&w, bytes, sizeof(bytes), e);
+    qa_net_writer_init(&w, bytes, 65507, e);
     bool ok = qa_kex_mdns_announce(&w, hostname, o->advertised_port, addresses, count, ttl);
-    free(addresses);
-    return ok && send_bytes(o, (qa_bytes){bytes, qa_net_writer_size(&w)}, e);
+    if (ok) ok = send_bytes(o, (qa_bytes){bytes, qa_net_writer_size(&w)}, e);
+    qa_arena_reset(&o->announcement_storage);
+    return ok;
 }
 
 bool qa_kex_mdns_owner_activate(qa_kex_mdns_owner *o, qa_error *e)
@@ -127,7 +140,8 @@ bool qa_kex_mdns_owner_open(uint16_t port, const qa_kex_mdns_hooks *hooks,
     if (!o) return fail(e, QA_ERROR_MEMORY, "Allocating KEX mDNS owner");
     o->advertised_port = port;
     o->hooks = *hooks;
-    if (!qa_kex_mdns_owner_activate(o, e) || !qa_kex_mdns_owner_publish(o, e)) {
+    if (!qa_kex_mdns_owner_storage_prepare(o, e) ||
+        !qa_kex_mdns_owner_activate(o, e) || !qa_kex_mdns_owner_publish(o, e)) {
         qa_kex_mdns_owner_destroy(o);
         return false;
     }
@@ -230,7 +244,7 @@ bool qa_kex_mdns_owner_dispatch(qa_kex_mdns_owner *o,
     qa_kex_mdns_result result = {0};
     if (ok && event && event->packet.kind == QA_NET_POLL_PACKET) {
         qa_error malformed = {0};
-        if (!qa_kex_mdns_read(event->packet.payload, &result, &malformed)) {
+        if (!qa_kex_mdns_read_scratch(event->packet.payload, &o->name_storage, &result, &malformed)) {
             if (malformed.code == QA_ERROR_MEMORY) { if (e) *e = malformed; ok = false; }
         } else {
             if (result.question) ok = announce(o, 120, e);
@@ -281,5 +295,7 @@ void qa_kex_mdns_owner_destroy(qa_kex_mdns_owner *o)
     qa_error ignored = {0};
     qa_kex_mdns_owner_shutdown(o, &ignored);
     qa_kex_mdns_owner_release_records(o);
+    qa_arena_destroy(&o->name_storage);
+    qa_arena_destroy(&o->announcement_storage);
     free(o);
 }

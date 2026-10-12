@@ -2,6 +2,7 @@
 #define QA_KEX_LAN_INTERNAL_H
 
 #include "qa/network_q2_kex.h"
+#include "qa/arena.h"
 
 struct attributes {
     qa_kex_attribute *data;
@@ -20,6 +21,7 @@ struct peer {
 };
 struct qa_kex_lan {
     qa_net_transport *transport;
+    qa_arena reply_storage;
     qa_net_address local_address;
     qa_kex_lan_options options;
     char name[1025];
@@ -35,6 +37,7 @@ struct qa_kex_lan {
 };
 
 bool qa_kex_lan_valid(const qa_kex_lan *);
+bool qa_kex_lan_reply_storage_prepare(qa_kex_lan *, qa_error *);
 qa_net_send_result qa_kex_lan_emit(void *, qa_bytes, qa_error *);
 void qa_kex_lan_destroy_detached(qa_kex_lan *);
 

@@ -1,6 +1,38 @@
 #include "output_domain.h"
-#include <stdlib.h>
 #include <string.h>
+
+static bool reserve(qa_output_domains *owner, size_t count, qa_error *error)
+{
+    if (count <= owner->capacity) return true;
+    size_t capacity = owner->capacity ? owner->capacity : 8;
+    while (capacity < count) {
+        if (capacity > SIZE_MAX / 2) { capacity = count; break; }
+        capacity *= 2;
+    }
+    if (capacity > SIZE_MAX / sizeof(*owner->regions)) {
+        qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Output color domain region storage overflow"); return false;
+    }
+    qa_output_domain_region *regions = qa_arena_grow(&owner->storage, owner->regions,
+        owner->count * sizeof(*regions), capacity * sizeof(*regions),
+        _Alignof(qa_output_domain_region), error);
+    if (!regions) return false;
+    owner->regions = regions; owner->capacity = capacity;
+    return true;
+}
+
+bool qa_output_domains_prepare(qa_output_domains *owner, const qa_scene_frame *frame,
+    size_t first, qa_error *error)
+{
+    size_t count = owner->count;
+    for (size_t i = first; i < frame->command_count; ++i)
+        if (frame->commands[i].kind == QA_SCENE_COMMAND_OUTPUT_DOMAIN) {
+            if (count == SIZE_MAX) {
+                qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Output color domain region storage overflow"); return false;
+            }
+            ++count;
+        }
+    return reserve(owner, count, error);
+}
 
 static bool valid(qa_scene_rect r, qa_scene_draw_buffer buffer, uint32_t width, uint32_t height)
 {
@@ -25,15 +57,7 @@ bool qa_output_domains_assign(qa_output_domains *owner, qa_scene_rect rect,
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Output color domain requires its real framebuffer region"); return false;
     }
     qa_output_domains_extent(owner,width,height);
-    if (owner->count == owner->capacity) {
-        size_t capacity = owner->capacity ? owner->capacity * 2 : 8;
-        if (capacity < owner->capacity || capacity > SIZE_MAX / sizeof(*owner->regions)) {
-            qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Output color domain region storage overflow"); return false;
-        }
-        qa_output_domain_region *regions = realloc(owner->regions, capacity * sizeof(*regions));
-        if (!regions) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining output color domains"); return false; }
-        owner->regions = regions; owner->capacity = capacity;
-    }
+    if (owner->count == SIZE_MAX || !reserve(owner, owner->count + 1, error)) return false;
     size_t kept = 0;
     for (size_t i = 0; i < owner->count; ++i)
         if (owner->regions[i].buffer != buffer || !covers(rect, owner->regions[i].rect))
@@ -98,10 +122,10 @@ bool qa_output_domains_codec(qa_source_save_io *io, qa_output_domains *owner,
     if (reading) { owner->width=width; owner->height=height; }
     size_t count = owner->count;
     if (!qa_source_save_count(io, &count, reading ? (io->input.size - io->offset) / 21 : SIZE_MAX / sizeof(*owner->regions))) return false;
-    if (reading && count) {
-        owner->regions = calloc(count, sizeof(*owner->regions));
-        if (!owner->regions) { qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Restoring output color regions"); return false; }
-        owner->count = owner->capacity = count;
+    if (reading) {
+        if (!reserve(owner, count, io->error)) return false;
+        if (count) memset(owner->regions, 0, count * sizeof(*owner->regions));
+        owner->count = count;
     }
     for (size_t i = 0; i < count; ++i) {
         qa_output_domain_region *r = owner->regions + i;
@@ -116,4 +140,4 @@ bool qa_output_domains_codec(qa_source_save_io *io, qa_output_domains *owner,
     return true;
 }
 void qa_output_domains_destroy(qa_output_domains *owner)
-{ free(owner->regions); memset(owner, 0, sizeof(*owner)); }
+{ qa_arena_destroy(&owner->storage); memset(owner, 0, sizeof(*owner)); }

@@ -1,14 +1,26 @@
 #include "startup_rotation.h"
 #include "qa/application_q2_rotation.h"
+#include "qa/arena.h"
 #include "qa/source_save.h"
 #include "qa/text.h"
 #include <stdio.h>
+
+typedef struct rotation_rows {
+    qa_arena storage;
+    char **maps,**labels;
+    size_t count;
+    qa_application_q2_rotation_view source;
+    bool valid;
+} rotation_rows;
+typedef struct rotation_parser { size_t cursor,start; bool done; } rotation_parser;
 
 struct frontend_startup_rotation {
     frontend_seat *seat;
     qa_ui *ui;
     qa_ui_id menu;
     char draft[512],status[512];
+    rotation_rows snapshots[2];
+    unsigned current;
     char **maps,**labels;
     size_t count,selected;
     qa_ui_control controls[11];
@@ -25,8 +37,12 @@ static double now(const frontend_startup_rotation *o)
 { return (double)o->seat->frontend->time_ns/1000000.0; }
 static void clear(frontend_startup_rotation *o)
 {
-    for(size_t i=0;i<o->count;++i) { free(o->maps[i]); free(o->labels[i]); }
-    free(o->maps); free(o->labels); o->maps=o->labels=NULL; o->count=0;
+    for(unsigned i=0;i<2;++i) {
+        qa_arena_reset(&o->snapshots[i].storage);
+        o->snapshots[i].maps=o->snapshots[i].labels=NULL;
+        o->snapshots[i].count=0; o->snapshots[i].valid=false;
+    }
+    o->maps=o->labels=NULL; o->count=0;
 }
 static bool source_read(frontend_startup_rotation *o,qa_application_q2_rotation_view *out,bool *present,qa_error *e)
 {
@@ -46,39 +62,68 @@ static bool source_read(frontend_startup_rotation *o,qa_application_q2_rotation_
         return fail(e,QA_ERROR_ARGUMENT,"Map rotation changed its actual published Q2 Source");
     *present=true; return true;
 }
-static bool append_map(frontend_startup_rotation *o,qa_bytes text,qa_error *e)
+static bool next_map(qa_bytes bytes,rotation_parser *parser,qa_bytes *out)
 {
-    if(!text.size)return true;
-    if(text.size>SIZE_MAX-32 || o->count>=SIZE_MAX/sizeof(*o->maps)-1)
+    while(!parser->done) {
+        size_t end=bytes.size; uint32_t code;
+        parser->done=true;
+        while(parser->cursor<bytes.size) {
+            size_t before=parser->cursor;
+            if(!qa_utf8_next(bytes,&parser->cursor,&code))break;
+            if(code!=',' && !qa_unicode_whitespace(code))continue;
+            end=before; parser->done=false; break;
+        }
+        *out=(qa_bytes){bytes.data+parser->start,end-parser->start};
+        parser->start=parser->cursor;
+        if(out->size)return true;
+    }
+    return false;
+}
+static bool append_map(rotation_rows *rows,qa_bytes text,qa_error *e)
+{
+    if(text.size>SIZE_MAX-32)
         return fail(e,QA_ERROR_MEMORY,"Source rotation exceeds its actual retained extent");
-    char **maps=realloc(o->maps,(o->count+1)*sizeof(*maps));
-    if(!maps)return fail(e,QA_ERROR_MEMORY,"Retaining actual Source rotation entries");
-    o->maps=maps;
-    char **labels=realloc(o->labels,(o->count+1)*sizeof(*labels));
-    if(!labels)return fail(e,QA_ERROR_MEMORY,"Retaining actual Source rotation labels");
-    o->labels=labels;
-    char *map=malloc(text.size+1),*label=malloc(text.size+32);
-    if(!map || !label) { free(map); free(label); return fail(e,QA_ERROR_MEMORY,"Retaining an actual Source map name"); }
+    char *map=qa_arena_alloc(&rows->storage,text.size+1,1,e);
+    char *label=qa_arena_alloc(&rows->storage,text.size+32,1,e);
+    if(!map || !label)return false;
     memcpy(map,text.data,text.size); map[text.size]=0;
-    snprintf(label,text.size+32,"%zu. %s",o->count+1,map);
-    o->maps[o->count]=map; o->labels[o->count++]=label; return true;
+    snprintf(label,text.size+32,"%zu. %s",rows->count+1,map);
+    rows->maps[rows->count]=map; rows->labels[rows->count++]=label; return true;
+}
+static bool same_maps(const rotation_rows *rows,const qa_application_q2_rotation_view *view)
+{
+    const qa_application_q2_rotation_view *source=&rows->source;
+    return rows->valid && source->application==view->application && source->owner==view->owner &&
+        source->descriptor==view->descriptor && source->console==view->console && source->cvars==view->cvars &&
+        source->command.session==view->command.session && source->command.cvar_view==view->command.cvar_view &&
+        source->scope.provider==view->scope.provider && source->scope.kind==view->scope.kind &&
+        source->scope.seat==view->scope.seat && source->configuration_generation==view->configuration_generation &&
+        source->rerelease==view->rerelease && source->prepared==view->prepared && source->maps_revision==view->maps_revision;
 }
 static bool parse(frontend_startup_rotation *o,const qa_application_q2_rotation_view *view,qa_error *e)
 {
-    clear(o);
-    const char *text=view->desired_maps; qa_bytes bytes={(const uint8_t *)text,strlen(text)};
-    size_t cursor=0,start=0; uint32_t code;
-    while(cursor<bytes.size) {
-        size_t before=cursor;
-        if(!qa_utf8_next(bytes,&cursor,&code))break;
-        if(code!=',' && !qa_unicode_whitespace(code))continue;
-        if(!append_map(o,(qa_bytes){bytes.data+start,before-start},e))return false;
-        start=cursor;
+    rotation_rows *rows=&o->snapshots[o->current];
+    if(!same_maps(rows,view)) {
+        qa_bytes bytes={(const uint8_t *)view->desired_maps,strlen(view->desired_maps)},entry;
+        rotation_parser parser={0}; size_t count=0;
+        while(next_map(bytes,&parser,&entry))++count;
+        if(count>SIZE_MAX/sizeof(*rows->maps))
+            return fail(e,QA_ERROR_MEMORY,"Source rotation exceeds its actual retained extent");
+        rows=&o->snapshots[o->current^1];
+        qa_arena_reset(&rows->storage); rows->count=0; rows->valid=false;
+        rows->maps=count?qa_arena_alloc(&rows->storage,count*sizeof(*rows->maps),_Alignof(char *),e):NULL;
+        rows->labels=count?qa_arena_alloc(&rows->storage,count*sizeof(*rows->labels),_Alignof(char *),e):NULL;
+        if(count && (!rows->maps || !rows->labels))return false;
+        parser=(rotation_parser){0};
+        while(next_map(bytes,&parser,&entry))if(!append_map(rows,entry,e))return false;
+        if(!qa_application_q2_rotation_current(view))
+            return fail(e,QA_ERROR_ARGUMENT,"Rotation changed while reading its actual order");
+        rows->source=*view; rows->valid=true;
+        o->current^=1; o->maps=rows->maps; o->labels=rows->labels; o->count=rows->count;
     }
-    if(!append_map(o,(qa_bytes){bytes.data+start,bytes.size-start},e))return false;
     if(!o->count)o->selected=0;
     else if(o->selected>=o->count)o->selected=o->count-1;
-    return qa_application_q2_rotation_current(view) || fail(e,QA_ERROR_ARGUMENT,"Rotation changed while reading its actual order");
+    return true;
 }
 static bool map_name(const char *text,char out[128],qa_error *e)
 {
@@ -115,8 +160,7 @@ static bool write(frontend_startup_rotation *o,const qa_application_q2_rotation_
         length+=amount+(length!=0);
     }
     if(length>2048)return fail(e,QA_ERROR_ARGUMENT,"Map rotation exceeds its authored 2048-character setting");
-    char *value=malloc(length+1);
-    if(!value)return fail(e,QA_ERROR_MEMORY,"Retaining the requested Source map order");
+    char value[2049];
     size_t used=0;
     for(size_t i=0;!empty && i<o->count;++i)if(i!=omit) {
         if(used)value[used++]=' ';
@@ -125,7 +169,8 @@ static bool write(frontend_startup_rotation *o,const qa_application_q2_rotation_
     if(append) { if(used)value[used++]=' '; size_t amount=strlen(append); memcpy(value+used,append,amount); used+=amount; }
     value[used]=0;
     bool okay=qa_application_q2_rotation_maps(o->seat->frontend->application,view,value,e);
-    free(value); return okay;
+    if(okay)o->snapshots[o->current].valid=false;
+    return okay;
 }
 static bool execute(frontend_startup_rotation *o,qa_ui_id id,const qa_ui_action *event,qa_error *e)
 {
@@ -156,7 +201,10 @@ static bool execute(frontend_startup_rotation *o,qa_ui_id id,const qa_ui_action 
         if((id==4 && !o->selected) || (id==5 && o->selected+1>=o->count))return true;
         size_t other=id==4?o->selected-1:o->selected+1;
         char *map=o->maps[other]; o->maps[other]=o->maps[o->selected]; o->maps[o->selected]=map;
-        if(!write(o,&view,NULL,SIZE_MAX,false,e))return false;
+        if(!write(o,&view,NULL,SIZE_MAX,false,e)) {
+            map=o->maps[other]; o->maps[other]=o->maps[o->selected]; o->maps[o->selected]=map;
+            return false;
+        }
         o->selected=other; return true;
     }
     if(id==6)return !o->count || write(o,&view,NULL,o->selected,false,e);
@@ -224,7 +272,9 @@ bool frontend_startup_rotation_destroy(frontend_startup_rotation **out,qa_error 
     if(!bound(o) || o->busy || !qa_ui_idle(o->ui))return fail(e,QA_ERROR_ARGUMENT,"Rotation retirement retains its actual UI callback");
     o->retiring=true;
     if(o->registered && !qa_ui_unregister(o->ui,o->menu,now(o),e))return false;
-    clear(o); free(o); *out=NULL; return true;
+    clear(o);
+    for(unsigned i=0;i<2;++i)qa_arena_destroy(&o->snapshots[i].storage);
+    free(o); *out=NULL; return true;
 }
 bool frontend_startup_rotation_open(frontend_startup_rotation *o,qa_error *e)
 { return bound(o) && o->registered && !o->busy && !o->retiring && qa_ui_open(o->ui,o->menu,now(o),e); }

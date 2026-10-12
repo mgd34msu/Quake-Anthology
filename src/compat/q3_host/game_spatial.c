@@ -249,14 +249,15 @@ q3_service_result q3_game_spatial(q3_call *call, int32_t *result, qa_error *erro
     case 24: case 43: ok = trace(call, code == 43, error); break;
     case 25: ok = point_contents(call, result, error); break;
     case 26: case 27: {
-        qa_vec3 first, second; qa_collision_leaf a, b; bool visible, connected = true;
+        qa_vec3 first, second; bool visible;
+        qa_collision_point_visibility_scratch scratch = {0};
+        const qa_collision_point_visibility_rules rules = {.leaf_rule = QA_LEAF_COLLISION,
+            .ignore_areas = code == 27, .minimum_cluster = INT32_MIN,
+            .minimum_area = INT32_MIN};
         ok = q3_vector(call, call->arguments[0], &first, error) &&
             q3_vector(call, call->arguments[1], &second, error) &&
-            qa_collision_point_leaf(geometry, first, QA_LEAF_COLLISION, &a, error) && qa_collision_point_leaf(geometry, second, QA_LEAF_COLLISION, &b, error) &&
-            qa_collision_cluster_visible(geometry, (int32_t)a.cluster, (int32_t)b.cluster, false, &visible, error);
-        if (ok && visible && code == 26)
-            ok = qa_collision_areas_connected(geometry, (int32_t)a.area, (int32_t)b.area, &connected, error);
-        if (ok) *result = visible && connected;
+            qa_collision_point_visible(geometry, first, second, &rules, &scratch, &visible, error);
+        if (ok) *result = visible;
         break;
     }
     case 29: {

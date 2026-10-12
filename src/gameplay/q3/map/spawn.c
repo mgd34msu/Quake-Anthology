@@ -64,97 +64,6 @@ bool q3_map_intern_fold(qa_q3_game *game, qa_bytes input, qa_string_id *out,
     return intern_text(game, input, true, out, error);
 }
 
-typedef struct q3_source_number {
-    qa_bytes text;
-    size_t offset;
-    bool overrun;
-} q3_source_number;
-
-static int source_byte(q3_source_number *input) {
-    if (input->offset > input->text.size) {
-        input->overrun = true;
-        return 0;
-    }
-    if (input->offset == input->text.size || input->text.data[input->offset] == 0)
-        return 0;
-    uint8_t byte = input->text.data[input->offset];
-    return byte < 128 ? byte : (int)byte - 256;
-}
-
-static int source_take(q3_source_number *input) {
-    int byte = source_byte(input);
-    ++input->offset;
-    return byte;
-}
-
-static void source_space(q3_source_number *input) {
-    int byte;
-    while ((byte = source_byte(input)) <= 32 && byte != 0)
-        ++input->offset;
-}
-
-static int source_sign(q3_source_number *input) {
-    int byte = source_byte(input);
-    if (byte != '+' && byte != '-')
-        return 1;
-    ++input->offset;
-    return byte == '-' ? -1 : 1;
-}
-
-static float source_float(q3_source_number *input, bool scan) {
-    source_space(input);
-    if (source_byte(input) == 0)
-        return 0;
-    int sign = source_sign(input);
-    float value = 0;
-    int character = scan ? '0' : source_byte(input);
-    if (source_byte(input) != '.') {
-        for (;;) {
-            character = source_take(input);
-            if (character < '0' || character > '9')
-                break;
-            value = ((value * 10.0f) + (float)(character - '0'));
-        }
-    } else if (!scan)
-        ++input->offset;
-    if (character == '.') {
-        float fraction = 0.1f;
-        for (;;) {
-            character = source_take(input);
-            if (character < '0' || character > '9')
-                break;
-            value = (value + ((float)(character - '0') * fraction));
-            fraction = (fraction * 0.1f);
-        }
-    }
-    return (value * (float)sign);
-}
-
-float q3_source_atof(qa_bytes text) {
-    q3_source_number input = {.text = text};
-    return source_float(&input, false);
-}
-
-static int32_t source_integer(qa_bytes text) {
-    q3_source_number input = {.text = text};
-    source_space(&input);
-    if (source_byte(&input) == 0)
-        return 0;
-    int sign = source_sign(&input);
-    uint32_t value = 0;
-    for (;;) {
-        int character = source_take(&input);
-        if (character < '0' || character > '9')
-            break;
-        value = value * UINT32_C(10) + (uint32_t)(character - '0');
-    }
-    if (sign < 0)
-        value = UINT32_C(0) - value;
-    int32_t result;
-    memcpy(&result, &value, sizeof(result));
-    return result;
-}
-
 bool q3_map_number(const qa_q3_map_fields *fields, const char *key, double fallback,
                    double *out, qa_error *error) {
     qa_bytes text;
@@ -162,7 +71,8 @@ bool q3_map_number(const qa_q3_map_fields *fields, const char *key, double fallb
         *out = fallback;
         return true;
     }
-    *out = q3_source_atof(text);
+    *out = qa_parse_quake_number_cursor(&(qa_number_cursor){.text = text},
+                                       QA_QUAKE_NUMBER_Q3_BYTECODE, false);
     (void)error;
     return true;
 }
@@ -170,7 +80,9 @@ bool q3_map_number(const qa_q3_map_fields *fields, const char *key, double fallb
 bool q3_map_integer(const qa_q3_map_fields *fields, const char *key, int32_t fallback,
                     int32_t *out) {
     qa_bytes text;
-    *out = q3_map_property(fields, key, &text) ? source_integer(text) : fallback;
+    *out = q3_map_property(fields, key, &text) ?
+        qa_parse_decimal_i32_cursor(&(qa_number_cursor){.text = text},
+                                    QA_DECIMAL_SIGNED_WRAP, true) : fallback;
     return true;
 }
 
@@ -181,11 +93,11 @@ bool q3_map_vector(const qa_q3_map_fields *fields, const char *key, qa_vec3 fall
         *out = fallback;
         return true;
     }
-    q3_source_number input = {.text = text};
+    qa_number_cursor input = {.text = text};
     float value[3];
-    value[0] = source_float(&input, true);
-    value[1] = source_float(&input, true);
-    value[2] = source_float(&input, true);
+    value[0] = (float)qa_parse_quake_number_cursor(&input, QA_QUAKE_NUMBER_Q3_BYTECODE, true);
+    value[1] = (float)qa_parse_quake_number_cursor(&input, QA_QUAKE_NUMBER_Q3_BYTECODE, true);
+    value[2] = (float)qa_parse_quake_number_cursor(&input, QA_QUAKE_NUMBER_Q3_BYTECODE, true);
     if (input.overrun) {
         qa_error_set(error, QA_ERROR_FORMAT, fields->ordinal, "invalid Q3 vector map field %s",
                      key);
@@ -259,7 +171,8 @@ static bool parse_generic(qa_q3_game *game, qa_bytes key, qa_bytes value,
         bytes_equal(key, "random") || bytes_equal(key, "angle")) {
         if (bytes_equal(key, "spawnflags") || bytes_equal(key, "count") ||
             bytes_equal(key, "health") || bytes_equal(key, "dmg")) {
-            int32_t integer = source_integer(value);
+            int32_t integer = qa_parse_decimal_i32_cursor(&(qa_number_cursor){.text = value},
+                                                         QA_DECIMAL_SIGNED_WRAP, true);
             if (bytes_equal(key, "spawnflags"))
                 state->spawnflags = (uint32_t)integer;
             else if (bytes_equal(key, "count"))
@@ -270,7 +183,8 @@ static bool parse_generic(qa_q3_game *game, qa_bytes key, qa_bytes value,
                 state->damage = integer;
             return true;
         }
-        number = q3_source_atof(value);
+        number = qa_parse_quake_number_cursor(&(qa_number_cursor){.text = value},
+                                            QA_QUAKE_NUMBER_Q3_BYTECODE, false);
         if (!isfinite(number))
             return q3_map_fail(error, "invalid Q3 authored numeric field");
         if (bytes_equal(key, "speed"))
@@ -424,7 +338,8 @@ static bool worldspawn(qa_q3_game *game, const qa_q3_map_fields *fields, qa_erro
     if (!qa_strings_intern(qa_session_strings(game->options.services.session), value, &gravity_text, error))
         return false;
     double gravity;
-    gravity = q3_source_atof(value);
+    gravity = qa_parse_quake_number_cursor(&(qa_number_cursor){.text = value},
+                                         QA_QUAKE_NUMBER_Q3_BYTECODE, false);
     if (!isfinite(gravity) || gravity < -FLT_MAX || gravity > FLT_MAX)
         return q3_map_fail(error, "invalid Q3 world gravity");
     if (!q3_map_property(fields, "enableDust", &value))

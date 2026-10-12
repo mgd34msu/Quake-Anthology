@@ -1219,6 +1219,19 @@ static bool gl_presented_retain(qa_gl_renderer *renderer,qa_error *error)
     target->width=renderer->presented_width; target->height=renderer->presented_height;
     return true;
 }
+static bool overdraw_prepare(qa_gl_renderer *renderer, uint32_t width,
+    uint32_t height, qa_error *error)
+{
+    size_t stride = ((size_t)width + 3) & ~(size_t)3;
+    if (!height || stride > SIZE_MAX / height) return false;
+    size_t bytes = stride * height;
+    if (bytes <= renderer->overdraw_capacity && renderer->overdraw_pixels) return true;
+    uint8_t *pixels = qa_arena_alloc(&renderer->work_storage, bytes, 1, error);
+    if (!pixels) return false;
+    renderer->overdraw_pixels = pixels; renderer->overdraw_capacity = bytes;
+    return true;
+}
+
 static bool gl_swap(qa_gl_renderer *renderer, bool source_front_buffer, qa_error *error)
 {
     if ((renderer->opacity.active && renderer->opacity.value != 1) || renderer->target) {
@@ -1231,17 +1244,16 @@ static bool gl_swap(qa_gl_renderer *renderer, bool source_front_buffer, qa_error
         if (!gl_dimensions(renderer,&width,&height,error)) return false;
         if (controls->frame_values.show_images && !qa_gl_source_image_grid(controls,controls->frame_values.show_images,error)) return false;
         if (renderer->overdraw) {
+            if (!overdraw_prepare(renderer,width,height,error)) return false;
             size_t stride=((size_t)width+3)&~(size_t)3;
-            if (!height || stride>SIZE_MAX/height) return false;
-            uint8_t *pixels=malloc(stride*height);
-            if (!pixels) { qa_error_set(error,QA_ERROR_MEMORY,0,"Reading Source overdraw stencil"); return false; }
+            uint8_t *pixels=renderer->overdraw_pixels;
             bool ok=pack_state(renderer,4,error);
             if (ok) {
                 renderer->gl.ReadPixels(0,0,(GLsizei)width,(GLsizei)height,GL_STENCIL_INDEX,GL_UNSIGNED_BYTE,pixels);
                 ok=gl_check(renderer,"Source overdraw readback",error);
             }
             if (ok) for (size_t y=0;y<height;++y) for (size_t x=0;x<width;++x) controls->counters.overdraw+=pixels[y*stride+x];
-            free(pixels); if (!ok) return false;
+            if (!ok) return false;
         }
         if (!controls->finish_called) renderer->gl.Finish();
         qa_render_source_report(controls,width,height);
@@ -1270,6 +1282,7 @@ static bool work_frame_begin(qa_gl_renderer *renderer, qa_error *error)
     renderer->world_indices = NULL;
     renderer->particle_vertices = NULL;
     renderer->particle_indices = NULL;
+    renderer->overdraw_pixels = NULL;
     renderer->skin_palette_count = 0;
 #define GL_WORK_PREPARE(field, capacity, type) \
     if (renderer->capacity) { \
@@ -1283,6 +1296,7 @@ static bool work_frame_begin(qa_gl_renderer *renderer, qa_error *error)
     GL_WORK_PREPARE(world_indices, world_index_capacity, uint32_t);
     GL_WORK_PREPARE(particle_vertices, particle_capacity, qa_scene_vertex);
     GL_WORK_PREPARE(particle_indices, particle_capacity, uint32_t);
+    GL_WORK_PREPARE(overdraw_pixels, overdraw_capacity, uint8_t);
 #undef GL_WORK_PREPARE
     for (size_t i = 0; i < renderer->particle_capacity; ++i)
         renderer->particle_indices[i] = (uint32_t)i;
@@ -1327,6 +1341,12 @@ static bool gl_execute_range(qa_gl_renderer *renderer, const qa_scene_frame *fra
         gl_meshes_prune(renderer);
         renderer->sequence = frame->sequence;
         if (!gl_skeletal_frame(renderer, frame, error)) return false;
+    }
+    if (!qa_output_domains_prepare(&renderer->output_domains, frame, first, error)) return false;
+    if (renderer->overdraw) {
+        uint32_t width=0,height=0;
+        if (!gl_dimensions(renderer,&width,&height,error) ||
+            !overdraw_prepare(renderer,width,height,error)) return false;
     }
     for (size_t i = first; i < frame->command_count; ++i) {
         renderer->frame_command=i;
@@ -1838,6 +1858,11 @@ bool qa_gl_set_overdraw(qa_gl_renderer *renderer, bool enabled,
                      "OpenGL overdraw requires stencil storage");
         return false;
     }
+    if (enabled) {
+        uint32_t width=0,height=0;
+        if (!gl_dimensions(renderer,&width,&height,error) ||
+            !overdraw_prepare(renderer,width,height,error)) return false;
+    }
     renderer->overdraw = enabled;
     return true;
 }
@@ -2220,6 +2245,11 @@ bool qa_gl_source_overdraw(qa_render_controls *controls,bool enabled,qa_error *e
     }
     if (renderer->overdraw==enabled) return true;
     if (!qa_display_make_current(renderer->options.display,error)) return false;
+    if (enabled) {
+        uint32_t width=0,height=0;
+        if (!gl_dimensions(renderer,&width,&height,error) ||
+            !overdraw_prepare(renderer,width,height,error)) return false;
+    }
     renderer->overdraw=enabled;
     if (enabled) {
         gl_state_enable(renderer, GL_STENCIL_TEST, true); gl_state_stencil_mask(renderer, UINT_MAX);

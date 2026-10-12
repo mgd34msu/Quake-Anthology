@@ -181,6 +181,23 @@ bool qa_collision_walk_segment(const qa_collision_geometry *, qa_trace_scratch *
 /* Mod_PointInLeaf starts node0 and uses float d > 0; collision keeps the
  * authored world root and ties front. */
 bool qa_collision_point_leaf(const qa_collision_geometry *, qa_vec3, qa_leaf_query_rule, qa_collision_leaf *, qa_error *);
+typedef struct qa_collision_point_visibility_rules {
+    qa_leaf_query_rule leaf_rule;
+    bool phs, ignore_areas;
+    int32_t minimum_cluster, minimum_area;
+} qa_collision_point_visibility_rules;
+typedef struct qa_collision_point_visibility_scratch {
+    const qa_collision_geometry *geometry;
+    uint64_t map_generation;
+    qa_vec3 origin;
+    qa_collision_leaf leaf, target;
+    qa_leaf_query_rule leaf_rule;
+    bool valid;
+} qa_collision_point_visibility_scratch;
+/* Zero caller scratch at the query batch boundary; geometry remains immutable. */
+bool qa_collision_point_visible(const qa_collision_geometry *, qa_vec3, qa_vec3,
+    const qa_collision_point_visibility_rules *, qa_collision_point_visibility_scratch *,
+    bool *, qa_error *);
 bool qa_collision_leaf_at(const qa_collision_geometry *, uint32_t, qa_collision_leaf *, qa_error *);
 bool qa_collision_box_leaves(const qa_collision_geometry *, qa_trace_scratch *, qa_bounds, uint32_t *leaves, size_t capacity, qa_leaf_list *, qa_error *);
 bool qa_collision_cluster_visible(const qa_collision_geometry *, int32_t from, int32_t to, bool phs, bool *, qa_error *);

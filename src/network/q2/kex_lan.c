@@ -3,6 +3,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+bool qa_kex_lan_reply_storage_prepare(qa_kex_lan *l,qa_error *e) {
+    if(!l->options.host)return true;
+    if(!qa_arena_reserve(&l->reply_storage,UINT16_MAX,e))return false;
+    qa_arena_seal(&l->reply_storage);
+    return true;
+}
 static void attrs_free(struct attributes*a) {
     free(a->data);
     a->data=NULL;
@@ -168,6 +174,11 @@ bool qa_kex_lan_open(qa_net_transport*t,const qa_kex_lan_options*o,qa_kex_lan**o
     l->next_id=1;
     if(o->name)strcpy(l->name,o->name);
     l->options.name=l->name;
+    if(!qa_kex_lan_reply_storage_prepare(l,e)) {
+        qa_arena_destroy(&l->reply_storage);
+        free(l);
+        return false;
+    }
     if(o->host) {
         for(unsigned i=0;i<o->local_players;i++) {
             uint64_t id=l->next_id++;
@@ -175,11 +186,13 @@ bool qa_kex_lan_open(qa_net_transport*t,const qa_kex_lan_options*o,qa_kex_lan**o
             l->local_ids[i]=id;
         }
         if(!attrs_set(&l->attributes,"ingame","1",false,e)) {
+            qa_arena_destroy(&l->reply_storage);
             free(l);
             return false;
         }
         l->joined=true;
     }  else if(!add_peer(l,&o->server,e)) {
+        qa_arena_destroy(&l->reply_storage);
         free(l);
         return false;
     }
@@ -207,6 +220,7 @@ void qa_kex_lan_close(qa_kex_lan*l) {
     for(size_t i=0;i<l->player_count;i++)attrs_free(&l->players[i].attributes);
     attrs_free(&l->attributes);
     qa_net_transport_close(l->transport);
+    qa_arena_destroy(&l->reply_storage);
     free(l);
 }
 bool qa_kex_lan_admitted(const qa_kex_lan*l,const qa_net_address*a) {
@@ -402,11 +416,8 @@ static bool message(qa_kex_lan*l,struct peer*p,const qa_kex_message*m,qa_error*e
         if(!qa_kex_read_string(&r,text,sizeof(text)))return false;
         if(strcmp(text,"QuakeII"))return true;
         if(!qa_net_reader_finish(&r))return false;
-        uint8_t*data=malloc(65535);
-        if(!data) {
-            qa_error_set(e,QA_ERROR_MEMORY,0,"KEX discovery allocation failed");
-            return false;
-        }
+        uint8_t*data=qa_arena_alloc(&l->reply_storage,UINT16_MAX,1,e);
+        if(!data)return false;
         qa_net_writer w;
         qa_net_writer_init(&w,data,65535,e);
         qa_kex_write_string(&w,l->name);
@@ -422,7 +433,7 @@ static bool message(qa_kex_lan*l,struct peer*p,const qa_kex_message*m,qa_error*e
         bool ok=!w.failed&&qa_net_transport_send(l->transport,&p->address,(qa_bytes) {
             data,qa_net_writer_size(&w)
         },e) == QA_NET_SEND_ACCEPTED;
-        free(data);
+        qa_arena_reset(&l->reply_storage);
         return ok;
     }
     if(m->kind==254) {

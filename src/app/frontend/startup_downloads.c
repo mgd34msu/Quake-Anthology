@@ -1,5 +1,6 @@
 #include "startup_downloads.h"
 #include "network_menu.h"
+#include "qa/arena.h"
 #include "qa/source_save.h"
 #include "qa/text.h"
 #include <inttypes.h>
@@ -22,6 +23,8 @@ struct frontend_startup_downloads {
     qa_seat_console *console;
     download_context contexts[2];
     download_draft draft;
+    qa_arena rows_storage[2];
+    unsigned current;
     download_row *jobs;
     qa_ui_row *rows;
     size_t count;
@@ -49,8 +52,8 @@ static bool read(frontend_startup_downloads *o,frontend_network_menu_view *out,q
 }
 static void clear(frontend_startup_downloads *o)
 {
-    for(size_t i=0;i<o->count;++i)free(o->jobs[i].path);
-    free(o->jobs); free(o->rows); o->jobs=NULL; o->rows=NULL; o->count=0;
+    for(unsigned i=0;i<2;++i)qa_arena_reset(&o->rows_storage[i]);
+    o->jobs=NULL; o->rows=NULL; o->count=0;
 }
 static const char *state(const qa_download_view *v)
 {
@@ -69,17 +72,18 @@ static bool refresh(frontend_startup_downloads *o,const frontend_network_menu_vi
     if(!frontend_network_menu_download_rows(o->seat->frontend,view,NULL,0,&count,e))return false;
     if(count>SIZE_MAX/sizeof(download_row) || count>SIZE_MAX/sizeof(qa_ui_row) || count>SIZE_MAX/sizeof(qa_download_view))
         return fail(e,QA_ERROR_MEMORY,"Download list exceeds its retained extent");
-    download_row *jobs=count?calloc(count,sizeof(*jobs)):NULL;
-    qa_ui_row *rows=count?calloc(count,sizeof(*rows)):NULL;
-    qa_download_view *values=count?calloc(count,sizeof(*values)):NULL;
+    qa_arena *candidate=&o->rows_storage[o->current^1];
+    qa_arena_reset(candidate);
+    download_row *jobs=count?qa_arena_alloc(candidate,count*sizeof(*jobs),_Alignof(download_row),e):NULL;
+    qa_ui_row *rows=count?qa_arena_alloc(candidate,count*sizeof(*rows),_Alignof(qa_ui_row),e):NULL;
+    qa_download_view *values=count?qa_arena_alloc(candidate,count*sizeof(*values),_Alignof(qa_download_view),e):NULL;
     bool okay=!count || (jobs && rows && values);
     if(!okay)fail(e,QA_ERROR_MEMORY,"Retaining the download list");
     size_t actual=0;
     if(okay)okay=frontend_network_menu_download_rows(o->seat->frontend,view,values,count,&actual,e) && actual==count;
     for(size_t i=0;okay && i<count;++i) {
-        jobs[i].view=values[i]; size_t length=strlen(values[i].path);
-        jobs[i].path=malloc(length+1);
-        if(jobs[i].path)memcpy(jobs[i].path,values[i].path,length+1);
+        jobs[i].view=values[i];
+        jobs[i].path=qa_arena_text(candidate,values[i].path,e);
         if(!jobs[i].path) { okay=fail(e,QA_ERROR_MEMORY,"Retaining a download path"); break; }
         jobs[i].view.path=jobs[i].path;
         snprintf(jobs[i].key,sizeof(jobs[i].key),"%" PRIu64,values[i].id);
@@ -87,17 +91,18 @@ static bool refresh(frontend_startup_downloads *o,const frontend_network_menu_vi
             state(values+i),values[i].received,values[i].limit);
         rows[i]=(qa_ui_row){.key=jobs[i].key,.label=jobs[i].path,.detail=jobs[i].detail,.enabled=true};
     }
-    free(values);
-    if(!okay) { for(size_t i=0;jobs && i<count;++i)free(jobs[i].path); free(jobs); free(rows); return false; }
+    if(!okay)return false;
+    if(!frontend_network_menu_current(o->seat->frontend,view))
+        return fail(e,QA_ERROR_ARGUMENT,"Download list changed its Network owner");
     bool changed=count!=o->count;
     for(size_t i=0;!changed && i<count;++i)changed=jobs[i].view.id!=o->jobs[i].view.id;
     if(changed)++o->revision;
     size_t selected=o->draft.selected;
     for(size_t i=0;i<count;++i)if(jobs[i].view.id==o->selected_id)selected=i;
     if(selected>=count)selected=count?count-1:0;
-    clear(o); o->jobs=jobs; o->rows=rows; o->count=count; o->draft.selected=selected;
+    o->current^=1; o->jobs=jobs; o->rows=rows; o->count=count; o->draft.selected=selected;
     o->selected_id=count?jobs[selected].view.id:0;
-    return frontend_network_menu_current(o->seat->frontend,view) || fail(e,QA_ERROR_ARGUMENT,"Download list changed its Network owner");
+    return true;
 }
 static bool field_copy(char *destination,size_t capacity,const qa_ui_action *event,qa_error *e)
 {
@@ -259,7 +264,9 @@ bool frontend_startup_downloads_destroy(frontend_startup_downloads **out,qa_erro
         if(!qa_ui_unregister(o->ui,o->contexts[o->registered-1].menu,now(o),e))return false;
         --o->registered;
     }
-    clear(o); free(o); *out=NULL; return true;
+    clear(o);
+    for(unsigned i=0;i<2;++i)qa_arena_destroy(&o->rows_storage[i]);
+    free(o); *out=NULL; return true;
 }
 bool frontend_startup_downloads_open(frontend_startup_downloads *o,qa_error *e)
 {

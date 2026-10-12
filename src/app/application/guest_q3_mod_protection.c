@@ -26,6 +26,16 @@ struct mod_protection_stage {
     store_delivery *deliveries;
     bool running;
 };
+mod_actor_channel *q3mod_channel_take(application_q3_mod *o,qa_error *e)
+{
+    if(o->channel_pool.head==SIZE_MAX&&!qa_pool_extend(&o->channel_pool,
+        qa_unified_frame_lease_arena(o->resource_storage),o->channel_chunk,e))return NULL;
+    size_t slot;mod_actor_channel *c=qa_pool_take(&o->channel_pool,&slot);
+    if(c)*c=(mod_actor_channel){.owner=o,.storage_slot=slot};
+    return c;
+}
+void q3mod_channel_return(mod_actor_channel *c)
+{qa_pool_release(&c->owner->channel_pool,c->storage_slot);}
 static bool require(mod_actor_channel *c, qa_error *e)
 {
     int32_t slot;
@@ -208,12 +218,12 @@ bool application_q3_mod_reserve(application_q3_mod *o, qa_actor_id actor, qa_err
         mod_actor_channel *found=NULL;
         for (mod_actor_channel *c=resources->channels;c;c=c->actor_next) if (c->definition==i) found=c;
         if (found) { if (found->client!=client || !qa_combat_protection_current(o->combat,found->lease)) return q3mod_fail(e,QA_ERROR_ARGUMENT,"Existing protection reservation changed client"); continue; }
-        mod_actor_channel *c=calloc(1,sizeof(*c));
+        mod_actor_channel *c=q3mod_channel_take(o,e);
         if (!c) { q3mod_resources_collect(o,resources); return q3mod_fail(e,QA_ERROR_MEMORY,"Owning original protection reservation"); }
         c->owner=o; c->actor=actor; c->client=client; c->definition=i;
         qa_protection_claim claim=o->profile->protection[i].claim; claim.owner=o->owner;
         if (!qa_combat_reserve_protection(o->combat,actor,o->profile->protection[i].channel,&claim,&c->lease,e)) {
-            free(c); q3mod_resources_collect(o,resources); return false;
+            q3mod_channel_return(c); q3mod_resources_collect(o,resources); return false;
         }
         q3mod_channel_retain(resources,c);
         mod_actor_channel **tail=&o->channels; while (*tail) tail=&(*tail)->next; *tail=c;
@@ -271,7 +281,7 @@ bool application_q3_mod_release_actor(application_q3_mod *o, qa_actor_id actor, 
         mod_actor_channel **link=&o->channels;
         while(*link&&*link!=c) link=&(*link)->next;
         if(*link) *link=c->next;
-        q3mod_channel_forget(c); free(c);
+        q3mod_channel_forget(c); q3mod_channel_return(c);
         resources=q3mod_resources_find(o,actor);
     }
     q3mod_resources_collect(o,resources);

@@ -44,7 +44,7 @@ bool application_q3_mod_restore(application_q3_mod *o, qa_bytes bytes, qa_error 
     bool ok=q3mod_saved_declaration(o->profile,&io,"QGMD") && qa_source_save_bool(&io,&active) && qa_source_save_bool(&io,&callbacks) && qa_source_save_count(&io,&count,UINT32_MAX);
     mod_actor_channel *head=NULL, **tail=&head;
     for (size_t i=0;ok && i<count;++i) {
-        mod_actor_channel *c=calloc(1,sizeof(*c));
+        mod_actor_channel *c=q3mod_channel_take(o,e);
         if (!c) { ok=q3mod_fail(e,QA_ERROR_MEMORY,"Owning detached source protection rows"); break; }
         c->owner=o; qa_string_id rule=0;
         ok=qa_source_save_actor(&io,&c->actor) && qa_source_save_i32(&io,&c->client) &&
@@ -58,7 +58,7 @@ bool application_q3_mod_restore(application_q3_mod *o, qa_bytes bytes, qa_error 
         for (mod_actor_channel *prior=head;ok && prior;prior=prior->next) if
             ((prior->definition==c->definition && qa_actor_id_equal(prior->actor,c->actor)) || prior->lease.serial==c->lease.serial)
                 ok=q3mod_fail(e,QA_ERROR_FORMAT,"Saved protection rows duplicate physical ownership");
-        if (!ok) { free(c); break; }
+        if (!ok) { q3mod_channel_return(c); break; }
         c->lease.actor=c->actor; c->lease.channel=o->profile->protection[c->definition].channel;
         *tail=c; tail=&c->next;
     }
@@ -72,7 +72,7 @@ bool application_q3_mod_restore(application_q3_mod *o, qa_bytes bytes, qa_error 
     if (!ok) {
         while (head) {
             mod_actor_channel *next=head->next;
-            q3mod_channel_forget(head); free(head); head=next;
+            q3mod_channel_forget(head); q3mod_channel_return(head); head=next;
         }
         return false;
     }

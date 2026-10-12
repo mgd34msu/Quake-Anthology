@@ -228,11 +228,8 @@ static bool model_read(frontend_unified_render *r,const qa_unified_model_state *
         .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=255};
     uint8_t translation[256];
     if (source->visual.has_player_colors) {
-        unsigned top=source->visual.player_colors>>4,bottom=source->visual.player_colors&15;
-        for (unsigned i=0;i<256;++i) translation[i]=(uint8_t)i;
-        for (unsigned i=0;i<16;++i) { unsigned t=top*16,b=bottom*16;
-            translation[16+i]=(uint8_t)(t<128?t+i:t+15-i);
-            translation[96+i]=(uint8_t)(b<128?b+i:b+15-i); }
+        (void)qa_image_player_translation(source->visual.player_colors >> 4,
+            source->visual.player_colors & 15u,translation,NULL);
         images.translation=(qa_bytes){translation,sizeof(translation)};
     }
     qa_scene_resources *bank; qa_material_library *materials; qa_font_library *fonts; qa_audio_bank *sounds;

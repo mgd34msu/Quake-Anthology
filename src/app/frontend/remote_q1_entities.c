@@ -141,8 +141,8 @@ bool frontend_remote_q1_entity_at(frontend_remote_q1 *row, size_t index, fronten
     if (value.colormap && value.colormap <= row->max_clients) {
         uint8_t colors = row->clients[value.colormap - 1].colors;
         out->has_colors = row->clients[value.colormap - 1].present;
-        out->top_color = (colors >> 4) > 13 ? 13 : colors >> 4;
-        out->bottom_color = (colors & 15) > 13 ? 13 : colors & 15;
+        out->top_color = colors >> 4;
+        out->bottom_color = colors & 15u;
     }
     if (qa_q1_is_qw(row->options.domain.protocol) && row->qw_intermission && weapon) out->visible = false;
     const remote_q1_camera_view *camera = remote_q1_camera_read(row);

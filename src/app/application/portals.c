@@ -1,7 +1,10 @@
 #include "qa/persistence_fields.h"
 #include "portals.h"
 #include "guest_q3_private.h"
+#include "control_frame.h"
 #include "qa/source_save.h"
+#include "qa/id_index.h"
+#include "qa/pool.h"
 
 typedef struct application_portal_claim {
     qa_actor_owner provider;
@@ -12,9 +15,67 @@ typedef struct application_portal_claim {
 } application_portal_claim;
 
 struct application_portals {
-    application_portal_claim *claims;
-    size_t count, capacity;
+    qa_unified_frame_lease *storage;
+    qa_id_index index;
+    qa_pool claims;
 };
+
+static uint64_t claim_key(const application_portal_claim *claim)
+{
+    return claim->family == QA_GAME_Q2
+        ? ((uint64_t)claim->portal << 32) | UINT32_MAX
+        : ((uint64_t)claim->first << 32) | claim->second;
+}
+
+static application_portal_claim *claim_at(const struct application_portals *owner, size_t ordinal)
+{
+    return qa_pool_at(&owner->claims, owner->index.entries[ordinal].value);
+}
+
+static application_portal_claim *claim_find(const struct application_portals *owner,
+    const application_portal_claim *key)
+{
+    if (!owner) return NULL;
+    qa_id_index_cursor cursor = qa_id_index_begin(&owner->index, key->provider, claim_key(key));
+    size_t slot;
+    return qa_id_index_next(&owner->index, &cursor, &slot) ? qa_pool_at(&owner->claims, slot) : NULL;
+}
+
+static void owner_destroy(struct application_portals *owner)
+{
+    if (!owner) return;
+    qa_unified_frame_lease *storage = owner->storage;
+    qa_id_index_destroy(&owner->index);
+    qa_unified_frame_lease_release(storage);
+}
+
+static struct application_portals *owner_create(qa_application *app, size_t capacity,
+    qa_error *error)
+{
+    qa_unified_frame_lease *storage = application_control_storage_acquire(app, error);
+    if (!storage) return NULL;
+    struct application_portals *owner = qa_unified_frame_lease_alloc(storage, 1, sizeof(*owner),
+        _Alignof(struct application_portals), error);
+    if (!owner) { qa_unified_frame_lease_release(storage); return NULL; }
+    qa_arena *arena = qa_unified_frame_lease_arena(storage);
+    *owner = (struct application_portals){.storage = storage, .index = {.storage = arena}};
+    if (!qa_pool_prepare(&owner->claims, arena, capacity, sizeof(application_portal_claim),
+        _Alignof(application_portal_claim), error) || !qa_id_index_reserve(&owner->index, capacity, error)) {
+        owner_destroy(owner);
+        return NULL;
+    }
+    return owner;
+}
+
+static application_portal_claim *claim_take(struct application_portals *owner,
+    size_t *slot, qa_error *error)
+{
+    if (!qa_id_index_reserve(&owner->index, 1, error)) return NULL;
+    if (owner->claims.head == SIZE_MAX && !qa_pool_extend(&owner->claims,
+        qa_unified_frame_lease_arena(owner->storage), owner->claims.capacity ? owner->claims.capacity : 8,
+        error)) return NULL;
+    return qa_pool_take(&owner->claims, slot);
+}
 
 static application_provider *claim_provider(qa_application *app,
                                              qa_actor_owner owner)
@@ -46,13 +107,6 @@ static bool claim_valid(qa_application *app, const application_portal_claim *c,
     return true;
 }
 
-static bool same_claim(const application_portal_claim *a,
-                         const application_portal_claim *b)
-{
-    return a->provider == b->provider && a->family == b->family &&
-           a->first == b->first && a->second == b->second && a->portal == b->portal;
-}
-
 static bool change(application_provider *provider, application_portal_claim key,
                      bool open, qa_error *error)
 {
@@ -65,10 +119,8 @@ static bool change(application_provider *provider, application_portal_claim key,
     if (!claim_valid(app, &key, error))
         return false;
     struct application_portals *owner = app->portals;
-    size_t index = 0;
-    while (owner && index < owner->count && !same_claim(owner->claims + index, &key))
-        ++index;
-    uint32_t before = owner && index < owner->count ? owner->claims[index].contributions : 0;
+    application_portal_claim *claim = claim_find(owner, &key);
+    uint32_t before = claim ? claim->contributions : 0;
     uint32_t after;
     if (key.family == QA_GAME_Q2) {
         /* Q2 SetAreaPortalState assigns a boolean; repeated sets are legal. */
@@ -80,30 +132,26 @@ static bool change(application_provider *provider, application_portal_claim key,
         after = open ? before + 1 : before - 1;
     }
     if (!owner) {
-        owner = calloc(1, sizeof(*owner));
-        if (!owner)
-            return application_fail(error, QA_ERROR_MEMORY, "Allocating native portal owner");
+        owner = owner_create(app, 8, error);
+        if (!owner) return false;
         app->portals = owner;
     }
-    if (index == owner->count && owner->count == owner->capacity) {
-        size_t capacity = owner->capacity ? owner->capacity * 2 : 8;
-        if (capacity < owner->capacity || capacity > SIZE_MAX / sizeof(*owner->claims))
-            return application_fail(error, QA_ERROR_MEMORY, "Native portal journal extent overflow");
-        void *next = realloc(owner->claims, capacity * sizeof(*owner->claims));
-        if (!next)
-            return application_fail(error, QA_ERROR_MEMORY, "Retaining native portal source claim");
-        owner->claims = next;
-        owner->capacity = capacity;
-    }
+    size_t slot = SIZE_MAX;
+    bool admitted = claim != NULL;
+    if (!admitted && !(claim = claim_take(owner, &slot, error))) return false;
     bool ok = key.family == QA_GAME_Q2
         ? qa_collision_adjust_portal(app->geometry, key.portal, (int)after - (int)before, error)
         : qa_collision_adjust_area_pair(app->geometry, (int32_t)key.first,
                                          (int32_t)key.second, open, error);
-    if (!ok)
+    if (!ok) {
+        if (!admitted) qa_pool_release(&owner->claims, slot);
         return false;
-    if (index == owner->count)
-        owner->claims[owner->count++] = key;
-    owner->claims[index].contributions = after;
+    }
+    if (!admitted) {
+        *claim = key;
+        qa_id_index_insert(&owner->index, key.provider, claim_key(&key), slot);
+    }
+    claim->contributions = after;
     return true;
 }
 
@@ -158,6 +206,19 @@ static qa_q3_host_portal_claim shared_claim(const application_portal_claim *c)
         .contributions = c->contributions};
 }
 
+typedef struct portal_retirement {
+    struct application_portals *owner;
+    qa_actor_owner provider;
+} portal_retirement;
+
+static bool keep_claim(void *context, const qa_id_index_entry *entry)
+{
+    portal_retirement *retirement = context;
+    if (entry->key != retirement->provider) return true;
+    qa_pool_release(&retirement->owner->claims, entry->value);
+    return false;
+}
+
 bool application_portals_close(qa_application *app, qa_actor_owner provider,
                                 qa_error *error)
 {
@@ -165,14 +226,14 @@ bool application_portals_close(qa_application *app, qa_actor_owner provider,
         return true;
     struct application_portals *owner = app->portals;
     bool found = false;
-    for (size_t i = 0; i < owner->count; ++i)
-        found |= !provider || owner->claims[i].provider == provider;
+    for (size_t i = 0; i < owner->index.count; ++i)
+        found |= !provider || owner->index.entries[i].key == provider;
     if (!found)
         return true;
     qa_collision_portal_checkpoint shared = {0};
     bool ok = qa_collision_capture_portals(app->geometry, &shared, error);
-    for (size_t i = 0; ok && i < owner->count; ++i) {
-        const application_portal_claim *c = owner->claims + i;
+    for (size_t i = 0; ok && i < owner->index.count; ++i) {
+        const application_portal_claim *c = claim_at(owner, i);
         if (provider && c->provider != provider)
             continue;
         qa_q3_host_portal_claim claim = shared_claim(c);
@@ -195,22 +256,20 @@ bool application_portals_close(qa_application *app, qa_actor_owner provider,
     qa_collision_portal_checkpoint_free(&shared);
     if (!ok)
         return false;
-    size_t keep = 0;
-    for (size_t i = 0; i < owner->count; ++i)
-        if (provider && owner->claims[i].provider != provider)
-            owner->claims[keep++] = owner->claims[i];
-    owner->count = keep;
-    if (!provider)
-        application_portals_destroy(app);
+    if (!provider) application_portals_destroy(app);
+    else {
+        portal_retirement retirement = {owner, provider};
+        qa_id_index_retain(&owner->index, keep_claim, &retirement);
+    }
     return true;
 }
 
 void application_portals_destroy(qa_application *app)
 {
     if (app && app->portals) {
-        free(app->portals->claims);
-        free(app->portals);
+        struct application_portals *owner = app->portals;
         app->portals = NULL;
+        owner_destroy(owner);
     }
 }
 
@@ -250,8 +309,8 @@ static bool collect(qa_application *app,
     bool ok = !count || sums != NULL;
     if (!ok)
         application_fail(error, QA_ERROR_MEMORY, "Allocating collective portal qualification");
-    for (size_t i = 0; ok && app->portals && i < app->portals->count; ++i) {
-        const application_portal_claim *c = app->portals->claims + i;
+    for (size_t i = 0; ok && app->portals && i < app->portals->index.count; ++i) {
+        const application_portal_claim *c = claim_at(app->portals, i);
         qa_q3_host_portal_claim claim = shared_claim(c);
         ok = claim_valid(app, c, error) && add_claim(shared, sums, &claim, error);
     }
@@ -388,11 +447,11 @@ bool application_portals_capture(qa_application *app, qa_buffer *out, qa_error *
         return false;
     qa_source_save_io io = {0};
     bool present = app->portals != NULL;
-    size_t count = present ? app->portals->count : 0;
-    size_t capacity = present ? app->portals->capacity : 0;
+    size_t count = present ? app->portals->index.count : 0;
+    size_t capacity = present ? app->portals->claims.capacity : 0;
     bool ok = qa_source_save_writer(&io, app->session, error) && header(&io, &present, &count, &capacity);
     for (size_t i = 0; ok && i < count; ++i) {
-        application_portal_claim copy = app->portals->claims[i];
+        application_portal_claim copy = *claim_at(app->portals, i);
         ok = row_fields(&io, app, &copy);
     }
     if (ok) ok = primary_fields(&io, app);
@@ -409,23 +468,27 @@ bool application_portals_restore(qa_application *app, qa_bytes bytes, qa_error *
         return application_fail(error, QA_ERROR_ARGUMENT, "Portal import requires an empty actual candidate owner");
     qa_source_save_io io = {0};
     bool present = false;
-    struct application_portals *owner = calloc(1, sizeof(*owner));
-    if (!owner)
-        return application_fail(error, QA_ERROR_MEMORY, "Allocating restored native portal owner");
+    size_t count = 0, capacity = 0;
+    struct application_portals *owner = NULL;
     bool ok = qa_source_save_reader(&io, app->session, bytes, error) &&
-        header(&io, &present, &owner->count, &owner->capacity);
-    if (ok && owner->count > (bytes.size - io.offset) / 36)
+        header(&io, &present, &count, &capacity);
+    if (ok && count > (bytes.size - io.offset) / 36)
         ok = application_fail(error, QA_ERROR_FORMAT, "Native portal journal byte extent disagrees");
-    if (ok && owner->capacity) {
-        owner->claims = calloc(owner->capacity, sizeof(*owner->claims));
-        if (!owner->claims)
-            ok = application_fail(error, QA_ERROR_MEMORY, "Allocating restored native portal claims");
-    }
-    for (size_t i = 0; ok && i < owner->count; ++i) {
-        ok = row_fields(&io, app, owner->claims + i);
-        for (size_t j = 0; ok && j < i; ++j)
-            if (same_claim(owner->claims + i, owner->claims + j))
-                ok = application_fail(error, QA_ERROR_FORMAT, "Duplicate native portal owner/key");
+    if (ok && present) { owner = owner_create(app, capacity, error); ok = owner != NULL; }
+    for (size_t i = 0; ok && i < count; ++i) {
+        application_portal_claim claim = {0};
+        ok = row_fields(&io, app, &claim);
+        if (ok && claim_find(owner, &claim))
+            ok = application_fail(error, QA_ERROR_FORMAT, "Duplicate native portal owner/key");
+        if (ok) {
+            size_t slot;
+            application_portal_claim *row = claim_take(owner, &slot, error);
+            ok = row != NULL;
+            if (ok) {
+                *row = claim;
+                qa_id_index_insert(&owner->index, claim.provider, claim_key(&claim), slot);
+            }
+        }
     }
     /* Earlier records cannot recover primary flags they never saved. */
     if (ok && io.offset < bytes.size) ok = primary_fields(&io, app);
@@ -439,8 +502,7 @@ bool application_portals_restore(qa_application *app, qa_bytes bytes, qa_error *
     if (ok && present) {
         app->portals = owner;
     } else {
-        free(owner->claims);
-        free(owner);
+        owner_destroy(owner);
     }
     return ok;
 }

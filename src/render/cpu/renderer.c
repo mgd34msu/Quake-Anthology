@@ -1038,6 +1038,7 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
     if (!work_frame_begin(renderer, error)) return false;
   }
   if (!cpu_raster_prepare(renderer, frame, first, begin, error)) return false;
+  if (!qa_output_domains_prepare(&renderer->output_domains, frame, first, error)) return false;
   if (begin && finish && !frame->source_backend && !skin_frame_prepare(renderer, frame, error)) return false;
   if (begin && frame->source_backend && frame->source_clear_draw_buffer) {
     qa_scene_view clear = renderer->view;

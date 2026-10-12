@@ -78,6 +78,7 @@ void qa_kex_lan_destroy_detached(qa_kex_lan *l)
     }
     for (size_t i = 0; i < l->player_count; ++i) free(l->players[i].attributes.data);
     free(l->attributes.data);
+    qa_arena_destroy(&l->reply_storage);
     free(l);
 }
 
@@ -205,7 +206,8 @@ bool qa_kex_lan_restore(qa_bytes bytes, qa_kex_lan **out, qa_error *e)
         ok = ok && !r.failed && qa_net_read_bytes(&r, extent, &channel) &&
             qa_kex_channel_restore(channel, qa_kex_lan_emit, p, &p->channel, e);
     }
-    if (!ok || !qa_net_reader_finish(&r) || !qa_kex_lan_valid(l)) {
+    if (!ok || !qa_net_reader_finish(&r) || !qa_kex_lan_valid(l) ||
+        !qa_kex_lan_reply_storage_prepare(l, e)) {
         qa_kex_lan_destroy_detached(l);
         if (!e || e->code == QA_OK) qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid KEX LAN retained state");
         return false;

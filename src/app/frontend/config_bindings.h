@@ -13,7 +13,8 @@ typedef struct frontend_config_binding_commands {
     qa_command_context command;
 } frontend_config_binding_commands;
 
-/* Dedicated command data has no input device, focus or interactive seat. */
+/* Dedicated commands own the common binding store without a device, focus or
+ * interactive seat. */
 frontend_config_bindings *frontend_config_bindings_create(qa_error *);
 bool frontend_config_bindings_destroy(frontend_config_bindings *,qa_error *);
 bool frontend_config_bindings_commands(frontend_config_bindings *,const frontend_config_binding_commands *,qa_error *);

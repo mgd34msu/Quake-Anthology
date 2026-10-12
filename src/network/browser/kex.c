@@ -74,7 +74,7 @@ bool qa_server_browser_receive_kex_discovery(qa_server_browser *b,
     if (!qa_server_browser_add(b, &packet->from, protocol, QA_SERVER_LAN, e)) return false;
     browser_record *record = qa_browser_find(b, &packet->from, protocol);
     if (!record) return qa_browser_fail(e, "Retail discovery lost its retained shared entry");
-    if (!qa_browser_status_store_response(record, packet->payload, e)) return false;
+    if (!qa_browser_response_store(b, record, packet->payload, false, e)) return false;
     decoded.address = record->entry.address;
     decoded.sources = record->entry.sources;
     decoded.available = true;

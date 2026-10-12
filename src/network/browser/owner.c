@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/http_save.h"
 #include "qa/network_q2.h"
+#include "qa/network_q3.h"
 #include "qa/arena.h"
 #include <stdlib.h>
 #include <string.h>
@@ -23,6 +24,52 @@ void qa_browser_changed(qa_server_browser *browser, const qa_server_entry *entry
         browser->hooks.changed(browser->hooks.context, entry, change); browser->callback = previous;
     }
 }
+bool qa_browser_response_store(qa_server_browser *browser, browser_record *record,
+    qa_bytes bytes, bool q3, qa_error *error) {
+    if (!record || !bytes.data || !bytes.size ||
+        bytes.size > (q3 ? QA_Q3_MESSAGE_BYTES : QA_BROWSER_DATAGRAM_BYTES))
+        return qa_browser_fail(error, "Invalid retained discovery datagram");
+    if (!record->response_data) {
+        record->response_data = qa_pool_take(browser->responses, &record->response_slot);
+        if (!record->response_data) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining discovery datagram"); return false;
+        }
+    }
+    memmove(record->response_data, bytes.data, bytes.size);
+    qa_buffer *response = q3 ? &record->q3_response : &record->status_response;
+    *response = (qa_buffer){record->response_data, bytes.size};
+    return true;
+}
+void qa_browser_response_clear(qa_server_browser *browser, browser_record *record) {
+    if (record->response_data) qa_pool_release(browser->responses, record->response_slot);
+    record->response_data = NULL;
+    record->q3_response = record->status_response = (qa_buffer){0};
+}
+bool qa_browser_queues_prepare(qa_server_browser *browser, size_t status, size_t broadcasts,
+    qa_error *error) {
+    browser_q3 *q = browser->q3;
+    if (status > q->status_capacity) {
+        size_t capacity = q->status_capacity;
+        if (capacity <= SIZE_MAX / 2 && capacity * 2 > status) capacity *= 2;
+        else capacity = status;
+        if (capacity > SIZE_MAX / sizeof(*q->status_queue)) return qa_browser_fail(error, "Discovery queue extent exhausted");
+        browser_status_query *rows = qa_arena_grow(&browser->queue_storage, q->status_queue,
+            q->status_count * sizeof(*rows), capacity * sizeof(*rows), _Alignof(browser_status_query), error);
+        if (!rows) return false;
+        q->status_queue = rows; q->status_capacity = capacity;
+    }
+    if (broadcasts > q->broadcast_capacity) {
+        size_t capacity = q->broadcast_capacity;
+        if (capacity <= SIZE_MAX / 2 && capacity * 2 > broadcasts) capacity *= 2;
+        else capacity = broadcasts;
+        if (capacity > SIZE_MAX / sizeof(*q->broadcasts)) return qa_browser_fail(error, "Q3 broadcast allocation extent exhausted");
+        browser_q3_broadcast *rows = qa_arena_grow(&browser->queue_storage, q->broadcasts,
+            q->broadcast_count * sizeof(*rows), capacity * sizeof(*rows), _Alignof(browser_q3_broadcast), error);
+        if (!rows) return false;
+        q->broadcasts = rows; q->broadcast_capacity = capacity;
+    }
+    return true;
+}
 bool qa_server_browser_create(qa_http *http, uint32_t capacity, const qa_browser_hooks *hooks,
                                qa_server_browser **out, qa_error *error) {
     if (!http || !capacity || capacity > 16384 || !hooks || !hooks->send || !out)
@@ -36,22 +83,32 @@ bool qa_server_browser_create(qa_http *http, uint32_t capacity, const qa_browser
     browser->q3->master_source = -1;
     browser->q3->next_entry_order = 1;
     browser->http = http; browser->capacity = capacity; browser->hooks = *hooks; browser->next_query = 1;
+    browser->responses = qa_arena_alloc(&browser->response_storage, sizeof(*browser->responses),
+        _Alignof(qa_pool), error);
+    if (!browser->responses || !qa_pool_prepare(browser->responses, &browser->response_storage,
+        capacity, QA_BROWSER_DATAGRAM_BYTES, _Alignof(max_align_t), error) ||
+        !qa_browser_queues_prepare(browser, capacity, capacity, error) ||
+        !qa_arena_reserve(&browser->master_storage, QA_BROWSER_HTTP_BYTES + 1 + QA_BROWSER_URL_BYTES + 1, error)) {
+        qa_server_browser_destroy(browser); return false;
+    }
+    qa_arena_seal(&browser->response_storage); qa_arena_seal(&browser->master_storage);
     *out = browser; return true;
 }
 void qa_server_browser_cancel_master(qa_server_browser *browser) {
     if (!browser || browser->callback) return;
     qa_http_cancel(browser->http, browser->http_master); browser->http_master = 0;
-    browser->master_pending = false; qa_buffer_free(&browser->master_body);
-    free(browser->master_url); browser->master_url = NULL;
+    browser->master_pending = false; browser->master_body = (qa_buffer){0};
+    browser->master_url = NULL; qa_arena_reset(&browser->master_storage);
 }
 void qa_server_browser_destroy(qa_server_browser *browser) {
     if (!browser || browser->callback) return;
     qa_server_browser_cancel_master(browser);
     for (uint32_t i = 0; i < browser->capacity; ++i) {
-        qa_buffer_free(&browser->records[i].q3_response);
-        qa_buffer_free(&browser->records[i].status_response);
+        qa_browser_response_clear(browser, &browser->records[i]);
     }
-    free(browser->q3->broadcasts); free(browser->q3->status_queue); free(browser->q3); free(browser->records); free(browser);
+    qa_arena_destroy(&browser->master_storage); qa_arena_destroy(&browser->queue_storage);
+    qa_arena_destroy(&browser->response_storage);
+    free(browser->q3); free(browser->records); free(browser);
 }
 bool qa_server_browser_add(qa_server_browser *browser, const qa_net_address *address,
                             qa_net_protocol_id protocol, uint32_t sources, qa_error *error) {
@@ -83,7 +140,7 @@ bool qa_server_browser_remove_source(qa_server_browser *browser, const qa_net_ad
     record->entry.sources &= ~source;
     qa_server_entry previous = record->entry;
     if (!record->entry.sources) {
-        qa_buffer_free(&record->q3_response); qa_buffer_free(&record->status_response);
+        qa_browser_response_clear(browser, record);
         memset(record, 0, sizeof(*record));
     }
     qa_browser_changed(browser, &previous, QA_BROWSER_MEMBERSHIP_CHANGED); return true;
@@ -201,8 +258,7 @@ bool qa_server_browser_receive(qa_server_browser *browser, const qa_net_datagram
     }
     decoded.address = target->entry.address; decoded.sources = target->entry.sources;
     decoded.updated_ns = packet->received_ns; decoded.ping_ns = packet->received_ns - sent;
-    if (protocol.kind == QA_NET_Q3_68 && !qa_browser_q3_store_response(target, packet->payload, error)) return false;
-    if (protocol.kind != QA_NET_Q3_68 && !qa_browser_status_store_response(target, packet->payload, error)) return false;
+    if (!qa_browser_response_store(browser, target, packet->payload, protocol.kind == QA_NET_Q3_68, error)) return false;
     decoded.available = true; decoded.has_ping = true; target->entry = decoded;
     qa_browser_changed(browser, &target->entry, QA_BROWSER_STATUS_RECEIVED); *recognized = true; return true;
 }
@@ -235,8 +291,9 @@ static bool http_body(void *context, qa_http_request_id id, const qa_http_respon
     if (bytes.size > 1048576 - browser->master_body.size || (bytes.size && !bytes.data))
         return qa_browser_fail(error, "HTTP master list exceeds 1 MiB");
     size_t size = browser->master_body.size + bytes.size;
-    uint8_t *data = realloc(browser->master_body.data, size + 1);
-    if (!data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining master list"); return false; }
+    uint8_t *data = browser->master_body.data;
+    if (!data) data = qa_arena_alloc(&browser->master_storage, QA_BROWSER_HTTP_BYTES + 1, 1, error);
+    if (!data) return false;
     if (bytes.size) memcpy(data + browser->master_body.size, bytes.data, bytes.size);
     data[size] = 0; browser->master_body = (qa_buffer){data, size}; return true;
 }
@@ -270,8 +327,8 @@ static void http_complete(void *context, qa_http_request_id id, const qa_http_re
             }
         }
     }
-    qa_buffer_free(&browser->master_body);
-    free(browser->master_url); browser->master_url = NULL;
+    browser->master_body = (qa_buffer){0}; browser->master_url = NULL;
+    qa_arena_reset(&browser->master_storage);
     if (browser->hooks.master_complete) {
         browser->callback = true;
         qa_browser_master_result result = {.protocol = browser->master_protocol,
@@ -305,16 +362,15 @@ bool qa_server_browser_master_http(qa_server_browser *browser, const char *url,
     if (!browser || browser->callback || !url || strlen(url) > 65535 || !qa_net_protocol_valid(protocol, error))
         return qa_browser_fail(error, "Invalid HTTP master query");
     qa_server_browser_cancel_master(browser);
-    browser->master_url = malloc(strlen(url) + 1);
-    if (!browser->master_url) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining HTTP master address"); return false; }
-    strcpy(browser->master_url, url);
+    browser->master_url = qa_arena_text(&browser->master_storage, url, error);
+    if (!browser->master_url) return false;
     browser->master_protocol = protocol; browser->master_sent = now;
     browser->q3->master_source = -1; browser->q3->master_received = false;
     qa_http_request request = {.url = url, .method = "GET", .maximum_response_bytes = 1048576,
         .timeout_ms = 15000, .connect_timeout_ms = 5000, .maximum_redirects = 5,
         .callbacks = {browser, http_headers, http_body, http_complete}};
     if (qa_http_submit(browser->http, &request, &browser->http_master, error)) return true;
-    free(browser->master_url); browser->master_url = NULL; return false;
+    browser->master_url = NULL; qa_arena_reset(&browser->master_storage); return false;
 }
 size_t qa_server_browser_count(const qa_server_browser *browser) {
     size_t count = 0;

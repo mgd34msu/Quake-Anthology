@@ -724,13 +724,12 @@ bool q2_map_in_phs(qa_q2_game *g, qa_vec3 from, qa_vec3 to) {
     if (s->in_phs)
         return s->in_phs(s->context, from, to);
     qa_collision_geometry *geometry = qa_world_geometry(g->services.world);
-    qa_collision_leaf a, b;
+    qa_collision_point_visibility_scratch scratch = {0};
+    const qa_collision_point_visibility_rules rules = {.leaf_rule = QA_LEAF_COLLISION,
+        .phs = true, .ignore_areas = true, .minimum_cluster = INT32_MIN,
+        .minimum_area = INT32_MIN};
     bool visible = false;
-    return qa_collision_point_leaf(geometry, from, QA_LEAF_COLLISION, &a, NULL) &&
-           qa_collision_point_leaf(geometry, to, QA_LEAF_COLLISION, &b, NULL) &&
-           qa_collision_cluster_visible(geometry, (int32_t)a.cluster, (int32_t)b.cluster, true,
-                                        &visible, NULL) &&
-           visible;
+    return qa_collision_point_visible(geometry, from, to, &rules, &scratch, &visible, NULL) && visible;
 }
 bool q2_map_transition(qa_q2_game *g, qa_actor_id source, qa_actor_id activator, qa_string_id map,
                        const qa_q2_landmark *landmark, bool end, qa_error *e) {

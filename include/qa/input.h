@@ -400,6 +400,10 @@ typedef struct qa_input_seat_options {
     void *context_user;
 } qa_input_seat_options;
 qa_input_seat *qa_input_seat_create(const qa_input_seat_options *, qa_error *);
+qa_input_seat *qa_input_seat_bindings_create(qa_error *);
+bool qa_input_physical_equal(qa_physical_input, qa_physical_input);
+bool qa_input_bindings_command(qa_input_seat *, const qa_command_invocation *, bool dedicated,
+    void (*print)(void *, const char *), void *, qa_error *);
 bool qa_input_seat_prepare_sources(qa_input_seat *, size_t physical_capacity, qa_error *);
 /* Release held input before retiring the console. Destruction only frees
  * storage; it does not dispatch callbacks. Event callbacks may change focus or

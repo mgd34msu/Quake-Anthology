@@ -196,6 +196,48 @@ inventory_store *qa_inventory_store_create(qa_inventory *table, qa_error *e)
     return store;
 }
 
+item_group *qa_inventory_group_create(inventory_store *store, qa_error *e)
+{
+    qa_inventory *owner = store->storage_owner;
+    qa_pool *pool = &owner->group_records;
+    if (pool->head == SIZE_MAX) {
+        size_t previous = pool->capacity;
+        if (!qa_pool_extend(pool, &owner->record_storage, 1, e)) return NULL;
+        memset(qa_pool_at(pool, previous), 0, sizeof(item_group));
+    }
+    size_t slot;
+    item_group *group = qa_pool_take(pool, &slot);
+    group->next = NULL;
+    group->serial = 0;
+    group->active = group->definitions_only = false;
+    group->owner = 0;
+    group->items = NULL;
+    group->count = group->order = 0;
+    group->storage_owner = owner;
+    group->storage_slot = slot;
+    group->source_index = group->source_candidate = NULL;
+    group->binding = (qa_inventory_binding){0};
+    group->action_context = NULL;
+    group->invoke = NULL;
+    group->item_index.storage = &group->index_storage;
+    qa_id_index_clear(&group->item_index);
+    qa_arena_reset(&group->payload_storage);
+    return group;
+}
+
+bool qa_inventory_group_items_prepare(item_group *group, size_t count, qa_error *e)
+{
+    if (count > SIZE_MAX / sizeof(*group->items))
+        return fail(e, QA_ERROR_MEMORY, "Inventory item definitions size overflow");
+    qa_item_admission *items = count ? qa_arena_alloc(&group->payload_storage,
+        count * sizeof(*items), _Alignof(qa_item_admission), e) : NULL;
+    if (count && !items) return false;
+    if (count) memset(items, 0, count * sizeof(*items));
+    group->items = items;
+    group->count = count;
+    return true;
+}
+
 bool qa_inventory_store_reserve_entries(qa_inventory *table, inventory_store *store,
     size_t needed, qa_error *e)
 {
@@ -230,6 +272,11 @@ static void storage_free(qa_inventory *table)
 {
     for (size_t i = 0; i < table->source_records.capacity; ++i)
         qa_arena_destroy(&((inventory_source_index *)qa_pool_at(&table->source_records, i))->storage);
+    for (size_t i = 0; i < table->group_records.capacity; ++i) {
+        item_group *group = qa_pool_at(&table->group_records, i);
+        qa_arena_destroy(&group->payload_storage);
+        qa_arena_destroy(&group->index_storage);
+    }
     qa_arena_destroy(&table->scratch_storage);
     qa_arena_destroy(&table->record_storage);
     free(table);
@@ -242,10 +289,9 @@ static void free_group(item_group *group)
 {
     source_index_dispose(group->source_index);
     source_index_dispose(group->source_candidate);
-    qa_arena_destroy(&group->index_storage);
-    for (size_t i = 0; i < group->count; ++i) free((void *)group->items[i].definition.label);
-    free(group->items);
-    free(group);
+    qa_id_index_clear(&group->item_index);
+    qa_arena_reset(&group->payload_storage);
+    qa_pool_release(&group->storage_owner->group_records, group->storage_slot);
 }
 
 void qa_inventory_store_drop(inventory_store *store)
@@ -827,12 +873,15 @@ bool qa_inventory_create(qa_actor_registry *actors, qa_inventory **out, qa_error
             sizeof(inventory_source_index), _Alignof(inventory_source_index), e) ||
         !qa_pool_prepare(&table->pickup_records, &table->record_storage, 0,
             sizeof(pickup_claim), _Alignof(pickup_claim), e) ||
+        !qa_pool_prepare(&table->group_records, &table->record_storage, 1,
+            sizeof(item_group), _Alignof(item_group), e) ||
         !qa_pool_prepare(&table->admission_pages, &table->record_storage, 1,
             sizeof(qa_inventory_admission) + sizeof(admission_entry), _Alignof(qa_inventory_admission), e)) {
         qa_arena_destroy(&table->record_storage);
         free(table->stores); free(table); return false;
     }
     memset(qa_pool_at(&table->source_records, 0), 0, sizeof(inventory_source_index));
+    memset(qa_pool_at(&table->group_records, 0), 0, sizeof(item_group));
     if (!qa_pool_reserve_pages(&table->scratch_pages, &table->scratch_storage,
             (size_t)table->capacity + 64, 512, _Alignof(max_align_t), e)) {
         qa_arena_destroy(&table->scratch_storage);
@@ -1137,10 +1186,9 @@ bool qa_inventory_bind_items(qa_inventory *table, qa_actor_id actor,
     inventory_store *store = acquire(table, actor);
     if (!store) return fail(e, QA_ERROR_NOT_FOUND, "Source items require primary inventory");
     bool ok = false;
-    item_group *group = calloc(1, sizeof(*group));
-    if (!group) { fail(e, QA_ERROR_MEMORY, "Cannot allocate source item group"); goto done; }
-    group->items = calloc(requested->count, sizeof(*group->items));
-    if (!group->items) { fail(e, QA_ERROR_MEMORY, "Cannot allocate source item definitions"); goto failed; }
+    item_group *group = qa_inventory_group_create(store, e);
+    if (!group) goto done;
+    if (!qa_inventory_group_items_prepare(group, requested->count, e)) goto failed;
     group->count = requested->count; group->owner = requested->owner; group->binding = requested->state;
     group->action_context = requested->action_context; group->invoke = requested->invoke; group->active = true;
     for (size_t i = 0; i < group->count; ++i) {
@@ -1157,10 +1205,8 @@ bool qa_inventory_bind_items(qa_inventory *table, qa_actor_id actor,
         if (pickup_for(store, definition.item)) { fail(e, QA_ERROR_ARGUMENT, "Source item already has a pickup delegate"); goto failed; }
         if (!find_in(table, store, NULL, definition.item, &entry, &found, e)) goto failed;
         if (found != admission.replace_primary) { fail(e, QA_ERROR_ARGUMENT, "Source item admission conflicts with primary inventory"); goto failed; }
-        size_t length = strlen(definition.label);
-        char *label = malloc(length + 1);
-        if (!label) { fail(e, QA_ERROR_MEMORY, "Cannot copy source item label"); goto failed; }
-        memcpy(label, definition.label, length + 1);
+        char *label = qa_arena_text(&group->payload_storage, definition.label, e);
+        if (!label) goto failed;
         admission.definition.label = label; group->items[i] = admission;
     }
     if (!group_index_prepare(group, e) || !group_validate(table, store, group, e)) goto failed;
@@ -1213,11 +1259,10 @@ bool qa_inventory_replace_definitions(qa_inventory *table, qa_actor_id actor,
         release_store(table, store);
         return true;
     }
-    item_group *group = calloc(1, sizeof(*group));
+    item_group *group = qa_inventory_group_create(store, e);
     bool ok = false;
-    if (!group) { fail(e, QA_ERROR_MEMORY, "Cannot allocate native definitions"); goto done; }
-    group->items = calloc(count, sizeof(*group->items));
-    if (!group->items) { fail(e, QA_ERROR_MEMORY, "Cannot allocate native item catalog"); goto failed; }
+    if (!group) goto done;
+    if (!qa_inventory_group_items_prepare(group, count, e)) goto failed;
     group->count = count; group->owner = owner; group->definitions_only = true;
     group->action_context = context; group->invoke = invoke;
     for (size_t i = 0; i < count; ++i) {
@@ -1243,10 +1288,8 @@ bool qa_inventory_replace_definitions(qa_inventory *table, qa_actor_id actor,
         for (size_t j = 0; j < i; ++j) if (definitions[j].item == definition->item) {
             fail(e, QA_ERROR_ARGUMENT, "Duplicate native item definition"); goto failed;
         }
-        size_t length = strlen(definition->label);
-        char *label = malloc(length + 1);
-        if (!label) { fail(e, QA_ERROR_MEMORY, "Cannot copy native item label"); goto failed; }
-        memcpy(label, definition->label, length + 1);
+        char *label = qa_arena_text(&group->payload_storage, definition->label, e);
+        if (!label) goto failed;
         group->items[i].definition = *definition;
         group->items[i].definition.label = label;
     }

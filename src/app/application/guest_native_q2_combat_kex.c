@@ -1,8 +1,10 @@
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_combat_kex.h"
 #include "guest_native_q2_combat.h"
+#include "control_frame.h"
 #include "qa/native_observe.h"
 #include "qa/persistence_fields.h"
+#include "qa/pool.h"
 #include <math.h>
 
 typedef enum kex_storage { KEX_POINTER, KEX_I32, KEX_U32 } kex_storage;
@@ -15,6 +17,7 @@ typedef struct kex_location {
 typedef struct kex_repair { kex_location source, target; } kex_repair;
 typedef struct kex_pending {
     struct kex_pending *next, *previous, *retired_next;
+    size_t storage_slot;
     struct application_q2_kex_damage *owner;
     unsigned calls;
     application_q2_combat_actor source;
@@ -22,6 +25,14 @@ typedef struct kex_pending {
     qa_damage_request request;
     bool active, pending;
 } kex_pending;
+typedef struct kex_saved {
+    kex_pending record;
+    struct kex_saved *next;
+    int32_t blood, knockback;
+    qa_vec3 point;
+    uint8_t mod[3];
+    uint32_t attacker_slot, inflictor_slot;
+} kex_saved;
 struct application_q2_kex_damage {
     application_q2_combat_profile *profile;
     qa_native_declared_region region;
@@ -32,6 +43,8 @@ struct application_q2_kex_damage {
     size_t repair_count;
     kex_pending *records, *retired;
     qa_actor_index record_index;
+    qa_unified_frame_lease *record_storage;
+    qa_pool record_pool;
     bool active;
 };
 static qa_native_instance *native(struct application_q2_kex_damage *p)
@@ -136,16 +149,20 @@ static void records_collect(struct application_q2_kex_damage *p)
         if (record->previous) record->previous->next = record->next;
         else p->records = record->next;
         if (record->next) record->next->previous = record->previous;
-        free(record);
+        qa_pool_release(&p->record_pool,record->storage_slot);
     }
 }
 static kex_pending *record_create(struct application_q2_kex_damage *p,
     const application_q2_combat_actor *source, qa_error *error)
 {
     records_collect(p);
-    kex_pending *record = calloc(1, sizeof(*record));
-    if (!record) { application_fail(error, QA_ERROR_MEMORY, "Retaining original KEX monster damage lifetime"); return NULL; }
-    *record = (kex_pending){.owner = p, .source = *source, .next = p->records};
+    if(p->record_pool.head==SIZE_MAX&&!qa_pool_extend(&p->record_pool,
+        qa_unified_frame_lease_arena(p->record_storage),
+        p->record_pool.first_capacity?p->record_pool.first_capacity:1,error)) return NULL;
+    size_t slot;
+    kex_pending *record=qa_pool_take(&p->record_pool,&slot);
+    if(!record) { application_fail(error,QA_ERROR_MEMORY,"Retaining original KEX monster damage lifetime");return NULL; }
+    *record = (kex_pending){.storage_slot=slot,.owner = p, .source = *source, .next = p->records};
     record->source.admitting = false;
     if (record->next) record->next->previous = record;
     p->records = record;
@@ -243,7 +260,12 @@ bool application_q2_kex_damage_prepare(application_q2_combat_profile *profile,
     if (!p) return application_fail(error, QA_ERROR_MEMORY, "Preparing original KEX damage observer");
     *out = p; p->profile = profile;
     const qa_actor_registry *registry = qa_session_actors(profile->engine->provider->application->session);
-    if (!qa_actor_index_create(&p->record_index, registry, NULL, error)) return false;
+    p->record_storage=application_control_storage_acquire(profile->engine->provider->application,error);
+    if(!p->record_storage) return false;
+    qa_arena *storage=qa_unified_frame_lease_arena(p->record_storage);
+    if (!qa_actor_index_create(&p->record_index, registry, storage, error)||
+        !qa_pool_prepare(&p->record_pool,storage,qa_actors_capacity(registry),
+            sizeof(kex_saved),_Alignof(kex_saved),error)) return false;
     uint32_t offsets[] = {profile->monster_attacker, profile->monster_inflictor, profile->monster_blood,
         profile->monster_knockback, profile->monster_point, profile->monster_mod, profile->monster_invincible};
     uint32_t sizes[] = {8, 8, 4, 4, 12, 3, 8};
@@ -354,22 +376,16 @@ bool application_q2_kex_damage_close(struct application_q2_kex_damage *p, qa_err
 {
     if (!p) return true;
     if (!application_q2_kex_damage_suspend(p, error)) return false;
-    while (p->records) { kex_pending *record = p->records; p->records = record->next; free(record); }
     qa_actor_index_destroy(&p->record_index);
+    qa_unified_frame_lease_release(p->record_storage);
     free(p->repairs); free(p); return true;
 }
 
-typedef struct kex_saved {
-    kex_pending record;
-    struct kex_saved *next;
-    int32_t blood, knockback;
-    qa_vec3 point;
-    uint8_t mod[3];
-    uint32_t attacker_slot, inflictor_slot;
-} kex_saved;
 struct application_q2_kex_restore {
     kex_saved *records;
     qa_actor_index record_index;
+    qa_unified_frame_lease *storage;
+    qa_pool record_pool;
 };
 static bool request_fields(qa_source_save_io *io, qa_damage_request *request)
 {
@@ -435,9 +451,9 @@ bool application_q2_kex_damage_capture(struct application_q2_kex_damage *p, qa_b
 void application_q2_kex_damage_restore_abort(struct application_q2_kex_restore *prepared)
 {
     if (!prepared) return;
-    while (prepared->records) { kex_saved *saved = prepared->records; prepared->records = saved->next; free(saved); }
+    qa_unified_frame_lease *storage=prepared->storage;
     qa_actor_index_destroy(&prepared->record_index);
-    free(prepared);
+    qa_unified_frame_lease_release(storage);
 }
 bool application_q2_kex_damage_restore_prepare(struct application_q2_kex_damage *p, qa_bytes bytes,
     struct application_q2_kex_restore **out, qa_error *error)
@@ -450,19 +466,28 @@ bool application_q2_kex_damage_restore_prepare(struct application_q2_kex_damage 
     for (kex_pending *record = p->records; record; record = record->next)
         if (record->mod_watch || record->blood_watch)
             return application_fail(error, QA_ERROR_ARGUMENT, "KEX deferred restore retains a failed source observer removal");
-    struct application_q2_kex_restore *prepared = calloc(1, sizeof(*prepared));
-    if (!prepared) return application_fail(error, QA_ERROR_MEMORY, "Preparing KEX deferred continuation");
+    qa_unified_frame_lease *storage=application_control_storage_acquire(p->profile->engine->provider->application,error);
+    if(!storage) return false;
+    struct application_q2_kex_restore *prepared=qa_unified_frame_lease_alloc(storage,1,
+        sizeof(*prepared),_Alignof(struct application_q2_kex_restore),error);
+    if(!prepared){qa_unified_frame_lease_release(storage);return false;}
+    prepared->storage=storage;
     qa_source_save_io io = {0}; size_t count = 0;
     const qa_actor_registry *registry = qa_session_actors(p->profile->engine->provider->application->session);
-    bool ok = qa_actor_index_create(&prepared->record_index, registry, NULL, error) &&
+    bool ok = qa_actor_index_create(&prepared->record_index, registry, qa_unified_frame_lease_arena(storage), error) &&
         qa_source_save_reader(&io, p->profile->engine->provider->application->session, bytes, error) &&
         qa_source_save_count(&io, &count, 65536);
+    size_t capacity=qa_actors_capacity(registry);
+    if(count>capacity) capacity=count;
+    if(ok) ok=qa_pool_prepare(&prepared->record_pool,qa_unified_frame_lease_arena(storage),
+        capacity,sizeof(kex_saved),_Alignof(kex_saved),error);
     qa_native_entity_table table;
     if (ok) ok = qa_native_entity_table_get(native(p), &table, error);
     for (size_t i = 0; ok && i < count; ++i) {
-        kex_saved *saved = calloc(1, sizeof(*saved));
+        size_t storage_slot;
+        kex_saved *saved=qa_pool_take(&prepared->record_pool,&storage_slot);
         if (!saved) { ok = application_fail(error, QA_ERROR_MEMORY, "Preparing original KEX pending damage"); break; }
-        *saved = (kex_saved){.next = prepared->records};
+        *saved = (kex_saved){.record={.storage_slot=storage_slot},.next = prepared->records};
         prepared->records = saved;
         ok = saved_fields(&io, saved);
         uint32_t slot = saved->record.source.slot; int32_t generation = saved->record.source.generation;
@@ -517,9 +542,11 @@ void application_q2_kex_damage_restore_commit(struct application_q2_kex_damage *
     struct application_q2_kex_restore *prepared)
 {
     if (!prepared) return;
-    while (p->records) { kex_pending *record = p->records; p->records = record->next; free(record); }
+    qa_unified_frame_lease *previous=p->record_storage;
     qa_actor_index_destroy(&p->record_index);
     p->record_index = prepared->record_index;
+    p->record_storage=prepared->storage;
+    p->record_pool=prepared->record_pool;
     p->records = p->retired = NULL;
     while (prepared->records) {
         kex_saved *saved = prepared->records; prepared->records = saved->next;
@@ -528,5 +555,8 @@ void application_q2_kex_damage_restore_commit(struct application_q2_kex_damage *
         if (record->next) record->next->previous = record;
         p->records = record;
     }
-    free(prepared);
+    prepared->record_index=(qa_actor_index){0};
+    prepared->record_pool=(qa_pool){0};
+    prepared->storage=NULL;
+    qa_unified_frame_lease_release(previous);
 }

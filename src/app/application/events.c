@@ -397,11 +397,12 @@ bool application_q1_multicast_receives(application_provider *provider,
     }
     qa_vec3 delta = qa_vec_sub(point, event->origin);
     if (mode == 1 && qa_vec_dot(delta, delta) <= 1024.0f * 1024.0f) { *out = true; return true; }
-    qa_collision_leaf from, to;
     qa_collision_geometry *geometry = qa_world_geometry(app->world);
-    return qa_collision_point_leaf(geometry, event->origin, QA_LEAF_Q1, &from, error) &&
-        qa_collision_point_leaf(geometry, point, QA_LEAF_Q1, &to, error) &&
-        qa_collision_cluster_visible(geometry, (int32_t)from.cluster, (int32_t)to.cluster, mode == 1, out, error);
+    qa_collision_point_visibility_scratch scratch = {0};
+    const qa_collision_point_visibility_rules rules = {.leaf_rule = QA_LEAF_Q1,
+        .phs = mode == 1, .ignore_areas = true, .minimum_cluster = INT32_MIN,
+        .minimum_area = INT32_MIN};
+    return qa_collision_point_visible(geometry, event->origin, point, &rules, &scratch, out, error);
 }
 
 static bool protocol_capacity(application_provider *provider,

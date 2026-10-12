@@ -57,29 +57,56 @@ int32_t qa_source_to_i32(double value) {
         ? (int32_t)value : INT32_MIN;
 }
 
-int32_t qa_parse_decimal_i32(const char *text, qa_decimal_rule rule) {
-    if (!text) return 0;
-    const unsigned char *cursor = (const unsigned char *)text;
-    while (*cursor) {
-        unsigned char byte = *cursor;
+static unsigned number_byte(qa_number_cursor *cursor) {
+    if (cursor->offset > cursor->text.size) {
+        cursor->overrun = true;
+        return 0;
+    }
+    return cursor->offset < cursor->text.size ? cursor->text.data[cursor->offset] : 0;
+}
+
+static unsigned number_take(qa_number_cursor *cursor) {
+    unsigned byte = number_byte(cursor);
+    if (cursor->offset < SIZE_MAX) ++cursor->offset;
+    else cursor->overrun = true;
+    return byte;
+}
+
+static void number_space(qa_number_cursor *cursor, qa_decimal_rule rule) {
+    unsigned byte;
+    while ((byte = number_byte(cursor)) != 0) {
         bool space = rule == QA_DECIMAL_LOCALE_CLAMP ? isspace(byte) != 0 :
             rule == QA_DECIMAL_SIGNED_WRAP ? byte <= 32 || byte >= 128 :
             rule == QA_DECIMAL_CONTROL_WRAP ? byte <= 32 :
             byte == ' ' || (byte >= '\t' && byte <= '\r');
         if (!space) break;
-        ++cursor;
+        ++cursor->offset;
     }
-    bool negative = *cursor == '-';
-    if (*cursor == '-' || *cursor == '+') ++cursor;
+}
+
+int32_t qa_parse_decimal_i32_cursor(qa_number_cursor *cursor, qa_decimal_rule rule,
+                                   bool consume_delimiter) {
+    number_space(cursor, rule);
+    if (number_byte(cursor) == 0) return 0;
+    unsigned byte = number_byte(cursor);
+    bool negative = byte == '-';
+    if (byte == '-' || byte == '+') ++cursor->offset;
     uint32_t value = 0, limit = negative ? UINT32_C(2147483648) : INT32_MAX;
     bool clamp = rule == QA_DECIMAL_ASCII_CLAMP || rule == QA_DECIMAL_LOCALE_CLAMP;
-    while (*cursor >= '0' && *cursor <= '9') {
-        uint32_t digit = (uint32_t)(*cursor++ - '0');
+    while ((byte = number_byte(cursor)) >= '0' && byte <= '9') {
+        uint32_t digit = number_take(cursor) - '0';
         value = clamp && value > (limit - digit) / 10 ?
             limit : value * 10u + digit;
     }
+    if (consume_delimiter) number_take(cursor);
     if (negative) value = 0u - value;
     return value <= INT32_MAX ? (int32_t)value : -1 - (int32_t)(UINT32_MAX - value);
+}
+
+int32_t qa_parse_decimal_i32(const char *text, qa_decimal_rule rule) {
+    if (!text) return 0;
+    qa_number_cursor cursor = {.text = {(const uint8_t *)text, SIZE_MAX}};
+    return qa_parse_decimal_i32_cursor(&cursor, rule, false);
 }
 
 uint16_t qa_angle_to_word(float angle,qa_angle_word_rule rule) {
@@ -140,37 +167,46 @@ bool qa_format_quake_float(float value, char out[64], qa_error *error) {
     return true;
 }
 
-double qa_parse_quake_number(const char *text, qa_quake_number_policy policy) {
-    if (!text)
-        return 0;
+double qa_parse_quake_number_cursor(qa_number_cursor *cursor, qa_quake_number_policy policy,
+                                    bool scan) {
     if (policy == QA_QUAKE_NUMBER_Q3_VM || policy == QA_QUAKE_NUMBER_Q3_BYTECODE) {
         bool bytecode = policy == QA_QUAKE_NUMBER_Q3_BYTECODE;
-        while (*text && (int8_t)(uint8_t)*text <= ' ')
-            ++text;
+        number_space(cursor, QA_DECIMAL_SIGNED_WRAP);
+        unsigned character = number_byte(cursor);
+        if (character == 0) return 0;
         float sign = 1, value = 0;
-        if (*text == '-' || *text == '+') {
-            if (*text == '-')
+        if (character == '-' || character == '+') {
+            if (character == '-')
                 sign = -1;
-            ++text;
+            ++cursor->offset;
         }
-        while (*text >= '0' && *text <= '9') {
-            if (bytecode) {
-                /* MULF and ADDF are distinct four-byte source operations. */
-                float product = (float)((double)value * 10.0);
-                value = (float)((double)product + (*text++ - '0'));
-            } else
-                value = value * 10 + (float)(*text++ - '0');
-        }
-        if (*text == '.') {
-            double fraction = bytecode ? (double)0.1f : 0.1;
-            ++text;
-            while (*text >= '0' && *text <= '9') {
+        character = scan ? '0' : number_byte(cursor);
+        if (number_byte(cursor) != '.') {
+            for (;;) {
+                character = number_take(cursor);
+                if (character < '0' || character > '9') break;
+                unsigned digit = character - '0';
                 if (bytecode) {
-                    float product = (float)((double)(*text++ - '0') * fraction);
+                    /* MULF and ADDF are distinct four-byte source operations. */
+                    float product = (float)((double)value * 10.0);
+                    value = (float)((double)product + digit);
+                } else
+                    value = value * 10 + (float)digit;
+            }
+        } else if (!scan)
+            ++cursor->offset;
+        if (character == '.') {
+            double fraction = bytecode ? (double)0.1f : 0.1;
+            for (;;) {
+                character = number_take(cursor);
+                if (character < '0' || character > '9') break;
+                unsigned digit = character - '0';
+                if (bytecode) {
+                    float product = (float)((double)digit * fraction);
                     value = (float)((double)value + product);
                     fraction = (float)(fraction * (double)0.1f);
                 } else {
-                    value = (float)((double)value + (*text++ - '0') * fraction);
+                    value = (float)((double)value + digit * fraction);
                     fraction *= 0.1;
                 }
             }
@@ -178,43 +214,51 @@ double qa_parse_quake_number(const char *text, qa_quake_number_policy policy) {
         return value * sign;
     }
     int sign = 1;
-    if (*text == '-') {
+    if (number_byte(cursor) == '-') {
         sign = -1;
-        ++text;
+        ++cursor->offset;
     }
     double value = 0;
-    if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
-        for (text += 2; *text; ++text) {
-            unsigned char c = (unsigned char)*text;
+    unsigned byte = number_byte(cursor), next = 0;
+    if ((byte == '0' || byte == '\'') && cursor->offset < cursor->text.size &&
+        cursor->text.size - cursor->offset > 1)
+        next = cursor->text.data[cursor->offset + 1];
+    if (byte == '0' && (next == 'x' || next == 'X')) {
+        cursor->offset += 2;
+        int c;
+        while ((c = number_byte(cursor)) != 0) {
             int digit = c >= '0' && c <= '9' ? c - '0' :
                 c >= 'a' && c <= 'f' ? c - 'a' + 10 :
                 c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
             if (digit < 0)
                 break;
             value = value * 16 + digit;
+            ++cursor->offset;
         }
-    } else if (*text == '\'') {
-        int quoted = (unsigned char)text[1];
+    } else if (byte == '\'') {
+        int quoted = (int)next;
         if ((policy & QA_QUAKE_NUMBER_SIGNED_QUOTE) && quoted >= 128)
             quoted -= 256;
         value = quoted;
     } else {
         size_t places = 0;
         bool decimal = false;
-        for (; *text; ++text) {
-            if (*text == '.') {
+        while ((byte = number_byte(cursor)) != 0) {
+            if (byte == '.') {
                 decimal = true;
                 places = 0;
+                ++cursor->offset;
                 continue;
             }
-            if (*text < '0' || *text > '9')
+            if (byte < '0' || byte > '9')
                 break;
             if (policy & QA_QUAKE_NUMBER_DIGIT_FIRST)
-                value = value * 10 + (*text - '0');
+                value = value * 10 + (byte - '0');
             else
-                value = value * 10 + *text - '0';
+                value = value * 10 + byte - '0';
             if (decimal)
                 ++places;
+            ++cursor->offset;
         }
         while (places) {
             value /= 10;
@@ -222,6 +266,12 @@ double qa_parse_quake_number(const char *text, qa_quake_number_policy policy) {
         }
     }
     return value * sign;
+}
+
+double qa_parse_quake_number(const char *text, qa_quake_number_policy policy) {
+    if (!text) return 0;
+    qa_number_cursor cursor = {.text = {(const uint8_t *)text, SIZE_MAX}};
+    return qa_parse_quake_number_cursor(&cursor, policy, false);
 }
 
 size_t qa_format_q3_integer(int32_t value, char out[12]) {

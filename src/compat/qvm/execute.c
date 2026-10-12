@@ -107,7 +107,9 @@ static bool execute(qa_qvm *, uint32_t, uint32_t, operands *, source_call *,
 static bool intercept(qa_qvm *, execution_frame *, uint32_t, int32_t, uint32_t,
                       uint32_t, size_t, qa_qvm_function_hook, void *, binding *, int32_t *, bool *, qa_error *);
 static bool qualify(const qa_qvm_image *, uint32_t, uint32_t, uint32_t,
-                    const qa_qvm_region_evaluation *, bool, qa_error *);
+                    const qa_qvm_region_evaluation *, bool, qa_arena *, qa_error *);
+static bool qualified(qa_qvm *, uint32_t, uint32_t, uint32_t,
+    const qa_qvm_region_evaluation *, qa_error *);
 
 static bool error_at(qa_error *error, size_t offset, const char *message)
 {
@@ -671,8 +673,8 @@ bool qa_qvm_bind_regions(const qa_qvm_call *call, const qa_qvm_region_binding *b
     if (count && !copy) return false;
     for (size_t i = 0; i < count; ++i) {
         if (bindings[i].enter == NULL) return error_at(error, 0, "QVM region entry callback is missing");
-        if (!qualify(call->vm->image, source->instruction, bindings[i].entry, bindings[i].join,
-                     NULL, call->vm->options.semantics == QA_QVM_INTERPRETED, error)) return false;
+        if (!qualified(call->vm, source->instruction, bindings[i].entry, bindings[i].join,
+                     NULL, error)) return false;
         copy[i].binding = bindings[i];
     }
     if (count > 1) qsort(copy, count, sizeof(*copy), region_order);
@@ -687,24 +689,41 @@ typedef struct proof_path {
     proof_word words[QVM_OPERANDS];
     uint32_t depth;
     uint8_t *initialized;
+    size_t slot;
 } proof_path;
+typedef struct qualified_region {
+    qa_qvm_region_evaluation evaluation;
+    qa_error interpreted_error;
+    bool has_evaluation, interpreted_checked, interpreted_accepted;
+} qualified_region;
 static bool local(proof_word word) { return word.kind == PROOF_LOCAL || word.kind == PROOF_DERIVED; }
 static bool known_local(const uint8_t *initialized, int64_t offset, uint32_t frame)
 { return offset >= 0 && offset < frame && initialized[(uint32_t)offset] != 0; }
+static proof_path *proof_take(qa_pool *pool, qa_arena *storage, uint32_t locals,
+    const proof_path *source, qa_error *error)
+{
+    if (pool->head == SIZE_MAX && !qa_pool_extend(pool, storage, 1, error)) return NULL;
+    size_t slot;
+    proof_path *path = qa_pool_take(pool, &slot);
+    if (!path) return NULL;
+    *path = source ? *source : (proof_path){0};
+    path->slot = slot;
+    path->initialized = locals ? (uint8_t *)(path + 1) : NULL;
+    if (locals) {
+        if (source) memcpy(path->initialized, source->initialized, locals);
+        else memset(path->initialized, 0, locals);
+    }
+    return path;
+}
 static bool proof_edge(proof_path **paths, uint32_t from, uint32_t target, uint32_t entry_pc,
-                        uint32_t join, const proof_path *source, uint32_t locals, qa_error *error)
+                        uint32_t join, const proof_path *source, uint32_t locals,
+                        qa_pool *pool, qa_arena *storage, qa_error *error)
 {
     if (target <= from || target > join) return error_at(error, from, "QVM region edge escapes or runs backward");
     proof_path **slot = &paths[target - entry_pc];
     if (*slot == NULL) {
-        *slot = malloc(sizeof(**slot));
-        if (*slot == NULL) return qa_qvm_error(error, QA_ERROR_MEMORY, from, "Allocating QVM region proof");
-        **slot = *source; (*slot)->initialized = NULL;
-        if (locals != 0) {
-            (*slot)->initialized = malloc(locals);
-            if ((*slot)->initialized == NULL) return qa_qvm_error(error, QA_ERROR_MEMORY, from, "Allocating QVM local proof");
-            memcpy((*slot)->initialized, source->initialized, locals);
-        }
+        *slot = proof_take(pool, storage, locals, source, error);
+        if (*slot == NULL) return false;
         return true;
     }
     proof_path *previous = *slot;
@@ -720,7 +739,8 @@ static bool proof_edge(proof_path **paths, uint32_t from, uint32_t target, uint3
 static bool valid_local(uint32_t offset, uint32_t frame)
 { return offset >= 8 && (offset & 3) == 0 && frame >= 4 && offset <= frame - 4; }
 static bool qualify(const qa_qvm_image *image, uint32_t owner, uint32_t entry_pc, uint32_t join,
-                    const qa_qvm_region_evaluation *evaluation, bool interpreted, qa_error *error)
+                    const qa_qvm_region_evaluation *evaluation, bool interpreted,
+                    qa_arena *storage, qa_error *error)
 {
     if (image == NULL) return error_at(error, owner, "Missing QVM region image");
     if (!function(image, owner, error)) return false;
@@ -743,13 +763,16 @@ static bool qualify(const qa_qvm_image *image, uint32_t owner, uint32_t entry_pc
     }
     size_t count = (size_t)join - entry_pc + 1;
     if (count > SIZE_MAX / sizeof(proof_path *)) return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "QVM region proof is too large");
-    proof_path **paths = calloc(count, sizeof(*paths));
-    if (paths == NULL) return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Allocating QVM region proof paths");
-    paths[0] = calloc(1, sizeof(*paths[0]));
-    bool ok = paths[0] != NULL, joined = false;
+    proof_path **paths = qa_arena_alloc(storage, count * sizeof(*paths),
+        _Alignof(proof_path *), error);
+    if (paths == NULL) return false;
+    memset(paths, 0, count * sizeof(*paths));
     uint32_t locals = evaluation == NULL ? 0 : frame;
-    if (ok && locals != 0) { paths[0]->initialized = calloc(locals, 1); ok = paths[0]->initialized != NULL; }
-    if (!ok) qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Allocating QVM initial proof state");
+    qa_pool pool = {0};
+    if (!qa_pool_prepare(&pool, storage, 1, sizeof(proof_path) + locals,
+        _Alignof(proof_path), error)) return false;
+    paths[0] = proof_take(&pool, storage, locals, NULL, error);
+    bool ok = paths[0] != NULL, joined = false;
     if (ok && evaluation != NULL)
         for (size_t i = 0; i < evaluation->input_count; ++i) paths[0]->initialized[evaluation->inputs[i]] = 1;
     for (uint32_t pc = entry_pc; ok && pc <= join; ++pc) {
@@ -848,13 +871,14 @@ static bool qualify(const qa_qvm_image *image, uint32_t owner, uint32_t entry_pc
                 ok = error_at(error, pc, "QVM region has an indirect jump"); break;
             }
             ok = right.value >= 0 && right.value <= UINT32_MAX
-                ? proof_edge(paths, pc, (uint32_t)right.value, entry_pc, join, path, locals, error)
+                ? proof_edge(paths, pc, (uint32_t)right.value, entry_pc, join, path, locals, &pool, storage, error)
                 : error_at(error, pc, "QVM region jump target is invalid");
         } else {
-            ok = proof_edge(paths, pc, pc + 1, entry_pc, join, path, locals, error);
-            if (ok && branch) ok = proof_edge(paths, pc, (uint32_t)instruction.operand, entry_pc, join, path, locals, error);
+            ok = proof_edge(paths, pc, pc + 1, entry_pc, join, path, locals, &pool, storage, error);
+            if (ok && branch) ok = proof_edge(paths, pc, (uint32_t)instruction.operand, entry_pc, join, path, locals, &pool, storage, error);
         }
-        free(path->initialized); free(path); paths[pc - entry_pc] = NULL;
+        qa_pool_release(&pool, path->slot);
+        paths[pc - entry_pc] = NULL;
     }
     if (ok && !joined) ok = error_at(error, entry_pc, "QVM region has no reachable join");
     for (uint32_t pc = owner + 1; ok && pc < end; ++pc) {
@@ -866,19 +890,92 @@ static bool qualify(const qa_qvm_image *image, uint32_t owner, uint32_t entry_pc
             target = image->instructions[pc - 1].operand;
         if (target > (int32_t)entry_pc && target < (int32_t)join) ok = error_at(error, pc, "QVM region has an incoming interior edge");
     }
-    for (size_t i = 0; i < count; ++i) if (paths[i] != NULL) { free(paths[i]->initialized); free(paths[i]); }
-    free(paths); return ok;
+    return ok;
+}
+static uint64_t region_key(uint32_t owner, uint32_t join)
+{ return ((uint64_t)owner << 32) | join; }
+static const qualified_region *region_find(const qa_qvm_image *image, uint32_t owner,
+    uint32_t entry_pc, uint32_t join, const qa_qvm_region_evaluation *evaluation)
+{
+    if (!image || !image->regions ||
+        (evaluation && evaluation->input_count && !evaluation->inputs)) return NULL;
+    const qa_id_index *records = image->regions;
+    qa_id_index_cursor cursor = qa_id_index_begin(records, entry_pc, region_key(owner, join));
+    size_t value;
+    while (qa_id_index_next(records, &cursor, &value)) {
+        const qualified_region *record = (const qualified_region *)(uintptr_t)value;
+        if (record->has_evaluation != (evaluation != NULL)) continue;
+        if (!evaluation) return record;
+        const qa_qvm_region_evaluation *saved = &record->evaluation;
+        if (saved->input_count != evaluation->input_count ||
+            saved->result_offset != evaluation->result_offset ||
+            saved->read_only != evaluation->read_only) continue;
+        size_t i = 0;
+        while (i < evaluation->input_count && saved->inputs[i] == evaluation->inputs[i]) ++i;
+        if (i == evaluation->input_count) return record;
+    }
+    return NULL;
+}
+static bool admit_region(const qa_qvm_image *image, uint32_t owner, uint32_t entry_pc,
+    uint32_t join, const qa_qvm_region_evaluation *evaluation, qa_error *error)
+{
+    if (region_find(image, owner, entry_pc, join, evaluation)) return true;
+    qa_arena scratch = {0};
+    bool ok = qualify(image, owner, entry_pc, join, evaluation, false, &scratch, error);
+    if (!ok) { qa_arena_destroy(&scratch); return false; }
+    qa_arena_reset(&scratch);
+    qa_error interpreted_error = {0};
+    bool interpreted = qualify(image, owner, entry_pc, join, evaluation, true,
+        &scratch, &interpreted_error);
+    qa_arena_destroy(&scratch);
+    qa_id_index *records = image->regions;
+    qa_arena *storage = records->storage;
+    if (!qa_id_index_reserve(records, 1, error)) return false;
+    qualified_region *record = qa_arena_alloc(storage, sizeof(*record),
+        _Alignof(qualified_region), error);
+    if (!record) return false;
+    uint32_t *inputs = NULL;
+    if (evaluation && evaluation->input_count) {
+        size_t bytes = evaluation->input_count * sizeof(*inputs);
+        inputs = qa_arena_alloc(storage, bytes, _Alignof(uint32_t), error);
+        if (!inputs) return false;
+        memcpy(inputs, evaluation->inputs, bytes);
+    }
+    *record = (qualified_region){.has_evaluation = evaluation != NULL,
+        .evaluation = evaluation ? *evaluation : (qa_qvm_region_evaluation){0},
+        .interpreted_checked = interpreted || interpreted_error.code != QA_ERROR_MEMORY,
+        .interpreted_accepted = interpreted, .interpreted_error = interpreted_error};
+    record->evaluation.inputs = inputs;
+    qa_id_index_insert(records, entry_pc, region_key(owner, join), (size_t)(uintptr_t)record);
+    return true;
+}
+static bool qualified(qa_qvm *vm, uint32_t owner, uint32_t entry_pc, uint32_t join,
+    const qa_qvm_region_evaluation *evaluation, qa_error *error)
+{
+    bool interpreted = vm->options.semantics == QA_QVM_INTERPRETED;
+    const qualified_region *record = region_find(vm->image, owner, entry_pc, join, evaluation);
+    if (record && (!interpreted || record->interpreted_checked)) {
+        if (!interpreted || record->interpreted_accepted) return true;
+        if (error) *error = record->interpreted_error;
+        return false;
+    }
+    qa_unified_frame_lease *storage = qa_unified_frame_lease_acquire(vm->transient_storage, error);
+    if (!storage) return false;
+    bool ok = qualify(vm->image, owner, entry_pc, join, evaluation, interpreted,
+        qa_unified_frame_lease_arena(storage), error);
+    qa_unified_frame_lease_release(storage);
+    return ok;
 }
 bool qa_qvm_qualify_region(const qa_qvm_image *image, uint32_t owner,
                           const qa_qvm_region_evaluation *evaluation, qa_error *error)
 {
     if (evaluation == NULL) return error_at(error, owner, "Missing QVM region evaluation");
-    return qualify(image, owner, evaluation->entry, evaluation->join, evaluation, false, error);
+    return admit_region(image, owner, evaluation->entry, evaluation->join, evaluation, error);
 }
 bool qa_qvm_qualify_source_region(const qa_qvm_image *image, uint32_t owner,
                                   uint32_t entry, uint32_t join, qa_error *error)
 {
-    return qualify(image, owner, entry, join, NULL, false, error);
+    return admit_region(image, owner, entry, join, NULL, error);
 }
 
 static bool arithmetic(uint8_t op, int32_t left, int32_t right, int32_t *out, qa_error *error)
@@ -1692,8 +1789,7 @@ bool qa_qvm_evaluate_region(qa_qvm *vm, uint32_t owner, const int32_t *arguments
     uint32_t floor, top;
     if (!evaluation_stack(vm, requested, &floor, &top, error)) return false;
     if (evaluation == NULL) return error_at(error, owner, "Missing QVM region evaluation");
-    if (!qualify(vm->image, owner, evaluation->entry, evaluation->join, evaluation,
-                 vm->options.semantics == QA_QVM_INTERPRETED, error)) return false;
+    if (!qualified(vm, owner, evaluation->entry, evaluation->join, evaluation, error)) return false;
     (void)top;
     if (evaluation->input_count != 0 && read_input == NULL) return error_at(error, owner, "Missing QVM region live-in values");
     if (evaluation->input_count > SIZE_MAX / (sizeof(uint32_t) + sizeof(int32_t)))
@@ -1725,8 +1821,7 @@ bool qa_qvm_evaluate_call_region(const qa_qvm_call *call, const qa_qvm_region_ev
     source_call *source = exec->host->owner;
     if (exec->host->kind != HOST_FUNCTION || source == NULL || source->proceeded || evaluation == NULL || out == NULL)
         return error_at(error, 0, "QVM call region must consume an unused original continuation");
-    if (!qualify(vm->image, source->instruction, evaluation->entry, evaluation->join, evaluation,
-                 vm->options.semantics == QA_QVM_INTERPRETED, error)) return false;
+    if (!qualified(vm, source->instruction, evaluation->entry, evaluation->join, evaluation, error)) return false;
     if ((evaluation->input_count != 0 && inputs == NULL)
         || evaluation->input_count > SIZE_MAX / (sizeof(uint32_t) + sizeof(int32_t)))
         return error_at(error, 0, "QVM call region has invalid live-ins");

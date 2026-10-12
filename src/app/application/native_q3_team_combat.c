@@ -174,25 +174,18 @@ static bool defend(const team_combat_scope *scope, qa_actor_id actor,
 }
 
 static bool in_pvs(const team_combat_scope *scope, qa_vec3 first, qa_vec3 second,
-    bool *out, qa_error *error)
+    qa_collision_point_visibility_scratch *scratch, bool *out, qa_error *error)
 {
-    qa_collision_leaf a, b;
     *out = false;
-    if (!live(scope, error) || !qa_collision_point_leaf(scope->geometry, first, QA_LEAF_COLLISION, &a, error) ||
-        !qa_collision_point_leaf(scope->geometry, second, QA_LEAF_COLLISION, &b, error)) return false;
-    if (a.cluster < -1 || a.cluster > INT32_MAX || b.cluster < -1 || b.cluster > INT32_MAX ||
-        a.area < 0 || a.area > INT32_MAX || b.area < 0 || b.area > INT32_MAX)
-        return application_fail(error, QA_ERROR_FORMAT, "native TEAM PVS leaf exceeds its source index ABI");
-    if (!qa_collision_cluster_visible(scope->geometry, (int32_t)a.cluster, (int32_t)b.cluster, false, out, error))
-        return false;
-    if (!*out) return true;
+    if (!live(scope, error)) return false;
     qa_cvars *registry = application_native_q3_console_registry(scope->provider);
     const qa_cvar_view *no_areas = qa_cvars_read(registry,
         application_native_q3_console_no_areas_handle(scope->provider));
     if (!no_areas)
         return application_fail(error, QA_ERROR_NOT_FOUND, "native TEAM PVS lost its source area policy");
-    if (no_areas->number != 0) return true;
-    return qa_collision_areas_connected(scope->geometry, (int32_t)a.area, (int32_t)b.area, out, error);
+    const qa_collision_point_visibility_rules rules = {.leaf_rule = QA_LEAF_COLLISION,
+        .ignore_areas = no_areas->number != 0, .minimum_cluster = -1, .minimum_area = 0};
+    return qa_collision_point_visible(scope->geometry, first, second, &rules, scratch, out, error);
 }
 
 static float distance(qa_vec3 first, qa_vec3 second)
@@ -204,10 +197,11 @@ static float distance(qa_vec3 first, qa_vec3 second)
 }
 
 static bool near_visible(const team_combat_scope *scope, float distance_to_base,
-    qa_vec3 first, qa_vec3 second, bool *out, qa_error *error)
+    qa_vec3 first, qa_vec3 second, qa_collision_point_visibility_scratch *scratch,
+    bool *out, qa_error *error)
 {
     *out = false;
-    return !(distance_to_base < 1000) || in_pvs(scope, first, second, out, error);
+    return !(distance_to_base < 1000) || in_pvs(scope, first, second, scratch, out, error);
 }
 
 static bool same_class(const char *left, const char *right)
@@ -399,8 +393,9 @@ static bool frag_bonuses(const team_combat_scope *scope, qa_actor_id target,
     float target_distance = distance(target_origin, base_origin);
     float attacker_distance = distance(attacker_origin, base_origin);
     bool visible;
-    if (!near_visible(scope, target_distance, base_origin, target_origin, &visible, error)) return false;
-    if (!visible && !near_visible(scope, attacker_distance, base_origin, attacker_origin, &visible, error))
+    qa_collision_point_visibility_scratch visibility = {0};
+    if (!near_visible(scope, target_distance, base_origin, target_origin, &visibility, &visible, error)) return false;
+    if (!visible && !near_visible(scope, attacker_distance, base_origin, attacker_origin, &visibility, &visible, error))
         return false;
     if (visible && killer.rule.session.team != victim.rule.session.team)
         return points(scope, attacker, attacker_slot, target_origin, scope->missionpack ? 10 : 1, error) &&
@@ -409,8 +404,8 @@ static bool frag_bonuses(const team_combat_scope *scope, qa_actor_id target,
     qa_vec3 carrier_origin;
     if (!qa_q3_source_current_origin_read(scope->game, carrier, &carrier_origin, error)) return false;
     float carrier_distance = distance(attacker_origin, carrier_origin);
-    if (!near_visible(scope, carrier_distance, carrier_origin, target_origin, &visible, error)) return false;
-    if (!visible && !near_visible(scope, attacker_distance, carrier_origin, attacker_origin, &visible, error))
+    if (!near_visible(scope, carrier_distance, carrier_origin, target_origin, &visibility, &visible, error)) return false;
+    if (!visible && !near_visible(scope, attacker_distance, carrier_origin, attacker_origin, &visibility, &visible, error))
         return false;
     return !visible || killer.rule.session.team == victim.rule.session.team ||
         (points(scope, attacker, attacker_slot, target_origin, scope->missionpack ? 2 : 1, error) &&

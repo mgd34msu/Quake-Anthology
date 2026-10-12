@@ -764,6 +764,10 @@ bool qa_q2_entities_player_frame(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     if (g->options.rules != QA_RULESET_Q2_RERELEASE)
         return true;
     q2_entities *r = g->entity_runtime;
+    qa_collision_point_visibility_scratch visibility = {0};
+    const qa_collision_point_visibility_rules visibility_rules = {
+        .leaf_rule = QA_LEAF_COLLISION, .ignore_areas = true,
+        .minimum_cluster = INT32_MIN, .minimum_area = INT32_MIN};
     for (size_t slot = 0; slot < 2; slot++) {
         q2_healthbar *bar = &r->bars[slot];
         if (!bar->controller.registry)
@@ -825,12 +829,9 @@ bool qa_q2_entities_player_frame(qa_q2_game *g, qa_actor_id id, qa_error *e) {
             if (!qa_world_body_read(g->services.world, id, &one, e) ||
                 !qa_world_body_read(g->services.world, bar->target, &two, e))
                 return false;
-            qa_collision_leaf from, to;
             qa_collision_geometry *geometry = qa_world_geometry(g->services.world);
-            if (!qa_collision_point_leaf(geometry, one.origin, QA_LEAF_COLLISION, &from, e) ||
-                !qa_collision_point_leaf(geometry, two.origin, QA_LEAF_COLLISION, &to, e) ||
-                !qa_collision_cluster_visible(geometry, (int32_t)from.cluster, (int32_t)to.cluster,
-                                              false, &event.visible, e))
+            if (!qa_collision_point_visible(geometry, one.origin, two.origin,
+                    &visibility_rules, &visibility, &event.visible, e))
                 return false;
         }
         event.value =

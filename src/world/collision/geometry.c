@@ -882,6 +882,36 @@ bool qa_collision_cluster_visible(const qa_collision_geometry *geometry,int32_t 
     *out=answer==VISIBILITY_ALL || (answer==VISIBILITY_ROW && bit_test(row,(size_t)(uint32_t)to));
     return true;
 }
+bool qa_collision_point_visible(const qa_collision_geometry *geometry,
+    qa_vec3 from, qa_vec3 to, const qa_collision_point_visibility_rules *rules,
+    qa_collision_point_visibility_scratch *scratch, bool *out, qa_error *error)
+{
+    if (!geometry || !rules || !scratch || !out)
+        return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid point visibility query");
+    *out = false;
+    if (!scratch->valid || scratch->geometry != geometry ||
+        scratch->map_generation != geometry->map_generation ||
+        scratch->leaf_rule != rules->leaf_rule || !qa_vec_equal(scratch->origin, from)) {
+        qa_collision_leaf leaf;
+        if (!qa_collision_point_leaf(geometry, from, rules->leaf_rule, &leaf, error)) return false;
+        *scratch = (qa_collision_point_visibility_scratch){.geometry = geometry,
+            .map_generation = geometry->map_generation, .origin = from, .leaf = leaf,
+            .leaf_rule = rules->leaf_rule, .valid = true};
+    }
+    qa_collision_leaf target;
+    if (!qa_collision_point_leaf(geometry, to, rules->leaf_rule, &target, error)) return false;
+    scratch->target = target;
+    const qa_collision_leaf *origin = &scratch->leaf;
+    if (origin->cluster < rules->minimum_cluster || origin->cluster > INT32_MAX ||
+        target.cluster < rules->minimum_cluster || target.cluster > INT32_MAX ||
+        origin->area < rules->minimum_area || origin->area > INT32_MAX ||
+        target.area < rules->minimum_area || target.area > INT32_MAX)
+        return geometry_fail(error, QA_ERROR_FORMAT, "Point visibility leaf exceeds its source index ABI");
+    if (!qa_collision_cluster_visible(geometry, (int32_t)origin->cluster,
+        (int32_t)target.cluster, rules->phs, out, error)) return false;
+    return !*out || rules->ignore_areas || qa_collision_areas_connected(geometry,
+        (int32_t)origin->area, (int32_t)target.area, out, error);
+}
 bool qa_collision_clusters_visible(const qa_collision_geometry *geometry,qa_trace_scratch *scratch,
     const int32_t *from,size_t from_count,qa_bytes targets,bool phs,bool *out,qa_error *error)
 {

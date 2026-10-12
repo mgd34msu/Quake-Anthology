@@ -126,7 +126,7 @@ typedef struct mod_actor_channel {
     application_q3_mod *owner;
     qa_actor_id actor;
     int32_t client;
-    size_t definition;
+    size_t definition, storage_slot;
     qa_protection_lease lease;
     bool bound;
 } mod_actor_channel;
@@ -150,6 +150,7 @@ typedef struct mod_pickup_actor {
     mod_actor_resources *resources;
     application_q3_mod *owner;
     qa_actor_id actor;
+    size_t storage_slot, rules_slot, bindings_slot;
     qa_pickup_lease lease;
     qa_pickup_rule *rules;
     mod_pickup_bound *bindings;
@@ -178,6 +179,8 @@ struct application_q3_mod {
     qa_unified_frame_lease *resource_storage;
     qa_pool resource_pool;
     size_t resource_chunk;
+    qa_pool channel_pool, pickup_pool, pickup_rules, pickup_bindings;
+    size_t channel_chunk, pickup_chunk, pickup_rule_chunk;
     unsigned pickup_calls;
     unsigned calls;
     bool restoring, restored_owner, active, callbacks_active, restored_callbacks, closing, failed_scope;
@@ -192,6 +195,8 @@ mod_actor_resources *q3mod_resources_take(application_q3_mod *, qa_actor_id, qa_
 void q3mod_resources_collect(application_q3_mod *, mod_actor_resources *);
 void q3mod_channel_retain(mod_actor_resources *, mod_actor_channel *);
 void q3mod_channel_forget(mod_actor_channel *);
+mod_actor_channel *q3mod_channel_take(application_q3_mod *,qa_error *);
+void q3mod_channel_return(mod_actor_channel *);
 bool q3mod_address(application_q3_mod *, qa_actor_id, size_t, uint32_t,
     size_t, uint32_t *, qa_error *);
 bool q3mod_scalar_word(double, mod_scalar, int32_t *, qa_error *);
