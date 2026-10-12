@@ -13,17 +13,28 @@
 
 typedef struct model_preference { char *product, *model; } model_preference;
 typedef struct q3_hook_metadata { qa_product_id product; application_q3_grapple_profile *profile; } q3_hook_metadata;
+typedef struct startup_roster_rows {
+    qa_arena storage;
+    qa_ui_library_roster_row *rows;
+    unsigned *counts;
+    size_t count;
+    const char *source_label, *map;
+    qa_resource *map_resource;
+} startup_roster_rows;
 struct frontend_startup_selection {
     qa_strings *names;
+    qa_arena choice_storage;
     qa_ui_library_choice *choices;
-    size_t count;
-    char **strings;
-    size_t string_count;
+    size_t count, choice_capacity;
     model_preference *models;
     size_t model_count;
-    qa_ui_library_roster_row *roster;
-    unsigned *roster_counts;
-    size_t roster_count;
+    startup_roster_rows rosters[2];
+    unsigned roster_current;
+    const qa_launch_draft *roster_draft;
+    qa_catalog *roster_catalog;
+    qa_product_id roster_geometry;
+    uint64_t roster_draft_revision, roster_catalog_generation, roster_lookup_generation, roster_resource_generation;
+    bool roster_valid;
     qa_catalog *hook_catalog;
     q3_hook_metadata *hooks;
     size_t hook_count;
@@ -45,20 +56,13 @@ static char *copy_text(const char *text, qa_error *e)
 
 static void clear_rows(frontend_startup_selection *s)
 {
-    for (size_t i = 0; i < s->string_count; ++i) free(s->strings[i]);
-    free(s->strings); free(s->choices); free(s->roster); free(s->roster_counts);
-    s->strings = NULL; s->choices = NULL; s->string_count = s->count = 0;
-    s->roster = NULL; s->roster_count = 0;
-    s->roster_counts = NULL;
+    qa_arena_reset(&s->choice_storage);
+    s->choices = NULL; s->count = 0;
 }
 
 static const char *text(frontend_startup_selection *s, const char *value, qa_error *e)
 {
-    char *copy = copy_text(value, e);
-    if (!copy) return NULL;
-    char **grown = realloc(s->strings, (s->string_count + 1) * sizeof(*grown));
-    if (!grown) { free(copy); qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining startup labels"); return NULL; }
-    s->strings = grown; s->strings[s->string_count++] = copy; return copy;
+    return qa_arena_text(&s->choice_storage, value, e);
 }
 
 static bool append(frontend_startup_selection *s, const char *id, const char *label,
@@ -68,9 +72,18 @@ static bool append(frontend_startup_selection *s, const char *id, const char *la
     if (!key || !title) return false;
     const char *reason = unavailable ? text(s, unavailable, e) : NULL;
     if (unavailable && !reason) return false;
-    qa_ui_library_choice *grown = realloc(s->choices, (s->count + 1) * sizeof(*grown));
-    if (!grown) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining startup choices"); return false; }
-    s->choices = grown; s->choices[s->count++] = (qa_ui_library_choice){key, title, reason}; return true;
+    if (!s->choices || s->count == s->choice_capacity) {
+        size_t capacity=s->choice_capacity;
+        if (s->choices || !capacity) capacity=capacity?capacity*2:1;
+        if (capacity<=s->count || capacity>SIZE_MAX/sizeof(*s->choices)) {
+            qa_error_set(e,QA_ERROR_MEMORY,0,"Startup choice rows exceed addressable storage"); return false;
+        }
+        qa_ui_library_choice *grown=qa_arena_grow(&s->choice_storage,s->choices,
+            s->choices?s->count*sizeof(*s->choices):0,capacity*sizeof(*s->choices),_Alignof(qa_ui_library_choice),e);
+        if (!grown) return false;
+        s->choices=grown; s->choice_capacity=capacity;
+    }
+    s->choices[s->count++] = (qa_ui_library_choice){key, title, reason}; return true;
 }
 
 static const qa_launch_provider *provider(const qa_launch_choices *c, const char *instance)
@@ -287,6 +300,12 @@ void frontend_startup_selection_destroy(frontend_startup_selection *s)
 {
     if (!s) return;
     clear_rows(s);
+    qa_arena_destroy(&s->choice_storage);
+    for (unsigned i=0;i<2;++i) {
+        qa_resource_release(s->rosters[i].map_resource);
+        qa_arena_destroy(&s->rosters[i].storage);
+    }
+    qa_catalog_release(s->roster_catalog);
     clear_hooks(s);
     for (size_t i = 0; i < s->model_count; ++i) { free(s->models[i].product); free(s->models[i].model); }
     free(s->models); qa_strings_destroy(s->names); free(s);
@@ -970,11 +989,11 @@ bool frontend_startup_selection_select(void *context, qa_ui_library *library, qa
     free(id); free(class_copy); return ok;
 }
 
-static bool roster_append(frontend_startup_selection *s, const char *classname,
+static bool roster_append(startup_roster_rows *rows, const char *classname,
     unsigned authored_count, qa_ui_library *library, qa_error *e)
 {
-    for (size_t i = 0; i < s->roster_count; ++i)
-        if (classname && s->roster[i].classname && !strcmp(s->roster[i].classname, classname)) return true;
+    for (size_t i = 0; i < rows->count; ++i)
+        if (classname && rows->rows[i].classname && !strcmp(rows->rows[i].classname, classname)) return true;
     char name[128], label[180];
     if (classname) { monster_name(classname, name, sizeof(name)); snprintf(label, sizeof(label), "%s (%u)", name, authored_count); }
     else snprintf(label, sizeof(label), "Unmatched classes");
@@ -988,24 +1007,19 @@ static bool roster_append(frontend_startup_selection *s, const char *classname,
             source && strcmp(source->campaign, "id1") && strcmp(source->campaign, "baseq2") ? source->campaign : "",
             source && source->edition == QA_EDITION_RERELEASE ? "rerelease" : "classic", strcmp(selection->instance, "startup:monster-source") ? " *" : "");
     }
-    const char *class_copy = classname ? text(s, classname, e) : NULL, *title = text(s, label, e), *value = text(s, effective, e);
+    const char *class_copy = classname ? qa_arena_text(&rows->storage, classname, e) : NULL, *title = qa_arena_text(&rows->storage, label, e), *value = qa_arena_text(&rows->storage, effective, e);
     if ((classname && !class_copy) || !title || !value) return false;
-    qa_ui_library_roster_row *grown = realloc(s->roster, (s->roster_count + 1) * sizeof(*grown));
-    if (!grown) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining authored monster rows"); return false; }
-    s->roster = grown;
-    unsigned *counts = realloc(s->roster_counts, (s->roster_count + 1) * sizeof(*counts));
-    if (!counts) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining authored monster counts"); return false; }
-    s->roster_counts = counts;
+    unsigned *counts=rows->counts;
     size_t index = classname ? 1 : 0;
-    while (index < s->roster_count) {
+    while (index < rows->count) {
         bool present = counts[index] != 0, selected_present = authored_count != 0;
-        if (selected_present != present ? selected_present : strcmp(classname, s->roster[index].classname) < 0) break;
+        if (selected_present != present ? selected_present : strcmp(classname, rows->rows[index].classname) < 0) break;
         ++index;
     }
-    memmove(s->roster + index + 1, s->roster + index, (s->roster_count - index) * sizeof(*s->roster));
-    memmove(counts + index + 1, counts + index, (s->roster_count - index) * sizeof(*counts));
-    s->roster[index] = (qa_ui_library_roster_row){class_copy, title, value}; counts[index] = authored_count;
-    ++s->roster_count; return true;
+    memmove(rows->rows + index + 1, rows->rows + index, (rows->count - index) * sizeof(*rows->rows));
+    memmove(counts + index + 1, counts + index, (rows->count - index) * sizeof(*counts));
+    rows->rows[index] = (qa_ui_library_roster_row){class_copy, title, value}; counts[index] = authored_count;
+    ++rows->count; return true;
 }
 
 bool frontend_startup_selection_roster(void *context, qa_ui_library *library,
@@ -1013,37 +1027,74 @@ bool frontend_startup_selection_roster(void *context, qa_ui_library *library,
 {
     frontend_startup_selection *s = context;
     if (!s || !library || !out || !count || !source_label) return fail(e, "Monster roster needs its draft");
-    clear_rows(s); *out = NULL; *count = 0;
+    *out = NULL; *count = 0;
     if (map_family(library) == QA_GAME_Q3) return fail(e, "This map has no supported authored monster roster");
-    const qa_monster_catalog_source *source = monster_source_for(library, "startup:monster-source");
-    const qa_product *p = source ? monster_product(qa_ui_library_catalog(library), source) : NULL;
-    *source_label = p ? p->title : "Authored campaign monsters";
-    qa_vfs *vfs = NULL; qa_resource *resource = NULL; qa_entities entities = {0}; qa_bsp_view bsp;
-    const qa_launch_choices *c = qa_ui_library_choices(library);
-    bool ok = qa_catalog_open(qa_ui_library_catalog(library), c->world.geometry, &vfs, e) &&
-        qa_vfs_acquire(vfs, c->world.map, &resource, NULL, e) && qa_bsp_open(qa_resource_bytes(resource), &bsp, e);
-    if (ok) ok = qa_entities_parse(bsp.lumps[QA_BSP_ENTITIES].bytes, QA_ENTITY_Q1, &entities, e);
-    if (ok) ok = roster_append(s, NULL, 0, library, e);
-    size_t slot_count; const qa_monster_catalog_slot *slots = qa_monster_catalog_slots(map_family(library), &slot_count);
-    for (size_t i = 0; ok && i < slot_count; ++i) {
-        unsigned found = 0; size_t length = strlen(slots[i].classname);
-        for (size_t n = 0; n < entities.count; ++n) { qa_bytes value; if (qa_entity_value(&entities, n, "classname", &value) && value.size == length && !memcmp(value.data, slots[i].classname, length)) ++found; }
-        ok = roster_append(s, slots[i].classname, found, library, e);
+    const qa_launch_draft *draft=qa_ui_library_draft(library);
+    qa_catalog *catalog=qa_launch_draft_catalog(draft);
+    const qa_launch_choices *c=qa_ui_library_choices(library);
+    uint64_t draft_revision=qa_launch_draft_revision(draft),catalog_generation=qa_catalog_generation(catalog);
+    uint64_t lookup_generation=qa_vfs_lookup_generation(qa_catalog_files(catalog));
+    uint64_t resource_generation=qa_resource_pool_admission_generation(qa_catalog_resources(catalog));
+    const startup_roster_rows *current=&s->rosters[s->roster_current];
+    if (s->roster_valid && s->roster_draft==draft && s->roster_catalog==catalog &&
+        s->roster_draft_revision==draft_revision && s->roster_catalog_generation==catalog_generation &&
+        s->roster_lookup_generation==lookup_generation && s->roster_resource_generation==resource_generation &&
+        s->roster_geometry==c->world.geometry &&
+        current->map && !strcmp(current->map,c->world.map)) {
+        *out=current->rows; *count=current->count; *source_label=current->source_label; return true;
     }
-    for (size_t n = 0; ok && n < entities.count; ++n) {
+    startup_roster_rows *rows=&s->rosters[s->roster_current^1];
+    qa_resource_release(rows->map_resource); rows->map_resource=NULL;
+    qa_arena_reset(&rows->storage);
+    rows->rows=NULL; rows->counts=NULL; rows->count=0; rows->map=rows->source_label=NULL;
+    const qa_monster_catalog_source *source=monster_source_for(library,"startup:monster-source");
+    const qa_product *p=source?monster_product(catalog,source):NULL;
+    rows->source_label=qa_arena_text(&rows->storage,p?p->title:"Authored campaign monsters",e);
+    rows->map=qa_arena_text(&rows->storage,c->world.map,e);
+    qa_vfs *vfs=NULL; qa_resource *resource=NULL; qa_entities entities={0}; qa_bsp_view bsp;
+    bool ok=rows->source_label && rows->map && qa_catalog_open(catalog,c->world.geometry,&vfs,e) &&
+        qa_vfs_acquire(vfs,c->world.map,&resource,NULL,e) && qa_bsp_open(qa_resource_bytes(resource),&bsp,e);
+    if (ok) ok=qa_entities_parse(bsp.lumps[QA_BSP_ENTITIES].bytes,QA_ENTITY_Q1,&entities,e);
+    size_t slot_count; const qa_monster_catalog_slot *slots=qa_monster_catalog_slots(map_family(library),&slot_count);
+    size_t maximum=1;
+    if (ok) {
+        if (slot_count>SIZE_MAX-maximum || entities.count>SIZE_MAX-maximum-slot_count ||
+            c->monster_count>SIZE_MAX-maximum-slot_count-entities.count ||
+            (maximum+=slot_count+entities.count+c->monster_count)>SIZE_MAX/sizeof(*rows->rows)) {
+            qa_error_set(e,QA_ERROR_MEMORY,0,"Authored monster rows exceed addressable storage"); ok=false;
+        }
+    }
+    if (ok) {
+        rows->rows=qa_arena_alloc(&rows->storage,maximum*sizeof(*rows->rows),_Alignof(qa_ui_library_roster_row),e);
+        rows->counts=qa_arena_alloc(&rows->storage,maximum*sizeof(*rows->counts),_Alignof(unsigned),e);
+        ok=rows->rows && rows->counts;
+    }
+    if (ok) ok=roster_append(rows,NULL,0,library,e);
+    for (size_t i=0;ok && i<slot_count;++i) {
+        unsigned found=0; size_t length=strlen(slots[i].classname);
+        for (size_t n=0;n<entities.count;++n) { qa_bytes value; if (qa_entity_value(&entities,n,"classname",&value) && value.size==length && !memcmp(value.data,slots[i].classname,length)) ++found; }
+        ok=roster_append(rows,slots[i].classname,found,library,e);
+    }
+    for (size_t n=0;ok && n<entities.count;++n) {
         qa_bytes value;
-        if (!qa_entity_value(&entities, n, "classname", &value) || value.size < 8 || memcmp(value.data, "monster_", 8)) continue;
-        char *name = malloc(value.size + 1);
-        if (!name) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining authored monster class"); ok = false; break; }
-        memcpy(name, value.data, value.size); name[value.size] = 0;
-        unsigned found = 0;
-        for (size_t i = 0; i < entities.count; ++i) { qa_bytes other; if (qa_entity_value(&entities, i, "classname", &other) && other.size == value.size && !memcmp(other.data, value.data, value.size)) ++found; }
-        ok = roster_append(s, name, found, library, e); free(name);
+        if (!qa_entity_value(&entities,n,"classname",&value) || value.size<8 || memcmp(value.data,"monster_",8)) continue;
+        char *name=qa_arena_alloc(&rows->storage,value.size+1,1,e);
+        if (!name) { ok=false; break; }
+        memcpy(name,value.data,value.size); name[value.size]=0;
+        unsigned found=0;
+        for (size_t i=0;i<entities.count;++i) { qa_bytes other; if (qa_entity_value(&entities,i,"classname",&other) && other.size==value.size && !memcmp(other.data,value.data,value.size)) ++found; }
+        ok=roster_append(rows,name,found,library,e);
     }
-    c = qa_ui_library_choices(library);
-    for (size_t i = 0; ok && i < c->monster_count; ++i)
-        if (*c->monsters[i].authored_classname) ok = roster_append(s, c->monsters[i].authored_classname, 0, library, e);
-    qa_entities_free(&entities); qa_resource_release(resource); qa_vfs_destroy(vfs);
-    if (!ok) return false;
-    *out = s->roster; *count = s->roster_count; return true;
+    c=qa_ui_library_choices(library);
+    for (size_t i=0;ok && i<c->monster_count;++i)
+        if (*c->monsters[i].authored_classname) ok=roster_append(rows,c->monsters[i].authored_classname,0,library,e);
+    qa_entities_free(&entities); qa_vfs_destroy(vfs);
+    if (!ok) { qa_resource_release(resource); return false; }
+    rows->map_resource=resource;
+    qa_catalog_retain(catalog); qa_catalog_release(s->roster_catalog); s->roster_catalog=catalog;
+    s->roster_draft=draft; s->roster_draft_revision=draft_revision; s->roster_geometry=c->world.geometry;
+    s->roster_catalog_generation=catalog_generation; s->roster_lookup_generation=lookup_generation;
+    s->roster_resource_generation=qa_resource_pool_admission_generation(qa_catalog_resources(catalog));
+    s->roster_current^=1; s->roster_valid=true;
+    *out=rows->rows; *count=rows->count; *source_label=rows->source_label; return true;
 }

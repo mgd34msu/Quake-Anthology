@@ -293,6 +293,11 @@ const qa_resource *qa_resource_pool_find(const qa_resource_pool *pool, uint64_t 
         ? (const qa_resource *)(uintptr_t)value : NULL;
 }
 
+uint64_t qa_resource_pool_admission_generation(const qa_resource_pool *pool)
+{
+    return pool ? pool->next_resource : 0;
+}
+
 qa_vfs *qa_vfs_create(qa_resource_pool *pool, qa_error *error)
 {
     if (pool == NULL) {

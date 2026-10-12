@@ -29,6 +29,7 @@ void qa_resource_pool_trim(qa_resource_pool *pool);
 /* Observe an existing version by its pool-local ID without loading content.
  * Borrowed until pool trimming/destruction; retain it across those operations. */
 const qa_resource *qa_resource_pool_find(const qa_resource_pool *, uint64_t id);
+uint64_t qa_resource_pool_admission_generation(const qa_resource_pool *);
 qa_vfs *qa_vfs_create(qa_resource_pool *pool, qa_error *error);
 qa_resource_pool *qa_vfs_resources(const qa_vfs *vfs);
 /* Copies mount/order/policy state while sharing immutable resources. Neither
