@@ -212,7 +212,8 @@ static bool configure_instance(qa_native_host *host, qa_native_module *module,
     if (host->string_names) qa_strings_retain(host->string_names);
     else if (!qa_strings_create(&host->string_names, error)) return false;
     if (!qa_strings_intern_cstr(host->string_names, "", &host->empty_string, error) ||
-        !qa_id_index_reserve(&host->strings, QA_Q2_MAX_CONFIGSTRINGS + 4096, error)) return false;
+        !qa_id_index_reserve(&host->strings, QA_Q2_MAX_CONFIGSTRINGS + 4096, error) ||
+        !qa_id_index_reserve(&host->cvar_records, qa_cvars_count(host->cvars), error)) return false;
     qa_native_process_options owned = {0};
     if (!options->process && !create_sdk_process(host, module, options, &owned, error))
         return false;
@@ -419,8 +420,10 @@ static void free_records(qa_native_host *host)
     qa_arena_destroy(&host->call_storage);
     qa_arena_destroy(&host->text_storage);
     native_host_command_dispose(host);
-    native_host_memory_state memory={.strings=host->strings, .cvar_shadows=host->cvar_shadows};
-    native_host_memory_dispose(&memory); host->strings=(qa_id_index){0}; host->cvar_shadows=NULL;
+    native_host_memory_state memory={.strings=host->strings, .cvar_records=host->cvar_records,
+        .cvar_shadows=host->cvar_shadows};
+    native_host_memory_dispose(&memory); host->strings=(qa_id_index){0};
+    host->cvar_records=(qa_id_index){0}; host->cvar_shadows=NULL;
     qa_strings_destroy(host->string_names); host->string_names=NULL;
     while (host->surfaces) {
         native_host_surface *next = host->surfaces->next;

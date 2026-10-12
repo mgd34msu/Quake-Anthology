@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "c01284f875409b8456786e64b0be0fa830218282",
+  "verified_main": "a3ced3e26e1726571f4815d4420f0562212328b5",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 157,
-    "open_source_observation": 214,
+    "fixed_source_build_core": 158,
+    "open_source_observation": 213,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -25109,8 +25109,9 @@
       "severity": "medium",
       "job": "03",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Completed Q2 EntityVisible decisions use common full-generation actor index with source-slot alias rows. Release compaction rebuilds the same index; cold restore rebuilds it from unchanged saved48-byte rows. Normal build/seven core suites passed; no live or timing claim.",
+      "fixed_commit": "a3ced3e26e1726571f4815d4420f0562212328b5"
     },
     {
       "id": "03-05",
@@ -41455,7 +41456,28 @@
         "04-005"
       ],
       "files_rechecked": [
-        "src/app/application/model_admission.c"
+        "src/app/application/character_selection.c",
+        "src/app/application/events.c",
+        "src/app/application/guest_q3_collision.c",
+        "src/app/application/guest_q3_exports.c",
+        "src/app/application/guest_q3_factory.c",
+        "src/app/application/guest_q3_scene_world.c",
+        "src/app/application/guest_q3_weapons_services.c",
+        "src/app/application/guest_qc_presentation.c",
+        "src/app/application/guest_source_actor.c",
+        "src/app/application/map.c",
+        "src/app/application/map_players.c",
+        "src/app/application/map_travel.c",
+        "src/app/application/match_intents.c",
+        "src/app/application/model_admission.c",
+        "src/app/application/native_client_roles.c",
+        "src/app/application/native_q1_composition_death.c",
+        "src/app/application/native_q1_console.c",
+        "src/app/application/native_q1_wire.c",
+        "src/app/application/native_q3_wire_state.c",
+        "src/app/application/save.c",
+        "src/app/application/save_resolvers.c",
+        "src/app/application/unified_player.c"
       ],
       "build_exit": 0,
       "core_exit": 0,
@@ -41470,6 +41492,29 @@
       ],
       "record_directory": "/tmp/qa-ta3196-provider-owner-adoption-20261012",
       "conclusion": "41 further module/restore/actor owner selections now use the shared provider index with exact first/all/eligible rules and distinct actual views. Post-callback pointer membership uses captured typed owner. Normal build/seven core suites passed; historical/name readers still being migrated."
+    },
+    {
+      "commit": "a3ced3e26e1726571f4815d4420f0562212328b5",
+      "source_tree": "4b4aa5e25dd4b315742ec7f1f106ba5fb9f7d711",
+      "finding_ids": [
+        "03-04"
+      ],
+      "files_rechecked": [
+        "src/app/application/native_q2_visibility.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-native-visibility-index-20261012",
+      "conclusion": "Completed Q2 EntityVisible decisions use common full-generation actor index with source-slot alias rows. Release compaction rebuilds the same index; cold restore rebuilds it from unchanged saved48-byte rows. Normal build/seven core suites passed; no live or timing claim."
     }
   ],
   "verification_limits": [

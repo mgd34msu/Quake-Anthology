@@ -29,6 +29,7 @@ typedef struct native_host_string_buffer {
 
 typedef struct native_host_cvar_record {
     char *name;
+    qa_string_id name_id;
     qa_native_address address, name_address;
     native_host_string_buffer value, latched;
     const char *value_text, *latched_text;
@@ -43,6 +44,7 @@ typedef struct native_host_cvar_record {
 
 typedef struct native_host_memory_state {
     qa_id_index strings;
+    qa_id_index cvar_records;
     native_host_cvar_record *cvar_shadows;
     native_host_string_buffer command_arguments[NATIVE_HOST_COMMAND_TOKENS], command_tail;
 } native_host_memory_state;
@@ -131,7 +133,8 @@ struct qa_native_host {
     qa_strings *string_names;
     qa_string_id empty_string;
     native_host_string_buffer command_arguments[NATIVE_HOST_COMMAND_TOKENS], command_tail;
-    native_host_cvar_record *cvar_shadows, *cvar_order;
+    native_host_cvar_record *cvar_shadows;
+    qa_id_index cvar_records;
     uint64_t cvar_view_identity, cvar_revision;
     native_host_surface *surfaces;
     qa_entity_model_fields models;

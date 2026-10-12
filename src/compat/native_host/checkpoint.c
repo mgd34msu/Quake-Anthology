@@ -99,7 +99,8 @@ static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
     bool captured = !host->cvars || ((!host->classic || native_host_refresh_cvars(host, error)) &&
         qa_cvars_save_capture(host->cvars, &registry, error));
     if (captured && host->kind != NATIVE_HOST_Q2_GAME) {
-        native_host_memory_state objects = {.strings=host->strings, .cvar_shadows=host->cvar_shadows};
+        native_host_memory_state objects = {.strings=host->strings, .cvar_records=host->cvar_records,
+            .cvar_shadows=host->cvar_shadows};
         memcpy(objects.command_arguments, host->command_arguments, sizeof(objects.command_arguments));
         objects.command_tail = host->command_tail;
         qa_source_save_io objects_io = {0};
@@ -499,8 +500,10 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
         if (ok) cvars=NULL;
     }
     if (ok && bind_memory) {
-        native_host_memory_state previous={.strings=host->strings, .cvar_shadows=host->cvar_shadows};
-        host->strings=memory.strings; host->cvar_shadows=memory.cvar_shadows;
+        native_host_memory_state previous={.strings=host->strings, .cvar_records=host->cvar_records,
+            .cvar_shadows=host->cvar_shadows};
+        host->strings=memory.strings; host->cvar_records=memory.cvar_records;
+        host->cvar_shadows=memory.cvar_shadows;
         memcpy(host->command_arguments, memory.command_arguments, sizeof(host->command_arguments));
         host->command_tail = memory.command_tail;
         memory=(native_host_memory_state){0}; native_host_memory_dispose(&previous);
