@@ -91,7 +91,7 @@ static bool submit(const q3n_frame *f, qa_error *error)
             --o->mark_count; memmove(m,m+1,(o->mark_count-i)*sizeof(*m)); continue;
         }
         if(m->shader==q3n_media_read(f->media)->graphics[Q3N_G_ENERGY_MARK]) {
-            int32_t fade=qa_source_float_to_i32((450 + -(450 * ((float)qa_i32_sub(f->time,m->time) / 3000))));
+            int32_t fade=qa_source_to_i32((450 + -(450 * ((float)qa_i32_sub(f->time,m->time) / 3000))));
             if(fade<255 && m->count && m->vertices[0].color[0])fade_rgb(m,fade<0?0:fade);
         }
         int32_t remaining=qa_i32_sub(expires,f->time);

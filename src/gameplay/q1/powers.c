@@ -361,8 +361,9 @@ bool qa_q1_game_damage_effect(qa_q1_game *g, qa_damage_effect_stage stage,
             float angle = qa_vec_yaw(delta, QA_DIRECTION_FLOAT, true) -
                           qa_vec_yaw(forward, QA_DIRECTION_FLOAT, true);
             if (!(angle > 90 && angle < 270) && !(angle < -90 && angle > -270)) {
-                effect->amount *=
-                    q1_classnamed(g, request->attack.inflictor, g->runtime_names[Q1_NAME_LAVA_SPIKE]) ? 0.7f : 0.3f;
+                float scale = q1_classnamed(g, request->attack.inflictor,
+                    g->runtime_names[Q1_NAME_LAVA_SPIKE]) ? 0.7f : 0.3f;
+                effect->amount = (float)((float)effect->amount * scale);
                 return shield_hit(g, player, error);
             }
         }
@@ -375,9 +376,9 @@ bool qa_q1_game_damage_effect(qa_q1_game *g, qa_damage_effect_stage stage,
             player->power_expires[QA_Q1_EMPATHY] != 0 &&
             (!inflictor || inflictor->power_expires[QA_Q1_EMPATHY] == 0)) {
             qa_string_id cause = g->runtime_names[Q1_NAME_HIPNOTIC_EMPATHY];
-            effect->amount *= 0.5f;
+            effect->amount = (float)((float)effect->amount * 0.5f);
             return !q1_alive(g, attacker) ||
-                   q1_damage_typed(g, attacker, request->target, request->target, effect->amount,
+                   q1_damage_typed(g, attacker, request->target, request->target, (float)effect->amount,
                                    QA_Q1_WEAPON_COUNT, QA_Q1_ARMOR_NORMAL, cause, error);
         }
     }

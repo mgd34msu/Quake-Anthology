@@ -47,7 +47,7 @@ bool q3n_lerp_run(const qa_player_animation_config *config, q3n_lerp_frame *stat
         state->frame_time = time < state->animation_time ? state->animation_time
             : qa_i32_add(state->old_frame_time, a->frame_lerp);
         double quotient = trunc((double)qa_i32_sub(state->frame_time, state->animation_time) / a->frame_lerp);
-        int32_t offset = qa_source_float_to_i32(((float)quotient * speed));
+        int32_t offset = qa_source_to_i32(((float)quotient * speed));
         int32_t count = a->flipflop ? qa_i32_from_u32((uint32_t)a->num_frames * 2u) : a->num_frames;
         if (offset >= count) {
             offset = qa_i32_sub(offset, count);
@@ -140,7 +140,7 @@ bool q3n_player_angles(q3n_player_pose *state, const qa_player_animation_config 
 {
     q3n_pose_entity pose = {.flags = (uint32_t)entity->eFlags,
         .velocity = qa_v3(entity->pos.delta[0], entity->pos.delta[1], entity->pos.delta[2]),
-        .movement_direction = qa_source_float_to_i32(entity->angles2[1]),
+        .movement_direction = qa_source_to_i32(entity->angles2[1]),
         .legs_animation = entity->legsAnim, .torso_animation = entity->torsoAnim};
     return q3n_player_angles_pose(state, config, &pose, angles, time, milliseconds, speed, out, error);
 }

@@ -25,13 +25,13 @@ bool qa_team_arena_score_calculate(const qa_team_arena_score_input *input,
         return fail(error, QA_ERROR_ARGUMENT, "Team Arena score calculation needs its actual source inputs");
     const qa_team_arena_stats *stats = &input->stats;
     float seconds = ((float)stats->end_time - (float)input->match_start_time) / 1000.0f;
-    int32_t time = qa_source_float_to_i32(seconds);
-    int32_t adjusted_time = qa_source_float_to_i32((float)input->time_to_beat);
+    int32_t time = qa_source_to_i32(seconds);
+    int32_t adjusted_time = qa_source_to_i32((float)input->time_to_beat);
     int32_t bonus = time < adjusted_time
         ? qa_i32_from_u32(((uint32_t)adjusted_time - (uint32_t)time) * 10u) : 0;
     bool won = stats->red_score > stats->blue_score;
     int32_t shutout = won && stats->blue_score <= 0 ? 100 : 0;
-    int32_t skill = qa_source_float_to_i32((float)input->skill);
+    int32_t skill = qa_source_to_i32((float)input->skill);
     if (skill < 1) skill = 1;
     qa_team_arena_score current = {
         .score = qa_i32_from_u32(((uint32_t)stats->base_score + (uint32_t)shutout + (uint32_t)bonus) * (uint32_t)skill),

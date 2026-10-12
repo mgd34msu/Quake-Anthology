@@ -769,7 +769,7 @@ bool qa_q2_entities_player_frame(qa_q2_game *g, qa_actor_id id, qa_error *e) {
         if (!bar->controller.registry)
             continue;
         q2_actor *controller = q2_ent(g, bar->controller);
-        float health = 0;
+        double health = 0;
         qa_builtin_actor_traits traits = {0};
         if (q2_actor_live(g, bar->target)) {
             qa_combat_state state;
@@ -834,7 +834,7 @@ bool qa_q2_entities_player_frame(qa_q2_game *g, qa_actor_id id, qa_error *e) {
                 return false;
         }
         event.value =
-            empty || traits.max_health <= 0 ? 0 : q2_clamp(health / traits.max_health, 0, 1);
+            empty || traits.max_health <= 0 ? 0 : q2_clamp((float)health / (float)traits.max_health, 0, 1);
         if (!q2_map_event(g, &event, e))
             return false;
         if (!q2_actor_live(g, id))

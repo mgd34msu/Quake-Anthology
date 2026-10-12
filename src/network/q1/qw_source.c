@@ -148,11 +148,11 @@ bool qa_qw_source_write_nails(qa_net_writer *writer, const qa_qw_nail *nails, si
     qa_net_write_u8(writer, 43); qa_net_write_u8(writer, (uint8_t)count);
     for (size_t i = 0; i < count; ++i) {
         const qa_qw_nail *nail = nails + i;
-        uint32_t x = (uint32_t)(qa_source_float_to_i32(nail->origin[0] + 4096.0f) >> 1);
-        uint32_t y = (uint32_t)(qa_source_float_to_i32(nail->origin[1] + 4096.0f) >> 1);
-        uint32_t z = (uint32_t)(qa_source_float_to_i32(nail->origin[2] + 4096.0f) >> 1);
-        uint32_t pitch = (uint32_t)qa_source_float_to_i32(nail->pitch * 16.0f / 360.0f) & 15u;
-        uint32_t yaw = (uint32_t)qa_source_float_to_i32(nail->yaw * 256.0f / 360.0f) & 255u;
+        uint32_t x = (uint32_t)(qa_source_to_i32(nail->origin[0] + 4096.0f) >> 1);
+        uint32_t y = (uint32_t)(qa_source_to_i32(nail->origin[1] + 4096.0f) >> 1);
+        uint32_t z = (uint32_t)(qa_source_to_i32(nail->origin[2] + 4096.0f) >> 1);
+        uint32_t pitch = (uint32_t)qa_source_to_i32(nail->pitch * 16.0f / 360.0f) & 15u;
+        uint32_t yaw = (uint32_t)qa_source_to_i32(nail->yaw * 256.0f / 360.0f) & 255u;
         uint8_t packed[6] = {(uint8_t)x, (uint8_t)((x >> 8) | (y << 4)),
             (uint8_t)(y >> 4), (uint8_t)z, (uint8_t)((z >> 8) | (pitch << 4)), (uint8_t)yaw};
         qa_net_write_data(writer, packed, sizeof(packed));

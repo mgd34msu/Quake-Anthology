@@ -95,8 +95,9 @@ bool qa_application_network_qw_receives(qa_application *, qa_actor_id,
     const qa_application_protocol_event *, bool *, qa_error *);
 /* Actual source actions run at the installed completed-frame command cut. */
 bool qa_application_network_qw_kill(qa_application *, qa_actor_id, bool *killed, qa_error *);
+enum { QA_QW_PAUSE_ANNOUNCEMENT_BYTES = 1396 };
 bool qa_application_network_qw_pause(qa_application *, qa_actor_id,
-    qa_buffer *announcement, bool *changed, qa_error *);
+    uint8_t *scratch, size_t scratch_bytes, qa_bytes *announcement, bool *changed, qa_error *);
 bool qa_application_network_qw_ptrack(qa_application *, qa_actor_id,
     bool target_supplied, int32_t client_slot, qa_error *);
 bool qa_application_network_qw_userinfo(qa_application *, qa_actor_id,

@@ -726,7 +726,7 @@ bool application_native_q1_ctf_damage_effect(application_provider *source,
         okay = source_cvar(&call, QA_Q1_SOURCE_TEAMPLAY, &policy, error);
         if (okay && !(policy < 0) && !call.view.rules.start_map) {
             okay = friendly(&call, request, &teammates, error);
-            uint32_t flags = (uint32_t)qa_source_float_to_i32((float)policy);
+            uint32_t flags = (uint32_t)qa_source_to_i32((float)policy);
             if (okay && teammates) {
                 if (stage == QA_DAMAGE_ARMOR_ALLOWED && (flags & 2u)) effect->allowed = false;
                 if (stage == QA_DAMAGE_BEFORE_HEALTH) {
@@ -782,7 +782,7 @@ bool application_native_q1_ctf_score_death(application_provider *source, qa_acto
         }
     }
     if (okay) okay = source_cvar(&call, QA_Q1_SOURCE_TEAMPLAY, &policy, error);
-    double penalty = policy < 0 ? -policy : teammates && ((uint32_t)qa_source_float_to_i32((float)policy) & 8u) ? 1 : 0;
+    double penalty = policy < 0 ? -policy : teammates && ((uint32_t)qa_source_to_i32((float)policy) & 8u) ? 1 : 0;
     if (okay && penalty > 0) okay = score(&call, attacker, -penalty, error);
     else if (okay) {
         okay = score(&call, attacker, 1, error);
@@ -868,7 +868,7 @@ bool application_native_q1_ctf_score_death(application_provider *source, qa_acto
         }
     }
     if (okay) okay = source_cvar(&call, QA_Q1_SOURCE_TEAMPLAY, &policy, error);
-    if (okay && policy >= 0 && teammates && ((uint32_t)qa_source_float_to_i32((float)policy) & 16u))
+    if (okay && policy >= 0 && teammates && ((uint32_t)qa_source_to_i32((float)policy) & 16u))
         okay = direct_damage(&call, attacker, attacker, attacker, 1000, "ctf:teamkill", error) &&
             score(&call, attacker, 1, error);
     if (okay) okay = current(&call, error);

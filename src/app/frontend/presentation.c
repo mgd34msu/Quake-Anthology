@@ -10,6 +10,7 @@
 #include "capture.h"
 #include "native_composition.h"
 #include "equipment_media.h"
+#include "visual_access.h"
 #include "component_scene.h"
 #include "qa/application_q3_components.h"
 #include "network_session.h"
@@ -293,7 +294,7 @@ static bool local_q3_damage(qa_frontend *f,frontend_seat *seat,qa_actor_id actor
         qa_combat_state combat;
         if(!qa_combat_read(qa_application_combat(f->application),actor,&combat,error))return false;
         q3n_damage_feedback_latch(&seat->q3_damage,source.source_time_ms,source.source_time_ms,
-            qa_source_float_to_i32(combat.health),player.damage_yaw,player.damage_pitch,player.damage_count,view->axis);
+            qa_source_to_i32(combat.health),player.damage_yaw,player.damage_pitch,player.damage_count,view->axis);
     }
     seat->q3_damage_event=player.damage_event; seat->q3_damage_time=source.source_time_ms;
     if(!source.present || player.dead || camera->cutscene)return true;
@@ -316,6 +317,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
     bool native_ready = qa_application_get_state(frontend->application) == QA_APPLICATION_RUNNING &&
         qa_application_map_read(frontend->application, &native_map);
     if (native_ready && !frontend_native_q3_sync(frontend, &native_factory, error)) return false;
+    if (native_ready && !frontend_visuals_prepare(frontend, error)) return false;
     if (!frontend_q3_texture_mode_begin_frame(frontend,error)) return false;
     if (!qa_scene_frame_material_order(&frontend->frame, frontend->order, error)) return false;
     qa_audio_listener listeners[4]; size_t listener_count = 0;

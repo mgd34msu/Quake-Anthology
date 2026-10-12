@@ -335,7 +335,7 @@ bool qa_server_profile_apply_startup(const qa_server_profile *profile,
             if (!owner->read_desired(owner->context, target->name, &desired, error) || !desired) { ok = false; break; }
             double number = 0;
             if (!qa_parse_atof(desired, &number, error)) { ok = false; break; }
-            uint32_t bits = (uint32_t)qa_source_float_to_i32((float)number);
+            uint32_t bits = (uint32_t)qa_source_to_i32((float)number);
             bool enabled = (!strcmp(value, "1")) != target->inverted;
             bits = enabled ? bits | target->mask : bits & ~target->mask;
             int32_t integer;

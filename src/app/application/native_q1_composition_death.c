@@ -437,7 +437,7 @@ bool application_native_q1_source_before_reaction(qa_application *app,
             qa_modes_q1_source_read(app->modes, mode, actor, QA_Q1_ROGUE_STEAM,
                 &input.victim_saved_team, error) && source_policy(&call, QA_Q1_SOURCE_GAMECFG, &gamecfg, error);
         if (okay) {
-            input.gamecfg = (uint32_t)qa_source_float_to_i32((float)gamecfg);
+            input.gamecfg = (uint32_t)qa_source_to_i32((float)gamecfg);
             input.tag_context = source;
             input.tag_score = application_native_q1_rogue_tag_score;
         }

@@ -41,7 +41,7 @@ static void enemy(q2m_context *c, qa_actor_id id) {
         c->actor->entity->enemy = id;
 }
 
-static bool health(q2m_context *c, qa_actor_id id, float *out, qa_error *error) {
+static bool health(q2m_context *c, qa_actor_id id, double *out, qa_error *error) {
     *out = 0;
     if (!q2_actor_live(c->game, id))
         return true;
@@ -112,7 +112,7 @@ bool q2m_medic_cleanup_patient(q2m_context *c, qa_actor_id id, qa_error *error) 
 static bool restore_enemy(q2m_context *c, bool *restored, qa_error *error) {
     *restored = false;
     qa_actor_id previous = c->monster->old_enemy;
-    float previous_health;
+    double previous_health;
     if (!health(c, previous, &previous_health, error))
         return false;
     if (!q2m_alive(c))
@@ -242,7 +242,7 @@ bool q2m_medic_acquire(q2m_context *c, bool preserve_enemy, bool *acquired,
                 continue;
             q2_actor *healer = native_actor(c->game, m->healer);
             if (healer) {
-                float healer_health;
+                double healer_health;
                 if (!health(c, healer->id, &healer_health, error)) {
                     result = false;
                     break;
@@ -254,7 +254,7 @@ bool q2m_medic_acquire(q2m_context *c, bool preserve_enemy, bool *acquired,
                     continue;
             }
         }
-        float candidate_health;
+        double candidate_health;
         if (!health(c, id, &candidate_health, error)) {
             result = false;
             break;
@@ -469,7 +469,7 @@ static bool revive(q2m_context *c, q2m_context *target, qa_error *error) {
     target->actor->extra_effects &= ~UINT64_C(0x4000);
     target->monster->healer = (qa_actor_id){0};
     qa_actor_id previous = c->monster->old_enemy;
-    float previous_health;
+    double previous_health;
     if (!health(c, previous, &previous_health, error))
         return false;
     if (!q2m_alive(c) || !q2m_alive(target))
@@ -576,7 +576,7 @@ static bool cable(q2m_context *c, qa_error *error) {
     if (rogue(c)) {
         if (target.actor->extra_effects & 2u)
             return q2m_medic_abort(c, !rerelease(c), false, false, error);
-        float target_health;
+        double target_health;
         if (!health(c, target_id, &target_health, error))
             return false;
         if (!q2m_alive(c) || !q2m_alive(&target))

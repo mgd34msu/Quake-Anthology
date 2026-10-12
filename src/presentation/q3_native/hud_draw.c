@@ -131,8 +131,8 @@ bool q3nh_model(q3n_hud_draw *d,float x,float y,float w,float h,int32_t model,in
     qa_angle_axis(angles,r.axis,QA_ANGLE_VM_MATH);
     qa_q3_refdef view={.flags=1,.fov_x=30,.fov_y=30,.time=d->frame->time};
     qa_scene_rect_f rect=q3nh_rect(d,(qa_scene_rect_f){x,y,w,h});
-    view.x=qa_source_float_to_i32(rect.x); view.y=qa_source_float_to_i32(rect.y);
-    view.width=qa_source_float_to_i32(rect.width); view.height=qa_source_float_to_i32(rect.height); q3ne_identity(view.axis);
+    view.x=qa_source_to_i32(rect.x); view.y=qa_source_to_i32(rect.y);
+    view.width=qa_source_to_i32(rect.width); view.height=qa_source_to_i32(rect.height); q3ne_identity(view.axis);
     return qa_q3_presentation_clear(d->frame->presentation,d->error) &&
         qa_q3_presentation_entity(d->frame->presentation,&r,d->error) &&
         qa_q3_presentation_render(d->frame->presentation,&view,d->error) && q3nh_current(d->owner,d->frame,d->error);

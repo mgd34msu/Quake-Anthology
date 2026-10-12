@@ -45,7 +45,7 @@ static void initialize_tables(void)
 unsigned qa_material_table_index(float value)
 {
     if (!isfinite(value)) return 0;
-    return (unsigned)(uint32_t)qa_source_float_to_i32(value) & 1023u;
+    return (unsigned)(uint32_t)qa_source_to_i32(value) & 1023u;
 }
 float qa_material_sine(unsigned index)
 {
@@ -54,7 +54,7 @@ float qa_material_sine(unsigned index)
 }
 static unsigned noise_cell(float value)
 {
-    return (unsigned)(uint32_t)qa_source_float_to_i32(floorf(value)) & 255u;
+    return (unsigned)(uint32_t)qa_source_to_i32(floorf(value)) & 255u;
 }
 static float noise_lattice(unsigned x, unsigned y, unsigned z, unsigned t)
 {

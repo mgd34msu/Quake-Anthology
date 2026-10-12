@@ -224,7 +224,8 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
     s->rule.old_water = 0;
     s->rule.air_ns = q2_deadline(g->now_ns, 12 * Q2_NS);
     s->rule.drown_damage = 2;
-    s->rule.damage_alpha = s->rule.bonus_alpha = s->rule.damage_blood = s->rule.damage_armor = s->rule.damage_power =
+    s->rule.damage_alpha = s->rule.bonus_alpha = 0;
+    s->rule.damage_blood = s->rule.damage_armor = s->rule.damage_power =
         s->rule.damage_knockback = 0;
     s->rule.fall_ns = 0;
     s->rule.bob_time = s->rule.bob_move = 0;

@@ -5,6 +5,9 @@
 #include "qa/application_native_q2_delivery.h"
 #include "qa/network_q2_messages.h"
 #include "qa/network_q1_nq.h"
+/* Cold root/provider/player publication; reserve actual owner groups and their
+ * media before reading the first output record. Existing groups remain live. */
+bool frontend_particle_admit(qa_frontend *,qa_error *);
 /* seat is the physical submitter, independent of the authored scene view. */
 bool frontend_particle_draw(qa_frontend *, uint32_t seat, const qa_scene_world_input *, qa_error *);
 bool frontend_particle_world(qa_frontend *, uint32_t seat, qa_scene_world_input *, qa_error *);

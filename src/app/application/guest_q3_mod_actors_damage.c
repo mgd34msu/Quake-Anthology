@@ -33,7 +33,7 @@ bool q3mod_actors_flush(application_q3_mod_actors *o,mod_actor_damage_frame *fra
     frame->result.reaction=QA_REACTION_NONE;
     return true;
 }
-bool q3mod_actors_reaction(application_q3_mod_actors *o,qa_actor_id actor,size_t kind,float amount,qa_error *e)
+bool q3mod_actors_reaction(application_q3_mod_actors *o,qa_actor_id actor,size_t kind,double amount,qa_error *e)
 {
     mod_actor_damage_frame *frame=o->frames;
     while(frame&&!qa_actor_id_equal(frame->request.target,actor)) frame=frame->previous;
@@ -172,8 +172,7 @@ bool q3mod_actors_damage_hook(application_q3_mod_actors *o,const qa_qvm_call *ca
     const mod_actor_call *layout=o->calls+MOD_ACTOR_DAMAGE;
     if(call->argument_count<layout->count) return q3mod_fail(e,QA_ERROR_FORMAT,"Source damage exceeds its reached argument frame");
     int32_t words[8]; for(size_t i=0;i<8;++i) if(!qa_qvm_call_argument(call,layout->roles[i],words+i,e)) return false;
-    qa_damage_request request={.amount=(float)words[5],.radius=((uint32_t)words[6]&o->damage_flags[0])!=0};
-    if((double)request.amount!=words[5]) return q3mod_fail(e,QA_ERROR_UNSUPPORTED,"Source damage amount exceeds exact canonical representation");
+    qa_damage_request request={.amount=words[5],.radius=((uint32_t)words[6]&o->damage_flags[0])!=0};
     if(!o->options.actor(o->options.context,words[0],&request.target,e)||!request.target.registry)
         return q3mod_fail(e,QA_ERROR_ARGUMENT,"Source damage target has no genuine canonical actor");
     if(!o->options.actor(o->options.context,words[1],&request.attack.inflictor,e)||!o->options.actor(o->options.context,words[2],&request.attack.attacker,e)||

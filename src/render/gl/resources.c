@@ -1031,7 +1031,9 @@ bool gl_skeletal_frame(qa_gl_renderer *renderer, const qa_scene_frame *frame, qa
     if (!present) return true;
     if (frame->command_count > (size_t)PTRDIFF_MAX / sizeof(*renderer->skin_palettes)) goto too_large;
     if (frame->command_count > renderer->skin_palette_capacity) {
-        void *data = realloc(renderer->skin_palettes, frame->command_count * sizeof(*renderer->skin_palettes));
+        void *data = qa_arena_grow(&renderer->work_storage, renderer->skin_palettes,
+            renderer->skin_palette_capacity * sizeof(*renderer->skin_palettes),
+            frame->command_count * sizeof(*renderer->skin_palettes), _Alignof(gl_skin_palette), error);
         if (!data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating skeletal palette slots"); return false; }
         renderer->skin_palettes = data;
         renderer->skin_palette_capacity = frame->command_count;
@@ -1138,7 +1140,6 @@ bool gl_skeletal_bind(qa_gl_renderer *renderer, const qa_scene_draw *draw, qa_er
 void gl_skeletal_destroy(qa_gl_renderer *renderer, bool native)
 {
     if (native && renderer->skin_palette_buffer) renderer->gl.DeleteBuffers(1, &renderer->skin_palette_buffer);
-    free(renderer->skin_palettes); free(renderer->skin_sampled); free(renderer->skin_vertices);
     renderer->skin_palettes = NULL; renderer->skin_sampled = NULL; renderer->skin_vertices = NULL;
     renderer->skin_palette_buffer = 0;
     renderer->skin_palette_bytes = renderer->skin_palette_cursor = 0;
@@ -1299,7 +1300,6 @@ void gl_world_pages_destroy(qa_gl_renderer *renderer, bool native)
     }
     if (native && renderer->world_index_buffer)
         renderer->gl.DeleteBuffers(1, &renderer->world_index_buffer);
-    free(renderer->world_indices);
     renderer->world_indices = NULL;
     renderer->world_index_buffer = 0;
     renderer->world_index_capacity = renderer->world_index_bytes = renderer->world_index_cursor = 0;
@@ -1383,7 +1383,9 @@ static bool world_index_reserve(qa_gl_renderer *renderer, size_t required, qa_er
     if (capacity > (size_t)INT_MAX || capacity > SIZE_MAX / sizeof(*renderer->world_indices)) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "OpenGL world index run exceeds supported storage"); return false;
     }
-    uint32_t *indices = realloc(renderer->world_indices, capacity * sizeof(*indices));
+    uint32_t *indices = qa_arena_grow(&renderer->work_storage, renderer->world_indices,
+        renderer->world_index_capacity * sizeof(*indices), capacity * sizeof(*indices),
+        _Alignof(uint32_t), error);
     if (!indices) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating OpenGL world index scratch"); return false; }
     renderer->world_indices = indices; renderer->world_index_capacity = capacity;
     return true;

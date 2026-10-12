@@ -125,7 +125,8 @@ typedef struct qa_q2_monster_checkpoint {
   qa_vec3 saved_attack_position, controller_direction;
   qa_attack last_attack;
   qa_q2_saved_reference attack_attacker, attack_inflictor, attack_projectile;
-  float pending_damage, pending_kick, controller_damage;
+  double pending_damage, pending_kick;
+  float controller_damage;
   uint64_t controller_ns;
   int64_t monster_slots, monster_used;
   int water_level, water_type;

@@ -234,9 +234,8 @@ static bool media_bank(frontend_unified_q2_rr_hud *o, qa_string_id content, bool
         qa_scene_resources *images; qa_material_library *materials; qa_font_library *fonts; qa_audio_bank *sounds;
         if (!frontend_unified_media_bank(o->media,content,&images,&materials,&fonts,&sounds,e)) return false;
     }
-    for (size_t i=0; i<frontend_unified_media_bank_count(o->media); ++i)
-        if (frontend_unified_media_bank_read(o->media,i,out) && out->content_name==content)
-            return out->product && out->product->family==QA_GAME_Q2 && out->files && out->images;
+    if (frontend_unified_media_bank_find(o->media,content,out))
+        return out->product && out->product->family==QA_GAME_Q2 && out->files && out->images;
     return fail(e,"RR HUD content has no genuine retained Q2 media bank");
 }
 static bool localized(frontend_unified_q2_rr_hud *o, rr_record *r, const char *source,

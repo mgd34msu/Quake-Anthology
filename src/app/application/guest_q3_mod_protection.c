@@ -54,7 +54,7 @@ static bool read_at(mod_actor_channel *c, uint32_t count_address, uint32_t selec
             (double)qa_load_i32le(bytes):qa_load_f32le(bytes);
         if (d->selection.masked) {
             uint32_t bits=d->selection.field.encoding==MOD_INT32?
-                (uint32_t)qa_load_i32le(bytes):(uint32_t)qa_source_float_to_i32(qa_load_f32le(bytes));
+                (uint32_t)qa_load_i32le(bytes):(uint32_t)qa_source_to_i32(qa_load_f32le(bytes));
             value=bits&d->selection.mask;
         }
         size_t i=0; while (i<d->selection.count && d->selection.values[i].value!=value) ++i;
@@ -129,7 +129,7 @@ static bool scale_declared(const mod_call *call)
     return false;
 }
 static bool absorb(void *context, const qa_damage_request *request, const qa_damage_geometry *geometry,
-    float amount, qa_damage_flags flags, qa_protection_observer *observer, float *saved, qa_error *e)
+    double amount, qa_damage_flags flags, qa_protection_observer *observer, double *saved, qa_error *e)
 {
     mod_actor_channel *c=context; application_q3_mod *o=c->owner;
     const mod_protection *d=o->profile->protection+c->definition;
@@ -151,8 +151,8 @@ static bool absorb(void *context, const qa_damage_request *request, const qa_dam
     scalar(&in,Q3_MOD_DAMAGE_FLAGS,mask); scalar(&in,Q3_MOD_PROTECTION_SCALE,flags.regular_scale);
     scalar(&in,Q3_MOD_TIME,seconds); double result;
     if (!q3mod_protection_observe(o,c->actor,observer,&d->absorb,&in,&result,e)) return false;
-    if (result<0 || result>FLT_MAX) return q3mod_fail(e,QA_ERROR_FORMAT,"Original absorption returned invalid savings");
-    *saved=(float)result; return true;
+    if (!isfinite(result) || result<0) return q3mod_fail(e,QA_ERROR_FORMAT,"Original absorption returned invalid savings");
+    *saved=result; return true;
 }
 static mod_actor_channel *channel_for(application_q3_mod *o,qa_actor_id actor,qa_protection_channel channel)
 {

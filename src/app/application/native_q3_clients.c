@@ -1500,8 +1500,8 @@ bool application_native_q3_client_movement_parameters(application_provider *prov
         if (!application_native_q3_settings_number_at(provider, APPLICATION_Q3_SETTING_G_GRAVITY, &gravity_value, error) ||
             !application_native_q3_settings_number_at(provider, APPLICATION_Q3_SETTING_G_SPEED, &speed_value, error)) return false;
         *pm_type = noclip ? 1 : combat.health <= 0 ? 3 : 0;
-        *gravity = qa_source_float_to_i32(gravity_value);
-        *speed = qa_source_float_to_i32(speed_value);
+        *gravity = qa_source_to_i32(gravity_value);
+        *speed = qa_source_to_i32(speed_value);
         application_provider *equipment = application_provider_for(app, actor, QA_ROLE_EQUIPMENT, "");
         if (!equipment || !equipment->constructed || !equipment->attached || equipment->close_pending)
             return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 movement lost its selected equipment owner");

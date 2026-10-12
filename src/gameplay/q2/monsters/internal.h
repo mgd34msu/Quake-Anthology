@@ -340,7 +340,7 @@ struct qa_q2_monster {
   qa_vec3 widow_previous_target;
   qa_vec3 controller_direction;
   qa_attack last_attack;
-  float pending_damage, pending_kick;
+  double pending_damage, pending_kick;
   int64_t monster_slots, monster_used;
   int water_level, water_type;
   uint64_t last_link_count;
@@ -399,7 +399,7 @@ bool q2m_damageable(q2m_context *, bool enabled, qa_error *);
 bool q2m_write_body(q2m_context *, bool link, qa_error *);
 bool q2m_link(q2m_context *, qa_error *);
 bool q2m_emit(q2m_context *, qa_builtin_event_kind, q2_runtime_name , int, qa_vec3,
-              qa_vec3, float, qa_error *);
+              qa_vec3, double, qa_error *);
 bool q2m_sound(q2m_context *, q2_runtime_name , int, float, qa_error *);
 bool q2m_sound_volume(q2m_context *, q2_runtime_name , int channel, float attenuation,
                        float volume, qa_error *);

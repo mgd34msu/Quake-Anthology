@@ -601,7 +601,7 @@ static bool item_observation(void *opaque,qa_actor_id pickup,qa_actor_id recipie
     q3_actor *player_actor=q3_actor_get(game,recipient);
     if(!q3_actor_get(game,pickup) || !player_actor || player_actor->kind!=Q3_ACTOR_PLAYER) goto done;
     qa_q3_player_state player=player_actor->state.player;
-    float maximum=(float)player.max_health;
+    int32_t maximum=player.max_health;
     int32_t quantity=spawn.count?spawn.count:item->quantity;
     switch(item->kind) {
     case QA_Q3_ITEM_WEAPON:
@@ -621,13 +621,13 @@ static bool item_observation(void *opaque,qa_actor_id pickup,qa_actor_id recipie
         *utility+=fmaxf(0,(float)((int64_t)after-ammo));*available=true;break;
     }
     case QA_Q3_ITEM_HEALTH:
-        if(player.persistent!=QA_Q3_P_GUARD && (item->quantity==5 || item->quantity==100)) maximum*=2;
-        *utility=fmaxf(0,fminf(maximum,combat.health+(float)quantity)-combat.health);
+        if(player.persistent!=QA_Q3_P_GUARD && (item->quantity==5 || item->quantity==100)) maximum=qa_i32_add(maximum,maximum);
+        *utility=(float)fmax(0,fmin(maximum,combat.health+quantity)-combat.health);
         *available=combat.health<maximum;break;
     case QA_Q3_ITEM_ARMOR:
         if(player.persistent==QA_Q3_P_SCOUT) break;
-        if(player.persistent!=QA_Q3_P_GUARD) maximum*=2;
-        *utility=fmaxf(0,fminf(maximum,(float)combat.armor.regular.points+(float)item->quantity)-(float)combat.armor.regular.points);
+        if(player.persistent!=QA_Q3_P_GUARD) maximum=qa_i32_add(maximum,maximum);
+        *utility=(float)fmax(0,fmin(maximum,combat.armor.regular.points+item->quantity)-combat.armor.regular.points);
         *available=combat.armor.regular.points<maximum;break;
     case QA_Q3_ITEM_HOLDABLE: *available=player.holdable==QA_Q3_H_NONE;*utility=*available?1:0;break;
     case QA_Q3_ITEM_POWERUP: *available=true;*utility=fmaxf(0,(float)quantity);break;
@@ -799,7 +799,7 @@ static bool pickup_original_body(void *context, const qa_pickup_offer *offer, bo
             return q3_fail(error, "Q3 source pickup returned an invalid admission kind");
         player = &recipient->state.player;
     }
-    float maximum = (float)player->max_health;
+    int32_t maximum = player->max_health;
     int32_t quantity = spawn.count ? spawn.count : item->quantity;
     double given;
     switch (item->kind) {
@@ -848,7 +848,7 @@ static bool pickup_original_body(void *context, const qa_pickup_offer *offer, bo
     }
     case QA_Q3_ITEM_HEALTH:
         if (player->persistent != QA_Q3_P_GUARD && (item->quantity == 5 || item->quantity == 100))
-            maximum *= 2;
+            maximum = qa_i32_add(maximum, maximum);
         if (combat.health >= maximum)
             return true;
         if (!pickup_log(call, offer, item, error))
@@ -856,14 +856,14 @@ static bool pickup_original_body(void *context, const qa_pickup_offer *offer, bo
         if (!pickup_original_live(game, offer, NULL, NULL))
             return true;
         if (!qa_combat_set_health(game->options.services.combat, offer->recipient,
-                                  fminf(maximum, combat.health + (float)quantity), error))
+                                  fmin(maximum, combat.health + quantity), error))
             return false;
         break;
     case QA_Q3_ITEM_ARMOR: {
         if (player->persistent == QA_Q3_P_SCOUT)
             return true;
         if (player->persistent != QA_Q3_P_GUARD)
-            maximum *= 2;
+            maximum = qa_i32_add(maximum, maximum);
         if (combat.armor.regular.points >= maximum)
             return true;
         if (!pickup_log(call, offer, item, error))
@@ -872,8 +872,8 @@ static bool pickup_original_body(void *context, const qa_pickup_offer *offer, bo
             return true;
         qa_regular_armor armor = {
             .kind = QA_ARMOR_Q3,
-            .protection.q3_protection = 0.66f,
-            .points = fminf(maximum, (float)combat.armor.regular.points + (float)item->quantity),
+            .protection.q3_protection = 0.66,
+            .points = fmin(maximum, combat.armor.regular.points + item->quantity),
             .item = game->item_ids[spawn.item_index]};
         if (!qa_combat_set_regular_armor(game->options.services.combat, offer->recipient, &armor,
                                          error))
@@ -930,16 +930,16 @@ static bool pickup_original_body(void *context, const qa_pickup_offer *offer, bo
         player->persistent_item = offer->pickup;
         player->max_health = player->handicap;
         if (player->persistent == QA_Q3_P_GUARD) {
-            player->max_health *= 2;
+            player->max_health = qa_i32_add(player->max_health, player->max_health);
             if (!qa_combat_set_health(game->options.services.combat, offer->recipient,
-                                      (float)player->max_health, error))
+                                      player->max_health, error))
                 return false;
             if (!pickup_original_live(game, offer, &entity, &recipient))
                 return true;
             player = &recipient->state.player;
             if (!qa_combat_set_regular_points(game->options.services.combat,
                                               offer->recipient,
-                                              (float)player->max_health, NULL,
+                                              player->max_health, NULL,
                                               error))
                 return false;
         } else if (player->persistent == QA_Q3_P_SCOUT) {
@@ -1082,10 +1082,10 @@ static bool pickup_complete(void *context, const qa_pickup_offer *offer, bool ac
     if (spawn.dropped)
         source->free_after_event = true;
     float seconds = spawn.wait_seconds != 0 ? spawn.wait_seconds : call->respawn;
-    int32_t respawn_seconds = qa_source_float_to_i32(seconds);
+    int32_t respawn_seconds = qa_source_to_i32(seconds);
     if (spawn.random_seconds != 0) {
         float adjusted = ((float)respawn_seconds + (q3_crandom(game) * spawn.random_seconds));
-        respawn_seconds = qa_source_float_to_i32(adjusted);
+        respawn_seconds = qa_source_to_i32(adjusted);
         if (respawn_seconds < 1)
             respawn_seconds = 1;
     }

@@ -9,8 +9,8 @@ typedef struct green_radius_context {
 static bool green_prepare(void *context, qa_damage_request *request, bool *allowed, qa_error *e) {
     green_radius_context *radius = context;
     *allowed = !(radius->hurt && qa_actor_id_equal(radius->direct, request->target));
-    request->amount = truncf(request->amount);
-    request->knockback = truncf(request->knockback);
+    request->amount = trunc(request->amount);
+    request->knockback = trunc(request->knockback);
     return q2_prepare_damage(radius->game, request, allowed, e);
 }
 bool q2_green_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contact, qa_error *e) {

@@ -2,9 +2,9 @@
 #include "qa/game_q3_clients.h"
 #include "qa/text.h"
 
-float q3_damage_regular_delta(const qa_damage_outcome *outcome, bool *written) {
+double q3_damage_regular_delta(const qa_damage_outcome *outcome, bool *written) {
     *written = false;
-    float delta = 0;
+    double delta = 0;
     for (size_t i = 0; i < outcome->mutation_count; ++i) {
         const qa_damage_mutation *mutation = &outcome->mutations[i];
         if (mutation->kind != QA_MUTATION_ARMOR)
@@ -12,8 +12,8 @@ float q3_damage_regular_delta(const qa_damage_outcome *outcome, bool *written) {
         *written = true;
         if (mutation->value.armor.before.regular.kind != QA_ARMOR_NONE &&
             mutation->value.armor.after.regular.kind != QA_ARMOR_NONE)
-            delta += (float)mutation->value.armor.before.regular.points -
-                     (float)mutation->value.armor.after.regular.points;
+            delta += mutation->value.armor.before.regular.points -
+                     mutation->value.armor.after.regular.points;
     }
     return delta;
 }
@@ -54,7 +54,7 @@ static bool before_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, 
     if (!(player->selections & (QA_Q3_CHARACTER | QA_Q3_EFFECTS)) && !source_client)
         return true;
     const qa_damage_result *result = &outcome->result;
-    float blood = result->applied_damage, armor = 0;
+    double blood = result->applied_damage, armor = 0;
     if (result->has_feedback) {
         blood = result->blood;
         armor = result->armor_saved + result->power_saved;
@@ -62,12 +62,13 @@ static bool before_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, 
         for (size_t i = 0; i < outcome->mutation_count; ++i) {
             const qa_damage_mutation *mutation = &outcome->mutations[i];
             if (mutation->kind == QA_MUTATION_ARMOR)
-                armor += fmaxf(0, (float)mutation->value.armor.before.regular.points -
-                                      (float)mutation->value.armor.after.regular.points);
+                armor += fmax(0, mutation->value.armor.before.regular.points -
+                                     mutation->value.armor.after.regular.points);
         }
-    player->damage_blood += blood;
-    player->damage_armor += armor;
-    player->damage_knockback += result->knockback;
+    player->damage_blood = qa_i32_add(player->damage_blood, qa_source_to_i32(blood));
+    player->damage_armor = qa_i32_add(player->damage_armor, qa_source_to_i32(armor));
+    player->damage_knockback = qa_i32_add(player->damage_knockback,
+        qa_source_to_i32(result->knockback));
     player->damage_from = outcome->request.direction;
     player->damage_from_world =
         qa_vec_dot(outcome->request.direction, outcome->request.direction) == 0;
@@ -155,8 +156,8 @@ static bool player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_
             return true;
         player = &entry->state.player;
     }
-    float count = fminf(255, (float)qa_source_float_to_i32(
-        player->damage_blood + player->damage_armor));
+    float count = (float)qa_i32_add(player->damage_blood, player->damage_armor);
+    if (count > 255) count = 255;
     if (!dead && count != 0) {
         if (player->damage_from_world) {
             player->damage_pitch = 255;
@@ -165,8 +166,8 @@ static bool player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_
         } else {
             qa_vec3 angles = qa_vec_angles(player->damage_from,QA_DIRECTION_VM,
                 QA_VECTOR_SOURCE|QA_VECTOR_DOUBLE_SQRT);
-            player->damage_pitch = qa_source_float_to_i32(((angles.x / 360) * 256));
-            player->damage_yaw = qa_source_float_to_i32(((angles.y / 360) * 256));
+            player->damage_pitch = qa_source_to_i32(((angles.x / 360) * 256));
+            player->damage_yaw = qa_source_to_i32(((angles.y / 360) * 256));
         }
         qa_combat_state combat;
         if (!qa_combat_read_traits(game->options.services.combat, actor, &combat, error))
@@ -177,7 +178,7 @@ static bool player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_
         player = &entry->state.player;
         if (game->now_ms > player->pain_after && !combat.invulnerable) {
             player->pain_after = q3_add_time(game->now_ms, 700);
-            if (!feedback_event(game, actor, 56, qa_source_float_to_i32((float)combat.health), error))
+            if (!feedback_event(game, actor, 56, qa_source_to_i32(combat.health), error))
                 return false;
             entry = q3_actor_get(game, actor);
             if (!entry)
@@ -185,7 +186,7 @@ static bool player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_
             player = &entry->state.player;
             player->damage_event = q3_add_time(player->damage_event, 1);
         }
-        player->damage_count = (int32_t)count;
+        player->damage_count = qa_source_to_i32(count);
         player->damage_blood = player->damage_armor = player->damage_knockback = 0;
     }
     q3_wire_entity_source *source = source_client ? q3_wire_entity(game, actor) : NULL;

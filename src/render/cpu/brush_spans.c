@@ -32,6 +32,7 @@ typedef struct brush_edge {
 typedef struct brush_event { int64_t x; size_t surface; } brush_event;
 typedef struct brush_span { uint32_t x, y, count; size_t surface; } brush_span;
 struct cpu_brush_context {
+  qa_arena storage;
   brush_surface *surfaces;
   size_t surface_count, surface_capacity;
   brush_edge *edges;
@@ -59,9 +60,10 @@ static bool cache_pinned(const qa_cpu_renderer *renderer) {
   return false;
 }
 
-static bool reserve(void **storage, size_t *capacity, size_t count,
+static bool reserve(qa_arena *arena, void **storage, size_t *capacity, size_t count,
                      size_t stride, qa_error *error) {
-  if (count <= *capacity) return true;
+  if (*storage && count <= *capacity) return true;
+  if (!count && !*capacity) return true;
   if (count > SIZE_MAX / stride) {
     qa_error_set(error, QA_ERROR_MEMORY, count, "CPU brush storage overflow");
     return false;
@@ -69,13 +71,136 @@ static bool reserve(void **storage, size_t *capacity, size_t count,
   size_t grown = *capacity ? *capacity : 64;
   while (grown < count && grown <= SIZE_MAX / 2 / stride) grown *= 2;
   if (grown < count || grown > SIZE_MAX / stride) grown = count;
-  void *replacement = realloc(*storage, grown * stride);
+  void *replacement = qa_arena_grow(arena, *storage,
+      *storage ? *capacity * stride : 0, grown * stride,
+      _Alignof(max_align_t), error);
   if (!replacement) {
     qa_error_set(error, QA_ERROR_MEMORY, count, "Allocating CPU brush storage");
     return false;
   }
   *storage = replacement;
   *capacity = grown;
+  return true;
+}
+
+static struct cpu_brush_context *context_available(qa_cpu_renderer *renderer,
+                                                   qa_error *error) {
+  struct cpu_brush_context **link = &renderer->brush_spans;
+  while (*link && (*link)->queued) link = &(*link)->next;
+  if (!*link) {
+    struct cpu_brush_context *context = qa_arena_alloc(&renderer->brush_storage,
+        sizeof(*context), _Alignof(struct cpu_brush_context), error);
+    if (!context) return NULL;
+    *context = (struct cpu_brush_context){0};
+    *link = context;
+  }
+  return *link;
+}
+
+static bool context_prepare(struct cpu_brush_context *context, qa_error *error) {
+#define BRUSH_PREPARE(field, capacity) \
+  if (!reserve(&context->storage, (void **)&context->field, \
+      &context->capacity, context->capacity, sizeof(*context->field), error)) return false
+  BRUSH_PREPARE(surfaces, surface_capacity);
+  BRUSH_PREPARE(edges, edge_capacity);
+  BRUSH_PREPARE(clip[0], clip_capacity[0]);
+  BRUSH_PREPARE(clip[1], clip_capacity[1]);
+  BRUSH_PREPARE(active_edges, active_edge_capacity);
+  BRUSH_PREPARE(active_surfaces, active_surface_capacity);
+  BRUSH_PREPARE(events, event_capacity);
+  BRUSH_PREPARE(spans, span_capacity);
+  BRUSH_PREPARE(rows, row_capacity);
+#undef BRUSH_PREPARE
+  return true;
+}
+
+static void context_reset(struct cpu_brush_context *context) {
+  qa_arena_reset(&context->storage);
+  context->surfaces = NULL;
+  context->edges = NULL;
+  context->clip[0] = context->clip[1] = NULL;
+  context->active_edges = context->active_surfaces = NULL;
+  context->events = NULL;
+  context->spans = NULL;
+  context->rows = NULL;
+}
+
+typedef struct brush_extent {
+  size_t surfaces, edges, clip;
+} brush_extent;
+
+static bool extent_add(brush_extent *extent, const qa_scene_brush_surface *brush,
+                         bool chain, qa_error *error) {
+  if (!brush->present) return true;
+  if (chain && brush->chain) {
+    for (const qa_scene_brush_surface *part = brush->chain; part; part = part->next)
+      if (!extent_add(extent, part, false, error)) return false;
+    return true;
+  }
+  if (brush->part_count) {
+    for (size_t i = 0; i < brush->part_count; ++i)
+      if (!extent_add(extent, brush->parts + i, true, error)) return false;
+    return true;
+  }
+  if (brush->polygon_vertices < 3) return true;
+  size_t vertices = brush->polygon_vertices;
+  if (vertices > SIZE_MAX - 7 || extent->surfaces == SIZE_MAX ||
+      vertices + 7 > SIZE_MAX - extent->edges) {
+    qa_error_set(error, QA_ERROR_MEMORY, vertices, "CPU brush queue overflow");
+    return false;
+  }
+  ++extent->surfaces;
+  extent->edges += vertices + 7;
+  if (vertices + 7 > extent->clip) extent->clip = vertices + 7;
+  return true;
+}
+
+bool cpu_brush_prepare(qa_cpu_renderer *renderer, const qa_scene_frame *frame,
+                        size_t first, bool begin, qa_error *error) {
+  if (begin) {
+    /* The frame-start raster drain has retired every borrowed context. */
+    cpu_brush_clear(renderer);
+    for (struct cpu_brush_context *context = renderer->brush_spans;
+         context; context = context->next) context_reset(context);
+  }
+  for (struct cpu_brush_context *context = renderer->brush_spans;
+       context; context = context->next)
+    if (!context->queued && !context_prepare(context, error)) return false;
+  brush_extent extent = {0};
+  size_t rows = renderer->current->height;
+  if (renderer->display.height > rows) rows = renderer->display.height;
+  for (size_t i = first; i < frame->command_count; ++i) {
+    const qa_scene_command *command = frame->commands + i;
+    if (command->kind == QA_SCENE_COMMAND_DRAW) {
+      if (!extent_add(&extent, &command->data.draw.brush, true, error)) return false;
+    } else if (command->kind == QA_SCENE_COMMAND_TARGET) {
+      const qa_scene_image *image = command->data.target.image;
+      if (image && image->level_count && image->levels &&
+          image->levels[0].height > rows) rows = image->levels[0].height;
+    }
+  }
+  if (!extent.surfaces) return true;
+  struct cpu_brush_context *context = context_available(renderer, error);
+  if (!context) return false;
+  if (extent.surfaces > SIZE_MAX - context->surface_count ||
+      extent.edges > SIZE_MAX - context->edge_count || rows == SIZE_MAX) {
+    qa_error_set(error, QA_ERROR_MEMORY, extent.surfaces, "CPU brush queue overflow");
+    return false;
+  }
+  size_t surfaces = context->surface_count + extent.surfaces;
+  size_t edges = context->edge_count + extent.edges;
+#define BRUSH_RESERVE(field, capacity, count) \
+  if (!reserve(&context->storage, (void **)&context->field, \
+      &context->capacity, count, sizeof(*context->field), error)) return false
+  BRUSH_RESERVE(surfaces, surface_capacity, surfaces);
+  BRUSH_RESERVE(edges, edge_capacity, edges);
+  BRUSH_RESERVE(clip[0], clip_capacity[0], extent.clip);
+  BRUSH_RESERVE(clip[1], clip_capacity[1], extent.clip);
+  BRUSH_RESERVE(active_edges, active_edge_capacity, edges);
+  BRUSH_RESERVE(active_surfaces, active_surface_capacity, surfaces);
+  BRUSH_RESERVE(events, event_capacity, edges);
+  BRUSH_RESERVE(rows, row_capacity, rows + 1);
+#undef BRUSH_RESERVE
   return true;
 }
 
@@ -139,7 +264,7 @@ static bool clip_brush(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
     return false;
   }
   for (size_t i = 0; i < 2; ++i)
-    if (!reserve((void **)&context->clip[i], &context->clip_capacity[i], count + 7,
+    if (!reserve(&context->storage, (void **)&context->clip[i], &context->clip_capacity[i], count + 7,
                   sizeof(*context->clip[i]), error)) return false;
   const float *mvp = draw->mvp.m, *model = draw->model.m;
   for (size_t i = 0; i < count; ++i) {
@@ -334,25 +459,13 @@ bool cpu_brush_draw_queued(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
     CPU_STATS_ADD(renderer, brush_predicate_rejects, 1);
     return true;
   }
-  struct cpu_brush_context *context = renderer->brush_spans;
-  struct cpu_brush_context **link = &renderer->brush_spans;
-  while (context && context->queued) {
-    link = &context->next;
-    context = context->next;
-  }
   int rounding = fegetround();
   if (rounding < 0) return true;
-  if (context && context->surface_count && context->rounding != rounding) {
+  struct cpu_brush_context *context = context_available(renderer, error);
+  if (!context) return false;
+  if (context->surface_count && context->rounding != rounding) {
     if (!cpu_brush_flush(renderer, error)) return false;
     return cpu_brush_draw_queued(renderer, draw, error, handled);
-  }
-  if (!context) {
-    context = calloc(1, sizeof(*context));
-    if (!context) {
-      qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating CPU brush owner");
-      return false;
-    }
-    *link = context;
   }
   context->rounding = rounding;
   brush_vertex *vertices;
@@ -384,9 +497,9 @@ bool cpu_brush_draw_queued(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
     qa_error_set(error, QA_ERROR_MEMORY, count, "CPU brush queue overflow");
     return false;
   }
-  if (!reserve((void **)&context->surfaces, &context->surface_capacity,
+  if (!reserve(&context->storage, (void **)&context->surfaces, &context->surface_capacity,
                context->surface_count + 1, sizeof(*context->surfaces), error) ||
-      !reserve((void **)&context->edges, &context->edge_capacity,
+      !reserve(&context->storage, (void **)&context->edges, &context->edge_capacity,
                context->edge_count + count, sizeof(*context->edges), error)) return false;
   if (!context->pinned) {
     if (!cache_pinned(renderer)) cpu_surface_cache_begin(renderer);
@@ -447,7 +560,7 @@ static bool append_span(struct cpu_brush_context *context, int64_t first,
     qa_error_set(error, QA_ERROR_MEMORY, 0, "CPU brush span overflow");
     return false;
   }
-  if (!reserve((void **)&context->spans, &context->span_capacity,
+  if (!reserve(&context->storage, (void **)&context->spans, &context->span_capacity,
                context->span_count + 1, sizeof(*context->spans), error)) return false;
   context->spans[context->span_count++] = (brush_span){(uint32_t)first,
       (uint32_t)y, (uint32_t)(last - first), surface};
@@ -494,13 +607,13 @@ static bool visible_interval(struct cpu_brush_context *context, size_t active_co
 static bool generate_spans(qa_cpu_renderer *renderer, struct cpu_brush_context *context,
                             qa_error *error) {
   size_t row_count = (size_t)(context->last - context->first + 1);
-  if (!reserve((void **)&context->active_edges, &context->active_edge_capacity,
+  if (!reserve(&context->storage, (void **)&context->active_edges, &context->active_edge_capacity,
                context->edge_count, sizeof(*context->active_edges), error) ||
-      !reserve((void **)&context->events, &context->event_capacity,
+      !reserve(&context->storage, (void **)&context->events, &context->event_capacity,
                context->edge_count, sizeof(*context->events), error) ||
-      !reserve((void **)&context->active_surfaces, &context->active_surface_capacity,
+      !reserve(&context->storage, (void **)&context->active_surfaces, &context->active_surface_capacity,
                context->surface_count, sizeof(*context->active_surfaces), error) ||
-      row_count == SIZE_MAX || !reserve((void **)&context->rows, &context->row_capacity,
+      row_count == SIZE_MAX || !reserve(&context->storage, (void **)&context->rows, &context->row_capacity,
                row_count + 1, sizeof(*context->rows), error)) return false;
   uint64_t sort_start = renderer->statistics_enabled ? qa_platform_time_ns() : 0;
   qsort(context->edges, context->edge_count, sizeof(*context->edges), edge_order);
@@ -768,12 +881,9 @@ void cpu_brush_destroy(qa_cpu_renderer *renderer) {
   cpu_brush_clear(renderer);
   while (context) {
     struct cpu_brush_context *next = context->next;
-    free(context->surfaces); free(context->edges);
-    free(context->clip[0]); free(context->clip[1]);
-    free(context->active_edges); free(context->active_surfaces); free(context->events);
-    free(context->spans); free(context->rows);
-    free(context);
+    qa_arena_destroy(&context->storage);
     context = next;
   }
   renderer->brush_spans = NULL;
+  qa_arena_destroy(&renderer->brush_storage);
 }

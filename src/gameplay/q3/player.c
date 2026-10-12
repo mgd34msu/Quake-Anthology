@@ -70,7 +70,7 @@ static bool activate_holdable(qa_q3_game *game, qa_actor_id actor, qa_q3_holdabl
     player = &entry->state.player;
     if (player->holdable != expected || player->spectator || combat.health <= 0 ||
         player->respawned ||
-        (expected == QA_Q3_H_MEDKIT && combat.health >= (float)player->max_health + 25))
+        (expected == QA_Q3_H_MEDKIT && combat.health >= qa_i32_add(player->max_health, 25)))
         return true;
     player->use_item_held = true;
     player->holdable = QA_Q3_H_NONE;
@@ -415,8 +415,7 @@ static bool player_state_valid(const qa_q3_player_state *state, bool source_clie
         !qa_vec_finite(state->cutscene.origin) || !qa_vec_finite(state->cutscene.angles) ||
         !qa_vec_finite(state->cutscene.view_offset) ||
         (state->cutscene.active && !(state->selections & QA_Q3_CHARACTER)) ||
-        !qa_vec_finite(state->damage_from) || !isfinite(state->damage_blood) ||
-        !isfinite(state->damage_armor) || !isfinite(state->damage_knockback) ||
+        !qa_vec_finite(state->damage_from) ||
         (!source_client && !state->selections) ||
         (state->selections & ~(uint32_t)QA_Q3_ALL_SELECTIONS))
         return false;
@@ -533,11 +532,11 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
     entry->force_gesture = false;
     if (player->selections & QA_Q3_CHARACTER) {
         qa_combat_state combat = {
-            .health = (float)player->handicap + 25,
+            .health = player->handicap + 25,
             .mass = 200,
             .can_take_damage = true,
             .team = team,
-            .armor.regular = {.kind = QA_ARMOR_Q3, .protection.q3_protection = 0.66f}};
+            .armor.regular = {.kind = QA_ARMOR_Q3, .protection.q3_protection = 0.66}};
         qa_combat_state previous;
         qa_error ignored = {0};
         bool has_combat = qa_combat_read(game->options.services.combat, actor, &previous, &ignored);
@@ -635,8 +634,8 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
         player = &entry->state.player;
         if (has_traits) {
             if (isfinite(traits.max_health) && traits.max_health >= 1 &&
-                traits.max_health < 2147483648.0f)
-                player->max_health = (int32_t)traits.max_health;
+                traits.max_health < 2147483648.0)
+                player->max_health = qa_source_to_i32(traits.max_health);
             if (isfinite(traits.view_height))
                 q3_player_height_write(game, actor, traits.view_height);
         }
@@ -1421,17 +1420,18 @@ static bool player_timers(qa_q3_game *game, qa_actor_id actor, int32_t elapsed,
         int32_t regen = player->persistent == QA_Q3_P_GUARD ? maximum / 2
                         : player->powerups[QA_Q3_P_REGEN]   ? maximum
                                                             : 0;
-        float health = combat.health;
+        double health = combat.health;
         bool regenerated = false;
         if (regen) {
-            if (health < (float)regen) {
-                health = fminf(health + 15, truncf((float)regen * 1.1f));
+            if (health < regen) {
+                health += 15;
+                if (health > regen * 1.1) health = qa_source_to_i32(regen * 1.1);
                 regenerated = true;
-            } else if (health < (float)regen * 2) {
-                health = fminf(health + 5, (float)regen * 2);
+            } else if (health < qa_i32_add(regen, regen)) {
+                health = fmin(health + 5, qa_i32_add(regen, regen));
                 regenerated = true;
             }
-        } else if (decay && health > (float)maximum)
+        } else if (decay && health > maximum)
             health -= 1;
         if (!qa_combat_set_health(game->options.services.combat, actor, health, error))
             return false;
@@ -1444,9 +1444,9 @@ static bool player_timers(qa_q3_game *game, qa_actor_id actor, int32_t elapsed,
         if (!qa_combat_read(game->options.services.combat, actor, &combat, error))
             return false;
         if (decay &&
-            combat.armor.regular.points > (float)maximum &&
+            combat.armor.regular.points > maximum &&
             !qa_combat_set_regular_points(game->options.services.combat, actor,
-                                          (float)combat.armor.regular.points - 1, NULL, error))
+                                          combat.armor.regular.points - 1, NULL, error))
             return false;
         entry = q3_actor_get(game, actor);
         if (!entry)
@@ -1538,7 +1538,7 @@ static bool player_world_effects(qa_q3_game *game, qa_actor_id actor, int32_t wa
                 if (player->drowning_damage > 15)
                     player->drowning_damage = 15;
                 int32_t damage = player->drowning_damage;
-                q3_runtime_name sound = combat.health <= (float)damage ? Q3_NAME_DROWN
+                q3_runtime_name sound = combat.health <= damage ? Q3_NAME_DROWN
                                     : (q3_rand(game) & 1u)         ? Q3_NAME_GURP1
                                                                    : Q3_NAME_GURP2;
                 if (!q3_sound(game, actor, sound, 3, error))
@@ -1601,7 +1601,7 @@ bool qa_q3_movement_environment(qa_q3_game *game, qa_actor_id actor, qa_movement
     qa_combat_state combat;
     if (!qa_combat_read(game->options.services.combat, actor, &combat, error))
         return false;
-    out->health = combat.health;
+    out->health = (float)combat.health;
     entry = q3_actor_get(game, actor);
     if (!entry)
         return true;
@@ -1762,7 +1762,7 @@ bool qa_q3_client_movement_complete(qa_q3_game *game, qa_actor_id actor, int32_t
         client->rule.followed_player.viewangles[0] = view.x;
         client->rule.followed_player.viewangles[1] = view.y;
         client->rule.followed_player.viewangles[2] = view.z;
-        client->rule.followed_player.viewheight = qa_source_float_to_i32(height);
+        client->rule.followed_player.viewheight = qa_source_to_i32(height);
         client->rule.followed_player.groundEntityNum = ground_entity_number;
     }
     return true;

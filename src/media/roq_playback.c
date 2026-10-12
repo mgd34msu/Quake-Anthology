@@ -1,4 +1,5 @@
 #include "roq_internal.h"
+#include "qa/arena.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -11,8 +12,9 @@ struct qa_roq_playback {
     qa_media_clock clock;
     qa_media_status status;
     qa_media_frame frame;
+    qa_arena storage;
     uint8_t *published, *resampled;
-    size_t published_capacity, physical_offset;
+    size_t physical_offset;
     uint32_t epoch, last;
     int64_t decoded;
     uint64_t source_sample, loop;
@@ -61,11 +63,22 @@ bool qa_roq_playback_create(qa_media_input *input, const qa_roq_playback_options
         return false;
     }
     playback->options = *options;
+    size_t published_bytes = options->scratch ? ROQ_FRAME_BYTES / 2 : 0;
+    size_t resampled_bytes = 256u * 256u * 4u;
+    qa_arena_init(&playback->storage, published_bytes + resampled_bytes);
+    if (published_bytes)
+        playback->published = qa_arena_alloc(&playback->storage, published_bytes, 1, error);
+    playback->resampled = qa_arena_alloc(&playback->storage, resampled_bytes, 1, error);
+    if ((published_bytes && !playback->published) || !playback->resampled) {
+        qa_roq_playback_destroy(playback);
+        return false;
+    }
+    qa_arena_seal(&playback->storage);
     playback->scratch = options->scratch;
     if (playback->scratch)
         qa_roq_scratch_retain(playback->scratch);
     else if (!qa_roq_scratch_create(&playback->scratch, error)) {
-        free(playback);
+        qa_roq_playback_destroy(playback);
         return false;
     }
     qa_roq_scratch_clear(playback->scratch, false);
@@ -87,8 +100,7 @@ void qa_roq_playback_destroy(qa_roq_playback *playback) {
         return;
     qa_roq_decoder_destroy(playback->decoder);
     qa_roq_scratch_release(playback->scratch);
-    free(playback->published);
-    free(playback->resampled);
+    qa_arena_destroy(&playback->storage);
     free(playback);
 }
 static bool before_stereo(void *context, qa_error *error) {
@@ -145,15 +157,6 @@ static bool publish(qa_roq_playback *playback, const qa_roq_event *event, qa_err
     if (playback->decoded == INT64_MAX)
         return roq_fail(error, "RoQ frame counter overflow");
     size_t bytes = event->data.frame.rgba.size;
-    if (playback->options.scratch && bytes > playback->published_capacity) {
-        uint8_t *grown = realloc(playback->published, bytes);
-        if (!grown) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating RoQ published frame");
-            return false;
-        }
-        playback->published = grown;
-        playback->published_capacity = bytes;
-    }
     ++playback->decoded;
     qa_bytes pixels = event->data.frame.rgba;
     /* Only the legacy shared-scratch policy needs a publication copy. */
@@ -321,12 +324,6 @@ bool qa_roq_playback_image(qa_roq_playback *playback, bool shader, uint32_t draw
         if (!qa_roq_decoder_view(playback->decoder, playback->physical_offset, 512u * 512u * 4u,
                                  &pixels, error))
             return false;
-        if (!playback->resampled)
-            playback->resampled = malloc(256u * 256u * 4u);
-        if (!playback->resampled) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating RoQ upload scratch");
-            return false;
-        }
         unsigned xm = image.width / 256, ym = image.height / 256,
                  shift = image.width == 512 ? 9 : 8;
         for (unsigned y = 0; y < 256; ++y)

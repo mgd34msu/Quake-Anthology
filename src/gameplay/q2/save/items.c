@@ -29,6 +29,7 @@ bool q2_save_item(q2_save_io *io, qa_q2_item_checkpoint *s) {
     Q2T(powers.breather_until_ns); Q2T(powers.enviro_until_ns);
     Q2T(powers.quad_fire_until_ns); Q2T(powers.double_until_ns);
     Q2T(powers.ir_until_ns); Q2T(powers.invisibility_until_ns);
-    Q2F(maximum_health); Q2U(power_cubes); Q2B(definitions_bound); Q2B(power_inventory_bound);
+    if (!q2_save_scalar(io, &s->maximum_health)) return false;
+    Q2U(power_cubes); Q2B(definitions_bound); Q2B(power_inventory_bound);
     return true;
 }

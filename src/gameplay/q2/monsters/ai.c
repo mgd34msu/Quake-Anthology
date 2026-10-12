@@ -1416,7 +1416,7 @@ bool q2m_react_to_damage(q2m_context *context, qa_actor_id attacker,
 
   if (rogue) {
     float fraction = monster->max_health > 0.0f
-                         ? context->combat.health / monster->max_health
+                         ? (float)context->combat.health / monster->max_health
                          : 0.0f;
     if (monster->enemy.registry != 0 && monster->target_anger) {
       if (q2_actor_live(context->game, monster->enemy) && fraction > 0.33f)
@@ -1817,7 +1817,7 @@ static bool attack_body(q2m_context *context, qa_actor_id id, qa_body_state *bod
   return true;
 }
 
-static bool attack_health(q2m_context *context, qa_actor_id id, float *health,
+static bool attack_health(q2m_context *context, qa_actor_id id, double *health,
                           qa_error *error) {
   *health = 0;
   if (!q2_actor_live(context->game, id))
@@ -1899,7 +1899,7 @@ static bool default_attack(q2m_context *context, bool *selected, qa_error *error
   if (!present || !q2_actor_live(game, enemy))
     return true;
   qa_vec3 start = qa_vec_add(context->body.origin, qa_v3(0, 0, m->view_height));
-  float health;
+  double health;
   if (!attack_health(context, enemy, &health, error))
     return false;
   if (!q2m_alive(context) || !q2_actor_live(game, enemy))
@@ -2073,7 +2073,7 @@ static bool widow_check_attack(q2m_context *context, bool *selected, qa_error *e
     *selected = true;
     return true;
   }
-  float health;
+  double health;
   if (!attack_health(context, enemy, &health, error))
     return false;
   if (!q2m_alive(context) || !q2_actor_live(game, enemy))
@@ -2191,7 +2191,7 @@ bool q2m_check_attack(q2m_context *context, bool *selected, bool *started, qa_er
   }
 
   qa_body_state target;
-  float health;
+  double health;
   bool present;
   qa_actor_id enemy = monster->enemy;
   if (!attack_body(context, enemy, &target, &present, error))

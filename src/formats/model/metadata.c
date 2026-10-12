@@ -138,7 +138,7 @@ bool qa_player_animation_load(qa_bytes text, const char *source_path,
         if (fps == 0)
             fps = 1;
         float lerp = 1000.0f / fps;
-        a->frame_lerp = a->initial_lerp = qa_source_float_to_i32(lerp);
+        a->frame_lerp = a->initial_lerp = qa_source_to_i32(lerp);
         a->present = true;
     }
     if (i != 31)

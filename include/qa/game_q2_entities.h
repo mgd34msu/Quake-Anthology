@@ -332,7 +332,8 @@ typedef struct qa_q2_entity_state {
     qa_actor_id activator, owner, enemy, goal;
     qa_actor_reference team_master, team_next;
     qa_vec3 direction, beam_end, multicast_origin;
-    float speed, accel, decel, wait, delay, damage, health, random, volume, attenuation;
+    float speed, accel, decel, wait, delay, damage, random, volume, attenuation;
+    double health;
     uint64_t due_ns, timestamp_ns, debounce_ns, sound_ns, expires_ns;
     uint64_t air_ns, pain_ns, environment_ns;
     int count, style, stage;

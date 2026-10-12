@@ -484,7 +484,7 @@ bool qa_bot_character_integer(const qa_bot_character *c, uint32_t index, int32_t
     if (v->kind == QA_BOT_CHARACTER_INTEGER)
         *out = v->data.integer;
     else if (v->kind == QA_BOT_CHARACTER_FLOAT) {
-        *out = qa_source_float_to_i32(v->data.number);
+        *out = qa_source_to_i32(v->data.number);
     } else {
         qa_error_set(e, QA_ERROR_FORMAT, index,
                      "Character characteristic cannot convert to signed integer");

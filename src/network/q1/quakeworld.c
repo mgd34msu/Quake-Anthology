@@ -192,14 +192,14 @@ static bool output_coord(qa_net_writer *w, qa_net_protocol_id p,
     qw_output_policy policy, float value)
 {
     return policy==QW_OUTPUT_SOURCE ?
-        qa_net_write_u16(w,(uint16_t)(uint32_t)qa_source_float_to_i32(value*8.0f)) :
+        qa_net_write_u16(w,(uint16_t)(uint32_t)qa_source_to_i32(value*8.0f)) :
         qa_q1_write_coord(w,p,value);
 }
 static bool output_angle(qa_net_writer *w, qa_net_protocol_id p,
     qw_output_policy policy, float value)
 {
     return policy==QW_OUTPUT_SOURCE ?
-        qa_net_write_u8(w,(uint8_t)(uint32_t)qa_source_float_to_i32(value*256.0f/360.0f)) :
+        qa_net_write_u8(w,(uint8_t)(uint32_t)qa_source_to_i32(value*256.0f/360.0f)) :
         qa_q1_write_angle(w,p,value);
 }
 bool qw_output_write_stat(qa_net_writer *w, uint8_t index, double value)
@@ -305,7 +305,7 @@ bool qw_output_write_player(qa_net_writer *w, qa_net_protocol_id p,
     if (s->flags&QA_QW_PF_COMMAND) qa_qw_write_delta_command(w,&zero,s->command);
     for (unsigned i=0;i<3;++i) if (s->flags&((unsigned)QA_QW_PF_VELOCITY1<<i)) {
         if (policy==QW_OUTPUT_SOURCE)
-            qa_net_write_u16(w,(uint16_t)(uint32_t)qa_source_float_to_i32(s->velocity[i]));
+            qa_net_write_u16(w,(uint16_t)(uint32_t)qa_source_to_i32(s->velocity[i]));
         else qa_net_write_i16(w,(int16_t)s->velocity[i]);
     }
     if (s->flags&QA_QW_PF_MODEL) output_index(w,p,policy,s->model);
@@ -697,7 +697,7 @@ static bool write_nails(qa_net_writer *w, const qa_qw_service *m)
             return qa_net_writer_fail(w,"Non-finite QuakeWorld nail");
         for (unsigned axis=0;axis<3;++axis) {
             float shifted=n->origin[axis]+4096.0f;
-            int32_t packed=qa_source_float_to_i32(shifted)>>1;
+            int32_t packed=qa_source_to_i32(shifted)>>1;
             if (packed<0 || packed>4095) return qa_net_writer_fail(w,"QuakeWorld nail exceeds coordinate range");
         }
     }

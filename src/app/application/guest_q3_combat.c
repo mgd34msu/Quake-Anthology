@@ -73,7 +73,7 @@ static combat_actor *actor_create(application_q3_combat *owner, qa_actor_id id, 
 }
 static bool read(void *context, qa_combat_state *out, qa_error *error)
 { return application_q3_combat_state_read(&((combat_actor *)context)->source, out, error); }
-static bool health(void *context, float value, qa_error *error)
+static bool health(void *context, double value, qa_error *error)
 { return application_q3_combat_health_write(&((combat_actor *)context)->source, value, error); }
 static bool armor(void *context, const qa_armor *value, qa_error *error)
 { return application_q3_combat_armor_write(&((combat_actor *)context)->source, value, error); }
@@ -228,12 +228,10 @@ static bool damage(void *context, const qa_qvm_call *call, int32_t *result, qa_e
     combat_actor *target;
     if (!pointer_actor(owner, words[Q3_DAMAGE_TARGET], &target, error)) return false;
     if (!target) return qa_qvm_proceed(call, result, error);
-    qa_damage_request request = {.target = target->source.actor, .amount = (float)words[Q3_DAMAGE_AMOUNT],
+    qa_damage_request request = {.target = target->source.actor, .amount = words[Q3_DAMAGE_AMOUNT],
         .knockback = (words[Q3_DAMAGE_DIRECTION] && !((uint32_t)words[Q3_DAMAGE_FLAGS] & d->damage_flags.no_knockback)) ?
-            (float)words[Q3_DAMAGE_AMOUNT] : 0,
+            words[Q3_DAMAGE_AMOUNT] : 0,
         .radius = ((uint32_t)words[Q3_DAMAGE_FLAGS] & d->damage_flags.radius) != 0};
-    if ((double)request.amount != words[Q3_DAMAGE_AMOUNT])
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "Reached source damage exceeds exact shared amount representation");
     if (!vector(owner, words[Q3_DAMAGE_DIRECTION], &request.direction, error) ||
         !vector(owner, words[Q3_DAMAGE_POINT], &request.point, error)) return false;
     combat_actor *attacker, *inflictor;
@@ -310,8 +308,6 @@ static bool armor_stage(void *context, const qa_qvm_call *call, int32_t *result,
     if (!foreign_regular && !foreign_power) return qa_qvm_proceed(call, result, error);
     qa_damage_flags flags = qa_attack_flags(&request->attack);
     flags.no_armor = ((uint32_t)source_flags & d->damage_flags.no_armor) != 0;
-    if ((double)(float)amount != amount)
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "Reached source armor damage exceeds exact shared representation");
     const qa_qvm_call *damage_call = application_q3_damage_scope_call(frame);
     int32_t direction, point;
     qa_damage_geometry geometry = {.normal = request->normal};
@@ -320,31 +316,31 @@ static bool armor_stage(void *context, const qa_qvm_call *call, int32_t *result,
         !vector(owner, direction, &geometry.direction, error) ||
         !vector(owner, point, &geometry.point, error)) return false;
     qa_armor_context victim = {0};
-    float saved = 0;
+    double saved = 0;
     if (foreign_power && !qa_combat_absorb(shared(owner), request, QA_PROTECTION_POWERED, &geometry,
-        (float)amount, flags, &victim, &saved, NULL, error)) return false;
+        amount, flags, &victim, &saved, NULL, error)) return false;
     const application_q3_combat_actor *source = application_q3_damage_scope_actor(frame);
     bool live = false;
     if (qa_actors_get(qa_session_actors(owner->role->engine->provider->application->session), source->actor) &&
         !application_q3_combat_actor_live(source, &live, error)) return false;
     if (!live) { *result = 0; return application_q3_damage_scope_cancel(frame, error); }
-    if (!isfinite(saved) || saved < 0 || saved > fmaxf(0, (float)amount))
+    if (!isfinite(saved) || saved < 0 || saved > fmax(0, amount))
         return application_fail(error, QA_ERROR_ARGUMENT, "Selected power armor exceeds reached source damage");
-    int32_t power_saved = (int32_t)trunc((double)saved), remaining = amount - power_saved;
+    int32_t power_saved = (int32_t)trunc(saved), remaining = amount - power_saved;
     if (!qa_qvm_call_set_argument(call, d->armor.call.positions[Q3_ARMOR_AMOUNT], remaining, error)) return false;
     bool ok;
     if (foreign_regular) {
-        float regular_saved;
+        double regular_saved;
         ok = qa_qvm_call_argument(call, d->armor.call.positions[Q3_ARMOR_FLAGS], &source_flags, error) &&
             qa_qvm_call_argument(damage_call, d->damage_call.positions[Q3_DAMAGE_DIRECTION], &direction, error) &&
             qa_qvm_call_argument(damage_call, d->damage_call.positions[Q3_DAMAGE_POINT], &point, error) &&
             vector(owner, direction, &geometry.direction, error) && vector(owner, point, &geometry.point, error);
         flags.no_armor = ((uint32_t)source_flags & d->damage_flags.no_armor) != 0;
         if (ok) ok = qa_combat_absorb(shared(owner), request, QA_PROTECTION_REGULAR, &geometry,
-            (float)remaining, flags, &victim, &regular_saved, NULL, error);
-        if (ok && (!isfinite(regular_saved) || regular_saved < 0 || regular_saved > fmaxf(0, (float)remaining)))
+            remaining, flags, &victim, &regular_saved, NULL, error);
+        if (ok && (!isfinite(regular_saved) || regular_saved < 0 || regular_saved > fmax(0, remaining)))
             ok = application_fail(error, QA_ERROR_ARGUMENT, "Selected regular armor exceeds reached source damage");
-        if (ok) *result = power_saved + (int32_t)trunc((double)regular_saved);
+        if (ok) *result = power_saved + (int32_t)trunc(regular_saved);
     } else {
         ok = qa_qvm_proceed(call, result, error);
         if (ok) *result += power_saved;

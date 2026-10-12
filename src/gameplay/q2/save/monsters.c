@@ -33,7 +33,8 @@ bool q2_save_monster(q2_save_io *io, qa_q2_monster_checkpoint *s) {
     Q2V(controller_direction);
     if (!q2_save_attack(io, &s->last_attack)) return false;
     Q2R(attack_attacker); Q2R(attack_inflictor); Q2R(attack_projectile);
-    Q2F(pending_damage); Q2F(pending_kick); Q2F(controller_damage); Q2T(controller_ns);
+    if (!q2_save_scalar(io, &s->pending_damage) || !q2_save_scalar(io, &s->pending_kick)) return false;
+    Q2F(controller_damage); Q2T(controller_ns);
     Q2S(i64, monster_slots); Q2S(i64, monster_used); Q2I(water_level); Q2I(water_type);
     Q2B(has_summons); Q2I(summon_strength); Q2U(summon_count);
     if (s->summon_count > 5) return q2_save_fail(io, "Invalid Q2 reinforcement count");

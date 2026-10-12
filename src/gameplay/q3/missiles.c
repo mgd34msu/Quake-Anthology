@@ -9,7 +9,7 @@ typedef struct radius_context {
 static bool radius_prepare(void *context, qa_damage_request *request, bool *allowed,
                            qa_error *error) {
     radius_context *call = context;
-    request->amount = truncf(request->amount);
+    request->amount = trunc(request->amount);
     request->knockback = request->amount;
     if (call->game->options.hooks.combat_provider)
         request->attack.combat_provider = call->game->options.hooks.combat_provider(

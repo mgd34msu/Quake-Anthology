@@ -126,7 +126,7 @@ static bool pose(application_native_q2_records *o,nqr_actor *actor,qa_error *e)
     if(o->crouch.encoding==QA_NATIVE_F32||o->crouch.encoding==QA_NATIVE_F64) {
         double flags;
         if(!nqr_scalar_decode(flag_raw,o->crouch.encoding,&flags,e)) return false;
-        int32_t integer=o->crouch.encoding==QA_NATIVE_F32?qa_source_float_to_i32((float)flags):
+        int32_t integer=o->crouch.encoding==QA_NATIVE_F32?qa_source_to_i32((float)flags):
             flags>=-2147483648.0&&flags<2147483648.0?(int32_t)flags:INT32_MIN;
         uint32_t bits=(uint32_t)integer;
         if(crouched) bits|=o->crouch_mask; else bits&=~o->crouch_mask;
@@ -320,11 +320,7 @@ static bool commit(application_native_q2_records *o,const nqr_observation *row,
     }
     if(f->kind<=NQR_SCORE) {
         double value; if(!nqr_scalar_decode(row->bytes,f->encoding,&value,e)) return false;
-        if(f->kind==NQR_HEALTH) {
-            float health=(float)value;
-            if(!isfinite(health)) return nqr_fail(e,QA_ERROR_FORMAT,"Native health exceeds canonical float storage");
-            return qa_combat_set_health(o->options.combat,row->actor,health,e);
-        }
+        if(f->kind==NQR_HEALTH) return qa_combat_set_health(o->options.combat,row->actor,value,e);
         qa_string_id team=0;
         if(f->kind==NQR_TEAM) {
             bool found=false;

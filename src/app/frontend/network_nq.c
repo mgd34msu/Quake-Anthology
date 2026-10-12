@@ -842,8 +842,8 @@ static bool frame_payload(frontend_nq_host *host,qa_actor_id actor,uint64_t firs
     qa_player_feedback feedback;
     qa_application_player_feedback_read(host->frontend->application,actor,first,
         qa_application_events_next(host->frontend->application),&feedback);
-    uint8_t armor=(uint8_t)(uint32_t)qa_source_float_to_i32(feedback.armor);
-    uint8_t blood=(uint8_t)(uint32_t)qa_source_float_to_i32(feedback.blood);
+    uint8_t armor=(uint8_t)(uint32_t)qa_source_to_i32(feedback.armor);
+    uint8_t blood=(uint8_t)(uint32_t)qa_source_to_i32(feedback.blood);
     if (feedback.damage) {
         if (protocol.kind == QA_NET_NQ15) {
             if (!qa_nq_write_damage(writer, armor, blood, feedback.origin)) return false;
@@ -1177,7 +1177,7 @@ static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_er
         if (!isfinite(v->source_frags) || (v->present && (!i || !v->name || (v->colors & 15) > 13 || (v->colors >> 4) > 13)) ||
             (!v->present && (v->name || v->frags || v->source_frags != 0 || v->colors)))
             return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake source status cache has invalid native ownership");
-        int32_t frags = qa_source_float_to_i32(v->source_frags);
+        int32_t frags = qa_source_to_i32(v->source_frags);
         if (v->frags != frags) return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake cache score differs from its actual source value");
     }
     return true;

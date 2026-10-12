@@ -77,7 +77,7 @@ bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, q2_runtime_name model, floa
     impulse.x = 100 * q2_crandom(g);
     impulse.y = 100 * q2_crandom(g);
     impulse.z = debris ? 100 + 100 * q2_crandom(g) : 200 + 100 * q2_random(g);
-    float factor = debris ? (float)qa_source_float_to_i32(damage) :
+    float factor = debris ? (float)qa_source_to_i32(damage) :
         (damage < 50 ? 0.7f : 1.2f) * (metal ? 1 : 0.5f);
     qa_vec3 velocity = qa_vec_add(source_body.velocity, qa_vec_scale(impulse, factor));
     if (!debris) {
@@ -115,7 +115,7 @@ bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, q2_runtime_name model, floa
     if (rr) {
         float instagib;
         if (!qa_q2_source_value(g, QA_Q2_SOURCE_INSTAGIB, 0, &instagib, e)) return false;
-        bool instant = qa_source_float_to_i32(instagib) != 0;
+        bool instant = qa_source_to_i32(instagib) != 0;
         lifetime = (uint64_t)((instant ? 1000u : 10000u) +
             q2_random_bounded(g, instant ? 4001u : 10001u)) * Q2_MS;
     } else lifetime = (uint64_t)((10 + q2_random(g) * 10) * 1e9);

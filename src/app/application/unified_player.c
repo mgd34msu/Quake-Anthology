@@ -477,7 +477,7 @@ static void armor(qa_armor *out, player_observation *o)
     if (o->has_q3 && o->primary->kind != APPLICATION_PROVIDER_Q3 && !o->q3_combat) {
         out->regular.kind = o->q3.stats[3] ? QA_ARMOR_Q3 : QA_ARMOR_NONE;
         out->regular.points = o->q3.stats[3];
-        out->regular.protection.q3_protection = .66f;
+        out->regular.protection.q3_protection = .66;
         return;
     }
     if (o->has_q2) {

@@ -335,7 +335,8 @@ static bool stage_strings(const qa_qc_instance *instance,
             qc_strings_destroy(out); return false;
         }
     }
-    if (!qc_strings_bind_identities(out, instance->strings.identities,
+    if (!qc_strings_bind_identities(out,
+                                    instance->options.host.session ? instance->strings.identities : NULL,
                                     instance->program->string_bytes, error)) {
         qc_strings_destroy(out); return false;
     }

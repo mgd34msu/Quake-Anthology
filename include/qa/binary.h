@@ -45,6 +45,11 @@ static inline int32_t qa_i32_add(int32_t left, int32_t right)
     return qa_i32_from_u32((uint32_t)left + (uint32_t)right);
 }
 
+static inline int32_t qa_i32_mul(int32_t left, int32_t right)
+{
+    return qa_i32_from_u32((uint32_t)left * (uint32_t)right);
+}
+
 static inline int32_t qa_i32_sub(int32_t left, int32_t right)
 {
     return qa_i32_from_u32((uint32_t)left - (uint32_t)right);

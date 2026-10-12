@@ -12,8 +12,8 @@ typedef struct application_q3_mod_actor_request {
         struct { uint64_t time_ns, elapsed_ns; } think;
         struct { qa_actor_id other; } touch;
         struct { qa_actor_id other, activator; } use;
-        struct { qa_actor_id attacker; float damage, kick; } pain;
-        struct { qa_actor_id attacker, inflictor; float damage, kick; qa_vec3 point; } die;
+        struct { qa_actor_id attacker; double damage, kick; } pain;
+        struct { qa_actor_id attacker, inflictor; double damage, kick; qa_vec3 point; } die;
     } source;
 } application_q3_mod_actor_request;
 typedef bool (*application_q3_mod_actor_body)(void *,

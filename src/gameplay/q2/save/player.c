@@ -1,7 +1,8 @@
 #include "internal.h"
 
 static bool carry(q2_save_io *io, qa_q2_player_carry *s) {
-    Q2F(health); Q2F(maximum_health); Q2U(armor.regular.kind);
+    if (!q2_save_scalar(io, &s->health) || !q2_save_scalar(io, &s->maximum_health)) return false;
+    Q2U(armor.regular.kind);
     if (!q2_save_f64(io, &s->armor.regular.points)) return false;
     Q2N(armor.regular.item);
     switch (s->armor.regular.kind) {
@@ -11,7 +12,7 @@ static bool carry(q2_save_io *io, qa_q2_player_carry *s) {
         if (!q2_save_f64(io, &s->armor.regular.protection.q2.normal) ||
             !q2_save_f64(io, &s->armor.regular.protection.q2.energy)) return false;
         break;
-    case QA_ARMOR_Q3: Q2F(armor.regular.protection.q3_protection); break;
+    case QA_ARMOR_Q3: Q2S(scalar, armor.regular.protection.q3_protection); break;
     default: return q2_save_fail(io, "Invalid Q2 carry armor kind");
     }
     Q2U(armor.powered.kind);
@@ -46,7 +47,9 @@ static bool state(q2_save_io *io, qa_q2_player_state *s) {
     Q2T(rule.respawn_timeout_ns); Q2T(rule.grapple_released_ns); Q2T(rule.quake_ns);
     Q2T(rule.help_draw_ns); Q2T(rule.help_marker_ns); Q2T(rule.mission_time_ns);
     Q2U(rule.mission_primary); Q2U(rule.mission_secondary); Q2U(rule.mission_changed);
-    Q2F(rule.fov); Q2F(rule.damage_blood); Q2F(rule.damage_armor); Q2F(rule.damage_power); Q2F(rule.damage_knockback);
+    Q2F(rule.fov);
+    if (!q2_save_i32_scalar(io, &s->rule.damage_blood) || !q2_save_i32_scalar(io, &s->rule.damage_armor) ||
+        !q2_save_i32_scalar(io, &s->rule.damage_power) || !q2_save_i32_scalar(io, &s->rule.damage_knockback)) return false;
     Q2F(rule.damage_alpha); Q2F(rule.bonus_alpha); Q2F(rule.damage_pitch); Q2F(rule.damage_roll); Q2F(rule.fall_value);
     Q2F(rule.bob_time); Q2F(rule.bob_move); Q2F(rule.killer_yaw);
     Q2V(rule.damage_from); Q2V(rule.damage_blend); Q2V(rule.old_velocity); Q2V(rule.old_view_angles);

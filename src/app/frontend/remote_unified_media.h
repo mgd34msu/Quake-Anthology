@@ -46,6 +46,7 @@ typedef struct frontend_unified_model_view {
  * on the isolated empty-bank prefix before shared dictionaries import. */
 size_t frontend_unified_media_bank_count(const frontend_unified_media *);
 bool frontend_unified_media_bank_read(const frontend_unified_media *, size_t, frontend_unified_bank_view *);
+bool frontend_unified_media_bank_find(const frontend_unified_media *, qa_string_id, frontend_unified_bank_view *);
 size_t frontend_unified_media_model_count(const frontend_unified_media *);
 bool frontend_unified_media_model_read(const frontend_unified_media *, size_t, frontend_unified_model_view *);
 qa_executable_recipe *frontend_unified_media_recipe(const frontend_unified_media *);

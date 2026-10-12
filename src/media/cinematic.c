@@ -87,20 +87,15 @@ static bool queue_audio(void *context, const qa_media_audio *sound, qa_error *er
     if (sound->native_pcm && sound->sample_bytes == 2)
         pcm = (const int16_t *)sound->pcm.data;
     else {
-        if (samples > movie->pcm_capacity) {
-            int16_t *grown = realloc(movie->pcm, samples * sizeof(*grown));
-            if (!grown) {
-                qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating cinematic PCM conversion");
-                return false;
-            }
-            movie->pcm = grown;
-            movie->pcm_capacity = samples;
-        }
+        qa_arena_reset(&movie->pcm_storage);
+        int16_t *converted = samples ? qa_arena_alloc(&movie->pcm_storage,
+            samples * sizeof(*converted), _Alignof(int16_t), error) : NULL;
+        if (samples && !converted) return false;
         for (size_t i = 0; i < samples; ++i)
-            movie->pcm[i] = sound->sample_bytes == 1
+            converted[i] = sound->sample_bytes == 1
                                 ? (int16_t)(((int)sound->pcm.data[i] - 128) * 256)
                                 : qa_load_i16le(sound->pcm.data + i * 2);
-        pcm = movie->pcm;
+        pcm = converted;
     }
     qa_audio_raw_stream *raw = current_raw(movie);
     bool installed = raw != NULL;
@@ -179,7 +174,7 @@ static void free_movie(qa_cinematic *movie) {
     qa_scene_image_release(movie->image);
     qa_cinematic_asset_release(movie->asset);
     free(movie->name);
-    free(movie->pcm);
+    qa_arena_destroy(&movie->pcm_storage);
     free(movie);
 }
 bool qa_cinematic_create(const qa_cinematic_source *source, const qa_cinematic_options *options,
@@ -220,6 +215,22 @@ bool qa_cinematic_create(const qa_cinematic_source *source, const qa_cinematic_o
     bool ok = false;
     switch (source->format) {
     case QA_CINEMATIC_CIN: {
+        if (!options->silent && source->data.cin) {
+            qa_cin_info info = qa_cin_asset_info(source->data.cin);
+            if (info.channels) {
+                uint64_t start, end;
+                if (!qa_cin_sample_range(13, info.sample_rate, &start, &end, error)) break;
+                uint64_t samples = (end - start) * info.channels;
+                if (samples > SIZE_MAX / sizeof(int16_t)) {
+                    cinematic_fail(error, "Cinematic PCM size overflow");
+                    break;
+                }
+                size_t bytes = (size_t)samples * sizeof(int16_t);
+                qa_arena_init(&movie->pcm_storage, bytes);
+                if (!qa_arena_reserve(&movie->pcm_storage, bytes, error)) break;
+                qa_arena_seal(&movie->pcm_storage);
+            }
+        }
         qa_cin_playback_options cin = {.loop = options->loop,
                                        .hold = options->hold,
                                        .silent = options->silent,

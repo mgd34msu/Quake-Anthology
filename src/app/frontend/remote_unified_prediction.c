@@ -414,7 +414,7 @@ bool frontend_remote_unified_prediction_merged_q3(frontend_remote_unified_predic
     merged.origin[0]=origin.x;merged.origin[1]=origin.y;merged.origin[2]=origin.z;
     merged.velocity[0]=velocity.x;merged.velocity[1]=velocity.y;merged.velocity[2]=velocity.z;
     merged.viewangles[0]=predicted.view_angles.x;merged.viewangles[1]=predicted.view_angles.y;merged.viewangles[2]=predicted.view_angles.z;
-    merged.viewheight=qa_source_float_to_i32(predicted.view_height);
+    merged.viewheight=qa_source_to_i32(predicted.view_height);
     if(!isfinite(predicted.command_time_ms)||predicted.command_time_ms < -0x1p63||predicted.command_time_ms >= 0x1p63)
         return fail(e,QA_ERROR_FORMAT,"Q3 prediction clock exceeds native millisecond storage");
     uint32_t clock=(uint32_t)(int64_t)predicted.command_time_ms;

@@ -287,6 +287,7 @@ struct qa_gl_renderer {
     gl_mesh_entry *meshes;
     qa_render_resource_index mesh_index;
     gl_stream_buffers stream;
+    qa_arena work_storage;
     GLuint skin_palette_buffer;
     size_t skin_palette_bytes, skin_palette_cursor, skin_palette_alignment;
     gl_skin_palette *skin_palettes;

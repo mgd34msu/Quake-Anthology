@@ -1,5 +1,7 @@
 #include "internal.h"
 #include "qa/binary.h"
+#include "qa/text.h"
+#include <float.h>
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -146,6 +148,36 @@ bool qa_source_save_f64(qa_source_save_io *io, double *value)
     if (io->direction == QA_SOURCE_SAVE_WRITE) memcpy(&word, value, 8);
     if (!qa_source_save_u64(io, &word)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ) memcpy(value, &word, 8);
+    return true;
+}
+bool qa_source_save_scalar(qa_source_save_io *io, double *value)
+{
+    if (!io || !value) return persistence_io_fail(io, QA_ERROR_ARGUMENT, "missing source scalar field");
+    const uint32_t extended = UINT32_C(0x7fc00000);
+    uint32_t word = extended;
+    if (io->direction == QA_SOURCE_SAVE_WRITE) {
+        if (!isfinite(*value)) return persistence_io_fail(io, QA_ERROR_ARGUMENT, "nonfinite source scalar field");
+        if (*value >= -FLT_MAX && *value <= FLT_MAX) {
+            float narrow = (float)*value;
+            if ((double)narrow == *value) memcpy(&word, &narrow, sizeof(word));
+        }
+    }
+    if (!qa_source_save_u32(io, &word)) return false;
+    if (word == extended) {
+        if (!qa_source_save_f64(io, value)) return false;
+    } else if (io->direction == QA_SOURCE_SAVE_READ) {
+        float narrow;
+        memcpy(&narrow, &word, sizeof(narrow));
+        *value = narrow;
+    }
+    return isfinite(*value) || persistence_io_fail(io, QA_ERROR_FORMAT, "nonfinite source scalar field");
+}
+bool qa_source_save_i32_scalar(qa_source_save_io *io, int32_t *value)
+{
+    if (!io || !value) return persistence_io_fail(io, QA_ERROR_ARGUMENT, "missing source signed scalar field");
+    double scalar = *value;
+    if (!qa_source_save_scalar(io, &scalar)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ) *value = qa_source_to_i32(scalar);
     return true;
 }
 bool qa_source_save_vec3(qa_source_save_io *io, qa_vec3 *value)

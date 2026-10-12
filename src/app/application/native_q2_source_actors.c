@@ -227,24 +227,20 @@ static bool reaction_run(native_source_actor *r,void *context,qa_native_instance
         if(count!=(o->rerelease?5u:4u)||arguments[2].type!=QA_NATIVE_F32||arguments[3].type!=QA_NATIVE_I32||
             !isfinite(arguments[2].as.f32)||!nullable(o,arguments+1,&request.source.pain.attacker,e))
             return application_fail(e,QA_ERROR_FORMAT,"Declared pain differs from its source reaction ABI");
-        request.source.pain.kick=arguments[2].as.f32;request.source.pain.damage=(float)arguments[3].as.i32;
-        if((double)request.source.pain.damage!=arguments[3].as.i32)
-            return application_fail(e,QA_ERROR_UNSUPPORTED,"Declared pain exceeds exact canonical damage storage");
+        request.source.pain.kick=arguments[2].as.f32;request.source.pain.damage=arguments[3].as.i32;
     } else {
         uint8_t point[12];
         if(count!=(o->rerelease?6u:5u)||arguments[3].type!=QA_NATIVE_I32||arguments[4].type!=QA_NATIVE_ADDRESS||
             !nullable(o,arguments+1,&request.source.die.inflictor,e)||
             !nullable(o,arguments+2,&request.source.die.attacker,e)||
             !qa_native_read(native,arguments[4].as.address,point,sizeof(point),e)) return false;
-        request.source.die.damage=(float)arguments[3].as.i32;
-        if((double)request.source.die.damage!=arguments[3].as.i32)
-            return application_fail(e,QA_ERROR_UNSUPPORTED,"Declared death exceeds exact canonical damage storage");
+        request.source.die.damage=arguments[3].as.i32;
         request.source.die.point=qa_v3(qa_load_f32le(point),qa_load_f32le(point+4),qa_load_f32le(point+8));
         if(!qa_vec_finite(request.source.die.point)) return application_fail(e,QA_ERROR_FORMAT,"Declared death has a nonfinite source point");
     }
     if(!request_eligible(o,entry->operation,&request)){if(result)*result=(qa_native_value){.type=QA_NATIVE_VOID};return true;}
     if(entry->operation==Q3_MOD_PAIN||entry->operation==Q3_MOD_DIE){
-        float knockback=0;
+        double knockback=0;
         qa_damage_result reaction={.reaction=entry->operation==Q3_MOD_DIE?QA_REACTION_DEATH:QA_REACTION_PAIN,
             .applied_damage=entry->operation==Q3_MOD_DIE?request.source.die.damage:request.source.pain.damage};
         if(!application_native_q2_source_damage_reaction(o->damage,r->actor,&reaction,
@@ -546,10 +542,11 @@ static bool canonical_reaction_body(void *context,const application_q3_mod_actor
         if(!target){*handled=false;return true;}
         entry=o->entries;while(entry&&entry->address!=target)entry=entry->next;}
     if(!entry||!entry->binding||entry->operation!=call->operation)return application_fail(e,QA_ERROR_ARGUMENT,"Native reaction lost its exact held original entry");
-    float damage=death?request->source.die.damage:request->source.pain.damage,
+    double damage=death?request->source.die.damage:request->source.pain.damage,
         kick=death?request->source.die.kick:request->source.pain.kick;
-    if(!isfinite(damage)||!isfinite(kick)||(double)damage<INT32_MIN||(double)damage>INT32_MAX)
+    if(!isfinite(damage)||!isfinite(kick)||damage<INT32_MIN||damage>INT32_MAX)
         return application_fail(e,QA_ERROR_FORMAT,"Native reaction damage exceeds its declared int32 ABI");
+    if(!death&&!application_native_q2_field_value(QA_NATIVE_F32,kick,e))return false;
     if(!address_for(o,death?request->source.die.attacker:request->source.pain.attacker,&attacker,e)||
         (death&&!address_for(o,request->source.die.inflictor,&inflictor,e)))return false;
     native_actor_touch *scratch=touch_take(o,e);
@@ -568,7 +565,7 @@ static bool canonical_reaction_body(void *context,const application_q3_mod_actor
     call->entry=entry;call->arguments[0]=(qa_native_value){.type=QA_NATIVE_ADDRESS,.as.address=self};
     call->arguments[1]=(qa_native_value){.type=QA_NATIVE_ADDRESS,.as.address=death?inflictor:attacker};
     call->arguments[2]=death?(qa_native_value){.type=QA_NATIVE_ADDRESS,.as.address=attacker}:
-        (qa_native_value){.type=QA_NATIVE_F32,.as.f32=kick};
+        (qa_native_value){.type=QA_NATIVE_F32,.as.f32=(float)kick};
     call->arguments[3]=(qa_native_value){.type=QA_NATIVE_I32,.as.i32=(int32_t)damage};call->count=4;
     if(death)call->arguments[call->count++]=(qa_native_value){.type=QA_NATIVE_ADDRESS,.as.address=scratch->scratch};
     if(o->rerelease)call->arguments[call->count++]=(qa_native_value){.type=QA_NATIVE_ADDRESS,.as.address=scratch->scratch+(death?12:0)};

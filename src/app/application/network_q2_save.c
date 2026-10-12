@@ -374,6 +374,8 @@ bool qa_application_network_q2_restore(qa_application_network_q2 *owner, qa_byte
         owner->event_actors = candidate->event_actors; candidate->event_actors = NULL;
         owner->events = candidate->events; candidate->events = NULL;
         owner->held_resources = candidate->held_resources; candidate->held_resources = NULL;
+        owner->held_names = candidate->held_names; candidate->held_names = (qa_id_index){0};
+        owner->held_wire_names = candidate->held_wire_names; candidate->held_wire_names = (qa_id_index){0};
         owner->held_resource_count = candidate->held_resource_count; candidate->held_resource_count = 0;
         owner->held_resource_capacity = candidate->held_resource_capacity; candidate->held_resource_capacity = 0;
         owner->held_resource_serial = candidate->held_resource_serial;

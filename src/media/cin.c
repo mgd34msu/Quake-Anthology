@@ -1,5 +1,6 @@
 #include "qa/media.h"
 #include "qa/binary.h"
+#include "qa/arena.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -18,7 +19,7 @@ struct qa_cin_decoder {
     uint64_t offset, index;
     uint8_t palette[768], compressed[CIN_COMPRESSED_LIMIT];
     uint8_t *pixels, *audio;
-    size_t audio_capacity;
+    qa_arena audio_storage;
     bool ended;
 };
 
@@ -80,11 +81,27 @@ bool qa_cin_decoder_create(qa_cin_asset *asset, qa_cin_decoder **out, qa_error *
     decoder->pixels = malloc((size_t)asset->info.width * asset->info.height);
     if (!decoder->pixels) { free(decoder); qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating CIN pixels"); return false; }
     decoder->asset = asset; qa_cin_asset_retain(asset);
+    if (asset->info.channels) {
+        uint64_t start, end;
+        if (!qa_cin_sample_range(13, asset->info.sample_rate, &start, &end, error)) {
+            qa_cin_decoder_destroy(decoder); return false;
+        }
+        uint64_t bytes = (end - start) * asset->info.channels * asset->info.sample_bytes;
+        if (bytes > SIZE_MAX) {
+            qa_cin_decoder_destroy(decoder);
+            return fail(error, "CIN PCM size overflows storage");
+        }
+        qa_arena_init(&decoder->audio_storage, (size_t)bytes);
+        decoder->audio = qa_arena_alloc(&decoder->audio_storage, (size_t)bytes, 1, error);
+        if (!decoder->audio) { qa_cin_decoder_destroy(decoder); return false; }
+        qa_arena_seal(&decoder->audio_storage);
+    }
     decoder->offset = CIN_HEADER_BYTES; *out = decoder; return true;
 }
 void qa_cin_decoder_destroy(qa_cin_decoder *decoder) {
     if (!decoder) return;
-    qa_cin_asset_release(decoder->asset); free(decoder->pixels); free(decoder->audio); free(decoder);
+    qa_cin_asset_release(decoder->asset); free(decoder->pixels);
+    qa_arena_destroy(&decoder->audio_storage); free(decoder);
 }
 bool qa_cin_sample_range(uint64_t frame, uint32_t rate, uint64_t *start, uint64_t *end, qa_error *error) {
     if (!start || !end || frame == UINT64_MAX || (rate && frame + 1 > UINT64_MAX / rate))
@@ -139,11 +156,6 @@ bool qa_cin_decoder_next(qa_cin_decoder *decoder, qa_cin_frame *out, qa_error *e
         if (bytes > SIZE_MAX || offset > qa_media_input_size(decoder->asset->input) ||
             bytes > qa_media_input_size(decoder->asset->input) - offset) return fail(error, "Truncated CIN audio");
         audio_bytes = (size_t)bytes;
-        if (audio_bytes > decoder->audio_capacity) {
-            uint8_t *grown = realloc(decoder->audio, audio_bytes);
-            if (!grown) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating CIN PCM scratch"); return false; }
-            decoder->audio = grown; decoder->audio_capacity = audio_bytes;
-        }
         if (!read_at(decoder, &offset, decoder->audio, audio_bytes, error)) return false;
     }
     if (decoder->index == UINT64_MAX) return fail(error, "CIN frame index overflow");

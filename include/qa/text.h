@@ -84,9 +84,9 @@ typedef enum qa_decimal_rule {
     QA_DECIMAL_LOCALE_CLAMP
 } qa_decimal_rule;
 int32_t qa_parse_decimal_i32(const char *, qa_decimal_rule);
-/* Original QC/x86 truncation, with INT32_MIN for nonfinite or out-of-range
- * binary32 operands. This is not a wrapping word conversion. */
-int32_t qa_source_float_to_i32(float value);
+/* Original x86 truncation, with INT32_MIN for nonfinite or out-of-range
+ * operands. Float source arithmetic rounds before this boundary. */
+int32_t qa_source_to_i32(double value);
 /* Quake PF_ftos: integral values use %d; all others use %5.1f. */
 bool qa_format_quake_float(float value, char out[64], qa_error *error);
 /* Q3 bg_lib AddInt spelling, including its wrapped INT32_MIN digit bytes.

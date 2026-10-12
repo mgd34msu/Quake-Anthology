@@ -1,7 +1,6 @@
 #include "guest_native_q2_private.h"
 #include "native_q2_source_combat_state.h"
 #include "guest_native_q2_combat_state.h"
-#include <float.h>
 #include <math.h>
 
 typedef struct source_scalar {
@@ -121,11 +120,10 @@ static bool state_at(application_native_q2_source_combat_state *o,qa_actor_id ac
     if(!scalar_read(o,base,o->health,&health,e)||
         !scalar_read(o,base,o->mass,&mass,e)||!scalar_read(o,base,o->damageable,&damageable,e)||
         !scalar_read(o,base,o->flags,&flags,e)||!application_native_q2_armor_read(o->armor,actor,&state.armor,e))return false;
-    if(fabs(health)>FLT_MAX||fabs(mass)>FLT_MAX||(double)(float)health!=health||(double)(float)mass!=mass||
-        flags!=trunc(flags)||fabs(flags)>9007199254740991.0)
-        return application_fail(e,QA_ERROR_UNSUPPORTED,"Declared combat exceeds exact canonical scalar storage");
+    if(flags!=trunc(flags)||fabs(flags)>9007199254740991.0)
+        return application_fail(e,QA_ERROR_UNSUPPORTED,"Declared combat flags exceed exact canonical integer storage");
     uint64_t value=flags<0?(uint64_t)(int64_t)flags:(uint64_t)flags;
-    state.health=(float)health;state.mass=(float)mass;state.can_take_damage=damageable!=0;
+    state.health=health;state.mass=mass;state.can_take_damage=damageable!=0;
     state.invulnerable=(value&o->invulnerable)!=0;state.no_knockback=(value&o->no_knockback)!=0;
     qa_application *app=o->engine->provider->application;
     state.team=app->modes?qa_modes_combat_team(app->modes,app->primary_mode,actor,(qa_team_ref){0}):(qa_team_ref){0};
@@ -161,7 +159,7 @@ bool application_native_q2_source_combat_projection_armor_observe(application_na
         application_native_q2_armor_observe(o->armor,actor,changed,context,out,e);
 }
 bool application_native_q2_source_combat_health_write(application_native_q2_source_combat_state *o,
-    qa_actor_id actor,float value,qa_error *e)
+    qa_actor_id actor,double value,qa_error *e)
 {
     qa_native_address base;
     return o&&application_native_q2_field_value(o->health.encoding,value,e)&&actor_address(o,actor,&base,e)&&

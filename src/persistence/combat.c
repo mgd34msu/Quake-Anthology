@@ -33,7 +33,7 @@ bool qa_source_save_armor(qa_source_save_io *io, qa_armor *value)
             !qa_source_save_f64(io, &value->regular.protection.q2.energy)) return false;
         break;
     case QA_ARMOR_Q3:
-        if (!qa_source_save_f32(io, &value->regular.protection.q3_protection)) return false;
+        if (!qa_source_save_scalar(io, &value->regular.protection.q3_protection)) return false;
         break;
     default: break;
     }
@@ -49,8 +49,8 @@ bool qa_source_save_armor(qa_source_save_io *io, qa_armor *value)
 
 static bool state(qa_source_save_io *io, qa_combat_state *value)
 {
-    return qa_source_save_f32(io, &value->health) && isfinite(value->health) &&
-        qa_source_save_f32(io, &value->mass) && isfinite(value->mass) && qa_source_save_armor(io, &value->armor) &&
+    return qa_source_save_scalar(io, &value->health) && isfinite(value->health) &&
+        qa_source_save_scalar(io, &value->mass) && isfinite(value->mass) && qa_source_save_armor(io, &value->armor) &&
         qa_source_save_bool(io, &value->can_take_damage) && qa_source_save_bool(io, &value->invulnerable) &&
         qa_source_save_bool(io, &value->no_knockback) && qa_source_save_team(io, &value->team);
 }

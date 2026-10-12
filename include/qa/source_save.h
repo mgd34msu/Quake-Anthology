@@ -51,6 +51,10 @@ bool qa_source_save_i32(qa_source_save_io *, int32_t *);
 bool qa_source_save_i64(qa_source_save_io *, int64_t *);
 bool qa_source_save_f32(qa_source_save_io *, float *);
 bool qa_source_save_f64(qa_source_save_io *, double *);
+/* Finite canonical scalars keep legacy binary32 bytes when exact. A quiet
+ * NaN marker introduces binary64 only when that precision is required. */
+bool qa_source_save_scalar(qa_source_save_io *, double *);
+bool qa_source_save_i32_scalar(qa_source_save_io *, int32_t *);
 bool qa_source_save_usercmd(qa_source_save_io *, qa_usercmd *);
 bool qa_source_save_vec3(qa_source_save_io *, qa_vec3 *);
 bool qa_source_save_count(qa_source_save_io *, size_t *, size_t maximum);

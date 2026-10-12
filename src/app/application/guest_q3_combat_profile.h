@@ -21,7 +21,7 @@ typedef struct application_q3_combat_call {
 } application_q3_combat_call;
 typedef struct application_q3_reaction_call { uint32_t count, target, amount; } application_q3_reaction_call;
 typedef struct application_q3_combat_mode { uint32_t offset; int32_t value; bool equal; } application_q3_combat_mode;
-typedef struct application_q3_combat_tier { int32_t value; float protection; } application_q3_combat_tier;
+typedef struct application_q3_combat_tier { int32_t value; double protection; } application_q3_combat_tier;
 typedef struct application_q3_combat_definition {
     uint32_t entity_stride, client_stride;
     struct { uint32_t inuse, health, takedamage, parent, client; } fields;
@@ -35,14 +35,14 @@ typedef struct application_q3_combat_definition {
     struct {
         uint32_t health_stat, team_stat, notarget, invulnerable, no_knockback;
         enum { Q3_COMBAT_MASS_CONSTANT, Q3_COMBAT_MASS_INT32, Q3_COMBAT_MASS_FLOAT32 } mass_kind;
-        union { float constant; uint32_t offset; } mass;
+        union { double constant; uint32_t offset; } mass;
         const qa_team_source_value *teams;
         size_t team_count;
     } state;
     struct {
         uint32_t check, points_stat, tier_stat;
         application_q3_combat_call call;
-        float protection, fallback;
+        double protection, fallback;
         const application_q3_combat_mode *modes;
         size_t mode_count;
         const application_q3_combat_tier *tiers;

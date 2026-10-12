@@ -129,14 +129,14 @@ bool q2_item_grant(qa_q2_game *g, q2_actor *a, qa_actor_id recipient, bool *acce
         if (!qa_combat_set_health(
                 g->services.combat, recipient,
                 d->ignore_maximum
-                    ? combat.health + (float)(item->spawn.count ? item->spawn.count : d->quantity)
-                    : fminf(powers->maximum_health,
-                            combat.health + (float)(item->spawn.count ? item->spawn.count : d->quantity)),
+                    ? combat.health + (item->spawn.count ? item->spawn.count : d->quantity)
+                    : fmin(powers->maximum_health,
+                            combat.health + (item->spawn.count ? item->spawn.count : d->quantity)),
                 e))
             return false;
         break;
     case QA_Q2_ITEM_FOOD:
-        if (!qa_combat_set_health(g->services.combat, recipient, combat.health + (float)item->spawn.count,
+        if (!qa_combat_set_health(g->services.combat, recipient, combat.health + item->spawn.count,
                                   e))
             return false;
         break;
@@ -144,7 +144,7 @@ bool q2_item_grant(qa_q2_game *g, q2_actor *a, qa_actor_id recipient, bool *acce
     case QA_Q2_ITEM_SHARD:
         return armor(g, recipient, d, &combat.armor.regular, accepted, e);
     case QA_Q2_ITEM_MAX_HEALTH:
-        powers->maximum_health += d->fill && g->options.deathmatch ? 0.0f : (float)d->quantity;
+        powers->maximum_health += d->fill && g->options.deathmatch ? 0 : d->quantity;
         if (d->fill && combat.health < powers->maximum_health &&
             !qa_combat_set_health(g->services.combat, recipient, powers->maximum_health, e))
             return false;

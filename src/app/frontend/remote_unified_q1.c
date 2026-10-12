@@ -18,6 +18,7 @@
 #include "qa/network_unified_frame.h"
 #include "qa/unified_frame_events.h"
 #include "qa/application_ui_names.h"
+#include "qa/id_index.h"
 #include <float.h>
 #include <math.h>
 #include <stdlib.h>
@@ -119,6 +120,7 @@ struct frontend_unified_q1 {
     qa_hud *hud;
     q1_group *groups;
     q1_activation *activations,*weapon_activation,*prompt_activation,*ctf_activation;
+    qa_id_index activation_index;
     q1_activation *power_activations[Q1_POWERS];
     q1_continuation weapon,prompt,finale;
     qa_scene_image *finale_image;
@@ -317,10 +319,14 @@ static bool activation(frontend_unified_q1 *o,const q1_event *p,q1_activation **
     *out=NULL;if(!p->provider.size)return true;
     qa_string_id provider=p->row->payload.kind==QA_UNIFIED_PRESENTATION_OWNER ?
         p->row->payload_owner_id : p->row->owner_provider_id;
-    for(q1_activation *a=o->activations;a;a=a->next)if(a->generation==p->owner_generation && a->provider==provider){*out=a;return true;}
+    qa_id_index_entry *binding=qa_id_index_find(&o->activation_index,provider,p->owner_generation);
+    if(binding){*out=(q1_activation *)(uintptr_t)binding->value;return true;}
+    if(!qa_id_index_reserve(&o->activation_index,1,e))return false;
     q1_activation *a=calloc(1,sizeof(*a));if(!a)return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual Q1 Source activation");
     a->provider=provider;
-    a->generation=p->owner_generation;a->next=o->activations;o->activations=a;*out=a;return true;
+    a->generation=p->owner_generation;a->next=o->activations;o->activations=a;
+    qa_id_index_insert(&o->activation_index,provider,p->owner_generation,(size_t)(uintptr_t)a);
+    *out=a;return true;
 }
 static qa_scene_image_options model_options(void);
 static bool group(frontend_unified_q1 *o,qa_string_id name,q1_activation *owner,q1_group **out,qa_error *e)
@@ -1028,6 +1034,7 @@ bool frontend_unified_q1_destroy(frontend_unified_q1 **slot,qa_error *e)
     o->hud=NULL;
     while(o->groups){q1_group *g=o->groups;o->groups=g->next;group_free(g);}
     while(o->activations){q1_activation *a=o->activations;o->activations=a->next;free(a);}
+    qa_id_index_destroy(&o->activation_index);
     prompt_clear(o);continuation_clear(&o->weapon);continuation_clear(&o->finale);qa_scene_image_release(o->finale_image);
     qa_localization_pool_destroy(o->localizations);qa_arena_destroy(&o->semantic_storage);free(o);*slot=NULL;return true;
 }

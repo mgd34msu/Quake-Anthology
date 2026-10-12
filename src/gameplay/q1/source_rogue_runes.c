@@ -224,7 +224,7 @@ static bool frame(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     if (deathmatch != 0) {
         if (!q1_source_value(g, QA_Q1_SOURCE_GAMECFG, 0, &cfg, error) || !current(g, error) ||
             world(g, error) != owner) return false;
-        uint32_t integer = (uint32_t)qa_source_float_to_i32(cfg);
+        uint32_t integer = (uint32_t)qa_source_to_i32(cfg);
         if ((integer & 1) && owner->rogue_runes_spawned == 0) {
             owner->rogue_runes_spawned = 1;
             q1_actor *timer;
@@ -241,7 +241,7 @@ static bool frame(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     if (health.health >= 100) return true;
     if (!q1_sound_resource(g, actor, g->runtime_names[Q1_NAME_RESOURCE_RUNES_END4_WAV], 0, 1, 1, error) || !player_current(g, actor, row, error) ||
         !qa_combat_read(g->services.combat, actor, &health, error) || !player_current(g, actor, row, error) ||
-        !qa_combat_set_health(g->services.combat, actor, fminf(100, health.health + 5), error) ||
+        !qa_combat_set_health(g->services.combat, actor, fminf(100, (float)health.health + 5.0f), error) ||
         !player_current(g, actor, row, error)) return false;
     row->regeneration = g->time + 1;
     return true;

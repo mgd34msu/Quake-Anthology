@@ -178,8 +178,7 @@ static bool hook_run(application_q3_mod_actors *o,const qa_qvm_call *call,
     } else {
         int32_t amount;
         if(!qa_qvm_call_argument(call,layout->roles[k==MOD_ACTOR_PAIN?2:3],&amount,e)) return false;
-        float damage=(float)amount;
-        if((double)damage!=amount) return q3mod_fail(e,QA_ERROR_UNSUPPORTED,"Actor source reaction exceeds exact canonical representation");
+        double damage=amount;
         if(!q3mod_actors_reaction(o,row->actor,k,damage,e)) return false;
         if(!qa_actors_get(qa_session_actors(o->options.session),request.self)) {
             if(!qa_qvm_cancel(call,e)) return false;

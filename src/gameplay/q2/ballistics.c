@@ -21,7 +21,7 @@ static bool damageable(qa_q2_game *g, qa_actor_id id, qa_combat_state *out) {
     return id.registry != 0 && q2_actor_live(g, id) &&
            qa_combat_read(g->services.combat, id, out, &ignored) && out->can_take_damage;
 }
-bool q2_damage(qa_q2_game *g, const qa_attack *attack, qa_actor_id target, float amount, float kick,
+bool q2_damage(qa_q2_game *g, const qa_attack *attack, qa_actor_id target, double amount, double kick,
                qa_vec3 direction, qa_vec3 point, qa_vec3 normal, bool radius, qa_error *e) {
     qa_damage_request request = {.attack = *attack,
                                  .target = target,
@@ -95,8 +95,8 @@ bool q2_prepare_damage(void *context, qa_damage_request *request, bool *allowed,
 }
 bool q2_prepare_radius_damage(void *context, qa_damage_request *request, bool *allowed,
                               qa_error *e) {
-    request->amount = truncf(request->amount);
-    request->knockback = truncf(request->knockback);
+    request->amount = trunc(request->amount);
+    request->knockback = trunc(request->knockback);
     return q2_prepare_damage(context, request, allowed, e);
 }
 bool q2_radius_damage(qa_q2_game *g, const qa_builtin_radius *radius, size_t *damaged,

@@ -408,7 +408,7 @@ float q1_random(qa_q1_game *g) { return qa_builtin_random_unit(&g->random); }
 float qa_q1_game_random(qa_q1_game *g) { return g && !g->destroy_pending ? q1_random(g) : 0; }
 float q1_health(qa_q1_game *g, qa_actor_id actor) {
     qa_combat_state state;
-    return qa_combat_read(g->services.combat, actor, &state, NULL) ? state.health : 0;
+    return qa_combat_read(g->services.combat, actor, &state, NULL) ? (float)state.health : 0;
 }
 bool q1_damageable(qa_q1_game *g, qa_actor_id actor) {
     qa_combat_state state;
@@ -1397,14 +1397,14 @@ bool q1_damage_typed(qa_q1_game *g, qa_actor_id target, qa_actor_id inflictor, q
     qa_damage_outcome_release(&outcome);
     return ok;
 }
-static bool radius_adjust(void *context, qa_actor_id target, float *damage, float *knockback,
+static bool radius_adjust(void *context, qa_actor_id target, double *damage, double *knockback,
                           bool *allowed, qa_error *error) {
     (void)knockback;
     (void)allowed;
     (void)error;
     qa_q1_game *g = context;
     if (q1_classnamed(g, target, g->runtime_names[Q1_NAME_MONSTER_SHAMBLER]))
-        *damage *= 0.5f;
+        *damage = (float)((float)*damage * 0.5f);
     return true;
 }
 static bool radius_prepare(void *context, qa_damage_request *request, bool *allowed,
@@ -1814,7 +1814,7 @@ static bool reaction_dispatch(qa_q1_game *g, const qa_damage_outcome *outcome, q
         return q1_monster_die(g, entity, outcome->request.attack.attacker, error);
     if (outcome->result.reaction == QA_REACTION_PAIN)
         return q1_monster_pain(g, entity, outcome->request.attack.attacker,
-                               outcome->result.applied_damage, error);
+                               (float)outcome->result.applied_damage, error);
     return true;
 }
 static bool reaction_inner(qa_q1_game *g, const qa_damage_outcome *outcome, qa_error *error) {

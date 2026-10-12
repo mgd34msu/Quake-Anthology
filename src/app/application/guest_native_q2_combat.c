@@ -43,7 +43,7 @@ typedef struct combat_frame {
     qa_damage_result result;
     qa_native_write_observer *health_watch, *velocity_watch, *armor_watch;
     qa_native_write_observer *pain_watch, *die_watch;
-    float health;
+    double health;
     qa_armor armor;
     qa_vec3 velocity;
     bool active, reacting, entering;
@@ -148,7 +148,7 @@ static bool address_for(struct application_native_q2_combat *p, qa_actor_id acto
         return qa_native_entity_address(native(p), slot, out, error);
     return application_fail(error, QA_ERROR_UNSUPPORTED, "Native damage needs an original body projection for its foreign actor");
 }
-static bool health_write(void *opaque, float value, qa_error *error)
+static bool health_write(void *opaque, double value, qa_error *error)
 {
     combat_record *record = opaque; ++record->calls; ++record->owner->engine->calls;
     bool ok = application_q2_combat_health_write(&record->source, value, error);
@@ -212,8 +212,8 @@ static bool committed_health(void *opaque, qa_native_instance *instance,
     if (event->before.size != 4 || event->after.size != 4)
         return application_fail(error, QA_ERROR_FORMAT, "Native health store has a different original extent");
     int32_t source_before = qa_load_i32le(event->before.data), source_after = qa_load_i32le(event->after.data);
-    float before = (float)source_before, after = (float)source_after;
-    if ((double)before != source_before || (double)after != source_after || frame->health != before)
+    double before = source_before, after = source_after;
+    if (frame->health != before)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Native health store does not match exact observed authority");
     frame->health = after;
     if (frame->owner->current != frame) return true;
@@ -315,12 +315,10 @@ static bool reaction_entry(void *opaque, qa_native_instance *instance, qa_native
         deferred && !deferred->dispatching && target == deferred->record->source.address ? deferred->record : NULL;
     if (!record) return qa_native_invoke_original(binding, arguments, count, result, error);
     if (!application_q2_combat_actor_valid(&record->source, error)) return false;
-    if ((double)(float)fields[APPLICATION_Q2_AMOUNT].as.i32 != fields[APPLICATION_Q2_AMOUNT].as.i32)
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "Native reaction damage exceeds exact shared result representation");
     qa_damage_result reaction = {.reaction = hook->operation == APPLICATION_Q2_DEATH ? QA_REACTION_DEATH : QA_REACTION_PAIN,
-        .applied_damage = (float)fields[APPLICATION_Q2_AMOUNT].as.i32};
+        .applied_damage = fields[APPLICATION_Q2_AMOUNT].as.i32};
     const qa_damage_request *request = synchronous ? frame->request : deferred->request;
-    float kick = request->knockback; qa_vec3 point = request->point;
+    double kick = request->knockback; qa_vec3 point = request->point;
     if (hook->operation == APPLICATION_Q2_PAIN) kick = fields[APPLICATION_Q2_KICK].as.f32;
     else if (!vector_read(p, fields[APPLICATION_Q2_POINT].as.address, &point, error)) return false;
     original_reaction original = {binding, arguments, count, result};
@@ -534,11 +532,8 @@ static bool damage_entry(void *opaque, qa_native_instance *instance, qa_native_e
         client && weapon_cause((uint32_t)cause.source.q2.means_of_death & ~UINT32_C(0x08000000)), &request.attack, error);
     if (ok) {
         request.attack.cause = cause; request.radius = (flags & 1) != 0;
-        request.amount = (float)fields[APPLICATION_Q2_AMOUNT].as.i32;
-        request.knockback = (float)fields[APPLICATION_Q2_KNOCKBACK].as.i32;
-        if ((double)request.amount != fields[APPLICATION_Q2_AMOUNT].as.i32 ||
-            (double)request.knockback != fields[APPLICATION_Q2_KNOCKBACK].as.i32)
-            ok = application_fail(error, QA_ERROR_UNSUPPORTED, "Incoming native damage exceeds exact shared argument representation");
+        request.amount = fields[APPLICATION_Q2_AMOUNT].as.i32;
+        request.knockback = fields[APPLICATION_Q2_KNOCKBACK].as.i32;
     }
     if (ok) ok = vector_read(p, fields[APPLICATION_Q2_DIRECTION].as.address, &request.direction, error) &&
         vector_read(p, fields[APPLICATION_Q2_POINT].as.address, &request.point, error) &&
@@ -581,9 +576,9 @@ static bool absorb_stage(struct application_native_q2_combat *p, combat_frame *f
     qa_damage_flags flags = {.no_armor = (source_flags & 2) != 0,
         .no_power_armor = (source_flags & 0x100) != 0, .no_regular_armor = (source_flags & 0x80) != 0,
         .energy = (source_flags & 4) != 0, .regular_scale = 1};
-    float saved;
+    double saved;
     if (!qa_combat_absorb(shared(p), frame->request, channel, &geometry,
-        (float)amount, flags, &context, &saved, NULL, error) ||
+        amount, flags, &context, &saved, NULL, error) ||
         !application_q2_combat_actor_valid(&frame->record->source, error) ||
         !isfinite(saved) || (double)saved < INT32_MIN || (double)saved > INT32_MAX)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native armor replacement did not retain its live original target or int32 result");

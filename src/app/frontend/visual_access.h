@@ -9,10 +9,15 @@
 bool frontend_visual_model_acquire(qa_frontend *, qa_actor_owner provider,
     qa_game_family, qa_string_id path, const qa_resource *retained_source,
     frontend_visual_model_view *, qa_error *);
+bool frontend_visual_model_cached_read(const qa_frontend *, qa_actor_owner provider,
+    qa_game_family, qa_string_id path, frontend_visual_model_view *);
 bool frontend_visual_model_admission(void *, qa_application *,
     const qa_application_model_admission_request *, qa_application_model_admission *, qa_error *);
 bool frontend_visual_media_acquire(qa_frontend *, qa_actor_owner provider,
     qa_game_family, frontend_visual_owner_view *, qa_error *);
+/* Admit currently published actor, static and local weapon resources before
+ * any seat starts retaining scene commands. Per-view submission only reads. */
+bool frontend_visuals_prepare(qa_frontend *, qa_error *);
 /* Pure rendering read of a previously admitted physical media owner. */
 bool frontend_visual_media_read(const qa_frontend *, qa_actor_owner provider,
     qa_game_family, frontend_visual_owner_view *, qa_error *);

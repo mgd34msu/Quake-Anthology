@@ -36,7 +36,8 @@ typedef struct qa_q2_player_motion {
 typedef struct qa_q2_player_view {
     qa_vec3 angles, offset, kick_angles, gun_angles, gun_offset;
     qa_vec4 blend;
-    float fov, health, ammo;
+    float fov, ammo;
+    double health;
     double armor;
     qa_string_id ammo_icon, armor_icon;
     qa_string_id pickup_icon, pickup_text, help_icon, selected_item_name;
@@ -94,7 +95,8 @@ typedef struct qa_q2_player_event {
     qa_item_id selected_item;
     uint32_t slot;
     int level, lives;
-    float damage, alpha;
+    double damage;
+    float alpha;
     qa_q2_respawn_status respawn_status;
     qa_q2_hand hand;
     bool visible, reliable, health, armor, shield, first;
@@ -168,7 +170,7 @@ typedef struct qa_q2_player_services {
     bool (*player_collision)(void *, qa_actor_id, bool, qa_error *);
 } qa_q2_player_services;
 typedef struct qa_q2_player_carry {
-    float health, maximum_health;
+    double health, maximum_health;
     qa_armor armor;
     qa_inventory_entry *inventory;
     qa_inventory *inventory_owner;
@@ -225,7 +227,8 @@ typedef struct qa_q2_player_rule_tail {
     uint64_t help_draw_ns, help_marker_ns, mission_time_ns;
     uint32_t mission_primary, mission_secondary;
     unsigned mission_changed;
-    float fov, damage_blood, damage_armor, damage_power, damage_knockback;
+    float fov;
+    int32_t damage_blood, damage_armor, damage_power, damage_knockback;
     float damage_alpha, bonus_alpha, damage_pitch, damage_roll, fall_value;
     float bob_time, bob_move, killer_yaw;
     qa_vec3 damage_from, damage_blend, old_velocity, old_view_angles, slow_view_angles;

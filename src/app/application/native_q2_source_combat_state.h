@@ -16,7 +16,7 @@ bool application_native_q2_source_combat_projection_health(application_native_q2
 bool application_native_q2_source_combat_projection_armor_observe(application_native_q2_source_combat_state *,
     qa_actor_id,application_native_q2_armor_changed_fn,void *,application_native_q2_armor_watch **,qa_error *);
 bool application_native_q2_source_combat_health_write(application_native_q2_source_combat_state *,
-    qa_actor_id,float,qa_error *);
+    qa_actor_id,double,qa_error *);
 bool application_native_q2_source_combat_armor_validate(application_native_q2_source_combat_state *,
     qa_actor_id,const qa_armor *,qa_error *);
 bool application_native_q2_source_combat_armor_write(application_native_q2_source_combat_state *,

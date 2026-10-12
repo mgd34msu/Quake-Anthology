@@ -2,7 +2,7 @@
 #include "qa/text.h"
 
 static uint32_t bits(float value) {
-    return (uint32_t)qa_source_float_to_i32(value);
+    return (uint32_t)qa_source_to_i32(value);
 }
 uint32_t q2_entity_color(const char *text) {
     if (!strchr(text, ' '))
@@ -51,7 +51,7 @@ static bool show(qa_q2_game *g, q2_actor *a, qa_error *e) {
         light.resolution = bits(q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SHADOWLIGHTRESOLUTION], 0));
         light.fade_start = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SHADOWLIGHTSTARTFADEDISTANCE], 0);
         light.fade_end = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SHADOWLIGHTENDFADEDISTANCE], 0);
-        light.style = qa_source_float_to_i32(q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SHADOWLIGHTSTYLE], -1));
+        light.style = qa_source_to_i32(q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SHADOWLIGHTSTYLE], -1));
         qa_actor_id style;
         if (q2_map_find(g, 0, q2_field_id(s, g->field_keys[QA_TARGET_KEY_SHADOWLIGHTSTYLETARGET]), 0, &style)) {
             q2_actor *owner = q2_ent(g, style);

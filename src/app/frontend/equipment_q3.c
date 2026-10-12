@@ -22,13 +22,76 @@ typedef struct equipment_q3_call {
     bool (*current)(void *);
 } equipment_q3_call;
 
+static bool content_matches(const equipment_q3_content *owner,
+    const qa_application_equipment_view *source)
+{
+    const qa_vfs *files = qa_application_provider_files(owner->frontend->application, source->provider);
+    return source->provider == owner->view.provider && source->q3_source.product == owner->view.product &&
+        source->source_generation == owner->source_generation &&
+        source->actor.registry == owner->actor_index.registry && files &&
+        ((files == owner->source_files && qa_vfs_lookup_generation(files) == owner->source_files_generation) ||
+            qa_vfs_lookup_equal(files, owner->view.content.mounts));
+}
+static bool content_source_files_bind(equipment_q3_content *owner, qa_actor_owner provider, qa_error *error)
+{
+    qa_vfs *files = qa_application_provider_files(owner->frontend->application, provider);
+    uint64_t generation = qa_vfs_lookup_generation(files);
+    if (files == owner->source_files && generation == owner->source_files_generation) return true;
+    if (!qa_vfs_retain(files, error)) return false;
+    qa_vfs_destroy(owner->source_files);
+    owner->source_files = files; owner->source_files_generation = generation;
+    return true;
+}
+static equipment_q3_content *content_find(const qa_frontend *frontend,
+    const qa_application_equipment_view *source)
+{
+    if (!frontend->equipment_q3) return NULL;
+    const qa_id_index *index = &frontend->equipment_q3->content_index;
+    qa_id_index_cursor cursor = qa_id_index_begin(index, source->provider, source->source_generation);
+    size_t value; equipment_q3_content *found = NULL;
+    while (qa_id_index_next(index, &cursor, &value)) {
+        equipment_q3_content *owner = (equipment_q3_content *)(uintptr_t)value;
+        if (content_matches(owner, source)) found = owner;
+    }
+    return found;
+}
+static frontend_equipment_q3_presenter *presenter_find(const equipment_q3_content *owner, qa_actor_id actor)
+{
+    size_t value;
+    return owner && qa_actor_index_find(&owner->actor_index, actor, &value) ?
+        (frontend_equipment_q3_presenter *)(uintptr_t)value : NULL;
+}
 static bool source_current(equipment_q3_content *owner, const qa_application_equipment_view *source)
 {
     return owner && source && source->family == QA_GAME_Q3 && source->has_q3_source &&
-        source->selected && source->provider == owner->view.provider &&
-        source->q3_source.product == owner->view.product &&
+        source->selected && content_matches(owner, source) &&
         source->q3_source.weapon == (int32_t)source->q3_weapon &&
         qa_application_equipment_current(owner->frontend->application, source);
+}
+static bool equipment_storage_prepare(qa_frontend *frontend, qa_error *error)
+{
+    if (frontend->equipment_q3) return true;
+    frontend_equipment_q3 *equipment = calloc(1, sizeof(*equipment));
+    if (!equipment) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining selected Q3 equipment owner");
+    equipment->content_index.storage = &equipment->storage;
+    bool okay = qa_pool_prepare(&equipment->content_records, &equipment->storage, 0,
+        sizeof(equipment_q3_content), _Alignof(equipment_q3_content), error) &&
+        qa_pool_prepare(&equipment->presenter_records, &equipment->storage, 0,
+            sizeof(frontend_equipment_q3_presenter), _Alignof(frontend_equipment_q3_presenter), error);
+    if (!okay) { qa_arena_destroy(&equipment->storage); free(equipment); return false; }
+    frontend->equipment_q3 = equipment; return true;
+}
+static bool record_reserve(qa_pool *pool, qa_arena *storage, qa_error *error)
+{
+    return pool->head != SIZE_MAX || qa_pool_extend(pool, storage, pool->capacity ? pool->capacity : 1, error);
+}
+static void content_publish(equipment_q3_content *owner)
+{
+    frontend_equipment_q3 *equipment = owner->storage_owner;
+    qa_id_index_insert(&equipment->content_index, owner->view.provider, owner->source_generation,
+        (size_t)(uintptr_t)owner);
+    if (equipment->tail) equipment->tail->next = owner; else equipment->contents = owner;
+    equipment->tail = owner;
 }
 
 bool frontend_equipment_q3_idle(const qa_frontend *frontend)
@@ -45,18 +108,28 @@ bool frontend_equipment_q3_idle(const qa_frontend *frontend)
     return true;
 }
 
-void frontend_equipment_q3_content_dispose(equipment_q3_content *owner)
+bool frontend_equipment_q3_content_dispose(equipment_q3_content *owner, qa_error *error)
 {
-    if (!owner) return;
+    if (!owner) return true;
+    frontend_equipment_q3 *equipment = owner->storage_owner;
     while (owner->presenters) {
         frontend_equipment_q3_presenter *row = owner->presenters;
+        if (!qa_q3_presentation_destroy(row->recipient, error)) return false;
+        if (presenter_find(owner, row->actor) == row) qa_actor_index_remove(&owner->actor_index, row->actor);
         owner->presenters = row->next;
-        (void)qa_q3_presentation_destroy(row->recipient, NULL); free(row);
+        qa_pool_release(&equipment->presenter_records, row->slot);
     }
+    owner->tail = NULL;
     q3n_weapons_destroy(owner->weapons);
     q3n_selected_media_destroy(owner->view.media);
     qa_q3_presentation_assets_destroy(owner->view.assets);
-    free(owner);
+    qa_actor_index_destroy(&owner->actor_index);
+    qa_arena_destroy(&owner->actor_storage);
+    qa_vfs_destroy(owner->source_files);
+    qa_id_index_remove_value(&equipment->content_index, owner->view.provider, owner->source_generation,
+        (size_t)(uintptr_t)owner);
+    qa_pool_release(&equipment->content_records, owner->slot);
+    return true;
 }
 
 bool frontend_equipment_q3_retire(qa_frontend *frontend, qa_error *error)
@@ -64,26 +137,43 @@ bool frontend_equipment_q3_retire(qa_frontend *frontend, qa_error *error)
     if (!frontend_equipment_q3_idle(frontend))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected Q3 equipment retains a real draw, registration or capture");
     if (!frontend || !frontend->equipment_q3) return true;
-    equipment_q3_content *row = frontend->equipment_q3->contents;
-    while (row) { equipment_q3_content *next = row->next; frontend_equipment_q3_content_dispose(row); row = next; }
-    frontend->equipment_q3->contents = frontend->equipment_q3->tail = NULL;
+    frontend_equipment_q3 *equipment = frontend->equipment_q3;
+    while (equipment->contents) {
+        equipment_q3_content *row = equipment->contents, *next = row->next;
+        if (!frontend_equipment_q3_content_dispose(row, error)) return false;
+        equipment->contents = next;
+    }
+    equipment->tail = NULL;
+    qa_id_index_clear(&equipment->content_index);
+    qa_pool_reset(&equipment->content_records);
+    qa_pool_reset(&equipment->presenter_records);
     return true;
 }
 
 void frontend_equipment_q3_destroy(qa_frontend *frontend)
 {
     if (!frontend || !frontend->equipment_q3 || !frontend_equipment_q3_retire(frontend, NULL)) return;
+    qa_id_index_destroy(&frontend->equipment_q3->content_index);
+    qa_arena_destroy(&frontend->equipment_q3->storage);
     free(frontend->equipment_q3); frontend->equipment_q3 = NULL;
 }
 
 static bool content_create(qa_frontend *frontend, const qa_application_equipment_view *source,
     equipment_q3_content **out, qa_error *error)
 {
-    equipment_q3_content *owner = calloc(1, sizeof(*owner));
+    frontend_equipment_q3 *equipment = frontend->equipment_q3;
+    if (!qa_id_index_reserve(&equipment->content_index, 1, error) ||
+        !record_reserve(&equipment->content_records, &equipment->storage, error)) return false;
+    size_t slot;
+    equipment_q3_content *owner = qa_pool_take(&equipment->content_records, &slot);
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining selected Q3 content registry");
-    owner->frontend = frontend; owner->view.provider = source->provider;
-    owner->view.product = source->q3_source.product;
-    bool ok = frontend_visual_media_acquire(frontend, source->provider, QA_GAME_Q3, &owner->view.content, error);
+    *owner = (equipment_q3_content){.frontend = frontend, .storage_owner = equipment,
+        .slot = slot, .source_generation = source->source_generation};
+    owner->view.provider = source->provider; owner->view.product = source->q3_source.product;
+    bool ok = qa_actor_index_create(&owner->actor_index,
+        qa_world_actors(qa_application_world(frontend->application)), &owner->actor_storage, error) &&
+        content_source_files_bind(owner, source->provider, error) &&
+        frontend_visual_media_acquire(frontend, source->provider, QA_GAME_Q3, &owner->view.content, error);
     qa_q3_presentation_asset_options assets = {.strings=qa_session_strings(qa_application_session(frontend->application)),.provider = {
         .mounts = owner->view.content.mounts, .images = owner->view.content.images,
         .materials = owner->view.content.materials, .family = QA_GAME_Q3, .geometry_owner = qa_application_world(frontend->application)}};
@@ -93,7 +183,11 @@ static bool content_create(qa_frontend *frontend, const qa_application_equipment
     if (ok) ok = q3n_selected_media_create(&media, &owner->view.media, error);
     q3n_weapon_options weapons = {.product = owner->view.product, .assets = owner->view.assets};
     if (ok) ok = q3n_weapons_create(&weapons, &owner->weapons, error);
-    if (!ok) { frontend_equipment_q3_content_dispose(owner); return false; }
+    if (!ok) {
+        if (!frontend_equipment_q3_content_dispose(owner, NULL)) content_publish(owner);
+        return false;
+    }
+    content_publish(owner);
     *out = owner; return true;
 }
 
@@ -107,24 +201,28 @@ bool frontend_equipment_q3_prepare(qa_frontend *frontend, const qa_application_e
         !qa_application_equipment_current(frontend->application, source) || !current(context) ||
         (frontend->equipment_q3 && frontend->equipment_q3->admitting))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected Q3 media requires its actual full actor and recipient lease");
-    if (!frontend->equipment_q3) {
-        frontend->equipment_q3 = calloc(1, sizeof(*frontend->equipment_q3));
-        if (!frontend->equipment_q3) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining selected Q3 equipment owner");
-    }
+    if (!equipment_storage_prepare(frontend, error)) return false;
     frontend_equipment_q3 *equipment = frontend->equipment_q3;
-    equipment_q3_content *owner = equipment->contents;
-    while (owner && owner->view.provider != source->provider) owner = owner->next;
-    bool fresh = !owner; equipment->admitting = true;
-    bool ok = !fresh || content_create(frontend, source, &owner, error);
+    equipment_q3_content *owner = content_find(frontend, source);
+    equipment->admitting = true;
+    bool ok = owner || content_create(frontend, source, &owner, error);
     if (ok && !source_current(owner, source))
         ok = frontend_fail(error, QA_ERROR_ARGUMENT, "Selected Q3 content changed its real source product");
-    frontend_equipment_q3_presenter *presenter = ok ? owner->presenters : NULL;
-    while (presenter && !qa_actor_id_equal(presenter->actor, source->actor)) presenter = presenter->next;
+    if (ok) ok = content_source_files_bind(owner, source->provider, error);
+    frontend_equipment_q3_presenter *presenter = ok ? presenter_find(owner, source->actor) : NULL;
     frontend_equipment_q3_presenter *candidate = NULL;
     if (ok && !presenter) {
-        candidate = calloc(1, sizeof(*candidate));
-        if (!candidate) ok = frontend_fail(error, QA_ERROR_MEMORY, "Retaining full actor selected Q3 presenter");
-        else { candidate->actor = source->actor; candidate->owner = owner; presenter = candidate; }
+        ok = record_reserve(&equipment->presenter_records, &equipment->storage, error);
+        if (ok) {
+            size_t slot;
+            candidate = qa_pool_take(&equipment->presenter_records, &slot);
+            if (!candidate) ok = frontend_fail(error, QA_ERROR_MEMORY, "Retaining full actor selected Q3 presenter");
+            else {
+                *candidate = (frontend_equipment_q3_presenter){.actor = source->actor, .owner = owner,
+                    .slot = slot, .physical_seat = UINT32_MAX};
+                presenter = candidate;
+            }
+        }
     }
     if (ok) {
         owner->admitting = true;
@@ -137,14 +235,14 @@ bool frontend_equipment_q3_prepare(qa_frontend *frontend, const qa_application_e
         owner->admitting = false;
     }
     equipment->admitting = false;
-    if (!ok) { free(candidate); if (fresh) frontend_equipment_q3_content_dispose(owner); return false; }
-    if (fresh) {
-        if (equipment->tail) equipment->tail->next = owner; else equipment->contents = owner;
-        equipment->tail = owner;
+    if (!ok) {
+        if (candidate) qa_pool_release(&equipment->presenter_records, candidate->slot);
+        return false;
     }
     if (candidate) {
         if (owner->tail) owner->tail->next = candidate; else owner->presenters = candidate;
         owner->tail = candidate;
+        qa_actor_index_put(&owner->actor_index, candidate->actor, (size_t)(uintptr_t)candidate);
     }
     *out = presenter; return true;
 }
@@ -363,6 +461,76 @@ static double local_view_clock(void *context)
     return presenter->source_time_ms;
 }
 
+static bool local_source_visible(const qa_application_equipment_view *source)
+{
+    return source->selected && source->family == QA_GAME_Q3 && source->has_q3_source &&
+        !source->source_slot && !source->original_qvm && !source->equipment_slot && source->visible &&
+        source->q3_weapon != QA_Q3_W_NONE &&
+        source->q3_source.persistant[3] != 3 && source->q3_source.pmType != 5;
+}
+static bool local_recipient_prepare(qa_frontend *frontend, uint32_t physical_seat, uint32_t launch_seat,
+    const qa_application_equipment_view *source, frontend_equipment_q3_presenter *presenter, qa_error *error)
+{
+    if (presenter->recipient && presenter->physical_seat == physical_seat) return true;
+    if (presenter->recipient) {
+        if (!qa_q3_presentation_destroy(presenter->recipient, error)) return false;
+        presenter->recipient = NULL;
+    }
+    qa_q3_presentation_options settings = {.assets = presenter->owner->view.assets,
+        .clock = {presenter, local_view_clock}, .seat = physical_seat,
+        .viewport = frontend_viewport(frontend, physical_seat), .near_clip = 4, .far_clip = 16384,
+        .identity_light = 1, .lod_scale = 5, .rail_segment_length = 32,
+        .video_frame = frontend_material_movies_frontend_resolve, .video_context = frontend};
+    presenter->cvars = NULL;
+    presenter->hud_cvars = (qa_hud_cvar_handles){0};
+    const qa_launch_snapshot *publication = qa_application_launch(frontend->application);
+    const char *instance = qa_application_provider_instance(frontend->application, source->provider);
+    const qa_launch_instance *descriptor = instance ? qa_launch_snapshot_find(publication, instance) : NULL;
+    if (descriptor) {
+        qa_application_startup_source tuple;
+        if (!qa_application_startup_source_read(frontend->application, publication, descriptor, &tuple, error))
+            return false;
+        if (tuple.scope.provider != source->provider)
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected presenter changed its actual equipment provider");
+        frontend_config_source *config = frontend_config_store_source(frontend->config_store, tuple.cvars);
+        presenter->cvars = frontend_config_source_seat_cvars(config, launch_seat);
+        qa_hud_cvars_bind(presenter->cvars, QA_HUD_CVAR_DRAW_GUN, &presenter->hud_cvars);
+    }
+    if (!frontend_q3_renderer_options_read(frontend, &settings, error) ||
+        !frontend_source_identity_allocate(frontend, &settings.owner, error) ||
+        !qa_q3_presentation_create(&settings, &presenter->recipient, error)) return false;
+    presenter->physical_seat = physical_seat;
+    return true;
+}
+
+bool frontend_equipment_q3_local_prepare(qa_frontend *frontend, qa_error *error)
+{
+    if (!frontend->scene_world || frontend_network_remote(frontend) ||
+        qa_application_get_state(frontend->application) != QA_APPLICATION_RUNNING) return true;
+    for (uint32_t seat = 0; seat < frontend->options.seats; ++seat) {
+        uint32_t launch_seat; qa_actor_id actor;
+        if (!frontend_seat_launch_id_read(frontend, seat, &launch_seat) ||
+            !qa_application_player_actor(frontend->application, launch_seat, &actor)) continue;
+        qa_application_equipment_view source;
+        qa_error observed = {0};
+        if (!qa_application_equipment_read(frontend->application, actor, &source, &observed)) {
+            if (observed.code == QA_ERROR_NOT_FOUND) continue;
+            if (error) *error = observed;
+            return false;
+        }
+        if (!local_source_visible(&source)) continue;
+        qa_application_camera_view camera;
+        if (!qa_application_control_camera(frontend->application, actor, &camera) || camera.cutscene) continue;
+        equipment_local_view call = {frontend, seat, launch_seat, &source};
+        frontend_equipment_q3_presenter *presenter;
+        if (!frontend_equipment_q3_prepare(frontend, &source, true, NULL,
+                &call, local_view_current, &presenter, error) ||
+            !local_recipient_prepare(frontend, seat, launch_seat, &source, presenter, error)) return false;
+        presenter->source_time_ms = source.q3_time_ms;
+    }
+    return true;
+}
+
 bool frontend_equipment_q3_local_view(qa_frontend *frontend, uint32_t physical_seat,
     const qa_application_equipment_view *source, const qa_scene_world_input *world,
     qa_scene_frame *frame, qa_error *error)
@@ -377,41 +545,15 @@ bool frontend_equipment_q3_local_view(qa_frontend *frontend, uint32_t physical_s
     equipment_local_view call = {frontend, physical_seat, launch_seat, source};
     if (!local_view_current(&call))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected view lost its local player recipient");
-    if (!source->visible || world->view.clip_enabled || frontend->seats[physical_seat].q1_chase ||
-        source->q3_source.persistant[3] == 3 || source->q3_source.pmType == 5) return true;
+    if (!local_source_visible(source) || world->view.clip_enabled || frontend->seats[physical_seat].q1_chase) return true;
     qa_application_camera_view camera;
     if (!qa_application_control_camera(frontend->application, source->actor, &camera))
         return frontend_fail(error, QA_ERROR_NOT_FOUND, "Selected view lost its actual player camera");
     if (camera.cutscene) return true;
-    frontend_equipment_q3_presenter *presenter = NULL;
-    if (!frontend_equipment_q3_prepare(frontend, source, true, NULL,
-            &call, local_view_current, &presenter, error)) return false;
-    qa_q3_presentation_options settings = {.assets = presenter->owner->view.assets,
-        .clock = {presenter, local_view_clock}, .seat = physical_seat,
-        .viewport = world->view.viewport, .near_clip = 4, .far_clip = 16384,
-        .identity_light = 1, .lod_scale = 5, .rail_segment_length = 32,
-        .video_frame = frontend_material_movies_frontend_resolve, .video_context = frontend};
-    if (!presenter->recipient) {
-        const qa_launch_snapshot *publication = qa_application_launch(frontend->application);
-        const char *instance = qa_application_provider_instance(frontend->application, source->provider);
-        const qa_launch_instance *descriptor = instance ? qa_launch_snapshot_find(publication, instance) : NULL;
-        if (descriptor) {
-            qa_application_startup_source tuple;
-            if (!qa_application_startup_source_read(frontend->application, publication, descriptor, &tuple, error))
-                return false;
-            if (tuple.scope.provider != source->provider)
-                return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected presenter changed its actual equipment provider");
-            frontend_config_source *config = frontend_config_store_source(frontend->config_store, tuple.cvars);
-            presenter->cvars = frontend_config_source_seat_cvars(config, launch_seat);
-            qa_hud_cvars_bind(presenter->cvars, QA_HUD_CVAR_DRAW_GUN, &presenter->hud_cvars);
-        }
-        if (!frontend_q3_renderer_options_read(frontend, &settings, error) ||
-            !frontend_source_identity_allocate(frontend, &settings.owner, error) ||
-            !qa_q3_presentation_create(&settings, &presenter->recipient, error)) return false;
-        presenter->physical_seat = physical_seat;
-    }
-    if (presenter->physical_seat != physical_seat)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected presenter changed its physical recipient seat");
+    frontend_equipment_q3_presenter *presenter = presenter_find(content_find(frontend, source), source->actor);
+    if (!presenter || !presenter->recipient || presenter->physical_seat != physical_seat) return true;
+    qa_q3_presentation_options settings;
+    if (!qa_q3_presentation_options_read(presenter->recipient, &settings, error)) return false;
     presenter->source_time_ms = source->q3_time_ms;
     const qa_cvar_view *draw = qa_cvars_read(presenter->cvars, presenter->hud_cvars.draw_gun);
     if (draw && draw->integer == 0) return true;

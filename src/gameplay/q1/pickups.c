@@ -791,7 +791,7 @@ static bool item_original(void *context, const qa_pickup_offer *offer, bool *tak
         qa_builtin_actor_traits traits;
         if (!item->mega && g->services.actor_traits &&
             g->services.actor_traits(g->services.context, actor, &traits))
-            limit = traits.max_health;
+            limit = (float)traits.max_health;
         if (health <= 0 || health >= limit)
             return true;
         *taken = true;
@@ -1313,7 +1313,7 @@ bool q1_pickup_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         qa_builtin_actor_traits traits;
         float max_health = player ? player->max_health : 0;
         if (!player && g->services.actor_traits &&
-            g->services.actor_traits(g->services.context, holder, &traits)) max_health = traits.max_health;
+            g->services.actor_traits(g->services.context, holder, &traits)) max_health = (float)traits.max_health;
         float health = q1_health(g, holder);
         if (health > max_health)
             return qa_combat_set_health(g->services.combat, holder, health - 1, error) &&
@@ -1591,7 +1591,7 @@ static bool pickup_preview(qa_q1_game *g, qa_actor_id actor, const q1_pickup *it
         qa_builtin_actor_traits traits;
         if (!item->mega && g->services.actor_traits &&
             g->services.actor_traits(g->services.context, actor, &traits))
-            limit = traits.max_health;
+            limit = (float)traits.max_health;
         if (health > 0 && health < limit) {
             *accepted = true;
             *utility = fmaxf(0, fminf(limit, health + item->count) - health);

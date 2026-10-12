@@ -242,12 +242,9 @@ void qa_cpu_destroy(qa_cpu_renderer *renderer) {
   buffer_destroy(&renderer->display);
   buffer_destroy(&renderer->opacity);
   free(renderer->output);
-  free(renderer->vertices);
-  free(renderer->skin_jobs);
-  free(renderer->skin_bindings);
+  qa_arena_destroy(&renderer->work_storage);
   qa_id_index_destroy(&renderer->skin_index);
   qa_arena_destroy(&renderer->skin_index_storage);
-  free(renderer->skin_transient);
   qa_output_domains_destroy(&renderer->output_domains);
   free(renderer);
 }
@@ -801,42 +798,72 @@ static size_t skin_job_find(const qa_cpu_renderer *renderer, const void *owner,
   }
   return SIZE_MAX;
 }
+static bool work_frame_begin(qa_cpu_renderer *renderer, qa_error *error) {
+  /* The preceding raster drain returns queued jobs. Prepared triangles own
+   * their interpolants; skin jobs return synchronously before submission. */
+  qa_arena_reset(&renderer->work_storage);
+  renderer->vertices = NULL;
+  renderer->skin_jobs = NULL;
+  renderer->skin_bindings = NULL;
+  renderer->skin_transient = NULL;
+  renderer->skin_job_count = 0;
+  renderer->skin_frame_prepared = false;
+  qa_id_index_clear(&renderer->skin_index);
+  if (renderer->skin_job_capacity) {
+    renderer->skin_jobs = qa_arena_alloc(&renderer->work_storage,
+        renderer->skin_job_capacity * sizeof(*renderer->skin_jobs),
+        _Alignof(qa_render_model_job), error);
+    if (!renderer->skin_jobs) return false;
+    renderer->skin_bindings = qa_arena_alloc(&renderer->work_storage,
+        renderer->skin_job_capacity * sizeof(*renderer->skin_bindings),
+        _Alignof(cpu_skin_binding), error);
+    if (!renderer->skin_bindings) return false;
+  }
+  if (renderer->skin_transient_capacity) {
+    renderer->skin_transient = qa_arena_alloc(&renderer->work_storage,
+        renderer->skin_transient_capacity * sizeof(*renderer->skin_transient),
+        _Alignof(qa_model_vertex), error);
+    if (!renderer->skin_transient) return false;
+  }
+  return true;
+}
 static bool skin_jobs_reserve(qa_cpu_renderer *renderer, qa_error *error) {
   size_t required = renderer->skin_job_count + 1;
   if (!qa_id_index_reserve(&renderer->skin_index, 1, error)) return false;
-  if (required <= renderer->skin_job_capacity) return true;
-  size_t capacity = renderer->skin_job_capacity ? renderer->skin_job_capacity * 2 : 16;
+  if (renderer->skin_jobs && renderer->skin_bindings &&
+      required <= renderer->skin_job_capacity) return true;
+  size_t capacity = renderer->skin_job_capacity;
+  if (required > capacity) capacity = capacity ? capacity * 2 : 16;
   if (capacity < required || capacity > (size_t)PTRDIFF_MAX / sizeof(*renderer->skin_jobs) ||
       capacity > (size_t)PTRDIFF_MAX / sizeof(*renderer->skin_bindings)) {
     qa_error_set(error, QA_ERROR_MEMORY, 0, "CPU model batch exceeds addressable storage"); return false;
   }
-  qa_render_model_job *jobs = malloc(capacity * sizeof(*jobs));
-  cpu_skin_binding *bindings = malloc(capacity * sizeof(*bindings));
-  if (!jobs || !bindings) {
-    free(jobs); free(bindings);
-    qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating retained CPU model batch storage"); return false;
-  }
-  if (renderer->skin_job_count) {
-    memcpy(jobs, renderer->skin_jobs, renderer->skin_job_count * sizeof(*jobs));
-    memcpy(bindings, renderer->skin_bindings, renderer->skin_job_count * sizeof(*bindings));
-  }
-  free(renderer->skin_jobs); free(renderer->skin_bindings);
+  qa_render_model_job *jobs = qa_arena_grow(&renderer->work_storage,
+      renderer->skin_jobs, renderer->skin_jobs ? renderer->skin_job_count * sizeof(*jobs) : 0,
+      capacity * sizeof(*jobs), _Alignof(qa_render_model_job), error);
+  if (!jobs) return false;
+  cpu_skin_binding *bindings = qa_arena_grow(&renderer->work_storage,
+      renderer->skin_bindings, renderer->skin_bindings ? renderer->skin_job_count * sizeof(*bindings) : 0,
+      capacity * sizeof(*bindings), _Alignof(cpu_skin_binding), error);
+  if (!bindings) return false;
   renderer->skin_jobs = jobs; renderer->skin_bindings = bindings;
   renderer->skin_job_capacity = capacity;
   return true;
 }
 static bool skin_transient_reserve(qa_cpu_renderer *renderer, size_t count, qa_error *error) {
-  if (count <= renderer->skin_transient_capacity) return true;
+  if (renderer->skin_transient && count <= renderer->skin_transient_capacity) return true;
+  if (!count && !renderer->skin_transient_capacity) return true;
   size_t capacity = renderer->skin_transient_capacity ? renderer->skin_transient_capacity : 256;
   while (capacity < count && capacity <= SIZE_MAX / 2) capacity *= 2;
   if (capacity < count || capacity > (size_t)PTRDIFF_MAX / sizeof(*renderer->skin_transient)) capacity = count;
   if (capacity > (size_t)PTRDIFF_MAX / sizeof(*renderer->skin_transient)) {
     qa_error_set(error, QA_ERROR_MEMORY, 0, "CPU transient model span exceeds addressable storage"); return false;
   }
-  qa_model_vertex *vertices = realloc(renderer->skin_transient, capacity * sizeof(*vertices));
-  if (!vertices) {
-    qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating retained CPU transient model span"); return false;
-  }
+  qa_model_vertex *vertices = qa_arena_grow(&renderer->work_storage,
+      renderer->skin_transient,
+      renderer->skin_transient ? renderer->skin_transient_capacity * sizeof(*vertices) : 0,
+      capacity * sizeof(*vertices), _Alignof(qa_model_vertex), error);
+  if (!vertices) return false;
   renderer->skin_transient = vertices; renderer->skin_transient_capacity = capacity;
   return true;
 }
@@ -877,8 +904,6 @@ static void skin_publish(qa_scene_skin_sample *sample, const qa_render_model_job
 }
 static bool skin_frame_prepare(qa_cpu_renderer *renderer, const qa_scene_frame *frame,
                                qa_error *error) {
-  renderer->skin_job_count = 0;
-  qa_id_index_clear(&renderer->skin_index);
   size_t transient_count = 0;
   for (size_t i = 0; i < frame->command_count; ++i) {
     const qa_scene_command *command = &frame->commands[i];
@@ -1008,7 +1033,11 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
     }
     return true;
   }
-  if (begin) cpu_raster_flush(renderer);
+  if (begin) {
+    cpu_raster_flush(renderer);
+    if (!work_frame_begin(renderer, error)) return false;
+  }
+  if (!cpu_raster_prepare(renderer, frame, first, begin, error)) return false;
   if (begin && finish && !frame->source_backend && !skin_frame_prepare(renderer, frame, error)) return false;
   if (begin && frame->source_backend && frame->source_clear_draw_buffer) {
     qa_scene_view clear = renderer->view;

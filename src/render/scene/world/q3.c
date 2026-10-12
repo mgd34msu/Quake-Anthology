@@ -26,7 +26,7 @@ static qa_scene_vertex vertex(const qa_bsp_vertex *source, uint32_t shift) {
 static float fog_byte(float value) {
     float scaled = value * 255;
     if (!isfinite(scaled)) return 0;
-    return (float)(uint8_t)(uint32_t)qa_source_float_to_i32(scaled) / 255;
+    return (float)(uint8_t)(uint32_t)qa_source_to_i32(scaled) / 255;
 }
 
 static bool load_lightmaps(qa_scene_world *world, q3_data *data, qa_error *error) {

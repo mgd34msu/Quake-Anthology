@@ -4,7 +4,7 @@
 
 typedef struct qa_q2_bot_entity {
     qa_string_id model,classname;
-    float max_health;
+    double max_health;
     int32_t frame;
     bool present,hidden,worldspawn;
 } qa_q2_bot_entity;

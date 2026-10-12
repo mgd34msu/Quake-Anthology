@@ -125,6 +125,24 @@ bool q2_save_text(q2_save_io *io, char *text, size_t capacity) {
     if (io->reading) text[size] = 0;
     return true;
 }
+bool q2_save_scalar(q2_save_io *io, double *value) {
+    qa_source_save_io values = {.session = io->game->services.session,
+        .direction = io->reading ? QA_SOURCE_SAVE_READ : QA_SOURCE_SAVE_WRITE,
+        .input = io->input, .output = io->output, .offset = io->offset,
+        .capacity = io->capacity, .error = io->error};
+    bool okay = qa_source_save_scalar(&values, value);
+    io->output = values.output; io->offset = values.offset; io->capacity = values.capacity;
+    return okay;
+}
+bool q2_save_i32_scalar(q2_save_io *io, int32_t *value) {
+    qa_source_save_io values = {.session = io->game->services.session,
+        .direction = io->reading ? QA_SOURCE_SAVE_READ : QA_SOURCE_SAVE_WRITE,
+        .input = io->input, .output = io->output, .offset = io->offset,
+        .capacity = io->capacity, .error = io->error};
+    bool okay = qa_source_save_i32_scalar(&values, value);
+    io->output = values.output; io->offset = values.offset; io->capacity = values.capacity;
+    return okay;
+}
 bool q2_save_actor_pointer(q2_save_io *io, qa_actor_reference *reference) {
     qa_source_save_io values = {.session = io->game->services.session,
         .direction = io->reading ? QA_SOURCE_SAVE_READ : QA_SOURCE_SAVE_WRITE,

@@ -97,7 +97,7 @@ static bool integer_argument(qa_qc_instance *vm, uint32_t index, int32_t *out, q
         (void)application_fail(error, QA_ERROR_FORMAT, "Nonfinite QuakeC integer message value");
         return false;
     }
-    *out = qa_source_float_to_i32(value); return true;
+    *out = qa_source_to_i32(value); return true;
 }
 static qa_actor_id window_actor(qa_qc_instance *vm, uint32_t word, bool packed)
 {

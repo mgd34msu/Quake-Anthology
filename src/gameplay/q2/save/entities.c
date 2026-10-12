@@ -67,7 +67,9 @@ static bool state(q2_save_io *io, qa_q2_entity_state *s) {
         !q2_save_actor_pointer(io, &s->team_next)) return false;
     Q2V(direction); Q2V(beam_end); Q2V(multicast_origin);
     Q2F(speed); Q2F(accel); Q2F(decel); Q2F(wait);
-    Q2F(delay); Q2F(damage); Q2F(health); Q2F(random); Q2F(volume); Q2F(attenuation);
+    Q2F(delay); Q2F(damage);
+    if (!q2_save_scalar(io, &s->health)) return false;
+    Q2F(random); Q2F(volume); Q2F(attenuation);
     Q2T(due_ns); Q2T(timestamp_ns); Q2T(debounce_ns); Q2T(sound_ns); Q2T(expires_ns);
     Q2T(air_ns); Q2T(pain_ns); Q2T(environment_ns);
     Q2I(count); Q2I(style); Q2I(stage); Q2B(usable); Q2B(touchable); Q2B(active);

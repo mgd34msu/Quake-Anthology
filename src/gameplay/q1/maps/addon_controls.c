@@ -394,8 +394,9 @@ bool q1_map_addon_control_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, q
                      g->services.actor_traits(g->services.context, other, &traits);
         if (!control(g, id) || !q1_alive(g, other))
             return true;
-        if (found && health > 0 && health < traits.max_health &&
-            !qa_combat_set_health(g->services.combat, other, fminf(health + damage, traits.max_health), error))
+        float maximum = found ? (float)traits.max_health : 0;
+        if (found && health > 0 && health < maximum &&
+            !qa_combat_set_health(g->services.combat, other, fminf(health + damage, maximum), error))
             return false;
         e = control(g, id);
         return !e || source_deadline(deadline, &e->map->cooldown, error);

@@ -7,9 +7,9 @@ static bool tag_bonus(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_error
         return false;
     if (m->options.services.actor_traits)
         m->options.services.actor_traits(m->options.services.context, actor, &traits);
-    float maximum = traits.max_health > 0 ? traits.max_health : 100;
+    double maximum = traits.max_health > 0 ? traits.max_health : 100;
     if (state.health < maximum && !qa_combat_set_health(m->options.services.combat, actor,
-                                                        fminf(maximum, state.health + 200), e))
+                                                        fmin(maximum, state.health + 200), e))
         return false;
     if (!m->options.hooks.give_body_armor)
         return mode_fail(e, "Tag requires the admitted Q2 body-armor pickup provider");

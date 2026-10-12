@@ -58,7 +58,7 @@ bool application_q2_combat_actor_init(application_q2_combat_profile *, uint32_t,
     qa_actor_id, bool admitting, application_q2_combat_actor *, qa_error *);
 bool application_q2_combat_actor_valid(application_q2_combat_actor *, qa_error *);
 bool application_q2_combat_state_read(void *, qa_combat_state *, qa_error *);
-bool application_q2_combat_health_write(void *, float, qa_error *);
+bool application_q2_combat_health_write(void *, double, qa_error *);
 bool application_q2_combat_armor_read(application_q2_combat_actor *, qa_armor *, qa_error *);
 bool application_q2_combat_armor_validate(void *, const qa_armor *, qa_error *);
 bool application_q2_combat_armor_write(void *, const qa_armor *, qa_error *);

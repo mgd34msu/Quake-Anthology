@@ -123,7 +123,7 @@ static bool scratch_run(void *context, qa_qvm *vm, uint32_t scratch, qa_error *e
     words[d->damage_call.positions[Q3_DAMAGE_ATTACKER]] = (int32_t)attacker;
     words[d->damage_call.positions[Q3_DAMAGE_DIRECTION]] = (int32_t)scratch;
     words[d->damage_call.positions[Q3_DAMAGE_POINT]] = (int32_t)scratch + 12;
-    double amount = trunc((double)request->amount);
+    double amount = trunc(request->amount);
     if (!isfinite(amount) || amount < INT32_MIN || amount > INT32_MAX)
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Source damage amount leaves its signed argument");
     if (ok) words[d->damage_call.positions[Q3_DAMAGE_AMOUNT]] = (int32_t)amount;

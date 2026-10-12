@@ -170,10 +170,11 @@ bool qa_builtin_radius_damage(const qa_builtin_services *s, const qa_builtin_rad
                 : qa_vec_length(qa_vec_sub(center, radius->origin));
         if (!radius->candidate_radius_only && distance > radius->radius)
             continue;
-        float amount = radius->damage - radius->distance_scale * distance;
+        float points = radius->damage - radius->distance_scale * distance;
         if (qa_actor_id_equal(actor, radius->attack.attacker))
-            amount *= radius->self_scale;
-        float knockback = amount * radius->knockback_scale;
+            points *= radius->self_scale;
+        double amount = points;
+        double knockback = (float)(points * radius->knockback_scale);
         bool allowed = amount > 0;
         if (radius->adjust &&
             !radius->adjust(radius->context, actor, &amount, &knockback, &allowed, error))

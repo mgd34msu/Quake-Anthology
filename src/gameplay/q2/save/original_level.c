@@ -294,8 +294,8 @@ bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
         client.player.info.chase_target = (qa_actor_id){0};
         client.persistent.flags = (uint32_t)flags;
         if (live_level) {
-            client.persistent.health = (float)health;
-            client.persistent.maximum_health = (float)maximum_health;
+            client.persistent.health = health;
+            client.persistent.maximum_health = maximum_health;
         }
         qa_q2_player_checkpoint saved = {.present = true, .value = client.player};
         okay = qa_q2_player_restore(game, actor, &saved, error) &&

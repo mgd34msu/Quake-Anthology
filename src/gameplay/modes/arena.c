@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "qa/binary.h"
+#include "qa/text.h"
 
 bool mode_obelisk_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id actor,
                         bool *accepted, qa_error *e) {
@@ -72,19 +74,19 @@ bool qa_modes_object_damage(qa_modes *m, qa_mode_id id, qa_damage_request *reque
     if (v->value.rules.kind == QA_MODE_TAG && v->value.rules.source != QA_MODE_ROGUE &&
         !qa_actor_id_equal(request->target, v->tag_owner) &&
         !qa_actor_id_equal(request->attack.attacker, v->tag_owner))
-        request->amount = truncf(request->amount * .75f);
+        request->amount = qa_i32_mul(qa_source_to_i32(request->amount), 3) / 4;
     if (v->value.rules.kind != QA_MODE_DEATHBALL)
         return true;
     if (!qa_actor_id_equal(request->target, v->ball)) {
         if (!qa_actor_id_equal(request->attack.attacker, v->ball))
-            request->amount = truncf(request->amount * .5f);
+            request->amount = qa_source_to_i32(request->amount) / 2;
         return true;
     }
     request->amount = 1;
     if (request->attack.cause.kind != QA_CAUSE_Q2)
         return true;
     int mod = request->attack.cause.source.q2.means_of_death;
-    float kick = request->knockback;
+    int32_t kick = qa_source_to_i32(request->knockback);
     if (kick < 1) {
         if (mod == 8)
             kick = 70;
@@ -93,22 +95,22 @@ bool qa_modes_object_damage(qa_modes *m, qa_mode_id id, qa_damage_request *reque
     } else
         switch (mod) {
         case 1:
-            kick *= 3;
+            kick = qa_i32_mul(kick, 3);
             break;
         case 2:
-            kick = truncf(kick * 3 / 8);
+            kick = qa_i32_mul(kick, 3) / 8;
             break;
         case 3:
         case 11:
         case 44:
-            kick = truncf(kick / 3);
+            kick /= 3;
             break;
         case 4:
         case 9:
-            kick = truncf(kick * 1.5f);
+            kick = qa_i32_mul(kick, 3) / 2;
             break;
         case 10:
-            kick *= 4;
+            kick = qa_i32_mul(kick, 4);
             break;
         case 6:
         case 15:
@@ -118,7 +120,7 @@ bool qa_modes_object_damage(qa_modes *m, qa_mode_id id, qa_damage_request *reque
         case 24:
         case 51:
         case 41:
-            kick = truncf(kick * .5f);
+            kick /= 2;
             break;
         default:
             break;
@@ -172,8 +174,8 @@ bool qa_modes_object_reaction(qa_modes *m, const qa_damage_outcome *outcome, qa_
                qa_modes_rank(m, v->id, e);
     }
     if (mode_member_get(m, v, attacker)) {
-        float damage = outcome->result.applied_damage / 10;
-        int32_t amount = damage >= (float)INT32_MAX ? INT32_MAX : damage < 1 ? 1 : (int32_t)damage;
+        double damage = outcome->result.applied_damage / 10;
+        int32_t amount = damage >= INT32_MAX ? INT32_MAX : damage < 1 ? 1 : qa_source_to_i32(damage);
         if (!qa_modes_add_score(m, v->id, attacker, amount, e))
             return false;
     }

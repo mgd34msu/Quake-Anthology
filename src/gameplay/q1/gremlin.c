@@ -197,7 +197,7 @@ static bool gorge_damage(qa_q1_game *g, q1_actor *entity, qa_actor_id target, fl
         qa_combat_read_traits(g->services.combat, entity->id, &self, NULL) &&
         qa_team_equal(qa_session_strings(g->services.session), self.team, combat.team))
         return true;
-    return qa_combat_set_health(g->services.combat, target, combat.health - damage, error);
+    return qa_combat_set_health(g->services.combat, target, (float)combat.health - damage, error);
 }
 static bool gorge(qa_q1_game *g, q1_actor *entity, float side, qa_error *error) {
     qa_actor_id target = q1_ref_actor(g, entity->state.monster.enemy);

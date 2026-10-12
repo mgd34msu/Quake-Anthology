@@ -55,7 +55,7 @@ bool q1_mg3_upgrade(qa_q1_game *g, q1_player *player, unsigned type, uint32_t fl
             qa_combat_state combat;
             if (!qa_combat_read(g->services.combat, actor, &combat, error) ||
                 !upgrade_current(g, actor, player, error)) return false;
-            float health = combat.health;
+            float health = (float)combat.health;
             if (health > 0 && health < *maximum &&
                 !qa_combat_set_health(g->services.combat, player->id,
                                       fminf(*maximum, health + *maximum), error))

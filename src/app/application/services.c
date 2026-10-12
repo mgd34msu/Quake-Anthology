@@ -880,7 +880,7 @@ static bool force_death(qa_application *application,
     application->operation = APPLICATION_ADVANCING;
     qa_damage_mutation mutation = {
         .kind = QA_MUTATION_HEALTH,
-        .value.health = {.before = traits.health, .after = (float)final_health},
+        .value.health = {.before = traits.health, .after = final_health},
     };
     qa_damage_outcome outcome = {
         .request = *request,
@@ -893,7 +893,7 @@ static bool force_death(qa_application *application,
     bool ok = q2_source || (qa_combat_set_traits(application->combat, request->target,
                                     &traits, error) &&
               qa_combat_set_health(application->combat, request->target,
-                                    (float)final_health, error));
+                                    final_health, error));
     if (ok && react)
         ok = qa_combat_source_reaction(application->combat, request,
                                          &outcome.result, error);
@@ -1013,8 +1013,8 @@ static bool combat_inflictor_center(void *opaque, const qa_damage_request *reque
     return application_native_q1_wire_inflictor_center(opaque, request, center, found, error);
 }
 
-static bool combat_source_amount(void *opaque, qa_actor_id actor, float amount,
-                                  float *out, qa_error *error)
+static bool combat_source_amount(void *opaque, qa_actor_id actor, double amount,
+                                  double *out, qa_error *error)
 {
     bool available = false;
     return application_qc_combat_damage_amount(opaque,actor,amount,out,&available,error) &&

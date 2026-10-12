@@ -101,7 +101,7 @@ bool q3nh_scoreboard(q3n_hud_draw *d,bool *showing)
            !q3nh_picture(d,416,86,64,32,m->graphics[Q3N_G_SCOREBOARD_NAME]))return false;
         bool compact=c->num_scores>7,local=false; int32_t line=compact?16:40,top=compact?8:16,maximum=compact?17:7,y=118,count;
         if(d->frame->preferences.text_scale>1) {
-            line=qa_source_float_to_i32((float)line*d->frame->preferences.text_scale);
+            line=qa_source_to_i32((float)line*d->frame->preferences.text_scale);
             int32_t fitting=346/line; if(maximum>fitting)maximum=fitting;
         }
         if(qa_game_type_is_team(c->game_type)) {
