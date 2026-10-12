@@ -4,12 +4,12 @@
 #include "qa/filesystem.h"
 
 typedef struct qa_q3_download_window qa_q3_download_window;
-/* Resolve an actual immutable mounted package, without recording a guest read.
- * The window copies the span before returning to its owner. Absent names return
- * an empty span; errors describe an invalid mounted authority. */
+/* Resolve and retain the actual mounted package without materializing it or
+ * recording a guest read. Absent names return NULL; the receiver closes the
+ * returned file reference. Identity is its admitted filesystem metadata. */
 typedef struct qa_q3_download_source {
     void *context;
-    bool (*resolve)(void *, const char *, qa_bytes *, const qa_fs_identity **, qa_error *);
+    bool (*resolve)(void *, const char *, qa_fs_file **, qa_fs_identity *, qa_error *);
 } qa_q3_download_source;
 typedef struct qa_q3_download_offer {
     const qa_q3_download_window *owner;

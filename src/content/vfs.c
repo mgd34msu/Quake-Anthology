@@ -1188,17 +1188,21 @@ const qa_archive *qa_vfs_archive(const qa_vfs *vfs, qa_mount_id id)
     const mount *source = find_mount(vfs, id);
     return source != NULL && source->archive != NULL ? source->archive->archive : NULL;
 }
-bool qa_vfs_archive_bytes(const qa_vfs *vfs, qa_mount_id id, qa_bytes *out, qa_error *error)
+bool qa_vfs_archive_file(const qa_vfs *vfs, qa_mount_id id, qa_fs_file **out,
+    qa_fs_identity *identity, qa_error *error)
 {
     const mount *source = vfs ? find_mount(vfs, id) : NULL;
-    if (!source || !source->archive || !out) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Whole package requires its actual mounted archive"); return false;
+    if (!source || !source->archive || !out || *out || !identity) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Package file requires its mounted archive"); return false;
     }
-    if (!vfs_package_materialize(source->archive, error)) return false;
-    package *archive = source->archive;
-    *out = (qa_bytes){archive->storage.data, archive->storage.size}; return true;
+    if (!source->archive_file) {
+        qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Mounted archive has no filesystem backing"); return false;
+    }
+    qa_fs_file_retain(source->archive_file);
+    *out = source->archive_file;
+    *identity = source->archive->identity;
+    return true;
 }
-
 bool qa_vfs_archive_checksums(qa_vfs *vfs, qa_mount_id id, uint32_t feed,
                                uint32_t *checksum, uint32_t *pure_checksum,
                                qa_error *error)

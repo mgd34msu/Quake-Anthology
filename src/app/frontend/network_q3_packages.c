@@ -329,22 +329,19 @@ bool frontend_q3_packages_pure(frontend_q3_packages *packages, int32_t server_id
         member_checksum(packages, "vm/ui.qvm", &out->ui_checksum, &out->has_ui, error);
 }
 bool frontend_q3_packages_download(frontend_q3_packages *packages, const char *name,
-    qa_bytes *out, const qa_fs_identity **identity, qa_error *error)
+    qa_fs_file **out, qa_fs_identity *identity, qa_error *error)
 {
     if (!out || !identity || !current(packages, error) || !qa_q3_download_name(name, error)) return false;
+    *out = NULL;
     for (size_t i = 0; i < packages->mount_count; ++i) {
         package_mount *mount = packages->mounts + i; if (!mount->entry.archive_path) continue;
         size_t game = strlen(mount->game), base = strlen(mount->basename), length = strlen(name);
         if (game > SIZE_MAX - base - 6 || length != game + base + 5) continue;
-        char *path = malloc(length + 1);
-        if (!path) return fail(error, QA_ERROR_MEMORY, "Matching actual mounted Q3 download name");
-        snprintf(path, length + 1, "%s/%s.pk3", mount->game, mount->basename);
-        bool matches = qa_archive_paths_equal(path, name, QA_ARCHIVE_ASCII_INSENSITIVE); free(path);
-        if (!matches) continue;
-        qa_vfs_mount_info info;
-        if (!qa_vfs_archive_bytes(packages->content, mount->mount, out, error) ||
-            !qa_vfs_mount_at(packages->content, i, &info) || !info.identity) return false;
-        *identity = info.identity; return true;
+        /* qa_q3_download_name admits fewer than 4096 bytes. */
+        char path[4096];
+        snprintf(path, sizeof(path), "%s/%s.pk3", mount->game, mount->basename);
+        if (!qa_archive_paths_equal(path, name, QA_ARCHIVE_ASCII_INSENSITIVE)) continue;
+        return qa_vfs_archive_file(packages->content, mount->mount, out, identity, error);
     }
     return fail(error, QA_ERROR_NOT_FOUND, "Requested Q3 package is absent from the actual mounted source catalog");
 }

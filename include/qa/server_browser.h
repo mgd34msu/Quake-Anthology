@@ -1,5 +1,6 @@
 #ifndef QA_SERVER_BROWSER_H
 #define QA_SERVER_BROWSER_H
+#include "qa/arena.h"
 #include "qa/network.h"
 #include "qa/http.h"
 
@@ -59,7 +60,7 @@ bool qa_server_browser_at(const qa_server_browser *, size_t, qa_server_entry *);
  * count even when capacity is smaller. stable ordering uses address bytes. */
 typedef enum qa_browser_sort { QA_BROWSER_NAME, QA_BROWSER_PING, QA_BROWSER_PLAYERS, QA_BROWSER_MAP } qa_browser_sort;
 typedef struct qa_browser_filter { const char *text; bool hide_empty, hide_full, favorites_only; qa_browser_sort sort; bool descending; } qa_browser_filter;
-bool qa_server_browser_list(const qa_server_browser *, const qa_browser_filter *,
+bool qa_server_browser_list(const qa_server_browser *, const qa_browser_filter *, qa_arena *scratch,
                              uint32_t *indices, size_t capacity, size_t *count, qa_error *);
 /* Persistent favorite/direct identities use explicit endian-aware encoding. */
 bool qa_server_browser_save(const qa_server_browser *, qa_buffer *, qa_error *);

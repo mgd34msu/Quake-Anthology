@@ -186,6 +186,7 @@ static bool restore(qa_network_runtime *runtime, const qa_q2_server_bootstrap_op
         ok = ok && server->pending_capacity && server->pending_capacity <= 65536;
         if (ok) { owner->state.server.pending = calloc(server->pending_capacity, sizeof(*owner->state.server.pending)); ok = owner->state.server.pending != NULL; }
     } else { owner->state.client.hooks = client->hooks; owner->state.client.timeout_ns = client->timeout_ns; }
+    if (ok) ok = q2_bootstrap_storage_prepare(owner, error);
     qa_source_save_io io = {0};
     if (ok) ok = qa_source_save_reader(&io, NULL, bytes, error) && fields(&io, owner, server, client) && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);

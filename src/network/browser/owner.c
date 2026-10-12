@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/http_save.h"
 #include "qa/network_q2.h"
+#include "qa/arena.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -340,11 +341,11 @@ static int compare(const qa_server_entry *a, const qa_server_entry *b, qa_browse
     return 0;
 }
 bool qa_server_browser_list(const qa_server_browser *browser, const qa_browser_filter *filter,
-                             uint32_t *indices, size_t capacity, size_t *count, qa_error *error) {
-    if (!browser || !filter || !count || (capacity && !indices) || filter->sort > QA_BROWSER_MAP)
+                             qa_arena *scratch, uint32_t *indices, size_t capacity, size_t *count, qa_error *error) {
+    if (!browser || !filter || !scratch || !count || (capacity && !indices) || filter->sort > QA_BROWSER_MAP)
         return qa_browser_fail(error, "Invalid browser list request");
-    uint32_t *all = malloc(browser->capacity * sizeof(*all));
-    if (!all) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating browser ordering"); return false; }
+    uint32_t *all = qa_arena_alloc(scratch, browser->capacity * sizeof(*all), _Alignof(uint32_t), error);
+    if (!all) return false;
     size_t size = 0;
     for (uint32_t i = 0; i < browser->capacity; ++i) {
         const qa_server_entry *entry = &browser->records[i].entry;
@@ -362,5 +363,5 @@ bool qa_server_browser_list(const qa_server_browser *browser, const qa_browser_f
     }
     size_t copied = size < capacity ? size : capacity;
     if (copied) memcpy(indices, all, copied * sizeof(*indices));
-    free(all); *count = size; return true;
+    *count = size; return true;
 }

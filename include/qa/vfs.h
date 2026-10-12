@@ -208,9 +208,8 @@ const qa_fs_identity *qa_vfs_archive_identity(const qa_vfs *vfs, qa_mount_id mou
 /* Borrow the already decoded archive for complete source entry enumeration.
  * Null for loose or missing mounts; valid until that mount is removed. */
 const qa_archive *qa_vfs_archive(const qa_vfs *vfs, qa_mount_id mount);
-/* Whole immutable bytes from this real mounted archive. Borrowed until unmount
- * or view teardown; consumers retain an owned copy across source replacement. */
-bool qa_vfs_archive_bytes(const qa_vfs *, qa_mount_id, qa_bytes *, qa_error *);
+/* Retains the mounted file without reopening it or reading archive bytes. */
+bool qa_vfs_archive_file(const qa_vfs *, qa_mount_id, qa_fs_file **, qa_fs_identity *, qa_error *);
 bool qa_vfs_archive_checksums(qa_vfs *vfs, qa_mount_id mount, uint32_t feed,
                                uint32_t *checksum, uint32_t *pure_checksum,
                                qa_error *error);

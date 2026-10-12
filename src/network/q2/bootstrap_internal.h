@@ -9,6 +9,7 @@ typedef struct qa_q2_pending_connect {
 } qa_q2_pending_connect;
 struct qa_network_q2_bootstrap {
     qa_network_runtime *runtime;
+    qa_arena reply_storage;
     qa_net_protocol_id protocols[8];
     size_t protocol_count;
     bool server, busy, canceled;
@@ -31,4 +32,5 @@ struct qa_network_q2_bootstrap {
 bool q2_bootstrap_idle(qa_network_q2_bootstrap *, qa_error *);
 bool q2_bootstrap_server_hooks_valid(const qa_q2_server_bootstrap_hooks *);
 bool q2_bootstrap_client_hooks_valid(const qa_q2_client_bootstrap_hooks *);
+bool q2_bootstrap_storage_prepare(qa_network_q2_bootstrap *, qa_error *);
 #endif

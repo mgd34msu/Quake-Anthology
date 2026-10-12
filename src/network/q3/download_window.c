@@ -11,7 +11,7 @@ struct qa_q3_download_window {
     qa_q3_download_source source;
     uint64_t revision;
     char name[64], denial[QA_Q3_COMMAND_CHARS];
-    uint8_t *file;
+    qa_fs_file *file;
     qa_fs_identity identity;
     int32_t size, count, current_block, client_block, transmit_block, send_time;
     int32_t block_sizes[BLOCKS];
@@ -36,13 +36,13 @@ bool qa_q3_download_window_create(const qa_q3_download_source *source, qa_q3_dow
 void qa_q3_download_window_close(qa_q3_download_window *window)
 {
     if (!window) return;
-    free(window->file); window->file = NULL; window->name[0] = 0;
+    qa_fs_file_close(window->file); window->file = NULL; window->name[0] = 0;
     window->denied = false; window->denial[0] = 0;
     /* Source CloseDownload retains physical block storage and counters. */
     if (window->revision < UINT64_MAX) ++window->revision;
 }
 void qa_q3_download_window_destroy(qa_q3_download_window *window)
-{ if (window) { free(window->file); free(window); } }
+{ if (window) { qa_fs_file_close(window->file); free(window); } }
 void qa_q3_download_window_rebind(qa_q3_download_window *window, void *context)
 { if (window) window->source.context = context; }
 const char *qa_q3_download_window_name(const qa_q3_download_window *window)
@@ -74,19 +74,19 @@ bool qa_q3_download_window_acknowledge(qa_q3_download_window *window, int32_t bl
 static bool open_file(qa_q3_download_window *window, bool enabled, bool pure, qa_error *error)
 {
     unsigned stock = qa_q3_stock_package(window->name);
-    qa_bytes bytes = {0}; const qa_fs_identity *identity = NULL;
+    qa_fs_file *file = NULL; qa_fs_identity identity = {0};
     if (enabled && !stock) {
         if (!qa_q3_download_name(window->name, error) ||
-            !window->source.resolve(window->source.context, window->name, &bytes, &identity, error)) return false;
-        window->size = bytes.data && identity && bytes.size > 0 && bytes.size <= INT32_MAX ? (int32_t)bytes.size : -1;
-        if (bytes.data && identity && bytes.size > 0 && bytes.size <= INT32_MAX) {
-            uint8_t *copy = malloc(bytes.size);
-            if (!copy) return fail(error, QA_ERROR_MEMORY, "Retaining actual Q3 mounted download file");
-            memcpy(copy, bytes.data, bytes.size); window->file = copy; window->identity = *identity;
-            window->size = (int32_t)bytes.size; window->count = 0; window->current_block = 0;
+            !window->source.resolve(window->source.context, window->name, &file, &identity, error)) return false;
+        uint64_t size = qa_fs_identity_size(&identity);
+        window->size = file && size > 0 && size <= INT32_MAX ? (int32_t)size : -1;
+        if (window->size > 0) {
+            window->file = file; window->identity = identity;
+            window->count = 0; window->current_block = 0;
             window->client_block = 0; window->transmit_block = 0; window->eof = false;
             return true;
         }
+        qa_fs_file_close(file);
     }
     window->denied = true;
     if (stock == 2) snprintf(window->denial, sizeof(window->denial),
@@ -98,6 +98,13 @@ static bool open_file(qa_q3_download_window *window, bool enabled, bool pure, qa
         "The server you are connecting to is not a pure server, set autodownload to No in your settings and you might be able to join the game anyway.\n");
     else snprintf(window->denial, sizeof(window->denial), "File \"%s\" not found on server for autodownloading.\n", window->name);
     return true;
+}
+static bool file_current(const qa_q3_download_window *window, qa_error *error)
+{
+    qa_fs_identity identity;
+    return qa_fs_file_identity(window->file, &identity, error) &&
+        (qa_fs_identity_equal(&identity, &window->identity) ||
+            fail(error, QA_ERROR_FORMAT, "Q3 source download changed after genuine open"));
 }
 static int32_t allowed_blocks(const qa_q3_server_rate *settings)
 {
@@ -131,10 +138,13 @@ bool qa_q3_download_window_write(qa_q3_download_window *window, bool enabled, bo
         if (!qa_q3_server_download(writer, &message)) return false;
         offer->count = 1; offer->denied = true; return true;
     }
-    if (window->current_block - window->client_block < BLOCKS && window->count != window->size) {
-        qa_bytes actual = {0}; const qa_fs_identity *identity = NULL;
+    bool refill = window->current_block - window->client_block < BLOCKS && window->count != window->size;
+    if (refill) {
+        qa_fs_file *actual = NULL; qa_fs_identity identity = {0};
         bool unchanged = window->source.resolve(window->source.context, window->name, &actual, &identity, error) &&
-            actual.data && identity && actual.size == (size_t)window->size && qa_fs_identity_equal(identity, &window->identity);
+            actual && qa_fs_identity_size(&identity) == (uint64_t)window->size &&
+            qa_fs_identity_equal(&identity, &window->identity) && file_current(window, error);
+        qa_fs_file_close(actual);
         if (!unchanged) {
             qa_q3_download_window_close(window);
             if (!error || error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Q3 source download changed after genuine open");
@@ -144,8 +154,13 @@ bool qa_q3_download_window_write(qa_q3_download_window *window, bool enabled, bo
     while (window->current_block - window->client_block < BLOCKS && window->count != window->size) {
         size_t slot = (uint32_t)window->current_block % BLOCKS;
         int32_t bytes = window->size - window->count; if (bytes > BLOCK_BYTES) bytes = BLOCK_BYTES;
-        memcpy(window->blocks[slot], window->file + window->count, (size_t)bytes);
+        if (!qa_fs_file_read_at(window->file, (size_t)window->count, window->blocks[slot], (size_t)bytes, error)) {
+            qa_q3_download_window_close(window); return false;
+        }
         window->block_sizes[slot] = bytes; window->count += bytes; ++window->current_block;
+    }
+    if (refill && !file_current(window, error)) {
+        qa_q3_download_window_close(window); return false;
     }
     if (window->count == window->size && !window->eof && window->current_block - window->client_block < BLOCKS) {
         window->block_sizes[(uint32_t)window->current_block % BLOCKS] = 0; ++window->current_block; window->eof = true;
@@ -208,16 +223,22 @@ static bool valid(const qa_q3_download_window *window, bool opened, qa_error *er
         window->count != (window->current_block >= data_blocks ? window->size : window->current_block * BLOCK_BYTES) ||
         window->eof != (window->current_block == data_blocks + 1))
         return fail(error, QA_ERROR_FORMAT, "Q3 download read cursor differs from its retained immutable file");
+    if (window->file && !file_current(window, error)) return false;
+    uint8_t actual[BLOCK_BYTES];
     for (int32_t block = window->client_block; block < window->current_block; ++block) {
         size_t slot = (uint32_t)block % BLOCKS;
         size_t offset = (size_t)block * BLOCK_BYTES;
         int32_t expected = block == data_blocks ? 0 : (int32_t)((size_t)window->size - offset);
         if (expected > BLOCK_BYTES) expected = BLOCK_BYTES;
-        if (window->block_sizes[slot] != expected || (window->file && expected &&
-            memcmp(window->blocks[slot], window->file + offset, (size_t)expected)))
+        if (window->block_sizes[slot] != expected)
             return fail(error, QA_ERROR_FORMAT, "Q3 download window bytes differ from its actual mounted source");
+        if (window->file && expected) {
+            if (!qa_fs_file_read_at(window->file, offset, actual, (size_t)expected, error)) return false;
+            if (memcmp(window->blocks[slot], actual, (size_t)expected))
+                return fail(error, QA_ERROR_FORMAT, "Q3 download window bytes differ from its actual mounted source");
+        }
     }
-    return true;
+    return !window->file || file_current(window, error);
 }
 bool qa_q3_download_window_checkpoint(const qa_q3_download_window *window, qa_buffer *out, qa_error *error)
 {
@@ -238,16 +259,17 @@ bool qa_q3_download_window_restore(qa_bytes bytes, const qa_q3_download_source *
         qa_source_save_finish(&io, NULL) && valid(window, opened, error);
     qa_source_save_dispose(&io);
     if (ok && opened) {
-        qa_bytes actual = {0}; const qa_fs_identity *identity = NULL;
+        qa_fs_file *actual = NULL; qa_fs_identity identity = {0};
         ok = qa_q3_download_name(window->name, error) && !qa_q3_stock_package(window->name) &&
-            source->resolve(source->context, window->name, &actual, &identity, error) && actual.data && identity &&
-            actual.size == (size_t)window->size;
+            source->resolve(source->context, window->name, &actual, &identity, error) && actual &&
+            qa_fs_identity_size(&identity) == (uint64_t)window->size;
         if (ok) {
-            window->identity = *identity;
-            window->file = malloc(actual.size);
-            if (!window->file) ok = fail(error, QA_ERROR_MEMORY, "Retaining restored genuine Q3 download source");
-            else { memcpy(window->file, actual.data, actual.size); ok = valid(window, true, error); }
-        } else if (!error || error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Saved Q3 download lacks its exact mounted package");
+            window->identity = identity; window->file = actual;
+            ok = valid(window, true, error);
+        } else {
+            qa_fs_file_close(actual);
+            if (!error || error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Saved Q3 download lacks its exact mounted package");
+        }
     }
     if (!ok) { qa_q3_download_window_destroy(window); return false; }
     *out = window; return true;

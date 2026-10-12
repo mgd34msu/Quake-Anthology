@@ -1,5 +1,4 @@
 #include "bootstrap_internal.h"
-#include <stdio.h>
 #include <errno.h>
 
 bool q2_bootstrap_idle(qa_network_q2_bootstrap *owner, qa_error *error)
@@ -60,27 +59,49 @@ static bool identity_valid(const qa_q2_client_identity *identity, bool ready_kex
             return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 social identity lacks termination");
     return true;
 }
+bool q2_bootstrap_storage_prepare(qa_network_q2_bootstrap *owner, qa_error *error)
+{
+    if (!owner->server) return true;
+    if (!qa_arena_reserve(&owner->reply_storage, UINT16_MAX, error)) return false;
+    qa_arena_seal(&owner->reply_storage);
+    return true;
+}
+static bool send_parts(qa_network_q2_bootstrap *owner, const qa_net_address *to,
+    const qa_bytes *parts, size_t count, qa_error *error)
+{
+    size_t size = 4;
+    for (size_t i = 0; i < count; ++i) {
+        if (parts[i].size > SIZE_MAX - size)
+            return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 connectionless reply overflows");
+        size += parts[i].size;
+    }
+    if (size > qa_net_transport_limit(owner->runtime->transport))
+        return q2_fail(error, QA_ERROR_ARGUMENT, "Invalid datagram destination or payload");
+    uint8_t *bytes = qa_arena_alloc(&owner->reply_storage, size, 1, error);
+    if (!bytes) return false;
+    qa_net_writer writer; qa_net_writer_init(&writer, bytes, size, error);
+    bool ok = qa_q2_oob_write(&writer, "");
+    for (size_t i = 0; ok && i < count; ++i)
+        ok = qa_net_write_data(&writer, parts[i].data, parts[i].size);
+    if (ok) ok = qa_network_send_address(owner->runtime, to,
+        (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
+    qa_arena_reset(&owner->reply_storage);
+    return ok;
+}
 static bool send_text(qa_network_q2_bootstrap *owner, const qa_net_address *to,
     const char *text, qa_error *error)
 {
-    size_t length = strlen(text);
-    if (length > SIZE_MAX - 4) return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 connectionless reply overflows");
-    uint8_t *bytes = malloc(length + 4);
-    if (!bytes) return q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 connectionless reply");
-    qa_net_writer writer; qa_net_writer_init(&writer, bytes, length + 4, error);
-    bool ok = qa_q2_oob_write(&writer, text) && qa_network_send_address(owner->runtime, to,
-        (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
-    free(bytes); return ok;
+    qa_bytes part = {(const uint8_t *)text, strlen(text)};
+    return send_parts(owner, to, &part, 1, error);
 }
 static bool refusal(qa_network_q2_bootstrap *owner, const qa_net_address *to,
     const char *reason, qa_error *error)
 {
     size_t length = strlen(reason);
     if (length > SIZE_MAX - 8) return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 refusal reason overflows");
-    char *text = malloc(length + 8);
-    if (!text) return q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 refusal reason");
-    memcpy(text, "print\n", 6); memcpy(text + 6, reason, length); text[6 + length] = '\n'; text[7 + length] = 0;
-    bool ok = send_text(owner, to, text, error); free(text); return ok;
+    const qa_bytes parts[] = {{(const uint8_t *)"print\n", 6},
+        {(const uint8_t *)reason, length}, {(const uint8_t *)"\n", 1}};
+    return send_parts(owner, to, parts, sizeof(parts) / sizeof(parts[0]), error);
 }
 static bool acceptance(qa_network_q2_bootstrap *owner, const qa_net_address *to,
     qa_net_protocol_id protocol, qa_error *error)
@@ -91,11 +112,10 @@ static bool acceptance(qa_network_q2_bootstrap *owner, const qa_net_address *to,
     const char *prefix = protocol.kind == QA_NET_Q2KEX_2023 ? "client_connect 2023" : "client_connect";
     size_t length = strlen(prefix), extra = url && *url ? strlen(url) : 0;
     if (extra > SIZE_MAX - length - 11) return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 acceptance advertisement overflows");
-    char *text = malloc(length + extra + 11);
-    if (!text) return q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 acceptance advertisement");
-    if (extra) snprintf(text, length + extra + 11, "%s dlserver=%s\n", prefix, url);
-    else snprintf(text, length + extra + 11, "%s\n", prefix);
-    bool ok = send_text(owner, to, text, error); free(text); return ok;
+    const qa_bytes parts[] = {{(const uint8_t *)prefix, length},
+        {(const uint8_t *)(extra ? " dlserver=" : "\n"), extra ? 10 : 1},
+        {(const uint8_t *)url, extra}};
+    return send_parts(owner, to, parts, extra ? 3 : 2, error);
 }
 bool qa_network_q2_bootstrap_server(qa_network_runtime *runtime,
     const qa_q2_server_bootstrap_options *options, qa_network_q2_bootstrap **out, qa_error *error)
@@ -116,6 +136,7 @@ bool qa_network_q2_bootstrap_server(qa_network_runtime *runtime,
         owner->state.server.pending = calloc(options->pending_capacity, sizeof(*owner->state.server.pending));
         if (!owner->state.server.pending) ok = q2_fail(error, QA_ERROR_MEMORY, "Allocating actual pending Q2 admission receipts");
     }
+    if (ok) ok = q2_bootstrap_storage_prepare(owner, error);
     if (!ok) { qa_network_q2_bootstrap_destroy(owner); return false; }
     *out = owner; return true;
 }
@@ -150,6 +171,7 @@ void qa_network_q2_bootstrap_destroy(qa_network_q2_bootstrap *owner)
 {
     if (!owner) return;
     if (owner->server) { qa_q2_challenges_destroy(owner->state.server.challenges); free(owner->state.server.pending); }
+    qa_arena_destroy(&owner->reply_storage);
     free(owner);
 }
 static bool queue_connect(qa_network_q2_bootstrap *owner, const qa_net_datagram *packet,

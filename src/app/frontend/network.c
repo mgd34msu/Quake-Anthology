@@ -1584,12 +1584,12 @@ static qa_q3_server_world q3_world(void *context)
     frontend_q3_peer *peer = context; qa_q3_server_world world = peer->world;
     world.downloading = qa_q3_download_window_active(peer->download); return world;
 }
-static bool q3_download_resolve(void *context, const char *name, qa_bytes *bytes,
-    const qa_fs_identity **identity, qa_error *error)
+static bool q3_download_resolve(void *context, const char *name, qa_fs_file **file,
+    qa_fs_identity *identity, qa_error *error)
 {
     qa_frontend_network *n = context; qa_error local = {0};
-    *bytes = (qa_bytes){0}; *identity = NULL;
-    if (frontend_q3_packages_download(n->q3_packages, name, bytes, identity, &local)) return true;
+    *file = NULL; *identity = (qa_fs_identity){0};
+    if (frontend_q3_packages_download(n->q3_packages, name, file, identity, &local)) return true;
     if (local.code == QA_ERROR_NOT_FOUND) return true;
     if (error) *error = local;
     return false;
@@ -4411,7 +4411,8 @@ static bool command(void *context, const qa_command_invocation *call, qa_error *
     if (!strcmp(name, "serverlist")) {
         uint32_t indices[2048]; size_t count;
         qa_browser_filter filter = {.text = call->argc > 1 ? call->argv[1] : NULL, .sort = QA_BROWSER_PING};
-        if (!qa_server_browser_list(n->browser, &filter, indices, 2048, &count, error)) return false;
+        if (!qa_server_browser_list(n->browser, &filter, &n->frontend->frame.storage,
+            indices, 2048, &count, error)) return false;
         for (size_t i = 0; i < count && i < 2048; ++i) {
             qa_server_entry entry; char address[256], line[sizeof(entry.name)+sizeof(entry.map)+sizeof(address)+96];
             if (!qa_server_browser_at(n->browser, indices[i], &entry) || !qa_net_address_format(&entry.address, address, sizeof(address), error)) return false;
@@ -7832,7 +7833,7 @@ bool frontend_network_menu_rows(const qa_frontend *f, const frontend_network_men
     uint32_t *indices=total?qa_arena_alloc(scratch,total*sizeof(*indices),_Alignof(uint32_t),error):NULL;
     if(total && !indices) return frontend_fail(error,QA_ERROR_MEMORY,"Reading retained startup browser rows");
     qa_browser_filter filter={.sort=QA_BROWSER_NAME};
-    bool ok=qa_server_browser_list(view->browser,&filter,indices,total,&listed,error);
+    bool ok=qa_server_browser_list(view->browser,&filter,scratch,indices,total,&listed,error);
     size_t used=0;
     for(size_t i=0;ok && i<listed;++i) {
         qa_server_entry entry;
@@ -7904,7 +7905,7 @@ bool frontend_network_menu_favorite(qa_frontend *f, const frontend_network_menu_
     uint32_t *indices=count?qa_arena_alloc(&f->frame.storage,count*sizeof(*indices),_Alignof(uint32_t),error):NULL;
     if(count && !indices) return frontend_fail(error,QA_ERROR_MEMORY,"Reading actual favorite membership");
     qa_browser_filter filter={.sort=QA_BROWSER_NAME}; size_t listed=0;
-    bool ok=qa_server_browser_list(n->browser,&filter,indices,count,&listed,error);
+    bool ok=qa_server_browser_list(n->browser,&filter,&f->frame.storage,indices,count,&listed,error);
     for(size_t i=0;ok && i<listed;++i) {
         ok=qa_server_browser_at(n->browser,indices[i],&existing);
         if(ok && menu_family(existing.protocol)==menu_family(protocol) &&
