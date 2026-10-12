@@ -514,30 +514,29 @@ static bool qw_userinfo(qa_application *app, qa_actor_id actor,
     uint32_t slot;
     if (!engine || !text || app->operation != APPLICATION_IDLE ||
         !qw_client_binding(engine, actor, &slot, error)) return false;
-    qa_qw_info info = {0};
-    if (!qa_qw_info_parse(text, &info, error)) return false;
-    const char *spectator = qa_qw_info_get(&info, "*spectator");
-    if ((spectator && !strcmp(spectator, "1")) != engine->clients[slot].spectator) {
-        qa_qw_info_free(&info);
+    if (strlen(text)>UINT16_MAX)
+        return application_fail(error,QA_ERROR_FORMAT,"QuakeWorld info string exceeds capacity");
+    qa_bytes spectator;
+    bool has_spectator=qa_info_find(text,(qa_bytes){(const uint8_t *)"*spectator",10},QA_INFO_LAST,&spectator);
+    if ((has_spectator && spectator.size==1 && spectator.data[0]=='1') != engine->clients[slot].spectator)
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld userinfo changes its trusted source role");
-    }
-    const char *name = qa_qw_info_get(&info, "name"), *team = qa_qw_info_get(&info, "team"),
-        *skin = qa_qw_info_get(&info, "skin");
-    size_t size = strlen(text) + 1;
-    char *raw_copy = malloc(size);
-    bool ok = raw_copy != NULL;
-    if (ok) memcpy(raw_copy, text, size);
-    else application_fail(error, QA_ERROR_MEMORY, "Retaining QuakeWorld source userinfo");
+    qa_unified_frame_lease *storage=application_control_storage_acquire(app,error);
+    if (!storage) return false;
+    qa_arena *arena=qa_unified_frame_lease_arena(storage);
+    const char *field_text[3];
+    char *raw_copy=application_player_userinfo_identity_read(arena,text,QA_INFO_LAST,"unnamed",field_text,error)?
+        qa_arena_text(arena,text,error):NULL;
+    bool ok=raw_copy!=NULL;
     application_player_record *record=application_player_record_find(app->players,actor);
     if (ok && (!record || record->retiring)) ok = application_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld userinfo lost its canonical admission");
-    if (ok) ok = application_player_identity_text(record, name ? name : "unnamed", team ? team : "", skin ? skin : "", error);
+    if (ok) ok = application_player_identity_text(record,field_text[0],field_text[1],field_text[2],error) &&
+        application_player_userinfo_adopt(record,raw_copy,storage,error);
     if (ok) {
-        free(record->userinfo); record->userinfo = raw_copy; raw_copy = NULL;
         ok = application_qc_client_userinfo(engine->provider, actor, error);
         if (!ok) application_fault(app, error);
     }
-    free(raw_copy);
-    qa_qw_info_free(&info); return ok;
+    qa_unified_frame_lease_release(storage);
+    return ok;
 }
 
 bool qa_application_network_qw_userinfo(qa_application *app, qa_actor_id actor,

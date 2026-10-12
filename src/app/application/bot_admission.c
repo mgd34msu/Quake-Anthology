@@ -73,8 +73,7 @@ bool application_players_bot_userinfo(qa_application *app, uint32_t physical,
         : application_native_q3_wire_userinfo(source, physical, text, error);
     if (okay) okay = application_player_identity_text(record, name, team, skin, error);
     if (!okay) { free(raw); return false; }
-    free(record->userinfo); record->userinfo = raw;
-    return true;
+    return application_player_userinfo_adopt(record,raw,NULL,error);
 }
 
 bool application_players_bot_connect(qa_application *app, uint32_t physical,

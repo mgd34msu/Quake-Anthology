@@ -50,12 +50,53 @@
 #include "qa/game_q1_source_travel.h"
 #include "qa/modes_q1_source.h"
 #include "qa/network_q1_channel.h"
+#include "qa/network_unified_frame_pool.h"
 #include "qa/ruleset.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+void application_player_userinfo_clear(application_player_record *record)
+{
+    qa_unified_frame_lease *storage=record->userinfo_storage;
+    char *text=record->userinfo;
+    record->userinfo=NULL; record->userinfo_storage=NULL;
+    if(storage)qa_unified_frame_lease_release(storage);
+    else free(text);
+}
+
+bool application_player_userinfo_adopt(application_player_record *record,char *text,
+    qa_unified_frame_lease *storage,qa_error *error)
+{
+    if(record->userinfo==text && record->userinfo_storage==storage)return true;
+    if(storage && !qa_unified_frame_lease_retain(storage,error))return false;
+    application_player_userinfo_clear(record);
+    record->userinfo=text; record->userinfo_storage=storage;
+    return true;
+}
+
+bool application_player_userinfo_identity_read(qa_arena *storage,const char *text,unsigned policy,
+    const char *missing_name,const char *fields[3],qa_error *error)
+{
+    const char *keys[]={"name","team","skin"};
+    qa_bytes values[3];
+    size_t bytes=3;
+    for (size_t i=0;i<3;++i) {
+        bool found=qa_info_find(text,(qa_bytes){(const uint8_t *)keys[i],strlen(keys[i])},policy,values+i);
+        if (!found && !i) values[i]=(qa_bytes){(const uint8_t *)missing_name,strlen(missing_name)};
+        bytes+=values[i].size;
+    }
+    char *write=qa_arena_alloc(storage,bytes,1,error);
+    if (!write) return false;
+    for (size_t i=0;i<3;++i) {
+        fields[i]=write;
+        memcpy(write,values[i].data,values[i].size);write+=values[i].size;
+        *write++=0;
+    }
+    return true;
+}
 
 bool application_player_qw_spectator(const application_provider *source,
                                     const application_player_record *record)
@@ -351,7 +392,7 @@ static void roster_free(struct application_player_roster *roster)
     free(roster->q1_points);
     free(roster->points);
     for (size_t i = 0; roster->records != NULL && i < roster->count; ++i) {
-        free(roster->records[i].userinfo);
+        application_player_userinfo_clear(roster->records+i);
         free(roster->records[i].bot_definition);
         qa_q1_travel_destroy(roster->records[i].q1_entry);
     }
@@ -563,9 +604,7 @@ static bool q3_initial_userinfo(qa_application *application,qa_catalog *catalog,
     if (copy == NULL)
         return application_fail(error, QA_ERROR_MEMORY,
                                 "cannot retain initial Q3 client userinfo");
-    free(record->userinfo);
-    record->userinfo = copy;
-    return true;
+    return application_player_userinfo_adopt(record,copy,NULL,error);
 }
 
 static bool q3_initial_bot_userinfo(qa_application *app,
@@ -587,9 +626,7 @@ static bool q3_initial_bot_userinfo(qa_application *app,
     if (!text) return application_fail(error, QA_ERROR_MEMORY, "cannot retain Q3 bot initial source settings");
     memcpy(text, record->userinfo, length);
     memcpy(text + length, suffix, (size_t)added + 1);
-    free(record->userinfo);
-    record->userinfo = text;
-    return true;
+    return application_player_userinfo_adopt(record,text,NULL,error);
 }
 
 static bool qw_info_add(char text[512], const char *key, const char *value, qa_error *error)
@@ -641,9 +678,9 @@ static bool qw_initial_userinfo(qa_application *app, application_player_record *
     if ((!name && !qw_info_add(text, "name", application_player_name(record), error)) ||
         (!team && !qw_info_add(text, "team", application_player_team(record), error)) ||
         (!skin && !qw_info_add(text, "skin", application_player_skin(record), error))) return false;
-    record->userinfo = player_text(text);
-    return record->userinfo != NULL ||
-        application_fail(error, QA_ERROR_MEMORY, "cannot retain actual QuakeWorld startup userinfo");
+    char *copy=player_text(text);
+    if(!copy)return application_fail(error, QA_ERROR_MEMORY, "cannot retain actual QuakeWorld startup userinfo");
+    return application_player_userinfo_adopt(record,copy,NULL,error);
 }
 
 static bool qw_source_userinfo(qa_application *app, application_player_record *record,
@@ -691,8 +728,7 @@ static bool qw_source_userinfo(qa_application *app, application_player_record *r
         free(raw);
         return application_fail(error, QA_ERROR_MEMORY, "cannot retain actual QuakeWorld source identity");
     }
-    free(record->userinfo);
-    record->userinfo = raw;
+    application_player_userinfo_adopt(record,raw,NULL,error);
     if (has_name) application_player_identity_mut(record)->name = name;
     return true;
 }
@@ -724,8 +760,7 @@ static bool q3_replacement_client(qa_application *application,
     if (!copy)
         return application_fail(error, QA_ERROR_MEMORY,
                                 "cannot retain Q3 replacement client userinfo");
-    free(record->userinfo);
-    record->userinfo = copy;
+    application_player_userinfo_adopt(record,copy,NULL,error);
     record->client_slot = previous->client_slot;
     record->source_slot = previous->source_slot;
     carry->q3_client = true;
@@ -3615,7 +3650,7 @@ static void record_free(struct application_player_roster *roster, application_pl
 {
     guest_bindings_clear(roster, record);
     qa_q1_travel_destroy(record->q1_entry);
-    free(record->userinfo);
+    application_player_userinfo_clear(record);
     free(record->bot_definition);
     *record = (application_player_record){.retiring = true};
     if (roster) roster_seats_rebuild(roster);
@@ -3756,9 +3791,17 @@ static bool record_text(qa_application *application, struct application_player_r
 {
     record->strings = qa_session_strings(application->session);
     if (!application_player_identity_text(record, name ? name : "", team ? team : "", skin ? skin : "", error)) return false;
-    if (userinfo != record->userinfo)
-        record->userinfo = userinfo != NULL ? player_text(userinfo) : NULL;
-    if (userinfo != NULL && record->userinfo == NULL) {
+    bool copied=true;
+    if (userinfo != record->userinfo) {
+        if(!userinfo)application_player_userinfo_clear(record);
+        else {
+            qa_unified_frame_lease *storage=application_control_storage_acquire(application,error);
+            char *copy=storage?qa_arena_text(qa_unified_frame_lease_arena(storage),userinfo,error):NULL;
+            copied=copy && application_player_userinfo_adopt(record,copy,storage,error);
+            qa_unified_frame_lease_release(storage);
+        }
+    }
+    if (!copied) {
         if (application_player_record_find(roster, record->actor) == record)
             qa_actor_index_remove(&roster->actors, record->actor);
         record_free(roster, record);
@@ -3907,9 +3950,12 @@ static bool record_append(qa_application *application, application_player_record
     for (size_t i = 0; i < roster->count; ++i)
         if (roster->records[i].dynamic && roster->records[i].actor.registry == 0 &&
             roster->records[i].character == NULL) {
+            application_player_record previous=roster->records[i];
             roster->records[i] = record;
             roster_seats_rebuild(roster);
-            if (!record_actor_bind(roster, roster->records + i, record.actor, error)) return false;
+            if (!record_actor_bind(roster, roster->records + i, record.actor, error)) {
+                roster->records[i]=previous; roster_seats_rebuild(roster); return false;
+            }
             ++roster->revision;
             application_actor_routes_bind(application, record.actor);
             *out = i;
@@ -3920,7 +3966,10 @@ static bool record_append(qa_application *application, application_player_record
     *out = roster->count;
     roster->records[roster->count++] = record;
     roster_seats_rebuild(roster);
-    if (!record_actor_bind(roster, roster->records + *out, record.actor, error)) return false;
+    if (!record_actor_bind(roster, roster->records + *out, record.actor, error)) {
+        roster->records[--roster->count]=(application_player_record){0};
+        roster_seats_rebuild(roster); return false;
+    }
     ++roster->revision;
     application_actor_routes_bind(application, record.actor);
     return true;
@@ -4967,13 +5016,14 @@ bool application_players_checkpoint_restore(qa_application *candidate, qa_bytes 
         application_player_identity_mut(record)->bot = (row_flags & 4u) != 0; record->remote = (row_flags & 8u) != 0;
         record->dynamic = (row_flags & 16u) != 0; record->retiring = (row_flags & 32u) != 0;
         record->source_begin_pending = (row_flags & 512u) != 0;
-        char *identity_text[3] = {0};
+        char *identity_text[3] = {0}, *userinfo=NULL;
         ok = !reader.failed && !(row_flags & ~2047u) &&
             roster_resolve_actor(actors, actor, (row_flags & 128u) != 0, &record->actor, error) &&
             roster_resolve_actor(actors, configured, (row_flags & 256u) != 0, &record->configured_actor, error) &&
             roster_read_text(&reader, &identity_text[0], error) && roster_read_text(&reader, &identity_text[1], error) &&
-            roster_read_text(&reader, &identity_text[2], error) && roster_read_text(&reader, &record->userinfo, error) &&
+            roster_read_text(&reader, &identity_text[2], error) && roster_read_text(&reader, &userinfo, error) &&
             roster_read_text(&reader, &record->bot_definition, error);
+        if(userinfo)application_player_userinfo_adopt(record,userinfo,NULL,error);
         if (ok) {
             record->strings = qa_session_strings(candidate->session);
             ok = application_player_identity_text(record, identity_text[0], identity_text[1], identity_text[2], error);
@@ -4991,7 +5041,7 @@ bool application_players_checkpoint_restore(qa_application *candidate, qa_bytes 
         }
         if (!(row_flags & 64u)) {
             if (record->userinfo[0]) { ok = false; break; }
-            free(record->userinfo); record->userinfo = NULL;
+            application_player_userinfo_clear(record);
         }
         if ((character && !record->character) || (!character && record->actor.registry) ||
             (record->remote && (!record->dynamic || !record->remote_client.owner ||

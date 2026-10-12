@@ -116,8 +116,7 @@ static bool set(const view_scope *scope, qa_actor_id actor, double value,
         char *copy = malloc(size);
         if (!copy) return application_fail(e, QA_ERROR_MEMORY, "Retaining actual native Q2 FOV userinfo");
         memcpy(copy, client->userinfo, size);
-        free(row->userinfo); row->userinfo = copy;
-        return true;
+        return application_player_userinfo_adopt(row,copy,NULL,e);
     }
     bool is_source = source->kind == APPLICATION_PROVIDER_Q2;
     application_provider *owner = is_source ? source : row->character;

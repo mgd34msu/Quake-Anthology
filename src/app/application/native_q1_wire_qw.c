@@ -8,7 +8,6 @@
 #include "qa/game_q1_weapons.h"
 #include "qa/network_q1_channel.h"
 #include "qa/text.h"
-#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 static uint8_t byte(double);
@@ -390,32 +389,38 @@ bool application_native_q1_qw_pause(qa_application *app,qa_actor_id actor,
 bool application_native_q1_qw_userinfo(qa_application *app,qa_actor_id actor,const char *raw,qa_error *error) {
     application_native_q1_wire_source source={0};
     if (!raw || !application_native_q1_wire_qw_begin(app,&source,error)) return false;
-    uint32_t slot;const application_player_record *row;qa_qw_info info={0};
-    bool okay=app->operation==APPLICATION_IDLE && binding(&source,actor,&slot,&row,error) && qa_qw_info_parse(raw,&info,error);
+    uint32_t slot;const application_player_record *row;
+    bool okay=app->operation==APPLICATION_IDLE && binding(&source,actor,&slot,&row,error);
+    if (okay && strlen(raw)>UINT16_MAX)
+        okay=application_fail(error,QA_ERROR_FORMAT,"QuakeWorld info string exceeds capacity");
     if (okay) {
-        const char *spectator=qa_qw_info_get(&info,"*spectator");
-        if ((spectator && !strcmp(spectator,"1"))!=application_player_identity(row)->spectator)
+        qa_bytes spectator;
+        bool present=qa_info_find(raw,(qa_bytes){(const uint8_t *)"*spectator",10},QA_INFO_LAST,&spectator);
+        if ((present && spectator.size==1 && spectator.data[0]=='1')!=application_player_identity(row)->spectator)
             okay=application_fail(error,QA_ERROR_ARGUMENT,"Native QuakeWorld userinfo changes its trusted source role");
     }
-    char *raw_copy = NULL;
+    char *raw_copy = NULL; qa_unified_frame_lease *storage=NULL;
+    const char *field_text[3];
     if (okay) {
-        size_t size = strlen(raw) + 1;
-        raw_copy = malloc(size);
-        if (raw_copy) memcpy(raw_copy, raw, size);
-        else okay = application_fail(error, QA_ERROR_MEMORY, "Retaining native QuakeWorld source userinfo");
+        storage=application_control_storage_acquire(app,error);
+        if (storage) {
+            qa_arena *arena=qa_unified_frame_lease_arena(storage);
+            if (application_player_userinfo_identity_read(arena,raw,QA_INFO_LAST,"unnamed",field_text,error))
+                raw_copy=qa_arena_text(arena,raw,error);
+        }
+        okay=raw_copy!=NULL;
     }
     if (okay) {
-        const char *name=qa_qw_info_get(&info,"name"),*team=qa_qw_info_get(&info,"team"),*skin=qa_qw_info_get(&info,"skin");
         application_player_record *actual=&app->players->records[row-app->players->records];
-        okay = application_player_identity_text(actual, name ? name : "unnamed", team ? team : "", skin ? skin : "", error);
+        okay = application_player_identity_text(actual,field_text[0],field_text[1],field_text[2],error);
+        if (okay)okay=application_player_userinfo_adopt(actual,raw_copy,storage,error);
         if (okay) {
-            free(actual->userinfo); actual->userinfo = raw_copy; raw_copy = NULL;
             okay=application_native_q1_wire_client_userinfo(source.provider,actor,error);
             if (!okay) application_fault(app,error);
         }
     }
-    free(raw_copy);
-    qa_qw_info_free(&info);application_native_q1_wire_end(&source);return okay;
+    qa_unified_frame_lease_release(storage);
+    application_native_q1_wire_end(&source);return okay;
 }
 
 bool application_native_q1_qw_emit(application_provider *p,const qa_builtin_event *event,

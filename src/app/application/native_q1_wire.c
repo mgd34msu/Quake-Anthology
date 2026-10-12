@@ -1557,18 +1557,24 @@ static bool source_roster_refresh(application_native_q1_wire_source *source, qa_
     if (!record || !qa_q1_source_client_read(source->provider->state.q1, actor, &view) ||
         record->client_slot != view.slot)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q1 source userinfo lost its full actor roster");
-    if (!qa_q1_source_client_userinfo_read(source->provider->state.q1, actor, false, NULL, &userinfo, error)) return false;
+    qa_unified_frame_lease *storage = application_control_storage_acquire(app, error);
+    if (!storage) return false;
+    if (!qa_q1_source_client_userinfo_read(source->provider->state.q1, actor, false,
+            qa_unified_frame_lease_arena(storage), &userinfo, error)) {
+        qa_unified_frame_lease_release(storage); return false;
+    }
     const char *name = NULL;
     if (!qa_q1_source_client_info(source->provider->state.q1, actor, "name", &name) || !name) {
-        qa_buffer_free(&userinfo);
+        qa_unified_frame_lease_release(storage);
         return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q1 continuation lost its typed source name");
     }
     application_player_record *actual = &app->players->records[record - app->players->records];
     if (!application_player_identity_text(actual, name, NULL, NULL, error)) {
-        qa_buffer_free(&userinfo); return false;
+        qa_unified_frame_lease_release(storage); return false;
     }
-    free(actual->userinfo); actual->userinfo = (char *)userinfo.data;
-    return true;
+    bool okay = application_player_userinfo_adopt(actual, (char *)userinfo.data, storage, error);
+    qa_unified_frame_lease_release(storage);
+    return okay;
 }
 bool application_native_q1_wire_name(qa_application *app, qa_actor_id actor, const char *name,
     qa_error *error) {

@@ -104,6 +104,31 @@ bool qa_launch_mode_identity_encode(const qa_launch_snapshot *snapshot,
     qa_json_writer_destroy(&writer);
     return ok;
 }
+bool qa_launch_mode_identity_equal(const qa_launch_mode *a, const qa_launch_mode *b)
+{
+#define U(member) if (a->rules.member != b->rules.member) return false;
+#define I(member) U(member)
+#define F(member) if (a->rules.member != b->rules.member || \
+    (a->rules.member == 0 && signbit(a->rules.member) != signbit(b->rules.member))) return false;
+#define B(member) U(member)
+#define R(member) if ((qa_ruleset_q2_tag(a->rules.member) != 0) != \
+    (qa_ruleset_q2_tag(b->rules.member) != 0)) return false;
+#define W(member) U(member)
+#define FIELD(kind, member) kind(member)
+    QA_LAUNCH_MODE_RULE_FIELDS(FIELD)
+#undef FIELD
+#undef U
+#undef I
+#undef F
+#undef B
+#undef R
+#undef W
+    const char *a_text[5] = {a->instance, a->teams[0], a->teams[1], a->teams[2], a->forced_team};
+    const char *b_text[5] = {b->instance, b->teams[0], b->teams[1], b->teams[2], b->forced_team};
+    for (size_t i = 0; i < 5; ++i)
+        if (strcmp(a_text[i] ? a_text[i] : "", b_text[i] ? b_text[i] : "")) return false;
+    return a->primary_score == b->primary_score;
+}
 static void resource_write(qa_json_writer *w, qa_catalog *catalog, const qa_launch_resource *v)
 {
     qa_json_writer_array(w); product(w, catalog, v->product); text(w, v->path);
@@ -337,7 +362,8 @@ static qa_clock_config read_clock(identity_reader *r)
     v.minimum_frame_ns = read_word(&s); v.maximum_frame_ns = read_word(&s); v.initial_lead_ns = read_word(&s);
     v.maximum_steps = read_unsigned(&s); r->failed |= s.failed; return v;
 }
-static qa_mode_rules read_rules(identity_reader *r, const qa_launch_provider *source)
+static qa_mode_rules read_rules(identity_reader *r, const qa_launch_provider *source,
+    bool identity_only)
 {
     identity_reader s = *r; qa_mode_rules v = {0};
     if (!record(&s, take(r), QA_LAUNCH_MODE_RULE_FIELD_COUNT)) { r->failed = true; return v; }
@@ -347,7 +373,8 @@ static qa_mode_rules read_rules(identity_reader *r, const qa_launch_provider *so
 #define B(member) v.member = read_bool(&s);
 #define R(member) do { \
     bool rerelease = read_bool(&s); \
-    v.member = source ? source->clock.kind : qa_mode_defaults(v.source, v.kind).ruleset; \
+    v.member = identity_only ? qa_ruleset_q2_from_tag(rerelease) : \
+        source ? source->clock.kind : qa_mode_defaults(v.source, v.kind).ruleset; \
     if (v.member == QA_RULESET_Q2_CLASSIC || v.member == QA_RULESET_Q2_RERELEASE) \
         v.member = qa_ruleset_q2_from_tag(rerelease); \
 } while (0);
@@ -362,6 +389,29 @@ static qa_mode_rules read_rules(identity_reader *r, const qa_launch_provider *so
 #undef R
 #undef W
     r->failed |= s.failed; return v;
+}
+static qa_launch_mode read_mode(identity_reader *r, const qa_launch_choices *choices)
+{
+    qa_launch_mode v = {0};
+    v.instance = read_text(r);
+    v.rules = read_rules(r, choices ? launch_provider(choices, v.instance) : NULL, !choices);
+    for (size_t i = 0; i < 3; ++i) v.teams[i] = read_text(r);
+    v.forced_team = read_text(r);
+    v.primary_score = read_bool(r);
+    return v;
+}
+bool qa_launch_mode_identity_decode(qa_bytes bytes, qa_arena *arena,
+    qa_launch_mode *out, qa_error *error)
+{
+    qa_json_document *document = NULL;
+    if (!qa_json_parse(bytes, &document, error)) return false;
+    identity_reader reader = {.document = document, .arena = arena, .error = error};
+    bool ok = record(&reader, qa_json_root(document), 7);
+    qa_launch_mode mode = ok ? read_mode(&reader, NULL) : (qa_launch_mode){0};
+    ok = ok && !reader.failed;
+    qa_json_destroy(document);
+    if (ok) *out = mode;
+    return ok;
 }
 static bool metadata_resource(identity_reader *r, qa_json_id id)
 {
@@ -470,10 +520,7 @@ bool qa_launch_identity_decode(qa_catalog *catalog, const qa_actor_registry *reg
         qa_launch_mod_selection v = {0}; v.instance = read_text(&r); v.component = read_text(&r); v.enabled = read_bool(&r);
         DONE(qa_launch_set_mod(draft, &v, error));
     if (ok) EACH("modes", 7)
-        qa_launch_mode v = {0}; v.instance = read_text(&r);
-        v.rules = read_rules(&r, launch_provider(qa_launch_draft_choices(draft), v.instance));
-        for (size_t j = 0; j < 3; ++j) v.teams[j] = read_text(&r);
-        v.forced_team = read_text(&r); v.primary_score = read_bool(&r);
+        qa_launch_mode v = read_mode(&r, qa_launch_draft_choices(draft));
         DONE(qa_launch_set_mode(draft, &v, error));
     if (ok) EACH("equipment", 13)
         qa_launch_equipment v = {0}; v.scope = read_scope(&r); v.instance = read_text(&r);

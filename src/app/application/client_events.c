@@ -113,16 +113,20 @@ bool application_client_userinfo_publish(qa_application *app, qa_actor_id actor,
         source != application_world_provider(app, QA_ROLE_ENTITIES, ""))
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Userinfo publication requires its live canonical Source client");
+    qa_unified_frame_lease *storage;
     if (text != row->userinfo) {
-        size_t size = strlen(text) + 1;
-        char *copy = malloc(size);
-        if (!copy) return application_fail(error, QA_ERROR_MEMORY,
-            "Retaining returned Source client userinfo");
-        memcpy(copy, text, size);
-        free(row->userinfo); row->userinfo = copy;
+        storage=application_control_storage_acquire(app,error);
+        char *copy=storage?qa_arena_text(qa_unified_frame_lease_arena(storage),text,error):NULL;
+        if(!copy || !application_player_userinfo_adopt(row,copy,storage,error)) {
+            qa_unified_frame_lease_release(storage); return false;
+        }
+    } else {
+        storage=row->userinfo_storage;
+        if(storage && !qa_unified_frame_lease_retain(storage,error))return false;
     }
-    return row->deferred || row->source_begin_pending ||
+    bool okay=row->deferred || row->source_begin_pending ||
         application_client_userinfo_changed(app, actor, error);
+    qa_unified_frame_lease_release(storage); return okay;
 }
 
 static bool provider_current(const qa_application *app, const client_listener *row)

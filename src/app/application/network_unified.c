@@ -506,17 +506,16 @@ static bool info_key(unified_info_pair pair, const char *key)
     return strlen(key) == pair.key_size && !memcmp(pair.key, key, pair.key_size);
 }
 
-static char *info_value_copy(const char *text,const char *key,qa_error *error)
+static char *info_value_text(qa_arena *storage,const char *text,const char *key,qa_error *error)
 {
     qa_bytes value;
     qa_info_find(text,(qa_bytes){(const uint8_t *)key,strlen(key)},0,&value);
-    char *copy=malloc(value.size+1);
+    char *copy=qa_arena_alloc(storage,value.size+1,1,error);
     if (copy) {memcpy(copy,value.data,value.size);copy[value.size]=0;}
-    else application_fail(error,QA_ERROR_MEMORY,"Retaining actual unified userinfo value");
     return copy;
 }
 
-static char *info_canonical(const char *text, const char *address, bool q1_language,
+static char *info_canonical(qa_arena *storage,const char *text, const char *address, bool q1_language,
     qa_error *error)
 {
     size_t length = strlen(text);
@@ -524,8 +523,9 @@ static char *info_canonical(const char *text, const char *address, bool q1_langu
         application_fail(error, QA_ERROR_FORMAT, "Unified userinfo exceeds its wire or endpoint domain");
         return NULL;
     }
-    unified_info_pair *pairs = calloc(length / 2 + 3, sizeof(*pairs));
-    if (!pairs) { application_fail(error, QA_ERROR_MEMORY, "Reading unified Source userinfo"); return NULL; }
+    unified_info_pair *pairs = qa_arena_alloc(storage,(length / 2 + 3) * sizeof(*pairs),
+        _Alignof(unified_info_pair),error);
+    if (!pairs) return NULL;
     size_t count = info_pairs(text, pairs), ip = count;
     bool language = false;
     for (size_t i = 0; i < count; ++i) {
@@ -538,16 +538,14 @@ static char *info_canonical(const char *text, const char *address, bool q1_langu
         pairs[count++] = (unified_info_pair){"language", "english", 8, 7};
     size_t size = 0;
     for (size_t i = 0; i < count; ++i) size += 2 + pairs[i].key_size + pairs[i].value_size;
-    char *result = malloc(size + 1);
-    if (!result) {
-        free(pairs); application_fail(error, QA_ERROR_MEMORY, "Retaining canonical Source userinfo"); return NULL;
-    }
+    char *result = qa_arena_alloc(storage,size + 1,1,error);
+    if (!result) return NULL;
     char *write = result;
     for (size_t i = 0; i < count; ++i) {
         *write++ = '\\'; memcpy(write, pairs[i].key, pairs[i].key_size); write += pairs[i].key_size;
         *write++ = '\\'; memcpy(write, pairs[i].value, pairs[i].value_size); write += pairs[i].value_size;
     }
-    *write = 0; free(pairs); return result;
+    *write = 0; return result;
 }
 
 bool application_unified_player_bind_local(qa_application *app, const qa_net_client *peer,
@@ -558,11 +556,14 @@ bool application_unified_player_bind_local(qa_application *app, const qa_net_cli
     if (peer->endpoint.kind == QA_NET_LOOPBACK) memcpy(address, "localhost", sizeof("localhost"));
     else if (!qa_net_address_format(&peer->endpoint, address, sizeof(address), error)) return false;
     application_player_record *row = (application_player_record *)application_players_connection_read(app, peer->id, seat);
-    char *userinfo = info_canonical(row->userinfo ? row->userinfo : "", address,
+    qa_unified_frame_lease *storage=application_control_storage_acquire(app,error);
+    if (!storage) return false;
+    char *userinfo = info_canonical(qa_unified_frame_lease_arena(storage),row->userinfo ? row->userinfo : "", address,
         primary(app)->kind == APPLICATION_PROVIDER_Q1, error);
-    if (!userinfo) return false;
-    free(row->userinfo); row->userinfo = userinfo;
-    return player_read(app, peer->id, seat, out, app->operation == APPLICATION_PERSISTING, error);
+    bool okay=userinfo && application_player_userinfo_adopt(row,userinfo,storage,error) &&
+        player_read(app, peer->id, seat, out, app->operation == APPLICATION_PERSISTING, error);
+    qa_unified_frame_lease_release(storage);
+    return okay;
 }
 
 static bool userinfo_source(application_provider *source, const qa_unified_session_player *player,
@@ -609,31 +610,29 @@ bool application_unified_player_userinfo(qa_application *app, qa_net_client_id c
         !application_unified_player_read(app, client, seat, &player, error)) return false;
     const application_player_record *row = application_players_connection_read(app, client, seat);
     const char *old = row->userinfo ? row->userinfo : "";
-    unified_info_pair *pairs = calloc(strlen(old) / 2 + 3, sizeof(*pairs));
-    if (!pairs) return application_fail(error, QA_ERROR_MEMORY, "Retaining unified client endpoint");
-    size_t count = info_pairs(old, pairs);
-    char *address = NULL;
-    for (size_t i = 0; i < count; ++i) if (info_key(pairs[i], "ip")) {
-        address = malloc(pairs[i].value_size + 1);
-        if (address) { memcpy(address, pairs[i].value, pairs[i].value_size); address[pairs[i].value_size] = 0; }
-        break;
-    }
-    free(pairs);
-    if (!address) return application_fail(error, QA_ERROR_ARGUMENT, "Unified Source userinfo lost its admitted endpoint");
+    qa_bytes endpoint;
+    if (!qa_info_find(old,(qa_bytes){(const uint8_t *)"ip",2},0,&endpoint))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Unified Source userinfo lost its admitted endpoint");
+    qa_unified_frame_lease *storage=application_control_storage_acquire(app,error);
+    if (!storage) return false;
+    qa_arena *arena=qa_unified_frame_lease_arena(storage);
+    char *address=qa_arena_alloc(arena,endpoint.size+1,1,error);
+    if (!address) {qa_unified_frame_lease_release(storage);return false;}
+    memcpy(address,endpoint.data,endpoint.size);address[endpoint.size]=0;
     application_provider *source = primary(app);
-    char *canonical = info_canonical(value, address, source->kind == APPLICATION_PROVIDER_Q1, error);
-    free(address);
-    if (!canonical) return false;
+    char *canonical = info_canonical(arena,value, address, source->kind == APPLICATION_PROVIDER_Q1, error);
     uint32_t slot = row->client_slot;
     application_player_record *actual = (application_player_record *)row;
-    free(actual->userinfo); actual->userinfo = canonical;
-    if (!userinfo_source(source, &player, slot, canonical, error) ||
-        !application_client_userinfo_changed(app, player.actor, error) ||
-        !application_unified_source_current(app, &receipt) ||
-        !application_unified_player_current(app, client, &player)) {
-        application_fault(app, error); return false;
+    if (!canonical || !application_player_userinfo_adopt(actual,canonical,storage,error)) {
+        qa_unified_frame_lease_release(storage);return false;
     }
-    return true;
+    bool okay=userinfo_source(source, &player, slot, canonical, error) &&
+        application_client_userinfo_changed(app, player.actor, error) &&
+        application_unified_source_current(app, &receipt) &&
+        application_unified_player_current(app, client, &player);
+    qa_unified_frame_lease_release(storage);
+    if (!okay) application_fault(app, error);
+    return okay;
 }
 
 static bool command_provider(application_provider *provider, const qa_command_invocation *command,
@@ -707,17 +706,18 @@ bool application_unified_player_command(qa_application *app, qa_net_client_id cl
         char declared_name[46]; q1_name(value,declared_name);
         okay = qa_q1_source_client_name(source->state.q1, player.actor, declared_name, error); handled = true;
         qa_buffer userinfo = {0}; qa_q1_source_client_view current;
+        qa_unified_frame_lease *userinfo_storage=okay?application_control_storage_acquire(app,error):NULL;
+        if (okay && !userinfo_storage) okay=false;
         if (okay) okay = qa_q1_source_client_read(source->state.q1,player.actor,&current) &&
-            qa_q1_source_client_userinfo_read(source->state.q1,player.actor,true,NULL,&userinfo,error);
+            qa_q1_source_client_userinfo_read(source->state.q1,player.actor,true,
+                qa_unified_frame_lease_arena(userinfo_storage),&userinfo,error);
         if (okay) {
             application_player_record *actual = (application_player_record *)row;
-            okay = application_player_identity_text(actual, current.name, NULL, NULL, error);
-            if (okay) {
-                free(actual->userinfo); actual->userinfo=(char *)userinfo.data; userinfo=(qa_buffer){0};
-                okay=application_client_userinfo_changed(app,player.actor,error);
-            }
+            okay = application_player_identity_text(actual, current.name, NULL, NULL, error) &&
+                application_player_userinfo_adopt(actual,(char *)userinfo.data,userinfo_storage,error) &&
+                application_client_userinfo_changed(app,player.actor,error);
         }
-        qa_buffer_free(&userinfo);
+        qa_unified_frame_lease_release(userinfo_storage);
     }
     if (okay && !handled && source->kind == APPLICATION_PROVIDER_Q1 && !strcmp(name, "color")) {
         const char *top = count ? arguments[0] : "0";
@@ -851,17 +851,19 @@ bool application_unified_player_admit(qa_application *app,
     char address[256];
     if (peer->endpoint.kind == QA_NET_LOOPBACK) memcpy(address, "localhost", sizeof("localhost"));
     else if (!qa_net_address_format(&peer->endpoint, address, sizeof(address), error)) return false;
-    char *userinfo = info_canonical(request->userinfo ? request->userinfo : "", address,
+    qa_unified_frame_lease *storage=application_control_storage_acquire(app,error);
+    if (!storage) return false;
+    qa_arena *arena=qa_unified_frame_lease_arena(storage);
+    bool okay=false;
+    char *userinfo = info_canonical(arena,request->userinfo ? request->userinfo : "", address,
         primary(app)->kind == APPLICATION_PROVIDER_Q1, error);
-    if (!userinfo) return false;
+    if (!userinfo) goto done;
     qa_application_remote_player_request canonical = *request;
     canonical.userinfo = userinfo;
-    char *name = info_value_copy(userinfo, "name", error);
-    char *skin = info_value_copy(userinfo, "skin", error);
-    char *team = info_value_copy(userinfo, "team", error);
-    if (!name || !skin || !team) { free(name); free(skin); free(team); free(userinfo); return false; }
-    canonical.name = name[0] || source.family != QA_GAME_Q1 ? name : "unconnected";
-    canonical.skin = skin; canonical.team = team;
+    const char *identity[3];
+    if (!application_player_userinfo_identity_read(arena,userinfo,0,"",identity,error)) goto done;
+    canonical.name = identity[0][0] || source.family != QA_GAME_Q1 ? identity[0] : "unconnected";
+    canonical.team = identity[1]; canonical.skin = identity[2];
     application_provider *provider = primary(app);
     if (source.family == QA_GAME_Q3 && canonical.source_slot == UINT32_MAX) {
         qa_cvars *registry = provider->kind == APPLICATION_PROVIDER_Q3 ?
@@ -874,34 +876,32 @@ bool application_unified_player_admit(qa_application *app,
             application_guest_q3_console_control(provider,APPLICATION_Q3_CVAR_PRIVATE_PASSWORD);
         const qa_cvar_view *reserved = qa_cvars_read(registry,reserved_handle);
         const qa_cvar_view *password = qa_cvars_read(registry,password_handle);
-        char *received = info_value_copy(userinfo, "password", error);
+        char *received = info_value_text(arena,userinfo, "password", error);
         if (!registry || !reserved || !password || !received) {
-            free(received); free(name); free(skin); free(team); free(userinfo);
-            return application_fail(error, QA_ERROR_ARGUMENT, "Unified Q3 admission lost its actual private-slot policy");
+            application_fail(error, QA_ERROR_ARGUMENT, "Unified Q3 admission lost its actual private-slot policy");
+            goto done;
         }
         uint32_t first = strcmp(received, password->value) && reserved->integer > 0 ?
             (uint32_t)reserved->integer : 0;
-        free(received);
         for (uint32_t slot = first; slot < source.max_clients; ++slot) {
             bool occupied;
-            if (!application_unified_source_slot_occupied(app, slot, &occupied, error)) {
-                free(name); free(skin); free(team); free(userinfo); return false;
-            }
+            if (!application_unified_source_slot_occupied(app, slot, &occupied, error)) goto done;
             if (!occupied) { canonical.source_slot = slot; break; }
         }
         if (canonical.source_slot == UINT32_MAX) {
-            free(name); free(skin); free(team); free(userinfo);
-            return application_fail(error, QA_ERROR_ARGUMENT, "Server is full");
+            application_fail(error, QA_ERROR_ARGUMENT, "Server is full");
+            goto done;
         }
     }
     qa_actor_id actor;
-    bool admitted = qa_application_remote_player_attach(app, &canonical, &actor, error);
-    free(name); free(skin); free(team); free(userinfo);
-    if (!admitted) return false;
+    if (!qa_application_remote_player_attach(app, &canonical, &actor, error)) goto done;
     if (!application_unified_player_read(app, request->client, request->seat, out, error) ||
         !qa_actor_id_equal(actor, out->actor)) {
         application_fault(app, error);
-        return false;
+        goto done;
     }
-    return true;
+    okay=true;
+done:
+    qa_unified_frame_lease_release(storage);
+    return okay;
 }

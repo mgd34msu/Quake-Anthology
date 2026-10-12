@@ -5,6 +5,7 @@
 #include "native_q3_console.h"
 #include "qa/game_q3_configstrings.h"
 #include "qa/game_q3_source.h"
+#include "qa/pool.h"
 #include "qa/source_save.h"
 #include "qa/text.h"
 
@@ -21,6 +22,8 @@ typedef struct ranking_client {
     int32_t since;
     bool has_observed, has_weapon;
     struct ranking_client *next;
+    struct ranking_client **previous_link;
+    size_t storage_slot;
 } ranking_client;
 struct application_rankings {
     qa_actor_owner provider;
@@ -31,16 +34,18 @@ struct application_rankings {
     size_t report_count;
     ranking_client *clients, **client_tail;
     size_t client_count;
+    qa_arena client_storage;
+    qa_pool client_rows;
+    qa_id_index client_slots, client_actors;
 };
 
 static void owner_free(application_rankings *owner)
 {
     if (!owner) return;
     qa_application_events_unsubscribe(&owner->reports);
-    while (owner->clients) {
-        ranking_client *next = owner->clients->next;
-        free(owner->clients); owner->clients = next;
-    }
+    qa_id_index_destroy(&owner->client_slots);
+    qa_id_index_destroy(&owner->client_actors);
+    qa_arena_destroy(&owner->client_storage);
     free(owner);
 }
 void application_rankings_dispose(qa_application *app)
@@ -58,6 +63,31 @@ static application_provider *source(qa_application *app)
     application_provider *provider = application_mode_provider(app, app->primary_mode);
     return provider && provider->kind == APPLICATION_PROVIDER_Q3 && provider->state.q3 &&
         provider->constructed && provider->attached && !provider->close_pending ? provider : NULL;
+}
+static application_rankings *owner_create(qa_application *app, qa_error *error)
+{
+    application_provider *provider=source(app);
+    uint32_t capacity;
+    if (!qa_q3_source_max_clients(provider ? provider->state.q3 : NULL,&capacity,error)) return NULL;
+    application_rankings *owner=calloc(1,sizeof(*owner));
+    if (!owner) {
+        application_fail(error,QA_ERROR_MEMORY,"Allocating native ranked match owner");
+        return NULL;
+    }
+    qa_arena_init(&owner->client_storage,0);
+    owner->client_slots.storage=&owner->client_storage;
+    owner->client_actors.storage=&owner->client_storage;
+    if (!qa_pool_prepare(&owner->client_rows,&owner->client_storage,capacity,
+            sizeof(ranking_client),_Alignof(ranking_client),error) ||
+        !qa_id_index_reserve(&owner->client_slots,capacity,error) ||
+        !qa_id_index_reserve(&owner->client_actors,capacity,error)) {
+        owner_free(owner);
+        return NULL;
+    }
+    qa_arena_seal(&owner->client_storage);
+    owner->client_tail=&owner->clients;
+    qa_application_events_subscribe(app,&owner->reports);
+    return owner;
 }
 static bool agreement(qa_application *app, application_rankings *owner, qa_error *error)
 {
@@ -249,15 +279,16 @@ bool application_rankings_report(void *context, const qa_ranking_source_report *
 static application_player_record *player(qa_application *app, application_provider *provider,
     uint32_t slot, qa_actor_id actor)
 {
-    if (app->players) for (size_t i = 0; i < app->players->count; ++i) {
-        application_player_record *row = app->players->records + i;
-        uint32_t native_slot;
-        if (!row->retiring && !row->source_begin_pending &&
-            row->client_slot == slot && (!actor.registry || qa_actor_id_equal(row->actor, actor)) &&
-            qa_q3_native_client_slot(provider->state.q3, row->actor, &native_slot, NULL) &&
-            native_slot == slot) return row;
+    if (!actor.registry) {
+        qa_q3_source_binding binding;
+        if (!qa_q3_source_binding_read(provider->state.q3,slot,&binding,NULL)) return NULL;
+        actor=binding.actor;
     }
-    return NULL;
+    application_player_record *row=application_player_record_find(app->players,actor);
+    uint32_t native_slot;
+    return row && !row->retiring && !row->source_begin_pending && row->client_slot==slot &&
+        qa_q3_native_client_slot(provider->state.q3,row->actor,&native_slot,NULL) &&
+        native_slot==slot ? row : NULL;
 }
 bool qa_application_rankings_client_slot(const qa_application *app, qa_actor_id actor,
     uint32_t *out)
@@ -341,21 +372,52 @@ static bool game_over(qa_application *app, application_rankings *owner,
     }
     return true;
 }
-static void client_tail(application_rankings *owner)
+static ranking_client *client_at_slot(application_rankings *owner, uint32_t slot)
 {
-    owner->client_tail = &owner->clients;
-    while (*owner->client_tail) owner->client_tail = &(*owner->client_tail)->next;
+    qa_id_index_entry *entry=qa_id_index_find(&owner->client_slots,slot,0);
+    return entry ? qa_pool_at(&owner->client_rows,entry->value) : NULL;
+}
+static ranking_client *client_for_actor(application_rankings *owner, qa_actor_id actor)
+{
+    qa_id_index_entry *entry=qa_id_index_find(&owner->client_actors,actor.slot,actor.generation);
+    ranking_client *row=entry ? qa_pool_at(&owner->client_rows,entry->value) : NULL;
+    return row && qa_actor_id_equal(row->actor,actor) ? row : NULL;
+}
+static ranking_client *client_append(application_rankings *owner, const ranking_client *value,
+    qa_error *error)
+{
+    size_t storage_slot;
+    ranking_client *row=qa_pool_take(&owner->client_rows,&storage_slot);
+    if (!row) {
+        application_fail(error,QA_ERROR_MEMORY,"Retaining ranked source client identity");
+        return NULL;
+    }
+    *row=*value;
+    row->storage_slot=storage_slot;
+    row->next=NULL;
+    row->previous_link=owner->client_tail;
+    *owner->client_tail=row;
+    owner->client_tail=&row->next;
+    qa_id_index_insert(&owner->client_slots,row->slot,0,storage_slot);
+    qa_id_index_insert(&owner->client_actors,row->actor.slot,row->actor.generation,storage_slot);
+    ++owner->client_count;
+    return row;
 }
 static bool disconnect(qa_application *app, application_rankings *owner,
     qa_actor_id actor, qa_error *error)
 {
-    ranking_client **link = &owner->clients;
-    while (*link && !qa_actor_id_equal((*link)->actor, actor)) link = &(*link)->next;
-    if (!*link) return true;
+    ranking_client *row=client_for_actor(owner,actor);
+    if (!row) return true;
     if (!flush(app, owner, error)) return false;
-    ranking_client *row = *link;
     bool ok = backend_result(app,owner,qa_rankings_disconnect(app->rankings, (int32_t)row->slot, error));
-    *link = row->next; --owner->client_count; free(row); client_tail(owner); return ok;
+    *row->previous_link=row->next;
+    if (row->next) row->next->previous_link=row->previous_link;
+    else owner->client_tail=row->previous_link;
+    qa_id_index_remove_value(&owner->client_slots,row->slot,0,row->storage_slot);
+    qa_id_index_remove_value(&owner->client_actors,row->actor.slot,row->actor.generation,row->storage_slot);
+    --owner->client_count;
+    qa_pool_release(&owner->client_rows,row->storage_slot);
+    return ok;
 }
 bool application_rankings_disconnect(qa_application *app, qa_actor_id actor, qa_error *error)
 {
@@ -369,17 +431,10 @@ bool application_rankings_disconnect(qa_application *app, qa_actor_id actor, qa_
 static ranking_client *observed_client(application_rankings *owner, uint32_t slot,
     qa_actor_id actor, qa_error *error)
 {
-    ranking_client *row=owner->clients;
-    while (row && row->slot!=slot) row=row->next;
+    ranking_client *row=client_at_slot(owner,slot);
     if (row) return row;
-    row=calloc(1,sizeof(*row));
-    if (!row) {
-        application_fail(error,QA_ERROR_MEMORY,"Retaining ranked source client identity");
-        return NULL;
-    }
-    row->actor=actor; row->slot=slot;
-    *owner->client_tail=row; owner->client_tail=&row->next; ++owner->client_count;
-    return row;
+    ranking_client value={.actor=actor,.slot=slot};
+    return client_append(owner,&value,error);
 }
 static bool reconcile_clients(qa_application *app, application_rankings *owner,
     application_provider *provider, qa_error *error)
@@ -493,12 +548,10 @@ bool application_rankings_frame(qa_application *app, qa_error *error)
         return application_fail(error,QA_ERROR_ARGUMENT,"Rankings lack actual native source settings and mode");
     bool enabled=enable->number!=0, fresh=!owner;
     if (!owner) {
-        owner=calloc(1,sizeof(*owner));
-        if (!owner) return application_fail(error,QA_ERROR_MEMORY,"Allocating native ranked match owner");
+        owner=owner_create(app,error);
+        if (!owner) return false;
         owner->provider=provider->owner; owner->source_serial=provider->launch->identity;
         owner->map_revision=app->map_revision; owner->enabled=enabled;
-        qa_application_events_subscribe(app,&owner->reports);
-        owner->client_tail=&owner->clients;
         app->ranked_source=owner;
     }
     owner->busy=true;
@@ -671,10 +724,8 @@ static bool owner_fields(qa_source_save_io *io, qa_application *app,
     if (!qa_source_save_bool(io,&present)) return false;
     if (!present) return true;
     if (reading) {
-        *value=calloc(1,sizeof(**value));
-        if (!*value) return application_fail(io->error,QA_ERROR_MEMORY,"Allocating saved ranked source owner");
-        qa_application_events_subscribe(app,&(*value)->reports);
-        (*value)->client_tail=&(*value)->clients;
+        *value=owner_create(app,io->error);
+        if (!*value) return false;
         (*value)->restoring=true;
     }
     application_rankings *owner=*value;
@@ -729,11 +780,8 @@ static bool owner_fields(qa_source_save_io *io, qa_application *app,
         (reading && count>remaining(io)/303)) return false;
     ranking_client *client=owner->clients;
     for (size_t i=0;i<count;++i) {
-        if (reading) {
-            client=calloc(1,sizeof(*client));
-            if (!client) return application_fail(io->error,QA_ERROR_MEMORY,"Allocating saved ranked client");
-            *owner->client_tail=client; owner->client_tail=&client->next; ++owner->client_count;
-        }
+        ranking_client loaded={0};
+        if (reading) client=&loaded;
         uint32_t weapon=client ? (uint32_t)client->weapon : 0;
         if (!client || !qa_source_save_actor(io,&client->actor) || !client->actor.registry ||
             !qa_source_save_u32(io,&client->slot) || client->slot>=QA_Q3_SOURCE_CLIENTS ||
@@ -741,10 +789,15 @@ static bool owner_fields(qa_source_save_io *io, qa_application *app,
             !qa_source_save_bool(io,&client->has_weapon) || !qa_source_save_u32(io,&weapon) || weapon>=QA_Q3_WEAPON_COUNT ||
             !qa_source_save_i32(io,&client->since)) return false;
         client->weapon=(qa_q3_weapon)weapon;
-        for (ranking_client *prior=owner->clients; prior!=client; prior=prior->next)
-            if (prior->slot==client->slot || qa_actor_id_equal(prior->actor,client->actor))
+        if (reading) {
+            if (client_at_slot(owner,client->slot) || client_for_actor(owner,client->actor))
                 return application_fail(io->error,QA_ERROR_FORMAT,"Duplicate ranked client source identity");
-        if (!reading) client=client->next;
+            if (!client_append(owner,client,io->error)) return false;
+        } else {
+            if (client_at_slot(owner,client->slot)!=client || client_for_actor(owner,client->actor)!=client)
+                return application_fail(io->error,QA_ERROR_FORMAT,"Duplicate ranked client source identity");
+            client=client->next;
+        }
     }
     return reading || !client || application_fail(io->error,QA_ERROR_ARGUMENT,"Ranked client extent changed");
 }

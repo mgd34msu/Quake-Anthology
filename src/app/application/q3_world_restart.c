@@ -22,7 +22,6 @@
 #include <string.h>
 
 typedef struct restart_client {
-    qa_actor_id actor;
     qa_q3_usercmd command;
     char *userinfo;
     uint32_t slot;
@@ -37,6 +36,7 @@ struct application_q3_world_restart {
     application_native_q3_wire_carry *wire;
     application_bots_original *bots;
     application_q3_world_startup startup;
+    qa_actor_index client_index;
     restart_client clients[64];
     size_t client_count;
     uint32_t retained_capacity;
@@ -180,9 +180,9 @@ bool application_q3_world_restart_client(const qa_application *app, qa_actor_id 
         app->operation != APPLICATION_CONFIGURING)
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Q3 replacement client requires its actual captured source transaction");
-    for (size_t i = 0; i < state->client_count; ++i) {
-        const restart_client *client = &state->clients[i];
-        if (!qa_actor_id_equal(actor, client->actor)) continue;
+    size_t index;
+    if (qa_actor_index_find_retained(&state->client_index, actor, &index)) {
+        const restart_client *client = &state->clients[index];
         *command = client->command;
         *userinfo = client->userinfo;
         return true;
@@ -195,6 +195,7 @@ static void dispose(application_q3_world_restart_state *state)
 {
     application_bots_original_dispose(state->bots);
     application_native_q3_wire_carry_dispose(state->wire);
+    qa_actor_index_destroy(&state->client_index);
     for (size_t i = 0; i < state->client_count; ++i) free(state->clients[i].userinfo);
     qa_launch_snapshot_release(state->launch);
     qa_launch_snapshot_release(state->candidate);
@@ -245,8 +246,7 @@ bool application_q3_world_restart_guest_handoff(qa_application *app,
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 shutdown changed a retained physical client generation");
         char *text = copy_text(userinfo, error);
         if (!text) return false;
-        free(record->userinfo);
-        record->userinfo = text;
+        application_player_userinfo_adopt(record,text,NULL,error);
         application_player_identity_mut(record)->bot = travel->seats[i].bot = bot;
         if (state->retained_capacity <= record->client_slot)
             state->retained_capacity = record->client_slot + 1;
@@ -373,6 +373,9 @@ static bool capture_clients(application_q3_world_restart_state *state,
     if (!app->players || app->players->map_provider != state->source)
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Q3 replacement has no actual source client roster");
+    if (!qa_actor_index_create(&state->client_index, qa_session_actors(app->session), NULL, error) ||
+        !qa_id_index_reserve(&state->client_index.retained,
+            sizeof(state->clients) / sizeof(*state->clients), error)) return false;
     application_player_record *ordered[64] = {0};
     for (size_t i = 0; i < app->players->count; ++i) {
         application_player_record *record = &app->players->records[i];
@@ -388,7 +391,6 @@ static bool capture_clients(application_q3_world_restart_state *state,
             return application_fail(error, QA_ERROR_ARGUMENT,
                 "Q3 replacement capacity excludes a retained source client slot");
         restart_client *client = &state->clients[state->client_count++];
-        client->actor = record->actor;
         client->slot = slot;
         const char *userinfo = record->userinfo;
         if (state->native) {
@@ -416,6 +418,10 @@ static bool capture_clients(application_q3_world_restart_state *state,
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 replacement client has no genuine source userinfo");
         client->userinfo = copy_text(userinfo, error);
         if (!client->userinfo) return false;
+        size_t previous;
+        if (!qa_actor_index_find_retained(&state->client_index, record->actor, &previous) &&
+            !qa_actor_index_remember(&state->client_index, record->actor,
+                state->client_count - 1, error)) return false;
     }
     if (state->native) {
         uint32_t maximum;
@@ -541,8 +547,7 @@ static bool reconcile_native_clients(application_provider *source,
             return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 shutdown changed a retained physical client generation");
         char *userinfo = copy_text(client.userinfo, error);
         if (!userinfo) return false;
-        free(record->userinfo);
-        record->userinfo = userinfo;
+        application_player_userinfo_adopt(record,userinfo,NULL,error);
         application_player_identity_mut(record)->bot = travel->seats[index].bot = client.bot;
         travel->carry[index].q3_command = client.command;
     }

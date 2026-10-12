@@ -3,12 +3,48 @@
 #include "q3_restart.h"
 #include "native_q3_clients.h"
 #include "startup_flow.h"
+#include "mode_identity.h"
 #include "qa/launch_identity.h"
 #include "qa/source_save.h"
 
 #include <stdlib.h>
 #include <string.h>
 
+void application_mode_identity_free(application_mode_identity *identity) {
+    qa_arena_destroy(&identity->text);
+    memset(identity, 0, sizeof(*identity));
+}
+bool application_mode_identity_bind(application_mode_identity *out,
+    const qa_launch_mode *mode, qa_error *error) {
+    application_mode_identity next = {.mode = *mode};
+    const char *text[5] = {mode->instance, mode->teams[0], mode->teams[1],
+        mode->teams[2], mode->forced_team};
+    size_t size = 0;
+    for (size_t i = 0; i < 5; ++i) size += strlen(text[i] ? text[i] : "") + 1;
+    qa_arena_init(&next.text, size);
+    bool okay = qa_arena_reserve(&next.text, size, error);
+    const char **fields[5] = {&next.mode.instance, &next.mode.teams[0],
+        &next.mode.teams[1], &next.mode.teams[2], &next.mode.forced_team};
+    for (size_t i = 0; okay && i < 5; ++i) {
+        *fields[i] = qa_arena_text(&next.text, text[i] ? text[i] : "", error);
+        okay = *fields[i] != NULL;
+    }
+    if (!okay) { application_mode_identity_free(&next); return false; }
+    qa_arena_seal(&next.text);
+    *out = next;
+    return true;
+}
+bool application_mode_identity_read(application_mode_identity *out,
+    qa_bytes bytes, qa_error *error) {
+    application_mode_identity next = {0};
+    qa_arena_init(&next.text, bytes.size);
+    bool okay = qa_arena_reserve(&next.text, bytes.size, error) &&
+        qa_launch_mode_identity_decode(bytes, &next.text, &next.mode, error);
+    if (!okay) { application_mode_identity_free(&next); return false; }
+    qa_arena_seal(&next.text);
+    *out = next;
+    return true;
+}
 typedef enum match_map_stage {
     MATCH_MAP_EMPTY, MATCH_MAP_UNRESOLVED, MATCH_MAP_BEFORE,
     MATCH_MAP_WAIT, MATCH_MAP_AFTER
@@ -25,6 +61,7 @@ struct application_match_intents {
     char *product_identity;
     uint64_t source_serial;
     qa_buffer selection_identity;
+    application_mode_identity selection;
     size_t selection_index, cursor;
     uint64_t revision;
     application_next_map_plan plan;
@@ -44,6 +81,7 @@ static void clear(application_match_intents *state) {
     if (!state->plan.assignments) state->plan.assignment_count = 0;
     application_next_map_plan_free(&state->plan);
     qa_buffer_free(&state->selection_identity);
+    application_mode_identity_free(&state->selection);
     free(state->product_identity);
     memset(state, 0, sizeof(*state));
     state->restart = restart;
@@ -107,12 +145,8 @@ static bool qualify(application_match_intents *state, qa_application *app,
         app->mode_ids[state->selection_index].generation != state->mode.generation ||
         application_native_q3_mode_source_provider(app, state->mode) != p))
         return application_fail(error, QA_ERROR_ARGUMENT, "match map mode generation retired");
-    qa_buffer identity = {0};
-    if (!qa_launch_mode_identity_encode(current, state->selection_index, &identity, error)) return false;
-    bool equal = identity.size == state->selection_identity.size &&
-        !memcmp(identity.data, state->selection_identity.data, identity.size);
-    qa_buffer_free(&identity);
-    if (!equal) return application_fail(error, QA_ERROR_ARGUMENT, "match map mode configuration changed");
+    if (!qa_launch_mode_identity_equal(&state->selection.mode, &choices->modes[state->selection_index]))
+        return application_fail(error, QA_ERROR_ARGUMENT, "match map mode configuration changed");
     if (state->restoring) state->source_serial = p->launch->identity;
     if (!state->source_serial || state->source_serial != p->launch->identity)
         return application_fail(error, QA_ERROR_ARGUMENT, "match map source selection changed");
@@ -212,8 +246,13 @@ bool application_match_intents_enqueue(application_match_intents *state, qa_appl
         (app->mode_ids[next.selection_index].slot != intent->mode.slot ||
          app->mode_ids[next.selection_index].generation != intent->mode.generation)) ++next.selection_index;
     next.product_identity = copy_text(p->product->identity, error);
-    if (!next.product_identity || !qa_launch_mode_identity_encode(snapshot(app),
-        next.selection_index, &next.selection_identity, error)) { clear(&next); return false; }
+    const qa_launch_snapshot *current = snapshot(app);
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(current);
+    if (!next.product_identity || !qa_launch_mode_identity_encode(current,
+        next.selection_index, &next.selection_identity, error) ||
+        !application_mode_identity_bind(&next.selection, &choices->modes[next.selection_index], error)) {
+        clear(&next); return false;
+    }
     *state = next;
     return true;
 }
@@ -402,6 +441,8 @@ static bool stream(qa_source_save_io *io, application_match_intents *state) {
     if (!state->owner || !state->mode.generation || !state->product_identity ||
         !state->product_identity[0] || !state->selection_identity.size ||
         !qa_source_save_bytes(io, state->selection_identity.data, state->selection_identity.size)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ && !application_mode_identity_read(&state->selection,
+        (qa_bytes){state->selection_identity.data, state->selection_identity.size}, io->error)) return false;
     if (state->stage == MATCH_MAP_UNRESOLVED) return true;
     application_next_map_plan *plan = &state->plan;
     uint32_t scope_kind = plan->scope.kind;

@@ -1,6 +1,7 @@
 #ifndef QA_LAUNCH_IDENTITY_H
 #define QA_LAUNCH_IDENTITY_H
 #include "qa/launch.h"
+#include "qa/arena.h"
 /* Portable native launch identity. Every choice is explicit; actor
  * references are saved slot/generation pairs relative to the supplied registry.
  * It is distinct from original game wire schemas. Outputs transfer on success.
@@ -11,6 +12,8 @@ bool qa_launch_identity_encode(const qa_launch_snapshot *, const qa_actor_regist
  * launch identity. Map transitions do not change this configuration record. */
 bool qa_launch_mode_identity_encode(const qa_launch_snapshot *, size_t index,
     qa_buffer *, qa_error *);
+bool qa_launch_mode_identity_decode(qa_bytes, qa_arena *, qa_launch_mode *, qa_error *);
+bool qa_launch_mode_identity_equal(const qa_launch_mode *, const qa_launch_mode *);
 /* Reconstructs an empty draft without preset defaults. A candidate registry is
  * required when actor scopes/seats name actors. Decode does not admit content:
  * after preparation, match the entire candidate identity before publication. */

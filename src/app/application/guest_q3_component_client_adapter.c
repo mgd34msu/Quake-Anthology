@@ -234,7 +234,7 @@ static bool set_userinfo(void *context,qa_actor_id actor,const char *text,qa_err
         else application_fail(e,QA_ERROR_FORMAT,"Component userinfo exceeds actual original Q2 storage");
     } else {
         char *copy=source->kind==APPLICATION_PROVIDER_QC?info_dictionary(text,e):q3g_copy_text(text,e);ok=copy!=NULL;
-        if(ok&&source->kind==APPLICATION_PROVIDER_QC) {free(p->userinfo);p->userinfo=copy;}
+        if(ok&&source->kind==APPLICATION_PROVIDER_QC) ok=application_player_userinfo_adopt(p,copy,NULL,e);
         else if(ok) {q3g_client *client=q3g_engine(source)->clients+p->client_slot;free(client->userinfo);client->userinfo=copy;}
     }
     --a->calls;
@@ -425,7 +425,7 @@ static bool source_set_team(application_q3_component_client_adapter *a,qa_actor_
         }
         if(!info) return false;
         p=player(a,actor);if(!p) {free(info);return application_fail(e,QA_ERROR_ARGUMENT,"Component QC team replaced its actual client");}
-        free(p->userinfo);p->userinfo=info;
+        application_player_userinfo_adopt(p,info,NULL,e);
         return application_qc_client_userinfo(source,actor,e)&&application_client_userinfo_changed(a->application,actor,e);
     }
     if(source->kind==APPLICATION_PROVIDER_Q2) {

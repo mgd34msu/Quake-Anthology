@@ -4,6 +4,7 @@
 #include "q3_round.h"
 #include "q3_world_restart.h"
 #include "native_q3_clients.h"
+#include "mode_identity.h"
 #include "qa/launch_identity.h"
 
 #include <stdio.h>
@@ -16,6 +17,7 @@ struct application_q3_restart {
     qa_string_id source_command, product_identity;
     uint64_t source_serial;
     qa_buffer selection_identity;
+    application_mode_identity selection;
     size_t selection_index;
     application_next_map_plan plan;
     int32_t delay_seconds, requested_ms, due_ms;
@@ -39,6 +41,7 @@ void application_q3_restart_cancel(application_q3_restart *state) {
     bool has_last_frame = state->has_last_frame, busy = state->busy;
     application_next_map_plan_free(&state->plan);
     qa_buffer_free(&state->selection_identity);
+    application_mode_identity_free(&state->selection);
     memset(state, 0, sizeof(*state));
     state->last_frame = last_frame;
     state->has_last_frame = has_last_frame;
@@ -96,12 +99,8 @@ static bool qualify(application_q3_restart *state, qa_application *app, qa_error
         strcmp(choices->modes[state->selection_index].instance, provider->launch->selection.instance) ||
         !qa_application_command_context_active(app, &state->plan.context))
         return application_fail(error, QA_ERROR_ARGUMENT, "pending Q3 restart source retired");
-    qa_buffer encoded = {0};
-    if (!qa_launch_mode_identity_encode(current, state->selection_index, &encoded, error)) return false;
-    bool equal = encoded.size == state->selection_identity.size &&
-        !memcmp(encoded.data, state->selection_identity.data, encoded.size);
-    qa_buffer_free(&encoded);
-    if (!equal) return application_fail(error, QA_ERROR_ARGUMENT, "pending Q3 restart selection changed");
+    if (!qa_launch_mode_identity_equal(&state->selection.mode, &choices->modes[state->selection_index]))
+        return application_fail(error, QA_ERROR_ARGUMENT, "pending Q3 restart selection changed");
     if (state->restoring) state->source_serial = provider->launch->identity;
     if (!state->source_serial || state->source_serial != provider->launch->identity)
         return application_fail(error, QA_ERROR_ARGUMENT, "pending Q3 restart source retired");
@@ -139,12 +138,15 @@ bool application_q3_restart_enqueue(application_q3_restart *state, qa_applicatio
     while (next.selection_index < app->mode_count &&
         (app->mode_ids[next.selection_index].slot != intent->mode.slot ||
          app->mode_ids[next.selection_index].generation != intent->mode.generation)) ++next.selection_index;
+    const qa_launch_snapshot *current = snapshot(app);
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(current);
     bool okay = application_native_restart_plan(app, intent->mode, intent->source_command,
         &next.plan, &next.delay_seconds, &next.warmup_enabled, error) &&
         application_q3_restart_clock(provider, &next.requested_ms, error) &&
         qa_strings_intern_cstr(qa_session_strings(app->session), provider->product->identity,
             &next.product_identity, error) &&
-        qa_launch_mode_identity_encode(snapshot(app), next.selection_index, &next.selection_identity, error);
+        qa_launch_mode_identity_encode(current, next.selection_index, &next.selection_identity, error) &&
+        application_mode_identity_bind(&next.selection, &choices->modes[next.selection_index], error);
     if (!okay) { application_q3_restart_cancel(&next); return false; }
     next.scheduled = next.delay_seconds != 0 && !next.warmup_enabled;
     next.due_ms = next.scheduled ? deadline(next.requested_ms, next.delay_seconds) : next.requested_ms;
@@ -281,6 +283,8 @@ bool application_q3_restart_stream(qa_source_save_io *io, application_q3_restart
         !qa_source_save_bool(io, &state->warmup_enabled) || !qa_source_save_bool(io, &state->scheduled) ||
         !qa_source_save_bool(io, &state->announced)) return false;
     state->plan.mode = state->mode; state->plan.scope.kind = (qa_application_console_kind)scope_kind;
+    if (io->direction == QA_SOURCE_SAVE_READ && !application_mode_identity_read(&state->selection,
+        (qa_bytes){state->selection_identity.data, state->selection_identity.size}, io->error)) return false;
     qa_bytes command = qa_strings_text(qa_session_strings(io->session), state->source_command);
     return state->owner && state->mode.generation && state->product_identity && state->selection_identity.size &&
         command.data && command.size && command.size < 1024 && !memchr(command.data, 0, command.size) &&

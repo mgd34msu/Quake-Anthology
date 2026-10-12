@@ -53,6 +53,7 @@ typedef struct application_player_record {
     qa_actor_player *player;
     qa_strings *strings;
     char *userinfo;
+    struct qa_unified_frame_lease *userinfo_storage;
     char *bot_definition;
     float bot_skill;
     int32_t bot_delay_ms;
@@ -64,6 +65,11 @@ typedef struct application_player_record {
     uint16_t output_incomplete;
     bool deferred, remote, dynamic, retiring, source_begin_pending;
 } application_player_record;
+bool application_player_userinfo_adopt(application_player_record *, char *,
+    struct qa_unified_frame_lease *, qa_error *);
+void application_player_userinfo_clear(application_player_record *);
+bool application_player_userinfo_identity_read(qa_arena *, const char *, unsigned,
+    const char *missing_name, const char *fields[3], qa_error *);
 
 static inline const qa_actor_player *application_player_identity(const application_player_record *record)
 { return record->player ? record->player : &record->pending_identity; }
