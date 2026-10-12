@@ -1565,7 +1565,7 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
                  options->classname);
     return false;
   }
-  const q2m_move_set *move_set = q2m_move_set_for(game, definition);
+  const q2m_move_set *move_set = definition->moves;
   if (move_set == NULL) {
     qa_error_set(error, QA_ERROR_FORMAT, 0,
                  "Native Q2 monster %s has no move table", options->classname);

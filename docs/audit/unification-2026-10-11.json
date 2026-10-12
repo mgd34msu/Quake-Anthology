@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "30ee0164ab6b55c2806c049e359d56d7d5d93b9c",
+  "verified_main": "de44b0f450ebfc74aba301520e5a6c3cdc58fa82",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 243,
-    "open_source_observation": 128,
+    "fixed_source_build_core": 244,
+    "open_source_observation": 127,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -32793,8 +32793,9 @@
       "severity": "low",
       "job": "20",
       "area": "gameplay_q1",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "de44b0f450ebfc74aba301520e5a6c3cdc58fa82"
     },
     {
       "id": "J20-08",
@@ -43630,6 +43631,42 @@
       ],
       "record_directory": "/tmp/qa-ta3196-snapshot-and-guest-owner-indexes-20261012-v1",
       "conclusion": "Remote Q1 snapshot identities and native FILE, kernel handle and TLS owners now use the shared ID index over their authoritative rows. Normal build and seven core suites passed; this does not claim full load-time capacity or live gameplay qualification."
+    },
+    {
+      "commit": "de44b0f450ebfc74aba301520e5a6c3cdc58fa82",
+      "source_tree": "2402ac1b459155d33a6c2dd05f42e5e286d950a7",
+      "finding_ids": [
+        "J20-07"
+      ],
+      "files_rechecked": [
+        "include/qa/builtin.h",
+        "include/qa/game_q1.h",
+        "include/qa/targets.h",
+        "src/app/application/providers.c",
+        "src/app/application/services.c",
+        "src/campaign/targets.c",
+        "src/gameplay/q1/addon_monsters.c",
+        "src/gameplay/q1/checkpoint/codec.c",
+        "src/gameplay/q1/checkpoint/original.c",
+        "src/gameplay/q1/clone.c",
+        "src/gameplay/q1/internal.h",
+        "src/gameplay/q1/maps/runtime.c",
+        "src/gameplay/q1/monsters.c",
+        "src/gameplay/q1/runtime.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-one-q1-target-router-20261012-v1",
+      "conclusion": "Q1 lookup, admission, clone, release and restore use one common target router; host lookup callbacks and the private actor-capacity fallback are deleted. Normal build and seven core suites passed."
     }
   ],
   "verification_limits": [

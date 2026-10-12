@@ -977,7 +977,7 @@ bool q2_original_monster_record(qa_q2_game *game, q2_original_record_io *io,
         }
         created = true;
         m->definition = definition;
-        m->move_set = q2m_move_set_for(game, definition);
+        m->move_set = definition->moves;
         m->classname = actor->entity->classname;
         m->entity_scale = io->edition == QA_RULESET_Q2_CLASSIC ? 1 : 0;
         m->health_scaling = 1;

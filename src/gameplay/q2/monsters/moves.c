@@ -19168,12 +19168,23 @@ static const q2m_move_set move_sets[] = {
     {.key="rerelease/supertank:supertankMoves",.moves=moves_68,.move_index=move_index_68,.move_count=13u,.frames=frames_68,.frame_count=221u,.actions=actions_68,.action_count=17u},
     {.key="rerelease/tank:tankMoves",.moves=moves_22,.move_index=move_index_22,.move_count=19u,.frames=frames_69,.frame_count=285u,.actions=actions_69,.action_count=48u},
 };
-const q2m_move_set *q2m_moves_named(const char *key)
+bool q2m_move_sets_bind(qa_strings *strings, qa_id_index *index, qa_error *error)
 {
-    if (key == NULL) return NULL;
-    for (size_t i=0;i<sizeof(move_sets)/sizeof(move_sets[0]);++i)
-        if (strcmp(move_sets[i].key,key)==0) return &move_sets[i];
-    return NULL;
+    size_t count = sizeof(move_sets) / sizeof(move_sets[0]);
+    if (!qa_id_index_reserve(index, count, error)) return false;
+    for (size_t i = count; i-- > 0;) {
+        qa_string_id key;
+        if (!qa_strings_intern_cstr(strings, move_sets[i].key, &key, error)) return false;
+        qa_id_index_insert(index, key, 0, i);
+    }
+    return true;
+}
+
+const q2m_move_set *q2m_moves_find(const qa_id_index *index, qa_string_id key)
+{
+    qa_id_index_cursor cursor = qa_id_index_begin(index, key, 0);
+    size_t ordinal;
+    return qa_id_index_next(index, &cursor, &ordinal) ? move_sets + ordinal : NULL;
 }
 
 static const char *const move_names[Q2M_MOVE_COUNT] = {

@@ -6,6 +6,7 @@
 #include "qa/game_q2_monsters.h"
 #include "qa/game_q2_entities.h"
 #include "qa/game_q2_player.h"
+#include "qa/id_index.h"
 
 #include <float.h>
 #include <stdio.h>
@@ -265,6 +266,7 @@ enum q2m_flags {
 typedef struct q2m_definition {
   const char *classname, *model, *move_set;
   qa_string_id classname_id;
+  const q2m_move_set *moves;
   q2m_species species;
   q2m_locomotion locomotion;
   qa_bounds bounds;
@@ -383,11 +385,10 @@ void q2m_free_monster(struct qa_q2_monster *);
 void q2m_retire_monster(qa_q2_game *, struct qa_q2_monster *);
 bool q2m_health_target(q2m_context *, qa_error *);
 
-const q2m_move_set *q2m_moves_named(const char *);
+bool q2m_move_sets_bind(qa_strings *, qa_id_index *, qa_error *);
+const q2m_move_set *q2m_moves_find(const qa_id_index *, qa_string_id);
 bool q2m_definitions_bind(qa_q2_game *, qa_error *);
 const q2m_definition *q2m_definition_for(const qa_q2_game *, qa_string_id);
-const q2m_move_set *q2m_move_set_for(const qa_q2_game *,
-                                     const q2m_definition *);
 const q2m_move_set *q2m_stalker_rerelease_moves(void);
 const q2m_move *q2m_move_find(const struct qa_q2_monster *, q2m_move_id);
 const q2m_move *q2m_move_named(const struct qa_q2_monster *, const char *);

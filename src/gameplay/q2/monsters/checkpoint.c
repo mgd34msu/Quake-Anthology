@@ -515,7 +515,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   const q2m_definition *definition =
       q2m_definition_for(game, qa_strings_find(qa_session_strings(game->services.session),
           (qa_bytes){(const uint8_t *)saved->definition, strlen(saved->definition)}));
-  const q2m_move_set *move_set = q2m_move_set_for(game, definition);
+  const q2m_move_set *move_set = definition ? definition->moves : NULL;
   if (definition == NULL || move_set == NULL) {
     qa_error_set(error, QA_ERROR_FORMAT, 0,
                  "Q2 monster checkpoint definition is unavailable");

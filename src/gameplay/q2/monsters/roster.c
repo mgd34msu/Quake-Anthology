@@ -504,6 +504,10 @@ static const q2m_definition rerelease_soldier_laser =
                       70, Q2M_ATTACK_BEAM, 1, 1000);
 #undef RERELEASE_SOLDIERH
 
+static const q2m_move_set *definition_moves(const qa_q2_game *,
+                                          const q2m_definition *,
+                                          const qa_id_index *);
+
 bool q2m_definitions_bind(qa_q2_game *game, qa_error *error) {
   size_t count = sizeof(definitions) / sizeof(definitions[0]);
   game->monster_definitions = calloc(count, sizeof(*game->monster_definitions));
@@ -516,17 +520,27 @@ bool q2m_definitions_bind(qa_q2_game *game, qa_error *error) {
       &rerelease_gunner, &rerelease_gladb};
   memcpy(game->monster_definitions, definitions, sizeof(definitions));
   game->monster_definition_count = count;
+  qa_id_index move_sets = {0};
+  if (!q2m_move_sets_bind(qa_session_strings(game->services.session), &move_sets, error)) {
+    qa_id_index_destroy(&move_sets);
+    return false;
+  }
   for (size_t i = 0; i < count; ++i) {
     q2m_definition *row = game->monster_definitions + i;
     if (game->options.rules == QA_RULESET_Q2_RERELEASE)
       for (size_t j = 0; j < sizeof(rerelease) / sizeof(*rerelease); ++j)
         if (!strcmp(row->classname, rerelease[j]->classname)) { *row = *rerelease[j]; break; }
-    if (!qa_builtin_resource(&game->services, row->classname, &row->classname_id, error)) return false;
+    if (!qa_builtin_resource(&game->services, row->classname, &row->classname_id, error)) {
+      qa_id_index_destroy(&move_sets);
+      return false;
+    }
+    row->moves = definition_moves(game, row, &move_sets);
     static const q2m_species medic_species[7] = {Q2M_SOLDIER_LIGHT, Q2M_SOLDIER,
         Q2M_SOLDIER_SS, Q2M_INFANTRY, Q2M_GUNNER, Q2M_MEDIC, Q2M_GLADIATOR};
     for (size_t j = 0; j < 7; ++j)
       if (row->species == medic_species[j]) game->medic_definitions[j] = row;
   }
+  qa_id_index_destroy(&move_sets);
   return true;
 }
 
@@ -626,19 +640,21 @@ static const char *base_move_set(const qa_q2_game *game, q2m_species species) {
   }
 }
 
-const q2m_move_set *q2m_move_set_for(const qa_q2_game *game,
-                                     const q2m_definition *definition) {
-  if (game == NULL || definition == NULL)
-    return NULL;
+static const q2m_move_set *definition_moves(const qa_q2_game *game,
+                                          const q2m_definition *definition,
+                                          const qa_id_index *move_sets) {
   if (game->options.rules == QA_RULESET_Q2_RERELEASE && definition->species == Q2M_STALKER)
     return q2m_stalker_rerelease_moves();
+  const char *key = definition->move_set;
   if (game->options.rules == QA_RULESET_Q2_RERELEASE &&
       (definition->species == Q2M_MEDIC || definition->species == Q2M_MEDIC_COMMANDER))
-    return q2m_moves_named("rerelease/medic:medicMoves");
-  const char *key = definition->move_set;
-  if (key == NULL)
+    key = "rerelease/medic:medicMoves";
+  else if (key == NULL)
     key = base_move_set(game, definition->species);
-  return q2m_moves_named(key);
+  if (key == NULL) return NULL;
+  qa_string_id name = qa_strings_find(qa_session_strings(game->services.session),
+      (qa_bytes){(const uint8_t *)key, strlen(key)});
+  return q2m_moves_find(move_sets, name);
 }
 
 const q2m_move *q2m_move_find(const struct qa_q2_monster *monster, q2m_move_id id) {
