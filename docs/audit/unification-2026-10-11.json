@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "4632419faf7c5616beab7b64b0ef76cefa0c180b",
+  "verified_main": "b0e238b0903380a82c2875c9a6150a62b8fcf8e9",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 211,
-    "open_source_observation": 160,
+    "fixed_source_build_core": 213,
+    "open_source_observation": 158,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -32865,8 +32865,9 @@
       "severity": "low",
       "job": "20",
       "area": "gameplay_q1",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "b0e238b0903380a82c2875c9a6150a62b8fcf8e9"
     },
     {
       "id": "J21-01",
@@ -33081,8 +33082,9 @@
       "severity": "high",
       "job": "21",
       "area": "gameplay_q2",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "b0e238b0903380a82c2875c9a6150a62b8fcf8e9"
     },
     {
       "id": "J21-07",
@@ -33382,7 +33384,10 @@
       "job": "23",
       "area": "gameplay_q2",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "source review; no runtime or performance proof",
+      "partial_followups": [
+        "b0e238b0: summon companions and contiguous entries now use the existing monster record pool, including restore paths. Arbitrary authored demand can extend common backing; definition admission remains a follow-up."
+      ]
     },
     {
       "id": "J23-04",
@@ -34376,7 +34381,10 @@
       "job": "26",
       "area": "module_hosts",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "source review; no runtime or performance proof",
+      "partial_followups": [
+        "b0e238b0: SDK surface mapping is keyed by retained surface-name ID with descriptor equality inside that bucket, common arena records and existing guest encodings. First-use name/guest-address admission remains; no complete load-time surface-ID claim."
+      ]
     },
     {
       "id": "26-05",
@@ -36619,7 +36627,10 @@
       "job": "33",
       "area": "shared_gameplay",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "source review; no runtime or performance proof",
+      "partial_followups": [
+        "b0e238b0: admissions use reusable packed qa_pool pages from the inventory arena. Actual deeper nesting or a larger retained demand can extend common backing; no whole-frame allocation claim."
+      ]
     },
     {
       "id": "J33-04",
@@ -36645,7 +36656,10 @@
       "job": "33",
       "area": "shared_gameplay",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "source review; no runtime or performance proof",
+      "partial_followups": [
+        "b0e238b0: actor stores use a constructor-sized common record pool; creating owner is pinned through detached stores, entries and restore swaps. Larger outstanding generation demand can extend common backing."
+      ]
     },
     {
       "id": "J33-05",
@@ -36755,7 +36769,10 @@
       "job": "33",
       "area": "shared_gameplay",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "source review; no runtime or performance proof",
+      "partial_followups": [
+        "b0e238b0: observer table and records use a constructor-prepared common owner/pool; callback retirement and restore transfer preserve the owner. Larger retained replacement peaks can extend common backing."
+      ]
     },
     {
       "id": "J33-08",
@@ -43014,6 +43031,48 @@
       ],
       "record_directory": "/tmp/qa-ta3196-one-ordered-vector-rotation-20261012-v1",
       "conclusion": "Both landmark rotation copies deleted; shared ordered float Euler primitive preserves caller axis mapping and sign/conversion order. Normal build and seven core suites passed, with positive/negative noncommuting rotation checks."
+    },
+    {
+      "commit": "b0e238b0903380a82c2875c9a6150a62b8fcf8e9",
+      "source_tree": "f13cee87bb814d4b5980915999404f7cd224ce7f",
+      "finding_ids": [
+        "J20-10",
+        "J21-06"
+      ],
+      "files_rechecked": [
+        "include/qa/source_save.h",
+        "src/compat/native_host/host.c",
+        "src/compat/native_host/internal.h",
+        "src/compat/native_host/world.c",
+        "src/gameplay/inventory.c",
+        "src/gameplay/inventory_internal.h",
+        "src/gameplay/pickups.c",
+        "src/gameplay/pickups_internal.h",
+        "src/gameplay/q1/source_travel_state.c",
+        "src/gameplay/q2/game.c",
+        "src/gameplay/q2/monsters/ai.c",
+        "src/gameplay/q2/monsters/checkpoint.c",
+        "src/gameplay/q2/monsters/core.c",
+        "src/gameplay/q2/monsters/reinforcements.c",
+        "src/gameplay/q2/monsters/reinforcements.h",
+        "src/gameplay/q2/save/original_monsters.c",
+        "src/persistence/combat.c",
+        "src/persistence/inventory.c",
+        "src/persistence/pickups.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-gameplay-owner-storage-20261012-v1",
+      "conclusion": "Delete duplicate armor encoding; inventory store/admission and pickup observers use common pooled storage with preserved restore/callback custody. Q2 perception has constructor/restore-sized sealed storage. Reinforcement payloads use existing monster pool; native surfaces use common semantic name/value index. Additional authored/historical demand and native first-use guest allocation remain partial; no global zero-allocation claim."
     }
   ],
   "verification_limits": [

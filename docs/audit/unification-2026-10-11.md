@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `4632419f`.
+Follow-up source changes were reviewed through main `b0e238b0`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 211 have source fixes
+There are **374 overlapping source-review observations**: 213 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 160 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 158 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -406,3 +406,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `2d8e7c02` / J33-01, J24-01: Private builtin actor snapshot types and pools deleted from all source callers. Q1/Q2/Q3/QC scoped queries use common world storage; modes and bots retain constructor-sized borrowed arena backing. Original order, callback custody and bot save encoding preserved. Actual common-pool capacity and newly admitted authored candidate growth remain bounded by their owners; no full live or global zero-allocation claim. Records: `/tmp/qa-ta3196-one-world-snapshot-storage-20261012-v1`.
 
 - `4632419f` / J23-06: Both landmark rotation copies deleted; shared ordered float Euler primitive preserves caller axis mapping and sign/conversion order. Normal build and seven core suites passed, with positive/negative noncommuting rotation checks. Records: `/tmp/qa-ta3196-one-ordered-vector-rotation-20261012-v1`.
+
+- `b0e238b0` / J20-10, J21-06: Delete duplicate armor encoding; inventory store/admission and pickup observers use common pooled storage with preserved restore/callback custody. Q2 perception has constructor/restore-sized sealed storage. Reinforcement payloads use existing monster pool; native surfaces use common semantic name/value index. Additional authored/historical demand and native first-use guest allocation remain partial; no global zero-allocation claim. Records: `/tmp/qa-ta3196-common-gameplay-owner-storage-20261012-v1`.

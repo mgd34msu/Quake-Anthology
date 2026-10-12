@@ -125,46 +125,6 @@ static bool shake_step(qa_q1_game *g, q1_actor *e, qa_error *error) {
     e = effect(g, id);
     return ok && (finished || !e || q1_map_schedule(g, e, .05, Q1_MAP_ADDON_SHAKE_TICK, error));
 }
-static bool lightning_damage(qa_q1_game *g, qa_actor_id id, qa_vec3 start, qa_vec3 end,
-                               float damage, qa_error *error) {
-    qa_vec3 delta = qa_vec_sub(end, start);
-    qa_vec3 side = qa_v3(-delta.y * 16, -delta.y * 16, 0);
-    qa_actor_id hits[3] = {0};
-    unsigned count = 0;
-    for (unsigned i = 0; i < 3 && effect(g, id); ++i) {
-        qa_vec3 offset = i == 0 ? qa_v3(0, 0, 0) : i == 1 ? side : qa_vec_scale(side, -1);
-        qa_trace_result trace;
-        if (!q1_trace(g, qa_vec_add(start, offset), qa_vec_add(end, offset), id, true,
-                       &trace, error))
-            return false;
-        if (!effect(g, id))
-            return true;
-        if (trace.hit != QA_TRACE_HIT_ACTOR)
-            continue;
-        bool duplicate = false;
-        for (unsigned j = 0; j < count; ++j)
-            duplicate |= qa_actor_id_equal(hits[j], trace.actor);
-        if (duplicate)
-            continue;
-        hits[count++] = trace.actor;
-        qa_combat_state combat;
-        qa_error observed = {0};
-        bool damageable = qa_combat_read(g->services.combat, trace.actor, &combat, &observed) &&
-                          combat.can_take_damage;
-        if (!effect(g, id))
-            return true;
-        if (damageable && q1_alive(g, trace.actor)) {
-            if (!isfinite(damage * 4) || damage * 4 < (float)INT32_MIN || damage * 4 >= (float)INT32_MAX)
-                return q1_map_fail(error, "Q1 addon lightning particle count exceeds native range");
-            if (!particles(g, id, trace.end, qa_v3(0, 0, 100), 225, (int32_t)(damage * 4), error))
-                return false;
-            if (effect(g, id) && q1_alive(g, trace.actor) &&
-                !q1_damage(g, trace.actor, id, id, damage, QA_Q1_WEAPON_COUNT, error))
-                return false;
-        }
-    }
-    return true;
-}
 static bool lightning(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_error *error) {
     qa_actor_id id = e->id;
     uint32_t flags = e->spawnflags;
@@ -204,7 +164,11 @@ static bool lightning(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_erro
                                   .code = style == 1 ? 1 : style == 2 ? 2 : 3};
         ok = emit(g, &event, "lightning", error);
         if (ok && damage != 0 && effect(g, id))
-            ok = lightning_damage(g, id, start, trace.end, damage, error);
+            ok = q1_electric_rays(g, id, id, id, start, trace.end, damage, 0, 225,
+                qa_v3(0, 0, 100), Q1_LIGHTNING_PARTICLES | Q1_LIGHTNING_REMEMBER_BEFORE_READ |
+                Q1_LIGHTNING_IGNORE_READ_FAILURE | Q1_LIGHTNING_SOURCE_EVENT |
+                Q1_LIGHTNING_TRUNC_DAMAGE_COUNT | Q1_LIGHTNING_ADDON_OWNER,
+                QA_Q1_WEAPON_COUNT, NULL, error);
         qa_authored_target fields;
         if (!ok || !effect(g, id) || !q1_alive(g, target) || (flags & 4) ||
             !qa_targets_read(g->maps->options.targets, target, &fields) ||

@@ -1612,7 +1612,12 @@ enum {
     Q1_LIGHTNING_DAMAGE_FIRST = 1u,
     Q1_LIGHTNING_REMEMBER_ALL = 2u,
     Q1_LIGHTNING_PARTICLES = 4u,
-    Q1_LIGHTNING_WETSUIT = 8u
+    Q1_LIGHTNING_WETSUIT = 8u,
+    Q1_LIGHTNING_REMEMBER_BEFORE_READ = 16u,
+    Q1_LIGHTNING_IGNORE_READ_FAILURE = 32u,
+    Q1_LIGHTNING_SOURCE_EVENT = 64u,
+    Q1_LIGHTNING_TRUNC_DAMAGE_COUNT = 128u,
+    Q1_LIGHTNING_ADDON_OWNER = 256u
 };
 bool q1_lightning_rays(qa_q1_game *, qa_actor_id attacker, qa_actor_id inflictor, qa_vec3 start,
                        qa_vec3 end, float damage, float blood, int32_t color, qa_vec3 direction,
