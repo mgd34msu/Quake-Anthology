@@ -22,6 +22,7 @@ typedef struct event_store {
     application_unified_event_owner *owners;
     size_t owner_count, owner_capacity;
     uint64_t owner_generation;
+    qa_id_index dictionary_index;
     application_unified_event_resource *resources;
     size_t resource_count, resource_capacity;
     application_unified_event_registration *registrations;
@@ -174,6 +175,7 @@ static void dispose_store(event_store *store)
         }
         free(store->resources[i].custodies);
     }
+    qa_id_index_destroy(&store->dictionary_index);
     free(store->resources);
     free(store->registrations);
     if (store->world_text_borrowed) {
@@ -406,6 +408,8 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
     const qa_application_content_graph *graph = store->application ?
         qa_application_content_graph_read(store->application) : NULL;
     uint64_t previous_serial = 0;
+    qa_id_index_clear(&store->dictionary_index);
+    if (!qa_id_index_reserve(&store->dictionary_index, store->resource_count, io->error)) return false;
     for (size_t i = 0; i < store->resource_count; ++i) {
         application_unified_event_resource *row = store->resources + i;
         uint64_t pool = row->saved_pool, resource = row->saved_resource, view = row->saved_view;
@@ -446,6 +450,7 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
             return event_fail(io, QA_ERROR_FORMAT, "Source custody allocation lost its backing");
         for (size_t j = 0; j < row->custody_count; ++j)
             if (!custody_field(io, graph, row->custodies + j)) return false;
+        qa_id_index_insert(&store->dictionary_index, row->name, 0, i);
     }
     application_unified_world_text *text = store->world_text;
     for (size_t i = 0; i < store->world_text_count; ++i,
@@ -481,10 +486,12 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
             !qa_source_save_u64(io, &row->custody) || row->custody > store->resources[row->resource].custody_count)
             return event_fail(io, QA_ERROR_FORMAT, "Source registration lost its actual retained resource");
         row->kind = (qa_native_host_resource_kind)kind;
-        for (size_t j = 0; j < i; ++j)
-            if (row->provider == store->registrations[j].provider && row->path == store->registrations[j].path &&
-                row->kind == store->registrations[j].kind)
-                return event_fail(io, QA_ERROR_FORMAT, "Source registration repeats a current path");
+        uint64_t discriminator = application_unified_event_registration_discriminator(row->provider, row->kind);
+        if (qa_id_index_find(&store->dictionary_index, row->path, discriminator))
+            return event_fail(io, QA_ERROR_FORMAT, "Source registration repeats a current path");
+        if (!qa_id_index_reserve(&store->dictionary_index, 2, io->error)) return false;
+        qa_id_index_insert(&store->dictionary_index, row->path, discriminator, i);
+        qa_id_index_insert(&store->dictionary_index, row->provider, UINT64_MAX, i);
     }
     return true;
 }
@@ -571,7 +578,8 @@ static bool resource_bindings(event_store *store, qa_application *app, qa_error 
             qa_resource_retain(held->resource);
         }
     }
-    return true;
+    return application_unified_event_dictionary_index_build(&store->dictionary_index,
+        store->resources, store->resource_count, store->registrations, store->registration_count, error);
 }
 
 static bool rows(qa_source_save_io *io, event_store *store)
@@ -823,8 +831,10 @@ static void record_resource_uses(const event_store *store, const application_uni
 {
     if (!row->simulation || row->simulation->kind != QA_UNIFIED_SIMULATION_SOUND) return;
     qa_string_id id = row->simulation->value.sound.resource;
-    for (size_t i = 0; i < store->resource_count; ++i)
-        if (id && id==store->resources[i].name) used[i] = true;
+    if (!id) return;
+    qa_id_index_cursor cursor = qa_id_index_begin(&store->application->unified_event_dictionary_index, id, 0);
+    size_t index;
+    if (qa_id_index_next(&store->application->unified_event_dictionary_index, &cursor, &index)) used[index] = true;
 }
 
 static bool registration_rebuilt(const event_store *store,
@@ -894,6 +904,7 @@ bool application_events_save_capture(qa_application *app, qa_buffer *out, qa_err
     bool ok = qa_source_save_writer(&io, app->session, error) && prefix(&io, &store) &&
         rows(&io, &store) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
+    qa_id_index_destroy(&store.dictionary_index);
     free(store.resources); free(store.registrations);
     return ok;
 }
@@ -968,6 +979,7 @@ static void install_store(qa_application *app, event_store *store, uint64_t pend
     app->unified_event_registrations = store->registrations;
     app->unified_event_registration_count = store->registration_count;
     app->unified_event_registration_capacity = store->registration_capacity;
+    app->unified_event_dictionary_index = store->dictionary_index;
     ++app->unified_event_registration_revision;
     app->unified_world_text = store->world_text; app->unified_world_text_count = store->world_text_count;
     app->unified_world_text_last = store->application->unified_world_text_last;

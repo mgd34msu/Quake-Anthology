@@ -385,6 +385,7 @@ struct qa_application {
     application_unified_event_owner *unified_event_owners;
     size_t unified_event_owner_count, unified_event_owner_capacity;
     uint64_t unified_event_owner_generation;
+    qa_id_index unified_event_dictionary_index;
     application_unified_event_resource *unified_event_resources;
     size_t unified_event_resource_count, unified_event_resource_capacity;
     application_unified_event_registration *unified_event_registrations;

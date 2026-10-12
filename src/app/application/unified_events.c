@@ -50,6 +50,30 @@ bool application_unified_event_source_read(qa_application *app, qa_actor_owner o
 size_t application_unified_event_resource_count(const qa_application *app)
 { return app ? app->unified_event_resource_count : 0; }
 
+bool application_unified_event_dictionary_index_build(qa_id_index *index,
+    const application_unified_event_resource *resources, size_t resource_count,
+    const application_unified_event_registration *registrations, size_t registration_count,
+    qa_error *error)
+{
+    qa_id_index_clear(index);
+    for (size_t i = 0; i < resource_count; ++i) {
+        const application_unified_event_resource *row = resources + i;
+        if (!qa_id_index_reserve(index, 2 + row->custody_count, error)) return false;
+        qa_id_index_insert(index, row->name, 0, i);
+        qa_id_index_insert(index, 0, (uint64_t)(uintptr_t)row->resource, i);
+        for (size_t j = 0; j < row->custody_count; ++j)
+            qa_id_index_insert(index, 0, (uint64_t)(uintptr_t)row->custodies[j].resource, i);
+    }
+    for (size_t i = 0; i < registration_count; ++i) {
+        const application_unified_event_registration *row = registrations + i;
+        if (!qa_id_index_reserve(index, 2, error)) return false;
+        qa_id_index_insert(index, row->path,
+            application_unified_event_registration_discriminator(row->provider, row->kind), i);
+        qa_id_index_insert(index, row->provider, UINT64_MAX, i);
+    }
+    return true;
+}
+
 static bool bind_owner(qa_application *app, qa_actor_owner owner, const qa_product *product,
     bool unowned, qa_error *error)
 {
@@ -182,9 +206,11 @@ const application_unified_event_resource *application_unified_event_resource_at(
 
 const application_unified_event_resource *application_unified_event_resource_find(const qa_application *app,qa_string_id id)
 {
-    for (size_t i=0;app && id && i<app->unified_event_resource_count;++i)
-        if (app->unified_event_resources[i].name==id) return app->unified_event_resources+i;
-    return NULL;
+    if (!app || !id) return NULL;
+    qa_id_index_cursor cursor = qa_id_index_begin(&app->unified_event_dictionary_index, id, 0);
+    size_t index;
+    return qa_id_index_next(&app->unified_event_dictionary_index, &cursor, &index) ?
+        app->unified_event_resources + index : NULL;
 }
 const qa_resource *application_unified_event_resource_read(const qa_application *app,qa_string_id id)
 {
@@ -202,9 +228,11 @@ bool application_unified_event_resource_lookup_receipt(qa_application *app, qa_a
         return application_fail(error, QA_ERROR_ARGUMENT, "Source sound lookup lost its actual registration owner");
     *id = 0; *custody = 0; *found = false;
     if (!path) return true;
-    for (size_t i = 0; i < app->unified_event_registration_count; ++i) {
-        const application_unified_event_registration *row = app->unified_event_registrations + i;
-        if (row->provider != owner || row->kind != kind || row->path != path) continue;
+    qa_id_index_cursor cursor = qa_id_index_begin(&app->unified_event_dictionary_index, path,
+        application_unified_event_registration_discriminator(owner, kind));
+    size_t index;
+    if (qa_id_index_next(&app->unified_event_dictionary_index, &cursor, &index)) {
+        const application_unified_event_registration *row = app->unified_event_registrations + index;
         if (row->resource >= app->unified_event_resource_count ||
             row->custody > app->unified_event_resources[row->resource].custody_count)
             return application_fail(error, QA_ERROR_FORMAT, "Source sound registration lost its retained resource");
@@ -253,10 +281,7 @@ bool application_unified_event_resource_lookup(qa_application *app, qa_actor_own
 bool application_unified_event_registration_clear(qa_application *app, qa_actor_owner owner, qa_error *error)
 {
     if (!app || !owner) return application_fail(error, QA_ERROR_ARGUMENT, "Source registration retirement has no actual owner");
-    bool changed = false;
-    for (size_t i = 0; i < app->unified_event_registration_count; ++i)
-        if (app->unified_event_registrations[i].provider == owner) { changed = true; break; }
-    if (!changed) return true;
+    if (!qa_id_index_find(&app->unified_event_dictionary_index, owner, UINT64_MAX)) return true;
     if (app->unified_event_registration_revision == UINT64_MAX)
         return application_fail(error, QA_ERROR_FORMAT, "Source registration revision is exhausted");
     size_t kept = 0;
@@ -264,6 +289,9 @@ bool application_unified_event_registration_clear(qa_application *app, qa_actor_
         if (app->unified_event_registrations[i].provider != owner)
             app->unified_event_registrations[kept++] = app->unified_event_registrations[i];
     app->unified_event_registration_count = kept;
+    if (!application_unified_event_dictionary_index_build(&app->unified_event_dictionary_index,
+        app->unified_event_resources, app->unified_event_resource_count,
+        app->unified_event_registrations, kept, error)) return false;
     ++app->unified_event_registration_revision;
     return true;
 }
@@ -273,16 +301,16 @@ static bool registration_bind(qa_application *app, qa_actor_owner owner, qa_nati
 {
     qa_string_id name;
     if (!qa_strings_intern_cstr(qa_session_strings(app->session), path, &name, error)) return false;
-    size_t index = 0;
-    while (index < app->unified_event_registration_count &&
-        (app->unified_event_registrations[index].provider != owner ||
-         app->unified_event_registrations[index].path != name ||
-         app->unified_event_registrations[index].kind != kind)) ++index;
+    uint64_t discriminator = application_unified_event_registration_discriminator(owner, kind);
+    qa_id_index_entry *entry = qa_id_index_find(&app->unified_event_dictionary_index, name, discriminator);
+    size_t index = entry ? entry->value : app->unified_event_registration_count;
     if (index < app->unified_event_registration_count &&
         app->unified_event_registrations[index].resource == resource &&
         app->unified_event_registrations[index].custody == custody) return true;
     if (app->unified_event_registration_revision == UINT64_MAX)
         return application_fail(error, QA_ERROR_FORMAT, "Source registration revision is exhausted");
+    if (index == app->unified_event_registration_count &&
+        !qa_id_index_reserve(&app->unified_event_dictionary_index, 2, error)) return false;
     if (index == app->unified_event_registration_capacity) {
         size_t capacity = index ? index * 2 : 32;
         if (capacity < index || capacity > SIZE_MAX / sizeof(*app->unified_event_registrations))
@@ -292,7 +320,11 @@ static bool registration_bind(qa_application *app, qa_actor_owner owner, qa_nati
         app->unified_event_registrations = rows; app->unified_event_registration_capacity = capacity;
     }
     app->unified_event_registrations[index] = (application_unified_event_registration){owner, name, resource, kind, custody};
-    if (index == app->unified_event_registration_count) ++app->unified_event_registration_count;
+    if (index == app->unified_event_registration_count) {
+        qa_id_index_insert(&app->unified_event_dictionary_index, name, discriminator, index);
+        qa_id_index_insert(&app->unified_event_dictionary_index, owner, UINT64_MAX, index);
+        ++app->unified_event_registration_count;
+    }
     ++app->unified_event_registration_revision;
     return true;
 }
@@ -314,6 +346,7 @@ void application_unified_events_resources_dispose(qa_application *app)
         free(row->custodies);
         qa_resource_pool_destroy(row->pool);
     }
+    qa_id_index_destroy(&app->unified_event_dictionary_index);
     free(app->unified_event_resources);
     free(app->unified_event_registrations);
     app->unified_event_registrations = NULL;
@@ -358,15 +391,17 @@ static bool opening_equal(const qa_vfs_acquisition *a, const qa_vfs_acquisition 
         !memcmp(a->opening.order, b->opening.order, a->opening.order_count * sizeof(*a->opening.order));
 }
 
-static bool custody_retain(application_unified_event_resource *row, const qa_vfs *view,
+static bool custody_retain(qa_application *app, size_t resource_index, const qa_vfs *view,
     const qa_resource *resource, const qa_vfs_acquisition *opening, uint64_t *index, qa_error *error)
 {
+    application_unified_event_resource *row = app->unified_event_resources + resource_index;
     if (row->view == view && row->resource == resource && opening_equal(&row->opening, opening)) {
         *index = 0; return true;
     }
     for (size_t i = 0; i < row->custody_count; ++i)
         if (row->custodies[i].view == view && row->custodies[i].resource == resource &&
             opening_equal(&row->custodies[i].opening, opening)) { *index = i + 1; return true; }
+    if (!qa_id_index_reserve(&app->unified_event_dictionary_index, 1, error)) return false;
     if (row->custody_count == row->custody_capacity) {
         size_t capacity = row->custody_capacity ? row->custody_capacity * 2 : 4;
         if (capacity <= row->custody_capacity || capacity > SIZE_MAX / sizeof(*row->custodies)) {
@@ -387,6 +422,8 @@ static bool custody_retain(application_unified_event_resource *row, const qa_vfs
     held.view = (qa_vfs *)view; held.resource = (qa_resource *)resource; held.pool = qa_vfs_resources(view);
     qa_resource_retain(held.resource); qa_resource_pool_retain(held.pool);
     row->custodies[row->custody_count++] = held; *index = row->custody_count;
+    qa_id_index_insert(&app->unified_event_dictionary_index, 0,
+        (uint64_t)(uintptr_t)resource, resource_index);
     return true;
 }
 
@@ -404,19 +441,24 @@ bool application_unified_event_resource_register_acquired(qa_application *app, q
     const char *registration_path = opening->path;
     if (!pool || qa_resource_pool_find(pool, qa_resource_id(resource)) != resource)
         return application_fail(error, QA_ERROR_FORMAT, "Source acquired registration is outside its retained resource pool");
-    for (size_t i = 0; i < app->unified_event_resource_count; ++i) {
-        application_unified_event_resource *old = app->unified_event_resources + i;
+    qa_id_index_cursor cursor = qa_id_index_begin(&app->unified_event_dictionary_index, 0,
+        (uint64_t)(uintptr_t)resource);
+    size_t candidate, matched = SIZE_MAX;
+    while (qa_id_index_next(&app->unified_event_dictionary_index, &cursor, &candidate)) {
+        if (candidate >= matched) continue;
+        const application_unified_event_resource *old = app->unified_event_resources + candidate;
         bool same = old->resource == resource && opening_equal(&old->opening, opening);
         for (size_t j = 0; !same && j < old->custody_count; ++j)
             same = old->custodies[j].resource == resource && opening_equal(&old->custodies[j].opening, opening);
         if (same && !strcmp(qa_strings_cstr(qa_session_strings(app->session), old->content), source.product->identity) &&
-            !strcmp(qa_strings_cstr(qa_session_strings(app->session), old->path), registration_path)) {
-            uint64_t custody;
-            bool ok = custody_retain(app->unified_event_resources + i, view, resource, opening, &custody, error) &&
-                registration_bind(app, owner, kind, path, i, custody, error);
-            if (ok) *id=old->name;
-            return ok;
-        }
+            !strcmp(qa_strings_cstr(qa_session_strings(app->session), old->path), registration_path)) matched = candidate;
+    }
+    if (matched != SIZE_MAX) {
+        uint64_t custody;
+        bool ok = custody_retain(app, matched, view, resource, opening, &custody, error) &&
+            registration_bind(app, owner, kind, path, matched, custody, error);
+        if (ok) *id=app->unified_event_resources[matched].name;
+        return ok;
     }
     uint64_t serial = 0;
     if (app->unified_event_resource_count)
@@ -447,6 +489,7 @@ bool application_unified_event_resource_register_acquired(qa_application *app, q
             else { app->unified_event_resources = rows; app->unified_event_resource_capacity = capacity; }
         }
     }
+    if (ok) ok = qa_id_index_reserve(&app->unified_event_dictionary_index, 2, error);
     if (ok) {
         ok = qa_vfs_acquisition_copy(opening, &row.opening, error) && qa_vfs_retain((qa_vfs *)view, error);
         if (ok) row.view = (qa_vfs *)view;
@@ -457,6 +500,8 @@ bool application_unified_event_resource_register_acquired(qa_application *app, q
         qa_resource_retain(row.resource); qa_resource_pool_retain(pool);
         size_t index = app->unified_event_resource_count++;
         app->unified_event_resources[index] = row;
+        qa_id_index_insert(&app->unified_event_dictionary_index, row.name, 0, index);
+        qa_id_index_insert(&app->unified_event_dictionary_index, 0, (uint64_t)(uintptr_t)resource, index);
         ok = registration_bind(app, owner, kind, path, index, 0, error);
         if (ok) *id=row.name;
     } else {

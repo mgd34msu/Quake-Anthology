@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "be9e10286558b79f93d811d758498b79f3adab85",
+  "verified_main": "8b8b5eebff18491436aeaafefcec745993624f36",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 187,
-    "open_source_observation": 184,
+    "fixed_source_build_core": 188,
+    "open_source_observation": 183,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -26841,8 +26841,9 @@
       "severity": "medium",
       "job": "05",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "8b8b5eebff18491436aeaafefcec745993624f36"
     },
     {
       "id": "05-H2",
@@ -42308,6 +42309,29 @@
       ],
       "record_directory": "/tmp/qa-ta3196-shared-render-tree-20261012",
       "conclusion": "World visibility and Q1 mirror traversal now use one read-only BSP tree visitor with caller-owned scratch and caller-defined ordering, pruning and light-mask payload. Private traversal engines/types are deleted. Existing gameplay BSP fixture covers both child orders, between callbacks, payload propagation, pruning and early stop; normal production build and seven core suites passed. Original renderer policy remains caller data; no screenshot or performance claim."
+    },
+    {
+      "commit": "8b8b5eebff18491436aeaafefcec745993624f36",
+      "source_tree": "af54e838bd300c846564b661f103abf15b2b1be9",
+      "finding_ids": [
+        "05-H1"
+      ],
+      "files_rechecked": [
+        "src/app/application/supplies.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-supply-pools-20261012",
+      "conclusion": "Supply actor/timer payloads now use common per-pair pools backed by one retained arena, prepared to actual actor capacity and exact profile timer extent. Admission/spawn/cheat/capture vectors use independent control leases, and retired rows are returned only after the outer callback scope leaves. Timer activation, int32 arithmetic, save order and candidate restore custody remain unchanged. Normal production build and seven core suites passed. Additional nested admission/cold restore can extend common storage; deeper inventory admission allocations remain outside this slice, so no whole-frame zero-allocation or live/performance claim."
     }
   ],
   "verification_limits": [
