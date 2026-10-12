@@ -28,6 +28,27 @@ static bool index_value(const qa_id_index *index, qa_item_id item,
     return qa_id_index_next(index, &cursor, value);
 }
 
+static pickup_claim *pickup_for(const inventory_store *store, qa_item_id item)
+{
+    size_t value;
+    return index_value(&store->pickup_items, item, 0, &value) ?
+        (pickup_claim *)(uintptr_t)value : NULL;
+}
+
+static void pickup_token_release(inventory_store *store, const void *token)
+{
+    size_t value;
+    uint64_t token_id = (uint64_t)(uintptr_t)token;
+    while (index_value(&store->pickup_items, 0, token_id, &value)) {
+        pickup_claim *claim = (pickup_claim *)(uintptr_t)value;
+        *claim->link = claim->next;
+        if (claim->next) claim->next->link = claim->link;
+        qa_id_index_remove_value(&store->pickup_items, claim->item, 0, value);
+        qa_id_index_remove_value(&store->pickup_items, 0, token_id, value);
+        qa_pool_release(&store->storage_owner->pickup_records, claim->storage_slot);
+    }
+}
+
 static size_t local_index(const inventory_store *store, qa_item_id item)
 {
     size_t ordinal;
@@ -113,6 +134,7 @@ inventory_store *qa_inventory_store_create(qa_inventory *table, qa_error *e)
     *store = (inventory_store){.references = 1, .storage_owner = table, .storage_slot = slot};
     store->local_items.storage = &store->index_storage;
     store->definitions.storage = &store->index_storage;
+    store->pickup_items.storage = &store->index_storage;
     ++table->storage_leases;
     return store;
 }
@@ -177,7 +199,11 @@ void qa_inventory_store_drop(inventory_store *store)
         store->primary_index = NULL;
         qa_arena_destroy(&store->index_storage);
         pickup_claim *claim = store->pickups;
-        while (claim) { pickup_claim *next = claim->next; free(claim); claim = next; }
+        while (claim) {
+            pickup_claim *next = claim->next;
+            qa_pool_release(&store->storage_owner->pickup_records, claim->storage_slot);
+            claim = next;
+        }
         qa_inventory *owner = store->entries_owner;
         qa_inventory *storage_owner = store->storage_owner;
         if (owner) qa_pool_release_run(&owner->scratch_pages, store->entries_slot, store->entries_pages);
@@ -736,6 +762,8 @@ bool qa_inventory_create(qa_actor_registry *actors, qa_inventory **out, qa_error
             sizeof(inventory_store), _Alignof(inventory_store), e) ||
         !qa_pool_prepare(&table->source_records, &table->record_storage, 1,
             sizeof(inventory_source_index), _Alignof(inventory_source_index), e) ||
+        !qa_pool_prepare(&table->pickup_records, &table->record_storage, 0,
+            sizeof(pickup_claim), _Alignof(pickup_claim), e) ||
         !qa_pool_prepare(&table->admission_pages, &table->record_storage, 1,
             sizeof(qa_inventory_admission) + sizeof(admission_entry), _Alignof(qa_inventory_admission), e)) {
         qa_arena_destroy(&table->record_storage);
@@ -1061,8 +1089,7 @@ bool qa_inventory_bind_items(qa_inventory *table, qa_actor_id actor,
         for (size_t j = 0; j < i; ++j) if (group->items[j].definition.item == definition.item) {
             fail(e, QA_ERROR_ARGUMENT, "Duplicate source item definition"); goto failed;
         }
-        for (pickup_claim *claim = store->pickups; claim; claim = claim->next)
-            if (claim->item == definition.item) { fail(e, QA_ERROR_ARGUMENT, "Source item already has a pickup delegate"); goto failed; }
+        if (pickup_for(store, definition.item)) { fail(e, QA_ERROR_ARGUMENT, "Source item already has a pickup delegate"); goto failed; }
         if (!find_in(table, store, NULL, definition.item, &entry, &found, e)) goto failed;
         if (found != admission.replace_primary) { fail(e, QA_ERROR_ARGUMENT, "Source item admission conflicts with primary inventory"); goto failed; }
         size_t length = strlen(definition.label);
@@ -1080,8 +1107,7 @@ bool qa_inventory_bind_items(qa_inventory *table, qa_actor_id actor,
             fail(e, QA_ERROR_ARGUMENT, "Primary inventory changed during source item admission"); goto failed;
         }
         if (group_for(store, item)) { fail(e, QA_ERROR_ARGUMENT, "Source item ownership changed during admission"); goto failed; }
-        for (pickup_claim *claim = store->pickups; claim; claim = claim->next)
-            if (claim->item == item) { fail(e, QA_ERROR_ARGUMENT, "Source item acquired a pickup delegate during admission"); goto failed; }
+        if (pickup_for(store, item)) { fail(e, QA_ERROR_ARGUMENT, "Source item acquired a pickup delegate during admission"); goto failed; }
     }
     if (table->serial == UINT64_MAX) { fail(e, QA_ERROR_ARGUMENT, "Inventory lease serial exhausted"); goto failed; }
     if (group->count > (SIZE_MAX - 1) / 2 ||
@@ -1212,17 +1238,8 @@ bool qa_inventory_close_items(qa_inventory *table, qa_inventory_lease lease, qa_
         group->active = false;
         groups_reindex(store);
         for (size_t i = 0; !group->definitions_only && i < group->count; ++i) {
-            pickup_claim *claim = store->pickups;
-            while (claim && claim->item != group->items[i].definition.item) claim = claim->next;
-            if (claim) {
-                const void *token = claim->token;
-                pickup_claim **link = &store->pickups;
-                while (*link) {
-                    pickup_claim *candidate = *link;
-                    if (candidate->token == token) { *link = candidate->next; free(candidate); }
-                    else link = &candidate->next;
-                }
-            }
+            pickup_claim *claim = pickup_for(store, group->items[i].definition.item);
+            if (claim) pickup_token_release(store, claim->token);
         }
     }
     release_store(table, store); return true;
@@ -1668,15 +1685,27 @@ bool qa_inventory_pickup_claim(qa_inventory *table, qa_actor_id actor, qa_item_i
         if (store) release_store(table, store);
         return fail(e, QA_ERROR_ARGUMENT, "Invalid inventory pickup claim");
     }
-    bool ok = true;
-    for (pickup_claim *claim = store->pickups; claim; claim = claim->next)
-        if (claim->item == item) {
-            ok = claim->token == token || fail(e, QA_ERROR_ARGUMENT, "Inventory item already has a pickup delegate");
-            release_store(table, store); return ok;
+    pickup_claim *claim = pickup_for(store, item);
+    if (claim) {
+        bool ok = claim->token == token || fail(e, QA_ERROR_ARGUMENT, "Inventory item already has a pickup delegate");
+        release_store(table, store); return ok;
+    }
+    bool ok = qa_id_index_reserve(&store->pickup_items, 2, e);
+    size_t slot;
+    if (ok) {
+        qa_inventory *owner = store->storage_owner;
+        claim = record_take(owner, &owner->pickup_records, 1, &slot, e);
+        if (!claim) ok = fail(e, QA_ERROR_MEMORY, "Cannot allocate inventory pickup claim");
+        else {
+            *claim = (pickup_claim){.next = store->pickups, .item = item, .token = token,
+                .link = &store->pickups, .storage_slot = slot};
+            if (claim->next) claim->next->link = &claim->next;
+            store->pickups = claim;
+            qa_id_index_insert(&store->pickup_items, item, 0, (size_t)(uintptr_t)claim);
+            qa_id_index_insert(&store->pickup_items, 0, (uint64_t)(uintptr_t)token,
+                (size_t)(uintptr_t)claim);
         }
-    pickup_claim *claim = malloc(sizeof(*claim));
-    if (!claim) ok = fail(e, QA_ERROR_MEMORY, "Cannot allocate inventory pickup claim");
-    else { *claim = (pickup_claim){store->pickups, item, token}; store->pickups = claim; }
+    }
     release_store(table, store); return ok;
 }
 
@@ -1684,9 +1713,8 @@ bool qa_inventory_pickup_current(qa_inventory *table, qa_actor_id actor, qa_item
 {
     inventory_store *store = acquire(table, actor);
     if (!store) return false;
-    bool found = false;
-    for (pickup_claim *claim = store->pickups; claim; claim = claim->next)
-        if (claim->item == item && claim->token == token) { found = true; break; }
+    pickup_claim *claim = pickup_for(store, item);
+    bool found = claim && claim->token == token;
     release_store(table, store); return found;
 }
 
@@ -1696,10 +1724,8 @@ bool qa_inventory_pickup_storage_current(const qa_inventory *table,qa_actor_id a
     if (!table || actor.slot >= table->capacity || !qa_actors_get(table->actors, actor)) return false;
     inventory_store *store = table->stores[actor.slot];
     if (!store || !store->attached || !qa_actor_id_equal(store->actor, actor)) return false;
-    bool claimed = false;
-    for (const pickup_claim *claim = store->pickups; claim; claim = claim->next)
-        if (claim->item == item && claim->token == token) { claimed = true; break; }
-    if (!claimed) return false;
+    const pickup_claim *claim = pickup_for(store, item);
+    if (!claim || claim->token != token) return false;
     const item_group *group = group_for(store, item);
     return group ? group->serial == serial && group->owner == owner : store->serial == serial;
 }
@@ -1708,12 +1734,7 @@ void qa_inventory_pickup_release(qa_inventory *table, qa_actor_id actor, const v
 {
     inventory_store *store = acquire(table, actor);
     if (!store) return;
-    pickup_claim **link = &store->pickups;
-    while (*link) {
-        pickup_claim *claim = *link;
-        if (claim->token == token) { *link = claim->next; free(claim); }
-        else link = &claim->next;
-    }
+    if (token) pickup_token_release(store, token);
     release_store(table, store);
 }
 

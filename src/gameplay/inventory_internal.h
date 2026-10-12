@@ -42,7 +42,7 @@ typedef struct inventory_store {
     size_t entries_slot, entries_pages;
     size_t count, capacity;
     qa_arena index_storage;
-    qa_id_index local_items, definitions;
+    qa_id_index local_items, definitions, pickup_items;
     inventory_source_index *primary_index;
     qa_inventory_binding primary;
     item_group *groups;
@@ -66,6 +66,8 @@ typedef struct pickup_claim {
     struct pickup_claim *next;
     qa_item_id item;
     const void *token;
+    struct pickup_claim **link;
+    size_t storage_slot;
 } pickup_claim;
 struct qa_inventory {
     qa_actor_registry *actors;
@@ -75,7 +77,7 @@ struct qa_inventory {
     size_t calls;
     qa_operation *operations[4];
     qa_arena record_storage;
-    qa_pool store_records, admission_pages, source_records;
+    qa_pool store_records, admission_pages, source_records, pickup_records;
     qa_arena scratch_storage;
     qa_pool scratch_pages;
     size_t storage_leases;
