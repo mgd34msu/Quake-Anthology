@@ -223,59 +223,52 @@ bool qa_q2_connect_write(qa_net_writer*w,const qa_q2_connect_request*q) {
     }
     return raw(w,line)&&raw(w,"\n");
 }
-typedef struct pair {
-    char key[1024],value[8193];
+enum { KEX_INFO_PAIRS=256, KEX_INFO_KEY_BYTES=1024, KEX_INFO_VALUE_BYTES=8193 };
+typedef struct kex_info_pair {
+    qa_bytes key,value;
     bool selected;
-}
-pair;
-static bool info_pairs(const char*text,pair*p,size_t*count,qa_error*e) {
+} kex_info_pair;
+static bool kex_info_read(const char*text,kex_info_pair*p,size_t*count,qa_error*e) {
     *count=0;
-    const char*s=text;
-    if(*s=='\\')s++;
-    while(*s) {
-        if(*count>=256)goto invalid;
-        const char*mid=strchr(s,'\\');
-        if(!mid||mid==s)goto invalid;
-        const char*end=strchr(mid+1,'\\');
-        if(!end)end=mid+1+strlen(mid+1);
-        size_t kn=(size_t)(mid-s),vn=(size_t)(end-mid-1);
-        if(kn>=sizeof(p[0].key)||vn>=sizeof(p[0].value))goto invalid;
-        memcpy(p[*count].key,s,kn);
-        p[*count].key[kn]=0;
-        memcpy(p[*count].value,mid+1,vn);
-        p[*count].value[vn]=0;
-        p[*count].selected=false;
-        (*count)++;
-        s=*end?end+1:end;
+    const char*cursor=text;
+    while(*cursor) {
+        if(cursor[0]=='\\'&&!cursor[1])break;
+        qa_bytes key,value;
+        if(*count>=KEX_INFO_PAIRS||!qa_info_next(&cursor,&key,&value)||
+            !key.size||key.size>=KEX_INFO_KEY_BYTES||value.size>=KEX_INFO_VALUE_BYTES)goto invalid;
+        p[(*count)++]=(kex_info_pair){key,value,false};
     }
     return true;
     invalid:qa_error_set(e,QA_ERROR_FORMAT,0,"Invalid KEX userinfo pairs");
     return false;
 }
-static bool suffix(const char*key,size_t*base,uint64_t*seat) {
-    const char*p=strrchr(key,'_');
-    if(!p||!p[1])return false;
+static bool suffix(qa_bytes key,size_t*base,uint64_t*seat) {
+    size_t start=key.size;
+    while(start&&key.data[start-1]!='_')--start;
+    if(!start||start==key.size)return false;
     uint64_t n=0;
-    for(const char*s=p+1;*s;s++) {
-        if(*s<'0'||*s>'9')return false;
-        if(n>UINT64_MAX/10||(n==UINT64_MAX/10&&(unsigned)(*s-'0')>UINT64_MAX%10))return false;
-        n=n*10+(unsigned)(*s-'0');
+    for(size_t i=start;i<key.size;i++) {
+        unsigned digit=key.data[i];
+        if(digit<'0'||digit>'9')return false;
+        digit-='0';
+        if(n>UINT64_MAX/10||(n==UINT64_MAX/10&&digit>UINT64_MAX%10))return false;
+        n=n*10+digit;
     }
-    *base=(size_t)(p-key);
+    *base=start-1;
     *seat=n;
     return true;
 }
-static bool append_pair(char*out,size_t cap,size_t*used,const char*key,const char*value,qa_error*e) {
-    size_t k=strlen(key),v=strlen(value);
+static bool append_pair(char*out,size_t cap,size_t*used,qa_bytes key,qa_bytes value,qa_error*e) {
+    size_t k=key.size,v=value.size;
     if(k>cap||v>cap||*used>=cap||k+v+2>=cap-*used) {
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"KEX userinfo exceeds output capacity");
         return false;
     }
     out[(*used)++]='\\';
-    memcpy(out+*used,key,k);
+    memcpy(out+*used,key.data,k);
     *used+=k;
     out[(*used)++]='\\';
-    memcpy(out+*used,value,v);
+    memcpy(out+*used,value.data,v);
     *used+=v;
     out[*used]=0;
     return true;
@@ -285,13 +278,9 @@ bool qa_q2_kex_seat_userinfo(const char*text,unsigned seat,char*out,size_t cap,q
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"Invalid KEX seat userinfo arguments");
         return false;
     }
-    pair*p=calloc(256,sizeof(*p));
-    if(!p) {
-        qa_error_set(e,QA_ERROR_MEMORY,0,"KEX userinfo allocation failed");
-        return false;
-    }
+    kex_info_pair p[KEX_INFO_PAIRS];
     size_t count=0,used=0;
-    bool ok=info_pairs(text,p,&count,e);
+    bool ok=kex_info_read(text,p,&count,e);
     out[0]=0;
     if(ok) {
         for(size_t i=0;i<count;i++) {
@@ -299,25 +288,24 @@ bool qa_q2_kex_seat_userinfo(const char*text,unsigned seat,char*out,size_t cap,q
             uint64_t id;
             if(suffix(p[i].key,&base,&id)) {
                 if(id==seat) {
-                    p[i].key[base]=0;
+                    p[i].key.size=base;
                     p[i].selected=true;
-                } else p[i].key[0]=0;
+                } else p[i].key.size=0;
             }
         }
         for(size_t i=0;i<count&&ok;i++) {
-            if(!p[i].key[0])continue;
+            if(!p[i].key.size)continue;
             bool skip=false;
             size_t chosen=i;
-            for(size_t j=0;j<i;j++)if(!strcmp(p[j].key,p[i].key)) {
+            for(size_t j=0;j<i;j++)if(qa_info_key_equal(p[j].key,p[i].key,0)) {
                 skip=true;
                 break;
             }
             if(skip)continue;
-            for(size_t j=i+1;j<count;j++)if(!strcmp(p[j].key,p[i].key)&&(p[j].selected||!p[chosen].selected))chosen=j;
+            for(size_t j=i+1;j<count;j++)if(qa_info_key_equal(p[j].key,p[i].key,0)&&(p[j].selected||!p[chosen].selected))chosen=j;
             ok=append_pair(out,cap,&used,p[i].key,p[chosen].value,e);
         }
     }
-    free(p);
     return ok;
 }
 bool qa_q2_kex_client_userinfo(const char*text,char*out,size_t cap,qa_error*e) {
@@ -325,28 +313,25 @@ bool qa_q2_kex_client_userinfo(const char*text,char*out,size_t cap,qa_error*e) {
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"Invalid KEX client userinfo arguments");
         return false;
     }
-    pair*p=calloc(256,sizeof(*p));
-    if(!p) {
-        qa_error_set(e,QA_ERROR_MEMORY,0,"KEX userinfo allocation failed");
-        return false;
-    }
+    kex_info_pair p[KEX_INFO_PAIRS];
     size_t count=0;
-    bool ok=info_pairs(text,p,&count,e)&&copy_text(out,cap,text,e);
+    bool ok=kex_info_read(text,p,&count,e)&&copy_text(out,cap,text,e);
     size_t used=ok?strlen(out):0;
     for(size_t i=0;i<count&&ok;i++) {
         size_t base;
         uint64_t seat;
         if(suffix(p[i].key,&base,&seat))continue;
-        char key[1027];
-        snprintf(key,sizeof(key),"%s_0",p[i].key);
+        uint8_t key[KEX_INFO_KEY_BYTES+3];
+        memcpy(key,p[i].key.data,p[i].key.size);
+        memcpy(key+p[i].key.size,"_0",2);
+        qa_bytes expanded={key,p[i].key.size+2};
         bool exists=false;
-        for(size_t j=0;j<count;j++)if(!strcmp(p[j].key,key)) {
+        for(size_t j=0;j<count;j++)if(qa_info_key_equal(p[j].key,expanded,0)) {
             exists=true;
             break;
         }
-        if(!exists)ok=append_pair(out,cap,&used,key,p[i].value,e);
+        if(!exists)ok=append_pair(out,cap,&used,expanded,p[i].value,e);
     }
-    free(p);
     return ok;
 }
 bool qa_q2_challenges_create(size_t capacity,qa_q2_random_fn random,void*user,qa_q2_challenges**out,qa_error*e) {

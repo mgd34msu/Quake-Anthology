@@ -2425,6 +2425,48 @@ static qa_net_send_result kex_capture(void *context, qa_bytes bytes, qa_error *e
     ++out->accepted;
     return QA_NET_SEND_ACCEPTED;
 }
+static void test_kex_userinfo_projection(void)
+{
+    qa_error error = {0};
+    char out[16385];
+    const char *input = "\\name\\base\\name_1\\early\\rate\\25000\\name\\later\\name_1\\last\\name_0\\other";
+    CHECK(qa_q2_kex_seat_userinfo(input, 1, out, sizeof(out), &error));
+    CHECK(!strcmp(out, "\\name\\last\\rate\\25000"));
+    CHECK(qa_q2_kex_seat_userinfo(input, 0, out, sizeof(out), &error));
+    CHECK(!strcmp(out, "\\name\\other\\rate\\25000"));
+    CHECK(qa_q2_kex_seat_userinfo(input, 7, out, sizeof(out), &error));
+    CHECK(!strcmp(out, "\\name\\later\\rate\\25000"));
+    CHECK(qa_q2_kex_client_userinfo("\\a\\first\\a\\second\\a_1\\seat", out, sizeof(out), &error));
+    CHECK(!strcmp(out, "\\a\\first\\a\\second\\a_1\\seat\\a_0\\first\\a_0\\second"));
+    CHECK(qa_q2_kex_client_userinfo("\\a\\base\\a_0\\chosen", out, sizeof(out), &error));
+    CHECK(!strcmp(out, "\\a\\base\\a_0\\chosen"));
+    CHECK(qa_q2_kex_seat_userinfo("\\a_18446744073709551616\\ordinary\\a_1\\selected", 1, out, sizeof(out), &error));
+    CHECK(!strcmp(out, "\\a_18446744073709551616\\ordinary\\a\\selected"));
+    CHECK(qa_q2_kex_seat_userinfo("\\", 0, out, sizeof(out), &error) && !out[0]);
+    CHECK(qa_q2_kex_seat_userinfo("\\empty\\\\tail\\v\\", 0, out, sizeof(out), &error));
+    CHECK(!strcmp(out, "\\empty\\\\tail\\v"));
+    CHECK(!qa_q2_kex_seat_userinfo("name", 0, out, sizeof(out), &error));
+    CHECK(!qa_q2_kex_seat_userinfo("\\\\bad", 0, out, sizeof(out), &error));
+    CHECK(!qa_q2_kex_seat_userinfo("\\a\\b\\\\tail\\v", 0, out, sizeof(out), &error));
+    CHECK(qa_q2_kex_seat_userinfo("\\a\\b", 0, out, 5, &error) && !strcmp(out, "\\a\\b"));
+    CHECK(!qa_q2_kex_seat_userinfo("\\a\\b", 0, out, 4, &error));
+    char many[257 * 4 + 1];
+    for (size_t i = 0; i < 257; ++i) memcpy(many + i * 4, "\\k\\v", 4);
+    many[256 * 4] = 0;
+    CHECK(qa_q2_kex_seat_userinfo(many, 0, out, sizeof(out), &error) && !strcmp(out, "\\k\\v"));
+    memcpy(many + 256 * 4, "\\k\\v", 5);
+    CHECK(!qa_q2_kex_seat_userinfo(many, 0, out, sizeof(out), &error));
+    char widths[1024 + 8193 + 3];
+    widths[0] = '\\'; memset(widths + 1, 'k', 1023); widths[1024] = '\\';
+    memset(widths + 1025, 'v', 8192); widths[9217] = 0;
+    CHECK(qa_q2_kex_seat_userinfo(widths, 0, out, sizeof(out), &error));
+    CHECK(strlen(out) == 9217 && !memcmp(out, widths, 9218));
+    widths[9217] = 'v'; widths[9218] = 0;
+    CHECK(!qa_q2_kex_seat_userinfo(widths, 0, out, sizeof(out), &error));
+    widths[1024] = 'k'; widths[1025] = '\\'; widths[1026] = 0;
+    CHECK(!qa_q2_kex_seat_userinfo(widths, 0, out, sizeof(out), &error));
+}
+
 static void test_kex_direct_delivery(void)
 {
     qa_error error={0};qa_net_loopback *hub;qa_net_transport *server,*client;
@@ -3378,6 +3420,7 @@ int main(int argc, char **argv)
     test_dosbox_loopback();
     test_loopback_nq_signon();
     test_kex_send_admission();
+    test_kex_userinfo_projection();
     test_kex_direct_delivery();
     test_nq_send_admission();
     test_q3_send_admission();
