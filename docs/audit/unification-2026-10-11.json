@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "7d3f6cc253d1e8d0bc5e2abe8f0d240a62d65f29",
+  "verified_main": "f71e825cf7ec939bbef4136da4364a89049e35ad",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 141,
-    "open_source_observation": 230,
+    "fixed_source_build_core": 142,
+    "open_source_observation": 229,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -29597,8 +29597,9 @@
       "severity": "medium",
       "job": "14",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source review of retained provider/metadata/map identity and previous-publication selection; matching normal build and seven core suites. No live audio or timing proof.",
+      "fixed_commit": "f71e825cf7ec939bbef4136da4364a89049e35ad"
     },
     {
       "id": "J14-11",
@@ -41006,6 +41007,32 @@
       ],
       "record_directory": "/tmp/qa-ta3196-common-tag-attachment-20261012",
       "conclusion": "One tag sampler/composition body serves all seventeen production attachment calls; selected_attach deleted and selected-character duplicate sampling removed. Seeded origin uses ordered common vector MA; child-pose origin/axes retain their original grouping, field copies and required/skip/identity tag behavior. Item axes and binary32-dot/double-sqrt pose normalization use existing common policies. Normal production build/seven suites passed; no live visual fidelity or timing claim."
+    },
+    {
+      "commit": "f71e825cf7ec939bbef4136da4364a89049e35ad",
+      "source_tree": "3315a678b76dab763b61b283193c7debb41973da",
+      "finding_ids": [
+        "J14-10"
+      ],
+      "files_rechecked": [
+        "src/app/frontend/music_sources.c",
+        "src/app/frontend/music_sources_private.h",
+        "src/session/configuration/transaction.c",
+        "src/app/frontend/config_store.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-retained-world-music-20261012",
+      "conclusion": "WORLD music retains metadata lease, provider identity and map revision; unchanged effective publication/configuration generation avoids provider-name lookup. Actual replacement invalidates; previous-publication selection and explicit CGAME override retained. No live or timing claim."
     }
   ],
   "verification_limits": [

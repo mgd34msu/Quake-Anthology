@@ -155,6 +155,7 @@ static void dispose_store(event_store *store)
         if (store->persistent[i].lease) qa_event_lease_release(store->persistent[i].lease);
     free(store->persistent);
     qa_event_ring_destroy(&store->pages);
+    if (store->application) application_events_projection_dispose(store->application);
     free(store->owners);
     for (size_t i = 0; store->resources && i < store->resource_count; ++i) {
         qa_buffer_free(&store->resources[i].key);
@@ -942,6 +943,8 @@ static void install_store(qa_application *app, event_store *store, uint64_t pend
     application_unified_events_resources_dispose(app);
     application_unified_world_text_destroy(app);
     app->event_ring = store->pages;
+    app->event_projection = store->application->event_projection;
+    store->application->event_projection = NULL;
     app->event_write = NULL;
     app->event_local_cursor = pending_first;
     /* Module reliable state is restored separately; retained presentation is not a new send. */
@@ -978,6 +981,7 @@ bool application_events_save_restore(qa_application *app, qa_bytes bytes, qa_err
     if (normalized.data) bytes = (qa_bytes){normalized.data, normalized.size};
     qa_application staging = *app;
     staging.event_ring = NULL;
+    staging.event_projection = NULL;
     staging.event_write = NULL;
     staging.event_subscribers = NULL;
     staging.unified_persistent = NULL;

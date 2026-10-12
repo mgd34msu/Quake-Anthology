@@ -644,15 +644,7 @@ static bool entity_read(qa_application *app, application_native_q1_wire_source *
     qa_physics_properties physics;
     value.step = !player && qa_q1_game_physics_read(source->provider->state.q1, actor, &physics) &&
                  physics.motion == QA_PHYSICS_STEP;
-    qa_application_event_range events = {.next = qa_application_events_local_first(app),
-        .end = qa_application_events_next(app)};
-    qa_application_event_view output;
-    while (qa_application_event_raw_next(app, &events,
-        UINT64_C(1) << QA_APPLICATION_EVENT_BUILTIN, &output)) {
-        const qa_builtin_event event = *output.value.builtin;
-        if (event.family == QA_GAME_Q1 &&
-            event.kind == QA_BUILTIN_MUZZLE && qa_actor_id_equal(event.actor, actor)) value.effects |= 2;
-    }
+    if (application_events_local_q1_muzzle(app, actor)) value.effects |= 2;
     vector(value.origin, visual.body.origin); vector(value.angles, visual.body.angles);
     uint32_t current_slot;
     if (application_world_provider(app, QA_ROLE_ENTITIES, "") != source->provider ||

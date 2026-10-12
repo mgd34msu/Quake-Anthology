@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `7d3f6cc2`.
+Follow-up source changes were reviewed through main `f71e825c`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 141 have source fixes
+There are **374 overlapping source-review observations**: 142 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 230 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 229 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -284,3 +284,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 | `07-03` partial | `76b76d8f` | All discovery callers and completion custody use common arenas; strided names remove the temporary copy. Existing core behavior cases passed with normal build/seven suites. Load-sized/no-growth work remains open. |
 
 | `31-09` | `7d3f6cc2` | One Q3 tag attachment body; original arithmetic, fields and missing-tag rules are caller policy. Shared item axes and pose normalization. Normal build/seven suites passed; no live visual or timing claim. |
+
+| `J14-10` | `f71e825c` | WORLD music identity retained across unchanged publications; replacement and startup previous-selection rules preserved. Normal build/seven suites passed; no live audio or timing claim. |

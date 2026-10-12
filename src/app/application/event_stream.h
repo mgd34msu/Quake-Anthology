@@ -10,6 +10,7 @@
 typedef struct application_event_record {
     qa_builtin_event event;
     qa_application_q2_audience q2_audience;
+    uint64_t previous_q1_muzzle;
 } application_event_record;
 
 typedef struct application_q2_map_event_record {
@@ -75,6 +76,8 @@ typedef struct application_event_write {
 
 bool application_event_stream_create(qa_application *, size_t actor_capacity, qa_error *);
 void application_event_stream_dispose(qa_application *);
+void application_events_projection_dispose(qa_application *);
+bool application_events_local_q1_muzzle(const qa_application *, qa_actor_id);
 void application_events_retire(qa_application *);
 bool application_event_stream_begin(qa_application *, qa_application_event_kind,
     application_event_write *, qa_error *);

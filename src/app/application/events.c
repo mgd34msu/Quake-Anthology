@@ -28,6 +28,53 @@
 #include <stdlib.h>
 #include <string.h>
 
+struct application_event_projection {
+    qa_arena storage;
+    qa_id_index slots;
+    uint64_t registry, *heads;
+    size_t capacity;
+};
+
+void application_events_projection_dispose(qa_application *app)
+{
+    struct application_event_projection *projection = app->event_projection;
+    if (!projection) return;
+    qa_id_index_destroy(&projection->slots);
+    qa_arena_destroy(&projection->storage);
+    free(projection);
+    app->event_projection = NULL;
+}
+
+static bool event_projection_create(qa_application *app, qa_error *error)
+{
+    const qa_actor_registry *registry = qa_session_actors(app->session);
+    size_t capacity = qa_actors_capacity(registry);
+    if (!capacity) return true;
+    struct application_event_projection *projection = calloc(1, sizeof(*projection));
+    if (!projection)
+        return application_fail(error, QA_ERROR_MEMORY, "Allocating event projection owner");
+    app->event_projection = projection;
+    projection->registry = qa_actors_identity(registry);
+    projection->capacity = capacity;
+    projection->slots.storage = &projection->storage;
+    if (projection->capacity > SIZE_MAX / sizeof(*projection->heads) ||
+        !qa_id_index_reserve(&projection->slots, projection->capacity, error)) {
+        if (projection->capacity > SIZE_MAX / sizeof(*projection->heads))
+            application_fail(error, QA_ERROR_MEMORY, "Event projection capacity overflows");
+        application_events_projection_dispose(app);
+        return false;
+    }
+    size_t bytes = projection->capacity * sizeof(*projection->heads);
+    projection->heads = qa_arena_alloc(&projection->storage, bytes, _Alignof(uint64_t), error);
+    if (!projection->heads) {
+        application_events_projection_dispose(app);
+        return false;
+    }
+    memset(projection->heads, 0, bytes);
+    qa_arena_seal(&projection->storage);
+    return true;
+}
+
 static bool valid_string(const qa_application *application, qa_string_id id)
 {
     return id == QA_STRING_NONE ||
@@ -165,6 +212,7 @@ bool application_event_stream_create(qa_application *app, size_t actors, qa_erro
     if (!app->unified_persistent)
         return application_fail(error, QA_ERROR_MEMORY, "Allocating load-sized persistent event slots");
     app->unified_persistent_capacity = records+command_slots;
+    if (!event_projection_create(app, error)) return false;
     app->event_local_cursor = 1;
     app->event_source_cursor = 1;
     app->event_peer_cursor = UINT64_MAX;
@@ -212,6 +260,18 @@ bool application_event_stream_commit(qa_application *app, application_event_writ
         application_event_stream_abort(app, write, error);
         return false;
     }
+    struct application_event_projection *projection = app->event_projection;
+    uint64_t *head = NULL;
+    uint32_t slot = 0;
+    if (projection && write->envelope->kind == QA_APPLICATION_EVENT_BUILTIN) {
+        const qa_builtin_event *event = &write->envelope->raw.builtin.event;
+        if (event->family == QA_GAME_Q1 && event->kind == QA_BUILTIN_MUZZLE &&
+            event->actor.registry == projection->registry && event->actor.slot < projection->capacity) {
+            slot = event->actor.slot;
+            head = projection->heads + slot;
+            write->envelope->raw.builtin.previous_q1_muzzle = *head;
+        }
+    }
     uint64_t id = qa_event_ring_commit(&write->transaction, write->envelope);
     app->event_write = NULL;
     if (!id) {
@@ -219,6 +279,11 @@ bool application_event_stream_commit(qa_application *app, application_event_writ
         app->simulation_event_sequence = write->simulation_before;
         if (error) *error = (qa_error){0};
         return false;
+    }
+    if (head) {
+        if (!qa_id_index_find(&projection->slots, slot, 0))
+            qa_id_index_insert(&projection->slots, slot, 0, slot);
+        *head = id;
     }
     application_unified_persistent_publish(app, write->envelope);
     if (write->envelope->world_text)
@@ -1244,6 +1309,25 @@ uint64_t qa_application_events_local_first(const qa_application *app)
 { return app ? app->event_local_cursor : 1; }
 uint64_t qa_application_events_next(const qa_application *app)
 { return app && app->event_ring ? qa_event_ring_next(app->event_ring) : 1; }
+bool application_events_local_q1_muzzle(const qa_application *app, qa_actor_id actor)
+{
+    const struct application_event_projection *projection = app ? app->event_projection : NULL;
+    if (!projection || actor.registry != projection->registry || actor.slot >= projection->capacity)
+        return false;
+    qa_id_index_cursor cursor = qa_id_index_begin(&projection->slots, actor.slot, 0);
+    size_t slot;
+    if (!qa_id_index_next(&projection->slots, &cursor, &slot)) return false;
+    uint64_t first = qa_application_events_first(app), end = qa_application_events_next(app);
+    uint64_t local = qa_application_events_local_first(app);
+    if (local > first) first = local;
+    for (uint64_t id = projection->heads[slot]; id >= first && id < end;) {
+        const application_event_envelope *record = application_event_stream_at(app, id);
+        if (!record) break;
+        if (qa_actor_id_equal(record->raw.builtin.event.actor, actor)) return true;
+        id = record->raw.builtin.previous_q1_muzzle;
+    }
+    return false;
+}
 qa_event_lease *qa_application_event_retain(qa_application *app,uint64_t id)
 { return app ? qa_event_ring_retain(app->event_ring,id) : NULL; }
 uint64_t qa_application_events_output_failures(const qa_application *app)
@@ -1280,6 +1364,7 @@ void application_event_stream_dispose(qa_application *app)
     }
     event_records_release(app,qa_application_events_next(app));
     qa_event_ring_destroy(&app->event_ring);
+    application_events_projection_dispose(app);
 }
 void qa_application_events_subscribe(qa_application *app,qa_application_event_subscription *reader)
 {

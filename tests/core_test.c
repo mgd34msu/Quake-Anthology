@@ -1531,6 +1531,47 @@ static void test_ring_console_capture(void)
     qa_console_destroy(test.app.console);
     application_event_stream_dispose(&test.app);free(test.app.unified_persistent);
 }
+static void test_q1_muzzle_projection(void)
+{
+    qa_application app={0};qa_error error={0};
+    CHECK(qa_session_create(&(qa_session_options){.actor_capacity=2,.component_capacity=1},&app.session,&error));
+    CHECK(application_event_stream_create(&app,16,&error));
+    uint64_t registry=qa_actors_identity(qa_session_actors(app.session));
+    qa_actor_id current={.registry=registry,.slot=0,.generation=2};
+    qa_actor_id previous=current;previous.generation=1;
+    qa_actor_id aborted=current;aborted.generation=3;
+    application_event_write write;
+    CHECK(application_event_stream_begin(&app,QA_APPLICATION_EVENT_BUILTIN,&write,&error));
+    write.envelope->raw.builtin.event=(qa_builtin_event){.family=QA_GAME_Q1,.kind=QA_BUILTIN_MUZZLE,.actor=current};
+    CHECK(application_event_stream_commit(&app,&write,&error));
+    CHECK(application_events_local_q1_muzzle(&app,current));
+    uint64_t next=qa_application_events_next(&app);
+    CHECK(application_event_stream_begin(&app,QA_APPLICATION_EVENT_BUILTIN,&write,&error));
+    write.envelope->raw.builtin.event=(qa_builtin_event){.family=QA_GAME_Q1,.kind=QA_BUILTIN_MUZZLE,.actor=aborted};
+    application_event_stream_abort(&app,&write,&error);
+    CHECK(qa_application_events_next(&app)==next && !application_events_local_q1_muzzle(&app,aborted));
+    CHECK(application_event_stream_begin(&app,QA_APPLICATION_EVENT_BUILTIN,&write,&error));
+    write.envelope->raw.builtin.event=(qa_builtin_event){.family=QA_GAME_Q1,.kind=QA_BUILTIN_MUZZLE,.actor=previous};
+    CHECK(application_event_stream_commit(&app,&write,&error));
+    CHECK(application_events_local_q1_muzzle(&app,current) && application_events_local_q1_muzzle(&app,previous));
+    app.event_local_cursor=next;
+    CHECK(!application_events_local_q1_muzzle(&app,current) && application_events_local_q1_muzzle(&app,previous));
+    CHECK(application_event_stream_begin(&app,QA_APPLICATION_EVENT_BUILTIN,&write,&error));
+    write.envelope->raw.builtin.event=(qa_builtin_event){.family=QA_GAME_Q1,.kind=QA_BUILTIN_MUZZLE,.actor=current};
+    CHECK(application_event_stream_commit(&app,&write,&error));
+    CHECK(application_events_local_q1_muzzle(&app,current) && application_events_local_q1_muzzle(&app,previous));
+    app.event_local_cursor=app.event_source_cursor=qa_application_events_next(&app);
+    application_events_retire(&app);
+    CHECK(!application_events_local_q1_muzzle(&app,current) && !application_events_local_q1_muzzle(&app,previous));
+    CHECK(application_event_stream_begin(&app,QA_APPLICATION_EVENT_BUILTIN,&write,&error));
+    write.envelope->raw.builtin.event=(qa_builtin_event){.family=QA_GAME_Q1,.kind=QA_BUILTIN_MUZZLE,.actor=previous};
+    CHECK(application_event_stream_commit(&app,&write,&error));
+    CHECK(!application_events_local_q1_muzzle(&app,current) && application_events_local_q1_muzzle(&app,previous));
+    qa_actor_id foreign=current;foreign.registry+=100;
+    CHECK(!application_events_local_q1_muzzle(&app,foreign));
+    application_event_stream_dispose(&app);free(app.unified_persistent);
+    CHECK(qa_session_destroy(app.session,&error));
+}
 static void test_connection_request_cursor(void)
 {
     qa_application app={0}; qa_error error={0};
@@ -4128,6 +4169,7 @@ int main(int argc, char **argv)
     test_shared_text_interpolation();
     test_localization_lookup_generation();
     test_ring_console_capture();
+    test_q1_muzzle_projection();
     test_connection_request_cursor();
     test_shared_effect_cursor();
     test_raw_audio_custody();
