@@ -16,17 +16,9 @@ static bool body(qa_q1_game *g, q1_actor *entity, qa_body_state *out, qa_error *
 qa_actor_id q1_find_target(const qa_q1_game *g, qa_string_id name) {
     if (!name || !qa_strings_text(qa_session_strings(g->services.session), name).size)
         return (qa_actor_id){0};
-    if (g->host.find_target) {
-        qa_actor_id target = {0};
-        if (g->host.find_target(g->host.context, name, &target))
-            return target;
-    }
-    for (uint32_t i = 0; i < g->capacity; ++i) {
-        q1_actor *candidate = g->actors[i];
-        if (candidate && candidate->active && candidate->targetname == name)
-            return candidate->id;
-    }
-    return (qa_actor_id){0};
+    qa_actor_id target = {0};
+    (void)qa_targets_first(g->targets, name, &target);
+    return target;
 }
 qa_actor_id q1_monster_route(const qa_q1_game *g, const q1_actor *entity) {
     qa_monster_mission mission;

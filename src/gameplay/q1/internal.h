@@ -1420,6 +1420,8 @@ struct qa_q1_game {
     qa_builtin_services services;
     qa_q1_options options;
     qa_q1_host host;
+    qa_targets *targets;
+    bool owns_targets;
     qa_string_id runtime_names[Q1_NAME_COUNT];
     const qa_string_id *lightstyle_bytes;
     qa_string_id body_queue_class;
@@ -1523,7 +1525,8 @@ bool q1_map_addon_frame(qa_q1_game *, qa_error *);
 bool q1_map_level_frame(qa_q1_game *, const qa_source_frame *, qa_error *);
 bool q1_map_ctf_frame(qa_q1_game *, qa_error *);
 bool q1_map_collision(const q1_actor *, qa_actor_collision *);
-bool q1_map_bind_target(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_bind_target(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_targets_adopt(qa_q1_game *, qa_targets *, qa_error *);
 bool q1_spawn_template(qa_q1_game *, const qa_q1_spawn *, const qa_body_state *, qa_actor_id *,
                        qa_error *);
 bool q1_map_spawn_template_wait(qa_q1_game *, q1_actor *, qa_error *);

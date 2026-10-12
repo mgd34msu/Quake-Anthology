@@ -723,6 +723,13 @@ bool qa_q1_game_create(const qa_builtin_services *services, const qa_q1_options 
     g->time = (double)g->time_ns / 1000000000.0;
     if (host)
         g->host = *host;
+    g->targets = services->targets;
+    if (!g->targets) {
+        g->targets = qa_targets_create(&(qa_target_options){.session = services->session}, error);
+        if (!g->targets)
+            goto fail;
+        g->owns_targets = true;
+    }
     for (unsigned i = 0; i < Q1_NAME_COUNT; ++i)
         if (!qa_strings_intern_cstr(qa_session_strings(services->session), q1_runtime_names[i], &g->runtime_names[i], error))
             goto fail;
@@ -755,6 +762,8 @@ bool qa_q1_game_create(const qa_builtin_services *services, const qa_q1_options 
     *out = g;
     return true;
 fail:
+    if (g->owns_targets)
+        qa_targets_destroy(g->targets);
     q1_source_rogue_states_free(g);
     q1_source_rogue_runes_free(g);
     qa_supply_destroy(g->source_supply);
@@ -873,6 +882,13 @@ void qa_q1_game_destroy(qa_q1_game *g) {
             if (g->actors[i] && g->actors[i]->pickup_observation.serial)
                 qa_pickups_observation_close(g->services.pickups,
                                               g->actors[i]->pickup_observation, NULL);
+    for (uint32_t i = 0; i < g->capacity; ++i) {
+        q1_actor *entity = g->actors[i];
+        if (entity && entity->native)
+            qa_targets_unbind_context(g->targets, entity->id, g);
+    }
+    if (g->owns_targets)
+        qa_targets_destroy(g->targets);
     q1_map_destroy(g);
     q1_wire_destroy(g);
     qa_supply_destroy(g->source_supply);
@@ -1000,7 +1016,7 @@ static bool create_state(qa_q1_game *g, qa_string_id classname, q1_entity_kind k
     entity->native = true;
     entity->physics = qa_physics_properties_default(g->options.rules);
     if (!q1_source_rogue_state_publish(g, entity, error) ||
-        !q1_map_bind_target(g, entity, error)) {
+        !q1_bind_target(g, entity, error)) {
         (void)q1_remove(g, entity, NULL);
         return false;
     }
@@ -1493,7 +1509,7 @@ static bool spawn_actor(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_s
             if (input[i] && !qa_strings_intern_cstr(qa_session_strings(g->services.session),
                 input[i], output[i], error)) goto fail;
     }
-    if (!q1_map_bind_target(g, entity, error))
+    if (!q1_bind_target(g, entity, error))
         goto fail;
     if (spawn->authored_monster && (!species || !g->host.monster_admit ||
         !g->host.monster_admit(g->host.context, actor, spawn->authored_monster, error)))

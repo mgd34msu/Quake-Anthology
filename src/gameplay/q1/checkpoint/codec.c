@@ -36,8 +36,13 @@ static bool same_target(const qa_target_binding *a, const qa_target_binding *b) 
         a->set_delay == b->set_delay && a->set_targetname == b->set_targetname &&
         a->remap_shader == b->remap_shader;
 }
-/* Candidate storage never owns shared services or published bindings. */
+/* Candidate storage never owns borrowed services or published bindings. */
 static void storage_free(qa_q1_game *g) {
+    if (g->owns_targets) {
+        qa_targets_destroy(g->targets);
+        g->targets = NULL;
+        g->owns_targets = false;
+    }
     q1_source_rogue_states_free(g);
     q1_source_rogue_runes_free(g);
     q1_wire_destroy(g);
@@ -181,7 +186,7 @@ static bool actors(q1_save_io *io, qa_q1_game *g, q1_door_group **index, size_t 
         bool target = false;
         if (io->values.direction == QA_SOURCE_SAVE_WRITE && g->maps) {
             qa_target_binding actual, expected;
-            if (qa_persistence_targets_binding(g->maps->options.targets, actor->id, &actual) &&
+            if (qa_persistence_targets_binding(g->targets, actor->id, &actual) &&
                 actual.context == g) {
                 if (!qa_q1_game_target_binding(g, actor->id, &expected, io->values.error) ||
                     !same_target(&actual, &expected))
@@ -420,6 +425,16 @@ bool qa_q1_game_restore_prepare(qa_q1_game *g, qa_bytes bytes, qa_q1_restore **o
     candidate->rogue_rune_storage = (qa_arena){0};
     candidate->rogue_rune_rows = (qa_pool){0};
     candidate->rogue_state_owners = (qa_id_index){0};
+    candidate->owns_targets = false;
+    if (!g->maps) {
+        candidate->targets = qa_targets_create(
+            &(qa_target_options){.session = g->services.session}, error);
+        if (!candidate->targets) {
+            qa_q1_game_restore_abort(ticket);
+            return false;
+        }
+        candidate->owns_targets = true;
+    }
     q1_save_io io = {.game = candidate};
     if (!qa_source_save_reader(&io.values, candidate->services.session, bytes, error)) {
         qa_q1_game_restore_abort(ticket);
@@ -480,6 +495,11 @@ bool qa_q1_game_restore_prepare(qa_q1_game *g, qa_bytes bytes, qa_q1_restore **o
         q1_save_fail(&io, "Trailing bytes in Q1 checkpoint");
         goto fail;
     }
+    if (candidate->owns_targets)
+        for (uint32_t i = 0; i < candidate->capacity; ++i)
+            if (candidate->actors[i] &&
+                !q1_bind_target(candidate, candidate->actors[i], error))
+                goto fail;
     free(strings);
     *out = ticket;
     return true;
@@ -534,9 +554,10 @@ bool qa_q1_game_restore_finish(qa_q1_game *g, qa_error *error) {
             qa_error_set(error, QA_ERROR_FORMAT, i, "Q1 saved pickup observation is missing");
             return false;
         }
+        if (!g->maps)
+            continue;
         qa_target_binding actual, expected;
-        bool bound = g->maps &&
-            qa_persistence_targets_binding(g->maps->options.targets, actor->id, &actual);
+        bool bound = qa_persistence_targets_binding(g->targets, actor->id, &actual);
         if (actor->restored_target) {
             if (!bound || !qa_q1_game_target_binding(g, actor->id, &expected, error) ||
                 !same_target(&actual, &expected)) {
@@ -569,8 +590,16 @@ bool qa_q1_game_restore_commit(qa_q1_restore *ticket, qa_error *error) {
     if (!qa_q1_game_restore_validate(ticket, error))
         return false;
     qa_q1_game *g = ticket->destination;
+    if (!ticket->candidate.maps && !g->owns_targets &&
+        !q1_targets_adopt(&ticket->candidate, g->targets, error))
+        return false;
     storage_free(g);
     *g = ticket->candidate;
+    if (!g->maps)
+        for (uint32_t i = 0; i < g->capacity; ++i)
+            if (g->actors[i])
+                qa_targets_rebind_context(g->targets, g->actors[i]->id,
+                                          &ticket->candidate, g);
     for (uint32_t i = 0; i < g->capacity; ++i)
         if (g->players[i] && g->players[i]->weapon_definitions.serial)
             g->players[i]->inventory_game = g;

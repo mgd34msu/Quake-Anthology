@@ -198,9 +198,6 @@ typedef struct qa_q1_host {
     bool (*client_attack)(void *, qa_actor_id, bool *);
     bool (*target)(void *, qa_actor_id, qa_q1_target *);
     bool (*check_client)(void *, qa_actor_id observer, qa_actor_id *, qa_error *);
-    bool (*find_target)(void *, qa_string_id targetname, qa_actor_id *);
-    bool (*find_targets)(void *, qa_string_id, qa_actor_id *, size_t capacity, size_t *count,
-                         qa_error *);
     qa_actor_owner (*combat_provider)(void *, qa_actor_id);
     bool (*supply)(void *, qa_actor_id recipient, qa_supply **, qa_error *);
     bool (*count_monster_kill)(void *, qa_actor_id);

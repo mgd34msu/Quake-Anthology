@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `a80cffa0`.
+Follow-up source changes were reviewed through main `30ee0164`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 241 have source fixes
+There are **374 overlapping source-review observations**: 243 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 130 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 128 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -438,3 +438,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `2e6839a1` / partial adoption: J25-03 partial: common numeric-ID indexes now cover imports, resource capabilities and native callbacks, including nested re-find and restore enrollment. FILE, kernel-handle and TLS lookups remain assigned to the same worker. Normal build and seven existing core suites passed; no whole-item closure. Records: `/tmp/qa-ta3196-native-import-resource-indexes-20261012-v1`.
 
 - `a80cffa0` / J33-06: Shared inventory retains local item, owner-definition, source ordinal and lease indexes. Topology revisions avoid re-enumerating unchanged fixed bindings; quantities still come from authoritative callbacks, and unversioned dynamic bindings enumerate live. Restore reconstructs derived indexes without save-byte changes. Normal build and seven core suites passed; real admission/nesting peaks and adapter write-side scans are separate open storage/index follow-ups. Records: `/tmp/qa-ta3196-indexed-inventory-source-topology-20261012-v1`.
+
+- `30ee0164` / 16-007, J25-03: Remote Q1 snapshot identities and native FILE, kernel handle and TLS owners now use the shared ID index over their authoritative rows. Normal build and seven core suites passed; this does not claim full load-time capacity or live gameplay qualification. Records: `/tmp/qa-ta3196-snapshot-and-guest-owner-indexes-20261012-v1`.

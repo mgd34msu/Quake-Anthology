@@ -41,6 +41,45 @@ static bool map_options_valid(const qa_q1_game *g, const qa_q1_map_options *opti
         return q1_map_fail(error, "invalid Q1 map service binding");
     return true;
 }
+bool q1_targets_adopt(qa_q1_game *g, qa_targets *targets, qa_error *error) {
+    if (g->targets == targets)
+        return true;
+    qa_world_actor_snapshot added = {0};
+    if (!qa_world_snapshot_acquire(g->services.world, &added, error))
+        return false;
+    bool okay = true;
+    for (uint32_t i = 0; i < g->capacity; ++i) {
+        q1_actor *entity = g->actors[i];
+        if (!entity || !entity->native)
+            continue;
+        qa_authored_target previous;
+        if (qa_targets_read(targets, entity->id, &previous))
+            continue;
+        qa_target_binding binding;
+        if (!qa_q1_game_target_binding(g, entity->id, &binding, error) ||
+            !qa_targets_bind(targets, &binding, error)) {
+            okay = false;
+            break;
+        }
+        added.actors[added.count++] = entity->id;
+    }
+    if (okay) {
+        for (uint32_t i = 0; i < g->capacity; ++i) {
+            q1_actor *entity = g->actors[i];
+            if (entity && entity->native)
+                qa_targets_unbind_context(g->targets, entity->id, g);
+        }
+        if (g->owns_targets)
+            qa_targets_destroy(g->targets);
+        g->targets = targets;
+        g->owns_targets = false;
+    } else {
+        for (size_t i = 0; i < added.count; ++i)
+            qa_targets_unbind_context(targets, added.actors[i], g);
+    }
+    qa_world_snapshot_release(&added);
+    return okay;
+}
 bool qa_q1_game_maps_bind(qa_q1_game *g, const qa_q1_map_options *options, qa_error *error) {
     if (!map_options_valid(g, options, error))
         return false;
@@ -63,6 +102,12 @@ bool qa_q1_game_maps_bind(qa_q1_game *g, const qa_q1_map_options *options, qa_er
     qa_arena_seal(&g->maps->score_storage);
     g->maps->options = *options;
     g->maps->lightning_end = -1;
+    if (!q1_targets_adopt(g, options->targets, error)) {
+        qa_arena_destroy(&g->maps->score_storage);
+        free(g->maps);
+        g->maps = NULL;
+        return false;
+    }
     return true;
 }
 static void door_groups_free(q1_door_group *group) {
@@ -110,6 +155,9 @@ bool qa_q1_game_begin_map(qa_q1_game *g, const qa_q1_map_options *options, qa_er
     for (uint32_t slot = 0; slot < g->capacity; ++slot)
         if (g->actors[slot] || g->players[slot])
             return q1_map_fail(error, "Q1 map reset requires completed actor release callbacks");
+
+    if (!q1_targets_adopt(g, options->targets, error))
+        return false;
 
     q1_wire_map_reset(g);
     if (g->host.source_info_map_reset) g->host.source_info_map_reset(g->host.context);
@@ -187,7 +235,7 @@ static bool target_set_targetname(void *context, qa_actor_id actor, qa_string_id
     if (!entity || !entity->native)
         return q1_map_fail(error, "Q1 targetname field owner is unavailable");
     entity->targetname = value;
-    qa_targets_changed(game->maps->options.targets, actor);
+    qa_targets_changed(game->targets, actor);
     return true;
 }
 static bool target_set_delay(void *context, qa_actor_id actor, float value, qa_error *error) {
@@ -523,8 +571,8 @@ bool qa_q1_game_target_binding(qa_q1_game *g, qa_actor_id actor, qa_target_bindi
         return false;
     }
     q1_actor *entity = q1_entity(g, actor);
-    if (!g->maps || !entity || !entity->native ||
-        (g->continuation_pending && !entity->restored_target))
+    if (!entity || !entity->native ||
+        (g->maps && g->continuation_pending && !entity->restored_target))
         return false;
     *out = (qa_target_binding){.actor = entity->id,
                                  .context = g,
@@ -537,13 +585,13 @@ bool qa_q1_game_target_binding(qa_q1_game *g, qa_actor_id actor, qa_target_bindi
                                  .set_targetname = target_set_targetname};
     return true;
 }
-bool q1_map_bind_target(qa_q1_game *g, q1_actor *entity, qa_error *error) {
-    if (!g->maps || !entity->native)
+bool q1_bind_target(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    if (!entity->native)
         return true;
     qa_target_binding binding;
     if (!qa_q1_game_target_binding(g, entity->id, &binding, error))
         return false;
-    return qa_targets_bind(g->maps->options.targets, &binding, error);
+    return qa_targets_bind(g->targets, &binding, error);
 }
 qa_string_id qa_q1_game_map_name(const qa_q1_game *g) {
     return g && g->maps ? g->maps->options.current_map : QA_STRING_NONE;
@@ -579,8 +627,8 @@ q1_map_state *q1_map_allocate(qa_q1_game *g, q1_actor *entity, qa_error *error) 
 }
 void q1_map_actor_released(qa_q1_game *g, q1_actor *entity) {
     q1_map_frame_tick_remove(g, entity->id);
-    if (g->maps && entity->native)
-        qa_targets_unbind_context(g->maps->options.targets, entity->id, g);
+    if (entity->native)
+        qa_targets_unbind_context(g->targets, entity->id, g);
     if (!entity->map)
         return;
     entity->map->pool_next = g->maps->retired;
@@ -667,7 +715,6 @@ void q1_map_destroy(qa_q1_game *g) {
     for (uint32_t i = 0; i < g->capacity; ++i) {
         q1_actor *entity = g->actors[i];
         if (entity && entity->active && entity->native) {
-            qa_targets_unbind_context(g->maps->options.targets, entity->id, g);
             entity->map = NULL;
         }
     }

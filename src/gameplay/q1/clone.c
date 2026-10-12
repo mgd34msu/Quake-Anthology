@@ -139,7 +139,7 @@ bool qa_q1_game_clone(qa_q1_game *g, qa_actor_id actor, qa_actor_id *out, qa_err
     if (source->map && !q1_map_clone(g, source, target, error))
         goto fail;
     q1_map_addon_clone(g, source->id, id);
-    if (!q1_map_bind_target(g, target, error))
+    if (!q1_bind_target(g, target, error))
         goto fail;
     qa_body_state body;
     qa_combat_state combat;

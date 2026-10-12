@@ -2044,7 +2044,7 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
         if (!qa_attack_next(&game->attack_sequence,&p->attack,error)) return false;
         p->remove_touch = saved(record,"touch") && !strcmp(saved(record,"touch"),"SUB_Remove");
     }
-    return q1_map_bind_target(game, entity, error);
+    return q1_bind_target(game, entity, error);
 }
 static bool restore_groups(qa_q1_game *game, const qa_q1_save_data *save,
     const qa_actor_id *slots, qa_error *error) {

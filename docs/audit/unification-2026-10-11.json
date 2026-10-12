@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "a80cffa04fad17607c27fa228005104e829e9a97",
+  "verified_main": "30ee0164ab6b55c2806c049e359d56d7d5d93b9c",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 241,
-    "open_source_observation": 130,
+    "fixed_source_build_core": 243,
+    "open_source_observation": 128,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -30164,7 +30164,7 @@
       "severity": "high",
       "job": "16",
       "area": "frontend",
-      "status": "open_source_observation",
+      "status": "fixed_source_build_core",
       "verification": "source review; no runtime or performance proof",
       "original_summary": "Remote Q1 entity interpolation and trails repeatedly scan number-keyed lists for previous entities and trail identities.",
       "independent_review": {
@@ -30189,7 +30189,8 @@
           }
         ],
         "narrowing": "Do not delete previous/current snapshots or trails as duplicate entity stores. Index each required version using protocol identity. result-16 cites remote_q1_client.c:254, which is not the time-swap operation in this tree; the concrete lookup sites still confirm the finding. No measured slowdown is established."
-      }
+      },
+      "fixed_commit": "30ee0164ab6b55c2806c049e359d56d7d5d93b9c"
     },
     {
       "id": "16-008",
@@ -34174,8 +34175,9 @@
       "severity": "medium",
       "job": "25",
       "area": "module_hosts",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "30ee0164ab6b55c2806c049e359d56d7d5d93b9c"
     },
     {
       "id": "J25-04",
@@ -43591,6 +43593,43 @@
       ],
       "record_directory": "/tmp/qa-ta3196-indexed-inventory-source-topology-20261012-v1",
       "conclusion": "Shared inventory retains local item, owner-definition, source ordinal and lease indexes. Topology revisions avoid re-enumerating unchanged fixed bindings; quantities still come from authoritative callbacks, and unversioned dynamic bindings enumerate live. Restore reconstructs derived indexes without save-byte changes. Normal build and seven core suites passed; real admission/nesting peaks and adapter write-side scans are separate open storage/index follow-ups."
+    },
+    {
+      "commit": "30ee0164ab6b55c2806c049e359d56d7d5d93b9c",
+      "source_tree": "a8aeccf272ff0958bf078baeb78a3eac512dff76",
+      "finding_ids": [
+        "16-007",
+        "J25-03"
+      ],
+      "files_rechecked": [
+        "src/app/frontend/remote_q1_client.c",
+        "src/app/frontend/remote_q1_effects.c",
+        "src/app/frontend/remote_q1_entities.c",
+        "src/app/frontend/remote_q1_private.h",
+        "src/app/frontend/remote_q1_qw.c",
+        "src/app/frontend/remote_q1_source.c",
+        "src/compat/native/guest/sysv_libc_private.h",
+        "src/compat/native/guest/sysv_runtime.c",
+        "src/compat/native/guest/sysv_stdio.c",
+        "src/compat/native/guest/windows_crt.h",
+        "src/compat/native/guest/windows_kernel.c",
+        "src/compat/native/guest/windows_kernel.h",
+        "src/compat/native/guest/windows_runtime.c",
+        "src/compat/native/guest/windows_stdio.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-snapshot-and-guest-owner-indexes-20261012-v1",
+      "conclusion": "Remote Q1 snapshot identities and native FILE, kernel handle and TLS owners now use the shared ID index over their authoritative rows. Normal build and seven core suites passed; this does not claim full load-time capacity or live gameplay qualification."
     }
   ],
   "verification_limits": [

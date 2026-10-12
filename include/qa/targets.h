@@ -101,6 +101,8 @@ bool qa_targets_bind(qa_targets *, const qa_target_binding *, qa_error *);
 void qa_targets_unbind(qa_targets *, qa_actor_id);
 /* Provider teardown removes only its own current binding. */
 void qa_targets_unbind_context(qa_targets *, qa_actor_id, const void *expected_context);
+/* Cold owner relocation preserves the admitted binding and its serial. */
+void qa_targets_rebind_context(qa_targets *, qa_actor_id, const void *expected_context, void *context);
 /* Commit this actor's current targetname and source ordering to the index.
  * Notify at the field store, before any nested target query. */
 void qa_targets_changed(qa_targets *, qa_actor_id);

@@ -11,36 +11,21 @@ bool q1_addon_target(qa_q1_game *g, q1_actor *entity, qa_actor_id *out, qa_error
     *out = (qa_actor_id){0};
     if (!(entity->spawnflags & 32) || !entity->target)
         return true;
-    if (!g->host.find_targets) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, entity->id.slot,
-                     "Q1 authored monster target selection requires the shared target router");
-        return false;
-    }
     qa_world_actor_snapshot snapshot = {0};
-    if (!q1_snapshot_actors(g, &snapshot, error))
+    if (!q1_snapshot_targets(g, g->targets, entity->target, &snapshot, error))
         return false;
-    size_t count = 0;
-    bool result = g->host.find_targets(g->host.context, entity->target, snapshot.actors,
-                                       snapshot.capacity, &count, error);
-    if (result && count > snapshot.capacity) {
-        qa_error_set(error, QA_ERROR_FORMAT, count,
-                     "Q1 target router exceeded reserved actor capacity");
-        result = false;
-    }
-    if (result) {
-        size_t eligible = 0;
-        for (size_t i = 0; i < count; ++i)
-            if (q1_damageable(g, snapshot.actors[i]))
-                snapshot.actors[eligible++] = snapshot.actors[i];
-        if (eligible) {
-            size_t index = (size_t)floorf(q1_random(g) * (float)eligible);
-            if (index == eligible)
-                index = eligible - 1;
-            *out = snapshot.actors[index];
-        }
+    size_t eligible = 0;
+    for (size_t i = 0; i < snapshot.count; ++i)
+        if (q1_damageable(g, snapshot.actors[i]))
+            snapshot.actors[eligible++] = snapshot.actors[i];
+    if (eligible) {
+        size_t index = (size_t)floorf(q1_random(g) * (float)eligible);
+        if (index == eligible)
+            index = eligible - 1;
+        *out = snapshot.actors[index];
     }
     qa_world_snapshot_release(&snapshot);
-    return result;
+    return true;
 }
 bool q1_addon_contents(qa_q1_game *g, q1_actor *entity, bool *stop, qa_error *error) {
     *stop = false;

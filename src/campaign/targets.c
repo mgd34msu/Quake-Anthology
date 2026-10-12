@@ -298,6 +298,17 @@ void qa_targets_unbind_context(qa_targets *targets, qa_actor_id actor, const voi
         (targets->monsters[actor.slot] && targets->monsters[actor.slot]->native.context == context)))
         qa_targets_unbind(targets, actor);
 }
+void qa_targets_rebind_context(qa_targets *targets, qa_actor_id actor,
+    const void *expected, void *context) {
+    if (!targets || actor.slot >= targets->capacity) return;
+    qa_target_binding *entry = &targets->bindings[actor.slot];
+    if (!qa_actor_id_equal(entry->actor, actor)) return;
+    target_monster *monster = targets->monsters[actor.slot];
+    if (monster && monster->native.context == expected)
+        monster->native.context = context;
+    else if (entry->context == expected)
+        entry->context = context;
+}
 bool qa_targets_read(const qa_targets *targets, qa_actor_id actor, qa_authored_target *out) {
     const qa_target_binding *entry = binding(targets, actor);
     qa_authored_target fields;

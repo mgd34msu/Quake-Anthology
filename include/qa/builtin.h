@@ -5,6 +5,7 @@
 #include "qa/physics.h"
 #include "qa/player_state.h"
 #include "qa/session.h"
+#include "qa/targets.h"
 #include "qa/world.h"
 
 typedef enum qa_builtin_event_kind {
@@ -232,6 +233,7 @@ typedef struct qa_builtin_services {
     qa_combat *combat;
     qa_inventory *inventory;
     qa_pickups *pickups;
+    qa_targets *targets;
     qa_physics *physics;
     void *context;
     void *cvar_context;

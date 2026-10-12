@@ -426,35 +426,6 @@ static bool q1_force_retouch(void *opaque, uint32_t source_frames, qa_error *err
     return qa_q1_game_force_retouch(provider->state.q1, source_frames, error);
 }
 
-static bool q1_find_target(void *opaque, qa_string_id target,
-                           qa_actor_id *out)
-{
-    application_provider *provider = opaque;
-    return qa_targets_first(provider->application->targets, target, out);
-}
-
-static bool q1_find_targets(void *opaque, qa_string_id target,
-                            qa_actor_id *actors, size_t capacity,
-                            size_t *count, qa_error *error)
-{
-    application_provider *provider = opaque;
-    if (count == NULL || (capacity != 0 && actors == NULL))
-        return application_fail(error, QA_ERROR_ARGUMENT,
-                                "Q1 target query needs output storage");
-    qa_target_cursor cursor = {0};
-    size_t written = 0;
-    qa_actor_id actor;
-    while (qa_targets_next(provider->application->targets, target, &cursor,
-                           &actor)) {
-        if (written == capacity)
-            return application_fail(error, QA_ERROR_MEMORY,
-                                    "Q1 target query output is too small");
-        actors[written++] = actor;
-    }
-    *count = written;
-    return true;
-}
-
 static qa_q1_options q1_initial_options(application_provider *provider,
     const qa_product *product, application_native_profile profile)
 {
@@ -620,8 +591,6 @@ static bool construct_q1(qa_application *application,
                        .source_info_map_reset = application_native_q1_source_info_map_reset,
                        .client_attack = application_native_q1_client_attack,
                        .check_client = application_native_q1_check_client,
-                       .find_target = q1_find_target,
-                       .find_targets = q1_find_targets,
                        .combat_provider = q1_combat_provider,
                        .supply = application_supplies_source_for,
                        .drop_inventory = q1_character_drop_inventory,
