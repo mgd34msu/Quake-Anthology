@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "0d7b282ea4c1ecf6277da61b9ade3760e40948a0",
+  "verified_main": "ed8c3afa58cbd695578a32a42958ec37d185466a",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -27385,7 +27385,13 @@
       "job": "08",
       "area": "audio_input_ui",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "source review; no runtime or performance proof",
+      "partial_followups": [
+        {
+          "commit": "ed8c3afa58cbd695578a32a42958ec37d185466a",
+          "conclusion": "Input binding formatting now uses one sealed shared arena per seat, reserved from current, held-historical and incoming bindings at bind/clone/readiness/replace/remap/restore boundaries across every dialect. Queued down/release text remains exact and held presses retain the original binding across publication. Private scratch realloc/append is deleted; bind argument join uses the common command arena and owned cfg output uses exact-size allocation. Existing core behavior checks exercise long held commands replaced by shorter bindings through configuration publication and direct replacement in all five dialects. Held-key/button-source growth and arbitrary command-source interning remain open; no all-input or whole-frame zero-allocation claim."
+        }
+      ]
     },
     {
       "id": "08-02",
@@ -40243,6 +40249,33 @@
       ],
       "record_directory": "/tmp/qa-ta3196-route-cold-arrays-20261012",
       "conclusion": "Prepare graph reserves every slot for the actual route bound min(edges,nodes)+1 nodes and min(edges,nodes) edges, plus the common two-point direct trajectory. Restore and historical publication reserve replacement slots to the admitted retained capacities before callback publication. Full variable-length prediction and authored traversal trajectories still have no admitted bound and remain open; this is not whole-frame zero-allocation proof. Normal production build and seven core suites pass."
+    },
+    {
+      "commit": "ed8c3afa58cbd695578a32a42958ec37d185466a",
+      "source_tree": "852b2095ef4de376dbb0a3b2e130c4fa0fa0f416",
+      "finding_ids": [
+        "08-01"
+      ],
+      "files_rechecked": [
+        "src/input/bindings.c",
+        "src/input/internal.h",
+        "src/input/save.c",
+        "src/input/seat.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-input-binding-arena-20261012",
+      "conclusion": "Input binding formatting now uses one sealed shared arena per seat, reserved from current, held-historical and incoming bindings at bind/clone/readiness/replace/remap/restore boundaries across every dialect. Queued down/release text remains exact and held presses retain the original binding across publication. Private scratch realloc/append is deleted; bind argument join uses the common command arena and owned cfg output uses exact-size allocation. Existing core behavior checks exercise long held commands replaced by shorter bindings through configuration publication and direct replacement in all five dialects. Held-key/button-source growth and arbitrary command-source interning remain open; no all-input or whole-frame zero-allocation claim. Matching normal build and seven core suites pass."
     }
   ],
   "verification_limits": [

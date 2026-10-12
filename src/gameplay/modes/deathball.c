@@ -108,9 +108,7 @@ bool mode_ball_frame(qa_modes *m, mode_instance *v, mode_object *o, qa_error *e)
     qa_body_state body;
     if (!qa_world_body_read(m->options.services.world, o->actor, &body, e))
         return false;
-    qa_string_id kind;
-    if (!qa_builtin_resource(&m->options.services, "dm_dball_ball_start", &kind, e))
-        return false;
+    qa_string_id kind = m->runtime_names[MODE_NAME_DM_DBALL_BALL_START];
     size_t count = 0;
     for (size_t i = 0; i < v->spawn_count; ++i)
         if (v->spawns[i].classname == kind)

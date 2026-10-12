@@ -90,74 +90,73 @@ bool mode_object_hide(qa_modes *m, mode_object *o, bool hidden, qa_error *e) {
     o->value.visible = !hidden;
     return mode_object_sync(m, o, e);
 }
-static const char *object_model(mode_instance *v, const qa_mode_object_spec *spec) {
+static qa_string_id object_model(const qa_modes *m, mode_instance *v, const qa_mode_object_spec *spec) {
     int team = mode_team_index(v, spec->team);
     if (spec->kind == QA_MODE_OBJECT_FLAG_BASE)
-        return "progs/ctfbase.mdl";
+        return m->runtime_names[MODE_NAME_MODEL_PROGS_CTFBASE_MDL];
     if (spec->kind == QA_MODE_OBJECT_FLAG) {
         if (v->value.rules.source == QA_MODE_ROGUE)
-            return "progs/ctfmodel.mdl";
+            return m->runtime_names[MODE_NAME_MODEL_PROGS_CTFMODEL_MDL];
         if (v->value.rules.source <= QA_MODE_Q1_HORDE)
-            return "progs/flag.mdl";
+            return m->runtime_names[MODE_NAME_MODEL_PROGS_FLAG_MDL];
         if (v->value.rules.source < QA_MODE_Q3)
-            return team == 0 ? "players/male/flag1.md2" : "players/male/flag2.md2";
-        return team == 0   ? "models/flags/r_flag.md3"
-               : team == 1 ? "models/flags/b_flag.md3"
-                           : "models/flags/n_flag.md3";
+            return m->runtime_names[team == 0 ? MODE_NAME_MODEL_PLAYERS_MALE_FLAG1_MD2
+                                             : MODE_NAME_MODEL_PLAYERS_MALE_FLAG2_MD2];
+        return m->runtime_names[team == 0   ? MODE_NAME_MODEL_FLAGS_R_FLAG_MD3
+                               : team == 1 ? MODE_NAME_MODEL_FLAGS_B_FLAG_MD3
+                                           : MODE_NAME_MODEL_FLAGS_N_FLAG_MD3];
     }
     if (spec->kind == QA_MODE_OBJECT_RELIC) {
-        static const char *q1[] = {"progs/end1.mdl", "progs/end2.mdl", "progs/end3.mdl",
-                                   "progs/end4.mdl"};
-        static const char *q2[] = {"models/ctf/resistance/tris.md2", "models/ctf/strength/tris.md2",
-                                   "models/ctf/haste/tris.md2", "models/ctf/regeneration/tris.md2",
-                                   "models/ctf/vampire/tris.md2"};
-        static const char *lm[] = {"models/ctf/resist/tris.md2", "models/ctf/damage/tris.md2",
-                                   "models/ctf/haste/tris.md2", "models/ctf/regen/tris.md2",
-                                   "models/ctf/resist/tris.md2"};
-        return v->value.rules.source <= QA_MODE_Q1_HORDE ? q1[(unsigned)spec->relic % 4]
-               : v->value.rules.source == QA_MODE_LMCTF  ? lm[spec->relic]
-                                                         : q2[spec->relic];
+        static const mode_name q1[] = {MODE_NAME_MODEL_PROGS_END1_MDL, MODE_NAME_MODEL_PROGS_END2_MDL,
+            MODE_NAME_MODEL_PROGS_END3_MDL, MODE_NAME_MODEL_PROGS_END4_MDL};
+        static const mode_name q2[] = {MODE_NAME_MODEL_CTF_RESISTANCE_MD2, MODE_NAME_MODEL_CTF_STRENGTH_MD2,
+            MODE_NAME_MODEL_CTF_HASTE_MD2, MODE_NAME_MODEL_CTF_REGENERATION_MD2, MODE_NAME_MODEL_CTF_VAMPIRE_MD2};
+        static const mode_name lm[] = {MODE_NAME_MODEL_CTF_RESIST_MD2, MODE_NAME_MODEL_CTF_DAMAGE_MD2,
+            MODE_NAME_MODEL_CTF_HASTE_MD2, MODE_NAME_MODEL_CTF_REGEN_MD2, MODE_NAME_MODEL_CTF_RESIST_MD2};
+        return m->runtime_names[v->value.rules.source <= QA_MODE_Q1_HORDE ? q1[(unsigned)spec->relic % 4]
+                               : v->value.rules.source == QA_MODE_LMCTF  ? lm[spec->relic]
+                                                                         : q2[spec->relic]];
     }
     if (spec->kind == QA_MODE_OBJECT_TAG)
-        return v->value.rules.source == QA_MODE_ROGUE ? "progs/sphere.mdl"
-                                                      : "models/items/tagtoken/tris.md2";
+        return m->runtime_names[v->value.rules.source == QA_MODE_ROGUE ? MODE_NAME_MODEL_PROGS_SPHERE_MDL
+                                                                       : MODE_NAME_MODEL_ITEMS_TAGTOKEN_MD2];
     if (spec->kind == QA_MODE_OBJECT_BALL)
-        return "models/objects/dball/tris.md2";
+        return m->runtime_names[MODE_NAME_MODEL_OBJECTS_DBALL_MD2];
     if (spec->kind == QA_MODE_OBJECT_CUBE)
-        return team == 0 ? "models/powerups/orb/r_orb.md3" : "models/powerups/orb/b_orb.md3";
+        return m->runtime_names[team == 0 ? MODE_NAME_MODEL_POWERUPS_R_ORB_MD3 : MODE_NAME_MODEL_POWERUPS_B_ORB_MD3];
     if (spec->kind == QA_MODE_OBJECT_OBELISK)
-        return "models/powerups/overload_base.md3";
-    return NULL;
+        return m->runtime_names[MODE_NAME_MODEL_POWERUPS_OVERLOAD_BASE_MD3];
+    return QA_STRING_NONE;
 }
-static const char *object_item(mode_instance *v, const qa_mode_object_spec *spec) {
+static qa_item_id object_item(const qa_modes *m, mode_instance *v, const qa_mode_object_spec *spec) {
     int team = mode_team_index(v, spec->team);
     if (spec->kind == QA_MODE_OBJECT_FLAG) {
         if (v->value.rules.source <= QA_MODE_Q1_HORDE)
-            return team == 0   ? "q1:ctf/flag/red"
-                   : team == 1 ? "q1:ctf/flag/blue"
-                               : "q1:ctf/flag/neutral";
+            return m->runtime_names[team == 0   ? MODE_NAME_Q1_CTF_FLAG_RED
+                                   : team == 1 ? MODE_NAME_Q1_CTF_FLAG_BLUE
+                                               : MODE_NAME_Q1_CTF_FLAG_NEUTRAL];
         if (v->value.rules.source == QA_MODE_LMCTF)
-            return "q2:flag";
+            return m->runtime_names[MODE_NAME_Q2_FLAG];
         if (v->value.rules.source < QA_MODE_Q3)
-            return team == 0 ? "q2:item_flag_team1" : "q2:item_flag_team2";
-        return team == 0   ? "q3:item/team_CTF_redflag"
-               : team == 1 ? "q3:item/team_CTF_blueflag"
-                           : "q3:item/team_CTF_neutralflag";
+            return m->runtime_names[team == 0 ? MODE_NAME_Q2_ITEM_FLAG_TEAM1 : MODE_NAME_Q2_ITEM_FLAG_TEAM2];
+        return m->runtime_names[team == 0   ? MODE_NAME_Q3_ITEM_TEAM_CTF_REDFLAG
+                               : team == 1 ? MODE_NAME_Q3_ITEM_TEAM_CTF_BLUEFLAG
+                                           : MODE_NAME_Q3_ITEM_TEAM_CTF_NEUTRALFLAG];
     }
     if (spec->kind == QA_MODE_OBJECT_TAG)
-        return v->value.rules.source == QA_MODE_ROGUE ? "q1:rogue/tag" : "q2:dm_tag_token";
+        return m->runtime_names[v->value.rules.source == QA_MODE_ROGUE ? MODE_NAME_Q1_ROGUE_TAG : MODE_NAME_Q2_DM_TAG_TOKEN];
     if (spec->kind == QA_MODE_OBJECT_RELIC) {
-        static const char *q1[] = {"q1:ctf/rune/resistance", "q1:ctf/rune/strength",
-                                   "q1:ctf/rune/haste", "q1:ctf/rune/regeneration"};
-        static const char *q2[] = {"q2:item_tech1", "q2:item_tech2", "q2:item_tech3",
-                                   "q2:item_tech4", "q2:item_tech5"};
-        static const char *lm[] = {"q2:resist_rune", "q2:damage_rune", "q2:haste_rune",
-                                   "q2:regen_rune", "q2:vampire_rune"};
-        return v->value.rules.source <= QA_MODE_Q1_HORDE ? q1[(unsigned)spec->relic % 4]
-               : v->value.rules.source == QA_MODE_LMCTF  ? lm[spec->relic]
-                                                         : q2[spec->relic];
+        static const mode_name q1[] = {MODE_NAME_Q1_CTF_RUNE_RESISTANCE, MODE_NAME_Q1_CTF_RUNE_STRENGTH,
+            MODE_NAME_Q1_CTF_RUNE_HASTE, MODE_NAME_Q1_CTF_RUNE_REGENERATION};
+        static const mode_name q2[] = {MODE_NAME_Q2_ITEM_TECH1, MODE_NAME_Q2_ITEM_TECH2,
+            MODE_NAME_Q2_ITEM_TECH3, MODE_NAME_Q2_ITEM_TECH4, MODE_NAME_Q2_ITEM_TECH5};
+        static const mode_name lm[] = {MODE_NAME_Q2_RESIST_RUNE, MODE_NAME_Q2_DAMAGE_RUNE,
+            MODE_NAME_Q2_HASTE_RUNE, MODE_NAME_Q2_REGEN_RUNE, MODE_NAME_Q2_VAMPIRE_RUNE};
+        return m->runtime_names[v->value.rules.source <= QA_MODE_Q1_HORDE ? q1[(unsigned)spec->relic % 4]
+                               : v->value.rules.source == QA_MODE_LMCTF  ? lm[spec->relic]
+                                                                         : q2[spec->relic]];
     }
-    return NULL;
+    return QA_STRING_NONE;
 }
 static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *spec,
                          qa_actor_id *out, qa_error *e) {
@@ -284,11 +283,8 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
             !qa_world_set_collision(m->options.services.world, actor, &collision, e))
             goto rollback;
     } else {
-        qa_string_id definition;
-        if (!qa_builtin_resource(&m->options.services, "anthology:mode-object", &definition, e))
-            goto rollback;
         qa_builtin_spawn spawn = {.owner = m->options.owner,
-                                  .definition = definition,
+                                  .definition = m->runtime_names[MODE_NAME_ANTHOLOGY_MODE_OBJECT],
                                   .body = body,
                                   .collision = &collision,
                                   .link = false};
@@ -324,11 +320,8 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
     if (spec->kind == QA_MODE_OBJECT_BALL)
         o->physics.clip_mask =
             UINT32_C(0x2020003) | (v->value.rules.ruleset == QA_RULESET_Q2_RERELEASE ? UINT32_C(0x40000000) : 0);
-    const char *model = object_model(v, spec), *item = object_item(v, spec);
-    if (model && !qa_builtin_resource(&m->options.services, model, &o->value.model, e))
-        goto rollback;
-    if (!o->spec.item && item && !qa_builtin_resource(&m->options.services, item, &o->spec.item, e))
-        goto rollback;
+    o->value.model = object_model(m, v, spec);
+    if (!o->spec.item) o->spec.item = object_item(m, v, spec);
     qa_item_id scoped_item;
     if (o->spec.item && !(v->value.rules.source == QA_MODE_ROGUE &&
                           spec->kind == QA_MODE_OBJECT_RELIC) &&
@@ -738,11 +731,8 @@ bool mode_object_drop(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id
     }
     if (o->spec.kind == QA_MODE_OBJECT_FLAG &&
         (v->value.rules.source == QA_MODE_Q2_CTF || v->value.rules.source >= QA_MODE_Q3)) {
-        qa_string_id definition;
-        if (!qa_builtin_resource(&m->options.services, "anthology:dropped-flag", &definition, e))
-            return false;
         qa_builtin_spawn spawn = {.owner = m->options.owner,
-                                  .definition = definition,
+                                  .definition = m->runtime_names[MODE_NAME_ANTHOLOGY_DROPPED_FLAG],
                                   .body = body,
                                   .collision = &o->collision,
                                   .link = true};

@@ -118,9 +118,7 @@ bool qa_modes_player_death_component(qa_modes *m, qa_mode_id id, const qa_damage
             return false;
         if (!native_q1_ctf && v->value.rules.source == QA_MODE_THREEWAVE && friendly &&
             v->value.rules.teamplay >= 0 && (v->value.rules.teamplay & 16)) {
-            qa_string_id type;
-            if (!qa_builtin_resource(&m->options.services, "ctf:teamkill", &type, e))
-                return false;
+            qa_string_id type = m->runtime_names[MODE_NAME_CTF_TEAMKILL];
             qa_damage_request punishment = {
                 .target = attacker,
                 .amount = 1000,

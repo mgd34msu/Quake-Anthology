@@ -131,7 +131,8 @@ static bool admission_prepare(qa_equipment *g, qa_actor_id actor,
             const qa_q2_weapon_definition *definition = qa_q2_weapon_definition_at(a->grapple.q2,
                 selection->grapple == QA_GRAPPLE_Q2_CTF ? QA_Q2_GRAPPLE : QA_Q2_LMCTF_HOOK);
             if (!definition) return mode_fail(e, "gear slot has no actual native Q2 weapon declaration");
-            if (!qa_builtin_resource(&g->options.services, definition->item, &weapon, e)) return false;
+            weapon = qa_q2_weapon_item(a->grapple.q2,
+                selection->grapple == QA_GRAPPLE_Q2_CTF ? QA_Q2_GRAPPLE : QA_Q2_LMCTF_HOOK, false);
             break;
         }
         case QA_GRAPPLE_Q3:
@@ -481,16 +482,13 @@ static bool equipment_input(qa_equipment *g, qa_actor_id actor, const qa_equipme
     return true;
 }
 static bool equipment_select_grapple(qa_equipment *, qa_actor_id, bool, qa_error *);
-static qa_item_id slot_grapple_item(qa_equipment *g,equipment_actor *p) {
+static qa_item_id slot_grapple_item(equipment_actor *p) {
     switch(p->state.selection.grapple) {
     case QA_GRAPPLE_THREEWAVE: case QA_GRAPPLE_ROGUE:
         return qa_q1_weapon_item(p->grapple.q1,p->state.selection.grapple==QA_GRAPPLE_THREEWAVE?QA_Q1_CTF_GRAPPLE:QA_Q1_ROGUE_GRAPPLE);
-    case QA_GRAPPLE_Q2_CTF: case QA_GRAPPLE_LMCTF: {
-        const qa_q2_weapon_definition *d=qa_q2_weapon_definition_at(p->grapple.q2,
-            p->state.selection.grapple==QA_GRAPPLE_Q2_CTF?QA_Q2_GRAPPLE:QA_Q2_LMCTF_HOOK);
-        return d&&d->item?qa_strings_find(qa_session_strings(g->options.services.session),
-            (qa_bytes){(const uint8_t *)d->item,strlen(d->item)}):0;
-    }
+    case QA_GRAPPLE_Q2_CTF: case QA_GRAPPLE_LMCTF:
+        return qa_q2_weapon_item(p->grapple.q2,
+            p->state.selection.grapple==QA_GRAPPLE_Q2_CTF?QA_Q2_GRAPPLE:QA_Q2_LMCTF_HOOK,false);
     case QA_GRAPPLE_Q3:return p->grapple.q3?qa_q3_weapon_item(p->grapple.q3,QA_Q3_W_GRAPPLE,false):p->grapple.weapon_item;
     case QA_GRAPPLE_DISABLED:return 0;
     }
@@ -535,7 +533,7 @@ static bool slot_grapple_current(void *context,qa_actor_id actor) {
 }
 static bool slot_grapple_accepts(void *context,qa_actor_id actor,qa_item_id item,bool *out,qa_error *e) {
     equipment_slot_context *c=context;equipment_actor *p=equipment_get(c->equipment,actor);(void)e;
-    *out=p&&item&&slot_grapple_current(context,actor)&&slot_grapple_item(c->equipment,p)==item;return true;
+    *out=p&&item&&slot_grapple_current(context,actor)&&slot_grapple_item(p)==item;return true;
 }
 static bool slot_grapple_select(void *context,qa_actor_id actor,qa_item_id item,bool *out,qa_error *e) {
     return slot_grapple_accepts(context,actor,item,out,e);
@@ -543,7 +541,7 @@ static bool slot_grapple_select(void *context,qa_actor_id actor,qa_item_id item,
 static bool slot_grapple_read(void *context,qa_actor_id actor,qa_weapon_presentation *out,qa_error *e) {
     equipment_slot_context *c=context;equipment_actor *p=equipment_get(c->equipment,actor);
     if(!p||!slot_grapple_current(context,actor))return mode_fail(e,"Grapple presentation lost its actual bound source");
-    *out=(qa_weapon_presentation){.provider=c->owner,.active=slot_grapple_item(c->equipment,p),.context=p};return out->active!=0;
+    *out=(qa_weapon_presentation){.provider=c->owner,.active=slot_grapple_item(p),.context=p};return out->active!=0;
 }
 static bool slot_grapple_holster(void *context,qa_actor_id actor,qa_error *e) {
     equipment_slot_context *c=context;qa_equipment *g=c->equipment;equipment_actor *p=equipment_get(g,actor);
@@ -624,7 +622,7 @@ static bool equipment_select_grapple(qa_equipment *g, qa_actor_id actor, bool se
     if (!p)
         return mode_fail(e, "unknown equipment player");
     if(!equipment_slot_ensure(g,actor,e))return false;
-    if(selected){bool accepted=false;return qa_weapon_slot_request(g->slots[actor.slot],p->state.sources.grapple,slot_grapple_item(g,p),&accepted,e)&&
+    if(selected){bool accepted=false;return qa_weapon_slot_request(g->slots[actor.slot],p->state.sources.grapple,slot_grapple_item(p),&accepted,e)&&
         qa_weapon_slot_reconcile(g->slots[actor.slot],e)&&accepted;}
     return qa_weapon_slot_return_primary(g->slots[actor.slot],e)&&qa_weapon_slot_reconcile(g->slots[actor.slot],e);
 }
@@ -817,9 +815,7 @@ static bool equipment_lmctf_command(qa_equipment *g, qa_modes *m, qa_mode_id id,
     }
     if (!p->grapple.q2)
         return mode_fail(e, "LMCTF native hook has no Q2 provider");
-    qa_item_id hook;
-    if (!qa_builtin_resource(&g->options.services, "q2:weapon_hook", &hook, e))
-        return false;
+    qa_item_id hook = qa_q2_weapon_item(p->grapple.q2, QA_Q2_LMCTF_HOOK, false);
     if (!(v->value.rules.flags & 16u)) {
         if (!pressed)
             return true;
@@ -933,8 +929,8 @@ bool qa_equipment_weapon_view_read(qa_equipment *g, qa_actor_id actor,
         const qa_q2_weapon_definition *definition = qa_q2_weapon_definition_at(p->grapple.q2,
             value.mechanic == QA_GRAPPLE_Q2_CTF ? QA_Q2_GRAPPLE : QA_Q2_LMCTF_HOOK);
         if (!definition) return mode_fail(e, "equipment weapon view lost its source definition");
-        value.item = qa_strings_find(qa_session_strings(g->options.services.session),
-            (qa_bytes){(const uint8_t *)definition->item, strlen(definition->item)});
+        value.item = qa_q2_weapon_item(p->grapple.q2,
+            value.mechanic == QA_GRAPPLE_Q2_CTF ? QA_Q2_GRAPPLE : QA_Q2_LMCTF_HOOK, false);
         break;
     }
     case QA_GRAPPLE_Q3:

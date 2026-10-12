@@ -153,13 +153,11 @@ bool qa_modes_plan_map(qa_modes *m, qa_mode_id id, const qa_mode_map_admission *
     for (size_t i = 0; i < n; ++i) {
         const qa_mode_map_admission *a = &map[i];
         if (a->role == QA_MODE_MAP_SPAWN) {
-            const char *name = qa_strings_cstr(qa_session_strings(m->options.services.session),
-                                               a->spawn.classname);
-            if (name && !strcmp(name, "dm_dball_ball_start")) {
+            if (a->spawn.classname == m->runtime_names[MODE_NAME_DM_DBALL_BALL_START]) {
                 present |= QA_MODE_MAP_BALL_SPAWN;
                 continue;
             }
-            if (name && !strcmp(name, "info_player_deathmatch"))
+            if (a->spawn.classname == m->runtime_names[MODE_NAME_INFO_PLAYER_DEATHMATCH])
                 ordinary_spawn = true;
             for (unsigned team = 0; team < 2; ++team)
                 if (a->spawn.team && a->spawn.team == v->value.rules.teams[team])
@@ -228,16 +226,13 @@ bool qa_modes_plan_map(qa_modes *m, qa_mode_id id, const qa_mode_map_admission *
     for (size_t i = 0; i < n; ++i)
         if (!ordinary_spawn && map[i].role == QA_MODE_MAP_SPAWN) {
             const qa_mode_spawnpoint *source = &map[i].spawn;
-            const char *name =
-                qa_strings_cstr(qa_session_strings(m->options.services.session), source->classname);
-            if (name && !strcmp(name, "dm_dball_ball_start"))
+            if (source->classname == m->runtime_names[MODE_NAME_DM_DBALL_BALL_START])
                 continue;
             qa_mode_map_admission generated = {.role = QA_MODE_MAP_SPAWN, .spawn = *source};
             generated.spawn.actor = (qa_actor_id){0};
             generated.spawn.team = 0;
-            if (!qa_builtin_resource(&m->options.services, "info_player_deathmatch",
-                                     &generated.spawn.classname, e) ||
-                !planned(out, capacity, count, generated, e))
+            generated.spawn.classname = m->runtime_names[MODE_NAME_INFO_PLAYER_DEATHMATCH];
+            if (!planned(out, capacity, count, generated, e))
                 return false;
         }
     if (separated && ((kind >= QA_MODE_TEAM_DEATHMATCH && kind <= QA_MODE_HARVESTER) ||
@@ -251,17 +246,16 @@ bool qa_modes_plan_map(qa_modes *m, qa_mode_id id, const qa_mode_map_admission *
                         .spawn = {.origin = points[team]->origin,
                                   .angles = points[team]->angles,
                                   .team = v->value.rules.teams[team]}};
-                    const char *name =
+                    mode_name name =
                         kind == QA_MODE_DEATHBALL
-                            ? (team ? "dm_dball_team2_start" : "dm_dball_team1_start")
+                            ? (team ? MODE_NAME_DM_DBALL_TEAM2_START : MODE_NAME_DM_DBALL_TEAM1_START)
                         : v->value.rules.source >= QA_MODE_Q3
-                            ? (team ? (variant ? "team_CTF_bluespawn" : "team_CTF_blueplayer")
-                                    : (variant ? "team_CTF_redspawn" : "team_CTF_redplayer"))
-                        : team ? "info_player_team2"
-                               : "info_player_team1";
-                    if (!qa_builtin_resource(&m->options.services, name, &generated.spawn.classname,
-                                             e) ||
-                        !planned(out, capacity, count, generated, e))
+                            ? (team ? (variant ? MODE_NAME_TEAM_CTF_BLUESPAWN : MODE_NAME_TEAM_CTF_BLUEPLAYER)
+                                    : (variant ? MODE_NAME_TEAM_CTF_REDSPAWN : MODE_NAME_TEAM_CTF_REDPLAYER))
+                        : team ? MODE_NAME_INFO_PLAYER_TEAM2
+                               : MODE_NAME_INFO_PLAYER_TEAM1;
+                    generated.spawn.classname = m->runtime_names[name];
+                    if (!planned(out, capacity, count, generated, e))
                         return false;
                 }
             }
@@ -294,10 +288,9 @@ bool qa_modes_plan_map(qa_modes *m, qa_mode_id id, const qa_mode_map_admission *
         if (*missing & QA_MODE_MAP_BALL_SPAWN) {
             qa_mode_map_admission generated = {
                 .role = QA_MODE_MAP_SPAWN,
-                .spawn = {.origin = neutral->origin, .angles = neutral->angles}};
-            if (!qa_builtin_resource(&m->options.services, "dm_dball_ball_start",
-                                     &generated.spawn.classname, e) ||
-                !planned(out, capacity, count, generated, e))
+                .spawn = {.origin = neutral->origin, .angles = neutral->angles,
+                    .classname = m->runtime_names[MODE_NAME_DM_DBALL_BALL_START]}};
+            if (!planned(out, capacity, count, generated, e))
                 return false;
             *missing &= ~(uint32_t)QA_MODE_MAP_BALL_SPAWN;
         }
@@ -328,10 +321,9 @@ bool qa_modes_plan_map(qa_modes *m, qa_mode_id id, const qa_mode_map_admission *
     if (kind == QA_MODE_HORDE) {
         if (*missing & QA_MODE_MAP_HORDE_CONTROLLER) {
             qa_mode_map_admission generated = {.role = QA_MODE_MAP_HORDE_MANAGER,
-                                               .object = {.origin = first->origin}};
-            if (!qa_builtin_resource(&m->options.services, "horde_event", &generated.object.target,
-                                     e) ||
-                !planned(out, capacity, count, generated, e))
+                                               .object = {.origin = first->origin,
+                                                   .target = m->runtime_names[MODE_NAME_HORDE_EVENT]}};
+            if (!planned(out, capacity, count, generated, e))
                 return false;
             *missing &= ~(uint32_t)QA_MODE_MAP_HORDE_CONTROLLER;
         }

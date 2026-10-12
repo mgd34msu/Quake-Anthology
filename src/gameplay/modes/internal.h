@@ -229,7 +229,52 @@ typedef struct mode_objective {
     X(Q1_WEAPON_ROCKETLAUNCHER, "q1:weapon/rocketlauncher") \
     X(Q1_WEAPON_MULTI_GRENADE, "q1:weapon/rogue:multi-grenade") \
     X(Q1_WEAPON_MULTI_ROCKET, "q1:weapon/rogue:multi-rocket") \
-    X(Q1_WEAPON_PLASMA, "q1:weapon/rogue:plasma")
+    X(Q1_WEAPON_PLASMA, "q1:weapon/rogue:plasma") \
+    X(DM_DBALL_BALL_START, "dm_dball_ball_start") \
+    X(DM_DBALL_TEAM1_START, "dm_dball_team1_start") \
+    X(DM_DBALL_TEAM2_START, "dm_dball_team2_start") \
+    X(CTF_TEAMKILL, "ctf:teamkill") \
+    X(ANTHOLOGY_MODE_OBJECT, "anthology:mode-object") \
+    X(ANTHOLOGY_DROPPED_FLAG, "anthology:dropped-flag") \
+    X(HORDE_EVENT, "horde_event") \
+    X(MODEL_PROGS_CTFBASE_MDL, "progs/ctfbase.mdl") \
+    X(MODEL_PROGS_CTFMODEL_MDL, "progs/ctfmodel.mdl") \
+    X(MODEL_PROGS_FLAG_MDL, "progs/flag.mdl") \
+    X(MODEL_PLAYERS_MALE_FLAG1_MD2, "players/male/flag1.md2") \
+    X(MODEL_PLAYERS_MALE_FLAG2_MD2, "players/male/flag2.md2") \
+    X(MODEL_FLAGS_R_FLAG_MD3, "models/flags/r_flag.md3") \
+    X(MODEL_FLAGS_B_FLAG_MD3, "models/flags/b_flag.md3") \
+    X(MODEL_FLAGS_N_FLAG_MD3, "models/flags/n_flag.md3") \
+    X(MODEL_PROGS_END1_MDL, "progs/end1.mdl") \
+    X(MODEL_PROGS_END2_MDL, "progs/end2.mdl") \
+    X(MODEL_PROGS_END3_MDL, "progs/end3.mdl") \
+    X(MODEL_PROGS_END4_MDL, "progs/end4.mdl") \
+    X(MODEL_CTF_RESISTANCE_MD2, "models/ctf/resistance/tris.md2") \
+    X(MODEL_CTF_STRENGTH_MD2, "models/ctf/strength/tris.md2") \
+    X(MODEL_CTF_HASTE_MD2, "models/ctf/haste/tris.md2") \
+    X(MODEL_CTF_REGENERATION_MD2, "models/ctf/regeneration/tris.md2") \
+    X(MODEL_CTF_VAMPIRE_MD2, "models/ctf/vampire/tris.md2") \
+    X(MODEL_CTF_RESIST_MD2, "models/ctf/resist/tris.md2") \
+    X(MODEL_CTF_DAMAGE_MD2, "models/ctf/damage/tris.md2") \
+    X(MODEL_CTF_REGEN_MD2, "models/ctf/regen/tris.md2") \
+    X(MODEL_PROGS_SPHERE_MDL, "progs/sphere.mdl") \
+    X(MODEL_ITEMS_TAGTOKEN_MD2, "models/items/tagtoken/tris.md2") \
+    X(MODEL_OBJECTS_DBALL_MD2, "models/objects/dball/tris.md2") \
+    X(MODEL_POWERUPS_R_ORB_MD3, "models/powerups/orb/r_orb.md3") \
+    X(MODEL_POWERUPS_B_ORB_MD3, "models/powerups/orb/b_orb.md3") \
+    X(MODEL_POWERUPS_OVERLOAD_BASE_MD3, "models/powerups/overload_base.md3") \
+    X(Q1_CTF_FLAG_RED, "q1:ctf/flag/red") \
+    X(Q1_CTF_FLAG_BLUE, "q1:ctf/flag/blue") \
+    X(Q1_CTF_FLAG_NEUTRAL, "q1:ctf/flag/neutral") \
+    X(Q3_ITEM_TEAM_CTF_REDFLAG, "q3:item/team_CTF_redflag") \
+    X(Q3_ITEM_TEAM_CTF_BLUEFLAG, "q3:item/team_CTF_blueflag") \
+    X(Q3_ITEM_TEAM_CTF_NEUTRALFLAG, "q3:item/team_CTF_neutralflag") \
+    X(Q1_ROGUE_TAG, "q1:rogue/tag") \
+    X(Q1_CTF_RUNE_RESISTANCE, "q1:ctf/rune/resistance") \
+    X(Q1_CTF_RUNE_STRENGTH, "q1:ctf/rune/strength") \
+    X(Q1_CTF_RUNE_HASTE, "q1:ctf/rune/haste") \
+    X(Q1_CTF_RUNE_REGENERATION, "q1:ctf/rune/regeneration") \
+    X(Q2_ITEM_TECH5, "q2:item_tech5")
 
 typedef enum mode_name {
 #define MODE_NAME_ENUM(key, text) MODE_NAME_##key,
