@@ -8,6 +8,70 @@
 
 static qa_application *application(application_q3_weapons_services *s)
 { return s->role->engine->provider->application; }
+static q3_weapon_actor_state *actor_state_find(const application_q3_weapons_services *s,
+    qa_actor_id actor)
+{
+    size_t slot;
+    if (!qa_actor_index_find_retained(&s->actor_states, actor, &slot)) return NULL;
+    q3_weapon_storage *storage = qa_pool_at(&s->state_pool, slot);
+    return &storage->actor;
+}
+static q3_weapon_storage *state_take(application_q3_weapons_services *s,
+    size_t *slot, qa_error *error)
+{
+    if (s->state_pool.active == s->state_pool.capacity &&
+        !qa_pool_extend(&s->state_pool, &s->state_storage, s->state_pool.capacity, error))
+        return NULL;
+    return qa_pool_take(&s->state_pool, slot);
+}
+static q3_weapon_actor_state *actor_state_take(application_q3_weapons_services *s,
+    qa_actor_id actor, qa_error *error)
+{
+    q3_weapon_actor_state *state = actor_state_find(s, actor);
+    if (state) return state;
+    size_t slot;
+    q3_weapon_storage *storage = state_take(s, &slot, error);
+    if (!storage) return NULL;
+    state = &storage->actor;
+    *state = (q3_weapon_actor_state){.actor = actor, .storage_slot = slot};
+    if (!qa_actor_index_remember(&s->actor_states, actor, slot, error)) {
+        qa_pool_release(&s->state_pool, slot); return NULL;
+    }
+    return state;
+}
+static void actor_state_collect(application_q3_weapons_services *s,
+    q3_weapon_actor_state *state)
+{
+    if (state->requested || state->matches) return;
+    qa_actor_index_forget_retained(&s->actor_states, state->actor);
+    qa_pool_release(&s->state_pool, state->storage_slot);
+}
+static void request_remove(application_q3_weapons_services *s, q3_weapon_actor_state *state)
+{
+    if (!state || !state->requested) return;
+    if (state->request_previous) state->request_previous->request_next = state->request_next;
+    else s->first_request = state->request_next;
+    if (state->request_next) state->request_next->request_previous = state->request_previous;
+    else s->last_request = state->request_previous;
+    state->request_previous = state->request_next = NULL;
+    state->requested = false; --s->request_count;
+    actor_state_collect(s, state);
+}
+void q3_weapon_requests_clear(application_q3_weapons_services *s)
+{ while (s->first_request) request_remove(s, s->first_request); }
+bool q3_weapon_request_store(application_q3_weapons_services *s, qa_actor_id actor,
+    int32_t weapon, qa_error *error)
+{
+    q3_weapon_actor_state *state = actor_state_take(s, actor, error);
+    if (!state) return false;
+    if (!state->requested) {
+        state->request_previous = s->last_request;
+        if (s->last_request) s->last_request->request_next = state;
+        else s->first_request = state;
+        s->last_request = state; state->requested = true; ++s->request_count;
+    }
+    state->weapon = weapon; return true;
+}
 bool q3_weapon_services_source(application_q3_weapons_services *s, qa_actor_id actor,
     q3_weapon_actor *out, qa_error *error)
 {
@@ -106,14 +170,20 @@ bool application_q3_weapons_services_match_binding(application_q3_weapons_servic
     if (!record || record->owner != owner || !app->primary_mode_ready ||
         mode.slot != app->primary_mode.slot || mode.generation != app->primary_mode.generation)
         return application_fail(error, QA_ERROR_FORMAT, "Original match binding differs from its actual actor and primary mode");
-    q3_weapon_match *match = s->matches;
-    while (match && (!qa_actor_id_equal(match->actor, actor) || match->mode.slot != mode.slot ||
-        match->mode.generation != mode.generation)) match = match->next;
+    q3_weapon_actor_state *state = actor_state_take(s, actor, error);
+    if (!state) return false;
+    q3_weapon_match *match = state->matches;
+    while (match && (match->mode.slot != mode.slot || match->mode.generation != mode.generation))
+        match = match->actor_next;
     if (!match) {
-        match = calloc(1, sizeof(*match));
-        if (!match) return application_fail(error, QA_ERROR_MEMORY, "Retaining genuine original match callback owner");
-        *match = (q3_weapon_match){.next = s->matches, .services = s, .actor = actor,
-            .source_owner = owner, .mode = mode}; s->matches = match;
+        size_t slot;
+        q3_weapon_storage *storage = state_take(s, &slot, error);
+        if (!storage) { actor_state_collect(s, state); return false; }
+        match = &storage->match;
+        *match = (q3_weapon_match){.next = s->matches, .actor_next = state->matches,
+            .services = s, .actor_state = state, .storage_slot = slot, .actor = actor,
+            .source_owner = owner, .mode = mode};
+        s->matches = state->matches = match;
     }
     if (match->source_owner != owner)
         return application_fail(error, QA_ERROR_FORMAT, "Original match callback owner changed its actor namespace");
@@ -152,7 +222,13 @@ bool application_q3_weapons_services_match_close(application_q3_weapons_services
             s->closing_match = false;
             return ok ? application_fail(error, QA_ERROR_ARGUMENT, "Original match actor retirement still retains its real binding") : false;
         }
-        s->matches = match->next; free(match);
+        q3_weapon_actor_state *state = match->actor_state;
+        q3_weapon_match **link = &state->matches;
+        while (*link != match) link = &(*link)->actor_next;
+        *link = match->actor_next;
+        s->matches = match->next;
+        qa_pool_release(&s->state_pool, match->storage_slot);
+        actor_state_collect(s, state);
     }
     s->closing_match = false; return true;
 }
@@ -187,44 +263,19 @@ static bool selected(void *context, qa_actor_id actor)
     return application_provider_for(app, actor, QA_ROLE_ARSENAL, "") == s->role->engine->provider &&
         (!app->equipment || qa_equipment_primary_selected(app->equipment, actor));
 }
-static size_t request_index(const application_q3_weapons_services *s, qa_actor_id actor)
-{
-    for (size_t i = 0; i < s->request_count; ++i)
-        if (qa_actor_id_equal(s->requests[i].actor, actor)) return i;
-    return s->request_count;
-}
-static void request_remove(application_q3_weapons_services *s, size_t i)
-{
-    if (i == s->request_count) return;
-    memmove(s->requests + i, s->requests + i + 1, (s->request_count - i - 1) * sizeof(*s->requests));
-    --s->request_count;
-}
 static bool attempted(void *context, qa_actor_id actor, int32_t weapon, qa_error *error)
 {
     application_q3_weapons_services *s = context; q3_weapon_actor source;
     if (!q3_weapon_services_source(s, actor, &source, error)) return false;
-    size_t i = request_index(s, actor);
-    if (i < s->request_count && s->requests[i].weapon != weapon) request_remove(s, i);
+    q3_weapon_actor_state *state = actor_state_find(s, actor);
+    if (state && state->requested && state->weapon != weapon) request_remove(s, state);
     return true;
-}
-static bool request_store(application_q3_weapons_services *s, qa_actor_id actor,
-    int32_t weapon, qa_error *error)
-{
-    size_t i = request_index(s, actor);
-    if (i == s->request_count) {
-        if (s->request_count == SIZE_MAX / sizeof(*s->requests))
-            return application_fail(error, QA_ERROR_MEMORY, "Original weapon request continuation exceeds native extent");
-        q3_weapon_request *grown = realloc(s->requests, (s->request_count + 1) * sizeof(*grown));
-        if (!grown) return application_fail(error, QA_ERROR_MEMORY, "Retaining original weapon command request");
-        s->requests = grown; ++s->request_count;
-    }
-    s->requests[i] = (q3_weapon_request){actor, weapon}; return true;
 }
 static bool accepted(void *context, qa_actor_id actor, int32_t weapon, qa_error *error)
 {
     application_q3_weapons_services *s = context; q3_weapon_actor source;
     if (weapon < 0) return application_fail(error, QA_ERROR_FORMAT, "Accepted Source weapon selection is negative");
-    return q3_weapon_services_source(s, actor, &source, error) && request_store(s, actor, weapon, error);
+    return q3_weapon_services_source(s, actor, &source, error) && q3_weapon_request_store(s, actor, weapon, error);
 }
 bool application_q3_weapons_services_select_intent(application_q3_weapons_services *s,
     qa_actor_id actor, qa_actor_owner owner, qa_item_id item, bool *admitted, qa_error *error)
@@ -255,7 +306,7 @@ bool application_q3_weapons_services_select_intent(application_q3_weapons_servic
         provider->owner != owner || !provider->constructed || !provider->attached || provider->close_pending))
         ok = application_fail(error, QA_ERROR_NOT_FOUND, "Original weapon selection replaced its real actor or inventory owner");
     if (ok && (active == item || count > 0)) {
-        if (active != item) ok = request_store(s, actor, weapon, error);
+        if (active != item) ok = q3_weapon_request_store(s, actor, weapon, error);
         if (ok) *admitted = true;
     }
     --s->calls; return ok;
@@ -265,8 +316,9 @@ bool application_q3_weapons_services_request(application_q3_weapons_services *s,
 {
     q3_weapon_actor source;
     if (!out || !present || !q3_weapon_services_source(s, actor, &source, error)) return false;
-    size_t i = request_index(s, actor); *present = i < s->request_count;
-    if (*present) *out = s->requests[i].weapon;
+    q3_weapon_actor_state *state = actor_state_find(s, actor);
+    *present = state && state->requested;
+    if (*present) *out = state->weapon;
     return true;
 }
 bool application_q3_weapons_services_request_completed(application_q3_weapons_services *s,
@@ -274,16 +326,16 @@ bool application_q3_weapons_services_request_completed(application_q3_weapons_se
 {
     q3_weapon_actor source;
     if (!q3_weapon_services_source(s, actor, &source, error)) return false;
-    size_t i = request_index(s, actor);
-    if (i == s->request_count) return true;
+    q3_weapon_actor_state *state = actor_state_find(s, actor);
+    if (!state || !state->requested) return true;
     int32_t selection;
     if (!q3_weapons_read(s->role->weapons, source.player +
         s->role->weapons->profile.selection_offset, &selection, error)) return false;
-    if (selection == s->requests[i].weapon) request_remove(s, i);
+    if (selection == state->weapon) request_remove(s, state);
     return true;
 }
 void application_q3_weapons_services_actor_released(application_q3_weapons_services *s, qa_actor_record actor)
-{ if (s) request_remove(s, request_index(s, actor.id)); }
+{ if (s) request_remove(s, actor_state_find(s, actor.id)); }
 bool application_q3_weapons_services_slice_finish(q3g_role *role, qa_actor_id actor,
     const qa_usercmd *command, const qa_q3_player *player, bool reached, qa_error *error)
 {
@@ -1028,6 +1080,19 @@ bool application_q3_weapons_services_create(q3g_role *role, application_q3_weapo
     application_q3_weapons_services *s = calloc(1, sizeof(*s));
     if (!s) return application_fail(error, QA_ERROR_MEMORY, "Retaining original weapon application services");
     s->role = role; s->image = role->image; s->vm = role->vm; s->abi = role->abi;
+    const qa_actor_registry *actors = qa_session_actors(application(s)->session);
+    size_t capacity = qa_actors_capacity(actors);
+    if (capacity > SIZE_MAX / 2) {
+        free(s);
+        return application_fail(error, QA_ERROR_MEMORY, "Original weapon service storage exceeds native extent");
+    }
+    if (!qa_pool_prepare(&s->state_pool, &s->state_storage, capacity * 2,
+            sizeof(q3_weapon_storage), _Alignof(q3_weapon_storage), error) ||
+        !qa_actor_index_create(&s->actor_states, actors, &s->state_storage, error) ||
+        !qa_id_index_reserve(&s->actor_states.retained, capacity, error)) {
+        qa_actor_index_destroy(&s->actor_states);
+        qa_arena_destroy(&s->state_storage); free(s); return false;
+    }
     qa_strings *strings = qa_session_strings(application(s)->session);
     size_t items = qa_strings_count(strings), text_bytes = 0;
     if (items < 4096) items = 4096;
@@ -1036,7 +1101,9 @@ bool application_q3_weapons_services_create(q3g_role *role, application_q3_weapo
         sizeof(qa_inventory_source_group) + sizeof(qa_item_definition) + sizeof(qa_supply_weapon) * 2) + text_bytes;
     size_t pages = (bytes * 4 + 4095) / 4096;
     if (!qa_pool_reserve_pages(&s->inventory_pages,&s->inventory_storage,pages,4096,_Alignof(max_align_t),error)) {
-        qa_arena_destroy(&s->inventory_storage); free(s); return false;
+        qa_arena_destroy(&s->inventory_storage);
+        qa_actor_index_destroy(&s->actor_states);
+        qa_arena_destroy(&s->state_storage); free(s); return false;
     }
     *out = s; return true;
 }
@@ -1047,6 +1114,9 @@ bool application_q3_weapons_services_destroy(application_q3_weapons_services **o
     if (!application_q3_weapons_services_idle(s))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original weapon services retain an actual Source action");
     if (!application_q3_weapons_services_match_close(s, error)) return false;
+    q3_weapon_requests_clear(s);
+    qa_actor_index_destroy(&s->actor_states);
+    qa_arena_destroy(&s->state_storage);
     qa_arena_destroy(&s->inventory_storage);
-    free(s->requests); free(s); *owner = NULL; return true;
+    free(s); *owner = NULL; return true;
 }
