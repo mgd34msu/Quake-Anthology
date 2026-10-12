@@ -6,16 +6,22 @@ static int32_t elapsed(int32_t at, int32_t from) {
     return qa_i32_from_u32((uint32_t)at - (uint32_t)from);
 }
 
-static bool valid_trajectory(const qa_trajectory *trajectory, float gravity,
-                              const qa_vec3 *out, qa_error *error) {
-    if (!trajectory || !out || trajectory->type < QA_TRAJECTORY_STATIONARY ||
-        trajectory->type > QA_TRAJECTORY_GRAVITY || !qa_vec_finite(trajectory->base) ||
-        !qa_vec_finite(trajectory->delta) || !isfinite(gravity) ||
-        (trajectory->type == QA_TRAJECTORY_SINE && trajectory->duration_ms == 0)) {
+static bool trajectory_arguments(const qa_trajectory *trajectory, const qa_vec3 *out,
+                                  bool velocity, qa_error *error) {
+    if (!trajectory || !out) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q3 trajectory or output");
         return false;
     }
+    if (trajectory->type < QA_TRAJECTORY_STATIONARY || trajectory->type > QA_TRAJECTORY_GRAVITY) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "BG_EvaluateTrajectory%s: unknown trType: %d",
+            velocity ? "Delta" : "", trajectory->time_ms);
+        return false;
+    }
     return true;
+}
+
+static float trajectory_seconds(int32_t milliseconds) {
+    return (float)(milliseconds * 0.001);
 }
 
 static float radians(const qa_trajectory *trajectory, int32_t at) {
@@ -25,7 +31,7 @@ static float radians(const qa_trajectory *trajectory, int32_t at) {
 
 bool qa_trajectory_position(const qa_trajectory *trajectory, int32_t at, float gravity,
                              qa_vec3 *out, qa_error *error) {
-    if (!valid_trajectory(trajectory, gravity, out, error)) return false;
+    if (!trajectory_arguments(trajectory, out, false, error)) return false;
     float seconds;
     switch (trajectory->type) {
     case QA_TRAJECTORY_STATIONARY:
@@ -33,23 +39,27 @@ bool qa_trajectory_position(const qa_trajectory *trajectory, int32_t at, float g
         *out = trajectory->base;
         return true;
     case QA_TRAJECTORY_LINEAR:
-        seconds = (float)elapsed(at, trajectory->time_ms) * 0.001f;
+        seconds = trajectory_seconds(elapsed(at, trajectory->time_ms));
         *out = qa_vec_add(trajectory->base, qa_vec_scale(trajectory->delta, seconds));
         return true;
     case QA_TRAJECTORY_LINEAR_STOP: {
         int32_t end = qa_i32_from_u32((uint32_t)trajectory->time_ms + (uint32_t)trajectory->duration_ms);
         if (at > end) at = end;
-        seconds = fmaxf(0, (float)elapsed(at, trajectory->time_ms) * 0.001f);
+        seconds = trajectory_seconds(elapsed(at, trajectory->time_ms));
+        if (seconds < 0) seconds = 0;
         *out = qa_vec_add(trajectory->base, qa_vec_scale(trajectory->delta, seconds));
         return true;
     }
-    case QA_TRAJECTORY_SINE:
-        *out = qa_vec_add(trajectory->base, qa_vec_scale(trajectory->delta, sinf(radians(trajectory, at))));
+    case QA_TRAJECTORY_SINE: {
+        float angle = radians(trajectory, at);
+        float phase = (float)sin((double)angle);
+        *out = qa_vec_add(trajectory->base, qa_vec_scale(trajectory->delta, phase));
         return true;
+    }
     case QA_TRAJECTORY_GRAVITY:
-        seconds = (float)elapsed(at, trajectory->time_ms) * 0.001f;
+        seconds = trajectory_seconds(elapsed(at, trajectory->time_ms));
         *out = qa_vec_add(trajectory->base, qa_vec_scale(trajectory->delta, seconds));
-        out->z -= 0.5f * gravity * seconds * seconds;
+        out->z = (float)(out->z - 0.5 * gravity * seconds * seconds);
         return true;
     }
     return false;
@@ -57,7 +67,7 @@ bool qa_trajectory_position(const qa_trajectory *trajectory, int32_t at, float g
 
 bool qa_trajectory_velocity(const qa_trajectory *trajectory, int32_t at, float gravity,
                              qa_vec3 *out, qa_error *error) {
-    if (!valid_trajectory(trajectory, gravity, out, error)) return false;
+    if (!trajectory_arguments(trajectory, out, true, error)) return false;
     switch (trajectory->type) {
     case QA_TRAJECTORY_STATIONARY:
     case QA_TRAJECTORY_INTERPOLATE:
@@ -70,15 +80,21 @@ bool qa_trajectory_velocity(const qa_trajectory *trajectory, int32_t at, float g
         *out = at > qa_i32_from_u32((uint32_t)trajectory->time_ms + (uint32_t)trajectory->duration_ms) ?
             qa_v3(0, 0, 0) : trajectory->delta;
         return true;
-    case QA_TRAJECTORY_SINE:
+    case QA_TRAJECTORY_SINE: {
         /* The original derivative uses half-amplitude cosine, independent of
          * the trajectory duration. Do not replace it with analytic scaling. */
-        *out = qa_vec_scale(trajectory->delta, cosf(radians(trajectory, at)) * 0.5f);
+        float angle = radians(trajectory, at);
+        float phase = (float)cos((double)angle);
+        phase = (float)(phase * 0.5);
+        *out = qa_vec_scale(trajectory->delta, phase);
         return true;
-    case QA_TRAJECTORY_GRAVITY:
+    }
+    case QA_TRAJECTORY_GRAVITY: {
+        float seconds = trajectory_seconds(elapsed(at, trajectory->time_ms));
         *out = trajectory->delta;
-        out->z -= gravity * ((float)elapsed(at, trajectory->time_ms) * 0.001f);
+        out->z -= gravity * seconds;
         return true;
+    }
     }
     return false;
 }

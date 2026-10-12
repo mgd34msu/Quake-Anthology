@@ -212,7 +212,9 @@ typedef struct qa_trajectory {
     qa_vec3 base, delta;
 } qa_trajectory;
 /* Native Q3 uses 800 for these shared game/cgame trajectories. The explicit
- * gravity argument also permits selected providers to evaluate other values. */
+ * gravity argument also permits selected providers to evaluate other values.
+ * Original Q3 rounds double milliseconds/trig/gravity position arithmetic at
+ * float assignments; sine phase multiplication and gravity velocity are float. */
 bool qa_trajectory_position(const qa_trajectory *, int32_t at_ms, float gravity,
                              qa_vec3 *, qa_error *);
 bool qa_trajectory_velocity(const qa_trajectory *, int32_t at_ms, float gravity,

@@ -849,6 +849,33 @@ static qa_unified_document *metadata_decode(qa_unified_frame_pool *pool,
     qa_unified_frame_lease_release(lease);qa_unified_document_destroy(source);qa_buffer_free(&wire);
     return decoded;
 }
+static void test_shared_trajectory(void)
+{
+    qa_error error={0}; qa_vec3 position={0},velocity={0};
+    qa_trajectory t={.type=QA_TRAJECTORY_LINEAR,.delta={1,0,0}};
+    CHECK(qa_trajectory_position(&t,999,800,&position,&error));
+    CHECK(position.x==0.999f);
+    t=(qa_trajectory){.type=QA_TRAJECTORY_GRAVITY,.base={0,0,10},.delta={0,0,5}};
+    CHECK(qa_trajectory_position(&t,1000,800,&position,&error));
+    CHECK(qa_trajectory_velocity(&t,1000,800,&velocity,&error));
+    CHECK(position.z==-385 && velocity.z==-795);
+    t=(qa_trajectory){.type=QA_TRAJECTORY_LINEAR_STOP,.duration_ms=1000,.delta={2,0,0}};
+    CHECK(qa_trajectory_position(&t,-1,800,&position,&error) && position.x==0);
+    CHECK(qa_trajectory_position(&t,1001,800,&position,&error) && position.x==2);
+    CHECK(qa_trajectory_velocity(&t,1000,800,&velocity,&error) && velocity.x==2);
+    CHECK(qa_trajectory_velocity(&t,1001,800,&velocity,&error) && velocity.x==0);
+    t.time_ms=INT32_MAX-10; t.duration_ms=20;
+    CHECK(qa_trajectory_velocity(&t,INT32_MIN+9,800,&velocity,&error) && velocity.x==2);
+    CHECK(qa_trajectory_velocity(&t,INT32_MIN+10,800,&velocity,&error) && velocity.x==0);
+    t=(qa_trajectory){.type=QA_TRAJECTORY_SINE,.duration_ms=2000,.delta={6,0,0}};
+    CHECK(qa_trajectory_velocity(&t,0,800,&velocity,&error) && velocity.x==3);
+    t.duration_ms=0;
+    CHECK(qa_trajectory_position(&t,0,800,&position,&error) && isnan(position.x));
+    t.type=(qa_trajectory_type)99; position=qa_v3(1,2,3);
+    CHECK(!qa_trajectory_position(&t,0,800,&position,&error));
+    CHECK(error.code==QA_ERROR_FORMAT && qa_vec_equal(position,qa_v3(1,2,3)));
+}
+
 static void test_bounded_handshake(void)
 {
     qa_error error={0};uint8_t storage[512];
@@ -3505,6 +3532,7 @@ int main(int argc, char **argv)
     test_arena();
     test_reserved_scene_frame();
     test_bounded_handshake();
+    test_shared_trajectory();
     test_metadata_retention();
     test_metadata_names();
     test_files();
