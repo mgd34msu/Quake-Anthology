@@ -72,7 +72,10 @@ static bool inventory_refresh(application_guest_projection *p, qa_error *error)
                 .public_weapon = weapon.weapon};
         }
     }
-    bool changed = used != p->inventory_count;
+    bool topology_changed = used != p->inventory_count;
+    for (size_t i = 0; !topology_changed && i < used; ++i)
+        topology_changed = fields[i].item != p->inventory[i].item;
+    bool changed = topology_changed;
     for (size_t i = 0; !changed && i < used; ++i)
         changed = fields[i].item != p->inventory[i].item || fields[i].mask != p->inventory[i].mask ||
             fields[i].field.offset != p->inventory[i].field.offset || fields[i].public_weapon != p->inventory[i].public_weapon;
@@ -81,6 +84,7 @@ static bool inventory_refresh(application_guest_projection *p, qa_error *error)
     if (used && !owned) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual public inventory catalog fields");
     if (used) memcpy(owned, fields, used * sizeof(*owned));
     free(p->inventory); p->inventory = owned; p->inventory_count = used;
+    if (topology_changed) ++p->inventory_items_revision;
     return true;
 }
 
@@ -172,6 +176,19 @@ static bool inventory_checked_count(void *opaque, size_t *out, qa_error *error)
     bool ok = current(context, &data, error) && inventory_refresh(context->projection, error) &&
         current(context, &data, error);
     if (ok) *out = context->projection->inventory_count;
+    --role->engine->calls;
+    return ok;
+}
+
+static bool inventory_items_revision(void *opaque, uint64_t *out, qa_error *error)
+{
+    guest_projection_actor *context = opaque;
+    q3g_role *role = context->projection->role;
+    ++role->engine->calls;
+    qa_q3_host_game_data data;
+    bool ok = current(context, &data, error) && inventory_refresh(context->projection, error) &&
+        current(context, &data, error);
+    if (ok) *out = context->projection->inventory_items_revision;
     --role->engine->calls;
     return ok;
 }
@@ -332,7 +349,7 @@ static qa_inventory_binding inventory_binding(guest_projection_actor *context)
 {
     return (qa_inventory_binding){.context = context, .count = inventory_count,
         .at = inventory_at, .write = inventory_write, .mutable_capacity = mutable_capacity,
-        .checked_count = inventory_checked_count,
+        .checked_count = inventory_checked_count, .items_revision = inventory_items_revision,
         .acquire = context->projection->public_inventory.acquisition_entry ? inventory_acquire : NULL};
 }
 

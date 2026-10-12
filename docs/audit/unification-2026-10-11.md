@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `8eb53bf3`.
+Follow-up source changes were reviewed through main `2e6839a1`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -434,3 +434,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `7ad491c5` / J25-06, J32-11: Listed native temporary file/stream/conversion staging uses scoped common guest scratch; Q1 view sky reads immutable admission metadata. Full snapshots, conversion zeroing and partial receipts remain in order. Normal build and seven core suites passed. Exhaustive nested scratch capacity and runtime speed are not claimed. Records: `/tmp/qa-ta3196-guest-scratch-and-sky-admission-20261012-v1`.
 
 - `8eb53bf3` / 31-01: Q3 scene admission uses the existing scene-bank implementation for source and non-source backends; private growable scene arrays are deleted. Active conversion, portal scratch and component packets use frame storage. Source/cell asset custody, scene limits and restoration policies were checked. Normal build and seven core suites passed; component picture receipt growth remains open. Records: `/tmp/qa-ta3196-one-q3-scene-bank-20261012-v1`.
+
+- `2e6839a1` / partial adoption: J25-03 partial: common numeric-ID indexes now cover imports, resource capabilities and native callbacks, including nested re-find and restore enrollment. FILE, kernel-handle and TLS lookups remain assigned to the same worker. Normal build and seven existing core suites passed; no whole-item closure. Records: `/tmp/qa-ta3196-native-import-resource-indexes-20261012-v1`.

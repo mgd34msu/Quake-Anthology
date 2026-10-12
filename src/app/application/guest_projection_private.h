@@ -46,6 +46,7 @@ typedef struct application_guest_projection {
     uint32_t entity_stride, client_stride, client_pointer;
     guest_inventory_field *inventory;
     size_t inventory_count;
+    uint64_t inventory_items_revision;
     guest_public_inventory_profile public_inventory;
     guest_inventory_catalog_services inventory_catalog;
     guest_projection_actor *actors;

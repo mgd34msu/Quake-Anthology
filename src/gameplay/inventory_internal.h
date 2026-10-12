@@ -3,6 +3,16 @@
 #include "qa/inventory.h"
 #include "qa/operation.h"
 #include "qa/pool.h"
+#include "qa/id_index.h"
+
+typedef struct inventory_source_index {
+    qa_arena storage;
+    qa_id_index items;
+    uint64_t revision;
+    qa_inventory *owner;
+    size_t storage_slot;
+    bool ready, validated;
+} inventory_source_index;
 
 typedef struct item_group {
     struct item_group *next;
@@ -11,6 +21,10 @@ typedef struct item_group {
     qa_actor_owner owner;
     qa_item_admission *items;
     size_t count;
+    size_t order;
+    qa_arena index_storage;
+    qa_id_index item_index;
+    inventory_source_index *source_index;
     qa_inventory_binding binding;
     void *action_context;
     bool (*invoke)(void *, qa_item_id, qa_item_action, qa_error *);
@@ -27,6 +41,9 @@ typedef struct inventory_store {
     qa_inventory *entries_owner;
     size_t entries_slot, entries_pages;
     size_t count, capacity;
+    qa_arena index_storage;
+    qa_id_index local_items, definitions;
+    inventory_source_index *primary_index;
     qa_inventory_binding primary;
     item_group *groups;
     struct pickup_claim *pickups;
@@ -58,7 +75,7 @@ struct qa_inventory {
     size_t calls;
     qa_operation *operations[4];
     qa_arena record_storage;
-    qa_pool store_records, admission_pages;
+    qa_pool store_records, admission_pages, source_records;
     qa_arena scratch_storage;
     qa_pool scratch_pages;
     size_t storage_leases;
@@ -86,4 +103,5 @@ inventory_store *qa_inventory_store_create(qa_inventory *, qa_error *);
 void qa_inventory_store_drop(inventory_store *);
 inventory_store *qa_inventory_checkpoint_acquire(qa_inventory *, qa_actor_id);
 void qa_inventory_checkpoint_release(qa_inventory *, inventory_store *);
+bool qa_inventory_store_index_restore(qa_inventory *, inventory_store *, qa_error *);
 #endif

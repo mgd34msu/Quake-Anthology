@@ -271,6 +271,11 @@ static bool read_entry(struct application_qc_item_actor *a,const application_qc_
 static size_t entry_count(void *context){return profile_of(context)->definition_count;}
 static bool checked_count(void *context,size_t *out,qa_error *e)
 {if(!physical_current(context,e))return false;*out=entry_count(context);return true;}
+static bool items_revision(void *context,uint64_t *out,qa_error *e)
+{
+    if(!physical_current(context,e))return false;
+    *out=0;return true;
+}
 static bool entry_at(void *context,size_t index,qa_inventory_entry *out,qa_error *e)
 {
     struct application_qc_item_actor *a=context;const struct application_qc_items *p=profile_of(a);size_t bit;
@@ -314,7 +319,7 @@ static void binding(struct application_qc_item_actor *a,qa_inventory_items *out)
 {
     const struct application_qc_items *p=profile_of(a);
     *out=(qa_inventory_items){.owner=a->engine->provider->owner,.items=p->admissions,.count=p->definition_count,
-        .state={.context=a,.count=entry_count,.at=entry_at,.write=entry_write,.mutable_capacity=mutable_capacity,.checked_count=checked_count},.action_context=a,.invoke=invoke};
+        .state={.context=a,.count=entry_count,.at=entry_at,.write=entry_write,.mutable_capacity=mutable_capacity,.checked_count=checked_count,.items_revision=items_revision},.action_context=a,.invoke=invoke};
 }
 static struct application_qc_item_actor *actor_create(struct application_qc_state *engine,qa_actor_id actor,qa_error *e)
 {

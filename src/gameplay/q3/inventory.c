@@ -113,6 +113,13 @@ static size_t equipment_count(void *opaque) {
             ++result;
     return result;
 }
+static bool equipment_revision(void *opaque, uint64_t *out, qa_error *error) {
+    q3_inventory_owner *owner = opaque;
+    q3_actor *actor = q3_actor_get(owner->game, owner->actor);
+    if (!actor || actor->kind != Q3_ACTOR_PLAYER)
+        return q3_fail(error, "missing Q3 equipment inventory owner");
+    *out = 0; return true;
+}
 static const qa_q3_item *equipment_at(q3_inventory_owner *owner, size_t ordinal, uint32_t *index) {
     size_t count;
     const qa_q3_item *items = qa_q3_items(owner->game->options.product, &count);
@@ -241,7 +248,7 @@ static bool inventory_admit(qa_q3_game *game, qa_actor_id actor, qa_error *error
             }
         qa_inventory_items group = {.owner = game->options.owner, .items = definitions,
             .count = used, .state = {.context = owner, .count = equipment_count,
-                                    .at = equipment_read, .write = equipment_write},
+                                    .at = equipment_read, .write = equipment_write, .items_revision = equipment_revision},
             .action_context = owner, .invoke = invoke};
         qa_inventory_lease lease = {0};
         if (!qa_inventory_bind_items(inventory, actor, &group, &lease, error))
@@ -344,6 +351,6 @@ bool qa_q3_game_inventory_group(qa_q3_game *game, qa_actor_id actor, uint64_t se
         .count = saved->count, .action_context = owner, .invoke = invoke};
     if (!saved->definitions_only)
         out->state = (qa_inventory_binding){.context = owner, .count = equipment_count,
-                                            .at = equipment_read, .write = equipment_write};
+                                            .at = equipment_read, .write = equipment_write, .items_revision = equipment_revision};
     return true;
 }

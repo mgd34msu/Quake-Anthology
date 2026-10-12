@@ -278,6 +278,7 @@ bool qa_persistence_inventory_restore(qa_session *session, qa_inventory *table,
         io.offset = record_offset;
         qa_inventory_hold(table);
         ok = store_fields(&io, scratch, store, resolve);
+        if (ok) ok = qa_inventory_store_index_restore(scratch, store, error);
         qa_inventory_unhold(table);
         if (ok) ok = persistence_serial_append(&serials, &serial_count, &serial_capacity, store->serial, scratch->serial, error);
         for (item_group *group = store->groups; ok && group; group = group->next)

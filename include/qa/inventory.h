@@ -25,6 +25,9 @@ typedef struct qa_inventory_binding {
      * item, capacity and count policy stay fixed. */
     bool (*acquire)(void *, const qa_inventory_entry *, double amount, bool publish,
                     qa_inventory_entry *, bool *handled, bool *writes, qa_error *);
+    /* Optional identity/order revision, independent of mutable counts. Without
+     * it, enumerate the live topology on each lookup. */
+    bool (*items_revision)(void *, uint64_t *, qa_error *);
 } qa_inventory_binding;
 typedef enum qa_item_action { QA_ITEM_USE = 1, QA_ITEM_DROP = 2 } qa_item_action;
 typedef struct qa_item_definition {

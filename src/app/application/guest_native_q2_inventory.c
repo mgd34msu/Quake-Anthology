@@ -486,10 +486,17 @@ static bool inventory_mutable(void *opaque, qa_item_id item)
     return false;
 }
 
+static bool inventory_items_revision(void *opaque, uint64_t *out, qa_error *error)
+{
+    qa_native_address base;
+    if (!client_address(opaque, &base, error)) return false;
+    *out = 0; return true;
+}
+
 static qa_inventory_binding inventory_binding(application_native_q2_client *client)
 {
     return (qa_inventory_binding){.context = client, .count = inventory_count,
-        .at = inventory_at, .write = inventory_write, .mutable_capacity = inventory_mutable};
+        .at = inventory_at, .write = inventory_write, .mutable_capacity = inventory_mutable, .items_revision = inventory_items_revision};
 }
 
 bool application_native_q2_inventory_admit(struct application_native_q2 *engine, uint32_t slot, qa_error *error)

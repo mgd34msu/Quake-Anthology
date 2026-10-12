@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "8eb53bf3acbee017b06e4847f84c5e88dc173ed7",
+  "verified_main": "2e6839a173f7dcab90470387b1f03bb05f196d32",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -43530,6 +43530,33 @@
       ],
       "record_directory": "/tmp/qa-ta3196-one-q3-scene-bank-20261012-v1",
       "conclusion": "Q3 scene admission uses the existing scene-bank implementation for source and non-source backends; private growable scene arrays are deleted. Active conversion, portal scratch and component packets use frame storage. Source/cell asset custody, scene limits and restoration policies were checked. Normal build and seven core suites passed; component picture receipt growth remains open."
+    },
+    {
+      "commit": "2e6839a173f7dcab90470387b1f03bb05f196d32",
+      "source_tree": "8ec16ed25506fec6c852fa0f068765116de7280b",
+      "finding_ids": [],
+      "files_rechecked": [
+        "src/compat/native/guest/checkpoint.c",
+        "src/compat/native/guest/cpu.c",
+        "src/compat/native/guest/internal.h",
+        "src/compat/native/guest/memory.c",
+        "src/compat/native/guest/native_backend.c",
+        "src/compat/native/guest/runtime_import.c",
+        "src/compat/native/guest/runtime_resource.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-native-import-resource-indexes-20261012-v1",
+      "conclusion": "J25-03 partial: common numeric-ID indexes now cover imports, resource capabilities and native callbacks, including nested re-find and restore enrollment. FILE, kernel-handle and TLS lookups remain assigned to the same worker. Normal build and seven existing core suites passed; no whole-item closure."
     }
   ],
   "verification_limits": [

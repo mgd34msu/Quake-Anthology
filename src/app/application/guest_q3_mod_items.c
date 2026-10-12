@@ -34,6 +34,11 @@ static size_t entry_count(void *context)
 {return ((item_actor *)context)->owner->profile->definition_count;}
 static bool checked_count(void *context,size_t *out,qa_error *e)
 {item_actor *a=context;if(!q3items_current(a,e))return false;*out=entry_count(a);return true;}
+static bool items_revision(void *context,uint64_t *out,qa_error *e)
+{
+    if(!q3items_current(context,e))return false;
+    *out=0;return true;
+}
 static const item_storage *storage_for(application_q3_mod_items_profile *p,qa_item_id item,size_t *bit)
 {
     for(size_t i=0;i<p->storage_count;++i){item_storage *s=p->storage+i;if(!s->bits&&s->item==item){*bit=0;return s;}
@@ -89,7 +94,7 @@ bool q3items_binding(item_actor *a,qa_inventory_items *out,qa_error *e)
         for(size_t i=0;i<o->profile->definition_count;++i){a->definitions[i]=o->profile->definitions[i].admission;a->definitions[i].definition.owner=o->mod->owner;}
     }
     *out=(qa_inventory_items){.owner=o->mod->owner,.items=a->definitions,.count=o->profile->definition_count,
-        .state={.context=a,.count=entry_count,.checked_count=checked_count,.at=at,.write=write,.mutable_capacity=mutable_capacity},.action_context=a,.invoke=action};
+        .state={.context=a,.count=entry_count,.checked_count=checked_count,.at=at,.write=write,.mutable_capacity=mutable_capacity,.items_revision=items_revision},.action_context=a,.invoke=action};
     return true;
 }
 static bool overlaps(uint32_t address,const qa_qvm_committed_write *event)

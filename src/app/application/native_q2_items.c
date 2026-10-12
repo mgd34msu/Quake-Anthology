@@ -206,6 +206,11 @@ static size_t count_binding(void *context)
 { return ((item_actor *)context)->owner->count; }
 static bool checked_count(void *context,size_t *out,qa_error *e)
 { item_actor *a=context; if(!current(a,e)) return false; *out=a->owner->count; return true; }
+static bool items_revision(void *context,uint64_t *out,qa_error *e)
+{
+    if(!current(context,e))return false;
+    *out=0;return true;
+}
 static bool at(void *context,size_t index,qa_inventory_entry *out,qa_error *e)
 {
     item_actor *a=context; if(!out||!current(a,e)||index>=a->owner->count) return false;
@@ -283,7 +288,7 @@ static bool action(void *context,qa_item_id item,qa_item_action action_kind,qa_e
 static void binding(item_actor *a,qa_inventory_items *out)
 {
     *out=(qa_inventory_items){.owner=a->owner->options.owner,.items=a->owner->admissions,.count=a->owner->count,
-        .state={.context=a,.count=count_binding,.checked_count=checked_count,.at=at,.write=write_binding,.mutable_capacity=mutable_capacity},
+        .state={.context=a,.count=count_binding,.checked_count=checked_count,.at=at,.write=write_binding,.mutable_capacity=mutable_capacity,.items_revision=items_revision},
         .action_context=a,.invoke=action};
 }
 static bool watched(void *context,qa_native_instance *instance,const qa_native_write_event *event,qa_error *e)
