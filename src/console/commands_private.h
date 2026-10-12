@@ -2,6 +2,7 @@
 #define QA_CONSOLE_COMMANDS_PRIVATE_H
 #include "internal.h"
 #include "qa/pool.h"
+#include "qa/console_discovery.h"
 typedef struct qa_console_release qa_console_release;
 
 typedef struct command_contribution {
@@ -105,6 +106,7 @@ struct qa_console {
     unsigned output_calls;
     size_t alias_count;
     unsigned program_leases;
+    uint64_t declaration_revision;
     uint64_t program_revision;
     bool program_revision_exhausted;
     struct qa_console_program *pending_program;
@@ -137,4 +139,9 @@ void qac_console_release_enter(qa_console *);
 void qac_console_program_touch(qa_console *, bool shared_namespace);
 bool qac_console_program_drain_allowed(const qa_console *, qa_error *);
 bool qac_console_program_immediate_allowed(const qa_console *, qa_error *);
+const qa_console_entry *qac_console_builtin_at(size_t ordinal);
+bool qac_console_completion_extent(qa_console *, const qa_command_context *,
+    size_t *count, size_t *text_bytes, size_t *maximum_name, qa_error *);
+bool qac_console_discover_captured(qa_console *, const qa_command_context *, qa_arena *,
+    size_t capacity, qa_console_discovery *, qa_error *);
 #endif

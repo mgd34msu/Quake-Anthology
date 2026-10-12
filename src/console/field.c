@@ -23,7 +23,7 @@ static void completion_clear(qa_text_field *field) {
     field->tail = NULL;
     field->completed = NULL;
     field->completed_capacity = 0;
-    field->match_count = 0;
+    field->match_count = field->match_capacity = 0;
     field->selected = false;
 }
 static void visible(qa_text_field *field) {
@@ -230,6 +230,48 @@ done:
 static int compare_names(const void *a, const void *b) {
     return qa_text_ascii_compare(*(const char *const *)a, *(const char *const *)b);
 }
+static bool completion_extent_add(size_t *extent, size_t bytes, qa_error *e) {
+    if (*extent > SIZE_MAX - bytes) return fail(e, "Completion storage overflow");
+    *extent += bytes;
+    return true;
+}
+bool qac_field_completion_prepare(qa_text_field *field, size_t count, size_t text_bytes,
+    size_t maximum_name, qa_error *e) {
+    if (count > SIZE_MAX / sizeof(*field->matches))
+        return fail(e, "Completion list overflow");
+    size_t tail = field->maximum * 4 + 1, extent = count * sizeof(*field->matches);
+    if (!completion_extent_add(&extent, _Alignof(char *) - 1, e) ||
+        !completion_extent_add(&extent, text_bytes, e) ||
+        !completion_extent_add(&extent, tail, e) ||
+        !completion_extent_add(&extent, maximum_name, e) ||
+        !completion_extent_add(&extent, tail, e) ||
+        !completion_extent_add(&extent, 1, e)) return false;
+    /* Saved cycles retain their original names and tail even when those
+     * declarations are absent from the current inventory. */
+    if (field->match_count) {
+        size_t retained_count = field->match_capacity ? field->match_capacity : field->match_count;
+        if (retained_count > SIZE_MAX / sizeof(*field->matches))
+            return fail(e, "Completion list overflow");
+        size_t retained = retained_count * sizeof(*field->matches), longest = 0;
+        if (!completion_extent_add(&retained, _Alignof(char *) - 1, e)) return false;
+        for (size_t i = 0; i < field->match_count; ++i) {
+            size_t length = strlen(field->matches[i]);
+            if (length > longest) longest = length;
+            if (!completion_extent_add(&retained, length, e) ||
+                !completion_extent_add(&retained, 1, e)) return false;
+        }
+        size_t retained_tail = strlen(field->tail), assembly = longest;
+        if (!completion_extent_add(&assembly, retained_tail, e) ||
+            !completion_extent_add(&assembly, 2, e) ||
+            !completion_extent_add(&retained, retained_tail, e) ||
+            !completion_extent_add(&retained, 1, e) ||
+            !completion_extent_add(&retained, field->completed_capacity, e)) return false;
+        if (field->completed_capacity < assembly &&
+            !completion_extent_add(&retained, assembly, e)) return false;
+        if (retained > extent) extent = retained;
+    }
+    return qa_arena_reserve(&field->completion_storage, extent, e);
+}
 bool qa_text_field_complete(qa_text_field *field, qa_field_completion_names names,
                             bool reverse, qa_error *e) {
     if (!field->match_count) {
@@ -254,6 +296,7 @@ bool qa_text_field_complete(qa_text_field *field, qa_field_completion_names name
             return fail(e, "Completion list overflow");
         field->matches = names.count ? qa_arena_alloc(&field->completion_storage,
             names.count * sizeof(*field->matches), _Alignof(char *), e) : NULL;
+        field->match_capacity = names.count;
         field->tail = qa_arena_text(&field->completion_storage, view.text + end_bytes, e);
         if ((names.count && !field->matches) || !field->tail) {
             completion_clear(field);
@@ -285,7 +328,9 @@ bool qa_text_field_complete(qa_text_field *field, qa_field_completion_names name
             completion_clear(field);
             return true;
         }
-        qsort(field->matches, field->match_count, sizeof(*field->matches), compare_names);
+        if (field->ordered_names.data != names.data || field->ordered_names.count != names.count ||
+            field->ordered_names.stride != names.stride)
+            qsort(field->matches, field->match_count, sizeof(*field->matches), compare_names);
         field->match_index = reverse ? 0 : field->match_count - 1;
     }
     size_t index = reverse ? (field->match_index ? field->match_index - 1 : field->match_count - 1)
@@ -296,6 +341,14 @@ bool qa_text_field_complete(qa_text_field *field, qa_field_completion_names name
         return fail(e, "Completion text overflow");
     size_t capacity = selected_bytes + tail_bytes + 2;
     if (capacity > field->completed_capacity) {
+        size_t longest = selected_bytes;
+        for (size_t i = 0; i < field->match_count; ++i) {
+            size_t length = strlen(field->matches[i]);
+            if (length > longest) longest = length;
+        }
+        if (longest > SIZE_MAX - tail_bytes - 2)
+            return fail(e, "Completion text overflow");
+        capacity = longest + tail_bytes + 2;
         char *text = qa_arena_alloc(&field->completion_storage, capacity, 1, e);
         if (!text)
             return fail(e, "Allocating completed console text");

@@ -1,4 +1,5 @@
-#include "internal.h"
+#include "commands_private.h"
+#include "cvars_private.h"
 #include "qa/console_discovery.h"
 #include "qa/arena.h"
 #include "qa/json.h"
@@ -12,6 +13,41 @@ typedef struct entry_list {
     qa_arena *storage;
     size_t capacity;
 } entry_list;
+uint64_t qa_console_declaration_revision(const qa_console *console) {
+    return console ? console->declaration_revision : 0;
+}
+static bool name_extent(const char *name, size_t *count, size_t *bytes,
+    size_t *maximum, qa_error *error) {
+    size_t length = strlen(name);
+    if (*count == SIZE_MAX || length == SIZE_MAX || *bytes > SIZE_MAX - length - 1)
+        return qac_fail(error, QA_ERROR_MEMORY, "console completion inventory overflows");
+    ++*count;
+    *bytes += length + 1;
+    if (*maximum < length) *maximum = length;
+    return true;
+}
+bool qac_console_completion_extent(qa_console *console, const qa_command_context *context,
+    size_t *count, size_t *bytes, size_t *maximum, qa_error *error) {
+    *count = *bytes = *maximum = 0;
+    for (command_entry *command = console->commands; command; command = command->next)
+        if (!name_extent(command->name, count, bytes, maximum, error)) return false;
+    const qa_console_entry *entry;
+    for (size_t i = 0; (entry = qac_console_builtin_at(i)); ++i)
+        if (!name_extent(entry->name, count, bytes, maximum, error)) return false;
+    for (alias_entry *alias = console->aliases; alias; alias = alias->next)
+        if (!name_extent(alias->view.name, count, bytes, maximum, error)) return false;
+    for (size_t i = 0;; ++i) {
+        qa_cvars *registry = qa_console_visible_cvars(console, context, i);
+        if (!registry) break;
+        const cvar_values *values = qac_cvars_current_values(registry);
+        if (values && values->canonical_values) values = values->canonical_values;
+        for (const cvar *var = values ? values->first : NULL; var; var = var->next)
+            if (!name_extent(var->view.name, count, bytes, maximum, error)) return false;
+        for (const cvar_alias *alias = values ? values->aliases : NULL; alias; alias = alias->next)
+            if (!name_extent(alias->name, count, bytes, maximum, error)) return false;
+    }
+    return true;
+}
 static int compare_entries(const void *a, const void *b) {
     const qa_console_discovery_entry *left = a, *right = b;
     int order = qa_text_ascii_compare(left->name, right->name);
@@ -37,7 +73,16 @@ static bool add(entry_list *list, qa_console_discovery_entry entry, qa_error *er
         list->view.entries = data;
         list->capacity = count;
     }
-    list->view.entries[list->view.count++] = entry;
+    size_t first = 0, last = list->view.count;
+    while (first < last) {
+        size_t middle = first + (last - first) / 2;
+        if (compare_entries(&list->view.entries[middle], &entry) <= 0) first = middle + 1;
+        else last = middle;
+    }
+    memmove(list->view.entries + first + 1, list->view.entries + first,
+        (list->view.count - first) * sizeof(entry));
+    list->view.entries[first] = entry;
+    ++list->view.count;
     return true;
 }
 bool qa_console_discovery_find(qa_console *console, const qa_command_context *context,
@@ -99,8 +144,18 @@ bool qa_console_discover(qa_console *console, const qa_command_context *context,
         return qac_fail(error, QA_ERROR_ARGUMENT, "missing console discovery context");
     qa_command_context captured;
     if (!qa_console_cvar_context(console, context, &captured, error)) return false;
-    context = &captured;
-    entry_list list = {.storage = storage};
+    return qac_console_discover_captured(console, &captured, storage, 0, out, error);
+}
+bool qac_console_discover_captured(qa_console *console, const qa_command_context *context,
+    qa_arena *storage, size_t capacity, qa_console_discovery *out, qa_error *error) {
+    entry_list list = {.storage = storage, .capacity = capacity};
+    if (capacity) {
+        if (capacity > SIZE_MAX / sizeof(*list.view.entries))
+            return qac_fail(error, QA_ERROR_MEMORY, "console discovery inventory overflows");
+        list.view.entries = qa_arena_alloc(storage, capacity * sizeof(*list.view.entries),
+            _Alignof(qa_console_discovery_entry), error);
+        if (!list.view.entries) return false;
+    }
     const qa_console_entry *entry;
     for (size_t i = 0; (entry = qa_console_context_entry_at(console, context, i)); ++i) {
         const qa_console_entry *visible = qa_console_find(console, context, entry->name);
@@ -144,8 +199,6 @@ bool qa_console_discover(qa_console *console, const qa_command_context *context,
                 goto fail;
         }
     }
-    if (list.view.count > 1)
-        qsort(list.view.entries, list.view.count, sizeof(*list.view.entries), compare_entries);
     *out = list.view;
     return true;
 fail:

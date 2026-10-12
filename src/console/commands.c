@@ -841,6 +841,12 @@ static const qa_console_entry builtin_entries[] = {
 };
 #undef COMMAND
 
+const qa_console_entry *qac_console_builtin_at(size_t ordinal)
+{
+    return ordinal < sizeof(builtin_entries) / sizeof(*builtin_entries)
+        ? &builtin_entries[ordinal] : NULL;
+}
+
 static bool builtin_allowed(qa_ruleset_id dialect, const char *name)
 {
     if (strcmp(name, "alias") == 0) return dialect != QA_RULESET_Q3;

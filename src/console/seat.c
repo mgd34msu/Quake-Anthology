@@ -1,4 +1,6 @@
 #include "seat_internal.h"
+#include "commands_private.h"
+#include "cvars_private.h"
 #include "qa/console_seat_save.h"
 #include "qa/text.h"
 #include "qa/arena.h"
@@ -75,6 +77,11 @@ void qa_seat_console_destroy(qa_seat_console *seat) {
     qa_text_field_destroy(seat->field);
     qa_text_field_destroy(seat->chat);
     qa_console_history_destroy(seat->history);
+    for (size_t i = 0; i < seat->completion_leases.capacity; ++i) {
+        completion_inventory *inventory = qa_pool_at(&seat->completion_leases, i);
+        qa_arena_destroy(&inventory->storage);
+    }
+    qa_arena_destroy(&seat->completion_storage);
     free(seat->script);
     free(seat);
 }
@@ -95,6 +102,7 @@ bool qa_seat_console_context_ready(const qa_seat_console *seat,
 void qa_seat_console_context_publish(qa_seat_console *seat, const qa_command_context *command) {
     free(seat->script); seat->script = NULL;
     seat->options.command = *command;
+    seat->completion_ready = false;
 }
 qa_console *qa_seat_console_recipient_read(const qa_seat_console *seat) {
     return seat?seat->options.commands:NULL;
@@ -172,6 +180,7 @@ static bool adopt_inner(qa_seat_console *seat, qa_seat_console *candidate, qa_in
     seat->script = candidate->script;
     candidate->script = NULL;
     seat->options = candidate->options;
+    seat->completion_ready = false;
     seat->options.command.script = seat->script;
     candidate->options.command.script = NULL;
     qa_console_buffer_dialect(seat->buffer, seat->options.command.dialect);
@@ -255,16 +264,68 @@ fail:
     qa_arena_destroy(&storage);
     return false;
 }
+static bool completion_prepare(qa_seat_console *seat, const qa_command_context *context,
+    qa_error *error) {
+    qa_console *commands = seat->options.commands;
+    qa_cvars *registry = qa_console_visible_cvars(commands, context, 0);
+    const cvar_values *values = qac_cvars_current_values(registry);
+    const cvar_values *canonical = values && values->canonical_values ? values->canonical_values : values;
+    uint64_t command_revision = qa_console_declaration_revision(commands);
+    uint64_t cvar_revision = canonical ? canonical->declaration_revision : 0;
+    if (seat->completion_ready && command_revision != UINT64_MAX && seat->completion_commands == commands &&
+        seat->completion_values == values && seat->completion_command_revision == command_revision &&
+        seat->completion_cvar_revision == cvar_revision) return true;
+    size_t count, text_bytes, maximum_name;
+    if (!qac_console_completion_extent(commands, context, &count, &text_bytes, &maximum_name, error) ||
+        !qac_field_completion_prepare(seat->field, count, text_bytes, maximum_name, error)) return false;
+    seat->completion_commands = commands;
+    seat->completion_values = values;
+    seat->completion_command_revision = command_revision;
+    seat->completion_cvar_revision = cvar_revision;
+    seat->completion_count = count;
+    seat->completion_ready = true;
+    return true;
+}
+static completion_inventory *completion_take(qa_seat_console *seat, qa_error *error) {
+    qa_pool *pool = &seat->completion_leases;
+    if (!pool->stride && !qa_pool_prepare(pool, &seat->completion_storage, 0,
+        sizeof(completion_inventory), _Alignof(completion_inventory), error)) return NULL;
+    if (pool->head == SIZE_MAX) {
+        size_t first = pool->capacity, count = first ? first : 1;
+        if (!qa_pool_extend(pool, &seat->completion_storage, count, error)) return NULL;
+        for (size_t i = first; i < pool->capacity; ++i)
+            memset(qa_pool_at(pool, i), 0, sizeof(completion_inventory));
+    }
+    size_t slot;
+    completion_inventory *inventory = qa_pool_take(pool, &slot);
+    inventory->slot = slot;
+    return inventory;
+}
 static bool complete(qa_seat_console *seat, qa_error *error) {
-    qa_arena storage = {0};
+    qa_command_context context;
+    if (!qa_console_cvar_context(seat->options.commands, &seat->options.command, &context, error) ||
+        !completion_prepare(seat, &context, error)) return false;
+    completion_inventory *inventory = completion_take(seat, error);
+    if (!inventory) return false;
+    size_t count = seat->completion_count;
+    bool ok = count <= (SIZE_MAX - (_Alignof(qa_console_discovery_entry) - 1)) /
+        sizeof(qa_console_discovery_entry);
+    if (!ok) qac_fail(error, QA_ERROR_MEMORY, "console discovery inventory overflows");
+    else ok = qa_arena_reserve(&inventory->storage,
+        count * sizeof(qa_console_discovery_entry) + _Alignof(qa_console_discovery_entry) - 1, error);
     qa_console_discovery entries = {0};
-    bool ok = qa_console_discover(seat->options.commands, &seat->options.command,
-                                  &storage, &entries, error);
-    if (ok)
-        ok = qa_text_field_complete(seat->field,
-            (qa_field_completion_names){.data = entries.count ? &entries.entries[0].name : NULL,
-                .count = entries.count, .stride = sizeof(*entries.entries)}, seat->shift, error);
-    qa_arena_destroy(&storage);
+    if (ok) ok = qac_console_discover_captured(seat->options.commands, &context,
+        &inventory->storage, count, &entries, error);
+    if (ok) {
+        qa_field_completion_names names = {
+            .data = entries.count ? &entries.entries[0].name : NULL,
+            .count = entries.count, .stride = sizeof(*entries.entries)};
+        seat->field->ordered_names = names;
+        ok = qa_text_field_complete(seat->field, names, seat->shift, error);
+        seat->field->ordered_names = (qa_field_completion_names){0};
+    }
+    qa_arena_reset(&inventory->storage);
+    qa_pool_release(&seat->completion_leases, inventory->slot);
     return ok;
 }
 static bool selected_inner(qa_seat_console *seat, qa_console_discovery_entry *out) {

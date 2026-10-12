@@ -34,6 +34,8 @@ void qac_console_program_touch(qa_console *console, bool shared_namespace)
         console->release_leases && console->release_advancing)) return;
     if (console->program_revision == UINT64_MAX) console->program_revision_exhausted = true;
     else ++console->program_revision;
+    if (shared_namespace && console->declaration_revision != UINT64_MAX)
+        ++console->declaration_revision;
 }
 
 bool qac_console_program_drain_allowed(const qa_console *console, qa_error *error)

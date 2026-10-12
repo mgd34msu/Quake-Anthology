@@ -384,6 +384,7 @@ typedef struct qa_console_entry {
 } qa_console_entry;
 
 qa_console *qa_console_create(const qa_console_options *options, qa_error *error);
+uint64_t qa_console_declaration_revision(const qa_console *);
 /* Bind Source callbacks to the shared console without another command queue. */
 bool qa_console_bind_source(qa_console *, const qa_console_options *, qa_error *);
 /* Bind a seat projection to an existing Source packet, or common services. */
