@@ -20,7 +20,9 @@ static void clear(qa_bot_goals *state)
     }
     bot_goal_indexes_clear(state);bot_goal_map_clear(state);
     qa_id_index_destroy(&state->aliases);
+    qa_actor_index_destroy(&state->source_actors);
     qa_bot_items_release(state->items);free(state->states);
+    qa_strings_destroy(state->services.strings);
     state->items=NULL;state->states=NULL;
 }
 static void *copy_array(const void *source,size_t count,size_t stride,qa_error *error)
@@ -41,6 +43,8 @@ static bool copy(const qa_bot_goals *source,qa_bot_goals *out,qa_error *error)
     out->items=NULL;out->states=NULL;out->weights=NULL;out->indexes=NULL;out->last_indexes=NULL;
     out->prepared_indexes=NULL;out->info=NULL;out->source=NULL;
     out->aliases=(qa_id_index){0};
+    out->source_actors=(qa_actor_index){0};
+    qa_strings_retain(out->services.strings);
     out->items=source->items;qa_bot_items_retain(out->items);
     out->states=copy_array(source->states,source->options.maximum_states,sizeof(*source->states),error);
     if(!out->states) goto failed;
@@ -69,14 +73,11 @@ static bool copy(const qa_bot_goals *source,qa_bot_goals *out,qa_error *error)
     }
     for(size_t i=0;i<source->source_count;++i) {
         const bot_source_goal *row=&source->source[i];
-        out->source[i]=*row;out->source[i].name=NULL;
-        if(!row->name || !row->name_capacity || strlen(row->name)>=row->name_capacity)
+        out->source[i]=*row;
+        if(!qa_strings_cstr(source->services.strings,row->name))
             {bot_goal_fail(error,"Invalid retained source-goal checkpoint name");goto failed;}
-        out->source[i].name=calloc(row->name_capacity,1);
-        if(!out->source[i].name) goto memory_failure;
-        memcpy(out->source[i].name,row->name,strlen(row->name)+1);
     }
-    if(!bot_goal_aliases_reindex(out,error)) goto failed;
+    if(!bot_goal_aliases_reindex(out,error) || !bot_goal_sources_reindex(out,error)) goto failed;
     return true;
 memory_failure:
     qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining complete goal reference history");

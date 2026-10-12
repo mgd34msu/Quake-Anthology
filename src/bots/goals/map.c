@@ -16,19 +16,48 @@ bool bot_goal_equal_name(const char *a, const char *b) {
     }
     return true;
 }
+void bot_goal_sources_clear(qa_bot_goals *g) {
+    free(g->source);
+    g->source=NULL;
+    g->source_count=g->source_capacity=0;
+    qa_actor_index_clear(&g->source_actors);
+}
+bool bot_goal_sources_reindex(qa_bot_goals *g,qa_error *e) {
+    qa_actor_index index={0};
+    if(g->services.actors && !qa_actor_index_create(&index,g->services.actors,NULL,e)) return false;
+    if(!qa_id_index_reserve(&index.retained,g->source_count,e)) goto failed;
+    for(size_t i=0;i<g->source_count;++i) {
+        size_t previous;
+        qa_actor_id actor=g->source[i].actor;
+        if(actor.registry!=index.registry || !actor.registry ||
+           qa_actor_index_find_retained(&index,actor,&previous)) {
+            bot_goal_fail(e,"Invalid retained source goal actor identity");goto failed;
+        }
+        if(!qa_actor_index_remember(&index,actor,i,e)) goto failed;
+    }
+    qa_actor_index_destroy(&g->source_actors);
+    g->source_actors=index;
+    return true;
+failed:
+    qa_actor_index_destroy(&index);return false;
+}
+const bot_source_goal *bot_goal_source_number(const qa_bot_goals *g,int32_t number) {
+    if(number<QA_BOT_SOURCE_GOAL_MIN || !g->source_count) return NULL;
+    int64_t ordinal=(int64_t)g->source[0].goal.number-number;
+    return ordinal>=0 && (uint64_t)ordinal<g->source_count ? g->source+(size_t)ordinal : NULL;
+}
 void bot_goal_map_clear(qa_bot_goals *g) {
     for(size_t i=0;g->info && i<g->info_count;++i)
         qa_id_index_remove(&g->aliases,g->info[i].pointer,BOT_GOAL_ALIAS_INFO);
-    for (size_t i = 0; i < g->source_count; ++i) free(g->source[i].name);
-    free(g->source); free(g->info);
-    g->source = NULL; g->info = NULL;
+    bot_goal_sources_clear(g);
+    free(g->info);
+    g->info = NULL;
     g->level_allocation = (qa_bot_memory_allocation){0};
     g->level_capacity = 0;
     g->source_count = g->source_capacity = g->info_count = g->info_capacity = 0;
     g->level_head = g->free_head = 0;
     g->location_head = g->camp_head = 0;
     g->initial_count = 0;
-    memset(g->source_buckets, 0, sizeof(g->source_buckets));
     g->entities = NULL;
 }
 static uint32_t map_float_word(float value) {
@@ -108,11 +137,7 @@ bool qa_bot_goals_rebind_world(qa_bot_goals *g, const qa_entities *entities, qa_
         return bot_goal_fail(e, "bot round must retain the actual map goal metadata");
     for (uint32_t i = 0; i < g->options.maximum_states; ++i)
         if (g->states[i].used) return bot_goal_fail(e, "retire every bot goal state before rebinding its world");
-    for (size_t i = 0; i < g->source_count; ++i) free(g->source[i].name);
-    free(g->source);
-    g->source = NULL;
-    g->source_count = g->source_capacity = 0;
-    memset(g->source_buckets, 0, sizeof(g->source_buckets));
+    bot_goal_sources_clear(g);
     return true;
 }
 static bool level_span(const qa_bot_goals *g, uint32_t id, qa_bot_memory_span *out, qa_error *error) {
@@ -436,11 +461,7 @@ bool qa_bot_goals_load_map(qa_bot_goals *g, const qa_entities *entities,
         return bot_goal_fail(e, "invalid goal map/navigation");
     g->busy = true;
     g->entities = entities;
-    for (size_t i = 0; i < g->source_count; ++i) free(g->source[i].name);
-    free(g->source);
-    g->source = NULL;
-    g->source_count = g->source_capacity = 0;
-    memset(g->source_buckets, 0, sizeof(g->source_buckets));
+    bot_goal_sources_clear(g);
     bool ok = bot_goal_map_info_load(g, navigation, e);
     if (ok && g->level_allocation.owner) ok = qa_bot_memory_free(g->memory, g->level_allocation, e);
     if (ok) ok = load_items(g, navigation, e);
@@ -588,9 +609,8 @@ bool qa_bot_goals_find_entity(qa_bot_goals *g, int32_t number, qa_error *e) {
 bool qa_bot_goals_name_read(const qa_bot_goals *g, int32_t number, const char **out, qa_error *e) {
     if (!g || !out) return bot_goal_fail(e, "Missing source goal-name owner/output");
     *out = "";
-    if (number >= QA_BOT_SOURCE_GOAL_MIN)
-        for (size_t i = 0; i < g->source_count; ++i)
-            if (g->source[i].goal.number == number) {*out = g->source[i].name;return true;}
+    const bot_source_goal *source=bot_goal_source_number(g,number);
+    if(source) {*out=qa_strings_cstr(g->services.strings,source->name);return true;}
     if (!g->configured) return true;
     bot_level_item item; bool found; uint32_t id;
     if (!bot_goal_find(g, number, &id, &item, &found, e)) return false;
@@ -632,11 +652,15 @@ bool qa_bot_goals_level_item(const qa_bot_goals *g, int32_t after, const char *n
         }
         id = item->next;
     }
-    bool next = after < QA_BOT_SOURCE_GOAL_MIN;
-    for (size_t i = 0; i < g->source_count; ++i) {
+    size_t first=0;
+    if(after>=QA_BOT_SOURCE_GOAL_MIN) {
+        const bot_source_goal *source=bot_goal_source_number(g,after);
+        if(!source) return true;
+        first=(size_t)(source-g->source)+1;
+    }
+    for (size_t i = first; i < g->source_count; ++i) {
         const bot_source_goal *source = &g->source[i];
-        if (!next) { next = source->goal.number == after; continue; }
-        if (!bot_goal_equal_name(name, source->name)) continue;
+        if (!bot_goal_equal_name(name, qa_strings_cstr(g->services.strings,source->name))) continue;
         int32_t info = out->item_info;
         *out = source->goal;
         out->item_info = info;

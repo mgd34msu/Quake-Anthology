@@ -110,7 +110,9 @@ static void clear(qa_bot_goals *goals)
     if (!goals->source) goals->source_count = 0;
     bot_goal_map_clear(goals);
     qa_id_index_destroy(&goals->aliases);
+    qa_actor_index_destroy(&goals->source_actors);
     qa_bot_items_release(goals->items); free(goals->states);
+    qa_strings_destroy(goals->services.strings);
 }
 static bool topology(const qa_bot_goals *goals, qa_error *error)
 {
@@ -166,18 +168,16 @@ static bool topology(const qa_bot_goals *goals, qa_error *error)
             goals->states[j].record.allocation.generation==slot->record.allocation.generation &&
             goals->states[j].record.allocation.slot==slot->record.allocation.slot) ok=false;
     }
-    uint32_t buckets[256] = {0};
+    if(qa_actor_index_retained_count(&goals->source_actors)!=goals->source_count) ok=false;
     for (size_t i = 0; ok && i < goals->source_count; ++i) {
         const bot_source_goal *source = &goals->source[i];
-        if (!source->actor.registry || !source->name || !source->name_capacity ||
-            strlen(source->name) >= source->name_capacity || source->goal.number < QA_BOT_SOURCE_GOAL_MIN ||
+        qa_bytes name=qa_strings_text(goals->services.strings,source->name);
+        size_t indexed;
+        if (!source->actor.registry || !name.data || memchr(name.data,0,name.size) ||
+            source->goal.number < QA_BOT_SOURCE_GOAL_MIN ||
             (i && (int64_t)goals->source[i - 1].goal.number - 1 != source->goal.number)) { ok = false; break; }
-        for (size_t j = 0; j < i; ++j) if (qa_actor_id_equal(source->actor, goals->source[j].actor)) { ok = false; break; }
-        uint32_t bucket = bot_goal_source_bucket(source->actor);
-        if (source->hash_next != buckets[bucket]) ok = false;
-        buckets[bucket] = (uint32_t)i + 1;
+        if(!qa_actor_index_find_retained(&goals->source_actors,source->actor,&indexed) || indexed!=i) ok=false;
     }
-    if (ok && memcmp(buckets, goals->source_buckets, sizeof(buckets))) ok = false;
     if (ok && goals->source_count && (int64_t)goals->source[goals->source_count - 1].goal.number - 1 != goals->next_source) ok = false;
     if (ok) return true;
 invalid:
@@ -273,18 +273,13 @@ static bool fields(qa_source_save_io *io, qa_bot_goals *goals, const qa_bot_save
             ok = bot_save_fail(io, QA_ERROR_MEMORY, "Restoring retained source goal capacity");
     }
     for (size_t i = 0; ok && i < goals->source_count; ++i) {
-        bot_source_goal *source = &goals->source[i]; const char *name = source->name;
-        ok = qa_source_save_actor(io, &source->actor) && bot_save_text(io, &name);
-        if (reading) source->name = (char *)name;
-        if (ok) ok = name && qa_source_save_count(io, &source->name_capacity, SIZE_MAX) &&
-            source->name_capacity > strlen(name) && goal_fields(io, &source->goal);
-        if (ok && reading) {
-            char *allocated = realloc(source->name, source->name_capacity);
-            if (!allocated) ok = bot_save_fail(io, QA_ERROR_MEMORY, "Restoring retained source goal name capacity");
-            else source->name = allocated;
-            uint32_t bucket = bot_goal_source_bucket(source->actor);
-            source->hash_next = goals->source_buckets[bucket]; goals->source_buckets[bucket] = (uint32_t)i + 1;
-        }
+        bot_source_goal *source = &goals->source[i];
+        ok = qa_source_save_actor(io, &source->actor) && qa_source_save_string(io, &source->name);
+        qa_bytes name=ok?qa_strings_text(goals->services.strings,source->name):(qa_bytes){0};
+        size_t legacy_name_capacity=reading?0:name.size+1;
+        if (ok) ok = name.data && !memchr(name.data,0,name.size) &&
+            qa_source_save_count(io, &legacy_name_capacity, SIZE_MAX) &&
+            legacy_name_capacity > name.size && goal_fields(io, &source->goal);
     }
     if (!ok && !io->failed) return bot_save_fail(io, QA_ERROR_FORMAT, "Invalid bot goal continuation fields");
     return ok;
@@ -311,10 +306,11 @@ bool qa_bot_goals_save_restore(qa_session *session, qa_bot_goals *goals, qa_byte
         if(goals->states[i].used) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Goal import requires its fresh state store");return false;}
     qa_bot_goals scratch = {.options = goals->options, .services = goals->services, .workspace = goals->workspace,
         .memory=goals->memory,.shared_memory=goals->shared_memory,.next_info=1};
+    qa_strings_retain(scratch.services.strings);
     qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, session, bytes, error) && signature(&io) &&
         fields(&io, &scratch, assets, entities,navigation) && qa_source_save_finish(&io, NULL) &&
-        bot_goal_aliases_reindex(&scratch,error) && topology(&scratch, error);
+        bot_goal_aliases_reindex(&scratch,error) && bot_goal_sources_reindex(&scratch,error) && topology(&scratch, error);
     if (ok) { qa_bot_goals old = *goals; *goals = scratch; clear(&old); }
     else clear(&scratch);
     if (!ok && (!error || error->code == QA_OK)) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid complete bot goal continuation");

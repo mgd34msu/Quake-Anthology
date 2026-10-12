@@ -2,6 +2,7 @@
 #define QA_BOT_GOALS_H
 
 #include "qa/bot_library.h"
+#include "qa/actors.h"
 #include "qa/bot_navigation.h"
 #include "qa/strings.h"
 
@@ -36,12 +37,13 @@ typedef struct qa_bot_pickup_goal {
     int32_t entity;
     qa_vec3 origin;
     qa_bounds bounds;
-    const char *name;
+    qa_string_id name;
     float utility;
 } qa_bot_pickup_goal;
 typedef struct qa_bot_goal_services {
     void *context;
     qa_strings *strings; /* Borrowed session name table. */
+    const qa_actor_registry *actors; /* Borrowed canonical actor registry. */
     qa_bot_navigation *(*navigation)(void *, int32_t client);
     /* Views follow ascending source entity order and remain borrowed until the
      * paired end. A snapshot may contain retired entities for visibility age. */

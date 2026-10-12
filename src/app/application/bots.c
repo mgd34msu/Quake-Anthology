@@ -201,7 +201,7 @@ static bool pickup(void *opaque,int32_t client,qa_actor_id actor,qa_bot_pickup_g
     const char *name=qa_strings_cstr(qa_session_strings(application->session),observation.item);
     int32_t number;if(!application_bot_entity_number(bots,actor,&number,error)) return false;
     *out=(qa_bot_pickup_goal){.actor=actor,.entity=number,.origin=body.origin,
-        .bounds=body.bounds,.name=name?name:"source pickup",.utility=observation.utility};
+        .bounds=body.bounds,.name=name?observation.item:application->ui_names.source_pickup,.utility=observation.utility};
     *found=qa_actors_get(qa_session_actors(application->session),actor)!=NULL;return true;
 }
 static bool owns_item(void *opaque,int32_t client,int32_t entity,bool *out,qa_error *error) {
@@ -1076,6 +1076,7 @@ bool application_bots_runtime_create(application_bots *bots,const qa_bot_runtime
     qa_bot_runtime_services services={.context=bots,.random=random,.navigation=application_bot_navigation,.command=bot_command,
         .diagnostic=bot_diagnostic,.log=application_bots_log_services(bots),
         .goals={.context=bots,.strings=qa_session_strings(bots->application->session),
+            .actors=qa_session_actors(bots->application->session),
             .navigation=application_bot_navigation,.pickups=pickup_list,.pickups_end=pickup_end,
             .pickup=pickup,.owns_item=owns_item},
         .movement={.context=bots,.navigation=bot_source_navigation,.actor=application_bot_actor,

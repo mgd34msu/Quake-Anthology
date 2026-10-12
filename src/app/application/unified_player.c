@@ -179,7 +179,8 @@ bool application_ui_names_prepare(qa_application *app, qa_error *error)
         {"rank_status", &names->ranking_status}, {"rank_menu", &names->ranking_menu},
         {"misc/flare.tga", &names->flare_image}, {"default", &names->material_default}, {"ladder", &names->material_ladder},
         {"debug-bounds", &names->debug_bounds}, {"colored-explosion", &names->colored_explosion},
-        {"developer-message", &names->developer_message}, {"cutscene", &names->cutscene},
+        {"developer-message", &names->developer_message}, {"source pickup", &names->source_pickup},
+        {"cutscene", &names->cutscene},
         {"sell-screen", &names->sell_screen}, {"q2:monster-muzzle", &names->monster_muzzle},
         {"q2:entity-event", &names->entity_event}, {"entity-event", &names->entity_event_plain}, {"cp", &names->cp},
         {"chat", &names->chat}, {"tchat", &names->tchat}, {"print", &names->print}

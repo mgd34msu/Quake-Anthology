@@ -50,58 +50,38 @@ static bool consider(goal_choice *c, const qa_bot_goal *goal, float weight, bool
     c->found = true;
     return true;
 }
-uint32_t bot_goal_source_bucket(qa_actor_id actor) {
-    uint64_t h = actor.registry ^ actor.generation ^ ((uint64_t)actor.slot * UINT64_C(0x9e3779b97f4a7c15));
-    h ^= h >> 33;
-    return (uint32_t)h & 255;
-}
 static bool source_binding(qa_bot_goals *g, const qa_bot_pickup_goal *current,
                             qa_vec3 origin, uint32_t area, qa_bounds world,
                             qa_bot_goal *out, qa_error *e) {
-    uint32_t bucket = bot_goal_source_bucket(current->actor), index = g->source_buckets[bucket];
-    while (index && !qa_actor_id_equal(g->source[index - 1].actor, current->actor))
-        index = g->source[index - 1].hash_next;
+    size_t index;
+    bool retained = qa_actor_index_find_retained(&g->source_actors, current->actor, &index);
     if (!current->name) return bot_goal_fail(e, "source pickup lacks a name");
-    size_t length = strlen(current->name);
-    if (length == SIZE_MAX) return bot_goal_fail(e, "source pickup name is too large");
-    char *name = NULL;
-    if (!index || g->source[index - 1].name_capacity <= length) {
-        name = malloc(length + 1);
-        if (!name) { qa_error_set(e, QA_ERROR_MEMORY, length, "retaining source pickup name"); return false; }
-        memcpy(name, current->name, length + 1);
-    }
-    if (!index) {
+    if (!retained) {
         if (g->next_source < QA_BOT_SOURCE_GOAL_MIN || g->source_count >= UINT32_MAX) {
-            free(name);
             return bot_goal_fail(e, "source pickup goal range exhausted");
         }
+        if (!qa_id_index_reserve(&g->source_actors.retained, 1, e)) return false;
         if (g->source_count == g->source_capacity) {
             size_t capacity = g->source_capacity ? g->source_capacity * 2 : 64;
             if (capacity <= g->source_capacity || capacity > SIZE_MAX / sizeof(*g->source)) {
-                free(name);
                 return bot_goal_fail(e, "source pickup goal storage overflow");
             }
             bot_source_goal *source = realloc(g->source, capacity * sizeof(*source));
             if (!source) {
-                free(name);
                 qa_error_set(e, QA_ERROR_MEMORY, capacity, "growing retained source pickup goals");
                 return false;
             }
             g->source = source;
             g->source_capacity = capacity;
         }
-        index = (uint32_t)++g->source_count;
-        g->source[index - 1] = (bot_source_goal){.actor = current->actor,
-            .goal = {.number = g->next_source--, .flags = QA_BOT_GOAL_ITEM, .item_info = -1},
-            .hash_next = g->source_buckets[bucket]};
-        g->source_buckets[bucket] = index;
+        index = g->source_count;
+        if (!qa_actor_index_remember(&g->source_actors, current->actor, index, e)) return false;
+        g->source[index] = (bot_source_goal){.actor = current->actor,
+            .goal = {.number = g->next_source--, .flags = QA_BOT_GOAL_ITEM, .item_info = -1}};
+        ++g->source_count;
     }
-    bot_source_goal *binding = &g->source[index - 1];
-    if (name) {
-        free(binding->name);
-        binding->name = name;
-        binding->name_capacity = length + 1;
-    } else memcpy(binding->name, current->name, length + 1);
+    bot_source_goal *binding = &g->source[index];
+    binding->name = current->name;
     binding->goal.origin = origin;
     binding->goal.area = (int32_t)area;
     binding->goal.mins = qa_vec_sub(world.mins, origin);
@@ -239,14 +219,12 @@ bool bot_goal_source_status(qa_bot_goals *g, int32_t client, const qa_bot_goal *
                             qa_bot_source_goal_status *out, qa_error *e) {
     *out = goal->number < QA_BOT_SOURCE_GOAL_MIN ? QA_BOT_GOAL_NATIVE : QA_BOT_GOAL_UNAVAILABLE;
     if (*out == QA_BOT_GOAL_NATIVE || !g->services.pickup) return true;
-    for (size_t i = 0; i < g->source_count; ++i) {
-        bot_source_goal *binding = &g->source[i];
-        if (binding->goal.number != goal->number) continue;
+    const bot_source_goal *binding = bot_goal_source_number(g, goal->number);
+    if (binding) {
         qa_bot_pickup_goal current; bool found;
         if (!g->services.pickup(g->services.context, client, binding->actor, &current, &found, e)) return false;
         if (found && qa_actor_id_equal(current.actor, binding->actor) &&
             current.entity == goal->entity && current.utility > 0) *out = QA_BOT_GOAL_AVAILABLE;
-        break;
     }
     return true;
 }

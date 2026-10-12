@@ -127,7 +127,7 @@ bool qa_bot_goals_create(qa_bot_items *items, const qa_bot_goal_options *options
         !isfinite(options->dropped_weight) || !options->random.next || !services->navigation ||
         (!!services->entities != !!services->entities_end) ||
         (!!services->pickups != !!services->pickups_end) ||
-        (services->pickups && !services->pickup) ||
+        (services->pickups && (!services->pickup || !services->actors)) ||
         SIZE_MAX / options->maximum_states < sizeof(bot_goal_slot))
         return bot_goal_fail(e, "invalid bot goal services or capacities");
     qa_bot_goals *g = calloc(1, sizeof(*g));
@@ -138,13 +138,15 @@ bool qa_bot_goals_create(qa_bot_items *items, const qa_bot_goal_options *options
     }
     g->options = *options;
     g->services = *services;
+    qa_strings_retain(g->services.strings);
     g->items = items;
     g->configured = true;
     g->next_source = INT32_MAX;
     g->next_pointer=1;
     g->next_info=1;
     qa_bot_items_retain(items);
-    if (!qa_strings_intern_cstr(services->strings, "info_camp", &g->info_camp, e) ||
+    if (!bot_goal_sources_reindex(g,e) ||
+        !qa_strings_intern_cstr(services->strings, "info_camp", &g->info_camp, e) ||
         !qa_strings_intern_cstr(services->strings, "target_location", &g->target_location, e)) {
         qa_bot_goals_destroy(g);
         return false;
@@ -162,11 +164,13 @@ void qa_bot_goals_destroy(qa_bot_goals *g) {
     while(g->weights) {bot_goal_weights *w=g->weights;g->weights=w->next;qa_bot_weights_release(w->weights);free(w);}
     bot_goal_indexes_clear(g);
     bot_goal_map_clear(g);
+    qa_actor_index_destroy(&g->source_actors);
     qa_id_index_destroy(&g->aliases);
     qa_bot_weight_workspace_destroy(g->workspace);
     qa_bot_items_release(g->items);
     free(g->states);
     (void)qa_bot_memory_release(g->memory,NULL);
+    qa_strings_destroy(g->services.strings);
     free(g);
 }
 bool qa_bot_goals_shutdown(qa_bot_goals *g, qa_error *error) {
@@ -179,9 +183,7 @@ bool qa_bot_goals_shutdown(qa_bot_goals *g, qa_error *error) {
     }
     g->configured = false;
     g->entities = NULL;
-    for (size_t i = 0; i < g->source_count; ++i) free(g->source[i].name);
-    free(g->source); g->source = NULL; g->source_count = g->source_capacity = 0;
-    memset(g->source_buckets, 0, sizeof(g->source_buckets));
+    bot_goal_sources_clear(g);
     bool ok = !g->level_allocation.owner || qa_bot_memory_free(g->memory, g->level_allocation, error);
     if (ok) {
         g->level_allocation = (qa_bot_memory_allocation){0}; g->level_capacity = 0;

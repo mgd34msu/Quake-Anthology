@@ -39,10 +39,8 @@ typedef struct bot_map_info {
 } bot_map_info;
 typedef struct bot_source_goal {
     qa_actor_id actor;
-    char *name;
-    size_t name_capacity;
+    qa_string_id name;
     qa_bot_goal goal;
-    uint32_t hash_next;
 } bot_source_goal;
 enum {BOT_GOAL_ALIAS_CONFIG,BOT_GOAL_ALIAS_INDEX,BOT_GOAL_ALIAS_INFO,BOT_GOAL_ALIAS_WEIGHTS};
 struct qa_bot_goals {
@@ -70,7 +68,7 @@ struct qa_bot_goals {
     uint32_t location_head, camp_head;
     bot_source_goal *source;
     size_t source_count, source_capacity;
-    uint32_t source_buckets[256];
+    qa_actor_index source_actors;
 };
 static inline uint64_t bot_goal_weights_discriminator(const qa_bot_weights *weights) {
     return (((uint64_t)(uintptr_t)weights >> 32) << 2) | BOT_GOAL_ALIAS_WEIGHTS;
@@ -109,7 +107,9 @@ bool bot_goal_source_status(qa_bot_goals *, int32_t, const qa_bot_goal *,
 bool bot_goal_entities(qa_bot_goals *, const qa_bot_goal_entity **, size_t *, void **, qa_error *);
 void bot_goal_entities_end(qa_bot_goals *, void *);
 bool bot_goal_equal_name(const char *, const char *);
-uint32_t bot_goal_source_bucket(qa_actor_id);
+void bot_goal_sources_clear(qa_bot_goals *);
+bool bot_goal_sources_reindex(qa_bot_goals *,qa_error *);
+const bot_source_goal *bot_goal_source_number(const qa_bot_goals *,int32_t);
 bool bot_goal_memory_bind(qa_bot_goals *,qa_bot_memory *,qa_error *);
 bool bot_goal_config_set(qa_bot_goals *,bot_goal_slot *,qa_bot_weights *,qa_error *);
 bool bot_goal_config_get(const qa_bot_goals *,const bot_goal_slot *,bot_goal_weights **,qa_error *);

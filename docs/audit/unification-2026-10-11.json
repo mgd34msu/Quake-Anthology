@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "732a78337c63c254d465576d1d2ca04eac9aa475",
+  "verified_main": "d89bfbdc276d1e9dc925d00dd1451f77dc4205c6",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 124,
-    "open_source_observation": 247,
+    "fixed_source_build_core": 125,
+    "open_source_observation": 246,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -26694,8 +26694,9 @@
       "severity": "low",
       "job": "05",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "Partial migration verified in 71030a1a; selected_q3_character.c full comparison remains outside that commit and is being included in the next verified slice."
+      "status": "fixed_source_build_core",
+      "verification": "Music creation and prepared selection reserve the actual stereo chunk bound before playback; raw PCM backing, growth and clone ownership now use the common arena. Wrapped queue clone/restore remains independent after source destruction in the existing core suite. Device and Vorbis workspace admission remain open; arbitrary public raw queue growth remains accepted. The selected-character frame equality caller omitted from 71030a1a is included and verified here.",
+      "fix_commit": "d89bfbdc276d1e9dc925d00dd1451f77dc4205c6"
     },
     {
       "id": "05-I4",
@@ -27029,7 +27030,7 @@
       "job": "06",
       "area": "audio_input_ui",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "Music creation and prepared selection reserve the actual stereo chunk bound before playback; raw PCM backing, growth and clone ownership now use the common arena. Wrapped queue clone/restore remains independent after source destruction in the existing core suite. Device and Vorbis workspace admission remain open; arbitrary public raw queue growth remains accepted. The selected-character frame equality caller omitted from 71030a1a is included and verified here."
     },
     {
       "id": "06-03",
@@ -40370,6 +40371,34 @@
       ],
       "record_directory": "/tmp/qa-ta3196-shared-guest-sort-20261012",
       "conclusion": "One guest heap-sort body serves SysV and Windows imports through comparator and memory-access adapters. ABI decoding, empty-range rules, signed comparator results, callback order, ties, nested scratch and partial failure mutations remain at their existing boundaries. Normal production build and seven core suites passed; no live guest-module claim."
+    },
+    {
+      "commit": "d89bfbdc276d1e9dc925d00dd1451f77dc4205c6",
+      "source_tree": "df5ea42d548f23e026dd8bc6182285129e6030a8",
+      "finding_ids": [
+        "06-02",
+        "05-D1"
+      ],
+      "files_rechecked": [
+        "src/audio/codec_internal.h",
+        "src/audio/music.c",
+        "src/audio/streams.c",
+        "src/app/application/selected_q3_character.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-audio-arena-20261012",
+      "conclusion": "Music creation and prepared selection reserve the actual stereo chunk bound before playback; raw PCM backing, growth and clone ownership now use the common arena. Wrapped queue clone/restore remains independent after source destruction in the existing core suite. Device and Vorbis workspace admission remain open; arbitrary public raw queue growth remains accepted. The selected-character frame equality caller omitted from 71030a1a is included and verified here."
     }
   ],
   "verification_limits": [
