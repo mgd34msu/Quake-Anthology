@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/common_parse.h"
 
 bool script_lexer_memory_bind(qa_script_lexer *l,qa_error *error)
 {
@@ -61,29 +62,12 @@ void script_lexer_copy_text(qa_script_lexer *l,qa_bytes input)
     if(input.size) memcpy(l->record.bytes+SCRIPT_LEXER_BYTES,input.data,input.size);
     qa_store_u32le(l->record.bytes+SCRIPT_LEXER_FLAGS,l->options.flags);
 }
-void script_lexer_compress(qa_script_lexer *l)
+bool script_lexer_compress(qa_script_lexer *l,qa_error *error)
 {
-    uint8_t *bytes=l->record.bytes+SCRIPT_LEXER_BYTES;size_t input=0,output=0;
-    bool newline=false,whitespace=false;uint8_t byte;
-    while((byte=bytes[input])!=0) {
-        if(byte=='/' && bytes[input+1]=='/') {
-            while(bytes[input] && bytes[input]!='\n') ++input;
-        } else if(byte=='/' && bytes[input+1]=='*') {
-            while(bytes[input] && (bytes[input]!='*' || bytes[input+1]!='/')) ++input;
-            if(bytes[input]) input+=2;
-        } else if(byte=='\n' || byte=='\r') {newline=true;++input;}
-        else if(byte==' ' || byte=='\t') {whitespace=true;++input;}
-        else {
-            if(newline) {bytes[output++]='\n';newline=false;whitespace=false;}
-            if(whitespace) {bytes[output++]=' ';whitespace=false;}
-            bytes[output++]=bytes[input++];
-            if(byte=='"') {
-                while((byte=bytes[input])!=0 && byte!='"') bytes[output++]=bytes[input++];
-                if(byte=='"') bytes[output++]=bytes[input++];
-            }
-        }
-    }
-    bytes[output]=0;qa_store_u32le(l->record.bytes+SCRIPT_LEXER_LENGTH,(uint32_t)output);
+    uint8_t *bytes=l->record.bytes+SCRIPT_LEXER_BYTES;size_t output;
+    qa_buffer storage={bytes,l->record.size-SCRIPT_LEXER_BYTES};
+    if(!qa_common_compress((qa_bytes){bytes,storage.size-1},QA_COMMON_TERMINATED,storage,&output,error)) return false;
+    qa_store_u32le(l->record.bytes+SCRIPT_LEXER_LENGTH,(uint32_t)output);return true;
 }
 static bool extent(qa_script_lexer *l,script_lexer_allocation *record,qa_error *error)
 {

@@ -45,17 +45,18 @@ static bool parse_menu(const char *path)
 }
 static bool load_menus(q3n_mission_hud *o,const char *requested)
 {
-    qa_resource *root=NULL; qa_buffer compressed={0};
+    qa_resource *root=NULL; char compressed[MAX_MENUDEFFILE];size_t compressed_length;
     const qa_cvar_view *selected=qa_cvars_read(q3nm_registry(o),o->hud_files);
     char path[1024]; q3menu_strncpyz(path,requested?requested:selected?selected->value:"",sizeof(path)); if(!path[0])strcpy(path,"ui/hud.txt");
     int start=o->options.milliseconds(o->options.context);
     if(!q3nm_current(o,o->frame,o->menus->error)||!qa_vfs_acquire(o->options.content,path,&root,NULL,o->menus->error))return false;
     qa_bytes bytes=qa_resource_bytes(root);
     if(bytes.size>=MAX_MENUDEFFILE) { qa_resource_release(root); return q3ne_fail(o->menus->error,QA_ERROR_FORMAT,"Mission HUD menu root exceeds 4095 source bytes"); }
-    bool ok=qa_common_compress(bytes,QA_COMMON_TERMINATED,&compressed,o->menus->error); qa_resource_release(root);
+    bool ok=qa_common_compress(bytes,QA_COMMON_TERMINATED,(qa_buffer){(uint8_t *)compressed,sizeof(compressed)},
+        &compressed_length,o->menus->error); qa_resource_release(root);
     if(!ok)return false;
     q3menu_reset(o->menus,false); o->scoreboard_menu=o->captured_menu=-1;
-    char *cursor=(char *)compressed.data;
+    char *cursor=compressed;
     o->menus->allocation_guard=true;
     if(setjmp(o->menus->allocation_failure))ok=false;
     else for(;;) {
@@ -67,7 +68,6 @@ static bool load_menus(q3n_mission_hud *o,const char *requested)
     }
     o->menus->allocation_guard=false;
     for(int i=1;i<=64;++i)q3menu_source_close(i);
-    qa_buffer_free(&compressed);
     if(ok&&!o->menus->failed) { o->loaded=true; q3menu_print("UI menu load time = %d milli seconds\n",q3ne_sub(o->options.milliseconds(o->options.context),start)); }
     return ok&&!o->menus->failed;
 }

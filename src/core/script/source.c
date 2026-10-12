@@ -78,7 +78,7 @@ bool script_include(qa_script *s, const qa_script_include *request, qa_error *e)
         const char *text=script_string(&s->arena,lexer->input.data,lexer->input.size,e);
         if(!text) {script_lexer_dispose(lexer);return false;}
         resource=(qa_script_resource){.path=lexer->path,.bytes={(const uint8_t *)text,lexer->input.size}};
-        if(s->services.file_text) script_lexer_compress(lexer);
+        if(s->services.file_text && !script_lexer_compress(lexer,e)) {script_lexer_dispose(lexer);return false;}
     } else if(!resource.path || !resource.path[0] || (resource.bytes.size && !resource.bytes.data)) {
         s->services.release(s->services.context,&resource);
         return script_fail(s,qa_script_position(s),"Script resolver returned an invalid resource",e);
@@ -86,7 +86,9 @@ bool script_include(qa_script *s, const qa_script_include *request, qa_error *e)
     if(!staged && !qa_script_lexer_open(resource.path,resource.bytes,&options,&lexer,e)) {
         s->services.release(s->services.context,&resource);return false;
     }
-    if(!staged && s->services.file_text) script_lexer_compress(lexer);
+    if(!staged && s->services.file_text && !script_lexer_compress(lexer,e)) {
+        script_lexer_dispose(lexer);s->services.release(s->services.context,&resource);return false;
+    }
     const char *included=qa_script_lexer_position(lexer).path;
     for(size_t i=0;i<s->stack_count;++i)
         if(same_path(qa_script_lexer_position(s->frames[s->stack[i]].lexer).path,included)) {

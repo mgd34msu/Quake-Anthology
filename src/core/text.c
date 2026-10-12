@@ -19,6 +19,20 @@ bool qa_info_next(const char **cursor,qa_bytes *key,qa_bytes *value)
     return true;
 }
 
+bool qa_info_key_equal(qa_bytes key,qa_bytes wanted,unsigned policy)
+{
+    bool match=key.size==wanted.size;
+    if (policy&QA_INFO_CASE_FOLD) {
+        for (size_t i=0;match && i<key.size;++i) {
+            unsigned char a=key.data[i],b=wanted.data[i];
+            if (a>='A' && a<='Z') a+='a'-'A';
+            if (b>='A' && b<='Z') b+='a'-'A';
+            match=a==b;
+        }
+    } else if (match && key.size) match=!memcmp(key.data,wanted.data,key.size);
+    return match;
+}
+
 bool qa_info_find(const char *text,qa_bytes wanted,unsigned policy,qa_bytes *out)
 {
     const char *cursor=text;
@@ -26,16 +40,7 @@ bool qa_info_find(const char *text,qa_bytes wanted,unsigned policy,qa_bytes *out
     bool found=false;
     *out=(qa_bytes){(const uint8_t *)"",0};
     while (qa_info_next(&cursor,&key,&value)) {
-        bool match=key.size==wanted.size;
-        if (policy&QA_INFO_CASE_FOLD) {
-            for (size_t i=0;match && i<key.size;++i) {
-                unsigned char a=key.data[i],b=wanted.data[i];
-                if (a>='A' && a<='Z') a+='a'-'A';
-                if (b>='A' && b<='Z') b+='a'-'A';
-                match=a==b;
-            }
-        } else if (match) match=!memcmp(key.data,wanted.data,key.size);
-        if (!match) continue;
+        if (!qa_info_key_equal(key,wanted,policy)) continue;
         *out=value;found=true;
         if (!(policy&QA_INFO_LAST)) break;
     }

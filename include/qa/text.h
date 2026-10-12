@@ -25,6 +25,8 @@ bool qa_text_join_words(const char *const *,size_t,char *,size_t,qa_error *);
  * starts at the string and ends at the next delimiter or terminator. */
 bool qa_info_next(const char **cursor,qa_bytes *key,qa_bytes *value);
 enum { QA_INFO_LAST=1, QA_INFO_CASE_FOLD=2 };
+/* Exact byte keys by default; CASE_FOLD compares ASCII letters only. */
+bool qa_info_key_equal(qa_bytes,qa_bytes,unsigned policy);
 /* First match by default; missing keys return false and an empty span. */
 bool qa_info_find(const char *,qa_bytes key,unsigned policy,qa_bytes *value);
 /* Full-token conversion in the C numeric locale, independent of UI language.

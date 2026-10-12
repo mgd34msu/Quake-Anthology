@@ -16,6 +16,7 @@
 #include "q1_sky.h"
 #include "internal.h"
 #include "qa/binary.h"
+#include "qa/text.h"
 #include "qa/q3_key.h"
 #include "qa/audio_save.h"
 #include "source_restore.h"
@@ -320,17 +321,6 @@ static bool time_register(qa_cvars *source,qa_cvars *client,uint64_t owner,qa_er
     }
     return true;
 }
-static bool equal_ascii(const char *text,size_t length,const char *name)
-{
-    if (strlen(name)!=length) return false;
-    for (size_t i=0;i<length;++i) {
-        unsigned a=(unsigned char)text[i],b=(unsigned char)name[i];
-        if (a>='A' && a<='Z') a+='a'-'A';
-        if (b>='A' && b<='Z') b+='a'-'A';
-        if (a!=b) return false;
-    }
-    return true;
-}
 bool frontend_source_system_info(qa_frontend *f,const qa_application_q3_client_context *view,const char *info,qa_error *error)
 {
     frontend_source_lease *lease=view?view->frontend_lifetime:NULL;
@@ -351,24 +341,23 @@ bool frontend_source_system_info(qa_frontend *f,const qa_application_q3_client_c
         if (ok) retained=qa_strings_cstr(lease->names,id);
     }
     const char *names[6]; size_t name_count=view->client_time_cvars?time_names(qa_cvars_dialect(view->client_time_cvars),names,false):0;
-    const char *cursor=info+(*info=='\\');
-    while (ok && *cursor) {
-        const char *separator=strchr(cursor,'\\'); if (!separator) break;
-        const char *value=separator+1,*end=strchr(value,'\\'); if (!end) end=value+strlen(value);
-        size_t name_length=(size_t)(separator-cursor),value_length=(size_t)(end-value);
-        bool skip=!name_length || equal_ascii(cursor,name_length,"cl_allowdownload");
-        for (size_t i=0;i<name_count;++i) if (equal_ascii(cursor,name_length,names[i])) skip=true;
-        if (!skip && equal_ascii(cursor,name_length,"timescale") && unchanged) skip=true;
+    const char *cursor=info;
+    qa_bytes key,value;
+    while (ok && qa_info_next(&cursor,&key,&value)) {
+        size_t name_length=key.size,value_length=value.size;
+        bool skip=!name_length || qa_info_key_equal(key,(qa_bytes){(const uint8_t *)"cl_allowdownload",16},QA_INFO_CASE_FOLD);
+        for (size_t i=0;i<name_count;++i)
+            if (qa_info_key_equal(key,(qa_bytes){(const uint8_t *)names[i],strlen(names[i])},QA_INFO_CASE_FOLD)) skip=true;
+        if (!skip && qa_info_key_equal(key,(qa_bytes){(const uint8_t *)"timescale",9},QA_INFO_CASE_FOLD) && unchanged) skip=true;
         if (!skip) {
             char *name=qa_arena_alloc(&f->frame.storage,name_length+1,1,error);
             char *copy=name?qa_arena_alloc(&f->frame.storage,value_length+1,1,error):NULL;
             if (!name || !copy) ok=false;
             else {
-                memcpy(name,cursor,name_length); name[name_length]=0; memcpy(copy,value,value_length); copy[value_length]=0;
+                memcpy(name,key.data,name_length); name[name_length]=0; memcpy(copy,value.data,value_length); copy[value_length]=0;
                 ok=time_write(lease,view->cvars,name,copy,error);
             }
         }
-        cursor=*end?end+1:end;
     }
     if (ok) lease->system_info=retained;
     time_leave(lease); return ok;

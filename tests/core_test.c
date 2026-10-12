@@ -21,6 +21,7 @@
 #include "qa/localization.h"
 #include "qa/lightstyles.h"
 #include "qa/text.h"
+#include "qa/common_parse.h"
 #include "qa/q2_sound.h"
 #include "qa/hud_q2.h"
 #include "qa/vfs.h"
@@ -1867,6 +1868,29 @@ static void test_cvar_info_storage(void)
     }
 }
 
+static void test_common_compression(void)
+{
+    qa_error error={0};
+    const uint8_t input[]="a/*discard\nthis*/b \t\r\n c //discard\n\"// quoted\t/* text */\" \201  ";
+    const uint8_t expected[]="ab\nc\n\"// quoted\t/* text */\" \201";
+    uint8_t output[sizeof(input)],in_place[sizeof(input)];size_t written=SIZE_MAX;
+    CHECK(qa_common_compress((qa_bytes){input,sizeof(input)-1},QA_COMMON_TERMINATED,
+        (qa_buffer){output,sizeof(output)},&written,&error));
+    CHECK(written==sizeof(expected)-1 && !memcmp(output,expected,sizeof(expected)));
+    memcpy(in_place,input,sizeof(input));
+    CHECK(qa_common_compress((qa_bytes){in_place,sizeof(in_place)-1},QA_COMMON_TERMINATED,
+        (qa_buffer){in_place,sizeof(in_place)},&written,&error));
+    CHECK(written==sizeof(expected)-1 && !memcmp(in_place,expected,sizeof(expected)));
+    const uint8_t terminated[]={'x',0,'/','*'};
+    CHECK(qa_common_compress((qa_bytes){terminated,sizeof(terminated)},QA_COMMON_UNINITIALIZED,
+        (qa_buffer){output,2},&written,&error) && written==1 && output[0]=='x' && !output[1]);
+    written=SIZE_MAX;
+    CHECK(!qa_common_compress((qa_bytes){(const uint8_t *)"x",1},QA_COMMON_UNINITIALIZED,
+        (qa_buffer){output,sizeof(output)},&written,&error) && written==SIZE_MAX);
+    CHECK(!qa_common_compress((qa_bytes){input,sizeof(input)-1},QA_COMMON_TERMINATED,
+        (qa_buffer){output,1},&written,&error) && written==SIZE_MAX);
+}
+
 static qa_input_seat *shared_input_seat(void *user, const qa_command_context *context)
 {
     return context->seat == 0 ? *(qa_input_seat **)user : NULL;
@@ -3246,6 +3270,7 @@ int main(int argc, char **argv)
     test_q3_command_cursors();
     test_shared_cvar_archive();
     test_cvar_info_storage();
+    test_common_compression();
     test_shared_input_menu_defaults();
     test_profiler_mode_changes();
     test_source_nonmipped_transparency();

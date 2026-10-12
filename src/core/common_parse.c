@@ -318,28 +318,29 @@ bool qa_common_matrix_3d(qa_common_parser *parser, qa_common_cursor *cursor, int
     int32_t dimensions[] = {z, y, x};
     return matrix_read(parser, cursor, dimensions, 3, matrix, capacity, &offset, error);
 }
-bool qa_common_compress(qa_bytes source, qa_common_end end, qa_buffer *out, qa_error *error) {
+bool qa_common_compress(qa_bytes source, qa_common_end end, qa_buffer storage,
+                        size_t *written, qa_error *error) {
     qa_common_cursor cursor;
-    if (!out)
+    if (!storage.data || !written)
         return fail(error, QA_ERROR_ARGUMENT, 0, "missing COM_Compress output");
     if (!qa_common_cursor_init(&cursor, source, end, error))
         return false;
-    uint8_t *text = malloc(cursor.terminator + 1);
-    if (!text)
-        return fail(error, QA_ERROR_MEMORY, 0, "allocating COM_Compress output");
+    if (storage.size <= cursor.terminator)
+        return fail(error, QA_ERROR_ARGUMENT, 0, "COM_Compress output is too small");
+    uint8_t *text = storage.data;
     size_t offset = 0, length = 0;
     bool newline = false, whitespace = false;
     for (;;) {
         int byte, next = 0;
         if (!byte_at(&cursor, offset, &byte, error))
-            goto failed;
+            return false;
         if (!byte)
             break;
         if (byte == '/' && !byte_at(&cursor, offset + 1, &next, error))
-            goto failed;
+            return false;
         if (byte == '/' && (next == '/' || next == '*')) {
             if (!skip_comment(&cursor, &offset, next == '*', error))
-                goto failed;
+                return false;
         } else if (byte == '\n' || byte == '\r') {
             newline = true;
             ++offset;
@@ -359,7 +360,7 @@ bool qa_common_compress(qa_bytes source, qa_common_end end, qa_buffer *out, qa_e
             if (byte == '"') {
                 for (;;) {
                     if (!byte_at(&cursor, offset, &byte, error))
-                        goto failed;
+                        return false;
                     if (!byte)
                         break;
                     text[length++] = source.data[offset++];
@@ -370,9 +371,6 @@ bool qa_common_compress(qa_bytes source, qa_common_end end, qa_buffer *out, qa_e
         }
     }
     text[length] = 0;
-    *out = (qa_buffer){.data = text, .size = length};
+    *written = length;
     return true;
-failed:
-    free(text);
-    return false;
 }

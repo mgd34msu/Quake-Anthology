@@ -77,7 +77,7 @@ bool script_lexer_memory_bind(qa_script_lexer *,qa_error *);
 bool script_lexer_memory_open(qa_script_lexer *,const char *,qa_bytes,qa_error *);
 bool script_lexer_punctuation_open(qa_script_lexer *,qa_error *);
 void script_lexer_copy_text(qa_script_lexer *,qa_bytes);
-void script_lexer_compress(qa_script_lexer *);
+bool script_lexer_compress(qa_script_lexer *,qa_error *);
 bool script_lexer_memory_validate(qa_script_lexer *,qa_error *);
 void script_lexer_memory_close(qa_script_lexer *,bool);
 void script_lexer_dispose(qa_script_lexer *);

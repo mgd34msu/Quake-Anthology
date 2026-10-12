@@ -70,8 +70,10 @@ bool qa_common_matrix_2d(qa_common_parser *, qa_common_cursor *, int32_t y, int3
                          float *matrix, size_t capacity, size_t offset, qa_error *);
 bool qa_common_matrix_3d(qa_common_parser *, qa_common_cursor *, int32_t z, int32_t y, int32_t x,
                          float *matrix, size_t capacity, size_t offset, qa_error *);
-/* One owned, NUL-terminated output; size excludes NUL. Output remains unchanged
- * on failure. Compression preserves quoted bytes and drops trailing space. */
-bool qa_common_compress(qa_bytes, qa_common_end, qa_buffer *, qa_error *);
+/* Storage holds the source prefix through its first NUL, or source.size + 1
+ * bytes when no NUL is present. It may equal source.data for in-place use.
+ * written excludes NUL and remains unchanged on failure; storage may contain
+ * a partial prefix. Quoted bytes remain unchanged and trailing space is dropped. */
+bool qa_common_compress(qa_bytes, qa_common_end, qa_buffer storage, size_t *written, qa_error *);
 
 #endif
