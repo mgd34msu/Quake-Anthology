@@ -40,7 +40,7 @@ bool guest_host_x86_64_to_cpu(const guest_host_x86_64_state *,
  * Actual flat selector identities must match; bases remain separately owned. */
 typedef bool (*guest_host_x86_64_stop_fn)(void *, int, void *,
     guest_host_x86_64_state *, bool *, qa_error *);
-bool guest_host_x86_64_bridge_open(guest_host_x86_64_stop_fn, void *, qa_error *);
+bool guest_host_x86_64_bridge_open(guest_host_x86_64_stop_fn, void *, size_t scratch_pages, qa_error *);
 bool guest_host_x86_64_enter(const guest_host_x86_64_state *, qa_error *);
 void guest_host_x86_64_bridge_close(void);
 

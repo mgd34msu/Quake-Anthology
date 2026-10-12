@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include "host_x86_64.h"
 #include "qa/binary.h"
+#include "qa/pool.h"
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,7 +9,6 @@
 #include <asm/prctl.h>
 #include <cpuid.h>
 #include <signal.h>
-#include <sys/mman.h>
 #include <sys/syscall.h>
 #include <ucontext.h>
 #include <errno.h>
@@ -181,6 +181,11 @@ extern void qa_host_bridge_capture(host_bridge_frame *);
 static guest_host_x86_64_stop_fn bridge_stop;
 static void *bridge_context;
 static guest_host_x86_64_capabilities bridge_capability;
+static qa_arena bridge_storage;
+static qa_pool bridge_workspaces;
+static size_t bridge_xsave_stride,bridge_signal_stack_bytes;
+static stack_t bridge_previous_stack;
+static sigset_t bridge_previous_mask;
 static struct sigaction previous_actions[5];
 static const int bridge_signals[]={SIGTRAP,SIGSEGV,SIGBUS,SIGILL,SIGFPE};
 static size_t installed_actions;
@@ -255,17 +260,32 @@ void qa_host_bridge_dispatch(int number, siginfo_t *information, void *opaque)
     }
 }
 
-bool guest_host_x86_64_bridge_open(guest_host_x86_64_stop_fn stop, void *context, qa_error *error)
+bool guest_host_x86_64_bridge_open(guest_host_x86_64_stop_fn stop, void *context,
+    size_t scratch_pages, qa_error *error)
 {
     if (!stop || bridge_stop || !guest_host_x86_64_capability(&bridge_capability,error)) return false;
     uint64_t shadow_stack=0;
     if(syscall(SYS_arch_prctl,0x5005,&shadow_stack)==0 && shadow_stack)
         return fail(error,QA_ERROR_UNSUPPORTED,shadow_stack,"host shadow-stack state is outside the actual native user transfer profile");
+    size_t signal_bytes=(size_t)SIGSTKSZ,xsave_bytes=bridge_capability.xsave_bytes;
+    bridge_xsave_stride=(xsave_bytes+63)&~(size_t)63;
+    if(signal_bytes>SIZE_MAX-xsave_bytes-65536 ||
+        signal_bytes+xsave_bytes+65536>SIZE_MAX-2*bridge_xsave_stride)
+        return fail(error,QA_ERROR_MEMORY,0,"native bridge workspace size overflow");
+    bridge_signal_stack_bytes=signal_bytes+xsave_bytes+65536;
+    if(sigaltstack(NULL,&bridge_previous_stack)!=0 ||
+        sigprocmask(SIG_SETMASK,NULL,&bridge_previous_mask)!=0)
+        return fail(error,QA_ERROR_ARGUMENT,0,"reading actual child controller signal state failed");
+    if(!qa_pool_reserve_pages(&bridge_workspaces,&bridge_storage,scratch_pages,
+        2*bridge_xsave_stride+bridge_signal_stack_bytes,64,error)) {
+        qa_arena_destroy(&bridge_storage);return false;
+    }
     struct sigaction action={0}; action.sa_sigaction=qa_host_bridge_signal; action.sa_flags=SA_SIGINFO|SA_ONSTACK;
     sigfillset(&action.sa_mask);
     for (installed_actions=0;installed_actions<5;++installed_actions)
         if (sigaction(bridge_signals[installed_actions],&action,previous_actions+installed_actions)!=0) {
             while(installed_actions) { --installed_actions; sigaction(bridge_signals[installed_actions],previous_actions+installed_actions,NULL); }
+            qa_arena_destroy(&bridge_storage);bridge_workspaces=(qa_pool){0};
             return fail(error,QA_ERROR_ARGUMENT,0,"installing actual child signal bridge failed");
         }
     bridge_stop=stop; bridge_context=context; return true;
@@ -273,8 +293,13 @@ bool guest_host_x86_64_bridge_open(guest_host_x86_64_stop_fn stop, void *context
 void guest_host_x86_64_bridge_close(void)
 {
     if (qa_host_bridge_frame) return;
+    /* A failed per-entry restoration retains its lease until the controller's
+     * original signal state is restored; the OS may still reference its stack. */
+    if(bridge_workspaces.active && (sigprocmask(SIG_SETMASK,&bridge_previous_mask,NULL)!=0 ||
+        sigaltstack(&bridge_previous_stack,NULL)!=0)) return;
     while(installed_actions) { --installed_actions; sigaction(bridge_signals[installed_actions],previous_actions+installed_actions,NULL); }
     bridge_stop=NULL; bridge_context=NULL;
+    qa_arena_destroy(&bridge_storage);bridge_workspaces=(qa_pool){0};
 }
 bool guest_host_x86_64_enter(const guest_host_x86_64_state *source, qa_error *error)
 {
@@ -292,22 +317,23 @@ bool guest_host_x86_64_enter(const guest_host_x86_64_state *source, qa_error *er
         if (qa_load_u32le(source->xsave.data+pkru.offset)&3)
             return fail(error,QA_ERROR_UNSUPPORTED,0,"native entry protection key zero denies the actual bridge storage");
     }
-    host_bridge_frame frame={.parent=qa_host_bridge_frame,.okay=true};
-    if (!guest_host_x86_64_state_copy(source,&frame.state,error)) return false;
-    if (frame.state.xsave.size<bridge_capability.xsave_bytes) {
-        void *full=NULL;
-        if (posix_memalign(&full,64,bridge_capability.xsave_bytes)!=0) { guest_host_x86_64_state_free(&frame.state); return fail(error,QA_ERROR_MEMORY,0,"retaining full child hardware state"); }
-        memset(full,0,bridge_capability.xsave_bytes); memcpy(full,frame.state.xsave.data,frame.state.xsave.size);
-        qa_buffer_free(&frame.state.xsave); frame.state.xsave=(qa_buffer){full,bridge_capability.xsave_bytes};
+    size_t slot;
+    uint8_t *workspace=qa_pool_take(&bridge_workspaces,&slot);
+    if(!workspace)return fail(error,QA_ERROR_MEMORY,0,"native bridge workspaces are exhausted");
+    host_bridge_frame frame={.parent=qa_host_bridge_frame,.okay=true,
+        .host_xsave=workspace+bridge_xsave_stride,
+        .signal_stack=workspace+2*bridge_xsave_stride,
+        .signal_stack_bytes=bridge_signal_stack_bytes};
+    frame.state.xsave=(qa_buffer){workspace,bridge_capability.xsave_bytes};
+    memset(frame.state.xsave.data,0,frame.state.xsave.size);
+    if (!guest_host_x86_64_state_copy(source,&frame.state,error)) {
+        qa_pool_release(&bridge_workspaces,slot);return false;
     }
-    if (posix_memalign(&frame.host_xsave,64,bridge_capability.xsave_bytes)!=0) { guest_host_x86_64_state_free(&frame.state); return fail(error,QA_ERROR_MEMORY,0,"retaining real controller floating context"); }
+    frame.state.xsave.size=bridge_capability.xsave_bytes;
     memset(frame.host_xsave,0,bridge_capability.xsave_bytes);
     memcpy(frame.registers,source->registers,sizeof(frame.registers)); frame.instruction=source->instruction; frame.flags=source->flags;
     frame.fs_base=source->fs_base; frame.gs_base=source->gs_base; frame.guest_xsave=frame.state.xsave.data; frame.xfeatures=bridge_capability.xfeatures;
-    frame.signal_stack_bytes=(size_t)SIGSTKSZ+bridge_capability.xsave_bytes+65536;
-    frame.signal_stack=mmap(NULL,frame.signal_stack_bytes,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
-    bool okay=frame.signal_stack!=MAP_FAILED;
-    if (okay) okay=syscall(SYS_arch_prctl,ARCH_GET_FS,&frame.host_fs)==0 && syscall(SYS_arch_prctl,ARCH_GET_GS,&frame.host_gs)==0;
+    bool okay=syscall(SYS_arch_prctl,ARCH_GET_FS,&frame.host_fs)==0 && syscall(SYS_arch_prctl,ARCH_GET_GS,&frame.host_gs)==0;
     stack_t signal_stack={.ss_sp=frame.signal_stack,.ss_size=frame.signal_stack_bytes,.ss_flags=(int)(1u<<31)};
     bool stack_installed=false,mask_saved=false;
     if (okay) { okay=sigaltstack(&signal_stack,&frame.previous_stack)==0; stack_installed=okay; }
@@ -320,16 +346,21 @@ bool guest_host_x86_64_enter(const guest_host_x86_64_state *source, qa_error *er
     if (okay) { qa_host_bridge_frame=&frame; qa_host_bridge_target=frame.instruction; qa_host_bridge_enter(); qa_host_bridge_frame=frame.parent; okay=frame.okay; if (!okay && error) *error=frame.failure; }
     else qa_error_set(error,QA_ERROR_ARGUMENT,0,
         "preparing actual child stack or thread bases failed: %s",strerror(errno));
-    if (mask_saved && sigprocmask(SIG_SETMASK,&frame.previous_mask,NULL)!=0) okay=fail(error,QA_ERROR_ARGUMENT,0,"restoring child controller signal mask failed");
-    if (stack_installed && sigaltstack(&frame.previous_stack,NULL)!=0) okay=fail(error,QA_ERROR_ARGUMENT,0,"restoring child controller signal stack failed");
-    if (frame.signal_stack!=MAP_FAILED) munmap(frame.signal_stack,frame.signal_stack_bytes);
-    free(frame.host_xsave); guest_host_x86_64_state_free(&frame.state); return okay;
+    bool restored=true;
+    if (mask_saved && sigprocmask(SIG_SETMASK,&frame.previous_mask,NULL)!=0) {
+        restored=false;okay=fail(error,QA_ERROR_ARGUMENT,0,"restoring child controller signal mask failed");
+    }
+    if (stack_installed && sigaltstack(&frame.previous_stack,NULL)!=0) {
+        restored=false;okay=fail(error,QA_ERROR_ARGUMENT,0,"restoring child controller signal stack failed");
+    }
+    if(restored)qa_pool_release(&bridge_workspaces,slot);
+    return okay;
 }
 #else
 bool guest_host_x86_64_capture(guest_host_x86_64_state *out,qa_error *error)
 { (void)out; return fail(error,QA_ERROR_UNSUPPORTED,0,"hardware state capture platform is unavailable"); }
-bool guest_host_x86_64_bridge_open(guest_host_x86_64_stop_fn stop,void *context,qa_error *error)
-{ (void)stop;(void)context; return fail(error,QA_ERROR_UNSUPPORTED,0,"native child signal bridge platform is unavailable"); }
+bool guest_host_x86_64_bridge_open(guest_host_x86_64_stop_fn stop,void *context,size_t scratch_pages,qa_error *error)
+{ (void)stop;(void)context;(void)scratch_pages; return fail(error,QA_ERROR_UNSUPPORTED,0,"native child signal bridge platform is unavailable"); }
 void guest_host_x86_64_bridge_close(void) { }
 bool guest_host_x86_64_enter(const guest_host_x86_64_state *state,qa_error *error)
 { (void)state; return fail(error,QA_ERROR_UNSUPPORTED,0,"native child assembly platform is unavailable"); }

@@ -525,10 +525,12 @@ bool guest_host_child_bootstrap(int argc,char *const *argv,bool *handled,int *st
     if(!handled || !status || argc<0 || (argc && !argv)) return fail(error,QA_ERROR_ARGUMENT,0,"native child bootstrap requires actual startup arguments");
     *handled=argc>=2 && !strcmp(argv[1],"--qa-native-host-child");if(!*handled)return true;
     *status=125;
-    if(argc!=4 || strcmp(argv[3],"--qa-native-profile-required") || !argv[2][0])
+    if(argc!=5 || strcmp(argv[3],"--qa-native-profile-required") || !argv[2][0] || !argv[4][0])
         return fail(error,QA_ERROR_UNSUPPORTED,0,"native child requires the actual configured instruction monitor");
     uint64_t descriptor=0;
     for(const char *at=argv[2];*at;++at) {if(*at<'0'||*at>'9'||descriptor>((uint64_t)INT_MAX-(unsigned)(*at-'0'))/10)return fail(error,QA_ERROR_ARGUMENT,0,"native child startup descriptor is invalid");descriptor=descriptor*10+(unsigned)(*at-'0');}
+    size_t scratch_pages=0;
+    for(const char *at=argv[4];*at;++at) {if(*at<'0'||*at>'9'||scratch_pages>(SIZE_MAX-(unsigned)(*at-'0'))/10)return fail(error,QA_ERROR_ARGUMENT,0,"native child scratch-page capacity is invalid");scratch_pages=scratch_pages*10+(unsigned)(*at-'0');}
     host_server server={.descriptor=(int)descriptor};
     bool okay=server_profile(&server,GUEST_PROFILE_GUARD_PROBE,NULL,error) &&
         guest_host_x86_64_capability(&server.capability,error) &&
@@ -537,7 +539,7 @@ bool guest_host_child_bootstrap(int argc,char *const *argv,bool *handled,int *st
         guest_host_x86_64_capture(&server.state,error) &&
         server_profile(&server,GUEST_PROFILE_GUARD_CAPTURE,&server.state,error) &&
         guest_profile_cpu_domain_read(&server.state,&server.capability,&server.domain,error) &&
-        guest_host_x86_64_bridge_open(server_stop,&server,error);
+        guest_host_x86_64_bridge_open(server_stop,&server,scratch_pages,error);
     qa_buffer body={0};
     long thread=okay?syscall(SYS_gettid):-1;
     if(okay && thread<=0)okay=fail(error,QA_ERROR_ARGUMENT,0,"reading actual child thread identity failed");
@@ -585,10 +587,12 @@ bool guest_host_child_create(const guest_host_child_options *options,guest_host_
     if(!code)code=posix_spawn_file_actions_adddup2(&actions,channel[1],3);
     if(!code && channel[0]!=3)code=posix_spawn_file_actions_addclose(&actions,channel[0]);
     if(!code && channel[1]!=3)code=posix_spawn_file_actions_addclose(&actions,channel[1]);
+    char scratch_pages[3*sizeof(size_t)+1];
+    snprintf(scratch_pages,sizeof(scratch_pages),"%zu",options->scratch_pages->capacity);
     char *arguments[]={(char *)options->profile_guard->runner,"-thread_private","-translate_fpu_pc",
         "-disable_traces","-max_elide_jmp","0","-max_elide_call","0","-c",
         (char *)options->profile_guard->client,"--",(char *)options->executable,"--qa-native-host-child","3",
-        "--qa-native-profile-required",NULL};pid_t process=0;
+        "--qa-native-profile-required",scratch_pages,NULL};pid_t process=0;
     if(!code)code=posix_spawn(&process,options->profile_guard->runner,&actions,&attributes,arguments,environ);
     if(attributes_initialized)posix_spawnattr_destroy(&attributes);
     if(actions_initialized)posix_spawn_file_actions_destroy(&actions);
