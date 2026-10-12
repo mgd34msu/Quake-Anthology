@@ -271,6 +271,7 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
             body->has_collision = true;
             body->collision = collision;
         }
+        qa_world_collision_rules_prepare(world,body);
     }
     if (ok && bindings) {
         uint64_t revision = qa_actors_revision(world->actors);

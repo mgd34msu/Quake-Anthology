@@ -36,6 +36,17 @@ static qa_world_body *ensure_body(qa_world *world, qa_actor_id actor, qa_error *
     return body;
 }
 
+void qa_world_collision_rules_prepare(qa_world *world,qa_world_body *body)
+{
+    const qa_entity_collision_fields *fields=body->collision_binding.fields;
+    if(fields!=NULL) {
+        qa_ruleset_id rules=qa_ruleset_from_family_tag(fields->family,fields->rerelease,QA_RULESET_NETQUAKE);
+        body->collision_rules=&qa_collision_roles[rules];
+    } else if(body->has_collision)
+        body->collision_rules=&qa_collision_roles[qa_collision_source_rules(body->collision.family)];
+    else body->collision_rules=world->default_collision_rules;
+}
+
 static bool valid_link_state(const qa_body_link_state *saved)
 {
     return saved!=NULL && (!saved->linked || (saved->link_count!=0
@@ -108,6 +119,7 @@ bool qa_world_create(qa_actor_registry *actors, qa_collision_geometry *geometry,
     qa_world *world=calloc(1,sizeof(*world));
     if(world==NULL) return fail(error,QA_ERROR_MEMORY,"Cannot allocate shared world");
     world->actors=actors; world->geometry=geometry; world->capacity=qa_actors_capacity(actors);
+    world->default_collision_rules=&qa_collision_roles[qa_collision_source_rules(qa_collision_geometry_family(geometry))];
     if(hooks!=NULL) world->hooks=*hooks;
     if(!prepare_visibility_storage(world,geometry,&world->visibility_storage,&world->leaf_cache,&world->visibility_bits,
         &world->cluster_bytes,&world->area_bytes,error)) {
@@ -266,6 +278,7 @@ bool qa_world_geometry_admission_commit(qa_world_geometry_admission *token,qa_er
     token->world->cluster_bytes=token->cluster_bytes;token->world->area_bytes=token->area_bytes;
     token->world->visibility_stride=token->cluster_bytes+token->area_bytes;
     token->world->geometry=token->geometry;
+    token->world->default_collision_rules=&qa_collision_roles[qa_collision_source_rules(qa_collision_geometry_family(token->geometry))];
     token->world->trace_scratch=token->scratch;
     token->scratch=NULL;
     memcpy(token->world->sectors,token->sectors,sizeof(token->sectors));
@@ -408,7 +421,9 @@ bool qa_world_body_create(qa_world *world,qa_actor_id actor,const qa_body_state 
     if(body->present) return fail(error,QA_ERROR_ARGUMENT,"Actor already has a body");
     if(world->body_serial==UINT64_MAX) return fail(error,QA_ERROR_ARGUMENT,"Body storage identity exhausted");
     body->storage_serial=++world->body_serial;
-    body->present=true; body->actor=actor; body->state=*state; return true;
+    body->present=true; body->actor=actor; body->state=*state;
+    qa_world_collision_rules_prepare(world,body);
+    return true;
 }
 
 bool qa_world_body_bind(qa_world *world,qa_actor_id actor,const qa_body_binding *binding,bool replace,qa_error *error)
@@ -420,7 +435,9 @@ bool qa_world_body_bind(qa_world *world,qa_actor_id actor,const qa_body_binding 
     if(body->present && !replace) return fail(error,QA_ERROR_ARGUMENT,"Actor already has a body binding");
     if(world->body_serial==UINT64_MAX) return fail(error,QA_ERROR_ARGUMENT,"Body storage identity exhausted");
     body->storage_serial=++world->body_serial;
-    body->actor=actor; body->present=true; body->external=true; body->binding=*binding; return true;
+    body->actor=actor; body->present=true; body->external=true; body->binding=*binding;
+    qa_world_collision_rules_prepare(world,body);
+    return true;
 }
 
 uint64_t qa_world_body_storage_serial(const qa_world *world,qa_actor_id actor)
@@ -515,6 +532,7 @@ bool qa_world_set_collision(qa_world *world,qa_actor_id actor,const qa_actor_col
         !qa_world_prepare_trace_geometry(world,collision->model_geometry,error)) return false;
     body->has_collision=collision!=NULL;
     if(collision!=NULL) body->collision=*collision;
+    qa_world_collision_rules_prepare(world,body);
     return true;
 }
 
@@ -537,6 +555,7 @@ bool qa_world_collision_bind(qa_world *world,qa_actor_id actor,const qa_collisio
         return fail(error,QA_ERROR_ARGUMENT,"Collision binding identity exhausted");
     ++body->collision_serial;
     body->collision_binding=binding!=NULL?*binding:(qa_collision_binding){0};
+    qa_world_collision_rules_prepare(world,body);
     return true;
 }
 bool qa_world_collision_unbind(qa_world *world,qa_actor_id actor,void *expected_context,qa_error *error)
@@ -550,6 +569,7 @@ bool qa_world_collision_unbind(qa_world *world,qa_actor_id actor,void *expected_
         return fail(error,QA_ERROR_ARGUMENT,"Collision binding identity exhausted");
     ++body->collision_serial;
     body->collision_binding=(qa_collision_binding){0};
+    qa_world_collision_rules_prepare(world,body);
     return true;
 }
 
@@ -563,6 +583,12 @@ static bool read_collision(qa_world *world,qa_actor_id actor,qa_actor_collision 
 
 bool qa_world_get_collision(qa_world *world,qa_actor_id actor,qa_actor_collision *out,qa_error *error)
 { return read_collision(world,actor,out,false,error); }
+const qa_collision_role_rules *qa_world_actor_collision_rules(const qa_world *world,qa_actor_id actor)
+{
+    const qa_world_body *body=qa_world_find_body(world,actor);
+    return body==NULL || (body->collision_binding.fields==NULL && !body->has_collision)
+        ?NULL:body->collision_rules;
+}
 bool qa_world_get_link_collision(qa_world *world,qa_actor_id actor,qa_actor_collision *out,qa_error *error)
 { return read_collision(world,actor,out,true,error); }
 bool qa_world_refresh(qa_world *world,qa_actor_id actor,qa_entity_pose pose,
@@ -638,7 +664,7 @@ static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_bod
     body->linked=true; body->linked_state=linked->state;
     spatial->bounds=linked->absolute_bounds; body->link_count=linked->link_count;
     body->linked_collision=collision;
-    qa_spatial_publish(world,body->actor.slot);
+    qa_spatial_publish(world,body->actor.slot,body->collision_rules->head_insert);
     qa_linked_body copy=*linked;
     if(body->external && body->binding.linked!=NULL) {
         qa_body_binding binding=body->binding;

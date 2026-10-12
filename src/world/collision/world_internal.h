@@ -49,6 +49,7 @@ struct qa_world {
     qa_trace_scratch *trace_scratch;
     qa_world_trace_geometry *trace_geometries;
     qa_world_hooks hooks;
+    const qa_collision_role_rules *default_collision_rules;
     uint32_t capacity;
     qa_spatial_sector sectors[QA_SPATIAL_SECTORS];
     qa_spatial_cursor *cursors;
@@ -137,7 +138,8 @@ static inline qa_linked_body qa_world_published_body(const qa_world *world, cons
 }
 bool qa_spatial_initialize(qa_world *, qa_bounds, qa_error *);
 uint32_t qa_spatial_sector_for_bounds(const qa_world *, qa_bounds);
-void qa_spatial_publish(qa_world *, uint32_t);
+void qa_spatial_publish(qa_world *, uint32_t, bool head_insert);
+void qa_world_collision_rules_prepare(qa_world *, qa_world_body *);
 void qa_spatial_remove(qa_world *, uint32_t);
 void qa_spatial_clear(qa_world *);
 void qa_spatial_rebuild_occupancy(qa_world *);

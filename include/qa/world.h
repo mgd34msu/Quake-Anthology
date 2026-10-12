@@ -248,6 +248,8 @@ bool qa_world_collision_bind(qa_world *, qa_actor_id, const qa_collision_binding
 bool qa_world_collision_unbind(qa_world *, qa_actor_id, void *expected_context, qa_error *);
 /* False with no error means absent; reader/validation failures set an error. */
 bool qa_world_get_collision(qa_world *, qa_actor_id, qa_actor_collision *, qa_error *);
+/* Retained actor-role behavior selected at collision admission or binding. */
+const qa_collision_role_rules *qa_world_actor_collision_rules(const qa_world *, qa_actor_id);
 /* Link metadata permits a brush awaiting its model index; clipping remains
  * strict. The purpose is passed directly to the shared field sampler. */
 bool qa_world_get_link_collision(qa_world *, qa_actor_id, qa_actor_collision *, qa_error *);
@@ -388,9 +390,9 @@ typedef struct qa_touch_contact {
 } qa_touch_contact;
 typedef void (*qa_world_touch_fn)(void *, qa_world *, const qa_touch_contact *);
 typedef bool (*qa_world_is_trigger_fn)(void *, qa_actor_id);
-/* Q1 traverses live sector links; Q2/Q3 snapshot candidate IDs before callbacks.
- * All families recheck generations and current overlap after nested mutation. */
-bool qa_world_touch_triggers(qa_world *, qa_actor_id, qa_game_family, qa_world_is_trigger_fn, qa_world_touch_fn, void *, qa_error *);
+/* Caller role selects live sector links or snapshot candidate IDs. Both recheck
+ * generations and current overlap after nested mutation. */
+bool qa_world_touch_triggers(qa_world *, qa_actor_id, const qa_collision_role_rules *, qa_world_is_trigger_fn, qa_world_touch_fn, void *, qa_error *);
 qa_collision_bits qa_world_actor_contents(const qa_actor_collision *);
 
 #endif

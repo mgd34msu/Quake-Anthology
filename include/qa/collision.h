@@ -27,6 +27,11 @@ typedef struct qa_trace_behavior {
     bool hull_boxes, legacy_boxes, owner_pairs, occupancy_replaces, merged_contents;
 } qa_trace_behavior;
 extern const qa_trace_behavior qa_trace_behaviors[QA_RULESET_Q3 + 1];
+typedef struct qa_collision_role_rules {
+    bool rotates, inverse_normal, sphere_bounds;
+    bool head_insert, live_trigger_touch, skip_dead_triggers;
+} qa_collision_role_rules;
+extern const qa_collision_role_rules qa_collision_roles[QA_RULESET_Q3 + 1];
 typedef struct qa_trace_policy {
     const qa_trace_behavior *behavior;
     qa_collision_bits contents_mask;

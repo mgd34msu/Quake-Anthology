@@ -22,11 +22,11 @@ const qa_trace_behavior qa_trace_behaviors[QA_RULESET_Q3 + 1] = {
 };
 
 const qa_collision_role_rules qa_collision_roles[QA_RULESET_Q3 + 1] = {
-    [QA_RULESET_NETQUAKE] = {false, false, false},
-    [QA_RULESET_QUAKEWORLD] = {false, false, false},
-    [QA_RULESET_Q2_CLASSIC] = {true, true, false},
-    [QA_RULESET_Q2_RERELEASE] = {true, true, false},
-    [QA_RULESET_Q3] = {true, false, true}
+    [QA_RULESET_NETQUAKE] = {.live_trigger_touch=true},
+    [QA_RULESET_QUAKEWORLD] = {.live_trigger_touch=true},
+    [QA_RULESET_Q2_CLASSIC] = {.rotates=true, .inverse_normal=true, .skip_dead_triggers=true},
+    [QA_RULESET_Q2_RERELEASE] = {.rotates=true, .inverse_normal=true, .skip_dead_triggers=true},
+    [QA_RULESET_Q3] = {.rotates=true, .sphere_bounds=true, .head_insert=true, .skip_dead_triggers=true}
 };
 
 qa_ruleset_id qa_collision_source_rules(qa_game_family family)

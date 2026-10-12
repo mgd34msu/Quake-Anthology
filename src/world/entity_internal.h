@@ -19,6 +19,7 @@ typedef struct qa_world_body {
     const qa_entity_body_fields *spatial_fields;
     qa_actor_collision collision;
     qa_collision_binding collision_binding;
+    const qa_collision_role_rules *collision_rules;
     uint64_t collision_serial;
     qa_body_attachment attachment;
     uint64_t attachment_order;

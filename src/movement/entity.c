@@ -192,9 +192,10 @@ static void trigger_touch(void *context, qa_world *world, const qa_touch_contact
 }
 
 static bool touch_triggers(qa_physics *p, qa_actor_id actor,
-                           qa_game_family family, bool source,
+                           qa_ruleset_id source_rules, bool source,
                            qa_error *error) {
-    qa_physics_properties props;
+    qa_physics_properties props = {0};
+    const qa_collision_role_rules *rules;
     if (!ph_live(p, actor)) return true;
     if (!p->services.read(p->services.context, actor, &props)) {
         qa_actor_collision collision;
@@ -203,27 +204,28 @@ static bool touch_triggers(qa_physics *p, qa_actor_id actor,
             if (local.code != QA_OK) { if (error) *error = local; return false; }
             return true;
         }
-        props = qa_physics_properties_default(qa_collision_source_rules(collision.family));
-    }
-    if (!source) family = qa_ruleset_read(props.rules)->family;
-    if (family != QA_GAME_Q1 && (props.flags & QA_PHYSICS_DEAD) &&
+        props.flags = 0;
+        rules = qa_world_actor_collision_rules(p->world, actor);
+    } else rules = &qa_collision_roles[props.rules];
+    if (source) rules = &qa_collision_roles[source_rules];
+    if (rules->skip_dead_triggers && (props.flags & QA_PHYSICS_DEAD) &&
         (props.flags & (QA_PHYSICS_PLAYER | QA_PHYSICS_MONSTER))) return true;
     ph_trigger_context call = {.physics = p, .error = error, .ok = true};
-    return qa_world_touch_triggers(p->world, actor, family, trigger_active,
+    return qa_world_touch_triggers(p->world, actor, rules, trigger_active,
                                   trigger_touch, &call, error) && call.ok;
 }
 
 bool qa_physics_touch_triggers(qa_physics *p, qa_actor_id actor, qa_error *error) {
-    return touch_triggers(p, actor, QA_GAME_Q1, false, error);
+    return touch_triggers(p, actor, QA_RULESET_NETQUAKE, false, error);
 }
 
 bool qa_physics_touch_triggers_source(qa_physics *p, qa_actor_id actor,
-                                       qa_game_family family, qa_error *error) {
-    if (!p || family < QA_GAME_Q1 || family > QA_GAME_Q3) {
+                                       qa_ruleset_id rules, qa_error *error) {
+    if (!p || (unsigned)rules > QA_RULESET_Q3) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid source trigger traversal");
         return false;
     }
-    return touch_triggers(p, actor, family, true, error);
+    return touch_triggers(p, actor, rules, true, error);
 }
 
 bool qa_physics_impact(qa_physics *p, qa_actor_id actor,

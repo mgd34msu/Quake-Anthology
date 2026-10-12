@@ -819,7 +819,7 @@ bool qa_q1_game_retouch_actor(qa_q1_game *g, qa_actor_id actor,
             ok = qa_world_link(g->services.world, actor, NULL, error);
             if (ok && q1_alive(g, actor))
                 ok = qa_physics_touch_triggers_source(g->services.physics, actor,
-                                                       QA_GAME_Q1, error);
+                                                       g->options.rules, error);
         }
     }
     return operation_finish(&operation, ok, error);

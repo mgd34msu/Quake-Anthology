@@ -68,13 +68,13 @@ uint32_t qa_spatial_sector_for_bounds(const qa_world *world,qa_bounds bounds)
     return index;
 }
 
-void qa_spatial_publish(qa_world *world,uint32_t slot)
+void qa_spatial_publish(qa_world *world,uint32_t slot,bool head_insert)
 {
     qa_spatial_remove(world,slot);
     qa_spatial_link *link=qa_actors_link(world->actors->links,slot);
     uint32_t index=qa_spatial_sector_for_bounds(world,link->bounds);
     qa_spatial_sector *sector=&world->sectors[index]; link->sector=index;
-    if(qa_actors_body(world->actors->pages,slot)->linked_collision.family==QA_GAME_Q3) {
+    if(head_insert) {
         link->previous=QA_SPATIAL_NONE;
         link->next=sector->head;
         if(sector->head!=QA_SPATIAL_NONE) qa_actors_link(world->actors->links,sector->head)->previous=slot;
@@ -449,14 +449,14 @@ static qa_spatial_visit touch_live(void *opaque,uint32_t slot)
     return !context->failed && qa_actors_get(context->world->actors,context->actor)!=NULL?QA_SPATIAL_CONTINUE:QA_SPATIAL_STOP;
 }
 
-bool qa_world_touch_triggers(qa_world *world,qa_actor_id actor,qa_game_family family,
+bool qa_world_touch_triggers(qa_world *world,qa_actor_id actor,const qa_collision_role_rules *rules,
                             qa_world_is_trigger_fn is_trigger,qa_world_touch_fn touch,void *opaque,qa_error *error)
 {
-    if(world==NULL || touch==NULL || family<QA_GAME_Q1 || family>QA_GAME_Q3) return fail(error,QA_ERROR_ARGUMENT,"Invalid trigger dispatch");
+    if(world==NULL || touch==NULL || rules==NULL) return fail(error,QA_ERROR_ARGUMENT,"Invalid trigger dispatch");
     qa_linked_body moving;
     if(!qa_world_linked(world,actor,&moving)) return true;
     trigger_context context={.world=world,.actor=actor,.is_trigger=is_trigger,.touch=touch,.context=opaque};
-    if(family==QA_GAME_Q1) {
+    if(rules->live_trigger_touch) {
         if(!qa_spatial_visit_raw(world,moving.absolute_bounds,touch_live,&context,error)) return false;
         if(context.failed && error!=NULL) *error=context.error;
         return !context.failed;
