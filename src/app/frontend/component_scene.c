@@ -93,7 +93,7 @@ struct frontend_component_scene {
     qa_scene_frame frame;
     component_scene_packet *packets,*last_packet;
     qa_q3_picture_receipt *pictures;
-    size_t picture_count;
+    size_t picture_count,picture_capacity;
     uint64_t picture_frame;
     size_t picture_cursor;
     bool picture_frame_valid;
@@ -317,7 +317,7 @@ static void pictures_clear(struct frontend_component_scene *owner)
         qa_material_release(owner->pictures[i].material);
         qa_scene_image_release(owner->pictures[i].image);
     }
-    free(owner->pictures); owner->pictures=NULL; owner->picture_count=0;
+    owner->pictures=NULL; owner->picture_count=owner->picture_capacity=0;
     owner->picture_frame_valid=false; owner->picture_cursor=0;
 }
 static bool picture_append(struct frontend_component_scene *owner,const qa_q3_picture_receipt *receipt,qa_error *e)
@@ -329,9 +329,15 @@ static bool picture_append(struct frontend_component_scene *owner,const qa_q3_pi
         !isfinite(receipt->color.x) || !isfinite(receipt->color.y) || !isfinite(receipt->color.z) || !isfinite(receipt->color.w) ||
         !isfinite(receipt->identity_light) || owner->picture_count>=SIZE_MAX/sizeof(*owner->pictures))
         return frontend_fail(e,QA_ERROR_FORMAT,"Component picture leaves its actual registered command namespace");
-    qa_q3_picture_receipt *rows=realloc(owner->pictures,(owner->picture_count+1)*sizeof(*rows));
-    if (!rows) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining private component picture command");
-    owner->pictures=rows;
+    if (owner->picture_count==owner->picture_capacity) {
+        size_t limit=SIZE_MAX/sizeof(*owner->pictures);
+        size_t capacity=owner->picture_capacity ?
+            (owner->picture_capacity>limit/2 ? limit : owner->picture_capacity*2) : 1;
+        qa_q3_picture_receipt *rows=qa_arena_grow(&owner->frame.storage,owner->pictures,
+            owner->picture_count*sizeof(*rows),capacity*sizeof(*rows),_Alignof(qa_q3_picture_receipt),e);
+        if (!rows) return false;
+        owner->pictures=rows; owner->picture_capacity=capacity;
+    }
     if (receipt->material && !qa_material_retain(receipt->material,e)) return false;
     if (receipt->image) qa_scene_image_retain(receipt->image);
     owner->pictures[owner->picture_count++]=*receipt; return true;
