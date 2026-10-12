@@ -17,13 +17,6 @@ static qa_vec3 model_axis(const qa_material_context *context, unsigned axis)
     return qa_v3(m[0], m[1], m[2]);
 }
 
-static qa_vec3 local_direction(const qa_material_context *context, qa_vec3 direction)
-{
-    return qa_v3(qa_vec_dot(direction, model_axis(context, 0)),
-                 qa_vec_dot(direction, model_axis(context, 1)),
-                 qa_vec_dot(direction, model_axis(context, 2)));
-}
-
 /* These two source operations retain a double multiplier until vector storage. */
 static qa_vec3 scale_double(qa_vec3 value, double scale)
 {
@@ -123,12 +116,13 @@ static bool autosprite(deform_mesh *geometry, const qa_material_context *context
     if (!geometry->retained && !require_quads(geometry, "autosprite", error)) return false;
     size_t count = geometry->mesh.vertex_count;
     if (geometry->retained) geometry->retained->vertex_count = geometry->retained->index_count = 0;
-    qa_vec3 left_direction = local_direction(context, context->view.axis[1]);
-    qa_vec3 up_direction = local_direction(context, context->view.axis[2]);
+    const qa_vec3 axes[3] = {model_axis(context, 0), model_axis(context, 1), model_axis(context, 2)};
+    qa_vec3 left_direction = qa_axis_to_local(context->view.axis[1], axes);
+    qa_vec3 up_direction = qa_axis_to_local(context->view.axis[2], axes);
     qa_vec3 normal = qa_vec_sub(qa_v3(0, 0, 0), context->view.axis[0]);
     float axis_scale = 1.0f;
     if (context->non_normalized_axis) {
-        float length = qa_vec_length(model_axis(context, 0));
+        float length = qa_vec_length(axes[0]);
         axis_scale = length == 0.0f ? 0.0f : 1.0f / length;
     }
     for (size_t start = 0; start < count; start += 4) {
@@ -170,7 +164,8 @@ static bool autosprite2(deform_mesh *geometry, const qa_material_context *contex
 {
     static const unsigned edges[6][2] = {{0, 1}, {0, 2}, {0, 3}, {1, 2}, {1, 3}, {2, 3}};
     if (!geometry->retained && !require_quads(geometry, "autosprite2", error)) return false;
-    qa_vec3 forward = local_direction(context, context->view.axis[0]);
+    const qa_vec3 axes[3] = {model_axis(context, 0), model_axis(context, 1), model_axis(context, 2)};
+    qa_vec3 forward = qa_axis_to_local(context->view.axis[0], axes);
     for (size_t start = 0; start < geometry->mesh.vertex_count; start += 4) {
         if (geometry->retained && (start > QA_SOURCE_TESS_VERTICES - 4 || start / 4u * 6u + 5 >= QA_SOURCE_TESS_INDEXES)) {
             qa_error_set(error, QA_ERROR_FORMAT, start, "Source autosprite2 read exceeds its physical cells"); return false;

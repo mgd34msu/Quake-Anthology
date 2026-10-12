@@ -1,7 +1,7 @@
 #include "qa/bot_perception.h"
 
 static float clamp(float value,float minimum,float maximum) { return fmaxf(minimum,fminf(value,maximum)); }
-static float angle_delta(float from,float to) { float value=qa_angle_wrap(to-from); return value>180 ? value-360 : value; }
+static float angle_delta(float from,float to) { return qa_angle_subtract(qa_angle_wrap(to-from),0.0f); }
 qa_bot_awareness qa_bot_awareness_new(qa_actor_id actor,double now,qa_vec3 origin)
 {
     return (qa_bot_awareness){.actor=actor,.last_contact=now,.last_seen=-1,.last_heard=-1,.last_known_origin=origin};
