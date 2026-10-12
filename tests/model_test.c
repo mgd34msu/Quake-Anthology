@@ -88,11 +88,14 @@ static void skin_bindings(void) {
     CHECK(qa_strings_intern_cstr(strings,"missing",&meshes[2].surface,&error));
     const size_t *first=NULL,*other=NULL,*again=NULL;
     uint64_t first_id=UINT64_C(0x100000001),other_id=UINT64_C(0x200000001);
+    CHECK(qa_model_skin_map_bind(&map,first_id,&meshes[0].surface,sizeof meshes[0],3,&error));
     CHECK(qa_model_skin_map_resolve(&map,first_id,&meshes[0].surface,sizeof meshes[0],3,&first,&error));
     CHECK(first[0]==0 && first[1]==2 && first[2]==SIZE_MAX);
+    CHECK(qa_model_skin_map_bind(&map,other_id,&meshes[1].surface,sizeof meshes[0],2,&error));
     CHECK(qa_model_skin_map_resolve(&map,other_id,&meshes[1].surface,sizeof meshes[0],2,&other,&error));
     CHECK(other!=first && other[0]==2 && other[1]==SIZE_MAX);
     for(uint64_t id=3;id<80;++id) {
+        CHECK(qa_model_skin_map_bind(&map,id,&meshes[0].surface,sizeof meshes[0],3,&error));
         CHECK(qa_model_skin_map_resolve(&map,id,&meshes[0].surface,sizeof meshes[0],3,&again,&error));
         CHECK(again[0]==0 && again[1]==2 && again[2]==SIZE_MAX);
     }

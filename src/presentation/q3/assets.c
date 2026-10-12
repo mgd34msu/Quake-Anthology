@@ -276,6 +276,19 @@ static bool same_skin_name(const char *a, const char *b)
     }
     return !a[i] && !b[i];
 }
+static bool skin_models_admit(qa_q3_presentation_assets *assets,
+    const qa_model_skin_map *skin, qa_error *error)
+{
+    for (size_t i = 0; i < assets->model_count; ++i)
+        if (!q3p_model_skin_admit(assets->models[i], skin, error)) return false;
+    return true;
+}
+bool q3p_assets_skin_bindings_prepare(qa_q3_presentation_assets *assets, qa_error *error)
+{
+    for (size_t i = 0; i < assets->skin_count; ++i)
+        if (assets->skins[i] && !skin_models_admit(assets, &assets->skins[i]->map, error)) return false;
+    return true;
+}
 static bool register_source_skin(qa_q3_presentation_assets *a, const char *path,
     int32_t *out, qa_error *error)
 {
@@ -329,6 +342,7 @@ static bool register_source_skin(qa_q3_presentation_assets *a, const char *path,
             ok = qa_material_register_kind(skin->provider.materials, skin->map.mappings[i].shader,
                 &images, QA_MATERIAL_DYNAMIC, &skin->materials[i], error);
     }
+    if (ok) ok = skin_models_admit(a, &skin->map, error);
     int32_t handle = ok && skin->map.count ? (int32_t)a->skin_count + 1 : 0;
     if (ok) ok = q3p_reserve((void **)&a->skins, &a->skin_capacity,
         a->skin_count + 1, sizeof(*a->skins), error) && q3p_add_name(a, Q3P_SKIN, path, handle, false, error);
@@ -365,6 +379,7 @@ bool qa_q3_register_skin(qa_q3_presentation_assets *a, const char *path, int32_t
                 a->skin_count + 1, sizeof(*a->skins), error);
             if (!ok && (!error || error->code == QA_OK)) q3p_fail(error, QA_ERROR_MEMORY, "allocating Q3 skin handle");
             if (ok) ok = qa_model_skin_map_load(qa_resource_bytes(resource), a->options.strings, &skin->map, error);
+            if (ok) ok = skin_models_admit(a, &skin->map, error);
             if (ok) { skin->resource = resource; skin->provider = provider;
                 resource = NULL; handle = (int32_t)a->skin_count + 1; }
         }

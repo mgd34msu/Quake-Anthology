@@ -193,7 +193,7 @@ bool qa_q3_assets_custody_restore(qa_q3_presentation_assets *assets, qa_error *e
             .images = images, .materials = material->library, .family = material->family};
         if (!qa_q3_assets_provider_hold(assets, &provider, error)) return false;
     }
-    return true;
+    return q3p_assets_skin_bindings_prepare(assets, error);
 }
 bool qa_q3_assets_map_hold(qa_q3_presentation_assets *assets, qa_scene_world *world,
     qa_collision_geometry *geometry, qa_error *error)

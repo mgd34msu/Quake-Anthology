@@ -870,6 +870,18 @@ static bool native_cache_policy_prepare(const frontend_model_policy *policy, qa_
     if (ok) covered[index] = true;
     return ok;
 }
+static bool registered_model_skins_prepare(const qa_q3_presentation_assets *assets,
+    qa_scene_model_image_policy *ticket, qa_error *error)
+{
+    size_t count = 0;
+    if (!qa_q3_assets_skin_count(assets, &count, error)) return false;
+    for (size_t i = 0; i < count; ++i) {
+        qa_q3_asset_skin_holder skin;
+        if (!qa_q3_assets_skin_holder(assets, i, &skin, error) ||
+            !qa_scene_model_image_policy_skin_admit(ticket, skin.map, error)) return false;
+    }
+    return true;
+}
 bool frontend_visual_registered_model_policy_prepare(qa_frontend *f, const frontend_model_policy *policy,
     qa_q3_presentation_assets *const *registries, size_t registry_count,
     const frontend_visual_policy_binding *bindings, size_t count, qa_error *error)
@@ -897,7 +909,10 @@ bool frontend_visual_registered_model_policy_prepare(qa_frontend *f, const front
                 if (index == count || qa_scene_model_source(root) != native) {
                     ok = frontend_fail(error, QA_ERROR_ARGUMENT, "Registered native alias lost its actual prepared root"); break;
                 }
-                if (covered[index]) continue;
+                if (covered[index]) {
+                    ok = registered_model_skins_prepare(registries[registry], bindings[index].ticket, error);
+                    continue;
+                }
                 qa_q3_model_opening opening;
                 ok = qa_q3_assets_model_opening(registries[registry], row, slot, &opening, error);
                 if (!ok) break;
@@ -925,6 +940,7 @@ bool frontend_visual_registered_model_policy_prepare(qa_frontend *f, const front
                         if (ok) description = &replacement;
                     }
                 }
+                if (ok) ok = registered_model_skins_prepare(registries[registry], bindings[index].ticket, error);
                 if (ok) ok = qa_scene_model_image_policy_select(bindings[index].ticket,
                     frontend_model_policy_select(policy, opening.provider.family, native, 0, true), frontend_model_policy_distance(policy, native), description, error);
                 visual_content_release(content);

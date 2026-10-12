@@ -237,6 +237,9 @@ typedef struct qa_model_skin_map {
 /* Model and skin admission use the same retained name table. */
 bool qa_model_skin_map_load(qa_bytes text, qa_strings *, qa_model_skin_map *out, qa_error *error);
 bool qa_model_skin_map_prepare(qa_model_skin_map *, qa_error *);
+/* Resolve mesh names once when the skin/model pair is admitted. */
+bool qa_model_skin_map_bind(const qa_model_skin_map *, uint64_t model,
+    const qa_string_id *surfaces, size_t stride, size_t count, qa_error *);
 bool qa_model_skin_map_resolve(const qa_model_skin_map *, uint64_t model,
     const qa_string_id *surfaces, size_t stride, size_t count, const size_t **indexes, qa_error *);
 void qa_model_skin_map_free(qa_model_skin_map *map);

@@ -224,13 +224,12 @@ bool qa_model_skin_map_prepare(qa_model_skin_map *map, qa_error *error) {
     }
     qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining skin mesh bindings"); return false;
 }
-bool qa_model_skin_map_resolve(const qa_model_skin_map *map, uint64_t model,
-    const qa_string_id *surfaces, size_t stride, size_t count, const size_t **indexes, qa_error *error) {
-    *indexes = NULL;
+bool qa_model_skin_map_bind(const qa_model_skin_map *map, uint64_t model,
+    const qa_string_id *surfaces, size_t stride, size_t count, qa_error *error) {
     if (!map->count || !count) return true;
     struct qa_model_skin_cache *cache = map->cache;
     qa_id_index_entry *entry = qa_id_index_find(&cache->models, 0, model);
-    if (entry) { *indexes = cache->bindings[entry->value]; return true; }
+    if (entry) return true;
     if (count > SIZE_MAX / sizeof(size_t)) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Skin mesh binding extent overflows"); return false;
     }
@@ -255,7 +254,18 @@ bool qa_model_skin_map_resolve(const qa_model_skin_map *map, uint64_t model,
     size_t slot = cache->models.count;
     cache->bindings[slot] = binding;
     qa_id_index_insert(&cache->models, 0, model, slot);
-    *indexes = binding; return true;
+    return true;
+}
+bool qa_model_skin_map_resolve(const qa_model_skin_map *map, uint64_t model,
+    const qa_string_id *surfaces, size_t stride, size_t count, const size_t **indexes, qa_error *error) {
+    (void)surfaces; (void)stride;
+    *indexes = NULL;
+    if (!map->count || !count) return true;
+    const qa_id_index_entry *entry = map->cache ? qa_id_index_find(&map->cache->models, 0, model) : NULL;
+    if (!entry) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Skin model binding was not admitted"); return false;
+    }
+    *indexes = map->cache->bindings[entry->value]; return true;
 }
 void qa_model_skin_map_free(qa_model_skin_map *map) {
     if (!map)

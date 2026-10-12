@@ -68,6 +68,21 @@ const qa_scene_model *qa_scene_model_replacement_first(const qa_scene_model *mod
 const qa_scene_model *qa_scene_model_replacement_next(const qa_scene_model *model) { return model ? model->replacement_next : NULL; }
 const qa_model_replacement *qa_scene_model_replacement_description(const qa_scene_model *model) { return model ? model->replacement_source : NULL; }
 uint64_t qa_scene_model_identity(const qa_scene_model *model) { return model ? model->identity : 0; }
+bool qa_scene_model_skin_admit(qa_scene_model *model, const qa_model_skin_map *skin,
+    qa_error *error)
+{
+    if (!model || !skin) return true;
+    qa_scene_model *node = model;
+    for (;;) {
+        if (node->source->format != QA_MODEL_MDL && !qa_model_skin_map_bind(skin, node->identity,
+            node->source->mesh_count ? &node->meshes[0].surface : NULL,
+            sizeof(*node->meshes), node->source->mesh_count, error)) return false;
+        if (node->replacement) { node = node->replacement; continue; }
+        while (node != model && !node->replacement_next) node = node->replacement_parent;
+        if (node == model) return true;
+        node = node->replacement_next;
+    }
+}
 static bool model_array(size_t count, size_t size, void **out, qa_error *error) {
     if (count > SIZE_MAX / size) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "model array exceeds addressable storage"); return false;
@@ -731,6 +746,11 @@ bool qa_scene_model_image_policy_replacement_parent(qa_scene_model_image_policy 
     next->source_lease = *mesh; *mesh = (qa_scene_model_content_lease){0};
     next->animation_lease = *animation; *animation = (qa_scene_model_content_lease){0};
     ticket->replacement = next; return true;
+}
+bool qa_scene_model_image_policy_skin_admit(qa_scene_model_image_policy *ticket,
+    const qa_model_skin_map *skin, qa_error *error)
+{
+    return qa_scene_model_skin_admit(ticket->replacement, skin, error);
 }
 bool qa_scene_model_image_policy_ready_is(const qa_scene_model_image_policy *ticket)
 { return model_policy_current(ticket) && ticket->sealed && !ticket->published &&

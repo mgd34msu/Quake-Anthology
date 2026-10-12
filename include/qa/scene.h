@@ -231,6 +231,8 @@ bool qa_scene_model_image_policy_prepare(qa_scene_model *, qa_scene_resource_pol
     qa_scene_model_image_policy **, qa_error *);
 bool qa_scene_model_image_policy_materials(qa_scene_model_image_policy *,
     qa_scene_material_image_policy *, qa_error *);
+bool qa_scene_model_image_policy_skin_admit(qa_scene_model_image_policy *,
+    const qa_model_skin_map *, qa_error *);
 /* Prepare a genuine replacement child against the private image bank. On
  * success the child takes these owning content leases; failure leaves them
  * with the caller. Publication attaches the prepared child without loading. */
@@ -1054,6 +1056,7 @@ struct qa_scene_model_input {
 bool qa_scene_model_create(const qa_model *, const char *source_path, qa_scene_resources *, qa_material_library *,
                            const qa_scene_image_options *, qa_strings *, qa_scene_model **, qa_error *);
 void qa_scene_model_destroy(qa_scene_model *);
+bool qa_scene_model_skin_admit(qa_scene_model *, const qa_model_skin_map *, qa_error *);
 bool qa_scene_model_lerp_tag(const qa_scene_model *, qa_string_id name,
     uint32_t from, uint32_t to, float fraction, qa_model_tag *);
 enum { QA_MODEL_PATH_PLAYER_SHADE = 1u, QA_MODEL_PATH_FLAME_FULLBRIGHT = 2u,
