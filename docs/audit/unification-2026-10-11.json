@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "e48bc8b26ae6e7ba030ebe0d407302cd70f11a06",
+  "verified_main": "7ad491c5de5c55e06e03139aba7920b67bc08ddf",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 237,
-    "open_source_observation": 134,
+    "fixed_source_build_core": 239,
+    "open_source_observation": 132,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -34309,8 +34309,9 @@
       "severity": "medium",
       "job": "25",
       "area": "module_hosts",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "7ad491c5de5c55e06e03139aba7920b67bc08ddf"
     },
     {
       "id": "26-01",
@@ -36446,8 +36447,9 @@
       "severity": "medium",
       "job": "32",
       "area": "render_presentation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "7ad491c5de5c55e06e03139aba7920b67bc08ddf"
     },
     {
       "id": "J32-12",
@@ -43460,6 +43462,36 @@
       ],
       "record_directory": "/tmp/qa-ta3196-rogue-owner-index-20261012-v1",
       "conclusion": "Rogue source-state ownership uses one common index with full identities and stable authoritative actor pointers. Create, rekey, clone, restore and release maintain it; existing cold input validation rejects malformed non-Rogue team-state rows. Normal build and seven existing core suites passed."
+    },
+    {
+      "commit": "7ad491c5de5c55e06e03139aba7920b67bc08ddf",
+      "source_tree": "d22193ff92db7745ed9bdee44ec7a98fcc7e112a",
+      "finding_ids": [
+        "J25-06",
+        "J32-11"
+      ],
+      "files_rechecked": [
+        "src/compat/native/guest/sysv_stdio.c",
+        "src/compat/native/guest/windows_kernel.c",
+        "src/compat/native/guest/windows_msvc.c",
+        "src/render/scene/world.c",
+        "src/render/scene/world/legacy/internal.h",
+        "src/render/scene/world/legacy/textures.c",
+        "src/render/scene/world/q1_sky.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-guest-scratch-and-sky-admission-20261012-v1",
+      "conclusion": "Listed native temporary file/stream/conversion staging uses scoped common guest scratch; Q1 view sky reads immutable admission metadata. Full snapshots, conversion zeroing and partial receipts remain in order. Normal build and seven core suites passed. Exhaustive nested scratch capacity and runtime speed are not claimed."
     }
   ],
   "verification_limits": [

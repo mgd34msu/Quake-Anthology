@@ -3,6 +3,7 @@
 #include "qa/material_library_save.h"
 #include "qa/scene_model_save.h"
 #include "qa/q3_source_scene_bank.h"
+#include "source_scene_bank_private.h"
 #include "qa/q3_assets_custody.h"
 #include "qa/scene_world_save.h"
 
@@ -13,19 +14,28 @@ static void source_model_namespace_release(void *assets)
 
 static bool source_scene_snapshot(qa_q3_presentation *p, qa_error *error)
 {
-    p->source_entity_assets = p->source_polygon_assets = NULL;
-    if (!p->options.source_state) return true;
-    qa_material_source_scratch *source = p->options.source_state(p->options.context, error);
-    qa_q3_source_scene_bank *bank = source ? qa_material_source_scene_bank(source, error) : NULL;
+    q3p_scene_scratch_clear(p);
+    qa_q3_source_scene_bank *bank = q3p_scene_bank(p, error);
     qa_q3_source_scene_membership membership;
     if (!bank || !qa_q3_source_scene_bank_membership(bank, &membership)) return false;
     size_t entities = membership.entities - membership.first_entity;
     size_t polygons = membership.polygons - membership.first_polygon;
     size_t lights = membership.lights - membership.first_light;
-    if (!q3p_reserve((void **)&p->entities, &p->entity_capacity, entities, sizeof(*p->entities), error) ||
-        !q3p_reserve((void **)&p->polygons, &p->polygon_capacity, polygons, sizeof(*p->polygons), error) ||
-        !q3p_reserve((void **)&p->vertices, &p->vertex_capacity, membership.vertices, sizeof(*p->vertices), error) ||
-        !q3p_reserve((void **)&p->lights, &p->light_capacity, lights, sizeof(*p->lights), error)) return false;
+    size_t current_vertices = 0;
+    if (polygons) {
+        qa_q3_source_polygon_cell first; const qa_q3_poly_vertex *raw;
+        if (!qa_q3_source_scene_bank_poly_read(bank,membership.first_polygon,&first,&raw)) return false;
+        current_vertices = membership.vertices - first.first;
+    }
+    p->entities = entities ? qa_arena_alloc(&p->frame->storage, entities * sizeof(*p->entities),
+        _Alignof(qa_q3_ref_entity), error) : NULL;
+    p->polygons = polygons ? qa_arena_alloc(&p->frame->storage, polygons * sizeof(*p->polygons),
+        _Alignof(q3p_polygon), error) : NULL;
+    p->vertices = current_vertices ? qa_arena_alloc(&p->frame->storage,
+        current_vertices * sizeof(*p->vertices), _Alignof(qa_scene_vertex), error) : NULL;
+    p->lights = q3_source_bank_lights(bank, &lights);
+    if ((entities && !p->entities) || (polygons && !p->polygons) ||
+        (current_vertices && !p->vertices)) return false;
     if (entities) {
         p->source_entity_assets = qa_arena_alloc(&p->frame->storage, entities * sizeof(*p->source_entity_assets),
             _Alignof(qa_q3_presentation_assets *), error);
@@ -50,11 +60,6 @@ static bool source_scene_snapshot(qa_q3_presentation *p, qa_error *error)
         p->source_polygon_assets[i] = cell.assets;
         for (size_t j = 0; j < cell.count; ++j) p->vertices[vertex_count++] = (qa_scene_vertex){
             .position = vertices[j].position, .texcoord = vertices[j].texcoord, .color = q3p_color(vertices[j].color)};
-    }
-    for (size_t i = 0; i < lights; ++i) {
-        qa_q3_source_light_cell cell;
-        if (!qa_q3_source_scene_bank_light_read(bank, membership.first_light + (uint32_t)i, &cell)) return false;
-        p->lights[i] = cell.value;
     }
     p->source_entity_first = membership.first_entity;
     p->entity_count = entities; p->polygon_count = polygons; p->vertex_count = vertex_count; p->light_count = lights;
@@ -123,34 +128,13 @@ static qa_material_context effect_context(const qa_q3_scene_options *options)
     return context;
 }
 
-static bool submit_polygons(qa_q3_presentation *p, const qa_q3_scene_options *options,
-                             qa_q3_source_scene_bank *bank, qa_error *error)
+static bool submit_polygons(qa_q3_presentation *p, const qa_q3_scene_options *options, qa_error *error)
 {
     for (size_t i = 0; i < p->polygon_count; ++i) {
         const q3p_polygon *polygon = &p->polygons[i];
         if (!polygon->count) continue;
         const qa_material *material;
         const qa_q3_presentation_assets *assets = p->source_polygon_assets ? p->source_polygon_assets[i] : p->options.assets;
-        if (bank) {
-            if (!qa_q3_source_scene_bank_poly_capacity(bank, polygon->count)) continue;
-            if (polygon->count > SIZE_MAX / sizeof(qa_q3_poly_vertex))
-                return q3p_fail(error, QA_ERROR_MEMORY, "Q3 supplemental polygon storage overflow");
-            qa_q3_poly_vertex *values = qa_arena_alloc(&p->frame->storage,
-                polygon->count * sizeof(*values), _Alignof(qa_q3_poly_vertex), error);
-            if (!values) return false;
-            for (size_t j = 0; j < polygon->count; ++j) {
-                const qa_scene_vertex *vertex = p->vertices + polygon->first + j;
-                values[j] = (qa_q3_poly_vertex){.position = vertex->position, .texcoord = vertex->texcoord,
-                    .color = {(uint8_t)lroundf(vertex->color.x * 255.0f),
-                        (uint8_t)lroundf(vertex->color.y * 255.0f),
-                        (uint8_t)lroundf(vertex->color.z * 255.0f),
-                        (uint8_t)lroundf(vertex->color.w * 255.0f)}};
-            }
-            bool admitted;
-            if (!qa_q3_source_scene_bank_poly(bank, (qa_q3_presentation_assets *)assets,
-                    polygon->shader, values, polygon->count, &polygon->fog, &admitted, error)) return false;
-            if (!admitted) continue;
-        }
         if (!q3p_shader_get(assets, polygon->shader, &material, error)) return false;
         if (!material) material = q3p_default_material(p);
         if (!material) return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 polygon has no default material");
@@ -1060,9 +1044,9 @@ bool qa_q3_presentation_selected_world_beam(qa_q3_presentation *p,
 }
 
 static bool submit_queued_surfaces(qa_q3_presentation *p, const qa_q3_scene_options *options,
-    size_t entity_count, qa_q3_source_scene_bank *bank, qa_error *error)
+    size_t entity_count, qa_error *error)
 {
-    if (!submit_polygons(p, options, bank, error)) return false;
+    if (!submit_polygons(p, options, error)) return false;
     for (size_t i = 0; !options->no_entities && i < entity_count; ++i) {
         qa_q3_ref_entity entity = p->entities[i];
         if (entity.kind == QA_Q3_REF_POLY) return q3p_fail(error, QA_ERROR_FORMAT, "R_AddEntitySurfaces: Bad reType");
@@ -1094,23 +1078,16 @@ static bool submit_view_surfaces(qa_q3_presentation *p, const qa_q3_scene_option
         qa_scene_command command = {.kind = QA_SCENE_COMMAND_VIEW, .data.view = options->world.view};
         if (!qa_scene_frame_emit(p->frame, &command, error)) return false;
     }
-    return submit_queued_surfaces(p, options, p->entity_count, NULL, error);
+    return submit_queued_surfaces(p, options, p->entity_count, error);
 }
 bool qa_q3_presentation_supplement(qa_q3_presentation *p,qa_q3_source_scene_bank *bank,const qa_q3_scene_options *options,
     qa_scene_frame *frame, qa_error *error)
 {
-    if (!p || !bank || !options || !frame || p->frame!=frame || !frame->command_count || !qa_q3_presentation_idle(p) ||
-        options->world.view.seat!=p->options.seat || !qa_vec_finite(options->world.view.origin) ||
-        !options->world.view.viewport.width || !options->world.view.viewport.height)
-        return q3p_fail(error,QA_ERROR_ARGUMENT,"Q3 supplement requires its actual unfinished parent view and registry");
-    qa_q3_scene_options admitted_options=*options;size_t admitted=0;
-    if(!qa_q3_source_scene_bank_entity_range(bank,p->options.assets,p->entities,p->entity_count,
-        &admitted_options.first_entity,&admitted,error))return false;
-    if (!q3p_begin(p,error)) return false;
-    uint32_t milliseconds=(uint32_t)(uint64_t)options->world.milliseconds;
-    memcpy(&p->render_milliseconds,&milliseconds,sizeof(milliseconds));
-    bool okay=submit_queued_surfaces(p,&admitted_options,admitted,bank,error);
-    return q3p_end(p,okay);
+    qa_q3_supplement *receipt = NULL;
+    bool ok = qa_q3_presentation_supplement_prepare(p, bank, frame, &receipt, error) &&
+        qa_q3_presentation_supplement_draw(receipt, options, frame, error);
+    qa_q3_presentation_supplement_release(&receipt);
+    return ok;
 }
 
 void qa_q3_presentation_supplement_release(qa_q3_supplement **slot)
@@ -1121,35 +1098,43 @@ void qa_q3_presentation_supplement_release(qa_q3_supplement **slot)
 }
 bool qa_q3_presentation_supplement_current(const qa_q3_supplement *r,const qa_scene_frame *frame)
 {
-    uint64_t cycle=0;
+    uint64_t cycle=0,source_cycle=0;
     return r && r->ready && frame && r->frame==frame && r->presentation->frame==frame &&
-        r->sequence==frame->sequence && qa_q3_source_scene_bank_cycle(r->bank,&cycle) && cycle==r->cycle;
+        r->sequence==frame->sequence && qa_q3_source_scene_bank_cycle(r->bank,&cycle) && cycle==r->cycle &&
+        qa_q3_source_scene_bank_cycle(r->source_bank,&source_cycle) && source_cycle==r->source_cycle;
 }
 bool qa_q3_presentation_supplement_prepare(qa_q3_presentation *p,qa_q3_source_scene_bank *bank,
     qa_scene_frame *frame,qa_q3_supplement **slot,qa_error *error)
 {
-    uint64_t cycle=0;
+    uint64_t cycle=0,source_cycle=0;
+    qa_q3_source_scene_bank *source_bank=p ? q3p_scene_bank(p,error) : NULL;
+    qa_q3_source_scene_membership source;
     if(!p || !bank || !frame || !slot || p->frame!=frame || !qa_q3_presentation_idle(p) ||
-        p->source_entity_assets || p->source_polygon_assets || !qa_q3_source_scene_bank_cycle(bank,&cycle))
+        p->options.source_state || !qa_q3_source_scene_bank_cycle(bank,&cycle) ||
+        !source_bank || !qa_q3_source_scene_bank_cycle(source_bank,&source_cycle) ||
+        !qa_q3_source_scene_bank_membership(source_bank,&source))
         return q3p_fail(error,QA_ERROR_ARGUMENT,"Supplement admission requires its actual returned queued registry and bank cycle");
+    size_t entity_count=source.entities-source.first_entity,polygon_count=source.polygons-source.first_polygon;
     if(!*slot){
-        if(p->supplements==UINT_MAX || p->polygon_count>SIZE_MAX/sizeof(uint32_t))
+        if(p->supplements==UINT_MAX)
             return q3p_fail(error,QA_ERROR_MEMORY,"Supplement receipt extent exceeds native storage");
         qa_q3_supplement *r=&p->supplement;
         if(!p->supplements) {
-            uint32_t *ordinals=p->polygon_count?qa_arena_alloc(&frame->storage,p->polygon_count*sizeof(*ordinals),_Alignof(uint32_t),error):NULL;
-            if(p->polygon_count && !ordinals)return false;
-            for(size_t i=0;i<p->polygon_count;++i)ordinals[i]=UINT32_MAX;
+            uint32_t *ordinals=polygon_count?qa_arena_alloc(&frame->storage,polygon_count*sizeof(*ordinals),_Alignof(uint32_t),error):NULL;
+            if(polygon_count && !ordinals)return false;
+            for(size_t i=0;i<polygon_count;++i)ordinals[i]=UINT32_MAX;
             *r=(qa_q3_supplement){.presentation=p,.bank=bank,.frame=frame,.sequence=frame->sequence,.cycle=cycle,
-                .entities=p->entities,.polygons=p->polygons,.vertices=p->vertices,.entity_count=p->entity_count,
-                .polygon_count=p->polygon_count,.vertex_count=p->vertex_count,.polygon_ordinals=ordinals};
+                .source_bank=source_bank,.source_cycle=source_cycle,.source_membership=source,
+                .entity_count=entity_count,.polygon_count=polygon_count,.polygon_ordinals=ordinals};
         }
         ++p->supplements;*slot=r;
     }
     qa_q3_supplement *r=*slot;
     if(r->presentation!=p || r->bank!=bank || r->frame!=frame || r->sequence!=frame->sequence || r->cycle!=cycle ||
-        r->entities!=p->entities || r->polygons!=p->polygons || r->vertices!=p->vertices ||
-        r->entity_count!=p->entity_count || r->polygon_count!=p->polygon_count || r->vertex_count!=p->vertex_count)
+        r->source_bank!=source_bank || r->source_cycle!=source_cycle ||
+        r->source_membership.entities!=source.entities || r->source_membership.first_entity!=source.first_entity ||
+        r->source_membership.polygons!=source.polygons || r->source_membership.first_polygon!=source.first_polygon ||
+        r->source_membership.vertices!=source.vertices)
         return q3p_fail(error,QA_ERROR_ARGUMENT,"Supplement preparation crossed its actual queued scene");
     if(r->ready)return true;
     if(!r->entities_done){
@@ -1158,32 +1143,24 @@ bool qa_q3_presentation_supplement_prepare(qa_q3_presentation *p,qa_q3_source_sc
         if(!r->entities_started){r->first=membership.entities;r->entities_started=true;}
         if(r->first>membership.entities || r->admitted!=membership.entities-r->first)
             return q3p_fail(error,QA_ERROR_ARGUMENT,"Partial supplement range was interrupted by another actual admission");
-        size_t admitted=0;uint32_t first=0;
-        const qa_q3_ref_entity *values=p->entities?p->entities+r->admitted:NULL;
-        bool okay=qa_q3_source_scene_bank_entity_range(bank,p->options.assets,values,p->entity_count-r->admitted,
-            &first,&admitted,error);
-        r->admitted+=admitted;
-        if(!okay)return false;
+        while(r->admitted<r->entity_count && qa_q3_source_scene_bank_entity_capacity(bank)) {
+            qa_q3_source_entity_cell cell;uint32_t ordinal;bool admitted;
+            if(!qa_q3_source_scene_bank_entity_read(source_bank,source.first_entity+(uint32_t)r->admitted,&cell) ||
+                !qa_q3_source_scene_bank_entity(bank,cell.assets,&cell.value,&ordinal,&admitted,error))return false;
+            if(!admitted)break;
+            ++r->admitted;
+        }
         r->entities_done=true;
     }
     while(r->polygons_done<r->polygon_count){
-        const q3p_polygon *polygon=p->polygons+r->polygons_done;
-        if(!polygon->count || !polygon->shader || !qa_q3_source_scene_bank_poly_capacity(bank,polygon->count)){
+        qa_q3_source_polygon_cell polygon;const qa_q3_poly_vertex *raw;
+        if(!qa_q3_source_scene_bank_poly_read(source_bank,source.first_polygon+(uint32_t)r->polygons_done,&polygon,&raw))return false;
+        if(!polygon.count || !polygon.shader || !qa_q3_source_scene_bank_poly_capacity(bank,polygon.count)){
             ++r->polygons_done;continue;
-        }
-        if(polygon->first>p->vertex_count || polygon->count>p->vertex_count-polygon->first ||
-            polygon->count>SIZE_MAX/sizeof(qa_q3_poly_vertex))
-            return q3p_fail(error,QA_ERROR_FORMAT,"Queued supplemental polygon leaves its actual vertex span");
-        qa_q3_poly_vertex *raw=qa_arena_alloc(&frame->storage,polygon->count*sizeof(*raw),_Alignof(qa_q3_poly_vertex),error);
-        if(!raw)return q3p_fail(error,QA_ERROR_MEMORY,"Retaining actual supplemental polygon values");
-        for(size_t i=0;i<polygon->count;++i){const qa_scene_vertex *v=p->vertices+polygon->first+i;
-            raw[i]=(qa_q3_poly_vertex){.position=v->position,.texcoord=v->texcoord,
-                .color={(uint8_t)lroundf(v->color.x*255),(uint8_t)lroundf(v->color.y*255),
-                    (uint8_t)lroundf(v->color.z*255),(uint8_t)lroundf(v->color.w*255)}};
         }
         qa_q3_source_scene_membership membership;bool admitted=false;
         bool okay=qa_q3_source_scene_bank_membership(bank,&membership) &&
-            qa_q3_source_scene_bank_poly(bank,p->options.assets,polygon->shader,raw,polygon->count,&polygon->fog,&admitted,error);
+            qa_q3_source_scene_bank_poly(bank,polygon.assets,polygon.shader,raw,polygon.count,&polygon.fog,&admitted,error);
         if(!okay)return false;
         if(admitted)r->polygon_ordinals[r->polygons_done]=membership.polygons;
         ++r->polygons_done;
@@ -1193,11 +1170,12 @@ bool qa_q3_presentation_supplement_prepare(qa_q3_presentation *p,qa_q3_source_sc
 bool qa_q3_presentation_supplement_draw(const qa_q3_supplement *r,const qa_q3_scene_options *options,
     qa_scene_frame *frame,qa_error *error)
 {
-    uint64_t cycle=0;qa_q3_source_scene_membership membership;
+    uint64_t cycle=0,source_cycle=0;qa_q3_source_scene_membership membership;
     qa_q3_presentation *p=r?r->presentation:NULL;
     if(!r || !r->ready || !options || !frame || r->frame!=frame || p->frame!=frame ||
         frame->sequence!=r->sequence || !frame->command_count || !qa_q3_presentation_idle(p) ||
         !qa_q3_source_scene_bank_cycle(r->bank,&cycle) || cycle!=r->cycle ||
+        !qa_q3_source_scene_bank_cycle(r->source_bank,&source_cycle) || source_cycle!=r->source_cycle ||
         !qa_q3_source_scene_bank_membership(r->bank,&membership) || r->first>membership.entities ||
         r->admitted>membership.entities-r->first || options->world.view.seat!=p->options.seat ||
         !qa_vec_finite(options->world.view.origin) || !options->world.view.viewport.width || !options->world.view.viewport.height ||
@@ -1244,7 +1222,9 @@ bool qa_q3_presentation_lights_read(const qa_q3_presentation *p,const qa_scene_l
 {
     if (!p || !out || !count || !qa_q3_presentation_idle(p))
         return q3p_fail(e,QA_ERROR_ARGUMENT,"Q3 lights require their returned actual presentation owner");
-    *out=p->lights; *count=p->light_count; return true;
+    qa_q3_source_scene_bank *bank=q3p_scene_bank(p,e);
+    if(!bank)return false;
+    *out=q3_source_bank_lights(bank,count);return true;
 }
 
 static bool submit_view(qa_q3_presentation *p, const qa_q3_scene_options *options, qa_error *error)
@@ -1297,7 +1277,8 @@ bool qa_q3_presentation_render(qa_q3_presentation *p, const qa_q3_refdef *refdef
     uint8_t visible[32]; char rows[8][33]; const char *texts[8];
     for (size_t i = 0; i < 32; ++i) visible[i] = (uint8_t)~refdef->area_mask[i];
     for (size_t i = 0; i < 8; ++i) { memcpy(rows[i], refdef->text[i], 32); rows[i][32] = 0; texts[i] = rows[i]; }
-    qa_q3_scene_options options = {.world_family = QA_GAME_Q3, .shadow_mode = p->options.shadow_mode,
+    qa_q3_scene_options options = {.world_family = QA_GAME_Q3, .first_entity=p->source_entity_first,
+        .shadow_mode = p->options.shadow_mode,
         .lod_scale = p->options.lod_scale, .lod_bias = p->options.lod_bias,
         .ambient_scale = .6f, .directed_scale = 1, .near_clip = p->options.near_clip,
         .rail = {.core_width = p->options.rail_core_width, .ring_width = p->options.rail_ring_width,
@@ -1323,7 +1304,6 @@ bool qa_q3_presentation_render(qa_q3_presentation *p, const qa_q3_refdef *refdef
     qa_scene_state_default(&options.state);
     p->render_milliseconds = refdef->time;
     if (p->options.source_state) {
-        options.first_entity = p->source_entity_first;
         options.world.source_entity_cells = true;
     }
     if (p->options.prepare_view) ok = p->options.prepare_view(p->options.context, refdef, &options, error);
@@ -1367,7 +1347,9 @@ bool qa_q3_presentation_render(qa_q3_presentation *p, const qa_q3_refdef *refdef
         options.world.view.projection.m[14] = -2 * far_clip * near_clip / (far_clip - near_clip);
     }
     size_t portal_count = 0;
-    if (ok) ok = q3p_reserve((void **)&p->portals, &p->portal_capacity, p->entity_count, sizeof(*p->portals), error);
+    qa_scene_portal *portals = ok && p->entity_count ? qa_arena_alloc(&p->frame->storage,
+        p->entity_count * sizeof(*portals), _Alignof(qa_scene_portal), error) : NULL;
+    if (ok && p->entity_count && !portals) ok = false;
     for (size_t i = 0; ok && !options.no_entities && !options.no_portals &&
         options.world.fast_sky != 1 && i < p->entity_count; ++i) {
         const qa_q3_ref_entity *entity = &p->entities[i];
@@ -1376,12 +1358,12 @@ bool qa_q3_presentation_render(qa_q3_presentation *p, const qa_q3_refdef *refdef
             .axis = {entity->axis[0], entity->axis[1], entity->axis[2]},
             .rotation_speed = entity->old_frame && entity->frame ? (float)entity->frame : 0,
             .rotation_offset = (float)entity->skin, .oscillate = entity->old_frame && !entity->frame};
-        p->portals[portal_count++] = portal;
+        portals[portal_count++] = portal;
     }
     bool portal_drawn = false;
     if (ok && p->world && !options.world.no_world && portal_count) {
         qa_scene_view child; qa_vec3 pvs; bool found;
-        ok = qa_scene_world_portal_view(p->world, &options.world, p->portals, portal_count, &child, &pvs, &found, error);
+        ok = qa_scene_world_portal_view(p->world, &options.world, portals, portal_count, &child, &pvs, &found, error);
         if (ok && found) {
             qa_q3_scene_options child_options = options;
             child_options.world.view = child; child_options.world.pvs_origin = pvs;
@@ -1408,8 +1390,13 @@ bool qa_q3_presentation_render(qa_q3_presentation *p, const qa_q3_refdef *refdef
         if (p->options.source_state) {
             qa_material_source_scratch *source = p->options.source_state(p->options.context, error);
             ok = source && qa_material_source_entity_scene(source, &p->source_entity_first, error);
+        } else {
+            qa_q3_source_scene_membership membership;
+            qa_q3_source_scene_bank_clear(p->scene_bank);
+            ok = qa_q3_source_scene_bank_membership(p->scene_bank, &membership);
+            if (ok) p->source_entity_first = membership.first_entity;
         }
-        if (ok) p->entity_count = p->polygon_count = p->vertex_count = p->light_count = 0;
+        if (ok) q3p_scene_scratch_clear(p);
     }
     if (!ok) { p->frame->command_count = first; p->frame->group_count = 0; }
     p->source_entity_assets = p->source_polygon_assets = NULL;

@@ -27,7 +27,7 @@ void qa_q3_source_scene_bank_destroy(qa_q3_source_scene_bank *bank)
     for (uint32_t i = 0; i < QA_Q3_SOURCE_ENTITY_CAPACITY; ++i)
         qa_q3_assets_release(bank->entities[i].assets);
     for (uint32_t i = 0; i < QA_Q3_SOURCE_LIGHT_CAPACITY; ++i)
-        qa_q3_assets_release(bank->lights[i].assets);
+        qa_q3_assets_release(bank->light_assets[i]);
     if (bank->polygons) for (uint32_t i = 0; i < bank->membership.max_polygons; ++i)
         qa_q3_assets_release(bank->polygons[i].assets);
     free(bank->polygons); free(bank->vertices); free(bank);
@@ -125,9 +125,9 @@ bool qa_q3_source_scene_bank_light(qa_q3_source_scene_bank *bank,
     *admitted = false;
     if (bank->membership.lights >= QA_Q3_SOURCE_LIGHT_CAPACITY || value->radius <= 0) return true;
     if (!qa_q3_assets_retain(assets, error)) return false;
-    qa_q3_source_light_cell *cell = bank->lights + bank->membership.lights;
-    qa_q3_presentation_assets *previous = cell->assets;
-    *cell = (qa_q3_source_light_cell){assets, *value};
+    uint32_t index = bank->membership.lights;
+    qa_q3_presentation_assets *previous = bank->light_assets[index];
+    bank->lights[index] = *value; bank->light_assets[index] = assets;
     ++bank->membership.lights; *admitted = true;
     qa_q3_assets_release(previous); return true;
 }
@@ -158,14 +158,20 @@ bool qa_q3_source_scene_bank_poly_read(const qa_q3_source_scene_bank *bank, uint
 }
 bool qa_q3_source_scene_bank_light_read(const qa_q3_source_scene_bank *bank,
     uint32_t index, qa_q3_source_light_cell *out)
-{ if (!bank || !out || index >= QA_Q3_SOURCE_LIGHT_CAPACITY) return false; *out = bank->lights[index]; return true; }
+{ if (!bank || !out || index >= QA_Q3_SOURCE_LIGHT_CAPACITY) return false;
+    *out = (qa_q3_source_light_cell){bank->light_assets[index], bank->lights[index]}; return true; }
+const qa_scene_light *q3_source_bank_lights(const qa_q3_source_scene_bank *bank, size_t *count)
+{
+    *count = bank->membership.lights - bank->membership.first_light;
+    return bank->lights + bank->membership.first_light;
+}
 static qa_q3_presentation_assets *registry_slot(const qa_q3_source_scene_bank *bank, size_t index)
 {
     if (index < QA_Q3_SOURCE_ENTITY_CAPACITY) return bank->entities[index].assets;
     index -= QA_Q3_SOURCE_ENTITY_CAPACITY;
     if (index < bank->membership.max_polygons) return bank->polygons[index].assets;
     index -= bank->membership.max_polygons;
-    return bank->lights[index].assets;
+    return bank->light_assets[index];
 }
 qa_q3_presentation_assets *qa_q3_source_scene_bank_registry_at(
     const qa_q3_source_scene_bank *bank, size_t ordinal)
@@ -206,7 +212,7 @@ bool q3_source_bank_valid_keys(const qa_q3_source_scene_bank *bank, const uint64
     for (uint32_t i = 0; i < m->entities; ++i)
         if (keys ? !keys[i] : !bank->entities[i].assets) return false;
     for (uint32_t i = 0; i < m->lights; ++i)
-        if (keys ? !keys[QA_Q3_SOURCE_ENTITY_CAPACITY + (size_t)m->max_polygons + i] : !bank->lights[i].assets) return false;
+        if (keys ? !keys[QA_Q3_SOURCE_ENTITY_CAPACITY + (size_t)m->max_polygons + i] : !bank->light_assets[i]) return false;
     uint32_t next = 0;
     for (uint32_t i = 0; i < m->max_polygons; ++i) {
         const qa_q3_source_polygon_cell *cell = bank->polygons + i;

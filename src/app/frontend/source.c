@@ -1185,7 +1185,12 @@ static bool construct_source(frontend_source *source, const qa_q3_host_options *
         .prepare_picture=prepare_picture,.video_frame=frontend_material_movies_frontend_resolve,.video_context=frontend,
         .remap = source_remap, .print = print_source};
     if (ok && source->shader_movies) ok=frontend_material_movies_cinematic_read(source->shader_movies,&presentation.cinematics,error);
-    if (ok && !restoring) ok=frontend_q3_renderer_options_read(frontend,&presentation,error);
+    qa_q3_presentation_options current=presentation;
+    if (ok) ok=frontend_q3_renderer_options_read(frontend,&current,error);
+    if (restoring) {
+        presentation.scene_max_polygons=current.scene_max_polygons;
+        presentation.scene_max_vertices=current.scene_max_vertices;
+    } else presentation=current;
     qa_cvar_handle shadows=ok?qa_cvars_resolve(host->cvars,"cg_shadows"):(qa_cvar_handle){0};
     if (ok && qa_cvars_read(host->cvars,shadows))
         ok=frontend_q3_shadow_mode_read(host->cvars,shadows,&presentation.shadow_mode,error);

@@ -178,6 +178,7 @@ typedef struct qa_q3_presentation_options {
     qa_scene_world_scratch *world_scratch, *world_child_scratch;
     qa_material_source_scratch *(*source_state)(void *, qa_error *);
     bool source_scene_membership;
+    uint32_t scene_max_polygons, scene_max_vertices;
     qa_media_clock clock;
     uint32_t seat;
     uint64_t owner;

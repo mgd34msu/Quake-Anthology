@@ -1,6 +1,7 @@
 #include "unified_q3_runtime_private.h"
 #include "unified_q3_runtime_video.h"
 #include "source_renderer_runtime.h"
+#include "q3_render_policy.h"
 #include "../../presentation/q3_native/packet_compiled.h"
 #include "../../presentation/q3_native/marks.h"
 #include "../../presentation/q3_native/local_entities.h"
@@ -323,6 +324,12 @@ bool frontend_unified_q3_runtime_build_children(frontend_unified_q3_runtime *o,q
     }
     q3n_loading_options load=o->options.loading; load.compiled_source=source;
     q3n_mission_hud_options mission=o->options.mission; mission.compiled_source=source;
+    qa_q3_presentation_options current=o->options.presentation;
+    if(!frontend_q3_renderer_options_read(o->options.frontend,&current,e))return false;
+    if(o->options.frontend->source_restoring) {
+        o->options.presentation.scene_max_polygons=current.scene_max_polygons;
+        o->options.presentation.scene_max_vertices=current.scene_max_vertices;
+    } else o->options.presentation=current;
     if(!qa_q3_presentation_create(&o->options.presentation,&c->presentation,e) ||
        !q3n_weapons_create(&weapons,&c->weapons,e) || !q3n_events_create_compiled(&events,&c->events,e) ||
        !q3n_particles_create_compiled(view.basis.assets,source,&c->particles,e) ||

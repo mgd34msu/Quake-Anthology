@@ -783,6 +783,12 @@ static bool create_runtime(frontend_remote_q3 *parent,bool restoring,frontend_re
     frontend_material_movies *shader_movies=NULL;
     if (!restoring && (!frontend_material_movies_library_owner(r->materials,&shader_movies,e) ||
         !frontend_material_movies_cinematic_read(shader_movies,&backend.cinematics,e))) return false;
+    qa_q3_presentation_options current=backend;
+    if (!frontend_q3_renderer_options_read(f,&current,e)) return false;
+    if (restoring) {
+        backend.scene_max_polygons=current.scene_max_polygons;
+        backend.scene_max_vertices=current.scene_max_vertices;
+    } else backend=current;
     q3n_weapon_options weapons={.assets=r->assets,.product=basis.product,.context=o,
         .particle_explosion=particle_explosion};
     q3n_event_options events={.assets=r->assets,.product=basis.product,.context=o,.print=print,.center_print=center,

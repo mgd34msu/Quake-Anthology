@@ -387,6 +387,13 @@ bool frontend_q3_renderer_options_read(qa_frontend *f, qa_q3_presentation_option
     if (!frontend_q3_source_color_lighting_read(f, edit, &lighting, error)) return false;
     out->near_clip = (float)row->number;
     out->identity_light = lighting.identity_light;
+    if (f->cpu || f->gl) {
+        qa_render_controls *controls = f->cpu ? qa_cpu_render_controls(f->cpu) : qa_gl_render_controls(f->gl);
+        bool initialized;
+        if (!frontend_q3_scene_limits_initialize(f, error) ||
+            !qa_render_controls_source_scene_limits_read(controls, &out->scene_max_polygons,
+                &out->scene_max_vertices, &initialized, error)) return false;
+    }
     return true;
 }
 bool frontend_q3_scene_policy_read(qa_frontend *f, qa_q3_scene_options *out, qa_error *error)

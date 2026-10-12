@@ -4,6 +4,7 @@
 #include "qa/scene_world_save.h"
 #include "config_store.h"
 #include "q3_color_policy.h"
+#include "q3_render_policy.h"
 #include "material_movies.h"
 
 struct frontend_equipment_q3_output {
@@ -404,7 +405,8 @@ bool frontend_equipment_q3_local_view(qa_frontend *frontend, uint32_t physical_s
             presenter->cvars = frontend_config_source_seat_cvars(config, launch_seat);
             qa_hud_cvars_bind(presenter->cvars, QA_HUD_CVAR_DRAW_GUN, &presenter->hud_cvars);
         }
-        if (!frontend_source_identity_allocate(frontend, &settings.owner, error) ||
+        if (!frontend_q3_renderer_options_read(frontend, &settings, error) ||
+            !frontend_source_identity_allocate(frontend, &settings.owner, error) ||
             !qa_q3_presentation_create(&settings, &presenter->recipient, error)) return false;
         presenter->physical_seat = physical_seat;
     }

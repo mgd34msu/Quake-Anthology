@@ -25,11 +25,6 @@
 typedef struct component_scene_packet {
     struct component_scene_packet *next;
     frontend_component_scene_packet view;
-    uint8_t *areas;
-    qa_scene_light *world_lights,*projected_lights;
-    qa_scene_vertex *rail_vertices;
-    float *q1_styles;
-    qa_vec3 *q2_styles;
     const char *texts[8];
 } component_scene_packet;
 struct frontend_component_scene_restore {
@@ -311,20 +306,9 @@ static bool configuration(void *context,uint8_t out[11332],qa_error *e)
     return publication(owner,&view,e) && frontend_q3_configuration(owner->frontend,out,e) &&
         owner->request.source.current(owner->request.source.context,&view);
 }
-static void packet_destroy(component_scene_packet *packet)
-{
-    free((void *)packet->view.entities); free((void *)packet->view.polygons);
-    free((void *)packet->view.vertices); free((void *)packet->view.lights);
-    free(packet->areas); free(packet->world_lights); free(packet->projected_lights);
-    free(packet->rail_vertices);
-    free(packet->q1_styles); free(packet->q2_styles); free(packet);
-}
 static void packets_clear(struct frontend_component_scene *owner)
 {
-    while (owner->packets) {
-        component_scene_packet *packet=owner->packets;
-        owner->packets=packet->next; packet_destroy(packet);
-    }
+    owner->packets=NULL;
     owner->last_packet=NULL; owner->packet_count=0;
 }
 static void pictures_clear(struct frontend_component_scene *owner)
@@ -358,13 +342,13 @@ static bool picture_capture(void *context,const qa_q3_picture_receipt *receipt,q
     return owner->begun && publication(owner,&view,e) && picture_append(owner,receipt,e) &&
         owner->request.source.current(owner->request.source.context,&view);
 }
-static bool copy_span(const void *span,size_t count,size_t element,void **out,qa_error *e)
+static bool copy_span(qa_arena *arena,const void *span,size_t count,size_t element,void **out,qa_error *e)
 {
     if (count && (!span || count>SIZE_MAX/element))
         return frontend_fail(e,QA_ERROR_FORMAT,"Completed component scene span exceeds its real source extent");
     if (!count) { *out=NULL; return true; }
-    *out=malloc(count*element);
-    if (!*out) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining completed component scene");
+    *out=qa_arena_alloc(arena,count*element,_Alignof(max_align_t),e);
+    if (!*out) return false;
     memcpy(*out,span,count*element); return true;
 }
 static bool packet_copy(struct frontend_component_scene *owner,const qa_q3_refdef *definition,const qa_q3_scene_options *options,
@@ -378,43 +362,35 @@ static bool packet_copy(struct frontend_component_scene *owner,const qa_q3_refde
     for (size_t i=0;i<polygon_count;++i)
         if (!polygons || polygons[i].first>vertex_count || polygons[i].count>vertex_count-polygons[i].first)
             return frontend_fail(e,QA_ERROR_FORMAT,"Completed component polygon leaves its issued vertices");
-    component_scene_packet *packet=calloc(1,sizeof(*packet));
-    if (!packet) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining completed component render packet");
-    packet->view=(frontend_component_scene_packet){.definition=*definition,.options=*options,
-        .entity_count=entity_count,.polygon_count=polygon_count,.vertex_count=vertex_count,.light_count=light_count};
-    void *entity_copy=NULL,*polygon_copy=NULL,*vertex_copy=NULL,*light_copy=NULL;
-    bool ok=copy_span(entities,entity_count,sizeof(*entities),&entity_copy,e) &&
-        copy_span(polygons,polygon_count,sizeof(*polygons),&polygon_copy,e) &&
-        copy_span(vertices,vertex_count,sizeof(*vertices),&vertex_copy,e) &&
-        copy_span(lights,light_count,sizeof(*lights),&light_copy,e);
-    packet->view.entities=entity_copy; packet->view.polygons=polygon_copy;
-    packet->view.vertices=vertex_copy; packet->view.lights=light_copy;
+    component_scene_packet *packet=qa_arena_alloc(&owner->frame.storage,sizeof(*packet),
+        _Alignof(component_scene_packet),e);
+    if (!packet) return false;
+    *packet=(component_scene_packet){.view={.definition=*definition,.options=*options,
+        .entities=entities,.entity_count=entity_count,.polygons=polygons,.polygon_count=polygon_count,
+        .vertices=vertices,.vertex_count=vertex_count,.lights=lights,.light_count=light_count}};
     void *areas=NULL,*world_lights=NULL,*projected=NULL;
-    if (ok) ok=copy_span(options->world.visible_areas,options->world.visible_area_bytes,1,&areas,e) &&
-        copy_span(options->world.lights,options->world.light_count,sizeof(qa_scene_light),&world_lights,e) &&
-        copy_span(options->world.projected_lights,options->world.projected_light_count,sizeof(qa_scene_light),&projected,e);
-    packet->areas=areas; packet->world_lights=world_lights; packet->projected_lights=projected;
+    bool ok=copy_span(&owner->frame.storage,options->world.visible_areas,options->world.visible_area_bytes,1,&areas,e) &&
+        copy_span(&owner->frame.storage,options->world.lights,options->world.light_count,sizeof(qa_scene_light),&world_lights,e) &&
+        copy_span(&owner->frame.storage,options->world.projected_lights,options->world.projected_light_count,sizeof(qa_scene_light),&projected,e);
     void *q1=NULL,*q2=NULL;
-    if (ok && options->world.q1_styles) ok=copy_span(options->world.q1_styles,options->world.style_count,sizeof(float),&q1,e);
-    if (ok && options->world.q2_styles) ok=copy_span(options->world.q2_styles,options->world.style_count,sizeof(qa_vec3),&q2,e);
-    packet->q1_styles=q1; packet->q2_styles=q2;
+    if (ok && options->world.q1_styles) ok=copy_span(&owner->frame.storage,options->world.q1_styles,options->world.style_count,sizeof(float),&q1,e);
+    if (ok && options->world.q2_styles) ok=copy_span(&owner->frame.storage,options->world.q2_styles,options->world.style_count,sizeof(qa_vec3),&q2,e);
     void *rail_vertices=NULL;
-    if (ok) ok=copy_span(options->rail.retained_vertices,options->rail.retained_count,
+    if (ok) ok=copy_span(&owner->frame.storage,options->rail.retained_vertices,options->rail.retained_count,
         sizeof(qa_scene_vertex),&rail_vertices,e);
-    packet->rail_vertices=rail_vertices;
     if (ok && options->world.render_text_count>8)
         ok=frontend_fail(e,QA_ERROR_FORMAT,"Completed component scene exceeds its actual refdef text slots");
     if (ok) {
-        packet->view.options.world.visible_areas=packet->areas;
-        packet->view.options.world.lights=packet->world_lights;
-        packet->view.options.world.projected_lights=packet->projected_lights;
-        packet->view.options.world.q1_styles=packet->q1_styles;
-        packet->view.options.world.q2_styles=packet->q2_styles;
-        packet->view.options.rail.retained_vertices=packet->rail_vertices;
+        packet->view.options.world.visible_areas=areas;
+        packet->view.options.world.lights=world_lights;
+        packet->view.options.world.projected_lights=projected;
+        packet->view.options.world.q1_styles=q1;
+        packet->view.options.world.q2_styles=q2;
+        packet->view.options.rail.retained_vertices=rail_vertices;
         for (size_t i=0;i<options->world.render_text_count;++i) packet->texts[i]=packet->view.definition.text[i];
         packet->view.options.world.render_texts=packet->texts;
     }
-    if (!ok) { packet_destroy(packet); return false; }
+    if (!ok) return false;
     if (owner->last_packet) owner->last_packet->next=packet; else owner->packets=packet;
     owner->last_packet=packet; ++owner->packet_count; return true;
 }
@@ -799,7 +775,12 @@ bool frontend_component_scene_prepare(void *context,const application_q3_compone
         .video_frame=frontend_material_movies_frontend_resolve,.video_context=f};
     if (owner->movies && !frontend_material_movies_cinematic_read(owner->movies,&options.cinematics,e)) return false;
     if (owner->has_restore_policy) constructor_policy(&options,&owner->restored_policy);
-    if (!request->restoring && !frontend_q3_renderer_options_read(f,&options,e)) return false;
+    qa_q3_presentation_options current=options;
+    if (!frontend_q3_renderer_options_read(f,&current,e)) return false;
+    if (request->restoring) {
+        options.scene_max_polygons=current.scene_max_polygons;
+        options.scene_max_vertices=current.scene_max_vertices;
+    } else options=current;
     if (!qa_q3_presentation_create(&options,&owner->presentation,e)) return false;
     owner->ready=true; owner->host_borrow=true;
     request->host->scene_resources=owner->images; request->host->scene_world=NULL; request->host->scene_frame=&owner->frame;

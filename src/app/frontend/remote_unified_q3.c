@@ -305,6 +305,12 @@ static bool backend_read(unified_q3_bank *b, qa_scene_rect viewport, qa_error *e
         .context=b,.submit_view=component_submit};
     qa_scene_world_input world={0}; frontend_unified_media_world_scratch(o->media,&world);
     options.world_scratch=world.scratch; options.world_child_scratch=world.child_scratch;
+    qa_q3_presentation_options current=options;
+    if (!frontend_q3_renderer_options_read(o->frontend,&current,e)) return false;
+    if (o->frontend->source_restoring) {
+        options.scene_max_polygons=current.scene_max_polygons;
+        options.scene_max_vertices=current.scene_max_vertices;
+    } else options=current;
     return qa_q3_presentation_create(&options,&b->backend,e);
 }
 static bool sound_output(void *context,const q3n_frame *f,qa_audio_asset *asset,const qa_vec3 *origin,int32_t channel,qa_error *e)

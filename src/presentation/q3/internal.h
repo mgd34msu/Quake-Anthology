@@ -7,6 +7,7 @@
 #include "qa/common_parse.h"
 #include "qa/scene_effects.h"
 #include "qa/text.h"
+#include "qa/q3_source_scene_bank.h"
 
 #include <limits.h>
 #include <math.h>
@@ -101,10 +102,10 @@ struct qa_q3_supplement {
     struct qa_q3_source_scene_bank *bank;
     qa_scene_frame *frame;
     uint64_t sequence,cycle;
-    const qa_q3_ref_entity *entities;
-    const q3p_polygon *polygons;
-    const qa_scene_vertex *vertices;
-    size_t entity_count,polygon_count,vertex_count,admitted,polygons_done;
+    qa_q3_source_scene_bank *source_bank;
+    uint64_t source_cycle;
+    qa_q3_source_scene_membership source_membership;
+    size_t entity_count,polygon_count,admitted,polygons_done;
     uint32_t first,*polygon_ordinals;
     bool entities_started,entities_done,ready;
 };
@@ -119,18 +120,18 @@ struct qa_q3_presentation {
     qa_bytes entity_text;
     qa_common_parser parser;
     qa_common_cursor cursor;
+    qa_q3_source_scene_bank *scene_bank;
+    uint64_t scene_sequence;
     qa_q3_ref_entity *entities;
-    size_t entity_count, entity_capacity;
+    size_t entity_count;
     uint32_t source_entity_first;
     qa_q3_presentation_assets **source_entity_assets, **source_polygon_assets;
     q3p_polygon *polygons;
-    size_t polygon_count, polygon_capacity;
+    size_t polygon_count;
     qa_scene_vertex *vertices;
-    size_t vertex_count, vertex_capacity;
-    qa_scene_light *lights;
-    size_t light_count, light_capacity;
-    qa_scene_portal *portals;
-    size_t portal_capacity;
+    size_t vertex_count;
+    const qa_scene_light *lights;
+    size_t light_count;
     qa_vec4 color;
     int32_t render_milliseconds;
     qa_scene_view material_view;
@@ -145,6 +146,8 @@ bool q3p_fail(qa_error *, qa_status, const char *);
 bool q3p_reserve(void **, size_t *capacity, size_t count, size_t width, qa_error *);
 bool q3p_begin(qa_q3_presentation *, qa_error *);
 bool q3p_end(qa_q3_presentation *, bool);
+qa_q3_source_scene_bank *q3p_scene_bank(const qa_q3_presentation *, qa_error *);
+void q3p_scene_scratch_clear(qa_q3_presentation *);
 bool q3p_capture_begin(qa_q3_presentation *, bool *owned_assets, qa_error *);
 void q3p_capture_end(qa_q3_presentation *, bool owned_assets);
 q3p_name *q3p_find_name(qa_q3_presentation_assets *, q3p_resource_kind, const char *);

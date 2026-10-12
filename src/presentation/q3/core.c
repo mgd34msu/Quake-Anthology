@@ -53,9 +53,8 @@ bool qa_q3_presentation_prepare_restored(qa_q3_presentation *p,qa_scene_frame *f
 {
     qa_q3_presentation_assets *a=p?p->options.assets:NULL;
     if (!p || !a || !qa_q3_presentation_idle(p) || p->world || p->geometry || p->entity_text.data || p->entity_text.size ||
-        p->world_loaded || p->material_view_valid || p->entity_count || p->entity_capacity ||
-        p->polygon_count || p->polygon_capacity || p->vertex_count || p->vertex_capacity ||
-        p->light_count || p->light_capacity || p->portal_capacity || p->movie_sources ||
+        p->world_loaded || p->material_view_valid || p->entity_count ||
+        p->polygon_count || p->vertex_count || p->light_count || p->movie_sources ||
         ((a->world || a->geometry) && (a->world!=world || a->geometry!=geometry)) ||
         a->name_count || a->name_capacity || a->model_count || a->model_capacity ||
         a->skin_count || a->skin_capacity || a->shader_count || a->shader_capacity || a->sound_count || a->sound_capacity ||
@@ -176,6 +175,13 @@ bool qa_q3_presentation_create(const qa_q3_presentation_options *options,
     if (options->cinematics && !qa_q3_cinematic_source_retain(options->cinematics,error)) {
         --options->assets->users; free(p); return false;
     }
+    if (!options->source_state && !qa_q3_source_scene_bank_create(
+        options->scene_max_polygons > 600 ? options->scene_max_polygons : 600,
+        options->scene_max_vertices > 3000 ? options->scene_max_vertices : 3000,
+        &p->scene_bank,error)) {
+        qa_q3_cinematic_source_release(p->options.cinematics);
+        --options->assets->users; free(p); return false;
+    }
     *out = p; return true;
 }
 
@@ -211,8 +217,9 @@ bool qa_q3_presentation_destroy(qa_q3_presentation *p, qa_error *error)
     }
     q3p_end(p, true);
     qa_q3_cinematic_source_release(p->options.cinematics);
+    qa_q3_source_scene_bank_destroy(p->scene_bank);
     qa_q3_presentation_assets_destroy(p->options.assets);
-    free(p->entities); free(p->polygons); free(p->vertices); free(p->lights); free(p->portals); free(p);
+    free(p);
     return ok;
 }
 
@@ -227,6 +234,11 @@ bool qa_q3_presentation_frame(qa_q3_presentation *p, qa_scene_frame *frame, qa_s
     if (!p || p->busy || p->options.assets->busy || !q3p_assets_children_idle(p->options.assets) ||
         !frame || !viewport.width || !viewport.height)
         return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 presentation frame");
+    if (p->scene_bank && (p->frame != frame || p->scene_sequence != frame->sequence)) {
+        qa_q3_source_scene_bank_frame(p->scene_bank);
+        q3p_scene_scratch_clear(p);
+    }
+    p->scene_sequence = frame->sequence;
     p->frame = frame; p->options.viewport = viewport; return true;
 }
 
@@ -273,7 +285,8 @@ static void retire_registry_map(qa_q3_presentation_assets *assets)
 static void retire_presentation_map(qa_q3_presentation *p)
 {
     p->world = NULL; p->geometry = NULL; p->entity_text = (qa_bytes){0};
-    p->entity_count = p->polygon_count = p->vertex_count = p->light_count = 0;
+    if (p->scene_bank) qa_q3_source_scene_bank_frame(p->scene_bank);
+    q3p_scene_scratch_clear(p);
     p->world_loaded = p->material_view_valid = false;
 }
 bool qa_q3_presentation_retire_world(qa_q3_presentation *p, qa_error *error)

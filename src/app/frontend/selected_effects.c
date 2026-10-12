@@ -7,6 +7,7 @@
 #include "native_q3_client.h"
 #include "capture.h"
 #include "source_effects.h"
+#include "q3_render_policy.h"
 #include <math.h>
 
 static bool primary_current(const qa_frontend *frontend, const frontend_effects_primary *primary)
@@ -208,6 +209,10 @@ bool frontend_selected_effects_empty(frontend_selected_effects_group *group,
     backend.milliseconds = NULL; backend.audio_bus = bus; backend.system_movie = NULL;
     backend.prepare_view = NULL; backend.submit_view = NULL; backend.prepare_picture = NULL;
     backend.video_frame = NULL; backend.video_context = NULL; backend.remap = NULL; backend.print = NULL; backend.scene_cleared = NULL;
+    qa_q3_presentation_options current=backend;
+    if (okay) okay=frontend_q3_renderer_options_read(group->owner->frontend,&current,error);
+    backend.scene_max_polygons=current.scene_max_polygons;
+    backend.scene_max_vertices=current.scene_max_vertices;
     if (okay) okay = qa_q3_presentation_create(&backend, &group->view.presentation, error);
     q3n_media_options media = {.product=group->view.q3_product, .assets=group->view.assets};
     q3n_event_options events = {.product = group->view.q3_product, .assets = group->view.assets,
