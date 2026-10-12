@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `85e51f3d`.
+Follow-up source changes were reviewed through main `e48bc8b2`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 236 have source fixes
+There are **374 overlapping source-review observations**: 237 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 135 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 134 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -428,3 +428,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `3152ef12` / 22-02, J21-07, J23-07, J37-02: Authored Q2 item and fixed-classname warm consumers use retained IDs with admission/restore binding. Source inspection also confirms J37-02 already uses one admitted attachment-name index and one interpolation path. Normal build and seven core suites passed; no live or speed claim. Records: `/tmp/qa-ta3196-q2-authored-items-and-names-20261012-v1`.
 
 - `85e51f3d` / 16-003, 16-008: QC recipient and provider membership uses retained full-generation indexes while existing cursor/list order remains authoritative; received Q1 model names and inline metadata bind at precache. Normal build and seven core suites passed. This does not close decoder/row storage allocation or full live-game qualification. Records: `/tmp/qa-ta3196-q1-received-name-and-recipient-indexes-20261012-v2`.
+
+- `e48bc8b2` / J20-08: Rogue source-state ownership uses one common index with full identities and stable authoritative actor pointers. Create, rekey, clone, restore and release maintain it; existing cold input validation rejects malformed non-Rogue team-state rows. Normal build and seven existing core suites passed. Records: `/tmp/qa-ta3196-rogue-owner-index-20261012-v1`.

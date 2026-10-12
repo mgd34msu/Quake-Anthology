@@ -100,6 +100,21 @@ static bool split_sky(qa_scene_world *world, qawl_texture *texture, const qa_bsp
             if (!scene_image_asset_copy(texture->sky[i], &recipe, error)) return false;
         }
     }
+    const qa_scene_image_level *level = texture->sky[1]->levels;
+    const uint8_t *pixels = level->pixels;
+    double sum[3] = {0}; size_t opaque = 0, count = (size_t)level->width * level->height;
+    for (size_t i = 0; i < count; ++i) if (pixels[i * 4 + 3]) {
+        for (unsigned c = 0; c < 3; ++c) sum[c] += pixels[i * 4 + c];
+        ++opaque;
+    }
+    qa_vec4 flat = {0, 0, 0, 1};
+    if (opaque) {
+        double denominator = (double)opaque * 255.0;
+        flat = (qa_vec4){(float)(sum[0] / denominator),
+            (float)(sum[1] / denominator), (float)(sum[2] / denominator), 1};
+    }
+    qawl_world *data = world->legacy_data;
+    data->q1_sky_texture = texture; data->q1_sky_flat = flat;
     return true;
 }
 
@@ -134,6 +149,7 @@ static bool animations(qawl_world *data, qa_error *error)
 bool qawl_textures_build(qa_scene_world *world, qa_error *error)
 {
     qawl_world *data = world->legacy_data;
+    data->q1_sky_texture = NULL; data->q1_sky_flat = (qa_vec4){0, 0, 0, 1};
     bool q1 = world->bsp.family == QA_BSP_Q1;
     if (q1) { if (!qa_bsp_texture_count(&world->bsp, &data->texture_count, error)) return false; }
     else data->texture_count = qa_bsp_record_count(&world->bsp, QA_BSP_TEXINFO);
@@ -213,6 +229,7 @@ bool qawl_textures_build(qa_scene_world *world, qa_error *error)
 void qawl_textures_destroy(qawl_world *data)
 {
     if (!data) return;
+    data->q1_sky_texture = NULL;
     for (size_t i = 0; data->textures && i < data->texture_count; ++i) {
         qawl_texture *texture = &data->textures[i];
         free(texture->name);

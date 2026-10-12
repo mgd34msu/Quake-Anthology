@@ -376,8 +376,14 @@ void qa_scene_world_image_policy_publish(qa_scene_world_image_policy *ticket)
     if (world->legacy_data) {
         qawl_world *current = world->legacy_data;
         qawl_texture *textures = current->textures; size_t count = current->texture_count;
+        const qawl_texture *sky_texture = current->q1_sky_texture;
+        qa_vec4 sky_flat = current->q1_sky_flat;
         current->textures = ticket->textures.textures; current->texture_count = ticket->textures.texture_count;
+        current->q1_sky_texture = ticket->textures.q1_sky_texture;
+        current->q1_sky_flat = ticket->textures.q1_sky_flat;
         ticket->textures.textures = textures; ticket->textures.texture_count = count;
+        ticket->textures.q1_sky_texture = sky_texture;
+        ticket->textures.q1_sky_flat = sky_flat;
         for (size_t i = 0; i < 6; ++i) {
             qa_scene_image *image = current->sky[i]; current->sky[i] = ticket->textures.sky[i]; ticket->textures.sky[i] = image;
         }

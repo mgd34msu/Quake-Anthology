@@ -58,23 +58,10 @@ bool qa_scene_world_q1_sky_begin(qa_scene_world *world, const qa_scene_world_inp
     qa_scene_sky_bounds_reset(sky->bounds);
     /* Sky_LoadTexture publishes the last admitted classic sky layers globally. */
     const qawl_world *data = world->legacy_data;
-    for (size_t i = 0; i < data->texture_count; ++i)
-        if (data->textures[i].sky[0] && data->textures[i].sky[1]) {
-            sky->layers[0] = data->textures[i].sky[0]; sky->layers[1] = data->textures[i].sky[1];
-        }
-    if (sky->layers[1]) {
-        const qa_scene_image_level *level = sky->layers[1]->levels;
-        const uint8_t *pixels = level->pixels;
-        double sum[3] = {0}; size_t opaque = 0, count = (size_t)level->width * level->height;
-        for (size_t i = 0; i < count; ++i) if (pixels[i * 4 + 3]) {
-            for (unsigned c = 0; c < 3; ++c) sum[c] += pixels[i * 4 + c];
-            ++opaque;
-        }
-        if (opaque) {
-            double denominator = (double)opaque * 255.0;
-            sky->flat = (qa_vec4){(float)(sum[0] / denominator),
-                (float)(sum[1] / denominator), (float)(sum[2] / denominator), 1};
-        }
+    if (data->q1_sky_texture) {
+        sky->layers[0] = data->q1_sky_texture->sky[0];
+        sky->layers[1] = data->q1_sky_texture->sky[1];
+        sky->flat = data->q1_sky_flat;
     }
     if (input->fog.density > 0) sky->flat = (qa_vec4){input->fog.color.x, input->fog.color.y, input->fog.color.z, 1};
     *out = sky; return true;

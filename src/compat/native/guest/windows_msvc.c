@@ -387,7 +387,8 @@ static bool insert_number(guest_windows *owner, uint64_t object, uint64_t intege
                     if (radix != 10 && integer && (flags & 8)) { prefix[0] = '0'; if (radix == 16) prefix[1] = flags & 4 ? 'X' : 'x'; }
                     size_t prefix_count = strlen(prefix), padding = width > (int64_t)(prefix_count + count) ? (size_t)width - prefix_count - count : 0;
                     size_t total = prefix_count + count + padding;
-                    char *bytes = malloc(total ? total : 1);
+                    qa_arena scratch; qa_arena_init_pool(&scratch, &owner->guest->scratch_pages);
+                    char *bytes = qa_arena_alloc(&scratch, total ? total : 1, 1, error);
                     if (!bytes) okay = guest_fail(error, QA_ERROR_MEMORY, 0, "formatting MSVC numeric insertion");
                     else {
                         uint32_t adjustment = (uint32_t)flags & 0x1c0; size_t at = 0;
@@ -401,9 +402,9 @@ static bool insert_number(guest_windows *owner, uint64_t object, uint64_t intege
                             okay = buffer_put(owner, buffer, (uint8_t)bytes[i], &written, error);
                             if (okay && written == -1) { okay = setstate(owner, base, 4, error); break; }
                         }
-                        free(bytes);
                         if (okay) okay = windows_write(owner, base + 40, 8, 0, error);
                     }
+                    qa_arena_destroy(&scratch);
                 }
             }
         }
@@ -450,12 +451,13 @@ static bool transfer(guest_windows *owner, uint64_t object, uint64_t data,
         size_t amount = available_count > 0 ? (size_t)available_count : 0;
         if (amount > (size_t)requested - copied) amount = (size_t)requested - copied;
         if (amount) {
-            uint64_t buffer; uint8_t *bytes = malloc(amount);
-            if (!bytes) return guest_fail(error, QA_ERROR_MEMORY, 0, "staging MSVC stream transfer");
+            qa_arena scratch; qa_arena_init_pool(&scratch, &owner->guest->scratch_pages);
+            uint64_t buffer; uint8_t *bytes = qa_arena_alloc(&scratch, amount, 1, error);
+            if (!bytes) { qa_arena_destroy(&scratch); return false; }
             bool okay = bump(owner, object, (int32_t)amount, input, &buffer, error) &&
                 qa_native_guest_read(owner->guest, input ? buffer : data + copied, bytes, amount, error) &&
                 qa_native_guest_write(owner->guest, input ? data + copied : buffer, (qa_bytes){bytes, amount}, error);
-            free(bytes); if (!okay) return false; copied += amount;
+            qa_arena_destroy(&scratch); if (!okay) return false; copied += amount;
         } else if (input) {
             int32_t character;
             if (!buffer_get(owner, object, true, &character, error)) return false;

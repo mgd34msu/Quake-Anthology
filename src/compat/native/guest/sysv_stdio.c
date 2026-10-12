@@ -163,9 +163,9 @@ bool sysv_stdio_flush(guest_sysv_runtime *r, uint64_t file, int32_t *out, qa_err
         if (!entry && (!stream.id || !stream.write)) return sysv_fail(error,QA_ERROR_UNSUPPORTED,"System V fflush has no actual standard output capability");
         uint64_t length = next-base;
         if (length > SIZE_MAX || !guest_range(r->guest,base,(size_t)length,QA_NATIVE_GUEST_READ,error)) return false;
-        uint8_t *bytes = malloc((size_t)length);
-        if (!bytes) return sysv_fail(error,QA_ERROR_MEMORY,"holding actual FILE pending output");
-        if (!sysv_read(r,base,bytes,(size_t)length,error)) { free(bytes); return false; }
+        qa_arena scratch; qa_arena_init_pool(&scratch, &r->guest->scratch_pages);
+        uint8_t *bytes = qa_arena_alloc(&scratch, (size_t)length, 1, error);
+        if (!bytes || !sysv_read(r,base,bytes,(size_t)length,error)) { qa_arena_destroy(&scratch); return false; }
         size_t written = 0;
         while (written < length) {
             size_t completed = 0, remaining = (size_t)length-written;
@@ -176,25 +176,25 @@ bool sysv_stdio_flush(guest_sysv_runtime *r, uint64_t file, int32_t *out, qa_err
                     bool retained = sysv_write(r,base,bytes+written,(size_t)length-written,error) &&
                         sysv_put_pointer(r,field(r,file,5),base+length-written,error);
                     (void)retained;
-                    free(bytes); return false;
+                    qa_arena_destroy(&scratch); return false;
                 }
             }
             bool callback = entry ? guest_runtime_resources_write(r->options.bindings.resources,entry->handle,
                 (qa_bytes){bytes+written,remaining},&completed,error) :
                 stream.write(stream.context,(qa_bytes){bytes+written,remaining},&completed,error);
-            if (!sysv_current(r,error)) { free(bytes); return false; }
+            if (!sysv_current(r,error)) { qa_arena_destroy(&scratch); return false; }
             bool valid = completed <= remaining;
             if (valid) written += completed;
             if (!callback || !valid || !completed) {
                 bool ok = sysv_write(r,base,bytes+written,(size_t)length-written,error) &&
                     sysv_put_pointer(r,field(r,file,5),base+length-written,error);
-                free(bytes);
+                qa_arena_destroy(&scratch);
                 if (!ok) return false;
                 if (!callback) return false;
                 return file_error(r,file,5,out,error);
             }
         }
-        free(bytes);
+        qa_arena_destroy(&scratch);
         if (!sysv_put_pointer(r,field(r,file,5),base,error)) return false;
     }
     if (entry || stream.flush) {
@@ -735,13 +735,13 @@ bool sysv_stdio_call(sysv_service *service,const qa_native_value *args,qa_native
         size_t total = (size_t)(size*count), completed = 0; uint8_t *bytes = NULL;
         if (total && (!args[0].as.address || !args[3].as.address))
             return sysv_fail(error,QA_ERROR_ARGUMENT,"System V stdio transfer requires actual nonnull memory and FILE");
+        qa_arena scratch; qa_arena_init_pool(&scratch, &r->guest->scratch_pages);
         if (total && service->operation == ST_WRITE) {
-            bytes = malloc(total);
-            if (!bytes) return sysv_fail(error,QA_ERROR_MEMORY,"holding fwrite source bytes");
-            if (!sysv_read(r,args[0].as.address,bytes,total,error)) { free(bytes); return false; }
+            bytes = qa_arena_alloc(&scratch, total, 1, error);
+            if (!bytes || !sysv_read(r,args[0].as.address,bytes,total,error)) { qa_arena_destroy(&scratch); return false; }
             int32_t fd; bool accepted;
-            if (!descriptor(r,args[3].as.address,&fd,error) || !orient(r,args[3].as.address,false,&accepted,error)) { free(bytes); return false; }
-            if (!accepted) { free(bytes); if (out->type == QA_NATIVE_U32) out->as.u32 = 0; else out->as.u64 = 0; return true; }
+            if (!descriptor(r,args[3].as.address,&fd,error) || !orient(r,args[3].as.address,false,&accepted,error)) { qa_arena_destroy(&scratch); return false; }
+            if (!accepted) { qa_arena_destroy(&scratch); if (out->type == QA_NATIVE_U32) out->as.u32 = 0; else out->as.u64 = 0; return true; }
         }
         bool ok = true;
         for (; completed < total; ++completed) {
@@ -753,7 +753,7 @@ bool sysv_stdio_call(sysv_service *service,const qa_native_value *args,qa_native
             }
             if (!ok || value < 0) break;
         }
-        free(bytes); uint64_t items = size ? completed/size : 0;
+        qa_arena_destroy(&scratch); uint64_t items = size ? completed/size : 0;
         if (out->type == QA_NATIVE_U32) out->as.u32 = (uint32_t)items; else out->as.u64 = items;
         return ok;
     }

@@ -418,14 +418,15 @@ static bool file_operation(windows_service *service, const qa_native_value *args
             if (integer(args + 3) && !windows_write(owner, integer(args + 3), 4, 0, error)) return false;
             result(out, QA_NATIVE_I32, 1); return true;
         }
-        uint8_t *bytes = requested ? malloc(requested) : NULL;
-        if (requested && !bytes) return guest_fail(error, QA_ERROR_MEMORY, 0, "staging Windows file bytes");
+        qa_arena scratch; qa_arena_init_pool(&scratch, &owner->guest->scratch_pages);
+        uint8_t *bytes = requested ? qa_arena_alloc(&scratch, requested, 1, error) : NULL;
+        if (requested && !bytes) { qa_arena_destroy(&scratch); return false; }
         size_t completed = 0; bool okay;
         if (operation == K_FILE_WRITE) {
-            if (!integer(args + 1)) { free(bytes); return guest_fail(error,QA_ERROR_ARGUMENT,0,"Windows file write source is null"); }
+            if (!integer(args + 1)) { qa_arena_destroy(&scratch); return guest_fail(error,QA_ERROR_ARGUMENT,0,"Windows file write source is null"); }
             okay = qa_native_guest_read(owner->guest, integer(args + 1), bytes, requested, error);
-            if (okay && handle->stream == 0) { free(bytes); return invalid_result(owner,out,QA_NATIVE_I32,5,0,error); }
-            if (okay && handle->stream >= 0 && !stream->id) { free(bytes); return invalid_result(owner,out,QA_NATIVE_I32,6,0,error); }
+            if (okay && handle->stream == 0) { qa_arena_destroy(&scratch); return invalid_result(owner,out,QA_NATIVE_I32,5,0,error); }
+            if (okay && handle->stream >= 0 && !stream->id) { qa_arena_destroy(&scratch); return invalid_result(owner,out,QA_NATIVE_I32,6,0,error); }
             if (okay && handle->stream >= 0) {
                 okay = stream->write(stream->context,(qa_bytes){bytes,requested},error);
                 if (okay) completed = requested;
@@ -433,7 +434,7 @@ static bool file_operation(windows_service *service, const qa_native_value *args
         } else {
             okay = handle->stream >= 0 ? stream->read(stream->context,bytes,requested,&completed,error) :
                 guest_runtime_resources_read(owner->resources, address, bytes, requested, &completed, error);
-            if (completed > requested) { free(bytes); return guest_fail(error,QA_ERROR_FORMAT,address,"Windows stream exceeded requested read length"); }
+            if (completed > requested) { qa_arena_destroy(&scratch); return guest_fail(error,QA_ERROR_FORMAT,address,"Windows stream exceeded requested read length"); }
             /* Preserve actual completed host bytes even when its callback fails. */
             qa_error failure = error ? *error : (qa_error){0};
             bool written = integer(args + 1) ? !completed ||
@@ -443,13 +444,13 @@ static bool file_operation(windows_service *service, const qa_native_value *args
                 qa_error destination_failure = error ? *error : (qa_error){0};
                 bool retained = handle->stream >= 0 ||
                     guest_runtime_resources_seek(owner->resources,address,view.offset,error);
-                free(bytes);
+                qa_arena_destroy(&scratch);
                 if (retained && error) *error = destination_failure;
                 return false;
             }
             if (!okay && error) *error = failure;
         }
-        free(bytes);
+        qa_arena_destroy(&scratch);
         if (completed && handle->stream >= 0) {
             if (completed > UINT64_MAX - handle->stream_offset)
                 return guest_fail(error,QA_ERROR_UNSUPPORTED,address,"Windows stream byte count overflows");
@@ -678,32 +679,34 @@ static bool locale_operation(windows_service *service, const qa_native_value *ar
     uint16_t *units = NULL; uint8_t *bytes = NULL; size_t length = 0; bool output_wide = operation == K_MULTI_WIDE || operation == K_MAP_W;
     UErrorCode status = U_ZERO_ERROR; bool used_default = false;
     if (operation == K_MULTI_WIDE && cp == 65001) {
-        bytes = malloc(source_count ? source_count : 1);
+        bytes = qa_arena_alloc(&scratch, source_count ? source_count : 1, 1, error);
         if (!bytes) { qa_arena_destroy(&scratch); return guest_fail(error, QA_ERROR_MEMORY, 0, "staging Windows UTF-8 input"); }
         for (size_t i = 0; i < source_count; ++i) bytes[i] = (uint8_t)source[i];
         int32_t needed = 0;
         u_strFromUTF8WithSub(NULL, 0, &needed, (const char *)bytes, (int32_t)source_count, 0xfffd, NULL, &status);
-        if (status != U_BUFFER_OVERFLOW_ERROR && U_FAILURE(status)) { qa_arena_destroy(&scratch); free(bytes); return guest_fail(error, QA_ERROR_FORMAT, 0, "Windows UTF-8 conversion failed"); }
-        units = calloc((size_t)needed + 1, 2); status = U_ZERO_ERROR;
-        if (!units) { qa_arena_destroy(&scratch); free(bytes); return guest_fail(error, QA_ERROR_MEMORY, 0, "encoding Windows UTF-16 output"); }
+        if (status != U_BUFFER_OVERFLOW_ERROR && U_FAILURE(status)) { qa_arena_destroy(&scratch); return guest_fail(error, QA_ERROR_FORMAT, 0, "Windows UTF-8 conversion failed"); }
+        units = qa_arena_alloc(&scratch, ((size_t)needed + 1) * sizeof(*units), _Alignof(uint16_t), error); status = U_ZERO_ERROR;
+        if (!units) { qa_arena_destroy(&scratch); return guest_fail(error, QA_ERROR_MEMORY, 0, "encoding Windows UTF-16 output"); }
+        memset(units, 0, ((size_t)needed + 1) * sizeof(*units));
         u_strFromUTF8WithSub(units, needed + 1, &needed, (const char *)bytes, (int32_t)source_count, 0xfffd, NULL, &status);
-        length = (size_t)needed; free(bytes); bytes = NULL;
+        length = (size_t)needed; bytes = NULL;
         /* TextDecoder consumes an initial UTF-8 BOM. */
         if (length && units[0] == 0xfeff) { memmove(units, units + 1, --length * 2); }
     } else if (operation == K_MULTI_WIDE) {
-        units = calloc(source_count + 1, 2);
+        units = qa_arena_alloc(&scratch, (source_count + 1) * sizeof(*units), _Alignof(uint16_t), error);
         if (!units) { qa_arena_destroy(&scratch); return guest_fail(error, QA_ERROR_MEMORY, 0, "encoding Windows code page output"); }
+        memset(units, 0, (source_count + 1) * sizeof(*units));
         length = source_count;
         for (size_t i = 0; i < length; ++i) units[i] = source[i] >= 128 && source[i] < 160 ? cp1252[source[i] - 128] : source[i];
     } else if (operation == K_WIDE_MULTI && cp == 65001) {
         int32_t needed = 0;
         u_strToUTF8WithSub(NULL, 0, &needed, source, (int32_t)source_count, 0xfffd, NULL, &status);
         if (status != U_BUFFER_OVERFLOW_ERROR && U_FAILURE(status)) { qa_arena_destroy(&scratch); return guest_fail(error, QA_ERROR_FORMAT, 0, "Windows UTF-16 conversion failed"); }
-        bytes = malloc((size_t)needed + 1); status = U_ZERO_ERROR;
+        bytes = qa_arena_alloc(&scratch, (size_t)needed + 1, 1, error); status = U_ZERO_ERROR;
         if (!bytes) { qa_arena_destroy(&scratch); return guest_fail(error, QA_ERROR_MEMORY, 0, "encoding Windows UTF-8 output"); }
         u_strToUTF8WithSub((char *)bytes, needed + 1, &needed, source, (int32_t)source_count, 0xfffd, NULL, &status); length = (size_t)needed;
     } else if (operation == K_WIDE_MULTI) {
-        bytes = malloc(source_count ? source_count : 1);
+        bytes = qa_arena_alloc(&scratch, source_count ? source_count : 1, 1, error);
         if (!bytes) { qa_arena_destroy(&scratch); return guest_fail(error, QA_ERROR_MEMORY, 0, "encoding Windows narrow output"); }
         for (size_t i = 0; i < source_count; ++i) {
             uint16_t c = source[i]; int converted = c < 128 || (c >= 160 && c <= 255) ? c : -1;
@@ -717,30 +720,30 @@ static bool locale_operation(windows_service *service, const qa_native_value *ar
         int32_t needed = flags == 0x100 ? u_strToLower(NULL, 0, source, (int32_t)source_count, "", &status) :
             u_strToUpper(NULL, 0, source, (int32_t)source_count, "", &status);
         if (status != U_BUFFER_OVERFLOW_ERROR && U_FAILURE(status)) { qa_arena_destroy(&scratch); return guest_fail(error, QA_ERROR_FORMAT, 0, "Windows Unicode case conversion failed"); }
-        units = calloc((size_t)needed + 1, 2); status = U_ZERO_ERROR;
+        units = qa_arena_alloc(&scratch, ((size_t)needed + 1) * sizeof(*units), _Alignof(uint16_t), error); status = U_ZERO_ERROR;
         if (!units) { qa_arena_destroy(&scratch); return guest_fail(error, QA_ERROR_MEMORY, 0, "encoding Windows mapped text"); }
+        memset(units, 0, ((size_t)needed + 1) * sizeof(*units));
         if (flags == 0x100) u_strToLower(units, needed + 1, source, (int32_t)source_count, "", &status);
         else u_strToUpper(units, needed + 1, source, (int32_t)source_count, "", &status);
         length = (size_t)needed;
         if (!output_wide) {
-            bytes = malloc(length ? length : 1);
-            if (!bytes) { qa_arena_destroy(&scratch); free(units); return guest_fail(error, QA_ERROR_MEMORY, 0, "encoding Windows mapped bytes"); }
+            bytes = qa_arena_alloc(&scratch, length ? length : 1, 1, error);
+            if (!bytes) { qa_arena_destroy(&scratch); return guest_fail(error, QA_ERROR_MEMORY, 0, "encoding Windows mapped bytes"); }
             for (size_t i = 0; i < length; ++i) bytes[i] = (uint8_t)units[i];
         }
     }
-    qa_arena_destroy(&scratch);
-    if (U_FAILURE(status)) { free(units); free(bytes); return guest_fail(error, QA_ERROR_FORMAT, 0, "Windows text conversion failed"); }
-    if (operation == K_WIDE_MULTI && integer(args + 7) && !windows_write(owner, integer(args + 7), 4, used_default, error)) { free(units); free(bytes); return false; }
+    if (U_FAILURE(status)) { qa_arena_destroy(&scratch); return guest_fail(error, QA_ERROR_FORMAT, 0, "Windows text conversion failed"); }
+    if (operation == K_WIDE_MULTI && integer(args + 7) && !windows_write(owner, integer(args + 7), 4, used_default, error)) { qa_arena_destroy(&scratch); return false; }
     int32_t capacity = args[5].as.i32; uint64_t output = integer(args + 4);
     if (capacity != 0 && (!output || capacity < 0 || (size_t)capacity < length)) {
-        free(units); free(bytes); return invalid_result(owner, out, QA_NATIVE_I32, 122, 0, error);
+        qa_arena_destroy(&scratch); return invalid_result(owner, out, QA_NATIVE_I32, 122, 0, error);
     }
     bool okay = true;
     if (capacity != 0) {
         if (output_wide) for (size_t i = 0; okay && i < length; ++i) okay = windows_write(owner, output + i * 2, 2, units[i], error);
         else okay = qa_native_guest_write(owner->guest, output, (qa_bytes){bytes, length}, error);
     }
-    free(units); free(bytes); result(out, QA_NATIVE_I32, length); return okay;
+    qa_arena_destroy(&scratch); result(out, QA_NATIVE_I32, length); return okay;
 }
 
 bool windows_kernel_invoke(windows_service *service, const qa_native_value *args,
@@ -840,14 +843,16 @@ bool windows_kernel_invoke(windows_service *service, const qa_native_value *args
         if (!capacity) return invalid_result(owner, out, type, 122, 0, error);
         UErrorCode status = U_ZERO_ERROR; int32_t needed = 0;
         u_strFromUTF8(NULL, 0, &needed, name, -1, &status);
-        uint16_t *text = calloc((size_t)needed + 1, 2);
-        if (!text) return guest_fail(error, QA_ERROR_MEMORY, 0, "encoding Windows module filename");
+        qa_arena scratch; qa_arena_init_pool(&scratch, &owner->guest->scratch_pages);
+        uint16_t *text = qa_arena_alloc(&scratch, ((size_t)needed + 1) * sizeof(*text), _Alignof(uint16_t), error);
+        if (!text) { qa_arena_destroy(&scratch); return false; }
+        memset(text, 0, ((size_t)needed + 1) * sizeof(*text));
         status = U_ZERO_ERROR; u_strFromUTF8(text, needed + 1, NULL, name, -1, &status);
-        if (U_FAILURE(status)) { free(text); return guest_fail(error, QA_ERROR_FORMAT, 0, "Windows module filename is invalid UTF-8"); }
+        if (U_FAILURE(status)) { qa_arena_destroy(&scratch); return guest_fail(error, QA_ERROR_FORMAT, 0, "Windows module filename is invalid UTF-8"); }
         size_t copied = (size_t)needed < capacity ? (size_t)needed : capacity - 1, unit = operation == K_FILENAME_W ? 2 : 1;
         bool okay = true;
         for (size_t i = 0; okay && i < copied; ++i) okay = windows_write(owner, b + i * unit, unit, text[i], error);
-        free(text); if (!okay || !windows_write(owner, b + copied * unit, unit, 0, error)) return false;
+        qa_arena_destroy(&scratch); if (!okay || !windows_write(owner, b + copied * unit, unit, 0, error)) return false;
         if ((size_t)needed >= capacity) return invalid_result(owner, out, type, 122, capacity, error);
         result(out, type, (size_t)needed); return true;
     }
@@ -873,11 +878,12 @@ bool windows_kernel_invoke(windows_service *service, const qa_native_value *args
         if (b & 16) return true;
         if (!windows_allocate(owner, bytes, a, &value, error)) return false;
         if (value) {
-            uint8_t *data = malloc((size_t)previous);
-            if (!data) return guest_fail(error, QA_ERROR_MEMORY, 0, "copying Windows heap reallocation");
+            qa_arena scratch; qa_arena_init_pool(&scratch, &owner->guest->scratch_pages);
+            uint8_t *data = qa_arena_alloc(&scratch, (size_t)previous, 1, error);
+            if (!data) { qa_arena_destroy(&scratch); return false; }
             bool okay = qa_native_guest_read(owner->guest, old, data, (size_t)previous, error) &&
                 qa_native_guest_write(owner->guest, value, (qa_bytes){data, (size_t)previous}, error) && windows_free(owner, old, a, error);
-            free(data); if (!okay) return false;
+            qa_arena_destroy(&scratch); if (!okay) return false;
         }
         result(out, type, value); return true;
     }
