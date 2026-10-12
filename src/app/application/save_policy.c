@@ -101,11 +101,10 @@ static bool native_q2_player(application_provider *source,qa_actor_id actor,floa
     bool *intermission,qa_error *error)
 {
     struct application_native_q2 *engine=source->state.native.q2_engine;
-    uint32_t slot=0;
-    for(uint32_t i=1;engine && i<257;++i)
-        if(engine->clients[i].connected && engine->clients[i].begun && !engine->clients[i].disconnect_started &&
-           qa_actor_id_equal(engine->clients[i].actor,actor)) {slot=i;break;}
-    if(!slot || !engine->initialized || engine->baseline || engine->shutting_down || !source->state.native.host)
+    uint32_t slot=application_native_q2_client_slot(engine,actor);
+    if(!slot || !engine->clients[slot].connected || !engine->clients[slot].begun ||
+        engine->clients[slot].disconnect_started || !engine->initialized || engine->baseline ||
+        engine->shutting_down || !source->state.native.host)
         return application_fail(error,QA_ERROR_NOT_FOUND,"Save policy lost its actual original Q2 player state");
     bool classic=engine->profile==QA_NATIVE_Q2_GAME_API3;
     if(!classic && engine->profile!=QA_NATIVE_Q2_GAME_API2023)

@@ -53,12 +53,30 @@ void frontend_q1_sky_selection_free(frontend_q1_sky_selection *selection)
     for (unsigned i = 0; i < 6; ++i) qa_scene_image_release(selection->images[i]);
     free(selection->name); free(selection);
 }
+static frontend_q1_sky_selection *recipient_selection(const frontend_q1_sky *owner, qa_actor_id recipient)
+{
+    size_t value;
+    return qa_actor_index_find_retained(&owner->recipients, recipient, &value) ?
+        (frontend_q1_sky_selection *)(uintptr_t)value : NULL;
+}
+static void retained_free(frontend_q1_sky *owner, frontend_q1_sky_selection *row)
+{
+    if (row->recipient.registry) {
+        if (recipient_selection(owner, row->recipient) == row)
+            qa_actor_index_forget_retained(&owner->recipients, row->recipient);
+    } else if (owner->shared == row) {
+        owner->shared = NULL;
+        for (frontend_q1_sky_selection *shared = owner->retained; shared; shared = shared->next)
+            if (!shared->recipient.registry) owner->shared = shared;
+    }
+    frontend_q1_sky_selection_free(row);
+}
 static void clear(frontend_q1_sky *owner)
 {
     frontend_q1_sky_selection_free(owner->baseline); owner->baseline = NULL;
     while (owner->retained) {
         frontend_q1_sky_selection *row = owner->retained;
-        owner->retained = row->next; frontend_q1_sky_selection_free(row);
+        owner->retained = row->next; retained_free(owner, row);
     }
     qa_resource_release(owner->map); owner->map = NULL; owner->map_bank = NULL;
     owner->map_revision = 0; owner->q1_map = false; owner->map_fog = false;
@@ -71,7 +89,7 @@ static void prune(frontend_q1_sky *owner)
         frontend_q1_sky_selection *row = *link;
         if ((row->provider && !qa_application_provider_instance(owner->application, row->provider)) ||
             (row->recipient.registry && !qa_actors_get(actors, row->recipient))) {
-            *link = row->next; frontend_q1_sky_selection_free(row);
+            *link = row->next; retained_free(owner, row);
         } else link = &row->next;
     }
 }
@@ -130,6 +148,10 @@ bool frontend_q1_sky_create(qa_frontend *frontend, frontend_q1_sky **out, qa_err
     frontend_q1_sky_controls_bind(registry, &owner->controls);
     const qa_cvar_view *fog = qa_cvars_read(registry, owner->controls.fog);
     if (!fog || !isfinite(fog->number)) { free(owner); return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 sky lost its actual canonical fog control"); }
+    if (!qa_actor_index_create(&owner->recipients,
+        qa_world_actors(qa_application_world(owner->application)), NULL, error)) {
+        free(owner); return false;
+    }
     owner->fog = fog->number; owner->fog_modification = fog->modification_count;
     *out = owner; return true;
 }
@@ -137,7 +159,7 @@ bool frontend_q1_sky_destroy(frontend_q1_sky **out, qa_error *error)
 {
     if (!out || !*out) return true;
     if (!frontend_q1_sky_idle(*out)) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 sky retirement retains its actual prepared owner");
-    clear(*out); free(*out); *out = NULL; return true;
+    clear(*out); qa_actor_index_destroy(&(*out)->recipients); free(*out); *out = NULL; return true;
 }
 bool frontend_q1_sky_map(frontend_q1_sky *owner, qa_error *error)
 {
@@ -196,7 +218,7 @@ bool frontend_q1_sky_map(frontend_q1_sky *owner, qa_error *error)
     frontend_q1_sky_selection **link = &owner->retained;
     while (*link) {
         if (!(*link)->provider || (*link)->map_revision != frontend->map_revision) {
-            frontend_q1_sky_selection *row = *link; *link = row->next; frontend_q1_sky_selection_free(row);
+            frontend_q1_sky_selection *row = *link; *link = row->next; retained_free(owner, row);
         } else link = &(*link)->next;
     }
     frontend_q1_sky_selection_free(owner->baseline); qa_resource_release(owner->map);
@@ -224,10 +246,18 @@ static bool receive(frontend_q1_sky *owner, qa_actor_owner provider, qa_actor_id
         frontend_q1_sky_selection_free(row);
         return ok ? frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 sky source retired during image admission") : false;
     }
+    frontend_q1_sky_selection *previous = recipient_selection(owner, recipient);
+    if (!recipient.registry) for (frontend_q1_sky_selection *shared = owner->retained; shared; shared = shared->next)
+        if (qa_actor_id_equal(shared->recipient, recipient)) { previous = shared; break; }
+    if (recipient.registry) {
+        if (!qa_actor_index_remember(&owner->recipients, recipient, (size_t)(uintptr_t)row, error)) {
+            frontend_q1_sky_selection_free(row); return false;
+        }
+    } else owner->shared = row;
     frontend_q1_sky_selection **link = &owner->retained;
     while (*link) {
-        if (qa_actor_id_equal((*link)->recipient, recipient)) {
-            frontend_q1_sky_selection *old = *link; *link = old->next; frontend_q1_sky_selection_free(old); break;
+        if (*link == previous) {
+            *link = previous->next; retained_free(owner, previous); break;
         }
         link = &(*link)->next;
     }
@@ -256,12 +286,9 @@ bool frontend_q1_sky_command(frontend_q1_sky *owner, const char *name, qa_error 
 }
 const frontend_q1_sky_selection *frontend_q1_sky_selected(const frontend_q1_sky *owner, qa_actor_id actor)
 {
-    const frontend_q1_sky_selection *shared = owner->baseline, *private = NULL;
-    for (const frontend_q1_sky_selection *row = owner->retained; row; row = row->next) {
-        if (!row->recipient.registry) { shared = row; private = NULL; }
-        else if (qa_actor_id_equal(row->recipient, actor)) private = row;
-    }
-    return private ? private : shared;
+    const frontend_q1_sky_selection *shared = owner->shared ? owner->shared : owner->baseline;
+    const frontend_q1_sky_selection *private = recipient_selection(owner, actor);
+    return private && (!shared || private->sequence > shared->sequence) ? private : shared;
 }
 bool frontend_q1_sky_name(const frontend_q1_sky *owner, qa_actor_id actor, const char **out, qa_error *error)
 {
@@ -279,7 +306,7 @@ bool frontend_q1_sky_retire_provider(frontend_q1_sky *owner, qa_actor_owner prov
     frontend_q1_sky_selection **link = &owner->retained;
     while (*link) {
         if ((*link)->provider == provider) {
-            frontend_q1_sky_selection *row = *link; *link = row->next; frontend_q1_sky_selection_free(row);
+            frontend_q1_sky_selection *row = *link; *link = row->next; retained_free(owner, row);
         } else link = &(*link)->next;
     }
     return true;
@@ -288,11 +315,11 @@ bool frontend_q1_sky_retire_actor(frontend_q1_sky *owner, qa_actor_id actor, qa_
 {
     if (!frontend_q1_sky_idle(owner) || !actor.registry || owner->frontend->capture || owner->frontend->resource_inventory)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 sky client retirement retains an active owner");
-    frontend_q1_sky_selection **link = &owner->retained;
-    while (*link) {
-        if (qa_actor_id_equal((*link)->recipient, actor)) {
-            frontend_q1_sky_selection *row = *link; *link = row->next; frontend_q1_sky_selection_free(row);
-        } else link = &(*link)->next;
+    frontend_q1_sky_selection *row = recipient_selection(owner, actor);
+    if (row) {
+        frontend_q1_sky_selection **link = &owner->retained;
+        while (*link != row) link = &(*link)->next;
+        *link = row->next; retained_free(owner, row);
     }
     return true;
 }

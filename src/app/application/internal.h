@@ -157,7 +157,6 @@ typedef struct application_motion_record {
 } application_motion_record;
 
 typedef struct application_actor_routes {
-    qa_actor_id actor;
     qa_actor_owner owner;
     qa_actor_definition definition;
     application_provider *source;
@@ -398,7 +397,7 @@ struct qa_application {
     application_motion_record *motion;
     uint32_t motion_capacity;
     application_actor_routes *actor_routes;
-    uint32_t actor_route_capacity;
+    qa_actor_index actor_route_index;
     const qa_launch_snapshot *actor_route_snapshot;
     application_control_record *controls;
     struct application_control_frames *control_frames;

@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `ee9d392f`.
+Follow-up source changes were reviewed through main `e45c4387`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 222 have source fixes
+There are **374 overlapping source-review observations**: 224 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 149 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 147 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -418,3 +418,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `f39b89c5` / 02-03, 30-03: Guest selected weapons use retained canonical IDs; one Q1 admission binder also serves builtin names/models. Existing Q3 Cvar_Update overlap rechecked: typed handles and inline ABI projections already replaced warm name routing/private heap mirrors. Required alias-value comparison remains. Operation hook records now use common pool/arena, with honest new-demand growth. Normal build and seven core suites pass. Records: `/tmp/qa-ta3196-admitted-weapon-ids-operation-storage-20261012-v1`.
 
 - `ee9d392f` / J19-F04, J19-F05, J19-F06: Indexed Q1 target traversal and retained endpoint/class IDs replace the listed private scans; source order and snapshot lifetime remain unchanged. Normal build and seven core suites passed; no live or speed claim. Records: `/tmp/qa-ta3196-q1-indexed-targets-rune-storage-20261012-v1`.
+
+- `e45c4387` / J24-06, J24-08: Q3 fixed sound/index and spawnpoint consumers use retained canonical IDs with configstring revision invalidation; original first-use ordinals and spawn policies are preserved. Normal build and seven core suites passed; no live or performance claim. Records: `/tmp/qa-ta3196-q3-bound-sounds-spawn-ids-20261012-v1`.

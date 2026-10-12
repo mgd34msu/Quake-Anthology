@@ -287,17 +287,20 @@ static const qa_launch_binding *selected_binding(qa_application *application,
 
 void application_actor_routes_clear(qa_application *application)
 {
+    qa_actor_index_clear(&application->actor_route_index);
     if (application->actor_routes != NULL)
         memset(application->actor_routes, 0,
-               application->actor_route_capacity * sizeof(*application->actor_routes));
+               application->actor_route_index.capacity * sizeof(*application->actor_routes));
     application->actor_route_snapshot = NULL;
 }
 
 void application_actor_routes_invalidate(qa_application *application, qa_actor_id actor)
 {
-    if (actor.slot < application->actor_route_capacity &&
-        qa_actor_id_equal(application->actor_routes[actor.slot].actor, actor))
-        application->actor_routes[actor.slot] = (application_actor_routes){0};
+    size_t row;
+    if (qa_actor_index_find(&application->actor_route_index,actor,&row)) {
+        application->actor_routes[row]=(application_actor_routes){0};
+        qa_actor_index_remove(&application->actor_route_index,actor);
+    }
 }
 
 static bool published_routing(const qa_application *application,
@@ -315,7 +318,7 @@ static const application_actor_routes *actor_routes(qa_application *application,
 {
     if ((selector != NULL && *selector != '\0') ||
         !published_routing(application, snapshot) ||
-        actor.slot >= application->actor_route_capacity)
+        actor.slot >= application->actor_route_index.capacity)
         return NULL;
     const qa_actor_record *record =
         qa_actors_get(qa_session_actors(application->session), actor);
@@ -325,11 +328,15 @@ static const application_actor_routes *actor_routes(qa_application *application,
         application_actor_routes_clear(application);
         application->actor_route_snapshot = snapshot;
     }
-    application_actor_routes *routes = &application->actor_routes[actor.slot];
-    if (!qa_actor_id_equal(routes->actor, actor) || routes->owner != record->owner ||
-        routes->definition != record->definition)
-        *routes = (application_actor_routes){.actor = actor,
-            .owner = record->owner, .definition = record->definition};
+    size_t row;
+    bool bound=qa_actor_index_find(&application->actor_route_index,actor,&row);
+    if (!bound) {
+        row=actor.slot;
+        qa_actor_index_put(&application->actor_route_index,actor,row);
+    }
+    application_actor_routes *routes=&application->actor_routes[row];
+    if (!bound || routes->owner!=record->owner || routes->definition!=record->definition)
+        *routes=(application_actor_routes){.owner=record->owner,.definition=record->definition};
     if (routes->ready)
         return routes;
     if (routes->resolving)
@@ -344,7 +351,7 @@ static const application_actor_routes *actor_routes(qa_application *application,
     application_provider *source = source_record ? provider_owned(application, source_record->owner) : NULL;
     const qa_launch_instance *source_instance = source && source->launch ?
         qa_launch_snapshot_find(snapshot, source->launch->selection.instance) : NULL;
-    application_actor_routes prepared = {.actor = actor,
+    application_actor_routes prepared = {
         .owner = routes->owner, .definition = routes->definition, .source = source, .ready = true};
     for (unsigned role = 0; role < QA_ROLE_COUNT; ++role) {
         prepared.providers[role] = bindings[role] ?
@@ -353,9 +360,11 @@ static const application_actor_routes *actor_routes(qa_application *application,
             qa_launch_snapshot_find(snapshot, bindings[role]->instance) : source_instance;
     }
     record = qa_actors_get(qa_session_actors(application->session), actor);
+    size_t current_row;
     if (!published_routing(application, snapshot) ||
         application->actor_route_snapshot != snapshot ||
-        !qa_actor_id_equal(routes->actor, actor) || !routes->resolving ||
+        !qa_actor_index_find(&application->actor_route_index,actor,&current_row) ||
+        current_row!=row || !routes->resolving ||
         record == NULL || record->owner != prepared.owner ||
         record->definition != prepared.definition) {
         application_actor_routes_invalidate(application, actor);

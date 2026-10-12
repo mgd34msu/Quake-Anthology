@@ -22,7 +22,8 @@ struct frontend_q1_sky {
     uint64_t map_revision, next_sequence, fog_modification;
     float fog;
     bool q1_map, map_fog, busy;
-    frontend_q1_sky_selection *baseline, *retained;
+    frontend_q1_sky_selection *baseline, *retained, *shared;
+    qa_actor_index recipients;
     frontend_q1_sky_policy *pending;
 };
 bool frontend_q1_sky_current(const frontend_q1_sky *);

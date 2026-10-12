@@ -3,6 +3,7 @@
 #include "qa/game_q1_bots.h"
 #include "qa/game_q3_source.h"
 #include "qa/qc_visual.h"
+#include "qa/qc_observation.h"
 #include <math.h>
 
 static bool ready(const qa_application *app)
@@ -48,16 +49,17 @@ static bool original_visual(application_provider *source, qa_actor_id actor,
         bool source_intermission;
         if (!application_source_intermission_read(source, &source_intermission, error)) return false;
         *intermission |= source_intermission;
-        for (uint32_t slot = 1; slot < qa_qc_entity_count(instance); ++slot) {
-            qa_qc_slot_binding binding;
-            if (!qa_qc_slot(instance, slot, &binding))
-                return application_fail(error, QA_ERROR_FORMAT, "Quake character physical row is missing");
-            if (binding.kind == QA_QC_SLOT_FREE || !qa_actor_id_equal(binding.actor, actor)) continue;
+        uint32_t slot=0; qa_error observation={0};
+        if (!qa_qc_actor_observation_slot(instance,actor,&slot,&observation)) {
+            if (observation.code!=QA_ERROR_NOT_FOUND || observation.offset!=0) {
+                if (error) *error=observation;
+                return false;
+            }
+        } else {
             qa_qc_visual visual;
             if (!qa_qc_visual_read(instance, slot, actor, &visual, error)) return false;
             *scale = visual.scale == 0 ? 1 : visual.scale;
             *opacity = visual.alpha == 0 ? 1 : fmaxf(0, fminf(1, visual.alpha));
-            break;
         }
     }
     return true;

@@ -26,9 +26,7 @@ static qa_vec3 vec(const float v[3]) { return qa_v3(v[0], v[1], v[2]); }
 
 static uint32_t player_slot(const q2_projection *p, qa_actor_id target)
 {
-    for (uint32_t slot = 1; slot <= 256; ++slot)
-        if (target.registry && qa_actor_id_equal(p->engine->clients[slot].actor, target)) return slot;
-    return 0;
+    return application_native_q2_client_slot(p->engine,target);
 }
 
 static bool reference_actor(const q2_projection *p, uint32_t slot, size_t relative_offset, qa_actor_id *out)

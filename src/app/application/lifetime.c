@@ -369,6 +369,7 @@ bool application_finalize(qa_application *application, qa_error *error)
     free(application->mode_ids);
     free(application->motion);
     free(application->actor_routes);
+    qa_actor_index_destroy(&application->actor_route_index);
     if (application->controls != NULL)
         for (uint32_t slot = 0; slot < application->control_capacity; ++slot)
             qa_movement_result_free(&application->controls[slot].result);

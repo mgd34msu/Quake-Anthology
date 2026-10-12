@@ -23,18 +23,14 @@ static bool physical_player(qa_application *app, const application_unified_q2_so
     struct application_native_q2 **out, qa_q2_player *state, qa_error *e)
 {
     struct application_native_q2 *native = engine(app, v);
-    uint32_t slot = v->player.source_slot;
-    if (!native || !slot || slot > 256 || slot > v->source.max_clients ||
+    uint32_t slot = application_native_q2_client_slot(native,v->player.actor);
+    if (!native || !slot || slot != v->player.source_slot || slot > 256 || slot > v->source.max_clients ||
         v->player.source_owner != v->source.owner)
         return application_fail(e, QA_ERROR_ARGUMENT, "Unified Q2 HUD lost its physical Source client");
     const application_native_q2_client *client = native->clients + slot;
     if (!client->connected || !client->begun || client->bot || client->disconnect_started ||
         !qa_actor_id_equal(client->actor, v->player.actor))
         return application_fail(e, QA_ERROR_ARGUMENT, "Unified Q2 HUD lost its admitted remote full actor");
-    for (uint32_t other = 1; other <= 256; ++other)
-        if (other != slot && native->clients[other].connected &&
-            qa_actor_id_equal(native->clients[other].actor, v->player.actor))
-            return application_fail(e, QA_ERROR_FORMAT, "Unified Q2 HUD actor aliases physical client slots");
     qa_native_host_q2_entity entity;
     qa_native_host *host = (qa_native_host *)v->physical.source.original.host;
     if (!qa_native_host_q2_wire_entity(host, slot, &entity, e)) return false;

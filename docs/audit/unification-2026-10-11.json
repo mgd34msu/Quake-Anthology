@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "ee9d392f7d0724a028bcf558c6deb7aed1255fcb",
+  "verified_main": "e45c4387f08ffb7eef73036f56c462ff5318e37c",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 222,
-    "open_source_observation": 149,
+    "fixed_source_build_core": 224,
+    "open_source_observation": 147,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -33822,8 +33822,9 @@
       "severity": "medium",
       "job": "24",
       "area": "gameplay_q3",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "e45c4387f08ffb7eef73036f56c462ff5318e37c"
     },
     {
       "id": "J24-07",
@@ -33903,8 +33904,9 @@
       "severity": "low",
       "job": "24",
       "area": "gameplay_q3",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "e45c4387f08ffb7eef73036f56c462ff5318e37c"
     },
     {
       "id": "J24-09",
@@ -43231,6 +43233,42 @@
       ],
       "record_directory": "/tmp/qa-ta3196-q1-indexed-targets-rune-storage-20261012-v1",
       "conclusion": "Indexed Q1 target traversal and retained endpoint/class IDs replace the listed private scans; source order and snapshot lifetime remain unchanged. Normal build and seven core suites passed; no live or speed claim."
+    },
+    {
+      "commit": "e45c4387f08ffb7eef73036f56c462ff5318e37c",
+      "source_tree": "5dc3384b4a345e2dbddcae6882d2a749bc146c4d",
+      "finding_ids": [
+        "J24-06",
+        "J24-08"
+      ],
+      "files_rechecked": [
+        "src/app/application/map_players.c",
+        "src/gameplay/q3/configstrings.c",
+        "src/gameplay/q3/feedback.c",
+        "src/gameplay/q3/game.c",
+        "src/gameplay/q3/internal.h",
+        "src/gameplay/q3/items.c",
+        "src/gameplay/q3/map/items.c",
+        "src/gameplay/q3/map/movers.c",
+        "src/gameplay/q3/map/runtime.c",
+        "src/gameplay/q3/map/targets.c",
+        "src/gameplay/q3/map/triggers.c",
+        "src/gameplay/q3/player.c",
+        "src/gameplay/q3/source_entities.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-q3-bound-sounds-spawn-ids-20261012-v1",
+      "conclusion": "Q3 fixed sound/index and spawnpoint consumers use retained canonical IDs with configstring revision invalidation; original first-use ordinals and spawn policies are preserved. Normal build and seven core suites passed; no live or performance claim."
     }
   ],
   "verification_limits": [

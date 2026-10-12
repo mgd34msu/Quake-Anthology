@@ -246,12 +246,12 @@ static bool source_capture(qa_unified_q3_source *out, application_unified_q3_sou
     out->product = r->product; out->server_time = r->time; out->level_start = r->level_start;
     out->game_type = r->game_type; out->max_clients = r->clients; out->snapshot_bit = r->snapshot_bit;
     out->viewer = v->player.actor;
-    for (uint32_t i = 0; i < r->clients; ++i) {
+    uint32_t client_slot;
+    if (qa_q3_native_client_slot(r->game,v->player.actor,&client_slot,NULL)) {
         qa_q3_source_binding binding;
-        if (!qa_q3_source_binding_read(r->game, i, &binding, e)) return false;
-        if (binding.in_use && qa_actor_id_equal(binding.actor, v->player.actor)) {
-            if (out->has_client) return application_fail(e, QA_ERROR_FORMAT, "Compiled Q3 recipient has duplicate physical client bindings");
-            out->has_client = true; out->client_number = i;
+        if (!qa_q3_source_binding_read(r->game,client_slot,&binding,e)) return false;
+        if (binding.in_use && qa_actor_id_equal(binding.actor,v->player.actor)) {
+            out->has_client=true; out->client_number=client_slot;
         }
     }
     out->entities = qa_unified_frame_lease_alloc(v->lease, r->entities, sizeof(*out->entities),

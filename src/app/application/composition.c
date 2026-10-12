@@ -113,7 +113,8 @@ bool application_composition_create(qa_application *application,
         return application_fail(error, QA_ERROR_MEMORY,
                                 "cannot allocate application movement state");
     application->motion_capacity = actor_capacity;
-    application->actor_route_capacity = actor_capacity;
+    if (!qa_actor_index_create(&application->actor_route_index,
+        qa_session_actors(application->session),NULL,error)) return false;
     application->control_capacity = actor_capacity;
     application->q2_visual_capacity = actor_capacity;
     if (!application_control_records_prepare(application->controls, actor_capacity, error)) return false;
