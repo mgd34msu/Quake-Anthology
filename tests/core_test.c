@@ -2236,6 +2236,34 @@ static bool shared_input_menu(void *user, qa_input_seat *seat, qa_input_focus fo
 
 static void test_shared_input_menu_defaults(void)
 {
+    qa_controller_selection a={.kind=QA_CONTROLLER_GUID,
+        .guid="AABBCCDDEEFF00112233445566778899",.ordinal=4};
+    qa_controller_selection b={.kind=QA_CONTROLLER_GUID,
+        .guid="aabbccddeeff00112233445566778899",.ordinal=4};
+    qa_controller_info device={.guid="aabbccddeeff00112233445566778899",
+        .ordinal=4,.serial="Unit-1"};
+    CHECK(qa_controller_selection_equal(&a,&b));
+    CHECK(qa_controller_selection_matches_device(&a,&device));
+    device.ordinal=5;
+    CHECK(!qa_controller_selection_matches_device(&a,&device));
+    b.ordinal=5;
+    CHECK(!qa_controller_selection_equal(&a,&b));
+    a.kind=b.kind=QA_CONTROLLER_SERIAL;
+    a.serial=b.serial="Unit-1";
+    CHECK(qa_controller_selection_equal(&a,&b));
+    CHECK(qa_controller_selection_matches_device(&a,&device));
+    b.serial="unit-1";
+    CHECK(!qa_controller_selection_equal(&a,&b));
+    device.serial=NULL;
+    CHECK(!qa_controller_selection_matches_device(&a,&device));
+    a.kind=b.kind=QA_CONTROLLER_AUTO;
+    CHECK(qa_controller_selection_equal(&a,&b));
+    CHECK(!qa_controller_selection_matches_device(&a,&device));
+    b.kind=QA_CONTROLLER_NONE;
+    CHECK(!qa_controller_selection_equal(&a,&b));
+    a.kind=QA_CONTROLLER_NONE;
+    CHECK(qa_controller_selection_equal(&a,&b));
+    CHECK(!qa_controller_selection_matches_device(&a,&device));
     qa_error error = {0};
     qa_cvars *cvars = qa_cvars_create(&(qa_cvar_options){.dialect = QA_RULESET_Q3,
         .side = QA_CVAR_SIDE_CLIENT}, &error);

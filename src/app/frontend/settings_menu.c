@@ -679,12 +679,6 @@ static bool audio_menu(void *context,uint32_t id,qa_ui_menu *out,qa_error *error
     frontend_seat *seat=context; (void)id; begin(seat);
     return audio_controls(seat,error) && finish(seat,FRONTEND_AUDIO_OPTIONS,"Audio",out,error,false);
 }
-static bool same_selection(const qa_controller_selection *left,const qa_controller_selection *right)
-{
-    return left->kind==right->kind && (left->kind==QA_CONTROLLER_AUTO || left->kind==QA_CONTROLLER_NONE ||
-        (!strcmp(left->guid,right->guid) && (left->kind==QA_CONTROLLER_GUID?left->ordinal==right->ordinal:
-            left->serial && right->serial && !strcmp(left->serial,right->serial))));
-}
 static bool primary_input_controls(frontend_seat *seat)
 {
     qa_frontend *f=seat->frontend; frontend_settings_menu *owner=seat->settings_menu;
@@ -782,7 +776,7 @@ static bool device_input_controls(frontend_seat *seat)
         size_t size=strlen(info.name)+32; char *label=cache(owner,size,1,1);
         if(!label) return false;
         snprintf(label,size,"%s (%u)",info.name,info.ordinal+1); labels[count]=label;
-        if(same_selection(&current,target)) selected=count,found=true;
+        if(qa_controller_selection_equal(&current,target)) selected=count,found=true;
         ++count;
     }
     if(!found) { selectors[count]=current; selectors[count].serial=current.serial?copy_text(owner,current.serial):NULL;

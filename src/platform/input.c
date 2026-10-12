@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "input_platform_private.h"
 #include "qa/input_platform_save.h"
+#include "qa/text.h"
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -279,16 +280,21 @@ static bool discover(qa_input_platform *p, int index, qa_error *error) {
     }
     return true;
 }
-static bool same_selection(const qa_controller_selection *a,const qa_controller_selection *b) {
-    return a->kind == b->kind && a->ordinal == b->ordinal &&
-        !memcmp(a->guid, b->guid, sizeof(a->guid)) &&
-        ((!a->serial && !b->serial) || (a->serial && b->serial && !strcmp(a->serial,b->serial)));
+static bool selection_identity_matches(const qa_controller_selection *selection,
+    const char *guid,unsigned ordinal,const char *serial) {
+    return qa_text_ascii_equal(selection->guid,guid) &&
+        (selection->kind==QA_CONTROLLER_GUID ? selection->ordinal==ordinal :
+            selection->serial && serial && !strcmp(selection->serial,serial));
 }
-static bool selection_matches(const qa_controller_selection *s,const qa_controller_info *d) {
-    return s->kind == QA_CONTROLLER_AUTO ||
-        ((s->kind == QA_CONTROLLER_GUID || s->kind == QA_CONTROLLER_SERIAL) &&
-         !strcmp(s->guid,d->guid) && (s->kind == QA_CONTROLLER_GUID ? s->ordinal == d->ordinal :
-            d->serial && !strcmp(s->serial,d->serial)));
+bool qa_controller_selection_equal(const qa_controller_selection *a,const qa_controller_selection *b) {
+    return a->kind==b->kind && (a->kind==QA_CONTROLLER_AUTO || a->kind==QA_CONTROLLER_NONE ||
+        ((a->kind==QA_CONTROLLER_GUID || a->kind==QA_CONTROLLER_SERIAL) &&
+            selection_identity_matches(a,b->guid,b->ordinal,b->serial)));
+}
+bool qa_controller_selection_matches_device(const qa_controller_selection *selection,
+    const qa_controller_info *device) {
+    return (selection->kind==QA_CONTROLLER_GUID || selection->kind==QA_CONTROLLER_SERIAL) &&
+        selection_identity_matches(selection,device->guid,device->ordinal,device->serial);
 }
 static void resolve_routes(const qa_input_platform *p, const struct seat_route routes[4],
                            const int32_t retained[4], int32_t assignments[4]) {
@@ -299,7 +305,8 @@ static void resolve_routes(const qa_input_platform *p, const struct seat_route r
             if (!r->seat || retained[slot] < 0) continue;
             for (size_t i = 0; i < p->device_count; ++i)
                 if (p->devices[i].info.instance == retained[slot] &&
-                    selection_matches(&r->selection,&p->devices[i].info)) {
+                    (r->selection.kind==QA_CONTROLLER_AUTO ||
+                        qa_controller_selection_matches_device(&r->selection,&p->devices[i].info))) {
                     assignments[slot] = retained[slot];
                     break;
                 }
@@ -323,7 +330,7 @@ static void resolve_routes(const qa_input_platform *p, const struct seat_route r
                     }
                 if (used)
                     continue;
-                if (!selection_matches(s,&d->info)) continue;
+                if (s->kind!=QA_CONTROLLER_AUTO && !qa_controller_selection_matches_device(s,&d->info)) continue;
                 match = d;
                 ++matches;
                 if (s->kind == QA_CONTROLLER_AUTO)
@@ -680,7 +687,7 @@ bool qa_input_platform_routes(qa_input_platform *p, qa_input_seat *const seats[4
     int32_t retained[4] = {-1,-1,-1,-1};
     for (unsigned i = 0; i < 4; ++i)
         if ((!p->seats[i].seat || p->seats[i].seat == seats[i]) &&
-            same_selection(&p->seats[i].selection,&copied[i]))
+            qa_controller_selection_equal(&p->seats[i].selection,&copied[i]))
             retained[i] = p->seats[i].instance;
     bool ok = release_all(p, time, error);
     for (unsigned i = 0; i < 4; ++i) {
@@ -1513,9 +1520,8 @@ static bool settings_current(const qa_input_platform_settings_ticket *t, qa_erro
     for (unsigned i = 0; i < 4; ++i) {
         const struct seat_route *a = &p->seats[i], *b = &t->routes[i];
         if (a->seat != b->seat || a->instance != b->instance ||
-            a->selection.kind != b->selection.kind || a->selection.ordinal != b->selection.ordinal ||
-            memcmp(a->selection.guid, b->selection.guid, sizeof(a->selection.guid)) ||
             a->selection.serial != b->selection.serial ||
+            !qa_controller_selection_equal(&a->selection,&b->selection) ||
             a->haptic_instance != b->haptic_instance || a->calibration_instance != b->calibration_instance ||
             a->calibration_sensor != b->calibration_sensor || memcmp(&a->haptic, &b->haptic, sizeof(a->haptic))) {
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings ticket lost its retained physical routes");
@@ -1719,7 +1725,7 @@ static bool settings_prepare(qa_input_platform *p, const qa_input_platform_setti
         .joystick_instance = p->joystick_instance, .next_joystick_instance = t->joystick_instance};
     if (selections) for (unsigned slot = 0; slot < 4; ++slot) {
         const struct seat_route *a = &t->routes[slot], *b = &t->next_routes[slot];
-        if (a->seat && (!same_selection(&a->selection,&b->selection) || a->instance != b->instance))
+        if (a->seat && (!qa_controller_selection_equal(&a->selection,&b->selection) || a->instance != b->instance))
             r->controller_routes |= 1u << slot;
         if (a->seat && b->instance >= 0 && a->instance != b->instance) {
             if (t->configuration[slot] == a->seat) {
@@ -1804,10 +1810,8 @@ bool qa_input_platform_settings_retained(const qa_input_platform *p,
     }
     for (unsigned slot = 0; slot < 4; ++slot)
         if (p->seats[slot].seat != t->routes[slot].seat || p->seats[slot].instance != t->routes[slot].instance ||
-            p->seats[slot].selection.kind != t->routes[slot].selection.kind ||
-            p->seats[slot].selection.ordinal != t->routes[slot].selection.ordinal ||
-            memcmp(p->seats[slot].selection.guid, t->routes[slot].selection.guid, sizeof(t->routes[slot].selection.guid)) ||
-            p->seats[slot].selection.serial != t->routes[slot].selection.serial) {
+            p->seats[slot].selection.serial != t->routes[slot].selection.serial ||
+            !qa_controller_selection_equal(&p->seats[slot].selection,&t->routes[slot].selection)) {
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings lost their actual retained physical routes");
             return false;
         }
@@ -2149,10 +2153,8 @@ bool qa_input_platform_settings_ready_is(const qa_input_platform_settings_ticket
         }
         if ((release ? release[slot] : NULL) != t->ready_release[slot] ||
             a->platform != b->platform || a->slot != b->slot || a->seat != b->seat ||
-            a->instance != b->instance || a->selection.kind != b->selection.kind ||
-            a->selection.ordinal != b->selection.ordinal ||
-            memcmp(a->selection.guid, b->selection.guid, sizeof(a->selection.guid)) ||
-            a->selection.serial != b->selection.serial || a->haptic_instance != b->haptic_instance ||
+            a->instance != b->instance || a->selection.serial != b->selection.serial ||
+            !qa_controller_selection_equal(&a->selection,&b->selection) || a->haptic_instance != b->haptic_instance ||
             a->calibration_instance != b->calibration_instance || a->calibration_sensor != b->calibration_sensor ||
             memcmp(&a->haptic, &b->haptic, sizeof(a->haptic))) return false;
         if (!a->seat) {

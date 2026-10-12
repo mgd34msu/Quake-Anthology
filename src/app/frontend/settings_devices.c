@@ -106,20 +106,6 @@ bool frontend_settings_devices_save(qa_frontend *f,qa_error *error)
     f->settings_devices=pending; return true;
 }
 
-static bool same_selection(const qa_controller_selection *a,const qa_controller_selection *b)
-{
-    return (a->kind==QA_CONTROLLER_GUID || a->kind==QA_CONTROLLER_SERIAL) &&
-        a->kind==b->kind && !SDL_strcasecmp(a->guid,b->guid) &&
-        (a->kind==QA_CONTROLLER_GUID ? a->ordinal==b->ordinal :
-            b->serial && !strcmp(a->serial,b->serial));
-}
-static bool matches_device(const qa_controller_selection *selection,const qa_controller_info *device)
-{
-    return (selection->kind==QA_CONTROLLER_GUID || selection->kind==QA_CONTROLLER_SERIAL) &&
-        !SDL_strcasecmp(selection->guid,device->guid) &&
-        (selection->kind==QA_CONTROLLER_GUID ? selection->ordinal==device->ordinal :
-            device->serial && !strcmp(selection->serial,device->serial));
-}
 static bool input_prepare(qa_frontend *f,struct frontend_settings_devices *pending,qa_error *error)
 {
     qa_input_platform_settings desired;
@@ -136,13 +122,14 @@ static bool input_prepare(qa_frontend *f,struct frontend_settings_devices *pendi
     if (pending->kind==DEVICE_KEYBOARD)
         return frontend_input_settings_prepare(f,&desired,configuration,now,&f->input_settings,error) &&
             frontend_input_settings_release_all_prepare(f->input_settings,now,error);
-    for (unsigned slot=0;slot<f->options.seats;++slot) if (slot!=(unsigned)pending->slot) {
-        bool steal=same_selection(&pending->selection,&selections[slot]);
+    for (unsigned slot=0;slot<f->options.seats;++slot) if (slot!=(unsigned)pending->slot &&
+        (pending->selection.kind==QA_CONTROLLER_GUID || pending->selection.kind==QA_CONTROLLER_SERIAL)) {
+        bool steal=qa_controller_selection_equal(&pending->selection,&selections[slot]);
         int32_t instance=qa_input_platform_controller(f->input,slot);
         for (size_t i=0;!steal && i<qa_input_platform_device_count(f->input);++i) {
             qa_controller_info device;
             if (qa_input_platform_device(f->input,i,&device) && device.instance==instance)
-                steal=matches_device(&pending->selection,&device);
+                steal=qa_controller_selection_matches_device(&pending->selection,&device);
         }
         if (steal) selections[slot]=(qa_controller_selection){.kind=QA_CONTROLLER_NONE};
     }

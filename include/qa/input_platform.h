@@ -31,6 +31,10 @@ typedef struct qa_controller_info {
     float sensor_rate[6];
     unsigned touchpads;
 } qa_controller_info;
+/* GUID identity ignores ASCII case. SERIAL identity ignores ordinal.
+ * AUTO/NONE compare by kind and do not match a concrete device. */
+bool qa_controller_selection_equal(const qa_controller_selection *,const qa_controller_selection *);
+bool qa_controller_selection_matches_device(const qa_controller_selection *,const qa_controller_info *);
 typedef struct qa_input_platform qa_input_platform;
 typedef struct qa_input_platform_options {
     qa_cvars *cvars;

@@ -247,9 +247,7 @@ static bool route_instance_valid(const qa_input_platform *p, unsigned slot)
         const qa_controller_info *d = &p->devices[row].info;
         if (d->instance != r->instance) continue;
         return r->selection.kind == QA_CONTROLLER_AUTO ||
-            (!strcmp(r->selection.guid, d->guid) &&
-             (r->selection.kind == QA_CONTROLLER_GUID ? r->selection.ordinal == d->ordinal :
-              d->serial && r->selection.serial && !strcmp(r->selection.serial, d->serial)));
+            qa_controller_selection_matches_device(&r->selection,d);
     }
     return false;
 }
