@@ -12,17 +12,13 @@ static qa_q3_host *role_host(qa_application *app,
         application_fail(error, QA_ERROR_ARGUMENT, "Q3 scene exchange requires its idle actual role lease");
         return NULL;
     }
-    application_provider **providers = app->routing_providers ? app->routing_providers : app->providers;
-    size_t count = app->routing_providers ? app->routing_provider_count : app->provider_count;
-    application_provider *provider = NULL;
-    for (size_t i = 0; providers && i < count; ++i)
-        if (providers[i] && providers[i]->owner == wanted->receiver) {
-            if (provider) {
-                application_fail(error, QA_ERROR_ARGUMENT, "Q3 scene receiver has ambiguous provider ownership");
-                return NULL;
-            }
-            provider = providers[i];
-        }
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, wanted->receiver,
+        app->routing_providers ? APPLICATION_PROVIDER_ROUTING : APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider = application_provider_lookup_next(app, &cursor);
+    if (application_provider_lookup_next(app, &cursor)) {
+        application_fail(error, QA_ERROR_ARGUMENT, "Q3 scene receiver has ambiguous provider ownership");
+        return NULL;
+    }
     struct application_q3_guest *engine = q3g_engine(provider);
     if (!provider || provider->application != app || !provider->constructed || !provider->attached ||
         provider->close_pending || !engine || engine->provider != provider ||

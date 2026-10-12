@@ -229,9 +229,8 @@ bool application_native_q1_wire_sound_resource(qa_application *app, qa_actor_own
     if (!out || !product || !found || !app || !app->session || !source || !path)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 sound registration read has no actual source");
     *out = NULL; *product = NULL; *found = false;
-    application_provider *p = NULL;
-    for (application_provider *actual = app->live_providers; actual; actual = actual->next_live)
-        if (actual->owner == source) { p = actual; break; }
+    application_provider *p = application_provider_lookup(app, source,
+        APPLICATION_PROVIDER_LIVE);
     if (!p || p->close_pending || !p->product || p->product->family != QA_GAME_Q1)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 sound source retired before its registration read");
     if (p->kind != APPLICATION_PROVIDER_Q1 || !p->state.q1) return true;
@@ -929,8 +928,8 @@ static bool emit_text(qa_application *app, application_provider *wire,
     }
     application_provider *source = NULL;
     if (formatted) {
-        for (size_t i = 0; i < app->provider_count; ++i)
-            if (app->providers[i]->owner == event->provider) { source = app->providers[i]; break; }
+        source = application_provider_lookup(app, event->provider,
+            APPLICATION_PROVIDER_PUBLISHED);
         if (!source || source->kind != APPLICATION_PROVIDER_Q1 || !source->constructed || !source->attached ||
             source->close_pending || !source->native_q1_wire || !source->product || source->product->family != QA_GAME_Q1)
             okay = application_fail(error, QA_ERROR_NOT_FOUND, "Localized Q1 wire text lost its actual content source");
@@ -983,9 +982,11 @@ bool application_native_q1_wire_emit(qa_application *app, const qa_builtin_event
     qa_error *error) {
     if (!event || event->family != QA_GAME_Q1) return true;
     if (event->kind == QA_BUILTIN_LIGHT) {
-        for (application_provider *source = app->live_providers; source; source = source->next_live)
-            if (source->owner == event->provider &&
-                (source->kind == APPLICATION_PROVIDER_QC || source->kind == APPLICATION_PROVIDER_Q1))
+        qa_id_index_cursor cursor = application_provider_lookup_begin(app, event->provider,
+            APPLICATION_PROVIDER_LIVE);
+        application_provider *source;
+        while ((source = application_provider_lookup_next(app, &cursor)))
+            if (source->kind == APPLICATION_PROVIDER_QC || source->kind == APPLICATION_PROVIDER_Q1)
                 return emit_light(source, event, error);
         return true;
     }

@@ -86,9 +86,11 @@ static const qa_launch_snapshot *snapshot(qa_application *app) {
         app->configuration ? qa_configuration_current(app->configuration) : NULL;
 }
 static application_provider *source(qa_application *app, qa_actor_owner owner) {
-    for (application_provider *p = app->live_providers; p; p = p->next_live)
-        if (p->owner == owner && p->constructed && p->attached && !p->close_pending &&
-            p->launch && p->product) return p;
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, owner,
+        APPLICATION_PROVIDER_LIVE);
+    application_provider *p;
+    while ((p = application_provider_lookup_next(app, &cursor)))
+        if (p->constructed && p->attached && !p->close_pending && p->launch && p->product) return p;
     return NULL;
 }
 static bool qualify(application_match_intents *state, qa_application *app,

@@ -19,12 +19,7 @@ static bool source_ready(const application_provider *p)
 { return source_returned(p) && qa_session_safe(p->application->session) && qa_world_idle(p->application->world); }
 static application_provider *owner(qa_application *app,qa_actor_owner id)
 {
-    application_provider *found=NULL;
-    for(size_t i=0;app && i<app->provider_count;++i) if(app->providers[i]->owner==id) {
-        if(found) return NULL;
-        found=app->providers[i];
-    }
-    return found;
+    return application_provider_lookup_unique(app,id,APPLICATION_PROVIDER_PUBLISHED);
 }
 static bool raw_scalar(application_provider *p,uint32_t slot,qa_actor_id actor,
     const qa_qc_definition *field,double *out,qa_error *error)

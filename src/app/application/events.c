@@ -180,8 +180,11 @@ static bool valid_event(qa_application *application,
             (event->kind == QA_BUILTIN_Q2_PLAYER_ANIMATION && (event->code < 0 || event->code > 2)))
             return application_fail(error, QA_ERROR_ARGUMENT, "Q2 animation requires its actual source and live actor");
         bool found = false;
-        for (const application_provider *source = application->live_providers; source; source = source->next_live)
-            if (source->owner == event->provider && source->kind == APPLICATION_PROVIDER_Q2 && !source->close_pending)
+        qa_id_index_cursor cursor = application_provider_lookup_begin(application, event->provider,
+            APPLICATION_PROVIDER_LIVE);
+        const application_provider *source;
+        while ((source = application_provider_lookup_next(application, &cursor)))
+            if (source->kind == APPLICATION_PROVIDER_Q2 && !source->close_pending)
                 found = true;
         if (!found) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 animation lost its actual native source");
     }
@@ -803,11 +806,11 @@ bool application_emit(void *opaque, const qa_builtin_event *event, qa_error *err
         return application_fail(error,QA_ERROR_ARGUMENT,"Gameplay event has no live application owner");
     if (!valid_event(application,event,error)) return false;
     if (event->q2_multicast.kind!=QA_BUILTIN_Q2_MULTICAST_NONE) {
-        application_provider *source=NULL;
-        for (application_provider *provider=application->live_providers;provider;provider=provider->next_live)
-            if (provider->owner==event->provider && provider->constructed && provider->attached && !provider->close_pending) {
-                source=provider; break;
-            }
+        qa_id_index_cursor cursor=application_provider_lookup_begin(application,event->provider,
+            APPLICATION_PROVIDER_LIVE);
+        application_provider *source;
+        while((source=application_provider_lookup_next(application,&cursor)))
+            if(source->constructed && source->attached && !source->close_pending) break;
         if (!application_native_q2_delivery_capture(source,&event->q2_multicast,event->end,
                 &audience,error)) return false;
     }

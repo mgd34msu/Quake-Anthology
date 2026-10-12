@@ -21,12 +21,12 @@
 
 static application_provider *source_owner(qa_application *app, qa_actor_owner owner)
 {
-    for (size_t i = 0; i < app->provider_count; ++i) {
-        application_provider *provider = app->providers[i];
-        if (provider && provider->attached && provider->constructed &&
-            !provider->close_pending && provider->owner == owner)
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, owner,
+        APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(app, &cursor)))
+        if (provider->attached && provider->constructed && !provider->close_pending)
             return provider;
-    }
     return NULL;
 }
 

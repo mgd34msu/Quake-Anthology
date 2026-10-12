@@ -276,18 +276,16 @@ bool qa_application_native_q3_wire_preconstruction_current(const qa_application 
 {
     if (!app || !owner || seat != UINT32_MAX || !services || app->destroy_requested)
         return false;
-    for (const application_provider *provider = app->live_providers; provider;
-         provider = provider->next_live) {
-        if (provider->owner != owner) continue;
-        const struct application_native_q3_wire *wire = provider->native_q3_wire;
-        return provider->application == app && provider->kind == APPLICATION_PROVIDER_Q3 &&
-            provider->constructed && !provider->attached && !provider->close_pending &&
-            provider->state.q3 && wire && wire->provider == provider && !wire->closing &&
-            wire->calls == 1 && wire->preparing_services == services &&
-            services->role == QA_QVM_GAME && services->owner == owner &&
-            services->session == app->session && services->world == wire->world;
-    }
-    return false;
+    const application_provider *provider = application_provider_lookup(app, owner,
+        APPLICATION_PROVIDER_LIVE);
+    if (!provider) return false;
+    const struct application_native_q3_wire *wire = provider->native_q3_wire;
+    return provider->application == app && provider->kind == APPLICATION_PROVIDER_Q3 &&
+        provider->constructed && !provider->attached && !provider->close_pending &&
+        provider->state.q3 && wire && wire->provider == provider && !wire->closing &&
+        wire->calls == 1 && wire->preparing_services == services &&
+        services->role == QA_QVM_GAME && services->owner == owner &&
+        services->session == app->session && services->world == wire->world;
 }
 
 bool application_native_q3_wire_create(application_provider *provider, qa_world *source_world,

@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `57ce4334`.
+Follow-up source changes were reviewed through main `ca94a5f3`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 156 have source fixes
+There are **374 overlapping source-review observations**: 157 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 215 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 214 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -310,3 +310,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 | `J15-02` | `0ca6ce15` | Browser uses shared info iteration/mutation; strict and warning policies retain boundary behavior. Normal build/seven suites and capacity/duplicate cases passed; no live claim. |
 
 | `03-15`, `04-003` | `57ce4334` | One SystemInfo apply body and shared info iterator replace private parsers. Filters, callback checks, nested text and save bytes retained. Normal build/seven suites passed; candidate allocations remain. |
+
+| `26-02` | `ca94a5f3` | Native HUD prefix uses caller-owned ABI bytes; per-draw malloc/free deleted. Exact guest prefix and synchronous seat lifetime retained. Normal build/seven suites passed; no live claim. |

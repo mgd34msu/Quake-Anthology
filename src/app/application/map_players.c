@@ -1976,8 +1976,10 @@ static bool admit_equipment(qa_application *application, const qa_launch_choices
     if (!ok) return false;
     if (sources.items) {
         application_provider *source = NULL;
-        for (size_t i = 0; i < application->provider_count; ++i)
-            if (application->providers[i]->owner == sources.items) source = application->providers[i];
+        qa_id_index_cursor cursor = application_provider_lookup_begin(application, sources.items,
+            APPLICATION_PROVIDER_PUBLISHED);
+        application_provider *provider;
+        while ((provider = application_provider_lookup_next(application, &cursor))) source = provider;
         if (!source)
             return application_fail(error, QA_ERROR_NOT_FOUND, "Admitted equipment items lost their selected provider");
         if (source->kind == APPLICATION_PROVIDER_Q3 &&
@@ -4320,9 +4322,10 @@ static application_provider *campaign_provider(qa_application *candidate,
     const qa_application *previous, qa_actor_owner owner)
 {
     if (!owner) return NULL;
-    for (size_t i=0;i<previous->provider_count;++i) {
-        const application_provider *source=previous->providers[i];
-        if (source->owner!=owner) continue;
+    qa_id_index_cursor cursor=application_provider_lookup_begin(previous,owner,
+        APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *source;
+    while ((source=application_provider_lookup_next(previous,&cursor))) {
         for (size_t j=0;j<candidate->provider_count;++j) {
             application_provider *next=candidate->providers[j];
             if (!strcmp(source->launch->selection.instance,next->launch->selection.instance)) return next;
@@ -4840,9 +4843,7 @@ bool application_players_checkpoint_capture(qa_application *application, qa_buff
 
 static application_provider *roster_provider(qa_application *application, qa_actor_owner owner)
 {
-    for (size_t i = 0; i < application->provider_count; ++i)
-        if (application->providers[i]->owner == owner) return application->providers[i];
-    return NULL;
+    return application_provider_lookup(application, owner, APPLICATION_PROVIDER_PUBLISHED);
 }
 
 static bool roster_string(const qa_strings *strings, qa_string_id id)

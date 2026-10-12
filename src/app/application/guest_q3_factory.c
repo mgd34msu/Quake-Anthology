@@ -25,14 +25,8 @@ bool q3g_compatibility(const qa_launch_instance *descriptor, const char *path,
 static application_provider *receiver_provider(qa_application *app, qa_actor_owner owner)
 {
     if (!app || !owner) return NULL;
-    application_provider **providers = app->routing_providers ? app->routing_providers : app->providers;
-    size_t count = app->routing_providers ? app->routing_provider_count : app->provider_count;
-    application_provider *found = NULL;
-    for (size_t i = 0; i < count; ++i) if (providers[i] && providers[i]->owner == owner) {
-        if (found) return NULL;
-        found = providers[i];
-    }
-    return found;
+    return application_provider_lookup_unique(app, owner,
+        app->routing_providers ? APPLICATION_PROVIDER_ROUTING : APPLICATION_PROVIDER_PUBLISHED);
 }
 
 static bool same_descriptor(const qa_launch_instance *actual, const qa_launch_instance *retained)
@@ -148,8 +142,11 @@ bool qa_application_q3_client_configuration_entered(const qa_application *app,
 {
     if (!app || !source || !source->scope.provider || !app->session) return false;
     bool found = false;
-    for (application_provider *provider = app->live_providers; provider; provider = provider->next_live) {
-        if (provider->owner != source->scope.provider || provider->application != app) continue;
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, source->scope.provider,
+        APPLICATION_PROVIDER_LIVE);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(app, &cursor))) {
+        if (provider->application != app) continue;
         struct application_q3_guest *engine = q3g_engine(provider);
         q3g_role *role = engine ? engine->entered_role : NULL;
         qa_q3_host_client_context host;
@@ -171,11 +168,14 @@ bool qa_application_q3_configuration_host_entered(const qa_application *app,
     const qa_application_startup_source *source, const qa_q3_host *host)
 {
     if (!app || !source || !source->descriptor || !host || !app->session) return false;
-    for (application_provider *provider = app->live_providers; provider; provider = provider->next_live) {
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, source->scope.provider,
+        APPLICATION_PROVIDER_LIVE);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(app, &cursor))) {
         struct application_q3_guest *engine = q3g_engine(provider);
         q3g_role *role = engine ? engine->entered_role : NULL;
         if (!role || role->engine != engine || role->host != host || !engine->calls || engine->restore_pending ||
-            provider->application != app || provider->owner != source->scope.provider) continue;
+            provider->application != app) continue;
         if (role->kind != QA_QVM_GAME)
             return qa_application_q3_client_configuration_entered(app, source);
         qa_cvars *cvars = NULL;

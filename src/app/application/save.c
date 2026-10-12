@@ -100,8 +100,11 @@ static bool controls_fields(qa_source_save_io *io, qa_application *app,
     if (reading) {
         record->application = app; record->player.player_mode = (qa_movement_mode)mode; record->active = true;
         if (cutscene) {
-            for (size_t i = 0; i < app->provider_count; ++i)
-                if (app->providers[i]->owner == cutscene) record->cutscene_character = app->providers[i];
+            qa_id_index_cursor cursor = application_provider_lookup_begin(app, cutscene,
+                APPLICATION_PROVIDER_PUBLISHED);
+            application_provider *provider;
+            while ((provider = application_provider_lookup_next(app, &cursor)))
+                record->cutscene_character = provider;
             if (!record->cutscene_character)
                 return application_fail(io->error, QA_ERROR_FORMAT, "saved cinematic character provider is unavailable");
         }
@@ -296,9 +299,9 @@ static bool restore_think(void *context, qa_actor_owner owner, qa_actor_id actor
     uint32_t callback_id, qa_think_fn *callback, void **binding, qa_error *error)
 {
     qa_application *candidate = context;
-    for (size_t i = 0; i < candidate->provider_count; ++i) {
-        application_provider *provider = candidate->providers[i];
-        if (provider->owner != owner) continue;
+    application_provider *provider = application_provider_lookup(candidate, owner,
+        APPLICATION_PROVIDER_PUBLISHED);
+    if (provider) {
         if (provider->kind == APPLICATION_PROVIDER_Q1)
             return qa_q1_game_think_binding(provider->state.q1, actor, callback_id, callback, binding, error);
         if (provider->kind == APPLICATION_PROVIDER_QC)

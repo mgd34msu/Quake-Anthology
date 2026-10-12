@@ -288,11 +288,8 @@ static bool constructor_choices(qa_application *app, qa_actor_owner receiver,
         return application_fail(error, QA_ERROR_ARGUMENT, "Character constructor requires its actual source callback owner");
     const qa_launch_snapshot *snapshot = app->routing_snapshot ? app->routing_snapshot : qa_application_launch(app);
     const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
-    application_provider **providers = app->routing_snapshot ? app->routing_providers : app->providers;
-    size_t count = app->routing_snapshot ? app->routing_provider_count : app->provider_count;
-    application_provider *source = NULL;
-    for (size_t i = 0; providers && i < count; ++i)
-        if (providers[i] && providers[i]->owner == receiver) { source = providers[i]; break; }
+    application_provider *source = application_provider_lookup(app, receiver,
+        app->routing_snapshot ? APPLICATION_PROVIDER_ROUTING : APPLICATION_PROVIDER_PUBLISHED);
     const qa_launch_provider *selected = NULL;
     if (choices && source && source->launch)
         for (size_t i = 0; i < choices->provider_count; ++i)

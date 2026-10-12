@@ -823,11 +823,13 @@ static bool retain_source_info(application_provider *provider, qa_error *error)
 {
     if (provider->application->operation == APPLICATION_PERSISTING) return true;
     struct application_native_q1_console *owner = provider->native_q1_console;
-    for (application_provider *previous = provider->application->live_providers; previous;
-         previous = previous->next_live) {
+    qa_id_index_cursor cursor = application_provider_lookup_begin(provider->application,
+        provider->owner, APPLICATION_PROVIDER_LIVE);
+    application_provider *previous;
+    while ((previous = application_provider_lookup_next(provider->application, &cursor))) {
         if (previous == provider || previous->kind != APPLICATION_PROVIDER_Q1 ||
             !previous->constructed || !previous->attached || previous->close_pending ||
-            !previous->launch || !previous->native_q1_console || previous->owner != provider->owner ||
+            !previous->launch || !previous->native_q1_console ||
             strcmp(previous->launch->selection.instance, provider->launch->selection.instance) ||
             dialect(previous) != dialect(provider)) continue;
         if (!application_native_q1_console_idle(previous))

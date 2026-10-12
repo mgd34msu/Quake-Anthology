@@ -60,10 +60,11 @@ bool qa_application_q3_collision_scene_hold(qa_application *app, qa_actor_owner 
     if (!app || !receiver || !service_owner || !out || !present || *out || app->destroy_requested)
         return application_fail(error, QA_ERROR_ARGUMENT, "Collision hold requires its actual physical CLIENT namespace");
     q3g_role *found = NULL;
-    application_provider **providers = app->routing_providers ? app->routing_providers : app->providers;
-    size_t count = app->routing_providers ? app->routing_provider_count : app->provider_count;
-    for (size_t i = 0; i < count; ++i) {
-        struct application_q3_guest *engine = providers[i] && providers[i]->owner == receiver ? q3g_engine(providers[i]) : NULL;
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, receiver,
+        app->routing_providers ? APPLICATION_PROVIDER_ROUTING : APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(app, &cursor))) {
+        struct application_q3_guest *engine = q3g_engine(provider);
         if (!engine) continue;
         for (q3g_role *role = engine->roles; role; role = role->next)
             if (role->kind == QA_QVM_CGAME && role->seat == seat) {

@@ -352,8 +352,10 @@ bool application_q3_weapons_services_grenade_interval(void *context, qa_actor_id
         !application_equipment_runtime_owner_current(app->equipment_runtime, owner))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Hand grenade cadence lost its actual selected equipment");
     application_provider *provider = NULL;
-    for (size_t i = 0; i < app->provider_count; ++i)
-        if (app->providers[i]->owner == owner) provider = app->providers[i];
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, owner,
+        APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *candidate;
+    while ((candidate = application_provider_lookup_next(app, &cursor))) provider = candidate;
     qa_q2_hand_grenade_state grenade; bool bound = false;
     if (!provider || provider->kind != APPLICATION_PROVIDER_Q2 || !provider->constructed ||
         !provider->attached || provider->close_pending || !provider->state.q2)

@@ -8,11 +8,11 @@ bool qa_application_guest_source_actor(qa_application *app, qa_actor_owner owner
     if (!app || !owner || !out || number < 0 || app->destroy_requested)
         return application_fail(error, QA_ERROR_ARGUMENT, "Invalid source actor observation");
     *out = (qa_actor_id){0};
-    application_provider *provider = NULL;
-    for (size_t i = 0; i < app->provider_count; ++i)
-        if (app->providers[i]->owner == owner && app->providers[i]->attached) {
-            provider = app->providers[i]; break;
-        }
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, owner,
+        APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(app, &cursor)))
+        if (provider->attached) break;
     if (!provider) return application_fail(error, QA_ERROR_NOT_FOUND, "Source actor owner is retired");
     if (provider->kind == APPLICATION_PROVIDER_QC) {
         qa_qc_slot_binding binding;

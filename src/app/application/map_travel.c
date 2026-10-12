@@ -471,12 +471,8 @@ bool qa_application_queue_map_travel(qa_application *application,
 static bool source_queue_travel(qa_application *application,
     const qa_application_travel_request *request, bool literal, qa_error *error)
 {
-    application_provider *provider = NULL;
-    for (size_t i = 0; application && request && i < application->provider_count; ++i)
-        if (application->providers[i]->owner == request->provider) {
-            provider = application->providers[i];
-            break;
-        }
+    application_provider *provider = request ? application_provider_lookup(application,
+        request->provider, APPLICATION_PROVIDER_PUBLISHED) : NULL;
     if (!provider || !provider->constructed || !provider->attached || provider->close_pending ||
         (application->operation != APPLICATION_IDLE && application->operation != APPLICATION_ADVANCING &&
          application->operation != APPLICATION_CONFIGURING))
@@ -1048,9 +1044,10 @@ bool qa_application_campaign_reenter(qa_application *candidate, qa_application *
     if (ok) {
         state->geometry=qa_launch_snapshot_choices(qa_application_launch(candidate))->world.geometry;
         state->provider=0; state->cause=(qa_actor_id){0};
-        for (size_t i=0;i<previous->provider_count;++i) {
-            const application_provider *source=previous->providers[i];
-            if (source->owner!=previous->map_state->provider) continue;
+        qa_id_index_cursor cursor=application_provider_lookup_begin(previous,
+            previous->map_state->provider,APPLICATION_PROVIDER_PUBLISHED);
+        application_provider *source;
+        while ((source=application_provider_lookup_next(previous,&cursor))) {
             for (size_t j=0;j<candidate->provider_count;++j)
                 if (!strcmp(source->launch->selection.instance,candidate->providers[j]->launch->selection.instance))
                     state->provider=candidate->providers[j]->owner;

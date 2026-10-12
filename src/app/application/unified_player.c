@@ -774,9 +774,8 @@ static bool native_inventory_presentation(qa_unified_inventory_presentation *out
     player_observation *o, const application_native_q2_inventory_presentation *p, qa_error *e)
 {
     if (p->kind == APPLICATION_NATIVE_INVENTORY_PRESENTATION_NONE) return true;
-    application_provider *owner = NULL;
-    for (size_t i = 0; i < o->app->provider_count; ++i)
-        if (o->app->providers[i]->owner == p->source) { owner = o->app->providers[i]; break; }
+    application_provider *owner = application_provider_lookup(o->app, p->source,
+        APPLICATION_PROVIDER_PUBLISHED);
     application_q3_component_publication component = {0};
     const qa_product *product = owner ? owner->product : NULL;
     if (owner) { if (!application_unified_provider_state(&out->source, owner, e)) return false; }
@@ -862,12 +861,11 @@ static bool ui_items(qa_unified_player_ui *out, player_observation *o, qa_error 
             d->owner == o->primary->owner && (d->actions & QA_ITEM_USE))) continue;
         ++base_count;
         if (o->has_gear && d->item == o->gear.item) continue;
-        application_provider *owner = NULL;
-        for (size_t n = 0; n < o->app->provider_count; ++n)
-            if (o->app->providers[n]->owner == d->owner) {
-                if (owner) return application_fail(e, QA_ERROR_FORMAT, "Player item has ambiguous published source owners");
-                owner = o->app->providers[n];
-            }
+        qa_id_index_cursor cursor = application_provider_lookup_begin(o->app, d->owner,
+            APPLICATION_PROVIDER_PUBLISHED);
+        application_provider *owner = application_provider_lookup_next(o->app, &cursor);
+        if (application_provider_lookup_next(o->app, &cursor))
+            return application_fail(e, QA_ERROR_FORMAT, "Player item has ambiguous published source owners");
         double owned = count(o, d->item), ammo = d->ammo ? count(o, d->ammo) : owned;
         double required = 1, warning = 0;
         size_t ordinal = i;
@@ -948,8 +946,8 @@ static bool weapon_status(qa_unified_player_ui *out, player_observation *o, qa_e
     qa_item_id selected = 0, ammo = 0;
     const char *label = NULL;
     if (o->has_gear && o->gear.active) {
-        for (size_t i = 0; i < o->app->provider_count; ++i)
-            if (o->app->providers[i]->owner == o->gear.source.owner) { owner = o->app->providers[i]; break; }
+        owner = application_provider_lookup(o->app, o->gear.source.owner,
+            APPLICATION_PROVIDER_PUBLISHED);
         selected = o->gear.item; label = o->gear.label;
     } else if (catalog_q3(o)) {
         const application_q3_catalog_weapon *w = q3_active(o);
@@ -973,9 +971,8 @@ static bool weapon_status(qa_unified_player_ui *out, player_observation *o, qa_e
         if (!v->has_weapon_status || !v->item) return true;
         owner = o->arsenal;
         if (v->equipment_slot) {
-            owner = NULL;
-            for (size_t i = 0; i < o->app->provider_count; ++i)
-                if (o->app->providers[i]->owner == v->provider) { owner = o->app->providers[i]; break; }
+            owner = application_provider_lookup(o->app, v->provider,
+                APPLICATION_PROVIDER_PUBLISHED);
         }
         selected = v->item; label = o->equipment_label;
         value.finite = v->finite_ammo;

@@ -10,9 +10,8 @@ bool qa_application_model_admit(qa_application *app,
         !request->opening || !request->view || app->destroy_requested)
         return application_fail(error, QA_ERROR_ARGUMENT, "Model admission needs its actual BODY acquisition");
     *out = (qa_application_model_admission){0}; *handled = false;
-    application_provider *provider = NULL;
-    for (size_t i = 0; i < app->provider_count; ++i)
-        if (app->providers[i]->owner == request->provider) { provider = app->providers[i]; break; }
+    application_provider *provider = application_provider_lookup(app, request->provider,
+        APPLICATION_PROVIDER_PUBLISHED);
     if (!provider || !provider->constructed || !provider->attached || provider->close_pending ||
         !provider->launch || !provider->product || provider->product->family != request->family)
         return application_fail(error, QA_ERROR_ARGUMENT, "Model admission lost its selected BODY provider");
@@ -26,11 +25,15 @@ bool qa_application_model_admit(qa_application *app,
         !qa_vfs_acquisition_retained(request->view, request->opening, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Model admission differs from its genuine BODY file scope");
     if (!app->model_admission) return true;
+    qa_actor_owner provider_owner = provider->owner;
     qa_application_model_admission result = {0};
     if (!app->model_admission(app->guest_context, app, request, &result, error)) return false;
     bool retained = false;
-    for (size_t i = 0; i < app->provider_count; ++i)
-        if (app->providers[i] == provider) { retained = true; break; }
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, provider_owner,
+        APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *member;
+    while ((member = application_provider_lookup_next(app, &cursor)))
+        if (member == provider) { retained = true; break; }
     if (!qa_application_command_context_active(app, &captured) ||
         qa_application_context_files(app, &captured, NULL) != files ||
         !retained || !provider->constructed || !provider->attached || provider->close_pending)

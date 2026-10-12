@@ -1130,11 +1130,11 @@ static application_provider *active_provider_named(qa_application *application,
 
 static application_provider *monster_owner(qa_application *app, qa_actor_owner owner)
 {
-    for (size_t i = 0; i < app->provider_count; ++i) {
-        application_provider *provider = app->providers[i];
-        if (provider && provider->owner == owner && provider->constructed && !provider->close_pending)
-            return provider;
-    }
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, owner,
+        APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(app, &cursor)))
+        if (provider->constructed && !provider->close_pending) return provider;
     return NULL;
 }
 static bool monster_activate_behavior(application_provider *map, qa_actor_id actor, qa_error *error)

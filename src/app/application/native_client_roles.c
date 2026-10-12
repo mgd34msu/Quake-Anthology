@@ -25,8 +25,8 @@ struct application_native_client_role {
 };
 static application_provider *provider_read(qa_application *app, qa_actor_owner owner)
 {
-    for (application_provider *p = app ? app->live_providers : NULL; p; p = p->next_live)
-        if (p->owner == owner) return p;
+    application_provider *p = application_provider_lookup(app, owner, APPLICATION_PROVIDER_LIVE);
+    if (p) return p;
     return app ? application_startup_flow_provider(app, owner) : NULL;
 }
 static struct application_native_client_role *row_read(application_provider *provider, uint32_t seat)
@@ -274,9 +274,8 @@ bool qa_application_client_retirement_current(qa_application *app,const qa_appli
 }
 bool application_native_client_source_associated(const qa_application *app,const qa_application_client_source *source)
 {
-    application_provider *p=NULL;
-    for (application_provider *at=app?app->live_providers:NULL;at;at=at->next_live)
-        if (source && at->owner==source->context.receiver) { p=at; break; }
+    application_provider *p=source?application_provider_lookup(app,source->context.receiver,
+        APPLICATION_PROVIDER_LIVE):NULL;
     struct application_native_client_role *r=source?row_read(p,source->context.seat):NULL;
     return p && p->application==app && p->constructed && p->attached && !p->close_pending &&
         application_native_client_only(p) && r && !r->retiring && source_equal(source,&r->source);

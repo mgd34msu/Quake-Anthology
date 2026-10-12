@@ -149,15 +149,11 @@ static bool client_context_read(qa_application *app, qa_actor_owner receiver,
 {
     if (!app || !out || !receiver || app->destroy_requested)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client context requires its live receiver owner");
-    application_provider **providers = app->routing_providers ? app->routing_providers : app->providers;
-    size_t count = app->routing_providers ? app->routing_provider_count : app->provider_count;
-    application_provider *provider = NULL;
-    for (size_t i = 0; i < count; ++i)
-        if (providers[i] && providers[i]->owner == receiver) {
-            if (provider)
-                return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client receiver has ambiguous source ownership");
-            provider = providers[i];
-        }
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, receiver,
+        app->routing_providers ? APPLICATION_PROVIDER_ROUTING : APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider = application_provider_lookup_next(app, &cursor);
+    if (application_provider_lookup_next(app, &cursor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client receiver has ambiguous source ownership");
     struct application_q3_guest *engine = q3g_engine(provider);
     if (!provider || provider->application != app || !provider->constructed || !provider->attached ||
         provider->close_pending || !engine || engine->restore_pending || engine->round.phase != Q3G_ROUND_NONE)
@@ -268,12 +264,12 @@ bool qa_application_q3_body_entry_read(qa_application *app, qa_actor_owner recei
 {
     if (!app || !out || !receiver)
         return application_fail(error, QA_ERROR_ARGUMENT, "Body Draw requires its actual entered receiver");
-    application_provider **providers = app->routing_providers ? app->routing_providers : app->providers;
-    size_t count = app->routing_providers ? app->routing_provider_count : app->provider_count;
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, receiver,
+        app->routing_providers ? APPLICATION_PROVIDER_ROUTING : APPLICATION_PROVIDER_PUBLISHED);
     q3g_role *role = NULL;
-    for (size_t i = 0; i < count; ++i) {
-        application_provider *provider = providers[i];
-        struct application_q3_guest *engine = provider && provider->owner == receiver ? q3g_engine(provider) : NULL;
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(app, &cursor))) {
+        struct application_q3_guest *engine = q3g_engine(provider);
         if (!engine) continue;
         if (role || !engine->calls || !engine->entered_role || engine->restore_pending)
             return application_fail(error, QA_ERROR_ARGUMENT, "Body Draw has no unique entered role");
@@ -321,15 +317,11 @@ bool qa_application_q3_client_host_read(qa_application *app, qa_actor_owner rece
 {
     if (!app || !out || !present || !receiver || app->destroy_requested)
         return application_fail(error, QA_ERROR_ARGUMENT, "Local CGAME host requires its live receiver inventory");
-    application_provider **providers = app->routing_providers ? app->routing_providers : app->providers;
-    size_t count = app->routing_providers ? app->routing_provider_count : app->provider_count;
-    application_provider *provider = NULL;
-    for (size_t i = 0; i < count; ++i)
-        if (providers[i] && providers[i]->owner == receiver) {
-            if (provider)
-                return application_fail(error, QA_ERROR_ARGUMENT, "Local CGAME host has ambiguous receiver ownership");
-            provider = providers[i];
-        }
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, receiver,
+        app->routing_providers ? APPLICATION_PROVIDER_ROUTING : APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider = application_provider_lookup_next(app, &cursor);
+    if (application_provider_lookup_next(app, &cursor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Local CGAME host has ambiguous receiver ownership");
     struct application_q3_guest *engine = q3g_engine(provider);
     if (!provider || provider->application != app || !provider->constructed || !provider->attached ||
         provider->close_pending || !engine || engine->provider != provider || engine->restore_pending ||
@@ -477,11 +469,10 @@ bool qa_application_q3_client_retire(qa_application *app,
         !qa_world_idle(app->world) || !qa_application_q3_client_context_current(app, retained))
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Q3 client retirement requires its exact receiver after source callbacks unwind");
-    application_provider **providers = app->routing_providers ? app->routing_providers : app->providers;
-    size_t count = app->routing_providers ? app->routing_provider_count : app->provider_count;
-    application_provider *provider = NULL;
-    for (size_t i = 0; i < count; ++i)
-        if (providers[i] && providers[i]->owner == retained->receiver) provider = providers[i];
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, retained->receiver,
+        app->routing_providers ? APPLICATION_PROVIDER_ROUTING : APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider = NULL, *candidate;
+    while ((candidate = application_provider_lookup_next(app, &cursor))) provider = candidate;
     struct application_q3_guest *engine = q3g_engine(provider);
     if (!engine || engine->calls || engine->draining_clients || !application_q3_guest_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client retirement has an active source owner");
@@ -508,15 +499,11 @@ static bool remote_context_read(qa_application *app, qa_actor_owner receiver,
     const qa_launch_snapshot *snapshot = !published && app->routing_snapshot ?
         app->routing_snapshot : qa_application_launch(app);
     const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
-    application_provider **providers = !published && app->routing_providers ? app->routing_providers : app->providers;
-    size_t count = !published && app->routing_providers ? app->routing_provider_count : app->provider_count;
-    application_provider *provider = NULL;
-    for (size_t i = 0; i < count; ++i)
-        if (providers[i] && providers[i]->owner == receiver) {
-            if (provider)
-                return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 context has ambiguous receiver ownership");
-            provider = providers[i];
-        }
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, receiver,
+        !published && app->routing_providers ? APPLICATION_PROVIDER_ROUTING : APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider = application_provider_lookup_next(app, &cursor);
+    if (application_provider_lookup_next(app, &cursor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 context has ambiguous receiver ownership");
     struct application_q3_guest *engine = q3g_engine(provider);
     bool selected = false;
     for (size_t i = 0; choices && i < choices->seat_count; ++i)
@@ -566,12 +553,12 @@ static bool remote_context_current(qa_application *app,
     qa_application_q3_client_context actual;
     if (!retained || !remote_context_read(app, retained->receiver,
         retained->seat, published, &actual, NULL)) return false;
-    application_provider **providers = !published && app->routing_providers ? app->routing_providers : app->providers;
-    size_t count = !published && app->routing_providers ? app->routing_provider_count : app->provider_count;
-    for (size_t index = 0; index < count; ++index)
-        if (providers[index] && providers[index]->owner == retained->receiver &&
-            providers[index]->kind == APPLICATION_PROVIDER_Q3)
-            return application_native_q3_remote_role_current(providers[index], retained);
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, retained->receiver,
+        !published && app->routing_providers ? APPLICATION_PROVIDER_ROUTING : APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(app, &cursor)))
+        if (provider->kind == APPLICATION_PROVIDER_Q3)
+            return application_native_q3_remote_role_current(provider, retained);
     return actual.session == retained->session &&
         actual.service_owner == retained->service_owner && actual.frontend_lifetime == retained->frontend_lifetime &&
         actual.console == retained->console && actual.cvars == retained->cvars &&

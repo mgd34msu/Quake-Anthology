@@ -113,8 +113,8 @@ static bool classname(death_call *call, qa_actor_id actor,
     if (!record) return application_fail(error, QA_ERROR_ARGUMENT, "Obituary source actor retired");
     *out = raw->classname;
     if (raw->entity || raw->client) return true;
-    application_provider *owner = call->app->live_providers;
-    while (owner && owner->owner != record->owner) owner = owner->next_live;
+    application_provider *owner = application_provider_lookup(call->app, record->owner,
+        APPLICATION_PROVIDER_LIVE);
     /* An actor without a source execution has the donor's empty classname.
      * A canonical item/definition ID is not an execution classname. */
     if (!owner || !record->has_source) return true;

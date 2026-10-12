@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "57ce4334901c8403f8e2fb69502796394f890b5c",
+  "verified_main": "ca94a5f3c659a39f6850ce56d737c6f335efaa32",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 156,
-    "open_source_observation": 215,
+    "fixed_source_build_core": 157,
+    "open_source_observation": 214,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -34286,8 +34286,9 @@
       "severity": "high",
       "job": "26",
       "area": "module_hosts",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Native HUD player-state prefix is read directly into caller-owned ABI storage; owned heap buffer and free removed. Exact 184/296-byte data and synchronous per-seat lifetime retained. Normal build/seven core suites passed; no live claim.",
+      "fixed_commit": "ca94a5f3c659a39f6850ce56d737c6f335efaa32"
     },
     {
       "id": "26-03",
@@ -41420,6 +41421,31 @@
       ],
       "record_directory": "/tmp/qa-ta3196-shared-system-info-20261012",
       "conclusion": "One shared SystemInfo apply and common borrowed info iteration replace private split/fold bodies. Filters, stable nested copies, post-set lifetime checks and saved text bytes retained. Normal build and seven core suites passed. One candidate allocation and Q2 cold snapshot allocations remain; no live or zero-allocation claim."
+    },
+    {
+      "commit": "ca94a5f3c659a39f6850ce56d737c6f335efaa32",
+      "source_tree": "37a349c6757b2acd2b00bd2bb0d77895f436d559",
+      "finding_ids": [
+        "26-02"
+      ],
+      "files_rechecked": [
+        "include/qa/native_host.h",
+        "src/compat/native_host/player.c",
+        "src/app/application/guest_native_q2_hud.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-native-hud-prefix-20261012",
+      "conclusion": "Native HUD player-state prefix is read directly into caller-owned ABI storage; owned heap buffer and free removed. Exact 184/296-byte data and synchronous per-seat lifetime retained. Normal build/seven core suites passed; no live claim."
     }
   ],
   "verification_limits": [
