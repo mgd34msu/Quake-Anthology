@@ -39,6 +39,8 @@ typedef struct q2_item_state {
     qa_pickup_lease observation;
 } q2_item_state;
 typedef struct q2_power_state {
+    qa_pool *storage;
+    size_t storage_slot;
     qa_q2_game *game;
     qa_actor_id actor, sphere;
     qa_q2_powerups values;
@@ -64,6 +66,8 @@ typedef struct q2_items {
     qa_arena storage;
     qa_arena picked_storage;
     qa_pool records;
+    qa_arena power_storage;
+    qa_pool power_records;
     qa_q2_item_definition *definitions;
     const qa_q2_item_definition **by_id;
     qa_id_index authored_items;
@@ -81,6 +85,7 @@ static inline qa_string_id q2_item_classname(qa_q2_game *g, const qa_q2_item_def
 }
 
 q2_power_state *q2_powers(qa_q2_game *, qa_actor_id, qa_error *);
+q2_power_state *q2_power_state_take(qa_q2_game *, qa_actor_id, qa_error *);
 q2_item_state *q2_item_state_take(qa_q2_game *, qa_error *);
 bool q2_item_picked_reserve(q2_item_state *, size_t, qa_error *);
 void q2_item_picked_clear(q2_item_state *);

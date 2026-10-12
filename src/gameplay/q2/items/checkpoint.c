@@ -179,17 +179,13 @@ bool qa_q2_item_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_item_checkpoi
         }
     }
     if (s->powers_present) {
-        candidate.powers = calloc(1, sizeof(*candidate.powers));
+        candidate.powers = q2_power_state_take(g, id, e);
         if (!candidate.powers)
-            goto memory;
+            goto fail;
         q2_power_state *p = candidate.powers;
-        const qa_q2_item_definition *cells = qa_q2_item_lookup(g, "ammo_cells");
-        *p = (q2_power_state){.game = g,
-                              .actor = id,
-                              .values = s->powers,
-                              .cells = cells ? cells->item : 0,
-                              .maximum_health = s->maximum_health,
-                              .power_cubes = s->power_cubes};
+        p->values = s->powers;
+        p->maximum_health = s->maximum_health;
+        p->power_cubes = s->power_cubes;
         if (!q2_resolve_reference(g, s->sphere, &p->sphere, e))
             goto fail;
         if (!g->restoring_continuation && s->definitions_bound && !q2_item_bind_actions(g, id, p, e))

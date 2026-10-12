@@ -49,7 +49,9 @@ bool q2_items_init(qa_q2_game *g, qa_error *e) {
     }
     if (!qa_pool_reserve_pages(&g->item_runtime->records, &g->item_runtime->storage,
             g->actor_records.capacity, sizeof(q2_item_storage),
-            _Alignof(q2_item_storage), e))
+            _Alignof(q2_item_storage), e) ||
+        !qa_pool_prepare(&g->item_runtime->power_records, &g->item_runtime->power_storage,
+            g->actor_records.capacity, sizeof(q2_power_state), _Alignof(q2_power_state), e))
         return false;
     for (size_t i = 0; i < g->item_runtime->records.capacity; ++i) {
         q2_item_storage *value = qa_pool_at(&g->item_runtime->records, i);
@@ -71,6 +73,7 @@ void q2_items_close(qa_q2_game *g) {
         free(g->item_runtime->by_id);
         free(g->item_runtime->definitions);
         qa_arena_destroy(&g->item_runtime->picked_storage);
+        qa_arena_destroy(&g->item_runtime->power_storage);
         qa_arena_destroy(&g->item_runtime->storage);
         free(g->item_runtime);
         g->item_runtime = NULL;
@@ -106,10 +109,11 @@ void q2_items_release_state(q2_actor *a) {
         qa_pool_release(a->item->storage, a->item->storage_slot);
         a->item = NULL;
     }
-    if (a->powers)
+    if (a->powers) {
         qa_inventory_close_items(a->powers->game->services.inventory, a->powers->definitions, NULL);
-    free(a->powers);
-    a->powers = NULL;
+        qa_pool_release(a->powers->storage, a->powers->storage_slot);
+        a->powers = NULL;
+    }
 }
 bool qa_q2_items_configure(qa_q2_game *g, const qa_q2_item_options *options, qa_error *e) {
     if (!g || !options || !isfinite(options->weapon_respawn_seconds) ||

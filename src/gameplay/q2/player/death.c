@@ -114,7 +114,7 @@ bool q2_player_reserve_corpses(qa_q2_game *g, qa_error *e) {
             q2_actor *corpse = q2_actor_get(g, id, true, e);
             if (!corpse)
                 return false;
-            corpse->client = q2_client_state_create(NULL, e);
+            corpse->client = q2_client_state_create(g, NULL, e);
             if (!corpse->client) {
                 qa_session_release(g->services.session, id, NULL);
                 return false;

@@ -3,22 +3,28 @@
 #include "qa/game_q2_checkpoint.h"
 #include "qa/game_q2_combat.h"
 
+q2_power_state *q2_power_state_take(qa_q2_game *g, qa_actor_id id, qa_error *e) {
+    qa_pool *pool = &g->item_runtime->power_records;
+    if (pool->head == SIZE_MAX) {
+        size_t count = pool->capacity ? pool->capacity : 1;
+        if (!qa_pool_extend(pool, &g->item_runtime->power_storage, count, e))
+            return NULL;
+    }
+    size_t slot;
+    q2_power_state *state = qa_pool_take(pool, &slot);
+    if (!state)
+        return NULL;
+    const qa_q2_item_definition *cells = qa_q2_item_lookup(g, "ammo_cells");
+    *state = (q2_power_state){.storage = pool, .storage_slot = slot, .game = g,
+        .actor = id, .maximum_health = 100, .cells = cells ? cells->item : 0};
+    return state;
+}
 q2_power_state *q2_powers(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     q2_actor *a = q2_actor_get(g, id, true, e);
     if (!a)
         return NULL;
-    if (!a->powers) {
-        a->powers = calloc(1, sizeof(*a->powers));
-        if (!a->powers) {
-            qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 item powers");
-            return NULL;
-        }
-        a->powers->game = g;
-        a->powers->actor = id;
-        a->powers->maximum_health = 100;
-        const qa_q2_item_definition *cells = qa_q2_item_lookup(g, "ammo_cells");
-        a->powers->cells = cells ? cells->item : 0;
-    }
+    if (!a->powers)
+        a->powers = q2_power_state_take(g, id, e);
     return a->powers;
 }
 bool qa_q2_powerups_read(qa_q2_game *g, qa_actor_id id, qa_q2_powerups *out, qa_error *e) {

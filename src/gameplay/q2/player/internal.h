@@ -35,6 +35,8 @@ typedef struct q2_players {
     size_t active_queries;
     qa_arena scratch_storage;
     qa_pool scratch_pages;
+    qa_arena client_storage;
+    qa_pool client_records;
 } q2_players;
 q2_actor *q2_client(qa_q2_game *, qa_actor_id, qa_error *);
 bool q2_player_info(qa_q2_game *, qa_actor_id, qa_builtin_player_info *);

@@ -42,12 +42,15 @@ bool q2_players_init(qa_q2_game *g, qa_error *e) {
     }
     if (!qa_pool_reserve_pages(&g->player_runtime->scratch_pages,
             &g->player_runtime->scratch_storage, (size_t)g->capacity + 64,
-            512, _Alignof(max_align_t), e)) {
-        qa_arena_destroy(&g->player_runtime->scratch_storage);
-        free(g->player_runtime);
-        g->player_runtime = NULL;
+            512, _Alignof(max_align_t), e) ||
+        !qa_pool_prepare(&g->player_runtime->client_records,
+            &g->player_runtime->client_storage, g->actor_records.capacity,
+            sizeof(q2_client_state), _Alignof(q2_client_state), e)) {
+        q2_players_close(g);
         return false;
     }
+    memset(g->player_runtime->client_records.values, 0,
+        g->player_runtime->client_records.capacity * g->player_runtime->client_records.stride);
     qa_q2_player_rules_default(&g->player_runtime->rules);
     return true;
 }
@@ -57,6 +60,11 @@ void q2_players_close(qa_q2_game *g) {
     for (size_t i = 0; i < 5; i++)
         free(g->player_runtime->rule_strings[i]);
     free(g->player_runtime->rotation_maps);
+    for (size_t i = 0; i < g->player_runtime->client_records.capacity; ++i) {
+        q2_client_state *state = qa_pool_at(&g->player_runtime->client_records, i);
+        qa_arena_destroy(&state->help_storage);
+    }
+    qa_arena_destroy(&g->player_runtime->client_storage);
     qa_arena_destroy(&g->player_runtime->scratch_storage);
     free(g->player_runtime);
     g->player_runtime = NULL;
@@ -68,24 +76,46 @@ void qa_q2_player_carry_free(qa_q2_player_carry *carry) {
         *carry = (qa_q2_player_carry){0};
     }
 }
-q2_client_state *q2_client_state_create(const qa_q2_player_rule_tail *rule, qa_error *e) {
+q2_client_state *q2_client_state_create(qa_q2_game *g,
+    const qa_q2_player_rule_tail *rule, qa_error *e) {
     size_t count = rule ? rule->help_count : 0;
     size_t capacity = count > Q2_COMPASS_POINTS ? count : Q2_COMPASS_POINTS;
-    if (capacity > (SIZE_MAX - sizeof(q2_client_state)) / sizeof(qa_vec3)) {
+    if (capacity > SIZE_MAX / sizeof(qa_vec3)) {
         qa_error_set(e, QA_ERROR_MEMORY, count, "Q2 player compass storage extent overflows");
         return NULL;
     }
-    q2_client_state *state = calloc(1, sizeof(*state) + capacity * sizeof(*state->help_storage));
-    if (!state) {
-        qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 player state");
+    qa_pool *pool = &g->player_runtime->client_records;
+    if (pool->head == SIZE_MAX) {
+        size_t previous = pool->capacity;
+        if (!qa_pool_extend(pool, &g->player_runtime->client_storage,
+                previous ? previous : 1, e))
+            return NULL;
+        for (size_t i = previous; i < pool->capacity; ++i)
+            memset(qa_pool_at(pool, i), 0, sizeof(q2_client_state));
+    }
+    size_t slot;
+    q2_client_state *state = qa_pool_take(pool, &slot);
+    if (!state)
         return NULL;
+    qa_arena help = state->help_storage;
+    *state = (q2_client_state){.storage = pool, .storage_slot = slot, .help_storage = help};
+    qa_arena_reset(&state->help_storage);
+    qa_vec3 *points = state->help_inline;
+    if (capacity > Q2_COMPASS_POINTS) {
+        points = qa_arena_alloc(&state->help_storage, capacity * sizeof(*points),
+            _Alignof(qa_vec3), e);
+        if (!points) {
+            qa_pool_release(pool, slot);
+            return NULL;
+        }
+        memset(points, 0, capacity * sizeof(*points));
     }
     if (rule)
         state->rule = *rule;
-    state->rule.help_points = state->help_storage;
+    state->rule.help_points = points;
     state->rule.help_capacity = capacity;
     if (count)
-        memcpy(state->help_storage, rule->help_points, count * sizeof(*state->help_storage));
+        memcpy(points, rule->help_points, count * sizeof(*points));
     return state;
 }
 void q2_client_release_state(q2_actor *a) {
@@ -94,7 +124,8 @@ void q2_client_release_state(q2_actor *a) {
     qa_q2_player_carry_free(&a->client->rule.coop);
     q2_player_inventory_free(a->client->rule.spawn_inventory_owner,
         &a->client->rule.spawn_inventory_storage, a->client->rule.spawn_inventory);
-    free(a->client);
+    qa_arena_reset(&a->client->help_storage);
+    qa_pool_release(a->client->storage, a->client->storage_slot);
     a->client = NULL;
 }
 bool qa_q2_players_configure(qa_q2_game *g, const qa_q2_player_rules *r,

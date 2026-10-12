@@ -300,7 +300,7 @@ static bool player_admit(void *context, qa_actor_id id, qa_error *e) {
             return false;
         }
     }
-    q2_client_state *s = q2_client_state_create(NULL, e);
+    q2_client_state *s = q2_client_state_create(g, NULL, e);
     if (!s)
         return false;
     a->client = s;

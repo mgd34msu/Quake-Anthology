@@ -63,10 +63,13 @@ bool qa_q2_begin_map(qa_q2_game *game, qa_string_id map_name, qa_string_id spawn
     memcpy(owned, players->rule_strings, sizeof(owned));
     qa_arena scratch_storage = players->scratch_storage;
     qa_pool scratch_pages = players->scratch_pages;
+    qa_arena client_storage = players->client_storage;
+    qa_pool client_records = players->client_records;
     qa_string_id *rotation_maps = players->rotation_maps;
     *players = (q2_players){.rules = rules, .services = services,
                             .rotation_maps = rotation_maps, .scratch_storage = scratch_storage,
-                            .scratch_pages = scratch_pages};
+                            .scratch_pages = scratch_pages, .client_storage = client_storage,
+                            .client_records = client_records};
     memcpy(players->rule_strings, owned, sizeof(owned));
     q2_entities *entities = game->entity_runtime;
     qa_actor_index_clear(&entities->wind_index);

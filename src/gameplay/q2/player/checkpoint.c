@@ -159,7 +159,7 @@ bool qa_q2_player_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_player_chec
     }
     if (!a)
         return false;
-    q2_client_state *state = q2_client_state_create(&saved->value.rule, e);
+    q2_client_state *state = q2_client_state_create(g, &saved->value.rule, e);
     if (!state)
         return false;
     state->player = qa_actors_player(qa_world_actors(g->services.world), id);
@@ -182,7 +182,7 @@ bool qa_q2_player_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_player_chec
     };
     qa_strings *strings = qa_session_strings(g->services.session);
     if (!q2_player_source_identity_bind(g,state,info->name,info->skin,e)) {
-        free(state); return false;
+        goto borrowed_failure;
     }
     /* Shared identity is restored by the actor checkpoint. Standalone/legacy
      * source imports admit that component through their saved projection. */
@@ -192,7 +192,7 @@ bool qa_q2_player_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_player_chec
             g->options.rules == QA_RULESET_Q2_RERELEASE ? sizeof(name) : 16u);
         state->player->name = state->source_name;
         if (named && !qa_strings_intern_cstr(strings, name, &state->player->name, e)) {
-            free(state); return false;
+            goto borrowed_failure;
         }
         state->player->skin = state->source_skin;
         state->player->model = state->source_model;
@@ -214,6 +214,10 @@ bool qa_q2_player_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_player_chec
     q2_client_release_state(a);
     a->client = state;
     return true;
+borrowed_failure:
+    qa_arena_reset(&state->help_storage);
+    qa_pool_release(state->storage, state->storage_slot);
+    return false;
 }
 bool qa_q2_players_capture(qa_q2_game *g, bool level_only, qa_q2_players_checkpoint *out, qa_error *e) {
     if (!g || !out) {
