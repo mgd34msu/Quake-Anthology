@@ -47,16 +47,16 @@ static bool print(qa_q3_game *game, qa_actor_id actor, const char *text, qa_erro
                                                .time_ns = (uint64_t)(uint32_t)game->now_ms * 1000000},
                            error);
 }
-static void arguments(const qa_command_invocation *command, char *text, size_t capacity) {
+static void arguments(size_t count, const char *const *args, char *text, size_t capacity) {
     size_t used = 0;
     text[0] = 0;
-    for (size_t i = 1; i < command->argc; ++i) {
-        size_t length = strlen(command->argv[i]);
+    for (size_t i = 0; i < count; ++i) {
+        size_t length = strlen(args[i]);
         if (length + used >= capacity - 1)
             break;
-        memcpy(text + used, command->argv[i], length);
+        memcpy(text + used, args[i], length);
         used += length;
-        if (i + 1 < command->argc)
+        if (i + 1 < count)
             text[used++] = ' ';
         text[used] = 0;
     }
@@ -92,10 +92,10 @@ bool qa_q3_game_grant_arsenal(qa_q3_game *game, qa_actor_id actor, bool ammo, qa
     --game->observation_depth;
     return okay;
 }
-static bool give(qa_q3_game *game, qa_actor_id actor, const qa_command_invocation *command,
+static bool give(qa_q3_game *game, qa_actor_id actor, size_t argument_count, const char *const *args,
                   bool selected, qa_error *error) {
     char text[1024];
-    arguments(command, text, sizeof(text));
+    arguments(argument_count, args, text, sizeof(text));
     bool all = named(text, "all");
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
@@ -155,7 +155,7 @@ static bool give(qa_q3_game *game, qa_actor_id actor, const qa_command_invocatio
         bool handled = false;
         return !selected || !game->options.hooks.give_item ||
                game->options.hooks.give_item(game->options.hooks.context, actor,
-                                             command->argc - 1, command->argv + 1,
+                                             argument_count, args,
                                              &handled, error);
     }
     if (game->options.services.cvar) {
@@ -189,24 +189,14 @@ static bool give(qa_q3_game *game, qa_actor_id actor, const qa_command_invocatio
 bool qa_q3_game_give_item(qa_q3_game *game, qa_actor_id actor, size_t count,
                           const char *const *args, bool *handled, qa_error *error) {
     if (!game || game->source_restored || !handled || (count && !args) ||
-        count >= SIZE_MAX / sizeof(*args) ||
         game->observation_depth == SIZE_MAX)
         return q3_fail(error, "invalid Q3 source item grant");
     *handled = false;
     for (size_t i = 0; i < count; ++i)
         if (!args[i])
             return q3_fail(error, "missing Q3 source item name");
-    const char **argv = malloc((count + 1) * sizeof(*argv));
-    if (!argv) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q3 source item arguments");
-        return false;
-    }
-    argv[0] = "give";
-    for (size_t i = 0; i < count; ++i)
-        argv[i + 1] = args[i];
-    qa_command_invocation command = {.argc = count + 1, .argv = argv};
     char text[1024];
-    arguments(&command, text, sizeof(text));
+    arguments(count, args, text, sizeof(text));
     size_t item_count;
     const qa_q3_item *items = qa_q3_items(game->options.product, &item_count);
     for (size_t i = 1; i < item_count; ++i)
@@ -215,9 +205,8 @@ bool qa_q3_game_give_item(qa_q3_game *game, qa_actor_id actor, size_t count,
             break;
         }
     ++game->observation_depth;
-    bool okay = !*handled || give(game, actor, &command, false, error);
+    bool okay = !*handled || give(game, actor, count, args, false, error);
     --game->observation_depth;
-    free(argv);
     return okay;
 }
 static bool dispatch(qa_q3_game *game, qa_actor_id actor, const qa_command_invocation *command,
@@ -295,7 +284,7 @@ static bool dispatch(qa_q3_game *game, qa_actor_id actor, const qa_command_invoc
     }
     if (named(name, "use") || named(name, "drop")) {
         char text[1024];
-        arguments(command, text, sizeof(text));
+        arguments(command->argc - 1, command->argv + 1, text, sizeof(text));
         size_t count;
         const qa_q3_item *items = qa_q3_items(game->options.product, &count);
         for (size_t i = 1; i < count; ++i)
@@ -328,7 +317,7 @@ static bool dispatch(qa_q3_game *game, qa_actor_id actor, const qa_command_invoc
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
     if (named(name, "give"))
-        return give(game, actor, command, true, error);
+        return give(game, actor, command->argc - 1, command->argv + 1, true, error);
     bool enabled;
     if (named(name, "god")) {
         if (!qa_combat_read_traits(game->options.services.combat, actor, &combat, error))
