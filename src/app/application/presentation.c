@@ -60,9 +60,12 @@ static application_provider *selected(qa_application *app, uint32_t seat, qa_lau
     if (!binding) binding = qa_launch_binding_for(choices,
         (qa_launch_scope){.kind = QA_SCOPE_WORLD}, role, NULL);
     if (!binding) return NULL;
-    for (size_t i = 0; i < app->provider_count; ++i) {
-        application_provider *provider = app->providers[i];
-        if (provider->attached && !strcmp(provider->launch->selection.instance, binding->instance)) return provider;
+    qa_actor_owner owner = qa_strings_find(qa_session_strings(app->session),
+        (qa_bytes){(const uint8_t *)binding->instance, strlen(binding->instance)});
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, owner, APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(app, &cursor))) {
+        if (provider->attached) return provider;
     }
     return NULL;
 }

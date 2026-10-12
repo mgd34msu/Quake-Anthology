@@ -256,14 +256,7 @@ static bool drop(void *context, qa_net_client_id id, const char *reason, qa_erro
 
 static application_provider *recipient_source(qa_application *app, qa_actor_owner owner)
 {
-    application_provider *found = NULL;
-    for (size_t i = 0; app && i < app->provider_count; ++i) {
-        application_provider *provider = app->providers[i];
-        if (provider->owner != owner) continue;
-        if (found) return NULL;
-        found = provider;
-    }
-    return found;
+    return application_provider_lookup_unique(app, owner, APPLICATION_PROVIDER_PUBLISHED);
 }
 
 struct application_q2_recipient_binding {

@@ -146,6 +146,7 @@ bool application_provider_close(qa_application *application,
     if (provider->next_live != NULL)
         provider->next_live->previous_live = provider->previous_live;
     provider->close_pending = false;
+    application_provider_unindex(application, provider);
     free(provider);
     --application->provider_states;
     return true;
@@ -375,6 +376,7 @@ bool application_finalize(qa_application *application, qa_error *error)
     free(application->q2_visuals);
     free(application->shader_remaps);
     free(application->providers);
+    qa_id_index_destroy(&application->provider_index);
     free(application->ui_names.q2_effects);
     while(application->content_names) {
         application_content_names *row=application->content_names;application->content_names=row->next;

@@ -116,6 +116,7 @@ bool application_source_baseline_prepare(application_provider *target,
     if (!app->providers) return application_fail(error, QA_ERROR_MEMORY, "retaining native baseline provider roster");
     app->providers[0] = scratch->source;
     app->provider_count = 1;
+    if (!application_provider_roster_index(app, app->providers, app->provider_count, error)) return false;
     app->routing_providers = app->providers;
     app->routing_provider_count = 1;
     if (target_q3 && target_q3->game) {

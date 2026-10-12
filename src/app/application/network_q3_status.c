@@ -6,14 +6,8 @@
 
 static application_provider *receiver(qa_application *app, qa_actor_owner owner)
 {
-    application_provider *found = NULL;
-    application_provider **rows = app->routing_providers ? app->routing_providers : app->providers;
-    size_t count = app->routing_providers ? app->routing_provider_count : app->provider_count;
-    for (size_t i = 0; i < count; ++i) if (rows[i] && rows[i]->owner == owner) {
-        if (found) return NULL;
-        found = rows[i];
-    }
-    return found;
+    return application_provider_lookup_unique(app, owner,
+        app->routing_providers ? APPLICATION_PROVIDER_ROUTING : APPLICATION_PROVIDER_PUBLISHED);
 }
 
 bool qa_application_network_q3_cgame_host_read(qa_application *app,

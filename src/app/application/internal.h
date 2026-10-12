@@ -18,6 +18,7 @@
 #include "qa/game_q2_player.h"
 #include "qa/game_q3.h"
 #include "qa/game_q3_map.h"
+#include "qa/id_index.h"
 #include "qa/modes.h"
 #include "qa/native_host.h"
 #include "qa/q3_host.h"
@@ -130,6 +131,12 @@ typedef struct application_provider {
         } native;
     } state;
 } application_provider;
+
+typedef enum application_provider_view {
+    APPLICATION_PROVIDER_LIVE,
+    APPLICATION_PROVIDER_PUBLISHED,
+    APPLICATION_PROVIDER_ROUTING
+} application_provider_view;
 
 typedef struct application_provider_admission {
     application_provider *provider;
@@ -252,6 +259,7 @@ typedef struct application_content_names {
 } application_content_names;
 
 struct qa_application {
+    qa_id_index provider_index;
     int64_t utc_ms;
     struct qa_application_client_preparation *client_preparation;
     application_publication *failed_publications;
@@ -639,6 +647,18 @@ bool application_record_level(application_provider *, qa_string_id,
                               qa_error *);
 bool application_provider_prepare(qa_application *, const qa_launch_instance *,
                                   application_provider **, qa_error *);
+bool application_provider_roster_index(qa_application *, application_provider *const *,
+    size_t, qa_error *);
+void application_provider_roster_unindex(qa_application *, application_provider *const *);
+void application_provider_unindex(qa_application *, const application_provider *);
+qa_id_index_cursor application_provider_lookup_begin(const qa_application *,
+    qa_actor_owner, application_provider_view);
+application_provider *application_provider_lookup_next(const qa_application *,
+    qa_id_index_cursor *);
+application_provider *application_provider_lookup(const qa_application *,
+    qa_actor_owner, application_provider_view);
+application_provider *application_provider_lookup_unique(const qa_application *,
+    qa_actor_owner, application_provider_view);
 bool application_instance_configuration(void *, const qa_launch_instance *,
                                         const qa_launch_choices *,
                                         qa_buffer *, qa_error *);

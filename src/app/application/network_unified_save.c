@@ -44,9 +44,13 @@ static bool drop_request(qa_source_save_io *io, application_unified_server *owne
     const qa_launch_instance *launch = okay ? qa_launch_snapshot_find(source->launch, instance) : NULL;
     application_provider *provider = NULL;
     okay = okay && launch;
-    for (size_t i = 0; okay && i < owner->application->provider_count; ++i) {
-        application_provider *candidate = owner->application->providers[i];
-        if (!candidate->launch || strcmp(candidate->launch->selection.instance, instance)) continue;
+    qa_actor_owner instance_owner = okay ? qa_strings_find(qa_session_strings(owner->application->session),
+        (qa_bytes){(const uint8_t *)instance, strlen(instance)}) : 0;
+    qa_id_index_cursor cursor = application_provider_lookup_begin(owner->application, instance_owner,
+        APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *candidate;
+    while (okay && (candidate = application_provider_lookup_next(owner->application, &cursor))) {
+        if (!candidate->launch) continue;
         if (provider) { okay = false; break; }
         provider = candidate;
     }

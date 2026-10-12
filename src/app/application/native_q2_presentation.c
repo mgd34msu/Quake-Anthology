@@ -9,8 +9,7 @@
 bool qa_application_native_q2_sound_resources(qa_application *app, qa_actor_owner owner,
     bool (*visit)(void *, const char *, qa_error *), void *context, qa_error *error)
 {
-    application_provider *provider = app->live_providers;
-    while (provider && provider->owner != owner) provider = provider->next_live;
+    application_provider *provider = application_provider_lookup(app, owner, APPLICATION_PROVIDER_LIVE);
     if (!provider || !provider->constructed || provider->close_pending) return true;
     const qa_strings *strings = qa_session_strings(app->session);
     if (provider->kind == APPLICATION_PROVIDER_Q2) {
@@ -242,9 +241,7 @@ bool qa_application_native_q2_source_clock_read(qa_application *app, qa_actor_ow
 {
     if (!app || !owner || !out || !interval_ns || !found || app->destroy_requested)
         return application_fail(error,QA_ERROR_ARGUMENT,"Q2 Source profile requires its actual emitting owner");
-    application_provider *provider=NULL;
-    for (application_provider *p=app->live_providers;p;p=p->next_live)
-        if (p->owner==owner) { provider=p; break; }
+    application_provider *provider=application_provider_lookup(app,owner,APPLICATION_PROVIDER_LIVE);
     *found=false;
     if (!provider || !provider->product || provider->product->family!=QA_GAME_Q2) return true;
     if (provider->application!=app || !provider->constructed || provider->close_pending)

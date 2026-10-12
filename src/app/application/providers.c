@@ -94,6 +94,45 @@ static bool kind_for(const qa_launch_instance *launch,
                             "provider has no executable runtime family");
 }
 
+bool application_provider_roster_index(qa_application *application,
+    application_provider *const *providers, size_t count, qa_error *error)
+{
+    if (!qa_id_index_reserve(&application->provider_index, count, error)) return false;
+    uint64_t view = (uint64_t)(uintptr_t)providers;
+    /* Buckets visit newest insertions first; retain the roster's source order. */
+    for (size_t i = count; i > 0; --i) {
+        application_provider *provider = providers[i - 1];
+        if (provider) qa_id_index_insert(&application->provider_index, provider->owner,
+            view, (size_t)(uintptr_t)provider);
+    }
+    return true;
+}
+
+static void provider_index_remove(qa_application *application, uint64_t view,
+    size_t value, bool by_value)
+{
+    qa_id_index *index = &application->provider_index;
+    size_t position = index->count;
+    while (position) {
+        qa_id_index_entry entry = index->entries[--position];
+        if (by_value ? entry.value == value : entry.discriminator == view)
+            (void)qa_id_index_remove_value(index, entry.key, entry.discriminator, entry.value);
+        if (position > index->count) position = index->count;
+    }
+}
+
+void application_provider_roster_unindex(qa_application *application,
+    application_provider *const *providers)
+{
+    if (providers) provider_index_remove(application, (uint64_t)(uintptr_t)providers, 0, false);
+}
+
+void application_provider_unindex(qa_application *application,
+    const application_provider *provider)
+{
+    provider_index_remove(application, 0, (size_t)(uintptr_t)provider, true);
+}
+
 bool application_provider_prepare(qa_application *application,
                                   const qa_launch_instance *launch,
                                   application_provider **out,
@@ -110,7 +149,8 @@ bool application_provider_prepare(qa_application *application,
     if (!qa_strings_intern_cstr(qa_session_strings(application->session),
                                 launch->selection.instance, &owner, error) ||
         !qa_strings_intern_cstr(qa_session_strings(application->session),
-                                "trigger_teleport", &trigger_teleport, error))
+                                "trigger_teleport", &trigger_teleport, error) ||
+        !qa_id_index_reserve(&application->provider_index, 1, error))
         return false;
     application_provider *provider = calloc(1, sizeof(*provider));
     if (provider == NULL)
@@ -159,6 +199,7 @@ bool application_provider_prepare(qa_application *application,
     if (provider->next_live != NULL)
         provider->next_live->previous_live = provider;
     application->live_providers = provider;
+    qa_id_index_insert(&application->provider_index, owner, 0, (size_t)(uintptr_t)provider);
     ++application->provider_states;
     *out = provider;
     return true;

@@ -447,13 +447,10 @@ bool application_unified_source_drop_recipient(qa_application *app,qa_actor_owne
         (app->operation!=APPLICATION_IDLE && app->operation!=APPLICATION_ADVANCING &&
             app->operation!=APPLICATION_CONFIGURING))
         return application_fail(error,QA_ERROR_ARGUMENT,"Source DROP recipient requires the real returned application roster");
-    application_provider *source=NULL;
-    for (size_t i=0;i<app->provider_count;++i) {
-        application_provider *candidate=app->providers[i];
-        if (candidate->owner!=source_owner) continue;
-        if (source) return application_fail(error,QA_ERROR_FORMAT,"Source DROP aliases installed provider owners");
-        source=candidate;
-    }
+    qa_id_index_cursor cursor=application_provider_lookup_begin(app,source_owner,APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *source=application_provider_lookup_next(app,&cursor);
+    if (application_provider_lookup_next(app,&cursor))
+        return application_fail(error,QA_ERROR_FORMAT,"Source DROP aliases installed provider owners");
     qa_actor_id actual; const char *actual_reason=NULL; bool pending=false;
     qa_q3_source_binding binding; qa_q3_native_client native;
     if (!source || source->application!=app || source->kind!=APPLICATION_PROVIDER_Q3 ||
@@ -489,7 +486,9 @@ bool application_unified_server_source_drop(application_unified_server *owner,qa
     if (!present || !qa_net_client_id_equal(client,owner->client) || seat.owner!=owner->seat.owner ||
         seat.index!=owner->seat.index || !qa_actor_id_equal(actor,owner->admitted_player.actor)) return true;
     application_provider *source=NULL;
-    for (size_t i=0;i<app->provider_count;++i) if (app->providers[i]->owner==source_owner) source=app->providers[i];
+    qa_id_index_cursor cursor=application_provider_lookup_begin(app,source_owner,APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *candidate;
+    while ((candidate=application_provider_lookup_next(app,&cursor))) source=candidate;
     if (!source || !owner->offered.launch || app->publication_generation!=owner->offered.publication ||
         app->map_revision!=owner->offered.map_revision || source->launch!=qa_launch_snapshot_find(owner->offered.launch,source->launch->selection.instance) ||
         !owner->admitted || !owner->player_attached)
@@ -518,8 +517,10 @@ bool application_unified_server_source_drop_current(const application_unified_se
         owner->admitted_player.arsenal.size!=owner->admitted_arsenal.size)
         return application_fail(error,QA_ERROR_ARGUMENT,"Unified DROP cleanup lacks its returned actual Source request");
     application_provider *source=NULL;
-    for (size_t i=0;i<owner->application->provider_count;++i)
-        if (owner->application->providers[i]->owner==owner->drop_source_owner) source=owner->application->providers[i];
+    qa_id_index_cursor cursor=application_provider_lookup_begin(owner->application,owner->drop_source_owner,
+        APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *candidate;
+    while ((candidate=application_provider_lookup_next(owner->application,&cursor))) source=candidate;
     qa_q3_native_client player; application_native_q3_wire_client_view wire; bool admitted=false;
     qa_q3_source_binding binding;
     qa_saved_actor_id saved;

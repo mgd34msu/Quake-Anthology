@@ -1320,9 +1320,10 @@ const qa_q3_gamestate *qa_application_network_q3_gamestate(qa_application *appli
 
 static q3g_role *external_cgame(qa_application *app, qa_actor_owner owner, uint32_t seat)
 {
-    for (size_t i = 0; app && i < app->provider_count; ++i) {
-        application_provider *provider = app->providers[i];
-        if (provider->owner != owner || !provider->attached) continue;
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, owner, APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(app, &cursor))) {
+        if (!provider->attached) continue;
         struct application_q3_guest *engine = q3g_engine(provider);
         for (q3g_role *role = engine ? engine->roles : NULL; role; role = role->next)
             if (role->kind == QA_QVM_CGAME && role->seat == seat && role->ready &&
@@ -1512,9 +1513,10 @@ bool qa_application_network_q3_client_native_system_info(qa_application *app, qa
     if (!app || !info || !qa_application_q3_remote_context_read(app, owner, seat, &receiver, error) ||
         !receiver.native_source || !qa_application_q3_remote_context_current(app, &receiver))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 SystemInfo lacks its actual native CLIENT receiver");
-    for (size_t i = 0; i < app->provider_count; ++i) {
-        application_provider *provider = app->providers[i];
-        if (provider->owner == owner && provider->attached)
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, owner, APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(app, &cursor))) {
+        if (provider->attached)
             return application_native_q3_remote_role_system_info(provider, seat, info, error);
     }
     return application_fail(error, QA_ERROR_ARGUMENT, "Q3 SystemInfo lost its actual native provider");
@@ -1528,9 +1530,10 @@ bool qa_application_network_q3_client_command(qa_application *app, qa_actor_owne
         !qa_application_q3_remote_context_current(app, &receiver))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 server command lacks its actual remote CLIENT receiver");
     if (receiver.native_source) {
-        for (size_t i = 0; i < app->provider_count; ++i) {
-            application_provider *provider = app->providers[i];
-            if (provider->owner == owner && provider->attached)
+        qa_id_index_cursor cursor = application_provider_lookup_begin(app, owner, APPLICATION_PROVIDER_PUBLISHED);
+        application_provider *provider;
+        while ((provider = application_provider_lookup_next(app, &cursor))) {
+            if (provider->attached)
                 return application_native_q3_remote_role_command(provider, seat, tokens, error);
         }
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 native arguments lost their admitted provider");

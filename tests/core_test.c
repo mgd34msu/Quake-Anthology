@@ -3342,6 +3342,44 @@ static void test_q3_send_admission(void)
     qa_q3_channel_destroy(receiver);
 }
 
+static void test_provider_identity_views(void)
+{
+    qa_application app={0}; qa_error error={0};
+    application_provider previous={.owner=17},replacement={.owner=17},other={.owner=18};
+    CHECK(qa_id_index_reserve(&app.provider_index,3,&error));
+    qa_id_index_insert(&app.provider_index,17,0,(size_t)(uintptr_t)&previous);
+    qa_id_index_insert(&app.provider_index,18,0,(size_t)(uintptr_t)&other);
+    qa_id_index_insert(&app.provider_index,17,0,(size_t)(uintptr_t)&replacement);
+    application_provider *published[]={&previous,&other},*candidate[]={&replacement},
+        *ambiguous[]={&previous,&replacement};
+    CHECK(application_provider_roster_index(&app,published,2,&error));
+    CHECK(application_provider_roster_index(&app,candidate,1,&error));
+    CHECK(application_provider_roster_index(&app,ambiguous,2,&error));
+    app.providers=published; app.provider_count=2;
+    app.routing_providers=candidate; app.routing_provider_count=1;
+    CHECK(application_provider_lookup(&app,17,APPLICATION_PROVIDER_LIVE)==&replacement);
+    CHECK(application_provider_lookup(&app,17,APPLICATION_PROVIDER_PUBLISHED)==&previous);
+    CHECK(application_provider_lookup_unique(&app,17,APPLICATION_PROVIDER_ROUTING)==&replacement);
+    app.routing_providers=ambiguous; app.routing_provider_count=2;
+    qa_id_index_cursor cursor=application_provider_lookup_begin(&app,17,APPLICATION_PROVIDER_ROUTING);
+    CHECK(application_provider_lookup_next(&app,&cursor)==&previous);
+    CHECK(application_provider_lookup_next(&app,&cursor)==&replacement);
+    CHECK(!application_provider_lookup_next(&app,&cursor));
+    CHECK(!application_provider_lookup_unique(&app,17,APPLICATION_PROVIDER_ROUTING));
+    application_provider_roster_unindex(&app,ambiguous);
+    CHECK(!application_provider_lookup(&app,17,APPLICATION_PROVIDER_ROUTING));
+    CHECK(application_provider_lookup(&app,17,APPLICATION_PROVIDER_PUBLISHED)==&previous);
+    application_provider_unindex(&app,&replacement);
+    app.routing_providers=candidate; app.routing_provider_count=1;
+    CHECK(!application_provider_lookup(&app,17,APPLICATION_PROVIDER_ROUTING));
+    CHECK(application_provider_lookup(&app,17,APPLICATION_PROVIDER_LIVE)==&previous);
+    application_provider_roster_unindex(&app,published);
+    CHECK(!application_provider_lookup(&app,17,APPLICATION_PROVIDER_PUBLISHED));
+    CHECK(application_provider_lookup(&app,17,APPLICATION_PROVIDER_LIVE)==&previous);
+    CHECK(application_provider_lookup(&app,18,APPLICATION_PROVIDER_LIVE)==&other);
+    qa_id_index_destroy(&app.provider_index);
+}
+
 static void test_actor_index_lifetimes(void)
 {
     qa_error error={0}; qa_actor_registry *registry=NULL; qa_actor_index index={0};
@@ -4191,6 +4229,7 @@ int main(int argc, char **argv)
     test_q2_retained_records();
     test_q2_record_delivery();
     test_actor_index_lifetimes();
+    test_provider_identity_views();
     test_q1_gameplay();
     test_guest();
     test_recovery(argv[0]);

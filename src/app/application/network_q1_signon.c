@@ -6,9 +6,10 @@
 
 static application_provider *source_owner(const qa_application *app, qa_actor_owner owner)
 {
-    for (size_t i = 0; app && i < app->provider_count; ++i) {
-        application_provider *p = app->providers[i];
-        if (p && p->owner == owner && p->constructed && p->attached && !p->close_pending && p->launch) return p;
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, owner, APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *p;
+    while ((p = application_provider_lookup_next(app, &cursor))) {
+        if (p->constructed && p->attached && !p->close_pending && p->launch) return p;
     }
     return NULL;
 }

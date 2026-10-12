@@ -15,15 +15,16 @@ typedef struct remote_character_owner {
 
 static application_provider *character_provider(qa_application *app, const char *instance)
 {
-    application_provider **providers = app->routing_snapshot ? app->routing_providers : app->providers;
-    size_t count = app->routing_snapshot ? app->routing_provider_count : app->provider_count;
     application_provider *found = NULL;
     qa_string_id id = qa_strings_find(qa_session_strings(app->session),
         (qa_bytes){(const uint8_t *)instance, strlen(instance)});
-    for (size_t i = 0; providers && i < count; ++i)
-        if (providers[i] && providers[i]->launch && providers[i]->owner == id) {
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, id,
+        app->routing_snapshot ? APPLICATION_PROVIDER_ROUTING : APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(app, &cursor)))
+        if (provider->launch) {
             if (found) return NULL;
-            found = providers[i];
+            found = provider;
         }
     return found;
 }

@@ -492,9 +492,10 @@ const char *qa_application_provider_instance(const qa_application *application,
 {
     if (application == NULL || owner == 0 || application->destroy_requested)
         return NULL;
-    for (const application_provider *provider = application->live_providers;
-         provider; provider = provider->next_live) {
-        if (provider->attached && provider->constructed && provider->owner == owner)
+    qa_id_index_cursor cursor = application_provider_lookup_begin(application, owner, APPLICATION_PROVIDER_LIVE);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(application, &cursor))) {
+        if (provider->attached && provider->constructed)
             return provider->launch->selection.instance;
     }
     return NULL;
@@ -506,10 +507,13 @@ bool qa_application_provider_owner(const qa_application *application,
     if (application == NULL || instance == NULL || out == NULL ||
         application->destroy_requested)
         return false;
-    for (size_t i = 0; i < application->provider_count; ++i) {
-        const application_provider *provider = application->providers[i];
-        if (provider->attached && provider->constructed &&
-            strcmp(provider->launch->selection.instance, instance) == 0) {
+    qa_actor_owner owner = qa_strings_find(qa_session_strings(application->session),
+        (qa_bytes){(const uint8_t *)instance, strlen(instance)});
+    qa_id_index_cursor cursor = application_provider_lookup_begin(application, owner,
+        APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(application, &cursor))) {
+        if (provider->attached && provider->constructed) {
             *out = provider->owner;
             return true;
         }
@@ -527,9 +531,11 @@ bool qa_application_provider_gravity(const qa_application *application,
         application->routing_snapshot : qa_application_launch(application);
     const qa_launch_binding *world = qa_launch_binding_for(qa_launch_snapshot_choices(snapshot),
         (qa_launch_scope){.kind = QA_SCOPE_WORLD}, QA_ROLE_ENTITIES, "");
-    for (size_t i = 0; i < application->provider_count; ++i) {
-        application_provider *provider = application->providers[i];
-        if (!provider->attached || !provider->constructed || provider->owner != owner)
+    qa_id_index_cursor cursor = application_provider_lookup_begin(application, owner,
+        APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(application, &cursor))) {
+        if (!provider->attached || !provider->constructed)
             continue;
         if (world && provider->launch && !strcmp(provider->launch->selection.instance, world->instance)) {
             if (!application->physics || !isfinite(application->physics->gravity)) return false;

@@ -77,21 +77,56 @@ static const qa_launch_binding *exact_binding(const qa_launch_choices *choices,
     return (unsigned)role < QA_ROLE_COUNT ? bindings[role] : NULL;
 }
 
+qa_id_index_cursor application_provider_lookup_begin(const qa_application *application,
+    qa_actor_owner owner, application_provider_view view)
+{
+    if (!application) return (qa_id_index_cursor){0};
+    /* Zero identifies the live list; each retained roster has its own address. */
+    uint64_t discriminator = 0;
+    if (view != APPLICATION_PROVIDER_LIVE) {
+        application_provider **providers = view == APPLICATION_PROVIDER_ROUTING ?
+            application->routing_providers : application->providers;
+        if (!providers) return (qa_id_index_cursor){0};
+        discriminator = (uint64_t)(uintptr_t)providers;
+    }
+    return qa_id_index_begin(&application->provider_index, owner, discriminator);
+}
+
+application_provider *application_provider_lookup_next(const qa_application *application,
+    qa_id_index_cursor *cursor)
+{
+    size_t value;
+    return application && qa_id_index_next(&application->provider_index, cursor, &value) ?
+        (application_provider *)(uintptr_t)value : NULL;
+}
+
+application_provider *application_provider_lookup(const qa_application *application,
+    qa_actor_owner owner, application_provider_view view)
+{
+    qa_id_index_cursor cursor = application_provider_lookup_begin(application, owner, view);
+    return application_provider_lookup_next(application, &cursor);
+}
+
+application_provider *application_provider_lookup_unique(const qa_application *application,
+    qa_actor_owner owner, application_provider_view view)
+{
+    qa_id_index_cursor cursor = application_provider_lookup_begin(application, owner, view);
+    application_provider *provider = application_provider_lookup_next(application, &cursor);
+    return application_provider_lookup_next(application, &cursor) ? NULL : provider;
+}
+
 static application_provider *provider_named(qa_application *application,
                                             const char *instance)
 {
     if (instance == NULL)
         return NULL;
-    application_provider **providers = application->routing_providers != NULL
-                                           ? application->routing_providers
-                                           : application->providers;
-    size_t count = application->routing_providers != NULL
-                       ? application->routing_provider_count
-                       : application->provider_count;
-    for (size_t index = 0; index < count; ++index) {
-        application_provider *provider = providers[index];
-        if (provider != NULL && provider->attached && provider->launch != NULL &&
-            strcmp(provider->launch->selection.instance, instance) == 0)
+    qa_actor_owner owner = qa_strings_find(qa_session_strings(application->session),
+        (qa_bytes){(const uint8_t *)instance, strlen(instance)});
+    qa_id_index_cursor cursor = application_provider_lookup_begin(application, owner,
+        application->routing_providers ? APPLICATION_PROVIDER_ROUTING : APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(application, &cursor))) {
+        if (provider->attached && provider->launch != NULL)
             return provider;
     }
     return NULL;
@@ -102,15 +137,11 @@ static application_provider *provider_owned(qa_application *application,
 {
     if (owner == 0)
         return NULL;
-    application_provider **providers = application->routing_providers != NULL
-                                           ? application->routing_providers
-                                           : application->providers;
-    size_t count = application->routing_providers != NULL
-                       ? application->routing_provider_count
-                       : application->provider_count;
-    for (size_t index = 0; index < count; ++index) {
-        application_provider *provider = providers[index];
-        if (provider != NULL && provider->attached && provider->owner == owner)
+    qa_id_index_cursor cursor = application_provider_lookup_begin(application, owner,
+        application->routing_providers ? APPLICATION_PROVIDER_ROUTING : APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(application, &cursor))) {
+        if (provider->attached)
             return provider;
     }
     return NULL;
@@ -1125,11 +1156,11 @@ static bool builtin_traits(void *opaque, qa_actor_id actor,
 static application_provider *target_source(qa_application *app, qa_actor_id actor)
 {
     qa_authored_monster *monster = qa_targets_monster(app->targets, actor);
-    if (monster)
-        for (size_t i = 0; i < app->provider_count; ++i) {
-            application_provider *provider = app->providers[i];
-            if (provider && provider->owner == monster->owner) return provider;
-        }
+    if (monster) {
+        application_provider *provider = application_provider_lookup(app, monster->owner,
+            APPLICATION_PROVIDER_PUBLISHED);
+        if (provider) return provider;
+    }
     return application_provider_for(app, actor, QA_ROLE_ENTITIES, "");
 }
 
@@ -1805,8 +1836,7 @@ static bool builtin_actor_callback(void *opaque, qa_builtin_actor_callback_kind 
     if (!app || !app->mod_operations || !request || !call || !result ||
         !qa_actors_get(qa_session_actors(app->session), request->self))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native callback lost its canonical operation owner");
-    application_provider *provider = app->live_providers;
-    while (provider && provider->owner != request->provider) provider = provider->next_live;
+    application_provider *provider = application_provider_lookup(app, request->provider, APPLICATION_PROVIDER_LIVE);
     if (!provider || !provider->constructed || provider->close_pending ||
         provider_family(provider) != request->family || app->destroy_requested)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native callback lost its actual source provider");

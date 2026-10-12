@@ -788,9 +788,13 @@ bool application_unified_source_command(qa_application *app,qa_net_client_id cli
     if (value->publication!=source.publication || value->map_revision!=source.map_revision)
         return application_fail(error,QA_ERROR_ARGUMENT,"Source command belongs to a retired activation");
     application_provider *provider=NULL;
-    for (size_t i=0;i<app->provider_count;++i) {
-        application_provider *candidate=app->providers[i];
-        if (!candidate->launch || strcmp(candidate->launch->selection.instance,value->instance)) continue;
+    qa_actor_owner instance_owner=qa_strings_find(qa_session_strings(app->session),
+        (qa_bytes){(const uint8_t *)value->instance,strlen(value->instance)});
+    qa_id_index_cursor cursor=application_provider_lookup_begin(app,instance_owner,
+        APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *candidate;
+    while ((candidate=application_provider_lookup_next(app,&cursor))) {
+        if (!candidate->launch) continue;
         if (provider) return application_fail(error,QA_ERROR_FORMAT,"Source command instance has duplicate installed providers");
         provider=candidate;
     }

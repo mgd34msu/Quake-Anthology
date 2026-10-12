@@ -32,14 +32,7 @@ void application_network_q2_resources_free(qa_application_network_q2 *owner)
 
 static application_provider *provider_at(qa_application_network_q2 *owner, qa_actor_owner id)
 {
-    application_provider *found = NULL;
-    for (size_t i = 0; i < owner->app->provider_count; ++i) {
-        application_provider *provider = owner->app->providers[i];
-        if (provider->owner != id) continue;
-        if (found) return NULL;
-        found = provider;
-    }
-    return found;
+    return application_provider_lookup_unique(owner->app, id, APPLICATION_PROVIDER_PUBLISHED);
 }
 
 static bool held_append(qa_application_network_q2 *owner, application_q2_held_resource *held, qa_error *error)
@@ -989,9 +982,13 @@ static bool holder_fields(qa_application_network_q2 *owner, qa_source_save_io *i
         !qa_source_save_u64(io, &pool) || !qa_source_save_u64(io, &resource)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ) {
         application_provider *provider = NULL;
-        for (size_t i = 0; i < owner->app->provider_count; ++i) {
-            application_provider *candidate = owner->app->providers[i];
-            if (candidate->launch && held->instance && !strcmp(candidate->launch->selection.instance, held->instance)) {
+        qa_actor_owner instance_owner = held->instance ? qa_strings_find(qa_session_strings(owner->app->session),
+            (qa_bytes){(const uint8_t *)held->instance, strlen(held->instance)}) : 0;
+        qa_id_index_cursor cursor = application_provider_lookup_begin(owner->app, instance_owner,
+            APPLICATION_PROVIDER_PUBLISHED);
+        application_provider *candidate;
+        while ((candidate = application_provider_lookup_next(owner->app, &cursor))) {
+            if (candidate->launch && held->instance) {
                 if (provider) return application_fail(io->error, QA_ERROR_FORMAT, "Q2 restored holder aliases Source instances");
                 provider = candidate;
             }

@@ -19,10 +19,7 @@ struct application_portals {
 static application_provider *claim_provider(qa_application *app,
                                              qa_actor_owner owner)
 {
-    for (application_provider *p = app->live_providers; p; p = p->next_live)
-        if (p->owner == owner)
-            return p;
-    return NULL;
+    return application_provider_lookup(app, owner, APPLICATION_PROVIDER_LIVE);
 }
 
 static bool claim_valid(qa_application *app, const application_portal_claim *c,

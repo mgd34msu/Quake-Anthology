@@ -259,9 +259,7 @@ bool qa_application_q3_source_client_slot(qa_application *app, qa_actor_owner ow
 {
     if (!app || !out || !app->session || !qa_actors_get(qa_session_actors(app->session), actor))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 source client has no live canonical generation");
-    application_provider *provider = NULL;
-    for (size_t i = 0; i < app->provider_count; ++i)
-        if (app->providers[i]->owner == owner) { provider = app->providers[i]; break; }
+    application_provider *provider = application_provider_lookup(app, owner, APPLICATION_PROVIDER_PUBLISHED);
     if (!provider || !provider->constructed || !provider->attached || provider->close_pending)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 source client has no admitted GAME owner");
     if (provider->kind == APPLICATION_PROVIDER_Q3)

@@ -253,7 +253,7 @@ static bool contains(application_provider *const *providers, size_t count,
     return false;
 }
 
-static bool provider_roster(application_publication *publication,
+static bool provider_roster(qa_application *application, application_publication *publication,
                             qa_error *error)
 {
     size_t count = qa_launch_snapshot_instance_count(publication->candidate);
@@ -281,7 +281,8 @@ static bool provider_roster(application_publication *publication,
                                         "candidate repeats one provider state");
         publication->next[publication->next_count++] = provider;
     }
-    return true;
+    return application_provider_roster_index(application, publication->next,
+        publication->next_count, error);
 }
 
 static bool removed_roster(qa_application *application,
@@ -526,14 +527,17 @@ static bool body_source(qa_application *application, const qa_actor_record *reco
 {
     /* Old source callbacks keep their published roster during replacement.
      * Unpublished constructors are eligible only through their actual actor row. */
-    for (size_t i = 0; i < application->provider_count; ++i) {
+    qa_id_index_cursor cursor = application_provider_lookup_begin(application, record->owner,
+        APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(application, &cursor))) {
         bool present;
-        if (!body_source_actor(application->providers[i], record, &present,
+        if (!body_source_actor(provider, record, &present,
             flags, flags_found, error)) return false;
-        if (present) { *out = application->providers[i]; return true; }
+        if (present) { *out = provider; return true; }
     }
-    for (application_provider *provider = application->live_providers;
-         provider; provider = provider->next_live) {
+    cursor = application_provider_lookup_begin(application, record->owner, APPLICATION_PROVIDER_LIVE);
+    while ((provider = application_provider_lookup_next(application, &cursor))) {
         bool present;
         if (!body_source_actor(provider, record, &present, flags, flags_found, error)) return false;
         if (present) { *out = provider; return true; }
@@ -770,7 +774,7 @@ bool application_publication_begin(qa_application *application,
     publication->candidate = candidate;
     *out = publication;
     if (!publication_prepare_values(application, publication, error) ||
-        !provider_roster(publication, error) ||
+        !provider_roster(application, publication, error) ||
         !removed_roster(application, publication, error))
         return false;
 
@@ -994,6 +998,7 @@ static bool publication_dispose_checked(qa_application *application,
     }
     free(publication->admissions);
     free(publication->removed);
+    application_provider_roster_unindex(application, publication->next);
     free(publication->next);
     application_map_publication_dispose(publication);
     free(publication);
@@ -1197,6 +1202,7 @@ static void publish_roster(qa_application *application,
             (provider->component.owner == 0 || provider->component_attached) &&
             (provider->policy.describe == NULL || provider->policy_attached);
     }
+    application_provider_roster_unindex(application, application->providers);
     free(application->providers);
     application->providers = publication->next;
     application->provider_count = publication->next_count;
@@ -1256,7 +1262,7 @@ bool application_save_prepare_content(qa_application *candidate,
     bool ok = application_save_components_decode(image, &components_saved, error) &&
               application_equipment_runtime_saved(candidate->session, image,
                   &publication->equipment_runtime_saved, error) &&
-              provider_roster(publication, error) &&
+              provider_roster(candidate, publication, error) &&
               application_save_sidecars_decode(image, candidate, error) &&
               prepare_world(candidate, publication, error);
     if (ok)
@@ -1736,6 +1742,7 @@ bool application_publication_retire(qa_application *application,
     if (!deconstruct_removed(&publication, error)) return false;
     if (!application_drain_provider_closes(application, error)) return false;
     if (!application_bots_destroy(application, error)) return false;
+    application_provider_roster_unindex(application, application->providers);
     free(application->providers);
     application->providers = NULL;
     application->provider_count = 0;

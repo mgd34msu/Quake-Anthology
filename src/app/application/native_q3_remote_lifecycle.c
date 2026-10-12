@@ -12,12 +12,10 @@ static struct application_native_q3_remote_role *source_row(qa_application *app,
         application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT lifecycle requires its current idle physical source");
         return NULL;
     }
-    application_provider *provider = NULL;
-    for (size_t i = 0; i < app->provider_count; ++i)
-        if (app->providers[i] && app->providers[i]->owner == source->receiver.receiver) {
-            if (provider) return NULL;
-            provider = app->providers[i];
-        }
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, source->receiver.receiver,
+        APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider = application_provider_lookup_next(app, &cursor);
+    if (application_provider_lookup_next(app, &cursor)) return NULL;
     if (!provider || provider->application != app || !provider->constructed || !provider->attached ||
         provider->close_pending || provider->kind != APPLICATION_PROVIDER_Q3 ||
         !application_native_q3_remote_roles_idle(provider)) {

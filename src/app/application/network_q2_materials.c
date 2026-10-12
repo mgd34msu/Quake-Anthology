@@ -664,12 +664,12 @@ bool application_network_q2_materials_derive(qa_application_network_q2 *owner,
     qa_bytes original=qa_resource_bytes(held->resource); qa_model model={0};
     if (!qa_model_load(original,&model,error)) return false;
     if (model.format!=QA_MODEL_MD3) { qa_model_free(&model); return application_fail(error,QA_ERROR_ARGUMENT,"Material closure needs an actual decoded MD3"); }
-    application_provider *provider=NULL;
-    for (size_t i=0;i<owner->app->provider_count;++i)
-        if (owner->app->providers[i]->owner==held->provider) {
-            if (provider) { qa_model_free(&model); return application_fail(error,QA_ERROR_ARGUMENT,"MD3 BODY Source owner is ambiguous"); }
-            provider=owner->app->providers[i];
-        }
+    qa_id_index_cursor cursor=application_provider_lookup_begin(owner->app,held->provider,
+        APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider=application_provider_lookup_next(owner->app,&cursor);
+    if (application_provider_lookup_next(owner->app,&cursor)) {
+        qa_model_free(&model); return application_fail(error,QA_ERROR_ARGUMENT,"MD3 BODY Source owner is ambiguous");
+    }
     if (!provider || !provider->product) { qa_model_free(&model); return application_fail(error,QA_ERROR_ARGUMENT,"MD3 catalog lost its genuine BODY Source"); }
     qa_game_family family=provider->product->family==QA_GAME_Q1?QA_GAME_Q1:
         provider->product->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;

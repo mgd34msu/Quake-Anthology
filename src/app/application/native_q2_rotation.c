@@ -5,8 +5,10 @@
 
 static application_provider *rotation_source(qa_application *app, qa_actor_owner owner)
 {
-    for (application_provider *provider = app ? app->live_providers : NULL; provider; provider = provider->next_live)
-        if (provider->owner == owner && provider->constructed && provider->attached && !provider->close_pending &&
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, owner, APPLICATION_PROVIDER_LIVE);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(app, &cursor)))
+        if (provider->constructed && provider->attached && !provider->close_pending &&
             provider->launch && provider->product && provider->product->family == QA_GAME_Q2 &&
             (provider->kind == APPLICATION_PROVIDER_Q2 ||
                 (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine))) return provider;

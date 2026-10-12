@@ -7,13 +7,7 @@
 
 static application_provider *receiver(qa_application *app, qa_actor_owner owner)
 {
-    application_provider *found = NULL;
-    for (size_t i = 0; app && i < app->provider_count; ++i)
-        if (app->providers[i] && app->providers[i]->owner == owner) {
-            if (found) return NULL;
-            found = app->providers[i];
-        }
-    return found;
+    return application_provider_lookup_unique(app, owner, APPLICATION_PROVIDER_PUBLISHED);
 }
 struct qa_native_q3_remote_client_transport {
     qa_application *application;
