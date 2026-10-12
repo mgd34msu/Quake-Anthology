@@ -1,15 +1,10 @@
 #include "pose.h"
+#include "qa/binary.h"
+#include "qa/text.h"
 
 #include <limits.h>
 #include <string.h>
 
-static int32_t word(uint32_t value) { int32_t result; memcpy(&result, &value, sizeof(result)); return result; }
-static int32_t sum(int32_t a, int32_t b) { return word((uint32_t)a + (uint32_t)b); }
-static int32_t difference(int32_t a, int32_t b) { return word((uint32_t)a - (uint32_t)b); }
-static int32_t integer(float value) {
-    return isfinite(value) && value >= -2147483648.0f && value < 2147483648.0f
-        ? (int32_t)truncf(value) : INT32_MIN;
-}
 static bool fail(qa_error *error, const char *message) {
     qa_error_set(error, QA_ERROR_FORMAT, 0, "%s", message); return false;
 }
@@ -26,7 +21,7 @@ static bool select_animation(const qa_player_animation_config *config,
     const qa_player_animation *a = animation(config, number, error);
     if (!a) return false;
     state->animation_number = number; state->selected = true;
-    state->animation_time = sum(state->frame_time, a->initial_lerp); return true;
+    state->animation_time = qa_i32_add(state->frame_time, a->initial_lerp); return true;
 }
 
 bool q3n_lerp_clear(const qa_player_animation_config *config, q3n_lerp_frame *state,
@@ -50,31 +45,31 @@ bool q3n_lerp_run(const qa_player_animation_config *config, q3n_lerp_frame *stat
         state->old_frame = state->frame; state->old_frame_time = state->frame_time;
         if (!a->frame_lerp) return true;
         state->frame_time = time < state->animation_time ? state->animation_time
-            : sum(state->old_frame_time, a->frame_lerp);
-        double quotient = trunc((double)difference(state->frame_time, state->animation_time) / a->frame_lerp);
-        int32_t offset = integer(((float)quotient * speed));
-        int32_t count = a->flipflop ? word((uint32_t)a->num_frames * 2u) : a->num_frames;
+            : qa_i32_add(state->old_frame_time, a->frame_lerp);
+        double quotient = trunc((double)qa_i32_sub(state->frame_time, state->animation_time) / a->frame_lerp);
+        int32_t offset = qa_source_float_to_i32(((float)quotient * speed));
+        int32_t count = a->flipflop ? qa_i32_from_u32((uint32_t)a->num_frames * 2u) : a->num_frames;
         if (offset >= count) {
-            offset = difference(offset, count);
+            offset = qa_i32_sub(offset, count);
             if (a->loop_frames) {
                 offset = (int32_t)((int64_t)offset % a->loop_frames);
-                offset = sum(offset, difference(a->num_frames, a->loop_frames));
-            } else { offset = difference(count, 1); state->frame_time = time; }
+                offset = qa_i32_add(offset, qa_i32_sub(a->num_frames, a->loop_frames));
+            } else { offset = qa_i32_sub(count, 1); state->frame_time = time; }
         }
         if (a->reversed)
-            state->frame = difference(difference(sum(a->first_frame, a->num_frames), 1), offset);
+            state->frame = qa_i32_sub(qa_i32_sub(qa_i32_add(a->first_frame, a->num_frames), 1), offset);
         else if (a->flipflop && offset >= a->num_frames) {
             if (!a->num_frames) return fail(error, "Native Q3 flipflop animation divides by zero");
             int32_t reflected = (int32_t)((int64_t)offset % a->num_frames);
-            state->frame = difference(difference(sum(a->first_frame, a->num_frames), 1), reflected);
+            state->frame = qa_i32_sub(qa_i32_sub(qa_i32_add(a->first_frame, a->num_frames), 1), reflected);
         }
-        else state->frame = sum(a->first_frame, offset);
+        else state->frame = qa_i32_add(a->first_frame, offset);
         if (time > state->frame_time) state->frame_time = time;
     }
-    if (state->frame_time > sum(time, 200)) state->frame_time = time;
+    if (state->frame_time > qa_i32_add(time, 200)) state->frame_time = time;
     if (state->old_frame_time > time) state->old_frame_time = time;
     state->back_lerp = state->frame_time == state->old_frame_time ? 0
-        : (1 + -((float)difference(time, state->old_frame_time) / (float)difference(state->frame_time, state->old_frame_time)));
+        : (1 + -((float)qa_i32_sub(time, state->old_frame_time) / (float)qa_i32_sub(state->frame_time, state->old_frame_time)));
     return true;
 }
 
@@ -130,7 +125,7 @@ bool q3n_player_angles_pose(q3n_player_pose *state, const qa_player_animation_co
         legs.z = (legs.z + -(lean * qa_vec_dot(velocity, axis[1])));
     }
     if (config->fixed_legs) legs = qa_v3(0, torso.y, 0);
-    int32_t elapsed = difference(time, state->pain_time);
+    int32_t elapsed = qa_i32_sub(time, state->pain_time);
     if (elapsed < 200) {
         float roll = (20 * (1 + -((float)elapsed / 200)));
         torso.z = (torso.z + (state->pain_direction ? roll : -roll));
@@ -147,7 +142,7 @@ bool q3n_player_angles(q3n_player_pose *state, const qa_player_animation_config 
 {
     q3n_pose_entity pose = {.flags = (uint32_t)entity->eFlags,
         .velocity = qa_v3(entity->pos.delta[0], entity->pos.delta[1], entity->pos.delta[2]),
-        .movement_direction = integer(entity->angles2[1]),
+        .movement_direction = qa_source_float_to_i32(entity->angles2[1]),
         .legs_animation = entity->legsAnim, .torso_animation = entity->torsoAnim};
     return q3n_player_angles_pose(state, config, &pose, angles, time, milliseconds, speed, out, error);
 }

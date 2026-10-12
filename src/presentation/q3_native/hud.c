@@ -1,5 +1,7 @@
 /* CG active HUD composition, id Software 1999-2005, GPL-2.0-or-later. */
 #include "qa/game_type.h"
+#include "qa/binary.h"
+#include "qa/text.h"
 #include "hud_internal.h"
 
 bool q3n_hud_create(const q3n_hud_options *options,q3n_hud **out,qa_error *e)
@@ -78,16 +80,16 @@ bool q3n_hud_scores_request(q3n_hud *o,const q3n_frame *f,bool *due,qa_error *e)
         o->options.remote_client || o->options.compiled_source || o->source_game!=f->source.source_game || f->time!=f->source.source_time_ms) ||
        !q3n_frame_current(f) || !q3ne_current(f,e))
         return q3ne_fail(e,QA_ERROR_ARGUMENT,"Score request requires its idle HUD and actual entered CLIENT clock");
-    *due=q3ne_plus(o->scores_request_time,2000)<f->time;
+    *due=qa_i32_add(o->scores_request_time,2000)<f->time;
     if(*due)o->scores_request_time=f->time;
     return true;
 }
 void q3n_hud_frame_sample(q3n_hud *o,int32_t offset)
-{ if(o && !o->busy) { o->frame_samples[(uint32_t)o->frame_count&127u]=offset; o->frame_count=q3ne_plus(o->frame_count,1); } }
+{ if(o && !o->busy) { o->frame_samples[(uint32_t)o->frame_count&127u]=offset; o->frame_count=qa_i32_add(o->frame_count,1); } }
 void q3n_hud_snapshot_sample(q3n_hud *o,bool dropped,int32_t ping,int32_t flags)
 { if(o && !o->busy) { unsigned i=(uint32_t)o->snapshot_count&127u; o->snapshot_samples[i]=dropped?-1:ping;
     if(!dropped)o->snapshot_flags[i]=flags;
-    o->snapshot_count=q3ne_plus(o->snapshot_count,1); } }
+    o->snapshot_count=qa_i32_add(o->snapshot_count,1); } }
 void q3n_hud_disconnect_command(q3n_hud *o,int32_t time)
 { if(o && !o->busy) { o->oldest_command_time=time; o->has_oldest_command=true; } }
 static bool center_string(q3n_hud_draw *d)
@@ -95,7 +97,7 @@ static bool center_string(q3n_hud_draw *d)
     const qa_hud_center_state *center=qa_hud_center_read(d->owner->options.messages);
     if(!center)return true;
     uint64_t time=(uint64_t)(uint32_t)d->frame->time*UINT64_C(1000000);
-    int32_t milliseconds=q3ne_int((1000*d->settings->center_time));
+    int32_t milliseconds=qa_source_float_to_i32((1000*d->settings->center_time));
     uint64_t duration=center->policy.source_layout?
         (uint64_t)(milliseconds>0?milliseconds:0)*UINT64_C(1000000):center->duration_ns;
     float alpha=qa_hud_center_alpha(center,time,duration);
@@ -122,12 +124,12 @@ static bool center_string(q3n_hud_draw *d)
                !q3nh_current(d->owner,d->frame,d->error))return false;
             y=(y + (height + 6));
         } else {
-            int32_t height=q3ne_int(((float)character_width * (center->policy.source_layout?1.5f:1)));
+            int32_t height=qa_source_float_to_i32(((float)character_width * (center->policy.source_layout?1.5f:1)));
             float width;
             if(!q3nh_width(d,full,(float)character_width,(float)height,0,&width) ||
                !q3nh_text(d,(640-width)/2,y,line,
                (float)character_width,(float)height,color,false,true,0))return false;
-            y=(float)q3ne_int((y + (((float)character_width * (center->policy.source_layout?1.5f:1)) * d->frame->preferences.text_scale)));
+            y=(float)qa_source_float_to_i32((y + (((float)character_width * (center->policy.source_layout?1.5f:1)) * d->frame->preferences.text_scale)));
         }
         if(end>=limit || !*end)break;
         start=end+1;
@@ -145,15 +147,15 @@ static bool status_head(q3n_hud_draw *d,float x)
         s->head_start_yaw=(180 + (g->damage_x * 45));
         s->head_end_yaw=(180 + (20 * (float)cos((double)(q3n_events_crandom(d->frame->events) * 3.14159274101257324219f))));
         s->head_end_pitch=(5 * (float)cos((double)(q3n_events_crandom(d->frame->events) * 3.14159274101257324219f)));
-        s->head_start_time=time; s->head_end_time=q3ne_int(((float)q3ne_plus(time,100) + (q3n_events_random(d->frame->events) * 2000)));
+        s->head_start_time=time; s->head_end_time=qa_source_float_to_i32(((float)qa_i32_add(time,100) + (q3n_events_random(d->frame->events) * 2000)));
     } else if(time>=s->head_end_time) {
         s->head_start_yaw=s->head_end_yaw; s->head_start_pitch=s->head_end_pitch; s->head_start_time=s->head_end_time;
-        s->head_end_time=q3ne_int(((float)q3ne_plus(time,100) + (q3n_events_random(d->frame->events) * 2000)));
+        s->head_end_time=qa_source_float_to_i32(((float)qa_i32_add(time,100) + (q3n_events_random(d->frame->events) * 2000)));
         s->head_end_yaw=(180 + (20 * (float)cos((double)(q3n_events_crandom(d->frame->events) * 3.14159274101257324219f))));
         s->head_end_pitch=(5 * (float)cos((double)(q3n_events_crandom(d->frame->events) * 3.14159274101257324219f)));
     }
     if(s->head_start_time>time)s->head_start_time=time;
-    float fraction=((float)q3ne_sub(time,s->head_start_time) / (float)q3ne_sub(s->head_end_time,s->head_start_time));
+    float fraction=((float)qa_i32_sub(time,s->head_start_time) / (float)qa_i32_sub(s->head_end_time,s->head_start_time));
     fraction=((fraction * fraction) * (3 + -(2 * fraction)));
     qa_vec3 angles=qa_v3((s->head_start_pitch + ((s->head_end_pitch + -s->head_start_pitch) * fraction)),
         (s->head_start_yaw + ((s->head_end_yaw + -s->head_start_yaw) * fraction)),0);
@@ -206,7 +208,7 @@ static bool crosshair(q3n_hud_draw *d)
     if(!q3nh_color(d,s->crosshair_health?color:NULL))return false;
     float size=(s->crosshair_size * (d->frame->preferences.crosshair_size / 8));
     const qa_hud_pickup_state *pickup=qa_hud_pickup_read(d->owner->options.messages);
-    int32_t elapsed=q3ne_sub(d->frame->time,pickup?
+    int32_t elapsed=qa_i32_sub(d->frame->time,pickup?
         (int32_t)(uint32_t)(pickup->blend_ns/UINT64_C(1000000)):0);
     if(!d->frame->preferences.reduced_flashes && elapsed>0 && elapsed<200)size=(size * (1 + ((float)elapsed / 200)));
     float w=(size * ((float)d->viewport.width / 640)),h=(size * ((float)d->viewport.height / 480));
@@ -265,7 +267,7 @@ static bool votes(q3n_hud_draw *d)
     const q3n_command_state *c=q3n_server_commands_state(d->commands); char text[1200];
     if(c->vote_time) {
         if(c->vote_modified && (!q3nh_sound(d,Q3N_S_TALK,6) || !q3n_server_commands_vote_drawn(d->commands,d->frame,-1,d->error)))return false;
-        int32_t seconds=q3ne_sub(30000,q3ne_sub(d->frame->time,c->vote_time))/1000; if(seconds<0)seconds=0;
+        int32_t seconds=qa_i32_sub(30000,qa_i32_sub(d->frame->time,c->vote_time))/1000; if(seconds<0)seconds=0;
         snprintf(text,sizeof(text),"VOTE(%i):%s yes:%i no:%i",seconds,c->vote_string,c->vote_yes,c->vote_no);
         if(!q3nh_text(d,0,58,text,8,16,q3nh_white,false,false,0))return false;
         if(d->owner->product==QA_Q3_TEAM_ARENA && !q3nh_text(d,0,76,"or press ESC then click Vote",8,16,q3nh_white,false,false,0))return false;
@@ -275,7 +277,7 @@ static bool votes(q3n_hud_draw *d)
     int32_t team=ci->team==1?0:ci->team==2?1:-1;
     if(team>=0 && c->team_vote_time[team]) {
         if(c->team_vote_modified[team] && (!q3nh_sound(d,Q3N_S_TALK,6) || !q3n_server_commands_vote_drawn(d->commands,d->frame,team,d->error)))return false;
-        int32_t seconds=q3ne_sub(30000,q3ne_sub(d->frame->time,c->team_vote_time[team]))/1000; if(seconds<0)seconds=0;
+        int32_t seconds=qa_i32_sub(30000,qa_i32_sub(d->frame->time,c->team_vote_time[team]))/1000; if(seconds<0)seconds=0;
         snprintf(text,sizeof(text),"TEAMVOTE(%i):%s yes:%i no:%i",seconds,c->team_vote_string[team],c->team_vote_yes[team],c->team_vote_no[team]);
         if(!q3nh_text(d,0,90,text,8,16,q3nh_white,false,false,0))return false;
     }
@@ -315,12 +317,12 @@ static bool warmup(q3n_hud_draw *d)
         } else {
             size_t length=q3nh_strlen(heading); int32_t cw=length>20?640/(int32_t)length:32;
             if(!q3nh_text(d,(float)(320-(int32_t)length*cw/2),c->game_type==1?20:25,heading,(float)cw,
-               (float)q3ne_int(((float)cw * (c->game_type==1?1.5f:1.1f))),q3nh_white,false,true,0))return false;
+               (float)qa_source_float_to_i32(((float)cw * (c->game_type==1?1.5f:1.1f))),q3nh_white,false,true,0))return false;
         }
     }
-    int32_t seconds=q3ne_sub(c->warmup,d->frame->time)/1000,new_warmup=c->warmup;
+    int32_t seconds=qa_i32_sub(c->warmup,d->frame->time)/1000,new_warmup=c->warmup;
     if(seconds<0) { new_warmup=0; seconds=0; }
-    snprintf(text,sizeof(text),"Starts in: %i",q3ne_plus(seconds,1));
+    snprintf(text,sizeof(text),"Starts in: %i",qa_i32_add(seconds,1));
     if(seconds!=c->warmup_count) {
         if(!q3n_server_commands_warmup_drawn(d->commands,d->frame,new_warmup,seconds,d->error))return false;
         if(seconds>=0 && seconds<=2 && !q3nh_sound(d,seconds==0?Q3N_S_COUNT1:seconds==1?Q3N_S_COUNT2:Q3N_S_COUNT3,7))return false;
@@ -371,14 +373,14 @@ static bool lagometer(q3n_hud_draw *d)
     int32_t shader=q3n_media_read(d->frame->media)->graphics[Q3N_G_WHITE];
     float range=(ah / 3),mid=(ay + range),scale=(range / 300);
     for(int32_t a=0;(float)a<aw;++a) {
-        float value=(((float)o->frame_samples[(uint32_t)q3ne_sub(q3ne_sub(o->frame_count,1),a)&127u]) * scale);
+        float value=(((float)o->frame_samples[(uint32_t)qa_i32_sub(qa_i32_sub(o->frame_count,1),a)&127u]) * scale);
         if(value==0.0f)continue;
         float h=fminf(fabsf(value),range);
         if(!q3nh_color(d,value>0?yellow:blue) || !q3nh_pixels(d,ax+aw-(float)a,value>0?mid-h:mid,1,h,shader,(qa_vec4){0}))return false;
     }
     range=(ah / 2); scale=(range / 900);
     for(int32_t a=0;(float)a<aw;++a) {
-        unsigned i=(uint32_t)q3ne_sub(q3ne_sub(o->snapshot_count,1),a)&127u; int32_t value=o->snapshot_samples[i];
+        unsigned i=(uint32_t)qa_i32_sub(qa_i32_sub(o->snapshot_count,1),a)&127u; int32_t value=o->snapshot_samples[i];
         if(!value)continue;
         float h=value<0?range:fminf(((float)value * scale),range);
         if(!q3nh_color(d,value<0?q3nh_red:o->snapshot_flags[i]&1?yellow:green) ||
@@ -411,8 +413,8 @@ static bool active_status(q3n_hud_draw *d)
         q3n_hud_state *s=&d->owner->state;
         if(!(q3n_frame_snapshot_player(d->frame)->eFlags&2))s->prox_time=0;
         else {
-            if(!s->prox_time) { s->prox_time=q3ne_plus(d->frame->time,5000); s->prox_counter=5; s->prox_tick=0; }
-            if(d->frame->time>s->prox_time) { s->prox_tick=s->prox_counter; s->prox_counter=q3ne_sub(s->prox_counter,1); s->prox_time=q3ne_plus(d->frame->time,1000); }
+            if(!s->prox_time) { s->prox_time=qa_i32_add(d->frame->time,5000); s->prox_counter=5; s->prox_tick=0; }
+            if(d->frame->time>s->prox_time) { s->prox_tick=s->prox_counter; s->prox_counter=qa_i32_sub(s->prox_counter,1); s->prox_time=qa_i32_add(d->frame->time,1000); }
             char text[64]; if(s->prox_tick)snprintf(text,sizeof(text),"INTERNAL COMBUSTION IN: %i",s->prox_tick); else snprintf(text,sizeof(text),"YOU HAVE BEEN MINED");
             if(!q3nh_text(d,320-(float)q3nh_strlen(text)*8,80,text,16,16,q3nh_red,true,true,0))return false;
         }

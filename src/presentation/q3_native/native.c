@@ -1,4 +1,5 @@
 #include "native_internal.h"
+#include "qa/binary.h"
 #include "local_entities.h"
 #include "marks.h"
 #include "trajectory.h"
@@ -10,12 +11,6 @@
 
 bool q3nn_fail(qa_error *error, qa_status status, const char *text)
 { qa_error_set(error,status,0,"%s",text); return false; }
-static int32_t signed_word(uint32_t value)
-{ int32_t out; memcpy(&out,&value,sizeof(out)); return out; }
-static int32_t subtract(int32_t a,int32_t b)
-{ return signed_word((uint32_t)a-(uint32_t)b); }
-static int32_t increment(int32_t a)
-{ return signed_word((uint32_t)a+1u); }
 static qa_vec3 array_vector(const float v[3])
 { return qa_v3(v[0],v[1],v[2]); }
 
@@ -231,7 +226,7 @@ bool q3nn_entity(q3n_native *o,const q3n_frame *f,uint32_t physical,
     bool reset=generation || !cent->valid || cent->teleport_bit!=teleport;
     if(generation) { memset(cent,0,sizeof(*cent)); cent->actor=actual->binding.actor; cent->physical=physical; }
     if(reset) {
-        if(cent->snapshot_time<subtract(f->time,300))cent->previous_event=0;
+        if(cent->snapshot_time<qa_i32_sub(f->time,300))cent->previous_event=0;
         cent->trail_time=f->time; cent->lerp_origin=array_vector(actual->state.origin); cent->lerp_angles=array_vector(actual->state.angles);
         if(actual->state.eType==1)q3n_player_reset(&cent->player,cent->lerp_angles);
     }
@@ -334,7 +329,7 @@ static bool powerup_audio(q3n_native *o,const q3n_frame *f,qa_error *e)
     for(unsigned i=0;i<16;++i) {
         int32_t expiry=f->local_player.powerups[i];
         if(expiry<=f->time)continue;
-        int32_t remaining=subtract(expiry,f->time),previous=subtract(expiry,o->old_time);
+        int32_t remaining=qa_i32_sub(expiry,f->time),previous=qa_i32_sub(expiry,o->old_time);
         if(remaining<5000 && remaining/1000!=previous/1000 &&
             (!qa_q3_presentation_sound(f->presentation,sound,NULL,f->local_player.clientNum,4,false,e) ||
              !qa_application_native_q3_presentation_current(f->application,&f->source)))return false;
@@ -413,7 +408,7 @@ static bool draw(q3n_native *o,int32_t latest,bool *rendered,bool *begun,
     const q3n_weapon_selection *selection=q3n_weapons_selection(o->weapons);
     const q3n_view_state *camera=q3n_view_read(o->view);
     if(!selection || !camera || !qa_native_q3_client_command_values(o->options.client,selection->weapon,camera->zoom_sensitivity,e))return false;
-    o->client_frame=increment(o->client_frame); f->client_frame=o->client_frame;
+    o->client_frame=qa_i32_add(o->client_frame,1); f->client_frame=o->client_frame;
     q3n_player_state_context transition={.warmup=commands->warmup,.timelimit=commands->timelimit,
         .fraglimit=commands->fraglimit,.scores1=commands->scores1,.intermission_started=commands->intermission_started};
     qa_native_q3_client_cvar show_miss;
@@ -451,7 +446,7 @@ static bool draw(q3n_native *o,int32_t latest,bool *rendered,bool *begun,
         !powerup_audio(o,f,e) || !qa_q3_presentation_listener(f->presentation,f->local_player.clientNum,f->refdef.origin,f->refdef.axis,e))return false;
     (void)in_water;
     if(settings->stereo!=2) {
-        int32_t milliseconds=subtract(f->time,o->old_time);
+        int32_t milliseconds=qa_i32_sub(f->time,o->old_time);
         o->frame_milliseconds=milliseconds<0?0:milliseconds; o->old_time=f->time;
         q3n_hud_frame_sample(o->hud,0);
     }

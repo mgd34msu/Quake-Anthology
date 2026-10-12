@@ -1,5 +1,7 @@
 /* CG scoreboard, id Software 1999-2005, GPL-2.0-or-later. */
 #include "qa/game_type.h"
+#include "qa/binary.h"
+#include "qa/text.h"
 #include "hud_internal.h"
 
 static void place_string(int32_t value,char out[64])
@@ -84,7 +86,7 @@ bool q3nh_scoreboard(q3n_hud_draw *d,bool *showing)
         float fade=color[0]; char text[256],place[64]; const q3n_event_state *events=q3n_events_state(d->frame->events);
         if(events->killer_name[0]) { snprintf(text,sizeof(text),"Fragged by %s",events->killer_name); if(!q3nh_center(d,40,text,fade))return false; }
         if(!qa_game_type_is_team(c->game_type)) {
-            if(p->persistant[3]!=3) { place_string(q3ne_plus(p->persistant[2],1),place);
+            if(p->persistant[3]!=3) { place_string(qa_i32_add(p->persistant[2],1),place);
                 snprintf(text,sizeof(text),"%s place with %i",place,p->persistant[0]); if(!q3nh_center(d,60,text,fade))return false; }
         } else {
             if(c->team_scores[0]==c->team_scores[1])snprintf(text,sizeof(text),"Teams are tied at %i",c->team_scores[0]);
@@ -99,7 +101,7 @@ bool q3nh_scoreboard(q3n_hud_draw *d,bool *showing)
            !q3nh_picture(d,416,86,64,32,m->graphics[Q3N_G_SCOREBOARD_NAME]))return false;
         bool compact=c->num_scores>7,local=false; int32_t line=compact?16:40,top=compact?8:16,maximum=compact?17:7,y=118,count;
         if(d->frame->preferences.text_scale>1) {
-            line=q3ne_int((float)line*d->frame->preferences.text_scale);
+            line=qa_source_float_to_i32((float)line*d->frame->preferences.text_scale);
             int32_t fitting=346/line; if(maximum>fitting)maximum=fitting;
         }
         if(qa_game_type_is_team(c->game_type)) {
@@ -123,7 +125,7 @@ bool q3nh_scoreboard(q3n_hud_draw *d,bool *showing)
             break;
         }
     }
-    s->deferred_player_loading=q3ne_plus(s->deferred_player_loading,1);
+    s->deferred_player_loading=qa_i32_add(s->deferred_player_loading,1);
     if(s->deferred_player_loading>10 && (!d->owner->options.load_deferred(d->owner->options.context,d->frame,d->error) ||
        !q3nh_current(d->owner,d->frame,d->error)))return false;
     *showing=true; return true;
@@ -141,7 +143,7 @@ bool q3nh_tourney(q3n_hud_draw *d)
     q3nh_anchor(d,320,240);
     if(d->owner->product==QA_Q3_TEAM_ARENA)return true;
     q3n_hud *o=d->owner; const q3n_command_state *c=q3n_server_commands_state(d->commands);
-    if(q3ne_plus(o->scores_request_time,2000)<d->frame->time) {
+    if(qa_i32_add(o->scores_request_time,2000)<d->frame->time) {
         o->scores_request_time=d->frame->time;
         if(!o->options.client_command(o->options.context,d->frame,"score",d->error) || !q3nh_current(o,d->frame,d->error))return false;
     }

@@ -1,5 +1,7 @@
 /* CG corner overlays, id Software 1999-2005, GPL-2.0-or-later. */
 #include "qa/game_type.h"
+#include "qa/binary.h"
+#include "qa/text.h"
 #include "hud_internal.h"
 
 static bool team_overlay(q3n_hud_draw *d,float *y,bool right,bool upper)
@@ -68,17 +70,17 @@ static bool upper(q3n_hud_draw *d)
     }
     if(d->settings->draw_fps) {
         q3n_hud *o=d->owner; int32_t time=o->options.milliseconds(o->options.context);
-        o->previous_times[(uint32_t)o->fps_index&3u]=q3ne_sub(time,o->previous_milliseconds);
-        o->previous_milliseconds=time; o->fps_index=q3ne_plus(o->fps_index,1);
+        o->previous_times[(uint32_t)o->fps_index&3u]=qa_i32_sub(time,o->previous_milliseconds);
+        o->previous_milliseconds=time; o->fps_index=qa_i32_add(o->fps_index,1);
         if(o->fps_index>4) {
-            int32_t total=0; for(unsigned i=0;i<4;++i)total=q3ne_plus(total,o->previous_times[i]); if(!total)total=1;
+            int32_t total=0; for(unsigned i=0;i<4;++i)total=qa_i32_add(total,o->previous_times[i]); if(!total)total=1;
             snprintf(text,sizeof(text),"%ifps",4000/total);
             if(!q3nh_right(d,635,y+2,text,1))return false;
         }
         y+=20*d->frame->preferences.text_scale;
     }
     if(d->settings->draw_timer) {
-        int32_t seconds=q3ne_sub(d->frame->time,c->level_start_time)/1000,minutes=seconds/60; seconds%=60;
+        int32_t seconds=qa_i32_sub(d->frame->time,c->level_start_time)/1000,minutes=seconds/60; seconds%=60;
         snprintf(text,sizeof(text),"%i:%i%i",minutes,seconds/10,seconds%10);
         if(!q3nh_right(d,635,y+2,text,1))return false;
         y+=20*d->frame->preferences.text_scale;
@@ -87,7 +89,7 @@ static bool upper(q3n_hud_draw *d)
         const qa_q3_player *p=q3n_frame_predicted_player(d->frame); q3n_player_feedback *g=&d->player->feedback;
         int32_t client=p->persistant[6];
         if(p->stats[0]>0 && g->attacker_time && client>=0 && client<64 && client!=q3n_frame_snapshot_player(d->frame)->clientNum) {
-            if(q3ne_sub(d->frame->time,g->attacker_time)>10000)g->attacker_time=0;
+            if(qa_i32_sub(d->frame->time,g->attacker_time)>10000)g->attacker_time=0;
             else {
                 if(!q3nh_head(d,580,y,60,60,client,qa_v3(0,180,0)))return false;
                 const char *info; uint64_t revision; char name[64];
@@ -141,7 +143,7 @@ static bool powerups(q3n_hud_draw *d,float y)
     const qa_q3_player *p=q3n_frame_snapshot_player(d->frame); if(p->stats[0]<=0)return true;
     unsigned sorted[16],count=0; int32_t remaining[16];
     for(unsigned i=0;i<16;++i)if(p->powerups[i]) {
-        int32_t time=q3ne_sub(p->powerups[i],d->frame->time); if(time<0 || time>999000)continue;
+        int32_t time=qa_i32_sub(p->powerups[i],d->frame->time); if(time<0 || time>999000)continue;
         unsigned j=0; while(j<count && remaining[j]<time)++j;
         for(unsigned k=count;k>j;--k) { sorted[k]=sorted[k-1]; remaining[k]=remaining[k-1]; }
         sorted[j]=i; remaining[j]=time; ++count;
@@ -155,12 +157,12 @@ static bool powerups(q3n_hud_draw *d,float y)
         y-=48; const float red[4]={1,0.2f,0.2f,1};
         if(!q3nh_color(d,red) || !q3nh_field(d,528,y,2,remaining[i]/1000))return false;
         float color[4],*modulation=NULL;
-        if(!d->frame->preferences.reduced_flashes && remaining[i]<5000) { float fraction=((float)remaining[i] / 1000); fraction=(fraction + -(float)q3ne_int(fraction));
+        if(!d->frame->preferences.reduced_flashes && remaining[i]<5000) { float fraction=((float)remaining[i] / 1000); fraction=(fraction + -(float)qa_source_float_to_i32(fraction));
             for(unsigned j=0;j<4;++j)color[j]=fraction;
             modulation=color; }
         if(!q3nh_color(d,modulation))return false;
         float size=48;
-        if(!d->frame->preferences.reduced_flashes && g->powerup_active==(int32_t)sorted[i] && q3ne_sub(d->frame->time,g->powerup_time)<200) {
+        if(!d->frame->preferences.reduced_flashes && g->powerup_active==(int32_t)sorted[i] && qa_i32_sub(d->frame->time,g->powerup_time)<200) {
             float pulse=(1 + -(((float)d->frame->time + -(float)g->powerup_time) / 200));
             size=(48 * (1 + (0.5f * pulse)));
         }
@@ -202,15 +204,15 @@ bool q3nh_team_chat(q3n_hud_draw *d)
     const q3n_command_state *c=q3n_server_commands_state(d->commands); int32_t last=c->team_chat_last_position;
     if(last==c->team_chat_position)return true;
     unsigned slot=(uint32_t)last%(uint32_t)height;
-    if(q3ne_sub(d->frame->time,c->team_chat_times[slot])>d->settings->team_chat_time) {
-        last=q3ne_plus(last,1); if(!q3n_server_commands_chat_drawn(d->commands,d->frame,last,d->error))return false;
+    if(qa_i32_sub(d->frame->time,c->team_chat_times[slot])>d->settings->team_chat_time) {
+        last=qa_i32_add(last,1); if(!q3n_server_commands_chat_drawn(d->commands,d->frame,last,d->error))return false;
     }
-    float row=8*d->frame->preferences.text_scale,h=(float)q3ne_sub(c->team_chat_position,last)*row;
+    float row=8*d->frame->preferences.text_scale,h=(float)qa_i32_sub(c->team_chat_position,last)*row;
     int32_t team=q3n_frame_snapshot_player(d->frame)->persistant[3];
     float color[4]={team==1?1:0,team!=1 && team!=2?1:0,team==2?1:0,0.33f};
     if(!q3nh_color(d,color) || !q3nh_picture(d,0,420-h,640,h,q3n_media_read(d->frame->media)->graphics[Q3N_G_TEAM_STATUS_BAR]) || !q3nh_color(d,NULL))return false;
-    for(int32_t i=q3ne_sub(c->team_chat_position,1);i>=last;i=q3ne_sub(i,1)) {
-        if(!q3nh_text(d,8,420-(float)q3ne_sub(c->team_chat_position,i)*row,c->team_chat[(uint32_t)i%(uint32_t)height],8,8,q3nh_white,false,false,0))return false;
+    for(int32_t i=qa_i32_sub(c->team_chat_position,1);i>=last;i=qa_i32_sub(i,1)) {
+        if(!q3nh_text(d,8,420-(float)qa_i32_sub(c->team_chat_position,i)*row,c->team_chat[(uint32_t)i%(uint32_t)height],8,8,q3nh_white,false,false,0))return false;
         if(i==INT32_MIN)break;
     }
     return true;

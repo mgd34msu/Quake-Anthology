@@ -431,6 +431,12 @@ static void test_shared_direction_angles(void)
 }
 static void test_source_text(void)
 {
+    CHECK(qa_i32_add(INT32_MAX,1)==INT32_MIN);
+    CHECK(qa_i32_add(INT32_MIN,-1)==INT32_MAX);
+    CHECK(qa_i32_sub(INT32_MIN,1)==INT32_MAX);
+    CHECK(qa_i32_sub(INT32_MAX,-1)==INT32_MIN);
+    CHECK(qa_i32_sub(INT32_MIN,INT32_MIN)==0);
+    CHECK(qa_i32_add(-1,1)==0);
     CHECK(qa_parse_decimal_i32(" \t-2147483649x",QA_DECIMAL_ASCII_CLAMP)==INT32_MIN);
     CHECK(qa_parse_decimal_i32("+2147483648",QA_DECIMAL_ASCII_CLAMP)==INT32_MAX);
     CHECK(qa_parse_decimal_i32("2147483648",QA_DECIMAL_SIGNED_WRAP)==INT32_MIN);

@@ -1,5 +1,6 @@
 /* id Software cg_servercmds.c voice chat runtime; GPL-2.0-or-later. */
 #include "server_commands_internal.h"
+#include "qa/binary.h"
 
 static bool warn(q3n_server_commands *o, const q3n_frame *f, qa_error *e,
     const char *kind, const char *filename)
@@ -109,7 +110,7 @@ bool q3n_voice_load(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
     int32_t after = o->options.memory_remaining(o->options.context);
     if (!q3nc_current(o, f, e)) return false;
     char message[80];
-    snprintf(message, sizeof(message), "voice chat memory size = %d\n", q3nc_sub(before, after));
+    snprintf(message, sizeof(message), "voice chat memory size = %d\n", qa_i32_sub(before, after));
     if (!q3nc_message(o, f, Q3N_COMMAND_PRINT, message, -1, NULL, e)) return false;
     o->voice.loaded = true; return true;
 }
@@ -186,7 +187,7 @@ static bool play(q3n_server_commands *o, const q3n_frame *f, q3n_buffered_voice 
         if (v->client != player->clientNum) {
             int32_t task = order(v->command);
             if (task > 0) {
-                o->state.accept_order_time = q3nc_add(f->time, 5000);
+                o->state.accept_order_time = qa_i32_add(f->time, 5000);
                 q3nc_copy(o->state.accept_voice, sizeof(o->state.accept_voice), v->command);
                 o->state.accept_task = task; o->state.accept_leader = v->client;
             }
@@ -255,7 +256,7 @@ bool q3n_voice_finish(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
         q3n_buffered_voice *voice = &o->voice.buffer[o->voice.out];
         if (voice->sound) {
             if (!play(o, f, voice, e)) return false;
-            o->voice.out = (o->voice.out + 1) % 32; o->voice.time = q3nc_add(f->time, 1000);
+            o->voice.out = (o->voice.out + 1) % 32; o->voice.time = qa_i32_add(f->time, 1000);
         }
     }
     return true;

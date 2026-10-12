@@ -1,5 +1,7 @@
 /* CG view calculations, id Software 1999-2005, GPL-2.0-or-later. */
 #include "view_internal.h"
+#include "qa/binary.h"
+#include "qa/text.h"
 
 static bool current(q3n_view *o,const q3n_frame *f,qa_error *e)
 {
@@ -108,14 +110,14 @@ static void first_person(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,con
     if(v->bob_cycle&1)roll=-roll;
     angles.x=(angles.x + pitch); angles.z=(angles.z + roll); f->view_angles=angles;
     float height=(r->origin.z + (float)p->viewheight);
-    int32_t delta=q3ne_sub(f->time,g->duck_time);
-    if(delta<100)height=(height + -((g->duck_change * (float)q3ne_sub(100,delta)) / 100));
+    int32_t delta=qa_i32_sub(f->time,g->duck_time);
+    if(delta<100)height=(height + -((g->duck_change * (float)qa_i32_sub(100,delta)) / 100));
     height=(height + fminf(6,((v->bob_fraction_sin * v->xy_speed) * s->bob_up)));
-    const q3n_event_state *events=q3n_events_state(f->events); delta=q3ne_sub(f->time,events->land_time);
+    const q3n_event_state *events=q3n_events_state(f->events); delta=qa_i32_sub(f->time,events->land_time);
     if(delta<150)height=(height + (events->land_change * ((float)delta / 150)));
-    else if(delta<450)height=(height + (events->land_change * (1 + -((float)q3ne_sub(delta,150) / 300))));
-    delta=q3ne_sub(f->time,events->step_time);
-    if(delta<200)height=(height + -((events->step_change * (float)q3ne_sub(200,delta)) / 200));
+    else if(delta<450)height=(height + (events->land_change * (1 + -((float)qa_i32_sub(delta,150) / 300))));
+    delta=qa_i32_sub(f->time,events->step_time);
+    if(delta<200)height=(height + -((events->step_change * (float)qa_i32_sub(200,delta)) / 200));
     r->origin=qa_vec_add(qa_v3(r->origin.x,r->origin.y,height),v->kick_origin);
 }
 static bool third_person(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,float angle,qa_error *e)
@@ -149,7 +151,7 @@ static bool fov(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,bool *in_wat
     qa_q3_refdef *r=&f->refdef; float horizontal=90;
     if(q3n_frame_predicted_player(f)->pmType!=5) {
         horizontal=s->dm_flags&16?90:q3nh_clamp(s->fov,1,160); float zoom=q3nh_clamp(s->zoom_fov,1,160);
-        float fraction=((float)q3ne_sub(f->time,o->state.zoom_time) / 150);
+        float fraction=((float)qa_i32_sub(f->time,o->state.zoom_time) / 150);
         if(o->state.zoomed)horizontal=fraction>1?zoom:(horizontal + (fraction * (zoom + -horizontal)));
         else if(fraction<=1)horizontal=(zoom + (fraction * (horizontal + -zoom)));
     }
@@ -195,14 +197,14 @@ bool q3n_view_frame(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,const q3
         v->xy_speed=(sqrtf(((predicted->velocity[0] * predicted->velocity[0]) + (predicted->velocity[1] * predicted->velocity[1]))));
         float angle=s->third_person_angle;
         if(s->camera_orbit_integer && f->time>v->next_orbit_time) {
-            v->next_orbit_time=q3ne_plus(f->time,s->camera_orbit_delay); angle=(angle + s->camera_orbit_value);
+            v->next_orbit_time=qa_i32_add(f->time,s->camera_orbit_delay); angle=(angle + s->camera_orbit_value);
             if(ok)ok=o->options.set_third_person_angle_value(o->options.context,angle,e) && q3ne_current(f,e);
         }
         if(!f->remote && !f->compiled && g->this_frame_teleport) { v->predicted_error=qa_v3(0,0,0); v->predicted_error_time=0; }
         if(s->error_decay>0) {
             int32_t error_time=f->compiled?f->compiled->prediction_error_time:f->remote?f->remote->prediction.prediction_error_time:v->predicted_error_time;
             qa_vec3 error=f->compiled?f->compiled->prediction_error:f->remote?f->remote->prediction.prediction_error:v->predicted_error;
-            float factor=((s->error_decay + -(float)q3ne_sub(f->time,error_time)) / s->error_decay);
+            float factor=((s->error_decay + -(float)qa_i32_sub(f->time,error_time)) / s->error_decay);
             if(factor>0 && factor<1)r->origin=qa_vec_add(r->origin,qa_vec_scale(error,factor));
             else if(f->compiled) {
                 if(ok)ok=q3n_compiled_frame_prediction_error_clear(f->compiled,e) && q3ne_current(f,e);
@@ -232,7 +234,7 @@ bool q3n_view_damage_blob(q3n_view *o,const q3n_frame *f,const q3n_view_settings
        ps->options.application!=o->options.application || ps->options.seat!=o->options.seat ||
        ps->options.remote_client!=o->options.remote_client || ps->options.compiled_source!=o->options.compiled_source)return false;
     const q3n_player_feedback *g=q3n_player_state_feedback(ps);
-    int32_t elapsed=q3ne_int(((float)f->time + -g->damage_time));
+    int32_t elapsed=qa_source_float_to_i32(((float)f->time + -g->damage_time));
     if(g->damage_value==0.0f || s->ragepro || elapsed<=0 || elapsed>=500 || f->third_person)return true;
     qa_q3_ref_entity r={.kind=QA_Q3_REF_SPRITE,.flags=4,.custom_shader=q3n_media_read(f->media)->graphics[Q3N_G_VIEW_BLOOD]};
     r.origin=qa_vec_add(f->refdef.origin,qa_vec_scale(f->refdef.axis[0],8));
@@ -266,7 +268,7 @@ void q3n_view_test_step(q3n_view *o,bool skin,int32_t delta)
 {
     if(!o || o->busy)return;
     int32_t *value=skin?&o->test_model.skin:&o->test_model.frame;
-    *value=q3ne_plus(*value,delta); if(delta<0 && *value<0)*value=0;
+    *value=qa_i32_add(*value,delta); if(delta<0 && *value<0)*value=0;
     char text[64]; snprintf(text,sizeof(text),"%s %i\n",skin?"skin":"frame",*value); o->options.print(o->options.context,text);
 }
 bool q3n_view_test_submit(q3n_view *o,const q3n_frame *f,const q3n_view_settings *s,qa_error *e)

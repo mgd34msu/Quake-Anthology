@@ -1,5 +1,7 @@
 /* CG drawing tools and model icons, id Software 1999-2005, GPL-2.0-or-later. */
 #include "hud_internal.h"
+#include "qa/binary.h"
+#include "qa/text.h"
 
 const float q3nh_white[4]={1,1,1,1},q3nh_normal[4]={1,0.69f,0,1},q3nh_red[4]={1,0,0,1};
 static const float colors[8][4]={{0,0,0,1},{1,0,0,1},{0,1,0,1},{1,1,0,1},{0,0,1,1},{0,1,1,1},{1,0,1,1},{1,1,1,1}};
@@ -18,8 +20,8 @@ size_t q3nh_strlen(const char *s)
 { size_t count=0; for(;*s;++s) { if(s[0]=='^' && s[1] && s[1]!='^')++s; else ++count; } return count; }
 bool q3nh_fade(int32_t time,int32_t start,int32_t duration,float color[4])
 {
-    int32_t elapsed=q3ne_sub(time,start); if(!start || elapsed>=duration)return false;
-    color[0]=color[1]=color[2]=1; int32_t remaining=q3ne_sub(duration,elapsed);
+    int32_t elapsed=qa_i32_sub(time,start); if(!start || elapsed>=duration)return false;
+    color[0]=color[1]=color[2]=1; int32_t remaining=qa_i32_sub(duration,elapsed);
     color[3]=remaining<200?((float)remaining / 200):1; return true;
 }
 void q3nh_health(int32_t health,int32_t armor,float color[4])
@@ -28,9 +30,9 @@ void q3nh_health(int32_t health,int32_t armor,float color[4])
     if(health<=0) { color[0]=color[1]=color[2]=0; return; }
     double absorption=health*0.66/(1.0-0.66);
     int32_t maximum=absorption<2147483648.0?(int32_t)absorption:INT32_MIN;
-    health=q3ne_plus(health,armor<maximum?armor:maximum); color[0]=1;
-    color[1]=health>60?1:health<30?0:((float)q3ne_sub(health,30) / 30);
-    color[2]=health>=100?1:health<66?0:((float)q3ne_sub(health,66) / 33);
+    health=qa_i32_add(health,armor<maximum?armor:maximum); color[0]=1;
+    color[1]=health>60?1:health<30?0:((float)qa_i32_sub(health,30) / 30);
+    color[2]=health>=100?1:health<66?0:((float)qa_i32_sub(health,66) / 33);
 }
 bool q3nh_color(q3n_hud_draw *d,const float c[4])
 {
@@ -129,8 +131,8 @@ bool q3nh_model(q3n_hud_draw *d,float x,float y,float w,float h,int32_t model,in
     qa_angle_axis(angles,r.axis,QA_ANGLE_VM_MATH);
     qa_q3_refdef view={.flags=1,.fov_x=30,.fov_y=30,.time=d->frame->time};
     qa_scene_rect_f rect=q3nh_rect(d,(qa_scene_rect_f){x,y,w,h});
-    view.x=q3ne_int(rect.x); view.y=q3ne_int(rect.y);
-    view.width=q3ne_int(rect.width); view.height=q3ne_int(rect.height); q3ne_identity(view.axis);
+    view.x=qa_source_float_to_i32(rect.x); view.y=qa_source_float_to_i32(rect.y);
+    view.width=qa_source_float_to_i32(rect.width); view.height=qa_source_float_to_i32(rect.height); q3ne_identity(view.axis);
     return qa_q3_presentation_clear(d->frame->presentation,d->error) &&
         qa_q3_presentation_entity(d->frame->presentation,&r,d->error) &&
         qa_q3_presentation_render(d->frame->presentation,&view,d->error) && q3nh_current(d->owner,d->frame,d->error);

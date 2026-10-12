@@ -1,5 +1,7 @@
 /* id Software cg_servercmds.c and cg_main.c; GPL-2.0-or-later. */
 #include "qa/game_type.h"
+#include "qa/binary.h"
+#include "qa/text.h"
 #include "server_commands_internal.h"
 #include "client_info_internal.h"
 #include "qa/game_q3_wire.h"
@@ -23,19 +25,6 @@ bool q3nc_same(const char *a, const char *b)
         if (x != y) return false;
     }
     return !*a && !*b;
-}
-static int32_t word(uint32_t value)
-{ return value <= INT32_MAX ? (int32_t)value : -1 - (int32_t)(UINT32_MAX - value); }
-int32_t q3nc_add(int32_t a, int32_t b) { return word((uint32_t)a + (uint32_t)b); }
-int32_t q3nc_sub(int32_t a, int32_t b) { return word((uint32_t)a - (uint32_t)b); }
-int32_t q3nc_integer(const char *text)
-{
-    while (*text && (signed char)*text <= 32) ++text;
-    bool negative = *text == '-';
-    if (*text == '+' || *text == '-') ++text;
-    uint32_t value = 0;
-    while (*text >= '0' && *text <= '9') value = value * 10u + (uint32_t)(*text++ - '0');
-    return word(negative ? 0u - value : value);
 }
 static bool identity(const qa_application_q3_client_context *a,
     const qa_application_q3_client_context *b)
@@ -369,7 +358,7 @@ static bool config_number(q3n_server_commands *o, const q3n_frame *f, uint32_t i
     _Alignas(max_align_t) uint8_t storage[QA_Q3_GAMESTATE_CHARS + 128];
     char *text = NULL; uint64_t revision;
     if (!config(o, f, index, storage, sizeof(storage), &text, &revision, e)) return false;
-    *out = q3nc_integer(text); return true;
+    *out = qa_parse_decimal_i32(text,QA_DECIMAL_SIGNED_WRAP); return true;
 }
 static bool info_value(const char *info, const char *key, char *out, size_t capacity, qa_error *e)
 { return qa_q3_info_value(info, key, out, capacity, e); }
@@ -381,14 +370,14 @@ static bool server_info(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
     q3n_command_state *s = &o->state;
     bool ok = info_value(text, "g_gametype", value, sizeof(value), e);
     if (ok) {
-        s->game_type = q3nc_integer(value);
+        s->game_type = qa_parse_decimal_i32(value,QA_DECIMAL_SIGNED_WRAP);
     }
     if (ok) ok = set_number(o, f, "g_gametype", s->game_type, e);
     const char *keys[] = {"dmflags", "teamflags", "fraglimit", "capturelimit", "timelimit", "sv_maxclients"};
     int32_t *fields[] = {&s->dm_flags, &s->team_flags, &s->fraglimit, &s->capturelimit, &s->timelimit, &s->max_clients};
     for (unsigned i = 0; ok && i < 6; ++i) {
         ok = info_value(text, keys[i], value, sizeof(value), e);
-        if (ok) *fields[i] = q3nc_integer(value);
+        if (ok) *fields[i] = qa_parse_decimal_i32(value,QA_DECIMAL_SIGNED_WRAP);
     }
     if (ok) ok = info_value(text, "mapname", value, sizeof(value), e);
     if (ok) { char map[8202]; snprintf(map, sizeof(map), "maps/%s.bsp", value); q3nc_copy(s->mapname, sizeof(s->mapname), map); }
@@ -601,7 +590,7 @@ bool q3nc_team_chat(q3n_server_commands *o, const q3n_frame *f, const char *inpu
             line[length] = 0;
             q3nc_copy(s->team_chat[s->team_chat_position % height], 241, line);
             s->team_chat_times[s->team_chat_position % height] = f->time;
-            s->team_chat_position = q3nc_add(s->team_chat_position, 1);
+            s->team_chat_position = qa_i32_add(s->team_chat_position, 1);
             if (s->team_chat_position < 0) return q3nc_fail(e, QA_ERROR_FORMAT, "Team chat source cursor overflow");
             line[0] = '^'; line[1] = color; length = 2; visible = 0; last_space = SIZE_MAX;
         }
@@ -615,14 +604,14 @@ bool q3nc_team_chat(q3n_server_commands *o, const q3n_frame *f, const char *inpu
     line[length] = 0;
     q3nc_copy(s->team_chat[s->team_chat_position % height], 241, line);
     s->team_chat_times[s->team_chat_position % height] = f->time;
-    s->team_chat_position = q3nc_add(s->team_chat_position, 1);
-    if (q3nc_sub(s->team_chat_position, s->team_chat_last_position) > height)
-        s->team_chat_last_position = q3nc_add(s->team_chat_position, -height);
+    s->team_chat_position = qa_i32_add(s->team_chat_position, 1);
+    if (qa_i32_sub(s->team_chat_position, s->team_chat_last_position) > height)
+        s->team_chat_last_position = qa_i32_add(s->team_chat_position, -height);
     return true;
 }
 static const char *arg(const qa_command_tokens *tokens, size_t index)
 { return index < tokens->count ? tokens->values[index] : ""; }
-static int32_t arg_int(const qa_command_tokens *tokens, size_t index) { return q3nc_integer(arg(tokens, index)); }
+static int32_t arg_int(const qa_command_tokens *tokens, size_t index) { return qa_parse_decimal_i32(arg(tokens, index),QA_DECIMAL_SIGNED_WRAP); }
 static bool dynamic(q3n_server_commands *o, const q3n_frame *f, uint32_t number,
     const q3n_client_info *ci, const q3n_client_dynamic *value, qa_error *e)
 {
@@ -685,34 +674,34 @@ static bool config_modified(q3n_server_commands *o, const q3n_frame *f, int32_t 
     case 0: ok = server_info(o, f, e); break;
     case 2: ok = music(o, f, e); break;
     case 5: {
-        int32_t warmup = q3nc_integer(text); s->warmup_count = -1;
+        int32_t warmup = qa_parse_decimal_i32(text,QA_DECIMAL_SIGNED_WRAP); s->warmup_count = -1;
         if (warmup > 0 && s->warmup <= 0) ok = sound_field(o, f,
             o->options.product == QA_Q3_TEAM_ARENA && qa_game_type_is_objective(s->game_type) ? Q3N_S_PREPARE_TEAM : Q3N_S_PREPARE, 7, e);
         if (ok) s->warmup = warmup;
         break;
     }
-    case 6: s->scores1 = q3nc_integer(text); break;
-    case 7: s->scores2 = q3nc_integer(text); break;
-    case 8: s->vote_time = q3nc_integer(text); s->vote_modified = true; break;
+    case 6: s->scores1 = qa_parse_decimal_i32(text,QA_DECIMAL_SIGNED_WRAP); break;
+    case 7: s->scores2 = qa_parse_decimal_i32(text,QA_DECIMAL_SIGNED_WRAP); break;
+    case 8: s->vote_time = qa_parse_decimal_i32(text,QA_DECIMAL_SIGNED_WRAP); s->vote_modified = true; break;
     case 9: q3nc_copy(s->vote_string, sizeof(s->vote_string), text);
         if (o->options.product == QA_Q3_TEAM_ARENA) ok = sound_field(o, f, Q3N_S_VOTE_NOW, 7, e);
         break;
-    case 10: s->vote_yes = q3nc_integer(text); s->vote_modified = true; break;
-    case 11: s->vote_no = q3nc_integer(text); s->vote_modified = true; break;
-    case 21: s->level_start_time = q3nc_integer(text); break;
-    case 22: s->intermission_started = q3nc_integer(text) != 0; break;
+    case 10: s->vote_yes = qa_parse_decimal_i32(text,QA_DECIMAL_SIGNED_WRAP); s->vote_modified = true; break;
+    case 11: s->vote_no = qa_parse_decimal_i32(text,QA_DECIMAL_SIGNED_WRAP); s->vote_modified = true; break;
+    case 21: s->level_start_time = qa_parse_decimal_i32(text,QA_DECIMAL_SIGNED_WRAP); break;
+    case 22: s->intermission_started = qa_parse_decimal_i32(text,QA_DECIMAL_SIGNED_WRAP) != 0; break;
     case 23: ok = flag_status(o, f, e); break;
     case 24: ok = shader_state(o, f, e); break;
     default:
         if (index >= 12 && index <= 19) {
             unsigned slot = (unsigned)index % 2;
-            if (index < 14) { s->team_vote_time[slot] = q3nc_integer(text); s->team_vote_modified[slot] = true; }
+            if (index < 14) { s->team_vote_time[slot] = qa_parse_decimal_i32(text,QA_DECIMAL_SIGNED_WRAP); s->team_vote_modified[slot] = true; }
             else if (index < 16) {
                 if (strlen(text) >= 1024) ok = q3nc_fail(e, QA_ERROR_FORMAT, "Team vote exceeds donor string storage");
                 if (ok) q3nc_copy(s->team_vote_string[slot], 1024, text);
                 if (ok && o->options.product == QA_Q3_TEAM_ARENA) ok = sound_field(o, f, Q3N_S_VOTE_NOW, 7, e);
-            } else if (index < 18) { s->team_vote_yes[slot] = q3nc_integer(text); s->team_vote_modified[slot] = true; }
-            else { s->team_vote_no[slot] = q3nc_integer(text); s->team_vote_modified[slot] = true; }
+            } else if (index < 18) { s->team_vote_yes[slot] = qa_parse_decimal_i32(text,QA_DECIMAL_SIGNED_WRAP); s->team_vote_modified[slot] = true; }
+            else { s->team_vote_no[slot] = qa_parse_decimal_i32(text,QA_DECIMAL_SIGNED_WRAP); s->team_vote_modified[slot] = true; }
         } else if (index >= 32 && index < 544) ok = f->compiled?
             q3n_media_compiled_configstring_changed(o->options.media,&f->compiled->source,(uint32_t)index,e):f->remote ?
             q3n_media_remote_configstring_changed(o->options.media, &f->remote->source, (uint32_t)index, e) :

@@ -1,4 +1,5 @@
 #include "remote_unified_private.h"
+#include "qa/binary.h"
 #include "remote_unified_metadata.h"
 #include "remote_unified_q3.h"
 #include "qa/application_ui_names.h"
@@ -450,7 +451,7 @@ static q3n_frame effect_frame(frontend_unified_q3 *o, unified_q3_bank *b, int32_
     return (q3n_frame){.unified_effects=&b->source,.presentation=b->backend,.assets=b->assets,
         .media=b->media,.events=b->effects,.physical_presentation_seat=d->physical_seat,
         .weapons=b->weapons,.particles=b->particles,.effect_output_context=b,.effect_sound_output=sound_output,.effect_entity_visible=local_visible,
-        .time=time,.frame_milliseconds=q3ne_word((uint32_t)o->time-(uint32_t)o->previous_time),.preferences=o->preferences};
+        .time=time,.frame_milliseconds=qa_i32_from_u32((uint32_t)o->time-(uint32_t)o->previous_time),.preferences=o->preferences};
 }
 static const q3n_event_settings effect_settings={.blood=true,.gibs=true,.add_marks=true};
 static const q3n_weapon_settings weapon_settings={.rail_trail_time=400,.tracer_length=160,
@@ -609,7 +610,7 @@ static bool ballistic_event_apply(frontend_unified_q3 *o,const qa_unified_presen
         const q3n_weapon_media *w=okay?&m->weapons[v.weapon]:NULL;
         if(okay)switch(v.kind){
         case QA_UNIFIED_Q3_FIRE:{
-            bool silent=v.weapon==6 && state->last_fire && state->last_fire_weapon==v.weapon && q3ne_sub(v.time_ms,state->last_fire_time)<=50;
+            bool silent=v.weapon==6 && state->last_fire && state->last_fire_weapon==v.weapon && qa_i32_sub(v.time_ms,state->last_fire_time)<=50;
             state->last_fire=true;state->last_fire_time=v.time_ms;state->last_fire_weapon=v.weapon;
             state->flash=true;state->fire_time=v.time_ms;state->flash_origin=v.origin;state->flash_end=v.end;state->weapon=v.weapon;
             int32_t sounds[4];size_t n=0;for(unsigned i=0;i<4;++i)if(w->flash_sounds[i])sounds[n++]=w->flash_sounds[i];
@@ -624,13 +625,13 @@ static bool ballistic_event_apply(frontend_unified_q3 *o,const qa_unified_presen
                 okay=q3n_trajectory(&v.trajectory,v.time_ms,&origin,e) && q3n_trajectory(&v.trajectory,prior,&old,e) &&
                     q3n_events_point_contents(&f,origin,-1,&contents_now,e) && q3n_events_point_contents(&f,old,-1,&contents_old,e);
                 if(okay && (contents_now&(8|16|32))){if(contents_now&contents_old&32)okay=q3n_effect_bubbles(&f,old,origin,8,e);}
-                else if(okay){int32_t tick=q3ne_word((uint32_t)(q3ne_plus(prior,50)/50)*UINT32_C(50));
+                else if(okay){int32_t tick=qa_i32_from_u32((uint32_t)(qa_i32_add(prior,50)/50)*UINT32_C(50));
                     for(;okay && tick<=v.time_ms;){qa_vec3 point;okay=q3n_trajectory(&v.trajectory,tick,&point,e);
                         if(okay){q3n_smoke smoke={.origin=point,.radius=w->trail_radius,.color={1,1,1,.33f},.duration=(float)w->trail_time,
                             .start_time=tick,.shader=m->graphics[w->trail==Q3N_TRAIL_NAIL?Q3N_G_NAIL_PUFF:Q3N_G_SMOKE_PUFF]};
                             q3n_effect_smoke(&f,&smoke)->type=Q3N_LE_SCALE_FADE;}
                         if(tick>INT32_MAX-50)break;
-                        tick=q3ne_plus(tick,50);}}
+                        tick=qa_i32_add(tick,50);}}
             }break;}
         case QA_UNIFIED_Q3_BOUNCE:okay=ballistic_sound(o,b,m->sounds[(q3n_events_rand(b->effects)&1)?Q3N_S_GRENADE_BOUNCE2:Q3N_S_GRENADE_BOUNCE1],(qa_actor_id){0},v.end,v.time_ms,0,1,e);break;
         case QA_UNIFIED_Q3_SHOTGUN:okay=q3n_weapons_effect_shotgun(&f,v.start,v.direction,v.seed,e);break;
@@ -812,13 +813,13 @@ static bool character_submit(frontend_unified_q3 *o,unified_q3_character *c,qa_e
     if(c->hidden)return true;
     if(c->reset){q3n_player_reset(&c->pose,c->angles);c->reset=false;}
     qa_q3_entity state=c->source;
-    state.eFlags=q3ne_word(c->flags);state.legsAnim=c->legs;state.torsoAnim=c->torso;
+    state.eFlags=qa_i32_from_u32(c->flags);state.legsAnim=c->legs;state.torsoAnim=c->torso;
     state.angles2[1]=(float)c->movement;
     state.pos.delta[0]=c->velocity.x;state.pos.delta[1]=c->velocity.y;state.pos.delta[2]=c->velocity.z;
     q3n_body_visual visual={.scale=c->scale,.opacity=c->opacity};
     memcpy(visual.color,c->color,sizeof(visual.color));
     q3n_body_options options={.time=o->time,
-        .frame_milliseconds=q3ne_word((uint32_t)o->time-(uint32_t)o->previous_time),
+        .frame_milliseconds=qa_i32_from_u32((uint32_t)o->time-(uint32_t)o->previous_time),
         .local_view_client=qa_actor_id_equal(viewer,c->actor)?state.number:-1,.swing_speed=.3f,.visual=&visual};
     q3n_player_body body;
     if(!q3n_player_body_build(c->bank->assets,&c->pose,&c->client,&state,c->origin,c->angles,
@@ -860,7 +861,7 @@ static bool ballistic_draw(frontend_unified_q3 *o,unified_q3_bank *b,qa_error *e
     if(!frontend_remote_unified_player(o->replica,&viewer,&source_number))return false;
     const q3n_media_view *m=q3n_media_read(b->media);
     for(unified_q3_ballistic *v=o->ballistics;v;v=v->next)if(v->bank==b){
-        if(v->last_fire && q3ne_sub(o->time,v->last_fire_time)>50)v->last_fire=false;
+        if(v->last_fire && qa_i32_sub(o->time,v->last_fire_time)>50)v->last_fire=false;
         const q3n_weapon_media *w=&m->weapons[v->weapon];
         if(v->projectile){
             qa_q3_ref_entity ref={.kind=v->weapon==8?QA_Q3_REF_SPRITE:QA_Q3_REF_MODEL,.model=w->missile_model,
@@ -872,7 +873,7 @@ static bool ballistic_draw(frontend_unified_q3 *o,unified_q3_bank *b,qa_error *e
             qa_vec3 velocity;if(!q3n_trajectory_delta(&v->trajectory,o->time,&velocity,e) || !ballistic_loop(o,b,w->missile_sound,v->actor,v->end,velocity,e))return false;
         }
         if(v->flash){
-            if(q3ne_sub(o->time,v->fire_time)>20)v->flash=false;
+            if(qa_i32_sub(o->time,v->fire_time)>20)v->flash=false;
             else{
                 qa_q3_ref_entity ref={.kind=QA_Q3_REF_MODEL,.model=w->flash_model,.origin=v->flash_origin,
                     .old_origin=v->flash_origin,.flags=qa_actor_id_equal(v->actor,viewer)?2:0};
@@ -883,7 +884,7 @@ static bool ballistic_draw(frontend_unified_q3 *o,unified_q3_bank *b,qa_error *e
             }
         }
         if(v->bolt){
-            if(q3ne_sub(o->time,v->bolt_time)>50)v->bolt=false;
+            if(qa_i32_sub(o->time,v->bolt_time)>50)v->bolt=false;
             else{
                 qa_q3_ref_entity ref={.kind=QA_Q3_REF_LIGHTNING,.origin=v->bolt_origin,.old_origin=v->bolt_end,
                     .custom_shader=m->graphics[Q3N_G_LIGHTNING_SHADER]};
@@ -1136,7 +1137,7 @@ bool frontend_unified_q3_presentation(frontend_unified_q3 *o,const qa_unified_pr
         if(okay&&!duplicate){
             if(v->loop)okay=frontend_unified_events_sound_loop_name(o->events,row->content_id,row->resource_id,id,
                 v->origin,v->velocity,row->seconds*1000,v->channel,v->volume,1,
-                q3ne_word((uint32_t)o->frontend->frame_number),true,e);
+                qa_i32_from_u32((uint32_t)o->frontend->frame_number),true,e);
             else okay=frontend_unified_events_sound_name(o->events,row->content_id,row->resource_id,id,v->origin,
                 row->seconds*1000,v->channel,v->volume,1,0,e);
         }

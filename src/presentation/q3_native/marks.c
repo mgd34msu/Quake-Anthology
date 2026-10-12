@@ -1,5 +1,7 @@
 /* id Software CG_ImpactMark/CG_AddMarks; GPL-2.0-or-later. */
 #include "events_internal.h"
+#include "qa/binary.h"
+#include "qa/text.h"
 
 static bool impact(const q3n_frame *f, const q3n_impact_mark *r, qa_error *error)
 {
@@ -62,17 +64,17 @@ static bool submit(const q3n_frame *f, qa_error *error)
     q3n_events *o=f->events; if(!f->event_settings->add_marks)return true;
     if(!q3ne_current(f,error))return false;
     for(uint32_t i=0;i<o->mark_count;) {
-        q3n_stored_mark *m=&o->marks[i]; int32_t expires=q3ne_plus(m->time,10000);
+        q3n_stored_mark *m=&o->marks[i]; int32_t expires=qa_i32_add(m->time,10000);
         if(f->time>expires) {
             --o->mark_count; memmove(m,m+1,(o->mark_count-i)*sizeof(*m)); continue;
         }
         if(m->shader==q3n_media_read(f->media)->graphics[Q3N_G_ENERGY_MARK]) {
-            int32_t fade=q3ne_int((450 + -(450 * ((float)q3ne_sub(f->time,m->time) / 3000))));
+            int32_t fade=qa_source_float_to_i32((450 + -(450 * ((float)qa_i32_sub(f->time,m->time) / 3000))));
             if(fade<255 && m->count && m->vertices[0].color[0])fade_rgb(m,fade<0?0:fade);
         }
-        int32_t remaining=q3ne_sub(expires,f->time);
+        int32_t remaining=qa_i32_sub(expires,f->time);
         if(remaining<1000) {
-            int32_t fade=q3ne_word(255u*(uint32_t)remaining)/1000;
+            int32_t fade=qa_i32_from_u32(255u*(uint32_t)remaining)/1000;
             if(m->alpha_fade)for(uint32_t j=0;j<m->count;++j)m->vertices[j].color[3]=(uint8_t)(uint32_t)fade;
             else fade_rgb(m,fade);
         }

@@ -1,5 +1,6 @@
 /* id Software cg_event.c and CG_PlayBufferedSounds; GPL-2.0-or-later. */
 #include "qa/game_type.h"
+#include "qa/binary.h"
 #include "events_internal.h"
 #include "weapon.h"
 #include "../q3/internal.h"
@@ -89,7 +90,7 @@ bool q3ne_current(const q3n_frame *f, qa_error *error)
             const qa_builtin_event *event = f->effect_event->event;
             clock = event && event->family == QA_GAME_Q3 && event->time_ns % UINT64_C(1000000) == 0 &&
                 event->time_ns / UINT64_C(1000000) <= UINT32_MAX &&
-                f->time == q3ne_word((uint32_t)(event->time_ns / UINT64_C(1000000))) &&
+                f->time == qa_i32_from_u32((uint32_t)(event->time_ns / UINT64_C(1000000))) &&
                 f->effect_pose_current && f->effect_pose_current(f->effect_output_context);
         }
         if (!f->events || !f->events->standalone_effects || f->events->remote_source || f->remote || f->compiled || f->events->options.compiled_source || !f->event_settings || !f->presentation ||
@@ -166,7 +167,7 @@ static bool center(const q3n_frame *f, const char *text, qa_error *error)
 }
 static bool pain(const q3n_frame *f, q3n_entity *cent, int32_t number, int32_t health, qa_error *error)
 {
-    if(q3ne_sub(f->time,cent->player.pain_time)<500)return true;
+    if(qa_i32_sub(f->time,cent->player.pain_time)<500)return true;
     char name[32]; snprintf(name,sizeof(name),"*pain%d_1.wav",health<25?25:health<50?50:health<75?75:100);
     if(!custom(f,number,3,name,error))return false;
     cent->player.pain_time=f->time; cent->player.pain_direction=!cent->player.pain_direction; return true;
@@ -293,7 +294,7 @@ static bool obituary(const q3n_frame *f, const qa_q3_entity *s, qa_error *error)
     if(message) { snprintf(output,sizeof(output),"%s %s.\n",victim,message); f->events->options.print(f->events->options.context,output); return q3ne_current(f,error); }
     if(attacker==ps->clientNum) {
         if(!qa_game_type_is_team(q3n_frame_game_type(f))) {
-            char rank[64]; place(q3ne_plus(ps->persistant[2],1),rank);
+            char rank[64]; place(qa_i32_add(ps->persistant[2],1),rank);
             snprintf(output,sizeof(output),"You fragged %s\n%s place with %d",victim,rank,ps->persistant[0]);
         } else snprintf(output,sizeof(output),"You fragged %s",victim);
         if((!mission || !(f->event_settings->single_player_active && f->event_settings->camera_orbit)) && !center(f,output,error))return false;
@@ -443,8 +444,8 @@ static bool dispatch(const q3n_frame *f, qa_q3_entity *s, q3n_entity *cent, qa_v
         if(predicted && client==predicted->clientNum) { o->state.land_change=(float)(-8*(event-Q3N_EV_FALL_SHORT+1)); o->state.land_time=f->time; } break;
     case Q3N_EV_STEP4:case Q3N_EV_STEP8:case Q3N_EV_STEP12:case Q3N_EV_STEP16: {
         if(!predicted || client!=predicted->clientNum || f->event_settings->demo_playback || (ps->pmFlags&4096) || f->event_settings->no_predict || f->event_settings->synchronous_clients)break;
-        int32_t delta=q3ne_sub(f->time,o->state.step_time);
-        float old=delta<200?((o->state.step_change * (float)q3ne_sub(200,delta)) / 200):0;
+        int32_t delta=qa_i32_sub(f->time,o->state.step_time);
+        float old=delta<200?((o->state.step_change * (float)qa_i32_sub(200,delta)) / 200):0;
         o->state.step_change=fminf(32,(old + (float)(4*(event-Q3N_EV_STEP4+1)))); o->state.step_time=f->time; break;
     }
     case Q3N_EV_JUMP_PAD: {
@@ -659,7 +660,7 @@ bool q3n_events_apply_remote(const q3n_frame *f,const q3n_remote_entity *actual,
         return q3ne_fail(error,QA_ERROR_ARGUMENT,"Remote Q3 event lacks its actual deduplicated cache callback");
     const qa_q3_entity *raw=actual->current;
     int32_t number=raw->eType>13 && (raw->eFlags&16)?raw->otherEntityNum:raw->number;
-    int32_t event=raw->eType>13?q3ne_sub(raw->eType,13):raw->event;
+    int32_t event=raw->eType>13?qa_i32_sub(raw->eType,13):raw->event;
     if(source->number!=number || source->event!=event ||
        actual->presentation->previous_event!=(raw->eType>13?1:raw->event))
         return q3ne_fail(error,QA_ERROR_ARGUMENT,"Remote Q3 event differs from its actual deduplicated source ES");
@@ -685,7 +686,7 @@ bool q3n_events_apply_compiled(const q3n_frame *f,const q3n_compiled_entity *act
         return q3ne_fail(error,QA_ERROR_ARGUMENT,"Compiled event requires its actual deduplicated snapshot callback");
     const qa_q3_entity *raw=actual->current;
     int32_t number=raw->eType>13 && (raw->eFlags&16)?raw->otherEntityNum:raw->number;
-    int32_t event=raw->eType>13?q3ne_sub(raw->eType,13):raw->event;
+    int32_t event=raw->eType>13?qa_i32_sub(raw->eType,13):raw->event;
     if (source->number!=number || source->event!=event ||
         actual->presentation->previous_event!=(raw->eType>13?1:raw->event))
         return q3ne_fail(error,QA_ERROR_ARGUMENT,"Compiled event differs from its actual checked source ES");
@@ -712,7 +713,7 @@ bool q3n_events_finish(const q3n_frame *f, qa_error *error)
             int32_t sound=o->sound_buffer[o->sound_out];
             if(sound) {
                 ok=q3ne_sound(f,sound,NULL,q3n_frame_snapshot_player(f)->clientNum,7,true,error);
-                if(ok) { o->sound_buffer[o->sound_out]=0; o->sound_out=(o->sound_out+1)%20; o->sound_time=q3ne_plus(f->time,750); }
+                if(ok) { o->sound_buffer[o->sound_out]=0; o->sound_out=(o->sound_out+1)%20; o->sound_time=qa_i32_add(f->time,750); }
             }
         }
     }

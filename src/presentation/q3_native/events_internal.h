@@ -1,6 +1,8 @@
 #ifndef QA_Q3_NATIVE_EVENTS_INTERNAL_H
 #define QA_Q3_NATIVE_EVENTS_INTERNAL_H
 #include "events.h"
+#include "qa/binary.h"
+#include "qa/text.h"
 #include "marks.h"
 #include "trajectory.h"
 #include <limits.h>
@@ -55,16 +57,12 @@ enum q3n_source_event {
     Q3N_EV_DEBUG_LINE, Q3N_EV_STOP_LOOP, Q3N_EV_TAUNT, Q3N_EV_TAUNT_YES, Q3N_EV_TAUNT_NO,
     Q3N_EV_TAUNT_FOLLOW, Q3N_EV_TAUNT_FLAG, Q3N_EV_TAUNT_BASE, Q3N_EV_TAUNT_PATROL
 };
-static inline int32_t q3ne_word(uint32_t x) { int32_t v; memcpy(&v, &x, 4); return v; }
-static inline int32_t q3ne_sub(int32_t x, int32_t y) { return q3ne_word((uint32_t)x - (uint32_t)y); }
-static inline int32_t q3ne_plus(int32_t x, int32_t y) { return q3ne_word((uint32_t)x + (uint32_t)y); }
-static inline int32_t q3ne_int(float x) { return !isfinite(x) || x < -2147483648.0f || x >= 2147483648.0f ? INT32_MIN : (int32_t)x; }
-static inline uint8_t q3ne_byte(float x) { return (uint8_t)(uint32_t)q3ne_int(x); }
+static inline uint8_t q3ne_byte(float x) { return (uint8_t)(uint32_t)qa_source_float_to_i32(x); }
 static inline qa_vec3 q3ne_array(const float x[3]) { return qa_v3(x[0], x[1], x[2]); }
 static inline void q3ne_store(float x[3], qa_vec3 v) { x[0] = v.x; x[1] = v.y; x[2] = v.z; }
 static inline bool q3ne_fail(qa_error *e, qa_status status, const char *s) { qa_error_set(e,status,0,"%s",s); return false; }
-static inline float q3ne_life(int32_t start, int32_t end) { return (1 / (float)q3ne_sub(end,start)); }
-static inline float q3ne_remaining(const q3n_local_entity *v, int32_t time) { return ((float)q3ne_sub(v->end_time,time) * v->life_rate); }
+static inline float q3ne_life(int32_t start, int32_t end) { return (1 / (float)qa_i32_sub(end,start)); }
+static inline float q3ne_remaining(const q3n_local_entity *v, int32_t time) { return ((float)qa_i32_sub(v->end_time,time) * v->life_rate); }
 static inline void q3ne_identity(qa_vec3 axis[3]) { axis[0]=qa_v3(1,0,0); axis[1]=qa_v3(0,1,0); axis[2]=qa_v3(0,0,1); }
 bool q3ne_current(const q3n_frame *, qa_error *);
 bool q3ne_sound(const q3n_frame *, int32_t sound, const qa_vec3 *, int32_t entity, int32_t channel, bool local, qa_error *);

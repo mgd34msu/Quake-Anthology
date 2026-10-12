@@ -1,5 +1,6 @@
 /* CG_LoadMenus and Team Arena menu/input lifetime, GPL-2.0-or-later. */
 #include "qa/game_type.h"
+#include "qa/binary.h"
 #include "mission_hud_internal.h"
 
 static bool assets(int handle)
@@ -68,7 +69,7 @@ static bool load_menus(q3n_mission_hud *o,const char *requested)
     }
     o->menus->allocation_guard=false;
     for(int i=1;i<=64;++i)q3menu_source_close(i);
-    if(ok&&!o->menus->failed) { o->loaded=true; q3menu_print("UI menu load time = %d milli seconds\n",q3ne_sub(o->options.milliseconds(o->options.context),start)); }
+    if(ok&&!o->menus->failed) { o->loaded=true; q3menu_print("UI menu load time = %d milli seconds\n",qa_i32_sub(o->options.milliseconds(o->options.context),start)); }
     return ok&&!o->menus->failed;
 }
 static void cache_assets(q3n_mission_hud *o)
@@ -125,7 +126,7 @@ bool q3n_mission_hud_response(q3n_mission_hud *o,const q3n_frame *f,const q3n_co
     Menus_ShowByName("voiceMenu"); bool ok=q3nm_set(o,"cl_conXOffset","72"); o->voice_time=f->time; return q3nm_end(o,p,ok); }
 bool q3n_mission_hud_timed(q3n_mission_hud *o,const q3n_frame *f,qa_error *e)
 { q3menu_context *p; if(!q3nm_begin(o,f,e,&p))return false; bool ok=true;
-    if(o->voice_time&&q3ne_sub(f->time,o->voice_time)>2500) { Menus_CloseByName("voiceMenu"); ok=q3nm_set(o,"cl_conXOffset","0"); o->voice_time=0; }
+    if(o->voice_time&&qa_i32_sub(f->time,o->voice_time)>2500) { Menus_CloseByName("voiceMenu"); ok=q3nm_set(o,"cl_conXOffset","0"); o->voice_time=0; }
     return q3nm_end(o,p,ok); }
 bool q3n_mission_hud_message(q3n_mission_hud *o,const q3n_frame *f,int32_t type,const char *text,qa_error *e)
 { q3menu_context *p; if(!text)return q3ne_fail(e,QA_ERROR_ARGUMENT,"Mission HUD chat requires source text");
@@ -172,7 +173,7 @@ bool q3n_mission_hud_mouse(q3n_mission_hud *o,const q3n_frame *f,int32_t dx,int3
     const qa_q3_player *player=q3n_frame_predicted_player(f); if(!player)return q3nm_end(o,p,q3ne_fail(e,QA_ERROR_ARGUMENT,"Mission mouse input requires its actual predicted player"));
     int type=player->pmType; bool ok=true;
     if((type==0||type==2)&&!o->hud->state.show_scores)ok=o->options.key_catcher(o->options.context,0,e);
-    else { o->cursor_x=q3ne_plus(o->cursor_x,dx); o->cursor_y=q3ne_plus(o->cursor_y,dy);
+    else { o->cursor_x=qa_i32_add(o->cursor_x,dx); o->cursor_y=qa_i32_add(o->cursor_y,dy);
         if(o->cursor_x<0)o->cursor_x=0;
         if(o->cursor_x>640)o->cursor_x=640;
         if(o->cursor_y<0)o->cursor_y=0;

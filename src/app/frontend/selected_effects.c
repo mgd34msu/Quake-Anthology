@@ -1,4 +1,5 @@
 #include "selected_effects_private.h"
+#include "qa/binary.h"
 #include "../../presentation/q3_native/events_internal.h"
 #include "../../presentation/q3/internal.h"
 #include "qa/scene_marks.h"
@@ -258,7 +259,7 @@ static q3n_frame frame(frontend_selected_effects_group *group, const qa_applicat
         .effect_sound_output = sound_output, .effect_pose_current = event ? pose_current : NULL,
         .presentation = group->view.presentation, .assets = group->view.assets, .media = group->view.media,
         .events = group->view.events, .event_settings = settings, .preferences = primary->preferences,
-        .time = group->time, .frame_milliseconds = group->sampled ? q3ne_sub(group->time, group->previous_time) : 0};
+        .time = group->time, .frame_milliseconds = group->sampled ? qa_i32_sub(group->time, group->previous_time) : 0};
 }
 
 static bool renderer_name(const char *name, const char *match)
@@ -306,7 +307,7 @@ static bool prepare_primary(qa_frontend *frontend, const frontend_effects_primar
         if (!okay) break;
         if (group->prepared && group->prepared_application_frame == source.application_frame &&
             group->time == source.sample_time_ms) continue;
-        if (group->sampled && q3ne_sub(source.sample_time_ms, group->previous_time) < 0) {
+        if (group->sampled && qa_i32_sub(source.sample_time_ms, group->previous_time) < 0) {
             okay = frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effect clock rewound without resetting its actual source owner"); break;
         }
         group->time = source.sample_time_ms; group->active_source = &source; group->active_primary = primary;
@@ -399,7 +400,7 @@ static bool event_primary(qa_frontend *frontend, const frontend_effects_primary 
     if (group->event_generation == event->queue_generation && event->event_id < group->event_cursor) return true;
     owner->busy = true; group->active_source = &event->source; group->active_event = event; group->active_primary = primary;
     group->active_pose = pose;
-    group->time = q3ne_word((uint32_t)(source_event->time_ns / UINT64_C(1000000)));
+    group->time = qa_i32_from_u32((uint32_t)(source_event->time_ns / UINT64_C(1000000)));
     q3n_event_settings settings = effect_settings(frontend);
     q3n_frame current = frame(group, &event->source, event, primary, &settings);
     bool okay = q3ne_current(&current, error);

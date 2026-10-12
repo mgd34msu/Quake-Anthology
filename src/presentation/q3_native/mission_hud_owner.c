@@ -1,5 +1,7 @@
 /* cg_newdraw.c owner draws, with the Team Arena stat schema. GPL-2.0-or-later. */
 #include "qa/game_type.h"
+#include "qa/binary.h"
+#include "qa/text.h"
 #include "mission_hud_internal.h"
 #include "qa/application_equipment.h"
 #include <float.h>
@@ -103,7 +105,7 @@ static const char *status_text(q3n_mission_hud *o)
     const qa_q3_player *p=q3nm_player(o); const q3n_command_state *s=o->commands; if(!s)return "";
     if(!qa_game_type_is_team(s->game_type)) { if(!p&&!q3nm_require_player(o))return "";
         if(p->persistant[3]==3)return "";
-        int rank=q3ne_plus(p->persistant[2],1); bool tied=(rank&0x4000)!=0; rank&=~0x4000;
+        int rank=qa_i32_add(p->persistant[2],1); bool tied=(rank&0x4000)!=0; rank&=~0x4000;
         const char *place=rank==1?"^41st^7":rank==2?"^12nd^7":rank==3?"^33rd^7":q3menu_format("%d%s",rank,
             rank==11||rank==12||rank==13?"th":rank%10==1?"st":rank%10==2?"nd":rank%10==3?"rd":"th");
         return q3menu_format("%s%s place with %d",tied?"Tied for ":"",place,p->persistant[0]); }
@@ -149,24 +151,24 @@ static void ammo(q3n_mission_hud *o,rectDef_t r,bool flat)
 static void player_head(q3n_mission_hud *o,rectDef_t r)
 {
     q3n_hud_state *s=&o->hud->state; const q3n_player_feedback *p=q3n_player_state_feedback(o->frame->player_state); int time=o->frame->time;
-    if(p&&p->damage_time!=0.0f&&q3ne_sub(time,q3ne_int(p->damage_time))<500) {
-        float frac=(float)q3ne_sub(time,q3ne_int(p->damage_time))/500,size=r.w*1.25f*(1.5f-frac*0.5f),stretch=size-r.w*1.25f;
+    if(p&&p->damage_time!=0.0f&&qa_i32_sub(time,qa_source_float_to_i32(p->damage_time))<500) {
+        float frac=(float)qa_i32_sub(time,qa_source_float_to_i32(p->damage_time))/500,size=r.w*1.25f*(1.5f-frac*0.5f),stretch=size-r.w*1.25f;
         r.x-=stretch*0.5f+p->damage_x*stretch*0.5f; s->head_start_yaw=180+p->damage_x*45;
         s->head_end_yaw=180+20*cosf(q3n_events_crandom(o->frame->events)*(float)M_PI);
         s->head_end_pitch=5*cosf(q3n_events_crandom(o->frame->events)*(float)M_PI); s->head_start_time=time;
-        s->head_end_time=q3ne_int((float)q3ne_plus(time,100)+q3n_events_random(o->frame->events)*2000);
+        s->head_end_time=qa_source_float_to_i32((float)qa_i32_add(time,100)+q3n_events_random(o->frame->events)*2000);
     } else if(time>=s->head_end_time) {
         s->head_start_yaw=s->head_end_yaw; s->head_start_pitch=s->head_end_pitch; s->head_start_time=s->head_end_time;
-        s->head_end_time=q3ne_int((float)q3ne_plus(time,100)+q3n_events_random(o->frame->events)*2000);
+        s->head_end_time=qa_source_float_to_i32((float)qa_i32_add(time,100)+q3n_events_random(o->frame->events)*2000);
         s->head_end_yaw=180+20*cosf(q3n_events_crandom(o->frame->events)*(float)M_PI);
         s->head_end_pitch=5*cosf(q3n_events_crandom(o->frame->events)*(float)M_PI);
     }
     if(s->head_start_time>time)s->head_start_time=time;
-    float frac=(float)q3ne_sub(time,s->head_start_time)/(float)q3ne_sub(s->head_end_time,s->head_start_time); frac=frac*frac*(3-2*frac);
+    float frac=(float)qa_i32_sub(time,s->head_start_time)/(float)qa_i32_sub(s->head_end_time,s->head_start_time); frac=frac*frac*(3-2*frac);
     q3nm_result(q3nh_head(&o->draw,r.x,r.y,r.w,r.h,q3nm_player(o)->clientNum,
         qa_v3(s->head_start_pitch+(s->head_end_pitch-s->head_start_pitch)*frac,s->head_start_yaw+(s->head_end_yaw-s->head_start_yaw)*frac,0)));
 }
-static bool order_blink(q3n_mission_hud *o) { return o->order_pending&&o->frame->time>q3ne_sub(o->order_time,2500)&&((o->frame->time>>9)&1); }
+static bool order_blink(q3n_mission_hud *o) { return o->order_pending&&o->frame->time>qa_i32_sub(o->order_time,2500)&&((o->frame->time>>9)&1); }
 static int carrier(q3n_mission_hud *o,bool blue)
 { for(int i=0;i<o->commands->max_clients;++i) { const q3n_client_info *ci=q3nm_client(o,i);
     if(ci&&ci->info_valid&&ci->team==(blue?1:2)&&(ci->dynamic.powerups&(1<<(blue?8:7))))return i; } return -1; }
@@ -200,7 +202,7 @@ static void held_item(q3n_mission_hud *o,rectDef_t r,bool persistent)
 static void area_powerups(q3n_mission_hud *o,rectDef_t r,int align,float special,float scale,float color[4])
 {
     const qa_q3_player *p=q3nm_player(o); if(p->stats[0]<=0)return; int sorted[16],remaining[16],count=0;
-    for(int i=0;i<16;++i) { int rem=q3ne_sub(p->powerups[i],o->frame->time); if(!p->powerups[i]||rem<=0||rem>=999000)continue;
+    for(int i=0;i<16;++i) { int rem=qa_i32_sub(p->powerups[i],o->frame->time); if(!p->powerups[i]||rem<=0||rem>=999000)continue;
         int j=0; while(j<count&&remaining[j]<rem)++j; for(int k=count;k>j;--k) { sorted[k]=sorted[k-1]; remaining[k]=remaining[k-1]; }
         sorted[j]=i; remaining[j]=rem; ++count; }
     float x=r.x,y=r.y;
@@ -240,7 +242,7 @@ static void spectators(q3n_mission_hud *o,rectDef_t r,float scale,float color[4]
     if(o->spectator_offset>length) { o->spectator_offset=0; o->spectator_paint_x=(int)(r.x+1); o->spectator_paint_x2=-1; }
     const char *value=o->commands->spectator_list;
     if(o->frame->time>o->spectator_time) {
-        o->spectator_time=q3ne_plus(o->frame->time,10);
+        o->spectator_time=qa_i32_add(o->frame->time,10);
         if((float)o->spectator_paint_x<=r.x+2) { if(o->spectator_offset<length) { o->spectator_paint_x+=q3nm_width(value+o->spectator_offset,scale,1)-1; ++o->spectator_offset; }
             else { o->spectator_offset=0; o->spectator_paint_x=o->spectator_paint_x2>=0?o->spectator_paint_x2:(int)(r.x+r.w-2); o->spectator_paint_x2=-1; } }
         else { --o->spectator_paint_x; if(o->spectator_paint_x2>=0)--o->spectator_paint_x2; }
@@ -340,11 +342,11 @@ bool q3n_mission_hud_next_order(q3n_mission_hud *o,const q3n_frame *f,qa_error *
     if(!ci->team_leader) { int index=q3nm_integer(o,QA_NATIVE_Q3_CVAR_cg_currentSelectedPlayer);
         if(index<0||index>=8)return q3nm_end(o,previous,q3ne_fail(e,QA_ERROR_FORMAT,"Next Mission order selected player leaves source team array"));
         if(o->commands->sorted_team_players[index]!=p->clientNum)return q3nm_end(o,previous,true); }
-    if(o->current_order<7) { o->current_order=q3ne_plus(o->current_order,1);
-        if(o->current_order==5&&!team_flag(o,false))o->current_order=q3ne_plus(o->current_order,1);
-        if(o->current_order==6&&!team_flag(o,true))o->current_order=q3ne_plus(o->current_order,1); }
+    if(o->current_order<7) { o->current_order=qa_i32_add(o->current_order,1);
+        if(o->current_order==5&&!team_flag(o,false))o->current_order=qa_i32_add(o->current_order,1);
+        if(o->current_order==6&&!team_flag(o,true))o->current_order=qa_i32_add(o->current_order,1); }
     else o->current_order=1;
-    o->order_pending=true; o->order_time=q3ne_plus(f->time,3000); return q3nm_end(o,previous,true);
+    o->order_pending=true; o->order_time=qa_i32_add(f->time,3000); return q3nm_end(o,previous,true);
 }
 bool q3n_mission_hud_select(q3n_mission_hud *o,const q3n_frame *f,bool next,qa_error *e)
 {

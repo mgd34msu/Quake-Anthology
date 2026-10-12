@@ -1,5 +1,7 @@
 /* id Software cg_localents.c; GPL-2.0-or-later. */
 #include "events_internal.h"
+#include "qa/binary.h"
+#include "qa/text.h"
 
 void q3ne_local_reset(q3n_events *o)
 {
@@ -46,7 +48,7 @@ static bool entity(const q3n_frame *f, const qa_q3_ref_entity *ref, qa_error *er
 static bool light(const q3n_frame *f, const q3n_local_entity *v, qa_error *error)
 {
     if(v->light==0.0f || f->preferences.reduced_flashes)return true;
-    float c=((float)q3ne_sub(f->time,v->start_time) / (float)q3ne_sub(v->end_time,v->start_time));
+    float c=((float)qa_i32_sub(f->time,v->start_time) / (float)qa_i32_sub(v->end_time,v->start_time));
     c=c<0.5f?1:(1 + -((c + -0.5f) * 2));
     return qa_q3_presentation_light(f->presentation,v->ref.origin,(v->light * c),v->light_color,false,error) && q3ne_current(f,error);
 }
@@ -55,7 +57,7 @@ static bool scale_fade(const q3n_frame *f, int32_t index, qa_error *error)
     q3n_events *o=f->events; q3n_local_entity *v=&o->locals[index].value; qa_q3_ref_entity *r=&v->ref;
     float c=q3ne_remaining(v,f->time);
     if(v->type==Q3N_LE_MOVE_SCALE_FADE && v->fade_in_time>v->start_time && f->time<v->fade_in_time)
-        c=(1 + -((float)q3ne_sub(v->fade_in_time,f->time) / (float)q3ne_sub(v->fade_in_time,v->start_time)));
+        c=(1 + -((float)qa_i32_sub(v->fade_in_time,f->time) / (float)qa_i32_sub(v->fade_in_time,v->start_time)));
     r->color[3]=q3ne_byte(((255 * c) * v->color[3]));
     if(v->type!=Q3N_LE_MOVE_SCALE_FADE || !(v->flags&Q3N_LE_DONT_SCALE))
         r->radius=((v->radius * (1 + -c)) + (v->type==Q3N_LE_FALL_SCALE_FADE?16:8));
@@ -68,9 +70,9 @@ static bool scale_fade(const q3n_frame *f, int32_t index, qa_error *error)
 }
 static bool blood_trail(const q3n_frame *f, int32_t index, qa_error *error)
 {
-    int32_t start=q3ne_word(150u*(uint32_t)(q3ne_plus(q3ne_sub(f->time,f->frame_milliseconds),150)/150));
-    int32_t end=q3ne_word(150u*(uint32_t)(f->time/150));
-    for(int32_t time=start; time<=end; time=q3ne_plus(time,150)) {
+    int32_t start=qa_i32_from_u32(150u*(uint32_t)(qa_i32_add(qa_i32_sub(f->time,f->frame_milliseconds),150)/150));
+    int32_t end=qa_i32_from_u32(150u*(uint32_t)(f->time/150));
+    for(int32_t time=start; time<=end; time=qa_i32_add(time,150)) {
         qa_vec3 origin;
         /* Allocation may recycle this exact record while the source traverses it. */
         if(!q3n_trajectory(&f->events->locals[index].value.pos,time,&origin,error))return false;
@@ -85,7 +87,7 @@ static bool fragment(const q3n_frame *f, int32_t index, qa_error *error)
 {
     q3n_events *o=f->events; q3n_local_entity *v=&o->locals[index].value; qa_q3_ref_entity *r=&v->ref;
     if(v->pos.type==0) {
-        int32_t t=q3ne_sub(v->end_time,f->time);
+        int32_t t=qa_i32_sub(v->end_time,f->time);
         if(t<1000) {
             r->lighting_origin=r->origin; r->flags|=128; qa_vec3 saved=r->origin;
             r->origin.z=(r->origin.z + -(16 * (1 + -((float)t / 1000))));
@@ -125,7 +127,7 @@ static bool fragment(const q3n_frame *f, int32_t index, qa_error *error)
         if(!q3ne_sound(f,m->sounds[n==0?Q3N_S_GIB_BOUNCE1:n==1?Q3N_S_GIB_BOUNCE2:Q3N_S_GIB_BOUNCE3],&tr.end,1022,0,false,error))return false;
     }
     v->bounce_sound=Q3N_BOUNCE_NONE;
-    int32_t hit_time=q3ne_int(((float)q3ne_sub(f->time,f->frame_milliseconds) + ((float)f->frame_milliseconds * tr.fraction)));
+    int32_t hit_time=qa_source_float_to_i32(((float)qa_i32_sub(f->time,f->frame_milliseconds) + ((float)f->frame_milliseconds * tr.fraction)));
     qa_vec3 velocity;
     if(!q3n_trajectory_delta(&v->pos,hit_time,&velocity,error))return false;
     qa_vec3 delta=qa_vec_scale(qa_vec_add(velocity,qa_vec_scale(normal,(-2 * qa_vec_dot(velocity,normal)))),v->bounce_factor);
@@ -136,7 +138,7 @@ static bool fragment(const q3n_frame *f, int32_t index, qa_error *error)
 static bool score_plum(const q3n_frame *f, int32_t index, qa_error *error)
 {
     q3n_local_entity *v=&f->events->locals[index].value; qa_q3_ref_entity *r=&v->ref;
-    float c=q3ne_remaining(v,f->time); int32_t score=q3ne_int(v->radius);
+    float c=q3ne_remaining(v,f->time); int32_t score=qa_source_float_to_i32(v->radius);
     const uint8_t colors[6][4]={{255,17,17,255},{255,0,255,255},{0,0,255,255},{255,255,0,255},{0,255,0,255},{255,255,255,255}};
     memcpy(r->color,colors[score<0?0:score>=50?1:score>=20?2:score>=10?3:score>=2?4:5],4);
     if(c<0.25f)r->color[3]=q3ne_byte((1020 * c));
@@ -161,15 +163,15 @@ static bool shockwave(const q3n_frame *f, q3n_local_entity *v, const qa_vec3 axi
 {
     qa_q3_ref_entity ref={.kind=QA_Q3_REF_MODEL,.model=q3n_media_read(f->media)->graphics[Q3N_G_KAMIKAZE_SHOCKWAVE],
         .shader_time=v->ref.shader_time,.origin=v->ref.origin,.non_normalized_axes=true};
-    float c=((float)q3ne_sub(time,start) / (float)q3ne_sub(end,start)), scale=((c * radius) / 88);
+    float c=((float)qa_i32_sub(time,start) / (float)qa_i32_sub(end,start)), scale=((c * radius) / 88);
     for(unsigned i=0;i<3;++i)ref.axis[i]=qa_vec_scale(axis[i],scale);
-    float alpha=time>fade?((float)q3ne_sub(time,fade) / (float)q3ne_sub(end,fade)):0;
+    float alpha=time>fade?((float)qa_i32_sub(time,fade) / (float)qa_i32_sub(end,fade)):0;
     memset(ref.color,q3ne_byte((255 + -(alpha * 255))),4);
     return entity(f,&ref,error);
 }
 static bool kamikaze(const q3n_frame *f, q3n_local_entity *v, qa_error *error)
 {
-    int32_t t=q3ne_sub(f->time,v->start_time); qa_vec3 axis[3]; q3ne_identity(axis);
+    int32_t t=qa_i32_sub(f->time,v->start_time); qa_vec3 axis[3]; q3ne_identity(axis);
     const q3n_media_view *m=q3n_media_read(f->media);
     if(t>0 && t<2000) {
         if(!(v->flags&Q3N_LE_SOUND1)) {
@@ -182,13 +184,13 @@ static bool kamikaze(const q3n_frame *f, q3n_local_entity *v, qa_error *error)
         float factor=(q3ne_remaining(v,f->time) * 255);
         for(unsigned i=0;i<4;++i)v->ref.color[i]=q3ne_byte((v->color[i] * factor));
         float c;
-        if(t<2000)c=((float)q3ne_sub(t,250) / 1750);
+        if(t<2000)c=((float)qa_i32_sub(t,250) / 1750);
         else {
             if(!(v->flags&Q3N_LE_SOUND2)) {
                 if(!q3ne_sound(f,m->sounds[Q3N_S_KAMIKAZE_IMPLODE],NULL,(int32_t)f->viewing_client,0,true,error))return false;
                 v->flags|=Q3N_LE_SOUND2;
             }
-            c=((float)q3ne_sub(2250,t) / 250);
+            c=((float)qa_i32_sub(2250,t) / 250);
         }
         for(unsigned i=0;i<3;++i)v->ref.axis[i]=qa_vec_scale(axis[i],((c * 720) / 72));
         v->ref.non_normalized_axes=true;
@@ -221,7 +223,7 @@ bool q3n_local_submit(const q3n_frame *f, qa_error *error)
             ok=entity(f,&v->ref,error);break;
         case Q3N_LE_EXPLOSION:ok=entity(f,&v->ref,error) && light(f,v,error);break;
         case Q3N_LE_SPRITE_EXPLOSION: {
-            float c=fminf(1,((float)q3ne_sub(v->end_time,f->time) / (float)q3ne_sub(v->end_time,v->start_time)));
+            float c=fminf(1,((float)qa_i32_sub(v->end_time,f->time) / (float)qa_i32_sub(v->end_time,v->start_time)));
             qa_q3_ref_entity r=v->ref; memset(r.color,255,3); r.color[3]=q3ne_byte(((255 * c) * 0.33f));
             r.radius=((42 * (1 + -c)) + 30); ok=entity(f,&r,error) && light(f,v,error);break;
         }
@@ -229,10 +231,10 @@ bool q3n_local_submit(const q3n_frame *f, qa_error *error)
         case Q3N_LE_KAMIKAZE:ok=kamikaze(f,v,error);break;
         case Q3N_LE_INVUL_IMPACT:case Q3N_LE_SHOW:ok=entity(f,&v->ref,error);break;
         case Q3N_LE_INVUL_JUICED: {
-            int32_t t=q3ne_sub(f->time,v->start_time);
+            int32_t t=qa_i32_sub(f->time,v->start_time);
             if(t>3000) {
-                float xy=(1 + ((0.3f * (float)q3ne_sub(t,3000)) / 2000));
-                float z=(0.7f + ((0.3f * (float)q3ne_sub(2000,q3ne_sub(t,3000))) / 2000));
+                float xy=(1 + ((0.3f * (float)qa_i32_sub(t,3000)) / 2000));
+                float z=(0.7f + ((0.3f * (float)qa_i32_sub(2000,qa_i32_sub(t,3000))) / 2000));
                 v->ref.axis[0].x=xy; v->ref.axis[1].y=xy; v->ref.axis[2].z=z;
             }
             if(t>5000) { v->end_time=0; qa_vec3 origin=v->ref.origin; q3n_effect_gib_player(f,origin); }

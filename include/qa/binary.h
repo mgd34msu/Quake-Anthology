@@ -40,6 +40,16 @@ static inline int32_t qa_i32_from_u32(uint32_t value)
            -1 - (int32_t)(UINT32_MAX - value);
 }
 
+static inline int32_t qa_i32_add(int32_t left, int32_t right)
+{
+    return qa_i32_from_u32((uint32_t)left + (uint32_t)right);
+}
+
+static inline int32_t qa_i32_sub(int32_t left, int32_t right)
+{
+    return qa_i32_from_u32((uint32_t)left - (uint32_t)right);
+}
+
 static inline int32_t qa_load_i32le(const void *data)
 {
     return qa_i32_from_u32(qa_load_u32le(data));

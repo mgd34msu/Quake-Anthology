@@ -1,5 +1,6 @@
 /* CG playerstate transitions, id Software 1999-2005, GPL-2.0-or-later. */
 #include "qa/game_type.h"
+#include "qa/binary.h"
 #include "player_state_internal.h"
 
 static bool q3n_player_state_transition_received(q3n_player_state *,const q3n_frame *,
@@ -99,7 +100,7 @@ void q3n_damage_feedback_latch(q3n_damage_feedback *g,int32_t client_time,
         front=fmaxf(front,0.1f); g->x=(-left / front); g->y=(up / distance);
     }
     g->x=q3nh_clamp(g->x,-1,1); g->y=q3nh_clamp(g->y,-1,1);
-    g->value=kick; g->kick_end_time=q3ne_plus(client_time,500); g->time=(float)server_time;
+    g->value=kick; g->kick_end_time=qa_i32_add(client_time,500); g->time=(float)server_time;
 }
 qa_vec3 q3n_damage_feedback_angles(const q3n_damage_feedback *g,int32_t time,qa_vec3 angles)
 {
@@ -149,7 +150,7 @@ static bool ammo(q3n_player_state *o,const q3n_frame *f,const qa_q3_player *p,qa
     for(int32_t i=2;i<extent;++i) {
         if(!(p->stats[q3nh_weapons_stat(o->product)]&(1<<i)))continue;
         bool slow=i==3 || i==4 || i==5 || i==7 || (o->product==QA_Q3_TEAM_ARENA && i==12);
-        total=q3ne_plus(total,q3ne_word((uint32_t)p->ammo[i]*(slow?1000u:200u)));
+        total=qa_i32_add(total,qa_i32_from_u32((uint32_t)p->ammo[i]*(slow?1000u:200u)));
         if(total>=5000) { o->feedback.low_ammo_warning=0; return true; }
     }
     int32_t previous=o->feedback.low_ammo_warning; o->feedback.low_ammo_warning=total==0?2:1;
@@ -171,7 +172,7 @@ static bool local_sounds(q3n_player_state *o,const q3n_frame *f,const qa_q3_play
             o->product==QA_Q3_TEAM_ARENA && (armor || health>100)?Q3N_S_HIT_LOW_ARMOR:Q3N_S_HIT;
         if(!sound(f,s,6,e))return false;
     } else if(p->persistant[1]<h->persistant[1] && !sound(f,Q3N_S_HIT_TEAM,6,e))return false;
-    if(p->stats[0]<q3ne_sub(h->health,1) && p->stats[0]>0 &&
+    if(p->stats[0]<qa_i32_sub(h->health,1) && p->stats[0]>0 &&
        !q3n_events_pain(f,predicted,f->compiled?f->compiled->predicted_state->number:f->remote?f->remote->predicted_state->number:p->clientNum,p->stats[0],e))return false;
     if(c->intermission_started)return true;
     bool reward=false;
@@ -202,11 +203,11 @@ static bool local_sounds(q3n_player_state *o,const q3n_frame *f,const qa_q3_play
         else if(p->persistant[2]==0x4000) { if(!buffered(f,Q3N_S_TIED_LEAD,e))return false; }
         else if(!(h->persistant[2]&~0x4000) && !buffered(f,Q3N_S_LOST_LEAD,e))return false;
     }
-    int32_t elapsed=q3ne_sub(f->time,q3n_frame_match_start_time(f));
+    int32_t elapsed=qa_i32_sub(f->time,q3n_frame_match_start_time(f));
     if(c->timelimit>0) {
-        int32_t sudden=q3ne_word(((uint32_t)c->timelimit*60u+2u)*1000u);
-        int32_t minute=q3ne_word(((uint32_t)c->timelimit-1u)*60000u);
-        int32_t five=q3ne_word(((uint32_t)c->timelimit-5u)*60000u);
+        int32_t sudden=qa_i32_from_u32(((uint32_t)c->timelimit*60u+2u)*1000u);
+        int32_t minute=qa_i32_from_u32(((uint32_t)c->timelimit-1u)*60000u);
+        int32_t five=qa_i32_from_u32(((uint32_t)c->timelimit-5u)*60000u);
         if(!(g->timelimit_warnings&4) && elapsed>sudden) {
             g->timelimit_warnings|=7; if(!sound(f,Q3N_S_SUDDEN_DEATH,7,e))return false;
         } else if(!(g->timelimit_warnings&2) && elapsed>minute) {
@@ -216,11 +217,11 @@ static bool local_sounds(q3n_player_state *o,const q3n_frame *f,const qa_q3_play
         }
     }
     if(c->fraglimit>0 && !qa_game_type_is_objective(q3n_frame_game_type(f))) {
-        if(!(g->fraglimit_warnings&4) && c->scores1==q3ne_sub(c->fraglimit,1)) {
+        if(!(g->fraglimit_warnings&4) && c->scores1==qa_i32_sub(c->fraglimit,1)) {
             g->fraglimit_warnings|=7; if(!buffered(f,Q3N_S_ONE_FRAG,e))return false;
-        } else if(c->fraglimit>2 && !(g->fraglimit_warnings&2) && c->scores1==q3ne_sub(c->fraglimit,2)) {
+        } else if(c->fraglimit>2 && !(g->fraglimit_warnings&2) && c->scores1==qa_i32_sub(c->fraglimit,2)) {
             g->fraglimit_warnings|=3; if(!buffered(f,Q3N_S_TWO_FRAGS,e))return false;
-        } else if(c->fraglimit>3 && !(g->fraglimit_warnings&1) && c->scores1==q3ne_sub(c->fraglimit,3)) {
+        } else if(c->fraglimit>3 && !(g->fraglimit_warnings&1) && c->scores1==qa_i32_sub(c->fraglimit,3)) {
             g->fraglimit_warnings|=1; if(!buffered(f,Q3N_S_THREE_FRAGS,e))return false;
         }
     }
@@ -237,8 +238,8 @@ static bool player_events(q3n_player_state *o,const q3n_frame *f,const qa_q3_pla
         if(!q3n_events_player(f,&s,cent,e))return false;
     }
     for(unsigned offset=2;offset>0;--offset) {
-        int32_t i=q3ne_sub(p->eventSequence,(int32_t)offset); unsigned slot=(uint32_t)i&1u;
-        if(i>=h->event_sequence || (i>q3ne_sub(h->event_sequence,2) && p->events[slot]!=h->events[slot])) {
+        int32_t i=qa_i32_sub(p->eventSequence,(int32_t)offset); unsigned slot=(uint32_t)i&1u;
+        if(i>=h->event_sequence || (i>qa_i32_sub(h->event_sequence,2) && p->events[slot]!=h->events[slot])) {
             predicted_s.event=p->events[slot]; predicted_s.eventParm=p->eventParms[slot];
             if(f->remote) {
                 f->remote->predicted_state->event=predicted_s.event;
@@ -249,7 +250,7 @@ static bool player_events(q3n_player_state *o,const q3n_frame *f,const qa_q3_pla
                 f->compiled->predicted_state->eventParm=predicted_s.eventParm;
             }
             if(!q3n_events_player(f,&predicted_s,predicted,e))return false;
-            o->predictable_events[(uint32_t)i&15u]=predicted_s.event; o->event_sequence=q3ne_plus(o->event_sequence,1);
+            o->predictable_events[(uint32_t)i&15u]=predicted_s.event; o->event_sequence=qa_i32_add(o->event_sequence,1);
         }
     }
     return true;
@@ -285,7 +286,7 @@ bool q3n_player_state_transition(q3n_player_state *o,const q3n_frame *f,const q3
     if(p->pmType!=5 && p->persistant[3]!=3)ok=local_sounds(o,f,p,cent,h,context,e);
     if(ok)ok=ammo(o,f,p,e) && player_events(o,f,p,actual.state,cent,actual.state,cent,h,e);
     if(ok && p->viewheight!=h->viewheight) {
-        o->feedback.duck_change=(float)q3ne_sub(p->viewheight,h->viewheight); o->feedback.duck_time=f->time;
+        o->feedback.duck_change=(float)qa_i32_sub(p->viewheight,h->viewheight); o->feedback.duck_time=f->time;
     }
     if(ok)remember(h,f,p,actual.binding.actor);
     o->busy=false; return ok;
@@ -363,7 +364,7 @@ static bool q3n_player_state_transition_received(q3n_player_state *o,const q3n_f
     if(ok)ok=ammo(o,f,snapshot,e) && player_events(o,f,p,actual,cent,
         predicted_state,predicted,&h,e);
     if(ok && p->viewheight!=h.viewheight) {
-        o->feedback.duck_change=(float)q3ne_sub(p->viewheight,h.viewheight); o->feedback.duck_time=f->time;
+        o->feedback.duck_change=(float)qa_i32_sub(p->viewheight,h.viewheight); o->feedback.duck_time=f->time;
     }
     if(ok)ok=q3ne_current(f,e);
     o->busy=false; return ok;
@@ -392,8 +393,8 @@ bool q3n_player_state_changed_events(q3n_player_state *o,const q3n_frame *f,bool
     }
     o->busy=true; bool ok=true;
     for(unsigned offset=2;ok && offset>0;--offset) {
-        int32_t i=q3ne_sub(p->eventSequence,(int32_t)offset); unsigned ring=(uint32_t)i&15u,slot=(uint32_t)i&1u;
-        if(i<o->event_sequence && i>q3ne_sub(o->event_sequence,16) && p->events[slot]!=o->predictable_events[ring]) {
+        int32_t i=qa_i32_sub(p->eventSequence,(int32_t)offset); unsigned ring=(uint32_t)i&15u,slot=(uint32_t)i&1u;
+        if(i<o->event_sequence && i>qa_i32_sub(o->event_sequence,16) && p->events[slot]!=o->predictable_events[ring]) {
             qa_q3_entity scratch=state; scratch.event=p->events[slot]; scratch.eventParm=p->eventParms[slot];
             if(f->remote) {
                 f->remote->predicted_state->event=scratch.event;
@@ -425,7 +426,7 @@ bool q3n_player_state_prediction_finish(q3n_player_state *o,const q3n_frame *f,b
 bool q3n_player_state_reward(q3n_player_state *o,const q3n_frame *f,q3n_reward *reward,float *alpha,bool *visible,qa_error *e)
 {
     if(!reward || !alpha || !visible || !current(o,f,e))return false;
-    q3n_player_feedback *g=&o->feedback; int32_t elapsed=q3ne_sub(f->time,g->reward_time); *visible=false;
+    q3n_player_feedback *g=&o->feedback; int32_t elapsed=qa_i32_sub(f->time,g->reward_time); *visible=false;
     if(!g->reward_time || elapsed>=3000) {
         if(g->reward_stack<=0)return true;
         for(int32_t i=0;i<g->reward_stack;++i)g->rewards[i]=g->rewards[i+1];

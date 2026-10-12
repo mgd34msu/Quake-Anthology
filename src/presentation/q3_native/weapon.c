@@ -1,4 +1,6 @@
 #include "weapon.h"
+#include "qa/binary.h"
+#include "qa/text.h"
 #include "events.h"
 #include "marks.h"
 #include "trajectory.h"
@@ -11,9 +13,6 @@ struct q3n_weapons {
     q3n_weapon_selection selection;
     bool busy;
 };
-static int32_t integer(float x) { return x>=-2147483648.0f && x<2147483648.0f ? (int32_t)x : INT32_MIN; }
-static int32_t difference(int32_t a,int32_t b) { uint32_t bits=(uint32_t)a-(uint32_t)b; int32_t result; memcpy(&result,&bits,4); return result; }
-static int32_t sum(int32_t a,int32_t b) { uint32_t bits=(uint32_t)a+(uint32_t)b; int32_t result; memcpy(&result,&bits,4); return result; }
 static void vector(float out[3],qa_vec3 value) { out[0]=value.x; out[1]=value.y; out[2]=value.z; }
 static qa_vec3 from(const float value[3]) { return qa_v3(value[0],value[1],value[2]); }
 static void identity(qa_vec3 axis[3]) { axis[0]=qa_v3(1,0,0); axis[1]=qa_v3(0,1,0); axis[2]=qa_v3(0,0,1); }
@@ -127,8 +126,8 @@ static bool brass(const q3n_frame *f,q3n_entity *cent,q3n_brass kind,qa_error *e
         velocity.z=(100 + (50 * q3n_events_crandom(f->events)));
         le->start_time=f->time;
         uint32_t duration_bits=(uint32_t)duration*(shotgun?3u:1u); int32_t initial; memcpy(&initial,&duration_bits,4);
-        le->end_time=integer(((float)sum(f->time,initial) + ((float)(shotgun?duration:duration/4) * q3n_events_random(f->events))));
-        le->pos.type=5; le->pos.time=shotgun?f->time:difference(f->time,q3n_events_rand(f->events)&15);
+        le->end_time=qa_source_float_to_i32(((float)qa_i32_add(f->time,initial) + ((float)(shotgun?duration:duration/4) * q3n_events_random(f->events))));
+        le->pos.type=5; le->pos.time=shotgun?f->time:qa_i32_sub(f->time,q3n_events_rand(f->events)&15);
         le->ref.origin=qa_vec_add(cent->lerp_origin,qa_axis_from_local(qa_v3(8,shotgun?0:-4,24),axis,QA_AXIS_ORDERED_SUM));
         uint32_t contents;
         if (!q3n_events_point_contents(f,le->ref.origin,-1,&contents,e)) return false;
@@ -206,11 +205,11 @@ static bool lightning(const q3n_frame *f,q3n_entity *cent,const qa_q3_entity *st
 static float barrel_spin(int32_t time,int32_t *previous_time,float *previous_angle,
     bool *spinning,bool firing)
 {
-    int32_t delta=difference(time,*previous_time); float angle;
+    int32_t delta=qa_i32_sub(time,*previous_time); float angle;
     if (*spinning) angle=(*previous_angle + ((float)delta * .9f));
     else {
         if (delta>1000) delta=1000;
-        float speed=(.5f * (.9f + ((float)difference(1000,delta) / 1000)));
+        float speed=(.5f * (.9f + ((float)qa_i32_sub(1000,delta) / 1000)));
         angle=(*previous_angle + ((float)delta * speed));
     }
     if (*spinning!=firing) {
@@ -253,7 +252,7 @@ static bool player_weapon(const q3n_frame *f,const qa_q3_presentation_assets *pa
     qa_q3_ref_entity gun=attached(parent,w->weapon_model);
     const qa_q3_player *predicted=q3n_frame_predicted_player(f);
     if (ps && predicted && predicted->weapon==7 && predicted->weaponState==3) {
-        uint8_t color=(uint8_t)((uint32_t)integer((255 * (1 + -((float)predicted->weaponTime / 1500))))&255u);
+        uint8_t color=(uint8_t)((uint32_t)qa_source_float_to_i32((255 * (1 + -((float)predicted->weaponTime / 1500))))&255u);
         gun.color[0]=gun.color[2]=color; gun.color[1]=gun.color[3]=0;
     } else if (ps) memset(gun.color,255,sizeof(gun.color));
     if (replacement && !f->remote && !f->compiled && !ps && f->weapons->options.held_replacement) {
@@ -283,16 +282,16 @@ static bool player_weapon(const q3n_frame *f,const qa_q3_presentation_assets *pa
     if (!source_entity(f,state->clientNum,&non_predicted,e)) return false;
     q3n_entity *source_cent=&f->entities[state->clientNum];
     if (!((state->weapon==6 || state->weapon==1 || state->weapon==10) && (non_predicted.eFlags&256)))
-        if (difference(f->time,cent->muzzle_flash_time)>20 && !cent->railgun_flash) return true;
+        if (qa_i32_sub(f->time,cent->muzzle_flash_time)>20 && !cent->railgun_flash) return true;
     qa_q3_ref_entity flash=attached(parent,w->flash_model);
     if (!flash.model) return true;
     qa_angle_axis(qa_v3(0,0,(q3n_events_crandom(f->events) * 10)),flash.axis,QA_ANGLE_VM_MATH);
     if (state->weapon==7) {
         const q3n_client_info *ci=state->clientNum>=0 && state->clientNum<64?q3n_clients_get(f->clients,(uint32_t)state->clientNum):NULL;
         if (!ci) return q3p_fail(e,QA_ERROR_FORMAT,"Rail flash requires its actual client-info row");
-        flash.color[0]=(uint8_t)((uint32_t)integer((ci->color1.x * 255))&255u);
-        flash.color[1]=(uint8_t)((uint32_t)integer((ci->color1.y * 255))&255u);
-        flash.color[2]=(uint8_t)((uint32_t)integer((ci->color1.z * 255))&255u); flash.color[3]=0;
+        flash.color[0]=(uint8_t)((uint32_t)qa_source_float_to_i32((ci->color1.x * 255))&255u);
+        flash.color[1]=(uint8_t)((uint32_t)qa_source_float_to_i32((ci->color1.y * 255))&255u);
+        flash.color[2]=(uint8_t)((uint32_t)qa_source_float_to_i32((ci->color1.z * 255))&255u); flash.color[3]=0;
     }
     if (!attach(f,&flash,&gun,qa_q3_presentation_tag_id(f->assets, QA_Q3_TAG_FLASH),true,e)) return false;
     if (!f->preferences.reduced_flashes && !emit(f,&flash,e)) return false;
@@ -415,9 +414,9 @@ bool q3n_weapons_view(const q3n_frame *f,const q3n_weapon_view *view,qa_error *e
     float roll=((roll_scale * view->bob_fraction_sin) * .005f),yaw=((roll_scale * view->bob_fraction_sin) * .01f);
     float pitch=((view->xy_speed * view->bob_fraction_sin) * .005f);
     qa_vec3 origin=f->refdef.origin,angles=qa_vec_add(f->view_angles,qa_v3(pitch,yaw,roll));
-    int32_t delta=difference(f->time,view->land_time);
+    int32_t delta=qa_i32_sub(f->time,view->land_time);
     if (delta<150) origin.z=(origin.z + (((view->land_change * .25f) * (float)delta) / 150));
-    else if (delta<450) origin.z=(origin.z + (((view->land_change * .25f) * (float)difference(450,delta)) / 300));
+    else if (delta<450) origin.z=(origin.z + (((view->land_change * .25f) * (float)qa_i32_sub(450,delta)) / 300));
     float drift=(((view->xy_speed + 40) * (float)sin((double)((float)f->time * .001f))) * .01f);
     angles=qa_vec_add(angles,qa_v3(drift,drift,drift));
     float offset=settings->fov>90?(-.2f * (float)(settings->fov-90)):0;
@@ -632,9 +631,9 @@ bool q3n_weapons_selected_authored_view(q3n_weapons *owner,const q3n_selected_we
 }
 static void colored(q3n_local_entity *le,qa_vec3 color,float byte_scale,uint8_t alpha,float fade,float fade_alpha)
 {
-    le->ref.color[0]=(uint8_t)((uint32_t)integer((color.x * byte_scale))&255u);
-    le->ref.color[1]=(uint8_t)((uint32_t)integer((color.y * byte_scale))&255u);
-    le->ref.color[2]=(uint8_t)((uint32_t)integer((color.z * byte_scale))&255u); le->ref.color[3]=alpha;
+    le->ref.color[0]=(uint8_t)((uint32_t)qa_source_float_to_i32((color.x * byte_scale))&255u);
+    le->ref.color[1]=(uint8_t)((uint32_t)qa_source_float_to_i32((color.y * byte_scale))&255u);
+    le->ref.color[2]=(uint8_t)((uint32_t)qa_source_float_to_i32((color.z * byte_scale))&255u); le->ref.color[3]=alpha;
     le->color[0]=(color.x * fade); le->color[1]=(color.y * fade); le->color[2]=(color.z * fade); le->color[3]=fade_alpha;
 }
 static bool rail(const q3n_frame *f,qa_vec3 color1,qa_vec3 color2,qa_vec3 *start,qa_vec3 end,qa_error *e)
@@ -645,8 +644,8 @@ static bool rail(const q3n_frame *f,qa_vec3 color1,qa_vec3 color2,qa_vec3 *start
     for (size_t i=0;i<36;++i) axes[i]=qa_vec_rotate_around(direction,temp,(float)(i*10),QA_ROTATION_MATRIX);
     const q3n_media_view *media=q3n_media_read(f->media);
     q3n_local_entity *core=q3n_local_allocate(f->events,Q3N_LE_FADE_RGB,QA_Q3_REF_RAIL_CORE);
-    core->start_time=f->time; core->end_time=integer(((float)f->time + f->weapon_settings->rail_trail_time));
-    core->life_rate=(1 / (float)difference(core->end_time,f->time)); core->ref.shader_time=((float)f->time / 1000);
+    core->start_time=f->time; core->end_time=qa_source_float_to_i32(((float)f->time + f->weapon_settings->rail_trail_time));
+    core->life_rate=(1 / (float)qa_i32_sub(core->end_time,f->time)); core->ref.shader_time=((float)f->time / 1000);
     core->ref.custom_shader=media->graphics[Q3N_G_RAIL_CORE]; core->ref.origin=*start; core->ref.old_origin=end;
     colored(core,color1,255,255,.75f,1);
     move=qa_vec_ma(move,20,direction); qa_vec3 step=qa_vec_scale(direction,5);
@@ -655,8 +654,8 @@ static bool rail(const q3n_frame *f,qa_vec3 color1,qa_vec3 color2,qa_vec3 *start
     for (int32_t i=0;(float)i<extent;i+=5) {
         if (i!=skip) {
             skip=i+5; q3n_local_entity *ring=q3n_local_allocate(f->events,Q3N_LE_MOVE_SCALE_FADE,QA_Q3_REF_SPRITE);
-            ring->flags=Q3N_LE_DONT_SCALE; ring->start_time=f->time; ring->end_time=sum(sum(f->time,i>>1),600);
-            ring->life_rate=(1 / (float)difference(ring->end_time,f->time)); ring->ref.shader_time=((float)f->time / 1000);
+            ring->flags=Q3N_LE_DONT_SCALE; ring->start_time=f->time; ring->end_time=qa_i32_add(qa_i32_add(f->time,i>>1),600);
+            ring->life_rate=(1 / (float)qa_i32_sub(ring->end_time,f->time)); ring->ref.shader_time=((float)f->time / 1000);
             ring->ref.radius=1.1f; ring->ref.custom_shader=media->graphics[Q3N_G_RAIL_RINGS]; colored(ring,color2,255,255,.75f,1);
             ring->pos.type=2; ring->pos.time=f->time; vector(ring->pos.base,qa_vec_ma(move,4,axes[j])); vector(ring->pos.delta,qa_vec_scale(axes[j],6));
         }
@@ -682,7 +681,7 @@ static bool plasma_at(const q3n_frame *f,int32_t number,qa_vec3 origin,qa_vec3 a
     velocity.x=(60 + -(120 * q3n_events_crandom(f->events)));
     velocity.y=(40 + -(80 * q3n_events_crandom(f->events)));
     velocity.z=(100 + -(200 * q3n_events_crandom(f->events)));
-    le->flags=Q3N_LE_TUMBLE; le->start_time=f->time; le->end_time=sum(f->time,600);
+    le->flags=Q3N_LE_TUMBLE; le->start_time=f->time; le->end_time=qa_i32_add(f->time,600);
     qa_vec3 axis[3]; qa_angle_axis(angles,axis,QA_ANGLE_VM_MATH); le->ref.origin=qa_vec_add(origin,qa_axis_from_local(qa_v3(2,2,2),axis,QA_AXIS_ORDERED_SUM));
     uint32_t contents;
     if (!q3n_events_point_contents(f,le->ref.origin,-1,&contents,e)) return false;
@@ -726,7 +725,7 @@ bool q3n_weapons_trail(const q3n_frame *f,q3n_entity *cent,const qa_q3_entity *s
         return emit(f,&beam,e);
     }
     if (f->weapon_settings->no_projectile_trail) return true;
-    int32_t next=sum(cent->trail_time,50)/50;
+    int32_t next=qa_i32_add(cent->trail_time,50)/50;
     uint32_t next_bits=(uint32_t)next*50; memcpy(&next,&next_bits,4);
     uint32_t contents,old_contents;
     if (!q3n_events_point_contents(f,origin,-1,&contents,e)) return false;
@@ -735,7 +734,7 @@ bool q3n_weapons_trail(const q3n_frame *f,q3n_entity *cent,const qa_q3_entity *s
     if (!q3n_trajectory(&state->pos,cent->trail_time,&previous,e) || !q3n_events_point_contents(f,previous,-1,&old_contents,e)) return false;
     cent->trail_time=f->time;
     if (contents&(32|16|8)) return !(contents&old_contents&32) || q3n_effect_bubbles(f,previous,origin,8,e);
-    for (;next<=f->time;next=sum(next,50)) {
+    for (;next<=f->time;next=qa_i32_add(next,50)) {
         qa_vec3 point;
         if (!q3n_trajectory(&state->pos,next,&point,e)) return false;
         q3n_smoke smoke={.origin=point,.radius=w->trail_radius,.color={1,1,1,.33f},.duration=(float)w->trail_time,.start_time=next,

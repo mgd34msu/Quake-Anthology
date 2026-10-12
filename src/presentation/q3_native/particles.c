@@ -1,14 +1,13 @@
 /* Selected cg_marks.c particles, id Software, GPL-2.0-or-later.
  * Behavioral donor: render/scene/particles/q3-system.ts, cg_marks.c profile. */
 #include "particles_internal.h"
+#include "qa/binary.h"
+#include "qa/text.h"
 #include "pose.h"
 #include <stdio.h>
 
 static bool q3n_particles_load_received(q3n_particles *,const q3n_frame *,qa_error *);
 
-static int32_t word(uint32_t v) { return v <= INT32_MAX ? (int32_t)v : -1 - (int32_t)(UINT32_MAX - v); }
-static int32_t integer(float v)
-{ return v >= -2147483648.0f && v < 2147483648.0f ? (int32_t)v : INT32_MIN; }
 bool q3np_fail(qa_error *error, qa_status code, const char *message)
 { qa_error_set(error,code,0,"%s",message); return false; }
 static bool current(const q3n_frame *f, qa_error *error)
@@ -167,10 +166,10 @@ bool q3n_particles_explosion(const q3n_frame *f, const char *name, qa_vec3 origi
     o->busy=true; int32_t index=o->free; q3n_particle *p=&o->slots[index];
     o->free=p->next; p->next=o->active; o->active=index; ++o->count;
     p->time=(float)f->time; p->alpha=0.5f; p->alpha_velocity=0;
-    if (duration<0) { duration=word(0u-(uint32_t)duration); p->roll=0; }
-    else p->roll=integer((q3n_events_crandom(f->events) * 179));
+    if (duration<0) { duration=qa_i32_from_u32(0u-(uint32_t)duration); p->roll=0; }
+    else p->roll=qa_source_float_to_i32((q3n_events_crandom(f->events) * 179));
     p->width=p->height=start_size; p->end_width=p->end_height=end_size;
-    p->end_time=(float)word((uint32_t)f->time+(uint32_t)duration); p->type=6;
+    p->end_time=(float)qa_i32_from_u32((uint32_t)f->time+(uint32_t)duration); p->type=6;
     p->origin=origin; p->velocity=velocity; p->acceleration=qa_v3(0,0,0);
     bool ok=current(f,error); o->busy=false; return ok;
 }
@@ -191,7 +190,7 @@ static bool draw(const q3n_frame *f, q3n_particle *p, qa_vec3 origin, qa_error *
     qa_vec3 distance=qa_vec_add(eye,qa_vec_scale(origin,-1));
     float length=qa_vec_length(distance);
     if (length<(width / 1.5f)) return true;
-    int32_t index=integer((float)floor((double)(ratio * (float)Q3N_PARTICLE_FRAMES)));
+    int32_t index=qa_source_float_to_i32((float)floor((double)(ratio * (float)Q3N_PARTICLE_FRAMES)));
     if (index<0 || index>=Q3N_PARTICLE_FRAMES) return q3np_fail(error,QA_ERROR_FORMAT,"Particle animation frame outside source range");
     p->shader=f->particles->shaders[index];
     qa_vec3 right=f->refdef.axis[1],up=f->refdef.axis[2];

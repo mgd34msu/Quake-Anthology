@@ -29,7 +29,4 @@ bool q3nc_team_chat(q3n_server_commands *, const q3n_frame *, const char *, qa_e
 bool q3nc_sound(q3n_server_commands *, const q3n_frame *, int32_t, int32_t, qa_error *);
 bool q3nc_same(const char *, const char *);
 void q3nc_copy(char *, size_t, const char *);
-int32_t q3nc_integer(const char *);
-int32_t q3nc_add(int32_t, int32_t);
-int32_t q3nc_sub(int32_t, int32_t);
 #endif

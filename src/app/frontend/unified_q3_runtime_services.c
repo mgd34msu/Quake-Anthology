@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/text.h"
 #include "unified_q3_runtime_services.h"
 #include "../application/native_q3_client_settings.h"
 #include "remote_unified_presentation.h"
@@ -366,7 +367,7 @@ static bool frame_settings(void *context,const q3n_compiled_frame *f,bool loadin
         .cvars=frontend_unified_q3_client_cvars(o->options.client),
         .refs=frontend_unified_q3_client_cvar_refs(o->options.client),.product=o->product};
     q3n_native_frame_options v;
-    if(!application_q3_client_frame_settings(&source,q3nc_integer(flags),ragepro(o),
+    if(!application_q3_client_frame_settings(&source,qa_parse_decimal_i32(flags,QA_DECIMAL_SIGNED_WRAP),ragepro(o),
         (size_t)memory_remaining(o),loading,false,stereo,&v,e) ||
         !frontend_unified_q3_client_local_server_read(o->options.client,&v.hud.local_server,e))return false;
     if(o->options.operations.frame_settings &&

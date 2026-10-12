@@ -1,5 +1,6 @@
 /* id Software cg_players.c, GPL-2.0-or-later. */
 #include "qa/game_type.h"
+#include "qa/binary.h"
 #include "player_fx.h"
 #include "events_internal.h"
 #include "attachments.h"
@@ -169,10 +170,10 @@ static bool breath(player_fx *p,const qa_q3_ref_entity *head,qa_error *e)
     if((c&FX_WATER) || ci->dynamic.breath_puff_time>f->time)return true;
     q3n_smoke smoke={.origin=qa_vec_add(qa_vec_add(head->origin,qa_vec_scale(head->axis[0],8)),qa_vec_scale(head->axis[2],-4)),
         .velocity={0,0,8},.radius=16,.color={1,1,1,0.66f},.duration=1500,
-        .start_time=f->time,.fade_in_time=q3ne_plus(f->time,400),.flags=Q3N_LE_DONT_SCALE,
+        .start_time=f->time,.fade_in_time=qa_i32_add(f->time,400),.flags=Q3N_LE_DONT_SCALE,
         .shader=p->media->graphics[Q3N_G_SHOTGUN_SMOKE]};
     q3n_effect_smoke(f,&smoke);
-    q3n_client_dynamic dynamic=ci->dynamic; dynamic.breath_puff_time=q3ne_plus(f->time,2000);
+    q3n_client_dynamic dynamic=ci->dynamic; dynamic.breath_puff_time=qa_i32_add(f->time,2000);
     bool ok=p->compiled?q3n_clients_compiled_dynamic_write(f->clients,&f->compiled->source,ci->physical_client,
         ci->configstring_revision,ci->media_revision,&dynamic,e):
         p->remote?q3n_clients_remote_dynamic_write(f->clients,&f->remote->source,ci->physical_client,
@@ -187,7 +188,7 @@ static bool dust(player_fx *p,qa_error *e)
     if(!p->settings->enable_dust || cent->dust_trail_time>f->time)return true;
     int32_t animation=cent->player.legs.animation.animation_number&~128;
     if(animation!=19 && animation!=21)return true;
-    cent->dust_trail_time=q3ne_plus(cent->dust_trail_time,40);
+    cent->dust_trail_time=qa_i32_add(cent->dust_trail_time,40);
     if(cent->dust_trail_time<f->time)cent->dust_trail_time=f->time;
     qa_vec3 origin=q3ne_array(p->state->pos.base); qa_trace_result tr;
     if(!q3n_events_trace(f,origin,qa_vec_add(origin,qa_v3(0,0,-64)),(qa_bounds){0},p->state->number,FX_PLAYERSOLID,&tr,e) || !current(p,e))return false;
@@ -222,7 +223,7 @@ static bool tokens(player_fx *p,int32_t flags,qa_error *e)
         qa_vec3 position=state->skull_positions[i],delta=qa_vec_sub(origin,position);
         skull.axis[0]=qa_vec_normalize(qa_v3(delta.x,delta.y,0)); skull.axis[2]=qa_v3(0,0,1);
         skull.axis[1]=qa_vec_cross(skull.axis[0],skull.axis[2]);
-        float angle=sphere_angle(q3ne_plus(p->frame->time,5000-(int32_t)i*500),16);
+        float angle=sphere_angle(qa_i32_add(p->frame->time,5000-(int32_t)i*500),16);
         skull.origin=qa_vec_add(position,qa_v3(0,0,((float)sin((double)angle) * 10)));
         if(!emit(p,&skull,e))return false;
         origin=position;
@@ -282,19 +283,19 @@ static bool mission(player_fx *p,const qa_q3_ref_entity *torso,qa_error *e)
     if(invulnerable) { if(!dynamic.invulnerability_start_time)dynamic.invulnerability_start_time=time;
         dynamic.invulnerability_stop_time=time; } else dynamic.invulnerability_start_time=0;
     if(!write_dynamic(p,&dynamic,e))return false;
-    int32_t start=q3ne_sub(time,dynamic.invulnerability_start_time),stop=q3ne_sub(time,dynamic.invulnerability_stop_time);
+    int32_t start=qa_i32_sub(time,dynamic.invulnerability_start_time),stop=qa_i32_sub(time,dynamic.invulnerability_stop_time);
     if(invulnerable || stop<250) {
         qa_q3_ref_entity r=*torso; r.model=p->media->graphics[Q3N_G_INVULNERABILITY_PLAYER];
         r.custom_skin=0; r.flags&=~2; r.origin=p->cent->lerp_origin;
-        float scale=start<250?((float)start / 250):stop<250?((float)q3ne_sub(250,stop) / 250):1;
+        float scale=start<250?((float)start / 250):stop<250?((float)qa_i32_sub(250,stop) / 250):1;
         r.axis[0]=qa_v3(scale,0,0); r.axis[1]=qa_v3(0,scale,0); r.axis[2]=qa_v3(0,0,scale);
         if(!emit(p,&r,e))return false;
     }
-    int32_t elapsed=q3ne_sub(time,dynamic.medkit_usage_time);
+    int32_t elapsed=qa_i32_sub(time,dynamic.medkit_usage_time);
     if(dynamic.medkit_usage_time && elapsed<500) {
         qa_q3_ref_entity r=*torso; r.model=p->media->graphics[Q3N_G_MEDKIT_USAGE]; r.custom_skin=0; r.flags&=~2;
         q3ne_identity(r.axis); r.origin=qa_vec_add(p->cent->lerp_origin,qa_v3(0,0,(-24 + (((float)elapsed * 80) / 500))));
-        uint8_t color=elapsed>400?q3ne_byte((255 + -(((float)q3ne_sub(elapsed,1000) * 255) / 100))):255;
+        uint8_t color=elapsed>400?q3ne_byte((255 + -(((float)qa_i32_sub(elapsed,1000) * 255) / 100))):255;
         memset(r.color,color,4); if(!emit(p,&r,e))return false;
     }
     return true;
@@ -365,7 +366,7 @@ static bool powerups(player_fx *p,const qa_q3_ref_entity *torso,qa_error *e)
     if(powered(p,3) && p->cent->trail_time<=p->frame->time) {
         int32_t animation=p->cent->player.legs.animation.animation_number&~128;
         if(animation==15 || animation==16) {
-            p->cent->trail_time=q3ne_plus(p->cent->trail_time,100);
+            p->cent->trail_time=qa_i32_add(p->cent->trail_time,100);
             if(p->cent->trail_time<p->frame->time)p->cent->trail_time=p->frame->time;
             q3n_smoke smoke={.origin=qa_vec_add(p->cent->lerp_origin,qa_v3(0,0,-16)),.velocity={0,0,0},.radius=8,
                 .color={1,1,1,1},.duration=500,.start_time=p->frame->time,.shader=p->media->graphics[Q3N_G_HASTE_PUFF]};
