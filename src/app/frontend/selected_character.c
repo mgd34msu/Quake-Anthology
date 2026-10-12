@@ -166,10 +166,41 @@ static bool resource_bundle(character_admission *call, qa_error *error)
     owner->view.animation = &owner->animation; return admission_current(call, error);
 }
 
+static bool poses_prepare(frontend_selected_character *owner, qa_error *error)
+{
+    const qa_actor_registry *actors = qa_world_actors(qa_application_world(owner->frontend->application));
+    size_t capacity = qa_actors_capacity(actors), seats = owner->frontend->options.seats;
+    uint32_t previous = owner->pose_seats;
+    if (seats <= previous) return true;
+    if (seats > SIZE_MAX / sizeof(*owner->pose_indexes) || capacity > SIZE_MAX / seats)
+        return frontend_fail(error, QA_ERROR_MEMORY, "Selected character pose storage extent is exhausted");
+    qa_actor_index *indexes = qa_arena_grow(&owner->pose_storage, owner->pose_indexes,
+        previous * sizeof(*indexes), seats * sizeof(*indexes), _Alignof(qa_actor_index), error);
+    if (!indexes) return false;
+    memset(indexes + previous, 0, (seats - previous) * sizeof(*indexes));
+    bool okay = true;
+    for (uint32_t seat = previous; okay && seat < seats; ++seat)
+        okay = qa_actor_index_create(indexes + seat, actors, &owner->pose_storage, error) &&
+            qa_id_index_reserve(&indexes[seat].retained, capacity, error);
+    if (okay) okay = previous ?
+        qa_pool_extend(&owner->pose_records, &owner->pose_storage, capacity * (seats - previous), error) :
+        qa_pool_prepare(&owner->pose_records, &owner->pose_storage, capacity * seats,
+            sizeof(frontend_selected_character_pose), _Alignof(frontend_selected_character_pose), error);
+    if (!okay) {
+        for (uint32_t seat = previous; seat < seats; ++seat) qa_actor_index_destroy(indexes + seat);
+        return false;
+    }
+    owner->pose_indexes = indexes;
+    owner->pose_seats = owner->frontend->options.seats;
+    return true;
+}
+
 void frontend_selected_character_dispose(frontend_selected_character *owner)
 {
     if (!owner) return;
-    while (owner->poses) { frontend_selected_character_pose *next = owner->poses->next; free(owner->poses); owner->poses = next; }
+    for (uint32_t seat = 0; seat < owner->pose_seats; ++seat)
+        qa_actor_index_destroy(owner->pose_indexes + seat);
+    qa_arena_destroy(&owner->pose_storage);
     qa_q3_presentation_assets_destroy(owner->view.assets);
     for (unsigned i = 0; i < 8; ++i) clear_resource(owner, i);
     qa_launch_instance_lease_release(owner->appearance_lease);
@@ -224,13 +255,28 @@ bool frontend_selected_character_prepare(qa_frontend *frontend, uint32_t launch_
         if (fresh) frontend_selected_character_dispose(owner);
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected character resource owner is busy");
     }
-    frontend_selected_character_pose *pose = owner->poses;
-    while (pose && (pose->physical_seat != physical_seat || !qa_actor_id_equal(pose->actor, source->actor))) pose = pose->next;
+    if (!poses_prepare(owner, error)) {
+        if (fresh) frontend_selected_character_dispose(owner);
+        return false;
+    }
+    qa_actor_index *index = owner->pose_indexes + physical_seat;
+    size_t slot;
+    frontend_selected_character_pose *pose = qa_actor_index_find_retained(index, source->actor, &slot) ?
+        qa_pool_at(&owner->pose_records, slot) : NULL;
     if (!pose) {
-        pose = calloc(1, sizeof(*pose));
-        if (!pose) { if (fresh) frontend_selected_character_dispose(owner); return frontend_fail(error, QA_ERROR_MEMORY, "Retaining selected character actor and view pose"); }
-        pose->owner = owner; pose->actor = source->actor; pose->physical_seat = physical_seat;
-        pose->reset = true; pose->next = owner->poses; owner->poses = pose;
+        if (owner->pose_records.head == SIZE_MAX &&
+            !qa_pool_extend(&owner->pose_records, &owner->pose_storage,
+                owner->pose_records.capacity ? owner->pose_records.capacity : 1, error)) {
+            if (fresh) frontend_selected_character_dispose(owner);
+            return false;
+        }
+        pose = qa_pool_take(&owner->pose_records, &slot);
+        *pose = (frontend_selected_character_pose){.owner = owner, .actor = source->actor, .reset = true};
+        if (!qa_actor_index_remember(index, source->actor, slot, error)) {
+            qa_pool_release(&owner->pose_records, slot);
+            if (fresh) frontend_selected_character_dispose(owner);
+            return false;
+        }
     }
     if (fresh) { owner->next = frontend->selected_characters; frontend->selected_characters = owner; }
     *out = pose; *admitted = true; return true;
@@ -444,8 +490,15 @@ bool frontend_selected_character_idle(const qa_frontend *frontend)
     if (!frontend) return false;
     for (const frontend_selected_character *owner = frontend->selected_characters; owner; owner = owner->next) {
         if (owner->admitting || !qa_q3_assets_idle(owner->view.assets)) return false;
-        for (const frontend_selected_character_pose *pose = owner->poses; pose; pose = pose->next)
-            if (pose->users) return false;
+        for (uint32_t seat = 0; seat < owner->pose_seats; ++seat) {
+            const qa_actor_index *index = owner->pose_indexes + seat;
+            for (size_t ordinal = 0; ordinal < qa_actor_index_retained_count(index); ++ordinal) {
+                qa_actor_id actor; size_t slot;
+                qa_actor_index_retained_at(index, ordinal, &actor, &slot);
+                const frontend_selected_character_pose *pose = qa_pool_at(&owner->pose_records, slot);
+                if (pose->users) return false;
+            }
+        }
     }
     return true;
 }
