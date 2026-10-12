@@ -89,7 +89,8 @@ struct qa_audio_mixer {
     size_t loop_count, loop_capacity;
     qa_mixer_loop_mix *loop_mixes;
     size_t loop_mix_count, loop_mix_capacity;
-    qa_audio_positions positions;
+    qa_audio_positions owned_positions, *positions;
+    qa_audio_position_projection position_projection;
     qa_mixer_transmission *transmissions;
     size_t transmission_count, transmission_capacity;
     qa_mixer_event *events;
@@ -113,6 +114,8 @@ struct qa_audio_mixer {
 
 /* Float destination for the engine DSP, with the same Source shift/clipping as PCM. */
 bool qa_audio_mixer_mix_float(qa_audio_mixer *, float *, size_t, qa_error *);
+bool qa_audio_mixer_create_positions(const qa_audio_mixer_options *, qa_audio_positions *,
+    qa_audio_mixer **, qa_error *);
 
 bool qa_audio_mixer_round_lock(qa_audio_mixer *, qa_error *);
 void qa_audio_mixer_round_stop(qa_audio_mixer *);

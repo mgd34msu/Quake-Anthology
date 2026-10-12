@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `de44b0f4`.
+Follow-up source changes were reviewed through main `7b50187e`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 244 have source fixes
+There are **374 overlapping source-review observations**: 245 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 127 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 126 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -442,3 +442,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `30ee0164` / 16-007, J25-03: Remote Q1 snapshot identities and native FILE, kernel handle and TLS owners now use the shared ID index over their authoritative rows. Normal build and seven core suites passed; this does not claim full load-time capacity or live gameplay qualification. Records: `/tmp/qa-ta3196-snapshot-and-guest-owner-indexes-20261012-v1`.
 
 - `de44b0f4` / J20-07: Q1 lookup, admission, clone, release and restore use one common target router; host lookup callbacks and the private actor-capacity fallback are deleted. Normal build and seven core suites passed. Records: `/tmp/qa-ta3196-one-q1-target-router-20261012-v1`.
+
+- `7b50187e` / 22-04: Q2 monster definition admission resolves the unchanged move-set table once using the common ID index; spawn and checkpoint consumers read retained bindings. Normal build and seven core suites passed. Records: `/tmp/qa-ta3196-bound-q2-monster-moves-20261012-v1`.

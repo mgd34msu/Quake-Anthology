@@ -216,8 +216,9 @@ static qa_vec3 sound_position(const qa_audio_mixer *mixer, const qa_audio_play *
     case QA_AUDIO_FIXED:
         return sound->origin;
     case QA_AUDIO_ACTOR:
-        return qa_audio_positions_read(&mixer->positions, sound->origin_actor, sound->owner,
-                              sound->family == QA_GAME_Q3 && sound->owner != QA_AUDIO_NO_OWNER);
+        return qa_audio_positions_read(mixer->positions, &mixer->position_projection,
+            sound->origin_actor, sound->owner,
+            sound->family == QA_GAME_Q3 && sound->owner != QA_AUDIO_NO_OWNER);
     }
     return qa_v3(0, 0, 0);
 }
@@ -479,8 +480,8 @@ static void clear_loop_mixes(qa_audio_mixer *mixer) {
     mixer->loop_mix_count = 0;
 }
 
-bool qa_audio_mixer_create(const qa_audio_mixer_options *options, qa_audio_mixer **out,
-                           qa_error *error) {
+bool qa_audio_mixer_create_positions(const qa_audio_mixer_options *options,
+    qa_audio_positions *positions, qa_audio_mixer **out, qa_error *error) {
     if (!options || !out || !options->sample_rate ||
         (options->output_channels != 1 && options->output_channels != 2))
         return mixer_error(error, QA_ERROR_ARGUMENT, "Invalid audio mixer format");
@@ -528,8 +529,9 @@ bool qa_audio_mixer_create(const qa_audio_mixer_options *options, qa_audio_mixer
     mixer->events = (qa_mixer_event *)mixer->notification_records.values;
     mixer->loops = load_array(mixer, workspace, sizeof(*mixer->loops), _Alignof(qa_mixer_loop), error);
     mixer->loop_mixes = load_array(mixer, workspace, sizeof(*mixer->loop_mixes), _Alignof(qa_mixer_loop_mix), error);
-    if (!qa_audio_positions_prepare(&mixer->positions, &mixer->prepared_storage,
-                                    workspace, true, error)) {
+    mixer->positions = positions ? positions : &mixer->owned_positions;
+    if (!positions && !qa_audio_positions_prepare(mixer->positions, &mixer->prepared_storage,
+                                                 workspace, true, error)) {
         qa_arena_destroy(&mixer->prepared_storage); free(mixer); return false;
     }
     mixer->transmissions = load_array(mixer, workspace * 2, sizeof(*mixer->transmissions), _Alignof(qa_mixer_transmission), error);
@@ -544,8 +546,14 @@ bool qa_audio_mixer_create(const qa_audio_mixer_options *options, qa_audio_mixer
     reverse_free_prefix(&mixer->voice_records, mixer->voice_count);
     reverse_free_prefix(&mixer->notification_records, mixer->notification_records.capacity);
     qa_arena_seal(&mixer->prepared_storage);
+    if (positions) qa_audio_positions_project(positions, &mixer->position_projection);
     *out = mixer;
     return true;
+}
+
+bool qa_audio_mixer_create(const qa_audio_mixer_options *options, qa_audio_mixer **out,
+    qa_error *error) {
+    return qa_audio_mixer_create_positions(options, NULL, out, error);
 }
 
 void qa_audio_mixer_destroy(qa_audio_mixer *mixer) {
@@ -575,7 +583,7 @@ void qa_audio_mixer_destroy(qa_audio_mixer *mixer) {
         prepared_release(mixer, mixer->events[index].prepared);
     }
     qa_id_index_destroy(&mixer->prepared_index);
-    qa_audio_positions_destroy(&mixer->positions);
+    qa_audio_positions_destroy(&mixer->owned_positions);
     qa_arena_destroy(&mixer->prepared_storage);
     free(mixer);
 }
@@ -609,8 +617,8 @@ bool qa_audio_mixer_position(qa_audio_mixer *mixer, uint64_t actor, qa_vec3 orig
         return false;
     if (actor == QA_AUDIO_NO_ACTOR || !qa_vec_finite(origin))
         return mixer_error(error, QA_ERROR_ARGUMENT, "Invalid audio actor position");
-    return qa_audio_positions_set(&mixer->positions, actor, QA_AUDIO_NO_OWNER,
-        origin, true, error);
+    return qa_audio_positions_set(mixer->positions, &mixer->position_projection,
+        actor, QA_AUDIO_NO_OWNER, origin, true, error);
 }
 
 bool qa_audio_mixer_position_owner(qa_audio_mixer *mixer, uint64_t actor, uint64_t owner,
@@ -619,7 +627,8 @@ bool qa_audio_mixer_position_owner(qa_audio_mixer *mixer, uint64_t actor, uint64
         return false;
     if (actor == QA_AUDIO_NO_ACTOR || !qa_vec_finite(origin))
         return mixer_error(error, QA_ERROR_ARGUMENT, "Invalid private audio actor position");
-    return qa_audio_positions_set(&mixer->positions, actor, owner, origin, false, error);
+    return qa_audio_positions_set(mixer->positions, &mixer->position_projection,
+        actor, owner, origin, false, error);
 }
 
 void qa_audio_mixer_geometry(qa_audio_mixer *mixer, qa_audio_transmission_fn fn, void *user) {
@@ -895,8 +904,8 @@ bool qa_audio_mixer_loop(qa_audio_mixer *mixer, const qa_audio_loop *request, qa
             request->sound.owner == QA_AUDIO_NO_OWNER &&
                     request->sound.actor == mixer->listener.actor
                 ? origin
-                : qa_audio_positions_read(&mixer->positions, mixer->listener.actor,
-                    QA_AUDIO_NO_OWNER, false);
+                : qa_audio_positions_read(mixer->positions, &mixer->position_projection,
+                    mixer->listener.actor, QA_AUDIO_NO_OWNER, false);
         qa_vec3 before = qa_vec_sub(listener, origin);
         qa_vec3 after = qa_vec_sub(listener, qa_vec_add(origin, request->velocity));
         float distance_before = qa_vec_dot(before, before);
@@ -949,8 +958,9 @@ static bool collect_loop_mixes(qa_audio_mixer *mixer, qa_error *error) {
         if (sound->family == QA_GAME_Q3) {
             double volume = trunc((double)sound->volume * (loop->request.persistent ? 90 : 127));
             if (!spatialize_q3(mixer,
-                                       qa_audio_positions_read(&mixer->positions, sound->actor, sound->owner,
-                                                      sound->owner != QA_AUDIO_NO_OWNER),
+                                       qa_audio_positions_read(mixer->positions,
+                                           &mixer->position_projection, sound->actor,
+                                           sound->owner, sound->owner != QA_AUDIO_NO_OWNER),
                                        volume, &loop->gain, error)) return false;
         } else {
             bool q1 = sound->family == QA_GAME_Q1;
@@ -1127,7 +1137,7 @@ static void stop_all_state(qa_audio_mixer *mixer) {
     for (size_t i = 0; i < mixer->loop_count; i++)
         prepared_release(mixer, mixer->loops[i].prepared);
     mixer->loop_count = 0;
-    qa_audio_positions_clear(&mixer->positions);
+    qa_audio_positions_projection_clear(mixer->positions, &mixer->position_projection);
     mixer->transmission_count = 0;
     mixer->source_begin_offset = 0;
     mixer->schedule_order = 0;

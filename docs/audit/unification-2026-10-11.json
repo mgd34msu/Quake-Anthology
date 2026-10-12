@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "de44b0f450ebfc74aba301520e5a6c3cdc58fa82",
+  "verified_main": "7b50187e4cd437c098ce3ecef007bdb53a319956",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 244,
-    "open_source_observation": 127,
+    "fixed_source_build_core": 245,
+    "open_source_observation": 126,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -33230,8 +33230,9 @@
       "severity": "low",
       "job": "22",
       "area": "gameplay_q2",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "7b50187e4cd437c098ce3ecef007bdb53a319956"
     },
     {
       "id": "J23-01",
@@ -43667,6 +43668,34 @@
       ],
       "record_directory": "/tmp/qa-ta3196-one-q1-target-router-20261012-v1",
       "conclusion": "Q1 lookup, admission, clone, release and restore use one common target router; host lookup callbacks and the private actor-capacity fallback are deleted. Normal build and seven core suites passed."
+    },
+    {
+      "commit": "7b50187e4cd437c098ce3ecef007bdb53a319956",
+      "source_tree": "5c2009082a5522033c344f7ca5f5e537414ad676",
+      "finding_ids": [
+        "22-04"
+      ],
+      "files_rechecked": [
+        "src/gameplay/q2/monsters/checkpoint.c",
+        "src/gameplay/q2/monsters/core.c",
+        "src/gameplay/q2/monsters/internal.h",
+        "src/gameplay/q2/monsters/moves.c",
+        "src/gameplay/q2/monsters/roster.c",
+        "src/gameplay/q2/save/original_monsters.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-bound-q2-monster-moves-20261012-v1",
+      "conclusion": "Q2 monster definition admission resolves the unchanged move-set table once using the common ID index; spawn and checkpoint consumers read retained bindings. Normal build and seven core suites passed."
     }
   ],
   "verification_limits": [

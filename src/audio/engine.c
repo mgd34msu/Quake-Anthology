@@ -106,7 +106,8 @@ static bool seat_create(qa_audio_engine *engine, const qa_audio_listener *listen
     seat->listener = *listener;
     seat->mixer = retained;
     qa_audio_mixer_options options = qa_audio_engine_mixer_options(engine);
-    if ((!retained && !qa_audio_mixer_create(&options, &seat->mixer, error)) ||
+    if ((!retained && !qa_audio_mixer_create_positions(&options, &engine->positions,
+            &seat->mixer, error)) ||
         !qa_audio_reverb_create(engine->options.sample_rate, &seat->reverb, error))
         goto failed;
     qa_audio_mixer_geometry(seat->mixer, engine->geometry, engine->geometry_user);
@@ -118,10 +119,6 @@ static bool seat_create(qa_audio_engine *engine, const qa_audio_listener *listen
     if (engine->clock > INT64_MAX ||
         !qa_audio_mixer_select_time(seat->mixer, engine->clock, (int64_t)engine->clock, error))
         goto failed;
-    for (size_t i = 0; i < engine->positions.count; i++)
-        if (!qa_audio_mixer_position(seat->mixer, engine->positions.rows[i].actor,
-                                     engine->positions.rows[i].origin, error))
-            goto failed;
     if (!qa_audio_mixer_listener(seat->mixer, listener, error))
         goto failed;
     *out = seat;
@@ -293,12 +290,7 @@ static bool position_impl(qa_audio_engine *engine, uint64_t actor, qa_vec3 posit
     if (!engine || engine->destroying || engine->destroy_pending || actor == QA_AUDIO_NO_ACTOR ||
         !qa_vec_finite(position))
         return fail(error, QA_ERROR_ARGUMENT, "Invalid audio actor position");
-    if (!qa_audio_positions_reserve(&engine->positions, actor, QA_AUDIO_NO_OWNER, error))
-        return false;
-    for (size_t i = 0; i < engine->seat_count; i++)
-        if (!qa_audio_mixer_position(engine->seats[i]->mixer, actor, position, error))
-            return false;
-    return qa_audio_positions_set(&engine->positions, actor, QA_AUDIO_NO_OWNER,
+    return qa_audio_positions_set(&engine->positions, NULL, actor, QA_AUDIO_NO_OWNER,
         position, true, error);
 }
 void qa_audio_engine_geometry(qa_audio_engine *engine, qa_audio_transmission_fn fn, void *user) {
