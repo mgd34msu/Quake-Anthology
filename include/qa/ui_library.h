@@ -42,6 +42,8 @@ typedef struct qa_ui_library_services {
     bool (*prepare_arenas)(void *, qa_ui_library *, qa_error *);
     bool (*arenas)(void *, qa_ui_library *, const qa_base_arena_catalog **,
         const qa_arena_progress **, qa_error *);
+    uint64_t (*choices_revision)(void *, qa_ui_library *, qa_ui_library_field,
+        const char *classname);
 } qa_ui_library_services;
 /* Borrowed selection views expire on an edit or refresh. No publication runs. */
 qa_launch_draft *qa_ui_library_draft(qa_ui_library *);

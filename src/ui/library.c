@@ -28,21 +28,58 @@ static bool preset(const qa_product *p) {
         (p->edition==QA_EDITION_CLASSIC || p->edition==QA_EDITION_RERELEASE) &&
         strcmp(p->campaign,"ctf") && strcmp(p->campaign,"lmctf");
 }
+static void choices_invalidate(qa_ui_library *m) {
+    for (size_t i=0;i<sizeof(m->fields)/sizeof(*m->fields);++i) m->fields[i].valid=false;
+    m->campaigns.valid=false; m->arena_valid=false;
+    m->choices=NULL; m->choice_count=0; m->selected="";
+}
+static bool service_select(qa_ui_library *m,qa_ui_library_field field,const char *classname,
+    const char *choice,qa_error *error) {
+    bool ok=m->services.select(m->services.context,m,field,classname,choice,error);
+    for (size_t i=0;i<sizeof(m->fields)/sizeof(*m->fields);++i) m->fields[i].valid=false;
+    m->arena_valid=false; return ok;
+}
 qa_launch_draft *qa_ui_library_draft(qa_ui_library *m) { return m?m->draft:NULL; }
 const qa_launch_choices *qa_ui_library_choices(const qa_ui_library *m) { return m?qa_launch_draft_choices(m->draft):NULL; }
 const qa_catalog *qa_ui_library_catalog(const qa_ui_library *m) { return m?m->catalog:NULL; }
 bool qa_ui_library_bind_services(qa_ui_library *m,const qa_ui_library_services *services,qa_error *error) {
     if (!m || !services || m->ui->handling || m->ui->drawing) return ui_fail(error,"selection services require an idle menu owner");
-    m->services=*services; return true;
+    m->services=*services; choices_invalidate(m); return true;
 }
 static qa_ui_control button(qa_ui_library *m,qa_ui_id id,const char *label,unsigned row,bool wide,bool enabled) {
     return (qa_ui_control){.id=id,.kind=QA_UI_BUTTON,.label=label,.rect={64,118+(float)row*34,wide?512:224,30},
         .visible=true,.enabled=enabled,.context=m,.action=action};
 }
 static bool open(qa_ui_library *m,qa_ui_id id,qa_error *error) { return qa_ui_open(m->ui,id,m->ui->time_ms,error); }
-static void choices_clear(qa_ui_library *m) {
-    for (size_t i=0;i<m->choice_count;++i) { free((void *)m->choices[i].id); free((void *)m->choices[i].label); free((void *)m->choices[i].unavailable); }
-    m->choice_count=0; m->selected[0]=0;
+static void choices_read(qa_ui_library *m,const library_choice_rows *rows) {
+    m->choices=rows->rows; m->choice_count=rows->count;
+    m->selected=rows->selected?rows->selected:"";
+}
+static void choices_begin(qa_ui_library *m,library_choice_cache *cache) {
+    library_choice_rows *rows=&cache->versions[cache->current^1];
+    qa_arena_reset(&rows->storage);
+    rows->rows=NULL; rows->count=0; rows->selected=""; rows->classname=NULL;
+    m->choice_build=rows; choices_read(m,rows);
+}
+static bool choices_reserve(qa_ui_library *m,size_t count,qa_error *error) {
+    if (!count) return true;
+    if (count>SIZE_MAX/sizeof(*m->choices)) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"startup choice rows exceed addressable storage"); return false;
+    }
+    m->choices=qa_arena_alloc(&m->choice_build->storage,count*sizeof(*m->choices),_Alignof(qa_ui_library_choice),error);
+    m->choice_build->rows=m->choices; return m->choices!=NULL;
+}
+static bool choices_selected(qa_ui_library *m,const char *text,qa_error *error) {
+    const char *selected=qa_arena_text(&m->choice_build->storage,text?text:"",error);
+    if (!selected) return false;
+    m->choice_build->selected=m->selected=selected; return true;
+}
+static bool choices_finish(qa_ui_library *m,library_choice_cache *cache,bool ok) {
+    if (ok) {
+        m->choice_build->count=m->choice_count;
+        cache->current^=1;
+    }
+    m->choice_build=NULL; choices_read(m,&cache->versions[cache->current]); return ok;
 }
 static char *copy_text(const char *s,qa_error *error) {
     if (!s) return NULL;
@@ -52,9 +89,9 @@ static char *copy_text(const char *s,qa_error *error) {
     return out;
 }
 static bool choice_add(qa_ui_library *m,const char *id,const char *label,const char *reason,qa_error *error) {
-    if (!ui_reserve((void **)&m->choices,&m->choice_capacity,m->choice_count+1,sizeof(*m->choices),error)) return false;
-    qa_ui_library_choice c={copy_text(id,error),copy_text(label,error),copy_text(reason,error)};
-    if (!c.id || !c.label || (reason && !c.unavailable)) { free((void *)c.id); free((void *)c.label); free((void *)c.unavailable); return false; }
+    qa_arena *storage=&m->choice_build->storage;
+    qa_ui_library_choice c={qa_arena_text(storage,id,error),qa_arena_text(storage,label,error),qa_arena_text(storage,reason,error)};
+    if (!c.id || !c.label || (reason && !c.unavailable)) return false;
     m->choices[m->choice_count++]=c; return true;
 }
 static const qa_launch_provider *role_provider(const qa_launch_choices *v,qa_launch_role role) {
@@ -82,7 +119,7 @@ static bool select_preset(qa_ui_library *m,qa_product_id product,bool authored,q
     qa_launch_world world=qa_launch_draft_choices(draft)->world;
     if (authored && p->family==QA_GAME_Q3) world.skill=1;
     if (!qa_launch_set_world(draft,&world,error)) { qa_launch_draft_destroy(draft); return false; }
-    qa_launch_draft_destroy(m->draft); m->draft=draft;
+    qa_launch_draft_destroy(m->draft); m->draft=draft; choices_invalidate(m);
     m->mode_preference=authored?QA_MODE_SINGLE_PLAYER:qa_launch_draft_choices(draft)->modes[0].rules.kind;
     if (m->mode_preference!=QA_MODE_SINGLE_PLAYER && m->mode_preference!=QA_MODE_COOPERATIVE) m->mode_preference=QA_MODE_FFA;
     if (authored) { m->native_product=product; m->native_skill=p->family==QA_GAME_Q3?2:1; m->arena_number=-1; }
@@ -92,7 +129,7 @@ bool qa_ui_library_select_mode(qa_ui_library *m,qa_mode_kind kind,qa_error *erro
     const qa_launch_choices *v=qa_ui_library_choices(m);
     if (!v || !v->mode_count || (kind!=QA_MODE_SINGLE_PLAYER && kind!=QA_MODE_COOPERATIVE && kind!=QA_MODE_FFA))
         return ui_fail(error,"startup mode requires a selected game");
-    if (m->services.select) return m->services.select(m->services.context,m,QA_UI_LIBRARY_MODE,NULL,
+    if (m->services.select) return service_select(m,QA_UI_LIBRARY_MODE,NULL,
         kind==QA_MODE_SINGLE_PLAYER?"singleplayer":kind==QA_MODE_COOPERATIVE?"coop":"deathmatch",error);
     qa_launch_mode mode=v->modes[0];
     mode.rules=qa_mode_defaults(mode.rules.source,kind);
@@ -101,19 +138,19 @@ bool qa_ui_library_select_mode(qa_ui_library *m,qa_mode_kind kind,qa_error *erro
     if (!qa_launch_set_mode(m->draft,&mode,error)) return false;
     m->mode_preference=kind; return true;
 }
-static bool select_role(qa_ui_library *m,qa_launch_role role,qa_product_id product,qa_error *error) {
+static bool select_role(qa_launch_draft *draft,qa_catalog *catalog,qa_launch_role role,qa_product_id product,qa_error *error) {
     qa_launch_draft *defaults=NULL;
-    if (!qa_launch_draft_create(m->catalog,product,NULL,&defaults,error)) return false;
+    if (!qa_launch_draft_create(catalog,product,NULL,&defaults,error)) return false;
     const qa_launch_choices *v=qa_launch_draft_choices(defaults);
     qa_launch_provider provider=v->providers[0];
     provider.instance=role==QA_ROLE_MOVEMENT?"startup:movement":"startup:character";
-    bool ok=qa_launch_set_provider(m->draft,&provider,error);
+    bool ok=qa_launch_set_provider(draft,&provider,error);
     const qa_launch_role character_roles[]={QA_ROLE_CHARACTER,QA_ROLE_BODY,QA_ROLE_SKIN,QA_ROLE_VOICE};
     size_t count=role==QA_ROLE_MOVEMENT?1:4;
     for (size_t i=0;i<count && ok;++i) {
         qa_launch_role actual=role==QA_ROLE_MOVEMENT?role:character_roles[i];
         const qa_launch_binding *original=qa_launch_binding_for(v,(qa_launch_scope){.kind=QA_SCOPE_DEFAULT_PLAYER},actual,"");
-        qa_launch_binding b=*original; b.instance=provider.instance; ok=qa_launch_bind(m->draft,&b,error);
+        qa_launch_binding b=*original; b.instance=provider.instance; ok=qa_launch_bind(draft,&b,error);
     }
     qa_launch_draft_destroy(defaults); return ok;
 }
@@ -126,7 +163,8 @@ static bool product_choices(qa_ui_library *m,qa_ui_library_field field,qa_error 
         selected=p?p->product:0;
     }
     const qa_product *selected_product=qa_catalog_product(m->catalog,selected);
-    if (selected_product) snprintf(m->selected,sizeof(m->selected),"%s",selected_product->key);
+    if (!choices_reserve(m,qa_catalog_count(m->catalog),error) ||
+        (selected_product && !choices_selected(m,selected_product->key,error))) return false;
     for (size_t i=0;i<qa_catalog_count(m->catalog);++i) {
         const qa_product *p=qa_catalog_at(m->catalog,i);
         if (field==QA_UI_LIBRARY_MOVEMENT || field==QA_UI_LIBRARY_CHARACTER) {
@@ -142,53 +180,106 @@ static bool product_choices(qa_ui_library *m,qa_ui_library_field field,qa_error 
 }
 static int choice_compare(const void *a,const void *b) { return strcmp(((const qa_ui_library_choice *)a)->id,((const qa_ui_library_choice *)b)->id); }
 static bool map_choices(qa_ui_library *m,qa_error *error) {
-    const qa_launch_choices *v=qa_ui_library_choices(m); snprintf(m->selected,sizeof(m->selected),"%s",v->world.map);
+    const qa_launch_choices *v=qa_ui_library_choices(m);
     size_t count; const qa_catalog_start *starts=qa_catalog_starts(m->catalog,v->world.geometry,NULL,&count);
+    size_t map_count; const qa_catalog_map *maps=qa_catalog_maps(m->catalog,v->world.geometry,&map_count);
+    if (map_count>SIZE_MAX-count) { qa_error_set(error,QA_ERROR_MEMORY,0,"startup map rows exceed addressable storage"); return false; }
+    if (!choices_reserve(m,count+map_count,error) || !choices_selected(m,v->world.map,error)) return false;
     for (size_t i=0;i<count;++i) {
         bool duplicate=false; for (size_t j=0;j<m->choice_count;++j) duplicate|=!strcmp(m->choices[j].id,starts[i].path);
         if (!duplicate && !choice_add(m,starts[i].path,starts[i].title,NULL,error)) return false;
     }
-    size_t authored=m->choice_count; const qa_catalog_map *maps=qa_catalog_maps(m->catalog,v->world.geometry,&count);
-    for (size_t i=0;i<count;++i) {
+    size_t authored=m->choice_count;
+    for (size_t i=0;i<map_count;++i) {
         bool duplicate=false; for (size_t j=0;j<authored;++j) duplicate|=!strcmp(m->choices[j].id,maps[i].path);
         if (!duplicate && !choice_add(m,maps[i].path,maps[i].path,NULL,error)) return false;
     }
     if (m->choice_count>authored) qsort(m->choices+authored,m->choice_count-authored,sizeof(*m->choices),choice_compare);
     return true;
 }
-static bool selection_choices(qa_ui_library *m,qa_ui_library_field field,qa_error *error) {
-    choices_clear(m); const qa_launch_choices *v=qa_ui_library_choices(m);
+static bool selection_build(qa_ui_library *m,qa_ui_library_field field,qa_error *error) {
+    const qa_launch_choices *v=qa_ui_library_choices(m);
     if (!v) return true;
     if (field<=QA_UI_LIBRARY_CHARACTER && field!=QA_UI_LIBRARY_MAP) return product_choices(m,field,error);
     if (field==QA_UI_LIBRARY_MAP) return map_choices(m,error);
     if (field==QA_UI_LIBRARY_DOPPLER) {
-        snprintf(m->selected,sizeof(m->selected),"%s",v->world.doppler?"source":"disabled");
+        if (!choices_reserve(m,2,error) || !choices_selected(m,v->world.doppler?"source":"disabled",error)) return false;
         return choice_add(m,"source","Game default",NULL,error) && choice_add(m,"disabled","Off",NULL,error);
     }
     if (field==QA_UI_LIBRARY_SKILL) {
         static const char *labels[]={"Easy","Normal","Hard","Nightmare"};
-        snprintf(m->selected,sizeof(m->selected),"%d",v->world.skill);
+        char skill[12]; snprintf(skill,sizeof(skill),"%d",v->world.skill);
+        if (!choices_reserve(m,4,error) || !choices_selected(m,skill,error)) return false;
         for (unsigned i=0;i<4;++i) { char id[2]={(char)('0'+i),0}; if (!choice_add(m,id,labels[i],NULL,error)) return false; }
         return true;
     }
     if (field==QA_UI_LIBRARY_MODE) {
         static const char *ids[]={"singleplayer","coop","deathmatch"},*labels[]={"Single player","Cooperative","Deathmatch"};
         qa_mode_kind kind=m->mode_preference;
-        snprintf(m->selected,sizeof(m->selected),"%s",ids[kind==QA_MODE_SINGLE_PLAYER?0:kind==QA_MODE_COOPERATIVE?1:2]);
+        if (!choices_reserve(m,3,error) || !choices_selected(m,ids[kind==QA_MODE_SINGLE_PLAYER?0:kind==QA_MODE_COOPERATIVE?1:2],error)) return false;
         for (unsigned i=0;i<3;++i) if (!choice_add(m,ids[i],labels[i],NULL,error)) return false;
         return true;
     }
     if (m->services.choices) {
         const qa_ui_library_choice *choices=NULL; size_t count=0; const char *selected=NULL;
         if (!m->services.choices(m->services.context,m,field,m->monster_classname,&choices,&count,&selected,error)) return false;
-        snprintf(m->selected,sizeof(m->selected),"%s",selected?selected:"");
+        if (!choices_reserve(m,count,error) || !choices_selected(m,selected,error)) return false;
         for (size_t i=0;i<count;++i) if (!choice_add(m,choices[i].id,choices[i].label,choices[i].unavailable,error)) return false;
     }
+    return true;
+}
+static bool selection_choices(qa_ui_library *m,qa_ui_library_field field,qa_error *error) {
+    library_choice_cache *cache=m->fields+field;
+    uint64_t draft_revision=qa_launch_draft_revision(m->draft),catalog_generation=qa_catalog_generation(m->catalog);
+    const char *classname=m->monster_classname?m->monster_classname:"";
+    bool builtin=(field<=QA_UI_LIBRARY_CHARACTER || field==QA_UI_LIBRARY_DOPPLER ||
+        field==QA_UI_LIBRARY_SKILL || field==QA_UI_LIBRARY_MODE || !m->services.choices);
+    uint64_t services_revision=!builtin && m->services.choices_revision?
+        m->services.choices_revision(m->services.context,m,field,m->monster_classname):0;
+    const library_choice_rows *retained=&cache->versions[cache->current];
+    if ((builtin || m->services.choices_revision) && cache->valid && cache->draft==m->draft && cache->catalog==m->catalog &&
+        cache->draft_revision==draft_revision && cache->catalog_generation==catalog_generation &&
+        cache->services_revision==services_revision &&
+        cache->mode==m->mode_preference && !strcmp(retained->classname?retained->classname:"",classname)) {
+        choices_read(m,retained); return true;
+    }
+    choices_begin(m,cache);
+    bool ok=selection_build(m,field,error);
+    if (ok) {
+        m->choice_build->classname=qa_arena_text(&m->choice_build->storage,classname,error);
+        ok=m->choice_build->classname!=NULL;
+    }
+    if (!choices_finish(m,cache,ok)) return false;
+    cache->draft=m->draft; cache->catalog=m->catalog; cache->draft_revision=qa_launch_draft_revision(m->draft);
+    cache->catalog_generation=catalog_generation;
+    cache->services_revision=!builtin && m->services.choices_revision?
+        m->services.choices_revision(m->services.context,m,field,m->monster_classname):0;
+    cache->mode=m->mode_preference; cache->valid=true;
     return true;
 }
 static const char *selected_label(qa_ui_library *m) {
     for (size_t i=0;i<m->choice_count;++i) if (!strcmp(m->selected,m->choices[i].id)) return m->choices[i].label;
     return m->selected;
+}
+static bool campaign_choices(qa_ui_library *m,qa_error *error) {
+    library_choice_cache *cache=&m->campaigns;
+    uint64_t generation=qa_catalog_generation(m->catalog);
+    if (cache->valid && cache->catalog==m->catalog && cache->catalog_generation==generation &&
+        cache->family==m->family && cache->edition==m->edition) {
+        choices_read(m,&cache->versions[cache->current]); return true;
+    }
+    choices_begin(m,cache);
+    bool ok=choices_reserve(m,qa_catalog_count(m->catalog),error);
+    for (size_t i=0;ok && i<qa_catalog_count(m->catalog);++i) {
+        const qa_product *p=qa_catalog_at(m->catalog,i);
+        if (!preset(p) || p->family!=m->family || p->edition!=m->edition) continue;
+        char label[512]; snprintf(label,sizeof(label),"%s (%s)",p->title,edition_name(p->edition));
+        ok=choice_add(m,p->key,label,NULL,error);
+    }
+    if (!choices_finish(m,cache,ok)) return false;
+    cache->catalog=m->catalog; cache->catalog_generation=generation;
+    cache->family=m->family; cache->edition=m->edition; cache->valid=true;
+    return true;
 }
 static bool select_custom_product(qa_ui_library *m,qa_product_id product,qa_error *error) {
     qa_launch_draft *candidate=NULL,*defaults=NULL;
@@ -196,13 +287,12 @@ static bool select_custom_product(qa_ui_library *m,qa_product_id product,qa_erro
         qa_launch_draft_destroy(candidate); return false;
     }
     const qa_launch_choices *old=qa_ui_library_choices(m),*next=qa_launch_draft_choices(defaults);
-    qa_ui_library staged=*m; staged.draft=candidate;
     bool ok=true;
     const qa_launch_role selected_roles[]={QA_ROLE_MOVEMENT,QA_ROLE_CHARACTER};
     for (size_t i=0;i<2 && ok;++i) {
         const qa_launch_provider *p=role_provider(old,selected_roles[i]);
         if (p && !strcmp(p->instance,"native:primary")) {
-            ok=select_role(&staged,selected_roles[i],p->product,error);
+            ok=select_role(candidate,m->catalog,selected_roles[i],p->product,error);
             if (selected_roles[i]==QA_ROLE_CHARACTER) {
                 const qa_launch_role definitions[]={QA_ROLE_BODY,QA_ROLE_SKIN,QA_ROLE_VOICE};
                 for (size_t j=0;j<3 && ok;++j) {
@@ -227,7 +317,7 @@ static bool select_custom_product(qa_ui_library *m,qa_product_id product,qa_erro
     }
     qa_launch_draft_destroy(defaults);
     if (!ok) { qa_launch_draft_destroy(candidate); return false; }
-    qa_launch_draft_destroy(m->draft); m->draft=candidate;
+    qa_launch_draft_destroy(m->draft); m->draft=candidate; choices_invalidate(m);
     return true;
 }
 static bool select_choice(qa_ui_library *m,const char *id,qa_error *error) {
@@ -239,7 +329,7 @@ static bool select_choice(qa_ui_library *m,const char *id,qa_error *error) {
     if (field==QA_UI_LIBRARY_PRODUCT) {
         const qa_product *p=qa_catalog_find(m->catalog,id);
         if (!p || !select_custom_product(m,p->id,error)) return false;
-        return !m->services.select || m->services.select(m->services.context,m,field,NULL,id,error);
+        return !m->services.select || service_select(m,field,NULL,id,error);
     }
     if (field==QA_UI_LIBRARY_MAP_PRODUCT || field==QA_UI_LIBRARY_MAP) {
         qa_launch_world world=qa_ui_library_choices(m)->world;
@@ -260,12 +350,12 @@ static bool select_choice(qa_ui_library *m,const char *id,qa_error *error) {
     }
     if (field==QA_UI_LIBRARY_MOVEMENT || field==QA_UI_LIBRARY_CHARACTER) {
         const qa_product *p=qa_catalog_find(m->catalog,id);
-        if (!p || !select_role(m,field==QA_UI_LIBRARY_MOVEMENT?QA_ROLE_MOVEMENT:QA_ROLE_CHARACTER,p->id,error)) return false;
-        return field!=QA_UI_LIBRARY_CHARACTER || !m->services.select || m->services.select(m->services.context,m,field,NULL,id,error);
+        if (!p || !select_role(m->draft,m->catalog,field==QA_UI_LIBRARY_MOVEMENT?QA_ROLE_MOVEMENT:QA_ROLE_CHARACTER,p->id,error)) return false;
+        return field!=QA_UI_LIBRARY_CHARACTER || !m->services.select || service_select(m,field,NULL,id,error);
     }
     if (field==QA_UI_LIBRARY_SKILL) { qa_launch_world world=qa_ui_library_choices(m)->world; world.skill=id[0]-'0'; return qa_launch_set_world(m->draft,&world,error); }
     if (field==QA_UI_LIBRARY_MODE) return qa_ui_library_select_mode(m,!strcmp(id,"singleplayer")?QA_MODE_SINGLE_PLAYER:!strcmp(id,"coop")?QA_MODE_COOPERATIVE:QA_MODE_FFA,error);
-    return m->services.select && m->services.select(m->services.context,m,field,m->monster_classname,id,error);
+    return m->services.select && service_select(m,field,m->monster_classname,id,error);
 }
 static bool launch(qa_ui_library *m,bool authored,qa_error *error) {
     m->last_authored=authored;
@@ -393,43 +483,54 @@ static int32_t arena_tier(const qa_base_arena *arena) {
     if (length<sizeof(special)) for (size_t i=0;i<length;++i) special[i]=arena->special[i]>='A' && arena->special[i]<='Z'?(char)(arena->special[i]+'a'-'A'):arena->special[i];
     return !strcmp(special,"training")?-1:!strcmp(special,"final")?-2:arena->number/4+1;
 }
-static bool arena_menu(qa_ui_library *m,size_t *count,qa_error *error) {
-    const qa_base_arena_catalog *catalog=NULL; const qa_arena_progress *progress=NULL;
-    if (!m->services.arenas || !m->services.arenas(m->services.context,m,&catalog,&progress,error) || !catalog || !progress)
-        return ui_fail(error,"arena selection requires its authored catalog and profile");
+static bool arena_rows_refresh(qa_ui_library *m,const qa_base_arena_catalog *catalog,
+    const qa_arena_progress *progress,qa_error *error) {
+    uint64_t generation=qa_catalog_generation(m->catalog),revision=qa_cvars_revision(progress->cvars);
+    uint64_t draft_revision=qa_launch_draft_revision(m->draft);
+    if (m->arena_valid && m->arena_catalog==catalog && m->arena_cvars==progress->cvars &&
+        m->arena_draft==m->draft && m->arena_draft_revision==draft_revision &&
+        m->arena_catalog_generation==generation && m->arena_profile_revision==revision &&
+        m->arena_cached_tier==m->arena_tier) return true;
+    library_arena_rows *rows=&m->arena_versions[m->arena_version^1];
+    qa_arena_reset(&rows->storage);
+    rows->rows=NULL; rows->numbers=rows->tiers=NULL; rows->tier_labels=NULL;
+    rows->count=rows->tier_count=0;
     size_t maximum=qa_base_arena_catalog_count(catalog);
-    if (!ui_reserve((void **)&m->arena_rows,&m->arena_capacity,maximum,sizeof(*m->arena_rows),error) ||
-        !ui_reserve((void **)&m->arena_numbers,&m->arena_number_capacity,maximum,sizeof(*m->arena_numbers),error) ||
-        !ui_reserve((void **)&m->tier_labels,&m->tier_capacity,maximum,sizeof(*m->tier_labels),error) ||
-        !ui_reserve((void **)&m->tiers,&m->tier_number_capacity,maximum,sizeof(*m->tiers),error)) return false;
-    for (size_t i=0;i<m->tier_count;++i) free((void *)m->tier_labels[i]);
-    m->tier_count=0;
-    for (size_t i=0;i<m->arena_count;++i) free((void *)m->arena_rows[i].detail);
-    m->arena_count=0;
+    if (maximum>SIZE_MAX/sizeof(*rows->rows)) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"authored arena rows exceed addressable storage"); return false;
+    }
+    if (maximum) {
+        rows->rows=qa_arena_alloc(&rows->storage,maximum*sizeof(*rows->rows),_Alignof(qa_ui_row),error);
+        rows->numbers=qa_arena_alloc(&rows->storage,maximum*sizeof(*rows->numbers),_Alignof(int32_t),error);
+        rows->tiers=qa_arena_alloc(&rows->storage,maximum*sizeof(*rows->tiers),_Alignof(int32_t),error);
+        rows->tier_labels=qa_arena_alloc(&rows->storage,maximum*sizeof(*rows->tier_labels),_Alignof(const char *),error);
+        if (!rows->rows || !rows->numbers || !rows->tiers || !rows->tier_labels) return false;
+    }
     qa_arena_catalog levels=qa_base_arena_catalog_levels(catalog);
     for (size_t i=0;i<maximum;++i) {
         const qa_base_arena *a=qa_base_arena_catalog_at(catalog,i);
         if (!*a->special && a->number>=levels.regular_levels) continue;
         int32_t tier=arena_tier(a);
-        bool found=false; for (size_t j=0;j<m->tier_count;++j) found|=m->tiers[j]==tier;
+        bool found=false; for (size_t j=0;j<rows->tier_count;++j) found|=rows->tiers[j]==tier;
         if (found) continue;
         char label[32]; snprintf(label,sizeof(label),tier==-1?"Training":tier==-2?"Final arena":"Tier %d",tier);
-        char *owned=copy_text(label,error); if (!owned) return false;
-        m->tier_labels[m->tier_count]=owned; m->tiers[m->tier_count++]=tier;
+        const char *owned=qa_arena_text(&rows->storage,label,error); if (!owned) return false;
+        rows->tier_labels[rows->tier_count]=owned; rows->tiers[rows->tier_count++]=tier;
     }
     /* UI arena selection order is authored, independently of GAME numbering. */
-    for (size_t i=0;i<m->tier_count;++i) for (size_t j=i+1;j<m->tier_count;++j) {
+    for (size_t i=0;i<rows->tier_count;++i) for (size_t j=i+1;j<rows->tier_count;++j) {
         int32_t ai=INT32_MAX,aj=INT32_MAX;
         for (size_t k=0;k<maximum;++k) {
             const qa_base_arena *a=qa_base_arena_catalog_at(catalog,k);
             int32_t tier=arena_tier(a);
-            if (tier==m->tiers[i] && a->selection<ai) ai=a->selection;
-            if (tier==m->tiers[j] && a->selection<aj) aj=a->selection;
+            if (tier==rows->tiers[i] && a->selection<ai) ai=a->selection;
+            if (tier==rows->tiers[j] && a->selection<aj) aj=a->selection;
         }
-        if (aj<ai) { int32_t t=m->tiers[i]; m->tiers[i]=m->tiers[j]; m->tiers[j]=t;
-            const char *s=m->tier_labels[i]; m->tier_labels[i]=m->tier_labels[j]; m->tier_labels[j]=s; }
+        if (aj<ai) { int32_t t=rows->tiers[i]; rows->tiers[i]=rows->tiers[j]; rows->tiers[j]=t;
+            const char *label=rows->tier_labels[i]; rows->tier_labels[i]=rows->tier_labels[j]; rows->tier_labels[j]=label; }
     }
-    if (m->arena_tier==INT32_MIN && m->tier_count) {
+    int32_t selected_tier=m->arena_tier,selected_number=m->arena_number;
+    if (selected_tier==INT32_MIN && rows->tier_count) {
         int32_t selected=-1;
         const qa_cvar_view *saved=qa_cvars_find(progress->cvars,"ui_spSelection");
         if (saved && isfinite(saved->number)) {
@@ -443,26 +544,42 @@ static bool arena_menu(qa_ui_library *m,size_t *count,qa_error *error) {
             }
         }
         if (selected<0 && !qa_arena_progress_current(progress,&selected,error)) return false;
-        m->arena_tier=m->tiers[0];
-        for (size_t i=0;i<maximum;++i) { const qa_base_arena *a=qa_base_arena_catalog_at(catalog,i); if (a->number==selected) { m->arena_number=selected; m->arena_tier=arena_tier(a); break; } }
+        selected_tier=rows->tiers[0];
+        for (size_t i=0;i<maximum;++i) { const qa_base_arena *a=qa_base_arena_catalog_at(catalog,i); if (a->number==selected) { selected_number=selected; selected_tier=arena_tier(a); break; } }
     }
-    size_t selected_tier=0,selected_row=0; const qa_base_arena *current=NULL;
-    for (size_t i=0;i<m->tier_count;++i) if (m->tiers[i]==m->arena_tier) selected_tier=i;
     for (size_t i=0;i<maximum;++i) {
         const qa_base_arena *a=qa_base_arena_catalog_at(catalog,i);
         if (!*a->special && a->number>=levels.regular_levels) continue;
-        int32_t tier=arena_tier(a);
-        if (tier!=m->arena_tier) continue;
+        if (arena_tier(a)!=selected_tier) continue;
         bool available=false; qa_arena_best best;
         if (!qa_arena_progress_available(progress,a->number,&available,error) || !qa_arena_progress_best(progress,a->number,&best,error)) return false;
         char detail[96];
         if (!available) snprintf(detail,sizeof(detail),"Locked");
         else if (!best.rank) snprintf(detail,sizeof(detail),"Not completed");
         else snprintf(detail,sizeof(detail),"Rank %d · Skill %d",best.rank,best.skill);
-        char *owned=copy_text(detail,error); if (!owned) return false;
-        m->arena_rows[m->arena_count]=(qa_ui_row){.key=a->map,.label=a->title,.detail=owned,.enabled=true};
-        m->arena_numbers[m->arena_count++]=a->number;
+        const char *owned=qa_arena_text(&rows->storage,detail,error);
+        const char *map=qa_arena_text(&rows->storage,a->map,error),*title=qa_arena_text(&rows->storage,a->title,error);
+        if (!owned || !map || !title) return false;
+        rows->rows[rows->count]=(qa_ui_row){.key=map,.label=title,.detail=owned,.enabled=true};
+        rows->numbers[rows->count++]=a->number;
     }
+    m->arena_version^=1; m->arena_rows=rows->rows; m->arena_numbers=rows->numbers; m->arena_count=rows->count;
+    m->tiers=rows->tiers; m->tier_labels=rows->tier_labels; m->tier_count=rows->tier_count;
+    m->arena_tier=selected_tier; m->arena_number=selected_number;
+    m->arena_catalog=catalog; m->arena_cvars=progress->cvars;
+    m->arena_draft=m->draft; m->arena_draft_revision=draft_revision;
+    m->arena_catalog_generation=generation; m->arena_profile_revision=revision;
+    m->arena_cached_tier=selected_tier; m->arena_valid=true; ++m->revision;
+    return true;
+}
+static bool arena_menu(qa_ui_library *m,size_t *count,qa_error *error) {
+    const qa_base_arena_catalog *catalog=NULL; const qa_arena_progress *progress=NULL;
+    if (!m->services.arenas || !m->services.arenas(m->services.context,m,&catalog,&progress,error) || !catalog || !progress)
+        return ui_fail(error,"arena selection requires its authored catalog and profile");
+    if (!arena_rows_refresh(m,catalog,progress,error)) return false;
+    size_t maximum=qa_base_arena_catalog_count(catalog),selected_tier=0,selected_row=0;
+    const qa_base_arena *current=NULL;
+    for (size_t i=0;i<m->tier_count;++i) if (m->tiers[i]==m->arena_tier) selected_tier=i;
     for (size_t i=0;i<m->arena_count;++i) {
         if (m->arena_number<0) m->arena_number=m->arena_numbers[0];
         if (m->arena_numbers[i]==m->arena_number) selected_row=i;
@@ -474,7 +591,7 @@ static bool arena_menu(qa_ui_library *m,size_t *count,qa_error *error) {
     m->controls[1]=button(m,2,"Arenas",0,true,m->arena_count!=0); m->controls[1].kind=QA_UI_LIST;
     m->controls[1].rect=(qa_scene_rect_f){48,144,544,156};
     m->controls[1].value.list.rows=m->arena_rows; m->controls[1].value.list.count=m->arena_count;
-    m->controls[1].value.list.selected=selected_row; m->controls[1].value.list.row_height=39; m->controls[1].value.list.revision=++m->revision;
+    m->controls[1].value.list.selected=selected_row; m->controls[1].value.list.row_height=39; m->controls[1].value.list.revision=m->revision;
     snprintf(m->labels[2],sizeof(m->labels[2]),"%s",current?"Opponents: ":"No single-player arenas are available.");
     if (current) for (size_t i=0;i<current->bot_count;++i) { size_t used=strlen(m->labels[2]); snprintf(m->labels[2]+used,sizeof(m->labels[2])-used,"%s%s",i?", ":"",current->bots[i]); }
     if (current && !current->bot_count) snprintf(m->labels[2],sizeof(m->labels[2]),"Opponents: None");
@@ -525,12 +642,8 @@ static bool factory(void *context,uint32_t seat,qa_ui_menu *out,qa_error *error)
         m->controls[count++]=button(m,6,"Custom game",5,true,m->draft!=NULL);
     } else if (id==QA_UI_LIBRARY_CAMPAIGN) {
         title=m->family==QA_GAME_Q3?"Quake III Arena":m->family==QA_GAME_Q2?(m->edition==QA_EDITION_CLASSIC?"Quake II classic":"Quake II rerelease"):(m->edition==QA_EDITION_CLASSIC?"Quake classic":"Quake rerelease");
-        choices_clear(m);
-        for (size_t i=0;i<qa_catalog_count(m->catalog);++i) {
-            const qa_product *p=qa_catalog_at(m->catalog,i);
-            if (!preset(p) || p->family!=m->family || p->edition!=m->edition) continue;
-            char label[512]; snprintf(label,sizeof(label),"%s (%s)",p->title,edition_name(p->edition));
-            if (!choice_add(m,p->key,label,NULL,error)) return false;
+        if (!campaign_choices(m,error)) return false;
+        for (size_t i=0;i<m->choice_count;++i) {
             m->controls[count]=button(m,count+1,m->choices[count].label,(unsigned)count,true,true); ++count;
         }
     } else if (id==QA_UI_LIBRARY_DIFFICULTY) {
@@ -637,11 +750,14 @@ static void release_profiles(qa_ui_library *m) {
     free(m->local_players);
 }
 void ui_library_clear(qa_ui_library *m) {
-    qa_launch_draft_destroy(m->draft); qa_catalog_release(m->catalog); release_profiles(m); choices_clear(m);
-    free(m->choices); free(m->monster_classname);
-    for (size_t i=0;i<m->tier_count;++i) free((void *)m->tier_labels[i]);
-    for (size_t i=0;i<m->arena_count;++i) free((void *)m->arena_rows[i].detail);
-    free(m->arena_rows); free(m->arena_numbers); free(m->tier_labels); free(m->tiers);
+    qa_launch_draft_destroy(m->draft); qa_catalog_release(m->catalog); release_profiles(m);
+    free(m->monster_classname);
+    for (size_t i=0;i<sizeof(m->fields)/sizeof(*m->fields);++i)
+        for (unsigned j=0;j<2;++j) qa_arena_destroy(&m->fields[i].versions[j].storage);
+    for (unsigned j=0;j<2;++j) {
+        qa_arena_destroy(&m->campaigns.versions[j].storage);
+        qa_arena_destroy(&m->arena_versions[j].storage);
+    }
 }
 bool qa_ui_library_refresh(qa_ui_library *m,qa_error *error) {
     if (!m || m->ui->drawing) return ui_fail(error,"invalid selection refresh");
@@ -649,7 +765,7 @@ bool qa_ui_library_refresh(qa_ui_library *m,qa_error *error) {
     qa_catalog *catalog=qa_application_catalog(m->application); qa_launch_draft *draft=NULL;
     if (m->draft && !qa_launch_draft_rebase(m->draft,catalog,&draft,error)) return false;
     qa_catalog_retain(catalog); qa_launch_draft_destroy(m->draft); qa_catalog_release(m->catalog);
-    m->catalog=catalog; m->draft=draft; choices_clear(m); return true;
+    m->catalog=catalog; m->draft=draft; choices_invalidate(m); return true;
 }
 
 bool qa_ui_library_create(qa_ui *ui, qa_application *application, qa_ui_id id,

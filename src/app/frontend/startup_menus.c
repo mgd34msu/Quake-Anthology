@@ -79,6 +79,13 @@ static bool select_choice(void *context, qa_ui_library *library, qa_ui_library_f
         return frontend_startup_arena_select(seat->startup_arena, library, field, classname, choice, error);
     return frontend_startup_selection_select(seat->startup_selection, library, field, classname, choice, error);
 }
+static uint64_t choices_revision(void *context, qa_ui_library *library,
+    qa_ui_library_field field, const char *classname)
+{
+    frontend_seat *seat = context;
+    (void)library; (void)field; (void)classname;
+    return qa_cvars_revision(qa_application_cvars(seat->frontend->application));
+}
 static bool roster(void *context, qa_ui_library *library,
     const qa_ui_library_roster_row **rows, size_t *count, const char **source, qa_error *error)
 {
@@ -207,6 +214,7 @@ bool frontend_startup_menus_create(frontend_seat *seat, qa_error *error)
         .context = seat, .hosting_menu = 260, .browser_menu = 200, .lobby_menu = 261,
         .mods_menu = FRONTEND_MODS,
         .hosting_label = hosting_label, .play = stage, .choices = choices, .select = select_choice,
+        .choices_revision = choices_revision,
         .roster = roster, .prepare_arenas = prepare_arenas, .arenas = arenas,
         .weapon_bindings = frontend_startup_selection_weapon_bindings}, error);
 }
