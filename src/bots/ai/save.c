@@ -168,9 +168,12 @@ static bool waypoint_chain(const bot_source_orders_state *orders,const bot_sourc
 }
 static bool topology(const qa_bots *bots, qa_error *error)
 {
+    const qa_actor_registry *actors=qa_session_actors(bots->services.shared.session);
     if (bots->client_capacity > INT32_MAX || bots->count > bots->client_capacity ||
-        (bots->client_capacity && !bots->clients) || (bots->actor_capacity && !bots->actor_clients) ||
-        bots->actor_capacity > qa_actors_capacity(qa_session_actors(bots->services.shared.session))) goto invalid;
+        (bots->client_capacity && !bots->clients) || !bots->actor_clients.entries ||
+        bots->actor_clients.registry!=qa_actors_identity(actors) ||
+        bots->actor_clients.capacity!=qa_actors_capacity(actors) ||
+        bots->actor_save_capacity>bots->actor_clients.capacity) goto invalid;
     for (size_t i = 0; i < BOT_SOURCE_MATCH_CVARS; ++i)
         if (!bots->source_match.cvars[i].registered) goto invalid;
     if(bots->shutdown_actor.registry && (!bots->shutting_down ||
@@ -205,8 +208,8 @@ static bool topology(const qa_bots *bots, qa_error *error)
             continue;
         }
         uint32_t i=state->view.client;
-        if (i>=bots->client_capacity || bots->clients[i]!=state || state->view.actor.slot >= bots->actor_capacity ||
-            bots->actor_clients[state->view.actor.slot] != i + 1 ||
+        if (i>=bots->client_capacity || bots->clients[i]!=state || state->view.actor.slot >= bots->actor_save_capacity ||
+            bot_ai_actor(bots,state->view.actor)!=state ||
             state->view.entity < 0 ||
             state->view.source_client!=(int32_t)source ||
             (state->inuse && bots->source_clients[state->view.source_client]!=i+1) ||
@@ -263,9 +266,13 @@ static bool topology(const qa_bots *bots, qa_error *error)
         if(client>bots->client_capacity || !bots->clients[client-1] ||
            !bots->clients[client-1]->inuse || bots->clients[client-1]->view.source_client!=(int32_t)i) goto invalid;
     }
-    for (uint32_t i = 0; i < bots->actor_capacity; ++i) {
-        uint32_t client = bots->actor_clients[i]; if (!client) continue;
-        if (client > bots->client_capacity || !bots->clients[client - 1] || bots->clients[client - 1]->view.actor.slot != i) goto invalid;
+    for (size_t i = 0; i < bots->actor_clients.capacity; ++i) {
+        const qa_actor_index_entry *entry=&bots->actor_clients.entries[i];
+        if(!entry->actor.registry) continue;
+        if(i>=bots->actor_save_capacity || entry->value>=bots->client_capacity ||
+           !bots->clients[entry->value] || entry->actor.slot!=i ||
+           !qa_actor_id_equal(bots->clients[entry->value]->view.actor,entry->actor) ||
+           bot_ai_actor(bots,entry->actor)!=bots->clients[entry->value]) goto invalid;
     }
     return true;
 invalid:
@@ -279,16 +286,16 @@ static void clear(qa_bots *bots)
         }
         free(bots->source_cells[i]);
     }
-    free(bots->clients); free(bots->actor_clients);
+    free(bots->clients); qa_actor_index_destroy(&bots->actor_clients);
     qa_builtin_snapshot_free(&bots->entities); qa_builtin_snapshot_free(&bots->players);
 }
 static bool fields(qa_source_save_io *io, qa_bots *bots,const bot_source_orders_state *waypoints)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    U(bots->client_capacity); U(bots->actor_capacity); U(bots->count);
+    U(bots->client_capacity); U(bots->actor_save_capacity); U(bots->count);
     for(size_t i=0;i<64;++i) U(bots->source_clients[i]);
     if (bots->client_capacity > INT32_MAX || (bots->client_capacity && SIZE_MAX / bots->client_capacity < sizeof(*bots->clients)) ||
-        (bots->actor_capacity && SIZE_MAX / bots->actor_capacity < sizeof(*bots->actor_clients)) || bots->count > bots->client_capacity) return false;
+        bots->count > bots->client_capacity) return false;
     if (!controls_fields(io, &bots->controls)) return false;
     I(bots->local_time_ms); I(bots->library_residual_ms); I(bots->scheduled_think_ms);
     F(bots->time); F(bots->regular_update_time); L(bots->command_sequence);
@@ -317,12 +324,13 @@ static bool fields(qa_source_save_io *io, qa_bots *bots,const bot_source_orders_
     if (reading) {
         size_t remaining = io->input.size - io->offset;
         if (remaining < 64 || bots->count > (remaining - 64) / 1280 ||
-            bots->actor_capacity > qa_actors_capacity(qa_session_actors(bots->services.shared.session)))
+            bots->actor_save_capacity > qa_actors_capacity(qa_session_actors(bots->services.shared.session)))
             return bot_save_fail(io, QA_ERROR_FORMAT, "Truncated native bot population storage");
         if (bots->client_capacity) bots->clients = calloc(bots->client_capacity, sizeof(*bots->clients));
-        if (bots->actor_capacity) bots->actor_clients = calloc(bots->actor_capacity, sizeof(*bots->actor_clients));
-        if ((bots->client_capacity && !bots->clients) || (bots->actor_capacity && !bots->actor_clients))
-            return bot_save_fail(io, QA_ERROR_MEMORY, "Restoring actual bot client/actor tables");
+        if (bots->client_capacity && !bots->clients)
+            return bot_save_fail(io, QA_ERROR_MEMORY, "Restoring actual bot client table");
+        if(!qa_actor_index_create(&bots->actor_clients,
+                qa_session_actors(bots->services.shared.session),NULL,io->error)) return false;
     }
     for (uint32_t i = 0; i < 64; ++i) {
         bool occupied = !reading && bots->source_cells[i] != NULL;
@@ -336,11 +344,19 @@ static bool fields(qa_source_save_io *io, qa_bots *bots,const bot_source_orders_
            !bot_ai_source_alias_bind(bots,state,io->error)) return false;
         if (!state_fields(io,state,waypoints,&bots->source_orders)) return false;
         if(reading && state->view.actor.registry) {
-            if(state->view.client>=bots->client_capacity || bots->clients[state->view.client]) return false;
+            if(state->view.client>=bots->client_capacity || bots->clients[state->view.client] ||
+               state->view.actor.slot>=bots->actor_save_capacity ||
+               bots->actor_clients.entries[state->view.actor.slot].actor.registry) return false;
             bots->clients[state->view.client]=state;
+            qa_actor_index_put(&bots->actor_clients,state->view.actor,state->view.client);
         }
     }
-    for (uint32_t i = 0; i < bots->actor_capacity; ++i) U(bots->actor_clients[i]);
+    for (uint32_t i = 0; i < bots->actor_save_capacity; ++i) {
+        const qa_actor_index_entry *entry=&bots->actor_clients.entries[i];
+        uint32_t expected=entry->actor.registry?(uint32_t)entry->value+1:0;
+        uint32_t client=expected;U(client);
+        if(reading && client!=expected) return false;
+    }
     return snapshot_fields(io, &bots->entities) && snapshot_fields(io, &bots->players);
 }
 bool qa_bots_population_capture(const qa_bots *bots, qa_buffer *out, qa_error *error)

@@ -159,8 +159,7 @@ static bool validate(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
            live->view.entity!=saved->view.entity ||
            live->inuse!=saved->inuse || live->counted!=saved->counted ||
            (saved->view.actor.registry && (saved->view.client>=b->client_capacity ||
-            b->clients[saved->view.client]!=live || saved->view.actor.slot>=b->actor_capacity ||
-            b->actor_clients[saved->view.actor.slot]!=saved->view.client+1)) ||
+            b->clients[saved->view.client]!=live || bot_ai_actor(b,saved->view.actor)!=live)) ||
            (saved->inuse && b->source_clients[saved->acquired_source_client]!=saved->view.client+1) ||
            (!saved->inuse && b->source_clients[saved->acquired_source_client]) ||
            live->character!=saved->character || live->goals!=saved->goals ||
@@ -292,6 +291,12 @@ bool qa_bots_restore(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
     }
     bot_chat_history_finish(chat,ok);
     if(ok) {
+        qa_actor_index_clear(&b->actor_clients);
+        for(uint32_t i=0;i<64;++i) {
+            const bot_ai_state *state=b->source_cells[i];
+            if(state && state->view.actor.registry)
+                qa_actor_index_put(&b->actor_clients,state->view.actor,state->view.client);
+        }
         b->controls=checkpoint->controls;b->local_time_ms=checkpoint->local_time_ms;
         b->library_residual_ms=checkpoint->library_residual_ms;b->scheduled_think_ms=checkpoint->scheduled_think_ms;
         b->time=checkpoint->time;b->regular_update_time=checkpoint->regular_update_time;

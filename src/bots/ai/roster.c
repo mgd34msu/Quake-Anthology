@@ -15,10 +15,8 @@ bool bot_ai_live(const qa_bots *b, qa_actor_id actor) {
     return qa_actors_get(qa_session_actors(b->services.shared.session), actor) != NULL;
 }
 bot_ai_state *bot_ai_actor(const qa_bots *b, qa_actor_id actor) {
-    if (!b || actor.slot >= b->actor_capacity) return NULL;
-    uint32_t index = b->actor_clients[actor.slot];
-    bot_ai_state *state = index ? b->clients[index - 1] : NULL;
-    return state && qa_actor_id_equal(state->view.actor, actor) ? state : NULL;
+    size_t client;
+    return b && qa_actor_index_find(&b->actor_clients,actor,&client) ? b->clients[client] : NULL;
 }
 bool bot_ai_mutable(qa_bots *b, qa_error *e) {
     return b && !b->busy && !b->source_match_exit_depth && !b->restore_pending && !b->shutting_down && !qa_bot_runtime_closed(b->runtime) ? true :
@@ -39,13 +37,15 @@ bool bot_ai_context_create(qa_bot_runtime *runtime, const qa_bot_services *servi
     b->runtime = runtime;
     b->services = *services;
     b->client_capacity = client_capacity;
-    b->actor_capacity = qa_actors_capacity(qa_session_actors(services->shared.session));
+    b->actor_save_capacity = qa_actors_capacity(qa_session_actors(services->shared.session));
     b->clients = calloc(b->client_capacity, sizeof(*b->clients));
-    b->actor_clients = calloc(b->actor_capacity, sizeof(*b->actor_clients));
-    if ((b->client_capacity && !b->clients) || (b->actor_capacity && !b->actor_clients)) {
-        free(b->clients); free(b->actor_clients); free(b);
+    if (b->client_capacity && !b->clients) {
+        free(b);
         qa_error_set(e, QA_ERROR_MEMORY, 0, "allocating retained bot actor/client lookup");
         return false;
+    }
+    if (!qa_actor_index_create(&b->actor_clients,qa_session_actors(services->shared.session),NULL,e)) {
+        free(b->clients);free(b);return false;
     }
     b->controls = (qa_bot_controls){.think_time_ms = 100, .rocket_jump = true};
     b->scheduled_think_ms = 100;
@@ -157,16 +157,14 @@ bool qa_bots_destroy(qa_bots *b, qa_error *e) {
     qa_builtin_snapshot_free(&b->entities);
     qa_builtin_snapshot_free(&b->players);
     qa_bot_runtime_lease_end(b->runtime);
-    free(b->clients); free(b->actor_clients); free(b);
+    free(b->clients); qa_actor_index_destroy(&b->actor_clients); free(b);
     return true;
 }
 void bot_ai_source_cell_clear(qa_bots *b,bot_ai_state *s) {
     uint32_t source=s->acquired_source_client;
     qa_bot_source_record record=s->source_record;
     qa_bot_source_span span=s->source_span;
-    if(s->view.actor.registry && s->view.actor.slot<b->actor_capacity &&
-       b->actor_clients[s->view.actor.slot]==s->view.client+1)
-        b->actor_clients[s->view.actor.slot]=0;
+    qa_actor_index_remove(&b->actor_clients,s->view.actor);
     if(s->view.client<b->client_capacity && b->clients[s->view.client]==s)
         b->clients[s->view.client]=NULL;
     b->source_clients[source]=0;
@@ -340,8 +338,8 @@ static bool admit(qa_bots *b,const qa_bot_admission *a,bool *rejected,qa_error *
     if (!bot_ai_mutable(b, e)) return false;
     if (!a || !a->character_file || !a->name || !isfinite(a->skill) ||
         a->client >= b->client_capacity || a->entity < 0 || !bot_ai_live(b, a->actor) ||
-        (a->actor.slot < b->actor_capacity && b->actor_clients[a->actor.slot]!=0 &&
-         b->actor_clients[a->actor.slot]!=a->client+1))
+        (b->actor_clients.entries[a->actor.slot].actor.registry &&
+         b->actor_clients.entries[a->actor.slot].value!=a->client))
         return bot_ai_fail(e, "invalid or duplicate native bot admission");
     int32_t source_client;
     if(!b->services.source_client(b->services.context,a->actor,&source_client,e)) return false;
@@ -350,14 +348,8 @@ static bool admit(qa_bots *b,const qa_bot_admission *a,bool *rejected,qa_error *
     bot_ai_state *s=b->source_cells[source_client];
     if(b->clients[a->client] && b->clients[a->client]!=s)
         return bot_ai_fail(e,"bot source or virtual client already has an active setup state");
-    if (a->actor.slot >= b->actor_capacity) {
-        uint32_t capacity=qa_actors_capacity(qa_session_actors(b->services.shared.session));
-        if (capacity && SIZE_MAX/capacity<sizeof(*b->actor_clients)) return bot_ai_fail(e,"bot actor lookup overflow");
-        uint32_t *lookup=realloc(b->actor_clients,(size_t)capacity*sizeof(*lookup));
-        if (!lookup) {qa_error_set(e,QA_ERROR_MEMORY,capacity,"growing bot actor lookup");return false;}
-        memset(lookup+b->actor_capacity,0,(capacity-b->actor_capacity)*sizeof(*lookup));
-        b->actor_clients=lookup;b->actor_capacity=capacity;
-    }
+    if (a->actor.slot >= b->actor_save_capacity)
+        b->actor_save_capacity=(uint32_t)b->actor_clients.capacity;
     bool acquired=s!=NULL;
     if(!s) s=calloc(1,sizeof(*s));
     if (!s) { qa_error_set(e, QA_ERROR_MEMORY, 0, "allocating native bot continuation"); return false; }
@@ -397,7 +389,7 @@ static bool admit(qa_bots *b,const qa_bot_admission *a,bool *rejected,qa_error *
         free(admission_name);free(character_request);return false;
     }
     if(acquired && s->view.actor.registry) {
-        if(s->view.actor.slot<b->actor_capacity) b->actor_clients[s->view.actor.slot]=0;
+        qa_actor_index_remove(&b->actor_clients,s->view.actor);
         if(s->view.client<b->client_capacity && b->clients[s->view.client]==s) b->clients[s->view.client]=NULL;
     }
     s->acquired_source_client=(uint32_t)source_client;
@@ -411,7 +403,7 @@ static bool admit(qa_bots *b,const qa_bot_admission *a,bool *rejected,qa_error *
     memset(s->name,0,sizeof(s->name));memcpy(s->name, a->name, name_size);
     b->clients[a->client]=s;
     b->source_cells[source_client]=s;
-    b->actor_clients[a->actor.slot]=a->client+1;
+    qa_actor_index_put(&b->actor_clients,a->actor,a->client);
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_ALLOCATED);
     b->busy = true;
     bool ok = admit_resources(b, s, a, e);

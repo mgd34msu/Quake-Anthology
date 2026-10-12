@@ -82,7 +82,7 @@ bool qa_bots_save_requirements_capture(const qa_bot_runtime *runtime, const qa_b
         .action_capacity = qa_bot_actions_capacity(runtime->actions),
         .population = population != NULL,
         .population_client_capacity = population ? population->client_capacity : 0,
-        .population_actor_capacity = population ? population->actor_capacity : 0
+        .population_actor_capacity = population ? population->actor_save_capacity : 0
     };
     requirements.runtime.library = *library;
     requirements.runtime.library.reload_characters = runtime->options.library.reload_characters;

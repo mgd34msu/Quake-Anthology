@@ -81,8 +81,9 @@ struct qa_bots {
     bot_ai_state *source_cells[64];
     uint32_t source_clients[64];
     uint32_t client_capacity, count;
-    uint32_t *actor_clients;
-    uint32_t actor_capacity;
+    qa_actor_index actor_clients;
+    /* Extent of the legacy slot/client words in population saves. */
+    uint32_t actor_save_capacity;
     qa_bot_controls controls;
     qa_builtin_actor_snapshot entities, players;
     int32_t local_time_ms, library_residual_ms, scheduled_think_ms;
