@@ -6,6 +6,7 @@
 #include "qa/bots_save.h"
 #include "qa/bots_catalog.h"
 #include "qa/arena.h"
+#include "qa/pool.h"
 #include <math.h>
 
 static inline bool application_bot_integer(double value,int32_t *out,qa_error *error) {
@@ -17,6 +18,7 @@ static inline bool application_bot_integer(double value,int32_t *out,qa_error *e
 }
 
 typedef struct application_bot_graph {
+    size_t storage_slot;
     application_provider *movement;
     qa_movement_profile profile;
     qa_bounds bounds;
@@ -36,6 +38,7 @@ typedef enum application_bot_round_phase {
     APPLICATION_BOT_ROUND_BOUND, APPLICATION_BOT_ROUND_FAILED
 } application_bot_round_phase;
 typedef struct application_bot_target {
+    size_t storage_slot;
     qa_actor_id actor;
     application_provider *movement;
     qa_movement_profile profile;
@@ -80,6 +83,8 @@ typedef struct application_bots {
     qa_bsp_view geometry;
     qa_entities entities;
     application_bot_graph *graphs;
+    qa_arena navigation_owner_storage;
+    qa_pool graph_records, target_records;
     qa_bot_navigation *map_navigation;
     application_bot_target *targets;
     qa_actor_index actor_targets;
@@ -133,6 +138,10 @@ static inline void application_bot_target_index_bind(application_bots *bots, app
 }
 bool application_bots_seats_prepare(application_bots *, qa_error *);
 bool application_bots_observations_prepare(application_bots *, qa_error *);
+application_bot_graph *application_bot_graph_take(application_bots *, qa_error *);
+void application_bot_graph_drop(application_bots *, application_bot_graph *);
+application_bot_target *application_bot_target_take(application_bots *, qa_error *);
+void application_bot_target_drop(application_bots *, application_bot_target *);
 void application_bot_seat_index_bind(application_bots *, application_bot_seat *);
 void application_bot_seat_index_remove(application_bots *, application_bot_seat *);
 

@@ -358,11 +358,14 @@ static bool navigation_fields(qa_source_save_io *io,application_bots *bots,bool 
     if(!qa_source_save_count(io,&count,SIZE_MAX/sizeof(application_bot_graph))) return false;
     if(io->direction==QA_SOURCE_SAVE_READ && prepare && count>(io->input.size-io->offset)/50)
         return bot_save_fail(io,QA_ERROR_FORMAT,"Truncated application navigation graph inventory");
+    if(io->direction==QA_SOURCE_SAVE_READ && prepare && count>bots->graph_records.capacity &&
+       !qa_pool_extend(&bots->graph_records,&bots->navigation_owner_storage,
+            count-bots->graph_records.capacity,io->error)) return false;
     application_bot_graph **tail=&bots->graphs,*g=bots->graphs;
     for(size_t i=0;i<count;++i) {
         if(io->direction==QA_SOURCE_SAVE_READ && prepare) {
-            g=calloc(1,sizeof(*g));
-            if(!g) return bot_save_fail(io,QA_ERROR_MEMORY,"Restoring application navigation graph owner");
+            g=application_bot_graph_take(bots,io->error);
+            if(!g) return false;
             *tail=g;tail=&g->next;
         }
         if(!g) return bot_save_fail(io,QA_ERROR_FORMAT,"Application navigation graph inventory differs");
@@ -399,11 +402,14 @@ static bool navigation_fields(qa_source_save_io *io,application_bots *bots,bool 
     if(!qa_source_save_count(io,&count,SIZE_MAX/sizeof(application_bot_target))) return false;
     if(io->direction==QA_SOURCE_SAVE_READ && count>(io->input.size-io->offset)/54)
         return bot_save_fail(io,QA_ERROR_FORMAT,"Truncated application target navigation inventory");
+    if(io->direction==QA_SOURCE_SAVE_READ && count>bots->target_records.capacity &&
+       !qa_pool_extend(&bots->target_records,&bots->navigation_owner_storage,
+            count-bots->target_records.capacity,io->error)) return false;
     application_bot_target **link=&bots->targets,*target=bots->targets;
     for(size_t i=0;i<count;++i) {
         if(io->direction==QA_SOURCE_SAVE_READ) {
-            target=calloc(1,sizeof(*target));
-            if(!target) return bot_save_fail(io,QA_ERROR_MEMORY,"Restoring application target navigation owner");
+            target=application_bot_target_take(bots,io->error);
+            if(!target) return false;
             *link=target;link=&target->next;
         }
         if(target->predicting || !qa_source_save_actor(io,&target->actor) || !target->actor.registry ||

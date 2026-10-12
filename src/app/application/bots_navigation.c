@@ -7,6 +7,36 @@
 #include <string.h>
 #include <stdio.h>
 
+static void *navigation_owner_take(application_bots *bots,qa_pool *records,size_t *slot,
+    qa_error *error) {
+    if(records->head==SIZE_MAX && !qa_pool_extend(records,&bots->navigation_owner_storage,
+        records->capacity?records->capacity:1,error)) return NULL;
+    return qa_pool_take(records,slot);
+}
+application_bot_graph *application_bot_graph_take(application_bots *bots,qa_error *error) {
+    size_t slot;
+    application_bot_graph *graph=navigation_owner_take(bots,&bots->graph_records,&slot,error);
+    if(graph) *graph=(application_bot_graph){.storage_slot=slot};
+    return graph;
+}
+void application_bot_graph_drop(application_bots *bots,application_bot_graph *graph) {
+    if(!graph) return;
+    qa_navigation_destroy(graph->navigation);qa_nav_graph_release(graph->graph);
+    qa_resource_release(graph->asset_resource);qa_vfs_acquisition_dispose(&graph->asset_acquisition);
+    qa_pool_release(&bots->graph_records,graph->storage_slot);
+}
+application_bot_target *application_bot_target_take(application_bots *bots,qa_error *error) {
+    size_t slot;
+    application_bot_target *target=navigation_owner_take(bots,&bots->target_records,&slot,error);
+    if(target) *target=(application_bot_target){.storage_slot=slot};
+    return target;
+}
+void application_bot_target_drop(application_bots *bots,application_bot_target *target) {
+    if(!target) return;
+    qa_bot_navigation_destroy(target->navigation);
+    qa_pool_release(&bots->target_records,target->storage_slot);
+}
+
 qa_bot_navigation *application_bot_navigation(void *opaque,int32_t client) {
     application_bots *bots=opaque;
     if(client<0) {
@@ -529,8 +559,9 @@ static bool navigation_resource(application_bots *bots,qa_resource **saved_resou
         if(end==stem) break;
         start=end+1;
     }
-    char *path=malloc(stem+22);
-    if(!path) return application_fail(error,QA_ERROR_MEMORY,"Allocating bot navigation resource path");
+    qa_arena storage={0};
+    char *path=qa_arena_alloc(&storage,stem+22,1,error);
+    if(!path) {qa_arena_destroy(&storage);return false;}
     bool ok=true;
     for(size_t i=0;i<2;++i) {
         bool aas=bots->geometry.family==QA_BSP_Q3?i==0:i==1;
@@ -559,7 +590,7 @@ static bool navigation_resource(application_bots *bots,qa_resource **saved_resou
         *saved_resource=resource;*saved_acquisition=acquisition;
         break;
     }
-    free(path);return ok;
+    qa_arena_destroy(&storage);return ok;
 }
 bool application_bot_navigation_rebuild(application_bots *bots,application_bot_graph *graph,qa_error *error) {
     qa_nav_profile profile={.movement=graph->profile,.shape={QA_SHAPE_BOX,graph->bounds},
@@ -605,13 +636,12 @@ static bool navigation_graph(application_bots *bots,application_provider *moveme
     while(shared && (shared->movement!=movement || memcmp(&shared->bounds,&bounds,sizeof(bounds)) ||
                     memcmp(&shared->profile,movement_profile,sizeof(*movement_profile)))) shared=shared->next;
     if(!shared) {
-        shared=calloc(1,sizeof(*shared));
-        if(!shared) return application_fail(error,QA_ERROR_MEMORY,"allocating shared bot navigation graph owner");
+        shared=application_bot_graph_take(bots,error);
+        if(!shared) return false;
         shared->movement=movement;shared->bounds=bounds;shared->profile=*movement_profile;
         bool ok=navigation_resource(bots,&shared->asset_resource,&shared->asset_acquisition,error) &&
             application_bot_navigation_rebuild(bots,shared,error);
-        if(!ok) {qa_navigation_destroy(shared->navigation);qa_nav_graph_release(shared->graph);qa_resource_release(shared->asset_resource);
-            qa_vfs_acquisition_dispose(&shared->asset_acquisition);free(shared);return false;}
+        if(!ok) {application_bot_graph_drop(bots,shared);return false;}
         shared->next=bots->graphs;bots->graphs=shared;
     }
     *out=shared;return true;
@@ -653,10 +683,10 @@ bool application_bots_guest_admit(qa_application *application,qa_actor_id actor,
     qa_player_state control;
     if(!qa_application_control_read(application,actor,&control))
         return application_fail(error,QA_ERROR_NOT_FOUND,"guest bot selected movement has not been admitted");
-    application_bot_target *target=calloc(1,sizeof(*target));
-    if(!target) return application_fail(error,QA_ERROR_MEMORY,"retaining guest bot navigation owner");
+    application_bot_target *target=application_bot_target_take(bots,error);
+    if(!target) return false;
     application_bot_seat seat={.actor=actor};
-    if(!application_bot_navigation_bind(bots,&seat,error)) {free(target);return false;}
+    if(!application_bot_navigation_bind(bots,&seat,error)) {application_bot_target_drop(bots,target);return false;}
     target->actor=actor;target->movement=application_provider_for(application,actor,QA_ROLE_MOVEMENT,NULL);
     target->profile=control.profile;target->bounds=control.bounds;target->navigation=seat.navigation;
     target->next=bots->targets;bots->targets=target;
@@ -675,10 +705,10 @@ bool application_bot_predict_motion(void *opaque,qa_actor_id actor,
     if(target && target->predicting)
         return application_fail(error,QA_ERROR_ARGUMENT,"target movement prediction reentered its workspace");
     if(!target) {
-        target=calloc(1,sizeof(*target));
-        if(!target) return application_fail(error,QA_ERROR_MEMORY,"retaining selected target movement prediction");
+        target=application_bot_target_take(bots,error);
+        if(!target) return false;
         application_bot_seat seat={.actor=actor};
-        if(!application_bot_navigation_bind(bots,&seat,error)) {free(target);return false;}
+        if(!application_bot_navigation_bind(bots,&seat,error)) {application_bot_target_drop(bots,target);return false;}
         target->actor=actor;target->movement=movement;target->profile=control.profile;
         target->bounds=control.bounds;target->navigation=seat.navigation;
         target->next=bots->targets;bots->targets=target;

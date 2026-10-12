@@ -70,7 +70,7 @@ static void navigation_publish(application_bots *bots,bot_round_graph *graphs,si
         bots->seats[i].actor=(qa_actor_id){0};
     }
     while(bots->targets) {application_bot_target *target=bots->targets;bots->targets=target->next;
-        qa_bot_navigation_destroy(target->navigation);free(target);}
+        application_bot_target_drop(bots,target);}
     qa_bot_navigation_destroy(bots->map_navigation);bots->map_navigation=*map_navigation;*map_navigation=NULL;
     for(size_t i=0;i<count;++i) {
         bot_round_graph *entry=graphs+i;

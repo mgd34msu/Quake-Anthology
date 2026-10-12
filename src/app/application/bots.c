@@ -190,6 +190,10 @@ bool application_bots_observations_prepare(application_bots *bots,qa_error *erro
         capacity*sizeof(*bots->train_stops),_Alignof(qa_nav_train_stop),error):NULL;
     if(capacity && !bots->train_stops) return false;
     if(capacity) memset(bots->train_stops,0,capacity*sizeof(*bots->train_stops));
+    if(!qa_pool_prepare(&bots->graph_records,&bots->navigation_owner_storage,1,
+            sizeof(application_bot_graph),_Alignof(application_bot_graph),error) ||
+       !qa_pool_prepare(&bots->target_records,&bots->navigation_owner_storage,capacity,
+            sizeof(application_bot_target),_Alignof(application_bot_target),error)) return false;
     bots->pickup_snapshot=(qa_world_actor_snapshot){.actors=actors,
         .world=bots->application->world,.borrowed=true};
     qa_arena_seal(&bots->observation_storage);
@@ -837,13 +841,13 @@ static bool close_bots(application_bots *bots,qa_error *error) {
     qa_bot_navigation_destroy(bots->map_navigation);
     if(bots->seats) for(uint32_t i=0;i<bots->capacity;++i) qa_bot_navigation_destroy(bots->seats[i].navigation);
     while(bots->targets) {application_bot_target *target=bots->targets;bots->targets=target->next;
-        qa_bot_navigation_destroy(target->navigation);free(target);}
+        application_bot_target_drop(bots,target);}
     while(bots->graphs) {application_bot_graph *graph=bots->graphs;bots->graphs=graph->next;
-        qa_navigation_destroy(graph->navigation);qa_nav_graph_release(graph->graph);
-        qa_resource_release(graph->asset_resource);qa_vfs_acquisition_dispose(&graph->asset_acquisition);free(graph);}
+        application_bot_graph_drop(bots,graph);}
     while(bots->guests) {application_bot_guest *guest=bots->guests;bots->guests=guest->next;free(guest);}
     application_bots_knowledge_dispose(bots);
     qa_arena_destroy(&bots->observation_storage);qa_entities_free(&bots->entities);
+    qa_arena_destroy(&bots->navigation_owner_storage);
     while(bots->script_files) {
         application_bot_script_file *file=bots->script_files;bots->script_files=file->next;
         qa_resource_release(file->resource);qa_vfs_acquisition_dispose(&file->acquisition);free(file);
@@ -933,7 +937,7 @@ bool application_bots_frame_at(qa_application *application,const qa_source_frame
         application_bot_target *target=*link;
         if(qa_actors_get(qa_session_actors(application->session),target->actor)) {link=&target->next;continue;}
         qa_actor_index_remove(&bots->actor_targets, target->actor);
-        *link=target->next;qa_bot_navigation_destroy(target->navigation);free(target);
+        *link=target->next;application_bot_target_drop(bots,target);
     }
     bots->producer_frame=admitted;bots->producer_host_ns=host_ns;bots->producing=true;
     if(bots->shared_world && (!application_bot_transport_frame(bots->transport,(double)admitted.elapsed_ns/1e6,error) ||
