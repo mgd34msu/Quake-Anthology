@@ -125,7 +125,7 @@ bool application_q3_component_source_restore(application_q3_component_source *s,
 {
     if(!s||s->actor_count||s->revision||s->command_sequence||s->current.ready||s->baseline.ready||!application_q3_component_source_idle(s)) return false;
     qa_source_save_io io={0}; bool ok=qa_source_save_reader(&io,s->options.session,bytes,e)&&fields(&io,s)&&qa_source_save_finish(&io,NULL);
-    qa_source_save_dispose(&io); return ok;
+    qa_source_save_dispose(&io); return ok&&q3component_source_indexes_rebuild(s,e);
 }
 bool application_q3_component_source_validate(application_q3_component_source *s,qa_error *e)
 {

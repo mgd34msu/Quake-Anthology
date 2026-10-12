@@ -35,15 +35,36 @@ bool application_q3_component_source_idle(const application_q3_component_source 
 { return s&&!s->borrows&&(!s->options.vm||qa_qvm_can_destroy(s->options.vm)); }
 static void publication_free(component_source_publication *p)
 {
+    qa_actor_index_destroy(&p->client_rows);
     free(p->clients); free(p->entities); free(p->game_state); *p=(component_source_publication){0};
 }
-static bool publication_prepare(component_source_publication *p,qa_error *e)
+static bool publication_prepare(component_source_publication *p,const qa_actor_registry *registry,qa_error *e)
 {
     p->game_state=calloc(1,sizeof(*p->game_state));
     p->entities=calloc(QA_Q3_ENTITIES,sizeof(*p->entities));
     p->clients=calloc(QA_Q3_ENTITIES,sizeof(*p->clients));
-    if(p->game_state && p->entities && p->clients) return true;
-    return q3scene_fail(e,QA_ERROR_MEMORY,"Preparing component publication storage");
+    if(!p->game_state || !p->entities || !p->clients)
+        return q3scene_fail(e,QA_ERROR_MEMORY,"Preparing component publication storage");
+    return qa_actor_index_create(&p->client_rows,registry,NULL,e) &&
+        qa_id_index_reserve(&p->client_rows.retained,QA_Q3_ENTITIES,e);
+}
+static bool publication_clients_rebuild(component_source_publication *p,qa_error *e)
+{
+    qa_id_index_clear(&p->client_rows.retained);
+    for(size_t i=0;i<p->client_count;++i)
+        if(!qa_actor_index_remember(&p->client_rows,p->clients[i].actor,i,e)) return false;
+    return true;
+}
+bool q3component_source_indexes_rebuild(application_q3_component_source *s,qa_error *e)
+{
+    qa_id_index_clear(&s->actor_slots);
+    qa_actor_index_clear(&s->actor_rows);
+    for(size_t i=0;i<s->actor_count;++i) {
+        qa_id_index_insert(&s->actor_slots,s->actors[i].row.slot,0,i);
+        if(!qa_actor_index_remember(&s->actor_rows,s->actors[i].row.actor,i,e)) return false;
+    }
+    return publication_clients_rebuild(&s->current,e) &&
+        publication_clients_rebuild(&s->baseline,e) && publication_clients_rebuild(&s->pending,e);
 }
 bool application_q3_component_source_create(const application_q3_component_source_options *options,
     application_q3_component_source **out,qa_error *e)
@@ -59,9 +80,14 @@ bool application_q3_component_source_create(const application_q3_component_sourc
     if((options->vm||options->host)&&!current(s)) { free(s); return q3scene_fail(e,QA_ERROR_ARGUMENT,"Component publication does not own its actual GAME"); }
     s->game_state=calloc(1,sizeof(*s->game_state));
     s->actors=calloc(QA_Q3_ENTITIES,sizeof(*s->actors));
-    if(!s->game_state || !s->actors || !publication_prepare(&s->current,e) ||
-        !publication_prepare(&s->baseline,e) || !publication_prepare(&s->pending,e)) {
+    const qa_actor_registry *registry=qa_session_actors(options->session);
+    if(!s->game_state || !s->actors || !qa_actor_index_create(&s->actor_rows,registry,NULL,e) ||
+        !qa_id_index_reserve(&s->actor_rows.retained,QA_Q3_ENTITIES,e) ||
+        !qa_id_index_reserve(&s->actor_slots,QA_Q3_ENTITIES,e) ||
+        !publication_prepare(&s->current,registry,e) || !publication_prepare(&s->baseline,registry,e) ||
+        !publication_prepare(&s->pending,registry,e)) {
         publication_free(&s->current);publication_free(&s->baseline);publication_free(&s->pending);
+        qa_actor_index_destroy(&s->actor_rows);qa_id_index_destroy(&s->actor_slots);
         free(s->actors);free(s->game_state);free(s);
         if(e && e->code!=QA_OK) return false;
         return q3scene_fail(e,QA_ERROR_MEMORY,"Preparing component source storage");
@@ -80,7 +106,10 @@ bool application_q3_component_source_attach(application_q3_component_source *s,q
     return q3scene_fail(e,QA_ERROR_ARGUMENT,"Component publication attach differs from its retained GAME");
 }
 static component_source_actor *at(application_q3_component_source *s,uint32_t slot)
-{ for(size_t i=0;i<s->actor_count;++i) if(s->actors[i].row.slot==slot) return s->actors+i; return NULL; }
+{
+    const qa_id_index_entry *entry=qa_id_index_find(&s->actor_slots,slot,0);
+    return entry?s->actors+entry->value:NULL;
+}
 static bool actor_read(void *context,uint32_t slot,qa_actor_id *actor,bool *owned,bool *found,qa_error *e)
 {
     application_q3_component_view *view=context; application_q3_component_source *s=view->source;
@@ -102,12 +131,14 @@ bool application_q3_component_source_bind(application_q3_component_source *s,uin
         (owned&&record->owner!=s->options.owner)||
         !qa_q3_host_actor_slot(s->options.host,actor,&actual,e)||actual!=slot)
         return q3scene_fail(e,QA_ERROR_ARGUMENT,"Component publication binding requires its reached full source actor");
-    for(size_t i=0;i<s->actor_count;++i)
-        if(qa_actor_id_equal(s->actors[i].row.actor,actor)&&s->actors[i].row.slot!=slot)
-            return q3scene_fail(e,QA_ERROR_FORMAT,"Component full actor already has a source slot");
+    size_t index;
+    if(qa_actor_index_find_retained(&s->actor_rows,actor,&index)&&s->actors[index].row.slot!=slot)
+        return q3scene_fail(e,QA_ERROR_FORMAT,"Component full actor already has a source slot");
     component_source_actor *row=at(s,slot);
     if(row&&!qa_actor_id_equal(row->row.actor,actor)) return q3scene_fail(e,QA_ERROR_FORMAT,"Component source slot is still occupied");
     if(!row) {
+        if(!qa_actor_index_remember(&s->actor_rows,actor,s->actor_count,e)) return false;
+        qa_id_index_insert(&s->actor_slots,slot,0,s->actor_count);
         row=s->actors+s->actor_count++;
     }
     *row=(component_source_actor){.row={slot,actor,owned},.client=admitted_client}; s->dirty=true; return true;
@@ -115,8 +146,16 @@ bool application_q3_component_source_bind(application_q3_component_source *s,uin
 bool application_q3_component_source_release_actor(application_q3_component_source *s,qa_actor_id actor,qa_error *e)
 {
     if(!s||s->borrows) return q3scene_fail(e,QA_ERROR_ARGUMENT,"Component source actor still has a presentation borrow");
-    for(size_t i=0;i<s->actor_count;++i) if(qa_actor_id_equal(s->actors[i].row.actor,actor)) {
-        memmove(s->actors+i,s->actors+i+1,(s->actor_count-i-1)*sizeof(*s->actors)); --s->actor_count; s->dirty=true; break;
+    size_t index;
+    if(qa_actor_index_find_retained(&s->actor_rows,actor,&index)) {
+        qa_id_index_remove(&s->actor_slots,s->actors[index].row.slot,0);
+        qa_actor_index_forget_retained(&s->actor_rows,actor);
+        memmove(s->actors+index,s->actors+index+1,(s->actor_count-index-1)*sizeof(*s->actors)); --s->actor_count;
+        for(size_t i=index;i<s->actor_count;++i) {
+            qa_id_index_find(&s->actor_slots,s->actors[i].row.slot,0)->value=i;
+            if(!qa_actor_index_remember(&s->actor_rows,s->actors[i].row.actor,i,e)) return false;
+        }
+        s->dirty=true;
     }
     return true;
 }
@@ -185,6 +224,7 @@ static bool publication(application_q3_component_source *s,int32_t time,componen
         }
     }
     if(!current(s)) { q3scene_fail(e,QA_ERROR_ARGUMENT,"Component source changed while publishing its original records"); goto failed; }
+    if(!publication_clients_rebuild(&p,e)) goto failed;
     p.ready=true;*out=p;return true;
 failed:
     return false;
@@ -213,9 +253,11 @@ bool application_q3_component_source_restore_baseline(application_q3_component_s
     const component_source_publication *source=&s->current;
     component_source_publication copy=*source;
     copy.game_state=s->baseline.game_state;copy.entities=s->baseline.entities;copy.clients=s->baseline.clients;
+    copy.client_rows=s->baseline.client_rows;
     *copy.game_state=*source->game_state;
     memcpy(copy.entities,source->entities,source->entity_count*sizeof(*copy.entities));
     memcpy(copy.clients,source->clients,source->client_count*sizeof(*copy.clients));
+    if(!publication_clients_rebuild(&copy,e)) return false;
     s->baseline=copy;return true;
 }
 static bool view_acquire(void *context,bool baseline,application_q3_scene_context *out,qa_error *e)
@@ -225,8 +267,8 @@ static bool view_acquire(void *context,bool baseline,application_q3_scene_contex
     if(!current(s)||!qa_qvm_can_destroy(s->options.vm)||!p->ready||!out||
         (!baseline&&(view->time_ms<p->time_ms||view->frame_ms<0)))
         return q3scene_fail(e,QA_ERROR_ARGUMENT,"Component view requires its actual completed GAME publication");
-    const component_source_client *client=NULL;
-    for(size_t i=0;i<p->client_count;++i) if(qa_actor_id_equal(p->clients[i].actor,view->viewer)) client=p->clients+i;
+    size_t index;
+    const component_source_client *client=qa_actor_index_find_retained(&p->client_rows,view->viewer,&index)?p->clients+index:NULL;
     if(!client||!qa_actors_get(qa_session_actors(s->options.session),view->viewer))
         return q3scene_fail(e,QA_ERROR_NOT_FOUND,"Component viewer has no admitted original source client");
     qa_unified_frame_lease *storage=view->storage;
@@ -295,8 +337,8 @@ static bool view_live(void *context,qa_actor_id actor)
 {
     application_q3_component_view *view=context; application_q3_component_source *s=view->source;
     if(!current(s)||!qa_actors_get(qa_session_actors(s->options.session),actor)) return false;
-    for(size_t i=0;i<s->actor_count;++i) if(qa_actor_id_equal(s->actors[i].row.actor,actor)) return true;
-    return false;
+    size_t index;
+    return qa_actor_index_find_retained(&s->actor_rows,actor,&index);
 }
 static void view_release(void *context,const application_q3_scene_context *c)
 {
@@ -320,5 +362,6 @@ bool application_q3_component_source_destroy(application_q3_component_source **o
     application_q3_component_source *s=*owner;
     if(!application_q3_component_source_idle(s)) return q3scene_fail(e,QA_ERROR_ARGUMENT,"Component source still has actual scene/executor borrowers");
     publication_free(&s->current); publication_free(&s->baseline);publication_free(&s->pending);
+    qa_actor_index_destroy(&s->actor_rows);qa_id_index_destroy(&s->actor_slots);
     free(s->actors); free(s->game_state); qa_qvm_image_release((qa_qvm_image *)s->options.image); free(s); *owner=NULL; return true;
 }

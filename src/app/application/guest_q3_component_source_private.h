@@ -1,6 +1,7 @@
 #ifndef QA_APPLICATION_GUEST_Q3_COMPONENT_SOURCE_PRIVATE_H
 #define QA_APPLICATION_GUEST_Q3_COMPONENT_SOURCE_PRIVATE_H
 #include "guest_q3_component_source.h"
+#include "qa/actors.h"
 
 typedef struct component_source_actor {
     application_q3_scene_actor row;
@@ -22,6 +23,7 @@ typedef struct component_source_publication {
     size_t entity_count;
     component_source_client *clients;
     size_t client_count;
+    qa_actor_index client_rows;
 } component_source_publication;
 typedef struct component_source_borrow {
     struct component_source_borrow *next;
@@ -39,6 +41,8 @@ struct application_q3_component_source {
     application_q3_component_source_options options;
     component_source_actor *actors;
     size_t actor_count;
+    qa_id_index actor_slots;
+    qa_actor_index actor_rows;
     qa_q3_gamestate *game_state;
     int64_t game_state_revision,revision;
     int32_t time_ms,command_sequence;
@@ -48,4 +52,5 @@ struct application_q3_component_source {
     component_source_borrow *borrows;
     bool dirty,restored;
 };
+bool q3component_source_indexes_rebuild(application_q3_component_source *,qa_error *);
 #endif
