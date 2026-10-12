@@ -73,7 +73,7 @@ bool application_rankings_warmup(void *context)
     const char *value = NULL;
     if (!provider || provider != source(provider->application) ||
         !qa_q3_configstring_read(provider->state.q3, 5, &value, NULL)) return true;
-    return strtol(value, NULL, 10) != 0;
+    return qa_parse_decimal_i32(value, QA_DECIMAL_ASCII_WRAP) != 0;
 }
 static bool publish_active(qa_application *app, application_provider *provider, qa_error *error)
 {
@@ -318,84 +318,6 @@ bool qa_application_rankings_spectate(qa_application *app, int32_t slot, qa_erro
     if (ok && !published) { ok=false; if (error) *error=active_error; }
     owner->busy=false; return ok;
 }
-static int number_digit(unsigned char value)
-{
-    if (value>='0' && value<='9') return value-'0';
-    if (value>='a' && value<='f') return value-'a'+10;
-    if (value>='A' && value<='F') return value-'A'+10;
-    return -1;
-}
-/* Number(cvar text) is separate from the registry's binary32 atof cache. */
-static bool cvar_number(const char *text, double *out, qa_error *error)
-{
-    qa_bytes bytes={(const uint8_t *)text,strlen(text)};
-    size_t cursor=0, first=bytes.size, last=0;
-    uint32_t scalar;
-    while (cursor<bytes.size) {
-        size_t begin=cursor;
-        (void)qa_utf8_next(bytes,&cursor,&scalar);
-        if (!qa_unicode_whitespace(scalar)) {
-            if (first==bytes.size) first=begin;
-            last=cursor;
-        }
-    }
-    *out=NAN;
-    if (!last) { *out=0; return true; }
-    bytes=(qa_bytes){bytes.data+first,last-first};
-    if (bytes.size>=2 && bytes.data[0]=='0') {
-        unsigned bits=bytes.data[1]=='x' || bytes.data[1]=='X' ? 4u :
-            bytes.data[1]=='o' || bytes.data[1]=='O' ? 3u :
-            bytes.data[1]=='b' || bytes.data[1]=='B' ? 1u : 0u;
-        if (bits) {
-            if (bytes.size==2) return true;
-            uint64_t mantissa=0;
-            unsigned count=0;
-            bool guard=false, sticky=false;
-            for (size_t i=2;i<bytes.size;++i) {
-                int digit=number_digit(bytes.data[i]);
-                if (digit<0 || (unsigned)digit>=(1u<<bits)) return true;
-                for (unsigned bit=bits;bit;--bit) {
-                    bool set=((unsigned)digit&(1u<<(bit-1u)))!=0;
-                    if (!count && !set) continue;
-                    if (count<53) mantissa=(mantissa<<1)|(set ? 1u : 0u);
-                    else if (count==53) guard=set;
-                    else sticky=sticky || set;
-                    if (count<1025) ++count;
-                }
-            }
-            if (count<=53) { *out=(double)mantissa; return true; }
-            if (guard && (sticky || (mantissa&1u))) ++mantissa;
-            *out=count>1024 || (count==1024 && mantissa==UINT64_C(9007199254740992))
-                ? INFINITY : ldexp((double)mantissa,(int)count-53);
-            return true;
-        }
-    }
-    cursor=0;
-    bool negative=bytes.data[0]=='-';
-    if (negative || bytes.data[0]=='+') ++cursor;
-    if (bytes.size-cursor==8 && !memcmp(bytes.data+cursor,"Infinity",8)) {
-        *out=negative ? -INFINITY : INFINITY; return true;
-    }
-    bool digit=false;
-    while (cursor<bytes.size && bytes.data[cursor]>='0' && bytes.data[cursor]<='9') {
-        digit=true; ++cursor;
-    }
-    if (cursor<bytes.size && bytes.data[cursor]=='.') {
-        ++cursor;
-        while (cursor<bytes.size && bytes.data[cursor]>='0' && bytes.data[cursor]<='9') {
-            digit=true; ++cursor;
-        }
-    }
-    if (!digit) return true;
-    if (cursor<bytes.size && (bytes.data[cursor]=='e' || bytes.data[cursor]=='E')) {
-        ++cursor;
-        if (cursor<bytes.size && (bytes.data[cursor]=='+' || bytes.data[cursor]=='-')) ++cursor;
-        size_t start=cursor;
-        while (cursor<bytes.size && bytes.data[cursor]>='0' && bytes.data[cursor]<='9') ++cursor;
-        if (cursor==start) return true;
-    }
-    return cursor!=bytes.size || qa_parse_number(bytes,out,error);
-}
 static bool game_over(qa_application *app, application_rankings *owner,
     application_provider *provider, qa_error *error)
 {
@@ -414,10 +336,7 @@ static bool game_over(qa_application *app, application_rankings *owner,
     }
     for (size_t i = 0; i < sizeof(integers)/sizeof(integers[0]); ++i) {
         const qa_cvar_view *value = qa_cvars_find(cvars, integers[i].name);
-        double number=0;
-        if (value && !cvar_number(value->value,&number,error)) return false;
-        number=trunc(number);
-        if (number == 0.0 || isnan(number)) number=0;
+        int32_t number=value ? qa_parse_decimal_i32(value->value,QA_DECIMAL_ASCII_WRAP) : 0;
         if (!backend_result(app,owner,qa_rankings_report_integer(app->rankings,-1,-1,integers[i].key,number,false,error))) return false;
     }
     return true;
@@ -547,8 +466,8 @@ static bool frame_players(qa_application *app, application_rankings *owner,
     const qa_cvar_view *time=qa_cvars_read(cvars,
         application_native_q3_console_rankings_handle(provider, APPLICATION_Q3_RANKINGS_TIMELIMIT));
     if (!frag || !time) return application_fail(error,QA_ERROR_ARGUMENT,"Ranked source lacks its actual limits");
-    double fraglimit, timelimit;
-    if (!cvar_number(frag->value,&fraglimit,error) || !cvar_number(time->value,&timelimit,error)) return false;
+    int32_t fraglimit=qa_parse_decimal_i32(frag->value,QA_DECIMAL_ASCII_WRAP);
+    int32_t timelimit=qa_parse_decimal_i32(time->value,QA_DECIMAL_ASCII_WRAP);
     if ((fraglimit==0 || fraglimit>100) && (timelimit==0 || timelimit>1000)) {
         if (!application_native_q3_console_borrow(provider,error)) return false;
         bool ok=qa_cvars_set(cvars,"timelimit","1000",true,error);

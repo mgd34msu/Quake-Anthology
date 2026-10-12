@@ -259,12 +259,10 @@ bool native_client_cache_reload(const native_client_cache_access *access, qa_err
         if (!access->configstring(access->context, 544 + slot, &text, error)) return false;
         size_t length = strlen(text);
         if (!length) continue;
-        char *retained = malloc(length + 1);
-        if (!retained) return native_client_fail(error, QA_ERROR_MEMORY, access->reload_memory_error);
+        char retained[QA_Q3_GAMESTATE_CHARS];
         memcpy(retained, text, length + 1);
         bool ok = access->reload_client_info(access->context, slot, retained, error) &&
             access->current(access->context);
-        free(retained);
         if (!ok) return false;
     }
     return true;
@@ -309,8 +307,7 @@ static native_client_cache_access cache_access(qa_native_q3_client_service *serv
         .configstring = configstring, .reload_client_info = reload_client_info,
         .registry = service->services.client.cvars, .owner = service->services.client.service_owner,
         .product = service->product, .cache = service->cache, .count = service->count, .refs=&service->cvar_refs,
-        .oversized_error = "Cvar_Update source exceeds MAX_CVAR_VALUE_STRING",
-        .reload_memory_error = "Retaining reached native client-info value"};
+        .oversized_error = "Cvar_Update source exceeds MAX_CVAR_VALUE_STRING"};
 }
 
 bool qa_native_q3_client_register(qa_native_q3_client_service *service, qa_error *error)

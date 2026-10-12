@@ -71,7 +71,6 @@ bool qa_native_q3_client_restore(qa_application *app,const qa_native_q3_client_b
         ok=qa_cvars_find(service->services.client.cvars,definition->name)!=NULL;
     }
     if (!ok) {
-        free(service->system_info);
         qa_launch_instance_lease_release(service->source_lease); free(service);
         if (!error || error->code==QA_OK) native_client_fail(error,QA_ERROR_FORMAT,"Invalid native CGAME constructor continuation");
         return false;

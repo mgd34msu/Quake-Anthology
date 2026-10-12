@@ -1,6 +1,7 @@
 #ifndef QA_APPLICATION_NATIVE_Q3_REMOTE_ROLE_PRIVATE_H
 #define QA_APPLICATION_NATIVE_Q3_REMOTE_ROLE_PRIVATE_H
 #include "native_q3_remote_role.h"
+#include "native_q3_system_info.h"
 #include "qa/arena.h"
 
 typedef enum native_q3_remote_lifecycle {
@@ -26,7 +27,7 @@ struct application_native_q3_remote_role {
     qa_arena argument_storage[2];
     unsigned argument_storage_slot;
     qa_buffer modules_restore;
-    char *system_info;
+    native_q3_system_info system_info;
     uint64_t argument_revision, module_sequence, module_generation;
     size_t calls, module_calls;
     native_q3_remote_lifecycle lifecycle;

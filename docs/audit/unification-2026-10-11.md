@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `e19d15b2`.
+Follow-up source changes were reviewed through main `b51370d7`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 202 have source fixes
+There are **374 overlapping source-review observations**: 203 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 169 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 168 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -394,3 +394,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `74c952c1` / 02-15, 17-01: QC finale polling storage/index now prepared at source construction, reused on reset and reconstructed on restore with inactive owner/save encoding preserved. Restart uses shared dimension projection with live registry or existing edit. Normal build and seven core suites passed; no live/gate claim. Records: `/tmp/qa-ta3196-client-owner-preparation-20261012-v1`.
 
 - `e19d15b2` / J11-04: Recipe and content sidecar admission/restore use one shared map inventory and entity application rule; duplicate inventory/path bodies removed. Optional misses, scoped ownership and existing formats/save fields retained. Normal build and seven core suites passed; cold allocations remain, no timing claim. Records: `/tmp/qa-ta3196-one-sidecar-rule-20261012-v1`.
+
+- `b51370d7` / 16-010: Q2 semantic beam, flashlight and light identities use the common indexed handle store with full actor candidate checks. Unicast claims use common indexed pool backing, preserving domain and publication ordering; new peak growth remains a partial admission gap. Normal build and seven core suites passed; no live or zero-allocation claim. Records: `/tmp/qa-ta3196-indexed-q2-event-storage-20261012-v1`.

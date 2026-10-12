@@ -14,7 +14,7 @@ struct qa_native_q3_remote_client_service {
     qa_native_q3_cvar_refs cvar_refs;
     uint64_t cache_revision, force_model_count, overlay_count;
     int32_t local_server;
-    char *system_info;
+    native_q3_system_info system_info;
     size_t actions;
     bool registered, updating, overlay_initial, attached, retiring;
 };

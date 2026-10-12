@@ -1,7 +1,6 @@
 #include "internal.h"
 #include "qa/launch_save.h"
 #include "qa/vfs_view_save.h"
-#include "qa/launch_q2_client.h"
 #include "qa/launch_client.h"
 #include "qa/catalog_save.h"
 #include <stdio.h>
@@ -739,73 +738,6 @@ bool qa_launch_instance_restore_builtin_client_metadata(const qa_launch_instance
     if (!ok && error && error->code == QA_OK)
         error_message(error, "Restored builtin client identity differs from its actual retained content");
     if (ok) ok = qa_launch_instance_retain_metadata(&owner->view, out, error);
-    owner_release(owner); return ok;
-}
-
-static bool q2_client_selection(const qa_launch_q2_client_metadata *request,
-    qa_launch_provider *selection, qa_error *error)
-{
-    const qa_product *profile = request ? qa_catalog_product(request->catalog, request->profile) : NULL;
-    const qa_product *selected = request ? qa_catalog_product(request->catalog, request->selected) : NULL;
-    const qa_product *program = profile ? qa_catalog_product(request->catalog, profile->program_product) : NULL;
-    if (!program) program = profile;
-    if (!request || !request->instance || !*request->instance || !profile || !selected || !program ||
-        profile->family != QA_GAME_Q2 || selected->family != QA_GAME_Q2 || program->family != QA_GAME_Q2 ||
-        !profile->builtin || !program->builtin || profile->program_kind != QA_PROGRAM_BUILTIN ||
-        program->program_kind != QA_PROGRAM_BUILTIN ||
-        (profile->edition != QA_EDITION_CLASSIC && profile->edition != QA_EDITION_RERELEASE) ||
-        profile->edition != selected->edition || profile->edition != program->edition ||
-        !request->prepared || !qa_catalog_product_view_current(request->catalog, request->selected, request->prepared))
-        return error_message(error, "Q2 CLIENT metadata requires its real compiled profile and prepared selected view");
-    *selection = (qa_launch_provider){.instance = request->instance, .product = selected->id,
-        .runtime = QA_PROGRAM_BUILTIN, .implementation = program->key, .artifact = "", .component = "",
-        .clock = qa_clock_defaults(profile->edition == QA_EDITION_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC)};
-    selection->clock.initial_lead_ns = 0;
-    return true;
-}
-static bool q2_client_identity(instance_owner *owner, const qa_launch_q2_client_metadata *request,
-    const qa_launch_provider *selection, qa_error *error)
-{
-    qa_launch_seat seat = {.id = request->seat, .name = "", .team = "", .local = true};
-    qa_launch_binding binding = {.scope = {.kind = QA_SCOPE_SEAT, .seat = request->seat},
-        .role = QA_ROLE_HUD, .instance = selection->instance, .selector = "", .definition = ""};
-    owner->view.roles = QA_ROLE_BIT(QA_ROLE_HUD) | QA_ROLE_BIT(QA_ROLE_AUDIO) | QA_ROLE_BIT(QA_ROLE_MENU);
-    bool ok = launch_empty(request->catalog, &owner->identity, error) &&
-        qa_launch_set_provider(owner->identity, selection, error) && qa_launch_set_seat(owner->identity, &seat, error) &&
-        qa_launch_bind(owner->identity, &binding, error);
-    if (ok) owner->view.selection = owner->identity->choices.providers[0];
-    return ok;
-}
-bool qa_launch_instance_prepare_q2_client_metadata(const qa_launch_q2_client_metadata *request,
-    qa_launch_instance_lease **out, qa_error *error)
-{
-    qa_launch_provider selection = {0};
-    if (!out || *out || !q2_client_selection(request, &selection, error)) return false;
-    instance_owner *owner = calloc(1, sizeof(*owner));
-    if (!owner) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining Q2 CLIENT metadata"); return false; }
-    owner->references = 1; owner->view.storage = owner;
-    bool ok = q2_client_identity(owner, request, &selection, error);
-    if (ok) { owner->view.content = qa_vfs_clone(request->prepared, error); ok = owner->view.content != NULL; }
-    if (ok) ok = instance_identity(owner, &owner->identity->choices, error) &&
-        qa_launch_instance_retain_metadata(&owner->view, out, error);
-    owner_release(owner); return ok;
-}
-bool qa_launch_instance_restore_q2_client_metadata(const qa_launch_q2_client_metadata *request,
-    const qa_launch_restored_instance *saved, qa_launch_instance_lease **out, qa_error *error)
-{
-    if (!request || !saved || !saved->catalog || !saved->content || !out || *out) return false;
-    instance_owner *owner = calloc(1, sizeof(*owner));
-    if (!owner) { qa_vfs_destroy(saved->content); qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring Q2 CLIENT metadata"); return false; }
-    owner->references = 1; owner->view.storage = owner; owner->view.content = saved->content;
-    qa_launch_q2_client_metadata actual = *request; actual.prepared = saved->content;
-    qa_launch_provider expected = {0};
-    bool ok = saved->catalog == request->catalog && q2_client_selection(&actual, &expected, error) &&
-        restored_selection_matches(&expected, request->catalog, saved) &&
-        !saved->artifact && !saved->artifact_acquisition && !saved->declaration &&
-        !saved->interface_count && !saved->behavior_count && q2_client_identity(owner, request, &expected, error);
-    if (ok) ok = instance_identity(owner, &owner->identity->choices, error) &&
-        qa_launch_instance_retain_metadata(&owner->view, out, error);
-    if (!ok && error && error->code == QA_OK) error_message(error, "Saved Q2 CLIENT descriptor leaves its genuine source recipe");
     owner_release(owner); return ok;
 }
 

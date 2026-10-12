@@ -29,8 +29,7 @@ static native_client_cache_access cache_access(qa_native_q3_remote_client_servic
         .configstring = configstring, .reload_client_info = reload_client_info,
         .registry = service->services.basis.client.cvars, .owner = service->services.basis.client.service_owner,
         .product = service->services.basis.product, .cache = service->cache, .refs=&service->cvar_refs, .count = native_client_definition_count,
-        .oversized_error = "Remote Cvar_Update exceeds MAX_CVAR_VALUE_STRING",
-        .reload_memory_error = "Retaining reached remote player configstring"};
+        .oversized_error = "Remote Cvar_Update exceeds MAX_CVAR_VALUE_STRING"};
 }
 bool qa_native_q3_remote_client_register(qa_native_q3_remote_client_service *service, qa_error *error)
 {
@@ -77,8 +76,7 @@ static bool system_info(qa_native_q3_remote_client_service *service, qa_error *e
     if (!state || !qa_native_q3_remote_client_current(service)) return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote SystemInfo lost its reached gamestate");
     native_q3_system_info_policy policy={
         .skip_time_controls=service->services.basis.client.client_time_cvars!=NULL,
-        .skip_same_timescale=true,.after_set=current,.context=service,
-        .memory_error="Retaining reached remote SystemInfo"};
+        .skip_same_timescale=true,.after_set=current,.context=service};
     return native_q3_system_info_apply(service->services.basis.client.cvars,&service->system_info,
         qa_q3_configstring(state,1),policy,error);
 }

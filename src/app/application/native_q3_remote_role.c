@@ -466,7 +466,7 @@ bool application_native_q3_remote_role_system_info(application_provider *provide
         return application_fail(error, QA_ERROR_ARGUMENT, "Native SystemInfo requires its actual configured CLIENT registry");
     /* Received source time does not overwrite the physical CLIENT time owner. */
     native_q3_system_info_policy policy={.skip_time_controls=true,
-        .after_set=system_info_current,.context=row,.memory_error="Retaining native CLIENT SystemInfo"};
+        .after_set=system_info_current,.context=row};
     ++row->calls;
     bool ok=native_q3_system_info_apply(row->cvars,&row->system_info,info,policy,error);
     --row->calls;
@@ -702,7 +702,7 @@ static bool role_destroy(application_provider *provider,
     qa_cvars_detach_callbacks(row->cvars); qa_cvars_destroy(row->cvars);
     qa_command_tokens_free(&row->arguments); qa_buffer_free(&row->modules_restore);
     qa_arena_destroy(&row->argument_storage[0]); qa_arena_destroy(&row->argument_storage[1]);
-    qa_launch_instance_lease_release(row->descriptor); free(row->system_info); free(row);
+    qa_launch_instance_lease_release(row->descriptor); free(row);
     return true;
 }
 

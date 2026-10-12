@@ -250,7 +250,7 @@ bool qa_native_q3_remote_client_destroy(qa_native_q3_remote_client_service *serv
     service->retiring = true;
     if (!service->services.release(service->services.context, error)) return false;
     service->character.release(service->character.lifetime);
-    qa_launch_instance_lease_release(service->descriptor); free(service->system_info); free(service); return true;
+    qa_launch_instance_lease_release(service->descriptor); free(service); return true;
 }
 bool qa_native_q3_remote_client_basis_read(const qa_native_q3_remote_client_service *service,
     qa_native_q3_remote_client_basis *out, qa_error *error)
@@ -303,7 +303,7 @@ bool qa_native_q3_remote_client_video_reset(qa_native_q3_remote_client_service *
     service->registered=false; service->overlay_initial=true;
     service->force_model_count=service->overlay_count=0; service->local_server=0;
     memset(service->cache,0,sizeof(service->cache)); ++service->cache_revision;
-    free(service->system_info); service->system_info=NULL;
+    service->system_info.present=false;
     return qa_native_q3_remote_client_current(service);
 }
 const qa_native_q3_cvar_refs *qa_native_q3_remote_client_cvar_refs(const qa_native_q3_remote_client_service *service)

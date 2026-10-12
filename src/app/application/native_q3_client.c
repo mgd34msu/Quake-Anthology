@@ -207,7 +207,6 @@ bool qa_native_q3_client_service_destroy(qa_native_q3_client_service *service,qa
 {
     if (!service) return true;
     if (!qa_native_q3_client_service_retire_ready(service,error)) return false;
-    free(service->system_info);
     service->character.release(service->character.lifetime);
     service->services.release(service->services.context);
     qa_launch_instance_lease_release(service->source_lease); free(service); return true;
@@ -246,7 +245,7 @@ bool qa_native_q3_client_video_reset(qa_native_q3_client_service *service,qa_err
     service->force_model_count=service->overlay_count=0;
     service->local_server=0; service->registered=false; service->overlay_initial=true;
     service->services.client.initialized=false;
-    free(service->system_info); service->system_info=NULL;
+    service->system_info.present=false;
     service->has_system_info_revision=false;
     return qa_native_q3_client_service_current(service);
 }

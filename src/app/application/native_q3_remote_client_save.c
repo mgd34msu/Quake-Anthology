@@ -27,17 +27,15 @@ static bool fields(qa_source_save_io *io, qa_native_q3_remote_client_service *se
             if (*value->value || value->number != 0 || value->integer || value->modification_count) return false;
         }
     }
-    bool present = service->system_info != NULL;
+    bool present = service->system_info.present;
     if (!qa_source_save_bool(io, &present)) return false;
     if (present) {
-        size_t length = io->direction == QA_SOURCE_SAVE_WRITE ? strlen(service->system_info) : 0;
+        size_t length = io->direction == QA_SOURCE_SAVE_WRITE ? strlen(service->system_info.text) : 0;
         if (!qa_source_save_count(io, &length, QA_Q3_BIG_INFO_CHARS - 1)) return false;
-        if (io->direction == QA_SOURCE_SAVE_READ) {
-            service->system_info = malloc(length + 1); if (!service->system_info) return false;
-        }
-        if (!qa_source_save_bytes(io, service->system_info, length) || memchr(service->system_info, 0, length)) return false;
-        service->system_info[length] = 0;
+        if (!qa_source_save_bytes(io, service->system_info.text, length) || memchr(service->system_info.text, 0, length)) return false;
+        service->system_info.text[length] = 0;
     }
+    service->system_info.present = present;
     return true;
 }
 bool qa_native_q3_remote_client_checkpoint(const qa_native_q3_remote_client_service *service, qa_buffer *out, qa_error *error)
@@ -67,7 +65,7 @@ bool qa_native_q3_remote_client_restore(qa_native_q3_remote_client_services *ser
         service->services.basis.client.seat, service, error);
     if (!ok) {
         if (service->attached) application_native_q3_remote_role_detach(service->provider, service->services.basis.client.seat, service, NULL);
-        free(service->system_info); qa_launch_instance_lease_release(service->descriptor); free(service);
+        qa_launch_instance_lease_release(service->descriptor); free(service);
         if (!error || error->code == QA_OK) native_client_fail(error, QA_ERROR_FORMAT, "Invalid remote native CGAME continuation");
         return false;
     }

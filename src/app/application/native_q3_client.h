@@ -4,6 +4,7 @@
 #include "qa/source_save.h"
 #include "qa/source_frame_time.h"
 #include "qa/application_native_q3_cvars.h"
+#include "native_q3_system_info.h"
 
 typedef struct native_client_definition {
     qa_native_q3_cvar_id id;
@@ -29,7 +30,7 @@ struct qa_native_q3_client_service {
     uint64_t force_model_count, overlay_count;
     int32_t local_server;
     size_t action_busy;
-    char *system_info;
+    native_q3_system_info system_info;
     uint64_t system_info_revision;
     bool registered, updating, overlay_initial, has_system_info_revision;
 };
@@ -48,7 +49,7 @@ typedef struct native_client_cache_access {
     qa_native_q3_client_cvar *cache;
     qa_native_q3_cvar_refs *refs;
     size_t count;
-    const char *oversized_error, *reload_memory_error, *missing_error;
+    const char *oversized_error, *missing_error;
 } native_client_cache_access;
 typedef struct native_client_userinfo_text {
     const char *defaults, *identity, *character, *capacity_error, *memory_error;

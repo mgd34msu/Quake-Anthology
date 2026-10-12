@@ -13,7 +13,7 @@ struct frontend_remote_q2_source {
     frontend_remote_q2_source_options options;
     qa_launch_instance_lease *metadata;
     qa_launch_instance_lease *constructor_metadata;
-    qa_launch_q2_client_metadata selected_request;
+    qa_launch_client_metadata selected_request;
     frontend_client_registry *registry;
     frontend_remote_q2 *receiver;
     qa_console *console;
@@ -37,7 +37,7 @@ static bool profile_protocol(const qa_product *profile, qa_net_protocol_id proto
 }
 bool frontend_remote_q2_source_recipe(qa_catalog *catalog, qa_net_protocol_id protocol,
     qa_product_id compiled, qa_product_id selected, const char *instance, uint32_t seat,
-    qa_launch_q2_client_metadata *out, qa_vfs **prepared, qa_error *error)
+    qa_launch_client_metadata *out, qa_vfs **prepared, qa_error *error)
 {
     qa_q2_codec codec;
     if (!catalog || !instance || !*instance || !out || !prepared || *prepared ||
@@ -51,7 +51,8 @@ bool frontend_remote_q2_source_recipe(qa_catalog *catalog, qa_net_protocol_id pr
         return remote_q2_fail(error, QA_ERROR_NOT_FOUND, "Q2 CLIENT wire profile has no installed compiled content owner");
     if (!selected) selected=profile->id;
     if (!qa_catalog_open(catalog, selected, prepared, error)) return false;
-    *out = (qa_launch_q2_client_metadata){catalog, profile->id, selected, *prepared, instance, seat};
+    *out = (qa_launch_client_metadata){.catalog = catalog, .profile = profile->id, .selected = selected,
+        .prepared = *prepared, .instance = instance, .seat = seat, .clock = qa_product_ruleset(profile, QA_GAME_Q2)};
     return true;
 }
 static bool retain(void *context, qa_error *error)
@@ -312,14 +313,15 @@ static bool content_admit(void *context, uint64_t loading, const frontend_remote
     const qa_product *original = qa_catalog_product(source->options.metadata.catalog, source->options.metadata.profile);
     const qa_product *profile = original ? qa_catalog_find(content->catalog, original->key) : NULL;
     if (!profile) return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 content admission lost its compiled profile");
-    qa_launch_q2_client_metadata request = {content->catalog, profile->id, content->selected, content->mounts,
-        source->options.metadata.instance, source->options.metadata.seat};
+    qa_launch_client_metadata request = {.catalog = content->catalog, .profile = profile->id,
+        .selected = content->selected, .prepared = content->mounts, .instance = source->options.metadata.instance,
+        .seat = source->options.metadata.seat, .clock = qa_product_ruleset(profile, QA_GAME_Q2)};
     qa_launch_instance_lease *metadata = NULL;
-    if (!qa_launch_instance_prepare_q2_client_metadata(&request, &metadata, error)) return false;
+    if (!qa_launch_instance_prepare_client_profile(&request, &metadata, error)) return false;
     frontend_remote_q2_domain previous = source->domain, candidate = previous;
     ++candidate.configuration_generation;
     qa_launch_instance_lease *old = source->metadata;
-    qa_launch_q2_client_metadata previous_request = source->selected_request;
+    qa_launch_client_metadata previous_request = source->selected_request;
     source->metadata = metadata; source->domain = candidate; source->receiver->options.domain = candidate;
     source->selected_request = request;
     source->selected_request.prepared = qa_launch_instance_lease_view(metadata)->content;
@@ -380,7 +382,7 @@ bool frontend_remote_q2_source_create(qa_frontend *f, const frontend_remote_q2_s
     if (!source) return false;
     source->frontend = f; source->options = *options; source->domain = options->client.domain; source->references = 1;
     *out = source;
-    if (!qa_launch_instance_prepare_q2_client_metadata(&options->metadata, &source->metadata, error)) return false;
+    if (!qa_launch_instance_prepare_client_profile(&options->metadata, &source->metadata, error)) return false;
     if (!qa_launch_instance_retain_metadata(qa_launch_instance_lease_view(source->metadata),
         &source->constructor_metadata, error)) return false;
     const qa_launch_instance *constructor = qa_launch_instance_lease_view(source->constructor_metadata);

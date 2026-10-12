@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "e19d15b25d7ac93588f664956dc63db610f2cb59",
+  "verified_main": "b51370d792e78cd60a50cba133402a756be76039",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 202,
-    "open_source_observation": 169,
+    "fixed_source_build_core": 203,
+    "open_source_observation": 168,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -30277,8 +30277,9 @@
       "severity": "medium",
       "job": "16",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "b51370d792e78cd60a50cba133402a756be76039"
     },
     {
       "id": "16-011",
@@ -35054,7 +35055,13 @@
       "job": "27",
       "area": "network",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "source review; no runtime or performance proof",
+      "partial_followups": [
+        {
+          "commit": "b51370d7",
+          "verification": "Common pool/index replace private claim realloc and lookup; full identity/domain retirement core check passes. New-peak pool/index growth and other host material copies remain open."
+        }
+      ]
     },
     {
       "id": "28-01",
@@ -35299,7 +35306,13 @@
       "job": "29",
       "area": "public_interfaces",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "source review; no runtime or performance proof",
+      "partial_followups": [
+        {
+          "commit": "b51370d7",
+          "verification": "Common pool/index replace private claim realloc and lookup; full identity/domain retirement core check passes. New-peak pool/index growth and other host material copies remain open."
+        }
+      ]
     },
     {
       "id": "29-02",
@@ -42704,6 +42717,33 @@
       ],
       "record_directory": "/tmp/qa-ta3196-one-sidecar-rule-20261012-v1",
       "conclusion": "Recipe and content sidecar admission/restore use one shared map inventory and entity application rule; duplicate inventory/path bodies removed. Optional misses, scoped ownership and existing formats/save fields retained. Normal build and seven core suites passed; cold allocations remain, no timing claim."
+    },
+    {
+      "commit": "b51370d792e78cd60a50cba133402a756be76039",
+      "source_tree": "74ddf0ee578abe9d2a5c8ac9fc338899e19ab557",
+      "finding_ids": [
+        "16-010"
+      ],
+      "files_rechecked": [
+        "src/app/frontend/remote_q2_effects.c",
+        "src/app/frontend/remote_q2_effects_private.h",
+        "src/app/frontend/remote_q2_effects_semantic.c",
+        "src/network/q2/unicast.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-indexed-q2-event-storage-20261012-v1",
+      "conclusion": "Q2 semantic beam, flashlight and light identities use the common indexed handle store with full actor candidate checks. Unicast claims use common indexed pool backing, preserving domain and publication ordering; new peak growth remains a partial admission gap. Normal build and seven core suites passed; no live or zero-allocation claim."
     }
   ],
   "verification_limits": [

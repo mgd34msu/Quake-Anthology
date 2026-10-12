@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "control_frame.h"
 #include "map_players_private.h"
 #include "native_maps.h"
 #include "native_q3_console.h"
@@ -522,20 +523,34 @@ static bool q3_list_entities(application_provider *p, qa_error *error) {
     int32_t list;
     if (!application_native_q3_settings_integer_at(p, APPLICATION_Q3_SETTING_G_LIST_ENTITY, &list, error)) return false;
     if (!list) return true;
+    qa_unified_frame_lease *lease = application_control_storage_acquire(p->application, error);
+    if (!lease) return false;
+    qa_arena *storage = qa_unified_frame_lease_arena(lease);
+    bool okay = true;
     for (uint32_t slot = 0; slot < 1024; ++slot) {
         const char *name;
-        if (!qa_q3_source_classname_read(p->state.q3, slot, &name, error)) return false;
+        if (!qa_q3_source_classname_read(p->state.q3, slot, &name, error)) {
+            okay = false;
+            break;
+        }
         if (!name) name = "(null)";
         int length = snprintf(NULL, 0, "%4u: %s\n", slot, name);
-        if (length < 0) return application_fail(error, QA_ERROR_FORMAT, "Q3 entity listing cannot format its source row");
-        char *text = malloc((size_t)length + 1);
-        if (!text) return application_fail(error, QA_ERROR_MEMORY, "Q3 entity listing cannot retain its source row");
+        if (length < 0) {
+            okay = application_fail(error, QA_ERROR_FORMAT, "Q3 entity listing cannot format its source row");
+            break;
+        }
+        char *text = qa_arena_alloc(storage, (size_t)length + 1, _Alignof(char), error);
+        if (!text) {
+            okay = false;
+            break;
+        }
         snprintf(text, (size_t)length + 1, "%4u: %s\n", slot, name);
-        bool okay = application_native_q3_console_print(p, text, error);
-        free(text);
-        if (!okay) return false;
+        okay = application_native_q3_console_print(p, text, error);
+        qa_arena_reset(storage);
+        if (!okay) break;
     }
-    return application_native_q3_settings_force_set(p, APPLICATION_Q3_SETTING_G_LIST_ENTITY, "0", error);
+    qa_unified_frame_lease_release(lease);
+    return okay && application_native_q3_settings_force_set(p, APPLICATION_Q3_SETTING_G_LIST_ENTITY, "0", error);
 }
 
 bool application_native_q3_source_end_frame(void *opaque,

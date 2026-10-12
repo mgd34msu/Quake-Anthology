@@ -1,14 +1,14 @@
 #ifndef QA_FRONTEND_REMOTE_Q2_SOURCE_H
 #define QA_FRONTEND_REMOTE_Q2_SOURCE_H
 #include "remote_q2_client.h"
-#include "qa/launch_q2_client.h"
+#include "qa/launch_client.h"
 #include "qa/launch_save.h"
 #include "qa/console_save.h"
 #include "remote_q2_restore.h"
 #include "qa/application_client_prepare.h"
 typedef struct frontend_remote_q2_source frontend_remote_q2_source;
 typedef struct frontend_remote_q2_source_options {
-    qa_launch_q2_client_metadata metadata;
+    qa_launch_client_metadata metadata;
     frontend_remote_q2_options client;
     /* Admit the real metadata-only app provider and return its actual pending
      * command namespace before constructing the CLIENT view and binding its callbacks. */
@@ -49,7 +49,7 @@ typedef struct frontend_remote_q2_source_view {
  * view until metadata preparation clones it. */
 bool frontend_remote_q2_source_recipe(qa_catalog *, qa_net_protocol_id, qa_product_id profile,
     qa_product_id selected, const char *instance,
-    uint32_t logical_seat, qa_launch_q2_client_metadata *, qa_vfs **prepared, qa_error *);
+    uint32_t logical_seat, qa_launch_client_metadata *, qa_vfs **prepared, qa_error *);
 bool frontend_remote_q2_source_create(qa_frontend *, const frontend_remote_q2_source_options *,
     frontend_remote_q2_source **, qa_error *);
 bool frontend_remote_q2_source_advance(frontend_remote_q2_source *, bool *ready, qa_error *);
