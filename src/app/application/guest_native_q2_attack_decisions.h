@@ -125,7 +125,8 @@ static bool decision_restore(struct application_native_q2_attack *p,qa_error *er
         if(!decision_store(p,field,(current&~field->mask)|(field->bits&field->mask),error)) return false;
         field->written=false;
     }
-    p->projections=projection->next; free(projection->fields); free(projection); return true;
+    qa_unified_frame_lease *storage=projection->storage;
+    p->projections=projection->next; qa_unified_frame_lease_release(storage); return true;
 }
 static bool decision_call(void *context,qa_native_instance *native,const qa_native_region_event *event,
     qa_native_region_decision *out,qa_error *error)
@@ -143,11 +144,15 @@ static bool decision_call(void *context,qa_native_instance *native,const qa_nati
     qa_actor_id actor;
     if(!source_actor(p,frame->entity,&actor,error)) return false;
     if(!qa_actor_id_equal(actor,frame->actor)) return decision_fail(error,QA_ERROR_NOT_FOUND,"Native weapon decision changed its physical Source actor");
-    decision_projection *projection=calloc(1,sizeof(*projection));
-    if(!projection) return decision_fail(error,QA_ERROR_MEMORY,"Retaining actual native weapon decision");
-    size_t count=qa_json_size(p->document,region->fields);
-    projection->fields=calloc(count,sizeof(*projection->fields));
-    if(!projection->fields) { free(projection); return decision_fail(error,QA_ERROR_MEMORY,"Retaining original weapon input masks"); }
+    qa_unified_frame_lease *storage=application_control_storage_acquire(p->engine->provider->application,error);
+    if(!storage) return false;
+    decision_projection *projection=qa_unified_frame_lease_alloc(storage,1,sizeof(*projection),
+        _Alignof(decision_projection),error);
+    size_t count=region->field_count;
+    if(projection) projection->fields=qa_unified_frame_lease_alloc(storage,count,sizeof(*projection->fields),
+        _Alignof(decision_saved),error);
+    if(!projection||!projection->fields) { qa_unified_frame_lease_release(storage); return false; }
+    projection->storage=storage;
     projection->region=region; projection->actor=frame->actor; projection->entity=frame->entity;
     projection->next=p->projections; p->projections=projection;
     for(size_t i=0;i<count;++i) {

@@ -1,6 +1,7 @@
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_attack.h"
 #include "guest_native_q2_input.h"
+#include "control_frame.h"
 #include "native_q2_inventory_scanner.h"
 #include "qa/native_observe.h"
 #include "qa/persistence_fields.h"
@@ -42,6 +43,7 @@ typedef struct attack_hook {
 typedef struct decision_region {
     struct application_native_q2_attack *owner;
     qa_json_id fields;
+    size_t field_count;
     uint32_t id;
     qa_native_region_binding *binding;
 } decision_region;
@@ -53,6 +55,7 @@ typedef struct decision_saved {
 } decision_saved;
 typedef struct decision_projection {
     struct decision_projection *next;
+    qa_unified_frame_lease *storage;
     decision_region *region;
     decision_saved *fields;
     size_t count;
@@ -234,7 +237,8 @@ bool application_native_q2_attack_prepare(struct application_native_q2 *engine, 
         qa_json_id fields=qa_json_get(doc,qa_json_at(doc,decisions,i),"fields");
         if(qa_json_type(doc,fields)!=QA_JSON_ARRAY||!qa_json_size(doc,fields))
             return application_fail(error,QA_ERROR_FORMAT,"Native weapon decision lacks its actual input mask roster");
-        p->decisions[i]=(decision_region){.owner=p,.fields=fields,.id=region.id};
+        p->decisions[i]=(decision_region){.owner=p,.fields=fields,
+            .field_count=qa_json_size(doc,fields),.id=region.id};
     }
     if (!word(doc, client, "pointer", &p->client_pointer, error) ||
         !word(doc, client, "weapon", &p->weapon, error) ||
