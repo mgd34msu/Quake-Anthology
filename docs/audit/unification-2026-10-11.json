@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "418d314a703562b9e97c4b935de6b8144968b00a",
+  "verified_main": "78168074b04b2d83428fe811fbb18bfe15156548",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 150,
-    "open_source_observation": 221,
+    "fixed_source_build_core": 152,
+    "open_source_observation": 219,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -25756,8 +25756,9 @@
       "severity": "low",
       "job": "03",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "One application-owned ID index maintains live and actual retained roster views. Listed callers migrated; original first/last/ambiguity and eligibility rules preserved. Core cases cover simultaneous views/removal/order. Further owner callers outside listed scope remain under active migration; no whole-capability or live proof.",
+      "fixed_commit": "78168074b04b2d83428fe811fbb18bfe15156548"
     },
     {
       "id": "04-001",
@@ -26002,8 +26003,9 @@
       "severity": "medium",
       "job": "04",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "One application-owned ID index maintains live and actual retained roster views. Listed callers migrated; original first/last/ambiguity and eligibility rules preserved. Core cases cover simultaneous views/removal/order. Further owner callers outside listed scope remain under active migration; no whole-capability or live proof.",
+      "fixed_commit": "78168074b04b2d83428fe811fbb18bfe15156548"
     },
     {
       "id": "04-006",
@@ -41231,6 +41233,56 @@
       ],
       "record_directory": "/tmp/qa-ta3196-shared-frame-model-index-20261012",
       "conclusion": "Pose keeps first ANY model; samples keep first eligible authored Q2 order. Fixed-pool projection owns immutable full-generation index; each entered sample owns marks in existing frame arena. Abort and teardown checked. Lease used-byte wrapper does not count direct index arena allocation; no complete residency, zero-allocation, live or speed claim."
+    },
+    {
+      "commit": "78168074b04b2d83428fe811fbb18bfe15156548",
+      "source_tree": "43001d617b803a1fdce6def7b17c045034653bc5",
+      "finding_ids": [
+        "03-18",
+        "04-005"
+      ],
+      "files_rechecked": [
+        "src/app/application/internal.h",
+        "src/app/application/providers.c",
+        "src/app/application/publication.c",
+        "src/app/application/lifetime.c",
+        "src/app/application/services.c",
+        "src/app/application/save_native_q2.c",
+        "src/app/application/native_q2_rotation.c",
+        "src/app/application/native_q2_presentation.c",
+        "src/app/application/native_q3_client_modules.c",
+        "src/app/application/native_q3_remote_character.c",
+        "src/app/application/native_q3_remote_client.c",
+        "src/app/application/native_q3_remote_content.c",
+        "src/app/application/native_q3_remote_lifecycle.c",
+        "src/app/application/network.c",
+        "src/app/application/network_q1_signon.c",
+        "src/app/application/network_q2_hooks.c",
+        "src/app/application/network_q2_materials.c",
+        "src/app/application/network_q2_resources.c",
+        "src/app/application/network_q3_status.c",
+        "src/app/application/network_unified.c",
+        "src/app/application/network_unified_save.c",
+        "src/app/application/network_unified_server.c",
+        "src/app/application/owner.c",
+        "src/app/application/portals.c",
+        "src/app/application/presentation.c",
+        "src/app/application/q3_round.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-provider-owner-index-20261012",
+      "conclusion": "Lookup uses canonical owner and actual live/roster identity, never cached eligibility. Candidate, publish, restore and refused-close ownership checked. Existing core cases verify old/new simultaneous views, ambiguity, ordering and removal. Additional owner scans remain under migration; no global foundation, live or timing claim."
     }
   ],
   "verification_limits": [

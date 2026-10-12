@@ -182,7 +182,7 @@ static bool makevectors(qa_qc_instance *instance, qa_error *error)
     qa_vec3 angles;
     if (!qa_qc_arg_vector(instance, 0, &angles, error)) return false;
     qa_vec3 forward,right,up;
-    qa_angle_vectors(angles,&forward,&right,&up,QA_ANGLE_FLOAT_MATH);
+    qa_angle_vectors(angles,&forward,&right,&up,QA_ANGLE_NATIVE_MATH);
     return set_vector(instance, instance->program->engine_globals.v_forward, forward, error)
         && set_vector(instance, instance->program->engine_globals.v_right, right, error)
         && set_vector(instance, instance->program->engine_globals.v_up, up, error);
@@ -257,7 +257,8 @@ static bool pure_builtin(qa_qc_instance *instance, int32_t number,
     case 9:
         if (!instance) return true;
         if (!qa_qc_arg_vector(instance, 0, &vector, error)) return false;
-        return qa_qc_return_vector(instance, qa_vec_normalize(vector), error);
+        qa_vec_normalize_length_rule(&vector, QA_LENGTH_DOUBLE_SQRT_CLEAR_ZERO);
+        return qa_qc_return_vector(instance, vector, error);
     case 10: {
         if (!instance) return false;
         const char *message;
@@ -268,7 +269,7 @@ static bool pure_builtin(qa_qc_instance *instance, int32_t number,
     case 12:
         if (!instance) return true;
         return qa_qc_arg_vector(instance, 0, &vector, error)
-            && qa_qc_return_float(instance, qa_vec_length(vector), error);
+            && qa_qc_return_float(instance, qa_vec_length_rule(vector, QA_LENGTH_DOUBLE_SQRT), error);
     case 13:
         if (!instance) return true;
         if (!qa_qc_arg_vector(instance, 0, &vector, error)) return false;

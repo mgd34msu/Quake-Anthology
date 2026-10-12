@@ -365,6 +365,19 @@ static void test_shared_vector_geometry(void)
     CHECK(qa_vec_normalize_length(&v)==5 && v.x==3.f/5 && v.y==4.f/5 && v.z==0);
     v=qa_v3(0,-0.f,0);
     CHECK(qa_vec_normalize_length(&v)==0 && signbit(v.y));
+    CHECK(qa_vec_normalize_length_rule(&v,QA_LENGTH_DOUBLE_SQRT_CLEAR_ZERO)==0 &&
+        !signbit(v.x) && !signbit(v.y) && !signbit(v.z));
+    v=qa_v3(0x1p-100f,-0x1p-100f,0);
+    CHECK(qa_vec_normalize_length_rule(&v,QA_LENGTH_DOUBLE_SQRT_CLEAR_ZERO)==0 &&
+        qa_vec_equal(v,qa_v3(0,0,0)) && !signbit(v.y));
+    float narrowed=7;
+    CHECK(qa_float_round_finite(-0.,&narrowed) && signbit(narrowed));
+    CHECK(qa_float_round_finite((double)FLT_MAX+0x1p102,&narrowed) && narrowed==FLT_MAX);
+    CHECK(qa_float_round_finite(-(double)FLT_MAX-0x1p102,&narrowed) && narrowed==-FLT_MAX);
+    narrowed=7;
+    CHECK(!qa_float_round_finite(0x1.ffffffp127,&narrowed) && narrowed==7);
+    CHECK(!qa_float_round_finite(INFINITY,&narrowed) && narrowed==7);
+    CHECK(!qa_float_round_finite(NAN,&narrowed) && narrowed==7);
     qa_vec3 axis[3],identity[3]={{1,0,0},{0,1,0},{0,0,1}},product[3];
     qa_angle_axis(qa_v3(12,37,21),axis,QA_ANGLE_VM_MATH);
     qa_vec3 world=qa_axis_from_local(qa_v3(3,-4,5),axis,QA_AXIS_ORDERED_SUM);

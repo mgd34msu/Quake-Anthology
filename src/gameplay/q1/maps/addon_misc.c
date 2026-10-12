@@ -1,5 +1,4 @@
 #include "internal.h"
-#include <float.h>
 
 static q1_actor *sacrifice(qa_q1_game *g, qa_actor_id id) {
     q1_actor *entity = q1_entity(g, id);
@@ -7,10 +6,10 @@ static q1_actor *sacrifice(qa_q1_game *g, qa_actor_id id) {
 }
 
 static bool sacrifice_float(double value, float *out, qa_error *error) {
-    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127)
-        return q1_map_fail(error, "Q1 Sacrifice value exceeds finite float range");
-    *out = fabs(value) > FLT_MAX ? (value < 0 ? -FLT_MAX : FLT_MAX) : (float)value;
-    return true;
+    if (qa_float_round_finite(value, out))
+        return true;
+    q1_map_fail(error, "Q1 Sacrifice value exceeds finite float range");
+    return false;
 }
 
 bool qa_q1_game_map_new_game_travel(const qa_q1_game *g) {

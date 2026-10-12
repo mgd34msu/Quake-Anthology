@@ -100,18 +100,24 @@ static inline double qa_vec_dot_wide(qa_vec3 a,qa_vec3 b) { return (double)a.x*b
 static inline qa_vec3 qa_vec_cross(qa_vec3 a, qa_vec3 b) {
     return qa_v3(a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x);
 }
+static inline bool qa_float_round_finite(double value, float *out) {
+    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127) return false;
+    *out = fabs(value) > FLT_MAX ? (value < 0 ? -FLT_MAX : FLT_MAX) : (float)value;
+    return true;
+}
 typedef enum qa_length_math_rule {
-    QA_LENGTH_FLOAT_SQRT, QA_LENGTH_DOUBLE_SQRT
+    QA_LENGTH_FLOAT_SQRT, QA_LENGTH_DOUBLE_SQRT, QA_LENGTH_DOUBLE_SQRT_CLEAR_ZERO
 } qa_length_math_rule;
 /* Both sum float squares; DOUBLE_SQRT retains the original sqrt(double). */
 static inline float qa_vec_length_rule(qa_vec3 v,qa_length_math_rule rule) {
     float square=qa_vec_dot(v,v);
-    return rule==QA_LENGTH_DOUBLE_SQRT?(float)sqrt((double)square):sqrtf(square);
+    return rule==QA_LENGTH_FLOAT_SQRT?sqrtf(square):(float)sqrt((double)square);
 }
 static inline float qa_vec_length(qa_vec3 v) { return qa_vec_length_rule(v,QA_LENGTH_FLOAT_SQRT); }
 static inline float qa_vec_normalize_length_rule(qa_vec3 *v,qa_length_math_rule rule) {
     float length=qa_vec_length_rule(*v,rule);
     if(length!=0.0f) *v=qa_vec_scale(*v,1.0f/length);
+    else if(rule==QA_LENGTH_DOUBLE_SQRT_CLEAR_ZERO) *v=qa_v3(0,0,0);
     return length;
 }
 static inline float qa_vec_normalize_length(qa_vec3 *v) { return qa_vec_normalize_length_rule(v,QA_LENGTH_FLOAT_SQRT); }

@@ -1,5 +1,4 @@
 #include "internal.h"
-#include <float.h>
 #include <limits.h>
 
 static q1_actor *effect(qa_q1_game *g, qa_actor_id id) {
@@ -19,14 +18,12 @@ static bool particles(qa_q1_game *g, qa_actor_id actor, qa_vec3 origin, qa_vec3 
                               .direction = direction, .code = color, .count = count};
     return emit(g, &event, NULL, error);
 }
-static float signed_random(qa_q1_game *g) { return q1_random(g) * 2 - 1; }
+static float signed_random(qa_q1_game *g) { return 2.0f * (q1_random(g) - 0.5f); }
 static bool effect_float(double value, float *out, qa_error *error) {
-    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127) {
-        q1_map_fail(error, "Q1 authored effect exceeds finite float range");
-        return false;
-    }
-    *out = fabs(value) > FLT_MAX ? (value < 0 ? -FLT_MAX : FLT_MAX) : (float)value;
-    return true;
+    if (qa_float_round_finite(value, out))
+        return true;
+    q1_map_fail(error, "Q1 authored effect exceeds finite float range");
+    return false;
 }
 static bool particle_step(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_actor_id id = e->id;
@@ -54,30 +51,19 @@ static bool particle_step(qa_q1_game *g, q1_actor *e, qa_error *error) {
         color = 234;
         count = 2;
     } else if (kind == Q1_MAP_ADDON_PARTICLE_TELE) {
-        double x = (double)signed_random(g) * 10;
-        double y = (double)signed_random(g) * 10;
-        double z = (double)signed_random(g) * 5;
-        float x_squared = (float)(x * x), y_squared = (float)(y * y),
-              z_squared = (float)(z * z);
-        float xy_squared = x_squared + y_squared;
-        float squared = xy_squared + z_squared;
-        float magnitude = (float)sqrt((double)squared);
-        double inverse = magnitude == 0 ? 0 : 1.0 / magnitude;
-        direction = qa_v3((float)(x * inverse), (float)(y * inverse), (float)(z * inverse));
+        float x = signed_random(g) * 10.0f;
+        float y = signed_random(g) * 10.0f;
+        float z = signed_random(g) * 5.0f;
+        direction = qa_v3(x, y, z);
+        qa_vec_normalize_length_rule(&direction, QA_LENGTH_DOUBLE_SQRT_CLEAR_ZERO);
         float distance = g->options.program == QA_Q1_MG3 ? e->map->distance : 64;
         if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
         if (!effect(g, id)) return true;
-        qa_vec3 offset;
-        if (!effect_float((double)direction.x * distance, &offset.x, error) ||
-            !effect_float((double)direction.y * distance, &offset.y, error) ||
-            !effect_float((double)direction.z * distance, &offset.z, error) ||
-            !effect_float((double)body.origin.x + offset.x, &origin.x, error) ||
-            !effect_float((double)body.origin.y + offset.y, &origin.y, error) ||
-            !effect_float((double)body.origin.z + offset.z, &origin.z, error)) return false;
-        double speed = (double)distance * -.125;
-        if (!effect_float((double)direction.x * speed, &direction.x, error) ||
-            !effect_float((double)direction.y * speed, &direction.y, error) ||
-            !effect_float((double)direction.z * speed, &direction.z, error)) return false;
+        qa_vec3 offset = qa_vec_scale(direction, distance);
+        origin = qa_vec_add(body.origin, offset);
+        direction = qa_vec_scale(offset, -0.125f);
+        if (!qa_vec_finite(offset) || !qa_vec_finite(origin) || !qa_vec_finite(direction))
+            return q1_map_fail(error, "Q1 authored effect exceeds finite float range");
         color = 3;
         count = 3;
     } else {
@@ -292,13 +278,11 @@ static bool fade_step(qa_q1_game *g, q1_actor *e, qa_error *error) {
                 continue;
             }
             double faded = (double)value - g->elapsed / delay;
-            if (!isfinite(faded) || fabs(faded) >= 0x1.ffffffp127) {
+            float next_alpha;
+            if (!qa_float_round_finite(faded, &next_alpha)) {
                 ok = q1_map_fail(error,"Q1 target alpha exceeds native range");
                 continue;
             }
-            float next_alpha = fabs(faded) > FLT_MAX
-                                   ? (faded < 0 ? -FLT_MAX : FLT_MAX)
-                                   : (float)faded;
             ok = alpha(g, target, next_alpha, error);
             ++remaining;
         } else if (g->maps->options.retire_actor)

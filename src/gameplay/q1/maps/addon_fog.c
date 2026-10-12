@@ -1,5 +1,4 @@
 #include "internal.h"
-#include <float.h>
 
 bool qa_q1_game_map_fog_read(const qa_q1_game *g, qa_actor_id player, qa_q1_fog_state *out) {
     if (!g || !out || !g->maps || !g->maps->addon_contacts || player.slot >= g->capacity ||
@@ -21,12 +20,10 @@ typedef struct fog_value {
     uint32_t flags;
 } fog_value;
 static bool fog_round(double value, float *out, qa_error *error) {
-    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127) {
-        q1_map_fail(error, "Q1 addon fog result exceeds native range");
-        return false;
-    }
-    *out = fabs(value) > FLT_MAX ? (value < 0 ? -FLT_MAX : FLT_MAX) : (float)value;
-    return true;
+    if (qa_float_round_finite(value, out))
+        return true;
+    q1_map_fail(error, "Q1 addon fog result exceeds native range");
+    return false;
 }
 static bool fog_blend(float first, float second, double tween, float *out,
                         qa_error *error) {

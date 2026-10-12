@@ -1,5 +1,4 @@
 #include "internal.h"
-#include <float.h>
 #include <stdio.h>
 
 static q1_actor *control(qa_q1_game *g, qa_actor_id id) {
@@ -7,11 +6,12 @@ static q1_actor *control(qa_q1_game *g, qa_actor_id id) {
     return e && e->map && q1_map_is_addon_control(e->map->kind) ? e : NULL;
 }
 static bool source_deadline(double value, double *out, qa_error *error) {
-    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127) {
+    float rounded;
+    if (!qa_float_round_finite(value, &rounded)) {
         q1_map_fail(error, "Q1 addon trigger deadline exceeds native range");
         return false;
     }
-    *out = fabs(value) > FLT_MAX ? (value < 0 ? -FLT_MAX : FLT_MAX) : (float)value;
+    *out = rounded;
     return true;
 }
 static bool broadcast(qa_q1_game *g, qa_actor_id source, const char *text, qa_error *error) {
