@@ -49,8 +49,10 @@ static bool role_current(void *context, const qa_qvm *cgame, const qa_qvm *game,
     if (!source) return false;
     if (source->game->vm != game)
         return application_fail(error, QA_ERROR_ARGUMENT, "CG weapon model registry changed its retained GAME executor");
-    if (!application_q3_weapon_models_profile_namespace(&role->artifact->weapon_models_profile,
-        source->game->image, source->game->abi, source->game->path, error)) return false;
+    const application_q3_weapon_models_module *module = &role->weapon_models->module;
+    if (source->game->image != module->game_image || source->game->path != module->game_artifact_path ||
+        source->game->abi != module->profile->game_abi)
+        return application_fail(error, QA_ERROR_ARGUMENT, "CG weapon receipt has a different actual GAME namespace");
     bool retained = engine->constructing_role == role || engine->initializing_role == role || engine->entered_role == role;
     for (q3g_role *current = engine->roles; !retained && current; current = current->next)
         retained = current == role;
@@ -107,8 +109,6 @@ bool application_q3_weapon_models_current(const application_q3_weapon_models *ow
         qa_qvm_get_abi(owner->module.game_vm) != owner->module.profile->game_abi ||
         qa_qvm_image_of(owner->module.game_vm) != owner->module.game_image))
         return application_fail(error, QA_ERROR_ARGUMENT, "CG weapon model owner changed its actual GAME namespace");
-    if (owner->module.profile->present && !application_q3_weapon_models_profile_namespace(owner->module.profile,
-        owner->module.game_image, qa_qvm_get_abi(owner->module.game_vm), owner->module.game_artifact_path, error)) return false;
     return qa_qvm_read(owner->module.vm, 0, NULL, 0, error) &&
         (!owner->module.profile->present || qa_qvm_read(owner->module.game_vm, 0, NULL, 0, error));
 }
@@ -230,6 +230,8 @@ bool application_q3_weapon_models_create(const application_q3_weapon_models_modu
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "Retaining original CG weapon model owner");
     owner->module = *module; *out = owner;
     if (!application_q3_weapon_models_current(owner, error)) return false;
+    if (module->profile->present && !application_q3_weapon_models_profile_namespace(module->profile,
+        module->game_image, qa_qvm_get_abi(module->game_vm), module->game_artifact_path, error)) return false;
     return !module->profile->present || qa_qvm_bind_function(module->vm, module->profile->registration,
         false, registration, owner, &owner->binding, error);
 }
