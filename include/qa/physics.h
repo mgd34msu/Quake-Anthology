@@ -151,7 +151,6 @@ bool qa_physics_touch_triggers_source(qa_physics *, qa_actor_id,
 bool qa_physics_impact(qa_physics *, qa_actor_id, const qa_trace_result *, qa_error *);
 bool qa_physics_water_transition(qa_physics *, qa_actor_id, qa_vec3 previous_origin,
                                  qa_error *);
-qa_vec3 qa_physics_clip_velocity(qa_vec3, qa_vec3 normal, float overbounce);
 
 typedef struct qa_physics_push {
     qa_actor_id actor;

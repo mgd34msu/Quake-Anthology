@@ -2,6 +2,7 @@
 #define QA_CONTENT_VFS_PRIVATE_H
 #include "qa/vfs.h"
 #include "qa/filesystem.h"
+#include "qa/id_index.h"
 typedef struct retained_read retained_read;
 typedef struct package {
     struct package *next;
@@ -17,7 +18,6 @@ typedef struct package {
 struct qa_resource {
     qa_resource *next;
     qa_resource *identity_next;
-    qa_resource *id_next;
     retained_read *history;
     size_t references;
     uint64_t id;
@@ -33,8 +33,7 @@ struct qa_resource_pool {
     uint64_t next_resource;
     package *packages;
     qa_resource *resources;
-    qa_resource **id_buckets;
-    size_t id_bucket_count, resource_count;
+    qa_id_index resource_ids;
     qa_resource **loose_buckets;
     size_t loose_bucket_count;
     size_t loose_count;

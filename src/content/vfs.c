@@ -244,13 +244,8 @@ void qa_resource_pool_destroy(qa_resource_pool *pool)
         archive = next;
     }
     free(pool->loose_buckets);
-    free(pool->id_buckets);
+    qa_id_index_destroy(&pool->resource_ids);
     free(pool);
-}
-
-static size_t resource_bucket(uint64_t id, size_t capacity)
-{
-    return (size_t)(id * UINT64_C(11400714819323198485)) & (capacity - 1);
 }
 
 bool vfs_resource_index_add(qa_resource_pool *pool, qa_resource *resource, qa_error *error)
@@ -258,57 +253,26 @@ bool vfs_resource_index_add(qa_resource_pool *pool, qa_resource *resource, qa_er
     if (qa_resource_pool_find(pool, resource->id) != NULL || resource->id == 0) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Duplicate resource identity"); return false;
     }
-    size_t capacity = pool->id_bucket_count;
-    if (pool->resource_count == SIZE_MAX || capacity > SIZE_MAX / 2) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "Resource identity index overflow"); return false;
-    }
-    if (capacity == 0 || pool->resource_count + 1 > capacity - capacity / 4) {
-        capacity = capacity == 0 ? 64 : capacity * 2;
-        if (capacity > SIZE_MAX / sizeof(*pool->id_buckets)) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "Resource identity index overflow"); return false;
-        }
-        qa_resource **buckets = calloc(capacity, sizeof(*buckets));
-        if (buckets == NULL) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating resource identity index"); return false;
-        }
-        for (size_t i = 0; i < pool->id_bucket_count; ++i) {
-            qa_resource *row = pool->id_buckets[i];
-            while (row != NULL) {
-                qa_resource *next = row->id_next;
-                size_t bucket = resource_bucket(row->id, capacity);
-                row->id_next = buckets[bucket]; buckets[bucket] = row;
-                row = next;
-            }
-        }
-        free(pool->id_buckets); pool->id_buckets = buckets; pool->id_bucket_count = capacity;
-    }
-    size_t bucket = resource_bucket(resource->id, capacity);
-    resource->id_next = pool->id_buckets[bucket]; pool->id_buckets[bucket] = resource;
-    ++pool->resource_count;
+    if (!qa_id_index_reserve(&pool->resource_ids, 1, error)) return false;
+    qa_id_index_insert(&pool->resource_ids, 0, resource->id, (size_t)(uintptr_t)resource);
     return true;
-}
-
-static void resource_index_remove(qa_resource_pool *pool, qa_resource *resource)
-{
-    size_t bucket = resource_bucket(resource->id, pool->id_bucket_count);
-    qa_resource **position = &pool->id_buckets[bucket];
-    while (*position != resource) position = &(*position)->id_next;
-    *position = resource->id_next; resource->id_next = NULL;
-    --pool->resource_count;
 }
 
 void qa_resource_pool_trim(qa_resource_pool *pool)
 {
     if (pool == NULL) return;
+    qa_id_index_clear(&pool->resource_ids);
     qa_resource **resource = &pool->resources;
     while (*resource != NULL) {
         if ((*resource)->references == 1) {
             qa_resource *removed = *resource;
             *resource = removed->next;
-            resource_index_remove(pool, removed);
             if (removed->archive == NULL) loose_remove(pool, removed);
             qa_resource_release(removed);
-        } else resource = &(*resource)->next;
+        } else {
+            qa_id_index_insert(&pool->resource_ids, 0, (*resource)->id, (size_t)(uintptr_t)*resource);
+            resource = &(*resource)->next;
+        }
     }
     package **archive = &pool->packages;
     while (*archive != NULL) {
@@ -322,11 +286,11 @@ void qa_resource_pool_trim(qa_resource_pool *pool)
 
 const qa_resource *qa_resource_pool_find(const qa_resource_pool *pool, uint64_t id)
 {
-    if (pool == NULL || id == 0 || pool->id_bucket_count == 0) return NULL;
-    size_t bucket = resource_bucket(id, pool->id_bucket_count);
-    for (const qa_resource *resource = pool->id_buckets[bucket]; resource != NULL; resource = resource->id_next)
-        if (resource->id == id) return resource;
-    return NULL;
+    if (pool == NULL || id == 0) return NULL;
+    qa_id_index_cursor cursor = qa_id_index_begin(&pool->resource_ids, 0, id);
+    size_t value;
+    return qa_id_index_next(&pool->resource_ids, &cursor, &value)
+        ? (const qa_resource *)(uintptr_t)value : NULL;
 }
 
 qa_vfs *qa_vfs_create(qa_resource_pool *pool, qa_error *error)
@@ -1729,7 +1693,7 @@ static bool cache_resource(qa_resource_pool *pool, qa_resource *resource, qa_err
     if (!vfs_resource_index_add(pool, resource, error)) return false;
     if (resource->archive != NULL) resource->archive->members[resource->ordinal] = resource;
     else if (!vfs_loose_cache_add(pool, resource, error)) {
-        resource_index_remove(pool, resource); return false;
+        qa_id_index_remove(&pool->resource_ids, 0, resource->id); return false;
     }
     resource->next = pool->resources;
     pool->resources = resource;

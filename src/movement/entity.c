@@ -1,5 +1,5 @@
 #include "entity/internal.h"
-#include "qa/movement.h"
+#include "internal.h"
 
 qa_actor_id qa_physics_actor_reference(const qa_physics *physics,
     qa_actor_reference reference) {
@@ -319,14 +319,6 @@ bool qa_physics_push_entity(qa_physics *p, qa_actor_id actor, qa_vec3 displaceme
     }
 }
 
-qa_vec3 qa_physics_clip_velocity(qa_vec3 velocity, qa_vec3 normal, float overbounce) {
-    qa_vec3 out = qa_vec_sub(velocity, qa_vec_scale(normal, qa_vec_dot(velocity, normal)*overbounce));
-    if (out.x > -0.1f && out.x < 0.1f) out.x = 0;
-    if (out.y > -0.1f && out.y < 0.1f) out.y = 0;
-    if (out.z > -0.1f && out.z < 0.1f) out.z = 0;
-    return out;
-}
-
 bool qa_physics_water_transition(qa_physics *p, qa_actor_id actor,
                                  qa_vec3 previous_origin, qa_error *error) {
     qa_body_state body;
@@ -473,7 +465,7 @@ bool qa_physics_fly_move(qa_physics *p, qa_actor_id actor, float seconds,
         qa_vec3 velocity = body.velocity;
         bool accepted = false;
         for (size_t i = 0; i < plane_count; ++i) {
-            qa_vec3 candidate = qa_physics_clip_velocity(original, planes[i], 1);
+            qa_vec3 candidate = qa_move_clip(original, planes[i], 1, 0.1f);
             bool good = true;
             for (size_t j = 0; j < plane_count; ++j) {
                 bool same = i == j || (qa_ruleset_read(props.rules)->family != QA_GAME_Q1 && qa_vec_equal(planes[i], planes[j]));
@@ -739,8 +731,8 @@ static bool physics_step(qa_physics *p, qa_actor_id actor, const qa_source_frame
     if (trace.fraction == 1) return true;
     result->collisions = 1;
     qa_vec3 normal = ph_normal(&trace);
-    velocity = qa_physics_clip_velocity(body.velocity, normal,
-        props.motion == QA_PHYSICS_WALL_BOUNCE ? 2 : props.motion == QA_PHYSICS_BOUNCE ? 1.5f : 1);
+    velocity = qa_move_clip(body.velocity, normal,
+        props.motion == QA_PHYSICS_WALL_BOUNCE ? 2 : props.motion == QA_PHYSICS_BOUNCE ? 1.5f : 1, 0.1f);
     if (props.motion != QA_PHYSICS_WALL_BOUNCE && qa_vec_dot(normal, props.gravity_direction) < -0.7f &&
         (qa_vec_dot(velocity, props.gravity_direction) > -60 || props.motion != QA_PHYSICS_BOUNCE)) {
         body.velocity = qa_v3(0, 0, 0);
