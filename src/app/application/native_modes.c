@@ -878,18 +878,12 @@ bool application_native_mode_visible(void *opaque, qa_actor_id from, qa_actor_id
         !qa_world_body_read(app->world, to, &b, NULL)) return false;
     if (pvs) {
         qa_collision_geometry *geometry = qa_world_geometry(app->world);
-        qa_collision_leaf first, second;
-        bool visible, connected;
-        return geometry && qa_collision_point_leaf(geometry, a.origin, QA_LEAF_COLLISION, &first, NULL) &&
-            qa_collision_point_leaf(geometry, b.origin, QA_LEAF_COLLISION, &second, NULL) &&
-            first.cluster >= INT32_MIN && first.cluster <= INT32_MAX &&
-            second.cluster >= INT32_MIN && second.cluster <= INT32_MAX &&
-            first.area >= INT32_MIN && first.area <= INT32_MAX &&
-            second.area >= INT32_MIN && second.area <= INT32_MAX &&
-            qa_collision_cluster_visible(geometry, (int32_t)first.cluster, (int32_t)second.cluster,
-                                          false, &visible, NULL) && visible &&
-            qa_collision_areas_connected(geometry, (int32_t)first.area, (int32_t)second.area,
-                                          &connected, NULL) && connected;
+        qa_collision_point_visibility_scratch scratch = {0};
+        const qa_collision_point_visibility_rules rules = {.leaf_rule = QA_LEAF_COLLISION,
+            .minimum_cluster = INT32_MIN, .minimum_area = INT32_MIN};
+        bool visible;
+        return geometry && qa_collision_point_visible(geometry, a.origin, b.origin,
+            &rules, &scratch, &visible, NULL) && visible;
     }
     qa_physics_services physics = application_physics_services(app);
     qa_physics_properties properties;

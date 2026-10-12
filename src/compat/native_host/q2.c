@@ -228,18 +228,13 @@ static bool visibility(qa_native_host *host, const qa_native_import_call *call,
         !native_host_read_vec3(host, native_argument_address(call, 1), &second, error))
         return false;
     qa_collision_geometry *geometry = qa_world_geometry(host->world.world);
-    qa_collision_leaf from, to;
-    if (!qa_collision_point_leaf(geometry, first, QA_LEAF_COLLISION, &from, error) ||
-        !qa_collision_point_leaf(geometry, second, QA_LEAF_COLLISION, &to, error) ||
-        !qa_collision_cluster_visible(geometry, (int32_t)from.cluster,
-                                      (int32_t)to.cluster, phs, out, error))
-        return false;
     bool ignore_portals = host->profile == QA_NATIVE_Q2_GAME_API2023 &&
                           call->argument_count > 2 && call->arguments[2].as.u8 != 0;
-    if (*out && !ignore_portals)
-        return qa_collision_areas_connected(geometry, (int32_t)from.area,
-                                            (int32_t)to.area, out, error);
-    return true;
+    qa_collision_point_visibility_scratch scratch = {0};
+    const qa_collision_point_visibility_rules rules = {.leaf_rule = QA_LEAF_COLLISION,
+        .phs = phs, .ignore_areas = ignore_portals, .minimum_cluster = INT32_MIN,
+        .minimum_area = INT32_MIN};
+    return qa_collision_point_visible(geometry, first, second, &rules, &scratch, out, error);
 }
 
 static bool sound_import(qa_native_host *host, const qa_native_import_call *call,

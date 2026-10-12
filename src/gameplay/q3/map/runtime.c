@@ -737,12 +737,15 @@ bool qa_q3_map_team_location_read(qa_q3_game *game, qa_actor_id actor,
     qa_actor_id next = game->map->location_head;
     if (!next.registry) return true;
     ++game->observation_depth;
-    bool okay = false, have_from = false;
+    bool okay = false;
     qa_body_state client;
     if (!q3_source_body_read(game, actor, &client, error) ||
         !team_location_current(game, actor, slot, (qa_actor_id){0}, error)) goto done;
     qa_collision_geometry *geometry = qa_world_geometry(game->options.services.world);
-    qa_collision_leaf from;
+    qa_collision_point_visibility_scratch visibility = {0};
+    const qa_collision_point_visibility_rules visibility_rules = {
+        .leaf_rule = QA_LEAF_COLLISION, .minimum_cluster = INT32_MIN,
+        .minimum_area = INT32_MIN};
     float nearest = 201326592.0f;
     qa_q3_map_team_location result = {0};
     uint32_t visited = 0;
@@ -759,37 +762,17 @@ bool qa_q3_map_team_location_read(qa_q3_game *game, qa_actor_id actor,
         qa_vec3 delta = qa_vec_sub(client.origin, body.origin);
         float squared = qa_vec_dot(delta,delta);
         if (squared <= nearest) {
-            qa_collision_leaf to;
-            bool visible, connected;
-            if (!have_from) {
-                if (!qa_collision_point_leaf(geometry, client.origin, QA_LEAF_COLLISION, &from, error) ||
-                    !team_location_current(game, actor, slot, next, error)) goto done;
-                have_from = true;
-            }
-            if (!qa_collision_point_leaf(geometry, body.origin, QA_LEAF_COLLISION, &to, error) ||
+            bool visible;
+            if (!qa_collision_point_visible(geometry, client.origin, body.origin,
+                    &visibility_rules, &visibility, &visible, error) ||
                 !team_location_current(game, actor, slot, next, error)) goto done;
-            if (from.cluster < INT32_MIN || from.cluster > INT32_MAX ||
-                to.cluster < INT32_MIN || to.cluster > INT32_MAX ||
-                from.area < INT32_MIN || from.area > INT32_MAX ||
-                to.area < INT32_MIN || to.area > INT32_MAX) {
-                q3_map_fail(error, "Q3 source location exceeds native visibility domains");
-                goto done;
-            }
-            if (!qa_collision_cluster_visible(geometry, (int32_t)from.cluster,
-                    (int32_t)to.cluster, false, &visible, error) ||
-                !team_location_current(game, actor, slot, next, error)) goto done;
-            if (!visible) goto next_location;
-            if (!qa_collision_areas_connected(geometry, (int32_t)from.area,
-                    (int32_t)to.area, &connected, error) ||
-                !team_location_current(game, actor, slot, next, error)) goto done;
-            if (visible && connected) {
+            if (visible) {
                 location = q3_map_const(game, next);
                 nearest = squared;
                 result = (qa_q3_map_team_location){.actor = next, .message = location->message,
                     .id = location->health, .count = location->count};
             }
         }
-next_location:
         location = q3_map_const(game, next);
         if (!location) {
             q3_map_fail(error, "Q3 source location chain changed during observation");

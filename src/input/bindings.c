@@ -30,9 +30,111 @@ struct qa_input_console {
     char names[96][32];
     size_t count;
 };
-static void print(qa_input_console *c, const char *text) {
-    if (c->options.print)
-        c->options.print(c->options.user, text);
+static void binding_print(void (*print)(void *, const char *), void *user, const char *text) {
+    if (print)
+        print(user, text);
+}
+bool qa_input_bindings_command(qa_input_seat *s, const qa_command_invocation *cmd,
+    bool dedicated, void (*print)(void *, const char *), void *user, qa_error *error) {
+    if (!cmd->argc) return true;
+    const char *name = cmd->argv[0];
+    if (qa_input_ascii_equal(name, "unbindall")) {
+        qa_input_seat_unbind_all(s);
+        return true;
+    }
+    if (qa_input_ascii_equal(name, "bindlist")) {
+        for (size_t i = 0; i < s->binding_count; ++i) {
+            char physical[128], line[256];
+            const qa_input_binding *b = &s->bindings[i]->view;
+            if (!qa_input_physical_name(b->input, physical, sizeof(physical)))
+                continue;
+            if (dedicated) {
+                binding_print(print, user, physical);
+                binding_print(print, user, " = ");
+            } else {
+                (void)snprintf(line, sizeof(line), "%s = ", physical);
+                binding_print(print, user, line);
+            }
+            if (b->kind == QA_BIND_COMMAND)
+                binding_print(print, user, b->command);
+            else {
+                (void)snprintf(line, sizeof(line), "action %u", (unsigned)b->action);
+                binding_print(print, user, line);
+            }
+            binding_print(print, user, "\n");
+        }
+        return true;
+    }
+    bool unbind = qa_input_ascii_equal(name, "unbind");
+    if (cmd->argc < 2 || (dedicated && unbind && cmd->argc != 2)) {
+        binding_print(print, user, !unbind ? "bind <key> [command]\n" : dedicated
+            ? "unbind <key> : remove commands from a key\n" : "unbind <key>\n");
+        return true;
+    }
+    int32_t device = 0;
+    for (size_t i = 0; i < s->binding_count; ++i)
+        if (s->bindings[i]->view.input.kind >= QA_PHYSICAL_BUTTON) {
+            device = s->bindings[i]->view.input.device;
+            break;
+        }
+    qa_physical_input physical;
+    if (!qa_input_physical_parse(cmd->argv[1], device, &physical)) {
+        if (dedicated) {
+            binding_print(print, user, "Unknown key ");
+            binding_print(print, user, cmd->argv[1]);
+            binding_print(print, user, "\n");
+        } else
+            binding_print(print, user, "Unknown key\n");
+        return true;
+    }
+    if (unbind) {
+        if (physical.kind >= QA_PHYSICAL_BUTTON) {
+            for (size_t i = 0; i < s->binding_count;) {
+                qa_physical_input p = s->bindings[i]->view.input;
+                p.device = physical.device;
+                if (qa_input_physical_equal(p, physical))
+                    qa_input_seat_unbind(s, s->bindings[i]->view.input);
+                else
+                    ++i;
+            }
+        } else
+            qa_input_seat_unbind(s, physical);
+        return true;
+    }
+    if (cmd->argc == 2) {
+        const qa_input_binding *b = qa_input_seat_binding(s, physical);
+        if (dedicated) {
+            char key[128];
+            if (!qa_input_physical_name(physical, key, sizeof(key))) return true;
+            binding_print(print, user, key);
+            binding_print(print, user, " = ");
+        }
+        binding_print(print, user, b && b->kind == QA_BIND_COMMAND ? b->command : b ? "Action binding" : "Unbound");
+        binding_print(print, user, "\n");
+        return true;
+    }
+    size_t size = cmd->argc - 3;
+    for (size_t i = 2; i < cmd->argc; ++i) {
+        size_t length = strlen(cmd->argv[i]);
+        if (length > SIZE_MAX - size) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Binding length overflow"); return false;
+        }
+        size += length;
+    }
+    if (size == SIZE_MAX) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Binding length overflow"); return false;
+    }
+    qa_arena text;
+    qa_console_command_arena(cmd->console, &text);
+    char *joined = qa_arena_alloc(&text, size + 1, 1, error);
+    bool ok = joined && qa_text_join_words(cmd->argv + 2, cmd->argc - 2,
+                                           joined, size + 1, error);
+    if (ok) {
+        qa_input_binding binding = {.input = physical, .kind = QA_BIND_COMMAND, .command = joined};
+        ok = qa_input_seat_bind(s, &binding, error);
+    }
+    qa_arena_destroy(&text);
+    return ok;
 }
 static bool command(void *user, const qa_command_invocation *cmd, qa_error *error) {
     qa_input_console *c = user;
@@ -98,86 +200,9 @@ static bool command(void *user, const qa_command_invocation *cmd, qa_error *erro
             c->options.center(c->options.user, s);
         return true;
     }
-    if (qa_input_ascii_equal(name, "unbindall")) {
-        qa_input_seat_unbind_all(s);
-        return true;
-    }
-    if (qa_input_ascii_equal(name, "bindlist")) {
-        for (size_t i = 0; i < s->binding_count; ++i) {
-            char physical[128], line[256];
-            const qa_input_binding *b = &s->bindings[i]->view;
-            if (!qa_input_physical_name(b->input, physical, sizeof(physical)))
-                continue;
-            (void)snprintf(line, sizeof(line), "%s = ", physical);
-            print(c, line);
-            if (b->kind == QA_BIND_COMMAND)
-                print(c, b->command);
-            else {
-                (void)snprintf(line, sizeof(line), "action %u", (unsigned)b->action);
-                print(c, line);
-            }
-            print(c, "\n");
-        }
-        return true;
-    }
-    if (cmd->argc < 2) {
-        print(c, qa_input_ascii_equal(name, "bind") ? "bind <key> [command]\n" : "unbind <key>\n");
-        return true;
-    }
-    int32_t device = 0;
-    for (size_t i = 0; i < s->binding_count; ++i)
-        if (s->bindings[i]->view.input.kind >= QA_PHYSICAL_BUTTON) {
-            device = s->bindings[i]->view.input.device;
-            break;
-        }
-    qa_physical_input physical;
-    if (!qa_input_physical_parse(cmd->argv[1], device, &physical)) {
-        print(c, "Unknown key\n");
-        return true;
-    }
-    if (qa_input_ascii_equal(name, "unbind")) {
-        if (physical.kind >= QA_PHYSICAL_BUTTON) {
-            for (size_t i = 0; i < s->binding_count;) {
-                qa_physical_input p = s->bindings[i]->view.input;
-                p.device = physical.device;
-                if (qa_input_physical_equal(p, physical))
-                    qa_input_seat_unbind(s, s->bindings[i]->view.input);
-                else
-                    ++i;
-            }
-        } else
-            qa_input_seat_unbind(s, physical);
-        return true;
-    }
-    if (cmd->argc == 2) {
-        const qa_input_binding *b = qa_input_seat_binding(s, physical);
-        print(c, b && b->kind == QA_BIND_COMMAND ? b->command : b ? "Action binding" : "Unbound");
-        print(c, "\n");
-        return true;
-    }
-    size_t size = cmd->argc - 3;
-    for (size_t i = 2; i < cmd->argc; ++i) {
-        size_t length = strlen(cmd->argv[i]);
-        if (length > SIZE_MAX - size) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "Binding length overflow"); return false;
-        }
-        size += length;
-    }
-    if (size == SIZE_MAX) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "Binding length overflow"); return false;
-    }
-    qa_arena text;
-    qa_console_command_arena(c->options.console, &text);
-    char *joined = qa_arena_alloc(&text, size + 1, 1, error);
-    bool ok = joined && qa_text_join_words(cmd->argv + 2, cmd->argc - 2,
-                                           joined, size + 1, error);
-    if (ok) {
-        qa_input_binding binding = {.input = physical, .kind = QA_BIND_COMMAND, .command = joined};
-        ok = qa_input_seat_bind(s, &binding, error);
-    }
-    qa_arena_destroy(&text);
-    return ok;
+    return qa_input_bindings_command(s, cmd, false, c->options.print, c->options.user, error);
 }
+
 static bool register_command(qa_input_console *c, const char *name, qa_error *error) {
     if (c->count >= sizeof(c->names) / sizeof(*c->names) || strlen(name) >= sizeof(c->names[0]))
         return false;

@@ -61,38 +61,33 @@ static bool source_current(qa_application *app, application_provider *source,
         !physical->close_pending && physical->map_bound;
 }
 
-static bool positional_point(qa_collision_geometry *geometry, const qa_collision_leaf *viewer,
-    qa_vec3 point, bool *out, qa_error *error)
-{
-    qa_collision_leaf leaf; bool visible;
-    *out=false;
-    if (!qa_collision_point_leaf(geometry,point, QA_LEAF_COLLISION,&leaf,error) ||
-        !qa_collision_cluster_visible(geometry,(int32_t)viewer->cluster,
-            (int32_t)leaf.cluster,true,&visible,error)) return false;
-    return !visible || qa_collision_areas_connected(geometry,(int32_t)viewer->area,
-        (int32_t)leaf.area,out,error);
-}
+static const qa_collision_point_visibility_rules positional_visibility_rules = {
+    .leaf_rule = QA_LEAF_COLLISION, .phs = true,
+    .minimum_cluster = INT32_MIN, .minimum_area = INT32_MIN};
 
-static bool positional_midpoints(qa_collision_geometry *geometry, const qa_collision_leaf *viewer,
-    qa_vec3 start, qa_vec3 end, unsigned splits, bool *out, qa_error *error)
+static bool positional_midpoints(qa_collision_geometry *geometry, qa_vec3 eye,
+    qa_collision_point_visibility_scratch *scratch, qa_vec3 start, qa_vec3 end,
+    unsigned splits, bool *out, qa_error *error)
 {
     qa_vec3 mid=qa_vec_scale(qa_vec_add(start,end),.5f);
-    if (!positional_point(geometry,viewer,mid,out,error)) return false;
+    if (!qa_collision_point_visible(geometry,eye,mid,&positional_visibility_rules,
+            scratch,out,error)) return false;
     if (*out || !splits) return true;
-    if (!positional_midpoints(geometry,viewer,start,mid,splits-1,out,error)) return false;
+    if (!positional_midpoints(geometry,eye,scratch,start,mid,splits-1,out,error)) return false;
     if (*out) return true;
-    return positional_midpoints(geometry,viewer,mid,end,splits-1,out,error);
+    return positional_midpoints(geometry,eye,scratch,mid,end,splits-1,out,error);
 }
 
 static bool positional_visible(qa_collision_geometry *geometry, qa_vec3 eye,
     qa_vec3 start, qa_vec3 end, bool *out, qa_error *error)
 {
-    qa_collision_leaf viewer;
-    if (!qa_collision_point_leaf(geometry,eye, QA_LEAF_COLLISION,&viewer,error)) return false;
-    if (!positional_point(geometry,&viewer,start,out,error)) return false;
+    qa_collision_point_visibility_scratch scratch = {0};
+    if (!qa_collision_point_visible(geometry,eye,start,&positional_visibility_rules,
+            &scratch,out,error)) return false;
     if (*out) return true;
-    if (!positional_point(geometry,&viewer,end,out,error)) return false;
-    return *out || positional_midpoints(geometry,&viewer,start,end,3,out,error);
+    if (!qa_collision_point_visible(geometry,eye,end,&positional_visibility_rules,
+            &scratch,out,error)) return false;
+    return *out || positional_midpoints(geometry,eye,&scratch,start,end,3,out,error);
 }
 
 static bool player_eye(qa_application *app, application_provider *physical, qa_actor_id actor,
@@ -182,6 +177,10 @@ static bool capture(application_provider *source, qa_vec3 origin, qa_vec3 line_e
     }
     qa_collision_leaf from={0};
     if (positioned && !qa_collision_point_leaf(geometry,origin, QA_LEAF_COLLISION,&from,error)) return false;
+    qa_collision_point_visibility_scratch visibility = {0};
+    const qa_collision_point_visibility_rules visibility_rules = {
+        .leaf_rule = QA_LEAF_COLLISION, .phs = delivery == QA_APPLICATION_Q2_PHS,
+        .minimum_cluster = INT32_MIN, .minimum_area = INT32_MIN};
     bool masked=delivery==QA_APPLICATION_Q2_PVS || delivery==QA_APPLICATION_Q2_PHS;
     bool before_begin=original && (message->reliable || delivery==QA_APPLICATION_Q2_UNICAST);
     size_t count=roster->count;
@@ -259,16 +258,18 @@ static bool capture(application_provider *source, qa_vec3 origin, qa_vec3 line_e
             ok=application_fail(error,QA_ERROR_ARGUMENT,"Q2 recipient changed during body observation");
             break;
         }
-        qa_collision_leaf to; bool pvs=false,connected=true;
-        if (!qa_collision_point_leaf(geometry,body.origin, QA_LEAF_COLLISION,&to,error) ||
-            (positional && !positional_visible(geometry,eye,origin,line_end,&pvs,error)) ||
-            (!positional && masked &&
-                (!qa_collision_areas_connected(geometry,(int32_t)from.area,(int32_t)to.area,&connected,error) ||
-                 !qa_collision_cluster_visible(geometry,(int32_t)from.cluster,(int32_t)to.cluster,
-                    delivery==QA_APPLICATION_Q2_PHS,&pvs,error)))) {
-            ok=false; break;
+        qa_collision_leaf to; bool pvs=false;
+        if (!positional && masked) {
+            if (!qa_collision_point_visible(geometry,origin,body.origin,&visibility_rules,
+                    &visibility,&pvs,error)) { ok=false; break; }
+            to=visibility.target;
+        } else {
+            if (!qa_collision_point_leaf(geometry,body.origin, QA_LEAF_COLLISION,&to,error) ||
+                (positional && !positional_visible(geometry,eye,origin,line_end,&pvs,error))) {
+                ok=false; break;
+            }
         }
-        if (!masked || (pvs && (positional || connected))) {
+        if (!masked || pvs) {
             for (size_t j=0;j<receipt.count;++j)
                 if (qa_actor_id_equal(recipients[j].actor,row.actor)) {
                     ok=application_fail(error,QA_ERROR_FORMAT,"Q2 audience repeats a full physical client");
