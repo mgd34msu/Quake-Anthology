@@ -540,12 +540,14 @@ static char *info_canonical(qa_arena *storage,const char *text, const char *addr
     for (size_t i = 0; i < count; ++i) size += 2 + pairs[i].key_size + pairs[i].value_size;
     char *result = qa_arena_alloc(storage,size + 1,1,error);
     if (!result) return NULL;
-    char *write = result;
+    size_t written = 0;
+    result[0] = 0;
     for (size_t i = 0; i < count; ++i) {
-        *write++ = '\\'; memcpy(write, pairs[i].key, pairs[i].key_size); write += pairs[i].key_size;
-        *write++ = '\\'; memcpy(write, pairs[i].value, pairs[i].value_size); write += pairs[i].value_size;
+        if (!qa_info_append(result, size + 1, &written,
+            (qa_bytes){(const uint8_t *)pairs[i].key, pairs[i].key_size},
+            (qa_bytes){(const uint8_t *)pairs[i].value, pairs[i].value_size}, 0, error)) return NULL;
     }
-    *write = 0; return result;
+    return result;
 }
 
 bool application_unified_player_bind_local(qa_application *app, const qa_net_client *peer,
