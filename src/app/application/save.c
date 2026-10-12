@@ -656,9 +656,13 @@ static const char *provider_schema(const application_provider *provider)
 
 static application_provider *saved_provider(qa_application *app, const char *instance)
 {
-    for (size_t i = 0; i < app->provider_count; ++i)
-        if (app->providers[i] && app->providers[i]->launch &&
-            !strcmp(app->providers[i]->launch->selection.instance, instance)) return app->providers[i];
+    qa_actor_owner owner = qa_strings_find(qa_session_strings(app->session),
+        (qa_bytes){(const uint8_t *)instance, strlen(instance)});
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, owner,
+        APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(app, &cursor)))
+        if (provider->launch) return provider;
     return NULL;
 }
 

@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `18f15cae`.
+Follow-up source changes were reviewed through main `9a069401`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -318,3 +318,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 | `03-04` | `a3ced3e2` | Completed Q2 visibility uses the common full-actor index, preserving source-slot aliases and unchanged saved rows. Normal build/seven suites passed; no live claim. |
 
 | `26-08` | `18f15cae` | Native cvar ABI metadata uses the common ID index and canonical handles. Guest addresses/order/writeback and saved fields retained. Normal build/seven suites passed; registration allocations remain. |
+
+| `26-11` | `9a069401` | Q3 module updates use retained cvar handles and fixed ABI mirror storage. Hidden-status, alias and saved-field rules retained. Normal build/seven suites passed; no live claim. |

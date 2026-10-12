@@ -1119,12 +1119,13 @@ static application_provider *active_provider_named(qa_application *application,
 {
     if (name == NULL)
         return NULL;
-    for (size_t index = 0; index < application->provider_count; ++index) {
-        application_provider *provider = application->providers[index];
-        if (provider != NULL && provider->attached && provider->launch != NULL &&
-            strcmp(provider->launch->selection.instance, name) == 0)
-            return provider;
-    }
+    qa_actor_owner owner = qa_strings_find(qa_session_strings(application->session),
+        (qa_bytes){(const uint8_t *)name, strlen(name)});
+    qa_id_index_cursor cursor = application_provider_lookup_begin(application, owner,
+        APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(application, &cursor)))
+        if (provider->attached && provider->launch != NULL) return provider;
     return NULL;
 }
 

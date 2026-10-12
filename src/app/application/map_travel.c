@@ -1030,9 +1030,12 @@ bool qa_application_campaign_reenter(qa_application *candidate, qa_application *
     qa_campaign_unit_checkpoint_free(&checkpoint);
     for (size_t i=0;ok && i<previous->provider_count;++i) {
         const application_provider *source=previous->providers[i];
-        for (size_t j=0;j<candidate->provider_count;++j) {
-            application_provider *next=candidate->providers[j];
-            if (strcmp(source->launch->selection.instance,next->launch->selection.instance)) continue;
+        qa_actor_owner next_owner=qa_strings_find(qa_session_strings(candidate->session),
+            qa_strings_text(qa_session_strings(previous->session),source->owner));
+        qa_id_index_cursor cursor=application_provider_lookup_begin(candidate,next_owner,
+            APPLICATION_PROVIDER_PUBLISHED);
+        application_provider *next;
+        while ((next=application_provider_lookup_next(candidate,&cursor))) {
             next->q1_server_flags=source->q1_server_flags;
             next->q2_server_flags=source->q2_server_flags;
         }
@@ -1048,9 +1051,13 @@ bool qa_application_campaign_reenter(qa_application *candidate, qa_application *
             previous->map_state->provider,APPLICATION_PROVIDER_PUBLISHED);
         application_provider *source;
         while ((source=application_provider_lookup_next(previous,&cursor))) {
-            for (size_t j=0;j<candidate->provider_count;++j)
-                if (!strcmp(source->launch->selection.instance,candidate->providers[j]->launch->selection.instance))
-                    state->provider=candidate->providers[j]->owner;
+            qa_actor_owner next_owner=qa_strings_find(qa_session_strings(candidate->session),
+                qa_strings_text(qa_session_strings(previous->session),source->owner));
+            qa_id_index_cursor next_cursor=application_provider_lookup_begin(candidate,next_owner,
+                APPLICATION_PROVIDER_PUBLISHED);
+            application_provider *next;
+            while ((next=application_provider_lookup_next(candidate,&next_cursor)))
+                state->provider=next->owner;
         }
         candidate->map_revision=previous->map_revision+1;
         state->entry_generation=0;

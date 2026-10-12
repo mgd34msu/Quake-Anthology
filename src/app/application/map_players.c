@@ -1900,9 +1900,11 @@ static unsigned player_scope_priority(qa_application *application,
 static bool equipment_owner(qa_application *application, const char *instance,
     qa_actor_owner *out, qa_error *error)
 {
-    for (size_t i = 0; i < application->provider_count; ++i) {
-        application_provider *provider = application->providers[i];
-        if (strcmp(provider->launch->selection.instance, instance)) continue;
+    qa_actor_owner owner = qa_strings_find(qa_session_strings(application->session),
+        (qa_bytes){(const uint8_t *)instance, strlen(instance)});
+    application_provider *provider = application_provider_lookup(application, owner,
+        APPLICATION_PROVIDER_PUBLISHED);
+    if (provider) {
         if (!provider->constructed || !provider->attached || provider->close_pending || !provider->owner)
             return application_fail(error, QA_ERROR_NOT_FOUND, "Selected equipment provider has retired");
         *out = provider->owner;
@@ -3787,10 +3789,9 @@ static application_provider *current_seat_provider(qa_application *application,
     if (!binding) binding = qa_launch_binding_for(choices,
         (qa_launch_scope){.kind = QA_SCOPE_SEAT, .seat = seat->id}, role, "");
     if (binding == NULL) return NULL;
-    for (size_t i = 0; i < application->provider_count; ++i)
-        if (!strcmp(application->providers[i]->launch->selection.instance, binding->instance))
-            return application->providers[i];
-    return NULL;
+    qa_actor_owner owner = qa_strings_find(qa_session_strings(application->session),
+        (qa_bytes){(const uint8_t *)binding->instance, strlen(binding->instance)});
+    return application_provider_lookup(application, owner, APPLICATION_PROVIDER_PUBLISHED);
 }
 
 static bool qw_reserved_character(const application_provider *provider)
@@ -4326,10 +4327,11 @@ static application_provider *campaign_provider(qa_application *candidate,
         APPLICATION_PROVIDER_PUBLISHED);
     application_provider *source;
     while ((source=application_provider_lookup_next(previous,&cursor))) {
-        for (size_t j=0;j<candidate->provider_count;++j) {
-            application_provider *next=candidate->providers[j];
-            if (!strcmp(source->launch->selection.instance,next->launch->selection.instance)) return next;
-        }
+        qa_actor_owner next_owner=qa_strings_find(qa_session_strings(candidate->session),
+            qa_strings_text(qa_session_strings(previous->session),source->owner));
+        application_provider *next=application_provider_lookup(candidate,next_owner,
+            APPLICATION_PROVIDER_PUBLISHED);
+        if (next) return next;
     }
     return NULL;
 }
