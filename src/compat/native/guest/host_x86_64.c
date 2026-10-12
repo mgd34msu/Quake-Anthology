@@ -24,11 +24,15 @@ void guest_host_x86_64_state_free(guest_host_x86_64_state *state)
 bool guest_host_x86_64_state_copy(const guest_host_x86_64_state *source,
     guest_host_x86_64_state *out, qa_error *error)
 {
-    if (!source || !out || out->xsave.data || out->xsave.size || !source->xsave.data || source->xsave.size < 576)
-        return fail(error,QA_ERROR_ARGUMENT,0,"hardware state copy needs actual complete source and empty output");
+    if (!source || !out || (!out->xsave.data && out->xsave.size) || !source->xsave.data || source->xsave.size < 576)
+        return fail(error,QA_ERROR_ARGUMENT,0,"hardware state copy needs actual complete source and output storage");
 #if defined(__linux__) && defined(__x86_64__)
-    void *bytes = NULL;
-    if (posix_memalign(&bytes,64,source->xsave.size) != 0) return fail(error,QA_ERROR_MEMORY,0,"retaining aligned hardware state");
+    void *bytes = out->xsave.data;
+    if (bytes) {
+        if (out->xsave.size < source->xsave.size || (uintptr_t)bytes % 64)
+            return fail(error,QA_ERROR_ARGUMENT,0,"hardware state output needs full aligned XSAVE storage");
+    } else if (posix_memalign(&bytes,64,source->xsave.size) != 0)
+        return fail(error,QA_ERROR_MEMORY,0,"retaining aligned hardware state");
     memcpy(bytes,source->xsave.data,source->xsave.size); *out = *source; out->xsave.data = bytes; return true;
 #else
     return fail(error,QA_ERROR_UNSUPPORTED,0,"hardware state copy platform is unavailable");

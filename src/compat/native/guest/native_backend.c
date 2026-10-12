@@ -59,12 +59,18 @@ bool guest_backing_retire(qa_native_guest *guest, guest_backing *backing,
 bool guest_native_transfer(qa_native_guest *guest, qa_native_guest_cpu *cpu,
     bool writing, qa_error *error)
 {
+    qa_arena scratch; qa_arena_init_pool(&scratch, &guest->scratch_pages);
     guest_host_x86_64_state retained = {0}, next = {0};
     const guest_host_x86_64_capabilities *capability =
         guest_host_child_capability(guest->child);
-    bool okay = capability && guest_host_child_cpu_read(guest->child, &retained, error);
+    bool okay = capability != NULL;
     if (!capability)
         guest_fail(error, QA_ERROR_ARGUMENT, 0, "native CPU lost its physical capability owner");
+    if (okay) {
+        retained.xsave = (qa_buffer){qa_arena_alloc(&scratch, capability->xsave_bytes, 64, error),
+            capability->xsave_bytes};
+        okay = retained.xsave.data && guest_host_child_cpu_read(guest->child, &retained, error);
+    }
     if (okay && writing) {
         /* The scalar ABI projection cannot replace privileged/emulated state
          * or extended hardware components. Keep the real full state owner. */
@@ -89,7 +95,11 @@ bool guest_native_transfer(qa_native_guest *guest, qa_native_guest_cpu *cpu,
                 (i < 4 && cpu->segments[i].base))
                 okay = guest_fail(error, QA_ERROR_UNSUPPORTED, i,
                     "native ABI projection requires actual flat segment state");
-        if (okay) okay = guest_host_x86_64_from_cpu(cpu, &retained, &next, error);
+        if (okay) {
+            next.xsave = (qa_buffer){qa_arena_alloc(&scratch, retained.xsave.size, 64, error),
+                retained.xsave.size};
+            okay = next.xsave.data && guest_host_x86_64_from_cpu(cpu, &retained, &next, error);
+        }
         if (okay) okay = guest_host_child_cpu_write(guest->child, &next, error);
     } else if (okay) {
         okay = guest_host_x86_64_to_cpu(&retained, cpu, error);
@@ -97,8 +107,7 @@ bool guest_native_transfer(qa_native_guest *guest, qa_native_guest_cpu *cpu,
          * describes the actual CPU, independently of that transfer mask. */
         if (okay) cpu->xcr0 = capability->xfeatures;
     }
-    guest_host_x86_64_state_free(&next);
-    guest_host_x86_64_state_free(&retained);
+    qa_arena_destroy(&scratch);
     return okay;
 }
 
