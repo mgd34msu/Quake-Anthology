@@ -2048,10 +2048,7 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
 }
 static bool restore_groups(qa_q1_game *game, const qa_q1_save_data *save,
     const qa_actor_id *slots, qa_error *error) {
-    while (game->maps->door_groups) {
-        q1_door_group *group = game->maps->door_groups; game->maps->door_groups = group->next;
-        free(group->members); free(group);
-    }
+    q1_door_groups_clear(game);
     for (uint32_t i = 2; i < save->entity_count; ++i) {
         q1_actor *entity = q1_entity(game,slots[i]);
         if (!entity || !entity->map || entity->map->kind != Q1_MAP_DOOR || entity->map->pending.mover.group) continue;
@@ -2060,8 +2057,8 @@ static bool restore_groups(qa_q1_game *game, const qa_q1_save_data *save,
         if (owner && !qa_q1_save_entity_decode(owner,&master,error)) return false;
         if (!master) master = i;
         if (master >= save->entity_count) return fail(error,"Original door master exceeds its physical edicts");
-        q1_door_group *group = calloc(1,sizeof(*group));
-        if (!group) { qa_error_set(error,QA_ERROR_MEMORY,0,"Restoring Source door group"); return false; }
+        q1_door_group *group = q1_door_group_take(game,error);
+        if (!group) return false;
         group->next = game->maps->door_groups; game->maps->door_groups = group;
         uint32_t member = master;
         do {
@@ -2069,9 +2066,8 @@ static bool restore_groups(qa_q1_game *game, const qa_q1_save_data *save,
             if (!door || !door->map || door->map->kind != Q1_MAP_DOOR || door->map->pending.mover.group ||
                 group->count >= save->entity_count)
                 return fail(error,"Original door ring differs from its actual physical members");
-            q1_ref *members = realloc(group->members,(group->count+1)*sizeof(*members));
-            if (!members) { qa_error_set(error,QA_ERROR_MEMORY,0,"Restoring Source door members"); return false; }
-            group->members = members; group->members[group->count++] = q1_ref_from(game,door->id);
+            if (!q1_door_members_reserve(game,group,group->count+1,error)) return false;
+            group->members[group->count++] = q1_ref_from(game,door->id);
             door->map->pending.mover.group = group;
             uint32_t next = 0;
             const char *link = saved(save->entities+member,"enemy");

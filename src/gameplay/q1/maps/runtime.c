@@ -90,32 +90,96 @@ bool qa_q1_game_maps_bind(qa_q1_game *g, const qa_q1_map_options *options, qa_er
         qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q1 map runtime");
         return false;
     }
-    if (!qa_arena_reserve(&g->maps->score_storage,
-            (size_t)g->capacity * sizeof(*g->maps->scores), error) ||
-        !(g->maps->scores = qa_arena_alloc(&g->maps->score_storage,
-            (size_t)g->capacity * sizeof(*g->maps->scores), _Alignof(float), error))) {
-        qa_arena_destroy(&g->maps->score_storage);
+    if (!q1_map_storage_prepare(g, error)) {
+        qa_arena_destroy(&g->maps->storage);
         free(g->maps);
         g->maps = NULL;
         return false;
     }
-    qa_arena_seal(&g->maps->score_storage);
     g->maps->options = *options;
     g->maps->lightning_end = -1;
     if (!q1_targets_adopt(g, options->targets, error)) {
-        qa_arena_destroy(&g->maps->score_storage);
+        qa_arena_destroy(&g->maps->storage);
         free(g->maps);
         g->maps = NULL;
         return false;
     }
     return true;
 }
-static void door_groups_free(q1_door_group *group) {
-    while (group) {
-        q1_door_group *next = group->next;
-        free(group->members);
-        free(group);
-        group = next;
+bool q1_map_storage_prepare(qa_q1_game *g, qa_error *error) {
+    if (!q1_map_records_prepare(g, error))
+        return false;
+    q1_map_runtime *maps = g->maps;
+    size_t alignment = _Alignof(max_align_t);
+    size_t per_actor = sizeof(*maps->scores) + sizeof(*maps->rotated_targets) +
+        sizeof(*maps->frame_ticks) + sizeof(*maps->addon_contacts) +
+        4 * sizeof(q1_ref) + _Alignof(q1_ref) - 1;
+    size_t padding = 4 * (alignment - 1);
+    if (g->capacity > (SIZE_MAX - padding) / per_actor) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Q1 map storage exceeds its actor extent");
+        return false;
+    }
+    size_t bytes = (size_t)g->capacity * per_actor + padding;
+    if (!qa_arena_reserve(&maps->storage, bytes, error))
+        return false;
+    maps->scores = qa_arena_alloc(&maps->storage, (size_t)g->capacity * sizeof(*maps->scores),
+        _Alignof(float), error);
+    maps->rotated_targets = qa_arena_alloc(&maps->storage,
+        (size_t)g->capacity * sizeof(*maps->rotated_targets), _Alignof(q1_rotate_target), error);
+    maps->frame_ticks = qa_arena_alloc(&maps->storage,
+        (size_t)g->capacity * sizeof(*maps->frame_ticks), _Alignof(qa_actor_id), error);
+    maps->addon_contacts = qa_arena_alloc(&maps->storage,
+        (size_t)g->capacity * sizeof(*maps->addon_contacts), _Alignof(q1_addon_contact), error);
+    if (!maps->scores || !maps->rotated_targets || !maps->frame_ticks || !maps->addon_contacts)
+        return false;
+    memset(maps->scores, 0, (size_t)g->capacity * sizeof(*maps->scores));
+    memset(maps->rotated_targets, 0, (size_t)g->capacity * sizeof(*maps->rotated_targets));
+    memset(maps->frame_ticks, 0, (size_t)g->capacity * sizeof(*maps->frame_ticks));
+    memset(maps->addon_contacts, 0, (size_t)g->capacity * sizeof(*maps->addon_contacts));
+    return true;
+}
+q1_map_state *q1_map_storage_take(qa_q1_game *g, qa_error *error) {
+    size_t slot;
+    q1_map_state *state = q1_record_take(g, &g->map_records, sizeof(*state), &slot, error);
+    if (state)
+        state->storage_slot = slot;
+    return state;
+}
+q1_door_group *q1_door_group_take(qa_q1_game *g, qa_error *error) {
+    size_t slot;
+    q1_door_group *group = q1_record_take(g, &g->door_records, sizeof(*group), &slot, error);
+    if (group)
+        group->storage_slot = slot;
+    return group;
+}
+bool q1_door_members_reserve(qa_q1_game *g, q1_door_group *group, size_t count, qa_error *error) {
+    if (count <= group->capacity)
+        return true;
+    size_t capacity = group->capacity ? group->capacity : 4;
+    while (capacity < count) {
+        if (capacity > SIZE_MAX / 2) {
+            capacity = count;
+            break;
+        }
+        capacity *= 2;
+    }
+    if (capacity > SIZE_MAX / sizeof(*group->members)) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Q1 door members exceed their extent");
+        return false;
+    }
+    q1_ref *members = qa_arena_grow(&g->maps->storage, group->members,
+        group->capacity * sizeof(*members), capacity * sizeof(*members), _Alignof(q1_ref), error);
+    if (!members)
+        return false;
+    group->members = members;
+    group->capacity = capacity;
+    return true;
+}
+void q1_door_groups_clear(qa_q1_game *g) {
+    while (g->maps->door_groups) {
+        q1_door_group *group = g->maps->door_groups;
+        g->maps->door_groups = group->next;
+        qa_pool_release(&g->door_records, group->storage_slot);
     }
 }
 bool qa_q1_game_rogue_runes_claim(qa_q1_game *g, bool *newly_claimed, qa_error *error) {
@@ -162,40 +226,13 @@ bool qa_q1_game_begin_map(qa_q1_game *g, const qa_q1_map_options *options, qa_er
     q1_wire_map_reset(g);
     if (g->host.source_info_map_reset) g->host.source_info_map_reset(g->host.context);
     qa_q1_map_options replacement = *options;
-    q1_map_state *states = g->maps->allocated;
-    q1_rotate_target *rotated = g->maps->rotated_targets;
-    qa_actor_id *frame_ticks = g->maps->frame_ticks;
-    qa_arena score_storage = g->maps->score_storage;
-    float *scores = g->maps->scores;
-    q1_addon_contact *contacts = g->maps->addon_contacts;
-    if (contacts)
-        memset(contacts, 0, g->capacity * sizeof(*contacts));
-    if (rotated)
-        memset(rotated, 0, g->capacity * sizeof(*rotated));
-    door_groups_free(g->maps->door_groups);
-    *g->maps = (q1_map_runtime){.options = replacement, .allocated = states,
-                               .rotated_targets = rotated, .frame_ticks = frame_ticks,
-                               .score_storage = score_storage, .scores = scores,
-                               .addon_contacts = contacts,
-                               .lightning_end = -1};
-    while (states) {
-        q1_map_state *next = states->allocated_next;
-        *states = (q1_map_state){.allocated_next = next, .pool_next = g->maps->spare};
-        g->maps->spare = states;
-        states = next;
-    }
-    g->spare_actors = g->retired_actors = NULL;
-    for (q1_actor *actor = g->allocated_actors; actor; actor = actor->allocation_next) {
-        q1_actor *next = actor->allocation_next;
-        *actor = (q1_actor){.allocation_next = next, .pool_next = g->spare_actors};
-        g->spare_actors = actor;
-    }
-    g->spare_players = g->retired_players = NULL;
-    for (q1_player *player = g->allocated_players; player; player = player->allocation_next) {
-        q1_player *next = player->allocation_next;
-        *player = (q1_player){.allocation_next = next, .pool_next = g->spare_players};
-        g->spare_players = player;
-    }
+    q1_door_groups_clear(g);
+    qa_arena storage = g->maps->storage;
+    *g->maps = (q1_map_runtime){.options = replacement, .storage = storage, .lightning_end = -1};
+    qa_arena_reset(&g->maps->storage);
+    q1_records_reset(g);
+    if (!q1_map_storage_prepare(g, error))
+        return false;
     g->total_monsters = g->killed_monsters = g->hellknight_melee = 0;
     g->authored_gremlins = g->spawned_gremlins = 0;
     g->source_captures[0] = g->source_captures[1] = 0;
@@ -606,20 +643,9 @@ q1_map_state *q1_map_allocate(qa_q1_game *g, q1_actor *entity, qa_error *error) 
         q1_map_fail(error, "Q1 authored map services are not bound");
         return NULL;
     }
-    q1_map_state *state = g->maps->spare;
-    if (state) {
-        g->maps->spare = state->pool_next;
-        q1_map_state *allocated = state->allocated_next;
-        *state = (q1_map_state){.allocated_next = allocated};
-    } else {
-        state = calloc(1, sizeof(*state));
-        if (!state) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q1 map actor");
-            return NULL;
-        }
-        state->allocated_next = g->maps->allocated;
-        g->maps->allocated = state;
-    }
+    q1_map_state *state = q1_map_storage_take(g, error);
+    if (!state)
+        return NULL;
     entity->map = state;
     state->netname = entity->source_netname;
     entity->source_netname = 0;
@@ -641,8 +667,8 @@ void q1_map_frame_begin(qa_q1_game *g) {
     while (g->maps->retired) {
         q1_map_state *state = g->maps->retired;
         g->maps->retired = state->pool_next;
-        state->pool_next = g->maps->spare;
-        g->maps->spare = state;
+        state->pool_next = NULL;
+        qa_pool_release(&g->map_records, state->storage_slot);
     }
 }
 static bool level_frame_current(qa_q1_game *game, const q1_map_runtime *maps,
@@ -718,17 +744,9 @@ void q1_map_destroy(qa_q1_game *g) {
             entity->map = NULL;
         }
     }
-    q1_map_state *state = g->maps->allocated;
-    while (state) {
-        q1_map_state *next = state->allocated_next;
-        free(state);
-        state = next;
-    }
-    door_groups_free(g->maps->door_groups);
-    free(g->maps->rotated_targets);
-    free(g->maps->frame_ticks);
-    free(g->maps->addon_contacts);
-    qa_arena_destroy(&g->maps->score_storage);
+    q1_door_groups_clear(g);
+    qa_pool_reset(&g->map_records);
+    qa_arena_destroy(&g->maps->storage);
     free(g->maps);
     g->maps = NULL;
 }
@@ -738,9 +756,9 @@ bool q1_map_clone(qa_q1_game *g, const q1_actor *source, q1_actor *destination, 
     q1_map_state *copy = q1_map_allocate(g, destination, error);
     if (!copy)
         return false;
-    q1_map_state *allocated = copy->allocated_next;
+    size_t storage_slot = copy->storage_slot;
     *copy = *source->map;
-    copy->allocated_next = allocated;
+    copy->storage_slot = storage_slot;
     copy->pool_next = NULL;
     if (g->maps->rotated_targets) {
         q1_rotate_target *row = &g->maps->rotated_targets[source->id.slot];

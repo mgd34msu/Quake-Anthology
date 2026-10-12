@@ -42,13 +42,6 @@ static bool link_targets(qa_q1_game *g, qa_actor_id id, qa_error *error) {
     e = rotation(g, id);
     if (!e)
         return true;
-    if (!g->maps->rotated_targets) {
-        g->maps->rotated_targets = calloc(g->capacity, sizeof(*g->maps->rotated_targets));
-        if (!g->maps->rotated_targets) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q1 rotation targets");
-            return false;
-        }
-    }
     e->map->pending.rotation.origin = self.origin;
     e->map->pending.rotation.linked = true;
     qa_world_actor_snapshot list = {0};

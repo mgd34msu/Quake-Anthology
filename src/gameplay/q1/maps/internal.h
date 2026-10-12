@@ -307,7 +307,7 @@ typedef enum q1_time_reaction { Q1_TIME_NO_REACTION, Q1_TIME_PAIN, Q1_TIME_CRASH
 typedef struct q1_door_group {
     struct q1_door_group *next;
     q1_ref *members;
-    size_t count;
+    size_t count, capacity, storage_slot;
 } q1_door_group;
 typedef struct q1_map_rogue_platform {
     double last_use, last_move, go_time;
@@ -354,7 +354,8 @@ typedef struct q1_addon_contact {
     uint32_t effects;
 } q1_addon_contact;
 struct q1_map_state {
-    struct q1_map_state *allocated_next, *pool_next;
+    struct q1_map_state *pool_next;
+    size_t storage_slot;
     q1_map_kind kind;
     q1_map_action action;
     qa_string_id original_model, map, noise[4], endtext, intermissiontext, netname, event, mdl;
@@ -432,11 +433,11 @@ struct q1_map_state {
 };
 struct q1_map_runtime {
     qa_q1_map_options options;
-    q1_map_state *allocated, *spare, *retired;
+    q1_map_state *retired;
     q1_door_group *door_groups;
     q1_rotate_target *rotated_targets;
     qa_actor_id *frame_ticks;
-    qa_arena score_storage;
+    qa_arena storage;
     float *scores;
     q1_addon_contact *addon_contacts;
     uint32_t frame_tick_count;
@@ -461,6 +462,11 @@ struct q1_map_runtime {
 };
 
 bool q1_map_fail(qa_error *, const char *);
+bool q1_map_storage_prepare(qa_q1_game *, qa_error *);
+q1_map_state *q1_map_storage_take(qa_q1_game *, qa_error *);
+q1_door_group *q1_door_group_take(qa_q1_game *, qa_error *);
+bool q1_door_members_reserve(qa_q1_game *, q1_door_group *, size_t, qa_error *);
+void q1_door_groups_clear(qa_q1_game *);
 bool q1_map_present_intermission(qa_q1_game *, qa_actor_id, uint32_t,
                                  const qa_q1_intermission_result *, qa_error *);
 bool q1_snapshot_targets_host_order(qa_q1_game *, qa_targets *, qa_string_id,

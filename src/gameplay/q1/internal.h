@@ -1278,7 +1278,8 @@ typedef struct q1_timed_effect {
     uint32_t count;
 } q1_timed_effect;
 typedef struct q1_actor {
-    struct q1_actor *allocation_next, *pool_next;
+    struct q1_actor *pool_next;
+    size_t storage_slot;
     q1_map_state *map;
     qa_pickup_lease pickup_observation;
     bool restored_target;
@@ -1361,7 +1362,8 @@ typedef struct q1_source_info_store {
     size_t count,capacity;
 } q1_source_info_store;
 typedef struct q1_player {
-    struct q1_player *allocation_next, *pool_next;
+    struct q1_player *pool_next;
+    size_t storage_slot;
     qa_actor_id id;
     qa_q1_input input;
     qa_q1_weapon weapon;
@@ -1443,8 +1445,10 @@ struct qa_q1_game {
     double source_captures[2];
     q1_map_runtime *maps;
     struct q1_wire_state *wire;
-    q1_actor **actors, *allocated_actors, *spare_actors, *retired_actors;
-    q1_player **players, *allocated_players, *spare_players, *retired_players;
+    q1_actor **actors, *retired_actors;
+    q1_player **players, *retired_players;
+    qa_arena record_storage;
+    qa_pool actor_records, player_records, map_records, door_records;
     uint32_t capacity, total_monsters, killed_monsters, hellknight_melee;
     uint32_t authored_gremlins, spawned_gremlins;
     qa_builtin_random random;
@@ -1507,6 +1511,13 @@ bool q1_source_rogue_state_owner(qa_q1_game *, q1_actor *, q1_ref, qa_error *);
 bool q1_source_value(const qa_q1_game *, qa_q1_source_setting, float fallback, float *, qa_error *);
 
 extern const q1_frame q1_frames[];
+bool q1_records_prepare(qa_q1_game *, qa_error *);
+bool q1_map_records_prepare(qa_q1_game *, qa_error *);
+void q1_records_reset(qa_q1_game *);
+void q1_records_destroy(qa_q1_game *);
+void *q1_record_take(qa_q1_game *, qa_pool *, size_t, size_t *, qa_error *);
+q1_actor *q1_actor_storage_take(qa_q1_game *, qa_error *);
+q1_player *q1_player_storage_take(qa_q1_game *, qa_error *);
 bool q1_map_spawn(qa_q1_game *, q1_actor *, const qa_q1_spawn *, bool *, qa_error *);
 bool q1_map_use(qa_q1_game *, q1_actor *, qa_actor_id other, qa_actor_id activator, qa_error *);
 bool q1_map_touch(qa_q1_game *, q1_actor *, const qa_touch_contact *, qa_error *);

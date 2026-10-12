@@ -128,10 +128,10 @@ bool qa_q1_game_clone(qa_q1_game *g, qa_actor_id actor, qa_actor_id *out, qa_err
     }
     if (!q1_source_rogue_state_owner(g, target, source->owner, error))
         goto fail;
-    q1_actor *allocation = target->allocation_next;
+    size_t storage_slot = target->storage_slot;
     *target = *source;
     target->id = id;
-    target->allocation_next = allocation;
+    target->storage_slot = storage_slot;
     target->pool_next = NULL;
     target->active = true;
     target->map = NULL;

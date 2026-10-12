@@ -8,13 +8,6 @@ static q1_actor *visual(qa_q1_game *g, qa_actor_id id) {
     return e && e->map ? e : NULL;
 }
 bool q1_map_frame_tick_add(qa_q1_game *g, qa_actor_id id, qa_error *error) {
-    if (!g->maps->frame_ticks) {
-        g->maps->frame_ticks = calloc(g->capacity, sizeof(*g->maps->frame_ticks));
-        if (!g->maps->frame_ticks) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q1 authored frame ticks");
-            return false;
-        }
-    }
     for (uint32_t i = 0; i < g->maps->frame_tick_count; ++i)
         if (qa_actor_id_equal(g->maps->frame_ticks[i], id))
             return true;

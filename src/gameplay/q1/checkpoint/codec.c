@@ -46,35 +46,8 @@ static void storage_free(qa_q1_game *g) {
     q1_source_rogue_states_free(g);
     q1_source_rogue_runes_free(g);
     q1_wire_destroy(g);
-    while (g->allocated_actors) {
-        q1_actor *next = g->allocated_actors->allocation_next;
-        free(g->allocated_actors);
-        g->allocated_actors = next;
-    }
-    while (g->allocated_players) {
-        q1_player *next = g->allocated_players->allocation_next;
-        q1_source_client_clear(g->allocated_players);
-        free(g->allocated_players);
-        g->allocated_players = next;
-    }
-    if (g->maps) {
-        while (g->maps->allocated) {
-            q1_map_state *next = g->maps->allocated->allocated_next;
-            free(g->maps->allocated);
-            g->maps->allocated = next;
-        }
-        while (g->maps->door_groups) {
-            q1_door_group *next = g->maps->door_groups->next;
-            free(g->maps->door_groups->members);
-            free(g->maps->door_groups);
-            g->maps->door_groups = next;
-        }
-        free(g->maps->rotated_targets);
-        free(g->maps->frame_ticks);
-        free(g->maps->addon_contacts);
-        free(g->maps);
-        g->maps = NULL;
-    }
+    q1_map_destroy(g);
+    q1_records_destroy(g);
     free(g->actors);
     free(g->players);
     g->actors = NULL;
@@ -117,7 +90,7 @@ static bool groups(q1_save_io *io, qa_q1_game *g, q1_door_group ***out, size_t *
     q1_door_group *group = g->maps->door_groups, **tail = &g->maps->door_groups;
     for (uint32_t i = 0; i < count; ++i) {
         if (io->values.direction == QA_SOURCE_SAVE_READ) {
-            group = allocate(io, 1, sizeof(*group));
+            group = q1_door_group_take(g, io->values.error);
             if (!group)
                 goto fail;
             *tail = group;
@@ -133,8 +106,7 @@ static bool groups(q1_save_io *io, qa_q1_game *g, q1_door_group ***out, size_t *
         }
         if (io->values.direction == QA_SOURCE_SAVE_READ) {
             group->count = members;
-            group->members = allocate(io, members, sizeof(*group->members));
-            if (!group->members)
+            if (!q1_door_members_reserve(g, group, members, io->values.error))
                 goto fail;
         }
         for (uint32_t j = 0; j < members; ++j)
@@ -165,11 +137,9 @@ static bool actors(q1_save_io *io, qa_q1_game *g, q1_door_group **index, size_t 
     for (uint32_t i = 0; i < count; ++i) {
         q1_actor *actor;
         if (io->values.direction == QA_SOURCE_SAVE_READ) {
-            actor = allocate(io, 1, sizeof(*actor));
+            actor = q1_actor_storage_take(g, io->values.error);
             if (!actor)
                 return false;
-            actor->allocation_next = g->allocated_actors;
-            g->allocated_actors = actor;
         } else {
             while (cursor < g->capacity && !g->actors[cursor])
                 ++cursor;
@@ -212,11 +182,9 @@ static bool actors(q1_save_io *io, qa_q1_game *g, q1_door_group **index, size_t 
             if (!g->maps)
                 return q1_save_fail(io, "Q1 map actor has no map services");
             if (io->values.direction == QA_SOURCE_SAVE_READ) {
-                actor->map = allocate(io, 1, sizeof(*actor->map));
+                actor->map = q1_map_storage_take(g, io->values.error);
                 if (!actor->map)
                     return false;
-                actor->map->allocated_next = g->maps->allocated;
-                g->maps->allocated = actor->map;
             }
             if (!q1_save_map(io, actor->map, index, group_count))
                 return false;
@@ -242,11 +210,9 @@ static bool players(q1_save_io *io, qa_q1_game *g) {
     for (uint32_t i = 0; i < count; ++i) {
         q1_player *player;
         if (io->values.direction == QA_SOURCE_SAVE_READ) {
-            player = allocate(io, 1, sizeof(*player));
+            player = q1_player_storage_take(g, io->values.error);
             if (!player)
                 return false;
-            player->allocation_next = g->allocated_players;
-            g->allocated_players = player;
         } else {
             while (cursor < g->capacity && !g->players[cursor])
                 ++cursor;
@@ -415,8 +381,13 @@ bool qa_q1_game_restore_prepare(qa_q1_game *g, qa_bytes bytes, qa_q1_restore **o
     *candidate = *g;
     candidate->actors = NULL;
     candidate->players = NULL;
-    candidate->allocated_actors = candidate->spare_actors = candidate->retired_actors = NULL;
-    candidate->allocated_players = candidate->spare_players = candidate->retired_players = NULL;
+    candidate->retired_actors = NULL;
+    candidate->retired_players = NULL;
+    candidate->record_storage = (qa_arena){0};
+    candidate->actor_records = (qa_pool){0};
+    candidate->player_records = (qa_pool){0};
+    candidate->map_records = (qa_pool){0};
+    candidate->door_records = (qa_pool){0};
     candidate->maps = NULL;
     candidate->wire = NULL;
     candidate->rogue_rune_players = NULL;
@@ -445,6 +416,7 @@ bool qa_q1_game_restore_prepare(qa_q1_game *g, qa_bytes bytes, qa_q1_restore **o
     candidate->players = allocate(&io, g->capacity, sizeof(*g->players));
     if (!candidate->actors || !candidate->players)
         goto fail;
+    if (!q1_records_prepare(candidate, error)) goto fail;
     if (!q1_source_rogue_runes_prepare(candidate, error)) goto fail;
     if (!q1_source_rogue_states_prepare(candidate, error)) goto fail;
     if (g->maps) {
@@ -452,6 +424,7 @@ bool qa_q1_game_restore_prepare(qa_q1_game *g, qa_bytes bytes, qa_q1_restore **o
         if (!candidate->maps)
             goto fail;
         candidate->maps->options = g->maps->options;
+        if (!q1_map_storage_prepare(candidate, error)) goto fail;
     }
     uint8_t magic[sizeof(signature)];
     uint32_t count = 0;

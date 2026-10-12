@@ -428,9 +428,8 @@ bool qa_q1_game_maps_finish(qa_q1_game *g, qa_error *error) {
         q1_actor *master = q1_entity(g, snapshot.actors[i]);
         if (!master || master->map->pending.mover.group)
             continue;
-        q1_door_group *group = calloc(1, sizeof(*group));
+        q1_door_group *group = q1_door_group_take(g, error);
         if (!group) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q1 door group");
             ok = false;
             break;
         }
@@ -440,7 +439,6 @@ bool qa_q1_game_maps_finish(qa_q1_game *g, qa_error *error) {
         if (!(ok = qa_world_body_read(g->services.world, master->id, &body, error)))
             break;
         qa_bounds bounds = body.bounds, previous = body.bounds;
-        size_t capacity = 0;
         for (size_t j = i; j < count; ++j) {
             q1_actor *candidate = q1_entity(g, snapshot.actors[j]);
             if (!candidate)
@@ -457,21 +455,8 @@ bool qa_q1_game_maps_finish(qa_q1_game *g, qa_error *error) {
                     break;
                 }
             }
-            if (group->count == capacity) {
-                size_t next = capacity ? capacity * 2 : 4;
-                if (next < capacity || next > SIZE_MAX / sizeof(*group->members)) {
-                    ok = q1_map_fail(error, "Q1 door group capacity overflow");
-                    break;
-                }
-                q1_ref *members = realloc(group->members, next * sizeof(*members));
-                if (!members) {
-                    qa_error_set(error, QA_ERROR_MEMORY, 0, "growing Q1 door group");
-                    ok = false;
-                    break;
-                }
-                group->members = members;
-                capacity = next;
-            }
+            if (!(ok = q1_door_members_reserve(g, group, group->count + 1, error)))
+                break;
             group->members[group->count++] = q1_ref_from(g, candidate->id);
             candidate->map->pending.mover.group = group;
             previous = body.bounds;

@@ -5,17 +5,9 @@ static q1_actor *field(qa_q1_game *g, qa_actor_id id) {
     return e && e->map && q1_map_is_addon_field(g, e->map->kind) ? e : NULL;
 }
 q1_addon_contact *q1_map_addon_contact(qa_q1_game *g, qa_actor_id id, bool create, qa_error *error) {
+    (void)error;
     if (!q1_alive(g, id) || id.slot >= g->capacity)
         return NULL;
-    if (!g->maps->addon_contacts) {
-        if (!create)
-            return NULL;
-        g->maps->addon_contacts = calloc(g->capacity, sizeof(*g->maps->addon_contacts));
-        if (!g->maps->addon_contacts) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q1 addon contact continuations");
-            return NULL;
-        }
-    }
     q1_addon_contact *row = &g->maps->addon_contacts[id.slot];
     if (!qa_actor_id_equal(row->actor, id)) {
         if (!create)

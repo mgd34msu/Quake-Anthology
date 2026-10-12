@@ -299,13 +299,6 @@ bool q1_save_map_runtime(q1_save_io *io, q1_map_runtime *m) {
     Q1_SAVE(io, u32, m->frame_tick_count);
     if (m->frame_tick_count > io->game->capacity)
         return q1_save_fail(io, "Too many Q1 authored frame callbacks");
-    if ((io->values.direction == QA_SOURCE_SAVE_READ) && m->frame_tick_count) {
-        m->frame_ticks = calloc(io->game->capacity, sizeof(*m->frame_ticks));
-        if (!m->frame_ticks) {
-            qa_error_set(io->values.error, QA_ERROR_MEMORY, io->values.offset, "allocating saved Q1 frame callbacks");
-            return false;
-        }
-    }
     for (uint32_t i = 0; i < m->frame_tick_count; ++i) {
         Q1_SAVE(io, actor, m->frame_ticks[i]);
         if (!m->frame_ticks[i].registry || m->frame_ticks[i].slot >= io->game->capacity)
@@ -321,13 +314,6 @@ bool q1_save_map_runtime(q1_save_io *io, q1_map_runtime *m) {
     Q1_SAVE(io, u32, count);
     if (count > io->game->capacity)
         return q1_save_fail(io, "Too many Q1 rotation targets");
-    if ((io->values.direction == QA_SOURCE_SAVE_READ) && count) {
-        m->rotated_targets = calloc(io->game->capacity, sizeof(*m->rotated_targets));
-        if (!m->rotated_targets) {
-            qa_error_set(io->values.error, QA_ERROR_MEMORY, io->values.offset, "allocating saved Q1 rotation targets");
-            return false;
-        }
-    }
     uint32_t next = 0;
     for (uint32_t i = 0; i < count; ++i) {
         q1_rotate_target saved = {0};
@@ -357,13 +343,6 @@ bool q1_save_map_runtime(q1_save_io *io, q1_map_runtime *m) {
     Q1_SAVE(io, u32, count);
     if (count > io->game->capacity)
         return q1_save_fail(io, "Too many Q1 addon contact continuations");
-    if ((io->values.direction == QA_SOURCE_SAVE_READ) && count) {
-        m->addon_contacts = calloc(io->game->capacity, sizeof(*m->addon_contacts));
-        if (!m->addon_contacts) {
-            qa_error_set(io->values.error, QA_ERROR_MEMORY, io->values.offset, "allocating saved Q1 addon contacts");
-            return false;
-        }
-    }
     next = 0;
     for (uint32_t i = 0; i < count; ++i) {
         q1_addon_contact saved = {0};

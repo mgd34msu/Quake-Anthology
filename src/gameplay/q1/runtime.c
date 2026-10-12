@@ -198,12 +198,12 @@ static const q1_player *source_client_at(const qa_q1_game *g, uint32_t slot) {
         if (player && player->active && player->source_client && player->client_slot == slot &&
             qa_actor_id_equal(player->id, physical->id)) return player;
     }
-    /* Borrowed characters retain their real provider/Source slot. The actual
-     * player owner list also supports lifetime-only component clients. */
-    for (const q1_player *player = g->allocated_players; player; player = player->allocation_next)
-        if (player->active && player->source_client && player->client_slot == slot &&
-            player->id.slot < g->capacity && g->players[player->id.slot] == player &&
+    /* Borrowed characters retain their real provider/Source slot. */
+    for (uint32_t i = 0; i < g->capacity; ++i) {
+        const q1_player *player = g->players[i];
+        if (player && player->active && player->source_client && player->client_slot == slot &&
             qa_actors_get(qa_session_actors(g->services.session), player->id)) return player;
+    }
     return NULL;
 }
 
@@ -265,6 +265,74 @@ q1_player *q1_player_get(qa_q1_game *g, qa_actor_id actor) {
     q1_player *player = g->players[actor.slot];
     return player && player->active && qa_actor_id_equal(player->id, actor) ? player : NULL;
 }
+static bool record_pool_prepare(qa_q1_game *g, qa_pool *pool, size_t size,
+    size_t alignment, qa_error *error) {
+    if (pool->stride)
+        return true;
+    if (!qa_pool_prepare(pool, &g->record_storage, g->capacity, size, alignment, error))
+        return false;
+    memset(pool->values, 0, pool->capacity * pool->stride);
+    return true;
+}
+bool q1_records_prepare(qa_q1_game *g, qa_error *error) {
+    return record_pool_prepare(g, &g->actor_records, sizeof(q1_actor), _Alignof(q1_actor), error) &&
+        record_pool_prepare(g, &g->player_records, sizeof(q1_player), _Alignof(q1_player), error);
+}
+bool q1_map_records_prepare(qa_q1_game *g, qa_error *error) {
+    return record_pool_prepare(g, &g->map_records, sizeof(q1_map_state), _Alignof(q1_map_state), error) &&
+        record_pool_prepare(g, &g->door_records, sizeof(q1_door_group), _Alignof(q1_door_group), error);
+}
+void *q1_record_take(qa_q1_game *g, qa_pool *pool, size_t size, size_t *slot, qa_error *error) {
+    if (pool->head == SIZE_MAX) {
+        size_t old = pool->capacity;
+        if (!qa_pool_extend(pool, &g->record_storage, old, error))
+            return NULL;
+        for (size_t i = old; i < pool->capacity; ++i)
+            memset(qa_pool_at(pool, i), 0, pool->stride);
+    }
+    void *record = qa_pool_take(pool, slot);
+    if (record)
+        memset(record, 0, size);
+    return record;
+}
+q1_actor *q1_actor_storage_take(qa_q1_game *g, qa_error *error) {
+    size_t slot;
+    q1_actor *actor = q1_record_take(g, &g->actor_records, sizeof(*actor), &slot, error);
+    if (actor)
+        actor->storage_slot = slot;
+    return actor;
+}
+q1_player *q1_player_storage_take(qa_q1_game *g, qa_error *error) {
+    size_t slot;
+    q1_player *player = q1_record_take(g, &g->player_records, sizeof(*player), &slot, error);
+    if (player)
+        player->storage_slot = slot;
+    return player;
+}
+void q1_records_reset(qa_q1_game *g) {
+    for (size_t i = 0; i < g->player_records.capacity; ++i) {
+        q1_player *player = qa_pool_at(&g->player_records, i);
+        q1_source_client_clear(player);
+        memset(player, 0, sizeof(*player));
+    }
+    qa_pool_reset(&g->actor_records);
+    qa_pool_reset(&g->player_records);
+    qa_pool_reset(&g->map_records);
+    qa_pool_reset(&g->door_records);
+    g->retired_actors = NULL;
+    g->retired_players = NULL;
+}
+void q1_records_destroy(qa_q1_game *g) {
+    for (size_t i = 0; i < g->player_records.capacity; ++i)
+        q1_source_client_clear(qa_pool_at(&g->player_records, i));
+    qa_arena_destroy(&g->record_storage);
+    g->actor_records = (qa_pool){0};
+    g->player_records = (qa_pool){0};
+    g->map_records = (qa_pool){0};
+    g->door_records = (qa_pool){0};
+    g->retired_actors = NULL;
+    g->retired_players = NULL;
+}
 q1_player *q1_player_allocate(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     q1_player *player = q1_player_get(g, actor);
     if (player)
@@ -273,22 +341,9 @@ q1_player *q1_player_allocate(qa_q1_game *g, qa_actor_id actor, qa_error *error)
         qa_error_set(error, QA_ERROR_NOT_FOUND, actor.slot, "Q1 player actor retired");
         return NULL;
     }
-    player = g->spare_players;
-    if (player) {
-        g->spare_players = player->pool_next;
-        q1_player *next = player->allocation_next;
-        q1_source_client_clear(player);
-        memset(player, 0, sizeof(*player));
-        player->allocation_next = next;
-    } else {
-        player = calloc(1, sizeof(*player));
-        if (!player) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "Q1 player extension allocation");
-            return NULL;
-        }
-        player->allocation_next = g->allocated_players;
-        g->allocated_players = player;
-    }
+    player = q1_player_storage_take(g, error);
+    if (!player)
+        return NULL;
     player->id = actor;
     player->active = true;
     player->weapon = QA_Q1_SHOTGUN;
@@ -535,14 +590,14 @@ static bool prepare_frame(void *context, qa_session *session, const qa_source_fr
     while (g->retired_actors) {
         q1_actor *entity = g->retired_actors;
         g->retired_actors = entity->pool_next;
-        entity->pool_next = g->spare_actors;
-        g->spare_actors = entity;
+        entity->pool_next = NULL;
+        qa_pool_release(&g->actor_records, entity->storage_slot);
     }
     while (g->retired_players) {
         q1_player *player = g->retired_players;
         g->retired_players = player->pool_next;
-        player->pool_next = g->spare_players;
-        g->spare_players = player;
+        player->pool_next = NULL;
+        qa_pool_release(&g->player_records, player->storage_slot);
     }
     g->time_ns = frame->time_ns;
     g->time = (double)frame->time_ns / 1000000000.0;
@@ -718,6 +773,8 @@ bool qa_q1_game_create(const qa_builtin_services *services, const qa_q1_options 
     }
     g->services = *services;
     g->options = *options;
+    if (!q1_records_prepare(g, error))
+        goto fail;
     g->qw_rj = options->rules == QA_RULESET_QUAKEWORLD ? 1 : 0;
     g->time_ns = Q1_SOURCE_INITIAL_TIME_NS;
     g->time = (double)g->time_ns / 1000000000.0;
@@ -767,6 +824,7 @@ fail:
     q1_source_rogue_states_free(g);
     q1_source_rogue_runes_free(g);
     qa_supply_destroy(g->source_supply);
+    q1_records_destroy(g);
     free(g->actors);
     free(g->players);
     free(g);
@@ -894,18 +952,9 @@ void qa_q1_game_destroy(qa_q1_game *g) {
     qa_supply_destroy(g->source_supply);
     q1_source_rogue_runes_free(g);
     q1_source_rogue_states_free(g);
-    while (g->allocated_actors) {
-        q1_actor *next = g->allocated_actors->allocation_next;
-        free(g->allocated_actors);
-        g->allocated_actors = next;
-    }
-    while (g->allocated_players) {
-        q1_player *next = g->allocated_players->allocation_next;
-        q1_inventory_close(g, g->allocated_players);
-        q1_source_client_clear(g->allocated_players);
-        free(g->allocated_players);
-        g->allocated_players = next;
-    }
+    for (size_t i = 0; i < g->player_records.capacity; ++i)
+        q1_inventory_close(g, qa_pool_at(&g->player_records, i));
+    q1_records_destroy(g);
     free(g->actors);
     free(g->players);
     free(g);
@@ -972,21 +1021,9 @@ void qa_q1_game_actor_released(qa_q1_game *g, qa_actor_record actor) {
 }
 
 static q1_actor *allocate_state(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
-    q1_actor *entity = g->spare_actors;
-    if (entity) {
-        g->spare_actors = entity->pool_next;
-        q1_actor *next = entity->allocation_next;
-        memset(entity, 0, sizeof(*entity));
-        entity->allocation_next = next;
-    } else {
-        entity = calloc(1, sizeof(*entity));
-        if (!entity) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q1 actor state");
-            return NULL;
-        }
-        entity->allocation_next = g->allocated_actors;
-        g->allocated_actors = entity;
-    }
+    q1_actor *entity = q1_actor_storage_take(g, error);
+    if (!entity)
+        return NULL;
     entity->id = actor;
     entity->active = true;
     entity->alpha = entity->scale = 1;
