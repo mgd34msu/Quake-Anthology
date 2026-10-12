@@ -427,6 +427,12 @@ static void test_shared_direction_angles(void)
     CHECK(qc.x==270 && qc.y==0 && !signbit(qc.y));
     qc=qa_vec_angles(qa_v3(1,-0.f,-0.f),QA_DIRECTION_INTEGER,qc_flags);
     CHECK(qc.x==0 && qc.y==0 && !signbit(qc.x) && !signbit(qc.y));
+    qa_vec3 native=qa_vec_angles(qa_v3(0,-1,-1),QA_DIRECTION_NATIVE_FLOAT,
+        QA_VECTOR_SOURCE|QA_VECTOR_DOUBLE_SQRT);
+    CHECK(native.x== -315 && native.y==270 && native.z==0);
+    native=qa_vec_angles(qa_v3(0,0,0),QA_DIRECTION_NATIVE_FLOAT,
+        QA_VECTOR_SOURCE|QA_VECTOR_DOUBLE_SQRT);
+    CHECK(native.x== -270 && native.y==0 && native.z==0);
     qa_vec3 axis[3];qa_angle_axis(wrapped,axis,QA_ANGLE_FLOAT_MATH);
     CHECK(qa_vec_length(qa_vec_sub(axis[0],qa_vec_normalize(input)))<1e-6f);
 }

@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "ef299e529408d1d00ae7e874733092b6e8065c57",
+  "verified_main": "c1c02b874623ca65dfa0ccb17245b0637435b349",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 144,
-    "open_source_observation": 227,
+    "fixed_source_build_core": 145,
+    "open_source_observation": 226,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -25582,8 +25582,9 @@
       "severity": "medium",
       "job": "03",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "All five scoped adapters use common ASCII equality; private helpers deleted. NULL/empty policy, exact high bytes, supplied-password authentication and first Q1 recipient preserved. Normal build/seven suites; no live command proof.",
+      "fixed_commit": "c1c02b874623ca65dfa0ccb17245b0637435b349"
     },
     {
       "id": "03-14",
@@ -41065,6 +41066,34 @@
       ],
       "record_directory": "/tmp/qa-ta3196-q1-muzzle-projection-20261012",
       "conclusion": "Per-slot common ID index leads to authoritative Q1 muzzle ring records with full actor identity; full event-window scan deleted. Derived projection published only on commit, separate restore ownership, no saved payload changes. Existing core cases protect slot reuse, abort, cursor and retirement; no live or timing claim."
+    },
+    {
+      "commit": "c1c02b874623ca65dfa0ccb17245b0637435b349",
+      "source_tree": "e460d3debd8cc57df10251c3d59e70b6c3903182",
+      "finding_ids": [
+        "03-13"
+      ],
+      "files_rechecked": [
+        "src/app/application/native_q3_chat.c",
+        "src/app/application/native_q3_clients.c",
+        "src/app/application/native_q3_client_time.c",
+        "src/app/application/native_q2_console.c",
+        "src/app/application/native_q1_wire.c",
+        "src/core/text.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-ascii-adapters-20261012",
+      "conclusion": "Four private equality helpers and inline Q1 fold loop deleted; existing common ASCII equality used with original caller policies. No public API, save or wire changes. No live or timing claim."
     }
   ],
   "verification_limits": [

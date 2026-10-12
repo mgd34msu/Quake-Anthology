@@ -1332,36 +1332,6 @@ bool application_q3_guest_selected_respawn(application_provider *source,
     return true;
 }
 
-static bool q3_pose_name_equal(const char *left, const char *right)
-{
-    while (*left && *right) {
-        unsigned char a = (unsigned char)*left++;
-        unsigned char b = (unsigned char)*right++;
-        if (a >= 'A' && a <= 'Z') a += 'a' - 'A';
-        if (b >= 'A' && b <= 'Z') b += 'a' - 'A';
-        if (a != b) return false;
-    }
-    return *left == *right;
-}
-
-static qa_vec3 q3_pose_angles(qa_vec3 direction)
-{
-    const double pi = 3.14159265358979323846;
-    float yaw, pitch;
-    if (direction.y == 0 && direction.x == 0) {
-        yaw = 0;
-        pitch = direction.z > 0 ? 90 : 270;
-    } else {
-        yaw = direction.x == 0 ? direction.y > 0 ? 90 : 270
-            : (float)(atan2(direction.y, direction.x) * 180.0 / pi);
-        if (yaw < 0) yaw += 360.0f;
-        float forward = (float)sqrt(direction.x * direction.x + direction.y * direction.y);
-        pitch = (float)(atan2(direction.z, forward) * 180.0 / pi);
-        if (pitch < 0) pitch += 360.0f;
-    }
-    return qa_v3(-pitch, yaw, 0);
-}
-
 static bool q3_pose_read(application_provider *provider, uint32_t slot,
     qa_vec3 *origin, qa_vec3 *angles, qa_error *error)
 {
@@ -1409,7 +1379,7 @@ static bool q3_pose_fallback(application_provider *provider, uint32_t count,
         if (!row.in_use || !row.classname) continue;
         const char *name = qa_strings_cstr(strings, row.classname);
         if (!name) return application_fail(error, QA_ERROR_ARGUMENT, "Q3 spawn row lost its genuine classname");
-        if (!q3_pose_name_equal(name, "info_player_deathmatch")) continue;
+        if (!qa_text_ascii_equal(name, "info_player_deathmatch")) continue;
         if (first == QA_Q3_SOURCE_NONE) first = slot;
         qa_vec3 position, facing;
         bool blocked;
@@ -1454,7 +1424,7 @@ static bool q3_intermission_pose(application_provider *provider,
         if (!row.in_use || !row.classname) continue;
         const char *name = qa_strings_cstr(strings, row.classname);
         if (!name) return application_fail(error, QA_ERROR_ARGUMENT, "Q3 intermission row lost its genuine classname");
-        if (!q3_pose_name_equal(name, "info_player_intermission")) continue;
+        if (!qa_text_ascii_equal(name, "info_player_intermission")) continue;
         qa_q3_map_actor_state point;
         if (!qa_q3_map_actor_capture(provider->state.q3, row.actor, &point))
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 intermission point has no actual source map record");
@@ -1474,7 +1444,7 @@ static bool q3_intermission_pose(application_provider *provider,
             const char *declared_name = qa_strings_cstr(strings, state.targetname);
             if (!declared_name)
                 return application_fail(error, QA_ERROR_ARGUMENT, "Q3 target row lost its source name");
-            if (q3_pose_name_equal(declared_name, target_name)) choices[choice_count++] = target_slot;
+            if (qa_text_ascii_equal(declared_name, target_name)) choices[choice_count++] = target_slot;
         }
         if (!choice_count) {
             int length = snprintf(NULL, 0, "G_PickTarget: target %s not found\n", target_name);
@@ -1490,7 +1460,8 @@ static bool q3_intermission_pose(application_provider *provider,
         qa_vec3 target_origin, target_angles;
         if (!qa_q3_game_rand(provider->state.q3, &random, error) ||
             !q3_pose_read(provider, choices[random % choice_count], &target_origin, &target_angles, error)) return false;
-        *angles = q3_pose_angles(qa_vec_sub(target_origin, *origin));
+        *angles = qa_vec_angles(qa_vec_sub(target_origin, *origin), QA_DIRECTION_NATIVE_FLOAT,
+            QA_VECTOR_SOURCE | QA_VECTOR_DOUBLE_SQRT);
         return true;
     }
     return q3_pose_fallback(provider, count, origin, angles, error);
@@ -4741,9 +4712,6 @@ static qa_vec3 roster_read_vec(qa_net_reader *reader)
     return value;
 }
 
-static bool roster_vector_valid(qa_vec3 value)
-{ return isfinite(value.x) && isfinite(value.y) && isfinite(value.z); }
-
 bool application_players_checkpoint_capture(qa_application *application, qa_buffer *out,
                                              qa_error *error)
 {
@@ -5030,8 +4998,8 @@ bool application_players_checkpoint_restore(qa_application *candidate, qa_bytes 
         uint32_t point_flags = qa_net_read_u32(&reader);
         point->point.no_bots = (point_flags & 1u) != 0; point->point.no_humans = (point_flags & 2u) != 0;
         point->target = qa_net_read_u32(&reader); point->ordinal = qa_net_read_u32(&reader);
-        ok = !reader.failed && !(point_flags & ~7u) && roster_vector_valid(point->point.origin) &&
-             roster_vector_valid(point->point.angles) && roster_string(strings, point->point.team) &&
+        ok = !reader.failed && !(point_flags & ~7u) && qa_vec_finite(point->point.origin) &&
+             qa_vec_finite(point->point.angles) && roster_string(strings, point->point.team) &&
              point->point.classname != QA_STRING_NONE && roster_string(strings, point->point.classname) &&
              roster_string(strings, point->target) &&
              roster_resolve_actor(actors, actor, (point_flags & 4u) != 0, &point->point.actor, error);
