@@ -9,6 +9,7 @@
 #include "control_frame.h"
 #include "qa/native_observe.h"
 #include "qa/pool.h"
+#include "qa/id_index.h"
 #include <math.h>
 
 enum { NATIVE_ACTOR_THINK = 4, NATIVE_ACTOR_CALLBACKS = 5 };
@@ -58,6 +59,7 @@ struct application_native_q2_source_actors {
     uint32_t offsets[NATIVE_ACTOR_CALLBACKS];
     bool present[NATIVE_ACTOR_CALLBACKS],rerelease,suspended;
     native_actor_entry *entries;
+    qa_id_index entry_index;
     native_actor_touch *touches;
     application_native_q2_source_combat_state *combat;
     struct application_native_q2_source_damage *damage;
@@ -100,6 +102,11 @@ static native_source_actor *actor_find(struct application_native_q2_source_actor
 {
     size_t row;
     return qa_actor_index_find(&o->actor_index,actor,&row)?(native_source_actor *)(uintptr_t)row:NULL;
+}
+static native_actor_entry *entry_find(struct application_native_q2_source_actors *o,qa_native_address address)
+{
+    qa_id_index_entry *entry=qa_id_index_find(&o->entry_index,QA_STRING_NONE,address);
+    return entry?(native_actor_entry *)(uintptr_t)entry->value:NULL;
 }
 static native_source_actor *row_at(struct application_native_q2_source_actors *o,uint32_t slot)
 {
@@ -287,14 +294,15 @@ static bool ensure(struct application_native_q2_source_actors *o,uint32_t slot,s
     if(!target) return true;
     application_q3_mod_operation operation=kind==NATIVE_ACTOR_THINK?Q3_MOD_THINK:
         (application_q3_mod_operation)(Q3_MOD_TOUCH+kind);
-    native_actor_entry *entry=o->entries;
-    while(entry&&entry->address!=target) entry=entry->next;
+    native_actor_entry *entry=entry_find(o,target);
     if(entry&&entry->operation!=operation) return application_fail(e,QA_ERROR_FORMAT,"Native reaction entry has incompatible declared kinds");
     if(entry&&entry->binding) return true;
     if(!entry) {
+        if(!qa_id_index_reserve(&o->entry_index,1,e))return false;
         entry=calloc(1,sizeof(*entry));
         if(!entry) return application_fail(e,QA_ERROR_MEMORY,"Retaining declared native reaction entry");
         entry->owner=o;entry->address=target;entry->operation=operation;entry->next=o->entries;o->entries=entry;
+        qa_id_index_insert(&o->entry_index,QA_STRING_NONE,target,(size_t)(uintptr_t)entry);
     }
     qa_native_type parameters[6];size_t count=operation==Q3_MOD_THINK?1:operation==Q3_MOD_USE?3:operation==Q3_MOD_TOUCH?4:
         operation==Q3_MOD_PAIN?(o->rerelease?5:4):(o->rerelease?6:5);
@@ -418,6 +426,7 @@ static bool prepare(struct application_native_q2 *n,qa_error *e)
     const qa_actor_registry *registry=qa_session_actors(n->provider->application->session);
     o->actor_storage=application_control_storage_acquire(n->provider->application,e);
     qa_arena *arena=o->actor_storage?qa_unified_frame_lease_arena(o->actor_storage):NULL;
+    o->entry_index.storage=arena;
     if(!arena||!qa_actor_index_create(&o->actor_index,registry,arena,e)||
         !qa_pool_prepare(&o->actor_pool,arena,qa_actors_capacity(registry),
             sizeof(native_actor_storage),_Alignof(native_actor_storage),e))return false;
@@ -468,8 +477,7 @@ static bool actor_touch(native_source_actor *r,const qa_touch_contact *contact,b
     if(!qa_native_entity_address(instance(o),r->slot,&self,e)||
         !pointer_read(o,self+o->offsets[0],&target,e)) return false;
     if(!target) return true;
-    native_actor_entry *entry=o->entries;
-    while(entry&&entry->address!=target) entry=entry->next;
+    native_actor_entry *entry=entry_find(o,target);
     if(!entry||!entry->binding||entry->operation!=Q3_MOD_TOUCH)
         return application_fail(e,QA_ERROR_ARGUMENT,"Declared touch lost its retained original entry");
     native_actor_touch *call=touch_take(o,e);
@@ -540,7 +548,7 @@ static bool canonical_reaction_body(void *context,const application_q3_mod_actor
     native_actor_entry *entry=call->entry;
     if(!call->captured){if(!pointer_read(o,self+o->offsets[kind],&target,e))return false;
         if(!target){*handled=false;return true;}
-        entry=o->entries;while(entry&&entry->address!=target)entry=entry->next;}
+        entry=entry_find(o,target);}
     if(!entry||!entry->binding||entry->operation!=call->operation)return application_fail(e,QA_ERROR_ARGUMENT,"Native reaction lost its exact held original entry");
     double damage=death?request->source.die.damage:request->source.pain.damage,
         kick=death?request->source.die.kick:request->source.pain.kick;
@@ -702,6 +710,7 @@ bool application_native_q2_source_actors_suspend(struct application_native_q2 *n
         if(entry->binding&&!qa_native_unobserve_entry(entry->binding,e)) return false;
         entry->binding=NULL;
     }
+    qa_id_index_clear(&o->entry_index);
     while(o->entries) {native_actor_entry *entry=o->entries;o->entries=entry->next;free(entry);}
     return true;
 }
@@ -717,6 +726,7 @@ bool application_native_q2_source_actors_close(struct application_native_q2 *n,q
     if(!application_native_q2_source_damage_destroy(&o->damage,e))return false;
     if(!application_native_q2_source_combat_state_destroy(&o->combat,e))return false;
     qa_actor_index_destroy(&o->actor_index);
+    qa_id_index_destroy(&o->entry_index);
     qa_unified_frame_lease_release(o->actor_storage);
     free(o);n->source_actors=NULL;return true;
 }

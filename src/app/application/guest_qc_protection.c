@@ -2,6 +2,8 @@
 #include "guest_qc_profile.h"
 #include "guest_mod_item_definition.h"
 #include "guest_qc_armor.h"
+#include "control_frame.h"
+#include "qa/pool.h"
 #include "qa/qc_observation.h"
 #include "qa/text.h"
 #include <float.h>
@@ -24,6 +26,7 @@ struct application_qc_protection_profile {
     qa_qc_inline_region regions[2];
 };
 typedef struct protection_channel {
+    size_t storage_slot;
     struct protection_channel *next,*previous;
     struct protection_channel *actor_next,*actor_previous;
     application_qc_protection *owner;
@@ -40,6 +43,8 @@ typedef struct protection_scope {
     qa_protection_observer *observer;
 } protection_scope;
 struct application_qc_protection {
+    qa_unified_frame_lease *storage;
+    qa_pool channel_pool;
     struct application_qc_state *engine;
     const application_qc_protection_profile *profile;
     protection_channel *channels;
@@ -291,14 +296,17 @@ static protection_channel *actor_first(application_qc_protection *owner,qa_actor
 }
 static void channel_reclaim(protection_channel *row)
 {
-    if(row->retired&&!row->calls)free(row);
+    if(row->retired&&!row->calls)qa_pool_release(&row->owner->channel_pool,row->storage_slot);
 }
 static protection_channel *channel_create(application_qc_protection *owner,qa_actor_id actor,
     uint32_t client,size_t definition,qa_error *error)
 {
-    protection_channel *row=calloc(1,sizeof(*row));
+    if(owner->channel_pool.head==SIZE_MAX&&!qa_pool_extend(&owner->channel_pool,
+        qa_unified_frame_lease_arena(owner->storage),owner->channel_pool.first_capacity,error))return NULL;
+    size_t storage_slot;
+    protection_channel *row=qa_pool_take(&owner->channel_pool,&storage_slot);
     if(!row){fail(error,QA_ERROR_MEMORY,"Owning QC protection callback context");return NULL;}
-    *row=(protection_channel){.next=owner->channels,.actor_next=actor_first(owner,actor),.owner=owner,.actor=actor,.client=client,
+    *row=(protection_channel){.storage_slot=storage_slot,.next=owner->channels,.actor_next=actor_first(owner,actor),.owner=owner,.actor=actor,.client=client,
         .definition=definition};
     if(row->actor_next)row->actor_next->actor_previous=row;
     if(row->next)row->next->previous=row;
@@ -509,11 +517,20 @@ bool application_qc_protection_create(struct application_qc_state *engine, qa_er
     if (!owner) return fail(error, QA_ERROR_MEMORY, "Owning QC protection callback contexts");
     owner->engine = engine; owner->profile = qualified->protection;
     const qa_actor_registry *registry=qa_session_actors(engine->services.session);
-    bool prepared=true;
+    size_t count=qa_actors_capacity(registry);
+    if(count>SIZE_MAX/owner->profile->count){
+        free(owner);return fail(error,QA_ERROR_MEMORY,"QC protection binding storage is too large");
+    }
+    count*=owner->profile->count;
+    owner->storage=application_control_storage_acquire(engine->provider->application,error);
+    qa_arena *arena=owner->storage?qa_unified_frame_lease_arena(owner->storage):NULL;
+    bool prepared=arena&&qa_pool_prepare(&owner->channel_pool,arena,count,
+        sizeof(protection_channel),_Alignof(protection_channel),error);
     for(size_t i=0;prepared&&i<owner->profile->count;++i)
-        prepared=qa_actor_index_create(owner->indexes+i,registry,NULL,error);
+        prepared=qa_actor_index_create(owner->indexes+i,registry,arena,error);
     if(!prepared){
         for(size_t i=0;i<owner->profile->count;++i)qa_actor_index_destroy(owner->indexes+i);
+        qa_unified_frame_lease_release(owner->storage);
         free(owner);return false;
     }
     engine->protection = owner;
@@ -619,6 +636,7 @@ bool application_qc_protection_destroy(struct application_qc_state *engine, qa_e
     if(engine->protection){
         for(size_t i=0;i<engine->protection->profile->count;++i)
             qa_actor_index_destroy(engine->protection->indexes+i);
+        qa_unified_frame_lease_release(engine->protection->storage);
     }
     free(engine->protection); engine->protection = NULL; return true;
 }

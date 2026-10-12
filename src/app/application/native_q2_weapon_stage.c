@@ -3,6 +3,7 @@
 #include "qa/native_observe.h"
 #include "qa/binary.h"
 #include "qa/pool.h"
+#include "qa/id_index.h"
 #include "qa/source_save.h"
 #include <math.h>
 #include <stdlib.h>
@@ -92,6 +93,7 @@ struct application_native_q2_weapon_stage {
     stage_projection *projections;
     stage_actor *actors;
     qa_actor_index actor_index;
+    qa_id_index dispatcher_index;
     qa_pool actor_pool;
     qa_unified_frame_lease *actor_storage;
     size_t actor_chunk;
@@ -353,9 +355,11 @@ static bool dispatch_call(void *context,qa_native_instance *native,qa_native_ent
         return fail(e,QA_ERROR_ARGUMENT,"Native weapon dispatcher retains an unfinished source projection");
     const qa_native_value *argument=arguments+o->argument; stage_actor *a=NULL;
     if(argument->type!=QA_NATIVE_ADDRESS) return fail(e,QA_ERROR_FORMAT,"Native weapon dispatcher received another ABI type");
-    for(stage_actor *row=o->actors;argument->as.address&&row;row=row->next) if(row->dispatcher==argument->as.address) {
-        if(!current(row,e)) return false;
-        a=row; break;
+    qa_id_index_entry *row=argument->as.address?
+        qa_id_index_find(&o->dispatcher_index,QA_STRING_NONE,argument->as.address):NULL;
+    if(row) {
+        a=(stage_actor *)(uintptr_t)row->value;
+        if(!current(a,e)) return false;
     }
     if(!a) return qa_native_invoke_original(binding,arguments,count,result,e);
     stage_dispatch frame={.previous=o->dispatch,.actor=a,.projection_base=o->projections};
@@ -504,6 +508,7 @@ bool application_native_q2_weapon_stage_admit(application_native_q2_weapon_stage
     if(!a) {
         qa_native_address address;
         if(!o->options.actor_current(o->options.context,actor,e)||!application_native_q2_callbacks_record(o->options.callbacks,actor,o->record,&address,e)) return false;
+        if(!qa_id_index_reserve(&o->dispatcher_index,1,e))return false;
         if(o->actor_pool.head==SIZE_MAX&&!qa_pool_extend(&o->actor_pool,
             qa_unified_frame_lease_arena(o->actor_storage),o->actor_chunk,e))return false;
         size_t slot;
@@ -513,6 +518,7 @@ bool application_native_q2_weapon_stage_admit(application_native_q2_weapon_stage
         if(o->actors)o->actors->previous=a;
         o->actors=a;
         qa_actor_index_put(&o->actor_index,actor,(size_t)(uintptr_t)a);
+        qa_id_index_insert(&o->dispatcher_index,QA_STRING_NONE,address,(size_t)(uintptr_t)a);
     }
     if(!current(a,e)) return false;
     if(!a->watch_count) {
@@ -671,8 +677,10 @@ bool application_native_q2_weapon_stage_create(const application_native_q2_weapo
     o->actor_chunk=qa_actors_capacity(registry);
     o->actor_storage=application_control_storage_acquire(options->application,e);
     qa_arena *storage=o->actor_storage?qa_unified_frame_lease_arena(o->actor_storage):NULL;
+    o->dispatcher_index.storage=storage;
     if(!o->actor_storage||!qa_actor_index_create(&o->actor_index,registry,storage,e)||
         !qa_pool_prepare(&o->actor_pool,storage,o->actor_chunk,sizeof(stage_actor),_Alignof(stage_actor),e)||
+        !qa_id_index_reserve(&o->dispatcher_index,o->actor_chunk,e)||
         !stage_prepare(o,e)) {
         qa_error cleanup={0};
         if(!application_native_q2_weapon_stage_destroy(&o,&cleanup)) *out=o;
@@ -705,6 +713,7 @@ bool application_native_q2_weapon_stage_release(application_native_q2_weapon_sta
     if(a->previous)a->previous->next=a->next;else o->actors=a->next;
     if(a->next)a->next->previous=a->previous;
     qa_actor_index_remove(&o->actor_index,actor);
+    qa_id_index_remove_value(&o->dispatcher_index,QA_STRING_NONE,a->dispatcher,(size_t)(uintptr_t)a);
     qa_pool_release(&o->actor_pool,a->storage_slot);
     return true;
 }
@@ -744,6 +753,7 @@ bool application_native_q2_weapon_stage_destroy(application_native_q2_weapon_sta
         free(rows->tests); free(rows->ends);
     }
     qa_actor_index_destroy(&o->actor_index);
+    qa_id_index_destroy(&o->dispatcher_index);
     qa_unified_frame_lease_release(o->actor_storage);
     free(o->regions); free(o->choices); free(o->parameters); free(o); *owner=NULL; return true;
 }

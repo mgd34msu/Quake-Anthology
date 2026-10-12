@@ -2,6 +2,7 @@
 #include "native_q2_records.h"
 #include "qa/native_observe.h"
 #include "qa/pool.h"
+#include "qa/network_unified_frame_pool.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -36,7 +37,7 @@ typedef struct item_actor {
     qa_actor_id actor;
     qa_inventory_lease lease;
     item_watch *watches;
-    size_t watch_count;
+    size_t watch_count,storage_slot;
     qa_inventory_entry *previous;
     unsigned entered;
     bool admitting,releasing,ready,restore_inventory;
@@ -51,12 +52,13 @@ struct application_native_q2_item_receipt {
 };
 struct application_native_q2_items {
     qa_arena receipt_storage;
-    qa_pool receipt_pool;
+    qa_pool receipt_pool,actor_pool;
     application_native_q2_items_options options;
     qa_item_admission *admissions;
     item_definition *definitions;
     item_storage *storage;
     size_t count,storage_count;
+    size_t actor_stride,previous_offset,watches_offset;
     qa_json_id weapon_stage;
     item_actor *actors;
     qa_actor_index actor_index;
@@ -183,9 +185,11 @@ static bool changed(item_actor *a,qa_item_id canonical,size_t storage,qa_error *
     bool valid;
     if(!current_read(a,&valid,e)) return false;
     if(!valid) return true;
-    qa_inventory_entry *after=o->count?calloc(o->count,sizeof(*after)):NULL;
-    qa_inventory_change *changes=o->count?calloc(o->count,sizeof(*changes)):NULL;
-    if(o->count&&(!after||!changes)) { free(after); free(changes); qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining native committed item values"); return false; }
+    qa_unified_frame_lease *storage_lease=application_native_q2_callbacks_storage_acquire(o->options.callbacks,e);
+    if(!storage_lease) return false;
+    qa_inventory_entry *after=o->count?qa_unified_frame_lease_alloc(storage_lease,o->count,sizeof(*after),_Alignof(qa_inventory_entry),e):NULL;
+    qa_inventory_change *changes=o->count?qa_unified_frame_lease_alloc(storage_lease,o->count,sizeof(*changes),_Alignof(qa_inventory_change),e):NULL;
+    if(o->count&&(!after||!changes)) { qa_unified_frame_lease_release(storage_lease); return false; }
     memcpy(after,a->previous,o->count*sizeof(*after));
     bool ok=true; size_t count=0;
     for(size_t i=0;ok&&i<o->storage_count;++i)
@@ -204,7 +208,7 @@ static bool changed(item_actor *a,qa_item_id canonical,size_t storage,qa_error *
         --o->calls; --a->entered;
         if(ok&&count) ok=current(a,e);
     }
-    free(after); free(changes); return ok;
+    qa_unified_frame_lease_release(storage_lease); return ok;
 }
 static size_t count_binding(void *context)
 { return ((item_actor *)context)->owner->count; }
@@ -359,7 +363,7 @@ static bool create_layout(const application_native_q2_items_options *options,app
     application_native_q2_items *o=calloc(1,sizeof(*o));
     if(!o) { qa_error_set(e,QA_ERROR_MEMORY,0,"Owning native item declaration"); return false; }
     *out=o; o->options=*options; o->count=qa_json_size(d,defs); o->storage_count=qa_json_size(d,storage);
-    if(!qa_actor_index_create(&o->actor_index,qa_session_actors(options->session),NULL,e)) return false;
+    if(!qa_actor_index_create(&o->actor_index,qa_session_actors(options->session),&o->receipt_storage,e)) return false;
     o->weapon_stage=qa_json_get(d,items,"weapons");
     o->definitions=calloc(o->count,sizeof(*o->definitions)); o->admissions=calloc(o->count,sizeof(*o->admissions));
     o->storage=o->storage_count?calloc(o->storage_count,sizeof(*o->storage)):NULL;
@@ -435,6 +439,39 @@ static bool create_layout(const application_native_q2_items_options *options,app
     }
     return occupied(o,e);
 }
+static bool actor_storage_prepare(application_native_q2_items *o,qa_error *e)
+{
+    size_t maximum=0;
+    for(size_t i=0;i<o->storage_count;++i) {
+        size_t n=o->storage[i].bit_count||o->storage[i].capacity_kind==ITEM_CONSTANT?1u:2u;
+        if(n>SIZE_MAX-maximum) return fail(e,"Native item watch count overflows");
+        maximum+=n;
+    }
+    size_t alignment=_Alignof(qa_inventory_entry),bytes=sizeof(item_actor);
+    if(bytes>SIZE_MAX-(alignment-1)) {
+        qa_error_set(e,QA_ERROR_MEMORY,0,"Native item actor storage overflows"); return false;
+    }
+    o->previous_offset=(bytes+alignment-1)&~(alignment-1);
+    if(o->count>(SIZE_MAX-o->previous_offset)/sizeof(qa_inventory_entry)) {
+        qa_error_set(e,QA_ERROR_MEMORY,0,"Native item actor storage overflows"); return false;
+    }
+    bytes=o->previous_offset+o->count*sizeof(qa_inventory_entry); alignment=_Alignof(item_watch);
+    if(bytes>SIZE_MAX-(alignment-1)) {
+        qa_error_set(e,QA_ERROR_MEMORY,0,"Native item actor storage overflows"); return false;
+    }
+    o->watches_offset=(bytes+alignment-1)&~(alignment-1);
+    if(maximum>(SIZE_MAX-o->watches_offset)/sizeof(item_watch)) {
+        qa_error_set(e,QA_ERROR_MEMORY,0,"Native item actor storage overflows"); return false;
+    }
+    o->actor_stride=o->watches_offset+maximum*sizeof(item_watch);
+    size_t capacity=qa_actors_capacity(qa_session_actors(o->options.session));
+    if(alignment<_Alignof(item_actor)) alignment=_Alignof(item_actor);
+    if(alignment<_Alignof(qa_inventory_entry)) alignment=_Alignof(qa_inventory_entry);
+    return qa_id_index_reserve(&o->actor_index.retained,capacity,e)&&
+        qa_pool_prepare(&o->actor_pool,&o->receipt_storage,capacity,o->actor_stride,alignment,e);
+}
+static void actor_free(item_actor *a)
+{ qa_pool_release(&a->owner->actor_pool,a->storage_slot); }
 bool application_native_q2_items_create(const application_native_q2_items_options *options,application_native_q2_items **out,qa_error *e)
 {
     if(!out||*out) return fail(e,"Native items construction requires an empty destination");
@@ -443,30 +480,23 @@ bool application_native_q2_items_create(const application_native_q2_items_option
         /* Layout parsing installs no actor leases or write subscriptions. */
         (void)application_native_q2_items_destroy(&o,NULL);return false;
     }
-    qa_arena_init(&o->receipt_storage, 0);
-    if (!qa_pool_prepare(&o->receipt_pool, &o->receipt_storage, NQR_CALL_DEPTH,
+    if (!actor_storage_prepare(o,e)||!qa_pool_prepare(&o->receipt_pool, &o->receipt_storage, NQR_CALL_DEPTH,
         sizeof(application_native_q2_item_receipt), _Alignof(application_native_q2_item_receipt), e)) {
         (void)application_native_q2_items_destroy(&o, NULL);
         return false;
     }
-    qa_arena_seal(&o->receipt_storage);
     *out=o;return true;
 }
 static bool actor_prepare_layout(application_native_q2_items *o,qa_actor_id actor,item_actor **out,qa_error *e)
 {
     if(!application_native_q2_callbacks_client_current(o->options.callbacks,actor,e)) return false;
-    item_actor *a=calloc(1,sizeof(*a));
+    if(o->actor_pool.head==SIZE_MAX&&!qa_pool_extend(&o->actor_pool,&o->receipt_storage,1,e)) return false;
+    size_t slot; item_actor *a=qa_pool_take(&o->actor_pool,&slot);
     if(!a) { qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining native source item actor"); return false; }
-    a->owner=o; a->actor=actor; a->admitting=true; *out=a;
-    a->previous=calloc(o->count,sizeof(*a->previous));
-    size_t maximum=0;
-    for(size_t i=0;i<o->storage_count;++i) {
-        size_t n=o->storage[i].bit_count||o->storage[i].capacity_kind==ITEM_CONSTANT?1u:2u;
-        if(n>SIZE_MAX-maximum) return fail(e,"Native item watch count overflows");
-        maximum+=n;
-    }
-    a->watches=maximum?calloc(maximum,sizeof(*a->watches)):NULL;
-    if(!a->previous||(maximum&&!a->watches)) { qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining native item words and watches"); return false; }
+    memset(a,0,o->actor_stride);
+    a->owner=o; a->actor=actor; a->admitting=true; a->storage_slot=slot; *out=a;
+    a->previous=(qa_inventory_entry *)((uint8_t *)a+o->previous_offset);
+    a->watches=o->storage_count?(item_watch *)((uint8_t *)a+o->watches_offset):NULL;
     for(size_t i=0;i<o->storage_count;++i) {
         item_storage *s=o->storage+i;
         if(!storage_read(a,i,a->previous+storage_index(o,i),e)) return false;
@@ -485,11 +515,11 @@ static bool actor_prepare(application_native_q2_items *o,qa_actor_id actor,item_
 {
     item_actor *a=NULL;
     if(!actor_prepare_layout(o,actor,&a,e)) {
-        if(a) {free(a->previous);free(a->watches);free(a);}
+        if(a) actor_free(a);
         return false;
     }
     if(!qa_actor_index_remember(&o->actor_index,actor,(size_t)(uintptr_t)a,e)) {
-        free(a->previous);free(a->watches);free(a);return false;
+        actor_free(a);return false;
     }
     a->next=o->actors;o->actors=a;*out=a;return true;
 }
@@ -524,7 +554,7 @@ bool application_native_q2_items_admit(application_native_q2_items *o,qa_actor_i
         while(*link&&*link!=a) link=&(*link)->next;
         if(*link==a) *link=a->next;
         qa_actor_index_forget_retained(&o->actor_index,actor);
-        free(a->previous);free(a->watches);free(a);return false;
+        actor_free(a);return false;
     }
     a->admitting=false;
     return actor_watch(a,e);
@@ -586,7 +616,7 @@ bool application_native_q2_items_release(application_native_q2_items *o,qa_actor
     if(a->lease.serial&&qa_inventory_lease_current(o->options.inventory,a->lease)&&!qa_inventory_close_items(o->options.inventory,a->lease,e)) return false;
     item_actor **link=&o->actors; while(*link!=a) link=&(*link)->next; *link=a->next;
     qa_actor_index_forget_retained(&o->actor_index,actor);
-    free(a->previous); free(a->watches); free(a); return true;
+    actor_free(a); return true;
 }
 bool application_native_q2_items_inventory_group(application_native_q2_items *o,qa_actor_id actor,uint64_t serial,
     const qa_inventory_source_group *saved,qa_inventory_items *out,qa_error *e)

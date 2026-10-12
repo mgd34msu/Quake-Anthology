@@ -70,6 +70,8 @@ bool application_native_q2_callbacks_pickup_saved_rule(struct application_native
 bool application_native_q2_callbacks_inventory_group(struct application_native_q2 *,qa_actor_id,uint64_t,
     const qa_inventory_source_group *,qa_inventory_items *,qa_error *);
 qa_native_instance *application_native_q2_callbacks_instance(application_native_q2_callbacks *);
+struct qa_unified_frame_lease *application_native_q2_callbacks_storage_acquire(
+    application_native_q2_callbacks *, qa_error *);
 bool application_native_q2_callbacks_scalar_read(application_native_q2_callbacks *,
     qa_native_address, qa_native_value_type, double *, qa_error *);
 bool application_native_q2_callbacks_scalar_write(application_native_q2_callbacks *,

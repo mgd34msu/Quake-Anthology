@@ -1785,6 +1785,9 @@ bool application_native_q2_callbacks_inventory_group(struct application_native_q
 }
 qa_native_instance *application_native_q2_callbacks_instance(application_native_q2_callbacks *o)
 { return o?instance(o):NULL; }
+qa_unified_frame_lease *application_native_q2_callbacks_storage_acquire(
+    application_native_q2_callbacks *o,qa_error *e)
+{ return application_control_storage_acquire(o->engine->provider->application,e); }
 static size_t scalar_bytes(qa_native_value_type type)
 {
     switch(type) {

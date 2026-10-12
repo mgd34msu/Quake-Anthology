@@ -2,6 +2,8 @@
 #include "guest_qc_items.h"
 #include "guest_mod_item_definition.h"
 #include "guest_qc_protection.h"
+#include "control_frame.h"
+#include "qa/pool.h"
 #include <float.h>
 typedef struct qc_pickup_definition {
     uint32_t id;
@@ -15,16 +17,18 @@ typedef struct qc_pickup_definition {
 struct application_qc_pickups { qc_pickup_definition *rules;size_t count; };
 typedef struct qc_pickup_bound { struct application_qc_pickup_actor *actor;const qc_pickup_definition *definition; } qc_pickup_bound;
 struct application_qc_pickup_actor {
+    size_t storage_slot;
     struct application_qc_state *engine;
     qa_actor_id actor;
     int32_t reference;
     qa_pickup_lease lease;
-    qa_pickup_rule *rules;
     qc_pickup_bound *bindings;
     unsigned calls;
     struct application_qc_pickup_actor *next;
 };
 struct application_qc_pickup_store {
+    qa_unified_frame_lease *storage;
+    qa_pool actors;
     qa_actor_index index;
     struct application_qc_pickup_actor *head;
 };
@@ -36,7 +40,18 @@ bool application_qc_pickups_create(struct application_qc_state *engine,qa_error 
     struct application_qc_pickup_store *store=calloc(1,sizeof(*store));
     if(!store)return application_fail(e,QA_ERROR_MEMORY,"Owning QC pickup binding store");
     const qa_actor_registry *registry=qa_session_actors(engine->services.session);
-    if(!qa_actor_index_create(&store->index,registry,NULL,e)){
+    size_t stride=sizeof(struct application_qc_pickup_actor);
+    if(p->count>(SIZE_MAX-stride)/sizeof(qc_pickup_bound)){
+        free(store);return application_fail(e,QA_ERROR_MEMORY,"QC pickup binding storage is too large");
+    }
+    stride+=p->count*sizeof(qc_pickup_bound);
+    store->storage=application_control_storage_acquire(engine->provider->application,e);
+    qa_arena *arena=store->storage?qa_unified_frame_lease_arena(store->storage):NULL;
+    if(!arena||!qa_actor_index_create(&store->index,registry,arena,e)||
+        !qa_pool_prepare(&store->actors,arena,qa_actors_capacity(registry),stride,
+            _Alignof(struct application_qc_pickup_actor),e)){
+        qa_actor_index_destroy(&store->index);
+        qa_unified_frame_lease_release(store->storage);
         free(store);return false;
     }
     engine->pickup_store=store;return true;
@@ -45,6 +60,7 @@ void application_qc_pickups_destroy(struct application_qc_state *engine)
 {
     if(!engine->pickup_store)return;
     qa_actor_index_destroy(&engine->pickup_store->index);
+    qa_unified_frame_lease_release(engine->pickup_store->storage);
     free(engine->pickup_store);engine->pickup_store=NULL;
 }
 static bool storage_declared(application_provider *provider,const qa_pickup_write *write,qa_error *e)
@@ -129,6 +145,12 @@ static bool take(void *context,const qa_pickup_offer *offer,qa_pickup_execution 
     if(ok)*out=accepted?QA_PICKUP_ACCEPTED:QA_PICKUP_REFUSED;
     --a->calls;return ok;
 }
+static qa_pickup_rule bound_rule(struct application_qc_pickup_actor *a,size_t index)
+{
+    const qc_pickup_definition *v=a->bindings[index].definition;
+    return (qa_pickup_rule){.id=v->id,.offered=v->offered,.offered_count=v->offered_count,
+        .writes=v->writes,.write_count=v->write_count,.context=a->bindings+index,.take=take};
+}
 static struct application_qc_pickup_actor *find(struct application_qc_state *engine,qa_actor_id actor)
 {
     size_t slot;struct application_qc_pickup_store *store=engine->pickup_store;
@@ -136,19 +158,37 @@ static struct application_qc_pickup_actor *find(struct application_qc_state *eng
     struct application_qc_pickup_actor *a=(struct application_qc_pickup_actor *)(uintptr_t)slot;
     return a->lease.serial?a:NULL;
 }
+static void released_sweep(struct application_qc_state *engine)
+{
+    if(!qa_pickups_idle(engine->services.pickups))return;
+    struct application_qc_pickup_store *store=engine->pickup_store;
+    struct application_qc_pickup_actor **link=&store->head;
+    while(*link){
+        struct application_qc_pickup_actor *a=*link;
+        if(a->lease.serial||a->calls){link=&a->next;continue;}
+        size_t row;
+        if(qa_actor_index_find(&store->index,a->actor,&row)&&row==(size_t)(uintptr_t)a)
+            qa_actor_index_remove(&store->index,a->actor);
+        *link=a->next;
+        qa_pool_release(&store->actors,a->storage_slot);
+    }
+}
 static struct application_qc_pickup_actor *create(struct application_qc_state *engine,qa_actor_id actor,qa_error *e)
 {
     const struct application_qc_pickups *p=engine->provider->state.qc.qualified->pickups;
     struct application_qc_pickup_store *store=engine->pickup_store;
-    struct application_qc_pickup_actor *a=calloc(1,sizeof(*a));
+    released_sweep(engine);
+    if(store->actors.head==SIZE_MAX&&!qa_pool_extend(&store->actors,
+        qa_unified_frame_lease_arena(store->storage),store->index.capacity,e))return NULL;
+    size_t storage_slot;
+    struct application_qc_pickup_actor *a=qa_pool_take(&store->actors,&storage_slot);
     if(!a){application_fail(e,QA_ERROR_MEMORY,"Owning actual QC pickup registration");return NULL;}
-    a->engine=engine;a->actor=actor;
-    a->rules=calloc(p->count,sizeof(*a->rules));a->bindings=calloc(p->count,sizeof(*a->bindings));
-    if(!a->rules||!a->bindings||!application_qc_reference(engine,actor,&a->reference,e)||!physical_current(a,e)){
-        free(a->rules);free(a->bindings);free(a);return NULL;
+    *a=(struct application_qc_pickup_actor){.storage_slot=storage_slot,.engine=engine,.actor=actor};
+    a->bindings=(qc_pickup_bound *)(a+1);
+    if(!application_qc_reference(engine,actor,&a->reference,e)||!physical_current(a,e)){
+        qa_pool_release(&store->actors,storage_slot);return NULL;
     }
-    for(size_t i=0;i<p->count;++i){const qc_pickup_definition *v=p->rules+i;a->bindings[i]=(qc_pickup_bound){a,v};
-        a->rules[i]=(qa_pickup_rule){.id=v->id,.offered=v->offered,.offered_count=v->offered_count,.writes=v->writes,.write_count=v->write_count,.context=a->bindings+i,.take=take};}
+    for(size_t i=0;i<p->count;++i)a->bindings[i]=(qc_pickup_bound){a,p->rules+i};
     a->next=store->head;store->head=a;
     qa_actor_index_put(&store->index,actor,(size_t)(uintptr_t)a);return a;
 }
@@ -158,7 +198,14 @@ bool application_qc_pickups_admit(struct application_qc_state *engine,qa_actor_i
     struct application_qc_pickup_actor *a=find(engine,actor);
     if(a)return physical_current(a,e)&&qa_pickups_registration_current(engine->services.pickups,a->lease,engine->provider->owner);
     a=create(engine,actor,e);if(!a)return false;
-    return qa_pickups_bind(engine->services.pickups,actor,engine->provider->owner,a->rules,engine->provider->state.qc.qualified->pickups->count,&a->lease,e);
+    size_t count=engine->provider->state.qc.qualified->pickups->count;
+    qa_unified_frame_lease *storage=application_control_storage_acquire(engine->provider->application,e);
+    if(!storage)return false;
+    qa_pickup_rule *rules=qa_unified_frame_lease_alloc(storage,count,sizeof(*rules),_Alignof(qa_pickup_rule),e);
+    if(!rules){qa_unified_frame_lease_release(storage);return false;}
+    for(size_t i=0;i<count;++i)rules[i]=bound_rule(a,i);
+    bool ok=qa_pickups_bind(engine->services.pickups,actor,engine->provider->owner,rules,count,&a->lease,e);
+    qa_unified_frame_lease_release(storage);return ok;
 }
 bool application_qc_pickups_release(struct application_qc_state *engine,qa_actor_id actor,qa_error *e)
 {
@@ -180,7 +227,7 @@ bool application_qc_pickups_close(struct application_qc_state *engine,qa_error *
         if(qa_actor_index_find(&store->index,a->actor,&row)&&row==(size_t)(uintptr_t)a)
             qa_actor_index_remove(&store->index,a->actor);
         store->head=a->next;
-        free(a->rules);free(a->bindings);free(a);
+        qa_pool_release(&store->actors,a->storage_slot);
     }return true;
 }
 bool application_qc_pickups_saved_rule(application_provider *provider,qa_actor_id actor,qa_actor_owner owner,uint64_t serial,uint32_t id,qa_pickup_rule *out,qa_error *e)
@@ -190,7 +237,7 @@ bool application_qc_pickups_saved_rule(application_provider *provider,qa_actor_i
     struct application_qc_pickup_actor *a=find(engine,actor);
     if(a&&a->lease.serial!=serial)return application_fail(e,QA_ERROR_FORMAT,"Saved QC pickup duplicates full actor ownership");
     if(!a){a=create(engine,actor,e);if(!a)return false;a->lease=(qa_pickup_lease){actor,serial};}
-    for(size_t i=0;i<p->count;++i)if(a->rules[i].id==id){*out=a->rules[i];return true;}
+    for(size_t i=0;i<p->count;++i)if(p->rules[i].id==id){*out=bound_rule(a,i);return true;}
     return application_fail(e,QA_ERROR_FORMAT,"Saved QC pickup rule is absent from the actual declaration");
 }
 

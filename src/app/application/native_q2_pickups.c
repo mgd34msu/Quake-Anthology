@@ -29,7 +29,7 @@ struct pickup_actor {
     qa_pickup_lease lease;
     qa_pickup_rule *rules;
     pickup_rule_context *contexts;
-    size_t rule_count;
+    size_t rule_count,storage_slot;
     unsigned entered;
     bool releasing,closed;
 };
@@ -41,6 +41,7 @@ typedef struct pickup_call {
     qa_pickup_execution *execution;
     application_native_callback_inputs inputs;
     application_native_q2_pickup_scope *watch;
+    qa_unified_frame_lease *storage;
     pickup_saved *saved;
     size_t saved_count;
     qa_pickup_outcome outcome;
@@ -52,6 +53,9 @@ struct application_native_q2_pickups {
     size_t count,bound_count;
     pickup_actor *actors;
     qa_actor_index actor_index;
+    qa_arena actor_storage;
+    qa_pool actor_pool;
+    size_t actor_stride,rules_offset,contexts_offset,actor_alignment;
     pickup_call *pending;
     unsigned calls;
     uint8_t pointer_bytes;
@@ -327,10 +331,14 @@ static bool take(void *context,const qa_pickup_offer *offer,qa_pickup_execution 
         [Q3_MOD_PICKUP_COUNT]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=offer->override_count?offer->count:0},
         [Q3_MOD_PICKUP_HAS_COUNT]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=offer->override_count?1:0},
         [Q3_MOD_PICKUP_DROPPED]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=offer->dropped?1:0}};
-    pickup_call *call=calloc(1,sizeof(*call));
-    if(!call) return fail(e,QA_ERROR_MEMORY,"Retaining native pickup source execution");
-    call->saved=rule->definition->field_count?calloc(rule->definition->field_count,sizeof(*call->saved)):NULL;
-    if(rule->definition->field_count&&!call->saved) { free(call); return fail(e,QA_ERROR_MEMORY,"Owning native pickup context restoration"); }
+    qa_unified_frame_lease *storage=application_native_q2_callbacks_storage_acquire(o->options.callbacks,e);
+    if(!storage) return false;
+    pickup_call *call=qa_unified_frame_lease_alloc(storage,1,sizeof(*call),_Alignof(pickup_call),e);
+    if(!call) { qa_unified_frame_lease_release(storage); return false; }
+    call->storage=storage;
+    call->saved=rule->definition->field_count?qa_unified_frame_lease_alloc(storage,rule->definition->field_count,
+        sizeof(*call->saved),_Alignof(pickup_saved),e):NULL;
+    if(rule->definition->field_count&&!call->saved) { qa_unified_frame_lease_release(storage); return false; }
     call->rule=rule; call->pickup=offer->pickup; call->execution=execution;
     call->inputs=(application_native_callback_inputs){values,{0}};
     call->executing=true; call->next=o->pending; o->pending=call; ++o->calls; ++a->entered;
@@ -352,19 +360,48 @@ static bool take(void *context,const qa_pickup_offer *offer,qa_pickup_execution 
     if(closed) {
         pickup_call **link=&o->pending; while(*link&&*link!=call) link=&(*link)->next;
         if(*link) *link=call->next;
-        free(call->saved); free(call);
+        qa_unified_frame_lease_release(call->storage);
     }
     if(ok&&!closed&&e) *e=close;
     else if(!ok&&e) *e=original;
     return ok&&closed;
 }
-static pickup_actor *actor_new(application_native_q2_pickups *o,qa_actor_id actor,qa_error *e)
+static bool actor_layout(application_native_q2_pickups *o,qa_error *e)
 {
-    pickup_actor *a=calloc(1,sizeof(*a));
+    size_t bytes=sizeof(pickup_actor),alignment=_Alignof(qa_pickup_rule);
+    if(bytes>SIZE_MAX-(alignment-1)) return fail(e,QA_ERROR_MEMORY,"Native pickup actor storage overflows");
+    o->rules_offset=(bytes+alignment-1)&~(alignment-1);
+    if(o->bound_count>(SIZE_MAX-o->rules_offset)/sizeof(qa_pickup_rule))
+        return fail(e,QA_ERROR_MEMORY,"Native pickup actor storage overflows");
+    bytes=o->rules_offset+o->bound_count*sizeof(qa_pickup_rule); alignment=_Alignof(pickup_rule_context);
+    if(bytes>SIZE_MAX-(alignment-1)) return fail(e,QA_ERROR_MEMORY,"Native pickup actor storage overflows");
+    o->contexts_offset=(bytes+alignment-1)&~(alignment-1);
+    if(o->count>(SIZE_MAX-o->contexts_offset)/sizeof(pickup_rule_context))
+        return fail(e,QA_ERROR_MEMORY,"Native pickup actor storage overflows");
+    o->actor_stride=o->contexts_offset+o->count*sizeof(pickup_rule_context);
+    if(alignment<_Alignof(pickup_actor)) alignment=_Alignof(pickup_actor);
+    if(alignment<_Alignof(qa_pickup_rule)) alignment=_Alignof(qa_pickup_rule);
+    o->actor_alignment=alignment; return true;
+}
+static bool actor_storage_prepare(application_native_q2_pickups *o,qa_actor_index *index,
+    qa_pool *pool,qa_arena *storage,qa_error *e)
+{
+    const qa_actor_registry *actors=qa_session_actors(o->options.session);
+    size_t capacity=qa_actors_capacity(actors);
+    return qa_actor_index_create(index,actors,storage,e)&&
+        qa_id_index_reserve(&index->retained,capacity,e)&&
+        qa_pool_prepare(pool,storage,capacity,o->actor_stride,o->actor_alignment,e);
+}
+static pickup_actor *actor_new(application_native_q2_pickups *o,qa_pool *pool,
+    qa_arena *storage,qa_actor_id actor,qa_error *e)
+{
+    if(pool->head==SIZE_MAX&&!qa_pool_extend(pool,storage,1,e)) return NULL;
+    size_t slot; pickup_actor *a=qa_pool_take(pool,&slot);
     if(!a) { fail(e,QA_ERROR_MEMORY,"Owning native pickup recipient"); return NULL; }
-    a->rules=calloc(o->count,sizeof(*a->rules)); a->contexts=calloc(o->count,sizeof(*a->contexts));
-    if(!a->rules||!a->contexts) { free(a->rules); free(a->contexts); free(a); fail(e,QA_ERROR_MEMORY,"Owning native pickup actor rules"); return NULL; }
-    a->owner=o; a->actor=actor;
+    memset(a,0,o->actor_stride);
+    a->rules=o->bound_count?(qa_pickup_rule *)((uint8_t *)a+o->rules_offset):NULL;
+    a->contexts=o->count?(pickup_rule_context *)((uint8_t *)a+o->contexts_offset):NULL;
+    a->owner=o; a->actor=actor; a->storage_slot=slot;
     for(size_t i=0;i<o->count;++i) {
         pickup_definition *r=o->definitions+i; a->contexts[i]=(pickup_rule_context){a,r};
         if(!r->write_count) continue;
@@ -373,7 +410,7 @@ static pickup_actor *actor_new(application_native_q2_pickups *o,qa_actor_id acto
     }
     return a;
 }
-static void actor_free(pickup_actor *a) { free(a->rules); free(a->contexts); free(a); }
+static void actor_free(qa_pool *pool,pickup_actor *a) { qa_pool_release(pool,a->storage_slot); }
 static void definitions_free(application_native_q2_pickups *o)
 {
     for(size_t i=0;i<o->count;++i) {
@@ -389,8 +426,7 @@ bool application_native_q2_pickups_create(const application_native_q2_pickups_op
     application_native_q2_pickups *o=calloc(1,sizeof(*o));
     if(!o) return fail(e,QA_ERROR_MEMORY,"Owning native pickups");
     o->options=*options; const qa_json_document *d=document(o); qa_json_id root=qa_json_root(d),rows=qa_json_get(d,root,"pickups");
-    bool ok=qa_actor_index_create(&o->actor_index,qa_session_actors(options->session),NULL,e)&&
-        (rows==QA_JSON_NONE||qa_json_type(d,rows)==QA_JSON_ARRAY);
+    bool ok=rows==QA_JSON_NONE||qa_json_type(d,rows)==QA_JSON_ARRAY;
     o->count=qa_json_size(d,rows); uint32_t width=0;
     if(ok) ok=word(d,qa_json_get(d,qa_json_get(d,qa_json_get(d,root,"target"),"abi"),"pointerBytes"),&width,e)&&(width==4||width==8);
     o->pointer_bytes=(uint8_t)width;
@@ -405,8 +441,9 @@ bool application_native_q2_pickups_create(const application_native_q2_pickups_op
         ok=parse_definition(o,i,qa_json_at(d,rows,i),e);
         if(ok&&o->definitions[i].write_count) ++o->bound_count;
     }
+    if(ok) ok=actor_layout(o,e)&&actor_storage_prepare(o,&o->actor_index,&o->actor_pool,&o->actor_storage,e);
     if(!ok) {
-        definitions_free(o); qa_actor_index_destroy(&o->actor_index); free(o);
+        definitions_free(o); qa_actor_index_destroy(&o->actor_index); qa_arena_destroy(&o->actor_storage); free(o);
         if(e&&e->code!=QA_OK) return false;
         return fail(e,QA_ERROR_FORMAT,"Native pickup declaration is invalid");
     }
@@ -426,11 +463,11 @@ bool application_native_q2_pickups_bind(application_native_q2_pickups *o,qa_acto
     if(!live) return true;
     pickup_actor *a=find(o,actor);
     if(a) return !a->releasing&&qa_pickups_registration_current(o->options.pickups,a->lease,o->options.owner);
-    a=actor_new(o,actor,e); if(!a) return false;
-    if(!qa_id_index_reserve(&o->actor_index.retained,1,e)) {actor_free(a);return false;}
-    if(!qa_pickups_bind(o->options.pickups,actor,o->options.owner,a->rules,a->rule_count,&a->lease,e)) {actor_free(a);return false;}
+    a=actor_new(o,&o->actor_pool,&o->actor_storage,actor,e); if(!a) return false;
+    if(!qa_id_index_reserve(&o->actor_index.retained,1,e)) {actor_free(&o->actor_pool,a);return false;}
+    if(!qa_pickups_bind(o->options.pickups,actor,o->options.owner,a->rules,a->rule_count,&a->lease,e)) {actor_free(&o->actor_pool,a);return false;}
     if(!qa_actor_index_remember(&o->actor_index,actor,(size_t)(uintptr_t)a,e)) {
-        (void)qa_pickups_close(o->options.pickups,a->lease,NULL);actor_free(a);return false;
+        (void)qa_pickups_close(o->options.pickups,a->lease,NULL);actor_free(&o->actor_pool,a);return false;
     }
     a->next=o->actors; o->actors=a; return true;
 }
@@ -451,14 +488,14 @@ bool application_native_q2_pickups_drain(application_native_q2_pickups *o,qa_err
         pickup_call *call=*link;
         if(!cleanup(o,call,e)) return false;
         if(call->executing) break;
-        *link=call->next; free(call->saved); free(call);
+        *link=call->next; qa_unified_frame_lease_release(call->storage);
     }
     if(qa_pickups_idle(o->options.pickups)) {
         pickup_actor **row=&o->actors;
         while(*row) {
             pickup_actor *a=*row;
             if(a->releasing&&a->closed&&!a->entered) {
-                *row=a->next;qa_actor_index_forget_retained(&o->actor_index,a->actor);actor_free(a);
+                *row=a->next;qa_actor_index_forget_retained(&o->actor_index,a->actor);actor_free(&o->actor_pool,a);
             }
             else row=&a->next;
         }
@@ -474,7 +511,7 @@ bool application_native_q2_pickups_destroy(application_native_q2_pickups **owner
     if(o->calls||!application_native_q2_pickups_drain(o,e)) return false;
     for(pickup_actor *a=o->actors;a;a=a->next) if(!application_native_q2_pickups_release(o,a->actor,e)) return false;
     if(!application_native_q2_pickups_drain(o,e)||o->actors) return fail(e,QA_ERROR_ARGUMENT,"Native pickup retirement retains an actual canonical grant callback");
-    definitions_free(o); qa_actor_index_destroy(&o->actor_index); free(o); *owner=NULL; return true;
+    definitions_free(o); qa_actor_index_destroy(&o->actor_index); qa_arena_destroy(&o->actor_storage); free(o); *owner=NULL; return true;
 }
 bool application_native_q2_pickups_saved_rule(application_native_q2_pickups *o,qa_actor_id actor,qa_actor_owner owner,uint64_t serial,uint32_t id,qa_pickup_rule *out,qa_error *e)
 {
@@ -484,7 +521,8 @@ bool application_native_q2_pickups_saved_rule(application_native_q2_pickups *o,q
     for(size_t i=0;i<a->rule_count;++i) if(a->rules[i].id==id) { *out=a->rules[i]; return true; }
     return fail(e,QA_ERROR_FORMAT,"Saved native pickup rule has no authored resource writes");
 }
-static bool codec(application_native_q2_pickups *o,qa_source_save_io *io,pickup_actor **decoded,bool *active,qa_error *e)
+static bool codec(application_native_q2_pickups *o,qa_source_save_io *io,pickup_actor **decoded,bool *active,
+    qa_actor_index *index,qa_pool *pool,qa_arena *storage,qa_error *e)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ; uint8_t tag[4]={'Q','N','P','K'};
     if(!qa_source_save_bytes(io,tag,sizeof(tag))||memcmp(tag,(uint8_t[]){'Q','N','P','K'},sizeof(tag))||!qa_source_save_bool(io,active)) return false;
@@ -504,11 +542,12 @@ static bool codec(application_native_q2_pickups *o,qa_source_save_io *io,pickup_
         qa_actor_id actor=reading?(qa_actor_id){0}:a->actor; uint64_t serial=reading?0:a->lease.serial;
         if(!qa_source_save_actor(io,&actor)||!qa_source_save_u64(io,&serial)||!serial||!qa_actors_get(qa_session_actors(o->options.session),actor)) return false;
         if(reading) {
-            if(find(o,actor)) return fail(e,QA_ERROR_FORMAT,"Saved native pickup repeats a recipient or registration serial");
+            size_t value;
+            if(qa_actor_index_find_retained(index,actor,&value)) return fail(e,QA_ERROR_FORMAT,"Saved native pickup repeats a recipient or registration serial");
             for(pickup_actor *other=*decoded;other;other=other->next) if(other->lease.serial==serial)
                 return fail(e,QA_ERROR_FORMAT,"Saved native pickup repeats a recipient or registration serial");
-            pickup_actor *row=actor_new(o,actor,e); if(!row) return false;
-            if(!qa_actor_index_remember(&o->actor_index,actor,(size_t)(uintptr_t)row,e)) {actor_free(row);return false;}
+            pickup_actor *row=actor_new(o,pool,storage,actor,e); if(!row) return false;
+            if(!qa_actor_index_remember(index,actor,(size_t)(uintptr_t)row,e)) {actor_free(pool,row);return false;}
             row->lease=(qa_pickup_lease){actor,serial}; *tail=row; tail=&row->next;
         } else {
             if(a->releasing||!qa_pickups_registration_current(o->options.pickups,a->lease,o->options.owner)) return fail(e,QA_ERROR_NOT_FOUND,"Native pickup capture lost its actual canonical registration");
@@ -523,7 +562,7 @@ bool application_native_q2_pickups_checkpoint(application_native_q2_pickups *o,q
         !application_native_q2_callbacks_storage_current(o->options.callbacks,e)) return false;
     qa_source_save_io io; if(!qa_source_save_writer(&io,o->options.session,e)) return false;
     bool active=o->active; pickup_actor *unused=NULL;
-    bool ok=codec(o,&io,&unused,&active,e)&&qa_source_save_finish(&io,out); qa_source_save_dispose(&io); return ok;
+    bool ok=codec(o,&io,&unused,&active,&o->actor_index,&o->actor_pool,&o->actor_storage,e)&&qa_source_save_finish(&io,out); qa_source_save_dispose(&io); return ok;
 }
 bool application_native_q2_pickups_restore(application_native_q2_pickups *o,qa_bytes input,qa_error *e)
 {
@@ -531,11 +570,15 @@ bool application_native_q2_pickups_restore(application_native_q2_pickups *o,qa_b
         return fail(e,QA_ERROR_ARGUMENT,"Native pickup restore requires its detached empty source candidate");
     qa_source_save_io io; if(!qa_source_save_reader(&io,o->options.session,input,e)) return false;
     pickup_actor *rows=NULL; bool active=false;
-    bool ok=codec(o,&io,&rows,&active,e)&&qa_source_save_finish(&io,NULL); qa_source_save_dispose(&io);
+    qa_arena storage={0}; qa_pool pool={0}; qa_actor_index index={0};
+    bool ok=actor_storage_prepare(o,&index,&pool,&storage,e)&&
+        codec(o,&io,&rows,&active,&index,&pool,&storage,e)&&qa_source_save_finish(&io,NULL); qa_source_save_dispose(&io);
     if(!ok) {
-        qa_actor_index_clear(&o->actor_index);
-        while(rows) { pickup_actor *next=rows->next; actor_free(rows); rows=next; } return false;
+        qa_actor_index_destroy(&index); qa_arena_destroy(&storage); return false;
     }
+    qa_actor_index_destroy(&o->actor_index); qa_arena_destroy(&o->actor_storage);
+    o->actor_pool=pool; o->actor_storage=storage; o->actor_index=index;
+    o->actor_index.retained.storage=&o->actor_storage;
     o->actors=rows; o->active=active; o->restoring=true; return true;
 }
 bool application_native_q2_pickups_finish_restore(application_native_q2_pickups *o,qa_error *e)
