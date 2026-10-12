@@ -8,12 +8,14 @@ typedef struct native_visibility_row {
     qa_actor_id actor;
     uint32_t source_slot;
     uint64_t visible[4];
+    size_t next_actor;
 } native_visibility_row;
 
 struct application_native_q2_visibility {
     uint64_t frame, time_ns;
     uint32_t source_capacity, clients;
     qa_actor_id viewers[257];
+    qa_actor_index actors;
     size_t count;
     bool valid;
     native_visibility_row rows[];
@@ -52,32 +54,69 @@ static bool entity_stage(struct application_native_q2 *engine,const qa_source_fr
 void application_native_q2_visibility_destroy(application_native_q2_visibility **owner)
 {
     if (!owner || !*owner) return;
+    qa_actor_index_destroy(&(*owner)->actors);
     free(*owner); *owner = NULL;
 }
 
-static application_native_q2_visibility *workspace_create(qa_error *error)
+static application_native_q2_visibility *workspace_create(struct application_native_q2 *engine,
+    qa_error *error)
 {
     size_t bytes = sizeof(application_native_q2_visibility) +
         (size_t)APPLICATION_Q2_SOURCE_EXTENT * sizeof(native_visibility_row);
     application_native_q2_visibility *owner = calloc(1, bytes);
-    if (!owner) application_fail(error, QA_ERROR_MEMORY, "Retaining completed Q2 Source visibility");
+    if (!owner) {
+        application_fail(error, QA_ERROR_MEMORY, "Retaining completed Q2 Source visibility");
+        return NULL;
+    }
+    const qa_actor_registry *registry = qa_session_actors(engine->provider->application->session);
+    if (!qa_actor_index_create(&owner->actors, registry, NULL, error) ||
+        !qa_id_index_reserve(&owner->actors.retained, APPLICATION_Q2_SOURCE_EXTENT, error)) {
+        application_native_q2_visibility_destroy(&owner);
+        return NULL;
+    }
     return owner;
 }
 
-static bool workspace_prepare(application_native_q2_visibility **out, qa_error *error)
+static bool workspace_prepare(struct application_native_q2 *engine,
+    application_native_q2_visibility **out, qa_error *error)
 {
     if (!*out) {
-        application_native_q2_visibility *candidate = workspace_create(error);
+        application_native_q2_visibility *candidate = workspace_create(engine, error);
         if (!candidate) return false;
         *out = candidate;
     }
     return true;
 }
 
+static void index_rows(application_native_q2_visibility *owner)
+{
+    qa_actor_index_clear(&owner->actors);
+    for (size_t i = owner->count; i-- > 0;) {
+        native_visibility_row *row = &owner->rows[i];
+        row->next_actor = SIZE_MAX;
+        (void)qa_actor_index_find_retained(&owner->actors, row->actor, &row->next_actor);
+        /* The workspace reserves one entry per possible Source row at load. */
+        (void)qa_actor_index_remember(&owner->actors, row->actor, i, NULL);
+    }
+}
+
+static const native_visibility_row *find_row(const application_native_q2_visibility *owner,
+    uint32_t source_slot, qa_actor_id actor)
+{
+    size_t i;
+    if (!qa_actor_index_find_retained(&owner->actors, actor, &i)) return NULL;
+    while (i != SIZE_MAX) {
+        const native_visibility_row *row = &owner->rows[i];
+        if (row->source_slot == source_slot) return row;
+        i = row->next_actor;
+    }
+    return NULL;
+}
+
 bool application_native_q2_visibility_prepare(struct application_native_q2 *engine, qa_error *error)
 {
     return engine->profile != QA_NATIVE_Q2_GAME_API2023 ||
-        workspace_prepare(&engine->visibility, error);
+        workspace_prepare(engine, &engine->visibility, error);
 }
 
 void application_native_q2_visibility_invalidate(struct application_native_q2 *engine)
@@ -162,6 +201,7 @@ bool application_native_q2_visibility_complete(struct application_native_q2 *eng
         if (ok && (!entity.in_use || !qa_actor_id_equal(entity.binding.actor, candidate->viewers[slot])))
             ok = application_fail(error, QA_ERROR_ARGUMENT, "Q2 visibility callback retired another retained Source viewer");
     }
+    if (ok) index_rows(candidate);
     candidate->valid = ok;
     return ok;
 }
@@ -178,9 +218,8 @@ bool application_native_q2_visibility_read(struct application_native_q2 *engine,
         engine->clients[viewer_slot].disconnect_started ||
         !qa_actor_id_equal(engine->clients[viewer_slot].actor, viewer))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 visibility has no completed decision for this physical Source viewer");
-    for (size_t i = 0; i < owner->count; ++i) {
-        const native_visibility_row *row = &owner->rows[i];
-        if (row->source_slot != source_slot || !qa_actor_id_equal(row->actor, actor)) continue;
+    const native_visibility_row *row = find_row(owner, source_slot, actor);
+    if (row) {
         *out = (row->visible[(viewer_slot - 1) / 64] & (UINT64_C(1) << ((viewer_slot - 1) % 64))) != 0;
         return true;
     }
@@ -203,9 +242,7 @@ bool application_native_q2_visibility_ready(struct application_native_q2 *engine
         if (!qa_native_host_q2_wire_entity(host, slot, &entity, error)) return false;
         if (!entity.in_use || !(entity.server_flags & 256) || (entity.server_flags & 1)) continue;
         if (!owner || !owner->valid || owner->frame != engine->frame.number || owner->time_ns != engine->frame.time_ns) { *out = false; return true; }
-        const native_visibility_row *row = NULL;
-        for (size_t i = 0; i < owner->count; ++i)
-            if (owner->rows[i].source_slot == slot && qa_actor_id_equal(owner->rows[i].actor, entity.binding.actor)) { row = &owner->rows[i]; break; }
+        const native_visibility_row *row = find_row(owner, slot, entity.binding.actor);
         if (!row) { *out = false; return true; }
         for (size_t i = 0; i < count; ++i) {
             uint32_t viewer = players[i].source_slot;
@@ -255,10 +292,18 @@ void application_native_q2_visibility_released(struct application_native_q2 *eng
         for (size_t i = 0; i < owner->count; ++i)
             owner->rows[i].visible[(slot - 1) / 64] &= ~(UINT64_C(1) << ((slot - 1) % 64));
     }
-    for (size_t i = 0; i < owner->count;) {
-        if (!qa_actor_id_equal(owner->rows[i].actor, actor)) { ++i; continue; }
-        --owner->count;
-        memmove(owner->rows + i, owner->rows + i + 1, (owner->count - i) * sizeof(*owner->rows));
+    size_t removed;
+    if (qa_actor_index_find_retained(&owner->actors, actor, &removed)) {
+        size_t write = removed;
+        for (size_t read = removed; read < owner->count; ++read) {
+            if (read == removed) {
+                removed = owner->rows[read].next_actor;
+                continue;
+            }
+            owner->rows[write++] = owner->rows[read];
+        }
+        owner->count = write;
+        index_rows(owner);
     }
 }
 
@@ -316,7 +361,7 @@ bool application_native_q2_visibility_restore(struct application_native_q2 *engi
     if (!engine || !frame || !clients || !out || *out)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 visibility restore requires an empty actual Source candidate");
     if (!bytes.size) return !map_ready || engine->profile != QA_NATIVE_Q2_GAME_API2023 ||
-        workspace_prepare(out, error);
+        workspace_prepare(engine, out, error);
     if (!map_ready || engine->profile != QA_NATIVE_Q2_GAME_API2023)
         return application_fail(error, QA_ERROR_FORMAT, "Q2 visibility continuation has no matching API2023 GAME");
     application_native_q2_visibility header = {0};
@@ -327,7 +372,7 @@ bool application_native_q2_visibility_restore(struct application_native_q2 *engi
     bool ok = !reader.failed && header.frame == frame->number && header.time_ns == frame->time_ns &&
         header.clients && header.clients <= 256 && header.source_capacity > header.clients &&
         header.source_capacity <= APPLICATION_Q2_SOURCE_EXTENT && viewers <= header.clients;
-    application_native_q2_visibility *candidate = ok ? workspace_create(error) : NULL;
+    application_native_q2_visibility *candidate = ok ? workspace_create(engine, error) : NULL;
     if (ok && !candidate) return false;
     if (ok) {
         candidate->frame = header.frame; candidate->time_ns = header.time_ns;
@@ -357,7 +402,10 @@ bool application_native_q2_visibility_restore(struct application_native_q2 *engi
         previous = row->source_slot;
     }
     if (ok) ok = qa_net_reader_finish(&reader);
-    if (ok) { candidate->count = count; candidate->valid = true; *out = candidate; candidate = NULL; }
+    if (ok) {
+        candidate->count = count; index_rows(candidate); candidate->valid = true;
+        *out = candidate; candidate = NULL;
+    }
     if (!ok && (!error || error->code == QA_OK)) application_fail(error, QA_ERROR_FORMAT, "Q2 visibility continuation lost its real actors, viewers or frame");
     application_native_q2_visibility_destroy(&candidate);
     return ok;

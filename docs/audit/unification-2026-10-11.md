@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `ca94a5f3`.
+Follow-up source changes were reviewed through main `c01284f8`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -312,3 +312,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 | `03-15`, `04-003` | `57ce4334` | One SystemInfo apply body and shared info iterator replace private parsers. Filters, callback checks, nested text and save bytes retained. Normal build/seven suites passed; candidate allocations remain. |
 
 | `26-02` | `ca94a5f3` | Native HUD prefix uses caller-owned ABI bytes; per-draw malloc/free deleted. Exact guest prefix and synchronous seat lifetime retained. Normal build/seven suites passed; no live claim. |
+
+| `03-18`, `04-005` follow-up | `c01284f8` | 41 more module/restore owner selections use the common index, retaining view/order rules and post-callback identity. Normal build/seven suites passed; historical/name readers remain in flight. |

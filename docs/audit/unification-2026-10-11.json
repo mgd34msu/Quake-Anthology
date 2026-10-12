@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "ca94a5f3c659a39f6850ce56d737c6f335efaa32",
+  "verified_main": "c01284f875409b8456786e64b0be0fa830218282",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -41446,6 +41446,30 @@
       ],
       "record_directory": "/tmp/qa-ta3196-native-hud-prefix-20261012",
       "conclusion": "Native HUD player-state prefix is read directly into caller-owned ABI storage; owned heap buffer and free removed. Exact 184/296-byte data and synchronous per-seat lifetime retained. Normal build/seven core suites passed; no live claim."
+    },
+    {
+      "commit": "c01284f875409b8456786e64b0be0fa830218282",
+      "source_tree": "cb47b5769d713b563ca614e1d083e4a69a447e5c",
+      "finding_ids": [
+        "03-18",
+        "04-005"
+      ],
+      "files_rechecked": [
+        "src/app/application/model_admission.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-provider-owner-adoption-20261012",
+      "conclusion": "41 further module/restore/actor owner selections now use the shared provider index with exact first/all/eligible rules and distinct actual views. Post-callback pointer membership uses captured typed owner. Normal build/seven core suites passed; historical/name readers still being migrated."
     }
   ],
   "verification_limits": [
