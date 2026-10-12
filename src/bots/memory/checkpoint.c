@@ -18,10 +18,11 @@ struct qa_bot_memory_checkpoint {
 struct qa_bot_memory_prepared {
     qa_bot_memory *owner;
     qa_bot_memory_checkpoint *image;
-    bot_memory_record *records;
+    qa_arena record_storage;
+    qa_pool records;
     bool *borrowed;
     qa_bot_memory_allocation *aliases;
-    uint32_t slots,capacity,first,last,free_head;
+    uint32_t slots,first,last;
     uint64_t next_generation,allocated_bytes;
 };
 static char *copy_text(const char *text,qa_error *error)
@@ -66,7 +67,7 @@ bool qa_bot_memory_checkpoint_capture(qa_bot_memory *memory,qa_bot_memory_checkp
     uint32_t previous=0;uint64_t total=0;
     for(uint32_t link=memory->first;link;) {
         if(link>memory->slots || image->count>=memory->live_count) goto invalid;
-        bot_memory_record *record=&memory->records[link-1];
+        bot_memory_record *record=qa_pool_at(&memory->records,link-1);
         if(!record->live || !record->backing || record->previous!=previous ||
            record->size>INT32_MAX-4 || (unsigned)record->kind>QA_BOT_MEMORY_HUNK ||
            !record->generation || (record->has_provenance && (!record->file || !record->label))) goto invalid;
@@ -134,12 +135,17 @@ bool qa_bot_memory_checkpoint_prepare(qa_bot_memory *memory,const qa_bot_memory_
     if(!plan) return bot_memory_fail(error,QA_ERROR_MEMORY,"Preparing bot memory checkpoint");
     plan->owner=memory;plan->image=(qa_bot_memory_checkpoint *)captured;
     ++plan->image->leases;memory->busy=true;
-    plan->capacity=(uint32_t)(memory->slots+captured->count);plan->slots=memory->slots;
+    uint32_t capacity=(uint32_t)(memory->slots+captured->count);
+    plan->slots=memory->slots;
     plan->next_generation=memory->next_generation;
-    if(plan->capacity) {
-        plan->records=calloc(plan->capacity,sizeof(*plan->records));
-        plan->borrowed=calloc(plan->capacity,sizeof(*plan->borrowed));
-        if(!plan->records || !plan->borrowed) goto memory_failure;
+    if(!qa_pool_prepare(&plan->records,&plan->record_storage,capacity,
+            sizeof(bot_memory_record),_Alignof(bot_memory_record),error)) goto failed;
+    if(capacity) {
+        memset(plan->records.values,0,(size_t)capacity*plan->records.stride);
+        size_t first;
+        (void)qa_pool_take_run(&plan->records,capacity,&first);
+        plan->borrowed=calloc(capacity,sizeof(*plan->borrowed));
+        if(!plan->borrowed) goto memory_failure;
     }
     if(captured->count && !(plan->aliases=calloc(captured->count,sizeof(*plan->aliases)))) goto memory_failure;
     for(size_t i=0;i<captured->count;++i) {
@@ -153,33 +159,34 @@ bool qa_bot_memory_checkpoint_prepare(qa_bot_memory *memory,const qa_bot_memory_
             bot_memory_fail(error,QA_ERROR_FORMAT,"Captured bot backing changed allocation identity");goto failed;
         }
         uint32_t slot=image->allocation.slot;
-        plan->records[slot]=*record;plan->borrowed[slot]=true;
+        *(bot_memory_record *)qa_pool_at(&plan->records,slot)=*record;
+        plan->borrowed[slot]=true;
         plan->aliases[i]=image->allocation;
     }
     uint32_t unused=0;
     for(size_t i=0;i<captured->count;++i) {
         const memory_image_record *image=&captured->records[i];
         if(!plan->aliases[i].owner) {
-            while(unused<plan->capacity && plan->records[unused].live) ++unused;
-            if(unused==plan->capacity || !plan->next_generation) {
+            while(unused<capacity && ((const bot_memory_record *)qa_pool_at(&plan->records,unused))->live) ++unused;
+            if(unused==capacity || !plan->next_generation) {
                 bot_memory_fail(error,QA_ERROR_MEMORY,"Restored bot allocation identities exhausted");goto failed;
             }
-            bot_memory_record *record=&plan->records[unused];
+            bot_memory_record *record=qa_pool_at(&plan->records,unused);
             if(!stage_record(plan,image,record,error)) goto failed;
             record->live=true;record->generation=plan->next_generation++;
             plan->aliases[i]=(qa_bot_memory_allocation){memory->owner,record->generation,unused};
             if(unused>=plan->slots) plan->slots=unused+1;
         }
         uint32_t link=plan->aliases[i].slot+1;
-        bot_memory_record *record=&plan->records[link-1];
-        record->previous=plan->last;record->next=0;record->free_next=0;
-        if(plan->last) plan->records[plan->last-1].next=link;else plan->first=link;
+        bot_memory_record *record=qa_pool_at(&plan->records,link-1);
+        record->previous=plan->last;record->next=0;
+        if(plan->last) ((bot_memory_record *)qa_pool_at(&plan->records,plan->last-1))->next=link;
+        else plan->first=link;
         plan->last=link;plan->allocated_bytes+=record->size;
     }
-    for(uint32_t slot=plan->slots;slot>0;--slot)
-        if(!plan->records[slot-1].live) {
-            plan->records[slot-1].free_next=plan->free_head;plan->free_head=slot;
-        }
+    for(uint32_t slot=capacity;slot>0;--slot)
+        if(!((const bot_memory_record *)qa_pool_at(&plan->records,slot-1))->live)
+            qa_pool_release(&plan->records,slot-1);
     *out=plan;return true;
 memory_failure:
     bot_memory_fail(error,QA_ERROR_MEMORY,"Allocating prepared bot memory topology");
@@ -208,7 +215,7 @@ bool qa_bot_memory_checkpoint_script_alias(const qa_bot_memory_prepared *plan,si
        memcmp(expected.data,image->bytes+4,expected.size))))
         return bot_memory_fail(error,QA_ERROR_FORMAT,"Script continuation differs from captured MEMORY bytes");
     qa_bot_memory_allocation allocation=plan->aliases[reference];
-    bot_memory_record *record=&plan->records[allocation.slot];
+    bot_memory_record *record=qa_pool_at(&plan->records,allocation.slot);
     *out=(qa_script_memory_allocation){allocation.owner,allocation.generation,allocation.slot};
     *span=(qa_script_memory_span){record->backing+4,record->size};return true;
 }
@@ -217,27 +224,32 @@ void qa_bot_memory_checkpoint_finish(qa_bot_memory_prepared *plan,bool commit)
     if(!plan) return;
     qa_bot_memory *memory=plan->owner;
     if(commit) {
-        for(uint32_t slot=0;slot<memory->slots;++slot)
-            if(memory->records[slot].live && !plan->borrowed[slot]) release_record(memory,&memory->records[slot]);
+        for(uint32_t slot=0;slot<memory->slots;++slot) {
+            bot_memory_record *record=qa_pool_at(&memory->records,slot);
+            if(record->live && !plan->borrowed[slot]) release_record(memory,record);
+        }
         for(size_t i=0;i<plan->image->count;++i) {
-            bot_memory_record *record=&plan->records[plan->aliases[i].slot];
+            bot_memory_record *record=qa_pool_at(&plan->records,plan->aliases[i].slot);
             memcpy(record->backing,plan->image->records[i].bytes,(size_t)record->size+4);
         }
-        free(memory->records);memory->records=plan->records;plan->records=NULL;
-        memory->slots=plan->slots;memory->capacity=plan->capacity;memory->free_head=plan->free_head;
+        qa_arena_destroy(&memory->record_storage);
+        memory->record_storage=plan->record_storage;plan->record_storage=(qa_arena){0};
+        memory->records=plan->records;plan->records=(qa_pool){0};
+        memory->slots=plan->slots;
         memory->first=plan->first;memory->last=plan->last;memory->next_generation=plan->next_generation;
         memory->live_count=plan->image->count;memory->allocated_bytes=plan->allocated_bytes;
         free(memory->script_restored);memory->script_restored=plan->aliases;plan->aliases=NULL;
         memory->script_restored_count=plan->image->count;
-    } else if(plan->records) {
-        for(uint32_t slot=0;slot<plan->capacity;++slot)
+    } else if(plan->records.values) {
+        for(size_t slot=0;slot<plan->records.capacity;++slot)
             if(!plan->borrowed || !plan->borrowed[slot]) {
-                bot_memory_record *record=&plan->records[slot];
+                bot_memory_record *record=qa_pool_at(&plan->records,slot);
                 if(record->backing) release_record(memory,record);
                 else {free(record->file);free(record->label);}
             }
     }
-    free(plan->records);free(plan->borrowed);free(plan->aliases);
+    qa_arena_destroy(&plan->record_storage);
+    free(plan->borrowed);free(plan->aliases);
     memory->busy=false;
     qa_bot_memory_checkpoint *image=plan->image;
     --image->leases;

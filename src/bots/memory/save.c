@@ -13,7 +13,7 @@ static bool fields(qa_source_save_io *io,qa_bot_memory *memory)
         return bot_save_fail(io,QA_ERROR_FORMAT,"Truncated ordered bot memory allocations");
     uint32_t link=memory->first;
     for(size_t i=0;i<count;++i) {
-        bot_memory_record *record=reading?NULL:&memory->records[link-1];
+        bot_memory_record *record=reading?NULL:qa_pool_at(&memory->records,link-1);
         uint32_t kind=reading?0:(uint32_t)record->kind,size=reading?0:record->size;
         bool has_provenance=!reading && record->has_provenance;
         const char *file=!reading?record->file:NULL,*label=!reading?record->label:NULL;
@@ -64,8 +64,9 @@ bool qa_bot_memory_restore(qa_bot_memory *memory,qa_bytes bytes,qa_error *error)
         fields(&io,&scratch) && qa_source_save_finish(&io,NULL);
     if(ok) {
         bot_memory_clear(memory);
-        memory->records=scratch.records;memory->capacity=scratch.capacity;memory->slots=scratch.slots;
-        memory->first=scratch.first;memory->last=scratch.last;memory->free_head=scratch.free_head;
+        memory->record_storage=scratch.record_storage;scratch.record_storage=(qa_arena){0};
+        memory->records=scratch.records;scratch.records=(qa_pool){0};memory->slots=scratch.slots;
+        memory->first=scratch.first;memory->last=scratch.last;
         memory->next_generation=scratch.next_generation;
         memory->live_count=scratch.live_count;memory->allocated_bytes=scratch.allocated_bytes;
     } else bot_memory_clear(&scratch);
@@ -77,7 +78,8 @@ bool qa_bot_memory_reference(const qa_bot_memory *memory,qa_bot_memory_allocatio
     if(!memory || memory->busy || memory->disposed || !out || !bot_memory_owned(memory,allocation))
         return bot_memory_fail(error,QA_ERROR_ARGUMENT,"Bot allocation reference requires its actual owner/output");
     size_t index=0;
-    for(uint32_t link=memory->first;link;link=memory->records[link-1].next,++index)
+    for(uint32_t link=memory->first;link;
+        link=((const bot_memory_record *)qa_pool_at(&memory->records,link-1))->next,++index)
         if(link-1==allocation.slot) {*out=index;return true;}
     return bot_memory_fail(error,QA_ERROR_ARGUMENT,"Bot checkpoint references an unowned or freed allocation");
 }
@@ -87,6 +89,7 @@ bool qa_bot_memory_resolve(const qa_bot_memory *memory,size_t reference,
     if(!memory || memory->busy || memory->disposed || !out || reference>=memory->live_count)
         return bot_memory_fail(error,QA_ERROR_FORMAT,"Saved bot allocation reference is outside its true owner");
     uint32_t link=memory->first;
-    for(size_t i=0;i<reference;++i) link=memory->records[link-1].next;
+    for(size_t i=0;i<reference;++i)
+        link=((const bot_memory_record *)qa_pool_at(&memory->records,link-1))->next;
     *out=bot_memory_handle(memory,link-1);return true;
 }

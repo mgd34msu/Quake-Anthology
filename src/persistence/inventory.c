@@ -63,7 +63,8 @@ static bool binding_fields(qa_source_save_io *io, qa_inventory_binding *binding)
     return ok;
 }
 
-static bool definition_fields(qa_source_save_io *io, qa_item_admission *item, bool definitions_only)
+static bool definition_fields(qa_source_save_io *io, qa_item_admission *item,
+    bool definitions_only, qa_arena *storage)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     bool present = !reading && item->definition.label != NULL;
@@ -75,8 +76,8 @@ static bool definition_fields(qa_source_save_io *io, qa_item_admission *item, bo
     if (reading) {
         if (io->offset > io->input.size || length > io->input.size - io->offset)
             return fail(io->error, "Truncated inventory label");
-        char *label = malloc(length + 1);
-        if (!label) { qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Copying restored inventory label"); return false; }
+        char *label = qa_arena_alloc(storage, length + 1, 1, io->error);
+        if (!label) return false;
         item->definition.label = label;
         if (!qa_source_save_bytes(io, label, length)) return false;
         label[length] = 0;
@@ -100,17 +101,13 @@ static bool group_fields(qa_source_save_io *io, qa_actor_id actor, item_group *g
         !qa_source_save_count(io, &group->count, SIZE_MAX / sizeof(*group->items)) || !group->count) return false;
     qa_inventory_items source = {0};
     if (reading) {
-        group->items = calloc(group->count, sizeof(*group->items));
-        if (!group->items) {
-            group->count = 0;
-            qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Allocating restored source inventory definitions"); return false;
-        }
+        if (!qa_inventory_group_items_prepare(group, group->count, io->error)) return false;
         group->active = true;
     }
     for (size_t i = 0; i < group->count; ++i) {
         qa_item_admission value = reading ? (qa_item_admission){0} : group->items[i];
         qa_item_admission *decoded = reading ? group->items + i : &value;
-        if (!definition_fields(io, decoded, group->definitions_only) || decoded->definition.owner != group->owner ||
+        if (!definition_fields(io, decoded, group->definitions_only, &group->payload_storage) || decoded->definition.owner != group->owner ||
             (decoded->definition.actions && !invoke)) return false;
         value = *decoded;
         for (size_t j = 0; j < i; ++j) if (group->items[j].definition.item == value.definition.item)
@@ -132,27 +129,13 @@ static bool group_fields(qa_source_save_io *io, qa_actor_id actor, item_group *g
                 return fail(io->error, "Saved inventory item is unavailable in the restored source");
         }
         if (source.items != group->items) {
-            qa_item_admission *items = calloc(source.count, sizeof(*items));
-            if (source.count && !items) {
-                qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Allocating restored inventory declarations");
-                return false;
-            }
-            for (size_t i = 0; i < group->count; ++i)
-                free((void *)group->items[i].definition.label);
-            free(group->items);
-            group->items = items;
-            group->count = source.count;
+            if (!qa_inventory_group_items_prepare(group, source.count, io->error)) return false;
             for (size_t i = 0; i < source.count; ++i) {
                 const char *label = source.items[i].definition.label;
-                size_t length = label ? strlen(label) : 0;
-                char *copy = label ? malloc(length + 1) : NULL;
-                if (label && !copy) {
-                    qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Allocating restored inventory item label");
-                    return false;
-                }
-                if (label) memcpy(copy, label, length + 1);
-                items[i] = source.items[i];
-                items[i].definition.label = copy;
+                char *copy = label ? qa_arena_text(&group->payload_storage, label, io->error) : NULL;
+                if (label && !copy) return false;
+                group->items[i] = source.items[i];
+                group->items[i].definition.label = copy;
             }
         }
         group->binding = source.state; group->action_context = source.action_context; group->invoke = source.invoke;
@@ -202,8 +185,8 @@ static bool store_fields(qa_source_save_io *io, qa_inventory *table, inventory_s
     item_group **link = &store->groups;
     for (size_t i = 0; i < count; ++i) {
         if (reading) {
-            *link = calloc(1, sizeof(**link));
-            if (!*link) { qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Allocating restored inventory group"); return false; }
+            *link = qa_inventory_group_create(store, io->error);
+            if (!*link) return false;
         }
         if (!group_fields(io, store->actor, *link, resolve)) return false;
         link = &(*link)->next;

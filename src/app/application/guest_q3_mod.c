@@ -326,10 +326,24 @@ bool application_q3_mod_create(application_q3_mod_profile *p, qa_qvm *vm, qa_ses
     if(p->protection_count||p->pickup_count) {
         const qa_actor_registry *registry=qa_session_actors(session);
         o->resource_chunk=qa_actors_capacity(registry);
+        o->pickup_chunk=p->maximum;
+        if(p->maximum&&(p->protection_count>SIZE_MAX/p->maximum||p->pickup_count>SIZE_MAX/p->maximum)) {
+            free(o);return q3mod_fail(e,QA_ERROR_MEMORY,"Owning declared source actor resources");
+        }
+        o->channel_chunk=p->maximum*p->protection_count;
+        o->pickup_rule_chunk=p->maximum*p->pickup_count;
         o->resource_storage=application_control_storage_acquire(s->application,e);
         bool ok=o->resource_storage&&qa_pool_prepare(&o->resource_pool,
             qa_unified_frame_lease_arena(o->resource_storage),o->resource_chunk,
             sizeof(mod_actor_resources),_Alignof(mod_actor_resources),e)&&
+            qa_pool_prepare(&o->channel_pool,qa_unified_frame_lease_arena(o->resource_storage),
+                o->channel_chunk,sizeof(mod_actor_channel),_Alignof(mod_actor_channel),e)&&
+            qa_pool_prepare(&o->pickup_pool,qa_unified_frame_lease_arena(o->resource_storage),
+                p->pickup_count?o->pickup_chunk:0,sizeof(mod_pickup_actor),_Alignof(mod_pickup_actor),e)&&
+            qa_pool_prepare(&o->pickup_rules,qa_unified_frame_lease_arena(o->resource_storage),
+                o->pickup_rule_chunk,sizeof(qa_pickup_rule),_Alignof(qa_pickup_rule),e)&&
+            qa_pool_prepare(&o->pickup_bindings,qa_unified_frame_lease_arena(o->resource_storage),
+                o->pickup_rule_chunk,sizeof(mod_pickup_bound),_Alignof(mod_pickup_bound),e)&&
             qa_actor_index_create(&o->resource_actors,registry,
                 qa_unified_frame_lease_arena(o->resource_storage),e)&&
             qa_id_index_reserve(&o->resource_actors.retained,o->resource_chunk,e);

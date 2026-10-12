@@ -33,8 +33,6 @@ static bool fields(application_q3_mod_items *o,item_actor *a,qa_source_save_io *
         a->address_count!=record_count(o->profile))return false;
     if(reading){a->saved_watch=watch;a->restore_weapon_bound=bound;a->lease.actor=a->actor;a->status=(qa_weapon_request_status)status;
         if(a->request.id)a->request.actor=a->actor;
-        a->addresses=calloc(a->address_count,sizeof(*a->addresses));
-        if(a->address_count&&!a->addresses)return q3mod_fail(io->error,QA_ERROR_MEMORY,"Retaining restored item source addresses");
     }
     for(size_t i=0;i<a->address_count;++i){item_record_address *r=a->addresses+i;
         if(!qa_source_save_count(io,&r->record,o->profile->source->record_count)||
@@ -68,7 +66,7 @@ bool application_q3_mod_items_restore(application_q3_mod_items *o,qa_bytes bytes
     qa_source_save_io io;if(!qa_source_save_reader(&io,o->mod->session,bytes,e))return false;
     size_t count=0;bool ok=q3mod_saved_declaration(o->profile->source,&io,"QGIT")&&qa_source_save_u64(&io,&o->next_request)&&qa_source_save_count(&io,&count,UINT32_MAX);
     item_actor **tail=&o->actors;
-    for(size_t i=0;ok&&i<count;++i){item_actor *a=calloc(1,sizeof(*a));
+    for(size_t i=0;ok&&i<count;++i){item_actor *a=q3items_actor_take(o,e);
         if(!a){ok=q3mod_fail(e,QA_ERROR_MEMORY,"Owning restored item continuation");break;}
         a->owner=o;*tail=a;tail=&a->next;
         ok=fields(o,a,&io);

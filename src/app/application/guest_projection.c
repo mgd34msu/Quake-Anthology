@@ -5,12 +5,22 @@
 #include "guest_qc_protection.h"
 #include "guest_native_q2_private.h"
 #include "guest_q3_combat_state.h"
+#include "control_frame.h"
 
 static guest_projection_actor *actor_context(application_guest_projection *p, qa_actor_id actor)
 {
     size_t value;
     return qa_actor_index_find_retained(&p->actor_contexts, actor, &value) ?
         (guest_projection_actor *)(uintptr_t)value : NULL;
+}
+static guest_projection_actor *actor_take(application_guest_projection *p, qa_error *error)
+{
+    if (p->actor_pool.head == SIZE_MAX && !qa_pool_extend(&p->actor_pool,
+        qa_unified_frame_lease_arena(p->storage), p->actor_chunk, error)) return NULL;
+    size_t slot;
+    guest_projection_actor *context = qa_pool_take(&p->actor_pool, &slot);
+    if (context) *context = (guest_projection_actor){.storage_slot = slot};
+    return context;
 }
 
 static bool current(guest_projection_actor *context, qa_q3_host_game_data *data,
@@ -80,10 +90,8 @@ static bool inventory_refresh(application_guest_projection *p, qa_error *error)
         changed = fields[i].item != p->inventory[i].item || fields[i].mask != p->inventory[i].mask ||
             fields[i].field.offset != p->inventory[i].field.offset || fields[i].public_weapon != p->inventory[i].public_weapon;
     if (!changed) return true;
-    guest_inventory_field *owned = used ? malloc(used * sizeof(*owned)) : NULL;
-    if (used && !owned) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual public inventory catalog fields");
-    if (used) memcpy(owned, fields, used * sizeof(*owned));
-    free(p->inventory); p->inventory = owned; p->inventory_count = used;
+    if (used) memcpy(p->inventory, fields, used * sizeof(*p->inventory));
+    p->inventory_count = used;
     if (topology_changed) ++p->inventory_items_revision;
     return true;
 }
@@ -408,11 +416,24 @@ bool application_guest_projection_prepare(q3g_role *role, qa_bytes primary, qa_e
     if (role->projection) return true;
     application_guest_projection *p = calloc(1, sizeof(*p));
     if (!p) return application_fail(error, QA_ERROR_MEMORY, "Preparing qualified guest projection");
-    if (!application_guest_projection_profile_read(role, primary, p, error) ||
-        !qa_actor_index_create(&p->actor_contexts,
-            qa_session_actors(role->engine->provider->application->session), NULL, error)) {
+    bool okay = application_guest_projection_profile_read(role, primary, p, error);
+    const qa_actor_registry *registry = qa_session_actors(role->engine->provider->application->session);
+    if (okay) {
+        p->actor_chunk = sizeof(role->engine->clients) / sizeof(*role->engine->clients);
+        p->storage = application_control_storage_acquire(role->engine->provider->application, error);
+        okay = p->storage && qa_pool_prepare(&p->actor_pool, qa_unified_frame_lease_arena(p->storage),
+            p->actor_chunk, sizeof(guest_projection_actor), _Alignof(guest_projection_actor), error) &&
+            qa_actor_index_create(&p->actor_contexts, registry, qa_unified_frame_lease_arena(p->storage), error);
+        if (okay && p->inventory_public) {
+            p->inventory = qa_unified_frame_lease_alloc(p->storage, 30, sizeof(*p->inventory),
+                _Alignof(guest_inventory_field), error);
+            okay = p->inventory != NULL;
+        }
+    }
+    if (!okay) {
         qa_actor_index_destroy(&p->actor_contexts);
-        application_guest_projection_profile_free(p); free(p); return false;
+        if (p->inventory_public) { p->inventory = NULL; p->inventory_count = 0; }
+        application_guest_projection_profile_free(p); qa_unified_frame_lease_release(p->storage); free(p); return false;
     }
     role->projection = p; return true;
 }
@@ -490,11 +511,11 @@ bool application_guest_projection_admit(q3g_role *role, qa_actor_id actor, qa_er
     if (!inventory_refresh(p, error)) return false;
     guest_projection_actor *context = actor_context(p, actor);
     if (!context) {
-        context = calloc(1, sizeof(*context));
+        context = actor_take(p, error);
         if (!context) return application_fail(error, QA_ERROR_MEMORY, "Retaining guest actor projection ownership");
-        *context = (guest_projection_actor){.next = p->actors, .projection = p, .actor = actor, .slot = slot};
+        context->next = p->actors; context->projection = p; context->actor = actor; context->slot = slot;
         if (!qa_actor_index_remember(&p->actor_contexts, actor, (size_t)(uintptr_t)context, error)) {
-            free(context); return false;
+            qa_pool_release(&p->actor_pool, context->storage_slot); return false;
         }
         p->actors = context;
     }
@@ -545,14 +566,15 @@ bool application_guest_projection_inventory_binding(q3g_role *role,
         return application_fail(error, QA_ERROR_FORMAT,
                                 "Restored guest inventory differs from its source lease");
     if (!context) {
-        context = calloc(1, sizeof(*context));
+        context = actor_take(projection, error);
         if (!context)
             return application_fail(error, QA_ERROR_MEMORY,
                                     "Retaining restored guest inventory callback context");
-        *context = temporary;
+        size_t storage_slot = context->storage_slot;
+        *context = temporary; context->storage_slot = storage_slot;
         context->next = projection->actors;
         if (!qa_actor_index_remember(&projection->actor_contexts, actor, (size_t)(uintptr_t)context, error)) {
-            free(context); return false;
+            qa_pool_release(&projection->actor_pool, context->storage_slot); return false;
         }
         projection->actors = context;
     }
@@ -605,8 +627,10 @@ bool application_guest_projection_close(q3g_role *role, qa_error *error)
         guest_projection_actor *context = p->actors;
         p->actors = context->next;
         qa_actor_index_forget_retained(&p->actor_contexts, context->actor);
-        free(context);
+        qa_pool_release(&p->actor_pool, context->storage_slot);
     }
     qa_actor_index_destroy(&p->actor_contexts);
-    application_guest_projection_profile_free(p); free(p); role->projection = NULL; return true;
+    if (p->inventory_public) { p->inventory = NULL; p->inventory_count = 0; }
+    application_guest_projection_profile_free(p); qa_unified_frame_lease_release(p->storage);
+    free(p); role->projection = NULL; return true;
 }

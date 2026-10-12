@@ -17,6 +17,7 @@ enum { NATIVE_ACTOR_THINK = 4, NATIVE_ACTOR_CALLBACKS = 5 };
 typedef struct native_actor_entry {
     struct native_actor_entry *next;
     struct application_native_q2_source_actors *owner;
+    size_t storage_slot;
     qa_native_address address;
     qa_native_entry_observer *binding;
     application_q3_mod_operation operation;
@@ -48,6 +49,7 @@ typedef struct native_actor_touch {
 typedef union native_actor_storage {
     native_source_actor actor;
     native_actor_touch touch;
+    native_actor_entry entry;
 } native_actor_storage;
 struct application_native_q2_source_actors {
     struct application_native_q2 *engine;
@@ -299,9 +301,12 @@ static bool ensure(struct application_native_q2_source_actors *o,uint32_t slot,s
     if(entry&&entry->binding) return true;
     if(!entry) {
         if(!qa_id_index_reserve(&o->entry_index,1,e))return false;
-        entry=calloc(1,sizeof(*entry));
-        if(!entry) return application_fail(e,QA_ERROR_MEMORY,"Retaining declared native reaction entry");
-        entry->owner=o;entry->address=target;entry->operation=operation;entry->next=o->entries;o->entries=entry;
+        size_t storage_slot;native_actor_storage *storage=storage_take(o,&storage_slot,e);
+        if(!storage) return application_fail(e,QA_ERROR_MEMORY,"Retaining declared native reaction entry");
+        entry=&storage->entry;
+        *entry=(native_actor_entry){.owner=o,.storage_slot=storage_slot,.address=target,
+            .operation=operation,.next=o->entries};
+        o->entries=entry;
         qa_id_index_insert(&o->entry_index,QA_STRING_NONE,target,(size_t)(uintptr_t)entry);
     }
     qa_native_type parameters[6];size_t count=operation==Q3_MOD_THINK?1:operation==Q3_MOD_USE?3:operation==Q3_MOD_TOUCH?4:
@@ -711,7 +716,8 @@ bool application_native_q2_source_actors_suspend(struct application_native_q2 *n
         entry->binding=NULL;
     }
     qa_id_index_clear(&o->entry_index);
-    while(o->entries) {native_actor_entry *entry=o->entries;o->entries=entry->next;free(entry);}
+    while(o->entries) {native_actor_entry *entry=o->entries;o->entries=entry->next;
+        qa_pool_release(&o->actor_pool,entry->storage_slot);}
     return true;
 }
 bool application_native_q2_source_actors_close(struct application_native_q2 *n,qa_error *e)

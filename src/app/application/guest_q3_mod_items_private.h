@@ -55,10 +55,10 @@ typedef struct item_actor {
     struct item_actor *next;
     application_q3_mod_items *owner;
     qa_actor_id actor;
+    size_t storage_slot, addresses_slot;
     item_record_address *addresses; size_t address_count;
     qa_inventory_lease lease;
     qa_qvm_binding watch,saved_watch;
-    qa_item_admission *definitions;
     item_pending *pending;
     application_q3_item_request request;
     qa_weapon_request_status status;
@@ -91,6 +91,10 @@ struct application_q3_mod_items {
     application_q3_mod_items_services services;
     item_actor *actors;
     qa_actor_index actor_rows;
+    qa_unified_frame_lease *storage;
+    qa_pool actor_pool, address_pool, watch_pool;
+    size_t actor_chunk, address_chunk, watch_chunk, watch_count;
+    qa_item_admission *definitions;
     application_q3_mod_items_application *application;
     application_q3_mod_items_entry *entries;
     uint64_t next_request;
@@ -98,6 +102,7 @@ struct application_q3_mod_items {
 };
 bool q3items_current(item_actor *,qa_error *);
 item_actor *q3items_actor(application_q3_mod_items *,qa_actor_id);
+item_actor *q3items_actor_take(application_q3_mod_items *,qa_error *);
 bool q3items_address(item_actor *,item_field,uint32_t *,qa_error *);
 bool q3items_scalar(item_actor *,item_field,const qa_qvm_committed_write *,int32_t *,qa_error *);
 bool q3items_capacity(item_actor *,const item_capacity *,const qa_qvm_committed_write *,int32_t *,qa_error *);

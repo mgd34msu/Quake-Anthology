@@ -87,13 +87,9 @@ static bool action(void *context,qa_item_id item,qa_item_action action_kind,qa_e
 }
 bool q3items_binding(item_actor *a,qa_inventory_items *out,qa_error *e)
 {
+    (void)e;
     application_q3_mod_items *o=a->owner;
-    if(!a->definitions){
-        a->definitions=calloc(o->profile->definition_count,sizeof(*a->definitions));
-        if(!a->definitions)return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining exact canonical item definitions");
-        for(size_t i=0;i<o->profile->definition_count;++i){a->definitions[i]=o->profile->definitions[i].admission;a->definitions[i].definition.owner=o->mod->owner;}
-    }
-    *out=(qa_inventory_items){.owner=o->mod->owner,.items=a->definitions,.count=o->profile->definition_count,
+    *out=(qa_inventory_items){.owner=o->mod->owner,.items=o->definitions,.count=o->profile->definition_count,
         .state={.context=a,.count=entry_count,.checked_count=checked_count,.at=at,.write=write,.mutable_capacity=mutable_capacity,.items_revision=items_revision},.action_context=a,.invoke=action};
     return true;
 }
@@ -157,16 +153,18 @@ static void dispose(void *context,const qa_qvm_committed_write *event)
 bool q3items_watch_create(item_actor *a,qa_error *e)
 {
     application_q3_mod_items *o=a->owner;
-    qa_qvm_write_range *ranges=NULL;size_t count=0;bool ok=true;
+    size_t slot=SIZE_MAX;
+    if(o->watch_count&&!qa_pool_run_available(&o->watch_pool,o->watch_count)&&
+        !qa_pool_extend(&o->watch_pool,qa_unified_frame_lease_arena(o->storage),o->watch_chunk,e))return false;
+    qa_qvm_write_range *ranges=o->watch_count?qa_pool_take_run(&o->watch_pool,o->watch_count,&slot):NULL;
+    if(o->watch_count&&!ranges)return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining actual item watch addresses");
+    size_t count=0;bool ok=true;
     for(size_t i=0;ok&&i<o->profile->storage_count;++i){
         const item_storage *s=o->profile->storage+i;
         size_t fields=(!s->bits&&s->capacity.kind==ITEM_CAPACITY_FIELD)?2:1;
         size_t globals=(!s->bits&&s->capacity.kind==ITEM_CAPACITY_SOURCE)?s->capacity.count:0;
         if(fields>SIZE_MAX-globals||fields+globals>SIZE_MAX-count||
             count+fields+globals>SIZE_MAX/sizeof(*ranges)){ok=false;break;}
-        qa_qvm_write_range *next=realloc(ranges,(count+fields+globals)*sizeof(*ranges));
-        if(!next){ok=q3mod_fail(e,QA_ERROR_MEMORY,"Retaining actual item watch addresses");break;}
-        ranges=next;
         for(size_t j=0;ok&&j<fields;++j){
             item_field f=j?s->capacity.field:s->field;
             size_t n=0;while(n<a->address_count&&a->addresses[n].record!=f.record)++n;
@@ -176,7 +174,8 @@ bool q3items_watch_create(item_actor *a,qa_error *e)
         for(size_t j=0;ok&&j<globals;++j)ranges[count++]=(qa_qvm_write_range){s->capacity.overrides[j].address,4};
     }
     if(ok)ok=qa_qvm_observe_writes_owned(o->mod->vm,ranges,count,publish,after,dispose,a,&a->watch,e);
-    free(ranges);return ok;
+    if(slot!=SIZE_MAX)qa_pool_release_run(&o->watch_pool,slot,o->watch_count);
+    return ok;
 }
 bool q3items_watch_read(item_actor *a,qa_qvm_saved_write_watch *out,qa_error *e)
 {
@@ -190,20 +189,62 @@ bool application_q3_mod_items_create(application_q3_mod_items_profile *p,applica
         (p->stage&&(!services->selected||!services->posture||!services->weapon_bind||!services->weapon_unbind||!services->weapon_current)))return q3mod_fail(e,QA_ERROR_ARGUMENT,"Items require their actual executor and canonical services");
     application_q3_mod_items *o=calloc(1,sizeof(*o));if(!o)return q3mod_fail(e,QA_ERROR_MEMORY,"Owning generic source items");
     o->profile=p;o->mod=mod;o->inventory=inventory;o->services=*services;
-    if(!qa_actor_index_create(&o->actor_rows,qa_session_actors(mod->session),NULL,e)) {
-        qa_actor_index_destroy(&o->actor_rows); free(o); return false;
+    o->actor_chunk=p->source->maximum;
+    bool ok=true;
+    for(size_t i=0;ok&&i<p->storage_count;++i){
+        const item_storage *s=p->storage+i;
+        size_t fields=(!s->bits&&s->capacity.kind==ITEM_CAPACITY_FIELD)?2:1;
+        size_t globals=(!s->bits&&s->capacity.kind==ITEM_CAPACITY_SOURCE)?s->capacity.count:0;
+        if(fields>SIZE_MAX-globals||fields+globals>SIZE_MAX-o->watch_count)ok=false;
+        else o->watch_count+=fields+globals;
+    }
+    if(ok&&o->actor_chunk&&
+        (p->source->record_count>SIZE_MAX/o->actor_chunk||o->watch_count>SIZE_MAX/o->actor_chunk))ok=false;
+    if(!ok){free(o);return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining actual item watch addresses");}
+    o->address_chunk=p->source->record_count*o->actor_chunk;
+    o->watch_chunk=o->watch_count*o->actor_chunk;
+    o->storage=application_control_storage_acquire(services->application,e);
+    qa_arena *arena=o->storage?qa_unified_frame_lease_arena(o->storage):NULL;
+    ok=arena&&qa_pool_prepare(&o->actor_pool,arena,o->actor_chunk,sizeof(item_actor),_Alignof(item_actor),e)&&
+        qa_pool_prepare(&o->address_pool,arena,o->address_chunk,sizeof(item_record_address),_Alignof(item_record_address),e)&&
+        qa_pool_prepare(&o->watch_pool,arena,o->watch_chunk,sizeof(qa_qvm_write_range),_Alignof(qa_qvm_write_range),e)&&
+        qa_actor_index_create(&o->actor_rows,qa_session_actors(mod->session),arena,e);
+    if(ok&&p->definition_count){
+        o->definitions=qa_unified_frame_lease_alloc(o->storage,p->definition_count,sizeof(*o->definitions),_Alignof(qa_item_admission),e);
+        ok=o->definitions!=NULL;
+        for(size_t i=0;ok&&i<p->definition_count;++i){o->definitions[i]=p->definitions[i].admission;o->definitions[i].definition.owner=mod->owner;}
+    }
+    if(!ok) {
+        qa_actor_index_destroy(&o->actor_rows);qa_unified_frame_lease_release(o->storage);free(o);return false;
     }
     *out=o;return true;
 }
 bool application_q3_mod_items_idle(const application_q3_mod_items *o)
 {if(!o)return true;if(o->calls||o->entries||o->application)return false;for(item_actor *a=o->actors;a;a=a->next)if(a->pending||a->references)return false;return true;}
+item_actor *q3items_actor_take(application_q3_mod_items *o,qa_error *e)
+{
+    if(o->actor_pool.head==SIZE_MAX&&!qa_pool_extend(&o->actor_pool,
+        qa_unified_frame_lease_arena(o->storage),o->actor_chunk,e))return NULL;
+    size_t slot;
+    item_actor *a=qa_pool_take(&o->actor_pool,&slot);
+    if(!a){q3mod_fail(e,QA_ERROR_MEMORY,"Owning admitted original item lease");return NULL;}
+    *a=(item_actor){.owner=o,.storage_slot=slot,.addresses_slot=SIZE_MAX};
+    size_t count=o->profile->source->record_count;
+    if(count){
+        if(!qa_pool_run_available(&o->address_pool,count)&&!qa_pool_extend(&o->address_pool,
+            qa_unified_frame_lease_arena(o->storage),o->address_chunk,e)){
+            qa_pool_release(&o->actor_pool,slot);return NULL;
+        }
+        a->addresses=qa_pool_take_run(&o->address_pool,count,&a->addresses_slot);
+        if(!a->addresses){qa_pool_release(&o->actor_pool,slot);q3mod_fail(e,QA_ERROR_MEMORY,"Retaining original item record bases");return NULL;}
+        memset(a->addresses,0,count*sizeof(*a->addresses));
+    }
+    return a;
+}
 static bool address_add(item_actor *a,size_t record,qa_error *e)
 {
     for(size_t i=0;i<a->address_count;++i)if(a->addresses[i].record==record)return true;
     if(a->address_count==SIZE_MAX/sizeof(*a->addresses))return false;
-    item_record_address *next=realloc(a->addresses,(a->address_count+1)*sizeof(*next));
-    if(!next)return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining original item record bases");
-    a->addresses=next;
     uint32_t address;if(!a->owner->mod->services.pointer(a->owner->mod->services.context,a->actor,record,&address,e))return false;
     a->addresses[a->address_count++]=(item_record_address){record,address};return true;
 }
@@ -212,10 +253,13 @@ bool application_q3_mod_items_admit(application_q3_mod_items *o,qa_actor_id acto
     if(!o||!q3mod_storage_current(o->mod,e)||!application_q3_mod_client_live(o->mod,actor)||!qa_actors_get(qa_session_actors(o->mod->session),actor))return false;
     item_actor *existing=q3items_actor(o,actor);if(existing)return existing->watch&&
         (!o->profile->stage||existing->weapon_bound)&&q3items_current(existing,e);
-    item_actor *a=calloc(1,sizeof(*a));
+    item_actor *a=q3items_actor_take(o,e);
     if(!a)return q3mod_fail(e,QA_ERROR_MEMORY,"Owning admitted original item lease");
     a->owner=o;a->actor=actor;a->next=o->actors;
-    if(!qa_actor_index_remember(&o->actor_rows,actor,(size_t)(uintptr_t)a,e)) { free(a); return false; }
+    if(!qa_actor_index_remember(&o->actor_rows,actor,(size_t)(uintptr_t)a,e)) {
+        if(a->addresses_slot!=SIZE_MAX)qa_pool_release_run(&o->address_pool,a->addresses_slot,o->profile->source->record_count);
+        qa_pool_release(&o->actor_pool,a->storage_slot);return false;
+    }
     o->actors=a;
     bool ok=true;
     for(size_t i=0;ok&&i<o->profile->storage_count;++i){const item_storage *s=o->profile->storage+i;size_t fields=(!s->bits&&s->capacity.kind==ITEM_CAPACITY_FIELD)?2:1;
@@ -240,9 +284,11 @@ static bool release_actor(application_q3_mod_items *o,item_actor *a,qa_error *e)
     if(a->lease.serial){if(qa_inventory_lease_current(o->inventory,a->lease)&&!qa_inventory_close_items(o->inventory,a->lease,e))return false;a->lease=(qa_inventory_lease){0};}
     item_actor **link=&o->actors;while(*link!=a)link=&(*link)->next;*link=a->next;
     qa_actor_index_forget_retained(&o->actor_rows,a->actor);
-    while(a->pending){item_pending *p=a->pending;a->pending=p->next;qa_unified_frame_lease_release(p->storage);}free(a->addresses);free(a->definitions);free(a);return true;
+    while(a->pending){item_pending *p=a->pending;a->pending=p->next;qa_unified_frame_lease_release(p->storage);}
+    if(a->addresses_slot!=SIZE_MAX)qa_pool_release_run(&o->address_pool,a->addresses_slot,o->profile->source->record_count);
+    qa_pool_release(&o->actor_pool,a->storage_slot);return true;
 }
 bool application_q3_mod_items_release(application_q3_mod_items *o,qa_actor_id actor,qa_error *e)
 {return release_actor(o,q3items_actor(o,actor),e);}
 bool application_q3_mod_items_destroy(application_q3_mod_items **in,qa_error *e)
-{if(!in)return false;application_q3_mod_items *o=*in;if(!o)return true;if(!application_q3_mod_items_idle(o))return false;while(o->actors)if(!release_actor(o,o->actors,e))return false;qa_actor_index_destroy(&o->actor_rows);free(o);*in=NULL;return true;}
+{if(!in)return false;application_q3_mod_items *o=*in;if(!o)return true;if(!application_q3_mod_items_idle(o))return false;while(o->actors)if(!release_actor(o,o->actors,e))return false;qa_actor_index_destroy(&o->actor_rows);qa_unified_frame_lease_release(o->storage);free(o);*in=NULL;return true;}

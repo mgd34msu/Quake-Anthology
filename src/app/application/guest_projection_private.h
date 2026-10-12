@@ -4,6 +4,8 @@
 #include "guest_q3_private.h"
 #include "qa/json.h"
 #include "guest_inventory_profile.h"
+#include "qa/pool.h"
+#include "qa/network_unified_frame_pool.h"
 
 typedef enum guest_record_kind { GUEST_ENTITY_RECORD, GUEST_CLIENT_RECORD } guest_record_kind;
 typedef struct guest_field { guest_record_kind record; uint32_t offset; } guest_field;
@@ -37,6 +39,7 @@ typedef struct guest_projection_actor {
     struct guest_projection_actor *next;
     struct application_guest_projection *projection;
     qa_actor_id actor;
+    size_t storage_slot;
     uint32_t slot;
     qa_inventory_lease inventory_lease;
     bool inventory_bound, inventory_prepared;
@@ -50,6 +53,9 @@ typedef struct application_guest_projection {
     guest_public_inventory_profile public_inventory;
     guest_inventory_catalog_services inventory_catalog;
     guest_projection_actor *actors;
+    qa_unified_frame_lease *storage;
+    qa_pool actor_pool;
+    size_t actor_chunk;
     qa_actor_index actor_contexts;
     const application_q3_combat_profile *state;
     bool has_inventory, inventory_public, located_inventory;

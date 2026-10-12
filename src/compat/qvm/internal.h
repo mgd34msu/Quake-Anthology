@@ -11,7 +11,6 @@ typedef struct qvm_code_word {
     int32_t value;
     uint32_t instruction;
 } qvm_code_word;
-
 struct qa_qvm_image {
     size_t references, instruction_count, memory_size;
     uint32_t code_length, data_length, literal_length, bss_length;
@@ -19,6 +18,8 @@ struct qa_qvm_image {
     qvm_code_word *code;
     qa_buffer initialized;
     size_t source_bytes;
+    qa_arena region_storage;
+    qa_id_index *regions;
 };
 struct qa_qvm_write_watch;
 struct qa_qvm {

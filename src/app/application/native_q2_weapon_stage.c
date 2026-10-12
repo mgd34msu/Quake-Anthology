@@ -42,8 +42,9 @@ typedef struct stage_projection {
     struct stage_projection *next;
     stage_region *region;
     qa_actor_id actor;
-    stage_saved *fields;
+    qa_unified_frame_lease *storage;
     size_t count;
+    stage_saved fields[];
 } stage_projection;
 typedef struct stage_watch {
     struct stage_actor *actor;
@@ -303,7 +304,7 @@ static bool projection_restore(application_native_q2_weapon_stage *o,stage_proje
                 stored_bits(saved->field->field.encoding,(current_bits&~saved->field->mask)|(saved->original&saved->field->mask)),e)) return false;
         saved->written=false;
     }
-    *head=p->next; free(p->fields); free(p); return true;
+    *head=p->next; qa_unified_frame_lease_release(p->storage); return true;
 }
 static bool region_call(void *context,qa_native_instance *native,const qa_native_region_event *event,qa_native_region_decision *decision,qa_error *e)
 {
@@ -320,11 +321,12 @@ static bool region_call(void *context,qa_native_instance *native,const qa_native
     stage_actor *a=frame->actor;
     if(frame->committed||qa_equipment_weapon_selected(o->options.equipment,a->actor,o->options.owner)) return true;
     if(!current(a,e)) return false;
-    stage_projection *p=calloc(1,sizeof(*p));
-    if(!p) return fail(e,QA_ERROR_MEMORY,"Retaining native weapon decision projection");
-    p->fields=region->count?calloc(region->count,sizeof(*p->fields)):NULL;
-    if(region->count&&!p->fields) { free(p); return fail(e,QA_ERROR_MEMORY,"Retaining native weapon input masks"); }
-    p->actor=a->actor; p->region=region; p->next=o->projections; o->projections=p;
+    qa_unified_frame_lease *storage=application_control_storage_acquire(o->options.application,e);
+    if(!storage)return false;
+    stage_projection *p=qa_unified_frame_lease_alloc(storage,1,
+        sizeof(*p)+region->count*sizeof(*p->fields),_Alignof(stage_projection),e);
+    if(!p) {qa_unified_frame_lease_release(storage);return false;}
+    p->storage=storage;p->actor=a->actor; p->region=region; p->next=o->projections; o->projections=p;
     for(size_t i=0;i<region->count;++i) {
         stage_saved *saved=p->fields+i; double value; saved->field=region->fields+i;
         if(!application_native_q2_field_address(o->options.callbacks,a->actor,&saved->field->field,&saved->address,e)||
@@ -653,7 +655,10 @@ static bool stage_prepare(application_native_q2_weapon_stage *o,qa_error *e)
         for(size_t j=0;j<i;++j) if(o->regions[j].id==r->id) return fail(e,QA_ERROR_FORMAT,"Native weapon decision repeats its original region");
         r->owner=o; qa_json_id fields=qa_json_get(d,row,"fields");
         if(qa_json_type(d,fields)!=QA_JSON_ARRAY||!qa_json_size(d,fields)) return fail(e,QA_ERROR_FORMAT,"Native weapon decision omitted its source fields");
-        r->count=qa_json_size(d,fields); r->fields=r->count?calloc(r->count,sizeof(*r->fields)):NULL;
+        r->count=qa_json_size(d,fields);
+        if(r->count>(SIZE_MAX-sizeof(stage_projection))/sizeof(stage_saved))
+            return fail(e,QA_ERROR_MEMORY,"Native weapon projection storage size overflow");
+        r->fields=r->count?calloc(r->count,sizeof(*r->fields)):NULL;
         if(r->count&&!r->fields) return fail(e,QA_ERROR_MEMORY,"Owning native weapon decision fields");
         for(size_t j=0;j<r->count;++j) {
             qa_json_id field=qa_json_at(d,fields,j); stage_mask *m=r->fields+j;

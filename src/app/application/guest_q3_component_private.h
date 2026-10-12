@@ -58,6 +58,7 @@ struct application_q3_component {
     size_t frame_branch_count;
     qa_string_id definition;
     component_player_cursor *player_cursors;
+    qa_unified_frame_lease *player_cursor_storage;
     size_t player_cursor_count;
     qa_actor_index player_cursor_rows;
     qa_qvm_binding player_watch;

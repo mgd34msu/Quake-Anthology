@@ -7,7 +7,10 @@ static void row_free(mod_pickup_actor *row)
         resources->pickup=NULL; row->resources=NULL;
         q3mod_resources_collect(row->owner,resources);
     }
-    free(row->rules); free(row->bindings); free(row);
+    application_q3_mod *o=row->owner;
+    if(row->rules_slot!=SIZE_MAX)qa_pool_release_run(&o->pickup_rules,row->rules_slot,o->profile->pickup_count);
+    if(row->bindings_slot!=SIZE_MAX)qa_pool_release_run(&o->pickup_bindings,row->bindings_slot,o->profile->pickup_count);
+    qa_pool_release(&o->pickup_pool,row->storage_slot);
 }
 static bool take(void *context,const qa_pickup_offer *offer,qa_pickup_execution *execution,qa_pickup_outcome *out,qa_error *e)
 {
@@ -25,12 +28,22 @@ static bool take(void *context,const qa_pickup_offer *offer,qa_pickup_execution 
 }
 static bool rules_create(application_q3_mod *o,qa_actor_id actor,mod_pickup_actor **out,qa_error *e)
 {
-    mod_pickup_actor *row=calloc(1,sizeof(*row));
+    if(o->pickup_pool.head==SIZE_MAX&&!qa_pool_extend(&o->pickup_pool,
+        qa_unified_frame_lease_arena(o->resource_storage),o->pickup_chunk,e))return false;
+    size_t slot;mod_pickup_actor *row=qa_pool_take(&o->pickup_pool,&slot);
     if(!row) return q3mod_fail(e,QA_ERROR_MEMORY,"Owning admitted original pickup recipient");
-    row->owner=o; row->actor=actor;
-    row->rules=calloc(o->profile->pickup_count,sizeof(*row->rules));
-    row->bindings=calloc(o->profile->pickup_count,sizeof(*row->bindings));
-    if(!row->rules||!row->bindings) { free(row->rules); free(row->bindings); free(row); return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining complete declared original pickup rules"); }
+    *row=(mod_pickup_actor){.owner=o,.actor=actor,.storage_slot=slot,.rules_slot=SIZE_MAX,.bindings_slot=SIZE_MAX};
+    size_t count=o->profile->pickup_count;
+    bool okay=(qa_pool_run_available(&o->pickup_rules,count)||qa_pool_extend(&o->pickup_rules,
+        qa_unified_frame_lease_arena(o->resource_storage),o->pickup_rule_chunk,e))&&
+        (qa_pool_run_available(&o->pickup_bindings,count)||qa_pool_extend(&o->pickup_bindings,
+            qa_unified_frame_lease_arena(o->resource_storage),o->pickup_rule_chunk,e));
+    if(okay){
+        row->rules=qa_pool_take_run(&o->pickup_rules,count,&row->rules_slot);
+        row->bindings=qa_pool_take_run(&o->pickup_bindings,count,&row->bindings_slot);
+        okay=row->rules&&row->bindings;
+    }
+    if(!okay){row_free(row);return false;}
     for(size_t i=0;i<o->profile->pickup_count;++i) {
         const mod_pickup *definition=o->profile->pickups+i;
         row->bindings[i]=(mod_pickup_bound){row,definition};
