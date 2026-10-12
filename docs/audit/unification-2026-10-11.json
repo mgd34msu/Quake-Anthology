@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "9a069401a3097c7fb34088695d7b6e3be039a3b7",
+  "verified_main": "cba4fbb4584a05e59a00f24223d35c09f2eac019",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -41569,6 +41569,33 @@
       ],
       "record_directory": "/tmp/qa-ta3196-q3-cvar-handles-20261012",
       "conclusion": "Q3 guest runtime updates retain canonical cvar handles; successful ABI mirror values use the original fixed extent. Hidden-status projection, aliases and old overlength checkpoint fields retained. Normal build/seven core suites passed; no whole-frame allocation or live claim."
+    },
+    {
+      "commit": "cba4fbb4584a05e59a00f24223d35c09f2eac019",
+      "source_tree": "4a7be2102a8ea83996033ffbbb18c41f7d16a3f3",
+      "finding_ids": [
+        "03-18",
+        "04-005"
+      ],
+      "files_rechecked": [
+        "src/app/application/map.c",
+        "src/app/application/map_players.c",
+        "src/app/application/map_travel.c",
+        "src/app/application/save.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-provider-name-adoption-20261012",
+      "conclusion": "Seven instance-name provider selection sites use existing common index and destination-local name identities. First/all/last match and campaign/save order retained. Normal build/seven core suites passed; historical candidate views remain in flight."
     }
   ],
   "verification_limits": [

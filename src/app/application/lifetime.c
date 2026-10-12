@@ -377,6 +377,7 @@ bool application_finalize(qa_application *application, qa_error *error)
     free(application->shader_remaps);
     free(application->providers);
     qa_id_index_destroy(&application->provider_index);
+    qa_actor_index_destroy(&application->native_client_actors);
     free(application->ui_names.q2_effects);
     while(application->content_names) {
         application_content_names *row=application->content_names;application->content_names=row->next;

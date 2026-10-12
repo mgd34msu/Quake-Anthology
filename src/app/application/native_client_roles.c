@@ -230,10 +230,17 @@ static bool create(qa_application *app, const qa_application_client_options *o,
         qa_launch_instance_lease_release(r->metadata); free(r->actors); free(r);
         return application_fail(error, QA_ERROR_ARGUMENT, "Saved CLIENT connection lost its genuine imported owner");
     }
+    if (!app->native_client_actors.entries &&
+        !qa_actor_index_create(&app->native_client_actors, qa_session_actors(app->session), NULL, error)) {
+        qa_launch_instance_lease_release(r->metadata); free(r->actors); free(r); return false;
+    }
     if (!o->owner.retain(o->owner.context, error)) {
         qa_launch_instance_lease_release(r->metadata); free(r->actors); free(r); return false;
     }
-    r->next = p->native_client_roles; p->native_client_roles = r; *out = r->source; return true;
+    r->next = p->native_client_roles; p->native_client_roles = r;
+    for (size_t i = 0; i < r->actor_count; ++i)
+        qa_actor_index_put(&app->native_client_actors, r->actors[i], (size_t)(uintptr_t)r);
+    *out = r->source; return true;
 }
 bool qa_application_client_create(qa_application *app, const qa_application_client_options *o,
     qa_application_client_source *out, qa_error *error)
@@ -286,22 +293,18 @@ bool application_native_client_observer_actor(void *context, const qa_session *s
     const qa_actor_record *actor)
 {
     const qa_application *app = context;
+    size_t value;
     if (!app || app->session != session || !actor || !actor->has_source ||
-        qa_actors_get(qa_session_actors(session), actor->id) != actor) return false;
-    for (application_provider *p = app->live_providers; p; p = p->next_live) {
-        if (!application_native_client_only(p)) continue;
-        for (const struct application_native_client_role *r = p->native_client_roles; r; r = r->next) {
-            const qa_application_client_context *source = &r->source.context;
-            if (r->provider != p || r->retiring || r->entity_mutating || !r->entity_generation ||
-                source->session != session || source->lifetime != r || source->receiver != p->owner ||
-                source->entity_owner != actor->owner || source->entity_definition != actor->definition ||
-                r->source.descriptor != qa_launch_instance_lease_view(r->metadata)) continue;
-            for (size_t i = 0; i < r->actor_count; ++i)
-                if (qa_actor_id_equal(r->actors[i], actor->id))
-                    return application_native_client_source_associated(app, &r->source);
-        }
-    }
-    return false;
+        qa_actors_get(qa_session_actors(session), actor->id) != actor ||
+        !qa_actor_index_find(&app->native_client_actors, actor->id, &value)) return false;
+    const struct application_native_client_role *r = (const struct application_native_client_role *)(uintptr_t)value;
+    application_provider *p = r->provider;
+    const qa_application_client_context *source = &r->source.context;
+    return application_native_client_only(p) && !r->retiring && !r->entity_mutating && r->entity_generation &&
+        source->session == session && source->lifetime == r && source->receiver == p->owner &&
+        source->entity_owner == actor->owner && source->entity_definition == actor->definition &&
+        r->source.descriptor == qa_launch_instance_lease_view(r->metadata) &&
+        application_native_client_source_associated(app, &r->source);
 }
 bool qa_application_client_bind(qa_application *app, const qa_application_client_source *pending,
     qa_net_client_id client, qa_net_seat_id seat, uint64_t epoch, qa_application_client_source *out, qa_error *error)
@@ -406,6 +409,7 @@ bool qa_application_client_entities_refresh(qa_application *app,
             }
         }
         if (record && !qa_actors_release(actors, id, error)) { ok = false; break; }
+        qa_actor_index_remove(&app->native_client_actors, id);
         --row->actor_count;
     }
     if (ok) {
@@ -449,6 +453,7 @@ bool qa_application_client_entity_read(qa_application *app, const qa_application
             if (qa_actors_get(actors, id) && !qa_actors_release(actors, id, error)) {
                 --r->calls; r->entity_mutating = false; return false;
             }
+            qa_actor_index_remove(&app->native_client_actors, id);
             --r->actor_count;
         }
         --r->calls; r->entity_mutating = false;
@@ -464,12 +469,15 @@ bool qa_application_client_entity_read(qa_application *app, const qa_application
         size_t live = 0;
         for (size_t i = 0; i < r->actor_count; ++i)
             if (qa_actors_get(actors, r->actors[i])) r->actors[live++] = r->actors[i];
+            else qa_actor_index_remove(&app->native_client_actors, r->actors[i]);
         r->actor_count = live;
     }
     qa_actor_id id;
     if (!qa_actors_allocate_source(actors, source->context.entity_owner, number,
         source->context.entity_definition, &id, error)) return false;
-    r->actors[r->actor_count++] = id; *out = id; return true;
+    r->actors[r->actor_count++] = id;
+    qa_actor_index_put(&app->native_client_actors, id, (size_t)(uintptr_t)r);
+    *out = id; return true;
 }
 static bool row_idle(const struct application_native_client_role *r)
 {
@@ -541,6 +549,7 @@ static bool retire(struct application_native_client_role *r, qa_error *error)
             --r->calls;
             if (!released) return false;
         }
+        qa_actor_index_remove(&r->provider->application->native_client_actors, id);
         --r->actor_count;
     }
     if (!r->options.owner.release(r->options.owner.context, error)) return false;

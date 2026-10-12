@@ -260,6 +260,7 @@ typedef struct application_content_names {
 
 struct qa_application {
     qa_id_index provider_index;
+    qa_actor_index native_client_actors;
     int64_t utc_ms;
     struct qa_application_client_preparation *client_preparation;
     application_publication *failed_publications;
