@@ -99,6 +99,7 @@ struct application_player_roster {
     size_t feedback_count;
     application_player_record *records;
     qa_actor_index actors;
+    qa_id_index seats;
     qa_arena guest_storage;
     qa_pool guest_bindings;
     qa_id_index guest_sources;

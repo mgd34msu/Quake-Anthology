@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "d5510fd410ebdde041414d4028bfcf8690ebb407",
+  "verified_main": "1909b408d80c817cd13dfbe72c2f03bb8e615bd4",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 189,
-    "open_source_observation": 182,
+    "fixed_source_build_core": 190,
+    "open_source_observation": 181,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -37267,8 +37267,9 @@
       "severity": "medium",
       "job": "37",
       "area": "public_interfaces",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "1909b408d80c817cd13dfbe72c2f03bb8e615bd4"
     }
   ],
   "followup_source_checks": [
@@ -42359,6 +42360,35 @@
       ],
       "record_directory": "/tmp/qa-ta3196-event-dictionary-index-20261012",
       "conclusion": "Event resource and registration lookup uses the common index; retained row order, resource custody and existing save encoding are preserved. Normal build and seven core suites passed; no live or whole-frame allocation claim."
+    },
+    {
+      "commit": "1909b408d80c817cd13dfbe72c2f03bb8e615bd4",
+      "source_tree": "b7252f1ec9a5543b8ed7f4f3e17f4d733c43a937",
+      "finding_ids": [
+        "J37-04"
+      ],
+      "files_rechecked": [
+        "include/qa/input.h",
+        "src/input/buttons.c",
+        "src/input/internal.h",
+        "src/input/save.c",
+        "src/input/seat.c",
+        "src/platform/input.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-held-input-arena-20261012",
+      "conclusion": "Physical route and binding admission prepare common arena-backed held/button spans; releases reuse admitted storage and repeats remain suppressed. Existing shared input checks passed, including eight overlapping inputs. Normal build and seven core suites passed; new authored source admission remains cold."
     }
   ],
   "verification_limits": [

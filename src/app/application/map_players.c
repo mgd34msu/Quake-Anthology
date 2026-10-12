@@ -242,7 +242,9 @@ bool qa_application_player_actor(const qa_application *application, uint32_t sea
     if (application == NULL || out == NULL || application->players == NULL ||
         application->session == NULL)
         return false;
-    for (size_t i = 0; i < application->players->count; ++i) {
+    qa_id_index_cursor candidates = qa_id_index_begin(&application->players->seats, seat, 0);
+    size_t i;
+    while (qa_id_index_next(&application->players->seats, &candidates, &i)) {
         const application_player_record *record = &application->players->records[i];
         if (!record->retiring && record->seat == seat && qa_actors_get(
                 qa_session_actors(application->session), record->actor) != NULL) {
@@ -274,6 +276,25 @@ bool application_player_source_actor(const qa_application *application,
     if(!record || !record->configured_actor.registry) return false;
     *out=record->configured_actor;
     return true;
+}
+
+static void roster_seats_rebuild(struct application_player_roster *roster)
+{
+    qa_id_index_clear(&roster->seats);
+    for (size_t i = roster->count; i--;) qa_id_index_insert(&roster->seats, roster->records[i].seat, 0, i);
+}
+
+static bool roster_seats_prepare(struct application_player_roster *roster, qa_error *error)
+{
+    roster->seats.storage = &roster->guest_storage;
+    if (!qa_id_index_reserve(&roster->seats, roster->capacity, error)) return false;
+    roster_seats_rebuild(roster); return true;
+}
+
+static void record_seat_set(struct application_player_roster *roster,
+    application_player_record *record, uint32_t seat)
+{
+    record->seat = seat; roster_seats_rebuild(roster);
 }
 
 static bool guest_bindings_prepare(struct application_player_roster *roster, qa_error *error)
@@ -335,6 +356,7 @@ static void roster_free(struct application_player_roster *roster)
         qa_q1_travel_destroy(roster->records[i].q1_entry);
     }
     qa_id_index_destroy(&roster->guest_sources);
+    qa_id_index_destroy(&roster->seats);
     qa_arena_destroy(&roster->guest_storage);
     qa_actor_index_destroy(&roster->actors);
     free(roster->records);
@@ -511,7 +533,7 @@ static void record_bind_identity(qa_application *application, application_player
     }
 }
 
-static bool record_text(qa_application *, application_player_record *, const char *, const char *,
+static bool record_text(qa_application *, struct application_player_roster *, application_player_record *, const char *, const char *,
                          const char *, const char *, qa_error *);
 static const char *roster_name(const qa_launch_choices *,
     const application_player_record *, bool);
@@ -785,7 +807,7 @@ bool application_players_prepare(qa_application *application,
         return application_fail(error, QA_ERROR_MEMORY, "cannot reserve travel player roster");
     }
     if (!qa_actor_index_create(&travel->roster->actors, qa_session_actors(application->session), NULL, error) ||
-        !guest_bindings_prepare(travel->roster, error)) {
+        !guest_bindings_prepare(travel->roster, error) || !roster_seats_prepare(travel->roster, error)) {
         application_players_dispose(travel);
         return false;
     }
@@ -810,7 +832,8 @@ bool application_players_prepare(qa_application *application,
                      (publication->map_provider->launch->selection.clock.kind == QA_RULESET_Q3 &&
                       (publication->map_provider->kind == APPLICATION_PROVIDER_QVM ||
                        publication->map_provider->kind == APPLICATION_PROVIDER_NATIVE))))};
-            if (!record_text(application, record, application_player_name(old), application_player_team(old), application_player_skin(old), old->userinfo, error)) {
+            roster_seats_rebuild(travel->roster);
+            if (!record_text(application, travel->roster, record, application_player_name(old), application_player_team(old), application_player_skin(old), old->userinfo, error)) {
                 application_players_dispose(travel);
                 return false;
             }
@@ -871,7 +894,7 @@ bool application_players_prepare(qa_application *application,
                     "secondary guest player/map ownership is not qualified");
             }
         }
-        travel->roster->records[i].seat = seat->id;
+        record_seat_set(travel->roster, travel->roster->records + i, seat->id);
         qa_actor_id previous = {0};
         const application_player_record *old = NULL;
         bool had_player = qa_application_player_actor(application, seat->id, &previous);
@@ -911,7 +934,7 @@ bool application_players_prepare(qa_application *application,
                         "Q1 local travel source slot differs from its roster");
                 }
             }
-            if (!record_text(application, &travel->roster->records[i],
+            if (!record_text(application, travel->roster, &travel->roster->records[i],
                     roster_name(previous_choices, old, false),
                     roster_name(previous_choices, old, true), application_player_skin(old), old->userinfo, error)) {
                 application_players_dispose(travel);
@@ -935,7 +958,7 @@ bool application_players_prepare(qa_application *application,
                 application_players_dispose(travel);
                 return false;
             }
-            if (!record_text(application, fresh, seat->name, seat->team, NULL, fresh->userinfo, error)) {
+            if (!record_text(application, travel->roster, fresh, seat->name, seat->team, NULL, fresh->userinfo, error)) {
                 application_players_dispose(travel);
                 return false;
             }
@@ -3365,7 +3388,7 @@ bool application_q3_round_players_prepare(qa_application *app,
         (roster->capacity && !roster->records))
         goto memory;
     if (!qa_actor_index_create(&roster->actors, qa_session_actors(app->session), NULL, error) ||
-        !guest_bindings_prepare(roster, error)) goto failed;
+        !guest_bindings_prepare(roster, error) || !roster_seats_prepare(roster, error)) goto failed;
     roster->map_provider = provider;
     roster->family = app->players->family;
     roster->spawn_point = app->players->spawn_point;
@@ -3423,7 +3446,8 @@ bool application_q3_round_players_prepare(qa_application *app,
             .configured_actor = old->configured_actor,
             .remote_seat = old->remote_seat, .remote = old->remote,
             .dynamic = old->dynamic,  };
-        if (!record_text(app, record, roster_name(choices, old, false),
+        roster_seats_rebuild(roster);
+        if (!record_text(app, roster, record, roster_name(choices, old, false),
                 roster_name(choices, old, true), application_player_skin(old), userinfo, error))
             goto failed;
         if (!record_bot_choice(record, &(qa_launch_seat){.bot_definition = old->bot_definition,
@@ -3611,6 +3635,7 @@ static void record_free(struct application_player_roster *roster, application_pl
     free(record->userinfo);
     free(record->bot_definition);
     *record = (application_player_record){.retiring = true};
+    if (roster) roster_seats_rebuild(roster);
 }
 
 bool application_player_bot(const qa_application *app, qa_actor_id actor)
@@ -3741,7 +3766,8 @@ bool application_players_native_q3_retire(qa_application *app,
     return retire_player(app,provider,actor,error);
 }
 
-static bool record_text(qa_application *application, application_player_record *record,
+static bool record_text(qa_application *application, struct application_player_roster *roster,
+                        application_player_record *record,
                         const char *name, const char *team, const char *skin,
                         const char *userinfo, qa_error *error)
 {
@@ -3750,9 +3776,9 @@ static bool record_text(qa_application *application, application_player_record *
     if (userinfo != record->userinfo)
         record->userinfo = userinfo != NULL ? player_text(userinfo) : NULL;
     if (userinfo != NULL && record->userinfo == NULL) {
-        if (application_player_record_find(application->players, record->actor) == record)
-            qa_actor_index_remove(&application->players->actors, record->actor);
-        record_free(application->players, record);
+        if (application_player_record_find(roster, record->actor) == record)
+            qa_actor_index_remove(&roster->actors, record->actor);
+        record_free(roster, record);
         return application_fail(error, QA_ERROR_MEMORY, "cannot retain player connection text");
     }
     if (record->actor.registry) record_bind_identity(application, record);
@@ -3899,6 +3925,7 @@ static bool record_append(qa_application *application, application_player_record
         if (roster->records[i].dynamic && roster->records[i].actor.registry == 0 &&
             roster->records[i].character == NULL) {
             roster->records[i] = record;
+            roster_seats_rebuild(roster);
             if (!record_actor_bind(roster, roster->records + i, record.actor, error)) return false;
             ++roster->revision;
             application_actor_routes_bind(application, record.actor);
@@ -3909,6 +3936,7 @@ static bool record_append(qa_application *application, application_player_record
         return application_fail(error, QA_ERROR_MEMORY, "canonical player roster capacity is exhausted");
     *out = roster->count;
     roster->records[roster->count++] = record;
+    roster_seats_rebuild(roster);
     if (!record_actor_bind(roster, roster->records + *out, record.actor, error)) return false;
     ++roster->revision;
     application_actor_routes_bind(application, record.actor);
@@ -3994,8 +4022,8 @@ bool application_players_bot_allocate(qa_application *app,
     application_player_record record = {.pending_identity = {.bot = true, .spectator = seat.spectator}, .seat = seat.id, .client_slot = physical,
         .source_slot = physical + offset, .configured_actor = seat.actor,
         .character = character,  .dynamic = true, };
-    if (!record_text(app, &record, seat.name, seat.team, "", "", error)) return false;
-    if (!record_bot_choice(&record, &seat, error)) { record_free(app->players, &record); return false; }
+    if (!record_text(app, NULL, &record, seat.name, seat.team, "", "", error)) return false;
+    if (!record_bot_choice(&record, &seat, error)) { record_free(NULL, &record); return false; }
     size_t index;
     if (pending != SIZE_MAX) {
         index = pending;
@@ -4003,8 +4031,9 @@ bool application_players_bot_allocate(qa_application *app,
         qa_actor_index_remove(&app->players->actors, app->players->records[index].actor);
         record_free(app->players, &app->players->records[index]);
         app->players->records[index] = record;
+        roster_seats_rebuild(app->players);
         ++app->players->revision;
-    } else if (!record_append(app, record, &index, error)) { record_free(app->players, &record); return false; }
+    } else if (!record_append(app, record, &index, error)) { record_free(NULL, &record); return false; }
     application_operation previous = app->operation;
     app->operation = APPLICATION_CONFIGURING;
     application_player_carry carry = {0};
@@ -4189,9 +4218,9 @@ static bool player_attach(qa_application *application,
         .source_slot = source_slot, .character = character, .remote_client = request->client,
         .remote_seat = request->network_seat, .remote = request->remote, .dynamic = request->remote,
          };
-    if (!record_text(application, &record, seat->name, seat->team, request->skin, request->userinfo, error)) return false;
+    if (!record_text(application, NULL, &record, seat->name, seat->team, request->skin, request->userinfo, error)) return false;
     size_t index;
-    if (!record_append(application, record, &index, error)) { record_free(application->players, &record); return false; }
+    if (!record_append(application, record, &index, error)) { record_free(NULL, &record); return false; }
     application->operation = APPLICATION_CONFIGURING;
     application_player_carry carry = {0};
     bool accepted;
@@ -4577,8 +4606,8 @@ bool application_players_guest_attach(qa_application *application,
         application_player_record record = {.pending_identity = {.spectator = info->spectator, .bot = true}, .seat = seat, .client_slot = slot,
             .source_slot = source->source_slot, .actor = actor, .character = provider,
               .dynamic = true};
-        if (!record_text(application, &record, info->name, "", info->skin, NULL, error)) return false;
-        if (!record_append(application, record, &index, error)) { record_free(roster, &record); return false; }
+        if (!record_text(application, NULL, &record, info->name, "", info->skin, NULL, error)) return false;
+        if (!record_append(application, record, &index, error)) { record_free(NULL, &record); return false; }
     }
     application_player_record *record = &roster->records[index];
     if (!guest_binding_append(roster, record, provider->owner, provider->launch->identity, slot, error))
@@ -4934,12 +4963,13 @@ bool application_players_checkpoint_restore(qa_application *candidate, qa_bytes 
     bool ok = qa_actor_index_create(&roster->actors, actors, NULL, error) &&
               guest_bindings_prepare(roster, error) &&
               roster->map_provider && (!roster->capacity || roster->records) &&
-              (!points || roster->points) && (!q1_points || roster->q1_points);
+              (!points || roster->points) && (!q1_points || roster->q1_points) &&
+              roster_seats_prepare(roster, error);
     if (!ok) application_fail(error, roster->map_provider ? QA_ERROR_MEMORY : QA_ERROR_FORMAT,
                               "roster map provider or allocation is missing");
     for (size_t i = 0; ok && i < count; ++i) {
         application_player_record *record = &roster->records[i];
-        record->seat = qa_net_read_u32(&reader); record->client_slot = qa_net_read_u32(&reader);
+        record_seat_set(roster, record, qa_net_read_u32(&reader)); record->client_slot = qa_net_read_u32(&reader);
         record->source_slot = qa_net_read_u32(&reader);
         qa_saved_actor_id actor = roster_read_saved(&reader), configured = roster_read_saved(&reader);
         qa_actor_owner character = qa_net_read_u32(&reader);

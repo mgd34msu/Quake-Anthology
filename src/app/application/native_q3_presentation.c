@@ -153,7 +153,9 @@ bool qa_application_native_q3_presentation_local(qa_application *app,
     *found = false;
     if (!app->players) return true;
     application_provider *provider = source(app, view->source_owner);
-    for (size_t i = 0; i < app->players->count; ++i) {
+    qa_id_index_cursor candidates = qa_id_index_begin(&app->players->seats, seat, 0);
+    size_t i;
+    while (qa_id_index_next(&app->players->seats, &candidates, &i)) {
         const application_player_record *row = &app->players->records[i];
         if (row->seat != seat || row->retiring || row->remote || application_player_identity(row)->bot ||
             !qa_actors_get(qa_session_actors(app->session), row->actor)) continue;
