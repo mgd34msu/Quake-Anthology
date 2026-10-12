@@ -1,5 +1,6 @@
 /* Donor: network/q3/connectionless.ts, admission.ts and authorization modules. */
 #include "qa/network_q3.h"
+#include "qa/command_lexer.h"
 #include "qa/text.h"
 #include <ctype.h>
 #include <limits.h>
@@ -31,29 +32,20 @@ int32_t qa_q3_parse_integer(const char *s) {
 const char *qa_q3_token(const qa_q3_tokens *t, size_t i) { return i < t->count ? t->text + t->offsets[i] : ""; }
 bool qa_q3_tokenize(const char *s, qa_q3_tokens *out, qa_error *error) {
     if (!s || !out) return fail(error, QA_ERROR_ARGUMENT, "Invalid Q3 command tokens");
-    out->count = 0; out->truncated = false; size_t used = 0;
-    while (*s) {
-        while (*s && ((unsigned char)*s <= 32 || (unsigned char)*s > 127)) ++s;
-        if (!*s || (s[0] == '/' && s[1] == '/')) break;
-        if (s[0] == '/' && s[1] == '*') {
-            s += 2;
-            while (*s && !(s[0] == '*' && s[1] == '/')) ++s;
-            if (*s) s += 2;
-            continue;
-        }
+    out->count = 0; out->truncated = false; size_t used = 0, offset = 0, length = strlen(s);
+    while (offset < length) {
+        qa_command_token_span token;
+        if (!qa_command_token_next(s, length, offset, QA_RULESET_Q3, false, &token, error)) return false;
+        if (!token.found) break;
         if (out->count >= 1024) { out->truncated = true; break; }
         if (used >= sizeof(out->text)) return fail(error, QA_ERROR_FORMAT, "Q3 command token storage exhausted");
         out->offsets[out->count++] = (uint16_t)used;
-        bool quoted = *s == '"';
-        if (quoted) ++s;
-        while (*s) {
-            if (quoted ? *s == '"' : ((unsigned char)*s <= 32 || (unsigned char)*s > 127 || *s == '"'
-                || (s[0] == '/' && (s[1] == '/' || s[1] == '*')))) break;
-            if (used >= sizeof(out->text) - 1) return fail(error, QA_ERROR_FORMAT, "Q3 command token storage exceeds 9215 bytes");
-            out->text[used++] = *s++;
-        }
+        size_t available = sizeof(out->text) - 1 - used;
+        size_t copied = token.size < available ? token.size : available;
+        memmove(out->text + used, s + token.start, copied); used += copied;
+        if (copied != token.size) return fail(error, QA_ERROR_FORMAT, "Q3 command token storage exceeds 9215 bytes");
         out->text[used++] = 0;
-        if (quoted && *s == '"') ++s;
+        offset = token.end;
     }
     if (!out->count) out->text[0] = 0;
     return true;

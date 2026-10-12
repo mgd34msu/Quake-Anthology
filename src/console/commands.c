@@ -1093,9 +1093,9 @@ static bool expand_macros(qa_console *console, const qa_command_context *context
     for (size_t offset = 0; text[offset] != '\0'; ++offset) {
         if (text[offset] == '"') quoted = !quoted;
         if (quoted || text[offset] != '$') continue;
-        qac_token token;
+        qa_command_token_span token;
         size_t length = strlen(text);
-        if (!qac_parse_token(text, length, offset + 1, QA_RULESET_Q2_CLASSIC, context->console_text, &token, error)) return false;
+        if (!qa_command_token_next(text, length, offset + 1, QA_RULESET_Q2_CLASSIC, context->console_text, &token, error)) return false;
         if (!token.found) continue;
         char name[1024];memcpy(name,text+token.start,token.size);name[token.size]='\0';
         qa_cvars *registry = cvars_for(console,context);

@@ -788,6 +788,44 @@ static void test_literal_tokens(void)
         qa_command_tokens_free(&arena); qa_command_tokens_free(&frame); qa_command_tokens_free(&span);
         qa_arena_destroy(&token_storage);
     }
+    const struct {
+        const char *text;
+        size_t count;
+        const char *tokens[4];
+    } q3_cases[] = {
+        {"alpha/* block */\"two words\" tail // ignored", 3, {"alpha", "two words", "tail"}},
+        {"\"\" a\"b\"c", 4, {"", "a", "b", "c"}},
+        {"del\177 next\200\"quoted\377\"", 3, {"del\177", "next", "quoted\377"}},
+        {"\"unterminated", 1, {"unterminated"}}
+    };
+    qa_q3_tokens wire;
+    for (size_t i = 0; i < sizeof(q3_cases) / sizeof(q3_cases[0]); ++i) {
+        qa_arena token_storage = {0};
+        qa_command_tokens parsed = {0};
+        qa_arena_init(&token_storage, 0);
+        CHECK(qa_q3_tokenize(q3_cases[i].text, &wire, &error));
+        CHECK(qa_command_tokenize(q3_cases[i].text, QA_RULESET_Q3, false, &parsed,
+            qa_arena_alloc_callback, &token_storage, &error));
+        CHECK(wire.count == q3_cases[i].count && parsed.count == q3_cases[i].count);
+        CHECK(!wire.truncated);
+        for (size_t token = 0; token < wire.count; ++token) {
+            CHECK(!strcmp(qa_q3_token(&wire, token), q3_cases[i].tokens[token]));
+            CHECK(!strcmp(parsed.values[token], q3_cases[i].tokens[token]));
+        }
+        qa_command_tokens_free(&parsed);
+        qa_arena_destroy(&token_storage);
+    }
+    char many[2051];
+    for (size_t i = 0; i < 1025; ++i) { many[i * 2] = 'x'; many[i * 2 + 1] = ' '; }
+    many[2050] = 0;
+    CHECK(qa_q3_tokenize(many, &wire, &error) && wire.count == 1024 && wire.truncated);
+    many[2048] = 0;
+    CHECK(qa_q3_tokenize(many, &wire, &error) && wire.count == 1024 && !wire.truncated);
+    char oversized[sizeof(wire.text) + 1];
+    memset(oversized, 'x', sizeof(oversized) - 1); oversized[sizeof(oversized) - 1] = 0;
+    CHECK(!qa_q3_tokenize(oversized, &wire, &error));
+    CHECK(wire.count == 1 && wire.offsets[0] == 0 && !wire.truncated);
+    CHECK(!memcmp(wire.text, oversized, sizeof(wire.text) - 1));
     second[0]='X'; qa_unified_frame_pool_destroy(&pool);
     CHECK(owned.count==2 && pooled.count==2);
     CHECK(!strcmp(owned.values[1],"quoted; text") && !strcmp(pooled.values[1],owned.values[1]));
