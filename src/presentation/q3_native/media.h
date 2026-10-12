@@ -11,6 +11,7 @@ typedef struct q3n_remote_source_view q3n_remote_source_view;
 typedef struct q3n_remote_source q3n_remote_source;
 typedef struct q3n_compiled_source q3n_compiled_source;
 typedef struct q3n_compiled_source_view q3n_compiled_source_view;
+typedef struct q3n_frame q3n_frame;
 /* A normalized remote CLIENT effect owns no GAME or retail snapshot. The
  * entered producer qualifies its actual provider, actor, clock and dictionary. */
 typedef struct q3n_unified_effect_source {
@@ -164,7 +165,6 @@ qa_q3_presentation_assets *q3n_media_assets(const q3n_media *);
 bool q3n_media_remote_current(const q3n_media *, const q3n_remote_source_view *, qa_error *);
 bool q3n_media_compiled_current(const q3n_media *, const q3n_compiled_source_view *, qa_error *);
 bool q3n_media_compiled_reset(q3n_media *, const q3n_compiled_source_view *, qa_error *);
-bool q3n_media_compiled_configstring_changed(q3n_media *, const q3n_compiled_source_view *, uint32_t, qa_error *);
 /* Pure observation is valid inside an authored loading callback while the
  * media owner is busy. It performs no registration or renderer work. */
 bool q3n_media_loading_read(const q3n_media *, q3n_loading_media *, qa_error *);
@@ -180,12 +180,11 @@ bool q3n_media_effects_current(const q3n_media *, qa_application *,
     const qa_application_selected_effects *, const qa_application_effect_event *, qa_error *);
 bool q3n_media_register_item(q3n_media *, uint32_t, qa_error *);
 bool q3n_media_register_weapon(q3n_media *, uint32_t, qa_error *);
-/* CL_GetServerCommand has already reached this exact cs row. Registration is
- * performed for this command even when its text repeats the previous value. */
-bool q3n_media_configstring_changed(q3n_media *, qa_native_q3_wire_reader *,
-    uint32_t index, qa_error *);
-bool q3n_media_remote_configstring_changed(q3n_media *, const q3n_remote_source_view *,
-    uint32_t index, qa_error *);
+/* CL_GetServerCommand has already reached this exact cs row. Text borrows the
+ * caller's command-local arena through registration callbacks. Registration
+ * occurs even when the row text repeats; the handle publishes after recheck. */
+bool q3n_media_configstring_changed(q3n_media *, const q3n_frame *, uint32_t index,
+    const char *text, uint64_t revision, qa_error *);
 /* Aggregate imports the actual backend registry first. These pure codecs
  * require its capture lease and retain only real numeric holder references. */
 

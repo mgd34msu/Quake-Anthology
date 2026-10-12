@@ -702,10 +702,8 @@ static bool config_modified(q3n_server_commands *o, const q3n_frame *f, int32_t 
                 if (ok && o->options.product == QA_Q3_TEAM_ARENA) ok = sound_field(o, f, Q3N_S_VOTE_NOW, 7, e);
             } else if (index < 18) { s->team_vote_yes[slot] = qa_parse_decimal_i32(text,QA_DECIMAL_SIGNED_WRAP); s->team_vote_modified[slot] = true; }
             else { s->team_vote_no[slot] = qa_parse_decimal_i32(text,QA_DECIMAL_SIGNED_WRAP); s->team_vote_modified[slot] = true; }
-        } else if (index >= 32 && index < 544) ok = f->compiled?
-            q3n_media_compiled_configstring_changed(o->options.media,&f->compiled->source,(uint32_t)index,e):f->remote ?
-            q3n_media_remote_configstring_changed(o->options.media, &f->remote->source, (uint32_t)index, e) :
-            q3n_media_configstring_changed(o->options.media, o->options.reader, (uint32_t)index, e);
+        } else if (index >= 32 && index < 544) ok =
+            q3n_media_configstring_changed(o->options.media,f,(uint32_t)index,text,revision,e);
         else if (index >= 544 && index < 608) {
             q3n_client_settings value;
             ok = settings(o, f, false, &value, e) && (f->compiled?

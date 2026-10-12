@@ -2,6 +2,7 @@
 #include "media.h"
 #include "remote_frame.h"
 #include "compiled_source.h"
+#include "frame.h"
 #include "../q3/internal.h"
 #include "qa/q3_assets_save.h"
 #include <stdio.h>
@@ -799,71 +800,51 @@ static bool load_graphics_now(q3n_media *m,const q3n_media_load *load,qa_error *
 bool q3n_media_load_graphics(q3n_media *m,const q3n_media_load *load,qa_error *e)
 { return enter(m,e) && leave(m,load_graphics_now(m,load,e)); }
 
-bool q3n_media_configstring_changed(q3n_media *m,qa_native_q3_wire_reader *reader,
-    uint32_t index,qa_error *e)
+bool q3n_media_configstring_changed(q3n_media *m,const q3n_frame *frame,
+    uint32_t index,const char *text,uint64_t revision,qa_error *e)
 {
     if (!enter(m,e)) return false;
-    qa_native_q3_wire_basis basis;
-    qa_native_q3_wire_publication reached;
-    const char *text; uint64_t revision;
-    bool okay=!m->options.remote_source && !m->options.compiled_source && index>=32 && index<544 && qa_native_q3_wire_reader_basis(reader,&basis,e) &&
-        basis.product==m->options.product && qa_native_q3_wire_reader_publication(reader,&reached,e) &&
-        qa_native_q3_wire_reader_configstring(reader,index,&text,&revision,e);
-    if (!okay) return leave(m,q3p_fail(e,QA_ERROR_ARGUMENT,"Native media change requires its exact reached model/sound row"));
-    size_t length=strlen(text);
-    char *retained=malloc(length+1);
-    if (!retained) return leave(m,q3p_fail(e,QA_ERROR_MEMORY,"Retaining reached native media text"));
-    memcpy(retained,text,length+1);
+    const q3n_remote_source_view *remote=frame->remote?&frame->remote->source:NULL;
+    const q3n_compiled_source_view *compiled=frame->compiled?&frame->compiled->source:NULL;
+    qa_native_q3_wire_publication reached={0};
+    bool okay=index>=32 && index<544;
+    if (okay && compiled) {
+        okay=!remote && !m->options.remote_source && m->options.compiled_source==compiled->owner &&
+            m->options.assets==compiled->basis.assets && compiled->basis.product==m->options.product &&
+            q3n_compiled_source_current(compiled);
+    } else if (okay && remote) {
+        okay=m->options.remote_source==remote->owner && remote->basis.product==m->options.product &&
+            q3n_remote_source_current(remote);
+    } else if (okay) {
+        qa_native_q3_wire_basis basis;
+        okay=!m->options.remote_source && !m->options.compiled_source &&
+            qa_native_q3_wire_reader_basis(frame->reader,&basis,e) && basis.product==m->options.product &&
+            qa_native_q3_wire_reader_publication(frame->reader,&reached,e);
+    }
+    if (!okay) return leave(m,q3p_fail(e,QA_ERROR_ARGUMENT,remote || compiled?
+        "Remote media change requires its exact reached model/sound row":
+        "Native media change requires its exact reached model/sound row"));
     uint32_t slot=index<288?index-32:index-288;
-    if (index<288) okay=model(m,retained,&m->view.game_models[slot],e);
-    else if (*retained!='*') okay=sound(m,retained,false,&m->view.game_sounds[slot],e);
+    int32_t *destination=index<288?&m->view.game_models[slot]:&m->view.game_sounds[slot];
+    int32_t handle=*destination;
+    if (index<288) okay=model(m,text,&handle,e);
+    else if (*text!='*') okay=sound(m,text,false,&handle,e);
     if (okay) {
         const char *actual; uint64_t current;
-        qa_native_q3_wire_publication after;
-        okay=qa_native_q3_wire_reader_configstring(reader,index,&actual,&current,e) &&
-            current==revision && !strcmp(actual,retained) &&
-            qa_native_q3_wire_reader_publication(reader,&after,e) &&
-            after.reached_command_sequence==reached.reached_command_sequence;
-        if (!okay && (!e || e->code==QA_OK)) q3p_fail(e,QA_ERROR_ARGUMENT,"Native media row changed during registration");
+        okay=(compiled?q3n_compiled_source_current(compiled):remote?q3n_remote_source_current(remote):true) &&
+            q3n_frame_configstring(frame,index,&actual,&current,e) && current==revision && !strcmp(actual,text);
+        if (okay && !remote && !compiled) {
+            qa_native_q3_wire_publication after;
+            okay=qa_native_q3_wire_reader_publication(frame->reader,&after,e) &&
+                after.reached_command_sequence==reached.reached_command_sequence;
+        }
+        if (!okay && (!e || e->code==QA_OK)) q3p_fail(e,QA_ERROR_ARGUMENT,remote || compiled?
+            "Remote media row changed during registration":"Native media row changed during registration");
     }
     if (okay) {
+        *destination=handle;
         if (index<288) { m->model_observed[slot]=true; m->model_revision[slot]=revision; }
         else { m->sound_observed[slot]=true; m->sound_revision[slot]=revision; }
     }
-    free(retained);
     return leave(m,okay);
 }
-static bool received_configstring_changed(q3n_media *m,const q3n_remote_source_view *source,
-    const q3n_compiled_source_view *compiled,uint32_t index,qa_error *e)
-{
-    if (!enter(m,e)) return false;
-    const char *text; uint64_t revision;
-    q3n_media_load load={.application=compiled?compiled->basis.application:source?source->basis.application:NULL,
-        .remote=source,.compiled=compiled};
-    bool okay=index>=32 && index<544 && source_string(m,&load,index,&text,&revision,e);
-    if (!okay) return leave(m,q3p_fail(e,QA_ERROR_ARGUMENT,"Remote media change requires its exact reached model/sound row"));
-    size_t length=strlen(text);
-    char *retained=malloc(length+1);
-    if (!retained) return leave(m,q3p_fail(e,QA_ERROR_MEMORY,"Retaining reached remote media text"));
-    memcpy(retained,text,length+1);
-    uint32_t slot=index<288?index-32:index-288;
-    if (index<288) okay=model(m,retained,&m->view.game_models[slot],e);
-    else if (*retained!='*') okay=sound(m,retained,false,&m->view.game_sounds[slot],e);
-    if (okay) {
-        const char *actual; uint64_t current;
-        okay=(compiled?q3n_compiled_source_current(compiled):q3n_remote_source_current(source)) &&
-            source_string(m,&load,index,&actual,&current,e) &&
-            current==revision && !strcmp(actual,retained);
-        if (!okay && (!e || e->code==QA_OK)) q3p_fail(e,QA_ERROR_ARGUMENT,"Remote media row changed during registration");
-    }
-    if (okay) {
-        if (index<288) { m->model_observed[slot]=true; m->model_revision[slot]=revision; }
-        else { m->sound_observed[slot]=true; m->sound_revision[slot]=revision; }
-    }
-    free(retained);
-    return leave(m,okay);
-}
-bool q3n_media_remote_configstring_changed(q3n_media *m,const q3n_remote_source_view *v,uint32_t n,qa_error *e)
-{ return received_configstring_changed(m,v,NULL,n,e); }
-bool q3n_media_compiled_configstring_changed(q3n_media *m,const q3n_compiled_source_view *v,uint32_t n,qa_error *e)
-{ return received_configstring_changed(m,NULL,v,n,e); }

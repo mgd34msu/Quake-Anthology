@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "468d5c40d9ad7c75d576d39179b3f790d9f99c02",
+  "verified_main": "b1e23546b6f83e8c014adb324c705d8eca4badcb",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 147,
-    "open_source_observation": 224,
+    "fixed_source_build_core": 148,
+    "open_source_observation": 223,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -34256,8 +34256,9 @@
       "severity": "high",
       "job": "26",
       "area": "module_hosts",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Native host message references reserve once from actual wire capacity. WriteEntity and restore reuse the span; ABI, saved fields and callback order preserved. Matching normal build and seven core suites; no live guest or performance claim.",
+      "fixed_commit": "b1e23546b6f83e8c014adb324c705d8eca4badcb"
     },
     {
       "id": "26-02",
@@ -41148,6 +41149,32 @@
       ],
       "record_directory": "/tmp/qa-ta3196-unified-q2-alias-removal-20261012",
       "conclusion": "Unused Unified number-to-actor alias allocation and scan deleted rather than indexed. Reached full-actor events unchanged; legacy-number source retains required callback. Semantic source uses actor_pose as already defined. Normal build/seven suites; no live or speed claim."
+    },
+    {
+      "commit": "b1e23546b6f83e8c014adb324c705d8eca4badcb",
+      "source_tree": "0c3ddd5eef17b9d83181256b99a039c86cef32ca",
+      "finding_ids": [
+        "26-01"
+      ],
+      "files_rechecked": [
+        "src/compat/native_host/message.c",
+        "src/compat/native_host/host.c",
+        "src/compat/native_host/checkpoint.c",
+        "src/compat/native_host/internal.h"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-native-message-references-20261012",
+      "conclusion": "Reference bound follows two-byte entity encoding, not a new cap. Failed writes, checkpoint import and teardown refusal retain ownership and protocol/save layout. Normal build and seven suites; source review only for live native guest paths."
     }
   ],
   "verification_limits": [
