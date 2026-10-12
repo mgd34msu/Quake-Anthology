@@ -1,5 +1,14 @@
 #include "guest_q3_mod_private.h"
 
+static void row_free(mod_pickup_actor *row)
+{
+    mod_actor_resources *resources=row->resources;
+    if(resources) {
+        resources->pickup=NULL; row->resources=NULL;
+        q3mod_resources_collect(row->owner,resources);
+    }
+    free(row->rules); free(row->bindings); free(row);
+}
 static bool take(void *context,const qa_pickup_offer *offer,qa_pickup_execution *execution,qa_pickup_outcome *out,qa_error *e)
 {
     mod_pickup_bound *bound=context; mod_pickup_actor *actor=bound->actor;
@@ -9,7 +18,7 @@ static bool take(void *context,const qa_pickup_offer *offer,qa_pickup_execution 
     bool ok=q3mod_pickup_run(o,bound->definition,offer,execution,out,e);
     if(!o->pickup_calls) { mod_pickup_actor **link=&o->pickup_actors;
         while(*link) { mod_pickup_actor *row=*link; if(row->lease.serial) { link=&row->next; continue; }
-            *link=row->next; free(row->rules); free(row->bindings); free(row);
+            *link=row->next; row_free(row);
         }
     }
     return ok;
@@ -30,30 +39,39 @@ static bool rules_create(application_q3_mod *o,qa_actor_id actor,mod_pickup_acto
     }
     *out=row; return true;
 }
-static void row_free(mod_pickup_actor *row)
-{ free(row->rules); free(row->bindings); free(row); }
 bool q3mod_pickups_admit(application_q3_mod *o,qa_actor_id actor,qa_error *e)
 {
     if(!o->profile->pickup_count||!o->active||!o->services.live_client(o->services.context,actor)) return true;
-    for(mod_pickup_actor *row=o->pickup_actors;row;row=row->next) if(qa_actor_id_equal(row->actor,actor))
+    mod_actor_resources *resources=q3mod_resources_find(o,actor);
+    mod_pickup_actor *row=resources?resources->pickup:NULL;
+    if(row)
         return qa_pickups_registration_current(o->services.pickups,row->lease,o->owner)||q3mod_fail(e,QA_ERROR_ARGUMENT,"Original pickup recipient retained a retired canonical registration");
-    mod_pickup_actor *row=NULL;
     if(!rules_create(o,actor,&row,e)) return false;
-    if(!qa_pickups_bind(o->services.pickups,actor,o->owner,row->rules,o->profile->pickup_count,&row->lease,e)) { row_free(row); return false; }
-    mod_pickup_actor **tail=&o->pickup_actors; while(*tail) tail=&(*tail)->next; *tail=row;
-    return true;
+    resources=q3mod_resources_take(o,actor,e);
+    if(!resources) { row_free(row); return false; }
+    ++resources->admissions;
+    bool bound=qa_pickups_bind(o->services.pickups,actor,o->owner,row->rules,o->profile->pickup_count,&row->lease,e);
+    resources=q3mod_resources_find(o,actor);
+    if(bound) {
+        row->resources=resources; resources->pickup=row;
+        mod_pickup_actor **tail=&o->pickup_actors; while(*tail) tail=&(*tail)->next; *tail=row;
+    }
+    --resources->admissions;
+    if(!bound) { row_free(row); q3mod_resources_collect(o,resources); }
+    return bound;
 }
 bool q3mod_pickups_release(application_q3_mod *o,qa_actor_id actor,qa_error *e)
 {
+    mod_actor_resources *resources=q3mod_resources_find(o,actor);
+    mod_pickup_actor *row=resources?resources->pickup:NULL;
+    if(!row) return true;
+    if(row->lease.serial&&!qa_pickups_close(o->services.pickups,row->lease,e)) return false;
+    row->lease.serial=0;
+    if(o->pickup_calls) return true;
     mod_pickup_actor **link=&o->pickup_actors;
-    while(*link) {
-        mod_pickup_actor *row=*link;
-        if(!qa_actor_id_equal(row->actor,actor)) { link=&row->next; continue; }
-        if(row->lease.serial&&!qa_pickups_close(o->services.pickups,row->lease,e)) return false;
-        row->lease.serial=0;
-        if(o->pickup_calls) { link=&row->next; continue; }
-        *link=row->next; row_free(row);
-    }
+    while(*link&&*link!=row) link=&(*link)->next;
+    if(*link) *link=row->next;
+    row_free(row);
     return true;
 }
 bool q3mod_pickups_close(application_q3_mod *o,qa_error *e)
@@ -66,7 +84,9 @@ bool application_q3_mod_pickup_saved_rule(application_q3_mod *o,qa_actor_id acto
     uint64_t serial,uint32_t id,qa_pickup_rule *out,qa_error *e)
 {
     if(!o||!out||owner!=o->owner||!serial||!q3mod_storage_current(o,e)) return false;
-    for(mod_pickup_actor *row=o->pickup_actors;row;row=row->next) if(qa_actor_id_equal(row->actor,actor)&&row->lease.serial==serial)
+    mod_actor_resources *resources=q3mod_resources_find(o,actor);
+    mod_pickup_actor *row=resources?resources->pickup:NULL;
+    if(row&&row->lease.serial==serial)
         for(size_t i=0;i<o->profile->pickup_count;++i) if(row->rules[i].id==id) { *out=row->rules[i]; return true; }
     return q3mod_fail(e,QA_ERROR_NOT_FOUND,"Saved original pickup has no actual declared recipient rule");
 }
@@ -87,9 +107,15 @@ bool q3mod_pickups_fields(application_q3_mod *o,qa_source_save_io *io)
         qa_actor_id actor={0}; uint64_t serial=0; int32_t slot;
         if(!qa_source_save_actor(io,&actor)||!qa_source_save_u64(io,&serial)||!serial||!o->active||!o->profile->pickup_count||
             !qa_actors_get(qa_session_actors(o->session),actor)||!o->services.client_slot(o->services.context,actor,&slot,io->error)) return false;
+        mod_actor_resources *resources=q3mod_resources_find(o,actor);
+        if(resources&&resources->pickup)
+            return q3mod_fail(io->error,QA_ERROR_FORMAT,"Saved original pickup recipients duplicate physical ownership");
         for(mod_pickup_actor *row=o->pickup_actors;row;row=row->next)
-            if(row->lease.serial==serial||qa_actor_id_equal(row->actor,actor)) return q3mod_fail(io->error,QA_ERROR_FORMAT,"Saved original pickup recipients duplicate physical ownership");
+            if(row->lease.serial==serial) return q3mod_fail(io->error,QA_ERROR_FORMAT,"Saved original pickup recipients duplicate physical ownership");
         mod_pickup_actor *row=NULL; if(!rules_create(o,actor,&row,io->error)) return false;
+        resources=q3mod_resources_take(o,actor,io->error);
+        if(!resources) { row_free(row); return false; }
+        row->resources=resources; resources->pickup=row;
         row->lease=(qa_pickup_lease){actor,serial}; *tail=row; tail=&row->next;
     }
     return true;

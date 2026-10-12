@@ -64,7 +64,18 @@ bool application_q3_mod_restore(application_q3_mod *o, qa_bytes bytes, qa_error 
     }
     if (ok) { o->active=active; ok=q3mod_pickups_fields(o,&io)&&qa_source_save_finish(&io,NULL); }
     qa_source_save_dispose(&io);
-    if (!ok) { while (head) { mod_actor_channel *next=head->next; free(head); head=next; } return false; }
+    for(mod_actor_channel *c=head;ok&&c;c=c->next) {
+        mod_actor_resources *resources=q3mod_resources_take(o,c->actor,e);
+        if(!resources) { ok=false; break; }
+        q3mod_channel_retain(resources,c);
+    }
+    if (!ok) {
+        while (head) {
+            mod_actor_channel *next=head->next;
+            q3mod_channel_forget(head); free(head); head=next;
+        }
+        return false;
+    }
     o->channels=head; o->active=active; o->restored_callbacks=callbacks; return true;
 }
 static bool channels_current(application_q3_mod *o, qa_error *e)

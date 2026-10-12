@@ -151,12 +151,19 @@ static bool absorb(void *context, const qa_damage_request *request, const qa_dam
     if (result<0 || result>FLT_MAX) return q3mod_fail(e,QA_ERROR_FORMAT,"Original absorption returned invalid savings");
     *saved=(float)result; return true;
 }
+static mod_actor_channel *channel_for(application_q3_mod *o,qa_actor_id actor,qa_protection_channel channel)
+{
+    mod_actor_resources *row=q3mod_resources_find(o,actor);
+    for(mod_actor_channel *c=row?row->channels:NULL;c;c=c->actor_next)
+        if(c->lease.channel==channel) return c;
+    return NULL;
+}
 bool application_q3_mod_protection_binding(application_q3_mod *o, qa_protection_lease lease,
     qa_protection_binding *out, qa_error *e)
 {
     if (!o || !out) return q3mod_fail(e,QA_ERROR_ARGUMENT,"Protection binding requires its owner");
-    for (mod_actor_channel *c=o->channels;c;c=c->next) if (c->lease.serial==lease.serial &&
-        c->lease.channel==lease.channel && qa_actor_id_equal(c->actor,lease.actor)) {
+    mod_actor_channel *c=channel_for(o,lease.actor,lease.channel);
+    if(c&&c->lease.serial==lease.serial) {
         *out=(qa_protection_binding){.context=c,.read=read_binding,.validate_write=validate_write,
             .write=write_binding,.absorb=absorb}; return true;
     }
@@ -168,8 +175,8 @@ bool application_q3_mod_protection_saved_binding(application_q3_mod *o,qa_actor_
     if(!o||!claim||!out||!q3mod_storage_current(o,e)||
         !qa_actors_get(qa_session_actors(o->session),actor))
         return q3mod_fail(e,QA_ERROR_ARGUMENT,"Saved protection requires its retained source and full actor");
-    for(mod_actor_channel *c=o->channels;c;c=c->next) {
-        if(!qa_actor_id_equal(c->actor,actor)||c->lease.channel!=channel) continue;
+    mod_actor_channel *c=channel_for(o,actor,channel);
+    if(c) {
         if(c->definition>=o->profile->protection_count)
             return q3mod_fail(e,QA_ERROR_FORMAT,"Saved protection has no actual declared channel");
         const mod_protection *definition=o->profile->protection+c->definition;
@@ -192,15 +199,20 @@ bool application_q3_mod_reserve(application_q3_mod *o, qa_actor_id actor, qa_err
     if (!qa_actors_get(qa_session_actors(o->session),actor) || !o->services.client_slot(o->services.context,actor,&client,e)) return false;
     if (client<0 || (uint32_t)client>=o->profile->maximum)
         return q3mod_fail(e,QA_ERROR_ARGUMENT,"Protection reservation leaves its actual declared source client roster");
+    mod_actor_resources *resources=q3mod_resources_take(o,actor,e);
+    if(!resources) return false;
     for (size_t i=0;i<o->profile->protection_count;++i) {
         mod_actor_channel *found=NULL;
-        for (mod_actor_channel *c=o->channels;c;c=c->next) if (c->definition==i && qa_actor_id_equal(c->actor,actor)) found=c;
+        for (mod_actor_channel *c=resources->channels;c;c=c->actor_next) if (c->definition==i) found=c;
         if (found) { if (found->client!=client || !qa_combat_protection_current(o->combat,found->lease)) return q3mod_fail(e,QA_ERROR_ARGUMENT,"Existing protection reservation changed client"); continue; }
         mod_actor_channel *c=calloc(1,sizeof(*c));
-        if (!c) return q3mod_fail(e,QA_ERROR_MEMORY,"Owning original protection reservation");
+        if (!c) { q3mod_resources_collect(o,resources); return q3mod_fail(e,QA_ERROR_MEMORY,"Owning original protection reservation"); }
         c->owner=o; c->actor=actor; c->client=client; c->definition=i;
         qa_protection_claim claim=o->profile->protection[i].claim; claim.owner=o->owner;
-        if (!qa_combat_reserve_protection(o->combat,actor,o->profile->protection[i].channel,&claim,&c->lease,e)) { free(c); return false; }
+        if (!qa_combat_reserve_protection(o->combat,actor,o->profile->protection[i].channel,&claim,&c->lease,e)) {
+            free(c); q3mod_resources_collect(o,resources); return false;
+        }
+        q3mod_channel_retain(resources,c);
         mod_actor_channel **tail=&o->channels; while (*tail) tail=&(*tail)->next; *tail=c;
     }
     return true;
@@ -210,7 +222,8 @@ bool application_q3_mod_admit(application_q3_mod *o, qa_actor_id actor, qa_error
     if (!q3mod_current(o,e)) return false;
     if (!o->profile->protection_count) return q3mod_pickups_admit(o,actor,e);
     if (!o->active || !o->services.live_client(o->services.context,actor)) return true;
-    for (mod_actor_channel *c=o->channels;c;c=c->next) if (qa_actor_id_equal(c->actor,actor) && !c->bound) {
+    mod_actor_resources *resources=q3mod_resources_find(o,actor);
+    for (mod_actor_channel *c=resources?resources->channels:NULL;c;c=c->actor_next) if (!c->bound) {
         qa_armor current={0}; qa_protection_binding binding;
         if (!q3mod_protection_read(c,&current,e) || !application_q3_mod_protection_binding(o,c->lease,&binding,e) ||
             !qa_combat_bind_protection(o->combat,c->lease,&binding,e)) return false;
@@ -248,13 +261,17 @@ bool application_q3_mod_release_actor(application_q3_mod *o, qa_actor_id actor, 
     if (!o) return true;
     if(!q3mod_pickups_release(o,actor,e)) return false;
     for (mod_protection_stage *s=o->stages;s;s=s->previous) if (qa_actor_id_equal(s->actor,actor) && !stop(s,e)) return false;
-    mod_actor_channel **link=&o->channels;
-    while (*link) {
-        mod_actor_channel *c=*link;
-        if (!qa_actor_id_equal(c->actor,actor)) { link=&c->next; continue; }
+    mod_actor_resources *resources=q3mod_resources_find(o,actor);
+    while(resources&&resources->channels) {
+        mod_actor_channel *c=resources->channels;
         if (!qa_combat_close_protection(o->combat,c->lease,e)) return false;
-        *link=c->next; free(c);
+        mod_actor_channel **link=&o->channels;
+        while(*link&&*link!=c) link=&(*link)->next;
+        if(*link) *link=c->next;
+        q3mod_channel_forget(c); free(c);
+        resources=q3mod_resources_find(o,actor);
     }
+    q3mod_resources_collect(o,resources);
     return true;
 }
 bool q3mod_protection_close(application_q3_mod *o, qa_error *e)
@@ -305,7 +322,8 @@ static bool observe(application_q3_mod *o, qa_actor_id actor, qa_protection_obse
     if (!stage) return q3mod_fail(e,QA_ERROR_MEMORY,"Owning actual protection write continuation");
     *stage=(mod_protection_stage){.owner=o,.actor=actor,.observer=observer,.pickup=pickup,.previous=o->stages,.running=true};
     qa_qvm_write_range ranges[4]; size_t n=0;
-    for (mod_actor_channel *c=o->channels;c;c=c->next) if (c->bound && qa_actor_id_equal(c->actor,actor)) {
+    mod_actor_resources *resources=q3mod_resources_find(o,actor);
+    for (mod_actor_channel *c=resources?resources->channels:NULL;c;c=c->actor_next) if (c->bound) {
         if (stage->count==2) { stage_free(stage); return q3mod_fail(e,QA_ERROR_ARGUMENT,"Protection owner duplicates a physical channel"); }
         watched_channel *w=stage->channels+stage->count++; w->channel=c;
         if (!addresses(c,&w->count_address,&w->selection_address,e) || !read_at(c,w->count_address,w->selection_address,&stage->before,e)) { stage_free(stage); return false; }
@@ -315,9 +333,10 @@ static bool observe(application_q3_mod *o, qa_actor_id actor, qa_protection_obse
     o->stages=stage;
     bool ok=qa_qvm_observe_writes(o->vm,ranges,n,publish,after,stage,&stage->watch,e);
     if (ok) ok=q3mod_invoke(o,call,inputs,result,e);
-    if (ok && qa_actors_get(qa_session_actors(o->session),actor))
-        for (mod_actor_channel *c=o->channels;ok && c;c=c->next)
-            if (qa_actor_id_equal(c->actor,actor)) ok=require(c,e);
+    if (ok && qa_actors_get(qa_session_actors(o->session),actor)) {
+        resources=q3mod_resources_find(o,actor);
+        for (mod_actor_channel *c=resources?resources->channels:NULL;ok && c;c=c->actor_next) ok=require(c,e);
+    }
     stage->running=false; stage->observer=NULL; stage->pickup=NULL;
     qa_error cleanup={0}; bool stopped=stop(stage,&cleanup);
     if (stopped) {

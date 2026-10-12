@@ -3,6 +3,7 @@
 #include "guest_q3_mod.h"
 #include "qa/json.h"
 #include "qa/binary.h"
+#include "qa/pool.h"
 #include <limits.h>
 #include <float.h>
 #include <math.h>
@@ -118,8 +119,10 @@ struct application_q3_mod_profile {
     size_t entry_count;
     mod_call_group stages[Q3_MOD_STAGE_COUNT];
 };
+typedef struct mod_actor_resources mod_actor_resources;
 typedef struct mod_actor_channel {
-    struct mod_actor_channel *next;
+    struct mod_actor_channel *next, *actor_next;
+    mod_actor_resources *resources;
     application_q3_mod *owner;
     qa_actor_id actor;
     int32_t client;
@@ -144,12 +147,19 @@ typedef struct mod_source_lease {
 typedef struct mod_pickup_bound { struct mod_pickup_actor *actor; const mod_pickup *definition; } mod_pickup_bound;
 typedef struct mod_pickup_actor {
     struct mod_pickup_actor *next;
+    mod_actor_resources *resources;
     application_q3_mod *owner;
     qa_actor_id actor;
     qa_pickup_lease lease;
     qa_pickup_rule *rules;
     mod_pickup_bound *bindings;
 } mod_pickup_actor;
+struct mod_actor_resources {
+    qa_actor_id actor;
+    size_t storage_slot, admissions;
+    mod_actor_channel *channels;
+    mod_pickup_actor *pickup;
+};
 struct application_q3_mod {
     application_q3_mod_profile *profile;
     qa_qvm *vm;
@@ -164,6 +174,10 @@ struct application_q3_mod {
     mod_protection_stage *stages;
     mod_source_lease *source_calls;
     mod_pickup_actor *pickup_actors;
+    qa_actor_index resource_actors;
+    qa_unified_frame_lease *resource_storage;
+    qa_pool resource_pool;
+    size_t resource_chunk;
     unsigned pickup_calls;
     unsigned calls;
     bool restoring, restored_owner, active, callbacks_active, restored_callbacks, closing, failed_scope;
@@ -173,6 +187,11 @@ bool q3mod_saved_declaration(const application_q3_mod_profile *, qa_source_save_
     const char identity[4]);
 bool q3mod_current(application_q3_mod *, qa_error *);
 bool q3mod_storage_current(application_q3_mod *, qa_error *);
+mod_actor_resources *q3mod_resources_find(application_q3_mod *, qa_actor_id);
+mod_actor_resources *q3mod_resources_take(application_q3_mod *, qa_actor_id, qa_error *);
+void q3mod_resources_collect(application_q3_mod *, mod_actor_resources *);
+void q3mod_channel_retain(mod_actor_resources *, mod_actor_channel *);
+void q3mod_channel_forget(mod_actor_channel *);
 bool q3mod_address(application_q3_mod *, qa_actor_id, size_t, uint32_t,
     size_t, uint32_t *, qa_error *);
 bool q3mod_scalar_word(double, mod_scalar, int32_t *, qa_error *);

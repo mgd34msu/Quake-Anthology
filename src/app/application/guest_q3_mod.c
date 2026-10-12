@@ -20,6 +20,48 @@ bool q3mod_storage_current(application_q3_mod *o, qa_error *e)
         (qa_qvm_image_of(o->vm) == o->profile->image) ? true :
         q3mod_fail(e,QA_ERROR_ARGUMENT,"Generic storage left its actual retained executor");
 }
+mod_actor_resources *q3mod_resources_find(application_q3_mod *o,qa_actor_id actor)
+{
+    size_t value;
+    return o&&qa_actor_index_find_retained(&o->resource_actors,actor,&value)?
+        (mod_actor_resources *)(uintptr_t)value:NULL;
+}
+mod_actor_resources *q3mod_resources_take(application_q3_mod *o,qa_actor_id actor,qa_error *e)
+{
+    mod_actor_resources *row=q3mod_resources_find(o,actor);
+    if(row) return row;
+    if(o->resource_pool.head==SIZE_MAX&&!qa_pool_extend(&o->resource_pool,
+        qa_unified_frame_lease_arena(o->resource_storage),o->resource_chunk,e)) return NULL;
+    size_t slot; row=qa_pool_take(&o->resource_pool,&slot);
+    if(!row) return NULL;
+    *row=(mod_actor_resources){.actor=actor,.storage_slot=slot};
+    if(!qa_actor_index_remember(&o->resource_actors,actor,(size_t)(uintptr_t)row,e)) {
+        qa_pool_release(&o->resource_pool,slot); return NULL;
+    }
+    return row;
+}
+void q3mod_resources_collect(application_q3_mod *o,mod_actor_resources *row)
+{
+    if(!row||row->channels||row->pickup||row->admissions) return;
+    qa_actor_index_forget_retained(&o->resource_actors,row->actor);
+    qa_pool_release(&o->resource_pool,row->storage_slot);
+}
+void q3mod_channel_retain(mod_actor_resources *row,mod_actor_channel *channel)
+{
+    mod_actor_channel **tail=&row->channels;
+    while(*tail) tail=&(*tail)->actor_next;
+    *tail=channel; channel->resources=row;
+}
+void q3mod_channel_forget(mod_actor_channel *channel)
+{
+    mod_actor_resources *row=channel->resources;
+    if(!row) return;
+    mod_actor_channel **link=&row->channels;
+    while(*link&&*link!=channel) link=&(*link)->actor_next;
+    if(*link) *link=channel->actor_next;
+    channel->resources=NULL; channel->actor_next=NULL;
+    q3mod_resources_collect(channel->owner,row);
+}
 bool q3mod_address(application_q3_mod *o, qa_actor_id actor, size_t index,
     uint32_t relative, size_t length, uint32_t *out, qa_error *e)
 {
@@ -281,6 +323,21 @@ bool application_q3_mod_create(application_q3_mod_profile *p, qa_qvm *vm, qa_ses
     if (!o) return q3mod_fail(e,QA_ERROR_MEMORY,"Owning generic source runtime");
     o->profile=p; o->vm=vm; o->session=session; o->owner=owner; o->combat=combat; o->services=*s;
     o->restoring=restoring; o->restored_owner=restoring;
+    if(p->protection_count||p->pickup_count) {
+        const qa_actor_registry *registry=qa_session_actors(session);
+        o->resource_chunk=qa_actors_capacity(registry);
+        o->resource_storage=application_control_storage_acquire(s->application,e);
+        bool ok=o->resource_storage&&qa_pool_prepare(&o->resource_pool,
+            qa_unified_frame_lease_arena(o->resource_storage),o->resource_chunk,
+            sizeof(mod_actor_resources),_Alignof(mod_actor_resources),e)&&
+            qa_actor_index_create(&o->resource_actors,registry,
+                qa_unified_frame_lease_arena(o->resource_storage),e)&&
+            qa_id_index_reserve(&o->resource_actors.retained,o->resource_chunk,e);
+        if(!ok) {
+            qa_actor_index_destroy(&o->resource_actors);
+            qa_unified_frame_lease_release(o->resource_storage); free(o); return false;
+        }
+    }
     *out=o; return true;
 }
 bool application_q3_mod_idle(const application_q3_mod *o)
@@ -301,6 +358,8 @@ bool application_q3_mod_destroy(application_q3_mod **in, qa_error *e)
         if (!consumed) return false;
     }
     if (!q3mod_protection_close(o,e)) return false;
+    qa_actor_index_destroy(&o->resource_actors);
+    qa_unified_frame_lease_release(o->resource_storage);
     free(o->callbacks); free(o); *in=NULL; return true;
 }
 size_t application_q3_mod_entry_count(const application_q3_mod *o) { return o?o->profile->entry_count:0; }
