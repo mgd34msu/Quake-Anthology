@@ -1,6 +1,7 @@
 #ifndef QA_FRONTEND_REMOTE_UNIFIED_PREDICTION_PRIVATE_H
 #define QA_FRONTEND_REMOTE_UNIFIED_PREDICTION_PRIVATE_H
 #include "remote_unified_prediction.h"
+#include "qa/stamp.h"
 typedef struct prediction_command {
     qa_usercmd raw;
     uint64_t sequence;
@@ -22,7 +23,7 @@ struct frontend_remote_unified_prediction {
     qa_collision_geometry *geometry;
     qa_world *scene;
     qa_spatial_actor *pending_rows;
-    bool *pending_used;
+    qa_stamp_set pending_stamps;
     size_t pending_count;
     qa_unified_document *snapshot_document;
     prediction_snapshot snapshot;

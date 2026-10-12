@@ -131,12 +131,13 @@ bool nav_graph_finish(qa_nav_graph *g, qa_error *e) {
     uint32_t *first_in = indices(&g->storage, n + 1, true, e), *incoming = indices(&g->storage, m, false, e),
              *cursor = indices(&scratch, n, false, e);
     uint32_t *stack = indices(&scratch, n, false, e), *next = indices(&scratch, n, false, e), *order = indices(&scratch, n, false, e);
-    uint8_t *seen = qa_arena_alloc(&scratch, n ? n : 1, _Alignof(uint8_t), e);
-    if (seen) memset(seen, 0, n ? n : 1);
+    uint32_t *marks = indices(&scratch, n, false, e);
     if (first_in == NULL || incoming == NULL || cursor == NULL || stack == NULL || next == NULL ||
-        order == NULL || seen == NULL) {
+        order == NULL || marks == NULL) {
         goto memory;
     }
+    qa_stamp_set seen;
+    qa_stamp_set_init(&seen, marks, n);
     for (size_t i = 0; i < m; ++i)
         ++first_in[nav_node_index(g, g->edges[i].to) + 1];
     for (size_t i = 1; i <= n; ++i) {
@@ -161,12 +162,11 @@ bool nav_graph_finish(qa_nav_graph *g, qa_error *e) {
         incoming[cursor[nav_node_index(g, g->edges[i].to)]++] = (uint32_t)i;
     size_t ordered = 0;
     for (uint32_t start = 0; start < n; ++start) {
-        if (seen[start])
+        if (!qa_stamp_set_mark(&seen, start))
             continue;
         size_t depth = 1;
         stack[0] = start;
         next[0] = g->first_out[start];
-        seen[start] = 1;
         while (depth != 0) {
             uint32_t node = stack[depth - 1];
             if (next[depth - 1] == g->first_out[node + 1]) {
@@ -175,30 +175,27 @@ bool nav_graph_finish(qa_nav_graph *g, qa_error *e) {
                 continue;
             }
             uint32_t child = nav_node_index(g, g->edges[g->outgoing[next[depth - 1]++]].to);
-            if (!seen[child]) {
-                seen[child] = 1;
+            if (qa_stamp_set_mark(&seen, child)) {
                 stack[depth] = child;
                 next[depth] = g->first_out[child];
                 ++depth;
             }
         }
     }
-    memset(seen, 0, n);
+    qa_stamp_set_begin(&seen);
     uint32_t cluster = 0;
     while (ordered != 0) {
         uint32_t start = order[--ordered];
-        if (seen[start])
+        if (!qa_stamp_set_mark(&seen, start))
             continue;
         size_t used = 1;
         stack[0] = start;
-        seen[start] = 1;
         while (used != 0) {
             uint32_t node = stack[--used];
             g->clusters[node] = cluster;
             for (uint32_t i = first_in[node]; i < first_in[node + 1]; ++i) {
                 uint32_t child = nav_node_index(g, g->edges[incoming[i]].from);
-                if (!seen[child]) {
-                    seen[child] = 1;
+                if (qa_stamp_set_mark(&seen, child)) {
                     stack[used++] = child;
                 }
             }

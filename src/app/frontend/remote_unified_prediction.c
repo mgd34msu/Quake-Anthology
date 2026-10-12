@@ -50,7 +50,7 @@ static bool profile_read(const frontend_remote_unified_prediction *p,const qa_un
 }
 static bool scene_prepare(frontend_remote_unified_prediction *p,const qa_unified_frame *frame,qa_error *e)
 {
-    for(size_t i=0;i<p->pending_count;++i) p->pending_used[p->pending_rows[i].body.actor.slot]=false;
+    qa_stamp_set_begin(&p->pending_stamps);
     p->pending_count=0;
     const qa_unified_world_frame *received=frame->world;
     if(received->collision_count>qa_actors_capacity(p->registry))
@@ -63,8 +63,7 @@ static bool scene_prepare(frontend_remote_unified_prediction *p,const qa_unified
                 frontend_remote_unified_actor_present(p->replica,row->body.actor.slot,row->body.actor.generation)) ||
             !(state.ground.kind != QA_ACTOR_REFERENCE_LIFETIME || actor_read(p,frame,state.ground.value.actor,&state.ground.value.actor,e)) ||
             !(collision.owner.kind != QA_ACTOR_REFERENCE_LIFETIME || actor_read(p,frame,collision.owner.value.actor,&collision.owner.value.actor,e))) return false;
-        if(p->pending_used[id.slot]) return fail(e,QA_ERROR_ARGUMENT,"Actor already has a body");
-        p->pending_used[id.slot]=true;
+        if(!qa_stamp_set_mark(&p->pending_stamps,id.slot)) return fail(e,QA_ERROR_ARGUMENT,"Actor already has a body");
         p->pending_rows[p->pending_count++]=(qa_spatial_actor){
             .body={id,state,row->body.absolute_bounds,row->body.link_count},.collision=collision};
     }
@@ -114,16 +113,17 @@ static bool create(frontend_remote_unified *replica,bool importing,
     p->epoch=frontend_remote_unified_epoch(replica); p->discarded=-1;p->importing=importing;
     uint32_t capacity=qa_actors_capacity(registry);
     p->pending_rows=calloc(capacity,sizeof(*p->pending_rows));
-    p->pending_used=calloc(capacity,sizeof(*p->pending_used));
-    if(!p->pending_rows || !p->pending_used ||
+    p->pending_stamps.marks=calloc(capacity,sizeof(*p->pending_stamps.marks));
+    if(!p->pending_rows || !p->pending_stamps.marks ||
         !qa_movement_result_reserve(&p->movement,(size_t)capacity+1,e)) {
         qa_movement_result_free(&p->movement);
-        free(p->pending_rows); free(p->pending_used); free(p);
+        free(p->pending_rows); free(p->pending_stamps.marks); free(p);
         return fail(e,QA_ERROR_MEMORY,"Allocating private prediction collision rows");
     }
+    qa_stamp_set_init(&p->pending_stamps,p->pending_stamps.marks,capacity);
     if(!qa_world_create(registry,geometry,NULL,1,&p->scene,e)) {
         qa_movement_result_free(&p->movement);
-        free(p->pending_rows); free(p->pending_used); free(p); return false;
+        free(p->pending_rows); free(p->pending_stamps.marks); free(p); return false;
     }
     *out=p; return true;
 }
@@ -448,6 +448,6 @@ bool frontend_remote_unified_prediction_destroy(frontend_remote_unified_predicti
     if(p->scene && !qa_world_destroy(p->scene,e)) return false;
     qa_unified_document_destroy(p->snapshot_document);
     qa_movement_result_free(&p->movement);
-    free(p->pending_rows); free(p->pending_used);
+    free(p->pending_rows); free(p->pending_stamps.marks);
     free(p); *owned=NULL; return true;
 }
