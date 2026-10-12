@@ -171,6 +171,10 @@ typedef struct qa_view_input_tuning {
     float angle_multiplier, move_multiplier;
     bool always_run;
 } qa_view_input_tuning;
+typedef enum qa_input_command_numeric_policy {
+    /* Zero keeps client sampling; predictions retain physical fractional moves. */
+    QA_INPUT_COMMAND_SOURCE, QA_INPUT_COMMAND_PHYSICAL_PREDICTION
+} qa_input_command_numeric_policy;
 typedef struct qa_input_command_frame {
     qa_ruleset_id kind;
     uint64_t sequence;
@@ -182,6 +186,7 @@ typedef struct qa_input_command_frame {
     float sensitivity;
     bool attack_allowed, has_pitch_drift, grounded, drift_disabled;
     float ideal_pitch;
+    qa_input_command_numeric_policy numeric_policy;
 } qa_input_command_frame;
 typedef struct qa_input_command_builder {
     qa_ruleset_id kind;
@@ -221,18 +226,21 @@ void qa_usercmd_build(const qa_input_command_intent *, const qa_input_command_fr
 
 typedef struct qa_input_command_basis {
     qa_ruleset_id kind;
+    qa_angle_word_rule angle_word_rule;
     double units;
     qa_vec3 delta_angles;
     int32_t delta_words[3];
+    uint8_t wrap_axes; /* Per-axis 16-bit wrap when wrap_words is false. */
     bool words, relative, wrap_words, repack_words, wide_delta, signed_shorts;
 } qa_input_command_basis;
 typedef enum qa_input_axis_quantization {
-    QA_INPUT_AXIS_EXACT, QA_INPUT_AXIS_TRUNCATE, QA_INPUT_AXIS_NEAREST, QA_INPUT_AXIS_SHORT
+    QA_INPUT_AXIS_EXACT, QA_INPUT_AXIS_TRUNCATE, QA_INPUT_AXIS_NEAREST, QA_INPUT_AXIS_SHORT,
+    QA_INPUT_AXIS_HALF_UP
 } qa_input_axis_quantization;
 typedef struct qa_input_axis_rule {
     qa_input_axis_quantization quantization;
     float minimum, maximum;
-    bool clamp, ratio_first, float_product;
+    bool clamp, ratio_first, float_product, float_steps;
 } qa_input_axis_rule;
 float qa_input_command_units(qa_ruleset_id);
 int32_t qa_input_signed_word(uint32_t);

@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "qa/binary.h"
+#include "qa/input.h"
 
 static bool trace(void *context, const qa_trace_query *query, qa_trace_result *out, qa_error *e) {
     nav_prediction *p = context;
@@ -122,11 +124,6 @@ static bool begin(nav_prediction *p, qa_actor_id actor, qa_vec3 origin, qa_error
     p->initialized = true;
     return true;
 }
-static int32_t signed_word(uint32_t word) {
-    int32_t result;
-    memcpy(&result, &word, sizeof(result));
-    return result;
-}
 static bool command_vector(nav_prediction *p, qa_vec3 move, uint32_t milliseconds, qa_error *e) {
     qa_movement_input *input = &p->input;
     uint64_t elapsed = (uint64_t)milliseconds * UINT64_C(1000000);
@@ -137,49 +134,36 @@ static bool command_vector(nav_prediction *p, qa_vec3 move, uint32_t millisecond
     float yaw = qa_vec_yaw(move,QA_DIRECTION_FLOAT,false),
           horizontal = fminf(400, hypotf(move.x, move.y));
     float up = fmaxf(-400, fminf(400, move.z));
-    int32_t word = qa_angle_to_word(yaw,QA_ANGLE_WORD_ROUNDED);
     input->elapsed_ns = elapsed;
     input->time_ns += input->elapsed_ns;
-    qa_usercmd c = {.kind = input->profile.kind,
-                             .sequence = p->sequence++,
-                             .milliseconds = milliseconds,
-                             .angles = {0, yaw, 0},
-                             .forward_move = horizontal,
-                             .up_move = up,
-                             .weapon = input->command.weapon};
-    c.server_frame = signed_word((uint32_t)c.sequence);
+    qa_input_command_intent intent = {.angles = {0, yaw, 0},
+        .move = {(double)horizontal / 512, 0, (double)up / 512}, .game_focus = true};
+    if (up > 0) intent.actions = UINT64_C(1) << QA_INPUT_JUMP;
+    else if (up < 0) intent.actions = UINT64_C(1) << QA_INPUT_CROUCH;
+    qa_input_command_frame frame = {.kind = input->profile.kind, .sequence = p->sequence++,
+        .numeric_policy = QA_INPUT_COMMAND_PHYSICAL_PREDICTION,
+        .weapon = input->command.weapon};
+    frame.server_frame = qa_i32_from_u32((uint32_t)frame.sequence);
     switch (input->state.kind) {
     case QA_RULESET_NETQUAKE:
-        c.acknowledged_server_seconds = (double)input->time_ns / 1000000000;
-        c.buttons = up > 0 ? 2 : 0;
+        frame.acknowledged_server_seconds = (double)input->time_ns / 1000000000;
         break;
     case QA_RULESET_QUAKEWORLD:
-        c.buttons = up > 0 ? 2 : 0;
         break;
     case QA_RULESET_Q2_CLASSIC:
-        c.angle_words[0] = -input->state.data.q2.delta_angle_shorts[0];
-        c.angle_words[1] = word - input->state.data.q2.delta_angle_shorts[1];
-        c.angle_words[2] = -input->state.data.q2.delta_angle_shorts[2];
+        for (unsigned axis = 0; axis < 3; ++axis)
+            frame.delta_angle_words[axis] = input->state.data.q2.delta_angle_shorts[axis];
         break;
     case QA_RULESET_Q2_RERELEASE:
-        c.angles = qa_vec_sub(c.angles, input->state.data.q2r.delta_angles);
-        c.buttons = up > 0 ? 8 : up < 0 ? 16 : 0;
-        c.up_move = 0;
+        frame.delta_angles = input->state.data.q2r.delta_angles;
         input->snap_initial = true;
         break;
     case QA_RULESET_Q3:
-        c.server_time_ms =
-            signed_word((uint32_t)input->state.data.q3.command_time_ms + milliseconds);
-        c.angle_words[0] = signed_word(0u - (uint32_t)input->state.data.q3.delta_angle_words[0]);
-        c.angle_words[1] =
-            (int32_t)(((uint32_t)word - (uint32_t)input->state.data.q3.delta_angle_words[1]) &
-                      65535);
-        c.angle_words[2] = signed_word(0u - (uint32_t)input->state.data.q3.delta_angle_words[2]);
-        c.forward_move = floorf(horizontal * 127 / 400 + 0.5f);
-        c.up_move = floorf(up * 127 / 400 + 0.5f);
+        frame.server_time_ms = qa_i32_from_u32((uint32_t)input->state.data.q3.command_time_ms + milliseconds);
+        memcpy(frame.delta_angle_words, input->state.data.q3.delta_angle_words, sizeof(frame.delta_angle_words));
         break;
     }
-    input->command = c;
+    qa_usercmd_build(&intent, &frame, milliseconds, &input->command);
     return true;
 }
 static bool command(nav_prediction *p, qa_vec3 target, qa_nav_travel mode, qa_error *e) {

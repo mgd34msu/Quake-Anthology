@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "15c8c63b7c54b714e25985cc6de430613438430b",
+  "verified_main": "624740a2346e8d2bdb489217e222918fa45bc0ef",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -40076,6 +40076,39 @@
       ],
       "record_directory": "/tmp/qa-ta3196-console-pooled-restore-20261012",
       "conclusion": "Restore and program snapshots use the runtime common pooled chunk constructor/destructor; private heap-backed chunks deleted. Exact cold reservation preserves capacity and live leases. Existing core behavior checks prove failed-restore rollback, scripts/consumed offsets, empty versus completion, unchanged generated-save bytes and repeated pool reuse; pure run probes preserve counters/segment boundaries. Normal build and seven core suites pass. Cold backing growth and independent context/program allocations remain; no zero-heap claim."
+    },
+    {
+      "commit": "624740a2346e8d2bdb489217e222918fa45bc0ef",
+      "source_tree": "289ab69a18c2f67db333bd8c4a03f3381396bd90",
+      "finding_ids": [
+        "09-01"
+      ],
+      "files_rechecked": [
+        "src/bots/chat/asset.c",
+        "src/bots/chat/internal.h",
+        "src/bots/chat/source_history.c",
+        "src/bots/chat/source_initial_library.c",
+        "src/bots/chat/source_initial_load.c",
+        "src/bots/chat/source_state.c",
+        "src/bots/chat/system_save.c",
+        "src/bots/library/internal.h",
+        "src/bots/runtime/assets_save.c",
+        "src/bots/runtime/handles.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-chat-library-alias-index-20261012",
+      "conclusion": "One library-owned common ID index replaces typed initial-chat Source pointer alias scans in runtime, shutdown, saves and cache projection. Actual pointer/published metadata, preferred references and library admission ordering remain authoritative; history transfers weak candidate aliases and detaches before release. Existing core check covers duplicate pointer filters, order and changed actual-resource identity. Original saved fields unchanged by source read. Admission, parser and projection allocations remain. Matching normal build and seven core suites pass."
     }
   ],
   "verification_limits": [

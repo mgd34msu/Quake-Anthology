@@ -162,6 +162,39 @@ static void test_chat_initial_aliases(void)
     CHECK(library.chat_initial_aliases.count==1);
     qa_id_index_destroy(&library.chat_initial_aliases);
 }
+
+static void test_physical_prediction_command(void)
+{
+    qa_input_command_intent intent={.angles={0,90,0},.move={201.25/512,0,-200.75/512},
+        .actions=UINT64_C(1)<<QA_INPUT_CROUCH,.game_focus=true};
+    for(qa_ruleset_id kind=QA_RULESET_NETQUAKE;kind<=QA_RULESET_Q3;++kind) {
+        qa_input_command_frame frame={.kind=kind,.sequence=UINT32_MAX,.server_frame=-1,
+            .numeric_policy=QA_INPUT_COMMAND_PHYSICAL_PREDICTION,.weapon=239,
+            .server_time_ms=123,.acknowledged_server_seconds=4.5,
+            .delta_angles={10,20,30},.delta_angle_words={-32768,32767,-5}};
+        qa_usercmd command;
+        qa_usercmd_build(&intent,&frame,300,&command);
+        CHECK(command.sequence==UINT32_MAX && command.server_frame==-1 && command.weapon==239);
+        CHECK(command.milliseconds==300 && command.duration_ns==0);
+        CHECK(command.forward_move==(kind==QA_RULESET_Q3?64:201.25f));
+        CHECK(command.up_move==(kind==QA_RULESET_Q3?-64:kind==QA_RULESET_Q2_RERELEASE?0:-200.75f));
+        CHECK(command.buttons==(kind==QA_RULESET_Q2_RERELEASE?16u:0u));
+        if(kind==QA_RULESET_NETQUAKE)CHECK(command.acknowledged_server_seconds==4.5);
+        if(kind==QA_RULESET_Q2_CLASSIC)CHECK(command.angle_words[0]==32768 && command.angle_words[1]==-16383 && command.angle_words[2]==5);
+        if(kind==QA_RULESET_Q2_RERELEASE)CHECK(command.angles.x==-10 && command.angles.y==70 && command.angles.z==-30);
+        if(kind==QA_RULESET_Q3) {
+            CHECK(command.angle_words[0]==32768 && command.angle_words[1]==49153 && command.angle_words[2]==5);
+            frame.delta_angle_words[0]=INT32_MIN;frame.delta_angle_words[1]=65535;frame.delta_angle_words[2]=INT32_MAX;
+            qa_usercmd_build(&intent,&frame,300,&command);
+            CHECK(command.angle_words[0]==INT32_MIN && command.angle_words[1]==16385 && command.angle_words[2]==-INT32_MAX);
+        }
+        frame.numeric_policy=QA_INPUT_COMMAND_SOURCE;
+        qa_usercmd_build(&intent,&frame,300,&command);
+        CHECK(command.milliseconds==100 && command.duration_ns==300000000);
+        CHECK(command.forward_move==(kind==QA_RULESET_Q3?127:kind==QA_RULESET_Q2_RERELEASE?201.25f:201));
+        CHECK(command.weapon==(kind==QA_RULESET_Q3?239:0));
+    }
+}
 static void test_console_restore_pages(void)
 {
     qa_error error={0};qa_session *session=NULL;
@@ -3892,6 +3925,7 @@ int main(int argc, char **argv)
     test_module_observation_storage();
     test_console_restore_pages();
     test_chat_initial_aliases();
+    test_physical_prediction_command();
     test_shared_campaign_modes();
     test_debug_geometry_wire();
     test_debug_geometry_lifetime();
