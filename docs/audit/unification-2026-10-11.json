@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "1a5c3dd454fb6186b743d3e921dd6db5449f33a3",
+  "verified_main": "0109c3d670cfe8c1863a074db2262a853101a15a",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 119,
-    "open_source_observation": 252,
+    "fixed_source_build_core": 121,
+    "open_source_observation": 250,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -27614,8 +27614,9 @@
       "severity": "medium",
       "job": "08",
       "area": "audio_input_ui",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Frontend owner and receipt image lookups now use the common ID index with full uint64 image identities, stable owner identity and original roster order. Media routing was migrated in51d654d9. Admission indexes only accepted registrations; staged image policy builds isolated candidates and reserves for all sealed owners before allocation-free publication. Original global Q3 shared-handle checks, failed receipts, transfer custody and cleanup refusal remain. Private render identity scans are deleted. Cold admission arrays and the required original Q3 handle scratch remain. Matching normal production build and seven core suites pass; no live or timing claim.",
+      "fix_commit": "0109c3d670cfe8c1863a074db2262a853101a15a"
     },
     {
       "id": "08-07",
@@ -29496,8 +29497,9 @@
       "severity": "medium",
       "job": "14",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Frontend owner and receipt image lookups now use the common ID index with full uint64 image identities, stable owner identity and original roster order. Media routing was migrated in51d654d9. Admission indexes only accepted registrations; staged image policy builds isolated candidates and reserves for all sealed owners before allocation-free publication. Original global Q3 shared-handle checks, failed receipts, transfer custody and cleanup refusal remain. Private render identity scans are deleted. Cold admission arrays and the required original Q3 handle scratch remain. Matching normal production build and seven core suites pass; no live or timing claim.",
+      "fix_commit": "0109c3d670cfe8c1863a074db2262a853101a15a"
     },
     {
       "id": "J14-09",
@@ -40186,6 +40188,33 @@
       ],
       "record_directory": "/tmp/qa-ta3196-model-attachment-names-20261012",
       "conclusion": "Scene model admission binds tag/bone names in its existing retained strings and common arena-backed index. MD3 keys include each frame and first exact ordinal; MD5 uses the first full joint name. One interpolation implementation remains. Native/frontend callers carry IDs; guest and received text converts through the common table at projection boundaries. Existing model checks cover frame clamp, duplicate order, exact case and long full MD5 names. Original saved declaration text and model lifetimes remain. Generic attachment construction still has no demonstrated production producer. Matching normal production build and seven core suites pass; no live or performance claim."
+    },
+    {
+      "commit": "0109c3d670cfe8c1863a074db2262a853101a15a",
+      "source_tree": "3669be07f3a1be822117758fa7d8e8e5a78d25ba",
+      "finding_ids": [
+        "08-06",
+        "J14-08"
+      ],
+      "files_rechecked": [
+        "src/app/frontend/internal.h",
+        "src/app/frontend/material_movies.c",
+        "src/app/frontend/material_movies_prepare.c",
+        "src/app/frontend/material_movies_private.h"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-frontend-movie-index-20261012",
+      "conclusion": "Frontend owner and receipt image lookups now use the common ID index with full uint64 image identities, stable owner identity and original roster order. Media routing was migrated in51d654d9. Admission indexes only accepted registrations; staged image policy builds isolated candidates and reserves for all sealed owners before allocation-free publication. Original global Q3 shared-handle checks, failed receipts, transfer custody and cleanup refusal remain. Private render identity scans are deleted. Cold admission arrays and the required original Q3 handle scratch remain. Matching normal production build and seven core suites pass; no live or timing claim."
     }
   ],
   "verification_limits": [

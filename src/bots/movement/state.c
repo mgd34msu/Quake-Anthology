@@ -179,6 +179,15 @@ bool qa_bot_moves_create(uint32_t maximum, qa_bot_library *library, qa_bot_actio
 bool qa_bot_moves_prepare_graph(qa_bot_moves *m, qa_nav_workspace_limits limits, qa_error *e) {
     if (!qa_nav_workspace_prepare(m->workspace, limits, e))
         return false;
+    size_t route_edges = limits.edges < limits.nodes ? limits.edges : limits.nodes;
+    if (route_edges == SIZE_MAX)
+        return bot_move_fail(e, "bot route storage exceeds address range");
+    size_t route_nodes = route_edges + 1;
+    for (uint32_t i = 0; i < m->maximum; ++i)
+        if (!qa_nav_route_reserve(&m->slots[i].state.route, route_nodes, route_edges, 0, e))
+            return false;
+    if (!qa_nav_route_reserve(&m->trajectory, 2, 1, 0, e))
+        return false;
     size_t edges = limits.edges;
     if (edges <= m->visited.count && m->point_capacity)
         return true;

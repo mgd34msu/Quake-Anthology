@@ -28,6 +28,17 @@ static bool slots_copy(bot_move_slot *out,const bot_move_slot *source,uint32_t m
     }
     return true;
 }
+static bool slots_prepare(bot_move_slot *slots,const qa_bot_moves *owner,qa_error *e) {
+    size_t nodes=0,edges=0;
+    for(uint32_t i=0;i<owner->maximum;++i) {
+        const qa_nav_route *route=&owner->slots[i].state.route;
+        if(nodes<route->node_capacity) nodes=route->node_capacity;
+        if(edges<route->edge_capacity) edges=route->edge_capacity;
+    }
+    for(uint32_t i=0;i<owner->maximum;++i)
+        if(!qa_nav_route_reserve(&slots[i].state.route,nodes,edges,0,e)) return false;
+    return true;
+}
 static bool route_fields(qa_source_save_io *io,bot_move_record *record) {
     if(!qa_source_save_bool(io,&record->route.found)) return false;
     if(!record->route.found) return true;
@@ -163,6 +174,7 @@ bool qa_bot_moves_save_restore(qa_bot_moves *m,qa_bytes saved,qa_error *e) {
                 ok=bot_save_fail(&io,QA_ERROR_FORMAT,"Restored movement handles share one source allocation");
     }
     if(ok) ok=qa_source_save_finish(&io,NULL);
+    if(ok) ok=slots_prepare(slots,m,e);
     m->busy=true;
     for(uint32_t i=0;ok && i<maximum;++i) if(slots[i].used &&
         (slots[i].state.walk_progress || slots[i].state.route.found)) {
@@ -267,7 +279,8 @@ bool bot_move_history_prepare(qa_bot_moves *m,const bot_move_history *image,
     if(!plan->state.slots) {
         free(plan);qa_error_set(e,QA_ERROR_MEMORY,0,"Preparing movement handle aliases");return false;
     }
-    if(!slots_copy(plan->state.slots,image->slots,m->maximum,e)) {
+    if(!slots_copy(plan->state.slots,image->slots,m->maximum,e) ||
+       !slots_prepare(plan->state.slots,m,e)) {
         slots_clear(plan->state.slots,m->maximum);free(plan->state.slots);free(plan);return false;
     }
     for(uint32_t i=0;i<m->maximum;++i) if(plan->state.slots[i].used &&

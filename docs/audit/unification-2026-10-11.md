@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `1a5c3dd4`.
+Follow-up source changes were reviewed through main `0109c3d6`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 119 have source fixes
+There are **374 overlapping source-review observations**: 121 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 252 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 250 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -137,6 +137,7 @@ results.
 | `J13-07` | `bcb95cff` | Q2/Q3 medium clipping and coverage share caller scratch. QW writer portion of 27-02 is fixed; histories remain open. |
 | `09-01` | `624740a2` | Named character, fuzzy, goal and initial-chat aliases use the common index; import/history and actual source-byte custody rechecked. Admission/workspace growth remains separate. |
 | `J11-08` | `1a5c3dd4` | Model tag/bone names bind once, preserving first exact match per MD3 frame and full MD5 names; native callers carry IDs. |
+| `08-06`, `J14-08` | `0109c3d6` | Media/frontend movie image ownership uses the common index, with full image identities, staged publication and original global Q3 sharing. |
 | `10-04` | `a04c8473` | Navigation uses the common usercmd builder with retained physical rounding and delta-angle policy; the private constructor is deleted. |
 | `J14-09` | `11620e3a` | One platform directory service replaces frontend SDL directory discovery; engine and SDL allocator ownership remain distinct. |
 
