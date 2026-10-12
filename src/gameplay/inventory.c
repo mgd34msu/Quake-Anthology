@@ -963,6 +963,7 @@ bool qa_inventory_bind(qa_inventory *table, qa_actor_id actor, const qa_inventor
 
 static bool primary_snapshot(qa_inventory *table, inventory_store *store,
                              const qa_inventory_binding *binding,
+                             qa_arena *storage,
                              qa_inventory_entry **out, size_t *out_count,
                              inventory_source_index **out_index, qa_error *e)
 {
@@ -979,10 +980,11 @@ static bool primary_snapshot(qa_inventory *table, inventory_store *store,
         return fail(e, QA_ERROR_NOT_FOUND, "Inventory changed during primary count callback");
     if (count > SIZE_MAX / sizeof(qa_inventory_entry))
         return fail(e, QA_ERROR_MEMORY, "Primary inventory snapshot size overflow");
-    qa_inventory_entry *entries = count ? calloc(count, sizeof(*entries)) : NULL;
-    if (count && !entries) return fail(e, QA_ERROR_MEMORY, "Cannot snapshot primary inventory");
+    qa_inventory_entry *entries = count ? qa_arena_alloc(storage,
+        count * sizeof(*entries), _Alignof(qa_inventory_entry), e) : NULL;
+    if (count && !entries) return false;
     inventory_source_index *index = source_candidate_take(store, NULL, e);
-    if (!index) { free(entries); return false; }
+    if (!index) return false;
     bool sampled;
     if (!source_capture(table, store, NULL, binding, index, count,
         entries, 0, NULL, &sampled, e)) goto failed;
@@ -1002,7 +1004,7 @@ static bool primary_snapshot(qa_inventory *table, inventory_store *store,
     *out = entries; *out_count = count; *out_index = index; return true;
 failed:
     source_candidate_return(store, NULL, index);
-    free(entries); return false;
+    return false;
 }
 
 bool qa_inventory_adopt_primary(qa_inventory *table, qa_actor_id actor,
@@ -1017,6 +1019,8 @@ bool qa_inventory_adopt_primary(qa_inventory *table, qa_actor_id actor,
     }
     inventory_store *store = acquire(table, actor);
     if (!store) return fail(e, QA_ERROR_NOT_FOUND, "Primary inventory actor retired");
+    qa_arena storage;
+    qa_inventory_scratch_acquire(table, &storage);
     bool ok = false;
     qa_inventory_entry *source = NULL, *adopted = NULL;
     inventory_source_index *prepared = NULL;
@@ -1035,12 +1039,13 @@ bool qa_inventory_adopt_primary(qa_inventory *table, qa_actor_id actor,
         }
         *out = (qa_inventory_lease){actor, store->serial}; ok = true; goto done;
     }
-    if (!primary_snapshot(table, store, binding, &source, &count, &prepared, e)) goto done;
+    if (!primary_snapshot(table, store, binding, &storage, &source, &count, &prepared, e)) goto done;
     if (store->references != 2) {
         fail(e, QA_ERROR_ARGUMENT, "Primary inventory callback retained an admission lease"); goto done;
     }
-    adopted = count ? malloc(count * sizeof(*adopted)) : NULL;
-    if (count && !adopted) { fail(e, QA_ERROR_MEMORY, "Cannot prepare primary inventory adoption"); goto done; }
+    adopted = count ? qa_arena_alloc(&storage, count * sizeof(*adopted),
+        _Alignof(qa_inventory_entry), e) : NULL;
+    if (count && !adopted) goto done;
     for (size_t i = 0; i < count; ++i) {
         adopted[i] = source[i];
         size_t local = local_index(store, source[i].item);
@@ -1106,7 +1111,8 @@ rollback:
     }
 done:
     source_candidate_return(store, NULL, prepared);
-    free(adopted); free(source); release_store(table, store); return ok;
+    qa_inventory_snapshot_release(table, &storage);
+    release_store(table, store); return ok;
 }
 
 bool qa_inventory_primary_current(qa_inventory *table, qa_inventory_lease lease,
@@ -1124,6 +1130,8 @@ bool qa_inventory_detach_primary(qa_inventory *table, qa_inventory_lease lease,
 {
     inventory_store *store = acquire(table, lease.actor);
     if (!store) return fail(e, QA_ERROR_NOT_FOUND, "Primary inventory detach actor retired");
+    qa_arena storage;
+    qa_inventory_scratch_acquire(table, &storage);
     bool ok = false;
     qa_inventory_entry *source = NULL;
     inventory_source_index *prepared = NULL;
@@ -1134,7 +1142,7 @@ bool qa_inventory_detach_primary(qa_inventory *table, qa_inventory_lease lease,
     if (store->references != 2 || store->revision == UINT64_MAX || table->serial == UINT64_MAX) {
         fail(e, QA_ERROR_ARGUMENT, "Primary inventory detach requires idle callbacks and available identity"); goto done;
     }
-    if (!primary_snapshot(table, store, &store->primary, &source, &count, &prepared, e)) goto done;
+    if (!primary_snapshot(table, store, &store->primary, &storage, &source, &count, &prepared, e)) goto done;
     if (store->references != 2 || table->serial == UINT64_MAX || store->revision == UINT64_MAX) {
         fail(e, QA_ERROR_ARGUMENT, "Primary inventory changed while preparing detach"); goto done;
     }
@@ -1153,7 +1161,8 @@ bool qa_inventory_detach_primary(qa_inventory *table, qa_inventory_lease lease,
     store->serial = ++table->serial; store_changed(store); ok = true;
 done:
     source_candidate_return(store, NULL, prepared);
-    free(source); release_store(table, store); return ok;
+    qa_inventory_snapshot_release(table, &storage);
+    release_store(table, store); return ok;
 }
 
 bool qa_inventory_create_actor(qa_inventory *table, qa_actor_id actor,
