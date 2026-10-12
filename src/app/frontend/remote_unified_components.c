@@ -140,11 +140,16 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
     if(!update||o->revision==UINT64_MAX||update->revision!=o->revision+1)
         return q3remote_component_fail(e,QA_ERROR_FORMAT,"Remote component reliable revision is not consecutive");
     uint64_t revision=update->revision; size_t count=update->source_count;
-    remote_component **next=count?calloc(count,sizeof(*next)):NULL;
-    remote_component_state *states=count?calloc(count,sizeof(*states)):NULL;
-    bool *created=count?calloc(count,sizeof(*created)):NULL;
-    bool *admitted=count?calloc(count,sizeof(*admitted)):NULL;
-    if(count&&(!next||!states||!created||!admitted)) { free(next); free(states); free(created); free(admitted); return q3remote_component_fail(e,QA_ERROR_MEMORY,"Retaining genuine reliable component candidate"); }
+    qa_unified_frame_lease *staging=count?qa_unified_session_frame_lease_acquire(o->replica->session,e):NULL;
+    qa_unified_frame_lease *roster=count&&staging?qa_unified_session_frame_lease_acquire(o->replica->session,e):NULL;
+    remote_component **next=roster?qa_unified_frame_lease_alloc(roster,count,sizeof(*next),_Alignof(remote_component *),e):NULL;
+    remote_component_state *states=staging?qa_unified_frame_lease_alloc(staging,count,sizeof(*states),_Alignof(remote_component_state),e):NULL;
+    bool *created=staging?qa_unified_frame_lease_alloc(staging,count,sizeof(*created),_Alignof(bool),e):NULL;
+    bool *admitted=staging?qa_unified_frame_lease_alloc(staging,count,sizeof(*admitted),_Alignof(bool),e):NULL;
+    if(count&&(!next||!states||!created||!admitted)) {
+        qa_unified_frame_lease_release(staging); qa_unified_frame_lease_release(roster);
+        return false;
+    }
     bool ok=true;
     for(size_t i=0;ok&&i<count;++i) {
         const qa_unified_component_q3 *row=update->sources+i;
@@ -195,7 +200,9 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
             if(next[i]->state.player_events)
                 frontend_unified_events_cursor_bind(o->events,&next[i]->event_cursor);
         }
-        free(o->rows); o->rows=next; o->count=count; o->revision=revision; next=NULL;
+        qa_unified_frame_lease *previous_roster=o->rows_lease;
+        o->rows=next; o->rows_lease=roster; o->count=count; o->revision=revision; roster=NULL;
+        qa_unified_frame_lease_release(previous_roster);
     } else {
         if(publishing) o->failed=true;
         qa_error original={0}; if(e) original=*e;
@@ -207,7 +214,7 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
         for(size_t i=0;i<count;++i) if(created[i]) { free(next[i]); next[i]=NULL; }
     }
     for(size_t i=0;i<count;++i) q3remote_component_state_free(states+i);
-    free(states); free(created); free(admitted); free(next); return ok;
+    qa_unified_frame_lease_release(staging); qa_unified_frame_lease_release(roster); return ok;
 }
 void frontend_unified_components_frame_abort(frontend_unified_component_frame **slot)
 {
@@ -294,7 +301,7 @@ bool frontend_unified_components_destroy(frontend_unified_components **slot,qa_e
         if(!q3remote_component_close(&row,e)) return false;
         o->retired=next;
     }
-    free(o->rows); free(o); *slot=NULL; return true;
+    qa_unified_frame_lease_release(o->rows_lease); free(o); *slot=NULL; return true;
 }
 bool frontend_unified_components_visit(const frontend_unified_components *o,const qa_application_content_visitor *visitor,qa_error *e)
 {

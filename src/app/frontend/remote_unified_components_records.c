@@ -61,7 +61,8 @@ void q3remote_component_state_free(remote_component_state *s)
         qa_unified_document_destroy(s->command_documents[i]);
         qa_unified_frame_lease_release(s->command_leases[i]);
     }
-    qa_unified_component_identity_dispose(&s->identity); memset(s,0,sizeof(*s));
+    qa_unified_document_destroy(s->identity_document);
+    memset(s,0,sizeof(*s));
 }
 static bool command_retain(const remote_component_state *source,size_t from,
     remote_component_state *out,size_t to,qa_error *e)
@@ -118,16 +119,22 @@ bool q3remote_component_state_read(frontend_unified_components *owner,const qa_u
         .abi=row->abi,.player_events=!row->scene,.game_state_revision=row->game_state_revision};
     bool ok=qa_strings_intern_cstr(owner->replica->strings,row->owner.provider,&s.provider_name,e);
     s.provider=(char *)qa_strings_cstr(owner->replica->strings,s.provider_name);
-    if(ok) ok=qa_unified_component_identity_clone(&row->identity,&s.identity,e)&&
-        qa_strings_intern_cstr(owner->replica->strings,row->identity.module.id,&s.module_name,e)&&
-        qa_strings_intern_cstr(owner->replica->strings,row->identity.module.artifact_path,&s.module_artifact,e);
     s.presentation_owner=(qa_source_owner){s.provider,s.owner_generation};
     if(ok&&previous) {
         ok=s.owner_generation==previous->state.owner_generation&&s.generation==previous->state.generation&&
             s.abi==previous->state.abi&&s.player_events==previous->state.player_events&&
-            qa_unified_component_identity_equal(&s.identity,&previous->state.identity);
-        if(ok) { s.mod=previous->state.mod; s.provider_row=previous->state.provider_row;
-            s.content_name=previous->state.content_name; }
+            qa_unified_component_identity_equal(&row->identity,&previous->state.identity);
+    }
+    if(ok) {
+        const qa_unified_document *identity_document=previous&&previous->state.identity_document?
+            previous->state.identity_document:document;
+        ok=qa_unified_document_retain(identity_document,&s.identity_document,e);
+        if(ok) s.identity=previous&&previous->state.identity_document?previous->state.identity:row->identity;
+    }
+    if(ok&&previous) {
+        s.mod=previous->state.mod; s.provider_row=previous->state.provider_row;
+        s.content_name=previous->state.content_name; s.module_name=previous->state.module_name;
+        s.module_artifact=previous->state.module_artifact;
     } else if(ok) ok=q3remote_component_state_qualify(owner,&s,e);
     int32_t base=row->command_base;
     if(ok) ok=!previous||base==previous->state.command_sequence;

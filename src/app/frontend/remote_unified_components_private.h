@@ -10,7 +10,8 @@
 #include "qa/network_unified_frame_pool.h"
 
 typedef struct remote_component_state {
-    qa_unified_component_identity identity;
+    qa_unified_component_identity identity; /* Borrowed from identity_document. */
+    qa_unified_document *identity_document;
     qa_source_owner presentation_owner;
     qa_string_id provider_name, content_name, module_name, module_artifact;
     char *provider; /* Borrowed from the replica's retained session strings. */
@@ -100,6 +101,7 @@ struct frontend_unified_components {
     qa_executable_recipe *recipe;
     frontend_unified_events *events;
     remote_component **rows;
+    qa_unified_frame_lease *rows_lease;
     size_t count;
     remote_component *retired;
     uint64_t revision;
