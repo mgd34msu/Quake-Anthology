@@ -6,7 +6,7 @@
  * constructs detached records and invokes no network or consumer callback.
  * Each live record requires its actual candidate consumer binding before a
  * matching native multi/easy handle continuation can transfer at publication. */
-bool qa_http_create_empty(qa_http **, qa_error *);
+bool qa_http_create_empty(qa_platform_events *, qa_http **, qa_error *);
 bool qa_http_checkpoint_ready(const qa_http *, qa_error *);
 bool qa_http_checkpoint(const qa_http *, qa_buffer *, qa_error *);
 bool qa_http_restore(qa_http *, qa_bytes, qa_error *);

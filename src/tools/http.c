@@ -3,6 +3,7 @@
 #include "save_internal.h"
 #include <curl/curl.h>
 #include <limits.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -16,12 +17,20 @@ typedef struct http_transfer {
     qa_buffer body;
     qa_http_callbacks callbacks;
     qa_http_response response;
-    qa_error failure;
-    uint64_t maximum_bytes, response_body_start;
+    qa_error failure, transport_failure;
+    uint64_t maximum_bytes, response_body_start, admitted_bytes, terminal_order;
+    CURLcode result;
     uint32_t timeout_ms, connect_timeout_ms, maximum_redirects;
-    bool canceled, callbacks_bound;
+    bool canceled, callbacks_bound, in_multi, paused, terminal, completion_queued, rejected;
 } http_transfer;
-struct qa_http { CURLM *multi; http_transfer *transfers; uint64_t next_id; bool pumping, pending_restore, detached; };
+struct qa_http {
+    CURLM *multi;
+    http_transfer *transfers;
+    qa_platform_events *events;
+    uint64_t next_id, source_id, time_ns, terminal_sequence;
+    bool pumping, pending_restore, detached, owns_events;
+};
+static atomic_uint_fast64_t next_source_id = 1;
 bool qa_http_callbacks_idle(const qa_http *owner) { return !owner || !owner->pumping; }
 static bool fail(qa_error *error, qa_status status, const char *text) {
     qa_error_set(error, status, 0, "%s", text); return false;
@@ -41,10 +50,18 @@ static void transfer_free(http_transfer *t) {
 }
 static void remove_transfer(qa_http *owner, http_transfer **link) {
     http_transfer *t = *link; *link = t->next;
-    if (t->easy) (void)curl_multi_remove_handle(owner->multi, t->easy);
+    if (t->in_multi) (void)curl_multi_remove_handle(owner->multi, t->easy);
     transfer_free(t);
 }
-bool qa_http_create(qa_http **out, qa_error *error) {
+static uint64_t source_id_take(qa_error *error) {
+    uint_fast64_t id = atomic_load_explicit(&next_source_id, memory_order_relaxed);
+    while (id != UINT64_MAX) {
+        if (atomic_compare_exchange_weak_explicit(&next_source_id, &id, id + 1,
+            memory_order_relaxed, memory_order_relaxed)) return (uint64_t)id;
+    }
+    fail(error, QA_ERROR_CAPACITY, "HTTP source IDs exhausted"); return 0;
+}
+bool qa_http_create(qa_platform_events *events, qa_http **out, qa_error *error) {
     if (!out) return fail(error, QA_ERROR_ARGUMENT, "missing HTTP owner output");
     /* libcurl global initialization is reference counted internally. Each
      * owner balances its own initialization through teardown. */
@@ -53,17 +70,24 @@ bool qa_http_create(qa_http **out, qa_error *error) {
     if (!owner) { curl_global_cleanup(); return fail(error, QA_ERROR_MEMORY, "allocating HTTP owner"); }
     owner->multi = curl_multi_init(); owner->next_id = 1;
     if (!owner->multi) { free(owner); curl_global_cleanup(); return fail(error, QA_ERROR_MEMORY, "allocating HTTP transfer queue"); }
+    owner->events = events; owner->owns_events = !events;
+    if (!events) owner->events = qa_platform_events_create(error);
+    if (!owner->events || !(owner->source_id = source_id_take(error))) {
+        if (owner->owns_events) qa_platform_events_destroy(owner->events);
+        curl_multi_cleanup(owner->multi); free(owner); curl_global_cleanup(); return false;
+    }
     *out = owner; return true;
 }
-bool qa_http_create_empty(qa_http **out, qa_error *error) {
+bool qa_http_create_empty(qa_platform_events *events, qa_http **out, qa_error *error) {
     if (!out || *out) return fail(error, QA_ERROR_ARGUMENT, "empty HTTP restoration requires an empty output");
-    if (!qa_http_create(out, error)) return false;
+    if (!qa_http_create(events, out, error)) return false;
     (*out)->pending_restore = true; return true;
 }
 bool qa_http_destroy(qa_http *owner, qa_error *error) {
     if (!owner) return true;
     if (owner->pumping) return fail(error, QA_ERROR_ARGUMENT, "HTTP teardown requires callbacks to return");
     while (owner->transfers) remove_transfer(owner, &owner->transfers);
+    if (owner->owns_events) qa_platform_events_destroy(owner->events);
     curl_multi_cleanup(owner->multi); free(owner); curl_global_cleanup(); return true;
 }
 static bool header_name(const char *name) {
@@ -107,11 +131,8 @@ static bool content_range(http_transfer *t, const char *bytes, size_t n) {
     if (cursor != n || t->response.has_range) return false;
     t->response.range_first = first; t->response.range_last = last; t->response.range_total = total; t->response.has_range = true; return true;
 }
-static size_t header_data(char *bytes, size_t size, size_t count, void *context) {
-    http_transfer *t = context;
-    if (size && count > SIZE_MAX / size) { fail(&t->failure, QA_ERROR_MEMORY, "HTTP header size overflow"); return 0; }
-    size_t n = size * count;
-    if (t->canceled) return 0;
+static bool header_receive(http_transfer *t, qa_bytes data) {
+    const char *bytes = (const char *)data.data; size_t n = data.size;
     if (n >= 5 && !memcmp(bytes, "HTTP/", 5)) {
         t->response_body_start = t->response.bytes;
         free(t->content_type); t->content_type = NULL;
@@ -123,38 +144,162 @@ static size_t header_data(char *bytes, size_t size, size_t count, void *context)
             space[2] >= '0' && space[2] <= '9' && space[3] >= '0' && space[3] <= '9')
             t->response.status = (unsigned)(space[1] - '0') * 100 + (unsigned)(space[2] - '0') * 10 + (unsigned)(space[3] - '0');
     } else if (n >= 14 && prefix_equal(bytes, "content-range:", 14)) {
-        if (!content_range(t, bytes, n)) { fail(&t->failure, QA_ERROR_FORMAT, "HTTP response returned an invalid content range"); return 0; }
+        if (!content_range(t, bytes, n)) return fail(&t->failure, QA_ERROR_FORMAT, "HTTP response returned an invalid content range");
     } else if (n >= 13 && prefix_equal(bytes, "content-type:", 13)) {
         size_t begin = 13, end = n;
         while (begin < end && (bytes[begin] == ' ' || bytes[begin] == '\t')) ++begin;
         while (end > begin && (bytes[end - 1] == '\r' || bytes[end - 1] == '\n' || bytes[end - 1] == ' ' || bytes[end - 1] == '\t')) --end;
         char *value = malloc(end - begin + 1);
-        if (!value) { fail(&t->failure, QA_ERROR_MEMORY, "allocating HTTP response metadata"); return 0; }
+        if (!value) return fail(&t->failure, QA_ERROR_MEMORY, "allocating HTTP response metadata");
         memcpy(value, bytes + begin, end - begin); value[end - begin] = 0;
         free(t->content_type); t->content_type = value; t->response.content_type = value;
     } else if ((n == 2 && bytes[0] == '\r' && bytes[1] == '\n') || (n == 1 && bytes[0] == '\n')) {
         if (t->callbacks.headers && !t->callbacks.headers(t->callbacks.context, t->id, &t->response, &t->failure)) {
             if (t->failure.code == QA_OK) fail(&t->failure, QA_ERROR_IO, "HTTP response rejected by consumer");
-            return 0;
+            return false;
         }
     }
-    return t->canceled ? 0 : n;
+    return true;
+}
+static size_t intake_data(char *bytes, size_t size, size_t count, void *context,
+    qa_sys_http_action action) {
+    http_transfer *t = context;
+    if (size && count > SIZE_MAX / size) {
+        fail(&t->transport_failure, QA_ERROR_MEMORY,
+            action == QA_SYS_HTTP_HEADER ? "HTTP header size overflow" : "HTTP body size overflow"); return 0;
+    }
+    size_t n = size * count;
+    if (t->canceled || t->transport_failure.code != QA_OK) return 0;
+    if (action == QA_SYS_HTTP_BODY && ((uint64_t)n > UINT64_MAX - t->admitted_bytes ||
+        (t->maximum_bytes && ((uint64_t)n > t->maximum_bytes ||
+            t->admitted_bytes > t->maximum_bytes - (uint64_t)n)))) {
+        fail(&t->transport_failure, QA_ERROR_FORMAT, "HTTP response exceeds admitted byte limit"); return 0;
+    }
+    qa_http *owner = t->owner;
+    qa_platform_event_result admitted = qa_platform_events_admit(owner->events,
+        QA_PLATFORM_EVENT_HTTP, n);
+    /* No offered bytes have been accepted on pause. libcurl replays this exact
+     * callback, including headers, when collect resumes the handle. */
+    if (admitted == QA_PLATFORM_EVENT_FULL) { t->paused = true; return CURL_WRITEFUNC_PAUSE; }
+    if (admitted == QA_PLATFORM_EVENT_OVERSIZE) {
+        fail(&t->transport_failure, QA_ERROR_CAPACITY, "HTTP callback exceeds platform event backing"); return 0;
+    }
+    qa_sys_event event = {.kind = QA_PLATFORM_EVENT_HTTP, .time_ns = owner->time_ns,
+        .data.http = {.source_id = owner->source_id, .request_id = t->id, .action = action}};
+    admitted = qa_platform_events_push(owner->events, &event,
+        (qa_bytes){(const uint8_t *)bytes, n}, (qa_bytes){0});
+    if (admitted != QA_PLATFORM_EVENT_ACCEPTED) {
+        t->paused = true; return CURL_WRITEFUNC_PAUSE;
+    }
+    if (action == QA_SYS_HTTP_BODY) t->admitted_bytes += (uint64_t)n;
+    return n;
+}
+static size_t header_data(char *bytes, size_t size, size_t count, void *context) {
+    return intake_data(bytes, size, count, context, QA_SYS_HTTP_HEADER);
 }
 static size_t body_data(char *bytes, size_t size, size_t count, void *context) {
-    http_transfer *t = context;
-    if (size && count > SIZE_MAX / size) { fail(&t->failure, QA_ERROR_MEMORY, "HTTP body size overflow"); return 0; }
-    size_t n = size * count;
-    if (t->canceled) return 0;
-    if ((uint64_t)n > UINT64_MAX - t->response.bytes ||
-        (t->maximum_bytes && ((uint64_t)n > t->maximum_bytes || t->response.bytes > t->maximum_bytes - (uint64_t)n))) {
-        fail(&t->failure, QA_ERROR_FORMAT, "HTTP response exceeds admitted byte limit"); return 0;
+    return intake_data(bytes, size, count, context, QA_SYS_HTTP_BODY);
+}
+static void canceled_remove(qa_http *owner) {
+    for (http_transfer **link = &owner->transfers; *link;) {
+        if ((*link)->canceled) remove_transfer(owner, link); else link = &(*link)->next;
     }
-    t->response.bytes += (uint64_t)n;
-    if (t->callbacks.body && !t->callbacks.body(t->callbacks.context, t->id, &t->response, (qa_bytes){(const uint8_t *)bytes, n}, &t->failure)) {
-        if (t->failure.code == QA_OK) fail(&t->failure, QA_ERROR_IO, "HTTP response rejected by consumer");
-        return 0;
+}
+static void terminal_set(http_transfer *t, CURLcode result) {
+    if (t->terminal) return;
+    if (t->in_multi) (void)curl_multi_remove_handle(t->owner->multi, t->easy);
+    t->in_multi = t->paused = false; t->terminal = true; t->result = result;
+    t->terminal_order = ++t->owner->terminal_sequence;
+}
+static bool terminals_publish(qa_http *owner) {
+    for (;;) {
+        http_transfer *first = NULL;
+        for (http_transfer *t = owner->transfers; t; t = t->next)
+            if (t->terminal && !t->completion_queued && !t->canceled &&
+                (!first || t->terminal_order < first->terminal_order)) first = t;
+        if (!first) { owner->terminal_sequence = 0; return true; }
+        if (qa_platform_events_admit(owner->events, QA_PLATFORM_EVENT_HTTP,
+            sizeof(first->transport_failure)) != QA_PLATFORM_EVENT_ACCEPTED) return false;
+        qa_sys_event event = {.kind = QA_PLATFORM_EVENT_HTTP, .time_ns = owner->time_ns,
+            .data.http = {.source_id = owner->source_id, .request_id = first->id,
+                .action = QA_SYS_HTTP_COMPLETE, .result = (uint32_t)first->result}};
+        if (qa_platform_events_push(owner->events, &event,
+            (qa_bytes){(const uint8_t *)&first->transport_failure, sizeof(first->transport_failure)},
+            (qa_bytes){0}) != QA_PLATFORM_EVENT_ACCEPTED) return false;
+        first->completion_queued = true;
     }
-    return t->canceled ? 0 : n;
+}
+bool qa_http_event(qa_http *owner, const qa_sys_event *event, qa_bytes bytes, qa_error *error) {
+    if (!owner || event->kind != QA_PLATFORM_EVENT_HTTP ||
+        event->data.http.source_id != owner->source_id) return true;
+    if (owner->pumping || owner->pending_restore || owner->detached)
+        return fail(error, QA_ERROR_ARGUMENT, "HTTP delivery requires its published native continuation and returned callbacks");
+    http_transfer **link = &owner->transfers;
+    while (*link && (*link)->id != event->data.http.request_id) link = &(*link)->next;
+    if (!*link) return true;
+    http_transfer *t = *link;
+    owner->pumping = true;
+    if (!t->canceled && event->data.http.action == QA_SYS_HTTP_COMPLETE) {
+        qa_error failure = t->failure;
+        if (failure.code == QA_OK) memcpy(&failure, bytes.data, sizeof(failure));
+        if (failure.code == QA_OK && event->data.http.result != (uint32_t)CURLE_OK)
+            qa_error_set(&failure, QA_ERROR_IO, 0, "HTTP transport failed (%u)", (unsigned)event->data.http.result);
+        *link = t->next;
+        if (t->callbacks.complete)
+            t->callbacks.complete(t->callbacks.context, t->id, &t->response,
+                failure.code == QA_OK ? NULL : &failure);
+        transfer_free(t);
+    } else if (!t->canceled && !t->rejected) {
+        bool accepted = true;
+        if (event->data.http.action == QA_SYS_HTTP_HEADER) accepted = header_receive(t, bytes);
+        else if (event->data.http.action == QA_SYS_HTTP_BODY) {
+            t->response.bytes += (uint64_t)bytes.size;
+            if (t->callbacks.body) accepted = t->callbacks.body(t->callbacks.context,
+                t->id, &t->response, bytes, &t->failure);
+        }
+        if (!accepted && !t->canceled) {
+            if (t->failure.code == QA_OK) fail(&t->failure, QA_ERROR_IO, "HTTP response rejected by consumer");
+            t->rejected = true;
+            terminal_set(t, CURLE_WRITE_ERROR);
+        }
+    }
+    canceled_remove(owner);
+    owner->pumping = false;
+    return true;
+}
+bool qa_http_collect(qa_http *owner, uint64_t time_ns, qa_error *error) {
+    if (!owner || owner->pumping || owner->pending_restore || owner->detached)
+        return fail(error, QA_ERROR_ARGUMENT, "HTTP progress requires its published native continuation and returned callbacks");
+    owner->pumping = true; owner->time_ns = time_ns;
+    canceled_remove(owner);
+    if (!terminals_publish(owner)) { owner->pumping = false; return true; }
+    for (http_transfer *t = owner->transfers; t; t = t->next) if (t->in_multi && t->paused) {
+        /* Unpausing can synchronously offer buffered bytes. Owner custody and
+         * the admission timestamp remain set throughout that call. */
+        t->paused = false;
+        CURLcode resumed = curl_easy_pause(t->easy, CURLPAUSE_CONT);
+        if (resumed != CURLE_OK) terminal_set(t, resumed);
+    }
+    if (!terminals_publish(owner)) { owner->pumping = false; return true; }
+    int running = 0;
+    CURLMcode result = curl_multi_perform(owner->multi, &running);
+    int queued = 0;
+    while (qa_platform_events_admit(owner->events, QA_PLATFORM_EVENT_HTTP,
+        sizeof(qa_error)) == QA_PLATFORM_EVENT_ACCEPTED) {
+        /* info_read removes the native completion; retain it only after its
+         * common record has room, and copy result before remove_handle. */
+        CURLMsg *message = curl_multi_info_read(owner->multi, &queued);
+        if (!message) break;
+        if (message->msg != CURLMSG_DONE) continue;
+        http_transfer *t = NULL;
+        (void)curl_easy_getinfo(message->easy_handle, CURLINFO_PRIVATE, &t);
+        if (!t) continue;
+        CURLcode completed_result = message->data.result;
+        terminal_set(t, completed_result);
+        if (!terminals_publish(owner)) break;
+    }
+    owner->pumping = false;
+    return result == CURLM_OK || fail(error, QA_ERROR_IO, "HTTP transfer queue failed");
 }
 bool qa_http_submit(qa_http *owner, const qa_http_request *r, qa_http_request_id *out, qa_error *error) {
     if (!owner || !r || !out || owner->pumping || owner->pending_restore || owner->detached || !r->url || !header_name(r->method) ||
@@ -209,6 +354,7 @@ bool qa_http_submit(qa_http *owner, const qa_http_request *r, qa_http_request_id
     }
 #undef OPTION
     if (curl_multi_add_handle(owner->multi, t->easy) != CURLM_OK) { fail(error, QA_ERROR_IO, "admitting HTTP transfer"); goto failed; }
+    t->in_multi = true;
     t->next = owner->transfers; owner->transfers = t; ++owner->next_id; *out = t->id; return true;
 memory:
     fail(error, QA_ERROR_MEMORY, "allocating HTTP request data");
@@ -224,33 +370,18 @@ void qa_http_cancel(qa_http *owner, qa_http_request_id id) {
     }
 }
 bool qa_http_pump(qa_http *owner, qa_error *error) {
-    if (!owner || owner->pumping || owner->pending_restore || owner->detached) return fail(error, QA_ERROR_ARGUMENT, "HTTP progress requires its published native continuation and returned callbacks");
-    owner->pumping = true; int running = 0;
-    CURLMcode result = curl_multi_perform(owner->multi, &running);
-    int queued = 0; CURLMsg *message;
-    while ((message = curl_multi_info_read(owner->multi, &queued)) != NULL) {
-        if (message->msg != CURLMSG_DONE) continue;
-        http_transfer *t = NULL;
-        (void)curl_easy_getinfo(message->easy_handle, CURLINFO_PRIVATE, &t);
-        if (!t) continue;
-        http_transfer **link = &owner->transfers;
-        while (*link && *link != t) link = &(*link)->next;
-        if (!*link) continue;
-        CURLcode completed_result = message->data.result;
-        *link = t->next; (void)curl_multi_remove_handle(owner->multi, t->easy);
-        if (!t->canceled && t->callbacks.complete) {
-            qa_error failure = t->failure;
-            if (failure.code == QA_OK && completed_result != CURLE_OK)
-                qa_error_set(&failure, QA_ERROR_IO, 0, "HTTP transport failed (%u)", (unsigned)completed_result);
-            t->callbacks.complete(t->callbacks.context, t->id, &t->response, failure.code == QA_OK ? NULL : &failure);
+    if (!qa_http_collect(owner, 0, error)) return false;
+    if (!owner->owns_events) return true;
+    for (;;) {
+        qa_platform_event_cursor cursor = {0}; qa_sys_event event; qa_bytes bytes;
+        bool delivered = false;
+        while (qa_platform_events_read(owner->events, &cursor, &event, &bytes)) {
+            if (!qa_http_event(owner, &event, bytes, error)) return false;
+            qa_platform_events_consume(owner->events, &cursor); delivered = true;
         }
-        transfer_free(t);
+        if (!delivered) return true;
+        (void)terminals_publish(owner);
     }
-    for (http_transfer **link = &owner->transfers; *link;) {
-        if ((*link)->canceled) remove_transfer(owner, link); else link = &(*link)->next;
-    }
-    owner->pumping = false;
-    return result == CURLM_OK || fail(error, QA_ERROR_IO, "HTTP transfer queue failed");
 }
 size_t qa_http_pending(const qa_http *owner) {
     size_t count = 0; if (owner) for (const http_transfer *t = owner->transfers; t; t = t->next) if (!t->canceled) ++count;
@@ -308,7 +439,10 @@ static bool transfer_fields(qa_source_save_io *io, http_transfer *t) {
          t->response.range_last >= t->response.range_total)) ||
         (!t->response.has_range && (t->response.range_first || t->response.range_last || t->response.range_total)))
         return tool_save_fail(io, "Invalid HTTP response range continuation");
-    if (reading) { t->response.status = status; t->response.content_type = t->content_type; t->callbacks_bound = t->canceled; }
+    if (reading) {
+        t->response.status = status; t->response.content_type = t->content_type;
+        t->admitted_bytes = t->response.bytes; t->callbacks_bound = t->canceled;
+    }
     return true;
 }
 
@@ -417,6 +551,11 @@ void qa_http_handoff_publish(qa_http *active, qa_http *candidate) {
         http_transfer *t = candidate->transfers; candidate->transfers = t->next; transfer_free(t);
     }
     CURLM *empty = candidate->multi; candidate->multi = active->multi; active->multi = empty;
+    qa_platform_events *events = candidate->events; candidate->events = active->events; active->events = events;
+    bool owns_events = candidate->owns_events; candidate->owns_events = active->owns_events; active->owns_events = owns_events;
+    uint64_t source_id = candidate->source_id; candidate->source_id = active->source_id; active->source_id = source_id;
+    candidate->time_ns = active->time_ns;
+    candidate->terminal_sequence = active->terminal_sequence; active->terminal_sequence = 0;
     candidate->transfers = active->transfers; active->transfers = NULL;
     candidate->detached = false;
 }

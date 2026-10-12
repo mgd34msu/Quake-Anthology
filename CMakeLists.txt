@@ -1585,7 +1585,7 @@ target_link_libraries(qa_ui PUBLIC qa_application qa_text qa_input qa_settings q
 
 add_library(qa_http STATIC
     src/tools/http.c)
-target_link_libraries(qa_http PUBLIC qa_core PRIVATE CURL::libcurl)
+target_link_libraries(qa_http PUBLIC qa_core qa_platform_events PRIVATE CURL::libcurl)
 
 add_library(qa_tools STATIC
     src/tools/camera.c

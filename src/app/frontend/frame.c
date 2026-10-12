@@ -438,6 +438,9 @@ bool frontend_platform_drain(qa_frontend *frontend, bool input_ready, qa_error *
         case QA_PLATFORM_EVENT_STREAM:
             ok=frontend_tools_stream_receive(frontend,&event,payload,error);
             break;
+        case QA_PLATFORM_EVENT_HTTP:
+            ok=frontend_tools_http_receive(frontend,&event,payload,error);
+            break;
         case QA_PLATFORM_EVENT_PACKET: {
             int32_t destination = event.data.packet.destination;
             bool tracked = destination >= 0 && (size_t)destination < sizeof(packets_blocked) / sizeof(*packets_blocked);

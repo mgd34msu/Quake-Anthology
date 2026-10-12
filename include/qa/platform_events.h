@@ -26,6 +26,7 @@ typedef enum qa_sys_event_kind {
     QA_PLATFORM_EVENT_USERCMD,
     QA_PLATFORM_EVENT_CONSOLE_COMMAND,
     QA_PLATFORM_EVENT_STREAM,
+    QA_PLATFORM_EVENT_HTTP,
     QA_PLATFORM_EVENT_KIND_COUNT
 } qa_sys_event_kind;
 
@@ -39,6 +40,9 @@ typedef enum qa_sys_window_action { QA_SYS_WINDOW_OTHER, QA_SYS_WINDOW_FOCUS_GAI
 typedef enum qa_sys_stream_action {
     QA_SYS_STREAM_ACCEPT, QA_SYS_STREAM_BYTES, QA_SYS_STREAM_PEER_CLOSE, QA_SYS_STREAM_LISTENER_ERROR
 } qa_sys_stream_action;
+typedef enum qa_sys_http_action {
+    QA_SYS_HTTP_HEADER, QA_SYS_HTTP_BODY, QA_SYS_HTTP_COMPLETE
+} qa_sys_http_action;
 
 /* SDL and socket records convert here at physical intake. Payload bytes live
  * in the queue's fixed arena until this event is consumed. */
@@ -62,6 +66,8 @@ typedef struct qa_sys_event {
         struct { uint32_t seat; } usercmd;
         struct { uint64_t source_id, peer_id; qa_sys_stream_action action;
             double accepted_wall_ms; } stream;
+        struct { uint64_t source_id, request_id; qa_sys_http_action action;
+            uint32_t result; } http;
     } data;
     uint32_t offset, length;
 } qa_sys_event;

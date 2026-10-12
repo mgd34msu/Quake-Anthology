@@ -250,6 +250,9 @@ static void publish(void *context,qa_application *active,qa_application *candida
         operation->services->publish(operation->services->context,active,candidate);
     frontend_network_transport_exchange(source,f);
     frontend_local_lobby_exchange(source,f);
+    qa_platform_events *events=source->platform_events;
+    source->platform_events=f->platform_events;
+    f->platform_events=events;
     qa_http_handoff_publish(frontend_tools_http(source),frontend_tools_http(f));
     if (operation->native.input) qa_input_platform_handoff(operation->native.input);
     if (operation->native.display) qa_display_handoff(operation->native.display);

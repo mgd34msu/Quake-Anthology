@@ -482,7 +482,7 @@ bool frontend_tools_create(qa_frontend *f, qa_error *error) {
     bool mounted = services->settings && qa_vfs_mount_directory(services->settings, (const char *)base.data,
         QA_ARCHIVE_EXACT, true, &services->private_mount, error);
     qa_buffer_free(&base);
-    if (!mounted || !qa_http_create(&services->http, error)) return false;
+    if (!mounted || !qa_http_create(f->platform_events, &services->http, error)) return false;
     if (f->options.application.user_root) {
         size_t n = strlen(f->options.application.user_root); services->output_root = malloc(n + 1);
         if (services->output_root) memcpy(services->output_root, f->options.application.user_root, n + 1);
@@ -542,19 +542,25 @@ bool frontend_tools_sync(qa_frontend *f, qa_error *error) {
     return consoles_sync(f, error);
 }
 bool frontend_tools_intake(qa_frontend *f, qa_platform_events *events, uint64_t now, qa_error *error) {
-    return !f || !f->tools || !f->tools->llm ||
-        qa_llm_callback_collect(f->tools->llm, events, now, error);
+    if (!f || !f->tools) return true;
+    return (!f->tools->http || qa_http_collect(f->tools->http, now, error)) &&
+        (!f->tools->llm || qa_llm_callback_collect(f->tools->llm, events, now, error));
 }
 bool frontend_tools_stream_receive(qa_frontend *f, const qa_sys_event *event,
     qa_bytes bytes, qa_error *error) {
     return !f || !f->tools || !f->tools->llm ||
         qa_llm_callback_event(f->tools->llm, event, bytes, error);
 }
+bool frontend_tools_http_receive(qa_frontend *f, const qa_sys_event *event,
+    qa_bytes bytes, qa_error *error) {
+    return !f || !f->tools || !f->tools->http ||
+        qa_http_event(f->tools->http, event, bytes, error);
+}
 bool frontend_tools_pump(qa_frontend *f, qa_error *error) {
     if (!f || !f->tools) return true;
     if (!frontend_tools_sync(f, error)) return false;
     if (!cpu_statistics_sync(f, error)) return false;
-    return qa_http_pump(f->tools->http, error) && qa_llm_tick(f->tools->llm, error);
+    return qa_llm_tick(f->tools->llm, error);
 }
 bool frontend_tools_camera(qa_frontend *f, uint32_t seat, bool portal, qa_scene_view *view, qa_error *error) {
     if (!f || !f->tools) return true;
@@ -761,7 +767,8 @@ bool frontend_tools_prepare_restored(qa_frontend *f, qa_bytes bytes, qa_error *e
             tools->output_root = saved.output_root; saved.output_root = NULL;
             ok = qa_application_content_claim_pool(graph, saved.pool, &tools->private_resources, error) &&
                 qa_application_content_claim_view(graph, saved.settings, &tools->settings, error) &&
-                qa_application_content_claim_view(graph, saved.files, &tools->files, error) && qa_http_create_empty(&tools->http, error);
+                qa_application_content_claim_view(graph, saved.files, &tools->files, error) &&
+                qa_http_create_empty(f->platform_events, &tools->http, error);
             qa_tools_options options; qa_llm_options language;
             ok = ok && frontend_tools_service_options(f, &options, &language) &&
                 qa_tools_create_empty(&options, &tools->owner, error) && qa_llm_create_empty(&language, &tools->llm, error);

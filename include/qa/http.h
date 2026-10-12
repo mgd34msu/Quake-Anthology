@@ -1,6 +1,7 @@
 #ifndef QA_HTTP_H
 #define QA_HTTP_H
 #include "qa/common.h"
+#include "qa/platform_events.h"
 
 typedef struct qa_http qa_http;
 typedef uint64_t qa_http_request_id;
@@ -33,12 +34,15 @@ typedef struct qa_http_request {
 } qa_http_request;
 /* Native libcurl multi owner. No worker thread or feature-private HTTP client.
  * Calls require one owner thread. submit copies URL/headers/body before return;
- * callbacks run only in pump. TLS verification is always enabled. */
-bool qa_http_create(qa_http **, qa_error *);
+ * callbacks run only while consuming admitted records. TLS verification is
+ * always enabled. A NULL queue creates an owned common queue for standalone use. */
+bool qa_http_create(qa_platform_events *, qa_http **, qa_error *);
 bool qa_http_destroy(qa_http *, qa_error *);
 bool qa_http_submit(qa_http *, const qa_http_request *, qa_http_request_id *, qa_error *);
 /* Nonblocking progress; caller's ordinary event loop chooses its next wakeup. */
 bool qa_http_pump(qa_http *, qa_error *);
+bool qa_http_collect(qa_http *, uint64_t time_ns, qa_error *);
+bool qa_http_event(qa_http *, const qa_sys_event *, qa_bytes, qa_error *);
 bool qa_http_next_timeout(const qa_http *, uint32_t *milliseconds, bool *pending, qa_error *);
 /* Idempotent; canceled requests receive no later consumer callbacks. Cancel is
  * legal inside a callback, including for that callback's current request. */
