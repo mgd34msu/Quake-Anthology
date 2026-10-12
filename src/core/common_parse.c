@@ -23,7 +23,7 @@ bool qa_common_cursor_init(qa_common_cursor *cursor, qa_bytes source, qa_common_
     return true;
 }
 qa_common_cursor_state qa_common_cursor_capture(const qa_common_cursor *cursor) {
-    return (qa_common_cursor_state){.offset = cursor->ended ? 0 : cursor->offset,
+    return (qa_common_cursor_state){.offset = cursor->ended && cursor->rule == QA_COMMON_SOURCE ? 0 : cursor->offset,
                                     .ended = cursor->ended};
 }
 bool qa_common_cursor_restore(qa_common_cursor *cursor, qa_common_cursor_state state,
@@ -31,8 +31,9 @@ bool qa_common_cursor_restore(qa_common_cursor *cursor, qa_common_cursor_state s
     if (!cursor || (!state.ended && state.offset > cursor->terminator))
         return fail(error, QA_ERROR_ARGUMENT, state.offset,
                     "COM_Parse cursor is outside its C byte string");
-    cursor->offset = state.ended ? 0 : state.offset;
+    cursor->offset = state.ended && cursor->rule == QA_COMMON_SOURCE ? 0 : state.offset;
     cursor->ended = state.ended;
+    cursor->token = (qa_common_token_span){0};
     return true;
 }
 qa_common_parser_state qa_common_parser_capture(const qa_common_parser *parser) {
@@ -124,7 +125,7 @@ bool qa_common_overwrite_token(qa_common_parser *parser, qa_bytes text, qa_error
 static bool byte_at(const qa_common_cursor *cursor, size_t offset, int *out, qa_error *error) {
     if (offset < cursor->source.size) {
         unsigned byte = cursor->source.data[offset];
-        *out = byte < 128 ? (int)byte : (int)byte - 256;
+        *out = (cursor->rule == QA_COMMON_SHADER || byte < 128) ? (int)byte : (int)byte - 256;
         return true;
     }
     if (offset == cursor->source.size && cursor->end == QA_COMMON_TERMINATED) {
@@ -134,13 +135,17 @@ static bool byte_at(const qa_common_cursor *cursor, size_t offset, int *out, qa_
     return fail(error, QA_ERROR_FORMAT, offset,
                 "COM_Parse reached an uninitialized short-read tail");
 }
-static bool skip_comment(const qa_common_cursor *cursor, size_t *offset, bool block,
-                         qa_error *error) {
+static void next_line(qa_common_parser *parser) {
+    parser->line = parser->line == INT32_MAX ? INT32_MIN : parser->line + 1;
+}
+static bool skip_comment(qa_common_parser *parser, qa_common_cursor *cursor,
+                         size_t *offset, bool block, bool *crossed_line, qa_error *error) {
     for (;;) {
         int byte, next;
         if (!byte_at(cursor, *offset, &byte, error))
             return false;
-        if (!byte || (!block && byte == '\n'))
+        if (!byte || (!block && (byte == '\n' ||
+            (cursor->rule == QA_COMMON_SHADER && byte == '\r'))))
             return true;
         if (block && byte == '*') {
             if (!byte_at(cursor, *offset + 1, &next, error))
@@ -150,17 +155,35 @@ static bool skip_comment(const qa_common_cursor *cursor, size_t *offset, bool bl
                 return true;
             }
         }
+        if (cursor->rule == QA_COMMON_SHADER) {
+            if (byte == '\n') {
+                next_line(parser);
+                ++cursor->token.prefix_lines;
+            }
+            if (byte == '\n' || byte == '\r') *crossed_line = true;
+        }
         ++*offset;
     }
 }
-static void next_line(qa_common_parser *parser) {
-    parser->line = parser->line == INT32_MAX ? INT32_MIN : parser->line + 1;
-}
-static void append(qa_common_parser *parser, uint8_t byte) {
+static bool append(qa_common_parser *parser, qa_common_cursor *cursor, uint8_t byte,
+                   size_t offset, qa_error *error) {
+    if (cursor->rule == QA_COMMON_SHADER) {
+        if (parser->token_length == QA_COMMON_TOKEN_CAPACITY - 1) {
+            cursor->offset = offset;
+            cursor->token.end = offset;
+            return fail(error, QA_ERROR_FORMAT, cursor->token.begin,
+                        "Shader token exceeds 1023 bytes");
+        }
+        if (byte == '\n') {
+            next_line(parser);
+            ++cursor->token.token_lines;
+        }
+    }
     if (parser->token_length < QA_COMMON_TOKEN_CAPACITY) {
         parser->token[parser->token_length++] = (char)byte;
         parser->token[parser->token_length] = 0;
     }
+    return true;
 }
 bool qa_common_parse(qa_common_parser *parser, qa_common_cursor *cursor, bool allow_line_breaks,
                      qa_error *error) {
@@ -168,8 +191,10 @@ bool qa_common_parse(qa_common_parser *parser, qa_common_cursor *cursor, bool al
         return fail(error, QA_ERROR_ARGUMENT, 0, "invalid COM_Parse operation");
     parser->token_length = 0;
     parser->token[0] = 0;
+    cursor->token = (qa_common_token_span){0};
     if (cursor->ended)
         return true;
+    bool shader = cursor->rule == QA_COMMON_SHADER;
     size_t offset = cursor->offset;
     bool crossed_line = false;
     int byte, lookahead;
@@ -179,17 +204,19 @@ bool qa_common_parse(qa_common_parser *parser, qa_common_cursor *cursor, bool al
         while (byte <= 32) {
             if (!byte) {
                 cursor->ended = true;
-                cursor->offset = 0;
+                cursor->offset = shader ? offset : 0;
                 return true;
             }
             if (byte == '\n') {
                 next_line(parser);
+                ++cursor->token.prefix_lines;
                 crossed_line = true;
             }
+            if (shader && byte == '\r') crossed_line = true;
             if (!byte_at(cursor, ++offset, &byte, error))
                 return false;
         }
-        if (crossed_line && !allow_line_breaks) {
+        if (!shader && crossed_line && !allow_line_breaks) {
             cursor->offset = offset;
             return true;
         }
@@ -199,11 +226,17 @@ bool qa_common_parse(qa_common_parser *parser, qa_common_cursor *cursor, bool al
             return false;
         if (lookahead == '/' || lookahead == '*') {
             offset += 2;
-            if (!skip_comment(cursor, &offset, lookahead == '*', error))
+            if (!skip_comment(parser, cursor, &offset, lookahead == '*', &crossed_line, error))
                 return false;
         } else
             break;
     }
+    if (shader && crossed_line && !allow_line_breaks) {
+        cursor->offset = offset;
+        return true;
+    }
+    cursor->token.begin = offset;
+    cursor->token.found = true;
     if (byte == '"') {
         ++offset;
         for (;;) {
@@ -214,23 +247,26 @@ bool qa_common_parse(qa_common_parser *parser, qa_common_cursor *cursor, bool al
                     return fail(error, QA_ERROR_FORMAT, offset - 1,
                                 "COM_Parse quoted token terminator exceeds 1024-byte storage");
                 cursor->ended = byte == 0;
-                cursor->offset = cursor->ended ? 0 : offset;
+                cursor->token.end = !byte ? offset - 1 : offset;
+                cursor->offset = cursor->ended ? (shader ? offset - 1 : 0) : offset;
                 return true;
             }
-            append(parser, cursor->source.data[offset - 1]);
+            if (!append(parser, cursor, cursor->source.data[offset - 1], offset - 1, error))
+                return false;
         }
     }
     do {
-        append(parser, cursor->source.data[offset]);
+        if (!append(parser, cursor, cursor->source.data[offset], offset, error)) return false;
         if (!byte_at(cursor, ++offset, &byte, error))
             return false;
-        if (byte == '\n')
+        if (!shader && byte == '\n')
             next_line(parser);
     } while (byte > 32);
     if (parser->token_length == QA_COMMON_TOKEN_CAPACITY) {
         parser->token_length = 0;
         parser->token[0] = 0;
     }
+    cursor->token.end = offset;
     cursor->offset = offset;
     return true;
 }
@@ -339,7 +375,7 @@ bool qa_common_compress(qa_bytes source, qa_common_end end, qa_buffer storage,
         if (byte == '/' && !byte_at(&cursor, offset + 1, &next, error))
             return false;
         if (byte == '/' && (next == '/' || next == '*')) {
-            if (!skip_comment(&cursor, &offset, next == '*', error))
+            if (!skip_comment(NULL, &cursor, &offset, next == '*', NULL, error))
                 return false;
         } else if (byte == '\n' || byte == '\r') {
             newline = true;

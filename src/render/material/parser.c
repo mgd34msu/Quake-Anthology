@@ -1,4 +1,6 @@
 #include "library_internal.h"
+#include "qa/common_parse.h"
+#include "qa/text.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,8 +11,9 @@ typedef struct material_token {
 } material_token;
 
 typedef struct material_lexer {
-    qa_bytes source;
-    size_t at, line;
+    qa_common_cursor cursor;
+    qa_common_parser parser;
+    size_t line;
     bool pending, failed;
     material_token saved;
     qa_error *error;
@@ -26,11 +29,6 @@ typedef struct material_parser {
     bool rejected;
 } material_parser;
 
-static unsigned char byte_at(const material_lexer *lexer, size_t at)
-{
-    return at < lexer->source.size ? lexer->source.data[at] : 0;
-}
-
 static bool token_next(material_lexer *lexer, bool lines, material_token *out)
 {
     if (lexer->failed) return false;
@@ -39,53 +37,20 @@ static bool token_next(material_lexer *lexer, bool lines, material_token *out)
         *out = lexer->saved;
         return true;
     }
-    bool newline = false;
-    for (;;) {
-        unsigned char c;
-        while ((c = byte_at(lexer, lexer->at)) && c <= ' ') {
-            if (c == '\n' || c == '\r') newline = true;
-            if (c == '\n') ++lexer->line;
-            ++lexer->at;
-        }
-        if (byte_at(lexer, lexer->at) == '/' && byte_at(lexer, lexer->at + 1) == '/') {
-            lexer->at += 2;
-            while ((c = byte_at(lexer, lexer->at)) && c != '\n' && c != '\r') ++lexer->at;
-            continue;
-        }
-        if (byte_at(lexer, lexer->at) == '/' && byte_at(lexer, lexer->at + 1) == '*') {
-            lexer->at += 2;
-            while ((c = byte_at(lexer, lexer->at)) &&
-                   !(c == '*' && byte_at(lexer, lexer->at + 1) == '/')) {
-                if (c == '\n' || c == '\r') newline = true;
-                if (c == '\n') ++lexer->line;
-                ++lexer->at;
-            }
-            if (c) lexer->at += 2;
-            continue;
-        }
-        break;
+    bool ok = qa_common_parse(&lexer->parser, &lexer->cursor, lines, lexer->error);
+    size_t line = lexer->line + lexer->cursor.token.prefix_lines;
+    lexer->line = line + lexer->cursor.token.token_lines;
+    if (!ok) {
+        qa_error_set(lexer->error, QA_ERROR_FORMAT, lexer->cursor.token.begin,
+                     "Shader token exceeds 1023 bytes at line %zu", line);
+        lexer->failed = true;
+        return false;
     }
-    if ((!lines && newline) || !byte_at(lexer, lexer->at)) return false;
-    out->start = lexer->at;
-    out->line = lexer->line;
-    bool quoted = byte_at(lexer, lexer->at) == '"';
-    if (quoted) ++lexer->at;
-    size_t count = 0;
-    unsigned char c;
-    while ((c = byte_at(lexer, lexer->at)) && (quoted ? c != '"' : c > ' ')) {
-        if (count + 1 >= sizeof(out->text)) {
-            qa_error_set(lexer->error, QA_ERROR_FORMAT, out->start,
-                         "Shader token exceeds 1023 bytes at line %zu", out->line);
-            lexer->failed = true;
-            return false;
-        }
-        out->text[count++] = (char)c;
-        if (c == '\n') ++lexer->line;
-        ++lexer->at;
-    }
-    if (quoted && c == '"') ++lexer->at;
-    out->text[count] = 0;
-    out->end = lexer->at;
+    if (!lexer->cursor.token.found) return false;
+    out->start = lexer->cursor.token.begin;
+    out->end = lexer->cursor.token.end;
+    out->line = line;
+    memcpy(out->text, lexer->parser.token, lexer->parser.token_length + 1);
     return true;
 }
 
@@ -93,27 +58,6 @@ static void token_put(material_lexer *lexer, const material_token *token)
 {
     lexer->saved = *token;
     lexer->pending = true;
-}
-
-static bool equal(const char *a, const char *b)
-{
-    for (; *a || *b; ++a, ++b) {
-        unsigned char x = (unsigned char)*a, y = (unsigned char)*b;
-        if (x >= 'A' && x <= 'Z') x += 'a' - 'A';
-        if (y >= 'A' && y <= 'Z') y += 'a' - 'A';
-        if (x != y) return false;
-    }
-    return true;
-}
-
-static bool prefix(const char *value, const char *start)
-{
-    while (*start) {
-        unsigned char c = (unsigned char)*value++;
-        if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
-        if (c != (unsigned char)*start++) return false;
-    }
-    return true;
 }
 
 static void line_skip(material_lexer *lexer)
@@ -129,14 +73,16 @@ static void line_skip(material_lexer *lexer)
 
 bool qa_material_script_catalog(qa_material_library *library, qa_bytes source, qa_error *error)
 {
-    material_lexer lexer = { .source = source, .line = 1, .error = error };
+    material_lexer lexer = { .line = 1, .error = error };
+    if (!qa_common_cursor_init(&lexer.cursor, source, QA_COMMON_TERMINATED, error)) return false;
+    lexer.cursor.rule = QA_COMMON_SHADER;
     material_token name, token;
     while (token_next(&lexer, true, &name)) {
         if (!name.text[0]) break;
         material_token opening = {0};
         bool body = token_next(&lexer, true, &opening);
         if (lexer.failed) return false;
-        if (!body) opening.start = opening.end = lexer.at;
+        if (!body) opening.start = opening.end = lexer.cursor.offset;
         size_t end = opening.end;
         int64_t depth = 0;
         token = opening;
@@ -233,11 +179,11 @@ static bool wave_parse(material_parser *parser, qa_material_wave *wave)
 {
     material_token token;
     if (!token_next(&parser->lexer, false, &token)) return false;
-    if (equal(token.text, "square")) wave->kind = QA_WAVE_SQUARE;
-    else if (equal(token.text, "triangle")) wave->kind = QA_WAVE_TRIANGLE;
-    else if (equal(token.text, "sawtooth")) wave->kind = QA_WAVE_SAWTOOTH;
-    else if (equal(token.text, "inversesawtooth")) wave->kind = QA_WAVE_INVERSE_SAWTOOTH;
-    else if (equal(token.text, "noise")) wave->kind = QA_WAVE_NOISE;
+    if (qa_text_ascii_equal(token.text, "square")) wave->kind = QA_WAVE_SQUARE;
+    else if (qa_text_ascii_equal(token.text, "triangle")) wave->kind = QA_WAVE_TRIANGLE;
+    else if (qa_text_ascii_equal(token.text, "sawtooth")) wave->kind = QA_WAVE_SAWTOOTH;
+    else if (qa_text_ascii_equal(token.text, "inversesawtooth")) wave->kind = QA_WAVE_INVERSE_SAWTOOTH;
+    else if (qa_text_ascii_equal(token.text, "noise")) wave->kind = QA_WAVE_NOISE;
     else wave->kind = QA_WAVE_SIN;
     return number_next(parser, &wave->base) && number_next(parser, &wave->amplitude) &&
            number_next(parser, &wave->phase) && number_next(parser, &wave->frequency);
@@ -261,13 +207,13 @@ static bool image_bind(material_parser *parser, qa_material_stage *stage, size_t
     char *name = image_name(source_name, parser->lexer.error);
     if (!name) { parser->lexer.failed = true; return false; }
     qa_scene_image *image = NULL;
-    if (builtins && (equal(name, "$whiteimage") || equal(name, "$lightmap"))) {
+    if (builtins && (qa_text_ascii_equal(name, "$whiteimage") || qa_text_ascii_equal(name, "$lightmap"))) {
         image = (qa_scene_image *)(parser->options.source_q3 ? qa_scene_source_q3_white(parser->library->resources) :
             qa_scene_white(parser->library->resources));
         if (!image) { free(name); parser->lexer.failed = true;
             qa_error_set(parser->lexer.error, QA_ERROR_ARGUMENT, 0, "Source shader has no admitted white image"); return false; }
         qa_scene_image_retain(image);
-        stage->lightmap = equal(name, "$lightmap");
+        stage->lightmap = qa_text_ascii_equal(name, "$lightmap");
         stage->is_lightmap |= stage->lightmap;
     } else {
         qa_scene_image_options options = parser->options;
@@ -309,17 +255,17 @@ static bool image_bind(material_parser *parser, qa_material_stage *stage, size_t
 
 static qa_scene_blend blend_factor(const char *token, bool destination)
 {
-    if (equal(token, "gl_zero")) return QA_BLEND_ZERO;
-    if (equal(token, "gl_one")) return QA_BLEND_ONE;
-    if (equal(token, "gl_src_alpha")) return QA_BLEND_SRC_ALPHA;
-    if (equal(token, "gl_one_minus_src_alpha")) return QA_BLEND_ONE_MINUS_SRC_ALPHA;
-    if (equal(token, "gl_dst_alpha")) return QA_BLEND_DST_ALPHA;
-    if (equal(token, "gl_one_minus_dst_alpha")) return QA_BLEND_ONE_MINUS_DST_ALPHA;
-    if (destination && equal(token, "gl_src_color")) return QA_BLEND_SRC_COLOR;
-    if (destination && equal(token, "gl_one_minus_src_color")) return QA_BLEND_ONE_MINUS_SRC_COLOR;
-    if (!destination && equal(token, "gl_dst_color")) return QA_BLEND_DST_COLOR;
-    if (!destination && equal(token, "gl_one_minus_dst_color")) return QA_BLEND_ONE_MINUS_DST_COLOR;
-    if (!destination && equal(token, "gl_src_alpha_saturate")) return QA_BLEND_SRC_ALPHA_SATURATE;
+    if (qa_text_ascii_equal(token, "gl_zero")) return QA_BLEND_ZERO;
+    if (qa_text_ascii_equal(token, "gl_one")) return QA_BLEND_ONE;
+    if (qa_text_ascii_equal(token, "gl_src_alpha")) return QA_BLEND_SRC_ALPHA;
+    if (qa_text_ascii_equal(token, "gl_one_minus_src_alpha")) return QA_BLEND_ONE_MINUS_SRC_ALPHA;
+    if (qa_text_ascii_equal(token, "gl_dst_alpha")) return QA_BLEND_DST_ALPHA;
+    if (qa_text_ascii_equal(token, "gl_one_minus_dst_alpha")) return QA_BLEND_ONE_MINUS_DST_ALPHA;
+    if (destination && qa_text_ascii_equal(token, "gl_src_color")) return QA_BLEND_SRC_COLOR;
+    if (destination && qa_text_ascii_equal(token, "gl_one_minus_src_color")) return QA_BLEND_ONE_MINUS_SRC_COLOR;
+    if (!destination && qa_text_ascii_equal(token, "gl_dst_color")) return QA_BLEND_DST_COLOR;
+    if (!destination && qa_text_ascii_equal(token, "gl_one_minus_dst_color")) return QA_BLEND_ONE_MINUS_DST_COLOR;
+    if (!destination && qa_text_ascii_equal(token, "gl_src_alpha_saturate")) return QA_BLEND_SRC_ALPHA_SATURATE;
     return QA_BLEND_ONE;
 }
 
@@ -327,22 +273,22 @@ static void rgb_parse(material_parser *parser, qa_material_stage *stage)
 {
     material_token token;
     if (!token_next(&parser->lexer, false, &token)) return;
-    if (equal(token.text, "identity")) stage->rgb = QA_COLOR_IDENTITY;
-    else if (equal(token.text, "identitylighting")) stage->rgb = QA_COLOR_IDENTITY_LIGHTING;
-    else if (equal(token.text, "entity")) stage->rgb = QA_COLOR_ENTITY;
-    else if (equal(token.text, "oneminusentity")) stage->rgb = QA_COLOR_ONE_MINUS_ENTITY;
-    else if (equal(token.text, "exactvertex")) stage->rgb = QA_COLOR_EXACT_VERTEX;
-    else if (equal(token.text, "vertex")) {
+    if (qa_text_ascii_equal(token.text, "identity")) stage->rgb = QA_COLOR_IDENTITY;
+    else if (qa_text_ascii_equal(token.text, "identitylighting")) stage->rgb = QA_COLOR_IDENTITY_LIGHTING;
+    else if (qa_text_ascii_equal(token.text, "entity")) stage->rgb = QA_COLOR_ENTITY;
+    else if (qa_text_ascii_equal(token.text, "oneminusentity")) stage->rgb = QA_COLOR_ONE_MINUS_ENTITY;
+    else if (qa_text_ascii_equal(token.text, "exactvertex")) stage->rgb = QA_COLOR_EXACT_VERTEX;
+    else if (qa_text_ascii_equal(token.text, "vertex")) {
         stage->rgb = QA_COLOR_VERTEX;
         if (stage->alpha == QA_COLOR_IDENTITY) stage->alpha = QA_COLOR_VERTEX;
-    } else if (equal(token.text, "oneminusvertex")) stage->rgb = QA_COLOR_ONE_MINUS_VERTEX;
-    else if (equal(token.text, "lightingdiffuse")) stage->rgb = QA_COLOR_LIGHTING_DIFFUSE;
-    else if (equal(token.text, "const")) {
+    } else if (qa_text_ascii_equal(token.text, "oneminusvertex")) stage->rgb = QA_COLOR_ONE_MINUS_VERTEX;
+    else if (qa_text_ascii_equal(token.text, "lightingdiffuse")) stage->rgb = QA_COLOR_LIGHTING_DIFFUSE;
+    else if (qa_text_ascii_equal(token.text, "const")) {
         qa_vec3 value = {stage->constant.x, stage->constant.y, stage->constant.z};
         if (!vector_parse(parser, &value)) { parser->rejected = true; return; }
         stage->constant.x = value.x; stage->constant.y = value.y; stage->constant.z = value.z;
         stage->rgb = QA_COLOR_CONSTANT;
-    } else if (equal(token.text, "wave")) {
+    } else if (qa_text_ascii_equal(token.text, "wave")) {
         (void)wave_parse(parser, &stage->rgb_wave);
         stage->rgb = QA_COLOR_WAVE;
     }
@@ -352,13 +298,13 @@ static void alpha_parse(material_parser *parser, qa_material_stage *stage)
 {
     material_token token;
     if (!token_next(&parser->lexer, false, &token)) return;
-    if (equal(token.text, "identity")) stage->alpha = QA_COLOR_IDENTITY;
-    else if (equal(token.text, "entity")) stage->alpha = QA_COLOR_ENTITY;
-    else if (equal(token.text, "oneminusentity")) stage->alpha = QA_COLOR_ONE_MINUS_ENTITY;
-    else if (equal(token.text, "vertex")) stage->alpha = QA_COLOR_VERTEX;
-    else if (equal(token.text, "oneminusvertex")) stage->alpha = QA_COLOR_ONE_MINUS_VERTEX;
-    else if (equal(token.text, "lightingspecular")) stage->alpha = QA_COLOR_LIGHTING_SPECULAR;
-    else if (equal(token.text, "const")) {
+    if (qa_text_ascii_equal(token.text, "identity")) stage->alpha = QA_COLOR_IDENTITY;
+    else if (qa_text_ascii_equal(token.text, "entity")) stage->alpha = QA_COLOR_ENTITY;
+    else if (qa_text_ascii_equal(token.text, "oneminusentity")) stage->alpha = QA_COLOR_ONE_MINUS_ENTITY;
+    else if (qa_text_ascii_equal(token.text, "vertex")) stage->alpha = QA_COLOR_VERTEX;
+    else if (qa_text_ascii_equal(token.text, "oneminusvertex")) stage->alpha = QA_COLOR_ONE_MINUS_VERTEX;
+    else if (qa_text_ascii_equal(token.text, "lightingspecular")) stage->alpha = QA_COLOR_LIGHTING_SPECULAR;
+    else if (qa_text_ascii_equal(token.text, "const")) {
         double value = 0;
         material_token argument;
         if (token_next(&parser->lexer, false, &argument)) value = strtod(argument.text, NULL);
@@ -372,10 +318,10 @@ static void alpha_parse(material_parser *parser, qa_material_stage *stage)
         }
         stage->constant.w = (float)(uint8_t)(uint32_t)(int32_t)integer / 255;
         stage->alpha = QA_COLOR_CONSTANT;
-    } else if (equal(token.text, "wave")) {
+    } else if (qa_text_ascii_equal(token.text, "wave")) {
         (void)wave_parse(parser, &stage->alpha_wave);
         stage->alpha = QA_COLOR_WAVE;
-    } else if (equal(token.text, "portal")) {
+    } else if (qa_text_ascii_equal(token.text, "portal")) {
         float range = 256;
         (void)number_next(parser, &range);
         stage->alpha = QA_COLOR_PORTAL;
@@ -387,10 +333,10 @@ static void tcgen_parse(material_parser *parser, qa_material_stage *stage)
 {
     material_token token;
     if (!token_next(&parser->lexer, false, &token)) return;
-    if (equal(token.text, "texture") || equal(token.text, "base")) stage->tcgen = QA_TC_TEXTURE;
-    else if (equal(token.text, "lightmap")) stage->tcgen = QA_TC_LIGHTMAP;
-    else if (equal(token.text, "environment")) stage->tcgen = QA_TC_ENVIRONMENT;
-    else if (equal(token.text, "vector")) {
+    if (qa_text_ascii_equal(token.text, "texture") || qa_text_ascii_equal(token.text, "base")) stage->tcgen = QA_TC_TEXTURE;
+    else if (qa_text_ascii_equal(token.text, "lightmap")) stage->tcgen = QA_TC_LIGHTMAP;
+    else if (qa_text_ascii_equal(token.text, "environment")) stage->tcgen = QA_TC_ENVIRONMENT;
+    else if (qa_text_ascii_equal(token.text, "vector")) {
         stage->tcgen = QA_TC_VECTOR;
         (void)vector_parse(parser, &stage->tc_vectors[0]);
         (void)vector_parse(parser, &stage->tc_vectors[1]);
@@ -401,7 +347,7 @@ static void tcmod_parse(material_parser *parser, qa_material_stage *stage)
 {
     if (stage->tcmod_count == QA_MATERIAL_MAX_TCMODS) {
         parser->lexer.failed = true;
-        qa_error_set(parser->lexer.error, QA_ERROR_FORMAT, parser->lexer.at,
+        qa_error_set(parser->lexer.error, QA_ERROR_FORMAT, parser->lexer.cursor.offset,
                      "Shader '%s' exceeds four tcMod directives", parser->material->name);
         return;
     }
@@ -419,15 +365,15 @@ static void tcmod_parse(material_parser *parser, qa_material_stage *stage)
     if (!token_next(&parser->lexer, false, &token)) return;
     qa_material_tcmod mod = { .kind = QA_TCMOD_NONE, .wave = {.kind = QA_WAVE_NONE} };
     size_t numbers = 0;
-    if (equal(token.text, "scale")) { mod.kind = QA_TCMOD_SCALE; numbers = 2; }
-    else if (equal(token.text, "scroll")) { mod.kind = QA_TCMOD_SCROLL; numbers = 2; }
-    else if (equal(token.text, "rotate")) { mod.kind = QA_TCMOD_ROTATE; numbers = 1; }
-    else if (equal(token.text, "transform")) { mod.kind = QA_TCMOD_TRANSFORM; numbers = 6; }
-    else if (equal(token.text, "entitytranslate")) mod.kind = QA_TCMOD_ENTITY_TRANSLATE;
-    else if (equal(token.text, "stretch")) {
+    if (qa_text_ascii_equal(token.text, "scale")) { mod.kind = QA_TCMOD_SCALE; numbers = 2; }
+    else if (qa_text_ascii_equal(token.text, "scroll")) { mod.kind = QA_TCMOD_SCROLL; numbers = 2; }
+    else if (qa_text_ascii_equal(token.text, "rotate")) { mod.kind = QA_TCMOD_ROTATE; numbers = 1; }
+    else if (qa_text_ascii_equal(token.text, "transform")) { mod.kind = QA_TCMOD_TRANSFORM; numbers = 6; }
+    else if (qa_text_ascii_equal(token.text, "entitytranslate")) mod.kind = QA_TCMOD_ENTITY_TRANSLATE;
+    else if (qa_text_ascii_equal(token.text, "stretch")) {
         mod.kind = QA_TCMOD_STRETCH;
         if (!wave_parse(parser, &mod.wave)) return;
-    } else if (equal(token.text, "turb")) {
+    } else if (qa_text_ascii_equal(token.text, "turb")) {
         mod.kind = QA_TCMOD_TURBULENCE;
         mod.wave.kind = QA_WAVE_SIN;
         if (!number_next(parser, &mod.wave.base) || !number_next(parser, &mod.wave.amplitude) ||
@@ -558,11 +504,11 @@ static bool stage_parse(material_parser *parser)
             stage->state = state;
             return true;
         }
-        if (equal(token.text, "map") || equal(token.text, "clampmap")) {
+        if (qa_text_ascii_equal(token.text, "map") || qa_text_ascii_equal(token.text, "clampmap")) {
             if (!parameter(parser, &argument)) break;
-            bool clamp = equal(token.text, "clampmap");
+            bool clamp = qa_text_ascii_equal(token.text, "clampmap");
             if (!image_bind(parser, stage, 0, argument.text, clamp, !clamp)) break;
-        } else if (equal(token.text, "animmap")) {
+        } else if (qa_text_ascii_equal(token.text, "animmap")) {
             if (!parameter(parser, &argument)) break;
             stage->animation_frequency = number_value(parser, &argument);
             while (token_next(&parser->lexer, false, &argument)) {
@@ -576,18 +522,18 @@ static bool stage_parse(material_parser *parser)
                 }
                 ++animation_count;
             }
-        } else if (equal(token.text, "videomap")) {
+        } else if (qa_text_ascii_equal(token.text, "videomap")) {
             if (!parameter(parser, &argument)) break;
             video_parse(parser, stage, &token, &argument);
-        } else if (equal(token.text, "blendfunc")) {
+        } else if (qa_text_ascii_equal(token.text, "blendfunc")) {
             if (!token_next(&parser->lexer, false, &argument)) continue;
             bool complete = true;
             source_blend_assigned = true;
-            if (equal(argument.text, "add")) {
+            if (qa_text_ascii_equal(argument.text, "add")) {
                 state.blend_source = QA_BLEND_ONE; state.blend_destination = QA_BLEND_ONE;
-            } else if (equal(argument.text, "filter")) {
+            } else if (qa_text_ascii_equal(argument.text, "filter")) {
                 state.blend_source = QA_BLEND_DST_COLOR; state.blend_destination = QA_BLEND_ZERO;
-            } else if (equal(argument.text, "blend")) {
+            } else if (qa_text_ascii_equal(argument.text, "blend")) {
                 state.blend_source = QA_BLEND_SRC_ALPHA; state.blend_destination = QA_BLEND_ONE_MINUS_SRC_ALPHA;
             } else {
                 state.blend_source = blend_factor(argument.text, false);
@@ -597,23 +543,23 @@ static bool stage_parse(material_parser *parser)
             }
             if (complete) destination_blend_assigned = true;
             if (complete && !explicit_depth) state.depth_write = false;
-        } else if (equal(token.text, "depthwrite")) {
+        } else if (qa_text_ascii_equal(token.text, "depthwrite")) {
             explicit_depth = true; state.depth_write = true;
-        } else if (equal(token.text, "depthfunc")) {
+        } else if (qa_text_ascii_equal(token.text, "depthfunc")) {
             if (!parameter(parser, &argument)) break;
-            if (equal(argument.text, "equal")) state.depth_test = QA_DEPTH_EQUAL;
-            else if (equal(argument.text, "lequal")) state.depth_test = QA_DEPTH_LEQUAL;
-        } else if (equal(token.text, "alphafunc")) {
+            if (qa_text_ascii_equal(argument.text, "equal")) state.depth_test = QA_DEPTH_EQUAL;
+            else if (qa_text_ascii_equal(argument.text, "lequal")) state.depth_test = QA_DEPTH_LEQUAL;
+        } else if (qa_text_ascii_equal(token.text, "alphafunc")) {
             if (!parameter(parser, &argument)) break;
-            state.alpha_test = equal(argument.text, "gt0") ? QA_ALPHA_GT0 :
-                equal(argument.text, "lt128") ? QA_ALPHA_LT128 :
-                equal(argument.text, "ge128") ? QA_ALPHA_GE128 : QA_ALPHA_NONE;
-        } else if (equal(token.text, "detail")) stage->detail = true;
-        else if (equal(token.text, "rgbgen")) rgb_parse(parser, stage);
-        else if (equal(token.text, "alphagen")) alpha_parse(parser, stage);
-        else if (equal(token.text, "tcgen") || equal(token.text, "texgen"))
+            state.alpha_test = qa_text_ascii_equal(argument.text, "gt0") ? QA_ALPHA_GT0 :
+                qa_text_ascii_equal(argument.text, "lt128") ? QA_ALPHA_LT128 :
+                qa_text_ascii_equal(argument.text, "ge128") ? QA_ALPHA_GE128 : QA_ALPHA_NONE;
+        } else if (qa_text_ascii_equal(token.text, "detail")) stage->detail = true;
+        else if (qa_text_ascii_equal(token.text, "rgbgen")) rgb_parse(parser, stage);
+        else if (qa_text_ascii_equal(token.text, "alphagen")) alpha_parse(parser, stage);
+        else if (qa_text_ascii_equal(token.text, "tcgen") || qa_text_ascii_equal(token.text, "texgen"))
             tcgen_parse(parser, stage);
-        else if (equal(token.text, "tcmod")) tcmod_parse(parser, stage);
+        else if (qa_text_ascii_equal(token.text, "tcmod")) tcmod_parse(parser, stage);
         else parser->rejected = true;
         if (parser->rejected || parser->lexer.failed) break;
     }
@@ -638,25 +584,26 @@ static void deform_parse(material_parser *parser)
     qa_material_deform *output = &material->deforms[material->deform_count++];
     output->kind = QA_DEFORM_NONE;
     qa_material_deform deform = {.kind = QA_DEFORM_NONE, .wave = {.kind = QA_WAVE_NONE}};
-    if (equal(token.text, "projectionshadow")) deform.kind = QA_DEFORM_PROJECTION_SHADOW;
-    else if (equal(token.text, "autosprite")) deform.kind = QA_DEFORM_AUTOSPRITE;
-    else if (equal(token.text, "autosprite2")) deform.kind = QA_DEFORM_AUTOSPRITE2;
-    else if (prefix(token.text, "text")) {
+    if (qa_text_ascii_equal(token.text, "projectionshadow")) deform.kind = QA_DEFORM_PROJECTION_SHADOW;
+    else if (qa_text_ascii_equal(token.text, "autosprite")) deform.kind = QA_DEFORM_AUTOSPRITE;
+    else if (qa_text_ascii_equal(token.text, "autosprite2")) deform.kind = QA_DEFORM_AUTOSPRITE2;
+    else if (qa_text_bytes_prefix((qa_bytes){(const uint8_t *)token.text,strlen(token.text)},
+                                  (qa_bytes){(const uint8_t *)"text",4},true)) {
         deform.kind = QA_DEFORM_TEXT;
         deform.text_index = token.text[4] >= '0' && token.text[4] <= '7' ? (uint32_t)(token.text[4] - '0') : 0;
-    } else if (equal(token.text, "bulge")) {
+    } else if (qa_text_ascii_equal(token.text, "bulge")) {
         if (!number_next(parser, &deform.width) || !number_next(parser, &deform.height) ||
             !number_next(parser, &deform.speed)) return;
         deform.kind = QA_DEFORM_BULGE;
-    } else if (equal(token.text, "normal")) {
+    } else if (qa_text_ascii_equal(token.text, "normal")) {
         if (!number_next(parser, &deform.wave.amplitude) || !number_next(parser, &deform.wave.frequency)) return;
         deform.kind = QA_DEFORM_NORMAL;
-    } else if (equal(token.text, "move")) {
+    } else if (qa_text_ascii_equal(token.text, "move")) {
         if (!number_next(parser, &deform.vector.x) || !number_next(parser, &deform.vector.y) ||
             !number_next(parser, &deform.vector.z)) return;
         deform.kind = QA_DEFORM_MOVE;
         (void)wave_parse(parser, &deform.wave);
-    } else if (equal(token.text, "wave")) {
+    } else if (qa_text_ascii_equal(token.text, "wave")) {
         float divisor;
         if (!number_next(parser, &divisor)) return;
         deform.kind = QA_DEFORM_WAVE;
@@ -682,7 +629,7 @@ static void surface_parameter(qa_material *material, const char *name)
         {"structural", 0, 0x10000000}, {"trans", 0, 0x20000000}, {"nodrop", 0, UINT32_C(0x80000000)}
     };
     for (size_t i = 0; i < sizeof(flags) / sizeof(flags[0]); ++i) {
-        if (equal(name, flags[i].name)) {
+        if (qa_text_ascii_equal(name, flags[i].name)) {
             material->surface_flags |= flags[i].surface;
             material->content_flags |= flags[i].content;
             return;
@@ -697,7 +644,7 @@ static float sort_value(material_parser *parser, const material_token *token)
         {"banner", 6}, {"underwater", 8}, {"additive", 10}, {"nearest", 16}
     };
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
-        if (equal(token->text, names[i].name)) return names[i].value;
+        if (qa_text_ascii_equal(token->text, names[i].name)) return names[i].value;
     return number_value(parser, token);
 }
 
@@ -803,36 +750,38 @@ bool qa_material_script_register(qa_material_library *library, qa_material *mate
                                   int32_t lightmap_index, const char *base_name,
                                   const qa_scene_image *base_image, qa_error *error)
 {
-    material_parser parser = { .lexer = {.source = source, .line = 1, .error = error},
+    material_parser parser = { .lexer = {.line = 1, .error = error},
         .library = library, .material = material, .options = *options,
         .base_name = base_name, .base_image = base_image };
+    if (!qa_common_cursor_init(&parser.lexer.cursor, source, QA_COMMON_TERMINATED, error)) return false;
+    parser.lexer.cursor.rule = QA_COMMON_SHADER;
     material_token token, argument;
     bool closed = false;
     if (!token_next(&parser.lexer, true, &token) || token.text[0] != '{') parser.rejected = true;
     while (!parser.rejected && token_next(&parser.lexer, true, &token)) {
         if (token.text[0] == '}') { closed = true; break; }
         if (token.text[0] == '{') { if (!stage_parse(&parser)) break; }
-        else if (equal(token.text, "surfaceparm")) {
+        else if (qa_text_ascii_equal(token.text, "surfaceparm")) {
             if (token_next(&parser.lexer, false, &argument)) surface_parameter(material, argument.text);
-        } else if (equal(token.text, "nomipmaps")) {
+        } else if (qa_text_ascii_equal(token.text, "nomipmaps")) {
             material->no_mipmaps = true; material->no_picmip = true;
-        } else if (equal(token.text, "nopicmip")) material->no_picmip = true;
-        else if (equal(token.text, "polygonoffset")) material->polygon_offset = true;
-        else if (equal(token.text, "entitymergable")) material->entity_mergable = true;
-        else if (equal(token.text, "clamptime")) (void)number_next(&parser, &material->clamp_time);
-        else if (equal(token.text, "portal")) material->sort = 1;
-        else if (equal(token.text, "sort")) {
+        } else if (qa_text_ascii_equal(token.text, "nopicmip")) material->no_picmip = true;
+        else if (qa_text_ascii_equal(token.text, "polygonoffset")) material->polygon_offset = true;
+        else if (qa_text_ascii_equal(token.text, "entitymergable")) material->entity_mergable = true;
+        else if (qa_text_ascii_equal(token.text, "clamptime")) (void)number_next(&parser, &material->clamp_time);
+        else if (qa_text_ascii_equal(token.text, "portal")) material->sort = 1;
+        else if (qa_text_ascii_equal(token.text, "sort")) {
             if (token_next(&parser.lexer, false, &argument)) material->sort = sort_value(&parser, &argument);
-        } else if (equal(token.text, "cull")) {
+        } else if (qa_text_ascii_equal(token.text, "cull")) {
             if (token_next(&parser.lexer, false, &argument)) {
-                if (equal(argument.text, "none") || equal(argument.text, "twosided") || equal(argument.text, "disable"))
+                if (qa_text_ascii_equal(argument.text, "none") || qa_text_ascii_equal(argument.text, "twosided") || qa_text_ascii_equal(argument.text, "disable"))
                     material->cull = QA_CULL_NONE;
-                else if (equal(argument.text, "back") || equal(argument.text, "backside") || equal(argument.text, "backsided"))
+                else if (qa_text_ascii_equal(argument.text, "back") || qa_text_ascii_equal(argument.text, "backside") || qa_text_ascii_equal(argument.text, "backsided"))
                     material->cull = QA_CULL_BACK;
             }
-        } else if (equal(token.text, "deformvertexes")) deform_parse(&parser);
-        else if (equal(token.text, "skyparms")) sky_parse(&parser);
-        else if (equal(token.text, "fogparms")) {
+        } else if (qa_text_ascii_equal(token.text, "deformvertexes")) deform_parse(&parser);
+        else if (qa_text_ascii_equal(token.text, "skyparms")) sky_parse(&parser);
+        else if (qa_text_ascii_equal(token.text, "fogparms")) {
             if (!vector_parse(&parser, &material->fog.color)) { parser.rejected = true; break; }
             material->fog.kind = QA_FOG_EXP2;
             material->fog.effect = QA_FOG_OVERLAY;
@@ -840,9 +789,13 @@ bool qa_material_script_register(qa_material_library *library, qa_material *mate
                 material->fog.density = 1 / fmaxf(1, material->fog.amount);
                 line_skip(&parser.lexer);
             }
-        } else if (equal(token.text, "q3map_sun")) sun_parse(&parser);
-        else if (equal(token.text, "light")) (void)token_next(&parser.lexer, false, &argument);
-        else if (prefix(token.text, "qer") || prefix(token.text, "q3map") || equal(token.text, "tesssize"))
+        } else if (qa_text_ascii_equal(token.text, "q3map_sun")) sun_parse(&parser);
+        else if (qa_text_ascii_equal(token.text, "light")) (void)token_next(&parser.lexer, false, &argument);
+        else if (qa_text_bytes_prefix((qa_bytes){(const uint8_t *)token.text,strlen(token.text)},
+                                      (qa_bytes){(const uint8_t *)"qer",3},true) ||
+                 qa_text_bytes_prefix((qa_bytes){(const uint8_t *)token.text,strlen(token.text)},
+                                      (qa_bytes){(const uint8_t *)"q3map",5},true) ||
+                 qa_text_ascii_equal(token.text, "tesssize"))
             line_skip(&parser.lexer);
         else parser.rejected = true;
         if (parser.lexer.failed) break;

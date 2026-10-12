@@ -2,80 +2,43 @@
 #include "qa/network_q2_materials.h"
 #include "qa/material_library_save.h"
 #include "qa/binary.h"
+#include "qa/common_parse.h"
 #include "qa/model.h"
 #include "qa/scene_resource_save.h"
 #include "qa/source_save.h"
+#include "qa/text.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 typedef struct material_token { char text[1024]; size_t begin, end; } material_token;
-typedef struct material_reader { qa_bytes bytes; size_t at; bool failed, missing_parameter; qa_error *error; } material_reader;
+typedef struct material_reader {
+    qa_common_cursor cursor;
+    qa_common_parser parser;
+    bool failed, missing_parameter;
+    qa_error *error;
+} material_reader;
 
-static unsigned char byte_at(const material_reader *r, size_t at)
-{ return at < r->bytes.size ? r->bytes.data[at] : 0; }
 static bool next_token(material_reader *r, bool lines, material_token *token)
 {
-    bool newline = false;
     if (r->failed) return false;
-    for (;;) {
-        unsigned char c;
-        while ((c = byte_at(r, r->at)) && c <= ' ') {
-            if (c == '\n' || c == '\r') newline = true;
-            ++r->at;
-        }
-        if (byte_at(r,r->at)=='/' && byte_at(r,r->at+1)=='/') {
-            r->at += 2;
-            while ((c=byte_at(r,r->at)) && c!='\n' && c!='\r') ++r->at;
-        } else if (byte_at(r,r->at)=='/' && byte_at(r,r->at+1)=='*') {
-            r->at += 2;
-            while ((c=byte_at(r,r->at)) && !(c=='*' && byte_at(r,r->at+1)=='/')) {
-                if (c=='\n' || c=='\r') newline=true;
-                ++r->at;
-            }
-            if (c) r->at += 2;
-        } else break;
+    if (!qa_common_parse(&r->parser,&r->cursor,lines,r->error)) {
+        qa_error_set(r->error,QA_ERROR_FORMAT,r->cursor.token.begin,
+                     "Material token exceeds its actual shader extent");
+        r->failed=true;
+        return false;
     }
-    if ((!lines && newline) || !byte_at(r,r->at)) return false;
-    token->begin=r->at;
-    bool quoted=byte_at(r,r->at)=='"';
-    if (quoted) ++r->at;
-    size_t count=0; unsigned char c;
-    while ((c=byte_at(r,r->at)) && (quoted ? c!='"' : c>' ')) {
-        if (count+1==sizeof(token->text)) {
-            qa_error_set(r->error,QA_ERROR_FORMAT,token->begin,"Material token exceeds its actual shader extent");
-            r->failed=true; return false;
-        }
-        token->text[count++]=(char)c; ++r->at;
-    }
-    if (quoted && c=='"') ++r->at;
-    token->text[count]=0; token->end=r->at; return true;
-}
-static bool equal(const char *a,const char *b)
-{
-    while (*a || *b) {
-        unsigned char x=(unsigned char)*a++,y=(unsigned char)*b++;
-        if (x>='A' && x<='Z') x+='a'-'A';
-        if (y>='A' && y<='Z') y+='a'-'A';
-        if (x!=y) return false;
-    }
-    return true;
-}
-static bool prefix(const char *a,const char *b)
-{
-    while (*b) {
-        unsigned char x=(unsigned char)*a++,y=(unsigned char)*b++;
-        if (x>='A' && x<='Z') x+='a'-'A';
-        if (y>='A' && y<='Z') y+='a'-'A';
-        if (x!=y) return false;
-    }
+    if (!r->cursor.token.found) return false;
+    token->begin=r->cursor.token.begin;
+    token->end=r->cursor.token.end;
+    memcpy(token->text,r->parser.token,r->parser.token_length+1);
     return true;
 }
 bool qa_q2_material_dependency_builtin(const qa_q2_material_dependency *dependency)
 {
     if (!dependency || dependency->kind!=QA_Q2_MATERIAL_IMAGE || !dependency->path) return false;
     return (dependency->builtin_images &&
-        (equal(dependency->path,"$whiteimage") || equal(dependency->path,"$lightmap"))) ||
+        (qa_text_ascii_equal(dependency->path,"$whiteimage") || qa_text_ascii_equal(dependency->path,"$lightmap"))) ||
         !strcmp(dependency->path,"$whiteimage") || !strcmp(dependency->path,"*white") ||
         !strcmp(dependency->path,"*default");
 }
@@ -253,8 +216,12 @@ bool qa_q2_material_script_scope(qa_bytes bytes,qa_q2_material_scope *out,qa_err
 
 static bool program_span(qa_bytes bytes,material_token *name,size_t *begin,size_t *end,qa_error *error)
 {
-    material_reader r={.bytes=bytes,.error=error}; material_token t;
-    if (!bytes.data || !next_token(&r,true,name) || !*name->text ||
+    material_reader r={.error=error}; material_token t;
+    if (!bytes.data)
+        return application_fail(error,QA_ERROR_FORMAT,"Material artifact must contain its actual named program");
+    if (!qa_common_cursor_init(&r.cursor,bytes,QA_COMMON_TERMINATED,error)) return false;
+    r.cursor.rule=QA_COMMON_SHADER;
+    if (!next_token(&r,true,name) || !*name->text ||
         !next_token(&r,true,&t) || t.text[0]!='{')
         return application_fail(error,QA_ERROR_FORMAT,"Material artifact must contain its actual named program");
     *begin=t.begin; size_t depth=1;
@@ -265,7 +232,7 @@ static bool program_span(qa_bytes bytes,material_token *name,size_t *begin,size_
     if (r.failed) return false;
     if (depth) return application_fail(error,QA_ERROR_FORMAT,"Material artifact program is truncated");
     *end=t.end;
-    if (next_token(&r,true,&t) || r.failed || r.at!=bytes.size)
+    if (next_token(&r,true,&t) || r.failed || r.cursor.offset!=bytes.size)
         return application_fail(error,QA_ERROR_FORMAT,"Material artifact has extra programs or trailing bytes");
     return true;
 }
@@ -273,9 +240,12 @@ static void skip_line(material_reader *r)
 {
     material_token ignored;
     for (;;) {
-        size_t at=r->at;
+        qa_common_cursor_state before=qa_common_cursor_capture(&r->cursor);
         if (!next_token(r,false,&ignored)) break;
-        if (!strcmp(ignored.text,"{") || !strcmp(ignored.text,"}")) { r->at=at; break; }
+        if (!strcmp(ignored.text,"{") || !strcmp(ignored.text,"}")) {
+            if (!qa_common_cursor_restore(&r->cursor,before,r->error)) r->failed=true;
+            break;
+        }
     }
 }
 typedef struct alias_dependencies { qa_q2_material_dependency_fn fn; void *context; } alias_dependencies;
@@ -313,7 +283,7 @@ static bool dependency(material_reader *r,qa_q2_material_dependency_kind kind,bo
     r->missing_parameter=false;
     if (!next_token(r,false,token)) { r->missing_parameter=true; return !r->failed; }
     qa_q2_material_dependency value={kind,token->text,token->begin,token->end,builtin_images};
-    return dependency_emit(r->bytes,&value,fn,context,error);
+    return dependency_emit(r->cursor.source,&value,fn,context,error);
 }
 static bool consume(material_reader *r,size_t count)
 { material_token t; while (count--) if (!next_token(r,false,&t)) return false; return true; }
@@ -325,59 +295,69 @@ bool qa_q2_material_script_dependencies(qa_bytes bytes,qa_q2_material_dependency
     alias_dependencies aliases={fn,context};
     if (!fn || !program_span(bytes,&name,&begin,&end,error) ||
         !aliases_read(bytes,alias_dependency,&aliases,error)) return false;
-    material_reader r={.bytes=bytes,.at=begin,.error=error}; size_t depth=0,stage_count=0;
+    material_reader r={.error=error}; size_t depth=0,stage_count=0;
+    if (!qa_common_cursor_init(&r.cursor,bytes,QA_COMMON_TERMINATED,error)) return false;
+    r.cursor.rule=QA_COMMON_SHADER;
+    r.cursor.offset=begin;
     bool rejected=false;
-    while (r.at<end && next_token(&r,true,&t)) {
+    while (r.cursor.offset<end && next_token(&r,true,&t)) {
         if (t.text[0]=='{') { ++depth; if (depth==2 && ++stage_count>8) rejected=true; continue; }
         if (t.text[0]=='}') { if (depth) --depth; continue; }
         if (rejected) continue;
-        if (depth==1 && equal(t.text,"skyparms")) {
+        if (depth==1 && qa_text_ascii_equal(t.text,"skyparms")) {
             if (!dependency(&r,QA_Q2_MATERIAL_SKY,false,fn,context,&arg,error)) return false;
             if (r.missing_parameter || !consume(&r,1)) continue;
             if (!dependency(&r,QA_Q2_MATERIAL_SKY,false,fn,context,&arg,error)) return false;
-        } else if (depth==2 && (equal(t.text,"map") || equal(t.text,"clampmap"))) {
-            if (!dependency(&r,QA_Q2_MATERIAL_IMAGE,equal(t.text,"map"),fn,context,&arg,error)) return false;
+        } else if (depth==2 && (qa_text_ascii_equal(t.text,"map") || qa_text_ascii_equal(t.text,"clampmap"))) {
+            if (!dependency(&r,QA_Q2_MATERIAL_IMAGE,qa_text_ascii_equal(t.text,"map"),fn,context,&arg,error)) return false;
             if (r.missing_parameter) rejected=true;
-        } else if (depth==2 && equal(t.text,"videomap")) {
+        } else if (depth==2 && qa_text_ascii_equal(t.text,"videomap")) {
             if (!dependency(&r,QA_Q2_MATERIAL_MOVIE,false,fn,context,&arg,error)) return false;
             if (r.missing_parameter) rejected=true;
-        } else if (depth==2 && equal(t.text,"animmap")) {
+        } else if (depth==2 && qa_text_ascii_equal(t.text,"animmap")) {
             if (!consume(&r,1)) { rejected=true; continue; }
             size_t count=0;
             for (;;) {
-                size_t at=r.at;
+                qa_common_cursor_state before=qa_common_cursor_capture(&r.cursor);
                 if (!next_token(&r,false,&arg)) break;
-                if (!strcmp(arg.text,"{") || !strcmp(arg.text,"}")) { r.at=at; break; }
+                if (!strcmp(arg.text,"{") || !strcmp(arg.text,"}")) {
+                    if (!qa_common_cursor_restore(&r.cursor,before,error)) return false;
+                    break;
+                }
                 if (count++<8) {
                     qa_q2_material_dependency value={QA_Q2_MATERIAL_IMAGE,arg.text,arg.begin,arg.end,false};
                     if (!dependency_emit(bytes,&value,fn,context,error)) return false;
                 }
             }
-        } else if (depth==2 && equal(t.text,"blendfunc")) {
-            if (next_token(&r,false,&arg) && !equal(arg.text,"add") && !equal(arg.text,"filter") && !equal(arg.text,"blend")) consume(&r,1);
-        } else if (depth==2 && (equal(t.text,"rgbgen") || equal(t.text,"alphagen"))) {
+        } else if (depth==2 && qa_text_ascii_equal(t.text,"blendfunc")) {
+            if (next_token(&r,false,&arg) && !qa_text_ascii_equal(arg.text,"add") && !qa_text_ascii_equal(arg.text,"filter") && !qa_text_ascii_equal(arg.text,"blend")) consume(&r,1);
+        } else if (depth==2 && (qa_text_ascii_equal(t.text,"rgbgen") || qa_text_ascii_equal(t.text,"alphagen"))) {
             if (next_token(&r,false,&arg)) {
-                if (equal(arg.text,"wave")) consume(&r,5);
-                else if (equal(arg.text,"const")) consume(&r,equal(t.text,"rgbgen")?5:1);
-                else if (equal(arg.text,"portal")) consume(&r,1);
+                if (qa_text_ascii_equal(arg.text,"wave")) consume(&r,5);
+                else if (qa_text_ascii_equal(arg.text,"const")) consume(&r,qa_text_ascii_equal(t.text,"rgbgen")?5:1);
+                else if (qa_text_ascii_equal(arg.text,"portal")) consume(&r,1);
             }
-        } else if (depth==2 && (equal(t.text,"tcgen") || equal(t.text,"texgen"))) {
-            if (next_token(&r,false,&arg) && equal(arg.text,"vector")) consume(&r,10);
-        } else if (depth==1 && equal(t.text,"deformvertexes")) {
+        } else if (depth==2 && (qa_text_ascii_equal(t.text,"tcgen") || qa_text_ascii_equal(t.text,"texgen"))) {
+            if (next_token(&r,false,&arg) && qa_text_ascii_equal(arg.text,"vector")) consume(&r,10);
+        } else if (depth==1 && qa_text_ascii_equal(t.text,"deformvertexes")) {
             if (next_token(&r,false,&arg)) {
-                if (equal(arg.text,"bulge")) consume(&r,3);
-                else if (equal(arg.text,"normal")) consume(&r,2);
-                else if (equal(arg.text,"move")) consume(&r,8);
-                else if (equal(arg.text,"wave")) consume(&r,6);
+                if (qa_text_ascii_equal(arg.text,"bulge")) consume(&r,3);
+                else if (qa_text_ascii_equal(arg.text,"normal")) consume(&r,2);
+                else if (qa_text_ascii_equal(arg.text,"move")) consume(&r,8);
+                else if (qa_text_ascii_equal(arg.text,"wave")) consume(&r,6);
             }
-        } else if (depth==1 && equal(t.text,"fogparms")) { consume(&r,6); skip_line(&r); }
-        else if (depth==1 && equal(t.text,"q3map_sun")) consume(&r,6);
-        else if ((depth==2 && equal(t.text,"tcmod")) ||
-            (depth==1 && (prefix(t.text,"qer") || prefix(t.text,"q3map") || equal(t.text,"tesssize")))) skip_line(&r);
-        else if ((depth==2 && (equal(t.text,"depthfunc") || equal(t.text,"alphafunc"))) ||
-            (depth==1 && (equal(t.text,"surfaceparm") || equal(t.text,"clamptime") || equal(t.text,"sort") || equal(t.text,"cull") || equal(t.text,"light")))) consume(&r,1);
-        else if ((depth==2 && (equal(t.text,"depthwrite") || equal(t.text,"detail"))) ||
-            (depth==1 && (equal(t.text,"nomipmaps") || equal(t.text,"nopicmip") || equal(t.text,"polygonoffset") || equal(t.text,"entitymergable") || equal(t.text,"portal")))) {}
+        } else if (depth==1 && qa_text_ascii_equal(t.text,"fogparms")) { consume(&r,6); skip_line(&r); }
+        else if (depth==1 && qa_text_ascii_equal(t.text,"q3map_sun")) consume(&r,6);
+        else if ((depth==2 && qa_text_ascii_equal(t.text,"tcmod")) ||
+            (depth==1 && (qa_text_bytes_prefix((qa_bytes){(const uint8_t *)t.text,strlen(t.text)},
+                                             (qa_bytes){(const uint8_t *)"qer",3},true) ||
+                         qa_text_bytes_prefix((qa_bytes){(const uint8_t *)t.text,strlen(t.text)},
+                                             (qa_bytes){(const uint8_t *)"q3map",5},true) ||
+                         qa_text_ascii_equal(t.text,"tesssize")))) skip_line(&r);
+        else if ((depth==2 && (qa_text_ascii_equal(t.text,"depthfunc") || qa_text_ascii_equal(t.text,"alphafunc"))) ||
+            (depth==1 && (qa_text_ascii_equal(t.text,"surfaceparm") || qa_text_ascii_equal(t.text,"clamptime") || qa_text_ascii_equal(t.text,"sort") || qa_text_ascii_equal(t.text,"cull") || qa_text_ascii_equal(t.text,"light")))) consume(&r,1);
+        else if ((depth==2 && (qa_text_ascii_equal(t.text,"depthwrite") || qa_text_ascii_equal(t.text,"detail"))) ||
+            (depth==1 && (qa_text_ascii_equal(t.text,"nomipmaps") || qa_text_ascii_equal(t.text,"nopicmip") || qa_text_ascii_equal(t.text,"polygonoffset") || qa_text_ascii_equal(t.text,"entitymergable") || qa_text_ascii_equal(t.text,"portal")))) {}
         else rejected=true;
     }
     return !r.failed;
