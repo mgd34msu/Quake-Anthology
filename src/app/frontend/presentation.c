@@ -177,13 +177,14 @@ bool frontend_frame_present(qa_frontend *frontend, qa_error *error)
     bool profiling = qa_profiler_enabled(profiler);
     bool ok = frontend->cpu ? qa_cpu_set_gamma(frontend->cpu, brightness, error) :
         qa_gl_set_gamma(frontend->gl, brightness, error);
-    if (ok && profiling) ok = qa_profiler_push(profiler, frontend->cpu ? "cpu_render" : "gl_submit", error);
+    if (ok && profiling) ok = qa_profiler_push(profiler,
+        frontend->profiler_labels[frontend->cpu ? FRONTEND_PROFILE_CPU_RENDER : FRONTEND_PROFILE_GL_SUBMIT], error);
     if (ok) {
         ok = frontend->cpu ? qa_cpu_execute(frontend->cpu, &frontend->frame, error) :
             qa_gl_execute(frontend->gl, &frontend->frame, error);
         if (profiling) ok = frontend_profiler_end(profiler, ok, error);
     }
-    if (ok && profiling) ok = qa_profiler_push(profiler, "window_present", error);
+    if (ok && profiling) ok = qa_profiler_push(profiler, frontend->profiler_labels[FRONTEND_PROFILE_WINDOW_PRESENT], error);
     if (ok) {
         ok = frontend->cpu ? qa_cpu_present_frame(frontend->cpu, error) : qa_gl_swap(frontend->gl, error);
         if (profiling) ok = frontend_profiler_end(profiler, ok, error);
@@ -607,7 +608,7 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
     qa_profiler *profiler = qa_tools_profiler(frontend_tools_owner(frontend));
     bool profiling = qa_profiler_enabled(profiler);
     bool render = false;
-    if (profiling && !qa_profiler_push(profiler, "scene_build", error)) return false;
+    if (profiling && !qa_profiler_push(profiler, frontend->profiler_labels[FRONTEND_PROFILE_SCENE_BUILD], error)) return false;
     qa_error feature = {0};
     bool ok = scene_build(frontend, &render, &feature);
     if (profiling && !frontend_profiler_end(profiler, true, error)) return false;

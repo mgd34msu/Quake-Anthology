@@ -33,6 +33,37 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define FRONTEND_PROFILER_LABELS(X) \
+    X(SOURCE_MAINTENANCE, "source_maintenance") \
+    X(SOURCE_COLOR_RETIREMENT, "source_color_retirement") \
+    X(SOURCE_MUSIC_PUBLICATION, "source_music_publication") \
+    X(VIEW_RESTORE_PUBLICATION, "view_restore_publication") \
+    X(STARTUP_REPLAY, "startup_replay") \
+    X(RESOURCE_POLICY, "resource_policy") \
+    X(FRAME_PREPARATION, "frame_preparation") \
+    X(SELECTED_BINDINGS, "selected_bindings") \
+    X(NETWORK_PUMP, "network_pump") \
+    X(APPLICATION, "application") \
+    X(PUBLICATION, "publication") \
+    X(CONTROLS, "controls") \
+    X(SCENE_UPDATES, "scene_updates") \
+    X(PRESENTATION, "presentation") \
+    X(CLIENT_POSE_PUBLICATION, "client_pose_publication") \
+    X(EVENTS, "events") \
+    X(AUDIO, "audio") \
+    X(FRAME_COMPLETION, "frame_completion") \
+    X(SOURCE_EVENTS, "source_events") \
+    X(CPU_RENDER, "cpu_render") \
+    X(GL_SUBMIT, "gl_submit") \
+    X(WINDOW_PRESENT, "window_present") \
+    X(SCENE_BUILD, "scene_build")
+typedef enum frontend_profiler_label {
+#define FRONTEND_PROFILER_ENUM(symbol, name) FRONTEND_PROFILE_##symbol,
+    FRONTEND_PROFILER_LABELS(FRONTEND_PROFILER_ENUM)
+#undef FRONTEND_PROFILER_ENUM
+    FRONTEND_PROFILE_COUNT
+} frontend_profiler_label;
+
 static inline bool frontend_profiler_end(qa_profiler *profiler, bool ok, qa_error *error)
 {
     qa_error cleanup = {0};
@@ -273,6 +304,7 @@ typedef struct frontend_engine_cvar_handles {
 struct qa_frontend {
     qa_frontend_options options;
     qa_frontend_tools *tools;
+    qa_string_id profiler_labels[FRONTEND_PROFILE_COUNT];
     qa_frontend_network *network;
     struct frontend_network_server_lease *network_server_leases;
     frontend_source *sources;

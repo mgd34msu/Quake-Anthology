@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include "qa/text.h"
 #include "qa/id_index.h"
+#include "qa/allocation_gate.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -48,14 +49,6 @@ static bool clock_read(qa_profiler *p, double *out, qa_error *error) {
     }
     *out = value; return true;
 }
-static void *grow(qa_arena *storage, void *array, size_t *capacity, size_t item,
-    size_t alignment, qa_error *error) {
-    size_t count = *capacity ? *capacity * 2 : 16;
-    if (count < *capacity || count > SIZE_MAX / item) { tools_fail(error, "profiler collection overflow"); return NULL; }
-    void *copy = qa_arena_grow(storage, array, *capacity * item, count * item, alignment, error);
-    if (!copy) return NULL;
-    *capacity = count; return copy;
-}
 static void *array_alloc(qa_arena *storage, size_t count, size_t item,
     size_t alignment, qa_error *error) {
     if (!count) return NULL;
@@ -71,8 +64,8 @@ static bool label_admit(qa_profiler *p, const char *name, qa_string_id *out, qa_
         qa_strings_intern_cstr(p->names, name, out, error);
 }
 static void clear(qa_profiler *p) {
-    qa_strings_destroy(p->names); p->names = NULL;
-    qa_id_index_clear(&p->total_index);
+    for (size_t i = 0; i < p->total_index.count; ++i)
+        p->total_index.entries[i].value = SIZE_MAX;
     if (p->stamps) for (size_t i = 0; i < p->stamp_count; ++i) {
         timer_stamp *stamp = p->stamps + (p->stamp_first + i) % p->stamp_capacity;
         qa_arena_reset(&stamp->storage); stamp->name = NULL;
@@ -90,10 +83,57 @@ bool qa_profiler_create(double (*clock)(void *), void *context, size_t capacity,
     if (!p->stamps || !clock_read(p, &p->epoch, error)) { (void)qa_profiler_destroy(p, NULL); return false; }
     *out = p; return true;
 }
+bool qa_profiler_prepare(qa_profiler *p, const char *const *names, size_t count,
+    size_t depth, qa_string_id *labels, qa_error *error)
+{
+    if (!p || p->pending_restore || p->busy || p->stack_count ||
+        (count && (!names || !labels)))
+        return tools_fail(error, "profiler preparation requires returned scopes and labels");
+    for (size_t i = 0; i < count; ++i) {
+        if (!names[i]) return tools_fail(error, "profiler label is missing");
+        if (!label_admit(p, names[i], &labels[i], error)) return false;
+    }
+    size_t additional = 0;
+    for (size_t i = 0; i < count; ++i) {
+        if (qa_id_index_find(&p->total_index, labels[i], 0)) continue;
+        bool duplicate = false;
+        for (size_t j = 0; j < i; ++j) duplicate |= labels[j] == labels[i];
+        if (!duplicate) ++additional;
+    }
+    if (additional > SIZE_MAX - p->total_index.count)
+        return tools_fail(error, "profiler labels exceed native storage");
+    size_t totals = p->total_index.count + additional;
+    if (totals > SIZE_MAX / sizeof(*p->totals) || depth > SIZE_MAX / sizeof(*p->stack))
+        return tools_fail(error, "profiler preparation exceeds native storage");
+    bool sealed = p->storage.sealed;
+    p->storage.sealed = false;
+    if (totals > p->total_capacity) {
+        timer_total *rows = qa_arena_grow(&p->storage, p->totals,
+            p->total_count * sizeof(*rows), totals * sizeof(*rows), _Alignof(timer_total), error);
+        if (!rows) goto failed;
+        p->totals = rows; p->total_capacity = totals;
+    }
+    if (depth > p->stack_capacity) {
+        timer_scope *stack = array_alloc(&p->storage, depth, sizeof(*stack),
+            _Alignof(timer_scope), error);
+        if (!stack) goto failed;
+        p->stack = stack; p->stack_capacity = depth;
+    }
+    if (!qa_id_index_reserve(&p->total_index, additional, error)) goto failed;
+    for (size_t i = 0; i < count; ++i)
+        if (!qa_id_index_find(&p->total_index, labels[i], 0))
+            qa_id_index_insert(&p->total_index, labels[i], 0, SIZE_MAX);
+    qa_arena_seal(&p->storage);
+    return true;
+failed:
+    p->storage.sealed = sealed;
+    return false;
+}
 bool qa_profiler_destroy(qa_profiler *p, qa_error *error) {
     if (!p) return true;
     if (p->busy || p->stack_count) return tools_fail(error, "profiler teardown requires scopes and callbacks to return");
     clear(p);
+    qa_strings_destroy(p->names);
     if (p->stamps) for (size_t i = 0; i < p->stamp_capacity; ++i) qa_arena_destroy(&p->stamps[i].storage);
     qa_id_index_destroy(&p->total_index);
     qa_arena_destroy(&p->stamp_input); qa_arena_destroy(&p->storage); free(p); return true;
@@ -108,20 +148,17 @@ bool qa_profiler_reset(qa_profiler *p, qa_error *error) {
     double epoch; if (!clock_read(p, &epoch, error)) return false;
     clear(p); p->epoch = epoch; return true;
 }
-bool qa_profiler_push(qa_profiler *p, const char *name, qa_error *error) {
-    if (!p || !name || p->pending_restore || p->busy) return tools_fail(error, "invalid or pending profiler scope admission");
+bool qa_profiler_push(qa_profiler *p, qa_string_id label, qa_error *error) {
+    if (!p || !label || p->pending_restore || p->busy) return tools_fail(error, "invalid or pending profiler scope admission");
     if (!p->enabled) {
         if (p->disabled_depth == SIZE_MAX) return tools_fail(error, "profiler scope depth exceeds native range");
         ++p->disabled_depth;
         return true;
     }
     if (p->stack_count == p->stack_capacity) {
-        void *copy = grow(&p->storage, p->stack, &p->stack_capacity, sizeof(*p->stack), _Alignof(timer_scope), error);
-        if (!copy) return false;
-        p->stack = copy;
+        qa_allocation_gate_capacity_exhausted();
+        return tools_fail(error, "profiler admitted scope depth exhausted");
     }
-    qa_string_id label;
-    if (!label_admit(p, name, &label, error)) return false;
     double now; if (!clock_read(p, &now, error)) return false;
     p->stack[p->stack_count++] = (timer_scope){.name = label, .start = now}; return true;
 }
@@ -137,21 +174,20 @@ bool qa_profiler_pop(qa_profiler *p, qa_error *error) {
     double now; if (!clock_read(p, &now, error)) return false;
     timer_scope scope = p->stack[p->stack_count - 1];
     qa_id_index_entry *entry = qa_id_index_find(&p->total_index, scope.name, 0);
-    size_t index = entry ? entry->value : p->total_count;
+    if (!entry) return tools_fail(error, "profiler scope label was not admitted");
+    size_t index = entry->value == SIZE_MAX ? p->total_count : entry->value;
     timer_total empty = {0}, *total = index < p->total_count ? &p->totals[index] : &empty;
     if (total->calls == UINT64_MAX) return tools_fail(error, "profiler call count exceeds native range");
     double elapsed = fmax(0, now - scope.start), self = fmax(0, elapsed - scope.children);
     if (!isfinite(elapsed) || !isfinite(total->total_ms + elapsed) || !isfinite(total->self_ms + self) ||
         (p->stack_count > 1 && !isfinite(p->stack[p->stack_count - 2].children + elapsed))) return tools_fail(error, "profiler timing exceeds native range");
     if (index == p->total_count) {
-        if (!qa_id_index_reserve(&p->total_index, 1, error)) return false;
         if (p->total_count == p->total_capacity) {
-            void *grown = grow(&p->storage, p->totals, &p->total_capacity, sizeof(*p->totals), _Alignof(timer_total), error);
-            if (!grown) return false;
-            p->totals = grown;
+            qa_allocation_gate_capacity_exhausted();
+            return tools_fail(error, "profiler admitted totals exhausted");
         }
         p->totals[index] = (timer_total){.name = scope.name}; ++p->total_count;
-        qa_id_index_insert(&p->total_index, scope.name, 0, index);
+        entry->value = index;
     }
     total = &p->totals[index];
     --p->stack_count;

@@ -27,6 +27,16 @@ struct qa_frontend_tools {
     double profiler_offset, profiler_anchor;
     bool profiler_reanchor;
 };
+static bool profiler_prepare(qa_frontend *f, qa_error *error)
+{
+    static const char *const names[] = {
+#define FRONTEND_PROFILER_NAME(symbol, name) name,
+        FRONTEND_PROFILER_LABELS(FRONTEND_PROFILER_NAME)
+#undef FRONTEND_PROFILER_NAME
+    };
+    return qa_profiler_prepare(qa_tools_profiler(f->tools->owner), names,
+        FRONTEND_PROFILE_COUNT, 2, f->profiler_labels, error);
+}
 static double milliseconds(void *context) { qa_frontend *f = context; return (double)f->time_ns / 1000000.0; }
 static double profiler_milliseconds(void *context) {
     qa_frontend *f = context;
@@ -487,7 +497,7 @@ bool frontend_tools_create(qa_frontend *f, qa_error *error) {
     if (!frontend_tools_service_options(f, &options, &llm) ||
         !qa_tools_create(&options, &services->owner, error) ||
         !qa_llm_create(&llm, &services->llm, error)) return false;
-    return consoles_sync(f, error);
+    return profiler_prepare(f, error) && consoles_sync(f, error);
 }
 bool frontend_tools_create_diagnostics(qa_frontend *f, qa_vfs *files, qa_error *error) {
     if (!f || f->tools || !files) return frontend_fail(error,QA_ERROR_ARGUMENT,"invalid detached frontend diagnostics admission");
@@ -497,7 +507,7 @@ bool frontend_tools_create_diagnostics(qa_frontend *f, qa_vfs *files, qa_error *
     services->debug_width_handle = qa_cvars_resolve(qa_application_cvars(f->application), "gl_debug_linewidth");
     services->files=qa_vfs_clone(files,error);
     return services->files && qa_tools_create_diagnostics(services->files,QA_FRONTEND_COMMAND_OWNER,
-        milliseconds,f,&services->owner,error);
+        milliseconds,f,&services->owner,error) && profiler_prepare(f, error);
 }
 bool frontend_tools_before_world_change(qa_frontend *f, qa_error *error) {
     if (!f || !f->tools) return true;
@@ -773,6 +783,7 @@ bool frontend_tools_restore(qa_frontend *f, const qa_tools_checkpoint_refs *tool
         !memcmp(&saved.debug_width, &tools->debug_width, sizeof(float)) && !memcmp(&saved.profiler_anchor, &tools->profiler_anchor, sizeof(double)) && tools->profiler_reanchor;
     ok = ok && qa_http_restore(tools->http, saved.http, error) &&
         qa_tools_restore(tools->owner, qa_application_session(f->application), tools_refs, saved.tools, error) &&
+        profiler_prepare(f, error) &&
         qa_llm_restore(tools->llm, qa_application_session(f->application), llm_refs, saved.llm, error);
     free(saved.output_root);
     if (!ok && error && error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "frontend tools private owner differs from admitted topology");
@@ -790,6 +801,7 @@ bool frontend_tools_rebind_ready(const qa_frontend *owned, const qa_frontend *de
 void frontend_tools_rebind(qa_frontend *owned, qa_frontend *destination)
 {
     qa_frontend_tools *tools = owned->tools;
+    memmove(destination->profiler_labels, owned->profiler_labels, sizeof(destination->profiler_labels));
     qa_tools_rebind_context(tools->owner, destination); qa_llm_rebind_context(tools->llm, destination);
     tools->frontend = destination;
     tools->debug_width_handle = qa_cvars_resolve(qa_application_cvars(destination->application), "gl_debug_linewidth");

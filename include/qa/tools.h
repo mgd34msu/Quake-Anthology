@@ -32,7 +32,9 @@ bool qa_profiler_create(double (*clock_ms)(void *), void *context,
 bool qa_profiler_destroy(qa_profiler *, qa_error *);
 bool qa_profiler_enable(qa_profiler *, bool enabled, qa_error *);
 bool qa_profiler_reset(qa_profiler *, qa_error *);
-bool qa_profiler_push(qa_profiler *, const char *name, qa_error *);
+bool qa_profiler_prepare(qa_profiler *, const char *const *names, size_t count,
+    size_t depth, qa_string_id *labels, qa_error *);
+bool qa_profiler_push(qa_profiler *, qa_string_id label, qa_error *);
 bool qa_profiler_pop(qa_profiler *, qa_error *);
 bool qa_profiler_stamp(qa_profiler *, const char *name, qa_error *);
 /* Detached snapshots (including copied labels) live in scratch. */

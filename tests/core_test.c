@@ -2425,29 +2425,33 @@ static void test_profiler_mode_changes(void)
     qa_error error = {0}; qa_profiler *profiler = NULL;
     profiler_clock clock = {0};
     CHECK(qa_profiler_create(test_profiler_clock, &clock, 8, &profiler, &error));
-    CHECK(qa_profiler_push(profiler, "disabled_outer", &error));
-    CHECK(qa_profiler_push(profiler, "disabled_inner", &error));
+    const char *names[] = {"disabled_outer", "disabled_inner", "disabled_sibling",
+        "outer", "inner", "sibling", "last_request"};
+    qa_string_id labels[7];
+    CHECK(qa_profiler_prepare(profiler, names, 7, 2, labels, &error));
+    CHECK(qa_profiler_push(profiler, labels[0], &error));
+    CHECK(qa_profiler_push(profiler, labels[1], &error));
     CHECK(qa_profiler_enable(profiler, true, &error));
     CHECK(!qa_profiler_enabled(profiler) && qa_profiler_idle(profiler));
     CHECK(qa_profiler_pop(profiler, &error));
     CHECK(!qa_profiler_enabled(profiler));
-    CHECK(qa_profiler_push(profiler, "disabled_sibling", &error));
+    CHECK(qa_profiler_push(profiler, labels[2], &error));
     CHECK(qa_profiler_pop(profiler, &error));
     CHECK(!qa_profiler_enabled(profiler) && clock.calls == 1);
     CHECK(qa_profiler_pop(profiler, &error));
     CHECK(qa_profiler_enabled(profiler) && qa_profiler_idle(profiler));
 
     clock.now = 1;
-    CHECK(qa_profiler_push(profiler, "outer", &error));
+    CHECK(qa_profiler_push(profiler, labels[3], &error));
     clock.now = 2;
-    CHECK(qa_profiler_push(profiler, "inner", &error));
+    CHECK(qa_profiler_push(profiler, labels[4], &error));
     CHECK(qa_profiler_enable(profiler, false, &error));
     CHECK(qa_profiler_enabled(profiler) && !qa_profiler_idle(profiler));
     clock.now = 5;
     CHECK(qa_profiler_pop(profiler, &error));
     CHECK(qa_profiler_enabled(profiler));
     clock.now = 6;
-    CHECK(qa_profiler_push(profiler, "sibling", &error));
+    CHECK(qa_profiler_push(profiler, labels[5], &error));
     clock.now = 7;
     CHECK(qa_profiler_pop(profiler, &error));
     CHECK(qa_profiler_enabled(profiler));
@@ -2469,11 +2473,15 @@ static void test_profiler_mode_changes(void)
     qa_arena_destroy(&scratch);
     CHECK(qa_profiler_enable(profiler, true, &error));
     CHECK(!qa_profiler_pop(profiler, &error));
-    CHECK(qa_profiler_push(profiler, "last_request", &error));
+    CHECK(qa_profiler_push(profiler, labels[6], &error));
     CHECK(qa_profiler_enable(profiler, false, &error));
     CHECK(qa_profiler_enable(profiler, true, &error));
     CHECK(qa_profiler_pop(profiler, &error));
     CHECK(qa_profiler_enabled(profiler));
+    CHECK(qa_profiler_reset(profiler, &error));
+    CHECK(qa_profiler_push(profiler, labels[3], &error));
+    clock.now += 2;
+    CHECK(qa_profiler_pop(profiler, &error));
     CHECK(qa_profiler_destroy(profiler, &error));
 }
 
