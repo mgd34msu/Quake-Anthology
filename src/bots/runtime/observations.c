@@ -1,18 +1,11 @@
 #include "internal.h"
 
-size_t bot_runtime_observation_bucket(int32_t number, size_t capacity) {
-    uint32_t value = (uint32_t)number;
-    value ^= value >> 16;
-    value *= UINT32_C(0x7feb352d);
-    value ^= value >> 15;
-    return (size_t)value & (capacity - 1);
+static const qa_id_index_entry *module_entry(const qa_bot_runtime *r, int32_t number) {
+    return qa_id_index_find((qa_id_index *)&r->observation_index, 0, (uint32_t)number);
 }
 static size_t module_slot(const qa_bot_runtime *r, int32_t number) {
-    if (!r->entity_capacity) return 0;
-    for (size_t id = r->observation_buckets[bot_runtime_observation_bucket(number, r->entity_capacity)]; id;
-         id = r->observation_links[id - 1].hash_next)
-        if (r->entities[id - 1].number == number) return id;
-    return 0;
+    const qa_id_index_entry *entry = module_entry(r, number);
+    return entry ? entry->value + 1 : 0;
 }
 const qa_bot_entity_info *bot_runtime_observation(const qa_bot_runtime *r, int32_t number) {
     if (r->options.observations == QA_BOT_OBSERVATION_MODULE) {
@@ -25,21 +18,16 @@ void bot_runtime_observations_clear(qa_bot_runtime *r) {
     for (size_t i = 0; i < r->entity_capacity; ++i)
         r->entities[i] = (qa_bot_entity_info){.number = (int32_t)i};
     if (r->options.observations == QA_BOT_OBSERVATION_MODULE) {
-        if (r->entity_capacity)
-            memset(r->observation_buckets, 0, r->entity_capacity * sizeof(*r->observation_buckets));
-        for (size_t i = 0; i < r->entity_capacity; ++i)
-            r->observation_links[i] = (bot_observation_link){
-                .next = i + 1 < r->entity_capacity ? i + 2 : 0};
-        r->observation_head = r->observation_tail = 0;
-        r->observation_free = r->entity_capacity ? 1 : 0;
+        qa_id_index_clear(&r->observation_index);
+        qa_pool_reset(&r->observation_slots);
     }
 }
 void bot_runtime_observations_close(qa_bot_runtime *r) {
-    free(r->entities); r->entities = NULL;
-    free(r->goal_entities); r->goal_entities = NULL;
-    free(r->observation_links); r->observation_links = NULL;
-    free(r->observation_buckets); r->observation_buckets = NULL;
-    r->entity_capacity = r->observation_head = r->observation_tail = r->observation_free = 0;
+    qa_id_index_destroy(&r->observation_index);
+    qa_arena_destroy(&r->observation_storage);
+    r->observation_slots = (qa_pool){0};
+    r->entities = NULL; r->goal_entities = NULL;
+    r->entity_capacity = 0;
 }
 bool bot_runtime_observations_resize(qa_bot_runtime *r, size_t count, qa_error *e) {
     bool module = r->options.observations == QA_BOT_OBSERVATION_MODULE;
@@ -52,42 +40,59 @@ bool bot_runtime_observations_resize(qa_bot_runtime *r, size_t count, qa_error *
         }
         count = rounded;
     }
-    if (count > SIZE_MAX / sizeof(*r->entities) || count > SIZE_MAX / sizeof(*r->goal_entities) ||
-        count > SIZE_MAX / sizeof(*r->observation_links) ||
-        count > SIZE_MAX / sizeof(*r->observation_buckets))
+    if (count > SIZE_MAX / sizeof(*r->entities) || count > SIZE_MAX / sizeof(*r->goal_entities))
         return bot_runtime_fail(e, "bot observation capacity overflow");
-    qa_bot_entity_info *entities = count ? calloc(count, sizeof(*entities)) : NULL;
-    qa_bot_goal_entity *goals = count ? malloc(count * sizeof(*goals)) : NULL;
-    bot_observation_link *links = module && count ? calloc(count, sizeof(*links)) : NULL;
-    size_t *buckets = module && count ? calloc(count, sizeof(*buckets)) : NULL;
-    if (count && (!entities || !goals || (module && (!links || !buckets)))) {
-        free(entities); free(goals); free(links); free(buckets);
-        qa_error_set(e, QA_ERROR_MEMORY, count, "allocating retained bot observations");
-        return false;
+    qa_arena storage = {0};
+    qa_pool slots = {0};
+    qa_id_index index = {0};
+    if (module) {
+        index.storage = &storage;
+        if (!qa_id_index_reserve(&index, count, e) ||
+            !qa_pool_prepare(&slots, &storage, count, sizeof(*r->entities),
+                _Alignof(qa_bot_entity_info), e)) goto failed;
     }
+    qa_bot_entity_info *entities = module ? (qa_bot_entity_info *)slots.values : count ?
+        qa_arena_alloc(&storage, count * sizeof(*entities), _Alignof(qa_bot_entity_info), e) : NULL;
+    qa_bot_goal_entity *goals = count ? qa_arena_alloc(&storage,
+        count * sizeof(*goals), _Alignof(qa_bot_goal_entity), e) : NULL;
+    if (count && (!entities || !goals)) goto failed;
+    if (count) memset(entities, 0, count * sizeof(*entities));
     size_t copy = count < r->entity_capacity ? count : r->entity_capacity;
     if (copy) memcpy(entities, r->entities, copy * sizeof(*entities));
     for (size_t i = copy; i < count; ++i) entities[i].number = (int32_t)i;
     if (module) {
-        if (copy) memcpy(links, r->observation_links, copy * sizeof(*links));
-        for (size_t id = r->observation_head; id; id = links[id - 1].next) {
-            size_t index = bot_runtime_observation_bucket(entities[id - 1].number, count);
-            links[id - 1].hash_next = buckets[index];
-            buckets[index] = id;
+        size_t free_count = 0;
+        size_t *free_slots = r->entity_capacity && r->observation_slots.head != SIZE_MAX ?
+            qa_arena_alloc(&storage, copy * sizeof(*free_slots), _Alignof(size_t), e) : NULL;
+        if (r->entity_capacity && r->observation_slots.head != SIZE_MAX && !free_slots) goto failed;
+        for (size_t id = r->entity_capacity ? r->observation_slots.head : SIZE_MAX;
+             id != SIZE_MAX; id = r->observation_slots.next[id])
+            free_slots[free_count++] = id;
+        for (size_t i = 0; i < count; ++i) {
+            size_t slot;
+            (void)qa_pool_take(&slots, &slot);
         }
-        for (size_t i = count; i-- > copy;) {
-            links[i].next = r->observation_free;
-            r->observation_free = i + 1;
+        while (free_count) qa_pool_release(&slots, free_slots[--free_count]);
+        for (size_t i = count; i-- > copy;) qa_pool_release(&slots, i);
+        for (size_t i = 0; i < r->observation_index.count; ++i) {
+            const qa_id_index_entry *entry = &r->observation_index.entries[i];
+            qa_id_index_insert(&index, entry->key, entry->discriminator, entry->value);
         }
     }
-    free(r->entities); free(r->goal_entities);
-    free(r->observation_links); free(r->observation_buckets);
+    qa_id_index_destroy(&r->observation_index);
+    qa_arena_destroy(&r->observation_storage);
+    r->observation_storage = storage; storage = (qa_arena){0};
+    r->observation_index = index; index = (qa_id_index){0};
+    if (module) r->observation_index.storage = &r->observation_storage;
+    r->observation_slots = slots;
     r->entities = entities;
     r->goal_entities = goals;
-    r->observation_links = links;
-    r->observation_buckets = buckets;
     r->entity_capacity = count;
     return true;
+failed:
+    qa_id_index_destroy(&index);
+    qa_arena_destroy(&storage);
+    return false;
 }
 bool qa_bot_runtime_update_entity(qa_bot_runtime *r, int32_t number,
                                    const qa_bot_entity_update *update, qa_error *e) {
@@ -99,16 +104,8 @@ bool qa_bot_runtime_update_entity(qa_bot_runtime *r, int32_t number,
     size_t slot = module ? module_slot(r, number) : (size_t)number + 1;
     if (!update) {
         if (module && slot) {
-            bot_observation_link *link = &r->observation_links[slot - 1];
-            size_t *hash = &r->observation_buckets[bot_runtime_observation_bucket(number, r->entity_capacity)];
-            while (*hash != slot) hash = &r->observation_links[*hash - 1].hash_next;
-            *hash = link->hash_next;
-            if (link->previous) r->observation_links[link->previous - 1].next = link->next;
-            else r->observation_head = link->next;
-            if (link->next) r->observation_links[link->next - 1].previous = link->previous;
-            else r->observation_tail = link->previous;
-            *link = (bot_observation_link){.next = r->observation_free};
-            r->observation_free = slot;
+            (void)qa_id_index_remove(&r->observation_index, 0, (uint32_t)number);
+            qa_pool_release(&r->observation_slots, slot - 1);
             r->entities[slot - 1] = (qa_bot_entity_info){0};
         }
         return true;
@@ -117,18 +114,12 @@ bool qa_bot_runtime_update_entity(qa_bot_runtime *r, int32_t number,
         !qa_vec_finite(update->old_origin) || !qa_vec_finite(update->mins) || !qa_vec_finite(update->maxs)))
         return bot_runtime_fail(e, "nonfinite bot entity observation");
     if (module && !slot) {
-        if (!r->observation_free &&
+        if ((!r->entity_capacity || r->observation_slots.head == SIZE_MAX) &&
             !bot_runtime_observations_resize(r, r->entity_capacity + 1, e)) return false;
-        slot = r->observation_free;
-        bot_observation_link *link = &r->observation_links[slot - 1];
-        r->observation_free = link->next;
-        size_t hash = bot_runtime_observation_bucket(number, r->entity_capacity);
-        *link = (bot_observation_link){.previous = r->observation_tail,
-            .hash_next = r->observation_buckets[hash]};
-        r->observation_buckets[hash] = slot;
-        if (r->observation_tail) r->observation_links[r->observation_tail - 1].next = slot;
-        else r->observation_head = slot;
-        r->observation_tail = slot;
+        size_t physical;
+        (void)qa_pool_take(&r->observation_slots, &physical);
+        qa_id_index_insert(&r->observation_index, 0, (uint32_t)number, physical);
+        slot = physical + 1;
         r->entities[slot - 1] = (qa_bot_entity_info){.number = number};
     }
     qa_bot_entity_info *info = &r->entities[slot - 1];
@@ -156,8 +147,8 @@ int32_t qa_bot_runtime_next_entity(const qa_bot_runtime *r, int32_t after) {
     if (!r || after == INT32_MAX) return 0;
     if (r->options.observations == QA_BOT_OBSERVATION_MODULE) {
         int32_t next = 0;
-        for (size_t id = r->observation_head; id; id = r->observation_links[id - 1].next) {
-            const qa_bot_entity_info *info = &r->entities[id - 1];
+        for (size_t i = 0; i < r->observation_index.count; ++i) {
+            const qa_bot_entity_info *info = &r->entities[r->observation_index.entries[i].value];
             if (info->valid && info->number > after && (!next || info->number < next)) next = info->number;
         }
         return next;
@@ -172,8 +163,10 @@ bool qa_bot_runtime_entity_after(const qa_bot_runtime *r, const int32_t *previou
     if (!r || !out || !found) return bot_runtime_fail(e, "missing ordered bot observation output");
     size_t slot = 0;
     if (r->options.observations == QA_BOT_OBSERVATION_MODULE) {
-        slot = previous ? module_slot(r, *previous) : 0;
-        slot = previous ? slot ? r->observation_links[slot - 1].next : 0 : r->observation_head;
+        const qa_id_index_entry *entry = previous ? module_entry(r, *previous) : NULL;
+        size_t ordinal = previous ? entry ? (size_t)(entry - r->observation_index.entries) + 1 :
+            r->observation_index.count : 0;
+        if (ordinal < r->observation_index.count) slot = r->observation_index.entries[ordinal].value + 1;
     } else {
         size_t start = previous && *previous >= 0 ? (size_t)*previous + 1 : 0;
         for (size_t i = start; i < r->entity_capacity; ++i)

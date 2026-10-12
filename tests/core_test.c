@@ -55,6 +55,8 @@
 #include "../src/app/application/unified_q3_events.h"
 #include "../src/app/application/events_save.h"
 #include "../src/network/unified/frame_internal.h"
+#include "../src/bots/runtime/internal.h"
+#include "qa/bot_observations_save.h"
 
 #include <fcntl.h>
 #include <limits.h>
@@ -83,6 +85,46 @@ static void test_compiled_sound_names(void)
     for (size_t i=1;i<QA_Q2_SFX_COUNT;++i)
         CHECK(!strcmp(qa_strings_cstr(strings,first[i]),qa_q2_sound_path(i-1)));
     qa_strings_destroy(strings);
+}
+
+static void test_module_observation_storage(void)
+{
+    qa_error error={0};qa_session *session=NULL;
+    CHECK(qa_session_create(&(qa_session_options){.actor_capacity=1,.component_capacity=1},&session,&error));
+    qa_bot_runtime first={.options={.observations=QA_BOT_OBSERVATION_MODULE},.time=1},
+        restored={.options={.observations=QA_BOT_OBSERVATION_MODULE}};
+    qa_bot_entity_update update={.origin={1,2,3}};
+    CHECK(qa_bot_runtime_update_entity(&first,INT32_MIN,&update,&error));
+    CHECK(qa_bot_runtime_update_entity(&first,INT32_MAX,&update,&error));
+    for(int32_t number=10;number<90;++number)
+        CHECK(qa_bot_runtime_update_entity(&first,number,&update,&error));
+    CHECK(qa_bot_runtime_update_entity(&first,INT32_MIN,NULL,&error));
+    CHECK(qa_bot_runtime_update_entity(&first,INT32_MIN,&update,&error));
+    qa_bot_entity_info row;bool found;int32_t previous=INT32_MAX;
+    CHECK(qa_bot_runtime_entity_after(&first,NULL,&row,&found,&error) && found && row.number==INT32_MAX);
+    CHECK(qa_bot_runtime_entity_after(&first,&previous,&row,&found,&error) && found && row.number==10);
+    qa_buffer saved={0},copy={0};
+    CHECK(qa_bot_observations_capture(session,&first,&saved,&error));
+    CHECK(qa_bot_observations_restore(session,&restored,(qa_bytes){saved.data,saved.size},&error));
+    CHECK(qa_bot_observations_capture(session,&restored,&copy,&error));
+    CHECK(saved.size==copy.size && !memcmp(saved.data,copy.data,saved.size));
+    qa_buffer_free(&saved);qa_buffer_free(&copy);
+    restored.time=first.time;
+    CHECK(qa_bot_runtime_update_entity(&first,15,NULL,&error));
+    CHECK(qa_bot_runtime_update_entity(&restored,15,NULL,&error));
+    CHECK(qa_bot_runtime_update_entity(&first,-5,&update,&error));
+    CHECK(qa_bot_runtime_update_entity(&restored,-5,&update,&error));
+    CHECK(qa_bot_observations_capture(session,&first,&saved,&error));
+    CHECK(qa_bot_observations_capture(session,&restored,&copy,&error));
+    CHECK(saved.size==copy.size && !memcmp(saved.data,copy.data,saved.size));
+    CHECK(qa_bot_runtime_invalidate_entities(&restored,&error));
+    CHECK(qa_bot_runtime_entity(&restored,INT32_MIN,&row,&found,&error) && found && !row.valid);
+    restored.time=2;
+    CHECK(qa_bot_runtime_update_entity(&restored,INT32_MIN,&update,&error));
+    CHECK(qa_bot_runtime_entity(&restored,INT32_MIN,&row,&found,&error) && found && row.valid && row.update_interval==0);
+    qa_buffer_free(&saved);qa_buffer_free(&copy);
+    bot_runtime_observations_close(&first);bot_runtime_observations_close(&restored);
+    CHECK(qa_session_destroy(session,&error));
 }
 
 static void test_shared_campaign_modes(void)
@@ -3765,6 +3807,7 @@ int main(int argc, char **argv)
     test_shared_random();
     test_q2_hud_configuration();
     test_compiled_sound_names();
+    test_module_observation_storage();
     test_shared_campaign_modes();
     test_debug_geometry_wire();
     test_debug_geometry_lifetime();

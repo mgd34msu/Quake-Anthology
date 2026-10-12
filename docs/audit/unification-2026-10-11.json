@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "bfc4ae0a18e880f35a6039615076a7801b3f84d9",
+  "verified_main": "386769dbbf77cb385c015c18e4c7bd2c772c2633",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -39948,6 +39948,32 @@
       ],
       "record_directory": "/tmp/qa-ta3196-bot-inverse-identity-20261012",
       "conclusion": "Three combat reverse scans are deleted. Native/guest/shared source inverse services read existing canonical actor indexes and binding metadata, without admitting or retiring aliases. Full forward equality, physical-alias priority, source client0..63/entity1..64 and targeting/source reads remain. New callbacks are bound by every shipped constructor and included in the existing cold service-boundary guard. Matching normal build and seven core suites pass; no live bot/combat or timing proof."
+    },
+    {
+      "commit": "386769dbbf77cb385c015c18e4c7bd2c772c2633",
+      "source_tree": "380bb94cee1c572389592bffdc6f17c8fc5ba322",
+      "finding_ids": [
+        "09-01"
+      ],
+      "files_rechecked": [
+        "src/bots/chat/source_history.c",
+        "src/bots/chat/source_initial.c",
+        "src/bots/chat/source_initial.h",
+        "src/bots/chat/source_initial_save.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-chat-member-index-20261012",
+      "conclusion": "Typed initial-chat source-pointer membership now uses one common ID index keyed by actual source offset and record kind. Actual source bytes, allocation truth, ordered cold metadata, saved fields and candidate history ownership remain. Library aliases and admission growth remain open. Matching normal build and seven core suites pass."
     }
   ],
   "verification_limits": [

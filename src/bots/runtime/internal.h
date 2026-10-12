@@ -2,6 +2,8 @@
 #define QA_BOT_RUNTIME_INTERNAL_H
 #include "qa/bot_runtime.h"
 #include "qa/bots_allocator.h"
+#include "qa/id_index.h"
+#include "qa/pool.h"
 #include "source_weapon_state.h"
 #include "../library/source_weapon_resource.h"
 #include <stdlib.h>
@@ -9,9 +11,6 @@
 #include <math.h>
 #include <limits.h>
 
-typedef struct bot_observation_link {
-    size_t previous, next, hash_next;
-} bot_observation_link;
 struct qa_bot_runtime {
     qa_bot_runtime_options options;
     qa_bot_runtime_services services;
@@ -37,9 +36,9 @@ struct qa_bot_runtime {
     qa_bot_entity_info *entities;
     qa_bot_goal_entity *goal_entities;
     size_t entity_capacity, observation_leases, owner_leases;
-    bot_observation_link *observation_links;
-    size_t *observation_buckets;
-    size_t observation_head, observation_tail, observation_free;
+    qa_arena observation_storage;
+    qa_pool observation_slots;
+    qa_id_index observation_index;
     qa_bot_bsp *bsp;
     qa_bot_runtime_map map;
     char *map_name;
@@ -64,6 +63,5 @@ bool bot_runtime_owners_create(qa_bot_runtime *, qa_error *);
 void bot_runtime_observations_clear(qa_bot_runtime *);
 void bot_runtime_observations_close(qa_bot_runtime *);
 const qa_bot_entity_info *bot_runtime_observation(const qa_bot_runtime *, int32_t);
-size_t bot_runtime_observation_bucket(int32_t, size_t);
 qa_bot_goal_services bot_runtime_goal_services(qa_bot_runtime *);
 #endif
