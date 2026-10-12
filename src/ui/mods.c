@@ -2,11 +2,8 @@
 #include <stdio.h>
 
 void ui_mods_cache_release(qa_ui_mods *mods) {
-    for (size_t i = 0; i < mods->count; ++i) {
-        free(mods->selections[i].retained_component);
-        free(mods->selections[i].retained_instance);
-        free(mods->selections[i].retained_label);
-    }
+    qa_arena_reset(&mods->rows_storage);
+    mods->rows = NULL; mods->selections = NULL;
     mods->count = 0;
 }
 
@@ -68,9 +65,6 @@ static bool row_add(qa_ui_mods *mods, const qa_catalog_mod *mod,
     if (!ui_search(title, key, product ? product->title : "",
         (qa_bytes){mods->query_lower.data, mods->query_lower.size}, &matched, error)) return false;
     if (!matched) return true;
-    if (!ui_reserve((void **)&mods->rows, &mods->capacity, mods->count + 1, sizeof(*mods->rows), error) ||
-        !ui_reserve((void **)&mods->selections, &mods->selection_capacity, mods->count + 1,
-                    sizeof(*mods->selections), error)) return false;
     size_t i = mods->count++;
     mods->selections[i] = (mod_row){.component = key,
         .instance = selection ? selection->instance : NULL, .enabled = selection && selection->enabled};
@@ -137,6 +131,19 @@ static bool factory(void *context, uint32_t seat, qa_ui_menu *out, qa_error *err
     if (mods->dirty) {
         ui_mods_cache_release(mods);
         const qa_launch_choices *choices = qa_launch_draft_choices(mods->draft);
+        size_t catalog_count = qa_catalog_mod_count(mods->catalog);
+        if (choices->mod_count > SIZE_MAX - catalog_count) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "UI storage overflow"); return false;
+        }
+        size_t capacity = choices->mod_count + catalog_count;
+        if (capacity > SIZE_MAX / sizeof(*mods->rows) || capacity > SIZE_MAX / sizeof(*mods->selections)) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "UI storage overflow"); return false;
+        }
+        mods->rows = capacity ? qa_arena_alloc(&mods->rows_storage,
+            capacity * sizeof(*mods->rows), _Alignof(qa_ui_row), error) : NULL;
+        mods->selections = capacity ? qa_arena_alloc(&mods->rows_storage,
+            capacity * sizeof(*mods->selections), _Alignof(mod_row), error) : NULL;
+        if (capacity && (!mods->rows || !mods->selections)) return false;
         for (size_t i = 0; i < choices->mod_count; ++i) {
             const qa_launch_mod_selection *selection = &choices->mods[i];
             const qa_catalog_mod *mod = qa_catalog_mod_find(mods->catalog, selection->component);
@@ -150,8 +157,6 @@ static bool factory(void *context, uint32_t seat, qa_ui_menu *out, qa_error *err
                 present |= !strcmp(choices->mods[j].component, mod->key);
             if (!present && !row_add(mods, mod, NULL, error)) return false;
         }
-        /* Reallocation may move selection state buffers referenced by rows. */
-        for (size_t i = 0; i < mods->count; ++i) mods->rows[i].detail = mods->selections[i].state;
         ++mods->revision;
         mods->dirty = false;
     }
@@ -212,6 +217,6 @@ bool qa_ui_mods_destroy(qa_ui_mods *mods, double time, qa_error *error) {
     qa_launch_draft_destroy(mods->draft); qa_catalog_release(mods->catalog);
     qa_buffer_free(&mods->query_lower);
     ui_mods_cache_release(mods);
-    free(mods->rows); free(mods->selections); free(mods);
+    qa_arena_destroy(&mods->rows_storage); free(mods);
     return true;
 }

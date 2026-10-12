@@ -5,7 +5,6 @@ typedef struct mod_row {
     const char *component, *instance;
     bool enabled;
     char state[96];
-    char *retained_component, *retained_instance, *retained_label;
 } mod_row;
 struct qa_ui_mods {
     qa_ui *ui;
@@ -15,7 +14,8 @@ struct qa_ui_mods {
     qa_catalog *catalog;
     qa_ui_row *rows;
     mod_row *selections;
-    size_t count, capacity, selection_capacity, selected;
+    qa_arena rows_storage;
+    size_t count, selected;
     qa_ui_control controls[7];
     char query[321], status[256], display[512];
     qa_buffer query_lower;

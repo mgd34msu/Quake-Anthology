@@ -19,25 +19,44 @@ bool ui_input_time(qa_ui *ui,double fallback,double *out,qa_error *error) {
     if (!isfinite(time) || time<0) return ui_fail(error,"Invalid UI physical input clock");
     *out=time; return true;
 }
-bool ui_reserve(void **data, size_t *capacity, size_t count, size_t stride, qa_error *error) {
-    if (count <= *capacity)
-        return true;
-    if (!stride || count > SIZE_MAX / stride) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "UI storage overflow");
-        return false;
+static ui_field *field_find(qa_ui *ui, qa_ui_id menu, qa_ui_id control) {
+    qa_id_index_cursor cursor = qa_id_index_begin(&ui->field_index, QA_STRING_NONE, menu);
+    size_t slot;
+    while (qa_id_index_next(&ui->field_index, &cursor, &slot)) {
+        ui_field *field = qa_pool_at(&ui->field_records, slot);
+        if (field->control == control) return field;
     }
-    size_t next = *capacity ? *capacity : 8;
-    while (next < count && next <= SIZE_MAX / 2)
-        next *= 2;
-    if (next < count || next > SIZE_MAX / stride)
-        next = count;
-    void *grown = realloc(*data, next * stride);
-    if (!grown) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating UI storage");
-        return false;
+    return NULL;
+}
+static ui_field *field_get(qa_ui *ui, qa_ui_id menu, qa_ui_id control, qa_error *error) {
+    ui_field *field = field_find(ui, menu, control);
+    if (field) return field;
+    if (!qa_id_index_reserve(&ui->field_index, 1, error)) return NULL;
+    if (ui->field_records.head == SIZE_MAX &&
+        !qa_pool_extend(&ui->field_records, &ui->state_storage, 1, error)) return NULL;
+    size_t slot;
+    field = qa_pool_take(&ui->field_records, &slot);
+    if (!field) return NULL;
+    *field = (ui_field){.menu = menu, .control = control, .cursor = SIZE_MAX};
+    qa_id_index_insert(&ui->field_index, QA_STRING_NONE, menu, slot);
+    return field;
+}
+static bool fields_prepare(qa_ui *ui, const qa_ui_menu *menu, qa_error *error) {
+    size_t missing = 0;
+    for (size_t i = 0; i < menu->count; ++i) {
+        const qa_ui_control *control = &menu->controls[i];
+        if ((control->kind == QA_UI_FIELD || control->kind == QA_UI_LIST) &&
+            !field_find(ui, menu->id, control->id)) ++missing;
     }
-    *data = grown;
-    *capacity = next;
+    if (!qa_id_index_reserve(&ui->field_index, missing, error)) return false;
+    size_t available = ui->field_records.capacity - ui->field_records.active;
+    if (missing > available && !qa_pool_extend(&ui->field_records,
+        &ui->state_storage, missing - available, error)) return false;
+    for (size_t i = 0; i < menu->count; ++i) {
+        const qa_ui_control *control = &menu->controls[i];
+        if ((control->kind == QA_UI_FIELD || control->kind == QA_UI_LIST) &&
+            !field_get(ui, menu->id, control->id, error)) return false;
+    }
     return true;
 }
 qa_ui_menu_registration *ui_registration(qa_ui *ui, qa_ui_id id) {
@@ -121,14 +140,7 @@ qa_ui_control ui_control(qa_ui *ui, const qa_ui_menu *menu, size_t index) {
 }
 ui_field *ui_field_get(qa_ui *ui, qa_ui_id id, qa_error *error) {
     qa_ui_id menu = ui->depth ? ui->stack[ui->depth - 1].menu : 0;
-    for (size_t i = 0; i < ui->field_count; ++i)
-        if (ui->fields[i].menu == menu && ui->fields[i].control == id)
-            return &ui->fields[i];
-    if (!ui_reserve((void **)&ui->fields, &ui->field_capacity, ui->field_count + 1,
-                     sizeof(*ui->fields), error))
-        return NULL;
-    ui->fields[ui->field_count] = (ui_field){.menu = menu, .control = id, .cursor = SIZE_MAX};
-    return &ui->fields[ui->field_count++];
+    return field_get(ui, menu, id, error);
 }
 size_t ui_list_page(const qa_ui_control *control) {
     double rows = floor((double)control->rect.height / fmaxf(1, control->value.list.row_height));
@@ -188,6 +200,13 @@ bool qa_ui_create(const qa_ui_options *options, qa_ui **out, qa_error *error) {
         return false;
     }
     ui->options = *options;
+    qa_arena_init(&ui->state_storage, 0);
+    ui->field_index.storage = &ui->state_storage;
+    if (!qa_pool_prepare(&ui->field_records, &ui->state_storage, 0,
+        sizeof(ui_field), _Alignof(ui_field), error)) {
+        qa_id_index_destroy(&ui->field_index);
+        qa_arena_destroy(&ui->state_storage); free(ui); return false;
+    }
     ui->cursor = (qa_vec2){320, 240};
     ui->scale = 1;
     ui->text_scale = 1;
@@ -216,9 +235,24 @@ bool qa_ui_register(qa_ui *ui, const qa_ui_menu_registration *registration, qa_e
     if (!ui || ui->drawing || !registration || !registration->id || !registration->factory ||
         ui_registration(ui, registration->id))
         return ui_fail(error, "invalid or duplicate UI menu registration");
-    if (!ui_reserve((void **)&ui->menus, &ui->menu_capacity, ui->menu_count + 1,
-                     sizeof(*ui->menus), error))
-        return false;
+    if (ui->menu_count == ui->menu_capacity) {
+        if (ui->menu_count == SIZE_MAX) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "UI storage overflow"); return false;
+        }
+        size_t capacity = ui->menu_capacity ? ui->menu_capacity : 8;
+        if (capacity <= ui->menu_count)
+            capacity = capacity <= SIZE_MAX / 2 ? capacity * 2 : ui->menu_count + 1;
+        if (capacity > SIZE_MAX / sizeof(*ui->menus) || capacity > SIZE_MAX / sizeof(*ui->stack)) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "UI storage overflow"); return false;
+        }
+        qa_ui_menu_registration *menus = qa_arena_grow(&ui->state_storage, ui->menus,
+            ui->menu_count * sizeof(*menus), capacity * sizeof(*menus), _Alignof(qa_ui_menu_registration), error);
+        if (!menus) return false;
+        ui_cursor *stack = qa_arena_grow(&ui->state_storage, ui->stack,
+            ui->depth * sizeof(*stack), capacity * sizeof(*stack), _Alignof(ui_cursor), error);
+        if (!stack) return false;
+        ui->menus = menus; ui->stack = stack; ui->menu_capacity = capacity;
+    }
     ui->menus[ui->menu_count++] = *registration;
     return true;
 }
@@ -267,10 +301,8 @@ bool qa_ui_open(qa_ui *ui, qa_ui_id id, double time, qa_error *error) {
     qa_ui_menu menu;
     if (!registration.factory(registration.context, ui->options.seat, &menu, error))
         return false;
-    if (!menu_valid(&menu, id, error) || !input_storage_prepare(ui,&menu,error)) return false;
-    if (!ui_reserve((void **)&ui->stack, &ui->stack_capacity, ui->depth + 1,
-                     sizeof(*ui->stack), error))
-        return false;
+    if (!menu_valid(&menu, id, error) || !input_storage_prepare(ui,&menu,error) ||
+        !fields_prepare(ui, &menu, error)) return false;
     if (registration.open && !registration.open(registration.context, ui->options.seat, error))
         return false;
     if (!ui->depth && !qa_input_seat_ui_push(ui->options.input, input_handler, ui, input_time,
@@ -353,9 +385,8 @@ bool qa_ui_destroy(qa_ui *ui, double time, qa_error *error) {
         return ui_fail(error, "UI presentation or callback is retained");
     if (!qa_ui_close_all(ui, time, error))
         return false;
-    free(ui->fields);
-    free(ui->stack);
-    free(ui->menus);
+    qa_id_index_destroy(&ui->field_index);
+    qa_arena_destroy(&ui->state_storage);
     qa_arena_destroy(&ui->input_storage);
     free(ui);
     return true;

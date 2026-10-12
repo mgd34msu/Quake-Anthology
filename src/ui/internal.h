@@ -1,6 +1,8 @@
 #ifndef QA_UI_INTERNAL_H
 #define QA_UI_INTERNAL_H
 #include "qa/ui.h"
+#include "qa/id_index.h"
+#include "qa/pool.h"
 #include "qa/text.h"
 #include <math.h>
 #include <stdlib.h>
@@ -9,17 +11,23 @@
 #define UI_MENU_FONT_SCALE 2.6f
 
 typedef struct ui_cursor { qa_ui_id menu, control; float scroll; } ui_cursor;
-typedef struct ui_field { qa_ui_id menu, control; size_t cursor, top; uint64_t revision; bool overstrike, scrolled; } ui_field;
+typedef struct ui_field {
+    qa_ui_id menu, control;
+    size_t cursor, top;
+    uint64_t revision;
+    bool overstrike, scrolled;
+} ui_field;
 struct qa_ui {
     struct qa_ui_presentation_ticket *presentation_ticket;
     qa_ui_options options;
     qa_arena input_storage;
+    qa_arena state_storage;
+    qa_pool field_records;
+    qa_id_index field_index;
     qa_ui_menu_registration *menus;
     size_t menu_count, menu_capacity;
     ui_cursor *stack;
-    size_t depth, stack_capacity;
-    ui_field *fields;
-    size_t field_count, field_capacity;
+    size_t depth;
     qa_input_ui_token input_token;
     qa_vec2 cursor, pointer;
     float scale, bias_x, bias_y, text_scale;
@@ -36,7 +44,6 @@ struct qa_ui {
 };
 bool ui_fail(qa_error *, const char *);
 bool ui_input_time(qa_ui *,double fallback,double *,qa_error *);
-bool ui_reserve(void **, size_t *, size_t, size_t, qa_error *);
 qa_ui_menu_registration *ui_registration(qa_ui *, qa_ui_id);
 bool ui_active(qa_ui *, qa_ui_menu *, qa_error *);
 qa_ui_control ui_control(qa_ui *, const qa_ui_menu *, size_t);
