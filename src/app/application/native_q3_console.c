@@ -1,4 +1,5 @@
 #include "native_q3_console.h"
+#include "control_frame.h"
 #include "q3_product.h"
 #include "startup_flow.h"
 #include "engine_shutdown.h"
@@ -247,19 +248,21 @@ bool application_native_q3_source_drop_begin(application_provider *provider,uint
     if(!pending||!reason||!qa_actor_id_equal(actual,actor))
         return application_fail(error,QA_ERROR_ARGUMENT,"Source Q3 DROP lacks its actual pending full client request");
     size_t length=strlen(reason);
-    char *retained=malloc(length+1);
-    if(!retained) return application_fail(error,QA_ERROR_MEMORY,"Retaining entered Source Q3 DROP reason");
+    qa_unified_frame_lease *storage=application_control_storage_acquire(app,error);
+    if(!storage) return false;
+    char *retained=qa_unified_frame_lease_alloc(storage,length+1,1,_Alignof(char),error);
+    if(!retained) { qa_unified_frame_lease_release(storage);return false; }
     memcpy(retained,reason,length+1);
     *scope=(application_native_q3_source_drop_scope){.provider=provider,.game=provider->state.q3,
-        .launch=provider->launch,.actor=actor,.slot=slot,.reason=retained,
+        .launch=provider->launch,.actor=actor,.slot=slot,.storage=storage,.reason=retained,
         .publication_generation=app->publication_generation,.command_generation=app->command_generation,
         .map_revision=app->map_revision};
     if(!source_drop_current(scope)) {
-        free(retained);*scope=(application_native_q3_source_drop_scope){0};
+        qa_unified_frame_lease_release(storage);*scope=(application_native_q3_source_drop_scope){0};
         return application_fail(error,QA_ERROR_ARGUMENT,"Source Q3 DROP lost its actual installed request");
     }
     if(!application_native_q3_console_borrow(provider,error)) {
-        free(retained);*scope=(application_native_q3_source_drop_scope){0};
+        qa_unified_frame_lease_release(storage);*scope=(application_native_q3_source_drop_scope){0};
         return false;
     }
     scope->previous=provider->native_q3_console->source_drop;
@@ -284,7 +287,7 @@ bool application_native_q3_source_drop_end(application_native_q3_source_drop_sco
     bool current=source_drop_current(scope);
     owner->source_drop=scope->previous;
     application_native_q3_console_release(scope->provider);
-    free(scope->reason);*scope=(application_native_q3_source_drop_scope){0};
+    qa_unified_frame_lease_release(scope->storage);*scope=(application_native_q3_source_drop_scope){0};
     return current||application_fail(error,QA_ERROR_ARGUMENT,"Source Q3 DROP changed its retained physical request");
 }
 bool application_native_q3_source_command_begin(application_provider *provider,qa_actor_id actor,

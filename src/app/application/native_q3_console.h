@@ -3,6 +3,7 @@
 
 #include "internal.h"
 #include "q3_product.h"
+#include "qa/network_unified_frame_pool.h"
 
 /* map_path is the actual incoming map, before public map metadata is replaced.
  * Engine defaults and genuine startup current/latch values share this owner;
@@ -54,6 +55,7 @@ typedef struct application_native_q3_source_drop_scope {
     qa_actor_id actor;
     uint32_t slot;
     uint64_t publication_generation, command_generation, map_revision;
+    qa_unified_frame_lease *storage;
     char *reason;
     bool disconnected;
 } application_native_q3_source_drop_scope;
