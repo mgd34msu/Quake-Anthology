@@ -69,19 +69,18 @@ bool nav_contents(const qa_navigation_services *s, const qa_nav_profile *p, qa_a
             return false;
     } else if (!qa_world_point_contents(s->world, &q, &sample, e))
         return false;
-    int32_t contents=qa_collision_point_contents_export(
-        sample.family==QA_GAME_Q2?sample.merged:sample.contents,
-        sample.family,sample.q1_opaque_token);
+    qa_collision_bits contents = sample.family == QA_GAME_Q2 ? sample.merged : sample.contents;
     if (sample.family == QA_GAME_Q1) {
-        *out = contents == -3   ? QA_NAV_WATER
-               : contents == -4 ? QA_NAV_SLIME
-               : contents == -5 ? QA_NAV_LAVA
-                                       : 0;
+        int32_t medium = qa_collision_q1_medium_class(contents);
+        *out = medium == -3   ? QA_NAV_WATER
+               : medium == -4 ? QA_NAV_SLIME
+               : medium == -5 ? QA_NAV_LAVA
+                              : 0;
     } else {
-        uint32_t value = (uint32_t)contents;
-        *out = ((value & 32) != 0 ? QA_NAV_WATER : 0) | ((value & 16) != 0 ? QA_NAV_SLIME : 0) |
-               ((value & 8) != 0 ? QA_NAV_LAVA : 0) |
-               (sample.family == QA_GAME_Q2 && (value & UINT32_C(0x20000000)) != 0
+        *out = (qa_collision_bits_overlap(contents, qa_collision_bit(QA_CONTENT_WATER)) ? QA_NAV_WATER : 0) |
+               (qa_collision_bits_overlap(contents, qa_collision_bit(QA_CONTENT_SLIME)) ? QA_NAV_SLIME : 0) |
+               (qa_collision_bits_overlap(contents, qa_collision_bit(QA_CONTENT_LAVA)) ? QA_NAV_LAVA : 0) |
+               (sample.family == QA_GAME_Q2 && qa_collision_bits_overlap(contents, qa_collision_bit(QA_CONTENT_LADDER))
                     ? QA_NAV_CONTENTS_LADDER
                     : 0);
     }
