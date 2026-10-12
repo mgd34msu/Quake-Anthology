@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "7b95b723edb4b02a6dd885ad4b07ee18dd437f59",
+  "verified_main": "71030a1acd7d7b0f2437381b9230e14b2574c62d",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 122,
-    "open_source_observation": 249,
+    "fixed_source_build_core": 124,
+    "open_source_observation": 247,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -23998,8 +23998,9 @@
       "severity": "low",
       "job": "01",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "One qa_source_frame_equal beside the common frame type replaces complete frame identity helpers and inline copies across selected effects/characters, guest/native Q3, Q2 owned-wire observation, Unified/network presentation and receiver restore. All seven fields remain exact; caller-specific subset/phase-excluding comparisons are unchanged. Remaining source vector finite checks now use qa_vec_finite; the already-adopted qa_vec_equal preserves component IEEE comparison. Normal production build and seven core suites pass, without new validation paths or save/protocol fields.",
+      "fix_commit": "71030a1acd7d7b0f2437381b9230e14b2574c62d"
     },
     {
       "id": "01-math-axis-projection",
@@ -26693,8 +26694,9 @@
       "severity": "low",
       "job": "05",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "One qa_source_frame_equal beside the common frame type replaces complete frame identity helpers and inline copies across selected effects/characters, guest/native Q3, Q2 owned-wire observation, Unified/network presentation and receiver restore. All seven fields remain exact; caller-specific subset/phase-excluding comparisons are unchanged. Remaining source vector finite checks now use qa_vec_finite; the already-adopted qa_vec_equal preserves component IEEE comparison. Normal production build and seven core suites pass, without new validation paths or save/protocol fields.",
+      "fix_commit": "71030a1acd7d7b0f2437381b9230e14b2574c62d"
     },
     {
       "id": "05-I4",
@@ -40305,6 +40307,43 @@
       ],
       "record_directory": "/tmp/qa-ta3196-mode-equipment-names-20261012",
       "conclusion": "Fixed mode/object/map names are bound once through the existing mode name table. Repeated DeathBall/teamkill/drop/object model/item consumers read retained IDs; authored item precedence, source/team/relic choices and optional no-model/item behavior remain. Equipment slot and presentation queries use the actual selected Q2 provider existing admitted weapon-item getter, with no second item/name cache. External classname conversion remains at map admission; public LMCTF command projection has no current production caller. Normal production build and seven core suites pass; no gameplay or timing claim."
+    },
+    {
+      "commit": "71030a1acd7d7b0f2437381b9230e14b2574c62d",
+      "source_tree": "401dfb3ca09510ae7d16da2d95b17d12a2c86c77",
+      "finding_ids": [
+        "01-math-small-copies",
+        "05-D1"
+      ],
+      "files_rechecked": [
+        "include/qa/scheduler.h",
+        "src/app/application/guest_q3_exports.c",
+        "src/app/application/guest_q3_gear.c",
+        "src/app/application/guest_q3_gear_memory.c",
+        "src/app/application/guest_q3_gear_save.c",
+        "src/app/application/native_q3_equipment.c",
+        "src/app/application/native_q3_presentation.c",
+        "src/app/application/network_unified.c",
+        "src/app/application/selected_effects.c",
+        "src/app/application/unified_q3_sources.c",
+        "src/app/application/unified_save_internal.c",
+        "src/app/frontend/network.c",
+        "src/compat/native_host/q2_wire.c",
+        "src/presentation/q3_native/server_commands.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-frame-equality-20261012",
+      "conclusion": "One qa_source_frame_equal beside the common frame type replaces complete frame identity helpers and inline copies across selected effects/characters, guest/native Q3, Q2 owned-wire observation, Unified/network presentation and receiver restore. All seven fields remain exact; caller-specific subset/phase-excluding comparisons are unchanged. Remaining source vector finite checks now use qa_vec_finite; the already-adopted qa_vec_equal preserves component IEEE comparison. Normal production build and seven core suites pass, without new validation paths or save/protocol fields."
     }
   ],
   "verification_limits": [

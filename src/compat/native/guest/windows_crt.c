@@ -237,44 +237,28 @@ bool windows_crt_finalize_image(guest_windows *owner, uint64_t base, uint64_t by
     return true;
 }
 
-typedef struct sort_context {
-    guest_windows *owner; uint64_t base, comparator; size_t bytes;
-    uint8_t *first, *second;
-} sort_context;
+typedef struct sort_callback {
+    guest_windows *owner;
+    uint64_t comparator;
+} sort_callback;
 
-static bool sort_compare(sort_context *sort, size_t left, size_t right, int32_t *out, qa_error *error)
+static bool sort_compare(void *context, uint64_t left, uint64_t right, int32_t *out, qa_error *error)
 {
+    sort_callback *sort = context;
     const qa_native_value_type types[] = {QA_NATIVE_ADDRESS, QA_NATIVE_ADDRESS};
-    const qa_native_value args[] = {{.type = QA_NATIVE_ADDRESS, .as.address = sort->base + left * sort->bytes},
-        {.type = QA_NATIVE_ADDRESS, .as.address = sort->base + right * sort->bytes}};
+    const qa_native_value args[] = {{.type = QA_NATIVE_ADDRESS, .as.address = left},
+        {.type = QA_NATIVE_ADDRESS, .as.address = right}};
     qa_native_value result;
     if (!windows_invoke(sort->owner, sort->comparator, types, 2, QA_NATIVE_I32, args, false, &result, error)) return false;
     *out = result.as.i32; return true;
 }
 
-static bool sort_swap(sort_context *sort, size_t left, size_t right, qa_error *error)
+static bool sort_transfer(void *context, uint64_t address, void *bytes, size_t width,
+    bool write, qa_error *error)
 {
-    uint64_t a = sort->base + left * sort->bytes, b = sort->base + right * sort->bytes;
-    return qa_native_guest_read(sort->owner->guest, a, sort->first, sort->bytes, error) &&
-        qa_native_guest_read(sort->owner->guest, b, sort->second, sort->bytes, error) &&
-        qa_native_guest_write(sort->owner->guest, a, (qa_bytes){sort->second, sort->bytes}, error) &&
-        qa_native_guest_write(sort->owner->guest, b, (qa_bytes){sort->first, sort->bytes}, error);
-}
-
-static bool sort_sift(sort_context *sort, size_t root, size_t end, qa_error *error)
-{
-    while (root < end / 2) {
-        size_t child = root * 2 + 1; int32_t comparison;
-        if (child + 1 < end) {
-            if (!sort_compare(sort, child, child + 1, &comparison, error)) return false;
-            if (comparison < 0) ++child;
-        }
-        if (!sort_compare(sort, root, child, &comparison, error)) return false;
-        if (comparison >= 0) return true;
-        if (!sort_swap(sort, root, child, error)) return false;
-        root = child;
-    }
-    return true;
+    sort_callback *sort = context;
+    return write ? qa_native_guest_write(sort->owner->guest, address, (qa_bytes){bytes, width}, error) :
+        qa_native_guest_read(sort->owner->guest, address, bytes, width, error);
 }
 
 static bool printf_service(guest_windows *, const qa_native_value *, qa_arena *, qa_native_value *, qa_error *);
@@ -441,13 +425,8 @@ static bool crt_invoke(windows_service *service, const qa_native_value *args,
         if (length < 2) return true;
         if (!bytes || length > 0x10000000 / bytes) return guest_fail(error, QA_ERROR_ARGUMENT, a, "invalid CRT qsort extent");
         if (!guest_range(owner->guest, a, length * bytes, QA_NATIVE_GUEST_WRITE, error)) return false;
-        uint8_t *snapshots = qa_arena_alloc(scratch, bytes * 2, 1, error);
-        if (!snapshots) return false;
-        sort_context sort = {owner, a, integer(args + 3), bytes, snapshots, snapshots + bytes};
-        for (size_t start = length / 2; start; ) { --start; if (!sort_sift(&sort, start, length, error)) return false; }
-        for (size_t end = length - 1; end; --end)
-            if (!sort_swap(&sort, 0, end, error) || !sort_sift(&sort, 0, end, error)) return false;
-        return true;
+        sort_callback sort = {owner, integer(args + 3)};
+        return guest_sort(a, length, bytes, scratch, sort_compare, sort_transfer, &sort, error);
     }
     case C_ERRNO: result(out, type, crt->error_number); return true;
     case C_STRTOUL: {

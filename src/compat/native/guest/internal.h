@@ -98,6 +98,10 @@ bool guest_backend_change(qa_native_guest *, const qa_native_guest_mapping *, ui
 bool guest_file_access(const qa_native_guest *, const qa_native_guest_mapping *,
     uint64_t, size_t, qa_error *);
 bool guest_publish(qa_native_guest *, const qa_native_guest_commit *, qa_error *);
+typedef bool (*guest_sort_compare_fn)(void *, uint64_t, uint64_t, int32_t *, qa_error *);
+typedef bool (*guest_sort_transfer_fn)(void *, uint64_t, void *, size_t, bool, qa_error *);
+bool guest_sort(uint64_t, size_t, size_t, qa_arena *, guest_sort_compare_fn,
+    guest_sort_transfer_fn, void *, qa_error *);
 bool guest_callback_failure(qa_native_guest *, const qa_error *);
 bool guest_call_prepared(const qa_native_guest *);
 bool guest_callback_cancelled(const qa_native_guest *, const qa_error *);

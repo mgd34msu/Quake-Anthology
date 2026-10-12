@@ -429,6 +429,58 @@ bool qa_native_guest_write(qa_native_guest *guest, uint64_t address, qa_bytes by
     return okay;
 }
 
+typedef struct guest_sort_state {
+    uint64_t base;
+    size_t width;
+    uint8_t *first, *second;
+    guest_sort_compare_fn compare;
+    guest_sort_transfer_fn transfer;
+    void *context;
+} guest_sort_state;
+
+static bool sort_swap(guest_sort_state *sort, size_t left, size_t right, qa_error *error)
+{
+    uint64_t a = sort->base + left * sort->width, b = sort->base + right * sort->width;
+    return sort->transfer(sort->context, a, sort->first, sort->width, false, error) &&
+        sort->transfer(sort->context, b, sort->second, sort->width, false, error) &&
+        sort->transfer(sort->context, a, sort->second, sort->width, true, error) &&
+        sort->transfer(sort->context, b, sort->first, sort->width, true, error);
+}
+
+static bool sort_sift(guest_sort_state *sort, size_t root, size_t end, qa_error *error)
+{
+    while (root < end / 2) {
+        size_t child = root * 2 + 1; int32_t comparison;
+        if (child + 1 < end) {
+            if (!sort->compare(sort->context, sort->base + child * sort->width,
+                sort->base + (child + 1) * sort->width, &comparison, error)) return false;
+            if (comparison < 0) ++child;
+        }
+        if (!sort->compare(sort->context, sort->base + root * sort->width,
+            sort->base + child * sort->width, &comparison, error)) return false;
+        if (comparison >= 0) return true;
+        if (!sort_swap(sort, root, child, error)) return false;
+        root = child;
+    }
+    return true;
+}
+
+bool guest_sort(uint64_t base, size_t count, size_t width, qa_arena *scratch,
+    guest_sort_compare_fn compare, guest_sort_transfer_fn transfer, void *context,
+    qa_error *error)
+{
+    uint8_t *snapshots = qa_arena_alloc(scratch, width * 2, 1, error);
+    if (!snapshots) return false;
+    guest_sort_state sort = {base, width, snapshots, snapshots + width, compare, transfer, context};
+    for (size_t start = count / 2; start; ) {
+        --start;
+        if (!sort_sift(&sort, start, count, error)) return false;
+    }
+    for (size_t end = count - 1; end; --end)
+        if (!sort_swap(&sort, 0, end, error) || !sort_sift(&sort, 0, end, error)) return false;
+    return true;
+}
+
 bool qa_native_guest_allocate_aligned(qa_native_guest *guest, size_t bytes, size_t alignment,
     uint32_t permissions, int32_t tag, uint64_t *out, qa_error *error)
 {

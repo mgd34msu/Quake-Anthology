@@ -262,42 +262,25 @@ static bool strtol_call(guest_sysv_runtime *r, const qa_native_value *args, bool
     }
     return set_integer(out, sysv_signed_type(r), negative ? UINT64_C(0) - value : value);
 }
-typedef struct sort_state {
+typedef struct sort_callback {
     guest_sysv_runtime *runtime;
-    uint64_t base, comparator;
-    size_t size;
-    uint8_t *first, *second;
-} sort_state;
-static bool sort_less(sort_state *state, size_t a, size_t b, bool *out, qa_error *error)
+    uint64_t comparator;
+} sort_callback;
+static bool sort_compare(void *context, uint64_t a, uint64_t b, int32_t *out, qa_error *error)
 {
+    sort_callback *sort = context;
     const qa_native_value_type types[] = {QA_NATIVE_ADDRESS,QA_NATIVE_ADDRESS};
-    qa_native_value arguments[] = {{.type = QA_NATIVE_ADDRESS, .as.address = state->base + a * state->size},
-        {.type = QA_NATIVE_ADDRESS, .as.address = state->base + b * state->size}}, result = {.type = QA_NATIVE_I32};
-    if (!sysv_invoke(state->runtime, state->comparator, types, 2, QA_NATIVE_I32, arguments, &result, error)) return false;
-    *out = result.as.i32 < 0; return true;
+    qa_native_value arguments[] = {{.type = QA_NATIVE_ADDRESS, .as.address = a},
+        {.type = QA_NATIVE_ADDRESS, .as.address = b}}, result = {.type = QA_NATIVE_I32};
+    if (!sysv_invoke(sort->runtime, sort->comparator, types, 2, QA_NATIVE_I32, arguments, &result, error)) return false;
+    *out = result.as.i32; return true;
 }
-static bool sort_swap(sort_state *state, size_t a, size_t b, qa_error *error)
+static bool sort_transfer(void *context, uint64_t address, void *bytes, size_t width,
+    bool write, qa_error *error)
 {
-    uint64_t first = state->base + a * state->size, second = state->base + b * state->size;
-    return sysv_read(state->runtime, first, state->first, state->size, error) &&
-        sysv_read(state->runtime, second, state->second, state->size, error) &&
-        sysv_write(state->runtime, first, state->second, state->size, error) &&
-        sysv_write(state->runtime, second, state->first, state->size, error);
-}
-static bool sort_sift(sort_state *state, size_t root, size_t end, qa_error *error)
-{
-    for (size_t child = root * 2 + 1; child < end; child = root * 2 + 1) {
-        bool less;
-        if (child + 1 < end) {
-            if (!sort_less(state, child, child + 1, &less, error)) return false;
-            if (less) ++child;
-        }
-        if (!sort_less(state, root, child, &less, error)) return false;
-        if (!less) break;
-        if (!sort_swap(state, root, child, error)) return false;
-        root = child;
-    }
-    return true;
+    sort_callback *sort = context;
+    return write ? sysv_write(sort->runtime, address, bytes, width, error) :
+        sysv_read(sort->runtime, address, bytes, width, error);
 }
 static bool libc_call(sysv_service *service, const qa_native_value *args,
     qa_arena *temporary, qa_native_value *out, qa_error *error)
@@ -495,14 +478,8 @@ static bool libc_call(sysv_service *service, const qa_native_value *args,
         if (!a || c > SYSV_MAX_ALLOCATION / count || !guest_range(r->guest, a, count * (size_t)c, QA_NATIVE_GUEST_WRITE, error)) return false;
         qa_arena scratch;
         qa_arena_init_pool(&scratch, &r->guest->scratch_pages);
-        uint8_t *bytes = qa_arena_alloc(&scratch, 2 * (size_t)c, 1, error);
-        if (!bytes) { qa_arena_destroy(&scratch); return false; }
-        sort_state state = {r,a,comparator,(size_t)c,bytes,bytes+(size_t)c};
-        bool ok = true;
-        for (size_t i = count / 2; ok && i; --i)
-            ok = sort_sift(&state, i - 1, count, error);
-        for (size_t end = count - 1; ok && end; --end)
-            ok = sort_swap(&state, 0, end, error) && sort_sift(&state, 0, end, error);
+        sort_callback sort = {r, comparator};
+        bool ok = guest_sort(a, count, (size_t)c, &scratch, sort_compare, sort_transfer, &sort, error);
         qa_arena_destroy(&scratch);
         return ok;
     }
