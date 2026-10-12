@@ -3,6 +3,7 @@
 #include "qa/native.h"
 #include "qa/inventory.h"
 struct application_native_q2;
+uint32_t application_native_q2_inventory_client_bytes(struct application_native_q2 *);
 typedef struct application_native_q2_inventory_source {
     qa_actor_id actor;
     uint32_t slot, inventory_offset, count, cursor_offset, client_bytes;

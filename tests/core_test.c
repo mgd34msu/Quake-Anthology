@@ -663,6 +663,16 @@ static void test_source_text(void)
     CHECK(!qa_text_to_source_bytes((qa_bytes){non_source,sizeof(non_source)},roundtrip,sizeof(roundtrip),&restored,&error));
     CHECK(!qa_text_to_source_bytes((qa_bytes){malformed,sizeof(malformed)},roundtrip,sizeof(roundtrip),&restored,&error));
     CHECK(qa_text_to_source_bytes((qa_bytes){0},roundtrip,1,&restored,&error) && !restored && !roundtrip[0]);
+    const uint8_t upper[]={0xc3,0x84,0xc4,0xb0,0xce,0xa3,0xce,0x9f,0xce,0xa3};
+    const uint8_t lower[]={0xc3,0xa4,'i',0xcc,0x87,0xcf,0x83,0xce,0xbf,0xcf,0x82};
+    qa_buffer owned={0},borrowed={0};qa_arena storage={0};
+    CHECK(qa_utf8_lower((qa_bytes){upper,sizeof(upper)},&owned,&error));
+    CHECK(owned.size==sizeof(lower) && !memcmp(owned.data,lower,sizeof(lower)) && !owned.data[owned.size]);
+    CHECK(qa_utf8_lower_arena((qa_bytes){upper,sizeof(upper)},&storage,&borrowed,&error));
+    CHECK(borrowed.size==owned.size && !memcmp(borrowed.data,owned.data,owned.size+1));
+    qa_buffer_free(&owned);qa_arena_reset(&storage);
+    CHECK(qa_utf8_lower_arena((qa_bytes){0},&storage,&borrowed,&error) && !borrowed.size && !borrowed.data[0]);
+    qa_arena_destroy(&storage);
 }
 static void test_shared_random(void)
 {

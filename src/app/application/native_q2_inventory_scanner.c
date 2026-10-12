@@ -3,6 +3,7 @@
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_attack.h"
 #include "native_q2_callbacks.h"
+#include "control_frame.h"
 #include "qa/native_observe.h"
 #include "qa/text.h"
 #include "qa/network.h"
@@ -14,12 +15,14 @@ typedef struct inventory_selection {
     qa_actor_id actor;
     qa_item_id item;
     uint32_t index;
+    size_t storage_slot;
 } inventory_selection;
 typedef struct inventory_restore {
     struct inventory_restore *next;
     application_native_q2_inventory_source source;
     qa_native_address address;
     qa_buffer bytes;
+    qa_unified_frame_lease *storage;
 } inventory_restore;
 typedef struct inventory_frame {
     struct inventory_frame *previous;
@@ -28,6 +31,8 @@ typedef struct inventory_frame {
     bool named, has_named_row;
     application_native_q2_inventory_row named_row;
     qa_buffer requested;
+    qa_arena requested_storage;
+    qa_unified_frame_lease *storage;
     inventory_restore *restore;
 } inventory_frame;
 typedef struct inventory_entry {
@@ -57,6 +62,9 @@ struct application_native_q2_inventory_scanner {
     size_t region_count;
     qa_arena readout_storage;
     qa_pool readout_pages;
+    qa_arena selection_storage, selection_index_storage, name_storage;
+    qa_pool selection_pool;
+    uint8_t *zero;
     inventory_selection *selected;
     qa_actor_index selection_index;
     inventory_frame *frame;
@@ -103,6 +111,18 @@ static inventory_selection *selection(application_native_q2_inventory_scanner *o
     size_t value;
     return qa_actor_index_find_retained(&o->selection_index,actor,&value)?(inventory_selection *)(uintptr_t)value:NULL;
 }
+static inventory_selection *selection_take(application_native_q2_inventory_scanner *o, qa_error *e)
+{
+    if (o->selection_pool.head == SIZE_MAX &&
+        !qa_pool_extend(&o->selection_pool, &o->selection_storage,
+            o->selection_pool.capacity ? o->selection_pool.capacity : 1, e)) return NULL;
+    size_t slot;
+    inventory_selection *s = qa_pool_take(&o->selection_pool, &slot);
+    if (s) *s = (inventory_selection){.storage_slot = slot};
+    return s;
+}
+static void selection_drop(application_native_q2_inventory_scanner *o, inventory_selection *s)
+{ if (s) qa_pool_release(&o->selection_pool, s->storage_slot); }
 void application_native_q2_inventory_scanner_release(application_native_q2_inventory_scanner *o, qa_actor_id actor)
 {
     if (!o) return;
@@ -112,7 +132,7 @@ void application_native_q2_inventory_scanner_release(application_native_q2_inven
     while(*p!=s) p=&(*p)->next;
     *p=s->next;
     qa_actor_index_forget_retained(&o->selection_index,actor);
-    free(s);
+    selection_drop(o, s);
 }
 static bool selection_install(application_native_q2_inventory_scanner *o,inventory_selection *s,qa_error *e)
 {
@@ -121,7 +141,7 @@ static bool selection_install(application_native_q2_inventory_scanner *o,invento
     if(previous) {
         inventory_selection **p=&o->selected;
         while(*p!=previous) p=&(*p)->next;
-        *p=previous->next;free(previous);
+        *p=previous->next;selection_drop(o, previous);
     }
     s->next=o->selected;o->selected=s;return true;
 }
@@ -172,9 +192,6 @@ static bool source(application_native_q2_inventory_scanner *o, qa_actor_id actor
     if (!current(o, e) || !application_native_q2_inventory_source_read(o->engine, actor, out, e)) return false;
     if (out->inventory_offset != o->inventory || out->count != o->count || out->cursor_offset != o->cursor || out->empty != o->empty)
         return application_fail(e, QA_ERROR_ARGUMENT, "Native scanner profile differs from its actual inventory owner");
-    for (size_t i = 0; i < o->write_count; ++i)
-        if (o->writes[i].offset > out->client_bytes || o->writes[i].bytes > out->client_bytes - o->writes[i].offset)
-            return application_fail(e, QA_ERROR_FORMAT, "Native scanner selection write leaves its declared client");
     return true;
 }
 static bool cursor(application_native_q2_inventory_scanner *o, qa_actor_id actor,
@@ -193,21 +210,32 @@ static bool cursor(application_native_q2_inventory_scanner *o, qa_actor_id actor
         if (!r->rows[i].selected && index >= 0 && r->rows[i].source_index == (uint32_t)index) { *out = i; break; }
     return true;
 }
-static bool save_bytes(application_native_q2_inventory_scanner *o,
+static qa_unified_frame_lease *frame_storage(application_native_q2_inventory_scanner *o,
+    inventory_frame *frame, qa_error *e)
+{
+    if (!frame->storage)
+        frame->storage = application_control_storage_acquire(o->engine->provider->application, e);
+    return frame->storage;
+}
+static bool save_bytes(application_native_q2_inventory_scanner *o, qa_unified_frame_lease *storage,
     const application_native_q2_inventory_source *s, uint32_t offset, size_t count,
     inventory_restore **chain, qa_error *e)
 {
-    inventory_restore *r = calloc(1, sizeof(*r));
-    if (!r) return application_fail(e, QA_ERROR_MEMORY, "Retaining original inventory temporary write");
-    r->source = *s; r->address = s->client + offset; r->bytes.data = malloc(count); r->bytes.size = count;
+    if (!storage) return false;
+    inventory_restore *r = qa_unified_frame_lease_alloc(storage, 1, sizeof(*r), _Alignof(inventory_restore), e);
+    if (!r) return false;
+    r->source = *s; r->address = s->client + offset;
+    r->bytes.data = qa_unified_frame_lease_alloc(storage, count, 1, 1, e); r->bytes.size = count;
     if (!r->bytes.data || !qa_native_read(instance(o), r->address, r->bytes.data, count, e)) {
-        qa_buffer_free(&r->bytes); free(r); return false;
+        return false;
     }
+    if (!qa_unified_frame_lease_retain(storage, e)) return false;
+    r->storage = storage;
     r->next = *chain; *chain = r; return true;
 }
 static void discard(inventory_restore **chain)
 {
-    while (*chain) { inventory_restore *r = *chain; *chain = r->next; qa_buffer_free(&r->bytes); free(r); }
+    while (*chain) { inventory_restore *r = *chain; *chain = r->next; qa_unified_frame_lease_release(r->storage); }
 }
 static bool restore(application_native_q2_inventory_scanner *o, inventory_restore **chain, qa_error *e)
 {
@@ -217,7 +245,7 @@ static bool restore(application_native_q2_inventory_scanner *o, inventory_restor
             if (!application_native_q2_inventory_source_current(o->engine, &r->source, e) ||
                 !qa_native_write(instance(o), r->address, (qa_bytes){r->bytes.data, r->bytes.size}, e)) return false;
         }
-        *chain = r->next; qa_buffer_free(&r->bytes); free(r);
+        *chain = r->next; qa_unified_frame_lease_release(r->storage);
     }
     return true;
 }
@@ -245,18 +273,19 @@ static bool evaluate(application_native_q2_inventory_scanner *o, qa_actor_id act
     application_native_q2_inventory_source s; inventory_restore *inventory = NULL, *writes = NULL;
     *accepted = false;
     if (!source(o, actor, &s, e) || !r->source_index || r->source_index >= o->count) return false;
-    if (!save_bytes(o, &s, o->inventory, (size_t)o->count * 4, &inventory, e)) return false;
+    qa_unified_frame_lease *storage = application_control_storage_acquire(o->engine->provider->application, e);
+    if (!storage) return false;
+    if (!save_bytes(o, storage, &s, o->inventory, (size_t)o->count * 4, &inventory, e)) {
+        qa_unified_frame_lease_release(storage); return false;
+    }
     for (size_t i = 0; i < o->write_count; ++i)
-        if (!save_bytes(o, &s, o->writes[i].offset, o->writes[i].bytes, &writes, e)) {
-            discard(&inventory); discard(&writes); return false;
+        if (!save_bytes(o, storage, &s, o->writes[i].offset, o->writes[i].bytes, &writes, e)) {
+            discard(&inventory); discard(&writes); qa_unified_frame_lease_release(storage); return false;
         }
-    uint8_t *zero = calloc(o->count, 4);
-    if (!zero) { discard(&inventory); discard(&writes); return application_fail(e, QA_ERROR_MEMORY, "Projecting original inventory scanner"); }
     ++o->evaluating;
-    bool ok = qa_native_write(instance(o), s.client + o->inventory, (qa_bytes){zero, (size_t)o->count * 4}, e) &&
+    bool ok = qa_native_write(instance(o), s.client + o->inventory, (qa_bytes){o->zero, (size_t)o->count * 4}, e) &&
         count_write(o, s.client + o->inventory + (uint64_t)r->source_index * 4, r, e) &&
         write_word(o, s.client + o->cursor, 0, e);
-    free(zero);
     inventory_entry *entry = &o->entries[direction > 0 ? 0 : 1];
     qa_native_value arguments[3] = {{.type = QA_NATIVE_ADDRESS, .as.address = s.entity},
         {.type = QA_NATIVE_I32, .as.i32 = flags}, {.type = QA_NATIVE_U8, .as.u8 = 0}};
@@ -270,6 +299,7 @@ static bool evaluate(application_native_q2_inventory_scanner *o, qa_actor_id act
     if (*accepted) discard(&writes);
     else if (!restore(o, &writes, &cleanup)) restored = false;
     pending(o, &inventory); pending(o, &writes);
+    qa_unified_frame_lease_release(storage);
     if (!restored && ok) { ok = false; if (e) *e = cleanup; }
     return ok;
 }
@@ -280,8 +310,8 @@ static bool navigate(application_native_q2_inventory_scanner *o, inventory_frame
     size_t chosen;
     if (!cursor(o, frame->actor, r, &chosen, e)) return false;
     if(!selection(o,frame->actor)&&!qa_id_index_reserve(&o->selection_index.retained,1,e)) return false;
-    inventory_selection *retained=calloc(1,sizeof(*retained));
-    if(!retained) return application_fail(e,QA_ERROR_MEMORY,"Reserving reached native inventory selection");
+    inventory_selection *retained=selection_take(o,e);
+    if(!retained) return false;
     for (size_t step = 1; step <= r->count; ++step) {
         size_t index;
         if (direction > 0) index = chosen == SIZE_MAX ? step - 1 : (chosen + step) % r->count;
@@ -296,14 +326,15 @@ static bool navigate(application_native_q2_inventory_scanner *o, inventory_frame
         }
         if (duplicate) continue;
         bool accepted;
-        if (!evaluate(o, frame->actor, row, direction, frame->flags, event, &accepted, e)) { free(retained); return false; }
+        if (!evaluate(o, frame->actor, row, direction, frame->flags, event, &accepted, e)) { selection_drop(o,retained); return false; }
         if (accepted) {
-            *retained=(inventory_selection){.actor=frame->actor,.item=row->item,.index=row->source_index};
-            if(!selection_install(o,retained,e)) {free(retained);return false;}
+            *retained=(inventory_selection){.actor=frame->actor,.item=row->item,.index=row->source_index,
+                .storage_slot=retained->storage_slot};
+            if(!selection_install(o,retained,e)) {selection_drop(o,retained);return false;}
             return true;
         }
     }
-    free(retained);
+    selection_drop(o,retained);
     application_native_q2_inventory_source s;
     if (!source(o, frame->actor, &s, e) || !write_word(o, s.client + o->cursor, o->empty, e)) return false;
     application_native_q2_inventory_scanner_release(o, frame->actor); return true;
@@ -327,7 +358,7 @@ static bool entry_call(void *opaque, qa_native_instance *actual, qa_native_entry
         if (ok && r.present) ok = cursor(o, frame.actor, &r, &chosen, e);
         if (ok && chosen != SIZE_MAX && r.rows[chosen].selected) {
             application_native_q2_inventory_source s;
-            ok = source(o, frame.actor, &s, e) && save_bytes(o, &s,
+            ok = source(o, frame.actor, &s, e) && save_bytes(o, frame_storage(o, &frame, e), &s,
                 o->inventory + r.rows[chosen].source_index * 4, 4, &frame.restore, e) &&
                 count_write(o, s.client + o->inventory + (uint64_t)r.rows[chosen].source_index * 4,
                     r.rows + chosen, e);
@@ -336,24 +367,27 @@ static bool entry_call(void *opaque, qa_native_instance *actual, qa_native_entry
     }
     if (ok) ok = qa_native_invoke_original(binding, arguments, count, result, e);
     qa_error cleanup = {0}; bool cleaned = restore(o, &frame.restore, &cleanup);
-    pending(o, &frame.restore); qa_buffer_free(&frame.requested);
+    pending(o, &frame.restore); qa_unified_frame_lease_release(frame.storage);
+    qa_arena_destroy(&frame.requested_storage);
     if (!cleaned && ok) { ok = false; if (e) *e = cleanup; }
     --o->calls; o->frame = frame.previous; return ok;
 }
-static bool normalized(const char *text, qa_buffer *out, qa_error *e)
+static bool normalized(qa_bytes text, qa_arena *storage, qa_buffer *out, qa_error *e)
 {
-    qa_buffer lowered = {0}; size_t length = strlen(text);
-    if (!qa_utf8_lower((qa_bytes){(const uint8_t *)text, length}, &lowered, e)) return false;
+    qa_buffer lowered = {0};
+    if (!qa_utf8_lower_arena(text, storage, &lowered, e)) return false;
     size_t written = 0;
     for (size_t i = 0; i < lowered.size; ++i) if (lowered.data[i] != ' ') lowered.data[written++] = lowered.data[i];
     lowered.data[written] = 0; lowered.size = written; *out = lowered; return true;
 }
-static bool same_name(const char *text, const qa_buffer *request, bool *same, qa_error *e)
+static bool same_name(application_native_q2_inventory_scanner *o, const char *text,
+    const qa_buffer *request, bool *same, qa_error *e)
 {
     qa_buffer value = {0};
-    if (!normalized(text, &value, e)) return false;
+    qa_arena_reset(&o->name_storage);
+    if (!normalized((qa_bytes){(const uint8_t *)text, strlen(text)}, &o->name_storage, &value, e)) return false;
     *same = value.size == request->size && (!value.size || !memcmp(value.data, request->data, value.size));
-    qa_buffer_free(&value); return true;
+    return true;
 }
 static bool named_choice(application_native_q2_inventory_scanner *o, inventory_frame *frame,
     const application_native_q2_inventory_readout *r, qa_native_address original,
@@ -363,7 +397,7 @@ static bool named_choice(application_native_q2_inventory_scanner *o, inventory_f
     qa_strings *strings = qa_session_strings(o->engine->provider->application->session);
     for (size_t i = 0; i < r->count; ++i) {
         const char *item = qa_strings_cstr(strings, r->rows[i].item); bool match;
-        if (!item || !same_name(item, &frame->requested, &match, e)) return false;
+        if (!item || !same_name(o, item, &frame->requested, &match, e)) return false;
         if (match) { *chosen = i; return true; }
     }
     if (original) {
@@ -374,7 +408,7 @@ static bool named_choice(application_native_q2_inventory_scanner *o, inventory_f
     size_t matches = 0;
     for (size_t i = 0; i < r->count; ++i) {
         bool match;
-        if (!same_name(r->rows[i].label, &frame->requested, &match, e)) return false;
+        if (!same_name(o, r->rows[i].label, &frame->requested, &match, e)) return false;
         if (match) { *chosen = i; ++matches; }
     }
     if (matches <= 1) return true;
@@ -383,7 +417,7 @@ static bool named_choice(application_native_q2_inventory_scanner *o, inventory_f
     size_t needed = frame->requested.size + 40;
     for (size_t i = 0; i < r->count; ++i) {
         bool match;
-        if (!same_name(r->rows[i].label, &frame->requested, &match, e)) return false;
+        if (!same_name(o, r->rows[i].label, &frame->requested, &match, e)) return false;
         if (match) {
             const char *item = qa_strings_cstr(strings, r->rows[i].item);
             if (!item || strlen(item) > SIZE_MAX - needed - 2)
@@ -391,12 +425,13 @@ static bool named_choice(application_native_q2_inventory_scanner *o, inventory_f
             needed += strlen(item) + 2;
         }
     }
-    char *text = malloc(needed);
-    if (!text) return application_fail(e, QA_ERROR_MEMORY, "Reporting ambiguous inventory name");
+    qa_unified_frame_lease *storage = frame_storage(o, frame, e);
+    char *text = storage ? qa_unified_frame_lease_alloc(storage, needed, 1, 1, e) : NULL;
+    if (!text) return false;
     size_t at = (size_t)snprintf(text, needed, "Ambiguous item \"%s\"; use ", (char *)frame->requested.data); size_t emitted = 0;
     bool ok = true;
     for (size_t i = 0; ok && i < r->count; ++i) {
-        bool match; ok = same_name(r->rows[i].label, &frame->requested, &match, e);
+        bool match; ok = same_name(o, r->rows[i].label, &frame->requested, &match, e);
         if (ok && match) {
             const char *item = qa_strings_cstr(strings, r->rows[i].item); size_t bytes = strlen(item);
             if (emitted++) { memcpy(text + at, ", ", 2); at += 2; }
@@ -405,7 +440,7 @@ static bool named_choice(application_native_q2_inventory_scanner *o, inventory_f
     }
     text[at++] = '\n'; text[at] = 0;
     if (ok) ok = o->options.print(o->options.context, frame->actor, text, e);
-    free(text); return ok;
+    return ok;
 }
 static bool lookup_name(application_native_q2_inventory_scanner *o, const qa_native_region_event *event,
     inventory_frame *frame, qa_error *e)
@@ -417,10 +452,15 @@ static bool lookup_name(application_native_q2_inventory_scanner *o, const qa_nat
         name = qa_load_u32le(bytes);
     } else name = event->state.registers[QA_NATIVE_RCX];
     if (!name) return application_fail(e, QA_ERROR_ARGUMENT, "Original native item lookup has no actual name argument");
-    qa_buffer text = {0}; bool ok = qa_native_read_string(instance(o), name, 1024 * 1024, &text, e);
-    qa_buffer_free(&frame->requested);
-    if (ok) ok = normalized((char *)text.data, &frame->requested, e);
-    qa_buffer_free(&text); return ok;
+    qa_arena_reset(&frame->requested_storage); frame->requested = (qa_buffer){0};
+    qa_bytes text;
+    if (!qa_native_string_span(instance(o), name, 1024 * 1024, &text, e)) return false;
+    if (!text.data) {
+        uint8_t *copy = qa_arena_alloc(&frame->requested_storage, text.size + 1, 1, e);
+        if (!copy || !qa_native_read(instance(o), name, copy, text.size + 1, e)) return false;
+        text.data = copy;
+    }
+    return normalized(text, &frame->requested_storage, &frame->requested, e);
 }
 static bool region_call(void *opaque, qa_native_instance *actual, const qa_native_region_event *event,
     qa_native_region_decision *decision, qa_error *e)
@@ -441,7 +481,7 @@ static bool region_call(void *opaque, qa_native_instance *actual, const qa_nativ
             if (index >= o->item_count) ok = application_fail(e, QA_ERROR_FORMAT, "Mixed inventory prototype leaves the genuine descriptor table");
             if (ok) ok = source(o, frame->actor, &s, e) && qa_native_rva(instance(o),
                 (uint64_t)o->item_table + (uint64_t)index * o->item_stride, o->item_stride, &descriptor, e) &&
-                save_bytes(o, &s, o->inventory + index * 4, 4, &frame->restore, e) &&
+                save_bytes(o, frame_storage(o, frame, e), &s, o->inventory + index * 4, 4, &frame->restore, e) &&
                 count_write(o, s.client + o->inventory + (uint64_t)index * 4, r.rows + chosen, e);
             if (ok) {
                 frame->named_row = r.rows[chosen]; frame->named_row.label = NULL;
@@ -502,7 +542,12 @@ bool application_native_q2_inventory_scanner_create(struct application_native_q2
     application_native_q2_inventory_scanner *o = calloc(1, sizeof(*o));
     if (!o) return application_fail(e, QA_ERROR_MEMORY, "Constructing original native inventory scanner");
     o->engine = engine; o->declaration = engine->declaration; o->options = *options; *out = o;
-    if(!qa_actor_index_create(&o->selection_index,qa_session_actors(engine->provider->application->session),NULL,e)) return false;
+    const qa_actor_registry *actors = qa_session_actors(engine->provider->application->session);
+    size_t capacity = qa_actors_capacity(actors);
+    if (!qa_pool_prepare(&o->selection_pool, &o->selection_storage, capacity,
+            sizeof(inventory_selection), _Alignof(inventory_selection), e) ||
+        !qa_actor_index_create(&o->selection_index, actors, &o->selection_index_storage, e) ||
+        !qa_id_index_reserve(&o->selection_index.retained, capacity, e)) return false;
     qa_native_module_info info = qa_native_module_describe(engine->provider->state.native.module);
     o->abi = info.image.target.abi; o->pointer_bytes = info.image.target.pointer_bytes;
     if (!qa_json_parse(qa_native_declaration_primary(o->declaration), &o->document, e)) return false;
@@ -515,15 +560,24 @@ bool application_native_q2_inventory_scanner_create(struct application_native_q2
         !word(d, items, "stride", &o->item_stride, e) || !word(d, items, "count", &o->item_count, e) || !o->item_stride)
         return application_fail(e, QA_ERROR_FORMAT, "Native scanner profile has invalid actual source extents");
     o->empty = (int32_t)empty;
+    o->zero = qa_arena_alloc(&o->selection_storage, (size_t)o->count * 4, 1, e);
+    if (!o->zero) return false;
+    memset(o->zero, 0, (size_t)o->count * 4);
     qa_json_id writes = qa_json_get(d, inventory, "selectionWrites");
     if (qa_json_type(d, writes) != QA_JSON_ARRAY || qa_json_size(d, writes) > SIZE_MAX / sizeof(*o->writes))
         return application_fail(e, QA_ERROR_FORMAT, "Native scanner profile has no selection write inventory");
-    o->write_count = qa_json_size(d, writes); o->writes = o->write_count ? calloc(o->write_count, sizeof(*o->writes)) : NULL;
-    if (o->write_count && !o->writes) return application_fail(e, QA_ERROR_MEMORY, "Retaining original selection writes");
-    for (size_t i = 0; i < o->write_count; ++i)
+    o->write_count = qa_json_size(d, writes);
+    o->writes = o->write_count ? qa_arena_alloc(&o->selection_storage,
+        o->write_count * sizeof(*o->writes), _Alignof(inventory_write_field), e) : NULL;
+    if (o->write_count && !o->writes) return false;
+    uint32_t client_bytes = application_native_q2_inventory_client_bytes(engine);
+    for (size_t i = 0; i < o->write_count; ++i) {
         if (!word(d, qa_json_at(d, writes, i), "offset", &o->writes[i].offset, e) ||
             !word(d, qa_json_at(d, writes, i), "bytes", &o->writes[i].bytes, e) || !o->writes[i].bytes)
             return application_fail(e, QA_ERROR_FORMAT, "Native scanner selection write has an empty extent");
+        if (o->writes[i].offset > client_bytes || o->writes[i].bytes > client_bytes - o->writes[i].offset)
+            return application_fail(e, QA_ERROR_FORMAT, "Native scanner selection write leaves its declared client");
+    }
     const char *names[] = {"next", "previous", "validate", "use", "namedUse"};
     for (unsigned i = 0; i < 5; ++i) {
         inventory_entry *entry = o->entries + i; uint32_t rva;
@@ -594,7 +648,10 @@ bool application_native_q2_inventory_scanner_destroy(application_native_q2_inven
     while (o->selected) application_native_q2_inventory_scanner_release(o, o->selected->actor);
     qa_actor_index_destroy(&o->selection_index);
     qa_arena_destroy(&o->readout_storage);
-    free(o->writes); qa_json_destroy(o->document); free(o); return true;
+    qa_arena_destroy(&o->name_storage);
+    qa_arena_destroy(&o->selection_index_storage);
+    qa_arena_destroy(&o->selection_storage);
+    qa_json_destroy(o->document); free(o); return true;
 }
 bool application_native_q2_inventory_scanner_read(application_native_q2_inventory_scanner *o,
     qa_actor_id actor, application_native_q2_inventory_readout *out, qa_error *e)
@@ -630,8 +687,8 @@ bool application_native_q2_inventory_scanner_restore_selection(application_nativ
         application_native_q2_inventory_scanner_release(o, actor); return true;
     }
     if(!selection(o,actor)&&!qa_id_index_reserve(&o->selection_index.retained,1,e)) return false;
-    inventory_selection *retained = calloc(1, sizeof(*retained));
-    if (!retained) return application_fail(e, QA_ERROR_MEMORY, "Reserving restored native inventory selection");
+    inventory_selection *retained = selection_take(o, e);
+    if (!retained) return false;
     ++o->calls;
     application_native_q2_inventory_readout r = {0}; bool ok = rows(o, actor, true, &r, e); size_t found = SIZE_MAX;
     for (size_t i = 0; ok && i < r.count; ++i) if (r.rows[i].item == item) { found = i; break; }
@@ -640,11 +697,11 @@ bool application_native_q2_inventory_scanner_restore_selection(application_nativ
         write_word(o, s.client + o->cursor, (int32_t)r.rows[found].source_index, e);
     if (ok) {
         *retained = (inventory_selection){.actor = actor, .item = item,
-            .index = r.rows[found].source_index};
+            .index = r.rows[found].source_index, .storage_slot = retained->storage_slot};
         ok=selection_install(o,retained,e);
         if(ok) retained=NULL;
     }
-    --o->calls; free(retained);
+    --o->calls; selection_drop(o, retained);
     application_native_q2_inventory_readout_free(&r); return ok;
 }
 bool application_native_q2_inventory_scanner_capture(application_native_q2_inventory_scanner *o,
@@ -682,11 +739,12 @@ bool application_native_q2_inventory_scanner_restore(application_native_q2_inven
         return application_fail(e, QA_ERROR_FORMAT, "Invalid original inventory scanner continuation");
     uint32_t count = qa_net_read_u32(&r); inventory_selection *head = NULL;
     qa_session *session = o->engine->provider->application->session; bool ok = !r.failed && bytes.size >= 8 && count <= (bytes.size - 8) / 20;
-    qa_actor_index decoded={0};
-    if(ok) ok=qa_actor_index_create(&decoded,qa_session_actors(session),NULL,e);
+    qa_actor_index decoded={0}; qa_arena decoded_storage={0};
+    if(ok) ok=qa_actor_index_create(&decoded,qa_session_actors(session),&decoded_storage,e);
+    if(ok) ok=qa_id_index_reserve(&decoded.retained,count,e);
     for (uint32_t i = 0; ok && i < count; ++i) {
-        inventory_selection *s = calloc(1, sizeof(*s));
-        if (!s) { ok = application_fail(e, QA_ERROR_MEMORY, "Decoding actual inventory selection mapping"); break; }
+        inventory_selection *s = selection_take(o, e);
+        if (!s) { ok = false; break; }
         s->next = head; head = s;
         qa_saved_actor_id saved = {.generation = qa_net_read_u64(&r), .slot = qa_net_read_u32(&r)};
         s->index = qa_net_read_u32(&r); uint32_t length = qa_net_read_u32(&r); qa_bytes item;
@@ -705,10 +763,15 @@ bool application_native_q2_inventory_scanner_restore(application_native_q2_inven
     if (ok && (r.failed || bytes.size > SIZE_MAX / 8 || r.bit != bytes.size * 8)) ok = application_fail(e, QA_ERROR_FORMAT, "Native inventory selection continuation has trailing fields");
     if (!ok) {
         qa_actor_index_destroy(&decoded);
-        while (head) { inventory_selection *s = head; head = s->next; free(s); } return false;
+        qa_arena_destroy(&decoded_storage);
+        while (head) { inventory_selection *s = head; head = s->next; selection_drop(o, s); } return false;
     }
     while (o->selected) application_native_q2_inventory_scanner_release(o, o->selected->actor);
-    qa_actor_index_destroy(&o->selection_index);o->selection_index=decoded;
+    qa_actor_index_destroy(&o->selection_index);
+    qa_arena_destroy(&o->selection_index_storage);
+    o->selection_index_storage=decoded_storage;
+    decoded.retained.storage=&o->selection_index_storage;
+    o->selection_index=decoded;
     o->selected = head; return true;
 }
 bool application_native_q2_inventory_scanner_finish_restore(application_native_q2_inventory_scanner *o, qa_error *e)

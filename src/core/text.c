@@ -256,7 +256,7 @@ bool qa_utf8_repair(qa_bytes input, qa_buffer *out, qa_error *error) {
     return true;
 }
 
-bool qa_utf8_lower(qa_bytes input, qa_buffer *out, qa_error *error) {
+static bool utf8_lower(qa_bytes input, qa_arena *storage, qa_buffer *out, qa_error *error) {
     if (!out || (!input.data && input.size) || input.size > INT32_MAX) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Unicode lowercase input");
         return false;
@@ -276,7 +276,8 @@ bool qa_utf8_lower(qa_bytes input, qa_buffer *out, qa_error *error) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "lowercasing UTF-8: %s", u_errorName(status));
         return false;
     }
-    uint8_t *data = malloc((size_t)needed + 1);
+    uint8_t *data = storage ? qa_arena_alloc(storage, (size_t)needed + 1, 1, error) :
+        malloc((size_t)needed + 1);
     if (!data) {
         ucasemap_close(map);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating lowercase text");
@@ -287,13 +288,23 @@ bool qa_utf8_lower(qa_bytes input, qa_buffer *out, qa_error *error) {
         ucasemap_utf8ToLower(map, (char *)data, needed + 1, source, (int32_t)input.size, &status);
     ucasemap_close(map);
     if (U_FAILURE(status) || written < 0 || written > needed) {
-        free(data);
+        if (!storage) free(data);
         qa_error_set(error, QA_ERROR_FORMAT, 0, "lowercasing UTF-8: %s", u_errorName(status));
         return false;
     }
     data[written] = 0;
     *out = (qa_buffer){data, (size_t)written};
     return true;
+}
+
+bool qa_utf8_lower(qa_bytes input, qa_buffer *out, qa_error *error)
+{
+    return utf8_lower(input, NULL, out, error);
+}
+
+bool qa_utf8_lower_arena(qa_bytes input, qa_arena *storage, qa_buffer *out, qa_error *error)
+{
+    return utf8_lower(input, storage, out, error);
 }
 
 bool qa_text_join_words(const char *const *words,size_t count,char *out,size_t capacity,qa_error *error)

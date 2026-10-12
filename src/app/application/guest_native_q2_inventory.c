@@ -23,6 +23,11 @@ struct application_native_q2_inventory {
     bool resolved;
 };
 
+uint32_t application_native_q2_inventory_client_bytes(struct application_native_q2 *engine)
+{
+    return engine->primary_inventory->client_bytes;
+}
+
 static bool word(const qa_json_document *doc, qa_json_id object, const char *key,
     uint32_t *out, qa_error *error)
 {
