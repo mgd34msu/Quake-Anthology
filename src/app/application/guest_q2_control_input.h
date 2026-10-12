@@ -17,10 +17,11 @@ static bool raw_entity(control_client *client,qa_movement_ground ground,qa_nativ
     if(ground.hit==QA_TRACE_HIT_WORLD) return qa_native_entity_address(client->native,0,out,error);
     qa_native_entity_table table;
     if(!qa_native_entity_table_get(client->native,&table,error)) return false;
-    for(uint32_t slot=0;slot<table.count;++slot) {
+    uint32_t slot;
+    if(qa_native_host_slot_for_actor(client->host,ground.actor,&slot)&&slot<table.count) {
         qa_native_slot_binding binding;
         if(!qa_native_slot(client->native,slot,&binding,error)) return false;
-        if(binding.kind!=QA_NATIVE_SLOT_FREE&&binding.owner==client->engine->provider->owner&&
+        if(binding.kind!=QA_NATIVE_SLOT_FREE&&binding.slot==slot&&binding.owner==client->engine->provider->owner&&
             binding.source_slot==slot&&qa_actor_id_equal(binding.actor,ground.actor))
             return qa_native_entity_address(client->native,slot,out,error);
     }

@@ -18,14 +18,12 @@ static bool source_command(void *context,int32_t slot,const char *text,
 static bool find_client(application_q3_component *c,uint32_t slot,qa_actor_id *actor,bool *found,qa_error *e)
 {
     *found=false;
-    for(size_t i=0;c->records&&i<c->records->actor_count;++i) {
-        component_actor row=c->records->actors[i];
-        if(row.slot==slot&&row.client&&!row.retired) {
-            if(!c->options.clients.current||!c->options.clients.current(c->options.clients.context,row.actor))
-                return q3records_fail(e,QA_ERROR_ARGUMENT,"Component client binding lost its retained physical source");
-            *actor=row.actor; *found=true; return true;
-        }
-    }
+    component_actor *row=c->records?q3records_slot(c->records,slot):NULL;
+    if(!row||!row->client||row->retired) return true;
+    qa_actor_id client=row->actor;
+    if(!c->options.clients.current||!c->options.clients.current(c->options.clients.context,client))
+        return q3records_fail(e,QA_ERROR_ARGUMENT,"Component client binding lost its retained physical source");
+    *actor=client; *found=true;
     return true;
 }
 static bool actual_client(application_q3_component *c,uint32_t slot,qa_actor_id *actor,qa_error *e)

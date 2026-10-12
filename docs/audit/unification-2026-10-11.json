@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "9ef280d47e414fcf718648f792b573fd2fdace31",
+  "verified_main": "c04c46fbdfcc90c46d373588707879f2ad1c0ecb",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 126,
-    "open_source_observation": 245,
+    "fixed_source_build_core": 127,
+    "open_source_observation": 244,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -35655,8 +35655,9 @@
       "severity": "medium",
       "job": "31",
       "area": "render_presentation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "One model animation.cfg decoder serves native client-info and selected equipment; private lexers, numeric and row loops are deleted. Source COM grammar, 31 records, optional Team Arena fallback rows, leg offsets, generated rows and caller fallback/strict policies remain. The existing number parser carries original bytecode precision as data; FPS division now follows source binary32 rules. Existing model tests cover metadata, reverse/negative loops, zero FPS, optional rows and unchanged output on incomplete records. Normal production build and seven core suites passed; no live model or performance claim.",
+      "fix_commit": "c04c46fbdfcc90c46d373588707879f2ad1c0ecb"
     },
     {
       "id": "31-07",
@@ -40466,6 +40467,36 @@
       ],
       "record_directory": "/tmp/qa-ta3196-shared-text-interpolation-20261012",
       "conclusion": "One interpolation writer serves compiled localization spans and classic positional text with their distinct missing-value and UTF-8/raw clipping policies. All native wire, Unified presentation and local UI callers borrow existing control/frame arena storage for the complete first pass; the second result writes directly into the caller output. The redundant frontend wrapper and private heap formatter are deleted. Existing core behavior checks cover introduced placeholders, finale lookup before truncation and differing UTF-8 piece/prefix clipping. Normal production build and seven core suites passed; no live presentation or whole-frame allocation claim."
+    },
+    {
+      "commit": "c04c46fbdfcc90c46d373588707879f2ad1c0ecb",
+      "source_tree": "2ca1c4dd6bf3d607e6c10ea36d29049601e2652f",
+      "finding_ids": [
+        "31-06"
+      ],
+      "files_rechecked": [
+        "include/qa/model.h",
+        "include/qa/text.h",
+        "src/core/number.c",
+        "src/formats/model/metadata.c",
+        "src/presentation/q3_native/client_info.c",
+        "src/presentation/q3_native/client_info_internal.h",
+        "src/presentation/q3_native/selected_media.c",
+        "tests/model_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-animation-decoder-20261012",
+      "conclusion": "One model animation.cfg decoder serves native client-info and selected equipment; private lexers, numeric and row loops are deleted. Source COM grammar, 31 records, optional Team Arena fallback rows, leg offsets, generated rows and caller fallback/strict policies remain. The existing number parser carries original bytecode precision as data; FPS division now follows source binary32 rules. Existing model tests cover metadata, reverse/negative loops, zero FPS, optional rows and unchanged output on incomplete records. Normal production build and seven core suites passed; no live model or performance claim."
     }
   ],
   "verification_limits": [

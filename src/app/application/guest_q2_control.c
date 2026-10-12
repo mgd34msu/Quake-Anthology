@@ -76,9 +76,7 @@ static bool client_for(struct application_native_q2 *engine, qa_actor_id actor,
     if (!engine || !out || !engine->provider->state.native.host ||
         engine->profile == QA_NATIVE_Q2_CGAME_API2023)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native client outputs require their original game host");
-    uint32_t slot = 0;
-    for (uint32_t i = 1; i < 257; ++i)
-        if (qa_actor_id_equal(engine->clients[i].actor, actor)) { slot = i; break; }
+    uint32_t slot = application_native_q2_client_slot(engine, actor);
     if (!slot) return application_fail(error, QA_ERROR_NOT_FOUND, "Native client outputs have no actual source slot");
     qa_native_host *host = engine->provider->state.native.host;
     control_client client = {.engine = engine, .host = host,
