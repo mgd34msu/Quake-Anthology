@@ -39,7 +39,7 @@ static bool cancel(q2_session *session, qa_error *error)
     q2_game_state_free(&client->preparing); return true;
 }
 static bool retire_client(q2_session *session, const char *reason, bool notice, bool notify,
-    bool records, uint64_t now, qa_error *error)
+    bool records, bool retain_batch, uint64_t now, qa_error *error)
 {
     q2_client *client = &session->state.client;
     if (!client->drop_reason && !sent_continue(session, error)) return false;
@@ -100,11 +100,14 @@ static bool retire_client(q2_session *session, const char *reason, bool notice, 
         if (client->drop_notify && !client->hooks.drop(client->hooks.context, session->id, client->drop_reason, error)) return false;
         client->drop_hook_done = true;
     }
-    q2_records_free(&client->batch); client->receive_held = false; client->acknowledgement_held = false;
+    /* An entered records consumer still borrows the decoded batch, including
+     * restored heap storage. continue retires it after the callback returns. */
+    if (!retain_batch) { q2_records_free(&client->batch); client->receive_held = false; }
+    client->acknowledgement_held = false;
     return true;
 }
 bool q2_client_drop_progress(q2_session *session, const char *reason, qa_error *error)
-{ return retire_client(session, reason, false, true, false, session->runtime->now_ns, error); }
+{ return retire_client(session, reason, false, true, false, false, session->runtime->now_ns, error); }
 static bool loading(q2_session *session, qa_error *error)
 {
     const qa_net_client *connection = qa_net_connections_get(session->runtime->connections, session->id);
@@ -162,7 +165,7 @@ static bool prepare(q2_session *session, bool *waiting, qa_error *error)
     }
     if ((unsigned)result > QA_Q2_PREPARATION_RECEIVING) return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 Source preparation returned an invalid state");
     if (result == QA_Q2_PREPARATION_CANCELED) {
-        if (!retire_client(session, "loading canceled", false, true, false, session->runtime->now_ns, error)) return false;
+        if (!retire_client(session, "loading canceled", false, true, false, true, session->runtime->now_ns, error)) return false;
     }
     client->preparation_held = false; *waiting = false; return true;
 }
@@ -230,10 +233,18 @@ static bool server_command(q2_session *session, uint8_t source_seat, const char 
         else if (ok && tokens.count) ok = current(session, error) &&
             client->hooks.server_command(client->hooks.context, session->id, source_seat, line, error) && current(session, error);
         qa_command_tokens_free(&tokens);qa_unified_frame_lease_release(storage);
+        if (session->retiring) { client->command_offset = 0; return ok; }
         if (!ok || *waiting) { client->command_offset = (size_t)((*end ? end + 1 : end) - text); return ok; }
         at = *end ? end + 1 : end;
     }
     client->command_offset = 0; return true;
+}
+bool qa_network_q2_client_stufftext(qa_network_runtime *runtime, qa_net_client_id id,
+    uint8_t source_seat, const char *text, bool *waiting, qa_error *error)
+{
+    q2_session *session = q2_get(runtime, id, false, error);
+    *waiting = false;
+    return session && server_command(session, source_seat, text, waiting, error);
 }
 bool q2_client_receive(q2_session *session, qa_bytes bytes, uint32_t acknowledged, uint64_t now, qa_error *error)
 {
@@ -315,8 +326,10 @@ bool qa_network_q2_client_continue(qa_network_runtime *runtime, qa_net_client_id
             }
             break;
         case QA_Q2_SVC_COMMAND:
-            ok = server_command(session, record->seat, event->data.print.text, &waiting, error);
-            if (ok && waiting) --client->batch.cursor;
+            if (!client->hooks.records_commands) {
+                ok = server_command(session, record->seat, event->data.print.text, &waiting, error);
+                if (ok && waiting) --client->batch.cursor;
+            }
             break;
         case QA_Q2_SVC_RECONNECT: ok = cancel(session, error) && loading(session, error) &&
             qa_network_q2_client_command(runtime, id, "new", 0, error); break;
@@ -338,15 +351,25 @@ bool qa_network_q2_client_continue(qa_network_runtime *runtime, qa_net_client_id
             break;
         }
         case QA_Q2_SVC_DISCONNECT:
-            ok = retire_client(session, "server disconnected", false, true, true, runtime->now_ns, error);
+            ok = client->hooks.records(client->hooks.context, id, record, 1,
+                client->batch.lease, error);
+            if (ok) ok = retire_client(session, "server disconnected", false, true, false, true, runtime->now_ns, error);
             break;
         default: break;
         }
         if (session->retiring) break;
+        if (ok && (!waiting || event->kind != QA_Q2_SVC_COMMAND)) {
+            ok = client->hooks.records(client->hooks.context, id, record, 1,
+                client->batch.lease, error);
+            if (session->retiring) break;
+            if (ok) ok = current(session, error);
+            if (ok && client->hooks.records_commands && event->kind == QA_Q2_SVC_COMMAND &&
+                client->preparation_held) {
+                waiting = true;
+                --client->batch.cursor;
+            }
+        }
     }
-    if (ok && !waiting && !session->retiring && client->receive_held && client->batch.cursor == client->batch.count)
-        ok = current(session, error) && client->hooks.records(client->hooks.context, id, client->batch.records,
-            client->batch.count, client->batch.lease, error) && current(session, error);
     if (!waiting && !(client->drop_reason && !client->drop_hook_done) &&
         (session->retiring || !ok || client->batch.cursor == client->batch.count)) {
         q2_records_free(&client->batch); client->receive_held = false;
@@ -429,7 +452,7 @@ bool qa_network_q2_client_disconnect(qa_network_runtime *runtime, qa_net_client_
     q2_session *session = peer->state;
     if (session->busy) return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 CLIENT disconnect is already entered");
     session->busy = true; runtime->callback = true;
-    bool ok = retire_client(session, "client disconnected", true, false, false, now, error);
+    bool ok = retire_client(session, "client disconnected", true, false, false, false, now, error);
     runtime->callback = false; session->busy = false; return ok;
 }
 bool qa_network_q2_client_request_full_frame(qa_network_runtime *runtime, qa_net_client_id id, qa_error *error)

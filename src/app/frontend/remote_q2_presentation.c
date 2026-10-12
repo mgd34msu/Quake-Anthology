@@ -251,15 +251,30 @@ static bool sound(frontend_remote_q2 *row, const qa_q2_kex_sound *event, qa_erro
     ok = qa_audio_engine_play(row->frontend->audio, &play, (int32_t)(row->sample_ns / 1000000), error);
     qa_audio_asset_release(asset); return ok;
 }
-bool remote_q2_records(frontend_remote_q2 *row, const qa_q2_server_record *records, size_t count, qa_error *error)
+bool remote_q2_records(frontend_remote_q2 *row, const qa_q2_server_record *records, size_t count,
+    bool *waiting, qa_error *error)
 {
+    *waiting = false;
     uint32_t remote_index;
     if (!frontend_remote_q2_wire_seat(row, &remote_index, error)) return false;
     for (size_t i = 0; i < count; ++i) {
         const qa_q2_server_record *record = &records[i];
-        if (record->seat && record->seat != remote_index + 1) continue;
         const qa_q2_server_event *event = &record->event;
+        if (record->seat && record->seat != remote_index + 1 &&
+            event->kind != QA_Q2_SVC_FRAME && event->kind != QA_Q2_SVC_COMMAND) continue;
         switch (event->kind) {
+        case QA_Q2_SVC_FRAME:
+            if (!remote_q2_frame_present(row, event->data.frame, error)) return false;
+            break;
+        case QA_Q2_SVC_COMMAND: {
+            qa_network_q2_state state;
+            if (!qa_network_q2_state_read(row->options.domain.runtime,
+                row->options.domain.client, &state, error)) return false;
+            if (!state.retiring && !qa_network_q2_client_stufftext(row->options.domain.runtime,
+                row->options.domain.client, record->seat, event->data.print.text, waiting, error)) return false;
+            if (*waiting) return true;
+            break;
+        }
         case QA_Q2_SVC_CONFIGSTRING:
             if (!remote_q2_config_set(row, event->data.config.index, event->data.config.value, error)) return false;
             break;

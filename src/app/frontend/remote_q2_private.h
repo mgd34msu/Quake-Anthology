@@ -107,6 +107,8 @@ struct frontend_remote_q2 {
     qa_arena effect_storage;
     qa_event_ring *events;
     uint64_t event_cursor;
+    size_t event_record_cursor;
+    bool event_consuming;
     struct frontend_q2_entity_pose *effect_poses;
     size_t effect_pose_capacity;
     float fraction, frame_ms, height_previous, height_current;
@@ -204,7 +206,8 @@ bool remote_q2_download_path_valid(const char *);
 qa_fs_root *remote_q2_download_destination(const frontend_remote_q2 *, const char *);
 uint64_t remote_q2_download_extent(const frontend_remote_q2 *);
 bool remote_q2_download_clear(frontend_remote_q2 *, qa_error *);
-bool remote_q2_records(frontend_remote_q2 *, const qa_q2_server_record *, size_t, qa_error *);
+bool remote_q2_records(frontend_remote_q2 *, const qa_q2_server_record *, size_t, bool *waiting, qa_error *);
+bool remote_q2_frame_present(frontend_remote_q2 *, const qa_q2_wire_frame *, qa_error *);
 bool remote_q2_player_fog_receive(frontend_remote_q2 *, qa_error *);
 bool remote_q2_layout_adopt(frontend_remote_q2 *, const qa_q2_serverdata *, qa_error *);
 const qa_q2_entity *remote_q2_frame_entity(const qa_q2_wire_frame *, uint32_t);

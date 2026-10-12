@@ -142,11 +142,13 @@ typedef struct remote_q2_event_batch {
 
 static void events_retire(frontend_remote_q2 *row)
 {
+    if (row->event_consuming) return;
     while (row->event_cursor < qa_event_ring_next(row->events)) {
         const remote_q2_event_batch *batch = qa_event_ring_at(row->events, row->event_cursor++);
         if (batch->lease) qa_unified_frame_lease_release(batch->lease);
         qa_event_ring_retire(row->events, row->event_cursor);
     }
+    row->event_record_cursor = 0;
 }
 
 static bool content_clear(frontend_remote_q2 *row, qa_error *error)
@@ -366,11 +368,17 @@ static bool hook_frame(void *context, qa_net_client_id id, const qa_q2_wire_fram
 {
     (void)records; (void)count; frontend_remote_q2 *row = context;
     if (!row || row->busy || !hook_current(row, id, error) || !frame || !frame->valid || !row->media_ready) return false;
+    row->received_ns = received_ns;
+    return true;
+}
+bool remote_q2_frame_present(frontend_remote_q2 *row, const qa_q2_wire_frame *frame, qa_error *error)
+{
+    if (!frame->valid || !row->media_ready) return true;
     if (!remote_q2_clientinfo_settings(row,error)) return false;
     qa_q2_wire_frame held = {0};
     if (!qa_q2_frame_clone(frame, &held, error)) return false;
     qa_q2_frame_free(&row->previous); row->previous = row->frame; row->frame = held;
-    row->received_ns = received_ns; row->fraction = 0;
+    row->fraction = 0;
     row->frame_ms = row->data.server_fps ? 1000.0f / (float)row->data.server_fps : 100;
     if (remote_q2_rerelease_presentation(row)) {
         uint32_t seat;
@@ -405,7 +413,6 @@ static bool hook_frame(void *context, qa_net_client_id id, const qa_q2_wire_fram
             animation->server_frame=row->frame.server_frame;
         }
     }
-    ++row->busy;
     bool ok = remote_q2_player_fog_receive(row, error);
     if (ok && row->options.entities_changed) ok = row->options.entities_changed(row->options.context,
         &row->options.domain, error);
@@ -413,22 +420,37 @@ static bool hook_frame(void *context, qa_net_client_id id, const qa_q2_wire_fram
     if (ok && !row->options.demo) remote_q2_prediction_receive(row);
     if (ok && !row->options.demo) ok = remote_q2_prediction_replay(row, error);
     if (ok) ok = remote_q2_effects_frame(row, error);
-    --row->busy;
     return ok && remote_q2_live(row, error);
 }
-static bool events_consume(frontend_remote_q2 *row, qa_error *error)
+static bool events_consume(frontend_remote_q2 *row, bool *waiting, qa_error *error)
 {
     bool ok = true;
+    *waiting = false;
     while (ok && row->event_cursor < qa_event_ring_next(row->events)) {
         const remote_q2_event_batch *batch = qa_event_ring_at(row->events, row->event_cursor);
-        ++row->busy;
-        ok = remote_q2_records(row, batch->records, batch->count, error);
-        if (ok) ok = remote_q2_events_present(row, batch->records, batch->count, error);
-        if (ok) ok = row->options.records(row->options.context, &row->options.domain,
-            batch->records, batch->count, error);
-        if (ok && row->collision_dirty) ok = remote_q2_prediction_publish(row, error);
-        --row->busy;
+        row->event_consuming = true;
+        while (ok && !*waiting && row->event_record_cursor < batch->count) {
+            const qa_q2_server_record *record = batch->records + row->event_record_cursor;
+            bool command = record->event.kind == QA_Q2_SVC_COMMAND;
+            if (command) ok = remote_q2_records(row, record, 1, waiting, error);
+            ++row->busy;
+            if (ok && !command) ok = remote_q2_records(row, record, 1, waiting, error);
+            if (ok && !*waiting && !row->retired) ok = remote_q2_events_present(row, record, 1, error);
+            if (ok && !*waiting && !row->retired) ok = row->options.records(row->options.context,
+                &row->options.domain, record, 1, error);
+            if (ok && !*waiting && !row->retired && row->collision_dirty) ok = remote_q2_prediction_publish(row, error);
+            --row->busy;
+            if (ok && !*waiting) ++row->event_record_cursor;
+        }
+        row->event_consuming = false;
+        if (row->retired) {
+            events_retire(row);
+            *waiting = false;
+            break;
+        }
+        if (ok && *waiting) break;
         if (batch->lease) qa_unified_frame_lease_release(batch->lease);
+        row->event_record_cursor = 0;
         ++row->event_cursor;
         qa_event_ring_retire(row->events, row->event_cursor);
     }
@@ -439,24 +461,26 @@ static bool hook_records(void *context, qa_net_client_id id, const qa_q2_server_
 {
     frontend_remote_q2 *row = context;
     if (!hook_current(row, id, error)) return false;
-    qa_event_transaction transaction;
-    if (!qa_event_ring_begin(row->events, &transaction)) return false;
-    remote_q2_event_batch *batch = qa_event_ring_alloc(&transaction, sizeof(*batch),
-        _Alignof(remote_q2_event_batch), error);
-    if (!batch) { qa_event_ring_abort(&transaction); return false; }
-    *batch = (remote_q2_event_batch){records, count, lease};
-    if (lease && !qa_unified_frame_lease_retain(lease, error)) {
-        qa_event_ring_abort(&transaction); return false;
+    bool waiting;
+    if (row->event_cursor == qa_event_ring_next(row->events)) {
+        qa_event_transaction transaction;
+        if (!qa_event_ring_begin(row->events, &transaction)) return false;
+        remote_q2_event_batch *batch = qa_event_ring_alloc(&transaction, sizeof(*batch),
+            _Alignof(remote_q2_event_batch), error);
+        if (!batch) { qa_event_ring_abort(&transaction); return false; }
+        *batch = (remote_q2_event_batch){records, count, lease};
+        if (lease && !qa_unified_frame_lease_retain(lease, error)) {
+            qa_event_ring_abort(&transaction); return false;
+        }
+        if (!qa_event_ring_commit(&transaction, batch)) {
+            if (lease) qa_unified_frame_lease_release(lease);
+            return false;
+        }
     }
-    if (!qa_event_ring_commit(&transaction, batch)) {
-        if (lease) qa_unified_frame_lease_release(lease);
-        return false;
-    }
-    /* A restored decoder batch may use a cold owned allocation instead of a
-     * lease. All callbacks, including failure retirement, finish within this
-     * source loan, before the decoder can release its nested frame state. */
-    return events_consume(row, error) &&
-        (row->options.demo || remote_q2_prediction_replay(row, error)) && remote_q2_live(row, error);
+    /* Cold decoded storage remains owned by the receiver while preparation
+     * waits. Resume the admitted head rather than admitting it a second time. */
+    return events_consume(row, &waiting, error) && (row->retired ||
+        ((waiting || row->options.demo || remote_q2_prediction_replay(row, error)) && remote_q2_live(row, error)));
 }
 static bool hook_download(void *context, qa_net_client_id id, const qa_q2_server_event *event,
     bool *complete, qa_error *error)
@@ -553,7 +577,7 @@ bool frontend_remote_q2_hooks(frontend_remote_q2 *row, qa_network_q2_client_hook
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 session hooks require their actual retained Source");
     *out = (qa_network_q2_client_hooks){row, hook_current, hook_serverdata, hook_prepare, hook_frame,
         hook_records, hook_download, hook_cancel, hook_ack, hook_sent, hook_command,
-        hook_server_command, hook_drop}; return true;
+        hook_server_command, hook_drop, true}; return true;
 }
 bool frontend_remote_q2_metadata_read(const frontend_remote_q2 *row, frontend_remote_q2_view *out, qa_error *error)
 {

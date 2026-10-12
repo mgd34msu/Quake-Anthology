@@ -140,8 +140,9 @@ typedef struct qa_network_q2_client_hooks {
         const qa_q2_game_state *, qa_q2_preparation *, qa_error *);
     bool (*frame)(void *, qa_net_client_id, const qa_q2_wire_frame *,
         const qa_q2_server_record *, size_t record_count, uint64_t received_ns, qa_error *);
-    /* Decoded storage stays leased through the callback. Presentation may
-     * retain that lease while consuming admitted output records. */
+    /* Completed original record spans arrive in decode order. Storage stays
+     * leased through the callback; a consumer may retain the current loan
+     * while a command's Source preparation waits. */
     bool (*records)(void *, qa_net_client_id, const qa_q2_server_record *, size_t,
         qa_unified_frame_lease *, qa_error *);
     bool (*download)(void *, qa_net_client_id,
@@ -157,6 +158,9 @@ typedef struct qa_network_q2_client_hooks {
      * source_seat retains the service marker (0 broadcast, 1..N recipients). */
     bool (*server_command)(void *, qa_net_client_id, uint8_t source_seat, const char *, qa_error *);
     bool (*drop)(void *, qa_net_client_id, const char *, qa_error *);
+    /* This records consumer invokes client_stufftext for COMMAND records.
+     * Other clients retain the network state machine's direct dispatch. */
+    bool records_commands;
 } qa_network_q2_client_hooks;
 typedef struct qa_network_q2_client_policy {
     qa_q2_channel_options channel;
@@ -255,5 +259,10 @@ typedef struct qa_network_q2_state {
 } qa_network_q2_state;
 bool qa_network_q2_state_read(qa_network_runtime *, qa_net_client_id,
     qa_network_q2_state *, qa_error *);
+/* The single stufftext state-machine action. A retained records consumer calls
+ * it in record order; command_offset resumes after an asynchronous precache.
+ * Unrecognized lines use the existing server_command terminal callback. */
+bool qa_network_q2_client_stufftext(qa_network_runtime *, qa_net_client_id,
+    uint8_t source_seat, const char *, bool *waiting, qa_error *);
 
 #endif

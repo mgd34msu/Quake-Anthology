@@ -2471,6 +2471,177 @@ static void test_q2_retained_records(void)
         q2_records_free(&batch);
     }
 }
+typedef struct q2_record_delivery_test {
+    qa_network_runtime *runtime;
+    q2_session *session;
+    qa_net_client_id id;
+    const qa_q2_server_record *loan;
+    qa_q2_server_event_kind kinds[8];
+    size_t count, preparations, frames, before, after, tail, drops;
+    bool commands, cancel;
+} q2_record_delivery_test;
+
+static bool q2_record_admit(void *context, const qa_net_connect *request, qa_error *error)
+{ (void)context; (void)request; (void)error; return true; }
+static bool q2_record_current(void *context, qa_net_client_id id, qa_error *error)
+{ (void)error; return qa_net_client_id_equal(((q2_record_delivery_test *)context)->id, id); }
+static bool q2_record_serverdata(void *context, qa_net_client_id id, uint64_t generation,
+    const qa_q2_serverdata *data, qa_q2_preparation *result, qa_error *error)
+{
+    (void)generation;
+    CHECK(data->servercount == 7);
+    *result = QA_Q2_PREPARATION_READY;
+    return q2_record_current(context, id, error);
+}
+static bool q2_record_prepare(void *context, qa_net_client_id id, uint64_t generation,
+    const qa_q2_game_state *game, qa_q2_preparation *result, qa_error *error)
+{
+    (void)generation;
+    q2_record_delivery_test *state = context;
+    CHECK(game->data.servercount == 7);
+    ++state->preparations;
+    *result = state->cancel ? QA_Q2_PREPARATION_CANCELED :
+        state->preparations == 1 ? QA_Q2_PREPARATION_WAITING : QA_Q2_PREPARATION_READY;
+    return q2_record_current(context, id, error);
+}
+static bool q2_record_frame(void *context, qa_net_client_id id, const qa_q2_wire_frame *frame,
+    const qa_q2_server_record *records, size_t count, uint64_t time, qa_error *error)
+{
+    (void)records; (void)count;
+    q2_record_delivery_test *state = context;
+    CHECK(frame->valid && time == 123);
+    CHECK(frame->server_frame == (int32_t)++state->frames);
+    return q2_record_current(context, id, error);
+}
+static bool q2_record_command(void *context, qa_net_client_id id, uint8_t seat,
+    const char *text, qa_error *error)
+{
+    q2_record_delivery_test *state = context;
+    CHECK(seat == 0);
+    if (!strcmp(text, "before")) ++state->before;
+    else if (!strcmp(text, "after")) ++state->after;
+    else { CHECK(!strcmp(text, "tail")); ++state->tail; }
+    return q2_record_current(context, id, error);
+}
+static bool q2_record_consume(void *context, qa_net_client_id id,
+    const qa_q2_server_record *records, size_t count, qa_unified_frame_lease *lease, qa_error *error)
+{
+    (void)lease;
+    q2_record_delivery_test *state = context;
+    CHECK(count == 1 && q2_record_current(context, id, error));
+    state->loan = records;
+    bool waiting = false;
+    bool ok = records->event.kind != QA_Q2_SVC_COMMAND || !state->commands ||
+        qa_network_q2_client_stufftext(state->runtime, id, records->seat,
+            records->event.data.print.text, &waiting, error);
+    /* Even cancellation must leave cold decoded storage alive through this
+     * callback; the enclosing continuation retires it afterward. */
+    CHECK(state->session->state.client.batch.records != NULL);
+    if (records->event.kind == QA_Q2_SVC_COMMAND) CHECK(records->event.data.print.text[0] != 0);
+    if (ok && !waiting) {
+        CHECK(state->count < sizeof(state->kinds) / sizeof(*state->kinds));
+        state->kinds[state->count++] = records->event.kind;
+    }
+    state->loan = NULL;
+    return ok;
+}
+static bool q2_record_cancel(void *context, qa_net_client_id id, qa_error *error)
+{
+    q2_record_delivery_test *state = context;
+    if (state->loan) CHECK(state->loan->event.kind == QA_Q2_SVC_COMMAND);
+    return q2_record_current(context, id, error);
+}
+static bool q2_record_drop(void *context, qa_net_client_id id, const char *reason, qa_error *error)
+{
+    (void)reason;
+    q2_record_delivery_test *state = context;
+    CHECK(state->session->state.client.batch.records != NULL);
+    if (state->loan) CHECK(state->loan->event.data.print.text[0] != 0);
+    ++state->drops;
+    return q2_record_current(context, id, error);
+}
+static bool q2_record_download(void *context, qa_net_client_id id,
+    const qa_q2_server_event *event, bool *complete, qa_error *error)
+{ (void)event; *complete = false; return q2_record_current(context, id, error); }
+static bool q2_record_ack(void *context, qa_net_client_id id, uint32_t sequence, uint64_t time, qa_error *error)
+{ (void)sequence; (void)time; return q2_record_current(context, id, error); }
+static bool q2_record_sent(void *context, qa_net_client_id id, qa_net_seat_id seat,
+    uint32_t sequence, uint64_t number, const qa_q2_usercmd *command, uint64_t time, qa_error *error)
+{ (void)seat; (void)sequence; (void)number; (void)command; (void)time; return q2_record_current(context, id, error); }
+static bool q2_record_input(void *context, const qa_usercmd *command, qa_q2_usercmd *out, qa_error *error)
+{ (void)context; (void)command; (void)error; *out = (qa_q2_usercmd){0}; return true; }
+static void test_q2_record_delivery(void)
+{
+    for (size_t pass = 0; pass < 5; ++pass) {
+        qa_error error = {0}; qa_net_loopback *hub; qa_net_transport *client, *server;
+        CHECK(qa_net_loopback_create((qa_net_limits){65535, 8}, &hub, &error));
+        CHECK(qa_net_loopback_bind(hub, "client", &client, &error));
+        CHECK(qa_net_loopback_bind(hub, "server", &server, &error));
+        q2_record_delivery_test state = {.commands = pass < 3, .cancel = pass == 2 || pass == 4};
+        qa_network_options options = {.owner = 71, .clients = 1, .packets_per_pump = 8,
+            .hooks = {.admit = q2_record_admit}};
+        CHECK(qa_network_create(client, &options, &state.runtime, &error));
+        qa_net_protocol_id protocol = {.kind = QA_NET_Q2_34};
+        qa_net_seat_binding seat = {.seat = {.owner = 71, .index = 0}, .remote_index = 0};
+        qa_net_connect request = {.attachment = QA_NET_LOCAL_SEAT, .endpoint = *qa_net_transport_address(server),
+            .protocol = protocol, .seats = &seat, .seat_count = 1};
+        qa_network_q2_client_policy policy = {.channel = {.protocol = protocol}, .pending_commands = 1,
+            .messages = {.demo = true, .config_strings = 2048, .inventory_slots = 256, .history_capacity = 2}};
+        qa_network_q2_client_hooks hooks = {.context = &state, .current = q2_record_current,
+            .server_data = q2_record_serverdata, .prepare = q2_record_prepare, .frame = q2_record_frame,
+            .records = q2_record_consume, .download = q2_record_download, .cancel_loading = q2_record_cancel,
+            .acknowledged = q2_record_ack, .sent = q2_record_sent, .command = q2_record_input,
+            .server_command = q2_record_command, .drop = q2_record_drop};
+        if (state.commands) hooks.records_commands = true;
+        CHECK(qa_network_attach_q2_client(state.runtime, &request, &policy, &hooks, 0, &state.id, &error));
+        state.session = q2_get(state.runtime, state.id, false, &error); CHECK(state.session);
+        uint8_t bytes[4096]; qa_net_writer writer; qa_q2_codec codec;
+        CHECK(qa_q2_codec_init(&codec, protocol, &error));
+        qa_net_writer_init(&writer, bytes, sizeof(bytes), &error);
+        qa_q2_serverdata data = {.servercount = 7, .attractloop = true, .gamedir = "baseq2", .levelname = "unit"};
+        CHECK(qa_q2_write_serverdata(&codec, &writer, &data));
+        qa_q2_server_event event = {.kind = QA_Q2_SVC_PRINT, .data.print.text = "unit"};
+        CHECK(qa_q2_server_event_write(&codec, &writer, &event));
+        event = (qa_q2_server_event){.kind = QA_Q2_SVC_COMMAND, .data.print.text = "before;precache 7;after"};
+        CHECK(qa_q2_server_event_write(&codec, &writer, &event));
+        qa_q2_wire_frame frame = {.valid = true, .server_frame = 1, .delta_frame = -1, .player_count = 1};
+        CHECK(qa_q2_frame_write(&codec, &writer, &frame, NULL, (qa_q2_entity_span){0}, 1));
+        event = (qa_q2_server_event){.kind = QA_Q2_SVC_PRINT, .data.print.text = "unit"};
+        CHECK(qa_q2_server_event_write(&codec, &writer, &event));
+        frame.server_frame = 2;
+        CHECK(qa_q2_frame_write(&codec, &writer, &frame, NULL, (qa_q2_entity_span){0}, 1));
+        event = (qa_q2_server_event){.kind = QA_Q2_SVC_COMMAND, .data.print.text = "tail"};
+        CHECK(qa_q2_server_event_write(&codec, &writer, &event));
+        CHECK(qa_network_q2_client_demo_receive(state.runtime, state.id,
+            (qa_bytes){bytes, qa_net_writer_size(&writer)}, 123, &error));
+        if (pass == 1 || pass == 2 || pass == 4) {
+            q2_records cold = {.received_ns = state.session->state.client.batch.received_ns};
+            for (size_t i = 0; i < state.session->state.client.batch.count; ++i)
+                CHECK(q2_record_retain(&cold, state.session->state.client.batch.records + i, &error));
+            q2_records_free(&state.session->state.client.batch); state.session->state.client.batch = cold;
+            CHECK(!cold.lease);
+        }
+        CHECK(qa_network_q2_client_continue(state.runtime, state.id, &error));
+        CHECK(state.before == 1 && state.after == 0 && state.tail == 0 && state.frames == 0);
+        if (state.cancel) {
+            CHECK(state.drops == 1 && state.session->retiring);
+        } else {
+            q2_client *held = &state.session->state.client;
+            CHECK(held->preparation_held && held->batch.cursor == 2 && held->command_offset == strlen("before;precache 7;"));
+            CHECK(state.count == 2 && state.kinds[0] == QA_Q2_SVC_SERVERDATA && state.kinds[1] == QA_Q2_SVC_PRINT);
+            CHECK(qa_network_q2_client_continue(state.runtime, state.id, &error));
+            static const qa_q2_server_event_kind expected[] = {QA_Q2_SVC_SERVERDATA, QA_Q2_SVC_PRINT,
+                QA_Q2_SVC_COMMAND, QA_Q2_SVC_FRAME, QA_Q2_SVC_PRINT, QA_Q2_SVC_FRAME, QA_Q2_SVC_COMMAND};
+            CHECK(state.count == sizeof(expected) / sizeof(*expected) && !memcmp(state.kinds, expected, sizeof(expected)));
+            CHECK(state.before == 1 && state.after == 1 && state.tail == 1 && state.frames == 2 && state.preparations == 2);
+            CHECK(held->command_offset == 0 && !held->preparation_held);
+            CHECK(qa_network_q2_client_continue(state.runtime, state.id, &error));
+            CHECK(state.count == sizeof(expected) / sizeof(*expected) && state.before == 1 && state.after == 1 && state.tail == 1);
+        }
+        CHECK(!state.session->state.client.batch.records && !state.session->state.client.receive_held);
+        qa_network_destroy(state.runtime); qa_net_transport_close(server); qa_net_loopback_close(hub);
+    }
+}
 static void test_q2_owned_frames(void)
 {
     const qa_net_protocol protocols[]={QA_NET_Q2_34,QA_NET_Q2REPRO_1038};
@@ -3050,6 +3221,7 @@ int main(int argc, char **argv)
     test_q1_lightstyle_event();
     test_q2_owned_frames();
     test_q2_retained_records();
+    test_q2_record_delivery();
     test_actor_index_lifetimes();
     test_q1_gameplay();
     test_guest();
