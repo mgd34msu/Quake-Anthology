@@ -1,4 +1,5 @@
 #include "supplies.h"
+#include "control_frame.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q1_supply.h"
 #include "qa/game_q1_bots.h"
@@ -10,6 +11,7 @@
 #include "qa/application_supplies_save.h"
 #include "qa/source_save.h"
 #include "qa/text.h"
+#include "qa/pool.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -310,6 +312,8 @@ typedef struct supply_pair {
     qa_pickup_rule *pickup_rules;
     size_t pickup_rule_count;
     qa_actor_index actors;
+    qa_pool actor_pool;
+    size_t timer_offset;
     bool native;
 } supply_pair;
 typedef struct supply_timer {
@@ -324,6 +328,7 @@ typedef struct supply_actor {
     qa_actor_id actor;
     supply_timer *timers;
     size_t timer_count;
+    size_t storage_slot;
     bool timers_ready;
     qa_pickup_lease pickups;
     bool pickup_imported;
@@ -333,6 +338,8 @@ struct application_supplies {
     qa_inventory *inventory;
     supply_pair *pairs;
     supply_actor *actors;
+    supply_actor *retired;
+    qa_arena storage;
     size_t calls;
     bool admitting;
 };
@@ -670,6 +677,28 @@ static void actor_link(application_supplies *owner, supply_actor *entry) {
     owner->actors = entry;
     qa_actor_index_put(&entry->pair->actors, entry->actor, (size_t)(uintptr_t)entry);
 }
+static void actor_dispose(supply_actor *entry) {
+    application_supplies *owner = entry->pair->owner;
+    if (owner->calls) {
+        entry->next = owner->retired;
+        owner->retired = entry;
+    } else qa_pool_release(&entry->pair->actor_pool, entry->storage_slot);
+}
+static void actor_list_free(supply_actor *head) {
+    while (head) {
+        supply_actor *next = head->next;
+        actor_dispose(head);
+        head = next;
+    }
+}
+static void supplies_leave(application_supplies *owner) {
+    if (--owner->calls) return;
+    while (owner->retired) {
+        supply_actor *entry = owner->retired;
+        owner->retired = entry->next;
+        qa_pool_release(&entry->pair->actor_pool, entry->storage_slot);
+    }
+}
 static bool original_player_current(application_provider *provider, qa_actor_id actor,
     qa_error *error) {
     if (provider->kind == APPLICATION_PROVIDER_QC) {
@@ -808,7 +837,7 @@ static bool original_q3_take(void *opaque, const qa_pickup_offer *offer,
         &accepted, error) && supply_current(pair, offer->recipient, error);
     if (ok) *out = qa_pickup_current(execution)
         ? (accepted ? QA_PICKUP_ACCEPTED : QA_PICKUP_REFUSED) : QA_PICKUP_STALE;
-    --owner->calls;
+    supplies_leave(owner);
     return ok;
 }
 static void pickup_rules_free(supply_pair *pair) {
@@ -910,6 +939,34 @@ static bool timer_profile_valid(supply_pair *pair, qa_error *error) {
             return application_fail(error, QA_ERROR_ARGUMENT, "Mapped ammo pool has no original Q3 regeneration rule");
     return true;
 }
+static bool actor_storage_prepare(supply_pair *pair, qa_error *error) {
+    size_t alignment = _Alignof(supply_timer);
+    pair->timer_offset = (sizeof(supply_actor) + alignment - 1) & ~(alignment - 1);
+    if (pair->profile.ammo_owner_count >
+        (SIZE_MAX - pair->timer_offset) / sizeof(supply_timer))
+        return application_fail(error, QA_ERROR_MEMORY, "Supply actor payload exceeds native extent");
+    size_t stride = pair->timer_offset + pair->profile.ammo_owner_count * sizeof(supply_timer);
+    if (alignment < _Alignof(supply_actor)) alignment = _Alignof(supply_actor);
+    return qa_pool_prepare(&pair->actor_pool, &pair->owner->storage,
+        qa_actors_capacity(qa_session_actors(pair->owner->application->session)),
+        stride, alignment, error);
+}
+static supply_actor *actor_take(supply_pair *pair, qa_error *error) {
+    if (pair->actor_pool.head == SIZE_MAX &&
+        !qa_pool_extend(&pair->actor_pool, &pair->owner->storage, 1, error)) return NULL;
+    size_t slot;
+    supply_actor *entry = qa_pool_take(&pair->actor_pool, &slot);
+    if (!entry) {
+        application_fail(error, QA_ERROR_MEMORY, "Retaining supply actor admission");
+        return NULL;
+    }
+    memset(entry, 0, pair->actor_pool.stride);
+    entry->pair = pair;
+    entry->storage_slot = slot;
+    if (pair->profile.ammo_owner_count)
+        entry->timers = (supply_timer *)((uint8_t *)entry + pair->timer_offset);
+    return entry;
+}
 
 bool application_supplies_create(qa_application *app, qa_inventory *inventory,
     application_supplies **out, qa_error *error) {
@@ -918,6 +975,7 @@ bool application_supplies_create(qa_application *app, qa_inventory *inventory,
     *out = NULL;
     application_supplies *owner = calloc(1, sizeof(*owner));
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "Allocating application supplies");
+    qa_arena_init(&owner->storage, 0);
     owner->application = app; owner->inventory = inventory; *out = owner;
     return true;
 }
@@ -939,13 +997,14 @@ bool application_supplies_destroy(application_supplies *owner, qa_error *error) 
         owner->actors = entry->next;
         if (owner->actors) owner->actors->previous = &owner->actors;
         qa_actor_index_remove(&entry->pair->actors, entry->actor);
-        free(entry->timers); free(entry);
+        actor_dispose(entry);
     }
     while (owner->pairs) {
         supply_pair *pair = owner->pairs; owner->pairs = pair->next;
         qa_actor_index_destroy(&pair->actors);
         qa_supply_destroy(pair->supply); pickup_rules_free(pair); profile_free(&pair->profile); free(pair);
     }
+    qa_arena_destroy(&owner->storage);
     free(owner); return true;
 }
 bool application_supplies_prepare(application_supplies *owner, application_provider *source,
@@ -975,7 +1034,8 @@ bool application_supplies_prepare(application_supplies *owner, application_provi
             qa_supply_create(owner->inventory, &pair->profile, &hooks, &pair->supply, error) &&
             pickup_rules_build(pair, error);
     }
-    --owner->calls;
+    if (ok) ok = actor_storage_prepare(pair, error);
+    supplies_leave(owner);
     if (!ok) { qa_actor_index_destroy(&pair->actors); qa_supply_destroy(pair->supply); pickup_rules_free(pair); profile_free(&pair->profile); free(pair); return false; }
     pair->next = owner->pairs; owner->pairs = pair; return true;
 }
@@ -1000,7 +1060,7 @@ static bool destination_metadata(supply_pair *pair, qa_item_id item,
     return false;
 }
 static bool admission_entries(supply_pair *pair, qa_actor_id actor,
-    qa_inventory_entry **out, size_t *count, qa_error *error) {
+    qa_unified_frame_lease *storage, qa_inventory_entry **out, size_t *count, qa_error *error) {
     *out = NULL; *count = 0;
     qa_inventory_entry *current = NULL;
     size_t current_count = 0;
@@ -1009,15 +1069,28 @@ static bool admission_entries(supply_pair *pair, qa_actor_id actor,
     if (current_count > SIZE_MAX / sizeof(*current))
         return application_fail(error, QA_ERROR_MEMORY, "Supply inventory exceeds native extent");
     if (current_count) {
-        current = malloc(current_count * sizeof(*current));
-        if (!current) return application_fail(error, QA_ERROR_MEMORY, "Reading actual supply inventory");
+        current = qa_unified_frame_lease_alloc(storage, current_count,
+            sizeof(*current), _Alignof(qa_inventory_entry), error);
+        if (!current) return false;
         size_t read_count = 0;
         if (!qa_inventory_entries(pair->owner->inventory, actor, current, current_count, &read_count, error) ||
-            !pair_current(pair, actor, error)) { free(current); return false; }
+            !pair_current(pair, actor, error)) return false;
         current_count = read_count;
     }
     const qa_supply_mapping *lists[] = {pair->profile.weapons, pair->profile.ammo};
     size_t counts[] = {pair->profile.weapon_count, pair->profile.ammo_count};
+    size_t capacity = 0;
+    for (size_t list = 0; list < 2; ++list)
+        for (size_t i = 0; i < counts[list]; ++i) {
+            if (lists[list][i].count > SIZE_MAX - capacity)
+                return application_fail(error, QA_ERROR_MEMORY, "Supply admission exceeds native extent");
+            capacity += lists[list][i].count;
+        }
+    if (capacity) {
+        *out = qa_unified_frame_lease_alloc(storage, capacity,
+            sizeof(**out), _Alignof(qa_inventory_entry), error);
+        if (!*out) return false;
+    }
     bool ok = true;
     for (size_t list = 0; ok && list < 2; ++list)
         for (size_t i = 0; ok && i < counts[list]; ++i)
@@ -1031,15 +1104,8 @@ static bool admission_entries(supply_pair *pair, qa_actor_id actor,
                 for (size_t k = 0; k < current_count; ++k)
                     if (current[k].item == item) { entry = current[k]; found = true; break; }
                 if (!found && !destination_metadata(pair, item, &entry, error)) { ok = false; break; }
-                if (*count == SIZE_MAX / sizeof(**out)) {
-                    ok = application_fail(error, QA_ERROR_MEMORY, "Supply admission exceeds native extent");
-                    break;
-                }
-                qa_inventory_entry *grown = realloc(*out, (*count + 1) * sizeof(*grown));
-                if (!grown) { ok = application_fail(error, QA_ERROR_MEMORY, "Allocating supply admission entries"); break; }
-                *out = grown; grown[(*count)++] = entry;
+                (*out)[(*count)++] = entry;
             }
-    free(current);
     return ok;
 }
 bool application_supplies_admit(application_supplies *owner, application_provider *source,
@@ -1061,36 +1127,39 @@ bool application_supplies_admit(application_supplies *owner, application_provide
             if (ok) { existing->pickups = (qa_pickup_lease){0}; existing->pickup_imported = false; }
         }
         if (ok) ok = pickup_actor_bind(existing, error);
-        owner->admitting = false; --owner->calls;
+        owner->admitting = false; supplies_leave(owner);
         return ok;
     }
-    supply_actor *entry = calloc(1, sizeof(*entry));
-    if (!entry) return application_fail(error, QA_ERROR_MEMORY, "Allocating supply actor admission");
-    entry->pair = pair; entry->actor = actor;
+    supply_actor *entry = actor_take(pair, error);
+    if (!entry) return false;
+    entry->actor = actor;
     ++owner->calls;
     owner->admitting = true;
     qa_inventory_entry *entries = NULL;
     size_t count = 0;
     qa_inventory_admission *admission = NULL;
-    bool ok = true;
-    if (!pair->native) {
+    qa_unified_frame_lease *storage = pair->native ? NULL :
+        application_control_storage_acquire(owner->application, error);
+    bool ok = pair->native || storage != NULL;
+    if (ok && !pair->native) {
         if (arsenal->kind == APPLICATION_PROVIDER_Q2)
             ok = qa_q2_items_admit_player(arsenal->state.q2, actor, false, error);
         else if (arsenal->kind == APPLICATION_PROVIDER_Q3)
             ok = qa_q3_inventory_admit(arsenal->state.q3, actor, error);
         if (ok) ok = pair_current(pair, actor, error);
     }
-    if (ok) ok = pair->native || (admission_entries(pair, actor, &entries, &count, error) &&
+    if (ok) ok = pair->native || (admission_entries(pair, actor, storage, &entries, &count, error) &&
         qa_inventory_prepare_entries(owner->inventory, actor, entries, count, &admission, error) &&
         pair_current(pair, actor, error) && qa_inventory_admission_validate(admission, error) &&
         pair_current(pair, actor, error) && qa_inventory_admission_commit(admission, error));
     if (ok) admission = NULL;
-    qa_inventory_admission_abort(admission); free(entries);
+    qa_inventory_admission_abort(admission);
+    qa_unified_frame_lease_release(storage);
     if (ok) { actor_link(owner, entry);
         ok = pickup_actor_bind(entry, error); }
-    else free(entry);
+    else actor_dispose(entry);
     owner->admitting = false;
-    --owner->calls; return ok;
+    supplies_leave(owner); return ok;
 }
 bool application_supplies_reconnect(application_supplies *owner, qa_error *error) {
     if (!owner || owner->admitting || !application_supplies_idle(owner))
@@ -1127,9 +1196,9 @@ bool application_supplies_pickup_rule(application_supplies *owner,qa_actor_id ac
     if (!rule) return application_fail(error, QA_ERROR_FORMAT, "Saved selected pickup has no authored mapping rule");
     supply_actor *entry = actor_find(owner, pair, actor);
     if (!entry) {
-        entry = calloc(1, sizeof(*entry));
-        if (!entry) return application_fail(error, QA_ERROR_MEMORY, "Retaining restored selected pickup recipient");
-        entry->pair = pair; entry->actor = actor; actor_link(owner, entry);
+        entry = actor_take(pair, error);
+        if (!entry) return false;
+        entry->actor = actor; actor_link(owner, entry);
     }
     if (entry->pickup_imported && entry->pickups.serial != serial)
         return application_fail(error, QA_ERROR_FORMAT, "Saved selected pickup changed its actual registration identity");
@@ -1145,7 +1214,7 @@ void application_supplies_actor_released(application_supplies *owner, qa_actor_r
         qa_actor_index_remove(&pair->actors, actor.id);
         *entry->previous = entry->next;
         if (entry->next) entry->next->previous = entry->previous;
-        free(entry->timers); free(entry);
+        actor_dispose(entry);
     }
 }
 bool application_supplies_ammo_destination(application_supplies *owner,
@@ -1187,7 +1256,7 @@ bool application_supplies_weapon_sources(application_supplies *owner, applicatio
     bool ok = supply_current(pair, actor, error) &&
         qa_supply_weapon_sources(&pair->profile, selected, selected_count,
             original, original_count, out, error) && supply_current(pair, actor, error);
-    --owner->calls; return ok;
+    supplies_leave(owner); return ok;
 }
 bool application_supplies_source_for(void *opaque, qa_actor_id actor, qa_supply **out,
     qa_error *error) {
@@ -1290,14 +1359,17 @@ bool application_supplies_cheat_arsenal(void *context, qa_actor_id actor,
     size_t definition_count = 0, entry_count = 0, written = 0;
     qa_item_definition *definitions = NULL;
     qa_inventory_entry *entries = NULL;
-    bool okay = qa_inventory_entries(owner->inventory, actor, NULL, 0,
+    qa_unified_frame_lease *storage = application_control_storage_acquire(app, error);
+    bool okay = storage && qa_inventory_entries(owner->inventory, actor, NULL, 0,
         &entry_count, error) && supply_current(pair, actor, error);
     if (okay && (entry_count > SIZE_MAX / sizeof(*definitions) ||
         entry_count > SIZE_MAX / sizeof(*entries)))
         okay = application_fail(error, QA_ERROR_MEMORY, "Selected grant exceeds native inventory extent");
     if (okay) {
-        definitions = entry_count ? malloc(entry_count * sizeof(*definitions)) : NULL;
-        entries = entry_count ? malloc(entry_count * sizeof(*entries)) : NULL;
+        definitions = entry_count ? qa_unified_frame_lease_alloc(storage, entry_count,
+            sizeof(*definitions), _Alignof(qa_item_definition), error) : NULL;
+        entries = entry_count ? qa_unified_frame_lease_alloc(storage, entry_count,
+            sizeof(*entries), _Alignof(qa_inventory_entry), error) : NULL;
         if (entry_count && (!definitions || !entries))
             okay = application_fail(error, QA_ERROR_MEMORY, "Retaining actual selected arsenal grant");
     }
@@ -1343,8 +1415,8 @@ bool application_supplies_cheat_arsenal(void *context, qa_actor_id actor,
         okay = application_fail(error, QA_ERROR_UNSUPPORTED,
             "Selected cheat grant has no admitted arsenal definitions");
     if (okay) *handled = true;
-    free(definitions); free(entries);
-    --owner->calls;
+    qa_unified_frame_lease_release(storage);
+    supplies_leave(owner);
     return okay;
 }
 static bool starter_count(supply_pair *pair, qa_actor_id actor, qa_item_id item,
@@ -1384,7 +1456,7 @@ bool application_supplies_spawn(application_supplies *owner, application_provide
                     "Q1 source spawn has no actual native or original player declaration");
             if (ok) ok = qa_q1_selected_arsenal_spawn(arsenal->state.q1, actor,
                 weapon, maximum, &preference, error) && supply_current(pair, actor, error);
-            --owner->calls;
+            supplies_leave(owner);
             return ok;
         }
         ++owner->calls;
@@ -1406,20 +1478,22 @@ bool application_supplies_spawn(application_supplies *owner, application_provide
                 "Original QC weapon has no selected Q1 source definition");
         if (ok) ok = qa_q1_selected_arsenal_spawn(arsenal->state.q1, actor, weapon,
             maximum, NULL, error) && supply_current(pair, actor, error);
-        --owner->calls;
+        supplies_leave(owner);
         return ok;
     }
     ++owner->calls;
     bool ok = true;
     qa_inventory_entry *entries = NULL;
     size_t count = 0;
-    ok = qa_inventory_entries(owner->inventory, actor, NULL, 0, &count, error) &&
+    qa_unified_frame_lease *storage = application_control_storage_acquire(owner->application, error);
+    ok = storage && qa_inventory_entries(owner->inventory, actor, NULL, 0, &count, error) &&
         supply_current(pair, actor, error);
     if (ok && count > SIZE_MAX / sizeof(*entries))
         ok = application_fail(error, QA_ERROR_MEMORY, "Selected arsenal reset exceeds native extent");
     if (ok && count) {
-        entries = malloc(count * sizeof(*entries));
-        if (!entries) ok = application_fail(error, QA_ERROR_MEMORY, "Reading selected arsenal reset entries");
+        entries = qa_unified_frame_lease_alloc(storage, count, sizeof(*entries),
+            _Alignof(qa_inventory_entry), error);
+        if (!entries) ok = false;
     }
     size_t read_count = 0;
     if (ok) ok = qa_inventory_entries(owner->inventory, actor, entries, count, &read_count, error) &&
@@ -1435,7 +1509,7 @@ bool application_supplies_spawn(application_supplies *owner, application_provide
             source_item(pair, entries[i].item) && !selected;
         if (clear) ok = starter_count(pair, actor, entries[i].item, 0, false, error);
     }
-    free(entries);
+    qa_unified_frame_lease_release(storage);
     if (ok && arsenal->kind == APPLICATION_PROVIDER_Q1) {
         qa_q1_player_view initialized;
         ok = qa_q1_player_inventory_initialize(arsenal->state.q1, actor, error) &&
@@ -1498,7 +1572,7 @@ bool application_supplies_spawn(application_supplies *owner, application_provide
                 supply_current(pair, actor, error);
         }
     }
-    --owner->calls;
+    supplies_leave(owner);
     return ok;
 }
 bool application_supplies_source_spawned(void *opaque, qa_actor_id actor, qa_error *error) {
@@ -1750,7 +1824,7 @@ bool application_supplies_q3_preview(void *opaque, const qa_q3_supply_descriptor
             q3_descriptor_current(source, descriptor, error);
     if (ok) *out = result;
     else qa_supply_preview_free(&result);
-    --owner->calls; return ok;
+    supplies_leave(owner); return ok;
 }
 static bool selected_deathmatch(const application_supplies *owner, bool *out, qa_error *error) {
     const qa_launch_snapshot *snapshot = owner->application->routing_snapshot;
@@ -1795,7 +1869,7 @@ bool application_supplies_q3_take(void *opaque, const qa_q3_supply_descriptor *d
         }
         if (ok && *accepted) *respawn = offer.respawn;
     }
-    --owner->calls; return ok;
+    supplies_leave(owner); return ok;
 }
 
 static bool timers_require(supply_pair *pair, qa_actor_id actor, supply_actor **out, qa_error *error) {
@@ -1804,16 +1878,13 @@ static bool timers_require(supply_pair *pair, qa_actor_id actor, supply_actor **
         return entry ? false : application_fail(error, QA_ERROR_ARGUMENT, "Mapped ammo actor is not admitted");
     if (entry->timers_ready) { *out = entry; return true; }
     size_t count = pair->profile.ammo_owner_count;
-    if (count > SIZE_MAX / sizeof(supply_timer))
-        return application_fail(error, QA_ERROR_MEMORY, "Mapped ammo timers exceed native extent");
-    supply_timer *timers = count ? calloc(count, sizeof(*timers)) : NULL;
-    if (count && !timers) return application_fail(error, QA_ERROR_MEMORY, "Allocating mapped ammo timers");
+    supply_timer *timers = entry->timers;
     for (size_t i = 0; i < count; ++i) {
         qa_supply_source_owner binding = pair->profile.ammo_owners[i];
         timers[i] = (supply_timer){.item = binding.item, .source = binding.source,
             .weapon = timer_weapon(pair, binding.source)};
     }
-    entry->timers = timers; entry->timer_count = count; entry->timers_ready = true;
+    entry->timer_count = count; entry->timers_ready = true;
     bool ok = true;
     for (size_t i = 0; ok && i < count; ++i) {
         qa_inventory_entry resource;
@@ -1822,7 +1893,7 @@ static bool timers_require(supply_pair *pair, qa_actor_id actor, supply_actor **
     }
     if (!ok) {
         if (actor_find(pair->owner, pair, actor) == entry) {
-            free(entry->timers); entry->timers = NULL; entry->timer_count = 0; entry->timers_ready = false;
+            entry->timer_count = 0; entry->timers_ready = false;
         }
         return false;
     }
@@ -1876,7 +1947,7 @@ bool application_supplies_q3_ammo_regeneration(void *opaque, qa_actor_id actor,
         }
         if (ok) entry->timers[i].elapsed = total;
     }
-    --owner->calls; return ok;
+    supplies_leave(owner); return ok;
 }
 bool application_supplies_q3_ammo_stored(void *opaque, qa_actor_id actor, qa_q3_weapon weapon,
     int32_t value, qa_error *error) {
@@ -1895,7 +1966,7 @@ bool application_supplies_q3_ammo_stored(void *opaque, qa_actor_id actor, qa_q3_
     supply_pair *pair = pair_find(owner, source, arsenal);
     if (!pair) return application_fail(error, QA_ERROR_ARGUMENT, "Mapped ammo source write lost its prepared pair");
     if (pair->native) return true;
-    /* Source stores never construct the lazy timer owner. */
+    /* Source stores do not activate regeneration counters before their first use. */
     supply_actor *entry = actor_find(owner, pair, actor);
     if (entry && entry->timers_ready)
         for (size_t i = 0; i < entry->timer_count; ++i)
@@ -1912,9 +1983,6 @@ static supply_pair *pair_ordinal(application_supplies *owner, size_t ordinal) {
     supply_pair *pair = owner->pairs;
     while (pair && ordinal--) pair = pair->next;
     return pair;
-}
-static void actor_list_free(supply_actor *head) {
-    while (head) { supply_actor *next = head->next; free(head->timers); free(head); head = next; }
 }
 static bool roster_matches(application_supplies *owner, const supply_actor *saved, qa_error *error) {
     const struct application_player_roster *roster = owner->application->players;
@@ -2017,11 +2085,7 @@ static bool supply_actors_field(application_supplies *owner, qa_source_save_io *
     supply_actor **link = head;
     size_t pairs = pair_count(owner);
     for (size_t i = 0; i < count; ++i) {
-        if (reading) {
-            *link = calloc(1, sizeof(**link));
-            if (!*link) return application_fail(error, QA_ERROR_MEMORY, "Decoding actual supply actor admissions");
-        }
-        supply_actor *row = *link;
+        supply_actor *row = reading ? NULL : *link;
         size_t ordinal = 0;
         if (!reading) {
             supply_pair *pair = owner->pairs;
@@ -2029,7 +2093,11 @@ static bool supply_actors_field(application_supplies *owner, qa_source_save_io *
         }
         if (!pairs || !qa_source_save_count(io, &ordinal, pairs - 1))
             return application_fail(error, QA_ERROR_FORMAT, "Saved supply actor has no prepared source pair");
-        if (reading) row->pair = pair_ordinal(owner, ordinal);
+        if (reading) {
+            row = actor_take(pair_ordinal(owner, ordinal), error);
+            if (!row) return false;
+            *link = row;
+        }
         if (!qa_source_save_actor(io, &row->actor)) return false;
         if (!row->actor.registry)
             return application_fail(error, QA_ERROR_FORMAT, "Saved supply admission has no actual actor");
@@ -2038,8 +2106,6 @@ static bool supply_actors_field(application_supplies *owner, qa_source_save_io *
         if (reading && row->timer_count) {
             if (row->timer_count > (io->input.size - io->offset) / 12)
                 return application_fail(error, QA_ERROR_FORMAT, "Truncated saved mapped ammo pools");
-            row->timers = calloc(row->timer_count, sizeof(*row->timers));
-            if (!row->timers) return application_fail(error, QA_ERROR_MEMORY, "Decoding actual mapped ammo counters");
         }
         for (size_t j = 0; j < row->timer_count; ++j) {
             supply_timer *timer = row->timers + j;
@@ -2078,10 +2144,14 @@ bool qa_application_supplies_capture(qa_application *app, qa_buffer *out, qa_err
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Supply capture requires an owned output");
     if (!supply_codec_ready(app, error)) return false;
     application_supplies *owner = app->supplies;
+    qa_unified_frame_lease *storage = application_control_storage_acquire(app, error);
+    if (!storage) return false;
     supply_actor *copy = NULL, **tail = &copy;
     for (const supply_actor *row = owner->actors; row; row = row->next) {
-        *tail = calloc(1, sizeof(**tail));
-        if (!*tail) { actor_list_free(copy); return application_fail(error, QA_ERROR_MEMORY, "Capturing actual supply admissions"); }
+        *tail = qa_unified_frame_lease_alloc(storage, 1, sizeof(**tail),
+            _Alignof(supply_actor), error);
+        if (!*tail) { qa_unified_frame_lease_release(storage); return false; }
+        **tail = (supply_actor){0};
         (*tail)->pair = row->pair; (*tail)->actor = row->actor; tail = &(*tail)->next;
     }
     ++owner->calls;
@@ -2094,8 +2164,9 @@ bool qa_application_supplies_capture(qa_application *app, qa_buffer *out, qa_err
         if (ok) {
             row->timers_ready = actual->timers_ready; row->timer_count = actual->timer_count;
             if (row->timer_count) {
-                row->timers = malloc(row->timer_count * sizeof(*row->timers));
-                if (!row->timers) { ok = application_fail(error, QA_ERROR_MEMORY, "Capturing mapped ammo counters"); break; }
+                row->timers = qa_unified_frame_lease_alloc(storage, row->timer_count,
+                    sizeof(*row->timers), _Alignof(supply_timer), error);
+                if (!row->timers) { ok = false; break; }
                 memcpy(row->timers, actual->timers, row->timer_count * sizeof(*row->timers));
             }
         }
@@ -2105,7 +2176,7 @@ bool qa_application_supplies_capture(qa_application *app, qa_buffer *out, qa_err
     if (ok) ok = qa_source_save_writer(&io, app->session, error) && supply_signature(&io, error) &&
         supply_pairs_field(owner, &io, error) && supply_actors_field(owner, &io, &copy, error) &&
         capture_current(owner, copy, error) && qa_source_save_finish(&io, &result);
-    qa_source_save_dispose(&io); actor_list_free(copy); --owner->calls;
+    qa_source_save_dispose(&io); qa_unified_frame_lease_release(storage); supplies_leave(owner);
     if (ok) *out = result;
     else qa_buffer_free(&result);
     return ok;
@@ -2148,6 +2219,6 @@ bool qa_application_supplies_restore(qa_application *app, qa_bytes bytes, qa_err
         }
     }
     actor_list_free(decoded);
-    --owner->calls;
+    supplies_leave(owner);
     return ok;
 }

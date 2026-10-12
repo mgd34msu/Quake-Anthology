@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "a73bb66ed1ceba36fc88d001d1bf9d468e114851",
+  "verified_main": "be9e10286558b79f93d811d758498b79f3adab85",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 186,
-    "open_source_observation": 185,
+    "fixed_source_build_core": 187,
+    "open_source_observation": 184,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -36307,8 +36307,9 @@
       "severity": "medium",
       "job": "32",
       "area": "render_presentation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "be9e10286558b79f93d811d758498b79f3adab85"
     },
     {
       "id": "J32-10",
@@ -42280,6 +42281,33 @@
       ],
       "record_directory": "/tmp/qa-ta3196-q3-membership-corrected-20261012",
       "conclusion": "Guest player bindings now use common pooled payloads plus full owner/source-slot membership; QVM and native remote Q3 roles use one common role index per owner instead of identity scans. Actual records, actor/launch state and checked teardown remain authoritative. Cold role reindexing retains list selection order and cleanup-refused roles; save field order is unchanged. Corrected a UI adapter name collision before the successful normal production build and seven core suites. No live-module, performance or whole-frame allocation claim."
+    },
+    {
+      "commit": "be9e10286558b79f93d811d758498b79f3adab85",
+      "source_tree": "efc5a0e06e2ba30cdc8deee06eba07ac955f5fa3",
+      "finding_ids": [
+        "J32-09"
+      ],
+      "files_rechecked": [
+        "include/qa/collision.h",
+        "src/render/scene/world.c",
+        "src/render/scene/world/internal.h",
+        "src/world/collision/geometry.c",
+        "tests/guest_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-shared-render-tree-20261012",
+      "conclusion": "World visibility and Q1 mirror traversal now use one read-only BSP tree visitor with caller-owned scratch and caller-defined ordering, pruning and light-mask payload. Private traversal engines/types are deleted. Existing gameplay BSP fixture covers both child orders, between callbacks, payload propagation, pruning and early stop; normal production build and seven core suites passed. Original renderer policy remains caller data; no screenshot or performance claim."
     }
   ],
   "verification_limits": [

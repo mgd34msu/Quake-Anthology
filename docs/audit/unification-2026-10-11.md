@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `a73bb66e`.
+Follow-up source changes were reviewed through main `be9e1028`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 186 have source fixes
+There are **374 overlapping source-review observations**: 187 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 185 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 184 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -368,3 +368,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `216e50cd` / 09-04: Fuzzy goal and weapon selectors prepare one common sealed traversal arena from all admitted separator aliases at create/bind/restore; ordinary evaluation only reads authoritative source records. Child/next and RNG order remain unchanged, with explicit mutation/free traversal prepared separately. Normal production build and seven core suites passed; genuinely new source admission may increase common storage, and no live or whole-frame allocation claim is made. Records: `/tmp/qa-ta3196-fuzzy-workspace-20261012`.
 
 - `a73bb66e` / 02-22, 04-004: Guest player bindings now use common pooled payloads plus full owner/source-slot membership; QVM and native remote Q3 roles use one common role index per owner instead of identity scans. Actual records, actor/launch state and checked teardown remain authoritative. Cold role reindexing retains list selection order and cleanup-refused roles; save field order is unchanged. Corrected a UI adapter name collision before the successful normal production build and seven core suites. No live-module, performance or whole-frame allocation claim. Records: `/tmp/qa-ta3196-q3-membership-corrected-20261012`.
+
+- `be9e1028` / J32-09: World visibility and Q1 mirror traversal now use one read-only BSP tree visitor with caller-owned scratch and caller-defined ordering, pruning and light-mask payload. Private traversal engines/types are deleted. Existing gameplay BSP fixture covers both child orders, between callbacks, payload propagation, pruning and early stop; normal production build and seven core suites passed. Original renderer policy remains caller data; no screenshot or performance claim. Records: `/tmp/qa-ta3196-shared-render-tree-20261012`.
