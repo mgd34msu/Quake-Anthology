@@ -484,10 +484,7 @@ static bool unified_scene_visuals(void *context,const qa_scene_world_input *worl
             angles = frontend_legacy_entity_angles(m->body_rules, m->media.model, m->effects,
                 angles, seconds, milliseconds);
         }
-        qa_model_transform_identity(&input.transform); qa_vec3 axes[3]; qa_angle_axis(angles,axes,QA_ANGLE_FLOAT_MATH);
-        input.transform.origin[0]=position.x;input.transform.origin[1]=position.y;input.transform.origin[2]=position.z;
-        for (unsigned a=0;a<3;++a) { input.transform.axes[a][0]=axes[a].x; input.transform.axes[a][1]=axes[a].y;
-            input.transform.axes[a][2]=axes[a].z; input.transform.scale[a]=scale; }
+        qa_model_transform_from_angles(&input.transform, position, angles, scale, QA_ANGLE_FLOAT_MATH);
         input.previous_origin=previous; input.ambient=qa_v3(1,1,1); input.identity_light=world->identity_light;
         input.video_frame=frontend_material_movies_frontend_resolve; input.video_context=r->frontend;
         if (m->flat_beam) {

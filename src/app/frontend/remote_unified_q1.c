@@ -849,12 +849,6 @@ bool frontend_unified_q1_model(frontend_unified_q1 *o,qa_actor_id actor,qa_strin
     if(ok && qa_actor_id_equal(actor,received) && content==o->weapon.content && path==o->weapon.path)input->frame=(uint32_t)p.a;
     return ok;
 }
-static void transform(qa_model_transform *out,qa_vec3 origin,qa_vec3 angles)
-{
-    qa_model_transform_identity(out);qa_vec3 axes[3];qa_angle_axis(angles,axes,QA_ANGLE_FLOAT_MATH);
-    out->origin[0]=origin.x;out->origin[1]=origin.y;out->origin[2]=origin.z;
-    for(unsigned i=0;i<3;++i){out->axes[i][0]=axes[i].x;out->axes[i][1]=axes[i].y;out->axes[i][2]=axes[i].z;}
-}
 static bool world_enter(frontend_unified_q1 *o,const qa_scene_world_input *world,qa_scene_frame *frame,qa_error *e)
 {
     if(!o || !world || frame!=&o->frontend->frame || o->busy || o->prepared ||
@@ -873,7 +867,7 @@ bool frontend_unified_q1_world_models(frontend_unified_q1 *o,const qa_scene_worl
             qa_scene_model_input input={.view=*view,.family=QA_GAME_Q1,.frame=s->frame,.old_frame=s->frame,.skin=s->skin,.color={1,1,1,1},
                 .source_path=s->path,.material_library=frontend_unified_model_materials(s->model.scene),.seconds=world->seconds,.identity_light=world->identity_light,.ambient={1,1,1},
                 .video_frame=world->video_frame,.video_context=world->video_context};
-            transform(&input.transform,s->origin,s->angles);
+            qa_model_transform_from_angles(&input.transform, s->origin, s->angles, 1, QA_ANGLE_FLOAT_MATH);
             if(s->model.brush_world)ok=qa_scene_world_submit_model(s->model.brush_world,s->model.inline_model,&input.transform,world,0,input.color,frame,e);
             else {ok=qa_scene_world_sample_light_input(frontend_unified_media_world(o->media),world,s->origin,&input.ambient,&input.directed,&input.light_direction,e) &&
                 frontend_legacy_model_input(frontend_unified_media_world(o->media),world,&input,e) && qa_scene_model_submit(s->model.scene,&input,frame,e);}

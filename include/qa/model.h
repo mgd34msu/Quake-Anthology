@@ -267,6 +267,8 @@ typedef struct qa_model_transform {
     float origin[3], axes[3][3], scale[3];
 } qa_model_transform;
 void qa_model_transform_identity(qa_model_transform *out);
+void qa_model_transform_from_angles(qa_model_transform *out, qa_vec3 origin, qa_vec3 angles,
+                                    float scale, qa_angle_math_rule rule);
 void qa_model_transform_point(const qa_model_transform *transform, const float point[3],
                               float out[3]);
 void qa_model_transform_direction(const qa_model_transform *transform, const float value[3],

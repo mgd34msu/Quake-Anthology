@@ -12,6 +12,20 @@ void qa_model_transform_identity(qa_model_transform *out) {
         out->scale[i] = 1;
     }
 }
+void qa_model_transform_from_angles(qa_model_transform *out, qa_vec3 origin, qa_vec3 angles,
+                                    float scale, qa_angle_math_rule rule) {
+    qa_vec3 axes[3];
+    qa_angle_axis(angles, axes, rule);
+    out->origin[0] = origin.x;
+    out->origin[1] = origin.y;
+    out->origin[2] = origin.z;
+    for (unsigned i = 0; i < 3; ++i) {
+        out->axes[i][0] = axes[i].x;
+        out->axes[i][1] = axes[i].y;
+        out->axes[i][2] = axes[i].z;
+        out->scale[i] = scale;
+    }
+}
 void qa_model_transform_direction(const qa_model_transform *t, const float value[3], float out[3]) {
     float scaled[3], result[3];
     for (unsigned i = 0; i < 3; ++i)

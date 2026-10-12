@@ -1081,18 +1081,6 @@ static bool entity_angles(qa_frontend *frontend, const qa_application_visual_vie
     return true;
 }
 
-static qa_model_transform transform(const qa_application_visual_view *view, qa_vec3 angles)
-{
-    qa_model_transform value;
-    qa_model_transform_identity(&value);
-    qa_vec3 axes[3]; qa_angle_axis(angles, axes,QA_ANGLE_FLOAT_MATH);
-    value.origin[0] = view->body.origin.x; value.origin[1] = view->body.origin.y; value.origin[2] = view->body.origin.z;
-    for (unsigned i = 0; i < 3; ++i) {
-        value.axes[i][0] = axes[i].x; value.axes[i][1] = axes[i].y; value.axes[i][2] = axes[i].z;
-        value.scale[i] = view->visual.scale;
-    }
-    return value;
-}
 static bool visual_flare(qa_frontend *frontend, const qa_application_visual_view *view,
     const qa_scene_world_input *world, qa_scene_frame *frame, qa_error *error)
 {
@@ -1202,12 +1190,8 @@ static bool local_legacy_view_weapon(qa_frontend *frontend, uint32_t seat, qa_ac
         !frontend_visual_model_acquire(frontend, weapon.provider, weapon.family,
             weapon.view_model, weapon.view_source, &model, error)) return false;
     if (media.shader_movies && !frontend_material_movies_frame(media.shader_movies, frame, error)) return false;
-    qa_vec3 axes[3]; qa_angle_axis(angles, axes,QA_ANGLE_FLOAT_MATH);
-    qa_model_transform placement; qa_model_transform_identity(&placement);
-    placement.origin[0] = origin.x; placement.origin[1] = origin.y; placement.origin[2] = origin.z;
-    for (size_t i = 0; i < 3; ++i) {
-        placement.axes[i][0] = axes[i].x; placement.axes[i][1] = axes[i].y; placement.axes[i][2] = axes[i].z;
-    }
+    qa_model_transform placement;
+    qa_model_transform_from_angles(&placement, origin, angles, 1, QA_ANGLE_FLOAT_MATH);
     uint32_t model_frame=q2_client_view_ready ? q2_client_view.gun_frame : weapon.frame>=0 ? (uint32_t)weapon.frame : 0;
     qa_scene_model_input input = {.view = world->view, .transform = placement,
         .previous_origin = origin, .color = {1, 1, 1, 1},
@@ -1256,15 +1240,10 @@ static bool static_model_prepare(qa_frontend *frontend, frontend_visual_owner *o
     frontend_static_model *row = calloc(1, sizeof(*row));
     if (!row) return frontend_fail(error, QA_ERROR_MEMORY, "Preparing source static model pose");
     row->baseline = *baseline;
-    qa_model_transform_identity(&row->transform);
-    qa_vec3 axes[3];
-    qa_angle_axis(qa_v3(baseline->angles[0], baseline->angles[1], baseline->angles[2]), axes,QA_ANGLE_FLOAT_MATH);
-    for (unsigned i = 0; i < 3; ++i) {
-        row->transform.origin[i] = baseline->origin[i];
-        row->transform.axes[i][0] = axes[i].x;
-        row->transform.axes[i][1] = axes[i].y;
-        row->transform.axes[i][2] = axes[i].z;
-    }
+    qa_model_transform_from_angles(&row->transform,
+        qa_v3(baseline->origin[0], baseline->origin[1], baseline->origin[2]),
+        qa_v3(baseline->angles[0], baseline->angles[1], baseline->angles[2]),
+        1, QA_ANGLE_FLOAT_MATH);
     bool okay = true;
     if (asset.has_inline_model) { row->is_inline = true; row->inline_model = asset.inline_model; }
     else {
@@ -1434,7 +1413,9 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
         if (view.visual.alpha <= 0 || view.visual.scale == 0) continue;
         qa_vec3 angles;
         if (!entity_angles(frontend, &view, NULL, &angles, error)) return false;
-        qa_model_transform placement = transform(&view, angles);
+        qa_model_transform placement;
+        qa_model_transform_from_angles(&placement, view.body.origin, angles,
+            view.visual.scale, QA_ANGLE_FLOAT_MATH);
         qa_vec4 color = {1, 1, 1, view.visual.alpha};
         if (view.visual.has_inline_model) {
             if (!qa_scene_world_submit_model(frontend->scene_world, view.visual.inline_model,
@@ -1460,7 +1441,8 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
             qa_model_transform model_placement = placement;
             if (view.family == QA_GAME_Q1 && model->model->format == QA_MODEL_MDL && (model->model->flags & 8)) {
                 if (!entity_angles(frontend, &view, model->model, &angles, error)) return false;
-                model_placement = transform(&view, angles);
+                qa_model_transform_from_angles(&model_placement, view.body.origin, angles,
+                    view.visual.scale, QA_ANGLE_FLOAT_MATH);
             }
             qa_scene_model_input input = {.view = world->view, .transform = model_placement,
                 .previous_origin = view.previous_origin, .color = color, .family = owner->family,

@@ -331,6 +331,20 @@ static fixture md5(void) {
 }
 
 int main(void) {
+    const float local[3] = {1, 2, 3};
+    for (qa_angle_math_rule rule = QA_ANGLE_FLOAT_MATH; rule <= QA_ANGLE_FLOAT_NATIVE_MATH; ++rule) {
+        qa_model_transform placement;
+        float point[3], direction[3];
+        qa_model_transform_from_angles(&placement, qa_v3(10, 20, 30), qa_v3(0, 0, 0), 2, rule);
+        qa_model_transform_direction(&placement, local, direction);
+        CHECK(direction[0] == 2 && direction[1] == 4 && direction[2] == 6);
+        qa_model_transform_point(&placement, local, point);
+        CHECK(point[0] == 12 && point[1] == 24 && point[2] == 36);
+        qa_model_transform_from_angles(&placement, qa_v3(10, 20, 30), qa_v3(0, 90, 0), 2, rule);
+        qa_model_transform_point(&placement, local, point);
+        CHECK(fabsf(point[0] - 6) < 0.00001f && fabsf(point[1] - 22) < 0.00001f);
+        CHECK(point[2] == 36);
+    }
     fixture fixtures[7] = {mdl(), md2(), md3(), md4(), md5(), sprite(false), sprite(true)};
     for (unsigned i = 0; i < 7; ++i) {
         qa_model m = load(&fixtures[i]);

@@ -64,18 +64,13 @@ static bool model_submit(frontend_remote_q1 *row, const frontend_remote_q1_entit
     if (!entity->entity.model || !entity->visible) return true;
     remote_q1_model *model = NULL;
     if (entity->model[0] != '*' && !remote_q1_model_read(row, entity, &model, error)) return false;
-    qa_model_transform transform; qa_model_transform_identity(&transform);
+    qa_model_transform transform;
     qa_vec3 origin = qa_v3(entity->entity.origin[0], entity->entity.origin[1], entity->entity.origin[2]);
-    qa_vec3 angles = qa_v3(entity->entity.angles[0], entity->entity.angles[1], entity->entity.angles[2]), axes[3];
+    qa_vec3 angles = qa_v3(entity->entity.angles[0], entity->entity.angles[1], entity->entity.angles[2]);
     if (model && !entity->view_weapon && entity->entity.number < 65536)
         angles = frontend_legacy_entity_angles(row->rules, model->source,
             0, angles, world->seconds, 0);
-    qa_angle_axis(angles, axes,QA_ANGLE_FLOAT_MATH);
-    transform.origin[0] = origin.x; transform.origin[1] = origin.y; transform.origin[2] = origin.z;
-    for (unsigned i = 0; i < 3; ++i) {
-        transform.axes[i][0] = axes[i].x; transform.axes[i][1] = axes[i].y; transform.axes[i][2] = axes[i].z;
-        transform.scale[i] = entity->scale;
-    }
+    qa_model_transform_from_angles(&transform, origin, angles, entity->scale, QA_ANGLE_FLOAT_MATH);
     qa_vec4 color = {1, 1, 1, entity->alpha};
     if (entity->model[0] == '*') {
         char *end; unsigned long number = strtoul(entity->model + 1, &end, 10);
