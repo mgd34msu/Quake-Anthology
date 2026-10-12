@@ -26,7 +26,7 @@
 #include "qa/q3_presentation_save.h"
 #include "qa/q3_assets_save.h"
 #include "qa/q3_assets_custody.h"
-#include "qa/scene_marks.h"
+#include "../../presentation/q3_native/marks.h"
 #include "qa/scene_world_save.h"
 #include "qa/strings.h"
 #include "qa/session.h"
@@ -505,16 +505,13 @@ static bool mark_fragments(void *context,const q3n_frame *f,const qa_vec3 *point
     qa_vec3 projection,qa_vec3 *output,size_t point_capacity,q3n_mark_fragment *fragments,
     size_t fragment_capacity,size_t *returned,qa_error *e)
 {
-    frontend_native_q3 *row=context; qa_q3_presentation_binding binding; qa_scene_mark_fragment native[128]; qa_scene_mark_result result;
+    frontend_native_q3 *row=context; qa_q3_presentation_binding binding; size_t result;
     if(fragment_capacity>128 || !returned || !frontend_native_q3_cut(row,f,e) ||
         !qa_q3_presentation_binding_read(f->presentation,&binding,e) || !binding.world ||
-        !qa_scene_world_mark_fragments(binding.world,points,count,projection,output,point_capacity,native,fragment_capacity,&result,e) ||
+        !q3n_world_mark_fragments(binding.world,&row->frontend->frame.storage,
+            points,count,projection,output,point_capacity,fragments,fragment_capacity,&result,e) ||
         !frontend_native_q3_cut(row,f,e))return false;
-    for(size_t i=0;i<result.fragment_count;++i) {
-        if(native[i].first_point>UINT32_MAX || native[i].point_count>UINT32_MAX)return frontend_fail(e,QA_ERROR_FORMAT,"Native mark fragment exceeds its source word");
-        fragments[i]=(q3n_mark_fragment){(uint32_t)native[i].first_point,(uint32_t)native[i].point_count};
-    }
-    *returned=result.fragment_count; return true;
+    *returned=result; return true;
 }
 static bool body_hidden(void *context,const q3n_frame *f,const qa_application_native_q3_entity *actual,bool *hidden,qa_error *e)
 {

@@ -376,7 +376,11 @@ bool remote_q2_frame_present(frontend_remote_q2 *row, const qa_q2_wire_frame *fr
     if (!frame->valid || !row->media_ready) return true;
     if (!remote_q2_clientinfo_settings(row,error)) return false;
     qa_q2_wire_frame held = {0};
-    if (!qa_q2_frame_clone(frame, &held, error)) return false;
+    if (frame->lease) {
+        /* Decoded records keep their immutable spans in this lease. */
+        if (!qa_unified_frame_lease_retain(frame->lease, error)) return false;
+        held = *frame;
+    } else if (!qa_q2_frame_clone(frame, &held, error)) return false;
     qa_q2_frame_free(&row->previous); row->previous = row->frame; row->frame = held;
     row->fraction = 0;
     row->frame_ms = row->data.server_fps ? 1000.0f / (float)row->data.server_fps : 100;

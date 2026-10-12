@@ -2,7 +2,6 @@
 #include "qa/binary.h"
 #include "../../presentation/q3_native/events_internal.h"
 #include "../../presentation/q3/internal.h"
-#include "qa/scene_marks.h"
 #include "qa/scene_world_save.h"
 #include "native_q3_client.h"
 #include "capture.h"
@@ -129,19 +128,12 @@ static bool marks(void *context, const q3n_frame *frame, const qa_vec3 *points, 
     size_t capacity, size_t *returned, qa_error *error)
 {
     frontend_selected_effects_group *group = context;
-    if (!returned || !active_current(group, frame, error) || capacity > SIZE_MAX / sizeof(qa_scene_mark_fragment)) return false;
-    qa_scene_mark_fragment *native = capacity ? calloc(capacity, sizeof(*native)) : NULL;
-    if (capacity && !native) return frontend_fail(error, QA_ERROR_MEMORY, "Allocating actual selected effect mark fragments");
-    qa_scene_mark_result result;
-    bool okay = qa_scene_world_mark_fragments(group->world, points, count, projection,
-        out, point_capacity, native, capacity, &result, error) && active_current(group, frame, error);
-    for (size_t i = 0; okay && i < result.fragment_count; ++i) {
-        if (native[i].first_point > UINT32_MAX || native[i].point_count > UINT32_MAX)
-            okay = frontend_fail(error, QA_ERROR_FORMAT, "Selected effect mark fragment exceeds its source word");
-        else fragments[i] = (q3n_mark_fragment){(uint32_t)native[i].first_point, (uint32_t)native[i].point_count};
-    }
-    if (okay) *returned = result.fragment_count;
-    free(native); return okay;
+    size_t result;
+    if (!returned || !active_current(group, frame, error) ||
+        !q3n_world_mark_fragments(group->world,&group->owner->frontend->frame.storage,
+            points,count,projection,out,point_capacity,fragments,capacity,&result,error) ||
+        !active_current(group, frame, error)) return false;
+    *returned=result;return true;
 }
 
 static double clock(void *context) { return (double)((frontend_selected_effects_group *)context)->time; }
@@ -171,8 +163,10 @@ static bool capture_ref(void *context, const qa_q3_ref_entity *ref, float radius
         size_t capacity = group->ref_capacity ? group->ref_capacity * 2 : 32;
         if (capacity < group->ref_capacity || capacity > SIZE_MAX / sizeof(*group->refs))
             return frontend_fail(error, QA_ERROR_MEMORY, "Selected effect reference capacity is exhausted");
-        frontend_selected_effects_ref *next = realloc(group->refs, capacity * sizeof(*next));
-        if (!next) return frontend_fail(error, QA_ERROR_MEMORY, "Capturing actual selected effect reference");
+        frontend_selected_effects_ref *next = qa_arena_grow(&group->owner->frontend->frame.storage,
+            group->refs,group->ref_count*sizeof(*next),capacity*sizeof(*next),
+            _Alignof(frontend_selected_effects_ref),error);
+        if (!next) return false;
         group->refs = next; group->ref_capacity = capacity;
     }
     group->refs[group->ref_count++] = (frontend_selected_effects_ref){*ref, radius}; return true;
@@ -190,7 +184,7 @@ bool frontend_selected_effects_group_dispose(frontend_selected_effects_group *gr
     group->view.presentation = NULL;
     q3n_events_destroy(group->view.events); q3n_media_destroy(group->view.media);
     qa_q3_presentation_assets_destroy(group->view.assets); qa_audio_bank_destroy(group->view.sounds);
-    qa_launch_instance_lease_release(group->launch_lease); free(group->refs); free(group); return true;
+    qa_launch_instance_lease_release(group->launch_lease); free(group); return true;
 }
 
 bool frontend_selected_effects_empty(frontend_selected_effects_group *group,
@@ -205,6 +199,7 @@ bool frontend_selected_effects_empty(frontend_selected_effects_group *group,
     qa_q3_presentation_options backend = binding->options;
     backend.assets = group->view.assets; backend.owner = group->view.identity;
     backend.context = group; backend.clock = (qa_media_clock){group, clock};
+    backend.source_state = NULL; backend.source_scratch = NULL; backend.source_scene_membership = false;
     backend.audio_actor = NULL; backend.listener = NULL; backend.music = NULL; backend.frame_number = NULL;
     backend.milliseconds = NULL; backend.audio_bus = bus; backend.system_movie = NULL;
     backend.prepare_view = NULL; backend.submit_view = NULL; backend.prepare_picture = NULL;
@@ -311,7 +306,7 @@ static bool prepare_primary(qa_frontend *frontend, const frontend_effects_primar
             group_primary_current(group, primary, error);
         if (!okay) break;
         if (group->prepared && group->prepared_application_frame == source.application_frame &&
-            group->time == source.sample_time_ms) continue;
+            group->prepared_scene_frame == frontend->frame.sequence && group->time == source.sample_time_ms) continue;
         if (group->sampled && qa_i32_sub(source.sample_time_ms, group->previous_time) < 0) {
             okay = frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effect clock rewound without resetting its actual source owner"); break;
         }
@@ -321,13 +316,16 @@ static bool prepare_primary(qa_frontend *frontend, const frontend_effects_primar
         q3n_frame current = frame(group, &source, NULL, primary, &settings);
         qa_bounds bounds = qa_scene_world_bounds(group->world);
         current.refdef.origin = qa_vec_add(bounds.maxs, qa_v3(65536,65536,65536));
-        group->ref_count = 0;
-        okay = q3ne_current(&current, error) && qa_q3_presentation_clear(group->view.presentation, error) &&
+        group->refs = NULL; group->ref_count = group->ref_capacity = 0;
+        okay = qa_q3_presentation_frame(group->view.presentation,&frontend->frame,binding.options.viewport,error) &&
+            q3ne_current(&current, error) && qa_q3_presentation_clear(group->view.presentation, error) &&
             q3n_local_submit(&current, error) && q3n_marks_submit(&current, error) &&
+            q3p_scene_snapshot(group->view.presentation,error) &&
             q3ne_current(&current, error) && primary_current(frontend, primary);
         group->active_source = NULL; group->active_primary = NULL;
         if (okay) {
             group->previous_time = group->time; group->prepared_application_frame = source.application_frame;
+            group->prepared_scene_frame = frontend->frame.sequence;
             group->sampled = true; group->prepared = true;
         }
     }
@@ -672,7 +670,8 @@ bool frontend_selected_effects_round(qa_frontend *frontend, qa_error *error)
     if (!frontend->selected_effects) return true;
     for (frontend_selected_effects_group *group = frontend->selected_effects->groups; group; group = group->next) {
         if (!qa_q3_presentation_clear(group->view.presentation, error)) return false;
-        q3n_events_round(group->view.events); group->ref_count = 0; group->sampled = false;
+        q3n_events_round(group->view.events); group->refs = NULL;
+        group->ref_count = group->ref_capacity = 0; group->sampled = false;
         group->prepared = false;
         group->prepared_application_frame = 0;
         group->event_cursor = qa_application_events_next(frontend->application);

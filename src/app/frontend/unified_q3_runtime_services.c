@@ -7,9 +7,9 @@
 #include "q3_render_policy.h"
 #include "qa/network_q3.h"
 #include "qa/console_cvars_prepare.h"
-#include "qa/scene_marks.h"
 #include "qa/material_source_scratch.h"
 #include "../../presentation/q3_native/server_commands_internal.h"
+#include "../../presentation/q3_native/marks.h"
 #include "../../presentation/q3/internal.h"
 #include <math.h>
 #include <limits.h>
@@ -272,16 +272,11 @@ static bool fragments(void *context,const q3n_frame *f,const qa_vec3 *points,siz
     size_t *returned,qa_error *e)
 {
     frontend_unified_q3_runtime_services *o=context;
-    if(!returned || fragment_capacity>SIZE_MAX/sizeof(qa_scene_mark_fragment) || !cut(o,f,e))return false;
-    qa_scene_mark_fragment *rows=fragment_capacity?calloc(fragment_capacity,sizeof(*rows)):NULL;
-    if(fragment_capacity && !rows){qa_error_set(e,QA_ERROR_MEMORY,0,"Preparing compiled Source mark fragments");return false;}
-    qa_scene_mark_result result={0};qa_scene_world *world=frontend_unified_media_world(o->options.media);
-    bool okay=world && qa_scene_world_mark_fragments(world,points,count,projection,vertices,capacity,
-        rows,fragment_capacity,&result,e) && cut(o,f,e);
-    for(size_t i=0;okay && i<result.fragment_count;++i){
-        okay=rows[i].first_point<=UINT32_MAX && rows[i].point_count<=UINT32_MAX;
-        if(okay)out[i]=(q3n_mark_fragment){(uint32_t)rows[i].first_point,(uint32_t)rows[i].point_count};}
-    free(rows);if(okay)*returned=result.fragment_count;return okay;
+    if(!returned || !cut(o,f,e))return false;
+    size_t result;qa_scene_world *world=frontend_unified_media_world(o->options.media);
+    if(!world || !q3n_world_mark_fragments(world,&o->options.frontend->frame.storage,
+        points,count,projection,vertices,capacity,out,fragment_capacity,&result,e) || !cut(o,f,e))return false;
+    *returned=result;return true;
 }
 static bool body_hidden(void *context,const q3n_frame *f,const q3n_compiled_entity *row,bool *out,qa_error *e)
 { frontend_unified_q3_runtime_services *o=context;const q3n_player_fx_compiled_backend *b=&o->options.operations.player_fx;

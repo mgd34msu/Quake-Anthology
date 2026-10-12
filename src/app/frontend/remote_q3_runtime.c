@@ -16,7 +16,6 @@
 #include "../../presentation/q3_native/local_entities.h"
 #include "../../presentation/q3_native/player_state_internal.h"
 #include "qa/bsp.h"
-#include "qa/scene_marks.h"
 #include "qa/material_source_scratch.h"
 #include <limits.h>
 #include <math.h>
@@ -506,15 +505,11 @@ static bool world_contents(void *context,const q3n_frame *f,qa_vec3 point,uint32
 static bool mark_fragments(void *context,const q3n_frame *f,const qa_vec3 *points,size_t count,qa_vec3 projection,
     qa_vec3 *output,size_t point_capacity,q3n_mark_fragment *fragments,size_t fragment_capacity,size_t *returned,qa_error *e)
 {
-    frontend_remote_q3_runtime *o=context; qa_scene_mark_fragment native[128]; qa_scene_mark_result result;
+    frontend_remote_q3_runtime *o=context; size_t result;
     if(!returned || fragment_capacity>128 || !cut(o,f,e) ||
-       !qa_scene_world_mark_fragments(o->services.resources.world,points,count,projection,output,point_capacity,
-           native,fragment_capacity,&result,e) || !cut(o,f,e))return false;
-    for(size_t i=0;i<result.fragment_count;++i) {
-        if(native[i].first_point>UINT32_MAX || native[i].point_count>UINT32_MAX)return fail(e,QA_ERROR_FORMAT,"Remote mark fragment exceeds its source word");
-        fragments[i]=(q3n_mark_fragment){(uint32_t)native[i].first_point,(uint32_t)native[i].point_count};
-    }
-    *returned=result.fragment_count; return true;
+       !q3n_world_mark_fragments(o->services.resources.world,&o->frontend->frame.storage,
+           points,count,projection,output,point_capacity,fragments,fragment_capacity,&result,e) || !cut(o,f,e))return false;
+    *returned=result; return true;
 }
 static bool reached(void *context,const q3n_remote_frame *r,const q3n_remote_command *command,qa_error *e)
 {

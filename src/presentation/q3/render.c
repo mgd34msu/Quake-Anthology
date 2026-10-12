@@ -12,7 +12,7 @@ static bool source_model_namespace_retain(void *assets, qa_error *error)
 static void source_model_namespace_release(void *assets)
 { qa_q3_assets_release(assets); }
 
-static bool source_scene_snapshot(qa_q3_presentation *p, qa_error *error)
+bool q3p_scene_snapshot(qa_q3_presentation *p, qa_error *error)
 {
     q3p_scene_scratch_clear(p);
     qa_q3_source_scene_bank *bank = q3p_scene_bank(p, error);
@@ -1264,7 +1264,7 @@ bool qa_q3_presentation_render(qa_q3_presentation *p, const qa_q3_refdef *refdef
 {
     if (!refdef || !q3p_begin(p, error)) return false;
     if (!p->frame) return q3p_end(p, q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 scene has no actual frame owner"));
-    if (!source_scene_snapshot(p, error)) return q3p_end(p, false);
+    if (!q3p_scene_snapshot(p, error)) return q3p_end(p, false);
     int64_t x = (int64_t)p->options.viewport.x + refdef->x;
     int64_t y = (int64_t)p->options.viewport.y + refdef->y;
     bool ok = p->frame && !p->frame->group_count && refdef->width > 0 && refdef->height > 0 &&

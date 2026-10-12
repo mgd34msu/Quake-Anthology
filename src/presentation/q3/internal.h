@@ -147,6 +147,7 @@ bool q3p_reserve(void **, size_t *capacity, size_t count, size_t width, qa_error
 bool q3p_begin(qa_q3_presentation *, qa_error *);
 bool q3p_end(qa_q3_presentation *, bool);
 qa_q3_source_scene_bank *q3p_scene_bank(const qa_q3_presentation *, qa_error *);
+bool q3p_scene_snapshot(qa_q3_presentation *, qa_error *);
 void q3p_scene_scratch_clear(qa_q3_presentation *);
 bool q3p_capture_begin(qa_q3_presentation *, bool *owned_assets, qa_error *);
 void q3p_capture_end(qa_q3_presentation *, bool owned_assets);

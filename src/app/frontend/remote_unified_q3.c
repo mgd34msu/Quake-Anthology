@@ -23,7 +23,6 @@
 #include "qa/hud.h"
 #include "qa/pool.h"
 #include "qa/vfs_view_save.h"
-#include "qa/scene_marks.h"
 #include "qa/scene_world_save.h"
 #include "qa/q3_assets_save.h"
 #include "qa/q3_presentation_save.h"
@@ -194,19 +193,11 @@ static bool fragments(void *context, const q3n_frame *f, const qa_vec3 *points, 
     size_t fragment_capacity, size_t *returned, qa_error *e)
 {
     unified_q3_bank *b = context;
-    if (f->unified_effects != &b->source || !effect_current(&b->source)) return false;
-    qa_scene_mark_fragment *rows=fragment_capacity && fragment_capacity<=SIZE_MAX/sizeof(*rows)?
-        qa_arena_alloc(&b->owner->frontend->frame.storage,fragment_capacity*sizeof(*rows),_Alignof(qa_scene_mark_fragment),e):NULL;
-    if (fragment_capacity && !rows) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Preparing real Q3 mark fragments");
-    qa_scene_mark_result result={0}; qa_scene_world *w=frontend_unified_media_world(b->owner->media);
-    bool okay = w && qa_scene_world_mark_fragments(w,points,count,projection,output,capacity,
-        rows,fragment_capacity,&result,e) && effect_current(&b->source);
-    for (size_t i=0; okay && i<result.fragment_count; ++i) {
-        okay=rows[i].first_point<=UINT32_MAX && rows[i].point_count<=UINT32_MAX;
-        if (okay) out[i]=(q3n_mark_fragment){(uint32_t)rows[i].first_point,(uint32_t)rows[i].point_count};
-    }
-    if(okay)*returned=result.fragment_count;
-    return okay;
+    if (!returned || f->unified_effects != &b->source || !effect_current(&b->source)) return false;
+    size_t result; qa_scene_world *w=frontend_unified_media_world(b->owner->media);
+    if (!w || !q3n_world_mark_fragments(w,&b->owner->frontend->frame.storage,
+        points,count,projection,output,capacity,out,fragment_capacity,&result,e) || !effect_current(&b->source)) return false;
+    *returned=result;return true;
 }
 static qa_actor_owner provider(frontend_unified_q3 *o, qa_string_id content,qa_string_id instance)
 {
