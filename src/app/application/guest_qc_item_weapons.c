@@ -23,9 +23,9 @@ struct application_qc_item_weapon_actor {
     struct application_qc_state *engine;
     qa_actor_id actor;
     int32_t reference;
-    unsigned calls;
+    unsigned calls, release_calls;
     bool bound, retired;
-    struct application_qc_item_weapon_actor *next;
+    struct application_qc_item_weapon_actor *next, *previous;
 };
 struct application_qc_item_weapon_store {
     qa_unified_frame_lease *storage;
@@ -62,6 +62,16 @@ void application_qc_item_weapons_destroy(struct application_qc_state *engine)
     qa_actor_index_destroy(&engine->item_weapon_store->index);
     qa_unified_frame_lease_release(engine->item_weapon_store->storage);
     free(engine->item_weapon_store);engine->item_weapon_store=NULL;
+}
+static void actor_reclaim(struct application_qc_item_weapon_actor *a)
+{
+    if(!a->retired||a->bound||a->calls)return;
+    struct application_qc_item_weapon_store *store=a->engine->item_weapon_store;size_t slot;
+    if(qa_actor_index_find(&store->index,a->actor,&slot)&&(struct application_qc_item_weapon_actor *)(uintptr_t)slot==a)
+        qa_actor_index_remove(&store->index,a->actor);
+    if(a->previous)a->previous->next=a->next;else store->head=a->next;
+    if(a->next)a->next->previous=a->previous;
+    qa_pool_release(&store->actors,a->storage_slot);
 }
 static bool array(const qa_json_document *d, qa_json_id id, size_t stride,
     void **out, size_t *count, qa_error *e)
@@ -322,7 +332,7 @@ static bool invoke(struct application_qc_item_weapon_actor *a,const application_
 {
     if(!current(a,e))return false;
     application_qc_inputs inputs={.self=a->actor,.time_ns=a->engine->source_time_ns};
-    ++a->calls;bool ok=application_qc_run_call(a->engine,call,&inputs,NULL,e);--a->calls;
+    ++a->calls;bool ok=application_qc_run_call(a->engine,call,&inputs,NULL,e);--a->calls;actor_reclaim(a);
     return ok;
 }
 static bool select_actor(struct application_qc_item_weapon_actor *a,qa_actor_id actor,
@@ -347,7 +357,7 @@ bool application_qc_item_weapons_select(struct application_qc_state *engine,qa_a
 {
     struct application_qc_item_weapon_actor *a=actor_for(engine,actor);
     if(!out||!a)return application_fail(e,QA_ERROR_ARGUMENT,"QC weapon select requires its actual item binding");
-    ++a->calls;bool ok=select_actor(a,actor,item,out,e);--a->calls;return ok;
+    ++a->calls;bool ok=select_actor(a,actor,item,out,e);--a->calls;actor_reclaim(a);return ok;
 }
 static bool select_weapon(void *context,qa_actor_id actor,qa_item_id item,bool *out,qa_error *e)
 {
@@ -392,7 +402,7 @@ static bool resume_actor(struct application_qc_item_weapon_actor *a,qa_actor_id 
 static bool resume(void *context,qa_actor_id actor,qa_item_id item,bool *out,uint64_t *request,qa_error *e)
 {
     struct application_qc_item_weapon_actor *a=context;
-    ++a->calls;bool ok=resume_actor(a,actor,item,out,request,e);--a->calls;return ok;
+    ++a->calls;bool ok=resume_actor(a,actor,item,out,request,e);--a->calls;actor_reclaim(a);return ok;
 }
 bool application_qc_item_weapons_resume(struct application_qc_state *engine,qa_actor_id actor,qa_error *e)
 {
@@ -440,7 +450,7 @@ bool application_qc_item_weapons_reserve(struct application_qc_state *engine,qa_
     if(!application_qc_reference(engine,actor,&a->reference,e)) {
         qa_pool_release(&store->actors,storage_slot);return false;
     }
-    a->next=store->head;store->head=a;
+    a->next=store->head;if(a->next)a->next->previous=a;store->head=a;
     qa_actor_index_put(&store->index,actor,(size_t)(uintptr_t)a);
     return current(a,e);
 }
@@ -471,13 +481,14 @@ bool application_qc_item_weapons_release(struct application_qc_state *engine,qa_
 {
     struct application_qc_item_weapon_actor *a=actor_for(engine,actor);
     if(!a)return true;
-    ++a->calls;
+    ++a->calls;++a->release_calls;
     bool ok=!a->bound||qa_equipment_weapon_unbind(engine->provider->application->equipment,actor,engine->provider->owner,a,e);
-    if(ok&&!a->retired){
+    --a->release_calls;
+    if(ok&&!a->release_calls&&!a->retired){
         a->bound=false;a->retired=true;
         qa_actor_index_remove(&engine->item_weapon_store->index,actor);
     }
-    --a->calls;return ok;
+    --a->calls;actor_reclaim(a);return ok;
 }
 bool application_qc_item_weapons_close(struct application_qc_state *engine,qa_error *e)
 {
@@ -487,7 +498,7 @@ bool application_qc_item_weapons_close(struct application_qc_state *engine,qa_er
     while(store&&store->head) {
         struct application_qc_item_weapon_actor *a=store->head;
         if(!a->retired && !application_qc_item_weapons_release(engine,a->actor,e))return false;
-        store->head=a->next;qa_pool_release(&store->actors,a->storage_slot);
+        if(store->head==a)actor_reclaim(a);
     }
     return true;
 }

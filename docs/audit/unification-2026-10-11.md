@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `50a1d16b`.
+Follow-up source changes were reviewed through main `e299ce8c`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 97 have source fixes
+There are **374 overlapping source-review observations**: 103 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 274 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 268 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -210,3 +210,19 @@ original lifecycle checks blindly.
 | `06-03` | `baa0025a` | Voice and lifecycle notification slots use common pools over the prepared mixer arena. FIFO, paired notifications, voice high-water/reuse order and sample ownership remain. Existing audio core checks now cover zero, partial and full initial voice sets with repeated playback/stop/reuse. |
 | `01-identity-remaining-actors` partial | `fe925221` | Accepted guest scene actor slots use one cold-reserved common ID index rebuilt with the accepted ordered publication. Existing duplicate slot/count validation remains; other actor resolvers remain. |
 | `06-04` | `50a1d16b` | Audio resource-ID/family entries share the existing bank ID index with name entries in a disjoint lossless key namespace. Core checks full-width IDs, family separation, compaction/rebuild, retirement and held sample lifetime. Cold decoding and resampling are unchanged. |
+
+| Observations | Commit | Shared replacement |
+| --- | --- | --- |
+| `01-identity-remaining-actors` | `80d65023` | Guest item actor leases use retained full-actor lookup; ordered rows and partial-restore cleanup remain. |
+| `10-05` | `8c273b51` | Navigation reads canonical contents directly. Q1 terminal precedence, current-to-water behavior, existing Q2 merged samples and Q2-only ladders remain. |
+| `09-05` | `11e8b444` | Route reset retains shared output storage across replanning and slot reuse. Graph metadata and trajectory state reset; lifecycle destruction frees backing. First or longer route capacity growth remains, so cold capacity preparation is still open. |
+| `09-02` | `bbd9c124` | Forty bot source-record consumers use common scalar binary primitives; private scalar codecs and aliases are deleted. ABI offsets and widths remain. |
+| `01-identity-remaining-actors` | `7c94458b` | Guest Q3 client retirement uses retained full-generation lookup through reserve, connect, bot allocation, round carry and save restore. Pending retired actors remain indexed until actual release. |
+| `01-identity-remaining-actors` | `b53b9a68` | Component bindings and each current/baseline/pending publication own common indexes. Ordered arrays and saved fields remain; publication swaps and baseline copying preserve independent index storage. |
+| `01-identity-remaining-actors` | `7c1515bd` | Guest pickup/protection resolvers share a retained actor index and common resource-group pool. Binding admission pins the group across callbacks; pickup visibility still starts after bind succeeds. Channels, lease serials and cleanup refusal retain original order and ownership. |
+| Signed-word follow-up | `42c2eb26` | Three additional bot scheduler/fuzzy signed-word helpers are deleted; common conversion preserves unsigned-wrap arithmetic. |
+| `26-16` | `e299ce8c` | QC direction builtins use common stock integer math: double atan2, float horizontal product, double sqrt rounded to float, positive integer zero and original vertical pitch. Existing float approximation is corrected, not claimed bit-identical to the old port. |
+
+All 13 actor resolver sites named by `01-identity-remaining-actors` now use the common indexes. Existing row/stage allocations remain separate work. `09-05` remains open for cold capacity preparation; retained output reuse alone does not prove zero runtime growth. The QC arithmetic recommendation was corrected against the original source; no old/new bit-equality claim is made for that correction.
+
+| `J19-F03`, `J20-01` | `9b07d1d8` | Q1 clone and MG3 upgrade use the common inventory snapshot lease; empty second reads and the MG3 checkpoint retain their order. Normal build and seven core suites passed; no live result. |

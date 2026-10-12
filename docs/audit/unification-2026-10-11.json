@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "50a1d16bcd3a541087da26f4d0a9f33e2ea9b065",
+  "verified_main": "9b07d1d83353cfcefe9ca2cc4fa955f9feacfc8a",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 97,
-    "open_source_observation": 274,
+    "fixed_source_build_core": 103,
+    "open_source_observation": 268,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -23763,8 +23763,8 @@
       "severity": "medium",
       "job": "01",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof",
+      "status": "fixed_source_build_core",
+      "verification": "Named source sites migrated and replaced resolver/codec/math bodies deleted; matching normal builds and seven core suites passed. No live or performance claim.",
       "partial_followup": {
         "commit": "2af9c4c722df8533445f13bf55d57aef400820ab",
         "conclusion": "Three guest projection actor resolvers use the retained common actor index through admission, restore, detach, close and round reset. Detached generations survive until physical context retirement. Other actor resolver sites remain; existing context allocations remain."
@@ -23777,8 +23777,25 @@
         {
           "commit": "fe925221f846876235e1bdd37ce0e2f678fd36d3",
           "conclusion": "Accepted guest scene actor slots use one cold-reserved common ID index rebuilt with the accepted ordered publication. Existing duplicate slot/count validation remains; other actor resolvers remain."
+        },
+        {
+          "commit": "80d65023bd63dc53a037b146b734d38078c2c52e",
+          "conclusion": "Guest item actor leases use retained full-actor lookup; ordered rows and partial-restore cleanup remain."
+        },
+        {
+          "commit": "7c94458bbc0cf413332df05c015d3b91a15df3ca",
+          "conclusion": "Guest Q3 client retirement uses retained full-generation lookup through reserve, connect, bot allocation, round carry and save restore. Pending retired actors remain indexed until actual release."
+        },
+        {
+          "commit": "b53b9a6821088b660e62ff51a9fd93b27af70505",
+          "conclusion": "Component bindings and each current/baseline/pending publication own common indexes. Ordered arrays and saved fields remain; publication swaps and baseline copying preserve independent index storage."
+        },
+        {
+          "commit": "7c1515bd86cd9d95a4db168a9e116eb294c31710",
+          "conclusion": "Guest pickup/protection resolvers share a retained actor index and common resource-group pool. Binding admission pins the group across callbacks; pickup visibility still starts after bind succeeds. Channels, lease serials and cleanup refusal retain original order and ownership."
         }
-      ]
+      ],
+      "fixed_commit": "7c1515bd86cd9d95a4db168a9e116eb294c31710"
     },
     {
       "id": "01-identity-gear-pointer",
@@ -27783,8 +27800,9 @@
       "severity": "low",
       "job": "09",
       "area": "bots_navigation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Named source sites migrated and replaced resolver/codec/math bodies deleted; matching normal builds and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "bbd9c124afa22b3177cbad1beb15e6302a2d5b0b"
     },
     {
       "id": "09-03",
@@ -27882,7 +27900,13 @@
       "job": "09",
       "area": "bots_navigation",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "source review; no runtime or performance proof",
+      "partial_followups": [
+        {
+          "commit": "11e8b4449b8a7e4db09130e0c8d70118a44e615b",
+          "conclusion": "Route reset retains shared output storage across replanning and slot reuse. Graph metadata and trajectory state reset; lifecycle destruction frees backing. First or longer route capacity growth remains, so cold capacity preparation is still open."
+        }
+      ]
     },
     {
       "id": "09-06",
@@ -28151,8 +28175,9 @@
       "severity": "medium",
       "job": "10",
       "area": "bots_navigation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Named source sites migrated and replaced resolver/codec/math bodies deleted; matching normal builds and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "8c273b514e2aa539723a74d301dfc0a3adf07398"
     },
     {
       "id": "10-06",
@@ -32064,8 +32089,9 @@
       "severity": "medium",
       "job": "19",
       "area": "gameplay_q1",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Q1 clone and MG3 upgrade use the common inventory snapshot lease. The shared reader retains the second enumeration for an empty inventory and MG3 between-read checkpoint; both paths release on every exit. No live or performance claim.",
+      "fixed_commit": "9b07d1d83353cfcefe9ca2cc4fa955f9feacfc8a"
     },
     {
       "id": "J19-F04",
@@ -32316,8 +32342,9 @@
       "severity": "medium",
       "job": "20",
       "area": "gameplay_q1",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Q1 clone and MG3 upgrade use the common inventory snapshot lease. The shared reader retains the second enumeration for an empty inventory and MG3 between-read checkpoint; both paths release on every exit. No live or performance claim.",
+      "fixed_commit": "9b07d1d83353cfcefe9ca2cc4fa955f9feacfc8a"
     },
     {
       "id": "J20-02",
@@ -34551,13 +34578,15 @@
         }
       ],
       "caller": "Guest QC builtin 13 and 51 from qc_machine_body/pure_builtin.",
-      "replacement": "Use common direction math with a float-product integer-truncation policy (extend the shared rule data if needed); do not substitute current double QA_DIRECTION_INTEGER silently.",
-      "semantics": "Keep exact float atan2/product, truncation before negative wrap, squared horizontal sqrt and vertical 90/270; these qsrc arithmetic rules must be data, not another vector-angle implementation.",
+      "replacement": "Common qa_vec_yaw and qa_vec_angles using QA_DIRECTION_INTEGER, squared float horizontal products and a double sqrt rounded to float. No new parallel float-integer policy.",
+      "semantics": "Original WinQuake/QW QC uses double atan2 degrees and integer truncation, float horizontal products, double sqrt rounded to float, positive integer zero and vertical 90/270 pitch.",
       "severity": "low",
       "job": "26",
       "area": "module_hosts",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Named source sites migrated and replaced resolver/codec/math bodies deleted; matching normal builds and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "e299ce8c83bb171db35416d31ec5bf50c1bf35a4",
+      "audit_correction": "The initial audit recommendation incorrectly described the port float approximation as original arithmetic. Direct WinQuake/pr_cmds.c:408-453 and QW/server/pr_cmds.c:345-390 reads correct that statement."
     },
     {
       "id": "26-17",
@@ -39162,6 +39191,307 @@
       ],
       "record_directory": "/tmp/qa-ta3196-audio-resource-id-index-20261011",
       "conclusion": "Audio resource-ID/family entries share the existing bank ID index with name entries in a disjoint lossless key namespace. Core checks full-width IDs, family separation, compaction/rebuild, retirement and held sample lifetime. Cold decoding and resampling are unchanged."
+    },
+    {
+      "commit": "80d65023bd63dc53a037b146b734d38078c2c52e",
+      "source_tree": "1229d7e1db9015e0f2c4dc91b27811a38dda999c",
+      "finding_ids": [
+        "01-identity-remaining-actors"
+      ],
+      "files_rechecked": [
+        "docs/audit/unification-2026-10-11.json",
+        "docs/audit/unification-2026-10-11.md",
+        "src/app/application/guest_q3_mod_items.c",
+        "src/app/application/guest_q3_mod_items_private.h",
+        "src/app/application/guest_q3_mod_items_save.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-item-actor-index-20261011",
+      "conclusion": "Guest item actor leases use retained full-actor lookup; ordered rows and partial-restore cleanup remain."
+    },
+    {
+      "commit": "8c273b514e2aa539723a74d301dfc0a3adf07398",
+      "source_tree": "5554c2d375aac599232e99b3bbbdd1447657dfac",
+      "finding_ids": [
+        "10-05"
+      ],
+      "files_rechecked": [
+        "src/navigation/world.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-nav-canonical-medium-20261011",
+      "conclusion": "Navigation reads canonical contents directly. Q1 terminal precedence, current-to-water behavior, existing Q2 merged samples and Q2-only ladders remain."
+    },
+    {
+      "commit": "11e8b4449b8a7e4db09130e0c8d70118a44e615b",
+      "source_tree": "6468cfd306617bc3bb566422971367b8adc6da3a",
+      "finding_ids": [
+        "09-05"
+      ],
+      "files_rechecked": [
+        "include/qa/navigation.h",
+        "src/bots/movement/save.c",
+        "src/bots/movement/state.c",
+        "src/navigation/route.c",
+        "src/navigation/runtime.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-retained-route-capacity-20261011",
+      "conclusion": "Route reset retains shared output storage across replanning and slot reuse. Graph metadata and trajectory state reset; lifecycle destruction frees backing. First or longer route capacity growth remains, so cold capacity preparation is still open."
+    },
+    {
+      "commit": "bbd9c124afa22b3177cbad1beb15e6302a2d5b0b",
+      "source_tree": "534120d10d4dd872509cc4837e22714f7f880cb7",
+      "finding_ids": [
+        "09-02"
+      ],
+      "files_rechecked": [
+        "src/bots/ai/combat.c",
+        "src/bots/ai/decision.c",
+        "src/bots/ai/source_alias.h",
+        "src/bots/ai/source_behavior_state.h",
+        "src/bots/ai/source_command.c",
+        "src/bots/ai/source_event_state.h",
+        "src/bots/ai/source_flags.h",
+        "src/bots/ai/source_goal.c",
+        "src/bots/ai/source_goal_record.h",
+        "src/bots/ai/source_memory.c",
+        "src/bots/ai/source_player.c",
+        "src/bots/ai/source_player.h",
+        "src/bots/ai/source_selectors.h",
+        "src/bots/ai/source_storage.c",
+        "src/bots/ai/source_team_policy.c",
+        "src/bots/ai/source_team_state.h",
+        "src/bots/ai/source_timers.h",
+        "src/bots/ai/source_view.h",
+        "src/bots/chat/checkpoint.c",
+        "src/bots/chat/integrity.c",
+        "src/bots/chat/source_graph.c",
+        "src/bots/chat/source_initial.c",
+        "src/bots/chat/source_initial_load.c",
+        "src/bots/chat/source_packed.c",
+        "src/bots/chat/source_state.c",
+        "src/bots/chat/source_state.h",
+        "src/bots/chat/state.c",
+        "src/bots/chat/system_save.c",
+        "src/bots/goals/map.c",
+        "src/bots/goals/source_state.c",
+        "src/bots/goals/source_weights.c",
+        "src/bots/library/character_source.c",
+        "src/bots/library/items_source.c",
+        "src/bots/library/source_fuzzy.c",
+        "src/bots/library/source_weapon_config.c",
+        "src/bots/memory/core.c",
+        "src/bots/movement/save.c",
+        "src/bots/movement/state.c",
+        "src/bots/runtime/assets_save.c",
+        "src/bots/runtime/handles.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-bot-source-endian-20261011",
+      "conclusion": "Forty bot source-record consumers use common scalar binary primitives; private scalar codecs and aliases are deleted. ABI offsets and widths remain."
+    },
+    {
+      "commit": "7c94458bbc0cf413332df05c015d3b91a15df3ca",
+      "source_tree": "170b51ee05aa6c958596879b742723576b3620d6",
+      "finding_ids": [
+        "01-identity-remaining-actors"
+      ],
+      "files_rechecked": [
+        "src/app/application/guest_admission.c",
+        "src/app/application/guest_bots.c",
+        "src/app/application/guest_q3.c",
+        "src/app/application/guest_q3_clients.c",
+        "src/app/application/guest_q3_private.h",
+        "src/app/application/guest_q3_restart.c",
+        "src/app/application/guest_q3_save.c",
+        "src/app/application/guest_q3_server.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-guest-client-actor-index-20261011",
+      "conclusion": "Guest Q3 client retirement uses retained full-generation lookup through reserve, connect, bot allocation, round carry and save restore. Pending retired actors remain indexed until actual release."
+    },
+    {
+      "commit": "b53b9a6821088b660e62ff51a9fd93b27af70505",
+      "source_tree": "2c4b1a89608acd1866cedabb888899140ad721be",
+      "finding_ids": [
+        "01-identity-remaining-actors"
+      ],
+      "files_rechecked": [
+        "src/app/application/guest_q3_component_source.c",
+        "src/app/application/guest_q3_component_source_private.h",
+        "src/app/application/guest_q3_component_source_save.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-component-publication-actor-index-20261011",
+      "conclusion": "Component bindings and each current/baseline/pending publication own common indexes. Ordered arrays and saved fields remain; publication swaps and baseline copying preserve independent index storage."
+    },
+    {
+      "commit": "7c1515bd86cd9d95a4db168a9e116eb294c31710",
+      "source_tree": "76dbe8b5a5fa8349aea90b0eee3e14b414784c0f",
+      "finding_ids": [
+        "01-identity-remaining-actors"
+      ],
+      "files_rechecked": [
+        "src/app/application/guest_q3_mod.c",
+        "src/app/application/guest_q3_mod_pickups.c",
+        "src/app/application/guest_q3_mod_private.h",
+        "src/app/application/guest_q3_mod_protection.c",
+        "src/app/application/guest_q3_mod_save.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-mod-resource-actor-index-20261011",
+      "conclusion": "Guest pickup/protection resolvers share a retained actor index and common resource-group pool. Binding admission pins the group across callbacks; pickup visibility still starts after bind succeeds. Channels, lease serials and cleanup refusal retain original order and ownership."
+    },
+    {
+      "commit": "42c2eb2681ed5676810168d22bc67981eab33ea3",
+      "source_tree": "6dbfd7d1ec5f1bd89a45f7ab9253f7a32a84f920",
+      "finding_ids": [],
+      "files_rechecked": [
+        "src/bots/ai/frame.c",
+        "src/bots/ai/source_match.c",
+        "src/bots/library/source_fuzzy_operations.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-bot-signed-word-20261011",
+      "conclusion": "Three additional bot scheduler/fuzzy signed-word helpers are deleted; common conversion preserves unsigned-wrap arithmetic."
+    },
+    {
+      "commit": "e299ce8c83bb171db35416d31ec5bf50c1bf35a4",
+      "source_tree": "12800f89aa6d938b20fa198aac9081941b609e68",
+      "finding_ids": [
+        "26-16"
+      ],
+      "files_rechecked": [
+        "src/compat/qc/builtins.c",
+        "src/core/math.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-qc-shared-direction-20261011",
+      "conclusion": "QC direction builtins use common stock integer math: double atan2, float horizontal product, double sqrt rounded to float, positive integer zero and original vertical pitch. Existing float approximation is corrected, not claimed bit-identical to the old port."
+    },
+    {
+      "commit": "9b07d1d83353cfcefe9ca2cc4fa955f9feacfc8a",
+      "source_tree": "047c7eff01502c7b4df1aa83a8db607e434d2896",
+      "finding_ids": [
+        "J19-F03",
+        "J20-01"
+      ],
+      "files_rechecked": [
+        "include/qa/inventory.h",
+        "src/gameplay/inventory.c",
+        "src/gameplay/q1/clone.c",
+        "src/gameplay/q1/mg3_progress.c",
+        "src/gameplay/q2/player/admission.c",
+        "src/gameplay/q2/player/commands.c",
+        "src/gameplay/q2/player/intermission.c",
+        "src/gameplay/q2/player/spawn.c",
+        "src/gameplay/q2/player/state.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-inventory-snapshots-20261011",
+      "conclusion": "Q1 clone and MG3 upgrade use the common inventory snapshot lease. The shared reader retains the second enumeration for an empty inventory and MG3 between-read checkpoint; both paths release on every exit. No live or performance claim."
     }
   ],
   "verification_limits": [
