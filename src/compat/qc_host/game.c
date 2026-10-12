@@ -57,6 +57,11 @@ static bool restore_host(void *context, qa_bytes bytes, qa_error *error) {
     if (!ok) return false;
     game->loading = qa_load_u32le(bytes.data + 4) != 0; return true;
 }
+static void capture_destroy(qa_qc_game *game) {
+    for (size_t i = 0; i < game->captures.capacity; ++i)
+        qa_arena_destroy(qa_pool_at(&game->captures, i));
+    qa_arena_destroy(&game->capture_storage);
+}
 bool qa_qc_game_create(const qa_qc_program *program, const qa_qc_game_options *options,
                         qa_qc_game **out, qa_error *error) {
     if (!program || !options || !out || !options->services.session || !options->services.world ||
@@ -86,8 +91,14 @@ bool qa_qc_game_create(const qa_qc_program *program, const qa_qc_game_options *o
     game->developer = qa_cvars_resolve(options->cvars, "developer");
     game->fields = qa_qc_program_resolved_fields(program);
     game->globals = qa_qc_program_resolved_globals(program);
+    qa_arena_init(&game->capture_storage, 0);
+    if (!qa_pool_prepare(&game->captures, &game->capture_storage, 1,
+        sizeof(qa_arena), _Alignof(qa_arena), error)) {
+        capture_destroy(game); free(game); return false;
+    }
+    qa_arena_init(qa_pool_at(&game->captures, 0), 0);
     game->bindings = malloc((options->vm.host.builtin_count + n) * sizeof(*game->bindings));
-    if (!game->bindings) { free(game); return qc_game_fail(error, QA_ERROR_MEMORY, "Allocating QC engine imports"); }
+    if (!game->bindings) { capture_destroy(game); free(game); return qc_game_fail(error, QA_ERROR_MEMORY, "Allocating QC engine imports"); }
     size_t count = options->vm.host.builtin_count;
     if (count) memcpy(game->bindings, options->vm.host.builtins, count * sizeof(*game->bindings));
     for (size_t i = 0; i < n; ++i) {
@@ -114,7 +125,7 @@ bool qa_qc_game_create(const qa_qc_program *program, const qa_qc_game_options *o
     vm.host.checkpoint = capture_host; vm.host.restore = restore_host;
     game->binding_count = count;
     if (!qa_qc_instance_create(program, &vm, &game->vm, error)) {
-        free(game->bindings); free(game); return false;
+        free(game->bindings); capture_destroy(game); free(game); return false;
     }
     game->options.vm.inline_regions = NULL;
     game->options.vm.inline_region_count = 0;
@@ -124,7 +135,7 @@ bool qa_qc_game_destroy(qa_qc_game *game, qa_error *error) {
     if (!game) return true;
     if (game->calls) return qc_game_fail(error, QA_ERROR_ARGUMENT, "QC game host is active");
     if (!qa_qc_instance_destroy(game->vm, error)) return false;
-    free(game->bindings); free(game); return true;
+    free(game->bindings); capture_destroy(game); free(game); return true;
 }
 bool qa_qc_game_idle(const qa_qc_game *game) { return game && !game->calls && qa_qc_idle(game->vm); }
 qa_qc_instance *qa_qc_game_instance(qa_qc_game *game) { return game ? game->vm : NULL; }

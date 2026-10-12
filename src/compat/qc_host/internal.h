@@ -2,6 +2,7 @@
 #define QA_QC_GAME_INTERNAL_H
 #include "qa/qc_host.h"
 #include "qa/binary.h"
+#include "qa/pool.h"
 #include "qa/text.h"
 #include <math.h>
 #include <stdlib.h>
@@ -14,6 +15,8 @@ struct qa_qc_game {
     const qa_qc_engine_globals *globals;
     qa_qc_instance *vm;
     qa_qc_builtin_binding *bindings;
+    qa_arena capture_storage;
+    qa_pool captures;
     size_t binding_count;
     size_t calls;
     bool loading;

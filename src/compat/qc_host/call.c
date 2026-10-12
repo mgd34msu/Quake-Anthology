@@ -4,6 +4,19 @@ typedef struct staged_global {
     const qa_qc_definition *definition;
     uint32_t old[3], value[3], count;
 } staged_global;
+static qa_arena *capture_acquire(qa_qc_game *game, size_t *slot, qa_error *error) {
+    if (game->captures.head == SIZE_MAX) {
+        size_t added = game->captures.capacity;
+        if (!qa_pool_extend(&game->captures, &game->capture_storage, 1, error)) return NULL;
+        qa_arena_init(qa_pool_at(&game->captures, added), 0);
+    }
+    return qa_pool_take(&game->captures, slot);
+}
+static void capture_release(qa_qc_game *game, qa_arena *storage, size_t slot) {
+    if (!storage) return;
+    qa_arena_reset(storage);
+    qa_pool_release(&game->captures, slot);
+}
 static qa_qc_value_type value_type(qa_qc_game_value_kind kind) {
     switch (kind) {
     case QA_QC_GAME_FLOAT: return QA_QC_FLOAT;
@@ -34,12 +47,17 @@ bool qc_game_value(qa_qc_game *game, const qa_qc_game_value *value, uint32_t wor
             static const char prefix[] = "qc-call-value:";
             size_t length = strlen(value->value.string);
             if (length > SIZE_MAX - sizeof(prefix)) return qc_game_fail(error, QA_ERROR_MEMORY, "QC call string name overflow");
-            char *name = malloc(length + sizeof(prefix));
-            if (!name) return qc_game_fail(error, QA_ERROR_MEMORY, "Allocating QC call string name");
+            size_t slot = SIZE_MAX;
+            qa_arena *storage = capture_acquire(game, &slot, error);
+            char *name = storage ? qa_arena_alloc(storage, length + sizeof(prefix), 1, error) : NULL;
+            if (!name) {
+                capture_release(game, storage, slot);
+                return qc_game_fail(error, QA_ERROR_MEMORY, "Allocating QC call string name");
+            }
             memcpy(name, prefix, sizeof(prefix) - 1); memcpy(name + sizeof(prefix) - 1, value->value.string, length + 1);
             size_t capacity = length + 1; if (capacity < 128) capacity = 128;
             bool ok = qa_qc_engine_string(game->vm, name, value->value.string, capacity, &integer, error);
-            free(name); if (!ok) return false;
+            capture_release(game, storage, slot); if (!ok) return false;
         }
         memcpy(words, &integer, sizeof(integer)); return true;
     case QA_QC_GAME_ACTOR:
@@ -79,7 +97,11 @@ static bool staged_call(qa_qc_game *game, uint32_t index, const qa_qc_inline_reg
     ++game->calls;
     uint32_t args[8][3], reserved[27];
     staged_global local[16];
-    staged_global *saved = global_count <= 16 ? local : calloc(global_count, sizeof(*saved));
+    size_t slot = SIZE_MAX;
+    qa_arena *storage = global_count > 16 ? capture_acquire(game, &slot, error) : NULL;
+    staged_global *saved = global_count <= 16 ? local : storage ?
+        qa_arena_alloc(storage, global_count * sizeof(*saved), _Alignof(staged_global), error) : NULL;
+    if (saved != local && saved) memset(saved, 0, global_count * sizeof(*saved));
     bool ok = saved != NULL;
     if (!ok) qc_game_fail(error, QA_ERROR_MEMORY, "Allocating QC callback global staging");
     for (size_t i = 0; ok && i < count; ++i) {
@@ -125,7 +147,7 @@ static bool staged_call(qa_qc_game *game, uint32_t index, const qa_qc_inline_reg
         if (!restored) { if (error) *error = restore_error; ok = false; }
         if (ok && result) memcpy(result, returned, sizeof(returned));
     }
-    if (saved != local) free(saved);
+    capture_release(game, storage, slot);
     --game->calls; return ok;
 }
 bool qa_qc_game_call_index(qa_qc_game *game, uint32_t index, const qa_qc_game_value *arguments,

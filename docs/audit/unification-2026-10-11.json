@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "fd21bfa3b132dfe732bf49d550c9497d60dbceda",
+  "verified_main": "03c9415e1d403bf9751051790a573a9c15259eff",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 169,
-    "open_source_observation": 202,
+    "fixed_source_build_core": 170,
+    "open_source_observation": 201,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -35990,8 +35990,9 @@
       "severity": "medium",
       "job": "32",
       "area": "render_presentation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "03c9415e1d403bf9751051790a573a9c15259eff"
     },
     {
       "id": "J32-03",
@@ -41854,6 +41855,32 @@
       ],
       "record_directory": "/tmp/qa-ta3196-aas-crossings-owner-20261012",
       "conclusion": "Q3 AAS crossings lease common navigation captures through the final guest write. Private host capture list deleted; collector arenas retain order, repeated DAG leaves and original zero-capacity behavior. Normal build/seven core suites passed; larger crossing or nesting peaks can still grow common storage."
+    },
+    {
+      "commit": "03c9415e1d403bf9751051790a573a9c15259eff",
+      "source_tree": "41c5c3cc988736de7ff28076aa9ad400d7bc7c03",
+      "finding_ids": [
+        "J32-02"
+      ],
+      "files_rechecked": [
+        "src/render/cpu/internal.h",
+        "src/render/cpu/renderer.c",
+        "src/render/resource_index_private.h",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-render-resource-index-20261012",
+      "conclusion": "Renderer resource identities and CPU skin-owner lookups now use the common ID index; exact owner/revision behavior passes the existing core fixture. This does not claim zero allocation or measured speedup."
     }
   ],
   "verification_limits": [

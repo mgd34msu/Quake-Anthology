@@ -4,6 +4,7 @@
 #include "guest_qc_protection.h"
 #include "guest_qc_objectives.h"
 #include "guest_q3_component_clients.h"
+#include "control_frame.h"
 #include <stdio.h>
 #include <float.h>
 #include "qa/text.h"
@@ -70,8 +71,15 @@ static bool run_call_staged(struct application_qc_state *engine, const applicati
     for (size_t j = 0; j < call->argument_count; ++j)
         if (!resolve(&call->arguments[j], inputs, &arguments[j], error)) return false;
     qa_qc_game_global local[16];
-    qa_qc_game_global *globals = call->global_count <= 16 ? local : calloc(call->global_count, sizeof(*globals));
-    if (!globals) return application_fail(error, QA_ERROR_MEMORY, "Allocating qualified QC globals");
+    qa_unified_frame_lease *storage = call->global_count > 16 ?
+        application_control_storage_acquire(engine->provider->application, error) : NULL;
+    qa_qc_game_global *globals = call->global_count <= 16 ? local :
+        storage ? qa_unified_frame_lease_alloc(storage, call->global_count,
+            sizeof(*globals), _Alignof(qa_qc_game_global), error) : NULL;
+    if (!globals) {
+        qa_unified_frame_lease_release(storage);
+        return application_fail(error, QA_ERROR_MEMORY, "Allocating qualified QC globals");
+    }
     bool ok = true;
     for (size_t j = 0; ok && j < call->global_count; ++j) {
         globals[j].name = call->globals[j].definition->name;
@@ -81,7 +89,7 @@ static bool run_call_staged(struct application_qc_state *engine, const applicati
         call->argument_count,globals,call->global_count,result,error) :
         qa_qc_game_call_index(engine->provider->state.qc.game,call->function,arguments,
         call->argument_count,globals,call->global_count,result,error);
-    if (globals != local) free(globals);
+    qa_unified_frame_lease_release(storage);
     return ok && application_qc_objectives_sync(engine,error) && application_qc_publish_client_outputs(engine, error);
 }
 bool application_qc_run_call(struct application_qc_state *engine,const application_qc_call *call,
