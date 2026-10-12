@@ -7,6 +7,7 @@
 #include "qa/scene_resource_save.h"
 #include "qa/material_movies_save.h"
 #include "qa/media_library_prepare.h"
+#include "qa/id_index.h"
 
 typedef struct frontend_material_movie_row {
     char *path;
@@ -29,6 +30,8 @@ struct frontend_material_movies {
     struct frontend_material_movies *next;
     frontend_material_movie_row **rows;
     size_t count, capacity;
+    qa_id_index images;
+    size_t roster_ordinal;
     uint64_t next_target;
     qa_material_movies *registry;
     qa_q3_cinematic_source *cinematic_source;
@@ -57,4 +60,7 @@ bool frontend_material_movie_cinematic_reserve(frontend_material_movie_cinematic
 bool frontend_material_movie_cinematic_receipt_make(const char *,
     frontend_material_movie_cinematic_receipt *, qa_error *);
 void frontend_material_movie_cinematic_receipt_free(frontend_material_movie_cinematic_receipt *);
+bool frontend_material_movie_images_build(qa_id_index *, frontend_material_movie_row *const *,
+    size_t, const frontend_material_movie_cinematic_receipt *, size_t, bool, qa_error *);
+void frontend_material_movie_images_publish(frontend_material_movies *, qa_id_index *);
 #endif

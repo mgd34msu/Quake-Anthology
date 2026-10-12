@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "a04c8473602b9f3359ccafb07c2f7d2dcd8b1836",
+  "verified_main": "1a5c3dd454fb6186b743d3e921dd6db5449f33a3",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 117,
-    "open_source_observation": 254,
+    "fixed_source_build_core": 119,
+    "open_source_observation": 252,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -27730,8 +27730,8 @@
       "severity": "medium",
       "job": "09",
       "area": "bots_navigation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof",
+      "status": "fixed_source_build_core",
+      "verification": "All named character, fuzzy, goal and initial-chat Source pointer/membership/library alias lookups use the common ID index. Current import/history construction, transfer and removal were rechecked after the final chat library slice; mutable source bytes and ordered source traversal remain authoritative. Changes span dd9d92db,112f2b66,5debf46f,386769db and624740a2, each recorded with normal build and seven core suites. Admission allocations, workspace growth and live fuzzy topology projection are distinct open findings; this closes only the named alias-lookup observation. No live or performance claim.",
       "partial_followups": [
         {
           "commit": "dd9d92db3c398a043336eb51d7cee1416374ead3",
@@ -27745,7 +27745,8 @@
           "commit": "5debf46f4b82d486fa98f7505b185cbe03699ae8",
           "verification": "Goal config, weight, index and map-info source aliases now use the common ID index. Ordered source links, raw allocator-backed reads, full weight-pointer identity, import/history candidates and unchanged saved fields remain. Initial-chat aliases in 09-01 remain open; admission storage growth is not closed. Matching normal build and seven core suites pass."
         }
-      ]
+      ],
+      "fix_commit": "624740a2346e8d2bdb489217e222918fa45bc0ef"
     },
     {
       "id": "09-02",
@@ -28525,8 +28526,9 @@
       "severity": "medium",
       "job": "11",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Scene model admission binds tag/bone names in its existing retained strings and common arena-backed index. MD3 keys include each frame and first exact ordinal; MD5 uses the first full joint name. One interpolation implementation remains. Native/frontend callers carry IDs; guest and received text converts through the common table at projection boundaries. Existing model checks cover frame clamp, duplicate order, exact case and long full MD5 names. Original saved declaration text and model lifetimes remain. Generic attachment construction still has no demonstrated production producer. Matching normal production build and seven core suites pass; no live or performance claim.",
+      "fix_commit": "1a5c3dd454fb6186b743d3e921dd6db5449f33a3"
     },
     {
       "id": "J11-09",
@@ -40136,6 +40138,54 @@
       ],
       "record_directory": "/tmp/qa-ta3196-nav-common-usercmd-20261012",
       "conclusion": "Navigation physical movement now feeds the common intent/usercmd builder and basis conversion. Fractional Q1/Q2 moves, Q3 float multiply/divide then half-up rounding, original delta-angle widths, rerelease jump/crouch encoding, wrapping times and SOURCE defaults remain. Existing core behavior checks cover these policies. Private navigation usercmd construction is deleted. Matching normal production build and seven core suites pass; no live or performance claim."
+    },
+    {
+      "commit": "1a5c3dd454fb6186b743d3e921dd6db5449f33a3",
+      "source_tree": "1fec9e70520415e7ed070cf943db82702e8aae28",
+      "finding_ids": [
+        "J11-08"
+      ],
+      "files_rechecked": [
+        "include/qa/model.h",
+        "include/qa/q3_presentation.h",
+        "include/qa/scene.h",
+        "src/app/frontend/equipment_gear_output.c",
+        "src/app/frontend/equipment_held_output.c",
+        "src/app/frontend/remote_unified_q3.c",
+        "src/app/frontend/selected_character.c",
+        "src/compat/q3_host/presentation.c",
+        "src/formats/model/model.c",
+        "src/presentation/q3/assets.c",
+        "src/presentation/q3/internal.h",
+        "src/presentation/q3/models.c",
+        "src/presentation/q3_native/attachments.c",
+        "src/presentation/q3_native/attachments.h",
+        "src/presentation/q3_native/body.c",
+        "src/presentation/q3_native/client_info.c",
+        "src/presentation/q3_native/packet.c",
+        "src/presentation/q3_native/player_fx.c",
+        "src/presentation/q3_native/selected_authored_media.c",
+        "src/presentation/q3_native/selected_authored_media.h",
+        "src/presentation/q3_native/selected_authored_media_internal.h",
+        "src/presentation/q3_native/weapon.c",
+        "src/presentation/q3_native/weapon.h",
+        "src/render/scene/models.c",
+        "src/render/scene/models/internal.h",
+        "tests/model_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-model-attachment-names-20261012",
+      "conclusion": "Scene model admission binds tag/bone names in its existing retained strings and common arena-backed index. MD3 keys include each frame and first exact ordinal; MD5 uses the first full joint name. One interpolation implementation remains. Native/frontend callers carry IDs; guest and received text converts through the common table at projection boundaries. Existing model checks cover frame clamp, duplicate order, exact case and long full MD5 names. Original saved declaration text and model lifetimes remain. Generic attachment construction still has no demonstrated production producer. Matching normal production build and seven core suites pass; no live or performance claim."
     }
   ],
   "verification_limits": [

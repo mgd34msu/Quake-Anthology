@@ -295,6 +295,7 @@ struct qa_frontend {
     frontend_music_sources *music_sources;
     frontend_view_settings *view_settings;
     struct frontend_material_movies *material_movie_owners;
+    qa_id_index material_movie_images;
     struct frontend_root_resources *root_resources, *root_resources_pending;
     struct frontend_q1_sky *q1_sky;
     struct frontend_qc_messages *qc_messages;

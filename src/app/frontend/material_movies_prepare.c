@@ -15,6 +15,7 @@ struct frontend_material_movies_policy {
     size_t cinematic_original_count, cinematic_count, cinematic_capacity;
     frontend_material_movie_row **original, **rows, **merged;
     size_t count, added, capacity, merged_capacity;
+    qa_id_index images;
     uint64_t original_target, next_target;
     bool busy, closing, sealed, published;
 };
@@ -28,6 +29,31 @@ static bool held(const frontend_material_movies_policy *policy)
         policy->owner->rows == (policy->published ? policy->merged : policy->original) &&
         policy->owner->cinematic_receipts==(policy->published?policy->cinematic_receipts:policy->cinematic_original) &&
         policy->owner->cinematic_count==(policy->published?policy->cinematic_count:policy->cinematic_original_count);
+}
+static bool images_reserve_publication(frontend_material_movies_policy *policy, qa_error *error)
+{
+    qa_frontend *frontend=policy->owner->source.frontend;
+    size_t additional=0;
+    for (frontend_material_movies *owner=frontend->material_movie_owners;owner;owner=owner->next) {
+        frontend_material_movies_policy *candidate=owner->pending;
+        if (!candidate || candidate->published || (!candidate->sealed && candidate!=policy)) continue;
+        for (size_t i=0;i<candidate->images.count;++i) {
+            qa_id_index_entry *entry=candidate->images.entries+i;
+            if (qa_id_index_find(&candidate->images,entry->key,entry->discriminator)!=entry) continue;
+            if (owner->cinematic_source) {
+                qa_id_index_cursor cursor=qa_id_index_begin(&candidate->images,entry->key,entry->discriminator);
+                size_t ordinal;
+                bool registered=false;
+                while (qa_id_index_next(&candidate->images,&cursor,&ordinal))
+                    if (candidate->cinematic_receipts[ordinal].handle>=0) { registered=true; break; }
+                if (!registered) continue;
+            }
+            if (additional==SIZE_MAX)
+                return frontend_fail(error,QA_ERROR_MEMORY,"Prepared shader movie index exceeds its allocation");
+            ++additional;
+        }
+    }
+    return qa_id_index_reserve(&frontend->material_movie_images,additional,error);
 }
 bool frontend_material_movies_policy_current(const frontend_material_movies_policy *policy,
     const frontend_material_movies *owner, const qa_scene_resource_policy *bank,
@@ -140,6 +166,7 @@ bool frontend_material_movies_policy_prepare(frontend_material_movies *owner,
         if (policy->media && !qa_media_library_stage_abort(&policy->media, error)) { *out = policy; return false; }
         for (size_t i=0;i<policy->cinematic_count;++i) frontend_material_movie_cinematic_receipt_free(policy->cinematic_receipts+i);
         free(policy->cinematic_receipts);
+        qa_id_index_destroy(&policy->images);
         owner->pending = NULL; free(policy); return false;
     }
     *out = policy; return true;
@@ -171,6 +198,10 @@ bool frontend_material_movies_policy_ready(frontend_material_movies_policy *poli
     if (policy->added) memcpy(policy->merged + policy->count, policy->rows, policy->added * sizeof(*policy->merged));
     if (!qa_media_library_stage_ready(policy->media, error) ||
         !qa_material_movies_stage_ready(policy->movies, error)) return false;
+    if (!frontend_material_movie_images_build(&policy->images,policy->merged,count,
+        policy->cinematic_receipts,policy->cinematic_count,policy->owner->cinematic_source!=NULL,error) ||
+        !images_reserve_publication(policy,error))
+        return false;
     policy->sealed = true; return true;
 }
 bool frontend_material_movies_policy_ready_is(const frontend_material_movies_policy *policy)
@@ -190,6 +221,7 @@ void frontend_material_movies_policy_publish(frontend_material_movies_policy *po
     policy->owner->cinematic_receipts=policy->cinematic_receipts;
     policy->owner->cinematic_count=policy->cinematic_count;
     policy->owner->cinematic_capacity=policy->cinematic_capacity;
+    frontend_material_movie_images_publish(policy->owner,&policy->images);
     policy->published = true;
 }
 static bool dispose(frontend_material_movies_policy **out, bool published, qa_error *error)
@@ -212,6 +244,7 @@ static bool dispose(frontend_material_movies_policy **out, bool published, qa_er
         for (size_t i=0;i<policy->cinematic_count;++i) frontend_material_movie_cinematic_receipt_free(policy->cinematic_receipts+i);
         free(policy->cinematic_receipts);
     }
+    qa_id_index_destroy(&policy->images);
     free(policy->rows); policy->owner->pending = NULL; free(policy); *out = NULL; return true;
 }
 bool frontend_material_movies_policy_finish(frontend_material_movies_policy **out, qa_error *error)

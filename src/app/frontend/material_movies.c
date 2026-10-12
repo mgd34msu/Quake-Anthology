@@ -3,12 +3,68 @@
 #include <ctype.h>
 #include <math.h>
 
+enum { MOVIE_IMAGE = 0, MOVIE_OWNER = 1 };
+
+static void roster_ordinals(qa_frontend *frontend)
+{
+    size_t ordinal = 0;
+    for (frontend_material_movies *row = frontend->material_movie_owners; row; row = row->next)
+        row->roster_ordinal = ordinal++;
+}
+static void image_remember(frontend_material_movies *owner, uint64_t initial)
+{
+    qa_id_index *images = &owner->source.frontend->material_movie_images;
+    size_t payload = (size_t)(uintptr_t)owner, existing;
+    qa_id_index_cursor cursor = qa_id_index_begin(images, MOVIE_IMAGE, initial);
+    while (qa_id_index_next(images, &cursor, &existing))
+        if (existing == payload) return;
+    qa_id_index_insert(images, MOVIE_IMAGE, initial, payload);
+}
+static void images_forget(frontend_material_movies *owner)
+{
+    qa_id_index *images = &owner->source.frontend->material_movie_images;
+    for (size_t i = 0; i < owner->images.count; ++i)
+        qa_id_index_remove_value(images, MOVIE_IMAGE, owner->images.entries[i].discriminator,
+            (size_t)(uintptr_t)owner);
+}
+bool frontend_material_movie_images_build(qa_id_index *index,
+    frontend_material_movie_row *const *rows, size_t count,
+    const frontend_material_movie_cinematic_receipt *receipts, size_t cinematic_count,
+    bool cinematic, qa_error *error)
+{
+    size_t extent = cinematic ? cinematic_count : count;
+    size_t additional = extent > index->count ? extent - index->count : 0;
+    if (!qa_id_index_reserve(index, additional, error)) return false;
+    qa_id_index_clear(index);
+    for (size_t i = 0; i < extent; ++i) {
+        const qa_scene_image *image = cinematic ? receipts[i].image :
+            rows[i]->failed ? NULL : rows[i]->initial;
+        if (image) qa_id_index_insert(index, MOVIE_IMAGE, image->identity, i);
+    }
+    return true;
+}
+void frontend_material_movie_images_publish(frontend_material_movies *owner, qa_id_index *candidate)
+{
+    images_forget(owner);
+    qa_id_index previous = owner->images;
+    owner->images = *candidate;
+    *candidate = previous;
+    for (size_t i = 0; i < owner->images.count; ++i) {
+        const qa_id_index_entry *entry = owner->images.entries + i;
+        if (!owner->cinematic_source || owner->cinematic_receipts[entry->value].handle >= 0)
+            image_remember(owner, entry->discriminator);
+    }
+}
+static bool images_reserve(frontend_material_movies *owner, qa_error *error)
+{
+    return qa_id_index_reserve(&owner->images, 1, error) &&
+        qa_id_index_reserve(&owner->source.frontend->material_movie_images, 1, error);
+}
 static bool member(const frontend_material_movies *owner)
 {
     if (!owner || !owner->linked || !owner->source.frontend) return false;
-    for (const frontend_material_movies *row = owner->source.frontend->material_movie_owners; row; row = row->next)
-        if (row == owner) return true;
-    return false;
+    return qa_id_index_find(&owner->source.frontend->material_movie_images, MOVIE_OWNER,
+        (uint64_t)(uintptr_t)owner) != NULL;
 }
 bool frontend_material_movie_link(frontend_material_movies *owner, qa_error *error)
 {
@@ -18,7 +74,11 @@ bool frontend_material_movie_link(frontend_material_movies *owner, qa_error *err
     for (const frontend_material_movies *row = frontend->material_movie_owners; row; row = row->next)
         if (row == owner || row->source.frontend != frontend || row->source.materials == owner->source.materials)
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Shader movie roster repeats or leaves its actual provider library");
+    if (!qa_id_index_reserve(&frontend->material_movie_images, 1, error)) return false;
     owner->next = frontend->material_movie_owners; frontend->material_movie_owners = owner;
+    qa_id_index_insert(&frontend->material_movie_images, MOVIE_OWNER, (uint64_t)(uintptr_t)owner,
+        (size_t)(uintptr_t)owner);
+    roster_ordinals(frontend);
     owner->linked = true; return true;
 }
 bool frontend_material_movie_unlink(frontend_material_movies *owner, qa_error *error)
@@ -27,7 +87,14 @@ bool frontend_material_movie_unlink(frontend_material_movies *owner, qa_error *e
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Shader movie retirement lost its exact frontend roster row");
     frontend_material_movies **row = &owner->source.frontend->material_movie_owners;
     while (*row != owner) row = &(*row)->next;
-    *row = owner->next; owner->next = NULL; owner->linked = false; return true;
+    images_forget(owner);
+    qa_id_index_remove(&owner->source.frontend->material_movie_images, MOVIE_OWNER,
+        (uint64_t)(uintptr_t)owner);
+    *row = owner->next; owner->next = NULL; owner->linked = false;
+    roster_ordinals(owner->source.frontend);
+    if (!owner->source.frontend->material_movie_owners)
+        qa_id_index_destroy(&owner->source.frontend->material_movie_images);
+    return true;
 }
 bool frontend_material_movie_source_valid(const frontend_material_movie_source *source)
 {
@@ -438,13 +505,19 @@ const qa_scene_image *frontend_material_movies_start(void *context, const char *
         if (owner->cinematic_count==SIZE_MAX ||
             !frontend_material_movie_cinematic_reserve(&owner->cinematic_receipts,&owner->cinematic_capacity,
                 owner->cinematic_count+1,error) ||
+            !images_reserve(owner,error) ||
             !frontend_material_movie_cinematic_receipt_make(name,&receipt,error)) return NULL;
         owner->busy=true;
         bool ok=qa_q3_cinematic_shader_play(owner->cinematic_source,name,&receipt.handle,&receipt.image,error);
         owner->busy=false;
         if (!ok) { free(receipt.path); return NULL; }
         qa_scene_image_retain(receipt.image);
-        owner->cinematic_receipts[owner->cinematic_count++]=receipt;
+        size_t ordinal=owner->cinematic_count++;
+        owner->cinematic_receipts[ordinal]=receipt;
+        if (receipt.image) {
+            qa_id_index_insert(&owner->images,MOVIE_IMAGE,receipt.image->identity,ordinal);
+            if (receipt.handle>=0) image_remember(owner,receipt.image->identity);
+        }
         return receipt.image;
     }
     char *path = frontend_material_movie_path(name, error);
@@ -454,7 +527,8 @@ const qa_scene_image *frontend_material_movies_start(void *context, const char *
             free(path); return frontend_material_movie_cached(owner->rows[i], error);
         }
     if (!owner->next_target || owner->count == SIZE_MAX ||
-        !frontend_material_movie_rows_reserve(&owner->rows, &owner->capacity, owner->count + 1, error)) {
+        !frontend_material_movie_rows_reserve(&owner->rows, &owner->capacity, owner->count + 1, error) ||
+        !images_reserve(owner,error)) {
         free(path); if (error && error->code == QA_OK)
             frontend_fail(error, QA_ERROR_MEMORY, "Shader movie target allocation exhausted");
         return NULL;
@@ -464,7 +538,14 @@ const qa_scene_image *frontend_material_movies_start(void *context, const char *
     bool ok = frontend_material_movie_row_create(owner, owner->source.media, owner->registry,
         path, owner->next_target, &row, error);
     free(path);
-    if (row) owner->rows[owner->count++] = row;
+    if (row) {
+        size_t ordinal=owner->count++;
+        owner->rows[ordinal]=row;
+        if (ok) {
+            qa_id_index_insert(&owner->images,MOVIE_IMAGE,row->initial->identity,ordinal);
+            image_remember(owner,row->initial->identity);
+        }
+    }
     if (ok) ++owner->next_target;
     owner->busy = false;
     return ok ? row->initial : NULL;
@@ -484,6 +565,7 @@ bool frontend_material_movies_destroy(frontend_material_movies **out, qa_error *
     if (qa_material_library_video_start_is(owner->source.materials, frontend_material_movies_start, owner))
         qa_material_library_set_video_start(owner->source.materials, NULL, NULL);
     owner->busy = true;
+    qa_id_index_destroy(&owner->images);
     qa_material_movies_destroy(owner->registry);
     for (size_t i = 0; i < owner->count; ++i) frontend_material_movie_row_free(owner->rows[i]);
     for (size_t i=0;i<owner->cinematic_count;++i) frontend_material_movie_cinematic_receipt_free(owner->cinematic_receipts+i);
@@ -519,10 +601,8 @@ const qa_scene_image *frontend_material_movies_resolve(void *context, uint64_t i
     owner->busy = true;
     const qa_scene_image *image = NULL;
     if (owner->cinematic_source) {
-        size_t index=0;
-        while (index<owner->cinematic_count && (!owner->cinematic_receipts[index].image ||
-            owner->cinematic_receipts[index].image->identity!=initial)) ++index;
-        if (index==owner->cinematic_count) frontend_fail(error,QA_ERROR_NOT_FOUND,"Reached numeric image has no actual shader registration receipt");
+        if (!qa_id_index_find(&owner->images,MOVIE_IMAGE,initial))
+            frontend_fail(error,QA_ERROR_NOT_FOUND,"Reached numeric image has no actual shader registration receipt");
         else image=qa_q3_cinematic_shader_resolve(owner->cinematic_source,initial,&owner->source.frontend->frame,error);
     }
     else if (qa_material_movies_prepare(owner->registry, &owner->source.frontend->frame, error))
@@ -539,29 +619,38 @@ const qa_scene_image *frontend_material_movies_frontend_resolve(void *context, u
     frontend_material_movies *selected = NULL;
     qa_q3_cinematic_handles *selected_pool=NULL;
     int32_t selected_handle=-1;
-    for (frontend_material_movies *owner = frontend->material_movie_owners; owner; owner = owner->next) {
+    size_t payload;
+    qa_id_index_cursor owners=qa_id_index_begin(&frontend->material_movie_images,MOVIE_IMAGE,initial);
+    while (qa_id_index_next(&frontend->material_movie_images,&owners,&payload)) {
+        frontend_material_movies *owner=(frontend_material_movies *)(uintptr_t)payload;
         if (!owner->linked || owner->source.frontend != frontend) {
             frontend_fail(error, QA_ERROR_ARGUMENT, "Reached shader movie roster leaves its actual frontend"); return NULL;
         }
         if (owner->cinematic_source) {
             qa_q3_cinematic_handles *pool=qa_q3_cinematic_source_handles(owner->cinematic_source);
-            for (size_t i=0;i<owner->cinematic_count;++i) {
-                const frontend_material_movie_cinematic_receipt *receipt=owner->cinematic_receipts+i;
-                if (receipt->handle<0 || !receipt->image || receipt->image->identity!=initial) continue;
+            size_t ordinal;
+            qa_id_index_cursor receipts=qa_id_index_begin(&owner->images,MOVIE_IMAGE,initial);
+            while (qa_id_index_next(&owner->images,&receipts,&ordinal)) {
+                const frontend_material_movie_cinematic_receipt *receipt=owner->cinematic_receipts+ordinal;
+                if (receipt->handle<0) continue;
                 if (pool!=frontend->source_cinematics ||
                     (selected && (selected_pool!=pool || selected_handle!=receipt->handle))) {
                     frontend_fail(error,QA_ERROR_FORMAT,"Reached scratch registration leaves its actual global numeric handle"); return NULL;
                 }
-                if (!selected) { selected=owner; selected_pool=pool; selected_handle=receipt->handle; }
+                if (!selected || owner->roster_ordinal<selected->roster_ordinal) {
+                    selected=owner; selected_pool=pool; selected_handle=receipt->handle;
+                }
             }
         }
-        for (size_t i = 0; i < owner->count; ++i) {
-            const frontend_material_movie_row *row = owner->rows[i];
-            if (row->failed || row->initial->identity != initial) continue;
-            if (selected) {
-                frontend_fail(error, QA_ERROR_FORMAT, "Reached shader initial image repeats a physical playback owner"); return NULL;
+        else {
+            qa_id_index_cursor rows=qa_id_index_begin(&owner->images,MOVIE_IMAGE,initial);
+            size_t ordinal;
+            while (qa_id_index_next(&owner->images,&rows,&ordinal)) {
+                if (selected) {
+                    frontend_fail(error, QA_ERROR_FORMAT, "Reached shader initial image repeats a physical playback owner"); return NULL;
+                }
+                selected = owner;
             }
-            selected = owner;
         }
     }
     if (!selected) {
