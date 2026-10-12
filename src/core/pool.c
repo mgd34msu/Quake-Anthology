@@ -176,9 +176,9 @@ void *qa_pool_grow_run(qa_pool *pool,size_t *slot,size_t current,size_t needed)
     *slot=first;return claim_run(pool,first,needed,needed-current);
 }
 
-void *qa_pool_take_run(qa_pool *pool, size_t count, size_t *slot)
+static size_t find_run(const qa_pool *pool,size_t count)
 {
-    if(count==1) return qa_pool_take(pool,slot);
+    if(count==1)return pool->head;
     size_t run=0,segment_end=pool->first_capacity;
     for(size_t i=0;count && i<pool->capacity;++i) {
         if(i==segment_end){
@@ -186,10 +186,21 @@ void *qa_pool_take_run(qa_pool *pool, size_t count, size_t *slot)
         }
         run=*next_at(pool,i)==POOL_USED?0:run+1;
         if(run!=count) continue;
-        *slot=i+1-count;
-        return claim_run(pool,*slot,count,count);
+        return i+1-count;
     }
-    *slot=SIZE_MAX;
+    return SIZE_MAX;
+}
+
+bool qa_pool_run_available(const qa_pool *pool,size_t count)
+{
+    return find_run(pool,count)!=SIZE_MAX;
+}
+
+void *qa_pool_take_run(qa_pool *pool, size_t count, size_t *slot)
+{
+    if(count==1)return qa_pool_take(pool,slot);
+    *slot=find_run(pool,count);
+    if(*slot!=SIZE_MAX)return claim_run(pool,*slot,count,count);
     if(pool->overflow!=SIZE_MAX) ++pool->overflow;
     qa_allocation_gate_capacity_exhausted();
     return NULL;

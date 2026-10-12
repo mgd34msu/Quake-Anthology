@@ -59,7 +59,7 @@ static bool context_fields(qa_source_save_io *io, qa_command_context *context,
     *context = restored; return true;
 }
 
-static bool chunks_fields(qa_source_save_io *io, command_chunk **head, command_chunk **last,
+static bool chunks_fields(qa_source_save_io *io,qa_console *storage,command_chunk **head, command_chunk **last,
                           size_t *bytes, const qa_console_save_resolvers *resolve, uint64_t captured_registry)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
@@ -69,11 +69,8 @@ static bool chunks_fields(qa_source_save_io *io, command_chunk **head, command_c
     if (reading && count > io->input.size - io->offset) return invalid(io->error, "Invalid console queue extent");
     command_chunk **tail = head;
     for (size_t i = 0; i < count; ++i) {
-        if (reading) {
-            *tail = calloc(1, sizeof(**tail));
-            if (!*tail) return qac_fail(io->error, QA_ERROR_MEMORY, "Retaining restored command chunk");
-        }
-        command_chunk *entry = *tail;
+        command_chunk decoded={0};
+        command_chunk *entry = reading?&decoded:*tail;
         bool text = entry->text != NULL;
         bool ok = context_fields(io, &entry->context, resolve, captured_registry) &&
             context_fields(io, &entry->caller, resolve, captured_registry) &&
@@ -83,19 +80,30 @@ static bool chunks_fields(qa_source_save_io *io, command_chunk **head, command_c
             !qa_source_save_bool(io, &entry->completion) || !qa_source_save_bool(io, &entry->success) ||
             entry->offset > entry->length ||
             (entry->completion ? text || entry->offset || entry->length || !entry->context.script : !text))
-            return invalid(io->error, "Invalid retained command chunk");
-        if (text) {
+            ok=invalid(io->error, "Invalid retained command chunk");
+        if (ok && text) {
             if (reading) {
-                if (io->offset > io->input.size || entry->length > io->input.size - io->offset)
-                    return invalid(io->error, "Truncated retained command bytes");
-                entry->text = malloc(entry->length + 1);
-                if (!entry->text) return qac_fail(io->error, QA_ERROR_MEMORY, "Retaining command bytes");
-                entry->text[entry->length] = 0;
-            }
-            if (!qa_source_save_bytes(io, entry->text, entry->length)) return false;
+                qa_bytes raw={0};
+                ok=qa_source_save_span(io,entry->length,&raw);
+                if (ok) entry->text=entry->length?(char *)raw.data:(char *)"";
+            } else ok=qa_source_save_bytes(io,entry->text,entry->length);
         }
         size_t pending = entry->length - entry->offset;
-        if (pending > SIZE_MAX - total) return invalid(io->error, "Retained console queue overflow");
+        if (ok && pending > SIZE_MAX - total) ok=invalid(io->error, "Retained console queue overflow");
+        if (ok && reading) {
+            ok=qac_console_chunk_reserve(storage,&decoded.context,&decoded.caller,
+                decoded.text,decoded.length,io->error);
+            command_chunk *copy=ok?qac_console_chunk_create(storage,&decoded.context,&decoded.caller,
+                decoded.text,decoded.length,false,io->error):NULL;
+            if (copy) {
+                copy->offset=decoded.offset;copy->completion=decoded.completion;copy->success=decoded.success;
+                *tail=entry=copy;
+            } else ok=false;
+        }
+        if (reading) {
+            free((char *)decoded.context.script);free((char *)decoded.caller.script);
+        }
+        if (!ok) return false;
         total += pending; *last = entry; tail = &entry->next;
     }
     if (!reading && total != *bytes) return invalid(io->error, "Console queue byte ownership differs");
@@ -147,8 +155,8 @@ static bool fields(qa_source_save_io *io, qa_console *state, qa_console *candida
         qa_source_save_i32(io, &state->wait) &&
         (!state->wait || context_fields(io, &state->wait_context, resolve, captured_registry)) &&
         qa_source_save_count(io, &state->alias_count, SIZE_MAX) &&
-        chunks_fields(io, &state->head, &state->tail, &state->queued_bytes, resolve, captured_registry) &&
-        chunks_fields(io, &state->deferred, &state->deferred_tail, &state->deferred_bytes, resolve, captured_registry) &&
+        chunks_fields(io,candidate, &state->head, &state->tail, &state->queued_bytes, resolve, captured_registry) &&
+        chunks_fields(io,candidate, &state->deferred, &state->deferred_tail, &state->deferred_bytes, resolve, captured_registry) &&
         state_valid(state, candidate, io->error);
 }
 
@@ -216,7 +224,7 @@ static bool fault_fields(qa_source_save_io *io,qa_error *fault)
     fault->message[length]=0; fault->code=(qa_status)code;
     return code!=QA_OK || (!fault->offset && !length);
 }
-static bool releases_fields(qa_source_save_io *io,qa_console *state,const qa_console *candidate,
+static bool releases_fields(qa_source_save_io *io,qa_console *state,qa_console *candidate,
     const qa_console_save_resolvers *resolve,uint64_t registry)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
@@ -244,7 +252,7 @@ static bool releases_fields(qa_source_save_io *io,qa_console *state,const qa_con
             (!owner->started && owner->fault.code!=QA_OK)) return false;
         size_t prepared_bytes=owner->prepared?owner->prepared->length-owner->prepared->offset:0;
         command_chunk *last=NULL;
-        if (!chunks_fields(io,&owner->prepared,&last,&prepared_bytes,resolve,registry) ||
+        if (!chunks_fields(io,candidate,&owner->prepared,&last,&prepared_bytes,resolve,registry) ||
             (owner->started && owner->prepared) || (owner->prepared && owner->prepared->next) ||
             !queue_valid(candidate,owner->prepared,prepared_bytes,io->error)) return false;
         if (owner->prepared) {
@@ -255,8 +263,8 @@ static bool releases_fields(qa_source_save_io *io,qa_console *state,const qa_con
         }
         if (owner->started && !owner->complete) {
             if (++active!=1 || !qa_console_pending(state) ||
-                !chunks_fields(io,&owner->head,&owner->tail,&owner->queued_bytes,resolve,registry) ||
-                !chunks_fields(io,&owner->deferred,&owner->deferred_tail,&owner->deferred_bytes,resolve,registry) ||
+                !chunks_fields(io,candidate,&owner->head,&owner->tail,&owner->queued_bytes,resolve,registry) ||
+                !chunks_fields(io,candidate,&owner->deferred,&owner->deferred_tail,&owner->deferred_bytes,resolve,registry) ||
                 !qa_source_save_i32(io,&owner->wait) ||
                 (owner->wait && !context_fields(io,&owner->wait_context,resolve,registry)) ||
                 !qa_source_save_count(io,&owner->alias_count,SIZE_MAX) ||
@@ -306,7 +314,7 @@ bool qa_console_save_capture_in_registry(const qa_console *console,qa_session *s
     bool ok=qa_source_save_writer(&io,session,error) && (!releases || qa_source_save_bytes(&io,magic,4)) &&
         fields(&io,&copy,(qa_console *)console,NULL,captured_registry) &&
         (!releases || (qa_source_save_bool(&io,&copy.drain_yielded) &&
-            releases_fields(&io,&copy,console,NULL,captured_registry))) && qa_source_save_finish(&io,out);
+            releases_fields(&io,&copy,(qa_console *)console,NULL,captured_registry))) && qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io);
     if (!ok && (!error || error->code==QA_OK))
         invalid(error,releases?"Invalid retained console release roster":"Invalid console continuation");

@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "0de3db14cd8a36a1d660327798f1a33339a75b52",
+  "verified_main": "51d654d96a5f0cc3146bbc1681f8619d72809acf",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -40021,6 +40021,31 @@
       ],
       "record_directory": "/tmp/qa-ta3196-mode-trace-policy-20261012",
       "conclusion": "Named three object queries use retained role ruleset via the shared trace-policy primitive; original masks, curves exclusion, shape, pass actor and offsets remain. Matching normal build and seven core suites pass; no live/combined-mode or timing proof."
+    },
+    {
+      "commit": "51d654d96a5f0cc3146bbc1681f8619d72809acf",
+      "source_tree": "92b2c039e500d3e6d521cb5c4866cc1a2f3d79dd",
+      "finding_ids": [
+        "08-06"
+      ],
+      "files_rechecked": [
+        "src/media/material_movies.c",
+        "src/media/material_movies_internal.h",
+        "src/media/material_movies_prepare.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-media-movie-index-20261012",
+      "conclusion": "Material movie image lookup uses common ID index with full uint64 identity and physical ordered rows. Admission, removal, stage publication and abort maintain the index alongside its owner. Original decoder/enable/frame ownership remains. Frontend owner/receipt scans remain open, so 08-06 is partial. Matching normal build and seven core suites pass; no live movie/timing proof."
     }
   ],
   "verification_limits": [

@@ -91,7 +91,7 @@ static void state_free(program_state *state)
     free(state->startup); *state = (program_state){0};
 }
 
-static bool chunks_copy(const command_chunk *source, command_chunk **out,
+static bool chunks_copy(qa_console *storage,const command_chunk *source, command_chunk **out,
     command_chunk **last, size_t expected_bytes, qa_error *error)
 {
     command_chunk **link = out; size_t bytes = 0;
@@ -100,21 +100,17 @@ static bool chunks_copy(const command_chunk *source, command_chunk **out,
             (source->completion ? source->text || source->length || source->offset || !source->context.script : !source->text) ||
             source->length == SIZE_MAX || source->length - source->offset > SIZE_MAX - bytes)
             return qac_fail(error, QA_ERROR_ARGUMENT, "command program has invalid retained chunks");
-        command_chunk *copy = calloc(1, sizeof(*copy));
-        if (!copy) return qac_fail(error, QA_ERROR_MEMORY, "retaining command program chunks");
+        if (!qac_console_chunk_reserve(storage,&source->context,&source->caller,
+                source->text,source->length,error)) return false;
+        command_chunk *copy = qac_console_chunk_create(storage,&source->context,&source->caller,
+            source->text,source->length,false,error);
+        if (!copy) return false;
         *link = copy; *last = copy;
-        copy->offset = source->offset; copy->length = source->length;
+        copy->offset = source->offset;
         copy->completion = source->completion; copy->success = source->success;
-        if (!context_copy(&copy->context, &source->context, error) ||
-            !context_copy(&copy->caller, &source->caller, error)) return false;
         copy->program_pending = source->program_pending;
         copy->program_source = source->program_source; copy->program_source.script = copy->context.script;
         copy->program_caller = source->program_caller; copy->program_caller.script = copy->caller.script;
-        if (source->text) {
-            copy->text = malloc(source->length + 1);
-            if (!copy->text) return qac_fail(error, QA_ERROR_MEMORY, "retaining command program bytes");
-            memcpy(copy->text, source->text, source->length); copy->text[source->length] = 0;
-        }
         bytes += source->length - source->offset; link = &copy->next;
     }
     return bytes == expected_bytes || qac_fail(error, QA_ERROR_ARGUMENT, "command program byte ownership differs");
@@ -148,7 +144,7 @@ static bool ids_copy(const retired_id *source, retired_id **out, qa_error *error
     return true;
 }
 
-static bool state_capture(const qa_console *console, program_state *state, qa_error *error)
+static bool state_capture(qa_console *storage,const qa_console *console, program_state *state, qa_error *error)
 {
     *state = (program_state){.queued_bytes = console->queued_bytes, .deferred_bytes = console->deferred_bytes,
         .alias_count = console->alias_count, .wait = console->wait, .cvars = console->options.cvars,
@@ -157,8 +153,8 @@ static bool state_capture(const qa_console *console, program_state *state, qa_er
         .revision = console->program_revision, .revision_exhausted = console->program_revision_exhausted};
     if (!context_copy(&state->context, &console->options.context, error) ||
         !context_copy(&state->wait_context, &console->wait_context, error) ||
-        !chunks_copy(console->head, &state->head, &state->tail, state->queued_bytes, error) ||
-        !chunks_copy(console->deferred, &state->deferred, &state->deferred_tail, state->deferred_bytes, error) ||
+        !chunks_copy(storage,console->head, &state->head, &state->tail, state->queued_bytes, error) ||
+        !chunks_copy(storage,console->deferred, &state->deferred, &state->deferred_tail, state->deferred_bytes, error) ||
         !aliases_copy(console->aliases, &state->aliases, error) ||
         !ids_copy(console->owners, &state->owners, error) || !ids_copy(console->clients, &state->clients, error)) return false;
     if (console->startup && !(state->startup = qac_copy(console->startup, error))) return false;
@@ -288,7 +284,7 @@ qa_console_program *qa_console_program_prepare(qa_console *source, qa_console *c
     program->source = source; program->candidate = candidate; program->resolve = *resolve; program->busy = true;
     ++source->program_leases; ++candidate->program_leases;
     program_state fresh = {0}, inherited = {0};
-    bool ok = state_capture(source, &program->original, error) && state_capture(candidate, &fresh, error) &&
+    bool ok = state_capture(candidate,source, &program->original, error) && state_capture(candidate,candidate, &fresh, error) &&
         resolve->current(resolve->context, source, candidate, error) &&
         aliases_copy(program->original.aliases, &inherited.aliases, error) &&
         (resolve->fresh_namespace ||
@@ -325,7 +321,7 @@ qa_console_program *qa_console_program_retain(qa_console *console,
     if (!program) { qac_fail(error, QA_ERROR_MEMORY, "retaining physical command program"); return NULL; }
     program->source = program->candidate = console; program->resolve = *resolve;
     program->retained = program->busy = true; ++console->program_leases;
-    bool ok = state_capture(console, &program->original, error) &&
+    bool ok = state_capture(console,console, &program->original, error) &&
         resolve->current(resolve->context, console, console, error);
     if (ok && !state_current(&program->original, console))
         ok = qac_fail(error, QA_ERROR_ARGUMENT, "physical command program changed during retention");
@@ -378,13 +374,13 @@ static bool tail_valid(const qa_console_program *program, const program_state *t
     return !tail->wait || context_live(candidate, &tail->wait_context, published, error);
 }
 
-static bool tail_copy(const program_state *source, program_state *out, qa_error *error)
+static bool tail_copy(qa_console *storage,const program_state *source, program_state *out, qa_error *error)
 {
     *out = (program_state){.queued_bytes = source->queued_bytes, .deferred_bytes = source->deferred_bytes,
         .alias_count = source->alias_count, .wait = source->wait};
     if (!context_copy(&out->wait_context, &source->wait_context, error) ||
-        !chunks_copy(source->head, &out->head, &out->tail, source->queued_bytes, error) ||
-        !chunks_copy(source->deferred, &out->deferred, &out->deferred_tail, source->deferred_bytes, error)) return false;
+        !chunks_copy(storage,source->head, &out->head, &out->tail, source->queued_bytes, error) ||
+        !chunks_copy(storage,source->deferred, &out->deferred, &out->deferred_tail, source->deferred_bytes, error)) return false;
     out->wait_source = source->wait_source; out->wait_source.script = out->wait_context.script;
     if (source->startup && !(out->startup = qac_copy(source->startup, error))) return false;
     return true;
@@ -459,9 +455,9 @@ bool qa_console_program_preflight(qa_console_program *program, qa_error *error)
         !qa_console_idle(program->candidate) || (!program->retained && qa_console_pending(program->candidate)))
         return qac_fail(error, QA_ERROR_ARGUMENT, "command program preflight requires its unchanged source and completed cfg prefix");
     program->busy = true; program_state prefix = {0};
-    bool ok = state_capture(program->candidate, &prefix, error) &&
+    bool ok = state_capture(program->candidate,program->candidate, &prefix, error) &&
         program->resolve.current(program->resolve.context, program->source, program->candidate, error) &&
-        state_capture(program->source, &program->prepared, error) &&
+        state_capture(program->candidate,program->source, &program->prepared, error) &&
         filter_source_tail(program, &program->prepared, error);
     command_chunk *lists[] = {program->prepared.head, program->prepared.deferred};
     for (size_t i = 0; ok && i < 2; ++i)
@@ -477,7 +473,7 @@ bool qa_console_program_preflight(qa_console_program *program, qa_error *error)
     if (ok) {
         filter_tail(program->candidate, &program->prepared);
         ok = tail_valid(program, &program->prepared, false, error) &&
-            tail_copy(&program->prepared, &program->publication, error);
+            tail_copy(program->candidate,&program->prepared, &program->publication, error);
     }
     if (ok && (!state_current(&program->original, program->source) || !state_current(&prefix, program->candidate)))
         ok = qac_fail(error, QA_ERROR_ARGUMENT, "command owner changed during program preflight");

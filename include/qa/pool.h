@@ -40,6 +40,9 @@ void qa_pool_release(qa_pool *, size_t slot);
 void qa_pool_reset(qa_pool *);
 /* Contiguous pages for the common arena. Slots keep the same lifetime and
  * exhaustion accounting as single-slot leases. */
+/* Read-only probe: no lease or accounting changes. A run stays within one
+ * backing segment. */
+bool qa_pool_run_available(const qa_pool *, size_t count);
 void *qa_pool_take_run(qa_pool *, size_t count, size_t *slot);
 /* Extend an owned run into adjacent free slots. May move its start; the caller
  * moves payload with memmove before using it. A failed probe changes nothing. */

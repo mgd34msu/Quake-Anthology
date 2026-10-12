@@ -57,6 +57,8 @@
 #include "../src/network/unified/frame_internal.h"
 #include "../src/bots/runtime/internal.h"
 #include "qa/bot_observations_save.h"
+#include "qa/console_save.h"
+#include "../src/console/commands_private.h"
 
 #include <fcntl.h>
 #include <limits.h>
@@ -125,6 +127,50 @@ static void test_module_observation_storage(void)
     qa_buffer_free(&saved);qa_buffer_free(&copy);
     bot_runtime_observations_close(&first);bot_runtime_observations_close(&restored);
     CHECK(qa_session_destroy(session,&error));
+}
+
+static bool saved_console_context(void *user,uint64_t registry,const qa_command_context *saved,
+    qa_command_context *restored,qa_error *error)
+{
+    (void)user;(void)registry;(void)error;*restored=*saved;return true;
+}
+static void test_console_restore_pages(void)
+{
+    qa_error error={0};qa_session *session=NULL;
+    CHECK(qa_session_create(&(qa_session_options){.actor_capacity=1,.component_capacity=1},&session,&error));
+    qa_command_context context={.session=17,.dialect=QA_RULESET_Q3,.origin=QA_COMMAND_LOCAL};
+    qa_console *console=qa_console_create(&(qa_console_options){.context=context,.disable_builtins=true},&error);
+    CHECK(console);
+    context.script="current.cfg";
+    qa_command_context caller=context;caller.script="parent.cfg";
+    const char text[]="echo ready\n";
+    command_chunk *first=qac_console_chunk_create(console,&context,&caller,text,sizeof(text)-1,false,&error);
+    command_chunk *empty=qac_console_chunk_create(console,&context,&caller,"",0,false,&error);
+    command_chunk *completion=qac_console_chunk_create(console,&context,&caller,NULL,0,false,&error);
+    CHECK(first && empty && completion);
+    first->offset=5;first->next=empty;empty->next=completion;
+    completion->completion=completion->success=true;
+    console->head=first;console->tail=completion;console->queued_bytes=first->length-first->offset;
+    qa_buffer saved={0},copy={0};CHECK(qa_console_save_capture(console,session,&saved,&error));
+    size_t held_slot,held_count=console->command_pages.capacity-console->command_pages.active;
+    CHECK(qa_pool_take_run(&console->command_pages,held_count,&held_slot));
+    size_t active=console->command_pages.active;
+    qa_console_save_resolvers resolve={.command_context=saved_console_context};
+    CHECK(!qa_console_save_restore(console,session,&resolve,(qa_bytes){saved.data,saved.size-1},&error));
+    CHECK(console->head==first && first->offset==5 && console->command_pages.active==active && console->command_storage.sealed);
+    CHECK(qa_console_save_restore(console,session,&resolve,(qa_bytes){saved.data,saved.size},&error));
+    CHECK(console->head->storage==&console->command_pages && console->head->offset==5);
+    CHECK(!strcmp(console->head->context.script,"current.cfg") && !strcmp(console->head->caller.script,"parent.cfg"));
+    CHECK(console->head->next->text && !console->head->next->text[0] && !console->tail->text && console->tail->completion);
+    CHECK(qa_console_save_capture(console,session,&copy,&error));
+    CHECK(copy.size==saved.size && !memcmp(copy.data,saved.data,saved.size));
+    qa_buffer_free(&copy);qa_pool_release_run(&console->command_pages,held_slot,held_count);
+    size_t capacity=console->command_pages.capacity;
+    for(size_t i=0;i<4;++i) {
+        CHECK(qa_console_save_restore(console,session,&resolve,(qa_bytes){saved.data,saved.size},&error));
+        CHECK(console->command_pages.capacity==capacity && console->command_storage.sealed);
+    }
+    qa_buffer_free(&saved);qa_console_destroy(console);CHECK(qa_session_destroy(session,&error));
 }
 
 static void test_shared_campaign_modes(void)
@@ -796,9 +842,17 @@ static void test_arena(void)
     for(size_t i=0;i<6;++i)qa_pool_release(&records,record_slots[i]);
     CHECK(records.active==0);
     qa_pool_reset(&records);
+    retained_head=records.head;
+    size_t retained_peak=records.peak,retained_overflow=records.overflow;
+    CHECK(!qa_pool_run_available(&records,0));
+    CHECK(qa_pool_run_available(&records,1) && qa_pool_run_available(&records,2));
+    CHECK(!qa_pool_run_available(&records,3));
+    CHECK(records.head==retained_head && records.active==0 &&
+        records.peak==retained_peak && records.overflow==retained_overflow);
     CHECK(!qa_pool_take_run(&records,3,&slot));
     CHECK(records.active==0);
     CHECK(qa_pool_take_run(&records,2,&slot)==record_values[0] && slot==0);
+    CHECK(qa_pool_run_available(&records,2) && !qa_pool_run_available(&records,3));
     CHECK(!qa_pool_grow_run(&records,&slot,2,3) && slot==0);
     CHECK(records.active==2 && record_values[1][0]==0x41);
     qa_pool_release_run(&records,slot,2);
@@ -3808,6 +3862,7 @@ int main(int argc, char **argv)
     test_q2_hud_configuration();
     test_compiled_sound_names();
     test_module_observation_storage();
+    test_console_restore_pages();
     test_shared_campaign_modes();
     test_debug_geometry_wire();
     test_debug_geometry_lifetime();

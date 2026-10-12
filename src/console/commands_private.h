@@ -123,6 +123,10 @@ struct qa_console {
 bool qac_console_context_capture(qa_console *, const qa_command_context *, qa_command_context *, qa_error *);
 command_chunk *qac_console_chunk_create(qa_console *,const qa_command_context *,const qa_command_context *,
     const char *,size_t,bool,qa_error *);
+/* Cold import/publication admits exact chunk storage; runtime creation never
+ * extends the pool. Existing live leases retain their addresses. */
+bool qac_console_chunk_reserve(qa_console *,const qa_command_context *,const qa_command_context *,
+    const char *,size_t,qa_error *);
 void qac_console_chunk_free(command_chunk *);
 bool qac_console_context_current(const qa_console *, const qa_command_context *, qa_error *);
 bool qac_console_context_view_current(const qa_console *,const qa_command_context *,bool publication,qa_error *);
