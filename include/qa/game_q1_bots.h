@@ -1,6 +1,7 @@
 #ifndef QA_GAME_Q1_BOTS_H
 #define QA_GAME_Q1_BOTS_H
 #include "qa/game_q1.h"
+#include "qa/arena.h"
 
 typedef struct qa_q1_bot_entity {
     qa_string_id model,classname;
@@ -49,7 +50,9 @@ bool qa_q1_source_client_userinfo_storage(qa_q1_game *,qa_actor_id,const char *,
  * key. It is a typed source value, so original Q1 backslashes remain intact. */
 bool qa_q1_source_client_userinfo_named(qa_q1_game *,qa_actor_id,const char *,const char *,qa_error *);
 /* Continuations can retain name separately from delimiter-based userinfo. */
-bool qa_q1_source_client_userinfo_read(const qa_q1_game *,qa_actor_id,bool include_name,qa_buffer *,qa_error *);
+/* NULL storage returns owned bytes; caller storage retains the same serialization
+ * until its reset and must not be passed to qa_buffer_free. */
+bool qa_q1_source_client_userinfo_read(const qa_q1_game *,qa_actor_id,bool include_name,qa_arena *storage,qa_buffer *,qa_error *);
 /* Publishes the exact name admitted by the source command boundary. */
 bool qa_q1_source_client_name(qa_q1_game *,qa_actor_id,const char *,qa_error *);
 bool qa_q1_source_client_colors(qa_q1_game *,qa_actor_id,int32_t,int32_t,qa_error *);

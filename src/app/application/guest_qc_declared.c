@@ -305,7 +305,7 @@ bool application_qc_callbacks_ready(const struct application_qc_state *engine, q
     return application_qc_objectives_ready(engine,error) && application_qc_combat_ready(engine,error) &&
         application_qc_protection_ready(engine,error);
 }
-static bool project_value(qa_qc_instance *vm, int32_t reference, const qa_qc_definition *field,
+static bool project_value(qa_application *app,qa_qc_instance *vm,int32_t reference,const qa_qc_definition *field,
                             qa_qc_game_value value, qa_error *error)
 {
     switch (value.kind) {
@@ -315,13 +315,15 @@ static bool project_value(qa_qc_instance *vm, int32_t reference, const qa_qc_def
         static const char prefix[] = "qc-projection:";
         size_t length = strlen(value.value.string);
         if (length > SIZE_MAX - sizeof(prefix)) return application_fail(error, QA_ERROR_MEMORY, "QC projection string name overflow");
-        char *name = malloc(length + sizeof(prefix));
-        if (!name) return application_fail(error, QA_ERROR_MEMORY, "Allocating QC projection string name");
+        qa_unified_frame_lease *storage=application_control_storage_acquire(app,error);
+        if(!storage) return false;
+        char *name=qa_unified_frame_lease_alloc(storage,length+sizeof(prefix),1,1,error);
+        if(!name) {qa_unified_frame_lease_release(storage);return false;}
         memcpy(name, prefix, sizeof(prefix) - 1);
         memcpy(name + sizeof(prefix) - 1, value.value.string, length + 1);
         int32_t text;
         bool ok = qa_qc_engine_string(vm, name, value.value.string, length + 1, &text, error);
-        free(name);
+        qa_unified_frame_lease_release(storage);
         return ok && qa_qc_project_entity_int(vm, reference, field->offset, text, error);
     }
     default: return application_fail(error, QA_ERROR_ARGUMENT, "QC declared field projection has an invalid type");
@@ -337,7 +339,7 @@ bool application_qc_seed_fields(struct application_qc_state *engine, qa_actor_id
     bool client = row && row->connected;
     for (size_t i = 0; i < profile->field_count; ++i) {
         if (profile->fields[i].kind == QC_FIELD_CONSTANT &&
-            !project_value(engine->provider->state.qc.instance, reference, profile->fields[i].definition,
+            !project_value(engine->provider->application,engine->provider->state.qc.instance,reference,profile->fields[i].definition,
                 profile->fields[i].constant.constant, error)) return false;
         if (client && profile->fields[i].kind == QC_FIELD_BODY &&
             (profile->fields[i].body == QA_BODY_MINIMUM || profile->fields[i].body == QA_BODY_MAXIMUM)) {
@@ -379,19 +381,34 @@ static bool declared_client(const struct application_qc_state *engine,qa_actor_i
     const application_qc_client *client = application_qc_client_for_actor(engine, actor);
     return client && client->connected;
 }
-static bool project_userinfo(qa_qc_instance *vm,int32_t reference,
-    const application_qc_bound_field *field,const qa_buffer *value,qa_error *error)
+static bool project_userinfo(struct application_qc_state *engine,qa_qc_instance *vm,
+    int32_t reference,qa_actor_id actor,const application_qc_bound_field *field,qa_error *error)
 {
     size_t length=strlen(field->key);
     if(length>SIZE_MAX-48) return application_fail(error,QA_ERROR_MEMORY,"QC userinfo buffer name overflows");
-    char *name=malloc(length+48);
-    if(!name) return application_fail(error,QA_ERROR_MEMORY,"Retaining QC userinfo buffer identity");
-    snprintf(name,length+48,"mod-userinfo:%d:%s",reference,field->key);
-    size_t capacity=value->size>=128?value->size+1:128;
-    int32_t string_id;
-    bool ok=qa_qc_engine_string(vm,name,(const char *)value->data,capacity,&string_id,error);
-    free(name);
-    return ok&&qa_qc_project_entity_int(vm,reference,field->definition->offset,string_id,error);
+    qa_application *app=engine->provider->application;
+    qa_unified_frame_lease *storage=application_control_storage_acquire(app,error);
+    if(!storage) return false;
+    qa_bytes value;
+    bool ok=application_client_userinfo_key_read(app,engine->world,actor,field->key,
+        qa_unified_frame_lease_arena(storage),&value,error);
+    char *name=NULL,*text=NULL;
+    if(ok) {
+        name=qa_unified_frame_lease_alloc(storage,length+48,1,1,error);
+        text=name?qa_unified_frame_lease_alloc(storage,value.size+1,1,1,error):NULL;
+        ok=text!=NULL;
+    }
+    if(ok) {
+        snprintf(name,length+48,"mod-userinfo:%d:%s",reference,field->key);
+        memcpy(text,value.data,value.size);text[value.size]=0;
+        size_t capacity=value.size>=128?value.size+1:128;
+        int32_t string_id;
+        ok=actor_current(engine,vm,reference,actor,error)&&
+            qa_qc_engine_string(vm,name,text,capacity,&string_id,error)&&
+            qa_qc_project_entity_int(vm,reference,field->definition->offset,string_id,error);
+    }
+    qa_unified_frame_lease_release(storage);
+    return ok;
 }
 bool application_qc_project_declared(struct application_qc_state *engine, qa_qc_instance *vm,
                                       const qa_qc_entity_access *access, qa_error *error)
@@ -408,12 +425,7 @@ bool application_qc_project_declared(struct application_qc_state *engine, qa_qc_
         case QC_FIELD_PRIVATE: case QC_FIELD_CONSTANT: case QC_FIELD_INPUT: case QC_FIELD_THINK: case QC_FIELD_NEXTTHINK: continue;
         case QC_FIELD_USERINFO: {
             if(!declared_client(engine,access->binding.actor)) continue;
-            qa_buffer text={0};
-            ok=application_client_userinfo_key_read(engine->provider->application,engine->world,
-                access->binding.actor,field->key,&text,error);
-            if(ok) ok=actor_current(engine,vm,access->reference,access->binding.actor,error)&&
-                project_userinfo(vm,access->reference,field,&text,error);
-            qa_buffer_free(&text);
+            ok=project_userinfo(engine,vm,access->reference,access->binding.actor,field,error);
             continue;
         }
         case QC_FIELD_HEALTH: {
@@ -474,7 +486,7 @@ bool application_qc_project_declared(struct application_qc_state *engine, qa_qc_
             break;
         }
         if (ok) ok = actor_current(engine, vm, access->reference, access->binding.actor, error) &&
-            project_value(vm, access->reference, def, value, error);
+            project_value(engine->provider->application,vm,access->reference,def,value,error);
     }
     engine->projecting = false; return ok;
 }

@@ -403,7 +403,8 @@ static bool info_set(qa_q1_game *game,q1_player *player,const char *key,const ch
     if(!player->source_info.capacity && !q1_source_info_prepare(&player->source_info,0,error)) return false;
     info_put(&player->source_info,key_id,value_id);return true;
 }
-bool qa_q1_source_client_userinfo_read(const qa_q1_game *game,qa_actor_id actor,bool include_name,qa_buffer *out,qa_error *error) {
+bool qa_q1_source_client_userinfo_read(const qa_q1_game *game,qa_actor_id actor,bool include_name,
+    qa_arena *storage,qa_buffer *out,qa_error *error) {
     const q1_player *player=client_const(game,actor);
     if(!player || !out || out->data || out->size) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q1 source userinfo read requires its client and empty output");return false;
@@ -421,7 +422,7 @@ bool qa_q1_source_client_userinfo_read(const qa_q1_game *game,qa_actor_id actor,
         length+=key_size+value_size+2;
     }
     if(length==SIZE_MAX) {qa_error_set(error,QA_ERROR_MEMORY,0,"Q1 source userinfo extent overflows");return false;}
-    uint8_t *bytes=malloc(length+1);
+    uint8_t *bytes=storage?qa_arena_alloc(storage,length+1,1,error):malloc(length+1);
     if(!bytes) {qa_error_set(error,QA_ERROR_MEMORY,0,"reading actual Q1 source userinfo");return false;}
     size_t cursor=0;
     for(size_t i=0;i<player->source_info.count;++i) {
@@ -431,7 +432,8 @@ bool qa_q1_source_client_userinfo_read(const qa_q1_game *game,qa_actor_id actor,
         if(!qa_info_append((char *)bytes,length+1,&cursor,
             (qa_bytes){(const uint8_t *)key,strlen(key)},
             (qa_bytes){(const uint8_t *)value,strlen(value)},0,error)) {
-            free(bytes);return false;
+            if(!storage) free(bytes);
+            return false;
         }
     }
     bytes[cursor]=0;*out=(qa_buffer){bytes,length};return true;

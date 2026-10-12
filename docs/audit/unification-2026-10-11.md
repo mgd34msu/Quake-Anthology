@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `2d679812`.
+Follow-up source changes were reviewed through main `138452ac`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 176 have source fixes
+There are **374 overlapping source-review observations**: 178 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 195 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 193 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -352,3 +352,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `e1e3e9f0` / 04-009: Q2 and Q3 source snapshot captures retain independent common control storage, prepared from their admitted entity extents. Prefix growth and partial-construction refusal keep existing captures intact; original wire records and visibility decisions remain unchanged. Normal build and seven core suites passed; no live, allocation-zero or performance claim. Records: `/tmp/qa-ta3196-source-wire-captures-20261012`.
 
 - `2d679812` / 02-11: QuakeC infokey and QW client-name parsing borrow the common info-string parser while callback text/key captures use independent control leases. Last-key selection, limits and string-buffer admission remain unchanged. Normal build and seven core suites passed; dynamic engine-string growth remains separately scoped. Records: `/tmp/qa-ta3196-qc-info-leases-20261012`.
+
+- `138452ac` / 02-02, 02-04: Q3 weapon requests and match callbacks use the full-actor retained index and stable common pool. Ordered requests, mode generations, refused unbind ownership and QAG3WR save bytes remain unchanged. Restore stages candidates in existing control storage. Normal build and seven core suites passed; historical peaks can still extend shared storage. Records: `/tmp/qa-ta3196-q3-weapon-services-20261012`.

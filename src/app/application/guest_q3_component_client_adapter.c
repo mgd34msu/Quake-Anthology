@@ -168,34 +168,51 @@ static bool color_team(const char *text,int32_t *out,qa_error *e)
         return application_fail(e,QA_ERROR_ARGUMENT,"Component team has no original Quake color command");
     *out=(int32_t)number;return true;
 }
-static bool userinfo(void *context,qa_actor_id actor,const char **out,qa_error *e)
+static bool userinfo_read(application_q3_component_client_adapter *a,qa_actor_id actor,
+    qa_arena *scratch,const qa_bytes *key,qa_bytes *out,qa_error *e)
 {
-    application_q3_component_client_adapter *a=context;
     if(!out) return application_fail(e,QA_ERROR_ARGUMENT,"Component userinfo needs its borrowed output");
     if(!client_current(a,actor,false))
         return application_fail(e,QA_ERROR_NOT_FOUND,"Component userinfo lost its physical connected client");
     application_player_record *p=storage(a)?application_player_record_find(a->application->players,actor):NULL;
-    application_provider *source=a->source;bool ok;
+    application_provider *source=a->source;bool ok;const char *text=NULL;
     ++a->calls;
     if(source->kind==APPLICATION_PROVIDER_Q1) {
         qa_buffer bytes={0};
-        ok=qa_q1_source_client_userinfo_read(source->state.q1,actor,true,&bytes,e);
-        if(ok) {qa_buffer_free(&a->userinfo);a->userinfo=bytes;*out=(const char *)bytes.data;}
+        ok=qa_q1_source_client_userinfo_read(source->state.q1,actor,true,scratch,&bytes,e);
+        if(ok) {
+            if(!scratch) {qa_buffer_free(&a->userinfo);a->userinfo=bytes;}
+            text=(const char *)bytes.data;
+        }
     } else if(source->kind==APPLICATION_PROVIDER_Q2)
-        ok=qa_q2_player_userinfo_read(source->state.q2,actor,out,e);
+        ok=qa_q2_player_userinfo_read(source->state.q2,actor,&text,e);
     else if(source->kind==APPLICATION_PROVIDER_Q3)
-        ok=application_native_q3_wire_userinfo_read(source,p->client_slot,out,e);
+        ok=application_native_q3_wire_userinfo_read(source,p->client_slot,&text,e);
     else if(source->kind==APPLICATION_PROVIDER_NATIVE&&source->state.native.q2_engine) {
-        *out=source->state.native.q2_engine->clients[p->client_slot+1].userinfo;ok=true;
+        text=source->state.native.q2_engine->clients[p->client_slot+1].userinfo;ok=true;
     } else if(source->kind==APPLICATION_PROVIDER_QC) {
-        char *copy=info_dictionary(p->userinfo?p->userinfo:"",e);ok=copy!=NULL;
-        if(ok) {qa_buffer_free(&a->userinfo);a->userinfo=(qa_buffer){(uint8_t *)copy,strlen(copy)};*out=copy;}
+        if(key) {text=p->userinfo?p->userinfo:"";ok=true;}
+        else {
+            char *copy=info_dictionary(p->userinfo?p->userinfo:"",e);ok=copy!=NULL;
+            if(ok) {qa_buffer_free(&a->userinfo);a->userinfo=(qa_buffer){(uint8_t *)copy,strlen(copy)};text=copy;}
+        }
     }
-    else {*out=q3g_engine(source)->clients[p->client_slot].userinfo;
-        if(!*out) *out="";
+    else {text=q3g_engine(source)->clients[p->client_slot].userinfo;
+        if(!text) text="";
         ok=true;}
+    if(ok) {
+        if(key) qa_info_find(text,*key,0,out);
+        else *out=(qa_bytes){(const uint8_t *)text,strlen(text)};
+    }
     --a->calls;
     return ok&&(client_current(a,actor,false)||application_fail(e,QA_ERROR_ARGUMENT,"Component userinfo changed its physical client"));
+}
+static bool userinfo(void *context,qa_actor_id actor,const char **out,qa_error *e)
+{
+    if(!out) return application_fail(e,QA_ERROR_ARGUMENT,"Component userinfo needs its borrowed output");
+    qa_bytes text;
+    if(!userinfo_read(context,actor,NULL,NULL,&text,e)) return false;
+    *out=(const char *)text.data;return true;
 }
 static bool set_userinfo(void *context,qa_actor_id actor,const char *text,qa_error *e)
 {
@@ -231,28 +248,17 @@ static bool info_adapter(qa_application *app,qa_world *world,
     return application_q3_component_client_adapter_create(app,app->players->map_provider,world,out,e);
 }
 bool application_client_userinfo_key_read(qa_application *app,qa_world *world,qa_actor_id actor,
-    const char *key,qa_buffer *out,qa_error *e)
+    const char *key,qa_arena *storage,qa_bytes *out,qa_error *e)
 {
-    if(!key||!*key||strchr(key,'\\')||!out||out->data||out->size)
-        return application_fail(e,QA_ERROR_ARGUMENT,"Client info read requires a valid key and empty owned output");
-    application_q3_component_client_adapter *a=NULL;
-    if(!info_adapter(app,world,&a,e)) return false;
-    const char *text;
-    bool ok=userinfo(a,actor,&text,e);
-    if(ok) {
-        qa_bytes value;
-        qa_info_find(text,(qa_bytes){(const uint8_t *)key,strlen(key)},0,&value);
-        out->data=malloc(value.size+1);
-        if(!out->data) ok=application_fail(e,QA_ERROR_MEMORY,"Retaining physical client info value");
-        else {memcpy(out->data,value.data,value.size);out->data[value.size]=0;out->size=value.size;}
-    }
-    qa_error cleanup={0};
-    if(!application_q3_component_client_adapter_destroy(&a,&cleanup)) {
-        if(ok&&e) *e=cleanup;
-        ok=false;
-    }
-    if(!ok) qa_buffer_free(out);
-    return ok;
+    if(!key||!*key||strchr(key,'\\')||!storage||!out)
+        return application_fail(e,QA_ERROR_ARGUMENT,"Client info read requires a valid key and borrowed output storage");
+    if(!app||!app->players||app->world!=world)
+        return application_fail(e,QA_ERROR_ARGUMENT,"Client info requires its installed physical world roster");
+    application_provider *source=app->players->map_provider;
+    application_q3_component_client_adapter a={.application=app,.source=source,
+        .owner=source?source->owner:0,.world=world};
+    qa_bytes wanted={(const uint8_t *)key,strlen(key)};
+    return userinfo_read(&a,actor,storage,&wanted,out,e);
 }
 bool application_client_userinfo_key_write(qa_application *app,qa_world *world,qa_actor_id actor,
     const char *key,const char *value,qa_error *e)

@@ -2281,7 +2281,7 @@ static bool q1_selected_q3_respawn(qa_application *app, application_provider *so
         int32_t game_type = match.rules.source == QA_MODE_THREEWAVE ||
             match.rules.source == QA_MODE_Q2_CTF || match.rules.source == QA_MODE_LMCTF ? 4 :
             options.program == QA_Q1_CTF || options.teamplay ? 3 : 0;
-        if (!qa_q1_source_client_userinfo_read(source->state.q1, actor, true, &userinfo, error)) return false;
+        if (!qa_q1_source_client_userinfo_read(source->state.q1, actor, true, NULL, &userinfo, error)) return false;
         bool okay = application_client_native_q3_userinfo(app, provider, actor,
             (const char *)userinfo.data, game_type, error);
         qa_buffer_free(&userinfo);

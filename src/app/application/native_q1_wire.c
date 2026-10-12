@@ -1556,7 +1556,7 @@ static bool source_roster_refresh(application_native_q1_wire_source *source, qa_
     if (!record || !qa_q1_source_client_read(source->provider->state.q1, actor, &view) ||
         record->client_slot != view.slot)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q1 source userinfo lost its full actor roster");
-    if (!qa_q1_source_client_userinfo_read(source->provider->state.q1, actor, false, &userinfo, error)) return false;
+    if (!qa_q1_source_client_userinfo_read(source->provider->state.q1, actor, false, NULL, &userinfo, error)) return false;
     const char *name = NULL;
     if (!qa_q1_source_client_info(source->provider->state.q1, actor, "name", &name) || !name) {
         qa_buffer_free(&userinfo);

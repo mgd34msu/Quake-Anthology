@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "2d67981202a2eae449717a3fa0580bb7bef4f721",
+  "verified_main": "138452ac6133e9ec9ea76ff39cf8fc30ebb0dacc",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 176,
-    "open_source_observation": 195,
+    "fixed_source_build_core": 178,
+    "open_source_observation": 193,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -24199,8 +24199,9 @@
       "severity": "high",
       "job": "02",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "138452ac6133e9ec9ea76ff39cf8fc30ebb0dacc"
     },
     {
       "id": "02-03",
@@ -24255,8 +24256,9 @@
       "severity": "medium",
       "job": "02",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "138452ac6133e9ec9ea76ff39cf8fc30ebb0dacc"
     },
     {
       "id": "02-05",
@@ -42035,6 +42037,32 @@
       ],
       "record_directory": "/tmp/qa-ta3196-qc-info-leases-20261012",
       "conclusion": "QuakeC infokey and QW client-name parsing borrow the common info-string parser while callback text/key captures use independent control leases. Last-key selection, limits and string-buffer admission remain unchanged. Normal build and seven core suites passed; dynamic engine-string growth remains separately scoped."
+    },
+    {
+      "commit": "138452ac6133e9ec9ea76ff39cf8fc30ebb0dacc",
+      "source_tree": "5ce8aac427d281c7056b8ef54a706eeca13cd9c2",
+      "finding_ids": [
+        "02-02",
+        "02-04"
+      ],
+      "files_rechecked": [
+        "src/app/application/guest_q3_weapons_services.c",
+        "src/app/application/guest_q3_weapons_services_private.h",
+        "src/app/application/guest_q3_weapons_services_save.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-q3-weapon-services-20261012",
+      "conclusion": "Q3 weapon requests and match callbacks use the full-actor retained index and stable common pool. Ordered requests, mode generations, refused unbind ownership and QAG3WR save bytes remain unchanged. Restore stages candidates in existing control storage. Normal build and seven core suites passed; historical peaks can still extend shared storage."
     }
   ],
   "verification_limits": [
