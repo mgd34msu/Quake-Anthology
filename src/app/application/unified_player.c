@@ -175,6 +175,7 @@ bool application_ui_names_prepare(qa_application *app, qa_error *error)
         {"demon/dland2.wav", &names->landing_sounds[0]}, {"world/land.wav", &names->landing_sounds[1]},
         {"misc/h2ohit1.wav", &names->landing_sounds[2]}, {"progs/player.mdl", &names->q1_player_model},
         {"i_health", &names->q2_health_icon}, {"i_help", &names->q2_help_icon},
+        {"q2:remote-armor", &names->q2_remote_armor},
         {"music", &names->music}, {"q1:fog", &names->fog}, {"misc/talk.wav", &names->talk_sound},
         {"rank_status", &names->ranking_status}, {"rank_menu", &names->ranking_menu},
         {"misc/flare.tga", &names->flare_image}, {"default", &names->material_default}, {"ladder", &names->material_ladder},
@@ -471,22 +472,21 @@ static bool copy_inventory(player_observation *o, qa_error *e)
     return true;
 }
 
-static bool armor(qa_armor *out, player_observation *o, qa_error *e)
+static void armor(qa_armor *out, player_observation *o)
 {
     if (o->has_q3 && o->primary->kind != APPLICATION_PROVIDER_Q3 && !o->q3_combat) {
         out->regular.kind = o->q3.stats[3] ? QA_ARMOR_Q3 : QA_ARMOR_NONE;
         out->regular.points = o->q3.stats[3];
         out->regular.protection.q3_protection = .66f;
-        return true;
+        return;
     }
     if (o->has_q2) {
         out->regular.kind = o->q2.stats[5] ? QA_ARMOR_Q2 : QA_ARMOR_NONE;
         out->regular.points = o->q2.stats[5];
-        return !o->q2.stats[5] || qa_strings_intern_cstr(qa_session_strings(o->app->session),
-            "q2:remote-armor", &out->regular.item, e);
+        if (o->q2.stats[5]) out->regular.item = o->app->ui_names.q2_remote_armor;
+        return;
     }
     *out = o->combat.armor;
-    return true;
 }
 
 static bool inventory(qa_unified_player_ui *out, player_observation *o, qa_error *e)
@@ -914,13 +914,13 @@ static bool ui_items(qa_unified_player_ui *out, player_observation *o, qa_error 
         } else if (owner && owner->product && owner->product->family == QA_GAME_Q3 && d->weapon) {
             bool original = owner != NULL && owner == o->primary && owner->kind != APPLICATION_PROVIDER_Q3;
             has_ammo = !d->ammo || (original ? ammo != 0 : ammo > 0);
-            for (unsigned w = 1; w < QA_Q3_WEAPON_COUNT; ++w) {
-                const char *name = qa_q3_weapon_identity_name((qa_q3_weapon)w);
-                const char *key = identity(o, d->item);
-                if (name && key && !strncmp(key, "q3:weapon/", 10) && !strcmp(key + 10, name)) {
-                    ordinal = w; if (!original && owner == o->primary) label = key + 10; break;
-                }
-            }
+            if (owner->kind == APPLICATION_PROVIDER_Q3)
+                for (unsigned w = 1; w < QA_Q3_WEAPON_COUNT; ++w)
+                    if (qa_q3_weapon_item(owner->state.q3, (qa_q3_weapon)w, false) == d->item) {
+                        ordinal = w;
+                        if (owner == o->primary) label = qa_q3_weapon_identity_name((qa_q3_weapon)w);
+                        break;
+                    }
             if (owner->kind != APPLICATION_PROVIDER_Q3 && q3g_engine(owner)) {
                 struct application_q3_guest *engine = q3g_engine(owner);
                 const application_q3_catalog_weapon *weapons;
@@ -990,47 +990,51 @@ static bool weapon_status(qa_unified_player_ui *out, player_observation *o, qa_e
     return application_unified_provider_state(&v->source, owner, e) &&
         application_unified_frame_string(o->lease, &v->label, label, e);
 }
-static const char *original_q3_warning(player_observation *o)
+typedef struct q3_ammo_observation {
+    qa_q3_weapon weapon;
+    qa_item_id item, ammo;
+} q3_ammo_observation;
+
+static q3_ammo_observation original_q3_ammo(const player_observation *o, size_t ordinal)
 {
-    if (!o->q3_standard) return "none";
+    const application_q3_catalog_weapon *w = o->q3_weapons + ordinal;
+    return (q3_ammo_observation){(qa_q3_weapon)w->weapon, w->item, w->ammo};
+}
+
+static q3_ammo_observation native_q3_ammo(const player_observation *o, size_t ordinal)
+{
+    qa_q3_weapon weapon = (qa_q3_weapon)(QA_Q3_W_MACHINEGUN + ordinal);
+    return (q3_ammo_observation){weapon,
+        qa_q3_weapon_item(o->arsenal->state.q3, weapon, false),
+        qa_q3_weapon_item(o->arsenal->state.q3, weapon, true)};
+}
+
+static qa_ammo_warning arsenal_warning(player_observation *o)
+{
+    q3_ammo_observation (*observe)(const player_observation *, size_t);
+    size_t extent;
+    if (catalog_q3(o)) {
+        if (!o->q3_standard) return QA_AMMO_NONE;
+        observe = original_q3_ammo; extent = o->q3_weapon_count;
+    } else if (o->arsenal->kind == APPLICATION_PROVIDER_Q3) {
+        observe = native_q3_ammo; extent = QA_Q3_WEAPON_COUNT - QA_Q3_W_MACHINEGUN;
+    } else return QA_AMMO_NONE;
     uint32_t total = 0;
-    for (size_t i = 0; i < o->q3_weapon_count; ++i) {
-        const application_q3_catalog_weapon *w = o->q3_weapons + i;
-        if (w->weapon < QA_Q3_W_MACHINEGUN ||
-            (o->q3_product == QA_Q3_ARENA && w->weapon > QA_Q3_W_GRAPPLE) || count(o, w->item) <= 0) continue;
-        double value = w->ammo ? count(o, w->ammo) : -1;
+    for (size_t i = 0; i < extent; ++i) {
+        q3_ammo_observation w = observe(o, i);
+        if (w.weapon < QA_Q3_W_MACHINEGUN ||
+            (o->q3_product == QA_Q3_ARENA && w.weapon > QA_Q3_W_GRAPPLE) || count(o, w.item) <= 0) continue;
+        double value = w.ammo ? count(o, w.ammo) : -1;
         /* Actual Q3 ammo counters are signed words; the aggregate retains
          * the original integer multiplication and addition widths. */
         uint32_t word = (uint32_t)(int32_t)value;
-        bool slow = w->weapon == QA_Q3_W_ROCKET || w->weapon == QA_Q3_W_GRENADE ||
-            w->weapon == QA_Q3_W_RAIL || w->weapon == QA_Q3_W_SHOTGUN ||
-            (o->q3_product == QA_Q3_TEAM_ARENA && w->weapon == QA_Q3_W_PROX);
+        bool slow = w.weapon == QA_Q3_W_ROCKET || w.weapon == QA_Q3_W_GRENADE ||
+            w.weapon == QA_Q3_W_RAIL || w.weapon == QA_Q3_W_SHOTGUN ||
+            (o->q3_product == QA_Q3_TEAM_ARENA && w.weapon == QA_Q3_W_PROX);
         total += word * (slow ? 1000u : 200u);
-        if (total <= INT32_MAX && total >= 5000) return "none";
+        if (total <= INT32_MAX && total >= 5000) return QA_AMMO_NONE;
     }
-    return total == 0 ? "empty" : "low";
-}
-
-static const char *arsenal_warning(player_observation *o)
-{
-    if (catalog_q3(o)) return original_q3_warning(o);
-    if (o->arsenal->kind == APPLICATION_PROVIDER_Q3) {
-        uint32_t total = 0;
-        for (qa_q3_weapon w = QA_Q3_W_MACHINEGUN; w < QA_Q3_WEAPON_COUNT; ++w) {
-            if (o->q3_product == QA_Q3_ARENA && w > QA_Q3_W_GRAPPLE) continue;
-            qa_item_id weapon = qa_q3_weapon_item(o->arsenal->state.q3, w, false);
-            if (count(o, weapon) <= 0) continue;
-            qa_item_id ammo = qa_q3_weapon_item(o->arsenal->state.q3, w, true);
-            double value = ammo ? count(o, ammo) : -1;
-            uint32_t word = (uint32_t)(int32_t)value;
-            bool slow = w == QA_Q3_W_ROCKET || w == QA_Q3_W_GRENADE || w == QA_Q3_W_RAIL ||
-                w == QA_Q3_W_SHOTGUN || (o->q3_product == QA_Q3_TEAM_ARENA && w == QA_Q3_W_PROX);
-            total += word * (slow ? 1000u : 200u);
-            if (total <= INT32_MAX && total >= 5000) return "none";
-        }
-        return total == 0 ? "empty" : "low";
-    }
-    return "none";
+    return total == 0 ? QA_AMMO_EMPTY : QA_AMMO_LOW;
 }
 
 static bool q1_team_face(qa_unified_player_ui *out, player_observation *o, qa_error *e)
@@ -1051,11 +1055,6 @@ static bool q1_team_face(qa_unified_player_ui *out, player_observation *o, qa_er
     }
     return application_fail(e, QA_ERROR_ARGUMENT, "Rogue team face lost its physical Source player");
 }
-static qa_ammo_warning warning_kind(const char *value)
-{
-    return !strcmp(value, "empty") ? QA_AMMO_EMPTY :
-        !strcmp(value, "low") ? QA_AMMO_LOW : QA_AMMO_NONE;
-}
 static bool native_inventory_item(qa_unified_native_inventory *out, player_observation *o,
     qa_item_id id, const char *label, double amount, qa_error *e)
 {
@@ -1068,14 +1067,15 @@ static bool ui(qa_unified_player_ui *out, player_observation *o, qa_error *e)
 {
     out->health = o->has_q2 ? (double)o->q2.stats[1] :
         o->has_q3 && o->primary->kind != APPLICATION_PROVIDER_Q3 ? (double)o->q3.stats[0] : (double)o->combat.health;
-    if (!armor(&out->armor, o, e) || !inventory(out, o, e) || !timers(out, o, e) ||
+    armor(&out->armor, o);
+    if (!inventory(out, o, e) || !timers(out, o, e) ||
         !ui_items(out, o, e) || !weapon_status(out, o, e)) return false;
     qa_item_id active = QA_STRING_NONE, ammo = QA_STRING_NONE;
     if (o->has_gear && o->gear.active) {
-        out->arsenal_warning = warning_kind(arsenal_warning(o)); active = o->gear.item;
+        out->arsenal_warning = arsenal_warning(o); active = o->gear.item;
     } else if (catalog_q3(o)) {
         const application_q3_catalog_weapon *w = q3_active(o);
-        out->arsenal_warning = warning_kind(original_q3_warning(o)); active = o->q3_active;
+        out->arsenal_warning = arsenal_warning(o); active = o->q3_active;
         if (w && w->ammo) { ammo = w->ammo; out->ammo_count = count(o, w->ammo); }
     } else if (native_original(o)) {
         const qa_q2_weapon_definition *w = o->native_weapon;
@@ -1270,12 +1270,6 @@ static bool selection_basis(qa_application *app, qa_actor_id actor,
     *primary = source; *arsenal = selected; return true;
 }
 
-static qa_item_id selection_identity(qa_application *app, const char *name)
-{
-    return name ? qa_strings_find(qa_session_strings(app->session),
-        (qa_bytes){(const uint8_t *)name, strlen(name)}) : 0;
-}
-
 bool application_unified_player_selection_read(qa_application *app, qa_actor_id actor,
     application_unified_player_selection *out, qa_error *e)
 {
@@ -1309,8 +1303,8 @@ bool application_unified_player_selection_read(qa_application *app, qa_actor_id 
         const qa_q2_weapon_definition *weapon = qa_q2_weapon_definition_at(arsenal->state.q2, player.weapon);
         if (player.weapon != QA_Q2_WEAPON_NONE) {
             if (!weapon) return application_fail(e, QA_ERROR_NOT_FOUND, "Selected Q2 UI lost its registered weapon definition");
-            value.item = selection_identity(app, weapon->item);
-            value.ammo = selection_identity(app, weapon->ammo);
+            value.item = qa_q2_weapon_item(arsenal->state.q2, player.weapon, false);
+            value.ammo = qa_q2_weapon_item(arsenal->state.q2, player.weapon, true);
             if (!value.item || (weapon->ammo && !value.ammo))
                 return application_fail(e, QA_ERROR_NOT_FOUND, "Selected Q2 UI lost its registered item namespace");
         }
@@ -1331,9 +1325,8 @@ bool application_unified_player_selection_read(qa_application *app, qa_actor_id 
             if (binding.bit == ui.weapon) { value.item = binding.item; break; }
         }
         static const uint32_t bits[] = {256, 512, 1024, 2048};
-        static const char *const ammo[] = {"q1:ammo/shells", "q1:ammo/nails", "q1:ammo/rockets", "q1:ammo/cells"};
         for (size_t i = 0; i < sizeof(bits) / sizeof(bits[0]); ++i) if (ui.items & bits[i]) {
-            value.ammo = selection_identity(app, ammo[i]);
+            value.ammo = app->ui_names.q1_ammo[i];
             if (!value.ammo) return application_fail(e, QA_ERROR_NOT_FOUND, "QC UI ammunition was not admitted");
             break;
         }

@@ -21,6 +21,7 @@ typedef struct protection_definition {
 } protection_definition;
 typedef struct protection_actor {
     struct protection_actor *next;
+    struct protection_actor *actor_next;
     struct application_native_q2_protection *owner;
     qa_actor_id actor;
     size_t definition;
@@ -52,11 +53,24 @@ struct application_native_q2_protection {
     protection_definition *definitions;
     size_t count;
     protection_actor *actors;
+    qa_actor_index actor_index;
     protection_stage *stages;
     unsigned writing;
 };
 static bool fail(qa_error *e,const char *text)
 { qa_error_set(e,QA_ERROR_ARGUMENT,0,"%s",text); return false; }
+static protection_actor *actor_find(application_native_q2_protection *o,qa_actor_id actor)
+{
+    size_t value;
+    return qa_actor_index_find_retained(&o->actor_index,actor,&value)?(protection_actor *)(uintptr_t)value:NULL;
+}
+static bool actor_remember(application_native_q2_protection *o,protection_actor *a,qa_error *e)
+{
+    protection_actor *first=actor_find(o,a->actor);
+    if(!first) return qa_actor_index_remember(&o->actor_index,a->actor,(size_t)(uintptr_t)a,e);
+    while(first->actor_next) first=first->actor_next;
+    first->actor_next=a;return true;
+}
 static bool identity(application_native_q2_protection *o,qa_json_id id,qa_string_id *out,qa_error *e)
 {
     const qa_json_document *d=application_native_q2_callbacks_document(o->options.callbacks); qa_buffer text={0};
@@ -123,6 +137,7 @@ static bool create_layout(const application_native_q2_protection_options *option
     application_native_q2_protection *o=calloc(1,sizeof(*o));
     if(!o) { qa_error_set(e,QA_ERROR_MEMORY,0,"Owning native protection declarations"); return false; }
     o->options=*options; *out=o;
+    if(!qa_actor_index_create(&o->actor_index,qa_session_actors(options->session),NULL,e)) return false;
     const qa_json_document *d=application_native_q2_callbacks_document(options->callbacks);
     qa_json_id rows=qa_json_get(d,qa_json_root(d),"protection");
     if(rows==QA_JSON_NONE) return true;
@@ -210,7 +225,7 @@ static bool validate_binding(void *context,const qa_armor *next,qa_error *e)
 static bool read_all(application_native_q2_protection *o,qa_actor_id actor,qa_armor *out,qa_error *e)
 {
     qa_armor result={0};
-    for(protection_actor *a=o->actors;a;a=a->next) if(qa_actor_id_equal(a->actor,actor)&&a->bound) {
+    for(protection_actor *a=actor_find(o,actor);a;a=a->actor_next) if(a->bound) {
         qa_armor armor; if(!read_actor(a,&armor,e)) return false;
         if(o->definitions[a->definition].channel==QA_PROTECTION_REGULAR) result.regular=armor.regular;
         else result.powered=armor.powered;
@@ -270,7 +285,7 @@ static bool committed(void *context,const qa_inventory_change *change,qa_error *
     protection_stage *suppressed=o->stages;
     for(protection_stage *s=suppressed;s;s=s->outer) ++s->suppressed;
     bool ok=true;
-    for(protection_actor *a=o->actors;ok&&a;a=a->next) if(a->bound&&qa_actor_id_equal(a->actor,stage->actor)) {
+    for(protection_actor *a=actor_find(o,stage->actor);ok&&a;a=a->actor_next) if(a->bound) {
         protection_definition *definition=o->definitions+a->definition;
         ok=current(a,e);
         for(size_t i=0;ok&&i<definition->count;++i) {
@@ -337,7 +352,7 @@ static bool observe_transfer(void *context,qa_error *e)
         stage->items=calloc(maximum,sizeof(*stage->items));
         if(!stage->items) { qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining complete protection inventory receipt"); ok=false; }
     }
-    for(protection_actor *a=o->actors;ok&&a;a=a->next) if(qa_actor_id_equal(a->actor,call->actor)&&a->bound) {
+    for(protection_actor *a=actor_find(o,call->actor);ok&&a;a=a->actor_next) if(a->bound) {
         protection_definition *definition=o->definitions+a->definition;
         for(size_t i=0;i<definition->item_count;++i) {
             bool found=false;
@@ -418,17 +433,22 @@ bool application_native_q2_protection_reserve(application_native_q2_protection *
     if(!o||!application_native_q2_callbacks_client_reserved_current(o->options.callbacks,actor,e)) return false;
     for(size_t i=0;i<o->count;++i) {
         protection_actor *found=NULL;
-        for(protection_actor *a=o->actors;a;a=a->next) if(a->definition==i&&qa_actor_id_equal(a->actor,actor)) found=a;
+        protection_actor *first=actor_find(o,actor);
+        for(protection_actor *a=first;a;a=a->actor_next) if(a->definition==i) found=a;
         if(found) { if(!qa_combat_protection_current(o->options.combat,found->lease)) return false; continue; }
         protection_definition *definition=o->definitions+i;
         for(size_t j=0;j<definition->item_count;++j) {
             qa_inventory_entry entry;
             if(!qa_inventory_entry_read(o->options.inventory,actor,definition->items[j],&entry,e)) return false;
         }
+        if(!first&&!qa_id_index_reserve(&o->actor_index.retained,1,e)) return false;
         protection_actor *a=calloc(1,sizeof(*a));
         if(!a) { qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining native protection reservation"); return false; }
         a->owner=o; a->actor=actor; a->definition=i;
         if(!qa_combat_reserve_protection(o->options.combat,actor,definition->channel,&definition->claim,&a->lease,e)) { free(a); return false; }
+        if(!actor_remember(o,a,e)) {
+            (void)qa_combat_close_protection(o->options.combat,a->lease,NULL);free(a);return false;
+        }
         protection_actor **tail=&o->actors;
         while(*tail) tail=&(*tail)->next;
         *tail=a;
@@ -438,7 +458,7 @@ bool application_native_q2_protection_reserve(application_native_q2_protection *
 bool application_native_q2_protection_bind(application_native_q2_protection *o,qa_actor_id actor,qa_error *e)
 {
     if(!source_current(o,actor,e)||!application_native_q2_protection_reserve(o,actor,e)) return false;
-    for(protection_actor *a=o->actors;a;a=a->next) if(!a->bound&&qa_actor_id_equal(a->actor,actor)) {
+    for(protection_actor *a=actor_find(o,actor);a;a=a->actor_next) if(!a->bound) {
         qa_protection_binding binding={.context=a,.read=read_binding,.validate_write=validate_binding,.write=write_binding,.absorb=absorb_binding};
         if(!qa_combat_bind_protection(o->options.combat,a->lease,&binding,e)) return false;
         a->bound=true;
@@ -451,7 +471,7 @@ bool application_native_q2_protection_item(void *context,qa_actor_id actor,qa_pr
     application_native_q2_protection *o=context;
     if(!o||!found||!source_current(o,actor,e)) return false;
     *found=false;
-    for(protection_actor *a=o->actors;a;a=a->next) if(a->bound&&qa_actor_id_equal(a->actor,actor)&&o->definitions[a->definition].channel==channel) {
+    for(protection_actor *a=actor_find(o,actor);a;a=a->actor_next) if(a->bound&&o->definitions[a->definition].channel==channel) {
         if(!current(a,e)||!qa_combat_protection_bound(o->options.combat,a->lease)) return false;
         protection_definition *definition=o->definitions+a->definition;
         for(size_t i=0;i<definition->item_count;++i) if(definition->items[i]==item) *found=true;
@@ -530,15 +550,22 @@ bool application_native_q2_protection_restore(application_native_q2_protection *
             a->definition<o->count&&a->lease.serial&&
             qa_actors_get(qa_session_actors(o->options.session),a->actor);
         if(ok) { a->lease.actor=a->actor; a->lease.channel=o->definitions[a->definition].channel; }
-        for(protection_actor *prior=head;ok&&prior;prior=prior->next)
-            if(prior->lease.serial==a->lease.serial||(prior->definition==a->definition&&qa_actor_id_equal(prior->actor,a->actor)))
+        for(protection_actor *prior=ok?actor_find(o,a->actor):NULL;ok&&prior;prior=prior->actor_next)
+            if(prior->definition==a->definition)
                 ok=fail(e,"Saved native protection lease repeats its actual ownership");
+        for(protection_actor *prior=head;ok&&prior;prior=prior->next)
+            if(prior->lease.serial==a->lease.serial)
+                ok=fail(e,"Saved native protection lease repeats its actual ownership");
+        if(ok) ok=actor_remember(o,a,e);
         if(!ok) { free(a); break; }
         *tail=a; tail=&a->next;
     }
     if(ok) ok=qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
-    if(!ok) { while(head) { protection_actor *next=head->next; free(head); head=next; } return false; }
+    if(!ok) {
+        qa_actor_index_clear(&o->actor_index);
+        while(head) { protection_actor *next=head->next; free(head); head=next; } return false;
+    }
     o->actors=head; return true;
 }
 bool application_native_q2_protection_saved_binding(application_native_q2_protection *o,qa_actor_id actor,
@@ -546,7 +573,7 @@ bool application_native_q2_protection_saved_binding(application_native_q2_protec
 {
     if(!o||!claim||!out||!application_native_q2_callbacks_restoring(o->options.callbacks))
         return fail(e,"Saved native protection requires its actual restoring source");
-    for(protection_actor *a=o->actors;a;a=a->next) if(a->bound&&a->restoring&&a->lease.channel==channel&&qa_actor_id_equal(a->actor,actor)) {
+    for(protection_actor *a=actor_find(o,actor);a;a=a->actor_next) if(a->bound&&a->restoring&&a->lease.channel==channel) {
         const qa_protection_claim *actual=&o->definitions[a->definition].claim;
         if(claim->owner!=actual->owner||claim->expected_owner!=actual->expected_owner||claim->rule!=actual->rule||claim->admission!=actual->admission||
             !current(a,e)) return fail(e,"Saved native protection claim differs from its retained source lease");
@@ -573,13 +600,17 @@ bool application_native_q2_protection_release(application_native_q2_protection *
 {
     if(!o) return true;
     for(protection_stage *s=o->stages;s;s=s->outer) if(qa_actor_id_equal(s->actor,actor)) return fail(e,"Native protection actor retains source write scopes");
-    protection_actor **link=&o->actors;
-    while(*link) {
-        protection_actor *a=*link;
-        if(!qa_actor_id_equal(a->actor,actor)) { link=&a->next; continue; }
+    protection_actor *a=actor_find(o,actor);
+    while(a) {
         if(a->references) return fail(e,"Native protection retains pending source-region authority");
         if(!qa_combat_close_protection(o->options.combat,a->lease,e)) return false;
-        *link=a->next; free(a);
+        protection_actor **link=&o->actors;
+        while(*link!=a) link=&(*link)->next;
+        *link=a->next;
+        protection_actor *next=a->actor_next;
+        if(next) (void)qa_actor_index_remember(&o->actor_index,actor,(size_t)(uintptr_t)next,NULL);
+        else qa_actor_index_forget_retained(&o->actor_index,actor);
+        free(a);a=next;
     }
     return true;
 }
@@ -616,5 +647,5 @@ bool application_native_q2_protection_destroy(application_native_q2_protection *
         free(definition->counters); free(definition->items);
         definition->counters=NULL; definition->items=NULL; definition->count=definition->item_count=0;
     }
-    free(o->definitions); free(o); *owner=NULL; return true;
+    free(o->definitions); qa_actor_index_destroy(&o->actor_index); free(o); *owner=NULL; return true;
 }
