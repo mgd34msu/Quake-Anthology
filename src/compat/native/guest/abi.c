@@ -694,7 +694,12 @@ static bool invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t 
     if(recovery_owner) recovery->invocation=&enclosing;
     bool nested = guest->run != NULL || guest->stopped_write_calls != 0;
     guest_host_x86_64_state hardware = {0};
-    if (okay && native && (nested || recovery_owner)) okay = guest_host_child_cpu_read(guest->child, &hardware, error);
+    if (okay && native && (nested || recovery_owner)) {
+        const guest_host_x86_64_capabilities *capability = guest_host_child_capability(guest->child);
+        hardware.xsave = (qa_buffer){qa_arena_alloc(&scratch, capability->xsave_bytes, 64, error),
+            capability->xsave_bytes};
+        okay = hardware.xsave.data && guest_host_child_cpu_read(guest->child, &hardware, error);
+    }
     uint64_t original_sp = okay ? enclosing.registers[QA_NATIVE_RSP] : 0, sp = 0;
     if (okay && original_sp < needed + plan->stack_alignment + plan->word)
         okay = guest_fail(error, QA_ERROR_ARGUMENT, original_sp, "guest ABI stack reserve underflows");
@@ -774,7 +779,6 @@ static bool invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t 
         }
     }
     if (!okay && effected && !guest_callback_cancelled(guest,error)) guest->failed = true;
-    guest_host_x86_64_state_free(&hardware);
     qa_arena_destroy(&scratch); return okay;
 }
 

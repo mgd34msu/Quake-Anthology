@@ -5,12 +5,14 @@
 #include "host_x86_64.h"
 #include "profile/guard.h"
 #include "profile/cpu.h"
+#include "qa/pool.h"
 
 typedef struct guest_host_child guest_host_child;
 typedef struct guest_host_child_options {
     const char *executable; /* Actual controller executable with bootstrap join. */
     qa_native_target target;
     const guest_profile_guard_launch *profile_guard; /* Borrowed only during create. */
+    qa_pool *scratch_pages; /* Guest-owned storage outlives the stopped child. */
 } guest_host_child_options;
 typedef enum guest_host_stop_kind {
     GUEST_HOST_STOP_IMPORT, GUEST_HOST_STOP_RETURN, GUEST_HOST_STOP_FAULT,

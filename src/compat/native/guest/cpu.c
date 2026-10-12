@@ -176,7 +176,8 @@ bool guest_cpu_open(qa_native_guest *guest, bool fresh, qa_error *error)
 {
     if (guest->options.backend == QA_NATIVE_GUEST_HOST_X86_64) {
         guest_host_child_options options = {.executable = guest->options.host_executable,
-            .target = guest->options.image.target, .profile_guard = guest->options.profile_guard};
+            .target = guest->options.image.target, .profile_guard = guest->options.profile_guard,
+            .scratch_pages = &guest->scratch_pages};
         if (!guest_host_child_create(&options, &guest->child, error)) return false;
         /* Fresh source construction initializes absent architectural components
          * once, before the first backing or mapping transaction. Cold adoption

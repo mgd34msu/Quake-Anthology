@@ -31,6 +31,8 @@ struct guest_host_child {
     guest_host_memory *memory;
     guest_host_x86_64_capabilities capability;
     qa_arena output_storage,input_storage;
+    qa_arena fault_storage;
+    qa_pool *scratch_pages;
     guest_profile_guard_receipt profile;
     guest_profile_cpu_domain domain;
     guest_host_x86_64_state state;
@@ -563,7 +565,7 @@ bool guest_host_child_bootstrap(int argc,char *const *argv,bool *handled,int *st
 bool guest_host_child_create(const guest_host_child_options *options,guest_host_child **out,qa_error *error)
 {
     if(!options || !out || *out || !options->executable || !*options->executable ||
-        !options->profile_guard || !options->profile_guard->runner || !*options->profile_guard->runner ||
+        !options->scratch_pages || !options->profile_guard || !options->profile_guard->runner || !*options->profile_guard->runner ||
         !options->profile_guard->client || !*options->profile_guard->client || options->target.arch!=QA_NATIVE_ARCH_X86_64 ||
         options->target.pointer_bytes!=8 || !((options->target.os==QA_NATIVE_OS_WINDOWS && options->target.abi==QA_NATIVE_ABI_MICROSOFT_X64) ||
         (options->target.os==QA_NATIVE_OS_LINUX && options->target.abi==QA_NATIVE_ABI_SYSTEM_V_X64)))
@@ -572,6 +574,7 @@ bool guest_host_child_create(const guest_host_child_options *options,guest_host_
     guest_host_child *child=calloc(1,sizeof(*child));
     if(!child) {close(channel[0]);close(channel[1]);return fail(error,QA_ERROR_MEMORY,0,"creating actual native child controller");}
     child->descriptor=channel[0];child->process=-1;child->target=options->target;
+    child->scratch_pages=options->scratch_pages;
     posix_spawn_file_actions_t actions;int code=posix_spawn_file_actions_init(&actions);bool actions_initialized=code==0;
     posix_spawnattr_t attributes;bool attributes_initialized=false;
     if(!code){code=posix_spawnattr_init(&attributes);attributes_initialized=code==0;}
@@ -617,6 +620,17 @@ bool guest_host_child_create(const guest_host_child_options *options,guest_host_
     if(okay) {
         qa_arena_destroy(&child->input_storage);
         okay=input_prepare(&child->input_storage,&child->capability,error);
+    }
+    if(okay) {
+        size_t bytes=(size_t)child->capability.xsave_bytes+63;
+        qa_arena_init(&child->fault_storage,bytes);
+        okay=qa_arena_reserve(&child->fault_storage,bytes,error);
+        qa_arena_seal(&child->fault_storage);
+        if(okay) {
+            child->fault.state.xsave=(qa_buffer){qa_arena_alloc(&child->fault_storage,
+                child->capability.xsave_bytes,64,error),child->capability.xsave_bytes};
+            okay=child->fault.state.xsave.data!=NULL;
+        }
     }
     if(!okay) {
         child->failed=true;
@@ -692,7 +706,8 @@ bool guest_host_child_destroy(guest_host_child **pointer,qa_error *error)
     }
     if(child->descriptor>=0){int result=close(child->descriptor);child->descriptor=-1;if(result!=0)return fail(error,QA_ERROR_ARGUMENT,0,"closing actual native child channel failed");}
     if(!guest_host_memory_destroy(&child->memory,error))return false;
-    guest_host_x86_64_state_free(&child->state);guest_host_x86_64_state_free(&child->fault.state);
+    guest_host_x86_64_state_free(&child->state);
+    qa_arena_destroy(&child->fault_storage);
     qa_arena_destroy(&child->output_storage);
     qa_arena_destroy(&child->input_storage);
     free(child->callbacks);free(child->interests);free(child);*pointer=NULL;return true;
@@ -849,8 +864,9 @@ static bool child_run(guest_host_child *child,uint64_t start,uint64_t stop,
         }
         if(receipt.kind==GUEST_HOST_STOP_FAULT) {
             if(entered)*entered=true;
-            guest_host_x86_64_state_free(&child->fault.state);child->fault=receipt;
-            if(guest_host_x86_64_state_copy(&child->state,&child->fault.state,error))child->has_fault=true;
+            qa_buffer retained=child->fault.state.xsave;child->fault=receipt;
+            child->fault.state.xsave=retained;
+            if(state_commit(&child->state,&child->capability,&child->fault.state,error))child->has_fault=true;
             qa_error_set(error,receipt.profile.kind==GUEST_PROFILE_GUARD_INSTRUCTION?QA_ERROR_UNSUPPORTED:QA_ERROR_ARGUMENT,
                 (size_t)(receipt.profile.kind?receipt.profile.instruction:receipt.address),
                 "actual %s stopped its continuation: signal %d/%d at %llx, address %llx, profile %u",
@@ -870,8 +886,12 @@ static bool child_run(guest_host_child *child,uint64_t start,uint64_t stop,
                 .number=child->state.registers[0],.arguments={child->state.registers[7],child->state.registers[6],
                     child->state.registers[2],child->state.registers[10],child->state.registers[8],child->state.registers[9]}};
             uint64_t flags=child->state.flags;
+            qa_arena scratch;qa_arena_init_pool(&scratch,child->scratch_pages);
             guest_host_x86_64_state entry_state={0};
-            if(!guest_host_x86_64_state_copy(&child->state,&entry_state,error)) {
+            entry_state.xsave=(qa_buffer){qa_arena_alloc(&scratch,
+                child->capability.xsave_bytes,64,error),child->capability.xsave_bytes};
+            if(!entry_state.xsave.data || !guest_host_x86_64_state_copy(&child->state,&entry_state,error)) {
+                qa_arena_destroy(&scratch);
                 qa_error ignored={0};packet_send(child->descriptor,HOST_ABORT,0,sequence,(qa_bytes){0},-1,&ignored);
                 okay=false;break;
             }
@@ -882,7 +902,7 @@ static bool child_run(guest_host_child *child,uint64_t start,uint64_t stop,
             if(okay && result.stop) {
                 okay=packet_send(child->descriptor,HOST_FINISH,0,sequence,(qa_bytes){0},-1,error);
                 if(okay) {
-                    guest_host_x86_64_state_free(&entry_state);
+                    qa_arena_destroy(&scratch);
                     returned=true;*program_stopped=true;continue;
                 }
             } else if(okay) {
@@ -891,12 +911,14 @@ static bool child_run(guest_host_child *child,uint64_t start,uint64_t stop,
                 child->state.instruction=call.next_instruction;
                 qa_buffer resume={0};okay=state_encode(&child->state,&child->output_storage,0,&resume,error);
                 if(okay)okay=packet_send(child->descriptor,HOST_RESUME,0,sequence,(qa_bytes){resume.data,resume.size},-1,error);
-                if(okay) {guest_host_x86_64_state_free(&entry_state);continue;}
+                if(okay) {qa_arena_destroy(&scratch);continue;}
             }
             /* A rejected service has no architectural syscall return. Retain
              * its actual entry CPU, while committed memory/file effects stay
              * with their real owners for terminal teardown. */
-            guest_host_x86_64_state_free(&child->state);child->state=entry_state;
+            qa_error restore={0};
+            if(!state_commit(&entry_state,&child->capability,&child->state,&restore) && error)*error=restore;
+            qa_arena_destroy(&scratch);
             qa_error ignored={0};packet_send(child->descriptor,HOST_ABORT,0,sequence,(qa_bytes){0},-1,&ignored);break;
         }
         bool bound=false;for(size_t i=0;i<child->callback_count;++i)
