@@ -122,7 +122,7 @@ bool qaw_build_legacy(qa_scene_world *world, qa_error *error)
         for (size_t j = leaf->faces.first; j < (size_t)leaf->faces.first + leaf->faces.count; ++j)
             world->surfaces[world->leaf_surfaces[j]].legacy->underwater = true;
     }
-    return true;
+    return qawl_light_styles_prepare(world, error);
 }
 
 static bool material_name(const char *source, char output[1024], qa_error *error)

@@ -26,6 +26,34 @@ static uint32_t light_u32(double value)
     return value >= -0x1p63 && value < 0x1p63 ? (uint32_t)(int64_t)value : 0;
 }
 
+bool qawl_light_styles_prepare(qa_scene_world *world, qa_error *error)
+{
+    qawl_world *data = world->legacy_data;
+    bool q1 = world->bsp.family == QA_BSP_Q1;
+    size_t capacity = 0;
+    for (size_t i = 0; i < world->surface_count; ++i) {
+        const qaw_legacy *light = world->surfaces[i].legacy;
+        for (size_t j = 0; j < light->style_count; ++j) {
+            size_t required = (size_t)light->styles[j] + 1;
+            if (required > capacity) capacity = required;
+        }
+    }
+    if (!q1) for (size_t i = 0; i < world->lightgrid.sample_count; ++i) {
+        uint8_t style = world->lightgrid.samples[i].style;
+        if (style == UINT8_MAX) continue;
+        size_t required = (size_t)style + 1;
+        if (required > capacity) capacity = required;
+    }
+    size_t stride = q1 ? sizeof(float) : sizeof(qa_vec3);
+    void *storage = capacity != 0 ? malloc(capacity * stride) : NULL;
+    if (capacity != 0 && storage == NULL)
+        return light_error(error, QA_ERROR_MEMORY, 0, "cannot allocate lightstyle snapshot");
+    if (q1) data->q1_styles = storage;
+    else data->q2_styles = storage;
+    data->style_capacity = capacity;
+    return true;
+}
+
 bool qawl_light_styles(qa_scene_world *world, const qa_scene_world_input *input, qa_error *error)
 {
     qawl_world *data = world->legacy_data;
@@ -40,17 +68,11 @@ bool qawl_light_styles(qa_scene_world *world, const qa_scene_world_input *input,
             return light_error(error, QA_ERROR_ARGUMENT, i, "nonfinite lightstyle");
     }
     void *storage = q1 ? (void *)data->q1_styles : (void *)data->q2_styles;
-    if (count != data->style_count) {
-        void *replacement = count != 0 ? malloc(count * stride) : NULL;
-        if (count != 0 && replacement == NULL)
-            return light_error(error, QA_ERROR_MEMORY, 0, "cannot allocate lightstyle snapshot");
-        free(storage);
-        storage = replacement;
-        if (q1) data->q1_styles = storage;
-        else data->q2_styles = storage;
-        data->style_count = count;
-    }
+    /* Only map-referenced indices are sampled; all supplied values were
+     * validated above, including any entries beyond this retained extent. */
+    if (count > data->style_capacity) count = data->style_capacity;
     if (count != 0) memcpy(storage, source, count * stride);
+    data->style_count = count;
     return true;
 }
 

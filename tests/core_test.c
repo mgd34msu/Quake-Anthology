@@ -32,6 +32,7 @@
 #include "qa/scene.h"
 #include "qa/render_cpu.h"
 #include "../src/render/scene/world/internal.h"
+#include "../src/render/scene/world/legacy/internal.h"
 #include "../src/render/scene/world/q3/patch.h"
 #include "qa/tools.h"
 #include "qa/input.h"
@@ -849,6 +850,44 @@ static qa_unified_document *metadata_decode(qa_unified_frame_pool *pool,
     qa_unified_frame_lease_release(lease);qa_unified_document_destroy(source);qa_buffer_free(&wire);
     return decoded;
 }
+static void test_lightstyle_snapshot(void)
+{
+    qa_error error={0}; uint16_t style=700;
+    qaw_legacy face={.styles=&style,.style_count=1};
+    qaw_surface surface={.legacy=&face}; qawl_world retained={0};
+    qa_scene_world world={.bsp={.family=QA_BSP_Q1},.legacy_data=&retained,
+        .surfaces=&surface,.surface_count=1};
+    CHECK(qawl_light_styles_prepare(&world,&error));
+    float values[702]; for(size_t i=0;i<702;++i) values[i]=(float)i;
+    qa_scene_world_input input={.q1_styles=values,.style_count=702};
+    CHECK(qawl_light_styles(&world,&input,&error));
+    float *storage=retained.q1_styles;
+    CHECK(retained.style_count==701 && storage[700]==700);
+    values[701]=INFINITY; values[700]=42;
+    CHECK(!qawl_light_styles(&world,&input,&error));
+    CHECK(retained.style_count==701 && storage[700]==700);
+    input.style_count=1;
+    CHECK(qawl_light_styles(&world,&input,&error) && retained.style_count==1);
+    input.style_count=701;
+    CHECK(qawl_light_styles(&world,&input,&error));
+    CHECK(retained.q1_styles==storage && storage[700]==42);
+    input.q1_styles=NULL;
+    CHECK(qawl_light_styles(&world,&input,&error) && retained.style_count==0);
+    free(retained.q1_styles);
+
+    qa_bsp_lightgrid_sample samples[2]={{.style=201},{.style=UINT8_MAX}};
+    retained=(qawl_world){0}; world=(qa_scene_world){.bsp={.family=QA_BSP_Q2},
+        .legacy_data=&retained,.lightgrid={.samples=samples,.sample_count=2}};
+    CHECK(qawl_light_styles_prepare(&world,&error));
+    qa_vec3 colors[203]; for(size_t i=0;i<203;++i) colors[i]=qa_v3(1,2,3);
+    input=(qa_scene_world_input){.q2_styles=colors,.style_count=203};
+    CHECK(qawl_light_styles(&world,&input,&error));
+    CHECK(retained.style_count==202 && qa_vec_equal(retained.q2_styles[201],qa_v3(1,2,3)));
+    colors[202].z=NAN;
+    CHECK(!qawl_light_styles(&world,&input,&error) && retained.style_count==202);
+    free(retained.q2_styles);
+}
+
 static void test_shared_trajectory(void)
 {
     qa_error error={0}; qa_vec3 position={0},velocity={0};
@@ -3533,6 +3572,7 @@ int main(int argc, char **argv)
     test_reserved_scene_frame();
     test_bounded_handshake();
     test_shared_trajectory();
+    test_lightstyle_snapshot();
     test_metadata_retention();
     test_metadata_names();
     test_files();

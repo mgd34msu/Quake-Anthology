@@ -33,7 +33,7 @@ typedef struct qawl_world {
     qa_scene_image *sky[6];
     float *q1_styles;
     qa_vec3 *q2_styles;
-    size_t style_count;
+    size_t style_count, style_capacity;
     struct qawl_light_atlas *light_atlases, *last_light_atlas;
     /* One exact geometric sample per leaf; styles remain live at every use. */
     qawl_point_light *point_lights, *last_point_light;
@@ -82,6 +82,7 @@ void qawl_light_destroy(qaw_legacy *);
 bool qawl_light_flush(qa_scene_world *, qa_scene_frame *, qa_error *);
 void qawl_light_atlases_destroy(qawl_world *);
 void qawl_light_atlases_dirty(qa_scene_world *);
+bool qawl_light_styles_prepare(qa_scene_world *, qa_error *);
 bool qawl_light_styles(qa_scene_world *, const qa_scene_world_input *, qa_error *);
 bool qawl_textures_build(qa_scene_world *, qa_error *);
 void qawl_textures_destroy(qawl_world *);
