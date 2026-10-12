@@ -380,7 +380,9 @@ static bool lerp(const q3n_frame *f,const packet_source *source,const q3n_packet
         entity->lerp_origin=qa_vec_add(a,qa_vec_scale(qa_vec_add(b,qa_vec_scale(a,-1)),fraction));
         if(!q3n_trajectory(&s->apos,snapshot->server_time,&a,error) ||
             !q3n_trajectory(&next_state->apos,next->server_time,&b,error)) return false;
-        entity->lerp_angles=qa_v3(qa_angle_lerp(a.x,b.x,fraction),qa_angle_lerp(a.y,b.y,fraction),qa_angle_lerp(a.z,b.z,fraction));
+        entity->lerp_angles=qa_v3(qa_angle_lerp(a.x,b.x,fraction,QA_ANGLE_LERP_SINGLE_TURN),
+            qa_angle_lerp(a.y,b.y,fraction,QA_ANGLE_LERP_SINGLE_TURN),
+            qa_angle_lerp(a.z,b.z,fraction,QA_ANGLE_LERP_SINGLE_TURN));
         return true;
     }
     if(!q3n_trajectory(&pos,f->time,&entity->lerp_origin,error) ||

@@ -353,7 +353,9 @@ static bool pose(qa_q3_prediction_scene *s, prediction_entity *e, bool smooth, q
         e->origin = qa_vec_lerp(a, b, fraction);
         if (!position(&e->current.apos, s->snapshots[0].value.server_time, &a, error) ||
             !position(&e->next.apos, s->snapshots[1].value.server_time, &b, error)) return false;
-        e->angles = qa_v3(qa_angle_lerp(a.x, b.x, fraction), qa_angle_lerp(a.y, b.y, fraction), qa_angle_lerp(a.z, b.z, fraction));
+        e->angles = qa_v3(qa_angle_lerp(a.x, b.x, fraction, QA_ANGLE_LERP_SINGLE_TURN),
+            qa_angle_lerp(a.y, b.y, fraction, QA_ANGLE_LERP_SINGLE_TURN),
+            qa_angle_lerp(a.z, b.z, fraction, QA_ANGLE_LERP_SINGLE_TURN));
         return true;
     }
     if (!position(&e->current.pos, s->time, &e->origin, error) ||

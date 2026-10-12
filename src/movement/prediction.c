@@ -75,8 +75,9 @@ static bool interpolate(qa_q3_prediction *p, const qa_q3_prediction_host *host, 
     s->bob_cycle=!isfinite(bob)||bob>=2147483648.0f||bob < -2147483648.0f?INT32_MIN:(int32_t)truncf(bob);
     s->origin=qa_vec_lerp(a->origin,b->origin,fraction);
     s->velocity=qa_vec_lerp(a->velocity,b->velocity,fraction);
-    if (!angles) s->view_angles=qa_v3(qa_angle_lerp(a->view_angles.x,b->view_angles.x,fraction),
-        qa_angle_lerp(a->view_angles.y,b->view_angles.y,fraction),qa_angle_lerp(a->view_angles.z,b->view_angles.z,fraction));
+    if (!angles) s->view_angles=qa_v3(qa_angle_lerp(a->view_angles.x,b->view_angles.x,fraction,QA_ANGLE_LERP_SINGLE_TURN),
+        qa_angle_lerp(a->view_angles.y,b->view_angles.y,fraction,QA_ANGLE_LERP_SINGLE_TURN),
+        qa_angle_lerp(a->view_angles.z,b->view_angles.z,fraction,QA_ANGLE_LERP_SINGLE_TURN));
     return true;
 }
 static bool adjusted(const qa_q3_prediction_host *host, qa_vec3 origin, qa_movement_ground ground, int32_t from, int32_t to, qa_vec3 *out, qa_error *error) {

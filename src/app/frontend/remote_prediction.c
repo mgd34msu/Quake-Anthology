@@ -583,9 +583,9 @@ static bool interpolate(frontend_remote_prediction *owner, const frontend_remote
         if (state->predicted.view.movement.kind == QA_RULESET_Q3)
             state->predicted.view.movement.data.q3.bob_cycle = bob_cycle;
         if (!grab_angles) state->predicted.view.view_angles = qa_v3(
-            qa_angle_lerp(a->viewangles[0], b->viewangles[0], fraction),
-            qa_angle_lerp(a->viewangles[1], b->viewangles[1], fraction),
-            qa_angle_lerp(a->viewangles[2], b->viewangles[2], fraction));
+            qa_angle_lerp(a->viewangles[0], b->viewangles[0], fraction, QA_ANGLE_LERP_SINGLE_TURN),
+            qa_angle_lerp(a->viewangles[1], b->viewangles[1], fraction, QA_ANGLE_LERP_SINGLE_TURN),
+            qa_angle_lerp(a->viewangles[2], b->viewangles[2], fraction, QA_ANGLE_LERP_SINGLE_TURN));
     }
     if (state->predicted.view.movement.kind == QA_RULESET_Q3)
         state->predicted.view.movement.data.q3.view_angles = state->predicted.view.view_angles;

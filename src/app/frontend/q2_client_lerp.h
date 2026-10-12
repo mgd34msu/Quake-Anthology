@@ -4,17 +4,11 @@
 #include "qa/application_native_q2_client.h"
 #include <string.h>
 
-static inline float frontend_q2_lerp_angle(float a, float b, float fraction)
-{
-    float delta = fmodf(b - a, 360);
-    if (delta > 180) delta -= 360;
-    if (delta < -180) delta += 360;
-    return a + fraction * delta;
-}
 static inline qa_vec3 frontend_q2_lerp_angles(qa_vec3 a, qa_vec3 b, float fraction)
 {
-    return qa_v3(frontend_q2_lerp_angle(a.x,b.x,fraction),
-        frontend_q2_lerp_angle(a.y,b.y,fraction),frontend_q2_lerp_angle(a.z,b.z,fraction));
+    return qa_v3(qa_angle_lerp(a.x,b.x,fraction,QA_ANGLE_LERP_NORMALIZED_DELTA),
+        qa_angle_lerp(a.y,b.y,fraction,QA_ANGLE_LERP_NORMALIZED_DELTA),
+        qa_angle_lerp(a.z,b.z,fraction,QA_ANGLE_LERP_NORMALIZED_DELTA));
 }
 static inline bool frontend_q2_lerp_near(qa_vec3 a, qa_vec3 b, float limit)
 {

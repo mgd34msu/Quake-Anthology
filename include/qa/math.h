@@ -59,7 +59,16 @@ float qa_angle_mod(float angle,qa_angle_word_rule);
 float qa_angle_wrap(float angle);
 float qa_angle_subtract(float first,float second);
 float qa_angle_delta(float target,float current);
-static inline float qa_angle_lerp(float from,float to,float fraction) {
+typedef enum qa_angle_lerp_rule {
+    QA_ANGLE_LERP_SINGLE_TURN, QA_ANGLE_LERP_NORMALIZED_DELTA
+} qa_angle_lerp_rule;
+static inline float qa_angle_lerp(float from,float to,float fraction,qa_angle_lerp_rule rule) {
+    if (rule==QA_ANGLE_LERP_NORMALIZED_DELTA) {
+        float delta=fmodf(to-from,360);
+        if (delta>180) delta-=360;
+        if (delta< -180) delta+=360;
+        return from+fraction*delta;
+    }
     if (to-from>180) to-=360;
     if (to-from< -180) to+=360;
     return from+fraction*(to-from);
