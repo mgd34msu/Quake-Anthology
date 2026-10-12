@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "d7372ae99a0ee9e19132aac8b299e1ebd8d384ae",
+  "verified_main": "3152ef1228821cfbdd2c4907c3316438f35ea775",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 230,
-    "open_source_observation": 141,
+    "fixed_source_build_core": 234,
+    "open_source_observation": 137,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -33137,8 +33137,9 @@
       "severity": "medium",
       "job": "21",
       "area": "gameplay_q2",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "3152ef1228821cfbdd2c4907c3316438f35ea775"
     },
     {
       "id": "22-01",
@@ -33182,8 +33183,9 @@
       "severity": "medium",
       "job": "22",
       "area": "gameplay_q2",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "3152ef1228821cfbdd2c4907c3316438f35ea775"
     },
     {
       "id": "22-03",
@@ -33557,8 +33559,9 @@
       "severity": "low",
       "job": "23",
       "area": "gameplay_q2",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "3152ef1228821cfbdd2c4907c3316438f35ea775"
     },
     {
       "id": "J23-08",
@@ -37263,8 +37266,9 @@
       "severity": "medium",
       "job": "37",
       "area": "public_interfaces",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "3152ef1228821cfbdd2c4907c3316438f35ea775"
     },
     {
       "id": "J37-03",
@@ -43353,6 +43357,45 @@
       ],
       "record_directory": "/tmp/qa-ta3196-q1-live-name-adoption-20261012-v1",
       "conclusion": "The reached Q1 fixed-name HUD/source/AI/pickup/message paths now use the existing cold runtime name table. One resource-ID message emitter preserves flags and empty/destroyed behavior; arbitrary mod ammo prefix acceptance remains. Normal build and seven core suites passed; no live claim."
+    },
+    {
+      "commit": "3152ef1228821cfbdd2c4907c3316438f35ea775",
+      "source_tree": "4e0c7c0398bb18e24044455da1e78bbe86365cbe",
+      "finding_ids": [
+        "22-02",
+        "J21-07",
+        "J23-07",
+        "J37-02"
+      ],
+      "files_rechecked": [
+        "include/qa/game_q2_items.h",
+        "src/app/application/map.c",
+        "src/app/application/save.c",
+        "src/gameplay/q2/entities/checkpoint.c",
+        "src/gameplay/q2/entities/lifecycle.c",
+        "src/gameplay/q2/internal.h",
+        "src/gameplay/q2/items/catalog.c",
+        "src/gameplay/q2/items/drop.c",
+        "src/gameplay/q2/items/internal.h",
+        "src/gameplay/q2/items/lifecycle.c",
+        "src/gameplay/q2/monsters/ai.c",
+        "src/gameplay/q2/monsters/lifecycle.c",
+        "src/gameplay/q2/nuke.c",
+        "src/gameplay/q2/player/map_spawns.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-q2-authored-items-and-names-20261012-v1",
+      "conclusion": "Authored Q2 item and fixed-classname warm consumers use retained IDs with admission/restore binding. Source inspection also confirms J37-02 already uses one admitted attachment-name index and one interpolation path. Normal build and seven core suites passed; no live or speed claim."
     }
   ],
   "verification_limits": [

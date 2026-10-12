@@ -23,7 +23,7 @@ static size_t active(const frontend_remote_q1 *row)
 {
     for (size_t i = 0; i < sizeof(weapons) / sizeof(*weapons); ++i)
         if (row->data.weapon == weapons[i].bit || (!i && !row->data.weapon && row->data.weapon_model &&
-            row->data.weapon_model <= row->model_count && !strcmp(row->models[row->data.weapon_model - 1], "progs/v_axe.mdl"))) return i;
+            row->data.weapon_model <= row->model_count && row->model_names[row->data.weapon_model - 1].axe)) return i;
     return SIZE_MAX;
 }
 static bool selected(frontend_remote_q1 *row, qa_bytes name, qa_error *error)

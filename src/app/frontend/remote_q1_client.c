@@ -261,6 +261,7 @@ void remote_q1_clear(frontend_remote_q1 *row)
     row->view_pose_ready = false;
     remote_q1_prediction_clear(row);
     remote_q1_media_clear(row);
+    free(row->model_names); row->model_names = NULL;
     names_free(&row->models, &row->model_count); names_free(&row->sounds, &row->sound_count);
     row->spike_model = 0;
     free(row->sound_available); row->sound_available = NULL;
@@ -365,9 +366,24 @@ static bool serverinfo(frontend_remote_q1 *row, const qa_nq_serverinfo *info, qa
     }
     if (!names_copy(&row->models, &row->model_count, info->models, info->model_count, error) ||
         !names_copy(&row->sounds, &row->sound_count, info->sounds, info->sound_count, error)) return false;
+    row->model_names = row->model_count ? calloc(row->model_count, sizeof(*row->model_names)) : NULL;
+    if (row->model_count && !row->model_names)
+        return remote_q1_fail(error, QA_ERROR_MEMORY, "Retaining received Q1 model names");
+    qa_strings *strings = qa_session_strings(qa_application_session(row->frontend->application));
     row->spike_model = 0;
-    for (size_t i = 0; i < row->model_count; ++i)
-        if (!strcmp(row->models[i], "progs/spike.mdl")) { row->spike_model = (uint32_t)i + 1; break; }
+    for (size_t i = 0; i < row->model_count; ++i) {
+        remote_q1_model_name *model = row->model_names + i;
+        const char *path = row->models[i];
+        if (!qa_strings_intern_cstr(strings, path, &model->path, error)) return false;
+        model->axe = !strcmp(path, "progs/v_axe.mdl");
+        model->inline_path = path[0] == '*';
+        if (model->inline_path) {
+            char *end;
+            model->inline_number = strtoul(path + 1, &end, 10);
+            model->inline_valid = end != path + 1 && !*end;
+        }
+        if (!row->spike_model && !strcmp(path, "progs/spike.mdl")) row->spike_model = (uint32_t)i + 1;
+    }
     if (!qa_vfs_acquire_receipt(row->content.mounts, map, &row->map, &row->map_opening, error)) return false;
     if (!remote_q1_media_prepare(row, error) || !remote_q1_string(&row->level_name, info->level, error)) return false;
     if (qa_q1_is_qw(row->options.domain.protocol)) row->qw.level = row->level_name;

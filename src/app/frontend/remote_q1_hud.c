@@ -4,6 +4,7 @@
 #include "equipment_media.h"
 #include "view_settings.h"
 #include "qa/game_q1_ui.h"
+#include "qa/application_ui_names.h"
 #include "qa/ui_preferences.h"
 #include <stdlib.h>
 #include <string.h>
@@ -49,17 +50,14 @@ bool frontend_remote_q1_hud_read(frontend_remote_q1 *row,const qa_hud_frame *fra
             .team="",.score=client->frags,.ping=client->has_ping?client->ping:0,
             .local=i+1==row->view_entity};
     }
-    static const struct { uint32_t bit; const char *name; } weapons[]={
-        {4096,"q1:weapon/axe"},{1,"q1:weapon/shotgun"},{2,"q1:weapon/supershotgun"},
-        {4,"q1:weapon/nailgun"},{8,"q1:weapon/supernailgun"},{16,"q1:weapon/grenadelauncher"},
-        {32,"q1:weapon/rocketlauncher"},{64,"q1:weapon/lightning"}};
+    static const uint32_t weapon_bits[]={4096,1,2,4,8,16,32,64};
+    const qa_application_ui_names *names=qa_application_ui_names_read(row->options.domain.application);
     qa_item_id selected=0;
-    for(size_t i=0;i<sizeof(weapons)/sizeof(*weapons);++i) {
+    for(size_t i=0;i<sizeof(weapon_bits)/sizeof(*weapon_bits);++i) {
         bool axe=i==0 && !data->weapon && data->weapon_model && data->weapon_model<=row->model_count &&
-            !strcmp(row->models[data->weapon_model-1],"progs/v_axe.mdl");
-        if(data->weapon!=weapons[i].bit && !axe) continue;
-        selected=qa_strings_find(qa_session_strings(qa_application_session(row->options.domain.application)),
-            (qa_bytes){(const uint8_t *)weapons[i].name,strlen(weapons[i].name)});
+            row->model_names[data->weapon_model-1].axe;
+        if(data->weapon!=weapon_bits[i] && !axe) continue;
+        selected=names->q1_weapons[i];
         break;
     }
     *out=(qa_hud_data){.vitals=hud->vitals,.vital_count=3,.bars=hud->ammo,.bar_count=4,

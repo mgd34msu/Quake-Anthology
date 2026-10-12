@@ -80,7 +80,7 @@ bool remote_q1_effects_media_prepare(frontend_remote_q1 *row, qa_error *error)
     for (size_t i=0;i<QA_Q1_BEAM_MODELS;++i) {
         qa_error missing={0};
         const char *path=qa_strings_cstr(strings,names->q1_beam_models[i]);
-        if (!remote_q1_model_read(row,&(frontend_remote_q1_entity_view){.model=path},
+        if (!remote_q1_model_read(row,names->q1_beam_models[i],&(frontend_remote_q1_entity_view){.model=path},
                 row->effects->beam_models+i,&missing) && missing.code!=QA_ERROR_NOT_FOUND) {
             if (error) *error=missing;
             return false;
@@ -313,9 +313,10 @@ static bool entities(frontend_remote_q1 *row, double seconds, qa_error *error)
         const qa_q1_entity *entity = row->current.rows + i;
         if (!entity->model || entity->model > row->model_count) continue;
         frontend_remote_q1_entity_view view = {.entity = *entity, .model = row->models[entity->model-1]};
-        if (view.model[0] == '*') continue;
+        const remote_q1_model_name *name = row->model_names + entity->model - 1;
+        if (name->inline_path) continue;
         remote_q1_model *model;
-        if (!remote_q1_model_read(row,&view,&model,error)) return false;
+        if (!remote_q1_model_read(row,name->path,&view,&model,error)) return false;
         qa_vec3 point = vector(entity->origin), angles = vector(entity->angles);
         for (size_t j=0;j<row->previous.count;++j) if (row->previous.rows[j].number==entity->number) {
             const qa_q1_entity *old=row->previous.rows+j;

@@ -69,10 +69,11 @@ bool remote_q1_prediction_prepare(frontend_remote_q1 *row,qa_error *error)
     row->collision_models=calloc(row->model_count,sizeof(*row->collision_models));
     if(!row->collision_actors || !row->collision_models ||
         !qa_world_create(row->options.domain.actors,row->collision,NULL,1,&row->collision_world,error)) return false;
-    for(size_t i=0;i<row->model_count;++i) if(row->models[i][0]=='*') {
-        char *end; unsigned long model=strtoul(row->models[i]+1,&end,10);
-        if(end!=row->models[i]+1 && !*end && model && model<qa_collision_model_count(row->collision))
-            row->collision_models[i]=(qa_entity_model_field){.model=(uint32_t)model,.present=true};
+    for(size_t i=0;i<row->model_count;++i) {
+        const remote_q1_model_name *model=row->model_names+i;
+        if(model->inline_path && model->inline_valid && model->inline_number &&
+            model->inline_number<qa_collision_model_count(row->collision))
+            row->collision_models[i]=(qa_entity_model_field){.model=(uint32_t)model->inline_number,.present=true};
     }
     qa_world_query_rules query_rules={.actors=row->collision_actors,
         .merge=qa_q1_is_qw(row->options.domain.protocol)?QA_WORLD_MERGE_QW_CLIENT:QA_WORLD_MERGE_SERVER};
@@ -121,7 +122,7 @@ bool remote_q1_prediction_publish(frontend_remote_q1 *row,qa_error *error)
         if(entity->number && entity->number<=32 && row->qw_player_valid[entity->number-1]) {
             if(players_solid && !(row->qw_players[entity->number-1].flags&QA_QW_PF_DEAD))
                 players[entity->number-1]=entity;
-        } else if(entity->model && entity->model<=row->model_count && row->models[entity->model-1][0]=='*' &&
+        } else if(entity->model && entity->model<=row->model_count && row->model_names[entity->model-1].inline_path &&
             !publish_body(row,entity,row->collision_models+entity->model-1,error)) return false;
     }
     /* Original QW adds brush physents first, then solid players by slot. */

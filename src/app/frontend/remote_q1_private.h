@@ -21,6 +21,12 @@ typedef struct remote_q1_model {
     uint8_t top, bottom;
 } remote_q1_model;
 
+typedef struct remote_q1_model_name {
+    qa_string_id path;
+    unsigned long inline_number;
+    bool inline_path, inline_valid, axe;
+} remote_q1_model_name;
+
 typedef struct remote_q1_entities { qa_q1_entity *rows; size_t count, capacity; } remote_q1_entities;
 typedef struct remote_q1_demo_seed {
     struct remote_q1_demo_seed *next;
@@ -69,6 +75,8 @@ struct frontend_remote_q1 {
     qa_audio_bank *sound_bank;
     frontend_world_scratch world_scratch;
     remote_q1_model *model_cache;
+    qa_id_index model_index;
+    remote_q1_model_name *model_names;
     const qa_scene_image *sky_images[6];
     uint8_t sky_found;
     uint64_t revision, map_generation, received_ns, frame_number, next_event;
@@ -120,7 +128,7 @@ void remote_q1_time_advance(frontend_remote_q1 *, double, uint64_t);
 void remote_q1_publication_update(frontend_remote_q1 *);
 bool remote_q1_media_prepare(frontend_remote_q1 *, qa_error *);
 bool remote_q1_sky_load(frontend_remote_q1 *, qa_error *);
-bool remote_q1_model_read(frontend_remote_q1 *, const frontend_remote_q1_entity_view *, remote_q1_model **, qa_error *);
+bool remote_q1_model_read(frontend_remote_q1 *, qa_string_id path, const frontend_remote_q1_entity_view *, remote_q1_model **, qa_error *);
 bool remote_q1_event_present(frontend_remote_q1 *, const qa_nq_message *, qa_error *);
 bool remote_q1_effects_clear(frontend_remote_q1 *, qa_error *);
 bool remote_q1_effects_draw(frontend_remote_q1 *, const qa_scene_view *, const qa_scene_world_input *, qa_error *);

@@ -22,6 +22,7 @@ void remote_q1_media_clear(frontend_remote_q1 *row)
         frontend_q1_help_forget_source(row->frontend->seats+row->options.domain.physical_seat,row->images);
     frontend_world_scratch_destroy(&row->world_scratch);
     qa_scene_world_destroy(row->world); row->world = NULL;
+    qa_id_index_destroy(&row->model_index);
     while (row->model_cache) {
         remote_q1_model *model = row->model_cache; row->model_cache = model->next;
         qa_scene_world_destroy(model->world); qa_scene_model_destroy(model->scene);
@@ -98,24 +99,22 @@ bool remote_q1_sky_load(frontend_remote_q1 *row, qa_error *error)
     }
     free(path); return ok;
 }
-bool remote_q1_model_read(frontend_remote_q1 *row, const frontend_remote_q1_entity_view *view, remote_q1_model **out, qa_error *error)
+bool remote_q1_model_read(frontend_remote_q1 *row, qa_string_id path, const frontend_remote_q1_entity_view *view, remote_q1_model **out, qa_error *error)
 {
     if (!remote_q1_mutable(row) || !view || !view->model || !out)
         return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 model admission overlaps its actual parent lease");
     *out = NULL;
-    for (remote_q1_model *m = row->model_cache; m; m = m->next)
-        if (!strcmp(m->path, view->model) && m->colors == view->has_colors &&
-            (!m->colors || (m->top == view->top_color && m->bottom == view->bottom_color))) { *out = m; return true; }
+    uint64_t colors = view->has_colors ? UINT64_C(65536) |
+        ((uint64_t)view->top_color << 8) | view->bottom_color : 0;
+    qa_id_index_entry *cached = qa_id_index_find(&row->model_index, path, colors);
+    if (cached) { *out = (remote_q1_model *)(uintptr_t)cached->value; return true; }
     remote_q1_model *m = calloc(1, sizeof(*m));
     if (!m) return remote_q1_fail(error, QA_ERROR_MEMORY, "Retaining remote Q1 model");
     m->colors = view->has_colors; m->top = view->top_color; m->bottom = view->bottom_color;
     bool ok = remote_q1_string(&m->path, view->model, error) &&
         qa_vfs_acquire_receipt(row->content.mounts, m->path, &m->resource, &m->opening, error);
-    size_t length = strlen(view->model);
-    bool brush = length >= 4 && view->model[length - 4] == '.' &&
-        (view->model[length - 3] == 'b' || view->model[length - 3] == 'B') &&
-        (view->model[length - 2] == 's' || view->model[length - 2] == 'S') &&
-        (view->model[length - 1] == 'p' || view->model[length - 1] == 'P');
+    bool brush = (qa_strings_name_flags(qa_session_strings(qa_application_session(row->frontend->application)),
+        path) & QA_NAME_BRUSH_PATH) != 0;
     qa_scene_image_options options = image_options(QA_IMAGE_USAGE_SKIN); uint8_t translation[256];
     if (m->colors) {
         for (unsigned i = 0; i < 256; ++i) translation[i] = (uint8_t)i;
@@ -145,11 +144,14 @@ bool remote_q1_model_read(frontend_remote_q1 *row, const frontend_remote_q1_enti
         qa_scene_model_source_resource_bind(m->scene, m->resource, error) &&
         frontend_visual_model_opening_initialize(row->frontend, QA_GAME_Q1, row->content.mounts,
             m->resource, &m->opening, &m->decoded, m->scene, error);
+    if (ok) ok = qa_id_index_reserve(&row->model_index, 1, error);
     if (!ok) {
         qa_scene_world_destroy(m->world); qa_scene_model_destroy(m->scene); qa_model_free(&m->decoded); qa_resource_release(m->resource);
         qa_vfs_acquisition_dispose(&m->opening); free(m->path); free(m); return false;
     }
-    m->source = brush ? NULL : &m->decoded; m->next = row->model_cache; row->model_cache = m; *out = m; return true;
+    m->source = brush ? NULL : &m->decoded; m->next = row->model_cache; row->model_cache = m;
+    qa_id_index_insert(&row->model_index, path, colors, (size_t)(uintptr_t)m);
+    *out = m; return true;
 }
 bool frontend_remote_q1_media_read(const frontend_remote_q1 *row, frontend_remote_q1_media *out, qa_error *error)
 {

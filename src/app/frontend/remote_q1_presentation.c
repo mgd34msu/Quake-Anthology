@@ -62,8 +62,9 @@ static bool model_submit(frontend_remote_q1 *row, const frontend_remote_q1_entit
     const qa_scene_view *view, const qa_scene_world_input *world, qa_error *error)
 {
     if (!entity->entity.model || !entity->visible) return true;
+    const remote_q1_model_name *name = row->model_names + entity->entity.model - 1;
     remote_q1_model *model = NULL;
-    if (entity->model[0] != '*' && !remote_q1_model_read(row, entity, &model, error)) return false;
+    if (!name->inline_path && !remote_q1_model_read(row, name->path, entity, &model, error)) return false;
     qa_model_transform transform;
     qa_vec3 origin = qa_v3(entity->entity.origin[0], entity->entity.origin[1], entity->entity.origin[2]);
     qa_vec3 angles = qa_v3(entity->entity.angles[0], entity->entity.angles[1], entity->entity.angles[2]);
@@ -72,11 +73,10 @@ static bool model_submit(frontend_remote_q1 *row, const frontend_remote_q1_entit
             0, angles, world->seconds, 0);
     qa_model_transform_from_angles(&transform, origin, angles, entity->scale, QA_ANGLE_FLOAT_MATH);
     qa_vec4 color = {1, 1, 1, entity->alpha};
-    if (entity->model[0] == '*') {
-        char *end; unsigned long number = strtoul(entity->model + 1, &end, 10);
-        if (end == entity->model + 1 || *end || number > UINT32_MAX)
+    if (name->inline_path) {
+        if (!name->inline_valid || name->inline_number > UINT32_MAX)
             return remote_q1_fail(error, QA_ERROR_FORMAT, "Q1 inline model has no genuine received model index");
-        return qa_scene_world_submit_model(row->world, (uint32_t)number, &transform, world,
+        return qa_scene_world_submit_model(row->world, (uint32_t)name->inline_number, &transform, world,
             entity->entity.number, color, &row->frontend->frame, error);
     }
     if (model->world) return qa_scene_world_submit_model(model->world, 0, &transform, world,
