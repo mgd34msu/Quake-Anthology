@@ -2,6 +2,7 @@
 #include "qa/strings.h"
 #include "qa/text.h"
 #include "qa/caption_save.h"
+#include "interpolation.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -62,6 +63,99 @@ static size_t append(char *out, size_t used, size_t capacity, const char *s, siz
     memcpy(out + used, s, n);
     out[used + n] = 0;
     return used + n;
+}
+typedef struct interpolation_writer {
+    char *out;
+    size_t capacity, used, full_size;
+    bool count;
+    qa_interpolation_truncation truncation;
+} interpolation_writer;
+static bool interpolation_append(interpolation_writer *writer, const char *text, size_t length,
+                                  qa_error *error) {
+    if (writer->count) {
+        if (length > SIZE_MAX - 1 - writer->full_size) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Interpolated text exceeds address space");
+            return false;
+        }
+        writer->full_size += length;
+    }
+    if (!writer->out) return true;
+    if (writer->truncation == QA_INTERPOLATION_PREFIX_UTF8) {
+        size_t available = writer->capacity - writer->used;
+        size_t copied = length < available ? length : available;
+        if (copied) memcpy(writer->out + writer->used, text, copied);
+        writer->used += copied;
+    } else {
+        writer->used = append(writer->out, writer->used, writer->capacity, text, length,
+                              writer->truncation == QA_INTERPOLATION_PIECES_RAW);
+    }
+    return true;
+}
+static bool interpolation_argument(interpolation_writer *writer,
+                                    const qa_text_interpolation *format, size_t index,
+                                    qa_error *error) {
+    const char *text = format->values[index];
+    char localized[QA_INTERPOLATION_ARGUMENT_CAPACITY];
+    qa_bytes value = format->resolve ? format->resolve(format->context, text, localized) :
+        (qa_bytes){(const uint8_t *)text, strlen(text)};
+    return interpolation_append(writer, (const char *)value.data, value.size, error);
+}
+bool qa_text_interpolate(const char *text, const qa_text_interpolation *format,
+                         char *out, size_t capacity, size_t *full_size, size_t *written,
+                         qa_error *error) {
+    interpolation_writer writer = {.out = out, .capacity = capacity, .count = full_size != NULL,
+                                    .truncation = format->truncation};
+    if (format->spans) {
+        size_t at = 0;
+        for (size_t i = 0; i < format->span_count; ++i) {
+            qa_localization_argument arg = format->spans[i];
+            if (!interpolation_append(&writer, text + at, arg.start - at, error) ||
+                !interpolation_argument(&writer, format, arg.index, error)) return false;
+            at = arg.end;
+        }
+        if (!interpolation_append(&writer, text + at, strlen(text + at), error)) return false;
+    } else {
+        const char *p = text;
+        while (*p) {
+            const char *part = p;
+            size_t length = 1;
+            if (*p == '{' && p[1] >= '0' && p[1] <= '9') {
+                const char *end = p + 1;
+                size_t index = 0;
+                bool overflow = false;
+                while (*end >= '0' && *end <= '9') {
+                    unsigned digit = (unsigned)(*end++ - '0');
+                    if (index > (SIZE_MAX - digit) / 10) overflow = true;
+                    else if (!overflow) index = index * 10 + digit;
+                }
+                if (*end == '}') {
+                    length = (size_t)(end + 1 - p);
+                    p = end + 1;
+                    if (!overflow && index < format->value_count) {
+                        if (!interpolation_argument(&writer, format, index, error)) return false;
+                        continue;
+                    }
+                    if (!format->keep_missing) length = 0;
+                } else ++p;
+            } else {
+                ++p;
+                while (*p && *p != '{') ++p;
+                length = (size_t)(p - part);
+            }
+            if (!interpolation_append(&writer, part, length, error)) return false;
+        }
+    }
+    size_t used = writer.used;
+    if (out && capacity) {
+        if (format->truncation == QA_INTERPOLATION_PREFIX_UTF8 && used == capacity) {
+            used = capacity - 1;
+            while (used && ((unsigned char)out[used] & 0xc0u) == 0x80u) --used;
+        }
+        out[used] = 0;
+    }
+    if (full_size) *full_size = writer.full_size;
+    if (written) *written = used;
+    return true;
 }
 static unsigned peek(loc_reader *reader, size_t ahead) {
     return ahead < reader->bytes.size - reader->at ? reader->bytes.data[reader->at + ahead] : 0;
@@ -318,6 +412,19 @@ const qa_localization_entry *qa_localization_find(const qa_localization *catalog
     qa_string_id id = qa_strings_find(catalog->keys, (qa_bytes){(const uint8_t *)key, strlen(key)});
     return id ? &catalog->entries[id - 1].value : NULL;
 }
+static size_t localize(const qa_localization *, const char *, const char *const *,
+                       size_t, bool, bool, bool, char *, size_t);
+typedef struct localized_argument {
+    const qa_localization *catalog;
+    bool preserve_unknown;
+} localized_argument;
+static qa_bytes resolve_localized_argument(void *context, const char *text,
+                                           char out[QA_INTERPOLATION_ARGUMENT_CAPACITY]) {
+    const localized_argument *argument = context;
+    size_t size = localize(argument->catalog, text, NULL, 0, false, false,
+                           argument->preserve_unknown, out, QA_INTERPOLATION_ARGUMENT_CAPACITY);
+    return (qa_bytes){(const uint8_t *)out, size};
+}
 static size_t localize(const qa_localization *catalog, const char *base, const char *const *arguments,
                    size_t argument_count, bool allow_in_place, bool raw_bytes, bool preserve_unknown,
                    char *out, size_t capacity) {
@@ -361,17 +468,14 @@ static size_t localize(const qa_localization *catalog, const char *base, const c
     for (size_t i = 0; i < argument_count; ++i)
         if (!arguments || !arguments[i])
             return append(out, 0, capacity, base, strlen(base), raw_bytes);
-    size_t used = 0, at = 0;
-    for (size_t i = 0; i < entry->argument_count; ++i) {
-        qa_localization_argument arg = entry->arguments[i];
-        used = append(out, used, capacity, entry->format + at, arg.start - at, raw_bytes);
-        char value[1024];
-        size_t n =
-            localize(catalog, arguments[arg.index], NULL, 0, false, false, preserve_unknown, value, sizeof(value));
-        used = append(out, used, capacity, value, n, raw_bytes);
-        at = arg.end;
-    }
-    return append(out, used, capacity, entry->format + at, strlen(entry->format + at), raw_bytes);
+    localized_argument argument = {catalog, preserve_unknown};
+    qa_text_interpolation interpolation = {.spans = entry->arguments,
+        .span_count = entry->argument_count, .values = arguments, .value_count = argument_count,
+        .context = &argument, .resolve = resolve_localized_argument,
+        .truncation = raw_bytes ? QA_INTERPOLATION_PIECES_RAW : QA_INTERPOLATION_PIECES_UTF8};
+    size_t used;
+    (void)qa_text_interpolate(entry->format, &interpolation, out, capacity, NULL, &used, NULL);
+    return used;
 }
 size_t qa_localize(const qa_localization *catalog, const char *base, const char *const *arguments,
     size_t argument_count, bool allow_in_place, bool raw_bytes, char *out, size_t capacity)

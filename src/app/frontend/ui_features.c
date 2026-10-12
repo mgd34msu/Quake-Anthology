@@ -4,7 +4,7 @@
 #include "accessibility.h"
 #include "source_restore.h"
 #include "campaign_menu.h"
-#include "q1_text.h"
+#include "qa/q1_text.h"
 #include "cinematic_captions.h"
 #include "qa/text.h"
 #include "qa/ui_presentation_prepare.h"
@@ -237,7 +237,7 @@ bool frontend_ui_source_message(qa_frontend *f,uint32_t seat,const qa_builtin_ev
     if (ok) {
         if (product->edition!=QA_EDITION_RERELEASE &&
             (format[0]!='$' || !qa_localization_find(catalog,format+1)))
-            ok=frontend_q1_classic_text(format,arguments,event->argument_count,output,1024,error);
+            ok=qa_q1_classic_text(format,arguments,event->argument_count,&f->frame.storage,output,1024,error);
         else (void)qa_localize_presentation(catalog,format,arguments,event->argument_count,true,output,1024);
         if (ok) *out=output;
     }
@@ -286,7 +286,7 @@ bool frontend_ui_source_prompt_text(qa_frontend *f,uint32_t seat,const qa_builti
     bool ok=true;
     if (product->edition!=QA_EDITION_RERELEASE &&
         (format[0]!='$' || !qa_localization_find(catalog,format+1)))
-        ok=frontend_q1_classic_text(format,NULL,0,output,1024,error);
+        ok=qa_q1_classic_text(format,NULL,0,&f->frame.storage,output,1024,error);
     else (void)qa_localize_presentation(catalog,format,NULL,0,true,output,1024);
     if (ok) *out=output;
     qa_localization_release(catalog);

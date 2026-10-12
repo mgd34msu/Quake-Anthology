@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "d89bfbdc276d1e9dc925d00dd1451f77dc4205c6",
+  "verified_main": "abb1747a05632fbf7c5a879b208678aac9238395",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -27876,7 +27876,7 @@
       "job": "09",
       "area": "bots_navigation",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "Foreign bot goals now retain canonical name IDs and use qa_actor_index for exact historical actor generations. Goal-number lookup uses the contiguous descending range already verified by save topology; restore and checkpoint copies rebuild independent retained indexes. Original counted-name bytes and capacity field remain importable; the unknown-pickup label is prepared once in the existing UI-name table. Historical generation row growth is still accepted and remains open. Normal production build and seven core suites passed; no live bot or allocation claim."
     },
     {
       "id": "09-04",
@@ -40399,6 +40399,39 @@
       ],
       "record_directory": "/tmp/qa-ta3196-audio-arena-20261012",
       "conclusion": "Music creation and prepared selection reserve the actual stereo chunk bound before playback; raw PCM backing, growth and clone ownership now use the common arena. Wrapped queue clone/restore remains independent after source destruction in the existing core suite. Device and Vorbis workspace admission remain open; arbitrary public raw queue growth remains accepted. The selected-character frame equality caller omitted from 71030a1a is included and verified here."
+    },
+    {
+      "commit": "abb1747a05632fbf7c5a879b208678aac9238395",
+      "source_tree": "403d53272487b9fe5fe489c1a47ec59b9a99d651",
+      "finding_ids": [
+        "09-03"
+      ],
+      "files_rechecked": [
+        "include/qa/bot_goals.h",
+        "include/qa/application_ui_names.h",
+        "src/app/application/bots.c",
+        "src/app/application/unified_player.c",
+        "src/bots/runtime/observations.c",
+        "src/bots/goals/internal.h",
+        "src/bots/goals/choose.c",
+        "src/bots/goals/core.c",
+        "src/bots/goals/map.c",
+        "src/bots/goals/save.c",
+        "src/bots/goals/checkpoint.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-bot-goal-identity-20261012",
+      "conclusion": "Foreign bot goals now retain canonical name IDs and use qa_actor_index for exact historical actor generations. Goal-number lookup uses the contiguous descending range already verified by save topology; restore and checkpoint copies rebuild independent retained indexes. Original counted-name bytes and capacity field remain importable; the unknown-pickup label is prepared once in the existing UI-name table. Historical generation row growth is still accepted and remains open. Normal production build and seven core suites passed; no live bot or allocation claim."
     }
   ],
   "verification_limits": [

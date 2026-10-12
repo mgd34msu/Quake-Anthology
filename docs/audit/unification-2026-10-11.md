@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `d89bfbdc`.
+Follow-up source changes were reviewed through main `abb1747a`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -244,3 +244,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 | `J25-05` | `732a7833` | One guest-sort body, retaining ABI comparator and memory adapters. Normal build and seven core suites passed. |
 
 | `06-02` partial, `05-D1` final caller | `d89bfbdc` | Music PCM storage reserved before playback; common arena backing and independent wrapped clone/restore checked. Device/Vorbis work remains open. |
+
+| `09-03` partial | `abb1747a` | Shared actor index and retained names for foreign goals; history/import field layout preserved. Historical row growth remains open. |

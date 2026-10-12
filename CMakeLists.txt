@@ -1699,7 +1699,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/equipment_gear_world_output.c
     src/app/frontend/equipment_held_output.c
     src/app/frontend/network_content_q3.c
-    src/app/frontend/q1_text.c
     src/app/frontend/input_profile.c
     src/app/frontend/input_settings.c
     src/app/frontend/input_shutdown.c

@@ -1,6 +1,7 @@
 #include "qa/q1_text.h"
 #include "qa/campaign_q1.h"
-#include <stdlib.h>
+#include "qa/arena.h"
+#include "interpolation.h"
 #include <string.h>
 
 /* Classic triggers.qc/doors.qc/Rogue and client.qc authored text. GPL-2.0-or-later. */
@@ -86,49 +87,17 @@ static const char *lookup(const q1_text_entry *entries,size_t count,const char *
     for (size_t i=0;i<count;++i) if (!strcmp(entries[i].key,key)) return entries[i].text;
     return NULL;
 }
-static bool format_text(const char *text,const char *const *arguments,size_t count,
-    bool message_arguments,bool keep_missing,char **out,qa_error *error)
+static qa_bytes message_argument(void *context, const char *text,
+                                 char storage[QA_INTERPOLATION_ARGUMENT_CAPACITY])
 {
-    size_t size=0;
-    for (unsigned pass=0;pass<2;++pass) {
-        const char *p=text; size_t used=0;
-        while (*p) {
-            const char *part=p; size_t length=1;
-            if (*p=='{' && p[1]>='0' && p[1]<='9') {
-                const char *end=p+1; size_t index=0; bool overflow=false;
-                while (*end>='0' && *end<='9') {
-                    unsigned digit=(unsigned)(*end++-'0');
-                    if (index>(SIZE_MAX-digit)/10) overflow=true;
-                    else if (!overflow) index=index*10+digit;
-                }
-                if (*end=='}') {
-                    length=(size_t)(end+1-p);
-                    if (!overflow && index<count) {
-                        part=arguments[index];
-                        if (message_arguments) {
-                            const char *mapped=lookup(messages,sizeof(messages)/sizeof(*messages),part);
-                            if (mapped) part=mapped;
-                        }
-                        p=end+1; length=strlen(part);
-                    } else { p=end+1; if (!keep_missing) length=0; }
-                } else ++p;
-            } else ++p;
-            if (length>SIZE_MAX-1-used) {
-                free(*out); *out=NULL;
-                qa_error_set(error,QA_ERROR_MEMORY,0,"Classic source text exceeds address space"); return false;
-            }
-            if (pass && length) memcpy(*out+used,part,length);
-            used+=length;
-        }
-        if (!pass) {
-            size=used; *out=malloc(size+1);
-            if (!*out) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating classic source text"); return false; }
-        } else (*out)[size]=0;
-    }
-    return true;
+    (void)context;
+    (void)storage;
+    const char *mapped=lookup(messages,sizeof(messages)/sizeof(*messages),text);
+    if (mapped) text=mapped;
+    return (qa_bytes){(const uint8_t *)text,strlen(text)};
 }
 bool qa_q1_classic_text(const char *text,const char *const *arguments,size_t count,
-    char *out,size_t capacity,qa_error *error)
+    qa_arena *scratch,char *out,size_t capacity,qa_error *error)
 {
     if (!text || (count && !arguments) || !out || !capacity) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Classic source text requires its actual argument tuple"); return false;
@@ -137,17 +106,20 @@ bool qa_q1_classic_text(const char *text,const char *const *arguments,size_t cou
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Classic source text lost an argument"); return false;
     }
     const char *format=lookup(messages,sizeof(messages)/sizeof(*messages),text);
-    char *first=NULL,*result=NULL;
+    qa_text_interpolation interpolation={.values=arguments,.value_count=count,
+        .truncation=QA_INTERPOLATION_PREFIX_UTF8};
     if (!format) {
         format=lookup(obituaries,sizeof(obituaries)/sizeof(*obituaries),text);
-        if (!format_text(format?format:text,arguments,count,false,false,&first,error)) return false;
+        if (!format) format=text;
+        size_t size;
+        if (!qa_text_interpolate(format,&interpolation,NULL,0,&size,NULL,error)) return false;
+        char *first=qa_arena_alloc(scratch,size+1,1,error);
+        if (!first || !qa_text_interpolate(format,&interpolation,first,size+1,NULL,NULL,error))
+            return false;
         format=qa_q1_finale_text(false,first);
     }
-    bool ok=format_text(format,arguments,count,true,true,&result,error);
-    if (ok) {
-        size_t length=strlen(result),written=length<capacity?length:capacity-1;
-        if (written<length) while (written && ((unsigned char)result[written]&0xc0u)==0x80u) --written;
-        memcpy(out,result,written); out[written]=0;
-    }
-    free(first); free(result); return ok;
+    interpolation.keep_missing=true;
+    interpolation.resolve=message_argument;
+    size_t size;
+    return qa_text_interpolate(format,&interpolation,out,capacity,&size,NULL,error);
 }

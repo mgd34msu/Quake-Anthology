@@ -33,6 +33,8 @@
 #include "../src/audio/mixer_internal.h"
 #include "qa/movement.h"
 #include "qa/q1_save.h"
+#include "qa/q1_text.h"
+#include "qa/campaign_q1.h"
 #include "qa/scene.h"
 #include "qa/render_cpu.h"
 #include "../src/render/scene/world/internal.h"
@@ -1300,6 +1302,36 @@ static void test_files(void)
     CHECK(unlink(path) == 0);
     CHECK(unlink(fifo_path) == 0);
     CHECK(rmdir(directory) == 0);
+}
+
+static void test_shared_text_interpolation(void)
+{
+    qa_error error={0}; qa_arena scratch={0}; char out[128];
+    qa_arena_init(&scratch,4096);
+    const char *introduced[]={"{","1}"};
+    CHECK(qa_q1_classic_text("{0}{1}",introduced,2,&scratch,out,sizeof(out),&error));
+    CHECK(!strcmp(out,"1}"));
+    CHECK(qa_q1_classic_text("{8}x",NULL,0,&scratch,out,sizeof(out),&error));
+    CHECK(!strcmp(out,"x"));
+    const char *finale[]={"$qc_finale_end"};
+    CHECK(qa_q1_classic_text("{0}",finale,1,&scratch,out,8,&error));
+    CHECK(!memcmp(out,qa_q1_finale_text(false,finale[0]),7) && !out[7]);
+    const char *utf8[]={"\xe2\x82\xac"};
+    for(size_t n=1;n<=4;++n) {
+        CHECK(qa_q1_classic_text("{0}x",utf8,1,&scratch,out,n,&error));
+        CHECK(strlen(out)==(n==4?3:0));
+    }
+    const char text[]="FORMAT = \"{0}x{1}\"\n";
+    qa_bytes layer={(const uint8_t *)text,sizeof(text)-1};
+    qa_localization_options options={.profile=QA_LOCALIZATION_Q2_RERELEASE};
+    qa_localization *catalog=NULL;
+    CHECK(qa_localization_create(&layer,1,&options,&catalog,&error));
+    const char *values[]={"\xe2\x82\xac","z"};
+    CHECK(qa_localize(catalog,"$FORMAT",values,2,false,false,out,3)==2);
+    CHECK(!strcmp(out,"xz"));
+    CHECK(qa_localize(catalog,"$FORMAT",values,2,false,true,out,3)==2);
+    CHECK((unsigned char)out[0]==0xe2 && (unsigned char)out[1]==0x82 && !out[2]);
+    qa_localization_release(catalog); qa_arena_destroy(&scratch);
 }
 
 static void test_localization_lookup_generation(void)
@@ -4039,6 +4071,7 @@ int main(int argc, char **argv)
     test_metadata_retention();
     test_metadata_names();
     test_files();
+    test_shared_text_interpolation();
     test_localization_lookup_generation();
     test_ring_console_capture();
     test_connection_request_cursor();

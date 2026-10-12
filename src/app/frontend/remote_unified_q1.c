@@ -580,7 +580,7 @@ static bool localize_piece(q1_group *g,const qa_builtin_event *value,qa_buffer *
     }
     out->data=(uint8_t *)g->parent->localized_text;
     if (g->product->edition!=QA_EDITION_RERELEASE && (base[0]!='$' || !qa_localization_find(g->localization,base+1))) {
-        if (!qa_q1_classic_text(base,argv,count,(char *)out->data,65536,e))return false;
+        if (!qa_q1_classic_text(base,argv,count,&g->parent->frontend->frame.storage,(char *)out->data,65536,e))return false;
         out->size=strlen((char *)out->data);
     } else out->size=qa_localize_presentation(g->localization,base,argv,count,true,(char *)out->data,65536);
     return true;

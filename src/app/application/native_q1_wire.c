@@ -1,4 +1,5 @@
 #include "native_q1_wire.h"
+#include "control_frame.h"
 #include "native_q1_console.h"
 #include "guest_qc_internal.h"
 #include "qa/application_startup_prepare.h"
@@ -957,9 +958,12 @@ static bool emit_text(qa_application *app, application_provider *wire,
             native_q1_wire_language *row = language_row(source->native_q1_wire, actor);
             if (!row || !row->catalog) { okay = application_fail(error, QA_ERROR_NOT_FOUND, "Q1 wire text has no admitted recipient catalog"); break; }
             if (source->product->edition != QA_EDITION_RERELEASE &&
-                (*format != '$' || !qa_localization_find(row->catalog, format + 1)))
-                okay = qa_q1_classic_text(format, arguments, event->argument_count, output, sizeof(output), error);
-            else (void)qa_localize_presentation(row->catalog, format, arguments,
+                (*format != '$' || !qa_localization_find(row->catalog, format + 1))) {
+                qa_unified_frame_lease *scratch = application_control_storage_acquire(app, error);
+                okay = scratch && qa_q1_classic_text(format, arguments, event->argument_count,
+                    qa_unified_frame_lease_arena(scratch), output, sizeof(output), error);
+                qa_unified_frame_lease_release(scratch);
+            } else (void)qa_localize_presentation(row->catalog, format, arguments,
                 event->argument_count, true, output, sizeof(output));
             value = output;
         }
