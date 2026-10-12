@@ -125,14 +125,12 @@ bool qa_native_host_q2_player(qa_native_host *host, uint32_t slot,
 }
 
 bool qa_native_host_q2_player_state(qa_native_host *host, uint32_t slot,
-    qa_buffer *out, qa_error *error)
+    uint8_t storage[296], qa_bytes *out, qa_error *error)
 {
     qa_native_address address; size_t bytes;
-    if (!out) return native_host_fail(error, QA_ERROR_ARGUMENT, slot, "Q2 player observation requires an output");
+    if (!storage || !out) return native_host_fail(error, QA_ERROR_ARGUMENT, slot, "Q2 player observation requires an output");
     if (!player_prefix(host, slot, &address, &bytes, error)) return false;
-    qa_buffer copy = {.data = malloc(bytes), .size = bytes};
-    if (!copy.data) return native_host_fail(error, QA_ERROR_MEMORY, slot, "Retaining original Q2 public player state");
-    if (!native_host_read(host, address, copy.data, bytes, error)) { qa_buffer_free(&copy); return false; }
-    *out = copy;
+    if (!native_host_read(host, address, storage, bytes, error)) return false;
+    *out = (qa_bytes){storage, bytes};
     return true;
 }

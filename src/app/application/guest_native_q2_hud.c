@@ -215,9 +215,10 @@ bool application_native_q2_draw_hud(application_provider *provider, uint32_t sea
         engine->hud_source_owner = source->provider->owner;
         engine->hud_config_revision = source->config_changes.revision;
     }
-    qa_buffer player = {0}; qa_native_host_q2_hud_view view;
+    uint8_t player_storage[296];
+    qa_bytes player = {0}; qa_native_host_q2_hud_view view;
     uint8_t data[1536] = {0};
-    if (ok) ok = qa_native_host_q2_player_state(source->provider->state.native.host, slot, &player, error);
+    if (ok) ok = qa_native_host_q2_player_state(source->provider->state.native.host, slot, player_storage, &player, error);
     if (ok && !engine->platform.hud_view)
         ok = application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q2 HUD viewport owner is absent");
     if (ok) ok = engine->platform.hud_view(engine->platform.context, seat, &view, error);
@@ -226,10 +227,8 @@ bool application_native_q2_draw_hud(application_provider *provider, uint32_t sea
         for (size_t i = 0; i < 256; ++i)
             qa_store_u16le(data + 1024 + i * 2, (uint16_t)source->clients[slot].inventory[i]);
         ok = qa_native_host_q2_draw_hud(provider->state.native.host, seat, &view,
-            (int32_t)slot - 1, (qa_bytes){data, sizeof(data)},
-            (qa_bytes){player.data, player.size}, error);
+            (int32_t)slot - 1, (qa_bytes){data, sizeof(data)}, player, error);
     }
-    qa_buffer_free(&player);
     --source->calls; --engine->calls;
     if (ok) engine->map_ready = provider->map_bound = true;
     return ok;

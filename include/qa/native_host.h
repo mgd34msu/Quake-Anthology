@@ -357,8 +357,10 @@ bool qa_native_host_spawn_entities(qa_native_host *, const char *map, const char
                                    const char *spawn_point, qa_error *);
 bool qa_native_host_run_frame(qa_native_host *, bool main_loop, qa_error *);
 bool qa_native_host_prep_frame(qa_native_host *, qa_error *);
+/* Read the original public player prefix into 296 caller-owned writable bytes.
+ * The output borrows 184 classic or 296 rerelease bytes from that storage. */
 bool qa_native_host_q2_player_state(qa_native_host *, uint32_t source_slot,
-                                     qa_buffer *, qa_error *);
+    uint8_t storage[296], qa_bytes *out, qa_error *);
 /* Source data is the original 1024-byte layout plus 256 signed short counts;
  * player_state is the public 296-byte KEX state. Copies live only during DrawHUD. */
 bool qa_native_host_q2_draw_hud(qa_native_host *, uint32_t seat,
