@@ -346,29 +346,50 @@ static bool receive_frame(qa_unified_channel *c, const qa_unified_packet *p, uin
     return true;
 }
 
-bool qa_unified_channel_receive_buffered(qa_unified_channel *c, qa_bytes datagram, uint64_t now,
-                                 qa_unified_admit_delivery_fn admit, qa_unified_deliver_fn deliver,
-                                 void *context, qa_error *error) {
+bool qa_unified_channel_packet_matches(const qa_unified_channel *c, const qa_unified_packet *p) {
+    unsigned mismatch=0;
+    for (size_t i=0;i<16;++i) mismatch|=(unsigned)(p->token.bytes[i]^c->token.bytes[i]);
+    return mismatch==0;
+}
+
+bool qa_unified_channel_packet_allowed(const qa_unified_channel *c, const qa_unified_packet *p) {
+    return p->payload.size<=c->limits.datagram_bytes-QA_UNIFIED_HEADER_BYTES &&
+        (p->kind==QA_UNIFIED_ACK ||
+        (p->total_bytes<=c->limits.message_bytes && p->fragments<=c->limits.fragments));
+}
+
+static bool receive_begin(qa_unified_channel *c, uint64_t now,
+                          qa_unified_deliver_fn deliver, qa_error *error) {
     if (!open_channel(c,error)) return false;
     if (!deliver) return error_message(error,QA_ERROR_ARGUMENT,"unified channel requires a delivery consumer");
-    if (!expire(c,now,error)) return false;
-    if (datagram.size>c->limits.datagram_bytes) return true;
-    qa_unified_packet p;
-    if (!qa_unified_packet_decode(datagram,&p,NULL)) return true;
-    unsigned mismatch=0;
-    for (size_t i=0;i<16;++i) mismatch|=(unsigned)(p.token.bytes[i]^c->token.bytes[i]);
-    if (mismatch || (p.kind!=QA_UNIFIED_ACK &&
-        (p.total_bytes>c->limits.message_bytes || p.fragments>c->limits.fragments))) return true;
-    c->busy=true; accept_ack(c,&p);
-    bool result=p.kind==QA_UNIFIED_ACK ? deliver_ready(c,admit,deliver,context,error) : p.kind==QA_UNIFIED_RELIABLE
-        ? receive_reliable(c,&p,now,admit,deliver,context,error)
-        : receive_frame(c,&p,now,admit,deliver,context,error);
+    return expire(c,now,error);
+}
+
+static bool receive_packet(qa_unified_channel *c, const qa_unified_packet *p, uint64_t now,
+                            qa_unified_admit_delivery_fn admit, qa_unified_deliver_fn deliver,
+                            void *context, qa_error *error) {
+    c->busy=true; accept_ack(c,p);
+    bool result=p->kind==QA_UNIFIED_ACK ? deliver_ready(c,admit,deliver,context,error) : p->kind==QA_UNIFIED_RELIABLE
+        ? receive_reliable(c,p,now,admit,deliver,context,error)
+        : receive_frame(c,p,now,admit,deliver,context,error);
     c->busy=false; return result;
+}
+
+bool qa_unified_channel_receive_packet(qa_unified_channel *c, const qa_unified_packet *p, uint64_t now,
+                                 qa_unified_admit_delivery_fn admit, qa_unified_deliver_fn deliver,
+                                 void *context, qa_error *error) {
+    if (!receive_begin(c,now,deliver,error)) return false;
+    return receive_packet(c,p,now,admit,deliver,context,error);
 }
 
 bool qa_unified_channel_receive(qa_unified_channel *c, qa_bytes datagram, uint64_t now,
                                  qa_unified_deliver_fn deliver, void *context, qa_error *error) {
-    return qa_unified_channel_receive_buffered(c,datagram,now,NULL,deliver,context,error);
+    if (!receive_begin(c,now,deliver,error)) return false;
+    if (datagram.size>c->limits.datagram_bytes) return true;
+    qa_unified_packet p;
+    if (!qa_unified_packet_decode(datagram,&p,NULL) ||
+        !qa_unified_channel_packet_matches(c,&p) || !qa_unified_channel_packet_allowed(c,&p)) return true;
+    return receive_packet(c,&p,now,NULL,deliver,context,error);
 }
 
 bool qa_unified_channel_resume(qa_unified_channel *c, qa_unified_admit_delivery_fn admit,

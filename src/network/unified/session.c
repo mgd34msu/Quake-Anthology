@@ -206,24 +206,42 @@ bool qa_unified_session_receive_resume(qa_unified_session *s, qa_error *e)
     return qa_unified_channel_resume(s->channel, admit_delivery, hold_delivery, s, e);
 }
 
-static bool receive_peer(void *state, qa_network_runtime *runtime, qa_net_client_id id,
-    const qa_net_datagram *packet, qa_error *e)
+static bool receive_ready(const qa_unified_session *s, const qa_network_runtime *runtime,
+    qa_net_client_id id, qa_error *e)
 {
-    qa_unified_session *s = state;
     if (!s->bound_source || s->entered || s->processing || runtime != s->runtime || !qa_net_client_id_equal(id, s->id))
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Recursive or mismatched production session receive");
-    qa_unified_packet decoded;
-    if (!qa_unified_packet_decode(packet->payload, &decoded, NULL)) return true;
-    unsigned mismatch = 0;
-    for (size_t i = 0; i < 16; ++i) mismatch |= (unsigned)(decoded.token.bytes[i] ^ s->token.bytes[i]);
-    if (mismatch || packet->payload.size > s->limits.datagram_bytes ||
-        (decoded.kind != QA_UNIFIED_ACK && (decoded.total_bytes > s->limits.message_bytes || decoded.fragments > s->limits.fragments))) return true;
+    return true;
+}
+
+static bool receive_authenticated(qa_unified_session *s, qa_network_runtime *runtime, qa_net_client_id id,
+    const qa_net_datagram *packet, const qa_unified_packet *decoded, qa_error *e)
+{
+    if (!qa_unified_channel_packet_allowed(s->channel, decoded)) return true;
     s->entered = true; s->now_ns = packet->received_ns;
-    bool ok = qa_unified_channel_receive_buffered(s->channel, packet->payload, packet->received_ns,
+    bool ok = qa_unified_channel_receive_packet(s->channel, decoded, packet->received_ns,
         admit_delivery, hold_delivery, s, e);
     if (ok) ok = qa_network_received(runtime, id, packet->received_ns, e);
     s->entered = false;
     return ok;
+}
+
+bool qa_unified_session_receive_packet(qa_unified_session *s, qa_network_runtime *runtime, qa_net_client_id id,
+    const qa_net_datagram *packet, const qa_unified_packet *decoded, qa_error *e)
+{
+    return receive_ready(s, runtime, id, e) &&
+        receive_authenticated(s, runtime, id, packet, decoded, e);
+}
+
+static bool receive_peer(void *state, qa_network_runtime *runtime, qa_net_client_id id,
+    const qa_net_datagram *packet, qa_error *e)
+{
+    qa_unified_session *s = state;
+    if (!receive_ready(s, runtime, id, e)) return false;
+    qa_unified_packet decoded;
+    if (!qa_unified_packet_decode(packet->payload, &decoded, NULL) ||
+        !qa_unified_channel_packet_matches(s->channel, &decoded)) return true;
+    return receive_authenticated(s, runtime, id, packet, &decoded, e);
 }
 
 static qa_net_send_result send_peer(void *state, qa_bytes bytes, qa_error *e)

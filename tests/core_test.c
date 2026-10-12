@@ -306,6 +306,23 @@ static void test_q2_hud_configuration(void)
 }
 static void test_json_caller_storage(void)
 {
+    static const struct { uint8_t bytes[4]; size_t size; } malformed[] = {
+        {{0xc0,0x80},2}, {{0xe0,0x80,0x80},3}, {{0xed,0xa0,0x80},3},
+        {{0xf4,0x90,0x80,0x80},4}, {{0xf0,0x9f},2}, {{0x80},1}};
+    for (size_t i=0;i<sizeof(malformed)/sizeof(*malformed);++i) {
+        qa_bytes bytes={malformed[i].bytes,malformed[i].size};
+        size_t cursor=0;uint32_t scalar=123;qa_error failure={0};qa_buffer quote={0};
+        CHECK(!qa_utf8_next_strict(bytes,&cursor,&scalar) && !cursor && scalar==123);
+        CHECK(!qa_json_quote(bytes,&quote,&failure) && !quote.data);
+        uint8_t json[6]={'"'};
+        memcpy(json+1,bytes.data,bytes.size);json[bytes.size+1]='"';
+        qa_json_document *invalid=NULL;
+        CHECK(!qa_json_parse((qa_bytes){json,bytes.size+2},&invalid,&failure) && !invalid);
+    }
+    const uint8_t valid[]={0xef,0xbf,0xbd,0xf4,0x8f,0xbf,0xbf};
+    size_t cursor=0;uint32_t scalar=0;
+    CHECK(qa_utf8_next_strict((qa_bytes){valid,sizeof(valid)},&cursor,&scalar) && scalar==0xfffd);
+    CHECK(qa_utf8_next_strict((qa_bytes){valid,sizeof(valid)},&cursor,&scalar) && scalar==0x10ffff);
     const char source[]="\"A\\u0000B\\ud83d\\ude00\\n\"";
     const uint8_t expected[]={'A',0,'B',0xf0,0x9f,0x98,0x80,'\n',0};
     qa_json_document *document=NULL; qa_error error={0};

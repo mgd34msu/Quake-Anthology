@@ -11,6 +11,8 @@ bool qa_utf8_lower(qa_bytes input, qa_buffer *out, qa_error *error);
 bool qa_utf8_repair(qa_bytes input, qa_buffer *out, qa_error *error);
 /* Allocation-free scalar iteration, replacing malformed subsequences. */
 bool qa_utf8_next(qa_bytes, size_t *cursor, uint32_t *scalar);
+/* Strict scalar iteration. End or malformed UTF-8 leaves outputs unchanged. */
+bool qa_utf8_next_strict(qa_bytes, size_t *cursor, uint32_t *scalar);
 bool qa_utf8_valid(qa_bytes);
 size_t qa_utf8_encode(uint32_t scalar, char out[4]);
 /* Source strings use one byte per Latin-1 scalar. Capacity includes the

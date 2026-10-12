@@ -66,7 +66,10 @@ bool qa_unified_session_continuation_read(qa_net_reader *, qa_unified_held *, qa
 qa_network_peer_ops qa_unified_session_operations(void);
 struct qa_network_peer;
 bool qa_unified_session_peer(const struct qa_network_peer *);
-bool qa_unified_session_peer_matches(const struct qa_network_peer *, const qa_net_datagram *);
+bool qa_unified_session_peer_matches(const struct qa_network_peer *, const qa_net_datagram *, const qa_unified_packet *);
+/* Borrows the decoded, token-authenticated packet for this delivery only. */
+bool qa_unified_session_receive_packet(qa_unified_session *, qa_network_runtime *, qa_net_client_id,
+    const qa_net_datagram *, const qa_unified_packet *, qa_error *);
 bool qa_unified_session_peer_checkpoint(const struct qa_network_peer *, qa_buffer *, qa_error *);
 bool qa_unified_session_attachment(const qa_network_runtime *, const qa_network_peer_ops *, const void *, const qa_net_connect *);
 bool qa_unified_session_token_conflict(const void *, const struct qa_network_peer *);

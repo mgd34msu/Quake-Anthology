@@ -2,6 +2,7 @@
 #include "source_report.h"
 #include "source_storage.h"
 #include "qa/network_q3.h"
+#include "qa/text.h"
 #include <stdio.h>
 
 static bool same_name(const char *left,const char *right)
@@ -22,14 +23,9 @@ static bool integer(qa_bots *bots,bot_ai_state *state,uint32_t offset,int32_t *o
 
 static void cube_count(int32_t value,char out[32])
 {
-    uint32_t bits=value<0?0u-(uint32_t)value:(uint32_t)value;
-    int32_t remaining;memcpy(&remaining,&bits,sizeof(remaining));
-    char reversed[16];size_t count=0,at=0;
-    do {reversed[count++]=(char)(48+remaining%10);remaining/=10;} while(remaining);
-    if(value<0) reversed[count++]='-';
+    char word[12];size_t count=qa_format_q3_integer(value,word),at=0;
     if(count<2) out[at++]=' ';
-    while(count) out[at++]=reversed[--count];
-    out[at]=0;
+    memcpy(out+at,word,count+1);
 }
 
 static bool carrying(qa_bots *bots,bot_ai_state *state,int32_t client,char out[32],qa_error *error)

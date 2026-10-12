@@ -50,29 +50,6 @@ static void whitespace(json_parser *parser) {
     }
 }
 
-/* Advance one valid Unicode scalar. This also rejects overlong encodings,
- * surrogate code points, and values outside Unicode. */
-static bool utf8(qa_bytes source, size_t *cursor) {
-    if (*cursor >= source.size) return false;
-    uint8_t first = source.data[*cursor];
-    size_t count;
-    uint32_t value, minimum;
-    if (first < 0x80) { ++*cursor; return true; }
-    if (first >= 0xc2 && first <= 0xdf) { count=2; value=first&0x1fu; minimum=0x80; }
-    else if (first >= 0xe0 && first <= 0xef) { count=3; value=first&0x0fu; minimum=0x800; }
-    else if (first >= 0xf0 && first <= 0xf4) { count=4; value=first&0x07u; minimum=0x10000; }
-    else return false;
-    if (count > source.size - *cursor) return false;
-    for (size_t i=1; i<count; ++i) {
-        uint8_t c = source.data[*cursor+i];
-        if ((c & 0xc0u) != 0x80u) return false;
-        value = (value<<6) | (c&0x3fu);
-    }
-    if (value < minimum || value > 0x10ffff || (value>=0xd800 && value<=0xdfff)) return false;
-    *cursor += count;
-    return true;
-}
-
 static bool hex4(qa_bytes source, size_t *cursor, uint32_t *out) {
     if (source.size - *cursor < 4) return false;
     uint32_t value = 0;
@@ -117,19 +94,6 @@ static bool escape(qa_bytes source, size_t *cursor, uint32_t *out) {
     return true;
 }
 
-static size_t encode_utf8(uint32_t value, uint8_t output[4]) {
-    if (value<0x80) { output[0]=(uint8_t)value; return 1; }
-    if (value<0x800) {
-        output[0]=(uint8_t)(0xc0u|(value>>6)); output[1]=(uint8_t)(0x80u|(value&0x3fu)); return 2;
-    }
-    if (value<0x10000) {
-        output[0]=(uint8_t)(0xe0u|(value>>12)); output[1]=(uint8_t)(0x80u|((value>>6)&0x3fu));
-        output[2]=(uint8_t)(0x80u|(value&0x3fu)); return 3;
-    }
-    output[0]=(uint8_t)(0xf0u|(value>>18)); output[1]=(uint8_t)(0x80u|((value>>12)&0x3fu));
-    output[2]=(uint8_t)(0x80u|((value>>6)&0x3fu)); output[3]=(uint8_t)(0x80u|(value&0x3fu)); return 4;
-}
-
 typedef struct string_reader {
     qa_bytes source;
     size_t cursor;
@@ -151,7 +115,7 @@ static bool string_byte(string_reader *reader, uint8_t *out) {
     if (c!='\\') { *out=c; return true; }
     uint32_t code;
     if (!escape(reader->source,&reader->cursor,&code)) return false;
-    reader->count=encode_utf8(code,reader->pending);
+    reader->count=qa_utf8_encode(code,(char *)reader->pending);
     reader->next=1; *out=reader->pending[0]; return true;
 }
 
@@ -235,7 +199,11 @@ static bool string_end(json_parser *parser) {
             uint32_t value;
             ++parser->cursor;
             if (!escape(source,&parser->cursor,&value)) return fail(parser,"invalid JSON string escape");
-        } else if (!utf8(source,&parser->cursor)) return fail(parser,"invalid UTF-8 in JSON string");
+        } else {
+            uint32_t scalar;
+            if (!qa_utf8_next_strict(source,&parser->cursor,&scalar))
+                return fail(parser,"invalid UTF-8 in JSON string");
+        }
     }
     return fail(parser,"unterminated JSON string");
 }
@@ -421,7 +389,7 @@ bool qa_json_string_equal(const qa_json_document *document, qa_json_id id, const
             ++cursor;
             uint32_t code;
             if (!escape(source,&cursor,&code)) return false;
-            uint8_t bytes[4]; size_t count=encode_utf8(code,bytes);
+            char bytes[4]; size_t count=qa_utf8_encode(code,bytes);
             if (count>length-position || memcmp(text+position,bytes,count)) return false;
             position+=count;
         } else {
@@ -511,7 +479,7 @@ bool qa_json_string_into(const qa_json_document *document, qa_json_id id,
             ++cursor;
             uint32_t code;
             if (!escape(source,&cursor,&code)) return false;
-            uint8_t bytes[4]; size_t length=encode_utf8(code,bytes);
+            char bytes[4]; size_t length=qa_utf8_encode(code,bytes);
             memcpy(output+count,bytes,length); count+=length;
         } else output[count++]=source.data[cursor++];
     }
@@ -534,7 +502,8 @@ bool qa_json_quote(qa_bytes source, qa_buffer *out, qa_error *error) {
     while (cursor<source.size) {
         size_t start=cursor;
         uint8_t c=source.data[cursor];
-        if (!utf8(source,&cursor)) { qa_error_set(error,QA_ERROR_FORMAT,start,"invalid UTF-8 for JSON string"); return false; }
+        uint32_t scalar;
+        if (!qa_utf8_next_strict(source,&cursor,&scalar)) { qa_error_set(error,QA_ERROR_FORMAT,start,"invalid UTF-8 for JSON string"); return false; }
         size_t bytes=c<0x20 ? 6u : c=='"' || c=='\\' ? 2u : cursor-start;
         if (length>SIZE_MAX-1-bytes) { qa_error_set(error,QA_ERROR_MEMORY,start,"JSON quoted string size overflow"); return false; }
         length+=bytes;

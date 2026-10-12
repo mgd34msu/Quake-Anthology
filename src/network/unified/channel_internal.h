@@ -73,9 +73,14 @@ bool qa_unified_payload_read(qa_net_reader *, const channel_payload *);
 uint8_t qa_unified_payload_byte(const channel_payload *, size_t offset);
 bool qa_unified_channel_valid(const qa_unified_channel *, qa_error *);
 typedef bool (*qa_unified_admit_delivery_fn)(void *, const qa_unified_delivery *);
-/* Declining a delivery retains its complete assembly without advancing the
- * cumulative receive receipt. ACK and outgoing transport still progress. */
-bool qa_unified_channel_receive_buffered(qa_unified_channel *, qa_bytes, uint64_t,
+/* These operations borrow a decoded packet. Matching authenticates its token;
+ * admission applies the configured datagram, message and fragment limits. */
+bool qa_unified_channel_packet_matches(const qa_unified_channel *, const qa_unified_packet *);
+bool qa_unified_channel_packet_allowed(const qa_unified_channel *, const qa_unified_packet *);
+/* The packet is decoded, authenticated and admitted by the caller. Declining
+ * delivery retains its assembly without advancing the cumulative receipt.
+ * ACK and outgoing transport still progress. */
+bool qa_unified_channel_receive_packet(qa_unified_channel *, const qa_unified_packet *, uint64_t,
     qa_unified_admit_delivery_fn, qa_unified_deliver_fn, void *, qa_error *);
 bool qa_unified_channel_resume(qa_unified_channel *, qa_unified_admit_delivery_fn,
     qa_unified_deliver_fn, void *, qa_error *);

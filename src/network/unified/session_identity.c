@@ -138,18 +138,15 @@ bool qa_unified_session_peer_tokens_equal(const qa_network_peer *a, const qa_net
     return qa_unified_session_peer(a) && qa_unified_session_peer(b) && qa_unified_session_token_conflict(b->state, a);
 }
 
-bool qa_unified_session_peer_matches(const qa_network_peer *peer, const qa_net_datagram *packet)
+bool qa_unified_session_peer_matches(const qa_network_peer *peer, const qa_net_datagram *packet,
+    const qa_unified_packet *wire)
 {
     if (!packet || !qa_unified_session_peer(peer)) return false;
     const qa_unified_session *s = peer->state;
     const qa_net_client *client = qa_net_connections_get(qa_network_connections(s->runtime), s->id);
-    qa_unified_packet wire;
     if (!client || client->protocol.kind != QA_NET_UNIFIED_1 || client->protocol.flags || client->protocol.revision ||
-        !qa_net_address_equal(&client->endpoint, &packet->from, true) ||
-        !qa_unified_packet_decode(packet->payload, &wire, NULL)) return false;
-    unsigned mismatch = 0;
-    for (size_t i = 0; i < 16; ++i) mismatch |= (unsigned)(wire.token.bytes[i] ^ s->token.bytes[i]);
-    return mismatch == 0;
+        !qa_net_address_equal(&client->endpoint, &packet->from, true)) return false;
+    return qa_unified_channel_packet_matches(s->channel, wire);
 }
 
 bool qa_unified_session_peer_checkpoint(const qa_network_peer *peer, qa_buffer *out, qa_error *e)

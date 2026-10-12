@@ -1,6 +1,7 @@
 /* Q3 ai_main.c bot session scan and bg_lib.c formatting semantics. */
 #include "internal.h"
 #include "source_storage.h"
+#include "qa/text.h"
 #include <stdio.h>
 
 bool bot_ai_source_client(qa_bots *b,bot_ai_state *s,int32_t *client,qa_error *e) {
@@ -110,12 +111,8 @@ bool bot_ai_session_read(qa_bots *b,bot_ai_state *s,qa_error *e) {
     return true;
 }
 static void format_integer(char *text,size_t *used,int32_t value) {
-    int32_t remaining=value;
-    if(value<0) {uint32_t bits=0-(uint32_t)value;memcpy(&remaining,&bits,sizeof(bits));}
-    char reversed[16];size_t count=0;
-    do {reversed[count++]=(char)(unsigned char)('0'+remaining%10);remaining/=10;} while(remaining);
-    if(value<0) reversed[count++]='-';
-    while(count) text[(*used)++]=reversed[--count];
+    char word[12];size_t count=qa_format_q3_integer(value,word);
+    memcpy(text+*used,word,count);*used+=count;
 }
 static bool format_float(char *text,size_t *used,float value,qa_error *e) {
     if(!isfinite(value) || fabs((double)value)>INT32_MAX)

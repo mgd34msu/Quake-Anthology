@@ -66,6 +66,17 @@ bool qa_utf8_next(qa_bytes input, size_t *cursor, uint32_t *scalar) {
     *scalar = code < 0 ? UINT32_C(0xfffd) : (uint32_t)code;
     return true;
 }
+bool qa_utf8_next_strict(qa_bytes input, size_t *cursor, uint32_t *scalar) {
+    if (*cursor >= input.size)
+        return false;
+    size_t next = *cursor;
+    UChar32 code = next_code(input, &next);
+    if (code < 0)
+        return false;
+    *cursor = next;
+    *scalar = (uint32_t)code;
+    return true;
+}
 size_t qa_utf8_encode(uint32_t code, char out[4]) {
     if (code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff))
         code = 0xfffd;
@@ -142,13 +153,12 @@ bool qa_utf8_repair(qa_bytes input, qa_buffer *out, qa_error *error) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid UTF-8 resource input");
         return false;
     }
-    int32_t length = (int32_t)input.size, at = 0;
+    size_t at = 0;
     size_t needed = 0;
-    while (at < length) {
-        int32_t begin = at;
-        UChar32 code;
-        U8_NEXT(input.data, at, length, code);
-        size_t count = code < 0 ? 3 : (size_t)(at - begin);
+    while (at < input.size) {
+        size_t begin = at;
+        UChar32 code = next_code(input, &at);
+        size_t count = code < 0 ? 3 : at - begin;
         if (count >= SIZE_MAX - needed) {
             qa_error_set(error, QA_ERROR_MEMORY, 0, "UTF-8 resource size overflow");
             return false;
@@ -162,11 +172,10 @@ bool qa_utf8_repair(qa_bytes input, qa_buffer *out, qa_error *error) {
     }
     at = 0;
     size_t written = 0;
-    while (at < length) {
-        int32_t begin = at;
-        UChar32 code;
-        U8_NEXT(input.data, at, length, code);
-        size_t count = code < 0 ? 3 : (size_t)(at - begin);
+    while (at < input.size) {
+        size_t begin = at;
+        UChar32 code = next_code(input, &at);
+        size_t count = code < 0 ? 3 : at - begin;
         if (code < 0)
             memcpy(data + written, "\xef\xbf\xbd", 3);
         else

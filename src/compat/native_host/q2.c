@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/text.h"
 
 #include <errno.h>
 #include <math.h>
@@ -389,29 +390,6 @@ static bool cvar_import(qa_native_host *host, const qa_native_import_call *call,
     return ok;
 }
 
-static bool info_find(const char *info, const char *key, const char **begin, size_t *length)
-{
-    const char *cursor = info;
-    if (*cursor == '\\')
-        ++cursor;
-    while (*cursor) {
-        const char *separator = strchr(cursor, '\\');
-        if (!separator)
-            break;
-        const char *end = strchr(separator + 1, '\\');
-        if (!end)
-            end = separator + 1 + strlen(separator + 1);
-        if ((size_t)(separator - cursor) == strlen(key) &&
-            !memcmp(cursor, key, (size_t)(separator - cursor))) {
-            *begin = separator + 1;
-            *length = (size_t)(end - separator - 1);
-            return true;
-        }
-        cursor = *end ? end + 1 : end;
-    }
-    return false;
-}
-
 static bool info_value(qa_native_host *host, const qa_native_import_call *call,
                        qa_native_value *result, qa_error *error)
 {
@@ -419,9 +397,10 @@ static bool info_value(qa_native_host *host, const qa_native_import_call *call,
     if (!call_text(host, call, 0, &info, error) || !call_text(host, call, 1, &key, error)) {
         return false;
     }
-    const char *begin = "";
-    size_t length = 0;
-    info_find((const char *)info.data, (const char *)key.data, &begin, &length);
+    qa_bytes value;
+    qa_info_find((const char *)info.data, key, 0, &value);
+    const char *begin = (const char *)value.data;
+    size_t length = value.size;
     uint64_t capacity = call->arguments[3].as.u64;
     bool ok = true;
     if (capacity) {

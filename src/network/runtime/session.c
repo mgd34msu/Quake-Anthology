@@ -175,19 +175,36 @@ bool qa_network_receive(qa_network_runtime *runtime, const qa_net_datagram *pack
     bool ok = true;
     if (packet->kind == QA_NET_POLL_PACKET) {
         qa_network_peer *target = NULL;
+        qa_unified_packet unified;
+        const qa_unified_packet *target_packet = NULL;
+        bool unified_decoded = false, unified_valid = false;
         bool connectionless = packet->payload.size >= 4 && qa_load_u32le(packet->payload.data) == UINT32_MAX;
         for (uint32_t i = 0; !connectionless && i < runtime->options.clients; ++i) {
             qa_network_peer *peer = &runtime->peers[i];
             const qa_net_client *client = peer->occupied ? qa_net_connections_get(runtime->connections, peer->id) : NULL;
-            if (client && (client->protocol.kind==QA_NET_UNIFIED_1 ? qa_unified_session_peer_matches(peer,packet) :
-                qa_network_qw_peer(peer) ? qa_network_qw_peer_matches(peer, packet) :
-                qa_network_q2_peer(peer) ? qa_network_q2_peer_matches(peer,packet) :
-                qa_net_address_equal(&client->endpoint, &packet->from, true))) { target = peer; break; }
+            if (!client) continue;
+            bool matches;
+            if (client->protocol.kind == QA_NET_UNIFIED_1) {
+                if (!unified_decoded) {
+                    unified_valid = qa_unified_packet_decode(packet->payload, &unified, NULL);
+                    unified_decoded = true;
+                }
+                matches = unified_valid && qa_unified_session_peer_matches(peer, packet, &unified);
+                if (matches) target_packet = &unified;
+            } else {
+                matches = qa_network_qw_peer(peer) ? qa_network_qw_peer_matches(peer, packet) :
+                    qa_network_q2_peer(peer) ? qa_network_q2_peer_matches(peer,packet) :
+                    qa_net_address_equal(&client->endpoint, &packet->from, true);
+            }
+            if (matches) { target = peer; break; }
         }
         runtime->callback = true;
         if (target) {
             qa_error issue={0};
-            if (!target->ops.receive(target->state, runtime, target->id, packet, &issue)) {
+            bool received = target_packet ? qa_unified_session_receive_packet(target->state,
+                runtime, target->id, packet, target_packet, &issue) :
+                target->ops.receive(target->state, runtime, target->id, packet, &issue);
+            if (!received) {
                 runtime->callback = false;
                 if(issue.code==QA_ERROR_CAPACITY && qa_network_q2_peer(target)) {
                     retire(runtime,target,"reliable queue overflow");
