@@ -139,7 +139,7 @@ static bool heat_sight(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_actor_i
     *out = trace.fraction == 1;
     return true;
 }
-static bool heat_rocket_run(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *snapshot,
+static bool heat_rocket_run(qa_q2_game *g, q2_actor *a, qa_world_actor_snapshot *snapshot,
                             qa_error *e) {
     q2_projectile *p = &a->projectile;
     if (g->now_ns < p->next_ns)
@@ -156,7 +156,7 @@ static bool heat_rocket_run(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapsho
     if (!qa_builtin_nearby(&g->services, body.origin, 1024, snapshot, e))
         return false;
     for (size_t i = 0; i < snapshot->count; ++i) {
-        qa_actor_id target = snapshot->ids[i];
+        qa_actor_id target = snapshot->actors[i];
         if (!q2_actor_live(g, target))
             continue;
         bool player;
@@ -242,10 +242,10 @@ static bool heat_rocket_run(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapsho
 bool q2_heat_rocket_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (g->now_ns < a->projectile.next_ns)
         return true;
-    qa_builtin_snapshot_frame *scratch = q2_scratch_acquire(g, e);
-    if (scratch == NULL)
+    qa_world_actor_snapshot scratch = {0};
+    if (!q2_scratch_acquire(g, &scratch, e))
         return false;
-    bool ok = heat_rocket_run(g, a, &scratch->snapshot, e);
-    qa_builtin_snapshot_release(scratch);
+    bool ok = heat_rocket_run(g, a, &scratch, e);
+    q2_scratch_release(g, &scratch);
     return ok;
 }

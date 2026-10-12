@@ -659,9 +659,8 @@ static bool checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved,
     if (!source_objects_current(m, e)) return false;
     for (uint32_t i = 0; i < m->mode_capacity; ++i)
         if (m->instances[i].active && !mode_relic_source_current(m, &m->instances[i], e)) return false;
-    if (!qa_builtin_players(&m->options.services, &m->players_order, e) ||
-        !qa_builtin_observations(&m->options.services, &m->observations, e))
-        return false;
+    if (!qa_builtin_players(&m->options.services, &m->players_order, e)) return false;
+    if (!qa_builtin_observations(&m->options.services, &m->observations, e)) return false;
     for (size_t i = 0; i < saved->mode_count; ++i)
         if (saved->modes[i].value.origin != QA_MODE_NATIVE_Q1_COMPOSITION &&
             !qa_modes_rank(m, saved->modes[i].id, e))
@@ -705,8 +704,8 @@ bool qa_modes_reconnect(qa_modes *m, qa_error *e) {
         mode_player *player = &m->players[i];
         if (player->active && !mode_items_reconnect(m, player->actor, e)) return false;
     }
-    if (!qa_builtin_players(&m->options.services, &m->players_order, e) ||
-        !qa_builtin_observations(&m->options.services, &m->observations, e)) return false;
+    if (!qa_builtin_players(&m->options.services, &m->players_order, e)) return false;
+    if (!qa_builtin_observations(&m->options.services, &m->observations, e)) return false;
     for (uint32_t i = 0; i < m->mode_capacity; ++i)
         if (m->instances[i].active &&
             m->instances[i].value.origin != QA_MODE_NATIVE_Q1_COMPOSITION) {

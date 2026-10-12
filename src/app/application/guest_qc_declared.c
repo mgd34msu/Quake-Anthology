@@ -354,19 +354,22 @@ bool application_qc_seed_fields(struct application_qc_state *engine, qa_actor_id
 bool application_qc_prepare_markers(struct application_qc_state *engine, qa_error *error)
 {
     if (!engine->provider->state.qc.qualified) return true;
-    if (!qa_builtin_observations(&engine->services, &engine->observations, error)) return false;
-    for (size_t i = 0; i < engine->observations.count; ++i) {
-        qa_actor_id actor = engine->observations.ids[i];
+    qa_world_actor_snapshot observations = {0};
+    bool ok = qa_builtin_observations(&engine->services, &observations, error);
+    for (size_t i = 0; ok && i < observations.count; ++i) {
+        qa_actor_id actor = observations.actors[i];
         if (!qa_actors_get(qa_session_actors(engine->services.session), actor)) continue;
         qa_builtin_player_info player;
         if (engine->services.player_info && engine->services.player_info(engine->services.context, actor, &player) && player.connected) continue;
         int32_t reference;
         qa_error absent = {0};
         if (qa_qc_actor_reference(engine->provider->state.qc.instance, actor, false, &reference, &absent)) continue;
-        if (absent.code != QA_ERROR_NOT_FOUND) { if (error) *error = absent; return false; }
-        if (!application_qc_reference(engine, actor, &reference, error) || !application_qc_seed_fields(engine, actor, error)) return false;
+        if (absent.code != QA_ERROR_NOT_FOUND) { if (error) *error = absent; ok = false; break; }
+        ok = application_qc_reference(engine, actor, &reference, error) &&
+            application_qc_seed_fields(engine, actor, error);
     }
-    return true;
+    qa_world_snapshot_release(&observations);
+    return ok;
 }
 static bool actor_current(struct application_qc_state *engine, qa_qc_instance *vm,
                             int32_t reference, qa_actor_id expected, qa_error *error)

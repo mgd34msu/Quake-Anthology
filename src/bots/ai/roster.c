@@ -22,6 +22,19 @@ bool bot_ai_mutable(qa_bots *b, qa_error *e) {
     return b && !b->busy && !b->source_match_exit_depth && !b->restore_pending && !b->shutting_down && !qa_bot_runtime_closed(b->runtime) ? true :
         bot_ai_fail(e, "bot population is absent, closed, restoring or executing a callback");
 }
+bool bot_ai_observations_prepare(qa_bots *b,qa_error *e) {
+    size_t capacity=qa_actors_capacity(qa_session_actors(b->services.shared.session));
+    if(capacity>SIZE_MAX/(2*sizeof(qa_actor_id)))
+        return bot_ai_fail(e,"bot observation storage exceeds its native extent");
+    qa_actor_id *actors=capacity?qa_arena_alloc(&b->observation_storage,
+        2*capacity*sizeof(*actors),_Alignof(qa_actor_id),e):NULL;
+    if(capacity && !actors) return false;
+    b->entities=(qa_world_actor_snapshot){.actors=actors,.world=b->services.shared.world,.borrowed=true};
+    b->players=(qa_world_actor_snapshot){.actors=actors?actors+capacity:NULL,
+        .world=b->services.shared.world,.borrowed=true};
+    qa_arena_seal(&b->observation_storage);
+    return true;
+}
 bool bot_ai_context_create(qa_bot_runtime *runtime, const qa_bot_services *services,
                     uint32_t client_capacity, qa_bots **out, qa_error *e) {
     if (!runtime || !services || !out || !services->shared.session ||
@@ -46,6 +59,10 @@ bool bot_ai_context_create(qa_bot_runtime *runtime, const qa_bot_services *servi
     }
     if (!qa_actor_index_create(&b->actor_clients,qa_session_actors(services->shared.session),NULL,e)) {
         free(b->clients);free(b);return false;
+    }
+    if(!bot_ai_observations_prepare(b,e)) {
+        qa_arena_destroy(&b->observation_storage);
+        qa_actor_index_destroy(&b->actor_clients);free(b->clients);free(b);return false;
     }
     b->controls = (qa_bot_controls){.think_time_ms = 100, .rocket_jump = true};
     b->scheduled_think_ms = 100;
@@ -154,8 +171,7 @@ bool qa_bots_destroy(qa_bots *b, qa_error *e) {
         bot_ai_source_cell_clear(b,s);
         free(s);b->source_cells[i]=NULL;
     }
-    qa_builtin_snapshot_free(&b->entities);
-    qa_builtin_snapshot_free(&b->players);
+    qa_arena_destroy(&b->observation_storage);
     qa_bot_runtime_lease_end(b->runtime);
     free(b->clients); qa_actor_index_destroy(&b->actor_clients); free(b);
     return true;

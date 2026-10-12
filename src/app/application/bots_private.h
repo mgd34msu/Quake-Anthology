@@ -5,6 +5,7 @@
 #include "qa/bots.h"
 #include "qa/bots_save.h"
 #include "qa/bots_catalog.h"
+#include "qa/arena.h"
 #include <math.h>
 
 static inline bool application_bot_integer(double value,int32_t *out,qa_error *error) {
@@ -91,7 +92,8 @@ typedef struct application_bots {
     struct application_bot_knowledge_owner *knowledge_owner;
     size_t knowledge_count,arsenal_leases;
     size_t calls;
-    qa_builtin_actor_snapshot pickup_snapshot;
+    qa_arena observation_storage;
+    qa_world_actor_snapshot pickup_snapshot;
     bool pickup_borrowed,mover_borrowed;
     qa_nav_train_stop *train_stops;
     size_t train_capacity;
@@ -130,6 +132,7 @@ static inline void application_bot_target_index_bind(application_bots *bots, app
     qa_actor_index_put(&bots->actor_targets, target->actor, (size_t)(uintptr_t)target);
 }
 bool application_bots_seats_prepare(application_bots *, qa_error *);
+bool application_bots_observations_prepare(application_bots *, qa_error *);
 void application_bot_seat_index_bind(application_bots *, application_bot_seat *);
 void application_bot_seat_index_remove(application_bots *, application_bot_seat *);
 

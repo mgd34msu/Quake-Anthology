@@ -13,8 +13,8 @@ static bool blind(qa_q2_game *g, qa_actor_id id, uint64_t duration, bool inside,
            (!q2_actor_live(g, id) || g->hooks.nuke_blind == NULL ||
             g->hooks.nuke_blind(g->hooks.context, id, until, inside, e));
 }
-static bool nuke_blast(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *snapshot,
-                       qa_builtin_actor_snapshot *players, qa_error *e) {
+static bool nuke_blast(qa_q2_game *g, q2_actor *a, qa_world_actor_snapshot *snapshot,
+                       qa_world_actor_snapshot *players, qa_actor_id *blinded, qa_error *e) {
     qa_actor_id id = a->id;
     q2_projectile p = a->projectile;
     qa_body_state body;
@@ -30,10 +30,9 @@ static bool nuke_blast(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
         return false;
     if (!qa_builtin_nearby(&g->services, body.origin, p.radius * 2, snapshot, e))
         return false;
-    qa_actor_id *blinded = snapshot->sort;
     size_t count = 0;
     for (size_t i = 0; i < snapshot->count; ++i) {
-        qa_actor_id target = snapshot->ids[i];
+        qa_actor_id target = snapshot->actors[i];
         if (!q2_actor_live(g, id))
             return true;
         if (qa_actor_id_equal(target, id) || !q2_target_damageable(g, target))
@@ -75,7 +74,7 @@ static bool nuke_blast(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
     if (!qa_builtin_players(&g->services, players, e))
         return false;
     for (size_t i = 0; i < players->count; ++i) {
-        qa_actor_id target = players->ids[i];
+        qa_actor_id target = players->actors[i];
         if (!q2_actor_live(g, id))
             return true;
         if (!q2_actor_live(g, target))
@@ -135,20 +134,27 @@ static bool nuke_blast(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
 static bool nuke_explode(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (a->projectile.phase != 0)
         return true;
-    qa_builtin_snapshot_frame *scratch = q2_scratch_acquire(g, e);
-    if (scratch == NULL)
+    qa_world_actor_snapshot scratch = {0};
+    if (!q2_scratch_acquire(g, &scratch, e))
         return false;
-    qa_builtin_snapshot_frame *players = q2_scratch_acquire(g, e);
-    if (players == NULL) {
-        qa_builtin_snapshot_release(scratch);
+    qa_world_actor_snapshot players = {0};
+    if (!q2_scratch_acquire(g, &players, e)) {
+        q2_scratch_release(g, &scratch);
         return false;
     }
-    bool result = nuke_blast(g, a, &scratch->snapshot, &players->snapshot, e);
-    qa_builtin_snapshot_release(players);
-    qa_builtin_snapshot_release(scratch);
+    qa_world_actor_snapshot blinded = {0};
+    if (!q2_scratch_acquire(g, &blinded, e)) {
+        q2_scratch_release(g, &players);
+        q2_scratch_release(g, &scratch);
+        return false;
+    }
+    bool result = nuke_blast(g, a, &scratch, &players, blinded.actors, e);
+    q2_scratch_release(g, &blinded);
+    q2_scratch_release(g, &players);
+    q2_scratch_release(g, &scratch);
     return result;
 }
-static bool nuke_quake_run(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *players,
+static bool nuke_quake_run(qa_q2_game *g, q2_actor *a, qa_world_actor_snapshot *players,
                            qa_error *e) {
     if (a->projectile.effect_ns < g->now_ns) {
         if (!nuke_sound(g, a, QA_Q2_SFX_WORLD_RUMBLE, 0, 0.75f, 0, e))
@@ -160,7 +166,7 @@ static bool nuke_quake_run(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot
     if (!qa_builtin_players(&g->services, players, e))
         return false;
     for (size_t i = 0; i < players->count; ++i) {
-        qa_actor_id target = players->ids[i];
+        qa_actor_id target = players->actors[i];
         if (!q2_actor_live(g, target))
             continue;
         qa_body_state body;
@@ -188,11 +194,11 @@ static bool nuke_quake_run(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot
     return true;
 }
 static bool nuke_quake(qa_q2_game *g, q2_actor *a, qa_error *e) {
-    qa_builtin_snapshot_frame *scratch = q2_scratch_acquire(g, e);
-    if (scratch == NULL)
+    qa_world_actor_snapshot scratch = {0};
+    if (!q2_scratch_acquire(g, &scratch, e))
         return false;
-    bool ok = nuke_quake_run(g, a, &scratch->snapshot, e);
-    qa_builtin_snapshot_release(scratch);
+    bool ok = nuke_quake_run(g, a, &scratch, e);
+    q2_scratch_release(g, &scratch);
     return ok;
 }
 bool q2_nuke_think(qa_q2_game *g, q2_actor *a, qa_error *e) {

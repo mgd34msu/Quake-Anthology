@@ -1519,15 +1519,15 @@ static bool carrier_coop_check(q2m_context *context, qa_error *error) {
   if (!context->game->options.cooperative ||
       context->game->now_ns < monster->coop_check_ns)
     return true;
-  qa_builtin_snapshot_frame *players = q2_player_roster(context->game, error);
-  if (players == NULL)
+  qa_world_actor_snapshot players = {0};
+  if (!q2_player_roster(context->game, &players, error))
     return false;
   bool result = true;
   size_t eligible = 0;
   qa_vec3 forward;
   qa_angle_vectors(context->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
-  for (size_t index = 0; index < players->snapshot.count; ++index) {
-    qa_actor_id target = players->snapshot.ids[index];
+  for (size_t index = 0; index < players.count; ++index) {
+    qa_actor_id target = players.actors[index];
     qa_body_state body;
     qa_error ignored = {0};
     qa_builtin_actor_traits traits = {0};
@@ -1559,7 +1559,7 @@ static bool carrier_coop_check(q2m_context *context, qa_error *error) {
       break;
     }
     if (trace.fraction == 1.0f)
-      players->snapshot.ids[eligible++] = target;
+      players.actors[eligible++] = target;
   }
   if (result && eligible != 0) {
     uint32_t selected =
@@ -1567,14 +1567,14 @@ static bool carrier_coop_check(q2m_context *context, qa_error *error) {
     if (selected >= eligible)
       selected = (uint32_t)eligible - 1u;
     qa_actor_id previous = monster->enemy;
-    monster->enemy = players->snapshot.ids[selected];
+    monster->enemy = players.actors[selected];
     monster->coop_check_ns = q2m_after(context->game->now_ns, 2.0);
     if (!carrier_rocket(context, error))
       result = false;
     if (q2m_alive(context))
       monster->enemy = previous;
   }
-  qa_builtin_snapshot_release(players);
+  q2_scratch_release(context->game, &players);
   return result;
 }
 
@@ -4353,12 +4353,12 @@ static bool fixbot_finish_goal(q2m_context *context, bool clear, qa_error *error
 
 static bool fixbot_scanner(q2m_context *context, qa_error *error) {
   qa_q2_game *game = context->game;
-  qa_builtin_snapshot_frame *nearby = q2_nearby(game, context->body.origin, 1024, error);
-  if (!nearby) return false;
+  qa_world_actor_snapshot nearby = {0};
+  if (!q2_nearby(game, context->body.origin, 1024, &nearby, error)) return false;
   qa_actor_id repair = {0};
   bool result = true;
-  for (size_t i = 0; i < nearby->snapshot.count; ++i) {
-    qa_actor_id id = nearby->snapshot.ids[i];
+  for (size_t i = 0; i < nearby.count; ++i) {
+    qa_actor_id id = nearby.actors[i];
     q2_actor *a = q2_actor_get(game, id, false, NULL);
     qa_combat_state combat;
     if (!a || !a->entity || a->entity->scenery != Q2S_REPAIR ||
@@ -4369,7 +4369,7 @@ static bool fixbot_scanner(q2m_context *context, qa_error *error) {
     if (!q2m_alive(context)) break;
     if (visible) { repair = id; break; }
   }
-  qa_builtin_snapshot_release(nearby);
+  q2_scratch_release(game, &nearby);
   if (!result || !q2m_alive(context)) return result;
   if (repair.registry) {
     q2m_fixbot_goal_retire(context, context->monster->goal);

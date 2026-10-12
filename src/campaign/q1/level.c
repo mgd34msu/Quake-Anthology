@@ -193,15 +193,15 @@ static bool achievements(qa_q1_level *level, qa_string_id next, qa_error *error)
     qa_q1_level_options *options = &level->options;
     if (options->skill == 3 && ((options->current_map == level->runtime_names[Q1_LEVEL_NAME_E1M1]) ||
                                 (options->current_map == level->runtime_names[Q1_LEVEL_NAME_E4M6]))) {
-        qa_builtin_actor_snapshot roster = {0};
+        qa_world_actor_snapshot roster = {0};
         if (!qa_builtin_players(&options->services, &roster, error)) {
-            qa_builtin_snapshot_free(&roster);
+            qa_world_snapshot_release(&roster);
             return false;
         }
         const bool pacifist = (options->current_map == level->runtime_names[Q1_LEVEL_NAME_E1M1]);
         bool ok = true;
         for (size_t i = 0; ok && i < roster.count; ++i) {
-            qa_actor_id actor = roster.ids[i];
+            qa_actor_id actor = roster.actors[i];
             if (!live(level, actor))
                 continue;
             const qa_q1_level_player *entry = &level->players[actor.slot];
@@ -211,7 +211,7 @@ static bool achievements(qa_q1_level *level, qa_string_id next, qa_error *error)
                 ok = options->achievement(options->context, actor,
                                           pacifist ? "ACH_PACIFIST" : "ACH_PAINLESS_MAZE", error);
         }
-        qa_builtin_snapshot_free(&roster);
+        qa_world_snapshot_release(&roster);
         if (!ok)
             return false;
     }

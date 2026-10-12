@@ -28,7 +28,7 @@ bool qa_modes_rank(qa_modes *m, qa_mode_id id, qa_error *e) {
             id, &source_counts, e)))) return false;
     size_t n = 0, playing = 0, voting = 0;
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-        uint32_t i = m->players_order.ids[ordinal].slot;
+        uint32_t i = m->players_order.actors[ordinal].slot;
         mode_member *member = &v->members[i];
         mode_player *p = member->joined ? mode_player_get(m, member->actor) : NULL;
         if (!p)
@@ -151,7 +151,7 @@ bool qa_modes_q3_source_reset_teams(qa_modes *m, qa_mode_id id, qa_error *e) {
 static size_t playing_team(qa_modes *m, mode_instance *v, qa_team_id team) {
     size_t count = 0;
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-        uint32_t i = m->players_order.ids[ordinal].slot;
+        uint32_t i = m->players_order.actors[ordinal].slot;
         mode_member *p = &v->members[i];
         mode_player *player = p->joined ? mode_player_get(m, p->actor) : NULL;
         qa_team_id current;
@@ -179,7 +179,7 @@ bool qa_modes_ready(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool ready, q
             !playing_team(m, v, v->value.rules.teams[1]))
             return true;
         for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-            uint32_t i = m->players_order.ids[ordinal].slot;
+            uint32_t i = m->players_order.actors[ordinal].slot;
             mode_member *a = &v->members[i];
             mode_player *x = a->joined ? mode_player_get(m, a->actor) : NULL;
             if (x && !a->player.spectator && !a->player.ready)
@@ -244,7 +244,7 @@ static bool begin_play(qa_modes *m, mode_instance *v, qa_error *e) {
     if (v->value.rules.auto_lock)
         v->value.rules.match_lock = true;
     for (size_t ordinal = 0; reset && ordinal < m->players_order.count; ++ordinal) {
-        uint32_t i = m->players_order.ids[ordinal].slot;
+        uint32_t i = m->players_order.actors[ordinal].slot;
         mode_member *p = &v->members[i];
         mode_player *player = p->joined ? mode_player_get(m, p->actor) : NULL;
         if (!player)
@@ -352,7 +352,7 @@ static bool intermission(qa_modes *m, mode_instance *v, qa_error *e) {
         }
     }
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-        uint32_t i = m->players_order.ids[ordinal].slot;
+        uint32_t i = m->players_order.actors[ordinal].slot;
         mode_member *p = &v->members[i];
         mode_player *player = p->joined ? mode_player_get(m, p->actor) : NULL;
         if (!player)
@@ -407,7 +407,7 @@ static bool duel_promote(qa_modes *m, mode_instance *v, qa_error *e) {
         return true;
     mode_member *oldest = NULL;
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-        uint32_t i = m->players_order.ids[ordinal].slot;
+        uint32_t i = m->players_order.actors[ordinal].slot;
         mode_member *member = &v->members[i];
         mode_player *p = member->joined ? mode_player_get(m, member->actor) : NULL;
         if (p && p->connected && !p->connecting && member->player.spectator &&
@@ -447,7 +447,7 @@ static bool lmctf_frame(qa_modes *m, mode_instance *v, qa_error *e) {
                 return false;
         if (v->remaining_seconds <= 0) {
             for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-                qa_actor_id actor = m->players_order.ids[ordinal];
+                qa_actor_id actor = m->players_order.actors[ordinal];
                 mode_member *p = mode_member_get(m, v, actor);
                 mode_player *player = mode_player_get(m, actor);
                 if (!p || !player || p->player.spectator)
@@ -479,7 +479,7 @@ static bool lmctf_frame(qa_modes *m, mode_instance *v, qa_error *e) {
     } else if (v->value.phase == QA_MODE_PLAYING) {
         if (v->remaining_seconds > 10 && v->value.rules.frag_limit) {
             for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-                mode_member *p = mode_member_get(m, v, m->players_order.ids[ordinal]);
+                mode_member *p = mode_member_get(m, v, m->players_order.actors[ordinal]);
                 if (p && p->stats.score >= v->value.rules.frag_limit) {
                     v->remaining_seconds = 10;
                     break;
@@ -523,7 +523,7 @@ bool mode_match_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
             m->options.hooks.q3_native_source(m->options.hooks.context, v->id, &native_owner);
         int32_t ready_mask = 0;
         for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-            uint32_t i = m->players_order.ids[ordinal].slot;
+            uint32_t i = m->players_order.actors[ordinal].slot;
             mode_member *member = &v->members[i];
             mode_player *p = member->joined ? mode_player_get(m, member->actor) : NULL;
             if (!p) continue;

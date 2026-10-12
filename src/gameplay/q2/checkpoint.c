@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "player/internal.h"
 
 bool q2_save_reference(qa_q2_game *g, qa_actor_id id, qa_q2_saved_reference *out, qa_error *e) {
     *out = (qa_q2_saved_reference){0};
@@ -30,12 +31,11 @@ bool q2_checkpoint_idle(qa_q2_game *g, qa_error *e) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 checkpoint requires a completed hand action");
         return false;
     }
-    for (qa_builtin_snapshot_frame *frame = g->trace_frames; frame != NULL; frame = frame->next)
-        if (frame->active) {
-            qa_error_set(e, QA_ERROR_ARGUMENT, 0,
-                         "Q2 checkpoint requires a gameplay callback boundary");
-            return false;
-        }
+    if (g->player_runtime && g->player_runtime->active_queries) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0,
+                     "Q2 checkpoint requires a gameplay callback boundary");
+        return false;
+    }
     return true;
 }
 bool qa_q2_runtime_capture(qa_q2_game *g, qa_q2_runtime_checkpoint *out, qa_error *e) {

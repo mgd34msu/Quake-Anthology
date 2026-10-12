@@ -121,7 +121,7 @@ typedef struct qa_bot_services {
     /* Read an existing alias only; -1 means no current mapping. */
     int32_t (*entity_number)(void *, qa_actor_id);
     bool (*entity_extent)(void *, uint32_t *, qa_error *);
-    bool (*entity_list)(void *, qa_builtin_actor_snapshot *, qa_error *);
+    bool (*entity_list)(void *, qa_world_actor_snapshot *, qa_error *);
     bool (*arsenal)(void *, qa_actor_id, const qa_bot_weapon_knowledge **, size_t *,
                      void **lease, qa_error *);
     void (*arsenal_end)(void *, void *lease);

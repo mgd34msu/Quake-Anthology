@@ -4,6 +4,7 @@
 #include "qa/modes.h"
 #include "qa/modes_save.h"
 #include "qa/modes_q3_session.h"
+#include "qa/arena.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -297,8 +298,8 @@ struct qa_modes {
     qa_mode_objective_checkpoint *restored_objectives;
     size_t restored_objective_count;
     bool source_restored;
-    qa_builtin_actor_snapshot players_order, observations;
-    qa_builtin_snapshot_frame *snapshot_frames;
+    qa_arena snapshot_storage;
+    qa_world_actor_snapshot players_order, observations;
 };
 
 bool mode_fail(qa_error *, const char *);

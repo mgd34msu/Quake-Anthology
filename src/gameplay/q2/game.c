@@ -300,7 +300,6 @@ bool qa_q2_actor_tick(qa_q2_game *g, qa_actor_id id, uint64_t now, uint64_t elap
 }
 static void close_game(void *context) {
     qa_q2_game *g = context;
-    qa_builtin_snapshot_pool_free(&g->trace_frames);
     qa_arena_destroy(&g->push_storage);
     while (g->all_actors != NULL) {
         q2_actor *next = g->all_actors->all_next;

@@ -28,10 +28,9 @@ bool q3_radius(qa_q3_game *game, qa_actor_id inflictor, qa_actor_id attacker, qa
                bool *accuracy, qa_error *error) {
     radius = fmaxf(radius, 1);
     qa_vec3 extent = qa_v3(radius, radius, radius);
-    qa_builtin_snapshot_frame *frame = q3_bounds_snapshot(
-        game, (qa_bounds){qa_vec_sub(origin, extent), qa_vec_add(origin, extent)},
-        QA_COLLISION_BOTH, error);
-    if (!frame)
+    qa_world_actor_snapshot snapshot;
+    if (!q3_bounds_snapshot(game, (qa_bounds){qa_vec_sub(origin, extent), qa_vec_add(origin, extent)},
+        QA_COLLISION_BOTH, &snapshot, error))
         return false;
     radius_context context = {game, attacker, false};
     qa_builtin_radius attack = {
@@ -47,8 +46,8 @@ bool q3_radius(qa_q3_game *game, qa_actor_id inflictor, qa_actor_id attacker, qa
         .check_visibility = true,
         .trace = qa_collision_default_policy(QA_GAME_Q3),
         .has_candidates = true,
-        .candidates = frame->snapshot.ids,
-        .candidate_count = frame->snapshot.count,
+        .candidates = snapshot.actors,
+        .candidate_count = snapshot.count,
         .context = &context,
         .prepare = radius_prepare,
         .attack = {.time_ns = (uint64_t)(uint32_t)game->now_ms * UINT64_C(1000000),
@@ -67,12 +66,12 @@ bool q3_radius(qa_q3_game *game, qa_actor_id inflictor, qa_actor_id attacker, qa
         !game->options.hooks.attack_providers(game->options.hooks.context, attacker,
             attack.attack.weapon, &attack.attack.inventory_provider,
             &attack.attack.movement_provider, error)) {
-        qa_builtin_snapshot_release(frame);
+        q3_bounds_snapshot_release(game, &snapshot);
         return false;
     }
     attack.trace.contents_mask = qa_collision_contents_mask(1, QA_GAME_Q3);
     bool ok = qa_builtin_radius_damage(&game->options.services, &attack, NULL, error);
-    qa_builtin_snapshot_release(frame);
+    q3_bounds_snapshot_release(game, &snapshot);
     if (accuracy)
         *accuracy = context.accuracy;
     return ok;

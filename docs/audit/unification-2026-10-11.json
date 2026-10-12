@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "c2ce87ad8ee6bd66f88c339f904152c5ec9bf5fb",
+  "verified_main": "56e76dfc9e598b579f3ecd4418c5df1db1ef3b25",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -42863,6 +42863,32 @@
       ],
       "record_directory": "/tmp/qa-ta3196-q1-common-snapshot-leases-20261012-v1",
       "conclusion": "Q1 gameplay and Rogue flag observations use common world leases; the private Q1 frame pool, map reset scan and checkpoint scan are removed while public callback custody remains. Rogue source order and full IDs are preserved. Normal build and seven core suites passed. J33-01 remains open for builtin, Q2, modes and bot callers currently being migrated."
+    },
+    {
+      "commit": "56e76dfc9e598b579f3ecd4418c5df1db1ef3b25",
+      "source_tree": "b3364ffba3f900367bb39452ae435cc8d437ffd5",
+      "finding_ids": [],
+      "files_rechecked": [
+        "src/app/application/bot_world.c",
+        "src/app/application/bot_world.h",
+        "src/app/application/bot_world_bind.c",
+        "src/app/frontend/map_events.c",
+        "src/app/frontend/remote_unified_q2_hud.c",
+        "src/tools/profiler.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-retained-name-storage-20261012-v1",
+      "conclusion": "Moved retained presentation, bot and profiler names to common indexed storage. New admission peaks can still grow storage; this does not establish whole-frame zero allocation."
     }
   ],
   "verification_limits": [

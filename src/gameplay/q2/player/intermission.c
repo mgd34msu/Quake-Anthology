@@ -73,12 +73,12 @@ bool qa_q2_players_camera(qa_q2_game *g, qa_vec3 origin, qa_vec3 angles, bool en
     p->camera_origin = origin;
     p->camera_angles = angles;
     p->camera_set = true;
-    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
-    if (!players)
+    qa_world_actor_snapshot players = {0};
+    if (!q2_player_roster(g, &players, e))
         return false;
     bool okay = true;
-    for (size_t i = 0; i < players->snapshot.count; i++) {
-        qa_actor_id id = players->snapshot.ids[i];
+    for (size_t i = 0; i < players.count; i++) {
+        qa_actor_id id = players.actors[i];
         if (!q2_actor_live(g, id))
             continue;
         q2_actor *a = q2_actor_get(g, id, false, NULL);
@@ -92,17 +92,17 @@ bool qa_q2_players_camera(qa_q2_game *g, qa_vec3 origin, qa_vec3 angles, bool en
             break;
         }
     }
-    qa_builtin_snapshot_release(players);
+    q2_scratch_release(g, &players);
     return okay;
 }
 static bool prepare_intermission(qa_q2_game *g, bool end_unit, qa_error *e) {
-    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
-    if (!players)
+    qa_world_actor_snapshot players = {0};
+    if (!q2_player_roster(g, &players, e))
         return false;
     q2_players *p = g->player_runtime;
     bool okay = false, rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
-    for (size_t i = 0; i < players->snapshot.count; ++i) {
-        qa_actor_id id = players->snapshot.ids[i];
+    for (size_t i = 0; i < players.count; ++i) {
+        qa_actor_id id = players.actors[i];
         q2_actor *a = q2_actor_get(g, id, false, NULL);
         if (!a || !a->client || !a->client->info.connected)
             continue;
@@ -119,15 +119,14 @@ static bool prepare_intermission(qa_q2_game *g, bool end_unit, qa_error *e) {
                 goto done;
         }
     }
-    qa_builtin_snapshot_release(players);
+    q2_scratch_release(g, &players);
     if (!end_unit || !g->options.cooperative)
         return true;
-    players = q2_player_roster(g, e);
-    if (!players)
+    if (!q2_player_roster(g, &players, e))
         return false;
     qa_strings *strings = qa_session_strings(g->services.session);
-    for (size_t i = 0; i < players->snapshot.count; ++i) {
-        qa_actor_id id = players->snapshot.ids[i];
+    for (size_t i = 0; i < players.count; ++i) {
+        qa_actor_id id = players.actors[i];
         if (!q2_actor_live(g, id) || !qa_inventory_has(g->services.inventory, id))
             continue;
         qa_inventory_entry *entries;
@@ -153,7 +152,7 @@ static bool prepare_intermission(qa_q2_game *g, bool end_unit, qa_error *e) {
     }
     okay = true;
 done:
-    qa_builtin_snapshot_release(players);
+    q2_scratch_release(g, &players);
     return okay;
 }
 bool qa_q2_players_intermission(qa_q2_game *g, const char *map, const qa_q2_landmark *landmark,

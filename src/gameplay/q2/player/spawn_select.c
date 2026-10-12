@@ -103,14 +103,14 @@ static qa_vec3 rotate_landmark(qa_vec3 v, qa_vec3 angles) {
     qa_vec3 z = qa_v3(x.x * cosf(r) + x.z * sinf(r), x.y, -x.x * sinf(r) + x.z * cosf(r));
     return qa_v3(z.x * cosf(y) - z.y * sinf(y), z.x * sinf(y) + z.y * cosf(y), z.z);
 }
-static bool range(qa_q2_game *g, qa_actor_id spot, const qa_builtin_actor_snapshot *players,
+static bool range(qa_q2_game *g, qa_actor_id spot, const qa_world_actor_snapshot *players,
                   float *out, qa_error *e) {
     qa_body_state spawn;
     if (!qa_world_body_read(g->services.world, spot, &spawn, e))
         return false;
     float closest = 9999999;
     for (size_t i = 0; i < players->count; i++) {
-        qa_actor_id player = players->ids[i];
+        qa_actor_id player = players->actors[i];
         if (!q2_actor_live(g, player))
             continue;
         qa_combat_state combat;
@@ -229,15 +229,15 @@ static bool select_deathmatch(qa_q2_game *g, q2_actor *a, qa_bounds bounds, qa_a
     }
     size_t n = 0;
     bool ok = false;
-    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
-    if (!players)
+    qa_world_actor_snapshot players = {0};
+    if (!q2_player_roster(g, &players, e))
         goto done;
     for (size_t name = first; name < last; name++) {
         cursor = (qa_target_cursor){0};
         while (n < count && qa_targets_next_authored(targets, names[name], &cursor, &id)) {
             spots[n].id = id;
             spots[n].source_order = n;
-            if (!range(g, id, &players->snapshot, &spots[n].distance, e))
+            if (!range(g, id, &players, &spots[n].distance, e))
                 goto done;
             n++;
         }
@@ -333,8 +333,7 @@ static bool select_deathmatch(qa_q2_game *g, q2_actor *a, qa_bounds bounds, qa_a
     }
     ok = true;
 done:
-    if (players)
-        qa_builtin_snapshot_release(players);
+    q2_scratch_release(g, &players);
     qa_arena_destroy(&storage);
     return ok;
 }
@@ -344,7 +343,7 @@ static bool trace_player(qa_q2_game *g, const qa_trace_result *hit) {
            g->services.actor_traits(g->services.context, hit->actor, &traits) && traits.player;
 }
 static bool coop_trace(qa_q2_game *g, qa_actor_id player, qa_vec3 origin, qa_bounds bounds,
-                       const qa_builtin_actor_snapshot *excluded, qa_trace_result *hit,
+                       const qa_world_actor_snapshot *excluded, qa_trace_result *hit,
                        qa_error *e) {
     qa_trace_query query = {.start = origin,
                             .end = origin,
@@ -352,7 +351,7 @@ static bool coop_trace(qa_q2_game *g, qa_actor_id player, qa_vec3 origin, qa_bou
                             .shape = {.kind = QA_SHAPE_BOX, .bounds = bounds},
                             .policy = {.behavior = &qa_trace_behaviors[QA_RULESET_Q2_RERELEASE],
                                        .contents_mask = qa_collision_contents_mask(excluded ? 0x2010003 : 0x42010003, QA_GAME_Q2)}};
-    return excluded ? qa_world_trace_excluding(g->services.world, &query, excluded->ids,
+    return excluded ? qa_world_trace_excluding(g->services.world, &query, excluded->actors,
                                                excluded->count, hit, e)
                     : qa_world_trace(g->services.world, &query, hit, e);
 }
@@ -382,8 +381,8 @@ static bool lava_spawn(qa_q2_game *g, qa_actor_id *out, qa_error *e) {
     }
     if (top == -99999)
         return true;
-    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
-    if (!players)
+    qa_world_actor_snapshot players = {0};
+    if (!q2_player_roster(g, &players, e))
         return false;
     bool okay = false;
     cursor = (qa_target_cursor){0};
@@ -395,7 +394,7 @@ static bool lava_spawn(qa_q2_game *g, qa_actor_id *out, qa_error *e) {
             goto done;
         if (body.origin.z < top + 64 || body.origin.z >= height)
             continue;
-        if (!range(g, id, &players->snapshot, &distance, e))
+        if (!range(g, id, &players, &distance, e))
             goto done;
         if (distance > 32) {
             *out = id;
@@ -404,7 +403,7 @@ static bool lava_spawn(qa_q2_game *g, qa_actor_id *out, qa_error *e) {
     }
     okay = true;
 done:
-    qa_builtin_snapshot_release(players);
+    q2_scratch_release(g, &players);
     return okay;
 }
 static bool select_coop(qa_q2_game *g, q2_actor *a, qa_bounds bounds, qa_string_id target,
@@ -416,8 +415,8 @@ static bool select_coop(qa_q2_game *g, q2_actor *a, qa_bounds bounds, qa_string_
         !matching_start(g, g->runtime_names[Q2_NAME_INFO_PLAYER_COOP], target, 0, &match, e))
         return false;
     qa_string_id coop_target = match.registry ? target : 0;
-    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
-    if (!players)
+    qa_world_actor_snapshot players = {0};
+    if (!q2_player_roster(g, &players, e))
         return false;
     bool okay = false;
     for (int pass = 0; pass < 2 && !out->registry; pass++)
@@ -435,7 +434,7 @@ static bool select_coop(qa_q2_game *g, q2_actor *a, qa_bounds bounds, qa_string_
             qa_trace_result hit;
             if (!qa_world_body_read(g->services.world, candidate, &body, e))
                 goto done;
-            const qa_builtin_actor_snapshot *excluded = pass ? &players->snapshot : NULL;
+            const qa_world_actor_snapshot *excluded = pass ? &players : NULL;
             if (!coop_trace(g, a->id, body.origin, bounds, excluded, &hit, e))
                 goto done;
             if (hit.start_solid && !trace_player(g, &hit)) {
@@ -464,7 +463,7 @@ static bool select_coop(qa_q2_game *g, q2_actor *a, qa_bounds bounds, qa_string_
         *out = first;
     okay = true;
 done:
-    qa_builtin_snapshot_release(players);
+    q2_scratch_release(g, &players);
     return okay;
 }
 bool q2_player_spawn_select(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,

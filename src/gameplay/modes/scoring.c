@@ -161,7 +161,7 @@ bool qa_modes_player_death_component(qa_modes *m, qa_mode_id id, const qa_damage
         mode_object *flag = mode_object_get(m, dead->flag);
         if (flag)
             for (size_t i = 0; i < m->players_order.count; ++i) {
-                mode_member *member = mode_member_get(m, v, m->players_order.ids[i]);
+                mode_member *member = mode_member_get(m, v, m->players_order.actors[i]);
                 qa_team_id team;
                 if (member && qa_modes_team(m, v->id, member->actor, &team, NULL) &&
                     (v->value.rules.teamplay == 5 || team == flag->spec.team))

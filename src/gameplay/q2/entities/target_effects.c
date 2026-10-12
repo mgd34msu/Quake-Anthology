@@ -2,6 +2,7 @@
 #include "internal.h"
 #include "qa/text.h"
 #include "qa/game_q2_monsters.h"
+#include "../player/internal.h"
 
 bool q2_laser_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_entity_state *s = a->entity;
@@ -28,16 +29,22 @@ bool q2_laser_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         .pass_actor = a->id,
         .policy = {.behavior = &qa_trace_behaviors[g->options.rules],
                    .contents_mask = qa_collision_contents_mask(0x6000001, QA_GAME_Q2)}};
-    qa_builtin_snapshot_frame *frame = q2_scratch_acquire(g, e);
-    if (!frame)
+    qa_arena history;
+    qa_arena_init_pool(&history, &g->player_runtime->scratch_pages);
+    size_t count = 0, capacity = g->capacity < 16 ? 16 : g->capacity;
+    qa_actor_id *excluded = qa_arena_alloc(&history, capacity * sizeof(*excluded),
+                                          _Alignof(qa_actor_id), e);
+    if (!excluded) {
+        qa_arena_destroy(&history);
         return false;
-    frame->snapshot.count = 0;
+    }
+    ++g->player_runtime->active_queries;
     bool okay = false;
     qa_vec3 terminal = query.end;
     for (;;) {
         qa_trace_result hit;
-        if (!qa_world_trace_excluding(g->services.world, &query, frame->snapshot.ids,
-                                      frame->snapshot.count, &hit, e))
+        if (!qa_world_trace_excluding(g->services.world, &query, excluded,
+                                      count, &hit, e))
             goto out;
         terminal = hit.end;
         qa_actor_id actor = hit.hit == QA_TRACE_HIT_ACTOR ? hit.actor : (qa_actor_id){0};
@@ -83,9 +90,21 @@ bool q2_laser_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
             }
             break;
         }
-        if (!qa_builtin_snapshot_reserve(&frame->snapshot, frame->snapshot.count + 1, e))
-            goto out;
-        frame->snapshot.ids[frame->snapshot.count++] = actor;
+        if (count == capacity) {
+            size_t next = capacity <= SIZE_MAX / 2 ? capacity * 2 : SIZE_MAX;
+            if (next > SIZE_MAX / sizeof(*excluded)) {
+                qa_error_set(e, QA_ERROR_MEMORY, 0, "Q2 laser hit history is too large");
+                goto out;
+            }
+            qa_actor_id *grown = qa_arena_grow(&history, excluded,
+                count * sizeof(*excluded), next * sizeof(*excluded),
+                _Alignof(qa_actor_id), e);
+            if (!grown)
+                goto out;
+            excluded = grown;
+            capacity = next;
+        }
+        excluded[count++] = actor;
         query.pass_actor = actor;
         query.start = hit.end;
     }
@@ -97,7 +116,8 @@ bool q2_laser_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
     okay = !q2_actor_live(g, a->id) ||
            q2_entity_schedule(g, a, Q2ET_LASER, (float)g->frame_ns / Q2_NS);
 out:
-    qa_builtin_snapshot_release(frame);
+    qa_arena_destroy(&history);
+    --g->player_runtime->active_queries;
     return okay;
 }
 static bool laser_switch(qa_q2_game *g, q2_actor *a, bool on, qa_error *e) {
@@ -178,12 +198,12 @@ static bool quake(qa_q2_game *g, q2_actor *a, qa_error *e) {
             return true;
         s->sound_ns = q2_deadline(g->now_ns, 500 * Q2_MS);
     }
-    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
-    if (!players)
+    qa_world_actor_snapshot players = {0};
+    if (!q2_player_roster(g, &players, e))
         return false;
     bool okay = false;
-    for (size_t i = 0; i < players->snapshot.count; i++) {
-        qa_actor_id id = players->snapshot.ids[i];
+    for (size_t i = 0; i < players.count; i++) {
+        qa_actor_id id = players.actors[i];
         if (!q2_actor_live(g, id))
             continue;
         qa_body_state body;
@@ -208,7 +228,7 @@ static bool quake(qa_q2_game *g, q2_actor *a, qa_error *e) {
     okay = g->now_ns >= s->expires_ns ||
            q2_entity_schedule(g, a, Q2ET_QUAKE, (float)g->frame_ns / Q2_NS);
 out:
-    qa_builtin_snapshot_release(players);
+    q2_scratch_release(g, &players);
     return okay;
 }
 static bool steam_start(qa_q2_game *g, q2_actor *a, qa_error *e) {
@@ -344,17 +364,17 @@ bool q2_target_extra_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *
     }
 }
 static bool kill_players(qa_q2_game *g, q2_actor *a, qa_error *e) {
-    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
-    if (!players)
+    qa_world_actor_snapshot players = {0};
+    if (!q2_player_roster(g, &players, e))
         return false;
-    qa_builtin_snapshot_frame *targets = q2_scratch_acquire(g, e);
-    if (!targets) {
-        qa_builtin_snapshot_release(players);
+    qa_world_actor_snapshot targets = {0};
+    if (!q2_scratch_acquire(g, &targets, e)) {
+        q2_scratch_release(g, &players);
         return false;
     }
     bool okay = false;
-    for (size_t i = 0; i < players->snapshot.count; i++) {
-        qa_actor_id id = players->snapshot.ids[i];
+    for (size_t i = 0; i < players.count; i++) {
+        qa_actor_id id = players.actors[i];
         if (q2_actor_live(g, id) && !q2_entity_damage(g, a, id, a->id, 100000, 0, 21, 32, e))
             goto out;
         if (!q2_actor_live(g, a->id)) {
@@ -362,10 +382,10 @@ static bool kill_players(qa_q2_game *g, q2_actor *a, qa_error *e) {
             goto out;
         }
     }
-    if (!qa_builtin_observations(&g->services, &targets->snapshot, e))
+    if (!qa_builtin_observations(&g->services, &targets, e))
         goto out;
-    for (size_t j = 0; j < targets->snapshot.count; j++) {
-        qa_actor_id id = targets->snapshot.ids[j];
+    for (size_t j = 0; j < targets.count; j++) {
+        qa_actor_id id = targets.actors[j];
         if (!q2_actor_live(g, id) || !q2_target_damageable(g, id))
             continue;
         qa_combat_state health;
@@ -375,8 +395,8 @@ static bool kill_players(qa_q2_game *g, q2_actor *a, qa_error *e) {
             goto out;
         if (health.health < 1)
             continue;
-        for (size_t i = 0; i < players->snapshot.count; i++) {
-            qa_actor_id player = players->snapshot.ids[i];
+        for (size_t i = 0; i < players.count; i++) {
+            qa_actor_id player = players.actors[i];
             if (!q2_actor_live(g, player))
                 continue;
             qa_body_state from;
@@ -402,8 +422,8 @@ static bool kill_players(qa_q2_game *g, q2_actor *a, qa_error *e) {
     }
     okay = true;
 out:
-    qa_builtin_snapshot_release(players);
-    qa_builtin_snapshot_release(targets);
+    q2_scratch_release(g, &players);
+    q2_scratch_release(g, &targets);
     return okay;
 }
 bool q2_target_extra_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id activator,

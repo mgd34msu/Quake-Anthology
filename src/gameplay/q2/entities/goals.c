@@ -62,12 +62,12 @@ bool q2_goal_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e)
         if (r->has_goals) {
             r->goal_number++;
             r->primary_changes++;
-            qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
-            if (!players)
+            qa_world_actor_snapshot players = {0};
+            if (!q2_player_roster(g, &players, e))
                 return false;
             bool okay = true;
-            for (size_t i = 0; i < players->snapshot.count; i++) {
-                q2_actor *player = q2_actor_get(g, players->snapshot.ids[i], false, NULL);
+            for (size_t i = 0; i < players.count; i++) {
+                q2_actor *player = q2_actor_get(g, players.actors[i], false, NULL);
                 if (player && player->client && !q2_rerelease_notify(g, player, e)) {
                     okay = false;
                     break;
@@ -75,7 +75,7 @@ bool q2_goal_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e)
                 if (!q2_actor_live(g, a->id))
                     break;
             }
-            qa_builtin_snapshot_release(players);
+            q2_scratch_release(g, &players);
             if (!okay)
                 return false;
             if (!q2_actor_live(g, a->id))

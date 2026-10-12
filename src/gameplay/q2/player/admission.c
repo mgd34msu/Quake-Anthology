@@ -75,12 +75,12 @@ static bool rerelease_inventory(qa_q2_game *g, q2_actor *a, qa_error *e) {
     }
     if (!q2_actor_live(g, a->id) || !g->options.cooperative)
         return true;
-    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
-    if (!players)
+    qa_world_actor_snapshot players = {0};
+    if (!q2_player_roster(g, &players, e))
         return false;
     bool okay = true;
-    for (size_t i = 0; i < players->snapshot.count; i++) {
-        qa_actor_id id = players->snapshot.ids[i];
+    for (size_t i = 0; i < players.count; i++) {
+        qa_actor_id id = players.actors[i];
         if (qa_actor_id_equal(a->id, id) || !q2_actor_live(g, id))
             continue;
         q2_actor *other = q2_actor_get(g, id, false, NULL);
@@ -121,7 +121,7 @@ static bool rerelease_inventory(qa_q2_game *g, q2_actor *a, qa_error *e) {
             a->powers->power_cubes = cubes;
         break;
     }
-    qa_builtin_snapshot_release(players);
+    q2_scratch_release(g, &players);
     return okay;
 }
 bool qa_q2_player_connect(qa_q2_game *g, const char *info, bool bot, qa_q2_connection_result *out,

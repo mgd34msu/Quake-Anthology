@@ -41,14 +41,14 @@ static bool eye(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
         return false;
-    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
-    if (!players)
+    qa_world_actor_snapshot players = {0};
+    if (!q2_player_roster(g, &players, e))
         return false;
     qa_actor_id closest = {0};
     float best = INFINITY;
     bool okay = false;
-    for (size_t i = 0; i < players->snapshot.count; i++) {
-        qa_actor_id id = players->snapshot.ids[i];
+    for (size_t i = 0; i < players.count; i++) {
+        qa_actor_id id = players.actors[i];
         if (!q2_actor_live(g, id))
             continue;
         q2_actor *p = q2_actor_get(g, id, false, NULL);
@@ -101,7 +101,7 @@ static bool eye(qa_q2_game *g, q2_actor *a, qa_error *e) {
              (!q2_actor_live(g, a->id) ||
               q2_entity_schedule(g, a, Q2ET_EYE, (float)g->frame_ns / Q2_NS))));
 out:
-    qa_builtin_snapshot_release(players);
+    q2_scratch_release(g, &players);
     return okay;
 }
 static bool look_at(qa_q2_game *g, q2_actor *a, qa_vec3 origin, qa_vec3 *angles, qa_error *e) {
@@ -141,12 +141,12 @@ static bool camera(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_q64 *v = s->q64;
     bool skip = false;
     if ((v->hackflags & 64) && g->now_ns > 2 * Q2_NS) {
-        qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
-        if (!players)
+        qa_world_actor_snapshot players = {0};
+        if (!q2_player_roster(g, &players, e))
             return false;
         bool okay = true;
-        for (size_t i = 0; i < players->snapshot.count; i++) {
-            qa_actor_id id = players->snapshot.ids[i];
+        for (size_t i = 0; i < players.count; i++) {
+            qa_actor_id id = players.actors[i];
             if (!q2_actor_live(g, id))
                 continue;
             q2_actor *p = q2_actor_get(g, id, false, NULL);
@@ -173,7 +173,7 @@ static bool camera(qa_q2_game *g, q2_actor *a, qa_error *e) {
                 }
             }
         }
-        qa_builtin_snapshot_release(players);
+        q2_scratch_release(g, &players);
         if (!okay)
             return false;
     }

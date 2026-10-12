@@ -32,7 +32,7 @@ typedef struct q2_players {
     qa_q2_landmark landmark;
     qa_vec3 camera_origin, camera_angles;
     qa_q2_player_noise_record noise[2];
-    size_t active_lists;
+    size_t active_queries;
     qa_arena scratch_storage;
     qa_pool scratch_pages;
 } q2_players;

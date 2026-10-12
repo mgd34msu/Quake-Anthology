@@ -3,6 +3,7 @@
 
 #include "qa/bots.h"
 #include "qa/bots_memory.h"
+#include "qa/arena.h"
 #include "source_orders.h"
 #include "source_team_policy.h"
 #include "source_events.h"
@@ -85,7 +86,8 @@ struct qa_bots {
     /* Extent of the legacy slot/client words in population saves. */
     uint32_t actor_save_capacity;
     qa_bot_controls controls;
-    qa_builtin_actor_snapshot entities, players;
+    qa_arena observation_storage;
+    qa_world_actor_snapshot entities, players;
     int32_t local_time_ms, library_residual_ms, scheduled_think_ms;
     float time, regular_update_time;
     uint64_t command_sequence;
@@ -105,6 +107,7 @@ struct qa_bots {
     qa_actor_id shutdown_actor;
 };
 bool bot_ai_fail(qa_error *, const char *);
+bool bot_ai_observations_prepare(qa_bots *, qa_error *);
 bot_ai_state *bot_ai_actor(const qa_bots *, qa_actor_id);
 bool bot_ai_live(const qa_bots *, qa_actor_id);
 bool bot_ai_mutable(qa_bots *, qa_error *);

@@ -2529,19 +2529,13 @@ static bool rerelease_flying_explosion(q2m_context *context,
 }
 
 static bool kill_widow2_stalkers(q2m_context *context, qa_error *error) {
-  qa_builtin_snapshot_frame *scratch = q2_scratch_acquire(context->game, error);
-  if (scratch == NULL)
+  qa_world_actor_snapshot scratch = {0};
+  if (!q2_scratch_acquire(context->game, &scratch, error))
     return false;
-  if (scratch->snapshot.capacity < context->game->capacity &&
-      !qa_builtin_snapshot_reserve(&scratch->snapshot, context->game->capacity,
-                                   error)) {
-    qa_builtin_snapshot_release(scratch);
-    return false;
-  }
-  scratch->snapshot.count = 0;
+  scratch.count = 0;
   for (q2_actor *actor = context->game->first_actor; actor != NULL;
        actor = actor->live_next)
-    scratch->snapshot.ids[scratch->snapshot.count++] = actor->id;
+    scratch.actors[scratch.count++] = actor->id;
 
   qa_vec3 point = context->body.origin;
   qa_body_state enemy_body;
@@ -2552,13 +2546,13 @@ static bool kill_widow2_stalkers(q2m_context *context, qa_error *error) {
     point = enemy_body.origin;
 
   if (!q2m_alive(context)) {
-    qa_builtin_snapshot_release(scratch);
+    q2_scratch_release(context->game, &scratch);
     return true;
   }
 
   bool result = true;
-  for (size_t index = 0; index < scratch->snapshot.count; ++index) {
-    qa_actor_id id = scratch->snapshot.ids[index];
+  for (size_t index = 0; index < scratch.count; ++index) {
+    qa_actor_id id = scratch.actors[index];
     if (id.slot >= context->game->capacity ||
         !q2_actor_live(context->game, id))
       continue;
@@ -2592,7 +2586,7 @@ static bool kill_widow2_stalkers(q2m_context *context, qa_error *error) {
     if (!q2m_alive(context))
       break;
   }
-  qa_builtin_snapshot_release(scratch);
+  q2_scratch_release(context->game, &scratch);
   return result;
 }
 
@@ -3072,13 +3066,12 @@ static bool touch_damage(q2m_context *context, qa_actor_id target,
 
 static bool berserk_slam_damage(q2m_context *context, qa_vec3 point,
                                 qa_error *error) {
-  qa_builtin_snapshot_frame *nearby =
-      q2_nearby(context->game, context->body.origin, 330.0f, error);
-  if (nearby == NULL)
+  qa_world_actor_snapshot nearby = {0};
+  if (!q2_nearby(context->game, context->body.origin, 330.0f, &nearby, error))
     return false;
   bool result = true;
-  for (size_t index = 0; index < nearby->snapshot.count; ++index) {
-    qa_actor_id target = nearby->snapshot.ids[index];
+  for (size_t index = 0; index < nearby.count; ++index) {
+    qa_actor_id target = nearby.actors[index];
     if (qa_actor_id_equal(target, context->actor->id))
       continue;
     qa_combat_state combat;
@@ -3145,7 +3138,7 @@ static bool berserk_slam_damage(q2m_context *context, qa_vec3 point,
       }
     }
   }
-  qa_builtin_snapshot_release(nearby);
+  q2_scratch_release(context->game, &nearby);
   return result;
 }
 

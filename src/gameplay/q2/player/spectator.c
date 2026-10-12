@@ -200,12 +200,12 @@ static bool squad_spot(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *
 }
 static bool squad_target(qa_q2_game *g, q2_actor *a, qa_q2_respawn_status *status,
                          bool *allowed, qa_error *e) {
-    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
-    if (!players)
+    qa_world_actor_snapshot players = {0};
+    if (!q2_player_roster(g, &players, e))
         return false;
     bool living = false, found = false, okay = false;
-    for (size_t i = 0; i < players->snapshot.count; ++i) {
-        qa_actor_id id = players->snapshot.ids[i];
+    for (size_t i = 0; i < players.count; ++i) {
+        qa_actor_id id = players.actors[i];
         if (!q2_actor_live(g, id))
             continue;
         qa_combat_state combat = {0};
@@ -225,8 +225,8 @@ static bool squad_target(qa_q2_game *g, q2_actor *a, qa_q2_respawn_status *statu
     }
     if (living) {
         bool searching = q2_map_searching(g, (qa_actor_id){0});
-        for (size_t i = 0; i < players->snapshot.count; ++i) {
-            q2_actor *other = q2_actor_get(g, players->snapshot.ids[i], false, NULL);
+        for (size_t i = 0; i < players.count; ++i) {
+            q2_actor *other = q2_actor_get(g, players.actors[i], false, NULL);
             if (!other || !other->client || !other->client->info.connected ||
                 other->client->info.dead)
                 continue;
@@ -284,7 +284,7 @@ static bool squad_target(qa_q2_game *g, q2_actor *a, qa_q2_respawn_status *statu
     *allowed = !living || found;
     okay = true;
 done:
-    qa_builtin_snapshot_release(players);
+    q2_scratch_release(g, &players);
     return okay;
 }
 bool q2_player_coop_respawn(qa_q2_game *g, q2_actor *a, qa_error *e) {

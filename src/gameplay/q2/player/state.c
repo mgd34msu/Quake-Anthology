@@ -484,12 +484,12 @@ q2_player_list *q2_player_list_acquire(qa_q2_game *g, bool scores, qa_error *e) 
         return NULL;
     }
     *list = (q2_player_list){.owner = owner, .storage = storage};
-    ++owner->active_lists;
-    qa_builtin_snapshot_frame *roster = q2_player_roster(g, e);
-    if (!roster)
+    ++owner->active_queries;
+    qa_world_actor_snapshot roster = {0};
+    if (!q2_player_roster(g, &roster, e))
         goto fail;
-    if (roster->snapshot.count) {
-        size_t capacity = roster->snapshot.count;
+    if (roster.count) {
+        size_t capacity = roster.count;
         if (capacity > SIZE_MAX / sizeof(*list->rows)) {
             qa_error_set(e, QA_ERROR_MEMORY, 0, "Q2 player listing is too large");
             goto release;
@@ -501,25 +501,25 @@ q2_player_list *q2_player_list_acquire(qa_q2_game *g, bool scores, qa_error *e) 
         }
         list->rows = rows;
     }
-    for (size_t i = 0; i < roster->snapshot.count; ++i) {
-        q2_player_row row = {.actor = roster->snapshot.ids[i]};
+    for (size_t i = 0; i < roster.count; ++i) {
+        q2_player_row row = {.actor = roster.actors[i]};
         if (!q2_player_info(g, row.actor, &row.info))
             continue;
         if (scores && !q2_player_score_read(g, row.actor, &row.score, e))
             goto release;
         list->rows[list->count++] = row;
     }
-    qa_builtin_snapshot_release(roster);
+    q2_scratch_release(g, &roster);
     return list;
 release:
-    qa_builtin_snapshot_release(roster);
+    q2_scratch_release(g, &roster);
 fail:
     q2_player_list_release(list);
     return NULL;
 }
 void q2_player_list_release(q2_player_list *list) {
     qa_arena storage = list->storage;
-    --list->owner->active_lists;
+    --list->owner->active_queries;
     qa_arena_destroy(&storage);
 }
 bool q2_client_slot(qa_q2_game *g, qa_actor_id id, uint32_t *slot) {

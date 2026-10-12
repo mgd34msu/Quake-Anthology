@@ -54,22 +54,26 @@ static bool activation(qa_q2_game *g, qa_actor_id controller,
     qa_string_id name = a->entity->targetname;
     if (!activation_traits(g, controller, view, error)) return false;
     if (!name || !q2_ent(g, controller)) return true;
-    qa_builtin_snapshot_frame *list = q2_scratch_acquire(g, error);
-    if (!list) return false;
-    qa_builtin_snapshot_frame *queue = q2_scratch_acquire(g, error);
-    if (!queue) { qa_builtin_snapshot_release(list); return false; }
-    bool ok = qa_builtin_observations(&g->services, &list->snapshot, error) &&
-        qa_builtin_snapshot_reserve(&queue->snapshot, list->snapshot.count + 1, error);
-    queue->snapshot.count = ok ? 1 : 0;
-    if (ok) { queue->snapshot.ids[0] = controller; queue->snapshot.sort[0] = (qa_actor_id){0}; }
+    qa_world_actor_snapshot list = {0};
+    if (!q2_scratch_acquire(g, &list, error)) return false;
+    qa_world_actor_snapshot queue = {0};
+    if (!q2_scratch_acquire(g, &queue, error)) { q2_scratch_release(g, &list); return false; }
+    qa_world_actor_snapshot parents = {0};
+    if (!q2_scratch_acquire(g, &parents, error)) {
+        q2_scratch_release(g, &queue);
+        q2_scratch_release(g, &list);
+        return false;
+    }
+    bool ok = qa_builtin_observations(&g->services, &list, error);
     size_t position = 0;
-    while (ok && position < queue->snapshot.count && q2_ent(g, controller)) {
-        qa_actor_id parent = queue->snapshot.ids[position++];
+    while (ok && position <= queue.count && q2_ent(g, controller)) {
+        qa_actor_id parent = position == 0 ? controller : queue.actors[position - 1];
+        ++position;
         a = q2_ent(g, parent);
         name = a ? a->entity->targetname : 0;
         if (!name) continue;
-        for (size_t i = 0; i < list->snapshot.count; ++i) {
-            qa_actor_id id = list->snapshot.ids[i];
+        for (size_t i = 0; i < list.count; ++i) {
+            qa_actor_id id = list.actors[i];
             q2_actor *candidate = q2_ent(g, id);
             if (!candidate || candidate->entity->target != name) continue;
             q2_entity_state *s = candidate->entity;
@@ -79,28 +83,33 @@ static bool activation(qa_q2_game *g, qa_actor_id controller,
                 if (!ok) break;
                 if (chosen.useable || chosen.shootable) {
                     qa_actor_id path = parent;
-                    for (size_t step = 0; path.registry && step < queue->snapshot.count; ++step) {
+                    for (size_t step = 0; path.registry && step <= queue.count; ++step) {
                         q2_actor *part = q2_ent(g, path);
                         if (part && part->entity->kind == Q2E_KEY && part->entity->usable)
                             chosen.navigation.locked = true;
-                        size_t index = 0;
-                        while (index < queue->snapshot.count &&
-                               !qa_actor_id_equal(queue->snapshot.ids[index], path)) ++index;
-                        path = index < queue->snapshot.count ? queue->snapshot.sort[index] : (qa_actor_id){0};
+                        if (qa_actor_id_equal(path, controller)) {
+                            path = (qa_actor_id){0};
+                        } else {
+                            size_t index = 0;
+                            while (index < queue.count &&
+                                   !qa_actor_id_equal(queue.actors[index], path)) ++index;
+                            path = index < queue.count ? parents.actors[index] : (qa_actor_id){0};
+                        }
                     }
-                    *view = chosen; position = queue->snapshot.count; name = 0; break;
+                    *view = chosen; position = queue.count + 1; name = 0; break;
                 }
             } else if ((s->kind == Q2E_RELAY || s->kind == Q2E_COUNTER || s->kind == Q2E_KEY ||
                         s->kind == Q2E_ELEVATOR || s->kind == Q2E_COOP_RELAY) && s->targetname) {
-                queue->snapshot.sort[queue->snapshot.count] = parent;
-                queue->snapshot.ids[queue->snapshot.count++] = id;
-                list->snapshot.ids[i] = list->snapshot.ids[--list->snapshot.count];
+                parents.actors[queue.count] = parent;
+                queue.actors[queue.count++] = id;
+                list.actors[i] = list.actors[--list.count];
                 --i;
             }
         }
     }
-    qa_builtin_snapshot_release(queue);
-    qa_builtin_snapshot_release(list);
+    q2_scratch_release(g, &parents);
+    q2_scratch_release(g, &queue);
+    q2_scratch_release(g, &list);
     return ok;
 }
 

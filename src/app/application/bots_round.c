@@ -77,7 +77,8 @@ static void navigation_publish(application_bots *bots,bot_round_graph *graphs,si
         qa_navigation_destroy(entry->previous);entry->previous=NULL;
         entry->owner->navigation=entry->fresh;entry->fresh=NULL;
     }
-    qa_builtin_snapshot_free(&bots->pickup_snapshot);
+    bots->pickup_snapshot.count=0;
+    bots->pickup_snapshot.capacity=0;
 }
 
 static bool original_text(const char *a,const char *b) {

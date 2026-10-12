@@ -21,7 +21,7 @@ static int vote_slot(mode_instance *v, qa_team_id team) {
 static size_t voters(qa_modes *m, mode_instance *v, qa_team_id team) {
     size_t count = 0;
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-        uint32_t i = m->players_order.ids[ordinal].slot;
+        uint32_t i = m->players_order.actors[ordinal].slot;
         mode_member *member = &v->members[i];
         mode_player *p = member->joined ? mode_player_get(m, member->actor) : NULL;
         if (!p || !p->connected ||
@@ -213,7 +213,7 @@ static bool execute_vote(qa_modes *m, mode_instance *v, qa_mode_vote *vote, qa_e
         if (!target || !qa_modes_team(m, v->id, intent.actor, &team, e) || team != intent.team)
             return true;
         for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-            uint32_t i = m->players_order.ids[ordinal].slot;
+            uint32_t i = m->players_order.actors[ordinal].slot;
             mode_member *member = &v->members[i];
             mode_player *p = member->joined ? mode_player_get(m, member->actor) : NULL;
             qa_team_id own;
@@ -248,7 +248,7 @@ bool mode_vote_frame(qa_modes *m, mode_instance *v, qa_error *e) {
                 continue;
             vote->yes = vote->no = 0;
             for (size_t i = 0; i < m->players_order.count; ++i) {
-                qa_actor_id actor = m->players_order.ids[i];
+                qa_actor_id actor = m->players_order.actors[i];
                 mode_member *member = mode_member_get(m, v, actor);
                 mode_player *player = mode_player_get(m, actor);
                 if (!member || !player || !player->connected)

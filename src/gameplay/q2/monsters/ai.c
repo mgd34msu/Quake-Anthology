@@ -826,14 +826,14 @@ bool q2m_perception_begin(qa_q2_game *game, qa_error *error) {
   runtime->began_frame = true;
   runtime->last_frame_ns = game->now_ns;
 
-  qa_builtin_snapshot_frame *players = q2_player_roster(game, error);
-  if (players == NULL)
+  qa_world_actor_snapshot players = {0};
+  if (!q2_player_roster(game, &players, error))
     return false;
-  size_t count = players->snapshot.count;
+  size_t count = players.count;
   ptrdiff_t current = runtime->sight_client.registry == 0 ? 0 : -1;
   if (runtime->sight_client.registry != 0)
     for (size_t index = 0; index < count; ++index)
-      if (qa_actor_id_equal(players->snapshot.ids[index],
+      if (qa_actor_id_equal(players.actors[index],
                             runtime->sight_client)) {
         current = (ptrdiff_t)index;
         break;
@@ -842,19 +842,19 @@ bool q2m_perception_begin(qa_q2_game *game, qa_error *error) {
   for (size_t offset = 1; offset <= count; ++offset) {
     size_t index = (size_t)(current + (ptrdiff_t)offset) % count;
     qa_builtin_actor_traits traits;
-    if (runtime_targetable(game, players->snapshot.ids[index], &traits)) {
-      runtime->sight_client = players->snapshot.ids[index];
+    if (runtime_targetable(game, players.actors[index], &traits)) {
+      runtime->sight_client = players.actors[index];
       break;
     }
   }
 
   bool result = true;
   for (size_t index = 0; index < count; ++index)
-    if (!q2_player_trail_step(game, players->snapshot.ids[index], error)) {
+    if (!q2_player_trail_step(game, players.actors[index], error)) {
       result = false;
       break;
     }
-  qa_builtin_snapshot_release(players);
+  q2_scratch_release(game, &players);
   return result;
 }
 
@@ -1684,12 +1684,12 @@ bool q2m_find_target(q2m_context *context, bool *found, qa_error *error) {
                             : context->game->frame_ns;
 
   if (context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
-    qa_builtin_snapshot_frame *players = q2_player_roster(context->game, error);
-    if (players == NULL)
+    qa_world_actor_snapshot players = {0};
+    if (!q2_player_roster(context->game, &players, error))
       return false;
     size_t eligible = 0;
-    for (size_t index = 0; index < players->snapshot.count; ++index) {
-      qa_actor_id id = players->snapshot.ids[index];
+    for (size_t index = 0; index < players.count; ++index) {
+      qa_actor_id id = players.actors[index];
       qa_builtin_actor_traits traits;
       qa_body_state body;
       qa_error ignored = {0};
@@ -1702,26 +1702,26 @@ bool q2m_find_target(q2m_context *context, bool *found, qa_error *error) {
         if (!in_front(context, id))
           continue;
         if (!q2m_visible(context, id, &visible, error)) {
-          qa_builtin_snapshot_release(players);
+          q2_scratch_release(context->game, &players);
           return false;
         }
         if (!q2m_alive(context)) {
-          qa_builtin_snapshot_release(players);
+          q2_scratch_release(context->game, &players);
           return true;
         }
       } else {
         visible = true;
       }
       if (visible)
-        players->snapshot.ids[eligible++] = id;
+        players.actors[eligible++] = id;
     }
     if (eligible != 0) {
       size_t selected = (size_t)floorf(q2m_random(context->game) * (float)eligible);
       if (selected >= eligible)
         selected = eligible - 1;
-      candidate = players->snapshot.ids[selected];
+      candidate = players.actors[selected];
     }
-    qa_builtin_snapshot_release(players);
+    q2_scratch_release(context->game, &players);
     if (candidate.registry != 0 &&
         qa_actor_id_equal(candidate, monster->enemy) &&
         !monster->sound_target.present)

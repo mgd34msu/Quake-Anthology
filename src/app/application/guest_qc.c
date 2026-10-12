@@ -1597,7 +1597,6 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
     qa_buffer_free(&engine->original_extension);
     application_qc_rerelease_destroy(engine);
     qa_resource_release(engine->debug_palette);
-    qa_builtin_snapshot_free(&engine->observations);
     application_qc_items_destroy(engine);
     application_qc_item_weapons_destroy(engine);
     application_qc_pickups_destroy(engine);

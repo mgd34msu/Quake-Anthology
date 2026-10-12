@@ -162,21 +162,19 @@ static bool map_field(qa_source_save_io *io,application_bots *bots) {
     return true;
 }
 static bool snapshot_field(qa_source_save_io *io,application_bots *bots) {
-    qa_builtin_actor_snapshot *s=&bots->pickup_snapshot;
+    qa_world_actor_snapshot *s=&bots->pickup_snapshot;
     size_t maximum=qa_actors_capacity(qa_session_actors(bots->application->session));
-    if(!qa_source_save_count(io,&s->capacity,maximum) || !qa_source_save_count(io,&s->count,s->capacity)) return false;
-    if(io->direction==QA_SOURCE_SAVE_READ && s->capacity) {
-        if(s->count>(io->input.size-io->offset)/13 || s->capacity>SIZE_MAX/(2*sizeof(*s->ids)))
+    size_t capacity=s->capacity,count=s->count;
+    if(!qa_source_save_count(io,&capacity,maximum) || !qa_source_save_count(io,&count,capacity)) return false;
+    if(io->direction==QA_SOURCE_SAVE_READ && capacity) {
+        if(count>(io->input.size-io->offset)/13 || capacity>SIZE_MAX/(2*sizeof(*s->actors)))
             return bot_save_fail(io,QA_ERROR_FORMAT,"Truncated application pickup snapshot");
-        s->ids=calloc(s->capacity,2*sizeof(*s->ids));
-        if(!s->ids) return bot_save_fail(io,QA_ERROR_MEMORY,"Restoring application pickup snapshot");
-        s->sort=s->ids+s->capacity;
+        s->capacity=capacity;s->count=count;
     }
-    if(s->count && !s->ids) return bot_save_fail(io,QA_ERROR_FORMAT,"Application pickup snapshot has no storage");
-    if(io->direction==QA_SOURCE_SAVE_WRITE && s->capacity &&
-        (!s->ids || s->sort!=s->ids+s->capacity))
+    if(count && !s->actors) return bot_save_fail(io,QA_ERROR_FORMAT,"Application pickup snapshot has no storage");
+    if(io->direction==QA_SOURCE_SAVE_WRITE && capacity && !s->actors)
         return bot_save_fail(io,QA_ERROR_FORMAT,"Application pickup snapshot allocation differs");
-    for(size_t i=0;i<s->count;++i) if(!qa_source_save_actor(io,s->ids+i)) return false;
+    for(size_t i=0;i<count;++i) if(!qa_source_save_actor(io,s->actors+i)) return false;
     if(!qa_source_save_count(io,&bots->train_capacity,maximum)) return false;
     if(io->direction==QA_SOURCE_SAVE_READ && bots->train_capacity) {
         if(bots->train_capacity>SIZE_MAX/sizeof(*bots->train_stops)) return false;
@@ -446,7 +444,7 @@ bool application_bots_save_prepare(qa_application *app,qa_bytes bytes,qa_bytes n
         if(!bots) ok=bot_save_fail(&io,QA_ERROR_MEMORY,"Allocating restored application bot owner");
         else {
             bots->application=app;bots->restoring=true;app->bots=bots;
-            ok=fields(&io,bots,&record);
+            ok=application_bots_observations_prepare(bots,error) && fields(&io,bots,&record);
         }
     }
     ok=ok && qa_source_save_finish(&io,NULL);qa_source_save_dispose(&io);

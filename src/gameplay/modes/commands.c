@@ -56,7 +56,7 @@ static qa_actor_id q3_client(qa_modes *m, mode_instance *v, const char *text,
     char wanted[1024];
     q3_name(text, team_vote, wanted);
     for (size_t i = 0; i < m->players_order.count; ++i) {
-        qa_actor_id actor = m->players_order.ids[i];
+        qa_actor_id actor = m->players_order.actors[i];
         mode_player *player = mode_player_get(m, actor);
         if (!player || !mode_member_get(m, v, actor) ||
             (!player->connected && !(team_vote && player->connecting)) ||

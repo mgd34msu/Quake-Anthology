@@ -527,7 +527,6 @@ struct qa_q2_game {
     qa_pool entity_records;
     q2_actor *first_actor, *last_actor;
     size_t capacity;
-    qa_builtin_snapshot_frame *trace_frames;
     struct q2_items *item_runtime;
     struct q2_players *player_runtime;
     struct q2_entities *entity_runtime;
@@ -767,9 +766,10 @@ bool q2_fire_nuke(qa_q2_game *, qa_actor_id owner, qa_vec3 origin, qa_vec3 direc
 bool q2_noise_for_actor(qa_q2_game *, qa_actor_id, qa_vec3, bool secondary, qa_error *);
 bool q2_nuke_think(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_nuke_reaction(qa_q2_game *, q2_actor *, const qa_damage_outcome *, qa_error *);
-qa_builtin_snapshot_frame *q2_scratch_acquire(qa_q2_game *, qa_error *);
-qa_builtin_snapshot_frame *q2_nearby(qa_q2_game *, qa_vec3 origin, float radius, qa_error *);
-qa_builtin_snapshot_frame *q2_player_roster(qa_q2_game *, qa_error *);
+bool q2_scratch_acquire(qa_q2_game *, qa_world_actor_snapshot *, qa_error *);
+void q2_scratch_release(qa_q2_game *, qa_world_actor_snapshot *);
+bool q2_nearby(qa_q2_game *, qa_vec3 origin, float radius, qa_world_actor_snapshot *, qa_error *);
+bool q2_player_roster(qa_q2_game *, qa_world_actor_snapshot *, qa_error *);
 enum {
     Q2_GIB_HEAD = 1u, Q2_GIB_METALLIC = 2u, Q2_GIB_SKINNED = 4u, Q2_GIB_UPRIGHT = 8u,
     Q2_GIB_WIDOW = 16u, Q2_GIB_WIDOW_SIZED = 32u, Q2_GIB_WIDOW_HIT_SOUND = 64u,

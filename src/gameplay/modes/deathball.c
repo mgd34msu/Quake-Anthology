@@ -74,7 +74,7 @@ bool mode_ball_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id 
     if (!qa_modes_team_score(m, v->id, team, amount, e))
         return false;
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-        uint32_t i = m->players_order.ids[ordinal].slot;
+        uint32_t i = m->players_order.actors[ordinal].slot;
         mode_member *p = &v->members[i];
         qa_team_id t;
         if (!p->joined || !mode_player_get(m, p->actor) || !qa_modes_team(m, v->id, p->actor, &t, NULL))
@@ -128,23 +128,21 @@ bool mode_ball_frame(qa_modes *m, mode_instance *v, mode_object *o, qa_error *e)
     if (!qa_world_body_write(m->options.services.world, o->actor, &body, e) ||
         !qa_combat_set_health(m->options.services.combat, o->actor, 50000, e))
         return false;
-    qa_builtin_snapshot_frame *frame = qa_builtin_snapshot_acquire(
-        &m->snapshot_frames, m->actor_capacity, e);
-    if (!frame) return false;
-    qa_builtin_actor_snapshot *candidates = &frame->snapshot;
+    qa_world_actor_snapshot candidates = {0};
+    if (!qa_world_snapshot_acquire(m->options.services.world, &candidates, e)) return false;
     bool overflow = false;
     if (!qa_world_query(m->options.services.world, qa_bounds_translate(body.bounds, body.origin),
-                        QA_COLLISION_SOLID, candidates->ids, candidates->capacity,
-                        &candidates->count, &overflow, e)) {
-        qa_builtin_snapshot_release(frame);
+                        QA_COLLISION_SOLID, candidates.actors, candidates.capacity,
+                        &candidates.count, &overflow, e)) {
+        qa_world_snapshot_release(&candidates);
         return false;
     }
     if (overflow) {
-        qa_builtin_snapshot_release(frame);
+        qa_world_snapshot_release(&candidates);
         return mode_fail(e, "DeathBall KillBox exceeded the actor registry capacity");
     }
-    for (size_t i = 0; i < candidates->count; ++i) {
-        qa_actor_id actor = candidates->ids[i];
+    for (size_t i = 0; i < candidates.count; ++i) {
+        qa_actor_id actor = candidates.actors[i];
         if (qa_actor_id_equal(actor, o->actor) || !mode_live(m, actor))
             continue;
         qa_combat_state target;
@@ -162,11 +160,11 @@ bool mode_ball_frame(qa_modes *m, mode_instance *v, mode_object *o, qa_error *e)
                                                .flags = 32,
                                                .native = QA_Q2_CAUSE_CLASSIC}}}};
         if (!mode_damage(m, v, QA_GAME_Q2, &request, e)) {
-            qa_builtin_snapshot_release(frame);
+            qa_world_snapshot_release(&candidates);
             return false;
         }
     }
-    qa_builtin_snapshot_release(frame);
+    qa_world_snapshot_release(&candidates);
     return mode_object_sync(m, o, e) && mode_event(m, v, QA_MODE_BALL_GOAL, (qa_actor_id){0},
                                                    (qa_actor_id){0}, o->actor, 0, 0, 6, e);
 }

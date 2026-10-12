@@ -1,11 +1,13 @@
 #include "qa/campaign_q1.h"
+#include "qa/arena.h"
 #include <math.h>
 #include <stdlib.h>
 
 struct qa_q1_spawn_selector {
     qa_q1_spawn_options options;
     qa_q1_spawn_rule *rules;
-    qa_builtin_actor_snapshot players, candidates;
+    qa_world_actor_snapshot players, candidates;
+    qa_arena candidate_storage;
     qa_actor_id last;
     bool active;
 };
@@ -60,8 +62,8 @@ qa_q1_spawn_selector *qa_q1_spawn_selector_create(const qa_q1_spawn_options *opt
 void qa_q1_spawn_selector_destroy(qa_q1_spawn_selector *selector) {
     if (!selector)
         return;
-    qa_builtin_snapshot_free(&selector->players);
-    qa_builtin_snapshot_free(&selector->candidates);
+    qa_world_snapshot_release(&selector->players);
+    qa_arena_destroy(&selector->candidate_storage);
     free(selector->rules);
     free(selector);
 }
@@ -140,7 +142,7 @@ static bool nearby(qa_q1_spawn_selector *selector, qa_actor_id point, float radi
     for (size_t i = 0; i < selector->players.count; ++i) {
         qa_body_state body;
         bool available;
-        if (!player_body(selector, selector->players.ids[i], living, &body, &available, error))
+        if (!player_body(selector, selector->players.actors[i], living, &body, &available, error))
             return false;
         if (!available)
             continue;
@@ -164,7 +166,7 @@ static bool visible(qa_q1_spawn_selector *selector, qa_actor_id point, bool *out
     for (size_t i = 0; i < selector->players.count; ++i) {
         qa_body_state body;
         bool available;
-        if (!player_body(selector, selector->players.ids[i], true, &body, &available, error))
+        if (!player_body(selector, selector->players.actors[i], true, &body, &available, error))
             return false;
         if (!available)
             continue;
@@ -199,7 +201,7 @@ static bool random_choice(qa_q1_spawn_selector *selector, qa_actor_id *out, qa_e
     size_t count = selector->candidates.count;
     /* The original rounds over count-1, giving endpoints half the interior weight. */
     size_t index = (size_t)floor(random * (double)(count - 1) + 0.5);
-    *out = selector->candidates.ids[index];
+    *out = selector->candidates.actors[index];
     return true;
 }
 static bool select_point(qa_q1_spawn_selector *selector, const qa_q1_spawn_point *points,
@@ -244,27 +246,37 @@ static bool select_point(qa_q1_spawn_selector *selector, const qa_q1_spawn_point
             return true;
         }
     } else if (selector->options.deathmatch) {
-        qa_builtin_actor_snapshot *candidates = &selector->candidates;
-        if (!qa_builtin_snapshot_reserve(candidates, count, error) ||
-            !qa_builtin_players(&selector->options.services, &selector->players, error))
+        qa_world_actor_snapshot *candidates = &selector->candidates;
+        if (count > candidates->capacity) {
+            if (count > SIZE_MAX / sizeof(*candidates->actors)) {
+                qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid native actor snapshot capacity");
+                return false;
+            }
+            qa_actor_id *actors = qa_arena_grow(&selector->candidate_storage, candidates->actors,
+                candidates->capacity * sizeof(*actors), count * sizeof(*actors),
+                _Alignof(qa_actor_id), error);
+            if (!actors) return false;
+            candidates->actors = actors; candidates->capacity = count; candidates->borrowed = true;
+        }
+        if (!qa_builtin_players(&selector->options.services, &selector->players, error))
             return false;
         candidates->count = 0;
         for (size_t i = 0; i < count; ++i)
             if (points[i].kind == QA_Q1_SPAWN_DEATHMATCH && live(selector, points[i].actor))
-                candidates->ids[candidates->count++] = points[i].actor;
+                candidates->actors[candidates->count++] = points[i].actor;
         if (!candidates->count)
             return fail(error, "No info_player_deathmatch on level");
         if (!selector->options.rerelease) {
             size_t start = candidates->count - 1;
             for (size_t i = 0; i < candidates->count; ++i)
-                if (qa_actor_id_equal(candidates->ids[i], selector->last)) {
+                if (qa_actor_id_equal(candidates->actors[i], selector->last)) {
                     start = i;
                     break;
                 }
             for (size_t i = 0; i < candidates->count; ++i) {
                 if (++start == candidates->count)
                     start = 0;
-                point = candidates->ids[start];
+                point = candidates->actors[start];
                 bool occupied = false;
                 if (!qa_actor_id_equal(point, selector->last) &&
                     !nearby(selector, point, 32, false, &occupied, error))
@@ -275,7 +287,7 @@ static bool select_point(qa_q1_spawn_selector *selector, const qa_q1_spawn_point
                 }
             }
             if (force)
-                *out = candidates->ids[0];
+                *out = candidates->actors[0];
             return true;
         }
         size_t all = candidates->count;
@@ -293,7 +305,7 @@ static bool select_point(qa_q1_spawn_selector *selector, const qa_q1_spawn_point
                 if (pass == 0 && !visible(selector, point, &seen, error))
                     return false;
                 if (!seen)
-                    candidates->ids[candidates->count++] = point;
+                    candidates->actors[candidates->count++] = point;
             }
             if (candidates->count)
                 return random_choice(selector, out, error);
@@ -303,7 +315,7 @@ static bool select_point(qa_q1_spawn_selector *selector, const qa_q1_spawn_point
         candidates->count = 0;
         for (size_t i = 0; i < count; ++i)
             if (points[i].kind == QA_Q1_SPAWN_DEATHMATCH && live(selector, points[i].actor))
-                candidates->ids[candidates->count++] = points[i].actor;
+                candidates->actors[candidates->count++] = points[i].actor;
         if (candidates->count != all)
             return fail(error, "Spawn candidates mutated during selection");
         return random_choice(selector, out, error);
@@ -327,6 +339,7 @@ bool qa_q1_spawn_select(qa_q1_spawn_selector *selector, const qa_q1_spawn_point 
     selector->active = true;
     qa_actor_id selected;
     bool ok = select_point(selector, points, count, force, &selected, error);
+    qa_world_snapshot_release(&selector->players);
     selector->active = false;
     if (ok)
         *out = selected;

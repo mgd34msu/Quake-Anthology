@@ -93,28 +93,31 @@ bool q3_rollback_spawn(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     }
     return false;
 }
-qa_builtin_snapshot_frame *q3_bounds_snapshot(qa_q3_game *game, qa_bounds bounds,
-                                       qa_collision_role role, qa_error *error) {
+bool q3_bounds_snapshot(qa_q3_game *game, qa_bounds bounds,
+                       qa_collision_role role, qa_world_actor_snapshot *snapshot, qa_error *error) {
     if (!game) {
         q3_fail(error, "missing Q3 spatial query provider");
-        return NULL;
+        return false;
     }
-    qa_builtin_snapshot_frame *frame = qa_builtin_snapshot_acquire(
-        &game->snapshot_frames, game->capacity, error);
-    if (!frame) return NULL;
+    if (!qa_world_snapshot_acquire(game->options.services.world, snapshot, error)) return false;
+    ++game->snapshot_depth;
     bool overflow = false;
-    if (!qa_world_query(game->options.services.world, bounds, role, frame->snapshot.ids,
-                        frame->snapshot.capacity, &frame->snapshot.count, &overflow, error)) {
-        qa_builtin_snapshot_release(frame);
-        return NULL;
+    if (!qa_world_query(game->options.services.world, bounds, role, snapshot->actors,
+                        snapshot->capacity, &snapshot->count, &overflow, error)) {
+        q3_bounds_snapshot_release(game, snapshot);
+        return false;
     }
     if (overflow) {
-        qa_builtin_snapshot_release(frame);
+        q3_bounds_snapshot_release(game, snapshot);
         qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                      "Q3 spatial query exceeded the actor registry capacity");
-        return NULL;
+        return false;
     }
-    return frame;
+    return true;
+}
+void q3_bounds_snapshot_release(qa_q3_game *game, qa_world_actor_snapshot *snapshot) {
+    qa_world_snapshot_release(snapshot);
+    --game->snapshot_depth;
 }
 int32_t q3_add_time(int32_t a, int32_t b) {
     uint32_t bits = (uint32_t)a + (uint32_t)b;
@@ -351,7 +354,6 @@ bool qa_q3_destroy(qa_q3_game *game, qa_error *error) {
     for(uint32_t i=0;i<game->capacity;++i)
         if(game->item_observations[i].serial)
             qa_pickups_observation_close(game->options.services.pickups,game->item_observations[i],NULL);
-    qa_builtin_snapshot_pool_free(&game->snapshot_frames);
     free(game->kamikaze_cooldowns);
     free(game->player_binding_tokens);
     free(game->item_observations);

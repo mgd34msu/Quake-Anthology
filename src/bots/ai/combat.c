@@ -368,7 +368,7 @@ bool bot_ai_find_enemy(qa_bots *b,bot_ai_state *s,int32_t current_enemy,bool *fo
     qa_actor_id current_actor=current_enemy>=0?
         b->services.entity_actor(b->services.context,current_enemy):(qa_actor_id){0};
     for (size_t i = 0; i < b->entities.count; ++i) {
-        qa_actor_id actor = b->entities.ids[i];
+        qa_actor_id actor = b->entities.actors[i];
         if(!bot_ai_live(b,actor) || qa_actor_id_equal(actor,s->view.actor) ||
            qa_actor_id_equal(actor,current_actor)) continue;
         int32_t source_client=b->services.source_client_number(b->services.context,actor);

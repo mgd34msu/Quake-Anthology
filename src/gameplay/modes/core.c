@@ -249,6 +249,7 @@ bool qa_modes_create(const qa_modes_options *options, qa_modes **out, qa_error *
         return false;
     }
     m->options = *options;
+    qa_arena_init(&m->snapshot_storage, 0);
     static const char *const runtime_names[] = {
 #define MODE_NAME_TEXT(key, text) text,
         MODE_NAME_LIST(MODE_NAME_TEXT)
@@ -274,11 +275,27 @@ bool qa_modes_create(const qa_modes_options *options, qa_modes **out, qa_error *
         qa_error_set(e, QA_ERROR_MEMORY, 0, "allocating mode stores");
         return false;
     }
-    if (!qa_builtin_snapshot_reserve(&m->players_order, m->actor_capacity, e) ||
-        !qa_builtin_snapshot_reserve(&m->observations, m->actor_capacity, e)) {
+    size_t capacity = m->actor_capacity;
+    if (capacity > SIZE_MAX / sizeof(qa_actor_id)) {
         qa_modes_destroy(m);
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "mode actor snapshot storage overflow");
         return false;
     }
+    m->players_order = (qa_world_actor_snapshot){.world = options->services.world,
+        .capacity = capacity, .borrowed = true};
+    m->observations = (qa_world_actor_snapshot){.world = options->services.world,
+        .capacity = capacity, .borrowed = true};
+    if (capacity) {
+        m->players_order.actors = qa_arena_alloc(&m->snapshot_storage,
+            capacity * sizeof(qa_actor_id), _Alignof(qa_actor_id), e);
+        m->observations.actors = qa_arena_alloc(&m->snapshot_storage,
+            capacity * sizeof(qa_actor_id), _Alignof(qa_actor_id), e);
+        if (!m->players_order.actors || !m->observations.actors) {
+            qa_modes_destroy(m);
+            return false;
+        }
+    }
+    qa_arena_seal(&m->snapshot_storage);
     *out = m;
     return true;
 }
@@ -302,9 +319,7 @@ void qa_modes_destroy(qa_modes *m) {
             free(v->items);
             mode_horde_free(v);
         }
-    qa_builtin_snapshot_free(&m->players_order);
-    qa_builtin_snapshot_free(&m->observations);
-    qa_builtin_snapshot_pool_free(&m->snapshot_frames);
+    qa_arena_destroy(&m->snapshot_storage);
     free(m->players);
     free(m->objects);
     free(m->instances);
@@ -401,8 +416,8 @@ bool qa_modes_remove(qa_modes *m, qa_mode_id id, qa_error *e) {
     mode_horde_free(v);
     *v = (mode_instance){.id = id};
     for (size_t i = 0; i < m->players_order.count; ++i)
-        if (mode_player_get(m, m->players_order.ids[i]) &&
-            !qa_modes_publish_items(m, m->players_order.ids[i], e))
+        if (mode_player_get(m, m->players_order.actors[i]) &&
+            !qa_modes_publish_items(m, m->players_order.actors[i], e))
             return false;
     return true;
 }
@@ -621,12 +636,14 @@ bool qa_modes_player(qa_modes *m, const qa_match_player *value, qa_error *e) {
     identity->name = value->name;
     identity->bot = value->bot;
     identity->present = true;
-    if (!m->callback_depth && !qa_builtin_players(&m->options.services, &m->players_order, e)) {
-        if (mode_live(m, actor) && qa_actor_id_equal(p->actor, actor)) {
-            *p = before;
-            *identity = identity_before;
+    if (!m->callback_depth) {
+        if (!qa_builtin_players(&m->options.services, &m->players_order, e)) {
+            if (mode_live(m, actor) && qa_actor_id_equal(p->actor, actor)) {
+                *p = before;
+                *identity = identity_before;
+            }
+            return false;
         }
-        return false;
     }
     return true;
 }
@@ -914,7 +931,7 @@ bool qa_modes_team_totals(qa_modes *m, qa_mode_id id, int64_t totals[3], qa_erro
         return mode_fail(e, "invalid team total query");
     totals[0] = totals[1] = totals[2] = 0;
     for (size_t i = 0; i < m->players_order.count; ++i) {
-        qa_actor_id actor = m->players_order.ids[i];
+        qa_actor_id actor = m->players_order.actors[i];
         qa_team_id team;
         int32_t score;
         if (!mode_member_get(m, v, actor))
@@ -1038,7 +1055,7 @@ bool qa_modes_choose_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team
     size_t counts[3] = {0};
     int64_t scores[3] = {0};
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-        qa_actor_id other = m->players_order.ids[ordinal];
+        qa_actor_id other = m->players_order.actors[ordinal];
         mode_member *member = mode_member_get(m, v, other);
         mode_player *p = mode_player_get(m, other);
         if (!member || !p || member->player.spectator || qa_actor_id_equal(actor, other))
@@ -1074,9 +1091,8 @@ static bool frame(qa_modes *m, qa_mode_id id, uint64_t now, uint64_t elapsed,
     v->value.time_ns = now;
     if (!v->value.rules.enabled)
         return true;
-    if (!qa_builtin_players(&m->options.services, &m->players_order, e) ||
-        !qa_builtin_observations(&m->options.services, &m->observations, e))
-        return false;
+    if (!qa_builtin_players(&m->options.services, &m->players_order, e)) return false;
+    if (!qa_builtin_observations(&m->options.services, &m->observations, e)) return false;
     if (!mode_objects_frame(m, v, elapsed, e))
         return false;
     if (v->value.rules.source == QA_MODE_ROGUE && v->value.rules.teamplay >= 4 &&
@@ -1100,7 +1116,7 @@ static bool frame(qa_modes *m, qa_mode_id id, uint64_t now, uint64_t elapsed,
             return false;
     }
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-        uint32_t i = m->players_order.ids[ordinal].slot;
+        uint32_t i = m->players_order.actors[ordinal].slot;
         mode_member *p = &v->members[i];
         if (!p->joined || !mode_player_get(m, p->actor))
             continue;
@@ -1183,7 +1199,7 @@ bool qa_modes_actor_released(qa_modes *m, qa_actor_record released, qa_error *e)
         if (!v->active)
             continue;
         for (size_t j = 0; j < m->players_order.count; ++j) {
-            mode_member *other = mode_member_get(m, v, m->players_order.ids[j]);
+            mode_member *other = mode_member_get(m, v, m->players_order.actors[j]);
             if (other && qa_actor_id_equal(other->player.follow_target, released.id))
                 other->player.follow_target = (qa_actor_id){0};
         }

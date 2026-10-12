@@ -990,11 +990,12 @@ static bool publication_dispose_checked(qa_application *application,
         (!publication->published || discarded_initial_world);
     if (discard_physics && !qa_physics_dispose(application->physics, error))
         return false;
+    qa_modes_destroy(publication->modes);
+    publication->modes = NULL;
     if (discarded_initial_world &&
         !qa_world_destroy(publication->initial_world, error))
         return false;
     publication->initial_world = NULL;
-    qa_modes_destroy(publication->modes);
     free(publication->mode_ids);
     qa_entities_free(&publication->entities);
     qa_collision_destroy(publication->geometry);

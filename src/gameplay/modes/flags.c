@@ -71,7 +71,7 @@ static bool capture(qa_modes *m, mode_instance *v, mode_object *flag, qa_actor_i
     if (source == QA_MODE_LMCTF && (v->value.rules.flags & 512u)) {
         int allies = 0, enemies = 0;
         for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-            uint32_t i = m->players_order.ids[ordinal].slot;
+            uint32_t i = m->players_order.actors[ordinal].slot;
             mode_member *p = &v->members[i];
             mode_player *player = p->joined ? mode_player_get(m, p->actor) : NULL;
             qa_team_id t;
@@ -92,7 +92,7 @@ static bool capture(qa_modes *m, mode_instance *v, mode_object *flag, qa_actor_i
     if (!points(m, v, actor, personal, e))
         return false;
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-        uint32_t i = m->players_order.ids[ordinal].slot;
+        uint32_t i = m->players_order.actors[ordinal].slot;
         mode_member *p = &v->members[i];
         mode_player *player = p->joined ? mode_player_get(m, p->actor) : NULL;
         qa_team_id t;
@@ -206,7 +206,7 @@ bool mode_flag_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id 
                 return false;
             if (source == QA_MODE_LMCTF)
                 for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-                    uint32_t i = m->players_order.ids[ordinal].slot;
+                    uint32_t i = m->players_order.actors[ordinal].slot;
                     mode_member *member = &v->members[i];
                     qa_team_id t;
                     if (member->joined && qa_modes_team(m, v->id, member->actor, &t, NULL) && t == team &&
@@ -290,7 +290,7 @@ static bool threewave_defense(qa_modes *m, mode_instance *v, mode_member *killer
     qa_actor_id centers[] = {killer->actor, dead->actor};
     for (size_t pass = 0; pass < 2; ++pass) {
         for (size_t ordinal = 0; ordinal < m->players_order.count && !carrier_bonus; ++ordinal) {
-            qa_actor_id actor = m->players_order.ids[ordinal];
+            qa_actor_id actor = m->players_order.actors[ordinal];
             mode_member *member = mode_member_get(m, v, actor);
             mode_player *player = mode_player_get(m, actor);
             qa_team_id current;
@@ -326,7 +326,7 @@ static bool rogue_defense(qa_modes *m, mode_instance *v, mode_member *killer, mo
     qa_actor_id centers[] = {killer->actor, dead->actor};
     for (size_t pass = 0; pass < 2; ++pass)
         for (size_t i = m->observations.count; i > 0; --i) {
-            qa_actor_id actor = m->observations.ids[i - 1];
+            qa_actor_id actor = m->observations.actors[i - 1];
             if (!near_center(m, actor, centers[pass], 400))
                 continue;
             mode_member *p = mode_member_get(m, v, actor);
@@ -441,7 +441,7 @@ bool mode_flag_bonus(qa_modes *m, mode_instance *v, qa_actor_id attacker, qa_act
             return true;
     }
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-        uint32_t i = m->players_order.ids[ordinal].slot;
+        uint32_t i = m->players_order.actors[ordinal].slot;
         mode_member *p = &v->members[i];
         qa_team_id t;
         if (!p->joined || !p->flag.registry || qa_actor_id_equal(p->actor, attacker) ||

@@ -6,15 +6,15 @@ bool q3_killbox(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
         return false;
     if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
         return true;
-    qa_builtin_snapshot_frame *frame = q3_bounds_snapshot(
-        game, qa_bounds_translate(body.bounds, body.origin), QA_COLLISION_SOLID, error);
-    if (!frame)
+    qa_world_actor_snapshot snapshot;
+    if (!q3_bounds_snapshot(game, qa_bounds_translate(body.bounds, body.origin),
+        QA_COLLISION_SOLID, &snapshot, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; i < frame->snapshot.count; ++i) {
+    for (size_t i = 0; i < snapshot.count; ++i) {
         if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
             break;
-        qa_actor_id candidate = frame->snapshot.ids[i];
+        qa_actor_id candidate = snapshot.actors[i];
         if (qa_actor_id_equal(candidate, actor))
             continue;
         qa_linked_body linked;
@@ -42,7 +42,7 @@ bool q3_killbox(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
         if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
             break;
     }
-    qa_builtin_snapshot_release(frame);
+    q3_bounds_snapshot_release(game, &snapshot);
     return ok;
 }
 static bool teleport_player(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin, qa_vec3 angles,
@@ -419,14 +419,13 @@ static bool kamikaze_area(qa_q3_game *game, qa_actor_id explosion, qa_actor_id a
                           qa_vec3 origin, float radius, float damage, bool shock, qa_error *error) {
     radius = fmaxf(1, radius);
     qa_vec3 extent = qa_v3(radius, radius, radius);
-    qa_builtin_snapshot_frame *frame = q3_bounds_snapshot(
-        game, (qa_bounds){qa_vec_sub(origin, extent), qa_vec_add(origin, extent)},
-        QA_COLLISION_BOTH, error);
-    if (!frame)
+    qa_world_actor_snapshot snapshot;
+    if (!q3_bounds_snapshot(game, (qa_bounds){qa_vec_sub(origin, extent), qa_vec_add(origin, extent)},
+        QA_COLLISION_BOTH, &snapshot, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; i < frame->snapshot.count; ++i) {
-        qa_actor_id actor = frame->snapshot.ids[i];
+    for (size_t i = 0; i < snapshot.count; ++i) {
+        qa_actor_id actor = snapshot.actors[i];
         if (actor.slot >= game->capacity ||
             !qa_actors_get(qa_session_actors(game->options.services.session), actor))
             continue;
@@ -484,7 +483,7 @@ static bool kamikaze_area(qa_q3_game *game, qa_actor_id explosion, qa_actor_id a
         else
             cooldown->damage_after = q3_add_time(game->now_ms, 3000);
     }
-    qa_builtin_snapshot_release(frame);
+    q3_bounds_snapshot_release(game, &snapshot);
     return ok;
 }
 bool q3_kamikaze_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {

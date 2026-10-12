@@ -97,7 +97,7 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
             v->value.rules.kind >= QA_MODE_TEAM_DEATHMATCH) {
             int counts[2] = {0};
             for (size_t i = 0; i < m->players_order.count; ++i) {
-                qa_actor_id other = m->players_order.ids[i];
+                qa_actor_id other = m->players_order.actors[i];
                 qa_team_id own;
                 if (qa_actor_id_equal(other, actor) || !mode_member_get(m, v, other) ||
                     !qa_modes_team(m, v->id, other, &own, NULL))
@@ -180,7 +180,7 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
                 continue;
             mode_member *leader = NULL, *first = NULL, *human = NULL;
             for (size_t i = 0; i < m->players_order.count; ++i) {
-                qa_actor_id other = m->players_order.ids[i];
+                qa_actor_id other = m->players_order.actors[i];
                 mode_player *candidate = mode_player_get(m, other);
                 mode_member *participant = mode_member_get(m, v, other);
                 qa_team_id own;
@@ -243,7 +243,7 @@ static bool follow(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_actor_id ta
     if (cycle) {
         size_t start = SIZE_MAX;
         for (size_t i = 0; i < m->players_order.count; ++i)
-            if (qa_actor_id_equal(m->players_order.ids[i], member->player.follow_target)) {
+            if (qa_actor_id_equal(m->players_order.actors[i], member->player.follow_target)) {
                 start = i;
                 break;
             }
@@ -252,7 +252,7 @@ static bool follow(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_actor_id ta
             size_t index = start == SIZE_MAX ? (cycle > 0 ? step - 1 : n - step)
                            : cycle > 0       ? (start + step) % n
                                              : (start + n - step) % n;
-            qa_actor_id candidate = m->players_order.ids[index];
+            qa_actor_id candidate = m->players_order.actors[index];
             if (followable(m, v, actor, candidate)) {
                 target = candidate;
                 automatic = 0;
@@ -314,9 +314,9 @@ bool qa_modes_follow_target(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_ac
     }
     unsigned count = 0;
     for (size_t i = 0; i < m->players_order.count; ++i)
-        if (followable(m, v, actor, m->players_order.ids[i]) &&
+        if (followable(m, v, actor, m->players_order.actors[i]) &&
             ++count == (unsigned)member->player.automatic_follow) {
-            *out = m->players_order.ids[i];
+            *out = m->players_order.actors[i];
             break;
         }
     return true;

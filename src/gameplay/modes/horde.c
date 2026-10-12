@@ -11,7 +11,6 @@ typedef struct horde_state {
     size_t point_count;
     horde_monster *monsters;
     horde_loot *loot;
-    qa_builtin_actor_snapshot finish_order, count_order;
     bool prepared, checking, finishing, wave_check_active;
 } horde_state;
 typedef struct squad_member {
@@ -100,8 +99,6 @@ void mode_horde_free(mode_instance *v) {
     free(h->points);
     free(h->monsters);
     free(h->loot);
-    qa_builtin_snapshot_free(&h->finish_order);
-    qa_builtin_snapshot_free(&h->count_order);
     free(h);
     v->horde = NULL;
 }
@@ -132,16 +129,6 @@ bool qa_modes_horde_configure(qa_modes *m, qa_mode_id id, const qa_horde_options
         free(h->loot);
         free(h);
         qa_error_set(e, QA_ERROR_MEMORY, 0, "allocating Horde actors");
-        return false;
-    }
-    if (!qa_builtin_snapshot_reserve(&h->finish_order, m->actor_capacity, e) ||
-        !qa_builtin_snapshot_reserve(&h->count_order, m->actor_capacity, e)) {
-        free(h->points);
-        free(h->monsters);
-        free(h->loot);
-        qa_builtin_snapshot_free(&h->finish_order);
-        qa_builtin_snapshot_free(&h->count_order);
-        free(h);
         return false;
     }
     if (count)
@@ -189,7 +176,7 @@ bool qa_modes_horde_toggle_point(qa_modes *m, qa_mode_id id, qa_actor_id point, 
 static size_t living(qa_modes *m, mode_instance *v) {
     size_t count = 0;
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-        uint32_t i = m->players_order.ids[ordinal].slot;
+        uint32_t i = m->players_order.actors[ordinal].slot;
         mode_member *p = &v->members[i];
         mode_player *player = p->joined ? mode_player_get(m, p->actor) : NULL;
         if (player && !p->player.spectator && mode_alive(m, p->actor))
@@ -203,7 +190,7 @@ static qa_actor_id choose_target(qa_modes *m, mode_instance *v) {
         return (qa_actor_id){0};
     float roll = random_value(m, v) * (float)count;
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-        uint32_t i = m->players_order.ids[ordinal].slot;
+        uint32_t i = m->players_order.actors[ordinal].slot;
         mode_member *p = &v->members[i];
         if (!p->joined || !mode_player_get(m, p->actor))
             continue;
@@ -222,7 +209,7 @@ static bool blocked(qa_modes *m, mode_instance *v, const qa_horde_point *point) 
         return false;
     float width = point->kind == QA_HORDE_RANGED || point->kind == QA_HORDE_BOSS ? 44 : 80;
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-        uint32_t i = m->players_order.ids[ordinal].slot;
+        uint32_t i = m->players_order.actors[ordinal].slot;
         mode_member *p = &v->members[i];
         if (!p->joined || !mode_alive(m, p->actor))
             continue;
@@ -598,11 +585,14 @@ static bool spawn_squad(qa_modes *m, mode_instance *v, horde_state *h, qa_error 
 }
 static bool check_wave(qa_modes *m, mode_instance *v, horde_state *h, qa_error *e) {
     h->value.next_ns = v->value.time_ns + 10 * MODE_SECOND;
-    if (!qa_builtin_observations(&m->options.services, &h->count_order, e))
+    qa_world_actor_snapshot count_order = {0};
+    if (!qa_builtin_observations(&m->options.services, &count_order, e)) {
+        qa_world_snapshot_release(&count_order);
         return false;
+    }
     size_t monsters = 0;
-    for (size_t i = 0; i < h->count_order.count; ++i) {
-        qa_actor_id actor = h->count_order.ids[i];
+    for (size_t i = 0; i < count_order.count; ++i) {
+        qa_actor_id actor = count_order.actors[i];
         qa_builtin_actor_traits traits = {0};
         if (!mode_alive(m, actor))
             continue;
@@ -611,10 +601,11 @@ static bool check_wave(qa_modes *m, mode_instance *v, horde_state *h, qa_error *
         if (traits.monster && traits.classname != m->runtime_names[MODE_NAME_MONSTER_ZOMBIE])
             ++monsters;
     }
+    qa_world_snapshot_release(&count_order);
     if (monsters > (h->value.wave % 3 == 0 || h->value.wave < 3 ? 0u : 5u))
         return true;
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-        uint32_t i = m->players_order.ids[ordinal].slot;
+        uint32_t i = m->players_order.actors[ordinal].slot;
         mode_member *p = &v->members[i];
         if (p->joined && mode_player_get(m, p->actor) && !mode_alive(m, p->actor) &&
             m->options.hooks.respawn &&
@@ -699,7 +690,7 @@ bool mode_horde_reconcile_keys(qa_modes *m, mode_instance *changed, qa_error *e)
         bool present = key_present(m, manager, gold != 0);
         qa_item_id item = m->runtime_names[gold ? MODE_NAME_KEY_GOLD : MODE_NAME_KEY_SILVER];
         for (size_t i = 0; i < m->players_order.count; ++i) {
-            qa_actor_id actor = m->players_order.ids[i];
+            qa_actor_id actor = m->players_order.actors[i];
             if (!mode_player_get(m, actor)) continue;
             bool participating = key_player(m, manager, actor);
             if (!participating && !mode_member_get(m, changed, actor)) continue;
@@ -725,7 +716,7 @@ static bool change_keys(qa_modes *m, qa_mode_id id, bool gold, int change, qa_er
     if (before == present) return true;
     qa_item_id item = m->runtime_names[gold ? MODE_NAME_KEY_GOLD : MODE_NAME_KEY_SILVER];
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-        qa_actor_id actor = m->players_order.ids[ordinal];
+        qa_actor_id actor = m->players_order.actors[ordinal];
         if (mode_player_get(m, actor) && key_player(m, manager, actor) &&
             !mode_set_count(m, actor, item, present ? 1 : 0, e))
             return false;
@@ -859,7 +850,7 @@ static bool loot_touch(qa_modes *m, qa_actor_id item_actor, qa_actor_id actor, b
             if (current >= loot->capacity)
                 return true;
             for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-                uint32_t i = m->players_order.ids[ordinal].slot;
+                uint32_t i = m->players_order.actors[ordinal].slot;
                 mode_member *p = &v->members[i];
                 if (!p->joined || !mode_alive(m, p->actor))
                     continue;
@@ -961,7 +952,7 @@ bool mode_horde_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
         return true;
     }
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-        uint32_t i = m->players_order.ids[ordinal].slot;
+        uint32_t i = m->players_order.actors[ordinal].slot;
         mode_member *p = &v->members[i];
         if (p->joined && p->stats.streak > 0 && v->value.time_ns > p->stats.last_kill_ns) {
             int streak = p->stats.streak;
@@ -977,7 +968,7 @@ bool mode_horde_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
         }
     }
     for (size_t ordinal = 0; ordinal < m->observations.count; ++ordinal) {
-        uint32_t i = m->observations.ids[ordinal].slot;
+        uint32_t i = m->observations.actors[ordinal].slot;
         horde_loot *loot = &h->loot[i];
         if (loot->kind != HORDE_POWER || !loot->fade_ns || !mode_live(m, loot->actor) ||
             v->value.time_ns < loot->fade_ns)
@@ -1044,10 +1035,13 @@ bool qa_modes_horde_finish(qa_modes *m, qa_mode_id id, qa_error *e) {
     h->finishing = true;
     h->value.next_ns = 0;
     h->value.spawning = false;
-    if (!qa_builtin_observations(&m->options.services, &h->finish_order, e))
+    qa_world_actor_snapshot finish_order = {0};
+    if (!qa_builtin_observations(&m->options.services, &finish_order, e)) {
+        qa_world_snapshot_release(&finish_order);
         return false;
-    for (size_t i = 0; i < h->finish_order.count; ++i) {
-        qa_actor_id actor = h->finish_order.ids[i];
+    }
+    for (size_t i = 0; i < finish_order.count; ++i) {
+        qa_actor_id actor = finish_order.actors[i];
         qa_builtin_actor_traits traits = {0};
         if (!m->options.services.actor_traits ||
             !m->options.services.actor_traits(m->options.services.context, actor, &traits) ||
@@ -1059,6 +1053,7 @@ bool qa_modes_horde_finish(qa_modes *m, qa_mode_id id, qa_error *e) {
         monster->kill_ns = v->value.time_ns + MODE_SECOND / 5 +
                            (uint64_t)(random_value(m, v) * 1.8f * (float)MODE_SECOND);
     }
+    qa_world_snapshot_release(&finish_order);
     return true;
 }
 bool qa_modes_horde_count_monster(qa_modes *m, qa_mode_id id, qa_actor_id actor) {

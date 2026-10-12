@@ -137,24 +137,22 @@ static bool controls_fields(qa_source_save_io *io, qa_bot_controls *controls)
     I(controls->think_time_ms); B(controls->paused); B(controls->challenge); B(controls->fast_chat);
     B(controls->no_chat); B(controls->rocket_jump); B(controls->grapple); B(controls->report); return true;
 }
-static bool snapshot_fields(qa_source_save_io *io, qa_builtin_actor_snapshot *snapshot)
+static bool snapshot_fields(qa_source_save_io *io, qa_world_actor_snapshot *snapshot)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    if (!qa_source_save_count(io, &snapshot->capacity, SIZE_MAX / (2 * sizeof(*snapshot->ids))) ||
-        snapshot->capacity > qa_actors_capacity(qa_session_actors(io->session)) ||
-        !qa_source_save_count(io, &snapshot->count, snapshot->capacity)) return false;
+    size_t capacity=snapshot->capacity,count=snapshot->count;
+    if (!qa_source_save_count(io, &capacity, SIZE_MAX / (2 * sizeof(*snapshot->actors))) ||
+        capacity > qa_actors_capacity(qa_session_actors(io->session)) ||
+        !qa_source_save_count(io, &count, capacity)) return false;
     if (reading) {
-        if (snapshot->count > (io->input.size - io->offset) / 13)
+        if (count > (io->input.size - io->offset) / 13)
             return bot_save_fail(io, QA_ERROR_FORMAT, "Truncated retained bot population observations");
-        if (snapshot->capacity) {
-            snapshot->ids = calloc(snapshot->capacity, 2 * sizeof(*snapshot->ids));
-            if (!snapshot->ids)
-                return bot_save_fail(io, QA_ERROR_MEMORY, "Restoring retained bot observation capacity");
-            snapshot->sort = snapshot->ids + snapshot->capacity;
+        if (capacity) {
+            snapshot->capacity=capacity;snapshot->count=count;
         }
-    } else if (snapshot->capacity && (!snapshot->ids || snapshot->sort != snapshot->ids + snapshot->capacity))
+    } else if (capacity && !snapshot->actors)
         return bot_save_fail(io, QA_ERROR_FORMAT, "Incomplete actual bot observation buffers");
-    for (size_t i = 0; i < snapshot->count; ++i) A(snapshot->ids[i]);
+    for (size_t i = 0; i < count; ++i) A(snapshot->actors[i]);
     return true;
 }
 static bool waypoint_chain(const bot_source_orders_state *orders,const bot_source_waypoint *point,
@@ -287,7 +285,7 @@ static void clear(qa_bots *bots)
         free(bots->source_cells[i]);
     }
     free(bots->clients); qa_actor_index_destroy(&bots->actor_clients);
-    qa_builtin_snapshot_free(&bots->entities); qa_builtin_snapshot_free(&bots->players);
+    qa_arena_destroy(&bots->observation_storage);
 }
 static bool fields(qa_source_save_io *io, qa_bots *bots,const bot_source_orders_state *waypoints)
 {
@@ -357,7 +355,7 @@ static bool fields(qa_source_save_io *io, qa_bots *bots,const bot_source_orders_
         uint32_t client=expected;U(client);
         if(reading && client!=expected) return false;
     }
-    return snapshot_fields(io, &bots->entities) && snapshot_fields(io, &bots->players);
+    return snapshot_fields(io,&bots->entities) && snapshot_fields(io,&bots->players);
 }
 bool qa_bots_population_capture(const qa_bots *bots, qa_buffer *out, qa_error *error)
 {
@@ -378,7 +376,8 @@ bool qa_bots_population_restore(qa_bots *bots, qa_bytes bytes, qa_error *error)
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Prepared bot population already owns continuation records"); return false;
     }
     qa_bots scratch = {.runtime = bots->runtime, .services = bots->services}; qa_source_save_io io = {0};
-    bool ok = qa_source_save_reader(&io, bots->services.shared.session, bytes, error) && signature(&io) &&
+    bool ok = bot_ai_observations_prepare(&scratch,error) &&
+        qa_source_save_reader(&io, bots->services.shared.session, bytes, error) && signature(&io) &&
         fields(&io,&scratch,&scratch.source_orders) && scratch.client_capacity == bots->client_capacity &&
         qa_source_save_finish(&io, NULL) && topology(&scratch, error);
     for(uint32_t i=0;ok && i<64;++i) if(scratch.source_cells[i])

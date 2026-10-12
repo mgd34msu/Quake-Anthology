@@ -571,7 +571,7 @@ bool qa_modes_object_at(qa_modes *m, size_t index, qa_actor_id *actor, qa_mode_o
     if (!m || !actor || !out)
         return mode_fail(e, "invalid native objective enumeration");
     for (size_t i = 0; i < m->observations.count; ++i) {
-        mode_object *o = mode_object_get(m, m->observations.ids[i]);
+        mode_object *o = mode_object_get(m, m->observations.actors[i]);
         if (o && !index--) {
             *actor = o->actor;
             return qa_modes_object_read(m, o->actor, out);
@@ -867,7 +867,7 @@ bool mode_objects_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_erro
             return false;
     }
     for (size_t ordinal = 0; ordinal < m->observations.count; ++ordinal) {
-        uint32_t i = m->observations.ids[ordinal].slot;
+        uint32_t i = m->observations.actors[ordinal].slot;
         mode_object *o = &m->objects[i];
         if (!o->active || o->mode.slot != v->id.slot || o->mode.generation != v->id.generation ||
             !mode_live(m, o->actor))

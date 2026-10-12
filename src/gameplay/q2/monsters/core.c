@@ -2106,23 +2106,23 @@ bool qa_q2_monsters_end_frame(qa_q2_game *game, qa_error *error) {
   }
   if (game->options.rules != QA_RULESET_Q2_RERELEASE)
     return true;
-  qa_builtin_snapshot_frame *snapshot = q2_scratch_acquire(game, error);
-  if (!snapshot)
+  qa_world_actor_snapshot snapshot = {0};
+  if (!q2_scratch_acquire(game, &snapshot, error))
     return false;
-  bool ok = qa_builtin_observations(&game->services, &snapshot->snapshot, error);
+  bool ok = qa_builtin_observations(&game->services, &snapshot, error);
   if (ok) {
     size_t count = 0;
-    for (size_t i = 0; i < snapshot->snapshot.count; i++) {
-      qa_actor_id id = snapshot->snapshot.ids[i];
+    for (size_t i = 0; i < snapshot.count; i++) {
+      qa_actor_id id = snapshot.actors[i];
       q2_actor *actor = q2_actor_get(game, id, false, NULL);
       if (actor && actor->monster && actor->projectile.kind == Q2_PROJECTILE_NONE &&
           actor->monster->controller_kind == Q2M_CONTROLLER_NONE && actor->monster->definition)
-        snapshot->snapshot.ids[count++] = id;
+        snapshot.actors[count++] = id;
     }
-    snapshot->snapshot.count = count;
-    qa_builtin_sort_observations(&game->services, &snapshot->snapshot);
-    for (size_t i = 0; i < snapshot->snapshot.count; i++) {
-      qa_actor_id id = snapshot->snapshot.ids[i];
+    snapshot.count = count;
+    qa_builtin_sort_observations(&game->services, &snapshot);
+    for (size_t i = 0; i < snapshot.count; i++) {
+      qa_actor_id id = snapshot.actors[i];
       if (q2_actor_live(game, id) &&
           !qa_q2_run_actor(game, id, finish_actor_damage, game, error)) {
         ok = false;
@@ -2130,7 +2130,7 @@ bool qa_q2_monsters_end_frame(qa_q2_game *game, qa_error *error) {
       }
     }
   }
-  qa_builtin_snapshot_release(snapshot);
+  q2_scratch_release(game, &snapshot);
   return ok;
 }
 

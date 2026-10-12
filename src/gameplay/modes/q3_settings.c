@@ -71,7 +71,7 @@ static bool wait(qa_modes *m, mode_instance *v, qa_error *e) {
 static bool enough_team(qa_modes *m, mode_instance *v, qa_team_id team, bool *found, qa_error *e) {
     *found = false;
     for (size_t i = 0; i < m->players_order.count; ++i) {
-        qa_actor_id actor = m->players_order.ids[i];
+        qa_actor_id actor = m->players_order.actors[i];
         mode_member *member = mode_member_get(m, v, actor);
         mode_player *player = member ? mode_player_get(m, actor) : NULL;
         if (!player || !player->connected || player->connecting || member->player.spectator) continue;
@@ -129,7 +129,7 @@ bool mode_q3_limits(qa_modes *m, mode_instance *v, qa_error *e) {
         if (v->value.team_scores[0] >= settings->frag_limit ||
             v->value.team_scores[1] >= settings->frag_limit) return qa_modes_end(m, v->id, 0, e);
         for (size_t i = 0; i < m->players_order.count; ++i) {
-            qa_actor_id actor = m->players_order.ids[i];
+            qa_actor_id actor = m->players_order.actors[i];
             mode_member *member = mode_member_get(m, v, actor);
             mode_player *player = member ? mode_player_get(m, actor) : NULL;
             if (!player || !player->connected || player->connecting || member->player.spectator) continue;

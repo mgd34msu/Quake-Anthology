@@ -204,11 +204,11 @@ static bool aim(struct application_qc_state *engine, qa_qc_instance *vm, qa_erro
         if (eligible) return qa_qc_return_vector(vm, forward, error);
     }
     /* A nested query gets its own snapshot; callbacks may reenter aim. */
-    qa_builtin_actor_snapshot targets = {0};
+    qa_world_actor_snapshot targets = {0};
     bool ok = qa_builtin_observations(&engine->services, &targets, error), selected = false;
     qa_vec3 selected_origin = {0};
     for (size_t i = 0; ok && i < targets.count; ++i) {
-        qa_actor_id target = targets.ids[i];
+        qa_actor_id target = targets.actors[i];
         ok = aim_eligible(engine, reference, actor, target, teams, &eligible, error);
         if (!ok || !eligible) continue;
         qa_body_state target_body;
@@ -221,7 +221,7 @@ static bool aim(struct application_qc_state *engine, qa_qc_instance *vm, qa_erro
             best = alignment; selected_origin = target_body.origin; selected = true;
         }
     }
-    qa_builtin_snapshot_free(&targets);
+    qa_world_snapshot_release(&targets);
     if (!ok) return false;
     if (selected) {
         qa_vec3 delta = qa_vec_sub(selected_origin, body.origin);

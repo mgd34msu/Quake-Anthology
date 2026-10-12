@@ -179,12 +179,25 @@ bool application_bots_initial_settings(qa_application *app,const qa_launch_seat 
     if(size>capacity) return application_fail(error,QA_ERROR_ARGUMENT,"original bot character path exceeds its output extent");
     memcpy(character,path,size);*skill=seat->bot_skill;return true;
 }
+bool application_bots_observations_prepare(application_bots *bots,qa_error *error) {
+    size_t capacity=qa_actors_capacity(qa_session_actors(bots->application->session));
+    if(capacity>SIZE_MAX/sizeof(qa_actor_id))
+        return application_fail(error,QA_ERROR_MEMORY,"Bot observations exceed native storage");
+    qa_actor_id *actors=capacity?qa_arena_alloc(&bots->observation_storage,
+        capacity*sizeof(*actors),_Alignof(qa_actor_id),error):NULL;
+    if(capacity && !actors) return false;
+    bots->pickup_snapshot=(qa_world_actor_snapshot){.actors=actors,
+        .world=bots->application->world,.borrowed=true};
+    qa_arena_seal(&bots->observation_storage);
+    return true;
+}
 static bool pickup_list(void *opaque,int32_t client,const qa_actor_id **out,size_t *count,void **lease,qa_error *error) {
     application_bots *bots=opaque;(void)client;
     if(bots->pickup_borrowed) return application_fail(error,QA_ERROR_ARGUMENT,"bot pickup snapshot is already borrowed");
     qa_builtin_services services=application_builtin_services(bots->application,bots->application->world,bots->application->physics);
+    bots->pickup_snapshot.capacity=qa_actors_capacity(qa_session_actors(bots->application->session));
     if(!qa_builtin_observations(&services,&bots->pickup_snapshot,error)) return false;
-    bots->pickup_borrowed=true;*out=bots->pickup_snapshot.ids;*count=bots->pickup_snapshot.count;*lease=bots;return true;
+    bots->pickup_borrowed=true;*out=bots->pickup_snapshot.actors;*count=bots->pickup_snapshot.count;*lease=bots;return true;
 }
 static void pickup_end(void *opaque,void *lease) {
     application_bots *bots=opaque;if(lease==bots) bots->pickup_borrowed=false;
@@ -318,7 +331,7 @@ static bool bot_entity_extent(void *opaque,uint32_t *out,qa_error *error) {
     *out=source && source->kind==APPLICATION_PROVIDER_Q3?QA_Q3_SOURCE_ENTITIES:
         qa_actors_capacity(qa_session_actors(bots->application->session));return true;
 }
-static bool bot_entity_list(void *opaque,qa_builtin_actor_snapshot *out,qa_error *error) {
+static bool bot_entity_list(void *opaque,qa_world_actor_snapshot *out,qa_error *error) {
     application_bots *bots=opaque;application_provider *source=bot_source(bots);
     qa_builtin_services shared=application_builtin_services(bots->application,bots->application->world,bots->application->physics);
     if(!qa_builtin_observations(&shared,out,error)) return false;
@@ -329,7 +342,7 @@ static bool bot_entity_list(void *opaque,qa_builtin_actor_snapshot *out,qa_error
             if(!application_bot_world_read(bots->shared_world,(int32_t)number,&actual,error)) return false;
             if(!actual.present) continue;
             if(out->count>=out->capacity) return application_fail(error,QA_ERROR_FORMAT,"shared bot source list exceeds actual actor storage");
-            out->ids[out->count++]=actual.actor;
+            out->actors[out->count++]=actual.actor;
         }
         return true;
     }
@@ -343,7 +356,7 @@ static bool bot_entity_list(void *opaque,qa_builtin_actor_snapshot *out,qa_error
         if(!binding.actor.registry || !qa_actors_get(qa_session_actors(bots->application->session),binding.actor) ||
            out->count>=out->capacity)
             return application_fail(error,QA_ERROR_FORMAT,"bot physical source entity list lost its actual actor extent");
-        out->ids[out->count++]=binding.actor;
+        out->actors[out->count++]=binding.actor;
     }
     return true;
 }
@@ -826,7 +839,7 @@ static bool close_bots(application_bots *bots,qa_error *error) {
         qa_resource_release(graph->asset_resource);qa_vfs_acquisition_dispose(&graph->asset_acquisition);free(graph);}
     while(bots->guests) {application_bot_guest *guest=bots->guests;bots->guests=guest->next;free(guest);}
     application_bots_knowledge_dispose(bots);
-    qa_builtin_snapshot_free(&bots->pickup_snapshot);qa_entities_free(&bots->entities);
+    qa_arena_destroy(&bots->observation_storage);qa_entities_free(&bots->entities);
     while(bots->script_files) {
         application_bot_script_file *file=bots->script_files;bots->script_files=file->next;
         qa_resource_release(file->resource);qa_vfs_acquisition_dispose(&file->acquisition);free(file);
@@ -985,6 +998,7 @@ static bool prepare_bots(qa_application *application,const qa_launch_choices *ch
     application_bots *bots=calloc(1,sizeof(*bots));
     if(!bots) return application_fail(error,QA_ERROR_MEMORY,"allocating application native bot owner");
     bots->application=application;bots->source=actual_source;bots->capacity=capacity;bots->geometry=*geometry;
+    if(!application_bots_observations_prepare(bots,error)) goto fail;
     uint32_t actor_capacity=qa_actors_capacity(qa_session_actors(application->session));
     uint32_t entity_base=actor_capacity>QA_Q3_SOURCE_ENTITIES?actor_capacity:QA_Q3_SOURCE_ENTITIES;
     if(actor_capacity>=INT32_MAX || guest_count>(INT32_MAX-entity_base)/QA_Q3_SOURCE_ENTITIES ||

@@ -173,7 +173,7 @@ static bool clear_collision_owner(qa_q2_game *g, q2_actor *a, qa_error *e) {
     collision.owner = (qa_actor_reference){0};
     return qa_world_set_collision(g->services.world, a->id, &collision, e);
 }
-static bool prox_open(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *snapshot,
+static bool prox_open(qa_q2_game *g, q2_actor *a, qa_world_actor_snapshot *snapshot,
                       qa_error *e) {
     q2_projectile *p = &a->projectile;
     if (p->frame != 9) {
@@ -197,7 +197,7 @@ static bool prox_open(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sna
     if (!qa_builtin_nearby(&g->services, body.origin, 202, snapshot, e))
         return false;
     for (size_t i = 0; i < snapshot->count; ++i) {
-        qa_actor_id target = snapshot->ids[i];
+        qa_actor_id target = snapshot->actors[i];
         if (!q2_actor_live(g, target))
             continue;
         if (qa_actor_id_equal(target, a->id))
@@ -237,7 +237,7 @@ static bool prox_open(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sna
     p->next_ns = q2_deadline(g->now_ns, 200 * Q2_MS);
     return true;
 }
-static bool tesla_activate(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *snapshot,
+static bool tesla_activate(qa_q2_game *g, q2_actor *a, qa_world_actor_snapshot *snapshot,
                            qa_error *e) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
@@ -251,7 +251,7 @@ static bool tesla_activate(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot
         if (!qa_builtin_nearby(&g->services, body.origin, 192, snapshot, e))
             return false;
         for (size_t i = 0; i < snapshot->count; ++i) {
-            qa_actor_id target = snapshot->ids[i];
+            qa_actor_id target = snapshot->actors[i];
             if (!q2_actor_live(g, target))
                 continue;
             if (!player_start(g, target))
@@ -416,7 +416,7 @@ static bool trap_gibs(qa_q2_game *g, q2_actor *a, const qa_body_state *body, qa_
     }
     return true;
 }
-static bool trap_think(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *snapshot,
+static bool trap_think(qa_q2_game *g, q2_actor *a, qa_world_actor_snapshot *snapshot,
                        qa_error *e) {
     q2_projectile *p = &a->projectile;
     qa_actor_id id = a->id;
@@ -476,7 +476,7 @@ static bool trap_think(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
     if (!qa_builtin_nearby(&g->services, body.origin, 256, snapshot, e))
         return false;
     for (size_t i = 0; i < snapshot->count; ++i) {
-        qa_actor_id target = snapshot->ids[i];
+        qa_actor_id target = snapshot->actors[i];
         if (!q2_actor_live(g, target))
             continue;
         if (qa_actor_id_equal(target, id))
@@ -604,14 +604,14 @@ static bool trap_think(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
     return frame_event(g, a, e);
 }
 static bool mine_scan(qa_q2_game *g, q2_actor *a,
-                      bool (*run)(qa_q2_game *, q2_actor *, qa_builtin_actor_snapshot *,
+                      bool (*run)(qa_q2_game *, q2_actor *, qa_world_actor_snapshot *,
                                   qa_error *),
                       qa_error *e) {
-    qa_builtin_snapshot_frame *scratch = q2_scratch_acquire(g, e);
-    if (scratch == NULL)
+    qa_world_actor_snapshot scratch = {0};
+    if (!q2_scratch_acquire(g, &scratch, e))
         return false;
-    bool ok = run(g, a, &scratch->snapshot, e);
-    qa_builtin_snapshot_release(scratch);
+    bool ok = run(g, a, &scratch, e);
+    q2_scratch_release(g, &scratch);
     return ok;
 }
 bool q2_mine_think(qa_q2_game *g, q2_actor *a, qa_error *e) {

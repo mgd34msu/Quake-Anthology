@@ -222,11 +222,11 @@ static bool bfg_target(qa_q2_game *g, qa_actor_id id, bool *eligible, qa_error *
     return true;
 }
 static bool bfg_effect_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, qa_vec3 origin,
-                           const qa_builtin_actor_snapshot *targets, qa_error *e) {
+                           const qa_world_actor_snapshot *targets, qa_error *e) {
     for (size_t i = 0; i < targets->count; ++i) {
         if (!live(g, id))
             return true;
-        qa_actor_id target = targets->ids[i];
+        qa_actor_id target = targets->actors[i];
         if (qa_actor_id_equal(target, id) || qa_actor_id_equal(target, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner)) ||
             !q2_target_damageable(g, target))
             continue;
@@ -299,20 +299,20 @@ static bool bfg_effect_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p
 }
 static bool bfg_effect(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, qa_vec3 origin,
                        qa_error *e) {
-    qa_builtin_snapshot_frame *scratch = q2_nearby(g, origin, p->radius, e);
-    if (scratch == NULL)
+    qa_world_actor_snapshot scratch = {0};
+    if (!q2_nearby(g, origin, p->radius, &scratch, e))
         return false;
-    bool ok = bfg_effect_run(g, id, p, origin, &scratch->snapshot, e);
-    qa_builtin_snapshot_release(scratch);
+    bool ok = bfg_effect_run(g, id, p, origin, &scratch, e);
+    q2_scratch_release(g, &scratch);
     return ok;
 }
 static bool bfg_fly_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, qa_vec3 origin,
-                        const qa_builtin_actor_snapshot *targets, qa_actor_id *excluded,
+                        const qa_world_actor_snapshot *targets, qa_actor_id *excluded,
                         qa_error *e) {
     for (size_t i = 0; i < targets->count; ++i) {
         if (!live(g, id))
             return true;
-        qa_actor_id target = targets->ids[i];
+        qa_actor_id target = targets->actors[i];
         if (qa_actor_id_equal(target, id) || qa_actor_id_equal(target, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner)) ||
             !q2_target_damageable(g, target))
             continue;
@@ -406,11 +406,21 @@ static bool bfg_fly_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, q
 }
 static bool bfg_fly(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, qa_vec3 origin,
                     qa_error *e) {
-    qa_builtin_snapshot_frame *scratch = q2_nearby(g, origin, 256, e);
-    if (scratch == NULL)
+    qa_world_actor_snapshot scratch = {0};
+    if (!q2_nearby(g, origin, 256, &scratch, e))
         return false;
-    bool result = bfg_fly_run(g, id, p, origin, &scratch->snapshot, scratch->snapshot.sort, e);
-    qa_builtin_snapshot_release(scratch);
+    qa_actor_id rerelease_excluded[16];
+    qa_world_actor_snapshot history = {0};
+    if (g->options.rules != QA_RULESET_Q2_RERELEASE &&
+        !q2_scratch_acquire(g, &history, e)) {
+        q2_scratch_release(g, &scratch);
+        return false;
+    }
+    qa_actor_id *excluded = g->options.rules == QA_RULESET_Q2_RERELEASE
+                               ? rerelease_excluded : history.actors;
+    bool result = bfg_fly_run(g, id, p, origin, &scratch, excluded, e);
+    q2_scratch_release(g, &history);
+    q2_scratch_release(g, &scratch);
     return result;
 }
 static bool bfg_laser_spawn(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_error *e) {

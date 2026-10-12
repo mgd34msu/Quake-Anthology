@@ -254,12 +254,12 @@ static bool say(qa_q2_game *g, q2_actor *a, const char *text, bool team, qa_erro
     message[length] = 0;
     team_name(q2_player_source_skin(g, a->client), (g->options.deathmatch_flags & 64) != 0, own_team,
               sizeof(own_team));
-    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
-    if (!players)
+    qa_world_actor_snapshot players = {0};
+    if (!q2_player_roster(g, &players, e))
         return false;
     bool okay = true;
-    for (size_t i = 0; i < players->snapshot.count; i++) {
-        qa_actor_id other = players->snapshot.ids[i];
+    for (size_t i = 0; i < players.count; i++) {
+        qa_actor_id other = players.actors[i];
         qa_builtin_player_info info;
         if (!q2_player_info(g, other, &info))
             continue;
@@ -273,7 +273,7 @@ static bool say(qa_q2_game *g, q2_actor *a, const char *text, bool team, qa_erro
             break;
         }
     }
-    qa_builtin_snapshot_release(players);
+    q2_scratch_release(g, &players);
     return okay;
 }
 static bool write_count(qa_q2_game *g, qa_actor_id actor, qa_item_id item, double capacity,

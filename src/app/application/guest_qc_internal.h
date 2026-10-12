@@ -122,7 +122,6 @@ struct application_qc_state {
     qa_lightstyles lightstyles;
     application_qc_message *messages;
     size_t message_count, message_capacity;
-    qa_builtin_actor_snapshot observations;
     application_qc_actor *actors;
     uint32_t actor_capacity;
 };

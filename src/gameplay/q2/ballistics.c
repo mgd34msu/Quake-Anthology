@@ -1,5 +1,6 @@
 #include "qa/q2_sound.h"
 #include "internal.h"
+#include "player/internal.h"
 #include "qa/game_q2_source.h"
 
 float q2_hitscan_range(void) { return 8192; }
@@ -100,16 +101,16 @@ bool q2_prepare_radius_damage(void *context, qa_damage_request *request, bool *a
 }
 bool q2_radius_damage(qa_q2_game *g, const qa_builtin_radius *radius, size_t *damaged,
                       qa_error *e) {
-    qa_builtin_snapshot_frame *scratch = q2_nearby(g, radius->origin, radius->radius, e);
-    if (scratch == NULL)
+    qa_world_actor_snapshot scratch = {0};
+    if (!q2_nearby(g, radius->origin, radius->radius, &scratch, e))
         return false;
     qa_builtin_radius request = *radius;
     request.has_candidates = true;
     request.candidate_radius_only = true;
-    request.candidates = scratch->snapshot.ids;
-    request.candidate_count = scratch->snapshot.count;
+    request.candidates = scratch.actors;
+    request.candidate_count = scratch.count;
     bool ok = qa_builtin_radius_damage(&g->services, &request, damaged, e);
-    qa_builtin_snapshot_release(scratch);
+    q2_scratch_release(g, &scratch);
     return ok;
 }
 static qa_vec3 spread(q2_weapon_call *c, qa_vec3 origin, qa_vec3 direction, float hs, float vs) {
@@ -341,33 +342,47 @@ static bool rail_run(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float 
                 Q2_NAME_RESOURCE_Q2_RAIL_WATER, 12, start, trace.end, e)) &&
            q2_noise_for_actor(c->game, c->actor->id, trace.end, true, e);
 }
-qa_builtin_snapshot_frame *q2_scratch_acquire(qa_q2_game *g, qa_error *e) {
-    return qa_builtin_snapshot_acquire(&g->trace_frames, g->capacity < 16 ? 16 : g->capacity, e);
+bool q2_scratch_acquire(qa_q2_game *g, qa_world_actor_snapshot *out, qa_error *e) {
+    if (!qa_world_snapshot_acquire(g->services.world, out, e))
+        return false;
+    ++g->player_runtime->active_queries;
+    return true;
 }
-qa_builtin_snapshot_frame *q2_nearby(qa_q2_game *g, qa_vec3 origin, float radius, qa_error *e) {
-    qa_builtin_snapshot_frame *scratch = q2_scratch_acquire(g, e);
-    if (scratch != NULL &&
-        !qa_builtin_nearby(&g->services, origin, radius, &scratch->snapshot, e)) {
-        qa_builtin_snapshot_release(scratch);
-        return NULL;
-    }
-    return scratch;
+void q2_scratch_release(qa_q2_game *g, qa_world_actor_snapshot *snapshot) {
+    if (!snapshot->frame)
+        return;
+    qa_world_snapshot_release(snapshot);
+    --g->player_runtime->active_queries;
 }
-qa_builtin_snapshot_frame *q2_player_roster(qa_q2_game *g, qa_error *e) {
-    qa_builtin_snapshot_frame *scratch = q2_scratch_acquire(g, e);
-    if (scratch != NULL && !qa_builtin_players(&g->services, &scratch->snapshot, e)) {
-        qa_builtin_snapshot_release(scratch);
-        return NULL;
+bool q2_nearby(qa_q2_game *g, qa_vec3 origin, float radius,
+               qa_world_actor_snapshot *out, qa_error *e) {
+    if (!q2_scratch_acquire(g, out, e))
+        return false;
+    if (!qa_builtin_nearby(&g->services, origin, radius, out, e)) {
+        q2_scratch_release(g, out);
+        return false;
     }
-    return scratch;
+    return true;
+}
+bool q2_player_roster(qa_q2_game *g, qa_world_actor_snapshot *out, qa_error *e) {
+    if (!q2_scratch_acquire(g, out, e))
+        return false;
+    if (!qa_builtin_players(&g->services, out, e)) {
+        q2_scratch_release(g, out);
+        return false;
+    }
+    return true;
 }
 bool q2_rail(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float damage, float kick, int mod,
              uint32_t flags, qa_error *e) {
-    qa_builtin_snapshot_frame *scratch = q2_scratch_acquire(c->game, e);
-    if (scratch == NULL)
+    qa_world_actor_snapshot scratch = {0};
+    if (!q2_scratch_acquire(c->game, &scratch, e))
         return false;
-    bool result = rail_run(c, start, direction, damage, kick, mod, flags, scratch->snapshot.ids, e);
-    qa_builtin_snapshot_release(scratch);
+    qa_actor_id rerelease_excluded[16];
+    qa_actor_id *excluded = c->rules == QA_RULESET_Q2_RERELEASE
+                               ? rerelease_excluded : scratch.actors;
+    bool result = rail_run(c, start, direction, damage, kick, mod, flags, excluded, e);
+    q2_scratch_release(c->game, &scratch);
     return result;
 }
 

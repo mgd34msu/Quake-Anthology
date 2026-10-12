@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `c2ce87ad`.
+Follow-up source changes were reviewed through main `56e76dfc`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -400,3 +400,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `164b9aec` / 03-08, 04-025, J12-07, J37-01: The Q2 CLIENT metadata constructor and SDK variant are deleted; callers use the existing common profile constructor. Q3 force-model and SystemInfo scratch use protocol-extent storage, diagnostic rows use common leased arena storage, and rankings use the original C integer policy. Normal build and seven core suites passed; no live/gameplay or global completion claim. Records: `/tmp/qa-ta3196-common-client-primitives-20261012-v1`.
 
 - `c2ce87ad` / J20-04: Q1 gameplay and Rogue flag observations use common world leases; the private Q1 frame pool, map reset scan and checkpoint scan are removed while public callback custody remains. Rogue source order and full IDs are preserved. Normal build and seven core suites passed. J33-01 remains open for builtin, Q2, modes and bot callers currently being migrated. Records: `/tmp/qa-ta3196-q1-common-snapshot-leases-20261012-v1`.
+
+- `56e76dfc` / partial adoption: Moved retained presentation, bot and profiler names to common indexed storage. New admission peaks can still grow storage; this does not establish whole-frame zero allocation. Records: `/tmp/qa-ta3196-common-retained-name-storage-20261012-v1`.

@@ -111,37 +111,10 @@ bool qa_q1_game_check_client(qa_q1_game *g, qa_actor_id observer,
 }
 
 bool q1_snapshot_actors(qa_q1_game *g, qa_world_actor_snapshot *out, qa_error *error) {
-    if (!qa_world_snapshot_acquire(g->services.world, out, error))
-        return false;
-    const qa_actor_registry *actors = qa_session_actors(g->services.session);
-    uint32_t cursor = 0;
-    const qa_actor_record *record;
-    while (qa_actors_next(actors, &cursor, &record))
-        out->actors[out->count++] = record->id;
-    return true;
+    return qa_builtin_observations(&g->services, out, error);
 }
 bool q1_snapshot_players(qa_q1_game *g, qa_world_actor_snapshot *out, qa_error *error) {
-    if (!g->services.players) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "native gameplay needs the ordered client roster");
-        return false;
-    }
-    if (!qa_world_snapshot_acquire(g->services.world, out, error))
-        return false;
-    size_t count = 0;
-    if (!g->services.players(g->services.context, out->actors, out->capacity, &count, error)) {
-        qa_world_snapshot_release(out);
-        return false;
-    }
-    if (count > out->capacity) {
-        qa_world_snapshot_release(out);
-        qa_error_set(error, QA_ERROR_FORMAT, count, "native player roster exceeds actor capacity");
-        return false;
-    }
-    const qa_actor_registry *actors = qa_session_actors(g->services.session);
-    for (size_t i = 0; i < count; ++i)
-        if (qa_actors_get(actors, out->actors[i]))
-            out->actors[out->count++] = out->actors[i];
-    return true;
+    return qa_builtin_players(&g->services, out, error);
 }
 bool q1_snapshot_targets(qa_q1_game *g, qa_targets *targets, qa_string_id name,
                          qa_world_actor_snapshot *out, qa_error *error) {

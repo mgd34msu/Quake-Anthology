@@ -186,13 +186,13 @@ static bool relay(qa_q2_game *g, q2_actor *a, qa_actor_id activator, bool period
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
         return false;
     qa_bounds bounds = absolute_bounds(body);
-    qa_builtin_snapshot_frame *frame = q2_player_roster(g, e);
-    if (!frame)
+    qa_world_actor_snapshot frame = {0};
+    if (!q2_player_roster(g, &frame, e))
         return false;
     bool okay = false;
     size_t inside = 0, outside = 0;
-    for (size_t i = 0; i < frame->snapshot.count; i++) {
-        qa_actor_id id = frame->snapshot.ids[i];
+    for (size_t i = 0; i < frame.count; i++) {
+        qa_actor_id id = frame.actors[i];
         bool active;
         if (!eligible(g, id, &active, e))
             goto out;
@@ -206,7 +206,7 @@ static bool relay(qa_q2_game *g, q2_actor *a, qa_actor_id activator, bool period
             outside++;
     }
     if (!outside) {
-        qa_actor_id first = frame->snapshot.count ? frame->snapshot.ids[0] : (qa_actor_id){0};
+        qa_actor_id first = frame.count ? frame.actors[0] : (qa_actor_id){0};
         if (!relay_fire(g, a, periodic ? first : activator, e))
             goto out;
         okay = !periodic || !q2_actor_live(g, a->id) ||
@@ -214,8 +214,8 @@ static bool relay(qa_q2_game *g, q2_actor *a, qa_actor_id activator, bool period
         goto out;
     }
     if ((!periodic || inside) && s->timestamp_ns < g->now_ns) {
-        for (size_t i = 0; i < frame->snapshot.count; i++) {
-            qa_actor_id id = frame->snapshot.ids[i];
+        for (size_t i = 0; i < frame.count; i++) {
+            qa_actor_id id = frame.actors[i];
             if (!q2_actor_live(g, id))
                 continue;
             bool active;
@@ -251,7 +251,7 @@ static bool relay(qa_q2_game *g, q2_actor *a, qa_actor_id activator, bool period
         s->timestamp_ns = q2_deadline(g->now_ns, 5 * Q2_NS);
     okay = !periodic || q2_entity_schedule(g, a, Q2ET_COOP_RELAY, s->wait);
 out:
-    qa_builtin_snapshot_release(frame);
+    q2_scratch_release(g, &frame);
     return okay;
 }
 bool q2_rerelease_poi(qa_q2_game *g, q2_actor *source, qa_actor_id activator, qa_error *e) {
@@ -800,18 +800,18 @@ bool qa_q2_entities_player_frame(qa_q2_game *g, qa_actor_id id, qa_error *e) {
                                  .slot = (int)slot};
         if (remove) {
             *bar = (q2_healthbar){0};
-            qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
-            if (!players)
+            qa_world_actor_snapshot players = {0};
+            if (!q2_player_roster(g, &players, e))
                 return false;
             bool okay = true;
-            for (size_t i = 0; i < players->snapshot.count; i++) {
-                event.recipient = players->snapshot.ids[i];
+            for (size_t i = 0; i < players.count; i++) {
+                event.recipient = players.actors[i];
                 if (q2_actor_live(g, event.recipient) && !q2_map_event(g, &event, e)) {
                     okay = false;
                     break;
                 }
             }
-            qa_builtin_snapshot_release(players);
+            q2_scratch_release(g, &players);
             if (!okay)
                 return false;
             if (!q2_actor_live(g, id))

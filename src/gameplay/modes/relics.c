@@ -32,7 +32,7 @@ static bool relic_spot(qa_modes *m, mode_instance *v, bool initial, qa_vec3 *ori
         float farthest = 0;
         if (initial)
             for (size_t i = 0; i < m->observations.count; ++i) {
-                qa_actor_id actor = m->observations.ids[i];
+                qa_actor_id actor = m->observations.actors[i];
                 qa_string_id name = actor_class(m, actor);
                 if (name != m->runtime_names[MODE_NAME_ITEM_HEALTH])
                     continue;
@@ -42,7 +42,7 @@ static bool relic_spot(qa_modes *m, mode_instance *v, bool initial, qa_vec3 *ori
                 float nearest = 9999999;
                 bool found[QA_RELIC_COUNT] = {0};
                 for (size_t j = i + 1; j < m->observations.count; ++j) {
-                    mode_object *rune = mode_object_get(m, m->observations.ids[j]);
+                    mode_object *rune = mode_object_get(m, m->observations.actors[j]);
                     if (!rune || rune->spec.kind != QA_MODE_OBJECT_RELIC ||
                         rune->mode.slot != v->id.slot ||
                         rune->mode.generation != v->id.generation || found[rune->spec.relic])
@@ -63,7 +63,7 @@ static bool relic_spot(qa_modes *m, mode_instance *v, bool initial, qa_vec3 *ori
         for (size_t kind = 0; !selected.registry && kind < 3; ++kind) {
             size_t count = 0;
             for (size_t i = 0; i < m->observations.count; ++i) {
-                qa_string_id name = actor_class(m, m->observations.ids[i]);
+                qa_string_id name = actor_class(m, m->observations.actors[i]);
                 if (name == m->runtime_names[health_classes[kind]])
                     ++count;
             }
@@ -75,9 +75,9 @@ static bool relic_spot(qa_modes *m, mode_instance *v, bool initial, qa_vec3 *ori
             if (chosen)
                 --chosen;
             for (size_t i = 0; i < m->observations.count; ++i) {
-                qa_string_id name = actor_class(m, m->observations.ids[i]);
+                qa_string_id name = actor_class(m, m->observations.actors[i]);
                 if (name == m->runtime_names[health_classes[kind]] && !chosen--) {
-                    selected = m->observations.ids[i];
+                    selected = m->observations.actors[i];
                     break;
                 }
             }

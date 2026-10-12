@@ -196,12 +196,12 @@ bool q2_player_copy_corpse(qa_q2_game *g, q2_actor *a, qa_error *e) {
 }
 static bool coop_death(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_players *runtime = g->player_runtime;
-    qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
-    if (!players)
+    qa_world_actor_snapshot players = {0};
+    if (!q2_player_roster(g, &players, e))
         return false;
     bool all_dead = true, okay = true;
-    for (size_t i = 0; i < players->snapshot.count; ++i) {
-        qa_actor_id id = players->snapshot.ids[i];
+    for (size_t i = 0; i < players.count; ++i) {
+        qa_actor_id id = players.actors[i];
         if (!q2_actor_live(g, id))
             continue;
         qa_combat_state health = {0};
@@ -223,7 +223,7 @@ static bool coop_death(qa_q2_game *g, q2_actor *a, qa_error *e) {
             break;
         }
     }
-    qa_builtin_snapshot_release(players);
+    q2_scratch_release(g, &players);
     if (!okay || !q2_actor_live(g, a->id))
         return okay;
     if (!all_dead) {
@@ -233,11 +233,10 @@ static bool coop_death(qa_q2_game *g, q2_actor *a, qa_error *e) {
     runtime->restart_ns = q2_deadline(g->now_ns, 5 * Q2_NS);
     qa_string_id message;
     message=g->runtime_names[Q2_NAME_RESOURCE_G_COOP_LOSE];
-    players = q2_player_roster(g, e);
-    if (!players)
+    if (!q2_player_roster(g, &players, e))
         return false;
-    for (size_t i = 0; i < players->snapshot.count; ++i) {
-        qa_actor_id id = players->snapshot.ids[i];
+    for (size_t i = 0; i < players.count; ++i) {
+        qa_actor_id id = players.actors[i];
         if (q2_actor_live(g, id) &&
             !qa_builtin_emit(&g->services,
                              &(qa_builtin_event){.kind = QA_BUILTIN_CENTERPRINT,
@@ -250,7 +249,7 @@ static bool coop_death(qa_q2_game *g, q2_actor *a, qa_error *e) {
             break;
         }
     }
-    qa_builtin_snapshot_release(players);
+    q2_scratch_release(g, &players);
     return okay;
 }
 bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcome, qa_error *e) {

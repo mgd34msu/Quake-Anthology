@@ -134,22 +134,22 @@ bool q2m_widow_powerups(q2m_context *context, qa_error *error) {
     if (!context->game->options.cooperative)
         return !context->monster->enemy.registry ||
                respond(context, context->monster->enemy, error);
-    qa_builtin_snapshot_frame *roster = q2_player_roster(context->game, error);
-    if (!roster)
+    qa_world_actor_snapshot roster = {0};
+    if (!q2_player_roster(context->game, &roster, error))
         return false;
     size_t count = 0;
-    for (size_t i = 0; i < roster->snapshot.count && q2m_alive(context); ++i) {
-        qa_actor_id actor = roster->snapshot.ids[i];
+    for (size_t i = 0; i < roster.count && q2m_alive(context); ++i) {
+        qa_actor_id actor = roster.actors[i];
         qa_builtin_actor_traits traits;
         if (q2_actor_live(context->game, actor) && context->game->services.actor_traits &&
             context->game->services.actor_traits(context->game->services.context, actor, &traits) &&
             traits.player && q2_actor_live(context->game, actor))
-            roster->snapshot.ids[count++] = actor;
+            roster.actors[count++] = actor;
     }
     bool ok = true, found = false;
     for (unsigned priority = 0; priority != 3 && !found && q2m_alive(context); ++priority) {
         for (size_t i = 0; i < count && q2m_alive(context); ++i) {
-            qa_actor_id actor = roster->snapshot.ids[i];
+            qa_actor_id actor = roster.actors[i];
             qa_builtin_powerups source;
             if (!powers(context, actor, &source, error)) {
                 ok = false;
@@ -168,6 +168,6 @@ bool q2m_widow_powerups(q2m_context *context, qa_error *error) {
         if (!ok)
             break;
     }
-    qa_builtin_snapshot_release(roster);
+    q2_scratch_release(context->game, &roster);
     return ok;
 }

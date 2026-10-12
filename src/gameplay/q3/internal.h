@@ -135,7 +135,7 @@ struct qa_q3_game {
     qa_actor_id body_queue[8];
     uint32_t podium_players[3];
     uint32_t body_queue_index;
-    qa_builtin_snapshot_frame *snapshot_frames;
+    size_t snapshot_depth;
     q3_map_runtime *map;
     q3_wire_state *wire;
     qa_q3_shader_remap_state shader_remaps;
@@ -195,7 +195,8 @@ bool q3_configstrings_prepare(qa_q3_game *, const qa_q3_checkpoint *, qa_string_
 void q3_configstrings_discard(qa_string_id *);
 void q3_configstrings_commit(qa_q3_game *, qa_string_id *);
 bool q3_rollback_spawn(qa_q3_game *, qa_actor_id, qa_error *);
-qa_builtin_snapshot_frame *q3_bounds_snapshot(qa_q3_game *, qa_bounds, qa_collision_role, qa_error *);
+bool q3_bounds_snapshot(qa_q3_game *, qa_bounds, qa_collision_role, qa_world_actor_snapshot *, qa_error *);
+void q3_bounds_snapshot_release(qa_q3_game *, qa_world_actor_snapshot *);
 bool q3_use_holdable(qa_q3_game *, qa_actor_id, qa_q3_holdable, qa_error *);
 qa_actor_id q3_portal_destination(qa_q3_game *, int32_t sequence);
 bool q3_inventory_holdable_changed(qa_q3_game *, qa_actor_id, qa_q3_holdable before,

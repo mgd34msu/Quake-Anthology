@@ -282,13 +282,13 @@ static bool coop_target(q2m_context *context, qa_actor_id *out, qa_error *error)
     qa_q2_game *game = context->game;
     if (!game->options.cooperative || !q2m_alive(context))
         return true;
-    qa_builtin_snapshot_frame *roster = q2_player_roster(game, error);
-    if (!roster)
+    qa_world_actor_snapshot roster = {0};
+    if (!q2_player_roster(game, &roster, error))
         return false;
     bool ok = true;
     size_t count = 0;
-    for (size_t i = 0; i < roster->snapshot.count && q2m_alive(context); ++i) {
-        qa_actor_id id = roster->snapshot.ids[i];
+    for (size_t i = 0; i < roster.count && q2m_alive(context); ++i) {
+        qa_actor_id id = roster.actors[i];
         qa_builtin_actor_traits traits;
         if (!q2_actor_live(game, id) || !game->services.actor_traits ||
             !game->services.actor_traits(game->services.context, id, &traits) || !traits.player)
@@ -301,13 +301,13 @@ static bool coop_target(q2m_context *context, qa_actor_id *out, qa_error *error)
             break;
         }
         if (q2m_alive(context) && q2_actor_live(game, id) && visible)
-            roster->snapshot.ids[count++] = id;
+            roster.actors[count++] = id;
     }
     if (ok && count && q2m_alive(context)) {
         size_t choice = (size_t)(q2m_random(game) * (float)count);
-        *out = roster->snapshot.ids[choice < count ? choice : count - 1];
+        *out = roster.actors[choice < count ? choice : count - 1];
     }
-    qa_builtin_snapshot_release(roster);
+    q2_scratch_release(game, &roster);
     return ok;
 }
 
@@ -363,12 +363,12 @@ bool q2m_widow_slots(q2m_context *context, qa_error *error) {
     qa_q2_game *game = context->game;
     int slots = game->options.skill < 2 ? 3 : game->options.skill == 2 ? 4 : 6;
     if (game->options.cooperative) {
-        qa_builtin_snapshot_frame *roster = q2_player_roster(game, error);
-        if (!roster)
+        qa_world_actor_snapshot roster = {0};
+        if (!q2_player_roster(game, &roster, error))
             return false;
         int64_t players = 0;
-        for (size_t i = 0; i < roster->snapshot.count && q2m_alive(context); ++i) {
-            qa_actor_id id = roster->snapshot.ids[i];
+        for (size_t i = 0; i < roster.count && q2m_alive(context); ++i) {
+            qa_actor_id id = roster.actors[i];
             qa_builtin_actor_traits traits;
             bool player = q2_actor_live(game, id) && game->services.actor_traits &&
                           game->services.actor_traits(game->services.context, id, &traits) &&
@@ -376,7 +376,7 @@ bool q2m_widow_slots(q2m_context *context, qa_error *error) {
             if (q2m_alive(context) && player && q2_actor_live(game, id))
                 ++players;
         }
-        qa_builtin_snapshot_release(roster);
+        q2_scratch_release(game, &roster);
         int64_t total = slots + game->options.skill * (players - 1);
         slots = (int)(total > 6 ? 6 : total);
     }

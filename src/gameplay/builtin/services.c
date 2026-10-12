@@ -112,74 +112,6 @@ bool qa_builtin_q1_lightstyle(const qa_builtin_services *s, qa_actor_owner provi
     return qa_builtin_emit(s, &event, error);
 }
 
-bool qa_builtin_snapshot_reserve(qa_builtin_actor_snapshot *snapshot, size_t capacity,
-                                 qa_error *error) {
-    if (!snapshot || capacity > SIZE_MAX / (2 * sizeof(qa_actor_id))) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid native actor snapshot capacity");
-        return false;
-    }
-    if (capacity <= snapshot->capacity)
-        return true;
-    qa_actor_id *ids = malloc(2 * capacity * sizeof(*ids));
-    if (!ids) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot reserve native actor snapshot");
-        return false;
-    }
-    if (snapshot->count)
-        memcpy(ids, snapshot->ids, snapshot->count * sizeof(*ids));
-    free(snapshot->ids);
-    snapshot->ids = ids;
-    snapshot->sort = ids + capacity;
-    snapshot->capacity = capacity;
-    return true;
-}
-void qa_builtin_snapshot_free(qa_builtin_actor_snapshot *snapshot) {
-    if (!snapshot)
-        return;
-    free(snapshot->ids);
-    *snapshot = (qa_builtin_actor_snapshot){0};
-}
-qa_builtin_snapshot_frame *qa_builtin_snapshot_acquire(qa_builtin_snapshot_frame **pool,
-                                                       size_t capacity, qa_error *error) {
-    if (!pool) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "missing native actor snapshot pool");
-        return NULL;
-    }
-    qa_builtin_snapshot_frame *frame = *pool;
-    while (frame && frame->active)
-        frame = frame->next;
-    bool created = !frame;
-    if (created) {
-        frame = calloc(1, sizeof(*frame));
-        if (!frame) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating nested native actor snapshot");
-            return NULL;
-        }
-    }
-    if (!qa_builtin_snapshot_reserve(&frame->snapshot, capacity, error)) {
-        if (created) free(frame);
-        return NULL;
-    }
-    if (created) {
-        frame->next = *pool;
-        *pool = frame;
-    }
-    frame->snapshot.count = 0;
-    frame->active = true;
-    return frame;
-}
-void qa_builtin_snapshot_release(qa_builtin_snapshot_frame *frame) {
-    if (frame) frame->active = false;
-}
-void qa_builtin_snapshot_pool_free(qa_builtin_snapshot_frame **pool) {
-    if (!pool) return;
-    while (*pool) {
-        qa_builtin_snapshot_frame *frame = *pool;
-        *pool = frame->next;
-        qa_builtin_snapshot_free(&frame->snapshot);
-        free(frame);
-    }
-}
 int qa_builtin_source_order(const qa_builtin_services *s, qa_actor_id a, qa_actor_id b) {
     if (s->physics && s->physics->services.source_order)
         return s->physics->services.source_order(s->physics->services.context, a, b);
@@ -196,75 +128,78 @@ int qa_builtin_source_order(const qa_builtin_services *s, qa_actor_id a, qa_acto
 static int snapshot_source_compare(void *context,qa_actor_id left,qa_actor_id right) {
     return qa_builtin_source_order(context,left,right);
 }
-static void sort_snapshot(const qa_builtin_services *s, qa_builtin_actor_snapshot *snapshot) {
-    qa_world_actor_snapshot view={.actors=snapshot->ids,.count=snapshot->count};
-    qa_world_snapshot_sort(&view,snapshot_source_compare,(void *)s);
+void qa_builtin_sort_observations(const qa_builtin_services *s, qa_world_actor_snapshot *snapshot) {
+    qa_world_snapshot_sort(snapshot, snapshot_source_compare, (void *)s);
 }
-void qa_builtin_sort_observations(const qa_builtin_services *s, qa_builtin_actor_snapshot *snapshot) {
-    sort_snapshot(s, snapshot);
+static bool snapshot_prepare(const qa_builtin_services *s, qa_world_actor_snapshot *snapshot,
+                             bool *acquired, qa_error *error) {
+    *acquired = !snapshot->frame && !snapshot->borrowed;
+    if (*acquired && !qa_world_snapshot_acquire(s->world, snapshot, error)) return false;
+    snapshot->count = 0;
+    return true;
 }
-bool qa_builtin_observations(const qa_builtin_services *s, qa_builtin_actor_snapshot *snapshot,
+bool qa_builtin_observations(const qa_builtin_services *s, qa_world_actor_snapshot *snapshot,
                              qa_error *error) {
-    if (!s || !s->session || !snapshot) {
+    if (!s || !s->session || !s->world || !snapshot) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid native actor observation query");
         return false;
     }
+    bool acquired;
+    if (!snapshot_prepare(s, snapshot, &acquired, error)) return false;
     const qa_actor_registry *actors = qa_session_actors(s->session);
-    if (!qa_builtin_snapshot_reserve(snapshot, qa_actors_capacity(actors), error))
-        return false;
-    snapshot->count = 0;
     const qa_actor_record *record;
     uint32_t cursor = 0;
     while (qa_actors_next(actors, &cursor, &record))
-        snapshot->ids[snapshot->count++] = record->id;
+        snapshot->actors[snapshot->count++] = record->id;
     return true;
 }
 bool qa_builtin_nearby(const qa_builtin_services *s, qa_vec3 origin, float radius,
-                       qa_builtin_actor_snapshot *snapshot, qa_error *error) {
+                       qa_world_actor_snapshot *snapshot, qa_error *error) {
     if (!s || !s->session || !s->world || !snapshot || !qa_vec_finite(origin) ||
         !isfinite(radius) || radius < 0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid native nearby query");
         return false;
     }
-    if (!qa_builtin_snapshot_reserve(snapshot, qa_actors_capacity(qa_session_actors(s->session)), error))
-        return false;
+    bool acquired;
+    if (!snapshot_prepare(s, snapshot, &acquired, error)) return false;
     qa_world_actor_snapshot nearby;
     qa_world_radius_query query = {.origin = origin, .radius = radius,
                                    .metric = QA_WORLD_RADIUS_ORIGIN,
-                                   .actor_storage = snapshot->ids,
+                                   .actor_storage = snapshot->actors,
                                    .actor_capacity = snapshot->capacity};
     if (!qa_world_radius_snapshot_capture(s->world, &query, &nearby, error)) {
-        snapshot->count = 0;
+        if (acquired) qa_world_snapshot_release(snapshot);
         return false;
     }
     snapshot->count = nearby.count;
     qa_world_snapshot_release(&nearby);
-    sort_snapshot(s, snapshot);
+    qa_builtin_sort_observations(s, snapshot);
     return true;
 }
-bool qa_builtin_players(const qa_builtin_services *s, qa_builtin_actor_snapshot *snapshot,
+bool qa_builtin_players(const qa_builtin_services *s, qa_world_actor_snapshot *snapshot,
                         qa_error *error) {
-    if (!s || !s->session || !s->players || !snapshot) {
+    if (!s || !s->session || !s->world || !s->players || !snapshot) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "native gameplay needs the ordered client roster");
         return false;
     }
-    if (!qa_builtin_snapshot_reserve(snapshot, qa_actors_capacity(qa_session_actors(s->session)), error))
-        return false;
-    snapshot->count = 0;
+    bool acquired;
+    if (!snapshot_prepare(s, snapshot, &acquired, error)) return false;
     size_t count = 0;
-    if (!s->players(s->context, snapshot->ids, snapshot->capacity, &count, error))
-        return false;
-    if (count > snapshot->capacity) {
+    bool ok = s->players(s->context, snapshot->actors, snapshot->capacity, &count, error);
+    if (ok && count > snapshot->capacity) {
         qa_error_set(error, QA_ERROR_FORMAT, count, "native player roster exceeds actor capacity");
+        ok = false;
+    }
+    if (!ok) {
+        if (acquired) qa_world_snapshot_release(snapshot);
         return false;
     }
+    const qa_actor_registry *actors = qa_session_actors(s->session);
     for (size_t i = 0; i < count; ++i)
-        if (qa_actors_get(qa_session_actors(s->session), snapshot->ids[i]))
-            snapshot->ids[snapshot->count++] = snapshot->ids[i];
+        if (qa_actors_get(actors, snapshot->actors[i]))
+            snapshot->actors[snapshot->count++] = snapshot->actors[i];
     return true;
 }
-
-
 
 static bool apply_trajectory(const qa_builtin_services *s, qa_actor_id actor,
                              const qa_builtin_trajectory_update *update, qa_error *error) {

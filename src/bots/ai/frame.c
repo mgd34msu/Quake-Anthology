@@ -225,11 +225,13 @@ finished:
 static bool observations(qa_bots *b, qa_error *e) {
     uint32_t extent;
     if (!b->services.entity_extent(b->services.context,&extent,e) ||
-        !qa_bot_runtime_invalidate_entity_range(b->runtime,0,extent,e) ||
-        !b->services.entity_list(b->services.context,&b->entities,e) ||
-        !qa_builtin_players(&b->services.shared, &b->players, e)) return false;
+        !qa_bot_runtime_invalidate_entity_range(b->runtime,0,extent,e)) return false;
+    b->entities.capacity=qa_actors_capacity(qa_session_actors(b->services.shared.session));
+    if (!b->services.entity_list(b->services.context,&b->entities,e)) return false;
+    b->players.capacity=qa_actors_capacity(qa_session_actors(b->services.shared.session));
+    if (!qa_builtin_players(&b->services.shared, &b->players, e)) return false;
     for (size_t i = 0; i < b->entities.count; ++i) {
-        qa_actor_id actor = b->entities.ids[i];
+        qa_actor_id actor = b->entities.actors[i];
         if (!bot_ai_live(b, actor)) continue;
         qa_bot_entity entity;
         if (!b->services.entity(b->services.context, actor, &entity, e)) return false;

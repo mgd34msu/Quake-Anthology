@@ -335,14 +335,14 @@ static bool mal_switch(qa_q2_game *g, q2_actor *a, bool on, qa_error *e) {
     return true;
 }
 static bool nuke(qa_q2_game *g, q2_actor *a, qa_error *e) {
-    qa_builtin_snapshot_frame *frame = q2_scratch_acquire(g, e);
-    if (!frame)
+    qa_world_actor_snapshot frame = {0};
+    if (!q2_scratch_acquire(g, &frame, e))
         return false;
     bool okay = false;
-    if (!qa_builtin_observations(&g->services, &frame->snapshot, e))
+    if (!qa_builtin_observations(&g->services, &frame, e))
         goto out;
-    for (size_t i = 0; i < frame->snapshot.count; i++) {
-        qa_actor_id id = frame->snapshot.ids[i];
+    for (size_t i = 0; i < frame.count; i++) {
+        qa_actor_id id = frame.actors[i];
         qa_builtin_actor_traits traits = {0};
         if (!q2_actor_live(g, id) || qa_actor_id_equal(id, a->id) || !g->services.actor_traits ||
             !g->services.actor_traits(g->services.context, id, &traits))
@@ -360,7 +360,7 @@ static bool nuke(qa_q2_game *g, q2_actor *a, qa_error *e) {
     a->entity->usable = false;
     okay = true;
 out:
-    qa_builtin_snapshot_release(frame);
+    q2_scratch_release(g, &frame);
     return okay;
 }
 bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {

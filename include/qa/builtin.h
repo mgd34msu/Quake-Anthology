@@ -308,34 +308,17 @@ bool qa_builtin_emit(const qa_builtin_services *, const qa_builtin_event *, qa_e
 bool qa_builtin_q1_lightstyle(const qa_builtin_services *, qa_actor_owner, qa_actor_id,
                              uint64_t time_ns, int32_t style, qa_string_id pattern, qa_error *);
 bool qa_builtin_resource(const qa_builtin_services *, const char *, qa_string_id *, qa_error *);
-/* Zero-initialize once, reuse between calls, and free at owner teardown. Each
- * nested gameplay query needs its own retained snapshot. IDs are observations;
- * recheck their generations after callbacks before using live actor state. */
-typedef struct qa_builtin_actor_snapshot {
-    qa_actor_id *ids, *sort;
-    size_t count, capacity;
-} qa_builtin_actor_snapshot;
-bool qa_builtin_snapshot_reserve(qa_builtin_actor_snapshot *, size_t, qa_error *);
-void qa_builtin_snapshot_free(qa_builtin_actor_snapshot *);
-/* Zero-initialize a provider's pool. Nested queries borrow distinct retained
- * frames until release; free the pool only after all queries have returned. */
-typedef struct qa_builtin_snapshot_frame {
-    struct qa_builtin_snapshot_frame *next;
-    qa_builtin_actor_snapshot snapshot;
-    bool active;
-} qa_builtin_snapshot_frame;
-qa_builtin_snapshot_frame *qa_builtin_snapshot_acquire(qa_builtin_snapshot_frame **,
-                                                       size_t, qa_error *);
-void qa_builtin_snapshot_release(qa_builtin_snapshot_frame *);
-void qa_builtin_snapshot_pool_free(qa_builtin_snapshot_frame **);
+/* Zero-initialize each scoped query and release it with qa_world_snapshot_release.
+ * A retained borrowed view may provide constructor-owned roster backing.
+ * Recheck actor generations after callbacks. */
 /* Nearby includes bodies without collision membership and measures origins,
  * then sorts using physics.source_order. Players preserves client order. */
 bool qa_builtin_nearby(const qa_builtin_services *, qa_vec3 origin, float radius,
-                       qa_builtin_actor_snapshot *, qa_error *);
-bool qa_builtin_observations(const qa_builtin_services *, qa_builtin_actor_snapshot *, qa_error *);
+                       qa_world_actor_snapshot *, qa_error *);
+bool qa_builtin_observations(const qa_builtin_services *, qa_world_actor_snapshot *, qa_error *);
 /* Sort retained observations using the configured source-order query. */
-void qa_builtin_sort_observations(const qa_builtin_services *, qa_builtin_actor_snapshot *);
-bool qa_builtin_players(const qa_builtin_services *, qa_builtin_actor_snapshot *, qa_error *);
+void qa_builtin_sort_observations(const qa_builtin_services *, qa_world_actor_snapshot *);
+bool qa_builtin_players(const qa_builtin_services *, qa_world_actor_snapshot *, qa_error *);
 int qa_builtin_source_order(const qa_builtin_services *, qa_actor_id, qa_actor_id);
 /* Update authoritative body fields only; each source retains its own trace and
  * link timing, so a trajectory update does not publish a premature link. */

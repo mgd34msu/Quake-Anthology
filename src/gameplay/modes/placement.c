@@ -24,7 +24,7 @@ bool qa_modes_spawnpoints(qa_modes *m, qa_mode_id id, const qa_mode_spawnpoint *
 static float distance_to_players(qa_modes *m, mode_instance *v, qa_vec3 point, qa_actor_id except) {
     float best = 9999999.0f * 9999999.0f;
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-        uint32_t i = m->players_order.ids[ordinal].slot;
+        uint32_t i = m->players_order.actors[ordinal].slot;
         mode_member *member = &v->members[i];
         mode_player *p = member->joined ? mode_player_get(m, member->actor) : NULL;
         if (!p || member->player.spectator || qa_actor_id_equal(p->actor, except) ||
@@ -90,20 +90,19 @@ static size_t q2_choose(qa_modes *m, mode_instance *v, qa_team_id team, bool far
     return SIZE_MAX;
 }
 static bool telefrag(qa_modes *m, qa_vec3 origin, bool *blocked, qa_error *e) {
-    qa_builtin_snapshot_frame *frame =
-        qa_builtin_snapshot_acquire(&m->snapshot_frames, m->actor_capacity, e);
-    if (!frame) return false;
+    qa_world_actor_snapshot candidates = {0};
+    if (!qa_world_snapshot_acquire(m->options.services.world, &candidates, e)) return false;
     size_t count;
     bool overflow;
     if (!qa_world_query(m->options.services.world,
                         qa_bounds_translate((qa_bounds){{-15, -15, -24}, {15, 15, 32}}, origin),
-                        QA_COLLISION_SOLID, frame->snapshot.ids, frame->snapshot.capacity,
+                        QA_COLLISION_SOLID, candidates.actors, candidates.capacity,
                         &count, &overflow, e)) {
-        qa_builtin_snapshot_release(frame);
+        qa_world_snapshot_release(&candidates);
         return false;
     }
     if (overflow) {
-        qa_builtin_snapshot_release(frame);
+        qa_world_snapshot_release(&candidates);
         return mode_fail(e, "spawn overlap exceeds source actor capacity");
     }
     *blocked = false;
@@ -111,13 +110,13 @@ static bool telefrag(qa_modes *m, qa_vec3 origin, bool *blocked, qa_error *e) {
         qa_builtin_actor_traits traits = {0};
         if (m->options.services.actor_traits &&
             m->options.services.actor_traits(m->options.services.context,
-                frame->snapshot.ids[i], &traits) &&
+                candidates.actors[i], &traits) &&
             traits.player) {
             *blocked = true;
             break;
         }
     }
-    qa_builtin_snapshot_release(frame);
+    qa_world_snapshot_release(&candidates);
     return true;
 }
 static bool q3_choose(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_team_id team,
@@ -262,10 +261,10 @@ static bool q1_spawnpoint(qa_modes *m, mode_instance *v, mode_member *member,
         if (v->value.rules.source == QA_MODE_ROGUE && index != last)
             for (size_t j = 0; j < m->players_order.count; ++j) {
                 if (physical && v->value.origin == QA_MODE_NATIVE_Q1_COMPOSITION &&
-                    !mode_member_get(m, v, m->players_order.ids[j])) continue;
+                    !mode_member_get(m, v, m->players_order.actors[j])) continue;
                 qa_body_state body;
                 qa_error read_error = {0};
-                if (!qa_world_body_read(m->options.services.world, m->players_order.ids[j],
+                if (!qa_world_body_read(m->options.services.world, m->players_order.actors[j],
                     &body, &read_error)) {
                     if (read_error.code == QA_ERROR_NOT_FOUND) continue;
                     if (e) *e = read_error;

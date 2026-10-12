@@ -412,8 +412,8 @@ bool mode_relic_spawn_all(qa_modes *m, mode_instance *v, qa_error *e) {
             return false;
     }
     for (size_t i = 0; i < m->players_order.count; ++i)
-        if (mode_member_get(m, v, m->players_order.ids[i]) &&
-            !qa_modes_publish_items(m, m->players_order.ids[i], e))
+        if (mode_member_get(m, v, m->players_order.actors[i]) &&
+            !qa_modes_publish_items(m, m->players_order.actors[i], e))
             return false;
     return true;
 }
