@@ -22,7 +22,10 @@ bool qa_text_from_source_bytes(qa_bytes, char *out, size_t capacity, size_t *siz
 bool qa_unicode_whitespace(uint32_t scalar);
 bool qa_text_join_words(const char *const *,size_t,char *,size_t,qa_error *);
 /* Counted bytes, including embedded NULs; folding changes ASCII A-Z only. */
+int qa_text_bytes_compare(qa_bytes, qa_bytes, bool ascii_fold);
 bool qa_text_bytes_equal(qa_bytes, qa_bytes, bool ascii_fold);
+bool qa_text_bytes_prefix(qa_bytes text, qa_bytes prefix, bool ascii_fold);
+int qa_text_ascii_compare(const char *, const char *);
 bool qa_text_ascii_equal(const char *, const char *);
 /* Q3 Q_IsColorString/ColorIndex after source-byte or UTF-8 scalar decoding.
  * A literal caret or end of text leaves the palette index unchanged. */

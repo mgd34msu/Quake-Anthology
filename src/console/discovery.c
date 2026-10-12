@@ -10,24 +10,15 @@ typedef struct entry_list {
     qa_console_discovery view;
     size_t capacity;
 } entry_list;
-static unsigned fold(unsigned c) { return c >= 'A' && c <= 'Z' ? c + 'a' - 'A' : c; }
-static int compare_names(const char *a, const char *b) {
-    while (*a && fold((unsigned char)*a) == fold((unsigned char)*b)) {
-        ++a;
-        ++b;
-    }
-    unsigned x = fold((unsigned char)*a), y = fold((unsigned char)*b);
-    return x < y ? -1 : x > y;
-}
 static int compare_entries(const void *a, const void *b) {
     const qa_console_discovery_entry *left = a, *right = b;
-    int order = compare_names(left->name, right->name);
+    int order = qa_text_ascii_compare(left->name, right->name);
     return order ? order : strcmp(left->name, right->name);
 }
 static bool add(entry_list *list, qa_console_discovery_entry entry, qa_error *error) {
     for (size_t i = 0; i < list->view.count; ++i) {
         qa_console_discovery_entry *current = &list->view.entries[i];
-        if ((current->kind != QA_CONSOLE_CVAR && !compare_names(current->name, entry.name)) ||
+        if ((current->kind != QA_CONSOLE_CVAR && qa_text_ascii_equal(current->name, entry.name)) ||
             (current->kind == QA_CONSOLE_CVAR && entry.kind == QA_CONSOLE_CVAR &&
              !strcmp(current->name, entry.name)))
             return true;
@@ -163,16 +154,14 @@ fail:
     qa_console_discovery_free(&list.view);
     return false;
 }
-static bool contains(const char *text, const char *query) {
-    if (!*query)
+static bool contains(const char *text, qa_bytes query) {
+    if (!query.size)
         return true;
     if (!text)
         return false;
-    for (; *text; ++text) {
-        size_t i = 0;
-        while (query[i] && text[i] && fold((unsigned char)text[i]) == fold((unsigned char)query[i]))
-            ++i;
-        if (!query[i])
+    qa_bytes span = {(const uint8_t *)text, strlen(text)};
+    for (; span.size; ++span.data, --span.size) {
+        if (qa_text_bytes_prefix(span, query, true))
             return true;
     }
     return false;
@@ -189,8 +178,9 @@ bool qa_console_entry_matches(const qa_console_discovery_entry *entry, const cha
                            !usage && entry->kind == QA_CONSOLE_CVAR ? " [value]" : ""};
     if (!*query)
         return true;
+    qa_bytes wanted = {(const uint8_t *)query, strlen(query)};
     for (size_t start = 0; start < sizeof(parts) / sizeof(*parts); ++start) {
-        if (contains(parts[start], query))
+        if (contains(parts[start], wanted))
             return true;
         for (size_t offset = 0; parts[start][offset]; ++offset) {
             size_t part = start, at = offset, matched = 0;
@@ -200,7 +190,8 @@ bool qa_console_entry_matches(const qa_console_discovery_entry *entry, const cha
                     at = 0;
                 }
                 if (part == sizeof(parts) / sizeof(*parts) ||
-                    fold((unsigned char)parts[part][at]) != fold((unsigned char)query[matched]))
+                    !qa_text_bytes_equal((qa_bytes){(const uint8_t *)parts[part] + at, 1},
+                                         (qa_bytes){wanted.data + matched, 1}, true))
                     break;
                 ++at;
                 ++matched;
@@ -328,7 +319,7 @@ static bool search_command(void *user, const qa_command_invocation *command, qa_
             }
         if (!found)
             for (size_t i = 0; i < entries.count; ++i)
-                if (!compare_names(entries.entries[i].name, query)) {
+                if (qa_text_ascii_equal(entries.entries[i].name, query)) {
                     found = &entries.entries[i];
                     break;
                 }

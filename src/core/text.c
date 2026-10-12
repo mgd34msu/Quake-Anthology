@@ -19,18 +19,38 @@ bool qa_info_next(const char **cursor,qa_bytes *key,qa_bytes *value)
     return true;
 }
 
-bool qa_text_bytes_equal(qa_bytes key,qa_bytes wanted,bool ascii_fold)
+int qa_text_bytes_compare(qa_bytes left,qa_bytes right,bool ascii_fold)
 {
-    bool match=key.size==wanted.size;
+    size_t count=left.size<right.size?left.size:right.size;
     if (ascii_fold) {
-        for (size_t i=0;match && i<key.size;++i) {
-            unsigned char a=key.data[i],b=wanted.data[i];
+        for (size_t i=0;i<count;++i) {
+            unsigned char a=left.data[i],b=right.data[i];
             if (a>='A' && a<='Z') a+='a'-'A';
             if (b>='A' && b<='Z') b+='a'-'A';
-            match=a==b;
+            if (a!=b) return a<b?-1:1;
         }
-    } else if (match && key.size) match=!memcmp(key.data,wanted.data,key.size);
-    return match;
+    } else if (count) {
+        int order=memcmp(left.data,right.data,count);
+        if (order) return order<0?-1:1;
+    }
+    return left.size==right.size?0:left.size<right.size?-1:1;
+}
+
+bool qa_text_bytes_equal(qa_bytes left,qa_bytes right,bool ascii_fold)
+{
+    return left.size==right.size && !qa_text_bytes_compare(left,right,ascii_fold);
+}
+
+bool qa_text_bytes_prefix(qa_bytes text,qa_bytes prefix,bool ascii_fold)
+{
+    return prefix.size<=text.size &&
+        qa_text_bytes_equal((qa_bytes){text.data,prefix.size},prefix,ascii_fold);
+}
+
+int qa_text_ascii_compare(const char *left,const char *right)
+{
+    return qa_text_bytes_compare((qa_bytes){(const uint8_t *)left,strlen(left)},
+                                (qa_bytes){(const uint8_t *)right,strlen(right)},true);
 }
 
 bool qa_text_ascii_equal(const char *left,const char *right)

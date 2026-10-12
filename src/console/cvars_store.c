@@ -287,16 +287,7 @@ static const qa_cvar_catalog_binding *catalog_name(const char *name, qa_cvar_sid
     while (lower < upper) {
         size_t middle = lower + (upper - lower) / 2;
         const char *candidate = qa_cvar_catalog_string(qa_cvar_catalog_bindings[middle].name);
-        const unsigned char *a = (const unsigned char *)name, *b = (const unsigned char *)candidate;
-        int order = 0;
-        while (*a || *b) {
-            unsigned char aa = *a, bb = *b;
-            if (aa >= 'A' && aa <= 'Z') aa = (unsigned char)(aa + ('a' - 'A'));
-            if (bb >= 'A' && bb <= 'Z') bb = (unsigned char)(bb + ('a' - 'A'));
-            if (aa != bb) { order = aa < bb ? -1 : 1; break; }
-            if (*a) ++a;
-            if (*b) ++b;
-        }
+        int order = qa_text_ascii_compare(name, candidate);
         if (order > 0) lower = middle + 1;
         else upper = middle;
     }

@@ -227,23 +227,8 @@ done:
     visible(field);
     return true;
 }
-static unsigned fold(unsigned c) { return c >= 'A' && c <= 'Z' ? c + 'a' - 'A' : c; }
-static int compare_text(const char *a, const char *b) {
-    while (*a && fold((unsigned char)*a) == fold((unsigned char)*b)) {
-        ++a;
-        ++b;
-    }
-    unsigned x = fold((unsigned char)*a), y = fold((unsigned char)*b);
-    return x < y ? -1 : x > y;
-}
 static int compare_names(const void *a, const void *b) {
-    return compare_text(*(const char *const *)a, *(const char *const *)b);
-}
-static bool starts(const char *name, const char *prefix, size_t length) {
-    for (size_t i = 0; i < length; ++i)
-        if (!name[i] || fold((unsigned char)name[i]) != fold((unsigned char)prefix[i]))
-            return false;
-    return true;
+    return qa_text_ascii_compare(*(const char *const *)a, *(const char *const *)b);
 }
 bool qa_text_field_complete(qa_text_field *field, const char *const *names, size_t count,
                             bool reverse, qa_error *e) {
@@ -273,12 +258,14 @@ bool qa_text_field_complete(qa_text_field *field, const char *const *names, size
             completion_clear(field);
             return fail(e, "Allocating console completion");
         }
+        qa_bytes prefix = {(const uint8_t *)view.text + first, prefix_bytes};
         for (size_t i = 0; i < count; ++i) {
-            if (!names[i] || !starts(names[i], view.text + first, prefix_bytes))
+            if (!names[i] || !qa_text_bytes_prefix(
+                    (qa_bytes){(const uint8_t *)names[i], strlen(names[i])}, prefix, true))
                 continue;
             bool duplicate = false;
             for (size_t j = 0; j < field->match_count; ++j)
-                if (!compare_text(field->matches[j], names[i])) {
+                if (qa_text_ascii_equal(field->matches[j], names[i])) {
                     duplicate = true;
                     break;
                 }

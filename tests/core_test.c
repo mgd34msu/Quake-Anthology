@@ -2084,6 +2084,17 @@ static void test_cvar_info_storage(void)
     CHECK(qa_text_bytes_equal((qa_bytes){upper,sizeof upper},(qa_bytes){lower,sizeof lower},true));
     CHECK(!qa_text_bytes_equal((qa_bytes){upper,sizeof upper},(qa_bytes){lower,sizeof lower},false));
     CHECK(!qa_text_bytes_equal((qa_bytes){upper,sizeof upper},(qa_bytes){other,sizeof other},true));
+    CHECK(!qa_text_bytes_compare((qa_bytes){upper,sizeof upper},(qa_bytes){lower,sizeof lower},true));
+    CHECK(qa_text_bytes_compare((qa_bytes){upper,sizeof upper},(qa_bytes){lower,sizeof lower},false)<0);
+    CHECK(qa_text_bytes_compare((qa_bytes){lower,sizeof lower},(qa_bytes){other,sizeof other},true)<0);
+    CHECK(qa_text_bytes_compare((qa_bytes){lower,2},(qa_bytes){lower,sizeof lower},true)<0);
+    CHECK(!qa_text_bytes_compare((qa_bytes){0},(qa_bytes){0},true));
+    CHECK(qa_text_bytes_prefix((qa_bytes){upper,sizeof upper},(qa_bytes){lower,2},true));
+    CHECK(!qa_text_bytes_prefix((qa_bytes){upper,sizeof upper},(qa_bytes){lower,2},false));
+    CHECK(!qa_text_bytes_prefix((qa_bytes){upper,2},(qa_bytes){lower,sizeof lower},true));
+    CHECK(qa_text_bytes_prefix((qa_bytes){upper,sizeof upper},(qa_bytes){0},true));
+    CHECK(!qa_text_ascii_compare("Alpha","ALPHA"));
+    CHECK(qa_text_ascii_compare("name","name_extra")<0);
     CHECK(qa_text_ascii_equal((const char *)upper,(const char *)other));
     CHECK(!qa_text_ascii_equal("command","command_extra"));
     const char *text="\\name\\first\\Name\\folded\\name\\last\\empty\\\\orphan";
