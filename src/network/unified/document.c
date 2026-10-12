@@ -573,10 +573,8 @@ bool qa_unified_inputs_write(const qa_unified_input_batch *batch, size_t maximum
 static bool typed_decode(qa_unified_document_kind kind, qa_bytes bytes, qa_strings *strings, qa_unified_frame_lease *lease, qa_event_transaction *transaction, qa_unified_document **out, qa_error *error)
 {
     if (kind==QA_UNIFIED_HANDSHAKE_DOCUMENT) {
-        if (bytes.size<5 || memcmp(bytes.data,"QUHS",4)) return bad(error,"Unified handshake has the wrong external envelope");
         qa_unified_handshake value={0};
-        return qa_unified_record_delta_decode(&qa_unified_handshake_layout,
-            (qa_bytes){bytes.data+4,bytes.size-4},NULL,&value,NULL, NULL, NULL, NULL, NULL,error) &&
+        return qa_unified_handshake_read(bytes,&value,error) &&
             qa_unified_document_create_handshake(&value,out,error);
     }
     if (kind==QA_UNIFIED_CONTROL_DOCUMENT && bytes.size>=4 && !memcmp(bytes.data,"QUCT",4)) {

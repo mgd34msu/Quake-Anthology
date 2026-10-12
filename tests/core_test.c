@@ -7,6 +7,7 @@
 #include "qa/pool.h"
 #include "qa/random.h"
 #include "qa/network_unified_frame_pool.h"
+#include "qa/network_unified_session.h"
 #include "qa/network_unified_control.h"
 #include "qa/unified_frame_metadata.h"
 #include "qa/unified_frame_events.h"
@@ -848,6 +849,41 @@ static qa_unified_document *metadata_decode(qa_unified_frame_pool *pool,
     qa_unified_frame_lease_release(lease);qa_unified_document_destroy(source);qa_buffer_free(&wire);
     return decoded;
 }
+static void test_bounded_handshake(void)
+{
+    qa_error error={0};uint8_t storage[512];
+    for (qa_unified_handshake_kind kind=QA_UNIFIED_HELLO;kind<=QA_UNIFIED_CONNECT;++kind) {
+        qa_unified_handshake value={.kind=kind},decoded={0};
+        memset(value.nonce.bytes,0x31,sizeof value.nonce.bytes);
+        memset(value.token.bytes,0x72,sizeof value.token.bytes);
+        qa_bytes wire={0};
+        CHECK(qa_unified_handshake_write(&value,storage,sizeof storage,&wire,&error));
+        CHECK(wire.data==storage && wire.size<=sizeof storage);
+        qa_unified_document *document=NULL;qa_buffer owned={0};
+        CHECK(qa_unified_document_create_handshake(&value,&document,&error));
+        CHECK(qa_unified_document_encode(document,&owned,&error));
+        CHECK(wire.size==owned.size && !memcmp(wire.data,owned.data,wire.size));
+        CHECK(qa_unified_handshake_read(wire,&decoded,&error));
+        CHECK(decoded.kind==kind && !memcmp(decoded.nonce.bytes,value.nonce.bytes,sizeof value.nonce.bytes));
+        qa_unified_token token=kind==QA_UNIFIED_HELLO?(qa_unified_token){0}:value.token;
+        CHECK(!memcmp(decoded.token.bytes,token.bytes,sizeof token.bytes));
+        qa_unified_handshake retained=decoded;
+        storage[wire.size]=0;
+        CHECK(!qa_unified_handshake_read((qa_bytes){storage,wire.size+1},&decoded,&error));
+        CHECK(!memcmp(&decoded,&retained,sizeof decoded));
+        qa_bytes previous=wire;
+        CHECK(!qa_unified_handshake_write(&value,storage,4,&wire,&error));
+        CHECK(wire.data==previous.data && wire.size==previous.size);
+        qa_buffer_free(&owned);qa_unified_document_destroy(document);
+    }
+    qa_unified_handshake untouched={.kind=QA_UNIFIED_CONNECT,.nonce={{1}}},decoded=untouched;
+    const uint8_t unknown[]={'Q','U','H','S',1,3};
+    CHECK(!qa_unified_handshake_read((qa_bytes){unknown,sizeof unknown},&decoded,&error));
+    CHECK(!memcmp(&decoded,&untouched,sizeof decoded));
+    CHECK(!qa_unified_handshake_read((qa_bytes){storage,sizeof storage+1},&decoded,&error));
+    CHECK(!memcmp(&decoded,&untouched,sizeof decoded));
+}
+
 static void test_metadata_retention(void)
 {
     qa_error error={0};qa_unified_frame_pool *pool=qa_unified_frame_pool_create(256*1024,4,&error);CHECK(pool);
@@ -3468,6 +3504,7 @@ int main(int argc, char **argv)
     test_spans();
     test_arena();
     test_reserved_scene_frame();
+    test_bounded_handshake();
     test_metadata_retention();
     test_metadata_names();
     test_files();

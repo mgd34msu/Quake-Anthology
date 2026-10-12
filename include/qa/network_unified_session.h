@@ -147,7 +147,10 @@ typedef struct qa_unified_handshake {
     qa_unified_token nonce, token;
 } qa_unified_handshake;
 bool qa_unified_handshake_read(qa_bytes, qa_unified_handshake *, qa_error *);
-bool qa_unified_handshake_write(const qa_unified_handshake *, qa_buffer *, qa_error *);
+/* Writes into caller-owned storage and publishes its borrowed wire span only
+ * on success. A 512-byte buffer holds every admitted handshake. */
+bool qa_unified_handshake_write(const qa_unified_handshake *, void *storage,
+    size_t capacity, qa_bytes *, qa_error *);
 bool qa_unified_token_random(qa_unified_token *, qa_error *);
 
 #endif

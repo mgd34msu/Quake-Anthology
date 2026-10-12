@@ -79,10 +79,10 @@ static bool send_handshake(qa_unified_bootstrap *b, const qa_net_address *addres
     qa_unified_handshake_kind kind, qa_unified_token nonce, qa_unified_token token, qa_error *e)
 {
     qa_unified_handshake message = {kind, nonce, token};
-    qa_buffer wire = {0};
-    if (!qa_unified_handshake_write(&message, &wire, e)) return false;
-    bool ok = qa_network_send_address(b->runtime, address, (qa_bytes){wire.data, wire.size}, e);
-    qa_buffer_free(&wire); return ok;
+    uint8_t storage[512];
+    qa_bytes wire;
+    return qa_unified_handshake_write(&message, storage, sizeof(storage), &wire, e) &&
+        qa_network_send_address(b->runtime, address, wire, e);
 }
 
 static bool server_receive(qa_unified_bootstrap *b, const qa_net_datagram *packet,
