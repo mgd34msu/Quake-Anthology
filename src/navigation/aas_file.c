@@ -180,15 +180,10 @@ bool nav_aas_read(qa_bytes bytes, const int32_t *checksum, qa_nav_asset **out, q
     *out = asset;
     return true;
 }
-static void store_float(uint8_t *p, float f) {
-    uint32_t bits;
-    memcpy(&bits, &f, sizeof(bits));
-    qa_store_u32le(p, bits);
-}
 static void store_vector(uint8_t *p, qa_vec3 v) {
-    store_float(p, v.x);
-    store_float(p + 4, v.y);
-    store_float(p + 8, v.z);
+    qa_store_f32le(p, v.x);
+    qa_store_f32le(p + 4, v.y);
+    qa_store_f32le(p + 8, v.z);
 }
 bool qa_aas_write(const qa_aas_view *v, qa_buffer *out, qa_error *error) {
     if (out == NULL || !qa_aas_validate(v, error))
@@ -233,7 +228,7 @@ bool qa_aas_write(const qa_aas_view *v, qa_buffer *out, qa_error *error) {
             case QA_AAS_PLANES: {
                 RECORD(planes, qa_aas_plane);
                 V(0, q->normal);
-                store_float(p + 12, q->distance);
+                qa_store_f32le(p + 12, q->distance);
                 I(16, q->type);
                 break;
             }

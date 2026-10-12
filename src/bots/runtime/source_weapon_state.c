@@ -1,15 +1,10 @@
 #include "source_weapon_state.h"
+#include "qa/binary.h"
 #include <limits.h>
 #include <stdlib.h>
 
 static bool fail(qa_error *error,const char *message) {
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"%s",message);return false;
-}
-static uint32_t read_word(const uint8_t *at) {
-    return (uint32_t)at[0]|((uint32_t)at[1]<<8)|((uint32_t)at[2]<<16)|((uint32_t)at[3]<<24);
-}
-static void write_word(uint8_t *at,uint32_t value) {
-    for(uint32_t i=0;i<4;++i) at[i]=(uint8_t)(value>>(i*8));
 }
 static bool span(const bot_weapon_record *record,qa_bot_memory_span *out,qa_error *error) {
     if(!record) return fail(error,"WeaponState source record is absent");
@@ -36,18 +31,18 @@ bool bot_weapon_record_read(const bot_weapon_record *record,bot_weapon_record_wo
     uint32_t *out,qa_error *error) {
     if(!out || !field_valid(field)) return fail(error,"WeaponState read requires its actual field/output");
     qa_bot_memory_span bytes;if(!span(record,&bytes,error)) return false;
-    *out=read_word(bytes.data+(uint32_t)field);return true;
+    *out=qa_load_u32le(bytes.data+(uint32_t)field);return true;
 }
 bool bot_weapon_record_write(const bot_weapon_record *record,bot_weapon_record_word field,
     uint32_t value,qa_error *error) {
     if(!field_valid(field)) return fail(error,"WeaponState write requires its actual field");
     qa_bot_memory_span bytes;if(!span(record,&bytes,error)) return false;
-    write_word(bytes.data+(uint32_t)field,value);return true;
+    qa_store_u32le(bytes.data+(uint32_t)field,value);return true;
 }
 bool bot_weapon_record_reset(const bot_weapon_record *record,qa_error *error) {
     qa_bot_memory_span bytes;if(!span(record,&bytes,error)) return false;
-    uint32_t config=read_word(bytes.data),indexes=read_word(bytes.data+4);
-    write_word(bytes.data,config);write_word(bytes.data+4,indexes);return true;
+    uint32_t config=qa_load_u32le(bytes.data),indexes=qa_load_u32le(bytes.data+4);
+    qa_store_u32le(bytes.data,config);qa_store_u32le(bytes.data+4,indexes);return true;
 }
 bool bot_weapon_indexes_allocate(qa_bot_memory *memory,uint32_t count,
     qa_bot_memory_allocation *out,qa_error *error) {
@@ -64,12 +59,12 @@ bool bot_weapon_index_read(qa_bot_memory *memory,qa_bot_memory_allocation alloca
     int32_t *out,qa_error *error) {
     if(!out) return fail(error,"Weapon index read requires its output");
     qa_bot_memory_span bytes;if(!index_span(memory,allocation,index,&bytes,error)) return false;
-    uint32_t value=read_word(bytes.data);*out=value<=INT32_MAX?(int32_t)value:-1-(int32_t)(UINT32_MAX-value);return true;
+    *out=qa_load_i32le(bytes.data);return true;
 }
 bool bot_weapon_index_write(qa_bot_memory *memory,qa_bot_memory_allocation allocation,uint32_t index,
     int32_t value,qa_error *error) {
     qa_bot_memory_span bytes;if(!index_span(memory,allocation,index,&bytes,error)) return false;
-    write_word(bytes.data,(uint32_t)value);return true;
+    qa_store_u32le(bytes.data,(uint32_t)value);return true;
 }
 void bot_weapon_pointers_init(bot_weapon_pointers *pointers) {
     *pointers=(bot_weapon_pointers){.next_pointer=1};
@@ -152,7 +147,7 @@ bool bot_weapon_config_set(bot_weapon_pointers *pointers,const bot_weapon_record
     qa_bot_memory_span bytes;if(!span(record,&bytes,error)) return false;
     uint32_t pointer=0;
     if(config && !config_pointer(pointers,config,&pointer,error)) return false;
-    uint32_t previous=read_word(bytes.data);
+    uint32_t previous=qa_load_u32le(bytes.data);
     if(previous) {
         bot_weapon_pointer *row=resolve(pointers,previous,error);
         if(!row) return false;
@@ -160,7 +155,7 @@ bool bot_weapon_config_set(bot_weapon_pointers *pointers,const bot_weapon_record
             return fail(error,"Released weapon configuration pointer has another source kind");
         if(--row->references==0) remove_row(pointers,row);
     }
-    write_word(bytes.data,pointer);return true;
+    qa_store_u32le(bytes.data,pointer);return true;
 }
 bool bot_weapon_indexes_get(const bot_weapon_pointers *pointers,const bot_weapon_record *record,
     qa_bot_memory_allocation *out,bool *present,qa_error *error) {
