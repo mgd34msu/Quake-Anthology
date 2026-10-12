@@ -30,7 +30,7 @@ struct guest_host_child {
     bool failed,source_initialized,state_written;
     guest_host_memory *memory;
     guest_host_x86_64_capabilities capability;
-    qa_arena output_storage;
+    qa_arena output_storage,input_storage;
     guest_profile_guard_receipt profile;
     guest_profile_cpu_domain domain;
     guest_host_x86_64_state state;
@@ -56,7 +56,7 @@ typedef struct host_server {
     guest_profile_interest *interests; size_t interest_count,interest_capacity;
     uint64_t stop,run_sequence,bypass,inventory_sequence;
     guest_host_x86_64_capabilities capability;
-    qa_arena output_storage;
+    qa_arena output_storage,input_storage;
     guest_host_x86_64_state state;
     guest_profile_guard_receipt profile;
     guest_profile_cpu_domain domain;
@@ -87,7 +87,7 @@ static bool transfer(int descriptor,void *bytes,size_t count,bool writing,qa_err
     return true;
 }
 static void packet_free(host_packet *packet)
-{ qa_buffer_free(&packet->body);if(packet->descriptor>=0) close(packet->descriptor);packet->descriptor=-1; }
+{ packet->body=(qa_buffer){0};if(packet->descriptor>=0) close(packet->descriptor);packet->descriptor=-1; }
 static bool packet_send(int descriptor,uint32_t operation,uint32_t status,uint64_t sequence,
     qa_bytes bytes,int passed,qa_error *error)
 {
@@ -107,8 +107,9 @@ static bool packet_send(int descriptor,uint32_t operation,uint32_t status,uint64
     return (sent==1 && transfer(descriptor,header+1,31,true,error) && transfer(descriptor,(void *)bytes.data,bytes.size,true,error)) ||
         fail(error,QA_ERROR_FORMAT,sequence,"sending actual native child packet failed");
 }
-static bool packet_receive(int descriptor,host_packet *packet,qa_error *error)
+static bool packet_receive(int descriptor,qa_arena *storage,host_packet *packet,qa_error *error)
 {
+    qa_arena_reset(storage);
     memset(packet,0,sizeof(*packet));packet->descriptor=-1;uint8_t header[32];
     union {struct cmsghdr alignment;uint8_t bytes[CMSG_SPACE(sizeof(int)*4)];} control;
     struct iovec vector={header,1};struct msghdr message={.msg_iov=&vector,.msg_iovlen=1,.msg_control=control.bytes,.msg_controllen=sizeof(control.bytes)};
@@ -125,7 +126,7 @@ static bool packet_receive(int descriptor,host_packet *packet,qa_error *error)
     uint64_t count=qa_load_u64le(header+24);
     if(count>SIZE_MAX || count>UINT32_MAX) {packet_free(packet);return fail(error,QA_ERROR_FORMAT,0,"native child packet byte span is invalid");}
     packet->operation=qa_load_u32le(header+8);packet->status=qa_load_u32le(header+12);packet->sequence=qa_load_u64le(header+16);
-    packet->body.data=count?malloc((size_t)count):NULL;packet->body.size=(size_t)count;
+    packet->body.data=count?qa_arena_alloc(storage,(size_t)count,1,error):NULL;packet->body.size=(size_t)count;
     if(count && !packet->body.data) {packet_free(packet);return fail(error,QA_ERROR_MEMORY,0,"retaining native child packet");}
     if(!transfer(descriptor,packet->body.data,packet->body.size,false,error)) {packet_free(packet);return false;}
     /* The stopped child has published its shared backing before this reply. */
@@ -144,6 +145,18 @@ static bool output_prepare(qa_arena *storage,
     /* HOST_STOP has the largest envelope; every XSAVE component comes from
      * the actual child capability admitted before its first invocation. */
     size_t bytes=(size_t)capability->xsave_bytes+188+84;
+    qa_arena_init(storage,bytes);
+    if(!qa_arena_reserve(storage,bytes,error))return false;
+    qa_arena_seal(storage);return true;
+}
+static bool input_prepare(qa_arena *storage,
+    const guest_host_x86_64_capabilities *capability,qa_error *error)
+{
+    /* Commands carry fixed metadata or XSAVE, not module/import bytes. Keep
+     * the entire largest packet and one separately aligned decoded state. */
+    size_t packet=(size_t)capability->xsave_bytes+188+84;
+    if(packet<sizeof(((qa_error *)0)->message))packet=sizeof(((qa_error *)0)->message);
+    size_t bytes=packet+capability->xsave_bytes+63;
     qa_arena_init(storage,bytes);
     if(!qa_arena_reserve(storage,bytes,error))return false;
     qa_arena_seal(storage);return true;
@@ -169,18 +182,33 @@ static bool state_encode(const guest_host_x86_64_state *state,qa_arena *storage,
     memcpy(data+188,state->xsave.data,state->xsave.size);return true;
 }
 static bool state_decode(qa_bytes bytes,const guest_host_x86_64_capabilities *capability,
-    guest_host_x86_64_state *out,qa_error *error)
+    qa_arena *scratch,guest_host_x86_64_state *out,qa_error *error)
 {
     if(bytes.size<188 || !out || out->xsave.data) return fail(error,QA_ERROR_FORMAT,0,"native hardware transfer is truncated or output occupied");
     uint64_t count=qa_load_u64le(bytes.data+180);
     if(count!=bytes.size-188 || count>capability->xsave_bytes || count<576) return fail(error,QA_ERROR_FORMAT,0,"native hardware transfer differs from real XSAVE extent");
-    void *storage=NULL;if(posix_memalign(&storage,64,(size_t)count)!=0) return fail(error,QA_ERROR_MEMORY,0,"decoding aligned native hardware transfer");
+    void *storage=NULL;
+    if(scratch)storage=qa_arena_alloc(scratch,(size_t)count,64,error);
+    else if(posix_memalign(&storage,64,capability->xsave_bytes)!=0)storage=NULL;
+    if(!storage)return fail(error,QA_ERROR_MEMORY,0,"decoding aligned native hardware transfer");
     for(size_t i=0;i<16;++i) out->registers[i]=qa_load_u64le(bytes.data+i*8);
     out->instruction=qa_load_u64le(bytes.data+128);out->flags=qa_load_u64le(bytes.data+136);
     out->fs_base=qa_load_u64le(bytes.data+144);out->gs_base=qa_load_u64le(bytes.data+152);
     for(size_t i=0;i<6;++i) out->selectors[i]=qa_load_u16le(bytes.data+160+i*2);
     out->xfeatures=qa_load_u64le(bytes.data+172);out->xsave=(qa_buffer){storage,(size_t)count};memcpy(storage,bytes.data+188,(size_t)count);
-    if(!guest_host_x86_64_state_valid(out,capability,error)) {guest_host_x86_64_state_free(out);return false;}return true;
+    if(!guest_host_x86_64_state_valid(out,capability,error)) {
+        if(!scratch)guest_host_x86_64_state_free(out);
+        else memset(out,0,sizeof(*out));
+        return false;
+    }return true;
+}
+static bool state_commit(const guest_host_x86_64_state *source,
+    const guest_host_x86_64_capabilities *capability,guest_host_x86_64_state *owner,qa_error *error)
+{
+    guest_host_x86_64_state next=*owner;
+    next.xsave.size=capability->xsave_bytes;
+    if(!guest_host_x86_64_state_copy(source,&next,error))return false;
+    *owner=next;return true;
 }
 static void mapping_encode(uint8_t bytes[44],const qa_native_guest_mapping *mapping)
 {
@@ -198,7 +226,8 @@ static bool request(guest_host_child *child,uint32_t operation,qa_bytes bytes,in
 {
     if(!usable(child) || child->sequence==UINT64_MAX) return fail(error,QA_ERROR_ARGUMENT,0,"native child request requires its stopped retained owner");
     uint64_t sequence=++child->sequence;host_packet packet;
-    if(!packet_send(child->descriptor,operation,0,sequence,bytes,descriptor,error) || !packet_receive(child->descriptor,&packet,error)) {child->failed=true;return false;}
+    if(!packet_send(child->descriptor,operation,0,sequence,bytes,descriptor,error) ||
+        !packet_receive(child->descriptor,&child->input_storage,&packet,error)) {child->failed=true;return false;}
     bool okay=packet.operation==(operation|HOST_REPLY) && packet.sequence==sequence && packet.descriptor<0 && !packet.status && !packet.body.size;
     if(!okay) {
         qa_status status=packet.operation==(operation|HOST_REPLY) && packet.sequence==sequence &&
@@ -310,8 +339,7 @@ static bool server_stop(void *context,int number,void *opaque,guest_host_x86_64_
             kind=GUEST_HOST_STOP_IMPORT;id=server->callbacks[i].id;address=entry;state->instruction=entry;break;
         }
     }
-    guest_host_x86_64_state_free(&server->state);
-    if(!guest_host_x86_64_state_copy(state,&server->state,error)) return false;
+    if(!state_commit(state,&server->capability,&server->state,error))return false;
     qa_buffer body={0};
     if(!state_encode(state,&server->output_storage,84,&body,error))return false;
     qa_store_u32le(body.data,(uint32_t)kind);qa_store_u32le(body.data+4,(uint32_t)number);
@@ -336,7 +364,7 @@ static bool server_stop(void *context,int number,void *opaque,guest_host_x86_64_
     if(kind==GUEST_HOST_STOP_RETURN) {*resume=false;return true;}
     server->stopped=true;
     while(okay) {
-        host_packet packet;if(!packet_receive(server->descriptor,&packet,error))return false;
+        host_packet packet;if(!packet_receive(server->descriptor,&server->input_storage,&packet,error))return false;
         if(packet.operation==HOST_FINISH) {
             okay=kind==GUEST_HOST_STOP_SYSCALL && server->syscalls &&
                 packet.sequence==server->run_sequence && packet.descriptor<0 && !packet.status && !packet.body.size;
@@ -348,12 +376,13 @@ static bool server_stop(void *context,int number,void *opaque,guest_host_x86_64_
         if(packet.operation==HOST_RESUME) {
             guest_host_x86_64_state next={0};
             okay=packet.sequence==server->run_sequence && packet.descriptor<0 &&
-                state_decode((qa_bytes){packet.body.data,packet.body.size},&server->capability,&next,error);
+                state_decode((qa_bytes){packet.body.data,packet.body.size},&server->capability,&server->input_storage,&next,error);
             packet_free(&packet);
             if(okay)okay=guest_profile_cpu_current(&server->domain,&server->capability,&next,error);
             if(okay)okay=server_profile(server,GUEST_PROFILE_GUARD_RESUME,&next,error);
-            if(okay) {guest_host_x86_64_state_free(state);*state=next;*resume=true;server->stopped=false;return true;}
-            guest_host_x86_64_state_free(&next);break;
+            if(okay)okay=state_commit(&next,&server->capability,state,error);
+            if(okay) {*resume=true;server->stopped=false;return true;}
+            break;
         }
         if(packet.operation==HOST_CANCEL) {
             okay=packet.sequence==server->run_sequence && packet.descriptor<0 &&
@@ -458,9 +487,9 @@ static bool server_dispatch(host_server *server,host_packet *packet,bool *comple
     case HOST_RUN: {
         if(bytes<17 || data[8]>1 || packet->descriptor>=0 || server->failed) {okay=false;break;}
         guest_host_x86_64_state state={0};
-        if(!state_decode((qa_bytes){data+17,bytes-17},&server->capability,&state,&failure)) {okay=false;break;}
+        if(!state_decode((qa_bytes){data+17,bytes-17},&server->capability,&server->input_storage,&state,&failure)) {okay=false;break;}
         if(!guest_profile_cpu_current(&server->domain,&server->capability,&state,&failure)) {
-            guest_host_x86_64_state_free(&state);okay=false;break;
+            okay=false;break;
         }
         uint64_t saved_stop=server->stop,saved_sequence=server->run_sequence,saved_bypass=server->bypass;
         bool saved_stopped=server->stopped,saved_syscalls=server->syscalls;
@@ -475,7 +504,6 @@ static bool server_dispatch(host_server *server,host_packet *packet,bool *comple
                 okay=false;
             }
         }
-        guest_host_x86_64_state_free(&state);
         server->stop=saved_stop;server->run_sequence=saved_sequence;server->stopped=saved_stopped;
         server->syscalls=saved_syscalls;server->bypass=saved_bypass;
         if(!okay) server->failed=true;
@@ -503,6 +531,7 @@ bool guest_host_child_bootstrap(int argc,char *const *argv,bool *handled,int *st
     bool okay=server_profile(&server,GUEST_PROFILE_GUARD_PROBE,NULL,error) &&
         guest_host_x86_64_capability(&server.capability,error) &&
         output_prepare(&server.output_storage,&server.capability,error) &&
+        input_prepare(&server.input_storage,&server.capability,error) &&
         guest_host_x86_64_capture(&server.state,error) &&
         server_profile(&server,GUEST_PROFILE_GUARD_CAPTURE,&server.state,error) &&
         guest_profile_cpu_domain_read(&server.state,&server.capability,&server.domain,error) &&
@@ -520,11 +549,12 @@ bool guest_host_child_bootstrap(int argc,char *const *argv,bool *handled,int *st
     }
     if(!okay) {qa_error transport={0};reply_failure(server.descriptor,HOST_READY,0,error,&transport);}
     while(okay && !server.exit) {
-        host_packet packet;if(!packet_receive(server.descriptor,&packet,error)){okay=false;break;}
+        host_packet packet;if(!packet_receive(server.descriptor,&server.input_storage,&packet,error)){okay=false;break;}
         bool completed=false;okay=server_dispatch(&server,&packet,&completed,error);packet_free(&packet);
     }
     guest_host_x86_64_bridge_close();guest_host_x86_64_state_free(&server.state);
     qa_arena_destroy(&server.output_storage);
+    qa_arena_destroy(&server.input_storage);
     for(size_t i=0;i<server.backing_count;++i) close(server.backings[i].descriptor);
     free(server.backings);free(server.mappings);free(server.callbacks);free(server.interests);close(server.descriptor);
     *status=okay?0:125;return okay;
@@ -562,7 +592,8 @@ bool guest_host_child_create(const guest_host_child_options *options,guest_host_
     close(channel[1]);
     if(code) {close(channel[0]);free(child);return fail(error,QA_ERROR_ARGUMENT,(uint64_t)code,"re-executing actual native controller failed");}
     child->process=process;*out=child;
-    host_packet ready;bool okay=guest_host_memory_create(&child->memory,error) && packet_receive(child->descriptor,&ready,error);
+    host_packet ready;bool okay=guest_host_memory_create(&child->memory,error) &&
+        packet_receive(child->descriptor,&child->input_storage,&ready,error);
     if(okay) {
         if(ready.operation==(HOST_READY|HOST_REPLY) && !ready.sequence && ready.descriptor<0 && ready.status) {
             qa_status status=ready.status>QA_OK && ready.status<=QA_ERROR_NOT_FOUND ? (qa_status)ready.status : QA_ERROR_FORMAT;
@@ -577,11 +608,15 @@ bool guest_host_child_create(const guest_host_child_options *options,guest_host_
             child->profile=(guest_profile_guard_receipt){qa_load_u32le(ready.body.data+16)};
             child->thread=qa_load_u64le(ready.body.data+36);
             okay=child->profile.policy==GUEST_PROFILE_GUARD_SOURCE_X64 &&
-                state_decode((qa_bytes){ready.body.data+44,ready.body.size-44},&child->capability,&child->state,error) &&
+                state_decode((qa_bytes){ready.body.data+44,ready.body.size-44},&child->capability,NULL,&child->state,error) &&
                 guest_profile_cpu_domain_read(&child->state,&child->capability,&child->domain,error) &&
                 output_prepare(&child->output_storage,&child->capability,error);
         }
         packet_free(&ready);
+    }
+    if(okay) {
+        qa_arena_destroy(&child->input_storage);
+        okay=input_prepare(&child->input_storage,&child->capability,error);
     }
     if(!okay) {
         child->failed=true;
@@ -617,7 +652,7 @@ bool guest_host_child_cpu_clock_read(guest_host_child *child,int32_t clock,int64
     uint8_t data[4];qa_store_u32le(data,(uint32_t)clock);
     uint64_t sequence=++child->sequence;host_packet packet;
     if(!packet_send(child->descriptor,HOST_CPU_CLOCK,0,sequence,(qa_bytes){data,sizeof(data)},-1,error) ||
-        !packet_receive(child->descriptor,&packet,error)) {child->failed=true;return false;}
+        !packet_receive(child->descriptor,&child->input_storage,&packet,error)) {child->failed=true;return false;}
     bool matched=packet.operation==(HOST_CPU_CLOCK|HOST_REPLY) && packet.sequence==sequence && packet.descriptor<0;
     bool okay=matched && !packet.status && packet.body.size==28 &&
         qa_load_u64le(packet.body.data)==(uint64_t)child->process &&
@@ -659,6 +694,7 @@ bool guest_host_child_destroy(guest_host_child **pointer,qa_error *error)
     if(!guest_host_memory_destroy(&child->memory,error))return false;
     guest_host_x86_64_state_free(&child->state);guest_host_x86_64_state_free(&child->fault.state);
     qa_arena_destroy(&child->output_storage);
+    qa_arena_destroy(&child->input_storage);
     free(child->callbacks);free(child->interests);free(child);*pointer=NULL;return true;
 }
 bool guest_host_child_backing(guest_host_child *child,const guest_host_backing_view *view,qa_error *error)
@@ -729,8 +765,8 @@ bool guest_host_child_cpu_read(const guest_host_child *child,guest_host_x86_64_s
 bool guest_host_child_cpu_write(guest_host_child *child,const guest_host_x86_64_state *source,qa_error *error)
 {
     if(!usable(child) || !guest_host_x86_64_state_valid(source,&child->capability,error))return false;
-    guest_host_x86_64_state next={0};if(!guest_host_x86_64_state_copy(source,&next,error))return false;
-    guest_host_x86_64_state_free(&child->state);child->state=next;child->state_written=true;return true;
+    if(source!=&child->state && !state_commit(source,&child->capability,&child->state,error))return false;
+    child->state_written=true;return true;
 }
 bool guest_host_child_read(const guest_host_child *child,uint64_t address,void *data,size_t bytes,qa_error *error)
 {
@@ -764,7 +800,7 @@ static bool child_run(guest_host_child *child,uint64_t start,uint64_t stop,
     bool okay=packet_send(child->descriptor,HOST_RUN,0,sequence,(qa_bytes){body.data,body.size},-1,error);
     bool returned=false;
     while(okay) {
-        host_packet packet;if(!packet_receive(child->descriptor,&packet,error)){okay=false;break;}
+        host_packet packet;if(!packet_receive(child->descriptor,&child->input_storage,&packet,error)){okay=false;break;}
         if(packet.sequence!=sequence || packet.descriptor>=0) {packet_free(&packet);okay=fail(error,QA_ERROR_FORMAT,sequence,"native stop belongs to a different entered continuation");break;}
         if(packet.operation==(HOST_RUN|HOST_REPLY) && packet.status) {
             qa_status status=packet.status>QA_OK && packet.status<=QA_ERROR_NOT_FOUND ? (qa_status)packet.status : QA_ERROR_FORMAT;
@@ -801,10 +837,11 @@ static bool child_run(guest_host_child *child,uint64_t start,uint64_t stop,
             (receipt.kind!=GUEST_HOST_STOP_SYSCALL || (syscall && receipt.profile.kind==GUEST_PROFILE_GUARD_SYSCALL &&
                 receipt.profile.bytes==2 && receipt.profile.instruction<=UINT64_MAX-2 &&
                 receipt.address==receipt.profile.instruction+2 && !receipt.callback_id)) &&
-            state_decode((qa_bytes){packet.body.data+84,packet.body.size-84},&child->capability,&receipt.state,error) &&
+            state_decode((qa_bytes){packet.body.data+84,packet.body.size-84},&child->capability,&child->input_storage,&receipt.state,error) &&
             guest_profile_cpu_current(&child->domain,&child->capability,&receipt.state,error);
-        packet_free(&packet);if(!okay){guest_host_x86_64_state_free(&receipt.state);break;}
-        guest_host_x86_64_state_free(&child->state);child->state=receipt.state;memset(&receipt.state,0,sizeof(receipt.state));
+        packet_free(&packet);if(!okay)break;
+        if(!state_commit(&receipt.state,&child->capability,&child->state,error)){okay=false;break;}
+        memset(&receipt.state,0,sizeof(receipt.state));
         if(receipt.kind==GUEST_HOST_STOP_RETURN) {
             returned=receipt.address==stop && child->state.instruction==stop;
             if(returned && entered)*entered=true;
@@ -821,7 +858,7 @@ static bool child_run(guest_host_child *child,uint64_t start,uint64_t stop,
                 (unsigned long long)child->state.instruction,(unsigned long long)receipt.address,
                 (unsigned)receipt.profile.kind);
             /* Drain the actual completed run reply before whole-child teardown. */
-            host_packet done;if(packet_receive(child->descriptor,&done,error))packet_free(&done);
+            host_packet done;if(packet_receive(child->descriptor,&child->input_storage,&done,error))packet_free(&done);
             okay=false;break;
         }
         if(receipt.kind==GUEST_HOST_STOP_SYSCALL) {
@@ -876,7 +913,7 @@ static bool child_run(guest_host_child *child,uint64_t start,uint64_t stop,
             observation->cancelled(observation->context,error)) {
             qa_error transfer_error={0};host_packet done;
             bool cancelled=packet_send(child->descriptor,HOST_CANCEL,0,sequence,(qa_bytes){0},-1,&transfer_error) &&
-                packet_receive(child->descriptor,&done,&transfer_error);
+                packet_receive(child->descriptor,&child->input_storage,&done,&transfer_error);
             if(cancelled) {
                 cancelled=done.operation==HOST_DONE && done.sequence==sequence && !done.status && !done.body.size;
                 if(!cancelled)qa_error_set(&transfer_error,QA_ERROR_FORMAT,(size_t)sequence,
