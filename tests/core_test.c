@@ -19,6 +19,7 @@
 #include "qa/recovery.h"
 #include "qa/persistence_fields.h"
 #include "qa/localization.h"
+#include "qa/lightstyles.h"
 #include "qa/text.h"
 #include "qa/q2_sound.h"
 #include "qa/hud_q2.h"
@@ -338,6 +339,34 @@ static void test_q1_lightstyle_event(void)
     CHECK(event.kind == QA_BUILTIN_LIGHT && event.family == QA_GAME_Q1);
     CHECK(event.code == 47 && event.resource == 35 && !event.text);
     CHECK(event.provider == 19 && event.time_ns == 1234 && qa_actor_id_equal(event.actor, actor));
+}
+
+static void test_ordered_lightstyles(void)
+{
+    qa_lightstyles first = {.count = 256}, second = {.count = 256};
+    qa_lightstyles merged = {.count = 256};
+    qa_lightstyles_set(&first, 4, 19);
+    uint64_t revision = first.revision;
+    qa_lightstyles_set(&first, 4, 19);
+    CHECK(first.revision == revision && !qa_lightstyles_ordered_present(&first, 4));
+    qa_lightstyles_set_ordered(&first, 4, 19, 3);
+    CHECK(first.revision == revision + 1);
+    qa_lightstyles_set_ordered(&first, 4, 19, 3);
+    CHECK(first.revision == revision + 1);
+    qa_lightstyles_set_ordered(&second, 4, 21, 2);
+    qa_lightstyles_set_ordered(&second, 255, QA_STRING_NONE, 0);
+    qa_lightstyles_merge_ordered(&merged, &first);
+    qa_lightstyles_merge_ordered(&merged, &second);
+    CHECK(merged.patterns[4] == 19 && merged.sequences[4] == 3);
+    CHECK(qa_lightstyles_ordered_present(&merged, 255));
+    CHECK(!qa_lightstyles_ordered_present(&merged, 5));
+    qa_lightstyles_set_ordered(&second, 4, QA_STRING_NONE, 3);
+    qa_lightstyles_merge_ordered(&merged, &second);
+    CHECK(merged.patterns[4] == QA_STRING_NONE && merged.sequences[4] == 3);
+    qa_lightstyles_set_ordered(&second, 4, 22, 1);
+    CHECK(second.patterns[4] == 22 && second.sequences[4] == 1);
+    second = (qa_lightstyles){.count = 256};
+    CHECK(!qa_lightstyles_ordered_present(&second, 4));
 }
 
 static void test_q1_effect_state(void)
@@ -3219,6 +3248,7 @@ int main(int argc, char **argv)
     test_q1_original_codec();
     test_q1_effect_state();
     test_q1_lightstyle_event();
+    test_ordered_lightstyles();
     test_q2_owned_frames();
     test_q2_retained_records();
     test_q2_record_delivery();

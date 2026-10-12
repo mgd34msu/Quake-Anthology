@@ -78,8 +78,7 @@ static qa_binding_record *binding_find(const qa_input_seat *s, qa_physical_input
     return NULL;
 }
 static bool binding_equal(const qa_input_binding *a, const qa_input_binding *b) {
-    return a->input.kind == b->input.kind && a->input.device == b->input.device &&
-        a->input.code == b->input.code && a->input.positive == b->input.positive &&
+    return qa_input_physical_equal(a->input, b->input) &&
         a->kind == b->kind && (a->kind == QA_BIND_COMMAND
             ? !strcmp(a->command, b->command) : a->action == b->action);
 }

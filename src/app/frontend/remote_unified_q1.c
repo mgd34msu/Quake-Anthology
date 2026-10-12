@@ -9,6 +9,7 @@
 #include "scene_identity.h"
 #include "received_music.h"
 #include "qa/localization.h"
+#include "qa/lightstyles.h"
 #include "qa/ui_language.h"
 #include "qa/text.h"
 #include "qa/q1_text.h"
@@ -98,8 +99,8 @@ typedef struct q1_group {
     qa_scene_image *particle_image;
     q1_static *statics;
     q1_ambient *ambient;
-    const char *styles[256];
-    uint64_t style_sequences[256],sky_sequence;
+    qa_lightstyles styles;
+    uint64_t sky_sequence;
     struct {const char *name,*social,*info;double colors,frags,ping;uint64_t sequences[6];bool fields[6],present,has_ping;} clients[256];
     const char *sky_name;
     qa_scene_image *sky[6];
@@ -327,6 +328,7 @@ static bool group(frontend_unified_q1 *o,qa_string_id name,q1_activation *owner,
     for(q1_group *g=o->groups;g;g=g->next) if(g->activation==owner && g->content_name==name) {*out=g;return true;}
     q1_group *g=calloc(1,sizeof(*g));qa_font_library *fonts;qa_vfs *files;
     if(!g) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q1 CLIENT content effects");
+    g->styles.count=256;
     g->content_name=name;
     g->content=qa_strings_cstr(o->replica->strings,g->content_name);
     if(!g->content || !frontend_unified_media_files(o->media,name,&files,&g->product,e) || g->product->family!=QA_GAME_Q1 ||
@@ -640,7 +642,7 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
         (void)frontend_fx_q1_state_beam(&g->effects,p.actor,false,&beam,p.seconds,
             qa_builtin_random_integer(&o->random));
         break;}
-    case Q1_STYLE:g->styles[(uint32_t)p.a]=(char *)p.text.data;g->style_sequences[(uint32_t)p.a]=p.sequence;p.text=(qa_bytes){0};break;
+    case Q1_STYLE:qa_lightstyles_set_ordered(&g->styles,(uint32_t)p.a,row->payload.value.builtin.resource,p.sequence);break;
     case Q1_STATIC: {if(!p.text.size)break;
         q1_static *s=calloc(1,sizeof(*s));qa_scene_image_options images=model_options();
         ok=s && frontend_unified_media_model(o->media,g->content_name,row->payload.value.builtin.resource,QA_GAME_Q1,&images,&s->model,e);
@@ -808,16 +810,16 @@ bool frontend_unified_q1_world_input(frontend_unified_q1 *o,qa_scene_world_input
     o->scene_lights=capacity?qa_arena_alloc(&o->frontend->frame.storage,capacity*sizeof(*o->scene_lights),_Alignof(qa_scene_light),e):NULL;
     if(capacity && !o->scene_lights)return false;
     size_t count=input->light_count;if(count)memcpy(o->scene_lights,input->lights,count*sizeof(*input->lights));
-    uint64_t sequences[256]={0};bool received[256]={0};q1_group *sky=NULL;
+    qa_lightstyles styles={.count=256};q1_group *sky=NULL;
     for(size_t i=0;i<256;++i)o->scene_styles[i]=input->q1_styles && i<input->style_count?input->q1_styles[i]:256;
     for(q1_group *g=o->groups;g;g=g->next){
         for(size_t i=0;i<Q1_LIGHTS;++i){frontend_fx_q1_light *l=g->effects.lights+i;if(l->die<=input->seconds)continue;float radius=fmaxf(0,l->radius-(float)(input->seconds-l->born)*l->decay);
             if(radius>0)o->scene_lights[count++]=(qa_scene_light){.family=QA_GAME_Q1,.origin=l->origin,.color=l->color,.radius=radius,.minimum=l->minimum,.scale=1,.additive=true,.identity=l->identity};}
-        for(size_t i=0;i<256;++i)if(g->styles[i] && (!received[i] || g->style_sequences[i]>=sequences[i])){
-            float value=frontend_legacy_lightstyle_sample(QA_GAME_Q1,g->styles[i],input->seconds);
-            received[i]=true;sequences[i]=g->style_sequences[i];o->scene_styles[i]=value;}
+        qa_lightstyles_merge_ordered(&styles,&g->styles);
         if(g->sky_name && (!sky || g->sky_sequence>=sky->sky_sequence))sky=g;
     }
+    for(uint32_t i=0;i<styles.count;++i)if(qa_lightstyles_ordered_present(&styles,i))
+        o->scene_styles[i]=frontend_legacy_lightstyle_sample(QA_GAME_Q1,qa_strings_cstr(o->replica->strings,styles.patterns[i]),input->seconds);
     input->lights=o->scene_lights;input->light_count=count;input->q1_styles=o->scene_styles;input->style_count=256;
     if(o->fog.active){double fraction=o->fog.duration==0?1:fmin(1,fmax(0,(input->seconds-o->fog.start)/o->fog.duration));
         double density=o->fog.previous_density+(o->fog.target_density-o->fog.previous_density)*fraction;

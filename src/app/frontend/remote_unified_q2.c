@@ -12,6 +12,7 @@
 #include "legacy_render_policy.h"
 #include "shared_register.h"
 #include "qa/hud_q2.h"
+#include "qa/lightstyles.h"
 #include "qa/caption_save.h"
 #include "qa/text.h"
 #include "qa/ui_preferences.h"
@@ -98,8 +99,7 @@ typedef struct q2_bank {
     const qa_font *native_font;
     q2_alias *aliases;
     size_t alias_count;
-    const char *styles[256];
-    uint64_t style_sequences[256];
+    qa_lightstyles styles;
 } q2_bank;
 typedef struct q2_native {
     q2_bank *bank;
@@ -355,7 +355,7 @@ bool frontend_unified_q2_owner_retire(frontend_unified_q2 *o,const qa_unified_pr
         o->view_owner=NULL;o->view_rules=0;o->view_layouts=0;o->view_gun_offset=qa_v3(0,0,0);o->view_actor=(qa_actor_id){0};
         o->view_blend_present=false;o->view_damage_present=false;o->view_blend=(qa_vec4){0};o->view_damage_blend=(qa_vec4){0}; }
     for (q2_bank *b=o->banks;b;b=b->next) if (b->activation==a) {
-        for (size_t i=0;i<256;++i) {b->styles[i]=NULL;b->style_sequences[i]=0;}
+        b->styles=(qa_lightstyles){.count=256};
         if (b->effects && !frontend_remote_q2_effects_retire_presentation(b->effects,e)) return false;
     }
     o->music_retiring=true;
@@ -605,6 +605,7 @@ static bool bank_name(frontend_unified_q2 *o,qa_string_id content_name,q2_activa
     if (!b) {
         b=calloc(1,sizeof(*b));
         if (!b) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual Q2 CLIENT content");
+        b->styles.count=256;
         b->owner=o; b->activation=activation_owner; b->rules=rules;
         qa_builtin_random_seed(&b->entity_random,1);
         b->content_name=content_name;
@@ -1269,7 +1270,7 @@ static bool map_receive(frontend_unified_q2 *o,const qa_unified_presentation_eve
     case QA_Q2_MAP_MUSIC:return music_receive(o,row,resource?resource:event_text,e);
     case QA_Q2_MAP_ACHIEVEMENT:return achievement(o,row,event_text,true,e);
     case QA_Q2_MAP_LIGHTSTYLE:{if (v->style<0 || v->style>=256 || !source_bank(o,row,false,&b,e))return false;
-        b->styles[v->style]=event_text?event_text:"";b->style_sequences[v->style]=row->sequence;return true;}
+        qa_lightstyles_set_ordered(&b->styles,(uint32_t)v->style,v->text,row->sequence);return true;}
     case QA_Q2_MAP_SKY:return sky_receive(o,row,v,e);
     case QA_Q2_MAP_STORY:{qa_unified_document *document=NULL;
         if (!activation(o,row->owner_provider_id,row->owner.generation,&owner,e) || (owner && owner->retired) ||
@@ -1628,13 +1629,13 @@ bool frontend_unified_q2_world_input(frontend_unified_q2 *o,qa_scene_world_input
     input->legacy_flashblend=policy.flashblend;
     input->legacy_texture_sort=policy.texture_sort;
     if (policy.lighting.present) input->view.clear_color=policy.lighting.clear;
-    bool present[256]={0}; uint64_t sequences[256]={0};
+    qa_lightstyles styles={.count=256};
     for (size_t i=0;i<256;++i) o->sampled_styles[i]=input->q2_styles && i<input->style_count?input->q2_styles[i]:qa_v3(1,1,1);
-    for (q2_bank *b=o->banks;b;b=b->next) for (size_t i=0;i<256;++i)
-        if (b->styles[i] && (!present[i] || b->style_sequences[i]>=sequences[i])) {
-            float value=frontend_legacy_lightstyle_sample(QA_GAME_Q2,b->styles[i],input->seconds);
-            o->sampled_styles[i]=qa_v3(value,value,value); present[i]=true; sequences[i]=b->style_sequences[i];
-        }
+    for (q2_bank *b=o->banks;b;b=b->next) qa_lightstyles_merge_ordered(&styles,&b->styles);
+    for (uint32_t i=0;i<styles.count;++i) if (qa_lightstyles_ordered_present(&styles,i)) {
+        float value=frontend_legacy_lightstyle_sample(QA_GAME_Q2,qa_strings_cstr(o->replica->strings,styles.patterns[i]),input->seconds);
+        o->sampled_styles[i]=qa_v3(value,value,value);
+    }
     input->q2_styles=o->sampled_styles; input->style_count=256;
     if (o->fog_received) input->fog=fog_sample(o,input->seconds);
     if (o->sky_name) {

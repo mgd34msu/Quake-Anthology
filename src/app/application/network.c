@@ -1462,8 +1462,9 @@ bool qa_application_network_q3_client_project(qa_application *app, qa_actor_owne
             return application_fail(error, QA_ERROR_FORMAT, "Q3 collision projection has an invalid retained source pose");
         bodies[row->number] = body; present[row->number] = true;
     }
-    qa_string_id definition;
-    if (!qa_strings_intern_cstr(qa_session_strings(app->session), "qa.network.q3.remote-entity", &definition, error)) return false;
+    qa_string_id definition = projection->definition;
+    if (definition == QA_STRING_NONE &&
+        !qa_strings_intern_cstr(qa_session_strings(app->session), "qa.network.q3.remote-entity", &definition, error)) return false;
     if (projection->owner && projection->definition != definition)
         return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 publication has a foreign definition");
     projection->owner = owner; projection->definition = definition;
