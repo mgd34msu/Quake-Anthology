@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "b4b9974372304500ab82f45123996ee6e5b5419f",
+  "verified_main": "0a292c41544f08ccfe1ba3b4e82473f38c5a912a",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 111,
-    "open_source_observation": 260,
+    "fixed_source_build_core": 112,
+    "open_source_observation": 259,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -28436,8 +28436,9 @@
       "severity": "medium",
       "job": "11",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "One internal route walker now serves probe and acquisition. Duplicate normalization/overlay/link/prefix/mount walks deleted. Filtering, terminal links, resource/receipt ownership and metadata-only probe semantics preserved without a pre-probe in acquisition. Existing VFS suite checks default/prefix/overlay agreement and terminal miss. Matching normal build and seven core suites pass.",
+      "fixed_commit": "0a292c41544f08ccfe1ba3b4e82473f38c5a912a"
     },
     {
       "id": "J11-07",
@@ -39749,6 +39750,30 @@
       ],
       "record_directory": "/tmp/qa-ta3196-shared-prepared-sound-index-20261011",
       "conclusion": "Prepared-sound lookup now uses load-reserved qa_id_index and existing prepared pool slots. Private buckets, hashing and chaining removed; exact sample/asset/Q3 identity and refcount/rollback/retirement order retained. One shared exact-value removal preserves other same-key candidates and iteration order. Normal build and seven core suites including the candidate-retirement behavior check pass. No speedup claim; common removal still compacts/rebuilds."
+    },
+    {
+      "commit": "0a292c41544f08ccfe1ba3b4e82473f38c5a912a",
+      "source_tree": "5f1239197fb4791dec109e881ddcb7a2e026fa58",
+      "finding_ids": [
+        "J11-06"
+      ],
+      "files_rechecked": [
+        "src/content/vfs.c",
+        "tests/vfs_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-shared-vfs-route-20261011",
+      "conclusion": "One internal route walker now serves probe and acquisition. Duplicate normalization/overlay/link/prefix/mount walks deleted. Filtering, terminal links, resource/receipt ownership and metadata-only probe semantics preserved without a pre-probe in acquisition. Existing VFS suite checks default/prefix/overlay agreement and terminal miss. Matching normal build and seven core suites pass."
     }
   ],
   "verification_limits": [

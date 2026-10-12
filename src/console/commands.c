@@ -11,7 +11,7 @@
 #include <string.h>
 
 static bool builtin(qa_console *console, const qa_command_invocation *command,
-                     bool *handled, qa_error *error);
+                     qa_arena *storage, bool *handled, qa_error *error);
 static bool dispatch(qa_console *console, const qa_command_context *context,
                       const char *raw, qa_error *error);
 
@@ -1335,6 +1335,8 @@ static bool dispatch_inner(qa_console *console, const qa_command_context *contex
     if (!qa_command_tokenize(expanded, context->dialect, context->console_text, &tokens,
         qa_arena_alloc_callback,&token_arena,error)) { qa_arena_destroy(&token_arena); return false; }
     if (tokens.count == 0) { qa_command_tokens_free(&tokens); qa_arena_destroy(&token_arena); return true; }
+    qa_arena command_arena={0};
+    qa_console_command_arena(console,&command_arena);
     qa_command_invocation command = {console, *context, tokens.count,
         (const char *const *)tokens.values, tokens.args_text, raw, 0, 0};
     command.context.direct = context->direct && context->script == NULL &&
@@ -1357,7 +1359,7 @@ static bool dispatch_inner(qa_console *console, const qa_command_context *contex
     qac_console_release_enter(console);
     bool handled = false;
     if (!options->disable_builtins) {
-        success = builtin(console, &command, &handled, error);
+        success = builtin(console, &command, &command_arena, &handled, error);
         if (!success || handled) goto done;
     }
     command_entry *entry = select_command(console, context, tokens.values[0]);
@@ -1409,6 +1411,7 @@ done:
         }
     }
     console->frame = frame.parent;
+    qa_arena_destroy(&command_arena);
     qa_command_tokens_free(&tokens);
     qa_arena_destroy(&token_arena);
     return success;
@@ -1471,10 +1474,11 @@ bool qa_console_execute_capture(qa_console *console, const qa_command_context *c
     return ok;
 }
 
-static bool command_text(const command_chunk *head, qac_text *text, qa_error *error)
+static void command_text(const command_chunk *head, char *text, size_t *length)
 {
     qa_command_context expected = head->context;
     bool resumed = false;
+    size_t used=0;
     for (const command_chunk *chunk = head; chunk != NULL; chunk = chunk->next) {
         if (chunk->completion) {
             if (!qac_q2(head->context.dialect) || !chunk->success || expected.script == NULL ||
@@ -1484,9 +1488,11 @@ static bool command_text(const command_chunk *head, qac_text *text, qa_error *er
             continue;
         }
         if (!qa_command_context_equal(&expected, &chunk->context, (resumed ? QA_COMMAND_CONTEXT_IGNORE_DIRECT : 0))) break;
-        if (!qac_text_add(text, chunk->text + chunk->offset, chunk->length - chunk->offset, error)) return false;
+        size_t size=chunk->length-chunk->offset;
+        if (size) memcpy(text+used,chunk->text+chunk->offset,size);
+        used+=size;
     }
-    return true;
+    text[used]=0;*length=used;
 }
 
 static void consume(qa_console *console, size_t bytes)
@@ -1529,6 +1535,8 @@ bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_e
     if (!qa_arena_init_buffer(&storage,scratch,sizeof(scratch),error)) {
         console->draining=false;return false;
     }
+    qa_arena extended={0};
+    qa_console_command_arena(console,&extended);
     if (console->head == NULL && console->wait != 0) {
         qac_console_program_touch(console, false);
         console->drain_yielded = true;
@@ -1558,48 +1566,38 @@ bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_e
             continue;
         }
         qa_arena_reset(&storage);
+        qa_arena_reset(&extended);
         qa_command_context context=first->context;
         size_t script_size=context.script?strlen(context.script)+1:0;
-        bool borrowed_script=script_size<=4096;
-        if (script_size && borrowed_script) {
-            char *script=qa_arena_alloc(&storage,script_size,1,error);
+        qa_arena *current=console->queued_bytes<=16384 && script_size<=4096?&storage:&extended;
+        if (script_size) {
+            char *script=qa_arena_text(current,context.script,error);
             if (!script) { success=false;break; }
-            memcpy(script,context.script,script_size);context.script=script;
-        } else if (!borrowed_script && !copy_context(&context,&first->context,error)) {
-            success=false;break;
+            context.script=script;
         }
         const qa_console_options *options=options_for(console,&context);
-        bool borrowed=buffer_limit(console,&context)<=16384;
-        qac_text text={0};
-        if (borrowed) {
-            text.data=qa_arena_alloc(&storage,16385,1,error);text.capacity=16385;
-            if (!text.data) { if (!borrowed_script) free((char *)context.script);success=false;break; }
-        }
-        if (!command_text(first, &text, error)) { if (!borrowed_script) free((char *)context.script); if (!borrowed) free(text.data); success = false; break; }
-        size_t offset = qa_command_separator(text.data, text.size, context.dialect);
-        size_t consumed = offset < text.size ? offset + 1 : offset;
+        char *text=qa_arena_alloc(current,console->queued_bytes+1,1,error);
+        if (!text) { success=false;break; }
+        size_t text_size;
+        command_text(first,text,&text_size);
+        size_t offset = qa_command_separator(text, text_size, context.dialect);
+        size_t consumed = offset < text_size ? offset + 1 : offset;
         if (!options) { success=qac_fail(error,QA_ERROR_ARGUMENT,"queued command cvar view has retired");
             consume(console, consumed);
-            if (!borrowed_script) free((char *)context.script);
-            if (!borrowed) free(text.data);
             break; }
         size_t maximum = options->maximum_command == 0 ? 1024 : options->maximum_command;
         if (offset >= maximum) {
             if (context.dialect != QA_RULESET_Q3) {
                 success = qac_fail(error, QA_ERROR_FORMAT, "command line exceeds source buffer");
                 consume(console, consumed);
-                if (!borrowed_script) free((char *)context.script);
-                if (!borrowed) free(text.data);
                 break;
             }
             offset = maximum - 1;
             consumed = offset + 1;
         }
-        text.data[offset] = '\0';
+        text[offset] = '\0';
         consume(console, consumed);
-        success = dispatch(console, &context, text.data, error);
-        if (!borrowed_script) free((char *)context.script);
-        if (!borrowed) free(text.data);
+        success = dispatch(console, &context, text, error);
         ++count;
         if (!success) break;
         if (console->wait_context.dialect != QA_RULESET_Q3 && console->wait != 0) {
@@ -1609,6 +1607,7 @@ bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_e
             break;
         }
     }
+    qa_arena_destroy(&extended);
     qa_arena_destroy(&storage);
     console->draining = false;
     if (executed != NULL) *executed = count;
@@ -1747,45 +1746,55 @@ bool qa_console_remove_client(qa_console *console, uint64_t client, qa_error *er
     return remove_id(console, client, false, error);
 }
 
-static bool join_arguments(const qa_command_invocation *command, size_t first,
-                            qac_text *out, qa_error *error)
+static char *joined_text(qa_arena *storage,const char *const *words,size_t count,
+    const char *suffix,size_t *length,qa_error *error)
 {
-    for (size_t i = first; i < command->argc; ++i)
-        if ((i != first && !qac_text_add(out, " ", 1, error)) ||
-            !qac_text_string(out, command->argv[i], error)) return false;
-    return qac_text_add(out, "", 0, error);
+    size_t size=count?count-1:0;
+    for (size_t i=0;i<count;++i) {
+        size_t word_size=strlen(words[i]);
+        if (word_size>=SIZE_MAX-size) {
+            qac_fail(error,QA_ERROR_MEMORY,"console text exceeds address space");return NULL;
+        }
+        size+=word_size;
+    }
+    size_t suffix_size=strlen(suffix);
+    if (suffix_size>=SIZE_MAX-size) {
+        qac_fail(error,QA_ERROR_MEMORY,"console text exceeds address space");return NULL;
+    }
+    char *text=qa_arena_alloc(storage,size+suffix_size+1,1,error);
+    if (!text || !qa_text_join_words(words,count,text,size+1,error)) return NULL;
+    memcpy(text+size,suffix,suffix_size+1);
+    if (length) *length=size+suffix_size;
+    return text;
 }
 
 static bool execute_script(qa_console *console, const qa_command_invocation *command,
-                            qa_error *error)
+                            qa_arena *storage, qa_error *error)
 {
     if (command->argc != 2) { output(console, &command->context, "exec <filename>\n"); return true; }
-    qac_text filename = {0};
-    if (!qac_text_string(&filename, command->argv[1], error)) return false;
-    const char *base = strrchr(filename.data, '/');
-    if (base == NULL) base = filename.data;
-    if (command->context.dialect == QA_RULESET_Q3 && strchr(base, '.') == NULL &&
-        !qac_text_add(&filename, ".cfg", 4, error)) { free(filename.data); return false; }
+    const char *base = strrchr(command->argv[1], '/');
+    if (base == NULL) base = command->argv[1];
+    const char *suffix=command->context.dialect==QA_RULESET_Q3 && strchr(base,'.')==NULL?".cfg":"";
+    char *filename=joined_text(storage,command->argv+1,1,suffix,NULL,error);
+    if (!filename) return false;
     const qa_console_options *options=options_for(console,&command->context);
-    if (!options) { free(filename.data); return qac_fail(error,QA_ERROR_ARGUMENT,"script Source callbacks have retired"); }
+    if (!options) return qac_fail(error,QA_ERROR_ARGUMENT,"script Source callbacks have retired");
     qa_bytes bytes = {0};
     void *lease = NULL;
     qa_error read_error = {0};
     bool found = options->read_script != NULL &&
-        options->read_script(options->user, &command->context, filename.data, &bytes, &lease, &read_error);
+        options->read_script(options->user, &command->context, filename, &bytes, &lease, &read_error);
     if (bytes.data == NULL && bytes.size != 0) {
         found = false;
         qa_error_set(&read_error, QA_ERROR_ARGUMENT, 0, "script reader returned invalid bytes");
     }
     qa_command_context script_context=command->context;
-    script_context.script=filename.data;script_context.direct=false;
+    script_context.script=filename;script_context.direct=false;
     command_chunk *completion = qac_console_chunk_create(console,&script_context,&command->context,NULL,0,false,error);
     command_chunk *text = NULL;
     if (completion == NULL) goto fail;
     completion->completion = true;
     completion->success = found;
-    free(filename.data);
-    filename.data = NULL;
     if (found) {
         size_t length = 0;
         while (length < bytes.size && bytes.data[length] != 0) ++length;
@@ -1833,7 +1842,6 @@ static bool execute_script(qa_console *console, const qa_command_invocation *com
     return true;
 fail:
     if (options->release_script != NULL) options->release_script(options->user, lease);
-    free(filename.data);
     if (text != NULL) qac_console_chunk_free(text);
     if (completion != NULL) qac_console_chunk_free(completion);
     return false;
@@ -1870,7 +1878,7 @@ static bool reset_all(qa_console *console,const qa_command_context *context,qa_e
 }
 
 static bool builtin(qa_console *console, const qa_command_invocation *command,
-                     bool *handled, qa_error *error)
+                     qa_arena *storage, bool *handled, qa_error *error)
 {
     const qa_console_options *options=options_for(console,&command->context);
     if (!options) return qac_fail(error,QA_ERROR_ARGUMENT,"builtin Source callbacks have retired");
@@ -1893,7 +1901,7 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
         return true;
     }
     if (qa_text_ascii_equal(name, "cmd")) return fallback_call(console, options->forward, command, error) != QA_COMMAND_FAILED;
-    if (qa_text_ascii_equal(name, "exec")) return execute_script(console, command, error);
+    if (qa_text_ascii_equal(name, "exec")) return execute_script(console, command, storage, error);
     if (qa_text_ascii_equal(name, "stuffcmds") && qac_q1(context->dialect))
         return options->startup_commands == NULL || qa_console_insert(console, context, options->startup_commands, error);
     if (qa_text_ascii_equal(name, "alias") && context->dialect != QA_RULESET_Q3) {
@@ -1902,24 +1910,20 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
                 output_value(console,context,alias->view.name,alias->view.alias_text);
             return true;
         }
-        qac_text text = {0};
-        bool ok = join_arguments(command, 2, &text, error);
-        if (ok && qac_q1(context->dialect) && command->argc > 2) ok = qac_text_add(&text, " ", 1, error);
-        if (ok) ok = qac_text_add(&text, "\n", 1, error);
-        if (ok && text.size >= 1024) ok = qac_fail(error, QA_ERROR_FORMAT, "alias body exceeds source buffer");
-        if (ok) ok = qa_console_alias(console, context, command->argv[1], text.data, error);
-        free(text.data);
-        return ok;
+        size_t size;
+        const char *suffix=qac_q1(context->dialect) && command->argc>2?" \n":"\n";
+        char *text=joined_text(storage,command->argv+2,command->argc-2,suffix,&size,error);
+        if (!text) return false;
+        if (size>=1024) return qac_fail(error,QA_ERROR_FORMAT,"alias body exceeds source buffer");
+        return qa_console_alias(console,context,command->argv[1],text,error);
     }
     if (qa_text_ascii_equal(name, "vstr")) {
         if (command->argc != 2) { output(console, context, "vstr <variable>\n"); return true; }
         const qa_cvar_view *variable=NULL;
         if (!qa_console_cvar_read(console,context,command->argv[1],&variable,error)) return false;
-        qac_text text = {0};
-        bool ok = qac_text_string(&text, variable == NULL ? "" : variable->value, error) && qac_text_add(&text, "\n", 1, error);
-        if (ok) ok = qa_console_insert(console, context, text.data, error);
-        free(text.data);
-        return ok;
+        const char *value=variable?variable->value:"";
+        char *text=joined_text(storage,&value,1,"\n",NULL,error);
+        return text && qa_console_insert(console,context,text,error);
     }
     if (qa_text_ascii_equal(name, "resetall")) return reset_all(console, context, error);
     if (qa_text_ascii_equal(name, "cvar_restart") && context->dialect == QA_RULESET_Q3) {
@@ -2011,19 +2015,16 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
                 .name=variable_name,.value=command->argv[2],
                 .flags=strcmp(command->argv[3], "u") == 0 ? QA_CVAR_USERINFO : QA_CVAR_SERVERINFO},error);
         }
-        qac_text value = {0};
-        bool ok = context->dialect == QA_RULESET_Q3 || flagged ? join_arguments(command, 2, &value, error) :
-            qac_text_string(&value, command->argv[2], error);
-        if (ok) {
-            if (flagged) {
-                uint32_t flag = qa_text_ascii_equal(name, "seta") ? QA_CVAR_ARCHIVE : qa_text_ascii_equal(name, "setu") ? QA_CVAR_USERINFO : QA_CVAR_SERVERINFO;
-                ok = cvar_apply(access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET_FLAGS,
-                    .name=variable_name,.value=value.data,.flags=flag},error);
-            } else ok = cvar_apply(access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET,
-                .name=variable_name,.value=value.data},error);
+        const char *value=context->dialect==QA_RULESET_Q3 || flagged?
+            joined_text(storage,command->argv+2,command->argc-2,"",NULL,error):command->argv[2];
+        if (!value) return false;
+        if (flagged) {
+            uint32_t flag = qa_text_ascii_equal(name, "seta") ? QA_CVAR_ARCHIVE : qa_text_ascii_equal(name, "setu") ? QA_CVAR_USERINFO : QA_CVAR_SERVERINFO;
+            return cvar_apply(access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET_FLAGS,
+                .name=variable_name,.value=value,.flags=flag},error);
         }
-        free(value.data);
-        return ok;
+        return cvar_apply(access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET,
+            .name=variable_name,.value=value},error);
     }
     const qa_cvar_view *variable=cvar_find(access,variable_name);
     if (toggle && context->dialect == QA_RULESET_Q3 && command->argc == 2) {
