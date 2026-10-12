@@ -1,6 +1,7 @@
 #include "seat_internal.h"
 #include "qa/console_seat_save.h"
 #include "qa/text.h"
+#include "qa/arena.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -222,28 +223,36 @@ static bool submit_inner(qa_seat_console *seat, qa_error *error) {
     const char *text = qa_text_field_read(seat->field).text;
     if (!*text)
         return true;
-    qac_text echo = {0}, command = {0};
-    if (!qac_text_string(&echo, "]", error) || !qac_text_string(&echo, text, error) ||
-        !qac_text_string(&echo, "\n", error))
+    qa_arena storage = {0};
+    qa_console_command_arena(seat->options.commands, &storage);
+    size_t length = strlen(text);
+    char *echo = qa_arena_alloc(&storage, length + 3, 1, error);
+    if (!echo)
         goto fail;
-    if (!qa_seat_console_print(seat, echo.data, error))
+    echo[0] = ']';
+    memcpy(echo + 1, text, length);
+    memcpy(echo + length + 1, "\n", 2);
+    if (!qa_seat_console_print(seat, echo, error))
         goto fail;
     const char *trimmed = trim_start(text);
     if (*trimmed == '/' || *trimmed == '\\')
         ++trimmed;
-    if (!qac_text_string(&command, trimmed, error) || !qac_text_string(&command, "\n", error) ||
-        !qa_console_append(seat->options.commands, &seat->options.command, command.data, error))
+    length = strlen(trimmed);
+    char *command = qa_arena_alloc(&storage, length + 2, 1, error);
+    if (!command)
+        goto fail;
+    memcpy(command, trimmed, length);
+    memcpy(command + length, "\n", 2);
+    if (!qa_console_append(seat->options.commands, &seat->options.command, command, error))
         goto fail;
     if (!qa_console_history_add(seat->history, text, error))
         goto fail;
     qa_text_field_clear(seat->field);
     qa_console_buffer_bottom(seat->buffer);
-    free(echo.data);
-    free(command.data);
+    qa_arena_destroy(&storage);
     return true;
 fail:
-    free(echo.data);
-    free(command.data);
+    qa_arena_destroy(&storage);
     return false;
 }
 static bool complete(qa_seat_console *seat, qa_error *error) {

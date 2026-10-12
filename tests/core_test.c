@@ -13,6 +13,8 @@
 #include "qa/unified_frame_events.h"
 #include "qa/console_cvars_prepare.h"
 #include "qa/console_buffer.h"
+#include "qa/console_dedicated_save.h"
+#include "qa/console_io.h"
 #include "qa/settings.h"
 #include "qa/binary.h"
 #include "qa/json.h"
@@ -2297,6 +2299,46 @@ static bool shared_input_menu(void *user, qa_input_seat *seat, qa_input_focus fo
     return false;
 }
 
+static void test_dedicated_line_storage(void)
+{
+    qa_error error={0};
+    qa_dedicated_console *first=qa_dedicated_console_create(&error),
+        *restored=qa_dedicated_console_create(&error);
+    CHECK(first && restored);
+    const uint8_t text[]={'a','\r','\n',0xc3,0xa9,0xff};
+    CHECK(qa_dedicated_console_feed(first,(qa_bytes){text,sizeof text},true,&error));
+    qa_bytes line,again;bool present;
+    CHECK(qa_dedicated_console_line_peek(first,&line,&present,&error) && present);
+    CHECK(line.size==3 && !memcmp(line.data,"a\n",3));
+    qa_dedicated_console_line_commit(first);
+    qa_buffer saved={0},copy={0};
+    CHECK(qa_dedicated_console_checkpoint(first,&saved,&error));
+    CHECK(qa_dedicated_console_restore(restored,(qa_bytes){saved.data,saved.size},&error));
+    CHECK(qa_dedicated_console_checkpoint(restored,&copy,&error));
+    CHECK(saved.size==copy.size && !memcmp(saved.data,copy.data,saved.size));
+    const uint8_t expected[]={0xc3,0xa9,0xef,0xbf,0xbd,'\n',0};
+    CHECK(qa_dedicated_console_line_peek(restored,&line,&present,&error) && present);
+    CHECK(line.size==sizeof expected && !memcmp(line.data,expected,sizeof expected));
+    CHECK(qa_dedicated_console_line_peek(restored,&again,&present,&error) && present);
+    CHECK(again.data==line.data && again.size==line.size);
+    qa_dedicated_console_line_commit(restored);
+    CHECK(qa_dedicated_console_eof(restored));
+    qa_buffer_free(&saved);qa_buffer_free(&copy);
+    qa_dedicated_console_destroy(first);qa_dedicated_console_destroy(restored);
+
+    first=qa_dedicated_console_create(&error);CHECK(first);
+    uint8_t *invalid=malloc(QA_PLATFORM_EVENT_BYTE_CAPACITY);CHECK(invalid);
+    memset(invalid,0xff,QA_PLATFORM_EVENT_BYTE_CAPACITY);
+    CHECK(qa_dedicated_console_feed(first,(qa_bytes){invalid,QA_PLATFORM_EVENT_BYTE_CAPACITY},true,&error));
+    CHECK(qa_dedicated_console_line_peek(first,&line,&present,&error) && present);
+    CHECK(line.size==3u*QA_PLATFORM_EVENT_BYTE_CAPACITY+2u);
+    for(size_t i=0;i<QA_PLATFORM_EVENT_BYTE_CAPACITY;++i)
+        CHECK(!memcmp(line.data+i*3,expected+2,3));
+    CHECK(line.data[line.size-2]=='\n' && line.data[line.size-1]==0);
+    qa_dedicated_console_line_commit(first);CHECK(qa_dedicated_console_eof(first));
+    free(invalid);qa_dedicated_console_destroy(first);
+}
+
 static void test_shared_input_menu_defaults(void)
 {
     qa_controller_selection a={.kind=QA_CONTROLLER_GUID,
@@ -3755,6 +3797,7 @@ int main(int argc, char **argv)
     test_common_compression();
     test_medium_coverage();
     test_qw_shared_output();
+    test_dedicated_line_storage();
     test_shared_input_menu_defaults();
     test_profiler_mode_changes();
     test_source_nonmipped_transparency();

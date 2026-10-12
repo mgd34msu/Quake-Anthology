@@ -2301,28 +2301,63 @@ static bool config_filtered(const qa_cvars *registry,const cvar_values *values,
 {
     if (registry == NULL || out == NULL)
         return qac_fail(error, QA_ERROR_ARGUMENT, "invalid cvar config arguments");
-    qac_text result = {0};
     qa_ruleset_id dialect = qa_cvars_dialect(registry);
     if (values->canonical_values) values=values->canonical_values;
+    if (values->count > SIZE_MAX / 3 / sizeof(qa_bytes))
+        return qac_fail(error, QA_ERROR_MEMORY, "cvar config selection exceeds address space");
+    qa_bytes *selected = values->count ? malloc(3 * values->count * sizeof(*selected)) : NULL;
+    if (values->count && !selected)
+        return qac_fail(error, QA_ERROR_MEMORY, "allocating cvar config selection");
+    size_t count = 0, size = 0;
     for (const cvar *entry = values->first; entry != NULL; entry = entry->next) {
         if (entry->view.player_scoped && entry->player != registry->options.seat) continue;
         const qa_cvar_view *variable = &entry->view;
         const char *value = archive_value(registry,values,variable);
         if (!value || (filter && !filter(context, registry, variable))) continue;
         if (strpbrk(value, "\"\r\n") != NULL) {
-            free(result.data);
+            free(selected);
             return qac_fail(error, QA_ERROR_FORMAT, "cvar value cannot be represented by source config quoting");
         }
         const char *prefix = dialect == QA_RULESET_Q3 || variable->console_created ||
             (qac_q2(dialect) && (variable->flags & QA_Q2_CVAR_CUSTOM) != 0) ? "seta " : qac_q2(dialect) ? "set " : "";
-        if (!qac_text_string(&result, prefix, error) || !qac_text_string(&result, variable->name, error) ||
-            !qac_text_add(&result, " \"", 2, error) || !qac_text_string(&result, value, error) ||
-            !qac_text_add(&result, "\"\n", 2, error)) {
-            free(result.data);
-            return false;
+        const qa_bytes parts[] = {
+            {(const uint8_t *)prefix, strlen(prefix)},
+            {(const uint8_t *)variable->name, strlen(variable->name)},
+            {(const uint8_t *)value, strlen(value)}
+        };
+        const size_t lengths[] = {parts[0].size, parts[1].size, parts[2].size, 4};
+        for (size_t i = 0; i < sizeof(lengths) / sizeof(lengths[0]); ++i) {
+            if (lengths[i] >= SIZE_MAX - size) {
+                free(selected);
+                return qac_fail(error, QA_ERROR_MEMORY, "cvar config exceeds address space");
+            }
+            size += lengths[i];
         }
+        memcpy(selected + count * 3, parts, sizeof(parts));
+        ++count;
     }
-    if (!qac_text_finish(&result, out, error)) { free(result.data); return false; }
+    uint8_t *data = malloc(size + 1);
+    if (!data) {
+        free(selected);
+        return qac_fail(error, QA_ERROR_MEMORY, "allocating cvar config text");
+    }
+    size_t used = 0;
+    for (size_t i = 0; i < count; ++i) {
+        const qa_bytes *parts = selected + i * 3;
+        for (size_t j = 0; j < 2; ++j) {
+            memcpy(data + used, parts[j].data, parts[j].size);
+            used += parts[j].size;
+        }
+        memcpy(data + used, " \"", 2);
+        used += 2;
+        memcpy(data + used, parts[2].data, parts[2].size);
+        used += parts[2].size;
+        memcpy(data + used, "\"\n", 2);
+        used += 2;
+    }
+    data[size] = 0;
+    free(selected);
+    *out = (qa_buffer){data, size};
     return true;
 }
 

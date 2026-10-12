@@ -205,70 +205,106 @@ bool qa_console_entry_matches(const qa_console_discovery_entry *entry, const cha
 static const char *kind_name(qa_console_entry_kind kind) {
     return kind == QA_CONSOLE_COMMAND ? "command" : kind == QA_CONSOLE_ALIAS ? "alias" : "cvar";
 }
-static bool line(qac_text *out, const char *label, const char *value, qa_error *error) {
-    return qac_text_string(out, label, error) && qac_text_string(out, value, error) &&
-           qac_text_string(out, "\n", error);
-}
-static bool quoted(qac_text *out, const char *text, qa_error *error) {
-    qa_buffer encoded = {0};
-    if (!qa_json_quote((qa_bytes){(const uint8_t *)text, strlen(text)}, &encoded, error))
-        return false;
-    bool ok = qac_text_add(out, (const char *)encoded.data, encoded.size, error);
-    qa_buffer_free(&encoded);
-    return ok;
-}
 bool qa_console_entry_help(const qa_console_discovery_entry *entry, qa_buffer *result,
                            qa_error *error) {
-    qac_text out = {0};
     const qa_console_documentation *doc = entry->documentation;
-    if (!qac_text_string(&out, entry->name, error) || !qac_text_string(&out, " (", error) ||
-        !qac_text_string(&out, kind_name(entry->kind), error) ||
-        !qac_text_string(&out, ")\n", error) ||
-        !line(&out, "",
-              entry->summary && *entry->summary ? entry->summary : "No description registered.",
-              error) ||
-        !qac_text_string(&out, "Usage: ", error))
-        goto fail;
-    if (doc && doc->usage) {
-        if (!qac_text_string(&out, doc->usage, error))
-            goto fail;
-    } else if (entry->kind == QA_CONSOLE_CVAR) {
-        if (!qac_text_string(&out, entry->name, error) || !qac_text_string(&out, " [value]", error))
-            goto fail;
-    } else if (!qac_text_string(
-                   &out, entry->kind == QA_CONSOLE_ALIAS ? entry->name : "not documented", error))
-        goto fail;
-    if (!qac_text_string(&out, "\n", error))
-        goto fail;
+    const char *values[] = {entry->value, entry->reset_value, entry->latched_value};
+    size_t capacity = 8;
+    if (!(doc && doc->usage) && entry->kind == QA_CONSOLE_CVAR) ++capacity;
     if (entry->kind == QA_CONSOLE_CVAR) {
-        const char *labels[] = {"Current: ", "Default: ", "Pending: "};
-        const char *values[] = {entry->value, entry->reset_value, entry->latched_value};
         for (size_t i = 0; i < 3; ++i)
-            if (values[i])
-                if (!qac_text_string(&out, labels[i], error) || !quoted(&out, values[i], error) ||
-                    !qac_text_string(&out, "\n", error))
-                    goto fail;
-    } else if (entry->kind == QA_CONSOLE_ALIAS && !line(&out, "Expands to: ", entry->value, error))
-        goto fail;
+            if (values[i]) capacity += 3;
+    } else if (entry->kind == QA_CONSOLE_ALIAS)
+        capacity += 3;
     if (doc) {
         if (doc->has_allowed_values) {
-            if (!qac_text_string(&out, "Allowed values: ", error))
-                goto fail;
-            for (size_t i = 0; i < doc->allowed_count; ++i)
-                if ((i && !qac_text_string(&out, ", ", error)) ||
-                    !qac_text_string(&out, doc->allowed_values[i], error))
-                    goto fail;
-            if (!qac_text_string(&out, "\n", error))
-                goto fail;
+            if (doc->allowed_count > (SIZE_MAX - capacity - 2) / 2)
+                return qac_fail(error, QA_ERROR_MEMORY, "console help exceeds address space");
+            capacity += doc->allowed_count ? 2 * doc->allowed_count + 1 : 2;
         }
-        for (size_t i = 0; i < doc->example_count; ++i)
-            if (!line(&out, "Example: ", doc->examples[i], error))
-                goto fail;
+        if (doc->example_count > (SIZE_MAX - capacity) / 3)
+            return qac_fail(error, QA_ERROR_MEMORY, "console help exceeds address space");
+        capacity += 3 * doc->example_count;
     }
-    if (qac_text_finish(&out, result, error))
-        return true;
+    if (capacity > SIZE_MAX / sizeof(const char *))
+        return qac_fail(error, QA_ERROR_MEMORY, "console help exceeds address space");
+    const char **parts = malloc(capacity * sizeof(*parts));
+    if (!parts)
+        return qac_fail(error, QA_ERROR_MEMORY, "allocating console help parts");
+    qa_buffer quotes[3] = {{0}};
+    size_t count = 0;
+    parts[count++] = entry->name;
+    parts[count++] = " (";
+    parts[count++] = kind_name(entry->kind);
+    parts[count++] = ")\n";
+    parts[count++] = entry->summary && *entry->summary ? entry->summary : "No description registered.";
+    parts[count++] = "\nUsage: ";
+    if (doc && doc->usage)
+        parts[count++] = doc->usage;
+    else if (entry->kind == QA_CONSOLE_CVAR) {
+        parts[count++] = entry->name;
+        parts[count++] = " [value]";
+    } else
+        parts[count++] = entry->kind == QA_CONSOLE_ALIAS ? entry->name : "not documented";
+    parts[count++] = "\n";
+    if (entry->kind == QA_CONSOLE_CVAR) {
+        const char *labels[] = {"Current: ", "Default: ", "Pending: "};
+        for (size_t i = 0; i < 3; ++i) {
+            if (!values[i]) continue;
+            if (!qa_json_quote((qa_bytes){(const uint8_t *)values[i], strlen(values[i])}, &quotes[i], error))
+                goto fail;
+            parts[count++] = labels[i];
+            parts[count++] = (const char *)quotes[i].data;
+            parts[count++] = "\n";
+        }
+    } else if (entry->kind == QA_CONSOLE_ALIAS) {
+        parts[count++] = "Expands to: ";
+        parts[count++] = entry->value;
+        parts[count++] = "\n";
+    }
+    if (doc) {
+        if (doc->has_allowed_values) {
+            parts[count++] = "Allowed values: ";
+            for (size_t i = 0; i < doc->allowed_count; ++i) {
+                if (i) parts[count++] = ", ";
+                parts[count++] = doc->allowed_values[i];
+            }
+            parts[count++] = "\n";
+        }
+        for (size_t i = 0; i < doc->example_count; ++i) {
+            parts[count++] = "Example: ";
+            parts[count++] = doc->examples[i];
+            parts[count++] = "\n";
+        }
+    }
+    size_t size = 0;
+    for (size_t i = 0; i < count; ++i) {
+        size_t length = strlen(parts[i]);
+        if (length >= SIZE_MAX - size) {
+            qac_fail(error, QA_ERROR_MEMORY, "console help exceeds address space");
+            goto fail;
+        }
+        size += length;
+    }
+    uint8_t *data = malloc(size + 1);
+    if (!data) {
+        qac_fail(error, QA_ERROR_MEMORY, "allocating console help text");
+        goto fail;
+    }
+    size_t used = 0;
+    for (size_t i = 0; i < count; ++i) {
+        size_t length = strlen(parts[i]);
+        memcpy(data + used, parts[i], length);
+        used += length;
+    }
+    data[size] = 0;
+    for (size_t i = 0; i < 3; ++i) qa_buffer_free(&quotes[i]);
+    free(parts);
+    *result = (qa_buffer){data, size};
+    return true;
 fail:
-    free(out.data);
+    for (size_t i = 0; i < 3; ++i) qa_buffer_free(&quotes[i]);
+    free(parts);
     return false;
 }
 struct qa_console_discovery_commands {
@@ -277,7 +313,11 @@ struct qa_console_discovery_commands {
 };
 static bool search_command(void *user, const qa_command_invocation *command, qa_error *error) {
     qa_console_discovery_commands *owner = user;
-    qac_text out = {0};
+    enum { PAGE_ROWS = 30 };
+    const char *parts[PAGE_ROWS * 7 + 4];
+    size_t count = 0;
+    qa_buffer quote = {0}, out = {0};
+    char summary[160], next_page[160];
     qa_console_discovery entries = {0};
     bool help = qa_text_ascii_equal(command->argv[0], "help");
     size_t page = 1;
@@ -333,62 +373,83 @@ static bool search_command(void *user, const qa_command_invocation *command, qa_
             qa_console_discovery_free(&entries);
             return true;
         }
-        if (!qac_text_string(&out, "No command, setting, or alias named ", error) ||
-            !quoted(&out, query, error) || !qac_text_string(&out, ". Use find <text>.\n", error))
+        if (!qa_json_quote((qa_bytes){(const uint8_t *)query, strlen(query)}, &quote, error))
             goto fail;
+        parts[count++] = "No command, setting, or alias named ";
+        parts[count++] = (const char *)quote.data;
+        parts[count++] = ". Use find <text>.\n";
     } else {
         size_t matches = 0;
         for (size_t i = 0; i < entries.count; ++i)
             if (qa_console_entry_matches(&entries.entries[i], query))
                 ++matches;
-        size_t pages = matches ? 1 + (matches - 1) / 30 : 1;
-        char summary[160];
+        size_t pages = matches ? 1 + (matches - 1) / PAGE_ROWS : 1;
         if (page > pages) {
             snprintf(summary, sizeof(summary), "Page %zu is out of range; %zu page(s).\n", page,
                      pages);
-            if (!qac_text_string(&out, summary, error))
-                goto fail;
+            parts[count++] = summary;
         } else {
-            size_t index = 0, start = (page - 1) * 30;
+            size_t index = 0, start = (page - 1) * PAGE_ROWS;
             for (size_t i = 0; i < entries.count; ++i) {
                 const qa_console_discovery_entry *entry = &entries.entries[i];
                 if (!qa_console_entry_matches(entry, query))
                     continue;
                 size_t ordinal = index++;
-                if (ordinal < start || ordinal - start >= 30)
+                if (ordinal < start || ordinal - start >= PAGE_ROWS)
                     continue;
-                if (!qac_text_string(&out, entry->name, error) ||
-                    !qac_text_string(&out, " (", error) ||
-                    !qac_text_string(&out, kind_name(entry->kind), error) ||
-                    !qac_text_string(&out, ")", error))
-                    goto fail;
-                if (entry->summary && *entry->summary &&
-                    (!qac_text_string(&out, " - ", error) ||
-                     !qac_text_string(&out, entry->summary, error)))
-                    goto fail;
-                if (!qac_text_string(&out, "\n", error))
-                    goto fail;
+                parts[count++] = entry->name;
+                parts[count++] = " (";
+                parts[count++] = kind_name(entry->kind);
+                parts[count++] = ")";
+                if (entry->summary && *entry->summary) {
+                    parts[count++] = " - ";
+                    parts[count++] = entry->summary;
+                }
+                parts[count++] = "\n";
             }
             snprintf(summary, sizeof(summary),
                      "%zu match(es), page %zu/%zu. Use help <name> for details.\n", matches, page,
                      pages);
-            if (!qac_text_string(&out, summary, error))
-                goto fail;
+            parts[count++] = summary;
             if (page < pages) {
-                snprintf(summary, sizeof(summary), " %zu\n", page + 1);
-                if (!qac_text_string(&out, "Next page: find ", error) ||
-                    !quoted(&out, query, error) || !qac_text_string(&out, summary, error))
+                if (!qa_json_quote((qa_bytes){(const uint8_t *)query, strlen(query)}, &quote, error))
                     goto fail;
+                snprintf(next_page, sizeof(next_page), " %zu\n", page + 1);
+                parts[count++] = "Next page: find ";
+                parts[count++] = (const char *)quote.data;
+                parts[count++] = next_page;
             }
         }
     }
+    for (size_t i = 0; i < count; ++i) {
+        size_t length = strlen(parts[i]);
+        if (length >= SIZE_MAX - out.size) {
+            qac_fail(error, QA_ERROR_MEMORY, "console search exceeds address space");
+            goto fail;
+        }
+        out.size += length;
+    }
+    out.data = malloc(out.size + 1);
+    if (!out.data) {
+        qac_fail(error, QA_ERROR_MEMORY, "allocating console search text");
+        goto fail;
+    }
+    size_t used = 0;
+    for (size_t i = 0; i < count; ++i) {
+        size_t length = strlen(parts[i]);
+        memcpy(out.data + used, parts[i], length);
+        used += length;
+    }
+    out.data[out.size] = 0;
     qa_console_discovery_free(&entries);
-    owner->options.print(owner->options.context, &command->context, out.data ? out.data : "");
-    free(out.data);
+    qa_buffer_free(&quote);
+    owner->options.print(owner->options.context, &command->context, (const char *)out.data);
+    qa_buffer_free(&out);
     return true;
 fail:
     qa_console_discovery_free(&entries);
-    free(out.data);
+    qa_buffer_free(&quote);
+    qa_buffer_free(&out);
     return false;
 }
 qa_console_discovery_commands *

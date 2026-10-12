@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "112f2b6677deb997c675d0bf4f2e0b34c571e0bd",
+  "verified_main": "5debf46f4b82d486fa98f7505b185cbe03699ae8",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -27738,6 +27738,10 @@
         {
           "commit": "112f2b6677deb997c675d0bf4f2e0b34c571e0bd",
           "verification": "Fuzzy source-pointer aliases now use the common ID index, rebuilt in save/history candidates before topology validation and transferred with heap ownership. Sparse pointers, kind checks, actual source-memory reads, original release order and encoded bytes are retained. Goal and initial-chat aliases in 09-01 remain open. Matching normal production build and seven core suites pass; no live or performance claim."
+        },
+        {
+          "commit": "5debf46f4b82d486fa98f7505b185cbe03699ae8",
+          "verification": "Goal config, weight, index and map-info source aliases now use the common ID index. Ordered source links, raw allocator-backed reads, full weight-pointer identity, import/history candidates and unchanged saved fields remain. Initial-chat aliases in 09-01 remain open; admission storage growth is not closed. Matching normal build and seven core suites pass."
         }
       ]
     },
@@ -39834,6 +39838,27 @@
       ],
       "record_directory": "/tmp/qa-ta3196-bot-fuzzy-alias-index-20261011",
       "conclusion": "Fuzzy source-pointer aliases now use the common ID index, rebuilt in save/history candidates before topology validation and transferred with heap ownership. Sparse pointers, kind checks, actual source-memory reads, original release order and encoded bytes are retained. Goal and initial-chat aliases in 09-01 remain open. Matching normal production build and seven core suites pass; no live or performance claim."
+    },
+    {
+      "commit": "5debf46f4b82d486fa98f7505b185cbe03699ae8",
+      "source_tree": "2ca105e493b628d88ccd060f890ed34f77d32b26",
+      "finding_ids": [
+        "09-01"
+      ],
+      "files_rechecked": [],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-bot-goal-alias-index-20261012",
+      "conclusion": "Goal config, weight, index and map-info source aliases now use the common ID index. Ordered source links, raw allocator-backed reads, full weight-pointer identity, import/history candidates and unchanged saved fields remain. Initial-chat aliases in 09-01 remain open; admission storage growth is not closed. Matching normal build and seven core suites pass."
     }
   ],
   "verification_limits": [

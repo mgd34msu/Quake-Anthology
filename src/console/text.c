@@ -73,41 +73,6 @@ char *qac_copy(const char *text, qa_error *error)
     return qac_copy_n(text, strlen(text), error);
 }
 
-bool qac_text_add(qac_text *text, const char *data, size_t length, qa_error *error)
-{
-    if (length >= SIZE_MAX - text->size)
-        return qac_fail(error, QA_ERROR_MEMORY, "console text exceeds address space");
-    size_t needed = text->size + length + 1;
-    if (needed > text->capacity) {
-        size_t capacity = text->capacity == 0 ? 64 : text->capacity;
-        while (capacity < needed) {
-            if (capacity > SIZE_MAX / 2) { capacity = needed; break; }
-            capacity *= 2;
-        }
-        char *grown = realloc(text->data, capacity);
-        if (grown == NULL) return qac_fail(error, QA_ERROR_MEMORY, "growing console text");
-        text->data = grown;
-        text->capacity = capacity;
-    }
-    if (length != 0) memcpy(text->data + text->size, data, length);
-    text->size += length;
-    text->data[text->size] = '\0';
-    return true;
-}
-
-bool qac_text_string(qac_text *text, const char *value, qa_error *error)
-{
-    return qac_text_add(text, value, strlen(value), error);
-}
-
-bool qac_text_finish(qac_text *text, qa_buffer *out, qa_error *error)
-{
-    if (!qac_text_add(text, "", 0, error)) return false;
-    *out = (qa_buffer){(uint8_t *)text->data, text->size};
-    *text = (qac_text){0};
-    return true;
-}
-
 bool qa_command_tokenize(const char *text, qa_ruleset_id dialect,
     bool console_text, qa_command_tokens *out,
     void *(*allocate)(void *, size_t, size_t, qa_error *), void *context, qa_error *error)

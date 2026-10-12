@@ -6,7 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 struct qa_dedicated_console {
-    qac_text pending, line;
+    qa_buffer pending, line;
+    size_t pending_capacity;
     size_t consumed, prepared;
     uint64_t oversized;
     bool discarding;
@@ -18,10 +19,9 @@ qa_dedicated_console *qa_dedicated_console_create(qa_error *error) {
         qac_fail(error, QA_ERROR_MEMORY, "allocating dedicated console");
         return NULL;
     }
-    console->pending.capacity = QA_PLATFORM_EVENT_BYTE_CAPACITY + 1u;
-    console->line.capacity = 3u * QA_PLATFORM_EVENT_BYTE_CAPACITY + 2u;
-    console->pending.data = malloc(console->pending.capacity);
-    console->line.data = malloc(console->line.capacity);
+    console->pending_capacity = QA_PLATFORM_EVENT_BYTE_CAPACITY + 1u;
+    console->pending.data = malloc(console->pending_capacity);
+    console->line.data = malloc(3u * QA_PLATFORM_EVENT_BYTE_CAPACITY + 2u);
     if (!console->pending.data || !console->line.data) {
         qa_dedicated_console_destroy(console);
         qac_fail(error, QA_ERROR_MEMORY, "allocating dedicated console text reservations");
@@ -33,8 +33,8 @@ qa_dedicated_console *qa_dedicated_console_create(qa_error *error) {
 void qa_dedicated_console_destroy(qa_dedicated_console *console) {
     if (!console)
         return;
-    free(console->pending.data);
-    free(console->line.data);
+    qa_buffer_free(&console->pending);
+    qa_buffer_free(&console->line);
     free(console);
 }
 bool qa_dedicated_console_feed(qa_dedicated_console *console, qa_bytes bytes, bool ended,
@@ -60,7 +60,7 @@ bool qa_dedicated_console_feed(qa_dedicated_console *console, qa_bytes bytes, bo
             if (console->oversized != UINT64_MAX) ++console->oversized;
             continue;
         }
-        console->pending.data[console->pending.size++] = (char)byte;
+        console->pending.data[console->pending.size++] = byte;
     }
     console->pending.data[console->pending.size] = 0;
     console->ended = ended;
@@ -86,6 +86,7 @@ bool qa_dedicated_console_eof(const qa_dedicated_console *console) {
 bool qa_dedicated_console_ended(const qa_dedicated_console *console) { return console->ended; }
 bool qa_dedicated_console_line_peek(qa_dedicated_console *console, qa_bytes *line,
     bool *present, qa_error *error) {
+    (void)error;
     *line = (qa_bytes){0};
     *present = false;
     if (console->consumed == console->pending.size) return true;
@@ -95,7 +96,7 @@ bool qa_dedicated_console_line_peek(qa_dedicated_console *console, qa_bytes *lin
         *present = true;
         return true;
     }
-    const char *start = console->pending.data + console->consumed;
+    const char *start = (const char *)console->pending.data + console->consumed;
     size_t size = console->pending.size - console->consumed;
     const char *newline = memchr(start, '\n', size);
     if (!newline && !console->ended) return true;
@@ -114,9 +115,11 @@ bool qa_dedicated_console_line_peek(qa_dedicated_console *console, qa_bytes *lin
     while (qa_utf8_next((qa_bytes){(const uint8_t *)start, length}, &cursor, &scalar)) {
         char encoded[4];
         size_t count = qa_utf8_encode(scalar, encoded);
-        if (!qac_text_add(&console->line, encoded, count, error)) return false;
+        memcpy(console->line.data + console->line.size, encoded, count);
+        console->line.size += count;
     }
-    if (!qac_text_string(&console->line, "\n", error)) return false;
+    console->line.data[console->line.size++] = '\n';
+    console->line.data[console->line.size] = 0;
     console->prepared = consumed;
     *line = (qa_bytes){(const uint8_t *)console->line.data, console->line.size + 1};
     *present = true;
@@ -134,7 +137,7 @@ void qa_dedicated_console_line_commit(qa_dedicated_console *console)
 static bool dedicated_fields(qa_source_save_io *io, qa_dedicated_console *console)
 {
     uint8_t magic[4]={'Q','D','C','N'};
-    size_t size=console->pending.size, capacity=console->pending.capacity, consumed=console->consumed;
+    size_t size=console->pending.size, capacity=console->pending_capacity, consumed=console->consumed;
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QDCN",4) ||
         !qa_source_save_count(io,&size,reading?io->input.size-io->offset:SIZE_MAX-1) ||
@@ -147,7 +150,7 @@ static bool dedicated_fields(qa_source_save_io *io, qa_dedicated_console *consol
             console->pending.data=malloc(capacity);
             if (!console->pending.data) return qac_fail(io->error,QA_ERROR_MEMORY,"Restoring dedicated console input reservation");
         }
-        console->pending.size=size; console->pending.capacity=capacity; console->consumed=consumed;
+        console->pending.size=size; console->pending_capacity=capacity; console->consumed=consumed;
     }
     if ((size && (!console->pending.data || (!reading && memchr(console->pending.data,0,size)))) ||
         !qa_source_save_bytes(io,(uint8_t *)console->pending.data,size)) return false;
@@ -158,8 +161,8 @@ static bool dedicated_fields(qa_source_save_io *io, qa_dedicated_console *consol
 bool qa_dedicated_console_checkpoint(const qa_dedicated_console *console, qa_buffer *out, qa_error *error)
 {
     if (!console || !out || out->data || out->size || console->consumed>console->pending.size ||
-        (console->pending.capacity?console->pending.size>=console->pending.capacity:console->pending.size!=0) ||
-        (console->pending.capacity!=0)!=(console->pending.data!=NULL) ||
+        (console->pending_capacity?console->pending.size>=console->pending_capacity:console->pending.size!=0) ||
+        (console->pending_capacity!=0)!=(console->pending.data!=NULL) ||
         (console->pending.data && console->pending.data[console->pending.size]))
         return qac_fail(error,QA_ERROR_ARGUMENT,"Dedicated capture requires its actual input owner and empty output");
     qa_source_save_io io={0}; qa_dedicated_console state=*console;
