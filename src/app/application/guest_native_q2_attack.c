@@ -40,9 +40,34 @@ typedef struct attack_hook {
     qa_native_entry_observer *binding;
     qa_native_address address;
 } attack_hook;
+typedef enum decision_record {
+    DECISION_ENTITY, DECISION_CLIENT, DECISION_IMAGE
+} decision_record;
+typedef struct decision_field {
+    decision_record record;
+    qa_native_value_type encoding;
+    uint32_t offset;
+    uint8_t bytes;
+} decision_field;
+typedef struct decision_input {
+    decision_field field;
+    uint32_t mask;
+} decision_input;
+typedef struct decision_test_descriptor {
+    decision_field field;
+    bool pointer, has_pointer_value, masked, at_most;
+    uint32_t rva, mask;
+    uint32_t *indirections;
+    size_t indirection_count;
+    double expected;
+} decision_test_descriptor;
+typedef struct decision_group {
+    decision_test_descriptor *tests;
+    size_t count;
+} decision_group;
 typedef struct decision_region {
     struct application_native_q2_attack *owner;
-    qa_json_id fields;
+    decision_input *fields;
     size_t field_count;
     uint32_t id;
     qa_native_region_binding *binding;
@@ -97,7 +122,11 @@ struct application_native_q2_attack {
     size_t decision_count;
     decision_frame *dispatch;
     decision_projection *projections;
-    qa_json_id committed;
+    decision_group *committed;
+    size_t committed_count;
+    decision_field water_level;
+    uint32_t command_angles;
+    qa_arena decision_storage;
     bool active, items_ready;
 };
 static bool word(const qa_json_document *doc, qa_json_id object, const char *name,
@@ -141,19 +170,13 @@ bool application_native_q2_attack_input_fields(struct application_native_q2 *eng
         !pointer_read(p,entity+p->client_pointer,&client,error)) return false;
     if(!qa_actor_id_equal(current,actor)||!client)
         return application_fail(error,QA_ERROR_NOT_FOUND,"Native input fields lost their physical Source client");
-    qa_json_id root=qa_json_root(p->document),weapons=qa_json_get(p->document,root,"weapons"),
-        entity_fields=qa_json_get(p->document,weapons,"entity");
     double water;
-    if(!decision_scalar(p,entity,qa_json_get(p->document,entity_fields,"waterLevel"),&water,error)) return false;
+    if(!decision_scalar(p,entity,&p->water_level,&water,error)) return false;
     if(water<0||water>3||trunc(water)!=water)
         return application_fail(error,QA_ERROR_FORMAT,"Native Source water level exceeds its actual SDK domain");
     out->water_level=(int32_t)water;
-    uint32_t offset;
-    if(!word(p->document,qa_json_get(p->document,root,"player"),"commandAngles",&offset,error)) return false;
-    if(offset>p->client_bytes||p->client_bytes-offset<12)
-        return application_fail(error,QA_ERROR_FORMAT,"Native Source command angles exceed its qualified client record");
     uint8_t bytes[12];
-    if(!qa_native_read(instance(p),client+offset,bytes,sizeof(bytes),error)) return false;
+    if(!qa_native_read(instance(p),client+p->command_angles,bytes,sizeof(bytes),error)) return false;
     *command_angles=qa_v3(qa_load_f32le(bytes),qa_load_f32le(bytes+4),qa_load_f32le(bytes+8));
     return qa_vec_finite(*command_angles)||application_fail(error,QA_ERROR_FORMAT,"Native Source command angles are not finite");
 }
@@ -223,10 +246,10 @@ bool application_native_q2_attack_prepare(struct application_native_q2 *engine, 
     if(!p->dispatcher_count||p->dispatcher_count>16||p->dispatcher_argument>=p->dispatcher_count)
         return application_fail(error,QA_ERROR_FORMAT,"Native weapon dispatcher actor exceeds its real argument roster");
     for(size_t i=0;i<p->dispatcher_count;++i) p->dispatcher_parameters[i]=scalar(QA_NATIVE_ADDRESS);
-    p->committed=qa_json_get(doc,weapons,"committedInput");
+    qa_json_id committed=qa_json_get(doc,weapons,"committedInput");
     qa_json_id decisions=qa_json_get(doc,weapons,"decisions");
     p->decision_count=qa_json_size(doc,decisions);
-    if(qa_json_type(doc,p->committed)!=QA_JSON_ARRAY || qa_json_type(doc,decisions)!=QA_JSON_ARRAY || !p->decision_count)
+    if(qa_json_type(doc,committed)!=QA_JSON_ARRAY || qa_json_type(doc,decisions)!=QA_JSON_ARRAY || !p->decision_count)
         return application_fail(error,QA_ERROR_FORMAT,"Native weapon dispatcher lacks its actual decision and commitment rosters");
     p->decisions=calloc(p->decision_count,sizeof(*p->decisions));
     if(!p->decisions) return application_fail(error,QA_ERROR_MEMORY,"Retaining qualified original weapon decisions");
@@ -237,7 +260,7 @@ bool application_native_q2_attack_prepare(struct application_native_q2 *engine, 
         qa_json_id fields=qa_json_get(doc,qa_json_at(doc,decisions,i),"fields");
         if(qa_json_type(doc,fields)!=QA_JSON_ARRAY||!qa_json_size(doc,fields))
             return application_fail(error,QA_ERROR_FORMAT,"Native weapon decision lacks its actual input mask roster");
-        p->decisions[i]=(decision_region){.owner=p,.fields=fields,
+        p->decisions[i]=(decision_region){.owner=p,
             .field_count=qa_json_size(doc,fields),.id=region.id};
     }
     if (!word(doc, client, "pointer", &p->client_pointer, error) ||
@@ -257,6 +280,7 @@ bool application_native_q2_attack_prepare(struct application_native_q2 *engine, 
         p->item_classname > p->item_stride || p->pointer_bytes > p->item_stride - p->item_classname ||
         p->item_flags > p->item_stride || p->item_stride - p->item_flags < 4)
         return application_fail(error, QA_ERROR_FORMAT, "Native attack producer differs from its source descriptors");
+    if(!decision_descriptors_prepare(p,weapons,committed,decisions,error)) return false;
     qa_json_id provenance = qa_json_get(doc, weapons, "provenance");
     if (qa_json_type(doc, provenance) != QA_JSON_OBJECT)
         return application_fail(error, QA_ERROR_UNSUPPORTED,
@@ -654,6 +678,7 @@ bool application_native_q2_attack_close(struct application_native_q2 *engine, qa
     qa_actor_index_destroy(&p->factor_index); qa_actor_index_destroy(&p->projectile_index);
     while (p->factors) { attack_factor *next = p->factors->next; free(p->factors); p->factors = next; }
     qa_arena_destroy(&p->projectile_storage);
+    qa_arena_destroy(&p->decision_storage);
     qa_json_destroy(p->document); free(p->decisions); free(p->items); free(p); engine->source_attack = NULL;
     return true;
 }

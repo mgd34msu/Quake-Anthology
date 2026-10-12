@@ -17,8 +17,9 @@ struct application_native_q2_inventory {
     qa_json_id world;
     q2_inventory_row *rows;
     size_t count;
-    uint32_t client_pointer, inventory_offset, client_bytes, source_count;
-    uint8_t pointer_bytes;
+    uint32_t client_pointer, inventory_offset, client_bytes, source_count, cursor_offset;
+    int32_t empty_cursor;
+    uint8_t pointer_bytes, cursor_bytes;
     bool resolved;
 };
 
@@ -114,6 +115,14 @@ bool application_native_q2_inventory_prepare(struct application_native_q2 *engin
     if (!count || count > source_count || p->inventory_offset > p->client_bytes ||
         (uint64_t)source_count * 4 > p->client_bytes - p->inventory_offset)
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 inventory exceeds its declared client record");
+    int64_t empty;
+    p->cursor_bytes = sizeof(int32_t);
+    if (!word(doc, inventory, "cursor", &p->cursor_offset, error) ||
+        !qa_json_i64(doc, qa_json_get(doc, inventory, "empty"), &empty, error) ||
+        empty < INT32_MIN || empty > INT32_MAX || p->cursor_offset > p->client_bytes ||
+        p->client_bytes - p->cursor_offset < p->cursor_bytes)
+        return application_fail(error, QA_ERROR_FORMAT, "Native inventory cursor leaves its actual client record");
+    p->empty_cursor = (int32_t)empty;
     p->count = count; p->rows = calloc(count, sizeof(*p->rows));
     return p->rows != NULL || application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 inventory roster");
 }
@@ -356,16 +365,10 @@ bool application_native_q2_inventory_source_read(struct application_native_q2 *e
     if (!slot || !resolve(engine, error))
         return slot ? false : application_fail(error, QA_ERROR_NOT_FOUND, "Native inventory source client is absent");
     struct application_native_q2_inventory *p = engine->primary_inventory;
-    qa_json_id declaration = qa_json_get(p->document, qa_json_root(p->document), "inventory");
     application_native_q2_inventory_source value = {.actor = actor, .slot = slot,
-        .inventory_offset = p->inventory_offset, .count = p->source_count, .client_bytes = p->client_bytes};
-    int64_t empty;
-    if (!word(p->document, declaration, "cursor", &value.cursor_offset, error) ||
-        !qa_json_i64(p->document, qa_json_get(p->document, declaration, "empty"), &empty, error) ||
-        empty < INT32_MIN || empty > INT32_MAX || value.cursor_offset > p->client_bytes ||
-        p->client_bytes - value.cursor_offset < 4)
-        return application_fail(error, QA_ERROR_FORMAT, "Native inventory cursor leaves its actual client record");
-    value.empty = (int32_t)empty;
+        .inventory_offset = p->inventory_offset, .count = p->source_count,
+        .client_bytes = p->client_bytes, .cursor_offset = p->cursor_offset,
+        .empty = p->empty_cursor};
     if (!source_client_address(engine, slot, actor, &value.client, error) ||
         !qa_native_entity_address(qa_native_host_instance(engine->provider->state.native.host), slot, &value.entity, error)) return false;
     *out = value;
@@ -592,18 +595,11 @@ bool application_native_q2_inventory_ui_read(application_provider *provider, qa_
     if (!client || client->inventory_prepared || !engine->primary_inventory->resolved)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 UI inventory lost its physical client binding");
     struct application_native_q2_inventory *p = engine->primary_inventory;
-    uint32_t cursor;
-    int64_t empty;
-    qa_json_id declaration = qa_json_get(p->document, qa_json_root(p->document), "inventory");
-    if (!word(p->document, declaration, "cursor", &cursor, error) ||
-        !qa_json_i64(p->document, qa_json_get(p->document, declaration, "empty"), &empty, error) ||
-        empty < INT32_MIN || empty > INT32_MAX || cursor > p->client_bytes || p->client_bytes - cursor < 4)
-        return application_fail(error, QA_ERROR_FORMAT, "Native Q2 inventory cursor exceeds its declared client");
     qa_native_address base;
     int32_t selected;
     ++engine->calls;
     bool entered = source_client_address(engine, slot, actor, &base, error) &&
-        scalar_read(engine, base + cursor, 4, &selected, error);
+        scalar_read(engine, base + p->cursor_offset, p->cursor_bytes, &selected, error);
     --engine->calls;
     if (!entered) return false;
     if (p->count > SIZE_MAX / sizeof(application_native_q2_ui_item))
@@ -619,7 +615,7 @@ bool application_native_q2_inventory_ui_read(application_provider *provider, qa_
         const q2_inventory_row *row = &p->rows[i];
         int32_t count;
         if (!scalar_read(engine, base + p->inventory_offset + row->index * 4u, 4, &count, error)) { ok = false; break; }
-        if (selected != empty && selected >= 0 && (uint32_t)selected == row->index) value.selected = row->item;
+        if (selected != p->empty_cursor && selected >= 0 && (uint32_t)selected == row->index) value.selected = row->item;
         if (!count) continue;
         if (row->index > UINT32_MAX - label_base || label_base + row->index >= engine->hud_names.layout.max_configs) {
             ok = application_fail(error, QA_ERROR_FORMAT, "Native Q2 item label leaves its actual configstring namespace");

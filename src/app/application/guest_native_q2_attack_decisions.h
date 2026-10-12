@@ -4,44 +4,156 @@
 static bool decision_fail(qa_error *error,qa_status status,const char *message)
 { application_fail(error,status,message); return false; }
 
-static size_t decision_field_bytes(struct application_native_q2_attack *p, qa_json_id field)
+static void *decision_array(struct application_native_q2_attack *p,size_t count,size_t bytes,
+    size_t alignment,qa_error *error)
 {
-    qa_json_id encoding=qa_json_get(p->document,field,"encoding");
-    static const char *const names[]={"int8","uint8","int16","uint16","int32","uint32","int64","uint64","float32","float64"};
-    static const uint8_t sizes[]={1,1,2,2,4,4,8,8,4,8};
-    for(size_t i=0;i<sizeof(sizes);++i) if(qa_json_string_equal(p->document,encoding,names[i])) return sizes[i];
-    return 0;
+    if(count>SIZE_MAX/bytes) {
+        decision_fail(error,QA_ERROR_MEMORY,"Native weapon descriptor size overflows"); return NULL;
+    }
+    void *out=qa_arena_alloc(&p->decision_storage,count*bytes,alignment,error);
+    if(out) memset(out,0,count*bytes);
+    return out;
 }
-static bool decision_field_address(struct application_native_q2_attack *p, qa_native_address entity,
-    qa_json_id field, size_t bytes, qa_native_address *out, qa_error *error)
+static bool decision_field_prepare(struct application_native_q2_attack *p,qa_json_id node,
+    uint8_t bytes,qa_native_value_type encoding,decision_field *out,qa_error *error)
 {
-    uint32_t offset;
-    if(!word(p->document,field,"offset",&offset,error)) return false;
-    qa_json_id record=qa_json_get(p->document,field,"record");
-    if(qa_json_string_equal(p->document,record,"image")) return qa_native_rva(instance(p),offset,bytes,out,error);
+    decision_field field={.bytes=bytes,.encoding=encoding};
+    if(!word(p->document,node,"offset",&field.offset,error)) return false;
+    qa_json_id record=qa_json_get(p->document,node,"record");
+    if(qa_json_string_equal(p->document,record,"image")) field.record=DECISION_IMAGE;
+    else if(qa_json_string_equal(p->document,record,"entity")) field.record=DECISION_ENTITY;
+    else if(qa_json_string_equal(p->document,record,"client")) {
+        field.record=DECISION_CLIENT;
+        if(field.offset>p->client_bytes || bytes>p->client_bytes-field.offset)
+            return decision_fail(error,QA_ERROR_FORMAT,"Native weapon field exceeds its Source client record");
+    } else return decision_fail(error,QA_ERROR_FORMAT,"Native weapon decision names another Source record");
+    *out=field; return true;
+}
+static bool decision_scalar_prepare(struct application_native_q2_attack *p,qa_json_id node,
+    decision_field *out,qa_error *error)
+{
+    static const struct { const char *name; qa_native_value_type encoding; uint8_t bytes; } types[]={
+        {"int8",QA_NATIVE_I8,1},{"uint8",QA_NATIVE_U8,1},{"int16",QA_NATIVE_I16,2},
+        {"uint16",QA_NATIVE_U16,2},{"int32",QA_NATIVE_I32,4},{"uint32",QA_NATIVE_U32,4},
+        {"int64",QA_NATIVE_I64,8},{"uint64",QA_NATIVE_U64,8},{"float32",QA_NATIVE_F32,4},
+        {"float64",QA_NATIVE_F64,8}};
+    qa_json_id encoding=qa_json_get(p->document,node,"encoding");
+    for(size_t i=0;i<sizeof(types)/sizeof(types[0]);++i)
+        if(qa_json_string_equal(p->document,encoding,types[i].name))
+            return decision_field_prepare(p,node,types[i].bytes,types[i].encoding,out,error);
+    return decision_fail(error,QA_ERROR_FORMAT,"Native weapon scalar has no Source encoding");
+}
+static bool decision_test_prepare(struct application_native_q2_attack *p,qa_json_id node,
+    decision_test_descriptor *out,qa_error *error)
+{
+    qa_json_id field=qa_json_get(p->document,node,"field"),kind=qa_json_get(p->document,node,"kind");
+    if(qa_json_string_equal(p->document,kind,"pointer")) {
+        out->pointer=true;
+        if(!decision_field_prepare(p,field,p->pointer_bytes,QA_NATIVE_ADDRESS,&out->field,error)) return false;
+        qa_json_id value=qa_json_get(p->document,node,"value");
+        out->has_pointer_value=qa_json_type(p->document,value)!=QA_JSON_NULL;
+        if(!out->has_pointer_value) return true;
+        if(!word(p->document,value,"rva",&out->rva,error)) return false;
+        qa_json_id offsets=qa_json_get(p->document,value,"indirections");
+        if(qa_json_type(p->document,offsets)!=QA_JSON_ARRAY)
+            return decision_fail(error,QA_ERROR_FORMAT,"Native weapon pointer lacks its indirection roster");
+        out->indirection_count=qa_json_size(p->document,offsets);
+        if(out->indirection_count) {
+            out->indirections=decision_array(p,out->indirection_count,sizeof(*out->indirections),
+                _Alignof(uint32_t),error);
+            if(!out->indirections) return false;
+        }
+        for(size_t i=0;i<out->indirection_count;++i) {
+            uint64_t offset;
+            if(!qa_json_u64(p->document,qa_json_at(p->document,offsets,i),&offset,error)) return false;
+            if(offset>UINT32_MAX) return decision_fail(error,QA_ERROR_FORMAT,"Native weapon pointer indirection overflows");
+            out->indirections[i]=(uint32_t)offset;
+        }
+        return true;
+    }
+    if(!qa_json_string_equal(p->document,kind,"scalar"))
+        return decision_fail(error,QA_ERROR_FORMAT,"Native weapon commitment names another test kind");
+    if(!decision_scalar_prepare(p,field,&out->field,error) ||
+        !qa_json_number(p->document,qa_json_get(p->document,node,"value"),&out->expected,error)) return false;
+    qa_json_id mask=qa_json_get(p->document,node,"mask");
+    out->masked=qa_json_type(p->document,mask)!=QA_JSON_NULL;
+    if(out->masked) {
+        uint64_t bits;
+        if(!qa_json_u64(p->document,mask,&bits,error)) return false;
+        if(bits>UINT32_MAX) return decision_fail(error,QA_ERROR_FORMAT,"Native weapon commitment mask exceeds its Source word");
+        out->mask=(uint32_t)bits;
+    }
+    qa_json_id comparison=qa_json_get(p->document,node,"comparison");
+    if(qa_json_string_equal(p->document,comparison,"equals")) out->at_most=false;
+    else if(qa_json_string_equal(p->document,comparison,"at-most")) out->at_most=true;
+    else return decision_fail(error,QA_ERROR_FORMAT,"Native weapon commitment has another Source comparison");
+    return true;
+}
+static bool decision_descriptors_prepare(struct application_native_q2_attack *p,qa_json_id weapons,
+    qa_json_id committed,qa_json_id decisions,qa_error *error)
+{
+    p->committed_count=qa_json_size(p->document,committed);
+    if(p->committed_count) {
+        p->committed=decision_array(p,p->committed_count,sizeof(*p->committed),_Alignof(decision_group),error);
+        if(!p->committed) return false;
+    }
+    for(size_t i=0;i<p->committed_count;++i) {
+        decision_group *group=p->committed+i;
+        qa_json_id row=qa_json_at(p->document,committed,i);
+        group->count=qa_json_size(p->document,row);
+        if(qa_json_type(p->document,row)!=QA_JSON_ARRAY || !group->count)
+            return decision_fail(error,QA_ERROR_FORMAT,"Native weapon commitment has an empty Source conjunction");
+        group->tests=decision_array(p,group->count,sizeof(*group->tests),_Alignof(decision_test_descriptor),error);
+        if(!group->tests) return false;
+        for(size_t j=0;j<group->count;++j)
+            if(!decision_test_prepare(p,qa_json_at(p->document,row,j),group->tests+j,error)) return false;
+    }
+    for(size_t i=0;i<p->decision_count;++i) {
+        decision_region *region=p->decisions+i;
+        qa_json_id fields=qa_json_get(p->document,qa_json_at(p->document,decisions,i),"fields");
+        region->fields=decision_array(p,region->field_count,sizeof(*region->fields),_Alignof(decision_input),error);
+        if(!region->fields) return false;
+        for(size_t j=0;j<region->field_count;++j) {
+            qa_json_id row=qa_json_at(p->document,fields,j);
+            decision_input *input=region->fields+j;
+            if(!decision_scalar_prepare(p,qa_json_get(p->document,row,"field"),&input->field,error)) return false;
+            if(input->field.bytes>4 || input->field.encoding==QA_NATIVE_F32)
+                return decision_fail(error,QA_ERROR_FORMAT,"Native weapon input mask requires an integer Source word");
+            if(!word(p->document,row,"clearMask",&input->mask,error) || !input->mask) return false;
+            if(input->field.bytes<4 && input->mask>=(UINT32_C(1)<<(input->field.bytes*8)))
+                return decision_fail(error,QA_ERROR_FORMAT,"Native weapon input mask exceeds its actual Source storage width");
+        }
+    }
+    qa_json_id entity=qa_json_get(p->document,weapons,"entity"),root=qa_json_root(p->document);
+    if(!decision_scalar_prepare(p,qa_json_get(p->document,entity,"waterLevel"),&p->water_level,error) ||
+        !word(p->document,qa_json_get(p->document,root,"player"),"commandAngles",&p->command_angles,error)) return false;
+    if(p->command_angles>p->client_bytes || p->client_bytes-p->command_angles<12)
+        return decision_fail(error,QA_ERROR_FORMAT,"Native Source command angles exceed its qualified client record");
+    qa_arena_seal(&p->decision_storage); return true;
+}
+static bool decision_field_address(struct application_native_q2_attack *p,qa_native_address entity,
+    const decision_field *field,qa_native_address *out,qa_error *error)
+{
+    if(field->record==DECISION_IMAGE) return qa_native_rva(instance(p),field->offset,field->bytes,out,error);
     qa_native_address base=entity;
-    if(qa_json_string_equal(p->document,record,"client")) {
-        if(offset>p->client_bytes || bytes>p->client_bytes-offset ||
-            !pointer_read(p,entity+p->client_pointer,&base,error)) return false;
+    if(field->record==DECISION_CLIENT) {
+        if(!pointer_read(p,entity+p->client_pointer,&base,error)) return false;
         if(!base) return decision_fail(error,QA_ERROR_NOT_FOUND,"Native weapon decision lost its Source client record");
-    } else if(!qa_json_string_equal(p->document,record,"entity"))
-        return decision_fail(error,QA_ERROR_FORMAT,"Native weapon decision names another Source record");
-    if(base>UINT64_MAX-offset) return decision_fail(error,QA_ERROR_FORMAT,"Native weapon field address overflows");
-    *out=base+offset; return true;
+    }
+    if(base>UINT64_MAX-field->offset) return decision_fail(error,QA_ERROR_FORMAT,"Native weapon field address overflows");
+    *out=base+field->offset; return true;
 }
 static bool decision_scalar(struct application_native_q2_attack *p,qa_native_address entity,
-    qa_json_id field,double *out,qa_error *error)
+    const decision_field *field,double *out,qa_error *error)
 {
-    size_t count=decision_field_bytes(p,field); uint8_t bytes[8]; qa_native_address address;
-    if(!count) return decision_fail(error,QA_ERROR_FORMAT,"Native weapon scalar has no Source encoding");
-    if(!decision_field_address(p,entity,field,count,&address,error)||!qa_native_read(instance(p),address,bytes,count,error)) return false;
-    qa_json_id encoding=qa_json_get(p->document,field,"encoding");
-    if(qa_json_string_equal(p->document,encoding,"float32")) *out=qa_load_f32le(bytes);
-    else if(qa_json_string_equal(p->document,encoding,"float64")) { uint64_t bits=qa_load_u64le(bytes); memcpy(out,&bits,sizeof(bits)); }
+    size_t count=field->bytes; uint8_t bytes[8]; qa_native_address address;
+    if(!decision_field_address(p,entity,field,&address,error)||!qa_native_read(instance(p),address,bytes,count,error)) return false;
+    if(field->encoding==QA_NATIVE_F32) *out=qa_load_f32le(bytes);
+    else if(field->encoding==QA_NATIVE_F64) { uint64_t bits=qa_load_u64le(bytes); memcpy(out,&bits,sizeof(bits)); }
     else {
         uint64_t bits=count==1?bytes[0]:count==2?qa_load_u16le(bytes):count==4?qa_load_u32le(bytes):qa_load_u64le(bytes);
-        bool signed_value=qa_json_string_equal(p->document,encoding,"int8")||qa_json_string_equal(p->document,encoding,"int16")||
-            qa_json_string_equal(p->document,encoding,"int32")||qa_json_string_equal(p->document,encoding,"int64");
+        bool signed_value=field->encoding==QA_NATIVE_I8||field->encoding==QA_NATIVE_I16||
+            field->encoding==QA_NATIVE_I32||field->encoding==QA_NATIVE_I64;
         if(signed_value) {
             int64_t value=count==1?(int8_t)bits:count==2?(int16_t)bits:count==4?(int32_t)bits:(int64_t)bits;
             if(value < -INT64_C(9007199254740991) || value > INT64_C(9007199254740991))
@@ -55,53 +167,37 @@ static bool decision_scalar(struct application_native_q2_attack *p,qa_native_add
     return isfinite(*out)||decision_fail(error,QA_ERROR_FORMAT,"Native weapon decision returned a nonfinite Source scalar");
 }
 static bool decision_test(struct application_native_q2_attack *p,qa_native_address entity,
-    qa_json_id test,bool *out,qa_error *error)
+    const decision_test_descriptor *test,bool *out,qa_error *error)
 {
-    qa_json_id field=qa_json_get(p->document,test,"field"),kind=qa_json_get(p->document,test,"kind");
-    if(qa_json_string_equal(p->document,kind,"pointer")) {
+    if(test->pointer) {
         qa_native_address address,actual,expected=0;
-        if(!decision_field_address(p,entity,field,p->pointer_bytes,&address,error)||!pointer_read(p,address,&actual,error)) return false;
-        qa_json_id value=qa_json_get(p->document,test,"value");
-        if(qa_json_type(p->document,value)!=QA_JSON_NULL) {
-            uint32_t rva;
-            if(!word(p->document,value,"rva",&rva,error)||!qa_native_rva(instance(p),rva,1,&expected,error)) return false;
-            qa_json_id offsets=qa_json_get(p->document,value,"indirections");
-            if(qa_json_type(p->document,offsets)!=QA_JSON_ARRAY) return decision_fail(error,QA_ERROR_FORMAT,"Native weapon pointer lacks its indirection roster");
-            for(size_t i=0;i<qa_json_size(p->document,offsets);++i) {
-                uint64_t offset;
-                if(!qa_json_u64(p->document,qa_json_at(p->document,offsets,i),&offset,error)) return false;
-                if(offset>UINT32_MAX||expected>UINT64_MAX-offset) return decision_fail(error,QA_ERROR_FORMAT,"Native weapon pointer indirection overflows");
+        if(!decision_field_address(p,entity,&test->field,&address,error)||!pointer_read(p,address,&actual,error)) return false;
+        if(test->has_pointer_value) {
+            if(!qa_native_rva(instance(p),test->rva,1,&expected,error)) return false;
+            for(size_t i=0;i<test->indirection_count;++i) {
+                uint32_t offset=test->indirections[i];
+                if(expected>UINT64_MAX-offset) return decision_fail(error,QA_ERROR_FORMAT,"Native weapon pointer indirection overflows");
                 if(!pointer_read(p,expected+offset,&expected,error)) return false;
             }
         }
         *out=actual==expected; return true;
     }
-    if(!qa_json_string_equal(p->document,kind,"scalar")) return decision_fail(error,QA_ERROR_FORMAT,"Native weapon commitment names another test kind");
-    double actual,expected;
-    if(!decision_scalar(p,entity,field,&actual,error)||!qa_json_number(p->document,qa_json_get(p->document,test,"value"),&expected,error)) return false;
-    qa_json_id mask=qa_json_get(p->document,test,"mask");
-    if(qa_json_type(p->document,mask)!=QA_JSON_NULL) {
-        uint64_t bits;
-        if(!qa_json_u64(p->document,mask,&bits,error)) return false;
-        if(bits>UINT32_MAX || actual<INT32_MIN || actual>UINT32_MAX || trunc(actual)!=actual)
+    double actual;
+    if(!decision_scalar(p,entity,&test->field,&actual,error)) return false;
+    if(test->masked) {
+        if(actual<INT32_MIN || actual>UINT32_MAX || trunc(actual)!=actual)
             return decision_fail(error,QA_ERROR_FORMAT,"Native weapon commitment mask exceeds its Source word");
-        actual=(double)((uint32_t)(int64_t)actual&(uint32_t)bits);
+        actual=(double)((uint32_t)(int64_t)actual&test->mask);
     }
-    qa_json_id comparison=qa_json_get(p->document,test,"comparison");
-    if(qa_json_string_equal(p->document,comparison,"equals")) *out=actual==expected;
-    else if(qa_json_string_equal(p->document,comparison,"at-most")) *out=actual<=expected;
-    else return decision_fail(error,QA_ERROR_FORMAT,"Native weapon commitment has another Source comparison");
-    return true;
+    *out=test->at_most?actual<=test->expected:actual==test->expected; return true;
 }
 static bool decision_committed(struct application_native_q2_attack *p,qa_native_address entity,bool *out,qa_error *error)
 {
     *out=false;
-    for(size_t i=0;i<qa_json_size(p->document,p->committed);++i) {
-        qa_json_id group=qa_json_at(p->document,p->committed,i); bool matches=true;
-        if(qa_json_type(p->document,group)!=QA_JSON_ARRAY||!qa_json_size(p->document,group))
-            return decision_fail(error,QA_ERROR_FORMAT,"Native weapon commitment has an empty Source conjunction");
-        for(size_t j=0;matches&&j<qa_json_size(p->document,group);++j)
-            if(!decision_test(p,entity,qa_json_at(p->document,group,j),&matches,error)) return false;
+    for(size_t i=0;i<p->committed_count;++i) {
+        const decision_group *group=p->committed+i; bool matches=true;
+        for(size_t j=0;matches&&j<group->count;++j)
+            if(!decision_test(p,entity,group->tests+j,&matches,error)) return false;
         if(matches) { *out=true; return true; }
     }
     return true;
@@ -156,16 +252,11 @@ static bool decision_call(void *context,qa_native_instance *native,const qa_nati
     projection->region=region; projection->actor=frame->actor; projection->entity=frame->entity;
     projection->next=p->projections; p->projections=projection;
     for(size_t i=0;i<count;++i) {
-        qa_json_id row=qa_json_at(p->document,region->fields,i),field=qa_json_get(p->document,row,"field");
+        const decision_input *input=region->fields+i;
         decision_saved *saved=projection->fields+i; uint8_t bytes[4]={0};
-        saved->bytes=decision_field_bytes(p,field);
-        if(!saved->bytes||saved->bytes>4||qa_json_string_equal(p->document,qa_json_get(p->document,field,"encoding"),"float32"))
-            return decision_fail(error,QA_ERROR_FORMAT,"Native weapon input mask requires an integer Source word");
-        if(!word(p->document,row,"clearMask",&saved->mask,error)||!saved->mask||
-            !decision_field_address(p,frame->entity,field,saved->bytes,&saved->address,error)||
+        saved->bytes=input->field.bytes; saved->mask=input->mask;
+        if(!decision_field_address(p,frame->entity,&input->field,&saved->address,error) ||
             !qa_native_read(native,saved->address,bytes,saved->bytes,error)) return false;
-        if(saved->bytes<4 && saved->mask>=(UINT32_C(1)<<(saved->bytes*8)))
-            return decision_fail(error,QA_ERROR_FORMAT,"Native weapon input mask exceeds its actual Source storage width");
         saved->bits=qa_load_u32le(bytes); ++projection->count;
     }
     for(size_t i=0;i<count;++i) {
