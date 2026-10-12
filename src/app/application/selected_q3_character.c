@@ -119,8 +119,5 @@ bool qa_application_selected_q3_character_current(qa_application *app,
         actual.legs_animation == saved->legs_animation && actual.torso_animation == saved->torso_animation &&
         actual.source_flags == saved->source_flags && actual.scale == saved->scale && actual.opacity == saved->opacity &&
         actual.present == saved->present &&
-        actual.source_frame.provider == saved->source_frame.provider &&
-        actual.source_frame.kind == saved->source_frame.kind && actual.source_frame.phase == saved->source_frame.phase &&
-        actual.source_frame.number == saved->source_frame.number && actual.source_frame.start_ns == saved->source_frame.start_ns &&
-        actual.source_frame.time_ns == saved->source_frame.time_ns && actual.source_frame.elapsed_ns == saved->source_frame.elapsed_ns;
+        qa_source_frame_equal(actual.source_frame, saved->source_frame);
 }

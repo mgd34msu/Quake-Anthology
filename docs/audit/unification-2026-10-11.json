@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "71030a1acd7d7b0f2437381b9230e14b2574c62d",
+  "verified_main": "732a78337c63c254d465576d1d2ca04eac9aa475",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -26694,9 +26694,8 @@
       "severity": "low",
       "job": "05",
       "area": "application",
-      "status": "fixed_source_build_core",
-      "verification": "One qa_source_frame_equal beside the common frame type replaces complete frame identity helpers and inline copies across selected effects/characters, guest/native Q3, Q2 owned-wire observation, Unified/network presentation and receiver restore. All seven fields remain exact; caller-specific subset/phase-excluding comparisons are unchanged. Remaining source vector finite checks now use qa_vec_finite; the already-adopted qa_vec_equal preserves component IEEE comparison. Normal production build and seven core suites pass, without new validation paths or save/protocol fields.",
-      "fix_commit": "71030a1acd7d7b0f2437381b9230e14b2574c62d"
+      "status": "open_source_observation",
+      "verification": "Partial migration verified in 71030a1a; selected_q3_character.c full comparison remains outside that commit and is being included in the next verified slice."
     },
     {
       "id": "05-I4",
@@ -34161,8 +34160,9 @@
       "severity": "medium",
       "job": "25",
       "area": "module_hosts",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "One guest heap-sort body serves SysV and Windows imports through comparator and memory-access adapters. ABI decoding, empty-range rules, signed comparator results, callback order, ties, nested scratch and partial failure mutations remain at their existing boundaries. Normal production build and seven core suites passed; no live guest-module claim.",
+      "fix_commit": "732a78337c63c254d465576d1d2ca04eac9aa475"
     },
     {
       "id": "J25-06",
@@ -40343,7 +40343,33 @@
         "model"
       ],
       "record_directory": "/tmp/qa-ta3196-common-frame-equality-20261012",
-      "conclusion": "One qa_source_frame_equal beside the common frame type replaces complete frame identity helpers and inline copies across selected effects/characters, guest/native Q3, Q2 owned-wire observation, Unified/network presentation and receiver restore. All seven fields remain exact; caller-specific subset/phase-excluding comparisons are unchanged. Remaining source vector finite checks now use qa_vec_finite; the already-adopted qa_vec_equal preserves component IEEE comparison. Normal production build and seven core suites pass, without new validation paths or save/protocol fields."
+      "conclusion": "One qa_source_frame_equal beside the common frame type replaces complete frame identity helpers and inline copies across selected effects, guest/native Q3, Q2 owned-wire observation, Unified/network presentation and receiver restore. All seven fields remain exact; caller-specific subset/phase-excluding comparisons are unchanged. Remaining source vector finite checks now use qa_vec_finite; the already-adopted qa_vec_equal preserves component IEEE comparison. Normal production build and seven core suites pass, without new validation paths or save/protocol fields. The selected-character caller was not staged in this commit; its migration is pending the next verified slice."
+    },
+    {
+      "commit": "732a78337c63c254d465576d1d2ca04eac9aa475",
+      "source_tree": "260b6e8e55caa4cd60802a0bc1f2dfba2ed31ba0",
+      "finding_ids": [
+        "J25-05"
+      ],
+      "files_rechecked": [
+        "src/compat/native/guest/internal.h",
+        "src/compat/native/guest/memory.c",
+        "src/compat/native/guest/sysv_libc.c",
+        "src/compat/native/guest/windows_crt.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-shared-guest-sort-20261012",
+      "conclusion": "One guest heap-sort body serves SysV and Windows imports through comparator and memory-access adapters. ABI decoding, empty-range rules, signed comparator results, callback order, ties, nested scratch and partial failure mutations remain at their existing boundaries. Normal production build and seven core suites passed; no live guest-module claim."
     }
   ],
   "verification_limits": [

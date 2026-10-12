@@ -1525,6 +1525,33 @@ static void test_shared_effect_cursor(void)
     free(app.unified_persistent);
 }
 
+static void test_raw_audio_custody(void)
+{
+    qa_error error={0};
+    qa_audio_raw_stream *stream=NULL,*copy=NULL,*restored=NULL;
+    int16_t first[2050],second[2050];
+    float discarded[4080]={0},a[4120]={0},b[4120]={0};
+    for(size_t i=0;i<2050;++i) { first[i]=(int16_t)i; second[i]=(int16_t)(-1-(int)i); }
+    CHECK(qa_audio_raw_create(22050,&stream,&error));
+    CHECK(qa_audio_raw_queue(stream,first,2050,1,22050,0,false,&error));
+    CHECK(qa_audio_raw_mix(stream,discarded,2040,1)==2040);
+    CHECK(qa_audio_raw_queue(stream,second,2050,1,22050,2050,false,&error));
+    CHECK(qa_audio_raw_clone_rate(stream,22050,&copy,&error));
+    qa_buffer saved={0};
+    CHECK(qa_audio_raw_checkpoint(stream,&saved,&error));
+    CHECK(qa_audio_raw_restore((qa_bytes){saved.data,saved.size},22050,&restored,&error));
+    qa_buffer_free(&saved);
+    qa_audio_raw_destroy(stream);
+    CHECK(qa_audio_raw_mix(copy,a,2060,1)==2060);
+    CHECK(qa_audio_raw_mix(restored,b,2060,1)==2060);
+    CHECK(!memcmp(a,b,sizeof(a)));
+    for(size_t i=0;i<2060;++i) {
+        float expected=i<10?first[2040+i]:second[i-10];
+        CHECK(a[2*i]==expected && a[2*i+1]==expected);
+    }
+    qa_audio_raw_destroy(copy); qa_audio_raw_destroy(restored);
+}
+
 static void test_shared_audio_preparation(void)
 {
     qa_error error = {0}; char directory[] = "/tmp/qa-audio-assets-XXXXXX";
@@ -4016,6 +4043,7 @@ int main(int argc, char **argv)
     test_ring_console_capture();
     test_connection_request_cursor();
     test_shared_effect_cursor();
+    test_raw_audio_custody();
     test_shared_audio_preparation();
     test_retained_movement_result();
     test_campaign_unit();

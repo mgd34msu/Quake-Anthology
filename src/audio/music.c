@@ -1,4 +1,5 @@
 #include "music_internal.h"
+#include "codec_internal.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -105,7 +106,10 @@ bool qa_audio_music_create(uint32_t rate, qa_game_family family, bool source_vol
         qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating music player");
         return false;
     }
-    if (!qa_audio_raw_create(rate, &music->pcm, error) || !qa_audio_music_controls_create(&music->controls, error)) {
+    if (!qa_audio_raw_create(rate, &music->pcm, error) ||
+        !qa_audio_raw_prepare(music->pcm,MUSIC_CHUNK_FRAMES,
+            sizeof(music->scratch)/sizeof(*music->scratch)/MUSIC_CHUNK_FRAMES,error) ||
+        !qa_audio_music_controls_create(&music->controls, error)) {
         qa_audio_raw_destroy(music->pcm);
         free(music);
         return false;
@@ -468,7 +472,11 @@ bool qa_audio_music_selection_prepare(qa_audio_music *music, qa_audio_music_sele
     }
     qa_audio_music_selection *selection = calloc(1, sizeof(*selection));
     if (!selection) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining prepared music selection"); return false; }
-    if (kind != QA_AUDIO_MUSIC_KEEP && !qa_audio_raw_create(music->output_rate, &selection->pcm, error)) {
+    if (kind != QA_AUDIO_MUSIC_KEEP &&
+        (!qa_audio_raw_create(music->output_rate, &selection->pcm, error) ||
+         !qa_audio_raw_prepare(selection->pcm,MUSIC_CHUNK_FRAMES,
+             sizeof(music->scratch)/sizeof(*music->scratch)/MUSIC_CHUNK_FRAMES,error))) {
+        qa_audio_raw_destroy(selection->pcm);
         free(selection); return false;
     }
     selection->music = music; selection->kind = kind; selection->intro = intro; selection->loop = loop;

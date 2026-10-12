@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `71030a1a`.
+Follow-up source changes were reviewed through main `732a7833`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -240,3 +240,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 | `06-05` | `5923d872` | Private console text builder and all callers deleted. Scoped command arenas, retained dedicated-input buffers and exact cold owned outputs preserve quoting/lifetimes/saved fields. Existing core checks unread checkpoint and worst-case UTF-8 repair. Large immediate-command and persistent/cold allocations remain separate work. |
 
 | `09-07` | `bfc4ae0a` | Canonical inverse bindings replace three bot combat reverse scans. Source alias ranges, generation equality and ordered targeting remain. Source review plus normal build/seven core suites; no live combat proof. |
+
+| `J25-05` | `732a7833` | One guest-sort body, retaining ABI comparator and memory adapters. Normal build and seven core suites passed. |

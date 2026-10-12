@@ -1,4 +1,5 @@
-#include "qa/audio.h"
+#include "codec_internal.h"
+#include "qa/arena.h"
 #include "qa/binary.h"
 
 #include <float.h>
@@ -10,6 +11,7 @@ _Static_assert(sizeof(double) == 8 && FLT_RADIX == 2 && DBL_MANT_DIG == 53 && DB
                "PCM checkpoints require binary64 doubles");
 
 struct qa_audio_raw_stream {
+    qa_arena storage;
     int16_t *samples;
     size_t capacity_samples, head, count;
     uint64_t begin, end, position;
@@ -81,9 +83,11 @@ static bool raw_reserve(qa_audio_raw_stream *stream, size_t frames, unsigned cha
         }
         capacity *= 2;
     }
-    int16_t *samples = malloc(capacity * sizeof(*samples));
+    qa_arena storage={0};
+    qa_arena_init(&storage,capacity * sizeof(int16_t));
+    int16_t *samples = qa_arena_alloc(&storage,capacity * sizeof(*samples),_Alignof(int16_t),error);
     if (samples == NULL) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating PCM queue");
+        qa_arena_destroy(&storage);
         return false;
     }
     if (preserve && stream->count != 0) {
@@ -95,11 +99,17 @@ static bool raw_reserve(qa_audio_raw_stream *stream, size_t frames, unsigned cha
         memcpy(samples + first * stream->channels, stream->samples,
                (stream->count - first) * stream->channels * sizeof(*samples));
     }
-    free(stream->samples);
+    qa_arena_destroy(&stream->storage);
+    stream->storage = storage;
     stream->samples = samples;
     stream->capacity_samples = capacity;
     stream->head = 0;
     return true;
+}
+
+bool qa_audio_raw_prepare(qa_audio_raw_stream *stream,size_t frames,unsigned channels,qa_error *error)
+{
+    return raw_reserve(stream,frames,channels,true,error);
 }
 
 bool qa_audio_raw_create(uint32_t output_rate, qa_audio_raw_stream **out, qa_error *error) {
@@ -121,7 +131,7 @@ bool qa_audio_raw_create(uint32_t output_rate, qa_audio_raw_stream **out, qa_err
 void qa_audio_raw_destroy(qa_audio_raw_stream *stream) {
     if (stream == NULL)
         return;
-    free(stream->samples);
+    qa_arena_destroy(&stream->storage);
     free(stream);
 }
 
@@ -213,24 +223,28 @@ bool qa_audio_raw_clone_rate(const qa_audio_raw_stream *source, uint32_t rate,
         return false;
     }
     *copy = *source;
+    copy->storage = (qa_arena){0};
     copy->samples = NULL;
     if (copy->capacity_samples) {
-        copy->samples = malloc(copy->capacity_samples * sizeof(*copy->samples));
+        qa_arena_init(&copy->storage,copy->capacity_samples * sizeof(*copy->samples));
+        copy->samples = qa_arena_alloc(&copy->storage,copy->capacity_samples * sizeof(*copy->samples),
+            _Alignof(int16_t),error);
         if (!copy->samples) {
-            free(copy);
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "Copying queued PCM conversion input");
+            qa_audio_raw_destroy(copy);
             return false;
         }
-        size_t capacity = copy->capacity_samples / copy->channels;
-        size_t first = capacity - copy->head;
-        if (first > copy->count) first = copy->count;
-        if (first)
-            memcpy(copy->samples + copy->head * copy->channels,
-                   source->samples + source->head * source->channels,
-                   first * copy->channels * sizeof(*copy->samples));
-        if (first < copy->count)
-            memcpy(copy->samples, source->samples,
-                   (copy->count - first) * copy->channels * sizeof(*copy->samples));
+        if (copy->count) {
+            size_t capacity = copy->capacity_samples / copy->channels;
+            size_t first = capacity - copy->head;
+            if (first > copy->count) first = copy->count;
+            if (first)
+                memcpy(copy->samples + copy->head * copy->channels,
+                       source->samples + source->head * source->channels,
+                       first * copy->channels * sizeof(*copy->samples));
+            if (first < copy->count)
+                memcpy(copy->samples, source->samples,
+                       (copy->count - first) * copy->channels * sizeof(*copy->samples));
+        }
     }
     if (!qa_audio_raw_set_rate(copy, rate, error)) {
         qa_audio_raw_destroy(copy);

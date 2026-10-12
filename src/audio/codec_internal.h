@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+bool qa_audio_raw_prepare(qa_audio_raw_stream *, size_t frames, unsigned channels, qa_error *);
+
 static inline bool qa_audio_codec_fail(qa_error *error, qa_status code, size_t offset,
                                        const char *message) {
     qa_error_set(error, code, offset, "%s", message);
