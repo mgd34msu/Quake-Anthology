@@ -136,13 +136,14 @@ static inline qa_vec3 qa_axis_remap(const qa_vec3 from[3],const qa_vec3 to[3],qa
 static inline qa_vec3 qa_axis_remap_point(qa_vec3 from_origin,const qa_vec3 from[3],qa_vec3 to_origin,const qa_vec3 to[3],qa_vec3 point,qa_axis_sum_rule rule) {
     return qa_vec_add(to_origin,qa_axis_remap(from,to,qa_vec_sub(point,from_origin),rule));
 }
-static inline qa_vec3 qa_axes_angles(const qa_vec3 axis[3]) {
-    const float degrees = 57.29577951308232f;
-    float horizontal = sqrtf(axis[0].x*axis[0].x + axis[0].y*axis[0].y);
-    return qa_v3(atan2f(-axis[0].z, horizontal)*degrees,
-                 atan2f(axis[0].y, axis[0].x)*degrees,
-                 atan2f(axis[1].z, axis[2].z)*degrees);
-}
+typedef enum qa_axes_projection_rule {
+    QA_AXES_FLOAT_COMPONENTS, QA_AXES_DOUBLE_BASIS
+} qa_axes_projection_rule;
+/* FLOAT_COMPONENTS uses float square/sqrt and atan2 of the source Z components.
+ * DOUBLE_BASIS rounds double pitch/yaw before float AngleVectors and derives
+ * roll from the second axis projected onto that zero-roll right/up basis.
+ * Neither rule normalizes or requires orthogonal input axes. */
+qa_vec3 qa_axes_angles(const qa_vec3 axis[3],qa_axes_projection_rule);
 static inline qa_vec3 qa_vec_lerp(qa_vec3 a, qa_vec3 b, float t) {
     return qa_vec_add(a, qa_vec_scale(qa_vec_sub(b, a), t));
 }

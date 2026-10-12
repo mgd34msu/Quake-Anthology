@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "3321b45f52547023421397927ce7a601cb360448",
+  "verified_main": "dda895760996d7a792a590e00f5d405644efdcde",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 130,
-    "open_source_observation": 241,
+    "fixed_source_build_core": 131,
+    "open_source_observation": 240,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -23699,8 +23699,9 @@
       "severity": "medium",
       "job": "01",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Immutable Source HUD ammo region spans are prepared in the common arena before function-hook publication. Status calls pass the prepared spans to the executor instead of calloc/fill/free. Per-call region copies remain in the existing leased invocation storage for reentry; failed unbind retains the owner and backing. Other executor qualification allocations remain separate work. Normal production build and seven core suites passed; no live HUD or whole-frame allocation claim.",
+      "fix_commit": "dda895760996d7a792a590e00f5d405644efdcde"
     },
     {
       "id": "01-identity-remaining-actors",
@@ -40554,6 +40555,31 @@
       ],
       "record_directory": "/tmp/qa-ta3196-common-userinfo-pairs-20261012",
       "conclusion": "Component client dictionary/edit/read use common info-pair traversal and first-key lookup; private delimiter walkers are deleted. Case-sensitive first-match, optional leading delimiter, trailing pair handling, dictionary dedup and literal/normalized edit order remain. Owned outputs remain where required by the API. Normal production build and seven core suites passed; no live userinfo or zero-allocation claim."
+    },
+    {
+      "commit": "dda895760996d7a792a590e00f5d405644efdcde",
+      "source_tree": "b412b1136e772b9106d50158cdd26f1f92194bf3",
+      "finding_ids": [
+        "01-storage-equipment-status"
+      ],
+      "files_rechecked": [
+        "src/app/application/guest_q3_equipment.c",
+        "src/compat/qvm/execute.c",
+        "src/core/arena.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-prepared-equipment-regions-20261012",
+      "conclusion": "Immutable Source HUD ammo region spans are prepared in the common arena before function-hook publication. Status calls pass the prepared spans to the executor instead of calloc/fill/free. Per-call region copies remain in the existing leased invocation storage for reentry; failed unbind retains the owner and backing. Other executor qualification allocations remain separate work. Normal production build and seven core suites passed; no live HUD or whole-frame allocation claim."
     }
   ],
   "verification_limits": [

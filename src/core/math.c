@@ -31,6 +31,24 @@ void qa_angle_axis(qa_vec3 angles,qa_vec3 axis[3],qa_angle_math_rule rule)
     axis[1]=qa_vec_scale(axis[1],-1);
 }
 
+qa_vec3 qa_axes_angles(const qa_vec3 axis[3],qa_axes_projection_rule rule)
+{
+    if(rule==QA_AXES_DOUBLE_BASIS) {
+        const double degrees=57.295779513082320876;
+        qa_vec3 angles=qa_v3((float)(atan2(-axis[0].z,hypot(axis[0].x,axis[0].y))*degrees),
+                             (float)(atan2(axis[0].y,axis[0].x)*degrees),0);
+        qa_vec3 right,up;
+        qa_angle_vectors(qa_v3(angles.x,angles.y,0),NULL,&right,&up,QA_ANGLE_FLOAT_MATH);
+        angles.z=(float)(atan2(qa_vec_dot(axis[1],up),-qa_vec_dot(axis[1],right))*degrees);
+        return angles;
+    }
+    const float degrees=57.29577951308232f;
+    float horizontal=sqrtf(axis[0].x*axis[0].x+axis[0].y*axis[0].y);
+    return qa_v3(atan2f(-axis[0].z,horizontal)*degrees,
+                 atan2f(axis[0].y,axis[0].x)*degrees,
+                 atan2f(axis[1].z,axis[2].z)*degrees);
+}
+
 void qa_axis_multiply(const qa_vec3 left[3],const qa_vec3 right[3],qa_vec3 out[3])
 {
     qa_vec3 columns[3]={{right[0].x,right[1].x,right[2].x},

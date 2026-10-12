@@ -532,7 +532,7 @@ bool frontend_unified_q3_selected_weapon(frontend_unified_q3 *o,const qa_unified
             .reduced_flashes=o->preferences.reduced_flashes,.context=&call,
             .current=selected_weapon_current,.submit=selected_weapon_submit};
         q3n_selected_weapon_view camera={.origin=world->view.origin,
-            .angles=qa_axes_angles(world->view.axis),.horizontal_speed=wire->horizontal_speed,
+            .angles=qa_axes_angles(world->view.axis,QA_AXES_FLOAT_COMPONENTS),.horizontal_speed=wire->horizontal_speed,
             .field_of_view=atanf(1/world->view.projection.m[0])*114.59155902616464f,
             .bob_cycle=wire->bob_cycle,.draw_gun=true};
         qa_cvars *cvars=qa_application_cvars(o->frontend->application);

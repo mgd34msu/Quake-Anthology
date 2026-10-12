@@ -320,6 +320,16 @@ static void test_shared_angle_basis(void)
         qa_angle_vectors(qa_v3(90,0,0),&only,NULL,NULL,(qa_angle_math_rule)rule);
         CHECK(fabsf(only.x)<1e-6f && only.y==0 && fabsf(only.z+1)<1e-6f);
     }
+    qa_vec3 axis[3]={{1,0,0},{0,1,1},{0,0,2}};
+    qa_vec3 component=qa_axes_angles(axis,QA_AXES_FLOAT_COMPONENTS);
+    qa_vec3 basis=qa_axes_angles(axis,QA_AXES_DOUBLE_BASIS);
+    CHECK(component.x==0 && component.y==0 && fabsf(component.z-26.565051f)<1e-5f);
+    CHECK(basis.x==0 && basis.y==0 && fabsf(basis.z-45)<1e-5f);
+    qa_vec3 original=qa_v3(17.5f,83.125f,-42.75f);
+    qa_angle_axis(original,axis,QA_ANGLE_FLOAT_MATH);
+    basis=qa_axes_angles(axis,QA_AXES_DOUBLE_BASIS);
+    CHECK(fabsf(basis.x-original.x)<1e-5f && fabsf(basis.y-original.y)<1e-5f &&
+        fabsf(basis.z-original.z)<1e-5f);
 }
 static void test_shared_bounds_and_transform(void)
 {

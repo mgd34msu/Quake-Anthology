@@ -199,11 +199,8 @@ static bool camera(application_q3_scene *s, qa_error *e)
         return q3scene_fail(e, QA_ERROR_FORMAT, "Component camera or time is outside its source ABI");
     float origin[] = {c->origin.x,c->origin.y,c->origin.z}, axis[] = {c->axis[0].x,c->axis[0].y,c->axis[0].z,
         c->axis[1].x,c->axis[1].y,c->axis[1].z,c->axis[2].x,c->axis[2].y,c->axis[2].z};
-    const double degrees = 57.295779513082320876;
-    float angles[] = {(float)(atan2(-c->axis[0].z, hypot(c->axis[0].x,c->axis[0].y))*degrees),
-        (float)(atan2(c->axis[0].y,c->axis[0].x)*degrees),0};
-    qa_vec3 right, up; qa_angle_vectors(qa_v3(angles[0],angles[1],0), NULL, &right, &up,QA_ANGLE_FLOAT_MATH);
-    angles[2] = (float)(atan2(qa_vec_dot(c->axis[1],up),-qa_vec_dot(c->axis[1],right))*degrees);
+    qa_vec3 projected=qa_axes_angles(c->axis,QA_AXES_DOUBLE_BASIS);
+    float angles[]={projected.x,projected.y,projected.z};
     for (size_t i = 0; i < p->origin.count; ++i) if (!words(s,p->origin.rows[i],origin,3,e)) return false;
     for (size_t i = 0; i < p->angles.count; ++i) if (!words(s,p->angles.rows[i],angles,3,e)) return false;
     for (size_t i = 0; i < p->axis.count; ++i) if (!words(s,p->axis.rows[i],axis,9,e)) return false;
