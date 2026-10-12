@@ -122,7 +122,7 @@ typedef struct qa_unified_debug_geometry {
     const qa_debug_line *lines;
     size_t count;
     uint64_t time_ns;
-    uint32_t lifetime_ms;
+    uint64_t lifetime_ns;
 } qa_unified_debug_geometry;
 typedef enum qa_unified_presentation_kind {
     QA_UNIFIED_PRESENTATION_BUILTIN, QA_UNIFIED_PRESENTATION_Q2_PLAYER,

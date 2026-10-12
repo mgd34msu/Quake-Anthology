@@ -1305,7 +1305,7 @@ bool qa_application_debug_emit(qa_application *app, const qa_application_debug_e
         return application_event_stream_decline(app, &write, true, error);
     qa_unified_presentation_payload payload = {.kind = QA_UNIFIED_PRESENTATION_DEBUG_GEOMETRY,
         .value.debug = {.lines = event->lines, .count = event->count,
-            .time_ns = event->time_ns, .lifetime_ms = event->lifetime_ms}};
+            .time_ns = event->time_ns, .lifetime_ns = event->lifetime_ns}};
     if (!application_unified_event_emit(app, event->provider, &payload, NULL,
         (qa_actor_id){0}, (qa_actor_id){0}, event->time_ns, 0, false, false, error)) {
         application_event_stream_abort(app, &write, error);

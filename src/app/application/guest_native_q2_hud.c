@@ -53,7 +53,7 @@ static bool debug_import(struct application_native_q2 *engine,
     if (okay && handled && qa_session_clock(app->session, engine->provider->owner, &clock))
         okay = qa_application_debug_emit(app, &(qa_application_debug_event){
             .provider = engine->provider->owner, .time_ns = clock.frame.time_ns,
-            .lines = lines, .count = count, .lifetime_ms = lifetime}, error);
+            .lines = lines, .count = count, .lifetime_ns = (uint64_t)lifetime * UINT64_C(1000000)}, error);
     qa_unified_frame_lease_release(storage);
     return okay && handled;
 }

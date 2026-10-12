@@ -85,11 +85,11 @@ static void test_shared_campaign_modes(void)
 static void test_debug_geometry_wire(void)
 {
     qa_debug_line lines[] = {
-        {.start = {1, 2, 3}, .end = {4, 5, 6}, .color = {1, 0.5f, 0, 0.75f}, .depth_test = true},
+        {.start = {1, 2, 3}, .end = {4, 5, 6}, .color = {1, 0.5f, 0, 0.75f}, .depth_test = true, .width = 1},
         {.start = {-1, -2, -3}, .end = {-4, -5, -6}, .color = {0, 1, 0.5f, 1}}};
     qa_unified_presentation_payload value = {.kind = QA_UNIFIED_PRESENTATION_DEBUG_GEOMETRY,
         .value.debug = {.lines = lines, .count = 2,
-            .time_ns = UINT64_C(9007199254740993), .lifetime_ms = 1250}};
+            .time_ns = UINT64_C(9007199254740993), .lifetime_ns = UINT64_C(1250000000)}};
     qa_unified_presentation_payload decoded = {0};
     qa_error error = {0}; qa_buffer wire = {0};
     CHECK(qa_unified_record_delta_encode(&qa_unified_presentation_payload_layout,
@@ -98,11 +98,42 @@ static void test_debug_geometry_wire(void)
         (qa_bytes){wire.data, wire.size}, NULL, &decoded, NULL, NULL, NULL, NULL, NULL, &error));
     CHECK(decoded.kind == value.kind && decoded.value.debug.count == 2);
     CHECK(decoded.value.debug.time_ns == value.value.debug.time_ns);
-    CHECK(decoded.value.debug.lifetime_ms == value.value.debug.lifetime_ms);
+    CHECK(decoded.value.debug.lifetime_ns == value.value.debug.lifetime_ns);
     CHECK(qa_unified_record_equal(&qa_unified_presentation_payload_layout,
         &value, &decoded, NULL, NULL));
     qa_unified_record_dispose(&qa_unified_presentation_payload_layout, &decoded);
     qa_buffer_free(&wire);
+}
+
+static bool debug_clock_read(void *context, const qa_debug_clock *clock, double *out) {
+    if (clock->provider != 1) return false;
+    *out = *(double *)context;
+    return true;
+}
+static void test_debug_geometry_lifetime(void)
+{
+    qa_debug_store *store = NULL; qa_error error = {0};
+    qa_arena scratch; qa_arena_init(&scratch, 1024);
+    const qa_debug_line *snapshot = NULL; size_t count = 0;
+    qa_debug_line line = {.start = {1, 0, 0}, .end = {2, 0, 0}, .color = {1, 1, 1, 1}};
+    CHECK(qa_debug_store_create(2, &store, &error));
+    CHECK(qa_debug_store_submit(store, &line, 1, 0, 250000, (qa_debug_clock){0}, &error));
+    CHECK(qa_debug_store_snapshot(store, 0.1, 1, NULL, NULL, &scratch, &snapshot, &count, &error) && count == 1);
+    CHECK(qa_debug_store_snapshot(store, 0.25, 1, NULL, NULL, &scratch, &snapshot, &count, &error) && count == 0);
+    CHECK(qa_debug_store_submit(store, &line, 1, 0, UINT64_C(6000000000000000), (qa_debug_clock){0}, &error));
+    CHECK(qa_debug_store_snapshot(store, (double)UINT32_MAX + 1, 2, NULL, NULL, &scratch, &snapshot, &count, &error) && count == 1);
+    qa_debug_store_clear(store);
+    CHECK(qa_debug_store_submit(store, &line, 1, 10, 0, (qa_debug_clock){0}, &error));
+    CHECK(qa_debug_store_snapshot(store, 10, 3, NULL, NULL, &scratch, &snapshot, &count, &error) && count == 1);
+    CHECK(qa_debug_store_snapshot(store, 10, 3, NULL, NULL, &scratch, &snapshot, &count, &error) && count == 1);
+    CHECK(qa_debug_store_snapshot(store, 10, 4, NULL, NULL, &scratch, &snapshot, &count, &error) && count == 0);
+    double source_time = 10;
+    CHECK(qa_debug_store_submit(store, &line, 1, source_time, 1000000, (qa_debug_clock){.provider = 1}, &error));
+    CHECK(qa_debug_store_snapshot(store, 1000, 5, debug_clock_read, &source_time, &scratch, &snapshot, &count, &error) && count == 1);
+    CHECK(qa_debug_store_snapshot(store, 2000, 6, debug_clock_read, &source_time, &scratch, &snapshot, &count, &error) && count == 1);
+    source_time = 11;
+    CHECK(qa_debug_store_snapshot(store, 2001, 7, debug_clock_read, &source_time, &scratch, &snapshot, &count, &error) && count == 0);
+    qa_debug_store_destroy(store); qa_arena_destroy(&scratch);
 }
 static void test_shared_angle_basis(void)
 {
@@ -2938,6 +2969,7 @@ int main(int argc, char **argv)
     test_compiled_sound_names();
     test_shared_campaign_modes();
     test_debug_geometry_wire();
+    test_debug_geometry_lifetime();
     test_shared_angle_basis();
     test_shared_bounds_and_transform();
     test_shared_vector_geometry();

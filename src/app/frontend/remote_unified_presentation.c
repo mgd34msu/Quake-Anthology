@@ -143,33 +143,14 @@ static bool presentation(void *context,const qa_unified_presentation_event *row,
         if(peer->endpoint.kind==QA_NET_LOOPBACK) return true;
         qa_tools *tools=frontend_tools_owner(p->frontend);
         if(!tools) return true;
-        const qa_unified_frame *frame=qa_unified_document_frame(frontend_remote_unified_frame(p->replica));
-        const qa_unified_world_frame *world=frame->world;
-        double seconds=0;
-        bool sampled=false;
-        for(size_t i=0;i<world->producer_sample_count;++i)
-            if(world->producer_samples[i].provider==row->provider_id) {
-                seconds=world->producer_samples[i].seconds;
-                sampled=true;
-                break;
-            }
-        if(!sampled) {
-            const qa_executable_recipe *recipe=frontend_remote_unified_recipe(p->replica);
-            for(size_t i=0;i<qa_executable_recipe_provider_count(recipe);++i) {
-                const qa_recipe_provider *provider=qa_executable_recipe_provider(recipe,i);
-                if(provider->source_owner==world->source.provider && provider->instance_name==row->provider_id) {
-                    seconds=world->presentation_seconds;
-                    sampled=true;
-                    break;
-                }
-            }
-        }
-        if(!sampled) return true;
+        qa_debug_clock source_clock = {.client = domain->client, .provider = row->provider_id};
+        double milliseconds;
+        if (!frontend_debug_clock_read(p->frontend, &source_clock, &milliseconds)) return true;
         const qa_unified_debug_geometry *debug=&row->payload.value.debug;
-        double age=fmax(0,seconds*1000-(double)debug->time_ns/1000000);
-        if(debug->lifetime_ms && age>=debug->lifetime_ms) return true;
+        double age=fmax(0,milliseconds-(double)debug->time_ns/1000000);
+        if(debug->lifetime_ns && age>=(double)debug->lifetime_ns/1000000) return true;
         return qa_debug_store_submit(qa_tools_debug(tools),debug->lines,debug->count,
-            (double)p->frontend->time_ns/1000000-age,debug->lifetime_ms,error);
+            (double)debug->time_ns/1000000,debug->lifetime_ns,source_clock,error);
     }
     if(row->payload.kind==QA_UNIFIED_PRESENTATION_PLAYER_FEEDBACK) {
         *mirrored=false;

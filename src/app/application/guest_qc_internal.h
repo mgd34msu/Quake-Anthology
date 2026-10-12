@@ -90,6 +90,7 @@ struct application_qc_state {
     qa_net_protocol_id protocol;
     application_qc_resource *resources;
     size_t resource_count, resource_capacity;
+    qa_resource *debug_palette;
     application_qc_precache precache;
     uint64_t precache_generation;
     size_t immutable_string_bytes;

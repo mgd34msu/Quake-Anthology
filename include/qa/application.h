@@ -632,7 +632,7 @@ typedef struct qa_application_debug_event {
     uint64_t time_ns;
     const struct qa_debug_line *lines;
     size_t count;
-    uint32_t lifetime_ms;
+    uint64_t lifetime_ns;
 } qa_application_debug_event;
 
 /* Caller-owned cursor. Unread records stay in the application ring. */

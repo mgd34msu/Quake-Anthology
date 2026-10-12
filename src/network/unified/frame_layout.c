@@ -1636,12 +1636,13 @@ static const qa_unified_field qa_debug_line_fields[] = {
     QA_UNIFIED_RECORD(qa_debug_line, end, qa_unified_vector_layout),
     QA_UNIFIED_RECORD(qa_debug_line, color, qa_unified_vector4_layout),
     QA_UNIFIED_FIELD(qa_debug_line, depth_test, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_debug_line, width, QA_UNIFIED_FIELD_F32),
 };
 static const qa_unified_record_layout qa_debug_line_layout = QA_UNIFIED_LAYOUT(qa_debug_line, qa_debug_line_fields);
 static const qa_unified_field qa_unified_debug_geometry_fields[] = {
     QA_UNIFIED_ARRAY(qa_unified_debug_geometry, lines, count, qa_debug_line_layout, SIZE_MAX / sizeof(qa_debug_line)),
     QA_UNIFIED_FIELD(qa_unified_debug_geometry, time_ns, QA_UNIFIED_FIELD_U64),
-    QA_UNIFIED_FIELD(qa_unified_debug_geometry, lifetime_ms, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_unified_debug_geometry, lifetime_ns, QA_UNIFIED_FIELD_U64),
 };
 static const qa_unified_record_layout qa_unified_debug_geometry_layout = QA_UNIFIED_LAYOUT(qa_unified_debug_geometry, qa_unified_debug_geometry_fields);
 static const qa_unified_record_layout *const qa_unified_presentation_payload_variants[] = {&qa_builtin_event_layout, &qa_unified_q2_player_event_layout, &qa_unified_q2_map_event_layout, &qa_unified_q2_protocol_event_layout, &qa_unified_q2_temporary_layout, &qa_unified_model_state_layout, &qa_unified_q3_event_layout, &qa_unified_q3_character_event_layout, &qa_unified_q3_ballistic_event_layout, &qa_unified_owner_event_layout, &qa_unified_visibility_event_layout, &qa_player_feedback_layout, &qa_unified_debug_geometry_layout};

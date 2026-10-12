@@ -3,10 +3,9 @@
 #include "qa/frontend.h"
 #include "qa/builtin.h"
 #include "qa/audio.h"
-/* The actual source emits EFFECT/q1:rerelease-debug with its EX_DRAW builtin
- * code and three numeric arguments: palette index, lifetime seconds, depth.
- * origin/end/direction carry geometry; value is size, volume radius/length,
- * attenuation cylinder half-height. WORLDTEXT carries the actual text ID. */
+/* World text uses EFFECT/q1:rerelease-debug with the WORLDTEXT builtin code,
+ * text ID, origin, size and numeric palette/lifetime/depth tuple. Shape lines
+ * are admitted by the source through the common application DEBUG ring. */
 bool frontend_qc_rerelease_event(qa_frontend *,const qa_builtin_event *,bool *,qa_error *);
 bool frontend_qc_rerelease_draw(qa_frontend *,uint32_t,const qa_scene_view *,qa_error *);
 bool frontend_qc_rerelease_idle(const qa_frontend *);

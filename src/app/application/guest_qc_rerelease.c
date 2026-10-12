@@ -5,6 +5,8 @@
 #include "qa/network_q1_qw.h"
 #include "qa/source_save.h"
 #include "qa/text.h"
+#include "qa/tools.h"
+#include "control_frame.h"
 
 typedef struct qc_finale_held { qa_actor_id actor; bool held; } qc_finale_held;
 typedef struct qc_prompt_choice { char *text; int32_t impulse; } qc_prompt_choice;
@@ -359,13 +361,52 @@ static bool debug_draw(struct application_qc_state *engine,qa_qc_instance *vm,qa
         !isfinite(event.value) || !isfinite(event.volume) || !isfinite(event.attenuation) ||
         !isfinite(lifetime) || lifetime<0 || !isfinite(depth))
         return application_fail(error,QA_ERROR_ARGUMENT,"Rerelease debug source arguments are nonfinite or negative");
-    qa_builtin_message_arg arguments[3]={
-        {.kind=QA_BUILTIN_MESSAGE_NUMBER,.value.number=color},
-        {.kind=QA_BUILTIN_MESSAGE_NUMBER,.value.number=lifetime},
-        {.kind=QA_BUILTIN_MESSAGE_NUMBER,.value.number=depth}};
-    event.arguments=arguments; event.argument_count=3;
-    return qa_builtin_resource(&engine->services,"q1:rerelease-debug",&event.resource,error) &&
-        qa_builtin_emit(&engine->services,&event,error);
+    if (builtin == QA_QC_BUILTIN_EX_DRAW_WORLDTEXT) {
+        qa_builtin_message_arg arguments[3]={
+            {.kind=QA_BUILTIN_MESSAGE_NUMBER,.value.number=color},
+            {.kind=QA_BUILTIN_MESSAGE_NUMBER,.value.number=lifetime},
+            {.kind=QA_BUILTIN_MESSAGE_NUMBER,.value.number=depth}};
+        event.arguments=arguments; event.argument_count=3;
+        return qa_builtin_resource(&engine->services,"q1:rerelease-debug",&event.resource,error) &&
+            qa_builtin_emit(&engine->services,&event,error);
+    }
+    long double duration = (long double)lifetime * 1000000000.L;
+    if (duration >= 18446744073709551616.L || duration > (long double)(UINT64_MAX - event.time_ns))
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC debug lifetime exceeds source clock");
+    uint64_t lifetime_ns = (uint64_t)duration;
+    if (!engine->debug_palette || (lifetime > 0 && !lifetime_ns)) return true;
+    qa_bytes palette = qa_resource_bytes(engine->debug_palette);
+    size_t index = (size_t)color * 3;
+    qa_vec4 rgba = {palette.data[index] / 255.f, palette.data[index + 1] / 255.f,
+        palette.data[index + 2] / 255.f, 1};
+    qa_debug_shape shape = {0};
+    switch (builtin) {
+    case QA_QC_BUILTIN_EX_DRAW_POINT: shape.kind=QA_DEBUG_POINT; shape.data.point.origin=event.origin; shape.data.point.size=event.value; break;
+    case QA_QC_BUILTIN_EX_DRAW_LINE: shape.kind=QA_DEBUG_LINE; shape.data.line.start=event.origin; shape.data.line.end=event.end; break;
+    case QA_QC_BUILTIN_EX_DRAW_ARROW: shape.kind=QA_DEBUG_ARROW; shape.data.arrow.start=event.origin; shape.data.arrow.end=event.end; shape.data.arrow.size=event.value; shape.data.arrow.cap_color=rgba; break;
+    case QA_QC_BUILTIN_EX_DRAW_RAY: shape.kind=QA_DEBUG_RAY; shape.data.ray.origin=event.origin; shape.data.ray.direction=event.direction; shape.data.ray.length=event.volume; shape.data.ray.size=event.value; break;
+    case QA_QC_BUILTIN_EX_DRAW_CIRCLE: shape.kind=QA_DEBUG_CIRCLE; shape.data.round.origin=event.origin; shape.data.round.radius=event.volume; break;
+    case QA_QC_BUILTIN_EX_DRAW_BOUNDS: shape.kind=QA_DEBUG_BOUNDS; shape.data.bounds=(qa_bounds){event.origin,event.end}; break;
+    case QA_QC_BUILTIN_EX_DRAW_SPHERE: shape.kind=QA_DEBUG_SPHERE; shape.data.round.origin=event.origin; shape.data.round.radius=event.volume; break;
+    case QA_QC_BUILTIN_EX_DRAW_CYLINDER: shape.kind=QA_DEBUG_CYLINDER; shape.data.cylinder.origin=event.origin; shape.data.cylinder.radius=event.volume; shape.data.cylinder.half_height=event.attenuation; break;
+    default: return application_fail(error, QA_ERROR_ARGUMENT, "Unknown rerelease debug source import");
+    }
+    qa_application *app = engine->provider->application;
+    qa_unified_frame_lease *storage = application_control_storage_acquire(app, error);
+    if (!storage) return false;
+    const qa_debug_line *lines = NULL;
+    size_t count = 0;
+    ok = qa_debug_shape_lines(&shape, rgba, depth != 0,
+        qa_unified_frame_lease_arena(storage), &lines, &count, error);
+    if (ok) {
+        qa_debug_line *owned = (qa_debug_line *)lines;
+        for (size_t i = 0; i < count; ++i) owned[i].width = 1;
+        ok = qa_application_debug_emit(app, &(qa_application_debug_event){
+            .provider = engine->provider->owner, .time_ns = engine->source_time_ns,
+            .lines = lines, .count = count, .lifetime_ns = lifetime_ns}, error);
+    }
+    qa_unified_frame_lease_release(storage);
+    return ok;
 }
 static bool finale(struct application_qc_state *engine,qa_qc_instance *vm,qa_error *error)
 {

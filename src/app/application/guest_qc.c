@@ -1396,6 +1396,15 @@ bool application_construct_qc(qa_application *app, application_provider *provide
         qa_qc_game_create(provider->state.qc.program,&options,&provider->state.qc.game,error);
     free(regions);if(!created)return false;
     provider->state.qc.instance = qa_qc_game_instance(provider->state.qc.game);
+    if (engine->profile == QA_QC_RERELEASE) {
+        qa_error palette_error = {0};
+        (void)qa_vfs_acquire(provider->launch->content, "gfx/palette.lmp",
+            &engine->debug_palette, NULL, &palette_error);
+        if (engine->debug_palette && qa_resource_bytes(engine->debug_palette).size != 768) {
+            qa_resource_release(engine->debug_palette);
+            engine->debug_palette = NULL;
+        }
+    }
     if(!application_qc_combat_create(engine,error) || !application_qc_protection_create(engine,error) ||
         !application_qc_items_initialize(engine,error) || !application_qc_item_weapons_create(engine,error) ||
         !application_qc_pickups_create(engine,error))return false;
@@ -1586,6 +1595,7 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
     application_qc_messages_destroy(engine);
     qa_buffer_free(&engine->original_extension);
     application_qc_rerelease_destroy(engine);
+    qa_resource_release(engine->debug_palette);
     qa_builtin_snapshot_free(&engine->observations);
     application_qc_items_destroy(engine);
     application_qc_item_weapons_destroy(engine);

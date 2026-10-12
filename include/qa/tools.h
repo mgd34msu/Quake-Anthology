@@ -3,6 +3,7 @@
 #include "qa/camera.h"
 #include "qa/console.h"
 #include "qa/native.h"
+#include "qa/network_ids.h"
 
 typedef enum qa_capture_format { QA_CAPTURE_TGA, QA_CAPTURE_PNG, QA_CAPTURE_JPEG } qa_capture_format;
 typedef struct qa_capture_result { char *path; uint32_t width, height; size_t bytes; } qa_capture_result;
@@ -42,7 +43,7 @@ bool qa_profiler_stamps(const qa_profiler *, qa_arena *, const qa_timer_stamp **
 bool qa_profiler_enabled(const qa_profiler *);
 bool qa_profiler_idle(const qa_profiler *);
 
-typedef struct qa_debug_line { qa_vec3 start, end; qa_vec4 color; bool depth_test; } qa_debug_line;
+typedef struct qa_debug_line { qa_vec3 start, end; qa_vec4 color; bool depth_test; float width; /* Zero uses the configured width. */ } qa_debug_line;
 typedef enum qa_debug_shape_kind { QA_DEBUG_LINE, QA_DEBUG_POINT, QA_DEBUG_CIRCLE, QA_DEBUG_SPHERE,
     QA_DEBUG_BOUNDS, QA_DEBUG_CYLINDER, QA_DEBUG_ARROW, QA_DEBUG_RAY } qa_debug_shape_kind;
 typedef struct qa_debug_shape {
@@ -65,16 +66,20 @@ bool qa_debug_shape_lines(const qa_debug_shape *, qa_vec4, bool depth_test,
 bool qa_debug_native_q2(qa_native_instance *, const qa_native_import_call *, qa_arena *,
                          const qa_debug_line **, size_t *, uint32_t *lifetime_ms,
                          bool *handled, qa_error *);
+/* Local clocks use an owner handle. Remote clocks use the full client handle
+ * and its retained provider name ID; no borrowed module pointers survive. */
+typedef struct qa_debug_clock { qa_net_client_id client; uint32_t provider; } qa_debug_clock;
+typedef bool (*qa_debug_clock_read)(void *, const qa_debug_clock *, double *milliseconds);
 typedef struct qa_debug_store qa_debug_store;
 bool qa_debug_store_create(size_t capacity, qa_debug_store **, qa_error *);
 void qa_debug_store_destroy(qa_debug_store *);
 void qa_debug_store_clear(qa_debug_store *);
 bool qa_debug_store_submit(qa_debug_store *, const qa_debug_line *, size_t,
-                            double server_ms, uint32_t lifetime_ms, qa_error *);
+                            double server_ms, uint64_t lifetime_ns, qa_debug_clock, qa_error *);
 /* Zero lifetime means one presentation frame, shared by all seats. Detached
  * snapshots live in scratch and can outlive mutation/retirement of the store. */
 bool qa_debug_store_snapshot(qa_debug_store *, double server_ms, uint64_t frame,
-                              qa_arena *, const qa_debug_line **, size_t *, qa_error *);
+                              qa_debug_clock_read, void *, qa_arena *, const qa_debug_line **, size_t *, qa_error *);
 bool qa_debug_draw(qa_scene_frame *, const qa_scene_view *, const qa_scene_image *white,
                     const qa_debug_line *, size_t, float width, qa_error *);
 

@@ -515,16 +515,51 @@ bool frontend_tools_camera(qa_frontend *f, uint32_t seat, bool portal, qa_scene_
     if (ok) *view = result;
     qa_arena_destroy(&scratch); return ok;
 }
+bool frontend_debug_clock_read(void *context, const qa_debug_clock *source, double *milliseconds) {
+    qa_frontend *frontend = context;
+    if (!source->client.owner) {
+        qa_clock_state clock;
+        if (!qa_session_clock(qa_application_session(frontend->application), source->provider, &clock)) return false;
+        *milliseconds = (double)clock.frame.time_ns / 1000000;
+        return true;
+    }
+    for (size_t i = 0; i < frontend_remote_unified_count(frontend); ++i) {
+        const frontend_remote_unified *replica = frontend_remote_unified_at(frontend, i);
+        const frontend_remote_unified_domain *domain = frontend_remote_unified_domain_read(replica);
+        if (!domain || frontend_remote_unified_retired(replica) ||
+            domain->client.owner != source->client.owner || domain->client.generation != source->client.generation ||
+            domain->client.slot != source->client.slot) continue;
+        const qa_unified_document *document = frontend_remote_unified_frame(replica);
+        const qa_unified_frame *frame = document ? qa_unified_document_frame(document) : NULL;
+        if (!frame || !frame->world) return false;
+        const qa_unified_world_frame *world = frame->world;
+        for (size_t j = 0; j < world->producer_sample_count; ++j)
+            if (world->producer_samples[j].provider == source->provider) {
+                *milliseconds = world->producer_samples[j].seconds * 1000;
+                return true;
+            }
+        const qa_executable_recipe *recipe = frontend_remote_unified_recipe(replica);
+        for (size_t j = 0; j < qa_executable_recipe_provider_count(recipe); ++j) {
+            const qa_recipe_provider *provider = qa_executable_recipe_provider(recipe, j);
+            if (provider->source_owner == world->source.provider && provider->instance_name == source->provider) {
+                *milliseconds = world->presentation_seconds * 1000;
+                return true;
+            }
+        }
+        return false;
+    }
+    return false;
+}
 bool frontend_tools_debug(qa_frontend *f, const qa_scene_view *view, qa_error *error) {
     if (!f || !f->tools) return true;
     qa_cvars *cvars = qa_application_cvars(f->application);
     const qa_cvar_view *width = qa_cvars_read(cvars, f->tools->debug_width_handle);
     if (width && isfinite(width->number) && width->number > 0) f->tools->debug_width = width->number;
     else if (width && !qa_cvars_set_number(cvars, "gl_debug_linewidth", f->tools->debug_width, error)) return false;
-    qa_arena scratch = {0}; const qa_debug_line *lines; size_t count;
-    bool ok = qa_debug_store_snapshot(qa_tools_debug(f->tools->owner), milliseconds(f), f->frame_number, &scratch, &lines, &count, error);
+    const qa_debug_line *lines; size_t count;
+    bool ok = qa_debug_store_snapshot(qa_tools_debug(f->tools->owner), milliseconds(f), f->frame_number, frontend_debug_clock_read, f, &f->frame.storage, &lines, &count, error);
     if (ok && count) ok = qa_debug_draw(&f->frame, view, qa_scene_white(f->ui_images), lines, count, f->tools->debug_width, error);
-    qa_arena_destroy(&scratch); return ok;
+    return ok;
 }
 bool frontend_tools_after_present(qa_frontend *f, qa_error *error) {
     if (!f || !f->tools) return true;

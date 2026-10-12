@@ -7,10 +7,10 @@
 
 typedef struct shape_lines { qa_debug_line *lines; size_t count, capacity; qa_vec4 color; bool depth; } shape_lines;
 static bool finite_color(qa_vec4 c) { return isfinite(c.x) && isfinite(c.y) && isfinite(c.z) && isfinite(c.w); }
-static bool valid_line(qa_debug_line line) { return qa_vec_finite(line.start) && qa_vec_finite(line.end) && finite_color(line.color); }
+static bool valid_line(qa_debug_line line) { return qa_vec_finite(line.start) && qa_vec_finite(line.end) && finite_color(line.color) && isfinite(line.width) && line.width >= 0; }
 static void line(shape_lines *s, qa_vec3 a, qa_vec3 b, qa_vec4 color) {
     /* Counts are fixed by the bounded source tessellation below. */
-    if (s->count < s->capacity) s->lines[s->count++] = (qa_debug_line){a, b, color, s->depth};
+    if (s->count < s->capacity) s->lines[s->count++] = (qa_debug_line){.start = a, .end = b, .color = color, .depth_test = s->depth};
 }
 static void arrow(shape_lines *s, qa_vec3 start, qa_vec3 end, float size, qa_vec4 cap_color) {
     qa_vec3 delta = qa_vec_sub(end, start); float length = qa_vec_length(delta);
@@ -21,6 +21,10 @@ static void arrow(shape_lines *s, qa_vec3 start, qa_vec3 end, float size, qa_vec
     qa_vec3 right = qa_vec_normalize(qa_vec_sub(rotated, qa_vec_scale(dir, qa_vec_dot(rotated, dir))));
     line(s, apex, tip, cap_color); line(s, qa_vec_add(apex, qa_vec_scale(right, extent)), tip, cap_color);
     line(s, qa_vec_add(apex, qa_vec_scale(right, -extent)), tip, cap_color);
+}
+static bool clock_equal(qa_debug_clock a, qa_debug_clock b) {
+    return a.provider == b.provider && a.client.owner == b.client.owner &&
+        a.client.generation == b.client.generation && a.client.slot == b.client.slot;
 }
 static qa_vec3 ring(qa_vec3 origin, float radius, int i, int count, float z) {
     double angle = i * 6.2831853071795864769 / count;
@@ -111,7 +115,7 @@ bool qa_debug_shape_lines(const qa_debug_shape *shape, qa_vec4 color, bool depth
     *out = s.lines; *count = s.count; return true;
 }
 
-typedef struct timed_line { qa_debug_line line; double expires; uint64_t first_frame; bool instant, presented; } timed_line;
+typedef struct timed_line { qa_debug_line line; double expires; uint64_t first_frame; bool instant, presented; qa_debug_clock clock; } timed_line;
 struct qa_debug_store { timed_line *lines; size_t count, capacity; bool pending_restore; };
 void tools_debug_pending(qa_debug_store *store) { store->pending_restore = true; }
 void tools_debug_exchange(qa_debug_store *stable, qa_debug_store *candidate) {
@@ -124,31 +128,26 @@ bool tools_debug_fields(qa_source_save_io *io, qa_debug_store **holder) {
         if (!store) { io->failed = true; qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "allocating restored debug store"); return false; }
         *holder = store;
     }
+    /* Debug geometry is transient presentation; consume legacy records on load. */
+    size_t count = 0;
     if (!qa_source_save_count(io, &store->capacity, SIZE_MAX / sizeof *store->lines) || !store->capacity ||
-        !qa_source_save_count(io, &store->count, store->capacity)) return tool_save_fail(io, "invalid debug continuation capacity");
+        !qa_source_save_count(io, &count, store->capacity)) return tool_save_fail(io, "invalid debug continuation capacity");
     if (io->direction == QA_SOURCE_SAVE_READ) {
         store->lines = calloc(store->capacity, sizeof *store->lines);
         if (!store->lines) return tool_save_fail(io, "allocating debug continuation lines");
     }
-    for (size_t i = 0; i < store->count; ++i) {
-        timed_line *v = &store->lines[i]; qa_vec4 *color = &v->line.color;
+    for (size_t i = 0; i < count; ++i) {
+        timed_line value = {0}, *v = &value; qa_vec4 *color = &v->line.color;
         if (!qa_source_save_vec3(io, &v->line.start) || !qa_source_save_vec3(io, &v->line.end) ||
             !qa_source_save_f32(io, &color->x) || !qa_source_save_f32(io, &color->y) ||
             !qa_source_save_f32(io, &color->z) || !qa_source_save_f32(io, &color->w) ||
             !qa_source_save_bool(io, &v->line.depth_test) || !qa_source_save_f64(io, &v->expires) ||
             !qa_source_save_u64(io, &v->first_frame) || !qa_source_save_bool(io, &v->instant) ||
             !qa_source_save_bool(io, &v->presented) || !valid_line(v->line) || !isfinite(v->expires) ||
-            v->expires < 0 || v->expires > UINT32_MAX || v->instant != (v->expires == 0))
+            v->expires < 0 || v->instant != (v->expires == 0))
             return tool_save_fail(io, "invalid debug line continuation");
     }
-    return true;
-}
-static bool source_milliseconds(double value, uint32_t *out, qa_error *error) {
-    if (!isfinite(value) || value < -0x1p63 || value >= 0x1p63) {
-        (void)tools_fail(error, "debug clock exceeds its native millisecond field");
-        return false;
-    }
-    *out = (uint32_t)(int64_t)value;
+    if (io->direction == QA_SOURCE_SAVE_READ) store->count = 0;
     return true;
 }
 bool qa_debug_store_create(size_t capacity, qa_debug_store **out, qa_error *error) {
@@ -161,31 +160,36 @@ bool qa_debug_store_create(size_t capacity, qa_debug_store **out, qa_error *erro
 }
 void qa_debug_store_destroy(qa_debug_store *store) { if (store) { free(store->lines); free(store); } }
 void qa_debug_store_clear(qa_debug_store *store) { if (store && !store->pending_restore) store->count = 0; }
-bool qa_debug_store_submit(qa_debug_store *store, const qa_debug_line *lines, size_t count, double server_ms, uint32_t lifetime, qa_error *error) {
+bool qa_debug_store_submit(qa_debug_store *store, const qa_debug_line *lines, size_t count, double server_ms, uint64_t lifetime, qa_debug_clock clock, qa_error *error) {
     if (!store || store->pending_restore || (count && !lines) || !isfinite(server_ms)) return tools_fail(error, "invalid or pending debug line submission");
     for (size_t i = 0; i < count; ++i) if (!valid_line(lines[i])) return tools_fail(error, "invalid debug line geometry");
-    uint32_t now;
-    if (!source_milliseconds(server_ms, &now, error)) return false;
-    uint32_t deadline = lifetime ? now + lifetime : 0;
+    double now = server_ms;
+    double deadline = lifetime ? now + (double)lifetime / 1000000 : 0;
     size_t keep = 0;
-    for (size_t i = 0; i < store->count; ++i) if (store->lines[i].instant || store->lines[i].expires > now) store->lines[keep++] = store->lines[i];
+    for (size_t i = 0; i < store->count; ++i) if (!clock_equal(store->lines[i].clock, clock) || store->lines[i].instant || store->lines[i].expires > now) store->lines[keep++] = store->lines[i];
     size_t skip = count > store->capacity ? count - store->capacity : 0, added = count - skip;
     size_t retained = keep < store->capacity - added ? keep : store->capacity - added;
     if (retained) memmove(store->lines, store->lines + keep - retained, retained * sizeof(*store->lines));
-    for (size_t i = 0; i < added; ++i) store->lines[retained + i] = (timed_line){.line = lines[skip + i], .expires = deadline, .instant = deadline == 0};
+    for (size_t i = 0; i < added; ++i) store->lines[retained + i] = (timed_line){.line = lines[skip + i], .expires = deadline, .instant = lifetime == 0, .clock = clock};
     store->count = retained + added; return true;
 }
 bool qa_debug_store_snapshot(qa_debug_store *store, double server_ms, uint64_t frame,
-                              qa_arena *scratch, const qa_debug_line **out, size_t *count, qa_error *error) {
+                              qa_debug_clock_read read_clock, void *context, qa_arena *scratch, const qa_debug_line **out, size_t *count, qa_error *error) {
     if (!store || store->pending_restore || !scratch || !out || !count || !isfinite(server_ms)) return tools_fail(error, "invalid or pending debug line snapshot");
-    uint32_t now;
-    if (!source_milliseconds(server_ms, &now, error)) return false;
+    double now = server_ms;
     qa_debug_line *lines = store->count ? qa_arena_alloc(scratch, store->count * sizeof(*lines), _Alignof(qa_debug_line), error) : NULL;
     if (store->count && !lines) return false;
     size_t keep = 0;
+    qa_debug_clock sampled_clock = {0}; double sampled_time = now; bool sampled = false, available = true;
     for (size_t i = 0; i < store->count; ++i) {
         timed_line value = store->lines[i];
-        if (value.instant ? value.presented && value.first_frame != frame : value.expires <= now) continue;
+        if (!sampled || !clock_equal(sampled_clock, value.clock)) {
+            sampled_clock = value.clock; sampled_time = now; sampled = true;
+            available = !value.clock.provider ||
+                (read_clock && read_clock(context, &value.clock, &sampled_time));
+        }
+        if (!available) continue;
+        if (value.instant ? value.presented && value.first_frame != frame : value.expires <= sampled_time) continue;
         if (value.instant && !value.presented) { value.presented = true; value.first_frame = frame; }
         store->lines[keep] = value; lines[keep++] = value.line;
     }
@@ -200,7 +204,9 @@ bool qa_debug_draw(qa_scene_frame *frame, const qa_scene_view *view, const qa_sc
     size_t checkpoint = frame->command_count;
     for (size_t begin = 0; begin < count;) {
         size_t end = begin + 1;
-        while (end < count && lines[end].depth_test == lines[begin].depth_test) ++end;
+        float line_width = lines[begin].width > 0 ? lines[begin].width : width;
+        while (end < count && lines[end].depth_test == lines[begin].depth_test &&
+            (lines[end].width > 0 ? lines[end].width : width) == line_width) ++end;
         size_t n = (end - begin) * 2;
         qa_scene_vertex *vertices = qa_arena_alloc(&frame->storage, n * sizeof(*vertices), _Alignof(qa_scene_vertex), error);
         uint32_t *indices = qa_arena_alloc(&frame->storage, n * sizeof(*indices), _Alignof(uint32_t), error);
@@ -217,7 +223,7 @@ bool qa_debug_draw(qa_scene_frame *frame, const qa_scene_view *view, const qa_sc
             .textures = {white}, .texture_count = 1, .environment = QA_TEXTURE_MODULATE, .lighting = QA_LIGHT_VERTEX, .shade_scale = 1};
         qa_scene_matrix_identity(&draw.model); draw.mvp = qa_scene_matrix_multiply(view->projection, qa_scene_view_matrix(view));
         qa_scene_state_default(&draw.state); draw.state.blend_source = QA_BLEND_SRC_ALPHA; draw.state.blend_destination = QA_BLEND_ONE_MINUS_SRC_ALPHA;
-        draw.state.depth_test = lines[begin].depth_test ? QA_DEPTH_LEQUAL : QA_DEPTH_ALWAYS; draw.state.depth_write = false; draw.state.line_width = width;
+        draw.state.depth_test = lines[begin].depth_test ? QA_DEPTH_LEQUAL : QA_DEPTH_ALWAYS; draw.state.depth_write = false; draw.state.line_width = line_width;
         if (!qa_scene_frame_draw(frame, &draw, error)) goto failed;
         begin = end;
     }
