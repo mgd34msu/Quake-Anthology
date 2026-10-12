@@ -1,6 +1,7 @@
 #ifndef QA_MODEL_H
 #define QA_MODEL_H
 #include "qa/common.h"
+#include "qa/common_parse.h"
 #include "qa/math.h"
 #include "qa/strings.h"
 #include "qa/id_index.h"
@@ -215,8 +216,13 @@ typedef struct qa_player_animation_config {
 bool qa_model_animation_scale_json(qa_model_animation *animation, qa_bytes json,
                                    qa_model_diagnostic diagnostic, void *context, qa_error *error);
 extern const char *const qa_player_animation_names[QA_PLAYER_ANIMATION_COUNT];
-bool qa_player_animation_load(qa_bytes text, qa_player_animation_config *out,
-                              qa_model_diagnostic diagnostic, void *context, qa_error *error);
+/* Q3 source COM tokens and bytecode numeric rules. Empty, overlong or
+ * incomplete records return true with loaded=false; out changes only on load.
+ * Lexer and diagnostic callback failures return false. Diagnostic text borrows
+ * a NUL-terminated 1024-byte source buffer for the callback. */
+bool qa_player_animation_load(qa_bytes text, const char *source_path,
+                              qa_player_animation_config *out, bool *loaded,
+                              qa_common_print diagnostic, void *context, qa_error *error);
 typedef struct qa_model_skin_mapping {
     qa_string_id surface;
     qa_string_id shader_id;

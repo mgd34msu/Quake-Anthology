@@ -187,111 +187,11 @@ static bool skins(q3n_clients *owner, q3n_client_info *ci, int32_t game_type, co
     }
     *loaded = ci->skins[0] && ci->skins[1] && ci->skins[2]; return true;
 }
-static int32_t signed_bits(uint32_t value)
-{ return value <= INT32_MAX ? (int32_t)value : -1 - (int32_t)(UINT32_MAX - value); }
-static float source_float(const char *text)
+static bool animation_print(void *context, qa_bytes text, qa_error *error)
 {
-    while (*text && (signed char)*text <= 32) ++text;
-    bool negative = *text == '-'; if (*text == '-' || *text == '+') ++text;
-    float value = 0;
-    while (*text >= '0' && *text <= '9') {
-        /* Distinct binary32 operations mirror the source MULF and ADDF. */
-        float product = (float)((double)value * 10.0);
-        value = (float)((double)product + (*text++ - '0'));
-    }
-    if (*text == '.') {
-        ++text; float fraction = 0.1f;
-        while (*text >= '0' && *text <= '9') {
-            float product = (float)((double)(*text++ - '0') * fraction);
-            value = (float)((double)value + product);
-            fraction = (float)((double)fraction * 0.1f);
-        }
-    }
-    return negative ? -value : value;
-}
-static bool animation_token(q3n_clients *owner, qa_common_cursor *cursor, qa_error *error)
-{ return qa_common_parse(&owner->animation_parser, cursor, true, error); }
-static bool parse_animation(q3n_clients *owner, qa_player_animation_config *config,
-    qa_bytes bytes, const char *path, bool *loaded, qa_error *error)
-{
-    *loaded = false;
-    if (!bytes.size) return true;
-    if (bytes.size > 19998) return print(owner, error, "File %s too long\n", path);
-    qa_common_cursor cursor;
-    if (!qa_common_cursor_init(&cursor, bytes, QA_COMMON_TERMINATED, error)) return false;
-    config->footsteps = QA_FOOTSTEP_NORMAL; config->gender = QA_MODEL_MALE;
-    memset(config->head_offset, 0, sizeof(config->head_offset));
-    config->fixed_legs = config->fixed_torso = false;
-    for (;;) {
-        qa_common_cursor_state previous = qa_common_cursor_capture(&cursor);
-        if (!animation_token(owner, &cursor, error)) return false;
-        const char *token = owner->animation_parser.token;
-        if (same(token, "footsteps")) {
-            if (!animation_token(owner, &cursor, error)) return false;
-            const char *names[] = {"normal", "boot", "flesh", "mech", "energy"};
-            bool known = same(token, "default");
-            if (known) config->footsteps = QA_FOOTSTEP_NORMAL;
-            for (uint32_t i = 0; i < 5; ++i) if (same(token, names[i])) {
-                config->footsteps = (qa_model_footstep)i; known = true; break;
-            }
-            if (!known && !print(owner, error, "Bad footsteps parm in %s: %s\n", path, token)) return false;
-        } else if (same(token, "headoffset")) {
-            for (size_t i = 0; i < 3; ++i) {
-                if (!animation_token(owner, &cursor, error)) return false;
-                config->head_offset[i] = source_float(token);
-            }
-        } else if (same(token, "sex")) {
-            if (!animation_token(owner, &cursor, error)) return false;
-            unsigned char sex = fold((unsigned char)*token);
-            config->gender = sex == 'f' ? QA_MODEL_FEMALE : sex == 'n' ? QA_MODEL_NEUTER : QA_MODEL_MALE;
-        } else if (same(token, "fixedlegs")) config->fixed_legs = true;
-        else if (same(token, "fixedtorso")) config->fixed_torso = true;
-        else {
-            if (*token >= '0' && *token <= '9') {
-                if (!qa_common_cursor_restore(&cursor, previous, error)) return false;
-                break;
-            }
-            if (!print(owner, error, "unknown token '%s' is %s\n", token, path)) return false;
-            if (previous.offset == cursor.offset && previous.ended == cursor.ended)
-                return q3n_client_fail(error, QA_ERROR_FORMAT, "CG animation prelude reached the source nonprogress cycle");
-        }
-    }
-    int32_t skip = 0; size_t index = 0;
-    for (; index < 31; ++index) {
-        qa_player_animation *a = &config->animations[index];
-        if (!animation_token(owner, &cursor, error)) return false;
-        const char *token = owner->animation_parser.token;
-        if (!*token) {
-            if (index >= 25) {
-                *a = config->animations[6]; a->reversed = a->flipflop = false;
-                a->present = true; continue;
-            }
-            break;
-        }
-        a->first_frame = qa_parse_decimal_i32(token,QA_DECIMAL_SIGNED_WRAP);
-        if (index == 13) skip = signed_bits((uint32_t)a->first_frame - (uint32_t)config->animations[6].first_frame);
-        if (index >= 13 && index < 25) a->first_frame = signed_bits((uint32_t)a->first_frame - (uint32_t)skip);
-        if (!animation_token(owner, &cursor, error)) return false;
-        if (!*token) break;
-        a->num_frames = qa_parse_decimal_i32(token,QA_DECIMAL_SIGNED_WRAP); a->reversed = a->flipflop = false;
-        if (a->num_frames < 0) { a->num_frames = signed_bits(0u - (uint32_t)a->num_frames); a->reversed = true; }
-        if (!animation_token(owner, &cursor, error)) return false;
-        if (!*token) break;
-        a->loop_frames = qa_parse_decimal_i32(token,QA_DECIMAL_SIGNED_WRAP);
-        if (!animation_token(owner, &cursor, error)) return false;
-        if (!*token) break;
-        float fps = source_float(token); if (fps == 0) fps = 1;
-        float lerp = (float)(1000.0 / (double)fps);
-        a->frame_lerp = a->initial_lerp = lerp >= -2147483648.0f && lerp < 2147483648.0f ? (int32_t)lerp : INT32_MIN;
-        a->present = true;
-    }
-    if (index != 31) return print(owner, error, "Error parsing animation file: %s", path);
-    config->animations[32] = config->animations[13]; config->animations[32].reversed = true;
-    config->animations[33] = config->animations[14]; config->animations[33].reversed = true;
-    config->animations[34] = (qa_player_animation){0, 16, 16, 66, 66, false, false, true};
-    config->animations[35] = (qa_player_animation){16, 5, 0, 50, 50, false, false, true};
-    config->animations[36] = (qa_player_animation){16, 5, 1, 66, 66, true, false, true};
-    *loaded = true; return true;
+    q3n_clients *owner = context;
+    if (owner->options.print) owner->options.print(owner->options.context, (const char *)text.data);
+    return current(owner, error);
 }
 static bool animation(q3n_clients *owner, q3n_client_info *ci, q3n_animation_holder *holder,
     const char *path, bool *loaded, qa_error *error)
@@ -308,7 +208,8 @@ static bool animation(q3n_clients *owner, q3n_client_info *ci, q3n_animation_hol
     if (!ok && local.code == QA_ERROR_NOT_FOUND) return current(owner, error);
     if (!ok) { if (error) *error = local; return false; }
     qa_bytes bytes = qa_resource_bytes(next.resource);
-    ok = parse_animation(owner, &ci->animations, bytes, path, loaded, error) && current(owner, error);
+    ok = qa_player_animation_load(bytes, path, &ci->animations, loaded, animation_print, owner, error) &&
+        current(owner, error);
     if (ok && *loaded) { q3n_animation_dispose(holder); *holder = next; next = (q3n_animation_holder){0}; }
     q3n_animation_dispose(&next); return ok;
 }

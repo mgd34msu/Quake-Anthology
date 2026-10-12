@@ -143,7 +143,8 @@ bool qa_format_quake_float(float value, char out[64], qa_error *error) {
 double qa_parse_quake_number(const char *text, qa_quake_number_policy policy) {
     if (!text)
         return 0;
-    if (policy == QA_QUAKE_NUMBER_Q3_VM) {
+    if (policy == QA_QUAKE_NUMBER_Q3_VM || policy == QA_QUAKE_NUMBER_Q3_BYTECODE) {
+        bool bytecode = policy == QA_QUAKE_NUMBER_Q3_BYTECODE;
         while (*text && (int8_t)(uint8_t)*text <= ' ')
             ++text;
         float sign = 1, value = 0;
@@ -152,14 +153,26 @@ double qa_parse_quake_number(const char *text, qa_quake_number_policy policy) {
                 sign = -1;
             ++text;
         }
-        while (*text >= '0' && *text <= '9')
-            value = value * 10 + (float)(*text++ - '0');
+        while (*text >= '0' && *text <= '9') {
+            if (bytecode) {
+                /* MULF and ADDF are distinct four-byte source operations. */
+                float product = (float)((double)value * 10.0);
+                value = (float)((double)product + (*text++ - '0'));
+            } else
+                value = value * 10 + (float)(*text++ - '0');
+        }
         if (*text == '.') {
-            double fraction = 0.1;
+            double fraction = bytecode ? (double)0.1f : 0.1;
             ++text;
             while (*text >= '0' && *text <= '9') {
-                value = (float)((double)value + (*text++ - '0') * fraction);
-                fraction *= 0.1;
+                if (bytecode) {
+                    float product = (float)((double)(*text++ - '0') * fraction);
+                    value = (float)((double)value + product);
+                    fraction = (float)(fraction * (double)0.1f);
+                } else {
+                    value = (float)((double)value + (*text++ - '0') * fraction);
+                    fraction *= 0.1;
+                }
             }
         }
         return value * sign;

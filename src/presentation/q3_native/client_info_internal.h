@@ -5,7 +5,6 @@
 #include "compiled_source.h"
 #include "../q3/internal.h"
 #include "qa/vfs_view_save.h"
-#include "qa/common_parse.h"
 
 typedef struct q3n_animation_holder {
     qa_resource *resource;
@@ -15,7 +14,6 @@ struct q3n_clients {
     q3n_client_options options;
     q3n_client_info clients[64];
     q3n_animation_holder holders[64];
-    qa_common_parser animation_parser;
     qa_application *application;
     const qa_application_native_q3_presentation *cut;
     const q3n_remote_source_view *remote_cut;

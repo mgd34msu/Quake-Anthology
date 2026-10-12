@@ -1,7 +1,6 @@
 /* SelectedQ3WeaponPresenter resources; SDK cg_weapons.c/cg_players.c,
  * id Software, GPL-2.0-or-later. */
 #include "selected_media_internal.h"
-#include "qa/text.h"
 #include <stdio.h>
 
 const qa_q3_item *q3n_selected_media_item(qa_q3_product product, int32_t weapon)
@@ -24,115 +23,14 @@ bool q3n_selected_media_path(const char *gun, const char *suffix, char out[128],
 }
 static bool current(const q3n_selected_media_request *r, qa_error *e)
 { return r->current(r->context) || q3p_fail(e, QA_ERROR_ARGUMENT, "Selected Q3 equipment observation was superseded"); }
-static unsigned char lower(unsigned char c)
-{ return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c; }
-static bool same(const char *a, const char *b)
-{
-    while (*a && *b && lower((unsigned char)*a) == lower((unsigned char)*b)) { ++a; ++b; }
-    return !*a && !*b;
-}
-static int32_t word(uint32_t value)
-{ return value <= INT32_MAX ? (int32_t)value : -1 - (int32_t)(UINT32_MAX - value); }
-
-static float number(const char *s)
-{
-    while (*s && (signed char)*s <= 32) ++s;
-    bool negative = *s == '-'; if (*s == '+' || *s == '-') ++s;
-    float value = 0;
-    while (*s >= '0' && *s <= '9') {
-        float product = (float)((double)value * 10.0);
-        value = (float)((double)product + (*s++ - '0'));
-    }
-    if (*s == '.') {
-        ++s; float fraction = 0.1f;
-        while (*s >= '0' && *s <= '9') {
-            float product = (float)((double)(*s++ - '0') * fraction);
-            value = (float)((double)value + product);
-            fraction = (float)((double)fraction * 0.1f);
-        }
-    }
-    return negative ? -value : value;
-}
-static bool warning(const char *format, const char *first, const char *second, qa_error *e)
-{
-    char message[1024];
-    int size = snprintf(message, sizeof(message), format, first, second);
-    return size >= 0 && (size_t)size < sizeof(message) ? true :
-        q3p_fail(e, QA_ERROR_FORMAT, "CG_Printf exceeds its 1024-byte source buffer");
-}
 bool q3n_selected_animation_parse(qa_bytes bytes, const char *source_path,
     qa_player_animation_config *out, qa_error *e)
 {
     if (!source_path || !out || !bytes.data || !bytes.size || bytes.size > 19998)
         return q3p_fail(e, QA_ERROR_FORMAT, "Selected Q3 weapon animation configuration is empty or too long");
-    qa_common_parser parser = {0}; qa_common_cursor cursor;
-    if (!qa_common_cursor_init(&cursor, bytes, QA_COMMON_TERMINATED, e)) return false;
-    qa_player_animation_config config = {0};
-    for (;;) {
-        qa_common_cursor_state previous = qa_common_cursor_capture(&cursor);
-        if (!qa_common_parse(&parser, &cursor, true, e)) return false;
-        const char *token = parser.token;
-        if (same(token, "footsteps")) {
-            if (!qa_common_parse(&parser, &cursor, true, e)) return false;
-            const char *names[] = {"normal", "boot", "flesh", "mech", "energy"};
-            bool known = same(token, "default");
-            if (known) config.footsteps = QA_FOOTSTEP_NORMAL;
-            for (unsigned i = 0; i < 5; ++i)
-                if (same(token, names[i])) { config.footsteps = (qa_model_footstep)i; known = true; }
-            if (!known && !warning("Bad footsteps parm in %s: %s\n", source_path, token, e)) return false;
-        } else if (same(token, "headoffset")) {
-            for (unsigned i = 0; i < 3; ++i) {
-                if (!qa_common_parse(&parser, &cursor, true, e)) return false;
-                config.head_offset[i] = number(token);
-            }
-        } else if (same(token, "sex")) {
-            if (!qa_common_parse(&parser, &cursor, true, e)) return false;
-            unsigned char first = lower((unsigned char)*token);
-            config.gender = first == 'f' ? QA_MODEL_FEMALE : first == 'n' ? QA_MODEL_NEUTER : QA_MODEL_MALE;
-        } else if (same(token, "fixedlegs")) config.fixed_legs = true;
-        else if (same(token, "fixedtorso")) config.fixed_torso = true;
-        else {
-            if (*token >= '0' && *token <= '9') {
-                if (!qa_common_cursor_restore(&cursor, previous, e)) return false;
-                break;
-            }
-            if (!warning("unknown token '%s' is %s\n", token, source_path, e)) return false;
-            if (previous.offset == cursor.offset && previous.ended == cursor.ended)
-                return q3p_fail(e, QA_ERROR_FORMAT, "CG animation prelude reached the source nonprogress cycle");
-        }
-    }
-    int32_t skip = 0; unsigned i = 0;
-    for (; i < 31; ++i) {
-        qa_player_animation *a = &config.animations[i];
-        if (!qa_common_parse(&parser, &cursor, true, e)) return false;
-        if (!*parser.token) {
-            if (i >= 25) { *a = config.animations[6]; a->reversed = a->flipflop = false; a->present = true; continue; }
-            break;
-        }
-        a->first_frame = qa_parse_decimal_i32(parser.token,QA_DECIMAL_SIGNED_WRAP);
-        if (i == 13) skip = word((uint32_t)a->first_frame - (uint32_t)config.animations[6].first_frame);
-        if (i >= 13 && i < 25) a->first_frame = word((uint32_t)a->first_frame - (uint32_t)skip);
-        if (!qa_common_parse(&parser, &cursor, true, e)) return false;
-        if (!*parser.token) break;
-        a->num_frames = qa_parse_decimal_i32(parser.token,QA_DECIMAL_SIGNED_WRAP);
-        if (a->num_frames < 0) { a->num_frames = word(0u - (uint32_t)a->num_frames); a->reversed = true; }
-        if (!qa_common_parse(&parser, &cursor, true, e)) return false;
-        if (!*parser.token) break;
-        a->loop_frames = qa_parse_decimal_i32(parser.token,QA_DECIMAL_SIGNED_WRAP);
-        if (!qa_common_parse(&parser, &cursor, true, e)) return false;
-        if (!*parser.token) break;
-        float fps = number(parser.token); if (fps == 0) fps = 1;
-        float lerp = (float)(1000.0 / (double)fps);
-        a->frame_lerp = a->initial_lerp = lerp >= -2147483648.0f && lerp < 2147483648.0f ? (int32_t)lerp : INT32_MIN;
-        a->present = true;
-    }
-    if (i != 31) return q3p_fail(e, QA_ERROR_FORMAT, "Error parsing selected Q3 weapon animation configuration");
-    config.animations[32] = config.animations[13]; config.animations[32].reversed = true;
-    config.animations[33] = config.animations[14]; config.animations[33].reversed = true;
-    config.animations[34] = (qa_player_animation){0, 16, 16, 66, 66, false, false, true};
-    config.animations[35] = (qa_player_animation){16, 5, 0, 50, 50, false, false, true};
-    config.animations[36] = (qa_player_animation){16, 5, 1, 66, 66, true, false, true};
-    *out = config; return true;
+    bool loaded;
+    return qa_player_animation_load(bytes, source_path, out, &loaded, NULL, NULL, e) &&
+        (loaded || q3p_fail(e, QA_ERROR_FORMAT, "Error parsing selected Q3 weapon animation configuration"));
 }
 static bool same_text(const char *a, const char *b)
 { return a && b ? !strcmp(a, b) : a == b; }

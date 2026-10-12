@@ -394,7 +394,40 @@ static void attachment_names(void) {
     qa_strings_destroy(strings);
 }
 
+static void player_animations(void) {
+    char text[2048];
+    size_t used=(size_t)snprintf(text,sizeof(text),
+        "// source metadata\nfootsteps boot\nsex F\nheadoffset 1.5 -2 .25\nfixedlegs\n");
+    CHECK(used<sizeof(text));
+    for(unsigned i=0;i<25;++i) {
+        int n=snprintf(text+used,sizeof(text)-used,"%u %d %d %s\n",i*10,
+            i==0?-2:3,i==0?-1:1,i==0?"0":"20");
+        CHECK(n>0 && (size_t)n<sizeof(text)-used); used+=(size_t)n;
+    }
+    qa_error error={0}; qa_player_animation_config config={0}; bool loaded=false;
+    CHECK(qa_player_animation_load((qa_bytes){(const uint8_t *)text,used},
+        "animation.cfg",&config,&loaded,NULL,NULL,&error) && loaded);
+    CHECK(config.footsteps==QA_FOOTSTEP_BOOT && config.gender==QA_MODEL_FEMALE && config.fixed_legs);
+    CHECK(config.head_offset[0]==1.5f && config.head_offset[1]==-2 && config.head_offset[2]==.25f);
+    CHECK(config.animations[0].reversed && config.animations[0].num_frames==2 &&
+        config.animations[0].loop_frames==-1 && config.animations[0].frame_lerp==1000);
+    CHECK(config.animations[13].first_frame==60 && config.animations[14].first_frame==70);
+    for(unsigned i=25;i<31;++i) {
+        CHECK(config.animations[i].present && !config.animations[i].reversed &&
+            config.animations[i].first_frame==config.animations[6].first_frame &&
+            config.animations[i].frame_lerp==config.animations[6].frame_lerp);
+    }
+    CHECK(config.animations[32].reversed && config.animations[32].first_frame==60);
+    CHECK(config.animations[34].loop_frames==16 && config.animations[34].frame_lerp==66);
+    qa_player_animation_config previous=config;
+    memcpy(text+used,"25",2);
+    CHECK(qa_player_animation_load((qa_bytes){(const uint8_t *)text,used+2},
+        "animation.cfg",&config,&loaded,NULL,NULL,&error) && !loaded);
+    CHECK(!memcmp(&previous,&config,sizeof(config)));
+}
+
 int main(void) {
+    player_animations();
     attachment_names();
     skin_bindings();
     const float local[3] = {1, 2, 3};

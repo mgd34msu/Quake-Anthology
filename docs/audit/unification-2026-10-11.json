@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "abb1747a05632fbf7c5a879b208678aac9238395",
+  "verified_main": "9ef280d47e414fcf718648f792b573fd2fdace31",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 125,
-    "open_source_observation": 246,
+    "fixed_source_build_core": 126,
+    "open_source_observation": 245,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -27669,8 +27669,9 @@
       "severity": "medium",
       "job": "08",
       "area": "audio_input_ui",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "One interpolation writer serves compiled localization spans and classic positional text with their distinct missing-value and UTF-8/raw clipping policies. All native wire, Unified presentation and local UI callers borrow existing control/frame arena storage for the complete first pass; the second result writes directly into the caller output. The redundant frontend wrapper and private heap formatter are deleted. Existing core behavior checks cover introduced placeholders, finale lookup before truncation and differing UTF-8 piece/prefix clipping. Normal production build and seven core suites passed; no live presentation or whole-frame allocation claim.",
+      "fix_commit": "9ef280d47e414fcf718648f792b573fd2fdace31"
     },
     {
       "id": "09-01",
@@ -40432,6 +40433,39 @@
       ],
       "record_directory": "/tmp/qa-ta3196-bot-goal-identity-20261012",
       "conclusion": "Foreign bot goals now retain canonical name IDs and use qa_actor_index for exact historical actor generations. Goal-number lookup uses the contiguous descending range already verified by save topology; restore and checkpoint copies rebuild independent retained indexes. Original counted-name bytes and capacity field remain importable; the unknown-pickup label is prepared once in the existing UI-name table. Historical generation row growth is still accepted and remains open. Normal production build and seven core suites passed; no live bot or allocation claim."
+    },
+    {
+      "commit": "9ef280d47e414fcf718648f792b573fd2fdace31",
+      "source_tree": "31d05d64606b3a5480b3b15a1d9671041e838318",
+      "finding_ids": [
+        "08-07"
+      ],
+      "files_rechecked": [
+        "CMakeLists.txt",
+        "include/qa/q1_text.h",
+        "src/text/q1_text.c",
+        "src/text/localization.c",
+        "src/text/interpolation.h",
+        "src/app/application/native_q1_wire.c",
+        "src/app/frontend/remote_unified_q1.c",
+        "src/app/frontend/ui_features.c",
+        "src/app/frontend/q1_text.c",
+        "src/app/frontend/q1_text.h",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-shared-text-interpolation-20261012",
+      "conclusion": "One interpolation writer serves compiled localization spans and classic positional text with their distinct missing-value and UTF-8/raw clipping policies. All native wire, Unified presentation and local UI callers borrow existing control/frame arena storage for the complete first pass; the second result writes directly into the caller output. The redundant frontend wrapper and private heap formatter are deleted. Existing core behavior checks cover introduced placeholders, finale lookup before truncation and differing UTF-8 piece/prefix clipping. Normal production build and seven core suites passed; no live presentation or whole-frame allocation claim."
     }
   ],
   "verification_limits": [

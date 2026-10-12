@@ -55,15 +55,18 @@ bool qa_parse_atof_float(const char *text, float *out, qa_error *error);
  * decimal digits scaled after the last dot. Whitespace, plus and exponents
  * are not consumed. NULL or a missing numeric prefix produces zero.
  * The first three policies accumulate/result in binary64; callers retain
- * their float conversion and admission bounds. Q3_VM selects bg_lib grammar
- * and arithmetic instead. Flags preserve reached arithmetic/quoted bytes. */
+ * their float conversion and admission bounds. The Q3 policies select bg_lib
+ * grammar and precision. Flags preserve reached arithmetic/quoted bytes. */
 typedef enum qa_quake_number_policy {
     QA_QUAKE_NUMBER_ASCII_UNSIGNED = 0, /* value * 10 + ascii - '0' */
     QA_QUAKE_NUMBER_DIGIT_FIRST = 1,    /* value * 10 + (ascii - '0') */
     QA_QUAKE_NUMBER_SIGNED_QUOTE = 2,   /* Interpret quoted bytes as int8. */
     /* Q3 bg_lib atof: signed whitespace/plus/minus, decimal prefix, float
      * accumulator with double fractional terms; no hex, quotes or exponent. */
-    QA_QUAKE_NUMBER_Q3_VM = 4
+    QA_QUAKE_NUMBER_Q3_VM = 4,
+    /* Original Q3 lcc bytecode uses four-byte float and double operations.
+     * The same bg_lib grammar rounds each product, sum and fraction to float. */
+    QA_QUAKE_NUMBER_Q3_BYTECODE = 8
 } qa_quake_number_policy;
 double qa_parse_quake_number(const char *, qa_quake_number_policy);
 /* Signed decimal prefix with the caller's original byte/overflow rules.

@@ -1,5 +1,7 @@
 #include "internal.h"
 #include "qa/id_index.h"
+#include "qa/text.h"
+#include <stdarg.h>
 #include <stdio.h>
 
 const char *const qa_player_animation_names[QA_PLAYER_ANIMATION_COUNT] = {
@@ -12,111 +14,136 @@ const char *const qa_player_animation_names[QA_PLAYER_ANIMATION_COUNT] = {
     "TORSO_NEGATIVE", "MAX_ANIMATIONS",  "LEGS_BACKCR",  "LEGS_BACKWALK",  "FLAG_RUN",
     "FLAG_STAND",     "FLAG_STAND2RUN"};
 static uint8_t lower(uint8_t c) { return c >= 'A' && c <= 'Z' ? (uint8_t)(c + ('a' - 'A')) : c; }
-static bool token_equal(qa_bytes token, const char *text) {
-    size_t len = strlen(text);
-    if (token.size != len)
-        return false;
-    for (size_t i = 0; i < len; ++i)
-        if (lower(token.data[i]) != (uint8_t)text[i])
-            return false;
-    return true;
-}
-static void diagnostic_at(qa_model_diagnostic callback, void *context, size_t offset,
-                          const char *message) {
-    if (callback)
-        callback(context, offset, message);
-}
-bool qa_player_animation_load(qa_bytes text, qa_player_animation_config *out,
-                              qa_model_diagnostic diagnostic, void *context, qa_error *error) {
-    if (!out || (!text.data && text.size)) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "animation text and output are required");
+static bool animation_diagnostic(qa_common_print callback, void *context, qa_error *error,
+                                 const char *format, ...) {
+    char message[1024];
+    va_list args;
+    va_start(args, format);
+    int length = vsnprintf(message, sizeof(message), format, args);
+    va_end(args);
+    if (length < 0 || (size_t)length >= sizeof(message)) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "CG_Printf exceeds its source buffer");
         return false;
     }
+    return !callback || callback(context, (qa_bytes){(const uint8_t *)message, (size_t)length}, error);
+}
+bool qa_player_animation_load(qa_bytes text, const char *source_path,
+                              qa_player_animation_config *out, bool *loaded,
+                              qa_common_print diagnostic, void *context, qa_error *error) {
+    if (!out || !loaded || !source_path || (!text.data && text.size)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "animation text, source path and outputs are required");
+        return false;
+    }
+    *loaded = false;
+    if (!text.size)
+        return true;
+    if (text.size > 19998)
+        return animation_diagnostic(diagnostic, context, error, "File %s too long\n", source_path);
+    qa_common_parser parser = {0};
+    qa_common_cursor cursor;
+    if (!qa_common_cursor_init(&cursor, text, QA_COMMON_TERMINATED, error))
+        return false;
     qa_player_animation_config config = {0};
-    model_reader r = {text, 0, error, true};
-    size_t token_start = 0;
-    qa_bytes token;
     for (;;) {
-        token_start = r.pos;
-        token = model_token_next(&r);
-        if (!token.data)
-            return model_fail(&r, "missing player animation records");
-        if (token.size && token.data[0] >= '0' && token.data[0] <= '9') {
-            r.pos = token_start;
+        qa_common_cursor_state previous = qa_common_cursor_capture(&cursor);
+        if (!qa_common_parse(&parser, &cursor, true, error))
+            return false;
+        const char *token = parser.token;
+        if (qa_text_ascii_equal(token, "footsteps")) {
+            if (!qa_common_parse(&parser, &cursor, true, error))
+                return false;
+            const char *names[] = {"normal", "boot", "flesh", "mech", "energy"};
+            bool known = qa_text_ascii_equal(token, "default");
+            if (known)
+                config.footsteps = QA_FOOTSTEP_NORMAL;
+            for (unsigned i = 0; i < 5; ++i)
+                if (qa_text_ascii_equal(token, names[i])) {
+                    config.footsteps = (qa_model_footstep)i;
+                    known = true;
+                    break;
+                }
+            if (!known && !animation_diagnostic(diagnostic, context, error,
+                    "Bad footsteps parm in %s: %s\n", source_path, token))
+                return false;
+        } else if (qa_text_ascii_equal(token, "headoffset")) {
+            for (unsigned i = 0; i < 3; ++i) {
+                if (!qa_common_parse(&parser, &cursor, true, error))
+                    return false;
+                config.head_offset[i] = (float)qa_parse_quake_number(parser.token, QA_QUAKE_NUMBER_Q3_BYTECODE);
+            }
+        } else if (qa_text_ascii_equal(token, "sex")) {
+            if (!qa_common_parse(&parser, &cursor, true, error))
+                return false;
+            uint8_t first = lower((uint8_t)*token);
+            config.gender = first == 'f' ? QA_MODEL_FEMALE : first == 'n' ? QA_MODEL_NEUTER : QA_MODEL_MALE;
+        } else if (qa_text_ascii_equal(token, "fixedlegs"))
+            config.fixed_legs = true;
+        else if (qa_text_ascii_equal(token, "fixedtorso"))
+            config.fixed_torso = true;
+        else {
+            if (*token >= '0' && *token <= '9') {
+                if (!qa_common_cursor_restore(&cursor, previous, error))
+                    return false;
+                break;
+            }
+            if (!animation_diagnostic(diagnostic, context, error,
+                    "unknown token '%s' is %s\n", token, source_path))
+                return false;
+            if (previous.offset == cursor.offset && previous.ended == cursor.ended) {
+                qa_error_set(error, QA_ERROR_FORMAT, 0,
+                             "CG animation prelude reached the source nonprogress cycle");
+                return false;
+            }
+        }
+    }
+    int32_t skip = 0;
+    unsigned i = 0;
+    for (; i < 31; ++i) {
+        qa_player_animation *a = &config.animations[i];
+        if (!qa_common_parse(&parser, &cursor, true, error))
+            return false;
+        if (!*parser.token) {
+            if (i >= 25) {
+                *a = config.animations[6];
+                a->reversed = a->flipflop = false;
+                a->present = true;
+                continue;
+            }
             break;
         }
-        if (token_equal(token, "footsteps")) {
-            qa_bytes value = model_token_next(&r);
-            if (token_equal(value, "default") || token_equal(value, "normal"))
-                config.footsteps = QA_FOOTSTEP_NORMAL;
-            else if (token_equal(value, "boot"))
-                config.footsteps = QA_FOOTSTEP_BOOT;
-            else if (token_equal(value, "flesh"))
-                config.footsteps = QA_FOOTSTEP_FLESH;
-            else if (token_equal(value, "mech"))
-                config.footsteps = QA_FOOTSTEP_MECH;
-            else if (token_equal(value, "energy"))
-                config.footsteps = QA_FOOTSTEP_ENERGY;
-            else
-                diagnostic_at(diagnostic, context, token_start, "unknown footsteps type");
-        } else if (token_equal(token, "sex")) {
-            qa_bytes value = model_token_next(&r);
-            uint8_t first = value.size ? lower(value.data[0]) : 0;
-            config.gender = first == 'f'   ? QA_MODEL_FEMALE
-                            : first == 'n' ? QA_MODEL_NEUTER
-                                           : QA_MODEL_MALE;
-        } else if (token_equal(token, "headoffset")) {
-            for (unsigned i = 0; i < 3; ++i)
-                config.head_offset[i] = model_scalar(&r);
-        } else if (token_equal(token, "fixedlegs"))
-            config.fixed_legs = true;
-        else if (token_equal(token, "fixedtorso"))
-            config.fixed_torso = true;
-        else
-            diagnostic_at(diagnostic, context, token_start, "unknown animation token");
-        if (!r.ok)
-            return false;
-    }
-    int64_t leg_offset = 0;
-    for (unsigned i = 0; i < 31; ++i) {
-        size_t start = r.pos;
-        token = model_token_next(&r);
-        r.pos = start;
-        if (!token.data) {
-            if (!r.ok)
-                return false;
-            if (i < 25)
-                return model_fail(&r, "missing required player animation");
-            config.animations[i] = config.animations[6];
-            config.animations[i].reversed = false;
-            config.animations[i].flipflop = false;
-            continue;
-        }
-        qa_player_animation *a = &config.animations[i];
-        int64_t first = model_integer(&r, 0, INT32_MAX);
+        a->first_frame = qa_parse_decimal_i32(parser.token, QA_DECIMAL_SIGNED_WRAP);
         if (i == 13)
-            leg_offset = first - config.animations[6].first_frame;
+            skip = qa_i32_from_u32((uint32_t)a->first_frame - (uint32_t)config.animations[6].first_frame);
         if (i >= 13 && i < 25)
-            first -= leg_offset;
-        if (first < INT32_MIN || first > INT32_MAX)
-            return model_fail(&r, "player animation frame overflows");
-        a->first_frame = (int32_t)first;
-        int32_t count = model_integer(&r, -INT32_MAX, INT32_MAX);
-        a->reversed = count < 0;
-        a->num_frames = count < 0 ? -count : count;
-        a->loop_frames = model_integer(&r, 0, INT32_MAX);
-        float fps = model_scalar(&r);
+            a->first_frame = qa_i32_from_u32((uint32_t)a->first_frame - (uint32_t)skip);
+        if (!qa_common_parse(&parser, &cursor, true, error))
+            return false;
+        if (!*parser.token)
+            break;
+        a->num_frames = qa_parse_decimal_i32(parser.token, QA_DECIMAL_SIGNED_WRAP);
+        if (a->num_frames < 0) {
+            a->num_frames = qa_i32_from_u32(0u - (uint32_t)a->num_frames);
+            a->reversed = true;
+        }
+        if (!qa_common_parse(&parser, &cursor, true, error))
+            return false;
+        if (!*parser.token)
+            break;
+        a->loop_frames = qa_parse_decimal_i32(parser.token, QA_DECIMAL_SIGNED_WRAP);
+        if (!qa_common_parse(&parser, &cursor, true, error))
+            return false;
+        if (!*parser.token)
+            break;
+        float fps = (float)qa_parse_quake_number(parser.token, QA_QUAKE_NUMBER_Q3_BYTECODE);
         if (fps == 0)
             fps = 1;
         float lerp = 1000.0f / fps;
-        if (!isfinite(lerp) || (double)lerp < INT32_MIN || (double)lerp > INT32_MAX)
-            return model_fail(&r, "player animation interval overflows");
-        a->frame_lerp = (int32_t)lerp;
-        a->initial_lerp = a->frame_lerp;
+        a->frame_lerp = a->initial_lerp = qa_source_float_to_i32(lerp);
         a->present = true;
-        if (!r.ok)
-            return false;
     }
+    if (i != 31)
+        return !diagnostic || animation_diagnostic(diagnostic, context, error,
+                                                   "Error parsing animation file: %s", source_path);
     config.animations[32] = config.animations[13];
     config.animations[32].reversed = true;
     config.animations[33] = config.animations[14];
@@ -125,6 +152,7 @@ bool qa_player_animation_load(qa_bytes text, qa_player_animation_config *out,
     config.animations[35] = (qa_player_animation){16, 5, 0, 50, 50, false, false, true};
     config.animations[36] = (qa_player_animation){16, 5, 1, 66, 66, true, false, true};
     *out = config;
+    *loaded = true;
     return true;
 }
 static bool skin_space(uint8_t c) { return c <= 32 || c >= 128; }
