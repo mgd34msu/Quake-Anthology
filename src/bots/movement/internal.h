@@ -22,6 +22,7 @@ typedef enum bot_move_variable {
     BOT_MOVE_VARIABLE_COUNT
 } bot_move_variable;
 enum { BOT_MOVE_STATE_BYTES = 772, BOT_MOVE_MAX_STATES = 64 };
+enum { BOT_MOVE_PREDICTION_FRAMES = 50 };
 typedef enum bot_move_field {
     BM_ORIGIN=0, BM_VELOCITY=12, BM_VIEW_OFFSET=24, BM_ENTITY=36, BM_CLIENT=40,
     BM_THINK_TIME=44, BM_PRESENCE=48, BM_VIEW_ANGLES=52, BM_AREA=64,

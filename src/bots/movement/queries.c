@@ -247,7 +247,7 @@ bool bot_air_control(bot_travel *t, qa_vec3 goal, bool *controlled, qa_vec3 *dir
     qa_nav_prediction_query q = {.origin = bot_move_vector(s,BM_ORIGIN),
                                  .velocity = bot_move_vector(s,BM_VELOCITY),
                                  .presence = bot_move_word(s,BM_PRESENCE) == 2 ? 2 : 4,
-                                 .maximum_frames = 50,
+                                 .maximum_frames = BOT_MOVE_PREDICTION_FRAMES,
                                  .frame_ms = 100};
     if (!bot_predict(t, &q, e))
         return false;

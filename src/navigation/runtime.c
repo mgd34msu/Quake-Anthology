@@ -374,6 +374,20 @@ bool nav_storage_reserve(qa_arena *storage, void **data, size_t *capacity,
     if (!next) return false;
     *data = next; *capacity = count; return true;
 }
+bool qa_nav_prediction_result_reserve(qa_nav_prediction_result *result, size_t points,
+    qa_error *e) {
+    return nav_storage_reserve(&result->storage, (void **)&result->trajectory,
+        &result->trajectory_capacity, points, sizeof(*result->trajectory),
+        _Alignof(qa_vec3), e);
+}
+void qa_nav_prediction_result_reset(qa_nav_prediction_result *result) {
+    if (!result) return;
+    qa_arena storage = result->storage;
+    qa_vec3 *trajectory = result->trajectory;
+    size_t capacity = result->trajectory_capacity;
+    *result = (qa_nav_prediction_result){.storage = storage,
+        .trajectory = trajectory, .trajectory_capacity = capacity};
+}
 bool qa_nav_route_reserve(qa_nav_route *route, size_t nodes, size_t edges,
     size_t points, qa_error *e) {
     return nav_storage_reserve(&route->storage, (void **)&route->nodes, &route->node_capacity,

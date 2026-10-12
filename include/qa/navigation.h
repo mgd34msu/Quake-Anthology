@@ -332,6 +332,8 @@ typedef struct qa_nav_prediction_query {
     uint32_t presence, command_frames, maximum_frames, frame_ms, stop_events,
         stop_area; /* NO_INDEX disables target-area stop. */
     bool on_ground, world_only;
+    /* Final-state consumers do not need a retained path of predicted points. */
+    bool omit_trajectory;
 } qa_nav_prediction_query;
 typedef struct qa_nav_prediction_result {
     qa_vec3 end, velocity;
@@ -348,6 +350,8 @@ typedef struct qa_nav_prediction_result {
 } qa_nav_prediction_result;
 bool qa_navigation_predict(qa_navigation *, qa_nav_workspace *, const qa_nav_prediction_query *,
                            qa_nav_prediction_result *, qa_error *);
+bool qa_nav_prediction_result_reserve(qa_nav_prediction_result *, size_t points, qa_error *);
+void qa_nav_prediction_result_reset(qa_nav_prediction_result *);
 void qa_nav_prediction_result_free(qa_nav_prediction_result *);
 
 #endif

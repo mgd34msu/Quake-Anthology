@@ -341,21 +341,15 @@ bool qa_navigation_predict(qa_navigation *n, qa_nav_workspace *w, const qa_nav_p
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid selected movement projection query");
         return false;
     }
-    qa_vec3 *trajectory = out->trajectory;
-    size_t capacity = out->trajectory_capacity;
-    qa_arena storage = out->storage;
-    *out = (qa_nav_prediction_result){.end = q->origin,
-                                      .velocity = q->velocity,
-                                      .grounded = q->on_ground,
-                                      .end_area = QA_NAV_NO_INDEX,
-                                      .trajectory = trajectory,
-                                      .trajectory_capacity = capacity,
-                                      .storage = storage};
-    if (!nav_storage_reserve(&out->storage, (void **)&out->trajectory,
-                            &out->trajectory_capacity, 1, sizeof(*out->trajectory),
-                            _Alignof(qa_vec3), e))
-        return false;
-    out->trajectory[out->trajectory_count++] = q->origin;
+    qa_nav_prediction_result_reset(out);
+    out->end = q->origin;
+    out->velocity = q->velocity;
+    out->grounded = q->on_ground;
+    out->end_area = QA_NAV_NO_INDEX;
+    if (!q->omit_trajectory) {
+        if (!qa_nav_prediction_result_reserve(out, 1, e)) return false;
+        out->trajectory[out->trajectory_count++] = q->origin;
+    }
     if (q->maximum_frames == 0)
         return true;
     nav_prediction p = {.navigation = n, .pass_actor = q->pass_actor, .world_only = q->world_only};
@@ -410,13 +404,13 @@ bool qa_navigation_predict(qa_navigation *n, qa_nav_workspace *w, const qa_nav_p
         out->end = end;
         out->seconds += (float)q->frame_ms / 1000;
         ++out->frames;
-        if (!nav_storage_reserve(&out->storage, (void **)&out->trajectory,
-                                 &out->trajectory_capacity, out->trajectory_count + 1,
-                                 sizeof(*out->trajectory), _Alignof(qa_vec3), e)) {
-            ok = false;
-            break;
+        if (!q->omit_trajectory) {
+            if (!qa_nav_prediction_result_reserve(out, out->trajectory_count + 1, e)) {
+                ok = false;
+                break;
+            }
+            out->trajectory[out->trajectory_count++] = end;
         }
-        out->trajectory[out->trajectory_count++] = end;
         if (out->stop_event != 0)
             break;
     }
