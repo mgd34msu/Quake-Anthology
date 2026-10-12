@@ -271,7 +271,7 @@ bool qa_console_forward_text(const qa_command_invocation *command,const char **t
         !qa_console_invocation_current(command->console,command)||!command->argc||
         !command->argv||!command->argv[0]||!command->raw||!command->args_text)
         return qac_fail(error,QA_ERROR_ARGUMENT,"Forwarded text requires its actual entered console invocation");
-    *explicit_command=qac_equal(command->argv[0],"cmd");
+    *explicit_command=qa_text_ascii_equal(command->argv[0],"cmd");
     *text=*explicit_command?command->args_text:command->argc>1?command->raw:command->argv[0];
     return true;
 }
@@ -669,7 +669,7 @@ static void free_command(command_entry *entry)
 static command_entry *find_command(const qa_console *console, const char *name)
 {
     for (command_entry *entry = console->commands; entry; entry = entry->next)
-        if (qac_equal(entry->name, name)) return entry;
+        if (qa_text_ascii_equal(entry->name, name)) return entry;
     return NULL;
 }
 
@@ -838,7 +838,7 @@ static bool is_builtin(const qa_console *console,const qa_command_context *conte
     const qa_console_options *options=options_for(console,context);
     if (!options || options->disable_builtins) return false;
     for (size_t i = 0; i < sizeof(builtin_entries) / sizeof(builtin_entries[0]); ++i)
-        if (qac_equal(name, builtin_entries[i].name) &&
+        if (qa_text_ascii_equal(name, builtin_entries[i].name) &&
             builtin_allowed(context->dialect, builtin_entries[i].name)) return true;
     return false;
 }
@@ -1052,7 +1052,7 @@ bool qa_console_alias(qa_console *console, const qa_command_context *context,
     char *copy = qac_copy(text, error);
     if (copy == NULL) return false;
     for (alias_entry *alias = console->aliases; alias != NULL; alias = alias->next) {
-        if (!qac_equal(alias->view.name,name)) continue;
+        if (!qa_text_ascii_equal(alias->view.name,name)) continue;
         qac_console_program_touch(console, true);
         free((char *)alias->view.alias_text);
         alias->view.alias_text = copy;
@@ -1248,7 +1248,7 @@ const qa_console_entry *qa_console_find(const qa_console *console,
     const qa_console_options *options=options_for(console,context);
     if (options && !options->disable_builtins)
         for (size_t i = 0; i < sizeof(builtin_entries) / sizeof(builtin_entries[0]); ++i)
-            if (qac_equal(name, builtin_entries[i].name) && builtin_allowed(context->dialect, builtin_entries[i].name))
+            if (qa_text_ascii_equal(name, builtin_entries[i].name) && builtin_allowed(context->dialect, builtin_entries[i].name))
                 return &builtin_entries[i];
     const command_entry *entry = select_command(console, context, name);
     return entry == NULL ? NULL : &select_contribution(console,entry,context)->view;
@@ -1363,7 +1363,7 @@ static bool dispatch_inner(qa_console *console, const qa_command_context *contex
     command_entry *entry = select_command(console, context, tokens.values[0]);
     if (entry == NULL && context->dialect != QA_RULESET_Q3) {
         for (alias_entry *alias = console->aliases; alias != NULL; alias = alias->next) {
-            if (!qac_equal(alias->view.name,tokens.values[0])) continue;
+            if (!qa_text_ascii_equal(alias->view.name,tokens.values[0])) continue;
             if (qac_q2(context->dialect) && ++console->alias_count == 16) {
                 output(console, context, "ALIAS_LOOP_COUNT\n");
                 goto done;
@@ -1877,7 +1877,7 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
     const char *name = command->argv[0];
     const qa_command_context *context = &command->context;
     *handled = true;
-    if (qac_equal(name, "wait")) {
+    if (qa_text_ascii_equal(name, "wait")) {
         qa_command_context saved;
         if (!copy_context(&saved, context, error)) return false;
         qac_console_program_touch(console, false);
@@ -1887,16 +1887,16 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
         console->wait = context->dialect == QA_RULESET_Q3 && command->argc == 2 ? qac_integer(command->argv[1]) : 1;
         return true;
     }
-    if (qac_equal(name, "echo")) {
+    if (qa_text_ascii_equal(name, "echo")) {
         for (size_t i = 1; i < command->argc; ++i) { output(console, context, command->argv[i]); output(console, context, " "); }
         output(console, context, "\n");
         return true;
     }
-    if (qac_equal(name, "cmd")) return fallback_call(console, options->forward, command, error) != QA_COMMAND_FAILED;
-    if (qac_equal(name, "exec")) return execute_script(console, command, error);
-    if (qac_equal(name, "stuffcmds") && qac_q1(context->dialect))
+    if (qa_text_ascii_equal(name, "cmd")) return fallback_call(console, options->forward, command, error) != QA_COMMAND_FAILED;
+    if (qa_text_ascii_equal(name, "exec")) return execute_script(console, command, error);
+    if (qa_text_ascii_equal(name, "stuffcmds") && qac_q1(context->dialect))
         return options->startup_commands == NULL || qa_console_insert(console, context, options->startup_commands, error);
-    if (qac_equal(name, "alias") && context->dialect != QA_RULESET_Q3) {
+    if (qa_text_ascii_equal(name, "alias") && context->dialect != QA_RULESET_Q3) {
         if (command->argc == 1) {
             for (alias_entry *alias = console->aliases; alias != NULL; alias = alias->next)
                 output_value(console,context,alias->view.name,alias->view.alias_text);
@@ -1911,7 +1911,7 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
         free(text.data);
         return ok;
     }
-    if (qac_equal(name, "vstr")) {
+    if (qa_text_ascii_equal(name, "vstr")) {
         if (command->argc != 2) { output(console, context, "vstr <variable>\n"); return true; }
         const qa_cvar_view *variable=NULL;
         if (!qa_console_cvar_read(console,context,command->argv[1],&variable,error)) return false;
@@ -1921,12 +1921,12 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
         free(text.data);
         return ok;
     }
-    if (qac_equal(name, "resetall")) return reset_all(console, context, error);
-    if (qac_equal(name, "cvar_restart") && context->dialect == QA_RULESET_Q3) {
+    if (qa_text_ascii_equal(name, "resetall")) return reset_all(console, context, error);
+    if (qa_text_ascii_equal(name, "cvar_restart") && context->dialect == QA_RULESET_Q3) {
         cvar_access access=cvar_access_read(cvars_for(console,context));
         return cvar_apply(access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_RESTART},error);
     }
-    if (qac_equal(name, "cmdlist")) {
+    if (qa_text_ascii_equal(name, "cmdlist")) {
         const char *pattern = context->dialect == QA_RULESET_Q3 && command->argc > 1 ? command->argv[1] : NULL;
         size_t count = 0;
         for (size_t i = 0; i < sizeof(builtin_entries) / sizeof(builtin_entries[0]); ++i) {
@@ -1947,7 +1947,7 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
         output(console, context, summary);
         return true;
     }
-    if (qac_equal(name, "cvarlist")) {
+    if (qa_text_ascii_equal(name, "cvarlist")) {
         const char *pattern = context->dialect == QA_RULESET_Q3 && command->argc > 1 ? command->argv[1] : NULL;
         size_t count = 0;
         cvar_access access=cvar_access_read(cvars_for(console,context));
@@ -1987,11 +1987,11 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
         }
         return true;
     }
-    bool set = qac_equal(name, "set");
-    bool flagged = qac_equal(name, "seta") || qac_equal(name, "setu") || qac_equal(name, "sets");
-    bool reset = qac_equal(name, "reset");
-    bool toggle = qac_equal(name, "toggle");
-    bool increment = qac_equal(name, "inc") || qac_equal(name, "dec");
+    bool set = qa_text_ascii_equal(name, "set");
+    bool flagged = qa_text_ascii_equal(name, "seta") || qa_text_ascii_equal(name, "setu") || qa_text_ascii_equal(name, "sets");
+    bool reset = qa_text_ascii_equal(name, "reset");
+    bool toggle = qa_text_ascii_equal(name, "toggle");
+    bool increment = qa_text_ascii_equal(name, "inc") || qa_text_ascii_equal(name, "dec");
     if (!set && !flagged && !reset && !toggle && !increment) { *handled = false; return true; }
     if (command->argc < 2) { output(console, context, "command requires a variable name\n"); return true; }
     const char *variable_name = command->argv[1];
@@ -2016,7 +2016,7 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
             qac_text_string(&value, command->argv[2], error);
         if (ok) {
             if (flagged) {
-                uint32_t flag = qac_equal(name, "seta") ? QA_CVAR_ARCHIVE : qac_equal(name, "setu") ? QA_CVAR_USERINFO : QA_CVAR_SERVERINFO;
+                uint32_t flag = qa_text_ascii_equal(name, "seta") ? QA_CVAR_ARCHIVE : qa_text_ascii_equal(name, "setu") ? QA_CVAR_USERINFO : QA_CVAR_SERVERINFO;
                 ok = cvar_apply(access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET_FLAGS,
                     .name=variable_name,.value=value.data,.flags=flag},error);
             } else ok = cvar_apply(access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET,
@@ -2046,7 +2046,7 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
                 .name=variable_name,.value=strcmp(variable->value, "0") == 0 ? "1" : "0"},error);
         }
         for (size_t i = 2; i < command->argc; ++i)
-            if (qac_equal(command->argv[i], variable->value))
+            if (qa_text_ascii_equal(command->argv[i], variable->value))
                 return cvar_apply(access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET_CONSOLE,
                     .name=variable_name,.value=command->argv[i + 1 < command->argc ? i + 1 : 2]},error);
         output(console, context, "current value is outside toggle cycle\n");
@@ -2054,7 +2054,7 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
     }
     if (!decimal_text(variable->value)) { output(console, context, "increment requires a decimal cvar\n"); return true; }
     float amount = command->argc > 2 ? qac_number(command->argv[2], QA_RULESET_Q2_CLASSIC) : 1;
-    float value = variable->number + (qac_equal(name, "dec") ? -amount : amount);
+    float value = variable->number + (qa_text_ascii_equal(name, "dec") ? -amount : amount);
     if (value == variable->number) return cvar_apply(access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET_CONSOLE,
         .name=variable_name,.value=variable->value},error);
     char formatted[64];

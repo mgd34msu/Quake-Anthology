@@ -52,18 +52,6 @@ bool qac_q2(qa_ruleset_id dialect)
     return dialect == QA_RULESET_Q2_CLASSIC || dialect == QA_RULESET_Q2_RERELEASE;
 }
 
-bool qac_equal(const char *left, const char *right)
-{
-    while (*left != '\0' && *right != '\0') {
-        unsigned char a = (unsigned char)*left++;
-        unsigned char b = (unsigned char)*right++;
-        if (a >= 'A' && a <= 'Z') a = (unsigned char)(a + ('a' - 'A'));
-        if (b >= 'A' && b <= 'Z') b = (unsigned char)(b + ('a' - 'A'));
-        if (a != b) return false;
-    }
-    return *left == *right;
-}
-
 char *qac_copy_n(const char *text, size_t length, qa_error *error)
 {
     if (length == SIZE_MAX) {

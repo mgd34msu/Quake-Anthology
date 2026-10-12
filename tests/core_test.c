@@ -1891,6 +1891,12 @@ static void test_shared_cvar_archive(void)
 
 static void test_cvar_info_storage(void)
 {
+    const uint8_t upper[]={'A',0,0xc1},lower[]={'a',0,0xc1},other[]={'a',0,0xe1};
+    CHECK(qa_text_bytes_equal((qa_bytes){upper,sizeof upper},(qa_bytes){lower,sizeof lower},true));
+    CHECK(!qa_text_bytes_equal((qa_bytes){upper,sizeof upper},(qa_bytes){lower,sizeof lower},false));
+    CHECK(!qa_text_bytes_equal((qa_bytes){upper,sizeof upper},(qa_bytes){other,sizeof other},true));
+    CHECK(qa_text_ascii_equal((const char *)upper,(const char *)other));
+    CHECK(!qa_text_ascii_equal("command","command_extra"));
     const char *text="\\name\\first\\Name\\folded\\name\\last\\empty\\\\orphan";
     qa_bytes key={(const uint8_t *)"name",4},info_span;
     CHECK(qa_info_find(text,key,0,&info_span) && info_span.size==5 && !memcmp(info_span.data,"first",5));

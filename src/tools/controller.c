@@ -1,5 +1,6 @@
 #include "tools_internal.h"
 #include "save_internal.h"
+#include "qa/text.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,15 +22,6 @@ bool tools_files(qa_tools *tools, const qa_command_context *source, qa_vfs **fil
     *files = tools->options.files; *mount = tools->options.output_mount; return true;
 }
 static void capture_free(tools_capture *request) { free(request->script); free(request->name); free(request); }
-static bool equal_name(const char *a, const char *b) {
-    while (*a && *b) {
-        unsigned x = (unsigned char)*a++, y = (unsigned char)*b++;
-        if (x >= 'A' && x <= 'Z') x += 'a' - 'A';
-        if (y >= 'A' && y <= 'Z') y += 'a' - 'A';
-        if (x != y) return false;
-    }
-    return *a == *b;
-}
 static void stop(qa_tools *tools) { qa_camera_playback_destroy(tools->playback); tools->playback = NULL; }
 static void reset_camera(qa_tools *tools) { stop(tools); qa_camera_release(tools->camera); tools->camera = NULL; }
 static bool start(qa_tools *tools, qa_error *error) {
@@ -79,10 +71,10 @@ static bool command(void *context, const qa_command_invocation *call, qa_error *
     if (tools->busy || tools->pending_restore) return tools_fail(error, "tools command requires returned callbacks and restored continuation");
     ++tools->busy; tools->output_console = call->console; bool success = false;
     const char *name = call->argv[0];
-    if (equal_name(name, "loadcamera")) {
+    if (qa_text_ascii_equal(name, "loadcamera")) {
         if (call->argc != 2) tools_fail(error, "usage: loadcamera <file.camera>");
         else success = load(tools, call->argv[1], &call->context, error);
-    } else if (equal_name(name, "savecamera")) {
+    } else if (qa_text_ascii_equal(name, "savecamera")) {
         if (call->argc != 2) tools_fail(error, "usage: savecamera <file.camera>");
         else if (!tools->camera) tools_fail(error, "no camera loaded");
         else {
@@ -92,24 +84,24 @@ static bool command(void *context, const qa_command_invocation *call, qa_error *
                 qa_vfs_write(files, mount, call->argv[1], (qa_bytes){bytes.data, bytes.size}, error);
             qa_buffer_free(&bytes);
         }
-    } else if (equal_name(name, "startcamera")) {
+    } else if (qa_text_ascii_equal(name, "startcamera")) {
         if (call->argc != 1) tools_fail(error, "usage: startcamera"); else success = start(tools, error);
-    } else if (equal_name(name, "stopcamera")) { stop(tools); success = true; }
-    else if (equal_name(name, "source-camera")) success = tools_camera_author(tools, call, error);
-    else if (equal_name(name, "timers") || equal_name(name, "timerstamp")) success = tools_timer_command(tools, call, error);
-    else if (!equal_name(name, "screenshot") && !equal_name(name, "screenshotPNG") && !equal_name(name, "screenshotJPEG") && !equal_name(name, "levelshot")) success = tools_diagnostic_command(tools, call, error);
+    } else if (qa_text_ascii_equal(name, "stopcamera")) { stop(tools); success = true; }
+    else if (qa_text_ascii_equal(name, "source-camera")) success = tools_camera_author(tools, call, error);
+    else if (qa_text_ascii_equal(name, "timers") || qa_text_ascii_equal(name, "timerstamp")) success = tools_timer_command(tools, call, error);
+    else if (!qa_text_ascii_equal(name, "screenshot") && !qa_text_ascii_equal(name, "screenshotPNG") && !qa_text_ascii_equal(name, "screenshotJPEG") && !qa_text_ascii_equal(name, "levelshot")) success = tools_diagnostic_command(tools, call, error);
     else {
         const char *argument = call->argc > 1 ? call->argv[1] : NULL;
-        bool levelshot = equal_name(name, "levelshot") || (argument && !strcmp(argument, "levelshot"));
+        bool levelshot = qa_text_ascii_equal(name, "levelshot") || (argument && !strcmp(argument, "levelshot"));
         bool silent = argument && !strcmp(argument, "silent");
-        if (equal_name(name, "levelshot") && call->context.dialect == QA_RULESET_Q3) {
+        if (qa_text_ascii_equal(name, "levelshot") && call->context.dialect == QA_RULESET_Q3) {
             if (tools->options.forward) success = tools->options.forward(tools->options.context, call, error);
             else tools_fail(error, "Q3 levelshot needs the active source command route");
         } else {
             const char *capture_name = levelshot ? tools->options.map_name(tools->options.context) : silent ? NULL : argument;
             if (levelshot && !capture_name) tools_fail(error, "no active map for levelshot");
             else success = capture_queue(tools, &call->context,
-                equal_name(name, "screenshotPNG") ? QA_CAPTURE_PNG : equal_name(name, "screenshotJPEG") ? QA_CAPTURE_JPEG : QA_CAPTURE_TGA,
+                qa_text_ascii_equal(name, "screenshotPNG") ? QA_CAPTURE_PNG : qa_text_ascii_equal(name, "screenshotJPEG") ? QA_CAPTURE_JPEG : QA_CAPTURE_TGA,
                 capture_name, levelshot, silent, error);
         }
     }

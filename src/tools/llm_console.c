@@ -29,10 +29,6 @@ static const struct { const char *name, *usage, *summary; } definitions[] = {
 static bool local(const qa_command_context *source) {
     return source->direct && !source->script && (source->origin == QA_COMMAND_LOCAL || source->origin == QA_COMMAND_SEAT);
 }
-static bool equal(const char *a, const char *b) {
-    while (*a && *b) { unsigned x = (unsigned char)*a++, y = (unsigned char)*b++; if (x >= 'A' && x <= 'Z') x += 32; if (y >= 'A' && y <= 'Z') y += 32; if (x != y) return false; }
-    return *a == *b;
-}
 static bool same_console(const qa_command_context *a, const qa_command_context *b) {
     return a->origin == b->origin && (a->origin != QA_COMMAND_SEAT || a->seat == b->seat);
 }
@@ -147,7 +143,7 @@ static bool command(void *context, const qa_command_invocation *call, qa_error *
     if (!active) return llm_fail(error, "LLM console context has retired");
     console_request **link = &binding->requests;
     while (*link && !same_console(&(*link)->source, &call->context)) link = &(*link)->next;
-    if (equal(call->argv[0], "llm_cancel")) {
+    if (qa_text_ascii_equal(call->argv[0], "llm_cancel")) {
         if (call->argc != 1) return llm_fail(error, "usage: llm_cancel");
         ++s->busy;
         if (*link) { cancel(binding, link); print(binding, &call->context, "LLM request canceled.\n"); }
@@ -164,7 +160,7 @@ static bool command(void *context, const qa_command_invocation *call, qa_error *
     if (!qa_utf8_valid(trimmed) || cursor != trimmed.size || units > 4096) { llm_fail(error, "LLM prompt exceeds 4096 characters or contains invalid UTF-8"); goto done; }
     if (trimmed.data != prompt.buffer.data) memmove(prompt.buffer.data, trimmed.data, trimmed.size);
     prompt.buffer.size = trimmed.size; prompt.buffer.data[trimmed.size] = 0;
-    bool execute = equal(call->argv[0], "llm_exec");
+    bool execute = qa_text_ascii_equal(call->argv[0], "llm_exec");
     if (!llm_console_instructions(binding->console, &call->context, (const char *)prompt.buffer.data, execute, &instructions, error)) goto done;
     request = calloc(1, sizeof *request);
     if (!request) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating console LLM request"); goto done; }

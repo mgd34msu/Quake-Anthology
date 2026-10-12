@@ -19,10 +19,10 @@ bool qa_info_next(const char **cursor,qa_bytes *key,qa_bytes *value)
     return true;
 }
 
-bool qa_info_key_equal(qa_bytes key,qa_bytes wanted,unsigned policy)
+bool qa_text_bytes_equal(qa_bytes key,qa_bytes wanted,bool ascii_fold)
 {
     bool match=key.size==wanted.size;
-    if (policy&QA_INFO_CASE_FOLD) {
+    if (ascii_fold) {
         for (size_t i=0;match && i<key.size;++i) {
             unsigned char a=key.data[i],b=wanted.data[i];
             if (a>='A' && a<='Z') a+='a'-'A';
@@ -31,6 +31,17 @@ bool qa_info_key_equal(qa_bytes key,qa_bytes wanted,unsigned policy)
         }
     } else if (match && key.size) match=!memcmp(key.data,wanted.data,key.size);
     return match;
+}
+
+bool qa_text_ascii_equal(const char *left,const char *right)
+{
+    return qa_text_bytes_equal((qa_bytes){(const uint8_t *)left,strlen(left)},
+                              (qa_bytes){(const uint8_t *)right,strlen(right)},true);
+}
+
+bool qa_info_key_equal(qa_bytes key,qa_bytes wanted,unsigned policy)
+{
+    return qa_text_bytes_equal(key,wanted,(policy&QA_INFO_CASE_FOLD)!=0);
 }
 
 bool qa_info_find(const char *text,qa_bytes wanted,unsigned policy,qa_bytes *out)

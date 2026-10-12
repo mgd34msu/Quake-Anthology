@@ -1,4 +1,5 @@
 #include "tools_internal.h"
+#include "qa/text.h"
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
@@ -11,10 +12,6 @@
 #include <unistd.h>
 #endif
 
-static bool equal(const char *a, const char *b) {
-    while (*a && *b) { unsigned x = (unsigned char)*a++, y = (unsigned char)*b++; if (x >= 'A' && x <= 'Z') x += 32; if (y >= 'A' && y <= 'Z') y += 32; if (x != y) return false; }
-    return *a == *b;
-}
 static bool memory(qa_tools *tools, const qa_command_context *source, qa_error *error) {
     uint64_t resident = 0, virtual_bytes = 0;
 #ifdef _WIN32
@@ -42,7 +39,7 @@ static bool memory(qa_tools *tools, const qa_command_context *source, qa_error *
 }
 bool tools_diagnostic_command(qa_tools *tools, const qa_command_invocation *call, qa_error *error) {
     const char *name = call->argv[0];
-    if (equal(name, "dir")) {
+    if (qa_text_ascii_equal(name, "dir")) {
         if (call->argc > 3) return tools_fail(error, "usage: dir [path] [extension]");
         const char *path = call->argc > 1 ? call->argv[1] : ""; if (!strcmp(path, ".")) path = "";
         qa_vfs_listing listing = {0};
@@ -51,13 +48,13 @@ bool tools_diagnostic_command(qa_tools *tools, const qa_command_invocation *call
         for (size_t i = 0; i < listing.count; ++i) { tools_print(tools, &call->context, listing.names[i]); tools_print(tools, &call->context, "\n"); }
         char text[96]; (void)snprintf(text, sizeof text, "%zu files\n", listing.count); tools_print(tools, &call->context, text); qa_vfs_listing_free(&listing); return true;
     }
-    if (equal(name, "touchFile")) {
+    if (qa_text_ascii_equal(name, "touchFile")) {
         if (call->argc != 2) return tools_fail(error, "usage: touchFile <file>");
         qa_vfs *files; qa_mount_id mount; qa_resource *resource = NULL;
         bool ok = tools_files(tools, &call->context, &files, &mount, error) && qa_vfs_acquire(files, call->argv[1], &resource, NULL, error); qa_resource_release(resource); return ok;
     }
-    if (equal(name, "meminfo")) { if (call->argc != 1) return tools_fail(error, "usage: meminfo"); return memory(tools, &call->context, error); }
-    if (equal(name, "shaderlist")) { if (call->argc > 2) return tools_fail(error, "usage: shaderlist [sorted]"); }
+    if (qa_text_ascii_equal(name, "meminfo")) { if (call->argc != 1) return tools_fail(error, "usage: meminfo"); return memory(tools, &call->context, error); }
+    if (qa_text_ascii_equal(name, "shaderlist")) { if (call->argc > 2) return tools_fail(error, "usage: shaderlist [sorted]"); }
     else if (call->argc != 1) return tools_fail(error, "diagnostic command takes no arguments");
     if (!tools->options.diagnostic) return tools_fail(error, "active application does not provide this diagnostic owner");
     qa_buffer text = {0}; bool ok = tools->options.diagnostic(tools->options.context, call, &text, error);

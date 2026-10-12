@@ -21,6 +21,9 @@ bool qa_text_to_source_bytes(qa_bytes, uint8_t *out, size_t capacity, size_t *si
 bool qa_text_from_source_bytes(qa_bytes, char *out, size_t capacity, size_t *size, qa_error *);
 bool qa_unicode_whitespace(uint32_t scalar);
 bool qa_text_join_words(const char *const *,size_t,char *,size_t,qa_error *);
+/* Counted bytes, including embedded NULs; folding changes ASCII A-Z only. */
+bool qa_text_bytes_equal(qa_bytes, qa_bytes, bool ascii_fold);
+bool qa_text_ascii_equal(const char *, const char *);
 /* Quake backslash info pairs, borrowed from the NUL-terminated input. Cursor
  * starts at the string and ends at the next delimiter or terminator. */
 bool qa_info_next(const char **cursor,qa_bytes *key,qa_bytes *value);

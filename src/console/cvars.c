@@ -49,7 +49,7 @@ bool qa_cvars_capture_metadata(const qa_cvars *registry,qa_cvar_registry_state *
 bool qac_cvars_name_equal(const qa_cvars *registry, const char *a, const char *b)
 {
     (void)registry;
-    return qac_equal(a, b);
+    return qa_text_ascii_equal(a, b);
 }
 
 static size_t name_hash(const qa_cvars *registry, const char *name)
@@ -368,7 +368,7 @@ bool qa_cvars_restore_metadata(qa_cvars *registry,const qa_cvar_registry_state *
             (bound && (view->owner!=records[i].owner || view->handle!=records[i].handle)))
             return qac_fail(error,QA_ERROR_FORMAT,"saved Source metadata lost its actual declaration/handle");
         for (size_t j=0;j<i;++j)
-            if ((records[i].handle!=SIZE_MAX && records[i].handle==records[j].handle) || qac_equal(records[i].name,records[j].name))
+            if ((records[i].handle!=SIZE_MAX && records[i].handle==records[j].handle) || qa_text_ascii_equal(records[i].name,records[j].name))
                 return qac_fail(error,QA_ERROR_FORMAT,"duplicate saved Source metadata");
     }
     if ((qa_cvars_dialect(registry)==QA_RULESET_Q3 && state->next_handle>1024) ||
@@ -638,10 +638,10 @@ static bool alias_affected(const qa_cvars *registry,const cvar_values *values,co
     const qa_cvar_catalog_conversion *conversion=qac_cvars_conversion(registry,values,alias->catalog_binding);
     if (conversion && (conversion->operation==QA_CATALOG_OP_VIDEO_MODE ||
         conversion->operation==QA_CATALOG_OP_FULLSCREEN)) {
-        if (qac_equal(canonical->view.name,"r_customwidth") ||
-            qac_equal(canonical->view.name,"r_customheight")) return true;
+        if (qa_text_ascii_equal(canonical->view.name,"r_customwidth") ||
+            qa_text_ascii_equal(canonical->view.name,"r_customheight")) return true;
         if (conversion->operation==QA_CATALOG_OP_FULLSCREEN &&
-            (qac_equal(canonical->view.name,"r_mode") || qac_equal(canonical->view.name,"vid_modelist"))) return true;
+            (qa_text_ascii_equal(canonical->view.name,"r_mode") || qa_text_ascii_equal(canonical->view.name,"vid_modelist"))) return true;
     }
     for (size_t i=0;conversion && i<conversion->operand_count;++i)
         if (qa_cvar_catalog_operands[conversion->operand_first+i].row_index==canonical->catalog_row) return true;
@@ -659,7 +659,7 @@ static bool receives_value(qa_cvars *registry,const cvar_values *values,const qa
 {
     if (bound) return true;
     for (const cvar_observer *observer=registry->observers;observer;observer=observer->next)
-        if (observer->active && !observer->suppressed && qac_equal(
+        if (observer->active && !observer->suppressed && qa_text_ascii_equal(
             canonical_name(registry,values,observer->name),canonical_name(registry,values,view->name))) return true;
     if (!registry->options.effect) return false;
     if (qa_cvars_dialect(registry)==QA_RULESET_QUAKEWORLD) return (view->flags&(QA_CVAR_USERINFO|QA_CVAR_SERVERINFO))!=0;
@@ -1415,7 +1415,7 @@ static bool write_group(cvar_target target,cvar_write *writes,size_t count,qa_er
             cvar_edit_event **link=&published.events;
             bool duplicate=false;
             for (cvar_edit_event *kept=published.events;kept;kept=kept->next)
-                if (kept->registry==event->registry && qac_equal(kept->snapshot->view.name,event->snapshot->view.name)) { kept->changed|=event->changed; duplicate=true; break; }
+                if (kept->registry==event->registry && qa_text_ascii_equal(kept->snapshot->view.name,event->snapshot->view.name)) { kept->changed|=event->changed; duplicate=true; break; }
             if (duplicate) { edit_event_free(event->registry,event); continue; }
             while (*link && (*link)->snapshot->binding_order<=event->snapshot->binding_order) link=&(*link)->next;
             event->next=*link; *link=event;
@@ -2212,13 +2212,13 @@ bool qa_cvars_info_write(const qa_cvars *registry, uint32_t flags, size_t maximu
             size_t count = 0;
             bool userinfo = (flags & QA_CVAR_USERINFO) != 0;
             bool strip = dialect != QA_RULESET_QUAKEWORLD ||
-                (userinfo ? !qac_equal(value->name, "name") : !values->high_characters);
+                (userinfo ? !qa_text_ascii_equal(value->name, "name") : !values->high_characters);
             for (size_t i = 0; i < pair_size; ++i) {
                 unsigned char c = (unsigned char)pair[i];
                 if (strip) {
                     c &= 127;
                     if (c < 32 || (dialect != QA_RULESET_QUAKEWORLD && c == 127)) continue;
-                    if (dialect == QA_RULESET_QUAKEWORLD && userinfo && qac_equal(value->name, "team") &&
+                    if (dialect == QA_RULESET_QUAKEWORLD && userinfo && qa_text_ascii_equal(value->name, "team") &&
                         c >= 'A' && c <= 'Z') c += 32;
                 }
                 if (dialect == QA_RULESET_QUAKEWORLD && c <= 13) continue;
@@ -2267,7 +2267,7 @@ static const char *archive_value(const qa_cvars *registry,const cvar_values *val
         (entry->catalog_row!=QA_CVAR_CATALOG_NO_ROW &&
             (qa_cvar_catalog_rows[entry->catalog_row].not_stored ||
              (qa_cvar_catalog_rows[entry->catalog_row].policies&QA_CATALOG_POLICY_PRIVATE)))) return NULL;
-    if (qac_equal(entry->view.name,"cl_cdkey")) return NULL;
+    if (qa_text_ascii_equal(entry->view.name,"cl_cdkey")) return NULL;
     const qa_cvars_edit *edit=registry->store->edit;
     for (const qa_cvars *source=registry->store->views;source;source=source->next_view) {
         const cvar_edit_view *prepared=edit && canonical==&edit->values?qac_cvars_edit_view((qa_cvars_edit *)edit,source):NULL;
@@ -2277,7 +2277,7 @@ static const char *archive_value(const qa_cvars *registry,const cvar_values *val
             (declaration->view.flags&(QA_Q2_CVAR_PRIVATE|QA_Q2_CVAR_NO_ARCHIVE))) return NULL;
         for (const cvar_alias *alias=metadata->aliases;alias;alias=alias->next)
             if (qac_q2(alias->flags_dialect) && (alias->flags&(QA_Q2_CVAR_PRIVATE|QA_Q2_CVAR_NO_ARCHIVE)) &&
-                (!entry->view.player_scoped || source->options.seat==entry->player) && qac_equal(alias->target,entry->view.name)) return NULL;
+                (!entry->view.player_scoped || source->options.seat==entry->player) && qa_text_ascii_equal(alias->target,entry->view.name)) return NULL;
     }
     return entry->view.latched_value?entry->view.latched_value:entry->view.value;
 }

@@ -1,19 +1,11 @@
 #include "llm_internal.h"
+#include "qa/text.h"
 #include <stdlib.h>
 #include <string.h>
 
-static bool equal(const char *a, const char *b) {
-    while (*a && *b) {
-        unsigned x = (unsigned char)*a++, y = (unsigned char)*b++;
-        if (x >= 'A' && x <= 'Z') x += 'a' - 'A';
-        if (y >= 'A' && y <= 'Z') y += 'a' - 'A';
-        if (x != y) return false;
-    }
-    return *a == *b;
-}
 bool llm_command_indirect(const char *name) {
     static const char *const names[] = {"llm_ask", "llm_exec", "llm_cancel", "exec", "vstr", "alias", "bind", "stuffcmds", "cmd", "wait"};
-    for (size_t i = 0; i < sizeof names / sizeof names[0]; ++i) if (equal(name, names[i])) return true;
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; ++i) if (qa_text_ascii_equal(name, names[i])) return true;
     return false;
 }
 typedef struct batch {
@@ -29,7 +21,7 @@ static bool known_variable(batch *b, const char *name) {
         qa_cvars *registry = qa_console_visible_cvars(b->console, b->context, i);
         if (!registry) break;
         for (const qa_cvar_view *var = qa_cvars_next(registry, NULL); var; var = qa_cvars_next(registry, var)) {
-            if (equal(var->name, name) && qa_console_cvar_owner(b->console, b->context, var->name) == registry) return true;
+            if (qa_text_ascii_equal(var->name, name) && qa_console_cvar_owner(b->console, b->context, var->name) == registry) return true;
         }
     }
     return false;
@@ -55,8 +47,8 @@ static bool admit_line(batch *b, qa_bytes line, const char *const *ancestry, siz
     if (!command && b->context->dialect != QA_RULESET_Q3) {
         const qa_console_entry *alias = NULL;
         for (size_t i = 0; (alias = qa_console_alias_at(b->console, b->context->owner, i)) != NULL; ++i) {
-            if (!equal(alias->name, name)) continue;
-            for (size_t j = 0; j < depth; ++j) if (equal(ancestry[j], name)) { llm_fail(error, "recursive console alias rejected"); goto done; }
+            if (!qa_text_ascii_equal(alias->name, name)) continue;
+            for (size_t j = 0; j < depth; ++j) if (qa_text_ascii_equal(ancestry[j], name)) { llm_fail(error, "recursive console alias rejected"); goto done; }
             const char *path[9];
             for (size_t j = 0; j < depth; ++j) path[j] = ancestry[j];
             path[depth] = name;
@@ -65,7 +57,7 @@ static bool admit_line(batch *b, qa_bytes line, const char *const *ancestry, siz
     }
     if (!command && !known_variable(b, name)) { llm_fail(error, "unknown command or setting; use find or help, then retry"); goto done; }
     static const char *const setters[] = {"set", "seta", "setu", "sets", "reset", "toggle", "inc", "dec"};
-    for (size_t i = 0; i < sizeof setters / sizeof setters[0]; ++i) if (equal(name, setters[i])) {
+    for (size_t i = 0; i < sizeof setters / sizeof setters[0]; ++i) if (qa_text_ascii_equal(name, setters[i])) {
         if (tokens.count < 2 || !known_variable(b, tokens.values[1])) { llm_fail(error, "generated settings commands require an existing console variable"); goto done; }
         break;
     }

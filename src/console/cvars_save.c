@@ -131,7 +131,7 @@ static bool read_domains(qa_source_save_io *io,saved_cvar *rows,size_t expected)
         const char *name=NULL;
         if (!qac_save_text(io,&name)) return false;
         saved_cvar *row=rows;
-        while (row && (!name || !qac_equal(row->name,name))) row=row->next;
+        while (row && (!name || !qa_text_ascii_equal(row->name,name))) row=row->next;
         free((char *)name);
         if (!row || row->metadata) return qac_fail(io->error,QA_ERROR_FORMAT,"canonical cvar metadata name differs");
         row->metadata=true;
@@ -147,7 +147,7 @@ static bool read_domains(qa_source_save_io *io,saved_cvar *rows,size_t expected)
                 !qac_dialect_valid((qa_ruleset_id)detail->dialect))
                 return qac_fail(io->error,QA_ERROR_FORMAT,"invalid canonical cvar detail");
             for (const saved_detail *prior=row->details;prior!=detail;prior=prior->next)
-                if (prior->dialect==detail->dialect && qac_equal(prior->binding,detail->binding))
+                if (prior->dialect==detail->dialect && qa_text_ascii_equal(prior->binding,detail->binding))
                     return qac_fail(io->error,QA_ERROR_FORMAT,"duplicate canonical cvar detail");
         }
     }
@@ -157,7 +157,7 @@ static bool read_domains(qa_source_save_io *io,saved_cvar *rows,size_t expected)
 static bool restore_domain(qa_cvars_restore *state,const saved_cvar *saved,qa_error *error)
 {
     cvar *row=qac_cvars_find_values(state->registry,&state->edit->values,saved->name);
-    if (!row || !qac_equal(row->view.name,saved->name))
+    if (!row || !qa_text_ascii_equal(row->view.name,saved->name))
         return qac_fail(error,QA_ERROR_FORMAT,"domain metadata needs a canonical cvar name");
     if (row->view.save_policy==QA_CVAR_SAVE_SETTING) return true;
     row->view.explicit_value=saved->explicit_value; row->pending_explicit=saved->pending_explicit;
@@ -167,7 +167,7 @@ static bool restore_domain(qa_cvars_restore *state,const saved_cvar *saved,qa_er
     for (const saved_detail *saved_domain=saved->details;saved_domain;saved_domain=saved_domain->next) {
         const qa_cvar_catalog_binding *binding=NULL;
         for (size_t i=0;i<qa_cvar_catalog_binding_count;++i)
-            if (qac_equal(qa_cvar_catalog_string(qa_cvar_catalog_bindings[i].name),saved_domain->binding) &&
+            if (qa_text_ascii_equal(qa_cvar_catalog_string(qa_cvar_catalog_bindings[i].name),saved_domain->binding) &&
                 qa_cvar_catalog_bindings[i].row_index==row->catalog_row &&
                 qa_cvar_catalog_bindings[i].seat==row->catalog_binding->seat) { binding=&qa_cvar_catalog_bindings[i]; break; }
         if (!binding) return qac_fail(error,QA_ERROR_FORMAT,"canonical cvar detail has a foreign alias");

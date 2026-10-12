@@ -67,7 +67,7 @@ bool qa_console_discovery_find(qa_console *console, const qa_command_context *co
     if (context->dialect != QA_RULESET_Q3) {
         const qa_console_entry *alias;
         for (size_t i = 0; (alias = qa_console_alias_at(console, context->owner, i)); ++i)
-            if (qac_equal(alias->name, name)) {
+            if (qa_text_ascii_equal(alias->name, name)) {
                 *out = (qa_console_discovery_entry){
                     .kind = QA_CONSOLE_ALIAS, .name = alias->name, .value = alias->alias_text};
                 return true;
@@ -84,7 +84,7 @@ bool qa_console_discovery_find(qa_console *console, const qa_command_context *co
                 const qa_cvar_view *var=NULL;
                 if (!qa_console_cvar_snapshot_at(console,context,vars,i,&var,NULL)) return false;
                 if (!var) break;
-                if (qac_equal(var->name, name) &&
+                if (qa_text_ascii_equal(var->name, name) &&
                     qa_console_cvar_owner(console, context, var->name) == vars) {
                     found = var;
                     break;
@@ -288,7 +288,7 @@ static bool search_command(void *user, const qa_command_invocation *command, qa_
     qa_console_discovery_commands *owner = user;
     qac_text out = {0};
     qa_console_discovery entries = {0};
-    bool help = qac_equal(command->argv[0], "help");
+    bool help = qa_text_ascii_equal(command->argv[0], "help");
     size_t page = 1;
     if (help && command->argc != 2) {
         owner->options.print(

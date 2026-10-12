@@ -242,7 +242,7 @@ static bool map_aliases(qa_console_program *program, alias_entry *head, const re
         if (is_retired(owners, entry->view.owner))
             return qac_fail(error, QA_ERROR_ARGUMENT, "command program alias names a retired candidate owner");
         for (alias_entry *prior = head; prior != entry; prior = prior->next)
-            if (qac_equal(prior->view.name, entry->view.name))
+            if (qa_text_ascii_equal(prior->view.name, entry->view.name))
                 return qac_fail(error, QA_ERROR_ARGUMENT, "command program aliases duplicate the common name");
     }
     return true;

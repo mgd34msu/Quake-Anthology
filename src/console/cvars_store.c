@@ -303,7 +303,7 @@ static const qa_cvar_catalog_binding *catalog_name(const char *name, qa_cvar_sid
     const qa_cvar_catalog_binding *fallback = NULL;
     for (size_t i = lower; i < qa_cvar_catalog_binding_count; ++i) {
         const qa_cvar_catalog_binding *binding = &qa_cvar_catalog_bindings[i];
-        if (!qac_equal(name, qa_cvar_catalog_string(binding->name))) break;
+        if (!qa_text_ascii_equal(name, qa_cvar_catalog_string(binding->name))) break;
         if (binding->side_scope == QA_CATALOG_ANY_SIDE) fallback = binding;
         else if ((binding->side_scope == QA_CATALOG_SERVER && side == QA_CVAR_SIDE_SERVER) ||
                  (binding->side_scope == QA_CATALOG_CLIENT && side != QA_CVAR_SIDE_SERVER)) return binding;
@@ -394,7 +394,7 @@ uint32_t qac_cvars_catalog_flags(const qa_cvars *registry, const cvar_values *va
     for (size_t i = 0; i < dialect->flags_count; ++i) {
         const qa_cvar_catalog_flags *clause = &qa_cvar_catalog_flag_clauses[dialect->flags_first + i];
         const char *name = qa_cvar_catalog_string(clause->member);
-        if (!clause->issues && (!*name || qac_equal(member, name) || qac_equal(member,qa_cvar_catalog_string(row->name))))
+        if (!clause->issues && (!*name || qa_text_ascii_equal(member, name) || qa_text_ascii_equal(member,qa_cvar_catalog_string(row->name))))
             flags |= qac_cvars_flags(clause->flags, QA_RULESET_Q3, active);
     }
     if (row->policies & QA_CATALOG_POLICY_LATCH_ALL)
@@ -632,7 +632,7 @@ bool qac_cvars_default_declare(cvar_target target, cvar *entry,
          target.registry->options.role==QA_CVAR_ROLE_ENGINE);
     bool engine_default=target.registry->options.role==QA_CVAR_ROLE_ENGINE && !canonical->defaults[active];
     bool apply=engine_default || (player_authority && (target.registry->options.dialect==active ||
-        (target.registry->options.role==QA_CVAR_ROLE_ENGINE && qac_equal(canonical->view.name,"name")))) ||
+        (target.registry->options.role==QA_CVAR_ROLE_ENGINE && qa_text_ascii_equal(canonical->view.name,"name")))) ||
         (authority==target.registry &&
         (stock_default_role(canonical,target.registry->options.dialect)==QA_CVAR_ROLE_GAME ||
          !canonical->defaults[target.registry->options.dialect]));
@@ -667,7 +667,7 @@ bool qa_cvars_select_dialect(qa_cvars *registry, qa_ruleset_id dialect,
             ? declaration->declaration_default:entry->defaults[dialect];
         qa_cvars *player_source=entry->player_default_source;
         if (entry->view.player_scoped && player_source && (player_source->options.dialect==dialect ||
-            (player_source->options.role==QA_CVAR_ROLE_ENGINE && qac_equal(entry->view.name,"name")))) {
+            (player_source->options.role==QA_CVAR_ROLE_ENGINE && qa_text_ascii_equal(entry->view.name,"name")))) {
             cvar_values *player_values=edit?&qac_cvars_edit_view(edit,player_source)->values:&player_source->values;
             const cvar *player_default=entry->ordinal<player_values->row_capacity?player_values->rows[entry->ordinal]:NULL;
             if (player_default && player_default->declaration_default) defaults[entry->ordinal]=player_default->declaration_default;
@@ -746,10 +746,10 @@ static bool player_definition(const qa_cvar_catalog_binding *binding)
         "team_headmodel","sex","color1","color2","team","handicap",
         "teamtask","spectator","password","hand"};
     const qa_cvar_catalog_row *row=&qa_cvar_catalog_rows[binding->row_index];
-    if (!qac_equal(qa_cvar_catalog_string(row->owner),"client")) return false;
+    if (!qa_text_ascii_equal(qa_cvar_catalog_string(row->owner),"client")) return false;
     bool identity=false, userinfo=false;
     for (size_t i=0;i<sizeof(names)/sizeof(names[0]);++i)
-        if (qac_equal(qa_cvar_catalog_string(binding->name),names[i])) { identity=true; break; }
+        if (qa_text_ascii_equal(qa_cvar_catalog_string(binding->name),names[i])) { identity=true; break; }
     for (size_t d=0;identity && d<QA_CVAR_CATALOG_DIALECTS;++d)
         for (size_t i=0;i<row->dialect[d].flags_count;++i)
             userinfo |= (qa_cvar_catalog_flag_clauses[row->dialect[d].flags_first+i].flags&QA_CVAR_USERINFO)!=0;

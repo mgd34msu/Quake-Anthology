@@ -20,7 +20,7 @@ static bool result_number(qac_cvar_conversion_output *out, double value, qa_erro
     return true;
 }
 static bool named(const qac_cvar_conversion_input *in,const char *name)
-{ return in->binding && qac_equal(qa_cvar_catalog_string(in->binding->name),name); }
+{ return in->binding && qa_text_ascii_equal(qa_cvar_catalog_string(in->binding->name),name); }
 static uint16_t second_color(const qa_cvar_catalog_conversion *conversion)
 { return qa_cvar_catalog_operands[conversion->operand_first+conversion->operand_count-1].row_index; }
 static bool family(double type, bool team)
@@ -94,7 +94,7 @@ static bool composite_write(const qac_cvar_conversion_input *in,
 static uint16_t video_row(const char *name)
 {
     for (size_t i=0;i<qa_cvar_catalog_row_count;++i)
-        if (qac_equal(qa_cvar_catalog_string(qa_cvar_catalog_rows[i].name),name)) return (uint16_t)i;
+        if (qa_text_ascii_equal(qa_cvar_catalog_string(qa_cvar_catalog_rows[i].name),name)) return (uint16_t)i;
     return QA_CVAR_CATALOG_NO_ROW;
 }
 static const char *video_operand(const qac_cvar_conversion_input *in,const char *name)
@@ -250,7 +250,7 @@ bool qac_cvar_read_conversion(const qac_cvar_conversion_input *in,
         if (in->options->dialect == QA_RULESET_Q3) value = value != 0;
         break;
     case QA_CATALOG_OP_SEX:
-        out->value = qac_equal(in->value, "neuter") ? "none" : in->value;
+        out->value = qa_text_ascii_equal(in->value, "neuter") ? "none" : in->value;
         return true;
     case QA_CATALOG_OP_QW_SKIN:
         if (in->options->dialect == QA_RULESET_QUAKEWORLD) {
@@ -324,7 +324,7 @@ bool qac_cvar_write_conversion(const qac_cvar_conversion_input *in,
         break;
     case QA_CATALOG_OP_FORCE_RESPAWN: value = value != 0 ? fmax(current, 1) : 0; break;
     case QA_CATALOG_OP_AUTOSWITCH:
-        value = named(in,"qts_weapon_autoswitch") ? (qac_equal(in->value,"never")?0:1) : value == 3 ? 0 : 1;
+        value = named(in,"qts_weapon_autoswitch") ? (qa_text_ascii_equal(in->value,"never")?0:1) : value == 3 ? 0 : 1;
         break;
     case QA_CATALOG_OP_SHADOWS:
         value = value == 0 ? 0 : current >= 2 && current <= 3 ? current : 1;
@@ -345,7 +345,7 @@ bool qac_cvar_write_conversion(const qac_cvar_conversion_input *in,
     case QA_CATALOG_OP_SAME_LEVEL: value = value != 0; break;
     case QA_CATALOG_OP_NO_EXIT: value = value == 0; break;
     case QA_CATALOG_OP_SEX:
-        out->value = qac_equal(in->value, "none") ? "neuter" : in->value;
+        out->value = qa_text_ascii_equal(in->value, "none") ? "neuter" : in->value;
         return true;
     case QA_CATALOG_OP_COLOR:
         value = map_value(c, value, QA_CATALOG_ALIAS_TO_CANONICAL, value);
