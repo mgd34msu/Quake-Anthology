@@ -42,7 +42,7 @@ static bool selected(frontend_remote_q1 *row, qa_bytes name, qa_error *error)
 }
 static int16_t source_short(float input)
 {
-    uint16_t word = (uint16_t)(uint32_t)qa_source_float_to_i32(input);
+    uint16_t word = (uint16_t)(uint32_t)qa_source_to_i32(input);
     int16_t result; memcpy(&result, &word, sizeof(result)); return result;
 }
 static bool command(frontend_remote_q1 *row, const qa_usercmd *source, qa_error *error)

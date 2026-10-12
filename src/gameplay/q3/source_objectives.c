@@ -115,7 +115,7 @@ static bool spawn_trigger(qa_q3_game *game, qa_actor_id model, qa_vec3 origin,
     qa_actor_collision collision = {.family = QA_GAME_Q3, .shape = QA_SHAPE_BOX,
         .contents = qa_collision_contents_decode(overload ? 1 : Q3_CONTENTS_TRIGGER, QA_GAME_Q3),
         .role = overload ? QA_COLLISION_SOLID : QA_COLLISION_TRIGGER};
-    qa_combat_state combat = {.health = (float)current.health, .mass = 200,
+    qa_combat_state combat = {.health = current.health, .mass = 200,
         .can_take_damage = true, .no_knockback = true};
     qa_builtin_spawn spawn = {.owner = game->options.owner, .definition = game->source_noclass,
         .body = {.origin = origin, .bounds = bounds}, .collision = &collision,
@@ -156,8 +156,8 @@ static bool spawn_trigger(qa_q3_game *game, qa_actor_id model, qa_vec3 origin,
             wire->ground_entity = 1023;
             char warning[160];
             snprintf(warning, sizeof(warning), "SpawnObelisk: noclass startsolid at (%d %d %d)\n",
-                qa_source_float_to_i32(start.x), qa_source_float_to_i32(start.y),
-                qa_source_float_to_i32(start.z));
+                qa_source_to_i32(start.x), qa_source_to_i32(start.y),
+                qa_source_to_i32(start.z));
             q3_map_warn(game, actor, warning);
             body.origin = start;
         } else {
@@ -264,7 +264,7 @@ bool q3_obelisk_step(qa_q3_game *game, qa_actor_id actor, qa_error *error)
     if (think == QA_Q3_OBELISK_RESPAWN) {
         combat.can_take_damage = true;
         if (!qa_combat_set_traits(game->options.services.combat, actor, &combat, error) ||
-            !qa_combat_set_health(game->options.services.combat, actor, (float)current.health, error)) return false;
+            !qa_combat_set_health(game->options.services.combat, actor, current.health, error)) return false;
         entry = obelisk(game, actor);
         if (!entry) return true;
         entry->state.obelisk.think = QA_Q3_OBELISK_REGEN;
@@ -276,11 +276,11 @@ bool q3_obelisk_step(qa_q3_game *game, qa_actor_id actor, qa_error *error)
         if (!entry) return true;
         entry->state.obelisk.next_think_ms = q3_add_time(game->now_ms,
             multiply(current.regen_period_seconds, 1000));
-        if (combat.health >= (float)current.health) return true;
+        if (combat.health >= current.health) return true;
         if (!q3_wire_add_event(game, actor, 63, 0, error)) return false;
         int32_t health = q3_add_time(health_word(combat.health), current.regen_amount);
         if (health > current.health) health = current.health;
-        if (!qa_combat_set_health(game->options.services.combat, actor, (float)health, error)) return false;
+        if (!qa_combat_set_health(game->options.services.combat, actor, health, error)) return false;
         q3_wire_entity_source *wire = q3_wire_entity(game, model);
         if (!wire) return q3_fail(error, "Obelisk regen lost its actual model actor");
         wire->model2 = ratio(multiply(health, 255), current.health);

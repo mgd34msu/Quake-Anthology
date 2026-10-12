@@ -5,7 +5,6 @@
 #include "qa/pool.h"
 #include "qa/qc_observation.h"
 #include "qa/text.h"
-#include <float.h>
 #include <ctype.h>
 #include <stdio.h>
 
@@ -357,7 +356,7 @@ static bool raw_armor(combat_actor *actor, const qa_qc_store_event *prior, qa_ar
     if (!raw_float(actor, profile->items, prior, &items, error) || !isfinite(items) ||
         !raw_float(actor, profile->armorvalue, prior, &points, error) ||
         !raw_float(actor, profile->armortype, prior, &absorption, error)) return false;
-    *out = (qa_armor){0}; uint32_t flags = (uint32_t)qa_source_float_to_i32(items);
+    *out = (qa_armor){0}; uint32_t flags = (uint32_t)qa_source_to_i32(items);
     for (size_t i = 3; i > 0; --i) if (flags & profile->masks[i - 1]) {
         out->regular = (qa_regular_armor){.kind = QA_ARMOR_Q1, .points = points,
             .item = profile->armor_items[i - 1], .protection.q1_absorption = absorption}; break;
@@ -368,21 +367,21 @@ static bool read(void *context, qa_combat_state *out, qa_error *error)
 {
     combat_actor *actor = context;
     const application_qc_combat_profile *profile = actor->owner->profile;
-    float damage, invincible;
-    if (!current(actor, error) || !raw_float(actor, profile->health, NULL, &out->health, error) ||
+    float health, damage, invincible;
+    if (!current(actor, error) || !raw_float(actor, profile->health, NULL, &health, error) ||
         !raw_armor(actor, NULL, &out->armor, error) ||
         !raw_float(actor, profile->takedamage, NULL, &damage, error) ||
         !raw_float(actor, profile->invincible, NULL, &invincible, error)) return false;
-    out->mass = 200; out->can_take_damage = damage != 0;
+    out->health = health; out->mass = 200; out->can_take_damage = damage != 0;
     out->invulnerable = invincible > (float)((double)actor->owner->engine->source_time_ns / 1e9);
     out->no_knockback = false; out->team = (qa_team_ref){0};
     return true;
 }
-static bool write_health(void *context, float value, qa_error *error)
+static bool write_health(void *context, double value, qa_error *error)
 {
     combat_actor *actor = context;
     return current(actor, error) && qa_qc_project_entity_float(actor->owner->engine->provider->state.qc.instance,
-        actor->reference, actor->owner->profile->health->offset, value, error);
+        actor->reference, actor->owner->profile->health->offset, (float)value, error);
 }
 static bool validate_armor(void *context, const qa_armor *armor, qa_error *error)
 {
@@ -393,8 +392,8 @@ static bool validate_armor(void *context, const qa_armor *armor, qa_error *error
     if (armor->regular.kind == QA_ARMOR_Q1) {
         bool known = false;
         for (size_t i = 0; i < 3; ++i) known |= actor->owner->profile->armor_items[i] == armor->regular.item;
-        if (!known || armor->regular.points > FLT_MAX || (double)(float)armor->regular.points != armor->regular.points)
-            return reject(error, "QC primary armor differs from its exact Source identity or precision");
+        if (!known)
+            return reject(error, "QC primary armor differs from its Source identity");
     }
     return true;
 }
@@ -405,7 +404,7 @@ static bool write_armor(void *context, const qa_armor *armor, qa_error *error)
     if (!validate_armor(context, armor, error)) return false;
     float value;
     if (!raw_float(actor, profile->items, NULL, &value, error) || !isfinite(value)) return false;
-    uint32_t bits = (uint32_t)qa_source_float_to_i32(value) & ~(profile->masks[0] | profile->masks[1] | profile->masks[2]);
+    uint32_t bits = (uint32_t)qa_source_to_i32(value) & ~(profile->masks[0] | profile->masks[1] | profile->masks[2]);
     if (armor->regular.kind == QA_ARMOR_Q1)
         for (size_t i = 0; i < 3; ++i) if (armor->regular.item == profile->armor_items[i]) bits |= profile->masks[i];
     int32_t source_bits;
@@ -424,8 +423,8 @@ static bool empty_armor(void *context, double points, qa_regular_armor *out, boo
     if (!current(actor, error)) return false;
     *present = profile->empty_declared;
     if (*present) {
-        if (!isfinite(points) || points < 0 || points > FLT_MAX || (double)(float)points != points)
-            return reject(error, "QC empty armor points exceed exact Source precision");
+        if (!isfinite(points) || points < 0)
+            return reject(error, "QC empty armor points must be finite and nonnegative");
         *out = (qa_regular_armor){.kind = QA_ARMOR_Q1, .points = points,
             .item = profile->empty_item, .protection.q1_absorption = profile->empty_absorption};
     }
@@ -434,7 +433,8 @@ static bool empty_armor(void *context, double points, qa_regular_armor *out, boo
 static application_qc_inputs inputs_for(struct application_qc_state *engine, const qa_damage_request *request)
 {
     return (application_qc_inputs){.self = request->target, .attacker = request->attack.attacker,
-        .inflictor = request->attack.inflictor, .amount = request->amount, .knockback = request->knockback,
+        .inflictor = request->attack.inflictor, .amount = (float)request->amount,
+        .knockback = (float)request->knockback,
         .point = request->point, .direction = request->direction, .normal = request->normal,
         .time_ns = engine->source_time_ns};
 }
@@ -626,7 +626,7 @@ static bool continued_damage(void *context, qa_combat *combat, const qa_damage_r
         ok = qa_qc_global_int(vm, location->word, &prior, error);
         if (!ok) break;
         saved[i] = (uint32_t)prior; ++staged;
-        int32_t value = 0; float amount = request->amount;
+        int32_t value = 0; float amount = (float)request->amount;
         if (location->role != QC_INPUT_AMOUNT) {
             qa_actor_id id = location->role == QC_INPUT_SELF ? request->target :
                 location->role == QC_INPUT_ATTACKER ? request->attack.attacker : request->attack.inflictor;
@@ -754,7 +754,7 @@ static bool reaction_body(void *context, const application_q3_mod_actor_request 
         int32_t attacker;
         if (!reference(frame->actor, effective->source.pain.attacker, &attacker, error) ||
             !qa_qc_call_set_arg_int(call->next, 0, attacker, error) ||
-            !qa_qc_call_set_arg_float(call->next, 1, effective->source.pain.damage, error)) return false;
+            !qa_qc_call_set_arg_float(call->next, 1, (float)effective->source.pain.damage, error)) return false;
     } else if (!qa_actor_id_equal(effective->source.die.attacker, frame->request->attack.attacker) ||
         !qa_actor_id_equal(effective->source.die.inflictor, frame->request->attack.inflictor) ||
         effective->source.die.damage != frame->result->applied_damage ||
@@ -900,26 +900,31 @@ bool application_qc_combat_inline(struct application_qc_state *engine, qa_qc_ins
     if (stage.flag_bits) {
         float value;
         if (!qa_qc_global_float(vm, stage.flags, &value, error) || !isfinite(value)) return false;
-        uint32_t bits = (uint32_t)qa_source_float_to_i32(value);
+        uint32_t bits = (uint32_t)qa_source_to_i32(value);
         if (stage.no_armor) flags.no_armor = (bits & stage.no_armor) != 0;
         if (stage.no_power) flags.no_power_armor = (bits & stage.no_power) != 0;
         if (stage.no_regular) flags.no_regular_armor = (bits & stage.no_regular) != 0;
         if (stage.energy) flags.energy = (bits & stage.energy) != 0;
     }
-    float amount, power_saved = 0, regular_saved = 0; int32_t original;
+    float amount; double power_saved = 0, regular_saved = 0; int32_t original;
     if (!qa_qc_global_int(vm, stage.damage, &original, error) ||
         !qa_qc_global_float(vm, stage.damage, &amount, error)) return false;
     bool ok = !power || qa_combat_absorb(engine->services.combat, frame->request, QA_PROTECTION_POWERED,
         NULL, amount, flags, NULL, &power_saved, NULL, error);
-    float remaining = amount - power_saved;
+    float remaining = (float)((double)amount - power_saved);
     uint32_t bits = float_bits(remaining);
     if (ok) ok = isfinite(remaining) && qa_qc_stage_globals(vm, stage.damage, &bits, 1, error);
     regular = qa_combat_protection_owner(engine->services.combat, frame->actor->actor, QA_PROTECTION_REGULAR, NULL, NULL);
     if (ok && regular) {
         ok = qa_combat_absorb(engine->services.combat, frame->request, QA_PROTECTION_REGULAR,
             NULL, remaining, flags, NULL, &regular_saved, NULL, error) && qa_qc_inline_skip_to_join(next, error);
-    } else if (ok) ok = qa_qc_inline_continue(next, error) && qa_qc_global_float(vm, stage.region.saved_word, &regular_saved, error);
-    float total = regular_saved + power_saved;
+    } else if (ok) {
+        float source_saved;
+        ok = qa_qc_inline_continue(next, error) &&
+            qa_qc_global_float(vm, stage.region.saved_word, &source_saved, error);
+        if (ok) regular_saved = source_saved;
+    }
+    float total = (float)(regular_saved + power_saved);
     if (ok && !isfinite(total)) ok = reject(error, "QC composed armor savings exceed actual Source precision");
     bits = float_bits(total);
     if (ok) ok = qa_qc_stage_globals(vm, stage.region.saved_word, &bits, 1, error);
@@ -1327,7 +1332,7 @@ static bool scale_parse(application_qc_combat_profile *profile, const qa_json_do
     return ok;
 }
 bool application_qc_combat_damage_amount(struct application_qc_state *engine, qa_actor_id actor,
-    float amount, float *out, bool *available, qa_error *error)
+    double amount, double *out, bool *available, qa_error *error)
 {
     if (!out || !available || !isfinite(amount) || amount < 0)
         return reject(error, "QC Source amount query requires finite original damage");
@@ -1369,7 +1374,7 @@ bool application_qc_combat_damage_amount(struct application_qc_state *engine, qa
         if (ok) { saved[i] = (uint32_t)actual; ++staged; }
     }
     application_qc_inputs inputs = {.self = source_actor, .attacker = source_actor, .inflictor = source_actor,
-        .amount = amount, .time_ns = engine->source_time_ns}; uint32_t result[3];
+        .amount = (float)amount, .time_ns = engine->source_time_ns}; uint32_t result[3];
     if (ok) {
         ++owner->calls;
         ok = application_qc_run_call_region(engine, &owner->profile->damage, &scale->region, &inputs, result, error);

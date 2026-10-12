@@ -2206,7 +2206,7 @@ static bool q1_selected_q3_pose(void *opaque, qa_actor_id actor,
     uint32_t quad_word=(uint32_t)(int64_t)quad_time;
     int32_t quad_until;memcpy(&quad_until,&quad_word,sizeof(quad_until));
     *out = (qa_q3_selected_source_pose){.view_angles = control.view_angles,
-        .view_height = control.view_height, .max_health = qa_source_float_to_i32(physical_max_health),
+        .view_height = control.view_height, .max_health = qa_source_to_i32(physical_max_health),
         .team = source_team, .quad_until_ms = quad_until};
     return true;
 }
@@ -4635,7 +4635,7 @@ bool application_players_guest_attach(qa_application *application,
             (selected == application_provider_for(application, actor, QA_ROLE_EFFECTS, "") ? QA_Q3_EFFECTS : 0u) |
             (selected == application_provider_for(application, actor, QA_ROLE_COMBAT, "") ? QA_Q3_COMBAT : 0u) |
             (selected == application_provider_for(application, actor, QA_ROLE_EQUIPMENT, "") ? QA_Q3_EQUIPMENT : 0u);
-        if (roles && (!qa_q3_bind_player(selected->state.q3, actor, roles, qa_source_float_to_i32((float)combat.health), error) ||
+        if (roles && (!qa_q3_bind_player(selected->state.q3, actor, roles, qa_source_to_i32((float)combat.health), error) ||
             !qa_q3_spawn_player(selected->state.q3, actor, &body, combat.team, error))) goto failed;
     }
     if (!application_guest_actor_admit(provider, actor, error)) goto failed;

@@ -95,8 +95,8 @@ bool q2_prepare_damage(void *context, qa_damage_request *request, bool *allowed,
 }
 bool q2_prepare_radius_damage(void *context, qa_damage_request *request, bool *allowed,
                               qa_error *e) {
-    request->amount = truncf(request->amount);
-    request->knockback = truncf(request->knockback);
+    request->amount = trunc(request->amount);
+    request->knockback = trunc(request->knockback);
     return q2_prepare_damage(context, request, allowed, e);
 }
 bool q2_radius_damage(qa_q2_game *g, const qa_builtin_radius *radius, size_t *damaged,

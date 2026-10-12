@@ -57,7 +57,7 @@ enum q3n_source_event {
     Q3N_EV_DEBUG_LINE, Q3N_EV_STOP_LOOP, Q3N_EV_TAUNT, Q3N_EV_TAUNT_YES, Q3N_EV_TAUNT_NO,
     Q3N_EV_TAUNT_FOLLOW, Q3N_EV_TAUNT_FLAG, Q3N_EV_TAUNT_BASE, Q3N_EV_TAUNT_PATROL
 };
-static inline uint8_t q3ne_byte(float x) { return (uint8_t)(uint32_t)qa_source_float_to_i32(x); }
+static inline uint8_t q3ne_byte(float x) { return (uint8_t)(uint32_t)qa_source_to_i32(x); }
 static inline qa_vec3 q3ne_array(const float x[3]) { return qa_v3(x[0], x[1], x[2]); }
 static inline void q3ne_store(float x[3], qa_vec3 v) { x[0] = v.x; x[1] = v.y; x[2] = v.z; }
 static inline bool q3ne_fail(qa_error *e, qa_status status, const char *s) { qa_error_set(e,status,0,"%s",s); return false; }

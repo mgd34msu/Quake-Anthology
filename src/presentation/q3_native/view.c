@@ -234,7 +234,7 @@ bool q3n_view_damage_blob(q3n_view *o,const q3n_frame *f,const q3n_view_settings
        ps->options.application!=o->options.application || ps->options.seat!=o->options.seat ||
        ps->options.remote_client!=o->options.remote_client || ps->options.compiled_source!=o->options.compiled_source)return false;
     const q3n_player_feedback *g=q3n_player_state_feedback(ps);
-    int32_t elapsed=qa_source_float_to_i32(((float)f->time + -g->damage_time));
+    int32_t elapsed=qa_source_to_i32(((float)f->time + -g->damage_time));
     if(g->damage_value==0.0f || s->ragepro || elapsed<=0 || elapsed>=500 || f->third_person)return true;
     qa_q3_ref_entity r={.kind=QA_Q3_REF_SPRITE,.flags=4,.custom_shader=q3n_media_read(f->media)->graphics[Q3N_G_VIEW_BLOOD]};
     r.origin=qa_vec_add(f->refdef.origin,qa_vec_scale(f->refdef.axis[0],8));

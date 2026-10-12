@@ -242,7 +242,7 @@ void qa_cpu_destroy(qa_cpu_renderer *renderer) {
   buffer_destroy(&renderer->display);
   buffer_destroy(&renderer->opacity);
   free(renderer->output);
-  free(renderer->vertices);
+  qa_arena_destroy(&renderer->vertex_storage);
   free(renderer->skin_jobs);
   free(renderer->skin_bindings);
   qa_id_index_destroy(&renderer->skin_index);
@@ -1009,6 +1009,7 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
     return true;
   }
   if (begin) cpu_raster_flush(renderer);
+  if (!cpu_raster_prepare(renderer, frame, first, begin, error)) return false;
   if (begin && finish && !frame->source_backend && !skin_frame_prepare(renderer, frame, error)) return false;
   if (begin && frame->source_backend && frame->source_clear_draw_buffer) {
     qa_scene_view clear = renderer->view;

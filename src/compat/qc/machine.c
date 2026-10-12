@@ -345,8 +345,8 @@ static bool execute_statement(qa_qc_instance *instance,
                            ? af != 0 && bf != 0 : af != 0 || bf != 0, error);
     case QA_QC_BITAND: case QA_QC_BITOR:
         if (!read_float(instance, s->a, &af, error) || !read_float(instance, s->b, &bf, error)) return false;
-        ai = s->opcode == QA_QC_BITAND ? qa_source_float_to_i32(af) & qa_source_float_to_i32(bf)
-                                      : qa_source_float_to_i32(af) | qa_source_float_to_i32(bf);
+        ai = s->opcode == QA_QC_BITAND ? qa_source_to_i32(af) & qa_source_to_i32(bf)
+                                      : qa_source_to_i32(af) | qa_source_to_i32(bf);
         return store_float(instance, s->c, (float)ai, error);
     case QA_QC_STORE_F: case QA_QC_STORE_S: case QA_QC_STORE_ENT:
     case QA_QC_STORE_FLD: case QA_QC_STORE_FN:
@@ -578,8 +578,7 @@ bool qc_machine_body(qa_qc_instance *instance, uint32_t function,
     instance->argument_count = argument_count;
     if (fn->named_builtin || fn->first_statement < 0) {
         qc_projection_invalidate(instance);
-        bool ok = qc_builtin_call(instance, fn->first_statement < 0 ? -fn->first_statement : 0,
-                                  fn->named_builtin ? fn->name : NULL, error);
+        bool ok = qc_builtin_call(instance, function, error);
         qc_projection_invalidate(instance);
         instance->argument_count = saved_arguments;
         return ok;

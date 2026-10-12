@@ -164,7 +164,7 @@ static bool host_give(struct application_qc_state *engine, int32_t reference,
         float items;
         return application_qc_float(engine, reference, engine->field_bindings->items, &items, error) &&
             application_qc_set_float(engine, reference, engine->field_bindings->items,
-                (float)(qa_source_float_to_i32(items) | (int32_t)weapon), error);
+                (float)(qa_source_to_i32(items) | (int32_t)weapon), error);
     }
     const qa_qc_definition *field = NULL, *alternate = NULL;
     bool extra = false;
@@ -253,7 +253,7 @@ bool application_qc_host_command(application_provider *provider,
     if (god || notarget) {
         float flags;
         if (!application_qc_float(engine, reference, engine->field_bindings->flags, &flags, error)) return false;
-        int32_t bit = god ? 64 : 128, next = qa_source_float_to_i32(flags) ^ bit;
+        int32_t bit = god ? 64 : 128, next = qa_source_to_i32(flags) ^ bit;
         enabled = (next & bit) != 0;
         if (!application_qc_set_float(engine, reference, engine->field_bindings->flags, (float)next, error)) return false;
     } else {

@@ -144,7 +144,7 @@ static bool barrel_blast(qa_q2_game *g, q2_actor *a, qa_error *e) {
             {Q2_NAME_RESOURCE_MODELS_OBJECTS_DEBRIS3_TRIS_MD2, 4},
             {Q2_NAME_RESOURCE_MODELS_OBJECTS_DEBRIS2_TRIS_MD2, 8}
         };
-        float speed = (float)qa_source_float_to_i32(1.5f * s->damage / 200);
+        float speed = (float)qa_source_to_i32(1.5f * s->damage / 200);
         for (size_t piece = 0; piece < sizeof(pieces) / sizeof(*pieces); ++piece)
             for (unsigned copy = 0; copy < pieces[piece].count; ++copy) {
                 if (!q2_spawn_gib(g, a->id, pieces[piece].model, speed,

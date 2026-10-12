@@ -170,7 +170,7 @@ static bool ramp(qa_q2_game *g, q2_actor *a, qa_error *e) {
         return true;
     float elapsed = (float)(g->now_ns - s->timestamp_ns) / Q2_NS;
     float level = 97 + s->direction.x + elapsed / s->speed * (s->direction.y - s->direction.x);
-    uint8_t byte = (uint8_t)(uint32_t)qa_source_float_to_i32(level);
+    uint8_t byte = (uint8_t)(uint32_t)qa_source_to_i32(level);
     if (!q2_map_event(g,
                       &(qa_q2_map_event){.kind = QA_Q2_MAP_LIGHTSTYLE,
                                          .actor = a->id,

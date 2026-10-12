@@ -100,15 +100,15 @@ bool qa_trajectory_velocity(const qa_trajectory *trajectory, int32_t at, float g
 }
 
 int32_t qa_physics_q3_hit_time(int32_t previous, int32_t now, float fraction) {
-    return qa_source_float_to_i32((float)previous + (float)elapsed(now, previous) * fraction);
+    return qa_source_to_i32((float)previous + (float)elapsed(now, previous) * fraction);
 }
 
 qa_vec3 qa_physics_q3_snap(qa_vec3 value) {
-    return qa_v3((float)qa_source_float_to_i32(value.x), (float)qa_source_float_to_i32(value.y), (float)qa_source_float_to_i32(value.z));
+    return qa_v3((float)qa_source_to_i32(value.x), (float)qa_source_to_i32(value.y), (float)qa_source_to_i32(value.z));
 }
 
 static float snap_towards(float value, float target) {
-    uint32_t result = (uint32_t)qa_source_float_to_i32(value);
+    uint32_t result = (uint32_t)qa_source_to_i32(value);
     if (!(target <= value)) ++result;
     return (float)qa_i32_from_u32(result);
 }

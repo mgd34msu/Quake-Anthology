@@ -460,7 +460,7 @@ bool qa_combat_bind_power_inventory(qa_combat *combat, qa_actor_id actor, qa_inv
     bool current_owner = record(combat, actor) == entry && entry->serial == serial;
     if (current_owner) entry->power_admitting = false;
     if (!ok) return false;
-    if (!isfinite((float)fuel.count) || !current_owner)
+    if (!isfinite(fuel.count) || !current_owner)
         return qa_combat_argument(error, "invalid or retired power fuel binding");
     entry->power_inventory = inventory; entry->power_item = item; return true;
 }
@@ -557,7 +557,7 @@ static bool observe_public(qa_combat *combat, qa_actor_id actor, bool armor, qa_
     if (cursor->reaction_seen) { advance_cursors(combat, actor, &mutation); return true; }
     return observe_store(combat, cursor, &mutation, error);
 }
-bool qa_combat_set_health(qa_combat *combat, qa_actor_id actor, float health, qa_error *error) {
+bool qa_combat_set_health(qa_combat *combat, qa_actor_id actor, double health, qa_error *error) {
     qa_combat_record *entry;
     if (!isfinite(health)) return qa_combat_argument(error, "health must be finite");
     if (!require_record(combat, actor, &entry, error)) return false;
@@ -884,8 +884,8 @@ bool qa_protection_observe(qa_protection_observer *observer, const qa_protection
     return remember_failure(ok, &observer->failed, &observer->failure, error);
 }
 bool qa_combat_absorb(qa_combat *combat, const qa_damage_request *request, qa_protection_channel channel,
-                      const qa_damage_geometry *geometry, float amount, qa_damage_flags flags, const qa_armor_context *context,
-                      float *saved, qa_powered_armor *power_effect, qa_error *error) {
+                      const qa_damage_geometry *geometry, double amount, qa_damage_flags flags, const qa_armor_context *context,
+                      double *saved, qa_powered_armor *power_effect, qa_error *error) {
     if (!request || !context || !saved || !isfinite(amount) || (channel != QA_PROTECTION_REGULAR && channel != QA_PROTECTION_POWERED))
         return qa_combat_argument(error, "invalid combat armor stage");
     qa_damage_geometry captured = geometry ? *geometry : (qa_damage_geometry){request->direction, request->point, request->normal};
@@ -907,7 +907,7 @@ bool qa_combat_absorb(qa_combat *combat, const qa_damage_request *request, qa_pr
         qa_protection_binding binding = slot->binding;
         qa_protection_observer observer = {.combat = combat, .cursor = cursor,
             .lease = {request->target, slot->serial, channel}, .owner = slot->claim.owner, .open = true};
-        float result = 0;
+        double result = 0;
         ++combat->active_calls;
         bool ok = binding.absorb(binding.context, request, &captured, amount, flags, &observer, &result, error);
         --combat->active_calls; observer.open = false;
@@ -1166,7 +1166,7 @@ static bool dispatch_source_reaction(qa_combat *combat, const qa_damage_outcome 
     return ok;
 }
 bool qa_damage_dispatch_source_reaction(qa_damage_observer *observer, const qa_damage_result *result,
-    float knockback, qa_vec3 point, qa_actor_owner source, qa_source_reaction_body original, void *context, qa_error *error) {
+    double knockback, qa_vec3 point, qa_actor_owner source, qa_source_reaction_body original, void *context, qa_error *error) {
     if (!isfinite(knockback) || !qa_vec_finite(point))
         return qa_combat_argument(error, "source callback geometry is not finite");
     if (!qa_damage_before_reaction(observer, result, error)) return false;
@@ -1183,7 +1183,7 @@ struct qa_source_reaction_observer {
     qa_error failure;
 };
 bool qa_source_reaction_dispatch(qa_source_reaction_observer *observer, const qa_damage_result *result,
-    float knockback, qa_vec3 point, qa_actor_owner source, qa_source_reaction_body original, void *context, qa_error *error) {
+    double knockback, qa_vec3 point, qa_actor_owner source, qa_source_reaction_body original, void *context, qa_error *error) {
     if (!observer) return qa_combat_argument(error, "source reaction observer is absent");
     if (observer->failed) { if (error) *error = observer->failure; return false; }
     bool ok = observer->open && !observer->dispatched;

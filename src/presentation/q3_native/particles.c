@@ -167,7 +167,7 @@ bool q3n_particles_explosion(const q3n_frame *f, const char *name, qa_vec3 origi
     o->free=p->next; p->next=o->active; o->active=index; ++o->count;
     p->time=(float)f->time; p->alpha=0.5f; p->alpha_velocity=0;
     if (duration<0) { duration=qa_i32_from_u32(0u-(uint32_t)duration); p->roll=0; }
-    else p->roll=qa_source_float_to_i32((q3n_events_crandom(f->events) * 179));
+    else p->roll=qa_source_to_i32((q3n_events_crandom(f->events) * 179));
     p->width=p->height=start_size; p->end_width=p->end_height=end_size;
     p->end_time=(float)qa_i32_from_u32((uint32_t)f->time+(uint32_t)duration); p->type=6;
     p->origin=origin; p->velocity=velocity; p->acceleration=qa_v3(0,0,0);
@@ -190,7 +190,7 @@ static bool draw(const q3n_frame *f, q3n_particle *p, qa_vec3 origin, qa_error *
     qa_vec3 distance=qa_vec_add(eye,qa_vec_scale(origin,-1));
     float length=qa_vec_length(distance);
     if (length<(width / 1.5f)) return true;
-    int32_t index=qa_source_float_to_i32((float)floor((double)(ratio * (float)Q3N_PARTICLE_FRAMES)));
+    int32_t index=qa_source_to_i32((float)floor((double)(ratio * (float)Q3N_PARTICLE_FRAMES)));
     if (index<0 || index>=Q3N_PARTICLE_FRAMES) return q3np_fail(error,QA_ERROR_FORMAT,"Particle animation frame outside source range");
     p->shader=f->particles->shaders[index];
     qa_vec3 right=f->refdef.axis[1],up=f->refdef.axis[2];

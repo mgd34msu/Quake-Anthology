@@ -178,7 +178,7 @@ bool q1_boss_child_reaction(qa_q1_game *g, q1_actor *e, const qa_damage_outcome 
     delta.z = 0;
     qa_vec3 impulse =
         qa_vec_scale(qa_vec_add(qa_vec_scale(qa_vec_normalize(delta), .8f), qa_v3(0, 0, .2f)),
-                     outcome->result.applied_damage * 10);
+                     (float)outcome->result.applied_damage * 10.0f);
     body.velocity = qa_vec_add(body.velocity, impulse);
     return qa_world_body_write(g->services.world, e->id, &body, error);
 }

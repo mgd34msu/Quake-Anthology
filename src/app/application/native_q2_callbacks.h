@@ -105,8 +105,8 @@ bool application_native_q2_callbacks_client_reserved_current(application_native_
 bool application_native_q2_callbacks_restoring(const application_native_q2_callbacks *);
 bool application_native_q2_callbacks_time_read(application_native_q2_callbacks *, double *, qa_error *);
 bool application_native_q2_callbacks_protection_absorb(application_native_q2_callbacks *, qa_json_id,
-    const qa_damage_request *, const qa_damage_geometry *, float, qa_damage_flags,
-    const application_native_q2_source_authority *, float *, qa_error *);
+    const qa_damage_request *, const qa_damage_geometry *, double, qa_damage_flags,
+    const application_native_q2_source_authority *, double *, qa_error *);
 bool application_native_q2_callbacks_close(struct application_native_q2 *, qa_error *);
 bool application_native_q2_callbacks_drain(struct application_native_q2 *, qa_error *);
 bool application_native_q2_callbacks_drain_application(struct qa_application *, qa_error *);

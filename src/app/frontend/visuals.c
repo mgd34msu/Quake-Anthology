@@ -31,15 +31,9 @@
 #include "particle_clock.h"
 #include "q2_client_lerp.h"
 #include "particle_delivery.h"
+#include "visuals_private.h"
 #include <limits.h>
 
-typedef struct frontend_visual_content {
-    size_t references;
-    const qa_vfs *files;
-    qa_resource *resource, *animation_resource, *scale_resource;
-    qa_model model;
-    qa_model_animation animation;
-} frontend_visual_content;
 static void visual_content_release(void *context)
 {
     frontend_visual_content *content = context;
@@ -101,84 +95,17 @@ bool frontend_visual_scene_model_content_clone(const qa_scene_model *scene, qa_s
     return visual_content_lease(lease.context, animation, out, error);
 }
 
-typedef struct frontend_model {
-    struct frontend_model *next;
-    qa_resource *resource;
-    qa_model owned_model;
-    frontend_visual_content *content, *replacement;
-    qa_model_replacement replacement_description;
-    int64_t source_rank;
-    bool source_rank_known;
-    const qa_model *model;
-    frontend_model_lease *lease;
-    qa_scene_model *scene;
-    qa_string_id path_name;
-    const char *path;
-} frontend_model;
-typedef struct frontend_brush {
-    struct frontend_brush *next;
-    qa_resource *resource;
-    qa_scene_world *world;
-    qa_string_id path_name;
-    const char *path;
-} frontend_brush;
-typedef struct visual_model_recipe {
-    char *path;
-    const qa_resource *resource;
-    int64_t rank;
-    bool known;
-} visual_model_recipe;
 static void recipes_free(visual_model_recipe *recipes, size_t count)
 {
     for (size_t i = 0; recipes && i < count; ++i) { free(recipes[i].path); qa_resource_release((qa_resource *)recipes[i].resource); }
     free(recipes);
 }
-typedef struct frontend_static_model {
-    struct frontend_static_model *next;
-    frontend_model *model;
-    frontend_brush *brush;
-    qa_model_transform transform;
-    qa_q1_entity baseline;
-    uint32_t inline_model;
-    bool is_inline;
-} frontend_static_model;
 static void static_models_free(frontend_static_model **models)
 {
     while (*models) {
         frontend_static_model *row = *models; *models = row->next; free(row);
     }
 }
-typedef struct frontend_flare_image {
-    struct frontend_flare_image *next;
-    qa_string_id name;
-    qa_scene_image *image;
-    bool standard;
-} frontend_flare_image;
-struct frontend_visual_owner {
-    frontend_visual_owner *next;
-    qa_actor_owner owner;
-    qa_game_family family;
-    qa_vfs *mounts;
-    qa_scene_resources *images;
-    qa_material_library *materials;
-    qa_frontend *frontend;
-    qa_strings *strings;
-    qa_media_library *media;
-    frontend_material_movies *shader_movies;
-    frontend_model *models;
-    frontend_brush *brushes;
-    frontend_flare_image *flares;
-    frontend_static_model *statics, *static_tail;
-    qa_nq_decoder *static_nq;
-    qa_qw_decoder *static_qw;
-    uint64_t static_revision;
-    size_t static_signon;
-    visual_model_recipe *recipes;
-    visual_model_recipe *brush_recipes;
-    size_t recipe_count, attached;
-    size_t brush_recipe_count, brushes_attached;
-    bool recipes_present, construction_failed;
-};
 static bool visual_movie_current(void *context, const frontend_material_movie_source *source)
 {
     const frontend_visual_owner *owner = context;
@@ -293,6 +220,9 @@ void frontend_visuals_destroy(qa_frontend *frontend)
                 &owner->shader_movies, &owner->media, NULL)) return;
         }
         if (!frontend_material_movies_destroy(&owner->shader_movies, NULL)) return;
+        frontend_visual_cache *cache = owner->cache;
+        qa_id_index_remove_value(&cache->owners, owner->owner, owner->family,
+            (size_t)(uintptr_t)owner);
         frontend->visuals = owner->next;
         static_models_free(&owner->statics);
         qa_nq_decoder_destroy(owner->static_nq); qa_qw_decoder_destroy(owner->static_qw);
@@ -301,23 +231,45 @@ void frontend_visuals_destroy(qa_frontend *frontend)
             qa_scene_model_destroy(model->scene); qa_model_free(&model->owned_model);
             visual_content_release(model->replacement); visual_content_release(model->content);
             frontend_model_release(model->lease);
-            qa_resource_release(model->resource); free(model);
+            qa_resource_release(model->resource);
         }
         while (owner->brushes) {
             frontend_brush *brush=owner->brushes; owner->brushes=brush->next;
-            qa_scene_world_destroy(brush->world); qa_resource_release(brush->resource); free(brush);
+            qa_scene_world_destroy(brush->world); qa_resource_release(brush->resource);
         }
         while (owner->flares) {
             frontend_flare_image *flare=owner->flares; owner->flares=flare->next;
-            qa_scene_image_release(flare->image); free(flare);
+            qa_scene_image_release(flare->image);
         }
+        qa_id_index_destroy(&owner->model_index);
+        qa_id_index_destroy(&owner->brush_index);
+        qa_id_index_destroy(&owner->flare_index);
+        qa_arena_destroy(&owner->storage);
         qa_material_library_destroy(owner->materials);
         qa_media_library_destroy(owner->media);
         qa_scene_resources_destroy(owner->images); qa_vfs_destroy(owner->mounts);
         recipes_free(owner->recipes, owner->recipe_count);
         recipes_free(owner->brush_recipes,owner->brush_recipe_count);
         qa_strings_destroy(owner->strings); free(owner);
+        if (!frontend->visuals) {
+            qa_id_index_destroy(&cache->owners);
+            qa_arena_destroy(&cache->storage); free(cache);
+        }
     }
+}
+static frontend_visual_owner *visual_owner_cached(const qa_frontend *frontend,
+    qa_actor_owner provider, qa_game_family family, const qa_vfs *files, bool names)
+{
+    if (!frontend->visuals || !files) return NULL;
+    const qa_id_index *index = &frontend->visuals->cache->owners;
+    qa_id_index_cursor cursor = qa_id_index_begin(index, provider, family);
+    const qa_strings *strings = names ? qa_session_strings(qa_application_session(frontend->application)) : NULL;
+    size_t value;
+    while (qa_id_index_next(index, &cursor, &value)) {
+        frontend_visual_owner *owner = (frontend_visual_owner *)(uintptr_t)value;
+        if ((!names || owner->strings == strings) && qa_vfs_lookup_equal(owner->mounts, files)) return owner;
+    }
+    return NULL;
 }
 static bool visual_owner(qa_frontend *frontend, const qa_application_visual_view *view,
     frontend_visual_owner **out, qa_error *error)
@@ -327,18 +279,28 @@ static bool visual_owner(qa_frontend *frontend, const qa_application_visual_view
     qa_vfs *files = qa_application_provider_files(frontend->application,view->provider);
     if (!files) return frontend_fail(error, QA_ERROR_NOT_FOUND, "appearance owner has no active content view");
     qa_game_family family = view->family == QA_GAME_Q2 ? QA_GAME_Q2 : view->family == QA_GAME_Q3 ? QA_GAME_Q3 : QA_GAME_Q1;
-    for (frontend_visual_owner *owner = frontend->visuals; owner; owner = owner->next)
-        if (owner->owner == view->provider && owner->family == family &&
-            owner->strings == qa_session_strings(qa_application_session(frontend->application)) &&
-            qa_vfs_lookup_equal(owner->mounts,files)) {
-            if (owner->construction_failed)
-                return frontend_fail(error, QA_ERROR_ARGUMENT, "Visual resource construction retains refused cleanup");
-            *out = owner; return true;
-        }
+    frontend_visual_owner *owner = visual_owner_cached(frontend, view->provider, family, files, true);
+    if (owner) {
+        if (owner->construction_failed)
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "Visual resource construction retains refused cleanup");
+        *out = owner; return true;
+    }
     if (!frontend_visuals_idle(frontend))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Appearance resources require idle admission owners");
-    frontend_visual_owner *owner = calloc(1, sizeof(*owner));
-    if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "allocating appearance resources");
+    frontend_visual_cache *cache = frontend->visuals ? frontend->visuals->cache : calloc(1, sizeof(*cache));
+    if (!cache) return frontend_fail(error, QA_ERROR_MEMORY, "Allocating visual owner directory");
+    cache->owners.storage = &cache->storage;
+    bool reserved = qa_id_index_reserve(&cache->owners, 1, error);
+    owner = reserved ? calloc(1, sizeof(*owner)) : NULL;
+    if (!owner) {
+        if (reserved) frontend_fail(error, QA_ERROR_MEMORY, "allocating appearance resources");
+        if (!frontend->visuals) {
+            qa_id_index_destroy(&cache->owners); qa_arena_destroy(&cache->storage); free(cache);
+        }
+        return false;
+    }
+    owner->cache = cache;
+    owner->model_index.storage = owner->brush_index.storage = owner->flare_index.storage = &owner->storage;
     owner->owner = view->provider;
     owner->frontend = frontend;
     owner->strings = qa_session_strings(qa_application_session(frontend->application));
@@ -361,13 +323,19 @@ static bool visual_owner(qa_frontend *frontend, const qa_application_visual_view
     if (!ok) {
         if (!frontend_material_movies_destroy(&owner->shader_movies, NULL)) {
             owner->construction_failed = true;
+            qa_id_index_insert(&cache->owners, owner->owner, owner->family, (size_t)(uintptr_t)owner);
             owner->next = frontend->visuals; frontend->visuals = owner; return false;
         }
         qa_material_library_destroy(owner->materials);
         qa_media_library_destroy(owner->media);
         qa_scene_resources_destroy(owner->images);
-        qa_vfs_destroy(owner->mounts); qa_strings_destroy(owner->strings); free(owner); return false;
+        qa_vfs_destroy(owner->mounts); qa_strings_destroy(owner->strings); free(owner);
+        if (!frontend->visuals) {
+            qa_id_index_destroy(&cache->owners); qa_arena_destroy(&cache->storage); free(cache);
+        }
+        return false;
     }
+    qa_id_index_insert(&cache->owners, owner->owner, owner->family, (size_t)(uintptr_t)owner);
     owner->next = frontend->visuals; frontend->visuals = owner; *out = owner;
     return true;
 }
@@ -510,14 +478,27 @@ static bool retained_source_rank(qa_frontend *frontend, frontend_visual_owner *o
     if (ok && found && receipt) return opening_rank(owner->mounts, receipt, out, error);
     return ok && (found || frontend_fail(error, QA_ERROR_ARGUMENT, "Held alias model lacks its genuine source opening receipt"));
 }
+static frontend_brush *brush_cached(const frontend_visual_owner *owner, qa_string_id path_name,
+    const qa_resource *source)
+{
+    qa_id_index_cursor cursor = qa_id_index_begin(&owner->brush_index, path_name,
+        source ? qa_resource_id(source) : 0);
+    size_t value;
+    while (qa_id_index_next(&owner->brush_index, &cursor, &value)) {
+        frontend_brush *brush = (frontend_brush *)(uintptr_t)value;
+        if (!source || brush->resource == source) return brush;
+    }
+    return NULL;
+}
 static bool brush_read(frontend_visual_owner *owner, qa_string_id path_name, const qa_resource *source,
     frontend_brush **out, qa_error *error)
 {
-    for (frontend_brush *brush=owner->brushes;brush;brush=brush->next)
-        if (brush->path_name==path_name && (!source || brush->resource==source)) { *out=brush; return true; }
+    frontend_brush *brush = brush_cached(owner, path_name, source);
+    if (brush) { *out = brush; return true; }
     const char *path=qa_strings_cstr(owner->strings,path_name);
-    frontend_brush *brush=calloc(1,sizeof(*brush));
+    brush = qa_arena_alloc(&owner->storage, sizeof(*brush), _Alignof(frontend_brush), error);
     if (!brush) { frontend_fail(error,QA_ERROR_MEMORY,"Allocating standalone brush world"); return false; }
+    *brush = (frontend_brush){0};
     brush->path_name=path_name; brush->path=path;
     bool ok;
     if (source) {
@@ -540,18 +521,26 @@ static bool brush_read(frontend_visual_owner *owner, qa_string_id path_name, con
     if (ok) ok=qa_scene_world_create(&bsp,owner->images,owner->materials,&options,&brush->world,error) &&
         qa_scene_world_source_resource_bind(brush->world,brush->resource,error);
     if (created) qa_collision_destroy(geometry);
+    uint64_t resource = qa_resource_id(brush->resource);
+    if (ok) ok = qa_id_index_reserve(&owner->brush_index, resource ? 2 : 1, error);
     if (!ok) {
-        qa_scene_world_destroy(brush->world); qa_resource_release(brush->resource); free(brush); return false;
+        qa_scene_world_destroy(brush->world); qa_resource_release(brush->resource); return false;
     }
+    qa_id_index_insert(&owner->brush_index, path_name, 0, (size_t)(uintptr_t)brush);
+    if (resource) qa_id_index_insert(&owner->brush_index, path_name, resource, (size_t)(uintptr_t)brush);
     brush->next=owner->brushes; owner->brushes=brush; *out=brush; return true;
 }
-static frontend_model *model_cached(frontend_visual_owner *owner, qa_string_id path_name,
+static frontend_model *model_cached(const frontend_visual_owner *owner, qa_string_id path_name,
     const qa_resource *source, bool colored, uint8_t colors)
 {
     uint8_t translation[256];
     if (colored) player_translation(colors, translation);
-    for (frontend_model *model = owner->models; model; model = model->next) {
-        if (model->path_name!=path_name || (source && model->resource != source)) continue;
+    qa_id_index_cursor cursor = qa_id_index_begin(&owner->model_index, path_name,
+        source ? qa_resource_id(source) : 0);
+    size_t value;
+    while (qa_id_index_next(&owner->model_index, &cursor, &value)) {
+        frontend_model *model = (frontend_model *)(uintptr_t)value;
+        if (source && model->resource != source) continue;
         const qa_scene_image_options *options = qa_scene_model_image_options(model->scene);
         bool translated = colored && model->model->format == QA_MODEL_MDL;
         if (options && options->translation.size == (translated ? sizeof(translation) : 0) &&
@@ -571,8 +560,9 @@ static bool model_read(qa_frontend *frontend, frontend_visual_owner *owner, qa_s
     uint8_t translation[256];
     if (colored) player_translation(colors, translation);
     const char *path=qa_strings_cstr(owner->strings,path_name);
-    frontend_model *model = calloc(1, sizeof(*model));
+    frontend_model *model = qa_arena_alloc(&owner->storage, sizeof(*model), _Alignof(frontend_model), error);
     if (!model) return frontend_fail(error, QA_ERROR_MEMORY, "allocating decoded appearance");
+    *model = (frontend_model){0};
     model->path_name=path_name; model->path=path;
     qa_scene_image_options images = {.family = owner->family, .wrap = QA_SCENE_REPEAT,
         .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = true, .usage = QA_IMAGE_USAGE_SKIN,
@@ -629,11 +619,15 @@ static bool model_read(qa_frontend *frontend, frontend_visual_owner *owner, qa_s
         frontend_model_policy_select(&policy, owner->family, model->model, 0, true),
         frontend_model_policy_distance(&policy, model->model),
         model->replacement ? &model->replacement_description : NULL, error);
+    uint64_t resource = qa_resource_id(model->resource);
+    if (ok) ok = qa_id_index_reserve(&owner->model_index, resource ? 2 : 1, error);
     if (!ok) {
         qa_scene_model_destroy(model->scene); qa_model_free(&model->owned_model);
         visual_content_release(model->replacement); visual_content_release(model->content);
-        qa_resource_release(model->resource); free(model); return false;
+        qa_resource_release(model->resource); return false;
     }
+    qa_id_index_insert(&owner->model_index, path_name, 0, (size_t)(uintptr_t)model);
+    if (resource) qa_id_index_insert(&owner->model_index, path_name, resource, (size_t)(uintptr_t)model);
     model->next = owner->models; owner->models = model; *out = model; return true;
 }
 typedef struct visual_policy_row {
@@ -1046,10 +1040,8 @@ bool frontend_visual_media_read(const qa_frontend *frontend, qa_actor_owner prov
         !qa_application_provider_instance(frontend->application, provider))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Media read requires its actual selected provider");
     const qa_vfs *files = qa_application_provider_files(frontend->application, provider);
-    qa_game_family expected = family;
-    for (const frontend_visual_owner *owner = frontend->visuals; owner; owner = owner->next) {
-        if (owner->owner != provider || owner->family != expected || !files ||
-            !qa_vfs_lookup_equal(files, owner->mounts)) continue;
+    const frontend_visual_owner *owner = visual_owner_cached(frontend, provider, family, files, false);
+    if (owner) {
         if (owner->construction_failed || !owner->images || !owner->materials || !owner->media ||
             qa_scene_resources_files(owner->images) != owner->mounts ||
             qa_material_library_resource_owner(owner->materials) != owner->images)
@@ -1059,6 +1051,19 @@ bool frontend_visual_media_read(const qa_frontend *frontend, qa_actor_owner prov
         return true;
     }
     return frontend_fail(error, QA_ERROR_ARGUMENT, "Media read has no previously admitted source owner");
+}
+bool frontend_visual_model_cached_read(const qa_frontend *frontend, qa_actor_owner provider,
+    qa_game_family family, qa_string_id path, frontend_visual_model_view *out)
+{
+    if (out) *out = (frontend_visual_model_view){0};
+    if (!frontend || !frontend->application || !provider || !path || !out) return false;
+    const qa_vfs *files = qa_application_provider_files(frontend->application, provider);
+    const frontend_visual_owner *owner = visual_owner_cached(frontend, provider, family, files, true);
+    if (!owner || owner->construction_failed) return false;
+    const frontend_model *model = model_cached(owner, path, NULL, false, 0);
+    if (!model) return false;
+    *out = (frontend_visual_model_view){model->path, model->resource, model->model, model->scene};
+    return true;
 }
 bool frontend_visual_model_acquire(qa_frontend *frontend, qa_actor_owner provider,
     qa_game_family family, qa_string_id path, const qa_resource *source,
@@ -1138,11 +1143,13 @@ static bool visual_flare(qa_frontend *frontend, const qa_application_visual_view
         return frontend_fail(error, QA_ERROR_FORMAT, "Q2 flare requires its genuine image receipt");
     if (world->legacy_policy.present && !world->legacy_policy.flares) return true;
     if (!visual_owner(frontend, view, &owner, error)) return false;
-    frontend_flare_image *binding=owner->flares;
-    while (binding && binding->name!=view->flare_image) binding=binding->next;
+    const qa_id_index_entry *entry = qa_id_index_find(&owner->flare_index, view->flare_image, 0);
+    frontend_flare_image *binding = entry ? (frontend_flare_image *)(uintptr_t)entry->value : NULL;
     if (!binding) {
-        binding=calloc(1,sizeof(*binding));
+        if (!qa_id_index_reserve(&owner->flare_index, 1, error)) return false;
+        binding = qa_arena_alloc(&owner->storage, sizeof(*binding), _Alignof(frontend_flare_image), error);
         if (!binding) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining flare image binding");
+        *binding = (frontend_flare_image){0};
         binding->name=view->flare_image;
         qa_scene_image_options sampling = {.family = QA_GAME_Q2, .wrap = QA_SCENE_CLAMP,
             .filter = QA_SCENE_LINEAR, .usage = QA_IMAGE_USAGE_SPRITE, .transparent_index = -1};
@@ -1152,11 +1159,12 @@ static bool visual_flare(qa_frontend *frontend, const qa_application_visual_view
         for (unsigned attempt=0;attempt<2;++attempt) {
             qa_error load={0};
             if (qa_scene_image_load(owner->images,path,&sampling,&binding->image,&load)) break;
-            if (load.code!=QA_ERROR_NOT_FOUND) { free(binding); if(error)*error=load; return false; }
+            if (load.code!=QA_ERROR_NOT_FOUND) { if(error)*error=load; return false; }
             if (path==canonical || view->flare_image==names->flare_image) break;
             path=canonical;
         }
         binding->standard=frontend_q2_flare_standard(path,canonical);
+        qa_id_index_insert(&owner->flare_index, view->flare_image, 0, (size_t)(uintptr_t)binding);
         binding->next=owner->flares; owner->flares=binding;
     }
     if (!binding->image) return true;

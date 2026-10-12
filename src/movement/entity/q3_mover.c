@@ -147,7 +147,7 @@ static bool q3_restore(q3_mover_transaction *transaction) {
             current.source.angular.base = saved->angles;
             if (current.source.has_client) {
                 current.source.client_origin = saved->origin;
-                current.source.delta_yaw_word = qa_source_float_to_i32(saved->delta_yaw);
+                current.source.delta_yaw_word = qa_source_to_i32(saved->delta_yaw);
                 current.source.write_client_motion = true;
             }
             if (!q3_source_write(transaction, saved->actor, &current.source)) return false;

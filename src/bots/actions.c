@@ -346,7 +346,7 @@ void qa_bot_change_view(qa_bot_view_state *state, float factor, float maximum, f
     float velocity[2] = {state->velocity.x, state->velocity.y};
     for (unsigned i = 0; i < 2; ++i) {
         if (challenge) {
-            int32_t integer = qa_source_float_to_i32(qa_angle_subtract(angles[i], ideals[i]));
+            int32_t integer = qa_source_to_i32(qa_angle_subtract(angles[i], ideals[i]));
             float difference = integer == INT32_MIN ? (float)INT32_MIN : (float)abs(integer);
             float speed = difference * factor;
             angles[i] = qa_bot_change_angle(angles[i], ideals[i], speed > maximum ? maximum : speed);
@@ -400,7 +400,7 @@ void qa_bot_input_intent(const qa_bot_input *input, qa_input_command_intent *out
     qa_vec3 forward, right;
     qa_angle_vectors(qa_v3(input->direction.z != 0 ? input->view_angles.x : 0,
                                   input->view_angles.y, 0), &forward, &right, NULL,QA_ANGLE_FLOAT_MATH);
-    int32_t vertical = qa_source_float_to_i32(forward.z);
+    int32_t vertical = qa_source_to_i32(forward.z);
     float up = vertical == INT32_MIN ? (float)INT32_MIN : (float)abs(vertical);
     intent.direction = qa_v3(qa_vec_dot(forward, input->direction), qa_vec_dot(right, input->direction),
                              up * input->direction.z);

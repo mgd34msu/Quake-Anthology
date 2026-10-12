@@ -1049,8 +1049,8 @@ static bool protection_scale_input(const qa_json_document *d,qa_json_id value)
         qa_json_string_equal(d,qa_json_get(d,qa_json_get(d,value,"value"),"name"),"regular-protection-scale");
 }
 bool application_native_q2_callbacks_protection_absorb(application_native_q2_callbacks *o,qa_json_id definition,
-    const qa_damage_request *request,const qa_damage_geometry *geometry,float amount,
-    qa_damage_flags flags,const application_native_q2_source_authority *authority,float *saved,qa_error *e)
+    const qa_damage_request *request,const qa_damage_geometry *geometry,double amount,
+    qa_damage_flags flags,const application_native_q2_source_authority *authority,double *saved,qa_error *e)
 {
     if(!request||!geometry||!saved||!isfinite(amount)||!isfinite(flags.regular_scale)||
         !o||!authority||!authority->current||
@@ -1085,9 +1085,8 @@ bool application_native_q2_callbacks_protection_absorb(application_native_q2_cal
     application_native_callback_inputs inputs={values,{0}};
     double result;
     if(!call_native_common(o,call,&inputs,&result,false,NULL,check,descriptor->region,authority,e)) return false;
-    float narrowed=(float)result;
-    if(!isfinite(narrowed)) return fail(e,"Native protection result exceeds its canonical stage amount");
-    *saved=narrowed; return true;
+    if(!isfinite(result)) return fail(e,"Native protection result exceeds its canonical stage amount");
+    *saved=result; return true;
 }
 bool application_native_q2_callbacks_transfer_current(const application_native_q2_callbacks *o)
 {return o&&o->scopes&&!o->scopes->completed&&o->scopes->scope;}

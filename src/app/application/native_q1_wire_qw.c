@@ -527,7 +527,7 @@ bool application_native_q1_qw_emit(application_provider *p,const qa_builtin_even
     return application_emit_protocol(p,&output,error);
 }
 static uint8_t byte(double number) {
-    return (uint8_t)(uint32_t)qa_source_float_to_i32((float)number);
+    return (uint8_t)(uint32_t)qa_source_to_i32((float)number);
 }
 bool application_native_q1_qw_flush(qa_application *app,qa_error *error) {
     application_native_q1_wire_source source={0};

@@ -86,8 +86,8 @@ bool frontend_unified_render_feedback(frontend_unified_render *r,const qa_player
     qa_vec3 from;
     if(!frontend_view_q1_damage_origin(feedback->origin,&from,error)) return false;
     frontend_view_q1_damage(&settings,r->origin,r->angles,
-        (uint8_t)(uint32_t)qa_source_float_to_i32(feedback->armor),
-        (uint8_t)(uint32_t)qa_source_float_to_i32(feedback->blood),from,seconds,
+        (uint8_t)(uint32_t)qa_source_to_i32(feedback->armor),
+        (uint8_t)(uint32_t)qa_source_to_i32(feedback->blood),from,seconds,
         &r->frontend->seats[domain->physical_seat].q1_view_motion);
     r->feedback_seen=true;
     return true;
@@ -153,8 +153,8 @@ static bool hud_read(void *context, const qa_hud_frame *frame, qa_hud_data *out,
         &has_view,&has_vitals,error))return false;
     if(has_vitals && !frame->source_status_native) {
         out->vitals=out->source_values;out->vital_count=2;
-        out->q1.health=qa_source_float_to_i32((float)out->source_values[0].value);
-        out->q1.armor=(uint32_t)qa_source_float_to_i32((float)out->source_values[1].value);
+        out->q1.health=qa_source_to_i32((float)out->source_values[0].value);
+        out->q1.armor=(uint32_t)qa_source_to_i32((float)out->source_values[1].value);
     }
     if (frame->source_status_native) out->q1.present=false;
     if (out->q1.present) { out->vital_count=0; out->crosshair_visible=out->crosshair_visible && out->q1.health>0; }
@@ -287,9 +287,9 @@ static bool q1_status_prepare(frontend_unified_render *r, const qa_unified_playe
         !frontend_q1_hud_prepare(files, images, materials, variant, e)) return false;
     qa_q1_program program = variant == QA_HUD_Q1_ROGUE ? QA_Q1_ROGUE :
         variant == QA_HUD_Q1_HIPNOTIC ? QA_Q1_HIPNOTIC : QA_Q1_ID1;
-    qa_q1_clientdata client = {.health = qa_source_float_to_i32((float)ui->health),
-        .armor = (uint32_t)qa_source_float_to_i32((float)ui->armor.regular.points),
-        .ammo = ui->has_ammo ? (uint32_t)qa_source_float_to_i32((float)ui->ammo_count) : 0};
+    qa_q1_clientdata client = {.health = qa_source_to_i32((float)ui->health),
+        .armor = (uint32_t)qa_source_to_i32((float)ui->armor.regular.points),
+        .ammo = ui->has_ammo ? (uint32_t)qa_source_to_i32((float)ui->ammo_count) : 0};
     for (unsigned bit = 0; bit < 32; ++bit) {
         qa_q1_weapon weapon; qa_q1_weapon_profile profile;
         if (!qa_q1_weapon_source(program, UINT32_C(1) << bit, &weapon) ||
@@ -302,7 +302,7 @@ static bool q1_status_prepare(frontend_unified_render *r, const qa_unified_playe
     for (unsigned i = 0; i < 7; ++i) {
         if (i < 4) for (size_t j = 0; j < ui->inventory_count; ++j)
             if (ui->inventory[j].item == names->q1_ammo[i]) *counts[i] =
-                (uint32_t)qa_source_float_to_i32((float)ui->inventory[j].count);
+                (uint32_t)qa_source_to_i32((float)ui->inventory[j].count);
         if (ui->ammo_item && ui->ammo_item == names->q1_ammo[i]) {
             unsigned bit = i < 4 ? (variant == QA_HUD_Q1_ROGUE ? 7u : 8u) + i :
                 i == QA_Q1_LAVA_NAILS ? 26u : i == QA_Q1_MULTI_ROCKETS ? 28u : 27u;

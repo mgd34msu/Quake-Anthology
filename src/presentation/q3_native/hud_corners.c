@@ -157,7 +157,7 @@ static bool powerups(q3n_hud_draw *d,float y)
         y-=48; const float red[4]={1,0.2f,0.2f,1};
         if(!q3nh_color(d,red) || !q3nh_field(d,528,y,2,remaining[i]/1000))return false;
         float color[4],*modulation=NULL;
-        if(!d->frame->preferences.reduced_flashes && remaining[i]<5000) { float fraction=((float)remaining[i] / 1000); fraction=(fraction + -(float)qa_source_float_to_i32(fraction));
+        if(!d->frame->preferences.reduced_flashes && remaining[i]<5000) { float fraction=((float)remaining[i] / 1000); fraction=(fraction + -(float)qa_source_to_i32(fraction));
             for(unsigned j=0;j<4;++j)color[j]=fraction;
             modulation=color; }
         if(!q3nh_color(d,modulation))return false;

@@ -119,6 +119,14 @@ bool frontend_equipment_retire(qa_frontend *frontend, qa_error *error)
         frontend->equipment->media=next;
     }
     frontend->equipment->tail = NULL;
+    for (size_t i = 0; i < frontend->equipment->held_lookups.count; ++i) {
+        frontend_held_lookup *lookup = (frontend_held_lookup *)(uintptr_t)
+            frontend->equipment->held_lookups.entries[i].value;
+        qa_vfs_destroy(lookup->files);
+        qa_strings_destroy(lookup->strings);
+    }
+    qa_id_index_destroy(&frontend->equipment->held_lookups);
+    qa_arena_destroy(&frontend->equipment->held_storage);
     frontend->equipment->admitting=false;
     return true;
 }
@@ -162,20 +170,81 @@ void frontend_equipment_destroy(qa_frontend *frontend)
     free(frontend->equipment); frontend->equipment = NULL;
 }
 
+static bool held_lookup(qa_frontend *frontend, const qa_application_equipment_view *view,
+    qa_vfs *files, const char **path, bool *found, qa_error *error)
+{
+    if (!frontend->equipment) {
+        frontend->equipment = calloc(1, sizeof(*frontend->equipment));
+        if (!frontend->equipment)
+            return frontend_fail(error, QA_ERROR_MEMORY, "Allocating retained equipment media owner");
+    }
+    frontend_equipment *equipment = frontend->equipment;
+    qa_strings *strings = qa_session_strings(qa_application_session(frontend->application));
+    equipment->held_lookups.storage = &equipment->held_storage;
+    qa_id_index_entry *entry = qa_id_index_find(&equipment->held_lookups,
+        view->view_model, view->provider);
+    frontend_held_lookup *lookup = entry ? (frontend_held_lookup *)(uintptr_t)entry->value : NULL;
+    if (!lookup) {
+        if (!qa_id_index_reserve(&equipment->held_lookups, 1, error)) return false;
+        lookup = qa_arena_alloc(&equipment->held_storage, sizeof(*lookup),
+            _Alignof(frontend_held_lookup), error);
+        if (!lookup) return false;
+        *lookup = (frontend_held_lookup){0};
+    }
+    uint64_t generation = qa_vfs_lookup_generation(files);
+    if (lookup->strings != strings || lookup->files != files ||
+        lookup->lookup_generation != generation) {
+        const char *retained_path = lookup->path;
+        if (lookup->strings != strings) {
+            const char *model_path = qa_strings_cstr(strings, view->view_model);
+            size_t length = strlen(model_path);
+            if (length > SIZE_MAX - sizeof(".held.json"))
+                return frontend_fail(error, QA_ERROR_MEMORY, "Equipment declaration path exceeds address space");
+            char *copy = qa_arena_alloc(&equipment->held_storage,
+                length + sizeof(".held.json"), 1, error);
+            if (!copy) return false;
+            memcpy(copy, model_path, length);
+            memcpy(copy + length, ".held.json", sizeof(".held.json"));
+            retained_path = copy;
+        }
+        if (lookup->files != files && !qa_vfs_retain(files, error)) return false;
+        if (lookup->strings != strings) {
+            qa_strings_retain(strings);
+            qa_strings_destroy(lookup->strings);
+        }
+        if (lookup->files != files) qa_vfs_destroy(lookup->files);
+        bool archive_only = true;
+        for (size_t i = 0; i < qa_vfs_mount_count(files); ++i) {
+            qa_vfs_mount_info mount;
+            qa_vfs_mount_at(files, i, &mount);
+            if (!mount.is_archive) { archive_only = false; break; }
+        }
+        *lookup = (frontend_held_lookup){.strings=strings, .files=files,
+            .path=retained_path, .lookup_generation=generation, .archive_only=archive_only};
+    }
+    if (!entry) qa_id_index_insert(&equipment->held_lookups, view->view_model,
+        view->provider, (size_t)(uintptr_t)lookup);
+    /* Loose mounts observe later file appearance without advancing the lookup
+     * policy token. Only admitted archive membership permits reusing a probe. */
+    if (!lookup->probed || !lookup->archive_only) {
+        bool present = false;
+        uint64_t size;
+        if (!qa_vfs_probe(files, lookup->path, &present, &size, error)) return false;
+        lookup->found = present;
+        lookup->probed = true;
+    }
+    *path = lookup->path;
+    *found = lookup->found;
+    return true;
+}
+
 static bool held_declaration(qa_frontend *frontend, const qa_application_equipment_view *view,
     frontend_equipment_media *row, qa_error *error)
 {
     const char *model_path = qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), view->view_model);
-    size_t length = strlen(model_path);
-    if (length > SIZE_MAX - sizeof(".held.json"))
-        return frontend_fail(error, QA_ERROR_MEMORY, "Equipment declaration path exceeds address space");
-    char *path = malloc(length + sizeof(".held.json"));
-    if (!path) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual equipment declaration path");
-    memcpy(path, model_path, length);
-    memcpy(path + length, ".held.json", sizeof(".held.json"));
+    const char *path = NULL;
     bool found = false;
-    uint64_t size;
-    bool ok = qa_vfs_probe(row->owner.mounts, path, &found, &size, error);
+    bool ok = held_lookup(frontend, view, row->owner.mounts, &path, &found, error);
     if (ok && found) {
         qa_resource *source = NULL;
         ok = qa_vfs_acquire(row->owner.mounts, path, &source, NULL, error);
@@ -188,7 +257,6 @@ static bool held_declaration(qa_frontend *frontend, const qa_application_equipme
         if (ok && !found)
             ok = frontend_fail(error, QA_ERROR_NOT_FOUND, "Selected equipment has no authored held declaration");
     }
-    free(path);
     return ok;
 }
 
@@ -678,21 +746,13 @@ bool frontend_equipment_media_prepare_q3_held(qa_frontend *frontend,
     }
     frontend_visual_owner_view owner;
     if (!frontend_visual_media_acquire(frontend, view->provider, view->family, &owner, error)) return false;
-    const char *model_path = qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), view->view_model);
-    size_t length = strlen(model_path);
-    if (length > SIZE_MAX - sizeof(".held.json"))
-        return frontend_fail(error, QA_ERROR_MEMORY, "Q3 held declaration path exceeds address space");
-    char *path = malloc(length + sizeof(".held.json"));
-    if (!path) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining Q3 held declaration path");
-    memcpy(path, model_path, length);
-    memcpy(path + length, ".held.json", sizeof(".held.json"));
+    const char *path = NULL;
     bool found = false;
-    uint64_t size;
-    bool okay = qa_vfs_probe(owner.mounts, path, &found, &size, error);
+    bool okay = held_lookup(frontend, view, owner.mounts, &path, &found, error);
     qa_resource *resource = NULL; frontend_held_declaration declaration = {0};
     if (okay && found) okay = qa_vfs_acquire(owner.mounts, path, &resource, NULL, error) &&
         frontend_held_declaration_read(resource, &declaration, error);
-    free(path); qa_resource_release(resource);
+    qa_resource_release(resource);
     if (okay && found) okay = prepare_media(frontend, view, &declaration, out, error);
     frontend_held_declaration_free(&declaration);
     if (okay && !qa_application_equipment_current(frontend->application, view))

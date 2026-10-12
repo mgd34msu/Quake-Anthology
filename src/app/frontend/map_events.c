@@ -438,7 +438,7 @@ static bool seat_receives(qa_frontend *frontend, unsigned seat, qa_actor_id reci
 }
 static float fog_fraction(float value)
 {
-    uint8_t byte = (uint8_t)(uint32_t)qa_source_float_to_i32(value * 255.0f);
+    uint8_t byte = (uint8_t)(uint32_t)qa_source_to_i32(value * 255.0f);
     return (float)byte / 255;
 }
 static qa_vec3 fog_color(qa_vec3 color)
@@ -449,8 +449,8 @@ static qa_q2_fog fog_source(qa_q2_fog fog)
 {
     fog.color = fog_color(fog.color); fog.start_color = fog_color(fog.start_color);
     fog.end_color = fog_color(fog.end_color); fog.sky_factor = fog_fraction(fog.sky_factor);
-    fog.start_distance = (float)qa_source_float_to_i32(fog.start_distance);
-    fog.end_distance = (float)qa_source_float_to_i32(fog.end_distance);
+    fog.start_distance = (float)qa_source_to_i32(fog.start_distance);
+    fog.end_distance = (float)qa_source_to_i32(fog.end_distance);
     return fog;
 }
 bool frontend_map_events(qa_frontend *frontend, qa_error *error)
@@ -473,8 +473,8 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
             qa_vec3 from;
             if(!frontend_view_q1_damage_origin(feedback.origin,&from,error) ||
                 !frontend_view_q1_local_damage(frontend,actor,
-                    (uint8_t)(uint32_t)qa_source_float_to_i32(feedback.armor),
-                    (uint8_t)(uint32_t)qa_source_float_to_i32(feedback.blood),from,error)) return false;
+                    (uint8_t)(uint32_t)qa_source_to_i32(feedback.armor),
+                    (uint8_t)(uint32_t)qa_source_to_i32(feedback.blood),from,error)) return false;
         }
     }
     uint64_t now = qa_session_elapsed(qa_application_session(frontend->application));

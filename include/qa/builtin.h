@@ -217,8 +217,8 @@ typedef struct qa_builtin_actor_callback_request {
     union {
         struct { uint64_t time_ns, elapsed_ns; } think;
         struct { qa_actor_id other, activator; } use;
-        struct { qa_actor_id attacker; float damage, kick; } pain;
-        struct { qa_actor_id attacker, inflictor; float damage, kick; qa_vec3 point; } die;
+        struct { qa_actor_id attacker; double damage, kick; } pain;
+        struct { qa_actor_id attacker, inflictor; double damage, kick; qa_vec3 point; } die;
     } source;
 } qa_builtin_actor_callback_request;
 typedef bool (*qa_builtin_actor_callback_body)(void *,
@@ -332,7 +332,7 @@ bool qa_builtin_step_projectile(const qa_builtin_services *, qa_actor_id, uint64
 typedef struct qa_builtin_hitscan {
     qa_trace_query trace;
     qa_attack attack;
-    float damage, knockback;
+    double damage, knockback;
     /* Piercing uses caller-owned retained scratch. A zero capacity is an
      * ordinary single trace. Damage callbacks can mutate or retire any actor. */
     qa_actor_id *excluded;
@@ -371,7 +371,7 @@ typedef struct qa_builtin_radius {
     const qa_actor_id *candidates;
     size_t candidate_count;
     void *context;
-    bool (*adjust)(void *, qa_actor_id, float *damage, float *knockback, bool *allowed, qa_error *);
+    bool (*adjust)(void *, qa_actor_id, double *damage, double *knockback, bool *allowed, qa_error *);
     bool (*after)(void *, const qa_damage_outcome *, qa_error *);
     bool (*prepare)(void *, qa_damage_request *, bool *allowed, qa_error *);
 } qa_builtin_radius;

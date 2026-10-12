@@ -961,7 +961,7 @@ bool q2_original_client_record(qa_q2_game *g, q2_original_record_io *io,
             {"damage_knockback", {3548, 3564, 3580}, &state->player.rule.damage_knockback},
         };
         for (size_t i = 0; i < sizeof(damage) / sizeof(damage[0]); ++i) {
-            int32_t value = io->reading ? 0 : qa_source_float_to_i32(*damage[i].value);
+            int32_t value = io->reading ? 0 : qa_source_to_i32(*damage[i].value);
             if (!q2_original_scalar(io, damage[i].name, Q2_ORIGINAL_I32, damage[i].offsets[0],
                 damage[i].offsets[1], damage[i].offsets[2], &value)) return false;
             if (io->reading) *damage[i].value = (float)value;

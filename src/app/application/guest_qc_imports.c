@@ -79,7 +79,7 @@ static bool global_reference(struct application_qc_state *engine, const qa_qc_de
 }
 static uint32_t source_flags(float value)
 {
-    return (uint32_t)qa_source_float_to_i32(value);
+    return (uint32_t)qa_source_to_i32(value);
 }
 static bool check_client_eye_reference(struct application_qc_state *engine, int32_t reference,
     qa_vec3 *out, qa_error *error) {

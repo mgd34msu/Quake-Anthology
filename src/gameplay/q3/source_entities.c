@@ -267,7 +267,7 @@ static bool source_components_create(qa_q3_game *game, qa_actor_id actor,
                                       qa_error *error) {
     const qa_builtin_services *services = &game->options.services;
     qa_combat_state combat = {.mass = 200, .armor.regular =
-        {.kind = QA_ARMOR_Q3, .protection.q3_protection = 0.66f}};
+        {.kind = QA_ARMOR_Q3, .protection.q3_protection = 0.66}};
     return qa_world_body_create(services->world, actor, &(qa_body_state){0}, error) &&
         qa_combat_create_actor(services->combat, actor, &combat, error) &&
         qa_inventory_create_actor(services->inventory, actor, NULL, 0, error);

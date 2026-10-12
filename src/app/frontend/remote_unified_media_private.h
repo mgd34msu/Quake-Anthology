@@ -3,6 +3,7 @@
 #include "internal.h"
 #include "remote_unified_media.h"
 #include "model_inventory.h"
+#include "qa/id_index.h"
 
 typedef struct unified_media_skin {
     struct unified_media_skin *next;
@@ -20,6 +21,7 @@ typedef struct unified_media_bank {
     qa_scene_resources *images;
     qa_material_library *materials;
     unified_media_skin *skins;
+    qa_id_index skin_index, model_index;
     qa_media_library *media;
     struct frontend_material_movies *shader_movies;
     uint64_t cinematic_audio_owner;
@@ -34,8 +36,7 @@ typedef struct unified_media_model {
     struct unified_media_model *next;
     unified_media_bank *bank;
     qa_string_id path;
-    qa_string_id skin_path;
-    const qa_material *skin_material;
+    unified_media_skin *skin;
     qa_game_family family;
     qa_scene_image_options options;
     uint8_t *palette, *translation;
@@ -54,6 +55,7 @@ struct frontend_unified_media {
     qa_executable_recipe *recipe;
     unified_media_bank *banks;
     unified_media_model *models;
+    qa_id_index bank_index, inline_index;
     qa_scene_world *world;
     qa_ruleset_id world_rules;
     unified_media_bank *world_bank;

@@ -872,7 +872,7 @@ static bool pickup_original_body(void *context, const qa_pickup_offer *offer, bo
             return true;
         qa_regular_armor armor = {
             .kind = QA_ARMOR_Q3,
-            .protection.q3_protection = 0.66f,
+            .protection.q3_protection = 0.66,
             .points = fminf(maximum, (float)combat.armor.regular.points + (float)item->quantity),
             .item = game->item_ids[spawn.item_index]};
         if (!qa_combat_set_regular_armor(game->options.services.combat, offer->recipient, &armor,
@@ -1082,10 +1082,10 @@ static bool pickup_complete(void *context, const qa_pickup_offer *offer, bool ac
     if (spawn.dropped)
         source->free_after_event = true;
     float seconds = spawn.wait_seconds != 0 ? spawn.wait_seconds : call->respawn;
-    int32_t respawn_seconds = qa_source_float_to_i32(seconds);
+    int32_t respawn_seconds = qa_source_to_i32(seconds);
     if (spawn.random_seconds != 0) {
         float adjusted = ((float)respawn_seconds + (q3_crandom(game) * spawn.random_seconds));
-        respawn_seconds = qa_source_float_to_i32(adjusted);
+        respawn_seconds = qa_source_to_i32(adjusted);
         if (respawn_seconds < 1)
             respawn_seconds = 1;
     }

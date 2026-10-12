@@ -1,4 +1,4 @@
-#include "qa/gameplay.h"
+#include "combat_internal.h"
 
 static bool same_number(double a, double b) {
     return a == b && (a != 0 || signbit(a) == signbit(b));
@@ -69,7 +69,7 @@ qa_damage_flags qa_attack_flags(const qa_attack *attack) {
     return flags;
 }
 
-bool qa_armor_absorb(const qa_armor *armor, float damage, qa_damage_flags flags,
+bool qa_armor_absorb(const qa_armor *armor, double damage, qa_damage_flags flags,
                      const qa_armor_context *context, const qa_protection_channel *stage,
                      qa_armor_result *out, qa_error *error) {
     if (!out || !context || !isfinite(damage) || !isfinite(context->screen_facing_dot) ||
@@ -92,17 +92,27 @@ bool qa_armor_absorb(const qa_armor *armor, float damage, qa_damage_flags flags,
     if (power && !flags.no_power_armor && (!context->rerelease || context->alive) &&
         powered->kind != QA_POWER_NONE && powered->cells > 0 &&
         (powered->kind != QA_POWER_SCREEN || context->screen_facing_dot > 0.3f)) {
-        double damage_per_cell = powered->kind == QA_POWER_SCREEN || context->ctf ? 1 : 2;
-        double protected_damage = trunc(powered->kind == QA_POWER_SCREEN ? (double)damage / 3 : 2 * (double)damage / 3);
+        int32_t source_damage, cells;
+        if (!qa_combat_source_integer(damage, &source_damage, error) ||
+            !qa_combat_source_integer(powered->cells, &cells, error)) return false;
+        int32_t damage_per_cell = powered->kind == QA_POWER_SCREEN || context->ctf ? 1 : 2;
+        int32_t protected_damage = (powered->kind == QA_POWER_SCREEN ? source_damage :
+            qa_combat_source_multiply(source_damage, 2)) / 3;
         bool doubled = context->rerelease ? flags.energy : flags.no_regular_armor;
-        double available = powered->cells * damage_per_cell;
-        if (doubled) available = trunc(available / 2);
-        if (context->rerelease) { protected_damage = fmax(1, protected_damage); available = fmax(1, available); }
+        int32_t available = qa_combat_source_multiply(cells, damage_per_cell);
+        if (doubled) available /= 2;
+        if (context->rerelease) {
+            if (protected_damage < 1) protected_damage = 1;
+            if (available < 1) available = 1;
+        }
         if (available != 0) {
             result.power_activated = true;
-            power_saved = fmin(available, protected_damage);
-            double used = trunc(power_saved / damage_per_cell) * (doubled ? 2 : 1);
-            powered->cells = context->rerelease ? fmax(0, powered->cells - fmax(damage_per_cell, used)) : powered->cells - used;
+            int32_t saved = available < protected_damage ? available : protected_damage;
+            power_saved = saved;
+            int32_t used = qa_combat_source_multiply(saved / damage_per_cell, doubled ? 2 : 1);
+            if (context->rerelease && used < damage_per_cell) used = damage_per_cell;
+            int32_t remaining = qa_combat_source_word((uint32_t)cells - (uint32_t)used);
+            powered->cells = context->rerelease && remaining < 0 ? 0 : remaining;
         }
     }
     qa_regular_armor *item = &result.armor.regular;
@@ -116,12 +126,22 @@ bool qa_armor_absorb(const qa_armor *armor, float damage, qa_damage_flags flags,
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "source armor requires an absorption owner"); return false;
         default: protection = 0; break;
         }
-        regular_saved = fmin(item->points, ceil(protection * flags.regular_scale * ((double)damage - power_saved)));
-        item->points -= regular_saved;
+        if (item->kind == QA_ARMOR_Q1) {
+            float remaining = (float)((float)damage - (float)power_saved);
+            float fraction = (float)((float)protection * flags.regular_scale);
+            regular_saved = fmin((float)item->points, ceilf((float)(fraction * remaining)));
+            item->points = (float)((float)item->points - (float)regular_saved);
+        } else {
+            double protected_damage = item->kind == QA_ARMOR_Q2 ?
+                (float)((float)((float)protection * flags.regular_scale) * (float)(damage - power_saved)) :
+                protection * flags.regular_scale * (damage - power_saved);
+            regular_saved = fmin(item->points, ceil(protected_damage));
+            item->points -= regular_saved;
+        }
         if (item->kind == QA_ARMOR_Q1 && item->points <= 0) item->protection.q1_absorption = 0;
     }
-    result.power_saved = (float)power_saved;
-    result.regular_saved = (float)regular_saved;
+    result.power_saved = power_saved;
+    result.regular_saved = regular_saved;
     if (!isfinite(power_saved) || !isfinite(regular_saved) || !isfinite(result.power_saved) ||
         !isfinite(result.regular_saved) || !qa_armor_validate(&result.armor, error)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "armor arithmetic overflow"); return false;

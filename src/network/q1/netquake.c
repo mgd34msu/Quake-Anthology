@@ -560,7 +560,7 @@ bool qa_nq_write_damage(qa_net_writer *w, uint8_t armor, uint8_t blood, const do
     for (unsigned axis = 0; axis < 3; ++axis) {
         if (!isfinite(origin[axis]) || !isfinite(origin[axis] * 8))
             return qa_net_writer_fail(w, "Nonfinite original NetQuake damage center");
-        fixed[axis] = (uint16_t)(uint32_t)qa_source_float_to_i32((float)origin[axis] * 8.0f);
+        fixed[axis] = (uint16_t)(uint32_t)qa_source_to_i32((float)origin[axis] * 8.0f);
     }
     return qa_net_write_u8(w, QA_NQ_DAMAGE) && qa_net_write_u8(w, armor) && qa_net_write_u8(w, blood) &&
         qa_net_write_u16(w, fixed[0]) && qa_net_write_u16(w, fixed[1]) && qa_net_write_u16(w, fixed[2]);

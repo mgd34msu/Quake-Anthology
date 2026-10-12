@@ -209,7 +209,7 @@ bool qa_application_network_qw_world_read(qa_application *app,
         !qa_qc_slot_reference(engine->provider->state.qc.instance, 0, &reference, error) ||
         !qw_string(engine, reference, engine->field_bindings->message, &value.level, error) ||
         !qw_scalar(engine, reference, engine->field_bindings->sounds, &cd_track, error)) return false;
-    value.cd_track = (uint8_t)(uint32_t)qa_source_float_to_i32(cd_track);
+    value.cd_track = (uint8_t)(uint32_t)qa_source_to_i32(cd_track);
     const char *separator = strrchr(product->directory, '/');
     value.game_directory = separator ? separator + 1 : product->directory;
     value.map_bytes = qa_resource_bytes(map.resource);
@@ -362,7 +362,7 @@ bool qa_application_network_qw_client_read(qa_application *app, qa_actor_id acto
     float items, flags;
     if (!qw_scalar(engine, reference, engine->field_bindings->items, &items, error) ||
         !qw_global(engine, engine->global_bindings->serverflags, &flags, error)) return false;
-    uint32_t item_bits = (uint32_t)qa_source_float_to_i32(items) | ((uint32_t)qa_source_float_to_i32(flags) << 28);
+    uint32_t item_bits = (uint32_t)qa_source_to_i32(items) | ((uint32_t)qa_source_to_i32(flags) << 28);
     int32_t signed_items;
     memcpy(&signed_items, &item_bits, sizeof(item_bits));
     value.stats[15] = signed_items;

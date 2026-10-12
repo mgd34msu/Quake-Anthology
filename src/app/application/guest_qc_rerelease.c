@@ -98,7 +98,7 @@ static bool byte_argument(qa_qc_instance *vm,uint32_t arg,uint8_t *out,qa_error 
         (void)application_fail(error,QA_ERROR_FORMAT,"Rerelease byte argument is nonfinite");
         return false;
     }
-    *out=(uint8_t)(uint32_t)qa_source_float_to_i32(value); return true;
+    *out=(uint8_t)(uint32_t)qa_source_to_i32(value); return true;
 }
 static bool target(struct application_qc_state *engine,qa_qc_instance *vm,int32_t reference,
     bool connected,uint32_t *out,qa_error *error)

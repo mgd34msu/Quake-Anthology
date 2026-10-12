@@ -76,8 +76,8 @@ bool q3_map_spawn_target(qa_q3_game *game, const qa_q3_map_fields *fields,
         if (!q3_configstring_index(game, state->noise, 288,
                                &state->noise_index, error))
             return false;
-        state->sound_frame = qa_source_float_to_i32(state->wait * 10.0f);
-        state->sound_random = qa_source_float_to_i32(state->random * 10.0f);
+        state->sound_frame = qa_source_to_i32(state->wait * 10.0f);
+        state->sound_random = qa_source_to_i32(state->random * 10.0f);
     } else if (!strcmp(name, "target_push")) {
         state->kind = QA_Q3_MAP_TARGET_PUSH;
         if (state->speed == 0)

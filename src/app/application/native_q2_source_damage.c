@@ -38,7 +38,7 @@ typedef struct declared_damage_frame {
     application_native_q2_armor_watch *armor_watch;
     qa_native_address scratch;
     application_native_q2_scratch *scratch_storage;
-    float health;
+    double health;
     qa_vec3 velocity;
     bool active,reacting;
 } declared_damage_frame;
@@ -179,7 +179,7 @@ static bool state_read(void *context,qa_combat_state *out,qa_error *e)
     declared_damage_actor *r=context;
     return application_native_q2_source_combat_state_read(r->owner->state,r->actor,out,e);
 }
-static bool health_write(void *context,float value,qa_error *e)
+static bool health_write(void *context,double value,qa_error *e)
 {
     declared_damage_actor *r=context;
     return application_native_q2_source_combat_health_write(r->owner->state,r->actor,value,e);
@@ -212,7 +212,7 @@ static bool health_changed(void *context,qa_native_instance *native,const qa_nat
     (void)event;declared_damage_frame *f=context;if(!f->active||f->reacting)return true;
     if(native!=instance(f->owner))return application_fail(e,QA_ERROR_ARGUMENT,"Declared health observer crossed its original instance");
     qa_combat_state state;if(!application_native_q2_source_combat_projection_read(f->owner->state,f->target,&state,e))return false;
-    float before=f->health;f->health=state.health;
+    double before=f->health;f->health=state.health;
     if(!frame_live(f)||before==state.health)return true;
     qa_damage_mutation mutation={.kind=QA_MUTATION_HEALTH,.value.health={before,state.health}};
     if(!qa_damage_observe(f->observer,&mutation,e))return false;
@@ -251,8 +251,8 @@ static bool original_damage(void *context,qa_error *e)
     declared_damage_frame *f=context;struct application_native_q2_source_damage *o=f->owner;
     const qa_damage_request *r=f->request;qa_native_address target,attacker,inflictor;
     qa_native_value arguments[10],mod;uint8_t raw[36],cause[3];
-    if((double)r->amount<INT32_MIN||(double)r->amount>INT32_MAX||
-        (double)r->knockback<INT32_MIN||(double)r->knockback>INT32_MAX)
+    if(r->amount<INT32_MIN||r->amount>INT32_MAX||
+        r->knockback<INT32_MIN||r->knockback>INT32_MAX)
         return application_fail(e,QA_ERROR_FORMAT,"Declared damage exceeds its original integer ABI");
     if(!address_for(o,r->target,&target,e)||!address_for(o,r->attack.attacker,&attacker,e)||
         !address_for(o,r->attack.inflictor,&inflictor,e)||
@@ -383,9 +383,7 @@ static bool incoming(void *context,qa_native_instance *native,qa_native_entry_ob
         return true;}
     if(!vector_read(o,a[3].as.address,&r.direction,e)||!vector_read(o,a[4].as.address,&r.point,e)||!vector_read(o,a[5].as.address,&r.normal,e)||
         !application_native_q2_source_combat_cause_read(o->state,a+9,(uint32_t)a[8].as.i32,&r.attack.cause,e))return false;
-    r.amount=(float)a[6].as.i32;r.knockback=(float)a[7].as.i32;r.radius=(a[8].as.i32&1)!=0;
-    if((double)r.amount!=a[6].as.i32||(double)r.knockback!=a[7].as.i32)
-        return application_fail(e,QA_ERROR_UNSUPPORTED,"Declared damage exceeds exact canonical amount storage");
+    r.amount=a[6].as.i32;r.knockback=a[7].as.i32;r.radius=(a[8].as.i32&1)!=0;
     if(!provenance(o,r.target,&r.attack,e))return false;
     declared_damage_actor *actor=actor_find(o,r.target);qa_damage_outcome outcome={0};
     declared_foreign_damage foreign={app->combat,&r,&outcome};
@@ -415,13 +413,11 @@ static bool process_deferred(void *context,qa_native_instance *native,qa_native_
     if(!address_for(o,actor,&base,e)||base!=a[0].as.address||!scalar_read(o,base,o->blood,&blood,e))return false;
     if(blood==0)return application_native_q2_source_original(o->engine,entry,a,count,result,e);
     if(!scalar_read(o,base,o->knockback,&kick,e)||!vector_read(o,base+o->point,&point,e))return false;
-    if((double)(float)blood!=blood||(double)(float)kick!=kick)
-        return application_fail(e,QA_ERROR_UNSUPPORTED,"Declared deferred reaction exceeds exact canonical scalar storage");
     declared_damage_processing processing={.outer=o->processing,.request=r->pending_request};
-    processing.request.knockback=(float)kick;processing.request.point=point;
+    processing.request.knockback=kick;processing.request.point=point;
     if(!qa_damage_request_validate(&processing.request,e))return false;
     qa_combat_state state;if(!state_read(r,&state,e))return false;
-    qa_damage_result reaction={.reaction=state.health<=0?QA_REACTION_DEATH:QA_REACTION_PAIN,.applied_damage=(float)blood};
+    qa_damage_result reaction={.reaction=state.health<=0?QA_REACTION_DEATH:QA_REACTION_PAIN,.applied_damage=blood};
     r->pending=false;o->processing=&processing;++o->engine->calls;++r->calls;
     bool cancelled=false;
     bool ok=qa_combat_source_reaction(o->engine->provider->application->combat,&processing.request,&reaction,e)&&
@@ -511,7 +507,7 @@ bool application_native_q2_source_damage_admit(struct application_native_q2_sour
     r->serial=qa_combat_storage_serial(combat,actor);r->bound=true;return actor_watches(r,e);
 }
 bool application_native_q2_source_damage_reaction(struct application_native_q2_source_damage *o,qa_actor_id actor,
-    const qa_damage_result *result,qa_attack *attack,float *knockback,bool *present,qa_error *e)
+    const qa_damage_result *result,qa_attack *attack,double *knockback,bool *present,qa_error *e)
 {
     *present=false;declared_damage_frame *f=o?o->frames:NULL;
     if(!f||!f->active||!qa_actor_id_equal(f->target,actor)){
@@ -566,7 +562,7 @@ static bool request_fields(qa_source_save_io *io,qa_damage_request *request)
         qa_source_save_string(io,&attack->weapon)&&qa_source_save_string(io,&attack->weapon_provider)&&
         qa_source_save_string(io,&attack->combat_provider)&&qa_source_save_string(io,&attack->inventory_provider)&&
         qa_source_save_string(io,&attack->movement_provider)&&qa_source_save_string(io,&attack->powerup_owner)&&
-        qa_source_save_f32(io,&request->amount)&&qa_source_save_f32(io,&request->knockback)&&
+        qa_source_save_scalar(io,&request->amount)&&qa_source_save_scalar(io,&request->knockback)&&
         qa_source_save_vec3(io,&request->direction)&&qa_source_save_vec3(io,&request->point)&&
         qa_source_save_vec3(io,&request->normal)&&qa_source_save_bool(io,&request->radius);
 }

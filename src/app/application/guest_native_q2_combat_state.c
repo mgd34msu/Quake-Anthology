@@ -529,9 +529,7 @@ bool application_q2_combat_state_read(void *opaque, qa_combat_state *out, qa_err
         !pointer_read(p, a->address + p->client_pointer, &client, error) ||
         !qa_native_rva(native(p), p->time, p->kex ? 8 : 4, &time, error) ||
         !integer_read(p, time, p->kex ? 8 : 4, &now, error)) return false;
-    out->health = (float)health; out->mass = (float)mass; out->team = qa_team_named(0);
-    if ((double)out->health != (double)health || (double)out->mass != (double)mass)
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "Native health or mass exceeds exact shared combat representation");
+    out->health = (double)health; out->mass = (double)mass; out->team = qa_team_named(0);
     if (client) {
         if (p->kex) {
             if (!integer_read(p, client + p->invincible, 8, &until, error)) return false;
@@ -569,7 +567,7 @@ bool application_q2_combat_state_read(void *opaque, qa_combat_state *out, qa_err
     out->invulnerable = ((uint64_t)flags & p->godmode) != 0 || until > now;
     return true;
 }
-bool application_q2_combat_health_write(void *opaque, float value, qa_error *error)
+bool application_q2_combat_health_write(void *opaque, double value, qa_error *error)
 {
     application_q2_combat_actor *a = opaque;
     return application_q2_combat_actor_valid(a, error) &&

@@ -67,7 +67,7 @@ typedef struct qa_attack {
 typedef struct qa_damage_request {
     qa_attack attack;
     qa_actor_id target;
-    float amount, knockback;
+    double amount, knockback;
     qa_vec3 direction, point, normal;
     bool radius;
 } qa_damage_request;
@@ -76,7 +76,7 @@ bool qa_attack_next(uint64_t *sequence, qa_attack *, qa_error *);
 typedef struct qa_damage_modifier {
     qa_actor_owner owner;
     void *context;
-    bool (*transform)(void *, qa_actor_id attacker, float amount, float *, qa_error *);
+    bool (*transform)(void *, qa_actor_id attacker, double amount, double *, qa_error *);
 } qa_damage_modifier;
 bool qa_damage_apply_modifier(const qa_actor_registry *, const qa_damage_request *, const qa_damage_modifier *, qa_damage_request *, qa_error *);
 
@@ -87,7 +87,7 @@ typedef struct qa_regular_armor {
     qa_regular_armor_kind kind;
     double points;
     qa_item_id item;
-    union { float q1_absorption; struct { double normal, energy; } q2; float q3_protection; } protection;
+    union { float q1_absorption; struct { double normal, energy; } q2; double q3_protection; } protection;
 } qa_regular_armor;
 typedef enum qa_power_kind { QA_POWER_NONE, QA_POWER_SCREEN, QA_POWER_SHIELD } qa_power_kind;
 typedef enum qa_power_armor_source {
@@ -113,7 +113,7 @@ typedef struct qa_armor_context { float screen_facing_dot; bool q2_profile, rere
 typedef struct qa_damage_geometry { qa_vec3 direction, point, normal; } qa_damage_geometry;
 typedef struct qa_armor_result {
     qa_armor armor;
-    float power_saved, regular_saved;
+    double power_saved, regular_saved;
     /* Actual source power-armor effect boundary, including Classic zero saves. */
     bool power_activated;
 } qa_armor_result;
@@ -122,12 +122,12 @@ bool qa_armor_validate(const qa_armor *, qa_error *);
 bool qa_regular_armor_equal(qa_regular_armor, qa_regular_armor);
 bool qa_powered_armor_equal(qa_powered_armor, qa_powered_armor);
 bool qa_armor_equal(qa_armor, qa_armor);
-bool qa_armor_absorb(const qa_armor *, float damage, qa_damage_flags,
+bool qa_armor_absorb(const qa_armor *, double damage, qa_damage_flags,
                      const qa_armor_context *, const qa_protection_channel *stage,
                      qa_armor_result *, qa_error *);
 
 typedef struct qa_combat_state {
-    float health, mass;
+    double health, mass;
     qa_armor armor;
     bool can_take_damage, invulnerable, no_knockback;
     qa_team_ref team;
@@ -137,22 +137,22 @@ typedef enum qa_mutation_kind { QA_MUTATION_HEALTH, QA_MUTATION_ARMOR, QA_MUTATI
 typedef struct qa_damage_mutation {
     qa_mutation_kind kind;
     union {
-        struct { float before, after; } health;
+        struct { double before, after; } health;
         struct { qa_armor before, after; } armor;
         struct { qa_vec3 before, after; qa_actor_owner movement; } velocity;
         struct { qa_vec3 value; qa_actor_owner movement; } impulse;
     } value;
 } qa_damage_mutation;
 typedef struct qa_damage_result {
-    float applied_damage;
+    double applied_damage;
     qa_reaction reaction;
     qa_game_family feedback_family;
     bool has_feedback, battlesuit;
-    float power_saved, armor_saved, blood, knockback;
+    double power_saved, armor_saved, blood, knockback;
     /* Actual selected Q2 damage after source modifiers, before protection.
      * It remains distinct from blood and armor savings. */
     bool has_q2_damage;
-    float q2_damage;
+    double q2_damage;
 } qa_damage_result;
 typedef struct qa_damage_inflictor_center {
     qa_actor_id inflictor;
@@ -187,14 +187,14 @@ typedef struct qa_combat_admission {
 typedef struct qa_combat_binding {
     void *context;
     bool (*read)(void *, qa_combat_state *, qa_error *);
-    bool (*write_health)(void *, float, qa_error *);
+    bool (*write_health)(void *, double, qa_error *);
     bool (*write_armor)(void *, const qa_armor *, qa_error *);
     bool (*validate_armor)(void *, const qa_armor *, qa_error *);
     bool (*write_traits)(void *, const qa_combat_state *, qa_error *);
     bool (*empty_regular_armor)(void *, double points, qa_regular_armor *, bool *selected, qa_error *);
     bool (*normalize_legacy_armor)(void *, const qa_armor *, qa_armor *, qa_error *);
     qa_damage_admit_fn admit;
-    bool (*adjust)(void *, const qa_damage_request *, float *amount, float *knockback, qa_error *);
+    bool (*adjust)(void *, const qa_damage_request *, double *amount, double *knockback, qa_error *);
     qa_source_damage_fn source_damage;
     bool source_armor_stages[2];
     bool has_primary_protection[2];
@@ -210,14 +210,14 @@ typedef enum qa_damage_effect_stage {
  * receives full pre-armor damage for reflection and may veto health loss;
  * changing its amount does not repeat absorption. AFTER_POWER/AFTER_ARMOR
  * transform the remaining amount. Each family retains its source ordering. */
-typedef struct qa_damage_effect { float amount; bool allowed; qa_reaction reaction; } qa_damage_effect;
+typedef struct qa_damage_effect { double amount; bool allowed; qa_reaction reaction; } qa_damage_effect;
 typedef enum qa_damage_feedback_stage {
     QA_DAMAGE_FEEDBACK_PROTECTION, QA_DAMAGE_FEEDBACK_POWER,
     QA_DAMAGE_FEEDBACK_ARMOR, QA_DAMAGE_FEEDBACK_HEALTH
 } qa_damage_feedback_stage;
 typedef struct qa_damage_feedback {
     qa_damage_feedback_stage stage;
-    float blood, power_saved, armor_saved;
+    double blood, power_saved, armor_saved;
     qa_powered_armor powered;
 } qa_damage_feedback;
 typedef bool (*qa_source_reaction_body)(void *, qa_error *);
@@ -271,7 +271,7 @@ typedef struct qa_protection_binding {
     bool (*read)(void *, qa_armor *, qa_error *);
     bool (*validate_write)(void *, const qa_armor *, qa_error *);
     bool (*write)(void *, const qa_armor *, qa_error *);
-    bool (*absorb)(void *, const qa_damage_request *, const qa_damage_geometry *, float, qa_damage_flags, qa_protection_observer *, float *saved, qa_error *);
+    bool (*absorb)(void *, const qa_damage_request *, const qa_damage_geometry *, double, qa_damage_flags, qa_protection_observer *, double *saved, qa_error *);
 } qa_protection_binding;
 
 typedef struct qa_q1_combat_context { bool quad, walk, has_momentum_direction, skip_base_team_health, same_player_netname, quakeworld_rj; int32_t teamplay; float rj; qa_vec3 momentum_direction; } qa_q1_combat_context;
@@ -368,7 +368,7 @@ bool qa_combat_read_traits(qa_combat *, qa_actor_id, qa_combat_state *, qa_error
 /* Checkpoint reads exclude component overlays and include authoritative fuel.
  * External source storage is identified by local=false and saves itself. */
 bool qa_combat_primary_read(qa_combat *, qa_actor_id, qa_combat_state *, bool *local, qa_error *);
-bool qa_combat_set_health(qa_combat *, qa_actor_id, float, qa_error *);
+bool qa_combat_set_health(qa_combat *, qa_actor_id, double, qa_error *);
 bool qa_combat_set_armor(qa_combat *, qa_actor_id, const qa_armor *, qa_error *);
 bool qa_combat_set_regular_points(qa_combat *, qa_actor_id, double, const qa_regular_armor *initial, qa_error *);
 bool qa_combat_set_regular_armor(qa_combat *, qa_actor_id, const qa_regular_armor *, qa_error *);
@@ -387,18 +387,18 @@ bool qa_combat_protection_owner(qa_combat *, qa_actor_id, qa_protection_channel,
 /* power_effect optionally receives the actual compiled power-armor recipe at
  * its reached effect boundary; NONE means no boundary was reached. Source-owned
  * absorbers emit their own source effects and return NONE here. */
-bool qa_combat_absorb(qa_combat *, const qa_damage_request *, qa_protection_channel, const qa_damage_geometry *, float, qa_damage_flags, const qa_armor_context *, float *, qa_powered_armor *power_effect, qa_error *);
+bool qa_combat_absorb(qa_combat *, const qa_damage_request *, qa_protection_channel, const qa_damage_geometry *, double, qa_damage_flags, const qa_armor_context *, double *, qa_powered_armor *power_effect, qa_error *);
 bool qa_combat_apply(qa_combat *, const qa_damage_request *, qa_damage_outcome *, qa_error *);
 bool qa_combat_run_source(qa_combat *, const qa_damage_request *, qa_source_damage_fn, void *, qa_damage_outcome *, qa_error *);
 bool qa_damage_dispatch_source_reaction(qa_damage_observer *, const qa_damage_result *,
-    float callback_knockback, qa_vec3 callback_point, qa_actor_owner, qa_source_reaction_body, void *, qa_error *);
+    double callback_knockback, qa_vec3 callback_point, qa_actor_owner, qa_source_reaction_body, void *, qa_error *);
 /* For captured pending hits whose feedback/confirmation already completed.
  * The observer lives on the stack through one original helper, is consumed at
  * most once by its actual pain/death entry, and never enters persistence. */
 bool qa_combat_run_source_reaction(qa_combat *, const qa_damage_request *, const qa_damage_result *,
     qa_source_reaction_executor, void *, qa_error *);
 bool qa_source_reaction_dispatch(qa_source_reaction_observer *, const qa_damage_result *,
-    float callback_knockback, qa_vec3 callback_point, qa_actor_owner, qa_source_reaction_body, void *, qa_error *);
+    double callback_knockback, qa_vec3 callback_point, qa_actor_owner, qa_source_reaction_body, void *, qa_error *);
 bool qa_combat_source_reaction(qa_combat *, const qa_damage_request *, const qa_damage_result *, qa_error *);
 qa_operation *qa_combat_damage_operation(qa_combat *);
 

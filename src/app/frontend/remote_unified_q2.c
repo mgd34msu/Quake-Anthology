@@ -1145,7 +1145,7 @@ static bool player_overlay(frontend_unified_q2 *o,const qa_unified_presentation_
 }
 static float fog_fraction(float value)
 {
-    uint8_t word=(uint8_t)(uint32_t)qa_source_float_to_i32(value*255.0f);
+    uint8_t word=(uint8_t)(uint32_t)qa_source_to_i32(value*255.0f);
     return (float)word/255;
 }
 static qa_vec3 fog_color(qa_vec3 color)
@@ -1154,7 +1154,7 @@ static qa_scene_fog fog_record(const qa_q2_fog *from)
 {
     return (qa_scene_fog){.kind=QA_FOG_Q2,.color=fog_color(from->color),.density=from->density,.sky_factor=fog_fraction(from->sky_factor),
         .height_color=fog_color(from->start_color),.height_end_color=fog_color(from->end_color),
-        .height_start=(float)qa_source_float_to_i32(from->start_distance),.height_end=(float)qa_source_float_to_i32(from->end_distance),
+        .height_start=(float)qa_source_to_i32(from->start_distance),.height_end=(float)qa_source_to_i32(from->end_distance),
         .height_falloff=from->falloff,.height_density=from->height_density,.far_depth=1};
 }
 static qa_scene_fog fog_sample(frontend_unified_q2 *o,double seconds)
@@ -1279,8 +1279,8 @@ static bool map_receive(frontend_unified_q2 *o,const qa_unified_presentation_eve
         fields[n++]=(qa_unified_q2_temp_field){.name=QA_Q2_TEMP_POSITION1,.kind=QA_Q2_TEMP_VECTOR,.vector=v->origin};
         fields[n++]=(qa_unified_q2_temp_field){.name=v->kind==QA_Q2_MAP_STEAM?QA_Q2_TEMP_DIRECTION:QA_Q2_TEMP_POSITION2,.kind=QA_Q2_TEMP_VECTOR,.vector=v->direction};
         fields[n++]=(qa_unified_q2_temp_field){.name=QA_Q2_TEMP_COLOR,.kind=QA_Q2_TEMP_INTEGER,.integer=v->style};
-        if (v->kind==QA_Q2_MAP_STEAM){fields[n++]=(qa_unified_q2_temp_field){.name=QA_Q2_TEMP_ENTITY2,.kind=QA_Q2_TEMP_INTEGER,.integer=qa_source_float_to_i32(v->value)};
-            if (v->slot!=-1)fields[n++]=(qa_unified_q2_temp_field){.name=QA_Q2_TEMP_TIME,.kind=QA_Q2_TEMP_INTEGER,.integer=qa_source_float_to_i32(v->duration)};}
+        if (v->kind==QA_Q2_MAP_STEAM){fields[n++]=(qa_unified_q2_temp_field){.name=QA_Q2_TEMP_ENTITY2,.kind=QA_Q2_TEMP_INTEGER,.integer=qa_source_to_i32(v->value)};
+            if (v->slot!=-1)fields[n++]=(qa_unified_q2_temp_field){.name=QA_Q2_TEMP_TIME,.kind=QA_Q2_TEMP_INTEGER,.integer=qa_source_to_i32(v->duration)};}
         qa_unified_q2_temporary t={.type=v->kind==QA_Q2_MAP_STEAM?QA_Q2_TE_STEAM:QA_Q2_TE_FORCEWALL,.rerelease=row->q2_profile==2,.fields=fields,.field_count=n};
         return temporary_receive(o,row,&t,e);}
     case QA_Q2_MAP_AUTOSAVE: /* The actual application save owner handles this synchronous Source request. */return true;

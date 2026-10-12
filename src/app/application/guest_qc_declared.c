@@ -465,7 +465,7 @@ bool application_qc_project_declared(struct application_qc_state *engine, qa_qc_
             ok = qa_qc_entity_float(vm, access->reference, def->offset, &previous, error) && isfinite(previous);
             uint32_t bits = 0;
             if (ok) {
-                bits = (uint32_t)qa_source_float_to_i32(previous) & field->private_mask;
+                bits = (uint32_t)qa_source_to_i32(previous) & field->private_mask;
                 if (client) bits |= 8u | (traits.no_target ? 128u : 0u);
                 if (client && field->grounded) {
                     if (ok && traits.grounded) bits |= 512u;

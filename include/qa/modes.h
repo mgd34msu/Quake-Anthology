@@ -621,8 +621,8 @@ bool qa_modes_q3_deathmatch_spawnpoint(qa_modes *, qa_mode_id, qa_actor_id,
 
 /* Source damage stages are intentionally distinct: outgoing multipliers,
  * resistance after powered armor, and vampire after actual health damage. */
-bool qa_modes_attack_damage(qa_modes *, qa_mode_id, qa_actor_id, float, float *, qa_error *);
-bool qa_modes_resist_damage(qa_modes *, qa_mode_id, qa_actor_id, float, float *, qa_error *);
+bool qa_modes_attack_damage(qa_modes *, qa_mode_id, qa_actor_id, double, double *, qa_error *);
+bool qa_modes_resist_damage(qa_modes *, qa_mode_id, qa_actor_id, double, double *, qa_error *);
 bool qa_modes_after_damage(qa_modes *, qa_mode_id, const qa_damage_outcome *, qa_error *);
 bool qa_modes_damage_effect(qa_modes *, qa_mode_id, qa_damage_effect_stage,
                             const qa_damage_request *, qa_damage_effect *, qa_error *);

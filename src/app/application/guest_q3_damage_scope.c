@@ -29,7 +29,7 @@ struct application_q3_damage_frame {
     qa_qvm_binding writes;
     reaction_watch reactions[2];
     damage_delivery *deliveries;
-    float health;
+    double health;
     qa_armor armor;
     qa_vec3 velocity;
     bool active, reacting, cancelled;
@@ -85,11 +85,8 @@ static bool reaction_enter(void *context, const qa_qvm_call *call, qa_error *err
         !qa_qvm_call_argument(call, watch->arguments.target, &target, error)) return false;
     if ((uint32_t)pointer != watch->pointer || (uint32_t)target != frame->source.entity) return true;
     if (!qa_qvm_call_argument(call, watch->arguments.amount, &amount, error)) return false;
-    float damage = (float)amount;
-    if ((double)damage != amount)
-        return fail(error, QA_ERROR_UNSUPPORTED, "Original Q3 reaction amount exceeds exact shared representation");
     frame->reacting = true;
-    frame->result = (qa_damage_result){.applied_damage = damage, .reaction = watch->kind};
+    frame->result = (qa_damage_result){.applied_damage = amount, .reaction = watch->kind};
     if (!qa_damage_before_reaction(frame->observer, &frame->result, error)) return false;
     bool live;
     return actor_live(frame, &live, error) && (live || application_q3_damage_scope_cancel(frame, error));
@@ -127,11 +124,8 @@ static bool store_publish(void *context, qa_qvm *vm,
     if (touches(event, health_at, 4)) {
         int32_t word;
         if (!application_q3_combat_word_read(&frame->source, health_at, &word, error)) goto failed;
-        float after = (float)word;
-        if ((double)after != word) {
-            fail(error, QA_ERROR_UNSUPPORTED, "Original Q3 health store exceeds exact shared representation"); goto failed;
-        }
-        float before = frame->health; frame->health = after;
+        double after = word;
+        double before = frame->health; frame->health = after;
         if (before != after) changes[count++] = (damage_change){health_at,
             {.kind = QA_MUTATION_HEALTH, .value.health = {before, after}}};
     }

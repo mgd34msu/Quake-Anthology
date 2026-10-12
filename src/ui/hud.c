@@ -548,8 +548,8 @@ static bool ctf_draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *sce
     snprintf(row, sizeof(row), "Red %s - Blue %s", red, blue);
     qa_vec4 color = {1, 1, 1, 1};
     if (!text(hud, scene, frame->safe_area, 320, 56, row, color, 1, QA_FONT_ALIGN_CENTER, error)) return false;
-    uint32_t flags = (uint32_t)qa_source_float_to_i32((float)hud->ctf_status.flags);
-    uint32_t runes = (uint32_t)qa_source_float_to_i32((float)hud->ctf_status.rune_items);
+    uint32_t flags = (uint32_t)qa_source_to_i32((float)hud->ctf_status.flags);
+    uint32_t runes = (uint32_t)qa_source_to_i32((float)hud->ctf_status.rune_items);
     snprintf(row, sizeof(row), "Red flag %s - Blue flag %s",
         flag_status(flags & 7), flag_status((flags >> 3) & 7));
     if (!text(hud, scene, frame->safe_area, 320, 72, row, color, 1, QA_FONT_ALIGN_CENTER, error)) return false;

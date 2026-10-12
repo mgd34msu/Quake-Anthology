@@ -438,7 +438,7 @@ static void q3_footsteps(qa_q3_step *step) {
     if (!q3_active(step)) return;
     int32_t old = state->bob_cycle;
     float cycle = (float)old + bob * (float)step->milliseconds;
-    state->bob_cycle = (int32_t)((uint32_t)qa_source_float_to_i32(cycle) & 255u);
+    state->bob_cycle = (int32_t)((uint32_t)qa_source_to_i32(cycle) & 255u);
     if ((((uint32_t)old + 64) ^ ((uint32_t)state->bob_cycle + 64)) & 128) {
         if (step->water_level == 0 && footstep && !step->context->input->profile.data.q3.no_footsteps)
             qa_move_event(step->context, q3_surface_footstep(step), 0);

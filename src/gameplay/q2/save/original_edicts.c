@@ -443,8 +443,8 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
         return qa_world_body_write(game->services.world, actor->id, &body, error);
     if (actor->client) {
         int32_t maximum = io->reading ? 0 : actor->powers ?
-            qa_source_float_to_i32(actor->powers->maximum_health) : 0;
-        int32_t height = io->reading ? 0 : qa_source_float_to_i32(actor->client->info.view_height);
+            qa_source_to_i32(actor->powers->maximum_health) : 0;
+        int32_t height = io->reading ? 0 : qa_source_to_i32(actor->client->info.view_height);
         int32_t dead = io->reading ? 0 : actor->client->info.dead ? 2 : 0;
         if (!q2_original_scalar(io, "max_health", Q2_ORIGINAL_I32, 484, 484, 484, &maximum) ||
             !q2_original_scalar(io, "viewheight", Q2_ORIGINAL_I32, 508, 508, 508, &height) ||
@@ -487,8 +487,8 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
     bool has_combat = qa_combat_read(game->services.combat, actor->id, &combat, NULL);
     float source_health = has_combat ? combat.health : actor->entity ? actor->entity->health : 0;
     if (actor->entity && actor->entity->scenery == Q2S_CLOCK) source_health = (float)actor->entity->clock_value;
-    int32_t health = io->reading ? 0 : qa_source_float_to_i32(source_health);
-    int32_t mass = io->reading ? 0 : qa_source_float_to_i32(combat.mass);
+    int32_t health = io->reading ? 0 : qa_source_to_i32(source_health);
+    int32_t mass = io->reading ? 0 : qa_source_to_i32(combat.mass);
     int32_t damage = io->reading ? 0 : combat.can_take_damage ?
         actor->item && actor->item->companion && actor->item->companion->kind == Q2_DOPPLEGANGER &&
             io->edition == QA_RULESET_Q2_CLASSIC ? 2 : 1 : 0;

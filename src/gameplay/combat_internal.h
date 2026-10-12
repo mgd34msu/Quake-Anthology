@@ -65,6 +65,9 @@ struct qa_protection_observer {
     qa_error failure;
 };
 bool qa_combat_argument(qa_error *, const char *);
+bool qa_combat_source_integer(double, int32_t *, qa_error *);
+int32_t qa_combat_source_word(uint32_t);
+int32_t qa_combat_source_multiply(int32_t, int32_t);
 bool qa_combat_live(qa_combat *, qa_actor_id);
 bool qa_combat_policy_execute(qa_combat *, const qa_combat_policy *, const qa_damage_request *, qa_damage_result *, qa_error *);
 bool qa_combat_impulse(qa_combat *, const qa_damage_request *, qa_vec3, float, qa_error *);

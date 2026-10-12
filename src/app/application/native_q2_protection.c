@@ -395,7 +395,7 @@ typedef struct absorb_call {
     protection_actor *actor;
     const qa_damage_request *request;
     const qa_damage_geometry *geometry;
-    float amount,*saved;
+    double amount,*saved;
     qa_damage_flags flags;
 } absorb_call;
 static bool authority_current(void *context,qa_error *e)
@@ -421,7 +421,7 @@ static bool absorb_execute(void *context,qa_error *e)
         a->owner->definitions[a->definition].source,call->request,call->geometry,call->amount,call->flags,&authority,call->saved,e);
 }
 static bool absorb_binding(void *context,const qa_damage_request *request,const qa_damage_geometry *geometry,
-    float amount,qa_damage_flags flags,qa_protection_observer *observer,float *saved,qa_error *e)
+    double amount,qa_damage_flags flags,qa_protection_observer *observer,double *saved,qa_error *e)
 {
     protection_actor *a=context;
     if(!request||!saved||!qa_actor_id_equal(request->target,a->actor)||!current(a,e)) return fail(e,"Native protection absorption lost its selected actor");

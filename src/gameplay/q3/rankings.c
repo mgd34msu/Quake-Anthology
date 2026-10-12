@@ -160,10 +160,10 @@ bool qa_q3_ranking_damage(qa_q3_game *game, const qa_damage_outcome *outcome,
     if (!enabled(game) || outcome->stale || !q3_is_player(game, outcome->request.target))
         return true;
     bool armor_written;
-    float armor = q3_damage_regular_delta(outcome, &armor_written);
+    double armor = q3_damage_regular_delta(outcome, &armor_written);
     if (outcome->result.applied_damage == 0 && !armor_written)
         return true;
-    float amount = outcome->result.applied_damage + armor;
+    double amount = outcome->result.applied_damage + armor;
     const qa_damage_request *request = &outcome->request;
     int32_t self = q3_entity_number(game, request->target);
     int32_t attacker = q3_entity_number(game, request->attack.attacker);
@@ -179,7 +179,7 @@ bool qa_q3_ranking_damage(qa_q3_game *game, const qa_damage_outcome *outcome,
     if ((method >= 14 && method <= 20) || method == 22)
         return true;
     int32_t group = damage_group(method);
-    int32_t damage = qa_source_float_to_i32(amount);
+    int32_t damage = qa_source_to_i32(amount);
     bool splash = method == 5 || method == 7 || method == 9 || method == 13;
     if ((new_hit && !pair(game, self, 1111020004, 1111020004 + 100 * group, 1, error)) ||
         !pair(game, self, 1111020006, 1111020006 + 100 * group, damage, error) ||

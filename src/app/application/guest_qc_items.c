@@ -261,7 +261,7 @@ static bool read_entry(struct application_qc_item_actor *a,const application_qc_
     if(s->bits){uint32_t allowed=s->private_mask;for(size_t i=0;i<s->count;++i)allowed|=s->items[i].mask;
         if(a->engine->provider->state.qc.qualified &&
             (count<0||count>16777215||truncf(count)!=count||((uint32_t)count&~allowed)))return application_fail(e,QA_ERROR_FORMAT,"QC item bits leave declared exact Source storage");
-        uint32_t bits=(uint32_t)qa_source_float_to_i32(count);
+        uint32_t bits=(uint32_t)qa_source_to_i32(count);
         *out=(qa_inventory_entry){s->items[bit].item,(bits&s->items[bit].mask)?1:0,1,QA_COUNT_STACK};return true;
     }
     if(s->capacity&&!scalar(a,s->capacity,before,&capacity,e))return false;
@@ -291,7 +291,7 @@ static bool entry_write(void *context,const qa_inventory_entry *value,qa_error *
     if(!s||!qa_inventory_validate_entry(value,&normalized,e)||!read_entry(a,s,bit,NULL,&previous,e))return false;
     qa_qc_instance *vm=a->engine->provider->state.qc.instance;
     if(s->bits){float count;if(value->capacity!=1||(value->count!=0&&value->count!=1)||!scalar(a,s->field,NULL,&count,e))return false;
-        uint32_t bits=(uint32_t)qa_source_float_to_i32(count);
+        uint32_t bits=(uint32_t)qa_source_to_i32(count);
         bits=value->count!=0?(bits|s->items[bit].mask):(bits&~s->items[bit].mask);
         float stored=a->engine->provider->state.qc.qualified?(float)bits:(float)(int32_t)bits;
         return qa_qc_project_entity_float(vm,a->reference,s->field->offset,stored,e);

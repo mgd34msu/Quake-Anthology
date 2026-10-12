@@ -175,7 +175,7 @@ static bool duck(void *context, const qa_qvm_call *call, int32_t *result, qa_err
     bool ok;
     if (scope->fixed_pose) {
         uint32_t flags;
-        uint32_t height = (uint32_t)qa_source_float_to_i32(scope->pose.view_height);
+        uint32_t height = (uint32_t)qa_source_to_i32(scope->pose.view_height);
         ok = word(owner, scope->player + 12, &flags, error) &&
             write_word(owner, scope, call, scope->player + 12,
                 (flags & ~UINT32_C(1)) | (scope->fixed_crouched ? 1u : 0u), error) &&

@@ -58,7 +58,7 @@ static bool source_health(const qa_q1_save_data *data,double *health,bool *god,q
             *health=value;found_health=true;
         } else if (!strcmp(field->key,"flags")) {
             if (!qa_parse_atof(field->value,&value,error)) return false;
-            *god=(qa_source_float_to_i32((float)value)&64)!=0;found_flags=true;
+            *god=(qa_source_to_i32((float)value)&64)!=0;found_flags=true;
         }
     }
     return (found_health && found_flags) || fail(error,"Original Source player edict lacks real health/flags");

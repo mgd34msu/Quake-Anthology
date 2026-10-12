@@ -956,14 +956,14 @@ bool q2_original_entity_record(qa_q2_game *g, q2_original_record_io *io, q2_acto
     if (io->references_only) return entity_references(g, io, s);
     if (!entity_strings(g, io, s) || !q2_original_record(io, Q2_ORIGINAL_ENTITY, s)) return false;
     if (s->kind == Q2E_DOOR || s->kind == Q2E_BUTTON) {
-        int32_t maximum = io->reading ? 0 : qa_source_float_to_i32(s->health);
+        int32_t maximum = io->reading ? 0 : qa_source_to_i32(s->health);
         if (!scalar(io, "max_health", Q2_ORIGINAL_I32, 484, &maximum)) return false;
         if (io->reading) s->health = (float)maximum;
     }
     if (s->kind == Q2E_SCENERY && s->scenery == Q2S_CLOCK && io->reading &&
         !scalar(io, "health", Q2_ORIGINAL_I32, 480, &s->clock_value)) return false;
     if (io->reading && original_mover_kind(s->kind) && !q2_mover_state(a, error)) return false;
-    int32_t damage = io->reading ? 0 : qa_source_float_to_i32(s->damage);
+    int32_t damage = io->reading ? 0 : qa_source_to_i32(s->damage);
     uint64_t timestamp = s->kind == Q2E_EARTHQUAKE || s->kind == Q2E_PUSH ? s->expires_ns : s->timestamp_ns;
     uint64_t touch_time = s->kind == Q2E_DOOR || s->kind == Q2E_BUTTON || s->kind == Q2E_DOOR_TRIGGER ||
         s->kind == Q2E_SECRET_DOOR ? s->timestamp_ns : s->debounce_ns;

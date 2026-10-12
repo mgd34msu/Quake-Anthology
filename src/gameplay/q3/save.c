@@ -23,6 +23,14 @@ static bool save_fail(qa_source_save_io *io, const char *message)
     return false;
 }
 
+static bool damage_counter(qa_source_save_io *io, int32_t *value)
+{
+    double scalar = *value;
+    if (!qa_source_save_scalar(io, &scalar)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ) *value = qa_source_to_i32(scalar);
+    return true;
+}
+
 static bool trajectory(qa_source_save_io *io, qa_trajectory *p)
 {
     ENUM(p->type, QA_TRAJECTORY_GRAVITY);
@@ -82,7 +90,8 @@ static bool player(qa_source_save_io *io, qa_q3_player_state *p, qa_q3_player_mo
     FIELD(i32, p->fly_sound_after); FIELD(i32, motion->jumppad_entity);
     FIELD(i32, motion->jumppad_frame); FIELD(i32, motion->pmove_frame_count);
     for (size_t i = 0; i < 3; ++i) FIELD(i32, p->last_command_angles[i]);
-    FIELD(f32, p->damage_blood); FIELD(f32, p->damage_armor); FIELD(f32, p->damage_knockback);
+    if (!damage_counter(io, &p->damage_blood) || !damage_counter(io, &p->damage_armor) ||
+        !damage_counter(io, &p->damage_knockback)) return false;
     FIELD(vec3, p->damage_from); FIELD(string, p->loop_sound);
     FIELD(f32, p->fractional_weapon_ms); FIELD(f32, motion->view_height);
     FIELD(vec3, motion->view_angles); FIELD(vec3, p->grapple_point);

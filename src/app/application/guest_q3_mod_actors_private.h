@@ -72,7 +72,7 @@ void q3mod_actors_collect(application_q3_mod_actors *);
 bool q3mod_actors_word(application_q3_mod_actors *,uint32_t,int32_t *,qa_error *);
 bool q3mod_actors_write(application_q3_mod_actors *,uint32_t,int32_t,qa_error *);
 bool q3mod_actors_state(void *,qa_combat_state *,qa_error *);
-bool q3mod_actors_health(void *,float,qa_error *);
+bool q3mod_actors_health(void *,double,qa_error *);
 bool q3mod_actors_armor(void *,const qa_armor *,qa_error *);
 bool q3mod_actors_armor_valid(void *,const qa_armor *,qa_error *);
 bool q3mod_actors_invoke(application_q3_mod_actors *,uint32_t,const int32_t *,size_t,int32_t *,qa_error *);
@@ -82,5 +82,5 @@ bool q3mod_actors_source_damage(void *,qa_combat *,const qa_damage_request *,qa_
 bool q3mod_actors_damage_hook(application_q3_mod_actors *,const qa_qvm_call *,
     application_q3_mod_actor_proceed,void *,int32_t *,qa_error *);
 bool q3mod_actors_flush(application_q3_mod_actors *,mod_actor_damage_frame *,qa_error *);
-bool q3mod_actors_reaction(application_q3_mod_actors *,qa_actor_id,size_t,float,qa_error *);
+bool q3mod_actors_reaction(application_q3_mod_actors *,qa_actor_id,size_t,double,qa_error *);
 #endif

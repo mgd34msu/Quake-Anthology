@@ -415,8 +415,7 @@ static bool player_state_valid(const qa_q3_player_state *state, bool source_clie
         !qa_vec_finite(state->cutscene.origin) || !qa_vec_finite(state->cutscene.angles) ||
         !qa_vec_finite(state->cutscene.view_offset) ||
         (state->cutscene.active && !(state->selections & QA_Q3_CHARACTER)) ||
-        !qa_vec_finite(state->damage_from) || !isfinite(state->damage_blood) ||
-        !isfinite(state->damage_armor) || !isfinite(state->damage_knockback) ||
+        !qa_vec_finite(state->damage_from) ||
         (!source_client && !state->selections) ||
         (state->selections & ~(uint32_t)QA_Q3_ALL_SELECTIONS))
         return false;
@@ -533,11 +532,11 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
     entry->force_gesture = false;
     if (player->selections & QA_Q3_CHARACTER) {
         qa_combat_state combat = {
-            .health = (float)player->handicap + 25,
+            .health = player->handicap + 25,
             .mass = 200,
             .can_take_damage = true,
             .team = team,
-            .armor.regular = {.kind = QA_ARMOR_Q3, .protection.q3_protection = 0.66f}};
+            .armor.regular = {.kind = QA_ARMOR_Q3, .protection.q3_protection = 0.66}};
         qa_combat_state previous;
         qa_error ignored = {0};
         bool has_combat = qa_combat_read(game->options.services.combat, actor, &previous, &ignored);
@@ -1762,7 +1761,7 @@ bool qa_q3_client_movement_complete(qa_q3_game *game, qa_actor_id actor, int32_t
         client->rule.followed_player.viewangles[0] = view.x;
         client->rule.followed_player.viewangles[1] = view.y;
         client->rule.followed_player.viewangles[2] = view.z;
-        client->rule.followed_player.viewheight = qa_source_float_to_i32(height);
+        client->rule.followed_player.viewheight = qa_source_to_i32(height);
         client->rule.followed_player.groundEntityNum = ground_entity_number;
     }
     return true;
