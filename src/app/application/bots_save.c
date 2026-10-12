@@ -176,11 +176,6 @@ static bool snapshot_field(qa_source_save_io *io,application_bots *bots) {
         return bot_save_fail(io,QA_ERROR_FORMAT,"Application pickup snapshot allocation differs");
     for(size_t i=0;i<count;++i) if(!qa_source_save_actor(io,s->actors+i)) return false;
     if(!qa_source_save_count(io,&bots->train_capacity,maximum)) return false;
-    if(io->direction==QA_SOURCE_SAVE_READ && bots->train_capacity) {
-        if(bots->train_capacity>SIZE_MAX/sizeof(*bots->train_stops)) return false;
-        bots->train_stops=calloc(bots->train_capacity,sizeof(*bots->train_stops));
-        if(!bots->train_stops) return bot_save_fail(io,QA_ERROR_MEMORY,"Restoring application mover scratch");
-    }
     return true;
 }
 static bool script_files_field(qa_source_save_io *io,application_bots *bots) {

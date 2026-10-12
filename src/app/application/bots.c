@@ -181,11 +181,15 @@ bool application_bots_initial_settings(qa_application *app,const qa_launch_seat 
 }
 bool application_bots_observations_prepare(application_bots *bots,qa_error *error) {
     size_t capacity=qa_actors_capacity(qa_session_actors(bots->application->session));
-    if(capacity>SIZE_MAX/sizeof(qa_actor_id))
+    if(capacity>SIZE_MAX/sizeof(qa_actor_id) || capacity>SIZE_MAX/sizeof(*bots->train_stops))
         return application_fail(error,QA_ERROR_MEMORY,"Bot observations exceed native storage");
     qa_actor_id *actors=capacity?qa_arena_alloc(&bots->observation_storage,
         capacity*sizeof(*actors),_Alignof(qa_actor_id),error):NULL;
     if(capacity && !actors) return false;
+    bots->train_stops=capacity?qa_arena_alloc(&bots->observation_storage,
+        capacity*sizeof(*bots->train_stops),_Alignof(qa_nav_train_stop),error):NULL;
+    if(capacity && !bots->train_stops) return false;
+    if(capacity) memset(bots->train_stops,0,capacity*sizeof(*bots->train_stops));
     bots->pickup_snapshot=(qa_world_actor_snapshot){.actors=actors,
         .world=bots->application->world,.borrowed=true};
     qa_arena_seal(&bots->observation_storage);
@@ -851,7 +855,7 @@ static bool close_bots(application_bots *bots,qa_error *error) {
     application_bots_original_detach(bots->original);
     qa_actor_index_destroy(&bots->actor_seats);
     qa_actor_index_destroy(&bots->actor_targets);
-    free(bots->client_seats);free(bots->train_stops);free(bots->seats);free(bots);return true;
+    free(bots->client_seats);free(bots->seats);free(bots);return true;
 }
 bool application_bots_can_destroy(const qa_application *application) {
     application_bots *bots=application?application->bots:NULL;

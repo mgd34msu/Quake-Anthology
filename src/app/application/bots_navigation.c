@@ -76,13 +76,7 @@ static bool native_mover(application_bots *bots,qa_actor_id actor,application_bo
         if(bots->mover_borrowed)
             return application_fail(error,QA_ERROR_ARGUMENT,"bot mover observation is already borrowed");
         size_t capacity=qa_actors_capacity(qa_session_actors(application->session));
-        if(capacity>bots->train_capacity) {
-            if(capacity>SIZE_MAX/sizeof(*bots->train_stops))
-                return application_fail(error,QA_ERROR_MEMORY,"bot train stop storage overflow");
-            qa_nav_train_stop *stops=realloc(bots->train_stops,capacity*sizeof(*stops));
-            if(!stops) return application_fail(error,QA_ERROR_MEMORY,"retaining bot authored train stops");
-            bots->train_stops=stops;bots->train_capacity=capacity;
-        }
+        if(capacity>bots->train_capacity) bots->train_capacity=capacity;
         size_t stops;bool ok;
         bots->mover_borrowed=true;
         if(provider->kind==APPLICATION_PROVIDER_Q1) {
