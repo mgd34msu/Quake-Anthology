@@ -324,7 +324,11 @@ bool qa_q2_entities_restore(qa_q2_game *g, const qa_q2_entities_checkpoint *s, q
     if (!q2_campaign_saved_valid(g, s, e)) return false;
     q2_entities next = *g->entity_runtime;
     next.wind = NULL;
-    next.wind_count = next.wind_capacity = s->wind_count;
+    next.wind_index = (qa_actor_index){0};
+    next.wind_count = s->wind_count;
+    next.wind_capacity = qa_actors_capacity(qa_session_actors(g->services.session));
+    if (next.wind_capacity < s->wind_count)
+        next.wind_capacity = s->wind_count;
     if (!q2_resolve_reference(g, s->poi, &next.poi, e) ||
         !q2_resolve_reference(g, s->poi_dynamic, &next.poi_dynamic, e))
         return false;
@@ -335,12 +339,14 @@ bool qa_q2_entities_restore(qa_q2_game *g, const qa_q2_entities_checkpoint *s, q
             !q2_resolve_reference(g, s->bars[i].target, &next.bars[i].target, e))
             return false;
     }
-    if (s->wind_count) {
-        next.wind = calloc(s->wind_count, sizeof(*next.wind));
+    if (next.wind_capacity) {
+        next.wind = calloc(next.wind_capacity, sizeof(*next.wind));
         if (!next.wind) {
             qa_error_set(e, QA_ERROR_MEMORY, 0, "Restoring Q2 wind timers");
             return false;
         }
+    }
+    if (s->wind_count) {
         for (size_t i = 0; i < s->wind_count; i++) {
             next.wind[i].until_ns = s->wind[i].until_ns;
             if (!q2_resolve_reference(g, s->wind[i].actor, &next.wind[i].actor, e)) {
@@ -391,7 +397,16 @@ bool qa_q2_entities_restore(qa_q2_game *g, const qa_q2_entities_checkpoint *s, q
         }
         memcpy(next.visited_maps, s->visited_maps, s->visited_count * sizeof(*next.visited_maps));
     }
+    if (!qa_actor_index_create(&next.wind_index, qa_session_actors(g->services.session), NULL, e)) {
+        free(next.wind);
+        free(next.visited_maps);
+        return false;
+    }
+    for (size_t i = 0; i < next.wind_count; i++)
+        if (q2_actor_live(g, next.wind[i].actor))
+            qa_actor_index_put(&next.wind_index, next.wind[i].actor, i);
     free(g->entity_runtime->wind);
+    qa_actor_index_destroy(&g->entity_runtime->wind_index);
     free(g->entity_runtime->visited_maps);
     *g->entity_runtime = next;
     return true;

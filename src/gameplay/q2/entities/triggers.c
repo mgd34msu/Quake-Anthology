@@ -55,35 +55,22 @@ bool q2_entity_multi(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error
 }
 static bool wind_sound(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     q2_entities *r = g->entity_runtime;
-    size_t slot = r->wind_count, spare = SIZE_MAX;
-    for (size_t i = 0; i < r->wind_count; i++) {
-        if (qa_actor_id_equal(r->wind[i].actor, id)) {
-            slot = i;
-            break;
+    size_t slot;
+    if (!qa_actor_index_find(&r->wind_index, id, &slot)) {
+        slot = r->wind_count;
+        for (size_t i = 0; i < r->wind_count; i++) {
+            if (!q2_actor_live(g, r->wind[i].actor)) {
+                slot = i;
+                break;
+            }
         }
-        if (spare == SIZE_MAX && !q2_actor_live(g, r->wind[i].actor))
-            spare = i;
-    }
-    if (slot == r->wind_count && spare != SIZE_MAX) {
-        slot = spare;
+        /* Load reserves every live actor; historical rows are recycled first. */
+        if (slot == r->wind_count)
+            r->wind_count++;
+        else
+            qa_actor_index_remove(&r->wind_index, r->wind[slot].actor);
         r->wind[slot] = (q2_wind_time){.actor = id};
-    }
-    if (slot == r->wind_count) {
-        if (r->wind_count == r->wind_capacity) {
-            size_t cap = r->wind_capacity ? r->wind_capacity * 2 : 16;
-            if (cap < r->wind_capacity || cap > SIZE_MAX / sizeof(*r->wind)) {
-                qa_error_set(e, QA_ERROR_MEMORY, 0, "Q2 wind timer capacity overflow");
-                return false;
-            }
-            q2_wind_time *p = realloc(r->wind, cap * sizeof(*p));
-            if (!p) {
-                qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 wind timers");
-                return false;
-            }
-            r->wind = p;
-            r->wind_capacity = cap;
-        }
-        r->wind[r->wind_count++] = (q2_wind_time){.actor = id};
+        qa_actor_index_put(&r->wind_index, id, slot);
     }
     if (r->wind[slot].until_ns >= g->now_ns)
         return true;

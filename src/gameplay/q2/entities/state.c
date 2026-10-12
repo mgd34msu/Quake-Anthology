@@ -42,6 +42,18 @@ bool q2_entities_init(qa_q2_game *g, qa_error *e) {
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 entity state");
         return false;
     }
+    q2_entities *r = g->entity_runtime;
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
+    r->wind_capacity = qa_actors_capacity(actors);
+    if (r->wind_capacity) {
+        r->wind = calloc(r->wind_capacity, sizeof(*r->wind));
+        if (!r->wind) {
+            qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 wind timers");
+            return false;
+        }
+    }
+    if (!qa_actor_index_create(&r->wind_index, actors, NULL, e))
+        return false;
     if (!qa_pool_prepare(&g->entity_records, &g->entity_storage,
             g->actor_records.capacity + 1, sizeof(q2_entity_record),
             _Alignof(q2_entity_record), e)) return false;
@@ -74,6 +86,7 @@ void q2_entity_state_release(qa_q2_game *g, q2_entity_state *s) {
 void q2_entities_close(qa_q2_game *g) {
     if (g->entity_runtime) {
         free(g->entity_runtime->wind);
+        qa_actor_index_destroy(&g->entity_runtime->wind_index);
         free(g->entity_runtime->visited_maps);
     }
     free(g->entity_runtime);

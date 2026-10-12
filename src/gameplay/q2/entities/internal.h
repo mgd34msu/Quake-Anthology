@@ -27,6 +27,7 @@ typedef struct q2_entities {
     bool sky_auto, has_goals;
     q2_wind_time *wind;
     size_t wind_count, wind_capacity;
+    qa_actor_index wind_index;
     uint32_t total_monsters, killed_monsters, level_count;
     qa_q2_campaign_level levels[QA_Q2_CAMPAIGN_LEVEL_LIMIT];
     qa_string_id *visited_maps;
