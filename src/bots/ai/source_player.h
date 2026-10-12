@@ -1,6 +1,7 @@
 #ifndef QA_BOT_AI_SOURCE_PLAYER_H
 #define QA_BOT_AI_SOURCE_PLAYER_H
 #include "internal.h"
+#include "qa/binary.h"
 #include "source_alias.h"
 
 enum { BOT_SOURCE_PW_INVIS=4 };
@@ -19,7 +20,7 @@ static inline void bot_ai_eye_set(bot_ai_state *state,qa_vec3 value) {
 }
 static inline void bot_ai_eye_height_add(bot_ai_state *state,int32_t height) {
     uint8_t *z=state->source_span.data+QA_BOT_SOURCE_EYE+8;
-    bot_source_f32_write(z,bot_source_f32_read(z)+(float)height);
+    qa_store_f32le(z,qa_load_f32le(z)+(float)height);
 }
 qa_bot_player bot_ai_player_sample(const bot_ai_state *);
 void bot_ai_player_observe(bot_ai_state *,const qa_bot_player *);

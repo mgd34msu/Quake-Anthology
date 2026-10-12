@@ -1,12 +1,7 @@
 #include "internal.h"
+#include "qa/binary.h"
 #include <stdio.h>
 
-static uint32_t word(const uint8_t *bytes) {
-    return (uint32_t)bytes[0]|((uint32_t)bytes[1]<<8)|((uint32_t)bytes[2]<<16)|((uint32_t)bytes[3]<<24);
-}
-static void store(uint8_t *bytes,uint32_t value) {
-    for(uint32_t index=0;index<4;++index) bytes[index]=(uint8_t)(value>>(index*8));
-}
 bool bot_chat_system_library_bind(qa_bot_chat_system *system,qa_bot_library *library,qa_error *error) {
     if(!system || !library || system->retired || system->restoring ||
        (system->library && system->library!=library)) {
@@ -107,7 +102,7 @@ static bool load(qa_bot_chat *state,qa_bot_library *library,const qa_bot_chat_te
             if(!same) continue;
             if(!qa_bot_memory_bytes(library->memory,allocation,&bytes,error)) return false;
             qa_bot_chat_asset *asset;
-            if(!resolve(library,word(bytes.data),&asset,error) || !qa_bot_chat_set_initial(state,asset,error)) return false;
+            if(!resolve(library,qa_load_u32le(bytes.data),&asset,error) || !qa_bot_chat_set_initial(state,asset,error)) return false;
             *result=0;return true;
         }
         if(available==64) return report_sources(state,revision,QA_SCRIPT_FATAL,
@@ -155,7 +150,7 @@ static bool load(qa_bot_chat *state,qa_bot_library *library,const qa_bot_chat_te
                     qa_bot_memory_span bytes;
                     ok=qa_bot_memory_bytes(library->memory,allocation,&bytes,error);
                     if(ok) {
-                        store(bytes.data,asset->initial_source->initial.pointer);
+                        qa_store_u32le(bytes.data,asset->initial_source->initial.pointer);
                         qa_bytes value;
                         ok=chat_text_read(name,63,&value,error);
                         if(ok && current(state,published)) {

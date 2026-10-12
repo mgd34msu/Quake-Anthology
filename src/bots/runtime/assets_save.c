@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/binary.h"
 #include "../library/internal.h"
 #include "../goals/internal.h"
 #include "../chat/internal.h"
@@ -104,7 +105,7 @@ static bool collect(const qa_bot_runtime *runtime, qa_bot_saved_assets *set, qa_
         for(size_t index=0;index<64;++index) if(runtime->chat_system->initial_cache[index].owner) {
             qa_bot_memory_span bytes;
             if(!qa_bot_memory_bytes(runtime->memory,runtime->chat_system->initial_cache[index],&bytes,error) || bytes.size!=132) return false;
-            uint32_t pointer=chat_raw_word(bytes.data);
+            uint32_t pointer=qa_load_u32le(bytes.data);
             for(qa_bot_chat_asset *asset=runtime->library->chat_assets;pointer && asset;asset=asset->next)
                 if(asset->initial_source && asset->initial_source->initial.pointer==pointer) {
                     if(!add(set,QA_BOT_SAVED_CHAT,asset,error)) return false;

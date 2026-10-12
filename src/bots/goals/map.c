@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/binary.h"
 #include "qa/game_type.h"
 #include <stdio.h>
 
@@ -28,26 +29,14 @@ void bot_goal_map_clear(qa_bot_goals *g) {
     memset(g->source_buckets, 0, sizeof(g->source_buckets));
     g->entities = NULL;
 }
-static uint32_t map_word(const uint8_t *at) {
-    return (uint32_t)at[0] | ((uint32_t)at[1] << 8) | ((uint32_t)at[2] << 16) | ((uint32_t)at[3] << 24);
-}
-static void map_word_set(uint8_t *at, uint32_t word) {
-    for (unsigned i = 0; i < 4; ++i) at[i] = (uint8_t)(word >> (i * 8));
-}
-static float map_float(const uint8_t *at) {
-    uint32_t word = map_word(at); float value; memcpy(&value, &word, sizeof(value)); return value;
-}
-static void map_float_set(uint8_t *at, float value) {
-    uint32_t word; memcpy(&word, &value, sizeof(word)); map_word_set(at, word);
-}
 static uint32_t map_float_word(float value) {
     uint32_t word; memcpy(&word, &value, sizeof(word)); return word;
 }
 static qa_vec3 map_vector(const uint8_t *at) {
-    return qa_v3(map_float(at), map_float(at + 4), map_float(at + 8));
+    return qa_v3(qa_load_f32le(at), qa_load_f32le(at + 4), qa_load_f32le(at + 8));
 }
 static void map_vector_set(uint8_t *at, qa_vec3 value) {
-    map_float_set(at, value.x); map_float_set(at + 4, value.y); map_float_set(at + 8, value.z);
+    qa_store_f32le(at, value.x); qa_store_f32le(at + 4, value.y); qa_store_f32le(at + 8, value.z);
 }
 bool bot_goal_info_span(const qa_bot_goals *g, uint32_t pointer, qa_bot_memory_span *out,
                         bool *camp, qa_error *error) {
@@ -68,7 +57,7 @@ bool bot_goal_info_free(qa_bot_goals *g, qa_error *error) {
             if (++steps > maximum)
                 return bot_goal_fail(error, "Goal map info free has an invalid retained list");
             if (!bot_goal_info_span(g, pointer, &bytes, &camp, error)) return false;
-            uint32_t next = map_word(bytes.data + (camp ? 160u : 144u));
+            uint32_t next = qa_load_u32le(bytes.data + (camp ? 160u : 144u));
             size_t i = 0;
             while (g->info[i].pointer != pointer) ++i;
             if (!qa_bot_memory_free(g->memory, g->info[i].allocation, error)) return false;
@@ -97,7 +86,7 @@ bool bot_goal_info_topology(const qa_bot_goals *g, qa_error *error) {
             qa_bot_memory_span bytes; bool camp;
             if (++steps > g->info_count) return bot_goal_fail(error, "Saved goal map info list has a cycle");
             if (!bot_goal_info_span(g, pointer, &bytes, &camp, error)) return false;
-            pointer = map_word(bytes.data + (camp ? 160u : 144u));
+            pointer = qa_load_u32le(bytes.data + (camp ? 160u : 144u));
         }
     }
     return true;
@@ -124,25 +113,22 @@ static bool level_span(const qa_bot_goals *g, uint32_t id, qa_bot_memory_span *o
         return bot_goal_fail(error, "Level-item heap extent differs from its source capacity");
     *out = (qa_bot_memory_span){bytes.data + (id - 1) * 60, 60}; return true;
 }
-static int32_t map_integer(uint32_t word) {
-    return word <= INT32_MAX ? (int32_t)word : -1 - (int32_t)(UINT32_MAX - word);
-}
 bool bot_goal_level_read(const qa_bot_goals *g, uint32_t id, bot_level_item *out, qa_error *error) {
     qa_bot_memory_span bytes;
     if (!out || !level_span(g, id, &bytes, error)) return false;
     const uint8_t *at = bytes.data;
-    *out = (bot_level_item){.number = map_integer(map_word(at)), .info = map_word(at + 4),
-        .flags = map_word(at + 8), .weight = map_float(at + 12), .origin = map_vector(at + 16),
-        .goal_area = map_word(at + 28), .goal_origin = map_vector(at + 32),
-        .entity = map_integer(map_word(at + 44)), .timeout = map_float(at + 48),
-        .previous = map_word(at + 52), .next = map_word(at + 56)};
+    *out = (bot_level_item){.number = qa_load_i32le(at), .info = qa_load_u32le(at + 4),
+        .flags = qa_load_u32le(at + 8), .weight = qa_load_f32le(at + 12), .origin = map_vector(at + 16),
+        .goal_area = qa_load_u32le(at + 28), .goal_origin = map_vector(at + 32),
+        .entity = qa_load_i32le(at + 44), .timeout = qa_load_f32le(at + 48),
+        .previous = qa_load_u32le(at + 52), .next = qa_load_u32le(at + 56)};
     return true;
 }
 bool bot_goal_level_word(const qa_bot_goals *g, uint32_t id, uint32_t offset, uint32_t word, qa_error *error) {
-    qa_bot_memory_span bytes;
+    qa_bot_memory_span bytes={0};
     if (offset > 56 || offset % 4) return bot_goal_fail(error, "Invalid level-item word offset");
     if (!level_span(g, id, &bytes, error)) return false;
-    map_word_set(bytes.data + offset, word); return true;
+    qa_store_u32le(bytes.data + offset, word); return true;
 }
 bool bot_goal_level_vector(const qa_bot_goals *g, uint32_t id, uint32_t offset, qa_vec3 value, qa_error *error) {
     qa_bot_memory_span bytes;
@@ -186,7 +172,7 @@ bool bot_goal_item(const qa_bot_goals *g, const bot_level_item *item, qa_bot_goa
     if (!qa_bot_items_view_read(g->items, &items, e)) return false;
     if (item->info >= items->count) return bot_goal_fail(e, "Item goal info exceeds its source configuration");
     const qa_bot_item_info *info = &items->items[item->info];
-    *out = (qa_bot_goal){.origin = item->goal_origin, .area = map_integer(item->goal_area),
+    *out = (qa_bot_goal){.origin = item->goal_origin, .area = qa_i32_from_u32(item->goal_area),
         .mins = info->mins, .maxs = info->maxs, .entity = item->entity, .number = item->number,
         .flags = QA_BOT_GOAL_ITEM | (item->timeout != 0 ? QA_BOT_GOAL_DROPPED : 0) |
                  (item->flags & 16 ? QA_BOT_GOAL_ROAM : 0), .item_info = info->number};
@@ -279,13 +265,13 @@ bool bot_goal_map_info_load(qa_bot_goals *g, qa_bot_navigation *n, qa_error *e) 
             for (unsigned field = 0; field < 4; ++field) {
                 float value;
                 if (!qa_bot_bsp_float(g->entities, id, fields[field], &value, &found, e)) return false;
-                map_float_set(bytes.data + 144 + field * 4, value);
+                qa_store_f32le(bytes.data + 144 + field * 4, value);
             }
         }
         uint32_t area;
         if (!qa_bot_navigation_point(n, map_vector(bytes.data), &area, e) ||
             !bot_goal_info_span(g, pointer, &bytes, &kind, e)) return false;
-        map_word_set(bytes.data + 12, area);
+        qa_store_u32le(bytes.data + 12, area);
         if (camp) {
             if (!area) {
                 if (!bot_goal_position_report(g, "camp spot at ", map_vector(bytes.data), " in solid\n", e) ||
@@ -293,9 +279,9 @@ bool bot_goal_map_info_load(qa_bot_goals *g, qa_bot_navigation *n, qa_error *e) 
                 --g->info_count;
                 continue;
             }
-            map_word_set(bytes.data + 160, g->camp_head); g->camp_head = pointer; ++camp_count;
+            qa_store_u32le(bytes.data + 160, g->camp_head); g->camp_head = pointer; ++camp_count;
         } else {
-            map_word_set(bytes.data + 144, g->location_head); g->location_head = pointer; ++location_count;
+            qa_store_u32le(bytes.data + 144, g->location_head); g->location_head = pointer; ++location_count;
         }
     }
     if (g->services.developer && g->services.developer(g->services.context)) {
@@ -647,8 +633,7 @@ bool qa_bot_goals_level_item(const qa_bot_goals *g, int32_t after, const char *n
 }
 static void info_goal(const qa_bot_memory_span *info, qa_bot_goal *out) {
     out->origin = map_vector(info->data);
-    uint32_t area = map_word(info->data + 12);
-    memcpy(&out->area, &area, sizeof(area));
+    out->area = qa_load_i32le(info->data + 12);
     out->entity = 0;
     out->mins = qa_v3(-8, -8, -8);
     out->maxs = qa_v3(8, 8, 8);
@@ -668,7 +653,7 @@ bool qa_bot_goals_location(const qa_bot_goals *g, const char *name, qa_bot_goal 
             *found = true;
             break;
         }
-        pointer = map_word(bytes.data + (camp ? 160u : 144u));
+        pointer = qa_load_u32le(bytes.data + (camp ? 160u : 144u));
     }
     return true;
 }
@@ -683,7 +668,7 @@ bool qa_bot_goals_camp(const qa_bot_goals *g, int32_t index, qa_bot_goal *out,
         if (++steps > g->info_count) return bot_goal_fail(e, "Goal map camp list has a cycle");
         if (!bot_goal_info_span(g, pointer, &bytes, &camp, e)) return false;
         if ((size_t)index == steps - 1) { info_goal(&bytes, out); *next = index + 1; break; }
-        pointer = map_word(bytes.data + (camp ? 160u : 144u));
+        pointer = qa_load_u32le(bytes.data + (camp ? 160u : 144u));
     }
     return true;
 }

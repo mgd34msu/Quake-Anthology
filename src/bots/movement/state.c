@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/binary.h"
 #include "../checkpoint_internal.h"
 #include <stdio.h>
 
@@ -64,21 +65,14 @@ static uint8_t *record_bytes(const bot_move_record *record, uint32_t offset, uin
     }
     return span.data+offset;
 }
-static uint32_t read_word(const uint8_t *p) {
-    return (uint32_t)p[0] | (uint32_t)p[1]<<8 | (uint32_t)p[2]<<16 | (uint32_t)p[3]<<24;
-}
-static void write_word(uint8_t *p, uint32_t value) {
-    for (unsigned i=0;i<4;++i) p[i]=(uint8_t)(value>>(i*8));
-}
 uint32_t bot_move_word(const bot_move_record *r, bot_move_field field) {
-    return read_word(record_bytes(r,(uint32_t)field,4));
+    return qa_load_u32le(record_bytes(r,(uint32_t)field,4));
 }
 int32_t bot_move_integer(const bot_move_record *r, bot_move_field field) {
-    uint32_t value=bot_move_word(r,field);
-    return value<=INT32_MAX ? (int32_t)value : -1-(int32_t)(UINT32_MAX-value);
+    return qa_load_i32le(record_bytes(r,(uint32_t)field,4));
 }
 float bot_move_float(const bot_move_record *r, bot_move_field field) {
-    uint32_t bits=bot_move_word(r,field);float value;memcpy(&value,&bits,4);return value;
+    return qa_load_f32le(record_bytes(r,(uint32_t)field,4));
 }
 qa_vec3 bot_move_vector(const bot_move_record *r, bot_move_field field) {
     float x=bot_move_float(r,field);
@@ -87,10 +81,10 @@ qa_vec3 bot_move_vector(const bot_move_record *r, bot_move_field field) {
     return qa_v3(x,y,z);
 }
 void bot_move_write_word(bot_move_record *r, bot_move_field field, uint32_t value) {
-    write_word(record_bytes(r,(uint32_t)field,4),value);
+    qa_store_u32le(record_bytes(r,(uint32_t)field,4),value);
 }
 void bot_move_write_float(bot_move_record *r, bot_move_field field, float value) {
-    uint32_t bits;memcpy(&bits,&value,4);bot_move_write_word(r,field,bits);
+    qa_store_f32le(record_bytes(r,(uint32_t)field,4),value);
 }
 void bot_move_write_vector(bot_move_record *r, bot_move_field field, qa_vec3 value) {
     bot_move_write_float(r,field,value.x);

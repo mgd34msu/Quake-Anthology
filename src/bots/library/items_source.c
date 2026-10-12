@@ -1,14 +1,9 @@
 #include "items_source.h"
+#include "qa/binary.h"
 #include "../memory/internal.h"
 
 static bool fail(qa_error *error, const char *text) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", text); return false;
-}
-static uint32_t word(const uint8_t *p) {
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-static void put(uint8_t *p, uint32_t value) {
-    for (unsigned i = 0; i < 4; ++i) p[i] = (uint8_t)(value >> (i * 8));
 }
 static bool bytes(qa_bot_items *c, qa_bot_memory_span *span, qa_error *error) {
     if (!c || !c->memory || !qa_bot_memory_bytes(c->memory, c->allocation, span, error)) return false;
@@ -38,7 +33,7 @@ bool bot_items_create(qa_bot_memory *memory, const char *path, size_t capacity,
     }
     qa_bot_memory_span span;
     if (!qa_bot_memory_bytes(memory, c->allocation, &span, error)) { qa_bot_items_release(c); return false; }
-    put(span.data + 4, BOT_ITEM_HEADER_BYTES);
+    qa_store_u32le(span.data + 4, BOT_ITEM_HEADER_BYTES);
     c->view.items = c->items; *out = c; return true;
 }
 bool bot_items_cell(qa_bot_items *c, size_t index, qa_bot_memory_span *out, qa_error *error) {
@@ -50,12 +45,12 @@ bool bot_items_count(qa_bot_items *c, uint32_t count, qa_error *error) {
     qa_bot_memory_span span;
     if (!bytes(c, &span, error)) return false;
     if (count > c->view.capacity) return fail(error, "Item count exceeds its source allocation");
-    put(span.data, count); return true;
+    qa_store_u32le(span.data, count); return true;
 }
 bool bot_items_header_count(qa_bot_items *c, uint32_t *out, qa_error *error) {
     qa_bot_memory_span span;
     if (!out || !bytes(c, &span, error)) return false;
-    *out = word(span.data);
+    *out = qa_load_u32le(span.data);
     return *out <= c->view.capacity || fail(error, "Item parser count exceeds its actual source cells");
 }
 bool bot_items_member(qa_bot_items *c, uint32_t index, qa_error *error) {
@@ -77,11 +72,11 @@ bool bot_items_store(qa_bot_items *c, size_t index, const qa_bot_item_info *valu
     if (!value || !bot_items_cell(c, index, &span, error)) return false;
     memcpy(span.data, value->classname, 32); memcpy(span.data + 32, value->name, 80);
     memcpy(span.data + 112, value->model, 80);
-    put(span.data + 192, (uint32_t)value->model_index); put(span.data + 196, (uint32_t)value->type);
-    put(span.data + 200, (uint32_t)value->inventory); put(span.data + 232, (uint32_t)value->number);
+    qa_store_u32le(span.data + 192, (uint32_t)value->model_index); qa_store_u32le(span.data + 196, (uint32_t)value->type);
+    qa_store_u32le(span.data + 200, (uint32_t)value->inventory); qa_store_u32le(span.data + 232, (uint32_t)value->number);
     float values[] = {value->respawn_seconds, value->mins.x, value->mins.y, value->mins.z,
                       value->maxs.x, value->maxs.y, value->maxs.z};
-    for (unsigned i = 0; i < 7; ++i) { uint32_t raw; memcpy(&raw, values + i, 4); put(span.data + 204 + i * 4, raw); }
+    for (unsigned i = 0; i < 7; ++i) qa_store_f32le(span.data + 204 + i * 4, values[i]);
     return true;
 }
 bool bot_items_project(qa_bot_items *c, qa_error *error) {
@@ -98,12 +93,12 @@ bool bot_items_project(qa_bot_items *c, qa_error *error) {
         memcpy(value->model, span.data + 112, 80);
         if (!memchr(value->classname, 0, 32) || !memchr(value->name, 0, 80) || !memchr(value->model, 0, 80))
             return fail(error, "Item source string is unterminated");
-        uint32_t raw = word(span.data + 192); memcpy(&value->model_index, &raw, 4);
-        raw = word(span.data + 196); memcpy(&value->type, &raw, 4);
-        raw = word(span.data + 200); memcpy(&value->inventory, &raw, 4);
-        raw = word(span.data + 232); memcpy(&value->number, &raw, 4);
+        value->model_index = qa_load_i32le(span.data + 192);
+        value->type = qa_load_i32le(span.data + 196);
+        value->inventory = qa_load_i32le(span.data + 200);
+        value->number = qa_load_i32le(span.data + 232);
         float values[7];
-        for (unsigned n = 0; n < 7; ++n) { raw = word(span.data + 204 + n * 4); memcpy(values + n, &raw, 4); }
+        for (unsigned n = 0; n < 7; ++n) values[n] = qa_load_f32le(span.data + 204 + n * 4);
         value->respawn_seconds = values[0]; value->mins = (qa_vec3){values[1], values[2], values[3]};
         value->maxs = (qa_vec3){values[4], values[5], values[6]};
     }

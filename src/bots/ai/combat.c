@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/binary.h"
 #include "qa/text.h"
 #include "qa/game_type.h"
 #include "source_event_state.h"
@@ -269,7 +270,7 @@ bool bot_ai_source_enemy_dead(qa_bots *b,bot_ai_state *s,const qa_bot_entity_inf
     *dead=player.has_player && player.pm_type!=0;return true;
 }
 static bool source_enemy_same_team(qa_bots *b,bot_ai_state *s,int32_t client,bool *same,qa_error *e) {
-    int32_t self=bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_CLIENT);
+    int32_t self=qa_load_i32le(s->source_span.data+QA_BOT_SOURCE_CLIENT);
     *same=false;
     if(self<0 || self>=64 || client<0 || client>=64 || !qa_game_type_has_allies(b->source_goals.game_type)) return true;
     int32_t own,other;
@@ -302,7 +303,7 @@ bool bot_ai_find_enemy(qa_bots *b,bot_ai_state *s,int32_t current_enemy,bool *fo
         best=qa_vec_dot(direction,direction);
     }
     if(s->team_arena && b->source_goals.game_type==6) {
-        int32_t self=bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_CLIENT),team;
+        int32_t self=qa_load_i32le(s->source_span.data+QA_BOT_SOURCE_CLIENT),team;
         if(!bot_ai_source_team(b,self,&team,e)) return false;
         if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
         qa_bot_goal goal=team==1?b->source_goals.blue_obelisk:b->source_goals.red_obelisk;
@@ -318,7 +319,7 @@ bool bot_ai_find_enemy(qa_bots *b,bot_ai_state *s,int32_t current_enemy,bool *fo
         }
     }
     for(int32_t client=0;client<b->source_goals.max_clients && client<64;++client) {
-        int32_t self=bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_CLIENT);
+        int32_t self=qa_load_i32le(s->source_span.data+QA_BOT_SOURCE_CLIENT);
         if(client==self || client==current_enemy) continue;
         qa_bot_entity_info info;bool observed;
         if(!qa_bot_runtime_entity(b->runtime,client,&info,&observed,e)) return false;
@@ -326,7 +327,7 @@ bool bot_ai_find_enemy(qa_bots *b,bot_ai_state *s,int32_t current_enemy,bool *fo
         bool dead;
         if(!bot_ai_source_enemy_dead(b,s,&info,&dead,e)) return false;
         if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
-        int32_t entity=bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_ENTITY);
+        int32_t entity=qa_load_i32le(s->source_span.data+QA_BOT_SOURCE_ENTITY);
         if(dead || info.number==entity) continue;
         bool carrying=enemy_carries_flag(b,&info),firing=(info.state.flags&0x100)!=0;
         if(!carrying && ((uint32_t)info.state.powerups&(1u<<BOT_SOURCE_PW_INVIS)) && !firing) continue;
@@ -646,7 +647,7 @@ static bool selected_fire_path(qa_bots *b,bot_ai_state *s,const qa_bot_weapon_kn
                     (int32_t)lroundf(flight*1000*((float)segment/(float)segments)),
                     weapon->gravity_acceleration,&end,e)) return false;
             qa_actor_id viewer=source?b->services.entity_actor(b->services.context,
-                bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_ENTITY)):s->view.actor;
+                qa_load_i32le(s->source_span.data+QA_BOT_SOURCE_ENTITY)):s->view.actor;
             qa_trace_result hit;
             if(!trace(b,s,previous,end,&bounds,viewer,BOT_SHOT,&hit,e)) return false;
             if(s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_live(b,enemy)) return true;
@@ -850,7 +851,7 @@ static bool source_goal_visible_near(qa_bots *b,bot_ai_state *s,const qa_bot_goa
     qa_vec3 target=qa_vec_add(goal->origin,qa_v3(0,0,1));
     qa_vec3 direction=qa_vec_sub(bot_ai_origin(s),target);
     if(!(qa_vec_dot(direction,direction)<distance*distance)) return true;
-    int32_t client=bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_CLIENT);
+    int32_t client=qa_load_i32le(s->source_span.data+QA_BOT_SOURCE_CLIENT);
     qa_actor_id pass=b->services.entity_actor(b->services.context,client);
     qa_trace_result hit;
     SOURCE_ATTACK_CALL(trace(b,s,bot_ai_eye(s),target,NULL,pass,BOT_SOLID,&hit,e));
@@ -861,7 +862,7 @@ static bool source_goal_visible_near(qa_bots *b,bot_ai_state *s,const qa_bot_goa
 static bool source_visible_carriers(qa_bots *b,bot_ai_state *s,int32_t *team,int32_t *enemy,qa_error *e) {
     *team=0;*enemy=0;
     for(int32_t client=0;client<b->source_goals.max_clients && client<64;++client) {
-        if(client==bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_CLIENT)) continue;
+        if(client==qa_load_i32le(s->source_span.data+QA_BOT_SOURCE_CLIENT)) continue;
         qa_bot_entity_info info;bool observed;
         SOURCE_ATTACK_CALL(qa_bot_runtime_entity(b->runtime,client,&info,&observed,e));
         if(!info.valid || !enemy_carries_flag(b,&info)) continue;
@@ -890,7 +891,7 @@ static bool source_kamikaze(qa_bots *b,bot_ai_state *s,qa_error *e) {
         SOURCE_ATTACK_CALL(source_carrier_near(b,s,carrier,&near,e));
         if(near) return bot_ai_source_action(b,s,QA_BOT_USE,e);
     } else if(type==6) {
-        int32_t client=bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_CLIENT),team;
+        int32_t client=qa_load_i32le(s->source_span.data+QA_BOT_SOURCE_CLIENT),team;
         SOURCE_ATTACK_CALL(bot_ai_source_team(b,client,&team,e));
         const qa_bot_goal *goal=team==1?&b->source_goals.blue_obelisk:&b->source_goals.red_obelisk;
         bool visible;
@@ -913,7 +914,7 @@ static bool source_invulnerability(qa_bots *b,bot_ai_state *s,qa_error *e) {
         if(carrier>=0) return true;
     }
     if(type!=4 && type!=5 && type!=6 && type!=7) return true;
-    int32_t client=bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_CLIENT),team;
+    int32_t client=qa_load_i32le(s->source_span.data+QA_BOT_SOURCE_CLIENT),team;
     SOURCE_ATTACK_CALL(bot_ai_source_team(b,client,&team,e));
     if(type==4 || type==5) goal=team==1?&b->source_goals.blue_flag:&b->source_goals.red_flag;
     else goal=team==1?&b->source_goals.blue_obelisk:&b->source_goals.red_obelisk;
@@ -947,7 +948,7 @@ static bool source_trace_hits(qa_bots *b,const qa_trace_result *trace_result,int
 }
 static qa_actor_id source_viewer(qa_bots *b,const bot_ai_state *s) {
     return b->services.entity_actor(b->services.context,
-        bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_ENTITY));
+        qa_load_i32le(s->source_span.data+QA_BOT_SOURCE_ENTITY));
 }
 bool bot_ai_source_aim(qa_bots *b,bot_ai_state *s,qa_error *e) {
     int32_t enemy=bot_ai_enemy_number(s);
@@ -1080,8 +1081,8 @@ bool bot_ai_source_aim(qa_bots *b,bot_ai_state *s,qa_error *e) {
     } else {
         best=bot_ai_last_enemy_origin(s);best.z+=8;
         if(skill>.5f && tactics.predict_occluded_splash) {
-            qa_bot_goal goal={.entity=bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_CLIENT),
-                .area=bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_AREA),.origin=bot_ai_eye(s),
+            qa_bot_goal goal={.entity=qa_load_i32le(s->source_span.data+QA_BOT_SOURCE_CLIENT),
+                .area=qa_load_i32le(s->source_span.data+QA_BOT_SOURCE_AREA),.origin=bot_ai_eye(s),
                 .mins={-8,-8,-8},.maxs={8,8,8}};
             qa_vec3 target;bool found;
             SOURCE_ATTACK_CALL(qa_bot_moves_visible_position(qa_bot_runtime_moves(b->runtime),
@@ -1172,7 +1173,7 @@ bool bot_ai_source_check_attack(qa_bots *b,bot_ai_state *s,qa_error *e) {
     } else if(!qa_bot_field_of_vision(bot_ai_view_angles(s),distance<100*100?120:50,qa_vec_angles(direction,QA_DIRECTION_VM,QA_VECTOR_SOURCE))) return true;
     qa_trace_result hit;
     qa_actor_id client=b->services.entity_actor(b->services.context,
-        bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_CLIENT));
+        qa_load_i32le(s->source_span.data+QA_BOT_SOURCE_CLIENT));
     if(!selected_predictable(&selected)) {
         SOURCE_ATTACK_CALL(trace(b,s,bot_ai_eye(s),bot_ai_aim_target(s),NULL,client,BOT_SOLID|BOT_PLAYERCLIP,&hit,e));
         if(hit.fraction<1 && !source_trace_hits(b,&hit,enemy)) return true;

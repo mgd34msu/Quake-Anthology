@@ -2,6 +2,7 @@
  * Copyright (C) 1999-2005 Id Software, Inc.
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
+#include "qa/binary.h"
 #include "source_goal_record.h"
 #include "source_event_state.h"
 #include "source_team_state.h"
@@ -118,7 +119,7 @@ bool bot_ai_source_point_contents(qa_bots *b,qa_vec3 point,qa_actor_id pass,int3
 bool bot_ai_source_entity_visible(qa_bots *b,bot_ai_state *s,int32_t entity,
                                   float fov,float *out,qa_error *e) {
     *out=0;if(!alive(b,s)) return true;
-    int32_t viewer_number=bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_ENTITY);
+    int32_t viewer_number=qa_load_i32le(s->source_span.data+QA_BOT_SOURCE_ENTITY);
     qa_bot_entity_info info;
     SOURCE_CALL(observation(b,entity,&info,e));
     qa_vec3 middle=qa_vec_add(info.state.origin,

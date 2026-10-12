@@ -1,5 +1,6 @@
 /* Q3 ai_team.c and ai_dmq3.c policy over the retained GAME and botlib owners. */
 #include "internal.h"
+#include "qa/binary.h"
 #include "qa/text.h"
 #include "qa/game_type.h"
 #include "source_selectors.h"
@@ -631,7 +632,7 @@ static bool random_deadline(qa_bots *b, bot_ai_state *s, float wait, uint32_t of
     float random;if(!bot_ai_random(b,&random,e)) return false;
     if(alive(b,s)) {
         float delay=random*10.0f;float start=b->time+wait;
-        bot_source_f32_write(s->source_span.data+offset,start+delay);
+        qa_store_f32le(s->source_span.data+offset,start+delay);
     }
     return true;
 }
@@ -853,7 +854,7 @@ static bool seek_ctf(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 team==2?qa_vec_sub(bot_ai_origin(s),b->source_goals.red_flag.origin):qa_v3(999,999,999);
             if(qa_vec_length(direction)<128) {
                 if(!bot_ai_source_alternate_route(b,s,opposite(team),e)) return false;
-            } else bot_source_i32_write(s->source_span.data+QA_BOT_SOURCE_ALT_GOAL+12,0);
+            } else qa_store_u32le(s->source_span.data+QA_BOT_SOURCE_ALT_GOAL+12,0);
             if(!alive(b,s)) return true;
             if(!b->services.userinfo || !b->services.userinfo(b->services.context,s->view.actor,"teamtask","1",e)) return false;
             return !alive(b,s) || bot_ai_source_voice(b,s,-1,"ihaveflag",false,e);

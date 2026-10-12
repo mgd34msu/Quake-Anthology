@@ -1,4 +1,5 @@
 #include "source_command.h"
+#include "qa/binary.h"
 #include "source_alias.h"
 #include "source_player.h"
 #include "source_view.h"
@@ -20,10 +21,10 @@ bool bot_ai_source_command_read(qa_bots *bots, bot_ai_state *state,
     uint8_t *command;
     if (!out || !bytes(bots, state, &command, error)) return false;
     command+=QA_BOT_SOURCE_COMMAND;
-    qa_q3_usercmd raw = {.serverTime = bot_source_i32_read(command),
-        .buttons = bot_source_i32_read(command + 16), .weapon = command[20]};
+    qa_q3_usercmd raw = {.serverTime = qa_load_i32le(command),
+        .buttons = qa_load_i32le(command + 16), .weapon = command[20]};
     for (uint32_t axis = 0; axis < 3; ++axis)
-        raw.angles[axis] = bot_source_i32_read(command + 4 + axis * 4);
+        raw.angles[axis] = qa_load_i32le(command + 4 + axis * 4);
     memcpy(&raw.forwardmove, command + 21, 1);
     memcpy(&raw.rightmove, command + 22, 1);
     memcpy(&raw.upmove, command + 23, 1);
@@ -45,11 +46,11 @@ bool bot_ai_source_command_write(qa_bots *bots, bot_ai_state *state,
     }
     qa_q3_usercmd raw;
     qa_usercmd_to_q3(value, &raw);
-    bot_source_i32_write(command, raw.serverTime);
-    bot_source_i32_write(command + 16, raw.buttons);
+    qa_store_u32le(command, (uint32_t)raw.serverTime);
+    qa_store_u32le(command + 16, (uint32_t)raw.buttons);
     command[20] = raw.weapon;
     for (uint32_t axis = 0; axis < 3; ++axis)
-        bot_source_i32_write(command + 4 + axis * 4, raw.angles[axis]);
+        qa_store_u32le(command + 4 + axis * 4, (uint32_t)raw.angles[axis]);
     command[21] = (uint8_t)raw.forwardmove;
     command[22] = (uint8_t)raw.rightmove;
     command[23] = (uint8_t)raw.upmove;
@@ -61,8 +62,8 @@ bool bot_ai_source_command_pause(qa_bots *bots, bot_ai_state *state, int32_t tim
     if (!bytes(bots, state, &command, error)) return false;
     command+=QA_BOT_SOURCE_COMMAND;
     command[21] = command[22] = command[23] = 0;
-    bot_source_word_write(command + 16, 0);
-    bot_source_i32_write(command, time);
+    qa_store_u32le(command + 16, 0);
+    qa_store_u32le(command, (uint32_t)time);
     return true;
 }
 
@@ -74,7 +75,7 @@ static bool action_client(qa_bots *bots,bot_ai_state *state,uint32_t *out,bool *
     if(state->retired || !bot_ai_live(bots,state->view.actor)) return true;
     if(!bots->services.source_action_client)
         return bot_ai_fail(error,"Source action requires its actual installed input namespace");
-    int32_t client=bot_source_i32_read(source+QA_BOT_SOURCE_CLIENT);
+    int32_t client=qa_load_i32le(source+QA_BOT_SOURCE_CLIENT);
     if(!bots->services.source_action_client(bots->services.context,client,out,error)) return false;
     *ready=!state->retired && bot_ai_live(bots,state->view.actor);
     return true;

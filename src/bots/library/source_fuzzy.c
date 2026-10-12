@@ -1,15 +1,10 @@
 #include "source_fuzzy.h"
+#include "qa/binary.h"
 #include <stdlib.h>
 #include <string.h>
 
 static bool fail(qa_error *error,const char *message) {
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"%s",message);return false;
-}
-static uint32_t read_word(const uint8_t *at) {
-    return (uint32_t)at[0]|((uint32_t)at[1]<<8)|((uint32_t)at[2]<<16)|((uint32_t)at[3]<<24);
-}
-static void write_word(uint8_t *at,uint32_t value) {
-    for(uint32_t i=0;i<4;++i) at[i]=(uint8_t)(value>>(i*8));
 }
 static bool live(const bot_fuzzy_heap *heap,qa_error *error) {
     return heap && heap->memory && !qa_bot_memory_disposed(heap->memory) ? true :
@@ -106,27 +101,27 @@ static bool valid_float(bot_fuzzy_float field) {
 bool bot_fuzzy_separator_word_read(const bot_fuzzy_separator *separator,bot_fuzzy_word field,uint32_t *out,qa_error *error) {
     if(!out || !valid_word(field)) return fail(error,"Fuzzy separator read requires its genuine word field/output");
     qa_bot_memory_span bytes;if(!separator_span(separator,&bytes,error)) return false;
-    *out=read_word(bytes.data+(uint32_t)field);return true;
+    *out=qa_load_u32le(bytes.data+(uint32_t)field);return true;
 }
 bool bot_fuzzy_separator_word_write(const bot_fuzzy_separator *separator,bot_fuzzy_word field,uint32_t value,qa_error *error) {
     if(!valid_word(field)) return fail(error,"Fuzzy separator write requires its genuine word field");
     qa_bot_memory_span bytes;if(!separator_span(separator,&bytes,error)) return false;
-    write_word(bytes.data+(uint32_t)field,value);return true;
+    qa_store_u32le(bytes.data+(uint32_t)field,value);return true;
 }
 bool bot_fuzzy_separator_integer_read(const bot_fuzzy_separator *separator,bot_fuzzy_word field,int32_t *out,qa_error *error) {
     if(!out) return fail(error,"Fuzzy separator integer read requires its typed output");
     uint32_t word;if(!bot_fuzzy_separator_word_read(separator,field,&word,error)) return false;
-    *out=word<=INT32_MAX?(int32_t)word:-1-(int32_t)(UINT32_MAX-word);return true;
+    *out=qa_i32_from_u32(word);return true;
 }
 bool bot_fuzzy_separator_float_read(const bot_fuzzy_separator *separator,bot_fuzzy_float field,float *out,qa_error *error) {
     if(!out || !valid_float(field)) return fail(error,"Fuzzy separator read requires its genuine float field/output");
     qa_bot_memory_span bytes;if(!separator_span(separator,&bytes,error)) return false;
-    uint32_t word=read_word(bytes.data+(uint32_t)field);memcpy(out,&word,4);return true;
+    *out=qa_load_f32le(bytes.data+(uint32_t)field);return true;
 }
 bool bot_fuzzy_separator_float_write(const bot_fuzzy_separator *separator,bot_fuzzy_float field,float value,qa_error *error) {
     if(!valid_float(field)) return fail(error,"Fuzzy separator write requires its genuine float field");
     qa_bot_memory_span bytes;if(!separator_span(separator,&bytes,error)) return false;
-    uint32_t word;memcpy(&word,&value,4);write_word(bytes.data+(uint32_t)field,word);return true;
+    qa_store_f32le(bytes.data+(uint32_t)field,value);return true;
 }
 static bool config_span(const bot_fuzzy_config *config,qa_bot_memory_span *out,qa_error *error) {
     if(!config) return fail(error,"Fuzzy configuration record is absent");
@@ -154,13 +149,13 @@ bool bot_fuzzy_config_bind(bot_fuzzy_heap *heap,qa_bot_memory_allocation allocat
 bool bot_fuzzy_config_count(const bot_fuzzy_config *config,int32_t *out,qa_error *error) {
     if(!out) return fail(error,"Fuzzy count read requires its typed output");
     qa_bot_memory_span bytes;if(!config_span(config,&bytes,error)) return false;
-    uint32_t word=read_word(bytes.data);
+    uint32_t word=qa_load_u32le(bytes.data);
     if(word>BOT_FUZZY_WEIGHTS) return fail(error,"Invalid fuzzy source weight count");
     *out=(int32_t)word;return true;
 }
 bool bot_fuzzy_config_count_write(const bot_fuzzy_config *config,int32_t count,qa_error *error) {
     qa_bot_memory_span bytes;if(!config_span(config,&bytes,error)) return false;
-    write_word(bytes.data,(uint32_t)count);return true;
+    qa_store_u32le(bytes.data,(uint32_t)count);return true;
 }
 static bool config_pointer_span(const bot_fuzzy_config *config,int32_t index,bool separator,uint8_t **out,qa_error *error) {
     if(index<0 || index>=BOT_FUZZY_WEIGHTS) return fail(error,"Fuzzy weight slot exceeds its configuration allocation");
@@ -170,11 +165,11 @@ static bool config_pointer_span(const bot_fuzzy_config *config,int32_t index,boo
 bool bot_fuzzy_config_pointer_read(const bot_fuzzy_config *config,int32_t index,bool separator,uint32_t *out,qa_error *error) {
     if(!out) return fail(error,"Fuzzy pointer read requires its typed output");
     uint8_t *at;if(!config_pointer_span(config,index,separator,&at,error)) return false;
-    *out=read_word(at);return true;
+    *out=qa_load_u32le(at);return true;
 }
 bool bot_fuzzy_config_pointer_write(const bot_fuzzy_config *config,int32_t index,bool separator,uint32_t pointer,qa_error *error) {
     uint8_t *at;if(!config_pointer_span(config,index,separator,&at,error)) return false;
-    write_word(at,pointer);return true;
+    qa_store_u32le(at,pointer);return true;
 }
 bool bot_fuzzy_config_filename(const bot_fuzzy_config *config,qa_bytes *out,qa_error *error) {
     if(!out) return fail(error,"Fuzzy filename read requires its byte output");

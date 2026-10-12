@@ -7,8 +7,6 @@ enum {CHAT_STATE_BYTES=316,CHAT_CONSOLE_BYTES=276,
 struct qa_bot_chat;
 struct qa_bot_chat_system;
 struct qa_bot_chat_asset;
-uint32_t chat_raw_word(const uint8_t *);
-void chat_raw_store(uint8_t *,uint32_t);
 bool chat_state_span(const struct qa_bot_chat *,qa_bot_memory_span *,qa_error *);
 bool chat_state_get(const struct qa_bot_chat *,uint32_t,uint32_t *,qa_error *);
 bool chat_state_set(struct qa_bot_chat *,uint32_t,uint32_t,qa_error *);

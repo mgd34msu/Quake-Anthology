@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/binary.h"
 #include "qa/bots_allocator_save.h"
 #include <stdio.h>
 #include <stdatomic.h>
@@ -58,14 +59,6 @@ static char *text_copy(const char *text,qa_error *error)
     if(!copy) {bot_memory_fail(error,QA_ERROR_MEMORY,"Retaining bot allocation provenance");return NULL;}
     memcpy(copy,text,length+1);return copy;
 }
-static void prefix_write(uint8_t *bytes,uint32_t value)
-{
-    for(uint32_t i=0;i<4;++i) bytes[i]=(uint8_t)(value>>(i*8));
-}
-static uint32_t prefix_read(const uint8_t *bytes)
-{
-    return (uint32_t)bytes[0]|((uint32_t)bytes[1]<<8)|((uint32_t)bytes[2]<<16)|((uint32_t)bytes[3]<<24);
-}
 bool qa_bot_memory_create(const qa_bot_memory_options *options,qa_bot_memory **out,qa_error *error)
 {
     if(!out || *out || (options && ((unsigned)options->profile>QA_BOT_MEMORY_DEBUG ||
@@ -113,7 +106,7 @@ bool bot_memory_allocate(qa_bot_memory *memory,uint32_t size,qa_bot_memory_kind 
         if(!ok) bot_memory_fail(error,QA_ERROR_MEMORY,"Allocating bot source bytes");
     }
     if(!ok) {free(record->file);free(record->label);return false;}
-    prefix_write(backing.bytes,kind==QA_BOT_MEMORY_HEAP?HEAP_ID:HUNK_ID);
+    qa_store_u32le(backing.bytes,kind==QA_BOT_MEMORY_HEAP?HEAP_ID:HUNK_ID);
     if(clear && size) memset(backing.bytes+PREFIX_BYTES,0,size);
     record->backing=backing.bytes;record->host_allocation=backing.token;record->live=true;
     uint32_t slot;
@@ -159,7 +152,7 @@ bool bot_memory_release(qa_bot_memory *memory,qa_bot_memory_allocation allocatio
         return bot_memory_fail(error,QA_ERROR_ARGUMENT,"Bot allocation belongs to another owner or has been freed");
     }
     if(!force) {
-        if(prefix_read(record->backing)!=HEAP_ID) return true;
+        if(qa_load_u32le(record->backing)!=HEAP_ID) return true;
         if(record->kind!=QA_BOT_MEMORY_HEAP)
             return bot_memory_fail(error,QA_ERROR_ARGUMENT,"Bot heap ID does not belong to a heap allocation");
     }

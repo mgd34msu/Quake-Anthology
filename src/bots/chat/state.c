@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/binary.h"
 #include "qa/text.h"
 #include "qa/bots_memory.h"
 
@@ -282,7 +283,7 @@ bool qa_bot_chat_set_identity_from(qa_bot_chat *state,const qa_bot_chat_text_sou
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Chat identity requires its actual state/text source");return false;
     }
     qa_bot_memory_span span;if(!chat_state_span(state,&span,error)) return false;
-    if(client) chat_raw_store(span.data+CHAT_CLIENT,(uint32_t)*client);
+    if(client) qa_store_u32le(span.data+CHAT_CLIENT,(uint32_t)*client);
     memset(span.data+CHAT_NAME,0,32);
     chat_retain(state);qa_bytes text;
     bool ok=chat_text_read(source,32,&text,error) && chat_state_span(state,&span,error);
@@ -444,15 +445,14 @@ bool qa_bot_chat_console_queue_from(qa_bot_chat *s,int32_t type,const qa_bot_cha
     qa_bot_memory_span span;
     if(ok) ok=chat_console_span(system,index,&span,e);
     if(ok) {
-        uint32_t bits;memcpy(&bits,&time,4);
-        chat_raw_store(span.data+4,bits);
-        chat_raw_store(span.data+8,(uint32_t)type);
+        qa_store_f32le(span.data+4,time);
+        qa_store_u32le(span.data+8,(uint32_t)type);
         qa_bytes text;ok=chat_text_read(source,256,&text,e);
         if(ok) ok=chat_console_span(system,index,&span,e);
         if(ok) {
             if(text.size) memmove(span.data+12,text.data,text.size);
             if(text.size<256) memset(span.data+12+text.size,0,256-text.size);
-            chat_raw_store(span.data+272,0);ok=chat_state_get(s,CHAT_LAST,&last,e);
+            qa_store_u32le(span.data+272,0);ok=chat_state_get(s,CHAT_LAST,&last,e);
         }
     }
     if(ok) ok=chat_console_set(system,index,268,last,e);
@@ -474,9 +474,7 @@ bool qa_bot_chat_console_first_source(const qa_bot_chat *s,qa_bot_console_messag
     if(!found || !s || !out || !chat_state_get(s,CHAT_FIRST,&pointer,error)) return false;
     *found=false;if(!pointer) return true;
     if(!chat_console_span(s->system,pointer,&span,error)) return false;
-    uint32_t bits=chat_raw_word(span.data+4);float time;memcpy(&time,&bits,4);
-    int32_t type;bits=chat_raw_word(span.data+8);memcpy(&type,&bits,4);
-    *out=(qa_bot_console_message){.handle=chat_raw_word(span.data),.time=time,.type=type};
+    *out=(qa_bot_console_message){.handle=qa_load_u32le(span.data),.time=qa_load_f32le(span.data+4),.type=qa_load_i32le(span.data+8)};
     memcpy(out->text,span.data+12,256);
     *found=true;return true;
 }

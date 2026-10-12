@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/binary.h"
 #include "../checkpoint_internal.h"
 #include "../library/character_load.h"
 #include "../library/character_source.h"
@@ -40,7 +41,7 @@ bool bot_runtime_chat_shutdown(qa_bot_runtime *runtime,qa_error *error) {
         qa_bot_memory_span span;
         if(!qa_bot_memory_bytes(system->memory,allocation,&span,error)) return false;
         if(span.size!=132) return bot_runtime_fail(error,"Cached chat has an invalid source extent");
-        uint32_t pointer=chat_raw_word(span.data);
+        uint32_t pointer=qa_load_u32le(span.data);
         if(pointer) {
             qa_bot_chat_asset *asset=runtime->library->chat_assets;
             while(asset && (!asset->initial_source || !asset->initial_source->published ||

@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/binary.h"
 #include "../save_fields.h"
 #include "qa/bot_movement_save.h"
 #include "qa/bots_allocator_save.h"
@@ -14,9 +15,7 @@ static bool empty(const qa_bot_moves *m) {
     return true;
 }
 static int32_t client_read(const qa_bot_memory_span *bytes) {
-    const uint8_t *at=bytes->data+BM_CLIENT;
-    uint32_t value=(uint32_t)at[0]|(uint32_t)at[1]<<8|(uint32_t)at[2]<<16|(uint32_t)at[3]<<24;
-    return value<=INT32_MAX?(int32_t)value:-1-(int32_t)(UINT32_MAX-value);
+    return qa_load_i32le(bytes->data+BM_CLIENT);
 }
 static void slots_clear(bot_move_slot *slots,uint32_t maximum) {
     if(!slots) return;

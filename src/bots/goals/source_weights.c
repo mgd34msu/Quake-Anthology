@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/binary.h"
 #include "../checkpoint_internal.h"
 
 bool bot_goal_memory_bind(qa_bot_goals *goals,qa_bot_memory *memory,qa_error *error)
@@ -27,8 +28,7 @@ bool bot_goal_indexes_write(qa_bot_goals *goals,qa_bot_memory_allocation allocat
     qa_bot_memory_span bytes;
     if(!qa_bot_memory_bytes(goals->memory,allocation,&bytes,error)) return false;
     if(index>=bytes.size/4) return bot_goal_fail(error,"Item index write is outside its source allocation");
-    uint32_t word=(uint32_t)value;
-    for(uint32_t byte=0;byte<4;++byte) bytes.data[index*4+byte]=(uint8_t)(word>>(byte*8));
+    qa_store_u32le(bytes.data+index*4,(uint32_t)value);
     return true;
 }
 bool bot_goal_indexes_read(qa_bot_goals *goals,const bot_goal_slot *state,int32_t index,
@@ -42,9 +42,7 @@ bool bot_goal_indexes_read(qa_bot_goals *goals,const bot_goal_slot *state,int32_
     if(!qa_bot_memory_bytes(goals->memory,allocation,&bytes,error)) return false;
     if(index<0 || (uint32_t)index>=bytes.size/4)
         return bot_goal_fail(error,"Item weight index is stale for the current item configuration");
-    const uint8_t *at=bytes.data+(uint32_t)index*4;
-    uint32_t word=(uint32_t)at[0]|((uint32_t)at[1]<<8)|((uint32_t)at[2]<<16)|((uint32_t)at[3]<<24);
-    *out=word<=INT32_MAX?(int32_t)word:-1-(int32_t)(UINT32_MAX-word);return true;
+    *out=qa_load_i32le(bytes.data+(uint32_t)index*4);return true;
 }
 bool bot_goal_indexes_publish(qa_bot_goals *goals,bot_goal_slot *state,
     qa_bot_memory_allocation allocation,qa_error *error)

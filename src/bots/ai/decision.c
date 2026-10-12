@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/binary.h"
 #include "source_goal_record.h"
 #include "source_activation.h"
 #include "source_event_state.h"
@@ -208,7 +209,7 @@ static bool clear_path_attack(qa_bots *b,bot_ai_state *s,const qa_q3_entity *ent
     result->flags|=QA_BOT_MOVE_VIEW|QA_BOT_MOVE_WEAPON;
     int32_t held;DECISION_CALL(bot_ai_source_player_word(b,s,BOT_PS_WEAPON,&held,e));
     if(held!=result->weapon || !qa_bot_field_of_vision(bot_ai_view_angles(s),20,result->ideal_view_angles)) return true;
-    int32_t viewer=bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_ENTITY);
+    int32_t viewer=qa_load_i32le(s->source_span.data+QA_BOT_SOURCE_ENTITY);
     qa_trace_result shot;
     DECISION_CALL(qa_bot_navigation_trace(navigation(b,s),bot_ai_eye(s),target,NULL,
         b->services.entity_actor(b->services.context,viewer),0x6000001,&shot,e));
@@ -267,7 +268,7 @@ static bool activation_query_eye(void *opaque,qa_vec3 *out,qa_error *e) {
 static bool activation_query_area(void *opaque,int32_t *out,qa_error *e) {
     activation_query_state *query=opaque;
     if(!activation_query_current(query,e)) return false;
-    *out=bot_source_i32_read(query->state->source_span.data+QA_BOT_SOURCE_AREA);return true;
+    *out=qa_load_i32le(query->state->source_span.data+QA_BOT_SOURCE_AREA);return true;
 }
 static bool activation_query_travel(void *opaque,uint32_t *out,qa_error *e) {
     activation_query_state *query=opaque;
@@ -671,7 +672,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                     qa_trace_result shot;
                     DECISION_CALL(qa_bot_navigation_trace(navigation(b,s),bot_ai_eye(s),activation.target,
                         NULL,b->services.entity_actor(b->services.context,
-                            bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_ENTITY)),0x6000001,&shot,e));
+                            qa_load_i32le(s->source_span.data+QA_BOT_SOURCE_ENTITY)),0x6000001,&shot,e));
                     if(!bot_ai_activation_top(s,&index,&have,e)) return false;
                     if(!have) continue;
                     activation=bot_ai_activation_read(s,index);

@@ -1,4 +1,5 @@
 #include "source_graph.h"
+#include "qa/binary.h"
 #include "internal.h"
 #include "../save_fields.h"
 #include "../memory/internal.h"
@@ -6,12 +7,6 @@
 
 static bool fail(qa_error *error,const char *message) {
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"%s",message);return false;
-}
-static uint32_t word(const uint8_t *bytes) {
-    return (uint32_t)bytes[0]|((uint32_t)bytes[1]<<8)|((uint32_t)bytes[2]<<16)|((uint32_t)bytes[3]<<24);
-}
-static void put(uint8_t *bytes,uint32_t value) {
-    for(uint32_t index=0;index<4;++index) bytes[index]=(uint8_t)(value>>(index*8));
 }
 static uint32_t width(bot_chat_graph_kind kind) {
     static const uint32_t widths[]={1,8,16,20,16,12,20};
@@ -77,14 +72,14 @@ bool bot_chat_graph_word(const bot_chat_graph *graph,uint32_t pointer,bot_chat_g
     qa_bot_memory_span span;
     if(!bytes(graph,pointer,kind,&span,error)) return false;
     if(offset>span.size || 4>span.size-offset) return fail(error,"Chat graph word exceeds its actual view");
-    *out=word(span.data+offset);return true;
+    *out=qa_load_u32le(span.data+offset);return true;
 }
 bool bot_chat_graph_write(bot_chat_graph *graph,uint32_t pointer,bot_chat_graph_kind kind,
     uint32_t offset,uint32_t value,qa_error *error) {
     qa_bot_memory_span span;
     if(!bytes(graph,pointer,kind,&span,error)) return false;
     if(offset>span.size || 4>span.size-offset) return fail(error,"Chat graph word exceeds its actual view");
-    put(span.data+offset,value);return true;
+    qa_store_u32le(span.data+offset,value);return true;
 }
 bool bot_chat_graph_link(const bot_chat_graph *graph,uint32_t pointer,bot_chat_graph_kind kind,
     uint32_t offset,bot_chat_graph_kind destination,uint32_t *out,qa_error *error) {
@@ -304,10 +299,10 @@ bool bot_chat_graph_project(qa_bot_chat_asset *asset,qa_error *error) {
             qa_bot_chat_template value={0};uint32_t bits,first;
             if(!bot_chat_graph_word(graph,root,kind,0,&value.context,error) ||
                !bot_chat_graph_word(graph,root,kind,4,&bits,error)) return false;
-            memcpy(&value.type,&bits,4);
+            value.type=qa_i32_from_u32(bits);
             if(!bot_chat_graph_word(graph,root,kind,8,&bits,error) ||
                !bot_chat_graph_link(graph,root,kind,12,BOT_CHAT_GRAPH_PIECE,&first,error)) return false;
-            memcpy(&value.subtype,&bits,4);
+            value.subtype=qa_i32_from_u32(bits);
             if(!project_pieces(asset,first,&value.pieces,error) ||
                !mapped(&asset->graph_templates,asset->view.template_count,root,error) ||
                !chat_append((void **)&asset->templates,&asset->template_capacity,&asset->view.template_count,sizeof(value),&value,error)) return false;
@@ -375,10 +370,11 @@ bool bot_chat_graph_message_text(const qa_bot_chat_asset *asset,uint32_t pointer
     return project_text(&asset->packed_source->graph,pointer,BOT_CHAT_GRAPH_MESSAGE,out,error);
 }
 bool bot_chat_graph_message_time(qa_bot_chat_asset *asset,uint32_t pointer,float *value,bool write,qa_error *error) {
-    bot_chat_graph *graph=&asset->packed_source->graph;uint32_t bits;
-    if(write) {memcpy(&bits,value,4);return bot_chat_graph_write(graph,pointer,BOT_CHAT_GRAPH_MESSAGE,4,bits,error);}
-    if(!bot_chat_graph_word(graph,pointer,BOT_CHAT_GRAPH_MESSAGE,4,&bits,error)) return false;
-    memcpy(value,&bits,4);return true;
+    bot_chat_graph *graph=&asset->packed_source->graph;qa_bot_memory_span span;
+    if(!bytes(graph,pointer,BOT_CHAT_GRAPH_MESSAGE,&span,error)) return false;
+    if(write) qa_store_f32le(span.data+4,*value);
+    else *value=qa_load_f32le(span.data+4);
+    return true;
 }
 bool bot_chat_graph_message_next(const qa_bot_chat_asset *asset,bot_chat_graph_messages *cursor,qa_error *error) {
     const bot_chat_graph *graph=&asset->packed_source->graph;

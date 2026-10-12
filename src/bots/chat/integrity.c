@@ -1,15 +1,10 @@
 #include "internal.h"
+#include "qa/binary.h"
 #include <stdio.h>
 
 typedef struct chat_integrity_string {
     qa_bot_memory_allocation allocation;
 } chat_integrity_string;
-static uint32_t word(const uint8_t *bytes) {
-    return (uint32_t)bytes[0]|((uint32_t)bytes[1]<<8)|((uint32_t)bytes[2]<<16)|((uint32_t)bytes[3]<<24);
-}
-static void store(uint8_t *bytes,uint32_t value) {
-    for(uint32_t index=0;index<4;++index) bytes[index]=(uint8_t)(value>>(8*index));
-}
 static bool integrity_cell(qa_bot_memory *memory,const chat_integrity_string *strings,size_t count,
     uint32_t pointer,qa_bot_memory_span *out,qa_error *error) {
     if(!pointer || pointer>count) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Chat integrity pointer has no true temporary allocation");return false;}
@@ -26,11 +21,11 @@ static bool integrity_seen(qa_bot_memory *memory,const chat_integrity_string *st
         qa_bot_memory_span bytes;
         if(visited>=count) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Chat integrity temporary list cycles");return false;}
         if(!integrity_cell(memory,strings,count,head,&bytes,error)) return false;
-        uint32_t source=word(bytes.data);
+        uint32_t source=qa_load_u32le(bytes.data);
         qa_bot_memory_span string;
         if(!integrity_cell(memory,strings,count,source,&string,error)) return false;
         if(!strcmp((const char *)string.data+8,name)) {*out=true;return true;}
-        head=word(bytes.data+4);
+        head=qa_load_u32le(bytes.data+4);
     }
     return true;
 }
@@ -122,8 +117,8 @@ bool qa_bot_chat_check_integrity(qa_bot_chat_system *system, qa_bot_chat_asset *
                 missing[count++]=(chat_integrity_string){allocation};qa_bot_memory_span bytes;
                 ok=qa_bot_memory_bytes(memory,allocation,&bytes,e);
                 if(ok) {
-                    store(bytes.data,(uint32_t)count);memcpy(bytes.data+8,key,size+1);
-                    store(bytes.data+4,head);head=(uint32_t)count;
+                    qa_store_u32le(bytes.data,(uint32_t)count);memcpy(bytes.data+8,key,size+1);
+                    qa_store_u32le(bytes.data+4,head);head=(uint32_t)count;
                     static const char prefix[]="missing random string ";
                     char *diagnostic=malloc(sizeof(prefix)+size);
                     if(!diagnostic) {qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining missing random source report");ok=false;}
@@ -141,7 +136,7 @@ bool qa_bot_chat_check_integrity(qa_bot_chat_system *system, qa_bot_chat_asset *
     while(ok && head) {
         qa_bot_memory_span bytes;
         ok=integrity_cell(memory,missing,count,head,&bytes,e);
-        if(ok) {uint32_t next=word(bytes.data+4);ok=qa_bot_memory_free(memory,missing[head-1].allocation,e);head=next;}
+        if(ok) {uint32_t next=qa_load_u32le(bytes.data+4);ok=qa_bot_memory_free(memory,missing[head-1].allocation,e);head=next;}
     }
     free(missing);
     qa_bot_chat_asset_release(asset);

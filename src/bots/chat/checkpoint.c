@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/binary.h"
 #include "../checkpoint_internal.h"
 
 static bool range_valid(qa_bot_chat_range range, size_t count) {
@@ -162,10 +163,8 @@ bool qa_bot_chat_capture_state(const qa_bot_chat *s, qa_bot_chat_state *out, qa_
     }
     qa_bot_memory_span span;
     if(!chat_state_span(s,&span,e)) return false;
-    uint32_t client=chat_raw_word(span.data+CHAT_CLIENT);
-    qa_bot_chat_state state = {.gender=chat_raw_word(span.data+CHAT_GENDER),
-        .last_handle=chat_raw_word(span.data+CHAT_HANDLE),.console_count=chat_raw_word(span.data+CHAT_COUNT)};
-    memcpy(&state.client,&client,4);
+    qa_bot_chat_state state = {.client=qa_load_i32le(span.data+CHAT_CLIENT),.gender=qa_load_u32le(span.data+CHAT_GENDER),
+        .last_handle=qa_load_u32le(span.data+CHAT_HANDLE),.console_count=qa_load_u32le(span.data+CHAT_COUNT)};
     memcpy(state.name,span.data+CHAT_NAME,sizeof(state.name));
     memcpy(state.message,span.data+CHAT_MESSAGE,sizeof(state.message));
     if (state.console_count != 0) {
@@ -174,18 +173,18 @@ bool qa_bot_chat_capture_state(const qa_bot_chat *s, qa_bot_chat_state *out, qa_
         state.console = malloc(state.console_count * sizeof(*state.console));
         if (state.console == NULL)
             goto memory;
-        size_t n=0;uint32_t pointer=chat_raw_word(span.data+CHAT_FIRST);
+        size_t n=0;uint32_t pointer=qa_load_u32le(span.data+CHAT_FIRST);
         while(pointer) {
             qa_bot_memory_span cell;
             if(n>=state.console_count || !chat_console_span(s->system,pointer,&cell,e)) goto invalid;
-            qa_bot_console_message *message=&state.console[n++];uint32_t bits;
-            message->handle=chat_raw_word(cell.data);bits=chat_raw_word(cell.data+4);memcpy(&message->time,&bits,4);
-            bits=chat_raw_word(cell.data+8);memcpy(&message->type,&bits,4);
+            qa_bot_console_message *message=&state.console[n++];
+            message->handle=qa_load_u32le(cell.data);message->time=qa_load_f32le(cell.data+4);
+            message->type=qa_load_i32le(cell.data+8);
             memcpy(message->text,cell.data+12,256);message->text[256]=0;
-            pointer=chat_raw_word(cell.data+272);
+            pointer=qa_load_u32le(cell.data+272);
         }
         if(n!=state.console_count) goto invalid;
-    } else if(chat_raw_word(span.data+CHAT_FIRST)) goto invalid;
+    } else if(qa_load_u32le(span.data+CHAT_FIRST)) goto invalid;
     *out = state;
     return true;
 memory:
@@ -226,19 +225,19 @@ static void clear_console(qa_bot_chat *s) {
 }
 static void commit_state(qa_bot_chat *s, const qa_bot_chat_state *state) {
     qa_bot_memory_span span;if(!chat_state_span(s,&span,NULL)) return;
-    chat_raw_store(span.data+CHAT_CLIENT,(uint32_t)state->client);chat_raw_store(span.data+CHAT_GENDER,state->gender);
-    chat_raw_store(span.data+CHAT_HANDLE,state->last_handle);
+    qa_store_u32le(span.data+CHAT_CLIENT,(uint32_t)state->client);qa_store_u32le(span.data+CHAT_GENDER,state->gender);
+    qa_store_u32le(span.data+CHAT_HANDLE,state->last_handle);
     memcpy(span.data+CHAT_NAME,state->name,sizeof(state->name));memcpy(span.data+CHAT_MESSAGE,state->message,sizeof(state->message));
     qa_bot_chat_system *system=s->system;
     uint32_t last=0;
     for (size_t i=0;i<state->console_count;++i) {
         uint32_t index=system->free_console;
-        uint32_t next=0,bits;qa_bot_memory_span cell;
+        uint32_t next=0;qa_bot_memory_span cell;
         if(!chat_console_get(system,index,272,&next,NULL) || !chat_console_span(system,index,&cell,NULL)) return;
         system->free_console=next;if(next) (void)chat_console_set(system,next,268,0,NULL);
-        chat_raw_store(cell.data,state->console[i].handle);memcpy(&bits,&state->console[i].time,4);chat_raw_store(cell.data+4,bits);
-        chat_raw_store(cell.data+8,(uint32_t)state->console[i].type);memcpy(cell.data+12,state->console[i].text,256);
-        chat_raw_store(cell.data+268,last);chat_raw_store(cell.data+272,0);
+        qa_store_u32le(cell.data,state->console[i].handle);qa_store_f32le(cell.data+4,state->console[i].time);
+        qa_store_u32le(cell.data+8,(uint32_t)state->console[i].type);memcpy(cell.data+12,state->console[i].text,256);
+        qa_store_u32le(cell.data+268,last);qa_store_u32le(cell.data+272,0);
         if(last) (void)chat_console_set(system,last,272,index,NULL);
         else (void)chat_state_set(s,CHAT_FIRST,index,NULL);
         last=index;++system->console_count;

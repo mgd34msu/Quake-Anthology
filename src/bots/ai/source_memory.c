@@ -1,4 +1,5 @@
 #include "qa/bots_memory.h"
+#include "qa/binary.h"
 #include "../save_fields.h"
 #include <stddef.h>
 #include <string.h>
@@ -46,31 +47,27 @@ bool qa_bot_source_record_write(const qa_bot_source_memory *memory,qa_bot_source
     if(!memory || !memory->write || (!in && record.length) || !bounds(record,error)) return false;
     return memory->write(memory->context,record.offset,in,record.length,error);
 }
-static bool word(const qa_bot_source_memory *memory,qa_bot_source_record record,uint32_t offset,
-    uint32_t *value,bool write,qa_error *error) {
+bool qa_bot_source_record_i32(const qa_bot_source_memory *memory,qa_bot_source_record record,uint32_t offset,
+    int32_t *value,bool write,qa_error *error) {
     qa_bot_source_record field;if(!value || !qa_bot_source_record_alias(record,offset,4,&field,error)) return false;
     uint8_t bytes[4];
     if(write) {
-        for(uint32_t i=0;i<4;++i) bytes[i]=(uint8_t)(*value>>(i*8));
+        qa_store_u32le(bytes,(uint32_t)*value);
         return qa_bot_source_record_write(memory,field,bytes,error);
     }
     if(!qa_bot_source_record_read(memory,field,bytes,error)) return false;
-    *value=(uint32_t)bytes[0]|((uint32_t)bytes[1]<<8)|((uint32_t)bytes[2]<<16)|((uint32_t)bytes[3]<<24);return true;
-}
-bool qa_bot_source_record_i32(const qa_bot_source_memory *memory,qa_bot_source_record record,uint32_t offset,
-    int32_t *value,bool write,qa_error *error) {
-    if(!value) return false;
-    uint32_t bits=0;if(write) memcpy(&bits,value,4);
-    if(!word(memory,record,offset,&bits,write,error)) return false;
-    if(!write) memcpy(value,&bits,4);
-    return true;
+    *value=qa_load_i32le(bytes);return true;
 }
 bool qa_bot_source_record_f32(const qa_bot_source_memory *memory,qa_bot_source_record record,uint32_t offset,
     float *value,bool write,qa_error *error) {
-    if(!value) return false;
-    uint32_t bits=0;if(write) memcpy(&bits,value,4);
-    if(!word(memory,record,offset,&bits,write,error)) return false;
-    if(!write) memcpy(value,&bits,4);
+    qa_bot_source_record field;if(!value || !qa_bot_source_record_alias(record,offset,4,&field,error)) return false;
+    uint8_t bytes[4];
+    if(write) {
+        qa_store_f32le(bytes,*value);
+        return qa_bot_source_record_write(memory,field,bytes,error);
+    }
+    if(!qa_bot_source_record_read(memory,field,bytes,error)) return false;
+    *value=qa_load_f32le(bytes);
     return true;
 }
 bool qa_bot_source_record_bool(const qa_bot_source_memory *memory,qa_bot_source_record record,uint32_t offset,
@@ -206,11 +203,11 @@ bool qa_bot_source_record_activation(const qa_bot_source_memory *memory,qa_bot_s
     uint8_t bytes[4];
     qa_bot_source_record link={field.offset+240,4};
     if(write) {
-        for(uint32_t i=0;i<4;++i) bytes[i]=(uint8_t)(activation->next>>(i*8));
+        qa_store_u32le(bytes,activation->next);
         return qa_bot_source_record_write(memory,link,bytes,error);
     }
     if(!qa_bot_source_record_read(memory,link,bytes,error)) return false;
-    activation->next=(uint32_t)bytes[0]|((uint32_t)bytes[1]<<8)|((uint32_t)bytes[2]<<16)|((uint32_t)bytes[3]<<24);
+    activation->next=qa_load_u32le(bytes);
     return true;
 }
 bool qa_bot_source_record_presence(const qa_bot_source_memory *memory,qa_bot_source_record record,

@@ -1,11 +1,6 @@
 #include "internal.h"
+#include "qa/binary.h"
 
-uint32_t chat_raw_word(const uint8_t *bytes) {
-    return (uint32_t)bytes[0]|((uint32_t)bytes[1]<<8)|((uint32_t)bytes[2]<<16)|((uint32_t)bytes[3]<<24);
-}
-void chat_raw_store(uint8_t *bytes,uint32_t value) {
-    for(uint32_t index=0;index<4;++index) bytes[index]=(uint8_t)(value>>(index*8));
-}
 bool chat_state_span(const qa_bot_chat *state,qa_bot_memory_span *out,qa_error *error) {
     if(!state || !state->system || !state->system->memory ||
        !qa_bot_memory_bytes(state->system->memory,state->allocation,out,error)) return false;
@@ -17,12 +12,12 @@ bool chat_state_span(const qa_bot_chat *state,qa_bot_memory_span *out,qa_error *
 bool chat_state_get(const qa_bot_chat *state,uint32_t offset,uint32_t *out,qa_error *error) {
     qa_bot_memory_span span;
     if(!out || offset>CHAT_STATE_BYTES-4 || !chat_state_span(state,&span,error)) return false;
-    *out=chat_raw_word(span.data+offset);return true;
+    *out=qa_load_u32le(span.data+offset);return true;
 }
 bool chat_state_set(qa_bot_chat *state,uint32_t offset,uint32_t value,qa_error *error) {
     qa_bot_memory_span span;
     if(offset>CHAT_STATE_BYTES-4 || !chat_state_span(state,&span,error)) return false;
-    chat_raw_store(span.data+offset,value);return true;
+    qa_store_u32le(span.data+offset,value);return true;
 }
 bool chat_state_text(const qa_bot_chat *state,uint32_t offset,uint32_t size,char **out,qa_error *error) {
     qa_bot_memory_span span;
@@ -69,12 +64,12 @@ bool chat_console_span(const qa_bot_chat_system *system,uint32_t pointer,qa_bot_
 bool chat_console_get(const qa_bot_chat_system *system,uint32_t pointer,uint32_t offset,uint32_t *out,qa_error *error) {
     qa_bot_memory_span span;
     if(!out || offset>CHAT_CONSOLE_BYTES-4 || !chat_console_span(system,pointer,&span,error)) return false;
-    *out=chat_raw_word(span.data+offset);return true;
+    *out=qa_load_u32le(span.data+offset);return true;
 }
 bool chat_console_set(qa_bot_chat_system *system,uint32_t pointer,uint32_t offset,uint32_t value,qa_error *error) {
     qa_bot_memory_span span;
     if(offset>CHAT_CONSOLE_BYTES-4 || !chat_console_span(system,pointer,&span,error)) return false;
-    chat_raw_store(span.data+offset,value);return true;
+    qa_store_u32le(span.data+offset,value);return true;
 }
 bool chat_console_heap(qa_bot_chat_system *system,uint32_t count,bool replace,qa_error *error) {
     if(!system || !count || count>UINT32_MAX/CHAT_CONSOLE_BYTES ||

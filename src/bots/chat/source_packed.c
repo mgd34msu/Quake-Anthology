@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/binary.h"
 #include "../save_fields.h"
 #include "../memory/internal.h"
 #include "qa/bots_allocator_save.h"
@@ -9,12 +10,6 @@
 
 static bool fail(qa_error *error,const char *text) {
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"%s",text);return false;
-}
-static uint32_t word(const uint8_t *bytes) {
-    return (uint32_t)bytes[0]|((uint32_t)bytes[1]<<8)|((uint32_t)bytes[2]<<16)|((uint32_t)bytes[3]<<24);
-}
-static void put(uint8_t *bytes,uint32_t value) {
-    for(uint32_t index=0;index<4;++index) bytes[index]=(uint8_t)(value>>(index*8));
 }
 static char *copy_text(const char *value,qa_error *error) {
     if(!value) return NULL;
@@ -245,10 +240,12 @@ static bool reserve(packed_parser *parser,uint32_t extent,uint32_t *out,qa_error
 static bool store_word(packed_parser *parser,uint32_t offset,uint32_t value,qa_error *error) {
     if(!parser->packed->allocation.owner) return true;
     qa_bot_memory_span bytes;if(!span(parser->packed,offset,4,&bytes,error)) return false;
-    put(bytes.data,value);return true;
+    qa_store_u32le(bytes.data,value);return true;
 }
 static bool store_float(packed_parser *parser,uint32_t offset,float value,qa_error *error) {
-    uint32_t bits;memcpy(&bits,&value,4);return store_word(parser,offset,bits,error);
+    if(!parser->packed->allocation.owner) return true;
+    qa_bot_memory_span bytes;if(!span(parser->packed,offset,4,&bytes,error)) return false;
+    qa_store_f32le(bytes.data,value);return true;
 }
 static bool store_string(packed_parser *parser,qa_bytes value,uint32_t *offset,qa_error *error) {
     if(value.size>=UINT32_MAX) return fail(error,"Packed chat text exceeds source allocation extent");
@@ -747,8 +744,7 @@ bool bot_chat_packed_group(const qa_bot_chat_asset *asset,uint32_t index,qa_bot_
         *out=(qa_bot_chat_synonyms){.context=member->word,.total_weight=member->number,.entries={member->first,member->count}};return true;
     }
     if(!span(packed,member->offset,16,&bytes,error)) return false;
-    uint32_t bits=word(bytes.data+4);float total;memcpy(&total,&bits,4);
-    *out=(qa_bot_chat_synonyms){.context=word(bytes.data),.total_weight=total,.entries={member->first,member->count}};return true;
+    *out=(qa_bot_chat_synonyms){.context=qa_load_u32le(bytes.data),.total_weight=qa_load_f32le(bytes.data+4),.entries={member->first,member->count}};return true;
 }
 bool bot_chat_packed_entry(const qa_bot_chat_asset *asset,uint32_t index,qa_bot_chat_synonym *out,
     qa_error *error) {
@@ -758,7 +754,7 @@ bool bot_chat_packed_entry(const qa_bot_chat_asset *asset,uint32_t index,qa_bot_
     const bot_chat_packed_member *member=&packed->entries[index];qa_bot_memory_span bytes;
     if(!packed->allocation.owner) {*out=(qa_bot_chat_synonym){.text=member->value,.weight=member->number};return true;}
     if(!span(packed,member->offset,12,&bytes,error) || !text(packed,member->text,&out->text,error)) return false;
-    uint32_t bits=word(bytes.data+4);memcpy(&out->weight,&bits,4);return true;
+    out->weight=qa_load_f32le(bytes.data+4);return true;
 }
 bool bot_chat_packed_list(const qa_bot_chat_asset *asset,uint32_t index,const char **name,int32_t *count,
     qa_error *error) {
@@ -768,7 +764,7 @@ bool bot_chat_packed_list(const qa_bot_chat_asset *asset,uint32_t index,const ch
     const bot_chat_packed_member *member=&packed->groups[index];qa_bot_memory_span bytes;
     if(!packed->allocation.owner) {*name=member->value;*count=(int32_t)member->count;return true;}
     if(!span(packed,member->offset,16,&bytes,error) || !text(packed,member->text,name,error)) return false;
-    uint32_t bits=word(bytes.data+4);memcpy(count,&bits,4);return true;
+    *count=qa_load_i32le(bytes.data+4);return true;
 }
 bool bot_chat_packed_weight(const qa_bot_chat_asset *asset,uint32_t index,float *out,qa_error *error) {
     const bot_chat_packed *packed=asset->packed_source;
@@ -777,7 +773,7 @@ bool bot_chat_packed_weight(const qa_bot_chat_asset *asset,uint32_t index,float 
     if(!packed->allocation.owner) {*out=packed->entries[index].number;return true;}
     qa_bot_memory_span bytes;
     if(!span(packed,packed->entries[index].offset+4,4,&bytes,error)) return false;
-    uint32_t bits=word(bytes.data);memcpy(out,&bits,4);return true;
+    *out=qa_load_f32le(bytes.data);return true;
 }
 bool bot_chat_packed_count(const qa_bot_chat_asset *asset,uint32_t index,int32_t *out,qa_error *error) {
     const bot_chat_packed *packed=asset->packed_source;
@@ -786,7 +782,7 @@ bool bot_chat_packed_count(const qa_bot_chat_asset *asset,uint32_t index,int32_t
     if(!packed->allocation.owner) {*out=(int32_t)packed->groups[index].count;return true;}
     qa_bot_memory_span bytes;
     if(!span(packed,packed->groups[index].offset+4,4,&bytes,error)) return false;
-    uint32_t bits=word(bytes.data);memcpy(out,&bits,4);return true;
+    *out=qa_load_i32le(bytes.data);return true;
 }
 bool bot_chat_packed_message(const qa_bot_chat_asset *asset,uint32_t index,const char **out,qa_error *error) {
     const bot_chat_packed *packed=asset->packed_source;

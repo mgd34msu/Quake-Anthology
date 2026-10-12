@@ -1,4 +1,5 @@
 #include "source_player.h"
+#include "qa/binary.h"
 #include "source_storage.h"
 #include "source_alias.h"
 
@@ -12,13 +13,13 @@ qa_bot_player bot_ai_player_sample(const bot_ai_state *state)
         .chatting=p->chatting,.carrying_objective=p->carrying_objective,
         .origin=bot_ai_origin(state),.velocity=bot_source_vec3_read(source+BOT_PS_VELOCITY),
         .eye=bot_ai_eye(state),.view_angles=bot_source_vec3_read(source+BOT_PS_VIEW_ANGLES),
-        .delta_angles={bot_source_i32_read(source+BOT_PS_DELTA_ANGLES),
-            bot_source_i32_read(source+BOT_PS_DELTA_ANGLES+4),
-            bot_source_i32_read(source+BOT_PS_DELTA_ANGLES+8)},
-        .presence=(bot_source_word_read(source+BOT_PS_MOVE_FLAGS)&1u)?4u:2u,
-        .current_weapon=bot_source_i32_read(source+BOT_PS_WEAPON),
-        .weapon_state=bot_source_i32_read(source+BOT_PS_WEAPON_STATE),
-        .weapon_time_ms=bot_source_i32_read(source+BOT_PS_WEAPON_TIME),
+        .delta_angles={qa_load_i32le(source+BOT_PS_DELTA_ANGLES),
+            qa_load_i32le(source+BOT_PS_DELTA_ANGLES+4),
+            qa_load_i32le(source+BOT_PS_DELTA_ANGLES+8)},
+        .presence=(qa_load_u32le(source+BOT_PS_MOVE_FLAGS)&1u)?4u:2u,
+        .current_weapon=qa_load_i32le(source+BOT_PS_WEAPON),
+        .weapon_state=qa_load_i32le(source+BOT_PS_WEAPON_STATE),
+        .weapon_time_ms=qa_load_i32le(source+BOT_PS_WEAPON_TIME),
         .last_attacker=p->last_attacker,.last_victim=p->last_victim,.deaths=p->deaths,.kills=p->kills,
         .last_damage_cause=p->last_damage_cause,.air_time=p->air_time,.teleport_time=p->teleport_time,
         .spawn_sequence=p->spawn_sequence,.teleport_sequence=p->teleport_sequence};
@@ -38,7 +39,7 @@ bool qa_bot_player_state_generic(const qa_bot_player_state_view *view,int32_t *o
 {
     if(!view || !view->bytes || !out)
         return bot_ai_fail(error,"Source player generic field requires its actual fixed view");
-    *out=bot_source_i32_read(view->bytes+440);return true;
+    *out=qa_load_i32le(view->bytes+440);return true;
 }
 
 bool qa_bot_player_state_slot(const qa_bot_player_state_view *view,
@@ -54,7 +55,7 @@ bool qa_bot_player_state_slot(const qa_bot_player_state_view *view,
     }
     if(!view || !view->bytes || !out || index<0 || index>=count)
         return bot_ai_fail(error,"Source player slot requires its actual fixed source view");
-    *out=bot_source_i32_read(view->bytes+(uint32_t)field+(uint32_t)index*4);
+    *out=qa_load_i32le(view->bytes+(uint32_t)field+(uint32_t)index*4);
     return true;
 }
 

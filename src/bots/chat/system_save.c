@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/binary.h"
 #include "../save_fields.h"
 #include "qa/bot_chat_system_save.h"
 static const uint8_t magic[8]={'Q','A','B','C','S','Y','S',2};
@@ -11,16 +12,15 @@ static bool text_field(qa_source_save_io *io,uint8_t *bytes,size_t capacity) {
     return true;
 }
 static bool word_field(qa_source_save_io *io,uint8_t *bytes,uint32_t offset) {
-    uint32_t value=io->direction==QA_SOURCE_SAVE_READ?0:chat_raw_word(bytes+offset);
+    uint32_t value=io->direction==QA_SOURCE_SAVE_READ?0:qa_load_u32le(bytes+offset);
     if(!qa_source_save_u32(io,&value)) return false;
-    if(io->direction==QA_SOURCE_SAVE_READ) chat_raw_store(bytes+offset,value);
+    if(io->direction==QA_SOURCE_SAVE_READ) qa_store_u32le(bytes+offset,value);
     return true;
 }
 static bool time_field(qa_source_save_io *io,uint8_t *bytes,uint32_t offset) {
-    uint32_t bits=io->direction==QA_SOURCE_SAVE_WRITE?chat_raw_word(bytes+offset):0;
-    float value;memcpy(&value,&bits,sizeof(value));
+    float value=io->direction==QA_SOURCE_SAVE_WRITE?qa_load_f32le(bytes+offset):0;
     if(!qa_source_save_f32(io,&value)) return false;
-    if(io->direction==QA_SOURCE_SAVE_READ) {memcpy(&bits,&value,sizeof(bits));chat_raw_store(bytes+offset,bits);}
+    if(io->direction==QA_SOURCE_SAVE_READ) qa_store_f32le(bytes+offset,value);
     return true;
 }
 static bool console_fields(qa_source_save_io *io,qa_bot_chat_system *system,uint32_t pointer) {
@@ -63,7 +63,7 @@ static bool state_fields(qa_source_save_io *io,qa_bot_chat *state,const qa_bot_c
         text_field(io,bytes.data+CHAT_NAME,32) && text_field(io,bytes.data+CHAT_MESSAGE,256) &&
         word_field(io,bytes.data,CHAT_HANDLE) && word_field(io,bytes.data,CHAT_FIRST) &&
         word_field(io,bytes.data,CHAT_LAST) && word_field(io,bytes.data,CHAT_COUNT);
-    if(ok && reading) chat_raw_store(bytes.data+CHAT_INITIAL,state->initial?state->initial->initial_source->initial.pointer:0);
+    if(ok && reading) qa_store_u32le(bytes.data+CHAT_INITIAL,state->initial?state->initial->initial_source->initial.pointer:0);
     return ok;
 }
 static bool cache_fields(qa_source_save_io *io,qa_bot_chat_system *system,const qa_bot_chat_asset_save_refs *refs,size_t index) {
@@ -71,7 +71,7 @@ static bool cache_fields(qa_source_save_io *io,qa_bot_chat_system *system,const 
     if(!reading && system->initial_cache[index].owner) {
         qa_bot_memory_span bytes;
         if(!qa_bot_memory_bytes(system->memory,system->initial_cache[index],&bytes,io->error) || bytes.size!=132) return false;
-        uint32_t pointer=chat_raw_word(bytes.data);
+        uint32_t pointer=qa_load_u32le(bytes.data);
         for(qa_bot_chat_asset *row=system->library?system->library->chat_assets:NULL;pointer && row;row=row->next)
             if(row->initial_source && row->initial_source->initial.pointer==pointer) {asset=row;break;}
         if(pointer && !asset) return bot_save_fail(io,QA_ERROR_FORMAT,"Chat cache has no installed asset recipe");
@@ -82,7 +82,7 @@ static bool cache_fields(qa_source_save_io *io,qa_bot_chat_system *system,const 
         bool ok=qa_bot_memory_allocate(system->memory,132,QA_BOT_MEMORY_HEAP,true,NULL,&system->initial_cache[index],io->error) &&
             qa_bot_memory_bytes(system->memory,system->initial_cache[index],&bytes,io->error);
         if(ok) {
-            chat_raw_store(bytes.data,asset->initial_source->initial.pointer);
+            qa_store_u32le(bytes.data,asset->initial_source->initial.pointer);
             size_t path=strlen(asset->view.path),name=strlen(asset->view.name);
             if(path>63) path=63;
             if(name>63) name=63;
@@ -113,7 +113,7 @@ static bool topology_valid(const qa_bot_chat_system *system,size_t *console_coun
     bool ok=true;size_t free_count=0,total=0;
     for(size_t index=0;ok && index<system->console_capacity;++index) {
         qa_bot_memory_span bytes;ok=chat_console_span(system,(uint32_t)index+1,&bytes,error);
-        if(ok) ok=chat_raw_word(bytes.data+268)<=system->console_capacity && chat_raw_word(bytes.data+272)<=system->console_capacity;
+        if(ok) ok=qa_load_u32le(bytes.data+268)<=system->console_capacity && qa_load_u32le(bytes.data+272)<=system->console_capacity;
         for(size_t prior=0;ok && prior<index;++prior) {
             const chat_console_cell *a=&system->console[index],*b=&system->console[prior];
             if(a->allocation.owner==b->allocation.owner && a->allocation.slot==b->allocation.slot &&
@@ -126,9 +126,9 @@ static bool topology_valid(const qa_bot_chat_system *system,size_t *console_coun
         qa_bot_memory_span bytes;qa_bot_chat_asset *initial;size_t count=0;
         ok=state->system==system && !state->retired && state->references==1 && state->previous==previous &&
             chat_state_span(state,&bytes,error) && chat_state_initial(state,&initial,error);
-        if(ok) ok=walk(system,chat_raw_word(bytes.data+CHAT_FIRST),&count,seen,error);
-        if(ok) ok=count==chat_raw_word(bytes.data+CHAT_COUNT) &&
-            chat_raw_word(bytes.data+CHAT_LAST)<=system->console_capacity;
+        if(ok) ok=walk(system,qa_load_u32le(bytes.data+CHAT_FIRST),&count,seen,error);
+        if(ok) ok=count==qa_load_u32le(bytes.data+CHAT_COUNT) &&
+            qa_load_u32le(bytes.data+CHAT_LAST)<=system->console_capacity;
         total+=count;previous=state;
         for(qa_bot_chat *prior=system->states;ok && prior!=state;prior=prior->next)
             if(prior->allocation.owner==state->allocation.owner && prior->allocation.slot==state->allocation.slot &&
@@ -136,7 +136,7 @@ static bool topology_valid(const qa_bot_chat_system *system,size_t *console_coun
     }
     for(size_t index=0;ok && index<64;++index) if(system->initial_cache[index].owner) {
         qa_bot_memory_span bytes;ok=qa_bot_memory_bytes(system->memory,system->initial_cache[index],&bytes,error);
-        uint32_t pointer=ok?chat_raw_word(bytes.data):0;bool found=!pointer;
+        uint32_t pointer=ok?qa_load_u32le(bytes.data):0;bool found=!pointer;
         if(system->library) for(qa_bot_chat_asset *asset=system->library->chat_assets;!found && asset;asset=asset->next)
             found=asset->initial_source && asset->initial_source->published && asset->initial_source->initial.pointer==pointer;
         ok=ok && found;

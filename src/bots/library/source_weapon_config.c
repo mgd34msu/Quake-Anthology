@@ -1,18 +1,10 @@
 #include "source_weapon_config.h"
+#include "qa/binary.h"
 #include <limits.h>
 #include <string.h>
 
 static bool fail(qa_error *error,const char *message) {
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"%s",message);return false;
-}
-static uint32_t read_word(const uint8_t *bytes) {
-    return (uint32_t)bytes[0]|((uint32_t)bytes[1]<<8)|((uint32_t)bytes[2]<<16)|((uint32_t)bytes[3]<<24);
-}
-static void write_word(uint8_t *bytes,uint32_t value) {
-    for(uint32_t i=0;i<4;++i) bytes[i]=(uint8_t)(value>>(8*i));
-}
-static int32_t signed_word(uint32_t value) {
-    return value<=INT32_MAX?(int32_t)value:-1-(int32_t)(UINT32_MAX-value);
 }
 static bool cell(const bot_weapon_config_record *record,uint32_t offset,uint32_t size,
     bot_weapon_config_cell *out,qa_error *error) {
@@ -40,20 +32,20 @@ static bool field(const bot_weapon_config_cell *value,uint32_t offset,uint32_t s
 bool bot_weapon_config_int(const bot_weapon_config_cell *value,uint32_t offset,int32_t *out,qa_error *error) {
     if(!out) return fail(error,"Weapon configuration integer requires its output");
     qa_bot_memory_span bytes;if(!field(value,offset,4,&bytes,error)) return false;
-    *out=signed_word(read_word(bytes.data));return true;
+    *out=qa_load_i32le(bytes.data);return true;
 }
 bool bot_weapon_config_set_int(const bot_weapon_config_cell *value,uint32_t offset,int32_t input,qa_error *error) {
     qa_bot_memory_span bytes;if(!field(value,offset,4,&bytes,error)) return false;
-    write_word(bytes.data,(uint32_t)input);return true;
+    qa_store_u32le(bytes.data,(uint32_t)input);return true;
 }
 bool bot_weapon_config_float(const bot_weapon_config_cell *value,uint32_t offset,float *out,qa_error *error) {
     if(!out) return fail(error,"Weapon configuration float requires its output");
     qa_bot_memory_span bytes;if(!field(value,offset,4,&bytes,error)) return false;
-    uint32_t word=read_word(bytes.data);memcpy(out,&word,4);return true;
+    *out=qa_load_f32le(bytes.data);return true;
 }
 bool bot_weapon_config_set_float(const bot_weapon_config_cell *value,uint32_t offset,float input,qa_error *error) {
     qa_bot_memory_span bytes;if(!field(value,offset,4,&bytes,error)) return false;
-    uint32_t word;memcpy(&word,&input,4);write_word(bytes.data,word);return true;
+    qa_store_f32le(bytes.data,input);return true;
 }
 bool bot_weapon_config_clear(const bot_weapon_config_cell *value,qa_error *error) {
     qa_bot_memory_span bytes;if(!bot_weapon_config_span(value,&bytes,error)) return false;
@@ -174,7 +166,7 @@ bool bot_weapon_config_allocate(qa_bot_memory *memory,uint32_t weapons,uint32_t 
     *out=(bot_weapon_config_record){.memory=memory,.allocation=allocation};
     bot_weapon_config_cell partial={.record=*out,.size=size};
     return bot_weapon_config_set_int(&partial,0,(int32_t)weapons,error) &&
-        bot_weapon_config_set_int(&partial,8,signed_word(projectile_offset),error) &&
+        bot_weapon_config_set_int(&partial,8,qa_i32_from_u32(projectile_offset),error) &&
         bot_weapon_config_set_int(&partial,12,BOT_WEAPON_CONFIG_BYTES,error);
 }
 bool bot_weapon_config_bind(qa_bot_memory *memory,qa_bot_memory_allocation allocation,

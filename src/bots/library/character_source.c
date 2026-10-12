@@ -1,15 +1,10 @@
 #include "character_source.h"
+#include "qa/binary.h"
 #include "../memory/internal.h"
 
 static bool fail(qa_error *error, const char *text) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", text);
     return false;
-}
-static uint32_t word(const uint8_t *p) {
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-static void put(uint8_t *p, uint32_t value) {
-    for (unsigned i = 0; i < 4; ++i) p[i] = (uint8_t)(value >> (i * 8));
 }
 static bool bytes(qa_bot_character *c, qa_bot_memory_span *out, qa_error *error) {
     if (!c || !c->source || c->retired)
@@ -71,7 +66,7 @@ bool bot_character_filename(qa_bot_character *c, const char *path, qa_error *err
 bool bot_character_skill(qa_bot_character *c, float skill, qa_error *error) {
     qa_bot_memory_span span;
     if (!bytes(c, &span, error)) return false;
-    uint32_t value; memcpy(&value, &skill, 4); put(span.data + 64, value); return true;
+    qa_store_f32le(span.data + 64, skill); return true;
 }
 bool bot_character_write(qa_bot_character *c, uint32_t index, qa_bot_character_value value,
                          bool type_first, qa_error *error) {
@@ -99,13 +94,14 @@ bool bot_character_write(qa_bot_character *c, uint32_t index, qa_bot_character_v
         raw = (uint32_t)pointer;
         store->strings[store->count++] = (bot_character_string){raw, allocation};
         if (!bytes(c, &span, error)) { free(copy); return false; }
-        put(span.data + offset + 4, raw);
+        qa_store_u32le(span.data + offset + 4, raw);
         qa_bot_memory_span text;
         if (!qa_bot_memory_bytes(store->memory, allocation, &text, error)) { free(copy); return false; }
         memcpy(text.data, copy, length + 1); free(copy);
     } else if (value.kind == QA_BOT_CHARACTER_INTEGER) raw = (uint32_t)value.data.integer;
-    else if (value.kind == QA_BOT_CHARACTER_FLOAT) memcpy(&raw, &value.data.number, 4);
-    put(span.data + offset + 4, raw); span.data[offset] = (uint8_t)value.kind;
+    if (value.kind == QA_BOT_CHARACTER_FLOAT) qa_store_f32le(span.data + offset + 4, value.data.number);
+    else qa_store_u32le(span.data + offset + 4, raw);
+    span.data[offset] = (uint8_t)value.kind;
     return true;
 }
 bool bot_character_header(qa_bot_character *c, qa_error *error) {
@@ -113,7 +109,7 @@ bool bot_character_header(qa_bot_character *c, qa_error *error) {
     if (!bytes(c, &span, error) || !memchr(span.data, 0, 64))
         return fail(error, "Character source filename is unterminated");
     c->view.path = (const char *)span.data;
-    uint32_t skill = word(span.data + 64); memcpy(&c->view.skill, &skill, 4);
+    c->view.skill = qa_load_f32le(span.data + 64);
     return true;
 }
 bool bot_character_kind(qa_bot_character *c, uint32_t index, qa_bot_character_value_kind *out,
@@ -129,10 +125,10 @@ bool bot_character_value(qa_bot_character *c, uint32_t index, qa_bot_character_v
     qa_bot_memory_span span;
     if (!value || index >= QA_BOT_CHARACTERISTICS || !bytes(c, &span, error))
         return fail(error, "Invalid character source cell");
-    uint32_t offset = BOT_CHARACTER_VALUE_OFFSET + index * 8, raw = word(span.data + offset + 4);
+    uint32_t offset = BOT_CHARACTER_VALUE_OFFSET + index * 8, raw = qa_load_u32le(span.data + offset + 4);
     *value = (qa_bot_character_value){.kind = (qa_bot_character_value_kind)span.data[offset]};
-    if (value->kind == QA_BOT_CHARACTER_INTEGER) memcpy(&value->data.integer, &raw, 4);
-    else if (value->kind == QA_BOT_CHARACTER_FLOAT) memcpy(&value->data.number, &raw, 4);
+    if (value->kind == QA_BOT_CHARACTER_INTEGER) value->data.integer = qa_i32_from_u32(raw);
+    else if (value->kind == QA_BOT_CHARACTER_FLOAT) value->data.number = qa_load_f32le(span.data + offset + 4);
     else if (value->kind == QA_BOT_CHARACTER_STRING) {
         bot_character_string *row = string(c->source, raw); qa_bot_memory_span text;
         bot_memory_record *record = row ? bot_memory_record_get(c->source->memory, row->allocation) : NULL;
@@ -158,7 +154,7 @@ bool qa_bot_character_free(qa_bot_character *c, qa_error *error) {
         if (!bytes(c, &span, error)) return false;
         uint32_t offset = BOT_CHARACTER_VALUE_OFFSET + i * 8;
         if (span.data[offset] != QA_BOT_CHARACTER_STRING) continue;
-        uint32_t pointer = word(span.data + offset + 4);
+        uint32_t pointer = qa_load_u32le(span.data + offset + 4);
         if (!pointer) continue;
         bot_character_string *row = string(c->source, pointer);
         if (!row || !qa_bot_memory_free(c->source->memory, row->allocation, error)) return false;
