@@ -37,7 +37,7 @@ add_library(qa_native STATIC
     src/compat/native/process.c
     src/compat/native/region.c
     src/compat/native/region_scope.c)
-target_link_libraries(qa_native PUBLIC qa_data PRIVATE ICU::uc)
+target_link_libraries(qa_native PUBLIC qa_core PRIVATE ICU::uc)
 if(UNIX)
     target_compile_definitions(qa_native PRIVATE _POSIX_C_SOURCE=200809L)
 endif()

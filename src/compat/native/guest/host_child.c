@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "host_child.h"
+#include "qa/arena.h"
 #include "qa/binary.h"
 #include "qa/platform_services.h"
 #include <errno.h>
@@ -29,6 +30,7 @@ struct guest_host_child {
     bool failed,source_initialized,state_written;
     guest_host_memory *memory;
     guest_host_x86_64_capabilities capability;
+    qa_arena output_storage;
     guest_profile_guard_receipt profile;
     guest_profile_cpu_domain domain;
     guest_host_x86_64_state state;
@@ -54,6 +56,7 @@ typedef struct host_server {
     guest_profile_interest *interests; size_t interest_count,interest_capacity;
     uint64_t stop,run_sequence,bypass,inventory_sequence;
     guest_host_x86_64_capabilities capability;
+    qa_arena output_storage;
     guest_host_x86_64_state state;
     guest_profile_guard_receipt profile;
     guest_profile_cpu_domain domain;
@@ -135,18 +138,35 @@ static bool reply_failure(int descriptor,uint32_t operation,uint64_t sequence,co
     return packet_send(descriptor,operation|HOST_REPLY,error && error->code!=QA_OK?(uint32_t)error->code:QA_ERROR_ARGUMENT,
         sequence,(qa_bytes){(const uint8_t *)message,strlen(message)},-1,transport_error);
 }
-static bool state_encode(const guest_host_x86_64_state *state,qa_buffer *out,qa_error *error)
+static bool output_prepare(qa_arena *storage,
+    const guest_host_x86_64_capabilities *capability,qa_error *error)
 {
-    if(!state || !out || out->data || out->size || !state->xsave.data || state->xsave.size<576 || state->xsave.size>SIZE_MAX-188)
+    /* HOST_STOP has the largest envelope; every XSAVE component comes from
+     * the actual child capability admitted before its first invocation. */
+    size_t bytes=(size_t)capability->xsave_bytes+188+84;
+    qa_arena_init(storage,bytes);
+    if(!qa_arena_reserve(storage,bytes,error))return false;
+    qa_arena_seal(storage);return true;
+}
+static bool state_encode(const guest_host_x86_64_state *state,qa_arena *storage,
+    size_t prefix,qa_buffer *out,qa_error *error)
+{
+    if(!state || !out || out->data || out->size || !state->xsave.data || state->xsave.size<576 ||
+        prefix>SIZE_MAX-188 || state->xsave.size>SIZE_MAX-prefix-188)
         return fail(error,QA_ERROR_ARGUMENT,0,"native hardware transfer needs actual state and empty output");
-    out->size=188+state->xsave.size;out->data=malloc(out->size);
+    /* No encode buffer crosses a service callback: packet_send completes its
+     * transfer before a receive, nested HOST_RUN or later encode can occur. */
+    qa_arena_reset(storage);
+    out->size=prefix+188+state->xsave.size;
+    out->data=qa_arena_alloc(storage,out->size,1,error);
     if(!out->data) {out->size=0;return fail(error,QA_ERROR_MEMORY,0,"encoding native hardware transfer");}
-    for(size_t i=0;i<16;++i) qa_store_u64le(out->data+i*8,state->registers[i]);
-    qa_store_u64le(out->data+128,state->instruction);qa_store_u64le(out->data+136,state->flags);
-    qa_store_u64le(out->data+144,state->fs_base);qa_store_u64le(out->data+152,state->gs_base);
-    for(size_t i=0;i<6;++i) qa_store_u16le(out->data+160+i*2,state->selectors[i]);
-    qa_store_u64le(out->data+172,state->xfeatures);qa_store_u64le(out->data+180,state->xsave.size);
-    memcpy(out->data+188,state->xsave.data,state->xsave.size);return true;
+    uint8_t *data=out->data+prefix;
+    for(size_t i=0;i<16;++i) qa_store_u64le(data+i*8,state->registers[i]);
+    qa_store_u64le(data+128,state->instruction);qa_store_u64le(data+136,state->flags);
+    qa_store_u64le(data+144,state->fs_base);qa_store_u64le(data+152,state->gs_base);
+    for(size_t i=0;i<6;++i) qa_store_u16le(data+160+i*2,state->selectors[i]);
+    qa_store_u64le(data+172,state->xfeatures);qa_store_u64le(data+180,state->xsave.size);
+    memcpy(data+188,state->xsave.data,state->xsave.size);return true;
 }
 static bool state_decode(qa_bytes bytes,const guest_host_x86_64_capabilities *capability,
     guest_host_x86_64_state *out,qa_error *error)
@@ -292,9 +312,8 @@ static bool server_stop(void *context,int number,void *opaque,guest_host_x86_64_
     }
     guest_host_x86_64_state_free(&server->state);
     if(!guest_host_x86_64_state_copy(state,&server->state,error)) return false;
-    qa_buffer hardware={0};if(!state_encode(state,&hardware,error)) return false;
-    qa_buffer body={.size=84+hardware.size};body.data=malloc(body.size);
-    if(!body.data) {qa_buffer_free(&hardware);return fail(error,QA_ERROR_MEMORY,0,"retaining native stop receipt");}
+    qa_buffer body={0};
+    if(!state_encode(state,&server->output_storage,84,&body,error))return false;
     qa_store_u32le(body.data,(uint32_t)kind);qa_store_u32le(body.data+4,(uint32_t)number);
     qa_store_u32le(body.data+8,(uint32_t)information->si_code);
     uint32_t access=0;
@@ -311,9 +330,8 @@ static bool server_stop(void *context,int number,void *opaque,guest_host_x86_64_
     qa_store_u64le(body.data+44,server->profile_fault.scope);qa_store_u64le(body.data+52,server->profile_fault.instruction);
     qa_store_u64le(body.data+60,server->profile_fault.address);qa_store_u64le(body.data+68,server->profile_fault.bytes);
     qa_store_u64le(body.data+76,server->profile_fault.continuation);
-    memcpy(body.data+84,hardware.data,hardware.size);qa_buffer_free(&hardware);
     bool okay=packet_send(server->descriptor,HOST_STOP,0,server->run_sequence,(qa_bytes){body.data,body.size},-1,error);
-    qa_buffer_free(&body);if(!okay)return false;
+    if(!okay)return false;
     if(kind==GUEST_HOST_STOP_FAULT) {server->failed=true;*resume=false;return true;}
     if(kind==GUEST_HOST_STOP_RETURN) {*resume=false;return true;}
     server->stopped=true;
@@ -483,30 +501,30 @@ bool guest_host_child_bootstrap(int argc,char *const *argv,bool *handled,int *st
     for(const char *at=argv[2];*at;++at) {if(*at<'0'||*at>'9'||descriptor>((uint64_t)INT_MAX-(unsigned)(*at-'0'))/10)return fail(error,QA_ERROR_ARGUMENT,0,"native child startup descriptor is invalid");descriptor=descriptor*10+(unsigned)(*at-'0');}
     host_server server={.descriptor=(int)descriptor};
     bool okay=server_profile(&server,GUEST_PROFILE_GUARD_PROBE,NULL,error) &&
-        guest_host_x86_64_capability(&server.capability,error) && guest_host_x86_64_capture(&server.state,error) &&
+        guest_host_x86_64_capability(&server.capability,error) &&
+        output_prepare(&server.output_storage,&server.capability,error) &&
+        guest_host_x86_64_capture(&server.state,error) &&
         server_profile(&server,GUEST_PROFILE_GUARD_CAPTURE,&server.state,error) &&
         guest_profile_cpu_domain_read(&server.state,&server.capability,&server.domain,error) &&
         guest_host_x86_64_bridge_open(server_stop,&server,error);
-    qa_buffer hardware={0},body={0};
+    qa_buffer body={0};
     long thread=okay?syscall(SYS_gettid):-1;
     if(okay && thread<=0)okay=fail(error,QA_ERROR_ARGUMENT,0,"reading actual child thread identity failed");
-    if(okay) okay=state_encode(&server.state,&hardware,error);
-    if(okay) {body.size=44+hardware.size;body.data=malloc(body.size);
-        if(!body.data)okay=fail(error,QA_ERROR_MEMORY,body.size,"owning actual child READY receipt");}
+    if(okay) okay=state_encode(&server.state,&server.output_storage,44,&body,error);
     if(okay) {
         qa_store_u64le(body.data,server.capability.xfeatures);qa_store_u32le(body.data+8,server.capability.xsave_bytes);qa_store_u32le(body.data+12,server.capability.mxcsr_mask);
         qa_store_u32le(body.data+16,server.profile.policy);
         qa_store_u64le(body.data+20,(uint64_t)getpid());qa_store_u64le(body.data+28,(uint64_t)getpgrp());
         qa_store_u64le(body.data+36,(uint64_t)thread);
-        memcpy(body.data+44,hardware.data,hardware.size);okay=packet_send(server.descriptor,HOST_READY,0,0,(qa_bytes){body.data,body.size},-1,error);
+        okay=packet_send(server.descriptor,HOST_READY,0,0,(qa_bytes){body.data,body.size},-1,error);
     }
-    qa_buffer_free(&hardware);qa_buffer_free(&body);
     if(!okay) {qa_error transport={0};reply_failure(server.descriptor,HOST_READY,0,error,&transport);}
     while(okay && !server.exit) {
         host_packet packet;if(!packet_receive(server.descriptor,&packet,error)){okay=false;break;}
         bool completed=false;okay=server_dispatch(&server,&packet,&completed,error);packet_free(&packet);
     }
     guest_host_x86_64_bridge_close();guest_host_x86_64_state_free(&server.state);
+    qa_arena_destroy(&server.output_storage);
     for(size_t i=0;i<server.backing_count;++i) close(server.backings[i].descriptor);
     free(server.backings);free(server.mappings);free(server.callbacks);free(server.interests);close(server.descriptor);
     *status=okay?0:125;return okay;
@@ -560,7 +578,8 @@ bool guest_host_child_create(const guest_host_child_options *options,guest_host_
             child->thread=qa_load_u64le(ready.body.data+36);
             okay=child->profile.policy==GUEST_PROFILE_GUARD_SOURCE_X64 &&
                 state_decode((qa_bytes){ready.body.data+44,ready.body.size-44},&child->capability,&child->state,error) &&
-                guest_profile_cpu_domain_read(&child->state,&child->capability,&child->domain,error);
+                guest_profile_cpu_domain_read(&child->state,&child->capability,&child->domain,error) &&
+                output_prepare(&child->output_storage,&child->capability,error);
         }
         packet_free(&ready);
     }
@@ -639,6 +658,7 @@ bool guest_host_child_destroy(guest_host_child **pointer,qa_error *error)
     if(child->descriptor>=0){int result=close(child->descriptor);child->descriptor=-1;if(result!=0)return fail(error,QA_ERROR_ARGUMENT,0,"closing actual native child channel failed");}
     if(!guest_host_memory_destroy(&child->memory,error))return false;
     guest_host_x86_64_state_free(&child->state);guest_host_x86_64_state_free(&child->fault.state);
+    qa_arena_destroy(&child->output_storage);
     free(child->callbacks);free(child->interests);free(child);*pointer=NULL;return true;
 }
 bool guest_host_child_backing(guest_host_child *child,const guest_host_backing_view *view,qa_error *error)
@@ -736,15 +756,12 @@ static bool child_run(guest_host_child *child,uint64_t start,uint64_t stop,
         !guest_host_memory_read(child->memory,stop,&trap,1,error) || trap!=0xcc)))
         return fail(error,QA_ERROR_ARGUMENT,start,"native invocation requires genuine owned return trap and stopped callbacks");
     if(!guest_profile_cpu_current(&child->domain,&child->capability,&child->state,error))return false;
-    child->state.instruction=start;qa_buffer hardware={0},body={0};
-    if(!state_encode(&child->state,&hardware,error))return false;
-    body.size=17+hardware.size;body.data=malloc(body.size);
-    if(!body.data){qa_buffer_free(&hardware);return fail(error,QA_ERROR_MEMORY,start,"retaining native invocation packet");}
+    child->state.instruction=start;qa_buffer body={0};
+    if(!state_encode(&child->state,&child->output_storage,17,&body,error))return false;
     qa_store_u64le(body.data,stop);body.data[8]=syscall!=NULL;
     qa_store_u64le(body.data+9,observation?observation->bypass:0);
-    memcpy(body.data+17,hardware.data,hardware.size);qa_buffer_free(&hardware);
     uint64_t sequence=++child->sequence;++child->running;
-    bool okay=packet_send(child->descriptor,HOST_RUN,0,sequence,(qa_bytes){body.data,body.size},-1,error);qa_buffer_free(&body);
+    bool okay=packet_send(child->descriptor,HOST_RUN,0,sequence,(qa_bytes){body.data,body.size},-1,error);
     bool returned=false;
     while(okay) {
         host_packet packet;if(!packet_receive(child->descriptor,&packet,error)){okay=false;break;}
@@ -835,9 +852,8 @@ static bool child_run(guest_host_child *child,uint64_t start,uint64_t stop,
                 child->state.registers[0]=(uint64_t)result.value;
                 child->state.registers[1]=call.next_instruction;child->state.registers[11]=flags;
                 child->state.instruction=call.next_instruction;
-                qa_buffer resume={0};okay=state_encode(&child->state,&resume,error);
+                qa_buffer resume={0};okay=state_encode(&child->state,&child->output_storage,0,&resume,error);
                 if(okay)okay=packet_send(child->descriptor,HOST_RESUME,0,sequence,(qa_bytes){resume.data,resume.size},-1,error);
-                qa_buffer_free(&resume);
                 if(okay) {guest_host_x86_64_state_free(&entry_state);continue;}
             }
             /* A rejected service has no architectural syscall return. Retain
@@ -872,9 +888,8 @@ static bool child_run(guest_host_child *child,uint64_t start,uint64_t stop,
             if(error)*error=transfer_error;
         }
         if(okay)okay=guest_profile_cpu_current(&child->domain,&child->capability,&child->state,error);
-        qa_buffer resume={0};if(okay)okay=state_encode(&child->state,&resume,error);
+        qa_buffer resume={0};if(okay)okay=state_encode(&child->state,&child->output_storage,0,&resume,error);
         if(okay)okay=packet_send(child->descriptor,HOST_RESUME,0,sequence,(qa_bytes){resume.data,resume.size},-1,error);
-        qa_buffer_free(&resume);
         if(!okay) {qa_error ignored={0};packet_send(child->descriptor,HOST_ABORT,0,sequence,(qa_bytes){0},-1,&ignored);break;}
     }
     --child->running;if(!okay)child->failed=true;return okay;
