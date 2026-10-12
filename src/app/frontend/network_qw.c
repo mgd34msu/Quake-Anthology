@@ -310,11 +310,12 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
                 .data.text = {2, "Can't suicide -- allready dead!\n"}}, error));
     }
     if (!strcmp(name, "pause")) {
-        qa_buffer announcement = {0}; bool changed;
-        if (!qa_application_network_qw_pause(host->frontend->application, actor, &announcement, &changed, error)) return false;
+        uint8_t storage[QA_QW_PAUSE_ANNOUNCEMENT_BYTES];
+        qa_bytes announcement = {0}; bool changed;
+        if (!qa_application_network_qw_pause(host->frontend->application, actor,
+            storage, sizeof(storage), &announcement, &changed, error)) return false;
         qa_qw_service message = {.kind = QA_QW_PRINT, .data.text = {2, (const char *)announcement.data}};
-        bool ok = changed ? broadcast(host, &message, error) : reliable(peer, &message, error);
-        qa_buffer_free(&announcement); return ok;
+        return changed ? broadcast(host, &message, error) : reliable(peer, &message, error);
     }
     if (!strcmp(name, "ptrack")) {
         bool target,extra;

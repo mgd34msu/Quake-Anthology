@@ -369,7 +369,8 @@ bool application_native_q1_qw_kill(qa_application *app,qa_actor_id actor,bool *k
     if (!okay) application_fault(app,error);
     return okay;
 }
-bool application_native_q1_qw_pause(qa_application *app,qa_actor_id actor,qa_buffer *out,bool *changed,qa_error *error) {
+bool application_native_q1_qw_pause(qa_application *app,qa_actor_id actor,
+    uint8_t *scratch,size_t scratch_bytes,qa_bytes *out,bool *changed,qa_error *error) {
     if (!out || out->data || out->size || !changed) return application_fail(error,QA_ERROR_ARGUMENT,"Native QuakeWorld pause requires empty announcement output");
     application_native_q1_wire_source source={0};
     if (!application_native_q1_wire_qw_begin(app,&source,error)) return false;
@@ -378,20 +379,12 @@ bool application_native_q1_qw_pause(qa_application *app,qa_actor_id actor,qa_buf
         qa_q1_source_client_read(source.provider->state.q1,actor,&client);
     const qa_cvar_view *policy=qa_q1_source_read(source.provider->state.q1,QA_Q1_SOURCE_PAUSABLE);
     const char *denial=policy && policy->number==0?"Pause not allowed.\n":okay && application_player_identity(row)->spectator?"Spectators can not pause.\n":NULL;
-    const char *suffix=app->q1_paused?" unpaused the game\n":" paused the game\n";
-    size_t prefix=okay && !denial?strlen(client.name):0;
-    size_t size=denial?strlen(denial):prefix+strlen(suffix);qa_buffer result={0};
-    if (okay && (prefix>1395 || size>1395)) okay=application_fail(error,QA_ERROR_FORMAT,"Native QuakeWorld pause announcement exceeds its source extent");
-    if (okay) {
-        result=(qa_buffer){.data=malloc(size+1),.size=size};
-        if (!result.data) okay=application_fail(error,QA_ERROR_MEMORY,"Retaining native QuakeWorld pause announcement");
-        else if (denial) memcpy(result.data,denial,size+1);
-        else {memcpy(result.data,client.name,prefix);memcpy(result.data+prefix,suffix,size-prefix+1);}
-    }
+    qa_bytes result={0};
+    if (okay) okay=application_qw_pause_announcement(scratch,scratch_bytes,client.name,denial,app->q1_paused,&result,error);
     application_provider *provider=source.provider;
     application_native_q1_wire_end(&source);
     if (okay && !denial) okay=application_q1_pause_set(app,provider,!app->q1_paused,error);
-    if (okay) {*out=result;*changed=denial==NULL;} else qa_buffer_free(&result);
+    if (okay) {*out=result;*changed=denial==NULL;}
     return okay;
 }
 bool application_native_q1_qw_userinfo(qa_application *app,qa_actor_id actor,const char *raw,qa_error *error) {

@@ -15,7 +15,10 @@ bool application_native_q1_qw_receives(qa_application *, qa_actor_id, const qa_a
 bool application_native_q1_qw_prepare(qa_application *, qa_actor_id, qa_error *);
 bool application_native_q1_qw_commands(qa_application *, const qa_network_command_group *, qa_error *);
 bool application_native_q1_qw_kill(qa_application *, qa_actor_id, bool *, qa_error *);
-bool application_native_q1_qw_pause(qa_application *, qa_actor_id, qa_buffer *, bool *, qa_error *);
+bool application_qw_pause_announcement(uint8_t *, size_t, const char *name,
+    const char *denial, bool paused, qa_bytes *, qa_error *);
+bool application_native_q1_qw_pause(qa_application *, qa_actor_id,
+    uint8_t *, size_t, qa_bytes *, bool *, qa_error *);
 bool application_native_q1_qw_userinfo(qa_application *, qa_actor_id, const char *, qa_error *);
 bool application_native_q1_qw_flush(qa_application *, qa_error *);
 

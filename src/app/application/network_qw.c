@@ -462,10 +462,32 @@ bool qa_application_network_qw_kill(qa_application *app, qa_actor_id actor,
     return ok;
 }
 
-bool qa_application_network_qw_pause(qa_application *app, qa_actor_id actor,
-    qa_buffer *out, bool *changed, qa_error *error)
+bool application_qw_pause_announcement(uint8_t *scratch, size_t scratch_bytes,
+    const char *name, const char *denial, bool paused, qa_bytes *out, qa_error *error)
 {
-    if (application_native_q1_qw_selected(app)) return application_native_q1_qw_pause(app, actor, out, changed, error);
+    const char *suffix = paused ? " unpaused the game\n" : " paused the game\n";
+    size_t name_size = denial ? 0 : strlen(name), suffix_size = denial ? 0 : strlen(suffix);
+    size_t limit = QA_QW_PAUSE_ANNOUNCEMENT_BYTES - 1;
+    if (name_size > limit || suffix_size > limit - name_size)
+        return application_fail(error, QA_ERROR_FORMAT, "QuakeWorld pause announcement exceeds its source message extent");
+    size_t size = denial ? strlen(denial) : name_size + suffix_size;
+    if (size > limit)
+        return application_fail(error, QA_ERROR_FORMAT, "QuakeWorld pause announcement exceeds its source message extent");
+    if (!scratch || size >= scratch_bytes)
+        return application_fail(error, QA_ERROR_CAPACITY, "QuakeWorld pause announcement exceeds its caller storage");
+    if (denial) memcpy(scratch, denial, size + 1);
+    else {
+        memcpy(scratch, name, name_size);
+        memcpy(scratch + name_size, suffix, suffix_size + 1);
+    }
+    *out = (qa_bytes){scratch, size};
+    return true;
+}
+
+bool qa_application_network_qw_pause(qa_application *app, qa_actor_id actor,
+    uint8_t *scratch, size_t scratch_bytes, qa_bytes *out, bool *changed, qa_error *error)
+{
+    if (application_native_q1_qw_selected(app)) return application_native_q1_qw_pause(app, actor, scratch, scratch_bytes, out, changed, error);
     if (!out || out->data || out->size || !changed)
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld pause requires empty announcement output");
     struct application_qc_state *engine = qw_source(app, NULL, error);
@@ -477,17 +499,9 @@ bool qa_application_network_qw_pause(qa_application *app, qa_actor_id actor,
     int32_t reference; const char *name = NULL;
     if (!denial && (!qa_qc_slot_reference(engine->provider->state.qc.instance, slot, &reference, error) ||
         !qw_string(engine, reference, engine->field_bindings->netname, &name, error))) return false;
-    const char *suffix = app->q1_paused ? " unpaused the game\n" : " paused the game\n";
-    size_t name_size = denial ? 0 : strlen(name), suffix_size = denial ? 0 : strlen(suffix);
-    if (name_size > 1395 || suffix_size > 1395 - name_size)
-        return application_fail(error, QA_ERROR_FORMAT, "QuakeWorld pause announcement exceeds its source message extent");
-    size_t size = denial ? strlen(denial) : name_size + suffix_size;
-    if (size > 1395) return application_fail(error, QA_ERROR_FORMAT, "QuakeWorld pause announcement exceeds its source message extent");
-    out->data = malloc(size + 1);
-    if (!out->data) return application_fail(error, QA_ERROR_MEMORY, "Retaining QuakeWorld pause announcement");
-    if (denial) memcpy(out->data, denial, size + 1);
-    else { memcpy(out->data, name, name_size); memcpy(out->data + name_size, suffix, suffix_size + 1); }
-    out->size = size; *changed = !denial;
+    qa_bytes announcement = {0};
+    if (!application_qw_pause_announcement(scratch, scratch_bytes, name, denial, app->q1_paused, &announcement, error)) return false;
+    *out = announcement; *changed = !denial;
     if (!denial) app->q1_paused = !app->q1_paused;
     return true;
 }

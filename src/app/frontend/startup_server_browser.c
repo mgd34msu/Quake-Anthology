@@ -24,9 +24,12 @@ typedef struct browser_draft {
 typedef struct browser_row {
     qa_server_entry entry;
     char address[256];
-    qa_buffer search;
     bool has_ping;
 } browser_row;
+typedef struct browser_text {
+    uint8_t *data;
+    size_t size, capacity;
+} browser_text;
 typedef struct browser_menu_context {
     frontend_startup_server_browser *owner;
     qa_ui_id id;
@@ -41,11 +44,11 @@ struct frontend_startup_server_browser {
     UCollator *base, *standard;
     browser_draft draft;
     browser_row *rows;
-    size_t row_count, row_capacity, unfiltered_count, filtered_count;
+    size_t row_count, unfiltered_count, filtered_count;
     size_t *order, *scratch;
     qa_ui_control controls[20];
     char labels[20][2304];
-    qa_arena measurements;
+    qa_arena rows_storage, details_storage, work_storage, measurements;
     char **details;
     size_t detail_count, detail_capacity;
     uint32_t registered;
@@ -152,7 +155,7 @@ static bool sort_rows(frontend_startup_server_browser *o,size_t count,qa_error *
     }
     return true;
 }
-static bool trim_lower(const char *text,qa_buffer *out,qa_error *e)
+static bool trim_lower(const char *text,qa_arena *storage,qa_buffer *out,qa_error *e)
 {
     qa_bytes bytes={(const uint8_t *)text,strlen(text)}; size_t cursor=0,begin=bytes.size,end=0; uint32_t code;
     while(cursor<bytes.size) {
@@ -161,7 +164,7 @@ static bool trim_lower(const char *text,qa_buffer *out,qa_error *e)
         if(!qa_unicode_whitespace(code)) { if(begin==bytes.size)begin=before; end=cursor; }
     }
     if(begin==bytes.size)begin=end=0;
-    return qa_utf8_lower((qa_bytes){bytes.data+begin,end-begin},out,e);
+    return qa_utf8_lower_arena((qa_bytes){bytes.data+begin,end-begin},storage,out,e);
 }
 static bool contains(qa_bytes text,qa_bytes query)
 {
@@ -171,13 +174,13 @@ static bool contains(qa_bytes text,qa_bytes query)
         if(!memcmp(text.data+i,query.data,query.size))return true;
     return false;
 }
-static bool included(const browser_draft *draft,const browser_row *row,qa_bytes filter)
+static bool included(const browser_draft *draft,const browser_row *row,qa_bytes search,qa_bytes filter)
 {
     const qa_server_entry *entry=&row->entry;
     return (!draft->favorites_only || (entry->sources&QA_SERVER_FAVORITE)) &&
         (!entry->available || !entry->maximum_players ||
             ((!draft->hide_empty || entry->players>0) && (!draft->hide_full || entry->players<entry->maximum_players))) &&
-        contains((qa_bytes){row->search.data,row->search.size},filter);
+        contains(search,filter);
 }
 static bool draft_text(qa_source_save_io *io,char *text,size_t capacity)
 {
@@ -255,13 +258,14 @@ static bool options_factory(void *,uint32_t,qa_ui_menu *,qa_error *);
 static bool details_factory(void *,uint32_t,qa_ui_menu *,qa_error *);
 static void clear_rows(frontend_startup_server_browser *o)
 {
-    for(size_t i=0;i<o->row_count;++i)qa_buffer_free(&o->rows[i].search);
-    o->row_count=0;
+    qa_arena_reset(&o->rows_storage);
+    o->rows=NULL; o->order=o->scratch=NULL;
+    o->row_count=o->unfiltered_count=o->filtered_count=0;
 }
 static void clear_details(frontend_startup_server_browser *o)
 {
-    for(size_t i=0;i<o->detail_count;++i)free(o->details[i]);
-    free(o->details); o->details=NULL; o->detail_count=o->detail_capacity=0;
+    qa_arena_reset(&o->details_storage);
+    o->details=NULL; o->detail_count=o->detail_capacity=0;
 }
 bool frontend_startup_server_browser_destroy(frontend_startup_server_browser **out,qa_error *e)
 {
@@ -277,7 +281,9 @@ bool frontend_startup_server_browser_destroy(frontend_startup_server_browser **o
         --o->registered;
     }
     clear_rows(o); clear_details(o);
-    free(o->rows); free(o->order); free(o->scratch);
+    qa_arena_destroy(&o->rows_storage);
+    qa_arena_destroy(&o->details_storage);
+    qa_arena_destroy(&o->work_storage);
     qa_arena_destroy(&o->measurements);
     if(o->base)ucol_close(o->base);
     if(o->standard)ucol_close(o->standard);
@@ -295,6 +301,9 @@ bool frontend_startup_server_browser_create(frontend_seat *seat,
     frontend_startup_server_browser *o=calloc(1,sizeof(*o));
     if(!o)return fail(e,QA_ERROR_MEMORY,"Retaining the physical startup server browser");
     o->seat=seat; o->ui=seat->ui; o->input=seat->input; o->console=seat->console; o->menus=*menus;
+    qa_arena_init(&o->rows_storage,0);
+    qa_arena_init(&o->details_storage,0);
+    qa_arena_init(&o->work_storage,0);
     qa_arena_init(&o->measurements,4096);
     *out=o;
     UErrorCode status=U_ZERO_ERROR; o->base=ucol_open(NULL,&status);
@@ -333,12 +342,13 @@ static bool append_detail(frontend_startup_server_browser *o,const char *text,si
         size_t capacity=o->detail_capacity?o->detail_capacity*2:16;
         if(capacity<o->detail_capacity || capacity>SIZE_MAX/sizeof(*o->details))
             return fail(e,QA_ERROR_MEMORY,"Server detail rows exceed their retained extent");
-        char **rows=realloc(o->details,capacity*sizeof(*rows));
-        if(!rows)return fail(e,QA_ERROR_MEMORY,"Retaining server detail rows");
+        char **rows=qa_arena_grow(&o->details_storage,o->details,o->detail_count*sizeof(*rows),
+            capacity*sizeof(*rows),_Alignof(char *),e);
+        if(!rows)return false;
         o->details=rows; o->detail_capacity=capacity;
     }
-    char *copy=malloc(length+1);
-    if(!copy)return fail(e,QA_ERROR_MEMORY,"Retaining an actual server detail line");
+    char *copy=qa_arena_alloc(&o->details_storage,length+1,1,e);
+    if(!copy)return false;
     if(length)memcpy(copy,text,length);
     copy[length]=0; o->details[o->detail_count++]=copy; return true;
 }
@@ -362,42 +372,50 @@ static bool detail_line(frontend_startup_server_browser *o,const char *text,qa_e
     }
     return (!used && bytes.size) || append_detail(o,line,used,e);
 }
-static bool bytes_add(qa_buffer *out,qa_bytes bytes,bool strip_colors,qa_error *e)
+static bool bytes_add(qa_arena *storage,browser_text *out,qa_bytes bytes,bool strip_colors,qa_error *e)
 {
     if(bytes.size>SIZE_MAX-out->size-2)return fail(e,QA_ERROR_MEMORY,"Server text exceeds its retained extent");
-    uint8_t *data=realloc(out->data,out->size+bytes.size+2);
-    if(!data)return fail(e,QA_ERROR_MEMORY,"Retaining actual server text");
-    out->data=data;
+    size_t needed=out->size+bytes.size+2;
+    if(needed>out->capacity) {
+        size_t capacity=out->capacity?out->capacity:needed;
+        while(capacity<needed)capacity=capacity>SIZE_MAX/2?needed:capacity*2;
+        uint8_t *data=qa_arena_grow(storage,out->data,out->data?out->size+1:0,capacity,1,e);
+        if(!data)return false;
+        out->data=data; out->capacity=capacity;
+    }
+    uint8_t *data=out->data;
     for(size_t i=0;i<bytes.size;++i) {
         if(strip_colors && bytes.data[i]=='^' && i+1<bytes.size && bytes.data[i+1]>='0' && bytes.data[i+1]<='9') { ++i; continue; }
         data[out->size++]=bytes.data[i];
     }
     data[out->size++]=' '; data[out->size]=0; return true;
 }
-static bool text_add(qa_buffer *out,const char *text,qa_error *e)
-{ return bytes_add(out,(qa_bytes){(const uint8_t *)text,strlen(text)},false,e); }
+static bool text_add(qa_arena *storage,browser_text *out,const char *text,qa_error *e)
+{ return bytes_add(storage,out,(qa_bytes){(const uint8_t *)text,strlen(text)},false,e); }
 static bool key_is(const qa_buffer *key,const char *name)
 { size_t size=strlen(name); return key->size==size && !memcmp(key->data,name,size); }
 static bool row_search(frontend_startup_server_browser *o,const frontend_network_menu_view *view,
-    browser_row *row,qa_error *e)
+    browser_row *row,qa_buffer *out,qa_error *e)
 {
-    qa_buffer raw={0}; qa_server_browser_details details={0}; bool okay=true;
+    qa_arena_reset(&o->work_storage);
+    browser_text raw={0}; qa_server_browser_details details={0}; bool okay=true;
     if(row->entry.available) {
         okay=frontend_network_menu_details_read(o->seat->frontend,view,&row->entry,&details,e);
-        if(okay)okay=text_add(&raw,row->entry.name,e) && text_add(&raw,row->entry.map,e);
+        if(okay)okay=text_add(&o->work_storage,&raw,row->entry.name,e) && text_add(&o->work_storage,&raw,row->entry.map,e);
         const qa_buffer *game=NULL;
         for(size_t i=0;okay && i<details.rule_count;++i) {
             const qa_server_browser_rule *rule=details.rules+i;
             if(key_is(&rule->name,"gamedir")) { game=&rule->value; break; }
             if(!game && key_is(&rule->name,"game"))game=&rule->value;
         }
-        if(okay && game)okay=bytes_add(&raw,(qa_bytes){game->data,game->size},false,e);
+        if(okay && game)okay=bytes_add(&o->work_storage,&raw,(qa_bytes){game->data,game->size},false,e);
         for(size_t i=0;okay && i<details.player_count;++i)
-            okay=bytes_add(&raw,(qa_bytes){details.players[i].name.data,details.players[i].name.size},true,e);
+            okay=bytes_add(&o->work_storage,&raw,(qa_bytes){details.players[i].name.data,details.players[i].name.size},true,e);
         if(okay)okay=frontend_network_menu_details_current(o->seat->frontend,view,&details);
     }
-    if(okay)okay=text_add(&raw,row->address,e) && qa_utf8_lower((qa_bytes){raw.data,raw.size},&row->search,e);
-    qa_buffer_free(&raw); qa_server_browser_details_free(&details); return okay;
+    if(okay)okay=text_add(&o->work_storage,&raw,row->address,e) &&
+        qa_utf8_lower_arena((qa_bytes){raw.data,raw.size},&o->work_storage,out,e);
+    qa_server_browser_details_free(&details); return okay;
 }
 static bool refresh(frontend_startup_server_browser *o,const frontend_network_menu_view *view,qa_error *e)
 {
@@ -411,17 +429,20 @@ static bool refresh(frontend_startup_server_browser *o,const frontend_network_me
         total+=counts[lane];
     }
     clear_rows(o);
-    if(total>o->row_capacity) {
+    if(total) {
         if(total>SIZE_MAX/sizeof(*o->rows) || total>SIZE_MAX/sizeof(*o->order))
             return fail(e,QA_ERROR_MEMORY,"Server inventory exceeds its native extent");
-        browser_row *rows=calloc(total,sizeof(*rows)); size_t *order=malloc(total*sizeof(*order)),*scratch=malloc(total*sizeof(*scratch));
-        if(!rows || !order || !scratch) { free(rows); free(order); free(scratch); return fail(e,QA_ERROR_MEMORY,"Retaining actual server inventory"); }
-        free(o->rows); free(o->order); free(o->scratch);
-        o->rows=rows; o->order=order; o->scratch=scratch; o->row_capacity=total;
+        browser_row *rows=qa_arena_alloc(&o->rows_storage,total*sizeof(*rows),_Alignof(browser_row),e);
+        size_t *order=qa_arena_alloc(&o->rows_storage,total*sizeof(*order),_Alignof(size_t),e);
+        size_t *scratch=qa_arena_alloc(&o->rows_storage,total*sizeof(*scratch),_Alignof(size_t),e);
+        if(!rows || !order || !scratch)return false;
+        o->rows=rows; o->order=order; o->scratch=scratch;
     }
     for(size_t lane=0;lane<lanes;++lane) {
-        qa_server_entry *entries=counts[lane]?malloc(counts[lane]*sizeof(*entries)):NULL;
-        if(counts[lane] && !entries)return fail(e,QA_ERROR_MEMORY,"Reading actual protocol server rows");
+        qa_arena_reset(&o->work_storage);
+        qa_server_entry *entries=counts[lane]?qa_arena_alloc(&o->work_storage,
+            counts[lane]*sizeof(*entries),_Alignof(qa_server_entry),e):NULL;
+        if(counts[lane] && !entries)return false;
         size_t count=0; bool okay=frontend_network_menu_rows(o->seat->frontend,view,protocols[lane],entries,counts[lane],&count,
             &o->seat->frontend->frame.storage,e);
         if(okay && count>counts[lane])okay=fail(e,QA_ERROR_ARGUMENT,"Server inventory changed during observation");
@@ -436,16 +457,16 @@ static bool refresh(frontend_startup_server_browser *o,const frontend_network_me
                 row->entry.sources=sources;
             }
         }
-        free(entries); if(!okay)return false;
+        if(!okay)return false;
     }
-    qa_buffer filter={0}; bool okay=trim_lower(o->draft.filter,&filter,e); size_t used=0;
+    qa_buffer filter={0}; bool okay=trim_lower(o->draft.filter,&o->rows_storage,&filter,e); size_t used=0;
     for(size_t i=0;okay && i<o->row_count;++i) {
         browser_row *row=o->rows+i; row->has_ping=row->entry.has_ping;
-        okay=qa_net_address_format(&row->entry.address,row->address,sizeof(row->address),e) && row_search(o,view,row,e);
+        qa_buffer search={0};
+        okay=qa_net_address_format(&row->entry.address,row->address,sizeof(row->address),e) && row_search(o,view,row,&search,e);
         if(okay && selected(&o->draft,row))o->draft.selected_protocol=row->entry.protocol;
-        if(okay && included(&o->draft,row,(qa_bytes){filter.data,filter.size}))o->order[used++]=i;
+        if(okay && included(&o->draft,row,(qa_bytes){search.data,search.size},(qa_bytes){filter.data,filter.size}))o->order[used++]=i;
     }
-    qa_buffer_free(&filter);
     if(okay)okay=sort_rows(o,used,e) && frontend_network_menu_current(o->seat->frontend,view);
     if(okay) {
         frontend_network_menu_status status;
@@ -479,15 +500,16 @@ static bool select_row(frontend_startup_server_browser *o,const frontend_network
 static bool counted_detail(frontend_startup_server_browser *o,const qa_buffer *name,const char *middle,
     const qa_buffer *value,qa_error *e)
 {
-    qa_buffer text={0}; bool okay=bytes_add(&text,(qa_bytes){name->data,name->size},false,e);
+    qa_arena_reset(&o->work_storage);
+    browser_text text={0}; bool okay=bytes_add(&o->work_storage,&text,(qa_bytes){name->data,name->size},false,e);
     if(okay && text.size) --text.size;
-    if(okay)okay=text_add(&text,middle,e);
+    if(okay)okay=text_add(&o->work_storage,&text,middle,e);
     if(okay && text.size) --text.size;
-    if(okay)okay=bytes_add(&text,(qa_bytes){value->data,value->size},false,e);
+    if(okay)okay=bytes_add(&o->work_storage,&text,(qa_bytes){value->data,value->size},false,e);
     if(okay && text.size)text.data[--text.size]=0;
     for(size_t i=0;i<text.size;++i)if(text.data[i]<32 || text.data[i]==127)text.data[i]=' ';
     if(okay)okay=detail_line(o,(const char *)text.data,e);
-    qa_buffer_free(&text); return okay;
+    return okay;
 }
 static bool build_details(frontend_startup_server_browser *o,const frontend_network_menu_view *view,qa_error *e)
 {
@@ -509,8 +531,8 @@ static bool build_details(frontend_startup_server_browser *o,const frontend_netw
         okay=counted_detail(o,&details.players[i].name,"",&suffix,e);
     }
     if(okay && details.rule_count) {
-        rules=malloc(details.rule_count*sizeof(*rules));
-        if(!rules)okay=fail(e,QA_ERROR_MEMORY,"Sorting actual server rule rows");
+        rules=qa_arena_alloc(&o->details_storage,details.rule_count*sizeof(*rules),_Alignof(size_t),e);
+        if(!rules)okay=false;
     }
     for(size_t i=0;okay && i<details.rule_count;++i) {
         size_t at=i;
@@ -530,7 +552,7 @@ static bool build_details(frontend_startup_server_browser *o,const frontend_netw
         okay=counted_detail(o,&rule->name,": ",&rule->value,e);
     }
     if(okay)okay=frontend_network_menu_details_current(o->seat->frontend,view,&details);
-    free(rules); qa_server_browser_details_free(&details); return okay;
+    qa_server_browser_details_free(&details); return okay;
 }
 static bool trim_copy(const char *text,char *out,size_t capacity,qa_error *e)
 {
