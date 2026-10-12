@@ -1,5 +1,6 @@
 #include "qa/platform_services.h"
 #include "internal.h"
+#include "../output_gamma.h"
 #include "brush_spans.h"
 #include "surface_cache.h"
 #include "particles.h"
@@ -179,7 +180,7 @@ qa_cpu_renderer *qa_cpu_create(const qa_cpu_options *options, qa_error *error) {
   qa_scene_state_default(&renderer->pipeline);
   renderer->clear_depth = 1;
   renderer->gamma_value = 1;
-  for (size_t i=0;i<256;++i) renderer->gamma[i]=(uint8_t)i;
+  qa_output_gamma_table(1, QA_OUTPUT_GAMMA_MIXED, renderer->gamma);
   renderer->stencil_maximum =
       options->stencil_bits == 32
           ? UINT32_MAX
@@ -601,9 +602,7 @@ bool qa_cpu_set_gamma(qa_cpu_renderer *renderer, float gamma, qa_error *error) {
   }
   if (gamma == renderer->gamma_value) return true;
   renderer->gamma_enabled = gamma != 1;
-  for (size_t i = 0; i < 256; ++i)
-    renderer->gamma[i] =
-        gamma == 1 ? (uint8_t)i : (uint8_t)floor(pow((float)i / 255, 1.0f / gamma) * 255 + .5);
+  qa_output_gamma_table(gamma, QA_OUTPUT_GAMMA_MIXED, renderer->gamma);
   renderer->gamma_value=gamma;
   return true;
 }
@@ -1748,8 +1747,7 @@ static bool cpu_surface_prepare(qa_cpu_renderer *renderer,uint32_t width,uint32_
   if (ticket->resized && !buffer_create(&ticket->next,width,height,false,renderer,error)) return false;
   ticket->output=malloc(count*4);
   if (!ticket->output) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating prepared CPU presentation"); return false; }
-  for (size_t i=0;i<256;++i)
-    ticket->gamma[i]=gamma==1?(uint8_t)i:(uint8_t)floor(pow((float)i/255,1.0f/gamma)*255+.5);
+  qa_output_gamma_table(gamma, QA_OUTPUT_GAMMA_MIXED, ticket->gamma);
   const uint8_t *pixels=ticket->resized?ticket->next.color:renderer->display.color;
   for (size_t i=0;i<count;++i) {
     for (size_t c=0;c<3;++c) ticket->output[i*4+c]=ticket->gamma[pixels[i*4+c]];

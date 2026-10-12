@@ -144,6 +144,16 @@ sub-millisecond and long durations, instant multi-seat frames and binary payload
 round trips. Debug geometry is transient presentation and is excluded from new
 tool captures; existing checkpoint fields remain readable.
 
+| Observations | Commit | Shared replacement |
+| --- | --- | --- |
+| `J24-07` | `bfc1881c` | Shared combat compares canonical team IDs. Original red/blue numbers are produced only at the Q3 boundary. |
+| `J14-03`, `17-03` partial | `da60a3cf` | Full-generation actor and uint64 bus indexes replace lookup scans. Same-round history and pool/index growth remain; round reset reclaims aliases. |
+| `J13-08` | `3df0a4c4` | Spatial insertion and trigger delivery retain role rules instead of selecting by family during each operation. |
+| `Q3NET-35-03` | `a9c32f98` | Console and Q3 network use one token-span lexer, with their original token limits and partial receipts. DEL remains an ordinary byte; the audit's claimed DEL discrepancy was incorrect. |
+| `27-04` | `ac8eec36` | KEX userinfo projects common borrowed info pairs. Pair/key/value limits, defaults and seat overrides remain. Shipped callers use distinct source and destination buffers. |
+| `J12-01/02/03/04/11` | `2a7903a1` | QuakeWorld touch de-duplication reads retained movement contacts. Numeric and source-text adapters use common primitives; shared contacts can still grow. |
+| `J32-01` | `27bde296` | Render/effect rotation, perpendicular selection, portal remap, transformed bounds and matrix directions use common primitives with explicit original arithmetic policies. |
+
 These fixes close the named observations only. They do not establish that all
 callers of every capability have migrated, that all module combinations work,
 or that the whole engine has zero steady-state allocation.
@@ -166,11 +176,3 @@ maps are necessary; resource construction occurs on misses; active-menu rebuilds
 are conditional; reached and authoritative config dictionaries are distinct;
 and missing module adapters are capability work, not permission to delete
 original lifecycle checks blindly.
-
-| `J24-07` | `bfc1881c` | Shared combat compares canonical team IDs. Original red/blue numbers are produced only at the Q3 boundary. |
-| `J14-03`, `17-03` partial | `da60a3cf` | Full-generation actor and uint64 bus indexes replace lookup scans. Same-round history and pool/index growth remain; round reset reclaims aliases. |
-| `J13-08` | `3df0a4c4` | Spatial insertion and trigger delivery retain role rules instead of selecting by family during each operation. |
-| `Q3NET-35-03` | `a9c32f98` | Console and Q3 network use one token-span lexer, with their original token limits and partial receipts. DEL remains an ordinary byte; the audit's claimed DEL discrepancy was incorrect. |
-| `27-04` | `ac8eec36` | KEX userinfo projects common borrowed info pairs. Pair/key/value limits, defaults and seat overrides remain. Shipped callers use distinct source and destination buffers. |
-| `J12-01/02/03/04/11` | `2a7903a1` | QuakeWorld touch de-duplication reads retained movement contacts. Numeric and source-text adapters use common primitives; shared contacts can still grow. |
-| `J32-01` | `27bde296` | Render/effect rotation, perpendicular selection, portal remap, transformed bounds and matrix directions use common primitives with explicit original arithmetic policies. |

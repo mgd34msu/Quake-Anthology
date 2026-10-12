@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../output_gamma.h"
 
 #include <limits.h>
 
@@ -302,14 +303,6 @@ static bool output_restore(qa_gl_renderer *renderer, qa_error *error)
     return gl_check(renderer, "OpenGL output target restore", error);
 }
 
-void gl_gamma_table(float gamma, uint8_t table[256])
-{
-    for (size_t i = 0; i < 256; ++i) {
-        float value = powf((float)i / 255.0f, 1.0f / gamma);
-        table[i] = (uint8_t)floorf(fminf(fmaxf(value, 0), 1) * 255 + 0.5f);
-    }
-}
-
 bool gl_output_gamma_prepare(qa_gl_renderer *renderer, float gamma,
                              bool copy_default, qa_error *error)
 {
@@ -333,7 +326,7 @@ bool gl_output_gamma_prepare(qa_gl_renderer *renderer, float gamma,
     }
     if (!output_objects(renderer, error)) return false;
     uint8_t table[256];
-    gl_gamma_table(gamma, table);
+    qa_output_gamma_table(gamma, QA_OUTPUT_GAMMA_FLOAT, table);
     gl_api *gl = &renderer->gl;
     GLuint table_texture = 0;
     gl->GenTextures(1, &table_texture);
@@ -928,7 +921,7 @@ bool gl_surface_targets_prepare(qa_gl_renderer *renderer,const qa_gl_renderer *s
         gl->BindRenderbuffer(GL_RENDERBUFFER,output->depth_stencil);
         gl->RenderbufferStorage(GL_RENDERBUFFER,depth_internal(renderer),(GLsizei)width,(GLsizei)height);
         output->width=width; output->height=height;
-        uint8_t table[256]; gl_gamma_table(gamma,table);
+        uint8_t table[256]; qa_output_gamma_table(gamma,QA_OUTPUT_GAMMA_FLOAT,table);
         gl_state_active_texture(renderer, GL_TEXTURE1); gl_state_bind_texture(renderer, GL_TEXTURE_2D,output->table);
         gl->BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
         gl->PixelStorei(GL_UNPACK_ALIGNMENT,1); gl->PixelStorei(GL_UNPACK_ROW_LENGTH,0);

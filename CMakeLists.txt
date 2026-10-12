@@ -861,6 +861,7 @@ add_library(qa_scene STATIC
     src/render/material/parser.c
     src/render/material/submit.c
     src/render/output_domain.c
+    src/render/output_gamma.c
 )
 target_link_libraries(qa_scene PUBLIC qa_world qa_persistence qa_q3_presentation)
 
