@@ -151,16 +151,18 @@ static bool radius_actor_include(void *context, qa_actor_id actor) {
 }
 bool q1_radius_snapshot(qa_q1_game *g, qa_vec3 origin, float radius, qa_builtin_snapshot_frame **out,
                         qa_error *error) {
+    qa_builtin_snapshot_frame *snapshot = qa_builtin_snapshot_acquire(&g->snapshots,
+        qa_actors_capacity(qa_session_actors(g->services.session)), error);
+    if (!snapshot)
+        return false;
     qa_world_actor_snapshot nearby;
     qa_world_radius_query query = {.origin = origin, .radius = radius,
         .metric = QA_WORLD_RADIUS_BOUNDS_CENTER, .include = radius_actor_include,
-        .context = g, .read_policy = QA_WORLD_RADIUS_SKIP_FAILED};
-    if (!qa_world_radius_snapshot_capture(g->services.world, &query, &nearby, error))
-        return false;
-    qa_builtin_snapshot_frame *snapshot = qa_builtin_snapshot_acquire(&g->snapshots,
-        qa_actors_capacity(qa_session_actors(g->services.session)), error);
-    if (!snapshot) {
-        qa_world_snapshot_release(&nearby);
+        .context = g, .read_policy = QA_WORLD_RADIUS_SKIP_FAILED,
+        .actor_storage = snapshot->snapshot.ids,
+        .actor_capacity = snapshot->snapshot.capacity};
+    if (!qa_world_radius_snapshot_capture(g->services.world, &query, &nearby, error)) {
+        qa_builtin_snapshot_release(snapshot);
         return false;
     }
     size_t count = 0;

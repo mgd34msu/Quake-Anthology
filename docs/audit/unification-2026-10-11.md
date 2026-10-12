@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 104 have source fixes
+There are **374 overlapping source-review observations**: 106 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 267 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 265 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -228,3 +228,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 | `J19-F03`, `J20-01` | `9b07d1d8` | Q1 clone and MG3 upgrade use the common inventory snapshot lease; empty second reads and the MG3 checkpoint retain their order. Normal build and seven core suites passed; no live result. |
 
 | `02-07` | `06b77db3` | QC weapon records return to the common pool after successful unbind and call draining; cleanup refusal retains ownership. Cold backing and extension for simultaneous records remain. |
+
+| `17-14`, `J18-12` | `c486c081` | Seven local/remote model transforms use one constructor, retaining explicit float math, scales and handedness. Existing model tests check cardinal yaw and scale/translation order; prebuilt beams are unchanged. |

@@ -226,18 +226,17 @@ bool qa_builtin_nearby(const qa_builtin_services *s, qa_vec3 origin, float radiu
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid native nearby query");
         return false;
     }
+    if (!qa_builtin_snapshot_reserve(snapshot, qa_actors_capacity(qa_session_actors(s->session)), error))
+        return false;
     qa_world_actor_snapshot nearby;
     qa_world_radius_query query = {.origin = origin, .radius = radius,
-                                   .metric = QA_WORLD_RADIUS_ORIGIN};
+                                   .metric = QA_WORLD_RADIUS_ORIGIN,
+                                   .actor_storage = snapshot->ids,
+                                   .actor_capacity = snapshot->capacity};
     if (!qa_world_radius_snapshot_capture(s->world, &query, &nearby, error)) {
         snapshot->count = 0;
         return false;
     }
-    if (!qa_builtin_snapshot_reserve(snapshot, qa_actors_capacity(qa_session_actors(s->session)), error)) {
-        qa_world_snapshot_release(&nearby);
-        return false;
-    }
-    if (nearby.count) memcpy(snapshot->ids, nearby.actors, nearby.count * sizeof(*snapshot->ids));
     snapshot->count = nearby.count;
     qa_world_snapshot_release(&nearby);
     sort_snapshot(s, snapshot);

@@ -27,20 +27,28 @@ static bool scan(qa_q1_game *g, q1_actor *e, float radius, bool monsters, bool u
     if (!q1_alive(g, id))
         return true;
     qa_vec3 eye = qa_vec_add(self.origin, view_offset);
-    qa_world_actor_snapshot nearby;
-    qa_world_radius_query query = {.origin = self.origin, .radius = radius,
-        .metric = QA_WORLD_RADIUS_BOUNDS_CENTER, .read_policy = QA_WORLD_RADIUS_SKIP_FAILED};
-    if (!qa_world_radius_snapshot_capture(g->services.world, &query, &nearby, error))
-        return false;
     qa_builtin_snapshot_frame *list = qa_builtin_snapshot_acquire(&g->snapshots,
         qa_actors_capacity(qa_session_actors(g->services.session)), error);
-    if (!list) {
-        qa_world_snapshot_release(&nearby);
+    if (!list)
+        return false;
+    qa_world_actor_snapshot nearby;
+    qa_world_radius_query query = {.origin = self.origin, .radius = radius,
+        .metric = QA_WORLD_RADIUS_BOUNDS_CENTER, .read_policy = QA_WORLD_RADIUS_SKIP_FAILED,
+        .actor_storage = list->snapshot.ids,
+        .actor_capacity = list->snapshot.capacity};
+    if (!qa_world_radius_snapshot_capture(g->services.world, &query, &nearby, error)) {
+        qa_builtin_snapshot_release(list);
         return false;
     }
+    for (size_t i = 0; i < nearby.count / 2; ++i) {
+        size_t opposite = nearby.count - 1 - i;
+        qa_actor_id actor = nearby.actors[i];
+        nearby.actors[i] = nearby.actors[opposite];
+        nearby.actors[opposite] = actor;
+    }
     size_t count = 0;
-    for (size_t i = nearby.count; i > 0; --i) {
-        qa_actor_id actor = nearby.actors[i - 1];
+    for (size_t i = 0; i < nearby.count; ++i) {
+        qa_actor_id actor = nearby.actors[i];
         qa_q1_target target;
         qa_builtin_actor_traits traits = {0};
         const q1_actor *native = q1_entity_const(g, actor);

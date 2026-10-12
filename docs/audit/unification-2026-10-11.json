@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "06b77db3c4202cf134229a5333d60ec19191a0ac",
+  "verified_main": "c486c0813476497bcab84cd947826fad1a5ff2d1",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 104,
-    "open_source_observation": 267,
+    "fixed_source_build_core": 106,
+    "open_source_observation": 265,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -31031,8 +31031,9 @@
       "severity": "medium",
       "job": "17",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Seven local and remote model-transform callers use the common constructor with explicit angle math and uniform scale. Two helpers and four inline builders deleted. Existing model suite verifies handedness, scale-before-translation and cardinal yaw for all angle rules. Prebuilt beam placement is untouched. Source/build/core only.",
+      "fixed_commit": "c486c0813476497bcab84cd947826fad1a5ff2d1"
     },
     {
       "id": "17-15",
@@ -31834,8 +31835,9 @@
       "severity": "medium",
       "job": "18",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Seven local and remote model-transform callers use the common constructor with explicit angle math and uniform scale. Two helpers and four inline builders deleted. Existing model suite verifies handedness, scale-before-translation and cardinal yaw for all angle rules. Prebuilt beam placement is untouched. Source/build/core only.",
+      "fixed_commit": "c486c0813476497bcab84cd947826fad1a5ff2d1"
     },
     {
       "id": "J18-13",
@@ -39516,6 +39518,36 @@
       ],
       "record_directory": "/tmp/qa-ta3196-qc-weapon-slot-reuse-20261011",
       "conclusion": "QC weapon records return their existing pool slot after successful outermost unbind and the final entered call. Reentrant release is pinned; cleanup refusal keeps exact ownership. Cold backing pages and extension for simultaneous live/deferred records remain. Source/build/core only."
+    },
+    {
+      "commit": "c486c0813476497bcab84cd947826fad1a5ff2d1",
+      "source_tree": "6de7d92bc1628435338965c23a116fd80f84e790",
+      "finding_ids": [
+        "17-14",
+        "J18-12"
+      ],
+      "files_rechecked": [
+        "include/qa/model.h",
+        "src/app/frontend/remote_q1_presentation.c",
+        "src/app/frontend/remote_unified_q1.c",
+        "src/app/frontend/remote_unified_render.c",
+        "src/app/frontend/visuals.c",
+        "src/formats/model/transform.c",
+        "tests/model_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-model-transform-20261011",
+      "conclusion": "Seven local and remote model-transform callers use the common constructor with explicit angle math and uniform scale. Two helpers and four inline builders deleted. Existing model suite verifies handedness, scale-before-translation and cardinal yaw for all angle rules. Prebuilt beam placement is untouched. Source/build/core only."
     }
   ],
   "verification_limits": [
