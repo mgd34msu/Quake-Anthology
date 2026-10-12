@@ -6,6 +6,24 @@
 #include "qa/cvars_alias.h"
 #include "cvar_catalog_generated.h"
 #include "cvars_conversion.h"
+#include "qa/pool.h"
+
+typedef struct cvar_store cvar_store;
+/* Declarations, prepared clones and notifications share an immutable version.
+ * Names retain catalog/store lifetime; descriptions/documents retire at the
+ * last reference. */
+typedef struct cvar_metadata {
+    cvar_store *store;
+    size_t slot, references;
+    qa_arena storage;
+    const char *name;
+    char *description;
+    const qa_console_documentation *documentation;
+} cvar_metadata;
+typedef struct cvar_notification_lease {
+    qa_arena storage;
+    size_t slot;
+} cvar_notification_lease;
 
 typedef struct cvar_observer {
     struct cvar_observer *next;
@@ -19,13 +37,13 @@ typedef struct cvar_observer {
 } cvar_observer;
 typedef struct cvar_post_event {
     struct cvar_post_event *next;
+    cvar_notification_lease *lease;
     size_t count;
     cvar_observer *observers[];
 } cvar_post_event;
 
 typedef struct cvar cvar;
 typedef struct cvar_alias cvar_alias;
-typedef struct cvar_store cvar_store;
 typedef struct cvar_edit_view cvar_edit_view;
 typedef struct cvar_projection {
     qa_cvar_view view;
@@ -65,6 +83,7 @@ struct cvar {
     bool pending_explicit;
     cvar_projection projection;
     qa_cvar_view view;
+    cvar_metadata *metadata;
     qa_cvar_binding binding;
     bool bound;
     uint64_t binding_order;
@@ -75,8 +94,10 @@ struct cvar_alias {
     struct cvar_alias *next;
     struct cvar_alias *canonical;
     size_t ordinal, target_ordinal;
-    char *name, *target, *description;
+    const char *name;
+    char *target, *description;
     const qa_console_documentation *documentation;
+    cvar_metadata *metadata;
     const qa_cvar_catalog_binding *catalog_binding;
     qa_cvar_binding binding;
     bool bound, declared, console_created;
@@ -119,6 +140,9 @@ struct cvar_store {
     uint64_t revision, projection_revision, next_binding;
     struct qa_cvars_edit *edit;
     size_t references;
+    qa_arena metadata_storage;
+    qa_arena name_storage; /* admitted guest names outlive metadata versions */
+    qa_pool metadata_leases;
 };
 struct cvar_edit_view {
     struct cvar_edit_view *next;
@@ -181,11 +205,18 @@ struct qa_cvars {
     uint64_t next_binding;
     cvar_edit_binding *edit_bindings;
     size_t edit_binding_count;
+    qa_arena notification_storage;
+    qa_pool notification_leases;
 };
 bool qac_cvars_touch(qa_cvars *, qa_error *);
 void qac_cvars_entry_free(cvar *);
 void qac_cvars_alias_free(cvar_alias *);
-cvar_alias *qac_cvars_alias_copy(const cvar_alias *, qa_error *);
+cvar_alias *qac_cvars_alias_copy(qa_cvars *, const cvar_alias *, qa_error *);
+bool qac_cvars_metadata_replace(qa_cvars *, cvar_metadata **, const char *,
+    const char *, const qa_console_documentation *, qa_error *);
+bool qac_cvars_metadata_retain(cvar_metadata *, qa_error *);
+void qac_cvars_metadata_view(const cvar_metadata *, qa_cvar_view *);
+void qac_cvars_metadata_storage_destroy(cvar_store *);
 bool qac_cvars_name_equal(const qa_cvars *, const char *, const char *);
 cvar *qac_cvars_find_values(const qa_cvars *, const cvar_values *, const char *);
 bool qac_cvars_index_reserve(const qa_cvars *, cvar_values *, size_t, qa_error *);

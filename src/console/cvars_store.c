@@ -445,11 +445,15 @@ static cvar *source_row(qa_cvars *registry, const cvar_values *values, cvar *can
     memset(entry->defaults, 0, sizeof(entry->defaults)); entry->details=NULL;
     entry->declaration_default = source && source->declaration_default
         ? qac_copy(source->declaration_default, error) : NULL;
-    entry->view.name = canonical->view.name;
-    entry->view.description = qac_copy(source ? source->view.description : "", error);
-    entry->view.documentation = NULL;
-    if (!entry->view.description || (source && source->declaration_default && !entry->declaration_default) ||
-        !qac_document_replace(&entry->view.documentation, source ? source->view.documentation : NULL, error)) {
+    entry->metadata=NULL;
+    if (source) {
+        if (!qac_cvars_metadata_retain(source->metadata,error)) { qac_cvars_entry_free(entry); return NULL; }
+        entry->metadata=source->metadata;
+    } else if (!qac_cvars_metadata_replace(registry,&entry->metadata,canonical->view.name,"",NULL,error)) {
+        qac_cvars_entry_free(entry); return NULL;
+    }
+    qac_cvars_metadata_view(entry->metadata,&entry->view);
+    if (source && source->declaration_default && !entry->declaration_default) {
         qac_cvars_entry_free(entry); return NULL;
     }
     if (!source) {
@@ -481,12 +485,12 @@ cvar_alias *qac_cvars_source_alias(qa_cvars *registry, cvar_values *values,
     if (!canonical || canonical->ordinal >= values->alias_capacity) return NULL;
     cvar_alias *alias = values->alias_rows[canonical->ordinal];
     if (alias) return alias;
-    alias = qac_cvars_alias_copy(canonical, error);
+    alias = qac_cvars_alias_copy(registry,canonical, error);
     if (!alias) return NULL;
     alias->canonical = canonical;
     alias->target_ordinal = SIZE_MAX;
-    free(alias->name); free(alias->target);
-    alias->name = canonical->name; alias->target = canonical->target;
+    free(alias->target);
+    alias->target = canonical->target;
     alias->handle = SIZE_MAX;
     alias->flags_dialect=qac_cvars_view_options(registry,values).dialect;
     alias->flags = qac_cvars_catalog_flags(registry,values,
@@ -529,14 +533,13 @@ bool qac_cvars_values_clone(qa_cvars *registry, const cvar_values *source,
             copy = calloc(1, sizeof(*copy));
             if (!copy) { qac_fail(error, QA_ERROR_MEMORY, "copying canonical cvar state"); goto failed; }
             *copy = *entry;
+            if (!qac_cvars_metadata_retain(copy->metadata,error)) { free(copy); goto failed; }
             copy->projection=(cvar_projection){0};
             copy->next = NULL; copy->canonical = NULL;
-            copy->view.name = qac_copy(entry->view.name, error);
             copy->view.value = qac_copy(entry->view.value, error);
             copy->view.reset_value = qac_copy(entry->view.reset_value, error);
             copy->view.latched_value = entry->view.latched_value ? qac_copy(entry->view.latched_value, error) : NULL;
-            copy->view.description = qac_copy(entry->view.description, error);
-            copy->view.documentation = NULL; copy->declaration_default = NULL;
+            copy->declaration_default = NULL;
             memset(copy->defaults, 0, sizeof(copy->defaults)); copy->details=NULL;
             cvar_detail **detail_tail=&copy->details;
             for (const cvar_detail *detail=entry->details;detail;detail=detail->next) {
@@ -548,9 +551,8 @@ bool qac_cvars_values_clone(qa_cvars *registry, const cvar_values *source,
                 *detail_tail=next; detail_tail=&next->next;
                 if ((detail->value && !next->value) || (detail->latched_value && !next->latched_value)) { qac_cvars_entry_free(copy); goto failed; }
             }
-            bool okay = copy->view.name && copy->view.value && copy->view.reset_value && copy->view.description &&
-                (!entry->view.latched_value || copy->view.latched_value) &&
-                qac_document_replace(&copy->view.documentation, entry->view.documentation, error);
+            bool okay = copy->view.value && copy->view.reset_value &&
+                (!entry->view.latched_value || copy->view.latched_value);
             if (!entry->definition)
                 for (size_t d = 0; okay && d < QA_CVAR_CATALOG_DIALECTS; ++d)
                     if (entry->defaults[d] && !(copy->defaults[d] = qac_copy(entry->defaults[d], error))) okay = false;
@@ -569,12 +571,12 @@ bool qac_cvars_values_clone(qa_cvars *registry, const cvar_values *source,
         }
     }
     for (const cvar_alias *alias = source->aliases; alias; alias = alias->next) {
-        cvar_alias *copy = qac_cvars_alias_copy(alias, error);
+        cvar_alias *copy = qac_cvars_alias_copy(registry,alias, error);
         if (!copy) goto failed;
         if (canonical_values) {
             copy->canonical = canonical_values->alias_rows[alias->ordinal];
-            free(copy->name); free(copy->target);
-            copy->name = copy->canonical->name; copy->target = copy->canonical->target;
+            free(copy->target);
+            copy->target = copy->canonical->target;
         } else copy->canonical = NULL;
         if (out->last_alias) out->last_alias->next = copy;
         else out->aliases = copy;
@@ -766,12 +768,14 @@ static bool admit_player(qa_cvars *registry,cvar_values *values,uint32_t player,
         entry->ordinal=values->count+count;
         memcpy(entry->defaults,definition->defaults,sizeof(entry->defaults));
         const char *initial=entry->defaults[dialect]?entry->defaults[dialect]:"";
-        entry->view=(qa_cvar_view){.name=qac_copy(definition->view.name,error),
+        entry->view=(qa_cvar_view){
             .value=qac_copy(initial,error),.reset_value=qac_copy(initial,error),
-            .description=qac_copy("",error),.flags=definition->view.flags,
+            .flags=definition->view.flags,
             .save_policy=QA_CVAR_SAVE_SETTING,.player_scoped=true,.handle=SIZE_MAX};
         *tail=entry; tail=&entry->next; ++count;
-        if (!entry->view.name || !entry->view.value || !entry->view.reset_value || !entry->view.description) goto failed;
+        if (!qac_cvars_metadata_replace(registry,&entry->metadata,definition->view.name,"",NULL,error)) goto failed;
+        qac_cvars_metadata_view(entry->metadata,&entry->view);
+        if (!entry->view.value || !entry->view.reset_value) goto failed;
     }
     if (count>SIZE_MAX-values->count || !qac_cvars_index_reserve(registry,values,values->count+count+values->alias_count,error) ||
         !qac_cvars_rows_reserve(values,values->count+count,values->alias_count,error)) goto failed;
@@ -820,12 +824,13 @@ qa_cvars *qac_cvars_store_create(const qa_cvar_options *options, qa_error *error
         if (!entry) { qac_fail(error, QA_ERROR_MEMORY, "allocating canonical cvar row"); goto failed; }
         entry->catalog_row = binding->row_index; entry->catalog_binding = binding;
         entry->ordinal = store->values.count;
-        entry->view.name = qac_copy(qa_cvar_catalog_string(binding->name), error);
-        entry->view.description = qac_copy("", error); entry->view.handle = SIZE_MAX;
+        if (!qac_cvars_metadata_replace(registry,&entry->metadata,
+            qa_cvar_catalog_string(binding->name),"",NULL,error)) { qac_cvars_entry_free(entry); goto failed; }
+        qac_cvars_metadata_view(entry->metadata,&entry->view);
+        entry->view.handle = SIZE_MAX;
         entry->view.flags = qa_cvar_catalog_rows[binding->row_index].archive_flags;
         entry->view.player_scoped=player_definition(binding);
         if (entry->view.player_scoped) entry->view.save_policy=QA_CVAR_SAVE_SETTING;
-        if (!entry->view.name || !entry->view.description) { qac_cvars_entry_free(entry); goto failed; }
         for (size_t d = 0; d < QA_CVAR_CATALOG_DIALECTS; ++d)
             entry->defaults[d] = catalog_default(registry, entry, (qa_ruleset_id)d, error);
         const char *initial = entry->defaults[options->dialect];
@@ -847,7 +852,7 @@ qa_cvars *qac_cvars_store_create(const qa_cvar_options *options, qa_error *error
         cvar_alias prototype = {.name = (char *)qa_cvar_catalog_string(binding->name),
             .target = (char *)target->view.name, .description = "", .catalog_binding = binding,
             .ordinal = store->values.alias_count, .target_ordinal = SIZE_MAX, .handle = SIZE_MAX};
-        cvar_alias *alias = qac_cvars_alias_copy(&prototype, error);
+        cvar_alias *alias = qac_cvars_alias_copy(registry,&prototype, error);
         if (!alias) goto failed;
         if (store->values.last_alias) store->values.last_alias->next = alias;
         else store->values.aliases = alias;
@@ -860,6 +865,7 @@ qa_cvars *qac_cvars_store_create(const qa_cvar_options *options, qa_error *error
     return registry;
 failed:
     qac_cvars_values_free(&registry->values); qac_cvars_values_free(&store->values);
+    qac_cvars_metadata_storage_destroy(store);
     free(store); free(registry); return NULL;
 }
 

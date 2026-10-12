@@ -8,6 +8,101 @@
 #include <stdlib.h>
 #include <string.h>
 
+static void *storage_take(qa_pool *pool,qa_arena *storage,size_t bytes,
+    size_t alignment,size_t *slot,qa_error *error)
+{
+    if (!pool->stride && !qa_pool_prepare(pool,storage,0,bytes,alignment,error)) return NULL;
+    if (pool->head==SIZE_MAX) {
+        size_t first=pool->capacity, count=first?first:1;
+        if (!qa_pool_extend(pool,storage,count,error)) return NULL;
+        for (size_t i=first;i<pool->capacity;++i) memset(qa_pool_at(pool,i),0,bytes);
+    }
+    return qa_pool_take(pool,slot);
+}
+
+static void metadata_release(cvar_metadata *metadata)
+{
+    if (!metadata || --metadata->references) return;
+    qac_document_free(metadata->documentation); metadata->documentation=NULL;
+    qa_arena_reset(&metadata->storage);
+    qa_pool_release(&metadata->store->metadata_leases,metadata->slot);
+}
+
+bool qac_cvars_metadata_retain(cvar_metadata *metadata,qa_error *error)
+{
+    if (metadata->references==SIZE_MAX)
+        return qac_fail(error,QA_ERROR_MEMORY,"cvar metadata references are exhausted");
+    ++metadata->references;
+    return true;
+}
+
+void qac_cvars_metadata_view(const cvar_metadata *metadata,qa_cvar_view *view)
+{
+    view->name=metadata->name; view->description=metadata->description;
+    view->documentation=metadata->documentation;
+}
+
+bool qac_cvars_metadata_replace(qa_cvars *registry,cvar_metadata **out,
+    const char *name,const char *description,const qa_console_documentation *doc,
+    qa_error *error)
+{
+    if (*out && doc==(*out)->documentation && !strcmp(name,(*out)->name) &&
+        !strcmp(description,(*out)->description)) return true;
+    size_t slot;
+    cvar_metadata *metadata=storage_take(&registry->store->metadata_leases,
+        &registry->store->metadata_storage,sizeof(*metadata),_Alignof(cvar_metadata),&slot,error);
+    if (!metadata) return false;
+    metadata->store=registry->store; metadata->slot=slot; metadata->references=1;
+    if (!metadata->storage.block_size) metadata->storage.block_size=strlen(description)+1;
+    /* Names have catalog or canonical-store lifetime, independently of each
+     * immutable description/document version. */
+    metadata->name=name;
+    metadata->description=qa_arena_text(&metadata->storage,description,error);
+    if (!metadata->name || !metadata->description ||
+        !qac_document_replace(&metadata->documentation,doc,error)) goto failed;
+    metadata_release(*out); *out=metadata;
+    return true;
+failed:
+    metadata_release(metadata); return false;
+}
+
+void qac_cvars_metadata_storage_destroy(cvar_store *store)
+{
+    for (size_t i=0;i<store->metadata_leases.capacity;++i) {
+        cvar_metadata *metadata=qa_pool_at(&store->metadata_leases,i);
+        qa_arena_destroy(&metadata->storage);
+    }
+    qa_arena_destroy(&store->metadata_storage);
+    qa_arena_destroy(&store->name_storage);
+}
+
+static cvar_notification_lease *notification_take(qa_cvars *registry,
+    size_t bytes,qa_error *error)
+{
+    size_t slot;
+    cvar_notification_lease *lease=storage_take(&registry->notification_leases,
+        &registry->notification_storage,sizeof(*lease),_Alignof(cvar_notification_lease),&slot,error);
+    if (!lease) return NULL;
+    lease->slot=slot;
+    if (!lease->storage.block_size) lease->storage.block_size=bytes;
+    return lease;
+}
+
+static void notification_release(qa_cvars *registry,cvar_notification_lease *lease)
+{
+    qa_arena_reset(&lease->storage);
+    qa_pool_release(&registry->notification_leases,lease->slot);
+}
+
+static void notification_storage_destroy(qa_cvars *registry)
+{
+    for (size_t i=0;i<registry->notification_leases.capacity;++i) {
+        cvar_notification_lease *lease=qa_pool_at(&registry->notification_leases,i);
+        qa_arena_destroy(&lease->storage);
+    }
+    qa_arena_destroy(&registry->notification_storage);
+}
+
 static bool touch(qa_cvars *registry, bool flags_only, qa_error *error)
 {
     if (!registry || (!flags_only && (registry->edit_first || registry->edit_bindings_pending)))
@@ -240,7 +335,7 @@ static void post_release(qa_cvars *registry, cvar_post_event *event)
         cvar_observer *row=event->observers[i];
         --row->references; observer_release(registry,row);
     }
-    free(event);
+    notification_release(registry,event->lease);
 }
 static bool post_prepare(qa_cvars *registry, const cvar *entry,
     cvar_post_event **out, qa_error *error)
@@ -257,9 +352,12 @@ static bool post_prepare(qa_cvars *registry, const cvar *entry,
     if (!count) return true;
     if (count>(SIZE_MAX-sizeof(cvar_post_event))/sizeof(cvar_observer *))
         return qac_fail(error,QA_ERROR_MEMORY,"cvar observer event exceeds address space");
-    cvar_post_event *event=malloc(sizeof(*event)+count*sizeof(*event->observers));
-    if (!event) return qac_fail(error,QA_ERROR_MEMORY,"retaining cvar publication observers");
-    event->next=NULL; event->count=0;
+    size_t bytes=sizeof(cvar_post_event)+count*sizeof(cvar_observer *);
+    cvar_notification_lease *lease=notification_take(registry,bytes,error);
+    if (!lease) return false;
+    cvar_post_event *event=qa_arena_alloc(&lease->storage,bytes,_Alignof(cvar_post_event),error);
+    if (!event) { notification_release(registry,lease); return false; }
+    event->next=NULL; event->lease=lease; event->count=0;
     for (cvar_observer *row=registry->observers;row;row=row->next)
         if (row->active && !row->suppressed && qac_cvars_name_equal(registry,canonical_name(registry,qac_cvars_current_values(registry),row->name),
             canonical_name(registry,qac_cvars_current_values(registry),entry->view.name))) {
@@ -414,47 +512,57 @@ struct cvar_edit_event {
     struct cvar_edit_event *next;
     cvar_edit_event_kind kind;
     qa_cvars *registry;
+    cvar_notification_lease *lease;
     cvar *snapshot;
     cvar_post_event *post;
     bool changed;
     qa_cvar_effect_kind effect;
     char *print_name, *print_message;
 };
-static cvar *entry_copy(const cvar *source, qa_error *error)
+static bool event_snapshot(cvar_edit_event *event,const cvar *source,
+    bool values,qa_error *error)
 {
-    cvar *copy=calloc(1,sizeof(*copy));
-    if (!copy) { qac_fail(error,QA_ERROR_MEMORY,"copying prepared cvar record"); return NULL; }
-    *copy=*source;
-    copy->next=NULL; copy->canonical=NULL; copy->declaration_default=NULL;
-    memset(copy->defaults,0,sizeof(copy->defaults)); copy->details=NULL;
-    copy->indexed_name=(cvar_name_node){0};
-    copy->view.name=qac_copy(source->view.name,error);
-    copy->view.value=qac_copy(source->view.value,error);
-    copy->view.reset_value=qac_copy(source->view.reset_value,error);
-    copy->view.latched_value=source->view.latched_value?qac_copy(source->view.latched_value,error):NULL;
-    copy->view.description=qac_copy(source->view.description,error);
-    copy->view.documentation=NULL;
-    if (!copy->view.name || !copy->view.value || !copy->view.reset_value ||
-        (source->view.latched_value && !copy->view.latched_value) || !copy->view.description ||
-        !qac_document_replace(&copy->view.documentation,source->view.documentation,error)) {
-        qac_cvars_entry_free(copy); return NULL;
+    cvar *copy=qa_arena_alloc(&event->lease->storage,sizeof(*copy),_Alignof(cvar),error);
+    if (!copy || !qac_cvars_metadata_retain(source->metadata,error)) return false;
+    *copy=(cvar){.view=source->view,.metadata=source->metadata,
+        .binding=source->binding,.bound=source->bound,.binding_order=source->binding_order};
+    qac_cvars_metadata_view(copy->metadata,&copy->view);
+    event->snapshot=copy;
+    if (values) {
+        copy->view.value=qa_arena_text(&event->lease->storage,source->view.value,error);
+        copy->view.reset_value=qa_arena_text(&event->lease->storage,source->view.reset_value,error);
+        if (!copy->view.value || !copy->view.reset_value) return false;
     }
-    return copy;
+    if (source->view.latched_value) {
+        copy->view.latched_value=qa_arena_text(&event->lease->storage,source->view.latched_value,error);
+        if (!copy->view.latched_value) return false;
+    }
+    return true;
 }
 static void edit_event_free(qa_cvars *registry,cvar_edit_event *event)
 {
     if (!event) return;
     post_release(registry,event->post);
-    if (event->snapshot) qac_cvars_entry_free(event->snapshot);
-    free(event->print_name); free(event->print_message); free(event);
+    if (event->snapshot) metadata_release(event->snapshot->metadata);
+    notification_release(registry,event->lease);
 }
-static cvar_edit_event *edit_event(qa_cvars_edit *edit,cvar_edit_event_kind kind,
+static cvar_edit_event *event_take(qa_cvars *registry,cvar_edit_event_kind kind,
+    qa_error *error)
+{
+    cvar_notification_lease *lease=notification_take(registry,
+        sizeof(cvar_edit_event)+sizeof(cvar),error);
+    if (!lease) return NULL;
+    cvar_edit_event *event=qa_arena_alloc(&lease->storage,sizeof(*event),_Alignof(cvar_edit_event),error);
+    if (!event) { notification_release(registry,lease); return NULL; }
+    *event=(cvar_edit_event){.kind=kind,.registry=registry,.lease=lease};
+    return event;
+}
+static cvar_edit_event *edit_event(qa_cvars_edit *edit,qa_cvars *registry,cvar_edit_event_kind kind,
     const cvar *entry,qa_error *error)
 {
-    cvar_edit_event *event=calloc(1,sizeof(*event));
-    if (!event) { qac_fail(error,QA_ERROR_MEMORY,"retaining prepared cvar notification"); return NULL; }
-    event->kind=kind; event->registry=edit->registry;
-    if (entry && !(event->snapshot=entry_copy(entry,error))) { free(event); return NULL; }
+    cvar_edit_event *event=event_take(registry,kind,error);
+    if (!event) return NULL;
+    if (entry && !event_snapshot(event,entry,true,error)) { edit_event_free(registry,event); return NULL; }
     if (edit->last) edit->last->next=event;
     else edit->first=event;
     edit->last=event;
@@ -465,11 +573,10 @@ static void print_message(cvar_target target, const char *name, const char *mess
     qa_cvars *registry=target.registry;
     if (registry->options.print == NULL) return;
     if (target.edit) {
-        cvar_edit_event *event=edit_event(target.edit,CVAR_EDIT_PRINT,NULL,&target.edit->fault);
+        cvar_edit_event *event=edit_event(target.edit,registry,CVAR_EDIT_PRINT,NULL,&target.edit->fault);
         if (!event) return;
-        event->registry=registry;
-        event->print_name=name?qac_copy(name,&target.edit->fault):NULL;
-        event->print_message=qac_copy(message,&target.edit->fault);
+        event->print_name=name?qa_arena_text(&event->lease->storage,name,&target.edit->fault):NULL;
+        event->print_message=qa_arena_text(&event->lease->storage,message,&target.edit->fault);
         return;
     }
     ++registry->notifying;
@@ -502,7 +609,6 @@ static const char *source_name(const qa_cvars *registry, const char *name)
 void qac_cvars_entry_free(cvar *entry)
 {
     if (!entry->canonical) {
-        free((char *)entry->view.name);
         free((char *)entry->view.value);
         free((char *)entry->view.reset_value);
         free((char *)entry->view.latched_value);
@@ -512,25 +618,29 @@ void qac_cvars_entry_free(cvar *entry)
             free(detail->value); free(detail->latched_value); free(detail); }
     }
     free(entry->declaration_default);
-    free((char *)entry->view.description);
-    qac_document_free(entry->view.documentation);
+    metadata_release(entry->metadata);
     free(entry);
 }
 void qac_cvars_alias_free(cvar_alias *alias)
 {
     if (!alias) return;
-    if (!alias->canonical) { free(alias->name); free(alias->target); }
-    free(alias->description);
-    qac_document_free(alias->documentation); free(alias);
+    if (!alias->canonical) free(alias->target);
+    metadata_release(alias->metadata); free(alias);
 }
-cvar_alias *qac_cvars_alias_copy(const cvar_alias *source,qa_error *error)
+cvar_alias *qac_cvars_alias_copy(qa_cvars *registry,const cvar_alias *source,qa_error *error)
 {
     cvar_alias *alias=calloc(1,sizeof(*alias));
     if (!alias) { qac_fail(error,QA_ERROR_MEMORY,"retaining canonical cvar alias"); return NULL; }
     alias->ordinal=source->ordinal;
     alias->target_ordinal=source->target_ordinal;
-    alias->name=qac_copy(source->name,error); alias->target=qac_copy(source->target,error);
-    alias->description=qac_copy(source->description,error);
+    alias->target=qac_copy(source->target,error);
+    if (source->metadata) {
+        if (!qac_cvars_metadata_retain(source->metadata,error)) { qac_cvars_alias_free(alias); return NULL; }
+        alias->metadata=source->metadata;
+    } else if (!qac_cvars_metadata_replace(registry,&alias->metadata,source->name,
+        source->description,source->documentation,error)) { qac_cvars_alias_free(alias); return NULL; }
+    alias->name=alias->metadata->name; alias->description=alias->metadata->description;
+    alias->documentation=alias->metadata->documentation;
     alias->handle=source->handle; alias->vm_bound=source->vm_bound;
     alias->catalog_binding=source->catalog_binding;
     alias->binding=source->binding; alias->bound=source->bound;
@@ -538,8 +648,7 @@ cvar_alias *qac_cvars_alias_copy(const cvar_alias *source,qa_error *error)
     alias->owner=source->owner; alias->flags=source->flags; alias->flags_dialect=source->flags_dialect;
     alias->modification_count=source->modification_count; alias->modified=source->modified;
 
-    if (!alias->name || !alias->target || !alias->description ||
-        !qac_document_replace(&alias->documentation,source->documentation,error)) {
+    if (!alias->target) {
         qac_cvars_alias_free(alias); return NULL;
     }
     return alias;
@@ -554,12 +663,17 @@ bool qa_cvars_document(qa_cvars *registry, const char *name, uint64_t owner,
         const cvar *target=find_variable(registry,alias->target);
         if (!target || alias->owner!=owner)
             return qac_fail(error,QA_ERROR_NOT_FOUND,"cvar alias documentation owner not found");
-        return qac_document_replace(&alias->documentation,doc,error);
+        if (!qac_cvars_metadata_replace(registry,&alias->metadata,alias->name,alias->description,doc,error)) return false;
+        alias->name=alias->metadata->name; alias->description=alias->metadata->description;
+        alias->documentation=alias->metadata->documentation;
+        return true;
     }
     cvar *entry = find_variable(registry, name);
     if (!entry || entry->view.owner != owner)
         return qac_fail(error, QA_ERROR_NOT_FOUND, "cvar documentation owner not found");
-    return qac_document_replace(&entry->view.documentation, doc, error);
+    if (!qac_cvars_metadata_replace(registry,&entry->metadata,entry->view.name,entry->view.description,doc,error)) return false;
+    qac_cvars_metadata_view(entry->metadata,&entry->view);
+    return true;
 }
 
 static void numbers(qa_cvars *registry, cvar *entry)
@@ -568,22 +682,13 @@ static void numbers(qa_cvars *registry, cvar *entry)
     entry->view.integer = qac_integer(entry->view.value);
 }
 
-static bool replace_text(const char **target, const char *value, qa_error *error)
-{
-    char *copy = qac_copy(value, error);
-    if (copy == NULL) return false;
-    free((char *)*target);
-    *target = copy;
-    return true;
-}
-
 static void effect(cvar_target target, qa_cvar_effect_kind kind, const cvar *entry)
 {
     qa_cvars *registry=target.registry;
     if (registry->options.effect != NULL) {
         if (target.edit) {
-            cvar_edit_event *event=edit_event(target.edit,CVAR_EDIT_EFFECT,entry,&target.edit->fault);
-            if (event) { event->effect=kind; event->registry=registry; }
+            cvar_edit_event *event=edit_event(target.edit,registry,CVAR_EDIT_EFFECT,entry,&target.edit->fault);
+            if (event) event->effect=kind;
             return;
         }
         ++registry->notifying;
@@ -666,15 +771,16 @@ static bool receives_value(qa_cvars *registry,const cvar_values *values,const qa
     return qa_cvars_dialect(registry)==QA_RULESET_NETQUAKE && values->server_active && (view->flags&QA_CVAR_SERVERINFO)!=0;
 }
 static bool retain_fanout(cvar_target target,qa_cvars *receiver,const qa_cvar_view *view,
+    cvar_metadata *metadata,
     const qa_cvar_binding *binding,bool bound,uint64_t order,bool observers,
     cvar_edit_event **events,qa_error *error)
 {
-    cvar snapshot={.view=*view,.binding=*binding,.bound=bound,.binding_order=order};
-    cvar_edit_event *event=calloc(1,sizeof(*event));
-    if (!event) return qac_fail(error,QA_ERROR_MEMORY,"retaining shared value notifications");
-    event->kind=CVAR_EDIT_NOTIFY; event->registry=receiver;
-    event->snapshot=entry_copy(&snapshot,error);
-    if (!event->snapshot || (observers && !post_prepare(receiver,&snapshot,&event->post,error))) {
+    cvar snapshot={.view=*view,.metadata=metadata,.binding=*binding,.bound=bound,.binding_order=order};
+    cvar_edit_event *event=event_take(receiver,CVAR_EDIT_NOTIFY,error);
+    if (!event) return false;
+    /* The complete operand group is projected again before validation or any
+     * callback. Retain its final value/reset once, after that projection. */
+    if (!event_snapshot(event,&snapshot,false,error) || (observers && !post_prepare(receiver,&snapshot,&event->post,error))) {
         edit_event_free(receiver,event); return false;
     }
     cvar_edit_event **link=events;
@@ -742,13 +848,13 @@ static bool write_prepare(cvar_target target,cvar_write *write,qa_error *error)
         bool okay=true;
         if (receives_value(receiver,values,&entry->view,entry->bound)) {
             const qa_cvar_view *view=qac_cvars_project(receiver,values,entry);
-            okay=view && retain_fanout(target,receiver,view,&entry->binding,entry->bound,
+            okay=view && retain_fanout(target,receiver,view,entry->metadata,&entry->binding,entry->bound,
                 entry->binding_order,true,&write->events,error);
         }
         for (cvar *derived=values->first;okay && derived;derived=derived->next) {
             if (!record_affected(receiver,values,derived,canonical) || !receives_value(receiver,values,&derived->view,derived->bound)) continue;
             const qa_cvar_view *view=qac_cvars_project(receiver,values,derived);
-            okay=view && retain_fanout(target,receiver,view,&derived->binding,derived->bound,
+            okay=view && retain_fanout(target,receiver,view,derived->metadata,&derived->binding,derived->bound,
                 derived->binding_order,true,&write->events,error);
         }
         for (cvar_alias *alias=values->aliases;okay && alias;alias=alias->next) {
@@ -756,7 +862,7 @@ static bool write_prepare(cvar_target target,cvar_write *write,qa_error *error)
             const qa_cvar_view *view=alias_view(receiver,values,alias);
             if (view && !receives_value(receiver,values,view,alias->bound)) continue;
             bool observers=!qac_cvars_name_equal(receiver,alias->target,canonical->view.name);
-            okay=view && retain_fanout(target,receiver,view,&alias->binding,alias->bound,
+            okay=view && retain_fanout(target,receiver,view,alias->metadata,&alias->binding,alias->bound,
                 alias->binding_order,observers,&write->events,error);
         }
         entry->canonical=original; qac_cvars_refresh(receiver,entry);
@@ -1015,8 +1121,12 @@ void qa_cvars_destroy(qa_cvars *registry)
         cvar_observer *row=registry->observers; registry->observers=row->next;
         free(row->name); free(row);
     }
+    notification_storage_destroy(registry);
     free(registry);
-    if (!--store->references) { qac_cvars_values_free(&store->values); free(store); }
+    if (!--store->references) {
+        qac_cvars_values_free(&store->values);
+        qac_cvars_metadata_storage_destroy(store); free(store);
+    }
 }
 
 qa_ruleset_id qa_cvars_dialect(const qa_cvars *registry)
@@ -1231,8 +1341,13 @@ static cvar *create_variable(cvar_target target,const char *name,const char *val
     cvar *entry=calloc(1,sizeof(*entry));
     if (!entry) { qac_fail(error,QA_ERROR_MEMORY,"allocating canonical guest cvar"); return NULL; }
     entry->catalog_row=QA_CVAR_CATALOG_NO_ROW; entry->ordinal=values->count;
-    entry->view.name=qac_copy(name,error); entry->view.value=qac_copy(value,error);
-    entry->view.reset_value=qac_copy(value,error); entry->view.description=qac_copy("",error);
+    entry->view.value=qac_copy(value,error);
+    entry->view.reset_value=qac_copy(value,error);
+    const char *retained_name=qa_arena_text(&target.registry->store->name_storage,name,error);
+    if (!retained_name || !qac_cvars_metadata_replace(target.registry,&entry->metadata,retained_name,"",NULL,error)) {
+        qac_cvars_entry_free(entry); return NULL;
+    }
+    qac_cvars_metadata_view(entry->metadata,&entry->view);
     entry->view.handle=SIZE_MAX;
     qa_cvar_save_policy policy=target.registry->options.declaration_save_policy
         ?target.registry->options.declaration_save_policy(name):QA_CVAR_SAVE_UNCLASSIFIED;
@@ -1295,12 +1410,17 @@ static bool register_variable(cvar_target target,const char *name,const char *de
     if (alias) {
         alias->flags=qac_cvars_flags(alias->flags,alias->flags_dialect,dialect)|native_flags;
         alias->flags_dialect=dialect;
-        if (!replace_text((const char **)&alias->description,description?description:"",error)) { free(converted.allocated_value); return false; }
+        if (!qac_cvars_metadata_replace(registry,&alias->metadata,alias->name,
+            description?description:"",alias->documentation,error)) { free(converted.allocated_value); return false; }
+        alias->name=alias->metadata->name; alias->description=alias->metadata->description;
+        alias->documentation=alias->metadata->documentation;
     } else {
         entry->view.flags=qac_cvars_flags(entry->view.flags,entry->flags_dialect,dialect)|native_flags;
         entry->flags_dialect=dialect;
         entry->view.console_created=false;
-        if (!replace_text(&entry->view.description,description?description:"",error)) { free(converted.allocated_value); return false; }
+        if (!qac_cvars_metadata_replace(registry,&entry->metadata,entry->view.name,
+            description?description:"",entry->view.documentation,error)) { free(converted.allocated_value); return false; }
+        qac_cvars_metadata_view(entry->metadata,&entry->view);
     }
     cvar *canonical=qac_cvars_canonical(entry);
     canonical->view.flags|=native_flags&QA_CVAR_ARCHIVE;
@@ -1359,8 +1479,17 @@ static bool write_group(cvar_target target,cvar_write *writes,size_t count,qa_er
     for (;prepared<count;++prepared) if (!write_prepare(target,&writes[prepared],error)) goto failed;
     typedef struct write_previous { const char *value, *reset, *latch; cvar_detail *details; cvar_detail proposed; } write_previous;
     write_previous retained[33];
-    write_previous *previous=count<=33?retained:calloc(count,sizeof(*previous));
-    if (!previous) { qac_fail(error,QA_ERROR_MEMORY,"admitting canonical value group"); goto failed; }
+    write_previous *previous=retained;
+    cvar_notification_lease *previous_lease=NULL;
+    if (count>33) {
+        if (count>SIZE_MAX/sizeof(*previous)) {
+            qac_fail(error,QA_ERROR_MEMORY,"canonical value group exceeds address space"); goto failed;
+        }
+        previous_lease=notification_take(target.registry,count*sizeof(*previous),error);
+        if (!previous_lease) goto failed;
+        previous=qa_arena_alloc(&previous_lease->storage,count*sizeof(*previous),_Alignof(write_previous),error);
+        if (!previous) { notification_release(target.registry,previous_lease); goto failed; }
+    }
     for (size_t i=0;i<count;++i) {
         cvar *canonical=qac_cvars_canonical(writes[i].entry);
         previous[i].value=canonical->view.value; previous[i].reset=canonical->view.reset_value; previous[i].latch=canonical->view.latched_value; previous[i].details=canonical->details;
@@ -1383,8 +1512,10 @@ static bool write_group(cvar_target target,cvar_write *writes,size_t count,qa_er
             cvar_alias *alias=find_alias(event->registry,values,event->snapshot->view.name);
             cvar *entry=alias?NULL:qac_cvars_find_values(event->registry,values,event->snapshot->view.name);
             const qa_cvar_view *projected=alias?alias_view(event->registry,values,alias):qac_cvars_project(event->registry,values,entry);
-            if (!projected || !replace_text(&event->snapshot->view.value,projected->value,error) ||
-                !replace_text(&event->snapshot->view.reset_value,projected->reset_value,error)) { okay=false; break; }
+            if (!projected) { okay=false; break; }
+            event->snapshot->view.value=qa_arena_text(&event->lease->storage,projected->value,error);
+            event->snapshot->view.reset_value=qa_arena_text(&event->lease->storage,projected->reset_value,error);
+            if (!event->snapshot->view.value || !event->snapshot->view.reset_value) { okay=false; break; }
             numbers(event->registry,event->snapshot);
         }
     }
@@ -1397,7 +1528,7 @@ static bool write_group(cvar_target target,cvar_write *writes,size_t count,qa_er
         }
     }
     ++target.registry->store->projection_revision;
-    if (previous!=retained) free(previous);
+    if (previous_lease) notification_release(target.registry,previous_lease);
     if (!okay) goto failed;
     for (size_t i=0;i<count;++i)
         for (cvar_edit_event *event=writes[i].events;event;event=event->next)
