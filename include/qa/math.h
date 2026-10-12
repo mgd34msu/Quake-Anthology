@@ -34,6 +34,9 @@ typedef enum qa_rotation_math_rule {
  * rounds double pi/radians to float before double sin/cos. Neither normalizes
  * the input axis. */
 qa_vec3 qa_vec_rotate_around(qa_vec3 axis,qa_vec3 point,float degrees,qa_rotation_math_rule);
+/* Apply float Euler rotations in X, then Y, then Z order. Degrees name axes,
+ * rather than the gameplay pitch/yaw/roll ordering. */
+qa_vec3 qa_vec_rotate_euler_xyz(qa_vec3 point,qa_vec3 degrees);
 float qa_inverse_sqrt(float);
 typedef enum qa_direction_math_rule {
     QA_DIRECTION_FLOAT, QA_DIRECTION_FLOAT_RATIO, QA_DIRECTION_FLOAT_DIVIDE,

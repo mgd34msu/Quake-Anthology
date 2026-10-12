@@ -96,13 +96,6 @@ bool q2_player_fix_stuck(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_bound
     }
     return true;
 }
-static qa_vec3 rotate_landmark(qa_vec3 v, qa_vec3 angles) {
-    const float radians = .01745329251994329577f;
-    float p = angles.x * radians, r = angles.z * radians, y = angles.y * radians;
-    qa_vec3 x = qa_v3(v.x, v.y * cosf(p) - v.z * sinf(p), v.y * sinf(p) + v.z * cosf(p));
-    qa_vec3 z = qa_v3(x.x * cosf(r) + x.z * sinf(r), x.y, -x.x * sinf(r) + x.z * cosf(r));
-    return qa_v3(z.x * cosf(y) - z.y * sinf(y), z.x * sinf(y) + z.y * cosf(y), z.z);
-}
 static bool range(qa_q2_game *g, qa_actor_id spot, const qa_world_actor_snapshot *players,
                   float *out, qa_error *e) {
     qa_body_state spawn;
@@ -537,7 +530,8 @@ bool q2_player_spawn_select(qa_q2_game *g, q2_actor *a, const qa_q2_player_movem
             if (!qa_world_body_read(g->services.world, reference, &b, e))
                 return false;
             qa_vec3 position =
-                qa_vec_add(rotate_landmark(landmark->relative_origin, b.angles), b.origin);
+                qa_vec_add(qa_vec_rotate_euler_xyz(landmark->relative_origin,
+                    qa_v3(b.angles.x,b.angles.z,b.angles.y)),b.origin);
             if (q2_map_flags(g, reference) & 1)
                 position.z = body.origin.z;
             bool clear;
@@ -547,7 +541,8 @@ bool q2_player_spawn_select(qa_q2_game *g, q2_actor *a, const qa_q2_player_movem
             if (clear) {
                 body.origin = fixed;
                 body.angles = qa_vec_add(landmark->relative_view_angles, b.angles);
-                body.velocity = rotate_landmark(landmark->relative_velocity, b.angles);
+                body.velocity = qa_vec_rotate_euler_xyz(landmark->relative_velocity,
+                    qa_v3(b.angles.x,b.angles.z,b.angles.y));
                 from_landmark = true;
             }
         }

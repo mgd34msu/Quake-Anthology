@@ -483,6 +483,10 @@ static void test_shared_vector_geometry(void)
     CHECK(fabsf(qa_vec_dot(normal,side))<1e-6f && fabsf(qa_vec_length(side)-1)<1e-6f);
     qa_vec3 rotated=qa_vec_rotate_around(qa_v3(0,0,1),qa_v3(1,0,0),90,QA_ROTATION_MATRIX);
     CHECK(fabsf(rotated.x)<1e-6f && fabsf(rotated.y-1)<1e-6f && rotated.z==0);
+    rotated=qa_vec_rotate_euler_xyz(qa_v3(1,2,3),qa_v3(90,90,90));
+    CHECK(qa_vec_length(qa_vec_sub(rotated,qa_v3(3,2,-1)))<1e-6f);
+    rotated=qa_vec_rotate_euler_xyz(qa_v3(1,2,3),qa_v3(-90,-90,-90));
+    CHECK(qa_vec_length(qa_vec_sub(rotated,qa_v3(3,-2,1)))<1e-6f);
     CHECK(fabsf(qa_inverse_sqrt(4)-.5f)<.001f);
     CHECK(fabsf(qa_vec_length(qa_vec_fast_normalize(qa_v3(3,4,0)))-1)<.002f);
 }

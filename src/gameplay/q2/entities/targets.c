@@ -116,13 +116,6 @@ static bool key_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error 
         s->usable = false;
     return true;
 }
-static qa_vec3 unrotate(qa_vec3 v, qa_vec3 angles) {
-    float p = -angles.x * .01745329251994329577f, r = -angles.z * .01745329251994329577f,
-          y = -angles.y * .01745329251994329577f;
-    qa_vec3 x = qa_v3(v.x, v.y * cosf(p) - v.z * sinf(p), v.y * sinf(p) + v.z * cosf(p));
-    qa_vec3 z = qa_v3(x.x * cosf(r) + x.z * sinf(r), x.y, -x.x * sinf(r) + x.z * cosf(r));
-    return qa_v3(z.x * cosf(y) - z.y * sinf(y), z.x * sinf(y) + z.y * cosf(y), z.z);
-}
 static bool changelevel(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id activator,
                         qa_error *e) {
     q2_entity_state *s = a->entity;
@@ -180,8 +173,10 @@ static bool changelevel(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_
         carry = (qa_q2_landmark){
             .player = activator,
             .name = target ? target->entity->targetname : 0,
-            .relative_origin = unrotate(qa_vec_sub(b.origin, ref.origin), ref.angles),
-            .relative_velocity = unrotate(player->client->rule.old_velocity, ref.angles),
+            .relative_origin = qa_vec_rotate_euler_xyz(qa_vec_sub(b.origin,ref.origin),
+                qa_v3(-ref.angles.x,-ref.angles.z,-ref.angles.y)),
+            .relative_velocity = qa_vec_rotate_euler_xyz(player->client->rule.old_velocity,
+                qa_v3(-ref.angles.x,-ref.angles.z,-ref.angles.y)),
             .relative_view_angles = qa_vec_sub(movement.view_angles, ref.angles)};
         landmark = &carry;
     }

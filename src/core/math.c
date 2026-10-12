@@ -31,6 +31,15 @@ void qa_angle_axis(qa_vec3 angles,qa_vec3 axis[3],qa_angle_math_rule rule)
     axis[1]=qa_vec_scale(axis[1],-1);
 }
 
+qa_vec3 qa_vec_rotate_euler_xyz(qa_vec3 v,qa_vec3 degrees)
+{
+    const float radians=.01745329251994329577f;
+    float p=degrees.x*radians,r=degrees.y*radians,y=degrees.z*radians;
+    qa_vec3 x=qa_v3(v.x,v.y*cosf(p)-v.z*sinf(p),v.y*sinf(p)+v.z*cosf(p));
+    qa_vec3 z=qa_v3(x.x*cosf(r)+x.z*sinf(r),x.y,-x.x*sinf(r)+x.z*cosf(r));
+    return qa_v3(z.x*cosf(y)-z.y*sinf(y),z.x*sinf(y)+z.y*cosf(y),z.z);
+}
+
 qa_vec3 qa_axes_angles(const qa_vec3 axis[3],qa_axes_projection_rule rule)
 {
     if(rule==QA_AXES_DOUBLE_BASIS) {

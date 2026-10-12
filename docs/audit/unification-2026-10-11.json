@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "56e76dfc9e598b579f3ecd4418c5df1db1ef3b25",
+  "verified_main": "2d8e7c02561df9f350cb2c29d3e606e05b080b8f",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 208,
-    "open_source_observation": 163,
+    "fixed_source_build_core": 210,
+    "open_source_observation": 161,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -33608,8 +33608,9 @@
       "severity": "high",
       "job": "24",
       "area": "gameplay_q3",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "2d8e7c02561df9f350cb2c29d3e606e05b080b8f"
     },
     {
       "id": "J24-02",
@@ -36531,14 +36532,15 @@
       "severity": "high",
       "job": "33",
       "area": "shared_gameplay",
-      "status": "open_source_observation",
+      "status": "fixed_source_build_core",
       "verification": "source review; no runtime or performance proof",
       "partial_followups": [
         {
           "commit": "8693af1b71addce839f74c47193711fd235263d9",
           "verification": "Q1 native radius, Hipnotic reversed scan and Q2 builtin nearby capture into the existing active caller buffer via the shared borrowed-storage radius API. Intermediate copies/world leases are deleted. Source order, second scratch plane, nested frames and callback cleanup are retained. Private builtin heap-backed reservation and persistent roster lifetimes remain open."
         }
-      ]
+      ],
+      "fixed_commit": "2d8e7c02561df9f350cb2c29d3e606e05b080b8f"
     },
     {
       "id": "J33-02",
@@ -42889,6 +42891,101 @@
       ],
       "record_directory": "/tmp/qa-ta3196-common-retained-name-storage-20261012-v1",
       "conclusion": "Moved retained presentation, bot and profiler names to common indexed storage. New admission peaks can still grow storage; this does not establish whole-frame zero allocation."
+    },
+    {
+      "commit": "2d8e7c02561df9f350cb2c29d3e606e05b080b8f",
+      "source_tree": "6d76d830b47eb4f780ab3f3318bce630a5a34284",
+      "finding_ids": [
+        "J33-01",
+        "J24-01"
+      ],
+      "files_rechecked": [
+        "include/qa/bots.h",
+        "include/qa/builtin.h",
+        "src/app/application/bots.c",
+        "src/app/application/bots_private.h",
+        "src/app/application/bots_round.c",
+        "src/app/application/bots_save.c",
+        "src/app/application/guest_qc.c",
+        "src/app/application/guest_qc_declared.c",
+        "src/app/application/guest_qc_imports.c",
+        "src/app/application/guest_qc_internal.h",
+        "src/app/application/publication.c",
+        "src/bots/ai/combat.c",
+        "src/bots/ai/frame.c",
+        "src/bots/ai/internal.h",
+        "src/bots/ai/roster.c",
+        "src/bots/ai/save.c",
+        "src/campaign/q1/level.c",
+        "src/campaign/q1/spawn.c",
+        "src/gameplay/builtin/services.c",
+        "src/gameplay/modes/checkpoint.c",
+        "src/gameplay/modes/commands.c",
+        "src/gameplay/modes/core.c",
+        "src/gameplay/modes/deathball.c",
+        "src/gameplay/modes/flags.c",
+        "src/gameplay/modes/horde.c",
+        "src/gameplay/modes/internal.h",
+        "src/gameplay/modes/map.c",
+        "src/gameplay/modes/match.c",
+        "src/gameplay/modes/objects.c",
+        "src/gameplay/modes/placement.c",
+        "src/gameplay/modes/q3_settings.c",
+        "src/gameplay/modes/relics.c",
+        "src/gameplay/modes/scoring.c",
+        "src/gameplay/modes/team_info.c",
+        "src/gameplay/modes/teams.c",
+        "src/gameplay/modes/vote.c",
+        "src/gameplay/q1/queries.c",
+        "src/gameplay/q2/ballistics.c",
+        "src/gameplay/q2/checkpoint.c",
+        "src/gameplay/q2/entities/goals.c",
+        "src/gameplay/q2/entities/navigation.c",
+        "src/gameplay/q2/entities/q64.c",
+        "src/gameplay/q2/entities/rerelease.c",
+        "src/gameplay/q2/entities/scenery.c",
+        "src/gameplay/q2/entities/target_effects.c",
+        "src/gameplay/q2/game.c",
+        "src/gameplay/q2/internal.h",
+        "src/gameplay/q2/map.c",
+        "src/gameplay/q2/mines.c",
+        "src/gameplay/q2/mission_bolts.c",
+        "src/gameplay/q2/monsters/actions.c",
+        "src/gameplay/q2/monsters/ai.c",
+        "src/gameplay/q2/monsters/combat.c",
+        "src/gameplay/q2/monsters/core.c",
+        "src/gameplay/q2/monsters/medic.c",
+        "src/gameplay/q2/monsters/reinforcements.c",
+        "src/gameplay/q2/monsters/widow_power.c",
+        "src/gameplay/q2/nuke.c",
+        "src/gameplay/q2/player/admission.c",
+        "src/gameplay/q2/player/commands.c",
+        "src/gameplay/q2/player/death.c",
+        "src/gameplay/q2/player/intermission.c",
+        "src/gameplay/q2/player/internal.h",
+        "src/gameplay/q2/player/spawn_select.c",
+        "src/gameplay/q2/player/spectator.c",
+        "src/gameplay/q2/player/state.c",
+        "src/gameplay/q2/projectiles.c",
+        "src/gameplay/q3/game.c",
+        "src/gameplay/q3/holdables.c",
+        "src/gameplay/q3/internal.h",
+        "src/gameplay/q3/map/runtime.c",
+        "src/gameplay/q3/missiles.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-one-world-snapshot-storage-20261012-v1",
+      "conclusion": "Private builtin actor snapshot types and pools deleted from all source callers. Q1/Q2/Q3/QC scoped queries use common world storage; modes and bots retain constructor-sized borrowed arena backing. Original order, callback custody and bot save encoding preserved. Actual common-pool capacity and newly admitted authored candidate growth remain bounded by their owners; no full live or global zero-allocation claim."
     }
   ],
   "verification_limits": [
