@@ -11,6 +11,7 @@
 #include "qa/game_q1_source_runes.h"
 #include "qa/game_q1_source_rogue_tag.h"
 #include "qa/game_q1_source_rogue_flags.h"
+#include "qa/id_index.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -1302,6 +1303,12 @@ typedef struct q1_character {
 } q1_character;
 struct qa_q1_source_client_view;
 typedef struct q1_source_info {qa_string_id key,value;} q1_source_info;
+typedef struct q1_source_info_store {
+    qa_arena storage;
+    qa_id_index keys;
+    q1_source_info *rows;
+    size_t count,capacity;
+} q1_source_info_store;
 typedef struct q1_player {
     struct q1_player *allocation_next, *pool_next;
     qa_actor_id id;
@@ -1341,8 +1348,7 @@ typedef struct q1_player {
     bool active, continuous, primary_holstered, arsenal, character, source_client;
     qa_q1_game *inventory_game;
     qa_inventory_lease weapon_definitions;
-    q1_source_info *source_info;
-    size_t source_info_count;
+    q1_source_info_store source_info;
     float source_frags,source_team;
     bool source_observer,source_no_target,source_god_mode,source_superhealth;
     q1_ref source_spectator_goal,source_spectator_track;
@@ -1418,6 +1424,7 @@ struct qa_q1_game {
     bool enemy_visible;
 };
 void q1_source_client_clear(q1_player *);
+bool q1_source_info_prepare(q1_source_info_store *,size_t pairs,qa_error *);
 bool q1_source_flag_spawn(qa_q1_game *, q1_actor *, bool *, qa_error *);
 bool q1_source_flag_think(qa_q1_game *, q1_actor *, q1_think_kind, qa_error *);
 bool q1_source_flag_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);

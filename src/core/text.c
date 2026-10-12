@@ -19,6 +19,32 @@ bool qa_info_next(const char **cursor,qa_bytes *key,qa_bytes *value)
     return true;
 }
 
+bool qa_info_append(char *out, size_t capacity, size_t *length,
+    qa_bytes key, qa_bytes value, unsigned policy, qa_error *error)
+{
+    if (!out || !length || *length >= capacity ||
+        (key.size && !key.data) || (value.size && !value.data)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid info pair output");
+        return false;
+    }
+    size_t remaining = capacity - 1 - *length;
+    if (!(policy & QA_INFO_TRUNCATE) &&
+        (remaining < 2 || key.size > remaining - 2 || value.size > remaining - 2 - key.size)) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Info pair exceeds output storage");
+        return false;
+    }
+    const qa_bytes parts[] = {
+        {(const uint8_t *)"\\", 1}, key, {(const uint8_t *)"\\", 1}, value};
+    for (size_t i = 0; i < sizeof(parts) / sizeof(*parts); ++i) {
+        size_t amount = parts[i].size < remaining ? parts[i].size : remaining;
+        if (amount) memmove(out + *length, parts[i].data, amount);
+        *length += amount;
+        remaining -= amount;
+    }
+    out[*length] = 0;
+    return true;
+}
+
 int qa_text_bytes_compare(qa_bytes left,qa_bytes right,bool ascii_fold)
 {
     size_t count=left.size<right.size?left.size:right.size;

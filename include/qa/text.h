@@ -33,6 +33,11 @@ bool qa_text_q3_color_escape(uint32_t current, uint32_t next, uint8_t *index);
 /* Quake backslash info pairs, borrowed from the NUL-terminated input. Cursor
  * starts at the string and ends at the next delimiter or terminator. */
 bool qa_info_next(const char **cursor,qa_bytes *key,qa_bytes *value);
+enum { QA_INFO_TRUNCATE = 4 };
+/* Append raw counted pairs in order. Capacity includes the trailing NUL;
+ * without TRUNCATE, insufficient space leaves output and length unchanged. */
+bool qa_info_append(char *, size_t capacity, size_t *length,
+    qa_bytes key, qa_bytes value, unsigned policy, qa_error *);
 enum { QA_INFO_LAST=1, QA_INFO_CASE_FOLD=2 };
 /* Exact byte keys by default; CASE_FOLD compares ASCII letters only. */
 bool qa_info_key_equal(qa_bytes,qa_bytes,unsigned policy);

@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "cba4fbb4584a05e59a00f24223d35c09f2eac019",
+  "verified_main": "10ce237075361a40d32b64f267224814759eb10d",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 160,
-    "open_source_observation": 211,
+    "fixed_source_build_core": 161,
+    "open_source_observation": 210,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -24651,8 +24651,9 @@
       "severity": "medium",
       "job": "02",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "All enrollment/removal/refusal callers reviewed with full actor identity. Normal build/seven core suites passed; no live CLIENT claim.",
+      "fixed_commit": "10ce237075361a40d32b64f267224814759eb10d"
     },
     {
       "id": "02-17",
@@ -41596,6 +41597,31 @@
       ],
       "record_directory": "/tmp/qa-ta3196-provider-name-adoption-20261012",
       "conclusion": "Seven instance-name provider selection sites use existing common index and destination-local name identities. First/all/last match and campaign/save order retained. Normal build/seven core suites passed; historical candidate views remain in flight."
+    },
+    {
+      "commit": "10ce237075361a40d32b64f267224814759eb10d",
+      "source_tree": "cd445101bb2d52501b3faa2cf492577fe5946c9a",
+      "finding_ids": [
+        "02-16"
+      ],
+      "files_rechecked": [
+        "src/app/application/internal.h",
+        "src/app/application/lifetime.c",
+        "src/app/application/native_client_roles.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-native-client-index-20261012",
+      "conclusion": "Common full-actor index replaces observer membership scans. Ordered capture/teardown arrays and original generation/publication/refusal predicates retained; restored rows rebuild index. Normal build/seven suites passed; no live CLIENT claim."
     }
   ],
   "verification_limits": [

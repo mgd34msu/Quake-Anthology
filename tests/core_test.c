@@ -2488,6 +2488,15 @@ static void test_cvar_info_storage(void)
     CHECK(qa_info_find(text,(qa_bytes){(const uint8_t *)"empty",5},0,&info_span) && info_span.size==0);
     CHECK(!qa_info_find(text,(qa_bytes){(const uint8_t *)"orphan",6},0,&info_span) && info_span.size==0);
     qa_error info_error={0};char too_small[4];
+    char raw_info[32] = ""; size_t raw_length = 0;
+    CHECK(qa_info_append(raw_info, sizeof(raw_info), &raw_length,
+        (qa_bytes){(const uint8_t *)"name", 4}, (qa_bytes){(const uint8_t *)"a\\b", 3}, 0, &info_error));
+    CHECK(qa_info_append(raw_info, sizeof(raw_info), &raw_length,
+        (qa_bytes){(const uint8_t *)"empty", 5}, (qa_bytes){0}, 0, &info_error));
+    CHECK(!strcmp(raw_info, "\\name\\a\\b\\empty\\") && raw_length == 16);
+    CHECK(!qa_info_append(raw_info, raw_length + 1, &raw_length,
+        (qa_bytes){(const uint8_t *)"x", 1}, (qa_bytes){(const uint8_t *)"y", 1}, 0, &info_error));
+    CHECK(!strcmp(raw_info, "\\name\\a\\b\\empty\\") && raw_length == 16);
     CHECK(!qa_q3_info_value(text,"NAME",too_small,sizeof(too_small),&info_error));
     char info[1024]="\\k\\first\\k\\second"; const char *warning;
     CHECK(qa_q3_info_set(info,sizeof(info),"k","third",QA_Q3_INFO_BROWSER,&warning,&info_error));

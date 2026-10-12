@@ -83,7 +83,6 @@ bool qa_q3_info_set(char *info, size_t capacity, const char *key, const char *va
     size_t retained = length - (remove_end - remove_begin), pair_size = 0;
     if (*value) {
         size_t remaining = capacity - 1;
-        const char *parts[] = {"\\", key, "\\", value};
         size_t sizes[] = {1, key_length, 1, strlen(value)};
         for (size_t i = 0; i < 4; ++i) {
             size_t amount = sizes[i] < remaining ? sizes[i] : remaining;
@@ -101,13 +100,10 @@ bool qa_q3_info_set(char *info, size_t capacity, const char *key, const char *va
         if (pair_size >= capacity - retained)
             return fail(error, QA_ERROR_FORMAT, "Q3 info storage exhausted");
         size_t offset = policy == QA_Q3_INFO_STRICT && capacity == 8192 ? retained : 0;
-        remaining = pair_size;
-        for (size_t i = 0; i < 4; ++i) {
-            size_t amount = sizes[i] < remaining ? sizes[i] : remaining;
-            memcpy(buffer + offset, parts[i], amount);
-            offset += amount;
-            remaining -= amount;
-        }
+        size_t written = 0;
+        if (!qa_info_append(buffer + offset, pair_size + 1, &written,
+                (qa_bytes){(const uint8_t *)key, key_length},
+                (qa_bytes){(const uint8_t *)value, sizes[3]}, QA_INFO_TRUNCATE, error)) return false;
     }
     size_t offset = policy == QA_Q3_INFO_STRICT && capacity == 8192 ? 0 : pair_size;
     memcpy(buffer + offset, info, remove_begin);

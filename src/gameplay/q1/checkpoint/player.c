@@ -180,27 +180,28 @@ bool q1_save_player(q1_save_io *io, q1_player *player) {
     if (!player->finale_held_present && player->finale_held)
         return q1_save_fail(io, "Q1 finale button history has no retained actor");
     Q1_SAVE(io, double, player->source_respawn_requested_at);
-    uint32_t info_count=(io->values.direction == QA_SOURCE_SAVE_READ)?0:(uint32_t)player->source_info_count;
-    if((io->values.direction == QA_SOURCE_SAVE_WRITE && player->source_info_count>UINT32_MAX) || !q1_save_u32(io,&info_count)) return false;
+    uint32_t info_count=(io->values.direction == QA_SOURCE_SAVE_READ)?0:(uint32_t)player->source_info.count;
+    if((io->values.direction == QA_SOURCE_SAVE_WRITE && player->source_info.count>UINT32_MAX) || !q1_save_u32(io,&info_count)) return false;
     if(io->values.direction == QA_SOURCE_SAVE_READ) {
         if(io->values.offset>io->values.input.size || info_count>(io->values.input.size-io->values.offset)/8 ||
-           (info_count && sizeof(*player->source_info)>SIZE_MAX/info_count))
+           (info_count && sizeof(*player->source_info.rows)>SIZE_MAX/info_count))
             return q1_save_fail(io,"Q1 source userinfo map exceeds its saved extent");
         q1_source_client_clear(player);
-        if(info_count && !(player->source_info=calloc(info_count,sizeof(*player->source_info))))
+        if((info_count || player->source_client) && !q1_source_info_prepare(&player->source_info,info_count,io->values.error))
             return q1_save_fail(io,"Allocating Q1 source userinfo continuation");
-        player->source_info_count=info_count;
+        player->source_info.count=info_count;
     }
     for(uint32_t i=0;i<info_count;++i) {
-        Q1_SAVE(io,string,player->source_info[i].key);
-        Q1_SAVE(io,string,player->source_info[i].value);
+        Q1_SAVE(io,string,player->source_info.rows[i].key);
+        Q1_SAVE(io,string,player->source_info.rows[i].value);
         qa_strings *strings=qa_session_strings(io->game->services.session);
-        if(!qa_strings_cstr(strings,player->source_info[i].key) ||
-           !qa_strings_cstr(strings,player->source_info[i].value))
+        if(!qa_strings_cstr(strings,player->source_info.rows[i].key) ||
+           !qa_strings_cstr(strings,player->source_info.rows[i].value))
             return q1_save_fail(io,"Q1 source userinfo key and value require actual C strings");
-        for(uint32_t j=0;j<i;++j)
-            if(player->source_info[j].key==player->source_info[i].key)
-                return q1_save_fail(io,"Duplicate Q1 source userinfo key");
+        qa_id_index_entry *entry=qa_id_index_find(&player->source_info.keys,player->source_info.rows[i].key,0);
+        if(entry && entry->value!=i) return q1_save_fail(io,"Duplicate Q1 source userinfo key");
+        if(io->values.direction == QA_SOURCE_SAVE_READ)
+            qa_id_index_insert(&player->source_info.keys,player->source_info.rows[i].key,0,i);
     }
     if(!player->source_client && (info_count || player->source_frags!=0 || player->source_team!=0 ||
         player->source_observer || player->source_no_target || player->source_god_mode || player->source_impulse ||

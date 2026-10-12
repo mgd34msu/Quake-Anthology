@@ -3,8 +3,51 @@
 #include <stdio.h>
 #include "qa/text.h"
 
+static void info_clear(q1_source_info_store *info) {
+    qa_id_index_destroy(&info->keys);qa_arena_destroy(&info->storage);
+    *info=(q1_source_info_store){0};
+}
 void q1_source_client_clear(q1_player *player) {
-    free(player->source_info);player->source_info=NULL;player->source_info_count=0;
+    info_clear(&player->source_info);
+}
+bool q1_source_info_prepare(q1_source_info_store *info,size_t pairs,qa_error *error) {
+    /* Name and colors can add these three keys after received admission. */
+    if(pairs>SIZE_MAX-3 || pairs+3>SIZE_MAX/sizeof(*info->rows)) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"Q1 source userinfo map exceeds its extent");return false;
+    }
+    size_t capacity=pairs+3,bytes=capacity*sizeof(*info->rows);
+    if(!info->storage.block_size) qa_arena_init(&info->storage,bytes);
+    info->keys.storage=&info->storage;
+    if(!qa_id_index_reserve(&info->keys,capacity,error)) return false;
+    q1_source_info *rows=qa_arena_alloc(&info->storage,bytes,_Alignof(q1_source_info),error);
+    if(!rows) return false;
+    memset(rows,0,bytes);info->rows=rows;info->capacity=capacity;return true;
+}
+static void info_put(q1_source_info_store *info,qa_string_id key,qa_string_id value) {
+    qa_id_index_entry *entry=qa_id_index_find(&info->keys,key,0);
+    if(entry) info->rows[entry->value].value=value;
+    else {
+        size_t row=info->count++;
+        info->rows[row]=(q1_source_info){key,value};qa_id_index_insert(&info->keys,key,0,row);
+    }
+}
+static bool info_load(qa_q1_game *game,q1_source_info_store *info,const char *text,qa_error *error) {
+    const char *cursor=text;qa_bytes key,value;size_t pairs=0;
+    while(qa_info_next(&cursor,&key,&value)) {
+        if(pairs==SIZE_MAX) {
+            qa_error_set(error,QA_ERROR_MEMORY,0,"Q1 source userinfo map exceeds its extent");return false;
+        }
+        ++pairs;
+    }
+    if(!q1_source_info_prepare(info,pairs,error)) return false;
+    cursor=text;qa_strings *strings=qa_session_strings(game->services.session);
+    while(qa_info_next(&cursor,&key,&value)) {
+        qa_string_id key_id,value_id;
+        if(!qa_strings_intern(strings,key,&key_id,error) ||
+            !qa_strings_intern(strings,value,&value_id,error)) return false;
+        info_put(info,key_id,value_id);
+    }
+    return true;
 }
 static const q1_player *client_const(const qa_q1_game *game,qa_actor_id actor) {
     if(!qa_q1_player_source_present(game,actor)) return NULL;
@@ -12,8 +55,8 @@ static const q1_player *client_const(const qa_q1_game *game,qa_actor_id actor) {
 }
 static qa_string_id info_id(const q1_player *player,qa_string_id key) {
     if(!key) return QA_STRING_NONE;
-    for(size_t i=0;i<player->source_info_count;++i)
-        if(player->source_info[i].key==key) return player->source_info[i].value;
+    qa_id_index_cursor cursor=qa_id_index_begin(&player->source_info.keys,key,0);size_t row;
+    if(qa_id_index_next(&player->source_info.keys,&cursor,&row)) return player->source_info.rows[row].value;
     return QA_STRING_NONE;
 }
 static const char *info_named(const qa_q1_game *game,const q1_player *player,qa_string_id key) {
@@ -116,23 +159,7 @@ static bool userinfo(qa_q1_game *game,qa_actor_id actor,const char *text,const c
     uint8_t previous=color(info_named(game,player,game->runtime_names[Q1_NAME_USERINFO_BOTTOMCOLOR]));
     q1_source_client_clear(player);
     const char *cursor=strchr(text,'\\');
-    qa_strings *strings=qa_session_strings(game->services.session);
-    while(cursor) {
-        const char *key=cursor+1,*separator=strchr(key,'\\');if(!separator) break;
-        const char *value=separator+1,*next=strchr(value,'\\');
-        size_t key_size=(size_t)(separator-key),value_size=next?(size_t)(next-value):strlen(value);
-        qa_string_id key_id,value_id;
-        if(!qa_strings_intern(strings,(qa_bytes){(const uint8_t *)key,key_size},&key_id,error) ||
-           !qa_strings_intern(strings,(qa_bytes){(const uint8_t *)value,value_size},&value_id,error)) goto finish;
-        size_t index=0;while(index<player->source_info_count && player->source_info[index].key!=key_id) ++index;
-        if(index==player->source_info_count) {
-            if(index>=SIZE_MAX/sizeof(*player->source_info)) {qa_error_set(error,QA_ERROR_MEMORY,0,"Q1 source userinfo map exceeds its extent");goto finish;}
-            q1_source_info *entries=realloc(player->source_info,(index+1)*sizeof(*entries));
-            if(!entries) {qa_error_set(error,QA_ERROR_MEMORY,0,"growing actual Q1 source userinfo");goto finish;}
-            player->source_info=entries;player->source_info_count=index+1;
-        }
-        player->source_info[index]=(q1_source_info){key_id,value_id};cursor=next;
-    }
+    if(!info_load(game,&player->source_info,cursor?cursor:"",error)) goto finish;
     if(name && !info_named(game,player,game->runtime_names[Q1_NAME_USERINFO_NAME]) && !info_set(game,player,"name",name,error)) goto finish;
     uint8_t current=color(info_named(game,player,game->runtime_names[Q1_NAME_USERINFO_BOTTOMCOLOR]));
     if(current!=previous) player->source_team=(float)current+1;
@@ -147,30 +174,14 @@ bool qa_q1_source_client_userinfo_storage(qa_q1_game *game,qa_actor_id actor,con
     qa_q1_game_operation operation={0};
     if(!text||!qa_q1_game_operation_begin(game,&operation,error)) return false;
     q1_player *player=(q1_player *)client_const(game,actor);
-    q1_source_info *entries=NULL;size_t count=0;bool okay=false;
+    q1_source_info_store staged={0};bool okay=false;
     if(!player) {qa_error_set(error,QA_ERROR_NOT_FOUND,0,"Q1 stored userinfo client is absent");goto finish;}
-    qa_strings *strings=qa_session_strings(game->services.session);
-    const char *cursor=text+(*text=='\\');
-    while(*cursor) {
-        const char *separator=strchr(cursor,'\\');if(!separator) break;
-        const char *value=separator+1,*next=strchr(value,'\\');
-        qa_string_id key_id,value_id;
-        if(!qa_strings_intern(strings,(qa_bytes){(const uint8_t *)cursor,(size_t)(separator-cursor)},&key_id,error)||
-            !qa_strings_intern(strings,(qa_bytes){(const uint8_t *)value,next?(size_t)(next-value):strlen(value)},&value_id,error)) goto finish;
-        size_t index=0;while(index<count&&entries[index].key!=key_id) ++index;
-        if(index==count) {
-            if(count>=SIZE_MAX/sizeof(*entries)) {qa_error_set(error,QA_ERROR_MEMORY,0,"Q1 stored userinfo extent overflows");goto finish;}
-            q1_source_info *grown=realloc(entries,(count+1)*sizeof(*entries));
-            if(!grown) {qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining Q1 stored userinfo dictionary");goto finish;}
-            entries=grown;entries[count++]=(q1_source_info){key_id,value_id};
-        }
-        if(!next) break;
-        cursor=next+1;
-    }
-    q1_source_client_clear(player);player->source_info=entries;player->source_info_count=count;
-    entries=NULL;okay=true;
+    if(!info_load(game,&staged,text,error)) goto finish;
+    q1_source_client_clear(player);player->source_info=staged;
+    player->source_info.keys.storage=&player->source_info.storage;
+    staged=(q1_source_info_store){0};okay=true;
 finish:
-    free(entries);qa_q1_game_operation_end(&operation);return okay;
+    info_clear(&staged);qa_q1_game_operation_end(&operation);return okay;
 }
 bool qa_q1_source_client_userinfo_named(qa_q1_game *game,qa_actor_id actor,const char *text,
     const char *name,qa_error *error) {
@@ -389,17 +400,8 @@ static bool info_set(qa_q1_game *game,q1_player *player,const char *key,const ch
     qa_string_id key_id,value_id;
     if(!qa_strings_intern_cstr(strings,key,&key_id,error) ||
        !qa_strings_intern_cstr(strings,value,&value_id,error)) return false;
-    size_t index=0;
-    while(index<player->source_info_count && player->source_info[index].key!=key_id) ++index;
-    if(index==player->source_info_count) {
-        if(index>=SIZE_MAX/sizeof(*player->source_info)) {
-            qa_error_set(error,QA_ERROR_MEMORY,0,"Q1 source userinfo map exceeds its extent");return false;
-        }
-        q1_source_info *entries=realloc(player->source_info,(index+1)*sizeof(*entries));
-        if(!entries) {qa_error_set(error,QA_ERROR_MEMORY,0,"growing actual Q1 source userinfo");return false;}
-        player->source_info=entries;player->source_info_count=index+1;
-    }
-    player->source_info[index]=(q1_source_info){key_id,value_id};return true;
+    if(!player->source_info.capacity && !q1_source_info_prepare(&player->source_info,0,error)) return false;
+    info_put(&player->source_info,key_id,value_id);return true;
 }
 bool qa_q1_source_client_userinfo_read(const qa_q1_game *game,qa_actor_id actor,bool include_name,qa_buffer *out,qa_error *error) {
     const q1_player *player=client_const(game,actor);
@@ -407,9 +409,9 @@ bool qa_q1_source_client_userinfo_read(const qa_q1_game *game,qa_actor_id actor,
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q1 source userinfo read requires its client and empty output");return false;
     }
     qa_strings *strings=qa_session_strings(game->services.session);size_t length=0;
-    for(size_t i=0;i<player->source_info_count;++i) {
-        const char *key=qa_strings_cstr(strings,player->source_info[i].key);
-        const char *value=qa_strings_cstr(strings,player->source_info[i].value);
+    for(size_t i=0;i<player->source_info.count;++i) {
+        const char *key=qa_strings_cstr(strings,player->source_info.rows[i].key);
+        const char *value=qa_strings_cstr(strings,player->source_info.rows[i].value);
         if(!key || !value) {qa_error_set(error,QA_ERROR_FORMAT,0,"Q1 source userinfo lost its actual string");return false;}
         if(!include_name && !strcmp(key,"name")) continue;
         size_t key_size=strlen(key),value_size=strlen(value);
@@ -422,13 +424,15 @@ bool qa_q1_source_client_userinfo_read(const qa_q1_game *game,qa_actor_id actor,
     uint8_t *bytes=malloc(length+1);
     if(!bytes) {qa_error_set(error,QA_ERROR_MEMORY,0,"reading actual Q1 source userinfo");return false;}
     size_t cursor=0;
-    for(size_t i=0;i<player->source_info_count;++i) {
-        const char *key=qa_strings_cstr(strings,player->source_info[i].key);
-        const char *value=qa_strings_cstr(strings,player->source_info[i].value);
+    for(size_t i=0;i<player->source_info.count;++i) {
+        const char *key=qa_strings_cstr(strings,player->source_info.rows[i].key);
+        const char *value=qa_strings_cstr(strings,player->source_info.rows[i].value);
         if(!include_name && !strcmp(key,"name")) continue;
-        size_t key_size=strlen(key),value_size=strlen(value);
-        bytes[cursor++]='\\';memcpy(bytes+cursor,key,key_size);cursor+=key_size;
-        bytes[cursor++]='\\';memcpy(bytes+cursor,value,value_size);cursor+=value_size;
+        if(!qa_info_append((char *)bytes,length+1,&cursor,
+            (qa_bytes){(const uint8_t *)key,strlen(key)},
+            (qa_bytes){(const uint8_t *)value,strlen(value)},0,error)) {
+            free(bytes);return false;
+        }
     }
     bytes[cursor]=0;*out=(qa_buffer){bytes,length};return true;
 }
