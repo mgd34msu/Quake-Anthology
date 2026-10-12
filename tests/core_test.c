@@ -28,6 +28,7 @@
 #include "qa/hud_q2.h"
 #include "qa/vfs.h"
 #include "qa/audio.h"
+#include "../src/audio/mixer_internal.h"
 #include "qa/movement.h"
 #include "qa/q1_save.h"
 #include "qa/scene.h"
@@ -1368,6 +1369,29 @@ static void test_shared_effect_cursor(void)
 static void test_shared_audio_preparation(void)
 {
     qa_error error = {0}; char directory[] = "/tmp/qa-audio-assets-XXXXXX";
+    qa_audio_mixer *positions = NULL;
+    qa_audio_mixer_options position_options = {.sample_rate = 44100, .output_channels = 2,
+        .workspace_capacity = 8};
+    uint64_t actor = UINT64_C(0x100000001), other = UINT64_C(0x200000001);
+    uint64_t owner = UINT64_C(0x100000005), other_owner = UINT64_C(0x200000005);
+    CHECK(qa_audio_mixer_create(&position_options, &positions, &error));
+    CHECK(qa_audio_mixer_position(positions, actor, qa_v3(1, 0, 0), &error));
+    CHECK(qa_audio_mixer_position(positions, other, qa_v3(2, 0, 0), &error));
+    CHECK(qa_audio_mixer_position_owner(positions, actor, owner, qa_v3(3, 0, 0), &error));
+    CHECK(qa_audio_mixer_position_owner(positions, actor, other_owner, qa_v3(4, 0, 0), &error));
+    CHECK(qa_audio_positions_read(&positions->positions, actor, owner, true).x == 3);
+    CHECK(qa_audio_positions_read(&positions->positions, actor, other_owner, true).x == 4);
+    CHECK(qa_audio_positions_read(&positions->positions, other, owner, true).x == 2);
+    CHECK(qa_audio_mixer_position(positions, actor, qa_v3(5, 0, 0), &error));
+    CHECK(qa_audio_positions_read(&positions->positions, actor, owner, true).x == 5);
+    CHECK(qa_audio_mixer_position_owner(positions, actor, QA_AUDIO_NO_OWNER, qa_v3(6, 0, 0), &error));
+    CHECK(qa_audio_positions_read(&positions->positions, actor, owner, true).x == 5);
+    CHECK(qa_audio_positions_read(&positions->positions, actor, owner, false).x == 6);
+    qa_audio_mixer_stop_actor(positions, actor, owner);
+    CHECK(qa_audio_positions_read(&positions->positions, actor, owner, true).x == 5);
+    qa_audio_mixer_stop_all(positions);
+    CHECK(qa_audio_positions_read(&positions->positions, actor, owner, true).x == 0);
+    qa_audio_mixer_destroy(positions);
     CHECK(mkdtemp(directory));
     char folder[128], path[160];
     CHECK(snprintf(folder, sizeof(folder), "%s/sound", directory) > 0);

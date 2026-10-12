@@ -3,6 +3,7 @@
 
 #include "codec_internal.h"
 #include "qa/pool.h"
+#include "positions_private.h"
 
 /* These are source DMA/chunk dimensions, not limits on actors or voices. */
 #define QA_MIXER_RAW_FRAMES QA_AUDIO_RAW_CAPACITY
@@ -68,11 +69,6 @@ typedef struct qa_mixer_loop_mix {
     bool doppler;
     float doppler_scale, old_doppler_scale;
 } qa_mixer_loop_mix;
-typedef struct qa_mixer_position {
-    uint64_t actor, owner;
-    qa_vec3 origin;
-    bool scoped;
-} qa_mixer_position;
 typedef struct qa_mixer_transmission {
     qa_vec3 origin;
     float gain;
@@ -94,8 +90,7 @@ struct qa_audio_mixer {
     size_t loop_count, loop_capacity;
     qa_mixer_loop_mix *loop_mixes;
     size_t loop_mix_count, loop_mix_capacity;
-    qa_mixer_position *positions;
-    size_t position_count, position_capacity;
+    qa_audio_positions positions;
     qa_mixer_transmission *transmissions;
     size_t transmission_count, transmission_capacity;
     qa_mixer_event *events;

@@ -3,6 +3,7 @@
 #include "qa/audio.h"
 #include "qa/audio_acoustics_prepare.h"
 #include "qa/audio_music_engine.h"
+#include "positions_private.h"
 typedef struct audio_seat {
     qa_audio_listener listener;
     qa_audio_mixer *mixer;
@@ -10,7 +11,6 @@ typedef struct audio_seat {
     qa_audio_underwater underwater;
     qa_audio_environment *environment;
 } audio_seat;
-typedef struct audio_position { uint64_t actor; qa_vec3 position; } audio_position;
 typedef struct audio_round_mixer { uint32_t seat; qa_audio_mixer *mixer; } audio_round_mixer;
 typedef struct audio_bus {
     uint64_t id;
@@ -27,8 +27,7 @@ struct qa_audio_engine {
     size_t seat_count;
     audio_round_mixer *round_mixers;
     size_t round_mixer_count, round_mixer_capacity;
-    audio_position *positions;
-    size_t position_count, position_capacity;
+    qa_audio_positions positions;
     audio_bus *buses;
     size_t bus_count, bus_capacity;
     float *sum, *seat_scratch;

@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "34c9ea24e06dd39496726542801e10488437b626",
+  "verified_main": "d4e74f884a193ccc49d297523a766986e9d2ac18",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 109,
-    "open_source_observation": 262,
+    "fixed_source_build_core": 110,
+    "open_source_observation": 261,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -28120,8 +28120,9 @@
       "severity": "medium",
       "job": "10",
       "area": "bots_navigation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source pointer and complete native config pointer aliases now use common qa_id_index. Cold import/history rebuild before ownership transfer. Original source memory reads, weak config identities, reference counts, ordered rows and saved bytes retained. Row admission heap storage remains; this fixes lookup adoption, not whole-frame zero allocation. Matching normal build and seven core suites.",
+      "fixed_commit": "d4e74f884a193ccc49d297523a766986e9d2ac18"
     },
     {
       "id": "10-04",
@@ -39626,6 +39627,32 @@
       ],
       "record_directory": "/tmp/qa-ta3196-original-presentation-math-20261011",
       "conclusion": "Deleted private camera/effect formulas in favor of the common math/info primitives with explicit original arithmetic. Float policy corrections are source-grounded; closed retail client and live visual fidelity unverified."
+    },
+    {
+      "commit": "d4e74f884a193ccc49d297523a766986e9d2ac18",
+      "source_tree": "aebd37ec07b15a04eaa18d65469c857afe0dd43b",
+      "finding_ids": [
+        "10-03"
+      ],
+      "files_rechecked": [
+        "src/bots/runtime/source_weapon_state.h",
+        "src/bots/runtime/source_weapon_state.c",
+        "src/bots/runtime/source_weapon_history.c",
+        "src/bots/runtime/source_weapon_save.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-bot-weapon-alias-index-20261011",
+      "conclusion": "Shared ID index replaces weapon pointer/config lookup scans. Weak aliases and source reads preserved; save/history index transfer verified by source. Row admission heap remains. Normal build/core only."
     }
   ],
   "verification_limits": [

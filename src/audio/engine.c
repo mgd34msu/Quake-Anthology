@@ -118,9 +118,9 @@ static bool seat_create(qa_audio_engine *engine, const qa_audio_listener *listen
     if (engine->clock > INT64_MAX ||
         !qa_audio_mixer_select_time(seat->mixer, engine->clock, (int64_t)engine->clock, error))
         goto failed;
-    for (size_t i = 0; i < engine->position_count; i++)
-        if (!qa_audio_mixer_position(seat->mixer, engine->positions[i].actor,
-                                     engine->positions[i].position, error))
+    for (size_t i = 0; i < engine->positions.count; i++)
+        if (!qa_audio_mixer_position(seat->mixer, engine->positions.rows[i].actor,
+                                     engine->positions.rows[i].origin, error))
             goto failed;
     if (!qa_audio_mixer_listener(seat->mixer, listener, error))
         goto failed;
@@ -155,6 +155,12 @@ bool qa_audio_engine_create(const qa_audio_engine_options *options, qa_audio_eng
         qa_audio_engine_destroy(engine);
         return fail(error, QA_ERROR_MEMORY, "Audio scratch allocation failed");
     }
+    size_t workspace = options->workspace_capacity ? options->workspace_capacity : 4096;
+    if (workspace < engine->options.initial_voices) workspace = engine->options.initial_voices;
+    if (!qa_audio_positions_prepare(&engine->positions, NULL, workspace, false, error)) {
+        qa_audio_engine_destroy(engine);
+        return false;
+    }
     *out = engine;
     return true;
 }
@@ -181,7 +187,7 @@ void qa_audio_engine_destroy(qa_audio_engine *engine) {
     if (engine->acoustics.context) engine->acoustics.release(engine->acoustics.context);
     free(engine->seats);
     free(engine->round_mixers);
-    free(engine->positions);
+    qa_audio_positions_destroy(&engine->positions);
     free(engine->buses);
     free(engine->sum);
     free(engine->seat_scratch);
@@ -287,23 +293,13 @@ static bool position_impl(qa_audio_engine *engine, uint64_t actor, qa_vec3 posit
     if (!engine || engine->destroying || engine->destroy_pending || actor == QA_AUDIO_NO_ACTOR ||
         !qa_vec_finite(position))
         return fail(error, QA_ERROR_ARGUMENT, "Invalid audio actor position");
-    size_t index = 0;
-    while (index < engine->position_count && engine->positions[index].actor != actor)
-        index++;
-    if (index == engine->position_count) {
-        audio_position *next = grow(engine->positions, &engine->position_capacity, index + 1,
-                                    sizeof(*engine->positions), error);
-        if (!next)
-            return false;
-        engine->positions = next;
-    }
+    if (!qa_audio_positions_reserve(&engine->positions, actor, QA_AUDIO_NO_OWNER, error))
+        return false;
     for (size_t i = 0; i < engine->seat_count; i++)
         if (!qa_audio_mixer_position(engine->seats[i]->mixer, actor, position, error))
             return false;
-    engine->positions[index] = (audio_position){actor, position};
-    if (index == engine->position_count)
-        engine->position_count++;
-    return true;
+    return qa_audio_positions_set(&engine->positions, actor, QA_AUDIO_NO_OWNER,
+        position, true, error);
 }
 void qa_audio_engine_geometry(qa_audio_engine *engine, qa_audio_transmission_fn fn, void *user) {
     if (!engine || engine->destroying || engine->destroy_pending || engine->round_resetting ||
@@ -1280,7 +1276,7 @@ bool qa_audio_engine_reset_round(qa_audio_engine *engine, qa_error *error) {
         leave(engine); return false;
     }
     stop_all_impl(engine, true);
-    engine->position_count = 0;
+    qa_audio_positions_clear(&engine->positions);
     for (size_t i = 0; i < engine->seat_count; ++i) {
         audio_seat *seat = engine->seats[i]; size_t at = engine->round_mixer_count++;
         engine->round_mixers[at] = (audio_round_mixer){seat->listener.seat, seat->mixer};

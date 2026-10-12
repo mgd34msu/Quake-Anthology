@@ -796,6 +796,7 @@ add_library(qa_audio STATIC
     src/audio/mixer.c
     src/audio/music.c
     src/audio/output.c
+    src/audio/positions.c
     src/audio/reverb.c
     src/audio/streams.c
     src/audio/wavelet.c)
