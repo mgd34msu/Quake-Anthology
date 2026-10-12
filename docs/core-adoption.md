@@ -1560,12 +1560,24 @@ and stamp callers in `536a0061`; and remaining Q3/admin LOG producers in
 build and all seven existing core suites, recorded in
 `/tmp/qa-ta3196-actor-storage-fixed-20261011/build.log` and `core.log`.
 
-A complete-file audit of 3,137 tracked source, header, build, tool and executable
-configuration inputs is complete against source tree
-`b01b311cab565aebb3b8745e777ceeabf0fba2c5`, with zero unread files. The
+The complete-file audit ledger records review of 3,137 tracked source, header,
+build, tool and executable configuration inputs in source tree
+`b01b311cab565aebb3b8745e777ceeabf0fba2c5`. Its reviewed and excluded path sets
+match that snapshot exactly, with no duplicate or unassigned path. The
 [audit report](audit/unification-2026-10-11.md) and its complete per-file ledger
 record the remaining adoption gaps, caller checks and refutations. Primitive
 and event-system adoption remains incomplete. These source/build/core results
 do not establish a whole-engine zero allocation count or live
 game/mod/protocol qualification. Cold construction, content/name admission and
 save encoding can still allocate.
+
+Follow-up code through `157d1f55` closes 21 named overlapping observations with
+source changes, matching normal builds and seven existing core suites; three
+claims are refuted and 350 source-review records remain open. The audit ledger
+records the exact commits and bounded checks. Shared migrations now include Q2
+trace roles and client indexes, Q3 snapshot/Source stamps and trigger snapshots,
+component received-event cursors, deferred ranking records, native/QC debug
+records, selected audio delivery, resource-policy revisions and synchronous
+guest execution storage. This does not close foundation adoption across the
+whole codebase. No live qualification or new installation follows from these
+checks.

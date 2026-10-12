@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "a2c842af82fb47c9ddba265bc1400fdaf13195b1",
+  "verified_main": "157d1f55d2db0ce3d502656a7919bf0f0dcd221f",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "open_source_observation": 368,
-    "fixed_source_build_core": 3,
+    "open_source_observation": 350,
+    "fixed_source_build_core": 21,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -23015,8 +23015,9 @@
       "severity": "high",
       "job": "00",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Synchronous QVM weapon preparation uses the dispatch lease. Q2 composition/prediction/unicast readers use the existing actor index and retain their own connection/retirement predicates. Source correction, matching frozen-tree normal production build and seven existing core suites; no live game, audio, install, timing or whole-frame allocation proof.",
+      "fix_commit": "27712313380cb8e1230a8d94f0a48a2cec59cfd9"
     },
     {
       "id": "J00-03",
@@ -23033,8 +23034,9 @@
       "severity": "high",
       "job": "00",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Common command access accepts its already-admitted native Q2 Source. QVM inventory live-in values are read directly into the executor transient lease, deleting the temporary host vector; region qualification allocations are outside this observation. Source correction, matching frozen-tree normal production build and seven existing core suites; no live game, audio, install, timing or whole-frame allocation proof.",
+      "fix_commit": "690d548278205b100131ca9c218adaad92f9d8c5"
     },
     {
       "id": "J00-04",
@@ -23243,8 +23245,8 @@
       "severity": "high",
       "job": "00",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof",
+      "status": "fixed_source_build_core",
+      "verification": "Common command access accepts its already-admitted native Q2 Source. QVM inventory live-in values are read directly into the executor transient lease, deleting the temporary host vector; region qualification allocations are outside this observation. Source correction, matching frozen-tree normal production build and seven existing core suites; no live game, audio, install, timing or whole-frame allocation proof.",
       "original_summary": "The common current-command guard rejects the native Q2 source path that the same controller explicitly admits",
       "independent_review": {
         "id": "J00-09",
@@ -23293,7 +23295,8 @@
             "observation": "control_move requires that accessor to return its running context."
           }
         ]
-      }
+      },
+      "fix_commit": "690d548278205b100131ca9c218adaad92f9d8c5"
     },
     {
       "id": "J00-10",
@@ -24952,8 +24955,9 @@
       "severity": "medium",
       "job": "03",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Synchronous QVM weapon preparation uses the dispatch lease. Q2 composition/prediction/unicast readers use the existing actor index and retain their own connection/retirement predicates. Source correction, matching frozen-tree normal production build and seven existing core suites; no live game, audio, install, timing or whole-frame allocation proof.",
+      "fix_commit": "27712313380cb8e1230a8d94f0a48a2cec59cfd9"
     },
     {
       "id": "03-02",
@@ -25028,8 +25032,9 @@
       "severity": "medium",
       "job": "03",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Per-frame module bindings use common keyed indexes while retaining full actor identity and current/baseline ownership. Native release uses the authoritative inverse slot mapping. Source correction, matching frozen-tree normal production build and seven existing core suites; no live game, audio, install, timing or whole-frame allocation proof.",
+      "fix_commit": "c09a1af00dcf66d3089f238d44cb0f11719cdfa2"
     },
     {
       "id": "03-04",
@@ -25720,8 +25725,8 @@
       "severity": "high",
       "job": "04",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof",
+      "status": "fixed_source_build_core",
+      "verification": "Q3 trigger contacts use the shared pooled world snapshot without the former 1024-candidate truncation; live actors are reread after callbacks. Source correction, matching frozen-tree normal production build and seven existing core suites; no live game, audio, install, timing or whole-frame allocation proof.",
       "original_summary": "Native Q3 trigger touch truncates the shared world at the original Q3 source-slot extent and ignores overflow.",
       "independent_review": {
         "id": "04-001",
@@ -25775,7 +25780,8 @@
             "observation": "Shared snapshot capture uses common pool storage and can preserve raw spatial order."
           }
         ]
-      }
+      },
+      "fix_commit": "14eddb380d97f6d529335f577283ce1f66f43b3b"
     },
     {
       "id": "04-002",
@@ -25796,8 +25802,9 @@
       "severity": "medium",
       "job": "04",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Native Q3 disconnect scopes retain exact reason bytes in the existing control lease through nested callbacks and release at failed admission/end. Cross-frame pending wire reason ownership is preserved. Source correction, matching frozen-tree normal production build and seven existing core suites; no live game, audio, install, timing or whole-frame allocation proof.",
+      "fix_commit": "157d1f55d2db0ce3d502656a7919bf0f0dcd221f"
     },
     {
       "id": "04-003",
@@ -26356,8 +26363,8 @@
       "severity": "high",
       "job": "04",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof",
+      "status": "fixed_source_build_core",
+      "verification": "One game-type conversion covers campaign and coop; selected Q3 sounds use common AUDIO delivery; per-frame resource policy refresh uses retained cvar modification counters. Source correction, matching frozen-tree normal production build and seven existing core suites; no live game, audio, install, timing or whole-frame allocation proof.",
       "original_summary": "Shared campaign/cooperative game types index past both eight-entry Q3 restart mode conversion tables.",
       "independent_review": {
         "id": "04-022",
@@ -26411,7 +26418,8 @@
             "observation": "Default Q3 mode conversion stays within original 0..7; finding does not assert defaults fail."
           }
         ]
-      }
+      },
+      "fix_commit": "90cb4b6724aedde5ae5127d7a29ae80cae641d36"
     },
     {
       "id": "04-023",
@@ -26440,8 +26448,9 @@
       "severity": "medium",
       "job": "04",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Deferred rankings use the common ring with leased exact text, original 65536 pending limit, detached-batch/reentrant order and readable existing checkpoint framing. Source correction, matching frozen-tree normal production build and seven existing core suites; no live game, audio, install, timing or whole-frame allocation proof.",
+      "fix_commit": "6a08052e3833079eb10bf34e86f31dcac34c4653"
     },
     {
       "id": "04-024",
@@ -29890,8 +29899,9 @@
       "severity": "medium",
       "job": "16",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "QC shape producers use the existing control lease and common DEBUG ring. Private line growth, prune and per-shape arenas are deleted. One final store preserves width1, provider-clock pause, nanosecond lifetimes and instant multi-seat visibility. World text retains its existing service. Debug presentation is excluded from new tool checkpoint captures; legacy fields remain readable. Source correction, matching frozen-tree normal production build and seven existing core suites; no live game, audio, install, timing or whole-frame allocation proof.",
+      "fix_commit": "684e60600ac88bb00f89a63b0bb959a8541338bf"
     },
     {
       "id": "16-006",
@@ -30346,8 +30356,9 @@
       "severity": "medium",
       "job": "16",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Per-frame module bindings use common keyed indexes while retaining full actor identity and current/baseline ownership. Native release uses the authoritative inverse slot mapping. Source correction, matching frozen-tree normal production build and seven existing core suites; no live game, audio, install, timing or whole-frame allocation proof.",
+      "fix_commit": "c09a1af00dcf66d3089f238d44cb0f11719cdfa2"
     },
     {
       "id": "16-019",
@@ -30380,8 +30391,8 @@
       "severity": "high",
       "job": "16",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof",
+      "status": "fixed_source_build_core",
+      "verification": "Component player events are consumed by cursors over received ring records, retaining the original frame lease and readiness/decode order; the second private event queue is deleted. Source correction, matching frozen-tree normal production build and seven existing core suites; no live game, audio, install, timing or whole-frame allocation proof.",
       "original_summary": "Remote Unified component player events are copied from the received event ring into a second pooled linked queue before scene delivery.",
       "independent_review": {
         "id": "16-019",
@@ -30410,7 +30421,8 @@
           }
         ],
         "narrowing": "This is the strongest actual extra internal event queue. It is not a Q3 reliable-command ABI history. Replace copied deferred storage with a component consumer cursor/retained original event lease, while retaining transformation/readiness/owner/recipient and begin-consume-advance ordering. Current event pool is load-sized; this finding does not assert per-event malloc."
-      }
+      },
+      "fix_commit": "aa7514e233d1c3f355909432acf23f34af0d1092"
     },
     {
       "id": "16-020",
@@ -30704,8 +30716,9 @@
       "severity": "high",
       "job": "17",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "One game-type conversion covers campaign and coop; selected Q3 sounds use common AUDIO delivery; per-frame resource policy refresh uses retained cvar modification counters. Source correction, matching frozen-tree normal production build and seven existing core suites; no live game, audio, install, timing or whole-frame allocation proof.",
+      "fix_commit": "90cb4b6724aedde5ae5127d7a29ae80cae641d36"
     },
     {
       "id": "17-08",
@@ -31032,8 +31045,9 @@
       "severity": "medium",
       "job": "17",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "One game-type conversion covers campaign and coop; selected Q3 sounds use common AUDIO delivery; per-frame resource policy refresh uses retained cvar modification counters. Source correction, matching frozen-tree normal production build and seven existing core suites; no live game, audio, install, timing or whole-frame allocation proof.",
+      "fix_commit": "90cb4b6724aedde5ae5127d7a29ae80cae641d36"
     },
     {
       "id": "17-18",
@@ -32737,8 +32751,9 @@
       "severity": "high",
       "job": "21",
       "area": "gameplay_q2",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Q2 exact trigger/killbox targets and gameplay traces use their retained role rules, including rerelease behavior; masks and deliberate classic-only dodge policy are preserved. Source correction, matching frozen-tree normal production build and seven existing core suites; no live game, audio, install, timing or whole-frame allocation proof.",
+      "fix_commit": "f4f3c235c68d75d5c56de20e18d3262dd1ab81e0"
     },
     {
       "id": "J21-04",
@@ -33094,8 +33109,9 @@
       "severity": "high",
       "job": "23",
       "area": "gameplay_q2",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Q2 exact trigger/killbox targets and gameplay traces use their retained role rules, including rerelease behavior; masks and deliberate classic-only dodge policy are preserved. Source correction, matching frozen-tree normal production build and seven existing core suites; no live game, audio, install, timing or whole-frame allocation proof.",
+      "fix_commit": "f4f3c235c68d75d5c56de20e18d3262dd1ab81e0"
     },
     {
       "id": "J23-03",
@@ -33406,8 +33422,9 @@
       "severity": "medium",
       "job": "24",
       "area": "gameplay_q3",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Q3 once-per-source-frame actor visits use the caller-owned common stamp set; new source frame, rebound slot and failure-retained mark behavior are preserved. Source correction, matching frozen-tree normal production build and seven existing core suites; no live game, audio, install, timing or whole-frame allocation proof.",
+      "fix_commit": "f6e429e7645a24aa17160652f3a61b9ab690c143"
     },
     {
       "id": "J24-03",
@@ -36760,8 +36777,9 @@
       "severity": "medium",
       "job": "36",
       "area": "public_interfaces",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Native Q2 GAME geometry is delivered through raw/typed Unified DEBUG and world text through the existing shared Q2 event store. Follow-ups c09a1af0 and 684e6060 preserve source clock, precise duration and shared consumer semantics. Source correction, matching frozen-tree normal production build and seven existing core suites; no live game, audio, install, timing or whole-frame allocation proof.",
+      "fix_commit": "6f837512050daa93eceee0fe4b77ede2b7b58cef"
     },
     {
       "id": "36-storage-bot-memory-slots",
@@ -37048,6 +37066,461 @@
         "image",
         "model"
       ]
+    },
+    {
+      "commit": "f4f3c235c68d75d5c56de20e18d3262dd1ab81e0",
+      "source_tree": "98db3eb38f0dcc5d6e5270cff0080070dec16adc",
+      "finding_ids": [
+        "J21-03",
+        "J23-02"
+      ],
+      "files_rechecked": [
+        "include/qa/collision.h",
+        "src/gameplay/q2/ballistics.c",
+        "src/gameplay/q2/entities/doors.c",
+        "src/gameplay/q2/entities/state.c",
+        "src/gameplay/q2/entities/triggers.c",
+        "src/gameplay/q2/gibs.c",
+        "src/gameplay/q2/grapple.c",
+        "src/gameplay/q2/items/companions.c",
+        "src/gameplay/q2/items/drop.c",
+        "src/gameplay/q2/items/lifecycle.c",
+        "src/gameplay/q2/mines.c",
+        "src/gameplay/q2/mission_bolts.c",
+        "src/gameplay/q2/monsters/actions.c",
+        "src/gameplay/q2/monsters/ai.c",
+        "src/gameplay/q2/monsters/beam.c",
+        "src/gameplay/q2/monsters/combat.c",
+        "src/gameplay/q2/monsters/core.c",
+        "src/gameplay/q2/monsters/corpse.c",
+        "src/gameplay/q2/monsters/lifecycle.c",
+        "src/gameplay/q2/monsters/medic.c",
+        "src/gameplay/q2/monsters/melee.c",
+        "src/gameplay/q2/monsters/proboscis.c",
+        "src/gameplay/q2/monsters/spawn.c",
+        "src/gameplay/q2/monsters/stalker.c",
+        "src/gameplay/q2/nuke.c",
+        "src/gameplay/q2/physics.c",
+        "src/gameplay/q2/projectiles.c",
+        "src/gameplay/q2/weapon_presentation.c",
+        "src/world/collision/contents.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-q2-trace-role-20261011",
+      "conclusion": "Q2 exact trigger/killbox targets and gameplay traces use their retained role rules, including rerelease behavior; masks and deliberate classic-only dodge policy are preserved."
+    },
+    {
+      "commit": "437e1ecf290a0164495fb7b1b35849a88b41365d",
+      "source_tree": "55bbb4861b2bc7a3cb5dbd4de44a3f3b01d3de2f",
+      "finding_ids": [],
+      "files_rechecked": [
+        "include/qa/network_q3.h",
+        "src/app/application/guest_q3.c",
+        "src/app/application/guest_q3_component_source.c",
+        "src/app/application/guest_q3_component_source_private.h",
+        "src/app/application/native_q3_wire.c",
+        "src/app/application/native_q3_wire.h",
+        "src/app/application/unified_q3_sources.c",
+        "src/network/q3/visibility.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-q3-visibility-stamps-20261011",
+      "conclusion": "Supplemental adoption: Q3 snapshot visibility uses caller-owned load-sized qa_stamp_set in native, guest and Unified readers; no private visited bool clear remains in this path."
+    },
+    {
+      "commit": "aa7514e233d1c3f355909432acf23f34af0d1092",
+      "source_tree": "9832270fda47dbc3b07479595070aa5d34af9dc1",
+      "finding_ids": [
+        "16-019"
+      ],
+      "files_rechecked": [
+        "src/app/frontend/remote_unified_components.c",
+        "src/app/frontend/remote_unified_components.h",
+        "src/app/frontend/remote_unified_components_private.h",
+        "src/app/frontend/remote_unified_components_records.c",
+        "src/app/frontend/remote_unified_components_scene.c",
+        "src/app/frontend/remote_unified_events.c",
+        "src/app/frontend/remote_unified_events.h",
+        "src/app/frontend/remote_unified_presentation.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-component-ring-20261011",
+      "conclusion": "Component player events are consumed by cursors over received ring records, retaining the original frame lease and readiness/decode order; the second private event queue is deleted."
+    },
+    {
+      "commit": "14eddb380d97f6d529335f577283ce1f66f43b3b",
+      "source_tree": "acf8d236f76562a7d65bfd2929875588e6a95df9",
+      "finding_ids": [
+        "04-001"
+      ],
+      "files_rechecked": [
+        "src/app/application/native_q3_control.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-shared-trigger-query-20261011",
+      "conclusion": "Q3 trigger contacts use the shared pooled world snapshot without the former 1024-candidate truncation; live actors are reread after callbacks."
+    },
+    {
+      "commit": "5efaf6575d5d11ec65c7e67b9cde67b74d32286e",
+      "source_tree": "6d8384e842844b3017dfd9ad10621b08cea94bb6",
+      "finding_ids": [],
+      "files_rechecked": [
+        "include/qa/event_ring.h",
+        "src/core/event_ring.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-cold-ring-capacity-20261011",
+      "conclusion": "Supplemental support: cold ring capacity growth preserves admitted record IDs, payload addresses and active leases; active growth is refused and append remains allocation-free within admitted capacity."
+    },
+    {
+      "commit": "6a08052e3833079eb10bf34e86f31dcac34c4653",
+      "source_tree": "616aff083b935dceb6d8665d363ee74ef256fc9e",
+      "finding_ids": [
+        "04-023"
+      ],
+      "files_rechecked": [
+        "include/qa/application.h",
+        "include/qa/rankings.h",
+        "src/app/application/event_stream.h",
+        "src/app/application/events.c",
+        "src/app/application/events_save.c",
+        "src/app/application/rankings.c",
+        "src/app/application/rankings.h"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-ranking-ring-20261011",
+      "conclusion": "Deferred rankings use the common ring with leased exact text, original 65536 pending limit, detached-batch/reentrant order and readable existing checkpoint framing."
+    },
+    {
+      "commit": "691d2582668d66718f34b82ec8dfed922dac3876",
+      "source_tree": "34430182a0dd473945487c29ca4c77e16a1788ce",
+      "finding_ids": [],
+      "files_rechecked": [
+        "include/qa/application.h",
+        "src/app/application/event_stream.h",
+        "src/app/application/events.c",
+        "src/app/application/guest_native_q2.c",
+        "src/app/application/guest_native_q2_hud.c",
+        "src/app/frontend/internal.h",
+        "src/app/frontend/map_events.c",
+        "src/app/frontend/menu_fonts.c",
+        "src/app/frontend/menu_fonts.h",
+        "src/app/frontend/native_q2.c",
+        "src/app/frontend/presentation.c",
+        "src/app/frontend/remote_unified_media.c",
+        "src/app/frontend/remote_unified_media.h",
+        "src/app/frontend/remote_unified_media_private.h",
+        "src/app/frontend/remote_unified_render.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-native-q2-event-imports-20261011",
+      "conclusion": "Native Q2 GAME debug/world text enter shared records; private native world-text storage is removed. Follow-up 6f837512 supplies remote typed delivery and c09a1af0 corrects the source clock stamp."
+    },
+    {
+      "commit": "90cb4b6724aedde5ae5127d7a29ae80cae641d36",
+      "source_tree": "b39a7f08e2c86e8d0719325ba9595068f3f9517c",
+      "finding_ids": [
+        "04-022",
+        "17-07",
+        "17-17"
+      ],
+      "files_rechecked": [
+        "include/qa/modes.h",
+        "src/app/application/q3_world_restart.c",
+        "src/app/frontend/selected_effects.c",
+        "src/app/frontend/shared_resource_policy.c",
+        "src/app/frontend/startup_arena.c",
+        "src/gameplay/modes/commands.c",
+        "src/gameplay/modes/core.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-shared-mode-audio-policy-20261011",
+      "conclusion": "One game-type conversion covers campaign and coop; selected Q3 sounds use common AUDIO delivery; per-frame resource policy refresh uses retained cvar modification counters."
+    },
+    {
+      "commit": "6f837512050daa93eceee0fe4b77ede2b7b58cef",
+      "source_tree": "2fb89137fbe976218f2984f3562dc9f07b04a303",
+      "finding_ids": [
+        "36-events-native-q2-debug"
+      ],
+      "files_rechecked": [
+        "include/qa/unified_frame_events.h",
+        "src/app/application/events.c",
+        "src/app/application/guest_native_q2_hud.c",
+        "src/app/frontend/map_events.c",
+        "src/app/frontend/remote_unified_presentation.c",
+        "src/network/unified/frame_layout.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-debug-unified-delivery-20261011",
+      "conclusion": "Native Q2 GAME geometry is delivered through raw/typed Unified DEBUG and world text through the existing shared Q2 event store. Follow-ups c09a1af0 and 684e6060 preserve source clock, precise duration and shared consumer semantics."
+    },
+    {
+      "commit": "690d548278205b100131ca9c218adaad92f9d8c5",
+      "source_tree": "a8cdafbfdcadb63a33a377a1281d435e752b3841",
+      "finding_ids": [
+        "J00-09",
+        "J00-03"
+      ],
+      "files_rechecked": [
+        "include/qa/qvm.h",
+        "src/app/application/control_frame.c",
+        "src/app/application/guest_inventory_profile.c",
+        "src/compat/qvm/execute.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-source-command-inventory-20261011",
+      "conclusion": "Common command access accepts its already-admitted native Q2 Source. QVM inventory live-in values are read directly into the executor transient lease, deleting the temporary host vector; region qualification allocations are outside this observation."
+    },
+    {
+      "commit": "c09a1af00dcf66d3089f238d44cb0f11719cdfa2",
+      "source_tree": "54e7b147c0ee3fbd3258e896513df6f25648d304",
+      "finding_ids": [
+        "16-018",
+        "03-03"
+      ],
+      "files_rechecked": [
+        "src/app/application/guest_native_q2_hud.c",
+        "src/app/application/native_q2_client_stages.c",
+        "src/app/frontend/remote_unified_components_private.h",
+        "src/app/frontend/remote_unified_components_records.c",
+        "src/app/frontend/remote_unified_components_scene.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-component-native-identities-20261011",
+      "conclusion": "Per-frame module bindings use common keyed indexes while retaining full actor identity and current/baseline ownership. Native release uses the authoritative inverse slot mapping."
+    },
+    {
+      "commit": "27712313380cb8e1230a8d94f0a48a2cec59cfd9",
+      "source_tree": "ff16f3ecd52f84d1c48f08dafecfa983c7e1857d",
+      "finding_ids": [
+        "J00-02",
+        "03-01"
+      ],
+      "files_rechecked": [
+        "src/app/application/arsenal_guest.c",
+        "src/app/application/guest_input_private.h",
+        "src/app/application/guest_q3_weapons.c",
+        "src/app/application/guest_q3_weapons.h",
+        "src/app/application/guest_q3_weapons_services.c",
+        "src/app/application/native_q1_composition_player.c",
+        "src/app/application/native_q2_delivery.c",
+        "src/app/application/native_q2_prediction.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-module-custody-client-lookup-20261011",
+      "conclusion": "Synchronous QVM weapon preparation uses the dispatch lease. Q2 composition/prediction/unicast readers use the existing actor index and retain their own connection/retirement predicates."
+    },
+    {
+      "commit": "f6e429e7645a24aa17160652f3a61b9ab690c143",
+      "source_tree": "4eb5f3166afd57224d10b82c8c70af6b9c06e8fd",
+      "finding_ids": [
+        "J24-02"
+      ],
+      "files_rechecked": [
+        "src/gameplay/q3/game.c",
+        "src/gameplay/q3/internal.h",
+        "src/gameplay/q3/source_entities.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-q3-source-stamps-20261011",
+      "conclusion": "Q3 once-per-source-frame actor visits use the caller-owned common stamp set; new source frame, rebound slot and failure-retained mark behavior are preserved."
+    },
+    {
+      "commit": "684e60600ac88bb00f89a63b0bb959a8541338bf",
+      "source_tree": "0c0bb34b9f5ec5a53bf91f7cbf9c3058077b5eeb",
+      "finding_ids": [
+        "16-005"
+      ],
+      "files_rechecked": [
+        "include/qa/application.h",
+        "include/qa/tools.h",
+        "include/qa/unified_frame_events.h",
+        "src/app/application/events.c",
+        "src/app/application/guest_native_q2_hud.c",
+        "src/app/application/guest_qc.c",
+        "src/app/application/guest_qc_internal.h",
+        "src/app/application/guest_qc_rerelease.c",
+        "src/app/frontend/internal.h",
+        "src/app/frontend/map_events.c",
+        "src/app/frontend/qc_rerelease_events.c",
+        "src/app/frontend/qc_rerelease_events.h",
+        "src/app/frontend/remote_unified_presentation.c",
+        "src/app/frontend/tools.c",
+        "src/network/unified/frame_layout.c",
+        "src/tools/debug.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-qc-debug-source-ring-20261011",
+      "conclusion": "QC shape producers use the existing control lease and common DEBUG ring. Private line growth, prune and per-shape arenas are deleted. One final store preserves width1, provider-clock pause, nanosecond lifetimes and instant multi-seat visibility. World text retains its existing service. Debug presentation is excluded from new tool checkpoint captures; legacy fields remain readable."
+    },
+    {
+      "commit": "157d1f55d2db0ce3d502656a7919bf0f0dcd221f",
+      "source_tree": "b8502a39acfb0e0ac51b8497d0fbb61d39326207",
+      "finding_ids": [
+        "04-002"
+      ],
+      "files_rechecked": [
+        "src/app/application/native_q3_console.c",
+        "src/app/application/native_q3_console.h"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-q3-drop-custody-20261011",
+      "conclusion": "Native Q3 disconnect scopes retain exact reason bytes in the existing control lease through nested callbacks and release at failed admission/end. Cross-frame pending wire reason ownership is preserved."
     }
   ],
   "verification_limits": [
