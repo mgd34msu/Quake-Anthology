@@ -2,6 +2,7 @@
 #include "remote_unified_private.h"
 #include "remote_unified_metadata.h"
 #include "remote_unified_save.h"
+#include "../application/control_frame.h"
 #include "selected_effects_particles.h"
 #include "selected_effects_q1_temporary.h"
 #include "legacy_render_policy.h"
@@ -19,13 +20,14 @@
 #include "qa/unified_frame_events.h"
 #include "qa/application_ui_names.h"
 #include "qa/id_index.h"
+#include "qa/pool.h"
 #include <float.h>
 #include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
-enum { Q1_LIGHTS=64, Q1_BEAMS=32, Q1_POWERS=9, Q1_PROMPT_CHOICES=65536 };
+enum { Q1_LIGHTS=64, Q1_BEAMS=32, Q1_POWERS=9, Q1_PROMPT_CHOICES=65536, Q1_RECORDS_INITIAL=32 };
 typedef enum q1_event_kind {
     Q1_PARTICLES,Q1_EFFECT,Q1_COLORS,Q1_BEAM,Q1_STYLE,Q1_STATIC,Q1_WEAPON,
     Q1_POWER,Q1_MESSAGE,Q1_STOP,Q1_AMBIENT,Q1_SOUND,Q1_CTF_STATUS,Q1_CTF_CAPTURE,
@@ -52,12 +54,14 @@ typedef struct q1_continuation {
 } q1_continuation;
 typedef struct q1_activation {
     struct q1_activation *next;
+    size_t slot;
     qa_string_id provider;
     uint64_t generation;
     bool retired;
 } q1_activation;
 typedef struct q1_static {
     struct q1_static *next;
+    size_t slot;
     const char *path;
     qa_vec3 origin,angles;
     uint32_t frame,skin;
@@ -65,6 +69,7 @@ typedef struct q1_static {
 } q1_static;
 typedef struct q1_ambient {
     struct q1_ambient *next;
+    size_t slot;
     const char *path;
     qa_audio_asset *asset;
     qa_audio_mixer *mixer;
@@ -84,6 +89,7 @@ typedef struct q1_group {
     frontend_unified_q1 *parent;
     frontend_received_music *music;
     struct q1_group *next;
+    size_t slot;
     qa_string_id content_name;
     const char *content;
     q1_activation *activation;
@@ -120,7 +126,9 @@ struct frontend_unified_q1 {
     qa_hud *hud;
     q1_group *groups;
     q1_activation *activations,*weapon_activation,*prompt_activation,*ctf_activation;
-    qa_id_index activation_index;
+    qa_arena owner_storage;
+    qa_pool activation_records, group_records, static_records, ambient_records;
+    qa_id_index activation_index, group_index;
     q1_activation *power_activations[Q1_POWERS];
     q1_continuation weapon,prompt,finale;
     qa_scene_image *finale_image;
@@ -302,17 +310,19 @@ static bool progress_record(frontend_unified_q1 *o,const q1_event *p,qa_error *e
     const char *prefix=p->kind==Q1_ACHIEVEMENT?"achievement:":"level:";
     size_t a=strlen(prefix),b=p->content.size,c=strlen(value);
     if(b>SIZE_MAX-a-1 || c>SIZE_MAX-a-b-1)return fail(e,"Q1 progress identity exceeds storage");
-    size_t length=a+b+1+c;uint8_t *identity=malloc(length);
-    if(!identity)return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining received Q1 progress identity");
+    qa_unified_frame_lease *storage=application_control_storage_acquire(o->frontend->application,e);
+    if(!storage)return false;
+    size_t length=a+b+1+c;uint8_t *identity=qa_arena_alloc(qa_unified_frame_lease_arena(storage),length,1,e);
+    if(!identity){qa_unified_frame_lease_release(storage);return false;}
     memcpy(identity,prefix,a);memcpy(identity+a,p->content.data,b);identity[a+b]=':';memcpy(identity+a+b+1,value,c);
     char participant[32];int count=snprintf(participant,sizeof(participant),"local-seat:%u",(unsigned)seat);
-    if(count<=0 || (size_t)count>=sizeof(participant)){free(identity);return fail(e,"Q1 progress local seat identity exceeds storage");}
+    if(count<=0 || (size_t)count>=sizeof(participant)){qa_unified_frame_lease_release(storage);return fail(e,"Q1 progress local seat identity exceeds storage");}
     qa_progress_event event={.kind=p->kind==Q1_ACHIEVEMENT?QA_PROGRESS_ACHIEVEMENT:QA_PROGRESS_LEVEL_COMPLETED,
         .source=QA_GAME_Q1,.participant={(const uint8_t *)participant,(size_t)count},.event={identity,length}};
     if(p->kind==Q1_ACHIEVEMENT)event.value.award=(qa_bytes){(const uint8_t *)value,c};
     else event.value.map=(qa_bytes){(const uint8_t *)value,c};
     bool inserted;bool ok=qa_player_progress_record(store,&event,&inserted,e);
-    free(identity);return ok;
+    qa_unified_frame_lease_release(storage);return ok;
 }
 static bool activation(frontend_unified_q1 *o,const q1_event *p,q1_activation **out,qa_error *e)
 {
@@ -321,24 +331,42 @@ static bool activation(frontend_unified_q1 *o,const q1_event *p,q1_activation **
         p->row->payload_owner_id : p->row->owner_provider_id;
     qa_id_index_entry *binding=qa_id_index_find(&o->activation_index,provider,p->owner_generation);
     if(binding){*out=(q1_activation *)(uintptr_t)binding->value;return true;}
-    if(!qa_id_index_reserve(&o->activation_index,1,e))return false;
-    q1_activation *a=calloc(1,sizeof(*a));if(!a)return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual Q1 Source activation");
-    a->provider=provider;
+    if(!qa_id_index_reserve(&o->activation_index,1,e) ||
+        (o->activation_records.head==SIZE_MAX &&
+            !qa_pool_extend(&o->activation_records,&o->owner_storage,1,e)))return false;
+    size_t slot;
+    q1_activation *a=qa_pool_take(&o->activation_records,&slot);
+    *a=(q1_activation){.slot=slot,.provider=provider};
     a->generation=p->owner_generation;a->next=o->activations;o->activations=a;
     qa_id_index_insert(&o->activation_index,provider,p->owner_generation,(size_t)(uintptr_t)a);
     *out=a;return true;
 }
 static qa_scene_image_options model_options(void);
+static q1_group *group_find(const frontend_unified_q1 *o,qa_string_id name,
+    const q1_activation *owner,const q1_group *selected)
+{
+    qa_id_index_cursor cursor=qa_id_index_begin(&o->group_index,name,(uint64_t)(uintptr_t)owner);
+    q1_group *found=NULL;size_t value;
+    while(qa_id_index_next(&o->group_index,&cursor,&value)) {
+        q1_group *g=(q1_group *)(uintptr_t)value;
+        if(selected) {if(g==selected)return g;}
+        else found=g;
+    }
+    return found;
+}
 static bool group(frontend_unified_q1 *o,qa_string_id name,q1_activation *owner,q1_group **out,qa_error *e)
 {
-    for(q1_group *g=o->groups;g;g=g->next) if(g->activation==owner && g->content_name==name) {*out=g;return true;}
-    q1_group *g=calloc(1,sizeof(*g));qa_font_library *fonts;qa_vfs *files;
-    if(!g) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q1 CLIENT content effects");
+    q1_group *g=group_find(o,name,owner,NULL);
+    if(g){*out=g;return true;}
+    if(o->group_records.head==SIZE_MAX && !qa_pool_extend(&o->group_records,&o->owner_storage,1,e))return false;
+    size_t slot;g=qa_pool_take(&o->group_records,&slot);
+    *g=(q1_group){.slot=slot};qa_font_library *fonts;qa_vfs *files;
     g->styles.count=256;
     g->content_name=name;
     g->content=qa_strings_cstr(o->replica->strings,g->content_name);
     if(!g->content || !frontend_unified_media_files(o->media,name,&files,&g->product,e) || g->product->family!=QA_GAME_Q1 ||
-        !frontend_unified_media_bank(o->media,g->content_name,&g->images,&g->materials,&fonts,&g->sounds,e)) {free(g);return false;}
+        !frontend_unified_media_bank(o->media,g->content_name,&g->images,&g->materials,&fonts,&g->sounds,e)) {
+        qa_pool_release(&o->group_records,g->slot);return false;}
     g->rules=qa_product_ruleset(g->product,QA_GAME_Q1);
     const qa_application_ui_names *names=qa_application_ui_names_read(o->frontend->application);
     qa_scene_image_options images=model_options();
@@ -347,10 +375,14 @@ static bool group(frontend_unified_q1 *o,qa_string_id name,q1_activation *owner,
         if(!frontend_unified_media_model(o->media,name,names->q1_beam_models[i],QA_GAME_Q1,
                 &images,g->beam_models+i,&missing) && missing.code!=QA_ERROR_NOT_FOUND) {
             if(e)*e=missing;
-            free(g);return false;
+            qa_pool_release(&o->group_records,g->slot);return false;
         }
     }
+    if(!qa_id_index_reserve(&o->group_index,1,e)){
+        qa_pool_release(&o->group_records,g->slot);return false;
+    }
     g->parent=o;g->files=files;g->activation=owner;frontend_fx_q1_state_initialize(&g->effects,Q1_LIGHTS,Q1_BEAMS);q1_group **tail=&o->groups;while(*tail) tail=&(*tail)->next;*tail=g;*out=g;
+    qa_id_index_insert(&o->group_index,name,(uint64_t)(uintptr_t)owner,(size_t)(uintptr_t)g);
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     frontend_q1_help_bind_source(o->frontend->seats+domain->physical_seat,g->images);return true;
 }
@@ -365,7 +397,7 @@ static bool music_current(void *context,const frontend_music_origin *origin)
             o->frontend->application!=o->replica->options.domain.application || o->epoch!=o->replica->epoch ||
             frontend_unified_media_recipe(o->media)!=o->replica->recipe || !frontend_unified_media_current(o->media))return false;
     }else if(!frontend_unified_q1_current(o))return false;
-    bool linked=false;for(q1_group *actual=o->groups;actual;actual=actual->next)if(actual==g){linked=true;break;}
+    bool linked=group_find(o,g->content_name,g->activation,g)==g;
     qa_executable_recipe *recipe=frontend_remote_unified_recipe(o->replica);
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     return linked && domain && origin->receiver==domain->command_context.owner && origin->physical_seat==domain->physical_seat &&
@@ -477,7 +509,21 @@ bool frontend_unified_q1_create(qa_frontend *f,frontend_remote_unified *r,fronte
         free(o);return frontend_unified_fail(e,QA_ERROR_MEMORY,"Q1 semantic storage exceeds addressable capacity");
     }
     qa_arena_init(&o->semantic_storage,0);
-    bool ok=qa_arena_reserve(&o->semantic_storage,labels+o->trail_capacity*sizeof(*o->trails),e);
+    qa_arena_init(&o->owner_storage,0);
+    o->activation_index.storage=&o->owner_storage;
+    o->group_index.storage=&o->owner_storage;
+    size_t group_capacity=qa_executable_recipe_provider_count(frontend_remote_unified_recipe(r));
+    bool ok=qa_pool_prepare(&o->activation_records,&o->owner_storage,o->trail_capacity,
+        sizeof(q1_activation),_Alignof(q1_activation),e) &&
+        qa_pool_prepare(&o->group_records,&o->owner_storage,group_capacity,
+            sizeof(q1_group),_Alignof(q1_group),e) &&
+        qa_pool_prepare(&o->static_records,&o->owner_storage,Q1_RECORDS_INITIAL,
+            sizeof(q1_static),_Alignof(q1_static),e) &&
+        qa_pool_prepare(&o->ambient_records,&o->owner_storage,Q1_RECORDS_INITIAL,
+            sizeof(q1_ambient),_Alignof(q1_ambient),e) &&
+        qa_id_index_reserve(&o->activation_index,o->trail_capacity,e) &&
+        qa_id_index_reserve(&o->group_index,group_capacity,e) &&
+        qa_arena_reserve(&o->semantic_storage,labels+o->trail_capacity*sizeof(*o->trails),e);
     if(ok){
         o->prompt_lines=qa_arena_alloc(&o->semantic_storage,labels,_Alignof(const char *),e);
         o->trails=qa_arena_alloc(&o->semantic_storage,o->trail_capacity*sizeof(*o->trails),_Alignof(q1_entity_trail),e);
@@ -488,7 +534,9 @@ bool frontend_unified_q1_create(qa_frontend *f,frontend_remote_unified *r,fronte
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(r);
     ok=ok && o->localizations && d && (f->source_restoring?checkpoint_current(o,e):frontend_unified_q1_current(o));
     if(ok)o->hud=f->seats[d->physical_seat].hud;
-    if(!ok){qa_localization_pool_destroy(o->localizations);qa_arena_destroy(&o->semantic_storage);free(o);return false;}
+    if(!ok){qa_localization_pool_destroy(o->localizations);qa_arena_destroy(&o->semantic_storage);
+        qa_id_index_destroy(&o->activation_index);qa_id_index_destroy(&o->group_index);
+        qa_arena_destroy(&o->owner_storage);free(o);return false;}
     o->ctf[0].label="Red";o->ctf[1].label="Blue";o->ctf[2].label="Flags";o->ctf[3].label="Runes";*out=o;return true;
 }
 bool frontend_unified_q1_events(frontend_unified_q1 *o,frontend_unified_events *events,qa_error *e)
@@ -514,14 +562,19 @@ static void prompt_clear(frontend_unified_q1 *o)
 { o->prompt_title=NULL;o->prompt_count=0;continuation_clear(&o->prompt);o->prompt_activation=NULL; }
 static void group_free(q1_group *g)
 {
+    frontend_unified_q1 *o=g->parent;
+    (void)qa_id_index_remove_value(&o->group_index,g->content_name,
+        (uint64_t)(uintptr_t)g->activation,(size_t)(uintptr_t)g);
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(g->parent->replica);
     frontend_q1_help_forget_source(g->parent->frontend->seats+domain->physical_seat,g->images);
     while(g->ambient){q1_ambient *a=g->ambient;g->ambient=a->next;
         if(a->mixer)qa_audio_mixer_remove_static(a->mixer,a->identity);
-        qa_audio_asset_release(a->asset);free(a);}
-    while(g->statics){q1_static *s=g->statics;g->statics=s->next;free(s);}
+        qa_audio_asset_release(a->asset);qa_pool_release(&o->ambient_records,a->slot);}
+    while(g->statics){q1_static *s=g->statics;g->statics=s->next;
+        qa_pool_release(&o->static_records,s->slot);}
     for(size_t i=0;i<6;++i)qa_scene_image_release(g->sky[i]);
-    qa_scene_image_release(g->particle_image);qa_localization_release(g->localization);free(g);
+    qa_scene_image_release(g->particle_image);qa_localization_release(g->localization);
+    qa_pool_release(&o->group_records,g->slot);
 }
 static bool retirement_parse(const qa_unified_presentation_event *row,q1_event *p,bool *retired,qa_error *e)
 {
@@ -650,10 +703,14 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
         break;}
     case Q1_STYLE:qa_lightstyles_set_ordered(&g->styles,(uint32_t)p.a,row->payload.value.builtin.resource,p.sequence);break;
     case Q1_STATIC: {if(!p.text.size)break;
-        q1_static *s=calloc(1,sizeof(*s));qa_scene_image_options images=model_options();
-        ok=s && frontend_unified_media_model(o->media,g->content_name,row->payload.value.builtin.resource,QA_GAME_Q1,&images,&s->model,e);
+        if(o->static_records.head==SIZE_MAX && !qa_pool_extend(&o->static_records,&o->owner_storage,1,e)){ok=false;break;}
+        size_t slot;q1_static *s=qa_pool_take(&o->static_records,&slot);
+        *s=(q1_static){.slot=slot};qa_scene_image_options images=model_options();
+        ok=frontend_unified_media_model(o->media,g->content_name,row->payload.value.builtin.resource,QA_GAME_Q1,&images,&s->model,e);
         if(ok) {s->path=(char *)p.text.data;p.text=(qa_bytes){0};s->origin=p.origin;s->angles=p.angles;s->frame=(uint32_t)p.a;s->skin=(uint32_t)p.b;
-            q1_static **tail=&g->statics;while(*tail) tail=&(*tail)->next;*tail=s;}else free(s);break;}
+            q1_static **tail=&g->statics;while(*tail) tail=&(*tail)->next;*tail=s;}
+        else qa_pool_release(&o->static_records,s->slot);
+        break;}
     case Q1_WEAPON: {q1_continuation next={.content=row->content_id,.path=row->payload.value.builtin.resource};
         ok=retain_row(o,row,&next,e);if(ok) {continuation_replace(&o->weapon,&next);o->weapon_activation=owner;}else continuation_clear(&next);break;}
     case Q1_POWER:o->powers[p.index]=p.a;o->power_activations[p.index]=owner;break;
@@ -667,10 +724,14 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
         if(ok && o->frontend->audio) {uint64_t audio;ok=o->options.audio_actor(o->options.context,actor,&audio,e);
             if(ok) qa_audio_engine_stop_channel(o->frontend->audio,audio,o->options.audio_owner,QA_GAME_Q1,(int32_t)p.a); }break;}
     case Q1_SOUND:ok=frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 sound must be paired with the real declared simulation sound route");break;
-    case Q1_AMBIENT: {q1_ambient *a=calloc(1,sizeof(*a));ok=a && qa_audio_bank_register_id(g->sounds,row->payload.value.builtin.resource,QA_GAME_Q1,&a->asset,e);
+    case Q1_AMBIENT: {
+        if(o->ambient_records.head==SIZE_MAX && !qa_pool_extend(&o->ambient_records,&o->owner_storage,1,e)){ok=false;break;}
+        size_t slot;q1_ambient *a=qa_pool_take(&o->ambient_records,&slot);
+        *a=(q1_ambient){.slot=slot};
+        ok=qa_audio_bank_register_id(g->sounds,row->payload.value.builtin.resource,QA_GAME_Q1,&a->asset,e);
         if(ok && a->asset && qa_audio_asset_sample(a->asset)->loop_start!=QA_AUDIO_NO_LOOP) {a->path=(char *)p.text.data;p.text=(qa_bytes){0};a->origin=p.origin;a->volume=(float)p.a;a->attenuation=(float)p.b;a->identity=qa_scene_identity();
             q1_ambient **tail=&g->ambient;while(*tail) tail=&(*tail)->next;*tail=a;}
-        else {if(a) qa_audio_asset_release(a->asset);free(a);}break;}
+        else {qa_audio_asset_release(a->asset);qa_pool_release(&o->ambient_records,a->slot);}break;}
     case Q1_CTF_STATUS:o->ctf[0].value=p.a;o->ctf[1].value=p.b;o->ctf[2].value=p.c;o->ctf[3].value=p.d;o->ctf_present=true;o->ctf_activation=owner;break;
     case Q1_CTF_CAPTURE:o->ctf[p.index].value=p.a;o->ctf_present=true;o->capture_until=p.seconds+3;o->ctf_activation=owner;break;
     case Q1_PROMPT:ok=prompt_set(o,&p,e);if(ok)o->prompt_activation=owner;break;
@@ -706,12 +767,17 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
         if(ok)o->pause_activation=p.flag?owner:NULL;
         }break;
     case Q1_SKY: {qa_scene_image *images[6]={0};bool found=false;static const char *const suffixes[]={"rt","bk","lf","ft","up","dn"};qa_scene_image_options options={.family=QA_GAME_Q1,.usage=QA_IMAGE_USAGE_SKY,.wrap=QA_SCENE_CLAMP,.filter=QA_SCENE_LINEAR};
-        for(size_t i=0;ok && p.text.size && i<6;++i){size_t n=p.text.size+32;char *path=malloc(n);if(!path){ok=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q1 received sky path");break;}
+        qa_unified_frame_lease *storage=NULL;char *path=NULL;size_t n=p.text.size+32;
+        if(p.text.size){storage=application_control_storage_acquire(o->frontend->application,e);
+            if(storage)path=qa_arena_alloc(qa_unified_frame_lease_arena(storage),n,1,e);
+            ok=path!=NULL;}
+        for(size_t i=0;ok && p.text.size && i<6;++i){
             snprintf(path,n,"gfx/env/%s%s.tga",(char *)p.text.data,suffixes[i]);ok=qa_scene_image_load_exact(g->images,path,&options,images+i,e);
-            if(ok && !images[i]){snprintf(path,n,"gfx/env/%s%s.png",(char *)p.text.data,suffixes[i]);ok=qa_scene_image_load_exact(g->images,path,&options,images+i,e);}free(path);
+            if(ok && !images[i]){snprintf(path,n,"gfx/env/%s%s.png",(char *)p.text.data,suffixes[i]);ok=qa_scene_image_load_exact(g->images,path,&options,images+i,e);}
             if(ok){found|=images[i]!=NULL;if(!images[i]){images[i]=(qa_scene_image *)qa_scene_missing(g->images);qa_scene_image_retain(images[i]);}}}
         if(ok){for(size_t i=0;i<6;++i){qa_scene_image_release(g->sky[i]);g->sky[i]=images[i];images[i]=NULL;}g->sky_name=(char *)p.text.data;p.text=(qa_bytes){0};g->sky_found=found;g->sky_sequence=p.sequence;}
         for(size_t i=0;i<6;++i)qa_scene_image_release(images[i]);
+        qa_unified_frame_lease_release(storage);
         break;}
     }
     return ok && mutable(o,e);
@@ -1033,8 +1099,10 @@ bool frontend_unified_q1_destroy(frontend_unified_q1 **slot,qa_error *e)
     for(q1_group *g=o->groups;g;g=g->next)for(q1_ambient *a=g->ambient;a;a=a->next)if(a->mixer){qa_audio_mixer_remove_static(a->mixer,a->identity);a->mixer=NULL;}
     o->hud=NULL;
     while(o->groups){q1_group *g=o->groups;o->groups=g->next;group_free(g);}
-    while(o->activations){q1_activation *a=o->activations;o->activations=a->next;free(a);}
-    qa_id_index_destroy(&o->activation_index);
+    while(o->activations){q1_activation *a=o->activations;o->activations=a->next;
+        qa_pool_release(&o->activation_records,a->slot);}
+    qa_id_index_destroy(&o->activation_index);qa_id_index_destroy(&o->group_index);
     prompt_clear(o);continuation_clear(&o->weapon);continuation_clear(&o->finale);qa_scene_image_release(o->finale_image);
-    qa_localization_pool_destroy(o->localizations);qa_arena_destroy(&o->semantic_storage);free(o);*slot=NULL;return true;
+    qa_localization_pool_destroy(o->localizations);qa_arena_destroy(&o->semantic_storage);
+    qa_arena_destroy(&o->owner_storage);free(o);*slot=NULL;return true;
 }
