@@ -1,5 +1,6 @@
 #include "guest_q3_component_records_private.h"
 #include "control_frame.h"
+#include "qa/arena.h"
 
 static bool projected(application_q3_component_records *r,qa_actor_id actor)
 { component_actor *row=q3records_actor(r,actor); return row&&row->projected&&!row->retired&&!row->owned&&q3records_live(r,actor); }
@@ -13,10 +14,11 @@ static bool reserve(component_frame *frame,component_observation **rows,size_t *
         if(extent>SIZE_MAX/2) { extent=count; break; }
         extent*=2;
     }
-    component_observation *next=qa_unified_frame_lease_alloc(frame->storage,extent,sizeof(*next),
-        _Alignof(component_observation),e);
+    if(extent>SIZE_MAX/sizeof(**rows)) return q3records_fail(e,QA_ERROR_MEMORY,"Unified frame allocation size overflow");
+    component_observation *next=qa_arena_grow(qa_unified_frame_lease_arena(frame->storage),*rows,
+        *capacity*sizeof(*next),extent*sizeof(*next),_Alignof(component_observation),e);
     if(!next) return false;
-    if(*capacity) memcpy(next,*rows,*capacity*sizeof(*next));
+    memset(next+*capacity,0,(extent-*capacity)*sizeof(*next));
     *rows=next; *capacity=extent; return true;
 }
 static bool observations(application_q3_component_records *r,component_frame *frame,qa_error *e)

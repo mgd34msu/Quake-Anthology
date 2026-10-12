@@ -1,5 +1,6 @@
 #include "guest_q3_component_body_private.h"
 #include "internal.h"
+#include "qa/arena.h"
 #include "qa/binary.h"
 #include "qa/q3_assets_save.h"
 
@@ -47,14 +48,16 @@ static bool part_append(application_q3_component_body *owner,component_body_outp
         return application_fail(error, QA_ERROR_MEMORY, "Component body helper extent is exhausted");
     if (output->count == output->capacity) {
         size_t capacity=output->capacity>SIZE_MAX/2?output->count+1:output->capacity?output->capacity*2:8;
-        qa_application_q3_component_part *parts=qa_unified_frame_lease_alloc(owner->storage,capacity,
-            sizeof(*parts),_Alignof(qa_application_q3_component_part),error);
-        size_t *passes=qa_unified_frame_lease_alloc(owner->storage,capacity,sizeof(*passes),_Alignof(size_t),error);
+        if (capacity>SIZE_MAX/sizeof(*output->parts) || capacity>SIZE_MAX/sizeof(*output->pass_capacities))
+            return application_fail(error,QA_ERROR_MEMORY,"Unified frame allocation size overflow");
+        qa_arena *arena=qa_unified_frame_lease_arena(owner->storage);
+        qa_application_q3_component_part *parts=qa_arena_grow(arena,output->parts,
+            output->capacity*sizeof(*parts),capacity*sizeof(*parts),_Alignof(qa_application_q3_component_part),error);
+        size_t *passes=qa_arena_grow(arena,output->pass_capacities,output->capacity*sizeof(*passes),
+            capacity*sizeof(*passes),_Alignof(size_t),error);
         if (!parts || !passes) return false;
-        if (output->count) {
-            memcpy(parts,output->parts,output->count*sizeof(*parts));
-            memcpy(passes,output->pass_capacities,output->count*sizeof(*passes));
-        }
+        memset(parts+output->capacity,0,(capacity-output->capacity)*sizeof(*parts));
+        memset(passes+output->capacity,0,(capacity-output->capacity)*sizeof(*passes));
         output->parts=parts; output->pass_capacities=passes; output->capacity=capacity;
     }
     *index = output->count++;
@@ -109,11 +112,14 @@ static bool player_hook(void *context, const qa_qvm_call *call, int32_t *result,
         else {
             if (owner->count == owner->capacity) {
                 size_t capacity=owner->capacity>SIZE_MAX/2?owner->count+1:owner->capacity?owner->capacity*2:8;
-                component_body_output *outputs=qa_unified_frame_lease_alloc(owner->storage,capacity,sizeof(*outputs),
-                    _Alignof(component_body_output),error);
+                component_body_output *outputs=NULL;
+                if (capacity>SIZE_MAX/sizeof(*outputs))
+                    okay=application_fail(error,QA_ERROR_MEMORY,"Unified frame allocation size overflow");
+                else outputs=qa_arena_grow(qa_unified_frame_lease_arena(owner->storage),owner->outputs,
+                    owner->capacity*sizeof(*outputs),capacity*sizeof(*outputs),_Alignof(component_body_output),error);
                 if (!outputs) okay=false;
                 else {
-                    if (owner->count) memcpy(outputs,owner->outputs,owner->count*sizeof(*outputs));
+                    memset(outputs+owner->capacity,0,(capacity-owner->capacity)*sizeof(*outputs));
                     owner->outputs=outputs;owner->capacity=capacity;
                 }
             }
@@ -177,10 +183,12 @@ bool application_q3_component_body_source_entity(void *context, const qa_qvm_cal
         size_t *capacity=mesh->player->output.pass_capacities+mesh->part;
         if (part->count == *capacity) {
             size_t extent=*capacity>SIZE_MAX/2?part->count+1:*capacity?*capacity*2:4;
-            qa_q3_ref_entity *passes=qa_unified_frame_lease_alloc(owner->storage,extent,sizeof(*passes),
-                _Alignof(qa_q3_ref_entity),error);
+            if (extent>SIZE_MAX/sizeof(*part->passes))
+                return application_fail(error,QA_ERROR_MEMORY,"Unified frame allocation size overflow");
+            qa_q3_ref_entity *passes=qa_arena_grow(qa_unified_frame_lease_arena(owner->storage),(void *)part->passes,
+                *capacity*sizeof(*passes),extent*sizeof(*passes),_Alignof(qa_q3_ref_entity),error);
             if (!passes) return false;
-            if (part->count) memcpy(passes,part->passes,part->count*sizeof(*passes));
+            memset(passes+*capacity,0,(extent-*capacity)*sizeof(*passes));
             part->passes=passes; *capacity=extent;
         }
         ((qa_q3_ref_entity *)part->passes)[part->count++] = *entity;

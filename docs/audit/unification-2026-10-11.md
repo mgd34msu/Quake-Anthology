@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `dda89576`.
+Follow-up source changes were reviewed through main `b943a670`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 131 have source fixes
+There are **374 overlapping source-review observations**: 132 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 240 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 239 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -256,3 +256,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 | `01-text-userinfo-pairs` | `3321b45f` | Common info-pair traversal/lookup replace private parsers, preserving Source-specific dedup and edit order. Normal build and seven core suites passed. |
 
 | `01-storage-equipment-status` | `dda89576` | Immutable HUD region spans prepared in one owner arena before hooks bind; per-draw allocation deleted and cleanup refusal retains storage. Normal build and seven core suites passed. |
+
+| `01-math-axis-projection` | `b943a670` | One axis projection primitive; both consumers retain explicit source arithmetic policy. Existing core cases protect distinct roll rules and handed basis recovery; normal build/seven suites passed. |

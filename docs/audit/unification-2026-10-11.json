@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "dda895760996d7a792a590e00f5d405644efdcde",
+  "verified_main": "b943a6707db379084134cd56561a5adddd9fad28",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 131,
-    "open_source_observation": 240,
+    "fixed_source_build_core": 132,
+    "open_source_observation": 239,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -24021,8 +24021,9 @@
       "severity": "low",
       "job": "01",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "One axis-to-angle math implementation serves both camera consumers, with explicit component-float and double/basis projection policy preserving their original arithmetic and nonorthogonal basis behavior. Private guest formula and former inline body are deleted; all production callers migrated. Existing core cases check distinct nonorthogonal roll projections and the handed camera-basis round trip. Normal production build and seven core suites passed; no live visual or timing claim.",
+      "fix_commit": "b943a6707db379084134cd56561a5adddd9fad28"
     },
     {
       "id": "01-combat-source-width",
@@ -40580,6 +40581,33 @@
       ],
       "record_directory": "/tmp/qa-ta3196-prepared-equipment-regions-20261012",
       "conclusion": "Immutable Source HUD ammo region spans are prepared in the common arena before function-hook publication. Status calls pass the prepared spans to the executor instead of calloc/fill/free. Per-call region copies remain in the existing leased invocation storage for reentry; failed unbind retains the owner and backing. Other executor qualification allocations remain separate work. Normal production build and seven core suites passed; no live HUD or whole-frame allocation claim."
+    },
+    {
+      "commit": "b943a6707db379084134cd56561a5adddd9fad28",
+      "source_tree": "edd2d1392df2422f3865602b3bc20d47b86f1eb0",
+      "finding_ids": [
+        "01-math-axis-projection"
+      ],
+      "files_rechecked": [
+        "include/qa/math.h",
+        "src/core/math.c",
+        "src/app/application/guest_q3_scene.c",
+        "src/app/frontend/remote_unified_q3.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-axis-projection-20261012",
+      "conclusion": "One axis-to-angle math implementation serves both camera consumers, with explicit component-float and double/basis projection policy preserving their original arithmetic and nonorthogonal basis behavior. Private guest formula and former inline body are deleted; all production callers migrated. Existing core cases check distinct nonorthogonal roll projections and the handed camera-basis round trip. Normal production build and seven core suites passed; no live visual or timing claim."
     }
   ],
   "verification_limits": [

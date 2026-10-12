@@ -1,4 +1,5 @@
 #include "guest_q3_mod_private.h"
+#include "qa/arena.h"
 #include "qa/input.h"
 
 typedef struct input_field { const mod_output *definition; application_q3_mod_output before; } input_field;
@@ -51,10 +52,10 @@ static bool append(qa_unified_frame_lease *storage,application_q3_mod_output **r
         size_t next_capacity=*capacity?*capacity*2:16;
         if (next_capacity<*capacity || next_capacity>SIZE_MAX/sizeof(**rows))
             return q3mod_fail(e,QA_ERROR_MEMORY,"Source input output inventory overflows");
-        application_q3_mod_output *next=qa_unified_frame_lease_alloc(storage,next_capacity,sizeof(*next),
-            _Alignof(application_q3_mod_output),e);
+        application_q3_mod_output *next=qa_arena_grow(qa_unified_frame_lease_arena(storage),*rows,
+            *capacity*sizeof(*next),next_capacity*sizeof(*next),_Alignof(application_q3_mod_output),e);
         if (!next) return false;
-        if (*count) memcpy(next,*rows,*count*sizeof(*next));
+        memset(next+*capacity,0,(next_capacity-*capacity)*sizeof(*next));
         *rows=next;*capacity=next_capacity;
     }
     (*rows)[(*count)++]=value; return true;
