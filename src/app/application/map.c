@@ -20,6 +20,8 @@
 #include "native_q3_settings.h"
 #include "native_q3_session.h"
 #include "native_maps.h"
+#include "control_frame.h"
+#include "qa/stamp.h"
 #include "qa/text.h"
 
 #include <float.h>
@@ -1318,6 +1320,8 @@ static bool monster_route_goal(void *opaque, qa_actor_id actor, qa_actor_id *out
     *out = row->route_goal;
     return true;
 }
+typedef struct monster_offset { int x, y, distance; } monster_offset;
+typedef struct monster_placement_node { qa_vec3 origin; int x, y; } monster_placement_node;
 typedef struct monster_placement_query {
     application_provider *map;
     qa_actor_id actor;
@@ -1327,12 +1331,17 @@ typedef struct monster_placement_query {
     uint32_t authored_flags;
     qa_vec3 authored_origin;
     qa_trace_policy policy;
+    qa_unified_frame_lease *storage;
     qa_actor_id *doors;
-    bool *blocked;
+    qa_stamp_set blocked;
     size_t door_count;
     const qa_actor_id *excluded;
     size_t excluded_count;
     qa_collision_bits medium;
+    qa_stamp_set visited;
+    monster_placement_node *pending;
+    monster_offset *offsets;
+    size_t offset_count;
 } monster_placement_query;
 static bool monster_medium(monster_placement_query *query, qa_vec3 origin, qa_collision_bits *out, qa_error *error)
 {
@@ -1356,7 +1365,7 @@ static bool monster_trace(monster_placement_query *query, qa_vec3 start, qa_vec3
         query->excluded, query->excluded_count, out, error)) return false;
     if (out->fraction < 1 && out->hit == QA_TRACE_HIT_ACTOR)
         for (size_t i = 0; i < query->door_count; ++i)
-            if (qa_actor_id_equal(query->doors[i], out->actor)) query->blocked[i] = true;
+            if (qa_actor_id_equal(query->doors[i], out->actor)) (void)qa_stamp_set_mark(&query->blocked, i);
     return true;
 }
 static bool monster_reachable(monster_placement_query *query, qa_vec3 start,
@@ -1372,7 +1381,6 @@ static bool monster_reachable(monster_placement_query *query, qa_vec3 start,
     *out = !center.start_solid && !center.all_solid && center.fraction == 1 && !exit.start_solid && !exit.all_solid;
     return true;
 }
-typedef struct monster_offset { int x, y, distance; } monster_offset;
 static qa_actor_reference monster_ground(const monster_placement_query *query,
     const qa_trace_result *floor, bool walking)
 {
@@ -1415,7 +1423,6 @@ static bool monster_candidate(monster_placement_query *query, qa_vec3 start,
     *found = true;
     return true;
 }
-typedef struct monster_placement_node { qa_vec3 origin; int x, y; } monster_placement_node;
 static bool monster_corner_placement(monster_placement_query *query, qa_vec3 source_origin,
     float radius, bool walking, qa_body_state *out, bool *found, qa_error *error)
 {
@@ -1424,15 +1431,19 @@ static bool monster_corner_placement(monster_placement_query *query, qa_vec3 sou
     float reach = fmaxf(512, radius);
     int extent = (int)ceilf(reach / 8);
     size_t width = (size_t)(extent * 2 + 1);
-    bool *visited = calloc(width * width, sizeof(*visited));
-    monster_placement_node *pending = malloc(capacity * sizeof(*pending));
-    if (!visited || !pending) {
-        free(visited); free(pending);
-        return application_fail(error, QA_ERROR_MEMORY, "Finding reachable selected monster placement");
+    if (!query->pending) {
+        uint32_t *marks = qa_unified_frame_lease_alloc(query->storage,
+            width * width, sizeof(*marks), _Alignof(uint32_t), error);
+        query->pending = qa_unified_frame_lease_alloc(query->storage,
+            capacity, sizeof(*query->pending), _Alignof(monster_placement_node), error);
+        if (!marks || !query->pending) return false;
+        qa_stamp_set_init(&query->visited, marks, width * width);
     }
+    qa_stamp_set_begin(&query->visited);
+    monster_placement_node *pending = query->pending;
     size_t count = 1;
     pending[0] = (monster_placement_node){.origin = source_origin};
-    visited[(size_t)extent * width + (size_t)extent] = true;
+    (void)qa_stamp_set_mark(&query->visited, (size_t)extent * width + (size_t)extent);
     bool ok = true;
     for (size_t index = 0; ok && !*found && index < count && index < limit; ++index) {
         monster_placement_node current = pending[index];
@@ -1441,7 +1452,7 @@ static bool monster_corner_placement(monster_placement_query *query, qa_vec3 sou
             if (x < -extent || x > extent || y < -extent || y > extent ||
                 (float)(x * x + y * y) * 64 > reach * reach) continue;
             size_t cell = (size_t)(y + extent) * width + (size_t)(x + extent);
-            if (visited[cell]) continue;
+            if (qa_stamp_set_test(&query->visited, cell)) continue;
             for (size_t lift = 0; ok && !*found && lift < 2; ++lift) {
                 qa_vec3 start = current.origin;
                 start.z += lift ? 18 : 0;
@@ -1454,7 +1465,7 @@ static bool monster_corner_placement(monster_placement_query *query, qa_vec3 sou
                 end.z = current.origin.z - 18;
                 if (!monster_trace(query, across.end, end, query->authored_bounds, false, true, &floor, error)) { ok = false; break; }
                 if (floor.start_solid || floor.all_solid || floor.fraction == 1 || !floor.contact || floor.contact_plane.normal.z < 0.7f) continue;
-                visited[cell] = true;
+                (void)qa_stamp_set_mark(&query->visited, cell);
                 pending[count++] = (monster_placement_node){.origin = floor.end, .x = x, .y = y};
                 qa_vec3 origin = floor.end;
                 origin.z += query->authored_bounds.mins.z - query->body.bounds.mins.z;
@@ -1473,7 +1484,6 @@ static bool monster_corner_placement(monster_placement_query *query, qa_vec3 sou
             }
         }
     }
-    free(visited); free(pending);
     return ok;
 }
 static bool monster_nearby(monster_placement_query *query, qa_body_state *out, bool *found, qa_error *error)
@@ -1494,17 +1504,20 @@ static bool monster_nearby(monster_placement_query *query, qa_body_state *out, b
         query->body.bounds.maxs.y - query->body.bounds.mins.y),
         fmaxf(query->authored_bounds.maxs.x - query->authored_bounds.mins.x,
         query->authored_bounds.maxs.y - query->authored_bounds.mins.y));
-    int extent = (int)ceilf(radius / 4);
-    size_t width = (size_t)(extent * 2 + 1);
-    monster_offset *offsets = malloc(width * width * sizeof(*offsets));
-    if (!offsets) return application_fail(error, QA_ERROR_MEMORY, "Finding selected monster placement");
-    size_t count = 0;
-    for (int x = -extent; x <= extent; ++x) for (int y = -extent; y <= extent; ++y)
-        if ((float)((x * x + y * y) * 16) <= radius * radius)
-            offsets[count++] = (monster_offset){.x = x * 4, .y = y * 4, .distance = x * x + y * y};
-    qsort(offsets, count, sizeof(*offsets), monster_offset_compare);
+    if (!query->offsets) {
+        int extent = (int)ceilf(radius / 4);
+        size_t width = (size_t)(extent * 2 + 1);
+        query->offsets = qa_unified_frame_lease_alloc(query->storage,
+            width * width, sizeof(*query->offsets), _Alignof(monster_offset), error);
+        if (!query->offsets) return false;
+        for (int x = -extent; x <= extent; ++x) for (int y = -extent; y <= extent; ++y)
+            if ((float)((x * x + y * y) * 16) <= radius * radius)
+                query->offsets[query->offset_count++] = (monster_offset){.x = x * 4, .y = y * 4, .distance = x * x + y * y};
+        qsort(query->offsets, query->offset_count, sizeof(*query->offsets), monster_offset_compare);
+    }
+    const monster_offset *offsets = query->offsets;
     bool ok = true;
-    for (size_t i = 0; ok && !*found && i < count; ++i) {
+    for (size_t i = 0; ok && !*found && i < query->offset_count; ++i) {
         if (walking) for (size_t lift = 0; ok && !*found && lift < 2; ++lift) {
             start = qa_vec_add(anchor, qa_v3((float)offsets[i].x, (float)offsets[i].y, lift ? 18 : 1));
             qa_vec3 end = start;
@@ -1522,7 +1535,6 @@ static bool monster_nearby(monster_placement_query *query, qa_body_state *out, b
                 }
         }
     }
-    free(offsets);
     if (ok && !*found && supported && authored_walk)
         ok = monster_corner_placement(query, source_origin, radius, walking, out, found, error);
     return ok;
@@ -1563,8 +1575,7 @@ static bool monster_started(void *opaque, qa_actor_id actor, qa_error *error)
         false, false, &trace, error)) return false;
     if (!trace.start_solid && !trace.all_solid) {
         row->placement = QA_MONSTER_PLACED;
-        free(row->barriers); row->barriers = NULL; row->barrier_count = 0;
-        return true;
+        return qa_targets_monster_barriers_set(app->targets, actor, NULL, 0, error);
     }
     if (map->kind == APPLICATION_PROVIDER_Q1 && monster_teleport_staging(map, &query.body)) {
         row->placement = QA_MONSTER_TELEPORT; row->placement_origin = query.body.origin;
@@ -1583,12 +1594,16 @@ static bool monster_started(void *opaque, qa_actor_id actor, qa_error *error)
         qa_q2_monster_shape(map->state.q2, authored, &query.authored_bounds, &query.authored_flags);
     if (!shape || !monster_medium(&query, query.body.origin, &query.medium, error))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Authored monster has no native placement shape");
-    qa_arena scratch; qa_arena_init(&scratch, 1024);
+    query.storage = application_control_storage_acquire(app, error);
+    if (!query.storage) return false;
     size_t capacity = qa_actors_count(qa_session_actors(app->session));
-    query.doors = qa_arena_alloc(&scratch, capacity * sizeof(*query.doors), _Alignof(qa_actor_id), error);
-    query.blocked = qa_arena_alloc(&scratch, capacity * sizeof(*query.blocked), _Alignof(bool), error);
-    qa_actor_id *excluded = qa_arena_alloc(&scratch, capacity * sizeof(*excluded), _Alignof(qa_actor_id), error);
-    bool ok = query.doors && query.blocked && excluded;
+    query.doors = qa_unified_frame_lease_alloc(query.storage, capacity,
+        sizeof(*query.doors), _Alignof(qa_actor_id), error);
+    uint32_t *blocked = qa_unified_frame_lease_alloc(query.storage, capacity,
+        sizeof(*blocked), _Alignof(uint32_t), error);
+    qa_actor_id *excluded = qa_unified_frame_lease_alloc(query.storage, capacity,
+        sizeof(*excluded), _Alignof(qa_actor_id), error);
+    bool ok = query.doors && blocked && excluded;
     if (ok && map->kind == APPLICATION_PROVIDER_Q2 && row->fields.targetname) {
         qa_target_cursor cursor = {0}; qa_actor_id door;
         while (qa_targets_next(app->targets, row->fields.targetname, &cursor, &door)) {
@@ -1599,36 +1614,37 @@ static bool monster_started(void *opaque, qa_actor_id actor, qa_error *error)
             if (found && (view.navigation.locked || view.navigation.has_destination)) query.doors[query.door_count++] = door;
         }
     }
-    if (ok) memset(query.blocked, 0, query.door_count * sizeof(*query.blocked));
+    if (ok) qa_stamp_set_init(&query.blocked, blocked, query.door_count);
     qa_body_state placement; bool found = false;
     if (ok) ok = monster_nearby(&query, &placement, &found, error);
     if (ok && found) {
         row->placement = QA_MONSTER_PLACED;
-        free(row->barriers); row->barriers = NULL; row->barrier_count = 0;
-        ok = qa_world_body_write(app->world, actor, &placement, error) && qa_world_link(app->world, actor, NULL, error);
+        ok = qa_targets_monster_barriers_set(app->targets, actor, NULL, 0, error) &&
+            qa_world_body_write(app->world, actor, &placement, error) && qa_world_link(app->world, actor, NULL, error);
     } else if (ok) {
         query.excluded = excluded;
         while (ok && !found) {
             size_t previous = query.excluded_count;
             query.excluded_count = 0;
-            for (size_t i = 0; i < query.door_count; ++i) if (query.blocked[i]) excluded[query.excluded_count++] = query.doors[i];
+            for (size_t i = 0; i < query.door_count; ++i)
+                if (qa_stamp_set_test(&query.blocked, i)) excluded[query.excluded_count++] = query.doors[i];
             if (previous == query.excluded_count) break;
             ok = monster_nearby(&query, &placement, &found, error);
         }
         if (ok && found) {
-            qa_monster_barrier *barriers = calloc(query.excluded_count, sizeof(*barriers));
+            qa_monster_barrier *barriers = qa_unified_frame_lease_alloc(query.storage,
+                query.excluded_count, sizeof(*barriers), _Alignof(qa_monster_barrier), error);
             ok = barriers != NULL;
-            if (!ok) application_fail(error, QA_ERROR_MEMORY, "Retaining authored door encounter");
             for (size_t i = 0; ok && i < query.excluded_count; ++i) {
                 qa_body_state body;
                 ok = qa_world_body_read(app->world, excluded[i], &body, error);
-                barriers[i] = (qa_monster_barrier){.actor = excluded[i], .origin = body.origin};
+                if (ok) barriers[i] = (qa_monster_barrier){.actor = excluded[i], .origin = body.origin};
             }
-            if (ok) { free(row->barriers); row->barriers = barriers; row->barrier_count = query.excluded_count; row->placement = QA_MONSTER_WAITING; }
-            else free(barriers);
+            if (ok) ok = qa_targets_monster_barriers_set(app->targets, actor, barriers, query.excluded_count, error);
+            if (ok) row->placement = QA_MONSTER_WAITING;
         } else if (ok) ok = application_fail(error, QA_ERROR_UNSUPPORTED, "Selected monster cannot fit its reachable authored encounter");
     }
-    qa_arena_destroy(&scratch);
+    qa_unified_frame_lease_release(query.storage);
     return ok;
 }
 

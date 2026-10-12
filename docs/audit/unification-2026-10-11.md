@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `81459187`.
+Follow-up source changes were reviewed through main `50d1200c`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 179 have source fixes
+There are **374 overlapping source-review observations**: 180 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 192 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 191 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -356,3 +356,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `138452ac` / 02-02, 02-04: Q3 weapon requests and match callbacks use the full-actor retained index and stable common pool. Ordered requests, mode generations, refused unbind ownership and QAG3WR save bytes remain unchanged. Restore stages candidates in existing control storage. Normal build and seven core suites passed; historical peaks can still extend shared storage. Records: `/tmp/qa-ta3196-q3-weapon-services-20261012`.
 
 - `81459187` / 02-14: Together with45667a4c, declared QC global captures and userinfo/string projections use independent common control leases. Q1 retains its one ordered serializer and exact backslash/first-key semantics; callers copy borrowed values before VM string admission. Normal build and seven core suites passed. Whole-userinfo services/writes and per-read projection work remain; new named guest strings can grow shared storage. Records: `/tmp/qa-ta3196-qc-declared-projections-20261012`.
+
+- `50d1200c` / 02-01: The Q3 weapon namespace is admitted once from the immutable GAME artifact profile. Hot validity checks retain the actual VM, image, path pointer and ABI, with disposal still ordered before role teardown. Normal build and seven core suites passed; no live or performance claim. Records: `/tmp/qa-ta3196-q3-weapon-model-namespace-20261012`.

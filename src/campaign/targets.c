@@ -90,7 +90,20 @@ qa_targets *qa_targets_create(const qa_target_options *options, qa_error *error)
         qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating target index");
         return NULL;
     }
+    if (!qa_pool_prepare(&targets->barrier_pages, &targets->barrier_storage,
+            targets->capacity, sizeof(qa_monster_barrier), _Alignof(qa_monster_barrier), error)) {
+        qa_targets_destroy(targets);
+        return NULL;
+    }
     return targets;
+}
+static void monster_destroy(target_monster *monster) {
+    if (!monster)
+        return;
+    if (monster->barrier_pages)
+        qa_pool_release_run(&monster->targets->barrier_pages,
+                            monster->barrier_slot, monster->barrier_pages);
+    free(monster);
 }
 void qa_targets_destroy(qa_targets *targets) {
     if (!targets)
@@ -98,9 +111,9 @@ void qa_targets_destroy(qa_targets *targets) {
     qa_arena_destroy(&targets->scratch);
     if (targets->monsters)
         for (size_t i = 0; i < targets->capacity; ++i) {
-            if (targets->monsters[i]) free(targets->monsters[i]->authored.barriers);
-            free(targets->monsters[i]);
+            monster_destroy(targets->monsters[i]);
         }
+    qa_arena_destroy(&targets->barrier_storage);
     free(targets->monsters);
     free(targets->authored);
     free(targets->index);
@@ -189,6 +202,43 @@ bool qa_targets_monster_lookup(void *opaque, qa_actor_id actor, qa_monster_missi
     *out = targets->monsters[actor.slot]->mission;
     return true;
 }
+static bool monster_barriers_set(target_monster *row, const qa_monster_barrier *barriers,
+                                  size_t count, qa_error *error) {
+    qa_targets *targets = row->targets;
+    size_t slot = 0;
+    qa_monster_barrier *copy = NULL;
+    if (count) {
+        if (!barriers)
+            return fail(error, "Monster barriers require their authored values");
+        if (count > SIZE_MAX / sizeof(*copy)) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Authored monster barrier extent overflows");
+            return false;
+        }
+        if (!qa_pool_run_available(&targets->barrier_pages, count) &&
+            !qa_pool_extend(&targets->barrier_pages, &targets->barrier_storage, count, error))
+            return false;
+        copy = qa_pool_take_run(&targets->barrier_pages, count, &slot);
+        if (!copy) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining authored monster barriers");
+            return false;
+        }
+        memcpy(copy, barriers, count * sizeof(*copy));
+    }
+    if (row->barrier_pages)
+        qa_pool_release_run(&targets->barrier_pages, row->barrier_slot, row->barrier_pages);
+    row->barrier_slot = slot;
+    row->barrier_pages = count;
+    row->authored.barriers = copy;
+    row->authored.barrier_count = count;
+    return true;
+}
+bool qa_targets_monster_barriers_set(qa_targets *targets, qa_actor_id actor,
+                                     const qa_monster_barrier *barriers, size_t count,
+                                     qa_error *error) {
+    if (!qa_targets_monster(targets, actor))
+        return fail(error, "Monster barriers require an admitted authored monster");
+    return monster_barriers_set(targets->monsters[actor.slot], barriers, count, error);
+}
 bool qa_targets_monster_admit(qa_targets *targets, qa_actor_id actor,
     const qa_authored_monster *authored, qa_error *error) {
     const qa_target_binding *native = targets ? binding(targets, actor) : NULL;
@@ -204,13 +254,11 @@ bool qa_targets_monster_admit(qa_targets *targets, qa_actor_id actor,
     bool zombie = (authored->source == QA_RULESET_NETQUAKE || authored->source == QA_RULESET_QUAKEWORLD) &&
         authored->fields.classname == targets->runtime_names[TARGET_NAME_MONSTER_ZOMBIE];
     row->mission.ambush = (authored->spawnflags & (zombie ? 2u : 1u)) != 0;
-    if (authored->barrier_count) {
-        row->authored.barriers = malloc(authored->barrier_count * sizeof(*authored->barriers));
-        if (!row->authored.barriers) { free(row); qa_error_set(error, QA_ERROR_MEMORY, 0, "retaining authored door encounter"); return false; }
-        memcpy(row->authored.barriers, authored->barriers, authored->barrier_count * sizeof(*authored->barriers));
+    if (!monster_barriers_set(row, authored->barriers, authored->barrier_count, error)) {
+        monster_destroy(row);
+        return false;
     }
-    if (targets->monsters[actor.slot]) free(targets->monsters[actor.slot]->authored.barriers);
-    free(targets->monsters[actor.slot]);
+    monster_destroy(targets->monsters[actor.slot]);
     targets->monsters[actor.slot] = row;
     targets->bindings[actor.slot] = monster_binding(row);
     qa_targets_changed(targets, actor);
@@ -227,7 +275,7 @@ bool qa_targets_bind(qa_targets *targets, const qa_target_binding *entry, qa_err
         return fail(error, "Authored target binding serial exhausted");
     target_monster *monster = targets->monsters[entry->actor.slot];
     if (monster && !qa_actor_id_equal(monster->native.actor, entry->actor)) {
-        free(monster->authored.barriers); free(monster); targets->monsters[entry->actor.slot] = NULL; monster = NULL;
+        monster_destroy(monster); targets->monsters[entry->actor.slot] = NULL; monster = NULL;
     }
     if (monster) monster->native = *entry;
     targets->bindings[entry->actor.slot] = monster ? monster_binding(monster) : *entry;
@@ -238,8 +286,7 @@ bool qa_targets_bind(qa_targets *targets, const qa_target_binding *entry, qa_err
 void qa_targets_unbind(qa_targets *targets, qa_actor_id actor) {
     if (actor.slot < targets->capacity &&
         qa_actor_id_equal(targets->bindings[actor.slot].actor, actor)) {
-        if (targets->monsters[actor.slot]) free(targets->monsters[actor.slot]->authored.barriers);
-        free(targets->monsters[actor.slot]);
+        monster_destroy(targets->monsters[actor.slot]);
         targets->monsters[actor.slot] = NULL;
         targets->bindings[actor.slot] = (qa_target_binding){0};
         targets->binding_serial[actor.slot] = 0;

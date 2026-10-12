@@ -107,6 +107,8 @@ void qa_targets_changed(qa_targets *, qa_actor_id);
 void qa_targets_monsters_configure(qa_targets *, void *context,
     bool (*resolve)(void *, qa_actor_owner, qa_monster_mission *, qa_error *));
 bool qa_targets_monster_admit(qa_targets *, qa_actor_id, const qa_authored_monster *, qa_error *);
+/* Copies encounter barriers into target-owned storage; zero count clears them. */
+bool qa_targets_monster_barriers_set(qa_targets *, qa_actor_id, const qa_monster_barrier *, size_t, qa_error *);
 void qa_targets_monster_route(qa_targets *, qa_actor_id, qa_string_id, qa_actor_id);
 qa_authored_monster *qa_targets_monster(qa_targets *, qa_actor_id);
 bool qa_targets_monster_lookup(void *targets, qa_actor_id, qa_monster_mission *);

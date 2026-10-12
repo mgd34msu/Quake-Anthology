@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "814591874dc6ac37eb791f9fe4a187580847186d",
+  "verified_main": "50d1200c99047148e49885d95426e70aab63486a",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 179,
-    "open_source_observation": 192,
+    "fixed_source_build_core": 180,
+    "open_source_observation": 191,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -24169,8 +24169,9 @@
       "severity": "high",
       "job": "02",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "50d1200c99047148e49885d95426e70aab63486a"
     },
     {
       "id": "02-02",
@@ -42094,6 +42095,29 @@
       ],
       "record_directory": "/tmp/qa-ta3196-qc-declared-projections-20261012",
       "conclusion": "Together with45667a4c, declared QC global captures and userinfo/string projections use independent common control leases. Q1 retains its one ordered serializer and exact backslash/first-key semantics; callers copy borrowed values before VM string admission. Normal build and seven core suites passed. Whole-userinfo services/writes and per-read projection work remain; new named guest strings can grow shared storage."
+    },
+    {
+      "commit": "50d1200c99047148e49885d95426e70aab63486a",
+      "source_tree": "53e5457c56058e6c5afc51dfd37c4f6ca0259c33",
+      "finding_ids": [
+        "02-01"
+      ],
+      "files_rechecked": [
+        "src/app/application/guest_q3_weapon_models.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-q3-weapon-model-namespace-20261012",
+      "conclusion": "The Q3 weapon namespace is admitted once from the immutable GAME artifact profile. Hot validity checks retain the actual VM, image, path pointer and ABI, with disposal still ordered before role teardown. Normal build and seven core suites passed; no live or performance claim."
     }
   ],
   "verification_limits": [

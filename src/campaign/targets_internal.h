@@ -2,6 +2,7 @@
 #define QA_TARGETS_INTERNAL_H
 #include "qa/targets.h"
 #include "qa/arena.h"
+#include "qa/pool.h"
 
 typedef struct target_index {
     qa_actor_id actor;
@@ -16,6 +17,7 @@ typedef struct target_monster {
     qa_target_binding native;
     qa_monster_mission mission;
     qa_authored_monster authored;
+    size_t barrier_slot, barrier_pages;
 } target_monster;
 typedef enum target_name {
     TARGET_NAME_MONSTER_ZOMBIE, TARGET_NAME_FUNC_AREAPORTAL,
@@ -33,6 +35,8 @@ struct qa_targets {
     target_index *index, *indexed;
     authored_index *authored;
     qa_arena scratch;
+    qa_arena barrier_storage;
+    qa_pool barrier_pages;
     size_t count, authored_count, capacity, depth;
     uint64_t next_binding_serial;
 };
