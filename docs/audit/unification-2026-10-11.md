@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `4a49aafc`.
+Follow-up source changes were reviewed through main `24b72287`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 214 have source fixes
+There are **374 overlapping source-review observations**: 215 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 157 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 156 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -410,3 +410,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `b0e238b0` / J20-10, J21-06: Delete duplicate armor encoding; inventory store/admission and pickup observers use common pooled storage with preserved restore/callback custody. Q2 perception has constructor/restore-sized sealed storage. Reinforcement payloads use existing monster pool; native surfaces use common semantic name/value index. Additional authored/historical demand and native first-use guest allocation remain partial; no global zero-allocation claim. Records: `/tmp/qa-ta3196-common-gameplay-owner-storage-20261012-v1`.
 
 - `4a49aafc` / J19-F08: Q1 addon and weapon lightning use one traversal with explicit preserved caller policies; the addon copy is deleted. Normal production build and seven core suites pass; no live or timing claim. Records: `/tmp/qa-ta3196-one-electric-traversal-20261012-v1`.
+
+- `24b72287` / 07-01: Cvar notifications and nested observer snapshots use reusable common pool/arena leases; immutable declaration metadata is shared by reference. Private per-notification copies are deleted. Normal build and seven core suites pass; cold admission and higher shared-storage demand remain possible. Records: `/tmp/qa-ta3196-common-cvar-notification-leases-20261012-v1`.

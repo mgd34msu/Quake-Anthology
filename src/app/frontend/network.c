@@ -161,6 +161,8 @@ typedef struct frontend_q3_client {
     bool q3_client_gamestate, q3_client_active, q3_client_retiring, q3_command_present, q3_client_entered;
     char q3_client_reason[256];
     char q3_client_userinfo[1024];
+    uint64_t q3_client_userinfo_view, q3_client_userinfo_revision;
+    qa_ruleset_id q3_client_userinfo_dialect;
     char q3_client_message[1024], q3_client_update_info[1024];
     int32_t q3_ui_client_number;
 } frontend_q3_client;
@@ -2932,6 +2934,7 @@ q1_attempt_done:
         ++n->q3_clients[0].q3_client_epoch; n->q3_clients[0].q3_client = (qa_net_client_id){0};
         n->q3_clients[0].q3_client_rebind = true; n->q3_clients[0].q3_client_closed = false; n->q3_clients[0].q3_client_retiring = false;
         n->q3_clients[0].q3_client_reason[0] = 0; n->q3_clients[0].q3_client_userinfo[0] = 0;
+        n->q3_clients[0].q3_client_userinfo_revision = 0;
         uint16_t qport = n->q3_clients[0].q3_client_admission.qport;
         qa_q3_client_admission_begin(&n->q3_clients[0].q3_client_admission, &address, qport);
         ok=true;
@@ -3032,28 +3035,34 @@ static bool client_drain(frontend_q3_client *n, bool presentation_frame, qa_erro
         if (!qa_net_transport_send_ready(qa_network_transport(n->runtime), &n->q3_client_admission.address)) return true;
         if (!client_authorization_prepare(n, (qa_bytes){0}, error) || !client_initial_session(n,error)) return false;
         qa_application_q3_client_context role;
-        qa_buffer info = {0};
+        char info[sizeof(n->q3_client_userinfo)];
         if (!qa_application_q3_remote_context_read(n->frontend->application, n->q3_cgame_owner, n->q3_client_launch_seat, &role, error) ||
-            !qa_cvars_info(role.cvars, QA_CVAR_USERINFO, 1024, &info, error)) return false;
-        bool ok = qa_q3_client_admission_resend(&n->q3_client_admission,
-            (int64_t)(n->frontend->wall_time_ns / UINT64_C(1000000)), (const char *)info.data, client_admission_send, n, error);
-        qa_buffer_free(&info); return ok;
+            !qa_cvars_info_write(role.cvars, QA_CVAR_USERINFO, sizeof(info), info, error)) return false;
+        return qa_q3_client_admission_resend(&n->q3_client_admission,
+            (int64_t)(n->frontend->wall_time_ns / UINT64_C(1000000)), info, client_admission_send, n, error);
     }
     if (!client_bind_attempt(n, error) || !client_initial_session(n,error)) return false;
     if (qa_network_q3_client_receive_pending(n->runtime, n->q3_client) &&
         !qa_network_q3_client_continue(n->runtime, n->q3_client, error)) return false;
     if(n->q3_client_downloads && !qa_q3_client_downloads_pump(n->q3_client_downloads,error)) return false;
-    qa_application_q3_client_context role; qa_buffer info = {0};
-    if (!qa_application_q3_remote_context_read(n->frontend->application, n->q3_cgame_owner, n->q3_client_launch_seat, &role, error) ||
-        !qa_cvars_info(role.cvars, QA_CVAR_USERINFO, sizeof(n->q3_client_userinfo), &info, error)) return false;
-    bool updated = true;
-    if (strcmp(n->q3_client_userinfo, (const char *)info.data)) {
-        char command[sizeof(n->q3_client_userinfo) + 12];
-        snprintf(command, sizeof(command), "userinfo \"%s\"", (const char *)info.data);
-        updated = qa_network_q3_client_command(n->runtime, n->q3_client, command, error);
-        if (updated) memcpy(n->q3_client_userinfo, info.data, info.size + 1);
+    qa_application_q3_client_context role;
+    if (!qa_application_q3_remote_context_read(n->frontend->application, n->q3_cgame_owner, n->q3_client_launch_seat, &role, error)) return false;
+    uint64_t view=qa_cvars_view_identity(role.cvars);
+    uint64_t revision=qa_cvars_prepared_edit(role.cvars)?0:qa_cvars_revision(role.cvars);
+    qa_ruleset_id dialect=qa_cvars_dialect(role.cvars);
+    if(!revision || view!=n->q3_client_userinfo_view || revision!=n->q3_client_userinfo_revision ||
+        dialect!=n->q3_client_userinfo_dialect) {
+        char info[sizeof(n->q3_client_userinfo)];
+        if(!qa_cvars_info_write(role.cvars,QA_CVAR_USERINFO,sizeof(info),info,error)) return false;
+        if(strcmp(n->q3_client_userinfo,info)) {
+            char command[sizeof(n->q3_client_userinfo)+12];
+            snprintf(command,sizeof(command),"userinfo \"%s\"",info);
+            if(!qa_network_q3_client_command(n->runtime,n->q3_client,command,error)) return false;
+            memcpy(n->q3_client_userinfo,info,strlen(info)+1);
+        }
+        n->q3_client_userinfo_view=view; n->q3_client_userinfo_revision=revision;
+        n->q3_client_userinfo_dialect=dialect;
     }
-    qa_buffer_free(&info); if (!updated) return false;
     if (!n->q3_client_gamestate) return true;
     if (n->q3_client_gamestate && !n->q3_client_entered) {
         qa_q3_usercmd initial = {0};
@@ -8516,6 +8525,7 @@ bool frontend_network_demo_playback(qa_frontend *f,const qa_command_context *sou
     ++n->q3_clients[0].q3_client_epoch;n->q3_clients[0].q3_client=(qa_net_client_id){0};n->q3_clients[0].q3_client_rebind=true;
     n->q3_clients[0].q3_client_closed=false;n->q3_clients[0].q3_client_retiring=false;n->q3_clients[0].q3_client_attached=false;
     n->q3_clients[0].q3_client_reason[0]=0;n->q3_clients[0].q3_client_userinfo[0]=0;
+    n->q3_clients[0].q3_client_userinfo_revision=0;
     qa_q3_client_admission_begin(&n->q3_clients[0].q3_client_admission,&local,(uint16_t)n->rotation_random);
     qa_net_seat_binding seat={{NETWORK_OWNER,0},0};
     qa_net_connect request={.attachment=QA_NET_LOCAL_SEAT,.endpoint=local,.protocol={QA_NET_Q3_68,0,0},

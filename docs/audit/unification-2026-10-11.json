@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "4a49aafca38f2f5a5c993a2fe4b4942efbe440f9",
+  "verified_main": "24b72287a673d1b9849c45513cc76af452a9fc9f",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 214,
-    "open_source_observation": 157,
+    "fixed_source_build_core": 215,
+    "open_source_observation": 156,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -27323,8 +27323,9 @@
       "severity": "medium",
       "job": "07",
       "area": "audio_input_ui",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "24b72287a673d1b9849c45513cc76af452a9fc9f"
     },
     {
       "id": "07-02",
@@ -43099,6 +43100,31 @@
       ],
       "record_directory": "/tmp/qa-ta3196-one-electric-traversal-20261012-v1",
       "conclusion": "Q1 addon and weapon lightning use one traversal with explicit preserved caller policies; the addon copy is deleted. Normal production build and seven core suites pass; no live or timing claim."
+    },
+    {
+      "commit": "24b72287a673d1b9849c45513cc76af452a9fc9f",
+      "source_tree": "ba073cc68c6b180daf8b004b36d5d99f93383227",
+      "finding_ids": [
+        "07-01"
+      ],
+      "files_rechecked": [
+        "src/console/cvars.c",
+        "src/console/cvars_private.h",
+        "src/console/cvars_store.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-cvar-notification-leases-20261012-v1",
+      "conclusion": "Cvar notifications and nested observer snapshots use reusable common pool/arena leases; immutable declaration metadata is shared by reference. Private per-notification copies are deleted. Normal build and seven core suites pass; cold admission and higher shared-storage demand remain possible."
     }
   ],
   "verification_limits": [

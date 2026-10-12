@@ -38,6 +38,7 @@ typedef struct native_q3_wire_client {
     uint32_t seat;
     char *userinfo;
     char *drop_reason;
+    qa_arena userinfo_storage, drop_storage;
     application_q3_command_cursor server_commands;
     qa_q3_usercmd command;
     qa_q3_usercmd commands[NATIVE_Q3_COMMAND_BACKUP];
@@ -54,7 +55,6 @@ typedef struct native_q3_wire_client {
     qa_q3_big_configstring big_configstring;
     bool admitted, begun, bot, command_received, has_snapshot;
     bool drop_pending, drop_delivered;
-    bool drop_reason_static;
     bool bot_snapshot_ready;
     qa_error drop_failure;
 } native_q3_wire_client;
@@ -98,6 +98,7 @@ struct application_native_q3_wire {
     uint64_t client_revision[QA_Q3_SOURCE_CLIENTS];
     struct application_native_q3_bot_cycle *bot_cycle;
     application_native_q3_bot_cycle bot_cycle_storage;
+    qa_unified_frame_lease *text_storage;
     qa_arena *snapshot_storage;
     uint8_t snapshot_bit;
     bool restore_pending, round_pending, replacement_pending, closing;
@@ -172,27 +173,42 @@ static native_q3_wire_client *userinfo_client(application_provider *provider, ui
     return client;
 }
 
-static char *copy_text(const char *text, qa_error *error)
+static bool text_storage_prepare(struct application_native_q3_wire *wire,qa_error *error)
 {
-    if (!text) {
-        application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 source text is absent");
+    wire->text_storage=application_control_storage_acquire(wire->provider->application,error);
+    if(!wire->text_storage) return false;
+    struct qa_pool *pages=qa_unified_frame_lease_arena(wire->text_storage)->pages;
+    for(size_t i=0;i<QA_Q3_SOURCE_CLIENTS;++i) {
+        qa_arena_init_pool(&wire->clients[i].userinfo_storage,pages);
+        qa_arena_init_pool(&wire->clients[i].drop_storage,pages);
+    }
+    return true;
+}
+
+static char *text_copy(struct application_native_q3_wire *wire,qa_arena *storage,
+    const char *text,qa_error *error)
+{
+    qa_arena_init_pool(storage,qa_unified_frame_lease_arena(wire->text_storage)->pages);
+    if(!text) {
+        qa_arena_destroy(storage);
+        application_fail(error,QA_ERROR_ARGUMENT,"Native Q3 source text is absent");
         return NULL;
     }
-    size_t length = strlen(text);
-    if (length == SIZE_MAX) {
-        application_fail(error, QA_ERROR_MEMORY, "Native Q3 source text extent overflow");
-        return NULL;
-    }
-    char *copy = malloc(length + 1);
-    if (!copy) {
-        application_fail(error, QA_ERROR_MEMORY, "Retaining native Q3 source text");
-        return NULL;
-    }
-    memcpy(copy, text, length + 1);
+    char *copy=qa_arena_text(storage,text,error);
+    if(!copy) qa_arena_destroy(storage);
     return copy;
 }
 
-
+static bool userinfo_replace(struct application_native_q3_wire *wire,native_q3_wire_client *client,
+    const char *text,qa_error *error)
+{
+    qa_arena storage;
+    char *copy=text_copy(wire,&storage,text,error);
+    if(!copy) return false;
+    qa_arena_destroy(&client->userinfo_storage);
+    client->userinfo_storage=storage;client->userinfo=copy;
+    return true;
+}
 
 static void bot_view_clear(native_q3_wire_client *client)
 {
@@ -231,14 +247,15 @@ static void clients_clear(struct application_native_q3_wire *wire)
 {
     for (size_t i = 0; i < QA_Q3_SOURCE_CLIENTS; ++i) {
         application_q3_command_clear(&wire->clients[i].server_commands);
-        free(wire->clients[i].userinfo);
-        if (!wire->clients[i].drop_reason_static) free(wire->clients[i].drop_reason);
+        qa_arena_destroy(&wire->clients[i].userinfo_storage);
+        qa_arena_destroy(&wire->clients[i].drop_storage);
         free(wire->clients[i].gamestate);
         for (size_t j = 0; j < QA_Q3_PACKET_BACKUP; ++j)
             if (!wire->clients[i].snapshots[j].reserved) free(wire->clients[i].snapshots[j].entities);
         wire->clients[i] = (native_q3_wire_client){.seat = UINT32_MAX, .sensitivity = 1};
         application_q3_command_init(&wire->clients[i].server_commands, wire->provider->application);
     }
+    qa_unified_frame_lease_release(wire->text_storage);wire->text_storage=NULL;
     qa_arena_destroy(wire->snapshot_storage);free(wire->snapshot_storage);wire->snapshot_storage=NULL;
 }
 
@@ -307,6 +324,7 @@ bool application_native_q3_wire_create(application_provider *provider, qa_world 
     bool ok = application_native_q3_wire_bind_sources(provider, error) &&
         qa_q3_source_max_clients(provider->state.q3, &wire->max_clients, error) &&
         wire->max_clients >= 1 && wire->max_clients <= QA_Q3_SOURCE_CLIENTS &&
+        text_storage_prepare(wire,error) &&
         snapshots_prepare(wire,error);
     qa_q3_host_options services = {.role = QA_QVM_GAME, .session = provider->application->session,
         .world = source_world, .owner = provider->owner};
@@ -376,25 +394,23 @@ bool application_native_q3_wire_connect(application_provider *provider, uint32_t
         if (!userinfo || client->seat != seat || client->bot != bot || client->begun ||
             (client->actor.registry && !qa_actor_id_equal(client->actor, actor)))
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 retained Connect differs from its carried source client");
-        char *copy = copy_text(userinfo, error);
-        if (!copy) return false;
-        free(client->userinfo);
-        client->userinfo = copy;
+        if(!userinfo_replace(wire,client,userinfo,error)) return false;
         client->actor = actor;
         ++wire->client_revision[slot];
         return true;
     }
     if (wire->clients[slot].admitted)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 source client is already connected");
-    char *copy = copy_text(userinfo, error);
-    if (!copy) return false;
     native_q3_wire_client *client = &wire->clients[slot];
+    if(!userinfo_replace(wire,client,userinfo,error)) return false;
+    char *copy=client->userinfo;
+    qa_arena userinfo_storage=client->userinfo_storage;
     qa_q3_entity *snapshots=client->snapshots[0].reserved?client->snapshots[0].entities:NULL;
-    free(client->userinfo);
-    if (!client->drop_reason_static) free(client->drop_reason);
+    qa_arena_destroy(&client->drop_storage);
     application_q3_command_clear(&client->server_commands);
     *client = (native_q3_wire_client){.actor = actor, .seat = seat,
-        .userinfo = copy, .admitted = true, .bot = bot, .sensitivity = 1,
+        .userinfo = copy, .userinfo_storage=userinfo_storage,
+        .admitted = true, .bot = bot, .sensitivity = 1,
         .entered_ns = qa_session_elapsed(provider->application->session)};
     snapshots_bind(client,snapshots);
     application_q3_command_init(&client->server_commands, provider->application);
@@ -426,11 +442,13 @@ bool application_native_q3_wire_disconnect(application_provider *provider, uint3
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 wire Disconnect exceeds source capacity");
     native_q3_wire_client *client = &wire->clients[slot];
     char *userinfo = client->userinfo;
+    qa_arena userinfo_storage=client->userinfo_storage;
     qa_q3_entity *snapshots=client->snapshots[0].reserved?client->snapshots[0].entities:NULL;
-    if (!client->drop_reason_static) free(client->drop_reason);
+    qa_arena_destroy(&client->drop_storage);
     client_world_clear(client);
     application_q3_command_clear(&client->server_commands);
-    *client = (native_q3_wire_client){.seat = UINT32_MAX, .userinfo = userinfo, .sensitivity = 1};
+    *client = (native_q3_wire_client){.seat = UINT32_MAX, .userinfo = userinfo,
+        .userinfo_storage=userinfo_storage,.sensitivity = 1};
     snapshots_bind(client,snapshots);
     application_q3_command_init(&client->server_commands, provider->application);
     ++wire->client_revision[slot];
@@ -443,11 +461,7 @@ bool application_native_q3_wire_userinfo(application_provider *provider, uint32_
     struct application_native_q3_wire *wire;
     native_q3_wire_client *client = userinfo_client(provider, slot, &wire, error);
     if (!client) return false;
-    char *copy = copy_text(text, error);
-    if (!copy) return false;
-    free(client->userinfo);
-    client->userinfo = copy;
-    return true;
+    return userinfo_replace(wire,client,text,error);
 }
 
 bool application_native_q3_wire_userinfo_read(application_provider *provider, uint32_t slot,
@@ -547,11 +561,14 @@ bool application_native_q3_wire_drop(application_provider *provider, uint32_t sl
     if (!reason)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 client DROP reason is absent");
     if (client->drop_pending) return true;
-    char *copy = copy_text(reason, error);
+    qa_arena storage;
+    char *copy = text_copy(wire,&storage,reason,error);
     if (!copy) return false;
     if (!application_unified_q3_text(provider, APPLICATION_Q3_SOURCE_DROP, (int32_t)slot, copy, error)) {
-        free(copy); return false;
+        qa_arena_destroy(&storage); return false;
     }
+    qa_arena_destroy(&client->drop_storage);
+    client->drop_storage=storage;
     client->drop_reason = copy;
     client->drop_pending = true;
     return true;
@@ -610,7 +627,8 @@ bool application_native_q3_wire_drop_transport(application_provider *provider, u
      * callback may have committed its peer retirement and must not replay. */
     client->drop_delivered = true;
     if (!wire->server.drop_client) return true;
-    char *reason = copy_text(client->drop_reason, error);
+    qa_arena reason_storage;
+    char *reason = text_copy(wire,&reason_storage,client->drop_reason,error);
     if (!reason) {
         client->drop_delivered = false;
         return false;
@@ -621,7 +639,7 @@ bool application_native_q3_wire_drop_transport(application_provider *provider, u
     uint64_t revision = wire->client_revision[slot];
     qa_error failure = {0};
     bool ok = wire->server.drop_client(wire->server.context, slot, reason, &failure);
-    free(reason);
+    qa_arena_destroy(&reason_storage);
     bool current = wire_owner(provider, NULL) == wire && provider->state.q3 == game &&
         wire->client_revision[slot] == revision && client->admitted && client->drop_pending &&
         qa_actor_id_equal(client->actor, actor) && source_binding(wire, slot, actor, NULL);
@@ -1019,8 +1037,8 @@ static bool send_command_transport(void *context,int32_t slot,const char *text,
         ok=application_q3_command_admit(&client->server_commands,event->text,
             config_index,fragment,&overflow,error);
         if(ok && overflow) {
+            qa_arena_destroy(&client->drop_storage);
             client->drop_reason="Server command overflow";
-            client->drop_reason_static=true;
             client->drop_pending=true;
         }
     }
@@ -1646,7 +1664,7 @@ static bool fields_failure(qa_source_save_io *io, const char *message)
     return application_fail(io->error, QA_ERROR_FORMAT, message);
 }
 
-static bool text_fields(qa_source_save_io *io, char **text)
+static bool text_fields(qa_source_save_io *io, qa_arena *storage, char **text)
 {
     bool present = *text != NULL;
     if (!qa_source_save_bool(io, &present) || !present) return !io->failed;
@@ -1656,7 +1674,7 @@ static bool text_fields(qa_source_save_io *io, char **text)
     if (io->direction == QA_SOURCE_SAVE_READ) {
         if (io->offset > io->input.size || length > io->input.size - io->offset)
             return fields_failure(io, "Native Q3 saved userinfo is truncated");
-        *text = malloc(length);
+        *text = qa_arena_alloc(storage,length,_Alignof(char),io->error);
         if (!*text) {
             io->failed = true;
             return application_fail(io->error, QA_ERROR_MEMORY, "Restoring native Q3 engine userinfo");
@@ -1987,8 +2005,9 @@ static bool client_fields(qa_source_save_io *io, native_q3_wire_client *client, 
     uint32_t failure_code = client->drop_failure.code;
     uint64_t failure_offset = client->drop_failure.offset;
     if (!actor_fields(io, &client->actor, checkpoint) || !qa_source_save_u32(io, &client->seat) ||
-        !text_fields(io, &client->userinfo) || !qa_source_save_bool(io, &client->admitted) ||
-        !text_fields(io, &client->drop_reason) ||
+        !text_fields(io,&client->userinfo_storage,&client->userinfo) ||
+        !qa_source_save_bool(io, &client->admitted) ||
+        !text_fields(io,&client->drop_storage,&client->drop_reason) ||
         !qa_source_save_bool(io, &client->drop_pending) ||
         !qa_source_save_bool(io, &client->drop_delivered) ||
         !qa_source_save_u32(io, &failure_code) ||
@@ -2176,7 +2195,8 @@ bool application_native_q3_wire_restore(application_provider *provider, qa_bytes
     candidate->max_clients = wire->max_clients;
     clients_clear(candidate);
     qa_source_save_io io = {0};
-    bool ok = qa_source_save_reader(&io, provider->application->session, bytes, error) &&
+    bool ok = text_storage_prepare(candidate,error) &&
+        qa_source_save_reader(&io, provider->application->session, bytes, error) &&
         wire_fields(&io, candidate, provider->owner, true) && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
     if (ok) ok=snapshots_prepare(candidate,error);
@@ -2189,6 +2209,7 @@ bool application_native_q3_wire_restore(application_provider *provider, qa_bytes
                 &candidate->clients[i].server_commands);
         }
         wire->snapshot_storage=candidate->snapshot_storage;candidate->snapshot_storage=NULL;
+        wire->text_storage=candidate->text_storage;candidate->text_storage=NULL;
         wire->max_clients = candidate->max_clients;
         wire->snapshot_bit = candidate->snapshot_bit;
         memset(candidate->clients, 0, sizeof(candidate->clients));
@@ -2275,7 +2296,8 @@ static bool carry_apply(application_provider *provider,
     candidate->provider = provider;
     clients_clear(candidate);
     qa_source_save_io io = {0};
-    bool ok = qa_source_save_reader(&io, provider->application->session,
+    bool ok = text_storage_prepare(candidate,error) &&
+        qa_source_save_reader(&io, provider->application->session,
         (qa_bytes){carry->bytes.data, carry->bytes.size}, error) &&
         wire_fields(&io, candidate, carry->owner, false) && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
@@ -2312,6 +2334,7 @@ static bool carry_apply(application_provider *provider,
                 &candidate->clients[i].server_commands);
         }
         wire->snapshot_storage=candidate->snapshot_storage;candidate->snapshot_storage=NULL;
+        wire->text_storage=candidate->text_storage;candidate->text_storage=NULL;
         memset(candidate->clients, 0, sizeof(candidate->clients));
         wire->max_clients = maximum;
         wire->snapshot_bit = candidate->snapshot_bit ^ 4;

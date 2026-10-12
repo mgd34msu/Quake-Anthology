@@ -3,6 +3,7 @@
 #include "network_q1_skin_commands.h"
 #include "neutral_config.h"
 #include "qa/application_network.h"
+#include "qa/console_cvars_prepare.h"
 #include "qa/ui_language.h"
 #include "qa/q1_chat_commands.h"
 #include "qa/source_frame_time.h"
@@ -32,7 +33,11 @@ struct frontend_network_q1_client {
     uint64_t input_sequence, input_sample;
     unsigned calls;
     bool configured, admitting, retired, closing, configuration_released, input_center;
-    char *pending_allskins, *userinfo, *userinfo_pending, *signon_name, *spawn_parameters;
+    char *pending_allskins, *signon_name, *spawn_parameters;
+    char userinfo[512], userinfo_pending[512];
+    bool has_userinfo_pending;
+    uint64_t userinfo_view, userinfo_revision, userinfo_language_view, userinfo_language_revision;
+    qa_ruleset_id userinfo_dialect;
     char *declared_name, *declared_parameters;
     size_t userinfo_next;
     uint8_t signon_color;
@@ -441,26 +446,14 @@ static frontend_remote_q1_source_options receiver_options(frontend_network_q1_cl
     .sample_seconds=o->options.demo_playback ? demo_sample_seconds : NULL,
     .demo_forced_track=o->demo_forced_track}; }
 static bool current_userinfo(frontend_network_q1_client *o,
-    const frontend_client_source_view *physical,qa_buffer *out,qa_error *error)
+    const frontend_client_source_view *physical,char out[512],qa_error *error)
 {
-    const size_t capacity=512;
     const char *language=NULL;
-    qa_buffer info={0};
-    if (!qa_cvars_info(physical->source.context.cvars,QA_CVAR_USERINFO,capacity,&info,error)) return false;
+    if (!qa_cvars_info_write(physical->source.context.cvars,QA_CVAR_USERINFO,sizeof(o->userinfo),out,error)) return false;
     if (!qa_ui_language_read(qa_application_cvars(o->options.frontend->application),
         qa_application_ui_preference_handles(o->options.frontend->application),
-        physical->source.context.physical_seat,&language,error)) { qa_buffer_free(&info); return false; }
-    uint8_t *data=realloc(info.data,capacity);
-    if (!data) {
-        qa_buffer_free(&info);
-        return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual QW userinfo language");
-    }
-    info.data=data;
-    if (!qa_q3_info_set((char *)info.data,capacity,"language",language, QA_Q3_INFO_STRICT, NULL,error)) {
-        qa_buffer_free(&info); return false;
-    }
-    info.size=strlen((char *)info.data);
-    *out=info; return true;
+        physical->source.context.physical_seat,&language,error)) return false;
+    return qa_q3_info_set(out,sizeof(o->userinfo),"language",language,QA_Q3_INFO_STRICT,NULL,error);
 }
 static bool complete_configuration(frontend_network_q1_client *o,qa_error *error)
 {
@@ -479,13 +472,8 @@ static bool complete_configuration(frontend_network_q1_client *o,qa_error *error
     frontend_remote_q1_source_options receiver=receiver_options(o);
     if(!frontend_remote_q1_source_create(o->options.frontend,&receiver,&o->source,error)) return false;
     if(qa_q1_is_qw(o->options.protocol)) {
-        qa_buffer info={0};
-        bool ok=current_userinfo(o,&physical,&info,error);
-        if(ok) {
-            o->userinfo=(char *)info.data; info=(qa_buffer){0};
-            ok=qa_qw_connect_create(o->options.qport,o->userinfo,&o->qw,error);
-        }
-        qa_buffer_free(&info); if(!ok) return false;
+        if(!current_userinfo(o,&physical,o->userinfo,error) ||
+            !qa_qw_connect_create(o->options.qport,o->userinfo,&o->qw,error)) return false;
     } else if(!qa_nq_connect_create(&o->nq,error)) return false;
     o->attachment=(qa_net_connect){.attachment=o->options.demo_playback ? QA_NET_LOCAL_SEAT : QA_NET_REMOTE,.endpoint=o->options.remote,
         .protocol=o->options.protocol,.seats=&o->binding,.seat_count=1,.composition=physical.source.configuration_generation};
@@ -533,44 +521,55 @@ static qa_q1_connect_state handshake(const frontend_network_q1_client *o)
 static bool userinfo_sync(frontend_network_q1_client *o,qa_error *error)
 {
     if(!o->qw) return true;
-    if(!o->userinfo_pending) {
-        frontend_client_source_view physical; qa_buffer info={0};
-        if(!frontend_client_source_read(o->physical,&physical,error) ||
-            !current_userinfo(o,&physical,&info,error)) return false;
-        if(strpbrk((char *)info.data,"\"\r\n")) {
-            qa_buffer_free(&info); return frontend_fail(error,QA_ERROR_FORMAT,"Invalid QW userinfo");
-        }
-        if(!strcmp(o->userinfo,(char *)info.data)) { qa_buffer_free(&info); return true; }
-        o->userinfo_pending=(char *)info.data; o->userinfo_next=0;
+    if(!o->has_userinfo_pending) {
+        frontend_client_source_view physical;
+        if(!frontend_client_source_read(o->physical,&physical,error)) return false;
+        const qa_cvars *variables=physical.source.context.cvars;
+        const qa_cvars *language=qa_application_cvars(o->options.frontend->application);
+        uint64_t view=qa_cvars_view_identity(variables);
+        uint64_t revision=qa_cvars_prepared_edit(variables)?0:qa_cvars_revision(variables);
+        uint64_t language_view=qa_cvars_view_identity(language);
+        uint64_t language_revision=qa_cvars_prepared_edit(language)?0:qa_cvars_revision(language);
+        qa_ruleset_id dialect=qa_cvars_dialect(variables);
+        if(revision && language_revision && view==o->userinfo_view && revision==o->userinfo_revision &&
+            language_view==o->userinfo_language_view && language_revision==o->userinfo_language_revision &&
+            dialect==o->userinfo_dialect) return true;
+        if(!current_userinfo(o,&physical,o->userinfo_pending,error)) return false;
+        if(strpbrk(o->userinfo_pending,"\"\r\n"))
+            return frontend_fail(error,QA_ERROR_FORMAT,"Invalid QW userinfo");
+        o->userinfo_view=view; o->userinfo_revision=revision;
+        o->userinfo_language_view=language_view; o->userinfo_language_revision=language_revision;
+        o->userinfo_dialect=dialect;
+        if(!strcmp(o->userinfo,o->userinfo_pending)) return true;
+        o->has_userinfo_pending=true; o->userinfo_next=0;
     }
     if(o->client.owner) {
-        qa_qw_info previous={0},current={0};
-        bool ok=qa_qw_info_parse(o->userinfo,&previous,error) &&
-            qa_qw_info_parse(o->userinfo_pending,&current,error);
-        size_t total=previous.count+current.count;
-        if(ok && o->userinfo_next>total) ok=false;
-        for(size_t i=o->userinfo_next;ok && i<total;++i) {
-            const char *key=i<previous.count?previous.rules[i].name:current.rules[i-previous.count].name;
-            bool duplicate=i>=previous.count && qa_qw_info_get(&previous,key)!=NULL;
-            const char *before=qa_qw_info_get(&previous,key),*after=qa_qw_info_get(&current,key);
-            if(!after) after="";
-            if(!duplicate && (!before || strcmp(before,after))) {
-                size_t capacity=strlen(key)+strlen(after)+14;
-                char *text=malloc(capacity);
-                if(!text) ok=frontend_fail(error,QA_ERROR_MEMORY,"Retaining reached QW setinfo command");
-                else {
-                    snprintf(text,capacity,"setinfo \"%s\" \"%s\"",key,after);
-                    ok=qa_network_q1_client_command(o->options.runtime,o->client,text,error);
-                    free(text);
+        size_t next=0;
+        for(unsigned phase=0;phase<2;++phase) {
+            const char *info=phase?o->userinfo_pending:o->userinfo;
+            const char *cursor=info;
+            qa_bytes key,value;
+            while(qa_info_next(&cursor,&key,&value)) {
+                qa_bytes first,before,after;
+                if(!qa_info_find(info,key,0,&first) || first.data!=value.data) continue;
+                if(next++<o->userinfo_next) continue;
+                bool has_before=qa_info_find(o->userinfo,key,QA_INFO_LAST,&before);
+                qa_info_find(o->userinfo_pending,key,QA_INFO_LAST,&after);
+                bool duplicate=phase && has_before;
+                if(!duplicate && (!has_before || !qa_text_bytes_equal(before,after,false))) {
+                    char text[sizeof(o->userinfo)+sizeof(o->userinfo_pending)+14];
+                    snprintf(text,sizeof(text),"setinfo \"%.*s\" \"%.*s\"",
+                        (int)key.size,(const char *)key.data,(int)after.size,(const char *)after.data);
+                    if(!qa_network_q1_client_command(o->options.runtime,o->client,text,error)) return false;
                 }
+                o->userinfo_next=next;
             }
-            if(ok) o->userinfo_next=i+1;
         }
-        qa_qw_info_free(&previous); qa_qw_info_free(&current);
-        if(!ok) return false;
+        if(o->userinfo_next>next) return false;
     }
     if(!qa_qw_connect_userinfo(o->qw,o->userinfo_pending,error)) return false;
-    free(o->userinfo); o->userinfo=o->userinfo_pending; o->userinfo_pending=NULL; o->userinfo_next=0;
+    memcpy(o->userinfo,o->userinfo_pending,strlen(o->userinfo_pending)+1);
+    o->has_userinfo_pending=false; o->userinfo_next=0;
     return true;
 }
 bool frontend_network_q1_client_admit(frontend_network_q1_client *o,const qa_net_connect *request,
@@ -736,7 +735,7 @@ bool frontend_network_q1_client_destroy(frontend_network_q1_client **owned,qa_er
     }
     o->closing=true; qa_nq_connect_destroy(o->nq); qa_qw_connect_destroy(o->qw);
     qa_vfs_destroy(o->skin_files); qa_vfs_destroy(o->content_files); qa_catalog_release(o->content_catalog);
-    free(o->pending_allskins); free(o->userinfo); free(o->userinfo_pending); free(o->signon_name); free(o->spawn_parameters);
+    free(o->pending_allskins); free(o->signon_name); free(o->spawn_parameters);
     free(o->declared_name); free(o->declared_parameters);
     free(o); *owned=NULL; return true;
 }
