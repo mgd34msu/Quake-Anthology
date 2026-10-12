@@ -46,6 +46,8 @@ struct frontend_equipment {
     frontend_equipment_media *media, *tail;
     qa_arena held_storage;
     qa_id_index held_lookups;
+    qa_id_index q1_hud_pictures;
+    const qa_strings *q1_hud_strings;
     bool admitting;
 };
 

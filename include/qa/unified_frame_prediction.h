@@ -29,7 +29,6 @@ struct qa_unified_frame_prediction {
     qa_movement_numeric numeric;
     qa_movement_profile profile;
     qa_movement_state state;
-    char *arsenal_provider, *character_provider;
     qa_string_id active_weapon;
     qa_unified_weapon_state weapon;
     qa_inventory_entry *ammo;

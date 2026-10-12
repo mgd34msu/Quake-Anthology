@@ -127,6 +127,8 @@ bool frontend_equipment_retire(qa_frontend *frontend, qa_error *error)
         qa_strings_destroy(lookup->strings);
     }
     qa_id_index_destroy(&frontend->equipment->held_lookups);
+    qa_id_index_destroy(&frontend->equipment->q1_hud_pictures);
+    frontend->equipment->q1_hud_strings = NULL;
     qa_arena_destroy(&frontend->equipment->held_storage);
     frontend->equipment->admitting=false;
     return true;
@@ -500,6 +502,30 @@ static const q1_hud_picture q1_hud_pictures[] = {
     {"q1:weapon/mg3:laser", "laser", "ui_h_weapon_laser", "sb_cells"},
     {"q1:weapon/mg3:mjolnir", NULL, "axe", "sb_cells"}
 };
+static bool q1_hud_pictures_bind(qa_frontend *f, qa_error *error)
+{
+    if (!f->equipment) {
+        f->equipment = calloc(1, sizeof(*f->equipment));
+        if (!f->equipment)
+            return frontend_fail(error, QA_ERROR_MEMORY, "Allocating retained equipment media owner");
+    }
+    frontend_equipment *equipment = f->equipment;
+    qa_strings *strings = qa_session_strings(qa_application_session(f->application));
+    if (equipment->q1_hud_strings == strings) return true;
+    qa_id_index *pictures = &equipment->q1_hud_pictures;
+    qa_id_index_clear(pictures);
+    equipment->q1_hud_strings = NULL;
+    pictures->storage = &equipment->held_storage;
+    size_t count = sizeof(q1_hud_pictures) / sizeof(*q1_hud_pictures);
+    if (!qa_id_index_reserve(pictures, count, error)) return false;
+    for (size_t i = 0; i < count; ++i) {
+        qa_string_id item;
+        if (!qa_strings_intern_cstr(strings, q1_hud_pictures[i].item, &item, error)) return false;
+        qa_id_index_insert(pictures, item, 0, i);
+    }
+    equipment->q1_hud_strings = strings;
+    return true;
+}
 static bool native_icon_declaration(qa_frontend *f,
     const qa_application_equipment_view *view, char key[192], char declaration[256], bool *present, qa_error *error)
 {
@@ -508,11 +534,11 @@ static bool native_icon_declaration(qa_frontend *f,
         !qa_application_equipment_current(f->application, view))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Native HUD icon requires its actual equipment source");
     if (view->family != QA_GAME_Q1 || !view->item) return true;
-    const char *name = qa_strings_cstr(qa_session_strings(qa_application_session(f->application)), view->item);
-    const q1_hud_picture *picture = NULL;
-    for (size_t i = 0; name && i < sizeof(q1_hud_pictures) / sizeof(*q1_hud_pictures); ++i)
-        if (!strcmp(name, q1_hud_pictures[i].item)) { picture = q1_hud_pictures + i; break; }
-    if (!picture) return true;
+    qa_id_index_entry *entry = f->equipment && f->equipment->q1_hud_strings ==
+        qa_session_strings(qa_application_session(f->application))
+        ? qa_id_index_find(&f->equipment->q1_hud_pictures, view->item, 0) : NULL;
+    if (!entry) return true;
+    const q1_hud_picture *picture = q1_hud_pictures + entry->value;
     const qa_launch_snapshot *launch = qa_application_launch(f->application);
     const char *instance = qa_application_provider_instance(f->application, view->provider);
     const qa_launch_instance *source = instance ? qa_launch_snapshot_find(launch, instance) : NULL;
@@ -541,7 +567,10 @@ bool frontend_equipment_media_native_icon_prepare(qa_frontend *f,
     const qa_application_equipment_view *view, const qa_material **out, qa_error *error)
 {
     char key[192], declaration[256]; bool present;
-    if (!out || *out || !native_icon_declaration(f, view, key, declaration, &present, error)) return false;
+    if (!out || *out) return false;
+    if (f && view && view->family == QA_GAME_Q1 && view->item &&
+        !q1_hud_pictures_bind(f, error)) return false;
+    if (!native_icon_declaration(f, view, key, declaration, &present, error)) return false;
     if (!present) return true;
     frontend_visual_owner_view media;
     if (!frontend_visual_media_acquire(f, view->provider, view->family, &media, error)) return false;
@@ -573,8 +602,8 @@ bool frontend_equipment_media_native_icon_read(qa_frontend *f,
 
 qa_hud_q1_variant frontend_q1_hud_variant(const qa_product *product)
 {
-    return product && !strcmp(product->campaign, "rogue") ? QA_HUD_Q1_ROGUE :
-        product && !strcmp(product->campaign, "hipnotic") ? QA_HUD_Q1_HIPNOTIC : QA_HUD_Q1_BASE;
+    return product && product->campaign_id == QA_CAMPAIGN_ROGUE ? QA_HUD_Q1_ROGUE :
+        product && product->campaign_id == QA_CAMPAIGN_HIPNOTIC ? QA_HUD_Q1_HIPNOTIC : QA_HUD_Q1_BASE;
 }
 static bool q1_hud_lump_prepare(qa_vfs *files, qa_scene_resources *images,
     qa_material_library *materials, const char *lump, qa_error *error)

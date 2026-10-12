@@ -69,8 +69,7 @@ static bool weapon(qa_application *app, application_provider *p, qa_actor_id id,
     const qa_inventory_entry *entries, size_t count, qa_error *e)
 {
     qa_item_id active;
-    if (!p->launch || !qa_application_weapon_read(app, id, &active, e) ||
-        !application_unified_frame_string(lease, &out->arsenal_provider, p->launch->selection.instance, e)) return false;
+    if (!p->launch || !qa_application_weapon_read(app, id, &active, e)) return false;
     out->active_weapon=active;
     qa_unified_weapon_state *w = &out->weapon;
     if (p->kind == APPLICATION_PROVIDER_Q1) {
@@ -141,9 +140,9 @@ static bool weapon(qa_application *app, application_provider *p, qa_actor_id id,
 }
 
 static bool animation(qa_application *app, application_provider *p, qa_actor_id id,
-    qa_unified_frame_prediction *out, qa_unified_frame_lease *lease, qa_error *e)
+    qa_unified_frame_prediction *out, qa_error *e)
 {
-    if (!p->launch || !application_unified_frame_string(lease, &out->character_provider, p->launch->selection.instance, e)) return false;
+    if (!p->launch) return false;
     qa_unified_animation_state *a = &out->animation;
     if (p->kind == APPLICATION_PROVIDER_Q1) {
         qa_q1_character_view v;
@@ -227,7 +226,7 @@ bool application_unified_prediction_build(qa_application *app,
     if (out->has_rerelease_origin) out->rerelease_origin = configuration.q2r_pml_origin;
     out->profile_id=configuration.profile_id;
     bool ok = weapon(app, a, player->actor, out, lease, entries, entry_count, e) &&
-        animation(app, c, player->actor, out, lease, e);
+        animation(app, c, player->actor, out, e);
     if (ok) {
         ok = application_unified_source_current(app, source) && application_unified_player_current(app, client, player) &&
             qa_actors_revision(registry) == revision &&
