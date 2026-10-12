@@ -110,38 +110,47 @@ bool qa_q1_game_check_client(qa_q1_game *g, qa_actor_id observer,
     return okay;
 }
 
-static bool snapshot_acquire(qa_q1_game *g, bool players, qa_builtin_snapshot_frame **out,
-                             qa_error *error) {
-    qa_builtin_snapshot_frame *snapshot = qa_builtin_snapshot_acquire(&g->snapshots, 0, error);
-    if (!snapshot)
+bool q1_snapshot_actors(qa_q1_game *g, qa_world_actor_snapshot *out, qa_error *error) {
+    if (!qa_world_snapshot_acquire(g->services.world, out, error))
         return false;
-    if (!(players ? qa_builtin_players(&g->services, &snapshot->snapshot, error)
-                  : qa_builtin_observations(&g->services, &snapshot->snapshot, error))) {
-        qa_builtin_snapshot_release(snapshot);
-        return false;
-    }
-    *out = snapshot;
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
+    uint32_t cursor = 0;
+    const qa_actor_record *record;
+    while (qa_actors_next(actors, &cursor, &record))
+        out->actors[out->count++] = record->id;
     return true;
 }
-
-bool q1_snapshot_actors(qa_q1_game *g, qa_builtin_snapshot_frame **out, qa_error *error) {
-    return snapshot_acquire(g, false, out, error);
-}
-bool q1_snapshot_players(qa_q1_game *g, qa_builtin_snapshot_frame **out, qa_error *error) {
-    return snapshot_acquire(g, true, out, error);
+bool q1_snapshot_players(qa_q1_game *g, qa_world_actor_snapshot *out, qa_error *error) {
+    if (!g->services.players) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "native gameplay needs the ordered client roster");
+        return false;
+    }
+    if (!qa_world_snapshot_acquire(g->services.world, out, error))
+        return false;
+    size_t count = 0;
+    if (!g->services.players(g->services.context, out->actors, out->capacity, &count, error)) {
+        qa_world_snapshot_release(out);
+        return false;
+    }
+    if (count > out->capacity) {
+        qa_world_snapshot_release(out);
+        qa_error_set(error, QA_ERROR_FORMAT, count, "native player roster exceeds actor capacity");
+        return false;
+    }
+    const qa_actor_registry *actors = qa_session_actors(g->services.session);
+    for (size_t i = 0; i < count; ++i)
+        if (qa_actors_get(actors, out->actors[i]))
+            out->actors[out->count++] = out->actors[i];
+    return true;
 }
 bool q1_snapshot_targets(qa_q1_game *g, qa_targets *targets, qa_string_id name,
-                         qa_builtin_snapshot_frame **out, qa_error *error) {
-    qa_builtin_snapshot_frame *snapshot = qa_builtin_snapshot_acquire(&g->snapshots,
-        qa_actors_capacity(qa_session_actors(g->services.session)), error);
-    if (!snapshot) return false;
+                         qa_world_actor_snapshot *out, qa_error *error) {
+    if (!qa_world_snapshot_acquire(g->services.world, out, error))
+        return false;
     qa_target_cursor cursor = {0};
     qa_actor_id actor;
-    size_t count = 0;
     while (qa_targets_next(targets, name, &cursor, &actor))
-        snapshot->snapshot.ids[count++] = actor;
-    snapshot->snapshot.count = count;
-    *out = snapshot;
+        out->actors[out->count++] = actor;
     return true;
 }
 
@@ -149,31 +158,24 @@ static bool radius_actor_include(void *context, qa_actor_id actor) {
     const q1_actor *native = q1_entity_const(context, actor);
     return native == NULL || native->physics.solid != QA_PHYSICS_NOT_SOLID;
 }
-bool q1_radius_snapshot(qa_q1_game *g, qa_vec3 origin, float radius, qa_builtin_snapshot_frame **out,
-                        qa_error *error) {
-    qa_builtin_snapshot_frame *snapshot = qa_builtin_snapshot_acquire(&g->snapshots,
-        qa_actors_capacity(qa_session_actors(g->services.session)), error);
-    if (!snapshot)
+bool q1_radius_snapshot(qa_q1_game *g, qa_vec3 origin, float radius,
+                        qa_world_actor_snapshot *out, qa_error *error) {
+    if (!qa_world_snapshot_acquire(g->services.world, out, error))
         return false;
     qa_world_actor_snapshot nearby;
     qa_world_radius_query query = {.origin = origin, .radius = radius,
         .metric = QA_WORLD_RADIUS_BOUNDS_CENTER, .include = radius_actor_include,
         .context = g, .read_policy = QA_WORLD_RADIUS_SKIP_FAILED,
-        .actor_storage = snapshot->snapshot.ids,
-        .actor_capacity = snapshot->snapshot.capacity};
+        .actor_storage = out->actors, .actor_capacity = out->capacity};
     if (!qa_world_radius_snapshot_capture(g->services.world, &query, &nearby, error)) {
-        qa_builtin_snapshot_release(snapshot);
+        qa_world_snapshot_release(out);
         return false;
     }
-    size_t count = 0;
     for (size_t i = 0; i < nearby.count; ++i) {
         qa_actor_id actor = nearby.actors[i];
-        if (!q1_alive(g, actor))
-            continue;
-        snapshot->snapshot.ids[count++] = actor;
+        if (q1_alive(g, actor))
+            out->actors[out->count++] = actor;
     }
     qa_world_snapshot_release(&nearby);
-    snapshot->snapshot.count = count;
-    *out = snapshot;
     return true;
 }

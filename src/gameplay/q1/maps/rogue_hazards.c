@@ -295,18 +295,18 @@ bool q1_map_rogue_hazard_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id othe
     if (entity->map->kind != Q1_MAP_ROGUE_QUAKE_KILL || !q1_map_player(g, other) ||
         !hazard(g, id) || !q1_alive(g, other))
         return true;
-    qa_builtin_snapshot_frame *snapshot;
+    qa_world_actor_snapshot snapshot = {0};
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     qa_actor_id quake = {0};
-    for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
-        q1_actor *candidate = hazard(g, snapshot->snapshot.ids[i]);
+    for (size_t i = 0; i < snapshot.count; ++i) {
+        q1_actor *candidate = hazard(g, snapshot.actors[i]);
         if (candidate && candidate->map->kind == Q1_MAP_ROGUE_QUAKE) {
             quake = candidate->id;
             break;
         }
     }
-    qa_builtin_snapshot_release(snapshot);
+    qa_world_snapshot_release(&snapshot);
     if (!quake.registry)
         return true;
     if (q1_alive(g, g->maps->world_actor))

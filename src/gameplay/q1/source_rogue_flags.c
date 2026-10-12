@@ -72,41 +72,36 @@ bool qa_q1_source_rogue_flag_read(qa_q1_game *g, qa_actor_id actor,
     *out = value;
     return true;
 }
-bool qa_q1_source_rogue_flags_snapshot(qa_q1_game *g, qa_actor_id **out,
-    size_t *count, qa_error *error) {
-    if (!g || !out || !count || g->destroy_pending || g->continuation_pending ||
+static int source_order(void *context, qa_actor_id left, qa_actor_id right) {
+    const qa_actor_registry *actors = context;
+    const qa_actor_record *first = qa_actors_get(actors, left);
+    const qa_actor_record *second = qa_actors_get(actors, right);
+    if (first->source_slot != second->source_slot)
+        return first->source_slot < second->source_slot ? -1 : 1;
+    return left.slot < right.slot ? -1 : left.slot > right.slot;
+}
+bool qa_q1_source_rogue_flags_snapshot(qa_q1_game *g, qa_world_actor_snapshot *out,
+    qa_error *error) {
+    if (!g || !out || g->destroy_pending || g->continuation_pending ||
         g->options.program != QA_Q1_ROGUE)
         return fail(error, (qa_actor_id){0}, "Rogue flags lost their physical source roster");
-    size_t total = 0;
-    for (uint32_t i = 0; i < g->capacity; ++i)
-        if (g->actors[i] && g->actors[i]->kind == Q1_SOURCE_ROGUE_FLAG) ++total;
-    qa_actor_id *rows = total ? malloc(total * sizeof(*rows)) : NULL;
-    if (total && !rows) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "Capturing Rogue source flags");
+    if (!qa_world_snapshot_acquire(g->services.world, out, error))
         return false;
-    }
-    size_t used = 0;
     const qa_actor_registry *actors = qa_session_actors(g->services.session);
     for (uint32_t i = 0; i < g->capacity; ++i) {
         q1_actor *e = g->actors[i];
         if (!e || e->kind != Q1_SOURCE_ROGUE_FLAG) continue;
         const qa_actor_record *record = qa_actors_get(actors, e->id);
         if (!record || record->owner != g->options.provider || !record->has_source) {
-            free(rows);
+            qa_world_snapshot_release(out);
             return fail(error, e->id, "Rogue flag lost its physical source ordinal");
         }
-        size_t at = used;
-        while (at && qa_actors_get(actors, rows[at - 1])->source_slot > record->source_slot) {
-            rows[at] = rows[at - 1];
-            --at;
-        }
-        rows[at] = e->id;
-        ++used;
+        out->actors[out->count++] = e->id;
     }
-    *out = rows;
-    *count = used;
+    qa_world_snapshot_sort(out, source_order, (void *)actors);
     return true;
 }
+
 bool qa_q1_source_rogue_flag_return(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(g, &operation, error)) return false;

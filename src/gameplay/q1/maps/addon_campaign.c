@@ -25,13 +25,13 @@ bool qa_q1_game_map_coop_spawn_grant(qa_q1_game *g, qa_actor_id actor, qa_actor_
 static bool activate_coop_spawns(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_actor_id id = e->id;
     qa_string_id target = e->target;
-    qa_builtin_snapshot_frame *players;
+    qa_world_actor_snapshot players = {0};
     if (!q1_snapshot_players(g, &players, error))
         return false;
     uint32_t weapons = 0;
     bool okay = true;
-    for (size_t i = 0; okay && i < players->snapshot.count && q1_alive(g, id); ++i) {
-        qa_actor_id player = players->snapshot.ids[i];
+    for (size_t i = 0; okay && i < players.count && q1_alive(g, id); ++i) {
+        qa_actor_id player = players.actors[i];
         if (!q1_alive(g, player))
             continue;
         uint32_t owned;
@@ -39,7 +39,7 @@ static bool activate_coop_spawns(qa_q1_game *g, q1_actor *e, qa_error *error) {
         if (okay)
             weapons |= owned;
     }
-    qa_builtin_snapshot_release(players);
+    qa_world_snapshot_release(&players);
     if (!okay || !q1_alive(g, id))
         return okay;
     qa_target_cursor cursor = {0};
@@ -101,14 +101,14 @@ bool q1_map_addon_sigil_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other,
     if (!e)
         return true;
     const char *message = qa_strings_cstr(qa_session_strings(g->services.session), e->map->netname);
-    qa_builtin_snapshot_frame *players;
+    qa_world_actor_snapshot players = {0};
     if (!q1_snapshot_players(g, &players, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && i < players->snapshot.count && q1_alive(g, id); ++i)
-        if (q1_alive(g, players->snapshot.ids[i]))
-            ok = q1_message(g, players->snapshot.ids[i], message ? message : "", error);
-    qa_builtin_snapshot_release(players);
+    for (size_t i = 0; ok && i < players.count && q1_alive(g, id); ++i)
+        if (q1_alive(g, players.actors[i]))
+            ok = q1_message(g, players.actors[i], message ? message : "", error);
+    qa_world_snapshot_release(&players);
     if (!ok)
         return false;
     e = campaign_actor(g, id);
@@ -147,10 +147,10 @@ bool q1_map_addon_sigil_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other,
         if (horde != 0) {
             if (!q1_snapshot_players(g, &players, error))
                 return false;
-            for (size_t i = 0; ok && i < players->snapshot.count && q1_alive(g, id); ++i)
-                if (q1_alive(g, players->snapshot.ids[i]))
-                    ok = q1_map_addon_hunger(g, players->snapshot.ids[i], (float)(g->time + 10), error);
-            qa_builtin_snapshot_release(players);
+            for (size_t i = 0; ok && i < players.count && q1_alive(g, id); ++i)
+                if (q1_alive(g, players.actors[i]))
+                    ok = q1_map_addon_hunger(g, players.actors[i], (float)(g->time + 10), error);
+            qa_world_snapshot_release(&players);
             if (!ok)
                 return false;
         }
@@ -227,12 +227,12 @@ bool q1_map_addon_campaign_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator
         return activate_coop_spawns(g, e, error);
     if (e->map->kind == Q1_MAP_EGG_OPENER) {
         qa_actor_id id = e->id;
-        qa_builtin_snapshot_frame *targets;
+        qa_world_actor_snapshot targets = {0};
         if (!q1_snapshot_targets(g, g->maps->options.targets, e->target, &targets, error))
             return false;
         bool ok = true;
-        for (size_t i = 0; ok && i < targets->snapshot.count && campaign_actor(g, id); ++i) {
-            qa_actor_id actor = targets->snapshot.ids[i];
+        for (size_t i = 0; ok && i < targets.count && campaign_actor(g, id); ++i) {
+            qa_actor_id actor = targets.actors[i];
             qa_authored_target fields;
             if (!qa_targets_read(g->maps->options.targets, actor, &fields))
                 continue;
@@ -247,7 +247,7 @@ bool q1_map_addon_campaign_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator
             else
                 ok = q1_map_fail(error, "Q1 egg opener requires the selected mover owner");
         }
-        qa_builtin_snapshot_release(targets);
+        qa_world_snapshot_release(&targets);
         return ok;
     }
     if (e->map->kind == Q1_MAP_RUNE_INDICATOR) {

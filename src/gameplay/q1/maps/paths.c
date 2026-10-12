@@ -40,28 +40,38 @@ bool qa_q1_game_path_change(qa_q1_game *g, qa_actor_id actor, const qa_q1_path_c
     }
     if (entity->kind != Q1_MONSTER)
         return q1_map_fail(error, "Q1 actor has no monster path continuation");
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    bool ok = true;
     q1_monster *m = &entity->state.monster;
     switch (change->kind) {
     case QA_Q1_PATH_VISIT:
         m->previous_corner = q1_ref_from(g, change->reference);
-        return true;
+        break;
     case QA_Q1_PATH_DESTINATION: {
         qa_body_state self, destination = {0};
         if ((change->target &&
              !qa_strings_cstr(qa_session_strings(g->services.session), change->target)) ||
-            (change->reference.registry && !q1_alive(g, change->reference)))
-            return q1_map_fail(error, "invalid Q1 path destination");
-        if (!qa_world_body_read(g->services.world, actor, &self, error))
-            return false;
+            (change->reference.registry && !q1_alive(g, change->reference))) {
+            ok = q1_map_fail(error, "invalid Q1 path destination");
+            goto done;
+        }
+        if (!qa_world_body_read(g->services.world, actor, &self, error)) {
+            ok = false;
+            goto done;
+        }
         if (!q1_alive(g, actor))
-            return true;
+            goto done;
         if (change->reference.registry &&
-            !qa_world_body_read(g->services.world, change->reference, &destination, error))
-            return false;
+            !qa_world_body_read(g->services.world, change->reference, &destination, error)) {
+            ok = false;
+            goto done;
+        }
         entity = q1_entity(g, actor);
         if (!entity || !entity->native || entity->kind != Q1_MONSTER ||
             (change->reference.registry && !q1_alive(g, change->reference)))
-            return true;
+            goto done;
         m = &entity->state.monster;
         m->path = change->reference.registry ? change->target : QA_STRING_NONE;
         entity->physics.goal = m->move_target = q1_ref_from(g, change->reference);
@@ -70,46 +80,58 @@ bool qa_q1_game_path_change(qa_q1_game *g, qa_actor_id actor, const qa_q1_path_c
         qa_vec3 direction = qa_vec_sub(destination.origin, self.origin);
         entity->physics.ideal_yaw =
             qa_vec_yaw(direction, QA_DIRECTION_FLOAT, true);
-        return true;
+        break;
     }
     case QA_Q1_PATH_PAUSE_END:
     case QA_Q1_PATH_STAND:
-        if (!isfinite(change->pause_until) || fabs(change->pause_until) > FLT_MAX)
-            return q1_map_fail(error, "invalid Q1 path pause deadline");
+        if (!isfinite(change->pause_until) || fabs(change->pause_until) > FLT_MAX) {
+            ok = q1_map_fail(error, "invalid Q1 path pause deadline");
+            goto done;
+        }
         m->pause_until = (float)change->pause_until;
-        return (change->kind == QA_Q1_PATH_PAUSE_END && !m->path_end) ||
-               q1_monster_play(g, entity, m->species->stand, error);
+        ok = (change->kind == QA_Q1_PATH_PAUSE_END && !m->path_end) ||
+             q1_monster_play(g, entity, m->species->stand, error);
+        break;
     case QA_Q1_PATH_CANCEL_PAUSE:
         m->pause_until = 0;
         m->addon.waiting = m->addon.path_wait = false;
         m->addon.normal_use = true;
-        return true;
+        break;
     case QA_Q1_PATH_FOLLOW_BEGIN: {
         uint16_t frame = (m->species->walk);
-        if (frame == UINT16_MAX)
-            return q1_map_fail(error, "Q1 follow target has no walk continuation");
+        if (frame == UINT16_MAX) {
+            ok = q1_map_fail(error, "Q1 follow target has no walk continuation");
+            goto done;
+        }
         m->old_enemy = q1_ref_from(g, change->reference);
         m->enemy = entity->physics.enemy = (q1_ref){0};
         m->next_frame = frame;
         entity->think = Q1_THINK_MONSTER_FRAME;
-        return true;
+        break;
     }
     case QA_Q1_PATH_FOLLOW_UNTIL:
-        if (!isfinite(change->follow_until) || fabs(change->follow_until) > FLT_MAX)
-            return q1_map_fail(error, "invalid Q1 follow cooldown deadline");
+        if (!isfinite(change->follow_until) || fabs(change->follow_until) > FLT_MAX) {
+            ok = q1_map_fail(error, "invalid Q1 follow cooldown deadline");
+            goto done;
+        }
         {
             qa_authored_monster *row = g->maps ? qa_targets_monster(g->maps->options.targets, actor) : NULL;
             if (row) row->follow_until_ns = (uint64_t)(change->follow_until * 1e9);
             else m->follow_until = (float)change->follow_until;
         }
-        return true;
+        break;
     case QA_Q1_PATH_FOUND:
-        return !q1_alive(g, change->reference) ||
-               q1_monster_found(g, entity, change->reference, error);
+        ok = !q1_alive(g, change->reference) ||
+             q1_monster_found(g, entity, change->reference, error);
+        break;
     case QA_Q1_PATH_OWNER:
+    default:
+        ok = q1_map_fail(error, "unknown Q1 path change");
         break;
     }
-    return q1_map_fail(error, "unknown Q1 path change");
+done:
+    qa_q1_game_operation_end(&operation);
+    return ok;
 }
 
 static bool read_path(qa_q1_game *g, qa_actor_id actor, qa_q1_path_state *out) {
@@ -186,15 +208,15 @@ bool q1_map_path_touch(qa_q1_game *g, q1_actor *corner, qa_actor_id actor, qa_er
 
 bool q1_map_path_use(qa_q1_game *g, q1_actor *trigger, qa_error *error) {
     qa_actor_id trigger_id = trigger->id;
-    qa_builtin_snapshot_frame *targets;
+    qa_world_actor_snapshot targets = {0};
     if (!q1_snapshot_targets(g, g->maps->options.targets, trigger->target, &targets, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; i < targets->snapshot.count && q1_alive(g, trigger_id); ++i) {
+    for (size_t i = 0; i < targets.count && q1_alive(g, trigger_id); ++i) {
         trigger = q1_entity(g, trigger_id);
         if (!trigger || !trigger->map)
             break;
-        qa_actor_id actor = targets->snapshot.ids[i];
+        qa_actor_id actor = targets.actors[i];
         if (!q1_alive(g, actor))
             continue;
         if (trigger->map->kind == Q1_MAP_CANCEL_PAUSE) {
@@ -228,7 +250,7 @@ bool q1_map_path_use(qa_q1_game *g, q1_actor *trigger, qa_error *error) {
         if (!ok)
             break;
     }
-    qa_builtin_snapshot_release(targets);
+    qa_world_snapshot_release(&targets);
     return ok;
 }
 

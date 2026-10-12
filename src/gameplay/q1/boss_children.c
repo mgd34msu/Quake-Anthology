@@ -125,12 +125,12 @@ fail:
     return false;
 }
 bool q1_boss_cleanup(qa_q1_game *g, qa_error *error) {
-    qa_builtin_snapshot_frame *snapshot;
+    qa_world_actor_snapshot snapshot = {0};
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
-        q1_actor *e = q1_entity(g, snapshot->snapshot.ids[i]);
+    for (size_t i = 0; i < snapshot.count; ++i) {
+        q1_actor *e = q1_entity(g, snapshot.actors[i]);
         if (e && e->kind == Q1_BOSS_CHILD &&
             (q1_classnamed(g, e->id, g->runtime_names[Q1_NAME_OLDNEW_CHILD]) || q1_classnamed(g, e->id, g->runtime_names[Q1_NAME_OLDNEW_EYE])) &&
             !q1_boss_child_schedule(g, e, Q1_CHILD_CLEANUP, .1, error)) {
@@ -138,7 +138,7 @@ bool q1_boss_cleanup(qa_q1_game *g, qa_error *error) {
             break;
         }
     }
-    qa_builtin_snapshot_release(snapshot);
+    qa_world_snapshot_release(&snapshot);
     if (!ok)
         return false;
     q1_actor *timer;
@@ -347,16 +347,16 @@ bool q1_boss_child_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
     case Q1_CHILD_CLEANUP:
         return q1_damage(g, e->id, e->id, e->id, 5000, QA_Q1_WEAPON_COUNT, error);
     case Q1_CHILD_ZOMBIE_CLEANUP: {
-        qa_builtin_snapshot_frame *snapshot;
+        qa_world_actor_snapshot snapshot = {0};
         if (!q1_snapshot_actors(g, &snapshot, error))
             return false;
         qa_actor_id zombie = {0};
-        for (size_t i = 0; i < snapshot->snapshot.count; ++i)
-            if (q1_classnamed(g, snapshot->snapshot.ids[i], g->runtime_names[Q1_NAME_MONSTER_SZOMBIE])) {
-                zombie = snapshot->snapshot.ids[i];
+        for (size_t i = 0; i < snapshot.count; ++i)
+            if (q1_classnamed(g, snapshot.actors[i], g->runtime_names[Q1_NAME_MONSTER_SZOMBIE])) {
+                zombie = snapshot.actors[i];
                 break;
             }
-        qa_builtin_snapshot_release(snapshot);
+        qa_world_snapshot_release(&snapshot);
         if (zombie.registry &&
             !q1_damage(g, zombie, g->services.physics->world_actor,
                        g->services.physics->world_actor, 500, QA_Q1_WEAPON_COUNT, error))

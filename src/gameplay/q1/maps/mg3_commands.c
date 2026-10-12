@@ -19,16 +19,16 @@ bool qa_q1_game_map_effects(const qa_q1_game *g, qa_actor_id actor, uint32_t *ou
     return true;
 }
 static bool cleanup_markers(qa_q1_game *g, qa_string_id name, qa_error *error) {
-    qa_builtin_snapshot_frame *snapshot;
+    qa_world_actor_snapshot snapshot = {0};
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && !g->destroy_pending && i < snapshot->snapshot.count; ++i) {
-        q1_actor *marker = q1_entity(g, snapshot->snapshot.ids[i]);
+    for (size_t i = 0; ok && !g->destroy_pending && i < snapshot.count; ++i) {
+        q1_actor *marker = q1_entity(g, snapshot.actors[i]);
         if (marker && marker->native && marker->classname == name)
             ok = q1_remove(g, marker, error);
     }
-    qa_builtin_snapshot_release(snapshot);
+    qa_world_snapshot_release(&snapshot);
     return ok;
 }
 bool q1_map_mg3_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impulse, bool *handled,
@@ -153,11 +153,11 @@ static bool marker_update(qa_q1_game *g, qa_actor_id player, qa_actor_id target,
     return true;
 }
 static bool marker_frame(qa_q1_game *g, qa_actor_id player, qa_vec3 eye,
-                          qa_builtin_snapshot_frame *snapshot, bool secret, qa_error *error) {
+                          const qa_world_actor_snapshot *snapshot, bool secret, qa_error *error) {
     qa_string_id target_name = g->runtime_names[secret ? Q1_NAME_TRIGGER_SECRET : Q1_NAME_TRIGGER_CHANGELEVEL];
     qa_string_id marker_name = g->runtime_names[secret ? Q1_NAME_CLASS_SECRET_MARKER : Q1_NAME_CLASS_EXIT_MARKER];
-    for (size_t i = 0; i < snapshot->snapshot.count && q1_alive(g, player); ++i) {
-        qa_actor_id id = snapshot->snapshot.ids[i];
+    for (size_t i = 0; i < snapshot->count && q1_alive(g, player); ++i) {
+        qa_actor_id id = snapshot->actors[i];
         q1_actor *marker = q1_entity(g, id);
         if (marker && marker->native && marker->classname == marker_name &&
             !target_class(g, q1_ref_actor(g, marker->owner), target_name)) {
@@ -171,11 +171,11 @@ static bool marker_frame(qa_q1_game *g, qa_actor_id player, qa_vec3 eye,
     }
     return true;
 }
-static bool monster_frame(qa_q1_game *g, qa_actor_id player, qa_builtin_snapshot_frame *snapshot,
+static bool monster_frame(qa_q1_game *g, qa_actor_id player, const qa_world_actor_snapshot *snapshot,
                            qa_error *error) {
     qa_string_id resource = g->runtime_names[Q1_NAME_RESOURCE_DEBUG_BOUNDS];
-    for (size_t i = 0; i < snapshot->snapshot.count && q1_alive(g, player); ++i) {
-        qa_actor_id id = snapshot->snapshot.ids[i];
+    for (size_t i = 0; i < snapshot->count && q1_alive(g, player); ++i) {
+        qa_actor_id id = snapshot->actors[i];
         q1_actor *native = q1_entity(g, id);
         bool active = native && native->native && (native->physics.flags & QA_PHYSICS_MONSTER);
         bool waiting = native && native->native && native->kind == Q1_MONSTER &&
@@ -223,16 +223,16 @@ bool qa_q1_game_map_addon_player_frame(qa_q1_game *g, qa_actor_id actor, qa_vec3
     if (!qa_q1_game_operation_begin(g, &operation, error))
         return false;
     qa_body_state body = {0};
-    qa_builtin_snapshot_frame *snapshot = NULL;
+    qa_world_actor_snapshot snapshot = {0};
     bool ok = qa_world_body_read(g->services.world, actor, &body, error);
     if (ok && q1_alive(g, actor))
         ok = q1_snapshot_actors(g, &snapshot, error);
     qa_vec3 eye = qa_vec_add(body.origin, view_offset);
-    if (ok && snapshot) {
-        ok = (!secret || marker_frame(g, actor, eye, snapshot, true, error)) &&
-             (!exit || marker_frame(g, actor, eye, snapshot, false, error)) &&
-             (!monster || monster_frame(g, actor, snapshot, error));
-        qa_builtin_snapshot_release(snapshot);
+    if (ok && snapshot.actors) {
+        ok = (!secret || marker_frame(g, actor, eye, &snapshot, true, error)) &&
+             (!exit || marker_frame(g, actor, eye, &snapshot, false, error)) &&
+             (!monster || monster_frame(g, actor, &snapshot, error));
+        qa_world_snapshot_release(&snapshot);
     }
     if (ok && !qa_q1_game_operation_live(&operation)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "MG3 map source retired during player frame");

@@ -446,16 +446,16 @@ static bool capture(rogue_call *call, qa_actor_id actor, bool alternate, qa_erro
             write_number(call, rows[i], QA_Q1_ROGUE_FLAGS, (uint32_t)qa_source_float_to_i32((float)(other_flags)) & ~UINT32_C(3), error);
     }
     free(rows);
-    rows = NULL;
-    if (okay) okay = qa_q1_source_rogue_flags_snapshot(call->operation.game, &rows, &count, error);
-    for (size_t i = 0; okay && i < count; ++i) {
+    qa_world_actor_snapshot flag_rows = {0};
+    if (okay) okay = qa_q1_source_rogue_flags_snapshot(call->operation.game, &flag_rows, error);
+    for (size_t i = 0; okay && i < flag_rows.count; ++i) {
         qa_q1_source_rogue_flag_view flag;
-        okay = qa_q1_source_rogue_flag_read(call->operation.game, rows[i], &flag, error);
+        okay = qa_q1_source_rogue_flag_read(call->operation.game, flag_rows.actors[i], &flag, error);
         if (okay && (alternate ? flag.team == (((uint32_t)qa_source_float_to_i32((float)(flags)) & 1) ? 5 : 14) :
             mode == 5 ? flag.team == 0 : flag.team != 0))
-            okay = qa_q1_source_rogue_flag_return(call->operation.game, rows[i], error) && current(call, error);
+            okay = qa_q1_source_rogue_flag_return(call->operation.game, flag_rows.actors[i], error) && current(call, error);
     }
-    free(rows);
+    qa_world_snapshot_release(&flag_rows);
     if (okay && alternate) okay = write_number(call, actor, QA_Q1_ROGUE_FLAGS, (uint32_t)qa_source_float_to_i32((float)(flags)) & ~UINT32_C(3), error);
     return okay;
 }
@@ -641,20 +641,19 @@ bool application_native_q1_rogue_player_died(application_provider *source,
         }
         free(rows);
     }
-    qa_actor_id *rows = NULL;
-    size_t count;
-    if (okay) okay = qa_q1_source_rogue_flags_snapshot(call.operation.game, &rows, &count, error);
-    for (size_t i = 0; okay && i < count; ++i) {
+    qa_world_actor_snapshot flag_rows = {0};
+    if (okay) okay = qa_q1_source_rogue_flags_snapshot(call.operation.game, &flag_rows, error);
+    for (size_t i = 0; okay && i < flag_rows.count; ++i) {
         qa_q1_source_rogue_flag_view flag;
-        okay = qa_q1_source_rogue_flag_read(call.operation.game, rows[i], &flag, error);
+        okay = qa_q1_source_rogue_flag_read(call.operation.game, flag_rows.actors[i], &flag, error);
         if (okay && flag.team == (mode == 5 && ((uint32_t)qa_source_float_to_i32((float)(flags)) & 1) ? 0 :
             ((uint32_t)qa_source_float_to_i32((float)(flags)) & 1) ? 5 : ((uint32_t)qa_source_float_to_i32((float)(flags)) & 2) ? 14 : -1)) {
             okay = write_number(&call, actor, QA_Q1_ROGUE_FLAGS, (uint32_t)qa_source_float_to_i32((float)(flags)) & ~UINT32_C(3), error) &&
-                flag_drop_call(&call, rows[i], error);
+                flag_drop_call(&call, flag_rows.actors[i], error);
             break;
         }
     }
-    free(rows);
+    qa_world_snapshot_release(&flag_rows);
 finish:
     qa_q1_game_operation_end(&call.operation);
     return okay;
@@ -894,21 +893,20 @@ bool application_native_q1_rogue_impulse(application_provider *source,
     if (okay && deathmatch != 0 && mode != 4 && mode != 5 && mode != 6)
         okay = message(&call, actor, "$qc_ctf_disabled", false, NULL, 0, error);
     if (okay && deathmatch != 0 && (mode == 4 || mode == 5 || mode == 6)) {
-        qa_actor_id *flags = NULL;
-        size_t count;
-        okay = qa_q1_source_rogue_flags_snapshot(call.operation.game, &flags, &count, error) &&
+        qa_world_actor_snapshot flags = {0};
+        okay = qa_q1_source_rogue_flags_snapshot(call.operation.game, &flags, error) &&
             player_required(&call, actor, error);
         qa_q1_source_rogue_flag_view red = {0}, blue = {0}, neutral = {0};
         bool has_red = false, has_blue = false, has_neutral = false;
-        for (size_t i = 0; okay && i < count; ++i) {
+        for (size_t i = 0; okay && i < flags.count; ++i) {
             qa_q1_source_rogue_flag_view view;
-            okay = qa_q1_source_rogue_flag_read(call.operation.game, flags[i], &view, error);
+            okay = qa_q1_source_rogue_flag_read(call.operation.game, flags.actors[i], &view, error);
             if (!okay) break;
             if (view.team == 5 && !has_red) { red = view; has_red = true; }
             else if (view.team == 14 && !has_blue) { blue = view; has_blue = true; }
             else if (view.team == 0 && !has_neutral) { neutral = view; has_neutral = true; }
         }
-        free(flags);
+        qa_world_snapshot_release(&flags);
         if (okay && mode == 5) okay = flag_report(&call, actor,
             has_neutral ? &neutral : NULL, "", false, true, mode, error);
         else if (okay) {

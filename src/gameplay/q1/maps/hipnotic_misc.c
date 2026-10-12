@@ -325,7 +325,7 @@ static bool effect_finale(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return false;
     if (!q1_alive(g, id))
         return true;
-    qa_builtin_snapshot_frame *players;
+    qa_world_actor_snapshot players = {0};
     if (!q1_snapshot_players(g, &players, error))
         return false;
     bool ok = true;
@@ -334,7 +334,7 @@ static bool effect_finale(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         qa_authored_target authored;
         qa_body_state source;
         qa_actor_id position = (entity->spawnflags & 1)
-                                  ? players->snapshot.count ? players->snapshot.ids[0]
+                                  ? players.count ? players.actors[0]
                                                               : g->maps->world_actor
                                   : path;
         ok = qa_targets_read(g->maps->options.targets, path, &authored) &&
@@ -348,11 +348,11 @@ static bool effect_finale(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     }
     if (ok && q1_alive(g, id) && !g->maps->options.control_player)
         ok = q1_map_fail(error, "Hipnotic finale requires selected player control owners");
-    for (size_t i = 0; ok && i < players->snapshot.count && q1_alive(g, id); ++i)
-        if (q1_alive(g, players->snapshot.ids[i]))
+    for (size_t i = 0; ok && i < players.count && q1_alive(g, id); ++i)
+        if (q1_alive(g, players.actors[i]))
             ok = g->maps->options.control_player(g->maps->options.context,
-                players->snapshot.ids[i], camera_body.origin, angles, qa_v3(0, 0, 0), error);
-    qa_builtin_snapshot_release(players);
+                players.actors[i], camera_body.origin, angles, qa_v3(0, 0, 0), error);
+    qa_world_snapshot_release(&players);
     if (!ok || !q1_alive(g, id))
         return ok;
     g->maps->finale.origin = camera_body.origin;

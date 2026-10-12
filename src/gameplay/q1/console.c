@@ -660,13 +660,13 @@ static bool source_world_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impul
         if (!q1_message(g, (qa_actor_id){0}, g->options.edition == QA_Q1_CLASSIC
                                                ? "Genocide!\n" : "$qc_genocide_cheat", error))
             return false;
-        qa_builtin_snapshot_frame *entities;
+        qa_world_actor_snapshot entities = {0};
         if (!q1_snapshot_actors(g, &entities, error))
             return false;
         qa_actor_id world = g->maps ? g->maps->world_actor : (qa_actor_id){0};
         bool ok = true;
-        for (size_t i = 0; ok && i < entities->snapshot.count && q1_alive(g, actor); ++i) {
-            qa_actor_id target = entities->snapshot.ids[i];
+        for (size_t i = 0; ok && i < entities.count && q1_alive(g, actor); ++i) {
+            qa_actor_id target = entities.actors[i];
             qa_builtin_actor_traits traits = {0};
             if (g->services.actor_traits)
                 g->services.actor_traits(g->services.context, target, &traits);
@@ -674,7 +674,7 @@ static bool source_world_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impul
             if (traits.monster && health > 0 && q1_alive(g, target))
                 ok = q1_damage(g, target, world, world, health + 10, QA_Q1_WEAPON_COUNT, error);
         }
-        qa_builtin_snapshot_release(entities);
+        qa_world_snapshot_release(&entities);
         return ok;
     }
     if (hip && impulse == 206) {
@@ -687,14 +687,14 @@ static bool source_world_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impul
     }
     if (hip && (impulse == 202 || impulse == 203)) {
         *handled = true;
-        qa_builtin_snapshot_frame *entities;
+        qa_world_actor_snapshot entities = {0};
         if (!q1_snapshot_actors(g, &entities, error))
             return false;
         qa_actor_id world = g->maps ? g->maps->world_actor : (qa_actor_id){0};
         bool ok = true;
         size_t ordinal = 0;
-        for (size_t i = 0; ok && i < entities->snapshot.count && !g->destroy_pending; ++i) {
-            qa_actor_id target = entities->snapshot.ids[i];
+        for (size_t i = 0; ok && i < entities.count && !g->destroy_pending; ++i) {
+            qa_actor_id target = entities.actors[i];
             if (qa_actor_id_equal(target, world) || !q1_alive(g, target))
                 continue;
             ++ordinal;
@@ -723,7 +723,7 @@ static bool source_world_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impul
                          body.origin.z);
             ok = q1_developer_message(g, text, error);
         }
-        qa_builtin_snapshot_release(entities);
+        qa_world_snapshot_release(&entities);
         return ok;
     }
     if (g->options.program == QA_Q1_MG3 && impulse >= 222 && impulse <= 224) {

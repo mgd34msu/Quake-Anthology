@@ -142,12 +142,12 @@ static bool finale_begin(qa_q1_game *g, q1_actor *oldone, qa_error *error) {
     if (!qa_q1_level_cutscene(g->maps->options.level, start, q1_ref_actor(g, oldone->state.monster.enemy),
                               g->maps->finale.exit_after, error))
         return false;
-    qa_builtin_snapshot_frame *players;
+    qa_world_actor_snapshot players = {0};
     if (!q1_snapshot_players(g, &players, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; i < players->snapshot.count && ok; ++i) {
-        qa_actor_id actor = players->snapshot.ids[i];
+    for (size_t i = 0; i < players.count && ok; ++i) {
+        qa_actor_id actor = players.actors[i];
         if (!q1_alive(g, actor))
             continue;
         qa_body_state body;
@@ -173,7 +173,7 @@ static bool finale_begin(qa_q1_game *g, q1_actor *oldone, qa_error *error) {
         traits.can_take_damage = false;
         ok = qa_combat_set_traits(g->services.combat, actor, &traits, error);
     }
-    qa_builtin_snapshot_release(players);
+    qa_world_snapshot_release(&players);
     if (!ok || !q1_map_finale_emit(g, 1, "", error))
         return false;
     const char *map =
@@ -238,8 +238,14 @@ bool qa_q1_game_map_finale(qa_q1_game *g, qa_actor_id actor, bool finish, qa_err
         (g->options.edition != QA_Q1_CLASSIC && !g->options.coop &&
          !g->maps->options.finish_campaign))
         return q1_map_fail(error, "invalid Q1 finale binding or source actor");
-    return finish ? finale_finish(g, oldone, error) : finale_begin(g, oldone, error);
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    bool ok = finish ? finale_finish(g, oldone, error) : finale_begin(g, oldone, error);
+    qa_q1_game_operation_end(&operation);
+    return ok;
 }
+
 void qa_q1_game_map_dismiss_finale(qa_q1_game *g) {
     if (g && !g->destroy_pending && g->maps) {
         g->maps->finale_dismissed = true;

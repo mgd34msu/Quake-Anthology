@@ -17,9 +17,9 @@ bool q1_hipnotic_lightning_claimed(const qa_q1_game *g, qa_actor_id actor) {
 }
 
 static bool scan(qa_q1_game *g, q1_actor *e, float radius, bool monsters, bool unclaimed,
-                  qa_builtin_snapshot_frame **out, qa_error *error) {
+                  qa_world_actor_snapshot *out, qa_error *error) {
     qa_actor_id id = e->id;
-    *out = NULL;
+    *out = (qa_world_actor_snapshot){0};
     qa_vec3 view_offset = e->map->view_offset;
     qa_body_state self;
     if (!qa_world_body_read(g->services.world, id, &self, error))
@@ -27,17 +27,16 @@ static bool scan(qa_q1_game *g, q1_actor *e, float radius, bool monsters, bool u
     if (!q1_alive(g, id))
         return true;
     qa_vec3 eye = qa_vec_add(self.origin, view_offset);
-    qa_builtin_snapshot_frame *list = qa_builtin_snapshot_acquire(&g->snapshots,
-        qa_actors_capacity(qa_session_actors(g->services.session)), error);
-    if (!list)
+    if (!qa_world_snapshot_acquire(g->services.world, out, error))
         return false;
+    qa_world_actor_snapshot *list = out;
     qa_world_actor_snapshot nearby;
     qa_world_radius_query query = {.origin = self.origin, .radius = radius,
         .metric = QA_WORLD_RADIUS_BOUNDS_CENTER, .read_policy = QA_WORLD_RADIUS_SKIP_FAILED,
-        .actor_storage = list->snapshot.ids,
-        .actor_capacity = list->snapshot.capacity};
+        .actor_storage = list->actors,
+        .actor_capacity = list->capacity};
     if (!qa_world_radius_snapshot_capture(g->services.world, &query, &nearby, error)) {
-        qa_builtin_snapshot_release(list);
+        qa_world_snapshot_release(list);
         return false;
     }
     for (size_t i = 0; i < nearby.count / 2; ++i) {
@@ -81,20 +80,19 @@ static bool scan(qa_q1_game *g, q1_actor *e, float radius, bool monsters, bool u
                                                           native ? target.view_height : 0));
         if (!q1_trace(g, eye, end, id, false, &trace, error)) {
             qa_world_snapshot_release(&nearby);
-            qa_builtin_snapshot_release(list);
+            qa_world_snapshot_release(list);
             return false;
         }
         if (!q1_alive(g, id))
             break;
         if (!q1_alive(g, actor) || trace.fraction != 1 || (trace.in_open && trace.in_water))
             continue;
-        list->snapshot.ids[count++] = actor;
+        list->actors[count++] = actor;
         if (unclaimed && (double)count == e->count)
             break;
     }
     qa_world_snapshot_release(&nearby);
-    list->snapshot.count = count;
-    *out = list;
+    list->count = count;
     return true;
 }
 
@@ -265,18 +263,18 @@ static bool tesla_tick(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return q1_map_schedule(g, e, .25, Q1_MAP_TESLA_TICK, error);
     uint8_t attack = s->pending.hazard.attack;
     if (attack <= 1) {
-        qa_builtin_snapshot_frame *list;
+        qa_world_actor_snapshot list = {0};
         if (!scan(g, e, s->distance, e->spawnflags & 1, true, &list, error))
             return false;
-        if (!list)
+        if (!list.actors)
             return true;
-        bool found = list->snapshot.count != 0, ok = true;
+        bool found = list.count != 0, ok = true;
         if (attack == 1) {
             qa_body_state body;
             if (!qa_world_body_read(g->services.world, id, &body, error))
                 ok = false;
-            for (size_t i = 0; ok && i < list->snapshot.count && q1_alive(g, id); ++i) {
-                qa_actor_id actor = list->snapshot.ids[i];
+            for (size_t i = 0; ok && i < list.count && q1_alive(g, id); ++i) {
+                qa_actor_id actor = list.actors[i];
                 if (!q1_alive(g, actor))
                     continue;
                 ok = q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_HIPWEAP_MJOLHIT_WAV], 0, 1, 1, error);
@@ -284,7 +282,7 @@ static bool tesla_tick(qa_q1_game *g, q1_actor *e, qa_error *error) {
                     ok = make_bolt(g, e, true, body.origin, qa_v3(0, 0, 0), actor, error);
             }
         }
-        qa_builtin_snapshot_release(list);
+        qa_world_snapshot_release(&list);
         if (!ok || !q1_alive(g, id))
             return ok;
         if (attack == 1) {
@@ -359,22 +357,22 @@ static bool mine_home(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (!q1_alive(g, id))
         return true;
     if (s->pending.hazard.search_until < g->time) {
-        qa_builtin_snapshot_frame *list;
+        qa_world_actor_snapshot list = {0};
         if (!scan(g, e, 2000, false, false, &list, error))
             return false;
-        if (!list)
+        if (!list.actors)
             return true;
         float closest = 2000;
         qa_actor_id selected = {0};
-        for (size_t i = 0; i < list->snapshot.count; ++i)
-            if (qa_world_body_read(g->services.world, list->snapshot.ids[i], &target, NULL)) {
+        for (size_t i = 0; i < list.count; ++i)
+            if (qa_world_body_read(g->services.world, list.actors[i], &target, NULL)) {
                 float distance = qa_vec_length(qa_vec_sub(target.origin, body.origin));
                 if (distance < closest) {
                     closest = distance;
-                    selected = list->snapshot.ids[i];
+                    selected = list.actors[i];
                 }
             }
-        qa_builtin_snapshot_release(list);
+        qa_world_snapshot_release(&list);
         if (!q1_alive(g, id))
             return true;
         if (selected.registry && !q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_HIPITEMS_SPIKMINE_WAV], 2, 1, 1, error))
@@ -408,14 +406,14 @@ static bool gravity_pull(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return false;
     if (!q1_alive(g, id))
         return true;
-    qa_builtin_snapshot_frame *list;
+    qa_world_actor_snapshot list = {0};
     if (!scan(g, e, e->map->distance, e->spawnflags & 1, true, &list, error))
         return false;
-    if (!list)
+    if (!list.actors)
         return true;
     bool ok = true;
-    for (size_t i = 0; ok && i < list->snapshot.count && q1_alive(g, id); ++i) {
-        qa_actor_id actor = list->snapshot.ids[i];
+    for (size_t i = 0; ok && i < list.count && q1_alive(g, id); ++i) {
+        qa_actor_id actor = list.actors[i];
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, actor, &body, NULL))
             continue;
@@ -434,7 +432,7 @@ static bool gravity_pull(qa_q1_game *g, q1_actor *e, qa_error *error) {
             ok = g->services.motion_changed(g->services.context, actor, &change, error);
         }
     }
-    qa_builtin_snapshot_release(list);
+    qa_world_snapshot_release(&list);
     return ok && (!q1_alive(g, id) || q1_map_schedule(g, e, .1, Q1_MAP_GRAVITY_PULL, error));
 }
 

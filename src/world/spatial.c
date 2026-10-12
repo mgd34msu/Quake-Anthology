@@ -260,6 +260,21 @@ bool qa_world_query(qa_world *world,qa_bounds bounds,qa_collision_role role,qa_a
     *count=context.count; *overflow=context.overflow; return true;
 }
 
+static bool snapshot_frame_acquire(qa_world_actor_snapshot *snapshot)
+{
+    size_t slot;
+    qa_world_snapshot_frame *frame=qa_pool_take(&snapshot->world->snapshot_pool,&slot);
+    if(frame==NULL) {
+        snapshot->failed=true;
+        return fail(snapshot->error,QA_ERROR_MEMORY,"Spatial snapshot capacity exhausted");
+    }
+    snapshot->frame=frame;
+    memcpy(frame->actors,snapshot->local,snapshot->count*sizeof(*snapshot->actors));
+    snapshot->actors=frame->actors;
+    snapshot->capacity=frame->capacity;
+    return true;
+}
+
 static qa_spatial_visit snapshot_actor(void *opaque,qa_actor_id actor)
 {
     qa_world_actor_snapshot *snapshot=opaque;
@@ -269,18 +284,8 @@ static qa_spatial_visit snapshot_actor(void *opaque,qa_actor_id actor)
             (void)fail(snapshot->error,QA_ERROR_MEMORY,"Spatial snapshot capacity exhausted");
             return QA_SPATIAL_STOP;
         }
-        qa_world *world=snapshot->world;
-        size_t slot;
-        qa_world_snapshot_frame *frame=qa_pool_take(&world->snapshot_pool,&slot);
-        if(frame==NULL) {
-            snapshot->failed=true;
-            (void)fail(snapshot->error,QA_ERROR_MEMORY,"Spatial snapshot capacity exhausted");
+        if(!snapshot_frame_acquire(snapshot))
             return QA_SPATIAL_STOP;
-        }
-        snapshot->frame=frame;
-        memcpy(frame->actors,snapshot->local,snapshot->count*sizeof(*snapshot->actors));
-        snapshot->actors=frame->actors;
-        snapshot->capacity=frame->capacity;
     }
     snapshot->actors[snapshot->count++]=actor;
     return QA_SPATIAL_CONTINUE;
@@ -340,6 +345,12 @@ static void snapshot_begin(qa_world *world,qa_world_actor_snapshot *out,qa_error
     out->error=error;
     out->failed=false;
     out->borrowed=false;
+}
+
+bool qa_world_snapshot_acquire(qa_world *world,qa_world_actor_snapshot *out,qa_error *error)
+{
+    snapshot_begin(world,out,error);
+    return snapshot_frame_acquire(out);
 }
 
 bool qa_world_snapshot_capture(qa_world *world,qa_bounds bounds,qa_collision_role role,

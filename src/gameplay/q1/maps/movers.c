@@ -407,18 +407,25 @@ bool q1_map_mover_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 bool qa_q1_game_maps_finish(qa_q1_game *g, qa_error *error) {
     if (!g || !g->maps)
         return q1_map_fail(error, "Q1 map services are not bound");
-    qa_builtin_snapshot_frame *snapshot;
-    if (!q1_snapshot_actors(g, &snapshot, error))
+    qa_q1_game_operation owner = {0}, operation = {0};
+    if (!qa_q1_game_retain(g, &owner, error))
         return false;
-    size_t count = 0;
-    for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
-        q1_actor *entity = q1_entity(g, snapshot->snapshot.ids[i]);
-        if (entity && entity->map && entity->map->kind == Q1_MAP_DOOR)
-            snapshot->snapshot.ids[count++] = entity->id;
+    if (!qa_q1_game_operation_begin(g, &operation, error)) {
+        qa_q1_game_operation_end(&owner);
+        return false;
     }
-    bool ok = true;
+    qa_world_actor_snapshot snapshot = {0};
+    bool ok = q1_snapshot_actors(g, &snapshot, error);
+    if (!ok)
+        goto done;
+    size_t count = 0;
+    for (size_t i = 0; i < snapshot.count; ++i) {
+        q1_actor *entity = q1_entity(g, snapshot.actors[i]);
+        if (entity && entity->map && entity->map->kind == Q1_MAP_DOOR)
+            snapshot.actors[count++] = entity->id;
+    }
     for (size_t i = 0; i < count && ok; ++i) {
-        q1_actor *master = q1_entity(g, snapshot->snapshot.ids[i]);
+        q1_actor *master = q1_entity(g, snapshot.actors[i]);
         if (!master || master->map->pending.mover.group)
             continue;
         q1_door_group *group = calloc(1, sizeof(*group));
@@ -435,7 +442,7 @@ bool qa_q1_game_maps_finish(qa_q1_game *g, qa_error *error) {
         qa_bounds bounds = body.bounds, previous = body.bounds;
         size_t capacity = 0;
         for (size_t j = i; j < count; ++j) {
-            q1_actor *candidate = q1_entity(g, snapshot->snapshot.ids[j]);
+            q1_actor *candidate = q1_entity(g, snapshot.actors[j]);
             if (!candidate)
                 continue;
             if (j != i) {
@@ -493,8 +500,13 @@ bool qa_q1_game_maps_finish(qa_q1_game *g, qa_error *error) {
         bounds.maxs = qa_vec_add(bounds.maxs, qa_v3(60, 60, 8));
         ok = helper_trigger(g, master, Q1_MAP_DOOR_TRIGGER, bounds, error);
     }
-    qa_builtin_snapshot_release(snapshot);
-    return ok && qa_q1_wire_freeze(g, error);
+done:
+    qa_world_snapshot_release(&snapshot);
+    qa_q1_game_operation_end(&operation);
+    if (ok)
+        ok = qa_q1_wire_freeze(g, error);
+    qa_q1_game_operation_end(&owner);
+    return ok;
 }
 bool q1_map_mover_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_error *error) {
     switch (entity->map->kind) {

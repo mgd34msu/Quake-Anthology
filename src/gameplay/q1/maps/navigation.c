@@ -62,19 +62,19 @@ static bool activator(qa_q1_game *g, qa_actor_id actor, qa_q1_map_mover_view *vi
         return false;
     if (!q1_map_text(g, name))
         return true;
-    qa_builtin_snapshot_frame *list;
+    qa_world_actor_snapshot list = {0};
     if (!q1_snapshot_actors(g, &list, error))
         return false;
-    qa_builtin_snapshot_frame *queue;
+    qa_world_actor_snapshot queue = {0};
     if (!q1_snapshot_actors(g, &queue, error)) {
-        qa_builtin_snapshot_release(list);
+        qa_world_snapshot_release(&list);
         return false;
     }
-    queue->snapshot.count = 0;
+    queue.count = 0;
     bool ok = true;
     for (;;) {
-        for (size_t i = 0; i < list->snapshot.count; ++i) {
-            q1_actor *candidate = mapped(g, list->snapshot.ids[i]);
+        for (size_t i = 0; i < list.count; ++i) {
+            q1_actor *candidate = mapped(g, list.actors[i]);
             if (!candidate || candidate->target != name)
                 continue;
             q1_map_kind kind = candidate->map->kind;
@@ -90,20 +90,20 @@ static bool activator(qa_q1_game *g, qa_actor_id actor, qa_q1_map_mover_view *vi
                 }
             } else if ((kind == Q1_MAP_RELAY || kind == Q1_MAP_DELAY) &&
                        q1_map_text(g, candidate->targetname)) {
-                queue->snapshot.ids[queue->snapshot.count++] = candidate->id;
+                queue.actors[queue.count++] = candidate->id;
                 /* Removing queued relays bounds branching paths and cycles. */
-                list->snapshot.ids[i] = list->snapshot.ids[--list->snapshot.count];
+                list.actors[i] = list.actors[--list.count];
                 --i;
             }
         }
-        if (!queue->snapshot.count)
+        if (!queue.count)
             break;
-        e = mapped(g, queue->snapshot.ids[--queue->snapshot.count]);
+        e = mapped(g, queue.actors[--queue.count]);
         name = e ? e->targetname : QA_STRING_NONE;
     }
 done:
-    qa_builtin_snapshot_release(queue);
-    qa_builtin_snapshot_release(list);
+    qa_world_snapshot_release(&queue);
+    qa_world_snapshot_release(&list);
     return ok;
 }
 static bool train_stops(qa_q1_game *g, qa_actor_id actor, q1_map_kind kind,

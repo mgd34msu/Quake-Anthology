@@ -10,10 +10,10 @@ static qa_vec3 enemy_origin(qa_q1_game *g, q1_actor *e) {
                : qa_v3(0, 0, 0);
 }
 bool q1_boss_first_player(qa_q1_game *g, q1_ref *out, qa_error *error) {
-    qa_builtin_snapshot_frame *snapshot;
+    qa_world_actor_snapshot snapshot = {0};
     if (!q1_snapshot_players(g, &snapshot, error)) return false;
-    *out = snapshot->snapshot.count ? q1_ref_from(g, snapshot->snapshot.ids[0]) : (q1_ref){0};
-    qa_builtin_snapshot_release(snapshot);
+    *out = snapshot.count ? q1_ref_from(g, snapshot.actors[0]) : (q1_ref){0};
+    qa_world_snapshot_release(&snapshot);
     return true;
 }
 
@@ -675,12 +675,12 @@ bool q1_shub_grenade_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_err
 }
 bool q1_spawn_shub_zombie(qa_q1_game *g, qa_actor_id *out, qa_error *error) {
     *out = (qa_actor_id){0};
-    qa_builtin_snapshot_frame *snapshot;
+    qa_world_actor_snapshot snapshot = {0};
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     size_t alive = 0, eligible = 0;
-    for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
-        q1_actor *e = q1_entity(g, snapshot->snapshot.ids[i]);
+    for (size_t i = 0; i < snapshot.count; ++i) {
+        q1_actor *e = q1_entity(g, snapshot.actors[i]);
         if (!e)
             continue;
         alive += q1_classnamed(g, e->id, g->runtime_names[Q1_NAME_MONSTER_SZOMBIE]);
@@ -688,20 +688,20 @@ bool q1_spawn_shub_zombie(qa_q1_game *g, qa_actor_id *out, qa_error *error) {
             ++eligible;
     }
     if (alive > 32 || !eligible) {
-        qa_builtin_snapshot_release(snapshot);
+        qa_world_snapshot_release(&snapshot);
         return true;
     }
     size_t selected = (size_t)floorf(q1_random(g) * (float)(eligible - 1) + .5f);
     qa_actor_id point = {0};
-    for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
-        q1_actor *e = q1_entity(g, snapshot->snapshot.ids[i]);
+    for (size_t i = 0; i < snapshot.count; ++i) {
+        q1_actor *e = q1_entity(g, snapshot.actors[i]);
         if (e && q1_classnamed(g, e->id, g->runtime_names[Q1_NAME_INFO_SZOMBIE_SPAWN]) && selected-- == 0) {
             point = e->id;
             e->wait = (float)(g->time + 8);
             break;
         }
     }
-    qa_builtin_snapshot_release(snapshot);
+    qa_world_snapshot_release(&snapshot);
     q1_actor *zombie;
     if (!q1_create(g, g->runtime_names[Q1_NAME_MONSTER_SZOMBIE], Q1_MONSTER, point, &zombie, error))
         return false;

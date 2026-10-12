@@ -107,9 +107,6 @@ bool qa_q1_game_begin_map(qa_q1_game *g, const qa_q1_map_options *options, qa_er
         return q1_map_fail(error, "Q1 map reset requires a retired world at a safe point");
     if (!qa_strings_text(qa_session_strings(g->services.session), options->current_map).size)
         return q1_map_fail(error, "Q1 map reset requires an interned map identity");
-    for (qa_builtin_snapshot_frame *snapshot = g->snapshots; snapshot; snapshot = snapshot->next)
-        if (snapshot->active)
-            return q1_map_fail(error, "Q1 map reset has an active actor query");
     for (uint32_t slot = 0; slot < g->capacity; ++slot)
         if (g->actors[slot] || g->players[slot])
             return q1_map_fail(error, "Q1 map reset requires completed actor release callbacks");
@@ -151,8 +148,6 @@ bool qa_q1_game_begin_map(qa_q1_game *g, const qa_q1_map_options *options, qa_er
         *player = (q1_player){.allocation_next = next, .pool_next = g->spare_players};
         g->spare_players = player;
     }
-    for (qa_builtin_snapshot_frame *snapshot = g->snapshots; snapshot; snapshot = snapshot->next)
-        snapshot->snapshot.count = 0;
     g->total_monsters = g->killed_monsters = g->hellknight_melee = 0;
     g->authored_gremlins = g->spawned_gremlins = 0;
     g->source_captures[0] = g->source_captures[1] = 0;

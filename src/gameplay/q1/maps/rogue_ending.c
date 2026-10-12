@@ -33,29 +33,29 @@ static bool remove_stuff(qa_q1_game *g, qa_error *error) {
     if (!qa_builtin_resource(&g->services, "ltrail_start", &trail, error) ||
         !qa_builtin_resource(&g->services, "item_time_core", &core_name, error))
         return false;
-    qa_builtin_snapshot_frame *snapshot;
+    qa_world_actor_snapshot snapshot = {0};
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
-    for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
-        q1_actor *entity = q1_entity(g, snapshot->snapshot.ids[i]);
+    for (size_t i = 0; i < snapshot.count; ++i) {
+        q1_actor *entity = q1_entity(g, snapshot.actors[i]);
         if (entity && entity->native && entity->classname == trail &&
             !q1_remove(g, entity, error)) {
-            qa_builtin_snapshot_release(snapshot);
+            qa_world_snapshot_release(&snapshot);
             return false;
         }
     }
-    qa_builtin_snapshot_release(snapshot);
+    qa_world_snapshot_release(&snapshot);
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     qa_actor_id core = {0};
-    for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
-        q1_actor *entity = q1_entity(g, snapshot->snapshot.ids[i]);
+    for (size_t i = 0; i < snapshot.count; ++i) {
+        q1_actor *entity = q1_entity(g, snapshot.actors[i]);
         if (entity && entity->native && entity->classname == core_name) {
             core = entity->id;
             break;
         }
     }
-    qa_builtin_snapshot_release(snapshot);
+    qa_world_snapshot_release(&snapshot);
     qa_body_state body = {0};
     if (core.registry && !qa_world_body_read(g->services.world, core, &body, error))
         return false;

@@ -959,15 +959,15 @@ static bool monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spe
     }
     entity->max_health = spec->health;
     if (spec->species == QA_Q1_DECOY && g->maps) {
-        qa_builtin_snapshot_frame *players;
+        qa_world_actor_snapshot players = {0};
         if (!q1_snapshot_players(g, &players, error))
             return false;
-        q1_player *player = players->snapshot.count ? q1_player_get(g, players->snapshot.ids[0])
+        q1_player *player = players.count ? q1_player_get(g, players.actors[0])
                                                     : NULL;
         q1_map_state *map = q1_map_allocate(g, entity, error);
         if (map)
             map->color_map = player && player->source_client ? (int32_t)(player->client_slot + 1) : 0;
-        qa_builtin_snapshot_release(players);
+        qa_world_snapshot_release(&players);
         if (!map)
             return false;
     }

@@ -1289,11 +1289,11 @@ bool q1_pickup_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             !(qa_q1_game_campaign_flags(g) & QA_Q1_BLOODY_NIGHTMARE_NEWGAME))
             return q1_remove(g, entity, error);
         if (item->kind == Q1_ITEM_MG3_UPGRADE) {
-            qa_builtin_snapshot_frame *snapshot;
+            qa_world_actor_snapshot snapshot = {0};
             if (!q1_snapshot_actors(g, &snapshot, error))
                 return false;
-            for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
-                q1_player *player = q1_player_get(g, snapshot->snapshot.ids[i]);
+            for (size_t i = 0; i < snapshot.count; ++i) {
+                q1_player *player = q1_player_get(g, snapshot.actors[i]);
                 if (!player)
                     continue;
                 const uint32_t flags[] = {player->mg3_progress.health, player->mg3_progress.shells,
@@ -1304,7 +1304,7 @@ bool q1_pickup_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                     break;
                 }
             }
-            qa_builtin_snapshot_release(snapshot);
+            qa_world_snapshot_release(&snapshot);
         }
         return q1_schedule(g, entity, 0.2, Q1_THINK_ITEM_PLACE, error);
     }

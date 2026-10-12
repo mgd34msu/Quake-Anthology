@@ -215,12 +215,12 @@ static bool repulse(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
-    qa_builtin_snapshot_frame *snapshot;
+    qa_world_actor_snapshot snapshot = {0};
     if (!q1_radius_snapshot(g, body.origin, 300, &snapshot, error))
         return false;
     bool ok = true;
-    for (size_t i = snapshot->snapshot.count; i > 0; --i) {
-        qa_actor_id actor = snapshot->snapshot.ids[i - 1];
+    for (size_t i = snapshot.count; i > 0; --i) {
+        qa_actor_id actor = snapshot.actors[i - 1];
         qa_q1_target traits;
         bool visible;
         if (!q1_target(g, actor, &traits) || !traits.player || traits.notarget ||
@@ -253,7 +253,7 @@ static bool repulse(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         if (!q1_alive(g, entity->id))
             break;
     }
-    qa_builtin_snapshot_release(snapshot);
+    qa_world_snapshot_release(&snapshot);
     if (!ok || !q1_alive(g, entity->id))
         return ok;
     if (!q1_radius(g, entity->id, entity->id, 60, entity->id, QA_Q1_WEAPON_COUNT, error))

@@ -317,12 +317,12 @@ static bool rune_magic(qa_q1_game *g, q1_actor *e, qa_error *error) {
         error);
 }
 static bool cleanup_orbs(qa_q1_game *g, q1_actor *e, qa_error *error) {
-    qa_builtin_snapshot_frame *snapshot;
+    qa_world_actor_snapshot snapshot = {0};
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
-        q1_actor *child = q1_entity(g, snapshot->snapshot.ids[i]);
+    for (size_t i = 0; i < snapshot.count; ++i) {
+        q1_actor *child = q1_entity(g, snapshot.actors[i]);
         if (child && q1_ref_equal(child->owner, q1_ref_from(g, e->id)) &&
             q1_classnamed(g, child->id, g->runtime_names[Q1_NAME_MONSTER_SUPER_SHAMBLER]) &&
             !q1_schedule(g, child, .1, Q1_THINK_HEAVY_SOURCE_DIE, error)) {
@@ -330,7 +330,7 @@ static bool cleanup_orbs(qa_q1_game *g, q1_actor *e, qa_error *error) {
             break;
         }
     }
-    qa_builtin_snapshot_release(snapshot);
+    qa_world_snapshot_release(&snapshot);
     return ok;
 }
 

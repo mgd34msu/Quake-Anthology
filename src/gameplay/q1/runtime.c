@@ -877,7 +877,6 @@ void qa_q1_game_destroy(qa_q1_game *g) {
         free(g->allocated_players);
         g->allocated_players = next;
     }
-    qa_builtin_snapshot_pool_free(&g->snapshots);
     free(g->actors);
     free(g->players);
     free(g);
@@ -1375,14 +1374,14 @@ bool q1_radius_typed(qa_q1_game *g, qa_actor_id inflictor, qa_actor_id attacker,
                                 .prepare = radius_prepare};
     radius.trace.q1_move = QA_Q1_MOVE_NO_MONSTERS;
     radius.attack.cause.source.q1.death_type = cause;
-    qa_builtin_snapshot_frame *snapshot;
+    qa_world_actor_snapshot snapshot = {0};
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     radius.has_candidates = true;
-    radius.candidates = snapshot->snapshot.ids;
-    radius.candidate_count = snapshot->snapshot.count;
+    radius.candidates = snapshot.actors;
+    radius.candidate_count = snapshot.count;
     bool ok = qa_builtin_radius_damage(&g->services, &radius, NULL, error);
-    qa_builtin_snapshot_release(snapshot);
+    qa_world_snapshot_release(&snapshot);
     return ok;
 }
 bool q1_can_damage(qa_q1_game *g, qa_actor_id target, qa_actor_id from, bool *out,

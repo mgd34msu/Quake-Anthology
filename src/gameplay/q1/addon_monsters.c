@@ -16,13 +16,13 @@ bool q1_addon_target(qa_q1_game *g, q1_actor *entity, qa_actor_id *out, qa_error
                      "Q1 authored monster target selection requires the shared target router");
         return false;
     }
-    qa_builtin_snapshot_frame *snapshot;
+    qa_world_actor_snapshot snapshot = {0};
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     size_t count = 0;
-    bool result = g->host.find_targets(g->host.context, entity->target, snapshot->snapshot.ids,
-                                       snapshot->snapshot.capacity, &count, error);
-    if (result && count > snapshot->snapshot.capacity) {
+    bool result = g->host.find_targets(g->host.context, entity->target, snapshot.actors,
+                                       snapshot.capacity, &count, error);
+    if (result && count > snapshot.capacity) {
         qa_error_set(error, QA_ERROR_FORMAT, count,
                      "Q1 target router exceeded reserved actor capacity");
         result = false;
@@ -30,16 +30,16 @@ bool q1_addon_target(qa_q1_game *g, q1_actor *entity, qa_actor_id *out, qa_error
     if (result) {
         size_t eligible = 0;
         for (size_t i = 0; i < count; ++i)
-            if (q1_damageable(g, snapshot->snapshot.ids[i]))
-                snapshot->snapshot.ids[eligible++] = snapshot->snapshot.ids[i];
+            if (q1_damageable(g, snapshot.actors[i]))
+                snapshot.actors[eligible++] = snapshot.actors[i];
         if (eligible) {
             size_t index = (size_t)floorf(q1_random(g) * (float)eligible);
             if (index == eligible)
                 index = eligible - 1;
-            *out = snapshot->snapshot.ids[index];
+            *out = snapshot.actors[index];
         }
     }
-    qa_builtin_snapshot_release(snapshot);
+    qa_world_snapshot_release(&snapshot);
     return result;
 }
 bool q1_addon_contents(qa_q1_game *g, q1_actor *entity, bool *stop, qa_error *error) {

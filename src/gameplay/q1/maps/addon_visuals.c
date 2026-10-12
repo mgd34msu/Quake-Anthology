@@ -212,14 +212,14 @@ static bool rope_tick(qa_q1_game *g, q1_actor *e, qa_error *error) {
 bool q1_map_addon_frame(qa_q1_game *g, qa_error *error) {
     if (!g->maps || !g->maps->frame_tick_count)
         return true;
-    qa_builtin_snapshot_frame *list;
+    qa_world_actor_snapshot list = {0};
     if (!q1_snapshot_actors(g, &list, error))
         return false;
-    list->snapshot.count = g->maps->frame_tick_count;
-    memcpy(list->snapshot.ids, g->maps->frame_ticks, list->snapshot.count * sizeof(*list->snapshot.ids));
+    list.count = g->maps->frame_tick_count;
+    memcpy(list.actors, g->maps->frame_ticks, list.count * sizeof(*list.actors));
     bool ok = true;
-    for (size_t i = 0; ok && i < list->snapshot.count; ++i) {
-        q1_actor *e = visual(g, list->snapshot.ids[i]);
+    for (size_t i = 0; ok && i < list.count; ++i) {
+        q1_actor *e = visual(g, list.actors[i]);
         if (!e)
             continue;
         if (e->map->kind == Q1_MAP_LIGHT_RAMP)
@@ -231,7 +231,7 @@ bool q1_map_addon_frame(qa_q1_game *g, qa_error *error) {
         else
             ok = q1_map_fail(error, "Invalid Q1 authored frame continuation");
     }
-    qa_builtin_snapshot_release(list);
+    qa_world_snapshot_release(&list);
     return ok;
 }
 bool q1_map_addon_visual_think(qa_q1_game *g, q1_actor *e, qa_error *error) {

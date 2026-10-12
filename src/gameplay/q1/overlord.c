@@ -2,12 +2,12 @@
 #include <stdio.h>
 
 bool q1_spawnpoint_empty(qa_q1_game *g, qa_actor_id marker, qa_vec3 origin) {
-    qa_builtin_snapshot_frame *nearby;
+    qa_world_actor_snapshot nearby = {0};
     if (!q1_radius_snapshot(g, origin, 64, &nearby, NULL))
         return false;
     bool empty = true;
-    for (size_t i = 0; i < nearby->snapshot.count; ++i) {
-        qa_actor_id actor = nearby->snapshot.ids[i];
+    for (size_t i = 0; i < nearby.count; ++i) {
+        qa_actor_id actor = nearby.actors[i];
         if (!q1_alive(g, actor) || qa_actor_id_equal(actor, marker))
             continue;
         qa_q1_target traits;
@@ -22,19 +22,19 @@ bool q1_spawnpoint_empty(qa_q1_game *g, qa_actor_id marker, qa_vec3 origin) {
             break;
         }
     }
-    qa_builtin_snapshot_release(nearby);
+    qa_world_snapshot_release(&nearby);
     return empty;
 }
 bool q1_overlord_destination(qa_q1_game *g, qa_actor_id *out, qa_error *error) {
     qa_body_state player = {0};
-    qa_builtin_snapshot_frame *players;
+    qa_world_actor_snapshot players = {0};
     if (!q1_snapshot_players(g, &players, error))
         return false;
-    qa_actor_id observer = players->snapshot.count        ? players->snapshot.ids[0]
+    qa_actor_id observer = players.count        ? players.actors[0]
                            : g->services.physics ? g->services.physics->world_actor
                                                  : (qa_actor_id){0};
     (void)qa_world_body_read(g->services.world, observer, &player, NULL);
-    qa_builtin_snapshot_release(players);
+    qa_world_snapshot_release(&players);
     qa_angle_vectors(player.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 forward = g->forward;
     qa_actor_id best = {0}, farthest = {0};

@@ -15,14 +15,14 @@ static bool source_deadline(double value, double *out, qa_error *error) {
     return true;
 }
 static bool broadcast(qa_q1_game *g, qa_actor_id source, const char *text, qa_error *error) {
-    qa_builtin_snapshot_frame *players;
+    qa_world_actor_snapshot players = {0};
     if (!q1_snapshot_players(g, &players, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && i < players->snapshot.count && control(g, source); ++i)
-        if (q1_alive(g, players->snapshot.ids[i]))
-            ok = q1_message(g, players->snapshot.ids[i], text, error);
-    qa_builtin_snapshot_release(players);
+    for (size_t i = 0; ok && i < players.count && control(g, source); ++i)
+        if (q1_alive(g, players.actors[i]))
+            ok = q1_message(g, players.actors[i], text, error);
+    qa_world_snapshot_release(&players);
     return ok;
 }
 static bool source_top(qa_q1_game *g, qa_actor_id actor) {
@@ -41,12 +41,12 @@ static bool source_top(qa_q1_game *g, qa_actor_id actor) {
 static bool door_relay(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_error *error) {
     qa_actor_id id = e->id;
     uint32_t flags = e->spawnflags;
-    qa_builtin_snapshot_frame *targets;
+    qa_world_actor_snapshot targets = {0};
     if (!q1_snapshot_targets(g, g->maps->options.targets, e->target, &targets, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && i < targets->snapshot.count && control(g, id); ++i) {
-        qa_actor_id actor = targets->snapshot.ids[i];
+    for (size_t i = 0; ok && i < targets.count && control(g, id); ++i) {
+        qa_actor_id actor = targets.actors[i];
         bool top = source_top(g, actor);
         if (!control(g, id) || !q1_alive(g, actor) || (flags & (top ? 1u : 2u)))
             continue;
@@ -66,7 +66,7 @@ static bool door_relay(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_err
         else
             ok = q1_map_fail(error, "Q1 door relay requires the selected foreign mover owner");
     }
-    qa_builtin_snapshot_release(targets);
+    qa_world_snapshot_release(&targets);
     return ok;
 }
 static bool door_group(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_error *error) {
@@ -353,15 +353,15 @@ static bool cutscene(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return true;
     if (!g->maps->options.control_player)
         return q1_map_fail(error, "Q1 addon cutscene requires selected player control owners");
-    qa_builtin_snapshot_frame *players;
+    qa_world_actor_snapshot players = {0};
     if (!q1_snapshot_players(g, &players, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && i < players->snapshot.count && control(g, id); ++i)
-        if (q1_alive(g, players->snapshot.ids[i]))
-            ok = g->maps->options.control_player(g->maps->options.context, players->snapshot.ids[i],
+    for (size_t i = 0; ok && i < players.count && control(g, id); ++i)
+        if (q1_alive(g, players.actors[i]))
+            ok = g->maps->options.control_player(g->maps->options.context, players.actors[i],
                                                  body.origin, angles, qa_v3(0, 0, 0), error);
-    qa_builtin_snapshot_release(players);
+    qa_world_snapshot_release(&players);
     if (!ok || !control(g, id))
         return ok;
     qa_builtin_event event = {.kind = QA_BUILTIN_EFFECT, .family = QA_GAME_Q1,

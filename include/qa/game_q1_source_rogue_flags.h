@@ -23,8 +23,8 @@ bool qa_q1_source_rogue_flags_configure(qa_q1_game *,
     const qa_q1_source_rogue_flags_services *, qa_error *);
 bool qa_q1_source_rogue_flag_read(qa_q1_game *, qa_actor_id,
     qa_q1_source_rogue_flag_view *, qa_error *);
-/* Caller owns the returned physical-source-order actor array. */
-bool qa_q1_source_rogue_flags_snapshot(qa_q1_game *, qa_actor_id **, size_t *, qa_error *);
+/* Caller releases the leased physical-source-order snapshot with qa_world_snapshot_release. */
+bool qa_q1_source_rogue_flags_snapshot(qa_q1_game *, qa_world_actor_snapshot *, qa_error *);
 bool qa_q1_source_rogue_flag_return(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_source_rogue_flag_drop(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_source_rogue_flag_carry(qa_q1_game *, qa_actor_id, qa_actor_id, qa_error *);

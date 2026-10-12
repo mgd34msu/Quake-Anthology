@@ -20,11 +20,6 @@ static bool boundary(const qa_q1_game *g, bool empty, qa_error *error) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 checkpoint requires a session safe point");
         return false;
     }
-    for (const qa_builtin_snapshot_frame *s = g->snapshots; s; s = s->next)
-        if (s->active) {
-            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 checkpoint has an active actor query");
-            return false;
-        }
     if (empty)
         for (uint32_t i = 0; i < g->capacity; ++i)
             if (g->actors[i] || g->players[i]) {

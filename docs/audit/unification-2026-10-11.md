@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `b51370d7`.
+Follow-up source changes were reviewed through main `164b9aec`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 203 have source fixes
+There are **374 overlapping source-review observations**: 207 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 168 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 164 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -396,3 +396,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `e19d15b2` / J11-04: Recipe and content sidecar admission/restore use one shared map inventory and entity application rule; duplicate inventory/path bodies removed. Optional misses, scoped ownership and existing formats/save fields retained. Normal build and seven core suites passed; cold allocations remain, no timing claim. Records: `/tmp/qa-ta3196-one-sidecar-rule-20261012-v1`.
 
 - `b51370d7` / 16-010: Q2 semantic beam, flashlight and light identities use the common indexed handle store with full actor candidate checks. Unicast claims use common indexed pool backing, preserving domain and publication ordering; new peak growth remains a partial admission gap. Normal build and seven core suites passed; no live or zero-allocation claim. Records: `/tmp/qa-ta3196-indexed-q2-event-storage-20261012-v1`.
+
+- `164b9aec` / 03-08, 04-025, J12-07, J37-01: The Q2 CLIENT metadata constructor and SDK variant are deleted; callers use the existing common profile constructor. Q3 force-model and SystemInfo scratch use protocol-extent storage, diagnostic rows use common leased arena storage, and rankings use the original C integer policy. Normal build and seven core suites passed; no live/gameplay or global completion claim. Records: `/tmp/qa-ta3196-common-client-primitives-20261012-v1`.

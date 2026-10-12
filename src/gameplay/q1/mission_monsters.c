@@ -51,12 +51,12 @@ static bool eel_zap(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_body_state self;
     if (!qa_world_body_read(g->services.world, entity->id, &self, error))
         return false;
-    qa_builtin_snapshot_frame *snapshot;
+    qa_world_actor_snapshot snapshot = {0};
     if (!q1_radius_snapshot(g, self.origin, 85, &snapshot, error))
         return false;
     bool result = true;
-    for (size_t i = snapshot->snapshot.count; i > 0; --i) {
-        qa_actor_id target = snapshot->snapshot.ids[i - 1];
+    for (size_t i = snapshot.count; i > 0; --i) {
+        qa_actor_id target = snapshot.actors[i - 1];
         qa_q1_target traits;
         if (q1_classnamed(g, target, g->runtime_names[Q1_NAME_MONSTER_EEL]) || !q1_target(g, target, &traits) ||
             !traits.player || !q1_damageable(g, target))
@@ -85,7 +85,7 @@ static bool eel_zap(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         if (!q1_alive(g, entity->id))
             break;
     }
-    qa_builtin_snapshot_release(snapshot);
+    qa_world_snapshot_release(&snapshot);
     return result;
 }
 static bool mummy_wake(qa_q1_game *g, q1_actor *entity, qa_error *error) {

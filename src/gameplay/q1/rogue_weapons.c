@@ -169,12 +169,12 @@ static bool plasma_explode(qa_q1_game *g, q1_actor *plasma, qa_actor_id other, q
     if (!q1_effect(g, QA_BUILTIN_EXPLOSION, plasma->id, self.origin, 0, 0, error))
         return false;
     unsigned count = 0;
-    qa_builtin_snapshot_frame *snapshot;
+    qa_world_actor_snapshot snapshot = {0};
     if (!q1_radius_snapshot(g, self.origin, 320, &snapshot, error))
         return false;
     bool result = true;
-    for (size_t i = snapshot->snapshot.count; i > 0; --i) {
-        qa_actor_id target = snapshot->snapshot.ids[i - 1];
+    for (size_t i = snapshot.count; i > 0; --i) {
+        qa_actor_id target = snapshot.actors[i - 1];
         if (q1_ref_equal(q1_ref_from(g, target), plasma->owner) ||
             (!is_player(g, target) && !is_monster(g, target)))
             continue;
@@ -211,7 +211,7 @@ static bool plasma_explode(qa_q1_game *g, q1_actor *plasma, qa_actor_id other, q
         if (++count == 5)
             break;
     }
-    qa_builtin_snapshot_release(snapshot);
+    qa_world_snapshot_release(&snapshot);
     return result && (!q1_alive(g, plasma->id) || q1_remove(g, plasma, error));
 }
 bool q1_rogue_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *error) {

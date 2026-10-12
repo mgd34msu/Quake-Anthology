@@ -823,14 +823,23 @@ bool qa_q1_player_postthink(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     q1_player *player = q1_player_get(g, actor);
     if (!player || !player->arsenal)
         return true;
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    bool ok = true;
     if (player->input.impulse && g->time >= player->attack_finished) {
-        if (!q1_weapon_impulse(g, player, player->input.impulse, error))
-            return false;
+        if (!q1_weapon_impulse(g, player, player->input.impulse, error)) {
+            ok = false;
+            goto done;
+        }
         if (!q1_alive(g, actor))
-            return true;
+            goto done;
         player->input.impulse = 0;
     }
-    return !player->input.attack || q1_fire(g, player, error);
+    ok = !player->input.attack || q1_fire(g, player, error);
+done:
+    qa_q1_game_operation_end(&operation);
+    return ok;
 }
 
 bool q1_aim(qa_q1_game *g, qa_actor_id actor, qa_vec3 forward, qa_vec3 *out, qa_error *error) {

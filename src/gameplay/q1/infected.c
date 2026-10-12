@@ -81,16 +81,16 @@ static bool retarget(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         !q1_classnamed(g, q1_ref_actor(g, m->enemy),
                        m->species->species == QA_Q1_ZOMBIE ? g->runtime_names[Q1_NAME_MONSTER_ZOMBIE] : g->runtime_names[Q1_NAME_MONSTER_DEMON1]))
         return true;
-    qa_builtin_snapshot_frame *snapshot;
+    qa_world_actor_snapshot snapshot = {0};
     if (!q1_snapshot_players(g, &snapshot, error))
         return false;
     qa_actor_id player = {0};
-    for (size_t i = 0; i < snapshot->snapshot.count; ++i)
-        if (q1_health(g, snapshot->snapshot.ids[i]) > 0) {
-            player = snapshot->snapshot.ids[i];
+    for (size_t i = 0; i < snapshot.count; ++i)
+        if (q1_health(g, snapshot.actors[i]) > 0) {
+            player = snapshot.actors[i];
             break;
         }
-    qa_builtin_snapshot_release(snapshot);
+    qa_world_snapshot_release(&snapshot);
     if (!player.registry)
         return true;
     q1_actor *rival = q1_entity(g, q1_ref_actor(g, m->enemy));

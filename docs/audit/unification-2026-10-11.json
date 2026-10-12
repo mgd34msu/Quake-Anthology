@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "b51370d792e78cd60a50cba133402a756be76039",
+  "verified_main": "164b9aec234804c26e3bf5f38f0313f5722128c5",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 203,
-    "open_source_observation": 168,
+    "fixed_source_build_core": 207,
+    "open_source_observation": 164,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -25338,8 +25338,9 @@
       "severity": "medium",
       "job": "03",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "164b9aec234804c26e3bf5f38f0313f5722128c5"
     },
     {
       "id": "03-09",
@@ -26587,8 +26588,9 @@
       "severity": "low",
       "job": "04",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "164b9aec234804c26e3bf5f38f0313f5722128c5"
     },
     {
       "id": "04-026",
@@ -28833,8 +28835,9 @@
       "severity": "medium",
       "job": "12",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "164b9aec234804c26e3bf5f38f0313f5722128c5"
     },
     {
       "id": "J12-08",
@@ -37168,8 +37171,9 @@
       "severity": "medium",
       "job": "37",
       "area": "public_interfaces",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "164b9aec234804c26e3bf5f38f0313f5722128c5"
     },
     {
       "id": "J37-02",
@@ -42744,6 +42748,49 @@
       ],
       "record_directory": "/tmp/qa-ta3196-indexed-q2-event-storage-20261012-v1",
       "conclusion": "Q2 semantic beam, flashlight and light identities use the common indexed handle store with full actor candidate checks. Unicast claims use common indexed pool backing, preserving domain and publication ordering; new peak growth remains a partial admission gap. Normal build and seven core suites passed; no live or zero-allocation claim."
+    },
+    {
+      "commit": "164b9aec234804c26e3bf5f38f0313f5722128c5",
+      "source_tree": "ecff255fdc351fbe8934958cf67750c79f6f7993",
+      "finding_ids": [
+        "03-08",
+        "04-025",
+        "J12-07",
+        "J37-01"
+      ],
+      "files_rechecked": [
+        "include/qa/launch_q2_client.h",
+        "src/app/application/native_modes.c",
+        "src/app/application/native_q3_client.c",
+        "src/app/application/native_q3_client.h",
+        "src/app/application/native_q3_client_cvars.c",
+        "src/app/application/native_q3_client_save.c",
+        "src/app/application/native_q3_client_time.c",
+        "src/app/application/native_q3_remote_client.c",
+        "src/app/application/native_q3_remote_client.h",
+        "src/app/application/native_q3_remote_client_cvars.c",
+        "src/app/application/native_q3_remote_client_save.c",
+        "src/app/application/native_q3_remote_role.c",
+        "src/app/application/native_q3_remote_role_private.h",
+        "src/app/application/native_q3_system_info.h",
+        "src/app/application/rankings.c",
+        "src/app/frontend/remote_q2_source.c",
+        "src/app/frontend/remote_q2_source.h",
+        "src/session/configuration/transaction.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-client-primitives-20261012-v1",
+      "conclusion": "The Q2 CLIENT metadata constructor and SDK variant are deleted; callers use the existing common profile constructor. Q3 force-model and SystemInfo scratch use protocol-extent storage, diagnostic rows use common leased arena storage, and rankings use the original C integer policy. Normal build and seven core suites passed; no live/gameplay or global completion claim."
     }
   ],
   "verification_limits": [

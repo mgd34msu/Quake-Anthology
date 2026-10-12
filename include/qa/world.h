@@ -330,6 +330,8 @@ typedef struct qa_world_actor_snapshot {
     bool failed, borrowed;
 } qa_world_actor_snapshot;
 typedef enum qa_world_snapshot_order { QA_WORLD_ORDER_SPATIAL, QA_WORLD_ORDER_ACTOR_SLOT } qa_world_snapshot_order;
+/* Leases full actor-capacity storage for a caller-filled roster. */
+bool qa_world_snapshot_acquire(qa_world *, qa_world_actor_snapshot *, qa_error *);
 /* Captures linked candidates in the world's load-sized pool. BOTH includes
  * nonsolid bodies. Callbacks may release actors; callers re-read each live id. */
 bool qa_world_snapshot_capture(qa_world *, qa_bounds, qa_collision_role,

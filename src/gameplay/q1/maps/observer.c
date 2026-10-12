@@ -155,13 +155,13 @@ bool qa_q1_game_map_observer_nearby(qa_q1_game *g, qa_actor_id actor, qa_error *
     if (!qa_q1_game_operation_begin(g, &operation, error))
         return false;
     qa_body_state body;
-    qa_builtin_snapshot_frame *snapshot = NULL;
+    qa_world_actor_snapshot snapshot = {0};
     bool ok = qa_world_body_read(g->services.world, actor, &body, error);
     if (ok && !g->destroy_pending && q1_alive(g, actor))
         ok = q1_snapshot_actors(g, &snapshot, error);
-    for (size_t i = 0; ok && snapshot && i < snapshot->snapshot.count &&
+    for (size_t i = 0; ok && snapshot.actors && i < snapshot.count &&
                        !g->destroy_pending && q1_alive(g, actor); ++i) {
-        qa_actor_id id = snapshot->snapshot.ids[i];
+        qa_actor_id id = snapshot.actors[i];
         if (!q1_alive(g, id))
             continue;
         q1_actor *entity = q1_entity(g, id);
@@ -194,7 +194,7 @@ bool qa_q1_game_map_observer_nearby(qa_q1_game *g, qa_actor_id actor, qa_error *
         if (handled)
             break;
     }
-    if (snapshot)
-        qa_builtin_snapshot_release(snapshot);
+    if (snapshot.actors)
+        qa_world_snapshot_release(&snapshot);
     return finish(&operation, ok, error);
 }
