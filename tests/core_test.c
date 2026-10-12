@@ -38,6 +38,7 @@
 #include "qa/campaign_q1.h"
 #include "qa/scene.h"
 #include "qa/render_cpu.h"
+#include "../src/render/resource_index_private.h"
 #include "../src/render/scene/world/internal.h"
 #include "../src/render/scene/world/legacy/internal.h"
 #include "../src/render/scene/world/q3/patch.h"
@@ -1033,6 +1034,38 @@ static void test_arena(void)
 
 static void *tokens_frame_allocate(void *lease,size_t bytes,size_t alignment,qa_error *error)
 { return qa_unified_frame_lease_alloc(lease,1,bytes,alignment,error); }
+static void test_render_resource_identity(void)
+{
+    qa_error error={0};
+    qa_render_resource_index index={0};
+    int values[7]={0},owners[2]={0};
+    const struct {uint64_t identity,revision;const void *owner;} keys[]={
+        {3,7,NULL},{UINT64_C(0x100000003),7,NULL},
+        {3,UINT64_C(0x10000000007),NULL},{3,7,&owners[0]},
+        {0,7,&owners[0]},{0,7,&owners[1]}
+    };
+    for(size_t i=0;i<sizeof(keys)/sizeof(*keys);++i) {
+        CHECK(render_resource_reserve(&index,index.count+1,&error));
+        render_resource_put(&index,keys[i].identity,keys[i].revision,keys[i].owner,values+i);
+        for(size_t j=0;j<=i;++j)
+            CHECK(render_resource_get(&index,keys[j].identity,keys[j].revision,keys[j].owner)==values+j);
+    }
+    render_resource_put(&index,3,7,NULL,values+6);
+    CHECK(index.count==6 && render_resource_get(&index,3,7,NULL)==values+6);
+    render_resource_remove(&index,3,7,NULL);
+    CHECK(index.count==5 && !render_resource_get(&index,3,7,NULL));
+    CHECK(render_resource_get(&index,3,UINT64_C(0x10000000007),NULL)==values+2);
+    CHECK(render_resource_get(&index,0,7,&owners[0])==values+4);
+    size_t capacity=index.slots.capacity;
+    render_resource_clear(&index);
+    CHECK(!index.count && index.slots.capacity==capacity);
+    CHECK(!render_resource_get(&index,0,7,&owners[0]));
+    CHECK(render_resource_reserve(&index,1,&error));
+    render_resource_put(&index,0,7,&owners[1],values+5);
+    CHECK(render_resource_get(&index,0,7,&owners[1])==values+5);
+    render_resource_destroy(&index);
+}
+
 static void test_literal_tokens(void)
 {
     qa_error error={0}; qa_command_tokens owned={0},pooled={0};
@@ -4222,6 +4255,7 @@ int main(int argc, char **argv)
     test_q2_weapon_names();
     test_q2_player_media();
     test_literal_tokens();
+    test_render_resource_identity();
     test_platform_event_retirement();
     test_q2_command_angles();
     test_loopback_admission();

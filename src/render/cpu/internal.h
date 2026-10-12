@@ -62,12 +62,9 @@ typedef struct cpu_stream_image {
 typedef struct cpu_skin_binding {
   qa_scene_skin_sample *sample;
   size_t offset;
-} cpu_skin_binding;
-typedef struct cpu_skin_slot {
   const void *owner;
   const qa_scene_skin_pose *pose;
-  size_t job;
-} cpu_skin_slot;
+} cpu_skin_binding;
 struct qa_cpu_renderer {
   qa_cpu_options options;
   qa_scene_frame service_frame, image_frame;
@@ -94,11 +91,11 @@ struct qa_cpu_renderer {
   qa_render_workers *raster_pool;
   qa_render_model_job *skin_jobs;
   cpu_skin_binding *skin_bindings;
-  cpu_skin_slot *skin_slots;
+  qa_arena skin_index_storage;
+  qa_id_index skin_index;
   qa_model_vertex *skin_transient;
-  size_t skin_job_count, skin_job_capacity, skin_slot_capacity;
+  size_t skin_job_count, skin_job_capacity;
   size_t skin_transient_capacity;
-  qa_stamp_set skin_marks;
   bool skin_frame_prepared;
   struct cpu_brush_context *brush_spans;
   struct cpu_surface_cache *surface_cache;

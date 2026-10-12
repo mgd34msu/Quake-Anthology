@@ -171,7 +171,7 @@ qa_cpu_renderer *qa_cpu_create(const qa_cpu_options *options, qa_error *error) {
     return NULL;
   }
   renderer->options = *options;
-  qa_stamp_set_init(&renderer->skin_marks, NULL, 0);
+  renderer->skin_index.storage = &renderer->skin_index_storage;
   if(!qa_scene_frame_init(&renderer->service_frame,options->owner,8u*1024u*1024u,error) ||
     !qa_scene_frame_init(&renderer->image_frame,options->owner,8u*1024u*1024u,error)){
     qa_scene_frame_destroy(&renderer->service_frame);free(renderer);return NULL;
@@ -245,7 +245,8 @@ void qa_cpu_destroy(qa_cpu_renderer *renderer) {
   free(renderer->vertices);
   free(renderer->skin_jobs);
   free(renderer->skin_bindings);
-  free(renderer->skin_slots);
+  qa_id_index_destroy(&renderer->skin_index);
+  qa_arena_destroy(&renderer->skin_index_storage);
   free(renderer->skin_transient);
   qa_output_domains_destroy(&renderer->output_domains);
   free(renderer);
@@ -789,55 +790,39 @@ bool qa_cpu_read_overdraw(const qa_cpu_renderer *renderer, uint8_t *destination,
   }
   return true;
 }
-static cpu_skin_slot *skin_slot(qa_cpu_renderer *renderer, const void *owner,
-                                const qa_scene_skin_pose *pose) {
-  if (!renderer->skin_slot_capacity) return NULL;
-  size_t mask = renderer->skin_slot_capacity - 1;
-  size_t index = render_resource_bucket(0, (uint64_t)(uintptr_t)pose, owner, mask);
-  for (;;) {
-    cpu_skin_slot *slot = &renderer->skin_slots[index];
-    if (!qa_stamp_set_test(&renderer->skin_marks, index) ||
-        (slot->owner == owner && slot->pose == pose)) return slot;
-    index = (index + 1) & mask;
+static size_t skin_job_find(const qa_cpu_renderer *renderer, const void *owner,
+                            const qa_scene_skin_pose *pose) {
+  qa_id_index_cursor cursor = qa_id_index_begin(&renderer->skin_index, 0,
+      (uint64_t)(uintptr_t)owner);
+  size_t index;
+  while (qa_id_index_next(&renderer->skin_index, &cursor, &index)) {
+    const cpu_skin_binding *binding = &renderer->skin_bindings[index];
+    if (binding->owner == owner && binding->pose == pose) return index;
   }
+  return SIZE_MAX;
 }
 static bool skin_jobs_reserve(qa_cpu_renderer *renderer, qa_error *error) {
   size_t required = renderer->skin_job_count + 1;
+  if (!qa_id_index_reserve(&renderer->skin_index, 1, error)) return false;
   if (required <= renderer->skin_job_capacity) return true;
   size_t capacity = renderer->skin_job_capacity ? renderer->skin_job_capacity * 2 : 16;
   if (capacity < required || capacity > (size_t)PTRDIFF_MAX / sizeof(*renderer->skin_jobs) ||
-      capacity > (size_t)PTRDIFF_MAX / sizeof(*renderer->skin_bindings) ||
-      capacity > (size_t)PTRDIFF_MAX / 2 / (sizeof(*renderer->skin_slots) + sizeof(uint32_t))) {
+      capacity > (size_t)PTRDIFF_MAX / sizeof(*renderer->skin_bindings)) {
     qa_error_set(error, QA_ERROR_MEMORY, 0, "CPU model batch exceeds addressable storage"); return false;
   }
   qa_render_model_job *jobs = malloc(capacity * sizeof(*jobs));
   cpu_skin_binding *bindings = malloc(capacity * sizeof(*bindings));
-  cpu_skin_slot *slots = calloc(capacity * 2, sizeof(*slots) + sizeof(uint32_t));
-  if (!jobs || !bindings || !slots) {
-    free(jobs); free(bindings); free(slots);
+  if (!jobs || !bindings) {
+    free(jobs); free(bindings);
     qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating retained CPU model batch storage"); return false;
   }
   if (renderer->skin_job_count) {
     memcpy(jobs, renderer->skin_jobs, renderer->skin_job_count * sizeof(*jobs));
     memcpy(bindings, renderer->skin_bindings, renderer->skin_job_count * sizeof(*bindings));
   }
-  cpu_skin_slot *previous = renderer->skin_slots;
-  qa_stamp_set previous_marks = renderer->skin_marks;
-  size_t previous_count = renderer->skin_slot_capacity;
   free(renderer->skin_jobs); free(renderer->skin_bindings);
   renderer->skin_jobs = jobs; renderer->skin_bindings = bindings;
   renderer->skin_job_capacity = capacity;
-  renderer->skin_slots = slots; renderer->skin_slot_capacity = capacity * 2;
-  qa_stamp_set_init(&renderer->skin_marks, (uint32_t *)(slots + renderer->skin_slot_capacity),
-      renderer->skin_slot_capacity);
-  for (size_t i = 0; i < previous_count; ++i) {
-    if (qa_stamp_set_test(&previous_marks, i)) {
-      cpu_skin_slot *slot = skin_slot(renderer, previous[i].owner, previous[i].pose);
-      *slot = previous[i];
-      qa_stamp_set_mark(&renderer->skin_marks, (size_t)(slot - renderer->skin_slots));
-    }
-  }
-  free(previous);
   return true;
 }
 static bool skin_transient_reserve(qa_cpu_renderer *renderer, size_t count, qa_error *error) {
@@ -893,7 +878,7 @@ static void skin_publish(qa_scene_skin_sample *sample, const qa_render_model_job
 static bool skin_frame_prepare(qa_cpu_renderer *renderer, const qa_scene_frame *frame,
                                qa_error *error) {
   renderer->skin_job_count = 0;
-  qa_stamp_set_begin(&renderer->skin_marks);
+  qa_id_index_clear(&renderer->skin_index);
   size_t transient_count = 0;
   for (size_t i = 0; i < frame->command_count; ++i) {
     const qa_scene_command *command = &frame->commands[i];
@@ -907,17 +892,15 @@ static bool skin_frame_prepare(qa_cpu_renderer *renderer, const qa_scene_frame *
     }
     const void *owner = skin->sample ? (const void *)skin->sample : (const void *)draw->mesh.geometry;
     const qa_scene_skin_pose *pose = skin->sample ? NULL : skin->pose;
-    cpu_skin_slot *slot = skin_slot(renderer, owner, pose);
-    if (slot && qa_stamp_set_test(&renderer->skin_marks, (size_t)(slot - renderer->skin_slots))) continue;
+    if (skin_job_find(renderer, owner, pose) != SIZE_MAX) continue;
     qa_scene_geometry_view geometry;
     if (!skin_descriptor(draw, &geometry, error)) return false;
     if (!skin_jobs_reserve(renderer, error)) return false;
-    slot = skin_slot(renderer, owner, pose);
     size_t index = renderer->skin_job_count++;
     renderer->skin_jobs[index] = skin_job(skin, &geometry);
-    renderer->skin_bindings[index] = (cpu_skin_binding){.sample = skin->sample, .offset = transient_count};
-    *slot = (cpu_skin_slot){.owner = owner, .pose = pose, .job = index};
-    qa_stamp_set_mark(&renderer->skin_marks, (size_t)(slot - renderer->skin_slots));
+    renderer->skin_bindings[index] = (cpu_skin_binding){.sample = skin->sample,
+        .offset = transient_count, .owner = owner, .pose = pose};
+    qa_id_index_insert(&renderer->skin_index, 0, (uint64_t)(uintptr_t)owner, index);
     if (!skin->sample) {
       if (geometry.skeletal.vertex_count > (size_t)PTRDIFF_MAX / sizeof(qa_model_vertex) - transient_count) {
         qa_error_set(error, QA_ERROR_MEMORY, i, "CPU frame model outputs exceed addressable storage"); return false;
@@ -970,9 +953,9 @@ bool cpu_skin_geometry(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   }
   const void *owner = skin->sample ? (const void *)skin->sample : (const void *)draw->mesh.geometry;
   const qa_scene_skin_pose *pose = skin->sample ? NULL : skin->pose;
-  cpu_skin_slot *slot = renderer->executing && renderer->skin_frame_prepared ? skin_slot(renderer, owner, pose) : NULL;
-  if (slot && qa_stamp_set_test(&renderer->skin_marks, (size_t)(slot - renderer->skin_slots))) {
-    const qa_render_model_job *job = &renderer->skin_jobs[slot->job];
+  size_t slot = renderer->executing && renderer->skin_frame_prepared ? skin_job_find(renderer, owner, pose) : SIZE_MAX;
+  if (slot != SIZE_MAX) {
+    const qa_render_model_job *job = &renderer->skin_jobs[slot];
     *vertices = job->vertices;
     *rounding = job->rounding;
     return true;

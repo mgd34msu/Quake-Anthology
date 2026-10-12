@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `8934a7e1`.
+Follow-up source changes were reviewed through main `fd21bfa3`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 168 have source fixes
+There are **374 overlapping source-review observations**: 169 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 203 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 202 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -336,3 +336,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `27b92d35` / 04-006: Native and external Q3 reached commands share literal token copying and retained alternating arenas; old arguments remain admitted on failed replacement. Joined Args and supplied empty Args both passed actual core cases. Normal build/seven core suites passed; first/larger commands can still grow common storage. Records: `/tmp/qa-ta3196-q3-reached-tokens-20261012`.
 
 - `8934a7e1` / 04-005: Candidate snapshots, published rosters and removed-provider views now share the common provider index. Original first-match ordering, historical descriptor identity, NULL qualification and abort-refusal lifetimes retained; candidate selection callers use the admitted roster view. Normal build/seven core suites passed; no live or allocation claim. Records: `/tmp/qa-ta3196-provider-historical-views-20261012`.
+
+- `fd21bfa3` / 26-09: Q3 AAS crossings lease common navigation captures through the final guest write. Private host capture list deleted; collector arenas retain order, repeated DAG leaves and original zero-capacity behavior. Normal build/seven core suites passed; larger crossing or nesting peaks can still grow common storage. Records: `/tmp/qa-ta3196-aas-crossings-owner-20261012`.

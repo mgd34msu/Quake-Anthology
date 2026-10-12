@@ -1,46 +1,44 @@
 #ifndef QA_RENDER_RESOURCE_INDEX_PRIVATE_H
 #define QA_RENDER_RESOURCE_INDEX_PRIVATE_H
 
-#include "qa/common.h"
+#include "qa/id_index.h"
+#include "qa/pool.h"
 #include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
 
 typedef struct qa_render_resource_slot {
     uint64_t identity, revision;
     const void *owner;
     void *value;
+    size_t slot;
 } qa_render_resource_slot;
 typedef struct qa_render_resource_index {
-    qa_render_resource_slot *slots;
-    size_t capacity, count;
+    qa_arena storage;
+    qa_pool slots;
+    qa_id_index identities;
+    size_t count;
 } qa_render_resource_index;
 
-static inline size_t render_resource_bucket(uint64_t identity, uint64_t revision,
-                                            const void *owner, size_t mask)
+static inline uint64_t render_resource_key(uint64_t identity, const void *owner,
+    qa_string_id *space)
 {
-    uint64_t key = identity ^ (revision * UINT64_C(0x9e3779b97f4a7c15)) ^
-                   (uint64_t)(uintptr_t)owner;
-    key ^= key >> 30;
-    key *= UINT64_C(0xbf58476d1ce4e5b9);
-    key ^= key >> 27;
-    key *= UINT64_C(0x94d049bb133111eb);
-    key ^= key >> 31;
-    return (size_t)key & mask;
+    *space = identity ? 0 : 1;
+    return identity ? identity : (uint64_t)(uintptr_t)owner;
 }
+
 static inline qa_render_resource_slot *render_resource_slot(
     const qa_render_resource_index *index, uint64_t identity, uint64_t revision,
     const void *owner)
 {
-    if (!index->capacity) return NULL;
-    size_t mask = index->capacity - 1;
-    size_t at = render_resource_bucket(identity, revision, owner, mask);
-    for (;;) {
-        qa_render_resource_slot *slot = index->slots + at;
-        if (!slot->value || (slot->identity == identity && slot->revision == revision &&
-                             slot->owner == owner)) return slot;
-        at = (at + 1) & mask;
+    qa_string_id space;
+    uint64_t key = render_resource_key(identity, owner, &space);
+    qa_id_index_cursor cursor = qa_id_index_begin(&index->identities, space, key);
+    size_t value;
+    while (qa_id_index_next(&index->identities, &cursor, &value)) {
+        qa_render_resource_slot *slot = qa_pool_at(&index->slots, value);
+        if (slot->identity == identity && slot->revision == revision &&
+            slot->owner == owner) return slot;
     }
+    return NULL;
 }
 static inline void *render_resource_get(const qa_render_resource_index *index,
     uint64_t identity, uint64_t revision, const void *owner)
@@ -53,59 +51,63 @@ static inline void render_resource_put(qa_render_resource_index *index,
     uint64_t identity, uint64_t revision, const void *owner, void *value)
 {
     qa_render_resource_slot *slot = render_resource_slot(index, identity, revision, owner);
-    if (!slot->value) ++index->count;
-    *slot = (qa_render_resource_slot){identity, revision, owner, value};
+    if (!slot) {
+        size_t ordinal;
+        slot = qa_pool_take(&index->slots, &ordinal);
+        *slot = (qa_render_resource_slot){identity, revision, owner, value, ordinal};
+        qa_string_id space;
+        uint64_t key = render_resource_key(identity, owner, &space);
+        qa_id_index_insert(&index->identities, space, key, ordinal);
+        ++index->count;
+    } else slot->value = value;
 }
 static inline bool render_resource_reserve(qa_render_resource_index *index,
                                            size_t required, qa_error *error)
 {
-    if (required <= index->capacity / 2) return true;
-    size_t capacity = index->capacity ? index->capacity : 128;
-    while (required > capacity / 2) {
-        if (capacity > SIZE_MAX / 2) goto failed;
-        capacity *= 2;
+    if (required <= index->count) return true;
+    if (!index->slots.stride) {
+        qa_render_resource_index next = {0};
+        next.identities.storage = &next.storage;
+        if (!qa_pool_prepare(&next.slots, &next.storage, required,
+                sizeof(qa_render_resource_slot), _Alignof(qa_render_resource_slot), error) ||
+            !qa_id_index_reserve(&next.identities, required, error)) {
+            qa_id_index_destroy(&next.identities);
+            qa_arena_destroy(&next.storage);
+            return false;
+        }
+        *index = next;
+        index->identities.storage = &index->storage;
+        return true;
     }
-    if (capacity > SIZE_MAX / sizeof(*index->slots)) goto failed;
-    qa_render_resource_index next = {.capacity = capacity};
-    next.slots = calloc(capacity, sizeof(*next.slots));
-    if (!next.slots) goto failed;
-    for (size_t i = 0; i < index->capacity; ++i) {
-        const qa_render_resource_slot *slot = index->slots + i;
-        if (slot->value)
-            render_resource_put(&next, slot->identity, slot->revision, slot->owner, slot->value);
+    if (!qa_id_index_reserve(&index->identities, required - index->count, error)) return false;
+    if (required > index->slots.capacity) {
+        size_t growth = required - index->slots.capacity;
+        if (growth < index->slots.capacity) growth = index->slots.capacity;
+        if (!qa_pool_extend(&index->slots, &index->storage, growth, error)) return false;
     }
-    free(index->slots);
-    *index = next;
     return true;
-failed:
-    qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating renderer resource index");
-    return false;
 }
 static inline void render_resource_remove(qa_render_resource_index *index,
     uint64_t identity, uint64_t revision, const void *owner)
 {
     qa_render_resource_slot *slot = render_resource_slot(index, identity, revision, owner);
-    if (!slot || !slot->value) return;
-    size_t mask = index->capacity - 1;
-    size_t at = (size_t)(slot - index->slots);
-    slot->value = NULL;
+    if (!slot) return;
+    qa_string_id space;
+    uint64_t key = render_resource_key(identity, owner, &space);
+    qa_id_index_remove_value(&index->identities, space, key, slot->slot);
+    qa_pool_release(&index->slots, slot->slot);
     --index->count;
-    for (at = (at + 1) & mask; index->slots[at].value; at = (at + 1) & mask) {
-        qa_render_resource_slot displaced = index->slots[at];
-        index->slots[at].value = NULL;
-        --index->count;
-        render_resource_put(index, displaced.identity, displaced.revision,
-                            displaced.owner, displaced.value);
-    }
 }
 static inline void render_resource_clear(qa_render_resource_index *index)
 {
-    if (index->slots) memset(index->slots, 0, index->capacity * sizeof(*index->slots));
+    qa_id_index_clear(&index->identities);
+    if (index->slots.stride) qa_pool_reset(&index->slots);
     index->count = 0;
 }
 static inline void render_resource_destroy(qa_render_resource_index *index)
 {
-    free(index->slots);
+    qa_id_index_destroy(&index->identities);
+    qa_arena_destroy(&index->storage);
     *index = (qa_render_resource_index){0};
 }
 
