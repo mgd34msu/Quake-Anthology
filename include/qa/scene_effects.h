@@ -70,16 +70,6 @@ bool qa_scene_default_model(qa_scene_frame *, const qa_scene_view *, qa_scene_ma
 bool qa_scene_default_model_draw(qa_scene_frame *, const qa_scene_view *, qa_scene_matrix,
     const qa_scene_image *, const qa_scene_state *, qa_scene_draw *, qa_error *);
 
-/* Call after backend recreation, atlas loss, or dropping an emitted frame. */
-void qa_scene_shadows_invalidate(qa_scene_shadows *);
-typedef struct qa_scene_shadow_options { bool enabled; uint32_t resolution_cap; } qa_scene_shadow_options;
-/* NULL options select enabled shadows and a maximum face resolution of 1024.
- * The cap is a source setting; point-light fitting may reduce it further. */
-bool qa_scene_shadows_prepare_options(qa_scene_shadows *, const qa_scene_light *, size_t,
-                                      const qa_scene_shadow_caster *, size_t,
-                                      const qa_scene_shadow_options *, qa_scene_frame *,
-                                      const qa_scene_shadow_light **, size_t *,
-                                      const qa_scene_image **, qa_error *);
 bool qa_scene_flags_cast_shadow(qa_game_family, uint32_t flags, float alpha,
                                 bool view_model, bool sprite);
 

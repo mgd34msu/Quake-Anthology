@@ -734,8 +734,8 @@ bool qa_scene_frame_emit(qa_scene_frame *, const qa_scene_command *, qa_error *)
 bool qa_scene_frame_output_domain(qa_scene_frame *, qa_scene_rect, bool source, qa_error *);
 bool qa_scene_frame_preblend_gamma(qa_scene_frame *, bool enabled, qa_error *);
 bool qa_scene_frame_draw(qa_scene_frame *, const qa_scene_draw *, qa_error *);
-/* Pin borrowed retained geometry, including intermediate shadow-caster data,
- * until reset. No command is emitted. NULL geometry needs no reference. */
+/* Pin borrowed retained geometry until reset. No command is emitted.
+ * NULL geometry needs no reference. */
 bool qa_scene_frame_geometry(qa_scene_frame *, const qa_scene_geometry *, qa_error *);
 /* Retain and prepare one exact model pose slot until reset. Repeated admissions
  * in this frame return the same immutable joints and palette ordinal. */
@@ -1082,25 +1082,4 @@ bool qa_scene_beam(qa_scene_frame *, const qa_scene_view *, qa_vec3 start, qa_ve
 bool qa_scene_sky(qa_scene_frame *, const qa_scene_view *,
                   const qa_scene_image *const images[6], float radius, float rotation,
                   qa_vec3 axis, qa_vec4 color, qa_error *);
-typedef struct qa_scene_shadow_caster {
-    const qa_scene_mesh *meshes;
-    size_t mesh_count;
-    qa_scene_matrix transform;
-    qa_bounds bounds;
-    uint64_t identity, revision;
-    bool world_geometry;
-} qa_scene_shadow_caster;
-bool qa_scene_world_shadow_caster(qa_scene_world *, uint32_t model,
-                                  const qa_model_transform *, const qa_scene_world_input *,
-                                  qa_scene_frame *, qa_scene_shadow_caster *, qa_error *);
-bool qa_scene_model_shadow_caster(qa_scene_model *, const qa_scene_model_input *,
-                                  qa_scene_frame *, qa_scene_shadow_caster *, qa_error *);
-typedef struct qa_scene_shadows qa_scene_shadows;
-qa_scene_shadows *qa_scene_shadows_create(qa_scene_resources *, qa_error *);
-void qa_scene_shadows_destroy(qa_scene_shadows *);
-bool qa_scene_shadows_prepare(qa_scene_shadows *, const qa_scene_light *, size_t,
-                              const qa_scene_shadow_caster *, size_t, qa_scene_frame *,
-                              const qa_scene_shadow_light **, size_t *,
-                              const qa_scene_image **, qa_error *);
-
 #endif

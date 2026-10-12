@@ -68,20 +68,6 @@ const qa_scene_model *qa_scene_model_replacement_first(const qa_scene_model *mod
 const qa_scene_model *qa_scene_model_replacement_next(const qa_scene_model *model) { return model ? model->replacement_next : NULL; }
 const qa_model_replacement *qa_scene_model_replacement_description(const qa_scene_model *model) { return model ? model->replacement_source : NULL; }
 uint64_t qa_scene_model_identity(const qa_scene_model *model) { return model ? model->identity : 0; }
-size_t qa_scene_model_shadow_identity_count(const qa_scene_model *model)
-{
-    size_t count = 0;
-    if (model) for (const scene_model_shadow_identity *entry = model->shadow_identities; entry; entry = entry->next) ++count;
-    return count;
-}
-bool qa_scene_model_shadow_identity_at(const qa_scene_model *model, size_t index, uint32_t *entity, uint64_t *identity)
-{
-    if (!model || !entity || !identity) return false;
-    const scene_model_shadow_identity *entry = model->shadow_identities;
-    while (entry && index) { entry = entry->next; --index; }
-    if (!entry) return false;
-    *entity = entry->entity; *identity = entry->identity; return true;
-}
 static bool model_array(size_t count, size_t size, void **out, qa_error *error) {
     if (count > SIZE_MAX / size) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "model array exceeds addressable storage"); return false;
@@ -225,8 +211,6 @@ void qa_scene_model_destroy(qa_scene_model *model) {
         if (binding->retained) qa_material_release(binding->material);
         free(binding);
     }
-    scene_model_shadow_identity *identity = model->shadow_identities;
-    while (identity) { scene_model_shadow_identity *next = identity->next; free(identity); identity = next; }
     if (model->animation_lease.release) model->animation_lease.release(model->animation_lease.context);
     if (model->replacement_source_lease.release) model->replacement_source_lease.release(model->replacement_source_lease.context);
     if (model->source_lease.release) model->source_lease.release(model->source_lease.context);

@@ -228,19 +228,6 @@ void qaw_destroy_legacy(qa_scene_world *world)
     world->legacy_data = NULL;
 }
 
-bool qaw_legacy_casts_shadow(const qa_scene_world *world, const qaw_surface *surface, bool entity)
-{
-    if (world->bsp.family == QA_BSP_Q1)
-        return !surface->sky && !surface->legacy->warp && surface->legacy->alpha >= 1;
-    qa_bsp_face face;
-    qa_bsp_texinfo info;
-    if (!qa_bsp_read_face(&world->bsp, surface->source_index, &face, NULL) ||
-        !qa_bsp_read_texinfo(&world->bsp, face.texinfo, &info, NULL)) return false;
-    int32_t excluded = 4 | 8 | 128;
-    if (entity) excluded |= 16 | 32;
-    return (info.flags & excluded) == 0;
-}
-
 static int32_t legacy_integer(double value)
 {
     return value >= INT32_MIN && value < 2147483648.0 ? (int32_t)value : INT32_MIN;

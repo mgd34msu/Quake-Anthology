@@ -64,11 +64,6 @@ typedef struct scene_model_mesh {
     bool influence_bounds_ready;
 } scene_model_mesh;
 
-typedef struct scene_model_shadow_identity {
-    uint32_t entity;
-    uint64_t identity;
-    struct scene_model_shadow_identity *next;
-} scene_model_shadow_identity;
 typedef struct qa_scene_model_capture qa_scene_model_capture;
 
 struct qa_scene_model {
@@ -105,7 +100,6 @@ struct qa_scene_model {
     const qa_model_replacement *replacement_source;
     scene_model_image ***replacement_skins;
     size_t replacement_skin_count;
-    scene_model_shadow_identity *shadow_identities;
 };
 
 static inline qa_vec3 model_vec(const float v[3]) { return qa_v3(v[0], v[1], v[2]); }

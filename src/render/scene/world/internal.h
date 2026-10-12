@@ -141,7 +141,6 @@ void qaw_destroy_legacy(qa_scene_world *);
 bool qaw_submit_legacy(qa_scene_world *, qaw_surface *, const qa_material_context *,
                        const qa_scene_world_input *, qa_scene_frame *, qa_error *);
 bool qaw_sample_legacy_light(const qa_scene_world *, qa_vec3, qa_vec3 *, qa_vec3 *, qa_vec3 *);
-bool qaw_legacy_casts_shadow(const qa_scene_world *, const qaw_surface *, bool);
 bool qaw_build_q3(qa_scene_world *, qa_error *);
 void qaw_destroy_q3(qa_scene_world *);
 bool qaw_submit_q3(qa_scene_world *, qaw_surface *, const qa_material_context *,

@@ -5,7 +5,7 @@
 typedef enum qa_scene_model_identity_kind {
     QA_SCENE_MODEL_IDENTITY_MODEL,
     QA_SCENE_MODEL_IDENTITY_MESH,
-    QA_SCENE_MODEL_IDENTITY_SHADOW
+    QA_SCENE_MODEL_IDENTITY_SHADOW /* Reserved for the old saved identity layout. */
 } qa_scene_model_identity_kind;
 bool qa_scene_model_source_resource_bind(qa_scene_model *, const qa_resource *, qa_error *);
 
@@ -45,6 +45,4 @@ const qa_scene_model *qa_scene_model_replacement_first(const qa_scene_model *);
 const qa_scene_model *qa_scene_model_replacement_next(const qa_scene_model *);
 const qa_model_replacement *qa_scene_model_replacement_description(const qa_scene_model *);
 uint64_t qa_scene_model_identity(const qa_scene_model *);
-size_t qa_scene_model_shadow_identity_count(const qa_scene_model *);
-bool qa_scene_model_shadow_identity_at(const qa_scene_model *, size_t, uint32_t *, uint64_t *);
 #endif

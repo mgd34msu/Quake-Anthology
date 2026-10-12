@@ -590,11 +590,6 @@ static bool model_rows(frontend_scene_namespace *space, uint64_t owner, const qa
             ok = mesh && graph_number(space, capture, SCENE_MESH, SCENE_MODEL_OWNER, owner, node, i, mesh->identity, error) &&
                 graph_geometry(space, capture, SCENE_MODEL_OWNER, owner, node, i, mesh->geometry, error);
         }
-        for (size_t i = 0; ok && i < qa_scene_model_shadow_identity_count(model); ++i) {
-            uint32_t entity = 0; uint64_t identity = 0;
-            ok = qa_scene_model_shadow_identity_at(model, i, &entity, &identity) && graph_number(space, capture,
-                SCENE_SHADOW, SCENE_MODEL_OWNER, owner, node, i, identity, error);
-        }
     }
     free(nodes.nodes);
     if (!ok && error && error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Actual model owner graph is incomplete");

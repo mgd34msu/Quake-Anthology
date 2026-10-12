@@ -833,7 +833,6 @@ add_library(qa_scene STATIC
     src/render/scene/models/draw.c
     src/render/scene/models/images.c
     src/render/scene/models/lighting.c
-    src/render/scene/models/shadows.c
     src/render/scene/models/sprites.c
     src/render/scene/models/topology.c
     src/render/scene/world.c
@@ -849,7 +848,6 @@ add_library(qa_scene STATIC
     src/render/scene/effects/particles.c
     src/render/scene/effects/particle_batch.c
     src/render/scene/effects/primitives.c
-    src/render/scene/effects/shadows.c
     src/render/scene/effects/sky.c
     src/render/scene/effects/stencil.c
     src/render/material/color.c

@@ -1981,69 +1981,6 @@ bool qa_scene_world_sky_drawn(const qa_scene_world *world)
     return world != NULL && world->sky_drawn;
 }
 
-static bool world_shadow_caster(qa_scene_world *world, uint32_t model_index,
-                                  const qa_model_transform *transform,
-                                  const qa_scene_world_input *input, qa_scene_frame *frame,
-                                  qa_scene_shadow_caster *out, qa_error *error)
-{
-    if (frame == NULL) return world_error(error, QA_ERROR_ARGUMENT, "shadow caster requires frame");
-    if (!valid_input(world, input, error)) return false;
-    if (out == NULL || model_index >= world->model_count)
-        return world_error(error, QA_ERROR_ARGUMENT, "invalid brush shadow caster request");
-    qa_material_context context = world_context(world, input);
-    if (transform != NULL) {
-        for (unsigned axis = 0; axis < 3; ++axis)
-            if (!isfinite(transform->origin[axis]))
-                return world_error(error, QA_ERROR_ARGUMENT, "nonfinite brush shadow origin");
-        qa_model_transform inverse;
-        if (!qa_model_transform_inverse(transform, &inverse))
-            return world_error(error, QA_ERROR_ARGUMENT, "brush shadow transform is singular");
-        context.model = qa_scene_model_matrix(transform);
-        context.local_view_origin = qaw_local_point(transform, input->view.origin);
-        context.non_normalized_axis = transform->scale[0] != 1 || transform->scale[1] != 1 || transform->scale[2] != 1;
-    }
-    const qaw_model *model = &world->models[model_index];
-    qa_scene_shadow_caster caster = {
-        .transform = context.model, .identity = model->identity, .revision = world->revision,
-        .world_geometry = model_index == 0 && transform == NULL
-    };
-    qa_scene_mesh *meshes = NULL;
-    if (model->surface_count != 0) {
-        if (model->surface_count > SIZE_MAX / sizeof(*meshes))
-            return world_error(error, QA_ERROR_MEMORY, "brush shadow mesh list exceeds address space");
-        meshes = qa_arena_alloc(&frame->storage, model->surface_count * sizeof(*meshes), _Alignof(qa_scene_mesh), error);
-        if (meshes == NULL) return false;
-    }
-    for (size_t i = 0; i < model->surface_count; ++i) {
-        const qaw_surface *surface = &world->surfaces[model->surfaces[i]];
-        context.time_offset = surface->material_time_offset;
-        qa_scene_mesh mesh = surface->mesh;
-        if (surface->flare) continue;
-        if (surface->material != NULL) {
-            if (!qa_material_shadow_mesh(surface->material, &mesh, &context, frame, &mesh, error)) return false;
-        } else if (!qaw_legacy_casts_shadow(world, surface, model_index != 0 || transform != NULL)) continue;
-        if (mesh.index_count == 0 || mesh.vertex_count == 0) continue;
-        if (!qa_scene_frame_geometry(frame, mesh.geometry, error)) return false;
-        caster.bounds = caster.mesh_count == 0 ? mesh.bounds : qa_bounds_union(caster.bounds, mesh.bounds);
-        meshes[caster.mesh_count++] = mesh;
-    }
-    caster.meshes = meshes;
-    *out = caster;
-    return true;
-}
-
-bool qa_scene_world_shadow_caster(qa_scene_world *world, uint32_t model_index,
-                                  const qa_model_transform *transform,
-                                  const qa_scene_world_input *input, qa_scene_frame *frame,
-                                  qa_scene_shadow_caster *out, qa_error *error)
-{
-    if (!world || !frame || world->restore_pending || world->checkpoint_active || world->capture || world->image_policy)
-        return world_error(error, QA_ERROR_ARGUMENT, "brush shadow submission requires idle continuation owners");
-    world_transaction start = transaction_begin(world, frame);
-    return transaction_end(world, frame, &start,
-        world_shadow_caster(world, model_index, transform, input, frame, out, error));
-}
-
 bool qa_scene_world_portal_view(qa_scene_world *world, const qa_scene_world_input *input,
                                 const qa_scene_portal *portals, size_t portal_count,
                                 qa_scene_view *view, qa_vec3 *pvs_origin, bool *found, qa_error *error)
