@@ -66,6 +66,19 @@ void qa_browser_response_clear(qa_server_browser *browser, browser_record *recor
     record->response_data = NULL; record->response_pages = 0;
     record->q3_response = record->status_response = (qa_buffer){0};
 }
+qa_arena *qa_browser_decode_acquire(const qa_server_browser *browser, size_t *slot, qa_error *error) {
+    qa_pool *pool = &browser->decoders->arenas;
+    if (pool->head == SIZE_MAX) {
+        size_t next = pool->capacity;
+        if (!qa_pool_extend(pool, &browser->decoders->backing, 1, error)) return NULL;
+        *(qa_arena *)qa_pool_at(pool, next) = (qa_arena){0};
+    }
+    return qa_pool_take(pool, slot);
+}
+void qa_browser_decode_release(const qa_server_browser *browser, size_t slot) {
+    qa_arena_reset(qa_pool_at(&browser->decoders->arenas, slot));
+    qa_pool_release(&browser->decoders->arenas, slot);
+}
 bool qa_browser_queues_prepare(qa_server_browser *browser, size_t status, size_t broadcasts,
     qa_error *error) {
     browser_q3 *q = browser->q3;
@@ -104,6 +117,14 @@ bool qa_server_browser_create(qa_http *http, uint32_t capacity, const qa_browser
     browser->q3->master_source = -1;
     browser->q3->next_entry_order = 1;
     browser->http = http; browser->capacity = capacity; browser->hooks = *hooks; browser->next_query = 1;
+    browser->decoders = qa_arena_alloc(&browser->decode_storage, sizeof(*browser->decoders),
+        _Alignof(browser_decode_storage), error);
+    if (!browser->decoders) { qa_server_browser_destroy(browser); return false; }
+    *browser->decoders = (browser_decode_storage){0};
+    if (!qa_pool_prepare(&browser->decoders->arenas, &browser->decoders->backing,
+        0, sizeof(qa_arena), _Alignof(qa_arena), error)) {
+        qa_server_browser_destroy(browser); return false;
+    }
     browser->responses = qa_arena_alloc(&browser->response_storage, sizeof(*browser->responses),
         _Alignof(qa_pool), error);
     if (!browser->responses || !qa_pool_prepare(browser->responses, &browser->response_storage,
@@ -129,6 +150,12 @@ void qa_server_browser_destroy(qa_server_browser *browser) {
     }
     qa_arena_destroy(&browser->master_storage); qa_arena_destroy(&browser->queue_storage);
     qa_arena_destroy(&browser->response_storage);
+    if (browser->decoders) {
+        for (size_t i = 0; i < browser->decoders->arenas.capacity; ++i)
+            qa_arena_destroy(qa_pool_at(&browser->decoders->arenas, i));
+        qa_arena_destroy(&browser->decoders->backing);
+    }
+    qa_arena_destroy(&browser->decode_storage);
     free(browser->q3); free(browser->records); free(browser);
 }
 bool qa_server_browser_add(qa_server_browser *browser, const qa_net_address *address,
@@ -267,7 +294,7 @@ bool qa_server_browser_receive(qa_server_browser *browser, const qa_net_datagram
     } else return true;
     if (packet->received_ns < sent || packet->received_ns - sent >= timeout) return true;
     qa_server_entry decoded; uint64_t challenge; qa_error ignored = {0};
-    if (!qa_browser_status_decode(packet->payload, protocol, &decoded, &challenge, &ignored)) return true;
+    if (!qa_browser_status_decode(browser, packet->payload, protocol, &decoded, &challenge, &ignored)) return true;
     if (protocol.kind == QA_NET_Q3_68 && challenge != query) return true;
     if (!target) {
         browser->callback = true;

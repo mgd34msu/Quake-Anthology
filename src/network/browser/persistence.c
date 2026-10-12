@@ -114,7 +114,7 @@ static bool browser_checkpoint_valid(const qa_server_browser *b)
         (b->master_pending && !b->master_timeout)) return false;
     for (uint32_t i = 0; i < b->capacity; ++i) {
         const browser_record *r = &b->records[i]; const qa_server_entry *e = &r->entry;
-        if (!qa_browser_status_response_valid(r) || (e->has_ping && !e->available) ||
+        if (!qa_browser_status_response_valid(b, r) || (e->has_ping && !e->available) ||
             (!e->has_ping && e->ping_ns)) return false;
         if (!r->occupied) continue;
         if (!e->sources || (e->sources & ~31u) || !service_address_valid(&e->address) ||

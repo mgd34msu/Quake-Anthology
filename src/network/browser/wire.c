@@ -53,15 +53,20 @@ static bool q2_player(void *context, int32_t score, int32_t ping, const char *na
     if (entry->players == UINT32_MAX) return qa_browser_fail(error, "Discovery player count overflow");
     ++entry->players; return true;
 }
-bool qa_browser_status_decode(qa_bytes bytes, qa_net_protocol_id protocol,
+bool qa_browser_status_decode(const qa_server_browser *browser, qa_bytes bytes, qa_net_protocol_id protocol,
                                qa_server_entry *out, uint64_t *challenge, qa_error *error) {
     qa_server_entry entry = {.protocol = protocol}; *challenge = 0;
     if (protocol.kind <= QA_NET_QW29) {
+        size_t slot;
+        qa_arena *scratch = qa_browser_decode_acquire(browser, &slot, error);
+        if (!scratch) return false;
         qa_q1_discovery status = {0};
-        if (!qa_q1_discovery_read(bytes, qa_q1_is_qw(protocol), &status, error)) return false;
-        bool ok = text_copy(entry.name, sizeof(entry.name), status.name, error) &&
-            text_copy(entry.map, sizeof(entry.map), status.map, error);
-        entry.players = status.players; entry.maximum_players = status.max_players;
+        bool ok = qa_q1_discovery_read(bytes, qa_q1_is_qw(protocol), scratch, &status, error);
+        if (ok) {
+            ok = text_copy(entry.name, sizeof(entry.name), status.name, error) &&
+                text_copy(entry.map, sizeof(entry.map), status.map, error);
+            entry.players = status.players; entry.maximum_players = status.max_players;
+        }
         if (ok && status.rules.count) {
             size_t used=0;
             for (size_t i = 0; i < status.rules.count; ++i) {
@@ -74,7 +79,8 @@ bool qa_browser_status_decode(qa_bytes bytes, qa_net_protocol_id protocol,
                 entry.rules[used]=0;
             }
         }
-        qa_q1_discovery_free(&status); if (!ok) return false;
+        qa_q1_discovery_free(&status); qa_browser_decode_release(browser, slot);
+        if (!ok) return false;
     } else if (protocol.kind == QA_NET_Q2KEX_2023) {
         if (!qa_browser_kex_decode(bytes, &entry, error)) return false;
         entry.protocol = protocol;
@@ -87,19 +93,25 @@ bool qa_browser_status_decode(qa_bytes bytes, qa_net_protocol_id protocol,
         qa_q2_oob message_storage; qa_q2_oob *message = &message_storage; bool recognized = false;
         char rules[8193];
         bool ok = qa_q2_oob_read(bytes, protocol.kind == QA_NET_Q2REPRO_1038, message, &recognized, error);
-        if (ok && recognized) ok = qa_q2_status_read(message, rules, sizeof(rules), q2_player, &entry, &recognized, error);
+        if (ok && recognized) {
+            size_t slot;
+            qa_arena *scratch = qa_browser_decode_acquire(browser, &slot, error);
+            ok = scratch && qa_q2_status_read(message, rules, sizeof(rules), scratch,
+                q2_player, &entry, &recognized, error);
+            if (scratch) qa_browser_decode_release(browser, slot);
+        }
         if (ok && recognized) ok = info(&entry, rules, error);
         if (!ok || !recognized) return qa_browser_fail(error, "Not a Q2 status response");
     }
     *out = entry; return true;
 }
-bool qa_browser_status_response_valid(const browser_record *record) {
+bool qa_browser_status_response_valid(const qa_server_browser *browser, const browser_record *record) {
     if (!record->status_response.size) return !record->status_response.data &&
         (record->entry.protocol.kind == QA_NET_Q3_68 || !record->entry.available);
     if (!record->occupied || !record->entry.available || record->entry.protocol.kind == QA_NET_Q3_68 ||
         !record->status_response.data || record->status_response.size > 65535) return false;
     qa_server_entry decoded; uint64_t challenge; qa_error ignored = {0};
-    return qa_browser_status_decode((qa_bytes){record->status_response.data, record->status_response.size},
+    return qa_browser_status_decode(browser, (qa_bytes){record->status_response.data, record->status_response.size},
         record->entry.protocol, &decoded, &challenge, &ignored) &&
         decoded.players == record->entry.players && decoded.maximum_players == record->entry.maximum_players &&
         !strcmp(decoded.name, record->entry.name) && !strcmp(decoded.map, record->entry.map) &&
@@ -184,8 +196,10 @@ bool qa_server_browser_details_read(const qa_server_browser *browser, const qa_n
         return qa_browser_fail(error,"Available discovery entry lost its received detail datagram");
     bool ok = detail_text(&candidate.response,bytes,error);
     if (ok && protocol.kind <= QA_NET_QW29) {
+        size_t slot;
+        qa_arena *scratch = qa_browser_decode_acquire(browser, &slot, error);
         qa_q1_discovery status = {0};
-        ok = qa_q1_discovery_read(bytes,qa_q1_is_qw(protocol),&status,error);
+        ok = scratch && qa_q1_discovery_read(bytes,qa_q1_is_qw(protocol),scratch,&status,error);
         for (size_t i = 0; ok && i < status.player_count; ++i)
             ok = detail_player(&candidate,status.player_details[i].score,status.player_details[i].ping,status.player_details[i].name,error);
         for (size_t i = 0; ok && i < status.rules.count; ++i) {
@@ -194,6 +208,7 @@ bool qa_server_browser_details_read(const qa_server_browser *browser, const qa_n
                 (qa_bytes){(const uint8_t *)value,strlen(value)},error);
         }
         qa_q1_discovery_free(&status);
+        if (scratch) qa_browser_decode_release(browser, slot);
     } else if (ok && protocol.kind == QA_NET_Q2KEX_2023) {
         qa_kex_status_view status;
         ok = qa_kex_status_read(bytes,&status,error);
@@ -209,9 +224,15 @@ bool qa_server_browser_details_read(const qa_server_browser *browser, const qa_n
     } else if (ok) {
         qa_q2_oob message_storage; qa_q2_oob *message = &message_storage; bool recognized=false;
         char rules[8193];
-        ok=qa_q2_oob_read(bytes,protocol.kind==QA_NET_Q2REPRO_1038,message,&recognized,error) && recognized &&
-            qa_q2_status_read(message,rules,sizeof(rules),detail_player,&candidate,&recognized,error) && recognized &&
-            detail_info(&candidate,rules,error);
+        ok=qa_q2_oob_read(bytes,protocol.kind==QA_NET_Q2REPRO_1038,message,&recognized,error) && recognized;
+        if (ok) {
+            size_t slot;
+            qa_arena *scratch = qa_browser_decode_acquire(browser, &slot, error);
+            ok = scratch && qa_q2_status_read(message,rules,sizeof(rules),scratch,
+                detail_player,&candidate,&recognized,error) && recognized &&
+                detail_info(&candidate,rules,error);
+            if (scratch) qa_browser_decode_release(browser, slot);
+        }
     }
     if(!ok) { qa_server_browser_details_free(&candidate); return false; }
     *out=candidate;

@@ -180,12 +180,15 @@ typedef struct qa_q1_discovery {
     qa_q1_discovery_player *player_details;
     size_t player_count;
     char *storage;
+    bool borrowed;
 } qa_q1_discovery;
 bool qa_nq_discovery_query(qa_net_writer *);
 bool qa_qw_discovery_query(qa_net_writer *);
 /* Donor NQ has no master protocol; QW master lists use the HTTP service. */
 bool qa_q1_discovery_master_query(bool quakeworld, qa_net_writer *);
-bool qa_q1_discovery_read(qa_bytes, bool quakeworld, qa_q1_discovery *, qa_error *);
+/* Optional storage owns the result until its arena is reset. NULL retains an
+ * owning result, released by qa_q1_discovery_free. */
+bool qa_q1_discovery_read(qa_bytes, bool quakeworld, qa_arena *, qa_q1_discovery *, qa_error *);
 void qa_q1_discovery_free(qa_q1_discovery *);
 
 #endif

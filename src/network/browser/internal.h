@@ -30,6 +30,8 @@ typedef struct browser_q3 {
     int32_t master_source;
 } browser_q3;
 
+typedef struct browser_decode_storage { qa_pool arenas; qa_arena backing; } browser_decode_storage;
+
 typedef struct browser_record {
     qa_server_entry entry;
     qa_buffer q3_response;
@@ -45,8 +47,9 @@ struct qa_server_browser {
     qa_browser_hooks hooks;
     browser_record *records;
     browser_q3 *q3;
-    qa_arena response_storage, queue_storage, master_storage;
+    qa_arena response_storage, queue_storage, master_storage, decode_storage;
     qa_pool *responses;
+    browser_decode_storage *decoders;
     uint32_t capacity;
     uint64_t next_query;
     qa_net_address broadcast, master;
@@ -63,11 +66,14 @@ void qa_browser_changed(qa_server_browser *, const qa_server_entry *, qa_browser
 bool qa_browser_restore_http(qa_server_browser *, qa_error *);
 bool qa_browser_http_valid(const qa_server_browser *, qa_error *);
 bool qa_browser_query_encode(qa_net_protocol_id, uint64_t challenge, qa_net_writer *);
-bool qa_browser_status_decode(qa_bytes, qa_net_protocol_id, qa_server_entry *, uint64_t *challenge, qa_error *);
+bool qa_browser_status_decode(const qa_server_browser *, qa_bytes, qa_net_protocol_id,
+    qa_server_entry *, uint64_t *challenge, qa_error *);
+qa_arena *qa_browser_decode_acquire(const qa_server_browser *, size_t *slot, qa_error *);
+void qa_browser_decode_release(const qa_server_browser *, size_t slot);
 bool qa_browser_response_store(qa_server_browser *, browser_record *, qa_bytes, bool q3, qa_error *);
 void qa_browser_response_clear(qa_server_browser *, browser_record *);
 bool qa_browser_queues_prepare(qa_server_browser *, size_t status, size_t broadcasts, qa_error *);
-bool qa_browser_status_response_valid(const browser_record *);
+bool qa_browser_status_response_valid(const qa_server_browser *, const browser_record *);
 bool qa_browser_master_decode(qa_bytes, qa_net_protocol_id, qa_net_address *, size_t, size_t *, bool *complete, qa_error *);
 uint32_t qa_browser_q3_source_bit(int32_t);
 bool qa_browser_q3_membership(qa_server_browser *, const qa_net_address *, uint32_t before, uint32_t after, qa_error *);

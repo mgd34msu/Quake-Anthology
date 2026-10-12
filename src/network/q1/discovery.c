@@ -17,10 +17,11 @@ bool qa_q1_discovery_master_query(bool quakeworld, qa_net_writer *writer) {
 }
 void qa_q1_discovery_free(qa_q1_discovery *status) {
     if (!status) return;
-    qa_qw_info_free(&status->rules); free(status->player_details); free(status->storage);
+    qa_qw_info_free(&status->rules);
+    if (!status->borrowed) { free(status->player_details); free(status->storage); }
     *status = (qa_q1_discovery){0};
 }
-static bool nq_discovery(qa_bytes bytes, qa_q1_discovery *out, qa_error *error) {
+static bool nq_discovery(qa_bytes bytes, qa_arena *arena, qa_q1_discovery *out, qa_error *error) {
     qa_nq_control response;
     if (!qa_nq_control_decode(bytes, &response, error)) return false;
     if (response.kind != QA_NQ_SERVER_INFO || response.data.server.version != 3)
@@ -29,9 +30,11 @@ static bool nq_discovery(qa_bytes bytes, qa_q1_discovery *out, qa_error *error) 
     size_t map_size = strlen(response.data.server.map) + 1;
     size_t address_size = strlen(response.data.server.address) + 1;
     qa_q1_discovery status = {.protocol = {.kind = QA_NET_NQ15},
-        .players = response.data.server.players, .max_players = response.data.server.max_players};
-    status.storage = malloc(name_size + map_size + address_size);
-    if (!status.storage) return fail(error, QA_ERROR_MEMORY, "Cannot allocate NetQuake discovery text");
+        .players = response.data.server.players, .max_players = response.data.server.max_players,
+        .borrowed = arena != NULL};
+    status.storage = arena ? qa_arena_alloc(arena, name_size + map_size + address_size, 1, error) :
+        malloc(name_size + map_size + address_size);
+    if (!status.storage) return arena ? false : fail(error, QA_ERROR_MEMORY, "Cannot allocate NetQuake discovery text");
     memcpy(status.storage, response.data.server.name, name_size);
     memcpy(status.storage + name_size, response.data.server.map, map_size);
     memcpy(status.storage + name_size + map_size, response.data.server.address, address_size);
@@ -86,24 +89,33 @@ static bool player_line(char *line, qa_q1_discovery_player *out) {
     line[(size_t)(name_end - line)] = 0;
     *out = (qa_q1_discovery_player){score, ping, name}; return true;
 }
-static bool qw_discovery(qa_bytes bytes, qa_q1_discovery *out, qa_error *error) {
+static bool qw_discovery(qa_bytes bytes, qa_arena *arena, qa_q1_discovery *out, qa_error *error) {
     qa_bytes text;
     if (!qa_qw_oob_decode(bytes, &text, error)) return false;
     if (text.size < 2 || text.data[0] != 'n' || text.data[1] != '\\')
         return fail(error, QA_ERROR_FORMAT, "Not a QuakeWorld status reply");
-    qa_q1_discovery status = {.protocol = {.kind = QA_NET_QW28}, .max_players = 32, .source_address = ""};
-    status.storage = malloc(text.size);
-    if (!status.storage) return fail(error, QA_ERROR_MEMORY, "Cannot allocate QuakeWorld discovery text");
+    qa_q1_discovery status = {.protocol = {.kind = QA_NET_QW28}, .max_players = 32,
+        .source_address = "", .borrowed = arena != NULL};
+    status.storage = arena ? qa_arena_alloc(arena, text.size, 1, error) : malloc(text.size);
+    if (!status.storage) return arena ? false : fail(error, QA_ERROR_MEMORY, "Cannot allocate QuakeWorld discovery text");
     memcpy(status.storage, text.data + 1, text.size - 1); status.storage[text.size - 1] = 0;
     size_t lines = 0;
     for (size_t i = 1; i < text.size; ++i) if (text.data[i] == '\n') ++lines;
     if (lines) {
-        status.player_details = calloc(lines, sizeof(*status.player_details));
-        if (!status.player_details) { qa_q1_discovery_free(&status); return fail(error, QA_ERROR_MEMORY, "Cannot allocate discovery player records"); }
+        if (lines > SIZE_MAX / sizeof(*status.player_details)) {
+            qa_q1_discovery_free(&status);
+            return fail(error, QA_ERROR_MEMORY, "Cannot allocate discovery player records");
+        }
+        status.player_details = arena ? qa_arena_alloc(arena, lines * sizeof(*status.player_details),
+            _Alignof(qa_q1_discovery_player), error) : calloc(lines, sizeof(*status.player_details));
+        if (!status.player_details) {
+            qa_q1_discovery_free(&status);
+            return arena ? false : fail(error, QA_ERROR_MEMORY, "Cannot allocate discovery player records");
+        }
     }
     char *line = strchr(status.storage, '\n');
     if (line) *line++ = 0;
-    if (!qa_qw_info_parse(status.storage, &status.rules, error)) { qa_q1_discovery_free(&status); return false; }
+    if (!qa_qw_info_parse_arena(status.storage, arena, &status.rules, error)) { qa_q1_discovery_free(&status); return false; }
     status.name = qa_qw_info_get(&status.rules, "hostname"); if (!status.name) status.name = "";
     status.map = qa_qw_info_get(&status.rules, "map"); if (!status.map) status.map = "";
     const char *maximum = qa_qw_info_get(&status.rules, "maxclients");
@@ -122,7 +134,7 @@ static bool qw_discovery(qa_bytes bytes, qa_q1_discovery *out, qa_error *error) 
     status.players = (uint32_t)status.player_count;
     *out = status; return true;
 }
-bool qa_q1_discovery_read(qa_bytes bytes, bool quakeworld, qa_q1_discovery *out, qa_error *error) {
+bool qa_q1_discovery_read(qa_bytes bytes, bool quakeworld, qa_arena *arena, qa_q1_discovery *out, qa_error *error) {
     if (!out) return fail(error, QA_ERROR_ARGUMENT, "Missing Quake discovery output");
-    return quakeworld ? qw_discovery(bytes, out, error) : nq_discovery(bytes, out, error);
+    return quakeworld ? qw_discovery(bytes, arena, out, error) : nq_discovery(bytes, arena, out, error);
 }

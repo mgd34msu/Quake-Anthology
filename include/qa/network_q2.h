@@ -3,6 +3,7 @@
 #include "qa/network.h"
 #include "qa/usercmd.h"
 #include "qa/strings.h"
+#include "qa/arena.h"
 
 typedef struct qa_q2_config_name { uint32_t index; qa_string_id value_id; } qa_q2_config_name;
 enum { QA_Q2_CLASSIC_CONFIGSTRINGS = 2080, QA_Q2_RERELEASE_CONFIGSTRINGS = 12448,
@@ -247,7 +248,9 @@ typedef struct qa_q2_status { const char *server_info; const qa_q2_status_player
 typedef bool (*qa_q2_status_player_fn)(void *, int32_t score, int32_t ping, const char *name, qa_error *);
 /* Status messages use original byte strings and stop at the packet budget. */
 bool qa_q2_status_write(qa_net_writer *, const qa_q2_status *, size_t body_limit);
-bool qa_q2_status_read(const qa_q2_oob *, char *server_info, size_t, qa_q2_status_player_fn, void *, bool *recognized, qa_error *);
+/* Player names borrow invocation scratch only for the callback. Optional
+ * storage supplies that scratch; NULL uses owning temporary storage. */
+bool qa_q2_status_read(const qa_q2_oob *, char *server_info, size_t, qa_arena *, qa_q2_status_player_fn, void *, bool *recognized, qa_error *);
 bool qa_q2_info_write(qa_net_writer *, const char *name, const char *map, uint32_t players, uint32_t maximum, const qa_net_protocol_id *, size_t, uint32_t offered_version, bool *present);
 /* Binary master replies must be examined before NUL-terminated OOB parsing. */
 bool qa_q2_master_read(qa_bytes, qa_net_address *, size_t capacity, size_t *count, bool *recognized, qa_error *);

@@ -25,7 +25,7 @@ bool qa_q2_status_write(qa_net_writer *w,const qa_q2_status *s,size_t limit) {
     }
     return !w->failed;
 }
-bool qa_q2_status_read(const qa_q2_oob *m,char *info,size_t capacity,qa_q2_status_player_fn callback,void *user,bool *recognized,qa_error *error) {
+bool qa_q2_status_read(const qa_q2_oob *m,char *info,size_t capacity,qa_arena *arena,qa_q2_status_player_fn callback,void *user,bool *recognized,qa_error *error) {
     if(!m||!info||!capacity||!recognized) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid Q2 status parse arguments");
         return false;
@@ -45,6 +45,8 @@ bool qa_q2_status_read(const qa_q2_oob *m,char *info,size_t capacity,qa_q2_statu
     info[size]=0;
     *recognized=true;
     body=*end?end+1:end;
+    char *temporary=NULL;
+    size_t temporary_capacity=arena?strlen(body)+1:0;
     while(*body) {
         end=strchr(body,'\n');
         if(!end)end=body+strlen(body);
@@ -58,7 +60,11 @@ bool qa_q2_status_read(const qa_q2_oob *m,char *info,size_t capacity,qa_q2_statu
             long long ping=strtoll(ping_start,&at,10);
             if(!errno&&at!=ping_start&&at<line_end&&(size_t)(line_end-at)>2&&at[0]==' '&&at[1]=='"'&&line_end[-1]=='"'&&score>=INT32_MIN&&score<=INT32_MAX&&ping>=INT32_MIN&&ping<=INT32_MAX) {
                 size_t name_size=(size_t)(line_end-at-3);
-                char *name=malloc(name_size+1);
+                if(arena&&!temporary) {
+                    temporary=qa_arena_alloc(arena,temporary_capacity,1,error);
+                    if(!temporary)return false;
+                }
+                char *name=arena?temporary:malloc(name_size+1);
                 if(!name) {
                     qa_error_set(error,QA_ERROR_MEMORY,0,"Q2 status name allocation failed");
                     return false;
@@ -66,7 +72,7 @@ bool qa_q2_status_read(const qa_q2_oob *m,char *info,size_t capacity,qa_q2_statu
                 memcpy(name,at+2,name_size);
                 name[name_size]=0;
                 bool ok=!callback||callback(user,(int32_t)score,(int32_t)ping,name,error);
-                free(name);
+                if(!arena)free(name);
                 if(!ok)return false;
             }
         }
