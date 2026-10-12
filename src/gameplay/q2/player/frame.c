@@ -1,5 +1,7 @@
 #include "qa/q2_sound.h"
 #include "internal.h"
+#include "qa/binary.h"
+#include "qa/text.h"
 
 static bool weapon_selected(qa_q2_game *g, q2_actor *a) {
     qa_q2_player_services *services = &g->player_runtime->services;
@@ -338,10 +340,14 @@ bool q2_client_reaction(qa_q2_game *g, const qa_damage_outcome *outcome, qa_erro
     q2_client_state *s = a->client;
     const qa_damage_result *r = &outcome->result;
     bool q2 = r->has_feedback && r->feedback_family == QA_GAME_Q2;
-    s->rule.damage_blood += q2 ? r->blood : r->applied_damage;
-    s->rule.damage_armor += q2 ? r->armor_saved : 0;
-    s->rule.damage_power += q2 ? r->power_saved : 0;
-    s->rule.damage_knockback += q2 ? r->knockback : outcome->request.knockback;
+    s->rule.damage_blood = qa_i32_add(s->rule.damage_blood,
+        qa_source_to_i32(q2 ? r->blood : r->applied_damage));
+    s->rule.damage_armor = qa_i32_add(s->rule.damage_armor,
+        qa_source_to_i32(q2 ? r->armor_saved : 0));
+    s->rule.damage_power = qa_i32_add(s->rule.damage_power,
+        qa_source_to_i32(q2 ? r->power_saved : 0));
+    s->rule.damage_knockback = qa_i32_add(s->rule.damage_knockback,
+        qa_source_to_i32(q2 ? r->knockback : outcome->request.knockback));
     s->rule.damage_from = outcome->request.point;
     if (q2 && r->power_saved > 0)
         s->rule.power_armor_ns = q2_deadline(g->now_ns, 200 * Q2_MS);

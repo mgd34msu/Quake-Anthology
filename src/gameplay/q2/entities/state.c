@@ -594,7 +594,7 @@ bool qa_q2_entity_defer_targets(qa_q2_game *g, const qa_target_use *request, qa_
     return q2_entity_schedule(g, actor, Q2ET_DELAYED_USE, request->fields.delay_seconds);
 }
 bool q2_entity_damage(qa_q2_game *g, q2_actor *a, qa_actor_id target, qa_actor_id credit,
-                      float amount, float kick, int mod, uint32_t flags, qa_error *e) {
+                      double amount, double kick, int mod, uint32_t flags, qa_error *e) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, target, &body, e))
         return false;

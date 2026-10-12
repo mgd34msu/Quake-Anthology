@@ -576,7 +576,7 @@ static bool trap_think(qa_q2_game *g, q2_actor *a, qa_world_actor_snapshot *snap
                 return false;
             if (combat.mass >= 400)
                 return explode(g, a, false, e);
-            float mass = combat.mass;
+            double mass = combat.mass;
             qa_builtin_actor_traits traits = {0};
             if (g->services.actor_traits != NULL)
                 g->services.actor_traits(g->services.context, best, &traits);
@@ -594,7 +594,7 @@ static bool trap_think(qa_q2_game *g, q2_actor *a, qa_world_actor_snapshot *snap
             p->enemy = target_reference;
             p->wait = 64;
             p->expire_ns = q2_deadline(g->now_ns, 30 * Q2_NS);
-            p->captured_mass = mass;
+            p->captured_mass = (float)mass;
             p->frame = 5;
             p->phase = MINE_CONSUMING;
             if (rerelease && !q2_trap_capture_gibs(g, a, e))

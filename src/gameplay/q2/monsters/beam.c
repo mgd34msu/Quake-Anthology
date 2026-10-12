@@ -68,7 +68,7 @@ static bool beam_damage(qa_q2_game *game, q2_actor *actor, qa_actor_id target,
     if (combat.health >= traits.max_health)
       return true;
     return qa_combat_set_health(game->services.combat, target,
-        fminf(traits.max_health, combat.health - beam->controller_damage), error);
+        fmin(traits.max_health, combat.health - beam->controller_damage), error);
   }
   if (!combat.can_take_damage || qa_actor_id_equal(target, beam->controller_owner))
     return true;

@@ -97,7 +97,7 @@ static bool selected_player(const qa_application *app,const application_player_r
         qa_actors_get(qa_session_actors(app->session),record->actor) &&
         (dedicated || (!record->remote && !application_player_identity(record)->bot));
 }
-static bool native_q2_player(application_provider *source,qa_actor_id actor,float *health,
+static bool native_q2_player(application_provider *source,qa_actor_id actor,double *health,
     bool *intermission,qa_error *error)
 {
     struct application_native_q2 *engine=source->state.native.q2_engine;
@@ -112,7 +112,7 @@ static bool native_q2_player(application_provider *source,qa_actor_id actor,floa
     qa_q2_player player;
     bool okay=qa_native_host_q2_player(source->state.native.host,slot,&player,error);
     if(okay) {
-        *health=(float)player.stats[1];
+        *health=player.stats[1];
         *intermission=*intermission || player.pmove.type==(classic?4:6);
     }
     return okay;
@@ -168,8 +168,8 @@ bool qa_application_save_policy(qa_application *app,qa_save_authority authority,
     size_t count=0;
     for(size_t i=0;roster && i<roster->count;++i)
         if(selected_player(app,roster->records+i,dedicated)) ++count;
-    if(count>SIZE_MAX/sizeof(float)) return application_fail(error,QA_ERROR_MEMORY,"Actual save player health extent exceeded");
-    float *health=count?malloc(count*sizeof(*health)):NULL;
+    if(count>SIZE_MAX/sizeof(double)) return application_fail(error,QA_ERROR_MEMORY,"Actual save player health extent exceeded");
+    double *health=count?malloc(count*sizeof(*health)):NULL;
     if(count && !health) return application_fail(error,QA_ERROR_MEMORY,"Reading actual admitted save player health");
     bool okay=true;size_t index=0;
     for(size_t i=0;okay && roster && i<roster->count;++i) {

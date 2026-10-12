@@ -167,7 +167,7 @@ static bool client_read(application_native_q1_wire_source *held,qa_actor_id acto
                 qa_application_equipment_current(app,&equipment);
             if (okay && !value.spectator) okay=entity(&source,actor,&value.entity,error);
             if (okay) {
-                if (!value.spectator) {value.health=combat.health;value.weapon_frame=player.weapon_frame;}
+                if (!value.spectator) {value.health=(float)combat.health;value.weapon_frame=player.weapon_frame;}
                 value.stats[0]=trunc((double)combat.health);value.stats[2]=model;
                 value.stats[3]=trunc(player.ammo);
                 value.stats[4]=trunc((double)(combat.armor.regular.kind==QA_ARMOR_NONE?0:combat.armor.regular.points));
@@ -527,7 +527,7 @@ bool application_native_q1_qw_emit(application_provider *p,const qa_builtin_even
     return application_emit_protocol(p,&output,error);
 }
 static uint8_t byte(double number) {
-    return (uint8_t)(uint32_t)qa_source_float_to_i32((float)number);
+    return (uint8_t)(uint32_t)qa_source_to_i32((float)number);
 }
 bool application_native_q1_qw_flush(qa_application *app,qa_error *error) {
     application_native_q1_wire_source source={0};

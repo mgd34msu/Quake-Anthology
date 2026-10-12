@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../combat_internal.h"
 
 static float rogue_random(qa_modes *m, mode_instance *v) {
     return m->options.hooks.source_random
@@ -321,7 +322,7 @@ bool qa_modes_tech_sound(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_relic
                                                 : m->runtime_names[MODE_NAME_SOUND_CTF_RESIST_WAV];
     return mode_sound(m, v, actor, sound, silenced ? .2f : 1, e);
 }
-bool qa_modes_attack_damage(qa_modes *m, qa_mode_id id, qa_actor_id actor, float amount, float *out,
+bool qa_modes_attack_damage(qa_modes *m, qa_mode_id id, qa_actor_id actor, double amount, double *out,
                             qa_error *e) {
     mode_instance *v = mode_get(m, id);
     if (!v || !out || !isfinite(amount))
@@ -330,10 +331,18 @@ bool qa_modes_attack_damage(qa_modes *m, qa_mode_id id, qa_actor_id actor, float
     if (v->value.rules.source == QA_MODE_ROGUE && !v->value.rules.rogue_deathmatch) return true;
     if (!qa_modes_has_relic(m, id, actor, QA_RELIC_STRENGTH))
         return true;
-    *out = v->value.rules.source == QA_MODE_LMCTF ? truncf(amount * 1.75f) : amount * 2;
+    if (v->value.rules.source == QA_MODE_LMCTF || v->value.rules.source == QA_MODE_Q2_CTF) {
+        int32_t damage;
+        if (!qa_combat_source_integer(amount, &damage, e)) return false;
+        if (v->value.rules.source == QA_MODE_LMCTF) {
+            if (!qa_combat_source_integer((float)((float)damage * 1.75f), &damage, e))
+                return false;
+        } else damage = qa_i32_mul(damage, 2);
+        *out = damage;
+    } else *out = (float)((float)amount * 2.0f);
     return true;
 }
-bool qa_modes_resist_damage(qa_modes *m, qa_mode_id id, qa_actor_id actor, float amount, float *out,
+bool qa_modes_resist_damage(qa_modes *m, qa_mode_id id, qa_actor_id actor, double amount, double *out,
                             qa_error *e) {
     mode_instance *v = mode_get(m, id);
     if (!v || !out || !isfinite(amount))
@@ -342,9 +351,15 @@ bool qa_modes_resist_damage(qa_modes *m, qa_mode_id id, qa_actor_id actor, float
     if (v->value.rules.source == QA_MODE_ROGUE && !v->value.rules.rogue_deathmatch) return true;
     if (!qa_modes_has_relic(m, id, actor, QA_RELIC_RESISTANCE))
         return true;
-    *out = v->value.rules.source == QA_MODE_LMCTF    ? truncf(amount / 1.75f)
-           : v->value.rules.source == QA_MODE_Q2_CTF ? truncf(amount * .5f)
-                                                     : amount * .5f;
+    if (v->value.rules.source == QA_MODE_LMCTF || v->value.rules.source == QA_MODE_Q2_CTF) {
+        int32_t damage;
+        if (!qa_combat_source_integer(amount, &damage, e)) return false;
+        if (v->value.rules.source == QA_MODE_LMCTF) {
+            if (!qa_combat_source_integer((float)((float)damage / 1.75f), &damage, e))
+                return false;
+        } else damage /= 2;
+        *out = damage;
+    } else *out = (float)((float)amount * .5f);
     if (v->value.rules.source == QA_MODE_Q2_CTF)
         return mode_sound(m, v, actor, m->runtime_names[MODE_NAME_SOUND_CTF_TECH1_WAV], 1, e);
     if (v->value.rules.source == QA_MODE_LMCTF)
@@ -374,12 +389,12 @@ bool qa_modes_after_damage(qa_modes *m, qa_mode_id id, const qa_damage_outcome *
     qa_combat_state state;
     if (!qa_combat_read(m->options.services.combat, actor, &state, e))
         return false;
-    float damage = outcome->result.applied_damage;
-    int32_t gain = (damage >= (float)INT32_MAX ? INT32_MAX : (int32_t)damage) >> (body ? 2 : 1);
+    double damage = outcome->result.applied_damage;
+    int32_t gain = (damage >= INT32_MAX ? INT32_MAX : (int32_t)damage) >> (body ? 2 : 1);
     if (state.health >= 250 || !gain)
         return true;
     return qa_combat_set_health(m->options.services.combat, actor,
-                                fminf(250, state.health + (float)gain), e) &&
+                                fmin(250, state.health + gain), e) &&
            mode_sound(m, v, actor, m->runtime_names[MODE_NAME_SOUND_BRAIN_BRNATCK3_WAV], 1, e);
 }
 bool mode_relic_source_current(qa_modes *m, mode_instance *v, qa_error *e) {
@@ -427,7 +442,8 @@ bool mode_relic_frame(qa_modes *m, mode_instance *v, qa_actor_id actor, mode_mem
         if (state.health >= 100) return true;
         if (!mode_sound(m, v, actor, m->runtime_names[MODE_NAME_SOUND_RUNES_END4_WAV], 1, e)) return false;
         if (!mode_member_get(m, v, actor)) return mode_fail(e, "Rogue rune carrier retired during regeneration");
-        if (!qa_combat_set_health(m->options.services.combat, actor, fminf(100, state.health + 5), e))
+        if (!qa_combat_set_health(m->options.services.combat, actor,
+                                  fminf(100, (float)state.health + 5.0f), e))
             return false;
         p = mode_member_get(m, v, actor);
         if (!p) return mode_fail(e, "Rogue rune carrier retired during regeneration health store");
@@ -443,7 +459,7 @@ bool mode_relic_frame(qa_modes *m, mode_instance *v, qa_actor_id actor, mode_mem
     uint64_t now = v->value.time_ns;
     if (v->value.rules.source == QA_MODE_LMCTF) {
         int32_t frame = (int32_t)(now / (MODE_SECOND / 10));
-        float health = state.health / 5;
+        double health = trunc(state.health / 5);
         int heart = health <= 5 ? 5 : health >= 25 ? 25 : (int)health;
         if ((int64_t)frame < (int64_t)p->regen_frame + heart)
             return true;
@@ -451,18 +467,20 @@ bool mode_relic_frame(qa_modes *m, mode_instance *v, qa_actor_id actor, mode_mem
         qa_builtin_actor_traits traits = {.max_health = 100};
         if (m->options.services.actor_traits)
             m->options.services.actor_traits(m->options.services.context, actor, &traits);
-        float maximum = traits.max_health > 0 ? traits.max_health : 100;
+        double maximum = traits.max_health > 0 ? traits.max_health : 100;
         if (state.health < maximum + 25 &&
             !qa_combat_set_health(m->options.services.combat, actor,
-                                  fminf(maximum + 25, state.health + (float)(heart / 3)), e))
+                                  fmin(maximum + 25,
+                                      trunc((float)((float)state.health + (float)heart / 3.0f))), e))
             return false;
         if (armor.kind == QA_ARMOR_NONE || armor.points == 0) {
             armor = (qa_regular_armor){.kind = QA_ARMOR_Q2,
-                                       .points = (float)(heart / 4),
+                                       .points = heart / 4,
                                        .item = m->runtime_names[MODE_NAME_Q2_ITEM_ARMOR_JACKET],
                                        .protection.q2 = {.normal = .3f, .energy = 0}};
         } else
-            armor.points = fminf(200, (float)armor.points + (float)(heart / 3));
+            armor.points = fmin(200,
+                               trunc((float)((float)armor.points + (float)heart / 3.0f)));
         return qa_combat_set_regular_armor(m->options.services.combat, actor, &armor, e) &&
                mode_sound(m, v, actor, m->runtime_names[MODE_NAME_SOUND_CTF_REGEN_WAV], 1, e);
     }
@@ -470,7 +488,9 @@ bool mode_relic_frame(qa_modes *m, mode_instance *v, qa_actor_id actor, mode_mem
         return true;
     uint64_t delay = 0;
     if (state.health < 150) {
-        if (!qa_combat_set_health(m->options.services.combat, actor, fminf(150, state.health + 5),
+        double health = v->value.rules.source == QA_MODE_THREEWAVE ?
+            fminf(150, (float)state.health + 5.0f) : fmin(150, state.health + 5);
+        if (!qa_combat_set_health(m->options.services.combat, actor, health,
                                   e))
             return false;
         delay += MODE_SECOND / 2;
@@ -480,7 +500,8 @@ bool mode_relic_frame(qa_modes *m, mode_instance *v, qa_actor_id actor, mode_mem
         can_armor = armor.kind != QA_ARMOR_NONE &&
                     (armor.kind != QA_ARMOR_Q1 || armor.protection.q1_absorption > 0);
     if (can_armor && armor.points < 150) {
-        armor.points = fminf(150, (float)armor.points + 5);
+        armor.points = v->value.rules.source == QA_MODE_THREEWAVE ?
+            fminf(150, (float)armor.points + 5.0f) : fmin(150, armor.points + 5);
         if (!qa_combat_set_regular_armor(m->options.services.combat, actor, &armor, e))
             return false;
         delay += MODE_SECOND / 2;

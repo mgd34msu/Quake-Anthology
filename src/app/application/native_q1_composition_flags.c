@@ -496,7 +496,7 @@ bool application_native_q1_ctf_drop_rune(application_provider *source, qa_actor_
     return okay;
 }
 
-static bool health(flag_call *call, qa_actor_id actor, float *out, qa_error *error) {
+static bool health(flag_call *call, qa_actor_id actor, double *out, qa_error *error) {
     qa_combat_state state;
     bool observer;
     if (!player_current(call, actor, &observer, error) ||
@@ -511,7 +511,7 @@ bool application_native_q1_ctf_regenerate(application_provider *source, qa_actor
     qa_q1_source_rune rune;
     bool found, observer;
     double due, time;
-    float value;
+    double value;
     bool okay = begin(source, &call, error) && held_rune(&call, actor, &rune, &found, error);
     if (okay && (!found || rune != QA_Q1_RUNE_REGENERATION)) { end(&call); return true; }
     if (okay) okay = number(&call, actor, QA_Q1_CTF_REGEN_TIME, &due, error) &&
@@ -523,7 +523,7 @@ bool application_native_q1_ctf_regenerate(application_provider *source, qa_actor
     if (okay) okay = health(&call, actor, &value, error);
     if (okay && value < 150) {
         okay = health(&call, actor, &value, error) &&
-            qa_combat_set_health(call.app->combat, actor, fminf(150, value + 5), error) &&
+            qa_combat_set_health(call.app->combat, actor, fminf(150, (float)value + 5.0f), error) &&
             player_current(&call, actor, &observer, error);
         if (okay) delay += .5;
     }
@@ -653,7 +653,7 @@ static bool friendly(flag_call *call, const qa_damage_request *request, bool *ou
     return true;
 }
 static bool direct_damage(flag_call *call, qa_actor_id target, qa_actor_id inflictor,
-    qa_actor_id attacker, float amount, const char *cause, qa_error *error) {
+    qa_actor_id attacker, double amount, const char *cause, qa_error *error) {
     if (!inflictor.registry) {
         qa_q1_source_entity world;
         bool found;
@@ -663,7 +663,7 @@ static bool direct_damage(flag_call *call, qa_actor_id target, qa_actor_id infli
             "CTF source damage lost its real world actor");
         inflictor = world.actor;
     }
-    return qa_q1_source_damage(call->operation.game, target, inflictor, attacker, amount, cause, error) &&
+    return qa_q1_source_damage(call->operation.game, target, inflictor, attacker, (float)amount, cause, error) &&
         current(call, error);
 }
 bool application_native_q1_ctf_damage_effect(application_provider *source,
@@ -681,11 +681,11 @@ bool application_native_q1_ctf_damage_effect(application_provider *source,
         if (request->attack.attacker.registry) {
             okay = optional_rune(&call, request->attack.attacker, &rune, &found, error);
             if (okay && found && rune == QA_Q1_RUNE_STRENGTH)
-                effect->amount = (float)(float)((double)effect->amount * 2);
+                effect->amount = (float)((float)effect->amount * 2.0f);
         }
         if (okay) okay = optional_rune(&call, request->target, &rune, &found, error);
         if (okay && found && rune == QA_Q1_RUNE_RESISTANCE) {
-            effect->amount = (float)(float)((double)effect->amount / 2);
+            effect->amount = (float)((float)effect->amount / 2.0f);
             double due, time;
             okay = number(&call, request->target, QA_Q1_CTF_RESISTANCE_SOUND, &due, error) &&
                 seconds(&call, &time, error);
@@ -726,7 +726,7 @@ bool application_native_q1_ctf_damage_effect(application_provider *source,
         okay = source_cvar(&call, QA_Q1_SOURCE_TEAMPLAY, &policy, error);
         if (okay && !(policy < 0) && !call.view.rules.start_map) {
             okay = friendly(&call, request, &teammates, error);
-            uint32_t flags = (uint32_t)qa_source_float_to_i32((float)policy);
+            uint32_t flags = (uint32_t)qa_source_to_i32((float)policy);
             if (okay && teammates) {
                 if (stage == QA_DAMAGE_ARMOR_ALLOWED && (flags & 2u)) effect->allowed = false;
                 if (stage == QA_DAMAGE_BEFORE_HEALTH) {
@@ -782,7 +782,7 @@ bool application_native_q1_ctf_score_death(application_provider *source, qa_acto
         }
     }
     if (okay) okay = source_cvar(&call, QA_Q1_SOURCE_TEAMPLAY, &policy, error);
-    double penalty = policy < 0 ? -policy : teammates && ((uint32_t)qa_source_float_to_i32((float)policy) & 8u) ? 1 : 0;
+    double penalty = policy < 0 ? -policy : teammates && ((uint32_t)qa_source_to_i32((float)policy) & 8u) ? 1 : 0;
     if (okay && penalty > 0) okay = score(&call, attacker, -penalty, error);
     else if (okay) {
         okay = score(&call, attacker, 1, error);
@@ -868,7 +868,7 @@ bool application_native_q1_ctf_score_death(application_provider *source, qa_acto
         }
     }
     if (okay) okay = source_cvar(&call, QA_Q1_SOURCE_TEAMPLAY, &policy, error);
-    if (okay && policy >= 0 && teammates && ((uint32_t)qa_source_float_to_i32((float)policy) & 16u))
+    if (okay && policy >= 0 && teammates && ((uint32_t)qa_source_to_i32((float)policy) & 16u))
         okay = direct_damage(&call, attacker, attacker, attacker, 1000, "ctf:teamkill", error) &&
             score(&call, attacker, 1, error);
     if (okay) okay = current(&call, error);

@@ -49,7 +49,7 @@ bool gl_particles_prepare(qa_gl_renderer *renderer, const qa_scene_particle_batc
         float scale = depth < 20 ? 1 : 1 + depth * .004f;
         qa_vec4 color = sample->color;
         color.w = batch->family == QA_GAME_Q1 ? 1 :
-            (float)(uint8_t)(uint32_t)qa_source_float_to_i32(color.w * 255.0f) / 255.0f;
+            (float)(uint8_t)(uint32_t)qa_source_to_i32(color.w * 255.0f) / 255.0f;
         for (unsigned corner = 0; corner < 3; ++corner) {
             qa_scene_vertex *vertex = renderer->particle_vertices + i * 3 + corner;
             memset(vertex, 0, sizeof(*vertex));

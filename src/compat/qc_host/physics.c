@@ -81,7 +81,7 @@ bool qa_qc_game_read_physics(qa_qc_game *game, qa_actor_id actor, qa_physics_pro
     value.solid = solid == 0 || (solid == 5 && game->options.vm.profile != QA_QC_RERELEASE) ? QA_PHYSICS_NOT_SOLID
         : solid == 1 ? QA_PHYSICS_TRIGGER : solid == 4 ? QA_PHYSICS_BRUSH
         : solid == 5 ? QA_PHYSICS_CORPSE : QA_PHYSICS_BOX;
-    uint32_t source = (uint32_t)qa_source_float_to_i32(flags);
+    uint32_t source = (uint32_t)qa_source_to_i32(flags);
     if (source & 1u) value.flags |= QA_PHYSICS_FLYING;
     if (source & 2u) value.flags |= QA_PHYSICS_SWIMMING;
     if (source & 1024u) value.flags |= QA_PHYSICS_PARTIAL_GROUND;
@@ -120,7 +120,7 @@ bool qa_qc_game_write_physics(qa_qc_game *game, qa_actor_id actor,
     if (!clock_word(value->q1_pusher.local_seconds, &local, error) ||
         !clock_word(value->q1_pusher.next_think_seconds, &next, error)) return false;
     if (!scalar(game, reference, game->fields->flags, 0, false, &flags, error)) return false;
-    int32_t bits = qa_source_float_to_i32(flags) & ~(1 | 2 | 1024 | 512);
+    int32_t bits = qa_source_to_i32(flags) & ~(1 | 2 | 1024 | 512);
     if (value->flags & QA_PHYSICS_FLYING) bits |= 1;
     if (value->flags & QA_PHYSICS_SWIMMING) bits |= 2;
     if (value->flags & QA_PHYSICS_PARTIAL_GROUND) bits |= 1024;

@@ -43,7 +43,7 @@ typedef struct q2_power_state {
     qa_q2_powerups values;
     qa_item_id cells;
     qa_inventory_lease definitions;
-    float maximum_health;
+    double maximum_health;
     uint32_t power_cubes;
 } q2_power_state;
 typedef struct q2_companion {

@@ -1288,7 +1288,7 @@ bool frontend_remote_prediction_item_read(const frontend_remote_prediction *owne
 static bool environment_fields(qa_source_save_io *io, qa_movement_environment *v)
 {
     uint32_t mode = v->mode;
-    if (!qa_source_save_f32(io, &v->health) || !qa_source_save_bool(io, &v->flight) ||
+    if (!qa_source_save_scalar(io, &v->health) || !qa_source_save_bool(io, &v->flight) ||
         !qa_source_save_bool(io, &v->haste) || !qa_source_save_bool(io, &v->invulnerable) ||
         !qa_source_save_f32(io, &v->gravity_multiplier) || !qa_source_save_f32(io, &v->speed_multiplier) ||
         !qa_source_save_bool(io, &v->fixed_pose) || !qa_source_save_bool(io, &v->fixed_crouched) ||

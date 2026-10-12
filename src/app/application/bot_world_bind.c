@@ -63,7 +63,7 @@ static bool metadata(void *context,qa_actor_id actor,application_bot_world_metad
         qa_q2_bot_entity actual;
         if(!qa_q2_bot_entity_read(q2->state.q2,actor,&actual,error)) return false;
         if(actual.present) {
-            int32_t maximum=qa_source_float_to_i32(actual.max_health);
+            int32_t maximum=qa_source_to_i32(actual.max_health);
             *out=(application_bot_world_metadata){.model=actual.model,.classname=actual.classname,
                 .frame=actual.frame,.max_health=maximum,.hidden=actual.hidden,.worldspawn=actual.worldspawn};
             *found=true;return true;
@@ -73,7 +73,7 @@ static bool metadata(void *context,qa_actor_id actor,application_bot_world_metad
     qa_q1_bot_entity actual;
     if(!qa_q1_bot_entity_read(source->state.q1,actor,&actual,error)) return false;
     if(!actual.present) return true;
-    int32_t maximum=qa_source_float_to_i32(actual.max_health);
+    int32_t maximum=qa_source_to_i32(actual.max_health);
     *out=(application_bot_world_metadata){.model=actual.model,.classname=actual.classname,.frame=actual.frame,
         .max_health=maximum,.worldspawn=actual.worldspawn};*found=true;return true;
 }
@@ -87,7 +87,7 @@ static bool movement(void *context,qa_actor_id actor,application_bot_world_movem
     application_player_record *record=player(binding,actor);
     if(!record || record->client_slot>INT32_MAX)
         return application_fail(error,QA_ERROR_FORMAT,"shared bot selected movement has no actual source player client");
-    int32_t height=qa_source_float_to_i32(control.view_height);
+    int32_t height=qa_source_to_i32(control.view_height);
     *out=(application_bot_world_movement){.source_client=(int32_t)record->client_slot,
         .view_height=height,.view_angles=control.view_angles,.grounded=control.ground.hit!=QA_TRACE_HIT_NONE};return true;
 }
@@ -104,7 +104,7 @@ static bool client(void *context,qa_actor_id actor,application_bot_world_client 
     qa_q1_source_client_view actual;
     *found=qa_q1_source_client_read(binding->source->state.q1,actor,&actual);
     if(!*found) return true;
-    int32_t score=qa_source_float_to_i32(actual.frags);
+    int32_t score=qa_source_to_i32(actual.frags);
     qa_application *app=binding->bots->application;
     application_provider *appearance=application_provider_for(app,actor,QA_ROLE_SKIN,NULL);
     if(!actual.name || !appearance || !appearance->launch)

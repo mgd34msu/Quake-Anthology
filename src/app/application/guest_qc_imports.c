@@ -79,7 +79,7 @@ static bool global_reference(struct application_qc_state *engine, const qa_qc_de
 }
 static uint32_t source_flags(float value)
 {
-    return (uint32_t)qa_source_float_to_i32(value);
+    return (uint32_t)qa_source_to_i32(value);
 }
 static bool check_client_eye_reference(struct application_qc_state *engine, int32_t reference,
     qa_vec3 *out, qa_error *error) {
@@ -124,7 +124,9 @@ static bool check_client_row(void *opaque, uint32_t slot, bool selection,
     *out = (qa_builtin_check_client_row){0};
     if (!check_client_reference(engine, slot, &reference, &out->present, error)) return false;
     if (!out->present) return true;
-    if (!application_qc_float(engine, reference, engine->field_bindings->health, &out->health, error)) return false;
+    float health;
+    if (!application_qc_float(engine, reference, engine->field_bindings->health, &health, error)) return false;
+    out->health = health;
     if (selection && !(out->health <= 0)) {
         float flags;
         if (!application_qc_float(engine, reference, engine->field_bindings->flags, &flags, error)) return false;

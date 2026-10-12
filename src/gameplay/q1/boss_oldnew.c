@@ -70,7 +70,7 @@ bool q1_major_boss_effect(qa_q1_game *g, qa_damage_effect_stage stage,
         q1_player *attacker = q1_player_get(g, request->attack.attacker);
         if (!attacker || !attacker->arsenal ||
             (attacker->weapon != QA_Q1_LIGHTNING && attacker->weapon != QA_Q1_MG3_LASER))
-            effect->amount *= .8f;
+            effect->amount = (float)((float)effect->amount * .8f);
     }
     return true;
 }

@@ -240,7 +240,7 @@ static bool give_inner(qa_q1_game *g, qa_actor_id actor, const qa_command_invoca
         if (!q1_alive(g, actor))
             return true;
         q1_player *player = q1_player_get(g, actor);
-        float health = has_amount ? (float)amount : normalized(input, "h") ? 0
+        double health = has_amount ? amount : normalized(input, "h") ? 0
                        : traits.max_health > 0 ? traits.max_health : player ? player->max_health : 100;
         if (!qa_combat_set_health(g->services.combat, actor, health, error))
             return false;

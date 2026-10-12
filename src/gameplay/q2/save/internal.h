@@ -22,6 +22,8 @@ bool q2_save_i32(q2_save_io *, int32_t *);
 bool q2_save_i64(q2_save_io *, int64_t *);
 bool q2_save_f32(q2_save_io *, float *);
 bool q2_save_f64(q2_save_io *, double *);
+bool q2_save_scalar(q2_save_io *, double *);
+bool q2_save_i32_scalar(q2_save_io *, int32_t *);
 bool q2_save_bool(q2_save_io *, bool *);
 bool q2_save_vec(q2_save_io *, qa_vec3 *);
 bool q2_save_string(q2_save_io *, qa_string_id *);

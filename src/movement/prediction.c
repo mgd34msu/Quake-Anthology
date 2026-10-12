@@ -70,7 +70,7 @@ static bool interpolate(qa_q3_prediction *p, const qa_q3_prediction_host *host, 
     qa_q3_movement_state *s=&p->predicted.data.q3;
     int32_t cycle=b->bob_cycle<a->bob_cycle?qa_i32_from_u32((uint32_t)b->bob_cycle+256u):b->bob_cycle;
     float bob=(float)a->bob_cycle+fraction*(float)difference(cycle,a->bob_cycle);
-    s->bob_cycle=qa_source_float_to_i32(bob);
+    s->bob_cycle=qa_source_to_i32(bob);
     s->origin=qa_vec_lerp(a->origin,b->origin,fraction);
     s->velocity=qa_vec_lerp(a->velocity,b->velocity,fraction);
     if (!angles) s->view_angles=qa_v3(qa_angle_lerp(a->view_angles.x,b->view_angles.x,fraction,QA_ANGLE_LERP_SINGLE_TURN),

@@ -71,7 +71,7 @@ static const original_field body_queue_fields[] = {
     FIELD(q1_actor, state.body.color_map, "colormap", I32)
 };
 static const original_field combat_fields[] = {
-    FIELD(qa_combat_state, health, "health", FLOAT),
+    FIELD(qa_combat_state, health, "health", DOUBLE),
     FIELD(qa_combat_state, armor.regular.points, "armorvalue", DOUBLE),
     FIELD(qa_combat_state, armor.regular.protection.q1_absorption, "armortype", FLOAT)
 };
@@ -1956,7 +1956,7 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
         movement->data.nq = (qa_nq_movement_state){.origin = body.origin,.old_origin = body.origin,
             .velocity = body.velocity,.angles = body.angles,.angular_velocity = physics.angular_velocity,
             .view_angles = player->input.view_angles,.punch_angles = player->punch,
-            .move_type = (int32_t)saved_number(record,"movetype"),.health = combat.health,.flags = flags,
+            .move_type = (int32_t)saved_number(record,"movetype"),.health = (float)combat.health,.flags = flags,
             .water_level = physics.water_level,.water_type = physics.water_type,
             .teleport_time_seconds = player->input.teleport_until,.ideal_pitch = saved_number(record,"idealpitch")};
         qa_actor_id ground = qa_actor_reference_resolve(qa_session_actors(game->services.session), body.ground);

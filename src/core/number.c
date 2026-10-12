@@ -52,8 +52,8 @@ static bool ready(qa_error *error) {
     return true;
 }
 
-int32_t qa_source_float_to_i32(float value) {
-    return value >= -2147483648.0f && value < 2147483648.0f
+int32_t qa_source_to_i32(double value) {
+    return value >= -2147483648.0 && value < 2147483648.0
         ? (int32_t)value : INT32_MIN;
 }
 
@@ -90,7 +90,7 @@ uint16_t qa_angle_to_word(float angle,qa_angle_word_rule rule) {
     case QA_ANGLE_WORD_ROUNDED: scaled=floorf(angle*(65536.0f/360.0f)+.5f);break;
     default: scaled=angle*65536.0f/360.0f;break;
     }
-    int32_t integer=scaled>=INT32_MIN && scaled<2147483648.0?(int32_t)scaled:INT32_MIN;
+    int32_t integer=qa_source_to_i32(scaled);
     return (uint16_t)(uint32_t)integer;
 }
 
@@ -116,7 +116,7 @@ bool qa_format_quake_float(float value, char out[64], qa_error *error) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Quake float output");
         return false;
     }
-    int32_t integer = qa_source_float_to_i32(value);
+    int32_t integer = qa_source_to_i32(value);
     if (value == (float)integer) {
         (void)snprintf(out, 64, "%d", integer);
         return true;

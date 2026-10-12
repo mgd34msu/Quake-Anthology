@@ -584,7 +584,7 @@ bool q2m_stalker_callback(q2m_context *c, q2m_callback_id name, bool *handled, q
                           qa_v3(0, 0, 0), 0, error);
     if (name == Q2M_CALLBACK_stalker_heal) {
         int skill = c->game->options.skill;
-        float health = c->combat.health + (skill == 2 ? 2 : skill == 3 ? 3 : 1);
+        double health = c->combat.health + (skill == 2 ? 2 : skill == 3 ? 3 : 1);
         bool rerelease = c->game->options.rules == QA_RULESET_Q2_RERELEASE;
         if (rerelease)
             c->monster->skin = health < c->monster->max_health * .5f ? 1 : 0;

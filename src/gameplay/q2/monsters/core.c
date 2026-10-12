@@ -93,7 +93,7 @@ bool q2m_link(q2m_context *context, qa_error *error) {
 
 bool q2m_emit(q2m_context *context, qa_builtin_event_kind kind,
               q2_runtime_name resource, int code, qa_vec3 origin, qa_vec3 end,
-              float value, qa_error *error) {
+              double value, qa_error *error) {
   if (!q2m_alive(context))
     return true;
   qa_builtin_event event = {
@@ -108,7 +108,7 @@ bool q2m_emit(q2m_context *context, qa_builtin_event_kind kind,
       .direction = qa_vec_normalize(qa_vec_sub(end, origin)),
       .volume = 1.0f,
       .attenuation = 1.0f,
-      .value = value,
+      .value = (float)value,
       .code = code,
       .frame = context->monster->frame,
   };

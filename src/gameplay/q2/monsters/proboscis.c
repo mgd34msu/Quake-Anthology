@@ -281,7 +281,7 @@ static bool think(qa_q2_game *game, q2_actor *tip, qa_error *error) {
                 return false;
             if (!q2_actor_live(game, id) || !q2m_alive(&owner))
                 return true;
-            float hp = fminf(owner.monster->base_health, combat.health + 2);
+            double hp = fmin(owner.monster->base_health, combat.health + 2);
             if (!qa_combat_set_health(game->services.combat, owner.actor->id, hp, error))
                 return false;
             if (!q2_actor_live(game, id) || !q2m_alive(&owner))

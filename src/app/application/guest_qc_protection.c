@@ -331,7 +331,7 @@ static bool require(protection_channel *row, int32_t *reference, qa_error *error
 }
 static uint32_t source_integer(float value)
 {
-    return (uint32_t)qa_source_float_to_i32(value);
+    return (uint32_t)qa_source_to_i32(value);
 }
 static bool scalar(protection_channel *row, int32_t reference, const qa_qc_definition *field,
     const qa_qc_store_event *before, float *out, qa_error *error)
@@ -401,8 +401,9 @@ static bool validate_write(void *context, const qa_armor *next, qa_error *error)
             next->powered.source_owner != row->owner->engine->provider->owner))
             return fail(error, QA_ERROR_ARGUMENT, "QC powered protection changed its actual source owner");
     }
-    if (!isfinite(count) || count < 0 || count > FLT_MAX || (double)(float)count != count)
-        return fail(error, QA_ERROR_ARGUMENT, "QC protection count is not exactly representable in source storage");
+    float source_count;
+    if (count < 0 || !qa_float_round_finite(count, &source_count))
+        return fail(error, QA_ERROR_ARGUMENT, "QC protection count must be finite and nonnegative");
     if (!definition->selection) {
         if (selected != definition->item)
             return fail(error, QA_ERROR_ARGUMENT, "QC protection write changed its fixed source selection");
@@ -450,8 +451,8 @@ static bool scale_declared(const application_qc_call *call)
     return false;
 }
 static bool absorb_binding(void *context, const qa_damage_request *request,
-    const qa_damage_geometry *geometry, float amount, qa_damage_flags flags,
-    qa_protection_observer *observer, float *saved, qa_error *error)
+    const qa_damage_geometry *geometry, double amount, qa_damage_flags flags,
+    qa_protection_observer *observer, double *saved, qa_error *error)
 {
     protection_channel *row = context; int32_t reference;
     application_qc_protection *owner = row->owner;
@@ -467,8 +468,10 @@ static bool absorb_binding(void *context, const qa_damage_request *request,
         (flags.no_power_armor ? definition->no_power : 0) |
         (flags.no_regular_armor ? definition->no_regular : 0) |
         (flags.energy ? definition->energy : 0) | (request->radius ? definition->radius : 0);
+    float source_amount = (float)amount;
     application_qc_inputs inputs = {.self = row->actor, .attacker = request->attack.attacker,
-        .inflictor = request->attack.inflictor, .amount = amount, .knockback = request->knockback,
+        .inflictor = request->attack.inflictor, .amount = source_amount,
+        .knockback = (float)request->knockback,
         .point = geometry->point, .direction = geometry->direction, .normal = geometry->normal,
         .time_ns = owner->engine->source_time_ns, .damage_flags = (float)bits,
         .protection_scale = flags.regular_scale};
@@ -486,11 +489,11 @@ static bool absorb_binding(void *context, const qa_damage_request *request,
     channel_reclaim(row);
     if (!ok) return false;
     float value; memcpy(&value, result, sizeof(value));
-    if (!isfinite(value) || value < 0 || value > amount)
+    if (!isfinite(value) || value < 0 || value > source_amount)
         return fail(error, QA_ERROR_FORMAT, "QC protection savings exceed the actual incoming damage");
     if (!retired && qa_actors_get(qa_session_actors(owner->engine->services.session), actor) &&
         !require(row, &reference, error)) return false;
-    *saved = value; return true;
+    *saved = fmin(amount, (double)value); return true;
 }
 static qa_protection_binding binding(protection_channel *row)
 {

@@ -50,14 +50,13 @@ static bool entry(const qa_json_document *doc, qa_json_id id, const qa_qvm_image
 }
 static bool stat(const qa_json_document *doc, qa_json_id id, uint32_t *out, qa_error *error)
 { return word(doc, id, out, error) && (*out < 16 || fail(error, QA_ERROR_FORMAT, "Combat stat leaves its public player record")); }
-static bool fraction(const qa_json_document *doc, qa_json_id id, float *out, qa_error *error)
+static bool fraction(const qa_json_document *doc, qa_json_id id, double *out, qa_error *error)
 {
     double value;
     if (!qa_json_number(doc, id, &value, error)) return false;
-    float native = (float)value;
-    if (!isfinite(value) || value < 0 || value > 1 || (double)native != value)
-        return fail(error, QA_ERROR_FORMAT, "Combat protection is not its original binary32 fraction");
-    *out = native; return true;
+    if (!isfinite(value) || value < 0 || value > 1)
+        return fail(error, QA_ERROR_FORMAT, "Combat protection is not a finite fraction");
+    *out = value; return true;
 }
 static bool masks(const qa_json_document *doc, qa_json_id object,
     const char *const *names, uint32_t **values, size_t count, qa_error *error)
@@ -239,8 +238,8 @@ static bool parse(application_q3_combat_profile *p, const qa_json_document *doc,
     if (qa_json_string_equal(doc, qa_json_get(doc, mass, "kind"), "constant")) {
         double value;
         if (!qa_json_number(doc, qa_json_get(doc, mass, "value"), &value, error)) return false;
-        d->state.mass_kind = Q3_COMBAT_MASS_CONSTANT; d->state.mass.constant = (float)value;
-        if (!isfinite(value) || value < 0 || !isfinite(d->state.mass.constant))
+        d->state.mass_kind = Q3_COMBAT_MASS_CONSTANT; d->state.mass.constant = value;
+        if (!isfinite(value) || value < 0)
             return fail(error, QA_ERROR_FORMAT, "Combat mass is not finite and nonnegative");
     } else {
         if (!qa_json_string_equal(doc, qa_json_get(doc, mass, "kind"), "entity") ||
@@ -284,7 +283,7 @@ static bool builtin(application_q3_combat_profile *p, qa_strings *strings,
     d->state.invulnerable = 16; d->state.no_knockback = 2048;
     d->state.mass_kind = Q3_COMBAT_MASS_CONSTANT; d->state.mass.constant = 200;
     d->armor.check = threewave ? 161690 : 139839; d->armor.points_stat = threewave ? 6 : 3;
-    d->armor.protection = .66f; d->armor.call.count = Q3_ARMOR_WORDS;
+    d->armor.protection = .66; d->armor.call.count = Q3_ARMOR_WORDS;
     for (size_t i = 0; i < Q3_ARMOR_WORDS; ++i) d->armor.call.positions[i] = (uint32_t)i;
     application_q3_grapple_profile_destroy(grapple);
     p->teams = calloc(2, sizeof(*p->teams));

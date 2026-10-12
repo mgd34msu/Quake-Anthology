@@ -180,7 +180,7 @@ bool qa_application_q1_save_capture(qa_application *app,const qa_q1_save_client 
         if (ok && (!skill || !isfinite(skill->number)))
             ok=application_fail(error,QA_ERROR_FORMAT,"Original source lost its live skill setting");
         if (ok) {
-            save->skill=qa_source_float_to_i32(fmaxf(0,fminf(3,floorf(skill->number))));
+            save->skill=qa_source_to_i32(fmaxf(0,fminf(3,floorf(skill->number))));
             save->time=(double)engine->source_time_ns/1e9;
             int32_t reference=0;float health=0;
             ok=qa_qc_slot_reference(provider->state.qc.instance,1,&reference,error) &&

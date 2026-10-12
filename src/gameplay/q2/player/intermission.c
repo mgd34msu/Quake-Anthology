@@ -285,7 +285,7 @@ bool qa_q2_players_frame(qa_q2_game *g, qa_error *e) {
             qa_combat_state combat;
             if (!qa_combat_read(g->services.combat, a->id, &combat, e))
                 return false;
-            float maximum = a->powers ? a->powers->maximum_health : 100;
+            double maximum = a->powers ? a->powers->maximum_health : 100;
             if (combat.health > maximum &&
                 !qa_combat_set_health(g->services.combat, a->id, maximum, e))
                 return false;

@@ -93,7 +93,7 @@ bool qa_q1_write_coord(qa_net_writer *w, qa_net_protocol_id p, float x)
     if (p.flags & QA_Q1_INT32COORD) return coord_integer(w,nearest((double)(x*16.0f)),true);
     if (p.flags & QA_Q1_COORD24) {
         if (!coord_integer(w,trunc(x),false)) return false;
-        int32_t remainder = qa_source_float_to_i32(x*255.0f)%255;
+        int32_t remainder = qa_source_to_i32(x*255.0f)%255;
         return qa_net_write_u8(w,(uint8_t)(uint32_t)remainder);
     }
     double fixed = (double)(x*8.0f);
@@ -116,13 +116,13 @@ bool qa_q1_write_angle(qa_net_writer *w, qa_net_protocol_id p, float x)
     if (p.flags & QA_Q1_FLOATANGLE) return qa_net_write_f32(w,x);
     if (p.flags & QA_Q1_SHORTANGLE) return rounded_angle(w,p,x,16);
     if (p.kind == QA_NET_NQ15) {
-        uint32_t bits = (uint32_t)qa_source_float_to_i32(x)*UINT32_C(256);
+        uint32_t bits = (uint32_t)qa_source_to_i32(x)*UINT32_C(256);
         int32_t product;
         memcpy(&product,&bits,sizeof(product));
         return qa_net_write_u8(w,(uint8_t)(uint32_t)(product/360));
     }
     if (p.kind == QA_NET_QW28)
-        return qa_net_write_u8(w,(uint8_t)(uint32_t)qa_source_float_to_i32(x*256.0f/360.0f));
+        return qa_net_write_u8(w,(uint8_t)(uint32_t)qa_source_to_i32(x*256.0f/360.0f));
     return rounded_angle(w,p,x,8);
 }
 bool qa_q1_read_protocol(qa_net_reader *r, bool qw, qa_net_protocol_id *out)

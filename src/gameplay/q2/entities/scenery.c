@@ -12,7 +12,7 @@ static bool model(qa_q2_game *g, q2_actor *a, const char *name, qa_bounds bounds
     return q2_entity_body(g, a, &b, false, e) && q2_entity_solid(g, a, solid, e) &&
            (!q2_actor_live(g, a->id) || q2_entity_show(g, a, e));
 }
-static bool health(qa_q2_game *g, q2_actor *a, float value, float mass, bool damageable,
+static bool health(qa_q2_game *g, q2_actor *a, double value, double mass, bool damageable,
                    bool invulnerable, qa_error *e) {
     return qa_combat_create_actor(g->services.combat, a->id,
                                   &(qa_combat_state){.health = value,
@@ -79,7 +79,7 @@ static bool break_apart(qa_q2_game *g, q2_actor *a, qa_actor_id inflictor, qa_ac
         qa_vec_sub(from.origin, body.origin) : qa_vec_sub(body.origin, from.origin)), 150);
     if (!q2_entity_body(g, a, &body, false, e))
         return false;
-    float mass = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_MASS], 75);
+    double mass = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_MASS], 75);
     if (qa_combat_has(g->services.combat, a->id)) {
         qa_combat_state combat;
         if (!qa_combat_read_traits(g->services.combat, a->id, &combat, e)) return false;
@@ -87,8 +87,8 @@ static bool break_apart(qa_q2_game *g, q2_actor *a, qa_actor_id inflictor, qa_ac
     }
     if (mass == 0)
         mass = 75;
-    int large = (int)q2_clamp(truncf(mass / 100), 0, 8),
-        small = (int)q2_clamp(truncf(mass / 25), 0, 16);
+    int large = (int)fmin(8, fmax(0, trunc(mass / 100))),
+        small = (int)fmin(16, fmax(0, trunc(mass / 25)));
     size = qa_vec_scale(size, .5f);
     for (int i = 0; i < large; i++) {
         if (rerelease) {
@@ -144,7 +144,7 @@ static bool barrel_blast(qa_q2_game *g, q2_actor *a, qa_error *e) {
             {Q2_NAME_RESOURCE_MODELS_OBJECTS_DEBRIS3_TRIS_MD2, 4},
             {Q2_NAME_RESOURCE_MODELS_OBJECTS_DEBRIS2_TRIS_MD2, 8}
         };
-        float speed = (float)qa_source_float_to_i32(1.5f * s->damage / 200);
+        float speed = (float)qa_source_to_i32(1.5f * s->damage / 200);
         for (size_t piece = 0; piece < sizeof(pieces) / sizeof(*pieces); ++piece)
             for (unsigned copy = 0; copy < pieces[piece].count; ++copy) {
                 if (!q2_spawn_gib(g, a->id, pieces[piece].model, speed,
@@ -218,7 +218,7 @@ static bool barrel_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         qa_combat_read(g->services.combat, a->id, &combat, e) &&
         q2_world_effects(g, a, &body, &combat, &s->air_ns, &s->pain_ns, &s->environment_ns, e);
 }
-static bool barrel_die(qa_q2_game *g, q2_actor *a, qa_actor_id attacker, float damage, qa_error *e) {
+static bool barrel_die(qa_q2_game *g, q2_actor *a, qa_actor_id attacker, double damage, qa_error *e) {
     q2_entity_state *s = a->entity;
     if (g->options.rules == QA_RULESET_Q2_RERELEASE &&
         (s->stage == Q2_BARREL_BURN || s->stage == Q2_BARREL_EXPLODE)) return true;
@@ -983,8 +983,8 @@ bool q2_scenery_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contac
         qa_vec3 direction = qa_vec_sub(body.origin, other.origin);
         direction.z = 0;
         direction = qa_vec_normalize(direction);
-        float distance =
-            mine.mass > 0 ? 20 * state.mass / mine.mass * (float)g->frame_ns / Q2_NS : 0;
+        float ratio = mine.mass > 0 ? (float)state.mass / (float)mine.mass : 0;
+        float distance = 20 * ratio * (float)g->frame_ns / Q2_NS;
         qa_trace_result hit;
         if (!q2_player_trace(g, a->id, body.origin,
                              qa_vec_add(body.origin, qa_vec_scale(direction, distance)),
@@ -1020,12 +1020,12 @@ bool q2_scenery_reaction(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *ou
             if (!q2_actor_live(g, a->id))
                 return true;
             if (!q2_spawn_gib(g, a->id, Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SM_MEAT_TRIS_MD2,
-                              out->result.applied_damage, 0, 0, 1, e))
+                              (float)out->result.applied_damage, 0, 0, 1, e))
                 return false;
         }
         return !q2_actor_live(g, a->id) ||
                q2_spawn_gib(g, a->id, Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_HEAD2_TRIS_MD2,
-                            out->result.applied_damage, Q2_GIB_HEAD, 0, 1, e);
+                            (float)out->result.applied_damage, Q2_GIB_HEAD, 0, 1, e);
     }
     case Q2S_ROTATING_LIGHT:
         if (!sparks(g, a, 30, e))

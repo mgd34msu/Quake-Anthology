@@ -490,7 +490,7 @@ static bool capture_player(qa_application *application, qa_actor_id actor,
     } else if (character != NULL && character->kind == APPLICATION_PROVIDER_Q3) {
         qa_q3_player_state state;
         if (qa_q3_player_read(character->state.q3, actor, &state))
-            carry->maximum_health = (float)state.max_health;
+            carry->maximum_health = state.max_health;
     }
     if (arsenal != NULL && arsenal->kind == APPLICATION_PROVIDER_Q1) {
         carry->has_q1 = qa_q1_player_read(arsenal->state.q1, actor, &carry->q1);
@@ -2206,7 +2206,7 @@ static bool q1_selected_q3_pose(void *opaque, qa_actor_id actor,
     uint32_t quad_word=(uint32_t)(int64_t)quad_time;
     int32_t quad_until;memcpy(&quad_until,&quad_word,sizeof(quad_until));
     *out = (qa_q3_selected_source_pose){.view_angles = control.view_angles,
-        .view_height = control.view_height, .max_health = qa_source_float_to_i32(physical_max_health),
+        .view_height = control.view_height, .max_health = qa_source_to_i32(physical_max_health),
         .team = source_team, .quad_until_ms = quad_until};
     return true;
 }
@@ -2678,11 +2678,11 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             .mass = 200, .can_take_damage = !seat->spectator};
         if (keep) { combat.health = carry->combat.health; combat.armor = carry->combat.armor; }
         bool q1_carry = character->kind == APPLICATION_PROVIDER_Q1;
-        float maximum_health = keep && carry->character_owner == character->owner
+        double maximum_health = keep && carry->character_owner == character->owner
             ? carry->maximum_health : reduced_health ? 50 : 100;
         if (classic_mission) maximum_health = 100;
         if (keep && q1_carry)
-            combat.health = fminf(maximum_health, fmaxf(maximum_health / 2, combat.health));
+            combat.health = fmin(maximum_health, fmax(maximum_health / 2, combat.health));
         bool original_q3_body = !reserved_player && q3g_engine(character) != NULL;
         if (reserved_player) {
             if (!qa_world_body_read(application->world, actor, &body, error) ||
@@ -2828,8 +2828,9 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             return false;
         record->deferred = !found;
         if (!found) defer_player(application, record);
+        const float source_health = (float)combat.health;
         if (!native_q1_character_spawn(character, map_source, actor,
-                &combat.health, maximum_health, error))
+                &source_health, (float)maximum_health, error))
             return false;
         if (!reserved_player && arsenal->kind == APPLICATION_PROVIDER_Q1 &&
             !qa_q1_player_attach(arsenal->state.q1, actor,
@@ -3036,7 +3037,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             return false;
         if (map_source->kind != APPLICATION_PROVIDER_Q1 && arsenal->kind == APPLICATION_PROVIDER_Q1 &&
             !(map_source->kind == APPLICATION_PROVIDER_QC && record->source_begin_pending)) {
-            float arsenal_maximum = arsenal == character ? maximum_health
+            float arsenal_maximum = arsenal == character ? (float)maximum_health
                 : keep_inventory && carry->has_q1 && carry->arsenal_owner == arsenal->owner
                     ? carry->q1.max_health : application_q1_program(arsenal->launch->selection.implementation) == QA_Q1_MG3
                         && !deathmatch(choices) ? 50 : 100;
@@ -4635,7 +4636,7 @@ bool application_players_guest_attach(qa_application *application,
             (selected == application_provider_for(application, actor, QA_ROLE_EFFECTS, "") ? QA_Q3_EFFECTS : 0u) |
             (selected == application_provider_for(application, actor, QA_ROLE_COMBAT, "") ? QA_Q3_COMBAT : 0u) |
             (selected == application_provider_for(application, actor, QA_ROLE_EQUIPMENT, "") ? QA_Q3_EQUIPMENT : 0u);
-        if (roles && (!qa_q3_bind_player(selected->state.q3, actor, roles, qa_source_float_to_i32((float)combat.health), error) ||
+        if (roles && (!qa_q3_bind_player(selected->state.q3, actor, roles, qa_source_to_i32(combat.health), error) ||
             !qa_q3_spawn_player(selected->state.q3, actor, &body, combat.team, error))) goto failed;
     }
     if (!application_guest_actor_admit(provider, actor, error)) goto failed;

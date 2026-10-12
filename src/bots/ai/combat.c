@@ -185,10 +185,10 @@ bool bot_ai_battle_inventory(qa_bots *b,bot_ai_state *s,int32_t enemy,qa_error *
     qa_vec3 direction=qa_vec_sub(info.state.origin,bot_ai_origin(s));
     bot_source_inventory inventory={b,s};
     if(!bot_ai_source_inventory_write(&inventory,QA_BOT_INV_ENEMY_HEIGHT,
-        qa_source_float_to_i32(direction.z),e)) return false;
+        qa_source_to_i32(direction.z),e)) return false;
     direction.z=0;
     return bot_ai_source_inventory_write(&inventory,QA_BOT_INV_ENEMY_DISTANCE,
-        qa_source_float_to_i32(qa_vec_length(direction)),e);
+        qa_source_to_i32(qa_vec_length(direction)),e);
 }
 static bool enemy_carries_flag(const qa_bots *b,const qa_bot_entity_info *info) {
     uint32_t flags=(1u<<7)|(1u<<8)|(b->services.team_arena?(1u<<9):0);
@@ -998,7 +998,7 @@ bool bot_ai_source_aim(qa_bots *b,bot_ai_state *s,qa_error *e) {
        qa_vec_dot(bot_ai_enemy_velocity(s),velocity)<0) accuracy*=.7f;
     float visibility;
     SOURCE_ATTACK_CALL(bot_ai_source_entity_visible(b,s,bot_ai_enemy_number(s),360,&visibility,e));
-    bool visible=qa_source_float_to_i32(visibility)!=0;
+    bool visible=qa_source_to_i32(visibility)!=0;
     qa_vec3 best;
     if(visible) {
         best=info.state.origin;best.z+=8;
@@ -1046,7 +1046,7 @@ bool bot_ai_source_aim(qa_bots *b,bot_ai_state *s,qa_error *e) {
                     distance=qa_vec_length(qa_vec_sub(info.state.origin,bot_ai_origin(s)));
                     qa_vec3 origin=info.state.origin;origin.z+=1;
                     qa_bot_movement_prediction_query query={.origin=origin,.velocity=velocity,.presence=4,
-                        .maximum_frames=qa_source_float_to_i32((distance*10)/selected.weapon.speed),.frame_time=.1f};
+                        .maximum_frames=qa_source_to_i32((distance*10)/selected.weapon.speed),.frame_time=.1f};
                     qa_bot_movement_prediction prediction;bool available;
                     qa_actor_id actor=bot_ai_enemy_actor(b,s);
                     SOURCE_ATTACK_CALL(b->services.predict_motion(b->services.context,actor,&query,&prediction,&available,e));

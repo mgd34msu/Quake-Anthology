@@ -797,7 +797,7 @@ static const qa_unified_field qa_movement_ground_fields[] = {
 static const qa_unified_record_layout qa_movement_ground_layout = QA_UNIFIED_LAYOUT(qa_movement_ground, qa_movement_ground_fields);
 
 static const qa_unified_field qa_movement_environment_fields[] = {
-    QA_UNIFIED_FIELD(qa_movement_environment, health, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_movement_environment, health, QA_UNIFIED_FIELD_F64),
     QA_UNIFIED_FIELD(qa_movement_environment, flight, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_movement_environment, haste, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_movement_environment, invulnerable, QA_UNIFIED_FIELD_BOOL),
@@ -1358,7 +1358,7 @@ static const qa_unified_field qa_unified_q2_player_view_fields[] = {
     QA_UNIFIED_RECORD(qa_q2_player_view, gun_offset, qa_unified_vector_layout),
     QA_UNIFIED_RECORD(qa_q2_player_view, blend, qa_unified_vector4_layout),
     QA_UNIFIED_FIELD(qa_q2_player_view, fov, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_q2_player_view, health, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_q2_player_view, health, QA_UNIFIED_FIELD_F64),
     QA_UNIFIED_FIELD(qa_q2_player_view, ammo, QA_UNIFIED_FIELD_F32),
     QA_UNIFIED_FIELD(qa_q2_player_view, armor, QA_UNIFIED_FIELD_F64),
     QA_UNIFIED_FIELD(qa_q2_player_view, ammo_icon, QA_UNIFIED_FIELD_NAME),
@@ -1407,7 +1407,7 @@ static const qa_unified_field qa_unified_q2_player_event_fields[] = {
     QA_UNIFIED_FIELD(qa_q2_player_event, slot, QA_UNIFIED_FIELD_U32),
     QA_UNIFIED_FIELD(qa_q2_player_event, level, QA_UNIFIED_FIELD_I32),
     QA_UNIFIED_FIELD(qa_q2_player_event, lives, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_q2_player_event, damage, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_q2_player_event, damage, QA_UNIFIED_FIELD_F64),
     QA_UNIFIED_FIELD(qa_q2_player_event, alpha, QA_UNIFIED_FIELD_F32),
     QA_UNIFIED_FIELD(qa_q2_player_event, respawn_status, QA_UNIFIED_FIELD_I32),
     QA_UNIFIED_FIELD(qa_q2_player_event, hand, QA_UNIFIED_FIELD_I32),
@@ -1697,8 +1697,8 @@ static const qa_unified_record_layout qa_attack_layout = QA_UNIFIED_LAYOUT(qa_at
 static const qa_unified_field qa_damage_request_fields[] = {
     QA_UNIFIED_RECORD(qa_damage_request, attack, qa_attack_layout),
     QA_UNIFIED_RECORD(qa_damage_request, target, qa_unified_actor_layout),
-    QA_UNIFIED_FIELD(qa_damage_request, amount, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_damage_request, knockback, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_damage_request, amount, QA_UNIFIED_FIELD_F64),
+    QA_UNIFIED_FIELD(qa_damage_request, knockback, QA_UNIFIED_FIELD_F64),
     QA_UNIFIED_RECORD(qa_damage_request, direction, qa_unified_vector_layout),
     QA_UNIFIED_RECORD(qa_damage_request, point, qa_unified_vector_layout),
     QA_UNIFIED_RECORD(qa_damage_request, normal, qa_unified_vector_layout),
@@ -1707,17 +1707,17 @@ static const qa_unified_field qa_damage_request_fields[] = {
 static const qa_unified_record_layout qa_damage_request_layout = QA_UNIFIED_LAYOUT(qa_damage_request, qa_damage_request_fields);
 
 static const qa_unified_field qa_damage_result_fields[] = {
-    QA_UNIFIED_FIELD(qa_damage_result, applied_damage, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_damage_result, applied_damage, QA_UNIFIED_FIELD_F64),
     QA_UNIFIED_FIELD(qa_damage_result, reaction, QA_UNIFIED_FIELD_I32),
     QA_UNIFIED_FIELD(qa_damage_result, feedback_family, QA_UNIFIED_FIELD_I32),
     QA_UNIFIED_FIELD(qa_damage_result, has_feedback, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_damage_result, battlesuit, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_FIELD(qa_damage_result, power_saved, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_damage_result, armor_saved, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_damage_result, blood, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_damage_result, knockback, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_damage_result, power_saved, QA_UNIFIED_FIELD_F64),
+    QA_UNIFIED_FIELD(qa_damage_result, armor_saved, QA_UNIFIED_FIELD_F64),
+    QA_UNIFIED_FIELD(qa_damage_result, blood, QA_UNIFIED_FIELD_F64),
+    QA_UNIFIED_FIELD(qa_damage_result, knockback, QA_UNIFIED_FIELD_F64),
     QA_UNIFIED_FIELD(qa_damage_result, has_q2_damage, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_FIELD(qa_damage_result, q2_damage, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_damage_result, q2_damage, QA_UNIFIED_FIELD_F64),
 };
 static const qa_unified_record_layout qa_damage_result_layout = QA_UNIFIED_LAYOUT(qa_damage_result, qa_damage_result_fields);
 
@@ -1739,7 +1739,7 @@ static const qa_unified_record_layout armor_q2_protection_layout =
     MEMBER_LAYOUT(qa_regular_armor, protection.q2, armor_q2_protection_fields);
 static const qa_unified_record_layout *const armor_protection_variants[] = {
     &armor_unprotected_layout, &float_layout, &armor_q2_protection_layout,
-    &float_layout, &armor_unprotected_layout,
+    &double_layout, &armor_unprotected_layout,
 };
 static const qa_unified_field regular_armor_fields[] = {
     QA_UNIFIED_FIELD(qa_regular_armor, kind, QA_UNIFIED_FIELD_I32),
@@ -1762,8 +1762,8 @@ static const qa_unified_field armor_fields[] = {
 };
 static const qa_unified_record_layout armor_layout = QA_UNIFIED_LAYOUT(qa_armor, armor_fields);
 static const qa_unified_field mutation_health_fields[] = {
-    MEMBER_FIELD(qa_damage_mutation, value.health, before, QA_UNIFIED_FIELD_F32),
-    MEMBER_FIELD(qa_damage_mutation, value.health, after, QA_UNIFIED_FIELD_F32),
+    MEMBER_FIELD(qa_damage_mutation, value.health, before, QA_UNIFIED_FIELD_F64),
+    MEMBER_FIELD(qa_damage_mutation, value.health, after, QA_UNIFIED_FIELD_F64),
 };
 static const qa_unified_record_layout mutation_health_layout = MEMBER_LAYOUT(qa_damage_mutation, value.health, mutation_health_fields);
 static const qa_unified_field mutation_armor_fields[] = {

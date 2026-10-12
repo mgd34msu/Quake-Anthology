@@ -14,7 +14,7 @@ typedef struct application_guest_carry {
 } application_guest_carry;
 typedef struct application_player_carry {
     qa_combat_state combat;
-    float maximum_health;
+    double maximum_health;
     qa_inventory_entry *inventory;
     size_t count;
     qa_q1_player_view q1;

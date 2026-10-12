@@ -186,7 +186,7 @@ typedef struct qa_movement_profile {
 typedef struct qa_movement_posture { qa_bounds bounds; float view_height; } qa_movement_posture;
 typedef enum qa_movement_mode { QA_MOVEMENT_MODE_NORMAL, QA_MOVEMENT_MODE_NOCLIP, QA_MOVEMENT_MODE_FREEZE } qa_movement_mode;
 typedef struct qa_movement_environment {
-    float health;
+    double health;
     bool flight, haste, invulnerable;
     float gravity_multiplier, speed_multiplier;
     bool fixed_pose, fixed_crouched;

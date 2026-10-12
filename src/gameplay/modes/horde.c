@@ -882,11 +882,12 @@ static bool loot_touch(qa_modes *m, qa_actor_id item_actor, qa_actor_id actor, b
                 return false;
             if (m->options.services.actor_traits)
                 m->options.services.actor_traits(m->options.services.context, actor, &traits);
-            float maximum = traits.max_health > 0 ? traits.max_health : 100;
-            if (state.health >= maximum)
+            float maximum = traits.max_health > 0 ? (float)traits.max_health : 100;
+            float health = (float)state.health;
+            if (health >= maximum)
                 return true;
             if (!qa_combat_set_health(m->options.services.combat, actor,
-                                      fminf(maximum, state.health + loot->amount), e))
+                                      fminf(maximum, health + loot->amount), e))
                 return false;
         } else if (loot->kind == HORDE_ARMOR || loot->kind == HORDE_POWER) {
             bool granted = false;

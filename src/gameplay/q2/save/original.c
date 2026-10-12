@@ -748,9 +748,9 @@ static bool persistent_record(qa_q2_game *g, q2_original_record_io *io,
     if (!q2_original_record(io, Q2_ORIGINAL_PERSISTENT, player)) return false;
     int32_t health = 0, maximum_health = 0;
     if (!io->reading) {
-        if (!isfinite(carry->health) || truncf(carry->health) != carry->health ||
+        if (!isfinite(carry->health) || trunc(carry->health) != carry->health ||
             carry->health < INT32_MIN || (double)carry->health > INT32_MAX ||
-            !isfinite(carry->maximum_health) || truncf(carry->maximum_health) != carry->maximum_health ||
+            !isfinite(carry->maximum_health) || trunc(carry->maximum_health) != carry->maximum_health ||
             carry->maximum_health < 0 || (double)carry->maximum_health > INT32_MAX)
             return fail(io, 0, "Q2 Source health exceeds the original integer storage");
         health = (int32_t)carry->health;
@@ -765,8 +765,8 @@ static bool persistent_record(qa_q2_game *g, q2_original_record_io *io,
         !original_weapon(g, io, "lastweapon", 1792, 1800, 1808, coop, last_weapon) ||
         !inventory_record(g, io, carry)) return false;
     if (io->reading) {
-        carry->health = (float)health;
-        carry->maximum_health = (float)maximum_health;
+        carry->health = health;
+        carry->maximum_health = maximum_health;
         carry->score = player->info.score;
         player->info.selected_item = carry->selected_item;
         const char *armor_classes[] = {"item_armor_jacket", "item_armor_combat", "item_armor_body"};
@@ -954,17 +954,15 @@ bool q2_original_client_record(qa_q2_game *g, q2_original_record_io *io,
             return false;
         if (io->product == QA_Q2_ROGUE &&
             !q2_original_reference(g, io, "owned_sphere", 3852, &state->sphere)) return false;
-        const struct {const char *name; uint16_t offsets[3]; float *value;} damage[] = {
+        const struct {const char *name; uint16_t offsets[3]; int32_t *value;} damage[] = {
             {"damage_armor", {3536, 3552, 3568}, &state->player.rule.damage_armor},
             {"damage_parmor", {3540, 3556, 3572}, &state->player.rule.damage_power},
             {"damage_blood", {3544, 3560, 3576}, &state->player.rule.damage_blood},
             {"damage_knockback", {3548, 3564, 3580}, &state->player.rule.damage_knockback},
         };
         for (size_t i = 0; i < sizeof(damage) / sizeof(damage[0]); ++i) {
-            int32_t value = io->reading ? 0 : qa_source_float_to_i32(*damage[i].value);
             if (!q2_original_scalar(io, damage[i].name, Q2_ORIGINAL_I32, damage[i].offsets[0],
-                damage[i].offsets[1], damage[i].offsets[2], &value)) return false;
-            if (io->reading) *damage[i].value = (float)value;
+                damage[i].offsets[1], damage[i].offsets[2], damage[i].value)) return false;
         }
         if (!q2_original_scalar(io, "damage_from", Q2_ORIGINAL_VECTOR, 3552, 3568, 3584,
             &state->player.rule.damage_from)) return false;

@@ -524,7 +524,7 @@ bool qa_q2_wire_view_read(const qa_q2_game *g, qa_actor_id id,
 
 static int16_t source_short(float value)
 {
-    uint16_t bits = (uint16_t)(uint32_t)qa_source_float_to_i32(value);
+    uint16_t bits = (uint16_t)(uint32_t)qa_source_to_i32(value);
     int16_t result;
     memcpy(&result, &bits, sizeof(result));
     return result;

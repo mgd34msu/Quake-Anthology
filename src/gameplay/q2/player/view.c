@@ -1,6 +1,7 @@
 #include "qa/q2_sound.h"
 #include "internal.h"
 #include "../entities/internal.h"
+#include "qa/binary.h"
 
 static qa_vec4 blend_add(qa_vec4 b, qa_vec3 color, float alpha) {
     if (alpha <= 0)
@@ -35,8 +36,10 @@ static bool feedback(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
         flash = s->rule.flashes;
     }
     *flashes = flash;
-    float blood = s->rule.damage_blood, armor = s->rule.damage_armor, power = s->rule.damage_power,
-          total = blood + armor + power;
+    float blood = (float)s->rule.damage_blood, armor = (float)s->rule.damage_armor,
+          power = (float)s->rule.damage_power,
+          total = (float)qa_i32_add(qa_i32_add(s->rule.damage_blood, s->rule.damage_armor),
+                                   s->rule.damage_power);
     if (total == 0)
         return true;
     if (m->animate_q2 && s->rule.animation_priority < 3) {
@@ -84,7 +87,9 @@ static bool feedback(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
         s->rule.damage_blend = qa_v3((armor + blood) / total, (power + armor) / total, armor / total);
     }
     if (s->rule.damage_knockback != 0 && combat.health > 0) {
-        float kick = q2_clamp(fabsf(s->rule.damage_knockback) * 100 / combat.health, count * .5f, 50);
+        int32_t knockback = s->rule.damage_knockback;
+        if (knockback < 0) knockback = qa_i32_sub(0, knockback);
+        float kick = q2_clamp((float)knockback * 100 / (float)combat.health, count * .5f, 50);
         qa_vec3 direction = qa_vec_normalize(qa_vec_sub(s->rule.damage_from, body.origin)), forward,
                 right;
         qa_angle_vectors(m->view_angles, &forward, &right, NULL,QA_ANGLE_FLOAT_MATH);

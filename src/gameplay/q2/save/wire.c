@@ -89,7 +89,7 @@ static bool view_fields(q2_save_io *io, qa_q2_wire_view *s)
         q2_save_vec(io, &v->gun_offset) &&
         q2_save_f32(io, &v->blend.x) && q2_save_f32(io, &v->blend.y) &&
         q2_save_f32(io, &v->blend.z) && q2_save_f32(io, &v->blend.w) &&
-        q2_save_f32(io, &v->fov) && q2_save_f32(io, &v->health) &&
+        q2_save_f32(io, &v->fov) && q2_save_scalar(io, &v->health) &&
         q2_save_f64(io, &v->armor) && q2_save_f32(io, &v->ammo) &&
         q2_save_string(io, &v->ammo_icon) && q2_save_string(io, &v->armor_icon) &&
         q2_save_i32(io, &v->ammo_count) &&

@@ -11,7 +11,7 @@ typedef struct qa_save_eligibility {
     qa_game_family family;
     qa_save_authority authority;
     bool active, deathmatch, intermission;
-    const float *player_health;
+    const double *player_health;
     size_t player_count;
 } qa_save_eligibility;
 bool qa_save_eligible(const qa_save_eligibility *, qa_save_purpose, qa_error *);

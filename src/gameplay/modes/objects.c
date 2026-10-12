@@ -550,7 +550,7 @@ bool qa_modes_object_read(qa_modes *m, qa_actor_id actor, qa_mode_object_view *o
         qa_combat_state state;
         if (v && qa_combat_read(m->options.services.combat, actor, &state, NULL))
             out->health_fraction =
-                (int32_t)(255 * fmaxf(0, fminf(1, state.health / v->value.rules.obelisk_health)));
+                (int32_t)(255 * fmax(0, fmin(1, state.health / v->value.rules.obelisk_health)));
     }
     return true;
 }
@@ -937,7 +937,7 @@ bool mode_objects_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_erro
                 if (!mode_event(m, v, QA_MODE_OBELISK_REGEN, (qa_actor_id){0}, (qa_actor_id){0},
                                 actor, o->spec.team, 0, 0, e) ||
                     !qa_combat_set_health(m->options.services.combat, actor,
-                                          fminf(v->value.rules.obelisk_health,
+                                          fmin(v->value.rules.obelisk_health,
                                                 state.health + v->value.rules.obelisk_regen),
                                           e))
                     return false;

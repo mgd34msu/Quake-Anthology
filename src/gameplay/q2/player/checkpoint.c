@@ -72,9 +72,7 @@ fail:
     return false;
 }
 static bool valid_state(qa_q2_game *g, const qa_q2_player_state *s, qa_error *e) {
-    const float values[] = {s->info.view_height,   s->rule.fov,
-                            s->rule.damage_blood,       s->rule.damage_armor,
-                            s->rule.damage_power,       s->rule.damage_knockback,
+    const double values[] = {s->info.view_height,   s->rule.fov,
                             s->rule.damage_alpha,       s->rule.bonus_alpha,
                             s->rule.damage_pitch,       s->rule.damage_roll,
                             s->rule.fall_value,         s->rule.bob_time,

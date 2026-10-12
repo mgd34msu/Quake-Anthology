@@ -10,7 +10,8 @@ typedef struct application_q3_gear application_q3_gear;
 typedef struct application_q3_gear_target {
     qa_actor_id actor;
     qa_body_state body;
-    float health, view_height;
+    double health;
+    float view_height;
     int32_t team;
     bool player, mover;
     const char *userinfo;

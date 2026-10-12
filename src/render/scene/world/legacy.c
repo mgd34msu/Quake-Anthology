@@ -241,7 +241,7 @@ static qawl_texture *animated_texture(qa_scene_world *world, const qaw_legacy *l
     if (world->bsp.family == QA_BSP_Q2) {
         int32_t frame;
         if (input->use_animation_frame) memcpy(&frame,&input->animation_frame,sizeof(frame));
-        else frame = qa_source_float_to_i32((float)input->seconds * 2.0f);
+        else frame = qa_source_to_i32((float)input->seconds * 2.0f);
         int64_t phase = (int64_t)frame % (int64_t)legacy->frame_count;
         if (phase < 0) phase += (int64_t)legacy->frame_count;
         return &data->textures[legacy->frames[(size_t)phase]];

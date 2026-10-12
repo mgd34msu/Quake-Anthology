@@ -72,15 +72,9 @@ bool application_q3_combat_word_write(const application_q3_combat_actor *a,
         qa_qvm_write(a->role->vm, address, (qa_bytes){bytes, sizeof(bytes)}, error) &&
         application_q3_combat_actor_current(a, error);
 }
-static bool exact_float(int32_t word, float *out, qa_error *error)
-{
-    *out = (float)word;
-    return (double)*out == (double)word ||
-        fail(error, QA_ERROR_UNSUPPORTED, "Original Q3 integer exceeds exact shared combat representation");
-}
 static bool integer(double value, int32_t *out, qa_error *error)
 {
-    if (!isfinite(value) || trunc((double)value) != value || value < INT32_MIN || (double)value > INT32_MAX)
+    if (!isfinite(value) || trunc(value) != value || value < INT32_MIN || value > INT32_MAX)
         return fail(error, QA_ERROR_ARGUMENT, "Original Q3 combat store requires a signed integer");
     *out = (int32_t)value; return true;
 }
@@ -102,7 +96,7 @@ static bool active_tiers(const application_q3_combat_actor *a, bool *out, qa_err
     }
     return true;
 }
-static bool protection(const application_q3_combat_actor *a, bool active, float *out, qa_error *error)
+static bool protection(const application_q3_combat_actor *a, bool active, double *out, qa_error *error)
 {
     const application_q3_combat_definition *d = definition(a); *out = d->armor.protection;
     if (!active) return true;
@@ -143,9 +137,9 @@ static bool armor_plan(const application_q3_combat_actor *a, const qa_armor *arm
     if (armor->regular.kind == QA_ARMOR_NONE) return true;
     if (!integer(armor->regular.points, &out->points, error) || out->points < 0)
         return fail(error, QA_ERROR_ARGUMENT, "Original Q3 armor points require a nonnegative source integer");
-    bool active; float current;
+    bool active; double current;
     if (!active_tiers(a, &active, error) || !protection(a, active, &current, error)) return false;
-    float requested = armor->regular.protection.q3_protection;
+    double requested = armor->regular.protection.q3_protection;
     if (requested == current) return true;
     const application_q3_combat_definition *d = definition(a);
     if (active) for (size_t i = 0; i < d->armor.tier_count; ++i)
@@ -166,7 +160,7 @@ bool application_q3_combat_armor_write(void *opaque, const qa_armor *armor, qa_e
         (!store.write_tier || application_q3_combat_word_write(a,
             a->player + 184 + d->armor.tier_stat * 4, store.tier, error));
 }
-bool application_q3_combat_health_write(void *opaque, float health, qa_error *error)
+bool application_q3_combat_health_write(void *opaque, double health, qa_error *error)
 {
     application_q3_combat_actor *a = opaque; int32_t value;
     if (!application_q3_combat_actor_current(a, error) || !integer(health, &value, error)) return false;
@@ -195,8 +189,8 @@ bool application_q3_combat_state_read(void *opaque, qa_combat_state *out, qa_err
         !application_q3_combat_word_read(a, a->entity + d->fields.health, &health, error) ||
         !application_q3_combat_word_read(a, a->entity + d->fields.takedamage, &damageable, error) ||
         !application_q3_combat_word_read(a, a->entity + d->reactions.flags, &flags, error) ||
-        !application_q3_combat_armor_read(a, &state.armor, error) ||
-        (inuse && !exact_float(health, &state.health, error))) return false;
+        !application_q3_combat_armor_read(a, &state.armor, error)) return false;
+    if (inuse) state.health = health;
     state.can_take_damage = inuse && damageable;
     state.invulnerable = ((uint32_t)flags & d->state.invulnerable) != 0;
     state.no_knockback = ((uint32_t)flags & d->state.no_knockback) != 0;
@@ -204,9 +198,12 @@ bool application_q3_combat_state_read(void *opaque, qa_combat_state *out, qa_err
     else {
         int32_t mass;
         if (!application_q3_combat_word_read(a, a->entity + d->state.mass.offset, &mass, error)) return false;
-        if (d->state.mass_kind == Q3_COMBAT_MASS_INT32) {
-            if (!exact_float(mass, &state.mass, error)) return false;
-        } else memcpy(&state.mass, &mass, sizeof(mass));
+        if (d->state.mass_kind == Q3_COMBAT_MASS_INT32) state.mass = mass;
+        else {
+            float native;
+            memcpy(&native, &mass, sizeof(native));
+            state.mass = native;
+        }
     }
     if (!isfinite(state.mass) || state.mass < 0)
         return fail(error, QA_ERROR_FORMAT, "Original Q3 source mass is not finite and nonnegative");

@@ -82,7 +82,7 @@ static inline uint8_t q2_byte_color(float f,bool clamp) {
     float n=f*255.0f;
     if(!isfinite(n))return 0;
     if(clamp){if(n<0.0)return 0;if(n>255.0)return 255;}
-    return (uint8_t)(uint32_t)qa_source_float_to_i32(n);
+    return (uint8_t)(uint32_t)qa_source_to_i32(n);
 }
 static inline uint8_t q2_quantized(float f,float scale,bool nonzero) {
     if(f==0.0f)return 0;

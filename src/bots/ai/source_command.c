@@ -41,7 +41,7 @@ bool bot_ai_source_command_write(qa_bots *bots, bot_ai_state *state,
         value->angle_words[axis] = qa_input_signed_word((uint32_t)value->angle_words[axis]);
     float *moves[] = {&value->forward_move, &value->side_move, &value->up_move};
     for (unsigned axis = 0; axis < 3; ++axis) {
-        uint32_t byte = (uint32_t)qa_source_float_to_i32(*moves[axis]) & 255u;
+        uint32_t byte = (uint32_t)qa_source_to_i32(*moves[axis]) & 255u;
         *moves[axis] = (float)(byte >= 128u ? (int32_t)byte - 256 : (int32_t)byte);
     }
     qa_q3_usercmd raw;

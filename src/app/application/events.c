@@ -949,7 +949,7 @@ bool application_q1_music_cue(qa_application *application, bool fresh, qa_error 
     } else if (source->kind == APPLICATION_PROVIDER_QC) {
         float sounds;
         if (!application_qc_float(source->state.qc.engine, 0, source->state.qc.engine->field_bindings->sounds, &sounds, error)) return false;
-        cd_track = (uint8_t)(uint32_t)qa_source_float_to_i32(sounds);
+        cd_track = (uint8_t)(uint32_t)qa_source_to_i32(sounds);
     } else return application_fail(error, QA_ERROR_UNSUPPORTED, "Q1 level cue has no native or QC Source");
     qa_clock_state clock;
     if (!qa_session_clock(application->session, source->owner, &clock))

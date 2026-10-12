@@ -151,15 +151,15 @@ static void ammo(q3n_mission_hud *o,rectDef_t r,bool flat)
 static void player_head(q3n_mission_hud *o,rectDef_t r)
 {
     q3n_hud_state *s=&o->hud->state; const q3n_player_feedback *p=q3n_player_state_feedback(o->frame->player_state); int time=o->frame->time;
-    if(p&&p->damage_time!=0.0f&&qa_i32_sub(time,qa_source_float_to_i32(p->damage_time))<500) {
-        float frac=(float)qa_i32_sub(time,qa_source_float_to_i32(p->damage_time))/500,size=r.w*1.25f*(1.5f-frac*0.5f),stretch=size-r.w*1.25f;
+    if(p&&p->damage_time!=0.0f&&qa_i32_sub(time,qa_source_to_i32(p->damage_time))<500) {
+        float frac=(float)qa_i32_sub(time,qa_source_to_i32(p->damage_time))/500,size=r.w*1.25f*(1.5f-frac*0.5f),stretch=size-r.w*1.25f;
         r.x-=stretch*0.5f+p->damage_x*stretch*0.5f; s->head_start_yaw=180+p->damage_x*45;
         s->head_end_yaw=180+20*cosf(q3n_events_crandom(o->frame->events)*(float)M_PI);
         s->head_end_pitch=5*cosf(q3n_events_crandom(o->frame->events)*(float)M_PI); s->head_start_time=time;
-        s->head_end_time=qa_source_float_to_i32((float)qa_i32_add(time,100)+q3n_events_random(o->frame->events)*2000);
+        s->head_end_time=qa_source_to_i32((float)qa_i32_add(time,100)+q3n_events_random(o->frame->events)*2000);
     } else if(time>=s->head_end_time) {
         s->head_start_yaw=s->head_end_yaw; s->head_start_pitch=s->head_end_pitch; s->head_start_time=s->head_end_time;
-        s->head_end_time=qa_source_float_to_i32((float)qa_i32_add(time,100)+q3n_events_random(o->frame->events)*2000);
+        s->head_end_time=qa_source_to_i32((float)qa_i32_add(time,100)+q3n_events_random(o->frame->events)*2000);
         s->head_end_yaw=180+20*cosf(q3n_events_crandom(o->frame->events)*(float)M_PI);
         s->head_end_pitch=5*cosf(q3n_events_crandom(o->frame->events)*(float)M_PI);
     }

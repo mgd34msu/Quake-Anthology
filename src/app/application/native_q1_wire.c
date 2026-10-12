@@ -705,7 +705,7 @@ static uint32_t counter(double value) {
     return value <= 0 ? 0 : value >= UINT32_MAX ? UINT32_MAX : (uint32_t)trunc(value);
 }
 static int16_t source_short(double value) {
-    uint16_t bits = (uint16_t)(uint32_t)qa_source_float_to_i32((float)value);
+    uint16_t bits = (uint16_t)(uint32_t)qa_source_to_i32((float)value);
     int16_t result; memcpy(&result, &bits, sizeof(result)); return result;
 }
 static float particle_direction(float value) {
@@ -740,14 +740,14 @@ bool application_native_q1_wire_clientdata(qa_application *app, qa_actor_id acto
                     ? 0 : world.server_flags << 28),
             .onground = row->player.ground.hit != QA_TRACE_HIT_NONE, .inwater = row->player.water_level >= 2,
             .weapon_frame = (uint32_t)player.weapon_frame, .weapon_model = model,
-            .armor = (uint32_t)qa_source_float_to_i32(combat.armor.regular.kind == QA_ARMOR_NONE
+            .armor = (uint32_t)qa_source_to_i32(combat.armor.regular.kind == QA_ARMOR_NONE
                 ? 0 : (float)combat.armor.regular.points),
-            .health = qa_source_float_to_i32(combat.health),
-            .ammo = (uint32_t)qa_source_float_to_i32(equipment.ammo ? (float)equipment.ammo_count : 0),
-            .shells = (uint32_t)qa_source_float_to_i32((float)player.shells),
-            .nails = (uint32_t)qa_source_float_to_i32((float)player.nails),
-            .rockets = (uint32_t)qa_source_float_to_i32((float)player.rockets),
-            .cells = (uint32_t)qa_source_float_to_i32((float)player.cells), .weapon = player.weapon};
+            .health = qa_source_to_i32(combat.health),
+            .ammo = (uint32_t)qa_source_to_i32(equipment.ammo ? (float)equipment.ammo_count : 0),
+            .shells = (uint32_t)qa_source_to_i32((float)player.shells),
+            .nails = (uint32_t)qa_source_to_i32((float)player.nails),
+            .rockets = (uint32_t)qa_source_to_i32((float)player.rockets),
+            .cells = (uint32_t)qa_source_to_i32((float)player.cells), .weapon = player.weapon};
         vector(value.punch, row->player.state.kind == QA_RULESET_NETQUAKE
             ? row->player.state.data.nq.punch_angles : equipment.kick_angles);
         vector(value.velocity, body.velocity);
@@ -772,7 +772,7 @@ bool application_native_q1_wire_status(qa_application *app, qa_actor_owner owner
             okay = application_fail(error, QA_ERROR_FORMAT, "Native Q1 source client lost its actual roster binding"); break;
         }
         float score = view.frags;
-        int32_t frags = qa_source_float_to_i32(score);
+        int32_t frags = qa_source_to_i32(score);
         players[count++] = (qa_application_network_q1_status_player){.actor = actor,
             .source_slot = slot + 1, .name = view.name, .name_id = view.name_id, .source_frags = score, .frags = frags,
             .colors = (uint8_t)((view.shirt << 4) | view.pants),
@@ -840,7 +840,8 @@ bool application_native_q1_wire_damage(qa_application *app,const qa_damage_outco
     application_provider *provider=application_provider_for(app,outcome->request.target,QA_ROLE_CHARACTER,"");
     if(!provider || provider->kind!=APPLICATION_PROVIDER_Q1) return true;
     qa_player_feedback feedback={.damage=true,
-        .armor=outcome->result.power_saved+outcome->result.armor_saved,.blood=outcome->result.blood};
+        .armor=(float)(outcome->result.power_saved+outcome->result.armor_saved),
+        .blood=(float)outcome->result.blood};
     qa_body_state body;
     if(qa_world_body_read(app->world,outcome->request.attack.inflictor,&body,NULL))
         for(size_t axis=0;axis<3;++axis) {

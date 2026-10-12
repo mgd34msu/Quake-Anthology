@@ -138,13 +138,13 @@ static bool native_preview(item_inspection *call, q2_actor *actor, qa_error *err
     if (!q2_actor_live(g, call->recipient) || !q2_actor_live(g, call->pickup)) return true;
     q2_actor *player = q2_actor_get(g, call->recipient, false, NULL);
     const q2_power_state *powers = player ? player->powers : NULL;
-    float maximum = powers ? powers->maximum_health : 100;
+    double maximum = powers ? powers->maximum_health : 100;
     bool instanced = g->options.cooperative && g->item_runtime->options.instanced_coop;
     switch (d->kind) {
     case QA_Q2_ITEM_HEALTH:
         *call->available = d->ignore_maximum || combat.health < maximum;
         *call->utility = fmaxf(0, (float)(item->spawn.count ? item->spawn.count : d->quantity));
-        if (!d->ignore_maximum) *call->utility = fminf(*call->utility, fmaxf(0, maximum - combat.health));
+        if (!d->ignore_maximum) *call->utility = (float)fmin(*call->utility, fmax(0, maximum - combat.health));
         return true;
     case QA_Q2_ITEM_FOOD:
         *call->available = true; *call->utility = fmaxf(0, (float)item->spawn.count); return true;
@@ -153,7 +153,7 @@ static bool native_preview(item_inspection *call, q2_actor *actor, qa_error *err
         qa_regular_armor next;
         *call->available = q2_item_armor_result(g, d, &combat.armor.regular, &next);
         if (*call->available)
-            *call->utility = fmaxf(1, (float)next.points - (float)combat.armor.regular.points);
+            *call->utility = (float)fmax(1, next.points - combat.armor.regular.points);
         return true;
     }
     case QA_Q2_ITEM_MAX_HEALTH:

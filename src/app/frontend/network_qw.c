@@ -938,7 +938,7 @@ static bool source_actions(frontend_qw_host *host, qa_error *error)
 }
 static int16_t source_short(float value)
 {
-    uint16_t bits = (uint16_t)(uint32_t)qa_source_float_to_i32(value);
+    uint16_t bits = (uint16_t)(uint32_t)qa_source_to_i32(value);
     int16_t result; memcpy(&result, &bits, sizeof(result)); return result;
 }
 static qa_qw_source_player source_player(const qa_application_network_qw_client *client,

@@ -331,7 +331,7 @@ void qa_input_command_convert(const qa_usercmd *source, const qa_input_move_inte
         case QA_INPUT_AXIS_TRUNCATE: value = trunc(value); break;
         case QA_INPUT_AXIS_NEAREST: value = (double)lrintf((float)value); break;
         case QA_INPUT_AXIS_HALF_UP: value = floorf((float)value + .5f); break;
-        case QA_INPUT_AXIS_SHORT: value = (int32_t)(uint16_t)(uint32_t)qa_source_float_to_i32((float)value);
+        case QA_INPUT_AXIS_SHORT: value = (int32_t)(uint16_t)(uint32_t)qa_source_to_i32((float)value);
             if (value > INT16_MAX) value -= 65536;
             break;
         }

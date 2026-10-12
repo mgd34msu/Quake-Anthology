@@ -161,7 +161,7 @@ static bool actor_read(death_call *call, qa_actor_id actor,
     if (!record) return application_fail(error, QA_ERROR_ARGUMENT, "Obituary actor retired during health read");
     qa_q1_obituary_actor value = {.actor = actor,
         .kill_string = raw->kill_string, .team = raw->team, .weapon = raw->weapon,
-        .health = combat.health, .water_level = (uint8_t)raw->water_level,
+        .health = (float)combat.health, .water_level = (uint8_t)raw->water_level,
         .quad_expires = raw->quad_remaining, .invulnerable_expires = raw->invulnerable_remaining,
         .player = raw->client, .monster = raw->monster, .brush = raw->brush};
     qa_strings *strings = qa_session_strings(call->app->session);
@@ -400,7 +400,7 @@ bool application_native_q1_source_before_reaction(qa_application *app,
         goto finish;
     }
     okay = player_current(&call, actor, error) &&
-        qa_q1_level_note_damage(call.level, actor, outcome->result.applied_damage, error) &&
+        qa_q1_level_note_damage(call.level, actor, (float)outcome->result.applied_damage, error) &&
         player_current(&call, actor, error);
     if (okay && outcome->result.applied_damage > 0 && options.program == QA_Q1_ROGUE)
         okay = application_native_q1_rogue_confirmed_damage(source, actor, attacker, error) &&
@@ -437,7 +437,7 @@ bool application_native_q1_source_before_reaction(qa_application *app,
             qa_modes_q1_source_read(app->modes, mode, actor, QA_Q1_ROGUE_STEAM,
                 &input.victim_saved_team, error) && source_policy(&call, QA_Q1_SOURCE_GAMECFG, &gamecfg, error);
         if (okay) {
-            input.gamecfg = (uint32_t)qa_source_float_to_i32((float)gamecfg);
+            input.gamecfg = (uint32_t)qa_source_to_i32((float)gamecfg);
             input.tag_context = source;
             input.tag_score = application_native_q1_rogue_tag_score;
         }

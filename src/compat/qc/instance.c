@@ -43,7 +43,7 @@ static bool body_ground_flags(const qa_qc_instance *instance,uint32_t slot,
         return qc_fail(error,QA_ERROR_FORMAT,slot,"QuakeC flags field has the wrong type");
     float value=qc_load_float(qc_entity_words_const(instance,slot),flags->offset);
     if (!isfinite(value)) return qc_fail(error,QA_ERROR_FORMAT,slot,"QuakeC body flags are nonfinite");
-    *out=(uint32_t)qa_source_float_to_i32(value); return true;
+    *out=(uint32_t)qa_source_to_i32(value); return true;
 }
 
 static uint8_t *edict_bytes(qa_qc_instance *instance, uint32_t slot)
@@ -1639,7 +1639,7 @@ static bool droptofloor(qa_qc_instance *instance, qa_error *error)
         float value;
         if (!qa_qc_entity_float(instance, reference, flags->offset, &value, error)
             || !qa_qc_set_entity_float(instance, reference, flags->offset,
-                    (float)(int32_t)((uint32_t)qa_source_float_to_i32(value) | 512u),
+                    (float)(int32_t)((uint32_t)qa_source_to_i32(value) | 512u),
                     error)) return false;
         if (!slot_matches(instance, slot, binding.kind, binding.actor))
             return qc_fail(error, QA_ERROR_NOT_FOUND, slot,

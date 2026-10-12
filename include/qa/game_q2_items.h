@@ -163,7 +163,7 @@ typedef struct qa_q2_item_checkpoint {
     qa_entity_visual visual;
     qa_q2_companion_checkpoint companion;
     qa_q2_powerups powers;
-    float maximum_health;
+    double maximum_health;
     uint32_t power_cubes;
     bool definitions_bound, power_inventory_bound;
 } qa_q2_item_checkpoint;

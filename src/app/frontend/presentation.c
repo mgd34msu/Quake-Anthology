@@ -293,7 +293,7 @@ static bool local_q3_damage(qa_frontend *f,frontend_seat *seat,qa_actor_id actor
         qa_combat_state combat;
         if(!qa_combat_read(qa_application_combat(f->application),actor,&combat,error))return false;
         q3n_damage_feedback_latch(&seat->q3_damage,source.source_time_ms,source.source_time_ms,
-            qa_source_float_to_i32(combat.health),player.damage_yaw,player.damage_pitch,player.damage_count,view->axis);
+            qa_source_to_i32(combat.health),player.damage_yaw,player.damage_pitch,player.damage_count,view->axis);
     }
     seat->q3_damage_event=player.damage_event; seat->q3_damage_time=source.source_time_ms;
     if(!source.present || player.dead || camera->cutscene)return true;

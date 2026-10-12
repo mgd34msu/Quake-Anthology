@@ -151,7 +151,7 @@ bool qa_q1_rogue_state(qa_q1_game *game, qa_actor_id player, qa_actor_id *out,
             if (!q1_source_value(game, QA_Q1_SOURCE_GAMECFG, 0, &gamecfg, error) ||
                 !player_current(&operation, player, client, slot, error) ||
                 !qa_q1_rogue_state_current(game, player, state, error)) goto finish;
-            uint32_t bits = (uint32_t)qa_source_float_to_i32(gamecfg);
+            uint32_t bits = (uint32_t)qa_source_to_i32(gamecfg);
             keep_color = ((uint32_t)bits & UINT32_C(8)) != 0;
         }
         double color = keep_color ? client->source_team : -1;

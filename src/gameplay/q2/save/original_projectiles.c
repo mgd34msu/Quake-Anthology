@@ -471,8 +471,8 @@ bool q2_original_projectile_record(qa_q2_game *g, q2_original_record_io *io,
         p->kind == Q2_TRAP && io->edition == QA_RULESET_Q2_CLASSIC ? 1u | (p->held ? 2u : 0) :
         (p->kind == Q2_BOLT || p->kind == Q2_BLUE_BOLT) && p->direct_mod == 10 ? 1u : 0;
     bool growth = p->kind == Q2_RERELEASE_SPAWN_GROWTH || p->kind == Q2_RERELEASE_SPAWN_BEAM;
-    int32_t damage = io->reading || growth || p->kind == Q2_BFG_BALL ? 0 : qa_source_float_to_i32(p->damage);
-    int32_t radius_damage = io->reading || growth ? 0 : qa_source_float_to_i32(
+    int32_t damage = io->reading || growth || p->kind == Q2_BFG_BALL ? 0 : qa_source_to_i32(p->damage);
+    int32_t radius_damage = io->reading || growth ? 0 : qa_source_to_i32(
         p->kind == Q2_BFG_BALL ? p->damage : p->radius_damage);
     float radius = growth ? 0 : p->kind == Q2_FLECHETTE ? p->kick : p->kind == Q2_ION ? 100 : p->radius;
     if (!scalar(io, "spawnflags", Q2_ORIGINAL_U32, 284, &flags) ||
@@ -503,13 +503,13 @@ bool q2_original_projectile_record(qa_q2_game *g, q2_original_record_io *io,
         !scalar(io, "angle", Q2_ORIGINAL_F32, UINT16_MAX, &p->radius)) return false;
     if (p->kind == Q2_TRAP) {
         float wait = (float)p->wait;
-        int32_t mass = io->reading ? 0 : qa_source_float_to_i32(
+        int32_t mass = io->reading ? 0 : qa_source_to_i32(
             p->captured_mass / (g->options.deathmatch ? 4 : 10));
         if (!scalar(io, "wait", Q2_ORIGINAL_F32, 592, &wait) ||
             !scalar(io, "delay", Q2_ORIGINAL_F32, 596, &p->delay) ||
             !scalar(io, "mass", Q2_ORIGINAL_I32, 400, &mass)) return false;
         if (io->reading) {
-            p->wait = qa_source_float_to_i32(wait);
+            p->wait = qa_source_to_i32(wait);
             p->captured_mass = (float)mass * (g->options.deathmatch ? 4 : 10);
         }
         if (io->edition == QA_RULESET_Q2_RERELEASE &&

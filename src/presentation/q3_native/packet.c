@@ -208,7 +208,7 @@ static bool team(const q3n_frame *f,const packet_source *source,q3n_entity *enti
     }
     if(game_type!=6) return true;
     ref.model=media->graphics[Q3N_G_OVERLOAD_BASE]; if(!body(f,source,entity,imports,&ref,error)) return false;
-    uint8_t health=(uint8_t)qa_source_float_to_i32((float)s->modelindex2);
+    uint8_t health=(uint8_t)qa_source_to_i32((float)s->modelindex2);
     if(s->frame==1) { ref.color[0]=ref.color[3]=255; ref.color[1]=ref.color[2]=health; ref.model=media->graphics[Q3N_G_OVERLOAD_ENERGY];
         if(!body(f,source,entity,imports,&ref,error)) return false; }
     if(s->frame!=2) {
@@ -220,7 +220,7 @@ static bool team(const q3n_frame *f,const packet_source *source,q3n_entity *enti
     if(!entity->misc_time) entity->misc_time=f->time;
     int32_t elapsed=qa_i32_sub(f->time,entity->misc_time), threshold=qa_i32_from_u32((uint32_t)qa_i32_sub(options->obelisk_respawn_delay,5)*1000u);
     float amount=elapsed>threshold ? fminf(1,((float)qa_i32_sub(elapsed,threshold) / (float)threshold)) : 0;
-    memset(ref.color,(uint8_t)qa_source_float_to_i32((amount * 255)),sizeof(ref.color)); ref.model=media->graphics[Q3N_G_OVERLOAD_LIGHTS];
+    memset(ref.color,(uint8_t)qa_source_to_i32((amount * 255)),sizeof(ref.color)); ref.model=media->graphics[Q3N_G_OVERLOAD_LIGHTS];
     if(!body(f,source,entity,imports,&ref,error)) return false;
     if(elapsed>threshold) {
         if(!entity->muzzle_flash_time) {
@@ -267,7 +267,7 @@ static bool packet_entity(const q3n_frame *f,const packet_source *source,q3n_ent
         ref.kind=QA_Q3_REF_PORTAL; ref.origin=entity->lerp_origin; ref.old_origin=vector(s->origin2);
         qa_vec3 forward={0}; if(s->eventParm>=0 && s->eventParm<(int32_t)QA_BYTE_NORMAL_COUNT) qa_byte_normal((uint8_t)s->eventParm,&forward);
         qa_vec3 side=qa_vec_scale(qa_vec_perpendicular(forward,QA_PERPENDICULAR_RECIPROCAL_PROJECTION),-1); ref.axis[0]=forward; ref.axis[1]=side; ref.axis[2]=qa_vec_cross(forward,side);
-        ref.old_frame=s->powerups; ref.frame=s->frame; ref.skin=qa_source_float_to_i32((((float)s->clientNum / 256) * 360));
+        ref.old_frame=s->powerups; ref.frame=s->frame; ref.skin=qa_source_to_i32((((float)s->clientNum / 256) * 360));
         return body(f,source,entity,imports,&ref,error);
     }
     case 7: {
@@ -276,7 +276,7 @@ static bool packet_entity(const q3n_frame *f,const packet_source *source,q3n_ent
         int32_t random_word=random_value(imports);
         if(!current(f,source,error)) return false;
         float random=((float)((uint32_t)random_word&32767u) / 32767), crandom=(2 * (random + -0.5f));
-        entity->misc_time=qa_source_float_to_i32(((float)qa_i32_add(f->time,qa_i32_from_u32((uint32_t)s->frame*100u)) + ((float)qa_i32_from_u32((uint32_t)s->clientNum*100u) * crandom)));
+        entity->misc_time=qa_source_to_i32(((float)qa_i32_add(f->time,qa_i32_from_u32((uint32_t)s->frame*100u)) + ((float)qa_i32_from_u32((uint32_t)s->clientNum*100u) * crandom)));
         return true;
     }
     case 11: return missile(f,source,entity,imports,true,error);

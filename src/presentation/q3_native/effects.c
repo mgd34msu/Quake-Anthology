@@ -12,7 +12,7 @@ q3n_local_entity *q3n_effect_smoke(const q3n_frame *f, const q3n_smoke *s)
     v->ref.rotation=(((float)(o->smoke_seed&65535u)/65536.0f) * 360);
     v->ref.radius=s->radius; v->ref.shader_time=((float)s->start_time / 1000);
     v->start_time=s->start_time; v->fade_in_time=s->fade_in_time;
-    v->end_time=qa_source_float_to_i32(((float)v->start_time + s->duration));
+    v->end_time=qa_source_to_i32(((float)v->start_time + s->duration));
     v->life_rate=q3ne_life(v->fade_in_time>v->start_time?v->fade_in_time:v->start_time,v->end_time);
     memcpy(v->color,s->color,sizeof(v->color));
     v->pos.type=2; v->pos.time=v->start_time;
@@ -37,10 +37,10 @@ bool q3n_effect_bubbles(const q3n_frame *f, qa_vec3 start, qa_vec3 end, float sp
     float length=qa_vec_length(difference);
     int32_t i=q3n_events_rand(o)%(int32_t)spacing;
     qa_vec3 move=qa_vec_add(start,qa_vec_scale(direction,(float)i)), step=qa_vec_scale(direction,spacing);
-    for(; (float)i<length; i=qa_source_float_to_i32(((float)i + spacing))) {
+    for(; (float)i<length; i=qa_source_to_i32(((float)i + spacing))) {
         q3n_local_entity *v=q3n_local_allocate(o,Q3N_LE_MOVE_SCALE_FADE,QA_Q3_REF_SPRITE);
         v->flags=Q3N_LE_DONT_SCALE; v->start_time=f->time;
-        v->end_time=qa_source_float_to_i32(((float)qa_i32_add(f->time,1000) + (q3n_events_random(o) * 250)));
+        v->end_time=qa_source_to_i32(((float)qa_i32_add(f->time,1000) + (q3n_events_random(o) * 250)));
         v->life_rate=q3ne_life(v->start_time,v->end_time);
         v->ref.shader_time=((float)f->time / 1000); v->ref.radius=3;
         v->ref.custom_shader=q3n_media_read(f->media)->graphics[Q3N_G_WATER_BUBBLE];
@@ -113,7 +113,7 @@ q3n_local_entity *q3n_effect_gib(const q3n_frame *f, qa_vec3 origin, qa_vec3 vel
 {
     q3n_local_entity *v=q3n_local_allocate(f->events,Q3N_LE_FRAGMENT,QA_Q3_REF_MODEL);
     v->start_time=f->time;
-    v->end_time=qa_source_float_to_i32(((float)qa_i32_add(f->time,5000) + (q3n_events_random(f->events) * 3000)));
+    v->end_time=qa_source_to_i32(((float)qa_i32_add(f->time,5000) + (q3n_events_random(f->events) * 3000)));
     v->ref.model=model; v->ref.origin=origin; q3ne_identity(v->ref.axis);
     v->pos.type=5; v->pos.time=f->time; q3ne_store(v->pos.base,origin); q3ne_store(v->pos.delta,velocity);
     v->bounce_factor=0.6f; v->bounce_sound=Q3N_BOUNCE_BLOOD; v->mark=Q3N_MARK_BLOOD;
@@ -144,7 +144,7 @@ void q3n_effect_big_explode(const q3n_frame *f, qa_vec3 origin)
         float z=(150 + (q3n_events_crandom(o) * 100));
         q3n_local_entity *v=q3n_local_allocate(o,Q3N_LE_FRAGMENT,QA_Q3_REF_MODEL);
         v->start_time=f->time;
-        v->end_time=qa_source_float_to_i32(((float)qa_i32_add(f->time,10000) + (q3n_events_random(o) * 6000)));
+        v->end_time=qa_source_to_i32(((float)qa_i32_add(f->time,10000) + (q3n_events_random(o) * 6000)));
         v->ref.model=q3n_media_read(f->media)->graphics[Q3N_G_SMOKE2]; v->ref.origin=origin; q3ne_identity(v->ref.axis);
         v->pos.type=5; v->pos.time=f->time; q3ne_store(v->pos.base,origin); q3ne_store(v->pos.delta,qa_v3(x,y,z));
         v->bounce_factor=0.1f; v->bounce_sound=Q3N_BOUNCE_BRASS;

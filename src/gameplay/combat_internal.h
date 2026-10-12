@@ -1,6 +1,7 @@
 #ifndef QA_COMBAT_INTERNAL_H
 #define QA_COMBAT_INTERNAL_H
 #include "qa/gameplay.h"
+#include "qa/binary.h"
 #include "qa/operation.h"
 #include "qa/pool.h"
 
@@ -65,6 +66,7 @@ struct qa_protection_observer {
     qa_error failure;
 };
 bool qa_combat_argument(qa_error *, const char *);
+bool qa_combat_source_integer(double, int32_t *, qa_error *);
 bool qa_combat_live(qa_combat *, qa_actor_id);
 bool qa_combat_policy_execute(qa_combat *, const qa_combat_policy *, const qa_damage_request *, qa_damage_result *, qa_error *);
 bool qa_combat_impulse(qa_combat *, const qa_damage_request *, qa_vec3, float, qa_error *);

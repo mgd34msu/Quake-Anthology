@@ -127,7 +127,7 @@ static bool brass(const q3n_frame *f,q3n_entity *cent,q3n_brass kind,qa_error *e
         velocity.z=(100 + (50 * q3n_events_crandom(f->events)));
         le->start_time=f->time;
         uint32_t duration_bits=(uint32_t)duration*(shotgun?3u:1u); int32_t initial; memcpy(&initial,&duration_bits,4);
-        le->end_time=qa_source_float_to_i32(((float)qa_i32_add(f->time,initial) + ((float)(shotgun?duration:duration/4) * q3n_events_random(f->events))));
+        le->end_time=qa_source_to_i32(((float)qa_i32_add(f->time,initial) + ((float)(shotgun?duration:duration/4) * q3n_events_random(f->events))));
         le->pos.type=5; le->pos.time=shotgun?f->time:qa_i32_sub(f->time,q3n_events_rand(f->events)&15);
         le->ref.origin=qa_vec_add(cent->lerp_origin,qa_axis_from_local(qa_v3(8,shotgun?0:-4,24),axis,QA_AXIS_ORDERED_SUM));
         uint32_t contents;
@@ -253,7 +253,7 @@ static bool player_weapon(const q3n_frame *f,const qa_q3_presentation_assets *pa
     qa_q3_ref_entity gun=attached(parent,w->weapon_model);
     const qa_q3_player *predicted=q3n_frame_predicted_player(f);
     if (ps && predicted && predicted->weapon==7 && predicted->weaponState==3) {
-        uint8_t color=(uint8_t)((uint32_t)qa_source_float_to_i32((255 * (1 + -((float)predicted->weaponTime / 1500))))&255u);
+        uint8_t color=(uint8_t)((uint32_t)qa_source_to_i32((255 * (1 + -((float)predicted->weaponTime / 1500))))&255u);
         gun.color[0]=gun.color[2]=color; gun.color[1]=gun.color[3]=0;
     } else if (ps) memset(gun.color,255,sizeof(gun.color));
     if (replacement && !f->remote && !f->compiled && !ps && f->weapons->options.held_replacement) {
@@ -291,9 +291,9 @@ static bool player_weapon(const q3n_frame *f,const qa_q3_presentation_assets *pa
     if (state->weapon==7) {
         const q3n_client_info *ci=state->clientNum>=0 && state->clientNum<64?q3n_clients_get(f->clients,(uint32_t)state->clientNum):NULL;
         if (!ci) return q3p_fail(e,QA_ERROR_FORMAT,"Rail flash requires its actual client-info row");
-        flash.color[0]=(uint8_t)((uint32_t)qa_source_float_to_i32((ci->color1.x * 255))&255u);
-        flash.color[1]=(uint8_t)((uint32_t)qa_source_float_to_i32((ci->color1.y * 255))&255u);
-        flash.color[2]=(uint8_t)((uint32_t)qa_source_float_to_i32((ci->color1.z * 255))&255u); flash.color[3]=0;
+        flash.color[0]=(uint8_t)((uint32_t)qa_source_to_i32((ci->color1.x * 255))&255u);
+        flash.color[1]=(uint8_t)((uint32_t)qa_source_to_i32((ci->color1.y * 255))&255u);
+        flash.color[2]=(uint8_t)((uint32_t)qa_source_to_i32((ci->color1.z * 255))&255u); flash.color[3]=0;
     }
     if (!attach(f,&flash,&gun,qa_q3_presentation_tag_id(f->assets, QA_Q3_TAG_FLASH),true,e)) return false;
     if (!f->preferences.reduced_flashes && !emit(f,&flash,e)) return false;
@@ -625,9 +625,9 @@ bool q3n_weapons_selected_authored_view(q3n_weapons *owner,const q3n_selected_we
 }
 static void colored(q3n_local_entity *le,qa_vec3 color,float byte_scale,uint8_t alpha,float fade,float fade_alpha)
 {
-    le->ref.color[0]=(uint8_t)((uint32_t)qa_source_float_to_i32((color.x * byte_scale))&255u);
-    le->ref.color[1]=(uint8_t)((uint32_t)qa_source_float_to_i32((color.y * byte_scale))&255u);
-    le->ref.color[2]=(uint8_t)((uint32_t)qa_source_float_to_i32((color.z * byte_scale))&255u); le->ref.color[3]=alpha;
+    le->ref.color[0]=(uint8_t)((uint32_t)qa_source_to_i32((color.x * byte_scale))&255u);
+    le->ref.color[1]=(uint8_t)((uint32_t)qa_source_to_i32((color.y * byte_scale))&255u);
+    le->ref.color[2]=(uint8_t)((uint32_t)qa_source_to_i32((color.z * byte_scale))&255u); le->ref.color[3]=alpha;
     le->color[0]=(color.x * fade); le->color[1]=(color.y * fade); le->color[2]=(color.z * fade); le->color[3]=fade_alpha;
 }
 static bool rail(const q3n_frame *f,qa_vec3 color1,qa_vec3 color2,qa_vec3 *start,qa_vec3 end,qa_error *e)
@@ -638,7 +638,7 @@ static bool rail(const q3n_frame *f,qa_vec3 color1,qa_vec3 color2,qa_vec3 *start
     for (size_t i=0;i<36;++i) axes[i]=qa_vec_rotate_around(direction,temp,(float)(i*10),QA_ROTATION_MATRIX);
     const q3n_media_view *media=q3n_media_read(f->media);
     q3n_local_entity *core=q3n_local_allocate(f->events,Q3N_LE_FADE_RGB,QA_Q3_REF_RAIL_CORE);
-    core->start_time=f->time; core->end_time=qa_source_float_to_i32(((float)f->time + f->weapon_settings->rail_trail_time));
+    core->start_time=f->time; core->end_time=qa_source_to_i32(((float)f->time + f->weapon_settings->rail_trail_time));
     core->life_rate=(1 / (float)qa_i32_sub(core->end_time,f->time)); core->ref.shader_time=((float)f->time / 1000);
     core->ref.custom_shader=media->graphics[Q3N_G_RAIL_CORE]; core->ref.origin=*start; core->ref.old_origin=end;
     colored(core,color1,255,255,.75f,1);

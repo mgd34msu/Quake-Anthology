@@ -186,6 +186,54 @@ static void test_shared_team_values(void)
     CHECK(qa_session_destroy(session,&error));
 }
 
+static void test_source_scalars(void)
+{
+    CHECK(qa_source_to_i32(16777217.0) == 16777217);
+    CHECK(qa_source_to_i32(INT32_MAX) == INT32_MAX);
+    CHECK(qa_source_to_i32(-2147483648.0) == INT32_MIN);
+    CHECK(qa_source_to_i32(2147483648.0) == INT32_MIN);
+    CHECK(qa_source_to_i32(INFINITY) == INT32_MIN);
+    CHECK(qa_source_to_i32(NAN) == INT32_MIN);
+    CHECK(qa_source_to_i32(1.9) == 1 && qa_source_to_i32(-1.9) == -1);
+    const double values[] = {0.0, -0.0, 0.5, 100.0, 16777217.0, -16777217.0,
+        INT32_MIN, INT32_MAX, 0.66};
+    for (size_t i = 0; i < sizeof(values) / sizeof(*values); ++i) {
+        qa_error error = {0}; qa_source_save_io io = {0}; qa_buffer saved = {0};
+        double value = values[i], restored = 0;
+        CHECK(qa_source_save_writer(&io, NULL, &error));
+        CHECK(qa_source_save_scalar(&io, &value) && qa_source_save_finish(&io, &saved));
+        CHECK(qa_source_save_reader(&io, NULL, (qa_bytes){saved.data, saved.size}, &error));
+        CHECK(qa_source_save_scalar(&io, &restored) && qa_source_save_finish(&io, NULL));
+        CHECK(restored == values[i] && signbit(restored) == signbit(values[i]));
+        float legacy_value = (float)values[i];
+        if ((double)legacy_value == values[i]) {
+            qa_buffer legacy = {0};
+            CHECK(qa_source_save_writer(&io, NULL, &error));
+            CHECK(qa_source_save_f32(&io, &legacy_value) && qa_source_save_finish(&io, &legacy));
+            CHECK(saved.size == legacy.size && !memcmp(saved.data, legacy.data, saved.size));
+            qa_buffer_free(&legacy);
+        }
+        CHECK(qa_source_save_reader(&io, NULL, (qa_bytes){saved.data, saved.size - 1}, &error));
+        CHECK(!qa_source_save_scalar(&io, &restored));
+        qa_source_save_dispose(&io); qa_buffer_free(&saved);
+    }
+    const int32_t counters[] = {0, 100, 16777217, INT32_MIN, INT32_MAX};
+    for (size_t i = 0; i < sizeof(counters) / sizeof(*counters); ++i) {
+        qa_error error = {0}; qa_source_save_io io = {0}; qa_buffer saved = {0};
+        int32_t value = counters[i], restored = 0;
+        CHECK(qa_source_save_writer(&io, NULL, &error));
+        CHECK(qa_source_save_i32_scalar(&io, &value) && qa_source_save_finish(&io, &saved));
+        CHECK(qa_source_save_reader(&io, NULL, (qa_bytes){saved.data, saved.size}, &error));
+        CHECK(qa_source_save_i32_scalar(&io, &restored) && qa_source_save_finish(&io, NULL));
+        CHECK(restored == counters[i]);
+        qa_buffer_free(&saved);
+    }
+    qa_error error = {0}; qa_source_save_io io = {0}; double invalid = INFINITY;
+    CHECK(qa_source_save_writer(&io, NULL, &error));
+    CHECK(!qa_source_save_scalar(&io, &invalid));
+    qa_source_save_dispose(&io);
+}
+
 static void test_module_observation_storage(void)
 {
     qa_error error={0};qa_session *session=NULL;
@@ -584,6 +632,8 @@ static void test_field_completion(void)
 }
 static void test_source_text(void)
 {
+    CHECK(qa_i32_mul(INT32_MAX,2)==-2);
+    CHECK(qa_i32_mul(INT32_MIN,-1)==INT32_MIN);
     CHECK(qa_i32_add(INT32_MAX,1)==INT32_MIN);
     CHECK(qa_i32_add(INT32_MIN,-1)==INT32_MAX);
     CHECK(qa_i32_sub(INT32_MIN,1)==INT32_MAX);
@@ -4553,6 +4603,7 @@ int main(int argc, char **argv)
     test_compiled_sound_names();
     test_unicast_claim_storage();
     test_shared_team_values();
+    test_source_scalars();
     test_module_observation_storage();
     test_console_restore_pages();
     test_chat_initial_aliases();

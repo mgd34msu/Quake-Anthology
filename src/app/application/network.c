@@ -272,7 +272,7 @@ static bool q1_wire_bits(float value, uint32_t *out, qa_error *error)
         application_fail(error, QA_ERROR_FORMAT, "Nonfinite Q1 source bit mask");
         return false;
     }
-    *out = (uint32_t)qa_source_float_to_i32(value); return true;
+    *out = (uint32_t)qa_source_to_i32(value); return true;
 }
 static bool q1_standard_quake(qa_application *app, struct application_qc_state *engine, bool *out, qa_error *error)
 {
@@ -302,7 +302,7 @@ bool qa_application_network_q1_world_read(qa_application *app, qa_actor_owner ow
         !qa_qc_string(engine->provider->state.qc.instance, id, &value.map, error) ||
         !q1_wire_string(engine, 0, engine->field_bindings->message, &value.level, error) ||
         !application_qc_float(engine, 0, engine->field_bindings->sounds, &number, error)) return false;
-    value.cd_track = (uint8_t)(uint32_t)qa_source_float_to_i32(number);
+    value.cd_track = (uint8_t)(uint32_t)qa_source_to_i32(number);
     value.seconds = (float)((double)engine->source_time_ns / 1e9);
     if (!*value.map) return application_fail(error, QA_ERROR_FORMAT, "Invalid Q1 source world identity");
     if (!*value.level) value.level = value.map;
@@ -562,8 +562,8 @@ bool application_q1_feedback_protocol_flush(qa_application *app,application_prov
         qa_application_player_feedback_read(app,player->actor,app->q1_feedback_protocol_cursor,next,&feedback);
         if(feedback.damage) {
             qa_qw_service message={.kind=QA_QW_DAMAGE,
-                .data.damage={.armor=(uint8_t)(uint32_t)qa_source_float_to_i32(feedback.armor),
-                    .blood=(uint8_t)(uint32_t)qa_source_float_to_i32(feedback.blood)}};
+                .data.damage={.armor=(uint8_t)(uint32_t)qa_source_to_i32(feedback.armor),
+                    .blood=(uint8_t)(uint32_t)qa_source_to_i32(feedback.blood)}};
             for(size_t axis=0;axis<3;++axis) message.data.damage.origin[axis]=(float)feedback.origin[axis];
             if(!application_emit_protocol(provider,&(qa_application_protocol_event){
                 .provider=provider->owner,.dialect=QA_RULESET_QUAKEWORLD,.time_ns=clock.frame.time_ns,

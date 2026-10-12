@@ -176,13 +176,13 @@ static bool nuke_quake_run(qa_q2_game *g, q2_actor *a, qa_world_actor_snapshot *
             continue;
         qa_combat_state combat;
         qa_error ignored;
-        float mass =
+        double mass =
             qa_combat_read(g->services.combat, target, &combat, &ignored) && combat.mass > 0
                 ? combat.mass
                 : 200;
         body.velocity.x += q2_crandom(g) * 150;
         body.velocity.y += q2_crandom(g) * 150;
-        body.velocity.z = a->projectile.speed * 100 / mass;
+        body.velocity.z = (float)(a->projectile.speed * (100.0 / mass));
         body.ground = (qa_actor_reference){0};
         if (!qa_world_body_write(g->services.world, target, &body, e) ||
             !qa_world_link(g->services.world, target, NULL, e))

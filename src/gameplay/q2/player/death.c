@@ -2,7 +2,7 @@
 #include "internal.h"
 #include "qa/game_q2_source.h"
 
-static bool client_head(qa_q2_game *g, q2_actor *a, float damage, qa_error *e) {
+static bool client_head(qa_q2_game *g, q2_actor *a, double damage, qa_error *e) {
     q2_client_state *s = a->client;
     bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     bool head = q2_random(g) < .5f;
@@ -41,11 +41,11 @@ static bool client_head(qa_q2_game *g, q2_actor *a, float damage, qa_error *e) {
         .role = QA_COLLISION_TRIGGER, .dead_monster = true};
     return qa_world_set_collision(g->services.world, a->id, rr ? &collision : NULL, e);
 }
-static bool throw_gibs(qa_q2_game *g, q2_actor *a, float damage, qa_error *e) {
+static bool throw_gibs(qa_q2_game *g, q2_actor *a, double damage, qa_error *e) {
     if (!q2_player_sound(g, a->id, QA_Q2_SFX_MISC_UDEATH, 4, e))
         return false;
     for (int i = 0; i < 4 && q2_actor_live(g, a->id); i++)
-        if (!q2_spawn_gib(g, a->id, Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SM_MEAT_TRIS_MD2, damage, 0, 0, 1, e))
+        if (!q2_spawn_gib(g, a->id, Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SM_MEAT_TRIS_MD2, (float)damage, 0, 0, 1, e))
             return false;
     return true;
 }
@@ -260,7 +260,7 @@ bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcom
     if (!qa_combat_read(g->services.combat, a->id, &combat, e) ||
         !qa_world_body_read(g->services.world, a->id, &body, e))
         return false;
-    float damage = outcome->request.amount;
+    double damage = outcome->request.amount;
     bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE, first = !s->info.dead;
     int means = outcome->request.attack.cause.kind == QA_CAUSE_Q2
                     ? outcome->request.attack.cause.source.q2.means_of_death & ~0x8000000

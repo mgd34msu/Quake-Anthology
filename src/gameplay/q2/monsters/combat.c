@@ -4,6 +4,7 @@
 #include "medic.h"
 #include "qa/game_q2_entities.h"
 #include "muzzle_data.h"
+#include "qa/text.h"
 
 static q2_weapon_call monster_weapon(q2m_context *context,
                                      qa_q2_weapon weapon) {
@@ -878,11 +879,10 @@ static bool pain_flipper_flyer(q2m_context *context, bool flyer, qa_error *error
                         rerelease, error);
 }
 
-static bool pain_berserk(q2m_context *context, qa_error *error) {
+static bool pain_berserk(q2m_context *context, int32_t damage, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
   bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
-  float damage = m->pending_damage;
   if (context->combat.health < m->max_health * .5f) m->skin = 1;
   else if (rerelease) m->skin = 0;
   if (rerelease && m->move &&
@@ -905,12 +905,11 @@ static bool pain_berserk(q2m_context *context, qa_error *error) {
                         false, error);
 }
 
-static bool pain_chick(q2m_context *context, qa_error *error) {
+static bool pain_chick(q2m_context *context, int32_t damage, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
   bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   bool rogue = g->options.product == QA_Q2_ROGUE;
-  float damage = m->pending_damage;
   if (context->combat.health < m->max_health * .5f) {
     if (rerelease) m->skin |= 1;
     else m->skin = 1;
@@ -936,12 +935,11 @@ static bool pain_chick(q2m_context *context, qa_error *error) {
          q2m_callback_run(context, Q2M_CALLBACK_monster_duck_up, error);
 }
 
-static bool pain_gunner(q2m_context *context, qa_error *error) {
+static bool pain_gunner(q2m_context *context, int32_t damage, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
   bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   bool rogue = g->options.product == QA_Q2_ROGUE;
-  float damage = m->pending_damage;
   if (context->combat.health < m->max_health * .5f) m->skin = 1;
   else if (rerelease) m->skin = 0;
   if (rogue || rerelease) {
@@ -968,12 +966,11 @@ static bool pain_gunner(q2m_context *context, qa_error *error) {
          q2m_callback_run(context, Q2M_CALLBACK_monster_duck_up, error);
 }
 
-static bool pain_hover(q2m_context *context, qa_error *error) {
+static bool pain_hover(q2m_context *context, int32_t damage, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
   bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   bool rogue = g->options.product == QA_Q2_ROGUE || m->definition->species == Q2M_DAEDALUS;
-  float damage = m->pending_damage;
   if (context->combat.health < m->max_health * .5f) {
     if (rogue || rerelease) m->skin |= 1;
     else m->skin = 1;
@@ -1061,12 +1058,11 @@ static bool pain_soldier(q2m_context *context, qa_error *error) {
   return q2m_soldier_sound_end(context, error);
 }
 
-static bool pain_tank(q2m_context *context, qa_error *error) {
+static bool pain_tank(q2m_context *context, int32_t damage, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
   bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   bool chainfist = rerelease && last_attack_chainfist(m);
-  float damage = m->pending_damage;
   if (context->combat.health < m->max_health * .5f) m->skin |= 1;
   else if (rerelease) m->skin &= ~1;
   if (!chainfist && damage <= 10) return true;
@@ -1132,12 +1128,11 @@ static bool pain_infantry(q2m_context *context, qa_error *error) {
          q2m_callback_run(context, Q2M_CALLBACK_monster_duck_up, error);
 }
 
-static bool pain_supertank(q2m_context *context, qa_error *error) {
+static bool pain_supertank(q2m_context *context, int32_t damage, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
   bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   bool boss5 = m->definition->species == Q2M_BOSS5;
-  float damage = m->pending_damage;
   if (context->combat.health < m->max_health * .5f) {
     if (rerelease) m->skin |= 1;
     else m->skin = 1;
@@ -1168,10 +1163,9 @@ static bool pain_supertank(q2m_context *context, qa_error *error) {
   return q2m_set_move(context, move, rerelease, error);
 }
 
-static bool pain_classic_makron(q2m_context *context, qa_error *error) {
+static bool pain_classic_makron(q2m_context *context, int32_t damage, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
-  float damage = m->pending_damage;
   if (context->combat.health < m->max_health * .5f) m->skin = 1;
   if (g->now_ns < m->pain_ns || (damage <= 25 && q2m_random(g) < .2f)) return true;
   m->pain_ns = q2m_after(g->now_ns, 3.0);
@@ -1189,11 +1183,10 @@ static bool pain_classic_makron(q2m_context *context, qa_error *error) {
   return !q2m_alive(context) || q2m_set_move(context, move, false, error);
 }
 
-static bool pain_jorg(q2m_context *context, qa_error *error) {
+static bool pain_jorg(q2m_context *context, int32_t damage, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
   bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
-  float damage = m->pending_damage;
   if (context->combat.health < m->max_health * .5f) m->skin = 1;
   else if (rerelease) m->skin = 0;
   if (!rerelease && !q2m_weapon_sound(context, Q2_NAME_NONE, error)) return false;
@@ -1260,7 +1253,7 @@ static bool pain_floater(q2m_context *context, qa_error *error) {
                       true, error);
 }
 
-static bool pain_boss2(q2m_context *context, qa_error *error) {
+static bool pain_boss2(q2m_context *context, int32_t damage, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
   bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
@@ -1268,7 +1261,6 @@ static bool pain_boss2(q2m_context *context, qa_error *error) {
   else if (rerelease) m->skin = 0;
   if (g->now_ns < m->pain_ns) return true;
   m->pain_ns = q2m_after(g->now_ns, 3.0);
-  float damage = m->pending_damage;
   q2_runtime_name sound = damage < 10 ? QA_Q2_SFX_BOSSHOVR_BHVPAIN3 :
                       damage < 30 ? QA_Q2_SFX_BOSSHOVR_BHVPAIN1 : QA_Q2_SFX_BOSSHOVR_BHVPAIN2;
   if (!q2m_sound(context, sound, 2, 0, error)) return false;
@@ -1388,7 +1380,7 @@ static bool pain_gladiator(q2m_context *context, qa_error *error) {
                       true, error);
 }
 
-static bool pain_fixbot(q2m_context *context, float damage, qa_error *error) {
+static bool pain_fixbot(q2m_context *context, int32_t damage, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   if (context->game->now_ns < monster->pain_ns)
     return true;
@@ -1406,8 +1398,8 @@ static bool pain_fixbot(q2m_context *context, float damage, qa_error *error) {
     return false;
   if (!q2m_alive(context))
     return true;
-  q2m_move_id move = damage <= 10.0f   ? Q2M_MOVE_fixbot_move_pain3
-                     : damage <= 25.0f ? Q2M_MOVE_fixbot_move_painb
+  q2m_move_id move = damage <= 10   ? Q2M_MOVE_fixbot_move_pain3
+                     : damage <= 25 ? Q2M_MOVE_fixbot_move_painb
                                        : Q2M_MOVE_fixbot_move_paina;
   if (!q2m_set_move(context, move, true, error)) return false;
   return !rerelease || q2m_medic_abort(context, false, false, false, error);
@@ -1428,11 +1420,10 @@ static bool pain_arachnid(q2m_context *context, qa_error *error) {
                                            Q2M_MOVE_arachnid_move_pain2, true, error);
 }
 
-static bool pain_shambler(q2m_context *context, qa_error *error) {
+static bool pain_shambler(q2m_context *context, int32_t damage, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
   bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
-  float damage = m->pending_damage;
   bool chainfist = last_attack_chainfist(m);
   if (g->now_ns < m->timestamp_ns) return true;
   m->timestamp_ns = q2_deadline(g->now_ns, rerelease ? UINT64_C(1000000) : g->frame_ns);
@@ -1458,11 +1449,10 @@ static bool commander_pain_dodge(q2m_context *context, qa_actor_id attacker,
       NULL, false, error);
 }
 
-static bool pain_gun_commander(q2m_context *context, qa_error *error) {
+static bool pain_gun_commander(q2m_context *context, int32_t damage, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
   bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
-  float damage = m->pending_damage;
   qa_actor_id attacker = m->last_attack.attacker;
   bool chainfist = last_attack_chainfist(m);
   if (rerelease)
@@ -1511,7 +1501,7 @@ static bool pain_gun_commander(q2m_context *context, qa_error *error) {
   return !m->ducked || q2m_callback_run(context, Q2M_CALLBACK_monster_duck_up, error);
 }
 
-static bool pain_carrier(q2m_context *context, float damage, qa_error *error) {
+static bool pain_carrier(q2m_context *context, int32_t damage, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   const bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   const bool chainfist = last_attack_chainfist(monster);
@@ -1546,7 +1536,7 @@ static bool pain_carrier(q2m_context *context, float damage, qa_error *error) {
   return true;
 }
 
-static bool pain_widow(q2m_context *context, float damage, bool sequel,
+static bool pain_widow(q2m_context *context, int32_t damage, bool sequel,
                        qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   const bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
@@ -1562,11 +1552,11 @@ static bool pain_widow(q2m_context *context, float damage, bool sequel,
     monster->pause_ns = 0;
   monster->pain_ns = q2m_after(context->game->now_ns, 5.0);
   q2_runtime_name sound = sequel
-                          ? damage < 15.0f   ? QA_Q2_SFX_WIDOW_BW2PAIN1
-                            : damage < 75.0f ? QA_Q2_SFX_WIDOW_BW2PAIN2
+                          ? damage < 15   ? QA_Q2_SFX_WIDOW_BW2PAIN1
+                            : damage < 75 ? QA_Q2_SFX_WIDOW_BW2PAIN2
                                              : QA_Q2_SFX_WIDOW_BW2PAIN3
-                          : damage < 15.0f   ? QA_Q2_SFX_WIDOW_BW1PAIN1
-                            : damage < 75.0f ? QA_Q2_SFX_WIDOW_BW1PAIN2
+                          : damage < 15   ? QA_Q2_SFX_WIDOW_BW1PAIN1
+                            : damage < 75 ? QA_Q2_SFX_WIDOW_BW1PAIN2
                                              : QA_Q2_SFX_WIDOW_BW1PAIN3;
   if ((rerelease || sequel) && !q2m_sound(context, sound, 2, 0, error))
     return false;
@@ -1576,13 +1566,13 @@ static bool pain_widow(q2m_context *context, float damage, bool sequel,
     if (!reacts_to_pain_cause(context, chainfist)) return true;
     if (!sequel) monster->pause_ns = 0;
   }
-  if (damage >= 15.0f && skill < 3) {
-    float chance = damage < 75.0f ? 0.6f - 0.2f * (float)skill
+  if (damage >= 15 && skill < 3) {
+    float chance = damage < 75 ? 0.6f - 0.2f * (float)skill
                                   : 0.75f - 0.1f * (float)skill;
     if (q2m_random(context->game) < chance) {
       if (sequel) monster->manual_steering = false;
       q2m_move_id move = sequel ? Q2M_MOVE_widow2_move_pain
-                                : damage < 75.0f
+                                : damage < 75
                                       ? Q2M_MOVE_widow_move_pain_light
                                       : Q2M_MOVE_widow_move_pain_heavy;
       if (!q2m_set_move(context, move, true, error))
@@ -1594,13 +1584,13 @@ static bool pain_widow(q2m_context *context, float damage, bool sequel,
          q2m_sound(context, sound, 2, 0, error);
 }
 
-static bool pain_guardian(q2m_context *context, float damage, qa_error *error) {
+static bool pain_guardian(q2m_context *context, int32_t damage, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   const bool chainfist = last_attack_chainfist(monster);
-  if ((!chainfist && damage <= 10.0f) ||
+  if ((!chainfist && damage <= 10) ||
       context->game->now_ns < monster->pain_ns)
     return true;
-  if (!chainfist && damage <= 75.0f && q2m_random(context->game) > 0.2f)
+  if (!chainfist && damage <= 75 && q2m_random(context->game) > 0.2f)
     return true;
   if ((monster->frame >= 162 && monster->frame <= 176) ||
       (monster->frame >= 177 && monster->frame <= 180) ||
@@ -1614,26 +1604,26 @@ static bool pain_guardian(q2m_context *context, float damage, qa_error *error) {
   return stop_loop_sound(context, QA_Q2_SFX_WEAPONS_HYPRBL1A, 0, error);
 }
 
-static bool pain_rerelease_makron(q2m_context *context, float damage,
+static bool pain_rerelease_makron(q2m_context *context, int32_t damage,
                                   qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   const bool chainfist = last_attack_chainfist(monster);
   if ((monster->move != Q2M_MOVE_NONE &&
        (monster->move->id == Q2M_MOVE_makron_move_sight)) ||
       context->game->now_ns < monster->pain_ns ||
-      (!chainfist && damage <= 25.0f && q2m_random(context->game) < 0.2f))
+      (!chainfist && damage <= 25 && q2m_random(context->game) < 0.2f))
     return true;
   monster->pain_ns = q2m_after(context->game->now_ns, 3.0);
   q2_runtime_name sound = Q2_NAME_NONE;
   q2m_move_id move = Q2M_MOVE_NONE;
-  if (damage <= 40.0f) {
+  if (damage <= 40) {
     sound = QA_Q2_SFX_MAKRON_PAIN3;
     move = Q2M_MOVE_makron_move_pain4;
-  } else if (damage <= 110.0f) {
+  } else if (damage <= 110) {
     sound = QA_Q2_SFX_MAKRON_PAIN2;
     move = Q2M_MOVE_makron_move_pain5;
   } else if (q2m_random(context->game) <=
-             (damage <= 150.0f ? 0.45f : 0.35f)) {
+             (damage <= 150 ? 0.45f : 0.35f)) {
     sound = QA_Q2_SFX_MAKRON_PAIN1;
     move = Q2M_MOVE_makron_move_pain6;
   }
@@ -1726,13 +1716,12 @@ static bool pain_actor(q2m_context *context, qa_error *error) {
   return q2m_set_move(context, moves[choice], true, error);
 }
 
-static bool pain_medic(q2m_context *context, qa_error *error) {
+static bool pain_medic(q2m_context *context, int32_t damage, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   bool rogue = rerelease || context->game->options.product != QA_Q2_XATRIX ||
                m->definition->species == Q2M_MEDIC_COMMANDER;
   bool commander = context->combat.mass > 400;
-  const float damage = m->pending_damage;
   const bool chainfist = last_attack_chainfist(m);
   if (rogue) {
     m->dodging = false;
@@ -1802,6 +1791,7 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
   if (!q2m_alive(context) || context->monster->dead)
     return true;
   struct qa_q2_monster *monster = context->monster;
+  const int32_t damage = qa_source_to_i32(monster->pending_damage);
   q2m_species species = monster->definition->species;
   if (species == Q2M_ACTOR)
     return pain_actor(context, error);
@@ -1813,42 +1803,41 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
         context->game->options.product == QA_Q2_ROGUE)))
     return true;
   if (species == Q2M_MEDIC || species == Q2M_MEDIC_COMMANDER)
-    return pain_medic(context, error);
+    return pain_medic(context, damage, error);
   if (species == Q2M_BRAIN || species == Q2M_MUTANT)
     return pain_brain_mutant(context, species == Q2M_BRAIN, error);
   if (species == Q2M_FLIPPER || species == Q2M_FLYER)
     return pain_flipper_flyer(context, species == Q2M_FLYER, error);
-  if (species == Q2M_BERSERK) return pain_berserk(context, error);
-  if (species == Q2M_CHICK || species == Q2M_CHICK_HEAT) return pain_chick(context, error);
-  if (species == Q2M_GUNNER) return pain_gunner(context, error);
-  if (species == Q2M_GUN_COMMANDER) return pain_gun_commander(context, error);
+  if (species == Q2M_BERSERK) return pain_berserk(context, damage, error);
+  if (species == Q2M_CHICK || species == Q2M_CHICK_HEAT) return pain_chick(context, damage, error);
+  if (species == Q2M_GUNNER) return pain_gunner(context, damage, error);
+  if (species == Q2M_GUN_COMMANDER) return pain_gun_commander(context, damage, error);
   if (species == Q2M_ARACHNID) return pain_arachnid(context, error);
-  if (species == Q2M_SHAMBLER) return pain_shambler(context, error);
-  if (species == Q2M_HOVER || species == Q2M_DAEDALUS) return pain_hover(context, error);
-  if (species == Q2M_TANK || species == Q2M_TANK_COMMANDER) return pain_tank(context, error);
+  if (species == Q2M_SHAMBLER) return pain_shambler(context, damage, error);
+  if (species == Q2M_HOVER || species == Q2M_DAEDALUS) return pain_hover(context, damage, error);
+  if (species == Q2M_TANK || species == Q2M_TANK_COMMANDER) return pain_tank(context, damage, error);
   if (species == Q2M_INFANTRY || species == Q2M_TURRET_DRIVER)
     return pain_infantry(context, error);
   if (species == Q2M_SUPERTANK || species == Q2M_BOSS5)
-    return pain_supertank(context, error);
-  if (species == Q2M_JORG) return pain_jorg(context, error);
+    return pain_supertank(context, damage, error);
+  if (species == Q2M_JORG) return pain_jorg(context, damage, error);
   if (species == Q2M_FLOATER) return pain_floater(context, error);
-  if (species == Q2M_BOSS2) return pain_boss2(context, error);
+  if (species == Q2M_BOSS2) return pain_boss2(context, damage, error);
   if (species == Q2M_GEKK) return pain_gekk(context, error);
   if (species == Q2M_INSANE) return pain_insane(context, error);
   if (species == Q2M_GLADIATOR || species == Q2M_GLADB) return pain_gladiator(context, error);
-  if (species == Q2M_FIXBOT) return pain_fixbot(context, monster->pending_damage, error);
-  if (species == Q2M_CARRIER) return pain_carrier(context, monster->pending_damage, error);
+  if (species == Q2M_FIXBOT) return pain_fixbot(context, damage, error);
+  if (species == Q2M_CARRIER) return pain_carrier(context, damage, error);
   if (species == Q2M_WIDOW || species == Q2M_WIDOW2)
-    return pain_widow(context, monster->pending_damage, species == Q2M_WIDOW2, error);
+    return pain_widow(context, damage, species == Q2M_WIDOW2, error);
   if (species == Q2M_MAKRON && context->game->options.rules != QA_RULESET_Q2_RERELEASE)
-    return pain_classic_makron(context, error);
+    return pain_classic_makron(context, damage, error);
   if (species == Q2M_PARASITE && context->game->options.rules != QA_RULESET_Q2_RERELEASE)
     return pain_classic_parasite(context, error);
   if (species == Q2M_SOLDIER_LIGHT || species == Q2M_SOLDIER ||
       species == Q2M_SOLDIER_SS || species == Q2M_SOLDIER_RIPPER ||
       species == Q2M_SOLDIER_HYPER || species == Q2M_SOLDIER_LASER)
     return pain_soldier(context, error);
-  float damage = monster->pending_damage;
   if (context->combat.health < monster->base_health * 0.5f)
     monster->skin |= 1;
   else if (context->game->options.rules == QA_RULESET_Q2_RERELEASE)
@@ -1892,10 +1881,10 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
     sound = random < 0.5f ? QA_Q2_SFX_GLADIATOR_PAIN : QA_Q2_SFX_GLADIATOR_GLDPAIN2;
     break;
   case Q2M_CARRIER:
-    if (damage < 10.0f) {
+    if (damage < 10) {
       move = Q2M_MOVE_NONE;
       sound = QA_Q2_SFX_CARRIER_PAIN_SM;
-    } else if (damage < 30.0f) {
+    } else if (damage < 30) {
       move = random < 0.5f ? Q2M_MOVE_carrier_move_pain_light : Q2M_MOVE_NONE;
       sound = QA_Q2_SFX_CARRIER_PAIN_MD;
     } else {
@@ -1904,8 +1893,8 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
     }
     break;
   case Q2M_FIXBOT:
-    move = damage <= 10.0f   ? Q2M_MOVE_fixbot_move_pain3
-           : damage <= 25.0f ? Q2M_MOVE_fixbot_move_painb
+    move = damage <= 10   ? Q2M_MOVE_fixbot_move_pain3
+           : damage <= 25 ? Q2M_MOVE_fixbot_move_painb
                              : Q2M_MOVE_fixbot_move_paina;
     sound = QA_Q2_SFX_FLYER_FLYPAIN1;
     break;
@@ -2235,14 +2224,14 @@ static const q2m_gib_piece rerelease_guardian_gibs[] = {
 
 static bool spawn_gib_recipe(q2m_context *context,
                              const q2m_gib_piece *pieces, size_t piece_count,
-                             float damage, qa_error *error) {
+                             double damage, qa_error *error) {
   const qa_actor_id source = context->actor->id;
   const int skin = context->monster->skin;
   const float scale = context->monster->entity_scale != 0 ? context->monster->entity_scale : 1;
   for (size_t piece_index = 0; piece_index < piece_count; ++piece_index) {
     const q2m_gib_piece *piece = &pieces[piece_index];
     for (uint8_t copy = 0; copy < piece->count; ++copy)
-      if (!q2_spawn_gib(context->game, source, piece->model, damage,
+      if (!q2_spawn_gib(context->game, source, piece->model, (float)damage,
                         piece->flags, skin, scale * piece->scale, error))
         return false;
   }
@@ -2253,7 +2242,7 @@ static bool spawn_gib_recipe(q2m_context *context,
   spawn_gib_recipe(context, name_, sizeof(name_) / sizeof((name_)[0]),       \
                    damage_, error)
 
-static bool spawn_death_gibs(q2m_context *context, float damage,
+static bool spawn_death_gibs(q2m_context *context, double damage,
                              qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   q2m_species species = monster->definition->species;
@@ -2287,7 +2276,7 @@ static bool spawn_death_gibs(q2m_context *context, float damage,
                                (monster->move->id == Q2M_MOVE_infantry_move_death3)
                            ? Q2_NAME_RESOURCE_MODELS_MONSTERS_INFANTRY_GIBS_HEAD_MD2
                            : Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SM_MEAT_TRIS_MD2;
-    return q2_spawn_gib(context->game, context->actor->id, head, damage,
+    return q2_spawn_gib(context->game, context->actor->id, head, (float)damage,
                         Q2_GIB_HEAD | Q2_GIB_SKINNED, monster->skin,
                         monster->entity_scale, error);
   }
@@ -2338,7 +2327,7 @@ static bool spawn_death_gibs(q2m_context *context, float damage,
       return false;
     return monster->style != 0 ||
            q2_spawn_gib(context->game, context->actor->id,
-                        Q2_NAME_RESOURCE_MODELS_MONSTERS_TANK_GIBS_BARM_MD2, damage,
+                        Q2_NAME_RESOURCE_MODELS_MONSTERS_TANK_GIBS_BARM_MD2, (float)damage,
                         Q2_GIB_SKINNED | Q2_GIB_UPRIGHT, monster->skin,
                         monster->entity_scale, error);
   case Q2M_GUN_COMMANDER: {
@@ -2349,7 +2338,7 @@ static bool spawn_death_gibs(q2m_context *context, float damage,
                                (monster->move->id == Q2M_MOVE_guncmdr_move_death5)
                            ? Q2_NAME_RESOURCE_MODELS_MONSTERS_GUNNER_GIBS_HEAD_MD2
                            : Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SM_MEAT_TRIS_MD2;
-    return q2_spawn_gib(context->game, context->actor->id, head, damage,
+    return q2_spawn_gib(context->game, context->actor->id, head, (float)damage,
                         Q2_GIB_HEAD | Q2_GIB_SKINNED, monster->skin,
                         monster->entity_scale, error);
   }
@@ -2597,7 +2586,7 @@ static bool widow_death(q2m_context *context, bool sequel, qa_error *error) {
     monster->gibbed = true;
     monster->can_take_damage = false;
     context->combat.can_take_damage = false;
-    float damage = fminf(monster->pending_damage, 100.0f);
+    float damage = (float)fmin(monster->pending_damage, 100.0f);
     if (!q2m_sound(context, QA_Q2_SFX_MISC_UDEATH, 2, 1.0f, error))
       return false;
     if (!q2m_alive(context))
@@ -2741,7 +2730,7 @@ bool q2m_die(q2m_context *context, qa_error *error) {
       return spawn_gib_recipe(context, pieces, count, 500.0f, error);
     }
     return spawn_death_gibs(context,
-                            fmaxf(1.0f, monster->pending_damage), error);
+                            fmax(1.0f, monster->pending_damage), error);
   }
   if (monster->dead)
     return true;
@@ -2941,7 +2930,7 @@ static bool environment_sound(qa_q2_game *g, q2_actor *a, qa_vec3 origin,
 bool q2_world_effects(qa_q2_game *g, q2_actor *a, const qa_body_state *body,
                       const qa_combat_state *current, uint64_t *air_ns, uint64_t *pain_ns,
                       uint64_t *damage_ns, qa_error *error) {
-  float health = current->health;
+  double health = current->health;
   int water = a->physics.water_level, contents = a->physics.water_type;
   bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   if (health > 0) {

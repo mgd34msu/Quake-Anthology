@@ -214,7 +214,7 @@ bool qa_q1_travel_capture(qa_q1_game *game, qa_actor_id actor, qa_item_id select
         new_state(&call, services, state, error);
     else if (ok) {
         state->max_health = mission && game->options.edition == QA_Q1_CLASSIC ? 100 : call.player->max_health;
-        state->health = fmaxf(state->max_health / 2, fminf(state->max_health, combat.health));
+        state->health = fmaxf(state->max_health / 2, fminf(state->max_health, (float)combat.health));
         state->armor = combat.armor;
         state->weapon = call.player->weapon;
         if (!mission && !addon && selected_weapon) {

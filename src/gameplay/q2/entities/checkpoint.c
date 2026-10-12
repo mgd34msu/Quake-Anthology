@@ -139,7 +139,7 @@ static bool valid_state(qa_q2_game *g, const q2_entity_state *s, qa_error *e) {
     for (size_t i = 0; i < sizeof(resources) / sizeof(*resources); i++)
         if (!q2_saved_resource(g, resources[i]))
             return false;
-    const float values[] = {s->speed,  s->accel,  s->decel,  s->wait,   s->delay,
+    const double values[] = {s->speed,  s->accel,  s->decel,  s->wait,   s->delay,
                             s->damage, s->health, s->random, s->volume, s->attenuation};
     for (size_t i = 0; i < sizeof(values) / sizeof(*values); i++)
         if (!isfinite(values[i]))

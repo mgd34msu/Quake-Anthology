@@ -97,7 +97,7 @@ static bool center_string(q3n_hud_draw *d)
     const qa_hud_center_state *center=qa_hud_center_read(d->owner->options.messages);
     if(!center)return true;
     uint64_t time=(uint64_t)(uint32_t)d->frame->time*UINT64_C(1000000);
-    int32_t milliseconds=qa_source_float_to_i32((1000*d->settings->center_time));
+    int32_t milliseconds=qa_source_to_i32((1000*d->settings->center_time));
     uint64_t duration=center->policy.source_layout?
         (uint64_t)(milliseconds>0?milliseconds:0)*UINT64_C(1000000):center->duration_ns;
     float alpha=qa_hud_center_alpha(center,time,duration);
@@ -124,12 +124,12 @@ static bool center_string(q3n_hud_draw *d)
                !q3nh_current(d->owner,d->frame,d->error))return false;
             y=(y + (height + 6));
         } else {
-            int32_t height=qa_source_float_to_i32(((float)character_width * (center->policy.source_layout?1.5f:1)));
+            int32_t height=qa_source_to_i32(((float)character_width * (center->policy.source_layout?1.5f:1)));
             float width;
             if(!q3nh_width(d,full,(float)character_width,(float)height,0,&width) ||
                !q3nh_text(d,(640-width)/2,y,line,
                (float)character_width,(float)height,color,false,true,0))return false;
-            y=(float)qa_source_float_to_i32((y + (((float)character_width * (center->policy.source_layout?1.5f:1)) * d->frame->preferences.text_scale)));
+            y=(float)qa_source_to_i32((y + (((float)character_width * (center->policy.source_layout?1.5f:1)) * d->frame->preferences.text_scale)));
         }
         if(end>=limit || !*end)break;
         start=end+1;
@@ -147,10 +147,10 @@ static bool status_head(q3n_hud_draw *d,float x)
         s->head_start_yaw=(180 + (g->damage_x * 45));
         s->head_end_yaw=(180 + (20 * (float)cos((double)(q3n_events_crandom(d->frame->events) * 3.14159274101257324219f))));
         s->head_end_pitch=(5 * (float)cos((double)(q3n_events_crandom(d->frame->events) * 3.14159274101257324219f)));
-        s->head_start_time=time; s->head_end_time=qa_source_float_to_i32(((float)qa_i32_add(time,100) + (q3n_events_random(d->frame->events) * 2000)));
+        s->head_start_time=time; s->head_end_time=qa_source_to_i32(((float)qa_i32_add(time,100) + (q3n_events_random(d->frame->events) * 2000)));
     } else if(time>=s->head_end_time) {
         s->head_start_yaw=s->head_end_yaw; s->head_start_pitch=s->head_end_pitch; s->head_start_time=s->head_end_time;
-        s->head_end_time=qa_source_float_to_i32(((float)qa_i32_add(time,100) + (q3n_events_random(d->frame->events) * 2000)));
+        s->head_end_time=qa_source_to_i32(((float)qa_i32_add(time,100) + (q3n_events_random(d->frame->events) * 2000)));
         s->head_end_yaw=(180 + (20 * (float)cos((double)(q3n_events_crandom(d->frame->events) * 3.14159274101257324219f))));
         s->head_end_pitch=(5 * (float)cos((double)(q3n_events_crandom(d->frame->events) * 3.14159274101257324219f)));
     }
@@ -317,7 +317,7 @@ static bool warmup(q3n_hud_draw *d)
         } else {
             size_t length=q3nh_strlen(heading); int32_t cw=length>20?640/(int32_t)length:32;
             if(!q3nh_text(d,(float)(320-(int32_t)length*cw/2),c->game_type==1?20:25,heading,(float)cw,
-               (float)qa_source_float_to_i32(((float)cw * (c->game_type==1?1.5f:1.1f))),q3nh_white,false,true,0))return false;
+               (float)qa_source_to_i32(((float)cw * (c->game_type==1?1.5f:1.1f))),q3nh_white,false,true,0))return false;
         }
     }
     int32_t seconds=qa_i32_sub(c->warmup,d->frame->time)/1000,new_warmup=c->warmup;

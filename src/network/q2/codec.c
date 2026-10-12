@@ -235,7 +235,7 @@ bool qa_q2_write_coord(qa_net_writer*w,float f) {
 }
 static bool angle(qa_net_writer*w,float f,unsigned bits) {
     if(!isfinite(f))return qa_net_writer_fail(w,"Nonfinite Q2 angle");
-    uint32_t value=bits==16 ? qa_angle_to_word(f,QA_ANGLE_WORD_NATIVE) : (uint32_t)qa_source_float_to_i32(f*256.0f/360.0f);
+    uint32_t value=bits==16 ? qa_angle_to_word(f,QA_ANGLE_WORD_NATIVE) : (uint32_t)qa_source_to_i32(f*256.0f/360.0f);
     return qa_net_write_bits(w,value,bits);
 }
 bool qa_q2_write_angle8(qa_net_writer*w,float f) {

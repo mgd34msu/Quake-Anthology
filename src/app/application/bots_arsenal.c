@@ -79,7 +79,7 @@ static bool observe_arsenal(application_bots *bots,qa_actor_id actor,qa_error *e
                 .reload=view.fire_interval,.speed=view.speed,.extra_z_velocity=view.extra_z_velocity,
                 .horizontal_spread=(float)(atan(view.horizontal_spread)*(180.0/3.14159265358979323846)/6),
                 .vertical_spread=(float)(atan(view.vertical_spread)*(180.0/3.14159265358979323846)/6)},
-                .projectile={.damage=qa_source_float_to_i32(view.damage),.radius=view.blast_radius,
+                .projectile={.damage=qa_source_to_i32(view.damage),.radius=view.blast_radius,
                     .gravity=view.gravity,.detonation=view.lifetime,
                     .damage_type=1|(view.blast_radius>0?2:0)},
                 .selected_projectile_damage=view.damage,.selected_splash_damage=view.blast_damage,

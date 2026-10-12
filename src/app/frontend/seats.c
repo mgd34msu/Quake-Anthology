@@ -396,7 +396,7 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
             if (!qa_application_qc_selected_player_ui_read(seat->frontend->application, frame->actor, QA_ROLE_ARSENAL, &ui, error)) return false;
             arsenal.items=ui.items; arsenal.items2=ui.items2;
             arsenal.power_items=ui.power_items; arsenal.power_items2=ui.power_items2;
-            arsenal.weapon=(uint32_t)qa_source_float_to_i32((float)ui.weapon);
+            arsenal.weapon=(uint32_t)qa_source_to_i32((float)ui.weapon);
             arsenal.shells=ui.shells; arsenal.nails=ui.nails; arsenal.rockets=ui.rockets; arsenal.cells=ui.cells;
         }
         if (camera.q1_character && camera.q1_character == camera.q1_arsenal) character = arsenal;
@@ -407,15 +407,15 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
             character.items=ui.items; character.items2=ui.items2;
             character.power_items=ui.power_items; character.power_items2=ui.power_items2;
         }
-        client.health = qa_source_float_to_i32(combat.health);
-        client.armor = (uint32_t)qa_source_float_to_i32(combat.armor.regular.kind == QA_ARMOR_NONE ?
+        client.health = qa_source_to_i32(combat.health);
+        client.armor = (uint32_t)qa_source_to_i32(combat.armor.regular.kind == QA_ARMOR_NONE ?
             0 : (float)combat.armor.regular.points);
-        client.ammo = (uint32_t)qa_source_float_to_i32(equipment.ammo ? (float)equipment.ammo_count : 0);
+        client.ammo = (uint32_t)qa_source_to_i32(equipment.ammo ? (float)equipment.ammo_count : 0);
         client.weapon = arsenal.weapon;
-        client.shells = (uint32_t)qa_source_float_to_i32((float)arsenal.shells);
-        client.nails = (uint32_t)qa_source_float_to_i32((float)arsenal.nails);
-        client.rockets = (uint32_t)qa_source_float_to_i32((float)arsenal.rockets);
-        client.cells = (uint32_t)qa_source_float_to_i32((float)arsenal.cells);
+        client.shells = (uint32_t)qa_source_to_i32((float)arsenal.shells);
+        client.nails = (uint32_t)qa_source_to_i32((float)arsenal.nails);
+        client.rockets = (uint32_t)qa_source_to_i32((float)arsenal.rockets);
+        client.cells = (uint32_t)qa_source_to_i32((float)arsenal.cells);
         client.items = (arsenal.items & ~arsenal.power_items) | character.power_items |
             (character.items & (131072u | 262144u)) |
             (((arsenal.items2 & ~arsenal.power_items2) | character.power_items2) << 23);

@@ -158,7 +158,7 @@ typedef struct qa_q3_player_state {
     int32_t fly_sound_after;
     int32_t last_command_angles[3];
     qa_q3_foreign_movement foreign_movement;
-    float damage_blood, damage_armor, damage_knockback;
+    int32_t damage_blood, damage_armor, damage_knockback;
     qa_vec3 damage_from;
     qa_string_id loop_sound;
     float fractional_weapon_ms;

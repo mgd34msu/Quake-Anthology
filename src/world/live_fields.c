@@ -45,7 +45,7 @@ static uint64_t word(qa_entity_scalar_field field)
     case QA_ENTITY_U8: return *field.bytes;
     case QA_ENTITY_U64_LE: return qa_load_u64le(field.bytes);
     case QA_ENTITY_F32_LE:
-        return (uint32_t)qa_source_float_to_i32(qa_load_f32le(field.bytes));
+        return (uint32_t)qa_source_to_i32(qa_load_f32le(field.bytes));
     case QA_ENTITY_I32_LE: case QA_ENTITY_U32_LE: return qa_load_u32le(field.bytes);
     }
     return 0;

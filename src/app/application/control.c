@@ -340,7 +340,7 @@ static qa_movement_ground body_ground(application_control_record *record,
 }
 
 static void state_body(application_control_record *record,
-                       const qa_body_state *body, float health)
+                       const qa_body_state *body, double health)
 {
     (void)qa_movement_set_origin(&record->player.state, body->origin, NULL);
     (void)qa_movement_set_velocity(&record->player.state, body->velocity, NULL);
@@ -354,7 +354,7 @@ static void state_body(application_control_record *record,
     switch (record->player.state.kind) {
     case QA_RULESET_NETQUAKE:
         record->player.state.data.nq.angles = body->angles;
-        record->player.state.data.nq.health = health;
+        record->player.state.data.nq.health = (float)health;
         record->player.ground = contact;
         record->player.state.data.nq.ground = record->player.ground;
         if (record->player.ground.hit == QA_TRACE_HIT_NONE)
@@ -4256,7 +4256,7 @@ bool application_control_source_spawn(qa_application *application,
         state.data.nq.ground = (qa_movement_ground){0};
         state.data.nq.fix_angle = false;
         state.data.nq.teleport_time_seconds = (double)source_time / 1000000000.0;
-        state.data.nq.health = combat.health;
+        state.data.nq.health = (float)combat.health;
         break;
     case QA_RULESET_QUAKEWORLD:
         state.data.qw.angles = view_angles;

@@ -406,7 +406,7 @@ static bool give(qa_q2_game *g, q2_actor *a, size_t count, const char *const *ar
     bool all = equal_name(requested, "all"), rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     qa_q2_player_services *services = &g->player_runtime->services;
     if (all || (count && equal_name(args[0], "health"))) {
-        float health = count == 2  ? (float)argument_integer(args[1])
+        double health = count == 2  ? argument_integer(args[1])
                        : a->powers ? a->powers->maximum_health
                                    : 100;
         if (!qa_combat_set_health(g->services.combat, a->id, health, e))

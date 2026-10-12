@@ -32,13 +32,14 @@ bool q3mod_actors_state(void *context,qa_combat_state *out,qa_error *e)
     if(!q3mod_actors_word(o,r->pointer+o->health,&health,e)||!q3mod_actors_word(o,r->pointer+o->takedamage,&damageable,e)||
         !q3mod_actors_word(o,r->pointer+o->flags,&flags,e)||!client(r,&c,e)) return false;
     if(c&&(!q3mod_actors_word(o,c+o->client_armor,&armor,e)||!q3mod_actors_word(o,c+o->client_team,&team,e))) return false;
-    qa_combat_state value={.health=(float)health,.mass=(float)o->mass,.can_take_damage=damageable!=0,
+    qa_combat_state value={.health=health,.mass=o->mass,.can_take_damage=damageable!=0,
         .invulnerable=((uint32_t)flags&o->godmode)!=0,.no_knockback=((uint32_t)flags&o->no_knockback)!=0};
-    if((double)value.health!=health) return q3mod_fail(e,QA_ERROR_UNSUPPORTED,"Source health exceeds exact canonical binary32 representation");
-    if(c) value.armor.regular=(qa_regular_armor){.kind=QA_ARMOR_Q3,.points=armor,.protection.q3_protection=(float)o->protection};
+    if(c) value.armor.regular=(qa_regular_armor){.kind=QA_ARMOR_Q3,.points=armor,.protection.q3_protection=o->protection};
     if(o->mass_kind!=MOD_ACTOR_MASS_CONSTANT) {
         int32_t raw; if(!q3mod_actors_word(o,r->pointer+o->mass_field,&raw,e)) return false;
-        if(o->mass_kind==MOD_ACTOR_MASS_FLOAT32) memcpy(&value.mass,&raw,4); else value.mass=(float)raw;
+        if(o->mass_kind==MOD_ACTOR_MASS_FLOAT32) {
+            float mass; memcpy(&mass,&raw,4); value.mass=mass;
+        } else value.mass=raw;
         if(!isfinite(value.mass)||value.mass<0) return q3mod_fail(e,QA_ERROR_FORMAT,"Source actor mass is invalid");
     }
     qa_team_id named_team=0;
@@ -53,7 +54,7 @@ bool q3mod_actors_state(void *context,qa_combat_state *out,qa_error *e)
     if(!row_current(r,e)) return false;
     *out=value; return true;
 }
-bool q3mod_actors_health(void *context,float health,qa_error *e)
+bool q3mod_actors_health(void *context,double health,qa_error *e)
 {
     mod_actor_row *r=context; application_q3_mod_actors *o=r->owner; int32_t value; uint32_t c;
     return q3mod_actors_current(o,e)&&row_current(r,e)&&q3mod_scalar_word(health,MOD_INT32,&value,e)&&client(r,&c,e)&&

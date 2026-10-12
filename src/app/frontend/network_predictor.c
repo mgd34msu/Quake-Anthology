@@ -40,7 +40,7 @@ static bool numeric_equal(const qa_movement_numeric *a,
 }
 static bool environment_equal(const qa_movement_environment *a,const qa_movement_environment *b)
 {
-    return float_equal(a->health,b->health) && a->flight==b->flight && a->haste==b->haste &&
+    return !memcmp(&a->health,&b->health,sizeof(a->health)) && a->flight==b->flight && a->haste==b->haste &&
         a->invulnerable==b->invulnerable && float_equal(a->gravity_multiplier,b->gravity_multiplier) &&
         float_equal(a->speed_multiplier,b->speed_multiplier) && a->fixed_pose==b->fixed_pose &&
         a->fixed_crouched==b->fixed_crouched && posture_equal(a->pose,b->pose) &&

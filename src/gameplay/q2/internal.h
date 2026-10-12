@@ -697,7 +697,7 @@ bool q2_mine_spawn(q2_weapon_call *, q2_projectile_kind, qa_vec3, qa_vec3, float
                    float, float, bool, qa_error *);
 bool q2_mine_touch(qa_q2_game *, const qa_touch_contact *, qa_error *);
 bool q2_mine_think(qa_q2_game *, q2_actor *, qa_error *);
-bool q2_damage(qa_q2_game *, const qa_attack *, qa_actor_id, float, float, qa_vec3, qa_vec3,
+bool q2_damage(qa_q2_game *, const qa_attack *, qa_actor_id, double, double, qa_vec3, qa_vec3,
                qa_vec3, bool, qa_error *);
 bool q2_prepare_damage(void *, qa_damage_request *, bool *allowed, qa_error *);
 bool q2_prepare_radius_damage(void *, qa_damage_request *, bool *allowed, qa_error *);

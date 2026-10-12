@@ -29,7 +29,7 @@ int16_t qa_move_short(int32_t value) {
 float qa_move_short_angle(int32_t word) { return (float)qa_move_short(word) * (360.0f / 65536.0f); }
 int32_t qa_move_q2_coordinate_word(const qa_q2_movement_state *state, float value) {
     uint32_t mask = state->wide_coordinates ? UINT32_C(0x7fffff) : UINT32_C(0xffff);
-    uint32_t bits = (uint32_t)qa_source_float_to_i32(value) & mask;
+    uint32_t bits = (uint32_t)qa_source_to_i32(value) & mask;
     return (int32_t)bits - (bits > mask / 2 ? (int32_t)(mask + 1) : 0);
 }
 

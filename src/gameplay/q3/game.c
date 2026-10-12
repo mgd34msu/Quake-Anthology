@@ -577,7 +577,7 @@ bool qa_q3_actor_traits(const qa_q3_game *game, qa_actor_id actor, qa_builtin_ac
             out->view_height = *control.view_height;
             out->grounded = control.ground->hit != QA_TRACE_HIT_NONE;
         }
-        out->max_health = (float)entry->state.player.max_health;
+        out->max_health = entry->state.player.max_health;
         out->invisible = entry->state.player.powerups[QA_Q3_P_INVIS] != 0;
     } else if (entry->kind == Q3_ACTOR_MISSILE)
         out->owner = entry->state.missile.owner;

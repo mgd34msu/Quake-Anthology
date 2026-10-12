@@ -127,7 +127,7 @@ static bool fragment(const q3n_frame *f, int32_t index, qa_error *error)
         if(!q3ne_sound(f,m->sounds[n==0?Q3N_S_GIB_BOUNCE1:n==1?Q3N_S_GIB_BOUNCE2:Q3N_S_GIB_BOUNCE3],&tr.end,1022,0,false,error))return false;
     }
     v->bounce_sound=Q3N_BOUNCE_NONE;
-    int32_t hit_time=qa_source_float_to_i32(((float)qa_i32_sub(f->time,f->frame_milliseconds) + ((float)f->frame_milliseconds * tr.fraction)));
+    int32_t hit_time=qa_source_to_i32(((float)qa_i32_sub(f->time,f->frame_milliseconds) + ((float)f->frame_milliseconds * tr.fraction)));
     qa_vec3 velocity;
     if(!q3n_trajectory_delta(&v->pos,hit_time,&velocity,error))return false;
     qa_vec3 delta=qa_vec_scale(qa_vec_add(velocity,qa_vec_scale(normal,(-2 * qa_vec_dot(velocity,normal)))),v->bounce_factor);
@@ -138,7 +138,7 @@ static bool fragment(const q3n_frame *f, int32_t index, qa_error *error)
 static bool score_plum(const q3n_frame *f, int32_t index, qa_error *error)
 {
     q3n_local_entity *v=&f->events->locals[index].value; qa_q3_ref_entity *r=&v->ref;
-    float c=q3ne_remaining(v,f->time); int32_t score=qa_source_float_to_i32(v->radius);
+    float c=q3ne_remaining(v,f->time); int32_t score=qa_source_to_i32(v->radius);
     const uint8_t colors[6][4]={{255,17,17,255},{255,0,255,255},{0,0,255,255},{255,255,0,255},{0,255,0,255},{255,255,255,255}};
     memcpy(r->color,colors[score<0?0:score>=50?1:score>=20?2:score>=10?3:score>=2?4:5],4);
     if(c<0.25f)r->color[3]=q3ne_byte((1020 * c));
