@@ -19,6 +19,7 @@ typedef struct client_snapshot {
     qa_q3_entity entities[256];
     qa_actor_id actors[256], player_actor;
     qa_actor_id bindings[QA_Q3_ENTITIES];
+    qa_actor_index numbers;
 } client_snapshot;
 typedef struct client_command {
     size_t references, slot;
@@ -200,8 +201,17 @@ static bool history_storage(frontend_unified_q3_client *c, qa_error *e)
         3 * (sizeof(client_gamestate) + sizeof(size_t)) +
         _Alignof(client_snapshot) + _Alignof(client_command) + _Alignof(client_gamestate) + 3 * _Alignof(size_t);
     if (!qa_arena_reserve(&c->storage,bytes,e) ||
-        !qa_pool_prepare(&c->snapshots,&c->storage,snapshots,sizeof(client_snapshot),_Alignof(client_snapshot),e) ||
-        !qa_pool_prepare(&c->commands,&c->storage,commands,sizeof(client_command),_Alignof(client_command),e) ||
+        !qa_pool_prepare(&c->snapshots,&c->storage,snapshots,sizeof(client_snapshot),_Alignof(client_snapshot),e)) return false;
+    uint64_t registry=qa_actors_identity(frontend_remote_unified_registry(c->replica));
+    for (size_t i=0;i<snapshots;++i) {
+        client_snapshot *row=qa_pool_at(&c->snapshots,i);
+        *row=(client_snapshot){.numbers={.registry=registry,.retained={.storage=&c->storage}}};
+    }
+    for (size_t i=0;i<snapshots;++i) {
+        client_snapshot *row=qa_pool_at(&c->snapshots,i);
+        if (!qa_id_index_reserve(&row->numbers.retained,QA_Q3_ENTITY_NONE,e)) return false;
+    }
+    if (!qa_pool_prepare(&c->commands,&c->storage,commands,sizeof(client_command),_Alignof(client_command),e) ||
         !qa_pool_prepare(&c->gamestates,&c->storage,3,sizeof(client_gamestate),_Alignof(client_gamestate),e)) return false;
     qa_arena_seal(&c->storage);
     c->histories[0].owner = c; c->histories[1].owner = c;
@@ -316,7 +326,9 @@ static bool receive(client_history *h, const frontend_unified_q3_source_view *v,
     size_t slot;
     client_snapshot *row = qa_pool_take(&h->owner->snapshots,&slot);
     if (!row) return fail(e,QA_ERROR_MEMORY,"Retaining compiled CLIENT snapshot");
+    qa_actor_index numbers=row->numbers;
     memset(row,0,sizeof(*row));
+    row->numbers=numbers; qa_actor_index_clear(&row->numbers);
     row->references = 1; row->slot = slot;
     int32_t previous = h->number; size_t index = (uint32_t)(previous+1)&(QA_Q3_PACKET_BACKUP-1u);
     snapshot_release(h->owner,h->snapshots[index]); h->snapshots[index] = row;
@@ -326,6 +338,11 @@ static bool receive(client_history *h, const frontend_unified_q3_source_view *v,
         .player=player->state,.entity_count=v->visible_count,.entities=row->entities};
     memcpy(row->value.area_mask,v->area_mask,sizeof(row->value.area_mask)); row->player_actor = player->actor;
     memcpy(row->bindings,h->actors,sizeof(row->bindings));
+    for (uint32_t i=0;i<QA_Q3_ENTITY_NONE;++i) {
+        qa_actor_id actor=row->bindings[i]; size_t previous_number;
+        if (!actor.registry || qa_actor_index_find_retained(&row->numbers,actor,&previous_number)) continue;
+        if (!qa_actor_index_remember(&row->numbers,actor,i,e)) return false;
+    }
     for (size_t i = 0; i < v->visible_count; ++i) {
         uint16_t number = v->visible_entities[i];
         row->entities[i] = v->entities[number].state; row->actors[i] = v->entities[number].actor;
@@ -508,7 +525,12 @@ bool frontend_unified_q3_client_destroy(frontend_unified_q3_client **out, qa_err
     if (!frontend_unified_q3_client_idle(c)) return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT retains entered consumers or a candidate frame");
     if (!q3n_compiled_source_destroy(&c->source,e)) return false;
     if (c->retirement && !frontend_unified_q3_source_retirement_client_drop(c->retirement,c,e)) return false;
-    history_free(c->history); qa_arena_destroy(&c->storage);
+    history_free(c->history);
+    for (size_t i=0;i<c->snapshots.capacity;++i) {
+        client_snapshot *row=qa_pool_at(&c->snapshots,i);
+        qa_actor_index_destroy(&row->numbers);
+    }
+    qa_arena_destroy(&c->storage);
     free(c->cvar_cache); free(c); *out = NULL; return true;
 }
 bool frontend_unified_q3_client_video_current(const frontend_unified_q3_client_video *t)
@@ -622,10 +644,8 @@ bool frontend_unified_q3_client_snapshot_number(const frontend_unified_q3_client
         return fail(e,QA_ERROR_ARGUMENT,"Compiled Source ownership requires its actual retained snapshot");
     const client_snapshot *row = c->history->snapshots[(uint32_t)message&(QA_Q3_PACKET_BACKUP-1u)];
     *number = QA_Q3_ENTITY_NONE; *present = false;
-    for (uint32_t i = 0; i < QA_Q3_ENTITY_NONE; ++i) {
-        if (!qa_actor_id_equal(row->bindings[i],actor)) continue;
-        *number = i; *present = true; break;
-    }
+    size_t indexed;
+    if (qa_actor_index_find_retained(&row->numbers,actor,&indexed)) { *number=(uint32_t)indexed; *present=true; }
     return true;
 }
 bool frontend_unified_q3_client_command(frontend_unified_q3_client *c, int32_t sequence, frontend_unified_q3_command *out, qa_error *e)

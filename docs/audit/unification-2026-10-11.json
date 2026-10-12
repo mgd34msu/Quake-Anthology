@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "51a78052dfec03158225dbe5dfcbe94b753692ba",
+  "verified_main": "f8151d7a2395b42d2f673667a5328dda9d4f0380",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 136,
-    "open_source_observation": 235,
+    "fixed_source_build_core": 137,
+    "open_source_observation": 234,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -32692,8 +32692,9 @@
       "severity": "medium",
       "job": "20",
       "area": "gameplay_q1",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Ordered Q1 model/sound precache rows and checkpoint fields unchanged; shared ID indexes built at admission and restore replace receipt/emission scans. Source review, matching normal build and seven existing core suites passed. No live game or performance claim.",
+      "fixed_commit": "f8151d7a2395b42d2f673667a5328dda9d4f0380"
     },
     {
       "id": "J20-07",
@@ -40804,6 +40805,32 @@
       ],
       "record_directory": "/tmp/qa-ta3196-prepared-vorbis-storage-20261012",
       "conclusion": "Music PCM, device automatic PCM/encoding/conversion and Vorbis staging use common arenas; music and OGV admit their actual 16384/4096-frame decoder chunk bounds before playback. Larger public reads keep full staging and unchanged decoder seek rollback. Void direct music start keeps accepted ownership on reservation failure and the existing first-read retry; transactional selection fails before claim. Device legacy saved smaller capacities and arbitrary larger accepted requests can still grow, so the zero-growth observation remains open. Normal production build and seven existing core suites passed; no live SDL/Vorbis audio, libvorbis internals or whole-frame allocation proof."
+    },
+    {
+      "commit": "f8151d7a2395b42d2f673667a5328dda9d4f0380",
+      "source_tree": "bacb35e7e0749d7e9436e5efd4e69f1dabe802ab",
+      "finding_ids": [
+        "J20-06"
+      ],
+      "files_rechecked": [
+        "src/gameplay/q1/wire_internal.h",
+        "src/gameplay/q1/wire.c",
+        "src/gameplay/q1/checkpoint/wire.c",
+        "src/core/id_index.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-q1-precache-ordinals-20261012",
+      "conclusion": "One shared ID index per ordered model/sound table replaces both receipt and emission lookup scans; zero slot, first ordinal, original table order, wire generation checks, callbacks and checkpoint layout remain. Load/restore reserve indexes; map reset reuses them. Normal production build and seven core suites passed; no live protocol, zero-allocation or speed claim."
     }
   ],
   "verification_limits": [

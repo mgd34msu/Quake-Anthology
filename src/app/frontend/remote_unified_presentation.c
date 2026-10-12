@@ -793,11 +793,11 @@ static bool q3_prediction_number(void *context,qa_actor_id actor,uint32_t *numbe
     unified_q3_prediction_mapping *mapping=context;
     if (!number || !found || !q3_prediction_current(mapping,error)) return false;
     *found=false;
-    for (uint32_t i=0;i<QA_Q3_ENTITY_WORLD;++i) {
-        qa_actor_id candidate; bool present;
-        if (!frontend_unified_q3_client_snapshot_actor(mapping->row->client,mapping->message,i,
-            &candidate,&present,error)) return false;
-        if (present && qa_actor_id_equal(candidate,actor)) { *number=i; *found=true; break; }
+    if (actor.registry) {
+        uint32_t indexed; bool present;
+        if (!frontend_unified_q3_client_snapshot_number(mapping->row->client,mapping->message,actor,
+            &indexed,&present,error)) return false;
+        if (present && indexed<QA_Q3_ENTITY_WORLD) { *number=indexed; *found=true; }
     }
     return q3_prediction_current(mapping,error);
 }
