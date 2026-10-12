@@ -1451,7 +1451,34 @@ static int reference_order(const void *left, const void *right)
     return (a > b) - (a < b);
 }
 
+typedef struct findradius_projection {
+    qa_qc_instance *instance;
+    uint32_t solid_word;
+    int32_t *references;
+    size_t count;
+    qa_error failure;
+} findradius_projection;
 
+static bool findradius_collision(void *opaque, qa_actor_id actor)
+{
+    findradius_projection *projection = opaque;
+    if (projection->failure.code != QA_OK) return false;
+    qa_actor_collision collision;
+    return qa_world_get_collision(projection->instance->options.host.world,
+        actor, &collision, &projection->failure);
+}
+
+static bool findradius_project(void *opaque, qa_actor_id actor, qa_error *error)
+{
+    findradius_projection *projection = opaque;
+    int32_t reference;
+    float solidity;
+    if (!qa_qc_actor_reference(projection->instance, actor, true, &reference, error)
+        || !qa_qc_entity_float(projection->instance, reference,
+            projection->solid_word, &solidity, error)) return false;
+    if (solidity != 0.0f) projection->references[projection->count++] = reference;
+    return true;
+}
 
 static bool findradius(qa_qc_instance *instance, qa_error *error)
 {
@@ -1481,46 +1508,22 @@ static bool findradius(qa_qc_instance *instance, qa_error *error)
         return qc_fail(error, QA_ERROR_MEMORY, 0, "Cannot snapshot findradius actors");
     int32_t *references = (int32_t *)(snapshot + instance->actor_index.capacity);
     bool ok = false;
-    size_t written = 0;
-    uint32_t cursor = 0;
-    const qa_actor_record *record;
-    while (written < actor_count && qa_actors_next(actors, &cursor, &record))
-        snapshot[written++] = record->id;
-    size_t reference_count = 0;
-    for (size_t i = 0; i < written; ++i) {
-        if (qa_actors_get(actors, snapshot[i]) == NULL) continue;
-        qa_actor_collision collision;
-        qa_error collision_error = {0};
-        if (!qa_world_get_collision(instance->options.host.world,
-                                    snapshot[i], &collision, &collision_error)) {
-            if (collision_error.code != QA_OK) {
-                if (error) *error = collision_error;
-                goto release;
-            }
-            continue;
-        }
-        qa_body_state body;
-        bool has_body;
-        if (!read_body_optional(instance->options.host.world, snapshot[i],
-                                &body, &has_body, error)) {
-            goto release;
-        }
-        if (!has_body) continue;
-        qa_vec3 center = qa_vec_add(body.origin,
-            qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), 0.5f));
-        if (qa_vec_length(qa_vec_sub(center, origin)) > radius) continue;
-        int32_t reference;
-        if (!qa_qc_actor_reference(instance, snapshot[i], true,
-                                   &reference, error)) {
-            goto release;
-        }
-        float solidity;
-        if (!qa_qc_entity_float(instance, reference, solid->offset, &solidity, error)) {
-            goto release;
-        }
-        if (solidity == 0.0f) continue;
-        references[reference_count++] = reference;
+    findradius_projection projection = {.instance = instance,
+        .solid_word = solid->offset, .references = references};
+    qa_world_radius_query query = {.origin = origin, .radius = radius,
+        .metric = QA_WORLD_RADIUS_BOUNDS_CENTER, .include = findradius_collision,
+        .context = &projection, .read_policy = QA_WORLD_RADIUS_SKIP_MISSING,
+        .visit = findradius_project, .actor_storage = snapshot,
+        .actor_capacity = instance->actor_index.capacity};
+    qa_world_actor_snapshot nearby;
+    if (!qa_world_radius_snapshot_capture(instance->options.host.world,
+            &query, &nearby, error)) goto release;
+    qa_world_snapshot_release(&nearby);
+    if (projection.failure.code != QA_OK) {
+        if (error != NULL) *error = projection.failure;
+        goto release;
     }
+    size_t reference_count = projection.count;
     if (reference_count > 1u)
         qsort(references, reference_count, sizeof(*references), reference_order);
     int32_t head = 0;

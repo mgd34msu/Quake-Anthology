@@ -259,6 +259,11 @@ static qa_spatial_visit snapshot_actor(void *opaque,qa_actor_id actor)
 {
     qa_world_actor_snapshot *snapshot=opaque;
     if(snapshot->count==snapshot->capacity) {
+        if(snapshot->borrowed) {
+            snapshot->failed=true;
+            (void)fail(snapshot->error,QA_ERROR_MEMORY,"Spatial snapshot capacity exhausted");
+            return QA_SPATIAL_STOP;
+        }
         qa_world *world=snapshot->world;
         size_t slot;
         qa_world_snapshot_frame *frame=qa_pool_take(&world->snapshot_pool,&slot);
@@ -329,6 +334,7 @@ static void snapshot_begin(qa_world *world,qa_world_actor_snapshot *out,qa_error
     out->frame=NULL;
     out->error=error;
     out->failed=false;
+    out->borrowed=false;
 }
 
 bool qa_world_snapshot_capture(qa_world *world,qa_bounds bounds,qa_collision_role role,
@@ -351,6 +357,11 @@ bool qa_world_radius_snapshot_capture(qa_world *world,const qa_world_radius_quer
     qa_world_actor_snapshot *out,qa_error *error)
 {
     snapshot_begin(world,out,error);
+    if(query->actor_storage!=NULL) {
+        out->actors=query->actor_storage;
+        out->capacity=query->actor_capacity;
+        out->borrowed=true;
+    }
     uint32_t cursor=0;
     const qa_actor_record *record;
     while(qa_actors_next(world->actors,&cursor,&record)) {
@@ -378,8 +389,14 @@ bool qa_world_radius_snapshot_capture(qa_world *world,const qa_world_radius_quer
         qa_vec3 point=body.origin;
         if(query->metric==QA_WORLD_RADIUS_BOUNDS_CENTER)
             point=qa_vec_add(point,qa_vec_scale(qa_vec_add(body.bounds.mins,body.bounds.maxs),0.5f));
-        if(qa_vec_length(qa_vec_sub(point,query->origin))<=query->radius)
+        if(qa_vec_length(qa_vec_sub(point,query->origin))<=query->radius) {
+            if(query->visit!=NULL && !query->visit(query->context,actor,error)) {
+                qa_world_snapshot_release(out);
+                out->count=0;
+                return false;
+            }
             out->actors[accepted++]=actor;
+        }
     }
     out->count=accepted;
     return true;

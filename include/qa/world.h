@@ -329,7 +329,7 @@ typedef struct qa_world_actor_snapshot {
     qa_world *world;
     qa_world_snapshot_frame *frame;
     qa_error *error;
-    bool failed;
+    bool failed, borrowed;
 } qa_world_actor_snapshot;
 typedef enum qa_world_snapshot_order { QA_WORLD_ORDER_SPATIAL, QA_WORLD_ORDER_ACTOR_SLOT } qa_world_snapshot_order;
 /* Captures linked candidates in the world's load-sized pool. BOTH includes
@@ -341,6 +341,7 @@ typedef enum qa_world_radius_read_policy {
     QA_WORLD_RADIUS_SKIP_MISSING, QA_WORLD_RADIUS_SKIP_FAILED, QA_WORLD_RADIUS_READ_REQUIRED
 } qa_world_radius_read_policy;
 typedef bool (*qa_world_radius_include_fn)(void *, qa_actor_id);
+typedef bool (*qa_world_radius_visit_fn)(void *, qa_actor_id, qa_error *);
 typedef struct qa_world_radius_query {
     qa_vec3 origin;
     float radius;
@@ -348,9 +349,16 @@ typedef struct qa_world_radius_query {
     qa_world_radius_include_fn include;
     void *context;
     qa_world_radius_read_policy read_policy;
+    qa_world_radius_visit_fn visit;
+    qa_actor_id *actor_storage;
+    size_t actor_capacity;
 } qa_world_radius_query;
 /* Current authoritative bodies, including unlinked/nonsolid bodies, in actor-
- * slot order. Pure eligibility runs before sampling the stable captured IDs. */
+ * slot order. Pure eligibility runs before sampling the stable captured IDs.
+ * An optional visitor runs immediately after each radius match, before the
+ * next actor is sampled; callbacks may change later candidates. Optional actor
+ * storage is borrowed through snapshot release and never grows or falls back
+ * to the world pool. Its capacity must cover the captured actor roster. */
 bool qa_world_radius_snapshot_capture(qa_world *, const qa_world_radius_query *,
     qa_world_actor_snapshot *, qa_error *);
 typedef int (*qa_world_snapshot_compare_fn)(void *, qa_actor_id, qa_actor_id);
