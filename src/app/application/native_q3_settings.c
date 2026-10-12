@@ -4,6 +4,7 @@
 #include "qa/source_save.h"
 #include "qa/game_q3_source.h"
 #include "qa/console_cvars_prepare.h"
+#include "control_frame.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -198,47 +199,27 @@ qa_cvar_save_policy application_native_q3_cvar_save_policy(const char *name)
 
 static void snapshot_dispose(application_native_q3_cvar_snapshot *snapshot)
 {
-    free((void *)snapshot->name);
-    free((void *)snapshot->value);
-    free((void *)snapshot->reset_value);
-    free((void *)snapshot->latched_value);
     *snapshot = (application_native_q3_cvar_snapshot){0};
 }
 
-static char *copy_text(const char *text, qa_error *error)
-{
-    size_t size = strlen(text);
-    if (size == SIZE_MAX) {
-        application_fail(error, QA_ERROR_MEMORY, "native Q3 cached cvar text is too large");
-        return NULL;
-    }
-    char *copy = malloc(size + 1);
-    if (!copy) {
-        application_fail(error, QA_ERROR_MEMORY, "copying native Q3 cached cvar text");
-        return NULL;
-    }
-    memcpy(copy, text, size + 1);
-    return copy;
-}
-
-static bool snapshot_copy(application_native_q3_cvar_snapshot *out, const qa_cvar_view *source,
-    qa_error *error)
+static bool snapshot_copy(qa_strings *strings, application_native_q3_cvar_snapshot *out,
+    const qa_cvar_view *source, qa_error *error)
 {
     application_native_q3_cvar_snapshot copy = {
         .flags = source->flags, .modification_count = source->modification_count,
         .numeric_value = source->number, .integer_value = source->integer,
         .modified = source->modified
     };
-    copy.name = copy_text(source->name, error);
-    if (copy.name) copy.value = copy_text(source->value, error);
-    if (copy.value) copy.reset_value = copy_text(source->reset_value, error);
-    if (copy.reset_value && source->latched_value)
-        copy.latched_value = copy_text(source->latched_value, error);
-    if (!copy.name || !copy.value || !copy.reset_value ||
-        (source->latched_value && !copy.latched_value)) {
-        snapshot_dispose(&copy);
-        return false;
-    }
+    qa_string_id name, value, reset_value, latched_value = QA_STRING_NONE;
+    if (!qa_strings_intern_cstr(strings, source->name, &name, error) ||
+        !qa_strings_intern_cstr(strings, source->value, &value, error) ||
+        !qa_strings_intern_cstr(strings, source->reset_value, &reset_value, error) ||
+        (source->latched_value && !qa_strings_intern_cstr(strings, source->latched_value,
+            &latched_value, error))) return false;
+    copy.name = qa_strings_cstr(strings, name);
+    copy.value = qa_strings_cstr(strings, value);
+    copy.reset_value = qa_strings_cstr(strings, reset_value);
+    copy.latched_value = qa_strings_cstr(strings, latched_value);
     *out = copy;
     return true;
 }
@@ -355,7 +336,8 @@ static bool register_cache(application_provider *provider, const char *build_dat
             owner->references[i].handle) : NULL;
         if (okay && !current)
             okay = application_fail(error, QA_ERROR_NOT_FOUND, "native Q3 registered cvar disappeared");
-        if (okay) okay = snapshot_copy(&copied[i], current, error);
+        if (okay) okay = snapshot_copy(qa_session_strings(provider->application->session),
+            &copied[i], current, error);
     }
     if (okay) {
         for (size_t i = 0; i < count; ++i) {
@@ -535,7 +517,8 @@ bool application_native_q3_settings_update(application_provider *provider, qa_er
         }
         if (snapshot_matches(&owner->snapshots[i], current)) continue;
         application_native_q3_cvar_snapshot copied = {0};
-        if (!snapshot_copy(&copied, current, error)) { okay = false; break; }
+        if (!snapshot_copy(qa_session_strings(provider->application->session),
+            &copied, current, error)) { okay = false; break; }
         bool changed = owner->snapshots[i].modification_count != copied.modification_count;
         snapshot_dispose(&owner->snapshots[i]);
         owner->snapshots[i] = copied;
@@ -549,11 +532,12 @@ bool application_native_q3_settings_update(application_provider *provider, qa_er
                 break;
             }
             size_t length = name_length + value_length + fixed_length;
-            char *command = malloc(length);
-            if (!command) { okay = application_fail(error, QA_ERROR_MEMORY, "formatting Q3 changed-cvar command"); break; }
+            qa_unified_frame_lease *storage = application_control_storage_acquire(provider->application, error);
+            char *command = storage ? qa_unified_frame_lease_alloc(storage, length, 1, _Alignof(char), error) : NULL;
+            if (!command) { qa_unified_frame_lease_release(storage); okay = false; break; }
             snprintf(command, length, "print \"Server: %s changed to %s\n\"", definition->name, copied.value);
             okay = owner->options.send_server_command(owner->options.context, -1, command, error);
-            free(command);
+            qa_unified_frame_lease_release(storage);
             if (okay && !owner_live(owner))
                 okay = application_fail(error, QA_ERROR_ARGUMENT, "native Q3 settings source retired during changed notification");
         }
@@ -575,11 +559,11 @@ static bool text_field(qa_source_save_io *io, const char **text, bool optional)
     size_t maximum = reading && io->offset <= io->input.size ? io->input.size - io->offset : SIZE_MAX;
     if (!qa_source_save_count(io, &size, maximum) || size == SIZE_MAX) return false;
     if (!reading) return qa_source_save_bytes(io, (void *)*text, size);
-    char *owned = malloc(size + 1);
-    if (!owned) return application_fail(io->error, QA_ERROR_MEMORY, "importing native Q3 cached cvar text");
-    if (!qa_source_save_bytes(io, owned, size) || memchr(owned, 0, size)) { free(owned); return false; }
-    owned[size] = 0;
-    *text = owned;
+    qa_bytes saved;
+    qa_string_id id;
+    if (!qa_source_save_span(io, size, &saved) || memchr(saved.data, 0, saved.size) ||
+        !qa_strings_intern(qa_session_strings(io->session), saved, &id, io->error)) return false;
+    *text = qa_strings_cstr(qa_session_strings(io->session), id);
     return true;
 }
 
@@ -608,7 +592,7 @@ static bool cache_header(qa_source_save_io *io, const struct application_native_
 
 /* Reuse the actual registry's numeric conversion and declaration metadata.
  * Aborting the prepared assignment leaves current values and callbacks alone. */
-static bool snapshot_restore_value(application_native_q3_cvar_snapshot *out,
+static bool snapshot_restore_value(qa_strings *strings, application_native_q3_cvar_snapshot *out,
     qa_cvars *registry, const char *name, const char *value, bool pending, qa_error *error)
 {
     const qa_cvar_view *current = qa_cvars_find(registry, name);
@@ -621,7 +605,7 @@ static bool snapshot_restore_value(application_native_q3_cvar_snapshot *out,
         qa_cvars_edit_apply(edit, &(qa_cvars_edit_command){.kind = QA_CVARS_EDIT_ASSIGN,
             .name = name, .value = value, .source_dialect = QA_RULESET_Q3, .force = true}, error);
     const qa_cvar_view *copy = okay ? qa_cvars_edit_find(edit, name) : NULL;
-    if (okay) okay = copy && snapshot_copy(out, copy, error);
+    if (okay) okay = copy && snapshot_copy(strings, out, copy, error);
     qa_cvars_edit_abort(edit);
     if (okay) {
         out->modification_count = pending ? modification - 1 : modification;
@@ -681,7 +665,7 @@ bool application_native_q3_settings_restore(application_provider *provider, qa_b
     bool used[SETTINGS_CAPACITY] = {0};
     bool warmup_observed = false;
     size_t count = 0;
-    bool okay = qa_source_save_reader(&io, NULL, bytes, error) && cache_header(&io, owner, &count) &&
+    bool okay = qa_source_save_reader(&io, provider->application->session, bytes, error) && cache_header(&io, owner, &count) &&
         qa_source_save_bool(&io, &warmup_observed);
     for (size_t i = 0; okay && i < definition_count(owner); ++i) {
         const setting_definition *definition = definition_at(owner, i);
@@ -691,7 +675,8 @@ bool application_native_q3_settings_restore(application_provider *provider, qa_b
         const qa_cvar_view *current = qa_cvars_read(registry, owner->references[i].handle);
         if (!current) okay = application_fail(error, QA_ERROR_FORMAT,
             "Q3 copied setting has no current source declaration");
-        else okay = snapshot_copy(&restored[i], current, error);
+        else okay = snapshot_copy(qa_session_strings(provider->application->session),
+            &restored[i], current, error);
     }
     for (size_t row = 0; okay && row < count; ++row) {
         const char *name = NULL, *value = NULL;
@@ -705,7 +690,7 @@ bool application_native_q3_settings_restore(application_provider *provider, qa_b
                 okay = application_fail(error, QA_ERROR_FORMAT, "Q3 copied gameplay names are unknown, repeated or settings");
         }
         application_native_q3_cvar_snapshot snapshot = {0};
-        if (okay) okay = snapshot_restore_value(&snapshot,
+        if (okay) okay = snapshot_restore_value(qa_session_strings(provider->application->session), &snapshot,
             application_native_q3_cvar_owner(provider, definition_at(owner, index)->name),
             definition_at(owner, index)->name, value, pending, error);
         if (okay) {
@@ -715,8 +700,6 @@ bool application_native_q3_settings_restore(application_provider *provider, qa_b
             used[index] = true;
         }
         snapshot_dispose(&snapshot);
-        free((void *)name);
-        free((void *)value);
     }
     if (okay) okay = qa_source_save_finish(&io, NULL);
     if (okay) {

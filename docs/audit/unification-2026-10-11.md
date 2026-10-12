@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `61f53dfc`.
+Follow-up source changes were reviewed through main `1e48c0e2`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 172 have source fixes
+There are **374 overlapping source-review observations**: 173 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 199 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 198 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -344,3 +344,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `45667a4c` / 26-15: QuakeC host globals and temporary value keys use independently leased common capture arenas, including nested VM execution and restoration. Declared global staging uses the existing control lease; its userinfo projection remains open. Normal build and seven core suites passed; larger storage peaks can still grow. Records: `/tmp/qa-ta3196-qc-host-captures-20261012`.
 
 - `61f53dfc` / 26-14: QuakeC string bytes and ordered engine buffers use one common arena and name index. Guest offsets, QW negative IDs and limits, alias growth and checkpoint replacement pass the existing core suite. New dynamic names and larger string extents can still grow common storage. Records: `/tmp/qa-ta3196-qc-string-storage-20261012`.
+
+- `1e48c0e2` / 02-05: Active and parked QuakeC input scopes retain independent shared control leases through callbacks, restoration and resume/abort. Private scope, field and capture heap storage is deleted. Normal build and seven core suites passed; source close refusal behavior remains unchanged. Records: `/tmp/qa-ta3196-qc-input-leases-20261012`.
