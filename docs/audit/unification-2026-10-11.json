@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "216e50cde0233844bc75866ba141194fda0c93ba",
+  "verified_main": "a73bb66ed1ceba36fc88d001d1bf9d468e114851",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 184,
-    "open_source_observation": 187,
+    "fixed_source_build_core": 186,
+    "open_source_observation": 185,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -24958,8 +24958,9 @@
       "severity": "high",
       "job": "02",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "a73bb66ed1ceba36fc88d001d1bf9d468e114851"
     },
     {
       "id": "02-23",
@@ -25922,8 +25923,9 @@
       "severity": "medium",
       "job": "04",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "a73bb66ed1ceba36fc88d001d1bf9d468e114851"
     },
     {
       "id": "04-005",
@@ -42235,6 +42237,49 @@
       ],
       "record_directory": "/tmp/qa-ta3196-fuzzy-workspace-20261012",
       "conclusion": "Fuzzy goal and weapon selectors prepare one common sealed traversal arena from all admitted separator aliases at create/bind/restore; ordinary evaluation only reads authoritative source records. Child/next and RNG order remain unchanged, with explicit mutation/free traversal prepared separately. Normal production build and seven core suites passed; genuinely new source admission may increase common storage, and no live or whole-frame allocation claim is made."
+    },
+    {
+      "commit": "a73bb66ed1ceba36fc88d001d1bf9d468e114851",
+      "source_tree": "bb3e0c9dd433117525e9dfbf2439f04f16e03f7c",
+      "finding_ids": [
+        "02-22",
+        "04-004"
+      ],
+      "files_rechecked": [
+        "src/app/application/guest_q3.c",
+        "src/app/application/guest_q3_client_console.c",
+        "src/app/application/guest_q3_clients.c",
+        "src/app/application/guest_q3_collision.c",
+        "src/app/application/guest_q3_exports.c",
+        "src/app/application/guest_q3_factory.c",
+        "src/app/application/guest_q3_private.h",
+        "src/app/application/guest_q3_roles.c",
+        "src/app/application/guest_q3_save.c",
+        "src/app/application/guest_q3_scene_world.c",
+        "src/app/application/guest_q3_source_ui.c",
+        "src/app/application/guest_q3_video.c",
+        "src/app/application/internal.h",
+        "src/app/application/map_players.c",
+        "src/app/application/map_players_private.h",
+        "src/app/application/native_q3_remote_lifecycle.c",
+        "src/app/application/native_q3_remote_role.c",
+        "src/app/application/native_q3_remote_role_private.h",
+        "src/app/application/network_q3_status.c",
+        "src/app/application/presentation.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-q3-membership-corrected-20261012",
+      "conclusion": "Guest player bindings now use common pooled payloads plus full owner/source-slot membership; QVM and native remote Q3 roles use one common role index per owner instead of identity scans. Actual records, actor/launch state and checked teardown remain authoritative. Cold role reindexing retains list selection order and cleanup-refused roles; save field order is unchanged. Corrected a UI adapter name collision before the successful normal production build and seven core suites. No live-module, performance or whole-frame allocation claim."
     }
   ],
   "verification_limits": [

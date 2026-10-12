@@ -37,7 +37,6 @@ typedef struct qaw_model {
     size_t surface_count, surface_capacity;
 } qaw_model;
 
-typedef struct qaw_pending { int32_t child; uint32_t lights, planes; } qaw_pending;
 typedef struct qaw_visibility_parent { uint32_t node, next; } qaw_visibility_parent;
 typedef struct qaw_admission_change { uint32_t surface, previous; } qaw_admission_change;
 
@@ -62,7 +61,7 @@ struct qa_scene_world_scratch {
     qa_stamp_set pvs_nodes, source_vis, surfaces;
     uint32_t *visible_surfaces, *surface_lights;
     size_t visible_count;
-    qaw_pending *pending;
+    qa_collision_tree_frame *pending;
     qa_bytes pvs;
     uint8_t *merged_pvs;
     int32_t pvs_selector, pvs_secondary, source_view_cluster;
