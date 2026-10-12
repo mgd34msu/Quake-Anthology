@@ -415,12 +415,6 @@ bool q3_start_kamikaze(qa_q3_game *game, qa_actor_id source, qa_actor_id attacke
     return q3_event(game, explosion, attacker, QA_BUILTIN_SOUND, 47, 13, body.origin,
                     qa_v3(0, 0, 0), qa_v3(0, 0, 0), error);
 }
-static float bounds_distance(qa_vec3 point, qa_bounds bounds) {
-    qa_vec3 d = qa_v3(fmaxf(bounds.mins.x - point.x, fmaxf(0, point.x - bounds.maxs.x)),
-                      fmaxf(bounds.mins.y - point.y, fmaxf(0, point.y - bounds.maxs.y)),
-                      fmaxf(bounds.mins.z - point.z, fmaxf(0, point.z - bounds.maxs.z)));
-    return qa_vec_length(d);
-}
 static bool kamikaze_area(qa_q3_game *game, qa_actor_id explosion, qa_actor_id attacker,
                           qa_vec3 origin, float radius, float damage, bool shock, qa_error *error) {
     radius = fmaxf(1, radius);
@@ -449,7 +443,7 @@ static bool kamikaze_area(qa_q3_game *game, qa_actor_id explosion, qa_actor_id a
         qa_linked_body linked;
         if (!qa_world_linked(game->options.services.world, actor, &linked))
             continue;
-        if (bounds_distance(origin, linked.absolute_bounds) >= radius)
+        if (qa_bounds_distance(linked.absolute_bounds, origin) >= radius)
             continue;
         qa_vec3 direction = qa_vec_add(qa_vec_sub(linked.state.origin, origin), qa_v3(0, 0, 24));
         if (!q3_damage(game, actor, attacker, explosion, QA_Q3_W_NONE, 26, 1u | 16u, damage,

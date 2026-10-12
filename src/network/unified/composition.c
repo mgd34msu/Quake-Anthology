@@ -1,4 +1,5 @@
 #include "value_internal.h"
+#include "qa/text.h"
 
 #include <fenv.h>
 #include <inttypes.h>
@@ -121,13 +122,8 @@ typedef struct canonical_member {
 typedef struct utf16_cursor { qa_bytes bytes; size_t cursor; uint16_t low; } utf16_cursor;
 static uint32_t next_unit(utf16_cursor *s) {
     if (s->low) { uint16_t low=s->low; s->low=0; return low; }
-    if (s->cursor==s->bytes.size) return UINT32_MAX;
-    uint32_t c=s->bytes.data[s->cursor++];
-    unsigned continuation=0;
-    if (c>=0xf0) { c&=7u; continuation=3; }
-    else if (c>=0xe0) { c&=15u; continuation=2; }
-    else if (c>=0xc0) { c&=31u; continuation=1; }
-    while (continuation--) c=(c<<6)|(s->bytes.data[s->cursor++]&63u);
+    uint32_t c;
+    if (!qa_utf8_next(s->bytes, &s->cursor, &c)) return UINT32_MAX;
     if (c>=0x10000) { c-=0x10000; s->low=(uint16_t)(0xdc00u+(c&1023u)); return 0xd800u+(c>>10); }
     return c;
 }

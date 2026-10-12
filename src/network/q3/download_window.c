@@ -25,8 +25,6 @@ static bool advance(qa_q3_download_window *window, qa_error *error)
     if (window->revision == UINT64_MAX) return fail(error, QA_ERROR_FORMAT, "Q3 download mutation sequence exhausted");
     ++window->revision; return true;
 }
-static int32_t signed_word(uint32_t value)
-{ return value <= INT32_MAX ? (int32_t)value : (int32_t)((int64_t)value - INT64_C(4294967296)); }
 bool qa_q3_download_window_create(const qa_q3_download_source *source, qa_q3_download_window **out, qa_error *error)
 {
     if (!source || !source->resolve || !out || *out)
@@ -111,8 +109,8 @@ static int32_t allowed_blocks(const qa_q3_server_rate *settings)
     if (selected_rate == 0) return 1;
     /* Math.imul converts the selected positive finite rate to Uint32 here. */
     uint32_t rate = (uint32_t)selected_rate;
-    int32_t product = signed_word(rate * settings->snapshot_ms);
-    int32_t numerator = signed_word((uint32_t)(product / 1000) + BLOCK_BYTES);
+    int32_t product = qa_i32_from_u32(rate * settings->snapshot_ms);
+    int32_t numerator = qa_i32_from_u32((uint32_t)(product / 1000) + BLOCK_BYTES);
     int32_t blocks = numerator / BLOCK_BYTES;
     return blocks < 0 ? 1 : blocks;
 }
@@ -157,7 +155,7 @@ bool qa_q3_download_window_write(qa_q3_download_window *window, bool enabled, bo
     while (blocks-- > 0) {
         if (window->client_block == window->current_block) break;
         if (offer->next_transmit == window->current_block) {
-            if (signed_word((uint32_t)time - (uint32_t)offer->send_time) > 1000) offer->next_transmit = window->client_block;
+            if (qa_i32_from_u32((uint32_t)time - (uint32_t)offer->send_time) > 1000) offer->next_transmit = window->client_block;
             else break;
         }
         size_t slot = (uint32_t)offer->next_transmit % BLOCKS;

@@ -31,10 +31,8 @@ struct qa_q3_prediction_scene {
 };
 static bool fail(qa_error *error, qa_status code, const char *message)
 { qa_error_set(error, code, 0, "%s", message); return false; }
-static int32_t signed_word(uint32_t value)
-{ return value <= INT32_MAX ? (int32_t)value : (int32_t)((int64_t)value - INT64_C(4294967296)); }
 static int32_t difference(int32_t a, int32_t b)
-{ return signed_word((uint32_t)a - (uint32_t)b); }
+{ return qa_i32_from_u32((uint32_t)a - (uint32_t)b); }
 static qa_vec3 vector(const float *v) { return qa_v3(v[0], v[1], v[2]); }
 static bool position(const qa_q3_trajectory *source, int32_t time, qa_vec3 *out, qa_error *error)
 {

@@ -14,10 +14,6 @@ struct qa_q3_channel {
     uint8_t packet[QA_Q3_FRAGMENT_BYTES + 10];
 };
 static bool fail(qa_error *e, qa_status code, const char *s) { qa_error_set(e, code, 0, "%s", s); return false; }
-static uint16_t get16(const uint8_t *p) { return (uint16_t)(p[0] | (uint16_t)p[1] << 8); }
-static uint32_t get32(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
-static void put16(uint8_t *p, uint16_t x) { p[0] = (uint8_t)x; p[1] = (uint8_t)(x >> 8); }
-static void put32(uint8_t *p, uint32_t x) { for (unsigned i = 0; i < 4; ++i) p[i] = (uint8_t)(x >> (i * 8)); }
 bool qa_q3_channel_create(qa_q3_role role, uint16_t qport, qa_q3_channel **out, qa_error *error) {
     if (!out || (role != QA_Q3_CLIENT && role != QA_Q3_SERVER)) return fail(error, QA_ERROR_ARGUMENT, "Invalid Q3 channel options");
     qa_q3_channel *c = calloc(1, sizeof(*c));
@@ -40,14 +36,14 @@ bool qa_q3_channel_transmit_matches(const qa_q3_channel *c, qa_bytes packet, qa_
     if (!c || c->role != QA_Q3_CLIENT || !packet.data || packet.size < 6 ||
         packet.size > sizeof(c->packet) || !c->pending)
         return fail(error, QA_ERROR_FORMAT, "Q3 retained datagram lacks its actual client channel");
-    uint32_t wire = get32(packet.data), sequence = c->outgoing;
+    uint32_t wire = qa_load_u32le(packet.data), sequence = c->outgoing;
     if ((wire & UINT32_C(0x7fffffff)) != sequence ||
-        ((wire & UINT32_C(0x80000000)) != 0) != c->fragmented || get16(packet.data + 4) != c->qport)
+        ((wire & UINT32_C(0x80000000)) != 0) != c->fragmented || qa_load_u16le(packet.data + 4) != c->qport)
         return fail(error, QA_ERROR_FORMAT, "Q3 retained datagram differs from its produced channel identity");
     size_t start = 0, length = c->send_size, header = 6;
     if (c->fragmented) {
         if (packet.size < 10) return fail(error, QA_ERROR_FORMAT, "Q3 retained fragment header is truncated");
-        start = get16(packet.data + 6); length = get16(packet.data + 8); header = 10;
+        start = qa_load_u16le(packet.data + 6); length = qa_load_u16le(packet.data + 8); header = 10;
         if (start > c->send_size || start % QA_Q3_FRAGMENT_BYTES || length > QA_Q3_FRAGMENT_BYTES ||
             length != (c->send_size - start > QA_Q3_FRAGMENT_BYTES ? QA_Q3_FRAGMENT_BYTES : c->send_size - start))
             return fail(error, QA_ERROR_FORMAT, "Q3 retained fragment differs from its true produced source span");
@@ -111,13 +107,13 @@ bool qa_q3_channel_prepare(qa_q3_channel *c, bool *present, qa_bytes *out, qa_er
     *present = false; *out = (qa_bytes){0};
     if (!c->pending) return true;
     size_t header = c->role == QA_Q3_CLIENT ? 6 : 4;
-    put32(c->packet, c->outgoing | (c->fragmented ? UINT32_C(0x80000000) : 0));
-    if (c->role == QA_Q3_CLIENT) put16(c->packet + 4, c->qport);
+    qa_store_u32le(c->packet, c->outgoing | (c->fragmented ? UINT32_C(0x80000000) : 0));
+    if (c->role == QA_Q3_CLIENT) qa_store_u16le(c->packet + 4, c->qport);
     size_t length = c->send_size - c->send_offset;
     if (c->fragmented) {
         if (length > QA_Q3_FRAGMENT_BYTES) length = QA_Q3_FRAGMENT_BYTES;
-        put16(c->packet + header, (uint16_t)c->send_offset);
-        put16(c->packet + header + 2, (uint16_t)length);
+        qa_store_u16le(c->packet + header, (uint16_t)c->send_offset);
+        qa_store_u16le(c->packet + header + 2, (uint16_t)length);
         header += 4;
     }
     if (length) memcpy(c->packet + header, c->send + c->send_offset, length);
@@ -134,10 +130,10 @@ bool qa_q3_channel_receive(qa_q3_channel *c, qa_bytes data, qa_q3_packet *out, q
     if (!c || !out || !data.data) return fail(error, QA_ERROR_ARGUMENT, "Invalid Q3 receive arguments");
     size_t header = c->role == QA_Q3_SERVER ? 6 : 4;
     if (data.size < header || data.size > QA_Q3_MESSAGE_BYTES) return fail(error, QA_ERROR_FORMAT, "Invalid Q3 datagram size");
-    uint32_t wire = get32(data.data), sequence = wire & UINT32_C(0x7fffffff);
+    uint32_t wire = qa_load_u32le(data.data), sequence = wire & UINT32_C(0x7fffffff);
     bool fragmented = (wire & UINT32_C(0x80000000)) != 0;
     *out = (qa_q3_packet){.kind = QA_Q3_PACKET_STALE, .sequence = sequence,
-        .qport = c->role == QA_Q3_SERVER ? get16(data.data + 4) : 0};
+        .qport = c->role == QA_Q3_SERVER ? qa_load_u16le(data.data + 4) : 0};
     if (fragmented && data.size < header + 4) return fail(error, QA_ERROR_FORMAT, "Truncated Q3 fragment header");
     if (sequence <= c->incoming) return true;
     out->dropped = sequence - c->incoming - 1;
@@ -148,7 +144,7 @@ bool qa_q3_channel_receive(qa_q3_channel *c, qa_bytes data, qa_q3_packet *out, q
         out->kind = QA_Q3_PACKET_MESSAGE; out->payload = (qa_bytes){c->delivered, length};
         return true;
     }
-    size_t start = get16(data.data + header), length = get16(data.data + header + 2);
+    size_t start = qa_load_u16le(data.data + header), length = qa_load_u16le(data.data + header + 2);
     header += 4;
     if (start > INT16_MAX || length > INT16_MAX || length > data.size - header)
         return fail(error, QA_ERROR_FORMAT, "Invalid Q3 fragment length");

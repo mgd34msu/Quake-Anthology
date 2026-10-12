@@ -124,13 +124,6 @@ bool qa_builtin_can_damage(const qa_builtin_services *s, qa_vec3 origin, qa_acto
     return true;
 }
 
-static float distance_to_bounds(qa_vec3 point, qa_bounds bounds) {
-    qa_vec3 delta = qa_v3(fmaxf(bounds.mins.x - point.x, fmaxf(0, point.x - bounds.maxs.x)),
-                          fmaxf(bounds.mins.y - point.y, fmaxf(0, point.y - bounds.maxs.y)),
-                          fmaxf(bounds.mins.z - point.z, fmaxf(0, point.z - bounds.maxs.z)));
-    return qa_vec_length(delta);
-}
-
 bool qa_builtin_radius_damage(const qa_builtin_services *s, const qa_builtin_radius *radius,
                               size_t *damaged, qa_error *error) {
     if (!s || !radius || !qa_vec_finite(radius->origin) || !isfinite(radius->radius) ||
@@ -173,7 +166,7 @@ bool qa_builtin_radius_damage(const qa_builtin_services *s, const qa_builtin_rad
             body.origin, qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), 0.5f));
         float distance =
             radius->distance == QA_RADIUS_BOUNDS
-                ? distance_to_bounds(radius->origin, qa_bounds_translate(body.bounds, body.origin))
+                ? qa_bounds_distance(qa_bounds_translate(body.bounds, body.origin), radius->origin)
                 : qa_vec_length(qa_vec_sub(center, radius->origin));
         if (!radius->candidate_radius_only && distance > radius->radius)
             continue;

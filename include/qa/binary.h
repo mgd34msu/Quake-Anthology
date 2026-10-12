@@ -34,11 +34,15 @@ static inline int16_t qa_load_i16le(const void *data)
            (int16_t)(-1 - (int32_t)(UINT16_MAX - value));
 }
 
-static inline int32_t qa_load_i32le(const void *data)
+static inline int32_t qa_i32_from_u32(uint32_t value)
 {
-    uint32_t value = qa_load_u32le(data);
     return value <= INT32_MAX ? (int32_t)value :
            -1 - (int32_t)(UINT32_MAX - value);
+}
+
+static inline int32_t qa_load_i32le(const void *data)
+{
+    return qa_i32_from_u32(qa_load_u32le(data));
 }
 
 static inline float qa_load_f32le(const void *data)

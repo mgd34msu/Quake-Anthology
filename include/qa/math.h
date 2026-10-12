@@ -144,5 +144,11 @@ static inline qa_bounds qa_bounds_union(qa_bounds a, qa_bounds b) {
     return (qa_bounds){qa_v3(fminf(a.mins.x,b.mins.x),fminf(a.mins.y,b.mins.y),fminf(a.mins.z,b.mins.z)),
                        qa_v3(fmaxf(a.maxs.x,b.maxs.x),fmaxf(a.maxs.y,b.maxs.y),fmaxf(a.maxs.z,b.maxs.z))};
 }
+static inline float qa_bounds_distance(qa_bounds bounds, qa_vec3 point) {
+    qa_vec3 delta = qa_v3(fmaxf(bounds.mins.x-point.x,fmaxf(0,point.x-bounds.maxs.x)),
+                          fmaxf(bounds.mins.y-point.y,fmaxf(0,point.y-bounds.maxs.y)),
+                          fmaxf(bounds.mins.z-point.z,fmaxf(0,point.z-bounds.maxs.z)));
+    return qa_vec_length(delta);
+}
 
 #endif

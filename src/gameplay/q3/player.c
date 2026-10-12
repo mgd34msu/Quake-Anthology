@@ -337,10 +337,6 @@ bool qa_q3_release_grapple(qa_q3_game *game, qa_actor_id actor, qa_error *error)
     --game->observation_depth;
     return okay;
 }
-static int32_t q3_angle_word(float angle) {
-    float scaled = ((angle * 65536.0f) / 360.0f);
-    return (int32_t)((uint32_t)qa_source_float_to_i32(scaled) & 65535u);
-}
 static void q3_cutscene_movement(qa_movement_state *state, qa_usercmd *command,
                                  const qa_q3_cutscene_state *cutscene) {
     qa_q3_movement_state *movement = &state->data.q3;
@@ -356,7 +352,7 @@ static void q3_cutscene_movement(qa_movement_state *state, qa_usercmd *command,
     command->forward_move = command->side_move = command->up_move = 0;
     for (size_t i = 0; i < 3; ++i)
         command->angle_words[i] =
-            (int32_t)(((uint32_t)q3_angle_word(angles[i]) -
+            (int32_t)(((uint32_t)qa_angle_to_word(angles[i], QA_ANGLE_WORD_NATIVE) -
                        (uint32_t)movement->delta_angle_words[i]) &
                       65535u);
 }
@@ -391,9 +387,12 @@ void q3_force_view(qa_q3_game *game, qa_actor_id actor, qa_q3_player_state *play
     bool native = q3_source_client_pointer(game, actor, &slot);
     if (q3_player_control(game, actor, &control, NULL) &&
         (control.state->kind != QA_RULESET_Q3 || (native && !control.source_movement))) {
-        q3_player_delta_write(game, actor, 0, q3_sub_time(q3_angle_word(angles.x), player->last_command_angles[0]));
-        q3_player_delta_write(game, actor, 1, q3_sub_time(q3_angle_word(angles.y), player->last_command_angles[1]));
-        q3_player_delta_write(game, actor, 2, q3_sub_time(q3_angle_word(angles.z), player->last_command_angles[2]));
+        q3_player_delta_write(game, actor, 0, q3_sub_time(
+            qa_angle_to_word(angles.x, QA_ANGLE_WORD_NATIVE), player->last_command_angles[0]));
+        q3_player_delta_write(game, actor, 1, q3_sub_time(
+            qa_angle_to_word(angles.y, QA_ANGLE_WORD_NATIVE), player->last_command_angles[1]));
+        q3_player_delta_write(game, actor, 2, q3_sub_time(
+            qa_angle_to_word(angles.z, QA_ANGLE_WORD_NATIVE), player->last_command_angles[2]));
     }
     ++player->teleport_revision;
     player->teleport_lock_ms = lock_ms;

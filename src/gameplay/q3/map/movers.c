@@ -744,12 +744,7 @@ static bool door_setup(qa_q3_game *game, qa_q3_map_actor_state *state,
             bounds = linked.absolute_bounds;
             first = false;
         } else {
-            bounds.mins = qa_v3(fminf(bounds.mins.x, linked.absolute_bounds.mins.x),
-                                fminf(bounds.mins.y, linked.absolute_bounds.mins.y),
-                                fminf(bounds.mins.z, linked.absolute_bounds.mins.z));
-            bounds.maxs = qa_v3(fmaxf(bounds.maxs.x, linked.absolute_bounds.maxs.x),
-                                fmaxf(bounds.maxs.y, linked.absolute_bounds.maxs.y),
-                                fmaxf(bounds.maxs.z, linked.absolute_bounds.maxs.z));
+            bounds = qa_bounds_union(bounds, linked.absolute_bounds);
         }
         if (!ensure_damageable(game, member, error))
             return false;

@@ -8,11 +8,8 @@
 #include <string.h>
 
 static bool fail(qa_error *e, qa_status code, const char *s) { qa_error_set(e, code, 0, "%s", s); return false; }
-static int32_t signed_word(uint32_t word) {
-    return word <= INT32_MAX ? (int32_t)word : -1 - (int32_t)(UINT32_MAX - word);
-}
 static int32_t elapsed_word(int64_t now, int64_t previous) {
-    return signed_word((uint32_t)now - (uint32_t)previous);
+    return qa_i32_from_u32((uint32_t)now - (uint32_t)previous);
 }
 static bool equal(const char *a, const char *b) {
     while (*a && *b) if (tolower((unsigned char)*a++) != tolower((unsigned char)*b++)) return false;
@@ -340,7 +337,7 @@ static bool server_connect(qa_q3_server_admission *s, const qa_q3_admission_opti
         if (slot->phase != QA_Q3_FREE && slot->has_address && qa_net_address_equal(from, &slot->address, false)
             && (slot->qport == request.qport || (from->kind != QA_NET_LOOPBACK && slot->address.port == from->port))) {
             if (elapsed_word(now, slot->last_connect_time) <
-                signed_word((uint32_t)o->reconnect_limit_seconds * UINT32_C(1000))) return true;
+                qa_i32_from_u32((uint32_t)o->reconnect_limit_seconds * UINT32_C(1000))) return true;
             selected = slot; break;
         }
     }
@@ -402,7 +399,7 @@ void qa_q3_server_admission_disconnect(qa_q3_server_admission *s, const qa_net_a
 }
 const qa_q3_admission_slot *qa_q3_route(const qa_net_address *from, qa_bytes packet, const qa_q3_admission_slot *slots, size_t count) {
     if (!from || !packet.data || packet.size < 6 || (count && !slots)) return NULL;
-    uint16_t qport = (uint16_t)(packet.data[4] | (uint16_t)packet.data[5] << 8);
+    uint16_t qport = qa_load_u16le(packet.data + 4);
     for (size_t i = 0; i < count; ++i) if (slots[i].phase != QA_Q3_FREE && slots[i].has_address && slots[i].qport == qport
         && qa_net_address_equal(from, &slots[i].address, false)) return &slots[i];
     return NULL;

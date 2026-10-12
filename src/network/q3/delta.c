@@ -53,11 +53,6 @@ static const net_field player_fields[] = {
 _Static_assert(ARRAY_COUNT(entity_fields) == 51, "Q3 entity wire field count");
 _Static_assert(ARRAY_COUNT(player_fields) == 48, "Q3 player wire field count");
 
-static int32_t signed_word(uint32_t word)
-{
-    return word <= INT32_MAX ? (int32_t)word : -1 - (int32_t)(UINT32_MAX - word);
-}
-
 static uint32_t field_word(const void *state, const net_field *field)
 {
     uint32_t word;
@@ -70,7 +65,7 @@ static void set_word(void *state, const net_field *field, uint32_t word)
     unsigned char *destination = (unsigned char *)state + field->offset;
     if (field->bits == 0) memcpy(destination, &word, sizeof(word));
     else {
-        int32_t value = signed_word(word);
+        int32_t value = qa_i32_from_u32(word);
         memcpy(destination, &value, sizeof(value));
     }
 }
@@ -252,7 +247,7 @@ bool qa_q3_read_player(qa_q3_reader *reader, const qa_q3_player *from,
                 if ((mask & (UINT32_C(1) << slot)) == 0) continue;
                 /* All three 16-bit arrays are read as signed shorts. */
                 int width = slot_fields[index].width == 16 ? -16 : 32;
-                values[slot] = signed_word(qa_q3_read_bits(reader, width));
+                values[slot] = qa_i32_from_u32(qa_q3_read_bits(reader, width));
             }
         }
     }
@@ -280,7 +275,7 @@ bool qa_q3_write_usercmd(qa_q3_writer *writer, const qa_q3_usercmd *from,
     if (from == NULL || to == NULL)
         return qa_net_writer_fail(&writer->raw, "Missing Q3 usercmd delta state");
     uint32_t difference = (uint32_t)to->serverTime - (uint32_t)from->serverTime;
-    bool small = signed_word(difference) < 256;
+    bool small = qa_i32_from_u32(difference) < 256;
     if (!qa_q3_write_bits(writer, small ? 1u : 0u, 1) ||
         !qa_q3_write_bits(writer, small ? difference : (uint32_t)to->serverTime, small ? 8 : 32))
         return false;
@@ -318,7 +313,7 @@ bool qa_q3_read_usercmd(qa_q3_reader *reader, const qa_q3_usercmd *from,
     bool small = qa_q3_read_bits(reader, 1) != 0;
     uint32_t time = qa_q3_read_bits(reader, small ? 8 : 32);
     if (small) time += (uint32_t)from->serverTime;
-    result.serverTime = signed_word(time);
+    result.serverTime = qa_i32_from_u32(time);
     bool changed = key == NULL || qa_q3_read_bits(reader, 1) != 0;
     if (changed) {
         uint32_t values[8];
@@ -330,11 +325,11 @@ bool qa_q3_read_usercmd(qa_q3_reader *reader, const qa_q3_usercmd *from,
             /* kbitmask[bits] intentionally retains one more key bit. */
             values[index] ^= mixed_key & (UINT32_MAX >> (31 - command_widths[index]));
         }
-        for (unsigned index = 0; index < 3; ++index) result.angles[index] = signed_word(values[index]);
+        for (unsigned index = 0; index < 3; ++index) result.angles[index] = qa_i32_from_u32(values[index]);
         result.forwardmove = movement_byte(values[3]);
         result.rightmove = movement_byte(values[4]);
         result.upmove = movement_byte(values[5]);
-        result.buttons = signed_word(values[6]);
+        result.buttons = qa_i32_from_u32(values[6]);
         result.weapon = (uint8_t)values[7];
     }
     if (reader->raw.failed) return false;
