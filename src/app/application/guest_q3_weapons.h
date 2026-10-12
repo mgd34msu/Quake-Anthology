@@ -2,6 +2,7 @@
 #define QA_APPLICATION_GUEST_Q3_WEAPONS_H
 
 #include "guest_q3_weapon_profile.h"
+#include "qa/network_unified_frame_pool.h"
 #include "qa/qvm_save.h"
 
 typedef struct application_q3_weapons application_q3_weapons;
@@ -29,10 +30,10 @@ typedef struct application_q3_weapon_services {
     bool (*give)(void *, qa_actor_id, application_q3_weapon_grant, qa_error *);
     bool (*give_item)(void *, qa_actor_id, qa_bytes, bool *handled, qa_error *);
     bool (*drop)(void *, qa_actor_id, application_q3_weapon_drop *, qa_error *);
-    /* Borrows the actual original movement equipment frame. Its owner keeps
+    /* Borrows the original movement equipment frame and dispatch storage. Its owner keeps
      * byte width, source currentness and compare-before-restore authority. */
     bool (*prepare_weapon)(void *, qa_actor_id, const qa_qvm_call *,
-        application_q3_weapon_preparation *, qa_error *);
+        qa_unified_frame_lease *, application_q3_weapon_preparation *, qa_error *);
 } application_q3_weapon_services;
 
 /* Moves profile arrays into the real runtime before binding. On failure, out

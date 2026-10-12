@@ -931,8 +931,8 @@ static bool completed(void *context, qa_actor_id actor, bool reached, qa_error *
     return application_guest_input_weapon_completed(s->role, actor, reached, error);
 }
 static bool prepare(void *context, qa_actor_id actor, const qa_qvm_call *call,
-    application_q3_weapon_preparation *out, qa_error *error)
-{ application_q3_weapons_services *s = context; return application_guest_input_prepare_weapon(s->role, actor, call, out, error); }
+    qa_unified_frame_lease *storage, application_q3_weapon_preparation *out, qa_error *error)
+{ application_q3_weapons_services *s = context; return application_guest_input_prepare_weapon(s->role, actor, call, storage, out, error); }
 
 static bool can_drop(const selected_inventory *view, qa_item_id item,
     qa_strings *strings)

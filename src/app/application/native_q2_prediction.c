@@ -155,16 +155,10 @@ bool qa_application_native_q2_prediction_read(qa_application *app, qa_actor_id a
         .profile = engine->profile, .frame = clock.frame,
         .publication_generation = app->publication_generation, .map_revision = app->map_revision,
         .actors_revision = qa_actors_revision(qa_session_actors(app->session))};
-    for (uint32_t slot = 1; slot < 257; ++slot) {
-        const application_native_q2_client *client = engine->clients + slot;
-        if (!client->connected || !client->begun || client->disconnect_started ||
-            !qa_actor_id_equal(client->actor, actor)) continue;
-        if (value.source_slot) return fail(error, QA_ERROR_FORMAT,
-            "Native Q2 prediction repeats its physical client actor");
-        value.source_slot = slot;
-    }
-    if (!value.source_slot) return fail(error, QA_ERROR_NOT_FOUND,
-        "Selected original Q2 role has no admitted client for this actor");
+    value.source_slot = application_native_q2_client_slot(engine, actor);
+    if (!value.source_slot || !engine->clients[value.source_slot].connected ||
+        !engine->clients[value.source_slot].begun || engine->clients[value.source_slot].disconnect_started)
+        return fail(error, QA_ERROR_NOT_FOUND, "Selected original Q2 role has no admitted client for this actor");
     prediction_layout layout;
     if (!layout_read(engine, role, &layout, error)) return false;
     qa_native_instance *instance = qa_native_host_instance(engine->provider->state.native.host);

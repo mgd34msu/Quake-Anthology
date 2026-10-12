@@ -93,15 +93,10 @@ bool application_native_q1_selected_q2_frame(qa_application *app, qa_actor_id ac
         !qa_session_clock(app->session, provider->owner, &clock) || clock.frame.provider != provider->owner ||
         clock.frame.kind != provider->component.clock.kind)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 carried flag lost its returned original Q2 character");
-    uint32_t slot = 0;
-    for (uint32_t i = 1; i < 257; ++i) {
-        const application_native_q2_client *client = engine->clients + i;
-        if (!client->connected || !client->begun || client->disconnect_started ||
-            !qa_actor_id_equal(client->actor, actor)) continue;
-        if (slot) return application_fail(error, QA_ERROR_FORMAT, "Original Q2 character aliases physical client slots");
-        slot = i;
-    }
-    if (!slot) return application_fail(error, QA_ERROR_NOT_FOUND, "Q1 carried flag has no begun original Q2 character");
+    uint32_t slot = application_native_q2_client_slot(engine, actor);
+    if (!slot || !engine->clients[slot].connected || !engine->clients[slot].begun ||
+        engine->clients[slot].disconnect_started)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Q1 carried flag has no begun original Q2 character");
     double frame;
     if (!qa_native_host_q2_character_frame(provider->state.native.host, slot, actor, &frame, error)) return false;
     if (application_provider_for(app, actor, QA_ROLE_CHARACTER, "") != provider ||

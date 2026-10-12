@@ -23,7 +23,7 @@ void application_guest_input_profile_free(application_guest_input_profile *);
 bool application_guest_input_attach(q3g_role *, qa_bytes primary, qa_error *);
 bool application_guest_input_detach(q3g_role *, qa_error *);
 bool application_guest_input_prepare_weapon(void *role, qa_actor_id,
-    const qa_qvm_call *, application_q3_weapon_preparation *, qa_error *);
+    const qa_qvm_call *, qa_unified_frame_lease *, application_q3_weapon_preparation *, qa_error *);
 bool application_guest_input_weapon_completed(void *role, qa_actor_id, bool reached, qa_error *);
 bool application_guest_input_weapon_slice(const qa_application *, qa_actor_id);
 bool application_guest_input_source_weapons(qa_application *, qa_actor_id);

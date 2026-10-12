@@ -196,7 +196,8 @@ static bool dispatch(void *context, const qa_qvm_call *call, int32_t *result, qa
     }
     application_q3_weapon_preparation preparation = {0};
     bool ok = qa_qvm_bind_branches(call, bindings, count, error);
-    if (ok && w->services.prepare_weapon) ok = w->services.prepare_weapon(w->services.context, actor.actor, call, &preparation, error);
+    if (ok && w->services.prepare_weapon) ok = w->services.prepare_weapon(w->services.context,
+        actor.actor, call, storage, &preparation, error);
     if (ok) ok = qa_qvm_proceed(call, result, error);
     qa_error cleanup = {0};
     if (preparation.finish && !preparation.finish(preparation.context, &cleanup)) {

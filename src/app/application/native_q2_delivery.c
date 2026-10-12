@@ -321,12 +321,15 @@ bool application_native_q2_message_capture(struct application_native_q2 *engine,
         .dupe_key=engine->profile==QA_NATIVE_Q2_GAME_API2023 &&
             message->target==QA_NATIVE_HOST_UNICAST ? message->flags:0};
     bool connected=false;
-    for (uint32_t slot=1;slot<257;++slot)
-        connected=connected || ((!engine->clients[slot].disconnect_started ||
-            (engine->calls && engine->disconnect_client == slot)) &&
-            (message->target==QA_NATIVE_HOST_UNICAST ?
-                (message->client.registry && qa_actor_id_equal(engine->clients[slot].actor,message->client)) :
-                engine->clients[slot].connected));
+    if (message->target==QA_NATIVE_HOST_UNICAST) {
+        uint32_t slot=application_native_q2_client_slot(engine,message->client);
+        connected=slot && (!engine->clients[slot].disconnect_started ||
+            (engine->calls && engine->disconnect_client == slot));
+    } else {
+        for (uint32_t slot=1;slot<257;++slot)
+            connected=connected || ((!engine->clients[slot].disconnect_started ||
+                (engine->calls && engine->disconnect_client == slot)) && engine->clients[slot].connected);
+    }
     if (connected && !capture(engine->provider,message->origin,(qa_vec3){0},
             QA_BUILTIN_Q2_MULTICAST_NONE,message,&result.audience,error)) return false;
     *out=result;

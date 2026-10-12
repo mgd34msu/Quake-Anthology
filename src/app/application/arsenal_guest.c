@@ -393,11 +393,12 @@ static bool finish_weapon(void *context, qa_error *error)
                 (qa_bytes){bytes, prepared->bytes}, error);
         }
     }
-    free(prepared); return okay;
+    return okay;
 }
 
 bool application_guest_input_prepare_weapon(void *context, qa_actor_id actor,
-    const qa_qvm_call *call, application_q3_weapon_preparation *out, qa_error *error)
+    const qa_qvm_call *call, qa_unified_frame_lease *storage,
+    application_q3_weapon_preparation *out, qa_error *error)
 {
     q3g_role *role = context;
     application_guest_input *input = role ? role->input : NULL;
@@ -411,19 +412,18 @@ bool application_guest_input_prepare_weapon(void *context, qa_actor_id actor,
     uint32_t movement;
     if (!source_word(input, input->profile.source->movement_global, &movement, error)) return false;
     if (movement != scope->movement) return true;
-    guest_weapon_preparation *prepared = calloc(1, sizeof(*prepared));
-    if (!prepared) return application_fail(error, QA_ERROR_MEMORY, "Allocating original holdable input scope");
+    guest_weapon_preparation *prepared = qa_unified_frame_lease_alloc(storage, 1,
+        sizeof(*prepared), _Alignof(guest_weapon_preparation), error);
+    if (!prepared) return false;
     bool legacy = role->abi == QA_QVM_Q3_116N;
     *prepared = (guest_weapon_preparation){.input = input, .scope = scope,
         .address = scope->movement + 4 + (legacy ? 4u : 16u), .bytes = legacy ? 1u : 4u};
     uint8_t bytes[4] = {0};
-    if (!qa_qvm_read(role->vm, prepared->address, bytes, prepared->bytes, error)) { free(prepared); return false; }
+    if (!qa_qvm_read(role->vm, prepared->address, bytes, prepared->bytes, error)) return false;
     prepared->previous = legacy ? bytes[0] : qa_load_u32le(bytes);
     prepared->projected = prepared->previous & ~UINT32_C(4);
     qa_store_u32le(bytes, prepared->projected);
-    if (!qa_qvm_write(role->vm, prepared->address, (qa_bytes){bytes, prepared->bytes}, error)) {
-        free(prepared); return false;
-    }
+    if (!qa_qvm_write(role->vm, prepared->address, (qa_bytes){bytes, prepared->bytes}, error)) return false;
     *out = (application_q3_weapon_preparation){prepared, finish_weapon};
     return true;
 }
