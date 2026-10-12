@@ -6,6 +6,7 @@
 #include "source_restore.h"
 #include "native_q2_save.h"
 #include "capture.h"
+#include "particle_delivery.h"
 #include "qa/scene_world_save.h"
 
 typedef enum frontend_round_phase {
@@ -270,7 +271,7 @@ bool frontend_round_clear_events(qa_frontend *frontend, qa_error *error)
 bool frontend_events_flush(qa_frontend *f, qa_error *error)
 {
     if (!frontend_network_publish(f, error)) return false;
-    if (!f->options.dedicated && (!frontend_map_events(f, error) ||
+    if (!f->options.dedicated && (!frontend_particle_admit(f, error) || !frontend_map_events(f, error) ||
         !frontend_particle_events(f, error) || !frontend_player_events(f, error))) return false;
     return frontend_events(f, error);
 }

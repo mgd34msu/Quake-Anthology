@@ -978,7 +978,7 @@ static bool frontend_step(qa_frontend *frontend,
                 for (uint32_t i=0;i<frontend->options.seats;++i)
                     console_open|=qa_input_seat_focus(frontend->seats[i].input)==QA_INPUT_CONSOLE;
                 if (console_open) {
-                    ok=frontend_present(frontend,error);
+                    ok=frontend_particle_admit(frontend,error) && frontend_present(frontend,error);
                     if (!ok) *playing=false;
                 }
             }

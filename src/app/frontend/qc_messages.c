@@ -591,6 +591,8 @@ bool frontend_qc_messages_drain(frontend_qc_messages *owner,qa_error *error)
             okay=row_get(owner,&source,actor,slot,&row,error);
         }
     }
+    if (okay && !owner->frontend->options.dedicated)
+        okay=frontend_particle_admit(owner->frontend,error);
     for(size_t i=0;okay && i<sources;++i) {
         qa_application_qc_message_source source; bool found=false; size_t count=0;
         okay=qa_application_qc_message_source_at(owner->application,i,&source,&found,error);

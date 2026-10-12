@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "visual_restore.h"
 #include "visual_access.h"
+#include "particle_delivery.h"
 #include "native_q3_client.h"
 #include "qa/persistence_content.h"
 #include "qa/application_ui_names.h"
@@ -1482,7 +1483,9 @@ bool frontend_visuals_prepare(qa_frontend *frontend, qa_error *error)
         if (native) continue;
         qa_application_visual_view view; bool found;
         if (!frontend_particle_visual_read(frontend, record->id, &view, &found, error)) return false;
-        if (!found || !view.visual.visible) continue;
+        if (!found) continue;
+        if (!frontend_particle_visual_admit(frontend, &view, NULL, error)) return false;
+        if (!view.visual.visible) continue;
         if (view.has_flare) {
             if (!flare_admit(frontend, &view, error)) return false;
             continue;
@@ -1501,6 +1504,7 @@ bool frontend_visuals_prepare(qa_frontend *frontend, qa_error *error)
                 if (!model_read(frontend, owner, path, view.model_resources[part], view.model_openings[part],
                     view.family == QA_GAME_Q1 && view.visual.has_player_colors, view.visual.player_colors,
                     &model, error)) return false;
+                if (!part && !frontend_particle_visual_admit(frontend, &view, model->model, error)) return false;
             }
         }
     }

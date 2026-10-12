@@ -8,6 +8,8 @@
 /* Cold root/provider/player publication; reserve actual owner groups and their
  * media before reading the first output record. Existing groups remain live. */
 bool frontend_particle_admit(qa_frontend *,qa_error *);
+bool frontend_particle_visual_admit(qa_frontend *,const qa_application_visual_view *,
+    const qa_model *,qa_error *);
 /* seat is the physical submitter, independent of the authored scene view. */
 bool frontend_particle_draw(qa_frontend *, uint32_t seat, const qa_scene_world_input *, qa_error *);
 bool frontend_particle_world(qa_frontend *, uint32_t seat, qa_scene_world_input *, qa_error *);
