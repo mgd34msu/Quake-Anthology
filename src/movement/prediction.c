@@ -1,11 +1,9 @@
 #include "internal.h"
+#include "qa/binary.h"
+#include "qa/text.h"
 #include <limits.h>
 #include <stdio.h>
-
-static int32_t signed_word(uint32_t word) {
-    return word<=INT32_MAX?(int32_t)word:(int32_t)((int64_t)word-INT64_C(4294967296));
-}
-static int32_t difference(int32_t a, int32_t b) { return signed_word((uint32_t)a-(uint32_t)b); }
+static int32_t difference(int32_t a, int32_t b) { return qa_i32_from_u32((uint32_t)a-(uint32_t)b); }
 void qa_q3_command_history_init(qa_q3_command_history *history) {
     if (!history) return;
     memset(history,0,sizeof(*history));
@@ -70,9 +68,9 @@ static bool interpolate(qa_q3_prediction *p, const qa_q3_prediction_host *host, 
     float fraction=(float)difference(frame->time_ms,frame->snapshot->server_time_ms)/(float)difference(next->server_time_ms,frame->snapshot->server_time_ms);
     const qa_q3_movement_state *a=&frame->snapshot->movement.data.q3,*b=&next->movement.data.q3;
     qa_q3_movement_state *s=&p->predicted.data.q3;
-    int32_t cycle=b->bob_cycle<a->bob_cycle?signed_word((uint32_t)b->bob_cycle+256u):b->bob_cycle;
+    int32_t cycle=b->bob_cycle<a->bob_cycle?qa_i32_from_u32((uint32_t)b->bob_cycle+256u):b->bob_cycle;
     float bob=(float)a->bob_cycle+fraction*(float)difference(cycle,a->bob_cycle);
-    s->bob_cycle=!isfinite(bob)||bob>=2147483648.0f||bob < -2147483648.0f?INT32_MIN:(int32_t)truncf(bob);
+    s->bob_cycle=qa_source_float_to_i32(bob);
     s->origin=qa_vec_lerp(a->origin,b->origin,fraction);
     s->velocity=qa_vec_lerp(a->velocity,b->velocity,fraction);
     if (!angles) s->view_angles=qa_v3(qa_angle_lerp(a->view_angles.x,b->view_angles.x,fraction,QA_ANGLE_LERP_SINGLE_TURN),
@@ -147,9 +145,9 @@ bool qa_q3_predict(qa_q3_prediction *p, const qa_q3_prediction_host *host, const
             }
         }
         if (settings->fixed) {
-            int32_t rounded=signed_word((uint32_t)p->command.server_time_ms+msec-1u);
+            int32_t rounded=qa_i32_from_u32((uint32_t)p->command.server_time_ms+msec-1u);
             int32_t quotient=rounded/(int32_t)msec;
-            p->command.server_time_ms=signed_word((uint32_t)quotient*msec);
+            p->command.server_time_ms=qa_i32_from_u32((uint32_t)quotient*msec);
         }
         qa_movement_input input;
         if (!host->movement_input(host->context,&p->predicted,&p->command,number,physics_time,&input,error)) return false;
@@ -174,7 +172,7 @@ bool qa_q3_predict(qa_q3_prediction *p, const qa_q3_prediction_host *host, const
     if (moved) {
         qa_q3_movement_state *s=&p->predicted.data.q3;
         if (!adjusted(host,s->origin,s->ground,physics_time,frame->time_ms,&s->origin,error)) return false;
-        if (signed_word(s->event_sequence)>signed_word(old.data.q3.event_sequence+2u)) warn(host,settings,"WARNING: dropped event\n");
+        if (qa_i32_from_u32(s->event_sequence)>qa_i32_from_u32(old.data.q3.event_sequence+2u)) warn(host,settings,"WARNING: dropped event\n");
         if (host->transition&&!host->transition(host->context,&p->predicted,&old,error)) return false;
         result.status=QA_PREDICTION_PREDICTED;
     }

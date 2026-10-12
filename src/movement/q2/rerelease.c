@@ -153,7 +153,7 @@ static qa_q2r_stuck_result rr_fix_stuck(rr_move *p, qa_vec3 *origin, qa_bounds b
         }
         trace = rr_trace(p, start, opposite, slab, 0);
         if (trace.start_solid) continue;
-        qa_vec3 end = qa_vec_add(trace.end, qa_vec_scale(normal, 0.125f));
+        qa_vec3 end = qa_vec_ma(trace.end, 0.125f, normal);
         qa_vec3 delta = qa_vec_sub(end, opposite);
         qa_vec3 next = qa_vec_add(*origin, delta);
         if (epsilon_axis >= 0) {
@@ -180,7 +180,7 @@ static void rr_slide(rr_move *p, qa_vec3 *origin, qa_vec3 *velocity,
     unsigned plane_count = 0;
     float remaining = elapsed;
     for (unsigned bump = 0; bump < 4 && !p->move->failed; ++bump) {
-        qa_vec3 end = qa_vec_add(*origin, qa_vec_scale(*velocity, remaining));
+        qa_vec3 end = qa_vec_ma(*origin, remaining, *velocity);
         qa_trace_result trace = rr_trace(p, *origin, end, p->bounds, 0);
         if (p->move->failed) return;
         if (trace.all_solid) {
@@ -293,7 +293,7 @@ static void rr_accelerate(rr_move *p, qa_vec3 direction, float speed, float acce
     if (add <= 0.0f) return;
     float amount = air ? accel * speed * p->dt : accel * p->dt * speed;
     if (amount > add) amount = add;
-    p->velocity = qa_vec_add(p->velocity, qa_vec_scale(direction, amount));
+    p->velocity = qa_vec_ma(p->velocity, amount, direction);
 }
 
 static void rr_friction(rr_move *p)
@@ -347,7 +347,7 @@ static void rr_add_currents(rr_move *p, qa_vec3 *wish)
                     (qa_collision_contents_export(trace.contents,QA_GAME_Q2,trace.q1_opaque_token) & RR_CONTENTS_LADDER)) {
                     qa_vec3 right = qa_vec_cross(trace.plane.normal, qa_v3(0,0,1));
                     wish->x = wish->y = 0.0f;
-                    *wish = qa_vec_add(*wish, qa_vec_scale(right, -speed));
+                    *wish = qa_vec_ma(*wish, -speed, right);
                 }
             } else {
                 wish->x = fminf(fmaxf(wish->x, -25.0f), 25.0f);
@@ -357,10 +357,10 @@ static void rr_add_currents(rr_move *p, qa_vec3 *wish)
     }
     if (p->result->water_type & RR_MASK_CURRENT) {
         float speed = p->result->water_level == 1 && rr_grounded(p) ? 200.0f : 400.0f;
-        *wish = qa_vec_add(*wish, qa_vec_scale(rr_current(p->result->water_type), speed));
+        *wish = qa_vec_ma(*wish, speed, rr_current(p->result->water_type));
     }
     if (rr_grounded(p))
-        *wish = qa_vec_add(*wish, qa_vec_scale(rr_current(p->ground_contents), 100.0f));
+        *wish = qa_vec_ma(*wish, 100.0f, rr_current(p->ground_contents));
 }
 
 static qa_vec3 rr_wish(rr_move *p)
@@ -520,7 +520,7 @@ static void rr_special(rr_move *p)
     if (p->state->gravity == 0 ||
         (!(p->command.buttons & RR_JUMP_BUTTON) && p->command.forward_move <= 0) ||
         p->result->water_level != 2 || (p->result->water_type & RR_NO_WATERJUMP)) return;
-    trace = rr_trace(p, *p->origin, qa_vec_add(*p->origin, qa_vec_scale(flat, 40.0f)),
+    trace = rr_trace(p, *p->origin, qa_vec_ma(*p->origin, 40.0f, flat),
                      p->bounds, RR_MASK_SOLID);
     if (trace.fraction == 1.0f || trace.plane.normal.z >= 0.7f) return;
     qa_vec3 velocity = qa_vec_scale(flat, 50.0f); velocity.z = 350.0f;
@@ -561,7 +561,7 @@ static void rr_fly(rr_move *p, bool clip)
     if (speed > p->max_speed) speed = p->max_speed;
     rr_accelerate(p, wish, speed * 2.0f, 10.0f, false);
     if (clip) rr_step_slide(p);
-    else *p->origin = qa_vec_add(*p->origin, qa_vec_scale(p->velocity, p->dt));
+    else *p->origin = qa_vec_ma(*p->origin, p->dt, p->velocity);
 }
 
 static float rr_height(const rr_move *p, float source)

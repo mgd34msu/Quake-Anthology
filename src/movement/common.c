@@ -281,12 +281,17 @@ bool qa_move_touch(qa_move_context *c, const qa_trace_result *trace) {
     qa_movement_call invocation=call(c);
     return control(c,c->services->touch(c->services->context,trace,&invocation,c->error));
 }
+bool qa_move_contact_seen(const qa_movement_result *result, const qa_trace_result *trace, size_t before) {
+    qa_movement_ground hit=qa_move_ground(trace);
+    for (size_t i=0;i<before;i++)
+        if (qa_move_same_ground(qa_move_ground(&result->contacts[i].trace),hit)) return true;
+    return false;
+}
 bool qa_move_contact(qa_move_context *c, const qa_trace_result *trace, bool touch_now, bool unique) {
     if (c->failed||c->removed) return false;
     if (trace->hit==QA_TRACE_HIT_NONE&&(c->state->kind!=QA_RULESET_QUAKEWORLD||touch_now)) return true;
     qa_movement_result *r=c->result;
-    if (unique) for (size_t i=0;i<r->contact_count;i++)
-        if (qa_move_same_ground(qa_move_ground(&r->contacts[i].trace),qa_move_ground(trace))) return true;
+    if (unique && qa_move_contact_seen(r,trace,r->contact_count)) return true;
     if (r->contact_count==r->contact_capacity) {
         size_t capacity=r->contact_capacity?r->contact_capacity*2:32;
         if (capacity<r->contact_capacity) {

@@ -1,5 +1,4 @@
 #include "common.h"
-#include <stdlib.h>
 
 typedef struct qw_move {
     q1_move base;
@@ -7,8 +6,6 @@ typedef struct qw_move {
     double elapsed_seconds;
     int32_t water_level, water_type;
     bool shared_controls, posture_published;
-    qa_movement_ground *touched;
-    size_t touched_count, touched_capacity;
 } qw_move;
 
 static bool qw_posture(qw_move *m) {
@@ -118,7 +115,7 @@ static void qw_accelerate(qw_move *m, qa_vec3 direction, float speed, float acce
     float add = (air ? fminf(speed, 30) : speed) - qa_vec_dot(s->velocity, direction);
     if (add <= 0) return;
     float amount = fminf(add, air ? acceleration * speed * m->base.c->dt : acceleration * m->base.c->dt * speed);
-    s->velocity = q1_ma(s->velocity, amount, direction);
+    s->velocity = qa_vec_ma(s->velocity, amount, direction);
 }
 
 static qa_vec3 qw_wish_velocity(const qw_move *m) {
@@ -276,36 +273,10 @@ static bool qw_spectator_move(qw_move *m, bool collide) {
     /* Original SpectatorMove skips integration at this return. */
     if (add <= 0 && !collide) return true;
     float acceleration = fmaxf(0, fminf(add, p->accelerate * c->dt * wish_speed));
-    s->velocity = q1_ma(s->velocity, acceleration, direction);
+    s->velocity = qa_vec_ma(s->velocity, acceleration, direction);
     if (collide) return qw_fly(m);
     s->origin = q1_qw_ma(s->origin, m->elapsed_seconds, s->velocity);
     return true;
-}
-
-static bool qw_touch_once(qw_move *m, const qa_trace_result *trace) {
-    if (trace->hit == QA_TRACE_HIT_NONE) return true;
-    qa_movement_ground hit = qa_move_ground(trace);
-    for (size_t i = 0; i < m->touched_count; ++i) {
-        if (qa_move_same_ground(m->touched[i], hit)) return true;
-    }
-    if (m->touched_count == m->touched_capacity) {
-        size_t capacity = m->touched_capacity ? m->touched_capacity * 2 : 16;
-        if (capacity < m->touched_capacity || capacity > SIZE_MAX / sizeof(*m->touched)) {
-            qa_error_set(m->base.c->error, QA_ERROR_MEMORY, 0, "QuakeWorld touched-target list is too large");
-            m->base.c->failed = true;
-            return false;
-        }
-        qa_movement_ground *touched = realloc(m->touched, capacity * sizeof(*touched));
-        if (!touched) {
-            qa_error_set(m->base.c->error, QA_ERROR_MEMORY, 0, "Allocating QuakeWorld touched-target list");
-            m->base.c->failed = true;
-            return false;
-        }
-        m->touched = touched;
-        m->touched_capacity = capacity;
-    }
-    m->touched[m->touched_count++] = hit;
-    return q1_touch(&m->base, trace, false);
 }
 
 static bool qw_step_physics(qw_move *m) {
@@ -352,7 +323,8 @@ static bool qw_step_physics(qw_move *m) {
     size_t contact_end = c->result->contact_count;
     for (size_t i = contact_start; i < contact_end; ++i) {
         qa_trace_result trace = c->result->contacts[i].trace;
-        if (!qw_touch_once(m, &trace)) return false;
+        if (trace.hit == QA_TRACE_HIT_NONE || qa_move_contact_seen(c->result, &trace, i)) continue;
+        if (!q1_touch(&m->base, &trace, false)) return false;
     }
     return true;
 }
@@ -420,6 +392,5 @@ bool qa_move_qw(qa_move_context *c) {
     if (!q1_stopped(&move.base) && q1_phase(&move.base, QA_MOVE_POSTTHINK))
         q1_finish(&move.base, c->state->data.qw.ground, move.water_level, move.water_type);
     if (!c->removed) q1_restore_mode(&move.base);
-    free(move.touched);
     return !c->failed;
 }

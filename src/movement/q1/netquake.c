@@ -180,7 +180,7 @@ static void nq_accelerate(nq_move *m, qa_vec3 direction, float speed, bool air) 
     float add = wish_speed - qa_vec_dot(s->velocity, direction);
     if (add <= 0) return;
     float acceleration = fminf(add, air ? p->accelerate * speed * m->dt : p->accelerate * m->dt * speed);
-    s->velocity = q1_ma(s->velocity, acceleration, direction);
+    s->velocity = qa_vec_ma(s->velocity, acceleration, direction);
 }
 
 static void nq_water_move(nq_move *m) {
@@ -204,7 +204,7 @@ static void nq_water_move(nq_move *m) {
     if (wish_speed == 0) return;
     float add = wish_speed - new_speed;
     if (add <= 0) return;
-    s->velocity = q1_ma(s->velocity, fminf(add, p->accelerate * wish_speed * m->dt), qa_vec_normalize(wish));
+    s->velocity = qa_vec_ma(s->velocity, fminf(add, p->accelerate * wish_speed * m->dt), qa_vec_normalize(wish));
 }
 
 static bool nq_air_move(nq_move *m) {
@@ -280,11 +280,11 @@ static bool nq_check_water_jump(nq_move *m) {
     forward.z = 0;
     qa_vec3 start = qa_vec_add(s->origin, qa_v3(0, 0, 8));
     qa_trace_result low, high;
-    if (!q1_point_trace(&m->base, start, q1_ma(start, 24, forward), &low)) return false;
+    if (!q1_point_trace(&m->base, start, qa_vec_ma(start, 24, forward), &low)) return false;
     if (low.fraction == 1) return true;
     start.z += c->result->bounds.maxs.z - 8;
     qa_vec3 direction = qa_vec_scale(low.plane.normal, -50);
-    if (!q1_point_trace(&m->base, start, q1_ma(start, 24, forward), &high)) return false;
+    if (!q1_point_trace(&m->base, start, qa_vec_ma(start, 24, forward), &high)) return false;
     s->water_jump_direction = direction;
     if (high.fraction != 1) return true;
     s->flags = (s->flags | Q1_FLAG_WATERJUMP) & ~(uint32_t)Q1_FLAG_JUMPRELEASED;
@@ -359,7 +359,7 @@ static bool nq_toss(nq_move *m) {
     if (s->flags & Q1_FLAG_ONGROUND) return true;
     nq_velocity_bounds(m);
     if (s->move_type != Q1_MOVE_FLY && s->move_type != Q1_MOVE_FLYMISSILE) nq_gravity(m);
-    s->angles = q1_ma(s->angles, m->dt, s->angular_velocity);
+    s->angles = qa_vec_ma(s->angles, m->dt, s->angular_velocity);
     qa_trace_result trace;
     if (!nq_push(m, qa_vec_scale(s->velocity, m->dt), &trace)) return false;
     if (trace.fraction == 1) return true;
@@ -407,7 +407,7 @@ static bool nq_physics(nq_move *m) {
         }
         case Q1_MOVE_NOCLIP:
             if (!extension_think && !q1_phase(&m->base, QA_MOVE_THINK)) return false;
-            s->origin = q1_ma(s->origin, m->dt, s->velocity);
+            s->origin = qa_vec_ma(s->origin, m->dt, s->velocity);
             break;
         case Q1_MOVE_TOSS:
         case Q1_MOVE_BOUNCE:

@@ -1,6 +1,7 @@
 /* Authored campaign numbering from UI_LoadArenas and base-arena-catalog.ts. */
 #include "qa/arena_progress_catalog.h"
 #include "qa/common_parse.h"
+#include "qa/text.h"
 #include "save_io.h"
 
 #include <limits.h>
@@ -36,7 +37,7 @@ static bool replace(char **field, const char *text, qa_error *error)
     if (!next) return false;
     free(*field); *field = next; return true;
 }
-static char *latin1_text(const char *text, size_t size, qa_error *error)
+static char *source_text(const char *text, size_t size, qa_error *error)
 {
     size_t length = size;
     for (size_t i = 0; i < size; ++i) {
@@ -47,17 +48,17 @@ static char *latin1_text(const char *text, size_t size, qa_error *error)
     if (length == SIZE_MAX) { fail(error, QA_ERROR_MEMORY, "Authored arena text exceeds UTF-8 storage"); return NULL; }
     char *out = malloc(length + 1);
     if (!out) { fail(error, QA_ERROR_MEMORY, "Allocating authored arena UTF-8 text"); return NULL; }
-    size_t written = 0;
-    for (size_t i = 0; i < size; ++i) {
-        unsigned char c = (unsigned char)text[i];
-        if (c < 128) out[written++] = (char)c;
-        else { out[written++] = (char)(0xc0u | (c >> 6)); out[written++] = (char)(0x80u | (c & 0x3fu)); }
+    size_t written;
+    if (!qa_text_from_source_bytes((qa_bytes){(const uint8_t *)text, size},
+                                  out, length + 1, &written, error)) {
+        free(out);
+        return NULL;
     }
-    out[written] = 0; return out;
+    return out;
 }
 static bool publish_text(char **field, qa_error *error)
 {
-    char *next = latin1_text(*field, strlen(*field), error);
+    char *next = source_text(*field, strlen(*field), error);
     if (!next) return false;
     free(*field); *field = next; return true;
 }
@@ -180,7 +181,7 @@ static bool bots(arena_row *row, qa_error *error)
         char **names = realloc(row->bots, (row->view.bot_count + 1) * sizeof(*names));
         if (!names) return fail(error, QA_ERROR_MEMORY, "Allocating authored arena bot names");
         row->bots = names;
-        char *name = latin1_text(text, (size_t)(end - text), error);
+        char *name = source_text(text, (size_t)(end - text), error);
         if (!name) return false;
         row->bots[row->view.bot_count++] = name; text = end;
     }

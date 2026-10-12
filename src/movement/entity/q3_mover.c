@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "qa/binary.h"
+#include "qa/text.h"
 
 enum { Q3_MOVER_LIMIT = QA_PHYSICS_SOURCE_PUSH_LIMIT };
 
@@ -18,16 +20,6 @@ typedef struct q3_mover_transaction {
     qa_error *error;
 } q3_mover_transaction;
 
-static int32_t q3_signed_word(uint32_t value) {
-    return value <= INT32_MAX ? (int32_t)value : -1 - (int32_t)(UINT32_MAX - value);
-}
-static int32_t q3_integer(float value) {
-    return isfinite(value) && value >= -2147483648.0f && value < 2147483648.0f
-        ? (int32_t)truncf(value) : INT32_MIN;
-}
-static uint32_t q3_angle_word(float angle) {
-    return (uint32_t)q3_integer((angle * 65536) / 360) & UINT32_C(65535);
-}
 static bool q3_native(qa_q3_mover_actor_kind kind) {
     return kind >= QA_Q3_MOVER_NATIVE_FIXED && kind <= QA_Q3_MOVER_PROXIMITY_MINE;
 }
@@ -155,7 +147,7 @@ static bool q3_restore(q3_mover_transaction *transaction) {
             current.source.angular.base = saved->angles;
             if (current.source.has_client) {
                 current.source.client_origin = saved->origin;
-                current.source.delta_yaw_word = q3_integer(saved->delta_yaw);
+                current.source.delta_yaw_word = qa_source_float_to_i32(saved->delta_yaw);
                 current.source.write_client_motion = true;
             }
             if (!q3_source_write(transaction, saved->actor, &current.source)) return false;
@@ -192,7 +184,7 @@ static bool q3_try_push(q3_mover_transaction *transaction, qa_actor_id actor,
         check.source.position.base = qa_vec_add(qa_vec_add(check.source.position.base, move), rotation);
         if (check.source.has_client) {
             check.source.client_origin = qa_vec_add(qa_vec_add(check.source.client_origin, move), rotation);
-            check.source.delta_yaw_word = q3_signed_word((uint32_t)check.source.delta_yaw_word + q3_angle_word(angular.y));
+            check.source.delta_yaw_word = qa_i32_from_u32((uint32_t)check.source.delta_yaw_word + qa_angle_to_word(angular.y, QA_ANGLE_WORD_NATIVE));
             check.source.write_client_motion = true;
         }
         if (!q3_source_write(transaction, actor, &check.source)) return false;
@@ -411,7 +403,7 @@ static bool q3_next(q3_mover_transaction *transaction, qa_actor_id part, qa_acto
     return true;
 }
 static bool q3_rewind_team(q3_mover_transaction *transaction, qa_actor_id leader) {
-    int32_t elapsed = q3_signed_word((uint32_t)transaction->now - (uint32_t)transaction->previous);
+    int32_t elapsed = qa_i32_from_u32((uint32_t)transaction->now - (uint32_t)transaction->previous);
     qa_actor_id part = leader;
     for (size_t count = 0; part.registry; ++count) {
         if (!q3_team_limit(transaction, count)) return false;
@@ -420,8 +412,8 @@ static bool q3_rewind_team(q3_mover_transaction *transaction, qa_actor_id leader
         if (read <= 0) return read == 0;
         if (!q3_team_part(transaction, &record)) return false;
         qa_actor_id next = record.source.team_next;
-        record.source.position.time_ms = q3_signed_word((uint32_t)record.source.position.time_ms + (uint32_t)elapsed);
-        record.source.angular.time_ms = q3_signed_word((uint32_t)record.source.angular.time_ms + (uint32_t)elapsed);
+        record.source.position.time_ms = qa_i32_from_u32((uint32_t)record.source.position.time_ms + (uint32_t)elapsed);
+        record.source.angular.time_ms = qa_i32_from_u32((uint32_t)record.source.angular.time_ms + (uint32_t)elapsed);
         if (!q3_source_write(transaction, part, &record.source)) return false;
         read = q3_read(transaction, part, &record);
         if (read < 0) return false;
@@ -468,7 +460,7 @@ static bool q3_run_team(q3_mover_transaction *transaction, qa_actor_id leader) {
         if (read <= 0) return read == 0;
         if (!q3_team_part(transaction, &record)) return false;
         qa_actor_id next = record.source.team_next;
-        int32_t end = q3_signed_word((uint32_t)record.source.position.time_ms + (uint32_t)record.source.position.duration_ms);
+        int32_t end = qa_i32_from_u32((uint32_t)record.source.position.time_ms + (uint32_t)record.source.position.duration_ms);
         if (record.source.position.type == QA_TRAJECTORY_LINEAR_STOP && transaction->now >= end &&
             !q3_action(transaction, QA_Q3_MOVER_REACHED, part, ph_none())) return false;
         if (!ph_live(transaction->physics, leader)) return true;

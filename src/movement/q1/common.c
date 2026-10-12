@@ -156,7 +156,7 @@ bool q1_fly(q1_move *m, double dt, q1_fly_result *out) {
             end = qa_qw_origin_to_vec3(q1_qw_ma(origin, remaining, *velocity));
         } else {
             start = c->state->data.nq.origin;
-            end = q1_ma(start, (float)remaining, *velocity);
+            end = qa_vec_ma(start, (float)remaining, *velocity);
         }
         if (!q1_move_trace(m, start, end, &trace)) return false;
         if (trace.all_solid || (m->qw && trace.start_solid)) {

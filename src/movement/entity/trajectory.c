@@ -1,18 +1,9 @@
 #include "internal.h"
-#include <limits.h>
-
-static int32_t signed_word(uint32_t value) {
-    return value <= INT32_MAX ? (int32_t)value :
-        (int32_t)((int64_t)value - INT64_C(4294967296));
-}
-
-static int32_t integer(float value) {
-    return isfinite(value) && value >= -2147483648.0f && value < 2147483648.0f ?
-        (int32_t)truncf(value) : INT32_MIN;
-}
+#include "qa/binary.h"
+#include "qa/text.h"
 
 static int32_t elapsed(int32_t at, int32_t from) {
-    return signed_word((uint32_t)at - (uint32_t)from);
+    return qa_i32_from_u32((uint32_t)at - (uint32_t)from);
 }
 
 static bool valid_trajectory(const qa_trajectory *trajectory, float gravity,
@@ -46,7 +37,7 @@ bool qa_trajectory_position(const qa_trajectory *trajectory, int32_t at, float g
         *out = qa_vec_add(trajectory->base, qa_vec_scale(trajectory->delta, seconds));
         return true;
     case QA_TRAJECTORY_LINEAR_STOP: {
-        int32_t end = signed_word((uint32_t)trajectory->time_ms + (uint32_t)trajectory->duration_ms);
+        int32_t end = qa_i32_from_u32((uint32_t)trajectory->time_ms + (uint32_t)trajectory->duration_ms);
         if (at > end) at = end;
         seconds = fmaxf(0, (float)elapsed(at, trajectory->time_ms) * 0.001f);
         *out = qa_vec_add(trajectory->base, qa_vec_scale(trajectory->delta, seconds));
@@ -76,7 +67,7 @@ bool qa_trajectory_velocity(const qa_trajectory *trajectory, int32_t at, float g
         *out = trajectory->delta;
         return true;
     case QA_TRAJECTORY_LINEAR_STOP:
-        *out = at > signed_word((uint32_t)trajectory->time_ms + (uint32_t)trajectory->duration_ms) ?
+        *out = at > qa_i32_from_u32((uint32_t)trajectory->time_ms + (uint32_t)trajectory->duration_ms) ?
             qa_v3(0, 0, 0) : trajectory->delta;
         return true;
     case QA_TRAJECTORY_SINE:
@@ -93,17 +84,17 @@ bool qa_trajectory_velocity(const qa_trajectory *trajectory, int32_t at, float g
 }
 
 int32_t qa_physics_q3_hit_time(int32_t previous, int32_t now, float fraction) {
-    return integer((float)previous + (float)elapsed(now, previous) * fraction);
+    return qa_source_float_to_i32((float)previous + (float)elapsed(now, previous) * fraction);
 }
 
 qa_vec3 qa_physics_q3_snap(qa_vec3 value) {
-    return qa_v3((float)integer(value.x), (float)integer(value.y), (float)integer(value.z));
+    return qa_v3((float)qa_source_float_to_i32(value.x), (float)qa_source_float_to_i32(value.y), (float)qa_source_float_to_i32(value.z));
 }
 
 static float snap_towards(float value, float target) {
-    uint32_t result = (uint32_t)integer(value);
+    uint32_t result = (uint32_t)qa_source_float_to_i32(value);
     if (!(target <= value)) ++result;
-    return (float)signed_word(result);
+    return (float)qa_i32_from_u32(result);
 }
 
 qa_vec3 qa_physics_q3_snap_towards(qa_vec3 value, qa_vec3 target) {

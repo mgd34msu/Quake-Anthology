@@ -41,11 +41,6 @@ static uint32_t q2_time(const qa_q2_movement_state *state);
 static void q2_time_set(qa_q2_movement_state *state, uint32_t value);
 static uint32_t q2_time_shift(const qa_q2_movement_state *state);
 
-static qa_vec3 q2_advance(qa_vec3 origin, float time, qa_vec3 velocity)
-{
-    return qa_vec_add(origin, qa_vec_scale(velocity, time));
-}
-
 static bool q2_grounded(const q2_classic_move *pm)
 {
     return pm->ground.hit != QA_TRACE_HIT_NONE;
@@ -95,7 +90,7 @@ static bool q2_slide(q2_classic_move *pm)
 
     for (unsigned bump = 0; bump < 4; ++bump) {
         qa_trace_result trace;
-        if (!q2_trace(pm, pm->origin, q2_advance(pm->origin, remaining, pm->velocity), &trace))
+        if (!q2_trace(pm, pm->origin, qa_vec_ma(pm->origin, remaining, pm->velocity), &trace))
             return false;
         if (trace.all_solid) {
             pm->velocity.z = 0;
@@ -197,7 +192,7 @@ static void q2_accelerate(q2_classic_move *pm, qa_vec3 direction,
     float add = capped - qa_vec_dot(pm->velocity, direction);
     if (add <= 0.0f) return;
     float amount = air ? acceleration * speed * pm->dt : acceleration * pm->dt * speed;
-    pm->velocity = q2_advance(pm->velocity, fminf(amount, add), direction);
+    pm->velocity = qa_vec_ma(pm->velocity, fminf(amount, add), direction);
 }
 
 static qa_vec3 q2_current(int32_t contents)
@@ -223,9 +218,9 @@ static qa_vec3 q2_add_currents(q2_classic_move *pm, qa_vec3 wish)
     }
     if (pm->water_type & Q2_MASK_CURRENT) {
         float water_speed = pm->water_level == 1 && q2_grounded(pm) ? 200.0f : 400.0f;
-        wish = q2_advance(wish, water_speed, q2_current(pm->water_type));
+        wish = qa_vec_ma(wish, water_speed, q2_current(pm->water_type));
     }
-    if (q2_grounded(pm)) wish = q2_advance(wish, 100.0f,
+    if (q2_grounded(pm)) wish = qa_vec_ma(wish, 100.0f,
         q2_current(qa_collision_contents_export(pm->ground_trace.contents,QA_GAME_Q2,pm->ground_trace.q1_opaque_token)));
     return wish;
 }
@@ -362,7 +357,7 @@ static bool q2_check_special(q2_classic_move *pm)
     pm->ladder = trace.fraction < 1.0f &&
         (qa_collision_contents_export(trace.contents,QA_GAME_Q2,trace.q1_opaque_token) & Q2_LADDER) != 0;
     if (pm->water_level != 2) return true;
-    qa_vec3 spot = q2_advance(pm->origin, 30.0f, flat);
+    qa_vec3 spot = qa_vec_ma(pm->origin, 30.0f, flat);
     spot.z += 4.0f;
     int32_t contents;
     if (!qa_move_contents(pm->context, spot, &contents)) return false;
@@ -394,9 +389,9 @@ static bool q2_fly_move(q2_classic_move *pm, bool collide)
     float add = wish_speed - qa_vec_dot(pm->velocity, wish);
     if (add <= 0.0f && !collide) return true;
     float acceleration = fmaxf(0.0f, fminf(10.0f * pm->dt * wish_speed, add));
-    pm->velocity = q2_advance(pm->velocity, acceleration, wish);
+    pm->velocity = qa_vec_ma(pm->velocity, acceleration, wish);
     if (collide) return q2_step_slide(pm);
-    pm->origin = q2_advance(pm->origin, pm->dt, pm->velocity);
+    pm->origin = qa_vec_ma(pm->origin, pm->dt, pm->velocity);
     return true;
 }
 

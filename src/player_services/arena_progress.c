@@ -1,4 +1,5 @@
 #include "qa/arena_progress.h"
+#include "qa/binary.h"
 #include "qa/text.h"
 #include "qa/network_q3.h"
 #include <inttypes.h>
@@ -11,12 +12,6 @@ static bool fail(qa_error *error, const char *message) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message);
     return false;
 }
-static int32_t signed_word(uint32_t bits) {
-    int32_t result;
-    memcpy(&result, &bits, sizeof(result));
-    return result;
-}
-
 static bool read_value(const qa_arena_progress *progress, qa_cvar_handle handle, const char *prefix,
                        int32_t index, int32_t *out, qa_error *error) {
     if (!progress || !progress->cvars || !out)
@@ -203,7 +198,7 @@ static bool grant(qa_arena_progress *progress, qa_arena_postgame *out, int32_t m
     int32_t previous;
     if (!qa_arena_progress_award(progress, medal, &previous, error) ||
         !write_value(progress, progress->awards, "a", medal,
-                     signed_word((uint32_t)previous + (uint32_t)count), error))
+                     qa_i32_from_u32((uint32_t)previous + (uint32_t)count), error))
         return false;
     if (display)
         out->awards[out->award_count++] = (qa_arena_award){medal, display};

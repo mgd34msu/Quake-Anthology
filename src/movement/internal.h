@@ -54,6 +54,7 @@ bool qa_move_phase(qa_move_context *, qa_movement_phase);
 bool qa_move_firing(qa_move_context *);
 bool qa_move_emit(qa_move_context *, qa_movement_effect);
 bool qa_move_contact(qa_move_context *, const qa_trace_result *, bool touch_now, bool unique);
+bool qa_move_contact_seen(const qa_movement_result *, const qa_trace_result *, size_t before);
 bool qa_move_touch(qa_move_context *, const qa_trace_result *);
 bool qa_move_event(qa_move_context *, int32_t event, int32_t parameter);
 bool qa_move_animation(qa_move_context *, qa_movement_animation_kind, int32_t value, bool force, bool backwards);
