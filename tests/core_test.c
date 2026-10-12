@@ -1093,22 +1093,26 @@ static qa_audio_trace_hit audio_material_trace(void *context, qa_vec3 start, qa_
 typedef struct log_delivery_test {
     qa_application app;
     size_t normal, captured;
+    char sequence[3];
     qa_command_context delivered;
 } log_delivery_test;
 static bool log_test_output(void *context,const char *text,qa_error *error)
 {
     log_delivery_test *test=context;(void)error;
-    CHECK(text && *text=='v');++test->captured;return true;
+    CHECK(text && *text && test->captured<sizeof test->sequence);
+    test->sequence[test->captured++]=*text;return true;
 }
 static void log_test_normal(void *context,const qa_command_context *command,const char *text)
 {
     log_delivery_test *test=context;
-    CHECK(text && *text=='v');test->delivered=*command;++test->normal;
+    CHECK(text && *text);test->delivered=*command;++test->normal;
 }
 static bool log_test_produce(void *context,const qa_command_invocation *command,qa_error *error)
 {
-    log_delivery_test *test=context;char text[]="value";
-    bool okay=qa_application_log_emit(&test->app,&command->context,text,true,error);
+    log_delivery_test *test=context;char text[]="2";
+    qa_console_emit_to(command->console,&command->context,"1",log_test_normal,test);
+    bool okay=qa_application_log_emit(&test->app,&command->context,text,QA_APPLICATION_LOG_CONSOLE,error);
+    qa_console_emit(command->console,&command->context,"3");
     text[0]='x';CHECK(test->captured==0 && test->normal==0);
     return okay;
 }
@@ -1123,18 +1127,20 @@ static void test_ring_console_capture(void)
     CHECK(qa_console_register(test.app.console,"ringlog","",1,false,log_test_produce,&test,&error));
     uint64_t first=qa_application_events_next(&test.app);
     CHECK(qa_application_console_execute_capture(&test.app,test.app.console,&context,"ringlog",log_test_output,&test,&error));
-    CHECK(test.captured==1 && test.normal==0);
+    CHECK(test.captured==3 && test.normal==0 && !memcmp(test.sequence,"123",3));
     qa_application_event_view view;
     CHECK(qa_application_event_read(&test.app,&(qa_application_event_cursor){.id=first},&view) &&
         view.kind==QA_APPLICATION_EVENT_LOG);
     const qa_application_log_event *log=view.value.log;
-    CHECK(log->context.dialect==context.dialect && log->context.owner==1 && log->text[0]=='v');
-    qa_application_log_deliver(test.app.console,log,NULL,NULL);
-    CHECK(test.captured==1 && test.normal==0);
+    CHECK(log->context.dialect==context.dialect && log->context.owner==1 && log->text[0]=='1');
+    CHECK(qa_application_event_read(&test.app,&(qa_application_event_cursor){.id=first+1},&view) &&
+        view.value.log->text[0]=='2');
+    qa_application_log_deliver(test.app.console,log,false,NULL,NULL);
+    CHECK(test.captured==3 && test.normal==0);
     uint64_t next=qa_application_events_next(&test.app);
-    CHECK(qa_application_log_emit(&test.app,&context,"value",true,&error));
+    CHECK(qa_application_log_emit(&test.app,&context,"value",QA_APPLICATION_LOG_CONSOLE,&error));
     CHECK(qa_application_event_read(&test.app,&(qa_application_event_cursor){.id=next},&view));
-    qa_application_log_deliver(test.app.console,view.value.log,NULL,NULL);
+    qa_application_log_deliver(test.app.console,view.value.log,false,NULL,NULL);
     CHECK(test.normal==1 && test.delivered.dialect==context.dialect);
     qa_console_destroy(test.app.console);
     application_event_stream_dispose(&test.app);free(test.app.unified_persistent);

@@ -893,7 +893,8 @@ static bool update_screen(void *context, qa_error *error)
 static void common_print(void *context, const char *text)
 {
     frontend_source_lease *lease = context;
-    (void)qa_application_log_emit(lease->source->application,&lease->command,text,true,NULL);
+    (void)qa_application_log_emit(lease->source->application,&lease->command,text,
+        QA_APPLICATION_LOG_CONSOLE,NULL);
 }
 static uint32_t common_milliseconds(void *context)
 {
@@ -2380,6 +2381,7 @@ bool frontend_before_world_change(void *context, qa_application *application, qa
     qa_frontend *frontend = context; (void)application;
     if (!frontend_owners_idle(frontend))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"World retirement requires idle frontend child owners");
+    frontend_logs_drain(frontend,UINT64_MAX);
     if (!frontend_network_local_groups_retire(frontend,error)) return false;
     if (frontend->music_sources && !frontend_music_sources_world_retire(frontend->music_sources,error)) return false;
     return frontend_campaign_ready(frontend) && frontend_tools_before_world_change(frontend, error) &&
@@ -2400,6 +2402,7 @@ bool frontend_world_retired(void *context, qa_application *application, qa_error
     qa_frontend *frontend = context; (void)application;
     if (!frontend_owners_idle(frontend))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"World retirement requires idle frontend child owners");
+    frontend_logs_drain(frontend,UINT64_MAX);
     if (!frontend_selected_effects_retire(frontend,error)) return false;
     qa_scene_frame_reset(&frontend->frame, frontend->frame_number);
     if (!frontend_native_q3_retire_world(frontend,error)) return false;

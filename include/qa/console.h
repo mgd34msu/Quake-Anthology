@@ -517,6 +517,10 @@ bool qa_console_expand_command(qa_console *, const qa_command_context *,
 bool qa_console_execute_capture(qa_console *, const qa_command_context *, const char *,
     void (*print)(void *, const qa_command_context *, const char *), void *, qa_error *);
 void qa_console_emit(qa_console *, const qa_command_context *, const char *);
+/* The active redirect receives output first. Otherwise use the host's ordinary
+ * sink; a NULL console permits output from a deferred tool callback. */
+void qa_console_emit_to(qa_console *, const qa_command_context *, const char *,
+    void (*print)(void *, const qa_command_context *, const char *), void *);
 bool qa_console_idle(const qa_console *);
 /* Read the actual constructor context through its current capture/valid hooks. */
 bool qa_console_context_read(qa_console *,qa_command_context *,qa_error *);

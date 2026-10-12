@@ -753,7 +753,7 @@ bool application_emit(void *opaque, const qa_builtin_event *event, qa_error *err
 }
 
 bool qa_application_log_emit(qa_application *app,const qa_command_context *context,
-    const char *text,bool console,qa_error *error)
+    const char *text,uint32_t flags,qa_error *error)
 {
     application_event_write write;
     if(!application_event_stream_begin(app,QA_APPLICATION_EVENT_LOG,&write,error))
@@ -764,8 +764,8 @@ bool qa_application_log_emit(qa_application *app,const qa_command_context *conte
     memcpy(copy,text,bytes);
     qa_application_log_event *log=&write.envelope->raw.log;
     *log=(qa_application_log_event){.context=*context,.text=copy,
-        .flags=(console?QA_APPLICATION_LOG_CONSOLE:0) |
-            (console && qa_console_output_redirected(app->console)?QA_APPLICATION_LOG_REDIRECTED:0)};
+        .flags=flags | ((flags&QA_APPLICATION_LOG_CONSOLE) &&
+            qa_console_output_redirected(app->console)?QA_APPLICATION_LOG_REDIRECTED:0)};
     if(context->script) {
         bytes=strlen(context->script)+1;
         char *script=application_event_stream_alloc(app,bytes,1,error);
@@ -780,18 +780,26 @@ abort:
 }
 
 void qa_application_log_deliver(qa_console *console,const qa_application_log_event *log,
-    void (*print)(void *,const qa_command_context *,const char *),void *context)
+    bool redirected,void (*print)(void *,const qa_command_context *,const char *),void *context)
 {
     if(!(log->flags&QA_APPLICATION_LOG_CONSOLE) ||
-        !!(log->flags&QA_APPLICATION_LOG_REDIRECTED)!=!!print) return;
+        !!(log->flags&QA_APPLICATION_LOG_REDIRECTED)!=redirected) return;
     if(print) print(context,&log->context,log->text);
     else qa_console_emit(console,&log->context,log->text);
 }
 typedef struct application_console_capture {
+    qa_application *application;
     bool (*write)(void *,const char *,qa_error *);
     void *context;
-    qa_error error;
+    qa_error admission_error,error;
 } application_console_capture;
+static void capture_admit(void *context,const qa_command_context *command,const char *text)
+{
+    application_console_capture *capture=context;
+    if(!capture->admission_error.code)
+        (void)qa_application_log_emit(capture->application,command,text,
+            QA_APPLICATION_LOG_CONSOLE,&capture->admission_error);
+}
 static void capture_print(void *context,const qa_command_context *command,const char *text)
 {
     application_console_capture *capture=context; (void)command;
@@ -801,19 +809,18 @@ bool qa_application_console_execute_capture(qa_application *app,qa_console *cons
     const qa_command_context *command,const char *text,bool (*write)(void *,const char *,qa_error *),
     void *context,qa_error *error)
 {
-    application_console_capture capture={.write=write,.context=context};
+    application_console_capture capture={.application=app,.write=write,.context=context};
     qa_application_event_subscription reader={0};
     qa_application_events_subscribe(app,&reader);
-    bool ok=qa_console_execute_capture(console,command,text,capture_print,&capture,error);
-    uint64_t next=qa_application_events_next(app);
-    for(uint64_t id=reader.next;id<next;++id) {
-        qa_application_event_view view;
-        if(qa_application_event_read(app,&(qa_application_event_cursor){.id=id},&view) &&
-            view.kind==QA_APPLICATION_EVENT_LOG)
-            qa_application_log_deliver(console,view.value.log,capture_print,&capture);
-    }
+    bool ok=qa_console_execute_capture(console,command,text,capture_admit,&capture,error);
+    qa_application_event_range range={.next=reader.next,.end=qa_application_events_next(app)};
+    qa_application_event_view view;
+    while(qa_application_event_raw_next(app,&range,
+        UINT64_C(1)<<QA_APPLICATION_EVENT_LOG,&view))
+        qa_application_log_deliver(console,view.value.log,true,capture_print,&capture);
     qa_application_events_unsubscribe(&reader);
     if(capture.error.code) { if(error) *error=capture.error; return false; }
+    if(capture.admission_error.code) { if(error) *error=capture.admission_error; return false; }
     return ok;
 }
 
@@ -821,7 +828,8 @@ bool application_source_log(application_provider *provider,const char *text,bool
 {
     qa_command_context context={.owner=provider->owner,.origin=QA_COMMAND_SERVER,
         .dialect=provider->launch->selection.clock.kind};
-    return qa_application_log_emit(provider->application,&context,text,console,error);
+    return qa_application_log_emit(provider->application,&context,text,
+        console?QA_APPLICATION_LOG_CONSOLE:0,error);
 }
 
 bool application_source_message(application_provider *provider, qa_actor_id actor,

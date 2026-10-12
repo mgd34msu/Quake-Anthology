@@ -13,9 +13,8 @@ char *tools_copy(const char *text, qa_error *error) {
     return out;
 }
 void tools_print(qa_tools *tools, const qa_command_context *context, const char *text) {
-    if (tools->output_console && qa_console_output_redirected(tools->output_console))
-        qa_console_emit(tools->output_console, context, text);
-    else if (tools->options.print) tools->options.print(tools->options.context, context, text);
+    qa_console_emit_to(tools->output_console,context,text,
+        tools->options.print,tools->options.context);
 }
 bool tools_files(qa_tools *tools, const qa_command_context *source, qa_vfs **files, qa_mount_id *mount, qa_error *error) {
     if (tools->options.files_for_context) return tools->options.files_for_context(tools->options.context, source, files, mount, error);

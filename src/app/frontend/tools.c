@@ -80,6 +80,31 @@ static void source_print(void *context, const qa_command_context *source, const 
         if (!qa_seat_console_print(f->seats[ordinal].console, text, &error)) fprintf(stderr, "console output: %s\n", error.message);
     } else fputs(text, stdout);
 }
+static void source_log(void *context,const qa_command_context *source,const char *text) {
+    qa_frontend *f=context;
+    if (context_active(context,source))
+        (void)qa_application_log_emit(f->application,source,text,
+            QA_APPLICATION_LOG_CONSOLE|QA_APPLICATION_LOG_TOOL_OUTPUT,NULL);
+}
+static void broadcast_print(void *context,const qa_command_context *source,const char *text) {
+    (void)source;
+    frontend_console_deliver(context,NULL,text);
+}
+void frontend_logs_drain(qa_frontend *f,uint64_t through) {
+    if (!f || !f->application) return;
+    if (f->log_output.application!=f->application) {
+        qa_application_events_subscribe(f->application,&f->log_output);
+        f->log_output.next=qa_application_events_local_first(f->application);
+    }
+    qa_application_event_range range={.next=f->log_output.next,.end=through};
+    qa_application_event_view output;
+    while (qa_application_event_raw_next(f->application,&range,
+        UINT64_C(1)<<QA_APPLICATION_EVENT_LOG,&output))
+        qa_application_log_deliver(qa_application_console(f->application),output.value.log,false,
+            (output.value.log->flags&QA_APPLICATION_LOG_TOOL_OUTPUT)?source_print:
+            (output.value.log->flags&QA_APPLICATION_LOG_BROADCAST)?broadcast_print:frontend_console_deliver,f);
+    qa_application_events_consumed(&f->log_output,range.next);
+}
 static const char *map_name(void *context) {
     qa_frontend *f = context; qa_application_map_view map;
     return qa_application_map_read(f->application, &map) ? map.name : NULL;
@@ -341,10 +366,10 @@ bool frontend_tools_service_options(const qa_frontend *frontend, qa_tools_option
     if (!services || services->frontend != f || !tools || !language) return false;
     qa_tools_options options = {.files = services->files, .output_mount = services->output_mount,
         .owner = QA_FRONTEND_COMMAND_OWNER, .context = f, .milliseconds = milliseconds, .profiler_milliseconds = profiler_milliseconds, .read_frame = read_frame,
-        .context_active = render_context_active, .map_name = map_name, .print = source_print, .forward = forward, .diagnostic = diagnostic, .files_for_context = files_for_context, .capture_context = capture_context};
+        .context_active = render_context_active, .map_name = map_name, .print = source_log, .forward = forward, .diagnostic = diagnostic, .files_for_context = files_for_context, .capture_context = capture_context};
     qa_llm_options llm = {.http = services->http, .settings = services->settings, .private_mount = services->private_mount,
         .owner = QA_FRONTEND_COMMAND_OWNER, .context = f, .wall_milliseconds = wall_milliseconds,
-        .open_browser = open_browser, .context_active = context_active, .print = source_print, .capture_context = capture_context};
+        .open_browser = open_browser, .context_active = context_active, .print = source_log, .capture_context = capture_context};
     *tools = options; *language = llm; return true;
 }
 static bool tools_services_encode(void *context,const qa_tools_options *value,uint64_t *key,qa_error *error)
@@ -479,6 +504,7 @@ bool frontend_tools_before_world_change(qa_frontend *f, qa_error *error) {
     qa_frontend_tools *services = f->tools;
     if (!qa_llm_before_world_change(services->llm, error)) return false;
     if (services->owner && !qa_tools_before_world_change(services->owner, error)) return false;
+    frontend_logs_drain(f,UINT64_MAX);
     return true;
 }
 bool frontend_tools_world_change_ready(qa_frontend *f, qa_error *error) {

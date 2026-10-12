@@ -162,6 +162,7 @@ static bool shutdown_inputs(qa_frontend *f,qa_error *error)
             const qa_cvars_edit *values=shared?
                 frontend_shared_values_prepared(frontend_shared_settings_values(shared)):NULL;
             qa_error detached={0};
+            frontend_logs_drain(f,UINT64_MAX);
             if(!values || !shutdown_connections(f,&detached) ||
                 !qa_application_engine_shutdown_begin_candidate(f->application,candidate,values,
                 &f->engine_shutdown,&detached)) {
@@ -264,6 +265,7 @@ static bool shutdown_inputs(qa_frontend *f,qa_error *error)
         owner->phase=SHUTDOWN_DETACH;
     }
     if(owner->phase==SHUTDOWN_DETACH) {
+        frontend_logs_drain(f,UINT64_MAX);
         if(!shutdown_admitted(f,error) || !shutdown_connections(f,error) ||
             !qa_application_engine_shutdown_begin(f->application,&f->engine_shutdown,error)) return false;
         owner->phase=SHUTDOWN_RETIRE_INPUT;
@@ -499,7 +501,7 @@ void frontend_print(void *context, const char *message)
             fprintf(stderr, "console output: %s\n", error.message);
     }
 }
-void frontend_console_print(void *context, const qa_command_context *source, const char *text)
+void frontend_console_deliver(void *context, const qa_command_context *source, const char *text)
 {
     qa_frontend *frontend = context;
     fputs(text, stdout);
@@ -516,6 +518,17 @@ void frontend_console_print(void *context, const qa_command_context *source, con
         if (frontend->seats[i].console && !qa_seat_console_print(frontend->seats[i].console, text, &error))
             fprintf(stderr, "console output: %s\n", error.message);
     }
+}
+void frontend_console_print(void *context,const qa_command_context *source,const char *text)
+{
+    qa_frontend *frontend=context;
+    if (!frontend->application) {
+        frontend_console_deliver(context,source,text);
+        return;
+    }
+    qa_command_context command=source?*source:(qa_command_context){0};
+    (void)qa_application_log_emit(frontend->application,&command,text,
+        QA_APPLICATION_LOG_CONSOLE|(source?0:QA_APPLICATION_LOG_BROADCAST),NULL);
 }
 struct frontend_constructor { qa_error failure; bool outputs_entered,outputs_completed,launch_game; };
 static bool input_render_size(void *context,uint32_t *width,uint32_t *height)
@@ -798,6 +811,7 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
             !frontend_restart_binding_destroy(frontend,error)) return false;
     }
     if (!shutdown_admitted(frontend,error)) return false;
+    frontend_logs_drain(frontend,UINT64_MAX);
     if (!frontend_local_lobby_destroy(&frontend->local_lobby,error)) return false;
     if (frontend->lobbies_owned) qa_lobbies_destroy(frontend->lobbies);
     frontend->lobbies = NULL;
@@ -850,6 +864,7 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     if (!frontend_network_destroy(frontend, error)) return false;
     frontend_qc_rerelease_destroy(frontend);
     if (frontend->config_store && !frontend_config_store_retired_ready(frontend->config_store,error)) return false;
+    frontend_logs_drain(frontend,UINT64_MAX);
     if (!frontend_ui_features_destroy(frontend,error) || !frontend_seats_destroy(frontend,error) ||
         !frontend_tools_destroy(frontend,error)) return false;
     if (frontend->view_settings && !(frontend->engine_shutdown?

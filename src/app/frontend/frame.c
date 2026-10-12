@@ -534,15 +534,12 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
 {
     if (!frontend_network_output_drain(frontend, error)) return false;
     qa_strings *strings = qa_session_strings(qa_application_session(frontend->application));
-    uint64_t next = qa_application_events_next(frontend->application);
-    for (uint64_t i = qa_application_events_local_first(frontend->application); i < next; ++i) {
-        qa_application_event_view output;
-        if (!qa_application_event_read(frontend->application, &(qa_application_event_cursor){.id = i, .projection = 0}, &output)) continue;
-        if(output.kind==QA_APPLICATION_EVENT_LOG) {
-            qa_application_log_deliver(qa_application_console(frontend->application),output.value.log,NULL,NULL);
-            continue;
-        }
-        if(output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
+    qa_application_event_range range={.next=qa_application_events_local_first(frontend->application),
+        .end=qa_application_events_next(frontend->application)};
+    qa_application_event_view output;
+    while (qa_application_event_raw_next(frontend->application,&range,
+        UINT64_C(1)<<QA_APPLICATION_EVENT_BUILTIN,&output)) {
+        frontend_logs_drain(frontend,range.id);
         qa_builtin_event event = *output.value.builtin;
         if (!frontend_ranking_event(frontend,&event,error)) return false;
         const char *text = qa_strings_cstr(strings, event.text);
@@ -578,6 +575,7 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
         }
         if (event.kind == QA_BUILTIN_MUZZLE && !frontend_event_sound(frontend, &event, error)) return false;
     }
+    frontend_logs_drain(frontend,range.end);
     bool okay = frontend_equipment_events_drain(frontend->gear_events,error) &&
         (frontend->round ? frontend_round_clear_events(frontend,error) :
          qa_application_clear_events(frontend->application, error));

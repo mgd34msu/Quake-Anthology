@@ -583,7 +583,8 @@ typedef struct qa_application_log_event {
     const char *text;
     uint32_t flags;
 } qa_application_log_event;
-enum { QA_APPLICATION_LOG_CONSOLE=1u,QA_APPLICATION_LOG_REDIRECTED=2u };
+enum { QA_APPLICATION_LOG_CONSOLE=1u,QA_APPLICATION_LOG_REDIRECTED=2u,
+    QA_APPLICATION_LOG_TOOL_OUTPUT=4u,QA_APPLICATION_LOG_BROADCAST=8u };
 
 typedef struct qa_application_q3_effect_event {
     const void *recipient;
@@ -720,13 +721,13 @@ void qa_application_events_subscribe(qa_application *,qa_application_event_subsc
 void qa_application_events_unsubscribe(qa_application_event_subscription *);
 void qa_application_events_consumed(qa_application_event_subscription *,uint64_t next);
 qa_event_lease *qa_application_event_retain(qa_application *,uint64_t id);
-bool qa_application_log_emit(qa_application *,const qa_command_context *,const char *,bool console,qa_error *);
+bool qa_application_log_emit(qa_application *,const qa_command_context *,const char *,uint32_t flags,qa_error *);
 bool qa_application_qw_command_emit(qa_application *,const qa_application_qw_command_event *,
     bool *overflow,qa_error *);
 bool qa_application_music_emit(qa_application *,const qa_application_music_event *,
     bool *admitted,qa_error *);
 void qa_application_log_deliver(qa_console *,const qa_application_log_event *,
-    void (*print)(void *,const qa_command_context *,const char *),void *context);
+    bool redirected,void (*print)(void *,const qa_command_context *,const char *),void *context);
 bool qa_application_console_execute_capture(qa_application *,qa_console *,const qa_command_context *,const char *,
     bool (*write)(void *,const char *,qa_error *),void *context,qa_error *);
 /* Module/protocol adapters consume committed Q3 output before client publication. */

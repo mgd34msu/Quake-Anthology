@@ -165,24 +165,41 @@ static void free_chunks(command_chunk *chunk)
     }
 }
 
+static void output_to(qa_console *console, const qa_command_context *context,
+    const char *text, void (*print)(void *, const qa_command_context *, const char *), void *user)
+{
+    if (console && console->redirect) {
+        print = console->redirect->print;
+        user = console->redirect->user;
+    }
+    if (print != NULL) {
+        if (console) ++console->output_calls;
+        print(user, context, text);
+        if (console) --console->output_calls;
+    }
+}
+
 static void output(qa_console *console, const qa_command_context *context, const char *text)
 {
     const qa_console_options *options=options_for(console,context);
-    if (!options) return;
-    void (*print)(void *, const qa_command_context *, const char *) =
-        console->redirect == NULL ? options->print : console->redirect->print;
-    void *user = console->redirect == NULL ? options->user : console->redirect->user;
-    if (print != NULL) {
-        ++console->output_calls;
-        print(user, context, text);
-        --console->output_calls;
-    }
+    if (options) output_to(console,context,text,options->print,options->user);
 }
 
 void qa_console_emit(qa_console *console, const qa_command_context *context, const char *text)
 {
     if (console != NULL && text != NULL)
         output(console, context_for(console, context), text);
+}
+
+void qa_console_emit_to(qa_console *console, const qa_command_context *context,
+    const char *text, void (*print)(void *, const qa_command_context *, const char *), void *user)
+{
+    if (!text) return;
+    if (console) {
+        context = context_for(console,context);
+        if (console->redirect && !options_for(console,context)) return;
+    }
+    output_to(console,context,text,print,user);
 }
 
 static bool returned(const qa_console *console)

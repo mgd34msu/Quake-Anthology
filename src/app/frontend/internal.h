@@ -348,6 +348,7 @@ struct qa_frontend {
     frontend_audio_identity *audio_first, *audio_last;
     uint64_t next_audio_id;
     qa_application *application;
+    qa_application_event_subscription log_output;
     frontend_engine_cvar_handles engine_cvars;
     frontend_pause_cvars pause_cvars;
     qa_display *display;
@@ -435,6 +436,7 @@ bool frontend_seat_actor_read(const qa_frontend *,uint32_t ordinal,qa_actor_id *
 bool frontend_command_seat_read(const qa_frontend *,const qa_command_context *,uint32_t *);
 bool frontend_seat_context_ready(void *,uint32_t,const qa_command_context *,qa_error *);
 bool frontend_events(qa_frontend *, qa_error *);
+void frontend_logs_drain(qa_frontend *,uint64_t through);
 bool frontend_events_flush(qa_frontend *, qa_error *);
 bool frontend_map_events(qa_frontend *, qa_error *);
 bool frontend_event_prepare(qa_frontend *, qa_error *);
@@ -456,6 +458,7 @@ bool frontend_player_events(qa_frontend *, qa_error *);
 void frontend_player_retire(frontend_seat *);
 void frontend_print(void *, const char *);
 void frontend_console_print(void *, const qa_command_context *, const char *);
+void frontend_console_deliver(void *, const qa_command_context *, const char *);
 qa_command_result frontend_console_forward(void *,const qa_command_invocation *,qa_error *);
 bool frontend_menu_open(frontend_seat *, qa_ui_id, qa_error *);
 bool frontend_game_menu(frontend_seat *, qa_error *);

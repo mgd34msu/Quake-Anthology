@@ -39,8 +39,7 @@ static bool same_console(const qa_command_context *a, const qa_command_context *
 static void print(llm_console *binding, const qa_command_context *source, const char *text) {
     qa_llm *s = binding->owner;
     if (!s->options.context_active(s->options.context, source)) return;
-    if (qa_console_output_redirected(binding->console)) qa_console_emit(binding->console, source, text);
-    else if (s->options.print) s->options.print(s->options.context, source, text);
+    qa_console_emit_to(binding->console,source,text,s->options.print,s->options.context);
 }
 static void retire(console_request *request) { if (request) { qa_buffer_free(&request->answer); free(request->script); free(request); } }
 static void cancel(llm_console *binding, console_request **link) {
