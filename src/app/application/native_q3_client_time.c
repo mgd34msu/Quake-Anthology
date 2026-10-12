@@ -1,4 +1,5 @@
 #include "native_q3_client.h"
+#include "qa/text.h"
 #include "qa/game_q3_configstrings.h"
 #include "qa/source_frame_time.h"
 #include <stdlib.h>
@@ -28,16 +29,6 @@ bool native_client_time_register(qa_native_q3_client_service *service,qa_error *
     }
     return true;
 }
-static bool same_name(const char *text,const char *name)
-{
-    while (*text && *name) {
-        unsigned a=(unsigned char)*text++,b=(unsigned char)*name++;
-        if (a>='A' && a<='Z') a+='a'-'A';
-        if (b>='A' && b<='Z') b+='a'-'A';
-        if (a!=b) return false;
-    }
-    return !*text && !*name;
-}
 static bool refresh_system_info(qa_native_q3_client_service *service,qa_error *error)
 {
     const char *borrowed; uint64_t revision;
@@ -54,9 +45,9 @@ static bool refresh_system_info(qa_native_q3_client_service *service,qa_error *e
         *separator=0; char *value=separator+1;
         separator=strchr(value,'\\');
         if (separator) { *separator=0; cursor=separator+1; } else cursor=value+strlen(value);
-        bool skip=! *name || same_name(name,"cl_allowdownload") || (same && same_name(name,"timescale"));
+        bool skip=! *name || qa_text_ascii_equal(name,"cl_allowdownload") || (same && qa_text_ascii_equal(name,"timescale"));
         if (service->services.client.client_time_cvars) for (size_t i=0;i<3;++i)
-            skip=skip || same_name(name,time_names[i]);
+            skip=skip || qa_text_ascii_equal(name,time_names[i]);
         if (!skip) ok=qa_cvars_set(service->services.client.cvars,name,value,true,error);
     }
     free(working);

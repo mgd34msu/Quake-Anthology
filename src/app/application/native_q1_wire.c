@@ -1479,15 +1479,7 @@ bool application_native_q1_wire_chat(application_native_q1_wire_source *source, 
             okay = application_fail(error, QA_ERROR_NOT_FOUND, "Native Q1 chat lost its physical source recipient"); break;
         }
         if (target) {
-            const unsigned char *left = (const unsigned char *)target, *right = (const unsigned char *)view.name;
-            while (*left && *right) {
-                unsigned char a = *left, b = *right;
-                if (a >= 'A' && a <= 'Z') a += 'a' - 'A';
-                if (b >= 'A' && b <= 'Z') b += 'a' - 'A';
-                if (a != b) break;
-                ++left; ++right;
-            }
-            if (*left || *right) continue;
+            if (!qa_text_ascii_equal(target, view.name)) continue;
             values[count++] = actor;
             break;
         }

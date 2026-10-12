@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `f71e825c`.
+Follow-up source changes were reviewed through main `ef299e52`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 142 have source fixes
+There are **374 overlapping source-review observations**: 144 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 229 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 227 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -167,7 +167,7 @@ tool captures; existing checkpoint fields remain readable.
 | `J12-05` | `f3b079bf` | Tools and LLM output enters ordered immutable LOG records. One leased final cursor and shared redirect capture preserve context/text/order; core capture checks exercise direct/ring/direct ordering. |
 | `J12-08` | `2a47f117` | One counted-byte comparison implements exact/ASCII-fold equality. Console and tools copies are deleted; embedded NUL/high-byte/length checks passed. |
 | `J32-13` | `62d85505` | Dormant model fingerprint/caster/atlas paths are deleted. Original reached planar and stencil shadow paths and reserved identity slot remain. |
-| `J12-12`, `Q3NET-35-02` | `a42df03f` | Input identity uses the common context comparator, preserving strict script pointer equality. Q3 decimal adapters preserve locale/ASCII distinctions and checksum casts. QVM perpendicular projection uses the shared reciprocal primitive. |
+| `J12-12`, `Q3NET-35-02`, `26-17` | `a42df03f` | Input identity uses the common context comparator, preserving strict script pointer equality. Q3 decimal adapters preserve locale/ASCII distinctions and checksum casts. QVM perpendicular projection uses the shared reciprocal primitive. |
 | `28-01` | `24aad7c8` | Live unified handshake reads the existing bounded layout and writes caller-owned storage, without temporary documents. Existing document decode delegates it; core checks compare wire bytes and failure output behavior. |
 | `31-10` | `748fa6a6` | Presentation converts ABI fields and delegates one qsrc-derived trajectory implementation. Core checks cover wrapped stop boundaries, gravity, milliseconds, half-amplitude sine velocity and invalid-output preservation. |
 | `09-06` | `c99499c4` | Bot bindings use qa_actor_index with full identities. Checkpoint rebuild and population/requirements save adapters keep the existing field order and client+1 words by source review; no live bot-save round trip. |
@@ -286,3 +286,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 | `31-09` | `7d3f6cc2` | One Q3 tag attachment body; original arithmetic, fields and missing-tag rules are caller policy. Shared item axes and pose normalization. Normal build/seven suites passed; no live visual or timing claim. |
 
 | `J14-10` | `f71e825c` | WORLD music identity retained across unchanged publications; replacement and startup previous-selection rules preserved. Normal build/seven suites passed; no live audio or timing claim. |
+
+| `03-17` | `ef299e52` | Q1 muzzle projection indexes authoritative ring records; abort, reused actor slots and retirement cases pass. Normal build/seven suites passed; no live protocol or speed claim. |

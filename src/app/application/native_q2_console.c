@@ -1,4 +1,5 @@
 #include "native_q2_console.h"
+#include "qa/text.h"
 #include "guest_native_q2_original_save.h"
 #include "q3_product.h"
 #include "startup_flow.h"
@@ -318,24 +319,15 @@ static bool operator_command(void *opaque, const qa_command_invocation *invocati
     free(players);
     return okay;
 }
-static bool password_required(const char *value) {
-    static const char none[] = "none";
-    if (!*value) return false;
-    size_t i = 0;
-    for (; value[i] && none[i]; ++i) {
-        unsigned char c = (unsigned char)value[i];
-        if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
-        if (c != (unsigned char)none[i]) return true;
-    }
-    return value[i] != none[i];
-}
 static bool changed(void *opaque, qa_cvars *registry, const char *name, qa_error *error) {
     struct application_native_q2_console *owner = opaque;
     if (!strcmp(name, "password") || !strcmp(name, "spectator_password")) {
         const qa_cvar_view *password = qa_cvars_read(registry, owner->password);
         const qa_cvar_view *spectator = qa_cvars_read(registry, owner->spectator_password);
-        unsigned required = (password && password_required(password->value) ? 1u : 0u) |
-                            (spectator && password_required(spectator->value) ? 2u : 0u);
+        unsigned required = (password && *password->value &&
+            !qa_text_ascii_equal(password->value, "none") ? 1u : 0u) |
+            (spectator && *spectator->value &&
+             !qa_text_ascii_equal(spectator->value, "none") ? 2u : 0u);
         char value[2] = {(char)('0' + required), 0};
         if (!qa_cvars_set(registry, "needpass", value, true, error)) return false;
     }

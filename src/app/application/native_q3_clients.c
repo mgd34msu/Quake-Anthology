@@ -29,16 +29,6 @@
 #include <stdio.h>
 #include <string.h>
 
-static bool named(const char *text, const char *name)
-{
-    while (*text && *name) {
-        unsigned char byte = (unsigned char)*text++;
-        if (byte >= 'A' && byte <= 'Z') byte += 'a' - 'A';
-        if (byte != (unsigned char)*name++) return false;
-    }
-    return !*text && !*name;
-}
-
 static int32_t difference(int32_t left, int32_t right)
 {
     uint32_t bits = (uint32_t)left - (uint32_t)right;
@@ -439,8 +429,8 @@ static bool userinfo_changed(application_provider *provider,
     if (qa_game_type_is_team(game_type) && (flags & 8u)) {
         char requested[1024];
         qa_q3_client_info_value(info, "team", requested, sizeof(requested));
-        if (named(requested, "red") || named(requested, "r")) team = 1;
-        else if (named(requested, "blue") || named(requested, "b")) team = 2;
+        if (qa_text_ascii_equal(requested, "red") || qa_text_ascii_equal(requested, "r")) team = 1;
+        else if (qa_text_ascii_equal(requested, "blue") || qa_text_ascii_equal(requested, "b")) team = 2;
         else {
             if (!application_native_q3_client_pick_team(provider, (int32_t)slot, &team, error)) return false;
         }
@@ -514,7 +504,7 @@ bool application_native_q3_client_connect(application_provider *provider, qa_act
     if (ok) ok = qa_q3_client_server_flags(provider->state.q3, slot, &flags, error) &&
         application_native_q3_settings_string_at(provider, APPLICATION_Q3_SETTING_G_PASSWORD, &password, error);
     if (ok && !(flags & 8u) && strcmp(address, "localhost") && *password &&
-        !named(password, "none") && strcmp(password, supplied)) *denial = "Invalid password";
+        !qa_text_ascii_equal(password, "none") && strcmp(password, supplied)) *denial = "Invalid password";
     if (!ok || *denial) {
         application_native_q3_console_release(provider);
         return ok;
@@ -991,16 +981,16 @@ static bool set_team(application_provider *provider, qa_actor_id actor,
         !application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_TEAM_FORCE_BALANCE, &balance, error) ||
         !application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_MAX_GAME_CLIENTS, &max_players, error)) return false;
     int32_t team = 0, state = QA_Q3_SPECTATOR_NOT, client = 0;
-    if (named(request, "scoreboard") || named(request, "score")) {
+    if (qa_text_ascii_equal(request, "scoreboard") || qa_text_ascii_equal(request, "score")) {
         team = 3; state = QA_Q3_SPECTATOR_SCOREBOARD;
-    } else if (named(request, "follow1") || named(request, "follow2")) {
+    } else if (qa_text_ascii_equal(request, "follow1") || qa_text_ascii_equal(request, "follow2")) {
         team = 3; state = QA_Q3_SPECTATOR_FOLLOW;
-        client = named(request, "follow1") ? -1 : -2;
-    } else if (named(request, "spectator") || named(request, "s")) {
+        client = qa_text_ascii_equal(request, "follow1") ? -1 : -2;
+    } else if (qa_text_ascii_equal(request, "spectator") || qa_text_ascii_equal(request, "s")) {
         team = 3; state = QA_Q3_SPECTATOR_FREE;
     } else if (qa_game_type_is_team(game_type)) {
-        if (named(request, "red") || named(request, "r")) team = 1;
-        else if (named(request, "blue") || named(request, "b")) team = 2;
+        if (qa_text_ascii_equal(request, "red") || qa_text_ascii_equal(request, "r")) team = 1;
+        else if (qa_text_ascii_equal(request, "blue") || qa_text_ascii_equal(request, "b")) team = 2;
         else if (!application_native_q3_client_pick_team(provider, (int32_t)slot, &team, error)) return false;
         if (balance) {
             int32_t counts[2];
@@ -1346,19 +1336,19 @@ bool application_native_q3_client_command(application_provider *provider, qa_act
     int32_t intermission;
     if (ok && !chat_handled) {
         const char *name = command->argv[0];
-        if (named(name, "score")) ok = application_native_q3_client_scoreboard(provider, actor, error);
+        if (qa_text_ascii_equal(name, "score")) ok = application_native_q3_client_scoreboard(provider, actor, error);
         else if (!application_native_q3_match_intermission(provider, &intermission, error)) ok = false;
         else if (intermission)
             ok = application_native_q3_chat_intermission(app, provider, actor, command, error);
-        else if (named(name, "team")) ok = team_command(provider, actor, command, error);
-        else if (named(name, "levelshot")) ok = level_shot(provider, actor, error);
-        else if (named(name, "follow") || named(name, "follownext") || named(name, "followprev"))
+        else if (qa_text_ascii_equal(name, "team")) ok = team_command(provider, actor, command, error);
+        else if (qa_text_ascii_equal(name, "levelshot")) ok = level_shot(provider, actor, error);
+        else if (qa_text_ascii_equal(name, "follow") || qa_text_ascii_equal(name, "follownext") || qa_text_ascii_equal(name, "followprev"))
             ok = follow_command(provider, actor, command,
-                named(name, "follownext") ? 1 : named(name, "followprev") ? -1 : 0, error);
-        else if (named(name, "teamtask")) ok = team_task(provider, actor, command, error);
-        else if (named(name, "gc")) ok = application_native_q3_game_command(app, provider, actor, command, error);
-        else if (named(name, "callvote") || named(name, "vote") ||
-            named(name, "callteamvote") || named(name, "teamvote")) {
+                qa_text_ascii_equal(name, "follownext") ? 1 : qa_text_ascii_equal(name, "followprev") ? -1 : 0, error);
+        else if (qa_text_ascii_equal(name, "teamtask")) ok = team_task(provider, actor, command, error);
+        else if (qa_text_ascii_equal(name, "gc")) ok = application_native_q3_game_command(app, provider, actor, command, error);
+        else if (qa_text_ascii_equal(name, "callvote") || qa_text_ascii_equal(name, "vote") ||
+            qa_text_ascii_equal(name, "callteamvote") || qa_text_ascii_equal(name, "teamvote")) {
             bool vote_handled;
             ok = application_native_q3_votes_command(provider, actor, command, &vote_handled, error) &&
                 (vote_handled || application_fail(error, QA_ERROR_ARGUMENT,

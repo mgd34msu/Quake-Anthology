@@ -34,16 +34,6 @@ typedef struct chat_client {
     bool inuse;
 } chat_client;
 
-static bool same_command(const char *text, const char *expected)
-{
-    while (*text && *expected) {
-        unsigned char byte = (unsigned char)*text++;
-        if (byte >= 'A' && byte <= 'Z') byte = (unsigned char)(byte + ('a' - 'A'));
-        if (byte != (unsigned char)*expected++) return false;
-    }
-    return !*text && !*expected;
-}
-
 static size_t bounded_length(const char *text, size_t capacity)
 {
     size_t length = 0;
@@ -433,23 +423,23 @@ bool application_native_q3_chat_command(qa_application *application,
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid native Q3 chat dispatch");
     *handled = false;
     const char *name = argument(command, 0);
-    if (!same_command(name, "say") && !same_command(name, "say_team") &&
-        !same_command(name, "tell") && !same_command(name, "vsay") &&
-        !same_command(name, "vsay_team") && !same_command(name, "vtell") &&
-        !same_command(name, "vosay") && !same_command(name, "vosay_team") &&
-        !same_command(name, "votell") && !same_command(name, "vtaunt")) return true;
+    if (!qa_text_ascii_equal(name, "say") && !qa_text_ascii_equal(name, "say_team") &&
+        !qa_text_ascii_equal(name, "tell") && !qa_text_ascii_equal(name, "vsay") &&
+        !qa_text_ascii_equal(name, "vsay_team") && !qa_text_ascii_equal(name, "vtell") &&
+        !qa_text_ascii_equal(name, "vosay") && !qa_text_ascii_equal(name, "vosay_team") &&
+        !qa_text_ascii_equal(name, "votell") && !qa_text_ascii_equal(name, "vtaunt")) return true;
     *handled = true;
     chat_scope scope;
     if (!scope_begin(application, provider, actor, command, &scope, error)) return false;
-    if (same_command(name, "say")) return say_command(&scope, command, CHAT_ALL, false, error);
-    if (same_command(name, "say_team")) return say_command(&scope, command, CHAT_TEAM, false, error);
-    if (same_command(name, "tell")) return tell(&scope, command, error);
-    if (same_command(name, "vsay")) return voice_command(&scope, command, CHAT_ALL, false, error);
-    if (same_command(name, "vsay_team")) return voice_command(&scope, command, CHAT_TEAM, false, error);
-    if (same_command(name, "vtell")) return voice_tell(&scope, command, false, error);
-    if (same_command(name, "vosay")) return voice_command(&scope, command, CHAT_ALL, true, error);
-    if (same_command(name, "vosay_team")) return voice_command(&scope, command, CHAT_TEAM, true, error);
-    if (same_command(name, "votell")) return voice_tell(&scope, command, true, error);
+    if (qa_text_ascii_equal(name, "say")) return say_command(&scope, command, CHAT_ALL, false, error);
+    if (qa_text_ascii_equal(name, "say_team")) return say_command(&scope, command, CHAT_TEAM, false, error);
+    if (qa_text_ascii_equal(name, "tell")) return tell(&scope, command, error);
+    if (qa_text_ascii_equal(name, "vsay")) return voice_command(&scope, command, CHAT_ALL, false, error);
+    if (qa_text_ascii_equal(name, "vsay_team")) return voice_command(&scope, command, CHAT_TEAM, false, error);
+    if (qa_text_ascii_equal(name, "vtell")) return voice_tell(&scope, command, false, error);
+    if (qa_text_ascii_equal(name, "vosay")) return voice_command(&scope, command, CHAT_ALL, true, error);
+    if (qa_text_ascii_equal(name, "vosay_team")) return voice_command(&scope, command, CHAT_TEAM, true, error);
+    if (qa_text_ascii_equal(name, "votell")) return voice_tell(&scope, command, true, error);
     return voice_taunt(&scope, error);
 }
 
