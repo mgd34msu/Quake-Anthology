@@ -125,6 +125,10 @@ bool qa_q2_item_drop(qa_q2_game *, qa_actor_id, qa_item_id, const qa_q2_drop_opt
                      qa_actor_id *out, bool *dropped, qa_error *);
 bool qa_q2_item_drop_monster(qa_q2_game *, qa_actor_id, const char *, qa_actor_id *, bool *,
                              qa_error *);
+bool qa_q2_item_authored_bind(qa_q2_game *, qa_string_id, qa_error *);
+qa_item_id qa_q2_item_authored_id(qa_q2_game *, qa_string_id);
+bool qa_q2_item_drop_monster_id(qa_q2_game *, qa_actor_id, qa_item_id, qa_actor_id *, bool *,
+    qa_error *);
 bool qa_q2_items_start(qa_q2_game *, qa_actor_id, const char *expression, qa_error *);
 bool qa_q2_powerups_read(qa_q2_game *, qa_actor_id, qa_q2_powerups *, qa_error *);
 bool qa_q2_powerups_clear(qa_q2_game *, qa_actor_id, qa_error *);

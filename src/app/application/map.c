@@ -1256,10 +1256,10 @@ static bool monster_killed(void *opaque, qa_actor_id actor, qa_actor_id attacker
     if (map->kind == APPLICATION_PROVIDER_Q2) {
         if (!qa_q2_campaign_monster_count(map->state.q2, QA_Q2_MONSTER_COUNT_KILLED, error)) return false;
         if (row->drop_item) {
-            const char *drop = qa_strings_cstr(qa_session_strings(app->session), row->drop_item);
+            qa_item_id drop = qa_q2_item_authored_id(map->state.q2, row->drop_item);
             qa_actor_id item;
             bool dropped;
-            if (!qa_q2_item_drop_monster(map->state.q2, actor, drop, &item, &dropped, error)) return false;
+            if (!qa_q2_item_drop_monster_id(map->state.q2, actor, drop, &item, &dropped, error)) return false;
             row = qa_targets_monster(app->targets, actor);
             if (!row) return true;
             if (map->component.clock.kind == QA_RULESET_Q2_RERELEASE && dropped && row->item_target) {
@@ -1684,6 +1684,9 @@ bool application_monster_admit(void *opaque, qa_actor_id actor, const qa_authore
 {
     application_provider *provider = opaque;
     qa_targets_monsters_configure(provider->application->targets, provider->application, application_monster_mission);
+    application_provider *map = row ? monster_owner(provider->application, row->owner) : NULL;
+    if (map && map->kind == APPLICATION_PROVIDER_Q2 &&
+        !qa_q2_item_authored_bind(map->state.q2, row->drop_item, error)) return false;
     return qa_targets_monster_admit(provider->application->targets, actor, row, error);
 }
 

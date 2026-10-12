@@ -321,7 +321,8 @@
     X(RESOURCE_TESLA_TRIGGER, "tesla trigger") \
     X(RESOURCE_MODELS_ITEMS_DEFENDER_TRIS_MD2, "models/items/defender/tris.md2") \
     X(RESOURCE_MODELS_ITEMS_HUNTER_TRIS_MD2, "models/items/hunter/tris.md2") \
-    X(RESOURCE_MODELS_ITEMS_VENGNCE_TRIS_MD2, "models/items/vengnce/tris.md2")
+    X(RESOURCE_MODELS_ITEMS_VENGNCE_TRIS_MD2, "models/items/vengnce/tris.md2") \
+    X(TELSA, "telsa")
 
 typedef uint32_t q2_runtime_name;
 enum {

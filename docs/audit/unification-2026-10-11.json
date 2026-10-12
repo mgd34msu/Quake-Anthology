@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "69dd092d574a95edc3f4b6e3f8e9396dbf16e4f1",
+  "verified_main": "d7372ae99a0ee9e19132aac8b299e1ebd8d384ae",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 229,
-    "open_source_observation": 142,
+    "fixed_source_build_core": 230,
+    "open_source_observation": 141,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -32639,8 +32639,9 @@
       "severity": "medium",
       "job": "20",
       "area": "gameplay_q1",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "d7372ae99a0ee9e19132aac8b299e1ebd8d384ae"
     },
     {
       "id": "J20-04",
@@ -43311,6 +43312,47 @@
       ],
       "record_directory": "/tmp/qa-ta3196-indexed-provider-and-sky-identity-20261012-v1",
       "conclusion": "Provider/client/sky identity callers use common full-generation indexes; source validity, reentrant route membership and retained sky precedence are preserved. Normal build and seven core suites passed; no live or allocation claim."
+    },
+    {
+      "commit": "d7372ae99a0ee9e19132aac8b299e1ebd8d384ae",
+      "source_tree": "56ee79a641d83b3dc29afa0af02d0d00890d466a",
+      "finding_ids": [
+        "J20-03"
+      ],
+      "files_rechecked": [
+        "include/qa/strings.h",
+        "src/core/strings.c",
+        "src/gameplay/q1/internal.h",
+        "src/gameplay/q1/maps/triggers.c",
+        "src/gameplay/q1/mg3_commands.c",
+        "src/gameplay/q1/mg3_progress.c",
+        "src/gameplay/q1/monster_lifecycle.c",
+        "src/gameplay/q1/pickups.c",
+        "src/gameplay/q1/player_ui.c",
+        "src/gameplay/q1/powers.c",
+        "src/gameplay/q1/rocket_ogre.c",
+        "src/gameplay/q1/rogue_weapons.c",
+        "src/gameplay/q1/source_birth.c",
+        "src/gameplay/q1/source_flags.c",
+        "src/gameplay/q1/source_rogue.c",
+        "src/gameplay/q1/source_rogue_tag.c",
+        "src/gameplay/q1/source_runes.c",
+        "src/gameplay/q1/source_travel.c",
+        "src/gameplay/q1/wire.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-q1-live-name-adoption-20261012-v1",
+      "conclusion": "The reached Q1 fixed-name HUD/source/AI/pickup/message paths now use the existing cold runtime name table. One resource-ID message emitter preserves flags and empty/destroyed behavior; arbitrary mod ammo prefix acceptance remains. Normal build and seven core suites passed; no live claim."
     }
   ],
   "verification_limits": [

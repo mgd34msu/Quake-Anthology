@@ -458,11 +458,12 @@ bool q2m_lifecycle_killed(q2m_context *context, qa_error *error) {
     monster->touch_active = false;
     context->actor->physics.flags &= ~(uint32_t)(QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING);
     if (!present && context->actor->entity) {
-        const char *drop = q2_field_text(context->game, context->actor->entity, context->game->field_keys[QA_TARGET_KEY_ITEM]);
-        if (*drop) {
+        qa_item_id drop = qa_q2_item_authored_id(context->game,
+            q2_field_id(context->actor->entity, context->game->field_keys[QA_TARGET_KEY_ITEM]));
+        if (drop) {
             qa_actor_id item;
             bool dropped;
-            if (!qa_q2_item_drop_monster(context->game, context->actor->id, drop, &item, &dropped, error))
+            if (!qa_q2_item_drop_monster_id(context->game, context->actor->id, drop, &item, &dropped, error))
                 return false;
             if (!q2m_alive(context))
                 return true;

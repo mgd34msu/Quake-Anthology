@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../items/internal.h"
 #include "qa/text.h"
 #include "qa/game_q2_monsters.h"
 
@@ -49,6 +50,10 @@ bool qa_q2_entity_spawn(qa_q2_game *g, qa_actor_id id, const qa_q2_map_fields *f
             }
         }
         s->field_count = fields->count;
+    }
+    if (!qa_q2_item_authored_bind(g, q2_field_id(s, g->field_keys[QA_TARGET_KEY_ITEM]), e)) {
+        q2_entity_state_release(g, s);
+        return false;
     }
     a->entity = s;
     a->entity_game = g;

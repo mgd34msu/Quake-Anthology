@@ -241,6 +241,19 @@ const qa_q2_item_definition *q2_item_by_id(qa_q2_game *g, qa_item_id id) {
     }
     return NULL;
 }
+bool qa_q2_item_authored_bind(qa_q2_game *g, qa_string_id name, qa_error *e) {
+    qa_id_index *index = &g->item_runtime->authored_items;
+    if (!name || qa_id_index_find(index, name, 0)) return true;
+    const char *text = qa_strings_cstr(qa_session_strings(g->services.session), name);
+    const qa_q2_item_definition *definition = text ? qa_q2_item_lookup(g, text) : NULL;
+    if (!qa_id_index_reserve(index, 1, e)) return false;
+    qa_id_index_insert(index, name, 0, definition ? definition->item : 0);
+    return true;
+}
+qa_item_id qa_q2_item_authored_id(qa_q2_game *g, qa_string_id name) {
+    qa_id_index_entry *entry = qa_id_index_find(&g->item_runtime->authored_items, name, 0);
+    return entry ? (qa_item_id)entry->value : 0;
+}
 bool q2_supplemental_find(qa_q2_game *g, const char *name, bool names_only,
                           qa_q2_supplemental_item *out) {
     const qa_q2_item_options *s = &g->item_runtime->options;

@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `69dd092d`.
+Follow-up source changes were reviewed through main `d7372ae9`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 229 have source fixes
+There are **374 overlapping source-review observations**: 230 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 142 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 141 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -422,3 +422,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `e45c4387` / J24-06, J24-08: Q3 fixed sound/index and spawnpoint consumers use retained canonical IDs with configstring revision invalidation; original first-use ordinals and spawn policies are preserved. Normal build and seven core suites passed; no live or performance claim. Records: `/tmp/qa-ta3196-q3-bound-sounds-spawn-ids-20261012-v1`.
 
 - `69dd092d` / 05-I1, 05-I2, 05-I3, 05-I4, 16-001: Provider/client/sky identity callers use common full-generation indexes; source validity, reentrant route membership and retained sky precedence are preserved. Normal build and seven core suites passed; no live or allocation claim. Records: `/tmp/qa-ta3196-indexed-provider-and-sky-identity-20261012-v1`.
+
+- `d7372ae9` / J20-03: The reached Q1 fixed-name HUD/source/AI/pickup/message paths now use the existing cold runtime name table. One resource-ID message emitter preserves flags and empty/destroyed behavior; arbitrary mod ammo prefix acceptance remains. Normal build and seven core suites passed; no live claim. Records: `/tmp/qa-ta3196-q1-live-name-adoption-20261012-v1`.

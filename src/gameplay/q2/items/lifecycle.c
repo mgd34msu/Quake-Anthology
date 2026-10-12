@@ -19,6 +19,7 @@ bool q2_items_init(qa_q2_game *g, qa_error *e) {
 }
 void q2_items_close(qa_q2_game *g) {
     if (g->item_runtime) {
+        qa_id_index_destroy(&g->item_runtime->authored_items);
         free(g->item_runtime->actions);
         free(g->item_runtime->admissions);
         free(g->item_runtime->by_id);

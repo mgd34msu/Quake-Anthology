@@ -1,5 +1,6 @@
 #include "checkpoint_internal.h"
 #include "internal.h"
+#include "../items/internal.h"
 
 void qa_q2_entity_checkpoint_free(qa_q2_entity_checkpoint *s) {
     if (!s)
@@ -201,7 +202,8 @@ bool qa_q2_entity_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_entity_chec
     q2_entity_state *s = q2_entity_state_take(g, e);
     if (!s) return false;
     *s = saved->value;
-    if (!copy_arrays(g, &saved->value, s, true, e))
+    if (!copy_arrays(g, &saved->value, s, true, e) ||
+        !qa_q2_item_authored_bind(g, q2_field_id(s, g->field_keys[QA_TARGET_KEY_ITEM]), e))
         goto fail;
     if (!q2_resolve_reference(g, saved->activator, &s->activator, e) ||
         !q2_resolve_reference(g, saved->owner, &s->owner, e) ||

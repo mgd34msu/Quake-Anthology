@@ -1755,7 +1755,21 @@ static bool persistence_restore_owner(void *opaque, void *value,
         &operation->resolvers, record->payload, error);
     case QA_SAVE_PICKUPS: return qa_persistence_pickups_restore(candidate->session, candidate->pickups,
         &operation->resolvers, record->payload, error);
-    case QA_SAVE_TARGETS: return qa_persistence_targets_restore(candidate->targets, &operation->resolvers, record->payload, error);
+    case QA_SAVE_TARGETS: {
+        if (!qa_persistence_targets_restore(candidate->targets, &operation->resolvers,
+                record->payload, error)) return false;
+        qa_target_cursor cursor = {0};
+        qa_actor_id actor;
+        while (qa_targets_next_authored(candidate->targets, 0, &cursor, &actor)) {
+            qa_monster_mission mission;
+            if (!qa_targets_monster_lookup(candidate->targets, actor, &mission)) continue;
+            application_provider *map = mission.context;
+            qa_authored_monster *row = qa_targets_monster(candidate->targets, actor);
+            if (map->kind == APPLICATION_PROVIDER_Q2 &&
+                !qa_q2_item_authored_bind(map->state.q2, row->drop_item, error)) return false;
+        }
+        return true;
+    }
     case QA_SAVE_CONTROLS: return application_controls_restore(candidate, record->payload, error);
     case QA_SAVE_MODES: {
         bool ok = qa_modes_restore_bytes(candidate->modes, record->payload, error);

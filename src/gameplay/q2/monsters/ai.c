@@ -1209,15 +1209,6 @@ static q2_actor *native_monster_actor(qa_q2_game *game, qa_actor_id id) {
              : NULL;
 }
 
-static const char *trait_classname(q2m_context *context,
-                                   const qa_builtin_actor_traits *traits) {
-  return traits->classname == 0
-             ? NULL
-             : qa_strings_cstr(
-                   qa_session_strings(context->game->services.session),
-                   traits->classname);
-}
-
 static bool clear_medic_target(q2m_context *context, qa_error *error) {
   if (!q2m_medic_cleanup_patient(context, context->monster->enemy, error))
     return false;
@@ -1283,9 +1274,9 @@ bool qa_q2_before_monster_step(qa_q2_game *game, qa_actor_id id, qa_vec3 *displa
       return false;
     if (!q2m_alive(&context))
       return true;
-    const char *name = trait_classname(&context, &traits);
-    const char *tesla = game->options.rules == QA_RULESET_Q2_RERELEASE ? "tesla_mine" : "tesla";
-    if (name && !strcmp(name, tesla)) {
+    qa_string_id tesla = game->runtime_names[game->options.rules == QA_RULESET_Q2_RERELEASE
+                                               ? Q2_NAME_TESLA_MINE : Q2_NAME_TESLA];
+    if (traits.classname && traits.classname == tesla) {
       qa_body_state area;
       if (!qa_world_body_read(game->services.world, area_id, &area, error))
         return false;
@@ -1343,19 +1334,19 @@ bool qa_q2_accept_ground(qa_q2_game *game, qa_actor_id id, qa_vec3 origin,
     return false;
   if (!q2m_alive(&context))
     return true;
-  const char *owner_name = trait_classname(&context, &owner_traits);
-  const char *tesla_name = game->options.rules == QA_RULESET_Q2_RERELEASE ? "tesla_mine" : "tesla";
-  if (!owner_name || strcmp(owner_name, tesla_name))
+  qa_string_id tesla_name = game->runtime_names[game->options.rules == QA_RULESET_Q2_RERELEASE
+                                                  ? Q2_NAME_TESLA_MINE : Q2_NAME_TESLA];
+  if (!owner_traits.classname || owner_traits.classname != tesla_name)
     return true;
   qa_actor_id enemy = context.monster->enemy;
   if (!actor_traits(&context, enemy, &enemy_traits, error))
     return false;
   if (!q2m_alive(&context))
     return true;
-  const char *enemy_name = trait_classname(&context, &enemy_traits);
-  const char *protected_name = game->options.rules == QA_RULESET_Q2_RERELEASE ? "tesla_mine" : "telsa";
+  qa_string_id protected_name = game->runtime_names[game->options.rules == QA_RULESET_Q2_RERELEASE
+                                                      ? Q2_NAME_TESLA_MINE : Q2_NAME_TELSA];
   bool engage = !q2_actor_live(game, enemy);
-  if (!engage && (!enemy_name || strcmp(enemy_name, protected_name))) {
+  if (!engage && (!enemy_traits.classname || enemy_traits.classname != protected_name)) {
     bool visible = false;
     if (enemy_traits.player && !q2m_visible(&context, enemy, &visible, error))
       return false;
@@ -1387,11 +1378,10 @@ bool q2m_react_to_damage(q2m_context *context, qa_actor_id attacker,
     if (!q2m_alive(context))
       return true;
     {
-      const char *name = trait_classname(context, &inflictor_traits);
-      const char *tesla_name = context->game->options.rules == QA_RULESET_Q2_RERELEASE
-                                   ? "tesla_mine"
-                                   : "tesla";
-      if (name != NULL && strcmp(name, tesla_name) == 0) {
+      qa_string_id tesla_name = context->game->runtime_names[
+          context->game->options.rules == QA_RULESET_Q2_RERELEASE
+              ? Q2_NAME_TESLA_MINE : Q2_NAME_TESLA];
+      if (inflictor_traits.classname != 0 && inflictor_traits.classname == tesla_name) {
         bool created;
         if (!qa_q2_mark_tesla_area(context->game, context->actor->id,
                                    monster->last_attack.inflictor, &created,
@@ -1472,8 +1462,8 @@ bool q2m_react_to_damage(q2m_context *context, qa_actor_id attacker,
     }
     chosen = attacker;
   } else {
-    const char *self_name = monster->definition->classname;
-    const char *other_name = trait_classname(context, &attacker_traits);
+    qa_string_id self_name = monster->definition->classname_id;
+    qa_string_id other_name = attacker_traits.classname;
     bool ignore = false;
     bool retaliate = false;
     if (other != NULL) {
@@ -1487,11 +1477,11 @@ bool q2m_react_to_damage(q2m_context *context, qa_actor_id attacker,
       retaliate =
           (monster->definition->locomotion ==
                other->monster->definition->locomotion &&
-           other_name != NULL && strcmp(self_name, other_name) != 0 &&
+           other_name != 0 && self_name != other_name &&
            !ignore) ||
           qa_actor_id_equal(other->monster->enemy, context->actor->id);
     } else {
-      retaliate = other_name == NULL || strcmp(self_name, other_name) != 0;
+      retaliate = other_name == 0 || self_name != other_name;
     }
     qa_builtin_actor_traits current_traits = {0};
     if (!actor_traits(context, monster->enemy, &current_traits, error))

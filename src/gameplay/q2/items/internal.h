@@ -3,6 +3,7 @@
 #include "../internal.h"
 #include "qa/game_q2_entities.h"
 #include "qa/game_q2_items.h"
+#include "qa/id_index.h"
 
 typedef enum q2_item_think {
     Q2_ITEM_IDLE,
@@ -63,6 +64,7 @@ typedef struct q2_items {
     qa_pool records;
     qa_q2_item_definition *definitions;
     const qa_q2_item_definition **by_id;
+    qa_id_index authored_items;
     qa_item_id powers[QA_Q2_POWER_COUNT];
     size_t count;
     qa_item_definition *actions;

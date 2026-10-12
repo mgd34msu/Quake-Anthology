@@ -142,21 +142,30 @@ bool qa_q2_item_drop(qa_q2_game *g, qa_actor_id owner, qa_item_id id,
     *dropped = true;
     return true;
 }
-bool qa_q2_item_drop_monster(qa_q2_game *g, qa_actor_id owner, const char *name, qa_actor_id *out,
-                             bool *dropped, qa_error *e) {
-    if (!g || !out || !dropped || !name) {
+bool qa_q2_item_drop_monster_id(qa_q2_game *g, qa_actor_id owner, qa_item_id id, qa_actor_id *out,
+                            bool *dropped, qa_error *e) {
+    if (!g || !out || !dropped) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 monster item drop");
         return false;
     }
     *dropped = false;
     *out = (qa_actor_id){0};
-    const qa_q2_item_definition *d = qa_q2_item_lookup(g, name);
+    const qa_q2_item_definition *d = q2_item_by_id(g, id);
     if (!d)
         return true;
     if (!q2_item_drop_definition(g, owner, d, &(qa_q2_drop_options){0}, 0, out, e))
         return false;
     *dropped = out->registry != 0;
     return true;
+}
+bool qa_q2_item_drop_monster(qa_q2_game *g, qa_actor_id owner, const char *name, qa_actor_id *out,
+                             bool *dropped, qa_error *e) {
+    if (!g || !out || !dropped || !name) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 monster item drop");
+        return false;
+    }
+    const qa_q2_item_definition *d = qa_q2_item_lookup(g, name);
+    return qa_q2_item_drop_monster_id(g, owner, d ? d->item : 0, out, dropped, e);
 }
 bool q2_item_food_cube(qa_q2_game *g, qa_actor_id source, qa_vec3 origin, float scale, int health,
                        qa_vec3 velocity, qa_error *e) {

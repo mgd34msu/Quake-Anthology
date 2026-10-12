@@ -274,10 +274,7 @@ bool q2_nuke_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
 bool q2_nuke_reaction(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcome, qa_error *e) {
     const qa_actor_record *attacker =
         qa_actors_get(qa_session_actors(g->services.session), outcome->request.attack.attacker);
-    const char *name = attacker == NULL ? NULL
-                                        : qa_strings_cstr(qa_session_strings(g->services.session),
-                                                          attacker->definition);
-    return name != NULL && strcmp(name, "nuke") == 0
+    return attacker != NULL && attacker->definition == g->runtime_names[Q2_NAME_RESOURCE_NUKE]
                ? qa_session_release(g->services.session, a->id, e)
                : nuke_explode(g, a, e);
 }

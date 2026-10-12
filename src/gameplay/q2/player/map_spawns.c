@@ -56,11 +56,13 @@ bool q2_player_same_target(qa_q2_game *g, qa_string_id a, qa_string_id b, bool *
 }
 bool q2_player_map_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     q2_entity_state *s = a->entity;
-    const char *name = qa_strings_cstr(qa_session_strings(g->services.session), s->classname);
-    bool start = !strcmp(name, "info_player_start"), coop = !strcmp(name, "info_player_coop"),
-         deathmatch = !strcmp(name, "info_player_deathmatch"),
-         intermission = !strcmp(name, "info_player_intermission"),
-         lava = g->options.rules == QA_RULESET_Q2_RERELEASE && !strcmp(name, "info_player_coop_lava");
+    qa_string_id name = s->classname;
+    bool start = name == g->runtime_names[Q2_NAME_INFO_PLAYER_START],
+         coop = name == g->runtime_names[Q2_NAME_INFO_PLAYER_COOP],
+         deathmatch = name == g->runtime_names[Q2_NAME_INFO_PLAYER_DEATHMATCH],
+         intermission = name == g->runtime_names[Q2_NAME_INFO_PLAYER_INTERMISSION],
+         lava = g->options.rules == QA_RULESET_Q2_RERELEASE &&
+                name == g->runtime_names[Q2_NAME_INFO_PLAYER_COOP_LAVA];
     *handled = start || coop || deathmatch || intermission || lava;
     if (!*handled)
         return true;
