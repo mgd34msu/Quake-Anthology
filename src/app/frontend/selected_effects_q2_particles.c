@@ -132,9 +132,9 @@ void frontend_fx_q2_tracker_trail(frontend_fx_particles *state, qa_builtin_rando
 {
     (void)random;
     qa_vec3 delta = qa_vec_sub(end, start), direction = qa_vec_normalize(delta); double length = qa_vec_length(delta);
-    double horizontal = hypot(direction.x, direction.y), pitch = -atan2(direction.z, horizontal), yaw = horizontal == 0 ? 0 : atan2(direction.y, direction.x);
-    qa_vec3 forward = {(float)(cos(pitch) * cos(yaw)), (float)(cos(pitch) * sin(yaw)), (float)-sin(pitch)};
-    qa_vec3 up = {(float)(sin(pitch) * cos(yaw)), (float)(sin(pitch) * sin(yaw)), (float)cos(pitch)};
+    qa_vec3 angles=qa_vec_angles(direction,QA_DIRECTION_NATIVE_FLOAT,QA_VECTOR_SOURCE|QA_VECTOR_DOUBLE_SQRT);
+    qa_vec3 forward,up;
+    qa_angle_vectors(angles,&forward,NULL,&up,QA_ANGLE_NATIVE_MATH);
     for (double distance = 0; distance < length && state->count < FRONTEND_FX_PARTICLE_CAPACITY; distance += 3) {
         qa_vec3 point = qa_vec_add(start, qa_vec_scale(direction, (float)distance)); frontend_fx_q2_particle value = particle(seconds);
         value.origin = qa_vec_add(point, qa_vec_scale(up, (float)(8 * cos(qa_vec_dot(point, forward)))));

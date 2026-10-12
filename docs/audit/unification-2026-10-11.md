@@ -230,3 +230,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 | `02-07` | `06b77db3` | QC weapon records return to the common pool after successful unbind and call draining; cleanup refusal retains ownership. Cold backing and extension for simultaneous records remain. |
 
 | `17-14`, `J18-12` | `c486c081` | Seven local/remote model transforms use one constructor, retaining explicit float math, scales and handedness. Existing model tests check cardinal yaw and scale/translation order; prebuilt beams are unchanged. |
+
+| Radius storage, partial | `8693af1b` | Q1/Q2 radius capture writes directly into the held caller buffer; Hipnotic keeps descending callback order. Extra copies/world leases removed. Private builtin allocation remains open. |

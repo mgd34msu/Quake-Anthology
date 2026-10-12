@@ -2,6 +2,7 @@
 #include "remote_q1_private.h"
 #include "qa/image.h"
 #include "qa/binary.h"
+#include "qa/text.h"
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -63,21 +64,6 @@ static bool transfer_clear(frontend_remote_q1_skins *o, qa_error *e)
     o->waiting_block = false;
     o->cleanup = false; return true;
 }
-static void info(const char *text, const char *key, char *out, size_t capacity)
-{
-    out[0] = 0; const char *p = text ? text : ""; size_t n = strlen(key);
-    if (*p == '\\') ++p;
-    while (*p) {
-        const char *a = p; while (*p && *p != '\\') ++p;
-        size_t k = (size_t)(p - a); if (!*p) break;
-        const char *b = ++p; while (*p && *p != '\\') ++p;
-        if (k == n && !memcmp(a, key, n)) {
-            size_t bytes = (size_t)(p - b); if (bytes >= capacity) bytes = capacity - 1;
-            memcpy(out, b, bytes); out[bytes] = 0;
-        }
-        if (*p) ++p;
-    }
-}
 static void skin_name(const char *text, char out[16])
 {
     memset(out, 0, 16);
@@ -93,7 +79,12 @@ static void skin_name(const char *text, char out[16])
 }
 static void player_name(const frontend_remote_q1_skins *o, unsigned slot, char out[16])
 {
-    char skin[1024]; info(o->row->clients[slot].userinfo, "skin", skin, sizeof(skin));
+    const char *userinfo=o->row->clients[slot].userinfo;
+    qa_bytes value;
+    qa_info_find(userinfo?userinfo:"",(qa_bytes){(const uint8_t *)"skin",4},QA_INFO_LAST,&value);
+    char skin[1024];size_t bytes=value.size<sizeof(skin)?value.size:sizeof(skin)-1;
+    if (bytes) memcpy(skin,value.data,bytes);
+    skin[bytes]=0;
     skin_name(o->all && *o->all ? o->all : *skin ? skin : o->base, out);
 }
 static bool acquire(frontend_remote_q1_skins *o, const char *path, qa_resource **resource,
@@ -146,8 +137,9 @@ static bool prepare(frontend_remote_q1_skins *o, qa_error *e)
         const char *raw = o->row->clients[slot].userinfo ? o->row->clients[slot].userinfo : "";
         if (!changed && o->infos[slot] && !strcmp(raw, o->infos[slot])) continue;
         if (!remote_q1_string(o->infos + slot, raw, e)) return false;
-        o->selected[slot] = 0; char named[1024]; info(raw, "name", named, sizeof(named));
-        if (!*named || o->noskins == 1) continue;
+        o->selected[slot] = 0; qa_bytes named;
+        qa_info_find(raw,(qa_bytes){(const uint8_t *)"name",4},QA_INFO_LAST,&named);
+        if (!named.size || o->noskins == 1) continue;
         char selected[16], base[16]; player_name(o, slot, selected); skin_name(o->base, base);
         size_t index = 0;
         while (index < o->count && (strcmp(o->cache[index].selected, selected) || strcmp(o->cache[index].base, base))) ++index;
@@ -207,8 +199,10 @@ static bool refresh(frontend_remote_q1_skins *o, bool *ready, qa_error *e)
     o->noskins = n->number; o->loading = true; o->path_count = o->cursor = 0;
     memset(o->selected, 0, sizeof(o->selected));
     if (o->noskins == 0) for (unsigned slot = 0; slot < 32; ++slot) {
-        char named[1024], selected[16], path[27];
-        info(o->row->clients[slot].userinfo, "name", named, sizeof(named)); if (!*named) continue;
+        char selected[16], path[27];qa_bytes named;
+        const char *userinfo=o->row->clients[slot].userinfo;
+        qa_info_find(userinfo?userinfo:"",(qa_bytes){(const uint8_t *)"name",4},QA_INFO_LAST,&named);
+        if (!named.size) continue;
         player_name(o, slot, selected); snprintf(path, sizeof(path), "skins/%s.pcx", selected);
         size_t i = 0; while (i < o->path_count && strcmp(o->paths[i], path)) ++i;
         if (i == o->path_count) strcpy(o->paths[o->path_count++], path);

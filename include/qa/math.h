@@ -38,8 +38,9 @@ float qa_inverse_sqrt(float);
 typedef enum qa_direction_math_rule {
     QA_DIRECTION_FLOAT, QA_DIRECTION_FLOAT_RATIO, QA_DIRECTION_FLOAT_DIVIDE,
     QA_DIRECTION_VM, QA_DIRECTION_NATIVE, QA_DIRECTION_INTEGER, QA_DIRECTION_GEAR,
-    QA_DIRECTION_NATIVE_RATIO
+    QA_DIRECTION_NATIVE_RATIO, QA_DIRECTION_NATIVE_FLOAT
 } qa_direction_math_rule;
+/* NATIVE_FLOAT rounds double degrees to float before the source wrap. */
 enum qa_vector_angle_flags {
     QA_VECTOR_NEGATIVE_PITCH=1u, QA_VECTOR_WRAP_YAW=2u, QA_VECTOR_WRAP_PITCH=4u,
     QA_VECTOR_SQUARED_HORIZONTAL=8u, QA_VECTOR_VERTICAL_CARDINAL=16u,
@@ -99,12 +100,21 @@ static inline double qa_vec_dot_wide(qa_vec3 a,qa_vec3 b) { return (double)a.x*b
 static inline qa_vec3 qa_vec_cross(qa_vec3 a, qa_vec3 b) {
     return qa_v3(a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x);
 }
-static inline float qa_vec_length(qa_vec3 v) { return sqrtf(qa_vec_dot(v, v)); }
-static inline float qa_vec_normalize_length(qa_vec3 *v) {
-    float length=qa_vec_length(*v);
+typedef enum qa_length_math_rule {
+    QA_LENGTH_FLOAT_SQRT, QA_LENGTH_DOUBLE_SQRT
+} qa_length_math_rule;
+/* Both sum float squares; DOUBLE_SQRT retains the original sqrt(double). */
+static inline float qa_vec_length_rule(qa_vec3 v,qa_length_math_rule rule) {
+    float square=qa_vec_dot(v,v);
+    return rule==QA_LENGTH_DOUBLE_SQRT?(float)sqrt((double)square):sqrtf(square);
+}
+static inline float qa_vec_length(qa_vec3 v) { return qa_vec_length_rule(v,QA_LENGTH_FLOAT_SQRT); }
+static inline float qa_vec_normalize_length_rule(qa_vec3 *v,qa_length_math_rule rule) {
+    float length=qa_vec_length_rule(*v,rule);
     if(length!=0.0f) *v=qa_vec_scale(*v,1.0f/length);
     return length;
 }
+static inline float qa_vec_normalize_length(qa_vec3 *v) { return qa_vec_normalize_length_rule(v,QA_LENGTH_FLOAT_SQRT); }
 static inline qa_vec3 qa_vec_normalize(qa_vec3 v) { qa_vec_normalize_length(&v);return v; }
 static inline qa_vec3 qa_vec_fast_normalize(qa_vec3 v) { return qa_vec_scale(v,qa_inverse_sqrt(qa_vec_dot(v,v))); }
 static inline qa_vec3 qa_axis_to_local(qa_vec3 v,const qa_vec3 axis[3]) {

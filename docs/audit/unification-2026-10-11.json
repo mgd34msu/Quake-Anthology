@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "c486c0813476497bcab84cd947826fad1a5ff2d1",
+  "verified_main": "8693af1b71addce839f74c47193711fd235263d9",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -32791,7 +32791,13 @@
       "job": "21",
       "area": "gameplay_q2",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "source review; no runtime or performance proof",
+      "partial_followups": [
+        {
+          "commit": "8693af1b71addce839f74c47193711fd235263d9",
+          "verification": "Q1 native radius, Hipnotic reversed scan and Q2 builtin nearby capture into the existing active caller buffer via the shared borrowed-storage radius API. Intermediate copies/world leases are deleted. Source order, second scratch plane, nested frames and callback cleanup are retained. Private builtin heap-backed reservation and persistent roster lifetimes remain open."
+        }
+      ]
     },
     {
       "id": "J21-02",
@@ -36374,7 +36380,13 @@
       "job": "33",
       "area": "shared_gameplay",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "source review; no runtime or performance proof",
+      "partial_followups": [
+        {
+          "commit": "8693af1b71addce839f74c47193711fd235263d9",
+          "verification": "Q1 native radius, Hipnotic reversed scan and Q2 builtin nearby capture into the existing active caller buffer via the shared borrowed-storage radius API. Intermediate copies/world leases are deleted. Source order, second scratch plane, nested frames and callback cleanup are retained. Private builtin heap-backed reservation and persistent roster lifetimes remain open."
+        }
+      ]
     },
     {
       "id": "J33-02",
@@ -37150,7 +37162,9 @@
         "bsp",
         "image",
         "model"
-      ]
+      ],
+      "source_tree": "24e45fc66fef2635670396c40c9c4dccf039a5dd",
+      "record_directory": "/tmp/qa-ta3196-qvm-restore-storage-20261011"
     },
     {
       "commit": "f18a88690392c8290c29d2f1105a0b86fd79cd45",
@@ -37170,7 +37184,9 @@
         "bsp",
         "image",
         "model"
-      ]
+      ],
+      "source_tree": "79e0895b837781485eafc470fe55641c8ca19686",
+      "record_directory": "/tmp/qa-ta3196-inventory-no-fingerprints-20261011"
     },
     {
       "commit": "a2c842af82fb47c9ddba265bc1400fdaf13195b1",
@@ -37187,7 +37203,9 @@
         "bsp",
         "image",
         "model"
-      ]
+      ],
+      "source_tree": "a679384d00d2ab21e11e6e499108ac8152bcabad",
+      "record_directory": "/tmp/qa-ta3196-q2-restore-identity-20261011"
     },
     {
       "commit": "f4f3c235c68d75d5c56de20e18d3262dd1ab81e0",
@@ -39548,6 +39566,32 @@
       ],
       "record_directory": "/tmp/qa-ta3196-common-model-transform-20261011",
       "conclusion": "Seven local and remote model-transform callers use the common constructor with explicit angle math and uniform scale. Two helpers and four inline builders deleted. Existing model suite verifies handedness, scale-before-translation and cardinal yaw for all angle rules. Prebuilt beam placement is untouched. Source/build/core only."
+    },
+    {
+      "commit": "8693af1b71addce839f74c47193711fd235263d9",
+      "source_tree": "8c3eb42dce9a91c8b01bcb79ccb98da34c0df204",
+      "finding_ids": [
+        "J33-01",
+        "J21-01"
+      ],
+      "files_rechecked": [
+        "src/gameplay/builtin/services.c",
+        "src/gameplay/q1/maps/hipnotic_hazards.c",
+        "src/gameplay/q1/queries.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-borrowed-radius-storage-20261011",
+      "conclusion": "Q1 native radius, Hipnotic reversed scan and Q2 builtin nearby capture into the existing active caller buffer via the shared borrowed-storage radius API. Intermediate copies/world leases are deleted. Source order, second scratch plane, nested frames and callback cleanup are retained. Private builtin heap-backed reservation and persistent roster lifetimes remain open."
     }
   ],
   "verification_limits": [

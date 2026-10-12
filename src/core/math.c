@@ -96,6 +96,7 @@ static double direction_degrees(double y,double x,qa_direction_math_rule rule)
             double integral=trunc(degrees);
             return integral==0?0:integral;
         }
+        if(rule==QA_DIRECTION_NATIVE_FLOAT) return (float)degrees;
         return degrees;
     }
     }

@@ -243,8 +243,7 @@ static bool lights(frontend_remote_q2_effects *o, const frontend_remote_q2_effec
             forward=s->view.axis[0]; right=s->view.axis[1];
             origin=qa_vec_add(s->view.origin,qa_vec_scale(right,f->hand<0?7:f->hand>0?-7:0));
         } else {
-            double pitch=pose.angles.x*.017453292519943295, yaw=pose.angles.y*.017453292519943295;
-            forward=qa_v3((float)(cos(pitch)*cos(yaw)),(float)(cos(pitch)*sin(yaw)),(float)-sin(pitch));
+            qa_angle_vectors(pose.angles,&forward,NULL,NULL,QA_ANGLE_FLOAT_MATH);
         }
         o->sampled_lights[o->light_count++]=(qa_scene_light){.origin=origin,.color={1,1,1},.direction=forward,
             .radius=512,.scale=2,.cos_half_angle=.92718385f,.additive=true,.spot=true,.casts_shadow=true,

@@ -839,17 +839,12 @@ static bool character_submit(frontend_unified_q3 *o,unified_q3_character *c,qa_e
             c,character_part,e))return false;
     c->submitted=true;c->time=o->time;return true;
 }
-static qa_vec3 perpendicular(qa_vec3 n)
-{
-    qa_vec3 a=fabsf(n.x)<fabsf(n.y)?(fabsf(n.x)<fabsf(n.z)?qa_v3(1,0,0):qa_v3(0,0,1)):
-        (fabsf(n.y)<fabsf(n.z)?qa_v3(0,1,0):qa_v3(0,0,1));
-    return qa_vec_normalize(qa_vec_sub(a,qa_vec_scale(n,qa_vec_dot(a,n))));
-}
 static void ballistic_axis(qa_vec3 direction,float rotation,qa_vec3 axes[3])
 {
     qa_vec3 n=qa_vec_normalize(direction);if(qa_vec_length(n)==0)n=qa_v3(0,0,1);
-    qa_vec3 side=perpendicular(n),cross=qa_vec_cross(n,side);float angle=rotation*.01745329251994329577f;
-    axes[0]=n;axes[1]=qa_vec_add(qa_vec_scale(side,cosf(angle)),qa_vec_scale(cross,sinf(angle)));axes[2]=qa_vec_cross(n,axes[1]);
+    qa_vec3 side=qa_vec_perpendicular(n,QA_PERPENDICULAR_RECIPROCAL_PROJECTION);
+    if(rotation) side=qa_vec_rotate_around(n,side,rotation,QA_ROTATION_MATRIX);
+    axes[0]=n;axes[1]=side;axes[2]=qa_vec_cross(n,side);
 }
 static bool ballistic_loop(frontend_unified_q3 *o,unified_q3_bank *b,int32_t handle,
     qa_actor_id id,qa_vec3 origin,qa_vec3 velocity,qa_error *e)

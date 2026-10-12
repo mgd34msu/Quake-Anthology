@@ -2,32 +2,20 @@
 #include "remote_q1_private.h"
 #include "remote_q1_prediction.h"
 #include "internal.h"
+#include "qa/text.h"
 #include <math.h>
 #include <stdio.h>
-#include <string.h>
 
 static qa_vec3 vector(const float *v) { return qa_v3(v[0], v[1], v[2]); }
-static double length(qa_vec3 v) { return sqrt((double)v.x*v.x + (double)v.y*v.y + (double)v.z*v.z); }
 static bool setting(const frontend_remote_q1 *row, qa_cvar_handle handle)
 { const qa_cvar_view *v = qa_cvars_read(row->options.domain.cvars, handle); return v && v->number != 0; }
-static bool spectator_info(const char *info)
-{
-    const char *value = NULL; size_t size = 0;
-    const char *p = info ? info : ""; if (*p == '\\') ++p;
-    while (*p) {
-        const char *key = p; while (*p && *p != '\\') ++p;
-        if (!*p) break;
-        size_t count = (size_t)(p-key); const char *text = ++p;
-        while (*p && *p != '\\') ++p;
-        if (count == 10 && !memcmp(key, "*spectator", 10)) { value = text; size = (size_t)(p-text); }
-        if (*p) ++p;
-    }
-    return value && size != 0;
-}
 static bool eligible(const frontend_remote_q1 *row, unsigned slot)
 {
-    return slot < 32 && row->clients[slot].userinfo && row->clients[slot].name &&
-        *row->clients[slot].name && !spectator_info(row->clients[slot].userinfo);
+    if (slot>=32 || !row->clients[slot].userinfo || !row->clients[slot].name ||
+        !*row->clients[slot].name) return false;
+    qa_bytes spectator;
+    qa_info_find(row->clients[slot].userinfo,(qa_bytes){(const uint8_t *)"*spectator",10},QA_INFO_LAST,&spectator);
+    return spectator.size==0;
 }
 static bool unlock(frontend_remote_q1 *row, qa_error *error)
 {
@@ -60,34 +48,32 @@ static bool visible(frontend_remote_q1 *row, const qa_qw_player *target, bool *o
 {
     qa_vec3 origin = vector(target->origin); qa_trace_result result;
     if (!trace(row, origin, row->camera.desired, &result, error)) return false;
-    *out = result.fraction == 1 && !result.in_water && length(qa_vec_sub(origin, row->camera.desired)) >= 16;
+    *out = result.fraction == 1 && !result.in_water &&
+        qa_vec_length_rule(qa_vec_sub(origin, row->camera.desired),QA_LENGTH_DOUBLE_SQRT)>=16;
     return true;
 }
 static bool flyby(frontend_remote_q1 *row, const qa_qw_player *self, const qa_qw_player *target,
     bool check_visibility, bool *found, qa_error *error)
 {
-    double yaw = target->command.angles[1] * 0.017453292519943295;
-    double roll = target->command.angles[2] * 0.017453292519943295;
-    qa_vec3 f = qa_v3((float)cos(yaw), (float)sin(yaw), 0);
-    qa_vec3 r = qa_v3((float)(cos(roll)*sin(yaw)), (float)(-cos(roll)*cos(yaw)), (float)-sin(roll));
-    qa_vec3 u = qa_v3((float)(sin(roll)*sin(yaw)), (float)(-sin(roll)*cos(yaw)), (float)cos(roll));
+    qa_vec3 f,r,u;
+    qa_angle_vectors(qa_v3(0,target->command.angles[1],target->command.angles[2]),&f,&r,&u,QA_ANGLE_NATIVE_MATH);
     qa_vec3 directions[] = {qa_vec_add(qa_vec_add(f,u),r),qa_vec_sub(qa_vec_add(f,u),r),
         qa_vec_add(f,r),qa_vec_sub(f,r),qa_vec_add(f,u),qa_vec_sub(f,u),
         qa_vec_sub(qa_vec_add(u,r),f),qa_vec_sub(qa_vec_sub(u,r),f),
         qa_v3(-f.x,-f.y,-f.z),f,qa_v3(-r.x,-r.y,-r.z),r};
-    double best = 1000; qa_vec3 position = {0}; *found = false;
+    float best = 1000; qa_vec3 position = {0}; *found = false;
     qa_vec3 origin = vector(target->origin), own = vector(self->origin);
     for (unsigned i = 0; i < 12; ++i) {
-        qa_vec3 d = directions[i]; double magnitude = length(d);
-        qa_vec3 unit = qa_v3((float)(d.x/magnitude),(float)(d.y/magnitude),(float)(d.z/magnitude));
-        qa_vec3 end = qa_v3((float)(origin.x+800.0*unit.x),(float)(origin.y+800.0*unit.y),(float)(origin.z+800.0*unit.z));
+        qa_vec3 unit=directions[i];
+        qa_vec_normalize_length_rule(&unit,QA_LENGTH_DOUBLE_SQRT);
+        qa_vec3 end=qa_vec_ma(origin,800,unit);
         qa_trace_result hit;
         if (!trace(row, origin, end, &hit, error)) return false;
         if (hit.in_water) continue;
-        double distance = length(qa_vec_sub(hit.end, origin));
+        float distance=qa_vec_length_rule(qa_vec_sub(hit.end, origin),QA_LENGTH_DOUBLE_SQRT);
         if (distance < 32 || distance > 800) continue;
         if (check_visibility) {
-            distance = length(qa_vec_sub(hit.end, own)); qa_trace_result sight;
+            distance=qa_vec_length_rule(qa_vec_sub(hit.end, own),QA_LENGTH_DOUBLE_SQRT); qa_trace_result sight;
             if (!trace(row, own, hit.end, &sight, error)) return false;
             if (sight.fraction != 1 || sight.in_water) continue;
         }
@@ -95,13 +81,6 @@ static bool flyby(frontend_remote_q1 *row, const qa_qw_player *self, const qa_qw
     }
     if (*found) { row->camera.locked = true; row->camera.desired = position; }
     return true;
-}
-static qa_vec3 angles(qa_vec3 v)
-{
-    if (v.x == 0 && v.y == 0) return qa_v3(v.z > 0 ? -90 : -270, 0, 0);
-    double yaw = trunc(atan2(v.y,v.x)*57.29577951308232);
-    double pitch = trunc(atan2(v.z,sqrt((double)v.x*v.x+(double)v.y*v.y))*57.29577951308232);
-    return qa_v3((float)-(pitch < 0 ? pitch+360 : pitch),(float)(yaw < 0 ? yaw+360 : yaw),0);
 }
 static bool finish(frontend_remote_q1 *row, const qa_qw_command *command, qa_error *error)
 {
@@ -152,10 +131,12 @@ bool remote_q1_camera_command(frontend_remote_q1 *row, qa_qw_command *command, u
                 bool chase = setting(row,row->chasecam);
                 if (chase) c->desired = vector(target->origin);
                 qa_vec3 delta = qa_vec_sub(c->desired,vector(self->origin));
-                if (chase ? delta.x != 0 || delta.y != 0 || delta.z != 0 : length(delta) > 16) {
+                if (chase ? delta.x != 0 || delta.y != 0 || delta.z != 0 :
+                    qa_vec_length_rule(delta,QA_LENGTH_DOUBLE_SQRT)>16) {
                     c->teleport = c->desired; c->has_teleport = true;
                 }
-                c->view = (remote_q1_camera_view){.origin=c->desired,.angles=chase?vector(target->command.angles):angles(qa_vec_sub(vector(target->origin),c->desired)),
+                c->view = (remote_q1_camera_view){.origin=c->desired,.angles=chase?vector(target->command.angles):
+                    qa_vec_angles(qa_vec_sub(vector(target->origin),c->desired),QA_DIRECTION_INTEGER,QA_VECTOR_SOURCE|QA_VECTOR_DOUBLE_SQRT),
                     .target_slot=c->slot,.target_flags=target->flags,.target_weapon_frame=target->weapon_frame,.chase=chase};
                 c->has_view = true;
                 command->angles[0]=c->view.angles.x; command->angles[1]=c->view.angles.y; command->angles[2]=c->view.angles.z;
