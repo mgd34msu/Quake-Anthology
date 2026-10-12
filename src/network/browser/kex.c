@@ -37,7 +37,7 @@ bool qa_browser_kex_decode(qa_bytes bytes, qa_server_entry *out, qa_error *e)
         if (a->value.size) memcpy(value, a->value.data, a->value.size);
         value[a->value.size] = 0;
         qa_error projection = {0};
-        (void)qa_q3_info_set(entry.rules, sizeof(entry.rules) - 1, key, value, &projection);
+        (void)qa_q3_info_set(entry.rules, sizeof(entry.rules) - 1, key, value, QA_Q3_INFO_STRICT, NULL, &projection);
     }
     *out = entry;
     return true;

@@ -316,9 +316,16 @@ bool qa_q3_server_command_ack(qa_q3_reliable *,qa_q3_gamestate *,int32_t,int32_t
 bool qa_q3_client_command_state_update(qa_q3_server_command_kind,const char *,int32_t *,
     qa_q3_usercmd *,size_t,qa_error *);
 bool qa_q3_info_value(const char *, const char *, char *, size_t, qa_error *);
+typedef enum qa_q3_info_policy {
+    QA_Q3_INFO_STRICT,
+    QA_Q3_INFO_BROWSER
+} qa_q3_info_policy;
 /* Remove the first exact-case key. Small strings prepend the new pair; the
- * 8192-byte source variant appends. Lookup remains ASCII-insensitive. */
-bool qa_q3_info_set(char *, size_t, const char *, const char *, qa_error *);
+ * 8192-byte source variant appends. Strict failure leaves the input unchanged.
+ * Browser warnings return true with a borrowed literal receipt; overflow
+ * removes the old key before reporting. Lookup remains ASCII-insensitive. */
+bool qa_q3_info_set(char *, size_t, const char *, const char *, qa_q3_info_policy,
+                    const char **warning, qa_error *);
 bool qa_q3_is_lan(const qa_net_address *);
 typedef struct qa_q3_connectionless {
     char line[1024];

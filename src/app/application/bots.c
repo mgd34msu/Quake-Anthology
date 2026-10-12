@@ -655,9 +655,9 @@ static bool bot_configstring(void *opaque,uint32_t index,char *out,size_t capaci
         qa_builtin_player_info player;
         if(!actor.registry || !shared.player_info(shared.context,actor,&player)) {out[0]=0;return true;}
         char information[1024]={0};
-        if(!qa_q3_info_set(information,sizeof(information),"n",player.name?player.name:"",error) ||
-           !qa_q3_info_set(information,sizeof(information),"t",player.spectator?"3":"0",error) ||
-           !qa_q3_info_set(information,sizeof(information),"model",player.skin?player.skin:"",error)) return false;
+        if(!qa_q3_info_set(information,sizeof(information),"n",player.name?player.name:"", QA_Q3_INFO_STRICT, NULL,error) ||
+           !qa_q3_info_set(information,sizeof(information),"t",player.spectator?"3":"0", QA_Q3_INFO_STRICT, NULL,error) ||
+           !qa_q3_info_set(information,sizeof(information),"model",player.skin?player.skin:"", QA_Q3_INFO_STRICT, NULL,error)) return false;
         size_t size=strlen(information);if(size>=capacity) size=capacity-1;
         memcpy(out,information,size);out[size]=0;return true;
     } else return application_fail(error,QA_ERROR_UNSUPPORTED,"shared bot source has no retained non-player configstring owner");
@@ -710,7 +710,7 @@ static bool bot_set_userinfo(void *opaque,qa_actor_id actor,const char *info,qa_
 static bool bot_userinfo(void *opaque,qa_actor_id actor,const char *key,const char *value,qa_error *error) {
     char info[1024];
     return bot_get_userinfo(opaque,actor,info,sizeof(info),error) &&
-        qa_q3_info_set(info,sizeof(info),key,value,error) && bot_set_userinfo(opaque,actor,info,error);
+        qa_q3_info_set(info,sizeof(info),key,value, QA_Q3_INFO_STRICT, NULL,error) && bot_set_userinfo(opaque,actor,info,error);
 }
 static bool bot_game_type(void *opaque,int32_t *out,qa_error *error) {
     application_bots *bots=opaque;

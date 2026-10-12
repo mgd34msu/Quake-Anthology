@@ -646,7 +646,7 @@ static bool info_pair(q3_call *call,const qa_command_context *command,char outpu
         strchr(name,'"') || strchr(value,'"')?"Can't use keys or values with a \"\n":NULL;
     if (message) { info_print(call,command,message); return true; }
     char removed[1024]; memcpy(removed,output,strlen(output)+1);
-    if (!qa_q3_info_set(removed,sizeof(removed),name,"",error)) return false;
+    if (!qa_q3_info_set(removed,sizeof(removed),name,"", QA_Q3_INFO_STRICT, NULL,error)) return false;
     if (!*value) { memcpy(output,removed,strlen(removed)+1); return true; }
     char pair[1024]; size_t pair_size=0;
     const char *parts[]={"\\",name,"\\",value};

@@ -333,7 +333,7 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
             return print_text(peer,"Invalid language\n",error);
         char info[4096]; if (strlen(peer->userinfo) >= sizeof(info)) return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld source userinfo exceeds retained extent");
         memcpy(info, peer->userinfo, strlen(peer->userinfo) + 1);
-        if (!qa_q3_info_set(info, sizeof(info), first, second, error)) return false;
+        if (!qa_q3_info_set(info, sizeof(info), first, second, QA_Q3_INFO_STRICT, NULL, error)) return false;
         char *copy = text_copy(info, error); if (!copy) return false;
         qa_application_language_ticket *locale=NULL;
         if (language && !qa_application_language_prepare(host->frontend->application,actor,second,&locale,error)) {
@@ -580,7 +580,7 @@ static bool connect_source(void *context, const qa_qw_connect_request *request,
     char info[4096];
     if (strlen(request->userinfo) >= sizeof(info)) return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld admission userinfo exceeds its source extent");
     strcpy(info, request->userinfo);
-    if (!qa_q3_info_set(info, sizeof(info), "*spectator", spectator ? "1" : "", error)) return false;
+    if (!qa_q3_info_set(info, sizeof(info), "*spectator", spectator ? "1" : "", QA_Q3_INFO_STRICT, NULL, error)) return false;
     qa_qw_info parsed = {0};
     if (!qa_qw_info_parse_arena(info, &host->frontend->frame.storage, &parsed, error)) return false;
     const char *language=qa_qw_info_get(&parsed,"language");
@@ -588,7 +588,7 @@ static bool connect_source(void *context, const qa_qw_connect_request *request,
         qa_qw_info_free(&parsed);
         *out=(qa_q1_connect_result){.decision=QA_Q1_CONNECT_REJECT,.reason="Invalid language\n"}; return true;
     }
-    if (!language && !qa_q3_info_set(info,sizeof(info),"language",qa_localization_language(NULL),error)) {
+    if (!language && !qa_q3_info_set(info,sizeof(info),"language",qa_localization_language(NULL), QA_Q3_INFO_STRICT, NULL,error)) {
         qa_qw_info_free(&parsed); return false;
     }
     const char *name = qa_qw_info_get(&parsed, "name"), *team = qa_qw_info_get(&parsed, "team"), *skin = qa_qw_info_get(&parsed, "skin"),

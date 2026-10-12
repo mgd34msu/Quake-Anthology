@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "067eb17cb607e5fdc931b61564aa32f9b3c8b50f",
+  "verified_main": "7dd02d56b6d6bc51f1f6271d765dbdc26f50b2a6",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -41315,6 +41315,45 @@
       ],
       "record_directory": "/tmp/qa-ta3196-shared-q1-math-20261012",
       "conclusion": "Shared finite-rounding/vector primitives and migrated callers checked against original QC, WinQuake, Hipnotic and MG1 arithmetic; normal build and seven core suites passed. Private wide TS arithmetic was corrected to qsrc rather than preserved. No live or performance claim."
+    },
+    {
+      "commit": "7dd02d56b6d6bc51f1f6271d765dbdc26f50b2a6",
+      "source_tree": "61fddd55625f57af93df0425f841aed4c364b136",
+      "finding_ids": [
+        "03-18",
+        "04-005"
+      ],
+      "files_rechecked": [
+        "src/app/application/arsenal.c",
+        "src/app/application/bots_navigation.c",
+        "src/app/application/bots_projection.c",
+        "src/app/application/bots_save.c",
+        "src/app/application/commands.c",
+        "src/app/application/control.c",
+        "src/app/application/control_frame.c",
+        "src/app/application/equipment_presentation.c",
+        "src/app/application/events_save.c",
+        "src/app/application/selected_effects.c",
+        "src/app/application/startup_lifecycle.c",
+        "src/app/application/unified_events.c",
+        "src/app/application/unified_presentations.c",
+        "src/app/application/unified_q1_events.c",
+        "src/app/application/unified_q2_native_events.c",
+        "src/app/application/unified_q3_events.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-provider-owner-callers-20261012",
+      "conclusion": "23 additional owner readers use the common index with original roster, ordering, eligibility and callback checks. Further current/historical owner readers remain under migration; no global closure, live or speed claim."
     }
   ],
   "verification_limits": [

@@ -220,9 +220,9 @@ bool application_character_userinfo(qa_application *app,qa_catalog *catalog,cons
         if (ok && protocol==QA_GAME_Q3) {
             const char *team=seat->spectator?"s":seat->team && *seat->team?seat->team:"free";
             char q3_name[901]; snprintf(q3_name,sizeof(q3_name),"%.900s",name);
-            ok=qa_q3_info_set(out,capacity,"name",q3_name,error) &&
-                qa_q3_info_set(out,capacity,"team",team,error) &&
-                qa_q3_info_set(out,capacity,"ip",local_ip?"localhost":"",error);
+            ok=qa_q3_info_set(out,capacity,"name",q3_name, QA_Q3_INFO_STRICT, NULL,error) &&
+                qa_q3_info_set(out,capacity,"team",team, QA_Q3_INFO_STRICT, NULL,error) &&
+                qa_q3_info_set(out,capacity,"ip",local_ip?"localhost":"", QA_Q3_INFO_STRICT, NULL,error);
         }
         if (ok && (protocol==QA_GAME_Q2 || found)) {
             qa_native_q3_character_declaration fallback={"male","grunt","male","grunt"};
@@ -249,7 +249,7 @@ bool application_character_userinfo(qa_application *app,qa_catalog *catalog,cons
                 int length=snprintf(body,capacity,"%s/%s",models[i],skins[i]);
                 ok=(length>=0 && (size_t)length<capacity) ||
                     application_fail(error,QA_ERROR_ARGUMENT,"Initial CHARACTER userinfo exceeds its source extent");
-                if (ok) ok=qa_q3_info_set(out,capacity,keys[i],body,error);
+                if (ok) ok=qa_q3_info_set(out,capacity,keys[i],body, QA_Q3_INFO_STRICT, NULL,error);
             }
             free(body);
         }

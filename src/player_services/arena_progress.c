@@ -35,7 +35,7 @@ static bool write_value(qa_arena_progress *progress, qa_cvar_handle handle, cons
     memcpy(info, text, size + 1);
     (void)snprintf(key, sizeof(key), "%s%" PRId32, prefix, index);
     (void)snprintf(number, sizeof(number), "%" PRId32, value);
-    return qa_q3_info_set(info, sizeof(info), key, number, error) &&
+    return qa_q3_info_set(info, sizeof(info), key, number, QA_Q3_INFO_STRICT, NULL, error) &&
            qa_cvars_set(progress->cvars, variable->name, info, true, error);
 }
 void qa_arena_progress_bind(qa_arena_progress *out,qa_cvars *cvars,qa_arena_catalog catalog)

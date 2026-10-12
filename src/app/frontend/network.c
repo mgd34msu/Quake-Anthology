@@ -1859,13 +1859,13 @@ static bool q3_query_field(qa_frontend_network *n, char info[1024], const char *
     if (strchr(key, '"') || strchr(value, '"')) {
         frontend_print(n->frontend, "Can't use keys or values with a \"\n"); return true;
     }
-    if (!qa_q3_info_set(info, 1024, key, "", error)) return false;
+    if (!qa_q3_info_set(info, 1024, key, "", QA_Q3_INFO_STRICT, NULL, error)) return false;
     if (!*value) return true;
     size_t pair_size = strlen(key) + strlen(value) + 2;
     if (pair_size >= 1024) pair_size = 1023;
     size_t extent = strlen(info) + pair_size;
     if (extent > 1024) { frontend_print(n->frontend, "Info string length exceeded\n"); return true; }
-    return qa_q3_info_set(info, 1024, key, value, error);
+    return qa_q3_info_set(info, 1024, key, value, QA_Q3_INFO_STRICT, NULL, error);
 }
 static bool q3_query(void *context, const qa_net_address *address, const qa_q3_connectionless *packet, qa_error *error)
 {

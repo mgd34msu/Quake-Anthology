@@ -129,44 +129,16 @@ static int32_t elapsed(uint64_t now, uint64_t then)
 { return word((uint32_t)(now / UINT64_C(1000000)) - (uint32_t)(then / UINT64_C(1000000))); }
 static void rule(const char *info, const char *key, char *out, size_t capacity)
 {
-    out[0] = 0; const char *p = info; if (*p == '\\') ++p;
-    while (*p) {
-        const char *name = p; while (*p && *p != '\\') ++p;
-        size_t n = (size_t)(p - name); if (!*p) break;
-        const char *value = ++p; while (*p && *p != '\\') ++p;
-        if (strlen(key) == n && !memcmp(name, key, n)) {
-            size_t size = (size_t)(p - value); if (size >= capacity) size = capacity - 1;
-            memcpy(out, value, size); out[size] = 0;
-        }
-        if (*p) ++p;
-    }
+    qa_bytes value;
+    qa_info_find(info, (qa_bytes){(const uint8_t *)key, strlen(key)}, QA_INFO_LAST, &value);
+    size_t size = value.size < capacity ? value.size : capacity - 1;
+    memcpy(out, value.data, size); out[size] = 0;
 }
 static bool info_set(frontend_q3_browser *b, char info[1024], const char *key, const char *value, qa_error *e)
 {
-    if (strlen(info) >= 1024) return fail(e, "Info_SetValueForKey: oversize infostring");
-    const char *warning = strpbrk(key, "\\") || strpbrk(value, "\\") ? "Can't use keys or values with a \\\n" :
-        strpbrk(key, ";") || strpbrk(value, ";") ? "Can't use keys or values with a semicolon\n" :
-        strpbrk(key, "\"") || strpbrk(value, "\"") ? "Can't use keys or values with a \"\n" : NULL;
-    if (warning) return b->options.print(b->options.context, warning, e);
-    /* Remove exact key before the source length check. */
-    char retained[1024]; strcpy(retained, info);
-    char *p = retained;
-    while (*p) {
-        char *begin = p; if (*p == '\\') ++p;
-        char *name = p; while (*p && *p != '\\') ++p;
-        size_t size = (size_t)(p - name); if (!*p) break;
-        ++p; while (*p && *p != '\\') ++p;
-        if (strlen(key) == size && !memcmp(name, key, size)) { memmove(begin, p, strlen(p) + 1); break; }
-    }
-    strcpy(info, retained); if (!*value) return true;
-    char pair[1024]; size_t used = 0;
-    const char *parts[] = {"\\", key, "\\", value};
-    for (size_t i = 0; i < 4; ++i) for (const char *s = parts[i]; *s && used < 1023; ++s) pair[used++] = *s;
-    pair[used] = 0;
-    size_t length = strlen(retained);
-    if (used + length > 1024) return b->options.print(b->options.context, "Info string length exceeded\n", e);
-    if (used + length == 1024) return fail(e, "Info string overflows source terminator");
-    memcpy(info, pair, used); memcpy(info + used, retained, length + 1); return true;
+    const char *warning;
+    if (!qa_q3_info_set(info, 1024, key, value, QA_Q3_INFO_BROWSER, &warning, e)) return false;
+    return !warning || b->options.print(b->options.context, warning, e);
 }
 static bool numeric(frontend_q3_browser *b, char info[1024], const char *key, double value, qa_error *e)
 { char text[64]; (void)snprintf(text, sizeof(text), "%.0f", value); return info_set(b, info, key, text, e); }
@@ -644,13 +616,12 @@ static bool browser_poll(frontend_q3_browser *b, qa_error *e)
         if (!qa_server_browser_q3_result(b->options.browser, slot->request, &result, e)) return false;
         if (!result->completed) continue;
         if (!b->options.print(b->options.context, "Server settings:\n", e)) return false;
-        const char *p = result->entry.rules; if (*p == '\\') ++p;
-        while (*p) {
-            const char *key = p; while (*p && *p != '\\') ++p; size_t n = (size_t)(p - key); if (!*p) break;
-            const char *value = ++p; while (*p && *p != '\\') ++p;
-            char line[16416]; (void)snprintf(line, sizeof(line), "%-24.*s%.*s\n", (int)n, key, (int)(p - value), value);
+        const char *p = result->entry.rules;
+        qa_bytes key, value;
+        while (qa_info_next(&p, &key, &value)) {
+            char line[16416]; (void)snprintf(line, sizeof(line), "%-24.*s%.*s\n",
+                (int)key.size, (const char *)key.data, (int)value.size, (const char *)value.data);
             if (!b->options.print(b->options.context, line, e)) return false;
-            if (*p) ++p;
         }
         if (!b->options.print(b->options.context, "\nPlayers:\nnum: score: ping: name:\n", e)) return false;
         for (uint32_t j = 0; j < result->player_count; ++j) {

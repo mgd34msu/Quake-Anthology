@@ -465,7 +465,7 @@ static bool current_userinfo(frontend_network_q1_client *o,
         return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual QW userinfo language");
     }
     info.data=data;
-    if (!qa_q3_info_set((char *)info.data,capacity,"language",language,error)) {
+    if (!qa_q3_info_set((char *)info.data,capacity,"language",language, QA_Q3_INFO_STRICT, NULL,error)) {
         qa_buffer_free(&info); return false;
     }
     info.size=strlen((char *)info.data);

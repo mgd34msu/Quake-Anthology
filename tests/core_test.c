@@ -2489,6 +2489,25 @@ static void test_cvar_info_storage(void)
     CHECK(!qa_info_find(text,(qa_bytes){(const uint8_t *)"orphan",6},0,&info_span) && info_span.size==0);
     qa_error info_error={0};char too_small[4];
     CHECK(!qa_q3_info_value(text,"NAME",too_small,sizeof(too_small),&info_error));
+    char info[1024]="\\k\\first\\k\\second"; const char *warning;
+    CHECK(qa_q3_info_set(info,sizeof(info),"k","third",QA_Q3_INFO_BROWSER,&warning,&info_error));
+    CHECK(!warning && !strcmp(info,"\\k\\third\\k\\second"));
+    CHECK(qa_q3_info_set(info,sizeof(info),"k","",QA_Q3_INFO_BROWSER,&warning,&info_error));
+    CHECK(!warning && !strcmp(info,"\\k\\second"));
+    CHECK(qa_q3_info_set(info,sizeof(info),"bad;key","value",QA_Q3_INFO_BROWSER,&warning,&info_error));
+    CHECK(warning && !strcmp(info,"\\k\\second"));
+    char oversized[1024];memset(oversized,'x',sizeof(oversized)-1);oversized[sizeof(oversized)-1]=0;
+    strcpy(info,"\\k\\old\\keep\\1");
+    CHECK(qa_q3_info_set(info,sizeof(info),"k",oversized,QA_Q3_INFO_BROWSER,&warning,&info_error));
+    CHECK(warning && !strcmp(info,"\\keep\\1"));
+    strcpy(info,"\\k\\old\\");
+    CHECK(!qa_q3_info_set(info,sizeof(info),"k",oversized,QA_Q3_INFO_STRICT,NULL,&info_error));
+    CHECK(!strcmp(info,"\\k\\old\\"));
+    CHECK(!qa_q3_info_set(info,sizeof(info),"k",oversized,QA_Q3_INFO_BROWSER,&warning,&info_error));
+    CHECK(!warning && !strcmp(info,"\\"));
+    char big_info[8192]="\\keep\\1";
+    CHECK(qa_q3_info_set(big_info,sizeof(big_info),"k","last",QA_Q3_INFO_STRICT,NULL,&info_error));
+    CHECK(!strcmp(big_info,"\\keep\\1\\k\\last"));
     for (qa_ruleset_id dialect = QA_RULESET_NETQUAKE; dialect <= QA_RULESET_Q3; ++dialect) {
         qa_error error = {0};
         qa_cvars *cvars = qa_cvars_create(&(qa_cvar_options){.dialect = dialect,

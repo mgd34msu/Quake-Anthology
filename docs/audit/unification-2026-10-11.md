@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `067eb17c`.
+Follow-up source changes were reviewed through main `7dd02d56`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -304,3 +304,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 | `03-18`, `04-005` | `78168074` | One provider owner index with distinct live/published/routing views; listed scans deleted. Order, ambiguity and lifetime core cases pass with normal build/seven suites. Further owner callers are still being migrated; no global closure claim. |
 
 | `J19-F07` | `067eb17c` | Common finite rounding and QC vector arithmetic replace private Q1 bodies. Original float spread/particle rounds and zero normalization retained; normal build/seven suites passed. No live or timing claim. |
+
+| `03-18`, `04-005` follow-up | `7dd02d56` | 23 additional control, event, bot, equipment and startup owner readers migrated with original selection rules. Normal build/seven suites passed; remaining readers still in flight. |

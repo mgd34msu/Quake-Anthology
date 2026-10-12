@@ -51,11 +51,23 @@ bool qa_q3_info_value(const char *info,const char *key,char *out,size_t capacity
     memcpy(out,value.data,value.size);out[value.size]=0;
     return true;
 }
-bool qa_q3_info_set(char *info, size_t capacity, const char *key, const char *value, qa_error *error) {
+bool qa_q3_info_set(char *info, size_t capacity, const char *key, const char *value,
+                    qa_q3_info_policy policy, const char **warning, qa_error *error) {
+    if (warning) *warning = NULL;
     if (!info || !key || !value || !capacity || capacity > 8192)
         return fail(error, QA_ERROR_ARGUMENT, "Invalid Q3 info assignment");
-    if (strpbrk(key, "\\;\"") || strpbrk(value, "\\;\"")) return fail(error, QA_ERROR_FORMAT, "Illegal Q3 info key/value");
     size_t length = strlen(info), key_length = strlen(key);
+    if (policy == QA_Q3_INFO_BROWSER && length >= capacity)
+        return fail(error, QA_ERROR_ARGUMENT, "Info_SetValueForKey: oversize infostring");
+    const char *invalid = strpbrk(key, "\\") || strpbrk(value, "\\") ? "Can't use keys or values with a \\\n" :
+        strpbrk(key, ";") || strpbrk(value, ";") ? "Can't use keys or values with a semicolon\n" :
+        strpbrk(key, "\"") || strpbrk(value, "\"") ? "Can't use keys or values with a \"\n" : NULL;
+    if (invalid) {
+        if (policy == QA_Q3_INFO_STRICT)
+            return fail(error, QA_ERROR_FORMAT, "Illegal Q3 info key/value");
+        if (warning) *warning = invalid;
+        return true;
+    }
     if (length >= capacity) return fail(error, QA_ERROR_FORMAT, "Q3 info exceeds capacity");
     size_t remove_begin = 0, remove_end = 0;
     const char *p=info;
@@ -78,9 +90,17 @@ bool qa_q3_info_set(char *info, size_t capacity, const char *key, const char *va
             pair_size += amount;
             remaining -= amount;
         }
+        if (policy == QA_Q3_INFO_BROWSER && pair_size >= capacity - retained) {
+            memmove(info + remove_begin, info + remove_end, length - remove_end + 1);
+            if (pair_size > capacity - retained) {
+                if (warning) *warning = "Info string length exceeded\n";
+                return true;
+            }
+            return fail(error, QA_ERROR_ARGUMENT, "Info string overflows source terminator");
+        }
         if (pair_size >= capacity - retained)
             return fail(error, QA_ERROR_FORMAT, "Q3 info storage exhausted");
-        size_t offset = capacity == 8192 ? retained : 0;
+        size_t offset = policy == QA_Q3_INFO_STRICT && capacity == 8192 ? retained : 0;
         remaining = pair_size;
         for (size_t i = 0; i < 4; ++i) {
             size_t amount = sizes[i] < remaining ? sizes[i] : remaining;
@@ -89,7 +109,7 @@ bool qa_q3_info_set(char *info, size_t capacity, const char *key, const char *va
             remaining -= amount;
         }
     }
-    size_t offset = capacity == 8192 ? 0 : pair_size;
+    size_t offset = policy == QA_Q3_INFO_STRICT && capacity == 8192 ? 0 : pair_size;
     memcpy(buffer + offset, info, remove_begin);
     memcpy(buffer + offset + remove_begin, info + remove_end, length - remove_end);
     buffer[retained + pair_size] = 0;
@@ -163,11 +183,11 @@ bool qa_q3_client_admission_resend(qa_q3_client_admission *c, int64_t now, const
     char info[1024], text[32];
     if (strlen(userinfo) >= sizeof(info)) return fail(error, QA_ERROR_FORMAT, "Q3 connect userinfo too large");
     strcpy(info, userinfo);
-    if (!qa_q3_info_set(info, sizeof(info), "protocol", "68", error)) return false;
+    if (!qa_q3_info_set(info, sizeof(info), "protocol", "68", QA_Q3_INFO_STRICT, NULL, error)) return false;
     snprintf(text, sizeof(text), "%u", (unsigned)c->qport);
-    if (!qa_q3_info_set(info, sizeof(info), "qport", text, error)) return false;
+    if (!qa_q3_info_set(info, sizeof(info), "qport", text, QA_Q3_INFO_STRICT, NULL, error)) return false;
     snprintf(text, sizeof(text), "%d", c->challenge);
-    if (!qa_q3_info_set(info, sizeof(info), "challenge", text, error)) return false;
+    if (!qa_q3_info_set(info, sizeof(info), "challenge", text, QA_Q3_INFO_STRICT, NULL, error)) return false;
     qa_buffer buffer = {0};
     if (!qa_q3_connect_encode(info, &buffer, error)) return false;
     bool ok = send(user, &c->address, (qa_bytes){buffer.data, buffer.size}, error); qa_buffer_free(&buffer); return ok;
@@ -291,11 +311,11 @@ static bool server_authorize(qa_q3_server_admission *s, const qa_q3_admission_op
     return true;
 }
 static bool server_userinfo_ip(qa_q3_server_admission *s, char info[1024], const char *ip, qa_error *e) {
-    if (!qa_q3_info_set(info, 1024, "ip", "", e)) return false;
+    if (!qa_q3_info_set(info, 1024, "ip", "", QA_Q3_INFO_STRICT, NULL, e)) return false;
     size_t extent = strlen(info) + strlen(ip) + 4;
     if (extent > 1024) { s->hooks.print(s->hooks.context, "Info string length exceeded\n"); return true; }
     if (extent == 1024) return fail(e, QA_ERROR_FORMAT, "Q3 userinfo IP assignment overflows its source terminator");
-    return qa_q3_info_set(info, 1024, "ip", ip, e);
+    return qa_q3_info_set(info, 1024, "ip", ip, QA_Q3_INFO_STRICT, NULL, e);
 }
 static bool server_connect(qa_q3_server_admission *s, const qa_q3_admission_options *o,
                            const qa_q3_admission_slot *slots, size_t count,

@@ -1297,7 +1297,7 @@ static bool team_task(application_provider *provider, qa_actor_id actor,
     if (length >= sizeof(info)) length = sizeof(info) - 1;
     memcpy(info, current, length); info[length] = 0;
     qa_format_q3_integer(qa_parse_decimal_i32(command->argv[1],QA_DECIMAL_SIGNED_WRAP), value);
-    if (!qa_q3_info_set(info, sizeof(info), "teamtask", value, error) ||
+    if (!qa_q3_info_set(info, sizeof(info), "teamtask", value, QA_Q3_INFO_STRICT, NULL, error) ||
         !application_native_q3_wire_userinfo(provider, slot, info, error)) return false;
     return application_native_q3_client_userinfo_changed(provider, actor, error);
 }
