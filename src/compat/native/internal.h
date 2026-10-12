@@ -165,6 +165,7 @@ struct qa_native_write_scope {
 };
 
 struct qa_native_entry_observer {
+    qa_arena storage;
     qa_native_entry_observer *next;
     qa_native_instance *instance;
     uint64_t id;

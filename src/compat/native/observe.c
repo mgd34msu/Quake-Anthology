@@ -3,6 +3,7 @@
 #include "qa/source_save.h"
 
 typedef struct native_signature_buffer {
+    qa_arena storage;
     uint8_t *data;
     size_t size, capacity;
 } native_signature_buffer;
@@ -26,7 +27,9 @@ static bool signature_grow(native_signature_buffer *buffer, size_t added, qa_err
                                "native observer message capacity overflows");
         capacity = next;
     }
-    uint8_t *grown = realloc(buffer->data, capacity);
+    if (!buffer->storage.block_size) buffer->storage.block_size = 256u;
+    uint8_t *grown = qa_arena_grow(&buffer->storage, buffer->data,
+        buffer->size, capacity, 1, error);
     if (!grown)
         return native_fail(error, QA_ERROR_MEMORY, 0, "allocating native observer message");
     buffer->data = grown;
@@ -37,7 +40,7 @@ static bool signature_grow(native_signature_buffer *buffer, size_t added, qa_err
 static void native_signature_buffer_free(native_signature_buffer *buffer) {
     if (!buffer)
         return;
-    free(buffer->data);
+    qa_arena_destroy(&buffer->storage);
     *buffer = (native_signature_buffer){0};
 }
 
@@ -138,18 +141,7 @@ static bool native_signature_get_u64(native_signature_reader *reader, uint64_t *
     return true;
 }
 
-static void signature_type_free(qa_native_type *type) {
-    if (!type || !type->fields)
-        return;
-    qa_native_type *fields = (qa_native_type *)type->fields;
-    for (size_t index = 0; index < type->field_count; ++index)
-        signature_type_free(&fields[index]);
-    free(fields);
-    type->fields = NULL;
-    type->field_count = 0;
-}
-
-static bool signature_get_type(native_signature_reader *reader, qa_native_type *out, unsigned depth,
+static bool signature_get_type(native_signature_reader *reader, qa_arena *storage, qa_native_type *out, unsigned depth,
                           size_t *count, qa_error *error) {
     uint32_t kind;
     uint64_t repetition, field_count;
@@ -166,36 +158,23 @@ static bool signature_get_type(native_signature_reader *reader, qa_native_type *
                            "native observer ABI type tree is invalid");
     qa_native_type type = {.kind = (qa_native_value_type)kind, .count = (size_t)repetition};
     if (field_count) {
-        qa_native_type *fields = calloc((size_t)field_count, sizeof(*fields));
+        qa_native_type *fields = qa_arena_alloc(storage, (size_t)field_count * sizeof(*fields),
+            _Alignof(qa_native_type), error);
         if (!fields)
             return native_fail(error, QA_ERROR_MEMORY, reader->offset,
                                "allocating native observer ABI fields");
         type.fields = fields;
         type.field_count = (size_t)field_count;
+        memset(fields, 0, type.field_count * sizeof(*fields));
         for (size_t index = 0; index < type.field_count; ++index) {
-            if (!signature_get_type(reader, &fields[index], depth + 1u, count, error)) {
-                signature_type_free(&type);
-                return false;
-            }
+            if (!signature_get_type(reader, storage, &fields[index], depth + 1u, count, error)) return false;
         }
     }
     *out = type;
     return true;
 }
 
-static void native_signature_signature_free(qa_native_signature *signature) {
-    if (!signature)
-        return;
-    qa_native_type *parameters = (qa_native_type *)signature->parameters;
-    for (size_t index = 0; index < signature->parameter_count; ++index)
-        signature_type_free(&parameters[index]);
-    free(parameters);
-    signature_type_free(&signature->result);
-    *signature = (qa_native_signature){0};
-}
-
-
-static bool native_signature_get_signature(native_signature_reader *reader, qa_native_signature *out,
+static bool native_signature_get_signature(native_signature_reader *reader, qa_arena *storage, qa_native_signature *out,
                                qa_error *error) {
     uint32_t abi;
     uint8_t variadic;
@@ -211,23 +190,19 @@ static bool native_signature_get_signature(native_signature_reader *reader, qa_n
                                      .parameter_count = (size_t)parameter_count};
     qa_native_type *parameters = NULL;
     if (signature.parameter_count) {
-        parameters = calloc(signature.parameter_count, sizeof(*parameters));
+        parameters = qa_arena_alloc(storage, signature.parameter_count * sizeof(*parameters),
+            _Alignof(qa_native_type), error);
         if (!parameters)
             return native_fail(error, QA_ERROR_MEMORY, reader->offset,
                                "allocating native observer signature");
         signature.parameters = parameters;
+        memset(parameters, 0, signature.parameter_count * sizeof(*parameters));
     }
     size_t count = 0;
     for (size_t index = 0; index < signature.parameter_count; ++index) {
-        if (!signature_get_type(reader, &parameters[index], 0, &count, error)) {
-            native_signature_signature_free(&signature);
-            return false;
-        }
+        if (!signature_get_type(reader, storage, &parameters[index], 0, &count, error)) return false;
     }
-    if (!signature_get_type(reader, &signature.result, 0, &count, error)) {
-        native_signature_signature_free(&signature);
-        return false;
-    }
+    if (!signature_get_type(reader, storage, &signature.result, 0, &count, error)) return false;
     *out = signature;
     return true;
 }
@@ -256,16 +231,35 @@ static bool next_id(qa_native_instance *instance, uint64_t *id, qa_error *error)
     return true;
 }
 
-static bool copy_signature(const qa_native_signature *signature, qa_native_signature *out,
+static bool copy_signature(const qa_native_signature *signature, qa_arena *storage, qa_native_signature *out,
                             qa_error *error) {
     native_signature_buffer encoded = {0};
     bool ok = native_signature_put_signature(&encoded, signature, error);
     if (ok) {
         native_signature_reader reader = {.bytes = {encoded.data, encoded.size}};
-        ok = native_signature_get_signature(&reader, out, error) && native_signature_end(&reader, error);
+        ok = native_signature_get_signature(&reader, storage, out, error) && native_signature_end(&reader, error);
     }
     native_signature_buffer_free(&encoded);
     return ok;
+}
+
+static qa_native_entry_observer *entry_observer_take(qa_native_instance *instance, qa_error *error)
+{
+    qa_arena storage;
+    qa_arena_init(&storage, sizeof(qa_native_entry_observer));
+    qa_native_entry_observer *binding = qa_arena_alloc(&storage, sizeof(*binding),
+        _Alignof(qa_native_entry_observer), error);
+    if (!binding) { qa_arena_destroy(&storage); return NULL; }
+    *binding = (qa_native_entry_observer){.storage = storage, .instance = instance};
+    return binding;
+}
+
+static void entry_observer_destroy(qa_native_entry_observer *binding)
+{
+    guest_abi_plan_destroy(binding->guest_plan);
+    qa_arena storage = binding->storage;
+    binding->storage = (qa_arena){0};
+    qa_arena_destroy(&storage);
 }
 
 static bool process_entry(void *context, qa_native_guest *guest, uint64_t id, qa_error *error) {
@@ -304,7 +298,7 @@ static bool signature_equal(const qa_native_signature *a,const qa_native_signatu
         left.size==right.size && !memcmp(left.data,right.data,left.size);
     native_signature_buffer_free(&left); native_signature_buffer_free(&right); return ok;
 }
-static bool observer_signature_fields(qa_source_save_io *io,qa_native_signature *signature)
+static bool observer_signature_fields(qa_source_save_io *io,qa_arena *storage,qa_native_signature *signature)
 {
     native_signature_buffer wire={0}; size_t count=0;
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
@@ -316,7 +310,7 @@ static bool observer_signature_fields(qa_source_save_io *io,qa_native_signature 
         if (!ok) native_fail(io->error,QA_ERROR_FORMAT,io->offset,"Saved Source signature leaves its counted extent");
         if (ok) {
             native_signature_reader reader={.bytes={io->input.data+io->offset,count}};
-            ok=native_signature_get_signature(&reader,signature,io->error) && native_signature_end(&reader,io->error);
+            ok=native_signature_get_signature(&reader,storage,signature,io->error) && native_signature_end(&reader,io->error);
             if (ok) io->offset+=count;
         }
     } else if (ok) ok=qa_source_save_bytes(io,wire.data,count);
@@ -335,12 +329,12 @@ bool native_observers_fields(qa_source_save_io *io,qa_native_instance *instance)
     qa_native_entry_observer *row=instance->entry_observers;
     for (size_t i=0;i<count;++i) {
         if (reading) {
-            row=calloc(1,sizeof(*row));
-            if (!row) return native_fail(io->error,QA_ERROR_MEMORY,i,"Owning saved Source entry observer");
-            row->instance=instance; row->next=instance->pending_entry_observers; instance->pending_entry_observers=row;
+            row=entry_observer_take(instance,io->error);
+            if (!row) return false;
+            row->next=instance->pending_entry_observers; instance->pending_entry_observers=row;
         }
         if (!qa_source_save_u64(io,&row->id) || !qa_source_save_u64(io,&row->address) ||
-            !observer_signature_fields(io,&row->signature) || !row->id || row->id>instance->next_observer_id ||
+            !observer_signature_fields(io,&row->storage,&row->signature) || !row->id || row->id>instance->next_observer_id ||
             row->address<instance->image_base || row->address-instance->image_base>=instance->image_bytes ||
             row->signature.abi!=instance->module->info.image.target.abi || row->signature.variadic || row->active_calls ||
             (!reading && !row->callback))
@@ -438,20 +432,16 @@ bool qa_native_observe_entry(qa_native_instance *instance, qa_native_address ent
         binding->next=instance->entry_observers; instance->entry_observers=binding; *out=binding;
         return true;
     }
-    qa_native_entry_observer *binding = calloc(1, sizeof(*binding));
-    if (!binding)
-        return native_fail(error, QA_ERROR_MEMORY, 0, "allocating native entry observer");
-    binding->instance = instance;
+    qa_native_entry_observer *binding = entry_observer_take(instance, error);
+    if (!binding) return false;
     binding->address = entry;
     binding->callback = callback;
     binding->context = context;
     bool ok = next_id(instance, &binding->id, error) &&
-              copy_signature(signature, &binding->signature, error) &&
+              copy_signature(signature, &binding->storage, &binding->signature, error) &&
               process_entry_bind(binding, error);
     if (!ok) {
-        native_signature_signature_free(&binding->signature);
-        guest_abi_plan_destroy(binding->guest_plan);
-        free(binding);
+        entry_observer_destroy(binding);
         return false;
     }
     binding->next = instance->entry_observers;
@@ -474,9 +464,7 @@ bool qa_native_unobserve_entry(qa_native_entry_observer *binding, qa_error *erro
         cursor = &(*cursor)->next;
     if (*cursor)
         *cursor = binding->next;
-    native_signature_signature_free(&binding->signature);
-    guest_abi_plan_destroy(binding->guest_plan);
-    free(binding);
+    entry_observer_destroy(binding);
     return true;
 }
 
@@ -806,15 +794,12 @@ void native_observers_destroy(qa_native_instance *instance) {
     while (instance->pending_entry_observers) {
         qa_native_entry_observer *binding=instance->pending_entry_observers;
         instance->pending_entry_observers=binding->next;
-        native_signature_signature_free(&binding->signature);
-        guest_abi_plan_destroy(binding->guest_plan); free(binding);
+        entry_observer_destroy(binding);
     }
     while (instance->entry_observers) {
         qa_native_entry_observer *binding = instance->entry_observers;
         instance->entry_observers = binding->next;
-        native_signature_signature_free(&binding->signature);
-        guest_abi_plan_destroy(binding->guest_plan);
-        free(binding);
+        entry_observer_destroy(binding);
     }
     while (instance->write_observers) {
         qa_native_write_observer *binding = instance->write_observers;

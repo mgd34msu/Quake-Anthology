@@ -7,6 +7,7 @@
 #include "qa/source_save.h"
 #include "control_frame.h"
 #include "qa/pool.h"
+#include "qa/id_index.h"
 #include <math.h>
 
 typedef struct combat_record {
@@ -24,7 +25,15 @@ typedef struct combat_reaction {
     qa_native_entry_observer *binding;
     qa_native_address address;
     application_q2_call_operation operation;
+    size_t storage_slot;
 } combat_reaction;
+typedef struct combat_reactions {
+    combat_reaction *first;
+    qa_unified_frame_lease *storage;
+    qa_pool pool;
+    qa_id_index index;
+    size_t chunk;
+} combat_reactions;
 typedef struct combat_incoming {
     struct combat_incoming *previous;
     qa_native_entry_observer *binding;
@@ -72,7 +81,7 @@ struct application_native_q2_combat {
     qa_unified_frame_lease *record_storage;
     qa_pool record_pool;
     size_t record_chunk;
-    combat_reaction *reactions;
+    combat_reactions reactions;
     qa_native_entry_observer *damage;
     combat_armor_hook armor[2];
     combat_frame *current, *retained;
@@ -85,6 +94,50 @@ static qa_native_instance *native(struct application_native_q2_combat *p)
 { return qa_native_host_instance(p->engine->provider->state.native.host); }
 static qa_combat *shared(struct application_native_q2_combat *p)
 { return p->engine->provider->application->combat; }
+static void reactions_destroy(combat_reactions *reactions)
+{
+    qa_id_index_destroy(&reactions->index);
+    qa_unified_frame_lease_release(reactions->storage);
+    *reactions = (combat_reactions){0};
+}
+static bool reactions_prepare(struct application_native_q2_combat *p,
+    combat_reactions *reactions, size_t count, qa_error *error)
+{
+    if (p->record_chunk > SIZE_MAX / 2)
+        return application_fail(error, QA_ERROR_MEMORY, "Native reaction capacity exceeds storage");
+    reactions->chunk = p->record_chunk * 2;
+    if (count < reactions->chunk) count = reactions->chunk;
+    reactions->storage = application_control_storage_acquire(p->engine->provider->application, error);
+    if (!reactions->storage) return false;
+    qa_arena *arena = qa_unified_frame_lease_arena(reactions->storage);
+    reactions->index.storage = arena;
+    if (!qa_pool_prepare(&reactions->pool, arena, count,
+        sizeof(combat_reaction), _Alignof(combat_reaction), error) ||
+        !qa_id_index_reserve(&reactions->index, count, error)) {
+        reactions_destroy(reactions); return false;
+    }
+    return true;
+}
+static combat_reaction *reaction_find(combat_reactions *reactions, qa_native_address address)
+{
+    qa_id_index_entry *entry = qa_id_index_find(&reactions->index, QA_STRING_NONE, address);
+    return entry ? qa_pool_at(&reactions->pool, entry->value) : NULL;
+}
+static combat_reaction *reaction_take(struct application_native_q2_combat *p,
+    combat_reactions *reactions, qa_error *error)
+{
+    if (!qa_id_index_reserve(&reactions->index, 1, error)) return NULL;
+    if (reactions->pool.head == SIZE_MAX && !qa_pool_extend(&reactions->pool,
+        qa_unified_frame_lease_arena(reactions->storage),
+        reactions->chunk ? reactions->chunk : 1, error)) return NULL;
+    size_t slot;
+    combat_reaction *hook = qa_pool_take(&reactions->pool, &slot);
+    if (!hook) {
+        application_fail(error, QA_ERROR_MEMORY, "Retaining native reaction entry ownership"); return NULL;
+    }
+    *hook = (combat_reaction){.owner = p, .storage_slot = slot};
+    return hook;
+}
 static combat_record *record_for(struct application_native_q2_combat *p, qa_actor_id actor)
 {
     size_t value;
@@ -266,8 +319,8 @@ static bool committed_callback(void *opaque, qa_native_instance *instance,
     if (!value) return true;
     application_q2_call_operation operation = event->address == frame->record->source.address + frame->owner->profile.pain
         ? APPLICATION_Q2_PAIN : APPLICATION_Q2_DEATH;
-    for (combat_reaction *hook = frame->owner->reactions; hook; hook = hook->next)
-        if (hook->address == value && hook->operation == operation) return true;
+    combat_reaction *hook = reaction_find(&frame->owner->reactions, value);
+    if (hook && hook->operation == operation) return true;
     return application_fail(error, QA_ERROR_UNSUPPORTED, "Native reaction store needs a prequalified callback entry before source continuation");
 }
 static bool remove_watches(combat_frame *frame, qa_error *error)
@@ -338,19 +391,23 @@ static bool ensure_reaction(struct application_native_q2_combat *p, qa_native_ad
     application_q2_call_operation operation, qa_error *error)
 {
     if (!address) return true;
-    for (combat_reaction *hook = p->reactions; hook; hook = hook->next)
-        if (hook->address == address) {
-            if (hook->operation != operation)
-                return application_fail(error, QA_ERROR_UNSUPPORTED, "Native reaction entry is shared by incompatible original call contracts");
-            return hook->binding || qa_native_observe_entry(native(p), address,
-                &p->profile.calls[operation].signature, reaction_entry, hook, &hook->binding, error);
-        }
-    combat_reaction *hook = calloc(1, sizeof(*hook));
-    if (!hook) return application_fail(error, QA_ERROR_MEMORY, "Retaining native reaction entry ownership");
-    hook->owner = p; hook->address = address; hook->operation = operation;
+    combat_reaction *hook = reaction_find(&p->reactions, address);
+    if (hook) {
+        if (hook->operation != operation)
+            return application_fail(error, QA_ERROR_UNSUPPORTED, "Native reaction entry is shared by incompatible original call contracts");
+        return hook->binding || qa_native_observe_entry(native(p), address,
+            &p->profile.calls[operation].signature, reaction_entry, hook, &hook->binding, error);
+    }
+    hook = reaction_take(p, &p->reactions, error);
+    if (!hook) return false;
+    hook->address = address; hook->operation = operation;
     if (!qa_native_observe_entry(native(p), address, &p->profile.calls[operation].signature,
-        reaction_entry, hook, &hook->binding, error)) { free(hook); return false; }
-    hook->next = p->reactions; p->reactions = hook; return true;
+        reaction_entry, hook, &hook->binding, error)) {
+        qa_pool_release(&p->reactions.pool, hook->storage_slot); return false;
+    }
+    hook->next = p->reactions.first; p->reactions.first = hook;
+    qa_id_index_insert(&p->reactions.index, QA_STRING_NONE, address, hook->storage_slot);
+    return true;
 }
 static bool execute_damage(combat_record *record, combat_incoming *incoming,
     const qa_damage_request *request, qa_damage_observer *observer,
@@ -644,6 +701,7 @@ bool application_native_q2_combat_prepare(struct application_native_q2 *engine, 
     if (!p->record_storage || !qa_pool_prepare(&p->record_pool,
         qa_unified_frame_lease_arena(p->record_storage), p->record_chunk,
         sizeof(combat_record), _Alignof(combat_record), error)) return false;
+    if (!reactions_prepare(p, &p->reactions, 0, error)) return false;
     if (!application_q2_combat_profile_read(engine, &p->profile, error)) return false;
     return !p->profile.kex || application_q2_kex_damage_prepare(&p->profile, &p->kex, error);
 }
@@ -676,7 +734,7 @@ bool application_native_q2_combat_activate(struct application_native_q2 *engine,
                 armor_entry, hook, &hook->binding, error)) return false;
     }
     if (!application_q2_kex_damage_activate(p->kex, error)) return false;
-    for (combat_reaction *hook=p->reactions; hook; hook=hook->next)
+    for (combat_reaction *hook=p->reactions.first; hook; hook=hook->next)
         if (!ensure_reaction(p,hook->address,hook->operation,error)) return false;
     p->active = true; return true;
 }
@@ -779,11 +837,13 @@ bool application_native_q2_combat_suspend(struct application_native_q2 *engine, 
         *frame_cursor = frame->retained_next; qa_unified_frame_lease_release(frame->storage);
         record_leave(frame_record);
     }
-    combat_reaction **cursor = &p->reactions;
+    combat_reaction **cursor = &p->reactions.first;
     while (*cursor) {
         combat_reaction *hook = *cursor;
         if (!qa_native_unobserve_entry(hook->binding, error)) return false;
-        *cursor = hook->next; free(hook);
+        *cursor = hook->next;
+        qa_id_index_remove(&p->reactions.index, QA_STRING_NONE, hook->address);
+        qa_pool_release(&p->reactions.pool, hook->storage_slot);
     }
     for (unsigned i = 0; i < 2; ++i) {
         if (!qa_native_unobserve_entry(p->armor[i].binding, error)) return false;
@@ -799,6 +859,7 @@ bool application_native_q2_combat_close(struct application_native_q2 *engine, qa
     if (!application_native_q2_combat_suspend(engine, error)) return false;
     if (!application_q2_kex_damage_close(p->kex, error)) return false;
     p->kex = NULL;
+    reactions_destroy(&p->reactions);
     qa_actor_index_destroy(&p->record_index);
     qa_unified_frame_lease_release(p->record_storage);
     application_q2_combat_profile_free(&p->profile); free(p); engine->source_combat = NULL; return true;
@@ -886,24 +947,24 @@ bool application_native_q2_combat_deferred(struct application_native_q2 *engine,
     --engine->calls; p->deferred = frame.previous; record_leave(record); return ok;
 }
 struct application_native_q2_combat_restore {
-    combat_reaction *reactions;
+    combat_reactions reactions;
     struct application_q2_kex_restore *kex;
 };
 static bool combat_fields(qa_source_save_io *io, struct application_native_q2_combat *p,
-    combat_reaction **reactions, qa_bytes *kex)
+    combat_reactions *reactions, qa_bytes *kex)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
     size_t count=0;
-    if (!reading) for (combat_reaction *hook=*reactions;hook;hook=hook->next) ++count;
+    if (!reading) for (combat_reaction *hook=reactions->first;hook;hook=hook->next) ++count;
     if (!qa_source_save_count(io,&count,SIZE_MAX)) return false;
     if (reading && (io->offset>io->input.size || count>(io->input.size-io->offset)/12))
         return application_fail(io->error,QA_ERROR_FORMAT,"Native reaction count exceeds its actual saved fields");
-    combat_reaction **tail=reactions;
+    if (reading && !reactions_prepare(p, reactions, count, io->error)) return false;
+    combat_reaction **tail=&reactions->first;
     for (size_t i=0;i<count;++i) {
         if (reading) {
-            *tail=calloc(1,sizeof(**tail));
-            if (!*tail) return application_fail(io->error,QA_ERROR_MEMORY,"Owning restored native reaction topology");
-            (*tail)->owner=p;
+            *tail=reaction_take(p, reactions, io->error);
+            if (!*tail) return false;
         }
         combat_reaction *hook=*tail;
         uint32_t operation=(uint32_t)hook->operation;
@@ -912,12 +973,13 @@ static bool combat_fields(qa_source_save_io *io, struct application_native_q2_co
             (!reading && !hook->binding))
             return application_fail(io->error,QA_ERROR_FORMAT,"Native reaction lacks its actual Source entry and call operation");
         hook->operation=(application_q2_call_operation)operation;
-        for (combat_reaction *prior=*reactions;prior!=hook;prior=prior->next)
-            if (prior->address==hook->address)
-                return application_fail(io->error,QA_ERROR_FORMAT,"Native saved reaction entry repeats");
+        combat_reaction *prior=reaction_find(reactions, hook->address);
+        if (reading ? prior!=NULL : prior!=hook)
+            return application_fail(io->error,QA_ERROR_FORMAT,"Native saved reaction entry repeats");
         if (reading) {
             uint8_t byte;
             if (!qa_native_read(native(p),hook->address,&byte,1,io->error)) return false;
+            qa_id_index_insert(&reactions->index, QA_STRING_NONE, hook->address, hook->storage_slot);
         }
         tail=&hook->next;
     }
@@ -956,9 +1018,7 @@ bool application_native_q2_combat_restore_ready(const struct application_native_
 void application_native_q2_combat_restore_abort(struct application_native_q2_combat_restore *token)
 {
     if (!token) return;
-    while (token->reactions) {
-        combat_reaction *hook=token->reactions; token->reactions=hook->next; free(hook);
-    }
+    reactions_destroy(&token->reactions);
     application_q2_kex_damage_restore_abort(token->kex); free(token);
 }
 bool application_native_q2_combat_restore_prepare(struct application_native_q2 *engine, qa_bytes bytes,
@@ -967,7 +1027,7 @@ bool application_native_q2_combat_restore_prepare(struct application_native_q2 *
     struct application_native_q2_combat *p = engine->source_combat;
     if (!out || *out) return application_fail(error,QA_ERROR_ARGUMENT,"Native combat restore token requires empty actual custody");
     if (!p) return !bytes.size || application_fail(error,QA_ERROR_FORMAT,"Native combat continuation has no actual source owner");
-    if (p->active || p->current || p->incoming || p->retained || p->damage || p->deferred || p->reactions)
+    if (p->active || p->current || p->incoming || p->retained || p->damage || p->deferred || p->reactions.first)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native deferred restore requires suspended damage observers");
     struct application_native_q2_combat_restore *token=calloc(1,sizeof(*token));
     if (!token) return application_fail(error,QA_ERROR_MEMORY,"Owning native combat restore preparation");
@@ -983,7 +1043,8 @@ void application_native_q2_combat_restore_commit(struct application_native_q2 *e
 {
     if (!token) return;
     struct application_native_q2_combat *p = engine->source_combat;
-    p->reactions=token->reactions; token->reactions=NULL;
+    reactions_destroy(&p->reactions);
+    p->reactions=token->reactions; token->reactions=(combat_reactions){0};
     application_q2_kex_damage_restore_commit(p->kex,token->kex); token->kex=NULL;
     free(token);
 }
