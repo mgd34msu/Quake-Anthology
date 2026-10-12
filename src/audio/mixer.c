@@ -132,26 +132,12 @@ static qa_mixer_prepared *prepared_retain(qa_mixer_prepared *prepared) {
     return prepared;
 }
 
-static size_t prepared_hash(const qa_audio_sample *sample, const qa_audio_asset *asset, bool q3) {
-    uint64_t hash = (uint64_t)(uintptr_t)sample ^
-                    ((uint64_t)(uintptr_t)asset * UINT64_C(0x9e3779b97f4a7c15)) ^ (uint64_t)q3;
-    hash ^= hash >> 30;
-    hash *= UINT64_C(0xbf58476d1ce4e5b9);
-    hash ^= hash >> 27;
-    hash *= UINT64_C(0x94d049bb133111eb);
-    return (size_t)(hash ^ (hash >> 31));
-}
-
 static void prepared_release(qa_audio_mixer *mixer, qa_mixer_prepared *prepared) {
     if (!prepared)
         return;
     if (--prepared->references == 0) {
-        size_t slot = prepared_hash(prepared->sample, prepared->asset, prepared->q3) &
-                      (mixer->prepared_index_capacity - 1);
-        qa_mixer_prepared **link = &mixer->prepared_index[slot];
-        while (*link != prepared)
-            link = &(*link)->next;
-        *link = prepared->next;
+        qa_id_index_remove_value(&mixer->prepared_index, prepared->q3,
+            (uint64_t)(uintptr_t)prepared->sample, prepared->slot);
         qa_audio_sample_release(prepared->sample);
         qa_audio_sample_release(prepared->pcm);
         qa_audio_asset_release(prepared->asset);
@@ -169,12 +155,13 @@ static qa_mixer_prepared *prepare(qa_audio_mixer *mixer, qa_audio_sample *sample
                     "Effects require nonempty mono PCM with a valid loop marker");
         return NULL;
     }
-    if (mixer->prepared_index_capacity) {
-        size_t bucket = prepared_hash(sample, asset, q3) & (mixer->prepared_index_capacity - 1);
-        for (qa_mixer_prepared *prepared = mixer->prepared_index[bucket]; prepared;
-             prepared = prepared->next)
-            if (prepared->sample == sample && prepared->asset == asset && prepared->q3 == q3)
-                return prepared_retain(prepared);
+    qa_id_index_cursor cursor = qa_id_index_begin(&mixer->prepared_index, q3,
+        (uint64_t)(uintptr_t)sample);
+    size_t candidate;
+    while (qa_id_index_next(&mixer->prepared_index, &cursor, &candidate)) {
+        qa_mixer_prepared *prepared = qa_pool_at(&mixer->prepared_records, candidate);
+        if (prepared->sample == sample && prepared->asset == asset && prepared->q3 == q3)
+            return prepared_retain(prepared);
     }
     size_t slot;
     qa_mixer_prepared *prepared = qa_pool_take(&mixer->prepared_records, &slot);
@@ -212,9 +199,7 @@ static qa_mixer_prepared *prepare(qa_audio_mixer *mixer, qa_audio_sample *sample
     }
     *prepared = (qa_mixer_prepared){.sample = sample, .pcm = pcm, .asset = asset,
                                   .q3 = q3, .slot = slot};
-    size_t bucket = prepared_hash(sample, asset, q3) & (mixer->prepared_index_capacity - 1);
-    prepared->next = mixer->prepared_index[bucket];
-    mixer->prepared_index[bucket] = prepared;
+    qa_id_index_insert(&mixer->prepared_index, q3, (uint64_t)(uintptr_t)sample, slot);
     return prepared_retain(prepared);
 }
 
@@ -514,30 +499,16 @@ bool qa_audio_mixer_create(const qa_audio_mixer_options *options, qa_audio_mixer
     mixer->random_state = 0x6d2b79f5u;
     mixer->event_head = mixer->event_tail = SIZE_MAX;
     size_t capacity = options->prepared_capacity ? options->prepared_capacity : 4096;
-    size_t buckets = 16;
-    while (capacity > buckets / 2) {
-        if (buckets > SIZE_MAX / 2) {
-            free(mixer);
-            return mixer_error(error, QA_ERROR_MEMORY, "Prepared effect index size overflow");
-        }
-        buckets *= 2;
-    }
-    if (buckets > SIZE_MAX / sizeof(*mixer->prepared_index)) {
-        free(mixer);
-        return mixer_error(error, QA_ERROR_MEMORY, "Prepared effect index size overflow");
-    }
     qa_arena_init(&mixer->prepared_storage, 0);
     if (!qa_pool_prepare(&mixer->prepared_records, &mixer->prepared_storage, capacity,
                          sizeof(qa_mixer_prepared), _Alignof(qa_mixer_prepared), error)) {
         qa_arena_destroy(&mixer->prepared_storage); free(mixer); return false;
     }
-    mixer->prepared_index = load_array(mixer, buckets, sizeof(*mixer->prepared_index), _Alignof(qa_mixer_prepared *), error);
-    if (!mixer->prepared_index) {
+    mixer->prepared_index.storage = &mixer->prepared_storage;
+    if (!qa_id_index_reserve(&mixer->prepared_index, capacity, error)) {
         qa_arena_destroy(&mixer->prepared_storage); free(mixer);
-        return mixer_error(error, QA_ERROR_MEMORY, "Cannot allocate prepared effect index");
+        return false;
     }
-    mixer->prepared_index_capacity = buckets;
-    memset(mixer->prepared_index, 0, buckets * sizeof(*mixer->prepared_index));
     size_t workspace = options->workspace_capacity ? options->workspace_capacity : 4096;
     if (workspace < options->initial_voices) workspace = options->initial_voices;
     if (workspace > SIZE_MAX / 2) {
@@ -603,6 +574,7 @@ void qa_audio_mixer_destroy(qa_audio_mixer *mixer) {
         mixer->event_head = mixer->events[index].next;
         prepared_release(mixer, mixer->events[index].prepared);
     }
+    qa_id_index_destroy(&mixer->prepared_index);
     qa_audio_positions_destroy(&mixer->positions);
     qa_arena_destroy(&mixer->prepared_storage);
     free(mixer);

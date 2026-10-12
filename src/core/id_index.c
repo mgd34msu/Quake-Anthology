@@ -79,14 +79,21 @@ qa_id_index_entry *qa_id_index_find(qa_id_index *index, qa_string_id key, uint64
     qa_id_index_cursor cursor = qa_id_index_begin(index, key, discriminator);
     return (qa_id_index_entry *)next_entry(index, &cursor);
 }
-bool qa_id_index_remove(qa_id_index *index, qa_string_id key, uint64_t discriminator)
+static bool remove_entries(qa_id_index *index, qa_string_id key, uint64_t discriminator,
+                           const size_t *value)
 {
-    if (!qa_id_index_find(index, key, discriminator)) return false;
+    qa_id_index_cursor cursor = qa_id_index_begin(index, key, discriminator);
+    size_t candidate;
+    bool found = false;
+    while (qa_id_index_next(index, &cursor, &candidate))
+        if (!value || candidate == *value) { found = true; break; }
+    if (!found) return false;
     size_t count = 0;
     memset(index->buckets, 0, index->capacity * 2 * sizeof(*index->buckets));
     for (size_t i = 0; i < index->count; ++i) {
         qa_id_index_entry entry = index->entries[i];
-        if (entry.key == key && entry.discriminator == discriminator) continue;
+        if (entry.key == key && entry.discriminator == discriminator &&
+            (!value || entry.value == *value)) continue;
         size_t slot = bucket(entry.key, entry.discriminator, index->capacity);
         entry.next = index->buckets[slot];
         index->entries[count] = entry;
@@ -94,6 +101,15 @@ bool qa_id_index_remove(qa_id_index *index, qa_string_id key, uint64_t discrimin
     }
     index->count = count;
     return true;
+}
+bool qa_id_index_remove(qa_id_index *index, qa_string_id key, uint64_t discriminator)
+{
+    return remove_entries(index, key, discriminator, NULL);
+}
+bool qa_id_index_remove_value(qa_id_index *index, qa_string_id key, uint64_t discriminator,
+                              size_t value)
+{
+    return remove_entries(index, key, discriminator, &value);
 }
 void qa_id_index_clear(qa_id_index *index)
 {

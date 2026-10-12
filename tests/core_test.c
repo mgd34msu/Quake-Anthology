@@ -2950,6 +2950,23 @@ static void test_q3_send_admission(void)
 static void test_actor_index_lifetimes(void)
 {
     qa_error error={0}; qa_actor_registry *registry=NULL; qa_actor_index index={0};
+    qa_id_index candidates = {0}; size_t retained;
+    uint64_t identity = UINT64_C(0x100000007), other_identity = UINT64_C(0x200000007);
+    CHECK(qa_id_index_reserve(&candidates, 4, &error));
+    qa_id_index_insert(&candidates, 1, identity, 10);
+    qa_id_index_insert(&candidates, 1, identity, 20);
+    qa_id_index_insert(&candidates, 1, identity, 30);
+    qa_id_index_insert(&candidates, 1, other_identity, 40);
+    CHECK(qa_id_index_remove_value(&candidates, 1, identity, 20));
+    qa_id_index_cursor cursor = qa_id_index_begin(&candidates, 1, identity);
+    CHECK(qa_id_index_next(&candidates, &cursor, &retained) && retained == 30);
+    CHECK(qa_id_index_next(&candidates, &cursor, &retained) && retained == 10);
+    CHECK(!qa_id_index_next(&candidates, &cursor, &retained));
+    CHECK(!qa_id_index_remove_value(&candidates, 1, identity, 99));
+    CHECK(qa_id_index_remove(&candidates, 1, identity));
+    cursor = qa_id_index_begin(&candidates, 1, other_identity);
+    CHECK(qa_id_index_next(&candidates, &cursor, &retained) && retained == 40);
+    qa_id_index_destroy(&candidates);
     uint8_t bytes[16384]; qa_arena storage;
     CHECK(qa_arena_init_buffer(&storage,bytes,sizeof(bytes),&error));
     CHECK(qa_actors_create(2,NULL,NULL,&registry,&error));

@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "204442d73e07153983aa3ec0ab35eb0b9bc8e0bf",
+  "verified_main": "dd9d92db3c398a043336eb51d7cee1416374ead3",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -27722,7 +27722,13 @@
       "job": "09",
       "area": "bots_navigation",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "source review; no runtime or performance proof",
+      "partial_followups": [
+        {
+          "commit": "dd9d92db3c398a043336eb51d7cee1416374ead3",
+          "verification": "Character string aliases now resolve through the common ID index. Sparse holes, source pointer generation, original allocator/read ordering and saved bytes retained; import/history rebuild indexes before projection/publication. Fuzzy, goal and initial-chat aliases in 09-01 remain open."
+        }
+      ]
     },
     {
       "id": "09-02",
@@ -39689,6 +39695,32 @@
       ],
       "record_directory": "/tmp/qa-ta3196-shared-audio-positions-20261011",
       "conclusion": "Engine and seat mixers now share one ID-indexed, arena-backed position implementation. Full actor/owner identity, scoped fallback, base overwrite and round lifetimes retained. Existing core test exercises integrated mixer setters and lifecycle. Engine historical storage can still grow, and seat-local scopes still require isolated store instances; whole zero-allocation observation remains open. Normal production build/core only; no live audio/performance claim."
+    },
+    {
+      "commit": "dd9d92db3c398a043336eb51d7cee1416374ead3",
+      "source_tree": "df03fd722a3d20f70db0b5f0b7245c27830488b5",
+      "finding_ids": [
+        "09-01"
+      ],
+      "files_rechecked": [
+        "src/bots/library/character_source.h",
+        "src/bots/library/character_source.c",
+        "src/bots/library/character_save.c",
+        "src/bots/library/source_assets_history.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-bot-character-alias-index-20261011",
+      "conclusion": "Character string aliases now resolve through the common ID index. Sparse holes, source pointer generation, original allocator/read ordering and saved bytes retained; import/history rebuild indexes before projection/publication. Fuzzy, goal and initial-chat aliases in 09-01 remain open. Normal production build/core only."
     }
   ],
   "verification_limits": [

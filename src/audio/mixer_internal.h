@@ -3,6 +3,7 @@
 
 #include "codec_internal.h"
 #include "qa/pool.h"
+#include "qa/id_index.h"
 #include "positions_private.h"
 
 /* These are source DMA/chunk dimensions, not limits on actors or voices. */
@@ -14,7 +15,6 @@ typedef struct qa_mixer_gain {
     double left, right;
 } qa_mixer_gain;
 typedef struct qa_mixer_prepared {
-    struct qa_mixer_prepared *next;
     qa_audio_sample *sample, *pcm;
     qa_audio_asset *asset;
     bool q3;
@@ -84,8 +84,7 @@ struct qa_audio_mixer {
     size_t voice_count;
     qa_arena prepared_storage;
     qa_pool prepared_records, voice_records, notification_records;
-    qa_mixer_prepared **prepared_index;
-    size_t prepared_index_capacity;
+    qa_id_index prepared_index;
     qa_mixer_loop *loops;
     size_t loop_count, loop_capacity;
     qa_mixer_loop_mix *loop_mixes;
