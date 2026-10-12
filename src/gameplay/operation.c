@@ -1,4 +1,5 @@
 #include "qa/operation.h"
+#include "qa/pool.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +16,7 @@ struct qa_operation_admission {
 typedef struct operation_frame {
     struct operation_frame *previous;
     void *request;
+    size_t storage_slot;
     qa_operation_canonical_fn canonical;
     void *context;
     uint64_t invocation;
@@ -24,8 +26,10 @@ typedef struct operation_frame {
 
 struct qa_operation {
     operation_entry *entries, *admissions;
-    operation_frame *current, *spare;
-    size_t request_size, result_size, active_count;
+    operation_frame *current;
+    qa_arena frame_storage;
+    qa_pool frames;
+    size_t request_size, request_offset, result_size, active_count;
     uint64_t next_sequence, next_invocation;
     size_t depth, admission_count;
 };
@@ -38,6 +42,18 @@ bool qa_operation_create(size_t request_size, size_t result_size, qa_operation *
     if (!out || !request_size) return argument(error,"operation requires a request layout and output");
     qa_operation *operation=calloc(1,sizeof(*operation));
     if (!operation) { qa_error_set(error,QA_ERROR_MEMORY,0,"allocating gameplay operation"); return false; }
+    size_t alignment=_Alignof(max_align_t);
+    operation->request_offset=(sizeof(operation_frame)+alignment-1)&~(alignment-1);
+    if (request_size>SIZE_MAX-operation->request_offset) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"operation request storage size overflow");
+        free(operation); return false;
+    }
+    size_t frame_size=operation->request_offset+request_size;
+    qa_arena_init(&operation->frame_storage,frame_size);
+    if (!qa_pool_prepare(&operation->frames,&operation->frame_storage,1,
+            frame_size,alignment,error)) {
+        qa_arena_destroy(&operation->frame_storage); free(operation); return false;
+    }
     operation->request_size=request_size; operation->result_size=result_size;
     operation->next_sequence=1; operation->next_invocation=1;
     *out=operation; return true;
@@ -64,11 +80,7 @@ bool qa_operation_destroy(qa_operation *operation, qa_error *error) {
     if (!qa_operation_destroy_validate(operation,error)) return false;
     if (!operation) return true;
     qa_operation_clear(operation);
-    while (operation->spare) {
-        operation_frame *frame=operation->spare;
-        operation->spare=frame->previous;
-        free(frame->request); free(frame);
-    }
+    qa_arena_destroy(&operation->frame_storage);
     free(operation); return true;
 }
 
@@ -214,15 +226,13 @@ bool qa_operation_dispatch(qa_operation *operation, const void *request, void *r
         --operation->depth; sweep(operation); return success;
     }
     if (operation->next_invocation==UINT64_MAX) return argument(error,"operation invocation identity exhausted");
-    operation_frame *frame=operation->spare;
-    if (frame) operation->spare=frame->previous;
-    else {
-        frame=calloc(1,sizeof(*frame));
-        if (frame) frame->request=malloc(operation->request_size);
-        if (!frame || !frame->request) {
-            free(frame); qa_error_set(error,QA_ERROR_MEMORY,0,"allocating operation invocation"); return false;
-        }
-    }
+    if (operation->frames.head==SIZE_MAX &&
+        !qa_pool_extend(&operation->frames,&operation->frame_storage,
+            operation->frames.capacity,error)) return false;
+    size_t slot;
+    operation_frame *frame=qa_pool_take(&operation->frames,&slot);
+    frame->storage_slot=slot;
+    frame->request=(uint8_t *)frame+operation->request_offset;
     memcpy(frame->request,request,operation->request_size);
     frame->previous=operation->current; frame->canonical=canonical; frame->context=canonical_context;
     frame->invocation=operation->next_invocation++; frame->called=false; frame->failed=false; frame->continuation_open=false;
@@ -251,6 +261,6 @@ bool qa_operation_dispatch(qa_operation *operation, const void *request, void *r
     }
 finished:
     operation->current=frame->previous;
-    frame->previous=operation->spare; operation->spare=frame;
+    qa_pool_release(&operation->frames,frame->storage_slot);
     --operation->depth; sweep(operation); return success;
 }

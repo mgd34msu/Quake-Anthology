@@ -426,11 +426,13 @@ typedef struct q2_player_source_info {
     float view_height;
     bool connected, spectator, dead, god, notarget, noclip, flashlight;
 } q2_player_source_info;
+enum { Q2_COMPASS_NAV_POINTS = 128, Q2_COMPASS_POINTS = Q2_COMPASS_NAV_POINTS + 1 };
 typedef struct q2_client_state {
     q2_player_source_info info;
     qa_q2_player_rule_tail rule;
     qa_string_id source_name, source_skin, source_model, source_model_resource;
     qa_actor_player *player;
+    qa_vec3 help_storage[];
 } q2_client_state;
 
 typedef struct q2_actor {
@@ -727,6 +729,7 @@ void q2_items_close(qa_q2_game *);
 void q2_players_close(qa_q2_game *);
 void q2_entities_close(qa_q2_game *);
 void q2_items_release_state(q2_actor *);
+q2_client_state *q2_client_state_create(const qa_q2_player_rule_tail *, qa_error *);
 void q2_client_release_state(q2_actor *);
 void q2_entity_release_state(q2_actor *);
 void q2_entity_unbind(qa_q2_game *, q2_actor *);

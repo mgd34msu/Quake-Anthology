@@ -300,11 +300,9 @@ static bool player_admit(void *context, qa_actor_id id, qa_error *e) {
             return false;
         }
     }
-    q2_client_state *s = calloc(1, sizeof(*s));
-    if (!s) {
-        qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 player");
+    q2_client_state *s = q2_client_state_create(NULL, e);
+    if (!s)
         return false;
-    }
     a->client = s;
     a->source_pm = (qa_q2_player_pm_rules){.frame = g->wire_frame, .time_ns = g->now_ns};
     s->info = (q2_player_source_info){

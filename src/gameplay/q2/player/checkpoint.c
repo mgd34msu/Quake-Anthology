@@ -11,14 +11,13 @@ void qa_q2_player_checkpoint_free(qa_q2_player_checkpoint *s) {
     free(s->value.rule.help_points);
     *s = (qa_q2_player_checkpoint){0};
 }
-static bool copy_arrays(const qa_q2_player_rule_tail *from, qa_q2_player_rule_tail *to, qa_error *e) {
+static bool copy_inventories(const qa_q2_player_rule_tail *from, qa_q2_player_rule_tail *to, qa_error *e) {
     to->coop.inventory = NULL;
     to->coop.inventory_owner = NULL;
     to->coop.inventory_storage = (qa_arena){0};
     to->spawn_inventory = NULL;
     to->spawn_inventory_owner = NULL;
     to->spawn_inventory_storage = (qa_arena){0};
-    to->help_points = NULL;
     void *copy;
     if (!q2_saved_array(from->coop.inventory, from->coop.count, sizeof(*from->coop.inventory),
                         &copy, e))
@@ -28,10 +27,6 @@ static bool copy_arrays(const qa_q2_player_rule_tail *from, qa_q2_player_rule_ta
                         &copy, e))
         return false;
     to->spawn_inventory = copy;
-    if (!q2_saved_array(from->help_points, from->help_count, sizeof(*from->help_points), &copy, e))
-        return false;
-    to->help_points = copy;
-    to->help_capacity = to->help_count;
     return true;
 }
 bool qa_q2_player_capture(qa_q2_game *g, qa_actor_id id, qa_q2_player_checkpoint *out,
@@ -53,8 +48,14 @@ bool qa_q2_player_capture(qa_q2_game *g, qa_actor_id id, qa_q2_player_checkpoint
     saved.value.rule = s->rule;
     saved.value.bot = s->player->bot;
     q2_player_source_info_read(g, s, &saved.value.info);
-    if (!copy_arrays(&s->rule, &saved.value.rule, e))
+    saved.value.rule.help_points = NULL;
+    void *points;
+    if (!copy_inventories(&s->rule, &saved.value.rule, e) ||
+        !q2_saved_array(s->rule.help_points, s->rule.help_count,
+                        sizeof(*s->rule.help_points), &points, e))
         goto fail;
+    saved.value.rule.help_points = points;
+    saved.value.rule.help_capacity = saved.value.rule.help_count;
     if (!q2_save_reference(g, s->info.chase_target, &saved.chase_target, e) ||
         !q2_save_reference(g, s->rule.noise[0], &saved.noise[0], e) ||
         !q2_save_reference(g, s->rule.noise[1], &saved.noise[1], e) ||
@@ -160,12 +161,9 @@ bool qa_q2_player_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_player_chec
     }
     if (!a)
         return false;
-    q2_client_state *state = calloc(1, sizeof(*state));
-    if (!state) {
-        qa_error_set(e, QA_ERROR_MEMORY, 0, "Restoring Q2 player state");
+    q2_client_state *state = q2_client_state_create(&saved->value.rule, e);
+    if (!state)
         return false;
-    }
-    state->rule = saved->value.rule;
     state->player = qa_actors_player(qa_world_actors(g->services.world), id);
     const qa_q2_player_info *info = &saved->value.info;
     state->info = (q2_player_source_info){
@@ -205,7 +203,7 @@ bool qa_q2_player_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_player_chec
         state->player->spectator = info->spectator;
         state->player->present = true;
     }
-    if (!copy_arrays(&saved->value.rule, &state->rule, e) ||
+    if (!copy_inventories(&saved->value.rule, &state->rule, e) ||
         !q2_resolve_reference(g, saved->chase_target, &state->info.chase_target, e) ||
         !q2_resolve_reference(g, saved->noise[0], &state->rule.noise[0], e) ||
         !q2_resolve_reference(g, saved->noise[1], &state->rule.noise[1], e) ||

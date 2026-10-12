@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "9d227a33433b7e954b3c74e02d26c7d9b44de85c",
+  "verified_main": "54b9b1d20d3b24137631f529cff74bbcb92adec7",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 193,
-    "open_source_observation": 178,
+    "fixed_source_build_core": 196,
+    "open_source_observation": 175,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -26959,8 +26959,9 @@
       "severity": "low",
       "job": "05",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "54b9b1d20d3b24137631f529cff74bbcb92adec7"
     },
     {
       "id": "06-01",
@@ -29741,8 +29742,9 @@
       "severity": "medium",
       "job": "15",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "54b9b1d20d3b24137631f529cff74bbcb92adec7"
     },
     {
       "id": "J15-04",
@@ -29861,8 +29863,9 @@
       "severity": "medium",
       "job": "15",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "54b9b1d20d3b24137631f529cff74bbcb92adec7"
     },
     {
       "id": "J15-08",
@@ -42572,6 +42575,34 @@
       ],
       "record_directory": "/tmp/qa-ta3196-native-world-common-storage-20261012-v1",
       "conclusion": "Native BoxEdicts now uses a shared spatial snapshot lease; the private candidate collector and per-query calloc/free are deleted. Native traversal/filter/count semantics preserved. Retained metadata uses common arenas with actual-capacity growth; normal build and seven core suites passed, no live allocation or timing claim."
+    },
+    {
+      "commit": "54b9b1d20d3b24137631f529cff74bbcb92adec7",
+      "source_tree": "a3b54f048742739b39ff57ab2e571401cc2541c5",
+      "finding_ids": [
+        "05-D3",
+        "J15-03",
+        "J15-07"
+      ],
+      "files_rechecked": [
+        "src/app/application/startup_flow.c",
+        "src/app/frontend/network_content_q3.c",
+        "src/app/frontend/network_q1_client.c",
+        "src/app/frontend/network_q1_skin_commands.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-shared-command-text-20261012-v1",
+      "conclusion": "Startup replay, Q1 command/content comparisons and remote Q3 game-type parsing now use existing shared context/text/integer primitives. Private duplicate bodies removed, original Q3 integer-prefix conversion selected. Normal build and seven core suites passed; no live or performance claim."
     }
   ],
   "verification_limits": [

@@ -722,8 +722,8 @@ static bool level_admit(qa_q2_game *g, const q2_original_level_file *file, qa_er
         if (!actor || !q2_wire_bind(g, actor, row->number, error)) return false;
         const char *name = qa_strings_cstr(qa_session_strings(g->services.session), classname);
         if (name && !strcmp(name, "bodyque") && !actor->client) {
-            actor->client = calloc(1, sizeof(*actor->client));
-            if (!actor->client) { qa_error_set(error, QA_ERROR_MEMORY, i, "Restoring original Q2 corpse owner"); return false; }
+            actor->client = q2_client_state_create(NULL, error);
+            if (!actor->client) return false;
             actor->client->player = qa_actors_player(qa_world_actors(g->services.world), id);
             actor->client->rule.corpse = true;
             qa_combat_state combat = {0};

@@ -68,13 +68,32 @@ void qa_q2_player_carry_free(qa_q2_player_carry *carry) {
         *carry = (qa_q2_player_carry){0};
     }
 }
+q2_client_state *q2_client_state_create(const qa_q2_player_rule_tail *rule, qa_error *e) {
+    size_t count = rule ? rule->help_count : 0;
+    size_t capacity = count > Q2_COMPASS_POINTS ? count : Q2_COMPASS_POINTS;
+    if (capacity > (SIZE_MAX - sizeof(q2_client_state)) / sizeof(qa_vec3)) {
+        qa_error_set(e, QA_ERROR_MEMORY, count, "Q2 player compass storage extent overflows");
+        return NULL;
+    }
+    q2_client_state *state = calloc(1, sizeof(*state) + capacity * sizeof(*state->help_storage));
+    if (!state) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 player state");
+        return NULL;
+    }
+    if (rule)
+        state->rule = *rule;
+    state->rule.help_points = state->help_storage;
+    state->rule.help_capacity = capacity;
+    if (count)
+        memcpy(state->help_storage, rule->help_points, count * sizeof(*state->help_storage));
+    return state;
+}
 void q2_client_release_state(q2_actor *a) {
     if (!a->client)
         return;
     qa_q2_player_carry_free(&a->client->rule.coop);
     q2_player_inventory_free(a->client->rule.spawn_inventory_owner,
         &a->client->rule.spawn_inventory_storage, a->client->rule.spawn_inventory);
-    free(a->client->rule.help_points);
     free(a->client);
     a->client = NULL;
 }

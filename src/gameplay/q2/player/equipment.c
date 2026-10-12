@@ -144,21 +144,13 @@ bool q2_client_item_action(qa_q2_game *g, qa_actor_id id, bool flashlight, bool 
         return q2_player_print(g, id, 2, "$no_valid_poi", e);
     if (!q2_actor_live(g, id))
         return true;
-    if (s->rule.help_capacity < 129) {
-        qa_vec3 *points = realloc(s->rule.help_points, 129 * sizeof(*points));
-        if (!points) {
-            qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining Q2 compass path");
-            return false;
-        }
-        s->rule.help_points = points;
-        s->rule.help_capacity = 129;
-    }
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, id, &body, e))
         return false;
     size_t count = 0;
     bool reachable;
-    if (!q2_map_navigation(g, id, body.origin, s->rule.help_location, s->rule.help_points, 128, &count,
+    if (!q2_map_navigation(g, id, body.origin, s->rule.help_location, s->rule.help_points,
+                           Q2_COMPASS_NAV_POINTS, &count,
                            &reachable, e))
         return false;
     if (!q2_actor_live(g, id))
@@ -169,8 +161,8 @@ bool q2_client_item_action(qa_q2_game *g, qa_actor_id id, bool flashlight, bool 
             return false;
         return !q2_actor_live(g, id) || q2_player_sound(g, id, QA_Q2_SFX_MISC_HELP_MARKER, 0, e);
     }
-    if (count > 128)
-        count = 128;
+    if (count > Q2_COMPASS_NAV_POINTS)
+        count = Q2_COMPASS_NAV_POINTS;
     s->rule.help_count = count;
     s->rule.help_index = 0;
     while (s->rule.help_index + 1 < count &&

@@ -5,6 +5,7 @@
 #include "qa/arena.h"
 #include "qa/native.h"
 #include "qa/pool.h"
+#include "qa/operation.h"
 #include "qa/random.h"
 #include "qa/network_unified_frame_pool.h"
 #include "qa/network_unified_session.h"
@@ -874,6 +875,66 @@ static void test_reserved_scene_frame(void)
         !memcmp(frame.images[0]->levels[0].pixels,pixel,sizeof pixel));
     qa_scene_frame_destroy(&frame);
     qa_scene_resources_destroy(resources);
+}
+
+typedef struct operation_pool_request {
+    max_align_t alignment;
+    unsigned depth;
+} operation_pool_request;
+typedef struct operation_pool_check {
+    qa_operation *operation;
+    qa_operation_next saved;
+    unsigned calls;
+    bool repeat;
+} operation_pool_check;
+static bool operation_pool_canonical(void *context,const void *request,void *result,qa_error *error)
+{
+    (void)error;
+    operation_pool_check *check=context;
+    CHECK((uintptr_t)request%_Alignof(max_align_t)==0);
+    ++check->calls;
+    *(unsigned *)result=((const operation_pool_request *)request)->depth;
+    return true;
+}
+static bool operation_pool_replace(void *context,const void *request,qa_operation_next next,
+    void *result,qa_error *error)
+{
+    operation_pool_check *check=context;
+    const operation_pool_request *outer=request;
+    unsigned depth=outer->depth;
+    if (depth<8) {
+        operation_pool_request nested={0}; nested.depth=depth+1;
+        unsigned value;
+        CHECK(qa_operation_dispatch(check->operation,&nested,&value,operation_pool_canonical,
+            check,NULL,NULL,error));
+        CHECK(value==depth+1 && outer->depth==depth);
+    }
+    CHECK(qa_operation_continue(next,request,result,error));
+    if (!depth) {
+        check->saved=next;
+        if (check->repeat) CHECK(!qa_operation_continue(next,request,result,error));
+    }
+    return true;
+}
+static void test_operation_pool(void)
+{
+    qa_error error={0}; operation_pool_check check={0};
+    CHECK(qa_operation_create(sizeof(operation_pool_request),sizeof(unsigned),&check.operation,&error));
+    qa_operation_hook hook={.owner=1,.name=1,.kind=QA_OPERATION_REPLACE,
+        .context=&check,.call.replace=operation_pool_replace};
+    qa_operation_registration registration;
+    CHECK(qa_operation_register(check.operation,&hook,&registration,&error));
+    operation_pool_request request={0}; unsigned value;
+    CHECK(qa_operation_dispatch(check.operation,&request,&value,operation_pool_canonical,
+        &check,NULL,NULL,&error));
+    CHECK(value==0 && check.calls==9);
+    CHECK(!qa_operation_continue(check.saved,&request,&value,&error));
+    check.repeat=true;
+    CHECK(!qa_operation_dispatch(check.operation,&request,&value,operation_pool_canonical,
+        &check,NULL,NULL,&error));
+    CHECK(check.calls==18);
+    CHECK(qa_operation_unregister(check.operation,registration));
+    CHECK(qa_operation_destroy(check.operation,&error));
 }
 
 static void test_arena(void)
@@ -4353,6 +4414,7 @@ int main(int argc, char **argv)
     test_binary();
     test_spans();
     test_arena();
+    test_operation_pool();
     test_reserved_scene_frame();
     test_bounded_handshake();
     test_shared_trajectory();

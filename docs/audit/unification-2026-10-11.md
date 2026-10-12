@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `9d227a33`.
+Follow-up source changes were reviewed through main `54b9b1d2`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 193 have source fixes
+There are **374 overlapping source-review observations**: 196 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 178 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 175 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -386,3 +386,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `d77a17f4` / 05-H2: Component publisher cursors reserve the existing protocol owner extent in the shared arena at create and restore. Frame capture and retained restore delete cursor growth and reuse owned storage. Normal build and seven core suites passed; no live or global allocation claim. Records: `/tmp/qa-ta3196-component-cursor-load-storage-20261012-v2`.
 
 - `9d227a33` / 26-03: Native BoxEdicts now uses a shared spatial snapshot lease; the private candidate collector and per-query calloc/free are deleted. Native traversal/filter/count semantics preserved. Retained metadata uses common arenas with actual-capacity growth; normal build and seven core suites passed, no live allocation or timing claim. Records: `/tmp/qa-ta3196-native-world-common-storage-20261012-v1`.
+
+- `54b9b1d2` / 05-D3, J15-03, J15-07: Startup replay, Q1 command/content comparisons and remote Q3 game-type parsing now use existing shared context/text/integer primitives. Private duplicate bodies removed, original Q3 integer-prefix conversion selected. Normal build and seven core suites passed; no live or performance claim. Records: `/tmp/qa-ta3196-shared-command-text-20261012-v1`.

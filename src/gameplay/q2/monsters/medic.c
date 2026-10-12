@@ -28,11 +28,9 @@ static bool medic_species(const struct qa_q2_monster *m) {
 }
 
 static q2_actor *native_actor(qa_q2_game *g, qa_actor_id id) {
-    if (!q2_actor_live(g, id) || id.slot >= g->capacity)
-        return NULL;
-    q2_actor *a = g->actors[id.slot];
-    return a && qa_actor_id_equal(a->id, id) && a->monster &&
-                   a->monster->definition && a->projectile.kind == Q2_PROJECTILE_NONE
+    q2_actor *a = q2_actor_get(g, id, false, NULL);
+    return a && a->monster && a->monster->definition &&
+                   a->projectile.kind == Q2_PROJECTILE_NONE
                ? a : NULL;
 }
 
@@ -354,11 +352,12 @@ static void clear_targets(q2m_context *c, q2m_context *target) {
         entity->target = entity->targetname = 0;
         qa_targets_changed(target->actor->entity_targets, target->actor->id);
         for (size_t i = 0; i < entity->field_count; ++i) {
-            const char *key = qa_strings_cstr(
-                qa_session_strings(c->game->services.session), entity->fields[i].key);
-            if (key && (!strcmp(key, "combattarget") || !strcmp(key, "deathtarget") ||
-                        (rerelease(c) && (!strcmp(key, "healthtarget") ||
-                                          !strcmp(key, "itemtarget")))))
+            qa_string_id key = entity->fields[i].key;
+            if (key == c->game->field_keys[QA_TARGET_KEY_COMBATTARGET] ||
+                key == c->game->field_keys[QA_TARGET_KEY_DEATHTARGET] ||
+                (rerelease(c) &&
+                 (key == c->game->field_keys[QA_TARGET_KEY_HEALTHTARGET] ||
+                  key == c->game->field_keys[QA_TARGET_KEY_ITEMTARGET])))
                 entity->fields[i].value = 0;
         }
     }
