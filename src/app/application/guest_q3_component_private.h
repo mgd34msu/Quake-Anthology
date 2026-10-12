@@ -59,6 +59,7 @@ struct application_q3_component {
     qa_string_id definition;
     component_player_cursor *player_cursors;
     size_t player_cursor_count;
+    qa_actor_index player_cursor_rows;
     qa_qvm_binding player_watch;
     qa_qvm_binding restored_player_watch;
     uint64_t player_order;

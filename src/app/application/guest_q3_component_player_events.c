@@ -42,15 +42,21 @@ static bool observe(void *context,qa_qvm *vm,const qa_qvm_committed_write *event
 bool q3component_player_events_create(application_q3_component *c,qa_error *e)
 {
     if(c->scene||c->player_record==SIZE_MAX||!c->maximum) return true;
+    if(!qa_actor_index_create(&c->player_cursor_rows,qa_session_actors(c->options.host.session),NULL,e)||
+        !qa_id_index_reserve(&c->player_cursor_rows.retained,c->maximum,e)) {
+        qa_actor_index_destroy(&c->player_cursor_rows); return false;
+    }
     component_record *record=c->records->records+c->player_record;
     qa_qvm_write_range ranges[64];
     for(uint32_t i=0;i<c->maximum;++i) ranges[i]=(qa_qvm_write_range){record->address+i*record->stride+108,32};
-    return qa_qvm_observe_writes(c->vm,ranges,c->maximum,observe,NULL,c,&c->player_watch,e);
+    if(qa_qvm_observe_writes(c->vm,ranges,c->maximum,observe,NULL,c,&c->player_watch,e)) return true;
+    qa_actor_index_destroy(&c->player_cursor_rows); return false;
 }
 bool q3component_player_events_track(application_q3_component *c,qa_actor_id actor,qa_error *e)
 {
     if(!c->player_watch) return true;
-    for(size_t i=0;i<c->player_cursor_count;++i) if(qa_actor_id_equal(c->player_cursors[i].actor,actor)) return true;
+    size_t row;
+    if(qa_actor_index_find_retained(&c->player_cursor_rows,actor,&row)) return true;
     uint32_t address;
     if(!application_q3_component_records_pointer(c->records,actor,c->player_record,&address,e)) return false;
     component_player_cursor cursor={.actor=actor,.address=address}; qa_q3_player state;
@@ -59,13 +65,19 @@ bool q3component_player_events_track(application_q3_component *c,qa_actor_id act
     cursor.sequence=cursor.observed=state.eventSequence;
     component_player_cursor *rows=realloc(c->player_cursors,(c->player_cursor_count+1)*sizeof(*rows));
     if(!rows) return q3records_fail(e,QA_ERROR_MEMORY,"Retaining admitted original player event cursor");
-    c->player_cursors=rows; rows[c->player_cursor_count++]=cursor; return true;
+    c->player_cursors=rows; rows[c->player_cursor_count]=cursor;
+    if(!qa_actor_index_remember(&c->player_cursor_rows,actor,c->player_cursor_count,e)) return false;
+    ++c->player_cursor_count; return true;
 }
 void q3component_player_events_release(application_q3_component *c,qa_actor_id actor)
 {
-    for(size_t i=0;i<c->player_cursor_count;++i) if(qa_actor_id_equal(c->player_cursors[i].actor,actor)) {
-        memmove(c->player_cursors+i,c->player_cursors+i+1,(c->player_cursor_count-i-1)*sizeof(*c->player_cursors)); --c->player_cursor_count; return;
-    }
+    size_t row;
+    if(!qa_actor_index_find_retained(&c->player_cursor_rows,actor,&row)) return;
+    qa_actor_index_forget_retained(&c->player_cursor_rows,actor);
+    memmove(c->player_cursors+row,c->player_cursors+row+1,(c->player_cursor_count-row-1)*sizeof(*c->player_cursors));
+    --c->player_cursor_count;
+    for(size_t i=row;i<c->player_cursor_count;++i)
+        (void)qa_actor_index_remember(&c->player_cursor_rows,c->player_cursors[i].actor,i,NULL);
 }
 typedef struct pending_event { uint64_t order; application_q3_scene_player_event event; } pending_event;
 bool q3component_player_events_publish(application_q3_component *c,bool succeeded,qa_error *e)
@@ -110,7 +122,8 @@ bool q3component_player_events_publish(application_q3_component *c,bool succeede
 bool q3component_player_events_destroy(application_q3_component *c,qa_error *e)
 {
     if(c->player_watch&&!qa_qvm_unobserve_writes(c->vm,c->player_watch,e)) return false;
-    c->player_watch=0; free(c->player_cursors); c->player_cursors=NULL; c->player_cursor_count=0; return true;
+    c->player_watch=0; qa_actor_index_destroy(&c->player_cursor_rows);
+    free(c->player_cursors); c->player_cursors=NULL; c->player_cursor_count=0; return true;
 }
 bool q3component_player_events_fields(application_q3_component *c,qa_source_save_io *io)
 {
@@ -121,6 +134,7 @@ bool q3component_player_events_fields(application_q3_component *c,qa_source_save
         !qa_source_save_count(io,&c->player_cursor_count,c->maximum)) return false;
     if(reading) {
         c->restored_player_watch=watch;
+        qa_actor_index_clear(&c->player_cursor_rows);
         c->player_cursors=c->player_cursor_count?calloc(c->player_cursor_count,sizeof(*c->player_cursors)):NULL;
         if(c->player_cursor_count&&!c->player_cursors) return q3records_fail(io->error,QA_ERROR_MEMORY,"Restoring original player event cursors");
     }
@@ -137,6 +151,7 @@ bool q3component_player_events_fields(application_q3_component *c,qa_source_save
             (cursor->address-record->address)/record->stride>=c->maximum) return false;
         if(!reading) { uint32_t actual; if(!application_q3_component_records_pointer(c->records,cursor->actor,c->player_record,&actual,io->error)||actual!=cursor->address) return false; }
         for(size_t j=0;j<i;++j) if(c->player_cursors[j].address==cursor->address||qa_actor_id_equal(c->player_cursors[j].actor,cursor->actor)) return false;
+        if(reading&&!qa_actor_index_remember(&c->player_cursor_rows,cursor->actor,i,io->error)) return false;
     }
     return true;
 }
