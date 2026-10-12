@@ -715,6 +715,10 @@ uint64_t qa_application_events_first(const qa_application *);
 uint64_t qa_application_events_local_first(const qa_application *);
 uint64_t qa_application_events_next(const qa_application *);
 uint64_t qa_application_events_output_failures(const qa_application *);
+void qa_application_world_text_frame(qa_application *, uint64_t presentation_frame, bool local_presentation);
+bool qa_application_world_text_read(qa_application *, qa_arena *,
+    const qa_entity_text **, size_t *, uint64_t *through, qa_error *);
+void qa_application_world_text_present(qa_application *, uint64_t through);
 /* Audio retains its unread records in the same ring while listeners are unavailable. */
 uint64_t qa_application_events_audio_first(const qa_application *);
 void qa_application_events_audio_consume(qa_application *, uint64_t next);

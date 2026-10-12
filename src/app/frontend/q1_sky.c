@@ -2,7 +2,6 @@
 #include "qa/scene_resource_save.h"
 #include "qa/text.h"
 #include "resource_bindings.h"
-#include "qc_rerelease_events.h"
 #include <math.h>
 #include <stdio.h>
 

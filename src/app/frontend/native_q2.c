@@ -10,6 +10,8 @@
 #include "qa/localization.h"
 #include "qa/hud_controls.h"
 #include "qa/ui_preferences.h"
+#include "qa/application_startup_prepare.h"
+#include "qa/application_ui_names.h"
 #include "qa/binary.h"
 #include <SDL.h>
 #include <math.h>
@@ -25,6 +27,7 @@ struct frontend_native_q2 {
     qa_frontend *frontend;
     qa_application *application;
     qa_actor_owner owner;
+    qa_string_id content;
     void *owner_context;
     bool (*owner_idle)(void *);
     unsigned active_imports;
@@ -165,6 +168,19 @@ static bool source_font(frontend_native_q2 *source, qa_error *error)
     if (!source->fonts) return false;
     return frontend_source_classic_font(source->mounts, source->images, source->fonts,
         QA_GAME_Q2, &source->classic, error);
+}
+bool frontend_native_q2_world_text_font(qa_frontend *frontend, qa_string_id content,
+    const qa_font **out, qa_error *error)
+{
+    *out = NULL;
+    for (frontend_native_q2 *source = frontend->native_q2; source; source = source->next) {
+        if (source->application != frontend->application || source->prepared || source->content != content)
+            continue;
+        if (!source_font(source, error)) return false;
+        *out = source->classic;
+        break;
+    }
+    return true;
 }
 static const char *binding_name(frontend_native_q2 *source, const char *command, char out[96])
 {
@@ -563,6 +579,16 @@ bool frontend_native_q2_services(void *context, qa_application *application, qa_
     }
     source->owner_context = engine->owner_context; source->owner_idle = engine->owner_idle;
     source->cvars = engine->cvars; source->prepared = false;
+    const qa_launch_snapshot *snapshots[] = {
+        qa_application_startup_candidate(application), qa_application_launch(application)};
+    const char *instance = qa_strings_cstr(qa_session_strings(qa_application_session(application)), owner);
+    for (size_t i = 0; instance && i < sizeof(snapshots) / sizeof(*snapshots); ++i) {
+        const qa_launch_instance *descriptor = qa_launch_snapshot_find(snapshots[i], instance);
+        if (!descriptor) continue;
+        source->content = qa_application_content_name(application, qa_application_catalog(application),
+            descriptor->selection.product);
+        break;
+    }
     qa_hud_cvars_bind(source->cvars,
         QA_HUD_CVAR_LANGUAGE | QA_HUD_CVAR_USE_FONT | QA_HUD_CVAR_CENTER_TIME, &source->hud_cvars);
     engine->context = source;

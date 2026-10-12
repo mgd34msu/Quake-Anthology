@@ -8,6 +8,7 @@
 #include "guest_q3_components.h"
 #include "qa/application_native_q2_presentation.h"
 #include "qa/application_network.h"
+#include "qa/qc.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -466,32 +467,66 @@ bool application_unified_event_resource_register_acquired(qa_application *app, q
     return ok;
 }
 
+static bool world_text_stage(qa_application *app, qa_actor_owner owner,
+    qa_actor_owner clock_owner, uint64_t time_ns, const qa_entity_text *visual,
+    double duration, bool presentation_lifetime, qa_error *error)
+{
+    application_provider *provider = source_provider(app, owner);
+    if (!provider || !visual->text || !qa_vec_finite(visual->origin) ||
+        !qa_vec_finite(visual->angles) || !isfinite(visual->cell_size) || visual->cell_size <= 0 ||
+        !isfinite(duration) || duration < 0)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Invalid source world text");
+    for (size_t i = 0; i < 4; ++i)
+        if (!isfinite(visual->color[i])) return application_fail(error, QA_ERROR_ARGUMENT, "Invalid world text color");
+    application_unified_world_text row = {.provider = owner, .clock_provider = clock_owner,
+        .visual = *visual, .timed = duration > 0, .expires = (double)time_ns / 1e9 + duration,
+        .presentation_lifetime = presentation_lifetime};
+    if (!isfinite(row.expires)) return application_fail(error, QA_ERROR_ARGUMENT, "World text lifetime overflows");
+    row.visual.content = provider->content_name;
+    return application_unified_world_text_append(app, &row, error);
+}
+
 bool application_unified_world_text_emit(qa_application *app, qa_actor_owner owner,
     const qa_q2_map_event *event, qa_error *error)
 {
-    application_provider *provider = source_provider(app, owner);
     qa_clock_state clock;
-    if (!provider || !event || event->kind != QA_Q2_MAP_WORLD_TEXT ||
-        !qa_session_clock(app->session, owner, &clock) || !event->text ||
-        !qa_vec_finite(event->origin) || !qa_vec_finite(event->direction) || !qa_vec_finite(event->color) ||
-        !isfinite(event->alpha) || !isfinite(event->value) || event->value <= 0 ||
-        !isfinite(event->duration) || event->duration < 0 || app->unified_world_text_revision == UINT64_MAX)
-        return application_fail(error, QA_ERROR_ARGUMENT, "World text has no actual Source clock or valid geometry");
+    if (!event || event->kind != QA_Q2_MAP_WORLD_TEXT || !qa_session_clock(app->session, owner, &clock))
+        return application_fail(error, QA_ERROR_ARGUMENT, "World text has no source clock");
+    qa_actor_owner clock_owner = owner;
     application_provider *primary = application_world_provider(app, QA_ROLE_ENTITIES, "");
     if (primary) {
-        qa_clock_state source_clock;
-        if (!qa_session_clock(app->session, primary->owner, &source_clock))
+        clock_owner = primary->owner;
+        if (!qa_session_clock(app->session, clock_owner, &clock))
             return application_fail(error, QA_ERROR_ARGUMENT, "World text lost its primary Source clock");
-        clock = source_clock;
     }
-    application_unified_world_text row = {.provider = owner,
-        .visual = {.text = event->text, .origin = event->origin, .angles = event->direction,
-            .color = {event->color.x, event->color.y, event->color.z, event->alpha},
-            .cell_size = event->value, .distance_cull_factor = .004f,
-            .billboard = (event->flags & 2u) != 0, .depth_test = (event->flags & 1u) != 0},
-        .timed = event->duration > 0, .expires = (double)clock.frame.time_ns / 1e9 + event->duration};
-    if (!qa_strings_intern_cstr(qa_session_strings(app->session), provider->product->identity, &row.visual.content, error)) return false;
-    return application_unified_world_text_append(app, &row, error);
+    qa_entity_text visual = {.text = event->text, .origin = event->origin, .angles = event->direction,
+        .color = {event->color.x, event->color.y, event->color.z, event->alpha},
+        .cell_size = event->value, .distance_cull_factor = .004f, .has_distance_cull = true,
+        .billboard = (event->flags & 2u) != 0, .depth_test = (event->flags & 1u) != 0};
+    return world_text_stage(app, owner, clock_owner, clock.frame.time_ns, &visual, event->duration, false, error);
+}
+
+bool application_unified_world_text_builtin(qa_application *app,
+    const qa_builtin_event *event, qa_error *error)
+{
+    if (event->family != QA_GAME_Q1 || event->kind != QA_BUILTIN_EFFECT ||
+        event->code != QA_QC_BUILTIN_EX_DRAW_WORLDTEXT ||
+        event->resource != app->ui_names.q1_rerelease_debug) return true;
+    if (event->argument_count != 3 || !event->arguments)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC world text lacks its typed arguments");
+    double values[3];
+    for (size_t i = 0; i < 3; ++i) {
+        if (event->arguments[i].kind != QA_BUILTIN_MESSAGE_NUMBER ||
+            !isfinite(event->arguments[i].value.number))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Invalid QC world text argument");
+        values[i] = event->arguments[i].value.number;
+    }
+    if (values[0] < 0 || values[0] > 255 || trunc(values[0]) != values[0])
+        return application_fail(error, QA_ERROR_ARGUMENT, "Invalid QC world text palette index");
+    qa_entity_text visual = {.text = event->text, .origin = event->origin,
+        .color = {1, 1, 1, 1}, .cell_size = event->value, .billboard = true,
+        .selected_font = true, .depth_test = values[2] != 0};
+    return world_text_stage(app, event->provider, event->provider, event->time_ns, &visual, values[1], true, error);
 }
 
 bool application_unified_world_text_append(qa_application *app,
@@ -987,17 +1022,44 @@ bool application_unified_events_restore_finish(qa_application *app, qa_error *er
     return true;
 }
 
-bool application_unified_world_text_read(qa_application *app, const application_unified_source *source,
-    qa_unified_frame_lease *lease, qa_unified_frame_visuals *out, qa_error *e)
+void qa_application_world_text_frame(qa_application *app, uint64_t presentation_frame,
+    bool local_presentation)
 {
-    double now = (double)source->frame.time_ns / 1e9;
-    bool changed = app->unified_world_text_map != source->map_revision;
+    app->unified_world_text_frame = presentation_frame;
+    app->unified_world_text_local_presentation = local_presentation;
+}
+
+void qa_application_world_text_present(qa_application *app, uint64_t through)
+{
+    if (!app->unified_world_text_local_presentation) return;
+    bool changed = false;
+    for (application_unified_world_text *row = app->unified_world_text; row; row = row->next) {
+        if (!row->presentation_lifetime || row->timed || row->observed ||
+            qa_event_lease_id(row->lease) >= through) continue;
+        row->observed = true;
+        row->first_frame = app->unified_world_text_frame;
+        changed = true;
+    }
+    if (changed) ++app->unified_world_text_revision;
+}
+
+bool qa_application_world_text_read(qa_application *app, qa_arena *storage,
+    const qa_entity_text **texts, size_t *count, uint64_t *through, qa_error *e)
+{
+    *texts = NULL; *count = 0; *through = qa_application_events_next(app);
+    bool changed = app->unified_world_text_map != app->map_revision;
     if (changed) application_unified_world_text_destroy(app);
+    application_provider *primary = application_world_provider(app, QA_ROLE_ENTITIES, "");
     application_unified_world_text **link = &app->unified_world_text, *previous = NULL;
     while (*link) {
         application_unified_world_text *row = *link;
-        if ((row->timed && row->expires <= now) ||
-            (!row->timed && row->observed && row->first_frame != source->frame.number)) {
+        qa_clock_state clock;
+        qa_actor_owner clock_owner = row->clock_provider ? row->clock_provider : primary ? primary->owner : row->provider;
+        bool clock_live = qa_session_clock(app->session, clock_owner, &clock);
+        bool presented = row->presentation_lifetime && app->unified_world_text_local_presentation;
+        uint64_t frame = presented ? app->unified_world_text_frame : clock_live ? clock.frame.number : 0;
+        if (!clock_live || (row->timed && row->expires <= (double)clock.frame.time_ns / 1e9) ||
+            (!row->timed && row->observed && row->first_frame != frame)) {
             *link = row->next;
             if (app->unified_world_text_last == row) app->unified_world_text_last = previous;
             --app->unified_world_text_count;
@@ -1005,22 +1067,32 @@ bool application_unified_world_text_read(qa_application *app, const application_
             changed = true;
             continue;
         }
-        if (!row->timed && !row->observed) {
-            row->observed = true; row->first_frame = source->frame.number; changed = true;
+        if (!row->timed && !row->observed && !presented) {
+            row->observed = true; row->first_frame = frame; changed = true;
         }
         previous = row; link = &row->next;
     }
     if (changed) ++app->unified_world_text_revision;
     size_t kept = app->unified_world_text_count;
-    app->unified_world_text_map = source->map_revision;
+    app->unified_world_text_map = app->map_revision;
     if (!kept) return true;
-    out->world_text = application_unified_frame_alloc(lease, kept, sizeof(*out->world_text), e);
-    if (!out->world_text) return application_fail(e, QA_ERROR_MEMORY, "Projecting retained Source world text");
-    out->world_text_count = kept;
+    qa_entity_text *values = qa_arena_alloc(storage, kept * sizeof(*values), _Alignof(qa_entity_text), e);
+    if (!values) return false;
+    *texts = values; *count = kept;
     const application_unified_world_text *s = app->unified_world_text;
-    for (size_t i = 0; i < kept; ++i, s = s->next) {
-        out->world_text[i] = s->visual;
-    }
+    for (size_t i = 0; i < kept; ++i, s = s->next) values[i] = s->visual;
+    return true;
+}
+
+bool application_unified_world_text_read(qa_application *app, const application_unified_source *source,
+    qa_unified_frame_lease *lease, qa_unified_frame_visuals *out, qa_error *e)
+{
+    (void)source;
+    const qa_entity_text *texts;
+    uint64_t through;
+    if (!qa_application_world_text_read(app, qa_unified_frame_lease_arena(lease),
+        &texts, &out->world_text_count, &through, e)) return false;
+    out->world_text = (qa_entity_text *)texts;
     return true;
 }
 

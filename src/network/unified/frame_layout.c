@@ -429,6 +429,8 @@ static const qa_unified_field qa_entity_text_fields[] = {
     QA_UNIFIED_FIELD(qa_entity_text, distance_cull_factor, QA_UNIFIED_FIELD_F32),
     QA_UNIFIED_FIELD(qa_entity_text, billboard, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_entity_text, depth_test, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_entity_text, selected_font, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_entity_text, has_distance_cull, QA_UNIFIED_FIELD_BOOL),
 };
 static const qa_unified_record_layout qa_entity_text_layout = QA_UNIFIED_LAYOUT(qa_entity_text, qa_entity_text_fields);
 

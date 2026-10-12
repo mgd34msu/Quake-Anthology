@@ -4,6 +4,60 @@
 #include "qa/text.h"
 #include "../../render/scene/resources_internal.h"
 
+bool frontend_world_text_draw(qa_frontend *f, const qa_scene_view *view,
+    const qa_entity_text *values, size_t count, const qa_strings *strings,
+    const qa_font *const *classic_fonts, uint64_t through, qa_error *error)
+{
+    if (!count) return true;
+    qa_font_world_text *texts = qa_arena_alloc(&f->frame.storage,
+        count * sizeof(*texts), _Alignof(qa_font_world_text), error);
+    if (!texts) return false;
+    for (size_t i = 0; i < count; ++i) {
+        const qa_entity_text *source = values + i;
+        texts[i] = (qa_font_world_text){.text = qa_strings_text(strings, source->text),
+            .origin = source->origin, .angles = source->angles,
+            .color = {source->color[0], source->color[1], source->color[2], source->color[3]},
+            .cell_size = source->cell_size, .distance_cull_factor = source->distance_cull_factor,
+            .orientation = source->billboard ? QA_FONT_WORLD_BILLBOARD : QA_FONT_WORLD_FIXED,
+            .font = source->selected_font ? QA_FONT_WORLD_SELECTED : QA_FONT_WORLD_CLASSIC,
+            .has_distance_cull = source->has_distance_cull, .depth_test = source->depth_test,
+            .content = source->content};
+    }
+    qa_font_selection selected = f->seats[view->seat].fonts;
+    for (size_t first = 0; first < count;) {
+        const qa_font *classic = classic_fonts && classic_fonts[first] ? classic_fonts[first] : selected.classic;
+        size_t next = first + 1;
+        while (next < count &&
+            (classic_fonts && classic_fonts[next] ? classic_fonts[next] : selected.classic) == classic) ++next;
+        qa_font_selection fonts = selected;
+        fonts.classic = classic;
+        qa_font_world_snapshot snapshot = {.texts = texts + first, .count = next - first};
+        if (!qa_font_world_draw(&f->frame, view, &snapshot, &fonts, 0, false, error)) return false;
+        first = next;
+    }
+    if (through) qa_application_world_text_present(f->application, through);
+    return true;
+}
+
+bool frontend_world_text_local(qa_frontend *f, const qa_scene_view *view, qa_error *error)
+{
+    const qa_entity_text *texts;
+    size_t count;
+    uint64_t through;
+    if (!qa_application_world_text_read(f->application, &f->frame.storage, &texts, &count, &through, error)) return false;
+    if (!count) return true;
+    const qa_font **fonts = qa_arena_alloc(&f->frame.storage, count * sizeof(*fonts),
+        _Alignof(const qa_font *), error);
+    if (!fonts) return false;
+    for (size_t i = 0; i < count; ++i) {
+        fonts[i] = NULL;
+        if (!texts[i].selected_font && !frontend_native_q2_world_text_font(f,
+            texts[i].content, fonts + i, error)) return false;
+    }
+    return frontend_world_text_draw(f, view, texts, count,
+        qa_session_strings(qa_application_session(f->application)), fonts, through, error);
+}
+
 bool frontend_menu_font_view(qa_frontend *f, const qa_product **selected, const qa_product **typography, qa_error *error)
 {
     qa_catalog *catalog = qa_application_catalog(f->application);

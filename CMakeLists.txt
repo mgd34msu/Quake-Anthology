@@ -1717,7 +1717,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/shared_settings.c
     src/app/frontend/menu_fonts.c
     src/app/frontend/original_frontend.c
-    src/app/frontend/qc_rerelease_events.c
     src/app/frontend/save_menu.c
     src/app/frontend/ui_features.c
     src/app/frontend/audio_identity.c

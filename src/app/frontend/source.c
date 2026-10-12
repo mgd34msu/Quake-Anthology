@@ -24,7 +24,6 @@
 #include "round.h"
 #include "campaign.h"
 #include "campaign_cinematic.h"
-#include "qc_rerelease_events.h"
 #include "qc_messages.h"
 #include "qa/q3_assets_save.h"
 #include "qa/q3_assets_custody.h"
@@ -2420,7 +2419,6 @@ bool frontend_world_retired(void *context, qa_application *application, qa_error
     frontend_visuals_destroy(frontend);
     if (!frontend_source_retire_world(frontend, error)) return false;
     frontend_particle_retire(frontend);
-    frontend_qc_rerelease_retire_world(frontend);
     if (!frontend_event_retire_checked(frontend,error)) return false;
     frontend->silent_audio_remainder = 0;
     if (frontend->music_sources && !frontend_music_sources_output(frontend->music_sources,FRONTEND_MUSIC_MENU,error)) return false;

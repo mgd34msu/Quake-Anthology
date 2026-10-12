@@ -58,7 +58,6 @@ typedef struct frontend_native_q2 frontend_native_q2;
 typedef struct frontend_native_q3 frontend_native_q3;
 typedef struct frontend_remote_q3 frontend_remote_q3;
 typedef struct frontend_remote_q2 frontend_remote_q2;
-typedef struct frontend_qc_rerelease frontend_qc_rerelease;
 bool frontend_native_q2_rebind_ready(const qa_frontend *, const qa_frontend *, qa_error *);
 bool frontend_native_q2_callbacks_idle(const qa_frontend *);
 void frontend_native_q2_rebind(qa_frontend *, qa_frontend *);
@@ -277,7 +276,6 @@ struct qa_frontend {
     struct frontend_client_source *client_sources;
     struct frontend_component_scene *component_scenes;
     struct frontend_component_scene_restore *component_scene_restores;
-    frontend_qc_rerelease *qc_rerelease;
     qa_native_runtime *native_runtime;
     qa_native_resource_inventory *native_resource_inventory_pending;
     qa_save_image *save_image_pending;
@@ -451,6 +449,7 @@ bool frontend_event_debug(qa_frontend *, const qa_scene_view *, qa_error *);
 bool frontend_event_retire_checked(qa_frontend *,qa_error *);
 bool frontend_event_sounds(qa_frontend *, qa_actor_owner, qa_game_family, qa_audio_bank **, qa_error *);
 bool frontend_event_images(qa_frontend *, qa_actor_owner, qa_game_family, qa_scene_resources **, qa_error *);
+bool frontend_event_qc_resources(qa_frontend *, qa_actor_owner, qa_scene_resources **, qa_audio_bank **, qa_error *);
 bool frontend_particle_events(qa_frontend *, qa_error *);
 bool frontend_particle_advance(qa_frontend *, qa_error *);
 bool frontend_particle_prepare(qa_frontend *,qa_error *);
@@ -620,6 +619,8 @@ bool frontend_world_retired(void *, qa_application *, qa_error *);
 bool frontend_native_q2_services(void *, qa_application *, qa_actor_owner, qa_native_profile,
     qa_native_host_engine_services *, qa_native_host_q2_application_fn *, void **, qa_error *);
 bool frontend_native_q2_frame(qa_frontend *, uint32_t, qa_scene_rect, qa_error *);
+bool frontend_native_q2_world_text_font(qa_frontend *, qa_string_id,
+    const qa_font **, qa_error *);
 void frontend_native_q2_retire_world(qa_frontend *);
 void frontend_visuals_destroy(qa_frontend *);
 bool frontend_visuals_submit(qa_frontend *, uint32_t, qa_actor_owner exclude, const qa_scene_world_input *, qa_scene_frame *, qa_error *);

@@ -3,7 +3,6 @@
 #include "scene_lights.h"
 #include "qa/pool.h"
 #include "qa/random.h"
-#include "qc_rerelease_events.h"
 #include "qa/scene_resource_save.h"
 #include "round.h"
 #include "qa/application_equipment_content.h"
@@ -483,9 +482,6 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
             continue;
         }
         qa_builtin_event event = *output.value.builtin;
-        bool handled;
-        if (!frontend_qc_rerelease_event(frontend,&event,&handled,error)) return false;
-        if (handled) continue;
         if (event.family == QA_GAME_Q1 && event.kind == QA_BUILTIN_EFFECT) {
             if (event.resource == names->music) {
                 if (!frontend_music_sources_world_cd(frontend->music_sources,

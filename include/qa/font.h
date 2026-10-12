@@ -8,7 +8,6 @@
 
 typedef struct qa_font_library qa_font_library;
 typedef struct qa_font qa_font;
-typedef struct qa_font_world_store qa_font_world_store;
 typedef struct qa_font_resource_policy qa_font_resource_policy;
 
 typedef enum qa_font_kind {
@@ -232,16 +231,6 @@ typedef struct qa_font_world_snapshot {
     size_t count;
 } qa_font_world_snapshot;
 
-qa_font_world_store *qa_font_world_store_create(qa_error *);
-void qa_font_world_store_destroy(qa_font_world_store *);
-void qa_font_world_store_clear(qa_font_world_store *);
-/* lifetime_seconds == 0 keeps the entry through exactly one observed frame. */
-bool qa_font_world_store_submit(qa_font_world_store *, const qa_font_world_text *,
-                                double now_seconds, double lifetime_seconds, qa_error *);
-/* Descriptors use arena storage; text bytes remain store-owned until mutation.
- */
-bool qa_font_world_store_snapshot(qa_font_world_store *, double now_seconds, uint64_t frame,
-                                  qa_arena *, qa_font_world_snapshot *out, qa_error *);
 /* Append world text after qa_scene_frame_finish so a Q2 depth-fog pass is
  * already present while depth-tested text can still reuse the world depth. */
 bool qa_font_world_draw(qa_scene_frame *, const qa_scene_view *, const qa_font_world_snapshot *,

@@ -28,7 +28,7 @@ typedef struct qa_entity_text {
     qa_string_id content, text;
     qa_vec3 origin, angles;
     float color[4], cell_size, distance_cull_factor;
-    bool billboard, depth_test;
+    bool billboard, depth_test, selected_font, has_distance_cull;
 } qa_entity_text;
 typedef enum qa_body_vector_kind {
     QA_BODY_ORIGIN = offsetof(qa_body_state, origin),

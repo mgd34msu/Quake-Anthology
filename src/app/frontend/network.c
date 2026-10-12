@@ -892,6 +892,19 @@ static bool q2_restore_stage(void *context,qa_fs_root *root,const char *path,uin
         initial || !qa_fs_stage_write(*out,0,prefix,&written,error) || written!=prefix.size) return false;
     *nonce=n->preparation_nonce; return true;
 }
+bool frontend_network_unified_local_domain(const qa_frontend *f, const frontend_remote_unified_domain *domain)
+{
+    const qa_frontend_network *n = f ? f->network : NULL;
+    if (!n || !n->unified || !domain || domain->application != f->application ||
+        domain->physical_seat >= f->options.seats) return false;
+    const frontend_local_client *local = n->local_clients + domain->physical_seat;
+    if (!local->service || local->runtime != domain->runtime ||
+        local->client_seat.owner != domain->seat.owner || local->client_seat.index != domain->seat.index) return false;
+    frontend_network_unified_client_view view;
+    return frontend_network_unified_client_metadata_read(local->service, &view, NULL) &&
+        qa_net_client_id_equal(view.physical.source.client, domain->client);
+}
+
 bool frontend_network_client_configuration_primary(const qa_frontend *f,const qa_application_client_source *source)
 {
     const qa_frontend_network *n=f?f->network:NULL;

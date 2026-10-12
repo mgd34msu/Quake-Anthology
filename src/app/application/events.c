@@ -780,7 +780,8 @@ static bool emit_event(qa_application *application, const qa_builtin_event *even
         memcpy(choices, event->prompt_choices, bytes);
         record->event.prompt_choices = choices;
     }
-    if (!application_native_q2_delivery_retain(application, audience, &record->q2_audience, error) ||
+    if (!application_unified_world_text_builtin(application, event, error) ||
+        !application_native_q2_delivery_retain(application, audience, &record->q2_audience, error) ||
         !application_native_q1_wire_emit(application, event, error) ||
         !application_unified_q1_event(application, event, (qa_actor_id){0}, error) ||
         !application_unified_q2_native_builtin(application, event, audience, error)) goto abort;

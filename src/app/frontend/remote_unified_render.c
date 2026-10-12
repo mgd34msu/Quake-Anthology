@@ -8,6 +8,7 @@
 #include "material_movies.h"
 #include "equipment_media.h"
 #include "menu_fonts.h"
+#include "network_session.h"
 #include "qa/game_q2.h"
 #include "qa/game_q1.h"
 #include "qa/application_ui_names.h"
@@ -410,9 +411,12 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
             sizeof(*r->world_text_fonts),_Alignof(const qa_font *),e);
         okay=r->world_text_fonts!=NULL;
     }
-    for (size_t i=0;okay && i<text_count;++i)
-        okay=frontend_unified_media_world_text_font(media,received->visuals->world_text[i].content,
-            r->world_text_fonts+i,e);
+    for (size_t i=0;okay && i<text_count;++i) {
+        r->world_text_fonts[i]=NULL;
+        if (!received->visuals->world_text[i].selected_font)
+            okay=frontend_unified_media_world_text_font(media,received->visuals->world_text[i].content,
+                r->world_text_fonts+i,e);
+    }
     if (okay) r->hud=f->seats[hud_domain->physical_seat].hud;
     if (!okay) { (void)frontend_unified_render_destroy(&r,NULL); return false; }
     *out=r; return true;
@@ -585,32 +589,27 @@ static bool unified_sky_environment(frontend_unified_render *r,const qa_scene_wo
 }
 static bool world_text_draw(frontend_unified_render *r,const qa_scene_view *view,qa_error *e)
 {
+    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(r->replica);
     const qa_unified_frame_visuals *visuals=qa_unified_document_frame(r->frame)->visuals;
-    size_t count=visuals->world_text_count;
+    if (!frontend_network_unified_local_domain(r->frontend,domain))
+        return frontend_world_text_draw(r->frontend,view,visuals->world_text,
+            visuals->world_text_count,r->replica->strings,r->world_text_fonts,0,e);
+    const qa_entity_text *texts;
+    size_t count;
+    uint64_t through;
+    if (!qa_application_world_text_read(r->frontend->application,&r->frontend->frame.storage,
+        &texts,&count,&through,e)) return false;
     if (!count) return true;
-    qa_font_world_text *texts=qa_arena_alloc(&r->frontend->frame.storage,
-        count*sizeof(*texts),_Alignof(qa_font_world_text),e);
-    if (!texts) return false;
+    const qa_font **fonts=qa_arena_alloc(&r->frontend->frame.storage,count*sizeof(*fonts),
+        _Alignof(const qa_font *),e);
+    if (!fonts) return false;
     for (size_t i=0;i<count;++i) {
-        const qa_entity_text *source=visuals->world_text+i;
-        texts[i]=(qa_font_world_text){.text=qa_strings_text(r->replica->strings,source->text),
-            .origin=source->origin,.angles=source->angles,
-            .color={source->color[0],source->color[1],source->color[2],source->color[3]},
-            .cell_size=source->cell_size,.distance_cull_factor=source->distance_cull_factor,
-            .orientation=source->billboard?QA_FONT_WORLD_BILLBOARD:QA_FONT_WORLD_FIXED,
-            .font=QA_FONT_WORLD_CLASSIC,.has_distance_cull=true,.depth_test=source->depth_test,
-            .content=source->content};
+        fonts[i]=NULL;
+        if (!texts[i].selected_font &&
+            !frontend_unified_media_world_text_font(r->media,texts[i].content,fonts+i,e)) return false;
     }
-    qa_font_selection fonts=r->frontend->seats[view->seat].fonts;
-    for (size_t first=0;first<count;) {
-        size_t next=first+1;
-        fonts.classic=r->world_text_fonts[first];
-        while (next<count && r->world_text_fonts[next]==fonts.classic) ++next;
-        qa_font_world_snapshot snapshot={.texts=texts+first,.count=next-first};
-        if (!qa_font_world_draw(&r->frontend->frame,view,&snapshot,&fonts,0,false,e)) return false;
-        first=next;
-    }
-    return true;
+    return frontend_world_text_draw(r->frontend,view,texts,count,
+        qa_session_strings(qa_application_session(r->frontend->application)),fonts,through,e);
 }
 bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unified_prediction_view *predicted,
     const frontend_unified_render_children *children,float stereo,qa_audio_listener *listener,qa_error *e)

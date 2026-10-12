@@ -391,7 +391,8 @@ struct qa_application {
     uint64_t unified_event_registration_revision;
     application_unified_world_text *unified_world_text, *unified_world_text_last;
     size_t unified_world_text_count;
-    uint64_t unified_world_text_revision, unified_world_text_map;
+    uint64_t unified_world_text_revision, unified_world_text_map, unified_world_text_frame;
+    bool unified_world_text_local_presentation;
     application_motion_record *motion;
     uint32_t motion_capacity;
     application_actor_routes *actor_routes;

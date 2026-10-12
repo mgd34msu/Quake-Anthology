@@ -132,6 +132,9 @@ static bool resource_key_field(qa_source_save_io *io,
 
 static event_store borrow_store(qa_application *app)
 {
+    size_t world_text_count = 0;
+    for (const application_unified_world_text *row = app->unified_world_text; row; row = row->next)
+        world_text_count += !row->presentation_lifetime;
     return (event_store){
         .persistent = app->unified_persistent, .persistent_count = app->unified_persistent_count,
         .persistent_capacity = app->unified_persistent_capacity,
@@ -142,8 +145,8 @@ static event_store borrow_store(qa_application *app)
         .registrations = app->unified_event_registrations,
         .registration_count = app->unified_event_registration_count,
         .registration_capacity = app->unified_event_registration_capacity,
-        .world_text = app->unified_world_text, .world_text_count = app->unified_world_text_count,
-        .world_text_capacity = app->unified_world_text_count, .world_text_map = app->unified_world_text_map,
+        .world_text = app->unified_world_text, .world_text_count = world_text_count,
+        .world_text_capacity = world_text_count, .world_text_map = app->unified_world_text_map,
         .world_text_borrowed = true,
         .application = app
     };
@@ -447,6 +450,7 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
     application_unified_world_text *text = store->world_text;
     for (size_t i = 0; i < store->world_text_count; ++i,
          text = store->world_text_borrowed ? text->next : text + 1) {
+        while (store->world_text_borrowed && text->presentation_lifetime) text = text->next;
         application_unified_world_text *row = text;
         qa_entity_text *visual = &row->visual;
         /* The import/export adapter retains the existing on-disk RGB doubles. */
@@ -464,6 +468,7 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
         if (io->direction == QA_SOURCE_SAVE_READ) {
             visual->color[0] = color.x; visual->color[1] = color.y; visual->color[2] = color.z;
             visual->distance_cull_factor = .004f;
+            visual->has_distance_cull = true;
         }
     }
     for (size_t i = 0; i < store->registration_count; ++i) {

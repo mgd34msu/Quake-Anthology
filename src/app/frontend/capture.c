@@ -34,7 +34,6 @@
 #include "selected_character_lifetime.h"
 #include "selected_effects.h"
 #include "save_commands.h"
-#include "qc_rerelease_events.h"
 #include "campaign_cinematic.h"
 #include "ui_features.h"
 #include "global_settings_storage.h"
@@ -215,7 +214,7 @@ static bool owners_returned(const qa_frontend *f,const frontend_video_guests *vi
 {
     if(video && !frontend_video_guests_resources_returned(f,video,NULL)) return false;
     if (!f || f->capture || f->resource_inventory || f->root_resources_pending ||
-        !frontend_cinematic_idle(f) || !frontend_qc_rerelease_idle(f) || !frontend_native_q2_children_idle(f) ||
+        !frontend_cinematic_idle(f) || !frontend_native_q2_children_idle(f) ||
         (!video && (!frontend_native_q3_idle(f) || !frontend_remote_q3_idle(f))) ||
         !frontend_remote_q2_idle(f) || (video?
             !frontend_remote_unified_presentation_video_returned(f,video,NULL):

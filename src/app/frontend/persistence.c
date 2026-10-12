@@ -25,7 +25,6 @@
 #include "equipment_q3.h"
 #include "selected_character.h"
 #include "selected_effects.h"
-#include "qc_rerelease_events.h"
 #include "qc_messages.h"
 #include "q1_sky.h"
 #include "q3_color_policy.h"
@@ -184,13 +183,12 @@ static bool discard_services(void *context,qa_application *candidate,qa_error *e
     frontend_equipment_gear_destroy(f);
     if (operation->services && operation->services->discard_services &&
         !operation->services->discard_services(operation->services->context,candidate,error)) return false;
-    if (!frontend_qc_rerelease_idle(f) || !frontend_equipment_retire(f,error) ||
+    if (!frontend_equipment_retire(f,error) ||
         !frontend_equipment_q3_retire(f,error) ||
         !frontend_selected_character_retire(f,error) ||
         !frontend_save_commands_destroy(f,error) || !frontend_campaign_destroy(f,error)) return false;
     frontend_equipment_destroy(f);
     frontend_equipment_q3_destroy(f);
-    frontend_qc_rerelease_destroy(f);
     for (unsigned i=0;i<f->options.seats;++i)
         if (f->seats[i].input && !qa_input_seat_release(f->seats[i].input,
             (double)f->wall_time_ns/1000000.0,error)) return false;

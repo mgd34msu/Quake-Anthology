@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "c5993e771f70860c9f3e7f6acf014a402258a421",
+  "verified_main": "01977991b82c071b183b4da75021278499c44073",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 162,
-    "open_source_observation": 209,
+    "fixed_source_build_core": 163,
+    "open_source_observation": 208,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -24674,8 +24674,9 @@
       "severity": "high",
       "job": "02",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "01977991b82c071b183b4da75021278499c44073"
     },
     {
       "id": "02-18",
@@ -41652,6 +41653,29 @@
       ],
       "record_directory": "/tmp/qa-ta3196-userinfo-owner-20261012",
       "conclusion": "Q1 info decoding shares iterator and ordered ID-index/arena ownership; raw writer shared with Q3 info boundary. Last duplicate value/first insertion order correction confined to one stored string. Save count/IDs/order and admission versus storage-only effects preserved. Normal build/seven suites and info capacity/duplicate/raw-byte cases passed; initial/larger input allocation remains."
+    },
+    {
+      "commit": "01977991b82c071b183b4da75021278499c44073",
+      "source_tree": "3e783509f19d6a88dda22bb0643222001486e0be",
+      "finding_ids": [
+        "02-17"
+      ],
+      "files_rechecked": [
+        "src/app/application/guest_qc_combat.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-qc-combat-capture-20261012",
+      "conclusion": "Two live QuakeC VM word captures use independent shared control leases; exact unwind and nested callback lifetimes preserved. Normal build and seven core suites passed. Larger shared-pool peaks remain allocation-capable; no runtime or global completion claim."
     }
   ],
   "verification_limits": [

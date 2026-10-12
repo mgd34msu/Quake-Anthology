@@ -6,7 +6,6 @@
 #include "accessibility.h"
 #include "ui_features.h"
 #include "menu_fonts.h"
-#include "qc_rerelease_events.h"
 #include "native_q3_client.h"
 #include "capture.h"
 #include "native_composition.h"
@@ -435,6 +434,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         qa_scene_command begin = {.kind = QA_SCENE_COMMAND_VIEW, .data.view = view};
         if (!qa_scene_frame_emit(&frontend->frame, &begin, error)) return false;
         bool remote_rendered=false,remote_listener_present=false,native_rendered=false,common_hud_drawn=false;
+        bool unified_rendered=false;
         bool source_center_owned=false;
         qa_audio_listener remote_listener;
         if (!frontend_network_client_draw(frontend,i,0,&remote_rendered,&remote_listener,
@@ -447,6 +447,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         if (!remote_rendered) {
             if (!frontend_remote_unified_draw(frontend,i,0,&remote_listener,&remote_rendered,error)) return false;
             remote_listener_present=remote_rendered && remote_listener.actor!=QA_AUDIO_NO_ACTOR;
+            unified_rendered=remote_rendered;
         }
         if (!remote_rendered) {
             if (!remote_q1_present(frontend,i,&view,&remote_listener,&remote_rendered,&common_hud_drawn,&preferences,!ui.fullscreen,error)) return false;
@@ -490,7 +491,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         if (local_presentation && !frontend_source_present(frontend, i, launch_seat, real_milliseconds,
                 frontend_network_remote(frontend) ? frontend_network_client_time(frontend) :
                     real_milliseconds, &common_hud_drawn, error)) return false;
-        if (!frontend_qc_rerelease_draw(frontend, i, &view, error)) return false;
+        if (!unified_rendered && !frontend_world_text_local(frontend, &view, error)) return false;
         size_t audio_seat_count = listener_count;
         if (remote_rendered && frontend->audio) {
             if (remote_listener_present) listeners[listener_count++]=remote_listener;

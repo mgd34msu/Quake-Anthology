@@ -825,6 +825,7 @@ static bool frontend_step(qa_frontend *frontend,
         frontend->time_ns=replay->time_ns;
         frontend->frame_number=replay->frame_before;
     }
+    qa_application_world_text_frame(frontend->application, frontend->frame_number, !frontend->options.dedicated);
     bool ok=frontend_platform_drain(frontend,replay!=NULL,error),ready=false;
     if(!replay && ok) {
         ok=platform_collect(frontend,frontend->wall_time_ns,error);

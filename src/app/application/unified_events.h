@@ -147,15 +147,16 @@ const application_unified_event_resource *application_unified_event_resource_at(
 
 typedef struct application_unified_world_text {
     qa_entity_text visual;
-    qa_actor_owner provider;
+    qa_actor_owner provider, clock_provider;
     double expires;
     uint64_t first_frame;
-    bool timed, observed;
+    bool timed, observed, presentation_lifetime;
     struct application_unified_world_text *next;
     qa_event_lease *lease;
 } application_unified_world_text;
 bool application_unified_world_text_emit(qa_application *, qa_actor_owner,
     const qa_q2_map_event *, qa_error *);
+bool application_unified_world_text_builtin(qa_application *, const qa_builtin_event *, qa_error *);
 bool application_unified_world_text_append(qa_application *, const application_unified_world_text *, qa_error *);
 void application_unified_world_text_publish(qa_application *, application_unified_world_text *, uint64_t);
 void application_unified_world_text_destroy(qa_application *);
