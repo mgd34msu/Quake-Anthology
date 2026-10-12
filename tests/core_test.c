@@ -4600,6 +4600,46 @@ static bool player_feedback_test(void)
     return true;
 }
 
+static void test_q3_player_entity_projection(void)
+{
+    qa_q3_player player = {.clientNum = 7, .eFlags = 8,
+        .eventSequence = 4, .entityEventSequence = 0,
+        .events = {14, 21}, .eventParms = {3, 9}, .weapon = 5,
+        .groundEntityNum = 1022, .loopSound = 17, .generic1 = 2};
+    player.stats[0] = 100;
+    player.origin[0] = -1.75f;
+    player.velocity[1] = 40;
+    player.viewangles[2] = 12.75f;
+    player.powerups[3] = 1;
+    qa_q3_entity entity = {.modelindex = 19, .event = 80, .eventParm = 81};
+    entity.pos.time = 123;
+    entity.pos.duration = 456;
+    qa_q3_player_entity_state(&player, &entity, true, false, 0);
+    CHECK(entity.number == 7 && entity.clientNum == 7 && entity.eType == 1);
+    CHECK(entity.pos.type == 1 && entity.pos.time == 123 && entity.pos.duration == 456);
+    CHECK(entity.pos.base[0] == -1 && entity.pos.delta[1] == 40 && entity.apos.base[2] == 12);
+    CHECK(entity.event == (14 | 512) && entity.eventParm == 3 && player.entityEventSequence == 3);
+    CHECK(entity.modelindex == 19 && entity.weapon == 5 && entity.powerups == 8);
+    player.externalEvent = 44;
+    player.externalEventParm = 6;
+    qa_q3_player_entity_state(&player, &entity, false, true, 1000);
+    CHECK(entity.event == 44 && entity.eventParm == 6 && player.entityEventSequence == 3);
+    CHECK(entity.pos.type == 3 && entity.pos.time == 1000 && entity.pos.duration == 50);
+    CHECK(entity.pos.base[0] == -1.75f && entity.apos.base[2] == 12.75f);
+    player.externalEvent = 0;
+    qa_q3_player_entity_state(&player, &entity, false, false, 0);
+    CHECK(entity.event == (21 | 768) && entity.eventParm == 9 && player.entityEventSequence == 4);
+    qa_q3_player_entity_state(&player, &entity, false, false, 0);
+    CHECK(entity.event == (21 | 768) && entity.eventParm == 9 && player.entityEventSequence == 4);
+    player.stats[0] = -40;
+    qa_q3_player_entity_state(&player, &entity, false, false, 0);
+    CHECK(entity.eType == 10 && entity.eFlags == 9);
+    player.stats[0] = 100;
+    player.pmType = 2;
+    qa_q3_player_entity_state(&player, &entity, false, false, 0);
+    CHECK(entity.eType == 10 && entity.eFlags == 8);
+}
+
 int main(int argc, char **argv)
 {
     if(!player_feedback_test()) return 1;
@@ -4614,6 +4654,7 @@ int main(int argc, char **argv)
     test_unicast_claim_storage();
     test_shared_team_values();
     test_source_scalars();
+    test_q3_player_entity_projection();
     test_module_observation_storage();
     test_console_restore_pages();
     test_chat_initial_aliases();

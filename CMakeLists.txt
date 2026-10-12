@@ -1009,6 +1009,7 @@ add_library(qa_network STATIC
     src/network/q3/client_save.c
     src/network/q3/clock.c
     src/network/q3/codec.c
+    src/network/q3/player_state.c
     src/network/q3/delta.c
     src/network/q3/huffman.c
     src/network/q3/messages.c

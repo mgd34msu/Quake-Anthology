@@ -55,6 +55,10 @@ typedef struct qa_q3_player {
     int32_t generic1, loopSound, jumppadEnt, ping, pmoveFramecount;
     int32_t jumppadFrame, entityEventSequence;
 } qa_q3_player;
+/* Original BG conversion consumes predictable events in the caller's player
+ * state. Existing unrelated entity fields remain unchanged. */
+void qa_q3_player_entity_state(qa_q3_player *, qa_q3_entity *,
+    bool snap, bool extrapolate, int32_t time_ms);
 typedef struct qa_q3_usercmd {
     int32_t serverTime, angles[3];
     int8_t forwardmove, rightmove, upmove;

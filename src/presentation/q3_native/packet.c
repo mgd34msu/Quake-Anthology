@@ -321,22 +321,7 @@ static bool remote_valid(const q3n_frame *f,const q3n_remote_entity *source,qa_e
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"Remote packet lacks its actual reached entity receipt"); return false;
 }
 static bool predict(const q3n_frame *f,qa_q3_player *p,qa_q3_entity *s,q3n_entity *entity,qa_error *error) {
-    s->number=p->clientNum; s->eType=p->pmType==2 || p->pmType==5 || p->stats[0]<=-40 ? 10 : 1;
-    s->pos.type=1; memcpy(s->pos.base,p->origin,sizeof(s->pos.base)); memcpy(s->pos.delta,p->velocity,sizeof(s->pos.delta));
-    s->apos.type=1; memcpy(s->apos.base,p->viewangles,sizeof(s->apos.base)); s->angles2[1]=(float)p->movementDir;
-    s->legsAnim=p->legsAnim; s->torsoAnim=p->torsoAnim; s->clientNum=p->clientNum;
-    s->eFlags=p->stats[0]<=0 ? p->eFlags|1 : p->eFlags&~1;
-    if(p->externalEvent) { s->event=p->externalEvent; s->eventParm=p->externalEventParm; }
-    else if(p->entityEventSequence<p->eventSequence) {
-        int32_t oldest=qa_i32_sub(p->eventSequence,2);
-        if(p->entityEventSequence<oldest) p->entityEventSequence=oldest;
-        uint32_t sequence=(uint32_t)p->entityEventSequence;
-        s->event=p->events[sequence&1u]|(int32_t)((sequence&3u)<<8);
-        s->eventParm=p->eventParms[sequence&1u]; p->entityEventSequence=qa_i32_from_u32(sequence+1u);
-    }
-    s->weapon=p->weapon; s->groundEntityNum=p->groundEntityNum; s->powerups=0;
-    for(unsigned i=0;i<16;++i) if(p->powerups[i]) s->powerups|=(int32_t)(1u<<i);
-    s->loopSound=p->loopSound; s->generic1=p->generic1;
+    qa_q3_player_entity_state(p,s,false,false,0);
     entity->loop_stopped=false;
     return q3n_frame_current(f) || (qa_error_set(error,QA_ERROR_ARGUMENT,0,"Packet prediction lost its CG owner"),false);
 }

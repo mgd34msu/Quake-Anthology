@@ -111,27 +111,6 @@ static bool store(remote_snapshot *to,const qa_q3_snapshot *from,qa_q3_product p
     if(count) memcpy(to->entities,from->entities,count*sizeof(*to->entities));
     to->value.entities=to->entities; return true;
 }
-/* Predictable events consume only this owner's retail PS copy. Transport PS
- * and the selected movement predictor remain independent retained objects. */
-static void player_entity(qa_q3_player *p,qa_q3_entity *s)
-{
-    s->number=p->clientNum; s->eType=p->pmType==2 || p->pmType==5 || p->stats[0]<=-40?10:1;
-    s->pos.type=1; memcpy(s->pos.base,p->origin,sizeof(s->pos.base)); memcpy(s->pos.delta,p->velocity,sizeof(s->pos.delta));
-    s->apos.type=1; memcpy(s->apos.base,p->viewangles,sizeof(s->apos.base)); s->angles2[1]=(float)p->movementDir;
-    s->legsAnim=p->legsAnim; s->torsoAnim=p->torsoAnim; s->clientNum=p->clientNum;
-    s->eFlags=p->stats[0]<=0?p->eFlags|1:p->eFlags&~1;
-    if(p->externalEvent) { s->event=p->externalEvent; s->eventParm=p->externalEventParm; }
-    else if(p->entityEventSequence<p->eventSequence) {
-        int32_t oldest=word((uint32_t)p->eventSequence-2u);
-        if(p->entityEventSequence<oldest) p->entityEventSequence=oldest;
-        uint32_t sequence=(uint32_t)p->entityEventSequence;
-        s->event=p->events[sequence&1u]|(int32_t)((sequence&3u)<<8);
-        s->eventParm=p->eventParms[sequence&1u]; p->entityEventSequence=word(sequence+1u);
-    }
-    s->weapon=p->weapon; s->groundEntityNum=p->groundEntityNum; s->powerups=0;
-    for(unsigned i=0;i<16;++i) if(p->powerups[i]) s->powerups|=(int32_t)(1u<<i);
-    s->loopSound=p->loopSound; s->generic1=p->generic1;
-}
 static void published(frontend_remote_centity *row,const qa_q3_snapshot *snap)
 {
     row->published=true; row->publication_message=snap->message_number;
@@ -194,7 +173,7 @@ static bool initial(frontend_remote_snapshots *s,qa_error *e)
 {
     s->has_snap=true;
     frontend_remote_centity *local=&s->entities[s->snap.value.player.clientNum];
-    player_entity(&s->snap.value.player,&local->current); published(local,&s->snap.value);
+    qa_q3_player_entity_state(&s->snap.value.player,&local->current,false,false,0); published(local,&s->snap.value);
     if(!commands(s,s->snap.value.server_command_number,e)) return false;
     if(!callback_begin(s,e)) return false;
     bool ok=s->options.respawn(s->options.context,&s->source,e);
@@ -210,7 +189,7 @@ static bool initial(frontend_remote_snapshots *s,qa_error *e)
 static void set_next(frontend_remote_snapshots *s)
 {
     s->has_next=true;
-    player_entity(&s->next.value.player,&s->entities[s->next.value.player.clientNum].next);
+    qa_q3_player_entity_state(&s->next.value.player,&s->entities[s->next.value.player.clientNum].next,false,false,0);
     s->entities[s->snap.value.player.clientNum].interpolate=true;
     for(size_t i=0;i<s->next.value.entity_count;++i) {
         const qa_q3_entity *entry=&s->next.value.entities[i]; frontend_remote_centity *row=&s->entities[entry->number];
@@ -226,7 +205,7 @@ static bool transition(frontend_remote_snapshots *s,const frontend_remote_snapsh
     for(size_t i=0;i<s->snap.value.entity_count;++i) s->entities[s->snap.value.entities[i].number].presentation->valid=false;
     s->snap=s->next; s->snap.value.entities=s->snap.entities;
     frontend_remote_centity *local=&s->entities[s->snap.value.player.clientNum];
-    player_entity(&s->snap.value.player,&local->current); published(local,&s->snap.value); local->interpolate=false;
+    qa_q3_player_entity_state(&s->snap.value.player,&local->current,false,false,0); published(local,&s->snap.value); local->interpolate=false;
     for(size_t i=0;i<s->snap.value.entity_count;++i) {
         frontend_remote_centity *row=&s->entities[s->snap.value.entities[i].number];
         row->current=row->next; published(row,&s->snap.value); row->presentation->valid=true;

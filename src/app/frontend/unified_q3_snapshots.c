@@ -205,25 +205,6 @@ bool frontend_unified_q3_snapshots_initialize(frontend_unified_q3_snapshots *s,
     if (ok) ok = frontend_unified_q3_client_initialization_complete(s->options.client,e);
     return ok;
 }
-static void player_entity(qa_q3_player *p,qa_q3_entity *s)
-{
-    s->number = p->clientNum; s->eType = p->pmType == 2 || p->pmType == 5 || p->stats[0] <= -40 ? 10 : 1;
-    s->pos.type = 1; memcpy(s->pos.base,p->origin,sizeof(s->pos.base)); memcpy(s->pos.delta,p->velocity,sizeof(s->pos.delta));
-    s->apos.type = 1; memcpy(s->apos.base,p->viewangles,sizeof(s->apos.base)); s->angles2[1] = (float)p->movementDir;
-    s->legsAnim = p->legsAnim; s->torsoAnim = p->torsoAnim; s->clientNum = p->clientNum;
-    s->eFlags = p->stats[0] <= 0 ? p->eFlags|1 : p->eFlags&~1;
-    if (p->externalEvent) { s->event = p->externalEvent; s->eventParm = p->externalEventParm; }
-    else if (p->entityEventSequence < p->eventSequence) {
-        int32_t oldest = word((uint32_t)p->eventSequence-2u);
-        if (p->entityEventSequence < oldest) p->entityEventSequence = oldest;
-        uint32_t sequence = (uint32_t)p->entityEventSequence;
-        s->event = p->events[sequence&1u]|(int32_t)((sequence&3u)<<8); s->eventParm = p->eventParms[sequence&1u];
-        p->entityEventSequence = word(sequence+1u);
-    }
-    s->weapon = p->weapon; s->groundEntityNum = p->groundEntityNum; s->powerups = 0;
-    for (unsigned i = 0; i < 16; ++i) if (p->powerups[i]) s->powerups |= (int32_t)(1u<<i);
-    s->loopSound = p->loopSound; s->generic1 = p->generic1;
-}
 static bool store(frontend_unified_q3_snapshots *s,cached_snapshot *out,const qa_q3_snapshot *in,qa_error *e)
 {
     if (!in || !in->valid || in->entity_count > 256) return fail(e,QA_ERROR_FORMAT,"Compiled snapshot has no actual bounded Source records");
@@ -286,7 +267,7 @@ static bool events_ready(frontend_unified_q3_snapshots *s,qa_error *e)
 static bool initial(frontend_unified_q3_snapshots *s,qa_error *e)
 {
     s->has_snap = true; uint32_t local = (uint32_t)s->snap.value.player.clientNum;
-    player_entity(&s->snap.value.player,&s->rows[local].current); published(s,local,&s->snap);
+    qa_q3_player_entity_state(&s->snap.value.player,&s->rows[local].current,false,false,0); published(s,local,&s->snap);
     if (!commands(s,s->snap.value.server_command_number,e)) return false;
     q3n_compiled_frame f;
     if (!begin(s,Q3N_COMPILED_SNAPSHOT_CALLBACK,&f,e)) return false;
@@ -301,7 +282,7 @@ static bool initial(frontend_unified_q3_snapshots *s,qa_error *e)
 static void next(frontend_unified_q3_snapshots *s)
 {
     s->has_next = true; uint32_t local = (uint32_t)s->next.value.player.clientNum;
-    player_entity(&s->next.value.player,&s->rows[local].next); s->rows[local].next_actor = s->next.bindings[local];
+    qa_q3_player_entity_state(&s->next.value.player,&s->rows[local].next,false,false,0); s->rows[local].next_actor = s->next.bindings[local];
     s->rows[s->snap.value.player.clientNum].interpolate = true;
     for (size_t i = 0; i < s->next.value.entity_count; ++i) {
         const qa_q3_entity *state = s->next.entities+i; uint32_t number = (uint32_t)state->number; cached_entity *row = s->rows+number;
@@ -319,7 +300,7 @@ static bool transition(frontend_unified_q3_snapshots *s,bool no_predict,bool syn
     s->snap = s->next; s->snap.value.entities = s->snap.entities;
     s->transition_alias = true;
     uint32_t local = (uint32_t)s->snap.value.player.clientNum;
-    player_entity(&s->snap.value.player,&s->rows[local].current); published(s,local,&s->snap); s->rows[local].interpolate = false;
+    qa_q3_player_entity_state(&s->snap.value.player,&s->rows[local].current,false,false,0); published(s,local,&s->snap); s->rows[local].interpolate = false;
     for (size_t i = 0; i < s->snap.value.entity_count; ++i) {
         uint32_t number = (uint32_t)s->snap.entities[i].number; cached_entity *row = s->rows+number;
         row->current = row->next; published(s,number,&s->snap); s->entities[number].valid = true;

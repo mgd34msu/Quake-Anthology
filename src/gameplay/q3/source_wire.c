@@ -772,37 +772,17 @@ static float snap_component(float value) {
 static void convert_player(qa_q3_player player, qa_q3_player_state *native,
                             q3_wire_entity_source *s, qa_q3_trajectory *position,
                             qa_q3_trajectory *angles, bool snap, bool extrapolate, int32_t time_ms) {
-    s->type = player.pmType == 5 || player.pmType == 2 || player.stats[0] <= -40 ? 10 : 1;
-    position->type = extrapolate ? 3 : 1;
-    if (extrapolate) {
-        position->time = time_ms;
-        position->duration = 50;
-    }
-    angles->type = 1;
-    for (size_t i = 0; i < 3; ++i) {
-        position->base[i] = snap ? snap_component(player.origin[i]) : player.origin[i];
-        position->delta[i] = player.velocity[i];
-        angles->base[i] = snap ? snap_component(player.viewangles[i]) : player.viewangles[i];
-    }
-    s->angles2.y = (float)player.movementDir;
-    s->legs = player.legsAnim; s->torso = player.torsoAnim; s->client = player.clientNum;
-    s->flags = player.stats[0] <= 0 ? player.eFlags | 1 : player.eFlags & ~1;
-    if (player.externalEvent) {
-        s->event = player.externalEvent;
-        s->event_parameter = player.externalEventParm;
-    } else if (player.entityEventSequence < player.eventSequence) {
-        int32_t oldest = q3_sub_time(player.eventSequence, 2);
-        if (player.entityEventSequence < oldest) player.entityEventSequence = oldest;
-        uint32_t sequence = (uint32_t)player.entityEventSequence;
-        s->event = player.events[sequence & 1u] | (int32_t)((sequence & 3u) << 8);
-        s->event_parameter = player.eventParms[sequence & 1u];
-        native->entity_event_sequence = sequence + 1u;
-    }
-    s->weapon = player.weapon; s->ground_entity = player.groundEntityNum;
-    s->powerups = 0;
-    for (unsigned i = 0; i < 16; ++i)
-        if (player.powerups[i]) s->powerups |= 1 << i;
-    s->loop_sound = player.loopSound; s->generic1 = player.generic1;
+    qa_q3_entity converted = {.pos = *position, .apos = *angles,
+        .event = s->event, .eventParm = s->event_parameter};
+    bool consumed = !player.externalEvent && player.entityEventSequence < player.eventSequence;
+    qa_q3_player_entity_state(&player, &converted, snap, extrapolate, time_ms);
+    if (consumed) native->entity_event_sequence = (uint32_t)player.entityEventSequence;
+    s->type = converted.eType; *position = converted.pos; *angles = converted.apos;
+    s->angles2.y = converted.angles2[1];
+    s->legs = converted.legsAnim; s->torso = converted.torsoAnim; s->client = converted.clientNum;
+    s->flags = converted.eFlags; s->event = converted.event; s->event_parameter = converted.eventParm;
+    s->weapon = converted.weapon; s->ground_entity = converted.groundEntityNum;
+    s->powerups = converted.powerups; s->loop_sound = converted.loopSound; s->generic1 = converted.generic1;
 }
 
 bool qa_q3_wire_player_publish(qa_q3_game *game, qa_actor_id actor, bool snap,
