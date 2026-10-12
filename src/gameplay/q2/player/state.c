@@ -226,7 +226,8 @@ bool q2_player_inventory_set(qa_q2_game *g, qa_actor_id id, const qa_inventory_e
     qa_inventory_entry *old = NULL;
     qa_arena storage;
     size_t n = 0;
-    if (!qa_inventory_entries_snapshot(g->services.inventory, id, &storage, &old, &n, e))
+    if (!qa_inventory_entries_snapshot(g->services.inventory, id, &storage, &old, &n,
+                                      NULL, NULL, e))
         return false;
     for (size_t i = 0; i < n && q2_actor_live(g, id); i++) {
         old[i].count = 0;
@@ -265,7 +266,7 @@ static bool player_carry_capture(void *context, qa_actor_id id, qa_error *e) {
                             .maximum_health = powers->maximum_health,
                             .armor = combat.armor};
     if (!qa_inventory_entries_snapshot(g->services.inventory, id, &c.inventory_storage,
-                                      &c.inventory, &c.count, e))
+                                      &c.inventory, &c.count, NULL, NULL, e))
         return false;
     c.inventory_owner = g->services.inventory;
     if (!q2_actor_live(g, id)) {

@@ -1,5 +1,4 @@
 #include "internal.h"
-#include <stdlib.h>
 
 static float capacity(float base, uint32_t bits) {
     for (; bits; bits &= bits - 1)
@@ -28,6 +27,15 @@ static bool upgrade_current(qa_q1_game *game, qa_actor_id actor,
         q1_player_get(game, actor) == player) return true;
     qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "MG3 upgrade lost its actual player");
     return false;
+}
+typedef struct upgrade_inventory_read {
+    qa_q1_game *game;
+    qa_actor_id actor;
+    q1_player *player;
+} upgrade_inventory_read;
+static bool upgrade_inventory_current(void *context, qa_error *error) {
+    const upgrade_inventory_read *read = context;
+    return upgrade_current(read->game, read->actor, read->player, error);
 }
 bool q1_mg3_upgrade(qa_q1_game *g, q1_player *player, unsigned type, uint32_t flag, bool *collected,
                     float *maximum, qa_error *error) {
@@ -80,35 +88,25 @@ bool q1_mg3_upgrade(qa_q1_game *g, q1_player *player, unsigned type, uint32_t fl
             if (!upgrade_current(g, actor, player, error)) return false;
         }
     }
-    size_t count = 0;
-    if (!qa_inventory_entries(g->services.inventory, actor, NULL, 0, &count, error) ||
-        !upgrade_current(g, actor, player, error)) return false;
-    if (count > SIZE_MAX / sizeof(qa_inventory_entry)) {
-        qa_error_set(error, QA_ERROR_MEMORY, actor.slot, "MG3 upgrade inventory extent overflows");
+    qa_inventory *inventory = g->services.inventory;
+    qa_arena storage;
+    qa_inventory_entry *entries;
+    size_t written;
+    upgrade_inventory_read read = {.game = g, .actor = actor, .player = player};
+    if (!qa_inventory_entries_snapshot(inventory, actor, &storage, &entries, &written,
+                                      upgrade_inventory_current, &read, error))
         return false;
-    }
-    qa_inventory_entry *entries = count ? malloc(count * sizeof(*entries)) : NULL;
-    if (count && !entries) {
-        qa_error_set(error, QA_ERROR_MEMORY, actor.slot, "Reading actual MG3 upgrade inventory");
-        return false;
-    }
-    size_t written = 0;
-    bool okay = qa_inventory_entries(g->services.inventory, actor, entries, count, &written, error) &&
-        upgrade_current(g, actor, player, error);
-    if (okay && written > count) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "MG3 upgrade inventory changed its actual extent");
-        okay = false;
-    }
+    bool okay = upgrade_current(g, actor, player, error);
     for (size_t i = 0; okay && i < written; ++i) {
         qa_bytes name = qa_strings_text(qa_session_strings(g->services.session), entries[i].item);
         if (name.size < sizeof("q1:ammo/") - 1 ||
             memcmp(name.data, "q1:ammo/", sizeof("q1:ammo/") - 1) ||
             entries[i].count <= entries[i].capacity) continue;
         entries[i].count = entries[i].capacity;
-        okay = qa_inventory_configure(g->services.inventory, actor, &entries[i], NULL, NULL, error) &&
+        okay = qa_inventory_configure(inventory, actor, &entries[i], NULL, NULL, error) &&
             upgrade_current(g, actor, player, error);
     }
-    free(entries);
+    qa_inventory_snapshot_release(inventory, &storage);
     if (!okay) return false;
     if (!q1_alive(g, player->id)) return true;
     if (player->source_client) {

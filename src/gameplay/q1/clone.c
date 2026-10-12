@@ -150,22 +150,14 @@ bool qa_q1_game_clone(qa_q1_game *g, qa_actor_id actor, qa_actor_id *out, qa_err
         goto fail;
     if (qa_inventory_has(g->services.inventory, actor)) {
         size_t count;
-        if (!qa_inventory_entries(g->services.inventory, actor, NULL, 0, &count, error))
+        qa_arena storage;
+        qa_inventory_entry *entries;
+        qa_inventory *inventory = g->services.inventory;
+        if (!qa_inventory_entries_snapshot(inventory, actor, &storage, &entries, &count,
+                                          NULL, NULL, error))
             goto fail;
-        if (count > SIZE_MAX / sizeof(qa_inventory_entry)) {
-            qa_error_set(error, QA_ERROR_MEMORY, count, "native Q1 clone inventory overflow");
-            goto fail;
-        }
-        qa_inventory_entry *entries = count ? malloc(count * sizeof(*entries)) : NULL;
-        if (count && !entries) {
-            qa_error_set(error, QA_ERROR_MEMORY, count,
-                         "native Q1 clone inventory allocation failed");
-            goto fail;
-        }
-        bool ok =
-            qa_inventory_entries(g->services.inventory, actor, entries, count, &count, error) &&
-            qa_inventory_create_actor(g->services.inventory, id, entries, count, error);
-        free(entries);
+        bool ok = qa_inventory_create_actor(inventory, id, entries, count, error);
+        qa_inventory_snapshot_release(inventory, &storage);
         if (!ok)
             goto fail;
     }

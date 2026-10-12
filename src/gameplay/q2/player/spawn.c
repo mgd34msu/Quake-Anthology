@@ -76,7 +76,7 @@ bool q2_player_start_items(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     qa_arena storage;
     size_t count = 0;
     if (!qa_inventory_entries_snapshot(g->services.inventory, id, &storage,
-                                      &entries, &count, e))
+                                      &entries, &count, NULL, NULL, e))
         return false;
     if (!q2_actor_live(g, id)) {
         qa_inventory_snapshot_release(g->services.inventory, &storage);

@@ -134,7 +134,7 @@ static bool prepare_intermission(qa_q2_game *g, bool end_unit, qa_error *e) {
         qa_arena storage;
         size_t count;
         if (!qa_inventory_entries_snapshot(g->services.inventory, id, &storage,
-                                          &entries, &count, e))
+                                          &entries, &count, NULL, NULL, e))
             goto done;
         bool cleared = true;
         for (size_t j = 0; j < count && q2_actor_live(g, id); ++j) {

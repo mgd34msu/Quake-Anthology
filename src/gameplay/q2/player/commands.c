@@ -43,7 +43,7 @@ bool q2_player_publish_inventory(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_arena storage;
     size_t count = 0;
     if (!qa_inventory_entries_snapshot(g->services.inventory, a->id, &storage,
-                                      &entries, &count, e))
+                                      &entries, &count, NULL, NULL, e))
         return false;
     bool ok = q2_player_emit(g,
                              &(qa_q2_player_event){.kind = QA_Q2_PLAYER_INVENTORY,

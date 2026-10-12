@@ -105,9 +105,11 @@ bool qa_inventory_count_read(qa_inventory *, qa_actor_id, qa_item_id, double *, 
 bool qa_inventory_entries(qa_inventory *, qa_actor_id, qa_inventory_entry *, size_t capacity, size_t *count, qa_error *);
 /* Snapshot the whole composed inventory into a retained common-pool lease.
  * Move the arena with its entries; release once after the final reader.
- * A lease survives inventory destruction and does not hold admission open. */
+ * A lease survives inventory destruction and does not hold admission open.
+ * between_reads may stop before the second enumeration after source callbacks. */
 bool qa_inventory_entries_snapshot(qa_inventory *, qa_actor_id, qa_arena *lease,
-    qa_inventory_entry **, size_t *, qa_error *);
+    qa_inventory_entry **, size_t *, bool (*between_reads)(void *, qa_error *),
+    void *context, qa_error *);
 void qa_inventory_snapshot_release(qa_inventory *, qa_arena *lease);
 bool qa_inventory_has(const qa_inventory *, qa_actor_id);
 uint64_t qa_inventory_revision(const qa_inventory *, qa_actor_id);

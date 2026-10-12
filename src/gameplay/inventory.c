@@ -922,13 +922,15 @@ uint64_t qa_inventory_definition_revision(const qa_inventory *table, qa_actor_id
 }
 
 bool qa_inventory_entries_snapshot(qa_inventory *table, qa_actor_id actor,
-    qa_arena *storage, qa_inventory_entry **out, size_t *count, qa_error *e)
+    qa_arena *storage, qa_inventory_entry **out, size_t *count,
+    bool (*between_reads)(void *, qa_error *), void *context, qa_error *e)
 {
     if (!table || !storage || !out || !count)
         return fail(e, QA_ERROR_ARGUMENT, "Invalid inventory snapshot arguments");
     qa_inventory_scratch_acquire(table, storage);
     size_t needed = 0;
     bool ok = qa_inventory_entries(table, actor, NULL, 0, &needed, e);
+    if (ok && between_reads) ok = between_reads(context, e);
     qa_inventory_entry *entries = NULL;
     if (ok && needed) {
         if (needed > SIZE_MAX / sizeof(*entries))
@@ -939,9 +941,12 @@ bool qa_inventory_entries_snapshot(qa_inventory *table, qa_actor_id actor,
             ok = entries != NULL;
         }
     }
-    if (ok && needed) ok = qa_inventory_entries(table, actor, entries, needed, &needed, e);
+    size_t written = 0;
+    if (ok) ok = qa_inventory_entries(table, actor, entries, needed, &written, e);
+    if (ok && written > needed)
+        ok = fail(e, QA_ERROR_ARGUMENT, "Inventory output buffer is too small");
     if (!ok) { qa_inventory_snapshot_release(table, storage); return false; }
-    *out = entries; *count = needed; return true;
+    *out = entries; *count = written; return true;
 }
 
 void qa_inventory_snapshot_release(qa_inventory *table, qa_arena *storage)
