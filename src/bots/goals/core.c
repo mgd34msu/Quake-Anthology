@@ -58,6 +58,7 @@ bool bot_goal_config_get(const qa_bot_goals *g,const bot_goal_slot *s,bot_goal_w
 bool bot_goal_config_set(qa_bot_goals *g, bot_goal_slot *s, qa_bot_weights *weights, qa_error *e) {
     bot_goal_weights *w = NULL;
     if (weights) {
+        if(!qa_bot_weight_workspace_prepare(g->workspace,weights,e)) return false;
         size_t value;
         if(bot_goal_alias_read(g,(uint32_t)(uintptr_t)weights,bot_goal_weights_discriminator(weights),&value))
             w=(bot_goal_weights *)(uintptr_t)value;

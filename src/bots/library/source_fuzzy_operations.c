@@ -13,17 +13,30 @@ typedef bot_fuzzy_stack fuzzy_stack;
 static bool fail(qa_error *error,const char *message) {
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"%s",message);return false;
 }
+bool bot_fuzzy_stack_prepare(bot_fuzzy_stack *stack,const bot_fuzzy_heap *heap,qa_error *error) {
+    if(!stack || !stack->storage || !heap)
+        return fail(error,"Fuzzy traversal preparation requires its storage and admitted heap");
+    /* Links remain live source data; every acyclic path fits the admitted aliases. */
+    size_t capacity=0;
+    for(const bot_fuzzy_pointer *row=heap->first;row;row=row->next)
+        if(row->kind==BOT_FUZZY_SEPARATOR) ++capacity;
+    if(capacity<=stack->capacity) return true;
+    if(capacity>(SIZE_MAX-(_Alignof(fuzzy_frame)-1))/sizeof(*stack->frames))
+        return fail(error,"Fuzzy traversal storage exceeds its native extent");
+    size_t bytes=capacity*sizeof(*stack->frames);
+    qa_arena storage={0};
+    qa_arena_init(&storage,bytes+_Alignof(fuzzy_frame)-1);
+    if(!qa_arena_reserve(&storage,bytes+_Alignof(fuzzy_frame)-1,error)) return false;
+    fuzzy_frame *frames=qa_arena_alloc(&storage,bytes,_Alignof(fuzzy_frame),error);
+    if(!frames) {qa_arena_destroy(&storage);return false;}
+    qa_arena_seal(&storage);
+    qa_arena_destroy(stack->storage);*stack->storage=storage;
+    stack->frames=frames;stack->capacity=capacity;stack->count=0;
+    return true;
+}
 static bool push(fuzzy_stack *stack,uint32_t pointer,bool undecided,qa_error *error) {
-    if(stack->count==stack->capacity) {
-        size_t capacity=stack->capacity?stack->capacity*2:16;
-        if(capacity<stack->capacity || capacity>SIZE_MAX/sizeof(*stack->frames))
-            return fail(error,"Fuzzy traversal storage exceeds its native extent");
-        if(!stack->capacity) qa_arena_init(stack->storage,capacity*sizeof(*stack->frames));
-        fuzzy_frame *frames=qa_arena_grow(stack->storage,stack->frames,
-            stack->capacity*sizeof(*frames),capacity*sizeof(*frames),_Alignof(fuzzy_frame),error);
-        if(!frames) {qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining fuzzy source traversal");return false;}
-        stack->frames=frames;stack->capacity=capacity;
-    }
+    if(stack->count==stack->capacity)
+        return fail(error,"Fuzzy traversal exceeds its prepared separator storage");
     stack->frames[stack->count++]=(fuzzy_frame){.pointer=pointer,.undecided=undecided};return true;
 }
 static size_t terminated(qa_bytes bytes) {
@@ -130,7 +143,8 @@ bool bot_fuzzy_evaluate(const bot_fuzzy_config *config,int32_t index,const qa_bo
 }
 bool bot_fuzzy_separator_tree_free(bot_fuzzy_heap *heap,uint32_t pointer,qa_error *error) {
     if(!pointer) return true;
-    qa_arena storage={0};fuzzy_stack stack={.storage=&storage};bool ok=push(&stack,pointer,false,error);
+    qa_arena storage={0};fuzzy_stack stack={.storage=&storage};
+    bool ok=bot_fuzzy_stack_prepare(&stack,heap,error) && push(&stack,pointer,false,error);
     while(ok && stack.count) {
         fuzzy_frame *frame=&stack.frames[stack.count-1];bot_fuzzy_separator separator;uint32_t next;
         ok=bot_fuzzy_separator_bind(heap,frame->pointer,&separator,error);
@@ -207,7 +221,8 @@ static bool mutate_leaf(const bot_fuzzy_separator *separator,fuzzy_mutation muta
 }
 static bool mutate_tree(bot_fuzzy_config *config,uint32_t root,fuzzy_mutation mutation,float scale,
     const qa_bot_random_source *random,qa_error *error) {
-    qa_arena storage={0};fuzzy_stack stack={.storage=&storage};bool ok=push(&stack,root,false,error);
+    qa_arena storage={0};fuzzy_stack stack={.storage=&storage};
+    bool ok=bot_fuzzy_stack_prepare(&stack,config->heap,error) && push(&stack,root,false,error);
     while(ok && stack.count) {
         fuzzy_frame *frame=&stack.frames[stack.count-1];bot_fuzzy_separator separator;uint32_t pointer;
         ok=bot_fuzzy_separator_bind(config->heap,frame->pointer,&separator,error);

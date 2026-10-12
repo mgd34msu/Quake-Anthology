@@ -169,6 +169,8 @@ static bool handles_fields(qa_source_save_io *io, qa_bot_runtime *runtime, const
             qa_bot_weights *weights;uint32_t index_pointer;
             if(ok) ok=bot_weapon_config_get(&runtime->weapon_pointers,&weapon->record,&weights,io->error) &&
                 bot_weapon_record_read(&weapon->record,BOT_WEAPON_INDEX_POINTER,&index_pointer,io->error);
+            if(ok && reading && weights)
+                ok=qa_bot_weight_workspace_prepare(runtime->weapon_workspace,weights,io->error);
         }
     }
     for(size_t i=0;ok && i<64;++i) {

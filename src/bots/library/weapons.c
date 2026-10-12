@@ -144,7 +144,8 @@ bool qa_bot_weapon_selector_create(qa_bot_weapons *config, qa_bot_weights *weigh
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating bot weapon weight mapping");
         return false;
     }
-    if (!qa_bot_weight_workspace_create(&s->workspace, e)) {
+    if (!qa_bot_weight_workspace_create(&s->workspace, e) ||
+        !qa_bot_weight_workspace_prepare(s->workspace,weights,e)) {
         qa_bot_weapon_selector_destroy(s);
         return false;
     }

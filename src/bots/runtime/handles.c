@@ -245,6 +245,7 @@ bool qa_bot_runtime_weapon_capture(const qa_bot_runtime *r, uint32_t id,
         (!weights || qa_bot_weights_clone(weights,out,e));
 }
 static bool bind_weapon_weights(qa_bot_runtime *runtime,bot_weapon_state *state,qa_bot_weights *weights,qa_error *error) {
+    if(weights && !qa_bot_weight_workspace_prepare(runtime->weapon_workspace,weights,error)) return false;
     if(!bot_weapon_config_set(&runtime->weapon_pointers,&state->record,weights,error)) return false;
     if(!weights || !runtime->weapon_config) return true;
     int32_t capacity;

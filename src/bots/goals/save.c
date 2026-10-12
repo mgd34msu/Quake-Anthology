@@ -311,6 +311,8 @@ bool qa_bot_goals_save_restore(qa_session *session, qa_bot_goals *goals, qa_byte
     bool ok = qa_source_save_reader(&io, session, bytes, error) && signature(&io) &&
         fields(&io, &scratch, assets, entities,navigation) && qa_source_save_finish(&io, NULL) &&
         bot_goal_aliases_reindex(&scratch,error) && bot_goal_sources_reindex(&scratch,error) && topology(&scratch, error);
+    for(bot_goal_weights *row=scratch.weights;ok && row;row=row->next)
+        ok=qa_bot_weight_workspace_prepare(scratch.workspace,row->weights,error);
     if (ok) { qa_bot_goals old = *goals; *goals = scratch; clear(&old); }
     else clear(&scratch);
     if (!ok && (!error || error->code == QA_OK)) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid complete bot goal continuation");

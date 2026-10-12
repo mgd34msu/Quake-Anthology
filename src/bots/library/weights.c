@@ -160,6 +160,15 @@ bool qa_bot_weight_workspace_create(qa_bot_weight_workspace **out, qa_error *e) 
     *out = w;
     return true;
 }
+bool qa_bot_weight_workspace_prepare(qa_bot_weight_workspace *work,const qa_bot_weights *weights,
+    qa_error *error) {
+    if(!work || work->busy || !weights || !weights->source) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid or nested fuzzy workspace preparation");
+        return false;
+    }
+    return bot_fuzzy_owned_open(weights->source,error) &&
+        bot_fuzzy_stack_prepare(&work->traversal,weights->source->source.heap,error);
+}
 void qa_bot_weight_workspace_destroy(qa_bot_weight_workspace *w) {
     if(w && !w->busy) {
         qa_arena_destroy(&w->traversal_storage);

@@ -11,6 +11,7 @@ typedef struct bot_fuzzy_stack {
     qa_arena *storage;
 } bot_fuzzy_stack;
 
+bool bot_fuzzy_stack_prepare(bot_fuzzy_stack *,const bot_fuzzy_heap *,qa_error *);
 bool bot_fuzzy_find(const bot_fuzzy_config *,qa_bytes,int32_t *,qa_error *);
 bool bot_fuzzy_evaluate(const bot_fuzzy_config *,int32_t,const qa_bot_inventory_view *,
     const qa_bot_random_source *,bot_fuzzy_stack *,float *,qa_error *);

@@ -97,6 +97,8 @@ bool qa_bot_weights_restore(const qa_bot_weights_view *, qa_bot_weights **, qa_e
 int32_t qa_bot_weights_find(const qa_bot_weights *, const char *);
 bool qa_bot_weights_find_value(const qa_bot_weights *,const char *,int32_t *,qa_error *);
 bool qa_bot_weight_workspace_create(qa_bot_weight_workspace **, qa_error *);
+/* Prepare from admitted separator storage before binding or evaluating weights. */
+bool qa_bot_weight_workspace_prepare(qa_bot_weight_workspace *, const qa_bot_weights *, qa_error *);
 void qa_bot_weight_workspace_destroy(qa_bot_weight_workspace *);
 typedef struct qa_bot_inventory_view {
     const int32_t *data;
