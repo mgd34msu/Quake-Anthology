@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "e2549f62dc04639c614d202dc681e3fb2c2ff3a6",
+  "verified_main": "65cf64a8c0c9b60169bb884c477730ed1164393d",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 134,
-    "open_source_observation": 237,
+    "fixed_source_build_core": 135,
+    "open_source_observation": 236,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -23824,8 +23824,9 @@
       "severity": "medium",
       "job": "01",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Gear Source-pointer resolution uses one load-sized common ID index of binding/tether memberships. The minimum interleaved row preserves B0,T0,B1,T1 duplicate priority; actor generations remain authoritative in the retained rows. All pointer membership writes and restore/admission reuse checks are migrated, with retired bindings held until Source cleanup. Save fields and physical layout qualification remain. Separate actor-release and physical-recipient walks remain outside this observation. Normal production build and seven core suites passed; no live gear or timing claim.",
+      "fix_commit": "65cf64a8c0c9b60169bb884c477730ed1164393d"
     },
     {
       "id": "01-storage-client-admission",
@@ -40664,6 +40665,34 @@
       ],
       "record_directory": "/tmp/qa-ta3196-protection-control-leases-20261012",
       "conclusion": "Protection absorption stages and committed-store deliveries use existing shared application control leases. Stage storage exists before write-watch registration; delivery is unlinked, copied and released before observer callback. Failed watch retirement retains the stage and backing for the original retry. Nested actor selection, exact sequence and regular/powered comparisons remain; channel/watch allocation remains outside this observation. Normal production build and seven core suites passed; no live combat or whole-frame allocation claim."
+    },
+    {
+      "commit": "65cf64a8c0c9b60169bb884c477730ed1164393d",
+      "source_tree": "1eda5cbf2d55278b6fc9c2c34271a59c5953fa84",
+      "finding_ids": [
+        "01-identity-gear-pointer"
+      ],
+      "files_rechecked": [
+        "src/app/application/guest_q3_gear_private.h",
+        "src/app/application/guest_q3_gear_memory.c",
+        "src/app/application/guest_q3_gear_mirror.c",
+        "src/app/application/guest_q3_gear.c",
+        "src/app/application/guest_q3_gear_save.c",
+        "src/core/id_index.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-gear-pointer-index-20261012",
+      "conclusion": "Gear Source-pointer resolution uses one load-sized common ID index of binding/tether memberships. The minimum interleaved row preserves B0,T0,B1,T1 duplicate priority; actor generations remain authoritative in the retained rows. All pointer membership writes and restore/admission reuse checks are migrated, with retired bindings held until Source cleanup. Save fields and physical layout qualification remain. Separate actor-release and physical-recipient walks remain outside this observation. Normal production build and seven core suites passed; no live gear or timing claim."
     }
   ],
   "verification_limits": [

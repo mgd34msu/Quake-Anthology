@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `e2549f62`.
+Follow-up source changes were reviewed through main `65cf64a8`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 134 have source fixes
+There are **374 overlapping source-review observations**: 135 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 237 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 236 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -262,3 +262,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 | `01-storage-lease-grow` | `000d4208` | All five listed capture-buffer growth sites use the common arena, preserving zeroed new elements and held-span lifetime. Normal build and seven core suites passed. |
 
 | `01-storage-protection-continuations` | `e2549f62` | Protection stages/store deliveries use shared control leases; release-before-callback and failed-cleanup retention preserved. Normal build and seven core suites passed. |
+
+| `01-identity-gear-pointer` | `65cf64a8` | One load-sized common pointer index retains interleaved duplicate priority and retired binding lifetime; admission/restore/free paths migrated. Normal build and seven core suites passed. |
