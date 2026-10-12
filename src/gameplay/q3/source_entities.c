@@ -30,6 +30,31 @@ void q3_client_projection(const qa_q3_game *game, const q3_client_state *client,
     *out = (qa_q3_native_client){.rule = client->rule, .ping = q3_client_ping_value(client)};
     q3_client_name_bytes(game, client, out->netname);
 }
+static uint32_t source_base_class(const qa_q3_game *game, qa_string_id classname) {
+    return qa_strings_name_flags(qa_session_strings(game->options.services.session), classname) &
+        QA_NAME_Q3_TEAM_BASES;
+}
+static void source_binding_store(qa_q3_game *game, uint32_t slot,
+    qa_q3_source_binding value) {
+    qa_q3_source_binding *row = &game->source_entities[slot];
+    uint32_t old_class = source_base_class(game, row->classname);
+    if (old_class)
+        qa_id_index_remove_value(&game->source_classnames, old_class, 0, slot);
+    *row = value;
+    uint32_t new_class = source_base_class(game, value.classname);
+    if (value.in_use && new_class)
+        qa_id_index_insert(&game->source_classnames, new_class, 0, slot);
+}
+void q3_source_classname_set(qa_q3_game *game, uint32_t slot, qa_string_id classname) {
+    qa_q3_source_binding value = game->source_entities[slot];
+    value.classname = classname;
+    source_binding_store(game, slot, value);
+}
+void q3_source_active_set(qa_q3_game *game, uint32_t slot, bool in_use) {
+    qa_q3_source_binding value = game->source_entities[slot];
+    value.in_use = in_use;
+    source_binding_store(game, slot, value);
+}
 void q3_source_state_reset(qa_q3_game *game) {
     q3_wire_reset(game);
     game->new_session = false;
@@ -51,6 +76,7 @@ void q3_source_state_reset(qa_q3_game *game) {
         game->clients[i].rule.source_model_shape = QA_SHAPE_BOX;
     }
     memset(game->source_entities, 0, sizeof(game->source_entities));
+    qa_id_index_clear(&game->source_classnames);
     for (uint32_t i = 0; i < QA_Q3_SOURCE_ENTITIES; ++i)
         game->source_entities[i].client_slot = i < game->options.max_clients ? (int32_t)i : -1;
     qa_actor_index_clear(&game->foreign_clients);
@@ -157,6 +183,34 @@ bool qa_q3_source_binding_read(const qa_q3_game *game, uint32_t slot,
     out->actor = q3_source_actor(game, slot);
     return true;
 }
+bool qa_q3_source_classified_actor_read(const qa_q3_game *game, uint32_t name_flag,
+    qa_actor_id *out, qa_error *error) {
+    if (!game || !out) return q3_fail(error, "Q3 classified source read needs its owner and output");
+    *out = (qa_actor_id){0};
+    uint32_t after = 0;
+    for (;;) {
+        uint32_t first = QA_Q3_SOURCE_NONE;
+        qa_id_index_cursor cursor = qa_id_index_begin(&game->source_classnames, name_flag, 0);
+        size_t slot;
+        while (qa_id_index_next(&game->source_classnames, &cursor, &slot))
+            if (slot >= after && slot < first && slot < game->source_count &&
+                game->source_entities[slot].in_use)
+                first = (uint32_t)slot;
+        if (first == QA_Q3_SOURCE_NONE) return true;
+        const qa_q3_source_binding *row = &game->source_entities[first];
+        if (!qa_strings_text(qa_session_strings(game->options.services.session), row->classname).data) {
+            qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "native TEAM base lost its source classname");
+            return false;
+        }
+        bool dropped;
+        if (!qa_q3_source_dropped_read(game, first, &dropped, error)) return false;
+        if (!dropped) {
+            *out = q3_source_actor(game, first);
+            return true;
+        }
+        after = first + 1;
+    }
+}
 qa_actor_id q3_source_actor(const qa_q3_game *game, uint32_t slot) {
     if (!game || slot >= QA_Q3_SOURCE_ENTITIES) return (qa_actor_id){0};
     const qa_actor_record *record = qa_actors_at_source(
@@ -232,7 +286,7 @@ static bool bind(qa_q3_game *game, uint32_t slot, qa_actor_id actor, qa_error *e
         if (!record->has_source && !qa_actors_bind_source(
                 qa_session_actor_registry(game->options.services.session), actor, slot, error)) return false;
     } else qa_actor_index_put(&game->foreign_clients, actor, slot);
-    *row = slot < QA_Q3_SOURCE_CLIENTS
+    qa_q3_source_binding value = slot < QA_Q3_SOURCE_CLIENTS
         ? (qa_q3_source_binding){.server_flags = row->server_flags,
             .number = row->number, .owner_number = row->owner_number,
             .classname = row->classname, .in_use = row->in_use,
@@ -242,6 +296,7 @@ static bool bind(qa_q3_game *game, uint32_t slot, qa_actor_id actor, qa_error *e
             .free_time_ms = row->free_time_ms, .classname = game->source_noclass,
             .server_flags = row->server_flags, .never_free = row->never_free,
             .client_slot = row->client_slot, .body_attached = true};
+    source_binding_store(game, slot, value);
     qa_stamp_set_restore_mark(&game->source_actor_visits, slot, 0);
     if (slot < QA_Q3_SOURCE_CLIENTS)
         game->clients[slot].player = qa_actors_player(
@@ -320,7 +375,7 @@ bool q3_source_row_body_ensure(qa_q3_game *game, uint32_t slot,
         return false;
     if (!bind(game, slot, actor, error)) return q3_rollback_spawn(game, actor, error);
     *q3_wire_entity_slot(game, slot) = source;
-    game->source_entities[slot] = saved;
+    source_binding_store(game, slot, saved);
     game->source_entities[slot].body_attached = true;
     if (!source_components_create(game, actor, error) ||
         !q3_wire_entity_ready(game, actor, error))
@@ -404,13 +459,13 @@ void q3_source_actor_released(qa_q3_game *game, qa_actor_record record) {
         game->current_origins[slot] = (q3_current_origin){0};
         game->clients[slot].player = NULL;
     }
-    game->source_entities[slot] = (qa_q3_source_binding){
+    source_binding_store(game, slot, (qa_q3_source_binding){
         .free_time_ms = slot < QA_Q3_SOURCE_CLIENTS ? 0 : game->now_ms,
         .server_flags = slot < QA_Q3_SOURCE_CLIENTS ? flags : 0,
         .number = slot < QA_Q3_SOURCE_CLIENTS ? number : 0,
         .owner_number = slot < QA_Q3_SOURCE_CLIENTS ? owner : 0,
         .classname = slot < QA_Q3_SOURCE_CLIENTS ? classname : game->source_freed,
-        .client_slot = slot < QA_Q3_SOURCE_CLIENTS ? client_slot : -1};
+        .client_slot = slot < QA_Q3_SOURCE_CLIENTS ? client_slot : -1});
     qa_actor_index_remove(&game->foreign_clients, actor);
     if (slot < QA_Q3_SOURCE_CLIENTS) game->client_actors[slot].actor = (qa_actor_id){0};
 }
@@ -430,7 +485,7 @@ bool q3_source_level_init(qa_q3_game *game, qa_error *error) {
         !qa_world_body_create(game->options.services.world, world,
                               &(qa_body_state){0}, error))
         return q3_rollback_spawn(game, world, error);
-    game->source_entities[QA_Q3_SOURCE_WORLD].classname = world_name;
+    q3_source_classname_set(game, QA_Q3_SOURCE_WORLD, world_name);
     if (!q3_wire_entity_ready(game, world, error) ||
         !q3_sound_index(game, Q3_NAME_FRY, &game->fry_sound_index, error) ||
         (game->options.hooks.source_world_init &&
@@ -499,10 +554,12 @@ bool q3_spawn_raw_actor(qa_q3_game *game, qa_string_id definition,
                q3_actor_source_number(game, actor, &game->foreign_clients) != slot)
         return q3_fail(error, "Q3 raw source row has a stale physical actor");
     qa_q3_source_binding *row = &game->source_entities[slot];
-    row->in_use = true;
-    row->number = (int32_t)slot;
-    row->owner_number = QA_Q3_SOURCE_NONE;
-    row->classname = game->source_noclass;
+    qa_q3_source_binding value = *row;
+    value.in_use = true;
+    value.number = (int32_t)slot;
+    value.owner_number = QA_Q3_SOURCE_NONE;
+    value.classname = game->source_noclass;
+    source_binding_store(game, slot, value);
     if (!q3_wire_entity_ready(game, actor, error)) return false;
     *out = actor;
     return true;
@@ -516,7 +573,7 @@ bool q3_spawn_actor(qa_q3_game *game, const qa_builtin_spawn *input,
     qa_actor_id actor;
     if (!q3_spawn_raw_actor(game, spawn.definition, &actor, error)) return false;
     uint32_t slot = q3_actor_source_number(game, actor, &game->foreign_clients);
-    if (spawn.definition) game->source_entities[slot].classname = spawn.definition;
+    if (spawn.definition) q3_source_classname_set(game, slot, spawn.definition);
     if (spawn.collision && qa_actor_reference_present(spawn.collision->owner))
         game->source_entities[slot].owner_number = spawn.collision->owner.kind == QA_ACTOR_REFERENCE_SOURCE &&
             spawn.collision->owner.value.source.owner == game->options.owner ? (int32_t)spawn.collision->owner.value.source.slot :
@@ -614,8 +671,13 @@ void q3_source_commit(qa_q3_game *game, const qa_q3_checkpoint *saved,
     *foreign_clients = (qa_actor_index){0};
     game->source_count = saved->source_count;
     memcpy(game->source_entities, saved->source_entities, sizeof(game->source_entities));
-    for (uint32_t slot = 0; slot < QA_Q3_SOURCE_ENTITIES; ++slot)
+    qa_id_index_clear(&game->source_classnames);
+    for (uint32_t slot = 0; slot < QA_Q3_SOURCE_ENTITIES; ++slot) {
         game->source_entities[slot].actor = (qa_actor_id){0};
+        uint32_t classname = source_base_class(game, game->source_entities[slot].classname);
+        if (game->source_entities[slot].in_use && classname)
+            qa_id_index_insert(&game->source_classnames, classname, 0, slot);
+    }
     for (uint32_t slot = 0; slot < QA_Q3_NATIVE_CLIENTS; ++slot) {
         qa_actor_player *player = qa_actors_player(qa_session_actors(game->options.services.session),
             saved->source_entities[slot].actor);

@@ -204,38 +204,6 @@ static bool near_visible(const team_combat_scope *scope, float distance_to_base,
     return !(distance_to_base < 1000) || in_pvs(scope, first, second, scratch, out, error);
 }
 
-static bool same_class(const char *left, const char *right)
-{
-    while (*left && *right) {
-        unsigned char a = (unsigned char)*left++, b = (unsigned char)*right++;
-        if (a >= 'A' && a <= 'Z') a = (unsigned char)(a + 'a' - 'A');
-        if (b >= 'A' && b <= 'Z') b = (unsigned char)(b + 'a' - 'A');
-        if (a != b) return false;
-    }
-    return !*left && !*right;
-}
-
-static bool find_base(const team_combat_scope *scope, const char *classname,
-    qa_actor_id *out, qa_error *error)
-{
-    *out = (qa_actor_id){0};
-    uint32_t count;
-    if (!qa_q3_source_entity_count(scope->game, &count, error)) return false;
-    for (uint32_t slot = 0; slot < count; ++slot) {
-        qa_q3_source_binding row;
-        if (!qa_q3_source_binding_read(scope->game, slot, &row, error)) return false;
-        if (!row.in_use || !row.classname) continue;
-        const char *name = qa_strings_cstr(qa_session_strings(scope->application->session), row.classname);
-        if (!name)
-            return application_fail(error, QA_ERROR_NOT_FOUND, "native TEAM base lost its source classname");
-        if (!same_class(name, classname)) continue;
-        bool dropped;
-        if (!qa_q3_source_dropped_read(scope->game, slot, &dropped, error)) return false;
-        if (!dropped) { *out = row.actor; return true; }
-    }
-    return true;
-}
-
 bool application_native_q3_team_check_hurt_carrier(void *opaque, qa_actor_id target,
     qa_actor_id attacker, qa_error *error)
 {
@@ -365,15 +333,15 @@ static bool frag_bonuses(const team_combat_scope *scope, qa_actor_id target,
             qa_q3_source_award_visual(scope->game, attacker, 0x10000u, error) &&
             client_live(scope, attacker, attacker_slot, error);
     }
-    const char *classname;
+    uint32_t base_class;
     qa_actor_id carrier = {0};
     if (scope->missionpack && scope->game_type == 6) {
         if (killer.rule.session.team != 1 && killer.rule.session.team != 2) return true;
-        classname = killer.rule.session.team == 1 ? "team_redobelisk" : "team_blueobelisk";
-    } else if (scope->missionpack && scope->game_type == 7) classname = "team_neutralobelisk";
+        base_class = killer.rule.session.team == 1 ? QA_NAME_Q3_RED_OBELISK : QA_NAME_Q3_BLUE_OBELISK;
+    } else if (scope->missionpack && scope->game_type == 7) base_class = QA_NAME_Q3_NEUTRAL_OBELISK;
     else {
         if (killer.rule.session.team != 1 && killer.rule.session.team != 2) return true;
-        classname = killer.rule.session.team == 1 ? "team_CTF_redflag" : "team_CTF_blueflag";
+        base_class = killer.rule.session.team == 1 ? QA_NAME_Q3_RED_FLAG_BASE : QA_NAME_Q3_BLUE_FLAG_BASE;
         for (uint32_t slot = 0; slot < scope->maximum; ++slot) {
             qa_q3_source_binding row;
             if (!qa_q3_source_binding_read(scope->game, slot, &row, error)) return false;
@@ -385,7 +353,7 @@ static bool frag_bonuses(const team_combat_scope *scope, qa_actor_id target,
         }
     }
     qa_actor_id base;
-    if (!find_base(scope, classname, &base, error)) return false;
+    if (!qa_q3_source_classified_actor_read(scope->game, base_class, &base, error)) return false;
     if (!base.registry) return true;
     qa_vec3 base_origin, attacker_origin;
     if (!qa_q3_source_current_origin_read(scope->game, base, &base_origin, error) ||

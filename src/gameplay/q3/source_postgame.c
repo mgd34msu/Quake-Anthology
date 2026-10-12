@@ -105,7 +105,7 @@ static bool spawn_podium(qa_q3_game *game, qa_actor_id *out, qa_error *error)
     qa_q3_entity original; qa_q3_wire_visibility visible;
     if (!qa_q3_wire_entity_read(game, slot, &original, &visible, error) ||
         !qa_world_set_collision(game->options.services.world, actor, &collision, error)) return false;
-    game->source_entities[slot].classname = classname;
+    q3_source_classname_set(game, slot, classname);
     game->actors[actor.slot] = (q3_actor){.actor = actor, .kind = Q3_ACTOR_PODIUM, .alpha = 1,
         .state.postgame.entity = original};
     q3_actor *entry = q3_actor_get(game, actor);
@@ -183,7 +183,7 @@ static bool spawn_model(qa_q3_game *game, qa_actor_id podium, uint32_t client,
         !qa_actors_set_metadata(qa_session_actor_registry(game->options.services.session),
             actor, game->options.owner, classname, error))
         return q3_rollback_spawn(game, actor, error);
-    game->source_entities[slot].classname = classname;
+    q3_source_classname_set(game, slot, classname);
     game->source_entities[slot].client_slot = source.client_slot;
     entry->state.postgame.timestamp = game->now_ms;
     entry->state.postgame.physics_object = true;

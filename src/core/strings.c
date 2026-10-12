@@ -130,7 +130,7 @@ bool qa_strings_intern(qa_strings *strings, qa_bytes text, qa_string_id *out, qa
     if(text.size>=9&&!memcmp(text.data,"info_flag",9)) flags|=QA_NAME_INFO_FLAG;
     if(text.size>=4&&!memcmp(text.data,"func",4)) flags|=QA_NAME_FUNC;
     if(text.size>=8&&!memcmp(text.data,"q1:ammo/",8)) flags|=QA_NAME_Q1_AMMO;
-    static const struct { const char *text; size_t size; uint32_t folded, exact; } team_names[] = {
+    static const struct { const char *text; size_t size; uint32_t folded, exact; } names[] = {
         {"red", 3, QA_NAME_TEAM_RED_ALIAS, QA_NAME_TEAM_RED_EXACT},
         {"team:red", 8, QA_NAME_TEAM_RED_ALIAS, QA_NAME_TEAM_RED_EXACT},
         {"blue", 4, QA_NAME_TEAM_BLUE_ALIAS, QA_NAME_TEAM_BLUE_EXACT},
@@ -138,13 +138,18 @@ bool qa_strings_intern(qa_strings *strings, qa_bytes text, qa_string_id *out, qa
         {"5", 1, QA_NAME_TEAM_RED_ALIAS, 0}, {"14", 2, QA_NAME_TEAM_BLUE_ALIAS, 0},
         {"q2:1", 4, QA_NAME_TEAM_RED_ALIAS, 0}, {"q3:1", 4, QA_NAME_TEAM_RED_ALIAS, 0},
         {"q2:2", 4, QA_NAME_TEAM_BLUE_ALIAS, 0}, {"q3:2", 4, QA_NAME_TEAM_BLUE_ALIAS, 0},
-        {"q2", 2, QA_NAME_TEAM_COLOR_NAMESPACE, 0}, {"q3", 2, QA_NAME_TEAM_COLOR_NAMESPACE, 0}
+        {"q2", 2, QA_NAME_TEAM_COLOR_NAMESPACE, 0}, {"q3", 2, QA_NAME_TEAM_COLOR_NAMESPACE, 0},
+        {"team_ctf_redflag", sizeof("team_ctf_redflag") - 1, QA_NAME_Q3_RED_FLAG_BASE, 0},
+        {"team_ctf_blueflag", sizeof("team_ctf_blueflag") - 1, QA_NAME_Q3_BLUE_FLAG_BASE, 0},
+        {"team_redobelisk", sizeof("team_redobelisk") - 1, QA_NAME_Q3_RED_OBELISK, 0},
+        {"team_blueobelisk", sizeof("team_blueobelisk") - 1, QA_NAME_Q3_BLUE_OBELISK, 0},
+        {"team_neutralobelisk", sizeof("team_neutralobelisk") - 1, QA_NAME_Q3_NEUTRAL_OBELISK, 0}
     };
-    for (size_t i = 0; i < sizeof(team_names) / sizeof(*team_names); ++i) {
-        qa_bytes candidate = {(const uint8_t *)team_names[i].text, team_names[i].size};
+    for (size_t i = 0; i < sizeof(names) / sizeof(*names); ++i) {
+        qa_bytes candidate = {(const uint8_t *)names[i].text, names[i].size};
         if (qa_text_bytes_equal(text, candidate, true)) {
-            flags |= team_names[i].folded;
-            if (team_names[i].exact && qa_text_bytes_equal(text, candidate, false)) flags |= team_names[i].exact;
+            flags |= names[i].folded;
+            if (names[i].exact && qa_text_bytes_equal(text, candidate, false)) flags |= names[i].exact;
             break;
         }
     }

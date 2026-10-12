@@ -501,8 +501,8 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
     if (qa_q3_source_actor_slot(game, actor, &source_slot, NULL)) {
         qa_string_id classname;
         if (!qa_builtin_resource(&game->options.services, "player", &classname, error)) return false;
-        game->source_entities[source_slot].classname = classname;
-        game->source_entities[source_slot].in_use = true;
+        q3_source_classname_set(game, source_slot, classname);
+        q3_source_active_set(game, source_slot, true);
         if (source_slot < QA_Q3_SOURCE_CLIENTS)
             entry->state.player.client_number = (int32_t)source_slot;
     }

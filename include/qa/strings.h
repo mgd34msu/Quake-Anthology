@@ -18,6 +18,13 @@ typedef uint32_t qa_string_id;
 #define QA_NAME_TEAM_BLUE_ALIAS (1u << 10)
 #define QA_NAME_TEAM_COLOR_NAMESPACE (1u << 11)
 #define QA_NAME_Q1_AMMO (1u << 12)
+#define QA_NAME_Q3_RED_FLAG_BASE (1u << 13)
+#define QA_NAME_Q3_BLUE_FLAG_BASE (1u << 14)
+#define QA_NAME_Q3_RED_OBELISK (1u << 15)
+#define QA_NAME_Q3_BLUE_OBELISK (1u << 16)
+#define QA_NAME_Q3_NEUTRAL_OBELISK (1u << 17)
+#define QA_NAME_Q3_TEAM_BASES (QA_NAME_Q3_RED_FLAG_BASE | QA_NAME_Q3_BLUE_FLAG_BASE | \
+    QA_NAME_Q3_RED_OBELISK | QA_NAME_Q3_BLUE_OBELISK | QA_NAME_Q3_NEUTRAL_OBELISK)
 typedef struct qa_strings qa_strings;
 
 /* Exact byte identity, with no case folding or path normalization. Normalize

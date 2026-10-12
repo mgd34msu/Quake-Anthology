@@ -1579,7 +1579,7 @@ bool q3_wire_temp_entity(qa_q3_game *game, qa_vec3 origin, int32_t event,
             if (ok && (!current(game, slot, actor) || !row(game, actor)))
                 ok = q3_fail(error, "Q3 temporary entity changed during its raw state observation");
             if (!ok) goto temp_done;
-            game->source_entities[slot].classname = name;
+            q3_source_classname_set(game, slot, name);
             original.eType = 13 + event;
             original.pos = (qa_q3_trajectory){.base = {snapped.x, snapped.y, snapped.z}};
             *entry = (q3_actor){.actor = actor, .kind = Q3_ACTOR_TEMPORARY, .alpha = 1,

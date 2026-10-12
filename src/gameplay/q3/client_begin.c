@@ -322,7 +322,7 @@ bool qa_q3_client_connect(qa_q3_game *game, qa_actor_id actor, bool bot, qa_erro
         uint32_t slot;
         if (!q3_client_slot(game, actor, &slot)) return false;
         game->source_entities[slot].server_flags |= 8u;
-        game->source_entities[slot].in_use = true;
+        q3_source_active_set(game, slot, true);
     }
     q3_player_motion_clear(game, actor);
     uint32_t actual_slot;
@@ -352,8 +352,8 @@ bool qa_q3_client_begin_state(qa_q3_game *game, qa_actor_id actor, qa_error *err
     if (!entry || !qa_actor_id_equal(q3_source_actor(game, slot), actor)) return true;
     qa_string_id classname;
     if (!qa_builtin_resource(&game->options.services, "noclass", &classname, error)) return false;
-    game->source_entities[slot].classname = classname;
-    game->source_entities[slot].in_use = true;
+    q3_source_classname_set(game, slot, classname);
+    q3_source_active_set(game, slot, true);
     game->source_entities[slot].client_slot = (int32_t)slot;
     game->source_entities[slot].body_attached = true;
     game->source_entities[slot].number = (int32_t)slot;
@@ -413,7 +413,7 @@ bool qa_q3_client_activate_bot(qa_q3_game *game, qa_actor_id actor, qa_error *er
     if (binding->client_slot != (int32_t)slot)
         return q3_fail(error, "Q3 bot activation lost its original fixed client pointer");
     binding->server_flags |= 8u;
-    binding->in_use = true;
+    q3_source_active_set(game, slot, true);
     return true;
 }
 
@@ -459,8 +459,8 @@ bool qa_q3_client_disconnect(qa_q3_game *game, qa_actor_id actor, qa_error *erro
     q3_wire_entity_source *source = q3_wire_entity(game, actor);
     if (!source) return q3_fail(error, "Q3 disconnect lost its actual source entity");
     source->model = 0;
-    game->source_entities[slot].in_use = false;
-    game->source_entities[slot].classname = classname;
+    q3_source_active_set(game, slot, false);
+    q3_source_classname_set(game, slot, classname);
     client->rule.connected = QA_Q3_CLIENT_DISCONNECTED;
     if (!qa_q3_client_persistent_team(game, slot, 0, error)) return false;
     game->source_entities[slot].body_attached = false;

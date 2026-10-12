@@ -170,6 +170,7 @@ struct qa_q3_game {
     q3_client_state clients[QA_Q3_NATIVE_CLIENTS];
     q3_actor client_actors[QA_Q3_NATIVE_CLIENTS];
     qa_q3_source_binding source_entities[QA_Q3_SOURCE_ENTITIES];
+    qa_id_index source_classnames;
     qa_actor_index foreign_clients;
     uint32_t source_count;
     bool new_session;
@@ -191,6 +192,8 @@ q3_actor *q3_actor_storage(qa_q3_game *, qa_actor_id);
 q3_actor *q3_actor_at(qa_q3_game *, uint32_t);
 const q3_actor *q3_actor_at_const(const qa_q3_game *, uint32_t);
 void q3_source_state_reset(qa_q3_game *);
+void q3_source_classname_set(qa_q3_game *, uint32_t, qa_string_id);
+void q3_source_active_set(qa_q3_game *, uint32_t, bool);
 bool q3_source_level_init(qa_q3_game *, qa_error *);
 bool q3_spawn_actor(qa_q3_game *, const qa_builtin_spawn *, qa_actor_id *, qa_error *);
 bool q3_teleport_event_at(qa_q3_game *, qa_actor_id, qa_vec3, bool entering, qa_error *);
