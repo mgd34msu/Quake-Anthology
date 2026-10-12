@@ -25,6 +25,7 @@ typedef struct function_entry {
 struct binding {
     binding *next, *next_observer;
     qa_qvm_binding id;
+    size_t slot;
     uint32_t instruction;
     enum { BIND_FUNCTION, BIND_OBSERVER, BIND_RESOLVER } kind;
     union { qa_qvm_function_hook hook; qa_qvm_function_observer observer; qa_qvm_function_resolver resolver; } fn;
@@ -68,8 +69,10 @@ typedef struct execution {
     host_scope *host;
     source_call *cancelled;
     binding *bindings, *resolver;
-    function_entry **entries;
-    size_t entry_count, entry_capacity;
+    function_entry *entries;
+    size_t entry_count;
+    qa_pool binding_records;
+    qa_id_index binding_ids;
     uint32_t program_stack;
     uint64_t next_binding, instructions, breaks;
     bool failed;
@@ -229,54 +232,67 @@ static function_entry *entry(execution *exec, uint32_t instruction)
     size_t low = 0, high = exec->entry_count;
     while (low < high) {
         size_t middle = low + (high - low) / 2;
-        if (exec->entries[middle]->instruction < instruction) low = middle + 1; else high = middle;
+        if (exec->entries[middle].instruction < instruction) low = middle + 1; else high = middle;
     }
-    return low < exec->entry_count && exec->entries[low]->instruction == instruction ? exec->entries[low] : NULL;
+    return low < exec->entry_count && exec->entries[low].instruction == instruction ? exec->entries + low : NULL;
 }
-static function_entry *ensure_entry(execution *exec, uint32_t instruction, qa_error *error)
+static binding *binding_find(const execution *exec, qa_qvm_binding id)
 {
-    function_entry *found = entry(exec, instruction);
-    if (found != NULL) return found;
-    if (exec->entry_count == exec->entry_capacity) {
-        size_t capacity = exec->entry_capacity == 0 ? 16 : exec->entry_capacity * 2;
-        if (capacity < exec->entry_capacity || capacity > SIZE_MAX / sizeof(*exec->entries)) {
-            qa_qvm_error(error, QA_ERROR_MEMORY, 0, "QVM function binding capacity exhausted"); return NULL;
-        }
-        function_entry **resized = realloc(exec->entries, capacity * sizeof(*resized));
-        if (resized == NULL) { qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Allocating QVM function index"); return NULL; }
-        exec->entries = resized; exec->entry_capacity = capacity;
-    }
-    found = calloc(1, sizeof(*found));
-    if (found == NULL) { qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Allocating QVM function entry"); return NULL; }
-    found->instruction = instruction;
-    size_t index = 0;
-    while (index < exec->entry_count && exec->entries[index]->instruction < instruction) ++index;
-    memmove(exec->entries + index + 1, exec->entries + index, (exec->entry_count - index) * sizeof(*exec->entries));
-    exec->entries[index] = found; ++exec->entry_count;
-    return found;
+    qa_id_index_cursor cursor = qa_id_index_begin(&exec->binding_ids, 0, id);
+    size_t value;
+    return qa_id_index_next(&exec->binding_ids, &cursor, &value) ?
+        (binding *)(uintptr_t)value : NULL;
 }
 static void collect_bindings(execution *exec)
 {
     if (exec->active != NULL) return;
-    for (size_t i = 0; i < exec->entry_count; ++i) {
-        function_entry *target = exec->entries[i];
-        if (target->hook != NULL && !target->hook->active) target->hook = NULL;
-        binding **link = &target->observers;
-        while (*link != NULL) { if (!(*link)->active) *link = (*link)->next_observer; else link = &(*link)->next_observer; }
-    }
-    if (exec->resolver != NULL && !exec->resolver->active) exec->resolver = NULL;
     binding **link = &exec->bindings;
     while (*link != NULL) {
         binding *current = *link;
         if (current->active) link = &current->next;
-        else { *link = current->next; free(current); }
+        else {
+            if (current->kind == BIND_RESOLVER) {
+                if (exec->resolver == current) exec->resolver = NULL;
+            } else {
+                function_entry *target = entry(exec, current->instruction);
+                if (current->kind == BIND_FUNCTION) {
+                    if (target->hook == current) target->hook = NULL;
+                } else {
+                    binding **observer = &target->observers;
+                    while (*observer != current) observer = &(*observer)->next_observer;
+                    *observer = current->next_observer;
+                }
+            }
+            *link = current->next;
+            qa_id_index_remove(&exec->binding_ids, 0, current->id);
+            qa_pool_release(&exec->binding_records, current->slot);
+        }
     }
 }
 
 bool qa_qvm_execution_create(qa_qvm *vm, qa_error *error)
 {
-    execution *exec = calloc(1, sizeof(*exec));
-    if (exec == NULL) return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Allocating QVM execution state");
+    execution *exec = qa_arena_alloc(&vm->observer_storage, sizeof(*exec),
+        _Alignof(execution), error);
+    if (!exec) return false;
+    *exec = (execution){0};
+    for (size_t i = 0; i < vm->image->instruction_count; ++i)
+        if (vm->image->instructions[i].opcode == QA_QVM_ENTER) ++exec->entry_count;
+    if (exec->entry_count > SIZE_MAX / sizeof(*exec->entries))
+        return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "QVM function binding capacity exhausted");
+    if (exec->entry_count) {
+        exec->entries = qa_arena_alloc(&vm->observer_storage,
+            exec->entry_count * sizeof(*exec->entries), _Alignof(function_entry), error);
+        if (!exec->entries) return false;
+        size_t index = 0;
+        for (size_t i = 0; i < vm->image->instruction_count; ++i)
+            if (vm->image->instructions[i].opcode == QA_QVM_ENTER)
+                exec->entries[index++] = (function_entry){.instruction = (uint32_t)i};
+    }
+    exec->binding_ids.storage = &vm->observer_storage;
+    if (!qa_pool_prepare(&exec->binding_records, &vm->observer_storage,
+        exec->entry_count + 1, sizeof(binding), _Alignof(binding), error) ||
+        !qa_id_index_reserve(&exec->binding_ids, exec->entry_count + 1, error)) return false;
     exec->program_stack = (uint32_t)vm->data_size; vm->execution = exec; return true;
 }
 void qa_qvm_execution_reset(qa_qvm *vm)
@@ -399,6 +415,9 @@ static bool restore_callbacks(qa_qvm *vm, uint64_t generation,
         while (constructed[i].binding != value->id) ++i;
         value->id = saved[i];
     }
+    qa_id_index_clear(&exec->binding_ids);
+    for (binding *value = exec->bindings; value; value = value->next)
+        qa_id_index_insert(&exec->binding_ids, 0, value->id, (size_t)(uintptr_t)value);
     exec->next_binding = generation;
     return true;
 }
@@ -419,10 +438,8 @@ bool qa_qvm_execution_restore_bindings(qa_qvm *vm, uint64_t generation,
 void qa_qvm_execution_destroy(qa_qvm *vm)
 {
     execution *exec = state(vm); if (exec == NULL) return;
-    for (size_t i = 0; i < exec->entry_count; ++i) free(exec->entries[i]);
-    binding *current = exec->bindings;
-    while (current != NULL) { binding *next = current->next; free(current); current = next; }
-    free(exec->entries); free(exec); vm->execution = NULL;
+    qa_id_index_destroy(&exec->binding_ids);
+    vm->execution = NULL;
 }
 bool qa_qvm_execution_active(const qa_qvm *vm)
 {
@@ -497,10 +514,15 @@ static binding *new_binding(qa_qvm *vm, uint32_t instruction, qa_error *error)
 {
     execution *exec = state(vm);
     if (exec->next_binding == UINT64_MAX) { error_at(error, 0, "QVM binding identities exhausted"); return NULL; }
-    binding *result = calloc(1, sizeof(*result));
-    if (result == NULL) { qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Allocating QVM binding"); return NULL; }
+    if (!qa_id_index_reserve(&exec->binding_ids, 1, error) ||
+        (exec->binding_records.head == SIZE_MAX &&
+            !qa_qvm_observer_pool_extend(vm, &exec->binding_records, 1, error))) return NULL;
+    size_t slot;
+    binding *result = qa_pool_take(&exec->binding_records, &slot);
+    *result = (binding){.slot = slot};
     result->id = ++exec->next_binding; result->instruction = instruction; result->active = true;
     result->next = exec->bindings; exec->bindings = result;
+    qa_id_index_insert(&exec->binding_ids, 0, result->id, (size_t)(uintptr_t)result);
     return result;
 }
 bool qa_qvm_bind_function(qa_qvm *vm, uint32_t instruction, bool host_invocations,
@@ -509,8 +531,7 @@ bool qa_qvm_bind_function(qa_qvm *vm, uint32_t instruction, bool host_invocation
     if (!qa_qvm_mutable(vm, error) || !function(vm->image, instruction, error)) return false;
     if (hook == NULL || out == NULL) return error_at(error, instruction, "QVM function hook or output is missing");
     execution *exec = state(vm);
-    function_entry *target = ensure_entry(exec, instruction, error);
-    if (target == NULL) return false;
+    function_entry *target = entry(exec, instruction);
     if (target->hook != NULL && target->hook->active) return error_at(error, instruction, "QVM function already has a hook");
     binding *value = new_binding(vm, instruction, error);
     if (value == NULL) return false;
@@ -524,8 +545,7 @@ bool qa_qvm_observe_function(qa_qvm *vm, uint32_t instruction, qa_qvm_function_o
     if (vm->candidate_inventory)
         return error_at(error, instruction, "Candidate callback inventory already sealed");
     if (observe == NULL || out == NULL) return error_at(error, instruction, "QVM function observer or output is missing");
-    function_entry *target = ensure_entry(state(vm), instruction, error);
-    if (target == NULL) return false;
+    function_entry *target = entry(state(vm), instruction);
     binding *value = new_binding(vm, instruction, error);
     if (value == NULL) return false;
     value->kind = BIND_OBSERVER; value->fn.observer = observe; value->context = context;
@@ -549,11 +569,11 @@ bool qa_qvm_unbind(qa_qvm *vm, qa_qvm_binding id, qa_error *error)
 {
     if (!qa_qvm_live(vm, error)) return false;
     execution *exec = state(vm);
-    for (binding *current = exec->bindings; current != NULL; current = current->next)
-        if (current->id == id && current->active) {
-            if (vm->candidate_inventory) vm->candidate_inventory_invalid=true;
-            current->active = false; collect_bindings(exec); return true;
-        }
+    binding *current = binding_find(exec, id);
+    if (current && current->active) {
+        if (vm->candidate_inventory) vm->candidate_inventory_invalid=true;
+        current->active = false; collect_bindings(exec); return true;
+    }
     return qa_qvm_error(error, QA_ERROR_NOT_FOUND, 0, "QVM binding does not exist");
 }
 

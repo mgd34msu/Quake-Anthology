@@ -4,6 +4,8 @@
 #include "qa/qvm.h"
 #include "qa/binary.h"
 #include "qa/network_unified_frame_pool.h"
+#include "qa/pool.h"
+#include "qa/id_index.h"
 
 typedef struct qvm_code_word {
     int32_t value;
@@ -26,6 +28,9 @@ struct qa_qvm {
     size_t data_size;
     uint32_t data_mask;
     qa_unified_frame_pool *transient_storage;
+    qa_arena observer_storage;
+    qa_pool watch_records, watch_ranges;
+    qa_id_index watch_ids;
     uint64_t write_sequence, next_watch;
     struct qa_qvm_write_watch *watches;
     unsigned publication_depth, write_delivery_depth, lifecycle_depth;
@@ -42,6 +47,8 @@ bool qa_qvm_mutable(const qa_qvm *, qa_error *);
 bool qa_qvm_raw_range(const qa_qvm *, uint32_t, size_t, qa_error *);
 bool qa_qvm_parse_restart(qa_bytes, qa_buffer *, size_t *, qa_error *);
 bool qa_qvm_execution_create(qa_qvm *, qa_error *);
+bool qa_qvm_observer_pool_extend(qa_qvm *, qa_pool *, size_t, qa_error *);
+bool qa_qvm_memory_create(qa_qvm *, qa_error *);
 void qa_qvm_execution_destroy(qa_qvm *);
 void qa_qvm_execution_reset(qa_qvm *);
 void qa_qvm_execution_checkpoint(const qa_qvm *, uint64_t values[3]);

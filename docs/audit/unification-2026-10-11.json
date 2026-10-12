@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "01977991b82c071b183b4da75021278499c44073",
+  "verified_main": "79bb8019dd361bb4a32d5a6df11ce3c2c975f5cd",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 163,
-    "open_source_observation": 208,
+    "fixed_source_build_core": 165,
+    "open_source_observation": 206,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -27465,8 +27465,9 @@
       "severity": "high",
       "job": "08",
       "area": "audio_input_ui",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "79bb8019dd361bb4a32d5a6df11ce3c2c975f5cd"
     },
     {
       "id": "08-03",
@@ -35413,8 +35414,9 @@
       "severity": "high",
       "job": "30",
       "area": "public_interfaces",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "79bb8019dd361bb4a32d5a6df11ce3c2c975f5cd"
     },
     {
       "id": "30-03",
@@ -41676,6 +41678,59 @@
       ],
       "record_directory": "/tmp/qa-ta3196-qc-combat-capture-20261012",
       "conclusion": "Two live QuakeC VM word captures use independent shared control leases; exact unwind and nested callback lifetimes preserved. Normal build and seven core suites passed. Larger shared-pool peaks remain allocation-capable; no runtime or global completion claim."
+    },
+    {
+      "commit": "79bb8019dd361bb4a32d5a6df11ce3c2c975f5cd",
+      "source_tree": "393f132c85f7118c95bff09ce950f9a8dfc26484",
+      "finding_ids": [
+        "08-02",
+        "30-02"
+      ],
+      "files_rechecked": [
+        "CMakeLists.txt",
+        "include/qa/application.h",
+        "include/qa/application_ui_names.h",
+        "include/qa/font.h",
+        "include/qa/world.h",
+        "src/app/application/events.c",
+        "src/app/application/events_save.c",
+        "src/app/application/internal.h",
+        "src/app/application/unified_events.c",
+        "src/app/application/unified_events.h",
+        "src/app/application/unified_player.c",
+        "src/app/frontend/capture.c",
+        "src/app/frontend/frame.c",
+        "src/app/frontend/internal.h",
+        "src/app/frontend/lifetime.c",
+        "src/app/frontend/map_events.c",
+        "src/app/frontend/menu_fonts.c",
+        "src/app/frontend/menu_fonts.h",
+        "src/app/frontend/native_q2.c",
+        "src/app/frontend/network.c",
+        "src/app/frontend/network_session.h",
+        "src/app/frontend/persistence.c",
+        "src/app/frontend/presentation.c",
+        "src/app/frontend/q1_sky.c",
+        "src/app/frontend/qc_rerelease_events.c",
+        "src/app/frontend/qc_rerelease_events.h",
+        "src/app/frontend/remote_unified_render.c",
+        "src/app/frontend/source.c",
+        "src/network/unified/frame_layout.c",
+        "src/text/font/world.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-world-text-owner-20261012",
+      "conclusion": "All world text uses retained output-event pages and one drawing adapter. Private font/QC stores deleted; actual local drawing owns one-frame lifetime, dedicated delivery uses source time, and Q2 save bytes stay unchanged. Normal build/seven core suites passed; live presentation remains untested."
     }
   ],
   "verification_limits": [

@@ -23,6 +23,30 @@ typedef struct write_delivery {
     uint8_t *bytes;
 } write_delivery;
 
+bool qa_qvm_observer_pool_extend(qa_qvm *vm, qa_pool *pool, size_t minimum,
+    qa_error *error)
+{
+    size_t count = pool->capacity > minimum ? pool->capacity : minimum;
+    return qa_pool_extend(pool, &vm->observer_storage, count, error);
+}
+
+bool qa_qvm_memory_create(qa_qvm *vm, qa_error *error)
+{
+    vm->watch_ids.storage = &vm->observer_storage;
+    return qa_pool_prepare(&vm->watch_records, &vm->observer_storage, 0,
+        sizeof(qa_qvm_write_watch), _Alignof(qa_qvm_write_watch), error) &&
+        qa_pool_prepare(&vm->watch_ranges, &vm->observer_storage, 0,
+            sizeof(qa_qvm_write_range), _Alignof(qa_qvm_write_range), error);
+}
+
+static qa_qvm_write_watch *watch_find(const qa_qvm *vm, qa_qvm_binding id)
+{
+    qa_id_index_cursor cursor = qa_id_index_begin(&vm->watch_ids, 0, id);
+    size_t value;
+    return qa_id_index_next(&vm->watch_ids, &cursor, &value) ?
+        (qa_qvm_write_watch *)(uintptr_t)value : NULL;
+}
+
 bool qa_qvm_live(const qa_qvm *vm, qa_error *error)
 {
     return (vm != NULL && !vm->retired) || qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"QVM instance is retired or absent");
@@ -97,18 +121,34 @@ bool qa_qvm_observe_writes_owned(qa_qvm *vm, const qa_qvm_write_range *ranges, s
     for (size_t i = 0; i < count; ++i)
         if (!qa_qvm_raw_range(vm,ranges[i].offset,ranges[i].length,error)) return false;
     qa_qvm_write_watch *watch = NULL;
+    qa_qvm_write_watch **reusable = NULL;
     /* A retired registration can be reused after every delivery returns.
      * Keep its range storage for the next call instead of allocating per tick. */
     if (!vm->write_delivery_depth) {
-        qa_qvm_write_watch **link = &vm->watches;
-        while (*link && ((*link)->active || (*link)->capacity < count)) link = &(*link)->next;
-        if (*link) { watch = *link; *link = watch->next; }
+        reusable = &vm->watches;
+        while (*reusable && ((*reusable)->active || (*reusable)->capacity < count))
+            reusable = &(*reusable)->next;
+        watch = *reusable;
+    }
+    if (!qa_id_index_reserve(&vm->watch_ids, watch ? 0 : 1, error)) return false;
+    if (watch) {
+        *reusable = watch->next;
+        qa_id_index_remove(&vm->watch_ids, 0, watch->id);
     }
     if (!watch) {
-        watch = calloc(1,sizeof(*watch));
-        if (watch == NULL) return qa_qvm_error(error,QA_ERROR_MEMORY,0,"allocating QVM write observer");
-        if (count > 0) watch->ranges = malloc(count * sizeof(*ranges));
-        if (count > 0 && watch->ranges == NULL) { free(watch); return qa_qvm_error(error,QA_ERROR_MEMORY,0,"allocating QVM observer ranges"); }
+        if (vm->watch_records.head == SIZE_MAX &&
+            !qa_qvm_observer_pool_extend(vm, &vm->watch_records, 1, error)) return false;
+        size_t slot;
+        watch = qa_pool_take(&vm->watch_records, &slot);
+        *watch = (qa_qvm_write_watch){0};
+        if (count > 0) {
+            if (!qa_pool_run_available(&vm->watch_ranges, count) &&
+                !qa_qvm_observer_pool_extend(vm, &vm->watch_ranges, count, error)) {
+                qa_pool_release(&vm->watch_records, slot); return false;
+            }
+            size_t range_slot;
+            watch->ranges = qa_pool_take_run(&vm->watch_ranges, count, &range_slot);
+        }
         watch->capacity = count;
     }
     watch->count = 0; watch->next = NULL;
@@ -136,6 +176,7 @@ bool qa_qvm_observe_writes_owned(qa_qvm *vm, const qa_qvm_write_range *ranges, s
     qa_qvm_write_watch **tail = &vm->watches;
     while (*tail != NULL) tail = &(*tail)->next;
     *tail = watch; *out = watch->id;
+    qa_id_index_insert(&vm->watch_ids, 0, watch->id, (size_t)(uintptr_t)watch);
     return true;
 }
 bool qa_qvm_observe_writes(qa_qvm *vm, const qa_qvm_write_range *ranges, size_t count,
@@ -146,11 +187,11 @@ bool qa_qvm_observe_writes(qa_qvm *vm, const qa_qvm_write_range *ranges, size_t 
 bool qa_qvm_unobserve_writes(qa_qvm *vm, qa_qvm_binding id, qa_error *error)
 {
     if (!qa_qvm_live(vm,error)) return false;
-    for (qa_qvm_write_watch *watch = vm->watches; watch != NULL; watch = watch->next)
-        if (watch->id == id && watch->active) {
-            if (vm->candidate_inventory) vm->candidate_inventory_invalid=true;
-            watch->active = false; return true;
-        }
+    qa_qvm_write_watch *watch = watch_find(vm, id);
+    if (watch && watch->active) {
+        if (vm->candidate_inventory) vm->candidate_inventory_invalid=true;
+        watch->active = false; return true;
+    }
     return qa_qvm_error(error,QA_ERROR_NOT_FOUND,0,"QVM write observer not found");
 }
 
@@ -170,12 +211,12 @@ bool qa_qvm_write_watch_read(const qa_qvm *vm, qa_qvm_binding id,
     qa_qvm_saved_write_watch *out, qa_error *error)
 {
     if (!out || !qa_qvm_live(vm,error)) return false;
-    for (const qa_qvm_write_watch *watch = vm->watches; watch; watch = watch->next)
-        if (watch->active && watch->id == id) {
-            *out = (qa_qvm_saved_write_watch){id,watch->ranges,watch->count,
-                watch->publish,watch->after,watch->context,watch->dispose};
-            return true;
-        }
+    const qa_qvm_write_watch *watch = watch_find(vm, id);
+    if (watch && watch->active) {
+        *out = (qa_qvm_saved_write_watch){id,watch->ranges,watch->count,
+            watch->publish,watch->after,watch->context,watch->dispose};
+        return true;
+    }
     return qa_qvm_error(error,QA_ERROR_NOT_FOUND,0,"QVM retained write watch is absent");
 }
 bool qa_qvm_memory_checkpoint_watches(const qa_qvm *vm,
@@ -224,6 +265,9 @@ void qa_qvm_memory_restore_watches(qa_qvm *vm, uint64_t generation,
         while (i < count && constructed[i].binding != watch->id) ++i;
         watch->id = saved[i];
     }
+    qa_id_index_clear(&vm->watch_ids);
+    for (qa_qvm_write_watch *watch = vm->watches; watch; watch = watch->next)
+        qa_id_index_insert(&vm->watch_ids, 0, watch->id, (size_t)(uintptr_t)watch);
     vm->next_watch = generation;
 }
 
@@ -470,10 +514,8 @@ bool qa_qvm_write_string(qa_qvm *vm, int32_t pointer, qa_bytes string, size_t ca
 
 void qa_qvm_memory_close(qa_qvm *vm)
 {
-    qa_qvm_write_watch *watch = vm->watches;
-    while (watch != NULL) {
-        qa_qvm_write_watch *next = watch->next;
-        free(watch->ranges); free(watch); watch = next;
-    }
     vm->watches = NULL;
+    qa_id_index_clear(&vm->watch_ids);
+    qa_pool_reset(&vm->watch_ranges);
+    qa_pool_reset(&vm->watch_records);
 }
