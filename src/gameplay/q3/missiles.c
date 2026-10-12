@@ -76,11 +76,6 @@ bool q3_radius(qa_q3_game *game, qa_actor_id inflictor, qa_actor_id attacker, qa
         *accuracy = context.accuracy;
     return ok;
 }
-static qa_vec3 nail_direction(qa_vec3 value) {
-    float length = (float)sqrt((double)qa_vec_dot(value, value));
-    return length == 0 ? value : qa_vec_scale(value, (1.0f / length));
-}
-
 bool q3_launch(qa_q3_game *game, qa_actor_id owner, qa_q3_weapon weapon, qa_vec3 start,
                qa_vec3 direction, qa_vec3 right, qa_vec3 up, float factor, qa_actor_id *out,
                qa_error *error) {
@@ -209,8 +204,9 @@ bool q3_launch(qa_q3_game *game, qa_actor_id owner, qa_q3_weapon weapon, qa_vec3
                        qa_vec_scale(right, horizontal)),
             qa_vec_scale(up, vertical));
         float nail_speed = (555.0f + (q3_random(game) * 1800.0f));
-        velocity = qa_physics_q3_snap(
-            qa_vec_scale(nail_direction(qa_vec_sub(end, start)), nail_speed));
+        qa_vec3 nail_direction = qa_vec_sub(end, start);
+        qa_vec_normalize_length_rule(&nail_direction, QA_LENGTH_DOUBLE_SQRT);
+        velocity = qa_physics_q3_snap(qa_vec_scale(nail_direction, nail_speed));
         entry->state.missile.trajectory.time_ms = game->now_ms;
         entry->state.missile.trajectory.delta = velocity;
         spawn.body.velocity = velocity;

@@ -283,8 +283,7 @@ void frontend_view_q1_damage(const frontend_q1_motion_settings *settings, qa_vec
     state->damage_color = armor > blood ? qa_v3(200,100,100) :
         armor ? qa_v3(220,50,50) : qa_v3(255,0,0);
     from = qa_vec_sub(from, origin);
-    float length = (float)sqrt(qa_vec_dot(from, from));
-    if (length != 0) from = qa_vec_scale(from, 1 / length);
+    qa_vec_normalize_length_rule(&from, QA_LENGTH_DOUBLE_SQRT);
     qa_vec3 axes[3]; qa_angle_axis(angles, axes,QA_ANGLE_FLOAT_MATH);
     state->damage_roll = count * -qa_vec_dot(from, axes[1]) * settings->kick_roll;
     state->damage_pitch = count * qa_vec_dot(from, axes[0]) * settings->kick_pitch;
