@@ -381,8 +381,11 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
         qa_trace_query trace = {.start = body.origin,
                                 .end = body.origin,
                                 .shape = {QA_SHAPE_BOX, body.bounds},
-                                .policy = {.behavior = &qa_trace_behaviors[qa_collision_source_rules(family(v))], .contents_mask = qa_collision_contents_mask(3, family(v)), .q1_hull = -1},
+                                .policy = qa_collision_ruleset_policy(v->value.rules.ruleset),
                                 .pass_actor = actor};
+        trace.policy.contents_mask = qa_collision_contents_mask(3, trace.policy.behavior->contents_format);
+        trace.policy.curves = false;
+        trace.policy.player_curve_clip = false;
         trace.start.z += family(v) == QA_GAME_Q1 ? 6 : 1;
         trace.end = trace.start;
         trace.end.z -= spec->kind == QA_MODE_OBJECT_OBELISK ? 4096
@@ -676,8 +679,11 @@ bool mode_object_drop(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id
     qa_trace_query query = {.start = player.origin,
                             .end = origin,
                             .shape = {QA_SHAPE_BOX, body.bounds},
-                            .policy = {.behavior = &qa_trace_behaviors[qa_collision_source_rules(family(v))], .contents_mask = qa_collision_contents_mask(3, family(v)), .q1_hull = -1},
+                            .policy = qa_collision_ruleset_policy(v->value.rules.ruleset),
                             .pass_actor = actor};
+    query.policy.contents_mask = qa_collision_contents_mask(3, query.policy.behavior->contents_format);
+    query.policy.curves = false;
+    query.policy.player_curve_clip = false;
     qa_trace_result trace;
     if (!qa_world_trace(m->options.services.world, &query, &trace, e))
         return false;
@@ -892,7 +898,9 @@ bool mode_objects_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_erro
             if (!qa_world_body_read(m->options.services.world, actor, &body, e))
                 return false;
             qa_point_query query = {
-                .point = body.origin, .policy = {.behavior = &qa_trace_behaviors[QA_RULESET_Q2_CLASSIC],}, .pass_actor = actor};
+                .point = body.origin,
+                .policy = qa_collision_ruleset_policy(v->value.rules.ruleset),
+                .pass_actor = actor};
             if (!qa_world_point_contents(m->options.services.world, &query, &contents, e))
                 return false;
             o->next_ns = 0;

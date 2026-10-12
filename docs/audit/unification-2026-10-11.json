@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "386769dbbf77cb385c015c18e4c7bd2c772c2633",
+  "verified_main": "340226fbf8a0e152111bfd353fc68c5de6c1b93a",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -39974,6 +39974,29 @@
       ],
       "record_directory": "/tmp/qa-ta3196-chat-member-index-20261012",
       "conclusion": "Typed initial-chat source-pointer membership now uses one common ID index keyed by actual source offset and record kind. Actual source bytes, allocation truth, ordered cold metadata, saved fields and candidate history ownership remain. Library aliases and admission growth remain open. Matching normal build and seven core suites pass."
+    },
+    {
+      "commit": "340226fbf8a0e152111bfd353fc68c5de6c1b93a",
+      "source_tree": "6788cec1d4379e9922033dcc7ee74a52d5924a59",
+      "finding_ids": [
+        "10-01"
+      ],
+      "files_rechecked": [
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-bot-observation-storage-20261012",
+      "conclusion": "Guest bot observations use common ID index and pool rows in one owned arena; private live buckets, links and free storage are deleted. Signed Source keys, insertion/free order, MODULE versus NATIVE histories, actual actor payload and QABOBSV fields remain. Existing core behavior check covers growth, generated-save byte round trips, reuse and invalidation. Admission still grows without a declared guest budget; 10-01 remains partial. Matching normal build and seven core suites pass."
     }
   ],
   "verification_limits": [
