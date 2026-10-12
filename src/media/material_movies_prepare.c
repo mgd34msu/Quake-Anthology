@@ -7,6 +7,7 @@ struct qa_material_movies_stage {
     qa_material_movies *owner, *destination;
     qa_scene_resource_policy *bank;
     material_movie *original, *merged;
+    qa_id_index original_images, merged_images;
     size_t count, added, capacity;
     qa_scene_frame *frame;
     uint64_t sequence;
@@ -69,6 +70,9 @@ bool qa_material_movies_stage_ready(qa_material_movies_stage *stage, qa_error *e
                 free(merged); return cinematic_fail(error, "Prepared movie roster repeats a true target");
             }
     }
+    if (!material_movies_index_build(&stage->merged_images, merged, count, error)) {
+        free(merged); return false;
+    }
     stage->merged = merged; stage->capacity = capacity; stage->added = added;
     stage->sealed = true; stage->destination->stage_sealed = true; return true;
 }
@@ -80,6 +84,9 @@ bool qa_material_movies_stage_ready_is(const qa_material_movies_stage *stage)
 void qa_material_movies_stage_publish(qa_material_movies_stage *stage)
 {
     if (!held(stage) || !stage->sealed || stage->published) return;
+    stage->original_images = stage->owner->images;
+    stage->owner->images = stage->merged_images;
+    stage->merged_images = (qa_id_index){0};
     stage->owner->movies = stage->merged; stage->merged = NULL;
     stage->owner->count += stage->added; stage->owner->capacity = stage->capacity;
     stage->destination->count = 0; stage->published = true;
@@ -87,6 +94,7 @@ void qa_material_movies_stage_publish(qa_material_movies_stage *stage)
 static void dispose(qa_material_movies_stage *stage)
 {
     stage->destination->stage_sealed = false; qa_material_movies_destroy(stage->destination);
+    qa_id_index_destroy(stage->published ? &stage->original_images : &stage->merged_images);
     free(stage->published ? stage->original : stage->merged);
     stage->owner->pending = NULL; free(stage);
 }

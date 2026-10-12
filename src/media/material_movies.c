@@ -48,13 +48,23 @@ void qa_material_movies_destroy(qa_material_movies *movies) {
     movies->busy = true;
     for (size_t i = 0; i < movies->count; ++i)
         qa_cinematic_destroy(movies->movies[i].playback);
+    qa_id_index_destroy(&movies->images);
     free(movies->movies);
     free(movies);
 }
 static material_movie *find(qa_material_movies *movies, uint64_t initial) {
-    for (size_t i = 0; i < movies->count; ++i)
-        if (movies->movies[i].initial == initial) return &movies->movies[i];
-    return NULL;
+    qa_id_index_entry *entry = qa_id_index_find(&movies->images, 0, initial);
+    return entry ? movies->movies + entry->value : NULL;
+}
+bool material_movies_index_build(qa_id_index *index, const material_movie *rows,
+    size_t count, qa_error *error)
+{
+    size_t additional = count > index->count ? count - index->count : 0;
+    if (!qa_id_index_reserve(index, additional, error)) return false;
+    qa_id_index_clear(index);
+    for (size_t i = 0; i < count; ++i)
+        qa_id_index_insert(index, 0, rows[i].initial, i);
+    return true;
 }
 bool qa_material_movies_add(qa_material_movies *movies, qa_cinematic *playback,
                             qa_scene_frame *frame, const qa_scene_image **out, qa_error *error) {
@@ -79,6 +89,7 @@ bool qa_material_movies_add(qa_material_movies *movies, qa_cinematic *playback,
         movies->movies = entries;
         movies->capacity = capacity;
     }
+    if (!qa_id_index_reserve(&movies->images, 1, error)) return false;
     const qa_scene_image *image;
     if (!cinematic_material_initial(playback, movies->resources, frame, &image, error)) {
         return false;
@@ -87,6 +98,7 @@ bool qa_material_movies_add(qa_material_movies *movies, qa_cinematic *playback,
         return cinematic_fail(error, "Material initial image already has a playback owner");
     movies->movies[movies->count] =
         (material_movie){.initial = image->identity, .playback = playback, .enabled = true};
+    qa_id_index_insert(&movies->images, 0, image->identity, movies->count);
     ++movies->count;
     *out = image;
     return true;
@@ -101,6 +113,7 @@ bool qa_material_movies_remove(qa_material_movies *movies, uint64_t initial, qa_
     qa_cinematic *playback = entry->playback;
     memmove(entry, entry + 1, (movies->count - index - 1) * sizeof(*entry));
     --movies->count;
+    material_movies_index_build(&movies->images, movies->movies, movies->count, NULL);
     movies->busy = true;
     qa_cinematic_destroy(playback);
     movies->busy = false;
