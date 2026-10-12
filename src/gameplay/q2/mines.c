@@ -1011,9 +1011,7 @@ bool qa_q2_bad_area(qa_q2_game *g, qa_actor_id actor, qa_vec3 origin, qa_actor_i
 }
 bool qa_q2_spawn_bad_area(qa_q2_game *g, qa_bounds absolute, uint64_t lifespan, qa_actor_id owner,
                           qa_actor_id *out, qa_error *e) {
-    if (g == NULL || out == NULL || !qa_vec_finite(absolute.mins) ||
-        !qa_vec_finite(absolute.maxs) || absolute.mins.x > absolute.maxs.x ||
-        absolute.mins.y > absolute.maxs.y || absolute.mins.z > absolute.maxs.z) {
+    if (g == NULL || out == NULL || !qa_bounds_valid(absolute)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 bad-area bounds");
         return false;
     }

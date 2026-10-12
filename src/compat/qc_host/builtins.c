@@ -46,9 +46,7 @@ static bool setmodel(qa_qc_game *game, qa_error *error) {
     if (entity && !qa_qc_reference_actor(game->vm, entity, &actor, error)) return false;
     qa_qc_game_resource cached;
     if (!game->options.resource(game->options.context, QA_QC_RESOURCE_MODEL, name, false, &cached, error)) return false;
-    if (!qa_vec_finite(cached.bounds.mins) || !qa_vec_finite(cached.bounds.maxs) ||
-        cached.bounds.mins.x > cached.bounds.maxs.x || cached.bounds.mins.y > cached.bounds.maxs.y ||
-        cached.bounds.mins.z > cached.bounds.maxs.z)
+    if (!qa_bounds_valid(cached.bounds))
         return qc_game_fail(error, QA_ERROR_FORMAT, "Invalid QC model bounds");
     qa_actor_id current;
     if (entity && (!qa_qc_reference_actor(game->vm, entity, &current, error) ||

@@ -165,10 +165,7 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
         spec->kind < QA_MODE_OBJECT_FLAG || spec->relic < QA_RELIC_RESISTANCE ||
         spec->relic >= QA_RELIC_COUNT || !qa_vec_finite(spec->origin) ||
         !qa_vec_finite(spec->angles) || !qa_vec_finite(spec->direction) ||
-        (spec->has_bounds &&
-         (!qa_vec_finite(spec->bounds.mins) || !qa_vec_finite(spec->bounds.maxs) ||
-          spec->bounds.mins.x > spec->bounds.maxs.x || spec->bounds.mins.y > spec->bounds.maxs.y ||
-          spec->bounds.mins.z > spec->bounds.maxs.z)) ||
+        (spec->has_bounds && !qa_bounds_valid(spec->bounds)) ||
         !isfinite(spec->value))
         return mode_fail(e, "invalid native mode object");
     int team = mode_team_index(v, spec->team);

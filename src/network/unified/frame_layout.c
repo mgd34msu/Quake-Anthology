@@ -1959,9 +1959,7 @@ static bool q3_sources_check(const qa_unified_frame_q3 *section, uint64_t regist
             if (row->number > QA_Q3_ENTITY_WORLD || entities[row->number] || row->state.number != (int32_t)row->number ||
                 !same_source(row->actor, registry) || !finite_record(&qa_q3_entity_layout, &row->state) ||
                 !finite_record(&qa_unified_vector_layout, &row->origin) ||
-                !finite_record(&qa_unified_bounds_layout, &row->link_bounds) ||
-                row->link_bounds.mins.x > row->link_bounds.maxs.x || row->link_bounds.mins.y > row->link_bounds.maxs.y ||
-                row->link_bounds.mins.z > row->link_bounds.maxs.z)
+                !qa_bounds_valid(row->link_bounds))
                 return frame_bad(error, "Typed Q3 entity lost its actual physical identity or finite link state");
             entities[row->number] = row;
         }

@@ -62,10 +62,7 @@ static bool read_outputs(struct application_qc_state *engine, uint32_t slot,
             values.has_body_bounds = true;
             ok = qa_qc_entity_vector(vm, reference, output->field->definition->offset, &values.body_bounds.mins, error) &&
                  qa_qc_entity_vector(vm, reference, output->maximum->definition->offset, &values.body_bounds.maxs, error);
-            if (ok && (!qa_vec_finite(values.body_bounds.mins) || !qa_vec_finite(values.body_bounds.maxs) ||
-                values.body_bounds.mins.x > values.body_bounds.maxs.x ||
-                values.body_bounds.mins.y > values.body_bounds.maxs.y ||
-                values.body_bounds.mins.z > values.body_bounds.maxs.z))
+            if (ok && !qa_bounds_valid(values.body_bounds))
                 ok = application_fail(error, QA_ERROR_FORMAT, "QC client body shape has invalid original bounds");
             break;
         case APPLICATION_CLIENT_MOVEMENT_MODE: case APPLICATION_CLIENT_STANCE: {

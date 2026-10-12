@@ -358,9 +358,7 @@ bool qa_physics_monster_walk_detached(qa_physics *p, qa_actor_id actor,
     if (!p || !p->world || !initial || !initial_source || !out || !out_source || !moved ||
         qa_ruleset_read(initial_source->rules)->family != QA_GAME_Q1 || !isfinite(yaw) || !isfinite(distance) ||
         !qa_vec_finite(initial->origin) || !qa_vec_finite(initial->angles) ||
-        !qa_vec_finite(initial->velocity) || !qa_vec_finite(initial->bounds.mins) ||
-        !qa_vec_finite(initial->bounds.maxs) || initial->bounds.mins.x > initial->bounds.maxs.x ||
-        initial->bounds.mins.y > initial->bounds.maxs.y || initial->bounds.mins.z > initial->bounds.maxs.z) {
+        !qa_vec_finite(initial->velocity) || !qa_bounds_valid(initial->bounds)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Detached monster walk requires actual Q1 state and finite bounds");
         return false;
     }

@@ -2461,9 +2461,7 @@ bool application_control_frames_fields(qa_source_save_io *io, qa_application *ap
             (!value.retained && ((!value.seen && !value.has_body_base) ||
                 (value.domain != CONTROL_COMMAND_Q3_SOURCE && (value.arsenal || value.weapon)))) ||
             (value.has_body_base && (!body_base_owner(source, controls[value.actor.slot].player.state.kind) ||
-                !qa_vec_finite(value.body_base.mins) || !qa_vec_finite(value.body_base.maxs) ||
-                value.body_base.mins.x > value.body_base.maxs.x || value.body_base.mins.y > value.body_base.maxs.y ||
-                value.body_base.mins.z > value.body_base.maxs.z)) ||
+                !qa_bounds_valid(value.body_base))) ||
             ((value.arsenal || value.weapon) &&
                 (!application_player_bot(app, value.actor) || !application_bots_actor(app, value.actor))) ||
             !weapon_owner(app, value.actor, value.arsenal, value.weapon) ||

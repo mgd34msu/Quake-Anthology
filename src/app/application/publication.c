@@ -587,9 +587,7 @@ static bool absolute_body_bounds(void *opaque, qa_actor_id actor,
     qa_bounds bounds = qa_collision_link_bounds(state->bounds, state->origin, state->angles,
         has_collision && collision.inline_model && collision.role != QA_COLLISION_TRIGGER,
         pad, qa_collision_source_rules(has_collision ? collision.family : QA_GAME_Q1));
-    if (!qa_vec_finite(bounds.mins) || !qa_vec_finite(bounds.maxs) ||
-        bounds.mins.x > bounds.maxs.x || bounds.mins.y > bounds.maxs.y ||
-        bounds.mins.z > bounds.maxs.z)
+    if (!qa_bounds_valid(bounds))
         return application_fail(error, QA_ERROR_FORMAT, "Source link bounds overflowed");
     *out = bounds;
     return true;

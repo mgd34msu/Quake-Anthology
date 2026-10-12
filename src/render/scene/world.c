@@ -2092,10 +2092,7 @@ bool qa_scene_world_fog_for_bounds(const qa_scene_world *world, qa_bounds bounds
 {
     if (out == NULL) return false;
     *out = (qa_scene_fog_volume){0};
-    if (world == NULL || world->bsp.family != QA_BSP_Q3 ||
-        !qa_vec_finite(bounds.mins) || !qa_vec_finite(bounds.maxs) ||
-        bounds.mins.x > bounds.maxs.x || bounds.mins.y > bounds.maxs.y ||
-        bounds.mins.z > bounds.maxs.z) return false;
+    if (world == NULL || world->bsp.family != QA_BSP_Q3 || !qa_bounds_valid(bounds)) return false;
     return qaw_q3_fog_for_bounds(world, bounds, out);
 }
 
