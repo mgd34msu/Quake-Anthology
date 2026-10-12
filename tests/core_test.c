@@ -2610,6 +2610,43 @@ static void test_shared_input_menu_defaults(void)
             CHECK(qa_console_drain(console,0,&drained,&error));
             CHECK(drained==1 && !qa_input_seat_action_active(seat,QA_INPUT_SCORES));
         }
+        char held_command[768];
+        memcpy(held_command,"+showscores ",12);
+        memset(held_command+12,'a',sizeof held_command-13);
+        held_command[sizeof held_command-1]=0;
+        for (unsigned replacement=0;replacement<2;++replacement) {
+            qa_physical_input physical={.kind=QA_PHYSICAL_KEY,.code=QA_KEY_TAB};
+            CHECK(qa_input_seat_bind(seat,&(qa_input_binding){.input=physical,
+                .kind=QA_BIND_COMMAND,.command=held_command},&error));
+            qa_input_event key={.kind=QA_INPUT_EVENT_KEY,.time_ms=time+=10,
+                .down=true,.input=physical};
+            size_t drained=0;
+            CHECK(qa_input_seat_event(seat,&key,NULL,&error));
+            CHECK(qa_console_drain(console,4096,&drained,&error));
+            CHECK(qa_input_seat_action_active(seat,QA_INPUT_SCORES));
+            qa_input_binding next={.input=physical,.kind=QA_BIND_COMMAND,.command="+attack"};
+            if (replacement==0) {
+                qa_input_seat *candidate=NULL;
+                CHECK(qa_input_seat_configuration_clone(seat,&candidate,&error));
+                CHECK(qa_input_seat_bind(candidate,&next,&error));
+                CHECK(qa_input_seat_configuration_ready(seat,candidate,&error));
+                qa_input_seat_configuration_publish(seat,candidate);
+                qa_input_seat_destroy(candidate);
+            } else CHECK(qa_input_seat_replace_bindings(seat,&next,1,&error));
+            key.down=false;key.time_ms=time+=10;
+            CHECK(qa_input_seat_event(seat,&key,NULL,&error));
+            CHECK(qa_console_drain(console,4096,&drained,&error));
+            CHECK(!qa_input_seat_action_active(seat,QA_INPUT_SCORES));
+            CHECK(!qa_input_seat_action_active(seat,QA_INPUT_ATTACK));
+            key.down=true;key.time_ms=time+=10;
+            CHECK(qa_input_seat_event(seat,&key,NULL,&error));
+            CHECK(qa_console_drain(console,4096,&drained,&error));
+            CHECK(qa_input_seat_action_active(seat,QA_INPUT_ATTACK));
+            key.down=false;key.time_ms=time+=10;
+            CHECK(qa_input_seat_event(seat,&key,NULL,&error));
+            CHECK(qa_console_drain(console,4096,&drained,&error));
+            CHECK(!qa_input_seat_action_active(seat,QA_INPUT_ATTACK));
+        }
         qa_input_console_destroy(commands);
         qa_input_seat_destroy(seat);
         qa_console_destroy(console);

@@ -3,6 +3,7 @@
 #include "qa/input.h"
 #include "qa/strings.h"
 #include "qa/input_release.h"
+#include "qa/arena.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -69,15 +70,16 @@ struct qa_input_seat {
     size_t ui_count, ui_capacity;
     qa_input_ui_token next_ui;
     qa_strings *command_sources;
+    qa_arena binding_text;
     char *scratch;
-    size_t scratch_size, scratch_capacity;
+    size_t scratch_size;
 };
 bool qa_input_release_action_access(const qa_input_seat *, qa_error *);
 bool qa_input_release_mutation_access(const qa_input_seat *, qa_error *);
 bool qa_input_binding_release_text(qa_input_seat *, const qa_held_binding *, double,
     const char **, qa_error *);
 bool qa_input_reserve(void **, size_t *capacity, size_t needed, size_t stride, qa_error *);
-bool qa_input_text_append(qa_input_seat *, const char *, size_t, qa_error *);
+bool qa_input_binding_text_prepare(qa_input_seat *, const qa_input_seat *, qa_error *);
 bool qa_input_physical_equal(qa_physical_input, qa_physical_input);
 uint64_t qa_input_physical_source(qa_physical_input);
 bool qa_input_command_source(qa_input_seat *, const char *, uint64_t *, qa_error *);

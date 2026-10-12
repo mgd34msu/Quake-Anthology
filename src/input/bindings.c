@@ -155,13 +155,28 @@ static bool command(void *user, const qa_command_invocation *cmd, qa_error *erro
         print(c, "\n");
         return true;
     }
-    s->scratch_size = 0;
-    for (size_t i = 2; i < cmd->argc; ++i)
-        if ((i > 2 && !qa_input_text_append(s, " ", 1, error)) ||
-            !qa_input_text_append(s, cmd->argv[i], strlen(cmd->argv[i]), error))
-            return false;
-    qa_input_binding binding = {.input = physical, .kind = QA_BIND_COMMAND, .command = s->scratch};
-    return qa_input_seat_bind(s, &binding, error);
+    size_t size = cmd->argc - 3;
+    for (size_t i = 2; i < cmd->argc; ++i) {
+        size_t length = strlen(cmd->argv[i]);
+        if (length > SIZE_MAX - size) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Binding length overflow"); return false;
+        }
+        size += length;
+    }
+    if (size == SIZE_MAX) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Binding length overflow"); return false;
+    }
+    qa_arena text;
+    qa_console_command_arena(c->options.console, &text);
+    char *joined = qa_arena_alloc(&text, size + 1, 1, error);
+    bool ok = joined && qa_text_join_words(cmd->argv + 2, cmd->argc - 2,
+                                           joined, size + 1, error);
+    if (ok) {
+        qa_input_binding binding = {.input = physical, .kind = QA_BIND_COMMAND, .command = joined};
+        ok = qa_input_seat_bind(s, &binding, error);
+    }
+    qa_arena_destroy(&text);
+    return ok;
 }
 static bool register_command(qa_input_console *c, const char *name, qa_error *error) {
     if (c->count >= sizeof(c->names) / sizeof(*c->names) || strlen(name) >= sizeof(c->names[0]))
@@ -282,16 +297,16 @@ bool qa_input_default_bindings(qa_input_seat *s, int32_t device, qa_error *error
 bool qa_input_reset_default_bindings(qa_input_seat *s, int32_t device, qa_error *error) {
     return default_bindings(s, device, true, error);
 }
-bool qa_input_bindings_config(const qa_input_seat *s, bool controllers, qa_buffer *out,
-                              qa_error *error) {
-    qa_input_seat text = {0};
-    bool success = qa_input_text_append(&text, "unbindall\n", 10, error);
+static bool bindings_config(const qa_input_seat *s, bool controllers, char *out,
+                            size_t *length, qa_error *error) {
+    size_t written = 10;
+    if (out) memcpy(out, "unbindall\n", written);
     static const char *const pads[] = {
         "A_BUTTON",  "B_BUTTON",   "X_BUTTON",    "Y_BUTTON",      "BACK",           "GUIDE",
         "START",     "LEFT_STICK", "RIGHT_STICK", "LEFT_SHOULDER", "RIGHT_SHOULDER", "DPAD_UP",
         "DPAD_DOWN", "DPAD_LEFT",  "DPAD_RIGHT",  "MISC",          "PADDLE1",        "PADDLE2",
         "PADDLE3",   "PADDLE4",    "TOUCHPAD"};
-    for (size_t i = 0; success && i < s->binding_count; ++i) {
+    for (size_t i = 0; i < s->binding_count; ++i) {
         const qa_input_binding *b = &s->bindings[i]->view;
         char key[96];
         const char *bound_command = b->kind == QA_BIND_COMMAND ? b->command : qa_input_action_command(b->action);
@@ -314,20 +329,37 @@ bool qa_input_bindings_config(const qa_input_seat *s, bool controllers, qa_buffe
             qa_error_set(error, QA_ERROR_FORMAT, 0,
                          "Source cfg cannot encode this binding; use structured seat "
                          "settings");
-            success = false;
-            break;
+            return false;
         }
-        success = qa_input_text_append(&text, "bind \"", 6, error) &&
-                  qa_input_text_append(&text, key, strlen(key), error) &&
-                  qa_input_text_append(&text, "\" \"", 3, error) &&
-                  qa_input_text_append(&text, bound_command, strlen(bound_command), error) &&
-                  qa_input_text_append(&text, "\"\n", 2, error);
+        size_t key_size = strlen(key), command_size = strlen(bound_command);
+        if (key_size > SIZE_MAX - written - 1 || command_size > SIZE_MAX - written - key_size - 1 ||
+            SIZE_MAX - written - key_size - command_size < 12) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Input text length overflow"); return false;
+        }
+        if (out) {
+            memcpy(out + written, "bind \"", 6);
+            memcpy(out + written + 6, key, key_size);
+            memcpy(out + written + 6 + key_size, "\" \"", 3);
+            memcpy(out + written + 9 + key_size, bound_command, command_size);
+            memcpy(out + written + 9 + key_size + command_size, "\"\n", 2);
+        }
+        written += 11 + key_size + command_size;
     }
-    if (success)
-        *out = (qa_buffer){(uint8_t *)text.scratch, text.scratch_size};
-    else
-        free(text.scratch);
-    return success;
+    if (out) out[written] = 0;
+    *length = written;
+    return true;
+}
+bool qa_input_bindings_config(const qa_input_seat *s, bool controllers, qa_buffer *out,
+                              qa_error *error) {
+    size_t size;
+    if (!bindings_config(s, controllers, NULL, &size, error)) return false;
+    char *text = malloc(size + 1);
+    if (!text) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating input configuration"); return false;
+    }
+    if (!bindings_config(s, controllers, text, &size, error)) { free(text); return false; }
+    *out = (qa_buffer){(uint8_t *)text, size};
+    return true;
 }
 bool qa_input_weapon_defaults(qa_input_seat *s, const qa_input_weapon_binding *items, size_t count,
                               qa_error *error) {

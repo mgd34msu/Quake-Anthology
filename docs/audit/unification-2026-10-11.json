@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "0109c3d670cfe8c1863a074db2262a853101a15a",
+  "verified_main": "0d7b282ea4c1ecf6277da61b9ade3760e40948a0",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -27937,6 +27937,10 @@
         {
           "commit": "11e8b4449b8a7e4db09130e0c8d70118a44e615b",
           "conclusion": "Route reset retains shared output storage across replanning and slot reuse. Graph metadata and trajectory state reset; lifecycle destruction frees backing. First or longer route capacity growth remains, so cold capacity preparation is still open."
+        },
+        {
+          "commit": "0d7b282ea4c1ecf6277da61b9ade3760e40948a0",
+          "conclusion": "Prepare graph reserves every slot for the actual route bound min(edges,nodes)+1 nodes and min(edges,nodes) edges, plus the common two-point direct trajectory. Restore and historical publication reserve replacement slots to the admitted retained capacities before callback publication. Full variable-length prediction and authored traversal trajectories still have no admitted bound and remain open; this is not whole-frame zero-allocation proof."
         }
       ]
     },
@@ -40215,6 +40219,30 @@
       ],
       "record_directory": "/tmp/qa-ta3196-frontend-movie-index-20261012",
       "conclusion": "Frontend owner and receipt image lookups now use the common ID index with full uint64 image identities, stable owner identity and original roster order. Media routing was migrated in51d654d9. Admission indexes only accepted registrations; staged image policy builds isolated candidates and reserves for all sealed owners before allocation-free publication. Original global Q3 shared-handle checks, failed receipts, transfer custody and cleanup refusal remain. Private render identity scans are deleted. Cold admission arrays and the required original Q3 handle scratch remain. Matching normal production build and seven core suites pass; no live or timing claim."
+    },
+    {
+      "commit": "0d7b282ea4c1ecf6277da61b9ade3760e40948a0",
+      "source_tree": "7bcbba8fe6b52bf0f81900d5c618183850d71bda",
+      "finding_ids": [
+        "09-05"
+      ],
+      "files_rechecked": [
+        "src/bots/movement/save.c",
+        "src/bots/movement/state.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-route-cold-arrays-20261012",
+      "conclusion": "Prepare graph reserves every slot for the actual route bound min(edges,nodes)+1 nodes and min(edges,nodes) edges, plus the common two-point direct trajectory. Restore and historical publication reserve replacement slots to the admitted retained capacities before callback publication. Full variable-length prediction and authored traversal trajectories still have no admitted bound and remain open; this is not whole-frame zero-allocation proof. Normal production build and seven core suites pass."
     }
   ],
   "verification_limits": [

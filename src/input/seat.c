@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/text.h"
 #include "qa/input_release.h"
+#include <float.h>
 #include <stdio.h>
 
 bool qa_input_reserve(void **data, size_t *capacity, size_t needed, size_t stride,
@@ -26,16 +27,6 @@ bool qa_input_reserve(void **data, size_t *capacity, size_t needed, size_t strid
     }
     *data = next;
     *capacity = grown;
-    return true;
-}
-bool qa_input_text_append(qa_input_seat *s, const char *text, size_t size, qa_error *error) {
-    if (size > SIZE_MAX - s->scratch_size - 1 ||
-        !qa_input_reserve((void **)&s->scratch, &s->scratch_capacity, s->scratch_size + size + 1, 1,
-                          error))
-        return false;
-    memcpy(s->scratch + s->scratch_size, text, size);
-    s->scratch_size += size;
-    s->scratch[s->scratch_size] = 0;
     return true;
 }
 bool qa_input_physical_equal(qa_physical_input a, qa_physical_input b) {
@@ -77,6 +68,8 @@ static qa_binding_record *binding_find(const qa_input_seat *s, qa_physical_input
         }
     return NULL;
 }
+static bool binding_text_prepare(qa_input_seat *, const qa_input_seat *,
+                                 const qa_binding_record *, qa_error *);
 static bool binding_equal(const qa_input_binding *a, const qa_input_binding *b) {
     return qa_input_physical_equal(a->input, b->input) &&
         a->kind == b->kind && (a->kind == QA_BIND_COMMAND
@@ -120,6 +113,7 @@ qa_input_seat *qa_input_seat_create(const qa_input_seat_options *o, qa_error *er
     s->options = *o;
     s->focused = true;
     s->next_ui = 1;
+    qa_arena_seal(&s->binding_text);
     if (!qa_strings_create(&s->command_sources, error) ||
         !qa_input_reserve((void **)&s->ui, &s->ui_capacity, 1, sizeof(*s->ui), error)) {
         qa_input_seat_destroy(s);
@@ -144,7 +138,7 @@ void qa_input_seat_destroy(qa_input_seat *s) {
     free(s->held);
     free(s->ui);
     free(s->catchers);
-    free(s->scratch);
+    qa_arena_destroy(&s->binding_text);
     free(s->recipient_pending);
     while (s->recipient_retired) {
         qa_input_recipient_handoff *next=s->recipient_retired->next;
@@ -379,6 +373,10 @@ bool qa_input_seat_bind(qa_input_seat *s, const qa_input_binding *binding, qa_er
         record->view.command = record->text;
     } else
         record->view.command = NULL;
+    if (!binding_text_prepare(s, NULL, record, error)) {
+        free(record);
+        return false;
+    }
     if (old) {
         s->bindings[index] = record;
         qa_input_binding_record_release(old);
@@ -423,7 +421,8 @@ const qa_input_binding *qa_input_seat_binding(const qa_input_seat *s, qa_physica
     qa_binding_record *b = binding_find(s, input, NULL);
     return b ? &b->view : NULL;
 }
-static void replace_bindings(qa_input_seat *s, qa_input_seat *candidate) {
+static bool replace_bindings(qa_input_seat *s, qa_input_seat *candidate, qa_error *error) {
+    if (!qa_input_binding_text_prepare(s, candidate, error)) return false;
     uint64_t revision = s->binding_revision + !qa_input_bindings_equal(s, candidate);
     qa_input_seat_unbind_all(s);
     free(s->bindings);
@@ -431,6 +430,14 @@ static void replace_bindings(qa_input_seat *s, qa_input_seat *candidate) {
     s->binding_count = candidate->binding_count;
     s->binding_capacity = candidate->binding_capacity;
     s->binding_revision = revision;
+    candidate->bindings = NULL;
+    candidate->binding_count = candidate->binding_capacity = 0;
+    return true;
+}
+static void binding_candidate_dispose(qa_input_seat *candidate) {
+    qa_input_seat_unbind_all(candidate);
+    free(candidate->bindings);
+    qa_arena_destroy(&candidate->binding_text);
 }
 bool qa_input_seat_replace_bindings(qa_input_seat *s, const qa_input_binding *bindings,
                                     size_t count, qa_error *error) {
@@ -440,9 +447,10 @@ bool qa_input_seat_replace_bindings(qa_input_seat *s, const qa_input_binding *bi
     }
     qa_input_seat candidate = {0};
     for (size_t i = 0; i < count; ++i) if (!qa_input_seat_bind(&candidate, &bindings[i], error)) {
-        qa_input_seat_unbind_all(&candidate); free(candidate.bindings); return false;
+        binding_candidate_dispose(&candidate); return false;
     }
-    replace_bindings(s, &candidate); return true;
+    bool ok = replace_bindings(s, &candidate, error);
+    binding_candidate_dispose(&candidate); return ok;
 }
 bool qa_input_seat_configuration_owned_is(const qa_input_seat *active,
                                          const qa_input_seat *candidate) {
@@ -459,7 +467,9 @@ bool qa_input_seat_configuration_ready(const qa_input_seat *active,
         return false;
     }
     return qa_input_seat_context_ready(active,&active->options.context,error) &&
-        qa_input_seat_context_ready(candidate,&candidate->options.context,error);
+        qa_input_seat_context_ready(candidate,&candidate->options.context,error) &&
+        qa_input_binding_text_prepare((qa_input_seat *)active,candidate,error) &&
+        qa_input_binding_text_prepare((qa_input_seat *)candidate,active,error);
 }
 bool qa_input_seat_configuration_clone(const qa_input_seat *source,qa_input_seat **out,qa_error *error) {
     if (!source || !out || *out || !qa_console_idle(source->options.console) ||
@@ -483,6 +493,9 @@ bool qa_input_seat_configuration_clone(const qa_input_seat *source,qa_input_seat
             copy->bindings[i]=source->bindings[i]; ++copy->bindings[i]->references; ++copy->binding_count;
         }
     }
+    if (!qa_input_binding_text_prepare(copy, source, error)) {
+        qa_input_seat_destroy(copy); return false;
+    }
     copy->binding_revision = source->binding_revision;
     *out=copy; return true;
 }
@@ -494,14 +507,23 @@ void qa_input_seat_configuration_publish(qa_input_seat *active, qa_input_seat *c
     qa_binding_record **bindings = active->bindings;
     size_t count = active->binding_count, capacity = active->binding_capacity;
     qa_gamepad_tuning gamepad = active->options.gamepad;
+    qa_arena binding_text = active->binding_text;
+    char *scratch = active->scratch;
+    size_t scratch_size = active->scratch_size;
     active->bindings = candidate->bindings;
     active->binding_count = candidate->binding_count;
     active->binding_capacity = candidate->binding_capacity;
     active->options.gamepad = candidate->options.gamepad;
+    active->binding_text = candidate->binding_text;
+    active->scratch = candidate->scratch;
+    active->scratch_size = candidate->scratch_size;
     candidate->bindings = bindings;
     candidate->binding_count = count;
     candidate->binding_capacity = capacity;
     candidate->options.gamepad = gamepad;
+    candidate->binding_text = binding_text;
+    candidate->scratch = scratch;
+    candidate->scratch_size = scratch_size;
 }
 bool qa_input_seat_remap_controller(qa_input_seat *s, int32_t device, qa_error *error) {
     if (!qa_input_release_mutation_access(s,error)) return false;
@@ -516,13 +538,13 @@ bool qa_input_seat_remap_controller(qa_input_seat *s, int32_t device, qa_error *
         if (b.input.kind >= QA_PHYSICAL_BUTTON)
             b.input.device = device;
         if (!qa_input_seat_bind(&candidate, &b, error)) {
-            qa_input_seat_unbind_all(&candidate);
-            free(candidate.bindings);
+            binding_candidate_dispose(&candidate);
             return false;
         }
     }
-    replace_bindings(s, &candidate);
-    return true;
+    bool ok = replace_bindings(s, &candidate, error);
+    binding_candidate_dispose(&candidate);
+    return ok;
 }
 bool qa_input_seat_action(qa_input_seat *s, qa_input_action action, uint64_t source, bool down,
                           double time, qa_error *error) {
@@ -544,17 +566,18 @@ static uint64_t command_key(qa_physical_input p) {
     return UINT64_C(65536) + (uint64_t)(uint32_t)p.device * 64 +
            (p.kind == QA_PHYSICAL_BUTTON ? p.code : 32 + p.code * 2 + (unsigned)p.positive);
 }
-static bool format_binding(qa_input_seat *s, const qa_held_binding *held, bool down, double time,
-                        qa_error *error) {
-    const qa_input_binding *b = held->binding ? &held->binding->view : NULL;
-    s->scratch_size = 0;
-    if (!b || b->kind==QA_BIND_ACTION)
-        return true;
-    const char *text = b->command;
+/* uint64 digits, the largest finite double's integer digits, two spaces,
+ * newline and NUL. The reservation uses the actual formatted length. */
+enum { BINDING_TAIL_CAPACITY = 20 + DBL_MAX_10_EXP + 5 };
+static bool binding_format(const qa_input_binding *binding, qa_ruleset_id dialect, bool down,
+                           const char *tail, size_t tail_size, char *out, size_t *length,
+                           qa_error *error) {
+    size_t written = 0;
+    const char *text = binding->command;
     size_t left = strlen(text);
     bool had_button = false;
     while (left) {
-        size_t n = qa_command_separator(text, left, s->options.context.dialect),
+        size_t n = qa_command_separator(text, left, dialect),
                consumed = n < left ? n + 1 : n;
         const char *segment = text;
         size_t size = n;
@@ -564,25 +587,107 @@ static bool format_binding(qa_input_seat *s, const qa_held_binding *held, bool d
         }
         while (size && (unsigned char)segment[size - 1] <= 32)
             --size;
-        if (size && *segment == '+') {
-            char tail[96];
-            int written = snprintf(tail, sizeof(tail), " %llu %.0f\n",
-                                   (unsigned long long)command_key(held->input), trunc(time));
-            if (written < 0 || (size_t)written >= sizeof(tail) ||
-                !qa_input_text_append(s, down ? "+" : "-", 1, error) ||
-                !qa_input_text_append(s, segment + 1, size - 1, error) ||
-                !qa_input_text_append(s, tail, (size_t)written, error))
+        bool button = size && *segment == '+';
+        if (button || (size && (down || had_button))) {
+            size_t suffix = button ? tail_size : 1;
+            if (suffix > SIZE_MAX - size || size + suffix > SIZE_MAX - written) {
+                qa_error_set(error, QA_ERROR_MEMORY, 0, "Input text length overflow");
                 return false;
-            had_button = true;
-        } else if (size && (down || had_button)) {
-            if (!qa_input_text_append(s, segment, size, error) ||
-                !qa_input_text_append(s, "\n", 1, error))
-                return false;
+            }
+            if (out) {
+                if (button) {
+                    out[written] = down ? '+' : '-';
+                    memcpy(out + written + 1, segment + 1, size - 1);
+                    memcpy(out + written + size, tail, tail_size);
+                } else {
+                    memcpy(out + written, segment, size);
+                    out[written + size] = '\n';
+                }
+            }
+            written += size + suffix;
         }
+        if (button)
+            had_button = true;
         text += consumed;
         left -= consumed;
     }
+    if (out) out[written] = 0;
+    *length = written;
     return true;
+}
+static bool binding_text_bound(const qa_binding_record *record, const char *tail,
+                               size_t tail_size, size_t *maximum, qa_error *error) {
+    if (!record || record->view.kind != QA_BIND_COMMAND) return true;
+    for (unsigned rule = QA_RULESET_NETQUAKE; rule <= QA_RULESET_Q3; ++rule) {
+        for (unsigned down = 0; down < 2; ++down) {
+            size_t length;
+            if (!binding_format(&record->view, (qa_ruleset_id)rule, down != 0, tail, tail_size,
+                                NULL, &length, error)) return false;
+            if (length > *maximum) *maximum = length;
+        }
+    }
+    return true;
+}
+static bool binding_text_prepare(qa_input_seat *seat, const qa_input_seat *other,
+                                 const qa_binding_record *extra, qa_error *error) {
+    char tail[BINDING_TAIL_CAPACITY];
+    int written = snprintf(tail, sizeof(tail), " %llu %.0f\n",
+                           (unsigned long long)UINT64_MAX, DBL_MAX);
+    if (written < 0 || (size_t)written >= sizeof(tail)) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Formatting input command suffix");
+        return false;
+    }
+    size_t maximum = 0;
+    const qa_input_seat *owners[] = {seat, other};
+    for (size_t owner = 0; owner < sizeof(owners) / sizeof(*owners); ++owner) {
+        const qa_input_seat *s = owners[owner];
+        if (!s) continue;
+        for (size_t i = 0; i < s->binding_count; ++i)
+            if (!binding_text_bound(s->bindings[i], tail, (size_t)written, &maximum, error))
+                return false;
+        for (size_t i = 0; i < s->held_count; ++i)
+            if (!binding_text_bound(s->held[i].binding, tail, (size_t)written, &maximum, error))
+                return false;
+    }
+    if (!binding_text_bound(extra, tail, (size_t)written, &maximum, error)) return false;
+    if (!maximum) {
+        qa_arena_seal(&seat->binding_text); return true;
+    }
+    if (maximum == SIZE_MAX) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Input text length overflow"); return false;
+    }
+    seat->binding_text.sealed = false;
+    bool ok = qa_arena_reserve(&seat->binding_text, maximum + 1, error);
+    qa_arena_seal(&seat->binding_text);
+    return ok;
+}
+bool qa_input_binding_text_prepare(qa_input_seat *seat, const qa_input_seat *other,
+                                   qa_error *error) {
+    return binding_text_prepare(seat, other, NULL, error);
+}
+static bool format_binding(qa_input_seat *s, const qa_held_binding *held, bool down, double time,
+                            qa_error *error) {
+    const qa_input_binding *b = held->binding ? &held->binding->view : NULL;
+    s->scratch_size = 0;
+    if (!b || b->kind == QA_BIND_ACTION) return true;
+    char tail[BINDING_TAIL_CAPACITY];
+    int written = snprintf(tail, sizeof(tail), " %llu %.0f\n",
+                           (unsigned long long)command_key(held->input), trunc(time));
+    if (written < 0 || (size_t)written >= sizeof(tail)) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Formatting input command suffix"); return false;
+    }
+    size_t length;
+    if (!binding_format(b, s->options.context.dialect, down, tail, (size_t)written,
+                        NULL, &length, error)) return false;
+    if (!length) return true;
+    if (length == SIZE_MAX) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Input text length overflow"); return false;
+    }
+    qa_arena_reset(&s->binding_text);
+    s->scratch = qa_arena_alloc(&s->binding_text, length + 1, 1, error);
+    if (!s->scratch) return false;
+    return binding_format(b, s->options.context.dialect, down, tail, (size_t)written,
+                          s->scratch, &s->scratch_size, error);
 }
 bool qa_input_binding_release_text(qa_input_seat *s,const qa_held_binding *held,double time,
     const char **out,qa_error *error) {
