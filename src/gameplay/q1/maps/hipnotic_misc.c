@@ -416,13 +416,12 @@ bool q1_map_hip_misc_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, q
 }
 bool q1_map_hip_misc_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, qa_error *error) {
     if (action == Q1_MAP_HIP_FINALE_NEXT) {
-        const char *function = qa_strings_cstr(qa_session_strings(g->services.session),
-                                               entity->map->spawn_function);
-        if (function && !strcmp(function, "info_startendtext_use"))
+        qa_string_id function = entity->map->spawn_function;
+        if (function == g->runtime_names[Q1_NAME_INFO_STARTENDTEXT_USE])
             return start_endtext(g, entity, q1_ref_actor(g, entity->activator), error);
-        if (function && !strcmp(function, "effect_finale_use"))
+        if (function == g->runtime_names[Q1_NAME_EFFECT_FINALE_USE])
             return effect_finale(g, entity, error);
-        if (function && !strcmp(function, "SUB_Remove"))
+        if (function == g->runtime_names[Q1_NAME_SUB_REMOVE])
             return q1_remove(g, entity, error);
         return q1_map_fail(error, "Hipnotic finale has an unknown native continuation");
     }

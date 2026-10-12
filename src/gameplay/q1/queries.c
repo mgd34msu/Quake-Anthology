@@ -127,6 +127,33 @@ bool q1_snapshot_targets(qa_q1_game *g, qa_targets *targets, qa_string_id name,
     return true;
 }
 
+static int target_host_order(void *context, qa_actor_id left, qa_actor_id right) {
+    (void)context;
+    return left.slot < right.slot ? -1 : left.slot > right.slot;
+}
+bool q1_snapshot_targets_host_order(qa_q1_game *g, qa_targets *targets,
+    qa_string_id name, bool include_unnamed, qa_world_actor_snapshot *out,
+    qa_error *error) {
+    if (!include_unnamed && !q1_map_text(g, name))
+        return qa_world_snapshot_acquire(g->services.world, out, error);
+    if (name) {
+        if (!q1_snapshot_targets(g, targets, name, out, error))
+            return false;
+    } else {
+        if (!qa_world_snapshot_acquire(g->services.world, out, error))
+            return false;
+        qa_target_cursor cursor = {0};
+        qa_actor_id actor;
+        while (qa_targets_next_authored(targets, 0, &cursor, &actor)) {
+            qa_authored_target fields;
+            if (qa_targets_read(targets, actor, &fields) && fields.targetname == name)
+                out->actors[out->count++] = actor;
+        }
+    }
+    qa_world_snapshot_sort(out, target_host_order, NULL);
+    return true;
+}
+
 static bool radius_actor_include(void *context, qa_actor_id actor) {
     const q1_actor *native = q1_entity_const(context, actor);
     return native == NULL || native->physics.solid != QA_PHYSICS_NOT_SOLID;

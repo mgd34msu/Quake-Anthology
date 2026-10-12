@@ -293,15 +293,15 @@ bool q1_map_addon_brush_think(qa_q1_game *g, q1_actor *e, q1_map_action action,
         qa_vec3 position = qa_vec_scale(qa_vec_add(self.bounds.mins,self.bounds.maxs),.5f);
         double nearest = 16384;
         qa_world_actor_snapshot list = {0};
-        if (!q1_snapshot_actors(g,&list,error))
+        if (!q1_snapshot_targets_host_order(g, g->maps->options.targets, targetname,
+                                           true, &list, error))
             return false;
         bool ok = true;
         for (size_t i = 0; i < list.count; ++i) {
             q1_actor *other = q1_entity(g,list.actors[i]);
             if (!other || !other->map || other->targetname != targetname)
                 continue;
-            qa_bytes marker = qa_strings_text(qa_session_strings(g->services.session),other->map->netname);
-            if (marker.size != 12 || memcmp(marker.data,"_toss_origin",12))
+            if (other->map->netname != g->runtime_names[Q1_NAME_TOSS_ORIGIN])
                 continue;
             float speed = other->speed;
             qa_body_state body;
@@ -475,8 +475,7 @@ bool q1_map_addon_brush_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
             e->map->movedir = qa_vec_add(e->map->movedir,random_vector(g,e->map->dest));
         if (e->spawnflags & 1) {
             if (e->speed == 0) e->speed = 200;
-            if (!qa_builtin_resource(&g->services,"_toss_origin",&e->map->netname,error))
-                return false;
+            e->map->netname = g->runtime_names[Q1_NAME_TOSS_ORIGIN];
         }
         break;
     case Q1_MAP_ADDON_SHATTER: {

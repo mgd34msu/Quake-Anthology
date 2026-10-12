@@ -156,12 +156,12 @@ static bool motion(qa_q1_game *g, qa_actor_id actor, const qa_body_state *body,
     return g->services.motion_changed(g->services.context, actor, &change, error);
 }
 static bool horde_manager(const qa_q1_game *g) {
-    for (uint32_t i = 0; i < g->capacity; ++i) {
-        q1_actor *e = g->actors[i];
-        if (!e || !e->active)
-            continue;
-        qa_bytes name = qa_strings_text(qa_session_strings(g->services.session), e->classname);
-        if (name.size == 13 && !memcmp(name.data, "horde_manager", 13))
+    qa_target_cursor cursor = {0};
+    qa_actor_id actor;
+    while (qa_targets_next_authored(g->maps->options.targets,
+        g->runtime_names[Q1_NAME_HORDE_MANAGER], &cursor, &actor)) {
+        const q1_actor *e = q1_entity_const(g, actor);
+        if (e && e->classname == g->runtime_names[Q1_NAME_HORDE_MANAGER])
             return true;
     }
     return false;

@@ -213,7 +213,7 @@ bool q1_map_addon_frame(qa_q1_game *g, qa_error *error) {
     if (!g->maps || !g->maps->frame_tick_count)
         return true;
     qa_world_actor_snapshot list = {0};
-    if (!q1_snapshot_actors(g, &list, error))
+    if (!qa_world_snapshot_acquire(g->services.world, &list, error))
         return false;
     list.count = g->maps->frame_tick_count;
     memcpy(list.actors, g->maps->frame_ticks, list.count * sizeof(*list.actors));

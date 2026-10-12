@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "ecae36ebf103a4f4690733db83aa3e40bb531779",
+  "verified_main": "f39b89c5d0d9332a0fc6c80c9c5233acd6b750d7",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 217,
-    "open_source_observation": 154,
+    "fixed_source_build_core": 219,
+    "open_source_observation": 152,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -24231,8 +24231,9 @@
       "severity": "medium",
       "job": "02",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "f39b89c5d0d9332a0fc6c80c9c5233acd6b750d7"
     },
     {
       "id": "02-04",
@@ -35526,8 +35527,9 @@
       "severity": "medium",
       "job": "30",
       "area": "public_interfaces",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "f39b89c5d0d9332a0fc6c80c9c5233acd6b750d7"
     },
     {
       "id": "31-01",
@@ -36592,7 +36594,8 @@
         {
           "commit": "da8d551a",
           "verification": "Private spare-frame list and frame/request allocations deleted; common qa_pool and qa_arena with aligned packed requests preserve nested callback custody. Normal build and seven core suites passed with real nested reuse/stale-continuation behavior. Arbitrary new recursion peaks still grow common storage; complete cold bound absent from current operation owner interface, so this observation remains open for that admission requirement."
-        }
+        },
+        "f39b89c5: operation hook owners now also use common entry slots alongside invocation frames; all private hook malloc/free paths removed. Public callbacks still permit new retained admission/recursion peaks, so backing can extend. No fixed-depth/zero-allocation claim."
       ]
     },
     {
@@ -43153,6 +43156,35 @@
       ],
       "record_directory": "/tmp/qa-ta3196-retained-client-userinfo-storage-20261012-v1",
       "conclusion": "Native Q3 retained text uses shared control pool pages with callback-safe child arenas; QW/Q3 client userinfo projection uses fixed protocol buffers and published revision gating, preserving prepared edits and reliable retries. Original text encoding remains unchanged. Normal build and seven core suites pass."
+    },
+    {
+      "commit": "f39b89c5d0d9332a0fc6c80c9c5233acd6b750d7",
+      "source_tree": "66899482c05d89d93d8f60185d82ad7330f8d14f",
+      "finding_ids": [
+        "02-03",
+        "30-03"
+      ],
+      "files_rechecked": [
+        "include/qa/game_q1.h",
+        "src/app/application/guest_qc_factory.c",
+        "src/app/application/guest_qc_internal.h",
+        "src/app/application/guest_weapon.c",
+        "src/gameplay/operation.c",
+        "src/gameplay/q1/runtime.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-admitted-weapon-ids-operation-storage-20261012-v1",
+      "conclusion": "Guest selected weapons use retained canonical IDs; one Q1 admission binder also serves builtin names/models. Existing Q3 Cvar_Update overlap rechecked: typed handles and inline ABI projections already replaced warm name routing/private heap mirrors. Required alias-value comparison remains. Operation hook records now use common pool/arena, with honest new-demand growth. Normal build and seven core suites pass."
     }
   ],
   "verification_limits": [

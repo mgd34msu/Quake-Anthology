@@ -504,7 +504,7 @@ static bool combat_context(void *context, const qa_damage_request *request,
         if (qa_q1_source_client_read(g, request->target, &victim) &&
             qa_q1_source_client_read(g, request->attack.attacker, &killer)) {
             out->game.q1.rj = g->qw_rj;
-            out->game.q1.same_player_netname = !strcmp(victim.name, killer.name);
+            out->game.q1.same_player_netname = victim.name_id == killer.name_id;
         }
     }
     if (g->host.base_team_health) {
@@ -748,9 +748,12 @@ bool qa_q1_game_create(const qa_builtin_services *services, const qa_q1_options 
         goto fail;
     if (!q1_pickup_supply_create(g, error))
         goto fail;
+    if (!q1_source_rogue_runes_prepare(g, error))
+        goto fail;
     *out = g;
     return true;
 fail:
+    q1_source_rogue_runes_free(g);
     qa_supply_destroy(g->source_supply);
     free(g->actors);
     free(g->players);

@@ -463,6 +463,8 @@ struct q1_map_runtime {
 bool q1_map_fail(qa_error *, const char *);
 bool q1_map_present_intermission(qa_q1_game *, qa_actor_id, uint32_t,
                                  const qa_q1_intermission_result *, qa_error *);
+bool q1_snapshot_targets_host_order(qa_q1_game *, qa_targets *, qa_string_id,
+    bool include_unnamed, qa_world_actor_snapshot *, qa_error *);
 static inline bool q1_map_text(qa_q1_game *g, qa_string_id text) {
     return qa_strings_text(qa_session_strings(g->services.session), text).size != 0;
 }

@@ -31,21 +31,6 @@ static bool publish(qa_q1_game *g, qa_actor_id actor, const qa_body_state *body,
         return false;
     return !q1_alive(g, actor) || qa_world_link(g->services.world, actor, NULL, error);
 }
-static bool target_snapshot(qa_q1_game *g, qa_string_id name,
-                             qa_world_actor_snapshot *out, qa_error *error) {
-    if (!q1_snapshot_actors(g, out, error))
-        return false;
-    size_t count = 0;
-    if (q1_map_text(g, name))
-        for (size_t i = 0; i < out->count; ++i) {
-            qa_authored_target fields;
-            if (qa_targets_read(g->maps->options.targets, out->actors[i], &fields) &&
-                fields.targetname == name)
-                out->actors[count++] = out->actors[i];
-        }
-    out->count = count;
-    return true;
-}
 static bool link_targets(qa_q1_game *g, qa_actor_id id, qa_error *error) {
     q1_actor *e = rotation(g, id);
     if (!e)
@@ -67,7 +52,8 @@ static bool link_targets(qa_q1_game *g, qa_actor_id id, qa_error *error) {
     e->map->pending.rotation.origin = self.origin;
     e->map->pending.rotation.linked = true;
     qa_world_actor_snapshot list = {0};
-    if (!target_snapshot(g, name, &list, error))
+    if (!q1_snapshot_targets_host_order(g, g->maps->options.targets, name,
+                                       false, &list, error))
         return false;
     bool ok = true;
     for (size_t i = 0; ok && i < list.count && rotation(g, id); ++i) {
@@ -112,7 +98,8 @@ static bool transform_targets(qa_q1_game *g, qa_actor_id id, target_transform mo
     qa_vec3 forward, right, up;
     qa_angle_vectors(self.angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
     qa_world_actor_snapshot list = {0};
-    if (!target_snapshot(g, name, &list, error))
+    if (!q1_snapshot_targets_host_order(g, g->maps->options.targets, name,
+                                       false, &list, error))
         return false;
     bool ok = true;
     for (size_t i = 0; ok && i < list.count && rotation(g, id); ++i) {
@@ -540,7 +527,8 @@ static bool damage_targets(qa_q1_game *g, qa_actor_id id, float damage, qa_error
     if (!e)
         return true;
     qa_world_actor_snapshot list = {0};
-    if (!target_snapshot(g, e->target, &list, error))
+    if (!q1_snapshot_targets_host_order(g, g->maps->options.targets, e->target,
+                                       false, &list, error))
         return false;
     bool ok = true;
     for (size_t i = 0; ok && i < list.count && rotation(g, id); ++i) {

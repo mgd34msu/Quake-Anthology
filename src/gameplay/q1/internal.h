@@ -12,6 +12,7 @@
 #include "qa/game_q1_source_rogue_tag.h"
 #include "qa/game_q1_source_rogue_flags.h"
 #include "qa/id_index.h"
+#include "qa/pool.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -19,6 +20,12 @@
 #define Q1_SOURCE_INITIAL_TIME_NS UINT64_C(1000000000)
 
 #define Q1_RUNTIME_NAME_LIST(X) \
+    X(TOSS_ORIGIN, "_toss_origin") \
+    X(INFO_STARTENDTEXT_USE, "info_startendtext_use") \
+    X(EFFECT_FINALE_USE, "effect_finale_use") \
+    X(SUB_REMOVE, "SUB_Remove") \
+    X(ENDPOINT1, "endpoint1") \
+    X(ENDPOINT2, "endpoint2") \
     X(RESOURCE_SELL_SCREEN, "sell-screen") \
     X(RESOURCE_CUTSCENE, "cutscene") \
     X(RESOURCE_ACTOR_EFFECTS, "actor-effects") \
@@ -1361,6 +1368,7 @@ typedef struct q1_player {
 typedef struct q1_rogue_rune_player {
     struct q1_rogue_rune_player *next, *previous;
     qa_actor_id actor;
+    size_t storage_slot;
     uint32_t rune;
     double notice, earth_noise, black_noise, hell_noise, regeneration;
 } q1_rogue_rune_player;
@@ -1380,6 +1388,8 @@ struct qa_q1_game {
     q1_rogue_rune_player *rogue_rune_players;
     q1_rogue_rune_player *rogue_rune_last;
     qa_actor_index rogue_rune_index;
+    qa_arena rogue_rune_storage;
+    qa_pool rogue_rune_rows;
     void *source_client_context;
     bool (*source_client_publish)(void *,const struct qa_q1_source_client_view *,qa_error *);
     bool (*source_client_observer)(void *,qa_actor_id,bool,qa_error *);
@@ -1438,6 +1448,8 @@ bool q1_source_rogue_flag_think(qa_q1_game *, q1_actor *, q1_think_kind, qa_erro
 bool q1_source_rogue_flag_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_source_rogue_rune_think(qa_q1_game *, q1_actor *, q1_think_kind, qa_error *);
 bool q1_source_rogue_rune_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_source_rogue_runes_prepare(qa_q1_game *, qa_error *);
+q1_rogue_rune_player *q1_source_rogue_runes_allocate(qa_q1_game *, qa_error *);
 void q1_source_rogue_runes_release(qa_q1_game *, qa_actor_id);
 void q1_source_rogue_runes_free(qa_q1_game *);
 bool q1_source_value(const qa_q1_game *, qa_q1_source_setting, float fallback, float *, qa_error *);

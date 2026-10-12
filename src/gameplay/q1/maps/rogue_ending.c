@@ -206,14 +206,14 @@ static bool run(qa_q1_game *g, qa_actor_id id, qa_error *error) {
     qa_actor_id goal = q1_ref_actor(g, actor->physics.goal);
     qa_authored_target fields;
     if (qa_targets_read(g->maps->options.targets, goal, &fields)) {
-        const char *name =
-            qa_strings_cstr(qa_session_strings(g->services.session), fields.targetname);
-        if (name && (!strcmp(name, "endpoint1") || !strcmp(name, "endpoint2"))) {
+        qa_string_id name = fields.targetname;
+        if (name == g->runtime_names[Q1_NAME_ENDPOINT1] ||
+            name == g->runtime_names[Q1_NAME_ENDPOINT2]) {
             actor = ending_actor(g, id);
             if (!actor)
                 return true;
             if (q1_alive(g, g->maps->world_actor))
-                g->maps->rogue_actor_stage = name[8] == '1' ? 2 : 4;
+                g->maps->rogue_actor_stage = name == g->runtime_names[Q1_NAME_ENDPOINT1] ? 2 : 4;
             return q1_map_schedule(g, actor, .1, Q1_MAP_ENDING_CONTROL, error);
         }
     }

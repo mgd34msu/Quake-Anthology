@@ -23,6 +23,31 @@ static bool player_current(qa_q1_game *g, qa_actor_id actor,
         ((qa_actors_get(qa_session_actors(g->services.session), actor) && find(g, actor) == row) ||
          fail(error, actor, "Rogue rune state changed during source callback"));
 }
+bool q1_source_rogue_runes_prepare(qa_q1_game *g, qa_error *error) {
+    if (g->options.program != QA_Q1_ROGUE) return true;
+    qa_arena_init(&g->rogue_rune_storage, 0);
+    if (!qa_pool_prepare(&g->rogue_rune_rows, &g->rogue_rune_storage, g->capacity,
+            sizeof(q1_rogue_rune_player), _Alignof(q1_rogue_rune_player), error) ||
+        !qa_actor_index_create(&g->rogue_rune_index,
+            qa_session_actors(g->services.session), NULL, error)) {
+        q1_source_rogue_runes_free(g);
+        return false;
+    }
+    return true;
+}
+q1_rogue_rune_player *q1_source_rogue_runes_allocate(qa_q1_game *g, qa_error *error) {
+    if (g->rogue_rune_rows.head == SIZE_MAX &&
+        !qa_pool_extend(&g->rogue_rune_rows, &g->rogue_rune_storage,
+            g->rogue_rune_rows.capacity, error)) return NULL;
+    size_t slot;
+    q1_rogue_rune_player *row = qa_pool_take(&g->rogue_rune_rows, &slot);
+    if (!row) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Creating Rogue rune carrier state");
+        return NULL;
+    }
+    *row = (q1_rogue_rune_player){.storage_slot = slot};
+    return row;
+}
 static q1_rogue_rune_player *state(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     if (!current(g, error) || !qa_actors_get(qa_session_actors(g->services.session), actor)) {
         fail(error, actor, "Rogue rune operation requires a live canonical actor");
@@ -30,14 +55,8 @@ static q1_rogue_rune_player *state(qa_q1_game *g, qa_actor_id actor, qa_error *e
     }
     q1_rogue_rune_player *found = find(g, actor);
     if (found) return found;
-    if (!g->rogue_rune_index.entries &&
-        !qa_actor_index_create(&g->rogue_rune_index,
-            qa_session_actors(g->services.session), NULL, error)) return NULL;
-    q1_rogue_rune_player *row = calloc(1, sizeof(*row));
-    if (!row) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "Creating Rogue rune carrier state");
-        return NULL;
-    }
+    q1_rogue_rune_player *row = q1_source_rogue_runes_allocate(g, error);
+    if (!row) return NULL;
     row->actor = actor;
     row->previous = g->rogue_rune_last;
     if (row->previous) row->previous->next = row;
@@ -54,16 +73,14 @@ void q1_source_rogue_runes_release(qa_q1_game *g, qa_actor_id actor) {
     else g->rogue_rune_players = row->next;
     if (row->next) row->next->previous = row->previous;
     else g->rogue_rune_last = row->previous;
-    free(row);
+    qa_pool_release(&g->rogue_rune_rows, row->storage_slot);
 }
 void q1_source_rogue_runes_free(qa_q1_game *g) {
-    while (g->rogue_rune_players) {
-        q1_rogue_rune_player *next = g->rogue_rune_players->next;
-        free(g->rogue_rune_players);
-        g->rogue_rune_players = next;
-    }
+    g->rogue_rune_players = NULL;
     g->rogue_rune_last = NULL;
     qa_actor_index_destroy(&g->rogue_rune_index);
+    qa_arena_destroy(&g->rogue_rune_storage);
+    g->rogue_rune_rows = (qa_pool){0};
 }
 bool qa_q1_source_rogue_runes_read(const qa_q1_game *g, qa_actor_id actor,
     uint32_t *out, bool *found, qa_error *error) {
