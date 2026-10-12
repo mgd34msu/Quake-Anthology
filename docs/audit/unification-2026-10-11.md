@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `24b72287`.
+Follow-up source changes were reviewed through main `ecae36eb`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 215 have source fixes
+There are **374 overlapping source-review observations**: 217 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 156 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 154 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -412,3 +412,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `4a49aafc` / J19-F08: Q1 addon and weapon lightning use one traversal with explicit preserved caller policies; the addon copy is deleted. Normal production build and seven core suites pass; no live or timing claim. Records: `/tmp/qa-ta3196-one-electric-traversal-20261012-v1`.
 
 - `24b72287` / 07-01: Cvar notifications and nested observer snapshots use reusable common pool/arena leases; immutable declaration metadata is shared by reference. Private per-notification copies are deleted. Normal build and seven core suites pass; cold admission and higher shared-storage demand remain possible. Records: `/tmp/qa-ta3196-common-cvar-notification-leases-20261012-v1`.
+
+- `ecae36eb` / 04-010, J15-05: Native Q3 retained text uses shared control pool pages with callback-safe child arenas; QW/Q3 client userinfo projection uses fixed protocol buffers and published revision gating, preserving prepared edits and reliable retries. Original text encoding remains unchanged. Normal build and seven core suites pass. Records: `/tmp/qa-ta3196-retained-client-userinfo-storage-20261012-v1`.

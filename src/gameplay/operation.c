@@ -8,6 +8,7 @@ typedef struct qa_operation_admission operation_entry;
 struct qa_operation_admission {
     operation_entry *next;
     qa_operation *operation;
+    size_t storage_slot;
     qa_operation_hook hook;
     uint64_t sequence, retiring;
     bool active;
@@ -28,7 +29,7 @@ struct qa_operation {
     operation_entry *entries, *admissions;
     operation_frame *current;
     qa_arena frame_storage;
-    qa_pool frames;
+    qa_pool frames, entry_slots;
     size_t request_size, request_offset, result_size, active_count;
     uint64_t next_sequence, next_invocation;
     size_t depth, admission_count;
@@ -51,7 +52,9 @@ bool qa_operation_create(size_t request_size, size_t result_size, qa_operation *
     size_t frame_size=operation->request_offset+request_size;
     qa_arena_init(&operation->frame_storage,frame_size);
     if (!qa_pool_prepare(&operation->frames,&operation->frame_storage,1,
-            frame_size,alignment,error)) {
+            frame_size,alignment,error) ||
+        !qa_pool_prepare(&operation->entry_slots,&operation->frame_storage,1,
+            sizeof(operation_entry),_Alignof(operation_entry),error)) {
         qa_arena_destroy(&operation->frame_storage); free(operation); return false;
     }
     operation->request_size=request_size; operation->result_size=result_size;
@@ -64,7 +67,10 @@ static void sweep(qa_operation *operation) {
     operation_entry **link=&operation->entries;
     while (*link) {
         operation_entry *entry=*link;
-        if (!entry->active) { *link=entry->next; free(entry); }
+        if (!entry->active) {
+            *link=entry->next;
+            qa_pool_release(&operation->entry_slots,entry->storage_slot);
+        }
         else link=&entry->next;
     }
 }
@@ -110,9 +116,13 @@ bool qa_operation_prepare(qa_operation *operation, const qa_operation_hook *hook
             return argument(error,"operation hook or retirement is already reserved");
     if (UINT64_MAX-operation->next_sequence<=operation->admission_count)
         return argument(error,"operation registration identity exhausted");
-    operation_entry *entry=malloc(sizeof(*entry));
-    if (!entry) { qa_error_set(error,QA_ERROR_MEMORY,0,"allocating operation registration"); return false; }
-    *entry=(operation_entry){.operation=operation,.hook=*hook,.retiring=retiring,.next=operation->admissions};
+    if (operation->entry_slots.head==SIZE_MAX &&
+        !qa_pool_extend(&operation->entry_slots,&operation->frame_storage,
+            operation->entry_slots.capacity,error)) return false;
+    size_t slot;
+    operation_entry *entry=qa_pool_take(&operation->entry_slots,&slot);
+    *entry=(operation_entry){.operation=operation,.storage_slot=slot,.hook=*hook,
+        .retiring=retiring,.next=operation->admissions};
     operation->admissions=entry; ++operation->admission_count;
     *out=entry; return true;
 }
@@ -149,7 +159,7 @@ bool qa_operation_admission_commit(qa_operation_admission *entry,
 void qa_operation_admission_abort(qa_operation_admission *token) {
     if (!token) return;
     detach_admission(token);
-    free(token);
+    qa_pool_release(&token->operation->entry_slots,token->storage_slot);
 }
 
 bool qa_operation_register(qa_operation *operation, const qa_operation_hook *hook,

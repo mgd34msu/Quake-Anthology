@@ -570,6 +570,8 @@ bool qa_q1_game_water_transition(qa_q1_game *, qa_actor_id, qa_error *);
 void qa_q1_game_actor_released(qa_q1_game *, qa_actor_record);
 qa_item_id qa_q1_weapon_item(const qa_q1_game *, qa_q1_weapon);
 const char *qa_q1_weapon_identity(qa_q1_weapon);
+bool qa_q1_weapon_names_bind(qa_strings *, qa_item_id items[QA_Q1_WEAPON_COUNT],
+    qa_string_id models[QA_Q1_WEAPON_COUNT], qa_error *);
 typedef struct qa_q1_weapon_profile {
     const char *item, *label;
     const char *ammo;

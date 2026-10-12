@@ -62,6 +62,14 @@ static const char *const weapon_models[QA_Q1_WEAPON_COUNT] = {
 const char *qa_q1_weapon_identity(qa_q1_weapon weapon) {
     return (unsigned)weapon < QA_Q1_WEAPON_COUNT ? weapon_names[weapon] : NULL;
 }
+bool qa_q1_weapon_names_bind(qa_strings *strings, qa_item_id items[QA_Q1_WEAPON_COUNT],
+    qa_string_id models[QA_Q1_WEAPON_COUNT], qa_error *error) {
+    for (size_t i = 0; i < QA_Q1_WEAPON_COUNT; ++i)
+        if (!qa_strings_intern_cstr(strings, weapon_names[i], &items[i], error) ||
+            (models && !qa_strings_intern_cstr(strings, weapon_models[i], &models[i], error)))
+            return false;
+    return true;
+}
 bool qa_q1_weapon_source(qa_q1_program program, uint32_t value, qa_q1_weapon *out) {
     if (!out || (unsigned)program > QA_Q1_CTF)
         return false;
@@ -724,10 +732,8 @@ bool qa_q1_game_create(const qa_builtin_services *services, const qa_q1_options 
         goto fail;
     source_bind(g);
     qa_builtin_random_seed(&g->random, options->random_seed);
-    for (size_t i = 0; i < QA_Q1_WEAPON_COUNT; ++i)
-        if (!qa_builtin_resource(services, weapon_names[i], &g->weapons[i], error) ||
-            !qa_builtin_resource(services, weapon_models[i], &g->weapon_models[i], error))
-            goto fail;
+    if (!qa_q1_weapon_names_bind(qa_session_strings(services->session),
+            g->weapons, g->weapon_models, error)) goto fail;
     for (size_t i = 0; i < QA_Q1_AMMO_COUNT; ++i)
         if (!qa_builtin_resource(services, ammo_names[i], &g->ammo[i], error))
             goto fail;

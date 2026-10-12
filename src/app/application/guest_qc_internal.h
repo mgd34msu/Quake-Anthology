@@ -87,6 +87,7 @@ struct application_qc_state {
     size_t command_depth;
     qa_world *world;
     qa_builtin_services services;
+    qa_item_id weapon_items[QA_Q1_WEAPON_COUNT];
     qa_builtin_random random;
     qa_cvars *cvars;
     application_qc_cvar_handles cvar_handles;

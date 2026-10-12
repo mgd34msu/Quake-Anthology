@@ -54,6 +54,8 @@ bool application_qc_console_prepare(qa_application *app, application_provider *p
             command_exports[i],&engine->command_exports[i].index);
     engine->immutable_string_bytes = qa_qc_program_strings(provider->state.qc.program).size;
     engine->services = application_builtin_services(app, world, app->physics);
+    if (!qa_q1_weapon_names_bind(qa_session_strings(app->session),
+            engine->weapon_items, NULL, error)) return false;
     engine->profile = selected;
     qa_qc_program_info program = qa_qc_program_describe(provider->state.qc.program);
     if ((selected == QA_QC_QUAKEWORLD) != (program.api == QA_QC_API_QUAKEWORLD))

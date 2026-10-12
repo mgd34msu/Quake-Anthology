@@ -10,11 +10,8 @@
 #include "qa/qc_observation.h"
 
 static bool canonical(application_provider *provider, qa_actor_id actor,
-                         const char *name, qa_item_id *out, qa_error *error)
+                         qa_item_id item, qa_item_id *out, qa_error *error)
 {
-    qa_strings *strings = qa_session_strings(provider->application->session);
-    qa_item_id item = name ? qa_strings_find(strings,
-        (qa_bytes){(const uint8_t *)name, strlen(name)}) : 0;
     if (!item) return application_fail(error, QA_ERROR_NOT_FOUND, "Source selected weapon has no canonical inventory identity");
     qa_inventory_entry entry;
     if (!qa_inventory_entry_read(provider->application->inventory, actor, item, &entry, error)) return false;
@@ -59,11 +56,8 @@ bool application_guest_weapon_read(application_provider *provider, qa_actor_id a
         if (!isfinite(value)) return application_fail(error, QA_ERROR_FORMAT, "QuakeC selected weapon is not finite");
         if (profile) {
             for (size_t i = 0; i < profile->weapon_count; ++i)
-                if (profile->weapon_values[i].value == value) {
-                    const char *name = qa_strings_cstr(qa_session_strings(provider->application->session),
-                        profile->weapon_values[i].item);
-                    return canonical(provider, actor, name, out, error);
-                }
+                if (profile->weapon_values[i].value == value)
+                    return canonical(provider, actor, profile->weapon_values[i].item, out, error);
             return application_fail(error, QA_ERROR_FORMAT, "QuakeC selected weapon value is outside its declaration");
         }
         if (value == 0) { *out = 0; return true; }
@@ -72,7 +66,7 @@ bool application_guest_weapon_read(application_provider *provider, qa_actor_id a
         qa_q1_weapon weapon;
         if (!qa_q1_weapon_source(application_q1_program(provider->product->campaign), (uint32_t)value, &weapon))
             return application_fail(error, QA_ERROR_FORMAT, "QuakeC selected weapon is outside the selected original program");
-        return canonical(provider, actor, qa_q1_weapon_identity(weapon), out, error);
+        return canonical(provider, actor, engine->weapon_items[weapon], out, error);
     }
     struct application_q3_guest *engine = q3g_engine(provider);
     uint32_t slot;
@@ -83,26 +77,16 @@ bool application_guest_weapon_read(application_provider *provider, qa_actor_id a
     qa_q3_player player;
     if (!qa_q3_host_source_player(engine->game->host, slot, &player, error)) return false;
     if (player.weapon == 0) { *out = 0; return true; }
-    if (provider->kind == APPLICATION_PROVIDER_QVM ||
-        (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.engine)) {
-        const application_q3_catalog_weapon *weapons; size_t count;
-        if (!engine->game->catalog || !application_q3_catalog_role_current(engine->game->catalog, engine->game))
-            return application_fail(error, QA_ERROR_UNSUPPORTED, "Original GAME has no current declared Source weapon catalog");
-        if (!application_q3_catalog_weapons(engine->game->catalog, &weapons, &count, error)) return false;
-        for (size_t i = 0; i < count; ++i)
-            if (weapons[i].weapon == player.weapon) {
-                if (!application_q3_catalog_role_current(engine->game->catalog, engine->game))
-                    return application_fail(error, QA_ERROR_ARGUMENT, "Source selected weapon replaced its real catalog");
-                *out = weapons[i].item; return true;
-            }
-        return application_fail(error, QA_ERROR_FORMAT,
-            "Original GAME selected a weapon outside its retained catalog");
-    }
-    const char *name = qa_q3_weapon_identity_name((qa_q3_weapon)player.weapon);
-    if (!name) return application_fail(error, QA_ERROR_FORMAT, "Q3 selected weapon exceeds the admitted source namespace");
-    char identity[64];
-    int length = snprintf(identity, sizeof(identity), "q3:weapon/%s", name);
-    if (length < 0 || (size_t)length >= sizeof(identity))
-        return application_fail(error, QA_ERROR_FORMAT, "Q3 selected weapon identity exceeds its canonical representation");
-    return canonical(provider, actor, identity, out, error);
+    const application_q3_catalog_weapon *weapons; size_t count;
+    if (!engine->game->catalog || !application_q3_catalog_role_current(engine->game->catalog, engine->game))
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Original GAME has no current declared Source weapon catalog");
+    if (!application_q3_catalog_weapons(engine->game->catalog, &weapons, &count, error)) return false;
+    for (size_t i = 0; i < count; ++i)
+        if (weapons[i].weapon == player.weapon) {
+            if (!application_q3_catalog_role_current(engine->game->catalog, engine->game))
+                return application_fail(error, QA_ERROR_ARGUMENT, "Source selected weapon replaced its real catalog");
+            *out = weapons[i].item; return true;
+        }
+    return application_fail(error, QA_ERROR_FORMAT,
+        "Original GAME selected a weapon outside its retained catalog");
 }
