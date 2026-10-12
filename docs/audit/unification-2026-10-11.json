@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "9cbf0df6d1f6b4b577794683432b511e9eaf32bb",
+  "verified_main": "e1e3e9f03d2e2655d0a18ccac1da5e0d5e83c0df",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 174,
-    "open_source_observation": 197,
+    "fixed_source_build_core": 175,
+    "open_source_observation": 196,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -26104,8 +26104,9 @@
       "severity": "medium",
       "job": "04",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "e1e3e9f03d2e2655d0a18ccac1da5e0d5e83c0df"
     },
     {
       "id": "04-010",
@@ -41983,6 +41984,32 @@
       ],
       "record_directory": "/tmp/qa-ta3196-q3-setting-snapshots-20261012",
       "conclusion": "Native Q3 cached cvar snapshots borrow canonical immutable text while retaining the original delayed G_UpdateCvars metadata. Change notifications use exact-sized common control leases and save fields remain unchanged. Normal build and seven core suites passed; new unique values may still allocate canonical strings."
+    },
+    {
+      "commit": "e1e3e9f03d2e2655d0a18ccac1da5e0d5e83c0df",
+      "source_tree": "33b1c474fb6547e74d2b836b15b4f68b72cbdbcd",
+      "finding_ids": [
+        "04-009"
+      ],
+      "files_rechecked": [
+        "src/app/application/native_q3_wire.c",
+        "src/app/application/network_q2.c",
+        "src/app/application/network_q2_frame.c",
+        "src/app/application/network_q2_private.h"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-source-wire-captures-20261012",
+      "conclusion": "Q2 and Q3 source snapshot captures retain independent common control storage, prepared from their admitted entity extents. Prefix growth and partial-construction refusal keep existing captures intact; original wire records and visibility decisions remain unchanged. Normal build and seven core suites passed; no live, allocation-zero or performance claim."
     }
   ],
   "verification_limits": [

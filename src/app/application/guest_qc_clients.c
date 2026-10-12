@@ -127,17 +127,17 @@ bool application_qc_source_client_released(struct application_qc_state *engine,
 }
 
 static bool qw_name_value(struct application_qc_state *engine, uint32_t slot,
-    const char *name, int32_t *out, qa_error *error)
+    qa_bytes name, int32_t *out, qa_error *error)
 {
     char key[32], text[32];
     snprintf(key, sizeof(key), "qw-name:%u", slot);
-    size_t length = strlen(name);
+    size_t length = name.size;
     if (length >= sizeof(text)) length = sizeof(text) - 1;
-    memcpy(text, name, length); text[length] = 0;
+    memcpy(text, name.data, length); text[length] = 0;
     return qa_qc_engine_string(engine->provider->state.qc.instance, key, text, sizeof(text), out, error);
 }
 static bool qw_name(struct application_qc_state *engine, uint32_t slot,
-    int32_t reference, const char *name, qa_error *error)
+    int32_t reference, qa_bytes name, qa_error *error)
 {
     const qa_qc_definition *field = application_qc_field(engine->field_bindings->netname, QA_QC_STRING, error);
     int32_t string;
@@ -434,7 +434,8 @@ static bool bind_player(application_provider *provider, uint32_t slot, uint32_t 
     int32_t string;
     if (netname == NULL || !application_qc_reference(engine, actor, &reference, error)) return false;
     if (engine->profile == QA_QC_QUAKEWORLD) {
-        if (!qw_name(engine, slot, reference, name, error)) return false;
+        if (!qw_name(engine, slot, reference,
+            (qa_bytes){(const uint8_t *)name, strlen(name)}, error)) return false;
     } else if (!qa_qc_string_allocate(vm, name, &string, error) ||
         !qa_qc_set_entity_int(vm, reference, netname->offset, string, error)) return false;
     if ((new_player || !client->has_parms) &&
@@ -477,10 +478,13 @@ bool application_qc_prepare_player(application_provider *provider, qa_actor_id a
         if (client->spawned || !client->has_parms || !source_binding(engine, slot, actor, error))
             return application_fail(error, QA_ERROR_ARGUMENT, "QW source Prepare requires an inactive retained client");
         if (client->prepared) return true;
-        const char *raw; qa_qw_info info = {0};
-        if (!qa_application_network_qw_userinfo_read(provider->application, actor, &raw, error) ||
-            !qa_qw_info_parse(raw, &info, error)) return false;
-        const char *name = qa_qw_info_get(&info, "name");
+        const char *raw;
+        if (!qa_application_network_qw_userinfo_read(provider->application, actor, &raw, error)) return false;
+        if (strlen(raw) > UINT16_MAX)
+            return application_fail(error, QA_ERROR_FORMAT, "QuakeWorld info string exceeds capacity");
+        qa_bytes name;
+        if (!qa_info_find(raw, (qa_bytes){(const uint8_t *)"name", 4}, QA_INFO_LAST, &name))
+            name = (qa_bytes){(const uint8_t *)"unnamed", 7};
         qa_qc_instance *vm = provider->state.qc.instance;
         int32_t reference, name_string;
         qa_qc_program_info program = qa_qc_program_describe(provider->state.qc.program);
@@ -499,8 +503,7 @@ bool application_qc_prepare_player(application_provider *provider, qa_actor_id a
             if (optional[i] && optional[i]->type != QA_QC_FLOAT)
                 ok = application_fail(error, QA_ERROR_FORMAT, "QW source Prepare optional movement field is not a float");
         }
-        if (ok) ok = qw_name_value(engine, slot, name ? name : "unnamed", &name_string, error);
-        qa_qw_info_free(&info);
+        if (ok) ok = qw_name_value(engine, slot, name, &name_string, error);
         for (uint32_t word = 0; ok && word < program.entity_field_words; ++word)
             ok = qa_qc_project_entity_int(vm, reference, word, 0, error);
         ok = ok && qa_qc_project_entity_float(vm, reference, colormap->offset, (float)slot, error) &&
@@ -654,14 +657,15 @@ bool application_qc_client_userinfo(application_provider *provider, qa_actor_id 
         if (engine->profile != QA_QC_QUAKEWORLD) {
             if (client->spawned) return true;
         } else {
-            const char *raw; qa_qw_info info = {0}; int32_t reference;
-            if (!qa_application_network_qw_userinfo_read(provider->application, actor, &raw, error) ||
-                !qa_qw_info_parse(raw, &info, error)) return false;
-            const char *name = qa_qw_info_get(&info, "name");
-            bool ok = application_qc_reference(engine, actor, &reference, error) &&
-                qw_name(engine, (uint32_t)(client - engine->clients), reference, name ? name : "unnamed", error);
-            qa_qw_info_free(&info);
-            return ok;
+            const char *raw; int32_t reference;
+            if (!qa_application_network_qw_userinfo_read(provider->application, actor, &raw, error)) return false;
+            if (strlen(raw) > UINT16_MAX)
+                return application_fail(error, QA_ERROR_FORMAT, "QuakeWorld info string exceeds capacity");
+            qa_bytes name;
+            if (!qa_info_find(raw, (qa_bytes){(const uint8_t *)"name", 4}, QA_INFO_LAST, &name))
+                name = (qa_bytes){(const uint8_t *)"unnamed", 7};
+            return application_qc_reference(engine, actor, &reference, error) &&
+                qw_name(engine, (uint32_t)(client - engine->clients), reference, name, error);
         }
     }
     return application_fail(error, QA_ERROR_NOT_FOUND, "QC userinfo requires a live admitted client");

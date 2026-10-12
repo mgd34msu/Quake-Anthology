@@ -1,4 +1,5 @@
 #include "guest_qc_internal.h"
+#include "control_frame.h"
 #include "map_travel_private.h"
 #include "qa/application_network_qw.h"
 #include "guest_qc_rerelease.h"
@@ -12,7 +13,8 @@ static bool vector_field(struct application_qc_state *engine, int32_t reference,
 }
 static bool info_key(struct application_qc_state *engine, qa_qc_instance *vm, qa_error *error)
 {
-    int32_t reference; const char *key, *value = "";
+    int32_t reference; const char *key;
+    qa_bytes value = {(const uint8_t *)"", 0};
     if (!qa_qc_arg_int(vm, 0, &reference, error) || !qa_qc_arg_string(vm, 1, &key, error)) return false;
     qa_qc_entity_layout layout = qa_qc_default_entity_layout(engine->provider->state.qc.program, engine->profile);
     if (reference < 0 || !layout.stride_bytes || (uint32_t)reference % layout.stride_bytes)
@@ -22,10 +24,9 @@ static bool info_key(struct application_qc_state *engine, qa_qc_instance *vm, qa
     if (!qa_qc_slot_reference(vm, slot, &actual_reference, error)) return false;
     if (actual_reference != reference)
         return application_fail(error, QA_ERROR_FORMAT, "QuakeC infokey reference differs from its actual source layout");
-    qa_qw_info info = {0};
     if (slot == 0) {
         const qa_cvar_view *cvar = qa_cvars_find(engine->cvars, key);
-        if (cvar) value = cvar->value;
+        if (cvar) value = (qa_bytes){(const uint8_t *)cvar->value, strlen(cvar->value)};
     } else if (slot <= engine->max_clients) {
         const application_qc_client *client = &engine->clients[slot];
         if (client->connected) {
@@ -39,31 +40,33 @@ static bool info_key(struct application_qc_state *engine, qa_qc_instance *vm, qa
                 !qa_actor_id_equal(binding.actor, client->actor))
                 return application_fail(error, QA_ERROR_FORMAT, "QuakeC infokey client differs from its source binding");
             const char *raw;
-            if (!qa_application_network_qw_userinfo_read(engine->provider->application, client->actor, &raw, error) ||
-                !qa_qw_info_parse(raw, &info, error)) return false;
-            const char *entry = qa_qw_info_get(&info, key);
-            if (entry) value = entry;
+            if (!qa_application_network_qw_userinfo_read(engine->provider->application, client->actor, &raw, error))
+                return false;
+            if (strlen(raw) > UINT16_MAX)
+                return application_fail(error, QA_ERROR_FORMAT, "QuakeWorld info string exceeds capacity");
+            (void)qa_info_find(raw, (qa_bytes){(const uint8_t *)key, strlen(key)}, QA_INFO_LAST, &value);
         }
     }
     size_t length = strlen(key);
-    if (length > SIZE_MAX - 48) {
-        qa_qw_info_free(&info);
+    if (length > SIZE_MAX - 48)
         return application_fail(error, QA_ERROR_MEMORY, "QuakeC infokey engine string name is too long");
+    qa_unified_frame_lease *storage = application_control_storage_acquire(engine->provider->application, error);
+    if (!storage) return false;
+    char *name = qa_unified_frame_lease_alloc(storage, length + 48, 1, _Alignof(char), error);
+    char *text = name ? qa_unified_frame_lease_alloc(storage, value.size + 1, 1, _Alignof(char), error) : NULL;
+    bool ok = text != NULL;
+    if (ok) {
+        bool qualified = engine->provider->state.qc.qualified != NULL;
+        snprintf(name, length + 48, "%s:%u:%s", qualified ? "mod-infokey" : "qw-infokey",
+            qualified ? (uint32_t)reference : slot, key);
+        memcpy(text, value.data, value.size); text[value.size] = 0;
+        size_t capacity = 1024;
+        if (qualified && value.size >= capacity) capacity = value.size + 1;
+        int32_t string;
+        ok = qa_qc_engine_string(vm, name, text, capacity, &string, error) &&
+            qa_qc_return_int(vm, string, error);
     }
-    char *name = malloc(length + 48);
-    if (!name) {
-        qa_qw_info_free(&info);
-        return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC infokey engine string name");
-    }
-    bool qualified = engine->provider->state.qc.qualified != NULL;
-    snprintf(name, length + 48, "%s:%u:%s", qualified ? "mod-infokey" : "qw-infokey",
-        qualified ? (uint32_t)reference : slot, key);
-    size_t capacity = 1024;
-    if (qualified && strlen(value) >= capacity) capacity = strlen(value) + 1;
-    int32_t string;
-    bool ok = qa_qc_engine_string(vm, name, value, capacity, &string, error) &&
-        qa_qc_return_int(vm, string, error);
-    free(name); qa_qw_info_free(&info);
+    qa_unified_frame_lease_release(storage);
     return ok;
 }
 static bool global_reference(struct application_qc_state *engine, const qa_qc_definition *definition,
