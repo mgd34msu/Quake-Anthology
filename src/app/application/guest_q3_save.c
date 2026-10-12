@@ -306,8 +306,11 @@ static bool fields(qa_source_save_io *io, struct application_q3_guest *engine)
         (engine->local_snapshot_server_bit != 0 && engine->local_snapshot_server_bit != 4))
         return state_fail(io, QA_ERROR_FORMAT, "Invalid application Q3 loaded compatibility");
     if (io->direction == QA_SOURCE_SAVE_READ && !q3g_clients_prepare(engine, io->error)) return false;
-    for (size_t i = 0; i < 64; ++i)
+    for (size_t i = 0; i < 64; ++i) {
         if (!qa_source_save_u32(io, &engine->seats[i]) || !client(io, engine, &engine->clients[i])) return false;
+        if (io->direction == QA_SOURCE_SAVE_READ && engine->clients[i].actor.registry &&
+            !q3g_client_actor_set(engine, (uint32_t)i, engine->clients[i].actor, io->error)) return false;
+    }
     return true;
 }
 
@@ -367,6 +370,8 @@ bool application_guest_q3_state_restore(application_provider *provider, qa_bytes
         ok = application_fail(error, QA_ERROR_FORMAT, "Application Q3 entity text differs from its prepared immutable map");
     if (ok) {
         q3g_clients_destroy(engine);
+        engine->client_actors = candidate->client_actors;
+        candidate->client_actors = (qa_actor_index){0};
         memcpy(engine->clients, candidate->clients, sizeof(engine->clients));
         for (size_t i = 0; i < 64; ++i) {
             engine->clients[i].server_commands = (application_q3_command_cursor){0};

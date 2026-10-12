@@ -45,7 +45,7 @@ bool application_q3_guest_client_reserve(application_provider *provider, uint32_
         (!borrowed && (!record->has_source || record->source_slot != slot)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 source client reservation changes its physical actor binding");
     if (!qa_q3_host_bind_actor(engine->game->host, slot, actor, borrowed, error)) return false;
-    client->actor = actor;
+    if (!q3g_client_actor_set(engine, slot, actor, error)) return false;
     client->reserved = true;
     return true;
 }
@@ -117,9 +117,10 @@ bool application_q3_guest_client_connect(application_provider *provider, uint32_
         engine->seats[slot] = seat;
     }
     char *copy = q3g_copy_text(info, error); if (!copy) return false;
-    if (!qa_q3_host_bind_actor(engine->game->host, slot, actor, borrowed, error)) { free(copy); return false; }
+    if (!qa_q3_host_bind_actor(engine->game->host, slot, actor, borrowed, error) ||
+        !q3g_client_actor_set(engine, slot, actor, error)) { free(copy); return false; }
     free(client->userinfo); client->userinfo = copy;
-    client->actor = actor; client->bot = bot; client->allocated = true;
+    client->bot = bot; client->allocated = true;
     client->begun = false;
     client->disconnect_started = false;
     client->entered_ns = qa_session_elapsed(provider->application->session);
@@ -323,8 +324,27 @@ bool application_q3_guest_client_command_vector(application_provider *provider, 
     return ok;
 }
 
+bool q3g_client_actor_set(struct application_q3_guest *engine, uint32_t slot,
+    qa_actor_id actor, qa_error *error)
+{
+    q3g_client *client = engine->clients + slot;
+    if (!qa_actor_index_remember(&engine->client_actors, actor, slot, error)) return false;
+    if (!qa_actor_id_equal(client->actor, actor))
+        qa_actor_index_forget_retained(&engine->client_actors, client->actor);
+    client->actor = actor;
+    return true;
+}
+
+void q3g_client_actor_clear(struct application_q3_guest *engine, uint32_t slot)
+{
+    q3g_client *client = engine->clients + slot;
+    qa_actor_index_forget_retained(&engine->client_actors, client->actor);
+    client->actor = (qa_actor_id){0};
+}
+
 void q3g_clients_clear(struct application_q3_guest *engine)
 {
+    qa_actor_index_clear(&engine->client_actors);
     for (size_t i = 0; i < 64; ++i) {
         q3g_client *client = &engine->clients[i];
         free(client->userinfo); free(client->retirement_reason); free(client->gamestate);
@@ -342,6 +362,11 @@ void q3g_clients_clear(struct application_q3_guest *engine)
 
 bool q3g_clients_prepare(struct application_q3_guest *engine, qa_error *error)
 {
+    if (!engine->client_actors.registry &&
+        (!qa_actor_index_create(&engine->client_actors,
+            qa_session_actors(engine->provider->application->session), NULL, error) ||
+         !qa_id_index_reserve(&engine->client_actors.retained,
+            sizeof(engine->clients) / sizeof(*engine->clients), error))) return false;
     for (size_t i = 0; i < 64; ++i) {
         q3g_client *client = engine->clients + i;
         if (!client->snapshots[0].entities && !qa_q3_slots_prepare(&client->snapshot_storage,
@@ -354,6 +379,7 @@ bool q3g_clients_prepare(struct application_q3_guest *engine, qa_error *error)
 void q3g_clients_destroy(struct application_q3_guest *engine)
 {
     q3g_clients_clear(engine);
+    qa_actor_index_destroy(&engine->client_actors);
     for (size_t i = 0; i < 64; ++i) {
         q3g_client *client = engine->clients + i;
         qa_arena_destroy(&client->snapshot_storage);

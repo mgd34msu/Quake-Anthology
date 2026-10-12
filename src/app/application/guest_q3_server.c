@@ -214,7 +214,7 @@ static bool allocate_bot(void *context, int32_t *out, qa_error *error)
     if (!qa_q3_host_actor(role->host, (uint32_t)*out, false, &actor, error) || !actor.registry ||
         !qa_actors_get(qa_session_actors(role->engine->provider->application->session), actor))
         return application_fail(error, QA_ERROR_FORMAT, "Q3 bot allocator returned no canonical source actor");
-    role->engine->clients[*out].actor = actor;
+    if (!q3g_client_actor_set(role->engine, (uint32_t)*out, actor, error)) return false;
     role->engine->clients[*out].pending_bot = true;
     role->engine->clients[*out].allocated = role->engine->clients[*out].bot = true;
     return true;

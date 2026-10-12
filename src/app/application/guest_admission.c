@@ -107,7 +107,7 @@ bool application_guest_clients_drain(application_provider *provider, qa_error *e
             continue;
         }
         client->fire = (q3g_fire_continuation){0};
-        client->actor = (qa_actor_id){0};
+        q3g_client_actor_clear(engine, slot);
         client->allocated = client->connected = client->begun = client->bot = false;
         client->carry_pending = false;
         client->reserved = false;

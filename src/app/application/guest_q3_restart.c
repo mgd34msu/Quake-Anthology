@@ -565,7 +565,7 @@ bool application_q3_guest_round_reconnect(application_provider *provider, uint32
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 round human seat differs from its carried source slot");
     }
     if (!qa_q3_host_bind_actor(engine->game->host, slot, actor, borrowed, error)) return false;
-    client->actor = actor;
+    if (!q3g_client_actor_set(engine, slot, actor, error)) return false;
     client->allocated = true;
     int32_t arguments[] = {(int32_t)slot, 0, client->bot ? 1 : 0}, result;
     bool admitted = false, ok;

@@ -26,7 +26,7 @@ bool application_guest_bot_allocate(application_provider *provider, int32_t *out
         if (!qa_q3_host_actor(engine->game->host, slot, true, &actor, error)) return false;
         if (!actor.registry || !qa_actors_get(qa_session_actors(provider->application->session), actor))
             return application_fail(error, QA_ERROR_FORMAT, "Guest bot allocator did not admit a canonical actor");
-        client->actor = actor;
+        if (!q3g_client_actor_set(engine, slot, actor, error)) return false;
         client->pending_bot = true;
         client->disconnect_started = false;
         client->entered_ns = qa_session_elapsed(provider->application->session);

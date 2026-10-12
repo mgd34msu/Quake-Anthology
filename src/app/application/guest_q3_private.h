@@ -158,6 +158,7 @@ struct application_q3_guest {
     qa_q3_model_names model_names;
     qa_q3_gamestate gamestate;
     q3g_client clients[64];
+    qa_actor_index client_actors;
     uint32_t seats[64];
     qa_command_tokens arguments;
     application_q3_command_storage client_commands[64];
@@ -219,6 +220,8 @@ bool q3g_compatibility(const qa_launch_instance *, const char *, const qa_qvm_im
 bool application_q3_guest_services_descriptor(qa_application *, application_provider *,
     const qa_launch_instance *, qa_qvm_role, uint32_t, uint64_t, qa_q3_host_options *, qa_error *);
 char *q3g_copy_text(const char *, qa_error *);
+bool q3g_client_actor_set(struct application_q3_guest *, uint32_t, qa_actor_id, qa_error *);
+void q3g_client_actor_clear(struct application_q3_guest *, uint32_t);
 void q3g_clients_clear(struct application_q3_guest *);
 bool q3g_clients_prepare(struct application_q3_guest *, qa_error *);
 void q3g_clients_destroy(struct application_q3_guest *);

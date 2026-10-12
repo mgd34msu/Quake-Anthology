@@ -501,23 +501,23 @@ bool application_q3_guest_actor_released(application_provider *provider, qa_acto
         if (!application_q3_combat_actor_released(role->combat, actor, error)) return false;
         if (role->host && !qa_q3_host_actor_released(role->host, actor, error)) return false;
     }
-    for (size_t i = 0; i < 64; ++i)
-        if (qa_actor_id_equal(engine->clients[i].actor, actor.id)) {
-            q3g_client *client = &engine->clients[i];
-            client->fire = (q3g_fire_continuation){0};
-            client->reserved = false;
-            if (engine->round.phase == Q3G_ROUND_RETIRING &&
-                (engine->round.carried & (UINT64_C(1) << i))) {
-                client->actor = (qa_actor_id){0};
-                client->connected = client->begun = client->roster_attached = false;
-                continue;
-            }
-            if (client->bot || client->roster_attached || client->pending_retirement) {
-                client->pending_retirement = true;
-                client->pending_bot = client->disconnect_pending = false;
-            } else client->actor = (qa_actor_id){0};
-            engine->clients[i].connected = engine->clients[i].allocated = false;
+    size_t slot;
+    if (qa_actor_index_find_retained(&engine->client_actors, actor.id, &slot)) {
+        q3g_client *client = &engine->clients[slot];
+        client->fire = (q3g_fire_continuation){0};
+        client->reserved = false;
+        if (engine->round.phase == Q3G_ROUND_RETIRING &&
+            (engine->round.carried & (UINT64_C(1) << slot))) {
+            q3g_client_actor_clear(engine, (uint32_t)slot);
+            client->connected = client->begun = client->roster_attached = false;
+            return true;
         }
+        if (client->bot || client->roster_attached || client->pending_retirement) {
+            client->pending_retirement = true;
+            client->pending_bot = client->disconnect_pending = false;
+        } else q3g_client_actor_clear(engine, (uint32_t)slot);
+        client->connected = client->allocated = false;
+    }
     return true;
 }
 
