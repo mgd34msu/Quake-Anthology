@@ -269,27 +269,10 @@ bool application_character_q2_initial_userinfo(const char *source,const char *de
     /* Retain every supplied byte, including an explicitly empty value. Only
      * absent protocol keys receive the canonical prepared default/settings. */
     for (const char *p=defaults;*p;) {
-        const char *pair=p++;
-        const char *key=p;
-        while (*p && *p!='\\') ++p;
-        size_t key_length=(size_t)(p-key);
-        if (!*p) break;
-        ++p;
-        while (*p && *p!='\\') ++p;
-        bool present=false;
-        const char *existing=source;
-        if (*existing=='\\') ++existing;
-        while (*existing) {
-            const char *at=existing;
-            while (*existing && *existing!='\\') ++existing;
-            if (!*existing) break;
-            size_t size=(size_t)(existing-at);
-            ++existing;
-            if (size==key_length && !memcmp(at,key,size)) { present=true; break; }
-            while (*existing && *existing!='\\') ++existing;
-            if (*existing) ++existing;
-        }
-        if (present) continue;
+        const char *pair=p;
+        qa_bytes key,value,existing;
+        if (!qa_info_next(&p,&key,&value)) break;
+        if (qa_info_find(source,key,0,&existing)) continue;
         size_t added=(size_t)(p-pair);
         if (added>=capacity-length)
             return application_fail(error,QA_ERROR_ARGUMENT,"Initial prepared Q2 userinfo exceeds its source extent");

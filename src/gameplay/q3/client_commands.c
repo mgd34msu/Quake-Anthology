@@ -1,18 +1,6 @@
 #include "client_private.h"
 #include "qa/game_type.h"
-
-static unsigned char upper(unsigned char value) {
-    return value >= 'a' && value <= 'z' ? (unsigned char)(value - ('a' - 'A')) : value;
-}
-
-static bool key_equal(const char *text, size_t length, const char *wanted) {
-    size_t i = 0;
-    while (i < length && wanted[i]) {
-        if (upper((unsigned char)text[i]) != upper((unsigned char)wanted[i])) return false;
-        ++i;
-    }
-    return i == length && !wanted[i];
-}
+#include "qa/text.h"
 
 void qa_q3_client_info_value(const char *source, const char *wanted,
                             char *out, size_t capacity) {
@@ -26,23 +14,12 @@ void qa_q3_client_info_value(const char *source, const char *wanted,
         ++length;
     }
     info[length] = 0;
-    size_t cursor = info[0] == '\\' ? 1 : 0;
-    while (cursor < length) {
-        size_t key = cursor;
-        while (cursor < length && info[cursor] != '\\') ++cursor;
-        if (cursor == length) return;
-        size_t key_length = cursor++ - key;
-        size_t value = cursor;
-        while (cursor < length && info[cursor] != '\\') ++cursor;
-        if (key_equal(info + key, key_length, wanted)) {
-            size_t count = cursor - value;
-            if (count >= capacity) count = capacity - 1;
-            memcpy(out, info + value, count);
-            out[count] = 0;
-            return;
-        }
-        if (cursor < length) ++cursor;
-    }
+    qa_bytes value;
+    if (!qa_info_find(info,(qa_bytes){(const uint8_t *)wanted,strlen(wanted)},
+            QA_INFO_CASE_FOLD,&value)) return;
+    size_t count=value.size<capacity ? value.size : capacity-1;
+    memcpy(out,value.data,count);
+    out[count]=0;
 }
 
 void qa_q3_client_clean_name(const char *source, char out[QA_Q3_NATIVE_NETNAME]) {

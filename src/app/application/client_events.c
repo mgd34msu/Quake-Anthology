@@ -11,6 +11,7 @@
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_type.h"
+#include "qa/text.h"
 #include <stdlib.h>
 
 typedef enum client_listener_kind {
@@ -55,28 +56,6 @@ static application_player_record *player(qa_application *app, qa_actor_id actor)
     return row && !row->source_begin_pending ? row : NULL;
 }
 
-static bool userinfo_has(const char *text, const char *key)
-{
-    if (*text == '\\') ++text;
-    while (*text) {
-        const char *name = text;
-        while (*text && *text != '\\') ++text;
-        size_t length = (size_t)(text - name), i = 0;
-        if (!*text) break;
-        while (i < length && key[i]) {
-            unsigned char byte = (unsigned char)name[i];
-            if (byte >= 'A' && byte <= 'Z') byte = (unsigned char)(byte + ('a' - 'A'));
-            if (byte != (unsigned char)key[i]) break;
-            ++i;
-        }
-        if (i == length && !key[i]) return true;
-        ++text;
-        while (*text && *text != '\\') ++text;
-        if (*text) ++text;
-    }
-    return false;
-}
-
 bool application_client_native_q3_userinfo(qa_application *app, application_provider *provider,
     qa_actor_id actor, const char *userinfo, int32_t game_type, qa_error *error)
 {
@@ -101,7 +80,11 @@ bool application_client_native_q3_userinfo(qa_application *app, application_prov
     const char *models[2] = {appearance->model,
         *appearance->head_model ? appearance->head_model : appearance->model};
     const char *skins[2] = {appearance->skin, appearance->head_skin};
-    bool missing[2] = {!userinfo_has(userinfo, keys[0]), !userinfo_has(userinfo, keys[1])};
+    bool missing[2];
+    qa_bytes value;
+    for (size_t i=0;i<2;++i)
+        missing[i]=!qa_info_find(userinfo,(qa_bytes){(const uint8_t *)keys[i],strlen(keys[i])},
+            QA_INFO_CASE_FOLD,&value);
     if (!missing[0] && !missing[1])
         return qa_q3_client_selected_presentation(provider->state.q3, actor, userinfo, game_type, error);
     size_t length = strlen(userinfo), capacity = length + 2;
