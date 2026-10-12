@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `157d1f55`.
+Follow-up source changes were reviewed through main `11620e3a`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 21 have source fixes
+There are **374 overlapping source-review observations**: 60 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 350 records are not 350 unique bugs: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 311 records are not 350 unique bugs: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -67,22 +67,23 @@ implementation in the same slice.
 
 | Capability | Confirmed examples | Required shared adoption |
 | --- | --- | --- |
-| Event delivery | `16-011`: legacy frame entity-event and unrecognized stufftext delivery still occurs before the client batch ring consumer. | Move the remaining producers/consumers onto retained records and ordered cursors. Preserve decode order, recipients and source timing. |
+| Event delivery | `J12-05`: tool/LLM output bypasses ordered LOG records. `J15-08`: connect transitions retain a private queue. | Move the remaining producers/consumers onto retained records and ordered cursors. Preserve decode order, recipients and source timing. |
 | Mixed module lifecycle | `02-12/13/20/21`: provider/map, client, respawn and selected-service gates lack composition adapters. | Implement shared role dispatch and the missing original guest lifecycle/service adapters. Removing a gate alone cannot supply a missing adapter. |
 | Trace policy and queries | The named Q2 role-policy and Q3 trigger-overflow observations below are fixed. Other private spatial and visibility walks remain in the ledger. | Migrate each remaining query to shared caller-owned storage and retained role policy, preserving ordering and original collision rules. |
 | Numeric and identity domains | `01-combat-source-width`, `03-16`: valid original int32 values lose admissibility through binary32 exactness checks. `J24-07`: numeric Q3 teams and interned team IDs are conflated. | Preserve original widths at module/protocol boundaries and explicit canonical team conversion. Never substitute a string ID for a protocol number. |
 | Entity/name/resource indexing | Private actor/source-number lists, model/picture caches, roster/reverse maps and runtime name conversions remain across application, frontend, bots and hosts. | Existing common indexes and retained IDs, keyed to the correct historical generation and ownership. Keep necessary namespace translation and previous snapshots. |
 | Stamps, spatial and math | Private visit arrays, visibility/mark/light walks, angle/vector/matrix operations and parsers remain. | Common caller-owned stamp/query scratch and existing math/text primitives. Retain exact rounding, trace rules and original draw semantics. |
 | Runtime storage | First-use/nested snapshots, reaction registration, guest invocation staging, packet/decode scratch, UI metadata and renderer buffers still grow or allocate during play. | Load-owned common pool/arena storage or frame leases according to actual lifetime. Preserve nested calls, retransmission, capacity and failure ownership; no arbitrary new cap. |
-| Content identity and saves | `J13-01`: full-BSP FNV identity persists into saves and cache keys. Binding-menu fingerprints remain. Native Q3 saves embed installed PE/ELF bytes. | Names in saves, generation/revision counters in-process and existing RAM-state restoration. Preserve mandatory original protocol checksums. |
+| Content identity and saves | `J25-02`: native Q3 saves embed installed PE/ELF bytes. The named BSP and binding-menu fingerprint observations are fixed. | Names in saves, generation/revision counters in-process and existing RAM-state restoration. Preserve mandatory original protocol checksums. |
 
 `04-022` is now fixed: one shared game-type conversion covers campaign and
 cooperative values as well as the original modes. The former eight-entry-table
 out-of-bounds read was source-confirmed; no live crash was reproduced.
 
-`27-02` also identifies a duplicate QW encoder that can omit a solid-to-nonsolid
-update when no other field changes. Moving to the common codec must retain the
-original packet bits, widths, baselines and histories.
+`27-02` is partial: the shared writer now handles SOLID-only set and clear
+updates, preserving raw Source delta decisions and QW29 extensions. Separate
+Source and decoder histories remain; their consolidation must retain frame age,
+original widths and frozen snapshot ownership.
 
 ## Fixed during the audit
 
@@ -116,6 +117,26 @@ results.
 | `J24-02` | `f6e429e7` | Q3 once-per-Source-frame actor visits use the common stamp set, including slot reuse. |
 | `16-005` | `684e6060` | QC shapes enter common DEBUG; private growth/pruning/shape arenas are deleted. One store preserves width1, provider-clock pause, nanosecond lifetime and instant multi-seat visibility. |
 | `04-002` | `157d1f55` | Disconnect scopes retain exact reason text in the existing control lease; cross-frame wire ownership stays intact. |
+
+| `J00-01`, `J23-05`, `J24-03` | `cdd63e09` | Shared borrowed info pairs preserve exact/case-folded first-match and merge semantics. |
+| `J00-04` | `66a629b5` | Native attack scopes use the existing common control lease. |
+| `16-002` | `74f135d5` | One angle interpolation implements explicit single-turn and normalized-delta source policies. |
+| `03-14` | `f7a51d88` | Private decimal-prefix readers use common explicit clamp/wrap/whitespace policies. |
+| `J14-11`, `J23-08` | `75b69540` | One MT19937 implementation preserves distinct original streams and save semantics. |
+| `J00-12` | `5e7cfddf` | Listener snapshots borrow control leases instead of allocating per dispatch. |
+| `J00-13` | `9d616e7e` | Native Q2 scalar decision descriptors resolve offsets and encodings once; reads remain live. |
+| `26-12` | `683d5bce` | QC radius enumeration uses shared world queries with immediate visitor and original source ordering. |
+| `16-011` | `38ed1cb2` | Q2 frame and command delivery uses the ordered received ring, retaining WAIT/cancel custody. |
+| `Q3NET-35-01`, `Q3NET-35-04`, `28-04`, `J24-05` | `ffbdb58d` | Boundary binary/math and Unicode comparison readers use the common primitives. |
+| `J14-01`, `J00-05`, `J00-06`, `04-013`, `04-014`, `04-015` | `ed9a2152` | Equipment, bindings, drafts and native Q2 resources retain IDs or edit revisions. |
+| `17-15`, `04-011` | `77aad804` | Unified legacy light styles use one ordered retained table; physical binding comparison uses the common predicate. |
+| `J13-01`, `02-08` | `c37e2735` | BSP fingerprints are removed. Runtime uses load generations; saved adapters preserve old slots and bind names/current generations. |
+| `28-02`, `J11-02`, `26-07`, `09-08` | `a78624e2` | Unified payload decode occurs once; JSON strict UTF-8, native info imports and bot integer output use common codecs. |
+| `J13-04`, `J13-05`, `J13-06` | `93b2440b` | Numeric vector/bounds equality and spatial sector selection are shared; unused attachment transport is deleted. |
+| `J11-03`, `17-16` | `f1436e9f` | Script and HUD compression share caller-owned storage; SystemInfo uses common pair and key primitives. |
+| `J11-05`, `J11-09` | `413a776e` | VFS resource identity uses the shared ID index; entity clipping uses the common original-epsilon algorithm. |
+| `J13-07` | `bcb95cff` | Q2/Q3 medium clipping and coverage share caller scratch. QW writer portion of 27-02 is fixed; histories remain open. |
+| `J14-09` | `11620e3a` | One platform directory service replaces frontend SDL directory discovery; engine and SDL allocator ownership remain distinct. |
 
 The seven suites are platform_services, core, archive, VFS, BSP, image and model.
 All listed commits are on remote main. No new qualified `qfiles/qa-c`

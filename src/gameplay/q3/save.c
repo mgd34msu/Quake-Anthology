@@ -103,6 +103,7 @@ static bool missile(qa_source_save_io *io, qa_q3_projectile_state *p)
     ENUM(p->weapon, QA_Q3_WEAPON_COUNT - 1);
     if (!trajectory(io, &p->trajectory)) return false;
     FIELD(actor, p->owner); FIELD(actor, p->pass); FIELD(actor, p->attached); FIELD(actor, p->trigger);
+    /* Canonical team names survive session string-ID remapping. */
     FIELD(string, p->team); FIELD(vec3, p->normal); FIELD(vec3, p->damage_point);
     FIELD(f32, p->damage); FIELD(f32, p->splash); FIELD(f32, p->radius);
     FIELD(i32, p->method); FIELD(i32, p->splash_method); FIELD(i32, p->think_at); FIELD(i32, p->event_at);

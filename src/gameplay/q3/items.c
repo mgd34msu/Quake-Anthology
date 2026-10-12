@@ -319,13 +319,8 @@ static bool denied_powerup(qa_q3_game *game, qa_actor_id pickup, qa_actor_id rec
         candidate = q3_actor_get(game, actor);
         if (!candidate || candidate->kind != Q3_ACTOR_PLAYER)
             continue;
-        uint32_t recipient_slot, candidate_slot;
-        int32_t receiver_team = qa_q3_native_client_slot(game, recipient, &recipient_slot, NULL)
-            ? game->clients[recipient_slot].rule.session.team : (int32_t)receiver.team;
-        int32_t candidate_team = qa_q3_native_client_slot(game, actor, &candidate_slot, NULL)
-            ? game->clients[candidate_slot].rule.session.team : (int32_t)combat.team;
         if (combat.health <= 0 ||
-            (qa_game_type_has_allies(game->options.rules.game_type) && receiver_team == candidate_team))
+            (qa_game_type_has_allies(game->options.rules.game_type) && receiver.team == combat.team))
             continue;
         qa_body_state body;
         if (!qa_world_body_read(game->options.services.world, actor, &body, error))

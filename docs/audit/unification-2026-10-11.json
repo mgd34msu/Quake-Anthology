@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "157d1f55d2db0ce3d502656a7919bf0f0dcd221f",
+  "verified_main": "11620e3a73ee3b5d4b6c296198e91af968e173cb",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "open_source_observation": 350,
-    "fixed_source_build_core": 21,
+    "fixed_source_build_core": 60,
+    "open_source_observation": 311,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -22993,8 +22993,9 @@
       "severity": "medium",
       "job": "00",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "cdd63e091ceecbf8d18b088e56a8d9613f504212"
     },
     {
       "id": "J00-02",
@@ -23061,8 +23062,9 @@
       "severity": "high",
       "job": "00",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "66a629b5a17651b270a58bd718c0bd480bcc8d3a"
     },
     {
       "id": "J00-05",
@@ -23079,8 +23081,9 @@
       "severity": "medium",
       "job": "00",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "ed9a2152c0b32020fbcfa7daccdc3af80e692849"
     },
     {
       "id": "J00-06",
@@ -23105,8 +23108,9 @@
       "severity": "medium",
       "job": "00",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "ed9a2152c0b32020fbcfa7daccdc3af80e692849"
     },
     {
       "id": "J00-07",
@@ -23393,8 +23397,9 @@
       "severity": "medium",
       "job": "00",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "5e7cfddf5d05a3134b787f5896a3d264d7092f50"
     },
     {
       "id": "J00-13",
@@ -23427,8 +23432,9 @@
       "severity": "medium",
       "job": "00",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "9d616e7eaa92f01002a350617e1ab26172dc1130"
     },
     {
       "id": "J00-14",
@@ -24320,8 +24326,9 @@
       "severity": "high",
       "job": "02",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "c37e2735e7866a3f5df9a266b6058b19f8384a77"
     },
     {
       "id": "02-09",
@@ -25555,8 +25562,9 @@
       "severity": "medium",
       "job": "03",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "f7a51d88cd4166e33872262eec36706c0126e13b"
     },
     {
       "id": "03-15",
@@ -26089,8 +26097,9 @@
       "severity": "medium",
       "job": "04",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "77aad804633eb1b40c105fb43e539e6697385465"
     },
     {
       "id": "04-012",
@@ -26125,8 +26134,9 @@
       "severity": "medium",
       "job": "04",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "ed9a2152c0b32020fbcfa7daccdc3af80e692849"
     },
     {
       "id": "04-014",
@@ -26147,8 +26157,9 @@
       "severity": "medium",
       "job": "04",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "ed9a2152c0b32020fbcfa7daccdc3af80e692849"
     },
     {
       "id": "04-015",
@@ -26165,8 +26176,9 @@
       "severity": "low",
       "job": "04",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "ed9a2152c0b32020fbcfa7daccdc3af80e692849"
     },
     {
       "id": "04-016",
@@ -27945,8 +27957,9 @@
       "severity": "low",
       "job": "09",
       "area": "bots_navigation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "a78624e264cf8fa5c4f3b8c599029de3b903a4f5"
     },
     {
       "id": "10-01",
@@ -28243,8 +28256,9 @@
       "severity": "medium",
       "job": "11",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "a78624e264cf8fa5c4f3b8c599029de3b903a4f5"
     },
     {
       "id": "J11-03",
@@ -28269,8 +28283,9 @@
       "severity": "medium",
       "job": "11",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "f1436e9fcdcf0361bfd90b16c502bf42bbaa5d59"
     },
     {
       "id": "J11-04",
@@ -28337,8 +28352,9 @@
       "severity": "medium",
       "job": "11",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "413a776e6eaf7acdf38bc399c5b41a4839c4f576"
     },
     {
       "id": "J11-06",
@@ -28445,8 +28461,9 @@
       "severity": "low",
       "job": "11",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "413a776e6eaf7acdf38bc399c5b41a4839c4f576"
     },
     {
       "id": "J12-01",
@@ -28863,8 +28880,9 @@
       "severity": "high",
       "job": "13",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "c37e2735e7866a3f5df9a266b6058b19f8384a77"
     },
     {
       "id": "J13-02",
@@ -28990,8 +29008,9 @@
       "severity": "low",
       "job": "13",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "93b2440bc9651783de22199eb7165059f9c9a845"
     },
     {
       "id": "J13-05",
@@ -29012,8 +29031,9 @@
       "severity": "low",
       "job": "13",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "93b2440bc9651783de22199eb7165059f9c9a845"
     },
     {
       "id": "J13-06",
@@ -29046,8 +29066,9 @@
       "severity": "low",
       "job": "13",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "93b2440bc9651783de22199eb7165059f9c9a845"
     },
     {
       "id": "J13-07",
@@ -29084,8 +29105,9 @@
       "severity": "medium",
       "job": "13",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "bcb95cff9a7b748af7d2603ed9235532d6b797ee"
     },
     {
       "id": "J13-08",
@@ -29136,8 +29158,9 @@
       "severity": "high",
       "job": "14",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "ed9a2152c0b32020fbcfa7daccdc3af80e692849"
     },
     {
       "id": "J14-02",
@@ -29412,8 +29435,9 @@
       "severity": "medium",
       "job": "14",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "11620e3a73ee3b5d4b6c296198e91af968e173cb"
     },
     {
       "id": "J14-10",
@@ -29480,8 +29504,9 @@
       "severity": "medium",
       "job": "14",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "75b695406f3118eea593a343aead8e65108919be"
     },
     {
       "id": "J15-01",
@@ -29794,8 +29819,9 @@
       "severity": "medium",
       "job": "16",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "74f135d548fb817cfd3de0bd5ef77ad824b12940"
     },
     {
       "id": "16-003",
@@ -30120,8 +30146,8 @@
       "severity": "high",
       "job": "16",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof",
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
       "original_summary": "Remote Q2 snapshot entity events and received stufftext still produce presentation/console effects outside the client event ring.",
       "independent_review": {
         "id": "16-011",
@@ -30160,7 +30186,8 @@
           }
         ],
         "narrowing": "This is an ordering/adoption gap, not an extra private event store or duplicate delivery bug. The original decoded frame/command is already retained in the batch and eventually delivered through the ring. Console append and source.sound are final canonical consumers; do not label those callbacks themselves as independent producer queues. A change must move admission/projection ownership once, keep server control/sign-on/precache execution ordered, and avoid admitting a duplicate frame event. No malformed sound or dropped command is proved."
-      }
+      },
+      "fixed_commit": "38ed1cb2ce61a9851ab0c7ed07afb0fe86f2e42c"
     },
     {
       "id": "16-012",
@@ -30985,8 +31012,9 @@
       "severity": "medium",
       "job": "17",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "77aad804633eb1b40c105fb43e539e6697385465"
     },
     {
       "id": "17-16",
@@ -31015,8 +31043,9 @@
       "severity": "medium",
       "job": "17",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "f1436e9fcdcf0361bfd90b16c502bf42bbaa5d59"
     },
     {
       "id": "17-17",
@@ -33236,8 +33265,9 @@
       "severity": "low",
       "job": "23",
       "area": "gameplay_q2",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "cdd63e091ceecbf8d18b088e56a8d9613f504212"
     },
     {
       "id": "J23-06",
@@ -33342,8 +33372,9 @@
       "severity": "medium",
       "job": "23",
       "area": "gameplay_q2",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "75b695406f3118eea593a343aead8e65108919be"
     },
     {
       "id": "J24-01",
@@ -33457,8 +33488,9 @@
       "severity": "medium",
       "job": "24",
       "area": "gameplay_q3",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "cdd63e091ceecbf8d18b088e56a8d9613f504212"
     },
     {
       "id": "J24-04",
@@ -33529,8 +33561,9 @@
       "severity": "medium",
       "job": "24",
       "area": "gameplay_q3",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "ffbdb58d138f089884d2529b1257d65001feeb3e"
     },
     {
       "id": "J24-06",
@@ -34223,8 +34256,9 @@
       "severity": "medium",
       "job": "26",
       "area": "module_hosts",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "a78624e264cf8fa5c4f3b8c599029de3b903a4f5"
     },
     {
       "id": "26-08",
@@ -34361,8 +34395,9 @@
       "severity": "medium",
       "job": "26",
       "area": "module_hosts",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "683d5bce6eca414457a3ca37a50d1a435f672405"
     },
     {
       "id": "26-13",
@@ -34710,7 +34745,7 @@
       "job": "27",
       "area": "network",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "Writer portion source-reviewed and checked in bcb95cff, including actual SOLID transitions and QW29 extension decoding. Source/decoder history consolidation remains open."
     },
     {
       "id": "27-03",
@@ -34899,8 +34934,9 @@
       "severity": "medium",
       "job": "28",
       "area": "network",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "a78624e264cf8fa5c4f3b8c599029de3b903a4f5"
     },
     {
       "id": "28-03",
@@ -34999,8 +35035,9 @@
       "severity": "low",
       "job": "28",
       "area": "network",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "ffbdb58d138f089884d2529b1257d65001feeb3e"
     },
     {
       "id": "29-01",
@@ -36611,8 +36648,9 @@
       "severity": "medium",
       "job": "35",
       "area": "network_q3",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "ffbdb58d138f089884d2529b1257d65001feeb3e"
     },
     {
       "id": "Q3NET-35-02",
@@ -36693,8 +36731,9 @@
       "severity": "low",
       "job": "35",
       "area": "network_q3",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "ffbdb58d138f089884d2529b1257d65001feeb3e"
     },
     {
       "id": "Q3NET-35-05",
@@ -37521,6 +37560,649 @@
       ],
       "record_directory": "/tmp/qa-ta3196-q3-drop-custody-20261011",
       "conclusion": "Native Q3 disconnect scopes retain exact reason bytes in the existing control lease through nested callbacks and release at failed admission/end. Cross-frame pending wire reason ownership is preserved."
+    },
+    {
+      "commit": "cdd63e091ceecbf8d18b088e56a8d9613f504212",
+      "source_tree": "0013f60cae367639e7f95c82e7da7e67da53bcdf",
+      "finding_ids": [
+        "J00-01",
+        "J23-05",
+        "J24-03"
+      ],
+      "files_rechecked": [
+        "src/app/application/character_selection.c",
+        "src/app/application/client_events.c",
+        "src/gameplay/q2/player/preferences.c",
+        "src/gameplay/q3/client_commands.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-info-walkers-20261011",
+      "conclusion": "Shared borrowed info pairs preserve exact/case-folded first-match and merge semantics."
+    },
+    {
+      "commit": "66a629b5a17651b270a58bd718c0bd480bcc8d3a",
+      "source_tree": "6102e7872766ff9ec5664cbc81dacb6282f1c76b",
+      "finding_ids": [
+        "J00-04"
+      ],
+      "files_rechecked": [
+        "src/app/application/guest_native_q2_attack.c",
+        "src/app/application/guest_native_q2_attack_decisions.h"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-native-attack-custody-20261011",
+      "conclusion": "Native attack scopes use the existing common control lease."
+    },
+    {
+      "commit": "74f135d548fb817cfd3de0bd5ef77ad824b12940",
+      "source_tree": "298cb67243dc8e0a2ec87a953c152369fce51972",
+      "finding_ids": [
+        "16-002"
+      ],
+      "files_rechecked": [
+        "include/qa/math.h",
+        "src/app/frontend/q2_client_lerp.h",
+        "src/app/frontend/remote_prediction.c",
+        "src/movement/prediction.c",
+        "src/network/q3/prediction_scene.c",
+        "src/presentation/q3_native/packet.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-shared-angle-lerp-20261011",
+      "conclusion": "One angle interpolation implements explicit single-turn and normalized-delta source policies."
+    },
+    {
+      "commit": "f7a51d88cd4166e33872262eec36706c0126e13b",
+      "source_tree": "280de257a06d9b9e1ae33f31cde6ee0139eba3e9",
+      "finding_ids": [
+        "03-14"
+      ],
+      "files_rechecked": [
+        "include/qa/text.h",
+        "src/app/application/native_q3_chat.c",
+        "src/app/application/native_q3_clients.c",
+        "src/app/application/native_q3_session.c",
+        "src/app/application/native_q3_votes.c",
+        "src/app/frontend/network.c",
+        "src/app/frontend/network_browser.c",
+        "src/app/frontend/network_qw.c",
+        "src/app/frontend/unified_q3_client.c",
+        "src/bots/ai/source_chat.c",
+        "src/bots/ai/source_orders.c",
+        "src/bots/ai/source_team_policy.c",
+        "src/bots/ai/team.c",
+        "src/core/number.c",
+        "src/gameplay/modes/commands.c",
+        "src/gameplay/q1/console.c",
+        "src/gameplay/q3/client_commands.c",
+        "src/network/browser/q3.c",
+        "src/network/q3/pure.c",
+        "src/player_services/arena_progress.c",
+        "src/presentation/q3_native/client_info.c",
+        "src/presentation/q3_native/loading.c",
+        "src/presentation/q3_native/remote_frame.c",
+        "src/presentation/q3_native/selected_media.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-decimal-prefix-20261011",
+      "conclusion": "Private decimal-prefix readers use common explicit clamp/wrap/whitespace policies."
+    },
+    {
+      "commit": "75b695406f3118eea593a343aead8e65108919be",
+      "source_tree": "aaf50c7b3fd4f5a48ac9a3366c7f457f8af2383b",
+      "finding_ids": [
+        "J14-11",
+        "J23-08"
+      ],
+      "files_rechecked": [
+        "include/qa/random.h",
+        "src/app/frontend/map_events.c",
+        "src/gameplay/q2/internal.h",
+        "src/gameplay/q2/random.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-shared-mt-state-20261011",
+      "conclusion": "One MT19937 implementation preserves distinct original streams and save semantics."
+    },
+    {
+      "commit": "5e7cfddf5d05a3134b787f5896a3d264d7092f50",
+      "source_tree": "90dce64f877827e4831e5aae0e8e6dd72f7d1e14",
+      "finding_ids": [
+        "J00-12"
+      ],
+      "files_rechecked": [
+        "src/app/application/client_events.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-listener-custody-20261011",
+      "conclusion": "Listener snapshots borrow control leases instead of allocating per dispatch."
+    },
+    {
+      "commit": "9d616e7eaa92f01002a350617e1ab26172dc1130",
+      "source_tree": "1698ffbcb48fc5737600a215ed8d8e1b8ca395ed",
+      "finding_ids": [
+        "J00-13"
+      ],
+      "files_rechecked": [
+        "src/app/application/guest_native_q2_attack.c",
+        "src/app/application/guest_native_q2_attack_decisions.h",
+        "src/app/application/guest_native_q2_inventory.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-native-decision-descriptors-20261011",
+      "conclusion": "Native Q2 scalar decision descriptors resolve offsets and encodings once; reads remain live."
+    },
+    {
+      "commit": "683d5bce6eca414457a3ca37a50d1a435f672405",
+      "source_tree": "7fd04776ac831b663335bc153b83541842ef10d6",
+      "finding_ids": [
+        "26-12"
+      ],
+      "files_rechecked": [
+        "include/qa/world.h",
+        "src/compat/qc/instance.c",
+        "src/world/spatial.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-qc-shared-radius-20261011",
+      "conclusion": "QC radius enumeration uses shared world queries with immediate visitor and original source ordering."
+    },
+    {
+      "commit": "38ed1cb2ce61a9851ab0c7ed07afb0fe86f2e42c",
+      "source_tree": "19230d2d3312988b3fcb3689cde477cb5acfb686",
+      "finding_ids": [
+        "16-011"
+      ],
+      "files_rechecked": [
+        "include/qa/network_q2_session.h",
+        "src/app/frontend/remote_q2_client.c",
+        "src/app/frontend/remote_q2_presentation.c",
+        "src/app/frontend/remote_q2_private.h",
+        "src/network/q2/session_client.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-q2-ring-frame-command-20261011",
+      "conclusion": "Q2 frame and command delivery uses the ordered received ring, retaining WAIT/cancel custody."
+    },
+    {
+      "commit": "ffbdb58d138f089884d2529b1257d65001feeb3e",
+      "source_tree": "6dacad6fe2dfdb94e2deb12b59f5903af75890d2",
+      "finding_ids": [
+        "Q3NET-35-01",
+        "Q3NET-35-04",
+        "28-04",
+        "J24-05"
+      ],
+      "files_rechecked": [
+        "include/qa/binary.h",
+        "include/qa/math.h",
+        "src/gameplay/builtin/attacks.c",
+        "src/gameplay/q3/holdables.c",
+        "src/gameplay/q3/map/movers.c",
+        "src/gameplay/q3/player.c",
+        "src/network/q3/admission.c",
+        "src/network/q3/channel.c",
+        "src/network/q3/delta.c",
+        "src/network/q3/download_window.c",
+        "src/network/q3/prediction_scene.c",
+        "src/network/unified/composition.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-shared-boundary-math-20261011",
+      "conclusion": "Boundary binary/math and Unicode comparison readers use the common primitives."
+    },
+    {
+      "commit": "ed9a2152c0b32020fbcfa7daccdc3af80e692849",
+      "source_tree": "118fc89dea1598914d59742a841754a5d71865b1",
+      "finding_ids": [
+        "J14-01",
+        "J00-05",
+        "J00-06",
+        "04-013",
+        "04-014",
+        "04-015"
+      ],
+      "files_rechecked": [
+        "include/qa/input.h",
+        "include/qa/launch.h",
+        "src/app/application/equipment_presentation.c",
+        "src/app/application/network_q2.c",
+        "src/app/application/network_q2_frame.c",
+        "src/app/application/network_q2_hooks.c",
+        "src/app/frontend/bindings_ui.c",
+        "src/app/frontend/internal.h",
+        "src/input/internal.h",
+        "src/input/save.c",
+        "src/input/seat.c",
+        "src/session/configuration/draft.c",
+        "src/session/configuration/internal.h"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-retained-ui-source-identities-20261011",
+      "conclusion": "Equipment, bindings, drafts and native Q2 resources retain IDs or edit revisions."
+    },
+    {
+      "commit": "77aad804633eb1b40c105fb43e539e6697385465",
+      "source_tree": "d6c767129677ef492b85f24ce30c0359cca04bc2",
+      "finding_ids": [
+        "17-15",
+        "04-011"
+      ],
+      "files_rechecked": [
+        "include/qa/lightstyles.h",
+        "src/app/application/network.c",
+        "src/app/frontend/remote_unified_q1.c",
+        "src/app/frontend/remote_unified_q2.c",
+        "src/input/seat.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-ordered-lightstyle-state-20261011",
+      "conclusion": "Unified legacy light styles use one ordered retained table; physical binding comparison uses the common predicate."
+    },
+    {
+      "commit": "c37e2735e7866a3f5df9a266b6058b19f8384a77",
+      "source_tree": "a1a72993241816d58cd843dc82f4fe8ff781fd52",
+      "finding_ids": [
+        "J13-01",
+        "02-08"
+      ],
+      "files_rechecked": [
+        "include/qa/application_native_q2_delivery.h",
+        "include/qa/collision.h",
+        "include/qa/q3_host.h",
+        "include/qa/q3_host_collision.h",
+        "src/app/application/guest_qc_checkpoint.c",
+        "src/app/application/native_q2_delivery.c",
+        "src/app/application/portals.c",
+        "src/app/composition/recipe_save.c",
+        "src/app/frontend/particle_events.c",
+        "src/app/frontend/remote_prediction.c",
+        "src/compat/q3_host/collision_scene.c",
+        "src/compat/q3_host/game_checkpoint.c",
+        "src/compat/q3_host/game_portals.c",
+        "src/world/collision/geometry.c",
+        "tests/q1_gameplay_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-map-name-generation-20261011",
+      "conclusion": "BSP fingerprints are removed. Runtime uses load generations; saved adapters preserve old slots and bind names/current generations."
+    },
+    {
+      "commit": "a78624e264cf8fa5c4f3b8c599029de3b903a4f5",
+      "source_tree": "b30c0ec5b3f6bca4a1a244089cb48c21e327c75c",
+      "finding_ids": [
+        "28-02",
+        "J11-02",
+        "26-07",
+        "09-08"
+      ],
+      "files_rechecked": [
+        "include/qa/text.h",
+        "src/bots/ai/session.c",
+        "src/bots/ai/source_report.c",
+        "src/compat/native_host/q2.c",
+        "src/core/json.c",
+        "src/core/text.c",
+        "src/network/runtime/internal.h",
+        "src/network/runtime/session.c",
+        "src/network/unified/channel.c",
+        "src/network/unified/channel_internal.h",
+        "src/network/unified/session.c",
+        "src/network/unified/session_identity.c",
+        "src/network/unified/session_internal.h",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-single-boundary-codecs-20261011",
+      "conclusion": "Unified payload decode occurs once; JSON strict UTF-8, native info imports and bot integer output use common codecs."
+    },
+    {
+      "commit": "93b2440bc9651783de22199eb7165059f9c9a845",
+      "source_tree": "85d528dad59438de34bf7954f32cdd2b5000f3a1",
+      "finding_ids": [
+        "J13-04",
+        "J13-05",
+        "J13-06"
+      ],
+      "files_rechecked": [
+        "include/qa/math.h",
+        "include/qa/world.h",
+        "src/app/application/arsenal_guest.c",
+        "src/app/application/bots_navigation.c",
+        "src/app/application/control.c",
+        "src/app/application/control_frame.c",
+        "src/app/application/equipment_runtime.c",
+        "src/app/application/guest_native_q2_combat.c",
+        "src/app/application/guest_q3_combat.c",
+        "src/app/application/guest_q3_damage_scope.c",
+        "src/app/application/guest_q3_mod_actors_damage.c",
+        "src/app/application/guest_q3_mod_input.c",
+        "src/app/application/guest_qc_checkpoint.c",
+        "src/app/application/map.c",
+        "src/app/application/map_travel.c",
+        "src/app/application/native_q2_presentation.c",
+        "src/app/application/selected_q3_character.c",
+        "src/app/frontend/native_composition.c",
+        "src/app/frontend/network.c",
+        "src/app/frontend/remote_q2_prediction.c",
+        "src/app/frontend/remote_unified_events.c",
+        "src/app/frontend/remote_unified_q3.c",
+        "src/app/frontend/source_effects.c",
+        "src/audio/mixer.c",
+        "src/bots/ai/decision.c",
+        "src/bots/goals/map.c",
+        "src/bots/navigation/prediction.c",
+        "src/compat/native_host/world.c",
+        "src/compat/qc/machine.c",
+        "src/gameplay/combat.c",
+        "src/gameplay/q1/checkpoint/original.c",
+        "src/gameplay/q1/dragon.c",
+        "src/gameplay/q2/entities/rerelease.c",
+        "src/gameplay/q2/entities/target_effects.c",
+        "src/gameplay/q2/physics.c",
+        "src/gameplay/q2/save/original_monsters.c",
+        "src/gameplay/q3/player.c",
+        "src/movement/entity.c",
+        "src/movement/entity/internal.h",
+        "src/movement/q1/quakeworld.c",
+        "src/movement/q3/move.c",
+        "src/navigation/prediction.c",
+        "src/presentation/q3/render.c",
+        "src/render/scene/effects.c",
+        "src/render/scene/effects/shadows.c",
+        "src/render/scene/world/legacy/lighting.c",
+        "src/render/scene/world/q3/patch.c",
+        "src/world/body.c",
+        "src/world/checkpoint.c",
+        "src/world/collision/contents.c",
+        "src/world/collision/q1.c",
+        "src/world/collision/q2.c",
+        "src/world/collision/q3.c",
+        "src/world/collision/q3/model.c",
+        "src/world/collision/q3/shared.h",
+        "src/world/collision/world.c",
+        "src/world/collision/world_internal.h",
+        "src/world/spatial.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-equality-sector-20261011",
+      "conclusion": "Numeric vector/bounds equality and spatial sector selection are shared; unused attachment transport is deleted."
+    },
+    {
+      "commit": "f1436e9fcdcf0361bfd90b16c502bf42bbaa5d59",
+      "source_tree": "9d562e4eb3011035aad2a903e72446b1e946cf9a",
+      "finding_ids": [
+        "J11-03",
+        "17-16"
+      ],
+      "files_rechecked": [
+        "include/qa/common_parse.h",
+        "include/qa/text.h",
+        "src/app/frontend/source.c",
+        "src/core/common_parse.c",
+        "src/core/script/internal.h",
+        "src/core/script/lexer_memory.c",
+        "src/core/script/source.c",
+        "src/core/text.c",
+        "src/presentation/q3_native/mission_hud_menu.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-script-compression-20261011",
+      "conclusion": "Script and HUD compression share caller-owned storage; SystemInfo uses common pair and key primitives."
+    },
+    {
+      "commit": "413a776e6eaf7acdf38bc399c5b41a4839c4f576",
+      "source_tree": "9a26fbb9f8992169e97c4e169aeaad08778788db",
+      "finding_ids": [
+        "J11-05",
+        "J11-09"
+      ],
+      "files_rechecked": [
+        "include/qa/physics.h",
+        "src/content/vfs.c",
+        "src/content/vfs_private.h",
+        "src/movement/entity.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-shared-vfs-physics-20261011",
+      "conclusion": "VFS resource identity uses the shared ID index; entity clipping uses the common original-epsilon algorithm."
+    },
+    {
+      "commit": "bcb95cff9a7b748af7d2603ed9235532d6b797ee",
+      "source_tree": "61549e161d351a00e9f999b7b3649993a79db335",
+      "finding_ids": [
+        "J13-07"
+      ],
+      "files_rechecked": [
+        "src/network/q1/quakeworld.c",
+        "src/network/q1/qw_output.h",
+        "src/network/q1/qw_source.c",
+        "src/world/collision/internal.h",
+        "src/world/collision/q2.c",
+        "src/world/collision/q3.c",
+        "src/world/collision/world.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-shared-collision-qw-writers-20261011",
+      "conclusion": "Q2/Q3 medium clipping and coverage share caller scratch. QW writer portion of 27-02 is fixed; histories remain open."
+    },
+    {
+      "commit": "11620e3a73ee3b5d4b6c296198e91af968e173cb",
+      "source_tree": "4659e37c3be1da15496d5a121436deed2b6b15f1",
+      "finding_ids": [
+        "J14-09"
+      ],
+      "files_rechecked": [
+        "CMakeLists.txt",
+        "include/qa/platform_services.h",
+        "src/app/frontend/input_profile.c",
+        "src/app/frontend/install_locations.c",
+        "src/app/frontend/lifetime.c",
+        "src/app/frontend/persistence.c",
+        "src/app/frontend/resources.c",
+        "src/app/frontend/tools.c",
+        "src/platform/directories.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-platform-directories-20261011",
+      "conclusion": "One platform directory service replaces frontend SDL directory discovery; engine and SDL allocator ownership remain distinct."
     }
   ],
   "verification_limits": [

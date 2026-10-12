@@ -1100,7 +1100,7 @@ static bool entity_read(const qa_q3_game *game, uint32_t slot, qa_q3_entity *out
         trajectory(&value.pos, &entry->state.missile.trajectory);
         value.eFlags = word(entry->state.missile.flags);
         value.weapon = (int32_t)entry->state.missile.weapon;
-        value.generic1 = word(entry->state.missile.team);
+        value.generic1 = q3_team_number(game, entry->state.missile.team);
         break;
     case Q3_ACTOR_ITEM:
         trajectory(&value.pos, &entry->state.item.trajectory);
@@ -1543,10 +1543,14 @@ bool q3_wire_damage(qa_q3_game *game, const qa_damage_outcome *outcome, qa_error
     }
     bool target_client = qa_q3_native_client_slot(game, target, &target_slot, &ignored);
     bool same_team = false;
-    if (target_client && qa_game_type_has_allies(game->options.rules.game_type)) {
-        int32_t target_team = q3_source_team(game, target);
-        int32_t attacker_team = q3_source_team(game, attacker);
-        same_team = target_team == attacker_team;
+    if (q3_is_player(game, target) && qa_game_type_has_allies(game->options.rules.game_type)) {
+        qa_combat_state attacking;
+        qa_error team_error = {0};
+        if (!qa_combat_read(game->options.services.combat, attacker, &attacking, &team_error)) {
+            damage_attacker(game, target, attacker);
+            return true;
+        }
+        same_team = combat.team == attacking.team;
     }
     if (!row(game, target) || !current(game, attacker_slot, attacker)) return true;
     q3_wire_client *client = &game->wire->clients[attacker_slot];

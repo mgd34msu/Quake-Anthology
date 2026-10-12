@@ -225,26 +225,15 @@ bool q3_launch(qa_q3_game *game, qa_actor_id owner, qa_q3_weapon weapon, qa_vec3
         return true;
     }
     if (weapon == QA_Q3_W_PROX) {
-        int32_t team;
-        uint32_t owner_slot;
-        if (qa_q3_native_client_slot(game, owner, &owner_slot, NULL)) {
-            if (!game->options.hooks.source_team) {
-                q3_fail(error, "Q3 proximity launch has no source session team owner");
-                return q3_rollback_spawn(game, actor, error);
-            }
-            team = game->options.hooks.source_team(game->options.hooks.context, owner);
-        } else {
-            qa_combat_state combat;
-            if (!qa_combat_read(game->options.services.combat, owner, &combat, error))
-                return q3_rollback_spawn(game, actor, error);
-            team = (int32_t)combat.team;
-        }
+        qa_combat_state combat;
+        if (!qa_combat_read(game->options.services.combat, owner, &combat, error))
+            return q3_rollback_spawn(game, actor, error);
         entry = q3_actor_get(game, actor);
         if (!entry || entry->kind != Q3_ACTOR_MISSILE) {
             if (out) *out = (qa_actor_id){0};
             return true;
         }
-        entry->state.missile.team = (qa_team_id)team;
+        entry->state.missile.team = combat.team;
     }
     if (weapon == QA_Q3_W_GRAPPLE) {
         q3_actor *player = q3_actor_get(game, owner);
@@ -752,7 +741,6 @@ bool q3_missile_trigger(qa_q3_game *game, qa_actor_id actor, qa_actor_id player,
         return q3_fail(error, "Q3 armed proximity mine lost its actual trigger");
     qa_vec3 origin = trigger_source->position.base;
     uint32_t player_slot;
-    int32_t team = (int32_t)combat.team;
     if (qa_q3_native_client_slot(game, player, &player_slot, NULL)) {
         qa_q3_entity source_player;
         qa_q3_wire_visibility visibility;
@@ -760,16 +748,13 @@ bool q3_missile_trigger(qa_q3_game *game, qa_actor_id actor, qa_actor_id player,
             return false;
         body.origin = qa_v3(source_player.pos.base[0], source_player.pos.base[1],
                              source_player.pos.base[2]);
-        if (!game->options.hooks.source_team)
-            return q3_fail(error, "Q3 proximity trigger has no source session team owner");
-        team = game->options.hooks.source_team(game->options.hooks.context, player);
     }
     entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_MISSILE ||
         entry->state.missile.phase != Q3_MISSILE_PROX_ARMED)
         return true;
     if (qa_vec_length(qa_vec_sub(body.origin, origin)) > entry->state.missile.radius ||
-        (qa_game_type_has_allies(game->options.rules.game_type) && entry->state.missile.team == (qa_team_id)team))
+        (qa_game_type_has_allies(game->options.rules.game_type) && entry->state.missile.team == combat.team))
         return true;
     qa_trace_policy policy = qa_collision_default_policy(QA_GAME_Q3);
     policy.contents_mask = qa_collision_contents_mask(1, QA_GAME_Q3);

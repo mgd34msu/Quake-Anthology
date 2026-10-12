@@ -525,6 +525,16 @@ bool q3_trace(qa_q3_game *game, qa_vec3 start, qa_vec3 end, qa_actor_id pass, ui
     query.policy.contents_mask = qa_collision_contents_mask(mask, QA_GAME_Q3);
     return qa_world_trace(game->options.services.world, &query, trace, error);
 }
+int32_t q3_team_number(const qa_q3_game *game, qa_team_id team)
+{
+    if (!team) return 0;
+    qa_team_source_value teams[2] = {{.value = 1}, {.value = 2}};
+    if (game->options.hooks.source_team_mapping)
+        game->options.hooks.source_team_mapping(game->options.hooks.context, teams);
+    for (size_t i = 0; i < 2; ++i)
+        if (teams[i].team == team) return teams[i].value;
+    return 0;
+}
 bool q3_accuracy(qa_q3_game *game, qa_actor_id target, qa_actor_id attacker) {
     if (qa_actor_id_equal(target, attacker))
         return false;
@@ -540,18 +550,7 @@ bool q3_accuracy(qa_q3_game *game, qa_actor_id target, qa_actor_id attacker) {
         !qa_actors_get(qa_session_actors(game->options.services.session), attacker) ||
         !qa_actors_get(qa_session_actors(game->options.services.session), target)) return false;
     if (!qa_game_type_has_allies(game->options.rules.game_type)) return true;
-    uint32_t attacker_client, target_client;
-    bool native_attacker = q3_source_client_pointer(game, attacker, &attacker_client);
-    bool native_target = q3_source_client_pointer(game, target, &target_client);
-    if (native_attacker && native_target)
-        return game->clients[attacker_client].rule.session.team != game->clients[target_client].rule.session.team;
-    if (!native_attacker && !native_target) return ac.team != tc.team;
-    char native_team[32];
-    snprintf(native_team, sizeof(native_team), "q3-team:%i",
-        game->clients[native_attacker ? attacker_client : target_client].rule.session.team);
-    const char *foreign_team = qa_strings_cstr(qa_session_strings(game->options.services.session),
-                                                native_attacker ? tc.team : ac.team);
-    return !foreign_team || strcmp(native_team, foreign_team) != 0;
+    return ac.team != tc.team;
 }
 bool q3_is_player(qa_q3_game *game, qa_actor_id actor) {
     const q3_actor *entry = q3_actor_const(game, actor);

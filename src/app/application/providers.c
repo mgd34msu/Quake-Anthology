@@ -1133,6 +1133,17 @@ static int32_t q3_source_team(void *opaque, qa_actor_id actor)
     return session.team;
 }
 
+static void q3_source_team_mapping(void *opaque, qa_team_source_value out[2])
+{
+    application_provider *provider = opaque;
+    qa_application *app = provider->application;
+    qa_mode_view mode;
+    if (!app->modes || !app->primary_mode_ready ||
+        !qa_modes_read(app->modes, app->primary_mode, &mode, NULL)) return;
+    out[0].team = mode.rules.teams[0];
+    out[1].team = mode.rules.teams[1];
+}
+
 static bool q3_memory_debug_integer(void *opaque, int32_t *out, qa_error *error)
 {
     return application_native_q3_settings_integer_at(opaque, APPLICATION_Q3_SETTING_G_DEBUG_ALLOC, out, error);
@@ -1298,6 +1309,7 @@ static bool construct_q3(qa_application *application,
                   .source_world_init = application_native_q3_source_world_initialize,
                   .source_team_items = application_native_q3_source_team_items,
                   .source_team = q3_source_team,
+                  .source_team_mapping = q3_source_team_mapping,
                   .source_hurt_carrier = application_native_q3_team_check_hurt_carrier,
                   .source_frag_bonuses = application_native_q3_team_frag_bonuses,
                   .source_death_score = application_native_q3_source_death_score,
