@@ -1,5 +1,6 @@
 #include "runtime_import.h"
 #include "internal.h"
+#include "qa/id_index.h"
 
 typedef struct import_function {
     guest_runtime_function descriptor;
@@ -20,10 +21,12 @@ struct guest_runtime_imports {
     import_function *functions;
     import_row *rows;
     qa_native_guest_mapping *traps;
+    qa_id_index identities;
     size_t function_count, function_capacity, count, capacity, trap_count, trap_capacity;
     unsigned calls;
     bool detached, closing, restore_leased;
 };
+enum { IMPORT_FUNCTION_ID, IMPORT_FUNCTION_ADDRESS, IMPORT_FIRST_ROW };
 
 static bool same_target(const qa_native_target *a, const qa_native_target *b)
 { return a->abi == b->abi && a->arch == b->arch && a->os == b->os && a->pointer_bytes == b->pointer_bytes; }
@@ -119,9 +122,36 @@ static bool same_signature(const guest_abi_signature *a, const guest_abi_signatu
 }
 static import_function *function_at(const guest_runtime_imports *o, uint64_t id)
 {
-    for (size_t i = 0; o && i < o->function_count; ++i)
-        if (o->functions[i].descriptor.id == id) return &o->functions[i];
-    return NULL;
+    if (!o) return NULL;
+    qa_id_index_cursor cursor = qa_id_index_begin(&o->identities, IMPORT_FUNCTION_ID, id);
+    size_t row;
+    return qa_id_index_next(&o->identities, &cursor, &row) ? &o->functions[row] : NULL;
+}
+static import_function *function_address(const guest_runtime_imports *o, uint64_t address)
+{
+    qa_id_index_cursor cursor = qa_id_index_begin(&o->identities, IMPORT_FUNCTION_ADDRESS, address);
+    size_t row;
+    return qa_id_index_next(&o->identities, &cursor, &row) ? &o->functions[row] : NULL;
+}
+static import_row *first_row(const guest_runtime_imports *o, uint64_t id)
+{
+    qa_id_index_cursor cursor = qa_id_index_begin(&o->identities, IMPORT_FIRST_ROW, id);
+    size_t row;
+    return qa_id_index_next(&o->identities, &cursor, &row) ? &o->rows[row] : NULL;
+}
+static void function_append(guest_runtime_imports *o, import_function f)
+{
+    size_t row = o->function_count++;
+    o->functions[row] = f;
+    qa_id_index_insert(&o->identities, IMPORT_FUNCTION_ID, f.descriptor.id, row);
+    qa_id_index_insert(&o->identities, IMPORT_FUNCTION_ADDRESS, f.descriptor.address, row);
+}
+static void row_append(guest_runtime_imports *o, import_row r)
+{
+    size_t row = o->count++;
+    o->rows[row] = r;
+    if (r.id && !first_row(o, r.id))
+        qa_id_index_insert(&o->identities, IMPORT_FIRST_ROW, r.id, row);
 }
 static import_row *key_at(const guest_runtime_imports *o, const guest_runtime_import_key *key)
 {
@@ -172,8 +202,9 @@ static bool dispatch(void *context, qa_native_guest *guest, uint64_t id, qa_erro
     ++o->calls; ++f->reached;
     if (f->unresolved) {
         ++f->failed; f->last_failure = QA_ERROR_UNSUPPORTED; --o->calls;
-        for (size_t i = 0; i < o->count; ++i) if (o->rows[i].id == id) {
-            const guest_runtime_import_key *key = &o->rows[i].key;
+        import_row *row = first_row(o, id);
+        if (row) {
+            const guest_runtime_import_key *key = &row->key;
             qa_error_set(e, QA_ERROR_UNSUPPORTED, (size_t)id,
                 "unresolved native import scope %llu library %s symbol %s ordinal %u version %s",
                 (unsigned long long)key->scope, key->library, key->name ? key->name : "",
@@ -271,7 +302,8 @@ static bool add_row(guest_runtime_imports *o, const guest_runtime_import_key *ke
     import_row *row, qa_error *e)
 {
     if (!key_valid(key) || key_at(o, key)) return guest_fail(e, QA_ERROR_ARGUMENT, 0, "import symbol key is invalid or already registered");
-    if (!guest_grow((void **)&o->rows, &o->capacity, o->count + 1, sizeof(*o->rows), e)) return false;
+    if (!guest_grow((void **)&o->rows, &o->capacity, o->count + 1, sizeof(*o->rows), e) ||
+        !qa_id_index_reserve(&o->identities, 1, e)) return false;
     return key_copy(key, &row->key, e);
 }
 
@@ -294,19 +326,19 @@ bool guest_runtime_imports_function(guest_runtime_imports *o, const guest_runtim
         previous->descriptor.invoke = d->invoke; previous->descriptor.variadic = d->variadic;
         previous->descriptor.context = d->context; previous->bound = true; return true;
     }
-    for (size_t i = 0; i < o->function_count; ++i)
-        if (o->functions[i].descriptor.address == d->address)
-            return guest_fail(e, QA_ERROR_ARGUMENT, d->address, "import trap slot already belongs to another function");
+    if (function_address(o, d->address))
+        return guest_fail(e, QA_ERROR_ARGUMENT, d->address, "import trap slot already belongs to another function");
     import_row row = {.kind = GUEST_RUNTIME_IMPORT_FUNCTION, .id = d->id, .address = d->address, .bytes = 16};
     if (!add_row(o, key, &row, e)) return false;
     import_function f = {.descriptor = *d, .bound = true}; memset(&f.descriptor.signature, 0, sizeof(f.descriptor.signature));
     bool okay = signature_copy(&d->signature, &f.descriptor.signature, e) &&
         guest_abi_plan_create(&f.descriptor.signature, NULL, 0, NULL, &f.plan, e) &&
-        guest_grow((void **)&o->functions, &o->function_capacity, o->function_count + 1, sizeof(*o->functions), e);
+        guest_grow((void **)&o->functions, &o->function_capacity, o->function_count + 1, sizeof(*o->functions), e) &&
+        qa_id_index_reserve(&o->identities, 3, e);
     qa_native_guest_callback callback = {d->id, d->address, dispatch, o};
     if (okay) okay = qa_native_guest_bind(o->guest, &callback, e);
     if (!okay) { key_free(&row.key); signature_free(&f.descriptor.signature); guest_abi_plan_destroy(f.plan); return false; }
-    o->functions[o->function_count++] = f; o->rows[o->count++] = row; return true;
+    function_append(o, f); row_append(o, row); return true;
 }
 
 bool guest_runtime_imports_unresolved(guest_runtime_imports *o,
@@ -323,18 +355,18 @@ bool guest_runtime_imports_unresolved(guest_runtime_imports *o,
         if (!qa_native_guest_bind(o->guest, &callback, e)) return false;
         prior->bound = true; return true;
     }
-    for (size_t i = 0; i < o->function_count; ++i)
-        if (o->functions[i].descriptor.address == address)
-            return guest_fail(e, QA_ERROR_ARGUMENT, address, "unresolved trap already has a physical owner");
+    if (function_address(o, address))
+        return guest_fail(e, QA_ERROR_ARGUMENT, address, "unresolved trap already has a physical owner");
     import_row row = {.kind = GUEST_RUNTIME_IMPORT_UNRESOLVED, .id = id, .address = address, .bytes = 16};
     if (!add_row(o, key, &row, e)) return false;
-    if (!guest_grow((void **)&o->functions, &o->function_capacity, o->function_count + 1, sizeof(*o->functions), e)) {
+    if (!guest_grow((void **)&o->functions, &o->function_capacity, o->function_count + 1, sizeof(*o->functions), e) ||
+        !qa_id_index_reserve(&o->identities, 3, e)) {
         key_free(&row.key); return false;
     }
     qa_native_guest_callback callback = {id, address, dispatch, o};
     if (!qa_native_guest_bind(o->guest, &callback, e)) { key_free(&row.key); return false; }
     import_function f = {.descriptor = {.id = id, .address = address}, .bound = true, .unresolved = true};
-    o->functions[o->function_count++] = f; o->rows[o->count++] = row; return true;
+    function_append(o, f); row_append(o, row); return true;
 }
 
 bool guest_runtime_imports_data(guest_runtime_imports *o, const guest_runtime_import_key *key,
@@ -345,7 +377,7 @@ bool guest_runtime_imports_data(guest_runtime_imports *o, const guest_runtime_im
         return guest_fail(e, QA_ERROR_ARGUMENT, address, "import data requires its genuine readable extent");
     import_row row = {.kind = GUEST_RUNTIME_IMPORT_DATA, .address = address, .bytes = bytes};
     if (!add_row(o, key, &row, e)) return false;
-    o->rows[o->count++] = row; return true;
+    row_append(o, row); return true;
 }
 
 bool guest_runtime_imports_alias(guest_runtime_imports *o, const guest_runtime_import_key *key,
@@ -354,12 +386,13 @@ bool guest_runtime_imports_alias(guest_runtime_imports *o, const guest_runtime_i
     import_function *f = function_at(o, id);
     if (!declarations_mutable(o, e) || !f) return guest_fail(e, QA_ERROR_ARGUMENT, id, "import alias requires its actual physical function owner");
     if (!key_valid(key)) return guest_fail(e, QA_ERROR_ARGUMENT, id, "import alias key is invalid");
-    for (size_t i = 0; i < o->count; ++i) if (o->rows[i].id == id && o->rows[i].key.scope != key->scope)
+    import_row *first = first_row(o, id);
+    if (first && first->key.scope != key->scope)
         return guest_fail(e, QA_ERROR_ARGUMENT, id, "import alias cannot change its provider scope");
     import_row row = {.kind = f->unresolved ? GUEST_RUNTIME_IMPORT_UNRESOLVED : GUEST_RUNTIME_IMPORT_FUNCTION,
         .id = id, .address = f->descriptor.address, .bytes = 16};
     if (!add_row(o, key, &row, e)) return false;
-    o->rows[o->count++] = row; return true;
+    row_append(o, row); return true;
 }
 
 bool guest_runtime_imports_unbind(guest_runtime_imports *o, uint64_t id, qa_error *e)
@@ -402,6 +435,7 @@ void guest_runtime_imports_abandon(guest_runtime_imports **owner)
     for (size_t i = 0; i < o->function_count; ++i) {
         signature_free(&o->functions[i].descriptor.signature); guest_abi_plan_destroy(o->functions[i].plan);
     }
+    qa_id_index_destroy(&o->identities);
     free(o->functions); free(o->rows); free(o->traps); free(o); *owner = NULL;
 }
 bool guest_runtime_imports_destroy(guest_runtime_imports **owner, qa_error *e)
@@ -536,16 +570,16 @@ static bool current(const guest_runtime_imports *o, const qa_native_guest *guest
         if (!trap_bytes(guest, o->traps[i].base, (size_t)o->traps[i].bytes, e)) return false;
     }
     for (size_t i = 0; i < o->function_count; ++i) {
-        const import_function *f = &o->functions[i]; bool found = false;
-        for (size_t j = 0; j < guest->callback_count; ++j) {
-            const qa_native_guest_callback *b = &guest->callbacks[j];
-            if (b->id == f->descriptor.id || b->address == f->descriptor.address) {
-                if (!f->bound || b->id != f->descriptor.id || b->address != f->descriptor.address ||
-                    b->invoke != dispatch || b->context != o)
-                    return guest_fail(e, QA_ERROR_FORMAT, f->descriptor.id, "import callback physical binding differs");
-                found = true;
-            }
-        }
+        const import_function *f = &o->functions[i];
+        const qa_native_guest_callback *b = guest_callback_id(guest, f->descriptor.id);
+        const qa_native_guest_callback *address = guest_callback_address(guest, f->descriptor.address);
+        bool found = b || address;
+        if (b && address && b != address)
+            return guest_fail(e, QA_ERROR_FORMAT, f->descriptor.id, "import callback physical binding differs");
+        if (!b) b = address;
+        if (b && (!f->bound || b->id != f->descriptor.id || b->address != f->descriptor.address ||
+            b->invoke != dispatch || b->context != o))
+            return guest_fail(e, QA_ERROR_FORMAT, f->descriptor.id, "import callback physical binding differs");
         if (found != f->bound) return guest_fail(e, QA_ERROR_FORMAT, f->descriptor.id, "import bound receipt differs from lower callback registry");
     }
     for (size_t i = 0; i < o->count; ++i)
@@ -634,9 +668,9 @@ bool guest_runtime_imports_decode(qa_bytes bytes, const qa_native_target *target
             last == QA_OK && !f.last_failure_detail[0] && (f.unresolved ? !f.descriptor.variadic_id :
                 f.descriptor.signature.abi == target->abi &&
                 (f.descriptor.signature.variadic == (f.descriptor.variadic_id != 0)));
-        for (size_t j = 0; okay && j < o->function_count; ++j)
-            if (o->functions[j].descriptor.id == f.descriptor.id || o->functions[j].descriptor.address == f.descriptor.address) okay = false;
-        if (okay) o->functions[o->function_count++] = f;
+        if (okay) okay = !function_at(o, f.descriptor.id) && !function_address(o, f.descriptor.address) &&
+            qa_id_index_reserve(&o->identities, 2, e);
+        if (okay) function_append(o, f);
         else signature_free(&f.descriptor.signature);
     }
     count = 0;
@@ -655,16 +689,16 @@ bool guest_runtime_imports_decode(qa_bytes bytes, const qa_native_target *target
             import_function *f = function_at(o, r.id);
             okay = f && r.address == f->descriptor.address && r.bytes == 16 &&
                 f->unresolved == (r.kind == GUEST_RUNTIME_IMPORT_UNRESOLVED);
-            for (size_t j = 0; okay && j < o->count; ++j)
-                if (o->rows[j].id == r.id && o->rows[j].key.scope != r.key.scope) okay = false;
+            import_row *first = first_row(o, r.id);
+            if (first && first->key.scope != r.key.scope) okay = false;
         } else if (okay) okay = !r.id && r.bytes <= SIZE_MAX;
-        if (okay) o->rows[o->count++] = r; else key_free(&r.key);
+        if (okay && r.id && !first_row(o, r.id)) okay = qa_id_index_reserve(&o->identities, 1, e);
+        if (okay) row_append(o, r); else key_free(&r.key);
     }
     if (okay) okay = c.at == bytes.size;
     /* All encoded rows and aliases are qualified before any plan/resolver work. */
     for (size_t i = 0; okay && i < o->function_count; ++i) {
-        import_function *f = &o->functions[i]; bool has_row = false;
-        for (size_t j = 0; j < o->count; ++j) if (o->rows[j].kind != GUEST_RUNTIME_IMPORT_DATA && o->rows[j].id == f->descriptor.id) has_row = true;
+        import_function *f = &o->functions[i]; bool has_row = first_row(o, f->descriptor.id) != NULL;
         if (f->unresolved) { okay = has_row; continue; }
         guest_runtime_function d = {0};
         okay = has_row && resolve && resolve(context, f->descriptor.id, &d, e) && d.id == f->descriptor.id &&

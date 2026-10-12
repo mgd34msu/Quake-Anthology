@@ -274,23 +274,21 @@ static bool restore_callbacks(qa_source_save_io *io, qa_native_guest *guest,
     if (!count(io, &total, 16)) return false;
     if (total && !resolve)
         return guest_fail(io->error, QA_ERROR_FORMAT, io->offset, "native guest saved callbacks require their real resolver");
-    if (!guest_grow((void **)&guest->callbacks, &guest->callback_capacity,
-        total, sizeof(*guest->callbacks), io->error)) return false;
+    if (!guest_callbacks_reserve(guest, total, io->error)) return false;
     for (size_t i = 0; i < total; ++i) {
         uint64_t id = 0, address = 0;
         if (!qa_source_save_u64(io, &id) || !qa_source_save_u64(io, &address)) return false;
         if (!id) return guest_fail(io->error, QA_ERROR_FORMAT, io->offset, "native guest saved callback has no identity");
         if (!guest_range(guest, address, 1, QA_NATIVE_GUEST_EXECUTE, io->error)) return false;
-        for (size_t j = 0; j < guest->callback_count; ++j)
-            if (guest->callbacks[j].id == id || guest->callbacks[j].address == address)
-                return guest_fail(io->error, QA_ERROR_FORMAT, io->offset, "native guest saved callback identity repeats");
+        if (guest_callback_id(guest, id) || guest_callback_address(guest, address))
+            return guest_fail(io->error, QA_ERROR_FORMAT, io->offset, "native guest saved callback identity repeats");
         qa_native_guest_callback callback = {0};
         if (!resolve(context, id, address, &callback, io->error)) return false;
         if (callback.id != id || callback.address != address || !callback.invoke)
             return guest_fail(io->error, QA_ERROR_FORMAT, io->offset, "native guest callback resolver changed saved identity");
         if (guest->options.backend == QA_NATIVE_GUEST_HOST_X86_64 &&
             !guest_native_result(guest, guest_host_child_bind(guest->child, id, address, io->error), io->error)) return false;
-        guest->callbacks[guest->callback_count++] = callback;
+        guest_callback_append(guest, callback);
     }
     return true;
 }

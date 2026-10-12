@@ -228,6 +228,34 @@ bool guest_cpu_open(qa_native_guest *guest, bool fresh, qa_error *error)
     return true;
 }
 
+enum { CALLBACK_ID, CALLBACK_ADDRESS };
+static qa_native_guest_callback *callback_key(const qa_native_guest *guest, qa_string_id key, uint64_t id)
+{
+    if (!guest) return NULL;
+    qa_id_index_cursor cursor = qa_id_index_begin(&guest->callback_identities, key, id);
+    size_t row;
+    return qa_id_index_next(&guest->callback_identities, &cursor, &row) ? &guest->callbacks[row] : NULL;
+}
+qa_native_guest_callback *guest_callback_id(const qa_native_guest *guest, uint64_t id)
+{ return callback_key(guest, CALLBACK_ID, id); }
+qa_native_guest_callback *guest_callback_address(const qa_native_guest *guest, uint64_t address)
+{ return callback_key(guest, CALLBACK_ADDRESS, address); }
+bool guest_callbacks_reserve(qa_native_guest *guest, size_t additional, qa_error *error)
+{
+    if (additional > SIZE_MAX - guest->callback_count || additional > SIZE_MAX / 2)
+        return guest_fail(error, QA_ERROR_MEMORY, 0, "native callback table size overflows");
+    return guest_grow((void **)&guest->callbacks, &guest->callback_capacity,
+        guest->callback_count + additional, sizeof(*guest->callbacks), error) &&
+        qa_id_index_reserve(&guest->callback_identities, additional * 2, error);
+}
+void guest_callback_append(qa_native_guest *guest, qa_native_guest_callback callback)
+{
+    size_t row = guest->callback_count++;
+    guest->callbacks[row] = callback;
+    qa_id_index_insert(&guest->callback_identities, CALLBACK_ID, callback.id, row);
+    qa_id_index_insert(&guest->callback_identities, CALLBACK_ADDRESS, callback.address, row);
+}
+
 bool qa_native_guest_bind(qa_native_guest *guest, const qa_native_guest_callback *callback, qa_error *error)
 {
     if (!guest_mutable(guest, error)) return false;
@@ -243,15 +271,13 @@ bool qa_native_guest_bind(qa_native_guest *guest, const qa_native_guest_callback
     if (!callback || !callback->id || !callback->invoke)
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "native guest callback identity and actual dispatch are required");
     if (!guest_range(guest, callback->address, 1, QA_NATIVE_GUEST_EXECUTE, error)) return false;
-    for (size_t i = 0; i < guest->callback_count; ++i)
-        if (guest->callbacks[i].id == callback->id || guest->callbacks[i].address == callback->address)
-            return guest_fail(error, QA_ERROR_ARGUMENT, callback->address, "native guest callback identity or address is already bound");
-    if (!guest_grow((void **)&guest->callbacks, &guest->callback_capacity,
-        guest->callback_count + 1, sizeof(*guest->callbacks), error)) return false;
+    if (guest_callback_id(guest, callback->id) || guest_callback_address(guest, callback->address))
+        return guest_fail(error, QA_ERROR_ARGUMENT, callback->address, "native guest callback identity or address is already bound");
+    if (!guest_callbacks_reserve(guest, 1, error)) return false;
     if (guest->options.backend == QA_NATIVE_GUEST_HOST_X86_64 &&
         !guest_native_result(guest, guest_host_child_bind(guest->child,
             callback->id, callback->address, error), error)) return false;
-    guest->callbacks[guest->callback_count++] = *callback;
+    guest_callback_append(guest, *callback);
     return true;
 }
 
@@ -259,9 +285,15 @@ bool qa_native_guest_unbind(qa_native_guest *guest, uint64_t id, qa_error *error
 {
     if (!qa_native_guest_idle(guest))
         return guest_fail(error, QA_ERROR_ARGUMENT, id, "native guest callback retirement requires idle ownership");
-    for (size_t i = 0; i < guest->callback_count; ++i) if (guest->callbacks[i].id == id) {
+    qa_native_guest_callback *callback = guest_callback_id(guest, id);
+    if (callback) {
+        size_t i = (size_t)(callback - guest->callbacks);
         if (guest->options.backend == QA_NATIVE_GUEST_HOST_X86_64 &&
             !guest_native_result(guest, guest_host_child_unbind(guest->child, id, error), error)) return false;
+        qa_id_index_remove(&guest->callback_identities, CALLBACK_ID, id);
+        qa_id_index_remove(&guest->callback_identities, CALLBACK_ADDRESS, callback->address);
+        for (size_t row = 0; row < guest->callback_identities.count; ++row)
+            if (guest->callback_identities.entries[row].value > i) --guest->callback_identities.entries[row].value;
         memmove(guest->callbacks + i, guest->callbacks + i + 1,
             (--guest->callback_count - i) * sizeof(*guest->callbacks));
         return true;
@@ -322,10 +354,8 @@ static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
         !guest_range(guest, start, 1, QA_NATIVE_GUEST_EXECUTE, error))
         return guest_fail(error, QA_ERROR_ARGUMENT, start, "native guest execution requires a genuine executable entry and bounded continuation");
     if (bypass) {
-        bool found = false;
-        for (size_t i = 0; i < guest->callback_count; ++i)
-            if (guest->callbacks[i].id == bypass && guest->callbacks[i].address == start) found = true;
-        if (!found) return guest_fail(error, QA_ERROR_ARGUMENT, bypass,
+        qa_native_guest_callback *bound = guest_callback_id(guest, bypass);
+        if (!bound || bound->address != start) return guest_fail(error, QA_ERROR_ARGUMENT, bypass,
             "native original invocation requires its actual bound entry");
     }
     guest_run frame = {.parent = guest->run, .remaining = budget, .bypass = bypass};
@@ -341,9 +371,8 @@ static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
             }
         if (!okay || !guest_range(guest, instruction, 1, QA_NATIVE_GUEST_EXECUTE, error)) { okay = false; break; }
         for (guest_run *owner = &frame; owner; owner = owner->parent) --owner->remaining;
-        qa_native_guest_callback callback = {0};
-        for (size_t i = 0; i < guest->callback_count; ++i)
-            if (guest->callbacks[i].address == instruction) { callback = guest->callbacks[i]; break; }
+        qa_native_guest_callback *bound = guest_callback_address(guest, instruction);
+        qa_native_guest_callback callback = bound ? *bound : (qa_native_guest_callback){0};
         if (callback.invoke && callback.id == frame.bypass) {
             frame.bypass = 0;
             callback = (qa_native_guest_callback){0};

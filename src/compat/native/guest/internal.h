@@ -4,6 +4,7 @@
 #include "qa/native_guest.h"
 #include "qa/binary.h"
 #include "qa/pool.h"
+#include "qa/id_index.h"
 #include "host_child.h"
 #include <unicorn/unicorn.h>
 #include <limits.h>
@@ -60,6 +61,7 @@ struct qa_native_guest {
     guest_allocation *allocations;
     size_t allocation_count, allocation_capacity;
     qa_native_guest_callback *callbacks;
+    qa_id_index callback_identities;
     size_t callback_count, callback_capacity;
     uint64_t next_mapping, next_backing, allocation_cursor;
     guest_run *run;
@@ -84,6 +86,10 @@ bool guest_uc(qa_native_guest *, uc_err, qa_error *);
 bool guest_grow(void **, size_t *, size_t, size_t, qa_error *);
 bool guest_ready(const qa_native_guest *, qa_error *);
 bool guest_mutable(const qa_native_guest *, qa_error *);
+qa_native_guest_callback *guest_callback_id(const qa_native_guest *, uint64_t);
+qa_native_guest_callback *guest_callback_address(const qa_native_guest *, uint64_t);
+bool guest_callbacks_reserve(qa_native_guest *, size_t, qa_error *);
+void guest_callback_append(qa_native_guest *, qa_native_guest_callback);
 guest_backing *guest_backing_at(const qa_native_guest *, uint64_t);
 qa_native_guest_mapping *guest_mapping(const qa_native_guest *, uint64_t);
 bool guest_range(const qa_native_guest *, uint64_t, size_t, uint32_t, qa_error *);

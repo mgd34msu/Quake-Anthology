@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "7ad491c5de5c55e06e03139aba7920b67bc08ddf",
+  "verified_main": "8eb53bf3acbee017b06e4847f84c5e88dc173ed7",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 239,
-    "open_source_observation": 132,
+    "fixed_source_build_core": 240,
+    "open_source_observation": 131,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -35594,8 +35594,9 @@
       "severity": "high",
       "job": "31",
       "area": "render_presentation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "8eb53bf3acbee017b06e4847f84c5e88dc173ed7"
     },
     {
       "id": "31-02",
@@ -43492,6 +43493,43 @@
       ],
       "record_directory": "/tmp/qa-ta3196-guest-scratch-and-sky-admission-20261012-v1",
       "conclusion": "Listed native temporary file/stream/conversion staging uses scoped common guest scratch; Q1 view sky reads immutable admission metadata. Full snapshots, conversion zeroing and partial receipts remain in order. Normal build and seven core suites passed. Exhaustive nested scratch capacity and runtime speed are not claimed."
+    },
+    {
+      "commit": "8eb53bf3acbee017b06e4847f84c5e88dc173ed7",
+      "source_tree": "c2e2f6cb9158a65fa0b80c0a82fd7855264a8ae6",
+      "finding_ids": [
+        "31-01"
+      ],
+      "files_rechecked": [
+        "include/qa/q3_presentation.h",
+        "src/app/frontend/component_scene.c",
+        "src/app/frontend/equipment_q3.c",
+        "src/app/frontend/q3_render_policy.c",
+        "src/app/frontend/remote_q3_runtime.c",
+        "src/app/frontend/remote_unified_q3.c",
+        "src/app/frontend/selected_effects.c",
+        "src/app/frontend/source.c",
+        "src/app/frontend/unified_q3_runtime.c",
+        "src/presentation/q3/core.c",
+        "src/presentation/q3/internal.h",
+        "src/presentation/q3/render.c",
+        "src/presentation/q3/scene.c",
+        "src/presentation/q3/source_scene_bank.c",
+        "src/presentation/q3/source_scene_bank_private.h"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-one-q3-scene-bank-20261012-v1",
+      "conclusion": "Q3 scene admission uses the existing scene-bank implementation for source and non-source backends; private growable scene arrays are deleted. Active conversion, portal scratch and component packets use frame storage. Source/cell asset custody, scene limits and restoration policies were checked. Normal build and seven core suites passed; component picture receipt growth remains open."
     }
   ],
   "verification_limits": [

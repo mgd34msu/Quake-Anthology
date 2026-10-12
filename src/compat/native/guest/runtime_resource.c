@@ -1,5 +1,6 @@
 #include "runtime_resource.h"
 #include "qa/binary.h"
+#include "qa/id_index.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -10,9 +11,11 @@ typedef struct runtime_file {
 } runtime_file;
 struct guest_runtime_resources {
     runtime_file *files;
+    qa_id_index identities;
     size_t count, capacity;
     bool busy, closing, detached, failed, provisional;
 };
+enum { RESOURCE_FILE_ID, RESOURCE_CAPABILITY_ID };
 
 static bool fail(qa_error *e, qa_status code, uint64_t id, const char *message)
 { qa_error_set(e, code, (size_t)id, "%s", message); return false; }
@@ -38,10 +41,23 @@ bool guest_runtime_resources_idle(const guest_runtime_resources *o)
 size_t guest_runtime_resources_count(const guest_runtime_resources *o)
 { return o ? o->count : 0; }
 
-static runtime_file *file_at(guest_runtime_resources *o, uint64_t id)
+static runtime_file *file_key(guest_runtime_resources *o, qa_string_id key, uint64_t id)
 {
-    for (size_t i = 0; o && i < o->count; ++i) if (o->files[i].view.id == id) return &o->files[i];
-    return NULL;
+    if (!o) return NULL;
+    qa_id_index_cursor cursor = qa_id_index_begin(&o->identities, key, id);
+    size_t row;
+    return qa_id_index_next(&o->identities, &cursor, &row) ? &o->files[row] : NULL;
+}
+static runtime_file *file_at(guest_runtime_resources *o, uint64_t id)
+{ return file_key(o, RESOURCE_FILE_ID, id); }
+static runtime_file *capability_at(guest_runtime_resources *o, uint64_t id)
+{ return file_key(o, RESOURCE_CAPABILITY_ID, id); }
+static void file_append(guest_runtime_resources *o, runtime_file file)
+{
+    size_t row = o->count++;
+    o->files[row] = file;
+    qa_id_index_insert(&o->identities, RESOURCE_FILE_ID, file.view.id, row);
+    qa_id_index_insert(&o->identities, RESOURCE_CAPABILITY_ID, file.view.capability, row);
 }
 
 bool guest_runtime_resources_file(guest_runtime_resources *o, uint64_t id,
@@ -49,9 +65,8 @@ bool guest_runtime_resources_file(guest_runtime_resources *o, uint64_t id,
 {
     if (!guest_runtime_resources_idle(o) || o->provisional || !id || !name || !capability_valid(c) || file_at(o, id))
         return fail(e, QA_ERROR_ARGUMENT, id, "resource registration needs a unique actual file capability");
-    for (size_t i = 0; i < o->count; ++i)
-        if (o->files[i].view.capability == c->id)
-            return fail(e, QA_ERROR_ARGUMENT, c->id, "file capability already has a close owner");
+    if (capability_at(o, c->id))
+        return fail(e, QA_ERROR_ARGUMENT, c->id, "file capability already has a close owner");
     size_t length = strlen(name);
     if (length == SIZE_MAX || o->count == SIZE_MAX / sizeof(*o->files))
         return fail(e, QA_ERROR_MEMORY, id, "resource registry extent overflows");
@@ -65,8 +80,9 @@ bool guest_runtime_resources_file(guest_runtime_resources *o, uint64_t id,
         if (!p) { free(copy); return fail(e, QA_ERROR_MEMORY, id, "growing resource registry"); }
         o->files = p; o->capacity = n;
     }
-    o->files[o->count++] = (runtime_file){
-        {id, c->id, 0, c->mode, creation, copy, false}, *c, true};
+    if (!qa_id_index_reserve(&o->identities, 2, e)) { free(copy); return false; }
+    file_append(o, (runtime_file){
+        {id, c->id, 0, c->mode, creation, copy, false}, *c, true});
     return true;
 }
 
@@ -184,6 +200,10 @@ bool guest_runtime_resources_remove_closed(guest_runtime_resources *o, uint64_t 
     if (!guest_runtime_resources_idle(o) || o->provisional || !f || !f->view.closed || f->owns_capability)
         return fail(e, QA_ERROR_ARGUMENT, id, "resource removal requires its genuine completed close receipt");
     size_t index = (size_t)(f - o->files);
+    qa_id_index_remove(&o->identities, RESOURCE_FILE_ID, f->view.id);
+    qa_id_index_remove(&o->identities, RESOURCE_CAPABILITY_ID, f->view.capability);
+    for (size_t i = 0; i < o->identities.count; ++i)
+        if (o->identities.entries[i].value > index) --o->identities.entries[i].value;
     free((void *)f->view.name);
     memmove(f, f + 1, (o->count - index - 1) * sizeof(*f));
     --o->count; return true;
@@ -194,6 +214,7 @@ void guest_runtime_resources_abandon(guest_runtime_resources **owner)
     if (!owner || !*owner || (*owner)->busy) return;
     guest_runtime_resources *o = *owner;
     for (size_t i = 0; i < o->count; ++i) free((void *)o->files[i].view.name);
+    qa_id_index_destroy(&o->identities);
     free(o->files); free(o); *owner = NULL;
 }
 
@@ -249,7 +270,7 @@ bool guest_runtime_resources_decode(qa_bytes bytes, guest_runtime_resources **ou
     o->files = count ? calloc((size_t)count, sizeof(*o->files)) : NULL;
     if (count && !o->files) { free(o); return fail(e, QA_ERROR_MEMORY, 0, "owning detached resource rows"); }
     o->capacity = (size_t)count;
-    size_t at = 12; bool okay = true;
+    size_t at = 12; bool okay = qa_id_index_reserve(&o->identities, (size_t)count * 2, e);
     for (size_t i = 0; okay && i < count; ++i) {
         if (bytes.size - at < 48) { okay = false; break; }
         guest_runtime_file_view v = {qa_load_u64le(bytes.data + at), qa_load_u64le(bytes.data + at + 8),
@@ -259,13 +280,12 @@ bool guest_runtime_resources_decode(qa_bytes bytes, guest_runtime_resources **ou
         at += 48;
         if (!v.id || !v.capability || v.mode & ~3u || closed > 1 ||
             length >= SIZE_MAX || length > bytes.size - at || memchr(bytes.data + at, 0, (size_t)length)) { okay = false; break; }
-        for (size_t j = 0; j < o->count; ++j)
-            if (o->files[j].view.id == v.id || o->files[j].view.capability == v.capability) okay = false;
+        if (file_at(o, v.id) || capability_at(o, v.capability)) okay = false;
         if (!okay) break;
         char *name = malloc((size_t)length + 1);
         if (!name) { fail(e, QA_ERROR_MEMORY, at, "owning restored resource name"); okay = false; break; }
         memcpy(name, bytes.data + at, (size_t)length); name[length] = 0; at += (size_t)length;
-        v.name = name; v.closed = closed != 0; o->files[o->count++].view = v;
+        v.name = name; v.closed = closed != 0; file_append(o, (runtime_file){.view = v});
     }
     if (!okay || at != bytes.size) {
         guest_runtime_resources_abandon(&o);
@@ -295,12 +315,6 @@ bool guest_runtime_resources_rebind(guest_runtime_resources *o,
         o->detached = false; o->provisional = true;
     }
     o->busy = false; free(rows); return okay;
-}
-
-static runtime_file *capability_at(guest_runtime_resources *o, uint64_t id)
-{
-    for (size_t i = 0; o && i < o->count; ++i) if (o->files[i].view.capability == id) return &o->files[i];
-    return NULL;
 }
 
 static bool same_capability(const guest_runtime_file_capability *a,

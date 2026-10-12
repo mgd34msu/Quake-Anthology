@@ -153,6 +153,7 @@ bool qa_native_guest_destroy(qa_native_guest **owner, qa_error *error)
     for (size_t i = 0; i < guest->backing_count; ++i)
         if (!guest->backings[i].child_owned) free(guest->backings[i].data);
     heap_destroy(guest->heap);
+    qa_id_index_destroy(&guest->callback_identities);
     free(guest->backings); free(guest->mappings); free(guest->allocations); free(guest->callbacks);
     qa_arena_destroy(&guest->scratch_storage);
     free(guest); *owner = NULL;

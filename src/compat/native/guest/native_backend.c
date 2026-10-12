@@ -152,10 +152,9 @@ static bool import(void *context, guest_host_child *child, uint64_t id,
     qa_native_guest *guest = context;
     if (guest->child != child || !guest->run || guest->callback_depth == UINT_MAX)
         return guest_fail(error, QA_ERROR_ARGUMENT, id, "native import lost its actual stopped owner");
-    qa_native_guest_callback callback = {0};
-    for (size_t i = 0; i < guest->callback_count; ++i)
-        if (guest->callbacks[i].id == id && guest->callbacks[i].address == state->instruction)
-            callback = guest->callbacks[i];
+    qa_native_guest_callback *bound = guest_callback_id(guest, id);
+    qa_native_guest_callback callback = bound && bound->address == state->instruction ?
+        *bound : (qa_native_guest_callback){0};
     if (!callback.invoke)
         return guest_fail(error, QA_ERROR_NOT_FOUND, id, "native import has no actual saved callback");
     guest_dispatch_started(guest);
@@ -253,10 +252,8 @@ bool qa_native_guest_run_native(qa_native_guest *guest, uint64_t start,
 bool guest_native_run_original(qa_native_guest *guest, uint64_t id,
     uint64_t start, uint64_t stop, qa_error *error)
 {
-    bool bound = false;
-    for (size_t i = 0; guest && i < guest->callback_count; ++i)
-        if (guest->callbacks[i].id == id && guest->callbacks[i].address == start) bound = true;
-    return bound ? native_run(guest, start, stop, id, NULL, NULL, NULL, error) :
+    qa_native_guest_callback *bound = guest_callback_id(guest, id);
+    return bound && bound->address == start ? native_run(guest, start, stop, id, NULL, NULL, NULL, error) :
         guest_fail(error, QA_ERROR_ARGUMENT, id, "native original requires its real bound entry");
 }
 bool guest_native_run_program(qa_native_guest *guest, uint64_t start,
