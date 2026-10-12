@@ -42,14 +42,18 @@ typedef struct native_actor_touch {
     struct native_actor_touch *next;
     qa_native_host_source_touch *ticket;
     qa_native_address scratch;
+    size_t storage_slot;
 } native_actor_touch;
+typedef union native_actor_storage {
+    native_source_actor actor;
+    native_actor_touch touch;
+} native_actor_storage;
 struct application_native_q2_source_actors {
     struct application_native_q2 *engine;
     native_source_actor *actors;
     qa_actor_index actor_index;
     qa_unified_frame_lease *actor_storage;
     qa_pool actor_pool;
-    size_t actor_chunk;
     uint32_t velocity,ground;
     uint32_t offsets[NATIVE_ACTOR_CALLBACKS];
     bool present[NATIVE_ACTOR_CALLBACKS],rerelease,suspended;
@@ -69,6 +73,28 @@ static bool scratch_close(struct application_native_q2_source_actors *o,native_a
     if(!qa_native_host_source_touch_close(&call->ticket,e))return false;
     if(call->scratch&&!qa_native_free(instance(o),call->scratch,e))return false;
     call->scratch=0;return true;
+}
+static native_actor_storage *storage_take(struct application_native_q2_source_actors *o,
+    size_t *slot,qa_error *e)
+{
+    if(o->actor_pool.head==SIZE_MAX&&!qa_pool_extend(&o->actor_pool,
+        qa_unified_frame_lease_arena(o->actor_storage),1,e))return NULL;
+    return qa_pool_take(&o->actor_pool,slot);
+}
+static native_actor_touch *touch_take(struct application_native_q2_source_actors *o,qa_error *e)
+{
+    size_t slot;native_actor_storage *storage=storage_take(o,&slot,e);
+    if(!storage)return NULL;
+    native_actor_touch *call=&storage->touch;
+    *call=(native_actor_touch){.next=o->touches,.storage_slot=slot};
+    o->touches=call;return call;
+}
+static void touch_release(struct application_native_q2_source_actors *o,native_actor_touch *call)
+{
+    native_actor_touch **link=&o->touches;
+    while(*link!=call)link=&(*link)->next;
+    *link=call->next;
+    qa_pool_release(&o->actor_pool,call->storage_slot);
 }
 static native_source_actor *actor_find(struct application_native_q2_source_actors *o,qa_actor_id actor)
 {
@@ -394,12 +420,11 @@ static bool prepare(struct application_native_q2 *n,qa_error *e)
     o->rerelease=qa_json_string_equal(d,qa_json_get(d,callbacks,"abi"),"q2-rerelease");
     memcpy(o->offsets,offsets,sizeof(offsets));memcpy(o->present,present,sizeof(present));n->source_actors=o;
     const qa_actor_registry *registry=qa_session_actors(n->provider->application->session);
-    o->actor_chunk=qa_actors_capacity(registry);
     o->actor_storage=application_control_storage_acquire(n->provider->application,e);
     qa_arena *arena=o->actor_storage?qa_unified_frame_lease_arena(o->actor_storage):NULL;
     if(!arena||!qa_actor_index_create(&o->actor_index,registry,arena,e)||
-        !qa_pool_prepare(&o->actor_pool,arena,o->actor_chunk,
-            sizeof(native_source_actor),_Alignof(native_source_actor),e))return false;
+        !qa_pool_prepare(&o->actor_pool,arena,qa_actors_capacity(registry),
+            sizeof(native_actor_storage),_Alignof(native_actor_storage),e))return false;
     if(!application_native_q2_source_combat_state_create(n,&o->combat,e))return false;
     if(!application_native_q2_source_damage_create(n,o->combat,o->velocity,&o->damage,e))return false;
     o->ready=true;
@@ -451,9 +476,8 @@ static bool actor_touch(native_source_actor *r,const qa_touch_contact *contact,b
     while(entry&&entry->address!=target) entry=entry->next;
     if(!entry||!entry->binding||entry->operation!=Q3_MOD_TOUCH)
         return application_fail(e,QA_ERROR_ARGUMENT,"Declared touch lost its retained original entry");
-    native_actor_touch *call=calloc(1,sizeof(*call));
-    if(!call) return application_fail(e,QA_ERROR_MEMORY,"Retaining declared native touch scratch");
-    call->next=o->touches;o->touches=call;
+    native_actor_touch *call=touch_take(o,e);
+    if(!call)return false;
     ++o->calls;++n->calls;
     bool ok=qa_native_host_source_touch_prepare(n->provider->state.native.host,o->rerelease,contact,&call->ticket,e);
     native_touch_execution execution={.actor=r,.entry=entry,.ticket=call->ticket,.other=contact->other};
@@ -461,11 +485,8 @@ static bool actor_touch(native_source_actor *r,const qa_touch_contact *contact,b
     --n->calls;--o->calls;
     if(ok) *handled=true;
     qa_error cleanup={0};
-    if(scratch_close(o,call,&cleanup)) {
-        native_actor_touch **link=&o->touches;
-        while(*link!=call) link=&(*link)->next;
-        *link=call->next;free(call);
-    } else {if(ok&&e) *e=cleanup;ok=false;}
+    if(scratch_close(o,call,&cleanup))touch_release(o,call);
+    else {if(ok&&e) *e=cleanup;ok=false;}
     return ok;
 }
 bool application_native_q2_source_actors_touch(struct application_native_q2 *n,
@@ -531,9 +552,8 @@ static bool canonical_reaction_body(void *context,const application_q3_mod_actor
         return application_fail(e,QA_ERROR_FORMAT,"Native reaction damage exceeds its declared int32 ABI");
     if(!address_for(o,death?request->source.die.attacker:request->source.pain.attacker,&attacker,e)||
         (death&&!address_for(o,request->source.die.inflictor,&inflictor,e)))return false;
-    native_actor_touch *scratch=calloc(1,sizeof(*scratch));
-    if(!scratch)return application_fail(e,QA_ERROR_MEMORY,"Retaining native reaction ABI scratch");
-    scratch->next=o->touches;o->touches=scratch;
+    native_actor_touch *scratch=touch_take(o,e);
+    if(!scratch)return false;
     bool ok=true;uint8_t raw[15]={0};size_t bytes=death?12:0;
     if(death){qa_vec3 point=request->source.die.point;
         ok=qa_vec_finite(point)||application_fail(e,QA_ERROR_FORMAT,"Native death reaction has a nonfinite point");
@@ -554,10 +574,8 @@ static bool canonical_reaction_body(void *context,const application_q3_mod_actor
     if(o->rerelease)call->arguments[call->count++]=(qa_native_value){.type=QA_NATIVE_ADDRESS,.as.address=scratch->scratch+(death?12:0)};
     if(ok)ok=application_native_q2_callbacks_transfer(o->engine->callbacks,canonical_reaction_original,call,e);
     if(ok)*handled=!call->cancelled;
-    qa_error cleanup={0};if(scratch_close(o,scratch,&cleanup)){
-        native_actor_touch **link=&o->touches;while(*link!=scratch)link=&(*link)->next;
-        *link=scratch->next;free(scratch);
-    }else{if(ok&&e)*e=cleanup;ok=false;}
+    qa_error cleanup={0};if(scratch_close(o,scratch,&cleanup))touch_release(o,scratch);
+    else{if(ok&&e)*e=cleanup;ok=false;}
     return ok;
 }
 static bool modified_reaction(native_actor_call *call,const application_q3_mod_actor_request *request,
@@ -630,10 +648,9 @@ bool application_native_q2_source_actors_admit(struct application_native_q2 *n,u
     if(!actors_collect(o,e))return false;
     native_source_actor *r=actor_find(o,actor);
     if(!r){
-        if(o->actor_pool.head==SIZE_MAX&&!qa_pool_extend(&o->actor_pool,
-            qa_unified_frame_lease_arena(o->actor_storage),o->actor_chunk,e))return false;
-        size_t storage_slot;r=qa_pool_take(&o->actor_pool,&storage_slot);
-        if(!r)return application_fail(e,QA_ERROR_MEMORY,"Retaining declared native body callback");
+        size_t storage_slot;native_actor_storage *storage=storage_take(o,&storage_slot,e);
+        if(!storage)return false;
+        r=&storage->actor;
         *r=(native_source_actor){.owner=o,.storage_slot=storage_slot,.actor=actor,.slot=slot,
             .next=o->actors,.previous=&o->actors};
         if(r->next)r->next->previous=&r->next;
@@ -680,7 +697,7 @@ bool application_native_q2_source_actors_suspend(struct application_native_q2 *n
     while(o->touches) {
         native_actor_touch *call=o->touches;
         if(!scratch_close(o,call,e)) return false;
-        o->touches=call->next;free(call);
+        touch_release(o,call);
     }
     o->suspended=true;
     for(native_source_actor *r=o->actors;r;r=r->next) if(!unwatch(r,e)) return false;

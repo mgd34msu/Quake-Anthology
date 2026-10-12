@@ -1008,20 +1008,18 @@ bool qa_native_host_q2_trace_encode(qa_native_host *host,const qa_trace_result *
     return encode_trace(host,trace,0,&result,error);
 }
 
-struct qa_native_host_source_touch {
-    qa_native_host *host;
-    qa_native_address scratch;
-    qa_native_value arguments[4];
-    bool prepared;
-};
-
 bool qa_native_host_source_touch_close(qa_native_host_source_touch **slot,qa_error *error)
 {
     if(!slot) return native_host_fail(error,QA_ERROR_ARGUMENT,0,"Native touch requires its retained ticket slot");
     qa_native_host_source_touch *touch=*slot;
     if(!touch) return true;
-    if(touch->scratch&&!qa_native_free(touch->host->instance,touch->scratch,error)) return false;
-    free(touch);*slot=NULL;return true;
+    qa_native_host *host=touch->host;
+    if(host->callback_depth>touch->callback_depth||
+        (!touch->active_call&&qa_native_active(host->instance)))
+        return native_host_fail(error,QA_ERROR_ARGUMENT,0,"Native touch scratch is still borrowed by its entered source call");
+    if(touch->scratch&&(host->destroying||host->restoring||qa_native_terminal(host->instance)))
+        return native_host_fail(error,QA_ERROR_ARGUMENT,0,"Native touch scratch owner is terminal or restoring");
+    native_host_call_scratch_release(host,touch->slot);*slot=NULL;return true;
 }
 
 bool qa_native_host_source_touch_prepare(qa_native_host *host,bool rerelease,
@@ -1057,10 +1055,10 @@ bool qa_native_host_source_touch_prepare(qa_native_host *host,bool rerelease,
             qa_store_u32le(bytes+40,(uint32_t)contact->surface.value);
         }
     }
-    qa_native_host_source_touch *touch=calloc(1,sizeof(*touch));
-    if(!touch) return native_host_fail(error,QA_ERROR_MEMORY,0,"Retaining native source touch arguments");
-    touch->host=host;*out=touch;
-    if(!qa_native_allocate(host->instance,size,INT32_MIN+10,&touch->scratch,error)||
+    qa_native_host_source_touch *touch=native_host_call_scratch_acquire(host,error);
+    if(!touch) return false;
+    *out=touch;
+    if(!native_host_call_scratch_buffer(touch,error)||
         !native_host_write(host,touch->scratch,bytes,size,error)) return false;
     touch->arguments[0]=(qa_native_value){.type=QA_NATIVE_ADDRESS,.as.address=self};
     touch->arguments[1]=(qa_native_value){.type=QA_NATIVE_ADDRESS,.as.address=other};

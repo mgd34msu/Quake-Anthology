@@ -27,6 +27,15 @@ typedef struct native_host_string_buffer {
     size_t capacity;
 } native_host_string_buffer;
 
+struct qa_native_host_source_touch {
+    qa_native_host *host;
+    qa_native_address scratch;
+    qa_native_value arguments[4];
+    size_t slot;
+    unsigned callback_depth;
+    bool active_call, prepared;
+};
+
 typedef struct native_host_cvar_record {
     char *name;
     qa_string_id name_id;
@@ -239,6 +248,8 @@ bool native_host_pmove(qa_native_host *, qa_native_address, qa_error *);
 bool native_host_movement_prepare(qa_native_host *, qa_error *);
 void native_host_movement_dispose(qa_native_host *);
 bool native_host_call_scratch_prepare(qa_native_host *, qa_error *);
+qa_native_host_source_touch *native_host_call_scratch_acquire(qa_native_host *, qa_error *);
+bool native_host_call_scratch_buffer(qa_native_host_source_touch *, qa_error *);
 qa_native_address native_host_call_scratch_take(qa_native_host *, size_t *, qa_error *);
 void native_host_call_scratch_release(qa_native_host *, size_t);
 

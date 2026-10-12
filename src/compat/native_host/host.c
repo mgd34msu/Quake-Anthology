@@ -440,7 +440,7 @@ static void free_records(qa_native_host *host)
 
 bool qa_native_host_destroy_ready(const qa_native_host *host)
 {
-    return host && !host->destroying && !host->callback_depth &&
+    return host && !host->destroying && !host->callback_depth && !host->call_scratch.active &&
         (!host->instance || qa_native_can_destroy(host->instance));
 }
 

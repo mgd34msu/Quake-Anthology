@@ -1,33 +1,69 @@
 #include "internal.h"
 #include <math.h>
 
+enum { NATIVE_HOST_CALL_SCRATCH_INITIAL = 64, NATIVE_HOST_CALL_SCRATCH_BYTES = 96 };
+
 bool native_host_call_scratch_prepare(qa_native_host *host, qa_error *error)
 {
     if (host->call_scratch.values) return true;
     qa_native_address base;
-    if (!qa_native_allocate(host->instance, 64 * 64, INT32_MIN + 8, &base, error))
+    if (!qa_native_allocate(host->instance,
+            NATIVE_HOST_CALL_SCRATCH_INITIAL * NATIVE_HOST_CALL_SCRATCH_BYTES,
+            INT32_MIN + 8, &base, error))
         return false;
-    if (!qa_pool_prepare(&host->call_scratch, &host->call_storage, 64,
-            sizeof(qa_native_address), _Alignof(qa_native_address), error)) return false;
+    if (!qa_pool_prepare(&host->call_scratch, &host->call_storage,
+            NATIVE_HOST_CALL_SCRATCH_INITIAL, sizeof(qa_native_host_source_touch),
+            _Alignof(qa_native_host_source_touch), error)) return false;
     for (size_t i = 0; i < host->call_scratch.capacity; ++i)
-        *(qa_native_address *)qa_pool_at(&host->call_scratch, i) = base + i * 64;
-    qa_arena_seal(&host->call_storage);
+        *(qa_native_host_source_touch *)qa_pool_at(&host->call_scratch, i) =
+            (qa_native_host_source_touch){.scratch = base + i * NATIVE_HOST_CALL_SCRATCH_BYTES};
     return true;
+}
+
+qa_native_host_source_touch *native_host_call_scratch_acquire(qa_native_host *host,
+    qa_error *error)
+{
+    if (!native_host_call_scratch_prepare(host, error)) return NULL;
+    if (host->call_scratch.head == SIZE_MAX) {
+        size_t first = host->call_scratch.capacity;
+        if (!qa_pool_extend(&host->call_scratch, &host->call_storage, 1, error)) return NULL;
+        *(qa_native_host_source_touch *)qa_pool_at(&host->call_scratch, first) =
+            (qa_native_host_source_touch){0};
+    }
+    size_t slot;
+    qa_native_host_source_touch *scratch = qa_pool_take(&host->call_scratch, &slot);
+    qa_native_address address = scratch->scratch;
+    *scratch = (qa_native_host_source_touch){.host = host, .scratch = address, .slot = slot,
+        .callback_depth = host->callback_depth, .active_call = qa_native_active(host->instance)};
+    return scratch;
+}
+
+bool native_host_call_scratch_buffer(qa_native_host_source_touch *scratch, qa_error *error)
+{
+    return scratch->scratch || qa_native_allocate(scratch->host->instance,
+        NATIVE_HOST_CALL_SCRATCH_BYTES, INT32_MIN + 8, &scratch->scratch, error);
 }
 
 qa_native_address native_host_call_scratch_take(qa_native_host *host, size_t *slot,
     qa_error *error)
 {
-    qa_native_address *address = qa_pool_take(&host->call_scratch, slot);
-    if (!address) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "native call scratch pool exhausted");
+    *slot = SIZE_MAX;
+    qa_native_host_source_touch *scratch = native_host_call_scratch_acquire(host, error);
+    if (!scratch) return 0;
+    if (!native_host_call_scratch_buffer(scratch, error)) {
+        native_host_call_scratch_release(host, scratch->slot);
         return 0;
     }
-    return *address;
+    *slot = scratch->slot;
+    return scratch->scratch;
 }
 
 void native_host_call_scratch_release(qa_native_host *host, size_t slot)
-{ qa_pool_release(&host->call_scratch, slot); }
+{
+    qa_native_host_source_touch *scratch = qa_pool_at(&host->call_scratch, slot);
+    scratch->prepared = false;
+    qa_pool_release(&host->call_scratch, slot);
+}
 
 bool native_host_movement_prepare(qa_native_host *host, qa_error *error)
 {
