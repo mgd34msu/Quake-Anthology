@@ -18,7 +18,9 @@ static bool push(fuzzy_stack *stack,uint32_t pointer,bool undecided,qa_error *er
         size_t capacity=stack->capacity?stack->capacity*2:16;
         if(capacity<stack->capacity || capacity>SIZE_MAX/sizeof(*stack->frames))
             return fail(error,"Fuzzy traversal storage exceeds its native extent");
-        fuzzy_frame *frames=realloc(stack->frames,capacity*sizeof(*frames));
+        if(!stack->capacity) qa_arena_init(stack->storage,capacity*sizeof(*stack->frames));
+        fuzzy_frame *frames=qa_arena_grow(stack->storage,stack->frames,
+            stack->capacity*sizeof(*frames),capacity*sizeof(*frames),_Alignof(fuzzy_frame),error);
         if(!frames) {qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining fuzzy source traversal");return false;}
         stack->frames=frames;stack->capacity=capacity;
     }
@@ -128,7 +130,7 @@ bool bot_fuzzy_evaluate(const bot_fuzzy_config *config,int32_t index,const qa_bo
 }
 bool bot_fuzzy_separator_tree_free(bot_fuzzy_heap *heap,uint32_t pointer,qa_error *error) {
     if(!pointer) return true;
-    fuzzy_stack stack={0};bool ok=push(&stack,pointer,false,error);
+    qa_arena storage={0};fuzzy_stack stack={.storage=&storage};bool ok=push(&stack,pointer,false,error);
     while(ok && stack.count) {
         fuzzy_frame *frame=&stack.frames[stack.count-1];bot_fuzzy_separator separator;uint32_t next;
         ok=bot_fuzzy_separator_bind(heap,frame->pointer,&separator,error);
@@ -141,7 +143,7 @@ bool bot_fuzzy_separator_tree_free(bot_fuzzy_heap *heap,uint32_t pointer,qa_erro
             ok=bot_fuzzy_pointer_free(heap,frame->pointer,BOT_FUZZY_SEPARATOR,error);--stack.count;
         }
     }
-    free(stack.frames);return ok;
+    qa_arena_destroy(&storage);return ok;
 }
 bool bot_fuzzy_config_free(bot_fuzzy_config *config,qa_error *error) {
     if(!config) return fail(error,"Fuzzy release requires its genuine configuration");
@@ -205,7 +207,7 @@ static bool mutate_leaf(const bot_fuzzy_separator *separator,fuzzy_mutation muta
 }
 static bool mutate_tree(bot_fuzzy_config *config,uint32_t root,fuzzy_mutation mutation,float scale,
     const qa_bot_random_source *random,qa_error *error) {
-    fuzzy_stack stack={0};bool ok=push(&stack,root,false,error);
+    qa_arena storage={0};fuzzy_stack stack={.storage=&storage};bool ok=push(&stack,root,false,error);
     while(ok && stack.count) {
         fuzzy_frame *frame=&stack.frames[stack.count-1];bot_fuzzy_separator separator;uint32_t pointer;
         ok=bot_fuzzy_separator_bind(config->heap,frame->pointer,&separator,error);
@@ -220,7 +222,7 @@ static bool mutate_tree(bot_fuzzy_config *config,uint32_t root,fuzzy_mutation mu
             else --stack.count;
         }
     }
-    free(stack.frames);return ok;
+    qa_arena_destroy(&storage);return ok;
 }
 static bool mutate_config(bot_fuzzy_config *config,int32_t selected,fuzzy_mutation mutation,float scale,
     const qa_bot_random_source *random,qa_error *error) {

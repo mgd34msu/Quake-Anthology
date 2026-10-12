@@ -156,12 +156,13 @@ bool qa_bot_weight_workspace_create(qa_bot_weight_workspace **out, qa_error *e) 
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating fuzzy workspace");
         return false;
     }
+    w->traversal.storage = &w->traversal_storage;
     *out = w;
     return true;
 }
 void qa_bot_weight_workspace_destroy(qa_bot_weight_workspace *w) {
     if(w && !w->busy) {
-        free(w->traversal.frames);
+        qa_arena_destroy(&w->traversal_storage);
         free(w);
     }
 }

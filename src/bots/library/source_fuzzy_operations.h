@@ -2,10 +2,13 @@
 #define QA_BOT_SOURCE_FUZZY_OPERATIONS_H
 #include "source_fuzzy.h"
 #include "qa/bot_library.h"
+#include "qa/arena.h"
 
 typedef struct bot_fuzzy_stack {
     struct bot_fuzzy_frame *frames;
     size_t count,capacity;
+    /* Metadata copies borrow storage without copying arena ownership. */
+    qa_arena *storage;
 } bot_fuzzy_stack;
 
 bool bot_fuzzy_find(const bot_fuzzy_config *,qa_bytes,int32_t *,qa_error *);

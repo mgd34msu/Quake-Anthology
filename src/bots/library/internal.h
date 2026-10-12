@@ -31,6 +31,7 @@ struct qa_bot_weights {
 };
 struct qa_bot_weight_workspace {
     bool busy;
+    qa_arena traversal_storage;
     bot_fuzzy_stack traversal;
 };
 struct qa_bot_character {
