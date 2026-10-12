@@ -5,6 +5,7 @@
 #include "qa/application_visual_visibility.h"
 #include "legacy_render_policy.h"
 #include "qa/audio.h"
+#include "qa/pool.h"
 #include "qa/console_draw.h"
 #include "qa/console_io.h"
 #include "qa/console_seat.h"
@@ -91,7 +92,12 @@ typedef struct frontend_music_sources frontend_music_sources;
 typedef struct frontend_view_settings frontend_view_settings;
 typedef struct frontend_equipment_events frontend_equipment_events;
 typedef struct qa_application_q3_round_cut qa_application_q3_round_cut;
-typedef struct frontend_audio_identity { qa_actor_id actor; uint64_t id; bool retired; } frontend_audio_identity;
+typedef struct frontend_audio_identity {
+    qa_actor_id actor;
+    uint64_t id;
+    bool retired;
+    struct frontend_audio_identity *next;
+} frontend_audio_identity;
 void frontend_audio_engine_options(qa_frontend *,qa_audio_engine_options *);
 bool frontend_audio_engine_options_ready(const qa_frontend *);
 bool frontend_startup_replay(qa_frontend *,qa_error *);
@@ -335,8 +341,11 @@ struct qa_frontend {
     uint64_t next_source_id;
     bool source_restoring;
     bool archive_enabled, archive_saved;
-    frontend_audio_identity *audio_ids;
-    size_t audio_id_count, audio_id_capacity;
+    qa_actor_index audio_actors;
+    qa_id_index audio_reverse;
+    qa_arena audio_identity_storage;
+    qa_pool audio_ids;
+    frontend_audio_identity *audio_first, *audio_last;
     uint64_t next_audio_id;
     qa_application *application;
     frontend_engine_cvar_handles engine_cvars;
@@ -457,6 +466,9 @@ void frontend_binding_cancel(void *, uint32_t);
 void frontend_bindings_destroy(frontend_seat *);
 void frontend_wheel_command(void *, qa_input_seat *, bool, bool);
 uint64_t frontend_audio_actor(qa_frontend *, qa_actor_id, qa_error *);
+bool frontend_audio_identities_prepare(qa_frontend *, qa_error *);
+void frontend_audio_identities_destroy(qa_frontend *);
+bool frontend_audio_actor_for_id(const qa_frontend *, uint64_t, qa_actor_id *);
 bool frontend_audio_actor_position(qa_frontend *, qa_actor_id, uint64_t,
     const qa_body_state *, qa_vec3 *, qa_error *);
 uint64_t frontend_audio_retained_event_actor(qa_frontend *, const qa_builtin_event *, qa_error *);

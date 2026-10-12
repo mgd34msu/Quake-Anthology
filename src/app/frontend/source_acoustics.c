@@ -49,10 +49,7 @@ static bool trace(void *context,const qa_audio_listener *listener,qa_vec3 start,
         !qa_application_acoustics_read(owner->shared,&scene,error))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Acoustic trace lost its actual listener scene");
     qa_actor_id pass={0}; bool found=listener->actor==QA_AUDIO_NO_ACTOR;
-    for (size_t i=0;!found && i<owner->frontend->audio_id_count;++i) {
-        const frontend_audio_identity *row=owner->frontend->audio_ids+i;
-        if (!row->retired && row->id==listener->actor) { pass=row->actor; found=true; }
-    }
+    if (!found) found=frontend_audio_actor_for_id(owner->frontend,listener->actor,&pass);
     if (!found) return frontend_fail(error,QA_ERROR_ARGUMENT,"Acoustic listener has no actual full actor identity");
     if (owner->private_scenes[listener->seat]) {
         qa_trace_query query={.start=start,.end=end,.shape={.kind=QA_SHAPE_POINT},

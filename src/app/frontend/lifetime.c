@@ -528,6 +528,7 @@ static bool input_render_size(void *context,uint32_t *width,uint32_t *height)
 static bool outputs_create(qa_frontend *frontend,frontend_shared_settings *prepared,
     qa_frontend *active,frontend_persistence_native *native,qa_error *error)
 {
+    if (!frontend_audio_identities_prepare(frontend, error)) return false;
     qa_frontend_options *options=&frontend->options;
     qa_audio_device_options device={.format=frontend->audio_output_format,.buffer_frames=1024};
     qa_input_platform_settings input_settings={0};
@@ -702,6 +703,7 @@ static bool create_frontend(const qa_frontend_options *options,bool launch_game,
     frontend->audio_output_format=device.format;
     frontend_application_options(frontend, &application);
     if (!qa_application_create(&application, &frontend->application, error)) goto fail;
+    if (!frontend_audio_identities_prepare(frontend, error)) goto fail;
     qa_platform_events_frame(frontend->platform_events, frontend->wall_time_ns);
     if (!frontend_platform_drain(frontend, false, error)) goto fail;
     if (!frontend_particle_prepare(frontend,error) || !frontend_local_lobby_init(frontend,error)) goto fail;
@@ -909,7 +911,8 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     if (frontend->sdl_subsystems) SDL_QuitSubSystem(frontend->sdl_subsystems);
     qa_platform_events_destroy(frontend->platform_events);
     free(frontend->network_connect_text);
-    free(frontend->constructor); free(frontend->map_name); free(frontend->audio_ids); free(frontend->seats); free(frontend->shutdown); free(frontend);
+    frontend_audio_identities_destroy(frontend);
+    free(frontend->constructor); free(frontend->map_name); free(frontend->seats); free(frontend->shutdown); free(frontend);
     return true;
 }
 bool qa_frontend_shutdown(qa_frontend **slot,qa_error *error)

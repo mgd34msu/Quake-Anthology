@@ -2419,14 +2419,14 @@ bool frontend_world_retired(void *context, qa_application *application, qa_error
     frontend_particle_retire(frontend);
     frontend_qc_rerelease_retire_world(frontend);
     if (!frontend_event_retire_checked(frontend,error)) return false;
-    frontend_audio_retire_round_aliases(frontend);
     frontend->silent_audio_remainder = 0;
     if (frontend->music_sources && !frontend_music_sources_output(frontend->music_sources,FRONTEND_MUSIC_MENU,error)) return false;
     for (size_t i=0;i<frontend_remote_q1_count(frontend);++i) {
         frontend_remote_q1 *row=frontend_remote_q1_at(frontend,i);
         if (!row || !remote_q1_effects_audio_detach(row,error)) return false;
     }
-    return !frontend->audio || qa_audio_engine_reset_round(frontend->audio, error);
+    if (frontend->audio && !qa_audio_engine_reset_round(frontend->audio, error)) return false;
+    frontend_audio_retire_round_aliases(frontend); return true;
 }
 
 size_t frontend_source_group_count(const qa_frontend *frontend)

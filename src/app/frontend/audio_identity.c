@@ -4,26 +4,54 @@
 #include "qa/ruleset.h"
 static uint64_t append_actor(qa_frontend *frontend, qa_actor_id actor, bool retired,
     qa_error *error);
+bool frontend_audio_identities_prepare(qa_frontend *frontend, qa_error *error)
+{
+    if (frontend->audio_actors.registry) return true;
+    const qa_actor_registry *actors = qa_session_actors(qa_application_session(frontend->application));
+    if (!qa_actor_index_create(&frontend->audio_actors, actors, NULL, error)) return false;
+    size_t capacity = frontend->audio_actors.capacity;
+    if (!qa_pool_prepare(&frontend->audio_ids, &frontend->audio_identity_storage, capacity,
+            sizeof(frontend_audio_identity), _Alignof(frontend_audio_identity), error) ||
+        !qa_id_index_reserve(&frontend->audio_actors.retained, capacity, error) ||
+        !qa_id_index_reserve(&frontend->audio_reverse, capacity, error)) {
+        frontend_audio_identities_destroy(frontend); return false;
+    }
+    return true;
+}
+void frontend_audio_identities_destroy(qa_frontend *frontend)
+{
+    qa_actor_index_destroy(&frontend->audio_actors);
+    qa_id_index_destroy(&frontend->audio_reverse);
+    qa_arena_destroy(&frontend->audio_identity_storage);
+    frontend->audio_ids = (qa_pool){0};
+    frontend->audio_first = frontend->audio_last = NULL;
+}
 void frontend_audio_retire_round_aliases(qa_frontend *frontend)
 {
-    for (size_t i = 0; i < frontend->audio_id_count; ++i) frontend->audio_ids[i].retired = true;
+    /* The caller has drained events and successfully reset the actual mixers. */
+    qa_actor_index_clear(&frontend->audio_actors);
+    qa_id_index_clear(&frontend->audio_reverse);
+    qa_pool_reset(&frontend->audio_ids);
+    frontend->audio_first = frontend->audio_last = NULL;
 }
 void frontend_audio_retire_dead_aliases(qa_frontend *frontend)
 {
     const qa_actor_registry *actors = qa_world_actors(qa_application_world(frontend->application));
-    for (size_t i = 0; i < frontend->audio_id_count; ++i)
-        if (!qa_actors_get(actors, frontend->audio_ids[i].actor)) frontend->audio_ids[i].retired = true;
+    for (frontend_audio_identity *row = frontend->audio_first; row; row = row->next)
+        if (!qa_actors_get(actors, row->actor)) {
+            row->retired = true;
+            qa_actor_index_remove(&frontend->audio_actors, row->actor);
+        }
 }
 uint64_t frontend_audio_actor(qa_frontend *frontend, qa_actor_id actor, qa_error *error)
 {
     if (!actor.registry) return QA_AUDIO_NO_ACTOR;
-    for (size_t i = 0; i < frontend->audio_id_count; ++i)
-        if (!frontend->audio_ids[i].retired && qa_actor_id_equal(frontend->audio_ids[i].actor, actor))
-            return frontend->audio_ids[i].id;
+    size_t slot;
+    if (qa_actor_index_find(&frontend->audio_actors, actor, &slot))
+        return ((const frontend_audio_identity *)qa_pool_at(&frontend->audio_ids, slot))->id;
     if (!qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), actor)) {
-        for (size_t i = 0; i < frontend->audio_id_count; ++i)
-            if (frontend->audio_ids[i].retired && qa_actor_id_equal(frontend->audio_ids[i].actor, actor))
-                return frontend->audio_ids[i].id;
+        if (qa_actor_index_find_retained(&frontend->audio_actors, actor, &slot))
+            return ((const frontend_audio_identity *)qa_pool_at(&frontend->audio_ids, slot))->id;
         return QA_AUDIO_NO_ACTOR;
     }
     return append_actor(frontend, actor, false, error);
@@ -34,19 +62,39 @@ static uint64_t append_actor(qa_frontend *frontend, qa_actor_id actor, bool reti
     if (frontend->next_audio_id >= UINT64_MAX - 1) {
         frontend_fail(error, QA_ERROR_ARGUMENT, "audio actor identity exhausted"); return QA_AUDIO_NO_ACTOR;
     }
-    if (frontend->audio_id_count == frontend->audio_id_capacity) {
-        size_t capacity = frontend->audio_id_capacity ? frontend->audio_id_capacity * 2 : 128;
-        if (capacity < frontend->audio_id_capacity || capacity > SIZE_MAX / sizeof(*frontend->audio_ids)) {
-            frontend_fail(error, QA_ERROR_MEMORY, "audio actor identity table overflow"); return QA_AUDIO_NO_ACTOR;
-        }
-        frontend_audio_identity *ids = realloc(frontend->audio_ids, capacity * sizeof(*ids));
-        if (!ids) { frontend_fail(error, QA_ERROR_MEMORY, "allocating audio actor identities"); return QA_AUDIO_NO_ACTOR; }
-        frontend->audio_ids = ids; frontend->audio_id_capacity = capacity;
+    if (frontend->audio_ids.active == frontend->audio_ids.capacity &&
+        !qa_pool_extend(&frontend->audio_ids, &frontend->audio_identity_storage,
+            frontend->audio_ids.capacity, error)) return QA_AUDIO_NO_ACTOR;
+    size_t previous;
+    bool remembered = qa_actor_index_find_retained(&frontend->audio_actors, actor, &previous);
+    if (!qa_id_index_reserve(&frontend->audio_reverse, 1, error) ||
+        (!remembered && !qa_id_index_reserve(&frontend->audio_actors.retained, 1, error)))
+        return QA_AUDIO_NO_ACTOR;
+    size_t slot;
+    frontend_audio_identity *row = qa_pool_take(&frontend->audio_ids, &slot);
+    if (!row) {
+        frontend_fail(error, QA_ERROR_MEMORY, "allocating audio actor identities"); return QA_AUDIO_NO_ACTOR;
+    }
+    if (!remembered && !qa_actor_index_remember(&frontend->audio_actors, actor, slot, error)) {
+        qa_pool_release(&frontend->audio_ids, slot); return QA_AUDIO_NO_ACTOR;
     }
     uint64_t id = ++frontend->next_audio_id;
-    frontend->audio_ids[frontend->audio_id_count++] =
-        (frontend_audio_identity){.actor = actor, .id = id, .retired = retired};
+    *row = (frontend_audio_identity){.actor = actor, .id = id, .retired = retired};
+    qa_id_index_insert(&frontend->audio_reverse, QA_STRING_NONE, id, slot);
+    if (!retired) qa_actor_index_put(&frontend->audio_actors, actor, slot);
+    if (frontend->audio_last) frontend->audio_last->next = row;
+    else frontend->audio_first = row;
+    frontend->audio_last = row;
     return id;
+}
+bool frontend_audio_actor_for_id(const qa_frontend *frontend, uint64_t id, qa_actor_id *actor)
+{
+    qa_id_index_cursor cursor = qa_id_index_begin(&frontend->audio_reverse, QA_STRING_NONE, id);
+    size_t slot;
+    if (!qa_id_index_next(&frontend->audio_reverse, &cursor, &slot)) return false;
+    const frontend_audio_identity *row = qa_pool_at(&frontend->audio_ids, slot);
+    if (row->retired) return false;
+    *actor = row->actor; return true;
 }
 static uint64_t retained_actor(qa_frontend *frontend, qa_actor_id actor, qa_error *error)
 {

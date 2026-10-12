@@ -605,8 +605,8 @@ static bool audio_output(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *e
 static bool audio_positions(qa_frontend *frontend, qa_error *error)
 {
     qa_world *world = qa_application_world(frontend->application);
-    for (size_t i = 0; i < frontend->audio_id_count; ++i) {
-        frontend_audio_identity identity = frontend->audio_ids[i];
+    for (const frontend_audio_identity *row = frontend->audio_first; row; row = row->next) {
+        frontend_audio_identity identity = *row;
         if (identity.retired) continue;
         if (!qa_actors_get(qa_world_actors(world), identity.actor)) continue;
         if (frontend_network_client_actor(frontend, identity.actor)) continue;

@@ -299,15 +299,15 @@ static bool begin(qa_application_q3_round_cut *cut,
         if (!qa_ui_rankings_reset_binding(f->seats[i].rankings, error)) return false;
         frontend_player_retire(f->seats + i);
     }
-    frontend_audio_retire_round_aliases(f);
     f->silent_audio_remainder = 0;
     for (size_t i=0;i<frontend_remote_q1_count(f);++i) {
         frontend_remote_q1 *row=frontend_remote_q1_at(f,i);
         if (!row || !remote_q1_effects_audio_detach(row,error)) return false;
     }
-    return (!f->audio || (frontend_audio_event(f,&(qa_audio_event){.kind=QA_AUDIO_EVENT_STOP_OWNER,
-                .all=true,.sound={.audience=QA_AUDIO_WORLD}},error) && qa_audio_engine_reset_round(f->audio, error))) &&
-        (!f->device || qa_audio_device_reset_round(f->device, error));
+    if (f->audio && (!frontend_audio_event(f,&(qa_audio_event){.kind=QA_AUDIO_EVENT_STOP_OWNER,
+            .all=true,.sound={.audience=QA_AUDIO_WORLD}},error) || !qa_audio_engine_reset_round(f->audio, error))) return false;
+    frontend_audio_retire_round_aliases(f);
+    return !f->device || qa_audio_device_reset_round(f->device, error);
 }
 static bool bind(qa_application_q3_round_cut *cut, qa_error *error)
 {

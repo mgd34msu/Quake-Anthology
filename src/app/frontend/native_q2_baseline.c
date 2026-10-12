@@ -61,6 +61,7 @@ static bool services(void *context, qa_application *application, qa_actor_owner 
         (frontend->application && frontend->application!=application))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"scratch frontend binds one actual native Q2 GAME application");
     frontend->application=application;
+    if (!frontend_audio_identities_prepare(frontend,error)) return false;
     if (!frontend->tools && !frontend_tools_create_diagnostics(frontend,engine->content_files,error)) return false;
     return frontend_native_q2_services(frontend,application,owner,profile,engine,out,application_context,error);
 }
@@ -125,5 +126,6 @@ bool frontend_native_q2_baseline_destroy(void *context, qa_error *error)
     if (!frontend_tools_destroy(frontend,error)) return false;
     qa_audio_engine_destroy(frontend->audio); qa_scene_frame_destroy(&frontend->frame);
     while (baseline->prints) { baseline_print *next=baseline->prints->next; free(baseline->prints); baseline->prints=next; }
-    free(baseline->clipboard); free(frontend->audio_ids); free(baseline); return true;
+    frontend_audio_identities_destroy(frontend);
+    free(baseline->clipboard); free(baseline); return true;
 }
