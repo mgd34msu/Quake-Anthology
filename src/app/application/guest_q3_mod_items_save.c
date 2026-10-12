@@ -75,6 +75,7 @@ bool application_q3_mod_items_restore(application_q3_mod_items *o,qa_bytes bytes
         for(item_actor *prior=o->actors;ok&&prior!=a;prior=prior->next)
             if(qa_actor_id_equal(prior->actor,a->actor)||prior->lease.serial==a->lease.serial||
                 prior->saved_watch==a->saved_watch||(a->request.id&&prior->request.id==a->request.id))ok=false;
+        if(ok)ok=qa_actor_index_remember(&o->actor_rows,a->actor,(size_t)(uintptr_t)a,e);
         qa_inventory_items binding;
         if(ok)ok=q3items_binding(a,&binding,e)&&q3items_watch_create(a,e);
     }

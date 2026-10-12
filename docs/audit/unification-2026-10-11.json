@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "c3f6c44ad143cef1f09d17a24891829c6b68b838",
+  "verified_main": "50a1d16bcd3a541087da26f4d0a9f33e2ea9b065",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 90,
-    "open_source_observation": 281,
+    "fixed_source_build_core": 97,
+    "open_source_observation": 274,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -23768,7 +23768,17 @@
       "partial_followup": {
         "commit": "2af9c4c722df8533445f13bf55d57aef400820ab",
         "conclusion": "Three guest projection actor resolvers use the retained common actor index through admission, restore, detach, close and round reset. Detached generations survive until physical context retirement. Other actor resolver sites remain; existing context allocations remain."
-      }
+      },
+      "partial_followups": [
+        {
+          "commit": "e0fb8caa3299ca6faebb4e5330ed458da559cb1b",
+          "conclusion": "Guest player-event cursors use the retained full-ID index through track, release, ordered compaction and restored cursor rebuild. Original event sequence, order and save fields remain. Other actor resolver sites remain."
+        },
+        {
+          "commit": "fe925221f846876235e1bdd37ce0e2f678fd36d3",
+          "conclusion": "Accepted guest scene actor slots use one cold-reserved common ID index rebuilt with the accepted ordered publication. Existing duplicate slot/count validation remains; other actor resolvers remain."
+        }
+      ]
     },
     {
       "id": "01-identity-gear-pointer",
@@ -27035,8 +27045,9 @@
       "severity": "medium",
       "job": "06",
       "area": "audio_input_ui",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Voice and lifecycle notification slots use common pools over the prepared mixer arena. FIFO, paired notifications, voice high-water/reuse order and sample ownership remain. Existing audio core checks now cover zero, partial and full initial voice sets with repeated playback/stop/reuse.",
+      "fixed_commit": "baa0025a43930eb3a5d5b80105db7df760a7a2f6"
     },
     {
       "id": "06-04",
@@ -27061,8 +27072,9 @@
       "severity": "medium",
       "job": "06",
       "area": "audio_input_ui",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Audio resource-ID/family entries share the existing bank ID index with name entries in a disjoint lossless key namespace. Core checks full-width IDs, family separation, compaction/rebuild, retirement and held sample lifetime. Cold decoding and resampling are unchanged.",
+      "fixed_commit": "50a1d16bcd3a541087da26f4d0a9f33e2ea9b065"
     },
     {
       "id": "06-05",
@@ -27266,8 +27278,9 @@
       "severity": "low",
       "job": "07",
       "area": "audio_input_ui",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Common counted-byte ordering/prefix handles console, completion and cvar catalog names. Exact spelling tie-breaks remain. Core covers embedded NUL, high bytes, case, ordering and prefix bounds. Completion storage allocations remain.",
+      "fixed_commit": "04212f403a428f1a7e840d9392690baf5f13a895"
     },
     {
       "id": "07-03",
@@ -28199,8 +28212,9 @@
       "severity": "low",
       "job": "10",
       "area": "bots_navigation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Bot weapon scalar records and AAS float fields use common endian primitives; private codecs deleted. Field widths and assembly remain. No retail bot/save round trip.",
+      "fixed_commit": "1d7b3118fc34eb5fa15950f57bfe68b4eb2f3b10"
     },
     {
       "id": "J11-01",
@@ -30600,8 +30614,9 @@
       "severity": "medium",
       "job": "17",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "One controller selection equality/device matcher covers platform routing, settings and saves. Core checks GUID case/ordinal, exact serial and serial ordinal independence. No physical hotplug proof.",
+      "fixed_commit": "6d503436f3bd1b9f05c8dfc464b7fa997079d765"
     },
     {
       "id": "17-03",
@@ -34254,8 +34269,9 @@
       "severity": "high",
       "job": "26",
       "area": "module_hosts",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Removed per-call bootstrap path witness checks and unused held bootstrap descriptor. Cold native-runtime launch validation and actual owned child probe/capture remain. Other standard file capability checks remain; no live SDK claim.",
+      "fixed_commit": "894ad0d98084e498e2c8a736a2bb60d97369ba32"
     },
     {
       "id": "26-07",
@@ -36090,8 +36106,9 @@
       "severity": "medium",
       "job": "32",
       "area": "render_presentation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "One frame-owned common ID index pins immutable images by their full creation serial. Index membership supplies the visit test; a second stamp store would duplicate it. Core checks interleaved frames, reset/re-admission and independent retained lifetimes. No whole-frame allocation or timing claim.",
+      "fixed_commit": "efbfdb9d730116e84a26bdaf8360214b714d3282"
     },
     {
       "id": "J32-09",
@@ -38916,6 +38933,235 @@
       ],
       "record_directory": "/tmp/qa-ta3196-common-color-escape-20261011",
       "conclusion": "Console and font layout share Q3 Q_IsColorString/ColorIndex semantics after scalar decoding. Core checks non-digit color escapes, literal/end handling and console cells; Q2 rerelease keeps its existing digit-only boundary. No font screenshot or live game proof."
+    },
+    {
+      "commit": "efbfdb9d730116e84a26bdaf8360214b714d3282",
+      "source_tree": "01025b58e995c90415bc0b3fffb37349342d671b",
+      "finding_ids": [
+        "J32-08"
+      ],
+      "files_rechecked": [
+        "docs/audit/unification-2026-10-11.json",
+        "docs/audit/unification-2026-10-11.md",
+        "include/qa/scene.h",
+        "src/render/scene/frame.c",
+        "src/render/scene/frame_internal.h",
+        "src/render/scene/resources_internal.h",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-frame-image-index-20261011",
+      "conclusion": "One frame-owned common ID index pins immutable images by their full creation serial. Index membership supplies the visit test; a second stamp store would duplicate it. Core checks interleaved frames, reset/re-admission and independent retained lifetimes. No whole-frame allocation or timing claim."
+    },
+    {
+      "commit": "e0fb8caa3299ca6faebb4e5330ed458da559cb1b",
+      "source_tree": "01e8744db780bcff394f72661d14d94b04446fd2",
+      "finding_ids": [
+        "01-identity-remaining-actors"
+      ],
+      "files_rechecked": [
+        "src/app/application/guest_q3_component_player_events.c",
+        "src/app/application/guest_q3_component_private.h"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-player-event-actor-index-20261011",
+      "conclusion": "Guest player-event cursors use the retained full-ID index through track, release, ordered compaction and restored cursor rebuild. Original event sequence, order and save fields remain. Other actor resolver sites remain."
+    },
+    {
+      "commit": "6d503436f3bd1b9f05c8dfc464b7fa997079d765",
+      "source_tree": "c73879d85327ac607e8887e0ebb43b3ce0b0828d",
+      "finding_ids": [
+        "17-02"
+      ],
+      "files_rechecked": [
+        "include/qa/input_platform.h",
+        "src/app/frontend/settings_devices.c",
+        "src/app/frontend/settings_menu.c",
+        "src/platform/input.c",
+        "src/platform/input_save.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-controller-identity-20261011",
+      "conclusion": "One controller selection equality/device matcher covers platform routing, settings and saves. Core checks GUID case/ordinal, exact serial and serial ordinal independence. No physical hotplug proof."
+    },
+    {
+      "commit": "04212f403a428f1a7e840d9392690baf5f13a895",
+      "source_tree": "49adb4288c7b3d34493e283553a627eec21d74d9",
+      "finding_ids": [
+        "07-02"
+      ],
+      "files_rechecked": [
+        "include/qa/text.h",
+        "src/console/cvars_store.c",
+        "src/console/discovery.c",
+        "src/console/field.c",
+        "src/core/text.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-name-order-20261011",
+      "conclusion": "Common counted-byte ordering/prefix handles console, completion and cvar catalog names. Exact spelling tie-breaks remain. Core covers embedded NUL, high bytes, case, ordering and prefix bounds. Completion storage allocations remain."
+    },
+    {
+      "commit": "894ad0d98084e498e2c8a736a2bb60d97369ba32",
+      "source_tree": "568604bfa27c4fa9ff4a1ec95fac80b06a1d0b70",
+      "finding_ids": [
+        "26-06"
+      ],
+      "files_rechecked": [
+        "src/compat/native_host/process_resources.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-native-bootstrap-custody-20261011",
+      "conclusion": "Removed per-call bootstrap path witness checks and unused held bootstrap descriptor. Cold native-runtime launch validation and actual owned child probe/capture remain. Other standard file capability checks remain; no live SDK claim."
+    },
+    {
+      "commit": "1d7b3118fc34eb5fa15950f57bfe68b4eb2f3b10",
+      "source_tree": "fd81ea5141f8a5e9bc35dfcdb4770910fef627a1",
+      "finding_ids": [
+        "10-07"
+      ],
+      "files_rechecked": [
+        "src/bots/runtime/source_weapon_state.c",
+        "src/navigation/aas_file.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-source-endian-20261011",
+      "conclusion": "Bot weapon scalar records and AAS float fields use common endian primitives; private codecs deleted. Field widths and assembly remain. No retail bot/save round trip."
+    },
+    {
+      "commit": "baa0025a43930eb3a5d5b80105db7df760a7a2f6",
+      "source_tree": "b98d05df2c9b66681827e3c6ea6ce261e9eaf970",
+      "finding_ids": [
+        "06-03"
+      ],
+      "files_rechecked": [
+        "src/audio/mixer.c",
+        "src/audio/mixer_internal.h",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-mixer-pools-20261011",
+      "conclusion": "Voice and lifecycle notification slots use common pools over the prepared mixer arena. FIFO, paired notifications, voice high-water/reuse order and sample ownership remain. Existing audio core checks now cover zero, partial and full initial voice sets with repeated playback/stop/reuse."
+    },
+    {
+      "commit": "fe925221f846876235e1bdd37ce0e2f678fd36d3",
+      "source_tree": "8d7454a448fca34c51b882efaa9b3040f21add95",
+      "finding_ids": [
+        "01-identity-remaining-actors"
+      ],
+      "files_rechecked": [
+        "src/app/application/guest_q3_scene.c",
+        "src/app/application/guest_q3_scene_private.h"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-accepted-scene-slot-index-20261011",
+      "conclusion": "Accepted guest scene actor slots use one cold-reserved common ID index rebuilt with the accepted ordered publication. Existing duplicate slot/count validation remains; other actor resolvers remain."
+    },
+    {
+      "commit": "50a1d16bcd3a541087da26f4d0a9f33e2ea9b065",
+      "source_tree": "bcb0c6ac681b5a1dc414be4703997afd89a944cc",
+      "finding_ids": [
+        "06-04"
+      ],
+      "files_rechecked": [
+        "src/audio/bank.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-audio-resource-id-index-20261011",
+      "conclusion": "Audio resource-ID/family entries share the existing bank ID index with name entries in a disjoint lossless key namespace. Core checks full-width IDs, family separation, compaction/rebuild, retirement and held sample lifetime. Cold decoding and resampling are unchanged."
     }
   ],
   "verification_limits": [

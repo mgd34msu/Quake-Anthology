@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `c3f6c44a`.
+Follow-up source changes were reviewed through main `50a1d16b`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 90 have source fixes
+There are **374 overlapping source-review observations**: 97 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 281 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 274 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -198,3 +198,15 @@ original lifecycle checks blindly.
 | `J21-04` | `ea0eaf27` | Q2 wind timers reserve actual actor capacity at load and use the common actor index, retaining cooldown and save order. |
 | `01-identity-remaining-actors` (partial) | `2af9c4c7` | Three guest projection resolvers use the common retained actor index. Detached generations remain; other resolvers and existing context allocations are still open. |
 | `06-07` | `c3f6c44a` | Console and font layout share the original Q3 color escape rule. Core checks non-digit escapes, literal/end handling and console cells. |
+
+| Observations | Commit | Shared replacement |
+| --- | --- | --- |
+| `J32-08` | `efbfdb9d` | One frame-owned common ID index pins immutable images by their full creation serial. Index membership supplies the visit test; a second stamp store would duplicate it. Core checks interleaved frames, reset/re-admission and independent retained lifetimes. No whole-frame allocation or timing claim. |
+| `01-identity-remaining-actors` partial | `e0fb8caa` | Guest player-event cursors use the retained full-ID index through track, release, ordered compaction and restored cursor rebuild. Original event sequence, order and save fields remain. Other actor resolver sites remain. |
+| `17-02` | `6d503436` | One controller selection equality/device matcher covers platform routing, settings and saves. Core checks GUID case/ordinal, exact serial and serial ordinal independence. No physical hotplug proof. |
+| `07-02` | `04212f40` | Common counted-byte ordering/prefix handles console, completion and cvar catalog names. Exact spelling tie-breaks remain. Core covers embedded NUL, high bytes, case, ordering and prefix bounds. Completion storage allocations remain. |
+| `26-06` | `894ad0d9` | Removed per-call bootstrap path witness checks and unused held bootstrap descriptor. Cold native-runtime launch validation and actual owned child probe/capture remain. Other standard file capability checks remain; no live SDK claim. |
+| `10-07` | `1d7b3118` | Bot weapon scalar records and AAS float fields use common endian primitives; private codecs deleted. Field widths and assembly remain. No retail bot/save round trip. |
+| `06-03` | `baa0025a` | Voice and lifecycle notification slots use common pools over the prepared mixer arena. FIFO, paired notifications, voice high-water/reuse order and sample ownership remain. Existing audio core checks now cover zero, partial and full initial voice sets with repeated playback/stop/reuse. |
+| `01-identity-remaining-actors` partial | `fe925221` | Accepted guest scene actor slots use one cold-reserved common ID index rebuilt with the accepted ordered publication. Existing duplicate slot/count validation remains; other actor resolvers remain. |
+| `06-04` | `50a1d16b` | Audio resource-ID/family entries share the existing bank ID index with name entries in a disjoint lossless key namespace. Core checks full-width IDs, family separation, compaction/rebuild, retirement and held sample lifetime. Cold decoding and resampling are unchanged. |

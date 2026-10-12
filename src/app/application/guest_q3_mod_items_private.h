@@ -90,6 +90,7 @@ struct application_q3_mod_items {
     qa_inventory *inventory;
     application_q3_mod_items_services services;
     item_actor *actors;
+    qa_actor_index actor_rows;
     application_q3_mod_items_application *application;
     application_q3_mod_items_entry *entries;
     uint64_t next_request;
