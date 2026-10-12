@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `28e8d3af`.
+Follow-up source changes were reviewed through main `c3f6c44a`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 87 have source fixes
+There are **374 overlapping source-review observations**: 90 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 284 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 281 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -67,7 +67,7 @@ implementation in the same slice.
 
 | Capability | Confirmed examples | Required shared adoption |
 | --- | --- | --- |
-| Event delivery | `J12-05`: tool/LLM output bypasses ordered LOG records. `J15-08`: connect transitions retain a private queue. | Move the remaining producers/consumers onto retained records and ordered cursors. Preserve decode order, recipients and source timing. |
+| Event delivery | The named tool/LLM LOG and deferred connection queues are fixed below. Other event custody observations remain in the ledger. | Move the remaining producers/consumers onto retained records and ordered cursors. Preserve decode order, recipients and source timing. |
 | Mixed module lifecycle | `02-12/13/20/21`: provider/map, client, respawn and selected-service gates lack composition adapters. | Implement shared role dispatch and the missing original guest lifecycle/service adapters. Removing a gate alone cannot supply a missing adapter. |
 | Trace policy and queries | The named Q2 role-policy and Q3 trigger-overflow observations below are fixed. Other private spatial and visibility walks remain in the ledger. | Migrate each remaining query to shared caller-owned storage and retained role policy, preserving ordering and original collision rules. |
 | Numeric and identity domains | `01-combat-source-width`, `03-16`: valid original int32 values lose admissibility through binary32 exactness checks. The named Q3 team-domain observation is fixed below. | Preserve original widths at module/protocol boundaries and explicit canonical team conversion. Never substitute a string ID for a protocol number. |
@@ -193,3 +193,8 @@ maps are necessary; resource construction occurs on misses; active-menu rebuilds
 are conditional; reached and authoritative config dictionaries are distinct;
 and missing module adapters are capability work, not permission to delete
 original lifecycle checks blindly.
+
+| `J15-08` | `cdd9b97a` | Deferred connection actions use common ring records and one network cursor; private nodes are deleted. FIFO and request lease checks pass; no live connection proof. |
+| `J21-04` | `ea0eaf27` | Q2 wind timers reserve actual actor capacity at load and use the common actor index, retaining cooldown and save order. |
+| `01-identity-remaining-actors` (partial) | `2af9c4c7` | Three guest projection resolvers use the common retained actor index. Detached generations remain; other resolvers and existing context allocations are still open. |
+| `06-07` | `c3f6c44a` | Console and font layout share the original Q3 color escape rule. Core checks non-digit escapes, literal/end handling and console cells. |

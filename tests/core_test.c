@@ -560,6 +560,34 @@ static void test_reserved_scene_frame(void)
     CHECK(frame.storage.pages->overflow==1);
     CHECK(frame.commands[frame.command_count-1].data.view.viewport.x==(int32_t)frame.command_count-1);
     qa_scene_frame_destroy(&frame);
+    qa_scene_resources *resources=qa_scene_resources_create(NULL,&error);
+    CHECK(resources);
+    const uint8_t pixel[]={10,20,30,255};
+    qa_scene_image_level level={1,1,pixel,sizeof pixel};
+    qa_scene_image *image=NULL;
+    CHECK(qa_scene_image_create(resources,"shared-frame-image",QA_SCENE_RGBA8,&level,1,
+        QA_SCENE_CLAMP,QA_SCENE_NEAREST,(qa_vec4){0},&image,&error));
+    qa_scene_frame peer;
+    CHECK(qa_scene_frame_init(&frame,19,1024*1024,&error));
+    CHECK(qa_scene_frame_init(&peer,20,1024*1024,&error));
+    for (unsigned pass=0;pass<2;++pass) {
+        qa_scene_frame_reset(&frame,pass+1);
+        qa_scene_frame_reset(&peer,pass+1);
+        CHECK(qa_scene_frame_image(&frame,image,&error));
+        CHECK(qa_scene_frame_image(&peer,image,&error));
+        CHECK(qa_scene_frame_image(&frame,image,&error));
+        CHECK(frame.image_count==1 && peer.image_count==1);
+        qa_scene_frame_reset(&peer,pass+2);
+        CHECK(qa_scene_frame_image(&peer,image,&error));
+        CHECK(qa_scene_frame_image(&frame,image,&error));
+        CHECK(frame.image_count==1 && peer.image_count==1);
+    }
+    qa_scene_image_release(image);
+    qa_scene_frame_destroy(&peer);
+    CHECK(frame.images[0]->levels[0].bytes==sizeof pixel &&
+        !memcmp(frame.images[0]->levels[0].pixels,pixel,sizeof pixel));
+    qa_scene_frame_destroy(&frame);
+    qa_scene_resources_destroy(resources);
 }
 
 static void test_arena(void)

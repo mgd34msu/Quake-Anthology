@@ -696,7 +696,7 @@ typedef struct qa_scene_model_pin {
 typedef struct qa_scene_frame {
     qa_scene_image_stream *stream_images;
     qa_material_source_scratch *source_pending;
-    uint64_t sequence, owner, image_epoch;
+    uint64_t sequence, owner;
     bool source_backend, source_skip_backend, source_clear_draw_buffer;
     bool source_begin_frame;
     int32_t source_stereo_frame;

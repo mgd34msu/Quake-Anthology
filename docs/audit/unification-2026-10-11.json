@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "28e8d3af86f491997b2edae393e9b3ffbc25e151",
+  "verified_main": "c3f6c44ad143cef1f09d17a24891829c6b68b838",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 87,
-    "open_source_observation": 284,
+    "fixed_source_build_core": 90,
+    "open_source_observation": 281,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -23764,7 +23764,11 @@
       "job": "01",
       "area": "application",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "source review; no runtime or performance proof",
+      "partial_followup": {
+        "commit": "2af9c4c722df8533445f13bf55d57aef400820ab",
+        "conclusion": "Three guest projection actor resolvers use the retained common actor index through admission, restore, detach, close and round reset. Detached generations survive until physical context retirement. Other actor resolver sites remain; existing context allocations remain."
+      }
     },
     {
       "id": "01-identity-gear-pointer",
@@ -27159,8 +27163,9 @@
       "severity": "medium",
       "job": "06",
       "area": "audio_input_ui",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "c3f6c44ad143cef1f09d17a24891829c6b68b838"
     },
     {
       "id": "06-08",
@@ -29750,8 +29755,9 @@
       "severity": "medium",
       "job": "15",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "cdd9b97a177f0fc03d5d8b4e0d1df3f9789d9996"
     },
     {
       "id": "J15-09",
@@ -32826,8 +32832,9 @@
       "severity": "high",
       "job": "21",
       "area": "gameplay_q2",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Source callers migrated and replaced paths deleted; matching normal production build and seven core suites passed. No live or performance claim.",
+      "fixed_commit": "ea0eaf270821789c1afb9450fc981f8e3a782aa1"
     },
     {
       "id": "J21-05",
@@ -38802,6 +38809,113 @@
       ],
       "record_directory": "/tmp/qa-ta3196-load-sized-lightstyles-20261011",
       "conclusion": "Legacy numeric style snapshots allocate once from actual face/grid references. Full supplied spans remain validated, including unreachable suffixes; core checks cover extended indices, grid-only styles and shrink/re-expand. Last-submission sampling remains world-owned."
+    },
+    {
+      "commit": "cdd9b97a177f0fc03d5d8b4e0d1df3f9789d9996",
+      "source_tree": "7924287a71d0e4b8c2cbce75b5cef9656e169b6c",
+      "finding_ids": [
+        "J15-08"
+      ],
+      "files_rechecked": [
+        "docs/audit/unification-2026-10-11.json",
+        "docs/audit/unification-2026-10-11.md",
+        "include/qa/application.h",
+        "src/app/application/event_stream.h",
+        "src/app/application/events.c",
+        "src/app/frontend/network.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-connection-action-ring-20261011",
+      "conclusion": "Deferred connection actions use the common ring with retained request text and a network cursor. Q1 successful-prefix retry and Q3 transition order remain; core checks FIFO, copied text and lease lifetime. No live connection proof."
+    },
+    {
+      "commit": "ea0eaf270821789c1afb9450fc981f8e3a782aa1",
+      "source_tree": "e3924185131307ffe0ee102e486e948ef304bc1b",
+      "finding_ids": [
+        "J21-04"
+      ],
+      "files_rechecked": [
+        "src/gameplay/q2/entities/checkpoint.c",
+        "src/gameplay/q2/entities/internal.h",
+        "src/gameplay/q2/entities/state.c",
+        "src/gameplay/q2/entities/triggers.c",
+        "src/gameplay/q2/map.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-wind-actor-storage-20261011",
+      "conclusion": "Q2 wind timers reserve actual actor capacity at load and use the common actor index. The unchanged post-player_push full-ID liveness check establishes the append bound. Cooldown and saved order remain; no live retail proof."
+    },
+    {
+      "commit": "2af9c4c722df8533445f13bf55d57aef400820ab",
+      "source_tree": "4e49af9a17e561b93b21407d942bbad3b83ade61",
+      "finding_ids": [],
+      "files_rechecked": [
+        "src/app/application/guest_projection.c",
+        "src/app/application/guest_projection_private.h",
+        "src/app/application/guest_q3_restart.c",
+        "src/app/application/guest_q3_save.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-retained-projection-index-20261011",
+      "conclusion": "Three guest projection actor resolvers use the retained common actor index through admission, restore, detach, close and round reset. Detached generations survive until physical context retirement. Other actor resolver sites remain; existing context allocations remain."
+    },
+    {
+      "commit": "c3f6c44ad143cef1f09d17a24891829c6b68b838",
+      "source_tree": "5024c0c9871f5cd9cf557d293e73d6fa82c2a72d",
+      "finding_ids": [
+        "06-07"
+      ],
+      "files_rechecked": [
+        "include/qa/text.h",
+        "src/console/buffer.c",
+        "src/core/text.c",
+        "src/text/font/layout.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-color-escape-20261011",
+      "conclusion": "Console and font layout share Q3 Q_IsColorString/ColorIndex semantics after scalar decoding. Core checks non-digit color escapes, literal/end handling and console cells; Q2 rerelease keeps its existing digit-only boundary. No font screenshot or live game proof."
     }
   ],
   "verification_limits": [

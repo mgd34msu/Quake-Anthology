@@ -64,6 +64,7 @@ bool qa_scene_frame_init(qa_scene_frame *frame,uint64_t owner,size_t bytes,qa_er
     }
     qa_arena_seal(&storage->backing);
     qa_arena_init_pool(&frame->storage,&storage->pages);
+    storage->image_slots.storage=&frame->storage;
     frame->reserved=storage;return true;
 }
 
@@ -85,7 +86,6 @@ void qa_scene_frame_reset(qa_scene_frame *frame, uint64_t sequence)
     }
     for (size_t i = 0; i < frame->image_count; ++i) qa_scene_image_release(frame->images[i]);
     frame->image_count = 0;
-    frame->image_epoch = 0;
     frame->stream_images = NULL;
     for (size_t i = 0; i < frame->geometry_count; ++i)
         qa_scene_geometry_release(frame->geometries[i]);
@@ -103,6 +103,10 @@ void qa_scene_frame_reset(qa_scene_frame *frame, uint64_t sequence)
     frame->source_clear_draw_buffer = false;
     frame->source_begin_frame=false;
     frame->source_stereo_frame=0;
+    if (frame->reserved) {
+        qa_id_index_destroy(&frame->reserved->image_slots);
+        frame->reserved->image_slots.storage=&frame->storage;
+    }
     qa_arena_reset(&frame->storage);
 }
 
@@ -120,14 +124,9 @@ void qa_scene_frame_destroy(qa_scene_frame *frame)
 static bool pin(qa_scene_frame *frame, const qa_scene_image *image, qa_error *error)
 {
     if (image == NULL) return true;
-    if (!frame->image_epoch) frame->image_epoch = qa_scene_identity();
-    owned_image *owned = (owned_image *)image;
-    if (frame->image_epoch) {
-        if (owned->frame_pin_epoch == frame->image_epoch) return true;
-    } else {
-        for (size_t i = 0; i < frame->image_count; ++i)
-            if (frame->images[i] == image) return true;
-    }
+    qa_id_index *slots = &frame->reserved->image_slots;
+    const owned_image *owned = (const owned_image *)image;
+    if (qa_id_index_find(slots, 0, owned->creation_sequence)) return true;
     if (frame->image_count == SIZE_MAX) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "scene image reference count overflow");
         return false;
@@ -136,9 +135,10 @@ static bool pin(qa_scene_frame *frame, const qa_scene_image *image, qa_error *er
     if (!scene_frame_reserve(frame,SCENE_IMAGES,&data, &frame->image_capacity, frame->image_count + 1,
                  sizeof(*frame->images), error)) return false;
     frame->images = data;
+    if (!qa_id_index_reserve(slots, 1, error)) return false;
     qa_scene_image_retain(image);
+    qa_id_index_insert(slots, 0, owned->creation_sequence, frame->image_count);
     frame->images[frame->image_count++] = image;
-    owned->frame_pin_epoch = frame->image_epoch;
     return true;
 }
 
