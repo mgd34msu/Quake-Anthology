@@ -12,8 +12,6 @@
 #include "qa/application_qc_presentation.h"
 #include "qa/text.h"
 
-#include <stdlib.h>
-
 typedef struct flag_call {
     application_provider *source;
     qa_application *app;
@@ -54,24 +52,14 @@ static bool begin(application_provider *source, flag_call *call, qa_error *error
 static void end(flag_call *call) {
     qa_q1_game_operation_end(&call->operation);
 }
-static bool snapshot_players(flag_call *call, qa_actor_id **out, size_t *count,
-    qa_error *error) {
+static bool snapshot_players(flag_call *call, qa_world_actor_snapshot *out, qa_error *error) {
     qa_q1_options options;
     double seconds;
     if (!qa_q1_source_respawn_options_read(call->operation.game, &options, &seconds, error) ||
         !current(call, error)) return false;
-    qa_actor_id *players = calloc(options.max_clients ? options.max_clients : 1, sizeof(*players));
-    if (!players)
-        return application_fail(error, QA_ERROR_MEMORY, "Capturing genuine CTF source recipients");
-    size_t total = 0;
-    for (uint32_t slot = 0; slot < options.max_clients; ++slot) {
-        qa_actor_id actor;
-        if (qa_q1_source_client_actor(call->operation.game, slot, &actor))
-            players[total++] = actor;
-    }
-    if (!current(call, error)) { free(players); return false; }
-    *out = players;
-    *count = total;
+    if (!application_native_q1_composition_players_capture(call->app, call->operation.game,
+        options.max_clients, out, error)) return false;
+    if (!current(call, error)) { qa_world_snapshot_release(out); return false; }
     return true;
 }
 static bool number(flag_call *call, qa_actor_id actor, qa_mode_q1_number field,
@@ -130,8 +118,7 @@ static bool announce_extra(flag_call *call, const char *key, qa_actor_id actor,
     qa_q1_source_client_view client;
     qa_builtin_message_arg arguments[2] = {{.kind = QA_BUILTIN_MESSAGE_STRING},
         {.kind = QA_BUILTIN_MESSAGE_STRING}};
-    qa_actor_id *players = NULL;
-    size_t count;
+    qa_world_actor_snapshot players = {0};
     if (!player_current(call, actor, &observer, error) ||
         !qa_q1_source_client_read(call->operation.game, actor, &client) ||
         !qa_strings_intern_cstr(qa_session_strings(call->app->session), client.name,
@@ -142,11 +129,11 @@ static bool announce_extra(flag_call *call, const char *key, qa_actor_id actor,
             &arguments[1].value.text, error)) return false;
         arguments_count = 2;
     }
-    if (!snapshot_players(call, &players, &count, error)) return false;
+    if (!snapshot_players(call, &players, error)) return false;
     bool okay = true;
-    for (size_t i = 0; okay && i < count; ++i)
-        okay = message(call, players[i], key, arguments, arguments_count, error);
-    free(players);
+    for (size_t i = 0; okay && i < players.count; ++i)
+        okay = message(call, players.actors[i], key, arguments, arguments_count, error);
+    qa_world_snapshot_release(&players);
     return okay && player_current(call, actor, &observer, error);
 }
 static bool announce(flag_call *call, const char *key, qa_actor_id actor, qa_error *error) {
@@ -188,13 +175,12 @@ static bool score(flag_call *call, qa_actor_id actor, double delta, qa_error *er
         player_current(call, actor, &observer, error);
 }
 static bool update_call(flag_call *call, qa_error *error) {
-    qa_actor_id *players;
-    size_t count;
-    if (!snapshot_players(call, &players, &count, error)) return false;
+    qa_world_actor_snapshot players = {0};
+    if (!snapshot_players(call, &players, error)) return false;
     bool okay = true;
-    for (size_t i = 0; okay && i < count; ++i)
-        okay = application_native_q1_ctf_status(call->source, players[i], error) && current(call, error);
-    free(players);
+    for (size_t i = 0; okay && i < players.count; ++i)
+        okay = application_native_q1_ctf_status(call->source, players.actors[i], error) && current(call, error);
+    qa_world_snapshot_release(&players);
     return okay;
 }
 static bool home(flag_call *call, bool blue, qa_actor_id *out, bool *found, qa_error *error) {
@@ -210,17 +196,16 @@ static bool return_call(flag_call *call, qa_actor_id flag, bool announce_return,
     if (!qa_q1_source_flag_read(call->operation.game, flag, &view, error) ||
         !qa_q1_source_flag_return(call->operation.game, flag, error) || !current(call, error)) return false;
     if (!announce_return) return true;
-    qa_actor_id *players;
-    size_t count;
-    if (!snapshot_players(call, &players, &count, error)) return false;
+    qa_world_actor_snapshot players = {0};
+    if (!snapshot_players(call, &players, error)) return false;
     bool okay = true;
-    for (size_t i = 0; okay && i < count; ++i) {
+    for (size_t i = 0; okay && i < players.count; ++i) {
         int color;
-        okay = team(call, players[i], &color, error) &&
-            message(call, players[i], color == (int)view.blue ?
+        okay = team(call, players.actors[i], &color, error) &&
+            message(call, players.actors[i], color == (int)view.blue ?
                 "$qc_ctf_your_returned" : "$qc_ctf_enemy_returned", NULL, 0, error);
     }
-    free(players);
+    qa_world_snapshot_release(&players);
     return okay;
 }
 
@@ -343,13 +328,12 @@ static bool captured(flag_call *call, qa_actor_id actor, bool blue, qa_error *er
         !qa_q1_source_capture_words_write(call->operation.game, time, blue ? 14 : 5, error) ||
         !current(call, error) || !sound(call, actor, "misc/flagcap.wav", 2, 0, error) ||
         !capture_total(call, blue, error) || !score(call, actor, 15, error)) return false;
-    qa_actor_id *players;
-    size_t count;
-    if (!snapshot_players(call, &players, &count, error)) return false;
+    qa_world_actor_snapshot players = {0};
+    if (!snapshot_players(call, &players, error)) return false;
     bool okay = true;
     double color = blue ? 14 : 5;
-    for (size_t i = 0; okay && i < count; ++i) {
-        qa_actor_id recipient = players[i];
+    for (size_t i = 0; okay && i < players.count; ++i) {
+        qa_actor_id recipient = players.actors[i];
         double last;
         okay = set_number(call, recipient, QA_Q1_CTF_KILLED, 0, error) &&
             number(call, recipient, QA_Q1_CTF_LAST_TEAM, &last, error);
@@ -371,7 +355,7 @@ static bool captured(flag_call *call, qa_actor_id actor, bool blue, qa_error *er
             message(call, recipient, last == color ? "$qc_ctf_team_captured" :
                 "$qc_ctf_your_captured", NULL, 0, error);
     }
-    free(players);
+    qa_world_snapshot_release(&players);
     for (unsigned i = 0; okay && i < 2; ++i) {
         qa_actor_id flag;
         bool found;
@@ -427,17 +411,16 @@ static bool touch(void *context, qa_actor_id flag, qa_actor_id actor, qa_error *
             grant(&call, actor, view.blue ? "q1:key/silver" : "q1:key/gold", 1, error) &&
             seconds(&call, &time, error) && set_number(&call, actor, QA_Q1_CTF_FLAG_SINCE, time, error) &&
             qa_q1_source_flag_carry(call.operation.game, flag, actor, error) && current(&call, error);
-        qa_actor_id *players = NULL;
-        size_t count = 0;
-        if (okay) okay = snapshot_players(&call, &players, &count, error);
-        for (size_t i = 0; okay && i < count; ++i) {
-            if (qa_actor_id_equal(players[i], actor)) continue;
+        qa_world_actor_snapshot players = {0};
+        if (okay) okay = snapshot_players(&call, &players, error);
+        for (size_t i = 0; okay && i < players.count; ++i) {
+            if (qa_actor_id_equal(players.actors[i], actor)) continue;
             int recipient_color;
-            okay = team(&call, players[i], &recipient_color, error) &&
-                message(&call, players[i], recipient_color == color ? "$qc_ctf_your_has" :
+            okay = team(&call, players.actors[i], &recipient_color, error) &&
+                message(&call, players.actors[i], recipient_color == color ? "$qc_ctf_your_has" :
                     "$qc_ctf_your_taken", NULL, 0, error);
         }
-        free(players);
+        qa_world_snapshot_release(&players);
     }
     if (okay) okay = update_call(&call, error);
     end(&call);
@@ -825,11 +808,10 @@ bool application_native_q1_ctf_score_death(application_provider *source, qa_acto
             player_body(&call, victim, &victim_body, error);
         qa_vec3 centers[2] = {attacker_body.origin, victim_body.origin};
         for (size_t pass = 0; okay && pass < 2; ++pass) {
-            qa_actor_id *players = NULL;
-            size_t count;
-            okay = snapshot_players(&call, &players, &count, error);
-            for (size_t i = 0; okay && i < count; ++i) {
-                qa_actor_id player = players[i];
+            qa_world_actor_snapshot players = {0};
+            okay = snapshot_players(&call, &players, error);
+            for (size_t i = 0; okay && i < players.count; ++i) {
+                qa_actor_id player = players.actors[i];
                 qa_body_state body;
                 bool observer;
                 int player_color;
@@ -848,7 +830,7 @@ bool application_native_q1_ctf_score_death(application_provider *source, qa_acto
                     }
                 }
             }
-            free(players);
+            qa_world_snapshot_release(&players);
             qa_actor_id flag;
             bool found_flag = false;
             if (okay && color >= 0) okay = home(&call, color == 1, &flag, &found_flag, error);

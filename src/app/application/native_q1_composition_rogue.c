@@ -3,6 +3,7 @@
 #include "native_q1_console.h"
 #include "native_q1_composition_birth.h"
 #include "native_q1_composition_player.h"
+#include "control_frame.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q1_composition.h"
 #include "qa/game_q1_rogue.h"
@@ -17,13 +18,13 @@
 #include "qa/application_qc_presentation.h"
 
 #include <math.h>
-#include <stdlib.h>
 #include <stdio.h>
 
 typedef struct rogue_call {
     application_provider *source;
     qa_application *app;
     qa_q1_game_operation operation;
+    qa_unified_frame_lease *scratch;
     qa_mode_id mode;
 } rogue_call;
 
@@ -70,6 +71,19 @@ static bool begin(application_provider *source, rogue_call *call, qa_error *erro
     return qa_q1_game_operation_begin(source->state.q1, &call->operation, error) &&
         application_native_q1_composition_mode(call->app, source, &call->mode, error) &&
         current(call, error);
+}
+
+static void end(rogue_call *call)
+{
+    qa_unified_frame_lease_release(call->scratch);
+    call->scratch = NULL;
+    qa_q1_game_operation_end(&call->operation);
+}
+
+static qa_arena *scratch(rogue_call *call, qa_error *error)
+{
+    if (!call->scratch) call->scratch = application_control_storage_acquire(call->app, error);
+    return call->scratch ? qa_unified_frame_lease_arena(call->scratch) : NULL;
 }
 
 static bool player(rogue_call *call, qa_actor_id actor, bool *found, qa_error *error)
@@ -132,22 +146,14 @@ static bool tag_current(void *context, const qa_q1_game *game, qa_error *error)
             QA_MODE_ROGUE, error);
 }
 
-static bool players_snapshot(rogue_call *call, qa_actor_id **out, size_t *count, qa_error *error)
+static bool players_snapshot(rogue_call *call, qa_world_actor_snapshot *out, qa_error *error)
 {
     qa_q1_options options;
     double seconds;
     if (!current(call, error) || !qa_q1_source_respawn_options_read(call->operation.game,
         &options, &seconds, error)) return false;
-    qa_actor_id *rows = calloc(options.max_clients ? options.max_clients : 1, sizeof(*rows));
-    if (!rows) return application_fail(error, QA_ERROR_MEMORY, "Capturing Rogue source players");
-    size_t used = 0;
-    for (uint32_t i = 0; i < options.max_clients; ++i) {
-        qa_actor_id actor;
-        if (qa_q1_source_client_actor(call->operation.game, i, &actor)) rows[used++] = actor;
-    }
-    *out = rows;
-    *count = used;
-    return true;
+    return application_native_q1_composition_players_capture(call->app, call->operation.game,
+        options.max_clients, out, error);
 }
 
 static bool player_required(rogue_call *call, qa_actor_id actor, qa_error *error)
@@ -173,13 +179,12 @@ static bool message(rogue_call *call, qa_actor_id actor, const char *text, bool 
 
 static bool broadcast(rogue_call *call, const char *text, bool center, qa_error *error)
 {
-    qa_actor_id *rows;
-    size_t count;
-    if (!players_snapshot(call, &rows, &count, error)) return false;
+    qa_world_actor_snapshot rows = {0};
+    if (!players_snapshot(call, &rows, error)) return false;
     bool okay = true;
-    for (size_t i = 0; okay && i < count; ++i)
-        okay = message(call, rows[i], text, center, NULL, 0, error);
-    free(rows);
+    for (size_t i = 0; okay && i < rows.count; ++i)
+        okay = message(call, rows.actors[i], text, center, NULL, 0, error);
+    qa_world_snapshot_release(&rows);
     return okay;
 }
 
@@ -195,12 +200,12 @@ static bool named_broadcast(rogue_call *call, qa_actor_id actor, const char *act
     if (!player_required(call, actor, error) ||
         !qa_q1_source_client_read(call->operation.game, actor, &client)) return false;
     size_t length = strlen(client.name) + strlen(action) + strlen(team_name(flag_team)) + 32;
-    char *text = malloc(length);
-    if (!text) return application_fail(error, QA_ERROR_MEMORY, "Formatting Rogue source announcement");
+    qa_arena *storage = scratch(call, error);
+    char *text = storage ? qa_arena_alloc(storage, length, _Alignof(char), error) : NULL;
+    if (!text) return false;
     snprintf(text, length, "%s %s the %s%sflag!\n", client.name, action,
         neutral ? "" : team_name(flag_team), neutral ? "" : " ");
     bool okay = broadcast(call, text, false, error);
-    free(text);
     return okay && player_required(call, actor, error);
 }
 
@@ -264,20 +269,19 @@ static bool flag_return_call(rogue_call *call, qa_actor_id actor, qa_error *erro
     if (!qa_q1_source_rogue_flag_read(call->operation.game, actor, &flag, error) ||
         !qa_q1_source_rogue_flag_return(call->operation.game, actor, error) ||
         !current(call, error) || !policy(call, APPLICATION_Q1_POLICY_TEAMPLAY, &mode, error)) return false;
-    qa_actor_id *rows;
-    size_t count;
-    if (!players_snapshot(call, &rows, &count, error)) return false;
+    qa_world_actor_snapshot rows = {0};
+    if (!players_snapshot(call, &rows, error)) return false;
     bool okay = true;
     char text[80];
     if (mode == 6) snprintf(text, sizeof(text), "%s flag has been returned to base!\n", team_name(flag.team));
-    for (size_t i = 0; okay && i < count; ++i) {
+    for (size_t i = 0; okay && i < rows.count; ++i) {
         double player_team;
-        okay = team(call, rows[i], &player_team, error) &&
-            message(call, rows[i], mode == 5 ? "$qc_flag_returned" : mode == 6 ? text :
+        okay = team(call, rows.actors[i], &player_team, error) &&
+            message(call, rows.actors[i], mode == 5 ? "$qc_flag_returned" : mode == 6 ? text :
                 player_team == flag.team ? "$qc_your_flag_returned_base" :
                 "$qc_enemy_flag_returned_base", true, NULL, 0, error);
     }
-    free(rows);
+    qa_world_snapshot_release(&rows);
     return okay;
 }
 
@@ -297,7 +301,7 @@ static bool flag_return(void *context, qa_actor_id actor, qa_error *error)
 {
     rogue_call call = {0};
     bool okay = begin(context, &call, error) && flag_return_call(&call, actor, error);
-    qa_q1_game_operation_end(&call.operation);
+    end(&call);
     return okay;
 }
 
@@ -305,7 +309,7 @@ static bool flag_drop(void *context, qa_actor_id actor, qa_error *error)
 {
     rogue_call call = {0};
     bool okay = begin(context, &call, error) && flag_drop_call(&call, actor, error);
-    qa_q1_game_operation_end(&call.operation);
+    end(&call);
     return okay;
 }
 
@@ -332,7 +336,7 @@ static bool flag_carrier(void *context, qa_actor_id actor, qa_actor_id carrier,
                 !(flag.team == 5 && !((uint32_t)qa_source_to_i32((float)(flags)) & 1)) && !(flag.team == 14 && !((uint32_t)qa_source_to_i32((float)(flags)) & 2));
         }
     }
-    qa_q1_game_operation_end(&call.operation);
+    end(&call);
     return okay;
 }
 
@@ -388,7 +392,7 @@ static bool flag_frame(void *context, qa_actor_id actor, double *out, qa_error *
         application_provider_for(call.app, actor, QA_ROLE_CHARACTER, "") == character &&
         character->constructed && !character->close_pending;
     if (okay) *out = frame;
-    qa_q1_game_operation_end(&call.operation);
+    end(&call);
     return okay;
 }
 
@@ -420,32 +424,31 @@ static bool capture(rogue_call *call, qa_actor_id actor, bool alternate, qa_erro
         !named_broadcast(call, actor, "captured", 0, true, error) ||
         !keys(call, actor, true, 0, error) || !source_sound(call, actor, "misc/flagcap.wav", true, error) ||
         !score(call, actor, alternate ? 8 : 15, error)) return false;
-    qa_actor_id *rows = NULL;
-    size_t count;
-    bool okay = players_snapshot(call, &rows, &count, error);
-    for (size_t i = 0; okay && i < count; ++i) {
+    qa_world_actor_snapshot rows = {0};
+    bool okay = players_snapshot(call, &rows, error);
+    for (size_t i = 0; okay && i < rows.count; ++i) {
         double actual_color, stamp, now, other_flags;
-        okay = color(call, rows[i], &actual_color, error);
+        okay = color(call, rows.actors[i], &actual_color, error);
         if (!okay) break;
         if (actual_color == actor_team) {
-            if (!qa_actor_id_equal(actor, rows[i])) okay = score(call, rows[i], alternate ? 4 : 10, error);
+            if (!qa_actor_id_equal(actor, rows.actors[i])) okay = score(call, rows.actors[i], alternate ? 4 : 10, error);
             if (okay && !alternate && mode != 5) {
-                okay = number(call, rows[i], QA_Q1_ROGUE_LAST_RETURNED_FLAG, &stamp, error) &&
+                okay = number(call, rows.actors[i], QA_Q1_ROGUE_LAST_RETURNED_FLAG, &stamp, error) &&
                     seconds(call, &now, error);
-                if (okay && stamp + 4 > now) okay = score(call, rows[i], 1, error);
+                if (okay && stamp + 4 > now) okay = score(call, rows.actors[i], 1, error);
             }
             if (okay && !alternate) {
-                okay = number(call, rows[i], QA_Q1_ROGUE_LAST_FRAGGED_CARRIER, &stamp, error) &&
+                okay = number(call, rows.actors[i], QA_Q1_ROGUE_LAST_FRAGGED_CARRIER, &stamp, error) &&
                     seconds(call, &now, error);
-                if (okay && stamp + 6 > now) okay = score(call, rows[i], 2, error);
+                if (okay && stamp + 6 > now) okay = score(call, rows.actors[i], 2, error);
             }
-            if (okay) okay = message(call, rows[i], "$qc_your_team_captured", true, NULL, 0, error);
-        } else okay = write_number(call, rows[i], QA_Q1_ROGUE_LAST_HURT_CARRIER, -5, error) &&
-            message(call, rows[i], "$qc_your_flag_captured", true, NULL, 0, error);
-        if (okay && !alternate) okay = number(call, rows[i], QA_Q1_ROGUE_FLAGS, &other_flags, error) &&
-            write_number(call, rows[i], QA_Q1_ROGUE_FLAGS, (uint32_t)qa_source_to_i32((float)(other_flags)) & ~UINT32_C(3), error);
+            if (okay) okay = message(call, rows.actors[i], "$qc_your_team_captured", true, NULL, 0, error);
+        } else okay = write_number(call, rows.actors[i], QA_Q1_ROGUE_LAST_HURT_CARRIER, -5, error) &&
+            message(call, rows.actors[i], "$qc_your_flag_captured", true, NULL, 0, error);
+        if (okay && !alternate) okay = number(call, rows.actors[i], QA_Q1_ROGUE_FLAGS, &other_flags, error) &&
+            write_number(call, rows.actors[i], QA_Q1_ROGUE_FLAGS, (uint32_t)qa_source_to_i32((float)(other_flags)) & ~UINT32_C(3), error);
     }
-    free(rows);
+    qa_world_snapshot_release(&rows);
     qa_world_actor_snapshot flag_rows = {0};
     if (okay) okay = qa_q1_source_rogue_flags_snapshot(call->operation.game, &flag_rows, error);
     for (size_t i = 0; okay && i < flag_rows.count; ++i) {
@@ -510,21 +513,20 @@ static bool flag_touch(void *context, qa_actor_id actor, qa_actor_id other, bool
         qa_q1_source_rogue_flag_carry(call.operation.game, actor, other, error) && current(&call, error) &&
         message(&call, other, mode == 5 ? "YOU GOT THE FLAG\n\nTAKE IT TO THEIR BASE\n" :
             "YOU GOT THE ENEMY FLAG\n\nRETURN TO BASE\n", true, NULL, 0, error);
-    qa_actor_id *rows = NULL;
-    size_t count;
-    if (okay) okay = players_snapshot(&call, &rows, &count, error);
+    qa_world_actor_snapshot rows = {0};
+    if (okay) okay = players_snapshot(&call, &rows, error);
     char text[100];
     snprintf(text, sizeof(text), "%s team has the %s flag!\n", team_name(own_team), team_name(flag.team));
-    for (size_t i = 0; okay && i < count; ++i) {
-        if (qa_actor_id_equal(other, rows[i])) continue;
+    for (size_t i = 0; okay && i < rows.count; ++i) {
+        if (qa_actor_id_equal(other, rows.actors[i])) continue;
         double recipient_team;
-        okay = team(&call, rows[i], &recipient_team, error) &&
-            message(&call, rows[i], mode == 5 ? "$qc_flag_taken" : recipient_team == flag.team ?
+        okay = team(&call, rows.actors[i], &recipient_team, error) &&
+            message(&call, rows.actors[i], mode == 5 ? "$qc_flag_taken" : recipient_team == flag.team ?
                 "$qc_your_flag_taken" : text, true, NULL, 0, error);
     }
-    free(rows);
+    qa_world_snapshot_release(&rows);
 finish:
-    qa_q1_game_operation_end(&call.operation);
+    end(&call);
     return okay;
 }
 
@@ -565,15 +567,14 @@ static bool assists(rogue_call *call, qa_actor_id victim, qa_actor_id attacker, 
         qa_body_state origin;
         if (!qa_world_body_read(call->app->world, origins[side], &origin, error) || !current(call, error)) return false;
         const qa_actor_registry *registry = qa_session_actors(call->app->session);
-        size_t count = qa_actors_count(registry), used = 0;
-        qa_actor_id *rows = count ? malloc(count * sizeof(*rows)) : NULL;
-        if (count && !rows) return application_fail(error, QA_ERROR_MEMORY, "Capturing Rogue assist observations");
+        qa_world_actor_snapshot rows = {0};
+        if (!qa_world_snapshot_acquire(call->app->world, &rows, error)) return false;
         uint32_t cursor = 0;
         const qa_actor_record *record;
-        while (qa_actors_next(registry, &cursor, &record)) rows[used++] = record->id;
+        while (qa_actors_next(registry, &cursor, &record)) rows.actors[rows.count++] = record->id;
         bool okay = true;
-        for (size_t i = used; okay && i; --i) {
-            qa_actor_id actor = rows[i - 1];
+        for (size_t i = rows.count; okay && i; --i) {
+            qa_actor_id actor = rows.actors[i - 1];
             if (!qa_actors_get(registry, actor) || !qa_world_body_storage_serial(call->app->world, actor)) continue;
             qa_body_state body;
             okay = qa_world_body_read(call->app->world, actor, &body, error) && current(call, error);
@@ -603,7 +604,7 @@ static bool assists(rogue_call *call, qa_actor_id victim, qa_actor_id attacker, 
                 }
             }
         }
-        free(rows);
+        qa_world_snapshot_release(&rows);
         if (!okay) return false;
     }
     return true;
@@ -630,16 +631,15 @@ bool application_native_q1_rogue_player_died(application_provider *source,
     if (okay && found && !qa_actor_id_equal(actor, attacker)) okay = assists(&call, actor, attacker, error);
     if (okay) okay = number(&call, actor, QA_Q1_ROGUE_FLAGS, &flags, error);
     if (okay && ((uint32_t)qa_source_to_i32((float)(flags)) & 3)) {
-        qa_actor_id *rows;
-        size_t count;
-        okay = players_snapshot(&call, &rows, &count, error);
-        for (size_t i = 0; okay && i < count; ++i) {
+        qa_world_actor_snapshot rows = {0};
+        okay = players_snapshot(&call, &rows, error);
+        for (size_t i = 0; okay && i < rows.count; ++i) {
             double value;
-            okay = team(&call, rows[i], &value, error);
+            okay = team(&call, rows.actors[i], &value, error);
             if (okay && (mode == 5 || (((uint32_t)qa_source_to_i32((float)(flags)) & 1) && value == 5) || (((uint32_t)qa_source_to_i32((float)(flags)) & 2) && value == 14)))
-                okay = write_number(&call, rows[i], QA_Q1_ROGUE_LAST_HURT_CARRIER, -10, error);
+                okay = write_number(&call, rows.actors[i], QA_Q1_ROGUE_LAST_HURT_CARRIER, -10, error);
         }
-        free(rows);
+        qa_world_snapshot_release(&rows);
     }
     qa_world_actor_snapshot flag_rows = {0};
     if (okay) okay = qa_q1_source_rogue_flags_snapshot(call.operation.game, &flag_rows, error);
@@ -655,7 +655,7 @@ bool application_native_q1_rogue_player_died(application_provider *source,
     }
     qa_world_snapshot_release(&flag_rows);
 finish:
-    qa_q1_game_operation_end(&call.operation);
+    end(&call);
     return okay;
 }
 
@@ -663,7 +663,7 @@ static bool tag_player(void *context, qa_actor_id actor, bool *found, qa_error *
 {
     rogue_call call = {0};
     bool okay = begin(context, &call, error) && player(&call, actor, found, error);
-    qa_q1_game_operation_end(&call.operation);
+    end(&call);
     return okay;
 }
 
@@ -676,7 +676,7 @@ static bool tag_announce(void *context, const char *text, qa_actor_id actor, qa_
     qa_string_id key;
     double seconds;
     bool found;
-    qa_actor_id *players = NULL;
+    qa_world_actor_snapshot players = {0};
     bool okay = begin(context, &call, error) && player(&call, actor, &found, error);
     if (okay && !found) okay = application_fail(error, QA_ERROR_ARGUMENT,
         "Rogue token announcement lost its actual source player");
@@ -686,28 +686,21 @@ static bool tag_announce(void *context, const char *text, qa_actor_id actor, qa_
         qa_strings_intern_cstr(qa_session_strings(call.app->session), text, &key, error) &&
         qa_q1_source_respawn_options_read(call.operation.game, &options, &seconds, error) &&
         current(&call, error);
-    size_t count = 0;
-    if (okay) {
-        players = calloc(options.max_clients ? options.max_clients : 1, sizeof(*players));
-        if (!players) okay = application_fail(error, QA_ERROR_MEMORY, "Capturing Rogue token recipients");
-    }
-    for (uint32_t slot = 0; okay && slot < options.max_clients; ++slot) {
-        qa_actor_id recipient;
-        if (qa_q1_source_client_actor(call.operation.game, slot, &recipient)) players[count++] = recipient;
-    }
-    for (size_t i = 0; okay && i < count; ++i) {
+    if (okay) okay = application_native_q1_composition_players_capture(call.app,
+        call.operation.game, options.max_clients, &players, error);
+    for (size_t i = 0; okay && i < players.count; ++i) {
         uint64_t time;
-        okay = player(&call, players[i], &found, error);
+        okay = player(&call, players.actors[i], &found, error);
         if (okay && !found) okay = application_fail(error, QA_ERROR_ARGUMENT,
             "Rogue token recipient retired during announcement");
         if (okay) okay = qa_q1_game_clock_read(call.operation.game, &time, &seconds);
         if (okay) okay = application_emit(call.app, &(qa_builtin_event){.kind = QA_BUILTIN_MESSAGE,
-            .family = QA_GAME_Q1, .provider = call.source->owner, .actor = players[i],
+            .family = QA_GAME_Q1, .provider = call.source->owner, .actor = players.actors[i],
             .time_ns = time, .text = key, .flags = 2u, .arguments = &argument,
             .argument_count = 1}, error) && current(&call, error);
     }
-    free(players);
-    qa_q1_game_operation_end(&call.operation);
+    qa_world_snapshot_release(&players);
+    end(&call);
     return okay;
 }
 
@@ -722,7 +715,7 @@ static bool tag_spawn_point(void *context, qa_actor_id *out, qa_error *error)
         roster->q1_point_count, true, out, error) && current(&call, error);
     if (okay && !out->registry)
         okay = application_fail(error, QA_ERROR_NOT_FOUND, "Rogue token has no genuine base spawn point");
-    qa_q1_game_operation_end(&call.operation);
+    end(&call);
     return okay;
 }
 
@@ -750,7 +743,7 @@ bool application_native_q1_rogue_tag_score(void *context, qa_actor_id victim,
         "Rogue token score lost its source victim");
     if (okay) okay = qa_q1_source_rogue_tag_score(call.operation.game, victim, attacker, points, error) &&
         current(&call, error);
-    qa_q1_game_operation_end(&call.operation);
+    end(&call);
     return okay;
 }
 
@@ -776,7 +769,7 @@ bool application_native_q1_rogue_confirmed_damage(application_provider *source,
         current(&call, error) && qa_modes_q1_source_write(call.app->modes, call.mode,
             attacker, QA_Q1_ROGUE_LAST_HURT_CARRIER, seconds, error) && current(&call, error);
 finish:
-    qa_q1_game_operation_end(&call.operation);
+    end(&call);
     return okay;
 }
 
@@ -787,7 +780,7 @@ bool application_native_q1_rogue_before_fire(application_provider *source,
     bool okay = begin(source, &call, error) && player_required(&call, actor, error) &&
         qa_q1_source_rogue_runes_before_fire(call.operation.game, actor, error) &&
         player_required(&call, actor, error);
-    qa_q1_game_operation_end(&call.operation);
+    end(&call);
     return okay;
 }
 
@@ -813,7 +806,7 @@ bool application_native_q1_rogue_attack_delay(application_provider *source,
             *delay = (float)(float)((float)((double)*delay * 2) / 3);
     } else if (okay) okay = qa_q1_source_rogue_runes_attack_delay(call.operation.game, actor, delay, error) &&
         player_required(&call, actor, error);
-    qa_q1_game_operation_end(&call.operation);
+    end(&call);
     return okay;
 }
 
@@ -827,7 +820,7 @@ static bool flag_report(rogue_call *call, qa_actor_id actor,
     const qa_q1_source_rogue_flag_view *flag, const char *label, bool own,
     bool single, double mode, qa_error *error)
 {
-    char buffer[512], *text = buffer, *owned = NULL;
+    char buffer[512], *text = buffer;
     size_t capacity = sizeof(buffer);
     const char *key = NULL;
     if (flag && flag->count == 1 && flag->owner.registry) {
@@ -838,15 +831,11 @@ static bool flag_report(rogue_call *call, qa_actor_id actor,
         if (name_size > (SIZE_MAX - strlen(label) - 128) / 2)
             return application_fail(error, QA_ERROR_MEMORY, "Rogue flag announcement exceeds its source extent");
         capacity = name_size + strlen(label) + 128;
-        owned = malloc(capacity);
-        if (!owned) return application_fail(error, QA_ERROR_MEMORY, "Retaining the Rogue flag owner name");
-        text = owned;
-        char *name = malloc(name_size);
-        if (!name) {
-            free(owned);
-            return application_fail(error, QA_ERROR_MEMORY, "Retaining the Rogue flag owner name");
-        }
-        memcpy(name, owner.name, name_size);
+        qa_arena *storage = scratch(call, error);
+        if (!storage) return false;
+        text = qa_arena_alloc(storage, capacity, _Alignof(char), error);
+        char *name = text ? qa_arena_text(storage, owner.name, error) : NULL;
+        if (!name) return false;
         bool self = qa_actor_id_equal(actor, flag->owner);
         if (single && self) key = "$qc_you_have_flag";
         else if (mode == 4 && self) key = "$qc_you_have_enemy_flag";
@@ -855,17 +844,12 @@ static bool flag_report(rogue_call *call, qa_actor_id actor,
             name, own ? "your" : "the enemy");
         else {
             double owner_team;
-            if (!team(call, flag->owner, &owner_team, error)) {
-                free(name);
-                free(owned);
-                return false;
-            }
+            if (!team(call, flag->owner, &owner_team, error)) return false;
             if (single) snprintf(text, capacity, "%s of the %s team has the flag!\n",
                 name, team_name(owner_team));
             else snprintf(text, capacity, "%s of the %s team has the %s flag.\n",
                 name, team_name(owner_team), label);
         }
-        free(name);
     } else if (single) key = !flag ? "$qc_flag_missing" : flag->count == 0 ?
         "$qc_flag_at_base" : flag->count == 2 ? "$qc_flag_lying_about" : "$qc_flag_screwed_up";
     else {
@@ -874,9 +858,7 @@ static bool flag_report(rogue_call *call, qa_actor_id actor,
             flag->count == 2 ? "lying about." : " corrupt.";
         snprintf(text, capacity, "%s is %s\n", label, place);
     }
-    bool okay = message(call, actor, key ? key : text, false, NULL, 0, error);
-    free(owned);
-    return okay;
+    return message(call, actor, key ? key : text, false, NULL, 0, error);
 }
 
 bool application_native_q1_rogue_impulse(application_provider *source,
@@ -933,7 +915,7 @@ bool application_native_q1_rogue_impulse(application_provider *source,
     if (okay) okay = qa_q1_source_client_consume_impulse(call.operation.game, actor, error) &&
         player_required(&call, actor, error);
     if (okay) *handled = true;
-    qa_q1_game_operation_end(&call.operation);
+    end(&call);
     return okay;
 }
 
@@ -959,22 +941,21 @@ static bool team_update(rogue_call *call, qa_error *error)
     bool enabled;
     if (!ctf(call, &enabled, error)) return false;
     if (!enabled) return true;
-    qa_actor_id *rows;
-    size_t count;
-    if (!players_snapshot(call, &rows, &count, error)) return false;
+    qa_world_actor_snapshot rows = {0};
+    if (!players_snapshot(call, &rows, error)) return false;
     float totals[3] = {0};
     bool okay = true;
-    for (size_t i = 0; okay && i < count; ++i) {
+    for (size_t i = 0; okay && i < rows.count; ++i) {
         double actual_team;
         qa_q1_source_client_view client;
-        okay = team(call, rows[i], &actual_team, error) && player_required(call, rows[i], error);
-        if (okay && !qa_q1_source_client_read(call->operation.game, rows[i], &client))
+        okay = team(call, rows.actors[i], &actual_team, error) && player_required(call, rows.actors[i], error);
+        if (okay && !qa_q1_source_client_read(call->operation.game, rows.actors[i], &client))
             okay = application_fail(error, QA_ERROR_ARGUMENT, "Rogue score update lost its source client");
         if (okay && actual_team == 5) totals[0] += client.frags;
         else if (okay && actual_team == 14) totals[1] += client.frags;
         else if (okay && actual_team == 1) totals[2] += client.frags;
     }
-    free(rows);
+    qa_world_snapshot_release(&rows);
     if (!okay) return false;
     unsigned order[3] = {0, 1, 2}, length = mode == 6 ? 3 : 2;
     for (unsigned i = 1; i < length; ++i) {
@@ -1068,7 +1049,7 @@ bool application_native_q1_rogue_after_physics(application_provider *source,
         team_frame(&call, actor, error) &&
         qa_q1_source_rogue_runes_frame(call.operation.game, actor, error) &&
         player_required(&call, actor, error);
-    qa_q1_game_operation_end(&call.operation);
+    end(&call);
     return okay;
 }
 
@@ -1131,6 +1112,6 @@ bool application_native_q1_rogue_damage_effect(application_provider *source,
     if (okay) allowed = ((uint32_t)qa_source_to_i32((float)(gamecfg)) & (stage == QA_DAMAGE_ARMOR_ALLOWED ? 2 : 4)) != 0;
 finish:
     if (okay) effect->allowed = effect->allowed && allowed;
-    qa_q1_game_operation_end(&call.operation);
+    end(&call);
     return okay;
 }

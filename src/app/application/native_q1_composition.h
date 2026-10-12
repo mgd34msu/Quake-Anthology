@@ -10,5 +10,7 @@ bool application_native_q1_composition_current(void *, qa_actor_owner, qa_mode_s
 bool application_native_q1_composition_player_current(void *, qa_actor_owner, qa_mode_source,
     qa_actor_id, bool *observer, qa_error *);
 bool application_native_q1_composition_mode(qa_application *, application_provider *, qa_mode_id *, qa_error *);
+bool application_native_q1_composition_players_capture(qa_application *, qa_q1_game *,
+    uint32_t client_slots, qa_world_actor_snapshot *, qa_error *);
 
 #endif

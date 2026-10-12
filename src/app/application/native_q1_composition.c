@@ -6,6 +6,17 @@
 
 #include <string.h>
 
+bool application_native_q1_composition_players_capture(qa_application *app, qa_q1_game *game,
+    uint32_t client_slots, qa_world_actor_snapshot *out, qa_error *error)
+{
+    if (!qa_world_snapshot_acquire(app->world, out, error)) return false;
+    for (uint32_t slot = 0; slot < client_slots; ++slot) {
+        qa_actor_id actor;
+        if (qa_q1_source_client_actor(game, slot, &actor)) out->actors[out->count++] = actor;
+    }
+    return true;
+}
+
 static bool source_options(application_provider *source, qa_q1_options *options,
     qa_error *error)
 {
