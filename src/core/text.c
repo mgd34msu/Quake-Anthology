@@ -39,6 +39,13 @@ bool qa_text_ascii_equal(const char *left,const char *right)
                               (qa_bytes){(const uint8_t *)right,strlen(right)},true);
 }
 
+bool qa_text_q3_color_escape(uint32_t current,uint32_t next,uint8_t *index)
+{
+    if (current!='^' || !next || next=='^') return false;
+    *index=(uint8_t)((next-(uint32_t)'0')&7u);
+    return true;
+}
+
 bool qa_info_key_equal(qa_bytes key,qa_bytes wanted,unsigned policy)
 {
     return qa_text_bytes_equal(key,wanted,(policy&QA_INFO_CASE_FOLD)!=0);

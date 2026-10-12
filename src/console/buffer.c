@@ -100,10 +100,16 @@ bool qa_console_buffer_print(qa_console_buffer *buffer, qa_bytes text, double ti
     uint8_t color = 7;
     uint32_t code;
     while (qa_utf8_next(text, &at, &code)) {
-        if ((buffer->dialect == QA_RULESET_Q3 || buffer->dialect == QA_RULESET_Q2_RERELEASE) &&
-            code == '^' && at < text.size && text.data[at] >= '0' && text.data[at] <= '9') {
-            color = (uint8_t)((text.data[at++] - '0') & 7);
-            continue;
+        if (code == '^' && (buffer->dialect == QA_RULESET_Q3 ||
+                buffer->dialect == QA_RULESET_Q2_RERELEASE)) {
+            size_t next_at = at;
+            uint32_t next;
+            if (qa_utf8_next(text, &next_at, &next) &&
+                (buffer->dialect == QA_RULESET_Q3 || (next >= '0' && next <= '9')) &&
+                qa_text_q3_color_escape(code, next, &color)) {
+                at = next_at;
+                continue;
+            }
         }
         if (code == '\n') {
             linefeed(buffer, time, notify, false);

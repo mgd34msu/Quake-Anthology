@@ -22,12 +22,12 @@ static bool finite_color(qa_vec4 color) {
     return isfinite(color.x) && isfinite(color.y) && isfinite(color.z) && isfinite(color.w);
 }
 
-static qa_vec4 q3_color(uint32_t codepoint, float alpha) {
+static qa_vec4 q3_color(uint8_t index, float alpha) {
     static const qa_vec4 colors[8] = {
         {0, 0, 0, 1}, {1, 0, 0, 1}, {0, 1, 0, 1}, {1, 1, 0, 1},
         {0, 0, 1, 1}, {0, 1, 1, 1}, {1, 0, 1, 1}, {1, 1, 1, 1},
     };
-    qa_vec4 result = colors[(codepoint - (uint32_t)'0') & 7u];
+    qa_vec4 result = colors[index];
     result.w = alpha;
     return result;
 }
@@ -137,9 +137,11 @@ bool qa_font_layout_build(const qa_font_selection *selection, const qa_font_layo
             at < options->text.size) {
             size_t next_at = at;
             uint32_t next;
-            if (qa_utf8_next(options->text, &next_at, &next) && next != 0 && next != '^') {
+            uint8_t index;
+            if (qa_utf8_next(options->text, &next_at, &next) &&
+                qa_text_q3_color_escape(codepoint, next, &index)) {
                 if (!options->force_color)
-                    color = q3_color(next, options->color.w);
+                    color = q3_color(index, options->color.w);
                 at = next_at;
                 continue;
             }

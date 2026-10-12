@@ -24,6 +24,9 @@ bool qa_text_join_words(const char *const *,size_t,char *,size_t,qa_error *);
 /* Counted bytes, including embedded NULs; folding changes ASCII A-Z only. */
 bool qa_text_bytes_equal(qa_bytes, qa_bytes, bool ascii_fold);
 bool qa_text_ascii_equal(const char *, const char *);
+/* Q3 Q_IsColorString/ColorIndex after source-byte or UTF-8 scalar decoding.
+ * A literal caret or end of text leaves the palette index unchanged. */
+bool qa_text_q3_color_escape(uint32_t current, uint32_t next, uint8_t *index);
 /* Quake backslash info pairs, borrowed from the NUL-terminated input. Cursor
  * starts at the string and ends at the next delimiter or terminator. */
 bool qa_info_next(const char **cursor,qa_bytes *key,qa_bytes *value);

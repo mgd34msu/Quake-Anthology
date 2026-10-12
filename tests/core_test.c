@@ -12,6 +12,7 @@
 #include "qa/unified_frame_metadata.h"
 #include "qa/unified_frame_events.h"
 #include "qa/console_cvars_prepare.h"
+#include "qa/console_buffer.h"
 #include "qa/settings.h"
 #include "qa/binary.h"
 #include "qa/json.h"
@@ -2025,6 +2026,32 @@ static void test_shared_cvar_archive(void)
 
 static void test_cvar_info_storage(void)
 {
+    uint8_t color=7;
+    CHECK(qa_text_q3_color_escape('^','a',&color) && color==1);
+    CHECK(qa_text_q3_color_escape('^','z',&color) && color==2);
+    CHECK(qa_text_q3_color_escape('^','9',&color) && color==1);
+    CHECK(qa_text_q3_color_escape('^',0xe9,&color) && color==1);
+    CHECK(!qa_text_q3_color_escape('^','^',&color) && color==1);
+    CHECK(!qa_text_q3_color_escape('^',0,&color) && color==1);
+    CHECK(!qa_text_q3_color_escape('x','1',&color) && color==1);
+    qa_error color_error={0};
+    qa_console_buffer *color_buffer=qa_console_buffer_create(QA_RULESET_Q3,32,128,&color_error);
+    CHECK(color_buffer);
+    static const uint8_t colored[]="^aA^zB^9C^";
+    CHECK(qa_console_buffer_print(color_buffer,(qa_bytes){colored,sizeof colored-1},0,&color_error));
+    qa_console_row color_row;
+    CHECK(qa_console_buffer_row(color_buffer,qa_console_buffer_count(color_buffer)-1,&color_row));
+    CHECK(color_row.count==4 && color_row.cells[0].scalar=='A' && color_row.cells[0].color==1);
+    CHECK(color_row.cells[1].scalar=='B' && color_row.cells[1].color==2);
+    CHECK(color_row.cells[2].scalar=='C' && color_row.cells[2].color==1);
+    CHECK(color_row.cells[3].scalar=='^' && color_row.cells[3].color==1);
+    qa_console_buffer_clear(color_buffer);
+    qa_console_buffer_dialect(color_buffer,QA_RULESET_Q2_RERELEASE);
+    static const uint8_t q2_colored[]="^aA^9B";
+    CHECK(qa_console_buffer_print(color_buffer,(qa_bytes){q2_colored,sizeof q2_colored-1},0,&color_error));
+    CHECK(qa_console_buffer_row(color_buffer,qa_console_buffer_count(color_buffer)-1,&color_row));
+    CHECK(color_row.count==4 && color_row.cells[0].scalar=='^' && color_row.cells[3].scalar=='B' && color_row.cells[3].color==1);
+    qa_console_buffer_destroy(color_buffer);
     const uint8_t upper[]={'A',0,0xc1},lower[]={'a',0,0xc1},other[]={'a',0,0xe1};
     CHECK(qa_text_bytes_equal((qa_bytes){upper,sizeof upper},(qa_bytes){lower,sizeof lower},true));
     CHECK(!qa_text_bytes_equal((qa_bytes){upper,sizeof upper},(qa_bytes){lower,sizeof lower},false));
