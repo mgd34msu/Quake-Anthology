@@ -276,7 +276,8 @@ static bool dispatch(qa_q3_game *game, qa_actor_id actor, const qa_command_invoc
         float coordinates[4];
         for (size_t i = 0; i < 4; ++i) {
             const char *argument = command->argv[i + 1];
-            coordinates[i] = q3_source_atof((qa_bytes){(const uint8_t *)argument, strlen(argument)});
+            coordinates[i] = (float)qa_parse_quake_number(
+                argument, QA_QUAKE_NUMBER_Q3_BYTECODE);
         }
         return qa_q3_teleport(game, actor, qa_v3(coordinates[0], coordinates[1], coordinates[2]),
                               qa_v3(0, coordinates[3], 0), error);

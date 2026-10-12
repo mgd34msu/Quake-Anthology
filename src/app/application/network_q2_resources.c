@@ -559,16 +559,6 @@ bool application_network_q2_dependency(qa_application_network_q2 *owner,
     held_free(&held); return ok;
 }
 
-static void model_translation(uint8_t colors, uint8_t table[256])
-{
-    for (unsigned i = 0; i < 256; ++i) table[i] = (uint8_t)i;
-    unsigned top = colors & 240u, bottom = (colors & 15u) << 4;
-    for (unsigned i = 0; i < 16; ++i) {
-        table[16 + i] = (uint8_t)(top < 128 ? top + i : top + 15 - i);
-        table[96 + i] = (uint8_t)(bottom < 128 ? bottom + i : bottom + 15 - i);
-    }
-}
-
 static bool model_colors_current(const application_q2_held_resource *held,
     const qa_application_visual_view *visual)
 {
@@ -576,7 +566,9 @@ static bool model_colors_current(const application_q2_held_resource *held,
     bool translated = bytes.size >= 4 && !memcmp(bytes.data, "IDPO", 4) && visual->visual.has_player_colors;
     if (held->image_translation.size != (translated ? 256u : 0u)) return false;
     if (!translated) return true;
-    uint8_t table[256]; model_translation(visual->visual.player_colors, table);
+    uint8_t table[256];
+    (void)qa_image_player_translation(visual->visual.player_colors >> 4,
+        visual->visual.player_colors & 15u, table, NULL);
     return !memcmp(table, held->image_translation.data, sizeof(table));
 }
 
@@ -602,7 +594,7 @@ static bool model_palette_admission(qa_application_network_q2 *owner,
         ok = bank && qa_model_load(qa_resource_bytes(held->resource), &model, error);
         uint8_t translation[256];
         if (ok && has_colors && model.format == QA_MODEL_MDL) {
-            model_translation(colors, translation);
+            (void)qa_image_player_translation(colors >> 4, colors & 15u, translation, NULL);
             images.translation = (qa_bytes){translation, sizeof(translation)};
         }
         if (ok && images.family == QA_GAME_Q3) {

@@ -117,12 +117,7 @@ bool remote_q1_model_read(frontend_remote_q1 *row, qa_string_id path, const fron
         path) & QA_NAME_BRUSH_PATH) != 0;
     qa_scene_image_options options = image_options(QA_IMAGE_USAGE_SKIN); uint8_t translation[256];
     if (m->colors) {
-        for (unsigned i = 0; i < 256; ++i) translation[i] = (uint8_t)i;
-        unsigned top = m->top * 16u, bottom = m->bottom * 16u;
-        for (unsigned i = 0; i < 16; ++i) {
-            translation[16 + i] = (uint8_t)(top < 128 ? top + i : top + 15 - i);
-            translation[96 + i] = (uint8_t)(bottom < 128 ? bottom + i : bottom + 15 - i);
-        }
+        ok = ok && qa_image_player_translation(m->top, m->bottom, translation, error);
         options.translation = (qa_bytes){translation, sizeof(translation)};
     }
     if (ok && brush) {

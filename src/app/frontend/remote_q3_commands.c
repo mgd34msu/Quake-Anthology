@@ -1,9 +1,9 @@
 /* Received CLIENT cg_consolecmds, id Software 1999-2005, GPL-2.0-or-later. */
 #include "remote_q3_commands.h"
 #include "remote_q3_runtime.h"
+#include "qa/binary.h"
 #include "qa/text.h"
 #include "../../presentation/q3_native/cgame_commands.h"
-#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,23 +33,6 @@ static bool fail(qa_error *e,qa_status status,const char *text)
 static unsigned char lower(unsigned char c)
 { return c>='A' && c<='Z'?(unsigned char)(c+32):c; }
 
-static int32_t signed_word(uint32_t word)
-{ int32_t out; memcpy(&out,&word,sizeof(out)); return out; }
-static int32_t sum(int32_t a,int32_t b)
-{ return signed_word((uint32_t)a+(uint32_t)b); }
-static int32_t integer(float value)
-{ return value>=-2147483648.0f && value<2147483648.0f?(int32_t)value:INT32_MIN; }
-static const char *number_start(const char *text,bool *negative)
-{
-    while(*text && (int8_t)(uint8_t)*text<=32)++text;
-    *negative=*text=='-'; if(*text=='+' || *text=='-')++text; return text;
-}
-static int32_t game_atoi(const char *text)
-{
-    bool negative; text=number_start(text,&negative); uint32_t value=0;
-    while(*text>='0' && *text<='9')value=value*10+(uint32_t)(*text++-'0');
-    return signed_word(negative?0-value:value);
-}
 static const char *arg(const qa_command_invocation *call,size_t index,char out[1024])
 {
     const char *text=index<call->argc?call->argv[index]:"";
@@ -115,7 +98,7 @@ static bool set(void *context,const qa_command_invocation *call,const char *name
         qa_cvars_set(actual.resources.domain.source.receiver.cvars,name,value,true,e) && invocation_current(o,call,e);
 }
 static int32_t crosshair(const q3n_frame *f,const q3n_hud_state *hud)
-{ return f->time>sum(hud->crosshair_client_time,1000)?-1:hud->crosshair_client; }
+{ return f->time>qa_i32_add(hud->crosshair_client_time,1000)?-1:hud->crosshair_client; }
 static bool scores(frontend_remote_q3_commands *o,const qa_command_invocation *call,const q3n_frame *f,
     const frontend_remote_q3_runtime_owners *owners,qa_error *e)
 {
@@ -144,22 +127,22 @@ static bool dispatch(frontend_remote_q3_commands *o,const qa_command_invocation 
     }
     if(q3n_cgame_command_equal(name,"+zoom") || q3n_cgame_command_equal(name,"-zoom")) { q3n_view_zoom(owners.view,*name=='+',f->time); return true; }
     if(q3n_cgame_command_equal(name,"weapnext") || q3n_cgame_command_equal(name,"weapprev")) { q3n_weapons_cycle(f,q3n_cgame_command_equal(name,"weapnext")?1:-1); return true; }
-    if(q3n_cgame_command_equal(name,"weapon")) { q3n_weapons_select(f,game_atoi(value)); return true; }
+    if(q3n_cgame_command_equal(name,"weapon")) { q3n_weapons_select(f,qa_parse_decimal_i32(value,QA_DECIMAL_SIGNED_WRAP)); return true; }
     if(q3n_cgame_command_equal(name,"viewpos")) {
-        snprintf(text,sizeof(text),"(%i %i %i) : %i\n",integer(f->refdef.origin.x),integer(f->refdef.origin.y),
-            integer(f->refdef.origin.z),integer(f->view_angles.y)); qa_console_emit(call->console,&call->context,text); return true;
+        snprintf(text,sizeof(text),"(%i %i %i) : %i\n",qa_source_to_i32(f->refdef.origin.x),qa_source_to_i32(f->refdef.origin.y),
+            qa_source_to_i32(f->refdef.origin.z),qa_source_to_i32(f->view_angles.y)); qa_console_emit(call->console,&call->context,text); return true;
     }
     if(q3n_cgame_command_equal(name,"sizeup") || q3n_cgame_command_equal(name,"sizedown")) {
         qa_native_q3_client_cvar cached;
         if(!qa_native_q3_remote_client_cvar_read(services.client,QA_NATIVE_Q3_CVAR_cg_viewsize,&cached,e))return false;
-        snprintf(text,sizeof(text),"%i",sum(cached.integer,q3n_cgame_command_equal(name,"sizeup")?10:-10)); return set(o,call,"cg_viewsize",text,e);
+        snprintf(text,sizeof(text),"%i",qa_i32_add(cached.integer,q3n_cgame_command_equal(name,"sizeup")?10:-10)); return set(o,call,"cg_viewsize",text,e);
     }
     if(q3n_cgame_command_equal(name,"+scores"))return scores(o,call,f,&owners,e);
     if(q3n_cgame_command_equal(name,"-scores")) { if(hud->show_scores)q3n_hud_scores(owners.hud,false,f->time); return true; }
     if(q3n_cgame_command_equal(name,"tcmd")) {
         int32_t target=crosshair(f,hud); if(target==0)return true;
         char narrow[4]={0}; size_t n=strlen(value); if(n>3)n=3; memcpy(narrow,value,n);
-        snprintf(text,sizeof(text),"gc %i %i",target,game_atoi(narrow)); return append(o,call,text,e);
+        snprintf(text,sizeof(text),"gc %i %i",target,qa_parse_decimal_i32(narrow,QA_DECIMAL_SIGNED_WRAP)); return append(o,call,text,e);
     }
     if(q3n_cgame_command_equal(name,"tell_target") || q3n_cgame_command_equal(name,"tell_attacker") || q3n_cgame_command_equal(name,"vtell_target") || q3n_cgame_command_equal(name,"vtell_attacker")) {
         bool target=q3n_cgame_command_equal(name,"tell_target") || q3n_cgame_command_equal(name,"vtell_target"); int32_t client;
@@ -192,7 +175,7 @@ static bool dispatch(frontend_remote_q3_commands *o,const qa_command_invocation 
     if(q3n_cgame_command_equal(name,"startOrbit")) {
         const qa_cvar_view *developer=qa_cvars_find(services.resources.domain.source.receiver.cvars,"developer");
         char immediate[1024]; snprintf(immediate,sizeof(immediate),"%s",developer?developer->value:"");
-        if(!game_atoi(immediate))return true;
+        if(!qa_parse_decimal_i32(immediate,QA_DECIMAL_SIGNED_WRAP))return true;
         qa_native_q3_client_cvar cached;
         if(!qa_native_q3_remote_client_cvar_read(services.client,QA_NATIVE_Q3_CVAR_cg_cameraOrbit,&cached,e))return false;
         if(cached.number!=0)return set(o,call,"cg_cameraOrbit","0",e) && set(o,call,"cg_thirdPerson","0",e);

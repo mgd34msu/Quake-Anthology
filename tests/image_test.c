@@ -59,7 +59,10 @@ static void pcx_and_palette(void) {
     uint8_t translation[256];
     CHECK(qa_image_player_translation(8, 3, translation, &error));
     CHECK(translation[16] == 143 && translation[31] == 128 && translation[96] == 48);
-    CHECK(!qa_image_player_translation(14, 3, translation, &error));
+    CHECK(qa_image_player_translation(14, 15, translation, &error));
+    CHECK(translation[16] == 239 && translation[31] == 224 &&
+          translation[96] == 255 && translation[111] == 240);
+    CHECK(!qa_image_player_translation(16, 3, translation, &error));
     qa_indexed_level level = {3, 2, {indices, sizeof(indices)}};
     qa_palette_options options = {255, 192, 255, NULL, QA_PALETTE_ORDINARY};
     CHECK(qa_image_expand_indexed(&level, BYTES(palette), &options, &decoded, &error));

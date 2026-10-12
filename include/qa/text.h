@@ -77,6 +77,12 @@ typedef enum qa_quake_number_policy {
     QA_QUAKE_NUMBER_Q3_BYTECODE = 8
 } qa_quake_number_policy;
 double qa_parse_quake_number(const char *, qa_quake_number_policy);
+typedef struct qa_number_cursor {
+    qa_bytes text;
+    size_t offset;
+    bool overrun;
+} qa_number_cursor;
+double qa_parse_quake_number_cursor(qa_number_cursor *, qa_quake_number_policy, bool scan);
 /* Signed decimal prefix with the caller's original byte/overflow rules.
  * Missing prefixes produce zero; wrap is modulo 2^32 for every digit. */
 typedef enum qa_decimal_rule {
@@ -87,6 +93,7 @@ typedef enum qa_decimal_rule {
     QA_DECIMAL_LOCALE_CLAMP
 } qa_decimal_rule;
 int32_t qa_parse_decimal_i32(const char *, qa_decimal_rule);
+int32_t qa_parse_decimal_i32_cursor(qa_number_cursor *, qa_decimal_rule, bool consume_delimiter);
 /* Original x86 truncation, with INT32_MIN for nonfinite or out-of-range
  * operands. Float source arithmetic rounds before this boundary. */
 int32_t qa_source_to_i32(double value);
