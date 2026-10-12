@@ -26,8 +26,8 @@ bool bot_ai_context_create(qa_bot_runtime *runtime, const qa_bot_services *servi
                     uint32_t client_capacity, qa_bots **out, qa_error *e) {
     if (!runtime || !services || !out || !services->shared.session ||
         !services->shared.world || !services->shared.combat || !services->shared.player_info || !services->player ||
-        !services->inventory || !services->entity || !services->entity_actor || !services->entity_extent || !services->entity_list || !services->arsenal || !services->arsenal_end ||
-        !services->submit || !services->random || !services->source_client || !services->source_actor ||
+        !services->inventory || !services->entity || !services->entity_actor || !services->entity_number || !services->entity_extent || !services->entity_list || !services->arsenal || !services->arsenal_end ||
+        !services->submit || !services->random || !services->source_client || !services->source_actor || !services->source_client_number ||
         !services->memory.allocate || !services->memory.read || !services->memory.write || !services->memory.borrow_span)
         return bot_ai_fail(e, "native bot population requires live shared gameplay and botlib services");
     if (client_capacity > INT32_MAX || (client_capacity && SIZE_MAX / client_capacity < sizeof(bot_ai_state *)))

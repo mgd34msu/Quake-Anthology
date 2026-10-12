@@ -45,20 +45,27 @@ static void retire(application_bot_world *world) {
     }
     world->order_count=retained;
 }
-static bool entity_id(application_bot_world *world,qa_actor_id actor,int32_t *out,qa_error *error) {
+static bool entity_find(application_bot_world *world,qa_actor_id actor,int32_t *out,bool *found,qa_error *error) {
+    *found=false;
     if(!live(world,actor)) return fail(error,QA_ERROR_NOT_FOUND,"shared bot entity identity requires its full live actor");
-    application_bot_world_movement movement;bool found;
-    if(!world->services.movement(world->services.context,actor,&movement,&found,error)) return false;
-    if(found) {
+    application_bot_world_movement movement;bool present;
+    if(!world->services.movement(world->services.context,actor,&movement,&present,error)) return false;
+    if(present) {
         if(movement.source_client<0 || !live(world,actor))
             return fail(error,QA_ERROR_FORMAT,"shared bot movement client lost its source identity");
-        *out=movement.source_client;return true;
+        *out=movement.source_client;*found=true;return true;
     }
     application_bot_world_metadata metadata;
-    if(!world->services.metadata(world->services.context,actor,&metadata,&found,error)) return false;
-    if(found && metadata.worldspawn) {*out=1022;return true;}
+    if(!world->services.metadata(world->services.context,actor,&metadata,&present,error)) return false;
+    if(present && metadata.worldspawn) {*out=1022;*found=true;return true;}
     size_t existing;
-    if(qa_actor_index_find(&world->actor_entities,actor,&existing)) {*out=(int32_t)existing;return true;}
+    if(qa_actor_index_find(&world->actor_entities,actor,&existing)) {*out=(int32_t)existing;*found=true;}
+    return true;
+}
+static bool entity_id(application_bot_world *world,qa_actor_id actor,int32_t *out,qa_error *error) {
+    bool found;
+    if(!entity_find(world,actor,out,&found,error)) return false;
+    if(found) return true;
     retire(world);
     uint32_t id=world->free_count?world->free_ids[world->free_count-1]:world->next_entity;
     if(id>=1022) return fail(error,QA_ERROR_ARGUMENT,"live bot observations exceed the simultaneous sensory capacity");
@@ -180,6 +187,10 @@ bool application_bot_world_refresh(application_bot_world *world,qa_error *error)
 bool application_bot_world_entity_id(application_bot_world *world,qa_actor_id actor,int32_t *out,qa_error *error) {
     if(!idle(world,error) || !out) return false;
     ++world->calls;bool okay=entity_id(world,actor,out,error);--world->calls;return okay;
+}
+bool application_bot_world_entity_find(application_bot_world *world,qa_actor_id actor,int32_t *out,qa_error *error) {
+    if(!idle(world,error) || !out) return false;
+    ++world->calls;bool found,okay=entity_find(world,actor,out,&found,error);--world->calls;return okay && found;
 }
 bool application_bot_world_actor(application_bot_world *world,int32_t number,qa_actor_id *out,qa_error *error) {
     if(!idle(world,error) || !out) return false;

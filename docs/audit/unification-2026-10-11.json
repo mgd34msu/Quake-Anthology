@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "5923d872a43873180cd0503fc06ca6c50ac07be6",
+  "verified_main": "a00e3e40b637c27725115260d39ba2835b34391d",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -28483,7 +28483,13 @@
       "job": "11",
       "area": "core_content_build_tools_tests",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "source review; no runtime or performance proof",
+      "partial_followups": [
+        {
+          "commit": "a00e3e40b637c27725115260d39ba2835b34391d",
+          "verification": "Custom-skin bindings now use the common ID index keyed by full uint64 model identity within each skin cache and common arena-owned historical arrays. Linked nodes, ID scan and per-node allocator/free walk are deleted. Existing model suite checks stride, first equal mapping, SIZE_MAX, full identity separation and stable arrays through index growth. First-use/new-pair arena allocation remains open. Matching normal build and seven core suites pass."
+        }
+      ]
     },
     {
       "id": "J11-08",
@@ -39889,6 +39895,30 @@
       ],
       "record_directory": "/tmp/qa-ta3196-console-owned-text-20261012",
       "conclusion": "Private qac_text type, helpers and every caller are deleted. Console execution and seat text use scoped common command arenas; dedicated UTF-8 input reuses its admitted reservation; cold config/help/search return exact owned buffers. CFG quoting, source dialect text, nested lifetimes and QDCN field layout remain. Existing core suite checks unread checkpoint round-trip and maximal accepted malformed UTF-8 repair. Large execute_now and persistent/cold owned allocations remain separate work; no global zero-heap claim."
+    },
+    {
+      "commit": "a00e3e40b637c27725115260d39ba2835b34391d",
+      "source_tree": "d5f95fbdeedb4254a8d32a5eb0aa59a7d7a8d038",
+      "finding_ids": [
+        "J11-07"
+      ],
+      "files_rechecked": [
+        "src/formats/model/metadata.c",
+        "tests/model_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-shared-skin-binding-index-20261012",
+      "conclusion": "Custom-skin bindings now use the common ID index keyed by full uint64 model identity within each skin cache and common arena-owned historical arrays. Linked nodes, ID scan and per-node allocator/free walk are deleted. Existing model suite checks stride, first equal mapping, SIZE_MAX, full identity separation and stable arrays through index growth. First-use/new-pair arena allocation remains open. Matching normal build and seven core suites pass."
     }
   ],
   "verification_limits": [

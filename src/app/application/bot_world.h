@@ -83,6 +83,8 @@ bool application_bot_world_destroy(application_bot_world *,qa_error *);
 bool application_bot_world_can_destroy(const application_bot_world *);
 bool application_bot_world_refresh(application_bot_world *,qa_error *);
 bool application_bot_world_entity_id(application_bot_world *,qa_actor_id,int32_t *,qa_error *);
+/* Read admitted identity without allocating or retiring a sensory alias. */
+bool application_bot_world_entity_find(application_bot_world *,qa_actor_id,int32_t *,qa_error *);
 bool application_bot_world_actor(application_bot_world *,int32_t,qa_actor_id *,qa_error *);
 uint32_t application_bot_world_entity_count(const application_bot_world *);
 bool application_bot_world_read(application_bot_world *,int32_t,application_bot_world_entity *,qa_error *);

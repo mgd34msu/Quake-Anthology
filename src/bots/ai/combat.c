@@ -365,19 +365,15 @@ bool bot_ai_find_enemy(qa_bots *b,bot_ai_state *s,int32_t current_enemy,bool *fo
     }
     /* Foreign damageable actors keep their canonical providers. Actual Source
      * client aliases were considered only by the physical client loop above. */
-    qa_actor_id source_actors[64];
-    for(int32_t client=0;client<64;++client) source_actors[client]=bot_ai_source_actor(b,client);
     qa_actor_id current_actor=current_enemy>=0?
         b->services.entity_actor(b->services.context,current_enemy):(qa_actor_id){0};
     for (size_t i = 0; i < b->entities.count; ++i) {
         qa_actor_id actor = b->entities.ids[i];
         if(!bot_ai_live(b,actor) || qa_actor_id_equal(actor,s->view.actor) ||
            qa_actor_id_equal(actor,current_actor)) continue;
-        bool source_client=false;
-        for(size_t client=0;client<64;++client) {
-            if(qa_actor_id_equal(source_actors[client],actor)) {source_client=true;break;}
-        }
-        if(source_client) continue;
+        int32_t source_client=b->services.source_client_number(b->services.context,actor);
+        if(source_client>=0 && source_client<64 &&
+           qa_actor_id_equal(b->services.source_actor(b->services.context,source_client),actor)) continue;
         qa_bot_player player;bool present;
         if (!bot_ai_target(b,s,actor,&player,&present,e)) return false;
         if (s->retired || !bot_ai_live(b, s->view.actor)) return true;
@@ -582,19 +578,24 @@ static bool selected_in_range(qa_bots *b,bot_ai_state *s,const qa_bot_weapon_kno
     *allowed=qa_vec_dot(direction,direction)<=weapon->maximum_range*weapon->maximum_range;
     return true;
 }
+static int32_t source_hit_number(qa_bots *b,qa_actor_id actor) {
+    if(!actor.registry) return -1;
+    int32_t number=b->services.entity_number(b->services.context,actor);
+    if(number<1 || number>64) return -1;
+    qa_actor_id expected=b->services.entity_actor(b->services.context,number);
+    return expected.registry && qa_actor_id_equal(actor,expected)?number:-1;
+}
 static bool selected_hit_safe(qa_bots *b,bot_ai_state *s,const qa_bot_weapon_knowledge *weapon,
                                qa_actor_id enemy,qa_vec3 muzzle,const qa_trace_result *hit,
                                bool source,bool *safe,qa_error *e) {
     *safe=true;
     if(hit->actor.registry && !qa_actor_id_equal(hit->actor,enemy)) {
         if(source) {
-            for(int32_t number=1;number<=64;++number) {
-                qa_actor_id actor=b->services.entity_actor(b->services.context,number);
-                if(!qa_actor_id_equal(hit->actor,actor)) continue;
+            int32_t number=source_hit_number(b,hit->actor);
+            if(number>=0) {
                 bool same;
                 if(!bot_ai_source_same_team(b,s,number,&same,e)) return false;
                 if(same) *safe=false;
-                break;
             }
         } else {
             qa_builtin_player_info info;
@@ -1194,11 +1195,12 @@ bool bot_ai_source_check_attack(qa_bots *b,bot_ai_state *s,qa_error *e) {
         qa_vec3 end=qa_vec_add(start,qa_vec_scale(forward,1000));start=qa_vec_add(start,qa_vec_scale(forward,-12));
         qa_bounds bounds={qa_v3(-8,-8,-8),qa_v3(8,8,8)};
         SOURCE_ATTACK_CALL(trace(b,s,start,end,&bounds,source_viewer(b,s),BOT_SHOT,&hit,e));
-        if(!source_trace_hits(b,&hit,enemy)) for(int32_t number=1;number<=64;++number) {
-            if(!source_trace_hits(b,&hit,number)) continue;
-            bool same;SOURCE_ATTACK_CALL(bot_ai_source_same_team(b,s,number,&same,e));
-            if(same) return true;
-            break;
+        if(!source_trace_hits(b,&hit,enemy)) {
+            int32_t number=source_hit_number(b,hit.actor);
+            if(number>=0) {
+                bool same;SOURCE_ATTACK_CALL(bot_ai_source_same_team(b,s,number,&same,e));
+                if(same) return true;
+            }
         }
         if((!source_trace_hits(b,&hit,enemy) || enemy>=64) && (selected.projectile.damage_type&BOT_RADIAL) &&
            hit.fraction*1000<selected.projectile.radius &&

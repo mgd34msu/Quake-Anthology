@@ -290,6 +290,28 @@ bool application_bot_entity_number(application_bots *bots,qa_actor_id actor,int3
     if(number>INT32_MAX) return application_fail(error,QA_ERROR_UNSUPPORTED,"bot entity number exceeds source range");
     *out=(int32_t)number;return true;
 }
+static int32_t bot_entity_number(void *opaque,qa_actor_id actor) {
+    application_bots *bots=opaque;uint32_t number;
+    if(bots->shared_world) {
+        int32_t existing;
+        return application_bot_world_entity_find(bots->shared_world,actor,&existing,NULL)?existing:-1;
+    }
+    if(!qa_actors_get(qa_session_actors(bots->application->session),actor)) return -1;
+    application_provider *source=bot_source(bots);
+    if(!source || source->kind!=APPLICATION_PROVIDER_Q3) {
+        return actor.slot<=INT32_MAX?(int32_t)actor.slot:-1;
+    }
+    if(qa_q3_source_actor_slot(source->state.q3,actor,&number,NULL))
+        return number<=INT32_MAX?(int32_t)number:-1;
+    for(application_bot_guest *guest=bots->guests;guest;guest=guest->next) {
+        struct application_q3_guest *engine=q3g_engine(guest->provider);
+        if(engine && engine->game && qa_q3_host_actor_slot(engine->game->host,actor,&number,NULL)) {
+            uint64_t mapped=(uint64_t)guest->entity_base+number;
+            return mapped<=INT32_MAX?(int32_t)mapped:-1;
+        }
+    }
+    return -1;
+}
 static bool bot_entity_extent(void *opaque,uint32_t *out,qa_error *error) {
     (void)error;application_bots *bots=opaque;application_provider *source=bot_source(bots);
     if(bots->shared_world) {*out=application_bot_world_entity_count(bots->shared_world);return true;}
@@ -499,6 +521,24 @@ static bool bot_source_client(void *opaque,qa_actor_id actor,int32_t *out,qa_err
     }
     if(slot>INT32_MAX) return application_fail(error,QA_ERROR_ARGUMENT,"bot source client exceeds signed extent");
     *out=(int32_t)slot;return true;
+}
+static int32_t bot_source_client_number(void *opaque,qa_actor_id actor) {
+    application_bots *bots=opaque;application_provider *source=bot_source(bots);uint32_t slot;
+    if(!qa_actors_get(qa_session_actors(bots->application->session),actor)) return -1;
+    if(source && source->kind==APPLICATION_PROVIDER_Q3) {
+        if(!qa_q3_source_actor_slot(source->state.q3,actor,&slot,NULL)) return -1;
+    } else if(source && (source->kind==APPLICATION_PROVIDER_QVM || source->kind==APPLICATION_PROVIDER_NATIVE) &&
+              source->product && source->product->family==QA_GAME_Q3) {
+        struct application_q3_guest *engine=q3g_engine(source);size_t existing;
+        if(!engine || !qa_actor_index_find_retained(&engine->client_actors,actor,&existing) || existing>=64 ||
+           !qa_actor_id_equal(engine->clients[existing].actor,actor)) return -1;
+        slot=(uint32_t)existing;
+    } else {
+        application_player_record *record=application_player_record_live(bots->application->players,actor);
+        if(!record) return -1;
+        slot=record->client_slot;
+    }
+    return slot<=INT32_MAX?(int32_t)slot:-1;
 }
 static qa_actor_id bot_source_actor(void *opaque,int32_t client) {
     application_bots *bots=opaque;application_provider *source=bot_source(bots);
@@ -901,11 +941,12 @@ qa_bot_services application_bots_services(application_bots *bots) {
             (source->product->campaign_id == QA_CAMPAIGN_MISSIONPACK),
         .shared=application_builtin_services(application,application->world,application->physics),
         .modes=application->modes,.player=application_bot_player,.inventory=application_bot_inventory_update,
-        .entity=application_bot_entity,.entity_actor=application_bot_actor,
+        .entity=application_bot_entity,.entity_actor=application_bot_actor,.entity_number=bot_entity_number,
         .entity_extent=bot_entity_extent,.entity_list=bot_entity_list,
         .arsenal=application_bot_arsenal,.arsenal_end=application_bot_arsenal_end,.submit=application_bot_submit,
         .source_client=bot_source_client,.source_action_client=bot_source_action_client,
-        .source_actor=bot_source_actor,.configuration=bot_configuration,.register_cvar=bot_register_cvar,
+        .source_actor=bot_source_actor,.source_client_number=bot_source_client_number,
+        .configuration=bot_configuration,.register_cvar=bot_register_cvar,
         .configstring=bot_configstring,.set_configstring=application_bots_configstring_set,
         .source_generic1=bot_source_generic1,
         .source_player=bot_source_player,.source_player_state=bot_source_player_state,.source_intermission=bot_source_intermission,
