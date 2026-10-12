@@ -257,7 +257,7 @@ static bool builtin(application_q3_combat_profile *p, qa_strings *strings,
 {
     application_q3_grapple_profile *grapple = NULL;
     if (!application_q3_grapple_profile_create(p->image, QA_QVM_GAME, p->abi,
-        p->path, &grapple, error)) return false;
+        p->path, strings, &grapple, error)) return false;
     if (!grapple) { *found = false; return true; }
     const application_q3_grapple_definition *source = application_q3_grapple_profile_definition(grapple);
     bool threewave = !strcmp(source->id, "threewave-1.7");

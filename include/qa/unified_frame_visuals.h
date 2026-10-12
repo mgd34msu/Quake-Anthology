@@ -3,8 +3,8 @@
 
 #include "qa/unified_frame_player.h"
 
-typedef struct qa_unified_model_attachment { char *path, *tag; qa_string_id path_id; } qa_unified_model_attachment;
-typedef struct qa_unified_weapon_anchor { char *path, *tag; qa_vec3 offset; float fov_above, fov_scale; } qa_unified_weapon_anchor;
+typedef struct qa_unified_model_attachment { qa_string_id path, tag; } qa_unified_model_attachment;
+typedef struct qa_unified_weapon_anchor { qa_string_id path, tag; qa_vec3 offset; float fov_above, fov_scale; } qa_unified_weapon_anchor;
 typedef struct qa_unified_q3_weapon_view {
     int32_t time_ms, torso_animation, last_fire_ms, bob_cycle, weapon;
     bool has_last_fire_ms, firing;
@@ -16,7 +16,7 @@ typedef struct qa_unified_model_state {
     qa_string_id body_provider;
     qa_string_id content, path;
     qa_string_id skin_path;
-    char *weapon_item;
+    qa_string_id weapon_item;
     qa_entity_visual visual;
     uint32_t q1_effects;
     qa_vec3 origin, angles, previous_origin;

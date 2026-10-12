@@ -590,7 +590,7 @@ static bool create_gear(equipment_source *source, const saved_source *saved, qa_
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Selected gear lacks its genuine retained original GAME QVM");
     application_q3_grapple_profile *profile = NULL;
     if (!application_q3_grapple_profile_create(artifact->image, artifact->kind, artifact->abi,
-        artifact->path, &profile, error)) return false;
+        artifact->path, qa_session_strings(runtime->options.services.session), &profile, error)) return false;
     if (!profile) return application_fail(error, QA_ERROR_UNSUPPORTED, "Selected GAME artifact declares no supported grapple profile");
     bool okay = (!saved || saved->gear) &&
         names(source, saved, error) && qa_vfs_acquisition_copy(&artifact->acquisition, &source->acquisition, error);

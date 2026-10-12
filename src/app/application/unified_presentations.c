@@ -243,25 +243,24 @@ static bool equipment(qa_application *app, const application_unified_source *sou
             .has_last_fire_ms = e.q3_fire.present, .last_fire_ms = e.q3_fire.time_ms,
             .firing = firing, .horizontal_speed = local ? (float)hypot(body.velocity.x, body.velocity.y) : 0,
             .bob_cycle = local && e.has_q3_source ? e.q3_source.bobCycle : 0, .weapon = (int32_t)e.q3_weapon};
-        if (e.item && !application_unified_frame_string(frame->lease, &row->weapon_item,
-            qa_strings_cstr(qa_session_strings(source->session), e.item), error)) return false;
+        row->weapon_item = e.item;
         if (local && gear_selected) {
             const application_q3_grapple_definition *d = gear.source.definition;
-            if (d->presentation.anchor_path && d->presentation.anchor_path[0]) {
+            if (d->presentation.anchor_path) {
                 row->anchor = application_unified_frame_alloc(frame->lease, 1, sizeof(*row->anchor), error);
                 if (!row->anchor) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual equipment anchor");
                 row->anchor->offset = d->presentation.anchor_offset;
                 row->anchor->fov_above = d->presentation.fov_above; row->anchor->fov_scale = d->presentation.fov_scale;
-                if (!application_unified_frame_string(frame->lease, &row->anchor->path, d->presentation.anchor_path, error) ||
-                    !application_unified_frame_string(frame->lease, &row->anchor->tag, d->presentation.anchor_tag, error)) return false;
+                row->anchor->path = d->presentation.anchor_path;
+                row->anchor->tag = d->presentation.anchor_tag;
             }
             size_t count = d->presentation.attachment_count;
             row->attachments = count ? application_unified_frame_alloc(frame->lease, count, sizeof(*row->attachments), error) : NULL;
             if (count && !row->attachments) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual equipment attachments");
             for (size_t i = 0; i < count; ++i) {
                 qa_unified_model_attachment *a = row->attachments + row->attachment_count++;
-                if (!application_unified_frame_string(frame->lease, &a->path, d->presentation.attachments[i].path, error) ||
-                    !application_unified_frame_string(frame->lease, &a->tag, d->presentation.attachments[i].tag, error)) return false;
+                a->path = d->presentation.attachments[i].path;
+                a->tag = d->presentation.attachments[i].tag;
             }
             if (!application_equipment_gear_presentation_current(app, &gear))
                 return application_fail(error, QA_ERROR_ARGUMENT, "Unified authored gear model changed its retained declaration");

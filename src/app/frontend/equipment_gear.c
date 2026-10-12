@@ -79,7 +79,8 @@ bool frontend_equipment_gear_content_create(qa_frontend *frontend,
     owner->frontend = frontend;
     owner->view = (frontend_equipment_gear_owner_view){.source = *source,
         .definition = definition, .product = product, .content = *content};
-    qa_q3_presentation_asset_options assets = {.strings=qa_session_strings(qa_application_session(frontend->application)),.provider = {.mounts = content->mounts,
+    qa_strings *strings = qa_session_strings(qa_application_session(frontend->application));
+    qa_q3_presentation_asset_options assets = {.strings=strings,.provider = {.mounts = content->mounts,
         .images = content->images, .materials = content->materials, .family = QA_GAME_Q3, .geometry_owner = qa_application_world(frontend->application)}};
     bool okay = qa_q3_presentation_assets_create(&assets, &owner->view.assets, error);
     size_t count = definition->presentation.attachment_count;
@@ -87,11 +88,11 @@ bool frontend_equipment_gear_content_create(qa_frontend *frontend,
     if (okay && count && !attachments)
         okay = frontend_fail(error, QA_ERROR_MEMORY, "Reading genuine gear attachment declarations");
     for (size_t i = 0; okay && i < count; ++i)
-        attachments[i] = (q3n_selected_authored_attachment){definition->presentation.attachments[i].path,
-            definition->presentation.attachments[i].tag};
+        attachments[i] = (q3n_selected_authored_attachment){qa_strings_cstr(strings, definition->presentation.attachments[i].path),
+            qa_strings_cstr(strings, definition->presentation.attachments[i].tag)};
     q3n_selected_authored_options media = {.content = content->mounts, .assets = owner->view.assets,
-        .gun = definition->presentation.view_model, .anchor = definition->presentation.anchor_path,
-        .anchor_tag = definition->presentation.anchor_tag, .attachments = attachments, .attachment_count = count};
+        .gun = definition->presentation.view_model, .anchor = qa_strings_cstr(strings, definition->presentation.anchor_path),
+        .anchor_tag = qa_strings_cstr(strings, definition->presentation.anchor_tag), .attachments = attachments, .attachment_count = count};
     if (okay) okay = q3n_selected_authored_create(&media, &owner->view.media, error);
     free(attachments);
     q3n_weapon_options weapons = {.product = product, .assets = owner->view.assets};

@@ -465,7 +465,7 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
                 found ? &declaration : NULL, &shared->weapon_models_profile, error)) goto failed;
         }
         if (role->image && kind == QA_QVM_GAME && !application_q3_grapple_profile_create(role->image,
-            kind, shared->abi, path, &shared->grapple_profile, error)) goto failed;
+            kind, shared->abi, path, strings, &shared->grapple_profile, error)) goto failed;
         shared->declaration = role->declaration;
         shared->primary = compatibility.primary; compatibility.primary = (qa_buffer){0};
         shared->equipment_presentation = compatibility.equipment_presentation;

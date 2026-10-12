@@ -2,10 +2,11 @@
 #define QA_FRONTEND_STARTUP_SELECTION_H
 
 #include "qa/ui_library.h"
+#include "qa/strings.h"
 
 typedef struct frontend_startup_selection frontend_startup_selection;
 
-bool frontend_startup_selection_create(frontend_startup_selection **, qa_error *);
+bool frontend_startup_selection_create(qa_strings *, frontend_startup_selection **, qa_error *);
 void frontend_startup_selection_destroy(frontend_startup_selection *);
 bool frontend_startup_selection_complete(qa_ui_library *, qa_error *);
 bool frontend_startup_monsters_select(qa_launch_draft *, const char *source, qa_error *);

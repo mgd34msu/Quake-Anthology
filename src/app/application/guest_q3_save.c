@@ -1078,7 +1078,8 @@ static bool prepare_artifact(application_provider *provider, struct application_
         artifact->primary = compatibility.primary; compatibility.primary = (qa_buffer){0};
         if (ok && artifact->kind == QA_QVM_GAME)
             ok = application_q3_grapple_profile_create(artifact->image, artifact->kind,
-                artifact->abi, artifact->path, &artifact->grapple_profile, error);
+                artifact->abi, artifact->path, qa_session_strings(provider->application->session),
+                &artifact->grapple_profile, error);
         if (ok && artifact->kind == QA_QVM_GAME)
             ok = application_q3_combat_profile_create(artifact->image, artifact->kind,
                 artifact->abi, artifact->path, (qa_bytes){artifact->primary.data, artifact->primary.size},

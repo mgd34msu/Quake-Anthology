@@ -14,6 +14,7 @@
 typedef struct model_preference { char *product, *model; } model_preference;
 typedef struct q3_hook_metadata { qa_product_id product; application_q3_grapple_profile *profile; } q3_hook_metadata;
 struct frontend_startup_selection {
+    qa_strings *names;
     qa_ui_library_choice *choices;
     size_t count;
     char **strings;
@@ -257,7 +258,7 @@ static bool prepare_q3_hooks(frontend_startup_selection *s, qa_ui_library *libra
         bool found = false;
         bool ok = qa_catalog_open(catalog, p->id, &vfs, e) && probe(vfs, "vm/qagame.qvm", &found, e);
         if (ok && found) ok = qa_qvm_image_open(vfs, "vm/qagame.qvm", QA_QVM_GAME, &image, &compatibility, e) &&
-            application_q3_grapple_profile_create(image, QA_QVM_GAME, compatibility.abi, "vm/qagame.qvm", &profile, e);
+            application_q3_grapple_profile_create(image, QA_QVM_GAME, compatibility.abi, "vm/qagame.qvm", s->names, &profile, e);
         qa_qvm_compatibility_free(&compatibility); qa_qvm_image_release(image); qa_vfs_destroy(vfs);
         if (!ok) { application_q3_grapple_profile_destroy(profile); clear_hooks(s); return false; }
         if (!profile) continue;
@@ -273,11 +274,12 @@ static bool prepare_q3_hooks(frontend_startup_selection *s, qa_ui_library *libra
     s->hook_catalog = catalog; qa_catalog_retain(catalog); return true;
 }
 
-bool frontend_startup_selection_create(frontend_startup_selection **out, qa_error *e)
+bool frontend_startup_selection_create(qa_strings *strings, frontend_startup_selection **out, qa_error *e)
 {
     if (!out) return fail(e, "Startup metadata needs an owner");
     *out = calloc(1, sizeof(**out));
     if (!*out) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Creating startup metadata"); return false; }
+    qa_strings_retain(strings); (*out)->names = strings;
     return true;
 }
 
@@ -287,7 +289,7 @@ void frontend_startup_selection_destroy(frontend_startup_selection *s)
     clear_rows(s);
     clear_hooks(s);
     for (size_t i = 0; i < s->model_count; ++i) { free(s->models[i].product); free(s->models[i].model); }
-    free(s->models); free(s);
+    free(s->models); qa_strings_destroy(s->names); free(s);
 }
 
 bool frontend_startup_selection_weapon_bindings(void *context, qa_ui_library *library,

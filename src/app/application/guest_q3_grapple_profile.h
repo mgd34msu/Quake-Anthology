@@ -3,9 +3,10 @@
 
 #include "qa/qvm.h"
 #include "qa/math.h"
+#include "qa/strings.h"
 
 typedef struct application_q3_grapple_attachment {
-    const char *path, *tag;
+    qa_string_id path, tag;
 } application_q3_grapple_attachment;
 typedef struct application_q3_grapple_cvar { const char *name, *value; } application_q3_grapple_cvar;
 typedef struct application_q3_grapple_word { uint32_t offset; int32_t value; } application_q3_grapple_word;
@@ -32,7 +33,7 @@ typedef struct application_q3_grapple_definition {
     struct {
         const char *projectile_model, *view_model;
         int32_t weapon_index;
-        const char *anchor_path, *anchor_tag;
+        qa_string_id anchor_path, anchor_tag;
         qa_vec3 anchor_offset;
         float fov_above, fov_scale;
         const application_q3_grapple_attachment *attachments;
@@ -49,8 +50,9 @@ typedef struct application_q3_grapple_profile application_q3_grapple_profile;
  * original ABI/layout/global/function entries and reserved scratch capacity.
  * Unknown artifacts succeed with no profile. No source code or Init runs. */
 bool application_q3_grapple_profile_create(qa_qvm_image *, qa_qvm_role, qa_qvm_abi,
-    const char *actual_artifact_path, application_q3_grapple_profile **, qa_error *);
-void application_q3_grapple_profile_destroy(application_q3_grapple_profile *);
+    const char *actual_artifact_path, qa_strings *, application_q3_grapple_profile **, qa_error *);
+void application_q3_grapple_profile_retain(const application_q3_grapple_profile *);
+void application_q3_grapple_profile_destroy(const application_q3_grapple_profile *);
 const application_q3_grapple_definition *application_q3_grapple_profile_definition(
     const application_q3_grapple_profile *);
 const qa_qvm_image *application_q3_grapple_profile_image(const application_q3_grapple_profile *);

@@ -8,8 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-static char *alias(qa_application *app, qa_string_id id)
-{ return id ? (char *)qa_strings_cstr(qa_session_strings(app->session), id) : NULL; }
 static bool source(application_provider *p, qa_clock_state *clock, qa_error *e)
 {
     return (p && p->application && p->constructed && !p->close_pending &&
@@ -89,7 +87,7 @@ static bool model(application_provider *p, qa_actor_id id, const qa_entity_visua
 {
     qa_unified_model_attachment attachments[3] = {0}; size_t count = 0;
     for (size_t i = 1; i < 4; ++i)
-        if (v->models[i]) attachments[count++].path = alias(p->application, v->models[i]);
+        if (v->models[i]) attachments[count++].path = v->models[i];
     qa_unified_presentation_payload payload = {.kind = QA_UNIFIED_PRESENTATION_MODEL};
     payload.value.model = (qa_unified_model_state){.actor = id, .family = QA_GAME_Q2, .visual = *v,
         .body_provider = p->owner,

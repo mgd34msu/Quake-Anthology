@@ -5,19 +5,25 @@
 #include <string.h>
 
 struct application_q3_grapple_profile {
+    size_t references;
     qa_qvm_image *image;
+    qa_strings *strings;
     char *path;
-    const application_q3_grapple_definition *definition;
+    application_q3_grapple_definition definition;
+    application_q3_grapple_attachment attachments[];
 };
 static const int32_t threewave_fire[] = {0};
 static const application_q3_grapple_word threewave_movement[] = {{232, 10}, {236, 0}};
 static const application_q3_grapple_cvar threewave_cvars[] = {
     {"g_gametype", "10"}, {"g_lithium", "0"}, {"p_enablePortal", "0"}};
-static const application_q3_grapple_attachment threewave_attachments[] = {
+typedef struct profile_attachment_names { const char *path, *tag; } profile_attachment_names;
+static const profile_attachment_names threewave_attachments[] = {
     {"models/weapons2/grapple/grapple_hand.md3", "tag_hook"}};
 typedef struct profile_card {
     application_q3_reference reference;
     application_q3_grapple_definition definition;
+    const char *anchor_path, *anchor_tag;
+    const profile_attachment_names *attachments;
 } profile_card;
 static const profile_card cards[] = {
     {Q3_REFERENCE_THREEWAVE_GAME, {
@@ -33,14 +39,14 @@ static const profile_card cards[] = {
         .pulling_flag = 2048, .event_lifetime_ms = 100, .damage_method = 29,
         .presentation = {.projectile_model = "models/weapons2/grapple/grapple_hook.md3",
             .view_model = "models/weapons2/grapple/grap.md3", .weapon_index = 11,
-            .anchor_path = "models/weapons2/shotgun/shotgun_hand.md3", .anchor_tag = "tag_weapon",
             .anchor_offset = {5, 0, -1}, .fov_above = 90, .fov_scale = -.2f,
-            .attachments = threewave_attachments, .attachment_count = 1,
+            .attachment_count = 1,
             .cable_flight = "models/weapons2/grapple/grapple1_cord_s.md3",
             .cable_pull = "models/weapons2/grapple/grapple1_cord_p.md3",
             .cable_hold = "models/weapons2/grapple/grapple1_cord_f.md3", .cable_segment_length = 14,
             .fire_sound = "sound/cctf/grapple/grapple_fire.wav", .attach_sound = "sound/cctf/grapple/grapple_hit.wav",
-            .pull_sound = "sound/cctf/grapple/grapple_pull.wav", .hang_sound = "sound/cctf/grapple/grapple_hang.wav"}}},
+            .pull_sound = "sound/cctf/grapple/grapple_pull.wav", .hang_sound = "sound/cctf/grapple/grapple_hang.wav"}},
+        "models/weapons2/shotgun/shotgun_hand.md3", "tag_weapon", threewave_attachments},
     {Q3_REFERENCE_LRCTF_GAME, {
         .id = "lrctf-1.2", .title = "LRCTF (Quake 3)", .entity_stride = 856, .client_stride = 872,
         .fields = {.inuse = 520, .client = 516, .parent = 600, .target = 784, .mover = 836,
@@ -51,9 +57,9 @@ static const profile_card cards[] = {
         .movement_bytes = 16, .pulling_flag = 2048, .event_lifetime_ms = 300, .damage_method = 23,
         .presentation = {.projectile_model = "models/weapons3/hook/hook1.md3",
             .view_model = "models/weapons3/hook/bit1.md3", .weapon_index = 10,
-            .anchor_path = "models/weapons2/shotgun/shotgun_hand.md3", .anchor_tag = "tag_weapon",
             .fov_above = 90, .fov_scale = -.2f, .cable_shader = true, .cable_path = "grapplerope", .cable_width = 16,
-            .fire_sound = "sound/grapple/midevil/grfire.wav", .attach_sound = "sound/grapple/midevil/grhit.wav"}}}
+            .fire_sound = "sound/grapple/midevil/grfire.wav", .attach_sound = "sound/grapple/midevil/grhit.wav"}},
+        "models/weapons2/shotgun/shotgun_hand.md3", "tag_weapon", NULL}
 };
 
 static bool fail(qa_error *error, qa_status code, const char *message)
@@ -99,36 +105,55 @@ static bool qualify(const qa_qvm_image *image, qa_qvm_abi abi,
 }
 
 bool application_q3_grapple_profile_create(qa_qvm_image *image, qa_qvm_role role, qa_qvm_abi abi,
-    const char *path, application_q3_grapple_profile **out, qa_error *error)
+    const char *path, qa_strings *strings, application_q3_grapple_profile **out, qa_error *error)
 {
     if (!image || role != QA_QVM_GAME || (unsigned)abi > QA_QVM_Q3_116N ||
         !path || !*path || !out || *out)
         return fail(error, QA_ERROR_ARGUMENT, "Grapple metadata requires its actual GAME artifact and empty owner");
-    const application_q3_grapple_definition *definition = NULL;
+    const profile_card *card = NULL;
     for (size_t i = 0; i < sizeof(cards) / sizeof(cards[0]); ++i) {
-        if (application_q3_reference_image(image, cards[i].reference)) { definition = &cards[i].definition; break; }
+        if (application_q3_reference_image(image, cards[i].reference)) { card = cards + i; break; }
     }
-    if (!definition) return true;
+    if (!card) return true;
     if (abi != QA_QVM_Q3_MODERN)
         return fail(error, QA_ERROR_FORMAT, "Grapple metadata differs from its exact source ABI");
-    if (!qualify(image, abi, definition, error)) return false;
-    application_q3_grapple_profile *profile = calloc(1, sizeof(*profile));
+    if (!qualify(image, abi, &card->definition, error)) return false;
+    size_t count = card->definition.presentation.attachment_count;
+    application_q3_grapple_profile *profile = calloc(1, sizeof(*profile) + count * sizeof(*profile->attachments));
     if (!profile) return fail(error, QA_ERROR_MEMORY, "Retaining immutable GAME grapple metadata");
     size_t length = strlen(path) + 1;
     profile->path = malloc(length);
     if (!profile->path) { free(profile); return fail(error, QA_ERROR_MEMORY, "Retaining grapple module identity path"); }
     memcpy(profile->path, path, length);
-    qa_qvm_image_retain(image); profile->image = image; profile->definition = definition;
+    qa_qvm_image_retain(image); profile->image = image;
+    profile->references = 1;
+    qa_strings_retain(strings); profile->strings = strings;
+    profile->definition = card->definition;
+    profile->definition.presentation.attachments = count ? profile->attachments : NULL;
+    bool okay = qa_strings_intern_cstr(strings, card->anchor_path,
+        &profile->definition.presentation.anchor_path, error) &&
+        qa_strings_intern_cstr(strings, card->anchor_tag,
+            &profile->definition.presentation.anchor_tag, error);
+    for (size_t i = 0; okay && i < count; ++i)
+        okay = qa_strings_intern_cstr(strings, card->attachments[i].path, &profile->attachments[i].path, error) &&
+            qa_strings_intern_cstr(strings, card->attachments[i].tag, &profile->attachments[i].tag, error);
+    if (!okay) { application_q3_grapple_profile_destroy(profile); return false; }
     *out = profile; return true;
 }
-void application_q3_grapple_profile_destroy(application_q3_grapple_profile *profile)
+void application_q3_grapple_profile_retain(const application_q3_grapple_profile *source)
 {
-    if (!profile) return;
-    qa_qvm_image_release(profile->image); free(profile->path); free(profile);
+    application_q3_grapple_profile *profile = (application_q3_grapple_profile *)source;
+    if (profile) ++profile->references;
+}
+void application_q3_grapple_profile_destroy(const application_q3_grapple_profile *source)
+{
+    application_q3_grapple_profile *profile = (application_q3_grapple_profile *)source;
+    if (!profile || --profile->references) return;
+    qa_qvm_image_release(profile->image); qa_strings_destroy(profile->strings); free(profile->path); free(profile);
 }
 const application_q3_grapple_definition *application_q3_grapple_profile_definition(
     const application_q3_grapple_profile *profile)
-{ return profile ? profile->definition : NULL; }
+{ return profile ? &profile->definition : NULL; }
 const qa_qvm_image *application_q3_grapple_profile_image(const application_q3_grapple_profile *profile)
 { return profile ? profile->image : NULL; }
 const char *application_q3_grapple_profile_path(const application_q3_grapple_profile *profile)

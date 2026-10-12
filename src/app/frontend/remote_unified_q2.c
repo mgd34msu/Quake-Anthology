@@ -302,7 +302,7 @@ static bool visual_apply(frontend_unified_q2 *o,const qa_unified_presentation_ev
         if (!m->path || !bank_name(o,row->content_id,NULL,QA_STRING_NONE,0,false,&b,e) ||
             !model_name(b,m->path,true,&scene,e)) return false;
         for (size_t i=0;i<m->attachment_count;++i)
-            if (!model_name(b,m->attachments[i].path_id,true,&scene,e)) return false;
+            if (!model_name(b,m->attachments[i].path,true,&scene,e)) return false;
     }
     if (row->q2_profile && !source_bank(o,row,true,&b,e)) return false;
     const char *content=qa_strings_cstr(o->replica->strings,row->content_id);
@@ -1558,8 +1558,8 @@ bool frontend_unified_q2_model_after(frontend_unified_q2 *o,qa_actor_id a,qa_str
     q2_bank *b=NULL; if (!bank_name(o,content,NULL,QA_STRING_NONE,0,false,&b,e)) return false;
     const qa_unified_model_state *model_state=&v->model->payload.value.model;
     for (size_t i=0;i<model_state->attachment_count;++i) {
-        const char *name=model_state->attachments[i].path;qa_scene_model *scene=NULL;
-        bool okay=model_name(b,model_state->attachments[i].path_id,false,&scene,e);
+        const char *name=qa_strings_cstr(o->replica->strings,model_state->attachments[i].path);qa_scene_model *scene=NULL;
+        bool okay=model_name(b,model_state->attachments[i].path,false,&scene,e);
         if (okay && scene) {qa_scene_model_input child=*input;
             child.source_path=name;
             child.attachments=NULL;child.attachment_count=0;child.skin=0;

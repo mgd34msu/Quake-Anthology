@@ -423,11 +423,6 @@ static bool record_finish(frontend_unified_events *o,qa_event_transaction *trans
         else if (row->payload.kind==QA_UNIFIED_PRESENTATION_Q3)
             resource=row->payload.value.q3.resource;
         if (resource && *resource && !qa_strings_intern_cstr(o->strings,resource,&row->resource_id,error)) return false;
-        if (row->payload.kind==QA_UNIFIED_PRESENTATION_MODEL) {
-            qa_unified_model_state *model=&row->payload.value.model;
-            for (size_t j=0;j<model->attachment_count;++j)
-                if (!qa_strings_intern_cstr(o->strings,model->attachments[j].path,&model->attachments[j].path_id,error)) return false;
-        }
         if (row->payload.kind==QA_UNIFIED_PRESENTATION_OWNER) {
             if (!qa_strings_intern_cstr(o->strings,row->payload.value.owner.owner.provider,&row->payload_owner_id,error)) return false;
         } else if (row->payload.kind==QA_UNIFIED_PRESENTATION_Q3&&row->payload.value.q3.kind==QA_UNIFIED_Q3_PLAYER_EVENT) {

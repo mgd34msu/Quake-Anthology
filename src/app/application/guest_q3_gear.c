@@ -34,7 +34,7 @@ bool application_q3_gear_create(const application_q3_gear_options *options, bool
     gear->options = *options; gear->restoring = restoring;
     gear->definition = application_q3_grapple_profile_definition(options->profile);
     gear->image = (qa_qvm_image *)application_q3_grapple_profile_image(options->profile);
-    gear->options.profile = NULL;
+    application_q3_grapple_profile_retain(gear->options.profile);
     qa_qvm_image_retain(gear->image);
     bool okay = q3gear_prepare_storage(gear, error) &&
         q3gear_replace_text(&gear->path, application_q3_grapple_profile_path(options->profile), error);
@@ -65,7 +65,8 @@ bool application_q3_gear_create(const application_q3_gear_options *options, bool
         qa_cvars_detach_callbacks(gear->cvars); qa_cvars_destroy(gear->cvars);
         qa_qvm_image_release(gear->image); qa_buffer_free(&gear->entities);
         qa_id_index_destroy(&gear->pointers);
-        qa_arena_destroy(&gear->actor_storage); free(gear->path); free(gear);
+        qa_arena_destroy(&gear->actor_storage); free(gear->path);
+        application_q3_grapple_profile_destroy(gear->options.profile); free(gear);
         return false;
     }
     *out = gear; return true;
@@ -416,5 +417,6 @@ bool application_q3_gear_destroy(application_q3_gear *gear, qa_error *error)
     for (size_t i = 0; i < 64; ++i) free(gear->userinfo[i]);
     qa_id_index_destroy(&gear->pointers);
     qa_arena_destroy(&gear->actor_storage); free(gear->path); qa_buffer_free(&gear->entities);
-    qa_qvm_image_release(gear->image); free(gear); return true;
+    qa_qvm_image_release(gear->image);
+    application_q3_grapple_profile_destroy(gear->options.profile); free(gear); return true;
 }
