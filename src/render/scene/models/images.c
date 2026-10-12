@@ -71,29 +71,60 @@ static scene_model_image *image_entry(qa_scene_model *model, const char *name, q
     return entry;
 }
 
-bool scene_model_material(qa_scene_model *model, qa_material_library *materials,
-    qa_string_id shader, const qa_material **out, qa_error *error) {
-    for (scene_model_resource_binding *binding = model->material_bindings; binding; binding = binding->next)
-        if (binding->library == materials && binding->shader == shader) {
-            *out = binding->material; return true;
-        }
+static scene_model_resource_binding *binding_find(qa_scene_model *model,
+    qa_material_library *materials, qa_string_id shader)
+{
+    const qa_id_index_entry *entry = qa_id_index_find(&model->resource_bindings,
+        shader, (uint64_t)(uintptr_t)materials);
+    return entry ? (scene_model_resource_binding *)(uintptr_t)entry->value : NULL;
+}
+
+bool scene_model_resource_admit(qa_scene_model *model, qa_material_library *materials,
+    qa_string_id shader, qa_error *error)
+{
+    if (binding_find(model, materials, shader)) return true;
     const char *name = qa_strings_cstr(model->strings, shader);
-    char *owned = NULL;
-    const char *path = qa_material_library_has_source_profile(materials) ? name :
-        (owned = qa_scene_model_image_path(name, error));
     const qa_material *material = NULL;
-    bool okay = path && qa_material_register(materials, path, &model->options, false, &material, error);
-    free(owned);
-    bool retain = materials != model->materials;
-    if (!okay || (retain && !qa_material_retain(material, error))) return false;
-    scene_model_resource_binding *binding = malloc(sizeof(*binding));
+    scene_model_image *image = NULL;
+    bool retain = materials && materials != model->materials;
+    if (materials) {
+        char *owned = NULL;
+        const char *path = qa_material_library_has_source_profile(materials) ? name :
+            (owned = qa_scene_model_image_path(name, error));
+        bool okay = path && qa_material_register(materials, path, &model->options, false, &material, error);
+        free(owned);
+        if (!okay) return false;
+    } else if (!scene_model_external(model, name, NULL, &image, error)) return false;
+    model->resource_bindings.storage = &model->resource_storage;
+    if (!qa_id_index_reserve(&model->resource_bindings, 1, error)) return false;
+    scene_model_resource_binding *binding = qa_arena_alloc(&model->resource_storage,
+        sizeof(*binding), _Alignof(scene_model_resource_binding), error);
+    if (!binding || (retain && !qa_material_retain(material, error))) return false;
+    *binding = (scene_model_resource_binding){.material=material, .image=image, .retained=retain};
+    qa_id_index_insert(&model->resource_bindings, shader, (uint64_t)(uintptr_t)materials,
+        (size_t)(uintptr_t)binding);
+    return true;
+}
+
+bool scene_model_material(qa_scene_model *model, qa_material_library *materials,
+    qa_string_id shader, const qa_material **out, qa_error *error)
+{
+    const scene_model_resource_binding *binding = binding_find(model, materials, shader);
     if (!binding) {
-        if (retain) qa_material_release(material);
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining model material binding"); return false;
+        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Model material binding was not admitted"); return false;
     }
-    *binding = (scene_model_resource_binding){.next=model->material_bindings,
-        .library=materials, .shader=shader, .material=material, .retained=retain};
-    model->material_bindings = binding; *out = material; return true;
+    *out = binding->material; return true;
+}
+
+void scene_model_bindings_destroy(qa_scene_model *model)
+{
+    for (size_t i = 0; i < model->resource_bindings.count; ++i) {
+        scene_model_resource_binding *binding =
+            (scene_model_resource_binding *)(uintptr_t)model->resource_bindings.entries[i].value;
+        if (binding->retained) qa_material_release(binding->material);
+    }
+    qa_id_index_destroy(&model->resource_bindings);
+    qa_arena_destroy(&model->resource_storage);
 }
 
 bool scene_model_external(qa_scene_model *model, const char *name, qa_scene_frame *frame, scene_model_image **out,
@@ -115,7 +146,8 @@ bool scene_model_external(qa_scene_model *model, const char *name, qa_scene_fram
     free(owned);
     if (!image) return false;
     if (model->options.family == QA_GAME_Q3) {
-        if (!scene_model_material(model, model->materials, image->name_id, &image->material, error)) goto fail;
+        if (!scene_model_resource_admit(model, model->materials, image->name_id, error) ||
+            !scene_model_material(model, model->materials, image->name_id, &image->material, error)) goto fail;
         if (qa_material_library_has_source_profile(model->materials) && image->material->default_shader &&
             (model->source->format == QA_MODEL_MD3 || model->source->format == QA_MODEL_MD4))
             image->material = qa_material_library_builtin(model->materials, QA_MATERIAL_BUILTIN_DEFAULT);
@@ -149,15 +181,11 @@ fail:
 
 bool scene_model_external_id(qa_scene_model *model, qa_string_id shader,
     scene_model_image **out, qa_error *error) {
-    for (scene_model_resource_binding *binding = model->material_bindings; binding; binding = binding->next)
-        if (!binding->library && binding->shader == shader) { *out = binding->image; return true; }
-    const char *name = qa_strings_cstr(model->strings, shader);
-    if (!scene_model_external(model, name, NULL, out, error)) return false;
-    scene_model_resource_binding *binding = malloc(sizeof(*binding));
-    if (!binding) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining model image binding"); return false; }
-    *binding = (scene_model_resource_binding){.next=model->material_bindings,
-        .shader=shader, .image=*out};
-    model->material_bindings = binding; return true;
+    const scene_model_resource_binding *binding = binding_find(model, NULL, shader);
+    if (!binding) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Model image binding was not admitted"); return false;
+    }
+    *out = binding->image; return true;
 }
 
 static bool flood_skin(uint8_t *pixels, uint32_t width, uint32_t height,

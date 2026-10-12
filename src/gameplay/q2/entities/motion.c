@@ -237,12 +237,8 @@ static bool curve(qa_q2_game *g, q2_actor *a, qa_error *e) {
     return schedule_ns(g, a, Q2ET_MOVE_ACCEL, g->frame_ns);
 }
 q2_mover *q2_mover_state(q2_actor *a, qa_error *e) {
-    if (!a->entity->mover) {
-        a->entity->mover = calloc(1, sizeof(*a->entity->mover));
-        if (!a->entity->mover)
-            qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 team member motion");
-    }
-    return a->entity->mover;
+    (void)e;
+    return q2_entity_mover_prepare(a->entity);
 }
 bool q2_move_start(qa_q2_game *g, q2_actor *a, qa_vec3 destination, bool angular, q2_move_done done,
                    qa_error *e) {

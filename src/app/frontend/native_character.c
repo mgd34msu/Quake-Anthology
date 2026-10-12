@@ -219,8 +219,20 @@ bool frontend_native_character_prepare_view(frontend_native_character *owner,
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected body order requires its actual prepared native frame");
     size_t count = 0;
     if (!options->world.no_world)
-        for (character_output *output = owner->outputs; output; output = output->next)
-            count += frontend_selected_character_output_count(output->output);
+        for (character_output *output = owner->outputs; output; output = output->next) {
+            size_t parts = frontend_selected_character_output_count(output->output);
+            const qa_q3_presentation_assets *assets = frontend_selected_character_output_assets(output->output);
+            for (size_t i = 0; i < output->pass_count; ++i) {
+                const frontend_selected_character_pass *pass = output->passes + i;
+                uint32_t first = pass->part == 3 ? 0 : pass->part;
+                size_t end = pass->part == 3 ? parts : (size_t)first + 1;
+                for (uint32_t part = first; part < end && part < parts; ++part)
+                    if (!frontend_visual_registered_materials_admit(assets,
+                        frontend_selected_character_output_part(output->output, part),
+                        owner->owners.assets, &pass->material, error)) return false;
+            }
+            count += parts;
+        }
     if (options->first_entity >= 1022 || count > 1022u - options->first_entity)
         return frontend_fail(error, QA_ERROR_FORMAT, "Selected bodies exceed the actual native source scene order");
     owner->first_order = options->first_entity; options->first_entity += (uint32_t)count;

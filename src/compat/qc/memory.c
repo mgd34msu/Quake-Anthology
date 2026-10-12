@@ -221,11 +221,24 @@ bool qc_strings_identity(qc_strings *strings, int32_t id, qa_string_id *out,
     return true;
 }
 
+static qa_strings *engine_names(qc_strings *strings, qa_error *error)
+{
+    if (strings->names == NULL) {
+        if (!qa_strings_create(&strings->names, error)) return NULL;
+        strings->owns_names = true;
+    }
+    return strings->names;
+}
+
 bool qc_strings_bind_identities(qc_strings *strings, qa_strings *identities,
                                 uint32_t literal_bytes, qa_error *error)
 {
+    if (identities == NULL) {
+        identities = engine_names(strings, error);
+        if (identities == NULL) return false;
+    }
     strings->identities = identities;
-    if (identities != NULL && strings->names != identities) {
+    if (strings->names != identities) {
         if (strings->owns_names) qa_strings_destroy(strings->names);
         strings->names = identities;
         strings->owns_names = false;
@@ -239,7 +252,6 @@ bool qc_strings_bind_identities(qc_strings *strings, qa_strings *identities,
             qa_id_index_insert(&strings->engines_by_name, name, 0, i);
         }
     }
-    if (identities == NULL) return true;
     uint32_t offset = 0;
     while (offset < literal_bytes) {
         const uint8_t *end = memchr(strings->bytes + offset, 0,
@@ -314,15 +326,6 @@ bool qc_strings_allocate(qc_strings *strings, const char *text, int32_t *out,
     if (!string_prepare(strings, offset, error)) return false;
     *out = (int32_t)offset;
     return true;
-}
-
-static qa_strings *engine_names(qc_strings *strings, qa_error *error)
-{
-    if (strings->names == NULL) {
-        if (!qa_strings_create(&strings->names, error)) return NULL;
-        strings->owns_names = true;
-    }
-    return strings->names;
 }
 
 bool qc_strings_engine_admit(qc_strings *strings, const char *name,

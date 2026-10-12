@@ -261,6 +261,7 @@ static void free_instance(qa_qc_instance *instance)
         for (size_t i = 0; i < instance->options.host.extension_count; ++i)
             free(instance->extensions[i]);
     free(instance->bindings); free(instance->extensions);
+    free(instance->builtin_targets);
     free(instance->inline_regions);
     qc_strings_destroy(&instance->strings);
     qa_arena_destroy(&instance->scratch);
@@ -386,6 +387,7 @@ bool qa_qc_instance_create(const qa_qc_program *program,
             options->host.session ? qa_session_strings(options->host.session) : NULL,
             program->string_bytes, error)
         || !copy_host(instance, error)
+        || !qc_builtin_prepare(instance, error)
         || !copy_inline_regions(instance, error)) {
         free_instance(instance); return false;
     }
@@ -1650,10 +1652,9 @@ static bool droptofloor(qa_qc_instance *instance, qa_error *error)
 
 bool qc_host_builtin(qa_qc_instance *instance,
                      const qa_qc_builtin_requirement *requirement,
+                     const qa_qc_builtin_binding *custom,
                      qa_error *error)
 {
-    const qa_qc_builtin_binding *custom = qc_builtin_binding(instance,
-        requirement->builtin, requirement->name);
     if (custom != NULL) {
         qa_error failure = {0};
         ++instance->callback_depth;

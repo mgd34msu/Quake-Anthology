@@ -2,6 +2,28 @@
 #include "events_internal.h"
 #include "qa/binary.h"
 #include "qa/text.h"
+#include "qa/scene_marks.h"
+
+bool q3n_world_mark_fragments(const qa_scene_world *world,qa_arena *storage,
+    const qa_vec3 *points,size_t count,qa_vec3 projection,qa_vec3 *output,size_t point_capacity,
+    q3n_mark_fragment *fragments,size_t fragment_capacity,size_t *returned,qa_error *error)
+{
+    if(!returned || (fragment_capacity && !fragments) ||
+        fragment_capacity>SIZE_MAX/sizeof(qa_scene_mark_fragment))
+        return q3ne_fail(error,QA_ERROR_ARGUMENT,"Q3 mark fragment destination exceeds its source span");
+    qa_scene_mark_fragment *rows=fragment_capacity?qa_arena_alloc(storage,
+        fragment_capacity*sizeof(*rows),_Alignof(qa_scene_mark_fragment),error):NULL;
+    if(fragment_capacity && !rows)return false;
+    qa_scene_mark_result result;
+    if(!qa_scene_world_mark_fragments(world,points,count,projection,output,point_capacity,
+        rows,fragment_capacity,&result,error))return false;
+    for(size_t i=0;i<result.fragment_count;++i) {
+        if(rows[i].first_point>UINT32_MAX || rows[i].point_count>UINT32_MAX)
+            return q3ne_fail(error,QA_ERROR_FORMAT,"Q3 mark fragment exceeds its source word");
+        fragments[i]=(q3n_mark_fragment){(uint32_t)rows[i].first_point,(uint32_t)rows[i].point_count};
+    }
+    *returned=result.fragment_count;return true;
+}
 
 static bool impact(const q3n_frame *f, const q3n_impact_mark *r, qa_error *error)
 {

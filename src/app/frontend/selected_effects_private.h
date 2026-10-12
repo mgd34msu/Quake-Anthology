@@ -22,7 +22,7 @@ struct frontend_selected_effects_group {
     qa_scene_world *world;
     qa_collision_geometry *geometry;
     uint64_t publication_generation, map_revision;
-    uint64_t prepared_application_frame;
+    uint64_t prepared_application_frame,prepared_scene_frame;
     uint64_t event_generation, event_cursor, audio_bus;
     int32_t time, previous_time;
     bool sampled, prepared, restoring;

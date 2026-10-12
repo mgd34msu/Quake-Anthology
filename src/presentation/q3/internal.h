@@ -147,6 +147,7 @@ bool q3p_reserve(void **, size_t *capacity, size_t count, size_t width, qa_error
 bool q3p_begin(qa_q3_presentation *, qa_error *);
 bool q3p_end(qa_q3_presentation *, bool);
 qa_q3_source_scene_bank *q3p_scene_bank(const qa_q3_presentation *, qa_error *);
+bool q3p_scene_snapshot(qa_q3_presentation *, qa_error *);
 void q3p_scene_scratch_clear(qa_q3_presentation *);
 bool q3p_capture_begin(qa_q3_presentation *, bool *owned_assets, qa_error *);
 void q3p_capture_end(qa_q3_presentation *, bool owned_assets);
@@ -160,7 +161,7 @@ bool q3p_model_get(const qa_q3_presentation_assets *, int32_t, const q3p_model *
 bool q3p_shader_get(const qa_q3_presentation_assets *, int32_t, const qa_material **, qa_error *);
 bool q3p_skin_get(const qa_q3_presentation_assets *, int32_t, const qa_model_skin_map **, qa_error *);
 bool q3p_skin_materials(const qa_q3_presentation_assets *, int32_t, const qa_material *const **, size_t *, qa_error *);
-bool q3p_model_skin_admit(q3p_model *, const qa_model_skin_map *, qa_error *);
+bool q3p_model_materials_admit(q3p_model *, const qa_model_skin_map *, qa_material_library *, qa_error *);
 bool q3p_assets_skin_bindings_prepare(qa_q3_presentation_assets *, qa_error *);
 qa_audio_asset *q3p_sound(const qa_q3_presentation_assets *, int32_t);
 void q3p_model_free(q3p_model *);

@@ -39,6 +39,7 @@ typedef struct q1_wire_state {
     double qw_client_stats[32][16];
     q1_qw_fraglog qw_fraglog;
     q1_wire_edict *edicts;
+    qa_arena edict_storage;
     uint32_t edict_capacity;
     uint32_t next_dynamic, authored_entities, authored_cursor, inline_models, edict_limit;
     bool loading, id1;

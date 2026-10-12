@@ -1617,6 +1617,23 @@ static bool body_scene_prepare(frontend_source_lease *lease,qa_q3_scene_options 
     qa_application_q3_body_draw view={.token=draw};
     if (!body_current(lease,&view) || options->first_entity>=1022 || draw->ref_count>1022-options->first_entity)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Body scene order left its actual Draw inventory");
+    for (const source_body_ref *primary=draw->refs;primary;primary=primary->next) {
+        if (!frontend_visual_registered_materials_admit(lease->source->assets, &primary->ref,
+            lease->source->assets, &primary->ref, error)) return false;
+        for (size_t j=0;j<draw->count;++j) for (size_t k=0;k<draw->components[j].bodies.count;++k) {
+            qa_application_q3_component_actor body;
+            if (!qa_application_q3_component_body_at(&draw->components[j].bodies,k,&body)) return false;
+            if (!qa_actor_id_equal(primary->actor,body.actor)) continue;
+            for (size_t m=0;m<body.count;++m) {
+                const qa_application_q3_component_part *part=body.parts+m;
+                if (primary->part!=QA_APPLICATION_Q3_BODY && part->part!=QA_APPLICATION_Q3_BODY &&
+                    part->part!=primary->part) continue;
+                for (size_t n=0;n<part->count;++n)
+                    if (!frontend_visual_registered_materials_admit(lease->source->assets, &primary->ref,
+                        draw->components[j].bodies.assets, part->passes+n, error)) return false;
+            }
+        }
+    }
     draw->first_order=options->first_entity; options->first_entity+=(uint32_t)draw->ref_count;
     draw->component_order=options->first_entity;
     frontend_scene_component_span span={.frontend=lease->source->frontend,

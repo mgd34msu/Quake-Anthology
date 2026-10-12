@@ -367,11 +367,7 @@ bool q2_brush_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         return true;
     }
     if (s->kind == Q2E_PLAT || s->kind == Q2E_SECRET_DOOR) {
-        s->mover = calloc(1, sizeof(*s->mover));
-        if (!s->mover) {
-            qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 brush motion");
-            return false;
-        }
+        q2_entity_mover_prepare(s);
         return s->kind == Q2E_PLAT ? platform_spawn(g, a, e) : secret_spawn(g, a, e);
     }
     if (s->kind == Q2E_ELEVATOR)

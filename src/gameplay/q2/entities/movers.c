@@ -99,11 +99,7 @@ bool q2_mover_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         }
         return q2_entity_show(g, a, e);
     }
-    s->mover = calloc(1, sizeof(*s->mover));
-    if (!s->mover) {
-        qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 mover");
-        return false;
-    }
+    q2_entity_mover_prepare(s);
     return s->kind == Q2E_TRAIN ? q2_train_spawn(g, a, e) : q2_door_spawn(g, a, e);
 }
 bool q2_mover_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id activator,

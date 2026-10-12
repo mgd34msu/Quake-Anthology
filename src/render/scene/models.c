@@ -83,6 +83,35 @@ bool qa_scene_model_skin_admit(qa_scene_model *model, const qa_model_skin_map *s
         node = node->replacement_next;
     }
 }
+bool qa_scene_model_materials_admit(qa_scene_model *model, const qa_model_skin_map *skin,
+    qa_material_library *materials, qa_error *error)
+{
+    if (!model) return true;
+    if (skin && !qa_scene_model_skin_admit(model, skin, error)) return false;
+    qa_scene_model *node = model;
+    for (;;) {
+        if (materials) {
+            for (size_t i = 0; i < node->source->mesh_count; ++i)
+                for (size_t j = 0; j < node->source->meshes[i].shader_count; ++j) {
+                    const scene_model_image *image = node->meshes[i].shaders[j];
+                    if (image && !scene_model_resource_admit(node, materials, image->name_id, error)) return false;
+                }
+        }
+        if (skin && node->source->format != QA_MODEL_MDL) {
+            const size_t *bindings = NULL;
+            if (!qa_model_skin_map_resolve(skin, node->identity,
+                node->source->mesh_count ? &node->meshes[0].surface : NULL,
+                sizeof(*node->meshes), node->source->mesh_count, &bindings, error)) return false;
+            for (size_t i = 0; bindings && i < node->source->mesh_count; ++i)
+                if (bindings[i] != SIZE_MAX && !scene_model_resource_admit(node, materials,
+                    skin->mappings[bindings[i]].shader_id, error)) return false;
+        }
+        if (node->replacement) { node = node->replacement; continue; }
+        while (node != model && !node->replacement_next) node = node->replacement_parent;
+        if (node == model) return true;
+        node = node->replacement_next;
+    }
+}
 static bool model_array(size_t count, size_t size, void **out, qa_error *error) {
     if (count > SIZE_MAX / size) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "model array exceeds addressable storage"); return false;
@@ -224,12 +253,7 @@ void qa_scene_model_destroy(qa_scene_model *model) {
     free(model->sampled_pose);
     free(model->sampled_pose_frames);
     scene_model_images_destroy(model);
-    while (model->material_bindings) {
-        scene_model_resource_binding *binding = model->material_bindings;
-        model->material_bindings = binding->next;
-        if (binding->retained) qa_material_release(binding->material);
-        free(binding);
-    }
+    scene_model_bindings_destroy(model);
     if (model->animation_lease.release) model->animation_lease.release(model->animation_lease.context);
     if (model->replacement_source_lease.release) model->replacement_source_lease.release(model->replacement_source_lease.context);
     if (model->source_lease.release) model->source_lease.release(model->source_lease.context);
@@ -566,6 +590,7 @@ static void model_policy_dispose(qa_scene_model_image_policy *ticket)
     for (size_t i = 0; i < ticket->count; ++i) {
         model_policy_node *node = &ticket->nodes[i];
         scene_model_images_destroy(&node->images);
+        scene_model_bindings_destroy(&node->images);
         model_policy_skin_arrays(&node->images);
         if (node->shaders) {
             for (size_t j = 0; j < node->owner->source->mesh_count; ++j) free(node->shaders[j]);
@@ -750,7 +775,9 @@ bool qa_scene_model_image_policy_replacement_parent(qa_scene_model_image_policy 
 bool qa_scene_model_image_policy_skin_admit(qa_scene_model_image_policy *ticket,
     const qa_model_skin_map *skin, qa_error *error)
 {
-    return qa_scene_model_skin_admit(ticket->replacement, skin, error);
+    return qa_scene_model_materials_admit(ticket->replacement, skin, NULL, error) &&
+        (ticket->owner->options.family != QA_GAME_Q3 ||
+            qa_scene_model_materials_admit(ticket->replacement, skin, ticket->owner->materials, error));
 }
 bool qa_scene_model_image_policy_ready_is(const qa_scene_model_image_policy *ticket)
 { return model_policy_current(ticket) && ticket->sealed && !ticket->published &&
@@ -773,8 +800,11 @@ void qa_scene_model_image_policy_publish(qa_scene_model_image_policy *ticket)
         model_policy_node *node = &ticket->nodes[i]; qa_scene_model *owner = node->owner;
         if (!node->prepared) continue;
         scene_model_image *images = owner->images; owner->images = node->images.images; node->images.images = images;
-        for (scene_model_resource_binding *binding = owner->material_bindings; binding; binding = binding->next)
-            if (!binding->library) binding->image = model_policy_binding(node, binding->image);
+        for (size_t j = 0; j < owner->resource_bindings.count; ++j) {
+            const qa_id_index_entry *entry = &owner->resource_bindings.entries[j];
+            scene_model_resource_binding *binding = (scene_model_resource_binding *)(uintptr_t)entry->value;
+            if (!entry->discriminator) binding->image = model_policy_binding(node, binding->image);
+        }
         scene_model_image **skins = owner->skins; owner->skins = node->images.skins; node->images.skins = skins;
         scene_model_image **sprites = owner->sprites; owner->sprites = node->images.sprites; node->images.sprites = sprites;
         for (size_t j = 0; j < owner->source->mesh_count; ++j) {

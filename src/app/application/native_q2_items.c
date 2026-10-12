@@ -59,6 +59,7 @@ struct application_native_q2_items {
     size_t count,storage_count;
     qa_json_id weapon_stage;
     item_actor *actors;
+    qa_actor_index actor_index;
     application_native_q2_item_receipt *receipts;
     unsigned writing,calls;
 };
@@ -92,8 +93,11 @@ static qa_native_value_type scalar(const qa_json_document *d,qa_json_id id)
     for(size_t i=1;i<sizeof(names)/sizeof(*names);++i) if(qa_json_string_equal(d,id,names[i])) return (qa_native_value_type)i;
     return QA_NATIVE_VOID;
 }
-static item_actor *actor_find(application_native_q2_items *o,qa_actor_id actor)
-{ for(item_actor *a=o?o->actors:NULL;a;a=a->next) if(qa_actor_id_equal(a->actor,actor)) return a; return NULL; }
+static item_actor *actor_find(const application_native_q2_items *o,qa_actor_id actor)
+{
+    size_t value;
+    return o&&qa_actor_index_find_retained(&o->actor_index,actor,&value)?(item_actor *)(uintptr_t)value:NULL;
+}
 static bool retired(item_actor *a,qa_error *e,const char *message)
 {
     qa_error failure={0};fail(&failure,message);
@@ -355,6 +359,7 @@ static bool create_layout(const application_native_q2_items_options *options,app
     application_native_q2_items *o=calloc(1,sizeof(*o));
     if(!o) { qa_error_set(e,QA_ERROR_MEMORY,0,"Owning native item declaration"); return false; }
     *out=o; o->options=*options; o->count=qa_json_size(d,defs); o->storage_count=qa_json_size(d,storage);
+    if(!qa_actor_index_create(&o->actor_index,qa_session_actors(options->session),NULL,e)) return false;
     o->weapon_stage=qa_json_get(d,items,"weapons");
     o->definitions=calloc(o->count,sizeof(*o->definitions)); o->admissions=calloc(o->count,sizeof(*o->admissions));
     o->storage=o->storage_count?calloc(o->storage_count,sizeof(*o->storage)):NULL;
@@ -483,6 +488,9 @@ static bool actor_prepare(application_native_q2_items *o,qa_actor_id actor,item_
         if(a) {free(a->previous);free(a->watches);free(a);}
         return false;
     }
+    if(!qa_actor_index_remember(&o->actor_index,actor,(size_t)(uintptr_t)a,e)) {
+        free(a->previous);free(a->watches);free(a);return false;
+    }
     a->next=o->actors;o->actors=a;*out=a;return true;
 }
 static bool actor_watch(item_actor *a,qa_error *e)
@@ -515,6 +523,7 @@ bool application_native_q2_items_admit(application_native_q2_items *o,qa_actor_i
         item_actor **link=&o->actors;
         while(*link&&*link!=a) link=&(*link)->next;
         if(*link==a) *link=a->next;
+        qa_actor_index_forget_retained(&o->actor_index,actor);
         free(a->previous);free(a->watches);free(a);return false;
     }
     a->admitting=false;
@@ -527,10 +536,9 @@ bool application_native_q2_items_actor_current(void *context,qa_actor_id actor,q
 }
 bool application_native_q2_items_actor_admitted(const application_native_q2_items *o,qa_actor_id actor)
 {
-    for(const item_actor *a=o?o->actors:NULL;a;a=a->next)
-        if(qa_actor_id_equal(a->actor,actor)) return a->ready&&!a->restore_inventory&&!a->releasing&&
-            qa_inventory_lease_current(o->options.inventory,a->lease);
-    return false;
+    const item_actor *a=actor_find(o,actor);
+    return a&&a->ready&&!a->restore_inventory&&!a->releasing&&
+        qa_inventory_lease_current(o->options.inventory,a->lease);
 }
 bool application_native_q2_items_receipt_begin(application_native_q2_items *o,qa_actor_id actor,
     application_native_q2_item_receipt **out,qa_error *e)
@@ -577,6 +585,7 @@ bool application_native_q2_items_release(application_native_q2_items *o,qa_actor
     }
     if(a->lease.serial&&qa_inventory_lease_current(o->options.inventory,a->lease)&&!qa_inventory_close_items(o->options.inventory,a->lease,e)) return false;
     item_actor **link=&o->actors; while(*link!=a) link=&(*link)->next; *link=a->next;
+    qa_actor_index_forget_retained(&o->actor_index,actor);
     free(a->previous); free(a->watches); free(a); return true;
 }
 bool application_native_q2_items_inventory_group(application_native_q2_items *o,qa_actor_id actor,uint64_t serial,
@@ -626,5 +635,6 @@ bool application_native_q2_items_destroy(application_native_q2_items **owner,qa_
         application_native_q2_field_dispose(&o->storage[i].field); application_native_q2_field_dispose(&o->storage[i].capacity_field); free(o->storage[i].bits);
     }
     free(o->definitions); free(o->admissions); free(o->storage);
+    qa_actor_index_destroy(&o->actor_index);
     qa_arena_destroy(&o->receipt_storage); free(o); *owner=NULL; return true;
 }

@@ -870,6 +870,39 @@ static bool native_cache_policy_prepare(const frontend_model_policy *policy, qa_
     if (ok) covered[index] = true;
     return ok;
 }
+bool frontend_visual_registered_materials_admit(const qa_q3_presentation_assets *models,
+    const qa_q3_ref_entity *model_ref, const qa_q3_presentation_assets *materials,
+    const qa_q3_ref_entity *material_ref, qa_error *error)
+{
+    if (model_ref->model <= 0) return true;
+    size_t count;
+    if (!qa_q3_assets_model_count(models, &count, error)) return false;
+    if ((size_t)model_ref->model > count) return true;
+    qa_q3_asset_model_holder holder;
+    if (!qa_q3_assets_model_holder(models, (size_t)model_ref->model - 1, &holder, error)) return false;
+    if (!holder.present || holder.registration_bad || holder.world) return true;
+    qa_q3_presentation_asset_options services;
+    qa_scene_world *world; qa_collision_geometry *geometry;
+    if (!qa_q3_assets_services(materials, &services, &world, &geometry, error)) return false;
+    const qa_model_skin_map *map = NULL;
+    if (material_ref->custom_skin > 0) {
+        if (!qa_q3_assets_skin_count(materials, &count, error)) return false;
+        if ((size_t)material_ref->custom_skin <= count) {
+            qa_q3_asset_skin_holder skin;
+            if (!qa_q3_assets_skin_holder(materials, (size_t)material_ref->custom_skin - 1, &skin, error)) return false;
+            map = skin.map;
+        }
+    }
+    qa_material_library *library = holder.provider.family == QA_GAME_Q3 || models != materials ?
+        services.provider.materials : NULL;
+    for (size_t i = 0; i < 3; ++i) {
+        bool shared = false;
+        for (size_t j = 0; j < i; ++j) if (holder.scenes[i] == holder.scenes[j]) shared = true;
+        if (!shared && !qa_scene_model_materials_admit(holder.scenes[i], map, library, error)) return false;
+    }
+    return qa_scene_model_materials_admit(holder.source_md4_scene, map, library, error);
+}
+
 static bool registered_model_skins_prepare(const qa_q3_presentation_assets *assets,
     qa_scene_model_image_policy *ticket, qa_error *error)
 {

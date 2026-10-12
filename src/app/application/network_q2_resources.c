@@ -27,7 +27,21 @@ void application_network_q2_resources_free(qa_application_network_q2 *owner)
 {
     for (size_t i = 0; i < owner->held_resource_count; ++i) held_free(&owner->held_resources[i]);
     free(owner->held_resources); owner->held_resources = NULL;
+    qa_id_index_destroy(&owner->held_names); qa_id_index_destroy(&owner->held_wire_names);
     owner->held_resource_count = owner->held_resource_capacity = 0;
+}
+
+static bool held_before(void *context, const qa_id_index_entry *entry)
+{
+    return entry->value < *(const size_t *)context;
+}
+
+static void held_rollback(qa_application_network_q2 *owner, size_t count)
+{
+    qa_id_index_retain(&owner->held_names, held_before, &count);
+    qa_id_index_retain(&owner->held_wire_names, held_before, &count);
+    while (owner->held_resource_count > count)
+        held_free(&owner->held_resources[--owner->held_resource_count]);
 }
 
 static application_provider *provider_at(qa_application_network_q2 *owner, qa_actor_owner id)
@@ -48,6 +62,11 @@ static bool held_append(qa_application_network_q2 *owner, application_q2_held_re
             !qa_strings_intern_cstr(strings, sound, &held->wire_names[QA_NATIVE_HOST_SOUND], error) ||
             !qa_strings_intern_cstr(strings, image, &held->wire_names[QA_NATIVE_HOST_IMAGE], error)) return false;
     }
+    if (held->model_scope_path && !qa_strings_intern_cstr(strings, held->model_scope_path,
+        &held->model_scope_name, error)) return false;
+    if (!qa_id_index_reserve(&owner->held_names, 1, error) ||
+        !qa_id_index_reserve(&owner->held_wire_names,
+            (held->wire_path ? 1u : 0u) + (held->model_scope_path ? 1u : 0u), error)) return false;
     if (owner->held_resource_count == owner->held_resource_capacity) {
         size_t capacity = owner->held_resource_capacity ? owner->held_resource_capacity * 2 : 16;
         if (capacity < owner->held_resource_capacity || capacity > SIZE_MAX / sizeof(*owner->held_resources))
@@ -56,7 +75,13 @@ static bool held_append(qa_application_network_q2 *owner, application_q2_held_re
         if (!rows) return application_fail(error, QA_ERROR_MEMORY, "Retaining Q2 actual content holders");
         owner->held_resources = rows; owner->held_resource_capacity = capacity;
     }
+    size_t row = owner->held_resource_count;
     owner->held_resources[owner->held_resource_count++] = *held;
+    qa_id_index_insert(&owner->held_names, held->path_name, held->provider, row);
+    if (held->wire_path)
+        qa_id_index_insert(&owner->held_wire_names, held->wire_names[QA_NATIVE_HOST_MODEL], 0, row);
+    if (held->model_scope_path)
+        qa_id_index_insert(&owner->held_wire_names, held->model_scope_name, 1, row);
     *held = (application_q2_held_resource){0}; return true;
 }
 
@@ -168,13 +193,14 @@ static bool held_store(qa_application_network_q2 *owner, application_q2_held_res
 {
     if (held->path && !held->path_name && !qa_strings_intern_cstr(qa_session_strings(owner->app->session),
         held->path, &held->path_name, error)) return false;
-    for (size_t i = 0; i < owner->held_resource_count; ++i) {
+    qa_id_index_cursor cursor = qa_id_index_begin(&owner->held_names, held->path_name, held->provider);
+    size_t i, selected = SIZE_MAX;
+    while (qa_id_index_next(&owner->held_names, &cursor, &i)) {
         const application_q2_held_resource *old = &owner->held_resources[i];
-        if (held_same(held, old, held->kind != APPLICATION_Q2_HELD_IMAGE_RECEIPT) &&
-            held->sky_face == old->sky_face && held->sky_group == old->sky_group) {
-            *out = i; return true;
-        }
+        if (i < selected && held_same(held, old, held->kind != APPLICATION_Q2_HELD_IMAGE_RECEIPT) &&
+            held->sky_face == old->sky_face && held->sky_group == old->sky_group) selected = i;
     }
+    if (selected != SIZE_MAX) { *out = selected; return true; }
     char alias[64];
     if (!held_serial(owner, held, error) || !qualified_name(held, alias, error)) return false;
     held->wire_path = application_network_q2_copy(alias, error);
@@ -426,22 +452,26 @@ static bool sky_store(qa_application_network_q2 *owner, application_q2_held_reso
     for (size_t face = 0; face < 6; ++face)
         if (!qa_strings_intern_cstr(qa_session_strings(owner->app->session), faces[face].path,
             &faces[face].path_name, error)) return false;
-    for (size_t candidate = 0; candidate < owner->held_resource_count; ++candidate) {
+    qa_id_index_cursor candidates = qa_id_index_begin(&owner->held_names, faces[0].path_name, faces[0].provider);
+    size_t candidate, selected = SIZE_MAX;
+    while (qa_id_index_next(&owner->held_names, &candidates, &candidate)) {
         const application_q2_held_resource *first = &owner->held_resources[candidate];
-        if (first->sky_face != 1 || !text_equal(first->sky_base, normalized) || !held_same(first, &faces[0], false)) continue;
+        if (candidate >= selected || first->sky_face != 1 || !text_equal(first->sky_base, normalized) ||
+            !held_same(first, &faces[0], false)) continue;
+        size_t matched[6];
         bool same = true;
         for (size_t face = 0; same && face < 6; ++face) {
-            bool found = false;
-            for (size_t i = 0; i < owner->held_resource_count; ++i) {
+            matched[face] = SIZE_MAX;
+            qa_id_index_cursor cursor = qa_id_index_begin(&owner->held_names, faces[face].path_name, faces[face].provider);
+            size_t i;
+            while (qa_id_index_next(&owner->held_names, &cursor, &i)) {
                 const application_q2_held_resource *old = &owner->held_resources[i];
-                if (old->sky_group == first->sky_group && old->sky_face == face + 1 &&
-                    text_equal(old->sky_base, normalized) && held_same(old, &faces[face], false)) {
-                    out[face] = i; found = true; break;
-                }
+                if (i < matched[face] && old->sky_group == first->sky_group && old->sky_face == face + 1 &&
+                    text_equal(old->sky_base, normalized) && held_same(old, &faces[face], false)) matched[face] = i;
             }
-            same = found;
+            same = matched[face] != SIZE_MAX;
         }
-        if (same) { group = first->sky_group; break; }
+        if (same) { selected = candidate; group = first->sky_group; memcpy(out, matched, sizeof(matched)); }
     }
     if (!group) {
         application_q2_held_resource receipt = {0};
@@ -499,14 +529,17 @@ bool application_network_q2_dependency(qa_application_network_q2 *owner,
     char *path = qa_scene_model_image_path(name, error);
     if (!path) return false;
     uint64_t authority = model->serial;
-    for (size_t i = 0; i < owner->held_resource_count; ++i) {
+    qa_string_id path_name = qa_strings_find(qa_session_strings(owner->app->session),
+        (qa_bytes){(const uint8_t *)path, strlen(path)});
+    qa_id_index_cursor cursor = qa_id_index_begin(&owner->held_names, path_name, model->provider);
+    size_t i, selected = SIZE_MAX;
+    while (qa_id_index_next(&owner->held_names, &cursor, &i)) {
         const application_q2_held_resource *old = &owner->held_resources[i];
-        if (old->kind == APPLICATION_Q2_HELD_DEPENDENCY && old->provider == model->provider &&
+        if (i < selected && old->kind == APPLICATION_Q2_HELD_DEPENDENCY &&
             old->identity == model->identity && old->authority == authority &&
-            !strcmp(old->path, path) && qa_vfs_lookup_equal(old->view, model->view)) {
-            free(path); *out = i; return true;
-        }
+            qa_vfs_lookup_equal(old->view, model->view)) selected = i;
     }
+    if (selected != SIZE_MAX) { free(path); *out = selected; return true; }
     application_q2_held_resource held = {.provider = model->provider, .identity = model->identity,
         .authority = authority, .kind = APPLICATION_Q2_HELD_DEPENDENCY, .path = path};
     held.instance = application_network_q2_copy(model->instance, error);
@@ -669,19 +702,20 @@ bool application_network_q2_visual_resource(qa_application_network_q2 *owner,
     if (!qa_application_capture_command_context(owner->app, &request, &captured, error)) return false;
     qa_vfs *files = qa_application_context_files(owner->app, &captured, NULL);
     if (!files) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 selected model has no actual provider file scope");
-    for (size_t i = 0; i < owner->held_resource_count; ++i) {
+    qa_id_index_cursor cursor = qa_id_index_begin(&owner->held_names,
+        visual->visual.models[model], visual->provider);
+    size_t i, selected = SIZE_MAX;
+    while (qa_id_index_next(&owner->held_names, &cursor, &i)) {
         const application_q2_held_resource *old = &owner->held_resources[i];
-        if (old->kind == APPLICATION_Q2_HELD_MODEL && old->provider == visual->provider &&
-            old->path_name == visual->visual.models[model] &&
+        if (i < selected && old->kind == APPLICATION_Q2_HELD_MODEL &&
             (!visual->model_resources[model] || old->resource == visual->model_resources[model]) &&
             old->identity == provider->launch->identity && qa_vfs_lookup_equal(old->view, files) &&
-            model_colors_current(old, visual)) {
-            if (visual->model_openings[model]) {
-                if (!acquisition_equal(&old->opening, visual->model_openings[model])) continue;
-            }
-            return application_network_q2_resource_id(owner, 0, old->wire_names[QA_NATIVE_HOST_MODEL], out, error);
-        }
+            model_colors_current(old, visual) && (!visual->model_openings[model] ||
+                acquisition_equal(&old->opening, visual->model_openings[model]))) selected = i;
     }
+    if (selected != SIZE_MAX)
+        return application_network_q2_resource_id(owner, 0,
+            owner->held_resources[selected].wire_names[QA_NATIVE_HOST_MODEL], out, error);
     application_q2_held_resource held = {.provider = provider->owner, .identity = provider->launch->identity,
         .kind = APPLICATION_Q2_HELD_MODEL};
     held.view = qa_vfs_clone(files, error);
@@ -717,8 +751,7 @@ bool application_network_q2_visual_resource(qa_application_network_q2 *owner,
         if (ok) ok = application_network_q2_resource_id(owner, 0,
             owner->held_resources[owner->held_resource_count - 1].wire_names[QA_NATIVE_HOST_MODEL], out, error);
     }
-    if (!ok && !appended) while (owner->held_resource_count > dependency_start)
-        held_free(&owner->held_resources[--owner->held_resource_count]);
+    if (!ok && !appended) held_rollback(owner, dependency_start);
     held_free(&held); return ok;
 }
 
@@ -779,11 +812,14 @@ bool qa_application_network_q2_event_resource(qa_application_network_q2 *owner, 
     }
     if (path_name) {
         const qa_application_visual_view colors = {0};
-        for (size_t i = 0; i < owner->held_resource_count; ++i) {
+        qa_id_index_cursor cursor = qa_id_index_begin(&owner->held_names, path_name, emitter);
+        size_t i, selected = SIZE_MAX;
+        while (qa_id_index_next(&owner->held_names, &cursor, &i)) {
             const application_q2_held_resource *old = owner->held_resources + i;
-            if (held_same(&held, old, false) && (held.kind != APPLICATION_Q2_HELD_MODEL || model_colors_current(old, &colors)))
-                return event_wire(owner, i, kind, out, error);
+            if (i < selected && held_same(&held, old, false) &&
+                (held.kind != APPLICATION_Q2_HELD_MODEL || model_colors_current(old, &colors))) selected = i;
         }
+        if (selected != SIZE_MAX) return event_wire(owner, selected, kind, out, error);
     }
     held.resource = NULL; held.view = NULL; held.opening = (qa_vfs_acquisition){0};
     held.instance = application_network_q2_copy(source.descriptor->selection.instance, error);
@@ -802,8 +838,7 @@ bool qa_application_network_q2_event_resource(qa_application_network_q2 *owner, 
         ok = model_derivation(owner, &held, source.product->family, false, 0, error);
     if (ok) ok = held_store(owner, &held, &index, error);
     if (ok) ok=event_wire(owner,index,kind,out,error);
-    else while (owner->held_resource_count > dependency_start)
-        held_free(&owner->held_resources[--owner->held_resource_count]);
+    else held_rollback(owner, dependency_start);
     held_free(&held); return ok;
 }
 
@@ -846,10 +881,18 @@ bool application_network_q2_download_resource(void *context, const char *path, c
         !source_bytes || source_bytes->data || source_bytes->size || !wire_bytes || wire_bytes->data || wire_bytes->size || !status ||
         !application_network_q2_current(owner, error)) return false;
     *view = NULL; *status = QA_Q2_DOWNLOAD_UNHANDLED;
-    for (size_t i = 0; i < owner->held_resource_count; ++i) {
-        application_q2_held_resource *held = &owner->held_resources[i];
-        bool companion = held->model_scope && held->model_scope_path && !strcmp(held->model_scope_path, path);
-        if (!companion && strcmp(held->wire_path, path)) continue;
+    qa_string_id path_name = qa_strings_find(qa_session_strings(owner->app->session),
+        (qa_bytes){(const uint8_t *)path, strlen(path)});
+    size_t i, selected = SIZE_MAX;
+    bool companion = false;
+    for (unsigned kind = 0; kind < 2; ++kind) {
+        qa_id_index_cursor cursor = qa_id_index_begin(&owner->held_wire_names, path_name, kind);
+        while (qa_id_index_next(&owner->held_wire_names, &cursor, &i)) {
+            if (i < selected || (i == selected && kind)) { selected = i; companion = kind != 0; }
+        }
+    }
+    if (selected != SIZE_MAX) {
+        application_q2_held_resource *held = &owner->held_resources[selected];
         *view = held->view;
         if (held->missing) { *status = QA_Q2_DOWNLOAD_MISSING; return true; }
         bool material = held->model_scope || held->kind == APPLICATION_Q2_HELD_MATERIAL ||

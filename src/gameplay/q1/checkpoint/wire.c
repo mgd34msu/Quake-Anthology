@@ -109,7 +109,9 @@ bool q1_save_wire(q1_save_io *io, qa_q1_game *g) {
     if (io->values.direction == QA_SOURCE_SAVE_READ) {
         if (wire->next_dynamic > (io->values.input.size - io->values.offset) / 5)
             return q1_save_fail(io, "Invalid Q1 physical Source edict continuation extent");
-        if (!q1_wire_edict_extent(wire, wire->next_dynamic, io->values.error)) return false;
+        uint32_t reserve = wire->edict_limit ? wire->edict_limit :
+            (g->capacity > wire->next_dynamic ? g->capacity : wire->next_dynamic);
+        if (!q1_wire_edict_extent(wire, reserve, io->values.error)) return false;
     }
     for (uint32_t slot = 0; slot < wire->next_dynamic; ++slot) {
         Q1_SAVE(io, bool, wire->edicts[slot].free);

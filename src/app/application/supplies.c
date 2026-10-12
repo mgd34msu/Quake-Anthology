@@ -1286,28 +1286,19 @@ bool application_supplies_source_for(void *opaque, qa_actor_id actor, qa_supply 
     return true;
 }
 
-static qa_item_id existing_item(const application_supplies *owner, const char *text) {
-    return qa_strings_find(qa_session_strings(owner->application->session),
-        (qa_bytes){(const uint8_t *)text, strlen(text)});
-}
-static const char *const q2_pickup_order[] = {
-    "q2:weapon_blaster", "q2:weapon_chainfist", "q2:weapon_shotgun", "q2:weapon_supershotgun",
-    "q2:weapon_machinegun", "q2:weapon_etf_rifle", "q2:weapon_chaingun", "q2:ammo_grenades",
-    "q2:ammo_trap", "q2:ammo_tesla", "q2:weapon_grenadelauncher", "q2:weapon_proxlauncher",
-    "q2:weapon_rocketlauncher", "q2:weapon_hyperblaster", "q2:weapon_boomer",
-    "q2:weapon_plasmabeam", "q2:weapon_railgun", "q2:weapon_phalanx",
-    "q2:weapon_disintegrator", "q2:weapon_bfg"
+static const qa_q2_weapon q2_pickup_order[] = {
+    QA_Q2_BLASTER, QA_Q2_CHAINFIST, QA_Q2_SHOTGUN, QA_Q2_SUPERSHOTGUN,
+    QA_Q2_MACHINEGUN, QA_Q2_ETF_RIFLE, QA_Q2_CHAINGUN, QA_Q2_GRENADES,
+    QA_Q2_TRAP, QA_Q2_TESLA, QA_Q2_GRENADELAUNCHER, QA_Q2_PROXLAUNCHER,
+    QA_Q2_ROCKETLAUNCHER, QA_Q2_HYPERBLASTER, QA_Q2_IONRIPPER,
+    QA_Q2_HEATBEAM, QA_Q2_RAILGUN, QA_Q2_PHALANX,
+    QA_Q2_DISINTEGRATOR, QA_Q2_BFG
 };
 static int q2_rank(supply_pair *pair, qa_item_id item) {
     if (!item) return -1;
     for (size_t i = 0; i < sizeof(q2_pickup_order)/sizeof(*q2_pickup_order); ++i)
-        if (existing_item(pair->owner, q2_pickup_order[i]) == item) return (int)i;
+        if (qa_q2_weapon_item(pair->arsenal->state.q2, q2_pickup_order[i], false) == item) return (int)i;
     return -1;
-}
-static qa_item_id q2_weapon_item(supply_pair *pair, qa_q2_weapon weapon) {
-    const qa_q2_weapon_definition *definition =
-        qa_q2_weapon_definition_at(pair->arsenal->state.q2, weapon);
-    return definition ? existing_item(pair->owner, definition->item) : 0;
 }
 static bool arsenal_item(supply_pair *pair, qa_item_id item) {
     application_provider *arsenal = pair->arsenal;
@@ -1318,10 +1309,8 @@ static bool arsenal_item(supply_pair *pair, qa_item_id item) {
             if (qa_q1_ammo_item(arsenal->state.q1, (qa_q1_ammo)ammo) == item) return true;
     } else if (arsenal->kind == APPLICATION_PROVIDER_Q2) {
         for (int weapon = QA_Q2_BLASTER; weapon < QA_Q2_WEAPON_COUNT; ++weapon) {
-            const qa_q2_weapon_definition *definition =
-                qa_q2_weapon_definition_at(arsenal->state.q2, (qa_q2_weapon)weapon);
-            if (definition && (existing_item(pair->owner, definition->item) == item ||
-                (definition->ammo && existing_item(pair->owner, definition->ammo) == item))) return true;
+            if (qa_q2_weapon_item(arsenal->state.q2, (qa_q2_weapon)weapon, false) == item ||
+                qa_q2_weapon_item(arsenal->state.q2, (qa_q2_weapon)weapon, true) == item) return true;
         }
     } else if (arsenal->kind == APPLICATION_PROVIDER_Q3) {
         int limit = (arsenal->product->campaign_id == QA_CAMPAIGN_MISSIONPACK)
@@ -1524,7 +1513,7 @@ bool application_supplies_spawn(application_supplies *owner, application_provide
     } else if (ok && arsenal->kind == APPLICATION_PROVIDER_Q2) {
         qa_q2_weapon active = family == QA_GAME_Q1 ? QA_Q2_SHOTGUN :
             family == QA_GAME_Q3 ? QA_Q2_MACHINEGUN : QA_Q2_BLASTER;
-        qa_item_id blaster = q2_weapon_item(pair, QA_Q2_BLASTER);
+        qa_item_id blaster = qa_q2_weapon_item(arsenal->state.q2, QA_Q2_BLASTER, false);
         if (family == QA_GAME_Q2) {
             double owned;
             ok = qa_inventory_count_read(owner->inventory, actor, blaster, &owned, error) &&
@@ -1534,15 +1523,15 @@ bool application_supplies_spawn(application_supplies *owner, application_provide
                     supply_current(pair, actor, error);
         } else ok = starter_count(pair, actor, blaster, 1, true, error);
         if (ok && family == QA_GAME_Q1)
-            ok = starter_count(pair, actor, q2_weapon_item(pair, QA_Q2_SHOTGUN), 1, true, error) &&
-                starter_count(pair, actor, existing_item(owner, "q2:ammo_shells"), 25, true, error);
+            ok = starter_count(pair, actor, qa_q2_weapon_item(arsenal->state.q2, QA_Q2_SHOTGUN, false), 1, true, error) &&
+                starter_count(pair, actor, qa_q2_weapon_item(arsenal->state.q2, QA_Q2_SHOTGUN, true), 25, true, error);
         if (ok && family == QA_GAME_Q3)
-            ok = starter_count(pair, actor, q2_weapon_item(pair, QA_Q2_MACHINEGUN), 1, true, error) &&
-                starter_count(pair, actor, q2_weapon_item(pair, QA_Q2_CHAINGUN), 1, true, error) &&
-                starter_count(pair, actor, existing_item(owner, "q2:ammo_bullets"), 100, true, error);
+            ok = starter_count(pair, actor, qa_q2_weapon_item(arsenal->state.q2, QA_Q2_MACHINEGUN, false), 1, true, error) &&
+                starter_count(pair, actor, qa_q2_weapon_item(arsenal->state.q2, QA_Q2_CHAINGUN, false), 1, true, error) &&
+                starter_count(pair, actor, qa_q2_weapon_item(arsenal->state.q2, QA_Q2_MACHINEGUN, true), 100, true, error);
         double active_count;
         if (ok) ok = qa_inventory_count_read(owner->inventory, actor,
-            q2_weapon_item(pair, active), &active_count, error) && supply_current(pair, actor, error);
+            qa_q2_weapon_item(arsenal->state.q2, active, false), &active_count, error) && supply_current(pair, actor, error);
         if (ok && active_count < 1)
             ok = application_fail(error, QA_ERROR_ARGUMENT, "Selected Q2 starter weapon is not owned");
         if (ok) ok = qa_q2_weapon_restore(arsenal->state.q2, actor,
@@ -1597,13 +1586,13 @@ static bool q2_weapon_receipts(supply_pair *pair, qa_actor_id actor,
         if (!qa_q2_weapon_read(pair->arsenal->state.q2, actor, &state, error)) return false;
         qa_q2_weapon incoming = QA_Q2_WEAPON_NONE;
         for (int weapon = QA_Q2_BLASTER; weapon < QA_Q2_WEAPON_COUNT; ++weapon)
-            if (q2_weapon_item(pair, (qa_q2_weapon)weapon) == items[i]) {
+            if (qa_q2_weapon_item(pair->arsenal->state.q2, (qa_q2_weapon)weapon, false) == items[i]) {
                 incoming = (qa_q2_weapon)weapon; break;
             }
         if (incoming == QA_Q2_WEAPON_NONE)
             return application_fail(error, QA_ERROR_ARGUMENT, "Pickup receipt has no actual Q2 weapon definition");
-        qa_item_id current = q2_weapon_item(pair,
-            state.pending != QA_Q2_WEAPON_NONE ? state.pending : state.weapon);
+        qa_item_id current = qa_q2_weapon_item(pair->arsenal->state.q2,
+            state.pending != QA_Q2_WEAPON_NONE ? state.pending : state.weapon, false);
         if (selection == QA_PICKUP_SWITCH_ALWAYS || q2_rank(pair, items[i]) > q2_rank(pair, current)) {
             qa_q2_selection selected;
             if (!qa_q2_weapon_select(pair->arsenal->state.q2, actor, incoming, false, &selected, error) ||
@@ -1675,7 +1664,7 @@ static bool ammo_granted(void *context, qa_actor_id actor,
                 auto_switch, preference, error) && supply_current(pair, actor, error);
     }
     if (pair->arsenal->kind == APPLICATION_PROVIDER_Q2) {
-        qa_item_id grenades = existing_item(pair->owner, "q2:ammo_grenades");
+        qa_item_id grenades = qa_q2_weapon_item(pair->arsenal->state.q2, QA_Q2_GRENADES, true);
         for (size_t i = 0; auto_switch && i < count; ++i)
             if (receipts[i].item == grenades && receipts[i].before == 0)
                 return q2_weapon_receipts(pair, actor, &grenades, 1, QA_PICKUP_SWITCH_IF_BETTER, error);

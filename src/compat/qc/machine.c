@@ -578,8 +578,7 @@ bool qc_machine_body(qa_qc_instance *instance, uint32_t function,
     instance->argument_count = argument_count;
     if (fn->named_builtin || fn->first_statement < 0) {
         qc_projection_invalidate(instance);
-        bool ok = qc_builtin_call(instance, fn->first_statement < 0 ? -fn->first_statement : 0,
-                                  fn->named_builtin ? fn->name : NULL, error);
+        bool ok = qc_builtin_call(instance, function, error);
         qc_projection_invalidate(instance);
         instance->argument_count = saved_arguments;
         return ok;

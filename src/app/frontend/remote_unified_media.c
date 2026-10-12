@@ -39,21 +39,27 @@ static bool bank(frontend_unified_media *owner, qa_string_id content_name, unifi
 {
     if (!owner || owner->importing || owner->busy || !content_name || !out || !frontend_unified_media_current(owner))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified media lost its retained recipe content");
-    for (unified_media_bank *row = owner->banks; row; row = row->next)
-        if (row->content_name == content_name) {
-            if (row->constructing || row->construction_failed)
-                return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified content bank retains an incomplete construction");
-            *out = row; return true;
-        }
+    qa_id_index_entry *binding = qa_id_index_find(&owner->bank_index, content_name, 0);
+    if (binding) {
+        unified_media_bank *row = (unified_media_bank *)(uintptr_t)binding->value;
+        if (row->constructing || row->construction_failed)
+            return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified content bank retains an incomplete construction");
+        *out = row; return true;
+    }
     if (owner->frontend->resource_inventory)
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified bank creation overlaps retained resource inventory");
+    if (!qa_id_index_reserve(&owner->bank_index, 2, error)) return false;
     unified_media_bank *row = calloc(1, sizeof(*row));
     if (!row) return frontend_unified_fail(error, QA_ERROR_MEMORY, "Retaining unified content media bank");
     row->content_name = content_name;
     row->content = qa_strings_cstr(owner->strings, content_name);
     row->constructing = true;
     row->next = owner->banks; owner->banks = row;
+    qa_id_index_insert(&owner->bank_index, content_name, 0, (size_t)(uintptr_t)row);
     bool okay = row->content && qa_executable_recipe_content(owner->recipe, row->content, &row->files, &row->product, error);
+    if (row->product)
+        qa_id_index_insert(&owner->bank_index, QA_STRING_NONE, (uint64_t)(uintptr_t)row->product,
+            (size_t)(uintptr_t)row);
     if (okay) row->images = qa_scene_resources_create(row->files, error);
     if (okay) okay = row->images && frontend_image_policy_initialize(owner->frontend, row->images, error);
     if (okay) {
@@ -83,8 +89,13 @@ static bool bank(frontend_unified_media *owner, qa_string_id content_name, unifi
         row->constructing = false; row->construction_failed = true;
         if (!frontend_unified_material_movies_clear(owner, 0, NULL)) return false;
         owner->banks = row->next;
+        qa_id_index_remove_value(&owner->bank_index, row->content_name, 0, (size_t)(uintptr_t)row);
+        if (row->product)
+            qa_id_index_remove_value(&owner->bank_index, QA_STRING_NONE, (uint64_t)(uintptr_t)row->product,
+                (size_t)(uintptr_t)row);
         qa_audio_bank_destroy(row->sounds); qa_font_library_destroy(row->fonts);
         qa_material_library_destroy(row->materials); qa_scene_resources_destroy(row->images);
+        qa_id_index_destroy(&row->skin_index); qa_id_index_destroy(&row->model_index);
         free(row); return false;
     }
     row->constructing = false; *out = row; return true;
@@ -133,8 +144,13 @@ bool frontend_unified_media_q3_assets_read(const frontend_unified_media *owner, 
     qa_q3_presentation_assets **out)
 {
     if (!owner || !product || !out || owner->busy) return false;
-    for (unified_media_bank *row=owner->banks;row;row=row->next)
+    qa_id_index_cursor cursor = qa_id_index_begin(&owner->bank_index, QA_STRING_NONE,
+        (uint64_t)(uintptr_t)product);
+    size_t value;
+    while (qa_id_index_next(&owner->bank_index, &cursor, &value)) {
+        unified_media_bank *row = (unified_media_bank *)(uintptr_t)value;
         if (row->product==product) { *out=row->q3_assets; return row->q3_assets!=NULL; }
+    }
     return false;
 }
 bool frontend_unified_media_create(qa_frontend *frontend, qa_executable_recipe *recipe, uint32_t physical_seat,
@@ -211,17 +227,24 @@ bool frontend_unified_media_skin(frontend_unified_media *owner, const frontend_u
     qa_string_id path, const qa_scene_image_options *options, const qa_material **out, qa_error *error)
 {
     unified_media_model *binding = model->binding;
-    if (binding && binding->skin_path == path) { *out = binding->skin_material; return true; }
+    if (binding && (binding->skin ? binding->skin->path : QA_STRING_NONE) == path) {
+        *out = binding->skin ? binding->skin->material : NULL; return true;
+    }
     unified_media_bank *files = binding ? binding->bank : NULL;
     if (!files && !bank(owner, content, &files, error)) return false;
-    for (unified_media_skin *row = files->skins; row; row = row->next)
+    qa_id_index_cursor cursor = qa_id_index_begin(&files->skin_index, path, 0);
+    size_t value;
+    while (qa_id_index_next(&files->skin_index, &cursor, &value)) {
+        unified_media_skin *row = (unified_media_skin *)(uintptr_t)value;
         if (row->path == path && same_options(&row->options, options)) {
-            if (binding) { binding->skin_path = path; binding->skin_material = row->material; }
+            if (binding) binding->skin = row;
             *out = row->material; return true;
         }
+    }
     if (options->palette_rgb.size > SIZE_MAX - sizeof(unified_media_skin) ||
         options->translation.size > SIZE_MAX - sizeof(unified_media_skin) - options->palette_rgb.size)
         return frontend_unified_fail(error, QA_ERROR_MEMORY, "Skin binding exceeds storage extent");
+    if (!qa_id_index_reserve(&files->skin_index, 1, error)) return false;
     unified_media_skin *row = calloc(1, sizeof(*row) + options->palette_rgb.size + options->translation.size);
     if (!row) return frontend_unified_fail(error, QA_ERROR_MEMORY, "Retaining skin binding");
     row->path = path; row->options = *options;
@@ -238,7 +261,8 @@ bool frontend_unified_media_skin(frontend_unified_media *owner, const frontend_u
         &row->options, false, &row->material, error);
     owner->busy = false;
     if (!okay) { free(row); return false; }
-    if (binding) { binding->skin_path = path; binding->skin_material = row->material; }
+    if (binding) binding->skin = row;
+    qa_id_index_insert(&files->skin_index, path, 0, (size_t)(uintptr_t)row);
     row->next = files->skins; files->skins = row; *out = row->material; return true;
 }
 bool frontend_unified_media_model(frontend_unified_media *owner, qa_string_id content_name,
@@ -251,27 +275,39 @@ bool frontend_unified_media_model(frontend_unified_media *owner, qa_string_id co
         (options->palette_rgb.size && !options->palette_rgb.data) || options->source_q3)
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified model needs its genuine content and retained image request");
     if (path[0] == '*') {
-        uint32_t index = 0;
-        if (!path[1]) return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified inline model has no received index");
-        for (const char *p = path + 1; *p; ++p) {
-            if (*p < '0' || *p > '9' || index > (UINT32_MAX - (uint32_t)(*p - '0')) / 10)
-                return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified inline model exceeds its received model domain");
-            index = index * 10 + (uint32_t)(*p - '0');
+        qa_id_index_entry *binding = qa_id_index_find(&owner->inline_index, path_name, 0);
+        uint32_t index = binding ? (uint32_t)binding->value : 0;
+        if (!binding) {
+            if (!path[1]) return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified inline model has no received index");
+            for (const char *p = path + 1; *p; ++p) {
+                if (*p < '0' || *p > '9' || index > (UINT32_MAX - (uint32_t)(*p - '0')) / 10)
+                    return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified inline model exceeds its received model domain");
+                index = index * 10 + (uint32_t)(*p - '0');
+            }
         }
         if (content_name != owner->world_bank->content_name)
             return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified inline model differs from the offered world content");
+        if (!binding) {
+            if (!qa_id_index_reserve(&owner->inline_index, 1, error)) return false;
+            qa_id_index_insert(&owner->inline_index, path_name, 0, index);
+        }
         *out = (frontend_unified_model){.brush_world = owner->world, .inline_model = index, .is_inline = true};
         return true;
     }
     unified_media_bank *files;
     if (!bank(owner, content_name, &files, error)) return false;
-    for (unified_media_model *row = owner->models; row; row = row->next)
+    qa_id_index_cursor cursor = qa_id_index_begin(&files->model_index, path_name, family);
+    size_t value;
+    while (qa_id_index_next(&files->model_index, &cursor, &value)) {
+        unified_media_model *row = (unified_media_model *)(uintptr_t)value;
         if (row->bank == files && row->family == family && row->path == path_name && same_options(&row->options, options)) {
             *out = (frontend_unified_model){.binding=row,.resource=row->resource,.opening=&row->opening,
                 .model=row->world?NULL:(row->source?row->source:&row->decoded),.scene=row->scene,.brush_world=row->world}; return true;
         }
+    }
     if (owner->frontend->resource_inventory)
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified model creation overlaps retained resource inventory");
+    if (!qa_id_index_reserve(&files->model_index, 1, error)) return false;
     unified_media_model *row = calloc(1, sizeof(*row));
     if (!row) return frontend_unified_fail(error, QA_ERROR_MEMORY, "Retaining unified model geometry");
     row->path = path_name;
@@ -312,6 +348,7 @@ bool frontend_unified_media_model(frontend_unified_media *owner, qa_string_id co
         qa_resource_release(row->resource); qa_vfs_acquisition_dispose(&row->opening);
         free(row->palette); free(row->translation); free(row); return false;
     }
+    qa_id_index_insert(&files->model_index, path_name, family, (size_t)(uintptr_t)row);
     row->next = owner->models; owner->models = row;
     *out = (frontend_unified_model){.binding=row,.resource=row->resource,.opening=&row->opening,
         .model=row->world?NULL:&row->decoded,.scene=row->scene,.brush_world=row->world}; return true;
@@ -454,6 +491,7 @@ bool frontend_unified_media_destroy(frontend_unified_media *owner, qa_error *err
     qa_scene_world_destroy(owner->world);
     while (owner->models) {
         unified_media_model *row = owner->models; owner->models = row->next;
+        qa_id_index_remove_value(&row->bank->model_index, row->path, row->family, (size_t)(uintptr_t)row);
         qa_scene_world_destroy(row->world); qa_scene_model_destroy(row->scene); qa_model_free(&row->decoded);
         frontend_model_release(row->source_lease);
         qa_resource_release(row->resource); qa_vfs_acquisition_dispose(&row->opening);
@@ -461,11 +499,17 @@ bool frontend_unified_media_destroy(frontend_unified_media *owner, qa_error *err
     }
     while (owner->banks) {
         unified_media_bank *row = owner->banks; owner->banks = row->next;
+        qa_id_index_remove_value(&owner->bank_index, row->content_name, 0, (size_t)(uintptr_t)row);
+        if (row->product)
+            qa_id_index_remove_value(&owner->bank_index, QA_STRING_NONE, (uint64_t)(uintptr_t)row->product,
+                (size_t)(uintptr_t)row);
         while (row->skins) { unified_media_skin *skin = row->skins; row->skins = skin->next; free(skin); }
+        qa_id_index_destroy(&row->skin_index); qa_id_index_destroy(&row->model_index);
         qa_buffer_free(&row->saved_assets);
         qa_audio_bank_destroy(row->sounds); qa_font_library_destroy(row->fonts);
         qa_material_library_destroy(row->materials); qa_scene_resources_destroy(row->images); free(row);
     }
+    qa_id_index_destroy(&owner->inline_index); qa_id_index_destroy(&owner->bank_index);
     qa_strings_destroy(owner->strings);
     free(owner); return true;
 }

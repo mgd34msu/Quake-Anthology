@@ -2,6 +2,15 @@
 #define QA_FRONTEND_EQUIPMENT_MEDIA_PRIVATE_H
 
 #include "equipment_media.h"
+#include "qa/id_index.h"
+
+typedef struct frontend_held_lookup {
+    qa_strings *strings;
+    qa_vfs *files;
+    const char *path;
+    uint64_t lookup_generation;
+    bool archive_only, probed, found;
+} frontend_held_lookup;
 
 struct frontend_equipment_media {
     struct frontend_equipment_media *next;
@@ -35,6 +44,8 @@ struct frontend_equipment_media {
 };
 struct frontend_equipment {
     frontend_equipment_media *media, *tail;
+    qa_arena held_storage;
+    qa_id_index held_lookups;
     bool admitting;
 };
 

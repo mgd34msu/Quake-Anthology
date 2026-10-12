@@ -21,9 +21,6 @@ typedef struct scene_model_image {
 } scene_model_image;
 
 typedef struct scene_model_resource_binding {
-    struct scene_model_resource_binding *next;
-    qa_material_library *library;
-    qa_string_id shader;
     const qa_material *material;
     scene_model_image *image;
     bool retained;
@@ -87,7 +84,8 @@ struct qa_scene_model {
     bool destroy_pending;
     scene_model_image **skins, **sprites;
     scene_model_image *images;
-    scene_model_resource_binding *material_bindings;
+    qa_arena resource_storage;
+    qa_id_index resource_bindings;
     struct qa_scene_model *replacement;
     struct qa_scene_model *replacement_next;
     struct qa_scene_model *replacement_parent;
@@ -119,6 +117,8 @@ bool scene_model_external(qa_scene_model *, const char *, qa_scene_frame *, scen
 bool scene_model_external_id(qa_scene_model *, qa_string_id, scene_model_image **, qa_error *);
 bool scene_model_material(qa_scene_model *, qa_material_library *, qa_string_id,
                          const qa_material **, qa_error *);
+bool scene_model_resource_admit(qa_scene_model *, qa_material_library *, qa_string_id, qa_error *);
+void scene_model_bindings_destroy(qa_scene_model *);
 bool scene_model_indexed(qa_scene_model *, const char *, qa_bytes, uint32_t, uint32_t,
                          bool sprite, scene_model_image **, qa_error *);
 bool scene_model_indexed_override(qa_scene_model *, const qa_scene_model_indexed_skin *,
