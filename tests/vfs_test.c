@@ -262,6 +262,9 @@ int main(void)
     CHECK(resolved == loose_id);
     expect_text(loose_resource, "loose");
     CHECK(qa_resource_package_name(loose_resource) == NULL);
+    bool probed = false; uint64_t probed_size = 0;
+    CHECK(qa_vfs_probe(vfs, "maps/item.txt", &probed, &probed_size, &error));
+    CHECK(probed && probed_size == qa_resource_bytes(loose_resource).size);
     qa_mount_id invalid_order[] = {pak_id, pak_id, zip_id};
     CHECK(!qa_vfs_set_order(vfs, invalid_order, 3, &error));
     qa_mount_id prefix_order[] = {zip_id, pak_id, loose_id};
@@ -269,6 +272,20 @@ int main(void)
     CHECK(qa_vfs_acquire(vfs, "maps/item.txt", &again, &resolved, &error));
     CHECK(again == zip_resource && resolved == zip_id);
     qa_resource_release(again);
+    CHECK(qa_vfs_probe(vfs, "maps/item.txt", &probed, &probed_size, &error));
+    CHECK(probed && probed_size == qa_resource_bytes(zip_resource).size);
+    CHECK(qa_vfs_set_user_overlay(vfs, loose_id, true, &error));
+    CHECK(qa_vfs_probe(vfs, "maps/item.txt", &probed, &probed_size, &error));
+    CHECK(probed && probed_size == qa_resource_bytes(loose_resource).size);
+    CHECK(qa_vfs_acquire(vfs, "maps/item.txt", &again, &resolved, &error));
+    CHECK(again == loose_resource && resolved == loose_id); qa_resource_release(again);
+    CHECK(qa_vfs_set_user_overlay(vfs, loose_id, false, &error));
+    CHECK(qa_vfs_set_link(vfs, "maps/", loose_id, "missing/", &error));
+    CHECK(qa_vfs_probe(vfs, "maps/item.txt", &probed, &probed_size, &error));
+    CHECK(!probed && probed_size == 0);
+    CHECK(!qa_vfs_acquire(vfs, "maps/item.txt", &again, &resolved, &error));
+    CHECK(again == NULL && error.code == QA_ERROR_NOT_FOUND);
+    CHECK(qa_vfs_set_link(vfs, "maps/", loose_id, NULL, &error));
     CHECK(qa_vfs_set_prefix_order(vfs, "MAPS", NULL, 0, &error));
 
     CHECK(!qa_vfs_acquire_from(vfs, loose_id, "DATA.TXT", &again, &error));

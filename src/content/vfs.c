@@ -1955,38 +1955,32 @@ bool qa_vfs_acquire(qa_vfs *vfs, const char *path, qa_resource **out,
     return qa_vfs_acquire_filtered(vfs, path, NULL, NULL, out, out_mount, error);
 }
 
-static bool acquire_filtered_mode(qa_vfs *vfs, const char *path,
-                              qa_vfs_accept_mount accept, void *context,
-                              qa_resource **out, qa_mount_id *out_mount,
-                              qa_vfs_acquisition *receipt, qa_error *error)
+typedef bool (*route_visit_fn)(qa_vfs *, mount *, const char *,
+    const resource_link *, void *, bool *, qa_error *);
+
+static bool resolve_route(qa_vfs *vfs, const char *path,
+    qa_vfs_accept_mount accept, void *accept_context,
+    route_visit_fn visit, void *context, bool *found, qa_error *error)
 {
-    if (out != NULL) *out = NULL;
-    if (vfs == NULL || out == NULL) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid resource acquisition");
-        return false;
-    }
     char *normalized = qa_vfs_normalize_path(path, error);
     if (normalized == NULL) return false;
+    *found = false;
     qa_error local = {0};
     for (size_t i = 0; i < vfs->count; i++) {
         mount *source = vfs->mounts[i];
         if (!source->user_overlay) continue;
-        if (accept != NULL && !accept(source->id, context)) continue;
-        if (acquire_mount(vfs, source, normalized, path, NULL, true, out, receipt, &local)) {
-            if (out_mount != NULL) *out_mount = source->id;
-            free(normalized);
-            return true;
-        }
-        if (local.code != QA_ERROR_NOT_FOUND) {
+        if (accept != NULL && !accept(source->id, accept_context)) continue;
+        if (!visit(vfs, source, normalized, NULL, context, found, &local)) {
             if (error != NULL) *error = local;
             free(normalized);
             return false;
         }
+        if (*found) { free(normalized); return true; }
     }
     for (resource_link *link = vfs->links; link != NULL; link = link->next) {
         size_t source_length = strlen(link->source);
         if (strncmp(normalized, link->source, source_length) != 0) continue;
-        if (accept != NULL && !accept(link->mount, context)) {
+        if (accept != NULL && !accept(link->mount, accept_context)) {
             qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "resource link mount was excluded");
             free(normalized);
             return false;
@@ -2011,8 +2005,7 @@ static bool acquire_filtered_mode(qa_vfs *vfs, const char *path,
         free(target);
         if (normalized == NULL) return false;
         mount *source = find_mount(vfs, link->mount);
-        bool result = acquire_mount(vfs, source, normalized, path, link, true, out, receipt, error);
-        if (result && out_mount != NULL) *out_mount = source->id;
+        bool result = visit(vfs, source, normalized, link, context, found, error);
         free(normalized);
         return result;
     }
@@ -2033,19 +2026,54 @@ static bool acquire_filtered_mode(qa_vfs *vfs, const char *path,
     for (size_t i = 0; i < vfs->count; i++) {
         mount *source = order == NULL ? vfs->mounts[i] : find_mount(vfs, order[i]);
         if (source->user_overlay) continue;
-        if (accept != NULL && !accept(source->id, context)) continue;
-        if (acquire_mount(vfs, source, normalized, path, NULL, true, out, receipt, &local)) {
-            if (out_mount != NULL) *out_mount = source->id;
-            free(normalized);
-            return true;
-        }
-        if (local.code != QA_ERROR_NOT_FOUND) {
+        if (accept != NULL && !accept(source->id, accept_context)) continue;
+        if (!visit(vfs, source, normalized, NULL, context, found, &local)) {
             if (error != NULL) *error = local;
             free(normalized);
             return false;
         }
+        if (*found) { free(normalized); return true; }
     }
     free(normalized);
+    return true;
+}
+
+typedef struct acquire_route_context {
+    const char *requested;
+    qa_resource **out;
+    qa_mount_id *out_mount;
+    qa_vfs_acquisition *receipt;
+} acquire_route_context;
+
+static bool acquire_route(qa_vfs *vfs, mount *source, const char *path,
+    const resource_link *link, void *opaque, bool *found, qa_error *error)
+{
+    acquire_route_context *context = opaque;
+    if (acquire_mount(vfs, source, path, context->requested, link, true,
+        context->out, context->receipt, error)) {
+        *found = true;
+        if (context->out_mount != NULL) *context->out_mount = source->id;
+        return true;
+    }
+    return link == NULL && error != NULL && error->code == QA_ERROR_NOT_FOUND;
+}
+
+static bool acquire_filtered_mode(qa_vfs *vfs, const char *path,
+                              qa_vfs_accept_mount accept, void *context,
+                              qa_resource **out, qa_mount_id *out_mount,
+                              qa_vfs_acquisition *receipt, qa_error *error)
+{
+    if (out != NULL) *out = NULL;
+    if (vfs == NULL || out == NULL) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid resource acquisition");
+        return false;
+    }
+    acquire_route_context acquisition = {.requested = path, .out = out,
+        .out_mount = out_mount, .receipt = receipt};
+    bool found;
+    if (!resolve_route(vfs, path, accept, context, acquire_route, &acquisition, &found, error))
+        return false;
+    if (found) return true;
     qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "resource not found: %s", path);
     return false;
 }
@@ -2092,6 +2120,12 @@ static bool probe_mount(const qa_vfs *vfs, const mount *source, const char *path
         return false;
     }
     qa_fs_file_close(file); *found = true; *size = qa_fs_identity_size(&identity); return true;
+}
+static bool probe_route(qa_vfs *vfs, mount *source, const char *path,
+    const resource_link *link, void *context, bool *found, qa_error *error)
+{
+    (void)link;
+    return source && probe_mount(vfs, source, path, found, context, error);
 }
 static bool read_recipe_valid(const qa_vfs *vfs, const qa_vfs_read_reference *entry, bool native_identity, qa_error *error)
 {
@@ -2213,41 +2247,7 @@ bool qa_vfs_probe(qa_vfs *vfs, const char *path, bool *found, uint64_t *size, qa
 {
     if (!vfs || !found || !size) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "VFS probe requires its view and outputs"); return false; }
     *found = false; *size = 0;
-    char *normalized = qa_vfs_normalize_path(path, error);
-    if (!normalized) return false;
-    bool ok = true;
-    for (size_t i = 0; ok && !*found && i < vfs->count; ++i)
-        if (vfs->mounts[i]->user_overlay) ok = probe_mount(vfs, vfs->mounts[i], normalized, found, size, error);
-    if (!ok || *found) { free(normalized); return ok; }
-    for (resource_link *link = vfs->links; link; link = link->next) {
-        size_t from = strlen(link->source), to = strlen(link->target);
-        if (strncmp(normalized, link->source, from)) continue;
-        size_t suffix = strlen(normalized + from);
-        if (to > SIZE_MAX - suffix - 1) { free(normalized); qa_error_set(error, QA_ERROR_MEMORY, 0, "VFS probe link extent"); return false; }
-        char *target = malloc(to + suffix + 1);
-        if (!target) { free(normalized); qa_error_set(error, QA_ERROR_MEMORY, 0, "VFS probe link path"); return false; }
-        memcpy(target, link->target, to); memcpy(target + to, normalized + from, suffix + 1);
-        free(normalized); normalized = qa_vfs_normalize_path(target, error); free(target);
-        if (!normalized) return false;
-        mount *source = find_mount(vfs, link->mount);
-        ok = source && probe_mount(vfs, source, normalized, found, size, error);
-        free(normalized); return ok;
-    }
-    qa_mount_id *order = NULL; size_t length = strlen(normalized);
-    for (prefix_order *prefix = vfs->prefixes; prefix; prefix = prefix->next) {
-        size_t prefix_length = strlen(prefix->prefix);
-        if (prefix_length < length && normalized[prefix_length] == '/') {
-            normalized[prefix_length] = 0;
-            bool matches = qa_archive_paths_equal(normalized, prefix->prefix, QA_ARCHIVE_CASE_INSENSITIVE);
-            normalized[prefix_length] = '/';
-            if (matches) { order = prefix->order; break; }
-        }
-    }
-    for (size_t i = 0; ok && !*found && i < vfs->count; ++i) {
-        mount *source = order ? find_mount(vfs, order[i]) : vfs->mounts[i];
-        if (!source->user_overlay) ok = probe_mount(vfs, source, normalized, found, size, error);
-    }
-    free(normalized); return ok;
+    return resolve_route(vfs, path, NULL, NULL, probe_route, size, found, error);
 }
 
 void qa_vfs_listing_free(qa_vfs_listing *listing)
