@@ -100,8 +100,8 @@ static inventory_source_index *source_index_take(inventory_store *store, qa_erro
     size_t slot;
     inventory_source_index *index = qa_pool_take(pool, &slot);
     if (!index) { fail(e, QA_ERROR_MEMORY, "Cannot prepare inventory source index"); return NULL; }
-    qa_arena_reset(&index->storage);
-    index->items = (qa_id_index){.storage = &index->storage};
+    index->items.storage = &index->storage;
+    qa_id_index_clear(&index->items);
     index->owner = owner; index->storage_slot = slot;
     index->revision = 0; index->ready = index->validated = false;
     return index;
@@ -110,10 +110,67 @@ static inventory_source_index *source_index_take(inventory_store *store, qa_erro
 static void source_index_dispose(inventory_source_index *index)
 {
     if (!index) return;
-    qa_arena_reset(&index->storage);
-    index->items = (qa_id_index){.storage = &index->storage};
+    qa_id_index_clear(&index->items);
     index->ready = index->validated = false;
     qa_pool_release(&index->owner->source_records, index->storage_slot);
+}
+
+static inventory_source_index *source_candidate_take(inventory_store *store,
+    item_group *group, qa_error *e)
+{
+    inventory_source_index **slot = group ? &group->source_candidate : &store->primary_candidate;
+    inventory_source_index *candidate = *slot;
+    *slot = NULL;
+    return candidate ? candidate : source_index_take(store, e);
+}
+
+static void source_candidate_return(inventory_store *store, item_group *group,
+    inventory_source_index *candidate)
+{
+    if (!candidate) return;
+    qa_id_index_clear(&candidate->items);
+    candidate->ready = candidate->validated = false;
+    inventory_source_index **slot = group ? &group->source_candidate : &store->primary_candidate;
+    if (!*slot) *slot = candidate;
+    else source_index_dispose(candidate);
+}
+
+static bool source_candidate_prepare(inventory_store *store, item_group *group,
+    size_t count, qa_error *e)
+{
+    inventory_source_index **slot = group ? &group->source_candidate : &store->primary_candidate;
+    inventory_source_index *candidate = *slot;
+    if (!candidate) candidate = group ? group->source_index : store->primary_index;
+    if (candidate) {
+        size_t additional = count > candidate->items.count ? count - candidate->items.count : 0;
+        return qa_id_index_reserve(&candidate->items, additional, e);
+    }
+    candidate = source_index_take(store, e);
+    if (!candidate) return false;
+    if (!qa_id_index_reserve(&candidate->items, count, e)) {
+        source_index_dispose(candidate); return false;
+    }
+    *slot = candidate;
+    return true;
+}
+
+bool qa_inventory_source_prepare(inventory_store *store, item_group *group,
+    size_t count, qa_error *e)
+{
+    inventory_source_index **slots[] = {
+        group ? &group->source_index : &store->primary_index,
+        group ? &group->source_candidate : &store->primary_candidate,
+    };
+    for (size_t i = 0; i < 2; ++i) {
+        if (!*slots[i]) {
+            *slots[i] = source_index_take(store, e);
+            if (!*slots[i]) return false;
+        }
+        inventory_source_index *index = *slots[i];
+        size_t additional = count > index->items.count ? count - index->items.count : 0;
+        if (!qa_id_index_reserve(&index->items, additional, e)) return false;
+    }
+    return true;
 }
 
 static void *record_take(qa_inventory *table, qa_pool *pool, size_t pages,
@@ -184,6 +241,7 @@ static void storage_release(qa_inventory *table)
 static void free_group(item_group *group)
 {
     source_index_dispose(group->source_index);
+    source_index_dispose(group->source_candidate);
     qa_arena_destroy(&group->index_storage);
     for (size_t i = 0; i < group->count; ++i) free((void *)group->items[i].definition.label);
     free(group->items);
@@ -196,7 +254,9 @@ void qa_inventory_store_drop(inventory_store *store)
         item_group *group = store->groups;
         while (group) { item_group *next = group->next; free_group(group); group = next; }
         source_index_dispose(store->primary_index);
+        source_index_dispose(store->primary_candidate);
         store->primary_index = NULL;
+        store->primary_candidate = NULL;
         qa_arena_destroy(&store->index_storage);
         pickup_claim *claim = store->pickups;
         while (claim) {
@@ -206,6 +266,7 @@ void qa_inventory_store_drop(inventory_store *store)
         }
         qa_inventory *owner = store->entries_owner;
         qa_inventory *storage_owner = store->storage_owner;
+        storage_owner->pickup_reservations -= store->pickup_reservation;
         if (owner) qa_pool_release_run(&owner->scratch_pages, store->entries_slot, store->entries_pages);
         qa_pool_release(&storage_owner->store_records, store->storage_slot);
         if (owner) storage_release(owner);
@@ -457,7 +518,7 @@ static bool source_refresh(qa_inventory *table, inventory_store *store, item_gro
     size_t count;
     if (!binding_count(table, store, group, &count, e)) return false;
     if (!group) count -= store->count;
-    inventory_source_index *candidate = source_index_take(store, e);
+    inventory_source_index *candidate = source_candidate_take(store, group, e);
     if (!candidate) return false;
     if (!source_capture(table, store, group, &binding, candidate, count,
         NULL, selected, sample, sampled, e)) goto failed;
@@ -471,14 +532,15 @@ static bool source_refresh(qa_inventory *table, inventory_store *store, item_gro
             fail(e, QA_ERROR_NOT_FOUND, "Inventory topology changed during enumeration"); goto failed;
         }
     }
+    if (!source_candidate_prepare(store, group, count, e)) goto failed;
     source = group ? group->source_index : store->primary_index;
     if (group) group->source_index = candidate;
     else store->primary_index = candidate;
     candidate->revision = topology; candidate->ready = true;
-    source_index_dispose(source);
+    source_candidate_return(store, group, source);
     return true;
 failed:
-    source_index_dispose(candidate);
+    source_candidate_return(store, group, candidate);
     return false;
 }
 
@@ -735,7 +797,8 @@ bool qa_inventory_store_index_restore(qa_inventory *table, inventory_store *stor
         if (definitions == SIZE_MAX || group->count > (SIZE_MAX - definitions - 1) / 2)
             return fail(e, QA_ERROR_MEMORY, "Inventory definition index overflows");
         definitions += group->count * 2 + 1;
-        if (!group_index_prepare(group, e)) return false;
+        if (!group_index_prepare(group, e) || (!group->definitions_only &&
+            !qa_inventory_source_prepare(store, group, group->count, e))) return false;
     }
     if (!qa_id_index_reserve(&store->definitions, definitions, e)) return false;
     groups_reindex(store);
@@ -869,7 +932,7 @@ static bool primary_snapshot(qa_inventory *table, inventory_store *store,
         return fail(e, QA_ERROR_MEMORY, "Primary inventory snapshot size overflow");
     qa_inventory_entry *entries = count ? calloc(count, sizeof(*entries)) : NULL;
     if (count && !entries) return fail(e, QA_ERROR_MEMORY, "Cannot snapshot primary inventory");
-    inventory_source_index *index = source_index_take(store, e);
+    inventory_source_index *index = source_candidate_take(store, NULL, e);
     if (!index) { free(entries); return false; }
     bool sampled;
     if (!source_capture(table, store, NULL, binding, index, count,
@@ -885,10 +948,11 @@ static bool primary_snapshot(qa_inventory *table, inventory_store *store,
             fail(e, QA_ERROR_NOT_FOUND, "Inventory changed during primary entry callback"); goto failed;
         }
     }
+    if (!source_candidate_prepare(store, NULL, count, e)) goto failed;
     index->revision = topology; index->ready = true;
     *out = entries; *out_count = count; *out_index = index; return true;
 failed:
-    source_index_dispose(index);
+    source_candidate_return(store, NULL, index);
     free(entries); return false;
 }
 
@@ -969,8 +1033,9 @@ bool qa_inventory_adopt_primary(qa_inventory *table, qa_actor_id actor,
             store->entries[retained++] = store->entries[i];
     }
     store->count = retained; local_reindex(store);
-    source_index_dispose(store->primary_index);
+    inventory_source_index *previous_index = store->primary_index;
     store->primary_index = prepared; prepared = NULL;
+    source_candidate_return(store, NULL, previous_index);
     store->local = false; store->primary = *binding;
     store->serial = serial; store_changed(store);
     *out = (qa_inventory_lease){actor, serial}; ok = true; goto done;
@@ -991,7 +1056,7 @@ rollback:
         if (e) *e = original;
     }
 done:
-    source_index_dispose(prepared);
+    source_candidate_return(store, NULL, prepared);
     free(adopted); free(source); release_store(table, store); return ok;
 }
 
@@ -1038,7 +1103,7 @@ bool qa_inventory_detach_primary(qa_inventory *table, qa_inventory_lease lease,
     store->local = true; store->primary = (qa_inventory_binding){0};
     store->serial = ++table->serial; store_changed(store); ok = true;
 done:
-    source_index_dispose(prepared);
+    source_candidate_return(store, NULL, prepared);
     free(source); release_store(table, store); return ok;
 }
 
@@ -1677,6 +1742,37 @@ bool qa_inventory_source_stored_ex(qa_inventory *table, qa_inventory_lease lease
     qa_arena_destroy(&storage); release_store(table, store); return ok;
 }
 
+static bool pickup_storage_prepare(inventory_store *store, size_t additional, qa_error *e)
+{
+    size_t existing = store->pickup_items.count / 2;
+    if (additional > SIZE_MAX / 2 - existing)
+        return fail(e, QA_ERROR_MEMORY, "Inventory pickup storage overflow");
+    size_t required = existing + additional;
+    if (!qa_id_index_reserve(&store->pickup_items, additional * 2, e)) return false;
+    if (required <= store->pickup_reservation) return true;
+    qa_inventory *owner = store->storage_owner;
+    size_t increase = required - store->pickup_reservation;
+    if (increase > SIZE_MAX - owner->pickup_reservations)
+        return fail(e, QA_ERROR_MEMORY, "Inventory pickup storage overflow");
+    size_t reservations = owner->pickup_reservations + increase;
+    if (reservations > owner->pickup_records.capacity &&
+        !qa_pool_extend(&owner->pickup_records, &owner->record_storage,
+            reservations - owner->pickup_records.capacity, e)) return false;
+    store->pickup_reservation = required;
+    owner->pickup_reservations = reservations;
+    return true;
+}
+
+bool qa_inventory_pickup_prepare(qa_inventory *table, qa_actor_id actor,
+    size_t additional, qa_error *e)
+{
+    inventory_store *store = acquire(table, actor);
+    if (!store) return fail(e, QA_ERROR_NOT_FOUND, "Inventory pickup admission actor is unavailable");
+    bool ok = pickup_storage_prepare(store, additional, e);
+    release_store(table, store);
+    return ok;
+}
+
 bool qa_inventory_pickup_claim(qa_inventory *table, qa_actor_id actor, qa_item_id item,
                                const void *token, qa_error *e)
 {
@@ -1690,11 +1786,11 @@ bool qa_inventory_pickup_claim(qa_inventory *table, qa_actor_id actor, qa_item_i
         bool ok = claim->token == token || fail(e, QA_ERROR_ARGUMENT, "Inventory item already has a pickup delegate");
         release_store(table, store); return ok;
     }
-    bool ok = qa_id_index_reserve(&store->pickup_items, 2, e);
+    bool ok = pickup_storage_prepare(store, 1, e);
     size_t slot;
     if (ok) {
         qa_inventory *owner = store->storage_owner;
-        claim = record_take(owner, &owner->pickup_records, 1, &slot, e);
+        claim = qa_pool_take(&owner->pickup_records, &slot);
         if (!claim) ok = fail(e, QA_ERROR_MEMORY, "Cannot allocate inventory pickup claim");
         else {
             *claim = (pickup_claim){.next = store->pickups, .item = item, .token = token,

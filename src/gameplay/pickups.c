@@ -47,6 +47,36 @@ static pickup_registration_storage *registration_storage(pickup_registration *re
         offsetof(pickup_registration_storage, registration));
 }
 
+static bool payload_extent(size_t *bytes, size_t count, size_t element,
+    size_t alignment, qa_error *e)
+{
+    size_t padding = alignment - 1;
+    if (count > SIZE_MAX / element || *bytes > SIZE_MAX - padding ||
+        count * element > SIZE_MAX - padding - *bytes)
+        return fail(e, QA_ERROR_MEMORY, "Pickup rule payload size overflow");
+    *bytes += count * element + padding;
+    return true;
+}
+
+static bool rule_payload_extent(const qa_pickup_rule *rule, size_t *bytes, qa_error *e)
+{
+    return payload_extent(bytes, rule->offered_count, sizeof(qa_item_id), _Alignof(qa_item_id), e) &&
+        payload_extent(bytes, rule->write_count, sizeof(qa_pickup_write), _Alignof(qa_pickup_write), e) &&
+        payload_extent(bytes, rule->write_count, sizeof(uint64_t), _Alignof(uint64_t), e);
+}
+
+static bool registration_payload_reserve(pickup_registration_storage *row,
+    size_t bytes, qa_error *e)
+{
+    if (bytes <= row->payload_capacity) return true;
+    size_t capacity = row->payload_capacity;
+    if (capacity && capacity <= SIZE_MAX / 2) capacity *= 2;
+    if (capacity < bytes) capacity = bytes;
+    if (!qa_arena_reserve(&row->payload, capacity, e)) return false;
+    row->payload_capacity = capacity;
+    return true;
+}
+
 static void registration_release(pickup_registration *registration)
 {
     pickup_registration_storage *storage = registration_storage(registration);
@@ -57,19 +87,28 @@ static void registration_release(pickup_registration *registration)
 bool qa_pickups_registration_rules_prepare(pickup_registration *registration,
     size_t count, qa_error *e)
 {
-    registration->rules = qa_arena_alloc(&registration_storage(registration)->payload,
+    pickup_registration_storage *row = registration_storage(registration);
+    qa_arena *storage = &row->payload;
+    size_t bytes = 0;
+    if (!payload_extent(&bytes, count, sizeof(*registration->rules), _Alignof(pickup_rule), e) ||
+        !registration_payload_reserve(row, bytes, e)) { registration->count = 0; return false; }
+    registration->rules = qa_arena_alloc(storage,
         count * sizeof(*registration->rules), _Alignof(pickup_rule), e);
     if (!registration->rules) { registration->count = 0; return false; }
     memset(registration->rules, 0, count * sizeof(*registration->rules));
     registration->count = count;
+    row->payload_bytes = bytes;
     return true;
 }
 
 bool qa_pickups_registration_rule_prepare(pickup_registration *registration,
     pickup_rule *owned, qa_error *e)
 {
-    qa_arena *storage = &registration_storage(registration)->payload;
+    pickup_registration_storage *row = registration_storage(registration);
+    qa_arena *storage = &row->payload;
     qa_pickup_rule *rule = &owned->rule;
+    size_t bytes = row->payload_bytes;
+    if (!rule_payload_extent(rule, &bytes, e) || !registration_payload_reserve(row, bytes, e)) return false;
     qa_item_id *offered = qa_arena_alloc(storage,
         rule->offered_count * sizeof(*offered), _Alignof(qa_item_id), e);
     if (!offered) return false;
@@ -84,6 +123,7 @@ bool qa_pickups_registration_rule_prepare(pickup_registration *registration,
     memset(owned->storage, 0, rule->write_count * sizeof(*owned->storage));
     rule->offered = offered;
     rule->writes = writes;
+    row->payload_bytes = bytes;
     return true;
 }
 
@@ -106,7 +146,7 @@ static pickup_registration *registration_actor_find(const qa_pickups *service, q
 }
 
 bool qa_pickups_registration_index_reserve(qa_pickups *service,
-    const pickup_registration *registration, qa_error *e)
+    pickup_registration *registration, qa_error *e)
 {
     size_t entries = 1;
     for (size_t i = 0; i < registration->count; ++i) {
@@ -116,8 +156,10 @@ bool qa_pickups_registration_index_reserve(qa_pickups *service,
     }
     pickup_observation_storage *storage = service->observation_storage;
     if (!qa_id_index_reserve(&storage->registration_index, entries, e)) return false;
-    return registration_actor_find(service, registration->actor) ||
+    bool ok = registration_actor_find(service, registration->actor) ||
         qa_id_index_reserve(&storage->registration_actors.retained, 1, e);
+    if (ok) qa_arena_seal(&registration_storage(registration)->payload);
+    return ok;
 }
 
 void qa_pickups_registration_index_insert(qa_pickups *service, pickup_registration *registration)
@@ -367,6 +409,8 @@ pickup_registration *qa_pickups_registration_take(qa_pickups *service, qa_error 
     pickup_registration_storage *row = qa_pool_take(pool, &slot);
     row->owner = storage;
     row->slot = slot;
+    row->payload_bytes = 0;
+    row->payload.sealed = false;
     row->registration = (pickup_registration){0};
     return &row->registration;
 }
@@ -390,11 +434,13 @@ bool qa_pickups_observe(qa_pickups *service,qa_actor_id actor,qa_actor_owner own
     pickup_observation_owner *previous=actor.slot<service->observation_capacity?service->observations[actor.slot]:NULL;
     if(previous && qa_actor_id_equal(previous->actor,actor) && previous->owner!=owner)
         return fail(e,QA_ERROR_ARGUMENT,"pickup observation belongs to another source");
-    pickup_observation_owner *binding=qa_pickups_observation_take(service,e);
+    pickup_observation_owner *binding=previous && !service->calls ? previous :
+        qa_pickups_observation_take(service,e);
     if(!binding) return false;
+    if(binding!=previous) observation_retire(service,previous);
     *binding=(pickup_observation_owner){.slot=binding->slot,.actor=actor,.owner=owner,
         .serial=++service->serial,.observer=*observer,.active=true};
-    observation_retire(service,previous);service->observations[actor.slot]=binding;
+    service->observations[actor.slot]=binding;
     *out=(qa_pickup_lease){actor,binding->serial};sweep(service);return true;
 }
 bool qa_pickups_observation_close(qa_pickups *service,qa_pickup_lease lease,qa_error *e) {
@@ -450,13 +496,20 @@ void qa_pickups_actor_released(qa_pickups *service, qa_actor_record actor)
 static bool capture_rules(pickup_registration *registration, const qa_pickup_rule *rules, size_t count, qa_error *e)
 {
     if (!rules || !count || count > SIZE_MAX / sizeof(*registration->rules)) return fail(e, QA_ERROR_ARGUMENT, "Pickup rules require a nonempty set");
+    size_t bytes = 0;
+    if (!payload_extent(&bytes, count, sizeof(*registration->rules), _Alignof(pickup_rule), e)) return false;
+    for (size_t i = 0; i < count; ++i) {
+        const qa_pickup_rule *rule = &rules[i];
+        if (!rule->id || !rule->take || !rule->offered_count || !rule->offered || !rule->write_count || !rule->writes ||
+            rule->offered_count > SIZE_MAX / sizeof(*rule->offered) || rule->write_count > SIZE_MAX / sizeof(*rule->writes) ||
+            rule->write_count > SIZE_MAX / sizeof(uint64_t)) return fail(e, QA_ERROR_ARGUMENT, "Invalid original pickup rule");
+        if (!rule_payload_extent(rule, &bytes, e)) return false;
+    }
+    if (!registration_payload_reserve(registration_storage(registration), bytes, e)) return false;
     if (!qa_pickups_registration_rules_prepare(registration, count, e)) return false;
     for (size_t i = 0; i < count; ++i) {
         const qa_pickup_rule *rule = &rules[i];
         pickup_rule *copy = &registration->rules[i];
-        if (!rule->id || !rule->take || !rule->offered_count || !rule->offered || !rule->write_count || !rule->writes ||
-            rule->offered_count > SIZE_MAX / sizeof(*rule->offered) || rule->write_count > SIZE_MAX / sizeof(*rule->writes) ||
-            rule->write_count > SIZE_MAX / sizeof(*copy->storage)) return fail(e, QA_ERROR_ARGUMENT, "Invalid original pickup rule");
         for (size_t j = 0; j < i; ++j) if (registration->rules[j].rule.id == rule->id)
             return fail(e, QA_ERROR_ARGUMENT, "Duplicate original pickup rule ID");
         copy->rule = *rule;
@@ -484,6 +537,24 @@ static bool capture_rules(pickup_registration *registration, const qa_pickup_rul
         }
     }
     return true;
+}
+
+size_t qa_pickups_inventory_write_count(const qa_pickup_write *writes, size_t count)
+{
+    size_t inventory = 0;
+    for (size_t i = 0; i < count; ++i) inventory += writes[i].resource.kind == QA_PICKUP_INVENTORY;
+    return inventory;
+}
+
+static bool registration_inventory_prepare(qa_pickups *service,
+    const pickup_registration *registration, qa_error *e)
+{
+    size_t inventory = 0;
+    for (size_t i = 0; i < registration->count; ++i) {
+        const qa_pickup_rule *rule = &registration->rules[i].rule;
+        inventory += qa_pickups_inventory_write_count(rule->writes, rule->write_count);
+    }
+    return !inventory || qa_inventory_pickup_prepare(service->inventory, registration->actor, inventory, e);
 }
 
 static bool registration_conflicts(qa_pickups *service, pickup_registration *candidate, qa_error *e)
@@ -527,7 +598,9 @@ bool qa_pickups_bind(qa_pickups *service, qa_actor_id actor, qa_actor_owner owne
     if (!qa_combat_pickup_begin(service->combat, actor, &combat_scope, e)) { registration_release(registration); return false; }
     qa_inventory_hold(service->inventory);
     ++service->calls;
-    bool ok = capture_rules(registration, rules, count, e) && registration_conflicts(service, registration, e);
+    bool ok = capture_rules(registration, rules, count, e) &&
+        registration_inventory_prepare(service, registration, e) &&
+        registration_conflicts(service, registration, e);
     for (size_t i = 0; ok && i < registration->count; ++i) {
         pickup_rule *rule = &registration->rules[i];
         for (size_t j = 0; ok && j < rule->rule.write_count; ++j) {

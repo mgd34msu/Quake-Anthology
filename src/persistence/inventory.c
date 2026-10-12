@@ -185,6 +185,7 @@ static bool store_fields(qa_source_save_io *io, qa_inventory *table, inventory_s
         if (!binding_fields(io, &store->primary)) return false;
         size_t source_count;
         if (!binding_count(&store->primary, &source_count, io->error)) return false;
+        if (reading && !qa_inventory_source_prepare(store, NULL, source_count, io->error)) return false;
         for (size_t i = 0; i < source_count; ++i) {
             qa_inventory_entry entry;
             if (!store->primary.at(store->primary.context, i, &entry, io->error)) return false;

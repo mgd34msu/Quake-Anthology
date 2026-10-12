@@ -52,6 +52,9 @@ static bool rule_fields(qa_source_save_io *io, qa_pickups *service, pickup_regis
             !source.offered || !source.writes)
             return fail(io->error, "Restored pickup rule has no matching source descriptor");
         rule->context = source.context; rule->take = source.take; rule->preview = source.preview;
+        size_t inventory = qa_pickups_inventory_write_count(source.writes, source.write_count);
+        if (inventory && !qa_inventory_pickup_prepare(service->inventory, registration->actor,
+                inventory, io->error)) return false;
     } else if (!rule->take) return fail(io->error, "Pickup rule lacks its source callback");
     for (size_t i = 0; i < rule->offered_count; ++i) {
         qa_item_id value = reading ? 0 : rule->offered[i];

@@ -24,7 +24,7 @@ typedef struct item_group {
     size_t order;
     qa_arena index_storage;
     qa_id_index item_index;
-    inventory_source_index *source_index;
+    inventory_source_index *source_index, *source_candidate;
     qa_inventory_binding binding;
     void *action_context;
     bool (*invoke)(void *, qa_item_id, qa_item_action, qa_error *);
@@ -43,10 +43,11 @@ typedef struct inventory_store {
     size_t count, capacity;
     qa_arena index_storage;
     qa_id_index local_items, definitions, pickup_items;
-    inventory_source_index *primary_index;
+    inventory_source_index *primary_index, *primary_candidate;
     qa_inventory_binding primary;
     item_group *groups;
     struct pickup_claim *pickups;
+    size_t pickup_reservation;
 } inventory_store;
 typedef struct admission_entry {
     qa_inventory_entry initial;
@@ -81,6 +82,7 @@ struct qa_inventory {
     qa_arena scratch_storage;
     qa_pool scratch_pages;
     size_t storage_leases;
+    size_t pickup_reservations;
     bool closed;
 };
 
@@ -94,6 +96,9 @@ static inline void qa_inventory_scratch_acquire(qa_inventory *table, qa_arena *s
 bool qa_inventory_storage_token(qa_inventory *, qa_actor_id, qa_item_id,
                                 uint64_t *, qa_error *);
 bool qa_inventory_pickup_claim(qa_inventory *, qa_actor_id, qa_item_id, const void *, qa_error *);
+/* Cold registration admission. additional is an upper count of new inventory
+ * destinations; existing claims and retired generation storage stay owned. */
+bool qa_inventory_pickup_prepare(qa_inventory *, qa_actor_id, size_t additional, qa_error *);
 bool qa_inventory_pickup_current(qa_inventory *, qa_actor_id, qa_item_id, const void *);
 bool qa_inventory_pickup_storage_current(const qa_inventory *,qa_actor_id,qa_item_id,
                                         const void *,uint64_t,qa_actor_owner);
@@ -106,4 +111,5 @@ void qa_inventory_store_drop(inventory_store *);
 inventory_store *qa_inventory_checkpoint_acquire(qa_inventory *, qa_actor_id);
 void qa_inventory_checkpoint_release(qa_inventory *, inventory_store *);
 bool qa_inventory_store_index_restore(qa_inventory *, inventory_store *, qa_error *);
+bool qa_inventory_source_prepare(inventory_store *, item_group *, size_t count, qa_error *);
 #endif

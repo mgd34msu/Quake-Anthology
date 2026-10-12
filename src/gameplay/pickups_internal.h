@@ -21,7 +21,7 @@ typedef struct pickup_registration_storage {
     qa_arena payload;
     pickup_registration registration;
     struct pickup_observation_storage *owner;
-    size_t slot;
+    size_t slot, payload_bytes, payload_capacity;
 } pickup_registration_storage;
 typedef enum pickup_consumption { PICKUP_LIVE, PICKUP_REMOVING, PICKUP_CONSUMED } pickup_consumption;
 typedef struct pickup_observation_owner {
@@ -73,6 +73,7 @@ pickup_observation_owner *qa_pickups_observation_take(qa_pickups *, qa_error *);
 pickup_registration *qa_pickups_registration_take(qa_pickups *, qa_error *);
 bool qa_pickups_registration_rules_prepare(pickup_registration *, size_t, qa_error *);
 bool qa_pickups_registration_rule_prepare(pickup_registration *, pickup_rule *, qa_error *);
-bool qa_pickups_registration_index_reserve(qa_pickups *, const pickup_registration *, qa_error *);
+size_t qa_pickups_inventory_write_count(const qa_pickup_write *, size_t);
+bool qa_pickups_registration_index_reserve(qa_pickups *, pickup_registration *, qa_error *);
 void qa_pickups_registration_index_insert(qa_pickups *, pickup_registration *);
 #endif
