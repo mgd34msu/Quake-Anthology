@@ -1,4 +1,5 @@
 #include "network_q3_packages.h"
+#include "qa/id_index.h"
 #include "qa/launch.h"
 #include "qa/source_save.h"
 #include <limits.h>
@@ -27,11 +28,11 @@ struct frontend_q3_packages {
     qa_cvar_handle pure, reports[4];
     qa_vfs *content;
     uint64_t source_generation, read_generation;
-    size_t read_count, mount_count, pack_count, seen_count, seen_capacity;
+    size_t read_count, mount_count, pack_count;
     package_mount *mounts;
     const qa_q3_pak_entry **packs;
     uint32_t *pure_checksums;
-    uint64_t *seen;
+    qa_id_index seen;
     qa_q3_pak_references *references;
     qa_vfs_acquisition cgame;
 };
@@ -105,7 +106,8 @@ void frontend_q3_packages_destroy(frontend_q3_packages *packages)
     qa_q3_pak_references_destroy(packages->references);
     qa_vfs_acquisition_dispose(&packages->cgame);
     if (packages->mounts) for (size_t i = 0; i < packages->mount_count; ++i) { free(packages->mounts[i].game); free(packages->mounts[i].basename); }
-    free(packages->mounts); free(packages->packs); free(packages->pure_checksums); free(packages->seen); free(packages);
+    free(packages->mounts); free(packages->packs); free(packages->pure_checksums);
+    qa_id_index_destroy(&packages->seen); free(packages);
 }
 bool frontend_q3_packages_create(qa_application *application, qa_actor_owner owner, uint32_t feed,
     frontend_q3_packages **out, qa_error *error)
@@ -158,22 +160,6 @@ invalid:
     if (!error || error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Actual Q3 package inventory is incomplete");
     frontend_q3_packages_destroy(packages); return false;
 }
-static size_t resource_slot(uint64_t id, size_t capacity)
-{ id ^= id >> 33; id *= UINT64_C(11400714819323198485); return (size_t)id & (capacity - 1); }
-static bool reserve_seen(frontend_q3_packages *packages, qa_error *error)
-{
-    if (packages->seen_capacity && packages->seen_count + 1 <= packages->seen_capacity / 2) return true;
-    size_t next = packages->seen_capacity ? packages->seen_capacity * 2 : 64;
-    if (next < packages->seen_capacity || next > SIZE_MAX / sizeof(*packages->seen))
-        return fail(error, QA_ERROR_MEMORY, "Q3 opened resource identity index exhausted");
-    uint64_t *seen = calloc(next, sizeof(*seen));
-    if (!seen) return fail(error, QA_ERROR_MEMORY, "Retaining Q3 actual opened resource identities");
-    for (size_t i = 0; i < packages->seen_capacity; ++i) if (packages->seen[i]) {
-        size_t slot = resource_slot(packages->seen[i], next); while (seen[slot]) slot = (slot + 1) & (next - 1);
-        seen[slot] = packages->seen[i];
-    }
-    free(packages->seen); packages->seen = seen; packages->seen_capacity = next; return true;
-}
 bool frontend_q3_packages_collect(frontend_q3_packages *packages, qa_error *error)
 {
     if (!current(packages, error)) return false;
@@ -185,16 +171,15 @@ bool frontend_q3_packages_collect(frontend_q3_packages *packages, qa_error *erro
         for (size_t i = 0; i < packages->mount_count; ++i) if (packages->mounts[i].mount == read.mount) mount = packages->mounts + i;
         if (!mount) return fail(error, QA_ERROR_FORMAT, "Actual opened resource lacks its mounted Q3 factory owner");
         if (!mount->product || mount->product->family != QA_GAME_Q3) { ++packages->read_count; continue; }
-        if (!reserve_seen(packages, error)) return false;
-        uint64_t id = qa_resource_id(read.resource); size_t slot = resource_slot(id, packages->seen_capacity);
-        while (packages->seen[slot] && packages->seen[slot] != id) slot = (slot + 1) & (packages->seen_capacity - 1);
-        if (!packages->seen[slot]) {
+        uint64_t id = qa_resource_id(read.resource);
+        if (!qa_id_index_find(&packages->seen, 0, id)) {
+            if (!qa_id_index_reserve(&packages->seen, 1, error)) return false;
             if (mount->archive && !mount->entry.archive_path)
                 return fail(error, QA_ERROR_FORMAT, "Opened Q3 archive does not belong to the actual PK3 package catalog");
             bool ok = mount->entry.archive_path ? qa_q3_pak_record_packed(packages->references, &mount->entry, read.path, error) :
                 qa_q3_pak_record_loose(packages->references, read.path, error);
             if (!ok) return false;
-            packages->seen[slot] = id; ++packages->seen_count;
+            qa_id_index_insert(&packages->seen, 0, id, 0);
         }
         ++packages->read_count;
     }

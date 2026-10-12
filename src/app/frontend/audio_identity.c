@@ -31,6 +31,10 @@ bool frontend_audio_domain_prepare(qa_frontend *frontend, frontend_audio_domain 
     if (domain->registry && domain->registry->index.registry == registry) return true;
     frontend_audio_domain_close(frontend, domain);
     size_t capacity = qa_actors_capacity(actors);
+    for (const frontend_remote_unified *replica = frontend->remote_unified;
+         replica; replica = replica->next)
+        if (replica->actors == actors && replica->identity_records.capacity > capacity)
+            capacity = replica->identity_records.capacity;
     if (!frontend->audio_ids.stride) {
         if (!qa_pool_prepare(&frontend->audio_ids, &frontend->audio_identity_storage,
                 capacity, sizeof(frontend_audio_identity), _Alignof(frontend_audio_identity), error)) return false;
@@ -61,7 +65,7 @@ bool frontend_audio_domain_prepare(qa_frontend *frontend, frontend_audio_domain 
             .slot = slot, .next = frontend->audio_registries};
         frontend->audio_registries = binding;
         qa_id_index_insert(&frontend->audio_registry_index, QA_STRING_NONE, registry, slot);
-    }
+    } else if (!qa_id_index_reserve(&binding->index.retained, capacity, error)) return false;
     binding->actors = actors;
     *domain = (frontend_audio_domain){.registry = binding, .next = frontend->audio_domains};
     frontend->audio_domains = domain;

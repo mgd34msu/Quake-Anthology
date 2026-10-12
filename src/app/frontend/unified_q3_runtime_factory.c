@@ -99,11 +99,18 @@ static bool trace_number(void *context,const q3n_compiled_frame *frame,const qa_
 {
     frontend_unified_q3_runtime_factory *o=context;
     if(!hit || !out || frame!=entered(o) || !q3n_compiled_frame_current(frame))return fail(e,"Compiled trace lost its physical hit receipt");
-    if(hit->hit==QA_TRACE_HIT_WORLD){*out=1022;return true;}
-    if(hit->hit==QA_TRACE_HIT_NONE){*out=1023;return true;}
-    for(uint32_t i=0;i<1022;++i){q3n_compiled_entity row;
-        if(!q3n_compiled_frame_entity(frame,i,&row,e))return false;
-        if(row.published && qa_actor_id_equal(row.actor,hit->actor)){*out=(int32_t)i;return true;}}
+    if(hit->hit==QA_TRACE_HIT_WORLD){*out=QA_Q3_ENTITY_WORLD;return true;}
+    if(hit->hit==QA_TRACE_HIT_NONE){*out=QA_Q3_ENTITY_NONE;return true;}
+    if(frame->snapshot) {
+        uint32_t number;bool present;
+        if(!frontend_unified_q3_client_snapshot_number(o->options.client,frame->snapshot->message_number,
+            hit->actor,&number,&present,e))return false;
+        if(present && number<QA_Q3_ENTITY_WORLD) {
+            q3n_compiled_entity row;
+            if(!q3n_compiled_frame_entity(frame,number,&row,e))return false;
+            if(row.published && qa_actor_id_equal(row.actor,hit->actor)){*out=(int32_t)number;return true;}
+        }
+    }
     return fail(e,"Compiled trace actor has no genuine physical Source entity");
 }
 static bool listener(void *context,const qa_audio_listener *value,qa_error *e)
