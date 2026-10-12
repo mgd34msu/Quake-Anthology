@@ -126,11 +126,13 @@ typedef struct qa_aas_crossing {
     uint32_t area;
     qa_vec3 point;
 } qa_aas_crossing;
-/* Zero-initialize once, then reuse. Collection resets count on failure and
- * retains storage. Results belong to the caller, independent of query scratch. */
+/* Zero-initialize once, then reuse without copying arena ownership. Collection
+ * resets count on failure and retains storage. Results belong to the caller,
+ * independent of query scratch. */
 typedef struct qa_nav_crossings {
     qa_aas_crossing *data;
     size_t count, capacity;
+    qa_arena storage;
 } qa_nav_crossings;
 void qa_nav_crossings_free(qa_nav_crossings *);
 bool qa_aas_query_create(qa_arena *, qa_aas_query **, qa_error *);

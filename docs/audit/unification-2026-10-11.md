@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `27b92d35`.
+Follow-up source changes were reviewed through main `8934a7e1`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -334,3 +334,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `53103fa2` / 26-18, 26-19: QVM source observers use common pools, arenas and full-width binding indexes; immutable function entries are prepared at admission. Callback ordering, nesting and restore identity mapping retained. Normal build/seven core suites passed; unbounded registration and nesting peaks can still grow common storage. Records: `/tmp/qa-ta3196-qvm-observer-pools-20261012`.
 
 - `27b92d35` / 04-006: Native and external Q3 reached commands share literal token copying and retained alternating arenas; old arguments remain admitted on failed replacement. Joined Args and supplied empty Args both passed actual core cases. Normal build/seven core suites passed; first/larger commands can still grow common storage. Records: `/tmp/qa-ta3196-q3-reached-tokens-20261012`.
+
+- `8934a7e1` / 04-005: Candidate snapshots, published rosters and removed-provider views now share the common provider index. Original first-match ordering, historical descriptor identity, NULL qualification and abort-refusal lifetimes retained; candidate selection callers use the admitted roster view. Normal build/seven core suites passed; no live or allocation claim. Records: `/tmp/qa-ta3196-provider-historical-views-20261012`.

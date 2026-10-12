@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "27b92d359fd346eb87b6e846b69962678f41ce00",
+  "verified_main": "8934a7e1a7d2374d9b0cc7c7ee00ed4dbc9818df",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -26010,7 +26010,7 @@
       "area": "application",
       "status": "fixed_source_build_core",
       "verification": "One application-owned ID index maintains live and actual retained roster views. Listed callers migrated; original first/last/ambiguity and eligibility rules preserved. Core cases cover simultaneous views/removal/order. Further owner callers outside listed scope remain under active migration; no whole-capability or live proof.",
-      "fixed_commit": "78168074b04b2d83428fe811fbb18bfe15156548"
+      "fixed_commit": "8934a7e1a7d2374d9b0cc7c7ee00ed4dbc9818df"
     },
     {
       "id": "04-006",
@@ -41792,6 +41792,36 @@
       ],
       "record_directory": "/tmp/qa-ta3196-q3-reached-tokens-20261012",
       "conclusion": "Native and external Q3 reached commands share literal token copying and retained alternating arenas; old arguments remain admitted on failed replacement. Joined Args and supplied empty Args both passed actual core cases. Normal build/seven core suites passed; first/larger commands can still grow common storage."
+    },
+    {
+      "commit": "8934a7e1a7d2374d9b0cc7c7ee00ed4dbc9818df",
+      "source_tree": "43f4fe1f82fbdc8c19f9b2084eae00d41f38facf",
+      "finding_ids": [
+        "04-005"
+      ],
+      "files_rechecked": [
+        "src/app/application/internal.h",
+        "src/app/application/map.c",
+        "src/app/application/map_players.c",
+        "src/app/application/providers.c",
+        "src/app/application/publication.c",
+        "src/app/application/services.c",
+        "src/app/application/startup_flow.c",
+        "src/app/application/startup_program.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-provider-historical-views-20261012",
+      "conclusion": "Candidate snapshots, published rosters and removed-provider views now share the common provider index. Original first-match ordering, historical descriptor identity, NULL qualification and abort-refusal lifetimes retained; candidate selection callers use the admitted roster view. Normal build/seven core suites passed; no live or allocation claim."
     }
   ],
   "verification_limits": [

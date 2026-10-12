@@ -122,7 +122,7 @@ bool qa_aas_point_area(const qa_aas_view *v, qa_vec3 point, uint32_t *out, qa_er
 }
 void qa_nav_crossings_free(qa_nav_crossings *out) {
     if (out != NULL) {
-        free(out->data);
+        qa_arena_destroy(&out->storage);
         *out = (qa_nav_crossings){0};
     }
 }
@@ -137,7 +137,9 @@ static bool crossing_reserve(qa_nav_crossings *out, size_t count, qa_error *e) {
     size_t capacity = out->capacity ? out->capacity : 16;
     while (capacity < count)
         capacity = capacity > limit / 2 ? limit : capacity * 2;
-    qa_aas_crossing *data = realloc(out->data, capacity * sizeof(*data));
+    qa_aas_crossing *data = qa_arena_grow(&out->storage, out->data,
+        out->capacity * sizeof(*data), capacity * sizeof(*data),
+        _Alignof(qa_aas_crossing), e);
     if (data == NULL) {
         qa_error_set(e, QA_ERROR_MEMORY, count, "Growing AAS crossing results");
         return false;

@@ -47,6 +47,12 @@ bool qa_bot_navigation_trace_areas(qa_bot_navigation *, qa_vec3 start, qa_vec3 e
                                   qa_aas_crossing *, size_t capacity, size_t *, qa_error *);
 bool qa_bot_navigation_trace_collect(qa_bot_navigation *, qa_vec3 start, qa_vec3 end,
                                      size_t maximum, qa_nav_crossings *, qa_error *);
+/* Retain independent output through caller callbacks, then release its slot
+ * instead of freeing the result. The query owner outlives every acquired result;
+ * released spans are reused. */
+bool qa_bot_navigation_crossings_acquire(qa_bot_navigation *, qa_nav_crossings **,
+                                        size_t *slot, qa_error *);
+void qa_bot_navigation_crossings_release(qa_bot_navigation *, size_t slot);
 bool qa_bot_navigation_bbox_areas(qa_bot_navigation *, qa_bounds, uint32_t *, size_t capacity,
                                  size_t *, qa_error *);
 bool qa_bot_navigation_enable(qa_bot_navigation *, uint32_t source_area, bool, bool *previous,

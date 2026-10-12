@@ -159,8 +159,9 @@ static bool trace_foreign(qa_navigation *n, qa_nav_workspace *w, qa_vec3 start, 
         qsort(w->crossings, crossed, sizeof(*w->crossings), crossing_compare);
     size_t written = crossed < capacity ? crossed : capacity;
     if (collected != NULL) {
-        if (!nav_reserve((void **)&collected->data, &collected->capacity, written,
-                         sizeof(*collected->data), e))
+        if (!nav_storage_reserve(&collected->storage, (void **)&collected->data,
+                &collected->capacity, written, sizeof(*collected->data),
+                _Alignof(qa_aas_crossing), e))
             return false;
         out = collected->data;
     }

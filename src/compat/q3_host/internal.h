@@ -43,12 +43,6 @@ typedef struct q3_script_namespace {
     uint64_t generation;
 } q3_script_namespace;
 
-typedef struct q3_crossings {
-    struct q3_crossings *next;
-    qa_nav_crossings storage;
-    bool busy;
-} q3_crossings;
-
 typedef struct q3_entity_slot {
     qa_q3_host *host;
     qa_actor_id actor;
@@ -130,7 +124,6 @@ struct qa_q3_host {
     q3_file files[64];
     uint64_t file_serial;
     qa_arena scratch;
-    q3_crossings *crossings;
     q3_script_namespace *script_namespace;
     qa_q3_host *script_member_next;
     qa_common_cursor entity_cursor;

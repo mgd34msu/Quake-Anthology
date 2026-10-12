@@ -407,9 +407,6 @@ bool qa_q3_host_round_ready(const qa_q3_host *host, qa_error *error)
     for (size_t i = 0; i < 64; ++i)
         if (host->script_namespace->pending[i] || (host->script_namespace->scripts[i] && host->script_namespace->scripts[i]->operations))
             return q3_fail(error, QA_ERROR_ARGUMENT, i, "Q3 round restart has an admitted script operation");
-    for (const q3_crossings *lease = host->crossings; lease; lease = lease->next)
-        if (lease->busy)
-            return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 round restart has a borrowed navigation crossing");
     return true;
 }
 
@@ -517,11 +514,6 @@ bool qa_q3_host_destroy(qa_q3_host *host, qa_error *error)
     }
     qa_fs_root_close(host->options.write_view.root); host->options.write_view.root=NULL;
     q3_script_namespace_release(host);
-    while (host->crossings) {
-        q3_crossings *lease = host->crossings;
-        host->crossings = lease->next;
-        qa_nav_crossings_free(&lease->storage); free(lease);
-    }
     qa_arena_destroy(&host->scratch);
     q3_game_checkpoint_free(host->game);
     q3_cvars_bindings_free(host->cvar_bindings,host->cvar_binding_count);

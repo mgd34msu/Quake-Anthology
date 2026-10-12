@@ -70,6 +70,9 @@ void qa_bot_navigation_destroy(qa_bot_navigation *n) {
     qa_nav_workspace_destroy(n->workspace);
     qa_nav_route_free(&n->trajectory);
     qa_nav_prediction_result_free(&n->prediction);
+    for (size_t i = 0; i < n->crossing_results.capacity; ++i)
+        qa_nav_crossings_free(qa_pool_at(&n->crossing_results, i));
+    qa_arena_destroy(&n->crossing_storage);
     qa_arena_destroy(&n->query_storage);
     free(n);
 }
@@ -92,7 +95,8 @@ bool qa_bot_navigation_bind(qa_bot_navigation *n, qa_navigation *runtime, qa_act
         n->actor = actor;
         return true;
     }
-    uint32_t offset = qa_nav_asset_aas(graph->asset) ? 0 : 1;
+    const qa_aas_view *aas = qa_nav_asset_aas(graph->asset);
+    uint32_t offset = aas ? 0 : 1;
     for (size_t i = 0; i < graph->node_count; ++i)
         if (graph->nodes[i].id > INT32_MAX - offset)
             return bot_nav_fail(e, "navigation area exceeds source signed range");
@@ -102,6 +106,29 @@ bool qa_bot_navigation_bind(qa_bot_navigation *n, qa_navigation *runtime, qa_act
     if (!qa_nav_workspace_prepare(n->workspace, qa_nav_workspace_limits_read(graph), e) ||
         !bot_nav_scratch(n, graph->node_count, e))
         return false;
+    if (!n->crossing_results.capacity) {
+        if (!qa_pool_prepare(&n->crossing_results, &n->crossing_storage, 1,
+                sizeof(qa_nav_crossings), _Alignof(qa_nav_crossings), e))
+            return false;
+        *(qa_nav_crossings *)qa_pool_at(&n->crossing_results, 0) = (qa_nav_crossings){0};
+    }
+    /* Shared BSP children can emit more crossings; this cold reservation is
+     * preparation for one ordinary query, and its result arena remains open. */
+    size_t crossings = aas ? aas->count[QA_AAS_NODES] + 1 : graph->node_count;
+    if (crossings > SIZE_MAX / sizeof(qa_aas_crossing)) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "Bot navigation crossing preparation exceeds address range");
+        return false;
+    }
+    for (size_t i = 0; i < n->crossing_results.capacity; ++i) {
+        qa_nav_crossings *out = qa_pool_at(&n->crossing_results, i);
+        if (crossings <= out->capacity) continue;
+        size_t bytes = crossings * sizeof(*out->data);
+        if (!qa_arena_reserve(&out->storage, bytes, e)) return false;
+        qa_aas_crossing *data = qa_arena_grow(&out->storage, out->data,
+            out->capacity * sizeof(*data), bytes, _Alignof(qa_aas_crossing), e);
+        if (!data) return false;
+        out->data = data; out->capacity = crossings;
+    }
     n->runtime = runtime;
     n->actor = actor;
     n->offset = offset;
@@ -164,6 +191,21 @@ bool qa_bot_navigation_trace_collect(qa_bot_navigation *n, qa_vec3 start, qa_vec
     for (size_t i = 0; i < out->count; ++i)
         out->data[i].area = qa_bot_navigation_source_area(n, out->data[i].area);
     return true;
+}
+bool qa_bot_navigation_crossings_acquire(qa_bot_navigation *n, qa_nav_crossings **out,
+                                        size_t *slot, qa_error *e) {
+    if (!n || !out || !slot) return bot_nav_fail(e, "missing bot navigation crossing output");
+    if (n->crossing_results.head == SIZE_MAX) {
+        size_t first = n->crossing_results.capacity;
+        if (!qa_pool_extend(&n->crossing_results, &n->crossing_storage, 1, e))
+            return false;
+        *(qa_nav_crossings *)qa_pool_at(&n->crossing_results, first) = (qa_nav_crossings){0};
+    }
+    *out = qa_pool_take(&n->crossing_results, slot);
+    return true;
+}
+void qa_bot_navigation_crossings_release(qa_bot_navigation *n, size_t slot) {
+    qa_pool_release(&n->crossing_results, slot);
 }
 bool qa_bot_navigation_bbox_areas(qa_bot_navigation *n, qa_bounds bounds, uint32_t *out,
                                  size_t capacity, size_t *count, qa_error *e) {

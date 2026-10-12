@@ -163,21 +163,16 @@ static bool areas(q3_call *call, qa_bot_navigation *navigation, int32_t *result,
     if (!q3_vector(call, call->arguments[0], &first, error) ||
         !q3_vector(call, call->arguments[1], &second, error)) return false;
     size_t capacity = maximum > 0 ? (size_t)maximum : 0;
-    q3_crossings *lease = NULL;
+    qa_nav_crossings *crossings = NULL;
+    size_t crossing_slot = SIZE_MAX;
     uint32_t *storage = NULL;
     size_t count = 0;
     bool ok;
     if (trace) {
-        lease = call->host->crossings;
-        while (lease && lease->busy) lease = lease->next;
-        if (!lease) {
-            lease = calloc(1, sizeof(*lease));
-            if (!lease) return q3_fail(error, QA_ERROR_MEMORY, 0, "retaining Q3 area trace output");
-            lease->next = call->host->crossings; call->host->crossings = lease;
-        }
-        lease->busy = true;
-        ok = qa_bot_navigation_trace_collect(navigation, first, second, capacity, &lease->storage, error);
-        count = lease->storage.count;
+        if (!qa_bot_navigation_crossings_acquire(navigation, &crossings, &crossing_slot, error))
+            return false;
+        ok = qa_bot_navigation_trace_collect(navigation, first, second, capacity, crossings, error);
+        count = crossings->count;
     } else {
         if (capacity > graph->node_count) capacity = graph->node_count;
         if (capacity > SIZE_MAX / sizeof(*storage))
@@ -188,7 +183,7 @@ static bool areas(q3_call *call, qa_bot_navigation *navigation, int32_t *result,
         ok = qa_bot_navigation_bbox_areas(navigation, (qa_bounds){first, second}, storage, capacity, &count, error);
     }
     for (size_t i = 0; ok && i < count; ++i) {
-        const qa_aas_crossing *crossed = trace ? lease->storage.data + i : NULL;
+        const qa_aas_crossing *crossed = trace ? crossings->data + i : NULL;
         uint32_t area = trace ? crossed->area : storage[i];
         if (i > (UINT64_MAX - call->arguments[2]) / 4) {
             ok = q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 trace area offset exceeds allocation"); break;
@@ -205,7 +200,7 @@ static bool areas(q3_call *call, qa_bot_navigation *navigation, int32_t *result,
                 q3_write_vector(call, address, crossed->point, error);
         }
     }
-    if (lease) lease->busy = false;
+    if (crossings) qa_bot_navigation_crossings_release(navigation, crossing_slot);
     if (ok) *result = (int32_t)count;
     return ok;
 }
