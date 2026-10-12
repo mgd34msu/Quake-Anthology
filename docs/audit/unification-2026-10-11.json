@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "76b76d8fe8ab44dd4d07e607c4ee9c623e2b2394",
+  "verified_main": "7d3f6cc253d1e8d0bc5e2abe8f0d240a62d65f29",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 140,
-    "open_source_observation": 231,
+    "fixed_source_build_core": 141,
+    "open_source_observation": 230,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -35799,8 +35799,9 @@
       "severity": "medium",
       "job": "31",
       "area": "render_presentation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "One tag attachment body replaces native/selected duplicates with explicit arithmetic, field and missing-tag policies. All seventeen callers migrated; item axes and pose normalization use shared math. Matching normal production build and seven existing core suites passed; no live visual comparison or performance claim.",
+      "fixed_commit": "7d3f6cc253d1e8d0bc5e2abe8f0d240a62d65f29"
     },
     {
       "id": "31-10",
@@ -40972,6 +40973,39 @@
       ],
       "record_directory": "/tmp/qa-ta3196-common-completion-storage-20261012",
       "conclusion": "Every discovery caller uses its own common arena; strided name slots remove the seat names-copy vector. Field arena owns detached matches/tail and reusable assembly; successful restore releases old backing and moves/zeros candidate, preserving destination address and saved fields. Existing core cases check detached names, dedup/cycle, UTF-8 tail/cursor and maximum behavior. Normal production build/seven suites passed. First/larger common storage and scoped discovery can still allocate, so load-sized/no-growth observation remains open. No live console/save execution or timing claim."
+    },
+    {
+      "commit": "7d3f6cc253d1e8d0bc5e2abe8f0d240a62d65f29",
+      "source_tree": "11f21adf4f47cb1161b3658e7e3fb4d82e5a6a58",
+      "finding_ids": [
+        "31-09"
+      ],
+      "files_rechecked": [
+        "src/presentation/q3_native/attachments.c",
+        "src/presentation/q3_native/attachments.h",
+        "src/presentation/q3_native/packet.c",
+        "src/presentation/q3_native/pose.c",
+        "src/presentation/q3_native/weapon.c",
+        "src/presentation/q3_native/body.c",
+        "src/presentation/q3_native/player_fx.c",
+        "src/app/frontend/selected_character.c",
+        "src/presentation/q3/models.c",
+        "include/qa/math.h",
+        "src/core/math.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-tag-attachment-20261012",
+      "conclusion": "One tag sampler/composition body serves all seventeen production attachment calls; selected_attach deleted and selected-character duplicate sampling removed. Seeded origin uses ordered common vector MA; child-pose origin/axes retain their original grouping, field copies and required/skip/identity tag behavior. Item axes and binary32-dot/double-sqrt pose normalization use existing common policies. Normal production build/seven suites passed; no live visual fidelity or timing claim."
     }
   ],
   "verification_limits": [

@@ -213,38 +213,50 @@ bool frontend_music_sources_current(const frontend_music_sources *owner) {
     return owner && owner->frontend && owner->slot && *owner->slot == owner &&
         owner->frontend->application == owner->application && owner->frontend->audio == owner->engine;
 }
-static const qa_launch_instance *world_instance(const frontend_music_sources *owner) {
+static const qa_launch_snapshot *world_publication(const frontend_music_sources *owner) {
     const qa_launch_snapshot *snapshot = qa_application_launch(owner->application);
     const qa_launch_snapshot *previous = qa_application_startup_publication_previous(owner->application, snapshot);
     if (previous && qa_application_startup_publication_consuming(owner->application, snapshot)) snapshot = previous;
+    return snapshot;
+}
+static const qa_launch_instance *world_instance(const qa_launch_snapshot *snapshot) {
     const qa_launch_binding *binding = qa_launch_binding_for(qa_launch_snapshot_choices(snapshot),
         (qa_launch_scope){.kind = QA_SCOPE_WORLD}, QA_ROLE_ENTITIES, "");
     return binding ? qa_launch_snapshot_find(snapshot, binding->instance) : NULL;
 }
 bool frontend_music_world_current(const frontend_music_sources *owner) {
-    const qa_launch_instance *instance = world_instance(owner);
-    const qa_launch_instance *saved = qa_launch_instance_lease_view(owner->world.metadata);
+    if (!frontend_music_sources_current(owner)) return false;
+    frontend_music_world *world = &(*owner->slot)->world;
+    const qa_launch_instance *saved = qa_launch_instance_lease_view(world->metadata);
     qa_application_map_view map; qa_actor_owner provider;
-    return frontend_music_sources_current(owner) && instance && saved &&
-        instance->storage == saved->storage && !strcmp(instance->selection.instance, owner->world.instance) &&
-        qa_application_provider_owner(owner->application, owner->world.instance, &provider) && provider == owner->world.provider &&
-        qa_application_map_read(owner->application, &map) && map.resource == owner->world.map && map.revision == owner->world.map_revision;
+    if (!saved || !qa_application_map_read(owner->application, &map) ||
+        map.resource != world->map || map.revision != world->map_revision) return false;
+    const qa_launch_snapshot *snapshot = world_publication(owner);
+    uint64_t generation = qa_application_configuration_generation(owner->application);
+    if (world->publication == snapshot && world->configuration_generation == generation) return true;
+    const qa_launch_instance *instance = world_instance(snapshot);
+    if (!instance || instance->storage != saved->storage || instance->identity != saved->identity ||
+        !qa_application_provider_owner(owner->application, instance->selection.instance, &provider) ||
+        provider != world->provider) return false;
+    /* The metadata lease owns the descriptor. This borrowed publication is
+     * only a revision key and is never dereferenced after retirement. */
+    world->publication = snapshot; world->configuration_generation = generation;
+    return true;
 }
 void frontend_music_world_dispose(frontend_music_world *world) {
     qa_launch_instance_lease_release(world->metadata); qa_resource_release(world->map);
-    free(world->instance); *world = (frontend_music_world){0};
+    *world = (frontend_music_world){0};
 }
 bool frontend_music_world_capture(frontend_music_sources *owner, qa_error *e) {
-    const qa_launch_instance *instance = world_instance(owner); qa_application_map_view map;
+    const qa_launch_snapshot *snapshot = world_publication(owner);
+    uint64_t generation = qa_application_configuration_generation(owner->application);
+    const qa_launch_instance *instance = world_instance(snapshot); qa_application_map_view map;
     if (!instance || !qa_application_map_read(owner->application, &map) || owner->world.metadata || owner->world.map)
         return fail(e, "WORLD music requires its actual published entity source and retained map");
-    size_t n = strlen(instance->selection.instance) + 1;
-    owner->world.instance = malloc(n);
-    if (!owner->world.instance) return frontend_fail(e, QA_ERROR_MEMORY, "Retaining WORLD music source identity");
-    memcpy(owner->world.instance, instance->selection.instance, n);
-    if (!qa_application_provider_owner(owner->application, owner->world.instance, &owner->world.provider) ||
+    if (!qa_application_provider_owner(owner->application, instance->selection.instance, &owner->world.provider) ||
         !qa_launch_instance_retain_metadata(instance, &owner->world.metadata, e)) return false;
     owner->world.map = map.resource; qa_resource_retain(map.resource); owner->world.map_revision = map.revision;
+    owner->world.publication = snapshot; owner->world.configuration_generation = generation;
     return frontend_music_world_current(owner) || fail(e, "WORLD music source changed during actual receipt acquisition");
 }
 qa_game_family frontend_music_family(const qa_catalog *catalog, qa_product_id id) {
@@ -744,6 +756,7 @@ bool frontend_music_sources_destroy(frontend_music_sources **in, qa_error *e) {
     qa_audio_music_controls_release(owner->controls); qa_catalog_release(owner->menu_catalog); *in = NULL; free(owner); return true;
 }
 void frontend_music_sources_rebind(frontend_music_sources *owner, qa_frontend *f, frontend_music_sources **slot) {
+    owner->world.publication = NULL; owner->world.configuration_generation = 0;
     owner->frontend = f; owner->application = f->application; owner->engine = f->audio; owner->slot = slot;
     for (size_t i = 0; i < 2; ++i) if (owner->policies[i]) frontend_music_policy_rebind(owner->policies[i], f, owner->policies + i);
 }

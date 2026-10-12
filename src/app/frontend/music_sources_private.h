@@ -6,7 +6,8 @@ typedef struct frontend_music_world {
     qa_resource *map;
     qa_actor_owner provider;
     uint64_t map_revision;
-    char *instance;
+    const qa_launch_snapshot *publication;
+    uint64_t configuration_generation;
 } frontend_music_world;
 struct frontend_music_sources {
     qa_frontend *frontend;
