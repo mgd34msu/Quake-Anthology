@@ -5,8 +5,7 @@
 
 static bool observed(const qa_q3_presentation_assets *a, qa_error *error)
 {
-    return a && (!a->busy || (a->capturing && !a->codec_busy)) ? true :
-        q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 asset observation requires an idle or captured owner");
+    return a ? true : q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 asset observation requires its owner");
 }
 bool qa_q3_assets_capture_begin(qa_q3_presentation_assets *a, qa_error *error)
 {
@@ -280,11 +279,14 @@ static bool skin_models_admit(qa_q3_presentation_assets *assets,
     const qa_model_skin_map *skin, qa_error *error)
 {
     for (size_t i = 0; i < assets->model_count; ++i)
-        if (!q3p_model_skin_admit(assets->models[i], skin, error)) return false;
+        if (!q3p_model_materials_admit(assets->models[i], skin,
+            assets->models[i] && assets->models[i]->provider.family == QA_GAME_Q3 ?
+            assets->options.provider.materials : NULL, error)) return false;
     return true;
 }
 bool q3p_assets_skin_bindings_prepare(qa_q3_presentation_assets *assets, qa_error *error)
 {
+    if (!skin_models_admit(assets, NULL, error)) return false;
     for (size_t i = 0; i < assets->skin_count; ++i)
         if (assets->skins[i] && !skin_models_admit(assets, &assets->skins[i]->map, error)) return false;
     return true;

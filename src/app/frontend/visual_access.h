@@ -35,6 +35,8 @@ bool frontend_visual_registered_model_policy_prepare(qa_frontend *, const struct
  * holder. Its first acquisition receipt and registered parent remain owned. */
 bool frontend_visual_registered_model_initialize(qa_frontend *, const qa_q3_model_opening *,
     const qa_model *, qa_scene_model *, qa_error *);
+bool frontend_visual_registered_materials_admit(const qa_q3_presentation_assets *, const qa_q3_ref_entity *,
+    const qa_q3_presentation_assets *, const qa_q3_ref_entity *, qa_error *);
 /* Native CLIENT caches retain this exact acquisition, parsed parent and scene
  * through destruction of its replacement children. No registry is synthesized. */
 bool frontend_visual_model_opening_initialize(qa_frontend *, qa_game_family, qa_vfs *,

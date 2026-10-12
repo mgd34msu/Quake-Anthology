@@ -103,16 +103,19 @@ bool q3p_model_get(const qa_q3_presentation_assets *a, int32_t handle,
     *out = handle ? a->models[handle - 1] : NULL; return true;
 }
 
-bool q3p_model_skin_admit(q3p_model *model, const qa_model_skin_map *skin, qa_error *error)
+bool q3p_model_materials_admit(q3p_model *model, const qa_model_skin_map *skin,
+    qa_material_library *materials, qa_error *error)
 {
     if (!model) return true;
     for (unsigned i = 0; i < 3; ++i) {
         bool shared = false;
         for (unsigned j = 0; j < i; ++j)
             if (model->scene[i] == model->scene[j]) shared = true;
-        if (!shared && !qa_scene_model_skin_admit(model->scene[i], skin, error)) return false;
+        if (!shared && (!qa_scene_model_materials_admit(model->scene[i], skin, NULL, error) ||
+            (materials && !qa_scene_model_materials_admit(model->scene[i], skin, materials, error)))) return false;
     }
-    return qa_scene_model_skin_admit(model->source_md4_scene, skin, error);
+    return qa_scene_model_materials_admit(model->source_md4_scene, skin, NULL, error) &&
+        (!materials || qa_scene_model_materials_admit(model->source_md4_scene, skin, materials, error));
 }
 
 static qa_bounds bounds(const qa_model_bounds *value)
@@ -426,8 +429,11 @@ bool qa_q3_register_model(qa_q3_presentation_assets *a, const char *path,
                 q3p_model_md4_source(model), model->source_md4_scene, error);
         }
     }
+    if (ok && model && !handle) ok = q3p_model_materials_admit(model, NULL,
+        model->provider.family == QA_GAME_Q3 ? a->options.provider.materials : NULL, error);
     for (size_t i = 0; ok && model && !handle && i < a->skin_count; ++i)
-        if (a->skins[i]) ok = q3p_model_skin_admit(model, &a->skins[i]->map, error);
+        if (a->skins[i]) ok = q3p_model_materials_admit(model, &a->skins[i]->map,
+            model->provider.family == QA_GAME_Q3 ? a->options.provider.materials : NULL, error);
     if (ok && model && !handle) {
         ok = a->model_count < INT32_MAX && q3p_reserve((void **)&a->models, &a->model_capacity,
             a->model_count + 1, sizeof(*a->models), error);

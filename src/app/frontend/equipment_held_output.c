@@ -1,5 +1,6 @@
 #include "equipment_held_output.h"
 #include "qa/q3_assets_save.h"
+#include "qa/q3_assets_custody.h"
 #include "qa/q3_asset_shader.h"
 #include <limits.h>
 #include <math.h>
@@ -90,6 +91,14 @@ bool frontend_equipment_held_output_create_from(qa_frontend *frontend,
     if (ok && (!retained.held || !retained.held->model || !retained.held_scene ||
             retained.held->reference_frame > INT32_MAX))
         ok = frontend_fail(error, QA_ERROR_FORMAT, "Held replacement has no real prepared model and scene");
+    if (ok) {
+        const qa_scene_image_options *images = qa_scene_model_image_options(retained.held_scene);
+        if (images->family == QA_GAME_Q3) {
+            qa_q3_presentation_provider provider;
+            ok = qa_q3_assets_provider_at(assets, 0, &provider) &&
+                qa_scene_model_materials_admit(retained.held_scene, NULL, provider.materials, error);
+        }
+    }
     if (ok) {
         qa_model_transform parent_pose, socket, tagged;
         parent_transform(parent, &parent_pose);
