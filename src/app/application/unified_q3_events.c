@@ -315,8 +315,7 @@ bool qa_application_q3_output_drain(qa_application *app, qa_error *error)
     while(ok && (view=qa_application_event_range_next(app,&cursor,&filter))) {
         const qa_unified_q3_event *event=&view->presentation->value.q3;
         if(event->kind==QA_UNIFIED_Q3_SERVER_COMMAND || event->kind==QA_UNIFIED_Q3_CONFIGSTRING) {
-            application_provider *provider=app->live_providers;
-            while(provider && provider->owner!=view->provider) provider=provider->next_live;
+            application_provider *provider=application_provider_lookup(app,view->provider,APPLICATION_PROVIDER_LIVE);
             if(provider && !provider->close_pending) {
                 qa_event_lease *lease=qa_event_ring_retain(app->event_ring,cursor.id);
                 if(provider->kind==APPLICATION_PROVIDER_Q3 && provider->native_q3_wire)

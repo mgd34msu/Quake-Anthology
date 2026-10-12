@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "78168074b04b2d83428fe811fbb18bfe15156548",
+  "verified_main": "067eb17cb607e5fdc931b61564aa32f9b3c8b50f",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 152,
-    "open_source_observation": 219,
+    "fixed_source_build_core": 153,
+    "open_source_observation": 218,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -32367,8 +32367,9 @@
       "severity": "medium",
       "job": "19",
       "area": "gameplay_q1",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Shared finite-rounding/vector primitives and migrated callers checked against original QC, WinQuake, Hipnotic and MG1 arithmetic; normal build and seven core suites passed. Private wide TS arithmetic was corrected to qsrc rather than preserved. No live or performance claim.",
+      "fixed_commit": "067eb17cb607e5fdc931b61564aa32f9b3c8b50f"
     },
     {
       "id": "J19-F08",
@@ -41283,6 +41284,37 @@
       ],
       "record_directory": "/tmp/qa-ta3196-provider-owner-index-20261012",
       "conclusion": "Lookup uses canonical owner and actual live/roster identity, never cached eligibility. Candidate, publish, restore and refused-close ownership checked. Existing core cases verify old/new simultaneous views, ambiguity, ordering and removal. Additional owner scans remain under migration; no global foundation, live or timing claim."
+    },
+    {
+      "commit": "067eb17cb607e5fdc931b61564aa32f9b3c8b50f",
+      "source_tree": "5e739a5681c5f75fee4ded0d0b685eed56bf6dd4",
+      "finding_ids": [
+        "J19-F07"
+      ],
+      "files_rechecked": [
+        "include/qa/math.h",
+        "src/compat/qc/builtins.c",
+        "src/gameplay/q1/gremlin_weapons.c",
+        "src/gameplay/q1/maps/addon_brushes.c",
+        "src/gameplay/q1/maps/addon_controls.c",
+        "src/gameplay/q1/maps/addon_effects.c",
+        "src/gameplay/q1/maps/addon_fog.c",
+        "src/gameplay/q1/maps/addon_misc.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-shared-q1-math-20261012",
+      "conclusion": "Shared finite-rounding/vector primitives and migrated callers checked against original QC, WinQuake, Hipnotic and MG1 arithmetic; normal build and seven core suites passed. Private wide TS arithmetic was corrected to qsrc rather than preserved. No live or performance claim."
     }
   ],
   "verification_limits": [

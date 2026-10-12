@@ -826,15 +826,12 @@ static bool registration_rebuilt(const event_store *store,
     const application_unified_event_registration *registration)
 {
     const qa_application *app = store->application;
-    for (size_t i = 0; i < app->provider_count; ++i) {
-        const application_provider *provider = app->providers[i];
-        if (provider->owner != registration->provider) continue;
-        if (provider->kind == APPLICATION_PROVIDER_Q1)
-            return registration->kind == QA_NATIVE_HOST_SOUND && qa_q1_wire_enabled(provider->state.q1);
-        if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
-            return provider->state.native.q2_engine->profile != QA_NATIVE_Q2_CGAME_API2023;
-        return false;
-    }
+    const application_provider *provider = application_provider_lookup(app, registration->provider,
+        APPLICATION_PROVIDER_PUBLISHED);
+    if (provider && provider->kind == APPLICATION_PROVIDER_Q1)
+        return registration->kind == QA_NATIVE_HOST_SOUND && qa_q1_wire_enabled(provider->state.q1);
+    if (provider && provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
+        return provider->state.native.q2_engine->profile != QA_NATIVE_Q2_CGAME_API2023;
     return false;
 }
 

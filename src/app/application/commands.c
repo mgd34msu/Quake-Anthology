@@ -18,9 +18,11 @@ static application_provider *command_owner(const qa_application *application, ui
 {
     if (owner == 0 || owner > UINT32_MAX)
         return NULL;
-    for (application_provider *provider = application->live_providers;
-         provider != NULL; provider = provider->next_live)
-        if (provider->owner == owner && provider->constructed && provider->attached)
+    qa_id_index_cursor cursor = application_provider_lookup_begin(application,
+        (qa_actor_owner)owner, APPLICATION_PROVIDER_LIVE);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(application, &cursor)))
+        if (provider->constructed && provider->attached)
             return provider;
     return NULL;
 }

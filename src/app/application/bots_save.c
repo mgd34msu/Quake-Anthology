@@ -47,10 +47,8 @@ static const qa_launch_snapshot *launch(qa_application *app) {
     return app->routing_snapshot?app->routing_snapshot:qa_application_launch(app);
 }
 static application_provider *provider(qa_application *app,qa_actor_owner owner) {
-    application_provider **table=app->routing_providers?app->routing_providers:app->providers;
-    size_t count=app->routing_providers?app->routing_provider_count:app->provider_count;
-    for(size_t i=0;i<count;++i) if(table[i] && table[i]->owner==owner) return table[i];
-    return NULL;
+    return application_provider_lookup(app,owner,
+        app->routing_providers?APPLICATION_PROVIDER_ROUTING:APPLICATION_PROVIDER_PUBLISHED);
 }
 static bool provider_field(qa_source_save_io *io,qa_application *app,application_provider **value,bool required) {
     qa_actor_owner owner=*value?(*value)->owner:0;

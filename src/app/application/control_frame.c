@@ -345,9 +345,7 @@ static application_provider *execution_provider(qa_application *app, qa_actor_id
 {
     qa_actor_owner owner;
     if (!qa_session_execution(app->session, actor, &owner)) return NULL;
-    for (size_t i = 0; i < app->provider_count; ++i)
-        if (app->providers[i]->owner == owner) return app->providers[i];
-    return NULL;
+    return application_provider_lookup(app, owner, APPLICATION_PROVIDER_PUBLISHED);
 }
 
 static application_provider *source_provider(qa_application *app, qa_actor_id actor)
@@ -1299,9 +1297,8 @@ const application_control_context *application_control_frame_current(const qa_ap
             actual.time_ns != current->command.time_ns || actual.elapsed_ns != current->command.elapsed_ns ||
             actual.host_elapsed_ns != current->command.host_elapsed_ns) return NULL;
         if (current->source_usercmd || current->source_guestcmd || current->source_q2cmd) {
-            application_provider *source = NULL;
-            for (size_t i = 0; i < app->provider_count; ++i)
-                if (app->providers[i]->owner == owner) { source = app->providers[i]; break; }
+            application_provider *source = application_provider_lookup(app, owner,
+                APPLICATION_PROVIDER_PUBLISHED);
             uint32_t slot;
             if (!source || !source->attached || !source->constructed || source->close_pending ||
                 (current->source_usercmd && (source->kind != APPLICATION_PROVIDER_Q3 ||

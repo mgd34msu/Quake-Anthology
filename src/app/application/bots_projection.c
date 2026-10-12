@@ -342,11 +342,11 @@ bool application_bot_entity(void *opaque,qa_actor_id actor,qa_bot_entity *out,qa
         .angles=body.angles,.mins=body.bounds.mins,.maxs=body.bounds.maxs,
         .ground_entity=-1,.solid=colliding?1:0,.model_index=colliding?(int32_t)collision.model:0};
     const qa_actor_record *record=qa_actors_get(qa_session_actors(application->session),actor);
-    application_provider **providers=application->routing_providers?application->routing_providers:application->providers;
-    size_t provider_count=application->routing_providers?application->routing_provider_count:application->provider_count;
-    for(size_t i=0;record && i<provider_count;++i) {
-        application_provider *provider=providers[i];
-        if(provider->kind!=APPLICATION_PROVIDER_Q3 || provider->owner!=record->owner) continue;
+    qa_id_index_cursor cursor=record?application_provider_lookup_begin(application,record->owner,
+        application->routing_providers?APPLICATION_PROVIDER_ROUTING:APPLICATION_PROVIDER_PUBLISHED):(qa_id_index_cursor){0};
+    application_provider *provider;
+    while((provider=application_provider_lookup_next(application,&cursor))) {
+        if(provider->kind!=APPLICATION_PROVIDER_Q3) continue;
         qa_q3_entity_view view;
         if(!qa_q3_entity_read(provider->state.q3,actor,&view,error)) return false;
         out->hidden=view.kind==QA_Q3_ENTITY_HIDDEN;out->missile=view.kind==QA_Q3_ENTITY_MISSILE;

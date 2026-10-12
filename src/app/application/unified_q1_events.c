@@ -73,8 +73,8 @@ bool application_unified_q1_event(qa_application *app, const qa_builtin_event *e
     case QA_BUILTIN_ITEM: reached = event->other.registry != 0; break;
     case QA_BUILTIN_DEATH: reached = event->count != 0; break;
     case QA_BUILTIN_ANIMATION: {
-        application_provider *p = app->live_providers;
-        while (p && p->owner != event->provider) p = p->next_live;
+        application_provider *p = application_provider_lookup(app, event->provider,
+            APPLICATION_PROVIDER_LIVE);
         reached = p && p->kind == APPLICATION_PROVIDER_Q1 &&
             (event->flags & UINT32_C(0x7fffffff)) < QA_Q1_WEAPON_COUNT;
         break;
@@ -87,8 +87,8 @@ bool application_unified_q1_event(qa_application *app, const qa_builtin_event *e
                 name==names->music || name==names->cutscene || name==names->sell_screen);
         if (!reached && !event->actor.registry && event->resource &&
             !(event->flags & UINT32_C(0x80000000))) {
-            application_provider *p = app->live_providers;
-            while (p && p->owner != event->provider) p = p->next_live;
+            application_provider *p = application_provider_lookup(app, event->provider,
+                APPLICATION_PROVIDER_LIVE);
             uint32_t index;
             reached = p && p->kind == APPLICATION_PROVIDER_Q1 &&
                 qa_q1_wire_emission_index(p->state.q1, true, event->resource, &index);

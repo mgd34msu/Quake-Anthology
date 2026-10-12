@@ -186,8 +186,10 @@ static bool equipment(qa_application *app, const application_unified_source *sou
     const char *model_name = qa_strings_cstr(qa_session_strings(app->session), e.view_model);
     if (!model_name || !*model_name) return true;
     application_provider *provider = NULL;
-    for (size_t i = 0; i < app->provider_count; ++i)
-        if (app->providers[i]->owner == e.provider) provider = app->providers[i];
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, e.provider,
+        APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *candidate;
+    while ((candidate = application_provider_lookup_next(app, &cursor))) provider = candidate;
     application_equipment_gear_presentation gear = {0}; bool gear_selected = false;
     const qa_product *product = provider ? provider->product : NULL;
     if (e.equipment_slot) {

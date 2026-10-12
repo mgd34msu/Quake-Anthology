@@ -113,10 +113,11 @@ bool application_arsenal_source_actor(void *context, qa_session *session, qa_act
     qa_application *application = context;
     if (application == NULL || session != application->session || frame == NULL)
         return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal turn belongs to another session");
-    for (size_t i = 0; i < application->provider_count; ++i) {
-        application_provider *source = application->providers[i];
-        if (source->owner != frame->provider ||
-            !source->constructed || !source->attached || source->close_pending) continue;
+    qa_id_index_cursor cursor = application_provider_lookup_begin(application,
+        frame->provider, APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *source;
+    while ((source = application_provider_lookup_next(application, &cursor))) {
+        if (!source->constructed || !source->attached || source->close_pending) continue;
         if (source->kind == APPLICATION_PROVIDER_Q1) {
             if (!qa_q1_game_retouch_actor(source->state.q1, actor, frame, error)) return false;
             if (!qa_actors_get(qa_session_actors(session), actor)) return true;

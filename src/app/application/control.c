@@ -76,9 +76,7 @@ static application_provider *control_execution(qa_application *app, qa_actor_id 
 {
     qa_actor_owner owner;
     if (!qa_session_execution(app->session, actor, &owner)) return NULL;
-    for (size_t i = 0; i < app->provider_count; ++i)
-        if (app->providers[i]->owner == owner) return app->providers[i];
-    return NULL;
+    return application_provider_lookup(app, owner, APPLICATION_PROVIDER_PUBLISHED);
 }
 
 static void end_q1_operations(application_move_call *move)

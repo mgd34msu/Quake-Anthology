@@ -28,12 +28,11 @@ bool qa_application_equipment_q3_metadata_read(const qa_application *app,
 {
     if (!app || !out || !owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "Equipment registry requires its actual Q3 product owner");
-    application_provider *found = NULL;
-    for (size_t i = 0; i < app->provider_count; ++i)
-        if (app->providers[i]->owner == owner) {
-            if (found) return application_fail(error, QA_ERROR_FORMAT, "Equipment product has ambiguous actual providers");
-            found = app->providers[i];
-        }
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, owner,
+        APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *found = application_provider_lookup_next(app, &cursor);
+    if (application_provider_lookup_next(app, &cursor))
+        return application_fail(error, QA_ERROR_FORMAT, "Equipment product has ambiguous actual providers");
     if (!found || !found->constructed || found->close_pending || !found->product ||
         found->product->family != QA_GAME_Q3)
         return application_fail(error, QA_ERROR_FORMAT, "Equipment registry lost its actual constructed Q3 provider");
@@ -49,8 +48,10 @@ bool qa_application_equipment_q3_metadata_read(const qa_application *app,
 
 static application_provider *qc_item_provider(qa_application *app,qa_actor_owner owner)
 {
-    for(size_t i=0;i<app->provider_count;++i){application_provider *provider=app->providers[i];
-        if(provider&&provider->owner==owner&&provider->kind==APPLICATION_PROVIDER_QC&&
+    qa_id_index_cursor cursor=application_provider_lookup_begin(app,owner,APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider;
+    while((provider=application_provider_lookup_next(app,&cursor))) {
+        if(provider->kind==APPLICATION_PROVIDER_QC&&
             provider->constructed&&provider->attached&&!provider->close_pending&&provider->product&&
             provider->launch&&provider->state.qc.engine&&provider->state.qc.qualified&&
             provider->state.qc.qualified->items&&provider->state.qc.qualified->items->weapons)return provider;
@@ -145,12 +146,11 @@ static bool q3_model_parents(qa_application *app,
     if (current_source.weapon != view->source_weapon)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original weapon model observation changed its actual source selection");
     q3g_role *found = NULL;
-    application_provider *receiver = NULL;
-    for (size_t i = 0; i < app->provider_count; ++i) {
-        if (app->providers[i]->owner != recipient) continue;
-        if (receiver) return application_fail(error, QA_ERROR_FORMAT, "Original weapon models repeat their actual recipient provider");
-        receiver = app->providers[i];
-    }
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, recipient,
+        APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *receiver = application_provider_lookup_next(app, &cursor);
+    if (application_provider_lookup_next(app, &cursor))
+        return application_fail(error, QA_ERROR_FORMAT, "Original weapon models repeat their actual recipient provider");
     struct application_q3_guest *receiver_engine = q3g_engine(receiver);
     if (!receiver || !receiver->constructed || !receiver->attached || receiver->close_pending)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original weapon models lost their actual recipient provider");

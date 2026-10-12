@@ -15,16 +15,15 @@
 
 static application_provider *source_provider(qa_application *app, qa_actor_owner owner)
 {
-    for (size_t i = 0; app && i < app->routing_provider_count; ++i) {
-        application_provider *p = app->routing_providers[i];
-        if (p->owner == owner) return p->close_pending ? NULL : p;
-    }
-    for (size_t i = 0; app && i < app->provider_count; ++i) {
-        application_provider *p = app->providers[i];
-        if (p->owner == owner) return p->close_pending ? NULL : p;
-    }
-    for (application_provider *p = app ? app->live_providers : NULL; p; p = p->next_live)
-        if (p->owner == owner && !p->close_pending) return p;
+    application_provider *provider = application_provider_lookup(app, owner,
+        APPLICATION_PROVIDER_ROUTING);
+    if (provider) return provider->close_pending ? NULL : provider;
+    provider = application_provider_lookup(app, owner, APPLICATION_PROVIDER_PUBLISHED);
+    if (provider) return provider->close_pending ? NULL : provider;
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, owner,
+        APPLICATION_PROVIDER_LIVE);
+    while ((provider = application_provider_lookup_next(app, &cursor)))
+        if (!provider->close_pending) return provider;
     return NULL;
 }
 
@@ -101,7 +100,10 @@ bool application_unified_event_owner_bound_is(const qa_application *app, const a
     if (!app || !provider || provider->application != app || !provider->product || !provider->product->identity ||
         provider->event_activation_deferred) return false;
     bool published = false;
-    for (size_t i = 0; i < app->provider_count; ++i) published |= app->providers[i] == provider;
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, provider->owner,
+        APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *actual;
+    while ((actual = application_provider_lookup_next(app, &cursor))) published |= actual == provider;
     if (!published) return false;
     for (size_t i = 0; i < app->unified_event_owner_count; ++i) {
         const application_unified_event_owner *activation = app->unified_event_owners + i;
@@ -126,7 +128,10 @@ bool application_unified_event_owner_prepare(qa_application *app, application_pr
         source_provider(app, provider->owner) != provider)
         return application_fail(error, QA_ERROR_ARGUMENT, "Source activation replacement lost its actual provider pair");
     bool published = false;
-    for (size_t i = 0; i < app->provider_count; ++i) published |= app->providers[i] == previous;
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, previous->owner,
+        APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *actual;
+    while ((actual = application_provider_lookup_next(app, &cursor))) published |= actual == previous;
     if (!published)
         return application_fail(error, QA_ERROR_ARGUMENT, "Source activation replacement lost its actual published provider");
     const qa_product *product = qa_catalog_product(qa_launch_instance_catalog(provider->launch),

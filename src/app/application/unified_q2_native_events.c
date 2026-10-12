@@ -18,9 +18,7 @@ static bool source(application_provider *p, qa_clock_state *clock, qa_error *e)
 }
 static application_provider *provider(qa_application *app, qa_actor_owner owner)
 {
-    for (application_provider *p = app->live_providers; p; p = p->next_live)
-        if (p->owner == owner) return p;
-    return NULL;
+    return application_provider_lookup(app, owner, APPLICATION_PROVIDER_LIVE);
 }
 static bool emit(application_provider *p, const qa_unified_presentation_payload *presentation,
     const qa_unified_simulation_payload *simulation, qa_actor_id actor, qa_actor_id recipient,

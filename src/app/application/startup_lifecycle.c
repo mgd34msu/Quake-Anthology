@@ -132,9 +132,12 @@ bool qa_application_startup_source_engine_cvars(const qa_application *app,
         source->scope.kind == QA_APPLICATION_CONSOLE_ENGINE ||
         source->command.owner != source->scope.provider)
         return application_fail(error, QA_ERROR_ARGUMENT, "Source ENGINE namespace requires its physical receiver tuple");
-    for (application_provider *provider = app->live_providers; provider; provider = provider->next_live) {
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, source->scope.provider,
+        APPLICATION_PROVIDER_LIVE);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(app, &cursor))) {
         if (provider->application != app || !provider->launch ||
-            provider->launch->storage != source->descriptor->storage || provider->owner != source->scope.provider)
+            provider->launch->storage != source->descriptor->storage)
             continue;
         if (!app->cvars && app->engine_shutdown_provider != provider)
             return application_fail(error, QA_ERROR_ARGUMENT, "Detached ENGINE namespace has no entered source shutdown loan");
@@ -160,9 +163,8 @@ bool qa_application_startup_source_primary(qa_application *app,
         source->scope.kind == QA_APPLICATION_CONSOLE_ENGINE)
         return application_fail(error, QA_ERROR_ARGUMENT, "Startup selection requires its actual published Source");
     *primary = false;
-    application_provider *provider = NULL;
-    for (application_provider *current = app->live_providers; current; current = current->next_live)
-        if (current->owner == source->scope.provider) { provider = current; break; }
+    application_provider *provider = application_provider_lookup(app, source->scope.provider,
+        APPLICATION_PROVIDER_LIVE);
     qa_application_startup_source qualified = *source;
     const qa_application_startup_hooks *hooks = hooks_for(provider);
     bool client = provider && provider->client_only_owned && source->scope.kind == QA_APPLICATION_CONSOLE_CLIENT;

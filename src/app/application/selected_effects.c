@@ -188,9 +188,7 @@ bool qa_application_selected_effects_current(qa_application *app,
 
 static application_provider *event_provider(qa_application *app, qa_actor_owner owner)
 {
-    for (size_t i = 0; i < app->provider_count; ++i)
-        if (app->providers[i] && app->providers[i]->owner == owner) return app->providers[i];
-    return NULL;
+    return application_provider_lookup(app, owner, APPLICATION_PROVIDER_PUBLISHED);
 }
 
 bool qa_application_effects_producer_read(qa_application *app, qa_actor_owner owner,

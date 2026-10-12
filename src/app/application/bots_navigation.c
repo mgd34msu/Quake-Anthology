@@ -68,12 +68,11 @@ static bool native_mover(application_bots *bots,qa_actor_id actor,application_bo
     const qa_actor_record *record=qa_actors_get(qa_session_actors(application->session),actor);
     if(!record) return true;
     qa_actor_owner owner=record->owner;
-    application_provider **providers=application->routing_providers?application->routing_providers:application->providers;
-    size_t count=application->routing_providers?application->routing_provider_count:application->provider_count;
-    for(size_t i=0;i<count;++i) {
-        application_provider *provider=providers[i];
-        if(provider->owner!=owner || (provider->kind!=APPLICATION_PROVIDER_Q1 &&
-                                     provider->kind!=APPLICATION_PROVIDER_Q2)) continue;
+    qa_id_index_cursor cursor=application_provider_lookup_begin(application,owner,
+        application->routing_providers?APPLICATION_PROVIDER_ROUTING:APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider;
+    while((provider=application_provider_lookup_next(application,&cursor))) {
+        if(provider->kind!=APPLICATION_PROVIDER_Q1 && provider->kind!=APPLICATION_PROVIDER_Q2) continue;
         if(bots->mover_borrowed)
             return application_fail(error,QA_ERROR_ARGUMENT,"bot mover observation is already borrowed");
         size_t capacity=qa_actors_capacity(qa_session_actors(application->session));
