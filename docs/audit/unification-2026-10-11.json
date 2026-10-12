@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "b4ccf40252171da61b9e9f7653b1bb689cae8745",
+  "verified_main": "d77a17f4e28d964aabbcb8bef02470655be43eb9",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 191,
-    "open_source_observation": 180,
+    "fixed_source_build_core": 192,
+    "open_source_observation": 179,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -26865,8 +26865,9 @@
       "severity": "medium",
       "job": "05",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "d77a17f4e28d964aabbcb8bef02470655be43eb9"
     },
     {
       "id": "05-I5",
@@ -42519,6 +42520,31 @@
       ],
       "record_directory": "/tmp/qa-ta3196-live-team-ref-20261012-v4",
       "conclusion": "Native Q2 combat retains the live numeric team without interning. All shared combat, guest component, player, missile, mode and bot consumers use the common reference and equality. Existing counted-name save encoding and color policies are preserved by core behavior checks. Normal build and seven core suites passed; no live or whole-frame allocation claim."
+    },
+    {
+      "commit": "d77a17f4e28d964aabbcb8bef02470655be43eb9",
+      "source_tree": "67e2d7635746c2af4ef8b326bb9458edc059e734",
+      "finding_ids": [
+        "05-H2"
+      ],
+      "files_rechecked": [
+        "src/app/application/unified_components.c",
+        "src/app/application/unified_components_internal.h",
+        "src/app/application/unified_components_save.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-component-cursor-load-storage-20261012-v2",
+      "conclusion": "Component publisher cursors reserve the existing protocol owner extent in the shared arena at create and restore. Frame capture and retained restore delete cursor growth and reuse owned storage. Normal build and seven core suites passed; no live or global allocation claim."
     }
   ],
   "verification_limits": [

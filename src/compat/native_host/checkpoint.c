@@ -476,8 +476,12 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
         }
     }
     if (ok && host->kind == NATIVE_HOST_Q2_GAME && table.capacity) {
-        native_host_q2_lifetime *values = calloc(table.capacity, sizeof(*values));
+        qa_arena creation_storage = {0};
+        size_t bytes = (size_t)table.capacity * sizeof(*host->q2_lifetimes);
+        native_host_q2_lifetime *values = bytes / sizeof(*host->q2_lifetimes) == table.capacity ?
+            qa_arena_alloc(&creation_storage, bytes, _Alignof(native_host_q2_lifetime), error) : NULL;
         if (!values) ok = native_host_fail(error, QA_ERROR_MEMORY, 0, "Restoring native Q2 Source creation metadata");
+        else memset(values, 0, bytes);
         for (uint32_t index = 0; ok && index < slot_count; ++index) {
             const saved_slot *saved = &slots[index];
             if (!saved->creation_present && !saved->linked) continue;
@@ -492,8 +496,12 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
             memcpy(values[saved->slot].origins, saved->origins, sizeof(saved->origins));
         }
         if (ok) {
-            free(host->q2_lifetimes); host->q2_lifetimes = values; host->q2_lifetime_capacity = table.capacity;
-        } else free(values);
+            qa_arena_destroy(&host->q2_lifetime_storage);
+            host->q2_lifetime_storage = creation_storage;
+            creation_storage = (qa_arena){0};
+            host->q2_lifetimes = values; host->q2_lifetime_capacity = table.capacity;
+        }
+        qa_arena_destroy(&creation_storage);
     }
     if (ok && cvars) {
         ok=qa_cvars_save_commit(cvars,error);

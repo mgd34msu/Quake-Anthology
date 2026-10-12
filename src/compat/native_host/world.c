@@ -260,12 +260,18 @@ bool native_host_fields_refresh(qa_native_host *host, qa_error *error)
         .kind_encoding = QA_ENTITY_I32_LE, .borrowed_kind = QA_NATIVE_SLOT_BORROWED,
         .zero_is_none = true};
     if (projection.table.capacity > host->q2_field_capacity) {
-        native_host_q2_fields *rows = calloc(projection.table.capacity, sizeof(*rows));
+        size_t bytes = (size_t)projection.table.capacity * sizeof(*host->q2_fields);
+        if (bytes / sizeof(*host->q2_fields) != projection.table.capacity)
+            return native_host_fail(error, QA_ERROR_MEMORY, 0,
+                "Native Q2 live entity fields size overflows");
+        native_host_q2_fields *rows = qa_arena_grow(&host->q2_field_storage, host->q2_fields,
+            (size_t)host->q2_field_capacity * sizeof(*rows), bytes,
+            _Alignof(native_host_q2_fields), error);
         if (!rows) return native_host_fail(error, QA_ERROR_MEMORY, 0,
             "Retaining native Q2 live entity fields");
-        if (host->q2_field_capacity)
-            memcpy(rows, host->q2_fields, (size_t)host->q2_field_capacity * sizeof(*rows));
-        free(host->q2_fields); host->q2_fields = rows;
+        memset(rows + host->q2_field_capacity, 0,
+            (size_t)(projection.table.capacity - host->q2_field_capacity) * sizeof(*rows));
+        host->q2_fields = rows;
         host->q2_field_capacity = projection.table.capacity;
         for (uint32_t slot = 1; slot < host->q2_field_capacity; ++slot)
             rows[slot].body_serial = 0;
@@ -676,11 +682,13 @@ static bool lifetime_capacity(qa_native_host *host, uint32_t slot, qa_error *err
     size_t bytes = (size_t)table.capacity * sizeof(*host->q2_lifetimes);
     if (slot >= table.capacity || bytes / sizeof(*host->q2_lifetimes) != table.capacity)
         return native_host_fail(error, QA_ERROR_FORMAT, slot, "Native Q2 link leaves its real Source table");
-    native_host_q2_lifetime *values = calloc(table.capacity, sizeof(*values));
+    native_host_q2_lifetime *values = qa_arena_grow(&host->q2_lifetime_storage,
+        host->q2_lifetimes, host->q2_lifetime_capacity * sizeof(*values), bytes,
+        _Alignof(native_host_q2_lifetime), error);
     if (!values) return native_host_fail(error, QA_ERROR_MEMORY, slot, "Retaining native Q2 Source creation metadata");
-    if (host->q2_lifetime_capacity)
-        memcpy(values, host->q2_lifetimes, host->q2_lifetime_capacity * sizeof(*values));
-    free(host->q2_lifetimes); host->q2_lifetimes = values; host->q2_lifetime_capacity = table.capacity;
+    memset(values + host->q2_lifetime_capacity, 0,
+        (table.capacity - host->q2_lifetime_capacity) * sizeof(*values));
+    host->q2_lifetimes = values; host->q2_lifetime_capacity = table.capacity;
     return true;
 }
 
@@ -1162,20 +1170,6 @@ bool native_host_trace(qa_native_host *host, const qa_native_import_call *call,
     return encode_trace(host, &trace, forced_entity, result, error);
 }
 
-typedef struct box_visit_context {
-    qa_actor_id *actors;
-    size_t count, capacity;
-} box_visit_context;
-
-static qa_spatial_visit box_visit(void *context, const qa_spatial_actor *actor)
-{
-    box_visit_context *visit = context;
-    if (visit->count < visit->capacity)
-        visit->actors[visit->count] = actor->body.actor;
-    ++visit->count;
-    return QA_SPATIAL_CONTINUE;
-}
-
 bool native_host_box_edicts(qa_native_host *host, const qa_native_import_call *call,
                             qa_native_value *result, qa_error *error)
 {
@@ -1200,22 +1194,15 @@ bool native_host_box_edicts(qa_native_host *host, const qa_native_import_call *c
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "native BoxEdicts output is null with nonzero capacity");
     size_t candidate_capacity = qa_actors_count(qa_world_actors(host->world.world));
-    qa_actor_id *actors = candidate_capacity
-                              ? calloc(candidate_capacity, sizeof(*actors))
-                              : NULL;
-    if (candidate_capacity && !actors)
-        return native_host_fail(error, QA_ERROR_MEMORY, 0,
-                                "allocating native BoxEdicts candidates");
     int32_t area = native_argument_i32(call, 4);
     if (area != 1 && area != 2) {
-        free(actors);
         return native_host_fail(error, QA_ERROR_ARGUMENT, (size_t)(uint32_t)area,
                                 "native BoxEdicts area is invalid");
     }
-    box_visit_context visit = {.actors = actors, .capacity = candidate_capacity};
-    bool ok = qa_world_visit(host->world.world, (qa_bounds){minimum, maximum},
-                             area == 1 ? QA_COLLISION_SOLID : QA_COLLISION_TRIGGER,
-                             box_visit, &visit, error);
+    qa_world_actor_snapshot visit;
+    bool ok = qa_world_snapshot_capture(host->world.world, (qa_bounds){minimum, maximum},
+        area == 1 ? QA_COLLISION_SOLID : QA_COLLISION_TRIGGER,
+        QA_WORLD_ORDER_SPATIAL, &visit, error);
     size_t accepted = 0;
     qa_native_address filter = host->profile == QA_NATIVE_Q2_GAME_API2023
                                    ? native_argument_address(call, 5)
@@ -1237,7 +1224,7 @@ bool native_host_box_edicts(qa_native_host *host, const qa_native_import_call *c
              index < count && !(host->profile == QA_NATIVE_Q2_GAME_API3 && !requested);
              ++index) {
             qa_native_address address;
-            if (!native_host_address_for_actor(host, actors[index], &address, error)) {
+            if (!native_host_address_for_actor(host, visit.actors[index], &address, error)) {
                 ok = false;
                 break;
             }
@@ -1292,7 +1279,7 @@ bool native_host_box_edicts(qa_native_host *host, const qa_native_import_call *c
                 break;
         }
     }
-    free(actors);
+    qa_world_snapshot_release(&visit);
     if (!ok)
         return false;
     if (host->profile == QA_NATIVE_Q2_GAME_API3)

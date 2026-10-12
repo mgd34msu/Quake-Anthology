@@ -434,8 +434,8 @@ static void free_records(qa_native_host *host)
     free(host->message);
     qa_arena_destroy(&host->message_reference_storage);
     free(host->retained_clients);
-    free(host->q2_lifetimes);
-    free(host->q2_fields);
+    qa_arena_destroy(&host->q2_lifetime_storage);
+    qa_arena_destroy(&host->q2_field_storage);
 }
 
 bool qa_native_host_destroy_ready(const qa_native_host *host)

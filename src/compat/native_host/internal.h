@@ -150,8 +150,10 @@ struct qa_native_host {
     qa_entity_model_field *model_entries;
     native_host_q2_lifetime *q2_lifetimes;
     size_t q2_lifetime_capacity;
+    qa_arena q2_lifetime_storage;
     native_host_q2_fields *q2_fields;
     uint32_t q2_field_capacity;
+    qa_arena q2_field_storage;
     qa_entity_references q2_references;
     bool q2_fields_reported, q2_fields_invalidated;
     uint8_t *message;

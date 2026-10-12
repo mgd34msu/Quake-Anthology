@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `b4ccf402`.
+Follow-up source changes were reviewed through main `d77a17f4`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 191 have source fixes
+There are **374 overlapping source-review observations**: 192 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 180 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 179 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -382,3 +382,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `f72824b4` / partial adoption: The bot fallback reads the exact canonical actor slot rather than scanning live actors to recover it. Existing roster preference, slot bounds and liveness remain. Normal build and seven core suites passed; no live or performance claim. Records: `/tmp/qa-ta3196-bot-canonical-slot-20261012`.
 
 - `b4ccf402` / partial adoption: Native Q2 combat retains the live numeric team without interning. All shared combat, guest component, player, missile, mode and bot consumers use the common reference and equality. Existing counted-name save encoding and color policies are preserved by core behavior checks. Normal build and seven core suites passed; no live or whole-frame allocation claim. Records: `/tmp/qa-ta3196-live-team-ref-20261012-v4`.
+
+- `d77a17f4` / 05-H2: Component publisher cursors reserve the existing protocol owner extent in the shared arena at create and restore. Frame capture and retained restore delete cursor growth and reuse owned storage. Normal build and seven core suites passed; no live or global allocation claim. Records: `/tmp/qa-ta3196-component-cursor-load-storage-20261012-v2`.
