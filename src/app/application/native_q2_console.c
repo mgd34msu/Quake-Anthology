@@ -292,23 +292,20 @@ static bool operator_command(void *opaque, const qa_command_invocation *invocati
             if (active(owner, &invocation->context)) qa_console_emit(owner->console, &invocation->context, " is not on the server\n");
         } else {
             qa_console_emit(owner->console, &invocation->context, "userinfo\n--------\n");
-            for (char *p = selected->userinfo; *p && active(owner, &invocation->context);) {
-                if (*p == '\\') ++p;
-                char *key = p;
-                while (*p && *p != '\\') ++p;
-                if (!*p) break;
-                *p++ = 0;
-                char *value = p;
-                while (*p && *p != '\\') ++p;
-                if (*p) *p++ = 0;
-                qa_console_emit(owner->console, &invocation->context, key);
-                size_t length = strlen(key);
+            const char *cursor=selected->userinfo; qa_bytes key,value;
+            while (*cursor && active(owner,&invocation->context) && qa_info_next(&cursor,&key,&value)) {
+                char *name=(char *)key.data,*text=(char *)value.data;
+                char *name_end=name+key.size,*value_end=text+value.size;
+                char name_separator=*name_end,value_separator=*value_end;
+                *name_end=0; *value_end=0;
+                qa_console_emit(owner->console, &invocation->context, name);
                 char padding[21];
-                size_t spaces = length < 20 ? 20 - length : 1;
+                size_t spaces = key.size < 20 ? 20 - key.size : 1;
                 memset(padding, ' ', spaces); padding[spaces] = 0;
                 if (active(owner, &invocation->context)) qa_console_emit(owner->console, &invocation->context, padding);
-                if (active(owner, &invocation->context)) qa_console_emit(owner->console, &invocation->context, value);
+                if (active(owner, &invocation->context)) qa_console_emit(owner->console, &invocation->context, text);
                 if (active(owner, &invocation->context)) qa_console_emit(owner->console, &invocation->context, "\n");
+                *name_end=name_separator; *value_end=value_separator;
             }
         }
     }

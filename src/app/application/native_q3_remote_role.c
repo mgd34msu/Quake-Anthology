@@ -4,6 +4,7 @@
 #include "qa/application_native_q3_remote_client.h"
 #include "qa/application_character_selection.h"
 #include "native_q3_client_modules.h"
+#include "native_q3_system_info.h"
 #include "qa/console_cvar_observer.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -454,41 +455,22 @@ bool application_native_q3_remote_role_arguments(application_provider *provider,
         return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT argument view lost its physical owner");
     *out = &row->arguments; *revision = row->argument_revision; return true;
 }
-static bool same_name(const char *a, const char *b)
+static bool system_info_current(void *context)
 {
-    while (*a && *b) {
-        unsigned x = (unsigned char)*a++, y = (unsigned char)*b++;
-        if (x >= 'A' && x <= 'Z') x += 'a' - 'A';
-        if (y >= 'A' && y <= 'Z') y += 'a' - 'A';
-        if (x != y) return false;
-    }
-    return !*a && !*b;
+    struct application_native_q3_remote_role *row=context;
+    return !row->retiring;
 }
 bool application_native_q3_remote_role_system_info(application_provider *provider, uint32_t seat, const char *info, qa_error *error)
 {
     struct application_native_q3_remote_role *row = find(provider, seat);
     if (!row || row->retiring || !info || row->calls == SIZE_MAX)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native SystemInfo requires its actual configured CLIENT registry");
-    size_t length = strlen(info);
-    char *retained = malloc(length + 1), *working = malloc(length + 1);
-    if (!retained || !working) {
-        free(retained); free(working); return application_fail(error, QA_ERROR_MEMORY, "Retaining native CLIENT SystemInfo");
-    }
-    memcpy(retained, info, length + 1); memcpy(working, info, length + 1);
-    ++row->calls; bool ok = true;
-    char *cursor = working; if (*cursor == '\\') ++cursor;
-    while (ok && *cursor) {
-        char *name = cursor, *separator = strchr(cursor, '\\'); if (!separator) break;
-        *separator = 0; char *value = separator + 1; separator = strchr(value, '\\');
-        if (separator) { *separator = 0; cursor = separator + 1; } else cursor = value + strlen(value);
-        /* These controls already belong to the same physical CLIENT time
-         * registry; received source time does not overwrite that owner. */
-        if (*name && !same_name(name, "cl_allowdownload") && !same_name(name, "timescale") &&
-            !same_name(name, "fixedtime") && !same_name(name, "com_cameraMode"))
-            ok = qa_cvars_set(row->cvars, name, value, true, error) && !row->retiring;
-    }
-    --row->calls; free(working);
-    if (ok) { free(row->system_info); row->system_info = retained; } else free(retained);
+    /* Received source time does not overwrite the physical CLIENT time owner. */
+    native_q3_system_info_policy policy={.skip_time_controls=true,
+        .after_set=system_info_current,.context=row,.memory_error="Retaining native CLIENT SystemInfo"};
+    ++row->calls;
+    bool ok=native_q3_system_info_apply(row->cvars,&row->system_info,info,policy,error);
+    --row->calls;
     return ok;
 }
 bool application_native_q3_remote_role_product(application_provider *provider, uint32_t seat, qa_q3_product *out, qa_error *error)

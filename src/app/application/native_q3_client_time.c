@@ -1,4 +1,5 @@
 #include "native_q3_client.h"
+#include "native_q3_system_info.h"
 #include "qa/text.h"
 #include "qa/game_q3_configstrings.h"
 #include "qa/source_frame_time.h"
@@ -12,6 +13,30 @@ static char *retain_text(const char *text)
     size_t length=strlen(text); char *copy=malloc(length+1);
     if (copy) memcpy(copy,text,length+1);
     return copy;
+}
+bool native_q3_system_info_apply(qa_cvars *cvars, char **retained, const char *received,
+    native_q3_system_info_policy policy, qa_error *error)
+{
+    char *copy=retain_text(received);
+    if (!copy) return native_client_fail(error,QA_ERROR_MEMORY,policy.memory_error);
+    bool same=policy.skip_same_timescale && *retained && !strcmp(copy,*retained),ok=true;
+    const char *cursor=copy; qa_bytes key,value;
+    while (ok && *cursor && qa_info_next(&cursor,&key,&value)) {
+        char *name=(char *)key.data,*text=(char *)value.data;
+        char *name_end=name+key.size,*value_end=text+value.size;
+        char name_separator=*name_end,value_separator=*value_end;
+        *name_end=0; *value_end=0;
+        bool skip=!key.size || qa_text_ascii_equal(name,"cl_allowdownload") ||
+            (same && qa_text_ascii_equal(name,"timescale"));
+        if (policy.skip_time_controls) for (size_t i=0;i<3;++i)
+            skip=skip || qa_text_ascii_equal(name,time_names[i]);
+        if (!skip) ok=qa_cvars_set(cvars,name,text,true,error) &&
+            (!policy.after_set || policy.after_set(policy.context));
+        *name_end=name_separator; *value_end=value_separator;
+    }
+    if (ok) { free(*retained); *retained=copy; }
+    else free(copy);
+    return ok;
 }
 bool native_client_time_register(qa_native_q3_client_service *service,qa_error *error)
 {
@@ -34,28 +59,13 @@ static bool refresh_system_info(qa_native_q3_client_service *service,qa_error *e
     const char *borrowed; uint64_t revision;
     if (!qa_native_q3_wire_reader_configstring(service->services.wire_reader,1,&borrowed,&revision,error)) return false;
     if (service->has_system_info_revision && service->system_info_revision==revision) return true;
-    char *retained=retain_text(borrowed),*working=retain_text(borrowed);
-    if (!retained || !working) { free(retained); free(working); return native_client_fail(error,QA_ERROR_MEMORY,"Retaining actual native SystemInfo"); }
-    bool same=service->system_info && !strcmp(retained,service->system_info),ok=true;
-    char *cursor=working;
-    if (*cursor=='\\') ++cursor;
-    while (ok && *cursor) {
-        char *name=cursor,*separator=strchr(cursor,'\\');
-        if (!separator) break;
-        *separator=0; char *value=separator+1;
-        separator=strchr(value,'\\');
-        if (separator) { *separator=0; cursor=separator+1; } else cursor=value+strlen(value);
-        bool skip=! *name || qa_text_ascii_equal(name,"cl_allowdownload") || (same && qa_text_ascii_equal(name,"timescale"));
-        if (service->services.client.client_time_cvars) for (size_t i=0;i<3;++i)
-            skip=skip || qa_text_ascii_equal(name,time_names[i]);
-        if (!skip) ok=qa_cvars_set(service->services.client.cvars,name,value,true,error);
-    }
-    free(working);
+    native_q3_system_info_policy policy={
+        .skip_time_controls=service->services.client.client_time_cvars!=NULL,
+        .skip_same_timescale=true,.memory_error="Retaining actual native SystemInfo"};
+    bool ok=native_q3_system_info_apply(service->services.client.cvars,&service->system_info,borrowed,policy,error);
     if (ok) {
-        free(service->system_info); service->system_info=retained;
         service->system_info_revision=revision; service->has_system_info_revision=true;
     }
-    else free(retained);
     return ok;
 }
 bool qa_native_q3_client_prepare(qa_native_q3_client_service *service,qa_error *error)

@@ -1,7 +1,6 @@
 #include "native_q3_remote_client.h"
 #include "native_q3_client_settings.h"
-#include <stdlib.h>
-#include <string.h>
+#include "native_q3_system_info.h"
 
 static bool enter(qa_native_q3_remote_client_service *service, qa_error *error)
 {
@@ -72,36 +71,16 @@ bool qa_native_q3_remote_client_update(qa_native_q3_remote_client_service *servi
         &service->overlay_count, &service->force_model_count, error);
     service->updating = false; return ok;
 }
-static bool same_name(const char *a, const char *b)
-{
-    while (*a && *b) { unsigned x = (unsigned char)*a++, y = (unsigned char)*b++;
-        if (x >= 'A' && x <= 'Z') x += 'a' - 'A';
-        if (y >= 'A' && y <= 'Z') y += 'a' - 'A';
-        if (x != y) return false; }
-    return !*a && !*b;
-}
 static bool system_info(qa_native_q3_remote_client_service *service, qa_error *error)
 {
     const qa_q3_gamestate *state = service->services.network.gamestate(service->services.network.context);
     if (!state || !qa_native_q3_remote_client_current(service)) return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote SystemInfo lost its reached gamestate");
-    const char *text = qa_q3_configstring(state, 1); size_t length = strlen(text);
-    char *retained = malloc(length + 1), *working = malloc(length + 1);
-    if (!retained || !working) { free(retained); free(working); return native_client_fail(error, QA_ERROR_MEMORY, "Retaining reached remote SystemInfo"); }
-    memcpy(retained, text, length + 1); memcpy(working, text, length + 1);
-    bool same = service->system_info && !strcmp(retained, service->system_info), ok = true;
-    char *cursor = working; if (*cursor == '\\') ++cursor;
-    while (ok && *cursor) {
-        char *name = cursor, *separator = strchr(cursor, '\\'); if (!separator) break;
-        *separator = 0; char *value = separator + 1; separator = strchr(value, '\\');
-        if (separator) { *separator = 0; cursor = separator + 1; } else cursor = value + strlen(value);
-        bool frame_owner = service->services.basis.client.client_time_cvars != NULL &&
-            (same_name(name, "timescale") || same_name(name, "fixedtime") || same_name(name, "com_cameraMode"));
-        if (*name && !same_name(name, "cl_allowdownload") && !frame_owner && !(same && same_name(name, "timescale")))
-            ok = qa_cvars_set(service->services.basis.client.cvars, name, value, true, error) && qa_native_q3_remote_client_current(service);
-    }
-    free(working);
-    if (ok) { free(service->system_info); service->system_info = retained; } else free(retained);
-    return ok;
+    native_q3_system_info_policy policy={
+        .skip_time_controls=service->services.basis.client.client_time_cvars!=NULL,
+        .skip_same_timescale=true,.after_set=current,.context=service,
+        .memory_error="Retaining reached remote SystemInfo"};
+    return native_q3_system_info_apply(service->services.basis.client.cvars,&service->system_info,
+        qa_q3_configstring(state,1),policy,error);
 }
 bool qa_native_q3_remote_client_system_info(qa_native_q3_remote_client_service *service, qa_error *error)
 {
