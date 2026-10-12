@@ -136,9 +136,8 @@ bool application_q3_gear_restore(application_q3_gear *gear, qa_bytes bytes,
         okay = binding_fields(&io, &row) && row.actor.slot < gear->capacity &&
             qa_actors_get(qa_session_actors(gear->options.host.session), row.actor) &&
             !gear->bindings[row.actor.slot].actor.registry;
-        for (uint32_t j = 0; j < gear->capacity && okay; ++j)
-            if (gear->bindings[j].actor.registry && gear->bindings[j].pointer == row.pointer) okay = false;
-        if (okay) gear->bindings[row.actor.slot] = row;
+        if (okay) okay = q3gear_pointer_row(gear, row.pointer, true) == SIZE_MAX;
+        if (okay) q3gear_binding_write(gear, row.actor.slot, row);
     }
     if (okay) okay = qa_source_save_count(&io, &tethers, bytes.size/32);
     for (size_t i = 0; i < tethers && okay; ++i) {
@@ -148,10 +147,10 @@ bool application_q3_gear_restore(application_q3_gear *gear, qa_bytes bytes,
             !gear->tethers[row.owner.slot].tracked;
         const qa_actor_record *record = row.actor.registry ? qa_actors_get(qa_session_actors(gear->options.host.session), row.actor) : NULL;
         if (okay && row.actor.registry) okay = record && record->owner == gear->options.host.owner && record->has_source;
+        if (okay && row.actor.registry) okay = q3gear_pointer_row(gear, row.hook, false) == SIZE_MAX;
         for (uint32_t j = 0; j < gear->capacity && okay && row.actor.registry; ++j)
-            if ((gear->tethers[j].actor.registry && (qa_actor_id_equal(gear->tethers[j].actor, row.actor) || gear->tethers[j].hook == row.hook)) ||
-                (gear->bindings[j].actor.registry && gear->bindings[j].pointer == row.hook)) okay = false;
-        if (okay) gear->tethers[row.owner.slot] = row;
+            if (gear->tethers[j].actor.registry && qa_actor_id_equal(gear->tethers[j].actor, row.actor)) okay = false;
+        if (okay) q3gear_tether_write(gear, row.owner.slot, row);
     }
     for (size_t i = 0; i < 1088 && okay; ++i) {
         const char *value = NULL;

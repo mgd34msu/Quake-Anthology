@@ -64,6 +64,7 @@ bool application_q3_gear_create(const application_q3_gear_options *options, bool
         qa_console_unbind_source(gear->console, qa_cvars_view_identity(gear->cvars), &cleanup);
         qa_cvars_detach_callbacks(gear->cvars); qa_cvars_destroy(gear->cvars);
         qa_qvm_image_release(gear->image); qa_buffer_free(&gear->entities);
+        qa_id_index_destroy(&gear->pointers);
         qa_arena_destroy(&gear->actor_storage); free(gear->path); free(gear);
         return false;
     }
@@ -145,7 +146,7 @@ bool q3gear_publish(application_q3_gear *gear, q3gear_tether *entry, qa_error *e
             if (!qa_session_release(gear->options.host.session, tether.actor, error) ||
                 !qa_q3_host_actor_released(gear->host, released, error)) return false;
         }
-        gear->tethers[owner.slot] = (q3gear_tether){0};
+        q3gear_tether_write(gear, owner.slot, (q3gear_tether){0});
     } else {
         uint32_t slot; qa_q3_entity source; qa_qvm_entity_shared shared;
         int32_t flags, mover = 0;
@@ -164,14 +165,14 @@ bool q3gear_publish(application_q3_gear *gear, q3gear_tether *entry, qa_error *e
             qa_string_id definition;
             if (!qa_strings_intern_cstr(qa_session_strings(gear->options.host.session), "q3:equipment/hook", &definition, error) ||
                 !qa_session_allocate(gear->options.host.session, gear->options.host.owner, definition, true, slot, &tether.actor, error)) return false;
-            tether.hook = hook; gear->tethers[owner.slot] = tether;
+            tether.hook = hook; q3gear_tether_write(gear, owner.slot, tether);
             if (!qa_world_body_create(gear->options.host.world, tether.actor, &body, error) ||
                 !qa_q3_host_bind_actor(gear->host, slot, tether.actor, true, error)) return false;
         }
         if (!qa_world_body_write(gear->options.host.world, tether.actor, &body, error) ||
             !qa_world_link(gear->options.host.world, tether.actor, NULL, error)) return false;
         if (pulling && !tether.pulling && !q3gear_sound(gear, tether.actor, gear->definition->presentation.attach_sound, false, error)) return false;
-        tether.pulling = pulling; gear->tethers[owner.slot] = tether;
+        tether.pulling = pulling; q3gear_tether_write(gear, owner.slot, tether);
     }
     if (!qa_actors_get(qa_session_actors(gear->options.host.session), owner)) return true;
     qa_vec3 velocity;
@@ -276,7 +277,9 @@ bool application_q3_gear_actor_released(application_q3_gear *gear, qa_actor_reco
     for (uint32_t i = 0; i < gear->capacity; ++i) {
         if (qa_actor_id_equal(gear->bindings[i].actor, released.id)) gear->bindings[i].retired = true;
         if (qa_actor_id_equal(gear->tethers[i].actor, released.id)) {
-            gear->tethers[i].actor = (qa_actor_id){0}; gear->tethers[i].orphaned = true;
+            q3gear_tether tether = gear->tethers[i];
+            tether.actor = (qa_actor_id){0}; tether.orphaned = true;
+            q3gear_tether_write(gear, i, tether);
         }
     }
     return gear->busy || qa_qvm_active(gear->vm) || gear->restoring ? true : q3gear_flush_releases(gear, error);
@@ -399,7 +402,7 @@ bool application_q3_gear_destroy(application_q3_gear *gear, qa_error *error)
                 if (!qa_session_release(gear->options.host.session, actor, error) ||
                     !qa_q3_host_actor_released(gear->host, released, error)) return false;
             }
-            gear->tethers[i] = (q3gear_tether){0};
+            q3gear_tether_write(gear, i, (q3gear_tether){0});
         }
     }
     if (!qa_q3_host_destroy_ready(gear->host) || (gear->vm && !qa_qvm_can_destroy(gear->vm)))
@@ -411,6 +414,7 @@ bool application_q3_gear_destroy(application_q3_gear *gear, qa_error *error)
     qa_cvars_detach_callbacks(gear->cvars); qa_cvars_destroy(gear->cvars);
     for (size_t i = 0; i < 1024; ++i) free(gear->configstrings[i]);
     for (size_t i = 0; i < 64; ++i) free(gear->userinfo[i]);
+    qa_id_index_destroy(&gear->pointers);
     qa_arena_destroy(&gear->actor_storage); free(gear->path); qa_buffer_free(&gear->entities);
     qa_qvm_image_release(gear->image); free(gear); return true;
 }

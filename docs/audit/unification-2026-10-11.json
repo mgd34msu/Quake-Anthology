@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "000d42085a772e989cd54d0502752ccaa6e8fec2",
+  "verified_main": "e2549f62dc04639c614d202dc681e3fb2c2ff3a6",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 133,
-    "open_source_observation": 238,
+    "fixed_source_build_core": 134,
+    "open_source_observation": 237,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -23934,8 +23934,9 @@
       "severity": "medium",
       "job": "01",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Protection absorption stages and committed-store deliveries use existing shared application control leases. Stage storage exists before write-watch registration; delivery is unlinked, copied and released before observer callback. Failed watch retirement retains the stage and backing for the original retry. Nested actor selection, exact sequence and regular/powered comparisons remain; channel/watch allocation remains outside this observation. Normal production build and seven core suites passed; no live combat or whole-frame allocation claim.",
+      "fix_commit": "e2549f62dc04639c614d202dc681e3fb2c2ff3a6"
     },
     {
       "id": "01-text-userinfo-pairs",
@@ -40637,6 +40638,32 @@
       ],
       "record_directory": "/tmp/qa-ta3196-common-capture-growth-20261012",
       "conclusion": "All five listed body, record-observation and mod-input grow/copy sites use common qa_arena_grow in their existing owned lease arena. Capacity policy, prefix, newly exposed zero state, alignment and old-span lifetime remain; no replacement publishes on failed growth. Direct arena requests no longer update the lease requested-byte diagnostic, which has no reader on these separate capture leases; network document/world leases retain their existing accounting. Normal production build and seven core suites passed; no live capture or whole-frame allocation claim."
+    },
+    {
+      "commit": "e2549f62dc04639c614d202dc681e3fb2c2ff3a6",
+      "source_tree": "639bbfc713cdef44e96c1139f929b8714993a4c4",
+      "finding_ids": [
+        "01-storage-protection-continuations"
+      ],
+      "files_rechecked": [
+        "src/app/application/guest_q3_mod_protection.c",
+        "src/app/application/guest_q3_mod.c",
+        "src/app/application/control_frame.c",
+        "src/network/unified/frame_pool.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-protection-control-leases-20261012",
+      "conclusion": "Protection absorption stages and committed-store deliveries use existing shared application control leases. Stage storage exists before write-watch registration; delivery is unlinked, copied and released before observer callback. Failed watch retirement retains the stage and backing for the original retry. Nested actor selection, exact sequence and regular/powered comparisons remain; channel/watch allocation remains outside this observation. Normal production build and seven core suites passed; no live combat or whole-frame allocation claim."
     }
   ],
   "verification_limits": [

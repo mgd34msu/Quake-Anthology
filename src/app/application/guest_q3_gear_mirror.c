@@ -9,11 +9,13 @@ bool q3gear_prepare_storage(application_q3_gear *gear, qa_error *error)
         return q3gear_fail(error, QA_ERROR_MEMORY, "Separate QVM gear actor bindings exceed the native allocation extent");
 #endif
     qa_arena_init(&gear->actor_storage, 0);
+    gear->pointers.storage = &gear->actor_storage;
     gear->bindings = qa_arena_alloc(&gear->actor_storage, (size_t)capacity * sizeof(*gear->bindings),
                                    _Alignof(q3gear_binding), error);
     gear->tethers = qa_arena_alloc(&gear->actor_storage, (size_t)capacity * sizeof(*gear->tethers),
                                  _Alignof(q3gear_tether), error);
     if (!gear->bindings || !gear->tethers ||
+        !qa_id_index_reserve(&gear->pointers, (size_t)capacity * 2, error) ||
         !qa_pool_prepare(&gear->spatial_scratch, &gear->actor_storage, QA_WORLD_SNAPSHOT_DEFAULT_FRAMES,
                          (size_t)capacity * sizeof(qa_actor_id), _Alignof(qa_actor_id), error)) return false;
     memset(gear->bindings, 0, (size_t)capacity * sizeof(*gear->bindings));
@@ -42,7 +44,7 @@ bool q3gear_mirror(application_q3_gear *gear, const application_q3_gear_target *
                 .origin = target.body.origin, .player = true};
             if (!q3gear_replace_text(&gear->userinfo[slot], target.userinfo, error) ||
                 !qa_q3_host_bind_actor(gear->host, slot, actor, true, error)) return false;
-            gear->bindings[actor.slot] = binding;
+            q3gear_binding_write(gear, actor.slot, binding);
             int32_t connect[] = {2, (int32_t)slot, 1, 0}, begin[] = {3, (int32_t)slot};
             if (!q3gear_call(gear, 0, connect, 4, &result, error)) return false;
             if (result) {
@@ -65,13 +67,11 @@ bool q3gear_mirror(application_q3_gear *gear, const application_q3_gear_target *
                 !q3gear_slot(gear, (uint32_t)result, &slot, error)) return false;
             if (slot < 64 || slot >= 1022)
                 return q3gear_fail(error, QA_ERROR_FORMAT, "Separate QVM gear allocator returned a reserved client/world slot");
-            for (uint32_t i = 0; i < gear->capacity; ++i)
-                if ((gear->bindings[i].actor.registry && gear->bindings[i].pointer == (uint32_t)result) ||
-                    (gear->tethers[i].actor.registry && gear->tethers[i].hook == (uint32_t)result))
-                    return q3gear_fail(error, QA_ERROR_ARGUMENT, "Separate QVM gear allocator reused a live source record");
+            if (q3gear_pointer_row(gear, (uint32_t)result, false) != SIZE_MAX)
+                return q3gear_fail(error, QA_ERROR_ARGUMENT, "Separate QVM gear allocator reused a live source record");
             binding = (q3gear_binding){.actor = actor, .pointer = (uint32_t)result, .origin = target.body.origin};
             if (!qa_q3_host_bind_actor(gear->host, slot, actor, true, error)) return false;
-            gear->bindings[actor.slot] = binding;
+            q3gear_binding_write(gear, actor.slot, binding);
         }
     }
     if (!q3gear_target(gear, actor, &target, error) ||
@@ -186,7 +186,7 @@ bool q3gear_forget(application_q3_gear *gear, qa_actor_id actor, qa_error *error
     }
     if (!gear->bindings[actor.slot].retired && !qa_q3_host_detach_actor(gear->host, slot, actor, error)) return false;
     if (binding.player) { free(gear->userinfo[slot]); gear->userinfo[slot] = NULL; }
-    gear->bindings[actor.slot] = (q3gear_binding){0}; return true;
+    q3gear_binding_write(gear, actor.slot, (q3gear_binding){0}); return true;
 }
 
 bool q3gear_flush_releases(application_q3_gear *gear, qa_error *error)

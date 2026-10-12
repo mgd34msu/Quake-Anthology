@@ -7,6 +7,7 @@
 #include "qa/cvars_save.h"
 #include "qa/source_save.h"
 #include "qa/bsp.h"
+#include "qa/id_index.h"
 #include "qa/pool.h"
 #include <limits.h>
 #include <math.h>
@@ -40,6 +41,7 @@ struct application_q3_gear {
     q3gear_binding *bindings;
     q3gear_tether *tethers;
     qa_arena actor_storage;
+    qa_id_index pointers;
     qa_pool spatial_scratch;
     uint32_t capacity;
     qa_qvm_binding same_team, damage, pull, mover;
@@ -75,6 +77,9 @@ bool q3gear_bind_hooks(application_q3_gear *, qa_error *);
 size_t q3gear_descriptors(application_q3_gear *, qa_qvm_saved_function out[4]);
 bool q3gear_sync(application_q3_gear *, qa_error *);
 bool q3gear_publish(application_q3_gear *, q3gear_tether *, qa_error *);
+size_t q3gear_pointer_row(application_q3_gear *, uint32_t pointer, bool bindings_only);
+void q3gear_binding_write(application_q3_gear *, uint32_t row, q3gear_binding);
+void q3gear_tether_write(application_q3_gear *, uint32_t row, q3gear_tether);
 qa_actor_id q3gear_actor(application_q3_gear *, int32_t pointer);
 bool q3gear_call(application_q3_gear *, uint32_t instruction,
     const int32_t *, size_t, int32_t *, qa_error *);

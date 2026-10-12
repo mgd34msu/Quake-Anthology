@@ -71,16 +71,44 @@ bool q3gear_slot(application_q3_gear *gear, uint32_t pointer, uint32_t *out, qa_
     *out = (uint32_t)((pointer - layout.entities_address) / layout.entity_stride); return true;
 }
 
+size_t q3gear_pointer_row(application_q3_gear *gear, uint32_t pointer, bool bindings_only)
+{
+    qa_id_index_cursor cursor = qa_id_index_begin(&gear->pointers, 0, pointer);
+    size_t row, first = SIZE_MAX;
+    /* Duplicate pointers retain the old B0,T0,B1,T1 source-row priority. */
+    while (qa_id_index_next(&gear->pointers, &cursor, &row))
+        if ((!bindings_only || !(row & 1)) && row < first) first = row;
+    return first;
+}
+
+void q3gear_binding_write(application_q3_gear *gear, uint32_t slot, q3gear_binding row)
+{
+    q3gear_binding previous = gear->bindings[slot];
+    size_t ordinal = (size_t)slot * 2;
+    if (previous.actor.registry && (!row.actor.registry || previous.pointer != row.pointer))
+        qa_id_index_remove_value(&gear->pointers, 0, previous.pointer, ordinal);
+    gear->bindings[slot] = row;
+    if (row.actor.registry && (!previous.actor.registry || previous.pointer != row.pointer))
+        qa_id_index_insert(&gear->pointers, 0, row.pointer, ordinal);
+}
+
+void q3gear_tether_write(application_q3_gear *gear, uint32_t slot, q3gear_tether row)
+{
+    q3gear_tether previous = gear->tethers[slot];
+    size_t ordinal = (size_t)slot * 2 + 1;
+    if (previous.actor.registry && (!row.actor.registry || previous.hook != row.hook))
+        qa_id_index_remove_value(&gear->pointers, 0, previous.hook, ordinal);
+    gear->tethers[slot] = row;
+    if (row.actor.registry && (!previous.actor.registry || previous.hook != row.hook))
+        qa_id_index_insert(&gear->pointers, 0, row.hook, ordinal);
+}
+
 qa_actor_id q3gear_actor(application_q3_gear *gear, int32_t pointer)
 {
     if (!pointer) return (qa_actor_id){0};
-    for (uint32_t i = 0; i < gear->capacity; ++i) {
-        if (gear->bindings[i].actor.registry && gear->bindings[i].pointer == (uint32_t)pointer)
-            return gear->bindings[i].actor;
-        if (gear->tethers[i].actor.registry && gear->tethers[i].hook == (uint32_t)pointer)
-            return gear->tethers[i].actor;
-    }
-    return (qa_actor_id){0};
+    size_t row = q3gear_pointer_row(gear, (uint32_t)pointer, false);
+    if (row == SIZE_MAX) return (qa_actor_id){0};
+    return row & 1 ? gear->tethers[row / 2].actor : gear->bindings[row / 2].actor;
 }
 
 static bool text_is(qa_bytes text, const char *value)
