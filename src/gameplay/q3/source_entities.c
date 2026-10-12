@@ -40,7 +40,7 @@ void q3_source_state_reset(qa_q3_game *game) {
     game->team_state = (qa_q3_source_team_state){0};
     game->match_state = (qa_q3_source_match_state){0};
     for (size_t i = 0; i < 3; ++i) game->podium_players[i] = QA_Q3_SOURCE_NONE;
-    memset(game->source_actor_ran, 0, sizeof(game->source_actor_ran));
+    qa_stamp_set_init(&game->source_actor_visits, game->source_actor_marks, QA_Q3_SOURCE_ENTITIES);
     memset(game->death_continuations, 0, sizeof(game->death_continuations));
     memset(game->current_origins, 0, sizeof(game->current_origins));
     memset(game->clients, 0, sizeof(game->clients));
@@ -241,7 +241,7 @@ static bool bind(qa_q3_game *game, uint32_t slot, qa_actor_id actor, qa_error *e
             .free_time_ms = row->free_time_ms, .classname = game->source_noclass,
             .server_flags = row->server_flags, .never_free = row->never_free,
             .client_slot = row->client_slot, .body_attached = true};
-    game->source_actor_ran[slot] = false;
+    qa_stamp_set_restore_mark(&game->source_actor_visits, slot, 0);
     if (slot < QA_Q3_SOURCE_CLIENTS)
         game->clients[slot].player = qa_actors_player(
             qa_session_actors(game->options.services.session), actor);

@@ -6,6 +6,7 @@
 #include "qa/game_q3_client_types.h"
 #include "qa/game_q3_source_types.h"
 #include "qa/game_q3_source.h"
+#include "qa/stamp.h"
 #include "qa/text.h"
 #include "source_wire.h"
 #include "source_postgame.h"
@@ -152,7 +153,8 @@ struct qa_q3_game {
     qa_q3_source_client_counts client_counts;
     qa_q3_source_team_state team_state;
     qa_q3_source_match_state match_state;
-    bool source_actor_ran[QA_Q3_SOURCE_ENTITIES];
+    qa_stamp_set source_actor_visits;
+    uint32_t source_actor_marks[QA_Q3_SOURCE_ENTITIES];
     q3_death_continuation death_continuations[QA_Q3_SOURCE_CLIENTS];
     q3_current_origin current_origins[QA_Q3_SOURCE_CLIENTS];
     qa_physics physics;

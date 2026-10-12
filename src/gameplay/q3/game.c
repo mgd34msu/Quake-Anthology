@@ -694,7 +694,7 @@ bool qa_q3_frame(qa_q3_game *game, int32_t previous, int32_t now, qa_error *erro
         return q3_fail(error, "Q3 source restoration is pending or unavailable");
     game->previous_ms = previous;
     game->now_ms = now;
-    memset(game->source_actor_ran, 0, sizeof(game->source_actor_ran));
+    qa_stamp_set_begin(&game->source_actor_visits);
     return q3_map_frame_begin(game, error);
 }
 static bool actor_frame(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
@@ -839,7 +839,7 @@ static bool component_begin(void *context, qa_session *session, const qa_source_
         return q3_fail(error, "Q3 source restoration is pending");
     game->previous_ms = game->now_ms;
     game->now_ms = (int32_t)(uint32_t)(frame->time_ns / UINT64_C(1000000));
-    memset(game->source_actor_ran, 0, sizeof(game->source_actor_ran));
+    qa_stamp_set_begin(&game->source_actor_visits);
     if (game->options.hooks.source_settings_update &&
         !game->options.hooks.source_settings_update(game->options.hooks.context, frame, error))
         return false;
@@ -864,8 +864,7 @@ bool qa_q3_source_run_actor(qa_q3_game *game, qa_actor_id actor,
         active.number != frame->number || active.time_ns != frame->time_ns ||
         !qa_q3_source_actor_slot(game, actor, &slot, error))
         return q3_fail(error, "Q3 actor dispatch needs its genuine native source frame");
-    if (!game->source_entities[slot].in_use || game->source_actor_ran[slot]) return true;
-    game->source_actor_ran[slot] = true;
+    if (!game->source_entities[slot].in_use || !qa_stamp_set_mark(&game->source_actor_visits, slot)) return true;
     q3_wire_event_status event_status;
     if (!q3_wire_expire_events(game, actor, &event_status, error)) return false;
     if (event_status != Q3_WIRE_EVENT_ACTIVE) return true;
