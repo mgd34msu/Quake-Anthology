@@ -260,13 +260,14 @@ bool application_guest_q3_video_reopen(application_guest_q3_video *ticket, qa_er
             row->seat, row->path, row->primary, &replacement, error);
         if (!ok) {
             /* The constructor retains a refused cleanup shell in its real list. */
-            for (q3g_role *r = engine->roles; r; r = r->next)
-                if (r->service_sequence > sequence && r->kind == row->kind &&
-                    r->seat == row->seat && !strcmp(r->path, row->path)) { row->role = r; break; }
+            qa_id_index_cursor roles = q3g_role_lookup_begin(engine, row->kind, row->seat);
+            q3g_role *r;
+            while ((r = q3g_role_lookup_next(engine, &roles)))
+                if (r->service_sequence > sequence && !strcmp(r->path, row->path)) { row->role = r; break; }
             break;
         }
         replacement->source_cleared = row->source_cleared;
-        replacement->next = engine->roles; engine->roles = replacement;
+        q3g_role_publish(&engine->roles, replacement, engine->roles);
         row->role = replacement; row->reopened = true;
     }
     ticket->busy = false;

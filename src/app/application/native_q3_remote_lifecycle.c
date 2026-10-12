@@ -22,8 +22,9 @@ static struct application_native_q3_remote_role *source_row(qa_application *app,
         application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT lifecycle retains a source callback or detached receiver");
         return NULL;
     }
-    for (struct application_native_q3_remote_role *row = provider->native_q3_remote_roles; row; row = row->next)
-        if (row->seat == source->receiver.seat && !row->retiring) return row;
+    struct application_native_q3_remote_role *row =
+        application_native_q3_remote_role_find(provider, source->receiver.seat);
+    if (row && !row->retiring) return row;
     application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT lifecycle lost its actual authored seat");
     return NULL;
 }

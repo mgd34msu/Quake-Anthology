@@ -74,8 +74,10 @@ static q3g_role *client_role(application_provider *provider, qa_qvm_role kind, u
 {
     struct application_q3_guest *engine = q3g_engine(provider);
     if (!engine) return NULL;
-    for (q3g_role *role = engine->roles; role; role = role->next)
-        if (role->kind == kind && role->seat == seat && role->ready && !role->retired) return role;
+    qa_id_index_cursor roles = q3g_role_lookup_begin(engine, kind, seat);
+    q3g_role *role;
+    while ((role = q3g_role_lookup_next(engine, &roles)))
+        if (role->seat == seat && role->ready && !role->retired) return role;
     return NULL;
 }
 

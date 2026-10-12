@@ -227,8 +227,10 @@ bool qa_application_q3_equipment_requests(qa_application *app, qa_actor_owner re
     }
     struct application_q3_guest *engine = q3g_engine(provider);
     q3g_role *role = NULL;
-    if (engine) for (q3g_role *r = engine->roles; r; r = r->next)
-        if (r->kind == QA_QVM_CGAME && r->seat == seat && r->ready && !r->retired) {
+    qa_id_index_cursor roles = q3g_role_lookup_begin(engine, QA_QVM_CGAME, seat);
+    q3g_role *r;
+    while ((r = q3g_role_lookup_next(engine, &roles)))
+        if (r->ready && !r->retired) {
             if (role) return application_fail(error, QA_ERROR_ARGUMENT, "Ambiguous actual equipment receiver");
             role = r;
         }
@@ -337,11 +339,13 @@ bool qa_application_q3_remote_recipe_read(qa_application *app,
     application_provider *provider = receiver_provider(app, source->receiver.receiver);
     struct application_q3_guest *engine = q3g_engine(provider);
     q3g_role *cgame = NULL, *ui = NULL;
-    for (q3g_role *role = engine->roles; role; role = role->next)
-        if (role->seat == source->receiver.seat && role->ready && !role->retired) {
-            if (role->kind == QA_QVM_CGAME) cgame = role;
-            if (role->kind == QA_QVM_UI) ui = role;
-        }
+    qa_id_index_cursor roles = q3g_role_lookup_begin(engine, QA_QVM_CGAME, source->receiver.seat);
+    q3g_role *role;
+    while ((role = q3g_role_lookup_next(engine, &roles)))
+        if (role->ready && !role->retired) cgame = role;
+    roles = q3g_role_lookup_begin(engine, QA_QVM_UI, source->receiver.seat);
+    while ((role = q3g_role_lookup_next(engine, &roles)))
+        if (role->ready && !role->retired) ui = role;
     bool bytecode = strtol(pure, NULL, 10) != 0;
     const qa_cvar_view *restricted = qa_cvars_find(source->receiver.cvars, "fs_restrict");
     bytecode |= restricted && restricted->number != 0;
@@ -466,16 +470,16 @@ bool qa_application_q3_remote_replace(qa_application *app,
         }
     }
     if (ok) {
-        cgame->next = engine->roles; engine->roles = cgame;
-        if (ui) { ui->next = engine->roles; engine->roles = ui; }
+        q3g_role_publish(&engine->roles, cgame, engine->roles);
+        if (ui) { q3g_role_publish(&engine->roles, ui, engine->roles); }
         qa_launch_instance_lease_release(engine->client_descriptor);
         engine->client_descriptor = descriptor; descriptor = NULL;
         engine->client_generation = request->previous.configuration_generation + 1;
         engine->connection_epoch = request->connection_epoch;
     } else {
         /* Failed physical cleanup stays reachable by the genuine provider. */
-        if (!discard_role(&cgame, NULL)) { cgame->next = engine->roles; engine->roles = cgame; }
-        if (!discard_role(&ui, NULL)) { ui->next = engine->roles; engine->roles = ui; }
+        if (!discard_role(&cgame, NULL)) { q3g_role_publish(&engine->roles, cgame, engine->roles); }
+        if (!discard_role(&ui, NULL)) { q3g_role_publish(&engine->roles, ui, engine->roles); }
     }
     qa_launch_instance_lease_release(descriptor);
     app->operation = APPLICATION_IDLE;
@@ -490,8 +494,10 @@ static bool role_artifact_read(qa_application *app, qa_actor_owner receiver,
     application_provider *provider = receiver_provider(app, receiver);
     struct application_q3_guest *engine = q3g_engine(provider);
     q3g_role *role = NULL;
-    if (engine) for (q3g_role *current = engine->roles; current; current = current->next)
-        if (current->kind == kind && current->seat == seat && current->ready && !current->retired) {
+    qa_id_index_cursor roles = q3g_role_lookup_begin(engine, kind, seat);
+    q3g_role *current;
+    while ((current = q3g_role_lookup_next(engine, &roles)))
+        if (current->seat == seat && current->ready && !current->retired) {
             if (role) return application_fail(error, QA_ERROR_ARGUMENT, "Ambiguous actual role receipt");
             role = current;
         }
@@ -539,11 +545,13 @@ bool qa_application_q3_remote_initialize(qa_application *app,
     if (!engine)
         return application_fail(error, QA_ERROR_ARGUMENT, "Remote source Init requires its actual acquired role factory");
     q3g_role *cgame = NULL, *ui = NULL;
-    for (q3g_role *role = engine->roles; role; role = role->next)
-        if (role->seat == request->source.receiver.seat && role->ready && !role->retired) {
-            if (role->kind == QA_QVM_CGAME) cgame = role;
-            if (role->kind == QA_QVM_UI) ui = role;
-        }
+    qa_id_index_cursor roles = q3g_role_lookup_begin(engine, QA_QVM_CGAME, request->source.receiver.seat);
+    q3g_role *role;
+    while ((role = q3g_role_lookup_next(engine, &roles)))
+        if (role->ready && !role->retired) cgame = role;
+    roles = q3g_role_lookup_begin(engine, QA_QVM_UI, request->source.receiver.seat);
+    while ((role = q3g_role_lookup_next(engine, &roles)))
+        if (role->ready && !role->retired) ui = role;
     if (!cgame || !ui || engine->initializing_role)
         return application_fail(error, QA_ERROR_ARGUMENT, "Remote Init lost its retained source role");
     engine->initializing_role = ui;
@@ -597,8 +605,10 @@ bool qa_application_q3_source_loading_screen(qa_application *app, qa_actor_owner
     if (!cgame || cgame->kind != QA_QVM_CGAME || cgame->seat != seat ||
         !engine->calls || cgame->init_succeeded) return true;
     q3g_role *ui = NULL;
-    for (q3g_role *role = engine->roles; role; role = role->next)
-        if (role->kind == QA_QVM_UI && role->seat == seat && role->ready && !role->retired) {
+    qa_id_index_cursor roles = q3g_role_lookup_begin(engine, QA_QVM_UI, seat);
+    q3g_role *role;
+    while ((role = q3g_role_lookup_next(engine, &roles)))
+        if (role->ready && !role->retired) {
             if (ui) return application_fail(error, QA_ERROR_ARGUMENT, "Ambiguous actual source loading UI");
             ui = role;
         }

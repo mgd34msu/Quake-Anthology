@@ -867,15 +867,10 @@ static bool clients_agree(application_provider *provider, qa_error *error)
                 return application_fail(error, QA_ERROR_FORMAT, "Q3 source human client changes its canonical roster seat");
         }
         if (client->roster_attached) {
-            bool admitted = false;
-            for (size_t j = 0; roster && j < roster->count; ++j) {
-                const application_player_record *player = roster->records + j;
-                if (!qa_actor_id_equal(player->actor, client->actor)) continue;
-                for (size_t k = 0; k < player->guest_count; ++k)
-                    if (player->guests[k].owner == provider->owner && player->guests[k].source_slot == i &&
-                        player->guests[k].identity == provider->launch->identity) admitted = true;
-            }
-            if (!admitted)
+            const application_player_record *player = application_player_record_find(roster, client->actor);
+            const application_player_guest_binding *binding = application_player_guest_find(roster, provider->owner, i);
+            if (!player || !binding || binding->record != player ||
+                binding->identity != provider->launch->identity)
                 return application_fail(error, QA_ERROR_FORMAT, "Q3 source bot attachment is absent from its exact saved roster");
         }
     }
@@ -1224,7 +1219,7 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
         bool created = q3g_role_create_restored(engine, (qa_qvm_role)artifact->kind, next->seat, artifact->path,
             (next->flags & ROLE_PRIMARY) != 0, next->sequence, next->owner, NULL, &role, error);
         if (!created) return false;
-        next->actual = role; role->next = engine->roles; engine->roles = role;
+        next->actual = role; q3g_role_publish(&engine->roles, role, engine->roles);
         if (!game_topology(role, error)) return false;
         if (artifact->kind == QA_QVM_GAME) {
             engine->game = role; q3g_game_aliases(engine, role);
@@ -1236,6 +1231,7 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
     engine->roles = saved->roles[0].actual;
     for (size_t i = 0; i < saved->role_count; ++i)
         saved->roles[i].actual->next = i + 1 < saved->role_count ? saved->roles[i + 1].actual : NULL;
+    q3g_roles_reindex(engine);
     return true;
 }
 

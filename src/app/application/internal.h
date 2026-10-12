@@ -67,6 +67,7 @@ typedef struct application_provider {
     struct application_native_q2_console *native_q2_console;
     struct application_native_q3_console *native_q3_console;
     struct application_native_q3_remote_role *native_q3_remote_roles;
+    qa_id_index native_q3_remote_seats;
     struct application_native_q3_settings *native_q3_settings;
     struct application_native_q3_ipfilters *native_q3_ipfilters;
     struct application_native_q3_wire *native_q3_wire;

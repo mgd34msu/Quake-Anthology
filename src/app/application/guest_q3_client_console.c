@@ -128,9 +128,11 @@ static qa_command_result forward(void *context,const qa_command_invocation *comm
     if (!available(row) || row->kind!=QA_QVM_CGAME || !app->console_forward)
         return QA_COMMAND_UNHANDLED;
     const q3g_role *role=NULL;
-    for (const q3g_role *current=row->engine->roles; current; current=current->next)
-        if (current->kind==row->kind && current->seat==row->seat && !current->retired &&
-            current->ready && current->host && !current->local_client && !current->native_client) {
+    qa_id_index_cursor roles=q3g_role_lookup_begin(row->engine,row->kind,row->seat);
+    q3g_role *current;
+    while ((current=q3g_role_lookup_next(row->engine,&roles)))
+        if (!current->retired && current->ready && current->host &&
+            !current->local_client && !current->native_client) {
             if (role) {
                 application_fail(error,QA_ERROR_ARGUMENT,"CLIENT forwarding has ambiguous actual role lifetimes");
                 return QA_COMMAND_FAILED;
@@ -209,9 +211,10 @@ bool application_guest_q3_client_console_source(struct application_q3_guest *eng
     const q3g_role *declaration = engine->constructing_role;
     if (!declaration || declaration->kind != row->kind || declaration->seat != row->seat)
         declaration = NULL;
-    for (const q3g_role *role = engine->roles; !declaration && role; role = role->next)
-        if (role->kind == row->kind && role->seat == row->seat && !role->retired && role->service_owner)
-            declaration = role;
+    qa_id_index_cursor roles = q3g_role_lookup_begin(engine, row->kind, row->seat);
+    q3g_role *role;
+    while (!declaration && (role = q3g_role_lookup_next(engine, &roles)))
+        if (!role->retired && role->service_owner) declaration = role;
     *out = (qa_application_startup_source){.descriptor = engine->provider->launch,
         .scope = {.provider = engine->provider->owner, .kind = row->kind == QA_QVM_CGAME ?
             QA_APPLICATION_CONSOLE_Q3_CGAME : QA_APPLICATION_CONSOLE_Q3_UI, .seat = row->seat},
@@ -263,10 +266,11 @@ bool application_guest_q3_client_console_idle(const struct application_q3_guest 
 static bool child_released(const struct application_guest_q3_client_console *row)
 {
     if (!row || row->calls || row->engine->calls || !qa_console_idle(row->console)) return false;
-    for (const q3g_role *role = row->engine->roles; role; role = role->next)
-        if (role->kind == row->kind && role->seat == row->seat &&
-            (!role->retired || role->initialized || role->host || role->vm || role->native ||
-             role->native_client || role->client_source || role->client_engine)) return false;
+    qa_id_index_cursor roles = q3g_role_lookup_begin(row->engine, row->kind, row->seat);
+    q3g_role *role;
+    while ((role = q3g_role_lookup_next(row->engine, &roles)))
+        if (!role->retired || role->initialized || role->host || role->vm || role->native ||
+            role->native_client || role->client_source || role->client_engine) return false;
     return true;
 }
 
@@ -290,8 +294,9 @@ bool application_guest_q3_client_console_retire_begin(struct application_q3_gues
         return row->retiring_game == old_game ||
             application_fail(error, QA_ERROR_ARGUMENT, "Hosted CLIENT retirement names another old GAME");
     bool bound = false;
-    for (q3g_role *role = engine->roles; role; role = role->next) {
-        if (role->kind != row->kind || role->seat != seat) continue;
+    qa_id_index_cursor roles = q3g_role_lookup_begin(engine, row->kind, seat);
+    q3g_role *role;
+    while ((role = q3g_role_lookup_next(engine, &roles))) {
         if (!role->local_client || role->client_source != old_game || !role->host || role->retired)
             return application_fail(error, QA_ERROR_ARGUMENT, "Hosted CLIENT retirement lost its actual old role leases");
         bound = true;
@@ -442,9 +447,10 @@ bool application_guest_q3_client_consoles_retarget(struct application_q3_guest *
     while (*position) {
         struct application_guest_q3_client_console *row = *position;
         bool bound = row->configuration != CLIENT_CONFIGURATION_LIVE && row->retiring_game == old_game;
-        for (q3g_role *role = engine->roles; !bound && role; role = role->next)
-            bound = role->kind == row->kind && role->seat == row->seat &&
-                role->local_client && role->client_source == old_game;
+        qa_id_index_cursor roles = q3g_role_lookup_begin(engine, row->kind, row->seat);
+        q3g_role *current;
+        while (!bound && (current = q3g_role_lookup_next(engine, &roles)))
+            bound = current->local_client && current->client_source == old_game;
         if (!bound) { position = &row->next; continue; }
         bool admitted = false;
         for (size_t i = 0; i < choices->seat_count; ++i)
@@ -485,9 +491,10 @@ bool application_guest_q3_client_console_destroy(struct application_q3_guest *en
         return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT console is borrowed");
     while (engine && engine->client_preparation) {
         struct application_guest_q3_client_console *row = engine->client_preparation;
-        for (const q3g_role *role = engine->roles; role; role = role->next)
-            if (role->kind == row->kind && role->seat == row->seat &&
-                (role->host || role->vm || role->native))
+        qa_id_index_cursor roles = q3g_role_lookup_begin(engine, row->kind, row->seat);
+        q3g_role *role;
+        while ((role = q3g_role_lookup_next(engine, &roles)))
+            if (role->host || role->vm || role->native)
                 return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT globals still have a retained module host");
         if (!qa_console_idle(row->console))
             return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT console still has retained command owners");

@@ -73,8 +73,10 @@ bool application_guest_q3_source_ui_create(struct application_q3_guest *engine,
     uint32_t seat, q3g_role **out, qa_error *error)
 {
     q3g_role *cgame = NULL;
-    for (q3g_role *role = engine ? engine->roles : NULL; role; role = role->next)
-        if (role->kind == QA_QVM_CGAME && role->seat == seat && role->ready && !role->retired) {
+    qa_id_index_cursor roles = q3g_role_lookup_begin(engine, QA_QVM_CGAME, seat);
+    q3g_role *role;
+    while ((role = q3g_role_lookup_next(engine, &roles)))
+        if (role->ready && !role->retired) {
             if (cgame) return application_fail(error, QA_ERROR_ARGUMENT, "Ambiguous actual source UI client");
             cgame = role;
         }
@@ -108,7 +110,7 @@ static bool received_current(q3g_role *cgame, const qa_q3_gamestate *state, qa_e
 static void discard_candidate(struct application_q3_guest *engine, q3g_role *role)
 {
     role->retired = true;
-    if (!q3g_role_destroy(role, NULL)) { role->next = engine->roles; engine->roles = role; }
+    if (!q3g_role_destroy(role, NULL)) { q3g_role_publish(&engine->roles, role, engine->roles); }
 }
 
 bool application_guest_q3_source_ui_received(q3g_role *cgame, const qa_q3_gamestate *state,
@@ -120,14 +122,15 @@ bool application_guest_q3_source_ui_received(q3g_role *cgame, const qa_q3_gamest
         !received_current(cgame, state, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Source UI policy requires its post-Begin local client");
     struct application_q3_guest *engine = cgame->engine;
-    q3g_role **position = NULL;
-    for (q3g_role **link = &engine->roles; *link; link = &(*link)->next)
-        if ((*link)->kind == QA_QVM_UI && (*link)->seat == cgame->seat &&
-            (*link)->ready && !(*link)->retired) {
-            if (position) return application_fail(error, QA_ERROR_ARGUMENT, "Ambiguous received source UI");
-            position = link;
+    qa_id_index_cursor roles = q3g_role_lookup_begin(engine, QA_QVM_UI, cgame->seat);
+    q3g_role *ui = NULL, *candidate;
+    while ((candidate = q3g_role_lookup_next(engine, &roles)))
+        if (candidate->ready && !candidate->retired) {
+            if (ui) return application_fail(error, QA_ERROR_ARGUMENT, "Ambiguous received source UI");
+            ui = candidate;
         }
-    q3g_role *ui = position ? *position : NULL;
+    q3g_role **position = &engine->roles;
+    while (*position && *position != ui) position = &(*position)->next;
     if (!ui || ui->descriptor->storage != cgame->descriptor->storage ||
         ui->descriptor->content != cgame->descriptor->content)
         return application_fail(error, QA_ERROR_ARGUMENT, "Received source UI has another physical descriptor");
@@ -152,8 +155,7 @@ bool application_guest_q3_source_ui_received(q3g_role *cgame, const qa_q3_gamest
     if (!q3g_role_shutdown_source(ui, false, error) || !q3g_role_destroy(ui, error)) {
         discard_candidate(engine, replacement); return false;
     }
-    replacement->next = next;
-    *position = replacement;
+    q3g_role_publish(position, replacement, next);
     *out = replacement;
     return true;
 }

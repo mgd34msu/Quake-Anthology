@@ -142,6 +142,8 @@ struct application_q3_guest {
     application_provider *provider;
     qa_world *world;
     q3g_role *roles, *game;
+    qa_id_index role_index;
+    size_t owned_role_count;
     q3g_role *constructing_role;
     q3g_role *initializing_role;
     q3g_role *entered_role;
@@ -182,6 +184,10 @@ struct application_q3_guest {
 };
 
 struct application_q3_guest *q3g_engine(application_provider *);
+qa_id_index_cursor q3g_role_lookup_begin(const struct application_q3_guest *, qa_qvm_role, uint32_t seat);
+q3g_role *q3g_role_lookup_next(const struct application_q3_guest *, qa_id_index_cursor *);
+void q3g_roles_reindex(struct application_q3_guest *);
+void q3g_role_publish(q3g_role **position, q3g_role *, q3g_role *next);
 bool q3g_command_begin(struct application_q3_guest *,const char *,const char *const *,size_t,
     qa_command_tokens *,qa_error *);
 void q3g_command_end(struct application_q3_guest *,qa_command_tokens);

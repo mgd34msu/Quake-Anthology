@@ -299,7 +299,7 @@ bool application_construct_q3_guest(qa_application *application, application_pro
     }
     q3g_role *role = NULL;
     if (!q3g_role_create(engine, kind, seat, path, true, &role, error)) return false;
-    role->next = engine->roles; engine->roles = role;
+    q3g_role_publish(&engine->roles, role, engine->roles);
     if (kind == QA_QVM_GAME) {
         engine->game = role;
         q3g_game_aliases(engine, role);
@@ -308,8 +308,7 @@ bool application_construct_q3_guest(qa_application *application, application_pro
             if (choices->seats[i].id == seat || !q3g_selected_client_seat(provider, choices, kind, i)) continue;
             q3g_role *companion = NULL;
             if (!q3g_role_create(engine, kind, choices->seats[i].id, path, false, &companion, error)) return false;
-            companion->next = engine->roles;
-            engine->roles = companion;
+            q3g_role_publish(&engine->roles, companion, engine->roles);
         }
     }
     /* The source client owns its UI helper even when another provider owns
@@ -320,7 +319,7 @@ bool application_construct_q3_guest(qa_application *application, application_pro
             q3g_role *ui = NULL;
             if (!application_guest_q3_source_ui_create(engine, choices->seats[i].id,
                 &ui, error)) return false;
-            ui->next = engine->roles; engine->roles = ui;
+            q3g_role_publish(&engine->roles, ui, engine->roles);
         }
     return true;
 }
@@ -372,9 +371,10 @@ bool application_q3_guest_client_sources_rebuild(application_provider *provider,
     for (size_t i = 0; i < choices->seat_count; ++i) {
         if (!q3g_selected_client_seat(provider, choices, kind, i)) continue;
         q3g_role *role = NULL;
-        for (q3g_role *current = engine->roles; current; current = current->next)
-            if (current->kind == kind && current->seat == choices->seats[i].id &&
-                !strcmp(current->path, path)) { role = current; break; }
+        qa_id_index_cursor roles = q3g_role_lookup_begin(engine, kind, choices->seats[i].id);
+        q3g_role *current;
+        while ((current = q3g_role_lookup_next(engine, &roles)))
+            if (!strcmp(current->path, path)) { role = current; break; }
         if (role && role->retired && !role->host) {
             q3g_role *replacement = NULL;
             if (!q3g_role_restart(role, &replacement, error)) return false;
@@ -383,8 +383,7 @@ bool application_q3_guest_client_sources_rebuild(application_provider *provider,
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client role has an incomplete physical source owner");
         } else if (!role) {
             if (!q3g_role_create(engine, kind, choices->seats[i].id, path, false, &role, error)) return false;
-            role->next = engine->roles;
-            engine->roles = role;
+            q3g_role_publish(&engine->roles, role, engine->roles);
         }
         if (!primary) primary = role;
     }
@@ -586,6 +585,7 @@ bool application_q3_guest_deconstruct(application_provider *provider, qa_error *
     }
     application_guest_q3_save_clear(engine);
     qa_launch_instance_lease_release(engine->client_descriptor);
+    qa_id_index_destroy(&engine->role_index);
     free(engine->entity_text); free(engine);
     if (!ok && error) *error = first;
     return ok;

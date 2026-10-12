@@ -30,9 +30,10 @@ bool qa_application_network_q3_cgame_host_read(qa_application *app,
     } else {
         struct application_q3_guest *engine = q3g_engine(provider);
         q3g_role *role = NULL;
-        for (q3g_role *row = engine ? engine->roles : NULL; row; row = row->next)
-            if (row->kind == QA_QVM_CGAME && row->seat == source->receiver.seat && row->ready &&
-                !row->retired && !row->local_client && row->client_services.gamestate) {
+        qa_id_index_cursor roles = q3g_role_lookup_begin(engine, QA_QVM_CGAME, source->receiver.seat);
+        q3g_role *row;
+        while ((row = q3g_role_lookup_next(engine, &roles)))
+            if (row->ready && !row->retired && !row->local_client && row->client_services.gamestate) {
                 if (role) return application_fail(error, QA_ERROR_ARGUMENT, "CGAME cache has ambiguous physical hosts");
                 role = row;
             }
