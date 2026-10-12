@@ -43,6 +43,7 @@
 #include "../src/app/application/internal.h"
 #include "../src/app/application/unified_q3_events.h"
 #include "../src/app/application/events_save.h"
+#include "../src/network/unified/frame_internal.h"
 
 #include <fcntl.h>
 #include <limits.h>
@@ -79,6 +80,29 @@ static void test_shared_campaign_modes(void)
     CHECK(qa_mode_from_game_type(QA_GAME_TYPE_COOPERATIVE) == QA_MODE_COOPERATIVE);
     CHECK(qa_mode_from_game_type(QA_GAME_TYPE_HARVESTER) == QA_MODE_HARVESTER);
     CHECK(qa_mode_from_game_type(-1) == QA_MODE_FFA);
+}
+
+static void test_debug_geometry_wire(void)
+{
+    qa_debug_line lines[] = {
+        {.start = {1, 2, 3}, .end = {4, 5, 6}, .color = {1, 0.5f, 0, 0.75f}, .depth_test = true},
+        {.start = {-1, -2, -3}, .end = {-4, -5, -6}, .color = {0, 1, 0.5f, 1}}};
+    qa_unified_presentation_payload value = {.kind = QA_UNIFIED_PRESENTATION_DEBUG_GEOMETRY,
+        .value.debug = {.lines = lines, .count = 2,
+            .time_ns = UINT64_C(9007199254740993), .lifetime_ms = 1250}};
+    qa_unified_presentation_payload decoded = {0};
+    qa_error error = {0}; qa_buffer wire = {0};
+    CHECK(qa_unified_record_delta_encode(&qa_unified_presentation_payload_layout,
+        &value, NULL, 65536, &wire, NULL, &error));
+    CHECK(qa_unified_record_delta_decode(&qa_unified_presentation_payload_layout,
+        (qa_bytes){wire.data, wire.size}, NULL, &decoded, NULL, NULL, NULL, NULL, NULL, &error));
+    CHECK(decoded.kind == value.kind && decoded.value.debug.count == 2);
+    CHECK(decoded.value.debug.time_ns == value.value.debug.time_ns);
+    CHECK(decoded.value.debug.lifetime_ms == value.value.debug.lifetime_ms);
+    CHECK(qa_unified_record_equal(&qa_unified_presentation_payload_layout,
+        &value, &decoded, NULL, NULL));
+    qa_unified_record_dispose(&qa_unified_presentation_payload_layout, &decoded);
+    qa_buffer_free(&wire);
 }
 static void test_shared_angle_basis(void)
 {
@@ -2913,6 +2937,7 @@ int main(int argc, char **argv)
     test_q2_hud_configuration();
     test_compiled_sound_names();
     test_shared_campaign_modes();
+    test_debug_geometry_wire();
     test_shared_angle_basis();
     test_shared_bounds_and_transform();
     test_shared_vector_geometry();

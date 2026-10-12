@@ -476,8 +476,13 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
         if (output.kind == QA_APPLICATION_EVENT_DEBUG) {
             const qa_application_debug_event *debug = output.value.debug;
             qa_tools *tools = frontend_tools_owner(frontend);
-            if (tools && !qa_debug_store_submit(qa_tools_debug(tools), debug->lines,
-                debug->count, (double)debug->time_ns / 1000000, debug->lifetime_ms, error))
+            qa_clock_state clock;
+            if (!tools || !qa_session_clock(qa_application_session(frontend->application),
+                debug->provider, &clock)) continue;
+            double age_ms = fmax(0, ((double)clock.frame.time_ns - (double)debug->time_ns) / 1000000);
+            if (!qa_debug_store_submit(qa_tools_debug(tools), debug->lines,
+                debug->count, (double)frontend->time_ns / 1000000 - age_ms,
+                debug->lifetime_ms, error))
                 return false;
             continue;
         }

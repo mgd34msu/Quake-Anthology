@@ -1303,13 +1303,16 @@ bool qa_application_debug_emit(qa_application *app, const qa_application_debug_e
     application_event_write write;
     if (!application_event_stream_begin(app, QA_APPLICATION_EVENT_DEBUG, &write, error))
         return application_event_stream_decline(app, &write, true, error);
-    qa_debug_line *lines = event->count ? application_event_stream_alloc(app,
-        event->count * sizeof(*lines), _Alignof(qa_debug_line), error) : NULL;
-    if (event->count && !lines)
+    qa_unified_presentation_payload payload = {.kind = QA_UNIFIED_PRESENTATION_DEBUG_GEOMETRY,
+        .value.debug = {.lines = event->lines, .count = event->count,
+            .time_ns = event->time_ns, .lifetime_ms = event->lifetime_ms}};
+    if (!application_unified_event_emit(app, event->provider, &payload, NULL,
+        (qa_actor_id){0}, (qa_actor_id){0}, event->time_ns, 0, false, false, error)) {
+        application_event_stream_abort(app, &write, error);
         return application_event_stream_decline(app, &write, true, error);
-    if (event->count) memcpy(lines, event->lines, event->count * sizeof(*lines));
+    }
     write.envelope->raw.debug = *event;
-    write.envelope->raw.debug.lines = lines;
+    write.envelope->raw.debug.lines = write.envelope->last_view->event.presentation->value.debug.lines;
     return application_event_stream_commit(app, &write, error) ||
         application_event_stream_decline(app, &write, true, error);
 }

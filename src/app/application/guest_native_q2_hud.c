@@ -51,7 +51,7 @@ static bool debug_import(struct application_native_q2 *engine,
         qa_unified_frame_lease_arena(storage), &lines, &count, &lifetime, &handled, error);
     if (okay && handled)
         okay = qa_application_debug_emit(app, &(qa_application_debug_event){
-            .provider = engine->provider->owner, .time_ns = qa_session_elapsed(app->session),
+            .provider = engine->provider->owner, .time_ns = engine->frame.time_ns,
             .lines = lines, .count = count, .lifetime_ms = lifetime}, error);
     qa_unified_frame_lease_release(storage);
     return okay && handled;

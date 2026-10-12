@@ -10,6 +10,7 @@
 #include "qa/unified_frame_visuals.h"
 #include "qa/network_q3.h"
 #include "qa/qvm.h"
+#include "qa/tools.h"
 
 /* Names stay interned until the wire codec resolves them. Payload pointers are
  * owned by the event record or its retained source page leases. */
@@ -117,13 +118,20 @@ typedef struct qa_unified_owner_event {
     qa_actor_id recipient;
 } qa_unified_owner_event;
 typedef struct qa_unified_visibility_event { qa_actor_id actor; bool visible; } qa_unified_visibility_event;
+typedef struct qa_unified_debug_geometry {
+    const qa_debug_line *lines;
+    size_t count;
+    uint64_t time_ns;
+    uint32_t lifetime_ms;
+} qa_unified_debug_geometry;
 typedef enum qa_unified_presentation_kind {
     QA_UNIFIED_PRESENTATION_BUILTIN, QA_UNIFIED_PRESENTATION_Q2_PLAYER,
     QA_UNIFIED_PRESENTATION_Q2_MAP, QA_UNIFIED_PRESENTATION_Q2_PROTOCOL,
     QA_UNIFIED_PRESENTATION_Q2_TEMPORARY, QA_UNIFIED_PRESENTATION_MODEL,
     QA_UNIFIED_PRESENTATION_Q3, QA_UNIFIED_PRESENTATION_Q3_CHARACTER,
     QA_UNIFIED_PRESENTATION_Q3_BALLISTIC, QA_UNIFIED_PRESENTATION_OWNER,
-    QA_UNIFIED_PRESENTATION_VISIBILITY, QA_UNIFIED_PRESENTATION_PLAYER_FEEDBACK
+    QA_UNIFIED_PRESENTATION_VISIBILITY, QA_UNIFIED_PRESENTATION_PLAYER_FEEDBACK,
+    QA_UNIFIED_PRESENTATION_DEBUG_GEOMETRY
 } qa_unified_presentation_kind;
 typedef struct qa_unified_presentation_payload {
     qa_unified_presentation_kind kind;
@@ -140,6 +148,7 @@ typedef struct qa_unified_presentation_payload {
         qa_unified_owner_event owner;
         qa_unified_visibility_event visibility;
         qa_player_feedback feedback;
+        qa_unified_debug_geometry debug;
     } value;
 } qa_unified_presentation_payload;
 typedef struct qa_unified_presentation_event {

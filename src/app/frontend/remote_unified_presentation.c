@@ -113,6 +113,7 @@ static bool audio_actor(void *context, qa_actor_id actor, uint64_t *out, qa_erro
 static bool presentation_validate(void *context,const qa_unified_presentation_event *row,qa_error *error)
 {
     unified_presentation *p = context;
+    if(row->payload.kind==QA_UNIFIED_PRESENTATION_DEBUG_GEOMETRY) return true;
     if(row->payload.kind==QA_UNIFIED_PRESENTATION_PLAYER_FEEDBACK) return true;
     if (row->payload.kind==QA_UNIFIED_PRESENTATION_OWNER)
         return frontend_unified_q1_owner_validate(p->q1,row,error) &&
@@ -135,6 +136,41 @@ static bool simulation_validate(void *context,const qa_unified_simulation_event 
 static bool presentation(void *context,const qa_unified_presentation_event *row,bool *mirrored,qa_error *error)
 {
     unified_presentation *p = context;
+    if(row->payload.kind==QA_UNIFIED_PRESENTATION_DEBUG_GEOMETRY) {
+        *mirrored=false;
+        const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(p->replica);
+        const qa_net_client *peer=qa_net_connections_get(qa_network_connections(domain->runtime),domain->client);
+        if(peer->endpoint.kind==QA_NET_LOOPBACK) return true;
+        qa_tools *tools=frontend_tools_owner(p->frontend);
+        if(!tools) return true;
+        const qa_unified_frame *frame=qa_unified_document_frame(frontend_remote_unified_frame(p->replica));
+        const qa_unified_world_frame *world=frame->world;
+        double seconds=0;
+        bool sampled=false;
+        for(size_t i=0;i<world->producer_sample_count;++i)
+            if(world->producer_samples[i].provider==row->provider_id) {
+                seconds=world->producer_samples[i].seconds;
+                sampled=true;
+                break;
+            }
+        if(!sampled) {
+            const qa_executable_recipe *recipe=frontend_remote_unified_recipe(p->replica);
+            for(size_t i=0;i<qa_executable_recipe_provider_count(recipe);++i) {
+                const qa_recipe_provider *provider=qa_executable_recipe_provider(recipe,i);
+                if(provider->source_owner==world->source.provider && provider->instance_name==row->provider_id) {
+                    seconds=world->presentation_seconds;
+                    sampled=true;
+                    break;
+                }
+            }
+        }
+        if(!sampled) return true;
+        const qa_unified_debug_geometry *debug=&row->payload.value.debug;
+        double age=fmax(0,seconds*1000-(double)debug->time_ns/1000000);
+        if(debug->lifetime_ms && age>=debug->lifetime_ms) return true;
+        return qa_debug_store_submit(qa_tools_debug(tools),debug->lines,debug->count,
+            (double)p->frontend->time_ns/1000000-age,debug->lifetime_ms,error);
+    }
     if(row->payload.kind==QA_UNIFIED_PRESENTATION_PLAYER_FEEDBACK) {
         *mirrored=false;
         qa_actor_id player; uint32_t slot;
