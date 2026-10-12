@@ -73,7 +73,7 @@ bool q3_map_spawn_target(qa_q3_game *game, const qa_q3_map_fields *fields,
         state->random = (float)random;
         if (!normalize_speaker_noise(game, state, error))
             return false;
-        if (!qa_q3_sound_index(game, q3_map_cstr(game, state->noise),
+        if (!q3_configstring_index(game, state->noise, 288,
                                &state->noise_index, error))
             return false;
         state->sound_frame = qa_source_float_to_i32(state->wait * 10.0f);
@@ -85,8 +85,8 @@ bool q3_map_spawn_target(qa_q3_game *game, const qa_q3_map_fields *fields,
         state->direction = q3_map_direction(state->angles);
         state->angles = qa_v3(0, 0, 0);
         state->launch_velocity = qa_vec_scale(state->direction, state->speed);
-        if (!qa_q3_sound_index(game, (state->spawnflags & 1u)
-                ? "sound/world/jumppad.wav" : "sound/misc/windfly.wav",
+        if (!q3_sound_index(game, (state->spawnflags & 1u)
+                ? Q3_NAME_JUMPPAD : Q3_NAME_WINDFLY,
                 &state->noise_index, error))
             return false;
     } else if (!strcmp(name, "target_laser"))
@@ -325,8 +325,8 @@ static bool use_push(qa_q3_game *game, qa_q3_map_actor_state *state,
         if (!q3_map_get(game, source) ||
             !qa_actors_get(qa_session_actors(game->options.services.session), activator))
             return true;
-        if (!q3_sound_report(game, activator, (spawnflags & 1u)
-                ? "sound/world/jumppad.wav" : "sound/misc/windfly.wav", 3, error))
+        if (!q3_sound_report(game, activator, game->runtime_names[(spawnflags & 1u)
+                ? Q3_NAME_JUMPPAD : Q3_NAME_WINDFLY], 3, error))
             return false;
     }
     return true;

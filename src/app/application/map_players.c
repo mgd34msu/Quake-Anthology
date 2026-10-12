@@ -3185,20 +3185,14 @@ static bool q3_player_points(qa_application *application,
     if (travel == NULL || travel->roster == NULL)
         return application_fail(error, QA_ERROR_ARGUMENT, "player publication has no retained roster");
     if (travel->roster->map_provider->kind == APPLICATION_PROVIDER_Q3) {
-        static const char *const names[] = {"info_player_start", "info_player_deathmatch",
-            "info_player_intermission", "team_CTF_redplayer", "team_CTF_blueplayer",
-            "team_CTF_redspawn", "team_CTF_bluespawn"};
         uint32_t cursor = 0;
         qa_q3_map_spawnpoint source;
         while (qa_q3_map_spawnpoint_next(travel->roster->map_provider->state.q3, &cursor, &source)) {
-            if ((unsigned)source.kind >= sizeof(names) / sizeof(names[0]))
-                return application_fail(error, QA_ERROR_FORMAT, "Q3 source spawnpoint has unknown kind");
-            qa_mode_spawnpoint point = {.actor = source.actor, .origin = source.origin,
+            const qa_actor_record *actor = qa_actors_get(qa_session_actors(application->session), source.actor);
+            if (!actor) continue;
+            qa_mode_spawnpoint point = {.actor = source.actor, .classname = actor->definition, .origin = source.origin,
                 .angles = source.angles, .flags = source.flags,
                 .no_bots = source.no_bots, .no_humans = source.no_humans};
-            if (!qa_strings_intern_cstr(qa_session_strings(application->session), names[source.kind],
-                                         &point.classname, error))
-                return false;
             bool retained = false;
             for (size_t i = 0; i < travel->roster->point_count; ++i)
                 if (travel->roster->points[i].ordinal == source.ordinal) {

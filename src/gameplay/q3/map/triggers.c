@@ -102,10 +102,10 @@ bool q3_map_spawn_trigger(qa_q3_game *game, const qa_q3_map_fields *fields,
     if (stored->kind == QA_Q3_MAP_TRIGGER_PUSH ||
         stored->kind == QA_Q3_MAP_TRIGGER_TELEPORT ||
         stored->kind == QA_Q3_MAP_TRIGGER_HURT) {
-        const char *path = stored->kind == QA_Q3_MAP_TRIGGER_HURT
-            ? "sound/world/electro.wav" : "sound/world/jumppad.wav";
+        q3_runtime_name sound = stored->kind == QA_Q3_MAP_TRIGGER_HURT
+            ? Q3_NAME_ELECTRO : Q3_NAME_JUMPPAD;
         int32_t sound_index;
-        if (!qa_q3_sound_index(game, path, &sound_index, error))
+        if (!q3_sound_index(game, sound, &sound_index, error))
             return q3_rollback_spawn(game, actor, error);
         stored = q3_map_get(game, actor);
         wire = q3_wire_entity(game, actor);
@@ -357,7 +357,7 @@ static bool hurt_touch(qa_q3_game *game, qa_q3_map_actor_state *state,
         if (!q3_map_get(game, source) ||
             !qa_actors_get(qa_session_actors(game->options.services.session), actor))
             return true;
-        if (!q3_sound_report(game, actor, "sound/world/electro.wav", 3, error))
+        if (!q3_sound_report(game, actor, game->runtime_names[Q3_NAME_ELECTRO], 3, error))
             return false;
     }
     if (!q3_map_get(game, source) ||

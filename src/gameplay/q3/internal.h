@@ -37,7 +37,28 @@
     X(KAMIKAZE, "kamikaze") \
     X(PORTAL_SOURCE, "hi_portal source") \
     X(PORTAL_DESTINATION, "hi_portal destination") \
-    X(TEMP_ENTITY, "tempEntity")
+    X(TEMP_ENTITY, "tempEntity") \
+    X(FRY, "sound/player/fry.wav") \
+    X(DROWN, "*drown.wav") \
+    X(GURP1, "sound/player/gurp1.wav") \
+    X(GURP2, "sound/player/gurp2.wav") \
+    X(POWERUP_RESPAWN, "sound/items/poweruprespawn.wav") \
+    X(KAMIKAZE_RESPAWN, "sound/items/kamikazerespawn.wav") \
+    X(ELECTRO, "sound/world/electro.wav") \
+    X(JUMPPAD, "sound/world/jumppad.wav") \
+    X(WINDFLY, "sound/misc/windfly.wav") \
+    X(DOOR_START, "sound/movers/doors/dr1_strt.wav") \
+    X(DOOR_END, "sound/movers/doors/dr1_end.wav") \
+    X(PLAT_START, "sound/movers/plats/pt1_strt.wav") \
+    X(PLAT_END, "sound/movers/plats/pt1_end.wav") \
+    X(BUTTON, "sound/movers/switches/butn2.wav") \
+    X(SPAWN_START, "info_player_start") \
+    X(SPAWN_DEATHMATCH, "info_player_deathmatch") \
+    X(SPAWN_INTERMISSION, "info_player_intermission") \
+    X(SPAWN_RED_PLAYER, "team_CTF_redplayer") \
+    X(SPAWN_BLUE_PLAYER, "team_CTF_blueplayer") \
+    X(SPAWN_RED, "team_CTF_redspawn") \
+    X(SPAWN_BLUE, "team_CTF_bluespawn")
 
 typedef enum q3_runtime_name {
 #define Q3_RUNTIME_NAME_ENUM(key, text) Q3_NAME_##key,
@@ -47,6 +68,7 @@ typedef enum q3_runtime_name {
 } q3_runtime_name;
 
 bool q3_configstring_index(qa_q3_game *, qa_string_id, uint32_t start, int32_t *, qa_error *);
+bool q3_sound_index(qa_q3_game *, q3_runtime_name, int32_t *, qa_error *);
 
 static inline float q3_source_vec_component(qa_vec3 vector, unsigned axis) {
     return axis == 0 ? vector.x : axis == 1 ? vector.y : vector.z;
@@ -142,6 +164,9 @@ struct qa_q3_game {
     qa_string_id configstrings[QA_Q3_NATIVE_CONFIGSTRINGS];
     uint64_t configstring_revisions[QA_Q3_NATIVE_CONFIGSTRINGS];
     uint64_t configstring_table_revision;
+    uint64_t sound_configstring_revision;
+    int32_t sound_indexes[Q3_NAME_COUNT];
+    uint64_t sound_index_revisions[Q3_NAME_COUNT];
     q3_client_state clients[QA_Q3_NATIVE_CLIENTS];
     q3_actor client_actors[QA_Q3_NATIVE_CLIENTS];
     qa_q3_source_binding source_entities[QA_Q3_SOURCE_ENTITIES];
@@ -222,8 +247,8 @@ static inline bool q3_player_control(const qa_q3_game *game, qa_actor_id actor,
 }
 void q3_force_view(qa_q3_game *, qa_actor_id, qa_q3_player_state *, qa_vec3, int32_t lock_ms);
 int32_t q3_entity_number(const qa_q3_game *, qa_actor_id);
-bool q3_sound(qa_q3_game *, qa_actor_id, const char *, int32_t channel, qa_error *);
-bool q3_sound_report(qa_q3_game *, qa_actor_id, const char *, int32_t channel, qa_error *);
+bool q3_sound(qa_q3_game *, qa_actor_id, q3_runtime_name, int32_t channel, qa_error *);
+bool q3_sound_report(qa_q3_game *, qa_actor_id, qa_string_id, int32_t channel, qa_error *);
 uint32_t q3_rand(qa_q3_game *);
 float q3_random(qa_q3_game *);
 float q3_crandom(qa_q3_game *);

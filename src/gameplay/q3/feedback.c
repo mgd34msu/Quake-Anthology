@@ -204,14 +204,14 @@ static bool player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_
             player->flags &= ~0x38848u;
     }
     int32_t loop_index = 0;
-    const char *loop = game->options.product == QA_Q3_TEAM_ARENA && (flags & 2u)
-                           ? "sound/weapons/proxmine/wstbtick.wav"
-                       : water_level && (water_type & (8 | 16)) ? "sound/player/fry.wav"
-                                                                : NULL;
-    if (source_client && loop && (flags & 2u) && game->options.product == QA_Q3_TEAM_ARENA) {
-        if (!qa_q3_sound_index(game, loop, &loop_index, error))
+    q3_runtime_name loop = game->options.product == QA_Q3_TEAM_ARENA && (flags & 2u)
+                           ? Q3_NAME_PROXMINE_TICK
+                       : water_level && (water_type & (8 | 16)) ? Q3_NAME_FRY
+                                                                : Q3_NAME_EMPTY;
+    if (source_client && loop == Q3_NAME_PROXMINE_TICK) {
+        if (!q3_sound_index(game, loop, &loop_index, error))
             return false;
-    } else if (loop)
+    } else if (loop != Q3_NAME_EMPTY)
         loop_index = game->fry_sound_index;
     entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
@@ -220,16 +220,10 @@ static bool player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_
         !qa_q3_wire_player_loop_sound(game, actor, loop_index, error))
         return false;
     player = &entry->state.player;
-    if (!loop)
+    if (loop == Q3_NAME_EMPTY)
         player->loop_sound = 0;
-    else {
-        qa_string_id resource;
-        if (!qa_builtin_resource(&game->options.services, loop, &resource, error))
-            return false;
-        entry = q3_actor_get(game, actor);
-        if (entry && entry->kind == Q3_ACTOR_PLAYER)
-            entry->state.player.loop_sound = resource;
-    }
+    else
+        player->loop_sound = game->runtime_names[loop];
     if (publish && qa_q3_native_client_slot(game, actor, &actual_slot, NULL) &&
         actual_slot == source_slot)
         *publish = true;

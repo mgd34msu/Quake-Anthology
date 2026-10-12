@@ -1538,9 +1538,9 @@ static bool player_world_effects(qa_q3_game *game, qa_actor_id actor, int32_t wa
                 if (player->drowning_damage > 15)
                     player->drowning_damage = 15;
                 int32_t damage = player->drowning_damage;
-                const char *sound = combat.health <= (float)damage ? "*drown.wav"
-                                    : (q3_rand(game) & 1u)         ? "sound/player/gurp1.wav"
-                                                                   : "sound/player/gurp2.wav";
+                q3_runtime_name sound = combat.health <= (float)damage ? Q3_NAME_DROWN
+                                    : (q3_rand(game) & 1u)         ? Q3_NAME_GURP1
+                                                                   : Q3_NAME_GURP2;
                 if (!q3_sound(game, actor, sound, 3, error))
                     return false;
                 entry = q3_actor_get(game, actor);

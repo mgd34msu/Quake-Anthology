@@ -669,28 +669,12 @@ bool qa_q3_map_spawnpoint_next(const qa_q3_game *game, uint32_t *cursor,
         const qa_q3_map_actor_state *state = &game->map->actors[(*cursor)++];
         if (!state->active || state->kind != QA_Q3_MAP_POINT)
             continue;
-        const char *name = q3_map_cstr(game, state->classname);
-        if (!name)
-            continue;
-        qa_q3_spawnpoint_kind kind;
-        if (!strcmp(name, "info_player_start"))
-            kind = QA_Q3_SPAWN_START;
-        else if (!strcmp(name, "info_player_deathmatch"))
-            kind = QA_Q3_SPAWN_DEATHMATCH;
-        else if (!strcmp(name, "info_player_intermission"))
-            kind = QA_Q3_SPAWN_INTERMISSION;
-        else if (!strcmp(name, "team_CTF_redplayer"))
-            kind = QA_Q3_SPAWN_RED_PLAYER;
-        else if (!strcmp(name, "team_CTF_blueplayer"))
-            kind = QA_Q3_SPAWN_BLUE_PLAYER;
-        else if (!strcmp(name, "team_CTF_redspawn"))
-            kind = QA_Q3_SPAWN_RED;
-        else if (!strcmp(name, "team_CTF_bluespawn"))
-            kind = QA_Q3_SPAWN_BLUE;
-        else
-            continue;
+        unsigned kind = QA_Q3_SPAWN_START;
+        while (kind <= QA_Q3_SPAWN_BLUE &&
+               state->classname != game->runtime_names[Q3_NAME_SPAWN_START + kind]) ++kind;
+        if (kind > QA_Q3_SPAWN_BLUE) continue;
         *out = (qa_q3_map_spawnpoint){.actor = state->actor,
-                                      .kind = kind,
+                                      .kind = (qa_q3_spawnpoint_kind)kind,
                                       .origin = state->origin,
                                       .angles = state->angles,
                                       .flags = state->spawnflags,

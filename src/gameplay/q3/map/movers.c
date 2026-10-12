@@ -184,7 +184,7 @@ static bool bind_mover(qa_q3_game *game, qa_q3_map_actor_state *state,
     }
     if (state->noise) {
         int32_t sound_index;
-        if (!qa_q3_sound_index(game, q3_map_cstr(game, state->noise), &sound_index, error))
+        if (!q3_configstring_index(game, state->noise, 288, &sound_index, error))
             return q3_rollback_spawn(game, actor, error);
         wire = q3_wire_entity(game, actor);
         if (!wire) {
@@ -589,24 +589,24 @@ bool q3_map_spawn_mover(qa_q3_game *game, const qa_q3_map_fields *fields,
         return q3_map_fail(error, "missing Q3 mover classname");
     if (!presentation_fields(game, fields, state, error))
         return false;
-    const char *start = NULL, *end = NULL;
+    q3_runtime_name start = Q3_NAME_EMPTY, end = Q3_NAME_EMPTY;
     if (!strcmp(name, "func_door")) {
-        start = "sound/movers/doors/dr1_strt.wav";
-        end = "sound/movers/doors/dr1_end.wav";
+        start = Q3_NAME_DOOR_START;
+        end = Q3_NAME_DOOR_END;
     } else if (!strcmp(name, "func_plat")) {
-        start = "sound/movers/plats/pt1_strt.wav";
-        end = "sound/movers/plats/pt1_end.wav";
+        start = Q3_NAME_PLAT_START;
+        end = Q3_NAME_PLAT_END;
     } else if (!strcmp(name, "func_button"))
-        start = "sound/movers/switches/butn2.wav";
-    if (start && !qa_q3_sound_index(game, start, &state->sound_1_to_2, error))
+        start = Q3_NAME_BUTTON;
+    if (start != Q3_NAME_EMPTY && !q3_sound_index(game, start, &state->sound_1_to_2, error))
         return false;
     if (!qa_actors_get(qa_session_actors(game->options.services.session), state->actor)) {
         state->actor = (qa_actor_id){0};
         return true;
     }
-    if (end) {
+    if (end != Q3_NAME_EMPTY) {
         state->sound_2_to_1 = state->sound_1_to_2;
-        if (!qa_q3_sound_index(game, end, &state->sound_pos_1, error))
+        if (!q3_sound_index(game, end, &state->sound_pos_1, error))
             return false;
         if (!qa_actors_get(qa_session_actors(game->options.services.session), state->actor)) {
             state->actor = (qa_actor_id){0};
@@ -678,14 +678,14 @@ static bool mover_sound(qa_q3_game *game, qa_q3_map_actor_state *state,
         return true;
     if (!q3_wire_add_event(game, state->actor, 45, sound, error))
         return false;
-    const char *path = NULL;
+    q3_runtime_name name = Q3_NAME_EMPTY;
     if (state->kind == QA_Q3_MAP_MOVER_DOOR)
-        path = start ? "sound/movers/doors/dr1_strt.wav" : "sound/movers/doors/dr1_end.wav";
+        name = start ? Q3_NAME_DOOR_START : Q3_NAME_DOOR_END;
     else if (state->kind == QA_Q3_MAP_MOVER_PLAT)
-        path = start ? "sound/movers/plats/pt1_strt.wav" : "sound/movers/plats/pt1_end.wav";
+        name = start ? Q3_NAME_PLAT_START : Q3_NAME_PLAT_END;
     else if (state->kind == QA_Q3_MAP_MOVER_BUTTON && start)
-        path = "sound/movers/switches/butn2.wav";
-    return !path || q3_sound_report(game, state->actor, path, 3, error);
+        name = Q3_NAME_BUTTON;
+    return name == Q3_NAME_EMPTY || q3_sound_report(game, state->actor, game->runtime_names[name], 3, error);
 }
 
 static bool area_portal(qa_q3_game *game, qa_q3_map_actor_state *state,

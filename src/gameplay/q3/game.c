@@ -412,19 +412,15 @@ static bool sound_report(qa_q3_game *game, qa_actor_id actor, qa_string_id resou
                               .channel = channel};
     return qa_builtin_emit(&game->options.services, &event, error);
 }
-bool q3_sound_report(qa_q3_game *game, qa_actor_id actor, const char *path, int32_t channel,
+bool q3_sound_report(qa_q3_game *game, qa_actor_id actor, qa_string_id resource, int32_t channel,
                      qa_error *error) {
-    qa_string_id resource;
     qa_body_state body;
-    return qa_builtin_resource(&game->options.services, path, &resource, error) &&
-        q3_source_body_read(game, actor, &body, error) &&
+    return q3_source_body_read(game, actor, &body, error) &&
         sound_report(game, actor, resource, body.origin, channel, error);
 }
-bool q3_sound(qa_q3_game *game, qa_actor_id actor, const char *path, int32_t channel,
+bool q3_sound(qa_q3_game *game, qa_actor_id actor, q3_runtime_name name, int32_t channel,
               qa_error *error) {
-    qa_string_id resource;
-    if (!qa_builtin_resource(&game->options.services, path, &resource, error))
-        return false;
+    qa_string_id resource = game->runtime_names[name];
     qa_body_state body;
     if (!q3_source_body_read(game, actor, &body, error))
         return false;
@@ -432,7 +428,7 @@ bool q3_sound(qa_q3_game *game, qa_actor_id actor, const char *path, int32_t cha
     if (qa_q3_source_actor_slot(game, actor, &source_slot, NULL)) {
         int32_t sound_index;
         qa_actor_id temporary;
-        if (!qa_q3_sound_index(game, path, &sound_index, error) ||
+        if (!q3_sound_index(game, name, &sound_index, error) ||
             !q3_wire_temp_entity(game, body.origin, 45, &temporary, error)) return false;
         qa_q3_entity *source = q3_wire_temporary(game, temporary);
         if (!source) return q3_fail(error, "Q3 sound lost its actual temporary entity");

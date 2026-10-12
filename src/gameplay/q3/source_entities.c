@@ -34,6 +34,7 @@ void q3_source_state_reset(qa_q3_game *game) {
     q3_wire_reset(game);
     game->new_session = false;
     game->fry_sound_index = 0;
+    memset(game->sound_indexes, 0, sizeof(game->sound_indexes));
     game->portal_sequence = 0;
     game->last_team_location_time = 0;
     game->client_counts = (qa_q3_source_client_counts){0};
@@ -431,7 +432,7 @@ bool q3_source_level_init(qa_q3_game *game, qa_error *error) {
         return q3_rollback_spawn(game, world, error);
     game->source_entities[QA_Q3_SOURCE_WORLD].classname = world_name;
     if (!q3_wire_entity_ready(game, world, error) ||
-        !qa_q3_sound_index(game, "sound/player/fry.wav", &game->fry_sound_index, error) ||
+        !q3_sound_index(game, Q3_NAME_FRY, &game->fry_sound_index, error) ||
         (game->options.hooks.source_world_init &&
          !game->options.hooks.source_world_init(game->options.hooks.context, error))) return false;
     for (size_t i = 0; i < 8; ++i) {

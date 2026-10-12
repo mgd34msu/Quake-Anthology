@@ -47,6 +47,7 @@ static bool write_value(qa_q3_game *game, uint32_t index, qa_string_id value,
     if (game->configstring_revisions[index] == UINT64_MAX)
         return q3_fail(error, "Q3 configstring mutation identity exhausted");
     game->configstrings[index] = value;
+    if (index > 288 && index < 544) ++game->sound_configstring_revision;
     const char *notice = qa_strings_cstr(strings, value);
     uint64_t revision = ++game->configstring_revisions[index];
     if (changed) ++game->configstring_table_revision;
@@ -128,17 +129,31 @@ bool qa_q3_model_index(qa_q3_game *game, const char *name, int32_t *out, qa_erro
 bool qa_q3_sound_index(qa_q3_game *game, const char *name, int32_t *out, qa_error *error) {
     return find_index(game, name, 288, out, error);
 }
+bool q3_sound_index(qa_q3_game *game, q3_runtime_name name, int32_t *out, qa_error *error) {
+    if (game->sound_indexes[name] &&
+        game->sound_index_revisions[name] == game->sound_configstring_revision) {
+        *out = game->sound_indexes[name];
+        return true;
+    }
+    qa_string_id resource = game->runtime_names[name];
+    if (!q3_configstring_index(game, resource, 288, out, error)) return false;
+    game->sound_indexes[name] = game->configstrings[288u + (uint32_t)*out] == resource ? *out : 0;
+    game->sound_index_revisions[name] = game->sound_configstring_revision;
+    return true;
+}
 static void replace_table(qa_q3_game *game, const qa_string_id *table) {
-    bool changed = false;
+    bool changed = false, sounds_changed = false;
     qa_strings *strings = qa_session_strings(game->options.services.session);
     for (uint32_t i = 0; i < QA_Q3_NATIVE_CONFIGSTRINGS; ++i) {
         qa_string_id prior = game->configstrings[i], next = table ? table[i] : QA_STRING_NONE;
         if (prior != next && (qa_strings_text(strings, prior).size ||
             qa_strings_text(strings, next).size)) changed = true;
+        if (prior != next && i > 288 && i < 544) sounds_changed = true;
         game->configstrings[i] = next;
         game->configstring_revisions[i] = 0;
     }
     if (changed) ++game->configstring_table_revision;
+    if (sounds_changed) ++game->sound_configstring_revision;
 }
 void q3_configstrings_clear(qa_q3_game *game) {
     replace_table(game, NULL);

@@ -1152,15 +1152,15 @@ static bool item_respawn(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     if (!entry || entry->kind != Q3_ACTOR_ITEM)
         return true;
     const qa_q3_item *definition = &items[entry->state.item.spawn.item_index];
-    const char *respawn_sound = definition->kind == QA_Q3_ITEM_POWERUP
-        ? "sound/items/poweruprespawn.wav"
+    q3_runtime_name respawn_sound = definition->kind == QA_Q3_ITEM_POWERUP
+        ? Q3_NAME_POWERUP_RESPAWN
         : definition->kind == QA_Q3_ITEM_HOLDABLE && definition->tag == QA_Q3_H_KAMIKAZE
-            ? "sound/items/kamikazerespawn.wav" : NULL;
-    if (respawn_sound) {
+            ? Q3_NAME_KAMIKAZE_RESPAWN : Q3_NAME_EMPTY;
+    if (respawn_sound != Q3_NAME_EMPTY) {
         int32_t sound_index;
         qa_actor_id temporary;
         if (!q3_wire_temp_entity(game, entry->state.item.trajectory.base, 46, &temporary, error) ||
-            !qa_q3_sound_index(game, respawn_sound, &sound_index, error))
+            !q3_sound_index(game, respawn_sound, &sound_index, error))
             return false;
         qa_q3_entity *event = q3_wire_temporary(game, temporary);
         uint32_t temporary_slot;

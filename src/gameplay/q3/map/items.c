@@ -39,7 +39,7 @@ bool q3_map_spawn_item(qa_q3_game *game, const qa_q3_map_fields *fields,
     if (items[item_index].kind == QA_Q3_ITEM_POWERUP) {
         int32_t sound_index;
         qa_actor_id actor = stored->actor;
-        if (!qa_q3_sound_index(game, "sound/items/poweruprespawn.wav", &sound_index, error))
+        if (!q3_sound_index(game, Q3_NAME_POWERUP_RESPAWN, &sound_index, error))
             return false;
         stored = q3_map_get(game, actor);
         if (!stored) {
@@ -193,11 +193,11 @@ static bool respawn_item(qa_q3_game *game, qa_q3_map_actor_state *state,
         return q3_map_fail(error, "invalid Q3 item team member definition");
     const qa_q3_item *item = &items[index];
     int32_t channel = selected->speed != 0 ? 3 : 0;
-    const char *path = item->kind == QA_Q3_ITEM_POWERUP
-        ? "sound/items/poweruprespawn.wav"
+    q3_runtime_name sound = item->kind == QA_Q3_ITEM_POWERUP
+        ? Q3_NAME_POWERUP_RESPAWN
         : item->kind == QA_Q3_ITEM_HOLDABLE && item->tag == QA_Q3_H_KAMIKAZE
-            ? "sound/items/kamikazerespawn.wav" : NULL;
-    if (path) {
+            ? Q3_NAME_KAMIKAZE_RESPAWN : Q3_NAME_EMPTY;
+    if (sound != Q3_NAME_EMPTY) {
         qa_actor_id temporary;
         qa_vec3 sound_origin = entry->state.item.trajectory.base;
         if (!q3_wire_temp_entity(game, sound_origin,
@@ -208,7 +208,7 @@ static bool respawn_item(qa_q3_game *game, qa_q3_map_actor_state *state,
         if (!event || !qa_q3_source_actor_slot(game, temporary, &source_slot, error))
             return q3_map_fail(error, "Q3 item respawn sound lost its temporary source row");
         int32_t sound_index;
-        if (!qa_q3_sound_index(game, path, &sound_index, error))
+        if (!q3_sound_index(game, sound, &sound_index, error))
             return false;
         event = q3_wire_temporary(game, temporary);
         if (!event || !qa_q3_source_actor_slot(game, temporary, &source_slot, error))
@@ -217,7 +217,7 @@ static bool respawn_item(qa_q3_game *game, qa_q3_map_actor_state *state,
         game->source_entities[source_slot].server_flags |= 32u;
         if (!q3_map_get(game, actor) || !q3_actor_get(game, actor))
             return true;
-        if (!q3_sound_report(game, actor, path, channel, error))
+        if (!q3_sound_report(game, actor, game->runtime_names[sound], channel, error))
             return false;
     }
     if (!q3_map_get(game, actor) || !q3_actor_get(game, actor))
