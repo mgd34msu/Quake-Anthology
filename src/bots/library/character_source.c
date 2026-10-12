@@ -28,12 +28,23 @@ void bot_character_store_release(bot_character_store *store) {
     if (!store || --store->references) return;
     if (store->owns_memory) (void)qa_bot_memory_dispose(store->memory, NULL);
     (void)qa_bot_memory_release(store->memory, NULL);
+    qa_id_index_destroy(&store->aliases);
     free(store->strings); free(store);
 }
+bool bot_character_strings_index(const bot_character_string *strings,size_t count,
+                                 qa_id_index *out,qa_error *error) {
+    qa_id_index index = {0};
+    for (size_t i = 0; i < count; ++i) if (strings[i].pointer) {
+        if (!qa_id_index_reserve(&index, 1, error)) {
+            qa_id_index_destroy(&index); return false;
+        }
+        qa_id_index_insert(&index, strings[i].pointer, 0, i);
+    }
+    qa_id_index_destroy(out); *out = index; return true;
+}
 static bot_character_string *string(bot_character_store *store, uint32_t pointer) {
-    for (size_t i = 0; i < store->count; ++i)
-        if (store->strings[i].pointer == pointer) return store->strings + i;
-    return NULL;
+    qa_id_index_entry *entry = qa_id_index_find(&store->aliases, pointer, 0);
+    return entry ? store->strings + entry->value : NULL;
 }
 bool bot_character_create(bot_character_store *store, const char *path, float skill,
                           qa_bot_character **out, qa_error *error) {
@@ -80,7 +91,8 @@ bool bot_character_write(qa_bot_character *c, uint32_t index, qa_bot_character_v
         if (type_first) span.data[offset] = (uint8_t)value.kind;
         bot_character_store *store = c->source;
         if (!bot_grow((void **)&store->strings, &store->capacity, store->count + 1,
-                      sizeof(*store->strings), error)) return false;
+                      sizeof(*store->strings), error) ||
+            !qa_id_index_reserve(&store->aliases, 1, error)) return false;
         size_t length = strlen(value.data.string);
         if (length >= INT32_MAX - 4) return fail(error, "Character string exceeds source allocation bounds");
         char *copy = malloc(length + 1);
@@ -92,7 +104,9 @@ bool bot_character_write(qa_bot_character *c, uint32_t index, qa_bot_character_v
         uint64_t pointer = store->next_pointer++;
         if (pointer > UINT32_MAX) { free(copy); return fail(error, "Character string pointer space is exhausted"); }
         raw = (uint32_t)pointer;
-        store->strings[store->count++] = (bot_character_string){raw, allocation};
+        size_t ordinal = store->count++;
+        store->strings[ordinal] = (bot_character_string){raw, allocation};
+        qa_id_index_insert(&store->aliases, raw, 0, ordinal);
         if (!bytes(c, &span, error)) { free(copy); return false; }
         qa_store_u32le(span.data + offset + 4, raw);
         qa_bot_memory_span text;
@@ -158,6 +172,7 @@ bool qa_bot_character_free(qa_bot_character *c, qa_error *error) {
         if (!pointer) continue;
         bot_character_string *row = string(c->source, pointer);
         if (!row || !qa_bot_memory_free(c->source->memory, row->allocation, error)) return false;
+        qa_id_index_remove(&c->source->aliases, pointer, 0);
         row->pointer = 0;
     }
     if (!qa_bot_memory_free(c->source->memory, c->allocation, error)) return false;

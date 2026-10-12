@@ -1,6 +1,7 @@
 #ifndef QA_BOT_CHARACTER_SOURCE_H
 #define QA_BOT_CHARACTER_SOURCE_H
 #include "internal.h"
+#include "qa/id_index.h"
 #include "qa/source_save.h"
 
 enum { BOT_CHARACTER_BYTES = 716, BOT_CHARACTER_VALUE_OFFSET = 68 };
@@ -15,9 +16,11 @@ typedef struct bot_character_store {
     uint64_t next_pointer;
     bot_character_string *strings;
     size_t count, capacity;
+    qa_id_index aliases;
 } bot_character_store;
 bool bot_character_store_create(qa_bot_memory *, bool, bot_character_store **, qa_error *);
 void bot_character_store_release(bot_character_store *);
+bool bot_character_strings_index(const bot_character_string *,size_t,qa_id_index *,qa_error *);
 bool bot_character_create(bot_character_store *, const char *, float, qa_bot_character **, qa_error *);
 bool bot_character_project(qa_bot_character *, qa_error *);
 bool bot_character_header(qa_bot_character *, qa_error *);

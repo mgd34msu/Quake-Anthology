@@ -11,6 +11,7 @@ typedef struct store_image {
     uint64_t next_pointer;
     bot_character_string *strings;
     size_t count;
+    qa_id_index aliases;
     qa_bot_memory_checkpoint *external;
     qa_bot_memory_prepared *prepared;
     struct store_image *next;
@@ -69,6 +70,7 @@ static void clear(bot_source_assets_history *image) {
         store_image *row = image->stores; image->stores = row->next;
         qa_bot_memory_checkpoint_finish(row->prepared, false);
         qa_bot_memory_checkpoint_destroy(row->external); bot_character_store_release(row->owner);
+        qa_id_index_destroy(&row->aliases);
         free(row->strings); free(row);
     }
     free(image->handles);
@@ -198,6 +200,7 @@ bool bot_source_assets_prepare(qa_bot_runtime *runtime, const bot_source_assets_
         for (size_t i = 0; i < row->count; ++i) if (row->strings[i].pointer &&
             !qa_bot_memory_checkpoint_resolve(row->prepared ? row->prepared : memory,
                 row->strings[i].allocation, &row->strings[i].allocation, error)) goto failed;
+        if (!bot_character_strings_index(row->strings,row->count,&row->aliases,error)) goto failed;
     }
     for (const character_image *source = image->characters; source; source = source->next) {
         character_image *row = calloc(1, sizeof(*row)); if (!row) goto memory;
@@ -237,6 +240,8 @@ void bot_source_assets_finish(bot_source_assets_restore *plan, bool commit) {
             qa_bot_memory_checkpoint_finish(row->prepared, true); row->prepared = NULL;
             free(row->owner->strings); row->owner->strings = row->strings; row->strings = NULL;
             row->owner->count = row->owner->capacity = row->count; row->owner->next_pointer = row->next_pointer;
+            qa_id_index_destroy(&row->owner->aliases);
+            row->owner->aliases = row->aliases; row->aliases = (qa_id_index){0};
         }
         bot_character_store *old_store = runtime->library->character_store;
         runtime->library->character_store = state->library_store;

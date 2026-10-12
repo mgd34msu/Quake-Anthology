@@ -39,7 +39,7 @@ bool bot_character_store_fields(qa_source_save_io *io, bot_character_store *stor
                  store->strings[j].allocation.generation == row->allocation.generation)))
                 return bot_save_fail(io, QA_ERROR_FORMAT, "Duplicate character string pointer");
     }
-    return true;
+    return !reading || bot_character_strings_index(store->strings,store->count,&store->aliases,io->error);
 }
 bool bot_character_alias_fields(qa_source_save_io *io, bot_character_store *store,
                                 const qa_bot_character *source, const qa_script_services *services,

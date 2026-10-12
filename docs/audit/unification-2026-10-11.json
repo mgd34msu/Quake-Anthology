@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "d4e74f884a193ccc49d297523a766986e9d2ac18",
+  "verified_main": "204442d73e07153983aa3ec0ab35eb0b9bc8e0bf",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -26968,7 +26968,13 @@
       "job": "06",
       "area": "audio_input_ui",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "source review; no runtime or performance proof",
+      "partial_followups": [
+        {
+          "commit": "204442d73e07153983aa3ec0ab35eb0b9bc8e0bf",
+          "verification": "Engine and seat mixers now share one ID-indexed, arena-backed position implementation. Full actor/owner identity, scoped fallback, base overwrite and round lifetimes retained. Existing core test exercises integrated mixer setters and lifecycle. Engine historical storage can still grow, and seat-local scopes still require isolated store instances; whole zero-allocation observation remains open."
+        }
+      ]
     },
     {
       "id": "06-02",
@@ -39653,6 +39659,36 @@
       ],
       "record_directory": "/tmp/qa-ta3196-bot-weapon-alias-index-20261011",
       "conclusion": "Shared ID index replaces weapon pointer/config lookup scans. Weak aliases and source reads preserved; save/history index transfer verified by source. Row admission heap remains. Normal build/core only."
+    },
+    {
+      "commit": "204442d73e07153983aa3ec0ab35eb0b9bc8e0bf",
+      "source_tree": "5ba4793a279460af1924f4fbaac190985fc808fe",
+      "finding_ids": [
+        "06-01"
+      ],
+      "files_rechecked": [
+        "CMakeLists.txt",
+        "src/audio/positions.c",
+        "src/audio/positions_private.h",
+        "src/audio/engine.c",
+        "src/audio/engine_internal.h",
+        "src/audio/mixer.c",
+        "src/audio/mixer_internal.h",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-shared-audio-positions-20261011",
+      "conclusion": "Engine and seat mixers now share one ID-indexed, arena-backed position implementation. Full actor/owner identity, scoped fallback, base overwrite and round lifetimes retained. Existing core test exercises integrated mixer setters and lifecycle. Engine historical storage can still grow, and seat-local scopes still require isolated store instances; whole zero-allocation observation remains open. Normal production build/core only; no live audio/performance claim."
     }
   ],
   "verification_limits": [
