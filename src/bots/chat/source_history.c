@@ -42,6 +42,7 @@ static bool resource_copy(const bot_chat_initial_resource *source,const qa_bot_m
     *target=*source;
     target->path=target->include_path=target->date=target->time=NULL;
     target->reader=NULL;target->pending=NULL;target->initial.types=target->initial.messages=NULL;
+    target->initial.members=(qa_id_index){0};
     if(target->options.globals) qa_script_defines_retain((qa_script_defines *)target->options.globals);
     bool ok=true;
 #define TEXT(field) do {if(source->field && !(target->field=copy(source->field,error))) ok=false;} while(0)
@@ -63,6 +64,7 @@ static bool resource_copy(const bot_chat_initial_resource *source,const qa_bot_m
         if(ok) memcpy(target->initial.messages,source->initial.messages,source->initial.message_count*sizeof(*target->initial.messages));
     }
     target->initial.type_capacity=target->initial.type_count;target->initial.message_capacity=target->initial.message_count;
+    if(ok) ok=bot_chat_initial_reindex(&target->initial,error);
     if(ok && source->reader) {
         qa_script_checkpoint checkpoint={0};qa_script_services services=bot_chat_initial_resource_services(target);
         ok=qa_script_capture(source->reader,&checkpoint,error) && qa_script_restore_detached(&services,&checkpoint,&target->reader,error);

@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "a00e3e40b637c27725115260d39ba2835b34391d",
+  "verified_main": "bfc4ae0a18e880f35a6039615076a7801b3f84d9",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 113,
-    "open_source_observation": 258,
+    "fixed_source_build_core": 114,
+    "open_source_observation": 257,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -28003,8 +28003,9 @@
       "severity": "medium",
       "job": "09",
       "area": "bots_navigation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Three combat reverse scans are deleted. Native/guest/shared source inverse services read existing canonical actor indexes and binding metadata, without admitting or retiring aliases. Full forward equality, physical-alias priority, source client0..63/entity1..64 and targeting/source reads remain. New callbacks are bound by every shipped constructor and included in the existing cold service-boundary guard. Matching normal build and seven core suites pass; no live bot/combat or timing proof.",
+      "fixed_commit": "bfc4ae0a18e880f35a6039615076a7801b3f84d9"
     },
     {
       "id": "09-08",
@@ -39919,6 +39920,34 @@
       ],
       "record_directory": "/tmp/qa-ta3196-shared-skin-binding-index-20261012",
       "conclusion": "Custom-skin bindings now use the common ID index keyed by full uint64 model identity within each skin cache and common arena-owned historical arrays. Linked nodes, ID scan and per-node allocator/free walk are deleted. Existing model suite checks stride, first equal mapping, SIZE_MAX, full identity separation and stable arrays through index growth. First-use/new-pair arena allocation remains open. Matching normal build and seven core suites pass."
+    },
+    {
+      "commit": "bfc4ae0a18e880f35a6039615076a7801b3f84d9",
+      "source_tree": "6b432a93d01f7bf7d163c3b5de476185cfabed7f",
+      "finding_ids": [
+        "09-07"
+      ],
+      "files_rechecked": [
+        "include/qa/bots.h",
+        "src/app/application/bot_world.c",
+        "src/app/application/bot_world.h",
+        "src/app/application/bots.c",
+        "src/bots/ai/combat.c",
+        "src/bots/ai/roster.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-bot-inverse-identity-20261012",
+      "conclusion": "Three combat reverse scans are deleted. Native/guest/shared source inverse services read existing canonical actor indexes and binding metadata, without admitting or retiring aliases. Full forward equality, physical-alias priority, source client0..63/entity1..64 and targeting/source reads remain. New callbacks are bound by every shipped constructor and included in the existing cold service-boundary guard. Matching normal build and seven core suites pass; no live bot/combat or timing proof."
     }
   ],
   "verification_limits": [

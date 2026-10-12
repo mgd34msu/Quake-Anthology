@@ -22,7 +22,7 @@ static bool memory_fields(qa_source_save_io *io,qa_bot_memory *memory) {
     return ok;
 }
 static bool pointers(qa_source_save_io *io,uint32_t **values,size_t *count,size_t *capacity,
-    const bot_chat_initial *chat,bool types) {
+    bot_chat_initial *chat,bool types) {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
     if(!qa_source_save_count(io,count,UINT32_MAX)) return false;
     if(reading && *count) {
@@ -38,6 +38,9 @@ static bool pointers(qa_source_save_io *io,uint32_t **values,size_t *count,size_
         for(size_t prior=0;prior<index;++prior)
             if((*values)[prior]==(*values)[index])
                 return bot_save_fail(io,QA_ERROR_FORMAT,"Duplicate initial chat member pointer");
+        if(reading && !bot_chat_initial_member_admit(chat,(*values)[index],types,index,io->error)) {
+            io->failed=true;return false;
+        }
         qa_bot_memory_span bytes;
         bool ok=types?bot_chat_initial_type(chat,(*values)[index],&bytes,io->error):
             bot_chat_initial_message(chat,(*values)[index],&bytes,io->error);

@@ -1,6 +1,7 @@
 #ifndef QA_BOT_CHAT_SOURCE_INITIAL_H
 #define QA_BOT_CHAT_SOURCE_INITIAL_H
 #include "qa/bots_allocator.h"
+#include "qa/id_index.h"
 
 enum {BOT_CHAT_INITIAL_BYTES=4,BOT_CHAT_TYPE_BYTES=44,BOT_CHAT_MESSAGE_BYTES=12};
 typedef struct bot_chat_initial {
@@ -9,6 +10,7 @@ typedef struct bot_chat_initial {
     uint32_t pointer;
     uint32_t *types,*messages;
     size_t type_count,type_capacity,message_count,message_capacity;
+    qa_id_index members;
 } bot_chat_initial;
 /* Membership is the parser's actual offset-plus-one typed view table. It does
  * not follow arbitrary raw links to manufacture a new type or message. */
@@ -17,6 +19,8 @@ bool bot_chat_initial_bind(qa_bot_memory *,qa_bot_memory_allocation,uint32_t,
 bool bot_chat_initial_allocate(qa_bot_memory *,uint32_t,uint32_t,bot_chat_initial *,qa_error *);
 void bot_chat_initial_dispose(bot_chat_initial *);
 bool bot_chat_initial_free(bot_chat_initial *,qa_error *);
+bool bot_chat_initial_member_admit(bot_chat_initial *,uint32_t,bool,size_t,qa_error *);
+bool bot_chat_initial_reindex(bot_chat_initial *,qa_error *);
 bool bot_chat_initial_first(const bot_chat_initial *,uint32_t *,qa_error *);
 bool bot_chat_initial_type(const bot_chat_initial *,uint32_t,qa_bot_memory_span *,qa_error *);
 bool bot_chat_initial_message(const bot_chat_initial *,uint32_t,qa_bot_memory_span *,qa_error *);

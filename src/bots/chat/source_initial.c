@@ -33,19 +33,42 @@ bool bot_chat_initial_allocate(qa_bot_memory *memory,uint32_t size,uint32_t poin
 }
 void bot_chat_initial_dispose(bot_chat_initial *chat) {
     if(!chat) return;
+    qa_id_index_destroy(&chat->members);
     free(chat->types);free(chat->messages);*chat=(bot_chat_initial){0};
 }
 bool bot_chat_initial_free(bot_chat_initial *chat,qa_error *error) {
     return chat?qa_bot_memory_free(chat->memory,chat->allocation,error):
         fail(error,"Initial chat free requires its actual owner");
 }
-static bool member(const uint32_t *pointers,size_t count,uint32_t pointer) {
-    for(size_t index=0;index<count;++index) if(pointers[index]==pointer) return true;
-    return false;
+static bool member(const bot_chat_initial *chat,uint32_t pointer,bool types) {
+    qa_id_index_cursor cursor=qa_id_index_begin(&chat->members,pointer,types?0:1);
+    size_t value;
+    return qa_id_index_next(&chat->members,&cursor,&value);
 }
-static bool register_pointer(uint32_t **pointers,size_t *count,size_t *capacity,
+bool bot_chat_initial_member_admit(bot_chat_initial *chat,uint32_t pointer,bool types,
+    size_t ordinal,qa_error *error) {
+    if(member(chat,pointer,types)) return true;
+    if(!qa_id_index_reserve(&chat->members,1,error)) return false;
+    qa_id_index_insert(&chat->members,pointer,types?0:1,ordinal);return true;
+}
+bool bot_chat_initial_reindex(bot_chat_initial *chat,qa_error *error) {
+    qa_id_index members={0};
+    if(!qa_id_index_reserve(&members,chat->type_count,error)) goto failed;
+    for(size_t index=0;index<chat->type_count;++index)
+        qa_id_index_insert(&members,chat->types[index],0,index);
+    if(!qa_id_index_reserve(&members,chat->message_count,error)) goto failed;
+    for(size_t index=0;index<chat->message_count;++index)
+        qa_id_index_insert(&members,chat->messages[index],1,index);
+    qa_id_index_destroy(&chat->members);chat->members=members;return true;
+failed:
+    qa_id_index_destroy(&members);return false;
+}
+static bool register_pointer(bot_chat_initial *chat,bool types,
     uint32_t pointer,qa_error *error) {
-    if(member(*pointers,*count,pointer)) return true;
+    if(member(chat,pointer,types)) return true;
+    uint32_t **pointers=types?&chat->types:&chat->messages;
+    size_t *count=types?&chat->type_count:&chat->message_count;
+    size_t *capacity=types?&chat->type_capacity:&chat->message_capacity;
     if(*count==*capacity) {
         size_t next=*capacity?*capacity*2:16;
         if(next<*capacity || next>SIZE_MAX/sizeof(**pointers))
@@ -54,17 +77,18 @@ static bool register_pointer(uint32_t **pointers,size_t *count,size_t *capacity,
         if(!grown) {qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining actual initial chat view membership");return false;}
         *pointers=grown;*capacity=next;
     }
+    if(!bot_chat_initial_member_admit(chat,pointer,types,*count,error)) return false;
     (*pointers)[(*count)++]=pointer;return true;
 }
 bool bot_chat_initial_type(const bot_chat_initial *chat,uint32_t pointer,
     qa_bot_memory_span *out,qa_error *error) {
-    if(!chat || !pointer || !member(chat->types,chat->type_count,pointer))
+    if(!chat || !pointer || !member(chat,pointer,true))
         return fail(error,"Initial chat pointer does not identify an allocated type");
     return cell(chat,pointer-1,BOT_CHAT_TYPE_BYTES,out,error);
 }
 bool bot_chat_initial_message(const bot_chat_initial *chat,uint32_t pointer,
     qa_bot_memory_span *out,qa_error *error) {
-    if(!chat || !pointer || !member(chat->messages,chat->message_count,pointer))
+    if(!chat || !pointer || !member(chat,pointer,false))
         return fail(error,"Initial chat pointer does not identify an allocated message");
     return cell(chat,pointer-1,BOT_CHAT_MESSAGE_BYTES,out,error);
 }
@@ -99,7 +123,7 @@ bool bot_chat_initial_type_add(bot_chat_initial *chat,uint32_t offset,qa_bytes n
         return fail(error,"Initial chat type publication requires its source name/output");
     qa_bot_memory_span bytes;
     if(!cell(chat,offset,BOT_CHAT_TYPE_BYTES,&bytes,error) ||
-       !register_pointer(&chat->types,&chat->type_count,&chat->type_capacity,offset+1,error)) return false;
+       !register_pointer(chat,true,offset+1,error)) return false;
     size_t copied=name.size<32?name.size:32;
     if(copied) memcpy(bytes.data,name.data,copied);
     memset(bytes.data+copied,0,32-copied);qa_store_u32le(bytes.data+36,0);
@@ -114,7 +138,7 @@ bool bot_chat_initial_message_add(bot_chat_initial *chat,uint32_t type,uint32_t 
     if(!chat || !out) return fail(error,"Initial chat message publication requires its owner/output");
     qa_bot_memory_span bytes;
     if(!cell(chat,offset,BOT_CHAT_MESSAGE_BYTES,&bytes,error) ||
-       !register_pointer(&chat->messages,&chat->message_count,&chat->message_capacity,offset+1,error)) return false;
+       !register_pointer(chat,false,offset+1,error)) return false;
     qa_store_f32le(bytes.data+4,-40);
     uint32_t previous;
     if(!bot_chat_initial_type_first(chat,type,&previous,error)) return false;
