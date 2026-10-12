@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "3152ef1228821cfbdd2c4907c3316438f35ea775",
+  "verified_main": "85e51f3df3d708f120e6f24d1843f0d931125740",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 234,
-    "open_source_observation": 137,
+    "fixed_source_build_core": 236,
+    "open_source_observation": 135,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -30022,8 +30022,9 @@
       "severity": "medium",
       "job": "16",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "85e51f3df3d708f120e6f24d1843f0d931125740"
     },
     {
       "id": "16-004",
@@ -30213,7 +30214,7 @@
       "severity": "high",
       "job": "16",
       "area": "frontend",
-      "status": "open_source_observation",
+      "status": "fixed_source_build_core",
       "verification": "source review; no runtime or performance proof",
       "original_summary": "Remote Q1 model and HUD paths still search static names per entity/frame, and inline model numbers are parsed again per draw.",
       "independent_review": {
@@ -30238,7 +30239,8 @@
           }
         ],
         "narrowing": "Protocol precache slot names and independent player translations are valid data. Bind their derived ids/model numbers at admission; preserve late precache updates and missing-resource behavior. This is not evidence that ordinary cache hits allocate."
-      }
+      },
+      "fixed_commit": "85e51f3df3d708f120e6f24d1843f0d931125740"
     },
     {
       "id": "16-009",
@@ -43396,6 +43398,38 @@
       ],
       "record_directory": "/tmp/qa-ta3196-q2-authored-items-and-names-20261012-v1",
       "conclusion": "Authored Q2 item and fixed-classname warm consumers use retained IDs with admission/restore binding. Source inspection also confirms J37-02 already uses one admitted attachment-name index and one interpolation path. Normal build and seven core suites passed; no live or speed claim."
+    },
+    {
+      "commit": "85e51f3df3d708f120e6f24d1843f0d931125740",
+      "source_tree": "f14cf2ca9a05604ccd64f6c85f11b8c93b21c5c2",
+      "finding_ids": [
+        "16-003",
+        "16-008"
+      ],
+      "files_rechecked": [
+        "src/app/frontend/qc_messages.c",
+        "src/app/frontend/remote_q1_client.c",
+        "src/app/frontend/remote_q1_effects.c",
+        "src/app/frontend/remote_q1_hud.c",
+        "src/app/frontend/remote_q1_media.c",
+        "src/app/frontend/remote_q1_prediction.c",
+        "src/app/frontend/remote_q1_presentation.c",
+        "src/app/frontend/remote_q1_private.h",
+        "src/app/frontend/remote_q1_transport.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-q1-received-name-and-recipient-indexes-20261012-v2",
+      "conclusion": "QC recipient and provider membership uses retained full-generation indexes while existing cursor/list order remains authoritative; received Q1 model names and inline metadata bind at precache. Normal build and seven core suites passed. This does not close decoder/row storage allocation or full live-game qualification."
     }
   ],
   "verification_limits": [

@@ -35,11 +35,7 @@ bool application_native_q1_rogue_state(void *context, qa_actor_owner owner,
 bool application_native_q1_rogue_state_current(void *context, qa_actor_owner owner,
     qa_actor_id actor, qa_actor_id state, qa_error *error) {
     application_provider *source = rogue_player(context, owner, actor, error);
-    qa_actor_id actual;
-    bool found;
-    return source && qa_q1_rogue_state_current(source->state.q1, actor, state, error) &&
-        qa_q1_rogue_state_find(source->state.q1, actor, &actual, &found, error) && found &&
-        qa_actor_id_equal(actual, state);
+    return source && qa_q1_rogue_state_current(source->state.q1, actor, state, error);
 }
 bool application_native_q1_rogue_number_read(void *context, qa_actor_owner owner,
     qa_actor_id actor, qa_actor_id state, uint32_t field, double *out, qa_error *error) {

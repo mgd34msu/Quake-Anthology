@@ -38,6 +38,7 @@ static bool same_target(const qa_target_binding *a, const qa_target_binding *b) 
 }
 /* Candidate storage never owns shared services or published bindings. */
 static void storage_free(qa_q1_game *g) {
+    q1_source_rogue_states_free(g);
     q1_source_rogue_runes_free(g);
     q1_wire_destroy(g);
     while (g->allocated_actors) {
@@ -197,6 +198,8 @@ static bool actors(q1_save_io *io, qa_q1_game *g, q1_door_group **index, size_t 
             if (actor->id.slot >= g->capacity || g->actors[actor->id.slot])
                 return q1_save_fail(io, "Duplicate Q1 actor continuation");
             g->actors[actor->id.slot] = actor;
+            if (!q1_source_rogue_state_publish(g, actor, io->values.error))
+                return false;
         }
         bool map = actor->map != NULL;
         Q1_SAVE(io, bool, map);
@@ -340,12 +343,6 @@ static bool payload(q1_save_io *io, qa_q1_game *g) {
                 !q1_ref_equal(q1_ref_from(g, player->id), actor->owner))
                 ok = q1_save_fail(io, "Rogue state has no matching physical source client");
         }
-        for (uint32_t j = 0; ok && j < i; ++j) {
-            const q1_actor *prior = g->actors[j];
-            if (prior && prior->kind == Q1_ROGUE_TEAM_STATE &&
-                q1_ref_equal(prior->owner, actor->owner))
-                ok = q1_save_fail(io, "Duplicate Rogue player state continuation");
-        }
     }
     if (ok) ok = q1_body_queue_validate(g, io->values.error);
     free(index);
@@ -422,6 +419,7 @@ bool qa_q1_game_restore_prepare(qa_q1_game *g, qa_bytes bytes, qa_q1_restore **o
     candidate->rogue_rune_index = (qa_actor_index){0};
     candidate->rogue_rune_storage = (qa_arena){0};
     candidate->rogue_rune_rows = (qa_pool){0};
+    candidate->rogue_state_owners = (qa_id_index){0};
     q1_save_io io = {.game = candidate};
     if (!qa_source_save_reader(&io.values, candidate->services.session, bytes, error)) {
         qa_q1_game_restore_abort(ticket);
@@ -433,6 +431,7 @@ bool qa_q1_game_restore_prepare(qa_q1_game *g, qa_bytes bytes, qa_q1_restore **o
     if (!candidate->actors || !candidate->players)
         goto fail;
     if (!q1_source_rogue_runes_prepare(candidate, error)) goto fail;
+    if (!q1_source_rogue_states_prepare(candidate, error)) goto fail;
     if (g->maps) {
         candidate->maps = allocate(&io, 1, sizeof(*candidate->maps));
         if (!candidate->maps)

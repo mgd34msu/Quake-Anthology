@@ -126,6 +126,8 @@ bool qa_q1_game_clone(qa_q1_game *g, qa_actor_id actor, qa_actor_id *out, qa_err
                      "native Q1 clone source retired during allocation");
         goto fail;
     }
+    if (!q1_source_rogue_state_owner(g, target, source->owner, error))
+        goto fail;
     q1_actor *allocation = target->allocation_next;
     *target = *source;
     target->id = id;

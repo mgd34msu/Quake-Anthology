@@ -35,8 +35,7 @@ bool qa_q1_game_path_change(qa_q1_game *g, qa_actor_id actor, const qa_q1_path_c
         change->kind > QA_Q1_PATH_FOUND)
         return q1_map_fail(error, "invalid Q1 path change");
     if (change->kind == QA_Q1_PATH_OWNER) {
-        entity->owner = q1_ref_from(g, change->reference);
-        return true;
+        return q1_source_rogue_state_owner(g, entity, q1_ref_from(g, change->reference), error);
     }
     if (entity->kind != Q1_MONSTER)
         return q1_map_fail(error, "Q1 actor has no monster path continuation");

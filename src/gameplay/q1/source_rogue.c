@@ -11,6 +11,73 @@ static bool rogue(const qa_q1_game *game, qa_error *error) {
         game->options.program == QA_Q1_ROGUE) ||
         fail(error, (qa_actor_id){0}, "Rogue state requires its live native source program");
 }
+static qa_id_index_cursor owner_cursor(const qa_q1_game *game, q1_ref owner) {
+    uint32_t slot = 0;
+    uint64_t discriminator = 0;
+    if (q1_ref_present(owner)) {
+        if (owner.kind == QA_ACTOR_REFERENCE_SOURCE) {
+            slot = owner.value.source.slot;
+            discriminator = owner.value.source.owner;
+        } else {
+            slot = owner.value.actor.slot;
+            discriminator = owner.value.actor.generation;
+        }
+    }
+    return qa_id_index_begin(&game->rogue_state_owners, slot, discriminator);
+}
+static const q1_actor *owner_state(const qa_q1_game *game, q1_ref owner,
+    const q1_actor *ignore) {
+    qa_id_index_cursor cursor = owner_cursor(game, owner);
+    size_t value;
+    while (qa_id_index_next(&game->rogue_state_owners, &cursor, &value)) {
+        const q1_actor *state = (const q1_actor *)(uintptr_t)value;
+        if (state != ignore && state->id.slot < game->capacity &&
+            game->actors[state->id.slot] == state && q1_ref_equal(state->owner, owner))
+            return state;
+    }
+    return NULL;
+}
+bool q1_source_rogue_states_prepare(qa_q1_game *game, qa_error *error) {
+    return game->options.program != QA_Q1_ROGUE ||
+        qa_id_index_reserve(&game->rogue_state_owners, game->capacity, error);
+}
+void q1_source_rogue_states_free(qa_q1_game *game) {
+    qa_id_index_destroy(&game->rogue_state_owners);
+}
+bool q1_source_rogue_state_publish(qa_q1_game *game, q1_actor *state, qa_error *error) {
+    if (state->kind != Q1_ROGUE_TEAM_STATE) return true;
+    if (owner_state(game, state->owner, state))
+        return fail(error, state->id, "Rogue source retains duplicate player state");
+    qa_id_index_cursor cursor = owner_cursor(game, state->owner);
+    qa_id_index_insert(&game->rogue_state_owners, cursor.key, cursor.discriminator,
+        (size_t)(uintptr_t)state);
+    return true;
+}
+void q1_source_rogue_state_unpublish(qa_q1_game *game, const q1_actor *state) {
+    if (!state || state->kind != Q1_ROGUE_TEAM_STATE) return;
+    qa_id_index_cursor cursor = owner_cursor(game, state->owner);
+    qa_id_index_remove_value(&game->rogue_state_owners, cursor.key, cursor.discriminator,
+        (size_t)(uintptr_t)state);
+}
+bool q1_source_rogue_state_owner(qa_q1_game *game, q1_actor *state, q1_ref owner,
+    qa_error *error) {
+    if (state->kind != Q1_ROGUE_TEAM_STATE) {
+        state->owner = owner;
+        return true;
+    }
+    if (q1_ref_equal(state->owner, owner)) {
+        state->owner = owner;
+        return true;
+    }
+    if (owner_state(game, owner, state))
+        return fail(error, state->id, "Rogue source retains duplicate player state");
+    q1_source_rogue_state_unpublish(game, state);
+    state->owner = owner;
+    qa_id_index_cursor cursor = owner_cursor(game, owner);
+    qa_id_index_insert(&game->rogue_state_owners, cursor.key, cursor.discriminator,
+        (size_t)(uintptr_t)state);
+    return true;
+}
 static const q1_actor *state_const(const qa_q1_game *game, qa_actor_id actor,
     qa_error *error) {
     if (!rogue(game, error)) return NULL;
@@ -28,12 +95,9 @@ bool qa_q1_rogue_state_find(const qa_q1_game *game, qa_actor_id player,
     if (!out || !found || !rogue(game, error)) return false;
     *found = false;
     *out = (qa_actor_id){0};
-    for (uint32_t i = 0; i < game->capacity; ++i) {
-        const q1_actor *state = game->actors[i];
-        if (!state || state->kind != Q1_ROGUE_TEAM_STATE ||
-            !q1_ref_equal(state->owner, q1_ref_from(game, player))) continue;
+    const q1_actor *state = owner_state(game, q1_ref_from(game, player), NULL);
+    if (state) {
         if (!state_const(game, state->id, error)) return false;
-        if (*found) return fail(error, player, "Rogue source retains duplicate player state");
         *found = true;
         *out = state->id;
     }
@@ -72,9 +136,6 @@ bool qa_q1_rogue_state(qa_q1_game *game, qa_actor_id player, qa_actor_id *out,
         state = created->id;
         if (!player_current(&operation, player, client, slot, error) ||
             !qa_q1_rogue_state_current(game, player, state, error)) goto finish;
-        qa_actor_id unique;
-        if (!qa_q1_rogue_state_find(game, player, &unique, &found, error) ||
-            !found || !qa_actor_id_equal(unique, state)) goto finish;
         float mode;
         if (!game->host.cvars) {
             fail(error, player, "Rogue state requires its genuine source policy reader");

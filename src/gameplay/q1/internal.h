@@ -1434,6 +1434,7 @@ struct qa_q1_game {
     qa_actor_index rogue_rune_index;
     qa_arena rogue_rune_storage;
     qa_pool rogue_rune_rows;
+    qa_id_index rogue_state_owners;
     void *source_client_context;
     bool (*source_client_publish)(void *,const struct qa_q1_source_client_view *,qa_error *);
     bool (*source_client_observer)(void *,qa_actor_id,bool,qa_error *);
@@ -1496,6 +1497,11 @@ bool q1_source_rogue_runes_prepare(qa_q1_game *, qa_error *);
 q1_rogue_rune_player *q1_source_rogue_runes_allocate(qa_q1_game *, qa_error *);
 void q1_source_rogue_runes_release(qa_q1_game *, qa_actor_id);
 void q1_source_rogue_runes_free(qa_q1_game *);
+bool q1_source_rogue_states_prepare(qa_q1_game *, qa_error *);
+void q1_source_rogue_states_free(qa_q1_game *);
+bool q1_source_rogue_state_publish(qa_q1_game *, q1_actor *, qa_error *);
+void q1_source_rogue_state_unpublish(qa_q1_game *, const q1_actor *);
+bool q1_source_rogue_state_owner(qa_q1_game *, q1_actor *, q1_ref, qa_error *);
 bool q1_source_value(const qa_q1_game *, qa_q1_source_setting, float fallback, float *, qa_error *);
 
 extern const q1_frame q1_frames[];

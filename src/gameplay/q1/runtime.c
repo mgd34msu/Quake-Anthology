@@ -750,9 +750,12 @@ bool qa_q1_game_create(const qa_builtin_services *services, const qa_q1_options 
         goto fail;
     if (!q1_source_rogue_runes_prepare(g, error))
         goto fail;
+    if (!q1_source_rogue_states_prepare(g, error))
+        goto fail;
     *out = g;
     return true;
 fail:
+    q1_source_rogue_states_free(g);
     q1_source_rogue_runes_free(g);
     qa_supply_destroy(g->source_supply);
     free(g->actors);
@@ -874,6 +877,7 @@ void qa_q1_game_destroy(qa_q1_game *g) {
     q1_wire_destroy(g);
     qa_supply_destroy(g->source_supply);
     q1_source_rogue_runes_free(g);
+    q1_source_rogue_states_free(g);
     while (g->allocated_actors) {
         q1_actor *next = g->allocated_actors->allocation_next;
         free(g->allocated_actors);
@@ -934,6 +938,7 @@ void qa_q1_game_actor_released(qa_q1_game *g, qa_actor_record actor) {
     q1_actor *entity = g->actors[actor.id.slot];
     if (entity && qa_actor_id_equal(entity->id, actor.id)) {
         q1_map_actor_released(g, entity);
+        q1_source_rogue_state_unpublish(g, entity);
         g->actors[actor.id.slot] = NULL;
         entity->active = false;
         entity->pool_next = g->retired_actors;
@@ -969,6 +974,7 @@ static q1_actor *allocate_state(qa_q1_game *g, qa_actor_id actor, qa_error *erro
     entity->id = actor;
     entity->active = true;
     entity->alpha = entity->scale = 1;
+    q1_source_rogue_state_unpublish(g, g->actors[actor.slot]);
     g->actors[actor.slot] = entity;
     return entity;
 }
@@ -993,7 +999,8 @@ static bool create_state(qa_q1_game *g, qa_string_id classname, q1_entity_kind k
     entity->kind = kind;
     entity->native = true;
     entity->physics = qa_physics_properties_default(g->options.rules);
-    if (!q1_map_bind_target(g, entity, error)) {
+    if (!q1_source_rogue_state_publish(g, entity, error) ||
+        !q1_map_bind_target(g, entity, error)) {
         (void)q1_remove(g, entity, NULL);
         return false;
     }
