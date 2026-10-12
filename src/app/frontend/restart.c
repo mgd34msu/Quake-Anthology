@@ -1,6 +1,7 @@
 #include "restart.h"
 #include "capture.h"
 #include "q3_color_policy.h"
+#include "shared_video.h"
 #include "input_shutdown.h"
 #include "qa/console_cvar_observer.h"
 #include <math.h>
@@ -41,14 +42,13 @@ static bool display_options(frontend_restart *owner,qa_display_backend backend,q
     qa_frontend *f=owner->options.frontend; qa_display_info info;
     if (!qa_display_info_get(f->display,&info,error)) return false;
     *options=f->options.display; options->backend=backend;
-    float width=number(owner,"r_customwidth",0),height=number(owner,"r_customheight",0);
-    if (width==0) width=(float)(f->cpu?f->width:info.logical_width);
-    if (height==0) height=(float)(f->cpu?f->height:info.logical_height);
+    uint32_t width,height;
+    if (!frontend_shared_video_dimensions(owner->options.cvars,NULL,
+        f->cpu?f->width:info.logical_width,f->cpu?f->height:info.logical_height,
+        &width,&height,error)) return false;
     float fullscreen=number(owner,"r_fullscreen",info.fullscreen!=QA_DISPLAY_WINDOWED);
     float swap=number(owner,"r_swapInterval",0); *gamma=number(owner,"r_gamma",f->options.gamma);
-    if (!isfinite(width) || !isfinite(height) || floorf(width)!=width || floorf(height)!=height ||
-        width<64 || width>16384 || height<64 || height>16384 ||
-        (fullscreen!=0 && fullscreen!=1) || (swap!=0 && swap!=1) || !isfinite(*gamma) || *gamma<.5f || *gamma>3)
+    if ((fullscreen!=0 && fullscreen!=1) || (swap!=0 && swap!=1) || !isfinite(*gamma) || *gamma<.5f || *gamma>3)
         return fail(error,QA_ERROR_ARGUMENT,"Restart display settings require valid size, fullscreen, brightness and swap interval");
     options->width=(uint32_t)width; options->height=(uint32_t)height;
     options->fullscreen=fullscreen==1?QA_DISPLAY_DESKTOP:QA_DISPLAY_WINDOWED;

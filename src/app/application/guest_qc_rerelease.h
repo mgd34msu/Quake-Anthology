@@ -1,6 +1,7 @@
 #ifndef APPLICATION_GUEST_QC_RERELEASE_H
 #define APPLICATION_GUEST_QC_RERELEASE_H
 #include "guest_qc_internal.h"
+bool application_qc_rerelease_prepare(struct application_qc_state *,qa_error *);
 bool application_qc_rerelease_import(struct application_qc_state *,qa_qc_instance *,qa_qc_builtin,qa_error *);
 void application_qc_rerelease_reset(struct application_qc_state *);
 void application_qc_rerelease_destroy(struct application_qc_state *);

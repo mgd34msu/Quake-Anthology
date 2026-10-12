@@ -20,18 +20,61 @@ typedef struct qc_prompt {
     bool active;
 } qc_prompt;
 struct application_qc_rerelease {
-    qc_finale_held *held;
+    qa_arena storage;
+    qa_id_index held_index;
+    qc_finale_held *held, *observations;
     size_t count;
     double last_poll;
-    bool has_poll,acknowledged;
+    bool active,has_poll,acknowledged;
     qc_prompt *prompts;
 };
+static bool owner_create(struct application_qc_state *engine,
+    struct application_qc_rerelease **out,qa_error *error)
+{
+    struct application_qc_rerelease *owner=calloc(1,sizeof(*owner));
+    if (!owner) return application_fail(error,QA_ERROR_MEMORY,"Allocating actual QC rerelease continuation");
+    qa_arena_init(&owner->storage,0);
+    owner->held_index.storage=&owner->storage;
+    size_t bytes=(size_t)engine->max_clients*sizeof(*owner->held);
+    if (bytes) {
+        owner->held=qa_arena_alloc(&owner->storage,bytes,_Alignof(qc_finale_held),error);
+        owner->observations=qa_arena_alloc(&owner->storage,bytes,_Alignof(qc_finale_held),error);
+    }
+    if ((bytes && (!owner->held || !owner->observations)) ||
+        !qa_id_index_reserve(&owner->held_index,engine->max_clients,error)) {
+        qa_id_index_destroy(&owner->held_index);
+        qa_arena_destroy(&owner->storage);
+        free(owner); return false;
+    }
+    qa_arena_seal(&owner->storage);
+    *out=owner; return true;
+}
+bool application_qc_rerelease_prepare(struct application_qc_state *engine,qa_error *error)
+{
+    if (engine->profile!=QA_QC_RERELEASE || engine->rerelease) return true;
+    return owner_create(engine,&engine->rerelease,error);
+}
 static bool owner_get(struct application_qc_state *engine,qa_error *error)
 {
-    if (engine->rerelease) return true;
-    engine->rerelease=calloc(1,sizeof(*engine->rerelease));
-    if (!engine->rerelease) return application_fail(error,QA_ERROR_MEMORY,"Allocating actual QC rerelease continuation");
+    if (!application_qc_rerelease_prepare(engine,error)) return false;
+    engine->rerelease->active=true;
     return true;
+}
+static bool held_at(const struct application_qc_rerelease *owner,qa_actor_id actor,size_t *out)
+{
+    qa_id_index_cursor cursor=qa_id_index_begin(&owner->held_index,actor.slot,actor.generation);
+    size_t row;
+    while (qa_id_index_next(&owner->held_index,&cursor,&row))
+        if (qa_actor_id_equal(owner->held[row].actor,actor)) { *out=row; return true; }
+    return false;
+}
+static void held_index_build(struct application_qc_rerelease *owner)
+{
+    qa_id_index_clear(&owner->held_index);
+    for (size_t i=owner->count;i>0;--i) {
+        qa_actor_id actor=owner->held[i-1].actor;
+        qa_id_index_insert(&owner->held_index,actor.slot,actor.generation,i-1);
+    }
 }
 static void prompt_clear(qc_prompt *prompt,uint64_t now)
 {
@@ -416,8 +459,7 @@ static bool finale(struct application_qc_state *engine,qa_qc_instance *vm,qa_err
     float seconds;
     if (!time || time->type!=QA_QC_FLOAT || !qa_qc_global_float(vm,time->offset,&seconds,error) || !isfinite(seconds))
         return application_fail(error,QA_ERROR_FORMAT,"QC finale has no genuine source clock");
-    qc_finale_held *current=calloc(engine->max_clients,sizeof(*current));
-    if (!current) return application_fail(error,QA_ERROR_MEMORY,"Observing actual QC finale source clients");
+    qc_finale_held *current=owner->observations;
     size_t count=0; bool ok=true;
     for (uint32_t slot=1;ok && slot<=engine->max_clients;++slot) {
         if (!engine->clients[slot].connected) continue;
@@ -430,16 +472,16 @@ static bool finale(struct application_qc_state *engine,qa_qc_instance *vm,qa_err
         bool reset=!owner->has_poll || seconds<owner->last_poll || (double)seconds-owner->last_poll>1;
         if (reset) owner->acknowledged=false;
         for (size_t i=0;i<count && !reset;++i) {
-            bool held=false;
-            for (size_t j=0;j<owner->count;++j)
-                if (qa_actor_id_equal(current[i].actor,owner->held[j].actor)) { held=owner->held[j].held; break; }
+            size_t previous;
+            bool held=held_at(owner,current[i].actor,&previous) && owner->held[previous].held;
             if (current[i].held && !held) owner->acknowledged=true;
         }
-        free(owner->held); owner->held=current; owner->count=count; current=NULL;
+        owner->observations=owner->held; owner->held=current; owner->count=count;
+        held_index_build(owner);
         owner->has_poll=true; owner->last_poll=seconds;
         ok=qa_qc_return_float(vm,owner->acknowledged?1:0,error);
     }
-    free(current); return ok;
+    return ok;
 }
 bool application_qc_rerelease_import(struct application_qc_state *engine,qa_qc_instance *vm,qa_qc_builtin builtin,qa_error *error)
 {
@@ -471,10 +513,24 @@ void application_qc_rerelease_destroy(struct application_qc_state *engine)
         for (uint32_t slot=1;slot<=engine->max_clients;++slot) prompt_clear(engine->rerelease->prompts+slot,0);
         free(engine->rerelease->prompts);
     }
-    free(engine->rerelease->held); free(engine->rerelease); engine->rerelease=NULL;
+    qa_id_index_destroy(&engine->rerelease->held_index);
+    qa_arena_destroy(&engine->rerelease->storage);
+    free(engine->rerelease); engine->rerelease=NULL;
 }
 void application_qc_rerelease_reset(struct application_qc_state *engine)
-{ application_qc_rerelease_destroy(engine); }
+{
+    if (!engine) return;
+    qa_buffer_free(&engine->npc_restore);
+    struct application_qc_rerelease *owner=engine->rerelease;
+    if (!owner) return;
+    if (owner->prompts) {
+        for (uint32_t slot=1;slot<=engine->max_clients;++slot) prompt_clear(owner->prompts+slot,0);
+        free(owner->prompts); owner->prompts=NULL;
+    }
+    owner->count=0; owner->last_poll=0;
+    owner->active=owner->has_poll=owner->acknowledged=false;
+    qa_id_index_clear(&owner->held_index);
+}
 static bool prompt_text(qa_source_save_io *io,char **owned)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ,present=!reading && *owned;
@@ -529,31 +585,30 @@ static bool prompt_fields(qa_source_save_io *io,struct application_qc_state *eng
 static bool fields(qa_source_save_io *io,struct application_qc_state *engine,
     struct application_qc_rerelease **out)
 {
-    bool reading=io->direction==QA_SOURCE_SAVE_READ,present=!reading && *out;
+    bool reading=io->direction==QA_SOURCE_SAVE_READ,present=!reading && *out && (*out)->active;
     uint8_t magic[4]={'Q','Q','E','X'};
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QQEX",4) ||
         !qa_source_save_bool(io,&present)) return false;
-    if (!present) return true;
+    if (!present) return !reading || engine->profile!=QA_QC_RERELEASE || owner_create(engine,out,io->error);
     if (engine->profile!=QA_QC_RERELEASE) return false;
     if (reading) {
-        *out=calloc(1,sizeof(**out));
-        if (!*out) return application_fail(io->error,QA_ERROR_MEMORY,"Restoring QC finale owner");
+        if (!owner_create(engine,out,io->error)) return false;
+        (*out)->active=true;
     }
     struct application_qc_rerelease *owner=*out;
     if (!qa_source_save_bool(io,&owner->has_poll) || !qa_source_save_bool(io,&owner->acknowledged) ||
         !qa_source_save_f64(io,&owner->last_poll) || !isfinite(owner->last_poll) ||
         !qa_source_save_count(io,&owner->count,engine->max_clients) ||
         (!owner->has_poll && (owner->last_poll != 0.0 || owner->acknowledged || owner->count))) return false;
-    if (reading && owner->count) {
-        owner->held=calloc(owner->count,sizeof(*owner->held));
-        if (!owner->held) return application_fail(io->error,QA_ERROR_MEMORY,"Restoring actual QC finale held actors");
-    }
     if (owner->count && !owner->held) return false;
     for (size_t i=0;i<owner->count;++i) {
         if (!qa_source_save_actor(io,&owner->held[i].actor) || !owner->held[i].actor.registry ||
             !qa_source_save_bool(io,&owner->held[i].held)) return false;
-        for (size_t j=0;j<i;++j) if (qa_actor_id_equal(owner->held[j].actor,owner->held[i].actor)) return false;
+        size_t previous;
+        if (held_at(owner,owner->held[i].actor,&previous) && previous<i) return false;
+        if (reading) qa_id_index_insert(&owner->held_index,owner->held[i].actor.slot,owner->held[i].actor.generation,i);
     }
+    if (reading) held_index_build(owner);
     return prompt_fields(io,engine,owner);
 }
 bool application_qc_rerelease_checkpoint(struct application_qc_state *engine,qa_buffer *out,qa_error *error)

@@ -151,7 +151,8 @@ bool frontend_shared_settings_constructor_settings(frontend_shared_settings *own
         if (!row[i] || !row[i]->value) return fail(error,"Native constructors lost a canonical setting");
     }
     uint32_t width,height;
-    if (!frontend_shared_video_dimensions(edit,display->width,display->height,&width,&height,error)) return false;
+    if (!frontend_shared_video_dimensions(qa_application_cvars(owner->application),edit,
+        display->width,display->height,&width,&height,error)) return false;
     double fullscreen=row[2]->number,swap=row[3]->number,brightness=row[4]->number;
     if ((fullscreen!=0 && fullscreen!=1) || (swap!=0 && swap!=1) ||
         !isfinite(brightness) || brightness<.5 || brightness>3)

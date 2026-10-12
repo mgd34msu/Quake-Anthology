@@ -97,14 +97,16 @@ bool frontend_shared_video_resolve(void *user,const qa_cvar_video_query *query,
         .height=frontend_video_modes[query->index].height};
     return true;
 }
-bool frontend_shared_video_dimensions(const qa_cvars_edit *edit,uint32_t fallback_width,
+bool frontend_shared_video_dimensions(const qa_cvars *registry,const qa_cvars_edit *edit,uint32_t fallback_width,
     uint32_t fallback_height,uint32_t *width,uint32_t *height,qa_error *error)
 {
-    const qa_cvar_view *mode=qa_cvars_edit_find(edit,FRONTEND_VIDEO_MODE_NAME);
+    const qa_cvar_view *mode=edit?qa_cvars_edit_find(edit,FRONTEND_VIDEO_MODE_NAME):
+        qa_cvars_find(registry,FRONTEND_VIDEO_MODE_NAME);
     if (!mode) return fail(error,"Display projection lost its canonical mode");
     qa_cvar_video_query query={.member=FRONTEND_VIDEO_MODE_NAME,.dialect=QA_RULESET_Q3,.index=mode->integer};
     if (query.index==-1) {
-        const qa_cvar_view *w=qa_cvars_edit_find(edit,"r_customwidth"),*h=qa_cvars_edit_find(edit,"r_customheight");
+        const qa_cvar_view *w=edit?qa_cvars_edit_find(edit,"r_customwidth"):qa_cvars_find(registry,"r_customwidth");
+        const qa_cvar_view *h=edit?qa_cvars_edit_find(edit,"r_customheight"):qa_cvars_find(registry,"r_customheight");
         if (!w || !h) return fail(error,"Display projection lost its canonical custom dimensions");
         double x=w->number!=0?(double)w->number:(double)fallback_width;
         double y=h->number!=0?(double)h->number:(double)fallback_height;
@@ -134,7 +136,8 @@ bool frontend_shared_video_settings(qa_frontend *f,const qa_cvars_edit *edit,
     uint32_t current_width=f->cpu?f->width:info.logical_width;
     uint32_t current_height=f->cpu?f->height:info.logical_height;
     uint32_t width,height;
-    if (!frontend_shared_video_dimensions(edit,current_width,current_height,&width,&height,error)) return false;
+    if (!frontend_shared_video_dimensions(qa_application_cvars(f->application),edit,
+        current_width,current_height,&width,&height,error)) return false;
     double fullscreen=rows[2]->number,swap=rows[3]->number;
     if ((fullscreen!=0 && fullscreen!=1) || (f->gl && swap!=0 && swap!=1))
         return fail(error,"Display settings require valid native size, fullscreen and swap interval");

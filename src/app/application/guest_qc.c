@@ -1342,6 +1342,7 @@ bool application_construct_qc(qa_application *app, application_provider *provide
     if (!engine->clients || !engine->actors)
         return application_fail(error, QA_ERROR_MEMORY, "Allocating QC physical client and actor rows");
     if (!qa_actor_index_create(&engine->client_index, qa_session_actors(engine->services.session), NULL, error)) return false;
+    if (!application_qc_rerelease_prepare(engine, error)) return false;
     if (!application_qc_messages_create(engine, error)) return false;
     int32_t difficulty = (int32_t)(fmaxf(0, fminf(3, skill->number)) + 0.5);
     static const qa_qc_builtin imports[] = {

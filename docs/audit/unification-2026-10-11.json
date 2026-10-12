@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "54b9b1d20d3b24137631f529cff74bbcb92adec7",
+  "verified_main": "da8d551a0d15454374e78339c6ef49691521cc5a",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 196,
-    "open_source_observation": 175,
+    "fixed_source_build_core": 199,
+    "open_source_observation": 172,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -33125,8 +33125,9 @@
       "severity": "medium",
       "job": "22",
       "area": "gameplay_q2",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "da8d551a0d15454374e78339c6ef49691521cc5a"
     },
     {
       "id": "22-02",
@@ -33169,8 +33170,9 @@
       "severity": "low",
       "job": "22",
       "area": "gameplay_q2",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "da8d551a0d15454374e78339c6ef49691521cc5a"
     },
     {
       "id": "22-04",
@@ -33405,8 +33407,9 @@
       "severity": "medium",
       "job": "23",
       "area": "gameplay_q2",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "da8d551a0d15454374e78339c6ef49691521cc5a"
     },
     {
       "id": "J23-05",
@@ -36549,7 +36552,13 @@
       "job": "33",
       "area": "shared_gameplay",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "source review; no runtime or performance proof",
+      "partial_followups": [
+        {
+          "commit": "da8d551a",
+          "verification": "Private spare-frame list and frame/request allocations deleted; common qa_pool and qa_arena with aligned packed requests preserve nested callback custody. Normal build and seven core suites passed with real nested reuse/stale-continuation behavior. Arbitrary new recursion peaks still grow common storage; complete cold bound absent from current operation owner interface, so this observation remains open for that admission requirement."
+        }
+      ]
     },
     {
       "id": "J33-03",
@@ -42603,6 +42612,40 @@
       ],
       "record_directory": "/tmp/qa-ta3196-shared-command-text-20261012-v1",
       "conclusion": "Startup replay, Q1 command/content comparisons and remote Q3 game-type parsing now use existing shared context/text/integer primitives. Private duplicate bodies removed, original Q3 integer-prefix conversion selected. Normal build and seven core suites passed; no live or performance claim."
+    },
+    {
+      "commit": "da8d551a0d15454374e78339c6ef49691521cc5a",
+      "source_tree": "ac5b268e4322c211b1ee9e91b7cfacb94dbbb323",
+      "finding_ids": [
+        "J23-04",
+        "22-01",
+        "22-03"
+      ],
+      "files_rechecked": [
+        "src/gameplay/operation.c",
+        "src/gameplay/q2/internal.h",
+        "src/gameplay/q2/monsters/medic.c",
+        "src/gameplay/q2/player/admission.c",
+        "src/gameplay/q2/player/checkpoint.c",
+        "src/gameplay/q2/player/death.c",
+        "src/gameplay/q2/player/equipment.c",
+        "src/gameplay/q2/player/state.c",
+        "src/gameplay/q2/save/original_level.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-gameplay-common-storage-20261012-v1",
+      "conclusion": "Compass points are constructor-owned before live use, including admitted restore extents; medic uses retained keys and common actor lookup. Operation private frame/request allocations and spare list replaced by common pool, with new-peak growth still open. Normal build and seven core suites passed, including nested continuation behavior; no live or zero-growth claim."
     }
   ],
   "verification_limits": [
