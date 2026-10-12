@@ -455,7 +455,14 @@ bool qa_q3_presentation_model_has_tags(const qa_q3_presentation_assets *a, int32
     return true;
 }
 
-bool qa_q3_presentation_tag(const qa_q3_presentation_assets *a, int32_t handle, const char *name,
+qa_string_id qa_q3_presentation_tag_id(const qa_q3_presentation_assets *a, qa_q3_tag_name name)
+{ return a ? a->tag_names[name] : QA_STRING_NONE; }
+qa_string_id qa_q3_presentation_tag_name(const qa_q3_presentation_assets *a, const char *name)
+{
+    return a && name ? qa_strings_find(a->options.strings,
+        (qa_bytes){(const uint8_t *)name, strlen(name)}) : QA_STRING_NONE;
+}
+bool qa_q3_presentation_tag(const qa_q3_presentation_assets *a, int32_t handle, qa_string_id name,
                             int32_t first, int32_t second, float fraction, qa_model_tag *out,
                             bool *found, qa_error *error)
 {
@@ -463,7 +470,8 @@ bool qa_q3_presentation_tag(const qa_q3_presentation_assets *a, int32_t handle, 
     if (!out || !found || !q3p_model_get(a, handle, &model, error)) return false;
     const qa_model *source = model && model->has_lods ? q3p_model_source(model, 0) : NULL;
     bool match = source && name && first >= 0 && second >= 0 &&
-        qa_model_lerp_tag(source, name, (uint32_t)first, (uint32_t)second, fraction, out);
+        qa_scene_model_lerp_tag(model->scene[0], name,
+            (uint32_t)first, (uint32_t)second, fraction, out);
     if (!match) *out = (qa_model_tag){.axes = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}};
     *found = match; return true;
 }

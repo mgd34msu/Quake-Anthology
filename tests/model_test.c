@@ -355,7 +355,47 @@ static fixture md5(void) {
     return f;
 }
 
+static void attachment_names(void) {
+    qa_error error = {0};
+    qa_strings *strings = NULL;
+    qa_id_index names = {0};
+    CHECK(qa_strings_create(&strings, &error));
+    qa_model_tag tags[6] = {
+        {.name = "tag_weapon", .axes = {{1,0,0},{0,1,0},{0,0,1}}},
+        {.name = "tag_weapon", .origin = {100,0,0}},
+        {.name = "tag_torso"},
+        {.name = "tag_torso"},
+        {.name = "tag_weapon", .origin = {2,0,0}, .axes = {{1,0,0},{0,1,0},{0,0,1}}},
+        {.name = "tag_weapon", .origin = {200,0,0}}
+    };
+    qa_model model = {.format = QA_MODEL_MD3, .frame_count = 2, .tag_count = 3, .tags = tags};
+    CHECK(qa_model_bind_attachment_names(&model, strings, &names, &error));
+    qa_string_id weapon = qa_strings_find(strings, (qa_bytes){(const uint8_t *)"tag_weapon",10});
+    qa_model_tag tag;
+    CHECK(qa_model_lerp_tag(&model, &names, weapon, 0, 999, .5f, &tag));
+    CHECK(tag.origin[0] == 1 && tag.axes[1][1] == 1);
+    CHECK(!qa_strings_find(strings, (qa_bytes){(const uint8_t *)"TAG_WEAPON",10}));
+    qa_id_index_destroy(&names);
+
+    char text_names[2][81];
+    memset(text_names, 'a', sizeof(text_names));
+    text_names[0][79] = 'b'; text_names[1][79] = 'c';
+    text_names[0][80] = text_names[1][80] = 0;
+    qa_model_bone bones[3] = {0};
+    bones[0].text_name = (qa_bytes){(const uint8_t *)text_names[0],80};
+    bones[1].text_name = (qa_bytes){(const uint8_t *)text_names[1],80};
+    bones[2].text_name = bones[0].text_name;
+    model = (qa_model){.format = QA_MODEL_MD5, .bone_count = 3, .bones = bones};
+    CHECK(qa_model_bind_attachment_names(&model, strings, &names, &error));
+    CHECK(qa_id_index_find(&names, qa_strings_find(strings, bones[0].text_name), 0)->value == 0);
+    CHECK(qa_id_index_find(&names, qa_strings_find(strings, bones[1].text_name), 0)->value == 1);
+    CHECK(names.count == 2);
+    qa_id_index_destroy(&names);
+    qa_strings_destroy(strings);
+}
+
 int main(void) {
+    attachment_names();
     skin_bindings();
     const float local[3] = {1, 2, 3};
     for (qa_angle_math_rule rule = QA_ANGLE_FLOAT_MATH; rule <= QA_ANGLE_FLOAT_NATIVE_MATH; ++rule) {
@@ -410,9 +450,17 @@ int main(void) {
     CHECK(m.declared_skin_count == 3 && m.skin_count == 0);
     CHECK(m.meshes[0].shaders[0].index == 7);
     qa_model_tag tag;
-    CHECK(qa_model_lerp_tag(&m, "tag_weapon", 0, 999, 0.5f, &tag));
+    qa_strings *tag_strings = NULL;
+    qa_id_index tag_names = {0};
+    CHECK(qa_strings_create(&tag_strings, &e));
+    CHECK(qa_model_bind_attachment_names(&m, tag_strings, &tag_names, &e));
+    qa_string_id weapon_tag = qa_strings_find(tag_strings,
+        (qa_bytes){(const uint8_t *)"tag_weapon", 10});
+    CHECK(qa_model_lerp_tag(&m, &tag_names, weapon_tag, 0, 999, 0.5f, &tag));
     CHECK(tag.origin[0] == 1 && tag.axes[1][1] == 1);
-    CHECK(!qa_model_lerp_tag(&m, "absent", 0, 1, 0.5f, &tag));
+    CHECK(!qa_model_lerp_tag(&m, &tag_names, QA_STRING_NONE, 0, 1, 0.5f, &tag));
+    qa_id_index_destroy(&tag_names);
+    qa_strings_destroy(tag_strings);
     CHECK(qa_model_sample_mesh(&m, 0, 1, 0, 0.5f, vertices, 3, &e));
     CHECK(vertices[0].position[0] == 0.5f);
     CHECK(!qa_model_sample_mesh(&m, 0, 2, 0, 0.5f, vertices, 3, &e));

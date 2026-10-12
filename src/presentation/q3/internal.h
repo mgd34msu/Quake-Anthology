@@ -60,6 +60,7 @@ typedef struct q3p_provider_custody q3p_provider_custody;
 typedef struct q3p_map_custody q3p_map_custody;
 struct qa_q3_presentation_assets {
     qa_q3_presentation_asset_options options;
+    const qa_string_id *tag_names;
     qa_q3_presentation_assets *parent;
     q3p_provider_custody *providers;
     q3p_map_custody *maps;

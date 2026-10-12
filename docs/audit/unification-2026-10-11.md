@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `624740a2`.
+Follow-up source changes were reviewed through main `a04c8473`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 116 have source fixes
+There are **374 overlapping source-review observations**: 117 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 255 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 254 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -135,6 +135,7 @@ results.
 | `J11-03`, `17-16` | `f1436e9f` | Script and HUD compression share caller-owned storage; SystemInfo uses common pair and key primitives. |
 | `J11-05`, `J11-09` | `413a776e` | VFS resource identity uses the shared ID index; entity clipping uses the common original-epsilon algorithm. |
 | `J13-07` | `bcb95cff` | Q2/Q3 medium clipping and coverage share caller scratch. QW writer portion of 27-02 is fixed; histories remain open. |
+| `10-04` | `a04c8473` | Navigation uses the common usercmd builder with retained physical rounding and delta-angle policy; the private constructor is deleted. |
 | `J14-09` | `11620e3a` | One platform directory service replaces frontend SDL directory discovery; engine and SDL allocator ownership remain distinct. |
 
 The seven suites are platform_services, core, archive, VFS, BSP, image and model.

@@ -383,7 +383,7 @@ static bool load(q3n_clients *owner, q3n_client_info *ci, q3n_animation_holder *
         if (!fallback) return q3n_client_fail(error, QA_ERROR_NOT_FOUND, "Default Q3 client model failed to register");
     }
     qa_model_tag tag;
-    if (!qa_q3_presentation_tag(owner->options.assets, ci->models[1], "tag_flag", 0, 0, 1,
+    if (!qa_q3_presentation_tag(owner->options.assets, ci->models[1], qa_q3_presentation_tag_id(owner->options.assets, QA_Q3_TAG_FLAG), 0, 0, 1,
         &tag, &ci->new_anims, error) || !current(owner, error)) return false;
     const char *fallback_sound = mission && qa_game_type_is_team(game_type) ? "james" : "sarge";
     memset(ci->sounds, 0, sizeof(ci->sounds));

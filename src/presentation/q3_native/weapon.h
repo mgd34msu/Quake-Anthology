@@ -38,6 +38,7 @@ typedef struct q3n_weapon_view {
 typedef struct q3n_selected_weapon_media {
     qa_q3_presentation_assets *assets;
     int32_t gun, hands, barrel, flash, invisibility, battle_weapon, quad_weapon;
+    qa_string_id anchor_tag;
 } q3n_selected_weapon_media;
 typedef struct q3n_selected_weapon_barrel {
     int32_t time;
@@ -67,11 +68,11 @@ typedef struct q3n_selected_weapon_view {
 } q3n_selected_weapon_view;
 typedef struct q3n_selected_weapon_attachment {
     int32_t model;
-    const char *tag;
+    qa_string_id tag;
 } q3n_selected_weapon_attachment;
 typedef struct q3n_selected_weapon_authored_view {
     q3n_selected_weapon_view camera;
-    const char *anchor_tag;
+    qa_string_id anchor_tag;
     qa_vec3 anchor_offset;
     float field_of_view, fov_above, fov_scale;
     int32_t frame, old_frame;

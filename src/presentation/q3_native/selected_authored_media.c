@@ -26,7 +26,7 @@ void q3n_selected_authored_destroy(q3n_selected_authored_media *owner)
     for (size_t i = 0; i < owner->options.attachment_count; ++i) {
         free((char *)owner->attachments[i].path); free((char *)owner->attachments[i].tag);
     }
-    free(owner->attachments); free(owner->attachment_models);
+    free(owner->attachments); free(owner->attachment_bindings);
     free(owner->gun); free(owner->anchor); free(owner->anchor_tag);
     free(owner->barrel); free(owner->flash); free(owner);
 }
@@ -38,7 +38,7 @@ bool q3n_selected_authored_create(const q3n_selected_authored_options *options,
         !options->anchor_tag || !*options->anchor_tag ||
         (options->attachment_count && !options->attachments) ||
         options->attachment_count > SIZE_MAX / sizeof(q3n_selected_authored_attachment) ||
-        options->attachment_count > SIZE_MAX / sizeof(int32_t) ||
+        options->attachment_count > SIZE_MAX / sizeof(q3n_selected_weapon_attachment) ||
         options->assets->options.provider.mounts != options->content ||
         options->assets->options.provider.family != QA_GAME_Q3 || options->assets->options.select)
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Authored Q3 media requires its genuine declaration and selected registry");
@@ -54,10 +54,12 @@ bool q3n_selected_authored_create(const q3n_selected_authored_options *options,
     owner->barrel = part_path(options->gun, "_barrel.md3", error);
     owner->flash = part_path(options->gun, "_flash.md3", error);
     bool okay = owner->gun && owner->anchor && owner->anchor_tag && owner->barrel && owner->flash;
+    if (okay) okay = qa_strings_intern_cstr(options->assets->options.strings,
+        owner->anchor_tag, &owner->anchor_name, error);
     if (okay && options->attachment_count) {
         owner->attachments = calloc(options->attachment_count, sizeof(*owner->attachments));
-        owner->attachment_models = calloc(options->attachment_count, sizeof(*owner->attachment_models));
-        if (!owner->attachments || !owner->attachment_models)
+        owner->attachment_bindings = calloc(options->attachment_count, sizeof(*owner->attachment_bindings));
+        if (!owner->attachments || !owner->attachment_bindings)
             okay = q3p_fail(error, QA_ERROR_MEMORY, "Retaining authored Q3 attachments");
     }
     for (size_t i = 0; okay && i < options->attachment_count; ++i) {
@@ -65,6 +67,8 @@ bool q3n_selected_authored_create(const q3n_selected_authored_options *options,
         owner->attachments[i].tag = copy(options->attachments[i].tag, error);
         owner->options.attachment_count = i + 1;
         okay = owner->attachments[i].path && owner->attachments[i].tag;
+        if (okay) okay = qa_strings_intern_cstr(options->assets->options.strings,
+            owner->attachments[i].tag, &owner->attachment_bindings[i].tag, error);
     }
     if (!okay) { q3n_selected_authored_destroy(owner); return false; }
     owner->options.gun = owner->gun; owner->options.anchor = owner->anchor;
@@ -89,6 +93,7 @@ static bool model(q3n_selected_authored_media *owner, const char *path, bool req
 static q3n_selected_weapon_media tuple(const q3n_selected_authored_media *owner, bool view)
 {
     return (q3n_selected_weapon_media){.assets = owner->options.assets, .gun = owner->gun_model,
+        .anchor_tag = owner->anchor_name,
         .hands = view ? owner->hands : 0, .barrel = view ? 0 : owner->barrel_model,
         .flash = view ? 0 : owner->flash_model, .invisibility = view ? 0 : owner->invisibility,
         .battle_weapon = view ? 0 : owner->battle_weapon, .quad_weapon = view ? 0 : owner->quad_weapon};
@@ -100,13 +105,13 @@ bool q3n_selected_authored_prepare(q3n_selected_authored_media *owner, bool view
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Authored Q3 admission requires its actual idle observation and registry");
     if (!current(context, read, error)) return false;
     bool prepare_attachments = view && !owner->view_ready;
-    int32_t *models = prepare_attachments && owner->options.attachment_count ?
+    q3n_selected_weapon_attachment *models = prepare_attachments && owner->options.attachment_count ?
         calloc(owner->options.attachment_count, sizeof(*models)) : NULL;
     if (prepare_attachments && owner->options.attachment_count && !models)
         return q3p_fail(error, QA_ERROR_MEMORY, "Preparing authored Q3 attachment handles");
-    if (models) memcpy(models, owner->attachment_models, owner->options.attachment_count * sizeof(*models));
+    if (models) memcpy(models, owner->attachment_bindings, owner->options.attachment_count * sizeof(*models));
     q3n_selected_authored_media candidate = *owner;
-    if (models) candidate.attachment_models = models;
+    if (models) candidate.attachment_bindings = models;
     owner->busy = true; bool okay = true;
     if (!candidate.gun_ready) {
         okay = model(&candidate, candidate.gun, true, &candidate.gun_model, context, read, error);
@@ -119,7 +124,7 @@ bool q3n_selected_authored_prepare(q3n_selected_authored_media *owner, bool view
             okay = model(&candidate, "models/weapons2/shotgun/shotgun_hand.md3", true, &candidate.hands, context, read, error);
         }
         for (size_t i = 0; okay && i < candidate.options.attachment_count; ++i)
-            okay = model(&candidate, candidate.attachments[i].path, true, &candidate.attachment_models[i], context, read, error);
+            okay = model(&candidate, candidate.attachments[i].path, true, &candidate.attachment_bindings[i].model, context, read, error);
         if (okay) candidate.view_ready = true;
     }
     if (okay && !view && !candidate.world_ready) {
@@ -132,7 +137,7 @@ bool q3n_selected_authored_prepare(q3n_selected_authored_media *owner, bool view
     }
     if (okay) okay = current(context, read, error);
     if (okay) {
-        if (models) free(owner->attachment_models);
+        if (models) free(owner->attachment_bindings);
         *owner = candidate; models = NULL;
         *out = tuple(owner, view);
     }
@@ -154,7 +159,8 @@ bool q3n_selected_authored_attachment_read(const q3n_selected_authored_media *ow
 {
     if (!q3n_selected_authored_idle(owner) || !owner->view_ready || !out || index >= owner->options.attachment_count)
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Authored Q3 attachment requires its completed view admission");
-    *out = (q3n_selected_authored_attachment_view){owner->attachments[index].tag, owner->attachment_models[index]}; return true;
+    *out = (q3n_selected_authored_attachment_view){owner->attachment_bindings[index].tag,
+        owner->attachment_bindings[index].model}; return true;
 }
 
 static bool model_handle(const q3n_selected_authored_media *owner, const char *path,
@@ -202,12 +208,12 @@ bool q3n_selected_authored_valid(const q3n_selected_authored_media *owner,
                 !model_handle(owner, "models/weapons2/shotgun/shotgun_hand.md3", owner->hands, true, error)) return false;
         } else if (!model_handle(owner, owner->anchor, owner->hands, true, error)) return false;
         for (size_t i = 0; i < owner->options.attachment_count; ++i)
-            if (!model_handle(owner, owner->attachments[i].path, owner->attachment_models[i], true, error)) return false;
+            if (!model_handle(owner, owner->attachments[i].path, owner->attachment_bindings[i].model, true, error)) return false;
     } else {
         if (owner->hands || owner->hands_fallback)
             return q3p_fail(error, QA_ERROR_FORMAT, "Unadmitted authored Q3 view has live hands");
         for (size_t i = 0; i < owner->options.attachment_count; ++i)
-            if (owner->attachment_models[i])
+            if (owner->attachment_bindings[i].model)
                 return q3p_fail(error, QA_ERROR_FORMAT, "Unadmitted authored Q3 view has live attachments");
     }
     if (owner->world_ready) {

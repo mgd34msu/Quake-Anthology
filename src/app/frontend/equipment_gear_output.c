@@ -95,7 +95,7 @@ static bool draw(frontend_equipment_gear_presenter *presenter,
     }
     if (okay && view) {
         q3n_selected_weapon_authored_view actual = {.camera = *view,
-            .anchor_tag = definition->presentation.anchor_tag,
+            .anchor_tag = media.anchor_tag,
             .anchor_offset = definition->presentation.anchor_offset, .field_of_view = fov,
             .fov_above = definition->presentation.fov_above, .fov_scale = definition->presentation.fov_scale,
             .attachments = parts, .attachment_count = attachments};

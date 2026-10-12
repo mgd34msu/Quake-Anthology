@@ -3,6 +3,7 @@
 #include "qa/common.h"
 #include "qa/math.h"
 #include "qa/strings.h"
+#include "qa/id_index.h"
 
 typedef enum qa_model_format {
     QA_MODEL_MDL,
@@ -145,7 +146,11 @@ bool qa_model_sample_alias(const qa_model *model, uint32_t frame, uint32_t old_f
                            qa_model_vertex *vertices, size_t count, qa_error *error);
 bool qa_model_corner_uv(const qa_model *model, uint32_t mesh, uint32_t triangle, uint32_t corner,
                         float out[2]);
-bool qa_model_lerp_tag(const qa_model *model, const char *name, uint32_t from, uint32_t to,
+/* Load-time binding into an empty caller-owned index and retained name table.
+ * MD3 keys include the frame; MD5 keys identify the first full joint name. */
+bool qa_model_bind_attachment_names(const qa_model *, qa_strings *, qa_id_index *, qa_error *);
+bool qa_model_lerp_tag(const qa_model *model, const qa_id_index *names, qa_string_id name,
+                       uint32_t from, uint32_t to,
                        float fraction, qa_model_tag *out);
 bool qa_model_skin_md5(const qa_model *model, uint32_t mesh, const qa_model_pose *pose,
                        size_t joint_count, qa_model_vertex *vertices, size_t count,

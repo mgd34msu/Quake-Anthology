@@ -337,25 +337,46 @@ bool qa_model_corner_uv(const qa_model *model, uint32_t mesh, uint32_t triangle,
         out[0] += 0.5f;
     return true;
 }
-bool qa_model_lerp_tag(const qa_model *m, const char *name, uint32_t from, uint32_t to,
+bool qa_model_bind_attachment_names(const qa_model *model, qa_strings *strings,
+    qa_id_index *names, qa_error *error) {
+    size_t count = 0;
+    if (model->format == QA_MODEL_MD3) {
+        if (model->tag_count && model->frame_count > SIZE_MAX / model->tag_count) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Model attachment names exceed storage"); return false;
+        }
+        count = (size_t)model->frame_count * model->tag_count;
+    } else if (model->format == QA_MODEL_MD5) count = model->bone_count;
+    if (!qa_id_index_reserve(names, count, error)) return false;
+    for (size_t i = 0; i < count; ++i) {
+        qa_bytes text = model->format == QA_MODEL_MD3 ?
+            (qa_bytes){(const uint8_t *)model->tags[i].name, strlen(model->tags[i].name)} :
+            qa_model_bone_name(&model->bones[i]);
+        qa_string_id name;
+        if (!qa_strings_intern(strings, text, &name, error)) return false;
+        uint64_t frame = model->format == QA_MODEL_MD3 ? i / model->tag_count : 0;
+        if (!qa_id_index_find(names, name, frame))
+            qa_id_index_insert(names, name, frame,
+                model->format == QA_MODEL_MD3 ? i % model->tag_count : i);
+    }
+    return true;
+}
+bool qa_model_lerp_tag(const qa_model *m, const qa_id_index *names, qa_string_id name,
+                       uint32_t from, uint32_t to,
                        float fraction, qa_model_tag *out) {
-    if (!m || !name || !out || !m->frame_count || !isfinite(fraction))
+    if (!m || !names || !name || !out || !m->frame_count || !m->tag_count || !isfinite(fraction))
         return false;
     if (from >= m->frame_count)
         from = m->frame_count - 1;
     if (to >= m->frame_count)
         to = m->frame_count - 1;
-    const qa_model_tag *a = NULL, *b = NULL;
-    for (uint32_t i = 0; i < m->tag_count; ++i) {
-        const qa_model_tag *tag = &m->tags[(size_t)from * m->tag_count + i];
-        if (!a && !strcmp(name, tag->name))
-            a = tag;
-        tag = &m->tags[(size_t)to * m->tag_count + i];
-        if (!b && !strcmp(name, tag->name))
-            b = tag;
-    }
-    if (!a || !b)
+    qa_id_index_cursor from_name = qa_id_index_begin(names, name, from);
+    qa_id_index_cursor to_name = qa_id_index_begin(names, name, to);
+    size_t first, second;
+    if (!qa_id_index_next(names, &from_name, &first) ||
+        !qa_id_index_next(names, &to_name, &second))
         return false;
+    const qa_model_tag *a = &m->tags[(size_t)from * m->tag_count + first];
+    const qa_model_tag *b = &m->tags[(size_t)to * m->tag_count + second];
     qa_model_tag result = *a;
     for (unsigned k = 0; k < 3; ++k) {
         result.origin[k] = a->origin[k] * (1 - fraction) + b->origin[k] * fraction;

@@ -149,6 +149,13 @@ bool qa_q3_presentation_assets_create(const qa_q3_presentation_asset_options *op
     a->options = *options; a->users = 1;
     if (a->options.strings) qa_strings_retain(a->options.strings);
     else if (!qa_strings_create(&a->options.strings, error)) { free(a); return false; }
+    static const char *const tag_names[] = {
+        "tag_torso", "tag_head", "tag_weapon", "tag_barrel", "tag_flash", "tag_flag"
+    };
+    if (!qa_strings_bind_names(a->options.strings, tag_names,
+        sizeof(tag_names) / sizeof(*tag_names), &a->tag_names, error)) {
+        qa_strings_destroy(a->options.strings); free(a); return false;
+    }
     if (!qa_q3_assets_provider_hold(a, &options->provider, error)) {
         qa_strings_destroy(a->options.strings); free(a); return false;
     }

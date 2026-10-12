@@ -15,7 +15,7 @@ typedef struct q3n_selected_authored_options {
     size_t attachment_count;
 } q3n_selected_authored_options;
 typedef struct q3n_selected_authored_attachment_view {
-    const char *tag;
+    qa_string_id tag;
     int32_t model;
 } q3n_selected_authored_attachment_view;
 

@@ -97,6 +97,10 @@ bool qa_scene_model_create(const qa_model *source, const char *source_path, qa_s
     }
     model->strings = strings; qa_strings_retain(strings);
     model->identity = qa_scene_identity(); model->options = *options;
+    qa_arena_init(&model->attachment_storage, 0);
+    model->attachment_names.storage = &model->attachment_storage;
+    if (!qa_model_bind_attachment_names(source, strings, &model->attachment_names, error)) goto fail;
+    qa_arena_seal(&model->attachment_storage);
     model->options.usage = source->format == QA_MODEL_SPR || source->format == QA_MODEL_SP2 ?
         QA_IMAGE_USAGE_SPRITE : QA_IMAGE_USAGE_SKIN;
     if (options->palette_rgb.size) {
@@ -214,6 +218,8 @@ void qa_scene_model_destroy(qa_scene_model *model) {
     if (model->animation_lease.release) model->animation_lease.release(model->animation_lease.context);
     if (model->replacement_source_lease.release) model->replacement_source_lease.release(model->replacement_source_lease.context);
     if (model->source_lease.release) model->source_lease.release(model->source_lease.context);
+    qa_id_index_destroy(&model->attachment_names);
+    qa_arena_destroy(&model->attachment_storage);
     qa_strings_destroy(model->strings);
     free(model);
 }
@@ -1398,6 +1404,12 @@ static bool model_beam(qa_scene_model *model, const qa_scene_model_input *input,
     return true;
 }
 
+bool qa_scene_model_lerp_tag(const qa_scene_model *model, qa_string_id name,
+    uint32_t from, uint32_t to, float fraction, qa_model_tag *out) {
+    return model && qa_model_lerp_tag(model->source, &model->attachment_names, name,
+        from, to, fraction, out);
+}
+
 static bool submit_attachments(qa_scene_model *model, const qa_scene_model_input *input,
                                 qa_scene_frame *frame, unsigned depth, qa_error *error) {
     for (size_t i = 0; i < input->attachment_count; ++i) {
@@ -1408,16 +1420,12 @@ static bool submit_attachments(qa_scene_model *model, const qa_scene_model_input
         qa_model_tag tag;
         float tag_scale = 1;
         if (model->source->format == QA_MODEL_MD3) {
-            if (!qa_model_lerp_tag(model->source, attachment->tag, input->old_frame, input->frame,
+            if (!qa_scene_model_lerp_tag(model, attachment->tag, input->old_frame, input->frame,
                                    1 - input->back_lerp, &tag)) continue;
         } else if (model->source->format == QA_MODEL_MD5) {
-            size_t length = strlen(attachment->tag);
-            uint32_t joint;
-            for (joint = 0; joint < model->source->bone_count; ++joint) {
-                qa_bytes name = qa_model_bone_name(&model->source->bones[joint]);
-                if (name.size == length && !memcmp(name.data, attachment->tag, length)) break;
-            }
-            if (joint >= model->source->bone_count || joint >= input->pose_count) continue;
+            qa_id_index_entry *name = qa_id_index_find(&model->attachment_names, attachment->tag, 0);
+            if (!name || name->value >= input->pose_count) continue;
+            size_t joint = name->value;
             qa_model_joint_tag(&input->pose[joint], &tag); tag_scale = input->pose[joint].scale;
         } else continue;
         qa_model_transform local_tag = {0}, world_tag;

@@ -144,7 +144,7 @@ static bool item(const q3n_frame *f,const packet_source *source,q3n_entity *enti
     if(product==QA_Q3_TEAM_ARENA && weapon && weapon->barrel_model) {
         qa_q3_ref_entity barrel={.kind=QA_Q3_REF_MODEL,.model=weapon->barrel_model,
             .lighting_origin=ref.lighting_origin,.shadow_plane=ref.shadow_plane,.flags=ref.flags};
-        if(!q3n_attach(f->assets,&barrel,&ref,"tag_barrel",true,error) || !current(f,source,error)) return false;
+        if(!q3n_attach(f->assets,&barrel,&ref,qa_q3_presentation_tag_id(f->assets, QA_Q3_TAG_BARREL),true,error) || !current(f,source,error)) return false;
         memcpy(barrel.axis,ref.axis,sizeof(ref.axis)); barrel.non_normalized_axes=ref.non_normalized_axes;
         if(!body(f,source,entity,imports,&barrel,error)) return false;
     }

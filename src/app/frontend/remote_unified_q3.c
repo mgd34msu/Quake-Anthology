@@ -558,10 +558,11 @@ bool frontend_unified_q3_selected_weapon(frontend_unified_q3 *o,const qa_unified
                 qa_arena_alloc(&scene->storage,model->attachment_count*sizeof(*attachments),_Alignof(q3n_selected_weapon_attachment),e):NULL;
             if(okay && model->attachment_count && !attachments)okay=false;
             for (size_t i=0;okay && i<model->attachment_count;++i) {
-                attachments[i].tag=model->attachments[i].tag;
+                attachments[i].tag=qa_q3_presentation_tag_name(b->assets,model->attachments[i].tag);
                 okay=qa_q3_register_model(b->assets,model->attachments[i].path,&attachments[i].model,e);
             }
-            q3n_selected_weapon_authored_view authored={.camera=camera,.anchor_tag=model->anchor->tag,
+            q3n_selected_weapon_authored_view authored={.camera=camera,
+                .anchor_tag=qa_q3_presentation_tag_name(b->assets,model->anchor->tag),
                 .anchor_offset=model->anchor->offset,
                 .field_of_view=camera.field_of_view,
                 .fov_above=model->anchor->fov_above,.fov_scale=model->anchor->fov_scale,

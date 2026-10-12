@@ -247,7 +247,7 @@ bool frontend_selected_character_animation(const frontend_selected_character_pos
 }
 
 static bool attach_part(frontend_selected_character *owner, qa_q3_ref_entity *child,
-    const qa_q3_ref_entity *parent, const char *name, bool *found, qa_error *error)
+    const qa_q3_ref_entity *parent, qa_string_id name, bool *found, qa_error *error)
 {
     qa_model_tag tag;
     float fraction = 1.0f - parent->back_lerp;
@@ -317,10 +317,10 @@ bool frontend_selected_character_build(frontend_selected_character_pose *pose,
             output->parts[1].back_lerp = next.torso.animation.back_lerp;
             output->count = 1;
             bool found = false;
-            okay = attach_part(owner, output->parts + 1, output->parts, "tag_torso", &found, error);
+            okay = attach_part(owner, output->parts + 1, output->parts, qa_q3_presentation_tag_id(owner->view.assets, QA_Q3_TAG_TORSO), &found, error);
             if (okay && found) {
                 output->parts[1].old_origin = output->parts[1].origin; output->count = 2;
-                okay = attach_part(owner, output->parts + 2, output->parts + 1, "tag_head", &found, error);
+                okay = attach_part(owner, output->parts + 2, output->parts + 1, qa_q3_presentation_tag_id(owner->view.assets, QA_Q3_TAG_HEAD), &found, error);
                 if (okay && found) { output->parts[2].old_origin = output->parts[2].origin; output->count = 3; }
             }
         }

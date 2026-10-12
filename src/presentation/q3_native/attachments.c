@@ -3,7 +3,7 @@
 #include <string.h>
 
 bool q3n_attach(const qa_q3_presentation_assets *assets, qa_q3_ref_entity *child,
-    const qa_q3_ref_entity *parent, const char *name, bool rotated, qa_error *error) {
+    const qa_q3_ref_entity *parent, qa_string_id name, bool rotated, qa_error *error) {
     qa_model_tag tag; bool found;
     float fraction = 1.0f - parent->back_lerp;
     if (!qa_q3_presentation_tag(assets, parent->model, name, parent->old_frame,

@@ -53,7 +53,7 @@ static bool start_sound(const q3n_frame *f,int32_t handle,const qa_vec3 *origin,
 }
 static bool loop_sound(const q3n_frame *f,int32_t handle,int32_t number,qa_vec3 origin,qa_error *e)
 { return qa_q3_presentation_loop(f->presentation,handle,number,origin,qa_v3(0,0,0),false,e) && frame_valid(f,e); }
-static bool attach(const q3n_frame *f,qa_q3_ref_entity *child,const qa_q3_ref_entity *parent,const char *tag,bool rotated,qa_error *e)
+static bool attach(const q3n_frame *f,qa_q3_ref_entity *child,const qa_q3_ref_entity *parent,qa_string_id tag,bool rotated,qa_error *e)
 { return q3n_attach(f->assets,child,parent,tag,rotated,e) && frame_valid(f,e); }
 bool q3n_weapons_idle(const q3n_weapons *w) { return w && !w->busy; }
 bool q3n_weapons_create(const q3n_weapon_options *options,q3n_weapons **out,qa_error *e)
@@ -270,14 +270,14 @@ static bool player_weapon(const q3n_frame *f,const qa_q3_presentation_assets *pa
             cent->lightning_firing=true;
         } else if (w->ready_sound && !loop_sound(f,w->ready_sound,state->number,cent->lerp_origin,e)) return false;
     }
-    if (!q3n_attach(parent_assets,&gun,parent,"tag_weapon",false,e) || !frame_valid(f,e) ||
+    if (!q3n_attach(parent_assets,&gun,parent,qa_q3_presentation_tag_id(parent_assets, QA_Q3_TAG_WEAPON),false,e) || !frame_valid(f,e) ||
         !powered(f,&gun,state->powerups,e)) return false;
     if (submitted) *submitted=true;
     if (w->barrel_model) {
         qa_q3_ref_entity barrel=attached(parent,w->barrel_model); float angle;
         if (!spin(f,cent,state,&angle,e)) return false;
         qa_angle_axis(qa_v3(0,0,angle),barrel.axis,QA_ANGLE_VM_MATH);
-        if (!attach(f,&barrel,&gun,"tag_barrel",true,e) || !powered(f,&barrel,state->powerups,e)) return false;
+        if (!attach(f,&barrel,&gun,qa_q3_presentation_tag_id(f->assets, QA_Q3_TAG_BARREL),true,e) || !powered(f,&barrel,state->powerups,e)) return false;
     }
     qa_q3_entity non_predicted;
     if (!source_entity(f,state->clientNum,&non_predicted,e)) return false;
@@ -294,7 +294,7 @@ static bool player_weapon(const q3n_frame *f,const qa_q3_presentation_assets *pa
         flash.color[1]=(uint8_t)((uint32_t)integer((ci->color1.y * 255))&255u);
         flash.color[2]=(uint8_t)((uint32_t)integer((ci->color1.z * 255))&255u); flash.color[3]=0;
     }
-    if (!attach(f,&flash,&gun,"tag_flash",true,e)) return false;
+    if (!attach(f,&flash,&gun,qa_q3_presentation_tag_id(f->assets, QA_Q3_TAG_FLASH),true,e)) return false;
     if (!f->preferences.reduced_flashes && !emit(f,&flash,e)) return false;
     if (ps || f->third_person || !predicted || state->number!=predicted->clientNum) {
         if (!lightning(f,source_cent,&non_predicted,flash.origin,e)) return false;
@@ -349,7 +349,7 @@ bool q3n_weapons_player_compiled_parent(const q3n_frame *f,const qa_q3_presentat
         !parent || parent->kind!=QA_Q3_REF_MODEL || parent->model<=0)
         return q3p_fail(e,QA_ERROR_ARGUMENT,"Compiled weapon requires its submitted character registry and torso");
     qa_model_tag tag;bool found=false;
-    if(!qa_q3_presentation_tag(assets,parent->model,"tag_weapon",parent->old_frame,parent->frame,
+    if(!qa_q3_presentation_tag(assets,parent->model,qa_q3_presentation_tag_id(assets, QA_Q3_TAG_WEAPON),parent->old_frame,parent->frame,
         (1 + -parent->back_lerp),&tag,&found,e) || !compiled_entity_valid(f,source,e))return false;
     return !found || (player_weapon(f,assets,parent,NULL,source->presentation,source->current,false,NULL,e) &&
         compiled_entity_valid(f,source,e));
@@ -365,7 +365,7 @@ bool q3n_weapons_player_parent(const q3n_frame *f,const qa_q3_presentation_asset
         state->number>=1024 || cent!=&f->entities[state->number])
         return q3p_fail(e,QA_ERROR_ARGUMENT,"Primary held weapon requires its actual character parent and source centity");
     qa_model_tag tag; bool found;
-    if (!qa_q3_presentation_tag(parent_assets,parent->model,"tag_weapon",parent->old_frame,
+    if (!qa_q3_presentation_tag(parent_assets,parent->model,qa_q3_presentation_tag_id(parent_assets, QA_Q3_TAG_WEAPON),parent->old_frame,
         parent->frame,(1 + -parent->back_lerp),&tag,&found,e) || !frame_valid(f,e)) return false;
     if (!found) return true;
     bool emitted=false;
@@ -472,7 +472,7 @@ static bool selected_emit(const q3n_selected_weapon_media *media,const q3n_selec
 /* Scene attachment composition retains each child's own pose. Missing optional
  * gun tags omit that attachment; selected hands require tag_weapon. */
 static bool selected_attach(const qa_q3_presentation_assets *assets,qa_q3_ref_entity *child,
-    const qa_q3_ref_entity *parent,const char *name,bool required,bool *found,qa_error *e)
+    const qa_q3_ref_entity *parent,qa_string_id name,bool required,bool *found,qa_error *e)
 {
     qa_model_tag tag; float fraction=(1 + -parent->back_lerp);
     if (!qa_q3_presentation_tag(assets,parent->model,name,parent->old_frame,parent->frame,fraction,&tag,found,e)) return false;
@@ -516,17 +516,17 @@ bool q3n_weapons_selected_held(q3n_weapons *owner,const q3n_selected_weapon_medi
     if (!media->gun) return selected_end(owner,true);
     int32_t flags=128|(held->personal_model?2:0); bool gun_found,have_barrel=false,have_flash=false;
     qa_q3_ref_entity gun=selected_part(media->gun,flags,held->lighting_origin);
-    if (!selected_attach(held->parent_assets,&gun,held->torso,"tag_weapon",false,&gun_found,e)) return selected_end(owner,false);
+    if (!selected_attach(held->parent_assets,&gun,held->torso,qa_q3_presentation_tag_id(held->parent_assets, QA_Q3_TAG_WEAPON),false,&gun_found,e)) return selected_end(owner,false);
     float spin_angle=barrel_spin(draw->time,&state->world_barrel.time,&state->world_barrel.angle,&state->world_barrel.spinning,draw->firing);
     qa_q3_ref_entity barrel=selected_part(media->barrel,flags,held->lighting_origin);
     qa_angle_axis(qa_v3(0,0,spin_angle),barrel.axis,QA_ANGLE_VM_MATH);
-    if (media->barrel && !selected_attach(media->assets,&barrel,&gun,"tag_barrel",false,&have_barrel,e)) return selected_end(owner,false);
+    if (media->barrel && !selected_attach(media->assets,&barrel,&gun,qa_q3_presentation_tag_id(media->assets, QA_Q3_TAG_BARREL),false,&have_barrel,e)) return selected_end(owner,false);
     qa_q3_ref_entity flash=selected_part(media->flash,flags,held->lighting_origin);
     if (media->flash && selected_flash(draw)) {
-        if (!selected_attach(media->assets,&flash,&gun,"tag_flash",false,&have_flash,e)) return selected_end(owner,false);
+        if (!selected_attach(media->assets,&flash,&gun,qa_q3_presentation_tag_id(media->assets, QA_Q3_TAG_FLASH),false,&have_flash,e)) return selected_end(owner,false);
         if (have_flash) {
             qa_angle_axis(qa_v3(0,0,(selected_random(state) * 10)),flash.axis,QA_ANGLE_VM_MATH);
-            if (!selected_attach(media->assets,&flash,&gun,"tag_flash",false,&have_flash,e)) return selected_end(owner,false);
+            if (!selected_attach(media->assets,&flash,&gun,qa_q3_presentation_tag_id(media->assets, QA_Q3_TAG_FLASH),false,&have_flash,e)) return selected_end(owner,false);
         }
     }
     bool okay=true;
@@ -575,15 +575,15 @@ bool q3n_weapons_selected_view(q3n_weapons *owner,const q3n_selected_weapon_medi
         hands.back_lerp=state->torso.back_lerp;
     }
     qa_q3_ref_entity gun=selected_part(media->gun,1|4|8,view->origin); bool found;
-    if (!selected_attach(media->assets,&gun,&hands,"tag_weapon",true,&found,e)) return selected_end(owner,false);
+    if (!selected_attach(media->assets,&gun,&hands,qa_q3_presentation_tag_id(media->assets, QA_Q3_TAG_WEAPON),true,&found,e)) return selected_end(owner,false);
     float spin_angle=barrel_spin(draw->time,&state->view_barrel.time,&state->view_barrel.angle,&state->view_barrel.spinning,draw->firing);
     qa_q3_ref_entity barrel=selected_part(media->barrel,1|4|8,view->origin); bool have_barrel=false;
     qa_angle_axis(qa_v3(0,0,spin_angle),barrel.axis,QA_ANGLE_VM_MATH);
-    if (media->barrel && !selected_attach(media->assets,&barrel,&gun,"tag_barrel",false,&have_barrel,e)) return selected_end(owner,false);
+    if (media->barrel && !selected_attach(media->assets,&barrel,&gun,qa_q3_presentation_tag_id(media->assets, QA_Q3_TAG_BARREL),false,&have_barrel,e)) return selected_end(owner,false);
     qa_q3_ref_entity flash=selected_part(media->flash,1|4|8,view->origin); bool have_flash=false;
     if (media->flash && selected_flash(draw)) {
         qa_angle_axis(qa_v3(0,0,(selected_random(state) * 10)),flash.axis,QA_ANGLE_VM_MATH);
-        if (!selected_attach(media->assets,&flash,&gun,"tag_flash",false,&have_flash,e)) return selected_end(owner,false);
+        if (!selected_attach(media->assets,&flash,&gun,qa_q3_presentation_tag_id(media->assets, QA_Q3_TAG_FLASH),false,&have_flash,e)) return selected_end(owner,false);
     }
     bool okay=selected_parts(media,draw,&gun,&barrel,have_barrel,0,submitted,e);
     if (okay && have_flash && !draw->reduced_flashes) okay=selected_emit(media,draw,&flash,submitted,e);
@@ -595,7 +595,7 @@ bool q3n_weapons_selected_authored_view(q3n_weapons *owner,const q3n_selected_we
 {
     if (!view || !qa_vec_finite(view->camera.origin) || !qa_vec_finite(view->camera.angles) ||
         !isfinite(view->camera.horizontal_speed) || view->camera.horizontal_speed<0 ||
-        !view->anchor_tag || !view->anchor_tag[0] || !qa_vec_finite(view->anchor_offset) ||
+        !qa_vec_finite(view->anchor_offset) ||
         !isfinite(view->field_of_view) || !isfinite(view->fov_above) || !isfinite(view->fov_scale) ||
         !isfinite(view->back_lerp) || view->back_lerp<0 || view->back_lerp>1 ||
         (view->attachment_count && !view->attachments) || !media || media->barrel || media->flash)
@@ -606,7 +606,7 @@ bool q3n_weapons_selected_authored_view(q3n_weapons *owner,const q3n_selected_we
     for (size_t i=0;i<view->attachment_count;++i) {
         const q3n_selected_weapon_attachment *attachment=view->attachments+i;
         const q3p_model *model;
-        if (attachment->model<=0 || !attachment->tag || !attachment->tag[0])
+        if (attachment->model<=0)
             return selected_end(owner,q3p_fail(e,QA_ERROR_FORMAT,"Authored Q3 attachment lost its retained model or tag"));
         if (!q3p_model_get(media->assets,attachment->model,&model,e)) return selected_end(owner,false);
     }

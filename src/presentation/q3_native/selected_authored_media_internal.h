@@ -8,7 +8,8 @@ struct q3n_selected_authored_media {
     q3n_selected_authored_options options;
     char *gun, *anchor, *anchor_tag, *barrel, *flash;
     q3n_selected_authored_attachment *attachments;
-    int32_t *attachment_models;
+    q3n_selected_weapon_attachment *attachment_bindings;
+    qa_string_id anchor_name;
     int32_t gun_model, hands, barrel_model, flash_model;
     int32_t invisibility, battle_weapon, quad_weapon;
     bool gun_ready, view_ready, world_ready, hands_fallback, busy;

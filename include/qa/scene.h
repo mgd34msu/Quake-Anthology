@@ -976,7 +976,7 @@ typedef enum qa_scene_alias_lighting {
     QA_ALIAS_CONTENT_LIGHTING, QA_ALIAS_Q3_DIFFUSE, QA_ALIAS_PREPARED_LIGHT
 } qa_scene_alias_lighting;
 typedef struct qa_scene_model_attachment {
-    const char *tag;
+    qa_string_id tag; /* Name in the parent model's retained table. */
     qa_scene_model *model;
     const qa_scene_model_input *input;
 } qa_scene_model_attachment;
@@ -1054,6 +1054,8 @@ struct qa_scene_model_input {
 bool qa_scene_model_create(const qa_model *, const char *source_path, qa_scene_resources *, qa_material_library *,
                            const qa_scene_image_options *, qa_strings *, qa_scene_model **, qa_error *);
 void qa_scene_model_destroy(qa_scene_model *);
+bool qa_scene_model_lerp_tag(const qa_scene_model *, qa_string_id name,
+    uint32_t from, uint32_t to, float fraction, qa_model_tag *);
 enum { QA_MODEL_PATH_PLAYER_SHADE = 1u, QA_MODEL_PATH_FLAME_FULLBRIGHT = 2u,
     QA_MODEL_PATH_DOUBLE_EYES = 4u };
 uint32_t qa_scene_model_path_flags(const qa_scene_model *);

@@ -83,7 +83,7 @@ bool frontend_equipment_held_output_create_from(qa_frontend *frontend,
         qa_q3_assets_model_holder(parent_assets, (size_t)parent->model - 1, &holder, error);
     if (ok && (!holder.present || !holder.sources[0]))
         ok = frontend_fail(error, QA_ERROR_FORMAT, "Held replacement parent has no actual registered model holder");
-    if (ok) ok = qa_q3_presentation_tag(parent_assets, parent->model, "tag_weapon",
+    if (ok) ok = qa_q3_presentation_tag(parent_assets, parent->model, qa_q3_presentation_tag_id(parent_assets, QA_Q3_TAG_WEAPON),
         parent->old_frame, parent->frame, 1 - parent->back_lerp, &tag, &found, error);
     if (ok && !found)
         ok = frontend_fail(error, QA_ERROR_FORMAT, "Original source torso has no weapon attachment");

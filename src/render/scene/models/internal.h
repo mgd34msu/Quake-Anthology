@@ -69,6 +69,8 @@ typedef struct qa_scene_model_capture qa_scene_model_capture;
 struct qa_scene_model {
     const qa_model *source;
     qa_strings *strings;
+    qa_arena attachment_storage;
+    qa_id_index attachment_names;
     qa_scene_model_content_lease source_lease, replacement_source_lease, animation_lease;
     qa_scene_resources *resources;
     qa_material_library *materials;

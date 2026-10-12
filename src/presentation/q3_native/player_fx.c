@@ -314,7 +314,7 @@ static bool flag(player_fx *p,int32_t skin,const qa_q3_ref_entity *torso,qa_erro
 {
     qa_q3_ref_entity pole=reference(QA_Q3_REF_MODEL,p->media->graphics[Q3N_G_FLAG_POLE]);
     pole.lighting_origin=torso->lighting_origin; pole.shadow_plane=torso->shadow_plane; pole.flags=torso->flags;
-    if(!q3n_attach(p->frame->assets,&pole,torso,"tag_flag",false,e) || !current(p,e) || !emit(p,&pole,e))return false;
+    if(!q3n_attach(p->frame->assets,&pole,torso,qa_q3_presentation_tag_id(p->frame->assets, QA_Q3_TAG_FLAG),false,e) || !current(p,e) || !emit(p,&pole,e))return false;
     qa_q3_ref_entity r=reference(QA_Q3_REF_MODEL,p->media->graphics[Q3N_G_FLAG_FLAP]);
     r.custom_skin=skin; r.lighting_origin=torso->lighting_origin; r.shadow_plane=torso->shadow_plane; r.flags=torso->flags;
     int32_t animation=p->state->legsAnim&~128;
@@ -334,7 +334,7 @@ static bool flag(player_fx *p,int32_t skin,const qa_q3_ref_entity *torso,qa_erro
     if(!q3n_lerp_run(&p->client.animations,&s->flag,idle||walk?FX_FLAG_STAND:FX_FLAG_RUN,p->frame->time,1,p->settings->animations_disabled,e))return false;
     r.old_frame=s->flag.old_frame; r.frame=s->flag.frame; r.back_lerp=s->flag.back_lerp;
     qa_angle_axis(qa_v3(0,s->flag_yaw,0),r.axis,QA_ANGLE_VM_MATH);
-    return q3n_attach(p->frame->assets,&r,&pole,"tag_flag",true,e) && current(p,e) && emit(p,&r,e);
+    return q3n_attach(p->frame->assets,&r,&pole,qa_q3_presentation_tag_id(p->frame->assets, QA_Q3_TAG_FLAG),true,e) && current(p,e) && emit(p,&r,e);
 }
 static bool light(player_fx *p,qa_vec3 color,qa_error *e)
 {

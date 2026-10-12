@@ -79,7 +79,13 @@ bool qa_q3_register_picture_image(qa_q3_presentation_assets *, const qa_scene_im
 bool qa_q3_register_sound(qa_q3_presentation_assets *, const char *, bool compressed, int32_t *, qa_error *);
 bool qa_q3_presentation_model_bounds(const qa_q3_presentation_assets *, int32_t, qa_bounds *, qa_error *);
 bool qa_q3_presentation_model_has_tags(const qa_q3_presentation_assets *, int32_t, bool *, qa_error *);
-bool qa_q3_presentation_tag(const qa_q3_presentation_assets *, int32_t, const char *,
+typedef enum qa_q3_tag_name {
+    QA_Q3_TAG_TORSO, QA_Q3_TAG_HEAD, QA_Q3_TAG_WEAPON,
+    QA_Q3_TAG_BARREL, QA_Q3_TAG_FLASH, QA_Q3_TAG_FLAG
+} qa_q3_tag_name;
+qa_string_id qa_q3_presentation_tag_id(const qa_q3_presentation_assets *, qa_q3_tag_name);
+qa_string_id qa_q3_presentation_tag_name(const qa_q3_presentation_assets *, const char *);
+bool qa_q3_presentation_tag(const qa_q3_presentation_assets *, int32_t, qa_string_id,
                             int32_t first, int32_t second, float fraction,
                             qa_model_tag *, bool *found, qa_error *);
 

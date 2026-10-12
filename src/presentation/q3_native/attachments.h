@@ -6,6 +6,6 @@
 /* Parent and child retain actual registered handles. Missing tags use the
  * renderer's genuine cleared orientation; attachment never registers media. */
 bool q3n_attach(const qa_q3_presentation_assets *, qa_q3_ref_entity *child,
-    const qa_q3_ref_entity *parent, const char *tag, bool rotated, qa_error *);
+    const qa_q3_ref_entity *parent, qa_string_id tag, bool rotated, qa_error *);
 
 #endif

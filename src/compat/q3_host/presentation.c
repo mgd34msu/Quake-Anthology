@@ -188,7 +188,8 @@ static bool tag(q3_call *call, qa_q3_presentation_assets *assets, bool ui,
         qa_bytes name = {0};
         if (!q3_string(call, call->arguments[5], &name, error))
             return false;
-        bool ok = qa_q3_presentation_tag(assets, model, (const char *)name.data,
+        bool ok = qa_q3_presentation_tag(assets, model,
+            qa_q3_presentation_tag_name(assets, (const char *)name.data),
             q3_integer(call, 2), q3_integer(call, 3), q3_float(call, 4),
             &value, &found, error);
 
