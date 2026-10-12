@@ -199,11 +199,9 @@ bool application_bot_player(void *opaque,qa_actor_id actor,qa_bot_player *out,qa
         .eye=qa_vec_add(body.origin,control.view_offset),.view_angles=control.view_angles,
         .presence=2,.firing=(control.buttons&1)!=0,.air_time=(float)qa_session_elapsed(application->session)/1e9f};
     out->eye.z+=control.view_height;
-    if(actor.slot<application->motion_capacity) {
-        application_motion_record *motion=&application->motion[actor.slot];
-        if(motion->active && qa_actor_id_equal(motion->actor,actor) && motion->reason==QA_BUILTIN_MOTION_TELEPORT)
-            out->teleport_sequence=motion->revision;
-    }
+    qa_application_motion_view motion;
+    if(qa_application_motion_read(application,actor,&motion) && motion.reason==QA_BUILTIN_MOTION_TELEPORT)
+        out->teleport_sequence=motion.revision;
     qa_builtin_actor_traits traits;
     if(services.actor_traits(services.context,actor,&traits)) out->invisible=traits.invisible;
     application_provider *arsenal=application_provider_for(application,actor,QA_ROLE_ARSENAL,NULL);

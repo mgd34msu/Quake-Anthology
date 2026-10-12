@@ -22,6 +22,7 @@
 #include "qa/player_progress_save.h"
 #include "qa/catalog_save.h"
 #include "qa/console_cvar_observer.h"
+#include "qa/pool.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +33,69 @@ bool application_fail(qa_error *error, qa_status code, const char *message)
 {
     qa_error_set(error, code, 0, "%s", message);
     return false;
+}
+
+struct application_actor_views {
+    qa_arena storage;
+    qa_pool records;
+    qa_actor_index actors;
+};
+
+application_actor_views *application_actor_views_create(const qa_actor_registry *actors,
+    qa_error *error)
+{
+    application_actor_views *views = calloc(1, sizeof(*views));
+    if (!views) {
+        application_fail(error, QA_ERROR_MEMORY, "Allocating actor view owner");
+        return NULL;
+    }
+    if (!qa_actor_index_create(&views->actors, actors, NULL, error) ||
+        !qa_pool_reserve_pages(&views->records, &views->storage, qa_actors_capacity(actors),
+            sizeof(application_actor_views_record), _Alignof(application_actor_views_record), error)) {
+        application_actor_views_destroy(views);
+        return NULL;
+    }
+    return views;
+}
+
+void application_actor_views_destroy(application_actor_views *views)
+{
+    if (!views) return;
+    qa_actor_index_destroy(&views->actors);
+    qa_arena_destroy(&views->storage);
+    free(views);
+}
+
+application_actor_views_record *application_actor_views_find(application_actor_views *views,
+    qa_actor_id actor)
+{
+    size_t slot;
+    return views && qa_actor_index_find(&views->actors, actor, &slot) ?
+        qa_pool_at(&views->records, slot) : NULL;
+}
+
+application_actor_views_record *application_actor_views_admit(application_actor_views *views,
+    qa_actor_id actor, qa_error *error)
+{
+    application_actor_views_record *record = application_actor_views_find(views, actor);
+    if (record) return record;
+    size_t slot;
+    record = qa_pool_take(&views->records, &slot);
+    if (!record) {
+        application_fail(error, QA_ERROR_MEMORY, "Actor view pool exhausted");
+        return NULL;
+    }
+    *record = (application_actor_views_record){0};
+    qa_actor_index_put(&views->actors, actor, slot);
+    return record;
+}
+
+void application_actor_views_remove(application_actor_views *views, qa_actor_id actor)
+{
+    size_t slot;
+    if (!views || !qa_actor_index_find(&views->actors, actor, &slot)) return;
+    qa_actor_index_remove(&views->actors, actor);
+    qa_pool_release(&views->records, slot);
 }
 
 void application_fault(qa_application *application, const qa_error *error)
@@ -696,13 +760,12 @@ bool qa_application_motion_read(const qa_application *application,
                                 qa_actor_id actor,
                                 qa_application_motion_view *out)
 {
-    if (application == NULL || out == NULL ||
-        actor.slot >= application->motion_capacity)
+    if (application == NULL || out == NULL)
         return false;
-    const application_motion_record *record =
-        &application->motion[actor.slot];
-    if (!record->active || !qa_actor_id_equal(record->actor, actor))
+    const application_actor_views_record *view = application_actor_views_find(application->actor_views, actor);
+    if (!view || !view->motion.active)
         return false;
+    const application_motion_record *record = &view->motion;
     *out = (qa_application_motion_view){
         .actor = record->actor,
         .body = record->body,
@@ -743,13 +806,12 @@ bool qa_application_q2_visual_read(const qa_application *application,
                                    qa_actor_id actor,
                                    qa_application_q2_visual_view *out)
 {
-    if (application == NULL || out == NULL ||
-        actor.slot >= application->q2_visual_capacity)
+    if (application == NULL || out == NULL)
         return false;
-    const application_q2_visual_record *record =
-        &application->q2_visuals[actor.slot];
-    if (!record->active || !qa_actor_id_equal(record->actor, actor))
+    const application_actor_views_record *view = application_actor_views_find(application->actor_views, actor);
+    if (!view || !view->q2_visual.active)
         return false;
+    const application_q2_visual_record *record = &view->q2_visual;
     *out = (qa_application_q2_visual_view){.actor = actor,
                                            .visual = record->visual,
                                            .revision = record->revision};

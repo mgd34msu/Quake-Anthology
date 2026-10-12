@@ -354,6 +354,7 @@ bool application_q3_round_restart(qa_application *app, application_provider *pro
         if (okay) {
             app->physics->world_actor = (qa_actor_id){0};
             app->shader_remap_count = 0;
+            qa_id_index_clear(&app->shader_remap_index);
             if (native) {
                 qa_clock_state clock = {0};
                 int32_t warmup = 0, effective_restarted = 0;

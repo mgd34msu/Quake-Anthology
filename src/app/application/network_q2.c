@@ -133,6 +133,14 @@ bool application_network_q2_layout(qa_application_network_q2 *owner, qa_error *e
     if (!owner->configs || !owner->entries || !owner->layouts || !owner->layout_text) return application_fail(error, QA_ERROR_MEMORY, "Allocating Q2 source configstrings");
     if (!qa_arena_reserve(&owner->layout_scratch, QA_HUD_Q2_LAYOUT_SCRATCH_BYTES, error)) return false;
     qa_arena_seal(&owner->layout_scratch);
+    size_t player_config_bytes = ((size_t)owner->host.client_slots + 1) * sizeof(*owner->player_configs);
+    if (!qa_arena_reserve(&owner->player_config_storage,
+        player_config_bytes + _Alignof(application_q2_player_config_receipt) - 1, error)) return false;
+    owner->player_configs = qa_arena_alloc(&owner->player_config_storage,
+        player_config_bytes, _Alignof(application_q2_player_config_receipt), error);
+    if (!owner->player_configs) return false;
+    memset(owner->player_configs, 0, player_config_bytes);
+    qa_arena_seal(&owner->player_config_storage);
     for (unsigned i = 0; i < 3; ++i) {
         owner->resources[i] = (application_q2_resource_table){.base = bases[i], .maximum = maximum[i]};
         owner->resources[i].names = calloc(maximum[i], sizeof(qa_string_id));
@@ -148,6 +156,7 @@ void application_network_q2_free_tables(qa_application_network_q2 *owner)
     free(owner->layouts); owner->layouts = NULL;
     free(owner->layout_text); owner->layout_text = NULL;
     qa_arena_destroy(&owner->layout_scratch);
+    qa_arena_destroy(&owner->player_config_storage); owner->player_configs = NULL;
     owner->status_references = (qa_hud_q2_stat_references){0};
     for (unsigned i = 0; i < 3; ++i) {
         application_q2_resource_table *table = &owner->resources[i];
@@ -831,10 +840,19 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
             if (!qa_q2_player_projection(game, row->actor, NULL, &player))
                 return application_fail(error, QA_ERROR_ARGUMENT, "Q2 gamestate player skin lacks physical Source admission");
             if (player.slot >= owner->host.client_slots) return application_fail(error, QA_ERROR_FORMAT, "Q2 Source player skin leaves its physical client range");
-            char text[512];
-            int length = snprintf(text, sizeof(text), "%s\\%s", player.name ? player.name : "", player.skin ? player.skin : "");
-            if (length < 0 || (size_t)length >= sizeof(text) ||
-                !application_network_q2_config(owner, owner->skin_base + player.slot, text, error)) return false;
+            application_q2_player_config_receipt *retained = owner->player_configs + player.slot;
+            qa_string_id config = retained->config;
+            if (!qa_actor_id_equal(retained->actor, row->actor) ||
+                retained->name != player.name_id || retained->skin != player.skin_id) {
+                char text[512];
+                int length = snprintf(text, sizeof(text), "%s\\%s",
+                    player.name ? player.name : "", player.skin ? player.skin : "");
+                if (length < 0 || (size_t)length >= sizeof(text) ||
+                    !qa_strings_intern_cstr(qa_session_strings(owner->app->session), text, &config, error)) return false;
+            }
+            if (!application_network_q2_config_id(owner, owner->skin_base + player.slot, config, error)) return false;
+            *retained = (application_q2_player_config_receipt){row->actor,
+                player.name_id, player.skin_id, config};
         }
     }
     owner->initialized = true;

@@ -192,6 +192,17 @@ typedef struct application_q2_visual_record {
     bool active;
 } application_q2_visual_record;
 
+typedef struct application_actor_views_record {
+    application_motion_record motion;
+    application_q2_visual_record q2_visual;
+} application_actor_views_record;
+typedef struct application_actor_views application_actor_views;
+application_actor_views *application_actor_views_create(const qa_actor_registry *, qa_error *);
+void application_actor_views_destroy(application_actor_views *);
+application_actor_views_record *application_actor_views_find(application_actor_views *, qa_actor_id);
+application_actor_views_record *application_actor_views_admit(application_actor_views *, qa_actor_id, qa_error *);
+void application_actor_views_remove(application_actor_views *, qa_actor_id);
+
 typedef struct application_publication {
     struct application_publication *failed_next;
     bool failed_retained;
@@ -394,8 +405,7 @@ struct qa_application {
     size_t unified_world_text_count;
     uint64_t unified_world_text_revision, unified_world_text_map, unified_world_text_frame;
     bool unified_world_text_local_presentation;
-    application_motion_record *motion;
-    uint32_t motion_capacity;
+    application_actor_views *actor_views;
     application_actor_routes *actor_routes;
     qa_actor_index actor_route_index;
     const qa_launch_snapshot *actor_route_snapshot;
@@ -404,9 +414,9 @@ struct qa_application {
     struct application_native_q2_scratch *native_baselines;
     qa_fs_root *baseline_write_root;
     uint32_t control_capacity;
-    application_q2_visual_record *q2_visuals;
-    uint32_t q2_visual_capacity;
     application_shader_remap *shader_remaps;
+    qa_arena shader_remap_storage;
+    qa_id_index shader_remap_index;
     size_t shader_remap_count, shader_remap_capacity;
     qa_builtin_random random;
     qa_string_id current_map;

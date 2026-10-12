@@ -367,15 +367,15 @@ bool application_finalize(qa_application *application, qa_error *error)
     application_unified_events_resources_dispose(application);
     application_unified_world_text_destroy(application);
     free(application->mode_ids);
-    free(application->motion);
+    application_actor_views_destroy(application->actor_views);
     free(application->actor_routes);
     qa_actor_index_destroy(&application->actor_route_index);
     if (application->controls != NULL)
         for (uint32_t slot = 0; slot < application->control_capacity; ++slot)
             qa_movement_result_free(&application->controls[slot].result);
     free(application->controls);
-    free(application->q2_visuals);
-    free(application->shader_remaps);
+    qa_id_index_destroy(&application->shader_remap_index);
+    qa_arena_destroy(&application->shader_remap_storage);
     free(application->providers);
     qa_id_index_destroy(&application->provider_index);
     qa_actor_index_destroy(&application->native_client_actors);

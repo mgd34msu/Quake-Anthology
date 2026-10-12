@@ -146,10 +146,21 @@ static bool application_controls_capture(qa_application *app, qa_buffer *out, qa
         else if (copy.active) ok = controls_fields(&io, app, &copy);
     }
     count = 0;
-    for (uint32_t i = 0; i < app->motion_capacity; ++i) if (app->motion[i].active) ++count;
-    if (ok) ok = qa_source_save_count(&io, &count, app->motion_capacity);
-    for (uint32_t i = 0; ok && i < app->motion_capacity; ++i) if (app->motion[i].active) {
-        application_motion_record copy = app->motion[i]; ok = motion_fields(&io, app, &copy);
+    const qa_actor_registry *actors = qa_session_actors(app->session);
+    uint32_t cursor = 0;
+    const qa_actor_record *actor;
+    while (qa_actors_next(actors, &cursor, &actor)) {
+        const application_actor_views_record *view = application_actor_views_find(app->actor_views, actor->id);
+        if (view && view->motion.active) ++count;
+    }
+    if (ok) ok = qa_source_save_count(&io, &count, qa_actors_capacity(actors));
+    cursor = 0;
+    while (ok && qa_actors_next(actors, &cursor, &actor)) {
+        const application_actor_views_record *view = application_actor_views_find(app->actor_views, actor->id);
+        if (view && view->motion.active) {
+            application_motion_record copy = view->motion;
+            ok = motion_fields(&io, app, &copy);
+        }
     }
     if (ok) ok = application_control_frames_fields(&io, app, app->controls, NULL, error);
     if (ok) ok = qa_source_save_finish(&io, out);
@@ -161,10 +172,24 @@ static bool application_controls_restore(qa_application *app, qa_bytes bytes, qa
 {
     struct application_control_frames *frames = NULL;
     application_control_record *controls = calloc(app->control_capacity, sizeof(*controls));
-    application_motion_record *motion = calloc(app->motion_capacity, sizeof(*motion));
-    if (!controls || !motion) { free(controls); free(motion); return application_fail(error, QA_ERROR_MEMORY, "allocating saved control continuations"); }
+    if (!controls) return application_fail(error, QA_ERROR_MEMORY, "allocating saved control continuations");
+    const qa_actor_registry *actors = qa_session_actors(app->session);
+    uint32_t actor_capacity = qa_actors_capacity(actors);
+    application_actor_views *views = application_actor_views_create(actors, error);
+    if (!views) { free(controls); return false; }
+    bool ok = true;
+    uint32_t cursor = 0;
+    const qa_actor_record *actor;
+    while (ok && qa_actors_next(actors, &cursor, &actor)) {
+        const application_actor_views_record *current = application_actor_views_find(app->actor_views, actor->id);
+        if (current && current->q2_visual.active) {
+            application_actor_views_record *candidate = application_actor_views_admit(views, actor->id, error);
+            if (candidate) candidate->q2_visual = current->q2_visual;
+            else ok = false;
+        }
+    }
     qa_source_save_io io = {0}; size_t count = 0;
-    bool ok = qa_source_save_reader(&io, app->session, bytes, error) && controls_signature(&io) &&
+    ok = ok && qa_source_save_reader(&io, app->session, bytes, error) && controls_signature(&io) &&
         qa_source_save_count(&io, &count, app->control_capacity);
     uint32_t previous = 0;
     for (size_t i = 0; ok && i < count; ++i) {
@@ -173,26 +198,31 @@ static bool application_controls_restore(qa_application *app, qa_bytes bytes, qa
         if (ok) { previous = record.player.actor.slot; controls[record.player.actor.slot] = record; }
         else qa_movement_result_free(&record.result);
     }
-    if (ok) ok = qa_source_save_count(&io, &count, app->motion_capacity);
+    if (ok) ok = qa_source_save_count(&io, &count, actor_capacity);
     previous = 0;
     for (size_t i = 0; ok && i < count; ++i) {
         application_motion_record record = {0};
-        ok = motion_fields(&io, app, &record) && record.actor.slot < app->motion_capacity && (!i || record.actor.slot > previous);
-        if (ok) { previous = record.actor.slot; motion[record.actor.slot] = record; }
+        ok = motion_fields(&io, app, &record) && record.actor.slot < actor_capacity && (!i || record.actor.slot > previous);
+        if (ok) {
+            application_actor_views_record *candidate = application_actor_views_admit(views, record.actor, error);
+            if (candidate) { previous = record.actor.slot; candidate->motion = record; }
+            else ok = false;
+        }
     }
     if (ok) ok = application_control_frames_fields(&io, app, controls, &frames, error);
     if (ok) ok = qa_source_save_finish(&io, NULL);
     if (ok) ok = application_control_records_prepare(controls, app->control_capacity, error);
     if (ok) {
-        application_control_record *old_controls = app->controls; application_motion_record *old_motion = app->motion;
-        app->controls = controls; app->motion = motion; controls = old_controls; motion = old_motion;
+        application_control_record *old_controls = app->controls;
+        application_actor_views *old_views = app->actor_views;
+        app->controls = controls; app->actor_views = views; controls = old_controls; views = old_views;
         struct application_control_frames *old_frames = app->control_frames;
         app->control_frames = frames; frames = old_frames;
     }
     if (!ok && (!error || error->code == QA_OK)) application_fail(error, QA_ERROR_FORMAT, "invalid saved control continuation");
     for (uint32_t i = 0; i < app->control_capacity; ++i) qa_movement_result_free(&controls[i].result);
     application_control_frames_free(frames);
-    free(controls); free(motion); qa_source_save_dispose(&io); return ok;
+    free(controls); application_actor_views_destroy(views); qa_source_save_dispose(&io); return ok;
 }
 
 void application_save_foundation_free(application_save_foundation *value)

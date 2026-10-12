@@ -367,6 +367,9 @@ bool qa_application_network_q2_restore(qa_application_network_q2 *owner, qa_byte
         owner->entries = candidate->entries; candidate->entries = NULL;
         owner->layouts = candidate->layouts; candidate->layouts = NULL;
         owner->layout_text = candidate->layout_text; candidate->layout_text = NULL;
+        owner->player_config_storage = candidate->player_config_storage;
+        candidate->player_config_storage = (qa_arena){0};
+        owner->player_configs = candidate->player_configs; candidate->player_configs = NULL;
         for (unsigned i = 0; i < 3; ++i) {
             owner->resources[i] = candidate->resources[i];
             candidate->resources[i] = (application_q2_resource_table){0};

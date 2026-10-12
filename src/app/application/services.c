@@ -514,12 +514,7 @@ bool application_actor_released(void *opaque, qa_session *session,
         qa_targets_unbind(application->targets, released.id);
     if (application->equipment != NULL)
         qa_equipment_actor_released(application->equipment, released);
-    if (released.id.slot < application->motion_capacity) {
-        application_motion_record *motion =
-            &application->motion[released.id.slot];
-        if (motion->active && qa_actor_id_equal(motion->actor, released.id))
-            *motion = (application_motion_record){0};
-    }
+    application_actor_views_remove(application->actor_views, released.id);
     if (released.id.slot < application->control_capacity) {
         application_control_record *control =
             &application->controls[released.id.slot];
@@ -535,12 +530,6 @@ bool application_actor_released(void *opaque, qa_session *session,
         }
     }
     application_control_frames_release(application, released.id);
-    if (released.id.slot < application->q2_visual_capacity) {
-        application_q2_visual_record *visual =
-            &application->q2_visuals[released.id.slot];
-        if (visual->active && qa_actor_id_equal(visual->actor, released.id))
-            *visual = (application_q2_visual_record){0};
-    }
     current = (qa_error){0};
     if (application->modes != NULL)
         remember_failure(
@@ -1138,6 +1127,7 @@ bool qa_application_player_info_read(qa_application *application, qa_actor_id ac
     if (!matched) return false;
     out->name = qa_strings_cstr(strings, identity->name);
     out->skin = qa_strings_cstr(strings, identity->skin);
+    out->name_id = identity->name;
     out->skin_id = identity->skin; out->model_id = identity->model;
     qa_builtin_actor_traits traits = {0};
     if (provider_traits(provider, actor, &traits)) out->view_height = traits.view_height;
@@ -1275,15 +1265,15 @@ static bool target_remap_shader(void *opaque, qa_string_id original,
         qa_strings_text(strings, replacement).data == NULL)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "shader remap needs interned source names");
-    for (size_t index = 0; index < application->shader_remap_count; ++index) {
-        application_shader_remap *remap =
-            &application->shader_remaps[index];
-        if (remap->original != original)
-            continue;
+    const qa_id_index_entry *entry = qa_id_index_find(&application->shader_remap_index, original, 0);
+    if (entry) {
+        application_shader_remap *remap = &application->shader_remaps[entry->value];
         remap->replacement = replacement;
         remap->time_ns = time_ns;
         return true;
     }
+    application->shader_remap_index.storage = &application->shader_remap_storage;
+    if (!qa_id_index_reserve(&application->shader_remap_index, 1, error)) return false;
     if (application->shader_remap_count ==
         application->shader_remap_capacity) {
         size_t capacity = application->shader_remap_capacity == 0
@@ -1294,14 +1284,18 @@ static bool target_remap_shader(void *opaque, qa_string_id original,
             return application_fail(error, QA_ERROR_MEMORY,
                                     "shader remap capacity is exhausted");
         application_shader_remap *remaps =
-            realloc(application->shader_remaps,
-                    capacity * sizeof(*application->shader_remaps));
+            qa_arena_grow(&application->shader_remap_storage, application->shader_remaps,
+                    application->shader_remap_count * sizeof(*application->shader_remaps),
+                    capacity * sizeof(*application->shader_remaps),
+                    _Alignof(application_shader_remap), error);
         if (remaps == NULL)
             return application_fail(error, QA_ERROR_MEMORY,
                                     "cannot retain shader remap");
         application->shader_remaps = remaps;
         application->shader_remap_capacity = capacity;
     }
+    qa_id_index_insert(&application->shader_remap_index, original, 0,
+                      application->shader_remap_count);
     application->shader_remaps[application->shader_remap_count++] =
         (application_shader_remap){original, replacement, time_ns};
     return true;
@@ -1624,7 +1618,6 @@ bool application_record_motion_change(qa_application *application,
                                       qa_error *error)
 {
     if (change == NULL || (unsigned)change->reason > QA_BUILTIN_MOTION_RESET ||
-        actor.slot >= application->motion_capacity ||
         qa_actors_get(qa_session_actors(application->session), actor) == NULL)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "motion change needs a live shared actor");
@@ -1635,11 +1628,11 @@ bool application_record_motion_change(qa_application *application,
         !qa_vec_finite(change->angular_kick))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "motion change contains a nonfinite view");
-    application_motion_record *record = &application->motion[actor.slot];
-    uint64_t revision =
-        record->active && qa_actor_id_equal(record->actor, actor)
-            ? record->revision
-            : 0;
+    application_actor_views_record *view = application_actor_views_admit(
+        application->actor_views, actor, error);
+    if (view == NULL) return false;
+    application_motion_record *record = &view->motion;
+    uint64_t revision = record->active ? record->revision : 0;
     if (revision == UINT64_MAX)
         return application_fail(error, QA_ERROR_MEMORY,
                                 "motion continuation revision is exhausted");

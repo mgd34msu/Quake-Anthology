@@ -91,6 +91,10 @@ typedef struct application_q2_numeric_config {
     uint32_t value;
     qa_string_id name;
 } application_q2_numeric_config;
+typedef struct application_q2_player_config_receipt {
+    qa_actor_id actor;
+    qa_string_id name, skin, config;
+} application_q2_player_config_receipt;
 struct qa_application_network_q2 {
     qa_application *app;
     qa_application_network_q2_host host;
@@ -110,6 +114,8 @@ struct qa_application_network_q2 {
     qa_string_id *configs;
     qa_hud_q2_stat_references status_references;
     qa_arena layout_scratch;
+    qa_arena player_config_storage;
+    application_q2_player_config_receipt *player_configs;
     application_q2_resource_table resources[3];
     qa_q2_config_entry *entries;
     application_q2_layout_receipt *layouts;

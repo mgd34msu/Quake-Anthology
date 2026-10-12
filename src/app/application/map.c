@@ -2113,16 +2113,15 @@ static bool q2_visual(void *opaque, qa_actor_id actor,
 {
     application_provider *provider = opaque;
     qa_application *application = provider->application;
-    if (visual == NULL || actor.slot >= application->q2_visual_capacity ||
+    if (visual == NULL ||
         qa_actors_get(qa_session_actors(application->session), actor) == NULL)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Q2 visual needs a live shared actor");
-    application_q2_visual_record *record =
-        &application->q2_visuals[actor.slot];
-    uint64_t revision = record->active &&
-                                qa_actor_id_equal(record->actor, actor)
-                            ? record->revision
-                            : 0;
+    application_actor_views_record *view = application_actor_views_admit(
+        application->actor_views, actor, error);
+    if (view == NULL) return false;
+    application_q2_visual_record *record = &view->q2_visual;
+    uint64_t revision = record->active ? record->revision : 0;
     if (revision == UINT64_MAX)
         return application_fail(error, QA_ERROR_MEMORY,
                                 "Q2 visual revision is exhausted");
@@ -2140,13 +2139,12 @@ static bool q2_read_visual(void *opaque, qa_actor_id actor,
 {
     application_provider *provider = opaque;
     qa_application *application = provider->application;
-    if (out == NULL || actor.slot >= application->q2_visual_capacity)
+    if (out == NULL)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Q2 visual read needs output storage");
-    application_q2_visual_record *record =
-        &application->q2_visuals[actor.slot];
-    if (record->active && qa_actor_id_equal(record->actor, actor)) {
-        *out = record->visual;
+    qa_application_q2_visual_view view;
+    if (qa_application_q2_visual_read(application, actor, &view)) {
+        *out = view.visual;
         return true;
     }
     application_provider *selected = application_provider_for(
