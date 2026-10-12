@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "b256f052bc30fc646ce1214505693a2e1c2503c1",
+  "verified_main": "112f2b6677deb997c675d0bf4f2e0b34c571e0bd",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -27734,6 +27734,10 @@
         {
           "commit": "dd9d92db3c398a043336eb51d7cee1416374ead3",
           "verification": "Character string aliases now resolve through the common ID index. Sparse holes, source pointer generation, original allocator/read ordering and saved bytes retained; import/history rebuild indexes before projection/publication. Fuzzy, goal and initial-chat aliases in 09-01 remain open."
+        },
+        {
+          "commit": "112f2b6677deb997c675d0bf4f2e0b34c571e0bd",
+          "verification": "Fuzzy source-pointer aliases now use the common ID index, rebuilt in save/history candidates before topology validation and transferred with heap ownership. Sparse pointers, kind checks, actual source-memory reads, original release order and encoded bytes are retained. Goal and initial-chat aliases in 09-01 remain open. Matching normal production build and seven core suites pass; no live or performance claim."
         }
       ]
     },
@@ -39803,6 +39807,33 @@
       ],
       "record_directory": "/tmp/qa-ta3196-console-command-arena-20261011",
       "conclusion": "Every commands.c qac_text use is replaced by scoped common arena storage and shared word joining. Nested dispatch scope and drain text survive post_dispatch and queue consumption. Dialect suffixes, script completion and persistent alias/cvar ownership retained. Outside owned-output/retained-line qac_text consumers and large execute_now copies remain open. Normal production build and seven core suites; no live/global zero-heap claim."
+    },
+    {
+      "commit": "112f2b6677deb997c675d0bf4f2e0b34c571e0bd",
+      "source_tree": "b108cb8f139c833119bf56a916cae0fbbda0e766",
+      "finding_ids": [
+        "09-01"
+      ],
+      "files_rechecked": [
+        "src/bots/library/source_fuzzy.c",
+        "src/bots/library/source_fuzzy.h",
+        "src/bots/library/source_fuzzy_checkpoint.c",
+        "src/bots/library/source_fuzzy_save.c",
+        "src/bots/library/source_fuzzy_standalone_save.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-bot-fuzzy-alias-index-20261011",
+      "conclusion": "Fuzzy source-pointer aliases now use the common ID index, rebuilt in save/history candidates before topology validation and transferred with heap ownership. Sparse pointers, kind checks, actual source-memory reads, original release order and encoded bytes are retained. Goal and initial-chat aliases in 09-01 remain open. Matching normal production build and seven core suites pass; no live or performance claim."
     }
   ],
   "verification_limits": [

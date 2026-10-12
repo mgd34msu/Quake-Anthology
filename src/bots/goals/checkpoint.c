@@ -19,6 +19,7 @@ static void clear(qa_bot_goals *state)
         qa_bot_weights_release(row->weights);free(row);
     }
     bot_goal_indexes_clear(state);bot_goal_map_clear(state);
+    qa_id_index_destroy(&state->aliases);
     qa_bot_items_release(state->items);free(state->states);
     state->items=NULL;state->states=NULL;
 }
@@ -39,6 +40,7 @@ static bool copy(const qa_bot_goals *source,qa_bot_goals *out,qa_error *error)
     *out=*source;
     out->items=NULL;out->states=NULL;out->weights=NULL;out->indexes=NULL;out->last_indexes=NULL;
     out->prepared_indexes=NULL;out->info=NULL;out->source=NULL;
+    out->aliases=(qa_id_index){0};
     out->items=source->items;qa_bot_items_retain(out->items);
     out->states=copy_array(source->states,source->options.maximum_states,sizeof(*source->states),error);
     if(!out->states) goto failed;
@@ -74,6 +76,7 @@ static bool copy(const qa_bot_goals *source,qa_bot_goals *out,qa_error *error)
         if(!out->source[i].name) goto memory_failure;
         memcpy(out->source[i].name,row->name,strlen(row->name)+1);
     }
+    if(!bot_goal_aliases_reindex(out,error)) goto failed;
     return true;
 memory_failure:
     qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining complete goal reference history");
@@ -147,6 +150,7 @@ void bot_goal_history_finish(bot_goal_history_restore *plan,bool commit)
         qa_bot_goals *goals=plan->owner;
         qa_bot_goals old=*goals;
         bool busy=goals->busy;*goals=plan->state;goals->busy=busy;
+        plan->state=(qa_bot_goals){0};
         clear(&old);
     } else clear(&plan->state);
     free(plan);

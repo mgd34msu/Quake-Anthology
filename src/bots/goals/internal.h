@@ -3,6 +3,7 @@
 #include "qa/bot_goals.h"
 #include "qa/bot_bsp.h"
 #include "qa/bots_allocator.h"
+#include "qa/id_index.h"
 #include "source_state.h"
 #include <stdlib.h>
 #include <string.h>
@@ -43,6 +44,7 @@ typedef struct bot_source_goal {
     qa_bot_goal goal;
     uint32_t hash_next;
 } bot_source_goal;
+enum {BOT_GOAL_ALIAS_CONFIG,BOT_GOAL_ALIAS_INDEX,BOT_GOAL_ALIAS_INFO,BOT_GOAL_ALIAS_WEIGHTS};
 struct qa_bot_goals {
     qa_bot_items *items;
     qa_bot_goal_options options;
@@ -51,6 +53,7 @@ struct qa_bot_goals {
     bot_goal_slot *states;
     bot_goal_weights *weights;
     qa_bot_memory *memory;
+    qa_id_index aliases;
     bot_goal_indexes *indexes,*last_indexes,*prepared_indexes;
     uint64_t next_pointer;
     qa_bot_weight_workspace *workspace;
@@ -69,6 +72,15 @@ struct qa_bot_goals {
     size_t source_count, source_capacity;
     uint32_t source_buckets[256];
 };
+static inline uint64_t bot_goal_weights_discriminator(const qa_bot_weights *weights) {
+    return (((uint64_t)(uintptr_t)weights >> 32) << 2) | BOT_GOAL_ALIAS_WEIGHTS;
+}
+static inline bool bot_goal_alias_read(const qa_bot_goals *goals,uint32_t pointer,
+    uint64_t discriminator,size_t *out) {
+    qa_id_index_cursor cursor=qa_id_index_begin(&goals->aliases,pointer,discriminator);
+    return qa_id_index_next(&goals->aliases,&cursor,out);
+}
+bool bot_goal_aliases_reindex(qa_bot_goals *,qa_error *);
 bool bot_goal_fail(qa_error *, const char *);
 bot_goal_slot *bot_goal_slot_get(const qa_bot_goals *, uint32_t, qa_error *);
 bool bot_goal_mutable(qa_bot_goals *, qa_error *);

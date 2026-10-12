@@ -109,6 +109,7 @@ static void clear(qa_bot_goals *goals)
     bot_goal_indexes_clear(goals);
     if (!goals->source) goals->source_count = 0;
     bot_goal_map_clear(goals);
+    qa_id_index_destroy(&goals->aliases);
     qa_bot_items_release(goals->items); free(goals->states);
 }
 static bool topology(const qa_bot_goals *goals, qa_error *error)
@@ -312,7 +313,8 @@ bool qa_bot_goals_save_restore(qa_session *session, qa_bot_goals *goals, qa_byte
         .memory=goals->memory,.shared_memory=goals->shared_memory,.next_info=1};
     qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, session, bytes, error) && signature(&io) &&
-        fields(&io, &scratch, assets, entities,navigation) && qa_source_save_finish(&io, NULL) && topology(&scratch, error);
+        fields(&io, &scratch, assets, entities,navigation) && qa_source_save_finish(&io, NULL) &&
+        bot_goal_aliases_reindex(&scratch,error) && topology(&scratch, error);
     if (ok) { qa_bot_goals old = *goals; *goals = scratch; clear(&old); }
     else clear(&scratch);
     if (!ok && (!error || error->code == QA_OK)) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid complete bot goal continuation");

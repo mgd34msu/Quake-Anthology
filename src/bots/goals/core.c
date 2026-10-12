@@ -39,6 +39,8 @@ static bool release_weights(qa_bot_goals *g, bot_goal_slot *s,qa_error *error) {
     bot_goal_weights **link = &g->weights;
     while (*link != w) link = &(*link)->next;
     *link = w->next;
+    qa_id_index_remove(&g->aliases,w->pointer,BOT_GOAL_ALIAS_CONFIG);
+    qa_id_index_remove(&g->aliases,(uint32_t)(uintptr_t)w->weights,bot_goal_weights_discriminator(w->weights));
     qa_bot_weights_release(w->weights);
     free(w);
     return true;
@@ -48,18 +50,21 @@ bool bot_goal_config_get(const qa_bot_goals *g,const bot_goal_slot *s,bot_goal_w
     uint32_t pointer;
     if(!bot_goal_record_word_read(&s->record,BOT_GOAL_CONFIG_POINTER,&pointer,e)) return false;
     if(!pointer) {*out=NULL;return true;}
-    bot_goal_weights *row=g->weights;
-    while(row && row->pointer!=pointer) row=row->next;
-    if(!row) return bot_goal_fail(e,"Invalid goal weight configuration pointer");
-    *out=row;return true;
+    size_t value;
+    if(!bot_goal_alias_read(g,pointer,BOT_GOAL_ALIAS_CONFIG,&value))
+        return bot_goal_fail(e,"Invalid goal weight configuration pointer");
+    *out=(bot_goal_weights *)(uintptr_t)value;return true;
 }
 bool bot_goal_config_set(qa_bot_goals *g, bot_goal_slot *s, qa_bot_weights *weights, qa_error *e) {
-    bot_goal_weights *w = g->weights;
+    bot_goal_weights *w = NULL;
     if (weights) {
-        while (w && w->weights != weights) w = w->next;
+        size_t value;
+        if(bot_goal_alias_read(g,(uint32_t)(uintptr_t)weights,bot_goal_weights_discriminator(weights),&value))
+            w=(bot_goal_weights *)(uintptr_t)value;
         if (!w) {
             if(!g->next_pointer || g->next_pointer>UINT32_MAX)
                 return bot_goal_fail(e,"Goal weight pointer identities exhausted");
+            if(!qa_id_index_reserve(&g->aliases,2,e)) return false;
             w = calloc(1, sizeof(*w));
             if (!w) {
                 qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining goal weight configuration reference");
@@ -71,9 +76,32 @@ bool bot_goal_config_set(qa_bot_goals *g, bot_goal_slot *s, qa_bot_weights *weig
             bot_goal_weights **tail=&g->weights;
             while(*tail) tail=&(*tail)->next;
             *tail=w;
+            qa_id_index_insert(&g->aliases,w->pointer,BOT_GOAL_ALIAS_CONFIG,(size_t)(uintptr_t)w);
+            qa_id_index_insert(&g->aliases,(uint32_t)(uintptr_t)weights,
+                bot_goal_weights_discriminator(weights),(size_t)(uintptr_t)w);
         }
     }
     return bot_goal_record_word_write(&s->record,BOT_GOAL_CONFIG_POINTER,weights?w->pointer:0,e);
+}
+bool bot_goal_aliases_reindex(qa_bot_goals *g,qa_error *error) {
+    qa_id_index aliases={0};
+    for(bot_goal_weights *row=g->weights;row;row=row->next) {
+        if(!qa_id_index_reserve(&aliases,2,error)) goto failed;
+        qa_id_index_insert(&aliases,row->pointer,BOT_GOAL_ALIAS_CONFIG,(size_t)(uintptr_t)row);
+        qa_id_index_insert(&aliases,(uint32_t)(uintptr_t)row->weights,
+            bot_goal_weights_discriminator(row->weights),(size_t)(uintptr_t)row);
+    }
+    for(bot_goal_indexes *row=g->indexes;row;row=row->next) {
+        if(!qa_id_index_reserve(&aliases,1,error)) goto failed;
+        qa_id_index_insert(&aliases,row->pointer,BOT_GOAL_ALIAS_INDEX,(size_t)(uintptr_t)row);
+    }
+    for(size_t i=0;i<g->info_count;++i) {
+        if(!qa_id_index_reserve(&aliases,1,error)) goto failed;
+        qa_id_index_insert(&aliases,g->info[i].pointer,BOT_GOAL_ALIAS_INFO,i);
+    }
+    qa_id_index_destroy(&g->aliases);g->aliases=aliases;return true;
+failed:
+    qa_id_index_destroy(&aliases);return false;
 }
 static bool bind_weights(qa_bot_goals *g,bot_goal_slot *s,qa_bot_weights *weights,qa_error *e) {
     if(!bot_goal_config_set(g,s,weights,e)) return false;
@@ -134,6 +162,7 @@ void qa_bot_goals_destroy(qa_bot_goals *g) {
     while(g->weights) {bot_goal_weights *w=g->weights;g->weights=w->next;qa_bot_weights_release(w->weights);free(w);}
     bot_goal_indexes_clear(g);
     bot_goal_map_clear(g);
+    qa_id_index_destroy(&g->aliases);
     qa_bot_weight_workspace_destroy(g->workspace);
     qa_bot_items_release(g->items);
     free(g->states);

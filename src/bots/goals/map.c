@@ -17,6 +17,8 @@ bool bot_goal_equal_name(const char *a, const char *b) {
     return true;
 }
 void bot_goal_map_clear(qa_bot_goals *g) {
+    for(size_t i=0;g->info && i<g->info_count;++i)
+        qa_id_index_remove(&g->aliases,g->info[i].pointer,BOT_GOAL_ALIAS_INFO);
     for (size_t i = 0; i < g->source_count; ++i) free(g->source[i].name);
     free(g->source); free(g->info);
     g->source = NULL; g->info = NULL;
@@ -38,12 +40,18 @@ static qa_vec3 map_vector(const uint8_t *at) {
 static void map_vector_set(uint8_t *at, qa_vec3 value) {
     qa_store_f32le(at, value.x); qa_store_f32le(at + 4, value.y); qa_store_f32le(at + 8, value.z);
 }
+static size_t info_index(const qa_bot_goals *g,uint32_t pointer) {
+    qa_id_index_cursor cursor=qa_id_index_begin(&g->aliases,pointer,BOT_GOAL_ALIAS_INFO);
+    size_t first=SIZE_MAX,value;
+    while(qa_id_index_next(&g->aliases,&cursor,&value)) if(value<first) first=value;
+    return first;
+}
 bool bot_goal_info_span(const qa_bot_goals *g, uint32_t pointer, qa_bot_memory_span *out,
                         bool *camp, qa_error *error) {
     if (!g || !pointer || !out || !camp) return bot_goal_fail(error, "Map info read requires its actual pointer/output");
-    const bot_map_info *row = NULL;
-    for (size_t i = 0; i < g->info_count; ++i) if (g->info[i].pointer == pointer) { row = &g->info[i]; break; }
-    if (!row) return bot_goal_fail(error, "Invalid goal map info pointer");
+    size_t index=info_index(g,pointer);
+    if(index==SIZE_MAX) return bot_goal_fail(error, "Invalid goal map info pointer");
+    const bot_map_info *row=&g->info[index];
     if (!qa_bot_memory_bytes(g->memory, row->allocation, out, error)) return false;
     if (out->size != (row->camp ? 164u : 148u)) return bot_goal_fail(error, "Goal map info allocation size mismatch");
     *camp = row->camp; return true;
@@ -58,11 +66,14 @@ bool bot_goal_info_free(qa_bot_goals *g, qa_error *error) {
                 return bot_goal_fail(error, "Goal map info free has an invalid retained list");
             if (!bot_goal_info_span(g, pointer, &bytes, &camp, error)) return false;
             uint32_t next = qa_load_u32le(bytes.data + (camp ? 160u : 144u));
-            size_t i = 0;
-            while (g->info[i].pointer != pointer) ++i;
+            size_t i=info_index(g,pointer);
             if (!qa_bot_memory_free(g->memory, g->info[i].allocation, error)) return false;
+            qa_id_index_remove(&g->aliases,pointer,BOT_GOAL_ALIAS_INFO);
             memmove(g->info + i, g->info + i + 1, (g->info_count - i - 1) * sizeof(*g->info));
-            --g->info_count; pointer = next;
+            --g->info_count;
+            for(size_t shifted=i;shifted<g->info_count;++shifted)
+                qa_id_index_find(&g->aliases,g->info[shifted].pointer,BOT_GOAL_ALIAS_INFO)->value=shifted;
+            pointer = next;
         }
         *heads[list] = 0;
     }
@@ -251,10 +262,12 @@ bool bot_goal_map_info_load(qa_bot_goals *g, qa_bot_navigation *n, qa_error *e) 
             if (!rows) { qa_error_set(e, QA_ERROR_MEMORY, capacity, "Retaining goal map info allocations"); return false; }
             g->info = rows; g->info_capacity = capacity;
         }
+        if(!qa_id_index_reserve(&g->aliases,1,e)) return false;
         qa_bot_memory_allocation allocation;
         if (!qa_bot_memory_allocate(g->memory, camp ? 164u : 148u, QA_BOT_MEMORY_HEAP, true, NULL, &allocation, e)) return false;
         uint32_t pointer = (uint32_t)g->next_info++;
-        g->info[g->info_count++] = (bot_map_info){allocation, pointer, camp};
+        g->info[g->info_count] = (bot_map_info){allocation, pointer, camp};
+        qa_id_index_insert(&g->aliases,pointer,BOT_GOAL_ALIAS_INFO,g->info_count++);
         qa_bot_memory_span bytes; bool kind, found; qa_vec3 origin;
         if (!bot_goal_info_span(g, pointer, &bytes, &kind, e) ||
             !qa_bot_bsp_vector(g->entities, id, "origin", &origin, &found, e)) return false;
@@ -276,6 +289,7 @@ bool bot_goal_map_info_load(qa_bot_goals *g, qa_bot_navigation *n, qa_error *e) 
             if (!area) {
                 if (!bot_goal_position_report(g, "camp spot at ", map_vector(bytes.data), " in solid\n", e) ||
                     !qa_bot_memory_free(g->memory, allocation, e)) return false;
+                qa_id_index_remove(&g->aliases,pointer,BOT_GOAL_ALIAS_INFO);
                 --g->info_count;
                 continue;
             }

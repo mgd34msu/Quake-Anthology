@@ -51,11 +51,13 @@ bool bot_goal_indexes_publish(qa_bot_goals *goals,bot_goal_slot *state,
     if(!qa_bot_memory_bytes(goals->memory,allocation,&bytes,error)) return false;
     if(!goals->next_pointer || goals->next_pointer>UINT32_MAX)
         return bot_goal_fail(error,"Goal index pointer identities exhausted");
+    if(!qa_id_index_reserve(&goals->aliases,1,error)) return false;
     bot_goal_indexes *row=calloc(1,sizeof(*row));
     if(!row) {qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining goal index allocation reference");return false;}
     row->allocation=allocation;row->pointer=(uint32_t)goals->next_pointer++;
     if(goals->last_indexes) goals->last_indexes->next=row;else goals->indexes=row;
     goals->last_indexes=row;
+    qa_id_index_insert(&goals->aliases,row->pointer,BOT_GOAL_ALIAS_INDEX,(size_t)(uintptr_t)row);
     return bot_goal_record_word_write(&state->record,BOT_GOAL_INDEX_POINTER,row->pointer,error);
 }
 bool bot_goal_indexes_get(const qa_bot_goals *goals,const bot_goal_slot *state,
@@ -66,20 +68,24 @@ bool bot_goal_indexes_get(const qa_bot_goals *goals,const bot_goal_slot *state,
     if(!bot_goal_record_word_read(&state->record,BOT_GOAL_INDEX_POINTER,&pointer,error)) return false;
     *present=pointer!=0;
     if(!pointer) {*out=(qa_bot_memory_allocation){0};return true;}
-    const bot_goal_indexes *row=goals->indexes;
-    while(row && row->pointer!=pointer) row=row->next;
-    if(!row) return bot_goal_fail(error,"Invalid goal item weight index pointer");
+    size_t value;
+    if(!bot_goal_alias_read(goals,pointer,BOT_GOAL_ALIAS_INDEX,&value))
+        return bot_goal_fail(error,"Invalid goal item weight index pointer");
+    const bot_goal_indexes *row=(const bot_goal_indexes *)(uintptr_t)value;
     *out=row->allocation;return true;
 }
 bool bot_goal_indexes_drop(qa_bot_goals *goals,bot_goal_slot *state,qa_error *error)
 {
     uint32_t pointer;
     if(!bot_goal_record_word_read(&state->record,BOT_GOAL_INDEX_POINTER,&pointer,error)) return false;
-    bot_goal_indexes **link=&goals->indexes,*previous=NULL;
-    while(*link && (*link)->pointer!=pointer) {previous=*link;link=&(*link)->next;}
-    if(*link) {
-        bot_goal_indexes *row=*link;*link=row->next;
+    size_t value;
+    if(bot_goal_alias_read(goals,pointer,BOT_GOAL_ALIAS_INDEX,&value)) {
+        bot_goal_indexes *row=(bot_goal_indexes *)(uintptr_t)value;
+        bot_goal_indexes **link=&goals->indexes,*previous=NULL;
+        while(*link!=row) {previous=*link;link=&(*link)->next;}
+        *link=row->next;
         if(goals->last_indexes==row) goals->last_indexes=previous;
+        qa_id_index_remove(&goals->aliases,pointer,BOT_GOAL_ALIAS_INDEX);
         free(row);
     }
     return bot_goal_record_word_write(&state->record,BOT_GOAL_INDEX_POINTER,0,error);
@@ -87,7 +93,8 @@ bool bot_goal_indexes_drop(qa_bot_goals *goals,bot_goal_slot *state,qa_error *er
 void bot_goal_indexes_clear(qa_bot_goals *goals)
 {
     while(goals->indexes) {
-        bot_goal_indexes *row=goals->indexes;goals->indexes=row->next;free(row);
+        bot_goal_indexes *row=goals->indexes;goals->indexes=row->next;
+        qa_id_index_remove(&goals->aliases,row->pointer,BOT_GOAL_ALIAS_INDEX);free(row);
     }
     goals->last_indexes=NULL;
 }
