@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "1909b408d80c817cd13dfbe72c2f03bb8e615bd4",
+  "verified_main": "ebe765963766b1f36acf07d5de07534b6d210119",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 190,
-    "open_source_observation": 181,
+    "fixed_source_build_core": 191,
+    "open_source_observation": 180,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -26634,8 +26634,9 @@
       "severity": "medium",
       "job": "04",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "ebe765963766b1f36acf07d5de07534b6d210119"
     },
     {
       "id": "05-I1",
@@ -42389,6 +42390,31 @@
       ],
       "record_directory": "/tmp/qa-ta3196-held-input-arena-20261012",
       "conclusion": "Physical route and binding admission prepare common arena-backed held/button spans; releases reuse admitted storage and repeats remain suppressed. Existing shared input checks passed, including eight overlapping inputs. Normal build and seven core suites passed; new authored source admission remains cold."
+    },
+    {
+      "commit": "ebe765963766b1f36acf07d5de07534b6d210119",
+      "source_tree": "eb74149f11945bcea997f04b432d393c41321263",
+      "finding_ids": [
+        "04-027"
+      ],
+      "files_rechecked": [
+        "src/app/application/map_players.c",
+        "src/app/application/map_players_private.h",
+        "src/app/application/native_q3_presentation.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-player-seat-index-20261012",
+      "conclusion": "Player-seat readers use the common index prepared from roster capacity and rebuilt at row/seat mutations and restore. Candidate order and actual live/non-retiring/role checks remain unchanged. Normal build and seven core suites passed; no runtime/performance claim."
     }
   ],
   "verification_limits": [

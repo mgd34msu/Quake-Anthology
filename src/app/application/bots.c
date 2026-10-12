@@ -767,8 +767,9 @@ qa_actor_id application_bot_client_actor(application_bots *bots,int32_t client) 
         const application_bot_seat *seat = bots->seats + row - 1;
         if (application_bot_seat_live(bots, seat)) return seat->actor;
     }
-    uint32_t cursor=(uint32_t)client;const qa_actor_record *record;
-    return qa_actors_next(qa_session_actors(bots->application->session),&cursor,&record) &&
+    const qa_actor_record *record=qa_actors_at(
+        qa_session_actors(bots->application->session),(uint32_t)client);
+    return record &&
         record->id.slot==(uint32_t)client?record->id:(qa_actor_id){0};
 }
 static bool bot_command(void *opaque,int32_t client,const char *text,qa_error *error) {

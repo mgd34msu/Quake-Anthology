@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `1909b408`.
+Follow-up source changes were reviewed through main `ebe76596`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 190 have source fixes
+There are **374 overlapping source-review observations**: 191 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 181 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 180 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -376,3 +376,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `d5510fd4` / 05-I5: Event resource and registration lookup uses the common index; retained row order, resource custody and existing save encoding are preserved. Normal build and seven core suites passed; no live or whole-frame allocation claim. Records: `/tmp/qa-ta3196-event-dictionary-index-20261012`.
 
 - `1909b408` / J37-04: Physical route and binding admission prepare common arena-backed held/button spans; releases reuse admitted storage and repeats remain suppressed. Existing shared input checks passed, including eight overlapping inputs. Normal build and seven core suites passed; new authored source admission remains cold. Records: `/tmp/qa-ta3196-held-input-arena-20261012`.
+
+- `ebe76596` / 04-027: Player-seat readers use the common index prepared from roster capacity and rebuilt at row/seat mutations and restore. Candidate order and actual live/non-retiring/role checks remain unchanged. Normal build and seven core suites passed; no runtime/performance claim. Records: `/tmp/qa-ta3196-player-seat-index-20261012`.
