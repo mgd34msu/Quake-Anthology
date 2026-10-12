@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "2d8e7c02561df9f350cb2c29d3e606e05b080b8f",
+  "verified_main": "4632419faf7c5616beab7b64b0ef76cefa0c180b",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 210,
-    "open_source_observation": 161,
+    "fixed_source_build_core": 211,
+    "open_source_observation": 160,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -33493,8 +33493,9 @@
       "severity": "medium",
       "job": "23",
       "area": "gameplay_q2",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "4632419faf7c5616beab7b64b0ef76cefa0c180b"
     },
     {
       "id": "J23-07",
@@ -42986,6 +42987,33 @@
       ],
       "record_directory": "/tmp/qa-ta3196-one-world-snapshot-storage-20261012-v1",
       "conclusion": "Private builtin actor snapshot types and pools deleted from all source callers. Q1/Q2/Q3/QC scoped queries use common world storage; modes and bots retain constructor-sized borrowed arena backing. Original order, callback custody and bot save encoding preserved. Actual common-pool capacity and newly admitted authored candidate growth remain bounded by their owners; no full live or global zero-allocation claim."
+    },
+    {
+      "commit": "4632419faf7c5616beab7b64b0ef76cefa0c180b",
+      "source_tree": "da07e738bd199661ea5feae73bcb423b4847ccae",
+      "finding_ids": [
+        "J23-06"
+      ],
+      "files_rechecked": [
+        "include/qa/math.h",
+        "src/core/math.c",
+        "src/gameplay/q2/entities/targets.c",
+        "src/gameplay/q2/player/spawn_select.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-one-ordered-vector-rotation-20261012-v1",
+      "conclusion": "Both landmark rotation copies deleted; shared ordered float Euler primitive preserves caller axis mapping and sign/conversion order. Normal build and seven core suites passed, with positive/negative noncommuting rotation checks."
     }
   ],
   "verification_limits": [

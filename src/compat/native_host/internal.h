@@ -64,7 +64,6 @@ void native_host_memory_dispose(native_host_memory_state *);
 typedef struct native_host_surface {
     qa_collision_surface surface;
     qa_native_address address;
-    struct native_host_surface *next;
 } native_host_surface;
 
 typedef struct native_host_q2_lifetime {
@@ -145,7 +144,8 @@ struct qa_native_host {
     native_host_cvar_record *cvar_shadows;
     qa_id_index cvar_records;
     uint64_t cvar_view_identity, cvar_revision;
-    native_host_surface *surfaces;
+    qa_id_index surfaces;
+    qa_arena surface_storage;
     qa_entity_model_fields models;
     qa_entity_model_field *model_entries;
     native_host_q2_lifetime *q2_lifetimes;

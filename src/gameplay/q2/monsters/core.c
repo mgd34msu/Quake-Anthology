@@ -1996,7 +1996,7 @@ void q2_monster_release_state(q2_actor *actor) {
 
 struct qa_q2_monster *q2m_monster_take(qa_q2_game *game, qa_error *error) {
   size_t slot;
-  struct qa_q2_monster *monster = qa_pool_take(&game->monster_records, &slot);
+  struct qa_q2_monster *monster = q2m_storage_take(game, 1, &slot, error);
   if (!monster) {
     qa_error_set(error, QA_ERROR_MEMORY, 0, "Q2 monster state pool exhausted");
     return NULL;
@@ -2008,8 +2008,7 @@ struct qa_q2_monster *q2m_monster_take(qa_q2_game *game, qa_error *error) {
 
 void q2m_free_monster(struct qa_q2_monster *monster) {
   if (monster) {
-    q2m_summon_clear(monster->summons);
-    free(monster->summons);
+    q2m_summon_free(monster->summons);
     qa_pool_release(monster->storage, monster->storage_slot);
   }
 }

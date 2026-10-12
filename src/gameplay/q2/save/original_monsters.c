@@ -691,7 +691,7 @@ static bool summons_record(qa_q2_game *game, q2_original_record_io *io,
     if (!medic) return true;
     q2m_summon_state *state = m->summons;
     if (io->reading && !state) {
-        state = calloc(1, sizeof(*state));
+        state = q2m_summon_take(game, io->error);
         if (!state) {
             qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Restoring original medic reinforcement state");
             return false;
@@ -732,23 +732,21 @@ static bool summons_record(qa_q2_game *game, q2_original_record_io *io,
         }
         if (count > SIZE_MAX / sizeof(q2m_reinforcement))
             return monster_error(io, "monsterinfo.reinforcements", "Original reinforcement list is too large");
-        q2m_reinforcement *entries = count ? calloc(count, sizeof(*entries)) : NULL;
-        if (count && !entries) {
-            qa_error_set(io->error, QA_ERROR_MEMORY, count, "Restoring original reinforcement list");
-            return false;
-        }
+        q2m_summon_state candidate = {0};
+        if (!q2m_summon_entries_take(game, &candidate, count, io->error)) return false;
+        q2m_reinforcement *entries = candidate.entries;
         for (size_t i = 0; i < count; ++i) {
             q2_original_record_io entry_io = *io;
             entry_io.object = qa_json_at(io->document, list, i);
             if (qa_json_type(io->document, entry_io.object) != QA_JSON_OBJECT) {
-                free(entries);
+                q2m_summon_entries_clear(&candidate);
                 return monster_error(io, "monsterinfo.reinforcements", "Invalid original reinforcement member");
             }
-            if (!reinforcement_record(game, &entry_io, entries + i)) { free(entries); return false; }
+            if (!reinforcement_record(game, &entry_io, entries + i)) {
+                q2m_summon_entries_clear(&candidate); return false;
+            }
         }
-        free(state->entries);
-        state->entries = entries;
-        state->entry_count = count;
+        q2m_summon_entries_move(state, &candidate);
         state->configured = true;
         state->chosen_count = 0;
     } else if (state && state->entry_count) {

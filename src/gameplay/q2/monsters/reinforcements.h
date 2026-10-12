@@ -8,6 +8,8 @@ typedef struct q2m_reinforcement {
     qa_bounds bounds;
 } q2m_reinforcement;
 typedef struct q2m_summon_state {
+    qa_pool *storage;
+    size_t storage_slot, entries_slot, entries_pages;
     qa_string_id authored;
     q2m_reinforcement *entries;
     size_t entry_count;
@@ -25,7 +27,13 @@ bool q2m_medic_summon_initialize(q2m_context *, q2m_summon_state *, qa_error *);
 bool q2m_medic_determine_summons(q2m_context *, q2m_summon_state *, qa_error *);
 bool q2m_medic_grow_summons(q2m_context *, q2m_summon_state *, qa_error *);
 bool q2m_medic_finish_summons(q2m_context *, q2m_summon_state *, qa_error *);
-void q2m_summon_clear(q2m_summon_state *);
+bool q2m_storage_prepare(qa_q2_game *, qa_error *);
+void *q2m_storage_take(qa_q2_game *, size_t pages, size_t *slot, qa_error *);
+q2m_summon_state *q2m_summon_take(qa_q2_game *, qa_error *);
+bool q2m_summon_entries_take(qa_q2_game *, q2m_summon_state *, size_t count, qa_error *);
+void q2m_summon_entries_clear(q2m_summon_state *);
+void q2m_summon_entries_move(q2m_summon_state *, q2m_summon_state *);
+void q2m_summon_free(q2m_summon_state *);
 bool q2m_summon_add(int64_t *counter, int64_t amount, qa_error *);
 bool q2m_summon_subtract(int64_t *counter, int64_t amount, qa_error *);
 bool q2m_summon_has_slots(const struct qa_q2_monster *, uint64_t required);

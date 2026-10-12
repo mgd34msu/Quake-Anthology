@@ -21,6 +21,8 @@ typedef struct inventory_store {
     uint64_t revision, definition_revision;
     size_t references;
     bool local, attached;
+    qa_inventory *storage_owner;
+    size_t storage_slot;
     qa_inventory_entry *entries;
     qa_inventory *entries_owner;
     size_t entries_slot, entries_pages;
@@ -39,6 +41,7 @@ struct qa_inventory_admission {
     inventory_store *store;
     uint64_t revision;
     size_t count, missing;
+    size_t storage_slot, storage_pages;
     bool validated;
     admission_entry entries[];
 };
@@ -54,16 +57,18 @@ struct qa_inventory {
     uint64_t serial;
     size_t calls;
     qa_operation *operations[4];
+    qa_arena record_storage;
+    qa_pool store_records, admission_pages;
     qa_arena scratch_storage;
     qa_pool scratch_pages;
-    size_t scratch_leases;
+    size_t storage_leases;
     bool closed;
 };
 
 static inline void qa_inventory_scratch_begin(qa_inventory *table, qa_arena *storage)
 { qa_arena_init_pool(storage, &table->scratch_pages); }
 static inline void qa_inventory_scratch_acquire(qa_inventory *table, qa_arena *storage)
-{ ++table->scratch_leases; qa_inventory_scratch_begin(table, storage); }
+{ ++table->storage_leases; qa_inventory_scratch_begin(table, storage); }
 
 /* Storage identity includes the primary binding, even when no component owns
  * the item. Pickup leases use it to reject storage replaced during callbacks. */
@@ -77,6 +82,8 @@ void qa_inventory_pickup_release(qa_inventory *, qa_actor_id, const void *);
 void qa_inventory_hold(qa_inventory *);
 void qa_inventory_unhold(qa_inventory *);
 bool qa_inventory_store_reserve_entries(qa_inventory *, inventory_store *, size_t, qa_error *);
+inventory_store *qa_inventory_store_create(qa_inventory *, qa_error *);
+void qa_inventory_store_drop(inventory_store *);
 inventory_store *qa_inventory_checkpoint_acquire(qa_inventory *, qa_actor_id);
 void qa_inventory_checkpoint_release(qa_inventory *, inventory_store *);
 #endif

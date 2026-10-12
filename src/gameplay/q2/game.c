@@ -3,6 +3,7 @@
 #include "player/feedback.h"
 #include "entities/internal.h"
 #include "monsters/internal.h"
+#include "monsters/reinforcements.h"
 
 bool q2_actor_live(const qa_q2_game *g, qa_actor_id id) {
     return qa_actors_get(qa_session_actors(g->services.session), id) != NULL;
@@ -391,11 +392,7 @@ bool qa_q2_create(const qa_builtin_services *services, const qa_q2_options *opti
         g->all_actors = a;
     }
     qa_arena_seal(&g->actor_storage);
-    /* Actor generations and their replaced revive/controller state may both
-     * remain leased until the existing source-frame retirement boundary. */
-    if (!qa_pool_reserve_pages(&g->monster_records, &g->monster_storage,
-            g->actor_records.capacity * 2, sizeof(struct qa_q2_monster),
-            _Alignof(struct qa_q2_monster), e)) {
+    if (!q2m_storage_prepare(g, e)) {
         close_game(g);
         return false;
     }

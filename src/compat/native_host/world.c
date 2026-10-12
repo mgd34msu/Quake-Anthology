@@ -873,15 +873,24 @@ static native_host_surface *surface_address(qa_native_host *host,
                                             const qa_collision_surface *surface,
                                             qa_error *error)
 {
-    for (native_host_surface *entry = host->surfaces; entry; entry = entry->next)
+    qa_string_id name;
+    if (!qa_strings_intern_cstr(host->string_names, surface->name, &name, error))
+        return NULL;
+    qa_id_index_cursor cursor = qa_id_index_begin(&host->surfaces, name, (uint32_t)surface->value);
+    size_t value;
+    while (qa_id_index_next(&host->surfaces, &cursor, &value)) {
+        native_host_surface *entry = (native_host_surface *)(uintptr_t)value;
         if (!memcmp(&entry->surface, surface, sizeof(*surface)))
             return entry;
-    native_host_surface *entry = calloc(1, sizeof(*entry));
+    }
+    if (!qa_id_index_reserve(&host->surfaces, 1, error)) return NULL;
+    native_host_surface *entry = qa_arena_alloc(&host->surface_storage,
+        sizeof(*entry), _Alignof(native_host_surface), error);
     if (!entry) {
         native_host_fail(error, QA_ERROR_MEMORY, 0, "allocating native surface record");
         return NULL;
     }
-    entry->surface = *surface;
+    *entry = (native_host_surface){.surface = *surface};
     size_t size = host->profile == QA_NATIVE_Q2_GAME_API3 ? 24u : 60u;
     uint8_t bytes[60] = {0};
     size_t name_bytes = host->profile == QA_NATIVE_Q2_GAME_API3 ? 16u : 32u;
@@ -903,11 +912,9 @@ static native_host_surface *surface_address(qa_native_host *host,
             qa_error ignored = {0};
             qa_native_free(host->instance, entry->address, &ignored);
         }
-        free(entry);
         return NULL;
     }
-    entry->next = host->surfaces;
-    host->surfaces = entry;
+    qa_id_index_insert(&host->surfaces, name, (uint32_t)surface->value, (size_t)(uintptr_t)entry);
     return entry;
 }
 

@@ -258,6 +258,7 @@ static qa_native_host *allocate_host(qa_native_module *module, native_host_kind 
     }
     host->kind = kind;
     host->profile = info.profile;
+    host->surfaces.storage = &host->surface_storage;
     host->pointer_bytes = info.image.target.pointer_bytes;
     if (info.profile == QA_NATIVE_Q2_GAME_API3) {
         host->classic = host->pointer_bytes == 4 ? &classic32 : &classic64;
@@ -424,12 +425,9 @@ static void free_records(qa_native_host *host)
         .cvar_shadows=host->cvar_shadows};
     native_host_memory_dispose(&memory); host->strings=(qa_id_index){0};
     host->cvar_records=(qa_id_index){0}; host->cvar_shadows=NULL;
+    qa_id_index_destroy(&host->surfaces);
+    qa_arena_destroy(&host->surface_storage);
     qa_strings_destroy(host->string_names); host->string_names=NULL;
-    while (host->surfaces) {
-        native_host_surface *next = host->surfaces->next;
-        free(host->surfaces);
-        host->surfaces = next;
-    }
     free(host->model_entries);
     free(host->message);
     qa_arena_destroy(&host->message_reference_storage);

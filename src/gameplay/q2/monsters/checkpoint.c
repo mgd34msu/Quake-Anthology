@@ -694,7 +694,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
     return false;
   }
   if (saved->has_summons) {
-    monster->summons = calloc(1, sizeof(*monster->summons));
+    monster->summons = q2m_summon_take(game, error);
     if (!monster->summons) {
       q2m_free_monster(monster);
       qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring medic reinforcement choices");
@@ -705,14 +705,11 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
     monster->summons->authored = saved->reinforcement_source;
     monster->summons->configured = saved->reinforcements_configured;
     if (saved->reinforcement_count) {
-      monster->summons->entries =
-          calloc(saved->reinforcement_count, sizeof(*monster->summons->entries));
-      if (!monster->summons->entries) {
+      if (!q2m_summon_entries_take(game, monster->summons, saved->reinforcement_count, error)) {
         q2m_free_monster(monster);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring medic reinforcement catalog");
         return false;
       }
-      monster->summons->entry_count = saved->reinforcement_count;
       for (size_t i = 0; i < saved->reinforcement_count; ++i)
         if (!restore_reinforcement(game, saved->reinforcements + i,
                                     monster->summons->entries + i, error)) {

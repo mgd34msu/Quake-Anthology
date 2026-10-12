@@ -66,7 +66,7 @@ static void sweep(qa_pickups *service)
     while (service->retired_observations) {
         pickup_observation_owner *retired=service->retired_observations;
         service->retired_observations=retired->retired_next;
-        free(retired);
+        qa_pool_release(&service->observation_storage->records, retired->slot);
     }
 }
 
@@ -163,6 +163,29 @@ bool qa_pickups_create(qa_actor_registry *actors, qa_combat *combat, qa_inventor
     qa_pickups *service = calloc(1, sizeof(*service));
     if (!service) return fail(e, QA_ERROR_MEMORY, "Cannot allocate pickup service");
     service->actors = actors; service->combat = combat; service->inventory = inventory;
+    service->observation_storage = calloc(1, sizeof(*service->observation_storage));
+    if (!service->observation_storage) {
+        free(service);
+        return fail(e, QA_ERROR_MEMORY, "Cannot allocate pickup observation storage");
+    }
+    pickup_observation_storage *storage = service->observation_storage;
+    qa_arena_init(&storage->arena, 0);
+    size_t capacity = qa_actors_capacity(actors);
+    if (capacity > SIZE_MAX / sizeof(*service->observations)) {
+        (void)qa_pickups_destroy(service, NULL);
+        return fail(e, QA_ERROR_MEMORY, "pickup observation table overflow");
+    }
+    if (capacity) {
+        service->observations = qa_arena_alloc(&storage->arena,
+            capacity * sizeof(*service->observations), _Alignof(pickup_observation_owner *), e);
+        if (!service->observations) { (void)qa_pickups_destroy(service, NULL); return false; }
+        memset(service->observations, 0, capacity * sizeof(*service->observations));
+    }
+    service->observation_capacity = (uint32_t)capacity;
+    if (!qa_pool_prepare(&storage->records, &storage->arena, capacity,
+            sizeof(pickup_observation_owner), _Alignof(pickup_observation_owner), e)) {
+        (void)qa_pickups_destroy(service, NULL); return false;
+    }
     *out = service; return true;
 }
 
@@ -182,8 +205,23 @@ bool qa_pickups_destroy(qa_pickups *service, qa_error *e)
     if (!qa_pickups_idle(service)) return fail(e, QA_ERROR_ARGUMENT, "Cannot destroy pickup service during callbacks");
     for (pickup_registration *r = service->registrations; r; r = r->next) r->active = false;
     sweep(service);
-    for(uint32_t i=0;i<service->observation_capacity;++i) free(service->observations[i]);
-    free(service->observations);free(service);return true;
+    for(uint32_t i=0;i<service->observation_capacity;++i)
+        if (service->observations[i])
+            qa_pool_release(&service->observation_storage->records, service->observations[i]->slot);
+    qa_arena_destroy(&service->observation_storage->arena);
+    free(service->observation_storage);free(service);return true;
+}
+
+pickup_observation_owner *qa_pickups_observation_take(qa_pickups *service, qa_error *e)
+{
+    pickup_observation_storage *storage = service->observation_storage;
+    if (storage->records.active == storage->records.capacity &&
+        !qa_pool_extend(&storage->records, &storage->arena,
+            storage->records.capacity ? storage->records.capacity : 1, e)) return NULL;
+    size_t slot;
+    pickup_observation_owner *owner = qa_pool_take(&storage->records, &slot);
+    *owner = (pickup_observation_owner){.slot = slot};
+    return owner;
 }
 
 static pickup_observation_owner *observation_get(qa_pickups *service,qa_actor_id actor) {
@@ -205,17 +243,10 @@ bool qa_pickups_observe(qa_pickups *service,qa_actor_id actor,qa_actor_owner own
     pickup_observation_owner *previous=actor.slot<service->observation_capacity?service->observations[actor.slot]:NULL;
     if(previous && qa_actor_id_equal(previous->actor,actor) && previous->owner!=owner)
         return fail(e,QA_ERROR_ARGUMENT,"pickup observation belongs to another source");
-    if(actor.slot>=service->observation_capacity) {
-        uint32_t capacity=qa_actors_capacity(service->actors);
-        if(capacity && sizeof(*service->observations)>SIZE_MAX/(size_t)capacity) return fail(e,QA_ERROR_MEMORY,"pickup observation table overflow");
-        pickup_observation_owner **slots=realloc(service->observations,(size_t)capacity*sizeof(*slots));
-        if(!slots) return fail(e,QA_ERROR_MEMORY,"allocating pickup observation table");
-        memset(slots+service->observation_capacity,0,(capacity-service->observation_capacity)*sizeof(*slots));
-        service->observations=slots;service->observation_capacity=capacity;
-    }
-    pickup_observation_owner *binding=malloc(sizeof(*binding));
-    if(!binding) return fail(e,QA_ERROR_MEMORY,"allocating pickup observation owner");
-    *binding=(pickup_observation_owner){.actor=actor,.owner=owner,.serial=++service->serial,.observer=*observer,.active=true};
+    pickup_observation_owner *binding=qa_pickups_observation_take(service,e);
+    if(!binding) return false;
+    *binding=(pickup_observation_owner){.slot=binding->slot,.actor=actor,.owner=owner,
+        .serial=++service->serial,.observer=*observer,.active=true};
     observation_retire(service,previous);service->observations[actor.slot]=binding;
     *out=(qa_pickup_lease){actor,binding->serial};sweep(service);return true;
 }

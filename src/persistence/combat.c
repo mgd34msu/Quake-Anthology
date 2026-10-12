@@ -16,7 +16,7 @@ bool qa_persistence_combat_admission(const qa_combat *combat, qa_actor_id actor,
     *out = entry->admission; return true;
 }
 
-static bool armor(qa_source_save_io *io, qa_armor *value)
+bool qa_source_save_armor(qa_source_save_io *io, qa_armor *value)
 {
     uint32_t regular = value->regular.kind, powered = value->powered.kind,
         edition = value->powered.source_edition, source_kind = value->powered.source_kind;
@@ -50,7 +50,7 @@ static bool armor(qa_source_save_io *io, qa_armor *value)
 static bool state(qa_source_save_io *io, qa_combat_state *value)
 {
     return qa_source_save_f32(io, &value->health) && isfinite(value->health) &&
-        qa_source_save_f32(io, &value->mass) && isfinite(value->mass) && armor(io, &value->armor) &&
+        qa_source_save_f32(io, &value->mass) && isfinite(value->mass) && qa_source_save_armor(io, &value->armor) &&
         qa_source_save_bool(io, &value->can_take_damage) && qa_source_save_bool(io, &value->invulnerable) &&
         qa_source_save_bool(io, &value->no_knockback) && qa_source_save_team(io, &value->team);
 }
@@ -248,7 +248,7 @@ static bool record(qa_source_save_io *io, qa_combat *combat, qa_inventory *inven
             !qa_source_save_bool(io, &slot->bound)) return false;
         slot->claim.admission = (qa_protection_admission)mode;
         if (!slot->bound) continue;
-        if (!qa_source_save_u32(io, &callbacks) || !armor(io, &reservoir)) return false;
+        if (!qa_source_save_u32(io, &callbacks) || !qa_source_save_armor(io, &reservoir)) return false;
         if (channel == QA_PROTECTION_POWERED && reservoir.powered.kind != QA_POWER_NONE &&
             reservoir.powered.source_kind == QA_POWER_SOURCE_GENERIC && reservoir.powered.source_owner != slot->claim.owner)
             return fail(io->error, "Generic powered reservoir differs from its actual absorption owner");

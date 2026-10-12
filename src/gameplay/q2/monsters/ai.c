@@ -1,4 +1,5 @@
 #include "qa/q2_sound.h"
+#include "qa/allocation_gate.h"
 #include "internal.h"
 #include "reinforcements.h"
 #include "medic.h"
@@ -27,6 +28,7 @@ typedef struct q2m_alert {
 struct q2_monsters_runtime {
   struct qa_q2_monster *retired;
   qa_q2_monster_services services;
+  qa_arena perception_storage;
   q2m_player_trail *trails;
   size_t trail_count, trail_capacity;
   size_t no_actor_trail;
@@ -170,32 +172,43 @@ bool q2m_count(q2m_context *context, qa_q2_monster_count kind,
       q2_campaign_monster_count(context->game, kind, error);
 }
 
-static bool runtime_reserve(void **storage, size_t *capacity, size_t count,
-                            size_t stride, qa_error *error) {
-  if (count <= *capacity)
-    return true;
-  size_t next = *capacity == 0 ? 4 : *capacity;
-  while (next < count) {
-    if (next > SIZE_MAX / 2) {
-      qa_error_set(error, QA_ERROR_MEMORY, count,
-                   "Q2 monster perception storage is too large");
-      return false;
-    }
-    next *= 2;
-  }
-  if (next > SIZE_MAX / stride) {
-    qa_error_set(error, QA_ERROR_MEMORY, count,
-                 "Q2 monster perception storage is too large");
+static void perception_storage_close(q2_monsters_runtime *runtime) {
+  qa_actor_index_destroy(&runtime->trail_index);
+  qa_actor_index_destroy(&runtime->alert_index);
+  qa_actor_index_destroy(&runtime->observer_index);
+  qa_arena_destroy(&runtime->perception_storage);
+}
+
+static bool perception_storage_prepare(qa_q2_game *game, q2_monsters_runtime *runtime,
+                                        size_t retained_trails, size_t retained_alerts,
+                                        qa_error *error) {
+  const qa_actor_registry *registry = qa_session_actors(game->services.session);
+  size_t live_rows = (size_t)qa_actors_capacity(registry) + 1;
+  if (retained_trails > SIZE_MAX - live_rows ||
+      retained_alerts > SIZE_MAX - live_rows) {
+    qa_error_set(error, QA_ERROR_MEMORY, 0, "Q2 monster perception storage is too large");
     return false;
   }
-  void *grown = realloc(*storage, next * stride);
-  if (grown == NULL) {
-    qa_error_set(error, QA_ERROR_MEMORY, count,
-                 "Unable to grow Q2 monster perception storage");
+  runtime->trail_capacity = retained_trails + live_rows;
+  runtime->alert_capacity = retained_alerts + live_rows;
+  if (runtime->trail_capacity > SIZE_MAX / sizeof(*runtime->trails) ||
+      runtime->alert_capacity > SIZE_MAX / sizeof(*runtime->alerts)) {
+    qa_error_set(error, QA_ERROR_MEMORY, 0, "Q2 monster perception storage is too large");
     return false;
   }
-  *storage = grown;
-  *capacity = next;
+  qa_arena_init(&runtime->perception_storage, 0);
+  runtime->trails = qa_arena_alloc(&runtime->perception_storage,
+      runtime->trail_capacity * sizeof(*runtime->trails), _Alignof(q2m_player_trail), error);
+  runtime->alerts = qa_arena_alloc(&runtime->perception_storage,
+      runtime->alert_capacity * sizeof(*runtime->alerts), _Alignof(q2m_alert), error);
+  if (!runtime->trails || !runtime->alerts ||
+      !qa_actor_index_create(&runtime->trail_index, registry, &runtime->perception_storage, error) ||
+      !qa_actor_index_create(&runtime->alert_index, registry, &runtime->perception_storage, error) ||
+      !qa_actor_index_create(&runtime->observer_index, registry, &runtime->perception_storage, error))
+    return false;
+  memset(runtime->trails, 0, runtime->trail_capacity * sizeof(*runtime->trails));
+  memset(runtime->alerts, 0, runtime->alert_capacity * sizeof(*runtime->alerts));
+  qa_arena_seal(&runtime->perception_storage);
   return true;
 }
 
@@ -213,12 +226,9 @@ bool q2_monsters_init(qa_q2_game *game, qa_error *error) {
                  "Unable to allocate Q2 monster perception runtime");
     return false;
   }
-  const qa_actor_registry *registry = qa_session_actors(game->services.session);
   game->monster_runtime->no_actor_trail = SIZE_MAX;
   game->monster_runtime->no_player_alert = SIZE_MAX;
-  if (!qa_actor_index_create(&game->monster_runtime->trail_index, registry, NULL, error) ||
-      !qa_actor_index_create(&game->monster_runtime->alert_index, registry, NULL, error) ||
-      !qa_actor_index_create(&game->monster_runtime->observer_index, registry, NULL, error)) {
+  if (!perception_storage_prepare(game, game->monster_runtime, 0, 0, error)) {
     q2_monsters_close(game);
     return false;
   }
@@ -235,11 +245,7 @@ void q2_monsters_close(qa_q2_game *game) {
   if (game == NULL || game->monster_runtime == NULL)
     return;
   q2_monsters_reclaim(game);
-  free(game->monster_runtime->trails);
-  free(game->monster_runtime->alerts);
-  qa_actor_index_destroy(&game->monster_runtime->trail_index);
-  qa_actor_index_destroy(&game->monster_runtime->alert_index);
-  qa_actor_index_destroy(&game->monster_runtime->observer_index);
+  perception_storage_close(game->monster_runtime);
   free(game->monster_definitions);
   game->monster_definitions = NULL; game->monster_definition_count = 0;
   free(game->monster_runtime);
@@ -253,6 +259,7 @@ void q2_monsters_begin_map(qa_q2_game *game) {
   qa_actor_index_clear(&runtime->alert_index);
   qa_actor_index_clear(&runtime->observer_index);
   *runtime = (q2_monsters_runtime){.services = runtime->services,
+      .perception_storage = runtime->perception_storage,
       .trails = runtime->trails, .trail_capacity = runtime->trail_capacity,
       .trail_index = runtime->trail_index, .no_actor_trail = SIZE_MAX,
       .alerts = runtime->alerts, .alert_capacity = runtime->alert_capacity,
@@ -382,31 +389,9 @@ bool qa_q2_monsters_restore(qa_q2_game *game,
   if (!q2_checkpoint_idle(game, error))
     return false;
 
-  q2m_player_trail *trails = NULL;
-  q2m_alert *alerts = NULL;
-  qa_actor_index trail_index = {0}, alert_index = {0}, observer_index = {0};
-  if (saved->trail_count != 0) {
-    trails = calloc(saved->trail_count, sizeof(trails[0]));
-    if (trails == NULL) {
-      qa_error_set(error, QA_ERROR_MEMORY, saved->trail_count,
-                   "Unable to restore Q2 monster trails");
-      return false;
-    }
-  }
-  if (saved->alert_count != 0) {
-    alerts = calloc(saved->alert_count, sizeof(alerts[0]));
-    if (alerts == NULL) {
-      free(trails);
-      qa_error_set(error, QA_ERROR_MEMORY, saved->alert_count,
-                   "Unable to restore Q2 monster alerts");
-      return false;
-    }
-  }
-
-  const qa_actor_registry *registry = qa_session_actors(game->services.session);
-  if (!qa_actor_index_create(&trail_index, registry, NULL, error) ||
-      !qa_actor_index_create(&alert_index, registry, NULL, error) ||
-      !qa_actor_index_create(&observer_index, registry, NULL, error)) goto failure;
+  q2_monsters_runtime prepared = {0};
+  if (!perception_storage_prepare(game, &prepared, saved->trail_count,
+                                  saved->alert_count, error)) goto failure;
 
   qa_actor_id sight_client = {0}, sight_observer = {0};
   if (!q2_resolve_reference(game, saved->sight_client, &sight_client, error) ||
@@ -415,7 +400,7 @@ bool qa_q2_monsters_restore(qa_q2_game *game,
     goto failure;
   for (size_t index = 0; index < saved->trail_count; ++index) {
     const qa_q2_monster_trail_checkpoint *source = &saved->trails[index];
-    q2m_player_trail *target = &trails[index];
+    q2m_player_trail *target = &prepared.trails[index];
     if (!q2_resolve_reference(game, source->actor, &target->actor, error))
       goto failure;
     target->head = source->head;
@@ -424,7 +409,7 @@ bool qa_q2_monsters_restore(qa_q2_game *game,
   }
   for (size_t index = 0; index < saved->alert_count; ++index) {
     const qa_q2_monster_alert_checkpoint *source = &saved->alerts[index];
-    q2m_alert *target = &alerts[index];
+    q2m_alert *target = &prepared.alerts[index];
     if (!q2_resolve_reference(game, source->player, &target->player, error) ||
         !q2_resolve_reference(game, source->observer, &target->observer,
                               error))
@@ -434,20 +419,20 @@ bool qa_q2_monsters_restore(qa_q2_game *game,
   }
 
   q2_monsters_runtime *runtime = game->monster_runtime;
-  free(runtime->trails);
-  free(runtime->alerts);
-  qa_actor_index_destroy(&runtime->trail_index);
-  qa_actor_index_destroy(&runtime->alert_index);
-  qa_actor_index_destroy(&runtime->observer_index);
-  runtime->trails = trails;
+  perception_storage_close(runtime);
+  runtime->perception_storage = prepared.perception_storage;
+  runtime->trails = prepared.trails;
   runtime->trail_count = saved->trail_count;
-  runtime->trail_capacity = saved->trail_count;
-  runtime->trail_index = trail_index;
-  runtime->alerts = alerts;
+  runtime->trail_capacity = prepared.trail_capacity;
+  runtime->trail_index = prepared.trail_index;
+  runtime->alerts = prepared.alerts;
   runtime->alert_count = saved->alert_count;
-  runtime->alert_capacity = saved->alert_count;
-  runtime->alert_index = alert_index;
-  runtime->observer_index = observer_index;
+  runtime->alert_capacity = prepared.alert_capacity;
+  runtime->alert_index = prepared.alert_index;
+  runtime->observer_index = prepared.observer_index;
+  runtime->trail_index.retained.storage = &runtime->perception_storage;
+  runtime->alert_index.retained.storage = &runtime->perception_storage;
+  runtime->observer_index.retained.storage = &runtime->perception_storage;
   index_trails(runtime);
   index_alerts(runtime);
   runtime->sight_client = sight_client;
@@ -461,11 +446,7 @@ bool qa_q2_monsters_restore(qa_q2_game *game,
   return true;
 
 failure:
-  free(trails);
-  free(alerts);
-  qa_actor_index_destroy(&trail_index);
-  qa_actor_index_destroy(&alert_index);
-  qa_actor_index_destroy(&observer_index);
+  perception_storage_close(&prepared);
   return false;
 }
 
@@ -516,10 +497,12 @@ static q2m_player_trail *trail_for(q2_monsters_runtime *runtime,
     return &runtime->trails[index];
   if (!create)
     return NULL;
-  if (!runtime_reserve((void **)&runtime->trails, &runtime->trail_capacity,
-                       runtime->trail_count + 1, sizeof(runtime->trails[0]),
-                       error))
+  if (runtime->trail_count == runtime->trail_capacity) {
+    qa_allocation_gate_capacity_exhausted();
+    qa_error_set(error, QA_ERROR_MEMORY, runtime->trail_count,
+                 "Q2 monster trail storage capacity exhausted");
     return NULL;
+  }
   q2m_player_trail *trail = &runtime->trails[runtime->trail_count++];
   *trail = (q2m_player_trail){.actor = actor, .actor_next = SIZE_MAX};
   if (actor.registry) qa_actor_index_put(&runtime->trail_index, actor, runtime->trail_count - 1);
@@ -787,10 +770,12 @@ static q2m_alert *alert_for(q2_monsters_runtime *runtime, qa_actor_id player,
     return &runtime->alerts[index];
   if (!create)
     return NULL;
-  if (!runtime_reserve((void **)&runtime->alerts, &runtime->alert_capacity,
-                       runtime->alert_count + 1, sizeof(runtime->alerts[0]),
-                       error))
+  if (runtime->alert_count == runtime->alert_capacity) {
+    qa_allocation_gate_capacity_exhausted();
+    qa_error_set(error, QA_ERROR_MEMORY, runtime->alert_count,
+                 "Q2 monster alert storage capacity exhausted");
     return NULL;
+  }
   q2m_alert *alert = &runtime->alerts[runtime->alert_count++];
   *alert = (q2m_alert){.player = player,
       .observer_previous = SIZE_MAX, .observer_next = SIZE_MAX};

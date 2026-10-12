@@ -196,27 +196,27 @@ bool qa_persistence_pickups_restore(qa_session *session, qa_pickups *service,
         link = &(*link)->next;
     }
     if (ok) ok = qa_source_save_count(&io, &count, qa_actors_capacity(service->actors));
-    scratch->observation_capacity = qa_actors_capacity(service->actors);
-    scratch->observations = calloc(scratch->observation_capacity, sizeof(*scratch->observations));
-    if (!scratch->observations) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating restored pickup observations"); ok = false; scratch->observation_capacity = 0; }
     uint32_t previous = 0;
     for (size_t i = 0; ok && i < count; ++i) {
-        pickup_observation_owner *owner = calloc(1, sizeof(*owner));
-        if (!owner) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating restored pickup observer"); ok = false; break; }
+        pickup_observation_owner *owner = qa_pickups_observation_take(scratch, error);
+        if (!owner) { ok = false; break; }
         ok = observation_fields(&io, scratch, owner, resolve) && owner->serial <= scratch->serial &&
             (!i || owner->actor.slot > previous);
         if (ok) ok = persistence_serial_append(&serials, &serial_count, &serial_capacity, owner->serial, scratch->serial, error);
         if (ok) { previous = owner->actor.slot; scratch->observations[owner->actor.slot] = owner; }
-        else free(owner);
+        else qa_pool_release(&scratch->observation_storage->records, owner->slot);
     }
     if (ok) ok = persistence_serial_unique(serials, serial_count, error) && qa_source_save_finish(&io, NULL) && safe(session, service, error);
     if (ok) {
         pickup_registration *old = service->registrations;
+        pickup_observation_storage *old_storage = service->observation_storage;
         pickup_observation_owner **old_observers = service->observations;
         uint32_t old_capacity = service->observation_capacity;
         service->registrations = scratch->registrations; service->observations = scratch->observations;
+        service->observation_storage = scratch->observation_storage;
         service->observation_capacity = scratch->observation_capacity; service->serial = scratch->serial;
         scratch->registrations = old; scratch->observations = old_observers; scratch->observation_capacity = old_capacity;
+        scratch->observation_storage = old_storage;
     }
     if (!ok && (!error || error->code == QA_OK)) fail(error, "Invalid saved pickup continuation");
     free(serials); qa_source_save_dispose(&io); (void)qa_pickups_destroy(scratch, NULL); return ok;

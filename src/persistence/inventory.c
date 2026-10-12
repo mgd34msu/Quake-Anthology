@@ -265,15 +265,14 @@ bool qa_persistence_inventory_restore(qa_session *session, qa_inventory *table,
         qa_source_save_count(&io, &count, table->capacity);
     uint32_t previous = 0;
     for (size_t i = 0; ok && i < count; ++i) {
-        inventory_store *store = calloc(1, sizeof(*store));
-        if (!store) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating restored inventory store"); ok = false; break; }
+        inventory_store *store = qa_inventory_store_create(scratch, error);
+        if (!store) { ok = false; break; }
         /* Install before decoding so every partially owned allocation is
          * reachable by the scratch service's ordinary destructor. */
-        store->references = 1;
         size_t record_offset = io.offset;
         ok = qa_source_save_actor(&io, &store->actor);
         if (!ok || !qa_actors_get(table->actors, store->actor) || (i && store->actor.slot <= previous)) {
-            free(store); ok = fail(error, "Saved inventory actor ordering is invalid"); break;
+            qa_inventory_store_drop(store); ok = fail(error, "Saved inventory actor ordering is invalid"); break;
         }
         previous = store->actor.slot; scratch->stores[store->actor.slot] = store;
         io.offset = record_offset;

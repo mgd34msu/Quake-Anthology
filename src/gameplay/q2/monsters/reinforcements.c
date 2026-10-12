@@ -33,6 +33,90 @@ static const int medic_strengths[7] = {1, 2, 2, 3, 4, 5, 6};
 static const qa_vec3 medic_positions[] = {
     {80, 0, 0}, {40, 60, 0}, {40, -60, 0}, {0, 80, 0}, {0, -80, 0}};
 
+bool q2m_storage_prepare(qa_q2_game *game, qa_error *error) {
+    size_t stride = sizeof(struct qa_q2_monster);
+    if (stride < sizeof(q2m_summon_state)) stride = sizeof(q2m_summon_state);
+    size_t alignment = _Alignof(struct qa_q2_monster);
+    if (alignment < _Alignof(q2m_summon_state)) alignment = _Alignof(q2m_summon_state);
+    if (alignment < _Alignof(q2m_reinforcement)) alignment = _Alignof(q2m_reinforcement);
+    if (stride > SIZE_MAX - (alignment - 1)) goto overflow;
+    stride = (stride + alignment - 1) & ~(alignment - 1);
+    size_t entry_bytes = sizeof(game->medic_definitions) / sizeof(*game->medic_definitions) *
+        sizeof(q2m_reinforcement);
+    size_t entry_pages = entry_bytes / stride + (entry_bytes % stride != 0);
+    if (game->actor_records.capacity > SIZE_MAX / 2 || entry_pages > SIZE_MAX - 2)
+        goto overflow;
+    size_t monsters = game->actor_records.capacity * 2;
+    size_t demand = entry_pages + 2;
+    if (monsters > SIZE_MAX / demand) goto overflow;
+    /* The existing retained-monster bound may all be medics. Every such
+     * generation can own one companion and the original default catalog.
+     * Authored catalogs and further retained peaks grow this same pool. */
+    return qa_pool_prepare(&game->monster_records, &game->monster_storage,
+        monsters * demand, stride, alignment, error);
+overflow:
+    qa_error_set(error, QA_ERROR_MEMORY, 0, "Q2 monster companion storage size overflow");
+    return false;
+}
+
+void *q2m_storage_take(qa_q2_game *game, size_t pages, size_t *slot, qa_error *error) {
+    if (!qa_pool_run_available(&game->monster_records, pages) &&
+        !qa_pool_extend(&game->monster_records, &game->monster_storage, pages, error))
+        return NULL;
+    return qa_pool_take_run(&game->monster_records, pages, slot);
+}
+
+q2m_summon_state *q2m_summon_take(qa_q2_game *game, qa_error *error) {
+    size_t slot;
+    q2m_summon_state *state = q2m_storage_take(game, 1, &slot, error);
+    if (state)
+        *state = (q2m_summon_state){.storage = &game->monster_records, .storage_slot = slot};
+    return state;
+}
+
+bool q2m_summon_entries_take(qa_q2_game *game, q2m_summon_state *state,
+                           size_t count, qa_error *error) {
+    if (count > SIZE_MAX / sizeof(*state->entries)) {
+        qa_error_set(error, QA_ERROR_MEMORY, count, "Medic reinforcement list is too large");
+        return false;
+    }
+    size_t bytes = count * sizeof(*state->entries);
+    size_t stride = game->monster_records.stride;
+    size_t pages = bytes / stride + (bytes % stride != 0), slot = 0;
+    q2m_reinforcement *entries = pages ? q2m_storage_take(game, pages, &slot, error) : NULL;
+    if (pages && !entries) return false;
+    if (bytes) memset(entries, 0, bytes);
+    state->storage = &game->monster_records;
+    state->entries = entries;
+    state->entry_count = count;
+    state->entries_slot = slot;
+    state->entries_pages = pages;
+    return true;
+}
+
+void q2m_summon_entries_clear(q2m_summon_state *state) {
+    if (state->entries_pages)
+        qa_pool_release_run(state->storage, state->entries_slot, state->entries_pages);
+    state->entries = NULL;
+    state->entry_count = state->entries_slot = state->entries_pages = 0;
+}
+
+void q2m_summon_free(q2m_summon_state *state) {
+    if (!state) return;
+    q2m_summon_entries_clear(state);
+    qa_pool_release(state->storage, state->storage_slot);
+}
+
+void q2m_summon_entries_move(q2m_summon_state *state, q2m_summon_state *candidate) {
+    q2m_summon_entries_clear(state);
+    state->entries = candidate->entries;
+    state->entry_count = candidate->entry_count;
+    state->entries_slot = candidate->entries_slot;
+    state->entries_pages = candidate->entries_pages;
+    candidate->entries = NULL;
+    candidate->entry_count = candidate->entries_slot = candidate->entries_pages = 0;
+}
+
 bool q2m_summon_initialize(q2m_context *context, qa_error *error) {
     q2m_species species = context->monster->definition->species;
     if (species == Q2M_WIDOW || species == Q2M_WIDOW2)
@@ -49,7 +133,7 @@ bool q2m_summon_initialize(q2m_context *context, qa_error *error) {
             context->monster->skin = 2;
         return true;
     }
-    context->monster->summons = calloc(1, sizeof(*context->monster->summons));
+    context->monster->summons = q2m_summon_take(context->game, error);
     if (!context->monster->summons) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating medic reinforcement choices");
         return false;
@@ -58,13 +142,6 @@ bool q2m_summon_initialize(q2m_context *context, qa_error *error) {
         return true;
     context->monster->skin = 2;
     return q2m_medic_summon_initialize(context, context->monster->summons, error);
-}
-
-void q2m_summon_clear(q2m_summon_state *state) {
-    if (!state)
-        return;
-    free(state->entries);
-    *state = (q2m_summon_state){0};
 }
 
 static bool configure(q2m_context *context, q2m_summon_state *state, qa_error *error) {
@@ -85,11 +162,9 @@ static bool configure(q2m_context *context, q2m_summon_state *state, qa_error *e
         qa_error_set(error, QA_ERROR_MEMORY, count, "Medic reinforcement list is too large");
         return false;
     }
-    q2m_reinforcement *entries = count ? calloc(count, sizeof(*entries)) : NULL;
-    if (count && !entries) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating authored medic reinforcements");
-        return false;
-    }
+    q2m_summon_state candidate = {0};
+    if (!q2m_summon_entries_take(game, &candidate, count, error)) return false;
+    q2m_reinforcement *entries = candidate.entries;
     const char *cursor = text;
     for (size_t i = 0; i < count; ++i) {
         if (!authored) {
@@ -126,14 +201,12 @@ static bool configure(q2m_context *context, q2m_summon_state *state, qa_error *e
         entries[i] = (q2m_reinforcement){definition, (int)strength, definition->bounds};
         cursor = *end ? end + 1 : end;
     }
-    free(state->entries);
-    state->entries = entries;
-    state->entry_count = count;
+    q2m_summon_entries_move(state, &candidate);
     state->authored = authored;
     state->configured = true;
     return true;
 invalid:
-    free(entries);
+    q2m_summon_entries_clear(&candidate);
     qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid authored medic reinforcement");
     return false;
 }
