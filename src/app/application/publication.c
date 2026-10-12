@@ -307,19 +307,25 @@ static bool removed_roster(qa_application *application,
         if (!contains(publication->next, publication->next_count, provider))
             publication->removed[publication->removed_count++] = provider;
     }
-    return true;
+    return application_provider_removed_index(application, publication->removed,
+        publication->removed_count, error);
 }
 
-static qa_actor_owner retiring_component(application_publication *publication,
+static qa_actor_owner retiring_component(qa_application *application,
+                                         application_publication *publication,
                                          application_provider *provider,
                                          bool *used)
 {
-    for (size_t index = 0; index < publication->removed_count; ++index)
-        if (!used[index] && publication->removed[index]->component_attached &&
-            publication->removed[index]->owner == provider->owner) {
+    qa_id_index_cursor cursor = application_provider_view_lookup_begin(application,
+        provider->owner, publication->removed);
+    application_provider *const *slot;
+    while ((slot = application_provider_removed_lookup_next(application, &cursor))) {
+        size_t index = (size_t)(slot - publication->removed);
+        if (!used[index] && (*slot)->component_attached) {
             used[index] = true;
             return provider->owner;
         }
+    }
     for (size_t index = 0; index < publication->removed_count; ++index)
         if (!used[index] && publication->removed[index]->component_attached) {
             used[index] = true;
@@ -394,12 +400,13 @@ static bool construct_and_reserve(qa_application *application,
                 provider_catalog = saved.product_catalog;
                 product = saved.product;
             }
-            if (!image)
-                for (size_t old = 0; old < publication->removed_count; ++old)
-                    if (publication->removed[old]->owner == provider->owner) {
-                        admission->previous_activation = publication->removed[old];
-                        break;
-                    }
+            if (!image) {
+                qa_id_index_cursor cursor = application_provider_view_lookup_begin(application,
+                    provider->owner, publication->removed);
+                application_provider *const *slot =
+                    application_provider_removed_lookup_next(application, &cursor);
+                if (slot) admission->previous_activation = *slot;
+            }
             bool activation = product && (provider->event_activation_bound ||
                 provider->event_activation_deferred || (image ? application_unified_event_owner_bind(application, provider, true, error) :
                 application_unified_event_owner_prepare(application, provider, admission->previous_activation, error)));
@@ -461,7 +468,7 @@ static bool construct_and_reserve(qa_application *application,
         if (cold) continue;
         if (!provider->component_attached && provider->component.owner != 0 && !admission->component) {
             qa_actor_owner retiring =
-                retiring_component(publication, provider, used);
+                retiring_component(application, publication, provider, used);
             if (!qa_session_prepare_component(application->session,
                                               &provider->component, retiring,
                                               &admission->component, error)) {
@@ -471,10 +478,11 @@ static bool construct_and_reserve(qa_application *application,
         }
         if (!provider->policy_attached && provider->policy.describe != NULL && !admission->policy) {
             bool replacement = false;
-            for (size_t old = 0; old < publication->removed_count; ++old)
-                if (publication->removed[old]->policy_attached &&
-                    publication->removed[old]->owner == provider->owner)
-                    replacement = true;
+            qa_id_index_cursor cursor = application_provider_view_lookup_begin(application,
+                provider->owner, publication->removed);
+            application_provider *const *slot;
+            while ((slot = application_provider_removed_lookup_next(application, &cursor)))
+                if ((*slot)->policy_attached) replacement = true;
             if (!qa_combat_prepare_policy(application->combat,
                                           &provider->policy, replacement,
                                           &admission->policy, error)) {
@@ -997,6 +1005,7 @@ static bool publication_dispose_checked(qa_application *application,
         application->physics_ready = false;
     }
     free(publication->admissions);
+    application_provider_view_unindex(application, publication->removed);
     free(publication->removed);
     application_provider_roster_unindex(application, publication->next);
     free(publication->next);

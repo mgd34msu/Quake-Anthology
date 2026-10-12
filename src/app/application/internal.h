@@ -651,11 +651,22 @@ bool application_provider_prepare(qa_application *, const qa_launch_instance *,
                                   application_provider **, qa_error *);
 bool application_provider_roster_index(qa_application *, application_provider *const *,
     size_t, qa_error *);
+bool application_provider_snapshot_index(qa_application *, const qa_launch_snapshot *const *,
+    qa_error *);
+bool application_provider_removed_index(qa_application *, application_provider *const *,
+    size_t, qa_error *);
 void application_provider_roster_unindex(qa_application *, application_provider *const *);
+void application_provider_view_unindex(qa_application *, const void *);
 void application_provider_unindex(qa_application *, const application_provider *);
 qa_id_index_cursor application_provider_lookup_begin(const qa_application *,
     qa_actor_owner, application_provider_view);
+qa_id_index_cursor application_provider_view_lookup_begin(const qa_application *,
+    uint64_t, const void *);
 application_provider *application_provider_lookup_next(const qa_application *,
+    qa_id_index_cursor *);
+const qa_launch_instance *application_provider_snapshot_lookup_next(const qa_application *,
+    qa_id_index_cursor *);
+application_provider *const *application_provider_removed_lookup_next(const qa_application *,
     qa_id_index_cursor *);
 application_provider *application_provider_lookup(const qa_application *,
     qa_actor_owner, application_provider_view);

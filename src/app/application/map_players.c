@@ -317,7 +317,8 @@ void application_players_dispose(application_player_travel *travel)
     free(travel);
 }
 
-static application_provider *seat_provider(application_publication *publication,
+static application_provider *seat_provider(qa_application *application,
+                                            application_publication *publication,
                                             const qa_launch_seat *seat,
                                             qa_launch_role role)
 {
@@ -337,10 +338,11 @@ static application_provider *seat_provider(application_publication *publication,
             (qa_launch_scope){.kind = QA_SCOPE_SEAT, .seat = seat->id}, role, "");
     if (binding == NULL)
         return NULL;
-    for (size_t i = 0; i < publication->next_count; ++i)
-        if (!strcmp(publication->next[i]->launch->selection.instance, binding->instance))
-            return publication->next[i];
-    return NULL;
+    qa_actor_owner owner = qa_strings_find(qa_session_strings(application->session),
+        (qa_bytes){(const uint8_t *)binding->instance, strlen(binding->instance)});
+    qa_id_index_cursor cursor = application_provider_view_lookup_begin(application, owner,
+        publication->next);
+    return application_provider_lookup_next(application, &cursor);
 }
 
 static bool player_adapter_available(const application_provider *provider)
@@ -698,7 +700,7 @@ bool application_players_prepare(qa_application *application,
         bool selected = provider == publication->map_provider;
         for (size_t seat = 0; seat < choices->seat_count && !selected; ++seat)
             for (size_t role = 0; role < sizeof(player_roles) / sizeof(player_roles[0]) && !selected; ++role)
-                selected = seat_provider(publication, &choices->seats[seat], player_roles[role]) == provider;
+                selected = seat_provider(application, publication, &choices->seats[seat], player_roles[role]) == provider;
         if (selected && !application_qc_player_roster_ready(provider, choices, error))
             return false;
     }
@@ -786,9 +788,9 @@ bool application_players_prepare(qa_application *application,
         travel->landmark = *landmark;
     for (size_t i = 0; i < choices->seat_count; ++i) {
         const qa_launch_seat *seat = &choices->seats[i];
-        application_provider *character = seat_provider(publication, seat, QA_ROLE_CHARACTER);
-        application_provider *movement = seat_provider(publication, seat, QA_ROLE_MOVEMENT);
-        application_provider *arsenal = seat_provider(publication, seat, QA_ROLE_ARSENAL);
+        application_provider *character = seat_provider(application, publication, seat, QA_ROLE_CHARACTER);
+        application_provider *movement = seat_provider(application, publication, seat, QA_ROLE_MOVEMENT);
+        application_provider *arsenal = seat_provider(application, publication, seat, QA_ROLE_ARSENAL);
         if (!player_adapter_available(character) || !player_adapter_available(movement) ||
             !player_adapter_available(arsenal)) {
             application_players_dispose(travel);
@@ -798,7 +800,7 @@ bool application_players_prepare(qa_application *application,
         const qa_launch_role other_roles[] = {QA_ROLE_INVENTORY, QA_ROLE_COMBAT,
                                                QA_ROLE_EFFECTS, QA_ROLE_EQUIPMENT};
         for (size_t j = 0; j < sizeof(other_roles) / sizeof(other_roles[0]); ++j) {
-            application_provider *provider = seat_provider(publication, seat, other_roles[j]);
+            application_provider *provider = seat_provider(application, publication, seat, other_roles[j]);
             if (provider != NULL && !player_adapter_available(provider)) {
                 application_players_dispose(travel);
                 return application_fail(error, QA_ERROR_UNSUPPORTED,
@@ -806,7 +808,7 @@ bool application_players_prepare(qa_application *application,
             }
         }
         for (size_t j = 0; j < sizeof(player_roles) / sizeof(player_roles[0]); ++j) {
-            application_provider *provider = seat_provider(publication, seat, player_roles[j]);
+            application_provider *provider = seat_provider(application, publication, seat, player_roles[j]);
             if (provider != NULL && provider->kind == APPLICATION_PROVIDER_QC &&
                 !application_qc_player_map_ready(provider, provider == character,
                                                 provider == publication->map_provider, error)) {
@@ -912,7 +914,7 @@ bool application_players_prepare(qa_application *application,
         bool selected = provider == publication->map_provider;
         for (size_t j = 0; j < choices->seat_count && !selected; ++j)
             for (size_t k = 0; k < sizeof(player_roles) / sizeof(player_roles[0]); ++k)
-                selected |= seat_provider(publication, &choices->seats[j], player_roles[k]) == provider;
+                selected |= seat_provider(application, publication, &choices->seats[j], player_roles[k]) == provider;
         if (selected && provider->kind == APPLICATION_PROVIDER_QC &&
             !application_qc_player_roster_ready(provider, choices, error)) {
             application_players_dispose(travel);
@@ -4306,10 +4308,10 @@ bool application_players_campaign_consume(qa_application *application,
         for (size_t j=0;j<choices->seat_count;++j)
             if (choices->seats[j].id==record->seat) record->configured_actor=choices->seats[j].actor;
         seat->actor=record->configured_actor;
-        record->character=seat_provider(publication,seat,QA_ROLE_CHARACTER);
+        record->character=seat_provider(application, publication,seat,QA_ROLE_CHARACTER);
         if (!player_adapter_available(record->character) ||
-            !player_adapter_available(seat_provider(publication,seat,QA_ROLE_MOVEMENT)) ||
-            !player_adapter_available(seat_provider(publication,seat,QA_ROLE_ARSENAL)))
+            !player_adapter_available(seat_provider(application, publication,seat,QA_ROLE_MOVEMENT)) ||
+            !player_adapter_available(seat_provider(application, publication,seat,QA_ROLE_ARSENAL)))
             return application_fail(error,QA_ERROR_UNSUPPORTED,"Campaign carry lost its selected player adapter");
     }
     travel->roster->map_provider=publication->map_provider;
@@ -4385,7 +4387,7 @@ bool application_players_campaign_reenter(qa_application *candidate,
     for (size_t i=0;i<travel->count;++i) {
         application_player_record *record=travel->roster->records+i;
         application_player_carry *carry=travel->carry+i;
-        record->character=seat_provider(&publication,travel->seats+i,QA_ROLE_CHARACTER);
+        record->character=seat_provider(candidate, &publication,travel->seats+i,QA_ROLE_CHARACTER);
         if (!record->character) return application_fail(error,QA_ERROR_FORMAT,"Campaign player lost its selected character");
         record->configured_actor=(qa_actor_id){0};
         for (size_t j=0;j<choices->seat_count;++j)

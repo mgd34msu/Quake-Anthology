@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `c5993e77`.
+Follow-up source changes were reviewed through main `27b92d35`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 167 have source fixes
+There are **374 overlapping source-review observations**: 168 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 209 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 203 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -332,3 +332,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `79bb8019` / 08-02, 30-02: All world text uses retained output-event pages and one drawing adapter. Private font/QC stores deleted; actual local drawing owns one-frame lifetime, dedicated delivery uses source time, and Q2 save bytes stay unchanged. Normal build/seven core suites passed; live presentation remains untested. Records: `/tmp/qa-ta3196-world-text-owner-20261012`.
 
 - `53103fa2` / 26-18, 26-19: QVM source observers use common pools, arenas and full-width binding indexes; immutable function entries are prepared at admission. Callback ordering, nesting and restore identity mapping retained. Normal build/seven core suites passed; unbounded registration and nesting peaks can still grow common storage. Records: `/tmp/qa-ta3196-qvm-observer-pools-20261012`.
+
+- `27b92d35` / 04-006: Native and external Q3 reached commands share literal token copying and retained alternating arenas; old arguments remain admitted on failed replacement. Joined Args and supplied empty Args both passed actual core cases. Normal build/seven core suites passed; first/larger commands can still grow common storage. Records: `/tmp/qa-ta3196-q3-reached-tokens-20261012`.

@@ -174,11 +174,11 @@ application_provider *application_startup_flow_provider(const qa_application *ap
             ? provider : NULL;
     }
     if (flow->generation != app->command_generation) return NULL;
-    for (size_t i = 0; i < qa_launch_snapshot_instance_count(flow->candidate); ++i) {
-        const qa_launch_instance *instance = qa_launch_snapshot_instance(flow->candidate, i);
+    qa_id_index_cursor cursor = application_provider_view_lookup_begin(app, owner, &flow->candidate);
+    const qa_launch_instance *instance;
+    while ((instance = application_provider_snapshot_lookup_next(app, &cursor))) {
         application_provider *provider = instance->state;
-        if (provider && provider->owner == owner && provider->application == app &&
-            !provider->close_pending && !provider->attached)
+        if (provider && provider->application == app && !provider->close_pending && !provider->attached)
             return provider;
     }
     return NULL;
@@ -801,6 +801,7 @@ bool qa_application_startup_abort(qa_application *app, qa_error *error)
         flow->publication = NULL;
     }
     if (flow->transaction && !qa_configuration_abort(flow->transaction, error)) goto fail;
+    application_provider_view_unindex(app, &flow->candidate);
     flow->transaction = NULL;
     application_engine_shutdown_release_candidate(app, flow->candidate);
     application_q3_product_finish(app, &flow->product, false);
@@ -992,6 +993,7 @@ static bool begin(qa_application *app, const qa_launch_draft *draft,
         (replacing ? qa_configuration_prepare_replacing(app->configuration, flow->product.draft, &flow->transaction, error)
             : qa_configuration_prepare(app->configuration, flow->product.draft, &flow->transaction, error));
     if (ok) flow->candidate = qa_configuration_candidate(flow->transaction);
+    if (ok) ok = application_provider_snapshot_index(app, &flow->candidate, error);
     if (ok) ok = prepare_root(app, flow, error);
     if (ok) ok = application_publication_begin(app, flow->previous, flow->candidate, &flow->publication, error);
     if (ok) {
@@ -1352,6 +1354,7 @@ bool qa_application_startup_advance(qa_application *app, bool *complete, qa_erro
             ok = application_publication_ready_values(app, flow->validated_publication, error);
         if (ok) ok = qa_configuration_commit(flow->transaction, error);
         if (ok) {
+            application_provider_view_unindex(app, &flow->candidate);
             flow->transaction = NULL;
             flow->candidate = NULL;
             flow->committed = true;

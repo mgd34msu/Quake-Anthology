@@ -188,17 +188,18 @@ bool application_map_identity(qa_application *application,
         (qa_bytes){(const uint8_t *)name, length}, out, error);
 }
 
-static application_provider *publication_provider(
+static application_provider *publication_provider(qa_application *application,
     const application_publication *publication, const char *name)
 {
     if (name == NULL)
         return NULL;
-    for (size_t index = 0; index < publication->next_count; ++index) {
-        application_provider *provider = publication->next[index];
-        if (provider != NULL && provider->launch != NULL &&
-            strcmp(provider->launch->selection.instance, name) == 0)
-            return provider;
-    }
+    qa_actor_owner owner = qa_strings_find(qa_session_strings(application->session),
+        (qa_bytes){(const uint8_t *)name, strlen(name)});
+    qa_id_index_cursor cursor = application_provider_view_lookup_begin(application, owner,
+        publication->next);
+    application_provider *provider;
+    while ((provider = application_provider_lookup_next(application, &cursor)))
+        if (provider->launch != NULL) return provider;
     return NULL;
 }
 
@@ -219,7 +220,7 @@ bool application_map_prepare_content(qa_application *application,
         return application_fail(error, QA_ERROR_NOT_FOUND,
                                 "world has no selected entity provider");
     publication->map_provider =
-        publication_provider(publication, binding->instance);
+        publication_provider(application, publication, binding->instance);
     if (publication->map_provider == NULL)
         return application_fail(error, QA_ERROR_NOT_FOUND,
                                 "selected entity provider is absent");

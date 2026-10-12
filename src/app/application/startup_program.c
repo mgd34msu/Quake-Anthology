@@ -72,17 +72,20 @@ static bool identity(void *context, qa_console_program_identity kind, uint64_t s
             *out=tuple->target.declaration_owner; return true;
         }
     }
-    if (kind == QA_CONSOLE_PROGRAM_OWNER)
-        for (size_t i = 0; i < qa_launch_snapshot_instance_count(owner->previous); ++i) {
-            const qa_launch_instance *old = qa_launch_snapshot_instance(owner->previous, i);
+    if (kind == QA_CONSOLE_PROGRAM_OWNER) {
+        qa_id_index_cursor cursor = application_provider_view_lookup_begin(owner->previous_application,
+            source, &owner->previous);
+        const qa_launch_instance *old;
+        while ((old = application_provider_snapshot_lookup_next(owner->previous_application, &cursor))) {
             application_provider *provider = old->state;
-            if (!provider || provider->owner != source) continue;
+            if (!provider) continue;
             const qa_launch_instance *selected = qa_launch_snapshot_find(owner->candidate, old->selection.instance);
             application_provider *candidate = selected ? selected->state : NULL;
             if (!candidate)
                 return application_fail(error, QA_ERROR_ARGUMENT, "Queued command owner has no actual candidate declaration");
             *out = candidate->owner; return true;
         }
+    }
     /* Historical retired lifetime IDs keep their identity. The lower owner
      * checks that none can retire a genuine fresh declaration. */
     *out = source; return true;
@@ -107,10 +110,12 @@ static bool candidate_tuple(application_startup_program *owner,const qa_command_
     bool *found,qa_error *error)
 {
     *found=false;
-    for (size_t i=0;i<qa_launch_snapshot_instance_count(owner->candidate);++i) {
-        const qa_launch_instance *descriptor=qa_launch_snapshot_instance(owner->candidate,i);
-        application_provider *provider=descriptor ? descriptor->state : NULL;
-        if (!provider || provider->owner!=context->owner) continue;
+    qa_id_index_cursor cursor=application_provider_view_lookup_begin(owner->application,
+        context->owner,&owner->candidate);
+    const qa_launch_instance *descriptor;
+    while ((descriptor=application_provider_snapshot_lookup_next(owner->application,&cursor))) {
+        application_provider *provider=descriptor->state;
+        if (!provider) continue;
         for (size_t index=0;;++index) {
             qa_application_startup_source actual; bool present;
             if (!application_provider_startup_source_at(provider,index,&actual,&present,error)) return false;
@@ -253,6 +258,8 @@ static void dispose(application_startup_program *owner)
         qa_launch_instance_lease_release(tuple->previous_lease);
         qa_launch_instance_lease_release(tuple->candidate_lease); free(tuple);
     }
+    application_provider_view_unindex(owner->previous_application, &owner->previous);
+    application_provider_view_unindex(owner->application, &owner->candidate);
     qa_launch_snapshot_release(owner->previous);
     qa_launch_snapshot_release(owner->candidate);
     application_startup_program **position = &owner->application->startup_program_owners;
@@ -319,7 +326,9 @@ static bool prepare_program(qa_application *app,qa_application *previous_app,
     owner->target=(qa_application_startup_source){.scope={.kind=QA_APPLICATION_CONSOLE_ENGINE},
         .console=app->console,.cvars=app->cvars};
     qa_launch_snapshot_retain(owner->previous); qa_launch_snapshot_retain(candidate);
-    bool ok=qa_console_context_read(previous_app->console,&owner->source.command,error) &&
+    bool ok=application_provider_snapshot_index(previous_app,&owner->previous,error) &&
+        application_provider_snapshot_index(app,&owner->candidate,error) &&
+        qa_console_context_read(previous_app->console,&owner->source.command,error) &&
         qa_console_context_read(app->console,&owner->target.command,error) && tuple_add(owner,source,target,error);
     if (!ok) { dispose(owner); return false; }
     owner->next_application=app->startup_program_owners; app->startup_program_owners=owner;

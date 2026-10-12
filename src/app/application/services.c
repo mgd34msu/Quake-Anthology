@@ -77,19 +77,24 @@ static const qa_launch_binding *exact_binding(const qa_launch_choices *choices,
     return (unsigned)role < QA_ROLE_COUNT ? bindings[role] : NULL;
 }
 
+qa_id_index_cursor application_provider_view_lookup_begin(const qa_application *application,
+    uint64_t owner, const void *view)
+{
+    qa_actor_owner key = (qa_actor_owner)owner;
+    return application && view && owner == key ? qa_id_index_begin(&application->provider_index, key,
+        (uint64_t)(uintptr_t)view) : (qa_id_index_cursor){0};
+}
+
 qa_id_index_cursor application_provider_lookup_begin(const qa_application *application,
     qa_actor_owner owner, application_provider_view view)
 {
     if (!application) return (qa_id_index_cursor){0};
-    /* Zero identifies the live list; each retained roster has its own address. */
-    uint64_t discriminator = 0;
-    if (view != APPLICATION_PROVIDER_LIVE) {
-        application_provider **providers = view == APPLICATION_PROVIDER_ROUTING ?
-            application->routing_providers : application->providers;
-        if (!providers) return (qa_id_index_cursor){0};
-        discriminator = (uint64_t)(uintptr_t)providers;
-    }
-    return qa_id_index_begin(&application->provider_index, owner, discriminator);
+    /* Zero identifies the live list; each retained source view has its own address. */
+    if (view == APPLICATION_PROVIDER_LIVE)
+        return qa_id_index_begin(&application->provider_index, owner, 0);
+    return application_provider_view_lookup_begin(application, owner,
+        view == APPLICATION_PROVIDER_ROUTING ?
+            application->routing_providers : application->providers);
 }
 
 application_provider *application_provider_lookup_next(const qa_application *application,
@@ -98,6 +103,22 @@ application_provider *application_provider_lookup_next(const qa_application *app
     size_t value;
     return application && qa_id_index_next(&application->provider_index, cursor, &value) ?
         (application_provider *)(uintptr_t)value : NULL;
+}
+
+const qa_launch_instance *application_provider_snapshot_lookup_next(
+    const qa_application *application, qa_id_index_cursor *cursor)
+{
+    size_t value;
+    return application && qa_id_index_next(&application->provider_index, cursor, &value) ?
+        (const qa_launch_instance *)(uintptr_t)value : NULL;
+}
+
+application_provider *const *application_provider_removed_lookup_next(
+    const qa_application *application, qa_id_index_cursor *cursor)
+{
+    size_t value;
+    return application && qa_id_index_next(&application->provider_index, cursor, &value) ?
+        (application_provider *const *)(uintptr_t)value : NULL;
 }
 
 application_provider *application_provider_lookup(const qa_application *application,

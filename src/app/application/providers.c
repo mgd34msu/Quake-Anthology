@@ -108,6 +108,35 @@ bool application_provider_roster_index(qa_application *application,
     return true;
 }
 
+bool application_provider_snapshot_index(qa_application *application,
+    const qa_launch_snapshot *const *view, qa_error *error)
+{
+    size_t count = qa_launch_snapshot_instance_count(*view);
+    if (!qa_id_index_reserve(&application->provider_index, count, error)) return false;
+    uint64_t discriminator = (uint64_t)(uintptr_t)view;
+    /* Each snapshot loan retains its own original descriptor order and storage. */
+    for (size_t i = count; i > 0; --i) {
+        const qa_launch_instance *instance = qa_launch_snapshot_instance(*view, i - 1);
+        application_provider *provider = instance->state;
+        if (provider) qa_id_index_insert(&application->provider_index, provider->owner,
+            discriminator, (size_t)(uintptr_t)instance);
+    }
+    return true;
+}
+
+bool application_provider_removed_index(qa_application *application,
+    application_provider *const *view, size_t count, qa_error *error)
+{
+    if (!qa_id_index_reserve(&application->provider_index, count, error)) return false;
+    uint64_t discriminator = (uint64_t)(uintptr_t)view;
+    for (size_t i = count; i > 0; --i) {
+        application_provider *provider = view[i - 1];
+        if (provider) qa_id_index_insert(&application->provider_index, provider->owner,
+            discriminator, (size_t)(uintptr_t)(view + i - 1));
+    }
+    return true;
+}
+
 static void provider_index_remove(qa_application *application, uint64_t view,
     size_t value, bool by_value)
 {
@@ -121,10 +150,15 @@ static void provider_index_remove(qa_application *application, uint64_t view,
     }
 }
 
+void application_provider_view_unindex(qa_application *application, const void *view)
+{
+    if (view) provider_index_remove(application, (uint64_t)(uintptr_t)view, 0, false);
+}
+
 void application_provider_roster_unindex(qa_application *application,
     application_provider *const *providers)
 {
-    if (providers) provider_index_remove(application, (uint64_t)(uintptr_t)providers, 0, false);
+    application_provider_view_unindex(application, providers);
 }
 
 void application_provider_unindex(qa_application *application,
