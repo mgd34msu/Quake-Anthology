@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `868114bf`.
+Follow-up source changes were reviewed through main `76b76d8f`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -280,3 +280,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 | `31-08` | `385eee46` | Q3 presentation numeric copies deleted; common float/decimal conversion and defined signed32 wrap used throughout scoped callers. Normal build/seven suites and wrap boundary cases passed; no live or speed claim. |
 
 | `17-18` | `868114bf` | One caller-arena scene graph BFS for namespace, inventory and capture; callback/ordinal/cycle rules and retained replay preserved. Normal build and seven suites passed; no live capture or zero-growth claim. |
+
+| `07-03` partial | `76b76d8f` | All discovery callers and completion custody use common arenas; strided names remove the temporary copy. Existing core behavior cases passed with normal build/seven suites. Load-sized/no-growth work remains open. |

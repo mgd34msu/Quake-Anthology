@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "868114bfe89481b416fc665614dd186ea1159ec3",
+  "verified_main": "76b76d8fe8ab44dd4d07e607c4ee9c623e2b2394",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -27358,7 +27358,7 @@
       "job": "07",
       "area": "audio_input_ui",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "Partial source migration: three discover callers use independent common arena scopes, retained completion names/tail/assembly use field-owned arena, extra names vector and private allocations deleted. Strided rows, detached name lifetime, cycling/dedup, UTF-8 cursor/tail and maximum cases passed in existing core suite. First/larger completion and independent discovery can still allocate common blocks; load-sized/no-growth requirement remains open."
     },
     {
       "id": "08-01",
@@ -40940,6 +40940,38 @@
       ],
       "record_directory": "/tmp/qa-ta3196-common-scene-walk-20261012",
       "conclusion": "One common caller-arena BFS body replaces three scoped graph traversals. Namespace checks its original root and projects only after topology admission; inventory/capture preserve pre-child visitor order and per-root duplicate/cycle checks. Active capture retained-link replay unchanged. Growth uses common arenas without extra owner checks or arbitrary limits. Cold payload arrays and linear alias checks remain. Normal production build/seven core suites passed; no live capture, save execution, zero-allocation or timing claim."
+    },
+    {
+      "commit": "76b76d8fe8ab44dd4d07e607c4ee9c623e2b2394",
+      "source_tree": "5da14c651434b580d004bc8832d64f08f6f290d0",
+      "finding_ids": [
+        "07-03"
+      ],
+      "files_rechecked": [
+        "src/console/discovery.c",
+        "src/console/seat.c",
+        "src/console/field.c",
+        "src/console/field_internal.h",
+        "src/console/seat_save.c",
+        "src/tools/llm_catalog.c",
+        "include/qa/console_discovery.h",
+        "include/qa/field.h",
+        "src/core/arena.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-completion-storage-20261012",
+      "conclusion": "Every discovery caller uses its own common arena; strided name slots remove the seat names-copy vector. Field arena owns detached matches/tail and reusable assembly; successful restore releases old backing and moves/zeros candidate, preserving destination address and saved fields. Existing core cases check detached names, dedup/cycle, UTF-8 tail/cursor and maximum behavior. Normal production build/seven suites passed. First/larger common storage and scoped discovery can still allocate, so load-sized/no-growth observation remains open. No live console/save execution or timing claim."
     }
   ],
   "verification_limits": [

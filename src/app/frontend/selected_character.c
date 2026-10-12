@@ -249,11 +249,8 @@ bool frontend_selected_character_animation(const frontend_selected_character_pos
 static bool attach_part(frontend_selected_character *owner, qa_q3_ref_entity *child,
     const qa_q3_ref_entity *parent, qa_string_id name, bool *found, qa_error *error)
 {
-    qa_model_tag tag;
-    float fraction = 1.0f - parent->back_lerp;
-    if (!qa_q3_presentation_tag(owner->view.assets, parent->model, name, parent->old_frame,
-        parent->frame, fraction, &tag, found, error)) return false;
-    return !*found || q3n_attach(owner->view.assets, child, parent, name, true, error);
+    return q3n_attach(owner->view.assets, child, parent, name, Q3N_ATTACH_ROTATED,
+        Q3N_ATTACH_MISSING_SKIP, found, error);
 }
 
 bool frontend_selected_character_build(frontend_selected_character_pose *pose,

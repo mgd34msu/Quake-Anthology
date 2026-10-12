@@ -106,12 +106,14 @@ static bool build(qa_q3_presentation_assets *assets, q3n_player_pose *state,
     body.parts[0].origin = body.parts[0].old_origin = origin;
     body.count = 1;
     if (!client->models[0] || !client->models[1]) { *out = body; return true; }
-    if (!q3n_attach(assets, &body.parts[1], &body.parts[0], qa_q3_presentation_tag_id(assets, QA_Q3_TAG_TORSO), true, error) ||
+    if (!q3n_attach(assets, &body.parts[1], &body.parts[0], qa_q3_presentation_tag_id(assets, QA_Q3_TAG_TORSO), Q3N_ATTACH_ROTATED,
+        Q3N_ATTACH_MISSING_IDENTITY, NULL, error) ||
         !received_current(frame,remote,compiled,client,error)) return false;
     if (options->visual) body.parts[1].old_origin = body.parts[1].origin;
     body.count = 2;
     if (!client->models[2]) { *out = body; return true; }
-    if (!q3n_attach(assets, &body.parts[2], &body.parts[1], qa_q3_presentation_tag_id(assets, QA_Q3_TAG_HEAD), true, error) ||
+    if (!q3n_attach(assets, &body.parts[2], &body.parts[1], qa_q3_presentation_tag_id(assets, QA_Q3_TAG_HEAD), Q3N_ATTACH_ROTATED,
+        Q3N_ATTACH_MISSING_IDENTITY, NULL, error) ||
         !received_current(frame,remote,compiled,client,error)) return false;
     if (options->visual) body.parts[2].old_origin = body.parts[2].origin;
     body.count = 3; *out = body; return true;

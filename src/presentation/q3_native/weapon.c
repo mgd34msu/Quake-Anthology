@@ -53,7 +53,8 @@ static bool start_sound(const q3n_frame *f,int32_t handle,const qa_vec3 *origin,
 static bool loop_sound(const q3n_frame *f,int32_t handle,int32_t number,qa_vec3 origin,qa_error *e)
 { return qa_q3_presentation_loop(f->presentation,handle,number,origin,qa_v3(0,0,0),false,e) && frame_valid(f,e); }
 static bool attach(const q3n_frame *f,qa_q3_ref_entity *child,const qa_q3_ref_entity *parent,qa_string_id tag,bool rotated,qa_error *e)
-{ return q3n_attach(f->assets,child,parent,tag,rotated,e) && frame_valid(f,e); }
+{ return q3n_attach(f->assets,child,parent,tag,rotated?Q3N_ATTACH_ROTATED:Q3N_ATTACH_INHERIT,
+    Q3N_ATTACH_MISSING_IDENTITY,NULL,e) && frame_valid(f,e); }
 bool q3n_weapons_idle(const q3n_weapons *w) { return w && !w->busy; }
 bool q3n_weapons_create(const q3n_weapon_options *options,q3n_weapons **out,qa_error *e)
 {
@@ -269,7 +270,8 @@ static bool player_weapon(const q3n_frame *f,const qa_q3_presentation_assets *pa
             cent->lightning_firing=true;
         } else if (w->ready_sound && !loop_sound(f,w->ready_sound,state->number,cent->lerp_origin,e)) return false;
     }
-    if (!q3n_attach(parent_assets,&gun,parent,qa_q3_presentation_tag_id(parent_assets, QA_Q3_TAG_WEAPON),false,e) || !frame_valid(f,e) ||
+    if (!q3n_attach(parent_assets,&gun,parent,qa_q3_presentation_tag_id(parent_assets, QA_Q3_TAG_WEAPON),Q3N_ATTACH_INHERIT,
+        Q3N_ATTACH_MISSING_IDENTITY,NULL,e) || !frame_valid(f,e) ||
         !powered(f,&gun,state->powerups,e)) return false;
     if (submitted) *submitted=true;
     if (w->barrel_model) {
@@ -468,23 +470,6 @@ static bool selected_emit(const q3n_selected_weapon_media *media,const q3n_selec
     if (!selected_current(draw,e) || !draw->submit(draw->context,media->assets,ref,e)) return false;
     *submitted=true; return selected_current(draw,e);
 }
-/* Scene attachment composition retains each child's own pose. Missing optional
- * gun tags omit that attachment; selected hands require tag_weapon. */
-static bool selected_attach(const qa_q3_presentation_assets *assets,qa_q3_ref_entity *child,
-    const qa_q3_ref_entity *parent,qa_string_id name,bool required,bool *found,qa_error *e)
-{
-    qa_model_tag tag; float fraction=(1 + -parent->back_lerp);
-    if (!qa_q3_presentation_tag(assets,parent->model,name,parent->old_frame,parent->frame,fraction,&tag,found,e)) return false;
-    if (!*found) return !required || q3p_fail(e,QA_ERROR_FORMAT,"Selected Q3 hands model has no required weapon tag");
-    qa_vec3 tag_axes[3],axes[3];
-    for (size_t i=0;i<3;++i)
-        tag_axes[i]=qa_axis_from_local(qa_v3(tag.axes[i][0],tag.axes[i][1],tag.axes[i][2]),parent->axis,QA_AXIS_ORDERED_SUM);
-    child->origin=qa_vec_add(parent->origin,qa_axis_from_local(qa_v3(tag.origin[0],tag.origin[1],tag.origin[2]),parent->axis,QA_AXIS_ORDERED_SUM));
-    child->old_origin=child->origin;
-    for (size_t i=0;i<3;++i) axes[i]=qa_axis_from_local(child->axis[i],tag_axes,QA_AXIS_ORDERED_SUM);
-    memcpy(child->axis,axes,sizeof(axes)); child->lighting_origin=parent->lighting_origin;
-    return true;
-}
 static qa_q3_ref_entity selected_part(int32_t model,int32_t flags,qa_vec3 lighting)
 {
     qa_q3_ref_entity ref=reference(QA_Q3_REF_MODEL,model);
@@ -515,17 +500,21 @@ bool q3n_weapons_selected_held(q3n_weapons *owner,const q3n_selected_weapon_medi
     if (!media->gun) return selected_end(owner,true);
     int32_t flags=128|(held->personal_model?2:0); bool gun_found,have_barrel=false,have_flash=false;
     qa_q3_ref_entity gun=selected_part(media->gun,flags,held->lighting_origin);
-    if (!selected_attach(held->parent_assets,&gun,held->torso,qa_q3_presentation_tag_id(held->parent_assets, QA_Q3_TAG_WEAPON),false,&gun_found,e)) return selected_end(owner,false);
+    if (!q3n_attach(held->parent_assets,&gun,held->torso,qa_q3_presentation_tag_id(held->parent_assets, QA_Q3_TAG_WEAPON),Q3N_ATTACH_CHILD_POSE,
+        Q3N_ATTACH_MISSING_SKIP,&gun_found,e)) return selected_end(owner,false);
     float spin_angle=barrel_spin(draw->time,&state->world_barrel.time,&state->world_barrel.angle,&state->world_barrel.spinning,draw->firing);
     qa_q3_ref_entity barrel=selected_part(media->barrel,flags,held->lighting_origin);
     qa_angle_axis(qa_v3(0,0,spin_angle),barrel.axis,QA_ANGLE_VM_MATH);
-    if (media->barrel && !selected_attach(media->assets,&barrel,&gun,qa_q3_presentation_tag_id(media->assets, QA_Q3_TAG_BARREL),false,&have_barrel,e)) return selected_end(owner,false);
+    if (media->barrel && !q3n_attach(media->assets,&barrel,&gun,qa_q3_presentation_tag_id(media->assets, QA_Q3_TAG_BARREL),Q3N_ATTACH_CHILD_POSE,
+        Q3N_ATTACH_MISSING_SKIP,&have_barrel,e)) return selected_end(owner,false);
     qa_q3_ref_entity flash=selected_part(media->flash,flags,held->lighting_origin);
     if (media->flash && selected_flash(draw)) {
-        if (!selected_attach(media->assets,&flash,&gun,qa_q3_presentation_tag_id(media->assets, QA_Q3_TAG_FLASH),false,&have_flash,e)) return selected_end(owner,false);
+        if (!q3n_attach(media->assets,&flash,&gun,qa_q3_presentation_tag_id(media->assets, QA_Q3_TAG_FLASH),Q3N_ATTACH_CHILD_POSE,
+            Q3N_ATTACH_MISSING_SKIP,&have_flash,e)) return selected_end(owner,false);
         if (have_flash) {
             qa_angle_axis(qa_v3(0,0,(selected_random(state) * 10)),flash.axis,QA_ANGLE_VM_MATH);
-            if (!selected_attach(media->assets,&flash,&gun,qa_q3_presentation_tag_id(media->assets, QA_Q3_TAG_FLASH),false,&have_flash,e)) return selected_end(owner,false);
+            if (!q3n_attach(media->assets,&flash,&gun,qa_q3_presentation_tag_id(media->assets, QA_Q3_TAG_FLASH),Q3N_ATTACH_CHILD_POSE,
+                Q3N_ATTACH_MISSING_SKIP,&have_flash,e)) return selected_end(owner,false);
         }
     }
     bool okay=true;
@@ -574,15 +563,18 @@ bool q3n_weapons_selected_view(q3n_weapons *owner,const q3n_selected_weapon_medi
         hands.back_lerp=state->torso.back_lerp;
     }
     qa_q3_ref_entity gun=selected_part(media->gun,1|4|8,view->origin); bool found;
-    if (!selected_attach(media->assets,&gun,&hands,qa_q3_presentation_tag_id(media->assets, QA_Q3_TAG_WEAPON),true,&found,e)) return selected_end(owner,false);
+    if (!q3n_attach(media->assets,&gun,&hands,qa_q3_presentation_tag_id(media->assets, QA_Q3_TAG_WEAPON),Q3N_ATTACH_CHILD_POSE,
+        Q3N_ATTACH_MISSING_REQUIRED,&found,e)) return selected_end(owner,false);
     float spin_angle=barrel_spin(draw->time,&state->view_barrel.time,&state->view_barrel.angle,&state->view_barrel.spinning,draw->firing);
     qa_q3_ref_entity barrel=selected_part(media->barrel,1|4|8,view->origin); bool have_barrel=false;
     qa_angle_axis(qa_v3(0,0,spin_angle),barrel.axis,QA_ANGLE_VM_MATH);
-    if (media->barrel && !selected_attach(media->assets,&barrel,&gun,qa_q3_presentation_tag_id(media->assets, QA_Q3_TAG_BARREL),false,&have_barrel,e)) return selected_end(owner,false);
+    if (media->barrel && !q3n_attach(media->assets,&barrel,&gun,qa_q3_presentation_tag_id(media->assets, QA_Q3_TAG_BARREL),Q3N_ATTACH_CHILD_POSE,
+        Q3N_ATTACH_MISSING_SKIP,&have_barrel,e)) return selected_end(owner,false);
     qa_q3_ref_entity flash=selected_part(media->flash,1|4|8,view->origin); bool have_flash=false;
     if (media->flash && selected_flash(draw)) {
         qa_angle_axis(qa_v3(0,0,(selected_random(state) * 10)),flash.axis,QA_ANGLE_VM_MATH);
-        if (!selected_attach(media->assets,&flash,&gun,qa_q3_presentation_tag_id(media->assets, QA_Q3_TAG_FLASH),false,&have_flash,e)) return selected_end(owner,false);
+        if (!q3n_attach(media->assets,&flash,&gun,qa_q3_presentation_tag_id(media->assets, QA_Q3_TAG_FLASH),Q3N_ATTACH_CHILD_POSE,
+            Q3N_ATTACH_MISSING_SKIP,&have_flash,e)) return selected_end(owner,false);
     }
     bool okay=selected_parts(media,draw,&gun,&barrel,have_barrel,0,submitted,e);
     if (okay && have_flash && !draw->reduced_flashes) okay=selected_emit(media,draw,&flash,submitted,e);
@@ -618,13 +610,15 @@ bool q3n_weapons_selected_authored_view(q3n_weapons *owner,const q3n_selected_we
     qa_angle_axis(selected_view_angles(&view->camera,draw->time),hands.axis,QA_ANGLE_VM_MATH);
     hands.frame=view->frame; hands.old_frame=view->old_frame; hands.back_lerp=view->back_lerp;
     qa_q3_ref_entity gun=selected_part(media->gun,1|4|8,view->camera.origin); bool found;
-    if (!selected_attach(media->assets,&gun,&hands,view->anchor_tag,true,&found,e)) return selected_end(owner,false);
+    if (!q3n_attach(media->assets,&gun,&hands,view->anchor_tag,Q3N_ATTACH_CHILD_POSE,
+        Q3N_ATTACH_MISSING_REQUIRED,&found,e)) return selected_end(owner,false);
     (void)barrel_spin(draw->time,&state->view_barrel.time,&state->view_barrel.angle,&state->view_barrel.spinning,draw->firing);
     bool okay=selected_emit(media,draw,&gun,submitted,e);
     for (size_t i=0;okay && i<view->attachment_count;++i) {
         const q3n_selected_weapon_attachment *attachment=view->attachments+i;
         qa_q3_ref_entity part=selected_part(attachment->model,1|4|8,view->camera.origin);
-        okay=selected_attach(media->assets,&part,&gun,attachment->tag,false,&found,e);
+        okay=q3n_attach(media->assets,&part,&gun,attachment->tag,Q3N_ATTACH_CHILD_POSE,
+            Q3N_ATTACH_MISSING_SKIP,&found,e);
         if (okay && found) okay=selected_emit(media,draw,&part,submitted,e);
     }
     return selected_end(owner,okay);

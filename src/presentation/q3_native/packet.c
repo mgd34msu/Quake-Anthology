@@ -123,7 +123,7 @@ static bool item(const q3n_frame *f,const packet_source *source,q3n_entity *enti
         if(!range(definition->tag,16,"weapon",error)) return false;
         weapon=&media->weapons[definition->tag];
         qa_vec3 midpoint=weapon->weapon_midpoint;
-        qa_vec3 offset=qa_vec_add(qa_vec_add(qa_vec_scale(ref.axis[0],midpoint.x),qa_vec_scale(ref.axis[1],midpoint.y)),qa_vec_scale(ref.axis[2],midpoint.z));
+        qa_vec3 offset=qa_axis_from_local(midpoint,ref.axis,QA_AXIS_ORDERED_SUM);
         entity->lerp_origin=qa_vec_add(entity->lerp_origin,qa_vec_scale(offset,-1)); entity->lerp_origin.z=(entity->lerp_origin.z + 8);
     }
     ref.origin=ref.old_origin=entity->lerp_origin;
@@ -142,7 +142,8 @@ static bool item(const q3n_frame *f,const packet_source *source,q3n_entity *enti
     if(product==QA_Q3_TEAM_ARENA && weapon && weapon->barrel_model) {
         qa_q3_ref_entity barrel={.kind=QA_Q3_REF_MODEL,.model=weapon->barrel_model,
             .lighting_origin=ref.lighting_origin,.shadow_plane=ref.shadow_plane,.flags=ref.flags};
-        if(!q3n_attach(f->assets,&barrel,&ref,qa_q3_presentation_tag_id(f->assets, QA_Q3_TAG_BARREL),true,error) || !current(f,source,error)) return false;
+        if(!q3n_attach(f->assets,&barrel,&ref,qa_q3_presentation_tag_id(f->assets, QA_Q3_TAG_BARREL),Q3N_ATTACH_ROTATED,
+            Q3N_ATTACH_MISSING_IDENTITY,NULL,error) || !current(f,source,error)) return false;
         memcpy(barrel.axis,ref.axis,sizeof(ref.axis)); barrel.non_normalized_axes=ref.non_normalized_axes;
         if(!body(f,source,entity,imports,&barrel,error)) return false;
     }

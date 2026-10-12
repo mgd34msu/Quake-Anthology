@@ -115,11 +115,9 @@ bool q3n_player_angles_pose(q3n_player_pose *state, const qa_player_animation_co
     float pitch = ((head.x > 180 ? (-360 + head.x) : head.x) * 0.75f);
     swing(pitch, 15, 30, 0.1f, milliseconds, &state->torso.pitch_angle, &state->torso.pitching);
     torso.x = config->fixed_torso ? 0 : state->torso.pitch_angle;
-    float velocity_length = (float)sqrt((double)qa_vec_dot(source_velocity, source_velocity));
+    qa_vec3 velocity = source_velocity;
+    float velocity_length = qa_vec_normalize_length_rule(&velocity, QA_LENGTH_DOUBLE_SQRT);
     if (velocity_length != 0) {
-        float inverse_length = (1 / velocity_length);
-        qa_vec3 velocity = qa_v3((source_velocity.x * inverse_length),
-            (source_velocity.y * inverse_length), (source_velocity.z * inverse_length));
         float lean = (velocity_length * 0.05f); qa_vec3 axis[3]; qa_angle_axis(legs, axis,QA_ANGLE_VM_MATH);
         legs.x = (legs.x + (lean * qa_vec_dot(velocity, axis[0])));
         legs.z = (legs.z + -(lean * qa_vec_dot(velocity, axis[1])));
