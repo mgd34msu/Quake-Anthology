@@ -21,8 +21,19 @@ typedef enum qa_angle_math_rule {
 void qa_angle_vectors(qa_vec3,qa_vec3 *forward,qa_vec3 *right,qa_vec3 *up,qa_angle_math_rule);
 void qa_angle_axis(qa_vec3,qa_vec3 axis[3],qa_angle_math_rule);
 void qa_axis_multiply(const qa_vec3 left[3],const qa_vec3 right[3],qa_vec3 out[3]);
-qa_vec3 qa_vec_perpendicular(qa_vec3);
-qa_vec3 qa_vec_rotate_around(qa_vec3 axis,qa_vec3 point,float degrees);
+typedef enum qa_perpendicular_math_rule {
+    QA_PERPENDICULAR_DIRECT_PROJECTION, QA_PERPENDICULAR_RECIPROCAL_PROJECTION
+} qa_perpendicular_math_rule;
+/* Direct projection uses the first least component as its seed. Reciprocal
+ * projection retains the source's minimum of one and two reciprocal scales. */
+qa_vec3 qa_vec_perpendicular(qa_vec3,qa_perpendicular_math_rule);
+typedef enum qa_rotation_math_rule {
+    QA_ROTATION_MATRIX, QA_ROTATION_RODRIGUES
+} qa_rotation_math_rule;
+/* MATRIX uses float pi/radians and the two source matrix products. RODRIGUES
+ * rounds double pi/radians to float before double sin/cos. Neither normalizes
+ * the input axis. */
+qa_vec3 qa_vec_rotate_around(qa_vec3 axis,qa_vec3 point,float degrees,qa_rotation_math_rule);
 float qa_inverse_sqrt(float);
 typedef enum qa_direction_math_rule {
     QA_DIRECTION_FLOAT, QA_DIRECTION_FLOAT_RATIO, QA_DIRECTION_FLOAT_DIVIDE,
@@ -99,14 +110,21 @@ static inline qa_vec3 qa_vec_fast_normalize(qa_vec3 v) { return qa_vec_scale(v,q
 static inline qa_vec3 qa_axis_to_local(qa_vec3 v,const qa_vec3 axis[3]) {
     return qa_v3(qa_vec_dot(v,axis[0]),qa_vec_dot(v,axis[1]),qa_vec_dot(v,axis[2]));
 }
-static inline qa_vec3 qa_axis_from_local(qa_vec3 v,const qa_vec3 axis[3]) {
-    return qa_vec_add(qa_vec_add(qa_vec_scale(axis[0],v.x),qa_vec_scale(axis[1],v.y)),qa_vec_scale(axis[2],v.z));
+typedef enum qa_axis_sum_rule {
+    QA_AXIS_ORDERED_SUM, QA_AXIS_ZERO_FIRST_SUM
+} qa_axis_sum_rule;
+/* ZERO_FIRST retains the initial positive-zero addition before the three
+ * ordered terms, including its signed-zero behavior. */
+static inline qa_vec3 qa_axis_from_local(qa_vec3 v,const qa_vec3 axis[3],qa_axis_sum_rule rule) {
+    qa_vec3 first=qa_vec_scale(axis[0],v.x);
+    if(rule==QA_AXIS_ZERO_FIRST_SUM) first=qa_vec_add(qa_v3(0,0,0),first);
+    return qa_vec_add(qa_vec_add(first,qa_vec_scale(axis[1],v.y)),qa_vec_scale(axis[2],v.z));
 }
-static inline qa_vec3 qa_axis_remap(const qa_vec3 from[3],const qa_vec3 to[3],qa_vec3 v) {
-    return qa_axis_from_local(qa_axis_to_local(v,from),to);
+static inline qa_vec3 qa_axis_remap(const qa_vec3 from[3],const qa_vec3 to[3],qa_vec3 v,qa_axis_sum_rule rule) {
+    return qa_axis_from_local(qa_axis_to_local(v,from),to,rule);
 }
-static inline qa_vec3 qa_axis_remap_point(qa_vec3 from_origin,const qa_vec3 from[3],qa_vec3 to_origin,const qa_vec3 to[3],qa_vec3 point) {
-    return qa_vec_add(to_origin,qa_axis_remap(from,to,qa_vec_sub(point,from_origin)));
+static inline qa_vec3 qa_axis_remap_point(qa_vec3 from_origin,const qa_vec3 from[3],qa_vec3 to_origin,const qa_vec3 to[3],qa_vec3 point,qa_axis_sum_rule rule) {
+    return qa_vec_add(to_origin,qa_axis_remap(from,to,qa_vec_sub(point,from_origin),rule));
 }
 static inline qa_vec3 qa_axes_angles(const qa_vec3 axis[3]) {
     const float degrees = 57.29577951308232f;

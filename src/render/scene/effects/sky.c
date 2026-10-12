@@ -143,7 +143,7 @@ static bool submit_face(qa_scene_frame *frame, const qa_scene_view *view,
     for (size_t i = 0; i < 4; ++i) {
         qa_vec3 direction = qa_effect_sky_vector(face, horizontal[i], vertical[i], radius);
         if (rotation != 0 && qa_vec_dot(axis, axis) != 0)
-            direction = qa_effect_rotate(direction, axis, rotation);
+            direction = qa_vec_rotate_around(axis, direction, rotation, QA_ROTATION_RODRIGUES);
         vertices[i].position = qa_vec_add(view->origin, direction);
         vertices[i].normal = qa_vec_normalize(qa_vec_scale(direction, -1));
         vertices[i].texcoord = (qa_vec2){

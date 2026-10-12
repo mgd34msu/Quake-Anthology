@@ -133,7 +133,7 @@ static bool use_shooter(qa_q3_game *game, qa_q3_map_actor_state *state,
         if (!q3_map_get(game, actor))
             return true;
     }
-    qa_vec3 up = qa_vec_perpendicular(direction);
+    qa_vec3 up = qa_vec_perpendicular(direction, QA_PERPENDICULAR_RECIPROCAL_PROJECTION);
     qa_vec3 right = qa_vec_cross(up, direction);
     direction = qa_vec_add(direction, qa_vec_scale(up, (q3_crandom(game) * spread)));
     direction = qa_vec_normalize(

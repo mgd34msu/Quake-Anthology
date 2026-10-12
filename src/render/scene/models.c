@@ -1070,7 +1070,7 @@ static bool md5_bounds_visible(const qa_scene_model_input *input, qa_bounds boun
 {
     qa_model_bounds local = {{bounds.mins.x, bounds.mins.y, bounds.mins.z},
                             {bounds.maxs.x, bounds.maxs.y, bounds.maxs.z}}, world;
-    qa_model_transform_bounds(&input->transform, &local, &world);
+    qa_model_transform_bounds(&input->transform, &local, &world, QA_MODEL_BOUNDS_COMPARISON);
     qa_bounds transformed = {model_vec(world.min), model_vec(world.max)};
     if (!qa_vec_finite(transformed.mins) || !qa_vec_finite(transformed.maxs)) return true;
     qa_scene_plane planes[6];
@@ -1244,7 +1244,7 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
         qa_bounds bounds = shell ? sample->shell_bounds : sample->bounds;
         qa_model_bounds local = {{bounds.mins.x, bounds.mins.y, bounds.mins.z},
                                 {bounds.maxs.x, bounds.maxs.y, bounds.maxs.z}}, world;
-        qa_model_transform_bounds(&input->transform, &local, &world);
+        qa_model_transform_bounds(&input->transform, &local, &world, QA_MODEL_BOUNDS_COMPARISON);
         qa_scene_plane planes[6];
         size_t count = qa_scene_frustum(&input->view, planes);
         if (!qa_scene_bounds_visible((qa_bounds){model_vec(world.min), model_vec(world.max)}, planes, count)) {
@@ -1650,7 +1650,7 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
             }
             if (model->source->format != QA_MODEL_MD5 && cull && mesh.vertex_count) {
                 qa_model_bounds local = cull_bounds(model, original, &mesh), world;
-                qa_model_transform_bounds(&input.transform, &local, &world);
+                qa_model_transform_bounds(&input.transform, &local, &world, QA_MODEL_BOUNDS_COMPARISON);
                 qa_bounds bounds = {model_vec(world.min), model_vec(world.max)};
                 qa_scene_plane planes[6];
                 size_t plane_count = qa_scene_frustum(&input.view, planes);

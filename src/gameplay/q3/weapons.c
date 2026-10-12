@@ -303,7 +303,7 @@ static bool shotgun(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry at
     if (!q3_event(game, shooter, (qa_actor_id){0}, QA_BUILTIN_SHOT, 54, (int32_t)seed,
                   attack.muzzle, direction, qa_v3(0, 0, 0), error))
         return false;
-    qa_vec3 forward = qa_vec_normalize(direction), right = qa_vec_perpendicular(forward),
+    qa_vec3 forward = qa_vec_normalize(direction), right = qa_vec_perpendicular(forward, QA_PERPENDICULAR_RECIPROCAL_PROJECTION),
             up = qa_vec_cross(forward, right);
     bool credited = false;
     for (unsigned pellet = 0; pellet < 11; ++pellet) {

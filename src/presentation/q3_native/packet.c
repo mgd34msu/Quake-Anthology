@@ -18,7 +18,7 @@ static qa_vec3 missile_direction(const qa_q3_trajectory *t) {
     qa_vec3 direction=vector(t->delta); return qa_vec_dot(direction,direction)==0 ? qa_v3(0,0,1) : qa_vec_normalize(direction);
 }
 static void direction_axis(qa_vec3 direction, int32_t yaw, qa_vec3 axis[3]) {
-    qa_vec3 side=qa_vec_perpendicular(direction); if(yaw) side=qa_vec_rotate_around(direction,side,(float)yaw);
+    qa_vec3 side=qa_vec_perpendicular(direction,QA_PERPENDICULAR_RECIPROCAL_PROJECTION); if(yaw) side=qa_vec_rotate_around(direction,side,(float)yaw,QA_ROTATION_MATRIX);
     axis[0]=direction; axis[1]=side; axis[2]=qa_vec_cross(direction,side);
 }
 static void scale_axis(qa_vec3 axis[3], float amount) { for(unsigned i=0;i<3;++i) axis[i]=qa_vec_scale(axis[i],amount); }
@@ -267,7 +267,7 @@ static bool packet_entity(const q3n_frame *f,const packet_source *source,q3n_ent
     case 6: {
         ref.kind=QA_Q3_REF_PORTAL; ref.origin=entity->lerp_origin; ref.old_origin=vector(s->origin2);
         qa_vec3 forward={0}; if(s->eventParm>=0 && s->eventParm<(int32_t)QA_BYTE_NORMAL_COUNT) qa_byte_normal((uint8_t)s->eventParm,&forward);
-        qa_vec3 side=qa_vec_scale(qa_vec_perpendicular(forward),-1); ref.axis[0]=forward; ref.axis[1]=side; ref.axis[2]=qa_vec_cross(forward,side);
+        qa_vec3 side=qa_vec_scale(qa_vec_perpendicular(forward,QA_PERPENDICULAR_RECIPROCAL_PROJECTION),-1); ref.axis[0]=forward; ref.axis[1]=side; ref.axis[2]=qa_vec_cross(forward,side);
         ref.old_frame=s->powerups; ref.frame=s->frame; ref.skin=integer((((float)s->clientNum / 256) * 360));
         return body(f,source,entity,imports,&ref,error);
     }

@@ -38,8 +38,16 @@ void qa_axis_multiply(const qa_vec3 left[3],const qa_vec3 right[3],qa_vec3 out[3
     for(unsigned i=0;i<3;++i) result[i]=qa_axis_to_local(left[i],columns);
     memcpy(out,result,sizeof(result));
 }
-qa_vec3 qa_vec_perpendicular(qa_vec3 v)
+qa_vec3 qa_vec_perpendicular(qa_vec3 v,qa_perpendicular_math_rule rule)
 {
+    if(rule==QA_PERPENDICULAR_DIRECT_PROJECTION) {
+        qa_vec3 axis;
+        float x=fabsf(v.x),y=fabsf(v.y),z=fabsf(v.z);
+        if(x<=y && x<=z) axis=qa_v3(1,0,0);
+        else if(y<=z) axis=qa_v3(0,1,0);
+        else axis=qa_v3(0,0,1);
+        return qa_vec_normalize(qa_vec_sub(axis,qa_vec_scale(v,qa_vec_dot(axis,v))));
+    }
     float minimum=1;qa_vec3 axis={1,0,0};
     if(fabsf(v.x)<minimum) minimum=fabsf(v.x);
     if(fabsf(v.y)<minimum) { minimum=fabsf(v.y);axis=qa_v3(0,1,0); }
@@ -47,9 +55,16 @@ qa_vec3 qa_vec_perpendicular(qa_vec3 v)
     float inverse=1/qa_vec_dot(v,v),distance=qa_vec_dot(v,axis)*inverse;
     return qa_vec_normalize(qa_vec_sub(axis,qa_vec_scale(qa_vec_scale(v,inverse),distance)));
 }
-qa_vec3 qa_vec_rotate_around(qa_vec3 axis,qa_vec3 point,float degrees)
+qa_vec3 qa_vec_rotate_around(qa_vec3 axis,qa_vec3 point,float degrees,qa_rotation_math_rule rule)
 {
-    qa_vec3 radial=qa_vec_perpendicular(axis),vertical=qa_vec_cross(radial,axis);
+    if(rule==QA_ROTATION_RODRIGUES) {
+        float radians=(float)((double)degrees*3.14159265358979323846/180.0);
+        float sine=(float)sin(radians),cosine=(float)cos(radians);
+        return qa_vec_add(qa_vec_add(qa_vec_scale(point,cosine),
+                                   qa_vec_scale(qa_vec_cross(axis,point),sine)),
+                          qa_vec_scale(axis,qa_vec_dot(axis,point)*(1.0f-cosine)));
+    }
+    qa_vec3 radial=qa_vec_perpendicular(axis,QA_PERPENDICULAR_RECIPROCAL_PROJECTION),vertical=qa_vec_cross(radial,axis);
     float radians=(degrees*3.14159274101257324219f)/180;
     float cosine=(float)cos((double)radians),sine=(float)sin((double)radians);
     qa_vec3 basis[3]={{radial.x,vertical.x,axis.x},{radial.y,vertical.y,axis.y},{radial.z,vertical.z,axis.z}};

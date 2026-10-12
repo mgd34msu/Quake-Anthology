@@ -521,7 +521,7 @@ void frontend_view_q1_motion(const frontend_q1_motion_settings *settings,
     if (!quakeworld) aim.z = input->entity_angles.z;
     qa_angle_axis(aim, axes,QA_ANGLE_FLOAT_MATH);
     if (!quakeworld) {
-        origin = qa_vec_add(origin,qa_axis_from_local(qa_v3(settings->offset.x,-settings->offset.y,settings->offset.z),axes));
+        origin = qa_vec_add(origin,qa_axis_from_local(qa_v3(settings->offset.x,-settings->offset.y,settings->offset.z),axes,QA_AXIS_ORDERED_SUM));
         origin.x = fmaxf(input->origin.x - 14, fminf(input->origin.x + 14, origin.x));
         origin.y = fmaxf(input->origin.y - 14, fminf(input->origin.y + 14, origin.y));
         origin.z = fmaxf(input->origin.z - 22, fminf(input->origin.z + 30, origin.z));

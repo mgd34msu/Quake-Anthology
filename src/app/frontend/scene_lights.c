@@ -22,7 +22,7 @@ bool frontend_scene_lights_merge(qa_arena *storage,qa_scene_world_input *world,
         qa_scene_light light;const qa_q3_refdef *definition;bool view,present;
         if(!read(context,&light,&definition,&view,&present,error)) return false;
         if(!present) break;
-        if(view) light.origin=qa_axis_remap_point(definition->origin,definition->axis,world->view.origin,world->view.axis,light.origin);
+        if(view) light.origin=qa_axis_remap_point(definition->origin,definition->axis,world->view.origin,world->view.axis,light.origin,QA_AXIS_ORDERED_SUM);
         lights[world->light_count+added]=light;
         if(added<projected_bound) projected_lights[projected+added]=light;
     }

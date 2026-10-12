@@ -828,10 +828,10 @@ static bool selected_effect_ready(qa_q3_presentation *p, const qa_q3_presentatio
 void qa_q3_ref_entity_remap(qa_q3_ref_entity *entity,qa_vec3 from_origin,const qa_vec3 from_axis[3],
     qa_vec3 to_origin,const qa_vec3 to_axis[3])
 {
-    entity->origin=qa_axis_remap_point(from_origin,from_axis,to_origin,to_axis,entity->origin);
-    entity->old_origin=qa_axis_remap_point(from_origin,from_axis,to_origin,to_axis,entity->old_origin);
-    entity->lighting_origin=qa_axis_remap_point(from_origin,from_axis,to_origin,to_axis,entity->lighting_origin);
-    for(size_t i=0;i<3;++i) entity->axis[i]=qa_axis_remap(from_axis,to_axis,entity->axis[i]);
+    entity->origin=qa_axis_remap_point(from_origin,from_axis,to_origin,to_axis,entity->origin,QA_AXIS_ORDERED_SUM);
+    entity->old_origin=qa_axis_remap_point(from_origin,from_axis,to_origin,to_axis,entity->old_origin,QA_AXIS_ORDERED_SUM);
+    entity->lighting_origin=qa_axis_remap_point(from_origin,from_axis,to_origin,to_axis,entity->lighting_origin,QA_AXIS_ORDERED_SUM);
+    for(size_t i=0;i<3;++i) entity->axis[i]=qa_axis_remap(from_axis,to_axis,entity->axis[i],QA_AXIS_ORDERED_SUM);
 }
 
 static void place_view_weapon(const qa_q3_scene_options *options,qa_q3_ref_entity *entity)

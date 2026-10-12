@@ -158,6 +158,5 @@ bool qaw_mesh_allocate(qa_scene_world *, qaw_surface *, size_t, size_t, qa_error
 void qaw_mesh_bounds(qaw_surface *);
 qa_vec3 qaw_local_point(const qa_model_transform *, qa_vec3);
 qa_vec3 qaw_local_vector(const qa_model_transform *, qa_vec3);
-qa_bounds qaw_transformed_bounds(qa_bounds, const qa_model_transform *);
 
 #endif

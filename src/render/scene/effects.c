@@ -126,14 +126,6 @@ bool qa_scene_legacy_dlights(qa_scene_frame *frame, const qa_scene_view *view,
     return true;
 }
 
-static qa_vec3 portal_transform(qa_vec3 vector, const qa_vec3 surface[3], const qa_vec3 camera[3])
-{
-    qa_vec3 result = qa_v3(0, 0, 0);
-    for (size_t i = 0; i < 3; ++i)
-        result = qa_vec_add(result, qa_vec_scale(camera[i], qa_vec_dot(vector, surface[i])));
-    return result;
-}
-
 bool qa_scene_portal_view(const qa_scene_view *view, qa_scene_plane plane,
                           const qa_scene_portal *portal, double seconds,
                           qa_scene_view *result, qa_vec3 *pvs_origin)
@@ -141,7 +133,7 @@ bool qa_scene_portal_view(const qa_scene_view *view, qa_scene_plane plane,
     if (!view || !portal || !result || !pvs_origin || !isfinite(seconds)) return false;
     float distance = qa_vec_dot(portal->origin, plane.normal) - plane.distance;
     if (fabsf(distance) > 64.0f) return false;
-    qa_vec3 surface[3] = {plane.normal, qa_effect_perpendicular(plane.normal), {0, 0, 0}};
+    qa_vec3 surface[3] = {plane.normal, qa_vec_perpendicular(plane.normal, QA_PERPENDICULAR_DIRECT_PROJECTION), {0, 0, 0}};
     surface[2] = qa_vec_cross(surface[0], surface[1]);
     bool mirror = portal->mirror || qa_vec_equal(portal->origin, portal->old_origin);
     qa_vec3 camera[3], surface_origin, camera_origin;
@@ -162,13 +154,13 @@ bool qa_scene_portal_view(const qa_scene_view *view, qa_scene_plane plane,
         if (portal->oscillate)
             angle = portal->rotation_offset + (float)sin((float)((float)(seconds * 1000.0) * 0.003f)) * 4;
         if (angle != 0 || portal->oscillate || portal->rotation_speed != 0) {
-            camera[1] = qa_effect_rotate(camera[1], camera[0], angle);
+            camera[1] = qa_vec_rotate_around(camera[0], camera[1], angle, QA_ROTATION_RODRIGUES);
             camera[2] = qa_vec_cross(camera[0], camera[1]);
         }
     }
     *result = *view;
-    result->origin = qa_vec_add(portal_transform(qa_vec_sub(view->origin, surface_origin), surface, camera), camera_origin);
-    for (size_t i = 0; i < 3; ++i) result->axis[i] = portal_transform(view->axis[i], surface, camera);
+    result->origin = qa_vec_add(qa_axis_remap(surface, camera, qa_vec_sub(view->origin, surface_origin), QA_AXIS_ZERO_FIRST_SUM), camera_origin);
+    for (size_t i = 0; i < 3; ++i) result->axis[i] = qa_axis_remap(surface, camera, view->axis[i], QA_AXIS_ZERO_FIRST_SUM);
     result->clip_enabled = true;
     result->mirror = mirror;
     result->clip_plane.normal = qa_vec_scale(camera[0], -1);
@@ -254,13 +246,13 @@ bool qa_scene_beam(qa_scene_frame *frame, const qa_scene_view *view, qa_vec3 sta
     qa_vec3 delta = qa_vec_sub(end, start);
     if (qa_vec_length(delta) == 0) return true;
     qa_vec3 direction = qa_vec_normalize(delta);
-    qa_vec3 perpendicular = qa_vec_scale(qa_effect_perpendicular(direction), width * 0.5f);
+    qa_vec3 perpendicular = qa_vec_scale(qa_vec_perpendicular(direction, QA_PERPENDICULAR_DIRECT_PROJECTION), width * 0.5f);
     qa_scene_mesh mesh;
     qa_scene_vertex *vertices;
     uint32_t *indices;
     if (!qa_effect_mesh(frame, 12, 36, &mesh, &vertices, &indices, error)) return false;
     for (uint32_t i = 0; i < 6; ++i) {
-        qa_vec3 offset = qa_effect_rotate(perpendicular, direction, (float)i * 60);
+        qa_vec3 offset = qa_vec_rotate_around(direction, perpendicular, (float)i * 60, QA_ROTATION_RODRIGUES);
         vertices[i * 2].position = qa_vec_add(start, offset);
         vertices[i * 2 + 1].position = qa_vec_add(vertices[i * 2].position, delta);
         vertices[i * 2].normal = vertices[i * 2 + 1].normal = qa_vec_normalize(offset);

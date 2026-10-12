@@ -11,7 +11,7 @@ static bool impact(const q3n_frame *f, const q3n_impact_mark *r, qa_error *error
     if(qa_vec_dot(r->direction,r->direction)==0)return true;
     for(unsigned i=0;i<4;++i)if(!isfinite(r->color[i]) || r->color[i]<0 || r->color[i]>1)
         return q3ne_fail(error,QA_ERROR_ARGUMENT,"CG_ImpactMark requires unit source colors");
-    qa_vec3 normal=qa_vec_normalize(r->direction), axis2=qa_vec_rotate_around(normal,qa_vec_perpendicular(normal),r->orientation);
+    qa_vec3 normal=qa_vec_normalize(r->direction), axis2=qa_vec_rotate_around(normal,qa_vec_perpendicular(normal,QA_PERPENDICULAR_RECIPROCAL_PROJECTION),r->orientation,QA_ROTATION_MATRIX);
     qa_vec3 axis1=qa_vec_cross(normal,axis2), points[4], output[384]; q3n_mark_fragment fragments[128]; size_t count=0;
     const float signs[4][2]={{-1,-1},{1,-1},{1,1},{-1,1}};
     for(unsigned i=0;i<4;++i)points[i]=qa_vec_add(qa_vec_add(r->origin,qa_vec_scale(qa_vec_scale(axis1,r->radius),signs[i][0])),qa_vec_scale(qa_vec_scale(axis2,r->radius),signs[i][1]));

@@ -492,20 +492,6 @@ qa_vec3 qaw_local_vector(const qa_model_transform *transform, qa_vec3 vector)
     return qa_v3(result[0], result[1], result[2]);
 }
 
-qa_bounds qaw_transformed_bounds(qa_bounds bounds, const qa_model_transform *transform)
-{
-    qa_bounds result = {qa_v3(FLT_MAX, FLT_MAX, FLT_MAX), qa_v3(-FLT_MAX, -FLT_MAX, -FLT_MAX)};
-    for (unsigned corner = 0; corner < 8; ++corner) {
-        float local[3] = {corner & 1 ? bounds.maxs.x : bounds.mins.x,
-                          corner & 2 ? bounds.maxs.y : bounds.mins.y,
-                          corner & 4 ? bounds.maxs.z : bounds.mins.z}, point[3];
-        qa_model_transform_point(transform, local, point);
-        result.mins = qa_v3(fminf(result.mins.x, point[0]), fminf(result.mins.y, point[1]), fminf(result.mins.z, point[2]));
-        result.maxs = qa_v3(fmaxf(result.maxs.x, point[0]), fmaxf(result.maxs.y, point[1]), fmaxf(result.maxs.z, point[2]));
-    }
-    return result;
-}
-
 static qa_bounds bsp_bounds(qa_bsp_bounds bounds)
 {
     return (qa_bounds){bounds.min, bounds.max};
@@ -1753,8 +1739,15 @@ static bool world_submit_model(qa_scene_world *world, uint32_t model_index,
     const qaw_model *model = &world->models[model_index];
     qa_scene_plane planes[6];
     size_t plane_count = input->no_cull ? 0 : qa_scene_frustum(&input->view, planes);
-    if (plane_count && !qa_scene_bounds_visible(qaw_transformed_bounds(bsp_bounds(model->source.bounds), transform),
-        planes, plane_count)) return true;
+    if (plane_count) {
+        qa_bounds bounds = bsp_bounds(model->source.bounds);
+        qa_model_bounds local = {{bounds.mins.x, bounds.mins.y, bounds.mins.z},
+                                 {bounds.maxs.x, bounds.maxs.y, bounds.maxs.z}}, transformed;
+        qa_model_transform_bounds(transform, &local, &transformed, QA_MODEL_BOUNDS_MINMAX);
+        qa_bounds world_bounds = {qa_v3(transformed.min[0], transformed.min[1], transformed.min[2]),
+                                  qa_v3(transformed.max[0], transformed.max[1], transformed.max[2])};
+        if (!qa_scene_bounds_visible(world_bounds, planes, plane_count)) return true;
+    }
     if (world->bsp.family == QA_BSP_Q3 && plane_count > 4) plane_count = 4;
     if (world->bsp.family != QA_BSP_Q3 && !qawl_light_styles(world, input, error)) return false;
     if (!begin_admission(world, frame, error)) return false;

@@ -80,8 +80,8 @@ q3n_local_entity *q3n_effect_explosion(const q3n_frame *f, const q3n_explosion *
         else {
             int32_t angle=q3n_events_rand(f->events)%360;
             v->ref.axis[0]=s->direction;
-            qa_vec3 p=qa_vec_perpendicular(s->direction);
-            v->ref.axis[1]=angle?qa_vec_rotate_around(s->direction,p,(float)angle):p;
+            qa_vec3 p=qa_vec_perpendicular(s->direction,QA_PERPENDICULAR_RECIPROCAL_PROJECTION);
+            v->ref.axis[1]=angle?qa_vec_rotate_around(s->direction,p,(float)angle,QA_ROTATION_MATRIX):p;
             v->ref.axis[2]=qa_vec_cross(v->ref.axis[0],v->ref.axis[1]);
         }
         v->ref.origin=s->origin;

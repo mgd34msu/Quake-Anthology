@@ -199,15 +199,15 @@ static void test_shared_vector_geometry(void)
     CHECK(qa_vec_normalize_length(&v)==0 && signbit(v.y));
     qa_vec3 axis[3],identity[3]={{1,0,0},{0,1,0},{0,0,1}},product[3];
     qa_angle_axis(qa_v3(12,37,21),axis,QA_ANGLE_VM_MATH);
-    qa_vec3 world=qa_axis_from_local(qa_v3(3,-4,5),axis);
+    qa_vec3 world=qa_axis_from_local(qa_v3(3,-4,5),axis,QA_AXIS_ORDERED_SUM);
     CHECK(qa_vec_length(qa_vec_sub(qa_axis_to_local(world,axis),qa_v3(3,-4,5)))<2e-6f);
     qa_axis_multiply(axis,identity,product);
     CHECK(!memcmp(product,axis,sizeof(axis)));
     qa_axis_multiply(product,identity,product);
     CHECK(!memcmp(product,axis,sizeof(axis)));
-    qa_vec3 normal=qa_vec_normalize(qa_v3(1,2,3)),side=qa_vec_perpendicular(normal);
+    qa_vec3 normal=qa_vec_normalize(qa_v3(1,2,3)),side=qa_vec_perpendicular(normal,QA_PERPENDICULAR_RECIPROCAL_PROJECTION);
     CHECK(fabsf(qa_vec_dot(normal,side))<1e-6f && fabsf(qa_vec_length(side)-1)<1e-6f);
-    qa_vec3 rotated=qa_vec_rotate_around(qa_v3(0,0,1),qa_v3(1,0,0),90);
+    qa_vec3 rotated=qa_vec_rotate_around(qa_v3(0,0,1),qa_v3(1,0,0),90,QA_ROTATION_MATRIX);
     CHECK(fabsf(rotated.x)<1e-6f && fabsf(rotated.y-1)<1e-6f && rotated.z==0);
     CHECK(fabsf(qa_inverse_sqrt(4)-.5f)<.001f);
     CHECK(fabsf(qa_vec_length(qa_vec_fast_normalize(qa_v3(3,4,0)))-1)<.002f);

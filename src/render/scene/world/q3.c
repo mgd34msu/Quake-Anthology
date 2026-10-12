@@ -377,12 +377,6 @@ bool qaw_q3_fog_for_bounds(const qa_scene_world *world, qa_bounds bounds,
     return false;
 }
 
-static qa_vec3 matrix_vector(qa_scene_matrix matrix, qa_vec3 p) {
-    return qa_v3(matrix.m[0] * p.x + matrix.m[4] * p.y + matrix.m[8] * p.z,
-                 matrix.m[1] * p.x + matrix.m[5] * p.y + matrix.m[9] * p.z,
-                 matrix.m[2] * p.x + matrix.m[6] * p.y + matrix.m[10] * p.z);
-}
-
 typedef struct qaw_source_sky {
     const qa_scene_world *world;
     qa_material_library *materials;
@@ -552,7 +546,7 @@ bool qaw_submit_q3(qa_scene_world *world, qaw_surface *surface, const qa_materia
         qa_bsp_surface source;
         if (!qa_bsp_read_surface(&world->bsp, surface->source_index, &source, error)) return false;
         qa_vec4 point = qa_scene_matrix_point(context->model, source.lightmap_origin);
-        qa_vec3 normal = qa_vec_normalize(matrix_vector(context->model, source.lightmap_vectors[2]));
+        qa_vec3 normal = qa_vec_normalize(qa_scene_matrix_direction(context->model, source.lightmap_vectors[2]));
         return input->flare(input->flare_context, surface->source_index, qa_v3(point.x, point.y, point.z),
                             source.lightmap_vectors[0], normal, &context->view, frame, error);
     }

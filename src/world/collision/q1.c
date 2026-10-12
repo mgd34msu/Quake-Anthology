@@ -167,7 +167,7 @@ static q1hull model_hull(const q1state *state,size_t model,unsigned index) {
 static void native_result(const qa_trace_query *query,const native_trace *trace,qa_vec3 origin,const qa_vec3 basis[3],qa_trace_result *out) {
     qa_trace_result result=qa_collision_empty_trace(query,QA_GAME_Q1);
     result.fraction=trace->fraction;
-    result.end=trace->fraction==1?query->end:qa_vec_add(qa_axis_from_local(trace->end,basis),origin);
+    result.end=trace->fraction==1?query->end:qa_vec_add(qa_axis_from_local(trace->end,basis,QA_AXIS_ORDERED_SUM),origin);
     result.start_solid=trace->start_solid; result.all_solid=trace->all_solid;
     result.in_open=trace->in_open; result.in_water=trace->in_water;
     result.plane=qa_collision_make_plane(qa_collision_pose_normal(trace->plane.normal,&query->target,query->target.inline_model,basis),trace->plane.distance,trace->plane.type);

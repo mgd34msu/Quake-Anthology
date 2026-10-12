@@ -68,7 +68,7 @@ static bool rail_geometry(qa_scene_frame *frame, const qa_scene_view *view,
             uint32_t base = (uint32_t)i * 4;
             const uint32_t quad[6] = {base, base + 1, base + 2, base + 2, base + 1, base + 3};
             memcpy(indices + i * 6, quad, sizeof(quad));
-            if (kind == QA_RAIL_LIGHTNING) right = qa_effect_rotate(right, direction, 45);
+            if (kind == QA_RAIL_LIGHTNING) right = qa_vec_rotate_around(direction, right, 45, QA_ROTATION_RODRIGUES);
         }
     } else {
         qa_vec3 seed = qa_v3(direction.z, -direction.x, direction.y);
@@ -162,14 +162,14 @@ bool qa_scene_q3_beam_draw(qa_scene_frame *frame, const qa_scene_view *view, qa_
     *present = false;
     qa_vec3 delta = qa_vec_sub(old_origin, origin);
     if (qa_vec_length(delta) == 0) return true;
-    qa_vec3 direction = qa_vec_normalize(delta), perpendicular = qa_vec_scale(qa_effect_perpendicular(direction), 4);
+    qa_vec3 direction = qa_vec_normalize(delta), perpendicular = qa_vec_scale(qa_vec_perpendicular(direction, QA_PERPENDICULAR_DIRECT_PROJECTION), 4);
     qa_scene_mesh mesh;
     qa_scene_vertex *vertices;
     uint32_t *indices;
     if (!qa_effect_mesh(frame, 12, 36, &mesh, &vertices, &indices, error)) return false;
     for (unsigned i = 0; i < 6; ++i) {
         /* Q3's source intentionally does not add the entity origin here. */
-        qa_vec3 start = qa_effect_rotate(perpendicular, direction, (float)i * 60);
+        qa_vec3 start = qa_vec_rotate_around(direction, perpendicular, (float)i * 60, QA_ROTATION_RODRIGUES);
         vertices[i * 2].position = start;
         vertices[i * 2 + 1].position = qa_vec_add(start, delta);
         vertices[i * 2].color = vertices[i * 2 + 1].color = (qa_vec4){1, 0, 0, 1};

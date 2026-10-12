@@ -277,8 +277,13 @@ bool qa_model_transform_inverse(const qa_model_transform *transform, qa_model_tr
 bool qa_model_attachment_align(const qa_model_transform *grip, const qa_model_transform *socket,
                                qa_model_transform *out);
 bool qa_model_triangle_attachment(const qa_model_vertex triangle[3], qa_model_transform *out);
+typedef enum qa_model_bounds_math_rule {
+    QA_MODEL_BOUNDS_COMPARISON, QA_MODEL_BOUNDS_MINMAX
+} qa_model_bounds_math_rule;
+/* Comparison keeps the first equal extremum; MINMAX retains fminf/fmaxf
+ * behavior for signed zero and NaN. Both transform corners in bit order. */
 void qa_model_transform_bounds(const qa_model_transform *transform, const qa_model_bounds *bounds,
-                               qa_model_bounds *out);
+                               qa_model_bounds *out, qa_model_bounds_math_rule);
 typedef struct qa_model_replacement {
     const qa_model *source, *mesh;
     const qa_model_animation *animation;

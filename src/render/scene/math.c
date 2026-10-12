@@ -7,7 +7,7 @@ void qa_scene_vertices_remap(qa_scene_vertex *out,const qa_scene_vertex *in,size
 {
     for(size_t i=0;i<count;++i) {
         qa_scene_vertex vertex=in[i];
-        vertex.position=qa_axis_remap_point(from_origin,from_axis,to_origin,to_axis,vertex.position);
+        vertex.position=qa_axis_remap_point(from_origin,from_axis,to_origin,to_axis,vertex.position,QA_AXIS_ORDERED_SUM);
         out[i]=vertex;
     }
 }
@@ -51,24 +51,31 @@ qa_scene_matrix qa_scene_projection(float fov_x, float fov_y, float near_clip, f
         0,0,-(far_clip + near_clip) / depth,-1, 0,0,-2 * far_clip * near_clip / depth,0}};
 }
 
-static void matrix_point(qa_scene_matrix matrix,qa_vec3 point,float *out,size_t rows)
+static void matrix_transform(qa_scene_matrix matrix,qa_vec3 point,float *out,size_t rows,bool translate)
 {
     for (size_t row = 0; row < rows; ++row) {
-        float value = point.x * matrix.m[row];
-        value += point.y * matrix.m[4 + row];
-        value += point.z * matrix.m[8 + row];
-        value += matrix.m[12 + row];
+        /* Keep each source operation's multiplicand order. Directions omit
+         * the translation addition entirely, including an addition of zero. */
+        float value = translate ? point.x * matrix.m[row] : matrix.m[row] * point.x;
+        value += translate ? point.y * matrix.m[4 + row] : matrix.m[4 + row] * point.y;
+        value += translate ? point.z * matrix.m[8 + row] : matrix.m[8 + row] * point.z;
+        if (translate) value += matrix.m[12 + row];
         out[row] = value;
     }
 }
 qa_vec4 qa_scene_matrix_point(qa_scene_matrix matrix,qa_vec3 point)
 {
-    float out[4];matrix_point(matrix,point,out,4);
+    float out[4];matrix_transform(matrix,point,out,4,true);
     return (qa_vec4){out[0],out[1],out[2],out[3]};
 }
 qa_vec3 qa_scene_matrix_point3(qa_scene_matrix matrix,qa_vec3 point)
 {
-    float out[3];matrix_point(matrix,point,out,3);
+    float out[3];matrix_transform(matrix,point,out,3,true);
+    return qa_v3(out[0],out[1],out[2]);
+}
+qa_vec3 qa_scene_matrix_direction(qa_scene_matrix matrix,qa_vec3 direction)
+{
+    float out[3];matrix_transform(matrix,direction,out,3,false);
     return qa_v3(out[0],out[1],out[2]);
 }
 

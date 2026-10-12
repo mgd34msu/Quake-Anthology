@@ -89,7 +89,7 @@ bool qa_model_triangle_attachment(const qa_model_vertex triangle[3], qa_model_tr
     return true;
 }
 void qa_model_transform_bounds(const qa_model_transform *transform, const qa_model_bounds *bounds,
-                               qa_model_bounds *out) {
+                               qa_model_bounds *out, qa_model_bounds_math_rule rule) {
     qa_model_bounds result;
     model_bounds_clear(&result);
     for (unsigned corner = 0; corner < 8; ++corner) {
@@ -97,7 +97,12 @@ void qa_model_transform_bounds(const qa_model_transform *transform, const qa_mod
         for (unsigned axis = 0; axis < 3; ++axis)
             point[axis] = corner & (1u << axis) ? bounds->max[axis] : bounds->min[axis];
         qa_model_transform_point(transform, point, world);
-        model_bounds_add(&result, world);
+        if (rule == QA_MODEL_BOUNDS_MINMAX) {
+            for (unsigned axis = 0; axis < 3; ++axis)
+                result.min[axis] = fminf(result.min[axis], world[axis]);
+            for (unsigned axis = 0; axis < 3; ++axis)
+                result.max[axis] = fmaxf(result.max[axis], world[axis]);
+        } else model_bounds_add(&result, world);
     }
     *out = result;
 }
