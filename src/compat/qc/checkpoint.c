@@ -305,15 +305,6 @@ static bool stage_strings(const qa_qc_instance *instance,
         const qc_saved_bytes *range = &checkpoint->strings[i];
         memcpy(out->bytes + range->offset, range->data, range->size);
     }
-    if (checkpoint->engine_count != 0) {
-        out->engines = calloc(checkpoint->engine_count, sizeof(*out->engines));
-        if (out->engines == NULL) {
-            qc_strings_destroy(out);
-            return qc_fail(error, QA_ERROR_MEMORY, 0,
-                           "Cannot restore QuakeC engine strings");
-        }
-        out->engine_capacity = checkpoint->engine_count;
-    }
     for (uint32_t i = 0; i < checkpoint->engine_count; ++i) {
         const qc_engine_string *source = &checkpoint->engine_strings[i];
         if (source->name == NULL || source->name[0] == '\0'
@@ -339,13 +330,10 @@ static bool stage_strings(const qa_qc_instance *instance,
                                "Overlapping or duplicate checkpoint engine string");
             }
         }
-        out->engines[i] = (qc_engine_string){qc_strdup(source->name, error),
-                                              source->offset, source->capacity};
-        if (out->engines[i].name == NULL) {
-            out->engine_count = i;
+        if (!qc_strings_engine_admit(out, source->name, source->offset,
+                                      source->capacity, error)) {
             qc_strings_destroy(out); return false;
         }
-        out->engine_count = i + 1u;
     }
     if (!qc_strings_bind_identities(out, instance->strings.identities,
                                     instance->program->string_bytes, error)) {
@@ -485,8 +473,7 @@ bool qa_qc_checkpoint_restore(qa_qc_instance *instance,
     memcpy(instance->slots, slots, (size_t)instance->options.entity_capacity * sizeof(*slots));
     free(slots);
     qc_strings_destroy(&instance->strings);
-    instance->strings = strings;
-    strings = (qc_strings){0};
+    qc_strings_move(&instance->strings, &strings);
     instance->entity_count = checkpoint->entity_count;
     qc_actor_index_rebuild(instance);
     instance->random_state = checkpoint->random_state;

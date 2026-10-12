@@ -12,12 +12,15 @@ static bool memory_fail(qa_error *error, qa_status status, size_t offset,
     return qc_fail(error, status, offset, message);
 }
 
-static bool string_aliases(const qc_strings *strings, const char *text)
+static bool string_alias_offset(const qc_strings *strings, const char *text,
+                                 uint32_t *offset)
 {
     if (strings == NULL || strings->bytes == NULL || text == NULL) return false;
     uintptr_t address = (uintptr_t)(const void *)text;
     uintptr_t base = (uintptr_t)(const void *)strings->bytes;
-    return address >= base && address - base < strings->used;
+    if (address < base || address - base >= strings->used) return false;
+    *offset = (uint32_t)(address - base);
+    return true;
 }
 
 bool qc_strings_reserve(qc_strings *strings, uint32_t length,
@@ -46,7 +49,8 @@ bool qc_strings_reserve(qc_strings *strings, uint32_t length,
         if (capacity < required)
             return memory_fail(error, QA_ERROR_MEMORY, strings->used,
                                "QC string arena overflow");
-        uint8_t *grown = realloc(strings->bytes, capacity);
+        uint8_t *grown = qa_arena_grow(&strings->storage, strings->bytes,
+            strings->used, capacity, 1, error);
         if (grown == NULL)
             return memory_fail(error, QA_ERROR_MEMORY, strings->used,
                                "growing QC string arena");
@@ -62,6 +66,7 @@ bool qc_strings_reserve(qc_strings *strings, uint32_t length,
 
 static bool engine_reserve(qc_strings *strings, qa_error *error)
 {
+    if (!qa_id_index_reserve(&strings->engines_by_name, 1, error)) return false;
     if (strings->engine_count < strings->engine_capacity) return true;
     uint32_t capacity;
     if (strings->engine_capacity == 0) capacity = 8u;
@@ -71,8 +76,9 @@ static bool engine_reserve(qc_strings *strings, qa_error *error)
         (capacity && SIZE_MAX / capacity < sizeof(*strings->engines)))
         return memory_fail(error, QA_ERROR_MEMORY, strings->engine_count,
                            "QC engine string index overflow");
-    qc_engine_string *grown = realloc(strings->engines,
-                                      (size_t)capacity * sizeof(*grown));
+    qc_engine_string *grown = qa_arena_grow(&strings->storage, strings->engines,
+        (size_t)strings->engine_count * sizeof(*grown), (size_t)capacity * sizeof(*grown),
+        _Alignof(qc_engine_string), error);
     if (grown == NULL)
         return memory_fail(error, QA_ERROR_MEMORY, strings->engine_count,
                            "growing QC engine string index");
@@ -100,30 +106,39 @@ bool qc_strings_create(qc_strings *strings, qa_bytes program, bool quakeworld,
 
     uint32_t capacity = program.size > QC_STRING_MIN_CAPACITY
                       ? (uint32_t)program.size : QC_STRING_MIN_CAPACITY;
-    uint8_t *bytes = calloc(capacity, 1u);
+    *strings = (qc_strings){.quakeworld = quakeworld};
+    qa_arena_init(&strings->storage, QC_STRING_MIN_CAPACITY);
+    strings->engines_by_name.storage = &strings->storage;
+    strings->identities_by_offset.storage = &strings->storage;
+    uint8_t *bytes = qa_arena_alloc(&strings->storage, capacity, 1, error);
     if (bytes == NULL)
         return memory_fail(error, QA_ERROR_MEMORY, 0,
                            "allocating QC string arena");
+    memset(bytes, 0, capacity);
     if (program.size != 0) memcpy(bytes, program.data, program.size);
 
-    *strings = (qc_strings){
-        .bytes = bytes,
-        .used = (uint32_t)program.size,
-        .capacity = capacity,
-        .quakeworld = quakeworld
-    };
+    strings->bytes = bytes;
+    strings->used = (uint32_t)program.size;
+    strings->capacity = capacity;
     return true;
 }
 
 void qc_strings_destroy(qc_strings *strings)
 {
     if (strings == NULL) return;
-    for (uint32_t i = 0; i < strings->engine_count; ++i)
-        free(strings->engines[i].name);
+    qa_id_index_destroy(&strings->engines_by_name);
     qa_id_index_destroy(&strings->identities_by_offset);
-    free(strings->engines);
-    free(strings->bytes);
+    if (strings->owns_names) qa_strings_destroy(strings->names);
+    qa_arena_destroy(&strings->storage);
     *strings = (qc_strings){0};
+}
+
+void qc_strings_move(qc_strings *out, qc_strings *source)
+{
+    *out = *source;
+    out->engines_by_name.storage = &out->storage;
+    out->identities_by_offset.storage = &out->storage;
+    *source = (qc_strings){0};
 }
 
 bool qc_strings_get(const qc_strings *strings, int32_t id, const char **out,
@@ -210,6 +225,20 @@ bool qc_strings_bind_identities(qc_strings *strings, qa_strings *identities,
                                 uint32_t literal_bytes, qa_error *error)
 {
     strings->identities = identities;
+    if (identities != NULL && strings->names != identities) {
+        if (strings->owns_names) qa_strings_destroy(strings->names);
+        strings->names = identities;
+        strings->owns_names = false;
+        qa_id_index_clear(&strings->engines_by_name);
+        if (!qa_id_index_reserve(&strings->engines_by_name,
+                                  strings->engine_count, error)) return false;
+        for (uint32_t i = 0; i < strings->engine_count; ++i) {
+            qa_string_id name;
+            if (!qa_strings_intern_cstr(identities, strings->engines[i].name,
+                                         &name, error)) return false;
+            qa_id_index_insert(&strings->engines_by_name, name, 0, i);
+        }
+    }
     if (identities == NULL) return true;
     uint32_t offset = 0;
     while (offset < literal_bytes) {
@@ -281,24 +310,40 @@ bool qc_strings_allocate(qc_strings *strings, const char *text, int32_t *out,
         return memory_fail(error, QA_ERROR_MEMORY, length,
                            "QC string exceeds the guest address space");
 
-    char *staged = NULL;
+    uint32_t alias_offset = 0;
+    bool aliases = string_alias_offset(strings, text, &alias_offset);
     uint32_t required = (uint32_t)length + 1u;
-    if (required > strings->capacity - strings->used &&
-        string_aliases(strings, text)) {
-        staged = qc_strdup(text, error);
-        if (staged == NULL) return false;
-        text = staged;
-    }
 
     uint32_t offset;
-    if (!qc_strings_reserve(strings, required, &offset, error)) {
-        free(staged);
-        return false;
-    }
+    if (!qc_strings_reserve(strings, required, &offset, error)) return false;
+    if (aliases) text = (const char *)strings->bytes + alias_offset;
     string_encode(strings, offset, text, length);
-    free(staged);
     if (!string_prepare(strings, offset, error)) return false;
     *out = (int32_t)offset;
+    return true;
+}
+
+static qa_strings *engine_names(qc_strings *strings, qa_error *error)
+{
+    if (strings->names == NULL) {
+        if (!qa_strings_create(&strings->names, error)) return NULL;
+        strings->owns_names = true;
+    }
+    return strings->names;
+}
+
+bool qc_strings_engine_admit(qc_strings *strings, const char *name,
+                              uint32_t offset, uint32_t capacity, qa_error *error)
+{
+    qa_strings *names = engine_names(strings, error);
+    qa_string_id identity;
+    if (names == NULL || !qa_strings_intern_cstr(names, name, &identity, error)
+        || !engine_reserve(strings, error)) return false;
+    char *owned_name = qa_arena_text(&strings->storage, name, error);
+    if (owned_name == NULL) return false;
+    uint32_t index = strings->engine_count++;
+    strings->engines[index] = (qc_engine_string){owned_name, offset, capacity};
+    qa_id_index_insert(&strings->engines_by_name, identity, 0, index);
     return true;
 }
 
@@ -314,14 +359,20 @@ bool qc_strings_engine(qc_strings *strings, const char *name, const char *text,
         return memory_fail(error, QA_ERROR_ARGUMENT, 0,
                            "invalid QC engine string request");
     size_t length = strlen(text);
-    for (uint32_t i = 0; i < strings->engine_count; ++i) {
+    qa_strings *names = engine_names(strings, error);
+    if (names == NULL) return false;
+    qa_string_id identity = qa_strings_find(names,
+        (qa_bytes){(const uint8_t *)name, strlen(name)});
+    qa_id_index_entry *found = identity == QA_STRING_NONE ? NULL :
+        qa_id_index_find(&strings->engines_by_name, identity, 0);
+    if (found != NULL) {
+        uint32_t i = (uint32_t)found->value;
         qc_engine_string *entry = &strings->engines[i];
         if (entry->name == NULL || entry->capacity == 0 ||
             entry->offset > strings->used ||
             entry->capacity > strings->used - entry->offset)
             return memory_fail(error, QA_ERROR_FORMAT, entry->offset,
                                "corrupt QC engine string index");
-        if (strcmp(entry->name, name) != 0) continue;
         if (length >= entry->capacity)
             return memory_fail(error, QA_ERROR_ARGUMENT, length,
                                "QC engine string exceeds its buffer");
@@ -342,39 +393,17 @@ bool qc_strings_engine(qc_strings *strings, const char *name, const char *text,
         return memory_fail(error, QA_ERROR_MEMORY, strings->engine_count,
                            "MAX_PRSTR");
 
-    char *owned_name = qc_strdup(name, error);
-    if (owned_name == NULL) return false;
-    if (!engine_reserve(strings, error)) {
-        free(owned_name);
-        return false;
-    }
-
-    char *staged = NULL;
-    if (capacity > strings->capacity - strings->used &&
-        string_aliases(strings, text)) {
-        staged = qc_strdup(text, error);
-        if (staged == NULL) {
-            free(owned_name);
-            return false;
-        }
-        text = staged;
-    }
+    if (!engine_reserve(strings, error)) return false;
+    uint32_t alias_offset = 0;
+    bool aliases = string_alias_offset(strings, text, &alias_offset);
 
     uint32_t offset;
-    if (!qc_strings_reserve(strings, (uint32_t)capacity, &offset, error)) {
-        free(staged);
-        free(owned_name);
-        return false;
-    }
+    if (!qc_strings_reserve(strings, (uint32_t)capacity, &offset, error)) return false;
+    if (aliases) text = (const char *)strings->bytes + alias_offset;
     string_encode(strings, offset, text, length);
-    free(staged);
 
-    uint32_t index = strings->engine_count++;
-    strings->engines[index] = (qc_engine_string){
-        .name = owned_name,
-        .offset = offset,
-        .capacity = (uint32_t)capacity
-    };
+    uint32_t index = strings->engine_count;
+    if (!qc_strings_engine_admit(strings, name, offset, (uint32_t)capacity, error)) return false;
     if (!string_prepare(strings, offset, error)) return false;
     *out = strings->quakeworld ? -(int32_t)index - 1 : (int32_t)offset;
     return true;

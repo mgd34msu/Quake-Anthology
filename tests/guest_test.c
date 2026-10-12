@@ -288,6 +288,38 @@ static double guest_source_time(void *opaque)
     return ((guest_fixture *)opaque)->source_time;
 }
 
+static void string_buffer_growth(const qa_qc_program *program, qa_qc_profile profile)
+{
+    qa_error error = {0};
+    qa_qc_instance *instance = NULL;
+    GAME_CHECK(qa_qc_instance_create(program,
+        &(qa_qc_options){.profile = profile, .entity_capacity = 4}, &instance, &error));
+    char payload[4096];
+    memset(payload, 'x', sizeof(payload) - 1); payload[sizeof(payload) - 1] = 0;
+    int32_t dynamic, first, same;
+    const char *text;
+    GAME_CHECK(qa_qc_string_allocate(instance, payload, &dynamic, &error));
+    GAME_CHECK(qa_qc_string(instance, dynamic, &text, &error));
+    GAME_CHECK(qa_qc_engine_string(instance, "first", text + 7, 16384, &first, &error));
+    GAME_CHECK(qa_qc_string(instance, first, &text, &error));
+    GAME_CHECK(strlen(text) == sizeof(payload) - 8 && !strcmp(text, payload + 7));
+    int32_t rows[48];
+    for (size_t i = 0; i < 48; ++i) {
+        char name[32]; snprintf(name, sizeof(name), "buffer-%zu", i);
+        GAME_CHECK(qa_qc_engine_string(instance, name, name, 64, rows + i, &error));
+    }
+    for (size_t i = 0; i < 48; ++i) {
+        char name[32]; snprintf(name, sizeof(name), "buffer-%zu", i);
+        GAME_CHECK(qa_qc_engine_string(instance, name, "changed", 64, &same, &error));
+        GAME_CHECK(same == rows[i]);
+        GAME_CHECK(qa_qc_string(instance, rows[i], &text, &error) && !strcmp(text, "changed"));
+    }
+    GAME_CHECK(qa_qc_engine_string(instance, "first", "final", 16384, &same, &error));
+    GAME_CHECK(same == first);
+    GAME_CHECK(qa_qc_string(instance, dynamic, &text, &error) && !strcmp(text, payload));
+    GAME_CHECK(qa_qc_instance_destroy(instance, &error));
+}
+
 static void checkpoint_strings(const qa_qc_program *program, qa_qc_profile profile)
 {
     qa_error error = {0};
@@ -651,8 +683,10 @@ void test_guest(void)
     GAME_CHECK(qa_session_add(fixture.session, &component, &error));
     execution(fixture.instance, fixture.program);
     shared_entities(&fixture, owner);
+    string_buffer_growth(fixture.program, QA_QC_NETQUAKE);
     checkpoint_strings(fixture.program, QA_QC_NETQUAKE);
     qa_qc_program *qw = guest_program(QA_QC_API_QUAKEWORLD);
+    string_buffer_growth(qw, QA_QC_QUAKEWORLD);
     checkpoint_strings(qw, QA_QC_QUAKEWORLD);
     qa_qc_program_destroy(qw);
     checkpoint_entities(&fixture, owner);

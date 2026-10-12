@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `03c9415e`.
+Follow-up source changes were reviewed through main `45667a4c`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 170 have source fixes
+There are **374 overlapping source-review observations**: 171 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 201 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 200 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -340,3 +340,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `fd21bfa3` / 26-09: Q3 AAS crossings lease common navigation captures through the final guest write. Private host capture list deleted; collector arenas retain order, repeated DAG leaves and original zero-capacity behavior. Normal build/seven core suites passed; larger crossing or nesting peaks can still grow common storage. Records: `/tmp/qa-ta3196-aas-crossings-owner-20261012`.
 
 - `03c9415e` / J32-02: Renderer resource identities and CPU skin-owner lookups now use the common ID index; exact owner/revision behavior passes the existing core fixture. This does not claim zero allocation or measured speedup. Records: `/tmp/qa-ta3196-render-resource-index-20261012`.
+
+- `45667a4c` / 26-15: QuakeC host globals and temporary value keys use independently leased common capture arenas, including nested VM execution and restoration. Declared global staging uses the existing control lease; its userinfo projection remains open. Normal build and seven core suites passed; larger storage peaks can still grow. Records: `/tmp/qa-ta3196-qc-host-captures-20261012`.

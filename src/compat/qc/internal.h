@@ -24,9 +24,11 @@ typedef struct qc_strings {
     uint32_t used, capacity;
     qc_engine_string *engines;
     uint32_t engine_count, engine_capacity;
+    qa_arena storage;
+    qa_strings *names;
     qa_strings *identities;
-    qa_id_index identities_by_offset;
-    bool quakeworld;
+    qa_id_index engines_by_name, identities_by_offset;
+    bool quakeworld, owns_names;
 } qc_strings;
 
 typedef struct qc_slot {
@@ -206,6 +208,9 @@ bool qc_strings_allocate(qc_strings *strings, const char *text, int32_t *out,
                          qa_error *error);
 bool qc_strings_engine(qc_strings *strings, const char *name, const char *text,
                        size_t capacity, int32_t *out, qa_error *error);
+bool qc_strings_engine_admit(qc_strings *, const char *name, uint32_t offset,
+                              uint32_t capacity, qa_error *);
+void qc_strings_move(qc_strings *out, qc_strings *source);
 bool qc_global_range(const qa_qc_instance *instance, uint32_t word,
                      uint32_t count, qa_error *error);
 bool qc_entity_slot(const qa_qc_instance *instance, int32_t reference,
