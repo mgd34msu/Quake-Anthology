@@ -1,4 +1,5 @@
 #include "client_events.h"
+#include "control_frame.h"
 #include "map_players_private.h"
 #include "guest_qc_profile.h"
 #include "guest_q3_private.h"
@@ -224,9 +225,11 @@ bool application_client_userinfo_changed(qa_application *app, qa_actor_id actor,
         gears + components + app->provider_count > SIZE_MAX / sizeof(client_listener))
         return application_fail(error, QA_ERROR_MEMORY, "Client listener snapshot exceeds its retained extent");
     size_t capacity = gears + components + app->provider_count, count = 0;
-    client_listener *rows = capacity ? calloc(capacity, sizeof(*rows)) : NULL;
-    if (capacity && !rows)
-        return application_fail(error, QA_ERROR_MEMORY, "Retaining the physical client listener order");
+    qa_unified_frame_lease *storage = capacity ? application_control_storage_acquire(app, error) : NULL;
+    if (capacity && !storage) return false;
+    client_listener *rows = capacity ? qa_unified_frame_lease_alloc(storage, capacity,
+        sizeof(*rows), _Alignof(client_listener), error) : NULL;
+    if (capacity && !rows) { qa_unified_frame_lease_release(storage); return false; }
     bool ok = true;
     for (size_t i = 0; ok && i < app->provider_count; ++i) {
         application_provider *p = app->providers[i];
@@ -312,7 +315,7 @@ bool application_client_userinfo_changed(qa_application *app, qa_actor_id actor,
             ok = application_fail(error, QA_ERROR_ARGUMENT, "Client listener replaced its canonical actor or publication");
     }
     qa_launch_snapshot_release(launch);
-    free(rows); return ok;
+    qa_unified_frame_lease_release(storage); return ok;
 }
 
 bool application_client_declared_disconnect(qa_application *app, qa_actor_id actor, qa_error *error)
@@ -324,9 +327,11 @@ bool application_client_declared_disconnect(qa_application *app, qa_actor_id act
     if (app->provider_count > SIZE_MAX / sizeof(client_listener))
         return application_fail(error, QA_ERROR_MEMORY,
             "Declared disconnect listener snapshot exceeds its extent");
-    client_listener *rows = app->provider_count ? calloc(app->provider_count, sizeof(*rows)) : NULL;
-    if (app->provider_count && !rows)
-        return application_fail(error, QA_ERROR_MEMORY, "Retaining declared disconnect listener order");
+    qa_unified_frame_lease *storage = app->provider_count ? application_control_storage_acquire(app, error) : NULL;
+    if (app->provider_count && !storage) return false;
+    client_listener *rows = app->provider_count ? qa_unified_frame_lease_alloc(storage,
+        app->provider_count, sizeof(*rows), _Alignof(client_listener), error) : NULL;
+    if (app->provider_count && !rows) { qa_unified_frame_lease_release(storage); return false; }
     size_t count = 0;
     bool ok = true;
     for (size_t i = 0; ok && i < app->provider_count; ++i) {
@@ -342,7 +347,7 @@ bool application_client_declared_disconnect(qa_application *app, qa_actor_id act
         ok = provider_listener(provider, actor, rows + count, &found, error);
         if (ok && found) ++count;
     }
-    if (!ok || !count) { free(rows); return ok; }
+    if (!ok || !count) { qa_unified_frame_lease_release(storage); return ok; }
     const qa_launch_snapshot *launch = qa_application_launch(app);
     const uint64_t generation = app->publication_generation;
     application_provider *source = app->players ? app->players->map_provider : NULL;
@@ -364,6 +369,6 @@ bool application_client_declared_disconnect(qa_application *app, qa_actor_id act
                 "Declared disconnect replaced its full client or provider identity");
     }
     qa_launch_snapshot_release(launch);
-    free(rows);
+    qa_unified_frame_lease_release(storage);
     return ok;
 }
