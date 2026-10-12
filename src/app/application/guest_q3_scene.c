@@ -52,12 +52,14 @@ static bool actor(void *context, uint32_t slot, qa_actor_id *out, bool *owned, b
 {
     application_q3_scene *s = context; *out = (qa_actor_id){0}; *owned = *found = false;
     if (!q3scene_current(s)) return q3scene_fail(e, QA_ERROR_ARGUMENT, "Component scene actor source is stale");
-    for (size_t i = 0; i < s->actor_count; ++i) if (s->actors[i].slot == slot) {
+    const qa_id_index_entry *entry = qa_id_index_find(&s->actor_slots, slot, 0);
+    if (entry) {
+        const application_q3_scene_actor *row = s->actors + entry->value;
         qa_actor_id actual; bool actual_owned, actual_found;
         if (!s->options.source.actor(s->options.source.context,slot,&actual,&actual_owned,&actual_found,e)) return false;
-        *out = s->actors[i].actor; *owned = s->actors[i].owned;
+        *out = row->actor; *owned = row->owned;
         *found = actual_found && actual_owned == *owned && qa_actor_id_equal(actual,*out) &&
-            s->options.source.live(s->options.source.context, *out); break;
+            s->options.source.live(s->options.source.context, *out);
     }
     return true;
 }
@@ -173,6 +175,7 @@ bool application_q3_scene_create(const application_q3_scene_options *options,
         s->command_storage = qa_unified_frame_pool_create(16u * 1024u * 1024u, 128, e);
         if (!s->actors || !s->snapshot_entities || !s->command_storage)
             return q3scene_fail(e, QA_ERROR_MEMORY, "Reserving component scene history");
+        if (!qa_id_index_reserve(&s->actor_slots, options->profile->capacity, e)) return false;
     }
     qa_q3_host_options host = options->host;
     host.console_command=declared_command; host.console_command_context=s;
@@ -326,6 +329,9 @@ static bool accept(application_q3_scene *s, bool baseline, bool *changed, qa_err
     }
     if (c->actor_count) memcpy(s->actors,c->actors,c->actor_count*sizeof(*s->actors));
     s->actor_count=c->actor_count;
+    qa_id_index_clear(&s->actor_slots);
+    for (size_t i=0;i<s->actor_count;++i)
+        qa_id_index_insert(&s->actor_slots,s->actors[i].slot,0,i);
     if (baseline&&!p->player_events) for (size_t i=0;i<c->snapshot->entity_count;++i) {
         const qa_q3_entity *entity=c->snapshot->entities+i;
         if (entity->number<0 || (uint32_t)entity->number>=p->capacity) return q3scene_fail(e,QA_ERROR_FORMAT,"Component baseline leaves centities");
@@ -487,6 +493,7 @@ void q3scene_history_clear(application_q3_scene *s)
     }
     qa_unified_frame_lease_release(s->reached_lease);
     qa_unified_frame_pool_destroy(&s->command_storage);
+    qa_id_index_destroy(&s->actor_slots);
     qa_command_tokens_free(&s->reached); free(s->actors); free(s->players); free(s->game_state); qa_buffer_free(&s->defaults);
 }
 bool application_q3_scene_destroy(application_q3_scene **owner,qa_error *e)

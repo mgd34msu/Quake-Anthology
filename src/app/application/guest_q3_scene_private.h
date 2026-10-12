@@ -2,6 +2,7 @@
 #define QA_APPLICATION_GUEST_Q3_SCENE_PRIVATE_H
 #include "guest_q3_scene.h"
 #include "qa/binary.h"
+#include "qa/id_index.h"
 #include "qa/network_unified_frame_pool.h"
 #include <stdlib.h>
 #include <string.h>
@@ -29,6 +30,7 @@ struct application_q3_scene {
     qa_q3_gamestate *game_state;
     qa_actor_id *players;
     application_q3_scene_actor *actors;
+    qa_id_index actor_slots;
     qa_q3_entity *snapshot_entities;
     qa_unified_frame_pool *command_storage;
     qa_unified_frame_lease *reached_lease;
