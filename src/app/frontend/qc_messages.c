@@ -13,6 +13,12 @@
 #include <string.h>
 
 typedef union qc_decoder { qa_nq_decoder *nq; qa_qw_decoder *qw; } qc_decoder;
+typedef struct qc_staged_message {
+    size_t start,end;
+    qa_net_protocol_id protocol;
+    uint32_t player_model;
+    union { qa_nq_message nq; qa_qw_service qw; } service;
+} qc_staged_message;
 typedef struct qc_provider_rows qc_provider_rows;
 typedef struct qc_recipient {
     struct qc_recipient *next;
@@ -50,6 +56,7 @@ struct frontend_qc_messages {
     qc_provider_rows *providers;
     qa_id_index sources,actor_rows,native_seats;
     qc_recipient *native_camera_zero;
+    qa_arena staging;
     bool busy;
 };
 bool frontend_qc_messages_idle(const frontend_qc_messages *owner)
@@ -154,6 +161,7 @@ bool frontend_qc_messages_destroy(frontend_qc_messages **out,qa_error *error)
         qc_recipient *row=(*out)->recipients; (*out)->recipients=row->next; row_unindex(*out,row);row_free(row);
     }
     qa_id_index_destroy(&(*out)->sources);qa_id_index_destroy(&(*out)->actor_rows);qa_id_index_destroy(&(*out)->native_seats);
+    qa_arena_destroy(&(*out)->staging);
     free(*out); *out=NULL; return true;
 }
 bool frontend_qc_messages_create(qa_frontend *f,frontend_qc_messages **out,qa_error *error)
@@ -243,7 +251,7 @@ static bool native_rows(frontend_qc_messages *owner, qa_error *error)
      * the existing direct feedback consumption at returned presentation. */
     return !admitted_qw || qa_application_network_qw_flush(owner->application,error);
 }
-static bool clone_decoder(const qc_recipient *,qc_decoder *,qa_error *);
+static qa_net_protocol_id decoder_protocol(const qc_recipient *);
 static bool row_get(frontend_qc_messages *owner,const qa_application_qc_message_source *source,
     qa_actor_id recipient,uint32_t slot,qc_recipient **out,qa_error *error)
 {
@@ -262,10 +270,15 @@ static bool row_get(frontend_qc_messages *owner,const qa_application_qc_message_
         row->event_projection=baseline->event_projection;
         memcpy(row->stats,baseline->stats,sizeof(row->stats)); row->stat_present=baseline->stat_present;
     }
+    qa_net_protocol_id protocol=baseline?decoder_protocol(baseline):source->protocol;
     bool okay;
-    if(baseline)okay=clone_decoder(baseline,&row->decoder,error);
-    else if(qa_q1_is_qw(source->protocol))okay=(row->decoder.qw=qa_qw_decoder_create(source->protocol,error))!=NULL;
-    else okay=qa_nq_decoder_create(source->protocol,source->options,&row->decoder.nq,error);
+    if(qa_q1_is_qw(protocol)) {
+        okay=(row->decoder.qw=qa_qw_decoder_create(protocol,error))!=NULL;
+        if(okay && baseline)okay=qa_qw_decoder_copy(row->decoder.qw,baseline->decoder.qw,error);
+    } else {
+        okay=qa_nq_decoder_create(protocol,baseline?row_options(baseline):source->options,&row->decoder.nq,error);
+        if(okay && baseline)okay=qa_nq_decoder_copy(row->decoder.nq,baseline->decoder.nq,error);
+    }
     if(okay)okay=row_index(owner,row,error);
     if(!okay) { row_free(row); return false; }
     row->next=owner->recipients; owner->recipients=row; *out=row; return true;
@@ -278,33 +291,24 @@ static bool decoder_checkpoint(const qc_recipient *row,qa_net_protocol_id protoc
 static bool decoder_restore(qa_net_protocol_id protocol,qa_nq_options options,qa_bytes bytes,qc_decoder *out,qa_error *error)
 { return qa_q1_is_qw(protocol)?qa_qw_decoder_restore_checkpoint(bytes,protocol,&out->qw,error):
     qa_nq_decoder_restore_checkpoint(bytes,protocol,options,&out->nq,error); }
-static bool clone_decoder(const qc_recipient *row,qc_decoder *out,qa_error *error)
+static void project_message(bool qw,const qc_staged_message *record,qa_nq_message *out)
 {
-    qa_buffer bytes={0}; qa_net_protocol_id protocol=decoder_protocol(row);
-    bool okay=decoder_checkpoint(row,protocol,&bytes,error) &&
-        decoder_restore(protocol,row_options(row),(qa_bytes){bytes.data,bytes.size},out,error);
-    qa_buffer_free(&bytes); return okay;
-}
-static bool read_message(qa_net_protocol_id protocol,qc_decoder decoder,qa_net_reader *reader,qa_nq_message *out)
-{
-    if(!qa_q1_is_qw(protocol))return qa_nq_read(decoder.nq,reader,out);
-    qa_qw_service source;
-    if(!qa_qw_service_read(reader,decoder.qw,0,&source))return false;
+    if(!qw) { *out=record->service.nq;return; }
+    const qa_qw_service *source=&record->service.qw;
     *out=(qa_nq_message){.op=QA_NQ_NOP};
-    switch(source.kind) {
-    case QA_QW_STUFFTEXT:out->op=QA_NQ_STUFFTEXT;out->data.text=source.data.text.value;break;
-    case QA_QW_DAMAGE:out->op=QA_NQ_DAMAGE;out->data.damage.armor=source.data.damage.armor;out->data.damage.blood=source.data.damage.blood;
-        memcpy(out->data.damage.origin,source.data.damage.origin,sizeof(out->data.damage.origin));break;
-    case QA_QW_STAT:out->op=QA_NQ_STAT;out->data.indexed.index=source.data.stat.index;out->data.indexed.value=source.data.stat.value;break;
-    case QA_QW_SET_VIEW:out->op=QA_NQ_SETVIEW;out->data.value=source.data.entity;break;
-    case QA_QW_SET_ANGLE:out->op=QA_NQ_SETANGLE;memcpy(out->data.angles,source.data.angles,sizeof(out->data.angles));break;
-    case QA_QW_CD_TRACK:out->op=QA_NQ_CDTRACK;out->data.cd.track=out->data.cd.loop=source.data.byte;break;
+    switch(source->kind) {
+    case QA_QW_STUFFTEXT:out->op=QA_NQ_STUFFTEXT;out->data.text=source->data.text.value;break;
+    case QA_QW_DAMAGE:out->op=QA_NQ_DAMAGE;out->data.damage.armor=source->data.damage.armor;out->data.damage.blood=source->data.damage.blood;
+        memcpy(out->data.damage.origin,source->data.damage.origin,sizeof(out->data.damage.origin));break;
+    case QA_QW_STAT:out->op=QA_NQ_STAT;out->data.indexed.index=source->data.stat.index;out->data.indexed.value=source->data.stat.value;break;
+    case QA_QW_SET_VIEW:out->op=QA_NQ_SETVIEW;out->data.value=source->data.entity;break;
+    case QA_QW_SET_ANGLE:out->op=QA_NQ_SETANGLE;memcpy(out->data.angles,source->data.angles,sizeof(out->data.angles));break;
+    case QA_QW_CD_TRACK:out->op=QA_NQ_CDTRACK;out->data.cd.track=out->data.cd.loop=source->data.byte;break;
     case QA_QW_INTERMISSION:out->op=QA_NQ_INTERMISSION;break;
     case QA_QW_FINALE:out->op=QA_NQ_FINALE;break;
-    case QA_QW_TEMPORARY_ENTITY:out->op=QA_NQ_TEMPENTITY;out->data.temporary=source.data.temporary;break;
+    case QA_QW_TEMPORARY_ENTITY:out->op=QA_NQ_TEMPENTITY;out->data.temporary=source->data.temporary;break;
     default:break;
     }
-    return true;
 }
 static bool captured_target(const qa_nq_message *message,const qa_application_protocol_event *event,
     size_t start,qa_actor_id *out,qa_error *error)
@@ -418,29 +422,69 @@ static bool packet(frontend_qc_messages *owner,qc_recipient *row,
         (event->multicast && !qw) ||
         (event->recipient.registry && !qa_actor_id_equal(event->recipient,row_actor(row))) || *offset>event->payload.size)
         return frontend_fail(error,QA_ERROR_FORMAT,"Local QC packet leaves its actual source and recipient");
+    qa_arena_reset(&owner->staging);
     qa_net_reader reader; qc_decoder validation={0};
-    if(!clone_decoder(row,&validation,error)) return false;
+    bool okay=qw?qa_qw_decoder_stage(row->decoder.qw,&owner->staging,&validation.qw,error):
+        qa_nq_decoder_stage(row->decoder.nq,&owner->staging,&validation.nq,error);
+    if(!okay)goto done;
     qa_bytes tail={event->payload.data?event->payload.data+*offset:NULL,event->payload.size-*offset};
-    qa_net_reader_init(&reader,tail,error); qa_nq_message message;
-    bool okay=true;
+    if(tail.size>SIZE_MAX/sizeof(qc_staged_message)) {
+        okay=frontend_fail(error,QA_ERROR_MEMORY,"QC staged services exceed address space");
+        goto done;
+    }
+    uint8_t *payload=tail.size?qa_arena_alloc(&owner->staging,tail.size,1,error):NULL;
+    qc_staged_message *records=tail.size?qa_arena_alloc(&owner->staging,
+        tail.size*sizeof(*records),_Alignof(qc_staged_message),error):NULL;
+    qa_application_protocol_reference *references=event->reference_count?qa_arena_alloc(&owner->staging,
+        event->reference_count*sizeof(*references),_Alignof(qa_application_protocol_reference),error):NULL;
+    if((tail.size && (!payload || !records)) || (event->reference_count && !references)) {
+        okay=false;goto done;
+    }
+    if(tail.size)memcpy(payload,tail.data,tail.size);
+    if(event->reference_count)memcpy(references,event->references,event->reference_count*sizeof(*references));
+    encoded.references=references;
+    qa_qw_service typed_qw;
+    if(encoded.qw) { typed_qw=*encoded.qw;encoded.qw=&typed_qw; }
+    qa_net_reader_init(&reader,(qa_bytes){payload,tail.size},error);
+    size_t count=0;
     while(okay && qa_net_reader_remaining(&reader)) {
-        size_t message_start=*offset+reader.bit/8;
-        okay=read_message(row_protocol(row),validation,&reader,&message);
+        qc_staged_message *record=records+count;
+        *record=(qc_staged_message){.start=*offset+reader.bit/8};
+        if(qw) {
+            okay=qa_qw_service_read(&reader,validation.qw,0,&record->service.qw);
+            if(okay)record->player_model=qa_qw_decoder_player_model(validation.qw);
+            if(okay && record->service.qw.kind==QA_QW_PACKET_ENTITIES) {
+                qa_qw_frame *frame=qa_arena_alloc(&owner->staging,sizeof(*frame),_Alignof(qa_qw_frame),error);
+                if(!frame)okay=false;
+                else { *frame=*record->service.qw.data.packet.frame;record->service.qw.data.packet.frame=frame; }
+            }
+        } else {
+            okay=qa_nq_read(validation.nq,&reader,&record->service.nq);
+            if(okay)record->protocol=qa_nq_decoder_protocol(validation.nq);
+        }
+        qa_nq_message message;
+        if(okay)project_message(qw,record,&message);
         if(okay && !row->native && message.op==QA_NQ_SETVIEW) {
             qa_actor_id target;
-            okay=captured_target(&message,event,message_start,&target,error);
+            okay=captured_target(&message,event,record->start,&target,error);
         }
+        if(okay) { record->end=*offset+reader.bit/8;++count; }
     }
-    okay=okay && qa_net_reader_finish(&reader); decoder_free(row_protocol(row),validation);
-    if(!okay) return false;
-    qa_net_reader_init(&reader,tail,error); size_t start=*offset;
-    while(qa_net_reader_remaining(&reader)) {
-        size_t message_start=start+reader.bit/8;
-        if(!read_message(row_protocol(row),row->decoder,&reader,&message) || !project(owner,row,&message,event,message_start,error)) return false;
-        *offset=start+reader.bit/8;
-        if(!row_current(owner,row)) return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 recipient retired during decoded delivery");
+    okay=okay && qa_net_reader_finish(&reader);
+    for(size_t i=0;okay && i<count;++i) {
+        const qc_staged_message *record=records+i;
+        if(qw)okay=qa_qw_decoder_commit(row->decoder.qw,&record->service.qw,record->player_model,error);
+        else qa_nq_decoder_commit(row->decoder.nq,record->protocol,&record->service.nq);
+        qa_nq_message message;project_message(qw,record,&message);
+        if(okay)okay=project(owner,row,&message,event,record->start,error);
+        if(!okay)break;
+        *offset=record->end;
+        if(!row_current(owner,row))
+            okay=frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 recipient retired during decoded delivery");
     }
-    return qa_net_reader_finish(&reader);
+done:
+    qa_arena_reset(&owner->staging);
+    return okay;
 }
 static bool signon(frontend_qc_messages *owner,qc_recipient *row,size_t index,
     const qa_application_protocol_event *event,qa_error *error)

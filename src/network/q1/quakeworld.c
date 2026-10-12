@@ -29,6 +29,7 @@ struct qa_qw_decoder {
     const char **names;
     size_t names_capacity;
     qa_qw_nail nails[QA_QW_MAX_NAILS];
+    qa_arena *storage;
 };
 static bool profile_valid(qa_net_protocol_id p)
 { return qa_q1_is_qw(p) && qa_q1_profile_valid(p,NULL); }
@@ -63,7 +64,7 @@ qa_qw_decoder *qa_qw_decoder_create(qa_net_protocol_id p, qa_error *e)
     d->protocol=p; return d;
 }
 void qa_qw_decoder_destroy(qa_qw_decoder *d)
-{ if (d) { free(d->baselines); free(d->names); free(d); } }
+{ if (d && !d->storage) { free(d->baselines); free(d->names); free(d); } }
 bool qa_qw_decoder_reset(qa_qw_decoder *d, qa_net_protocol_id p, qa_error *e)
 {
     if (!d || !profile_valid(p)) return error(e,QA_ERROR_ARGUMENT,"Invalid QuakeWorld reset");
@@ -79,6 +80,43 @@ bool qa_qw_decoder_set_player_model(qa_qw_decoder *d, uint32_t model, qa_error *
     if (!d || model>=precache_limit(d->protocol)) return error(e,QA_ERROR_ARGUMENT,"Invalid QuakeWorld player model");
     d->player_model=model; return true;
 }
+static bool baseline_reserve(qa_qw_decoder *d, size_t capacity, qa_error *e)
+{
+    if (capacity <= d->baseline_capacity) return true;
+    baseline_slot *next = d->storage ? qa_arena_grow(d->storage, d->baselines,
+        d->baseline_capacity * sizeof(*next), capacity * sizeof(*next), _Alignof(baseline_slot), e) :
+        realloc(d->baselines, capacity * sizeof(*next));
+    if (!next) return error(e,QA_ERROR_MEMORY,"Allocating QuakeWorld baselines");
+    memset(next+d->baseline_capacity,0,(capacity-d->baseline_capacity)*sizeof(*next));
+    d->baselines=next; d->baseline_capacity=capacity;
+    return true;
+}
+bool qa_qw_decoder_copy(qa_qw_decoder *destination, const qa_qw_decoder *source, qa_error *e)
+{
+    if (destination == source) return true;
+    if (!baseline_reserve(destination, source->baseline_capacity, e)) return false;
+    if (source->baseline_capacity)
+        memcpy(destination->baselines, source->baselines, source->baseline_capacity * sizeof(*source->baselines));
+    if (destination->baseline_capacity > source->baseline_capacity)
+        memset(destination->baselines + source->baseline_capacity, 0,
+            (destination->baseline_capacity - source->baseline_capacity) * sizeof(*destination->baselines));
+    destination->protocol = source->protocol;
+    destination->player_model = source->player_model;
+    memcpy(destination->frames, source->frames, sizeof(destination->frames));
+    memcpy(destination->requests, source->requests, sizeof(destination->requests));
+    return true;
+}
+bool qa_qw_decoder_stage(const qa_qw_decoder *source, qa_arena *storage,
+    qa_qw_decoder **out, qa_error *e)
+{
+    qa_qw_decoder *next = qa_arena_alloc(storage, sizeof(*next), _Alignof(qa_qw_decoder), e);
+    if (!next) return false;
+    next->baselines = NULL; next->baseline_capacity = 0;
+    next->names = NULL; next->names_capacity = 0; next->storage = storage;
+    if (!qa_qw_decoder_copy(next, source, e)) return false;
+    *out = next;
+    return true;
+}
 bool qa_qw_decoder_set_baseline(qa_qw_decoder *d, const qa_q1_entity *s, qa_error *e)
 {
     if (!d || !entity_valid(d->protocol,s) || s->effects || s->qw_flags)
@@ -86,10 +124,7 @@ bool qa_qw_decoder_set_baseline(qa_qw_decoder *d, const qa_q1_entity *s, qa_erro
     if (s->number>=d->baseline_capacity) {
         size_t capacity=d->baseline_capacity ? d->baseline_capacity : 512;
         while (capacity<=s->number) capacity*=2;
-        baseline_slot *next=realloc(d->baselines,capacity*sizeof(*next));
-        if (!next) return error(e,QA_ERROR_MEMORY,"Allocating QuakeWorld baselines");
-        memset(next+d->baseline_capacity,0,(capacity-d->baseline_capacity)*sizeof(*next));
-        d->baselines=next; d->baseline_capacity=capacity;
+        if (!baseline_reserve(d, capacity, e)) return false;
     }
     d->baselines[s->number]=(baseline_slot){.valid=true,.entity=*s}; return true;
 }
@@ -120,6 +155,18 @@ void qa_qw_decoder_delta_request(qa_qw_decoder *d, uint32_t sequence, bool has_b
         uint32_t age=(sequence-d->requests[i].sequence)&UINT32_C(0x7fffffff);
         if (age>=QA_QW_UPDATE_BACKUP && age<UINT32_C(0x40000000)) d->requests[i].valid=false;
     }
+}
+bool qa_qw_decoder_commit(qa_qw_decoder *d, const qa_qw_service *message,
+    uint32_t player_model, qa_error *e)
+{
+    switch (message->kind) {
+    case QA_QW_SERVER_DATA: return qa_qw_decoder_reset(d, message->data.server.protocol, e);
+    case QA_QW_BASELINE: return qa_qw_decoder_set_baseline(d, &message->data.baseline, e);
+    case QA_QW_PACKET_ENTITIES: return qa_qw_decoder_store_frame(d, message->data.packet.frame, e);
+    case QA_QW_MODEL_LIST: case QA_QW_SOUND_LIST: d->player_model = player_model; break;
+    default: break;
+    }
+    return true;
 }
 static uint32_t read_index(qa_net_reader *r, qa_net_protocol_id p)
 { return p.kind==QA_NET_QW28 ? qa_net_read_u8(r) : qa_net_read_u16(r); }
@@ -416,7 +463,8 @@ static bool read_entities(qa_net_reader *r, qa_qw_decoder *d, uint32_t sequence,
     }
     m->kind=QA_QW_PACKET_ENTITIES; m->data.packet.delta=delta;
     m->data.packet.from_sequence=previous ? previous->sequence : 0;
-    if (!qa_qw_decoder_store_frame(d,f,r->error)) { r->failed=true; return false; }
+    m->data.packet.frame=f;
+    if (!qa_qw_decoder_commit(d,m,d->player_model,r->error)) { r->failed=true; return false; }
     m->data.packet.frame=qa_qw_decoder_frame(d,sequence);
     return true;
 }
@@ -491,7 +539,9 @@ static bool read_list(qa_net_reader *r, qa_qw_decoder *d, qa_qw_service *m)
         if (count>=limit-first-1) return qa_net_reader_fail(r,"QuakeWorld precache overflow");
         if (count==d->names_capacity) {
             size_t capacity=d->names_capacity ? d->names_capacity*2 : 32;
-            const char **names=realloc(d->names,capacity*sizeof(*names));
+            const char **names=d->storage ? qa_arena_grow(d->storage,d->names,
+                d->names_capacity*sizeof(*names),capacity*sizeof(*names),_Alignof(const char *),r->error) :
+                realloc(d->names,capacity*sizeof(*names));
             if (!names) { error(r->error,QA_ERROR_MEMORY,"Allocating QuakeWorld precache names"); r->failed=true; return false; }
             d->names=names; d->names_capacity=capacity;
         }
@@ -503,7 +553,7 @@ static bool read_list(qa_net_reader *r, qa_qw_decoder *d, qa_qw_service *m)
     if (r->failed) return false;
     m->data.list.first=first; m->data.list.next=next;
     m->data.list.count=count; m->data.list.names=d->names;
-    d->player_model=player_model; return true;
+    return qa_qw_decoder_commit(d,m,player_model,r->error);
 }
 bool qa_qw_service_read(qa_net_reader *r, qa_qw_decoder *d, uint32_t sequence, qa_qw_service *out)
 {
@@ -624,8 +674,8 @@ bool qa_qw_service_read(qa_net_reader *r, qa_qw_decoder *d, uint32_t sequence, q
     default: return qa_net_reader_fail(r,"Unknown QuakeWorld service opcode");
     }
     if (r->failed) return false;
-    if (m.kind==QA_QW_SERVER_DATA) qa_qw_decoder_reset(d,m.data.server.protocol,NULL);
-    if (m.kind==QA_QW_BASELINE && !qa_qw_decoder_set_baseline(d,&m.data.baseline,r->error)) { r->failed=true; return false; }
+    if ((m.kind==QA_QW_SERVER_DATA || m.kind==QA_QW_BASELINE) &&
+        !qa_qw_decoder_commit(d,&m,d->player_model,r->error)) { r->failed=true; return false; }
     *out=m; return true;
 }
 

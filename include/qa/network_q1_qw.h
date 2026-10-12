@@ -2,6 +2,7 @@
 #define QA_NETWORK_Q1_QW_H
 
 #include "qa/network_q1.h"
+#include "qa/arena.h"
 
 enum {
     QA_QW_PF_MSEC = 1, QA_QW_PF_COMMAND = 2,
@@ -67,6 +68,11 @@ typedef struct qa_qw_service {
 } qa_qw_service;
 
 typedef struct qa_qw_decoder qa_qw_decoder;
+bool qa_qw_decoder_copy(qa_qw_decoder *, const qa_qw_decoder *, qa_error *);
+/* Stages borrow storage until reset; packet name/nail scratch is not copied.
+ * Read the stage normally and commit decoded services in delivery order. */
+bool qa_qw_decoder_stage(const qa_qw_decoder *, qa_arena *, qa_qw_decoder **, qa_error *);
+bool qa_qw_decoder_commit(qa_qw_decoder *, const qa_qw_service *, uint32_t player_model, qa_error *);
 qa_qw_decoder *qa_qw_decoder_create(qa_net_protocol_id, qa_error *);
 void qa_qw_decoder_destroy(qa_qw_decoder *);
 bool qa_qw_decoder_reset(qa_qw_decoder *, qa_net_protocol_id, qa_error *);

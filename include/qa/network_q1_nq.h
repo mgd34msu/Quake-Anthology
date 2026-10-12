@@ -1,6 +1,7 @@
 #ifndef QA_NETWORK_Q1_NQ_H
 #define QA_NETWORK_Q1_NQ_H
 #include "qa/network_q1.h"
+#include "qa/arena.h"
 
 typedef struct qa_nq_options { bool standard_quake, private_rerelease; } qa_nq_options;
 typedef enum qa_nq_svc {
@@ -63,6 +64,12 @@ bool qa_nq_decoder_set_time(qa_nq_decoder *, float, qa_error *);
 /* Strings borrow input. Serverinfo name arrays are decoder scratch, valid
  * until the next read. Each successful read commits one complete service. */
 bool qa_nq_read(qa_nq_decoder *, qa_net_reader *, qa_nq_message *);
+/* Copy authoritative decoder state, excluding borrowed packet scratch.
+ * A staged decoder belongs to storage until its next reset. Read it normally,
+ * then commit successful decoded services to the retained decoder in order. */
+bool qa_nq_decoder_copy(qa_nq_decoder *, const qa_nq_decoder *, qa_error *);
+bool qa_nq_decoder_stage(const qa_nq_decoder *, qa_arena *, qa_nq_decoder **, qa_error *);
+void qa_nq_decoder_commit(qa_nq_decoder *, qa_net_protocol_id, const qa_nq_message *);
 bool qa_nq_decoder_save(qa_net_writer *, const qa_nq_decoder *);
 bool qa_nq_decoder_restore(qa_net_reader *, qa_nq_decoder *);
 /* Entity writes use the supplied baseline and absolute server time. Other

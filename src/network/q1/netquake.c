@@ -30,6 +30,7 @@ struct qa_nq_decoder {
     const char **models, **sounds;
     const qa_q1_entity *source_baselines;
     size_t source_baseline_count;
+    qa_arena *storage;
 };
 static bool nq_profile(qa_net_protocol_id p)
 {
@@ -59,7 +60,44 @@ bool qa_nq_decoder_create(qa_net_protocol_id p, qa_nq_options options, qa_nq_dec
 }
 void qa_nq_decoder_destroy(qa_nq_decoder *d)
 {
-    if (d) { free(d->baselines); free(d->present); free(d->models); free(d->sounds); free(d); }
+    if (d && !d->storage) { free(d->baselines); free(d->present); free(d->models); free(d->sounds); free(d); }
+}
+bool qa_nq_decoder_copy(qa_nq_decoder *destination, const qa_nq_decoder *source, qa_error *error)
+{
+    (void)error;
+    if (destination == source) return true;
+    memcpy(destination->present, source->present, 65536);
+    for (size_t i = 0; i < 65536; ++i)
+        if (source->present[i]) destination->baselines[i] = source->baselines[i];
+    destination->protocol = source->protocol;
+    destination->options = source->options;
+    destination->time = source->time;
+    return true;
+}
+bool qa_nq_decoder_stage(const qa_nq_decoder *source, qa_arena *storage,
+    qa_nq_decoder **out, qa_error *error)
+{
+    qa_nq_decoder *next = qa_arena_alloc(storage, sizeof(*next), _Alignof(qa_nq_decoder), error);
+    if (!next) return false;
+    *next = (qa_nq_decoder){.storage=storage};
+    next->baselines = qa_arena_alloc(storage, 65536 * sizeof(*next->baselines), _Alignof(qa_q1_entity), error);
+    next->present = qa_arena_alloc(storage, 65536, 1, error);
+    next->models = qa_arena_alloc(storage, 8192 * sizeof(*next->models), _Alignof(const char *), error);
+    next->sounds = qa_arena_alloc(storage, 8192 * sizeof(*next->sounds), _Alignof(const char *), error);
+    if (!next->baselines || !next->present || !next->models || !next->sounds ||
+        !qa_nq_decoder_copy(next, source, error)) return false;
+    *out = next;
+    return true;
+}
+void qa_nq_decoder_commit(qa_nq_decoder *d, qa_net_protocol_id protocol, const qa_nq_message *message)
+{
+    if (message->op == QA_NQ_SERVERINFO && d->present) memset(d->present, 0, 65536);
+    if (message->op == QA_NQ_BASELINE && d->present) {
+        d->baselines[message->data.entity.number] = message->data.entity;
+        d->present[message->data.entity.number] = 1;
+    }
+    if (message->op == QA_NQ_TIME) d->time = message->data.seconds;
+    d->protocol = protocol;
 }
 void qa_nq_decoder_reset(qa_nq_decoder *d) { if (d) { memset(d->present,0,65536); d->time=0; } }
 qa_net_protocol_id qa_nq_decoder_protocol(const qa_nq_decoder *d) { return d ? d->protocol : (qa_net_protocol_id){QA_NET_NQ15,0,0}; }
@@ -310,10 +348,7 @@ bool qa_nq_read(qa_nq_decoder *d, qa_net_reader *r, qa_nq_message *out)
                 return qa_net_reader_fail(r,"Protocol change cannot represent retained baseline");
         }
     }
-    if (op==11 && d->present) memset(d->present,0,65536);
-    if (m.op==QA_NQ_BASELINE && d->present) { d->baselines[m.data.entity.number]=m.data.entity; d->present[m.data.entity.number]=1; }
-    if (op==7) d->time=m.data.seconds;
-    d->protocol=p; *out=m; return true;
+    qa_nq_decoder_commit(d,p,&m); *out=m; return true;
 }
 
 static bool write_i8(qa_net_writer *w, double value)
