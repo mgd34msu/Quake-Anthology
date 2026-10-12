@@ -33,7 +33,7 @@ typedef struct frontend_particle_owner {
     qa_game_family family;
     qa_actor_owner world_source;
     qa_actor_id recipient;
-    uint64_t map_identity;
+    uint64_t map_generation;
     qa_scene_resources *images;
     qa_scene_image *particle_image;
     qa_builtin_random random;
@@ -455,15 +455,15 @@ static bool particle_world_owner(qa_frontend *frontend, qa_actor_owner *out)
         qa_application_provider_owner(frontend->application, binding->instance, out);
 }
 static bool delivery_world_current(qa_frontend *frontend, qa_actor_owner world_source,
-    uint64_t map_identity)
+    uint64_t map_generation)
 {
     qa_application_map_view map;
     qa_actor_owner physical = 0;
     qa_collision_geometry *geometry = qa_world_geometry(qa_application_world(frontend->application));
-    return world_source && map_identity && geometry &&
+    return world_source && map_generation && geometry &&
         qa_application_map_read(frontend->application, &map) &&
         particle_world_owner(frontend, &physical) &&
-        physical == world_source && qa_collision_map_identity(geometry) == map_identity;
+        physical == world_source && qa_collision_load_generation(geometry) == map_generation;
 }
 static bool q2_delivery_admit(qa_frontend *frontend, qa_actor_owner provider,
     const qa_application_q2_audience *audience)
@@ -471,7 +471,7 @@ static bool q2_delivery_admit(qa_frontend *frontend, qa_actor_owner provider,
     const char *reason = NULL;
     if (!audience->captured) reason = "Q2 effect has no captured source delivery";
     else if (audience->source != provider) reason = "Q2 effect delivery belongs to another producer";
-    else if (!delivery_world_current(frontend, audience->world_source, audience->map_identity))
+    else if (!delivery_world_current(frontend, audience->world_source, audience->map_generation))
         reason = "Q2 effect delivery belongs to a retired world";
     if (reason) {
         qa_error skipped = {0};
@@ -483,7 +483,7 @@ static bool q2_delivery_admit(qa_frontend *frontend, qa_actor_owner provider,
 }
 static bool particle_client_current(qa_frontend *frontend, const frontend_particle_owner *owner)
 {
-    if (!delivery_world_current(frontend, owner->world_source, owner->map_identity)) return false;
+    if (!delivery_world_current(frontend, owner->world_source, owner->map_generation)) return false;
     for (uint32_t seat = 0; seat < frontend->options.seats; ++seat) {
         if (frontend_network_local_input_owned(frontend,seat)) continue;
         qa_actor_id actor;
@@ -501,7 +501,7 @@ typedef struct frontend_q2_sample {
 static bool q2_owner_sample(qa_frontend *frontend, const frontend_particle_owner *owner,
     frontend_q2_sample *out, qa_error *error)
 {
-    if (!owner->q2_effects || !delivery_world_current(frontend, owner->world_source, owner->map_identity))
+    if (!owner->q2_effects || !delivery_world_current(frontend, owner->world_source, owner->map_generation))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 sample lost its delivered physical world");
     uint64_t sample, server;
     float back_lerp;
@@ -700,17 +700,17 @@ static bool local_q2_create(qa_frontend *frontend,frontend_particle_owner *owner
     return frontend_remote_q2_effects_create(&source,&owner->q2_effects,error);
 }
 static bool particle_owner(qa_frontend *frontend, qa_actor_owner provider, qa_game_family family,
-    qa_actor_owner world_source, uint64_t map_identity, qa_actor_id recipient,
+    qa_actor_owner world_source, uint64_t map_generation, qa_actor_id recipient,
     frontend_particle_owner **out, qa_error *error)
 {
     *out = NULL;
     if (family == QA_GAME_Q2 && (!recipient.registry ||
-            !delivery_world_current(frontend, world_source, map_identity)))
+            !delivery_world_current(frontend, world_source, map_generation)))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 particle owner lost its actual delivered world");
     if (!frontend_particle_prepare(frontend, error)) return false;
     for (frontend_particle_owner *owner = frontend->particles->owners; owner; owner = owner->next)
         if (owner->provider == provider && owner->family == family &&
-            owner->world_source == world_source && owner->map_identity == map_identity &&
+            owner->world_source == world_source && owner->map_generation == map_generation &&
             qa_actor_id_equal(owner->recipient, recipient)) { *out = owner; return true; }
     qa_ruleset_id edition = QA_RULESET_Q2_CLASSIC;
     uint64_t interval = 0;
@@ -728,7 +728,7 @@ static bool particle_owner(qa_frontend *frontend, qa_actor_owner provider, qa_ga
     frontend_particle_owner *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "allocating provider particle pool");
     owner->frontend=frontend;owner->provider = provider; owner->family = family;
-    owner->world_source = world_source; owner->map_identity = map_identity; owner->recipient = recipient;
+    owner->world_source = world_source; owner->map_generation = map_generation; owner->recipient = recipient;
     owner->q2_edition = edition; owner->q2_interval_ns = interval;
     qa_builtin_random_seed(&owner->random, 1);
     if (family == QA_GAME_Q1) {
@@ -851,7 +851,7 @@ static bool q2_visual_entity_admit(qa_frontend *frontend,uint32_t seat,
     if (!geometry || !binding || !qa_application_provider_owner(frontend->application,binding->instance,&primary)) return true;
     frontend_particle_owner *owner;
     if (!particle_owner(frontend,view->provider,QA_GAME_Q2,primary,
-        qa_collision_map_identity(geometry),recipient,&owner,error)) return false;
+        qa_collision_load_generation(geometry),recipient,&owner,error)) return false;
     if (!owner) return true;
     frontend_q2_sample sample;
     if (!q2_owner_sample(frontend,owner,&sample,error)) return false;
@@ -905,7 +905,7 @@ static bool entity_effects_prepare(qa_frontend *frontend,uint32_t seat,qa_actor_
         qa_collision_geometry *geometry=qa_world_geometry(qa_application_world(frontend->application));
         frontend_particle_owner *owner;
         if (!geometry || !particle_owner(frontend,state->clock_source,QA_GAME_Q2,state->clock_source,
-            qa_collision_map_identity(geometry),recipient,&owner,error)) return false;
+            qa_collision_load_generation(geometry),recipient,&owner,error)) return false;
         if (owner) {
             frontend_q2_sample sample;
             if (!q2_owner_sample(frontend,owner,&sample,error)) return false;
@@ -1122,7 +1122,7 @@ bool frontend_particle_q2_temporary(qa_frontend *frontend,
         if (!received) continue;
         frontend_particle_owner *owner;
         if (!particle_owner(frontend,message->provider,QA_GAME_Q2,audience->world_source,
-            audience->map_identity,recipient,&owner,error)) return false;
+            audience->map_generation,recipient,&owner,error)) return false;
         if (!owner) continue;
         double time;
         if (!q2_beam_clock(frontend,owner,client,physical,&time,error) ||
@@ -1148,7 +1148,7 @@ static bool q2_builtin_beam(qa_frontend *frontend,const qa_builtin_event *event,
         if (!received) continue;
         frontend_particle_owner *owner;
         if (!particle_owner(frontend,event->provider,QA_GAME_Q2,audience->world_source,
-            audience->map_identity,recipient,&owner,error)) return false;
+            audience->map_generation,recipient,&owner,error)) return false;
         if (!owner) continue;
         double time;
         if (!q2_beam_clock(frontend,owner,sample,physical,&time,error) ||
@@ -1282,7 +1282,7 @@ bool frontend_particle_world(qa_frontend *frontend, uint32_t seat,
             }
         } else {
             if (!owner->q2_effects || !qa_actor_id_equal(owner->recipient,recipient) ||
-                !delivery_world_current(frontend,owner->world_source,owner->map_identity)) continue;
+                !delivery_world_current(frontend,owner->world_source,owner->map_generation)) continue;
             frontend_remote_q2_effects_sample sample;
             if (!local_q2_sample(frontend,owner,world,&sample,error)) return false;
             if (owner->entity_events && owner->q2_event_frame!=frontend->frame_number) {
@@ -1345,7 +1345,7 @@ bool frontend_particle_draw(qa_frontend *frontend, uint32_t seat, const qa_scene
         if (owner->q2_effects) {
             qa_actor_id recipient;
             if (!frontend_seat_actor_read(frontend,seat,&recipient) || !qa_actor_id_equal(recipient,owner->recipient) ||
-                !delivery_world_current(frontend,owner->world_source,owner->map_identity)) continue;
+                !delivery_world_current(frontend,owner->world_source,owner->map_generation)) continue;
             frontend_remote_q2_effects_sample effects;
             const qa_scene_light *lights;size_t count;
             if (!local_q2_sample(frontend,owner,world,&effects,error) ||

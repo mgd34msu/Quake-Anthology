@@ -126,7 +126,7 @@ bool qa_q3_host_portal_claim_at(const qa_q3_host *host, size_t index, qa_q3_host
         if (!entry->count) continue;
         size_t count = family == QA_GAME_Q3 ? 1 : entry->target_count;
         if (index >= count) { index -= count; continue; }
-        *out = (qa_q3_host_portal_claim){.map_identity = qa_collision_map_identity(geometry), .family = family,
+        *out = (qa_q3_host_portal_claim){.map_generation = qa_collision_load_generation(geometry), .family = family,
             .first = entry->first, .second = entry->second, .contributions = entry->count};
         if (family == QA_GAME_Q2) {
             out->portal = entry->targets[index].portal;

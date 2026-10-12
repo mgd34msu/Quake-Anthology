@@ -28,7 +28,8 @@ typedef struct qa_application_q2_recipient {
 typedef struct qa_application_q2_audience {
     qa_actor_owner source, world_source;
     qa_source_frame source_frame;
-    uint64_t source_time_ns, map_identity;
+    uint64_t source_time_ns;
+    uint64_t map_generation; /* Local capture only; wire events carry admitted content. */
     qa_vec3 multicast_origin;
     int32_t area, cluster;
     const qa_application_q2_recipient *recipients;

@@ -260,7 +260,9 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
     const char *artifact = launch->selection.artifact;
     const char *declaration = qa_resource_path(launch->declaration);
     qa_qc_program_info program = qa_qc_program_describe(engine->provider->state.qc.program);
+    const char *map_name = qa_collision_map_name(qa_world_geometry(engine->world));
     size_t capacity = 256;
+    if (!add_size(&capacity, strlen(map_name) + 4, error)) return false;
     if (!add_size(&capacity, (artifact ? strlen(artifact) : 0) + 4, error) ||
         !add_size(&capacity, (declaration ? strlen(declaration) : 0) + 4, error)) return false;
     if (engine->original_extension.size>UINT32_MAX ||
@@ -333,7 +335,7 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
         qa_net_write_u32(&writer, engine->profile) &&
         write_text(&writer, artifact) && write_text(&writer, declaration) &&
         qa_net_write_u32(&writer, program.system_crc) &&
-        qa_net_write_u64(&writer, qa_collision_map_identity(qa_world_geometry(engine->world))) &&
+        qa_net_write_u64(&writer, 0) &&
         qa_net_write_u64(&writer, engine->source_time_ns) &&
         qa_net_write_f32(&writer, engine->serverflags) && qa_net_write_u8(&writer, engine->loading) &&
         qa_net_write_u8(&writer, engine->initialized) &&
@@ -381,6 +383,7 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
                 write_actor(&writer, actors, reference->actor) && qa_net_write_u8(&writer, reference->packed_sound);
         }
     }
+    if (ok) ok = write_text(&writer, map_name);
     qa_buffer_free(&registry); qa_buffer_free(&rerelease); openings_free(openings,engine->resource_count);
     if (!ok) { free(data); return false; }
     *out = (qa_buffer){data, qa_net_writer_size(&writer)}; return true;
@@ -412,9 +415,10 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
         qa_net_read_u32(&reader) != (uint32_t)engine->profile ||
         !read_text_matches(&reader, launch->selection.artifact) ||
         !read_text_matches(&reader, qa_resource_path(launch->declaration)) ||
-        qa_net_read_u32(&reader) != program.system_crc ||
-        qa_net_read_u64(&reader) != qa_collision_map_identity(qa_world_geometry(engine->world)))
+        qa_net_read_u32(&reader) != program.system_crc)
         return application_fail(error, QA_ERROR_FORMAT, "QuakeC engine checkpoint identity differs");
+    (void)qa_net_read_u64(&reader); /* Older checkpoints stored a BSP fingerprint here. */
+    if (reader.failed) return false;
     application_provider *current=application_save_current_provider(engine->provider);
     struct application_qc_state *unit=current && current->kind==APPLICATION_PROVIDER_QC
         ? current->state.qc.engine : NULL;
@@ -572,6 +576,8 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
                 qa_actor_id_equal(candidate.messages[earlier].recipient, message->recipient))
                 ok = qa_net_reader_fail(&reader, "Duplicate QuakeC saved message destination");
     }
+    if (ok && qa_net_reader_remaining(&reader))
+        ok = read_text_matches(&reader, qa_collision_map_name(qa_world_geometry(engine->world)));
     if (ok) ok = qa_net_reader_finish(&reader);
     for (size_t i = 0; ok && i < candidate.message_count;) {
         const application_qc_message *message = candidate.messages + i;

@@ -46,6 +46,11 @@ bool q3_game_checkpoint_capture(qa_q3_host *host, qa_buffer *out, qa_error *erro
     if (game->portal_count > UINT32_MAX || game->portal_count > (SIZE_MAX - size) / PORTAL_BYTES)
         return q3_fail(error, QA_ERROR_MEMORY, 0, "Q3 game checkpoint is too large");
     size += game->portal_count * PORTAL_BYTES;
+    const char *map_name = qa_collision_map_name(qa_world_geometry(host->options.world));
+    size_t name_bytes = strlen(map_name);
+    if (name_bytes > UINT32_MAX || size > SIZE_MAX - 4 || name_bytes > SIZE_MAX - size - 4)
+        return q3_fail(error, QA_ERROR_MEMORY, 0, "Q3 game checkpoint map name is too large");
+    size += 4 + name_bytes;
     qa_buffer bytes = {.data = calloc(1, size), .size = size};
     if (!bytes.data) return q3_fail(error, QA_ERROR_MEMORY, 0, "Capturing Q3 game host");
     uint8_t *header = bytes.data;
@@ -54,7 +59,7 @@ bool q3_game_checkpoint_capture(qa_q3_host *host, qa_buffer *out, qa_error *erro
     qa_store_u32le(header + 12, game->client_stride);
     qa_store_u32le(header + 16, host->options.server.maximum_clients);
     qa_store_u64le(header + 20, game->entities); qa_store_u64le(header + 28, game->clients);
-    qa_store_u64le(header + 36, qa_collision_map_identity(qa_world_geometry(host->options.world)));
+    /* Bytes 36..43 remain reserved for older checkpoint readers. */
     qa_store_u32le(header + 44, actors); qa_store_u32le(header + 48, (uint32_t)game->portal_count);
     qa_store_u64le(header + 52, game->portal_capacity);
     uint8_t *row = header + GAME_HEADER;
@@ -80,6 +85,8 @@ bool q3_game_checkpoint_capture(qa_q3_host *host, qa_buffer *out, qa_error *erro
         qa_store_u32le(row, game->portals[i].first); qa_store_u32le(row + 4, game->portals[i].second);
         qa_store_u32le(row + 8, game->portals[i].count);
     }
+    qa_store_u32le(row, (uint32_t)name_bytes);
+    memcpy(row + 4, map_name, name_bytes);
     *out = bytes; return true;
 }
 
@@ -114,8 +121,7 @@ bool q3_game_checkpoint_decode(qa_q3_host *host, qa_bytes bytes, q3_game_data **
         *out = NULL; return true;
     }
     if (bytes.size < GAME_HEADER || memcmp(bytes.data, "Q3GD", 4) ||
-        qa_load_u32le(bytes.data + 16) != host->options.server.maximum_clients ||
-        qa_load_u64le(bytes.data + 36) != qa_collision_map_identity(qa_world_geometry(host->options.world)))
+        qa_load_u32le(bytes.data + 16) != host->options.server.maximum_clients)
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 game checkpoint map or source identity mismatch");
     uint32_t actors = qa_load_u32le(bytes.data + 44), portals = qa_load_u32le(bytes.data + 48);
     uint64_t portal_capacity = qa_load_u64le(bytes.data + 52);
@@ -125,8 +131,17 @@ bool q3_game_checkpoint_decode(qa_q3_host *host, qa_bytes bytes, q3_game_data **
     if (actors > 1022 || actors > remaining / ACTOR_BYTES)
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 game checkpoint actor table is invalid");
     remaining -= (size_t)actors * ACTOR_BYTES;
-    if (portals > remaining / PORTAL_BYTES || remaining != (size_t)portals * PORTAL_BYTES)
+    if (portals > remaining / PORTAL_BYTES)
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 game checkpoint portal table is invalid");
+    remaining -= (size_t)portals * PORTAL_BYTES;
+    if (remaining) {
+        const uint8_t *name = bytes.data + bytes.size - remaining;
+        const char *map_name = qa_collision_map_name(qa_world_geometry(host->options.world));
+        size_t name_bytes = strlen(map_name);
+        if (remaining < 4 || qa_load_u32le(name) != name_bytes || remaining - 4 != name_bytes ||
+            memcmp(name + 4, map_name, name_bytes))
+            return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 game checkpoint map name differs");
+    }
     q3_game_data *game = calloc(1, sizeof(*game));
     if (!game) return q3_fail(error, QA_ERROR_MEMORY, 0, "Restoring Q3 game bindings");
     game->entity_count = qa_load_u32le(bytes.data + 4); game->entity_stride = qa_load_u32le(bytes.data + 8);

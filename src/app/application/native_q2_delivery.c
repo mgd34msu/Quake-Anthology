@@ -187,7 +187,7 @@ static bool capture(application_provider *source, qa_vec3 origin, qa_vec3 line_e
     size_t count=roster->count;
     qa_application_q2_recipient *recipients=app->event_q2_capture->recipients;
     qa_application_q2_audience receipt={.source=source->owner,.world_source=physical->owner,
-        .source_frame=clock.frame,.source_time_ns=now,.map_identity=qa_collision_map_identity(geometry),
+        .source_frame=clock.frame,.source_time_ns=now,.map_generation=qa_collision_load_generation(geometry),
         .multicast_origin=origin,.area=positioned?(int32_t)from.area:-1,
         .cluster=positioned?(int32_t)from.cluster:-1,.kind=delivery,.positioned=positioned,
         .recipients=recipients,.captured=true};

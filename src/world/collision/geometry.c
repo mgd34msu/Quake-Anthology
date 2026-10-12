@@ -5,6 +5,7 @@
 
 #include <limits.h>
 #include <stdlib.h>
+#include <stdatomic.h>
 
 typedef struct geometry_portal { uint32_t contributions; bool known, primary; } geometry_portal;
 typedef struct geometry_segment_frame {
@@ -50,9 +51,11 @@ struct qa_collision_geometry {
     size_t area_portal_count, known_portal_count;
     geometry_portal *portals;
     bool no_areas;
-    uint64_t map_identity;
+    uint64_t map_generation;
     uint32_t protocol_checksum;
 };
+
+static atomic_uint_fast64_t next_geometry_generation = 1;
 
 static bool load_visibility_rows(qa_collision_geometry *, qa_error *);
 
@@ -353,11 +356,8 @@ bool qa_collision_create(const qa_bsp_view *bsp, qa_collision_geometry **out, qa
     geometry->bsp = *bsp;
     geometry->protocol_checksum = qa_block_checksum(bsp->source);
     geometry->family = bsp->family == QA_BSP_Q1 ? QA_GAME_Q1 : bsp->family == QA_BSP_Q2 ? QA_GAME_Q2 : QA_GAME_Q3;
-    geometry->map_identity = UINT64_C(14695981039346656037);
-    for (size_t i = 0; i < bsp->source.size; ++i) {
-        geometry->map_identity ^= bsp->source.data[i];
-        geometry->map_identity *= UINT64_C(1099511628211);
-    }
+    geometry->map_generation = atomic_fetch_add_explicit(
+        &next_geometry_generation, 1, memory_order_relaxed);
     if (!load_topology(geometry, error) || !load_areas(geometry, error)) goto fail;
     const qa_collision_topology topology = {geometry->planes, geometry->nodes,
         geometry->plane_count, geometry->node_count};
@@ -387,9 +387,14 @@ uint32_t qa_collision_map_checksum(const qa_collision_geometry *geometry)
     return geometry ? geometry->protocol_checksum : 0;
 }
 
-uint64_t qa_collision_map_identity(const qa_collision_geometry *geometry)
+uint64_t qa_collision_load_generation(const qa_collision_geometry *geometry)
 {
-    return geometry == NULL ? 0 : geometry->map_identity;
+    return geometry == NULL ? 0 : geometry->map_generation;
+}
+
+const char *qa_collision_map_name(const qa_collision_geometry *geometry)
+{
+    return geometry && geometry->resource ? qa_resource_path(geometry->resource) : "";
 }
 
 size_t qa_collision_model_count(const qa_collision_geometry *geometry)
@@ -980,6 +985,7 @@ bool qa_collision_adjust_area_pair(qa_collision_geometry *geometry, int32_t firs
 void qa_collision_portal_checkpoint_free(qa_collision_portal_checkpoint *checkpoint)
 {
     if (checkpoint == NULL) return;
+    free(checkpoint->map_name);
     free(checkpoint->portals);
     free(checkpoint->area_pairs);
     *checkpoint = (qa_collision_portal_checkpoint){0};
@@ -989,11 +995,15 @@ bool qa_collision_capture_portals(const qa_collision_geometry *geometry, qa_coll
 {
     if (geometry == NULL || out == NULL) return geometry_fail(error, QA_ERROR_ARGUMENT, "Missing portal checkpoint output");
     qa_collision_portal_checkpoint checkpoint = {.family = geometry->family, .format = geometry->bsp.format,
-        .map_identity = geometry->map_identity, .area_count = geometry->area_count, .no_areas = geometry->no_areas,
+        .map_generation = geometry->map_generation, .area_count = geometry->area_count, .no_areas = geometry->no_areas,
         .portal_count = geometry->known_portal_count, .area_pair_count = geometry->area_pair_count};
+    const char *name = qa_collision_map_name(geometry);
+    size_t name_bytes = strlen(name) + 1;
+    checkpoint.map_name = geometry_array(name_bytes, 1, error);
+    if (checkpoint.map_name) memcpy(checkpoint.map_name, name, name_bytes);
     checkpoint.portals = geometry_array(checkpoint.portal_count, sizeof(*checkpoint.portals), error);
     checkpoint.area_pairs = geometry_array(checkpoint.area_pair_count, sizeof(*checkpoint.area_pairs), error);
-    if ((checkpoint.portal_count != 0 && checkpoint.portals == NULL)
+    if (!checkpoint.map_name || (checkpoint.portal_count != 0 && checkpoint.portals == NULL)
         || (checkpoint.area_pair_count != 0 && checkpoint.area_pairs == NULL)) {
         qa_collision_portal_checkpoint_free(&checkpoint);
         return false;
@@ -1012,7 +1022,9 @@ bool qa_collision_capture_portals(const qa_collision_geometry *geometry, qa_coll
 bool qa_collision_restore_portals(qa_collision_geometry *geometry, const qa_collision_portal_checkpoint *checkpoint, qa_error *error)
 {
     if (geometry == NULL || checkpoint == NULL || checkpoint->family != geometry->family
-        || checkpoint->format != geometry->bsp.format || checkpoint->map_identity != geometry->map_identity
+        || checkpoint->format != geometry->bsp.format
+        || (checkpoint->map_generation && checkpoint->map_generation != geometry->map_generation)
+        || !checkpoint->map_name || strcmp(checkpoint->map_name, qa_collision_map_name(geometry))
         || checkpoint->area_count != geometry->area_count || checkpoint->portal_count != geometry->known_portal_count
         || checkpoint->area_pair_count != geometry->area_pair_count
         || (checkpoint->portal_count != 0 && checkpoint->portals == NULL)

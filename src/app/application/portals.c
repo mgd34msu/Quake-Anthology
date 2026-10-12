@@ -6,7 +6,7 @@
 typedef struct application_portal_claim {
     qa_actor_owner provider;
     uint64_t source_serial;
-    uint64_t map_identity;
+    uint64_t map_generation;
     qa_game_family family;
     uint32_t first, second, portal, contributions;
 } application_portal_claim;
@@ -30,7 +30,7 @@ static bool claim_valid(qa_application *app, const application_portal_claim *c,
 {
     application_provider *p = claim_provider(app, c->provider);
     if (!p || !p->launch || !c->source_serial || p->launch->identity != c->source_serial ||
-        c->map_identity != qa_collision_map_identity(app->geometry) ||
+        c->map_generation != qa_collision_load_generation(app->geometry) ||
         c->family != qa_collision_geometry_family(app->geometry))
         return application_fail(error, QA_ERROR_FORMAT,
                                 "Native portal claim has no admitted map/source identity");
@@ -64,7 +64,7 @@ static bool change(application_provider *provider, application_portal_claim key,
         return application_fail(error, QA_ERROR_ARGUMENT, "Portal mutation has no live native owner");
     key.provider = provider->owner;
     key.source_serial = provider->launch->identity;
-    key.map_identity = qa_collision_map_identity(app->geometry);
+    key.map_generation = qa_collision_load_generation(app->geometry);
     if (!claim_valid(app, &key, error))
         return false;
     struct application_portals *owner = app->portals;
@@ -129,7 +129,7 @@ static bool target(const qa_collision_portal_checkpoint *shared,
                      const qa_q3_host_portal_claim *claim, size_t *index,
                      qa_error *error)
 {
-    if (claim->family != shared->family || claim->map_identity != shared->map_identity ||
+    if (claim->family != shared->family || claim->map_generation != shared->map_generation ||
         claim->contributions > UINT32_MAX)
         return application_fail(error, QA_ERROR_FORMAT, "Portal claim differs from shared map identity or range");
     if (shared->family == QA_GAME_Q2) {
@@ -156,7 +156,7 @@ static bool target(const qa_collision_portal_checkpoint *shared,
 
 static qa_q3_host_portal_claim shared_claim(const application_portal_claim *c)
 {
-    return (qa_q3_host_portal_claim){.family = c->family, .map_identity = c->map_identity,
+    return (qa_q3_host_portal_claim){.family = c->family, .map_generation = c->map_generation,
         .first = c->first, .second = c->second, .portal = c->portal,
         .contributions = c->contributions};
 }
@@ -318,8 +318,9 @@ static bool row_fields(qa_source_save_io *io, qa_application *app,
                          application_portal_claim *c)
 {
     uint32_t family = qa_persistence_family_tag(c->family);
+    uint64_t reserved = 0;
     if (!qa_source_save_string(io, &c->provider) ||
-        !qa_source_save_u64(io, &c->map_identity) || !qa_source_save_u32(io, &family) ||
+        !qa_source_save_u64(io, &reserved) || !qa_source_save_u32(io, &family) ||
         !qa_source_save_u32(io, &c->first) || !qa_source_save_u32(io, &c->second) ||
         !qa_source_save_u32(io, &c->portal) || !qa_source_save_u32(io, &c->contributions))
         return false;
@@ -329,6 +330,7 @@ static bool row_fields(qa_source_save_io *io, qa_application *app,
         if (!provider || !provider->launch)
             return application_fail(io->error, QA_ERROR_FORMAT, "Saved portal source owner is absent");
         c->source_serial = provider->launch->identity;
+        c->map_generation = qa_collision_load_generation(app->geometry);
         if (c->family == QA_GAME_Q2)
             c->contributions = c->contributions != 0;
     }
@@ -368,7 +370,7 @@ static bool primary_fields(qa_source_save_io *io, qa_application *app)
                 ok = application_fail(io->error, QA_ERROR_FORMAT,
                                       "Saved primary portal IDs are not unique and ordered");
             qa_q3_host_portal_claim claim = {.family = shared.family,
-                .map_identity = shared.map_identity, .portal = portal};
+                .map_generation = shared.map_generation, .portal = portal};
             if (ok) ok = target(&shared, &claim, &index, io->error);
             if (ok) shared.portals[index].primary = true;
             previous = portal;
@@ -397,6 +399,7 @@ bool application_portals_capture(qa_application *app, qa_buffer *out, qa_error *
         ok = row_fields(&io, app, &copy);
     }
     if (ok) ok = primary_fields(&io, app);
+    if (ok) ok = qa_source_save_text_assert(&io, qa_collision_map_name(app->geometry));
     if (ok)
         ok = qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
@@ -429,6 +432,8 @@ bool application_portals_restore(qa_application *app, qa_bytes bytes, qa_error *
     }
     /* Earlier records cannot recover primary flags they never saved. */
     if (ok && io.offset < bytes.size) ok = primary_fields(&io, app);
+    if (ok && io.offset < bytes.size)
+        ok = qa_source_save_text_assert(&io, qa_collision_map_name(app->geometry));
     if (ok)
         ok = qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);

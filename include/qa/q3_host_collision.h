@@ -29,7 +29,7 @@ typedef struct qa_q3_host_collision_view {
     qa_collision_geometry *geometry;
     const struct qa_resource *map_resource;
     qa_actor_owner receiver;
-    uint64_t service_owner, map_identity;
+    uint64_t service_owner, map_generation;
     uint32_t snapshot_address, next_snapshot_address;
     int32_t snapshot_time, next_snapshot_time, time, physics_time, processed_snapshot;
     bool this_frame_teleport, next_frame_teleport;

@@ -286,7 +286,7 @@ static bool capture(const qa_q3_host_collision_scene *scene, collision_capture *
         .next_snapshot_time = signed_word(result.words[9])};
     if (!result.view.geometry)
         { q3_fail(error, QA_ERROR_ARGUMENT, 0, "CG collision cache lost its actual map parent"); goto failed; }
-    result.view.map_identity = qa_collision_map_identity(result.view.geometry);
+    result.view.map_generation = qa_collision_load_generation(result.view.geometry);
     result.view.map_resource = qa_collision_resource(result.view.geometry);
     size_t entity_bytes = qa_qvm_entity_bytes(host->options.abi);
     result.record_size = entity_bytes * 2 + 24;
@@ -331,7 +331,7 @@ static bool unchanged(const qa_q3_host_collision_scene *scene, const collision_c
     collision_capture after = {0};
     if (!capture(scene, &after, error)) return false;
     bool same = before->view.geometry == after.view.geometry && before->view.map_resource == after.view.map_resource &&
-        before->view.map_identity == after.view.map_identity &&
+        before->view.map_generation == after.view.map_generation &&
         before->view.solid_count == after.view.solid_count &&
         !memcmp(before->words, after.words, sizeof(before->words));
     for (size_t i = 0; same && i < before->view.solid_count; ++i)

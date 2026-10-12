@@ -715,6 +715,16 @@ static void retained_external_brush(void)
         checkpoint.bodies[0].retained_collision.model_geometry == NULL);
     qa_collision_geometry *replacement;
     GAME_CHECK(qa_collision_create(&bsp, &replacement, &error));
+    GAME_CHECK(qa_collision_load_generation(replacement) != 0 &&
+        qa_collision_load_generation(replacement) != qa_collision_load_generation(external.geometry));
+    GAME_CHECK(qa_collision_map_checksum(replacement) == qa_collision_map_checksum(external.geometry));
+    qa_collision_portal_checkpoint portals = {0};
+    GAME_CHECK(qa_collision_capture_portals(external.geometry, &portals, &error));
+    GAME_CHECK(qa_collision_restore_portals(external.geometry, &portals, &error));
+    GAME_CHECK(!qa_collision_restore_portals(replacement, &portals, &error));
+    portals.map_generation = 0;
+    GAME_CHECK(qa_collision_restore_portals(replacement, &portals, &error));
+    qa_collision_portal_checkpoint_free(&portals);
     qa_collision_destroy(external.geometry);
     external.geometry = replacement;
     model_entries[1].geometry = replacement;

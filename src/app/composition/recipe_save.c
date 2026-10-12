@@ -52,12 +52,14 @@ static bool acquisition(qa_source_save_io *io, qa_vfs *files, qa_vfs_acquisition
         qa_vfs_acquisition_opening_codec(io, files, value) && value->opening_present &&
         qa_vfs_acquisition_retained(files, value, io->error);
 }
-static bool portal_fields(qa_source_save_io *io, qa_collision_portal_checkpoint *state)
+static bool portal_fields(qa_source_save_io *io, qa_collision_portal_checkpoint *state,
+    const char *map_name)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     uint32_t family = qa_persistence_family_tag(state->family), format = state->format;
+    uint64_t reserved = 0;
     if (!qa_source_save_u32(io, &family) || family > 3u ||
-        !qa_source_save_u32(io, &format) || !qa_source_save_u64(io, &state->map_identity) ||
+        !qa_source_save_u32(io, &format) || !qa_source_save_u64(io, &reserved) ||
         !qa_source_save_u32(io, &state->area_count) || !qa_source_save_bool(io, &state->no_areas) ||
         !qa_source_save_count(io, &state->portal_count, reading ?
             (io->input.size - io->offset) / 9 : SIZE_MAX / sizeof(*state->portals))) return false;
@@ -79,6 +81,15 @@ static bool portal_fields(qa_source_save_io *io, qa_collision_portal_checkpoint 
     }
     for (size_t i = 0; i < state->area_pair_count; ++i)
         if (!qa_source_save_u32(io, state->area_pairs + i)) return false;
+    if ((!reading || io->offset < io->input.size) && !qa_source_save_text_assert(io, map_name))
+        return false;
+    if (reading) {
+        size_t bytes = strlen(map_name) + 1;
+        state->map_name = malloc(bytes);
+        if (!state->map_name) { qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Restoring recipe map name"); return false; }
+        memcpy(state->map_name, map_name, bytes);
+        state->map_generation = 0;
+    }
     return true;
 }
 static bool graph_fields(qa_source_save_io *io, qa_executable_recipe *recipe,
@@ -169,7 +180,8 @@ static bool graph_fields(qa_source_save_io *io, qa_executable_recipe *recipe,
             qa_resource_pool_find(recipe->pool, entry->acquisition.resource_id) != entry->value.resource ||
             strcmp(entry->value.path, entry->acquisition.path)) return false;
     }
-    return qa_source_save_count(io, &recipe->map_index, resources - 1) && portal_fields(io, portals);
+    return qa_source_save_count(io, &recipe->map_index, resources - 1) &&
+        portal_fields(io, portals, qa_resource_path(recipe->resources[recipe->map_index]->value.resource));
 }
 static bool geometry_restore(qa_executable_recipe *recipe,
     const qa_collision_portal_checkpoint *portals, qa_error *error)

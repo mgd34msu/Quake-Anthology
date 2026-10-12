@@ -37,7 +37,7 @@ typedef struct prediction_state {
     qa_net_client_id connection;
     qa_actor_id actor;
     qa_actor_owner movement, character, arsenal;
-    uint64_t epoch, map_identity, restart_generation;
+    uint64_t epoch, map_generation, restart_generation;
     int32_t snapshot_number;
     qa_actor_owner receiver;
     uint64_t service_owner, receipt_time_ns;
@@ -832,7 +832,7 @@ static bool source_valid(const frontend_remote_prediction *owner,
         configuration->input.prediction && !configuration->input.q2r_pml_origin &&
         (!configuration->q3_character || configuration->native_q3_character) &&
         (!configuration->q3_arsenal || configuration->native_q3_arsenal) &&
-        source->geometry && qa_collision_map_identity(source->geometry) && selected && source->scene.snapshot &&
+        source->geometry && qa_collision_load_generation(source->geometry) && selected && source->scene.snapshot &&
         isfinite(source->settings.error_decay_value) &&
         (!source->settings.error_decay_integer || source->settings.error_decay_value != 0) &&
         (selected == source->scene.snapshot || selected == source->scene.next_snapshot) &&
@@ -847,7 +847,7 @@ static bool same_identity(const prediction_state *state,
     const qa_application_control_prediction_configuration *c = &source->configuration;
     return qa_net_client_id_equal(state->connection, source->input.connection) &&
         state->epoch == source->input.epoch && state->restart_generation == source->restart_generation &&
-        state->map_identity == qa_collision_map_identity(source->geometry) &&
+        state->map_generation == qa_collision_load_generation(source->geometry) &&
         qa_actor_id_equal(state->actor, c->input.actor) && state->movement == c->movement &&
         state->character == c->character && state->arsenal == c->arsenal &&
         state->baseline.view.movement.kind == c->input.state.kind;
@@ -856,7 +856,7 @@ static void set_identity(prediction_state *state, const frontend_remote_predicti
 {
     state->connection = source->input.connection; state->epoch = source->input.epoch;
     state->restart_generation = source->restart_generation;
-    state->map_identity = qa_collision_map_identity(source->geometry);
+    state->map_generation = qa_collision_load_generation(source->geometry);
     state->actor = source->configuration.input.actor;
     state->movement = source->configuration.movement; state->character = source->configuration.character;
     state->arsenal = source->configuration.arsenal;
@@ -1456,6 +1456,7 @@ static bool state_fields(qa_source_save_io *io, prediction_state *state,
     qa_application_control_prediction_configuration *configuration, prediction_player *initial)
 {
     uint8_t magic[4] = {'Q','R','P','D'};
+    uint64_t reserved = 0;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QRPD", sizeof(magic)) ||
         !configuration_fields(io, configuration) ||
         !qa_source_save_bool(io, &state->initialized) ||
@@ -1466,7 +1467,7 @@ static bool state_fields(qa_source_save_io *io, prediction_state *state,
         !qa_source_save_u64(io, &state->connection.generation) || !qa_source_save_actor(io, &state->actor) ||
         !qa_source_save_string(io, &state->movement) || !qa_source_save_string(io, &state->character) ||
         !qa_source_save_string(io, &state->arsenal) || !qa_source_save_u64(io, &state->epoch) ||
-        !qa_source_save_u64(io, &state->map_identity) || !qa_source_save_u64(io, &state->restart_generation) ||
+        !qa_source_save_u64(io, &reserved) || !qa_source_save_u64(io, &state->restart_generation) ||
         !qa_source_save_i32(io, &state->snapshot_number) || !qa_source_save_vec3(io, &state->q2r_pml_origin) ||
         !qa_source_save_string(io, &state->receiver) || !qa_source_save_u64(io, &state->service_owner) ||
         !qa_source_save_u32(io, &state->launch_seat) || !qa_source_save_u32(io, &state->source_client) ||
@@ -1477,7 +1478,7 @@ static bool state_fields(qa_source_save_io *io, prediction_state *state,
         !qa_source_save_bool(io, &state->has_discarded) || !qa_source_save_u64(io, &state->discarded_sequence) ||
         !qa_source_save_count(io, &state->count, 64)) return false;
     qa_ruleset_id kind = configuration->input.state.kind;
-    if (!state->connection.owner || !state->connection.generation || !state->epoch || !state->map_identity ||
+    if (!state->connection.owner || !state->connection.generation || !state->epoch ||
         !state->receiver || !state->service_owner || state->source_client >= 64 ||
         !qa_actor_id_equal(state->actor, configuration->input.actor) || state->movement != configuration->movement ||
         state->character != configuration->character || state->arsenal != configuration->arsenal ||
@@ -1526,6 +1527,16 @@ static bool state_fields(qa_source_save_io *io, prediction_state *state,
     }
     return !state->count || state->predicted.view.sequence <= prior_source;
 }
+static bool state_map_fields(qa_source_save_io *io, prediction_state *state,
+    const frontend_remote_prediction_source *source)
+{
+    const char *name = state->initialized ? qa_collision_map_name(source->geometry) : "";
+    if ((io->direction == QA_SOURCE_SAVE_WRITE || io->offset < io->input.size) &&
+        !qa_source_save_text_assert(io, name)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ && state->initialized)
+        state->map_generation = qa_collision_load_generation(source->geometry);
+    return true;
+}
 bool frontend_remote_prediction_checkpoint(const frontend_remote_prediction *owner,
     qa_buffer *out, qa_error *error)
 {
@@ -1535,8 +1546,13 @@ bool frontend_remote_prediction_checkpoint(const frontend_remote_prediction *own
     prediction_player initial = owner->initial;
     qa_application_control_prediction_configuration configuration = owner->options.initial_configuration;
     qa_source_save_io io = {0};
-    bool ok = qa_source_save_writer(&io, owner->options.session, error) &&
-        state_fields(&io, &state, &configuration, &initial) && qa_source_save_finish(&io, out);
+    frontend_remote_prediction_source source = {0}; bool present = false;
+    bool ok = !state.initialized ||
+        (owner->options.source_read(owner->options.context, &source, &present, error) &&
+         present && same_identity(&state, &source) && owner->options.source_current(owner->options.context, &source));
+    if (ok) ok = qa_source_save_writer(&io, owner->options.session, error) &&
+        state_fields(&io, &state, &configuration, &initial) &&
+        state_map_fields(&io, &state, &source) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
     if (!ok && (!error || error->code == QA_OK)) fail(error, QA_ERROR_FORMAT, "Invalid private prediction continuation");
     return ok;
@@ -1548,12 +1564,14 @@ bool frontend_remote_prediction_restore(frontend_remote_prediction *owner, qa_by
     qa_application_control_prediction_configuration configuration = {0};
     qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, owner->options.session, bytes, error) &&
-        state_fields(&io, &state, &configuration, &initial) && qa_source_save_finish(&io, NULL);
-    qa_source_save_dispose(&io);
+        state_fields(&io, &state, &configuration, &initial);
     frontend_remote_prediction_source source = {0}; bool present = false;
     if (ok) ok = owner->options.configuration_current(owner->options.context, &configuration);
     if (ok && state.initialized) ok = owner->options.source_read(owner->options.context, &source, &present, error);
-    if (ok && state.initialized) ok = present && source_valid(owner, &source) &&
+    if (ok && state.initialized) ok = present && source_valid(owner, &source);
+    if (ok) ok = state_map_fields(&io, &state, &source) && qa_source_save_finish(&io, NULL);
+    qa_source_save_dispose(&io);
+    if (ok && state.initialized) ok =
         qa_actor_id_equal(configuration.input.actor, source.configuration.input.actor) &&
         configuration.movement == source.configuration.movement && configuration.character == source.configuration.character &&
         configuration.arsenal == source.configuration.arsenal &&
@@ -1581,22 +1599,29 @@ bool frontend_remote_prediction_restore_new(const frontend_remote_prediction_opt
     qa_application_control_prediction_configuration configuration = {0};
     qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, bindings->session, bytes, error) &&
-        state_fields(&io, &state, &configuration, &initial) && qa_source_save_finish(&io, NULL);
-    qa_source_save_dispose(&io);
+        state_fields(&io, &state, &configuration, &initial);
     if (ok) ok = qa_actors_get(qa_session_actors(bindings->session), configuration.input.actor) &&
         bindings->configuration_current(bindings->context, &configuration);
     if (!ok) {
+        qa_source_save_dispose(&io);
         if (!error || error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Invalid saved prediction constructor and continuation");
         return false;
     }
     frontend_remote_prediction *owner = calloc(1, sizeof(*owner));
-    if (!owner) return fail(error, QA_ERROR_MEMORY, "Allocating actual restored private prediction owner");
+    if (!owner) {
+        qa_source_save_dispose(&io);
+        return fail(error, QA_ERROR_MEMORY, "Allocating actual restored private prediction owner");
+    }
     owner->options = *bindings; owner->options.initial_configuration = configuration;
     owner->initial = initial; owner->state = state;
     frontend_remote_prediction_source source = {0}; bool present = false;
     if (state.initialized) ok = bindings->source_read(bindings->context, &source, &present, error) &&
-        present && source_valid(owner, &source) && same_identity(&state, &source) &&
+        present && source_valid(owner, &source);
+    if (ok) ok = state_map_fields(&io, &state, &source) && qa_source_save_finish(&io, NULL);
+    qa_source_save_dispose(&io);
+    if (ok && state.initialized) ok = same_identity(&state, &source) &&
         bindings->source_current(bindings->context, &source);
+    if (ok) owner->state = state;
     if (!ok) {
         frontend_remote_prediction_destroy(owner);
         if (!error || error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Restored prediction lost its genuine source graph");

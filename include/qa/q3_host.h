@@ -392,7 +392,7 @@ bool qa_q3_host_visibility_read(qa_q3_host *, uint32_t slot,
 /* Called by the map transaction after attaching its immutable source text. */
 bool qa_q3_host_set_entity_text(qa_q3_host *, qa_bytes, qa_error *);
 typedef struct qa_q3_host_portal_claim {
-    uint64_t map_identity, contributions;
+    uint64_t map_generation, contributions;
     qa_game_family family;
     uint32_t first, second, portal;
 } qa_q3_host_portal_claim;

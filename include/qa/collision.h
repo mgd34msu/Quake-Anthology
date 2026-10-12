@@ -115,7 +115,10 @@ const struct qa_resource *qa_collision_resource(const qa_collision_geometry *);
 const qa_bsp_view *qa_collision_bsp(const qa_collision_geometry *);
 qa_game_family qa_collision_geometry_family(const qa_collision_geometry *);
 uint32_t qa_collision_map_checksum(const qa_collision_geometry *);
-uint64_t qa_collision_map_identity(const qa_collision_geometry *);
+/* In-process load identity. Never persist or send across a protocol boundary. */
+uint64_t qa_collision_load_generation(const qa_collision_geometry *);
+/* Logical resource path; the admitted content graph owns its product namespace. */
+const char *qa_collision_map_name(const qa_collision_geometry *);
 size_t qa_collision_model_count(const qa_collision_geometry *);
 bool qa_collision_model_bounds(const qa_collision_geometry *, uint32_t model, qa_bounds *, qa_error *);
 /* Q2 .mat sidecar contents: first 15 bytes up to NUL. Invalid ASCII material
@@ -192,7 +195,8 @@ typedef struct qa_collision_saved_portal {
 typedef struct qa_collision_portal_checkpoint {
     qa_game_family family;
     qa_bsp_format format;
-    uint64_t map_identity; /* Stable fingerprint of the immutable BSP bytes. */
+    uint64_t map_generation; /* Live capture only; zero on persistent import. */
+    char *map_name; /* Owned logical name, qualified by the restored content graph. */
     uint32_t area_count;
     bool no_areas;
     qa_collision_saved_portal *portals; /* Q2, in ascending portal-ID order. */
