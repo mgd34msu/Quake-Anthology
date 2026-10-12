@@ -2888,6 +2888,23 @@ static void test_shared_input_menu_defaults(void)
             CHECK(qa_console_drain(console,4096,&drained,&error));
             CHECK(!qa_input_seat_action_active(seat,QA_INPUT_ATTACK));
         }
+        CHECK(qa_input_seat_prepare_sources(seat, 8, &error));
+        for (unsigned i=0;i<8;++i) {
+            qa_physical_input physical={.kind=QA_PHYSICAL_KEY,.code=(uint16_t)('a'+i)};
+            CHECK(qa_input_seat_bind(seat,&(qa_input_binding){.input=physical,
+                .kind=QA_BIND_ACTION,.action=QA_INPUT_ATTACK},&error));
+            qa_input_event key={.kind=QA_INPUT_EVENT_KEY,.time_ms=time+=10,
+                .down=true,.input=physical};
+            CHECK(qa_input_seat_event(seat,&key,NULL,&error));
+            key.repeat=true;
+            CHECK(qa_input_seat_event(seat,&key,NULL,&error));
+        }
+        for (unsigned i=0;i<8;++i) {
+            qa_input_event key={.kind=QA_INPUT_EVENT_KEY,.time_ms=time+=10,
+                .input={.kind=QA_PHYSICAL_KEY,.code=(uint16_t)('a'+i)}};
+            CHECK(qa_input_seat_event(seat,&key,NULL,&error));
+            CHECK(qa_input_seat_action_active(seat,QA_INPUT_ATTACK)==(i!=7));
+        }
         qa_input_console_destroy(commands);
         qa_input_seat_destroy(seat);
         qa_console_destroy(console);

@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "8b8b5eebff18491436aeaafefcec745993624f36",
+  "verified_main": "d5510fd410ebdde041414d4028bfcf8690ebb407",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 188,
-    "open_source_observation": 183,
+    "fixed_source_build_core": 189,
+    "open_source_observation": 182,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -26890,8 +26890,9 @@
       "severity": "medium",
       "job": "05",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "d5510fd410ebdde041414d4028bfcf8690ebb407"
     },
     {
       "id": "05-H3",
@@ -42332,6 +42333,32 @@
       ],
       "record_directory": "/tmp/qa-ta3196-supply-pools-20261012",
       "conclusion": "Supply actor/timer payloads now use common per-pair pools backed by one retained arena, prepared to actual actor capacity and exact profile timer extent. Admission/spawn/cheat/capture vectors use independent control leases, and retired rows are returned only after the outer callback scope leaves. Timer activation, int32 arithmetic, save order and candidate restore custody remain unchanged. Normal production build and seven core suites passed. Additional nested admission/cold restore can extend common storage; deeper inventory admission allocations remain outside this slice, so no whole-frame zero-allocation or live/performance claim."
+    },
+    {
+      "commit": "d5510fd410ebdde041414d4028bfcf8690ebb407",
+      "source_tree": "3353fb3a34de76be302d2e9b55f4d1f7781ede13",
+      "finding_ids": [
+        "05-I5"
+      ],
+      "files_rechecked": [
+        "src/app/application/events_save.c",
+        "src/app/application/internal.h",
+        "src/app/application/unified_events.c",
+        "src/app/application/unified_events.h"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-event-dictionary-index-20261012",
+      "conclusion": "Event resource and registration lookup uses the common index; retained row order, resource custody and existing save encoding are preserved. Normal build and seven core suites passed; no live or whole-frame allocation claim."
     }
   ],
   "verification_limits": [

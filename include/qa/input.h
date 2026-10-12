@@ -2,6 +2,7 @@
 #define QA_INPUT_H
 
 #include "qa/math.h"
+#include "qa/arena.h"
 #include "qa/console.h"
 #include "qa/movement.h"
 
@@ -12,10 +13,12 @@
  */
 typedef struct qa_input_button {
     uint64_t inline_sources[4], *sources;
+    qa_arena source_storage;
     size_t count, capacity;
     double down_ms, held_ms;
     bool pressed, released;
 } qa_input_button;
+bool qa_input_button_prepare(qa_input_button *, size_t source_capacity, qa_error *);
 bool qa_input_button_down(qa_input_button *, uint64_t source, double time_ms, qa_error *);
 void qa_input_button_up(qa_input_button *, uint64_t source, double time_ms, double missing_ms);
 void qa_input_button_release(qa_input_button *, double time_ms);
@@ -397,6 +400,7 @@ typedef struct qa_input_seat_options {
     void *context_user;
 } qa_input_seat_options;
 qa_input_seat *qa_input_seat_create(const qa_input_seat_options *, qa_error *);
+bool qa_input_seat_prepare_sources(qa_input_seat *, size_t physical_capacity, qa_error *);
 /* Release held input before retiring the console. Destruction only frees
  * storage; it does not dispatch callbacks. Event callbacks may change focus or
  * bindings, but the current seat must live until the callback returns. */

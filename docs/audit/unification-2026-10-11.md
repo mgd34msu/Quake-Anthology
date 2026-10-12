@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `8b8b5eeb`.
+Follow-up source changes were reviewed through main `d5510fd4`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 188 have source fixes
+There are **374 overlapping source-review observations**: 189 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 183 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 182 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -372,3 +372,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `be9e1028` / J32-09: World visibility and Q1 mirror traversal now use one read-only BSP tree visitor with caller-owned scratch and caller-defined ordering, pruning and light-mask payload. Private traversal engines/types are deleted. Existing gameplay BSP fixture covers both child orders, between callbacks, payload propagation, pruning and early stop; normal production build and seven core suites passed. Original renderer policy remains caller data; no screenshot or performance claim. Records: `/tmp/qa-ta3196-shared-render-tree-20261012`.
 
 - `8b8b5eeb` / 05-H1: Supply actor/timer payloads now use common per-pair pools backed by one retained arena, prepared to actual actor capacity and exact profile timer extent. Admission/spawn/cheat/capture vectors use independent control leases, and retired rows are returned only after the outer callback scope leaves. Timer activation, int32 arithmetic, save order and candidate restore custody remain unchanged. Normal production build and seven core suites passed. Additional nested admission/cold restore can extend common storage; deeper inventory admission allocations remain outside this slice, so no whole-frame zero-allocation or live/performance claim. Records: `/tmp/qa-ta3196-supply-pools-20261012`.
+
+- `d5510fd4` / 05-I5: Event resource and registration lookup uses the common index; retained row order, resource custody and existing save encoding are preserved. Normal build and seven core suites passed; no live or whole-frame allocation claim. Records: `/tmp/qa-ta3196-event-dictionary-index-20261012`.

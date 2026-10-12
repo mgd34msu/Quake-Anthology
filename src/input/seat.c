@@ -1,9 +1,52 @@
 #include "internal.h"
 #include "qa/text.h"
+#include "qa/command_lexer.h"
 #include "qa/input_release.h"
 #include <float.h>
 #include <stdio.h>
 
+static bool source_storage_prepare(qa_input_seat *seat,size_t physical,size_t bindings,
+    size_t commands,qa_error *error) {
+    if(physical<seat->physical_capacity) physical=seat->physical_capacity;
+    if(bindings>SIZE_MAX-physical || seat->held_count>SIZE_MAX-physical-bindings) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"Input source storage overflow");return false;
+    }
+    size_t held=physical+bindings+seat->held_count;
+    if(commands>SIZE_MAX-held) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"Input source storage overflow");return false;
+    }
+    if(held>seat->held_capacity) {
+        size_t capacity=seat->held_capacity?seat->held_capacity:16;
+        while(capacity<held && capacity<=SIZE_MAX/2) capacity*=2;
+        if(capacity<held) capacity=held;
+        if(capacity>SIZE_MAX/sizeof(*seat->held)) {
+            qa_error_set(error,QA_ERROR_MEMORY,0,"Input source storage overflow");return false;
+        }
+        seat->held_storage.sealed=false;
+        qa_held_binding *rows=qa_arena_grow(&seat->held_storage,seat->held,
+            seat->held_count*sizeof(*rows),capacity*sizeof(*rows),_Alignof(qa_held_binding),error);
+        qa_arena_seal(&seat->held_storage);
+        if(!rows) return false;
+        seat->held=rows;seat->held_capacity=capacity;
+    }
+    size_t needed=held+commands;
+    for(size_t action=0;action<QA_INPUT_ACTION_COUNT;++action) {
+        qa_input_button *button=&seat->buttons[action];
+        size_t capacity=button->sources?button->capacity:4;
+        while(capacity<needed && capacity<=SIZE_MAX/2) capacity*=2;
+        if(capacity<needed) capacity=needed;
+        if(!qa_input_button_prepare(button,capacity,error)) return false;
+        qa_arena_seal(&button->source_storage);
+    }
+    seat->physical_capacity=physical;
+    return true;
+}
+bool qa_input_seat_prepare_sources(qa_input_seat *seat,size_t physical,qa_error *error) {
+    if(!seat) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Input source preparation requires its seat");return false;}
+    if(!source_storage_prepare(seat,physical,seat->binding_count,
+        qa_strings_count(seat->command_sources),error)) return false;
+    seat->physical_prepared=true;return true;
+}
 bool qa_input_reserve(void **data, size_t *capacity, size_t needed, size_t stride,
                       qa_error *error) {
     if (needed <= *capacity)
@@ -38,12 +81,20 @@ uint64_t qa_input_physical_source(qa_physical_input input) {
     return ((uint64_t)input.kind << 61) | ((uint64_t)(uint32_t)input.device << 24) |
            ((uint64_t)input.code << 1) | (uint64_t)input.positive;
 }
-bool qa_input_command_source(qa_input_seat *s, const char *text, uint64_t *out, qa_error *error) {
-    qa_string_id id;
-    if (!qa_strings_intern_cstr(s->command_sources, text, &id, error))
-        return false;
+static bool command_source_span(qa_input_seat *s,qa_bytes text,uint64_t *out,qa_error *error) {
+    if(!s->command_sources && !qa_strings_create(&s->command_sources,error)) return false;
+    qa_string_id id=qa_strings_find(s->command_sources,text);
+    if(!id) {
+        size_t commands=qa_strings_count(s->command_sources);
+        if(commands==SIZE_MAX || !source_storage_prepare(s,s->physical_capacity,
+            s->binding_count,commands+1,error) ||
+           !qa_strings_intern(s->command_sources,text,&id,error)) return false;
+    }
     *out = UINT64_C(0x8000000000000000) | id;
     return true;
+}
+bool qa_input_command_source(qa_input_seat *s,const char *text,uint64_t *out,qa_error *error) {
+    return command_source_span(s,(qa_bytes){(const uint8_t *)text,strlen(text)},out,error);
 }
 bool qa_input_physical_valid(qa_physical_input input) {
     if (input.kind == QA_PHYSICAL_KEY)
@@ -135,7 +186,7 @@ void qa_input_seat_destroy(qa_input_seat *s) {
         qa_input_button_destroy(&s->buttons[i]);
     qa_strings_destroy(s->command_sources);
     free(s->bindings);
-    free(s->held);
+    qa_arena_destroy(&s->held_storage);
     free(s->ui);
     free(s->catchers);
     qa_arena_destroy(&s->binding_text);
@@ -438,6 +489,10 @@ static void binding_candidate_dispose(qa_input_seat *candidate) {
     qa_input_seat_unbind_all(candidate);
     free(candidate->bindings);
     qa_arena_destroy(&candidate->binding_text);
+    qa_arena_destroy(&candidate->held_storage);
+    for(size_t action=0;action<QA_INPUT_ACTION_COUNT;++action)
+        qa_input_button_destroy(&candidate->buttons[action]);
+    qa_strings_destroy(candidate->command_sources);
 }
 bool qa_input_seat_replace_bindings(qa_input_seat *s, const qa_input_binding *bindings,
                                     size_t count, qa_error *error) {
@@ -553,6 +608,12 @@ bool qa_input_seat_action(qa_input_seat *s, qa_input_action action, uint64_t sou
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid input action");
         return false;
     }
+    if(down && !s->physical_prepared) {
+        qa_input_button *button=&s->buttons[action];
+        size_t capacity=button->sources?button->capacity:4;
+        if(button->count==capacity && !source_storage_prepare(s,button->count+1,
+            s->binding_count,qa_strings_count(s->command_sources),error)) return false;
+    }
     if (down)
         return qa_input_button_down(&s->buttons[action], source, time, error);
     qa_input_button_up(&s->buttons[action], source, time, 10);
@@ -565,6 +626,54 @@ static uint64_t command_key(qa_physical_input p) {
         return QA_KEY_MOUSE1 + qa_input_mouse_button(p.code) - 1;
     return UINT64_C(65536) + (uint64_t)(uint32_t)p.device * 64 +
            (p.kind == QA_PHYSICAL_BUTTON ? p.code : 32 + p.code * 2 + (unsigned)p.positive);
+}
+static bool binding_command_sources_prepare(qa_input_seat *seat,const qa_binding_record *record,
+    qa_error *error) {
+    if(!record || record->view.kind!=QA_BIND_COMMAND) return true;
+    char source[21];uint64_t id;
+    snprintf(source,sizeof(source),"%llu",(unsigned long long)command_key(record->view.input));
+    if(!qa_input_command_source(seat,source,&id,error)) return false;
+    for(unsigned rule=QA_RULESET_NETQUAKE;rule<=QA_RULESET_Q3;++rule) {
+        const char *text=record->view.command;
+        size_t left=strlen(text);
+        while(left) {
+            size_t length=qa_command_separator(text,left,(qa_ruleset_id)rule);
+            size_t consumed=length<left?length+1:length;
+            const char *segment=text;
+            while(length && (unsigned char)*segment<=32) {++segment;--length;}
+            if(length && *segment=='+') {
+                qa_command_token_span command,source_token;
+                qa_error lexical={0};
+                if(qa_command_token_next(segment,length,0,(qa_ruleset_id)rule,false,&command,&lexical) &&
+                   command.found && qa_command_token_next(segment,length,command.end,(qa_ruleset_id)rule,
+                       false,&source_token,&lexical) && source_token.found &&
+                   !command_source_span(seat,(qa_bytes){(const uint8_t *)segment+source_token.start,
+                       source_token.size},&id,error)) return false;
+            }
+            text+=consumed;left-=consumed;
+        }
+    }
+    return true;
+}
+static bool binding_sources_prepare(qa_input_seat *seat,const qa_input_seat *other,
+    const qa_binding_record *extra,qa_error *error) {
+    if(!seat->options.console) return true;
+    bool ok=true;
+    const qa_input_seat *owners[]={seat,other};
+    for(size_t owner=0;ok && owner<sizeof(owners)/sizeof(*owners);++owner) {
+        const qa_input_seat *source=owners[owner];
+        if(!source) continue;
+        for(size_t index=0;ok && index<source->binding_count;++index)
+            ok=binding_command_sources_prepare(seat,source->bindings[index],error);
+        for(size_t index=0;ok && index<source->held_count;++index)
+            ok=binding_command_sources_prepare(seat,source->held[index].binding,error);
+    }
+    if(ok) ok=binding_command_sources_prepare(seat,extra,error);
+    if(!ok) return false;
+    size_t bindings=other && other->binding_count>seat->binding_count?other->binding_count:seat->binding_count;
+    if(extra && bindings==SIZE_MAX) {qa_error_set(error,QA_ERROR_MEMORY,0,"Input binding count overflow");return false;}
+    return source_storage_prepare(seat,seat->physical_capacity,bindings+(extra!=NULL),
+        qa_strings_count(seat->command_sources),error);
 }
 /* uint64 digits, the largest finite double's integer digits, two spaces,
  * newline and NUL. The reservation uses the actual formatted length. */
@@ -650,6 +759,7 @@ static bool binding_text_prepare(qa_input_seat *seat, const qa_input_seat *other
                 return false;
     }
     if (!binding_text_bound(extra, tail, (size_t)written, &maximum, error)) return false;
+    if(!binding_sources_prepare(seat,other,extra,error)) return false;
     if (!maximum) {
         qa_arena_seal(&seat->binding_text); return true;
     }
@@ -714,9 +824,12 @@ static bool digital(qa_input_seat *s, qa_physical_input input, bool down, double
     if (down) {
         if (index < s->held_count)
             return true;
-        if (!qa_input_reserve((void **)&s->held, &s->held_capacity, s->held_count + 1,
-                              sizeof(*s->held), error))
+        if(!s->physical_prepared && !source_storage_prepare(s,s->held_count+1,
+            s->binding_count,qa_strings_count(s->command_sources),error)) return false;
+        if(s->held_count==s->held_capacity) {
+            qa_error_set(error,QA_ERROR_MEMORY,0,"Physical input exceeds its admitted source storage");
             return false;
+        }
         qa_binding_record *binding = !consumed && s->focus == QA_INPUT_GAME && s->focused
                                          ? binding_find(s, input, NULL)
                                          : NULL;
