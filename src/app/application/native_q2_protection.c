@@ -162,7 +162,9 @@ static bool create_layout(const application_native_q2_protection_options *option
         } else return fail(e,"Native protection admission is undeclared");
         qa_json_id storage=qa_json_get(d,row,"storage");
         if(qa_json_type(d,storage)!=QA_JSON_ARRAY||!qa_json_size(d,storage)) return fail(e,"Native protection lacks its real source storage");
-        application_native_q2_armor_options armor={options->callbacks,qa_session_strings(options->session),options->owner};
+        application_native_q2_armor_options armor={.callbacks=options->callbacks,
+            .strings=qa_session_strings(options->session),.owner=options->owner,
+            .actors=qa_session_actors(options->session)};
         if(!application_native_q2_armor_create(&armor,definition->channel==QA_PROTECTION_REGULAR?storage:QA_JSON_NONE,
             definition->channel==QA_PROTECTION_POWERED?storage:QA_JSON_NONE,false,&definition->armor,e)) return false;
         definition->count=qa_json_size(d,storage);

@@ -15,6 +15,7 @@ typedef struct application_native_q2_armor_options {
     application_native_q2_callbacks *callbacks;
     qa_strings *strings;
     qa_actor_owner owner;
+    const qa_actor_registry *actors;
 } application_native_q2_armor_options;
 typedef bool (*application_native_q2_armor_changed_fn)(void *,const qa_armor *,const qa_armor *,qa_error *);
 

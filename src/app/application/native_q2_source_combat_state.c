@@ -103,7 +103,8 @@ bool application_native_q2_source_combat_state_create(struct application_native_
     if(!none&&!q2&&!qa_json_string_equal(d,qa_json_get(d,armor,"kind"),"source"))
         return application_fail(e,QA_ERROR_FORMAT,"Declared combat armor storage kind is unknown");
     application_native_q2_armor_options options={.callbacks=n->callbacks,
-        .strings=qa_session_strings(n->provider->application->session),.owner=n->provider->owner};
+        .strings=qa_session_strings(n->provider->application->session),.owner=n->provider->owner,
+        .actors=qa_session_actors(n->provider->application->session)};
     return application_native_q2_armor_create(&options,none?QA_JSON_NONE:qa_json_get(d,armor,"regular"),
         none?QA_JSON_NONE:qa_json_get(d,armor,"power"),q2,&o->armor,e);
 }

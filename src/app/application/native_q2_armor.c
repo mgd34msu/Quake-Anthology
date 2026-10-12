@@ -1,5 +1,6 @@
 #include "native_q2_armor.h"
 #include "qa/native_observe.h"
+#include "qa/pool.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,11 +34,18 @@ typedef struct armor_watch_field {
     qa_native_address address;
     qa_native_write_observer *binding;
 } armor_watch_field;
+typedef struct armor_plan {
+    size_t storage_slot,count;
+    armor_store stores[];
+} armor_plan;
 struct application_native_q2_armor {
     application_native_q2_armor_options options;
     armor_regular *regular;
     armor_power *power;
     size_t regular_count,power_count,watch_count;
+    qa_pool plans,watches;
+    qa_arena storage;
+    size_t storage_chunk;
     bool q2;
 };
 struct application_native_q2_armor_watch {
@@ -45,11 +53,11 @@ struct application_native_q2_armor_watch {
     qa_actor_id actor;
     application_native_q2_armor_changed_fn changed;
     void *context;
-    armor_watch_field *fields;
-    size_t count;
+    size_t storage_slot,count;
     qa_armor previous;
     unsigned entered;
     bool closing;
+    armor_watch_field fields[];
 };
 static bool fail(qa_error *e,const char *text)
 { qa_error_set(e,QA_ERROR_FORMAT,0,"%s",text); return false; }
@@ -233,7 +241,23 @@ static bool create_layout(const application_native_q2_armor_options *options,
         }
         for(size_t j=0;j<i;++j) if(o->power[j].kind==p->kind) return fail(e,"Native powered armor selection repeats a kind");
     }
-    return fields_valid(o,e);
+    if(!fields_valid(o,e)) return false;
+    size_t fields=field_count(o);
+    if(fields>(SIZE_MAX-sizeof(armor_plan))/sizeof(armor_store)||
+        fields>(SIZE_MAX-sizeof(application_native_q2_armor_watch))/sizeof(armor_watch_field)) {
+        qa_error_set(e,QA_ERROR_MEMORY,0,"Native armor observation storage size overflows"); return false;
+    }
+    if(options->actors) o->storage_chunk=qa_actors_capacity(options->actors);
+    else {
+        qa_native_entity_table table;
+        if(!qa_native_entity_table_get(application_native_q2_callbacks_instance(options->callbacks),&table,e)) return false;
+        o->storage_chunk=table.capacity;
+    }
+    return qa_pool_prepare(&o->plans,&o->storage,o->storage_chunk,
+        sizeof(armor_plan)+fields*sizeof(armor_store),_Alignof(armor_plan),e)&&
+        qa_pool_prepare(&o->watches,&o->storage,o->storage_chunk,
+            sizeof(application_native_q2_armor_watch)+fields*sizeof(armor_watch_field),
+            _Alignof(application_native_q2_armor_watch),e);
 }
 bool application_native_q2_armor_create(const application_native_q2_armor_options *options,
     qa_json_id regular,qa_json_id power,bool q2,application_native_q2_armor **out,qa_error *e)
@@ -334,7 +358,7 @@ static bool enable_store(application_native_q2_armor *o,qa_actor_id actor,const 
     if(!store(o,actor,&p->enabled,(double)signed_value,stores,count,e)) return false;
     return !active||select_store(o,actor,&p->selection,true,stores,count,e);
 }
-static bool plan(application_native_q2_armor *o,qa_actor_id actor,const qa_armor *next,armor_store **out,size_t *out_count,qa_error *e)
+static bool plan(application_native_q2_armor *o,qa_actor_id actor,const qa_armor *next,armor_plan **out,qa_error *e)
 {
     qa_armor before,after; armor_regular *regular=NULL; armor_power *power=NULL;
     if(!next||!application_native_q2_armor_read(o,actor,&before,e)) return false;
@@ -347,8 +371,12 @@ static bool plan(application_native_q2_armor *o,qa_actor_id actor,const qa_armor
         for(size_t i=0;i<o->power_count;++i) if(o->power[i].kind==next->powered.kind) power=o->power+i;
         if(!power||next->powered.source_owner!=o->options.owner||next->powered.source_kind!=QA_POWER_SOURCE_GENERIC) return fail(e,"Native powered armor differs from its actual source owner");
     }
-    size_t maximum=field_count(o),count=0; armor_store *stores=maximum?calloc(maximum,sizeof(*stores)):NULL;
-    if(maximum&&!stores) { qa_error_set(e,QA_ERROR_MEMORY,0,"Preparing native armor stores"); return false; }
+    if(o->plans.head==SIZE_MAX&&!qa_pool_extend(&o->plans,&o->storage,
+        o->storage_chunk?o->storage_chunk:1,e)) return false;
+    size_t slot,count=0; armor_plan *prepared=qa_pool_take(&o->plans,&slot);
+    if(!prepared) { qa_error_set(e,QA_ERROR_MEMORY,0,"Preparing native armor stores"); return false; }
+    memset(prepared,0,o->plans.stride); prepared->storage_slot=slot;
+    armor_store *stores=prepared->stores;
     bool ok=true;
     if(next->regular.kind==QA_ARMOR_NONE) for(size_t i=0;ok&&i<o->regular_count;++i) {
         bool active; ok=selected(o,actor,&o->regular[i].selection,NULL,0,&active,e);
@@ -370,21 +398,27 @@ static bool plan(application_native_q2_armor *o,qa_actor_id actor,const qa_armor
     if(ok) ok=(after.powered.kind==next->powered.kind&&after.powered.cells==requested_cells&&
         (empty?after.regular.kind==QA_ARMOR_NONE:after.regular.kind==next->regular.kind&&after.regular.item==next->regular.item)&&
         after.regular.points==requested_points)||fail(e,"Native source selections cannot represent the requested armor");
-    if(!ok) { free(stores); return false; } *out=stores; *out_count=count; return true;
+    if(!ok) { qa_pool_release(&o->plans,slot); return false; }
+    prepared->count=count; *out=prepared; return true;
 }
 bool application_native_q2_armor_validate(application_native_q2_armor *o,qa_actor_id actor,const qa_armor *next,qa_error *e)
-{ armor_store *stores=NULL; size_t count; bool ok=o&&plan(o,actor,next,&stores,&count,e); free(stores); return ok; }
+{
+    armor_plan *prepared=NULL; bool ok=o&&plan(o,actor,next,&prepared,e);
+    if(prepared) qa_pool_release(&o->plans,prepared->storage_slot);
+    return ok;
+}
 bool application_native_q2_armor_write(application_native_q2_armor *o,qa_actor_id actor,const qa_armor *next,qa_error *e)
 {
-    armor_store *stores=NULL; size_t count=0; if(!o||!plan(o,actor,next,&stores,&count,e)) return false;
+    armor_plan *prepared=NULL; if(!o||!plan(o,actor,next,&prepared,e)) return false;
+    armor_store *stores=prepared->stores;
     bool ok=true;
-    for(size_t i=0;ok&&i<count;++i) {
+    for(size_t i=0;ok&&i<prepared->count;++i) {
         qa_native_address address;
         ok=application_native_q2_field_address(o->options.callbacks,actor,stores[i].field,&address,e)&&address==stores[i].address;
         if(ok) ok=application_native_q2_callbacks_scalar_write(o->options.callbacks,address,stores[i].field->encoding,stores[i].value,e);
         else if(!e||e->code==QA_OK) fail(e,"Native armor store changed its original address");
     }
-    free(stores); return ok;
+    qa_pool_release(&o->plans,prepared->storage_slot); return ok;
 }
 static bool watched(void *context,qa_native_instance *instance,const qa_native_write_event *event,qa_error *e)
 {
@@ -403,11 +437,13 @@ bool application_native_q2_armor_observe(application_native_q2_armor *o,qa_actor
     application_native_q2_armor_changed_fn changed,void *context,application_native_q2_armor_watch **out,qa_error *e)
 {
     if(!o||!changed||!out||*out) return fail(e,"Native armor observation requires an empty owned scope");
-    application_native_q2_armor_watch *watch=calloc(1,sizeof(*watch));
+    if(o->watches.head==SIZE_MAX&&!qa_pool_extend(&o->watches,&o->storage,
+        o->storage_chunk?o->storage_chunk:1,e)) return false;
+    size_t slot; application_native_q2_armor_watch *watch=qa_pool_take(&o->watches,&slot);
     if(!watch) { qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining native armor write scope"); return false; }
+    memset(watch,0,o->watches.stride); watch->storage_slot=slot;
     watch->owner=o; watch->actor=actor; watch->changed=changed; watch->context=context; *out=watch; ++o->watch_count;
-    watch->count=field_count(o); watch->fields=watch->count?calloc(watch->count,sizeof(*watch->fields)):NULL;
-    if(watch->count&&!watch->fields) { qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining native armor watched fields"); return false; }
+    watch->count=field_count(o);
     if(!application_native_q2_armor_read(o,actor,&watch->previous,e)) return false;
     for(size_t i=0;i<watch->count;++i) {
         armor_watch_field *f=watch->fields+i; f->owner=watch; f->field=field_at(o,i);
@@ -423,11 +459,12 @@ bool application_native_q2_armor_observe_end(application_native_q2_armor_watch *
     application_native_q2_armor_watch *watch=*owner;
     if(watch->entered) return fail(e,"Native armor observation is entered");
     watch->closing=true;
-    if(watch->fields) for(size_t i=watch->count;i>0;--i) {
+    for(size_t i=watch->count;i>0;--i) {
         armor_watch_field *f=watch->fields+i-1;
         if(f->binding) { if(!qa_native_unobserve_writes(f->binding,e)) return false; f->binding=NULL; }
     }
-    --watch->owner->watch_count; free(watch->fields); free(watch); *owner=NULL; return true;
+    --watch->owner->watch_count; qa_pool_release(&watch->owner->watches,watch->storage_slot);
+    *owner=NULL; return true;
 }
 bool application_native_q2_armor_observe_cancel(application_native_q2_armor_watch *watch,qa_error *e)
 {
@@ -440,12 +477,13 @@ bool application_native_q2_armor_destroy(application_native_q2_armor **owner,qa_
 {
     if(!owner||!*owner) return true;
     application_native_q2_armor *o=*owner;
-    if(o->watch_count) return fail(e,"Native armor retains source write scopes");
+    if(o->watch_count||o->plans.active) return fail(e,"Native armor retains source write scopes");
     if(o->regular) for(size_t i=0;i<o->regular_count;++i) {
         application_native_q2_field_dispose(&o->regular[i].selection.field); application_native_q2_field_dispose(&o->regular[i].points);
     }
     if(o->power) for(size_t i=0;i<o->power_count;++i) {
         application_native_q2_field_dispose(&o->power[i].selection.field); application_native_q2_field_dispose(&o->power[i].cells); application_native_q2_field_dispose(&o->power[i].enabled);
     }
+    qa_arena_destroy(&o->storage);
     free(o->regular); free(o->power); free(o); *owner=NULL; return true;
 }

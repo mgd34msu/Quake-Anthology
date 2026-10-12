@@ -14,6 +14,7 @@ typedef struct attack_item {
 } attack_item;
 typedef struct attack_factor {
     struct attack_factor *next, *previous;
+    size_t storage_slot;
     unsigned calls;
     qa_actor_id actor;
     double factor;
@@ -36,6 +37,7 @@ typedef struct attack_frame {
 } attack_frame;
 typedef struct attack_hook {
     struct attack_hook *next;
+    size_t storage_slot;
     struct application_native_q2_attack *owner;
     qa_native_entry_observer *binding;
     qa_native_address address;
@@ -111,8 +113,8 @@ struct application_native_q2_attack {
     attack_factor *factors;
     attack_projectile *projectiles;
     qa_actor_index factor_index, projectile_index;
-    qa_pool projectile_pool;
-    qa_arena projectile_storage;
+    qa_pool factor_pool, projectile_pool, hook_pool;
+    qa_arena factor_storage, projectile_storage, hook_storage;
     attack_frame *current;
     uint64_t sequence;
     uint32_t dispatcher_entry, dispatcher_argument, dispatcher_count;
@@ -188,9 +190,11 @@ static attack_factor *factor_for(struct application_native_q2_attack *p, qa_acto
 static attack_factor *factor_create(struct application_native_q2_attack *p, qa_actor_id actor,
     qa_error *error)
 {
-    attack_factor *factor = calloc(1, sizeof(*factor));
+    if (p->factor_pool.head == SIZE_MAX && !qa_pool_extend(&p->factor_pool,
+            &p->factor_storage, p->factor_pool.first_capacity ? p->factor_pool.first_capacity : 1, error)) return NULL;
+    size_t slot; attack_factor *factor = qa_pool_take(&p->factor_pool, &slot);
     if (!factor) { application_fail(error, QA_ERROR_MEMORY, "Retaining original weapon modifier result"); return NULL; }
-    *factor = (attack_factor){.actor = actor, .next = p->factors};
+    *factor = (attack_factor){.storage_slot = slot, .actor = actor, .next = p->factors};
     if (factor->next) factor->next->previous = factor;
     p->factors = factor;
     qa_actor_index_put(&p->factor_index, actor, (size_t)(uintptr_t)factor);
@@ -202,7 +206,7 @@ static void factor_reclaim(struct application_native_q2_attack *p, attack_factor
     if (factor->previous) factor->previous->next = factor->next;
     else p->factors = factor->next;
     if (factor->next) factor->next->previous = factor->previous;
-    free(factor);
+    qa_pool_release(&p->factor_pool, factor->storage_slot);
 }
 static attack_projectile *projectile_for(struct application_native_q2_attack *p, qa_actor_id actor)
 {
@@ -227,6 +231,8 @@ bool application_native_q2_attack_prepare(struct application_native_q2 *engine, 
     const qa_actor_registry *registry = qa_session_actors(engine->provider->application->session);
     if (!qa_actor_index_create(&p->factor_index, registry, NULL, error) ||
         !qa_actor_index_create(&p->projectile_index, registry, NULL, error) ||
+        !qa_pool_prepare(&p->factor_pool, &p->factor_storage,
+            qa_actors_capacity(registry), sizeof(attack_factor), _Alignof(attack_factor), error) ||
         !qa_pool_reserve_pages(&p->projectile_pool, &p->projectile_storage,
             qa_actors_capacity(registry), sizeof(attack_projectile), _Alignof(attack_projectile), error)) return false;
     if (!qa_json_parse(qa_native_declaration_primary(engine->declaration), &p->document, error)) return false;
@@ -280,6 +286,11 @@ bool application_native_q2_attack_prepare(struct application_native_q2 *engine, 
         p->item_classname > p->item_stride || p->pointer_bytes > p->item_stride - p->item_classname ||
         p->item_flags > p->item_stride || p->item_stride - p->item_flags < 4)
         return application_fail(error, QA_ERROR_FORMAT, "Native attack producer differs from its source descriptors");
+    p->items = qa_arena_alloc(&p->hook_storage, p->item_count * sizeof(*p->items), _Alignof(attack_item), error);
+    if (!p->items || !qa_pool_prepare(&p->hook_pool, &p->hook_storage,
+            p->item_count, sizeof(attack_hook), _Alignof(attack_hook), error)) return false;
+    memset(p->items, 0, p->item_count * sizeof(*p->items));
+    qa_arena_seal(&p->hook_storage);
     if(!decision_descriptors_prepare(p,weapons,committed,decisions,error)) return false;
     qa_json_id provenance = qa_json_get(doc, weapons, "provenance");
     if (qa_json_type(doc, provenance) != QA_JSON_OBJECT)
@@ -451,9 +462,7 @@ bool application_native_q2_attack_activate(struct application_native_q2 *engine,
     if (!engine->provider->state.native.host || !engine->initialized)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native attack activation requires initialized original item storage");
     if (!p->items_ready) {
-        free(p->items); p->items = NULL; p->count = 0;
-        p->items = calloc(p->item_count, sizeof(*p->items));
-        if (!p->items) return application_fail(error, QA_ERROR_MEMORY, "Retaining qualified native weapon callbacks");
+        p->count = 0;
         for (uint32_t i = 0; i < p->item_count; ++i) {
             qa_native_address record, name, think; uint8_t flags[4]; qa_buffer text = {0};
             if (!qa_native_rva(instance(p), (uint64_t)p->item_table + (uint64_t)i * p->item_stride, p->item_stride, &record, error) ||
@@ -486,9 +495,10 @@ bool application_native_q2_attack_activate(struct application_native_q2 *engine,
         attack_hook *hook = p->weapons;
         while (hook && hook->address != p->items[i].think) hook = hook->next;
         if (!hook) {
-            hook = calloc(1, sizeof(*hook));
+            size_t slot; hook = qa_pool_take(&p->hook_pool, &slot);
             if (!hook) return application_fail(error, QA_ERROR_MEMORY, "Retaining native weapon entry lease");
-            hook->owner = p; hook->address = p->items[i].think; hook->next = p->weapons; p->weapons = hook;
+            *hook = (attack_hook){.storage_slot = slot, .owner = p,
+                .address = p->items[i].think, .next = p->weapons}; p->weapons = hook;
         }
         if (!hook->binding && !qa_native_observe_entry(instance(p), hook->address, &weapon_sig,
                 weapon_entry, hook, &hook->binding, error)) return false;
@@ -667,7 +677,8 @@ bool application_native_q2_attack_suspend(struct application_native_q2 *engine, 
         if (*bindings[i] && !qa_native_unobserve_entry(*bindings[i], error)) return false;
         *bindings[i] = NULL;
     }
-    while (p->weapons) { attack_hook *next = p->weapons->next; free(p->weapons); p->weapons = next; }
+    while (p->weapons) { attack_hook *next = p->weapons->next;
+        qa_pool_release(&p->hook_pool, p->weapons->storage_slot); p->weapons = next; }
     return true;
 }
 bool application_native_q2_attack_close(struct application_native_q2 *engine, qa_error *error)
@@ -676,10 +687,11 @@ bool application_native_q2_attack_close(struct application_native_q2 *engine, qa
     if (!p) return true;
     if (!application_native_q2_attack_suspend(engine, error)) return false;
     qa_actor_index_destroy(&p->factor_index); qa_actor_index_destroy(&p->projectile_index);
-    while (p->factors) { attack_factor *next = p->factors->next; free(p->factors); p->factors = next; }
+    qa_arena_destroy(&p->factor_storage);
     qa_arena_destroy(&p->projectile_storage);
+    qa_arena_destroy(&p->hook_storage);
     qa_arena_destroy(&p->decision_storage);
-    qa_json_destroy(p->document); free(p->decisions); free(p->items); free(p); engine->source_attack = NULL;
+    qa_json_destroy(p->document); free(p->decisions); free(p); engine->source_attack = NULL;
     return true;
 }
 
@@ -688,8 +700,8 @@ struct application_native_q2_attack_restore {
     attack_factor *factors;
     attack_projectile *projectiles;
     qa_actor_index factor_index, projectile_index;
-    qa_pool projectile_pool;
-    qa_arena projectile_storage;
+    qa_pool factor_pool, projectile_pool;
+    qa_arena factor_storage, projectile_storage;
 };
 static bool attack_fields(qa_source_save_io *io, qa_attack *attack)
 {
@@ -737,7 +749,7 @@ void application_native_q2_attack_restore_abort(struct application_native_q2_att
 {
     if (!prepared) return;
     qa_actor_index_destroy(&prepared->factor_index); qa_actor_index_destroy(&prepared->projectile_index);
-    while (prepared->factors) { attack_factor *next = prepared->factors->next; free(prepared->factors); prepared->factors = next; }
+    qa_arena_destroy(&prepared->factor_storage);
     qa_arena_destroy(&prepared->projectile_storage);
     free(prepared);
 }
@@ -758,15 +770,21 @@ bool application_native_q2_attack_restore_prepare(struct application_native_q2 *
     const qa_actor_registry *registry = qa_session_actors(engine->provider->application->session);
     bool ok = qa_actor_index_create(&prepared->factor_index, registry, NULL, error) &&
         qa_actor_index_create(&prepared->projectile_index, registry, NULL, error) &&
+        qa_pool_prepare(&prepared->factor_pool, &prepared->factor_storage,
+            qa_actors_capacity(registry), sizeof(attack_factor), _Alignof(attack_factor), error) &&
         qa_pool_reserve_pages(&prepared->projectile_pool, &prepared->projectile_storage,
             qa_actors_capacity(registry), sizeof(attack_projectile), _Alignof(attack_projectile), error) &&
         qa_source_save_reader(&io, engine->provider->application->session, bytes, error);
     size_t count = 0;
     if (ok) ok = qa_source_save_u64(&io, &prepared->sequence) && qa_source_save_count(&io, &count, 65536);
     for (size_t i = 0; ok && i < count; ++i) {
-        attack_factor *row = calloc(1, sizeof(*row));
+        if (prepared->factor_pool.head == SIZE_MAX && !qa_pool_extend(&prepared->factor_pool,
+                &prepared->factor_storage, prepared->factor_pool.first_capacity ? prepared->factor_pool.first_capacity : 1, error)) {
+            ok = false; break;
+        }
+        size_t storage_slot; attack_factor *row = qa_pool_take(&prepared->factor_pool, &storage_slot);
         if (!row) { ok = application_fail(error, QA_ERROR_MEMORY, "Preparing native modifier continuation"); break; }
-        *row = (attack_factor){.next = prepared->factors};
+        *row = (attack_factor){.storage_slot = storage_slot, .next = prepared->factors};
         if (row->next) row->next->previous = row;
         prepared->factors = row;
         ok = qa_source_save_actor(&io, &row->actor) && qa_source_save_f64(&io, &row->factor) &&
@@ -816,14 +834,16 @@ void application_native_q2_attack_restore_commit(struct application_native_q2 *e
     if (!prepared) return;
     struct application_native_q2_attack *p = engine->source_attack;
     qa_actor_index_destroy(&p->factor_index); qa_actor_index_destroy(&p->projectile_index);
-    while (p->factors) { attack_factor *next = p->factors->next; free(p->factors); p->factors = next; }
+    qa_arena_destroy(&p->factor_storage);
     qa_arena_destroy(&p->projectile_storage);
     p->sequence = prepared->sequence; p->factors = prepared->factors; p->projectiles = prepared->projectiles;
     p->factor_index = prepared->factor_index; p->projectile_index = prepared->projectile_index;
+    p->factor_pool = prepared->factor_pool;
+    p->factor_storage = prepared->factor_storage;
     p->projectile_pool = prepared->projectile_pool;
     p->projectile_storage = prepared->projectile_storage;
     free(prepared);
     /* Raw descriptor pointers belong to the candidate image and are resolved
      * again before observers are rebound; none are saved or transplanted. */
-    free(p->items); p->items = NULL; p->count = 0; p->items_ready = false;
+    p->count = 0; p->items_ready = false;
 }
