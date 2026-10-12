@@ -1,5 +1,7 @@
 #include "selected_authored_media_internal.h"
 
+static bool admitted_valid(const q3n_selected_authored_media *, qa_error *);
+
 static char *copy(const char *text, qa_error *error)
 {
     size_t length = strlen(text);
@@ -104,6 +106,7 @@ bool q3n_selected_authored_prepare(q3n_selected_authored_media *owner, bool view
     if (!q3n_selected_authored_idle(owner) || !read || !out || !qa_q3_assets_idle(owner->options.assets))
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Authored Q3 admission requires its actual idle observation and registry");
     if (!current(context, read, error)) return false;
+    bool admitting = !owner->gun_ready || (view ? !owner->view_ready : !owner->world_ready);
     bool prepare_attachments = view && !owner->view_ready;
     q3n_selected_weapon_attachment *models = prepare_attachments && owner->options.attachment_count ?
         calloc(owner->options.attachment_count, sizeof(*models)) : NULL;
@@ -136,6 +139,7 @@ bool q3n_selected_authored_prepare(q3n_selected_authored_media *owner, bool view
         if (okay) candidate.world_ready = true;
     }
     if (okay) okay = current(context, read, error);
+    if (okay && admitting) okay = admitted_valid(&candidate, error);
     if (okay) {
         if (models) free(owner->attachment_bindings);
         *owner = candidate; models = NULL;
@@ -152,7 +156,7 @@ bool q3n_selected_authored_ready(const q3n_selected_authored_media *owner, bool 
 bool q3n_selected_authored_read(const q3n_selected_authored_media *owner, bool view,
     q3n_selected_weapon_media *out, qa_error *error)
 {
-    if (!q3n_selected_authored_ready(owner, view) || !out || !q3n_selected_authored_valid(owner, error))
+    if (!q3n_selected_authored_ready(owner, view) || !out)
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Authored Q3 media has no completed admitted route");
     *out = tuple(owner, view); return true;
 }
@@ -194,7 +198,7 @@ static bool shader_handle(const q3n_selected_authored_media *owner, const char *
     return name && name->handle == handle ? true :
         q3p_fail(error, QA_ERROR_FORMAT, "Authored Q3 shader lost its source registration");
 }
-bool q3n_selected_authored_valid(const q3n_selected_authored_media *owner,
+static bool admitted_valid(const q3n_selected_authored_media *owner,
     qa_error *error)
 {
     const qa_q3_presentation_assets *assets = owner ? owner->options.assets : NULL;

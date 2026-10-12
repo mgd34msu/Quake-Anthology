@@ -33,6 +33,7 @@ bool q3n_selected_authored_options_read(const q3n_selected_authored_media *,
 bool q3n_selected_authored_prepare(q3n_selected_authored_media *, bool view,
     void *context, bool (*current)(void *), q3n_selected_weapon_media *, qa_error *);
 bool q3n_selected_authored_ready(const q3n_selected_authored_media *, bool view);
+/* Preparation qualifies the retained handles. Draw reads perform no path lookup. */
 bool q3n_selected_authored_read(const q3n_selected_authored_media *, bool view,
     q3n_selected_weapon_media *, qa_error *);
 size_t q3n_selected_authored_attachment_count(const q3n_selected_authored_media *);
