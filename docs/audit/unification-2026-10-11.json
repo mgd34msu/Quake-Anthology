@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "164b9aec234804c26e3bf5f38f0313f5722128c5",
+  "verified_main": "c2ce87ad8ee6bd66f88c339f904152c5ec9bf5fb",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 207,
-    "open_source_observation": 164,
+    "fixed_source_build_core": 208,
+    "open_source_observation": 163,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -32642,8 +32642,9 @@
       "severity": "medium",
       "job": "20",
       "area": "gameplay_q1",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "c2ce87ad8ee6bd66f88c339f904152c5ec9bf5fb"
     },
     {
       "id": "J20-05",
@@ -42791,6 +42792,77 @@
       ],
       "record_directory": "/tmp/qa-ta3196-common-client-primitives-20261012-v1",
       "conclusion": "The Q2 CLIENT metadata constructor and SDK variant are deleted; callers use the existing common profile constructor. Q3 force-model and SystemInfo scratch use protocol-extent storage, diagnostic rows use common leased arena storage, and rankings use the original C integer policy. Normal build and seven core suites passed; no live/gameplay or global completion claim."
+    },
+    {
+      "commit": "c2ce87ad8ee6bd66f88c339f904152c5ec9bf5fb",
+      "source_tree": "db897c068f6bb58f69cf9277aca3d3e9b4e30e9c",
+      "finding_ids": [
+        "J20-04"
+      ],
+      "files_rechecked": [
+        "include/qa/game_q1_source_rogue_flags.h",
+        "include/qa/world.h",
+        "src/app/application/native_q1_composition_rogue.c",
+        "src/gameplay/q1/addon_commands.c",
+        "src/gameplay/q1/addon_monsters.c",
+        "src/gameplay/q1/armagon.c",
+        "src/gameplay/q1/boss_children.c",
+        "src/gameplay/q1/boss_final.c",
+        "src/gameplay/q1/boss_small.c",
+        "src/gameplay/q1/charm.c",
+        "src/gameplay/q1/checkpoint/codec.c",
+        "src/gameplay/q1/console.c",
+        "src/gameplay/q1/gremlin.c",
+        "src/gameplay/q1/gremlin_ai.c",
+        "src/gameplay/q1/heavy.c",
+        "src/gameplay/q1/hipnotic_weapons.c",
+        "src/gameplay/q1/infected.c",
+        "src/gameplay/q1/internal.h",
+        "src/gameplay/q1/lavaman.c",
+        "src/gameplay/q1/maps/addon_brushes.c",
+        "src/gameplay/q1/maps/addon_campaign.c",
+        "src/gameplay/q1/maps/addon_controls.c",
+        "src/gameplay/q1/maps/addon_effects.c",
+        "src/gameplay/q1/maps/addon_triggers.c",
+        "src/gameplay/q1/maps/addon_visuals.c",
+        "src/gameplay/q1/maps/bosses.c",
+        "src/gameplay/q1/maps/ctf.c",
+        "src/gameplay/q1/maps/hipnotic_hazards.c",
+        "src/gameplay/q1/maps/hipnotic_misc.c",
+        "src/gameplay/q1/maps/hipnotic_rotation.c",
+        "src/gameplay/q1/maps/mg3_commands.c",
+        "src/gameplay/q1/maps/movers.c",
+        "src/gameplay/q1/maps/navigation.c",
+        "src/gameplay/q1/maps/observer.c",
+        "src/gameplay/q1/maps/paths.c",
+        "src/gameplay/q1/maps/rogue_ending.c",
+        "src/gameplay/q1/maps/rogue_hazards.c",
+        "src/gameplay/q1/maps/runtime.c",
+        "src/gameplay/q1/mission_monsters.c",
+        "src/gameplay/q1/monster_lifecycle.c",
+        "src/gameplay/q1/monsters.c",
+        "src/gameplay/q1/overlord.c",
+        "src/gameplay/q1/pickups.c",
+        "src/gameplay/q1/queries.c",
+        "src/gameplay/q1/rogue_weapons.c",
+        "src/gameplay/q1/runtime.c",
+        "src/gameplay/q1/source_rogue_flags.c",
+        "src/gameplay/q1/weapons.c",
+        "src/world/spatial.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-q1-common-snapshot-leases-20261012-v1",
+      "conclusion": "Q1 gameplay and Rogue flag observations use common world leases; the private Q1 frame pool, map reset scan and checkpoint scan are removed while public callback custody remains. Rogue source order and full IDs are preserved. Normal build and seven core suites passed. J33-01 remains open for builtin, Q2, modes and bot callers currently being migrated."
     }
   ],
   "verification_limits": [

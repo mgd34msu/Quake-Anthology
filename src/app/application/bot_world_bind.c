@@ -58,16 +58,13 @@ static bool metadata(void *context,qa_actor_id actor,application_bot_world_metad
     application_provider *arsenal=application_provider_for(binding->bots->application,actor,QA_ROLE_ARSENAL,NULL);
     application_provider *q2=source->kind==APPLICATION_PROVIDER_Q2?source:
         arsenal && arsenal->kind==APPLICATION_PROVIDER_Q2?arsenal:NULL;
-    qa_strings *strings=qa_session_strings(binding->bots->application->session);
     *found=false;
     if(q2) {
         qa_q2_bot_entity actual;
         if(!qa_q2_bot_entity_read(q2->state.q2,actor,&actual,error)) return false;
         if(actual.present) {
-            const char *model=actual.model?qa_strings_cstr(strings,actual.model):"";
-            if(!model) return false;
             int32_t maximum=qa_source_float_to_i32(actual.max_health);
-            *out=(application_bot_world_metadata){.model=model,.classname=actual.classname,
+            *out=(application_bot_world_metadata){.model=actual.model,.classname=actual.classname,
                 .frame=actual.frame,.max_health=maximum,.hidden=actual.hidden,.worldspawn=actual.worldspawn};
             *found=true;return true;
         }
@@ -77,9 +74,7 @@ static bool metadata(void *context,qa_actor_id actor,application_bot_world_metad
     if(!qa_q1_bot_entity_read(source->state.q1,actor,&actual,error)) return false;
     if(!actual.present) return true;
     int32_t maximum=qa_source_float_to_i32(actual.max_health);
-    const char *model=actual.model?qa_strings_cstr(strings,actual.model):"";
-    if(!model) return application_fail(error,QA_ERROR_FORMAT,"shared Q1 metadata has no actual source model text");
-    *out=(application_bot_world_metadata){.model=model,.classname=actual.classname,.frame=actual.frame,
+    *out=(application_bot_world_metadata){.model=actual.model,.classname=actual.classname,.frame=actual.frame,
         .max_health=maximum,.worldspawn=actual.worldspawn};*found=true;return true;
 }
 static bool movement(void *context,qa_actor_id actor,application_bot_world_movement *out,

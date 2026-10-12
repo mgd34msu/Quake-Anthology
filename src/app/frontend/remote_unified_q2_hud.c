@@ -8,6 +8,7 @@
 #include "qa/caption_save.h"
 #include "qa/text.h"
 #include "qa/network_unified_frame.h"
+#include "qa/id_index.h"
 #include "qa/pool.h"
 #include <float.h>
 #include <math.h>
@@ -25,8 +26,7 @@ typedef struct rr_record {
     qa_unified_document *event_document;
     qa_arena text_storage;
     rr_kind kind;
-    qa_string_id content_name;
-    char *content, *source_provider, *owner_provider;
+    qa_string_id content_name, owner_provider;
     uint64_t owner_generation;
     double seconds;
     qa_actor_id actor, target;
@@ -52,11 +52,6 @@ typedef struct rr_damage {
     double amount, expires_ms;
     bool health, armor, shield;
 } rr_damage;
-typedef struct rr_retired {
-    struct rr_retired *next;
-    char *provider;
-    uint64_t generation;
-} rr_retired;
 struct frontend_unified_q2_rr_hud {
     qa_frontend *frontend;
     frontend_remote_unified *replica;
@@ -64,6 +59,8 @@ struct frontend_unified_q2_rr_hud {
     frontend_unified_events *events;
     qa_localization_pool *localizations;
     qa_arena storage;
+    qa_arena retirement_storage;
+    qa_id_index retired;
     qa_pool text_pages, bar_records;
     qa_hud *prints;
     qa_unified_document *frame, *prepared;
@@ -74,7 +71,6 @@ struct frontend_unified_q2_rr_hud {
     rr_record path, coop, report, objective, mission, help;
     rr_record pending_objective;
     bool pending_printed, pending_sound;
-    rr_retired *retired;
     qa_scene_view view;
     bool have_view, busy, help_open, controls_registered;
     struct { qa_cvar_handle pois, damage, damage_ms, edge, maximum; } controls;
@@ -148,9 +144,8 @@ static bool parse(frontend_unified_q2_rr_hud *o, const qa_unified_presentation_e
         !isfinite(row->seconds) || row->seconds<0 || !isfinite(row->seconds*1000) ||
         (row->owner.generation && (!row->owner.provider || !*row->owner.provider)))
         return fail(e,"RR HUD event lacks its actual Source clock and owner");
-    r->content=row->content; r->source_provider=row->provider;
-    if (!qa_strings_intern_cstr(o->replica->strings,row->content,&r->content_name,e)) return false;
-    r->owner_provider=row->owner.provider; r->owner_generation=row->owner.generation;
+    r->content_name=row->content_id;
+    r->owner_provider=row->owner_provider_id; r->owner_generation=row->owner.generation;
     r->seconds=row->seconds;
     const qa_q2_map_event *map=row->payload.kind==QA_UNIFIED_PRESENTATION_Q2_MAP?&row->payload.value.q2_map:NULL;
     const qa_q2_player_event *player=row->payload.kind==QA_UNIFIED_PRESENTATION_Q2_PLAYER?&row->payload.value.q2_player:NULL;
@@ -219,12 +214,12 @@ static bool parse(frontend_unified_q2_rr_hud *o, const qa_unified_presentation_e
     if (!okay && (!e || e->code==QA_OK)) fail(e,"RR HUD event lacks its actual Source, actor or typed payload");
     return okay;
 }
-static bool retired(const frontend_unified_q2_rr_hud *o, const rr_record *r)
+static bool retired(const frontend_unified_q2_rr_hud *o, qa_string_id provider, uint64_t generation)
 {
-    if (!r->owner_generation) return false;
-    for (rr_retired *item=o->retired; item; item=item->next)
-        if (item->generation==r->owner_generation && !strcmp(item->provider,r->owner_provider)) return true;
-    return false;
+    if (!generation) return false;
+    qa_id_index_cursor cursor=qa_id_index_begin(&o->retired,provider,generation);
+    size_t value;
+    return qa_id_index_next(&o->retired,&cursor,&value);
 }
 bool frontend_unified_q2_rr_validate(frontend_unified_q2_rr_hud *o,
     const qa_unified_presentation_event *row, qa_error *e)
@@ -412,7 +407,8 @@ bool frontend_unified_q2_rr_presentation(frontend_unified_q2_rr_hud *o,
     *mirrored=false; rr_record r={0}; bool okay=parse(o,row,false,true,&r,e);
     qa_actor_id viewer; uint32_t number_id;
     if (okay) okay=frontend_remote_unified_player(o->replica,&viewer,&number_id);
-    if (okay && ((r.kind!=RR_REPORT && !qa_actor_id_equal(viewer,r.actor)) || retired(o,&r))) {
+    if (okay && ((r.kind!=RR_REPORT && !qa_actor_id_equal(viewer,r.actor)) ||
+        retired(o,r.owner_provider,r.owner_generation))) {
         record_clear(&r); return true;
     }
     if (okay) okay=retain_record(o,row,&r,e);
@@ -505,9 +501,13 @@ bool frontend_unified_q2_rr_create(qa_frontend *f, frontend_remote_unified *repl
     frontend_unified_q2_rr_hud *o=calloc(1,sizeof(*o));
     if (!o) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Creating actual received RR HUD owner");
     qa_arena_init(&o->storage,0);
-    if (!qa_pool_prepare(&o->text_pages,&o->storage,4096,4096,_Alignof(max_align_t),e) ||
+    qa_arena_init(&o->retirement_storage,0);
+    o->retired.storage=&o->retirement_storage;
+    if (!qa_id_index_reserve(&o->retired,1,e) ||
+        !qa_pool_prepare(&o->text_pages,&o->storage,4096,4096,_Alignof(max_align_t),e) ||
         !qa_pool_prepare(&o->bar_records,&o->storage,
             qa_actors_capacity(frontend_remote_unified_registry(replica)),sizeof(rr_bar),_Alignof(rr_bar),e)) {
+        qa_id_index_destroy(&o->retired); qa_arena_destroy(&o->retirement_storage);
         qa_arena_destroy(&o->storage); free(o); return false;
     }
     qa_arena_seal(&o->storage);
@@ -516,7 +516,9 @@ bool frontend_unified_q2_rr_create(qa_frontend *f, frontend_remote_unified *repl
     o->prints=f->seats[domain->physical_seat].hud;
     o->localizations=qa_localization_pool_create(e);
     if (!o->localizations || !current(o,e)) {
-        qa_localization_pool_destroy(o->localizations); qa_arena_destroy(&o->storage); free(o); return false;
+        qa_localization_pool_destroy(o->localizations);
+        qa_id_index_destroy(&o->retired); qa_arena_destroy(&o->retirement_storage);
+        qa_arena_destroy(&o->storage); free(o); return false;
     }
     if (f->source_restoring) controls_bind(o,domain->cvars);
     *out=o; return true;
@@ -536,11 +538,11 @@ bool frontend_unified_q2_rr_destroy(frontend_unified_q2_rr_hud **slot, qa_error 
     while (o->bars) { rr_bar *row=o->bars; o->bars=row->next; record_clear(&row->row); qa_pool_release(&o->bar_records,row->slot); }
     record_clear(&o->path); record_clear(&o->coop); record_clear(&o->report); record_clear(&o->objective);
     record_clear(&o->mission); record_clear(&o->help); record_clear(&o->pending_objective);
-    while (o->retired) { rr_retired *row=o->retired; o->retired=row->next; free(row->provider); free(row); }
+    qa_id_index_destroy(&o->retired); qa_arena_destroy(&o->retirement_storage);
     qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->prepared);
     qa_localization_pool_destroy(o->localizations); qa_arena_destroy(&o->storage); free(o); *slot=NULL; return true;
 }
-static bool owner_parse(const qa_unified_presentation_event *row, const char **provider,
+static bool owner_parse(const qa_unified_presentation_event *row, qa_string_id *provider,
     uint64_t *generation, bool *is_retired, qa_error *e)
 {
     if (!row || row->payload.kind!=QA_UNIFIED_PRESENTATION_OWNER || !isfinite(row->seconds))
@@ -549,53 +551,47 @@ static bool owner_parse(const qa_unified_presentation_event *row, const char **p
     if ((unsigned)event->kind>QA_UNIFIED_OWNER_REFRESHED || !event->owner.provider ||
         !*event->owner.provider || !event->owner.generation)
         return fail(e,"RR owner event lacks its actual lifetime token");
-    *provider=event->owner.provider; *generation=event->owner.generation;
+    *provider=row->payload_owner_id; *generation=event->owner.generation;
     *is_retired=event->kind==QA_UNIFIED_OWNER_RETIRED; return true;
 }
 bool frontend_unified_q2_rr_owner_validate(frontend_unified_q2_rr_hud *o,
     const qa_unified_presentation_event *row, qa_error *e)
 {
     if (!o || !row || !current(o,e)) return false;
-    const char *provider; uint64_t generation; bool is_retired;
+    qa_string_id provider; uint64_t generation; bool is_retired;
     return owner_parse(row,&provider,&generation,&is_retired,e);
 }
-static bool owned(const rr_record *r, const rr_retired *owner)
-{ return r->event && r->owner_generation==owner->generation && r->owner_provider && !strcmp(r->owner_provider,owner->provider); }
+static bool owned(const rr_record *r, qa_string_id provider, uint64_t generation)
+{ return r->event && r->owner_generation==generation && r->owner_provider && r->owner_provider==provider; }
 bool frontend_unified_q2_rr_owner_retire(frontend_unified_q2_rr_hud *o,
     const qa_unified_presentation_event *row, qa_error *e)
 {
     if (!o || !row || o->busy || !current(o,e)) return false;
-    const char *provider; uint64_t generation; bool is_retired;
+    qa_string_id provider; uint64_t generation; bool is_retired;
     if (!owner_parse(row,&provider,&generation,&is_retired,e)) return false;
     if (!is_retired) return true;
-    for (rr_retired *item=o->retired; item; item=item->next)
-        if (item->generation==generation && !strcmp(item->provider,provider)) return true;
-    rr_retired *item=calloc(1,sizeof(*item));
-    if (!item) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual RR presentation retirement");
-    size_t size=strlen(provider)+1;
-    item->provider=malloc(size);
-    if (!item->provider) { free(item); return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual RR owner identity"); }
-    memcpy(item->provider,provider,size);
-    item->generation=generation; item->next=o->retired; o->retired=item;
+    if (retired(o,provider,generation)) return true;
+    if (!qa_id_index_reserve(&o->retired,1,e)) return false;
+    qa_id_index_insert(&o->retired,provider,generation,0);
     size_t kept=0;
     for (size_t i=0; i<o->poi_count; ++i) {
-        if (owned(o->pois+i,item)) record_clear(o->pois+i);
+        if (owned(o->pois+i,provider,generation)) record_clear(o->pois+i);
         else { if (kept!=i) { o->pois[kept]=o->pois[i]; o->pois[i]=(rr_record){0}; } ++kept; }
     }
     o->poi_count=kept; kept=0;
     for (size_t i=0; i<o->damage_count; ++i) {
-        if (owned(&o->damage[i].row,item)) record_clear(&o->damage[i].row);
+        if (owned(&o->damage[i].row,provider,generation)) record_clear(&o->damage[i].row);
         else { if (kept!=i) { o->damage[kept]=o->damage[i]; o->damage[i]=(rr_damage){0}; } ++kept; }
     }
     o->damage_count=kept;
     rr_bar **bar=&o->bars;
     while (*bar) {
         rr_bar *entry=*bar;
-        if (owned(&entry->row,item)) { *bar=entry->next; record_clear(&entry->row); qa_pool_release(&o->bar_records,entry->slot); }
+        if (owned(&entry->row,provider,generation)) { *bar=entry->next; record_clear(&entry->row); qa_pool_release(&o->bar_records,entry->slot); }
         else bar=&entry->next;
     }
     rr_record *records[]={&o->path,&o->coop,&o->report,&o->objective,&o->mission,&o->help,&o->pending_objective};
-    for (size_t i=0; i<sizeof(records)/sizeof(*records); ++i) if (owned(records[i],item)) {
+    for (size_t i=0; i<sizeof(records)/sizeof(*records); ++i) if (owned(records[i],provider,generation)) {
         if (records[i]==&o->objective || records[i]==&o->pending_objective)
             if (!qa_hud_clear_center(o->prints,e)) return false;
         if (records[i]==&o->help) o->help_open=false;

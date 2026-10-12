@@ -2,6 +2,7 @@
 #include "internal.h"
 #include "scene_lights.h"
 #include "qa/pool.h"
+#include "qa/id_index.h"
 #include "qa/random.h"
 #include "qa/scene_resource_save.h"
 #include "round.h"
@@ -28,7 +29,7 @@
 enum { FRONTEND_STYLES = 256 };
 typedef struct frontend_footsteps {
     struct frontend_footsteps *next;
-    qa_string_id material;
+    size_t slot;
     qa_audio_asset *assets[16];
     uint32_t count;
 } frontend_footsteps;
@@ -39,6 +40,9 @@ typedef struct frontend_event_resources {
     qa_vfs *files;
     qa_audio_bank *sounds;
     qa_scene_resources *images;
+    qa_arena step_storage;
+    qa_pool step_records;
+    qa_id_index step_index;
     frontend_footsteps *footsteps;
     bool gear;
     qa_actor_owner selected_owner;
@@ -283,6 +287,19 @@ static bool audio_play(qa_frontend *frontend, frontend_event_state *state,
     int32_t milliseconds = (int32_t)((state->audio_time_ns / 1000000) & INT32_MAX);
     return audio_play_receivers(frontend, sound, milliseconds, error);
 }
+static bool footsteps_storage_prepare(frontend_event_resources *resources, size_t required,
+    qa_error *error)
+{
+    if (required <= resources->step_records.capacity) return true;
+    if (!qa_id_index_reserve(&resources->step_index,
+            required - resources->step_index.count, error)) return false;
+    size_t capacity = resources->step_index.capacity;
+    if (!resources->step_records.capacity)
+        return qa_pool_prepare(&resources->step_records, &resources->step_storage, capacity,
+            sizeof(frontend_footsteps), _Alignof(frontend_footsteps), error);
+    return qa_pool_extend(&resources->step_records, &resources->step_storage,
+        capacity - resources->step_records.capacity, error);
+}
 static bool resources_read(qa_frontend *frontend, qa_actor_owner provider, qa_game_family family,
     frontend_event_resources **out, qa_error *error)
 {
@@ -304,17 +321,22 @@ static bool resources_read(qa_frontend *frontend, qa_actor_owner provider, qa_ga
     frontend_event_resources *entry = calloc(1, sizeof(*entry));
     if (!entry) return frontend_fail(error, QA_ERROR_MEMORY, "allocating presentation event resources");
     entry->owner = provider; entry->family = family; entry->gear = gear;
+    qa_arena_init(&entry->step_storage, 0);
+    entry->step_index.storage = &entry->step_storage;
     entry->files = qa_vfs_clone(files, error);
     entry->images = entry->files ? qa_scene_resources_create(entry->files, error) : NULL;
     bool ok = entry->files && entry->images &&
         frontend_image_policy_initialize(frontend, entry->images, error) &&
         (!frontend->audio || (qa_audio_bank_create(entry->files, qa_session_strings(qa_application_session(frontend->application)), &entry->sounds, error) &&
-            (family != QA_GAME_Q2 || frontend_ui_audio_prepare_q2_source(frontend, entry->sounds, provider, error)))) &&
+            (family != QA_GAME_Q2 || (frontend_ui_audio_prepare_q2_source(frontend, entry->sounds, provider, error) &&
+                footsteps_storage_prepare(entry, 1, error))))) &&
         (!gear || gear_resources_bind(frontend->application, entry, error));
     if (!ok) {
         qa_audio_bank_destroy(entry->sounds); qa_scene_resources_destroy(entry->images);
         qa_vfs_destroy(entry->files); qa_resource_release(entry->artifact);
-        qa_launch_instance_lease_release(entry->descriptor); free(entry); return false;
+        qa_launch_instance_lease_release(entry->descriptor);
+        qa_id_index_destroy(&entry->step_index); qa_arena_destroy(&entry->step_storage);
+        free(entry); return false;
     }
     entry->next = state->resources; state->resources = entry; *out = entry; return true;
 }
@@ -396,8 +418,9 @@ bool frontend_event_retire_checked(qa_frontend *frontend, qa_error *error)
         while (entry->footsteps) {
             frontend_footsteps *steps = entry->footsteps; entry->footsteps = steps->next;
             for (uint32_t i = 0; i < steps->count; ++i) qa_audio_asset_release(steps->assets[i]);
-            free(steps);
+            qa_pool_release(&entry->step_records, steps->slot);
         }
+        qa_id_index_destroy(&entry->step_index); qa_arena_destroy(&entry->step_storage);
         qa_audio_bank_destroy(entry->sounds); qa_scene_resources_destroy(entry->images);
         qa_vfs_destroy(entry->files); qa_resource_release(entry->artifact);
         qa_launch_instance_lease_release(entry->descriptor); free(entry);
@@ -751,11 +774,13 @@ static bool footsteps_read(qa_frontend *frontend, frontend_event_resources *reso
 {
     const qa_application_ui_names *names=qa_application_ui_names_read(frontend->application);
     if (material==names->material_default) material=QA_STRING_NONE;
-    for (frontend_footsteps *entry = resources->footsteps; entry; entry = entry->next)
-        if (entry->material==material) { *out = entry; return true; }
-    frontend_footsteps *entry = calloc(1, sizeof(*entry));
-    if (!entry) return frontend_fail(error, QA_ERROR_MEMORY, "retaining source footstep table");
-    entry->material=material;
+    qa_id_index_entry *known = qa_id_index_find(&resources->step_index, material, 0);
+    if (known) { *out = qa_pool_at(&resources->step_records, known->value); return true; }
+    if (resources->step_records.active == resources->step_records.capacity &&
+        !footsteps_storage_prepare(resources, resources->step_records.capacity + 1, error)) return false;
+    size_t slot;
+    frontend_footsteps *entry = qa_pool_take(&resources->step_records, &slot);
+    *entry = (frontend_footsteps){.slot = slot};
     const char *text=qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)),material);
     for (unsigned i = 0; i < 16; ++i) {
         char path[64];
@@ -764,12 +789,14 @@ static bool footsteps_read(qa_frontend *frontend, frontend_event_resources *reso
         qa_audio_asset *asset = NULL;
         if (!qa_audio_bank_register(resources->sounds, path, QA_GAME_Q2, &asset, error)) {
             for (unsigned j = 0; j < entry->count; ++j) qa_audio_asset_release(entry->assets[j]);
-            free(entry); return false;
+            qa_pool_release(&resources->step_records, slot); return false;
         }
         if (!asset) break;
         entry->assets[entry->count++] = asset;
     }
-    entry->next = resources->footsteps; resources->footsteps = entry; *out = entry; return true;
+    entry->next = resources->footsteps; resources->footsteps = entry;
+    qa_id_index_insert(&resources->step_index, material, 0, slot);
+    *out = entry; return true;
 }
 static bool entity_footstep(qa_frontend *frontend, frontend_event_state *state,
     const qa_builtin_event *event, qa_error *error)

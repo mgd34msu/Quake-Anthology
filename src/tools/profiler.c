@@ -4,16 +4,30 @@
 #include <inttypes.h>
 #include <stdio.h>
 #include "qa/text.h"
+#include "qa/id_index.h"
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct timer_scope { char *name; double start, children; } timer_scope;
+typedef struct timer_scope { qa_string_id name; double start, children; } timer_scope;
+typedef struct timer_total {
+    qa_string_id name;
+    uint64_t calls;
+    double total_ms, self_ms, maximum_ms;
+} timer_total;
+typedef struct timer_stamp {
+    const char *name;
+    double milliseconds;
+    qa_arena storage;
+} timer_stamp;
 struct qa_profiler {
     double (*clock)(void *);
     void *context;
-    qa_timer_report *totals;
+    qa_strings *names;
+    qa_id_index total_index;
+    qa_arena storage, stamp_input;
+    timer_total *totals;
     timer_scope *stack;
-    qa_timer_stamp *stamps;
+    timer_stamp *stamps;
     size_t total_count, total_capacity, stack_count, stack_capacity;
     size_t stamp_count, stamp_capacity, stamp_first;
     size_t disabled_depth;
@@ -34,16 +48,36 @@ static bool clock_read(qa_profiler *p, double *out, qa_error *error) {
     }
     *out = value; return true;
 }
-static void *grow(void *array, size_t *capacity, size_t item, qa_error *error) {
+static void *grow(qa_arena *storage, void *array, size_t *capacity, size_t item,
+    size_t alignment, qa_error *error) {
     size_t count = *capacity ? *capacity * 2 : 16;
     if (count < *capacity || count > SIZE_MAX / item) { tools_fail(error, "profiler collection overflow"); return NULL; }
-    void *copy = realloc(array, count * item);
-    if (!copy) { qa_error_set(error, QA_ERROR_MEMORY, 0, "growing profiler collection"); return NULL; }
+    void *copy = qa_arena_grow(storage, array, *capacity * item, count * item, alignment, error);
+    if (!copy) return NULL;
     *capacity = count; return copy;
 }
+static void *array_alloc(qa_arena *storage, size_t count, size_t item,
+    size_t alignment, qa_error *error) {
+    if (!count) return NULL;
+    if (count > SIZE_MAX / item) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "profiler collection exceeds storage"); return NULL;
+    }
+    void *array = qa_arena_alloc(storage, count * item, alignment, error);
+    if (array) memset(array, 0, count * item);
+    return array;
+}
+static bool label_admit(qa_profiler *p, const char *name, qa_string_id *out, qa_error *error) {
+    return (p->names || qa_strings_create(&p->names, error)) &&
+        qa_strings_intern_cstr(p->names, name, out, error);
+}
 static void clear(qa_profiler *p) {
-    if (p->totals) for (size_t i = 0; i < p->total_count; ++i) free((char *)p->totals[i].name);
-    if (p->stamps) for (size_t i = 0; i < p->stamp_count; ++i) free((char *)p->stamps[(p->stamp_first + i) % p->stamp_capacity].name);
+    qa_strings_destroy(p->names); p->names = NULL;
+    qa_id_index_clear(&p->total_index);
+    if (p->stamps) for (size_t i = 0; i < p->stamp_count; ++i) {
+        timer_stamp *stamp = p->stamps + (p->stamp_first + i) % p->stamp_capacity;
+        qa_arena_reset(&stamp->storage); stamp->name = NULL;
+    }
+    qa_arena_reset(&p->stamp_input);
     p->total_count = p->stamp_count = p->stamp_first = 0;
 }
 bool qa_profiler_create(double (*clock)(void *), void *context, size_t capacity, qa_profiler **out, qa_error *error) {
@@ -51,15 +85,18 @@ bool qa_profiler_create(double (*clock)(void *), void *context, size_t capacity,
     qa_profiler *p = calloc(1, sizeof *p);
     if (!p) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating profiler"); return false; }
     p->clock = clock; p->context = context; p->stamp_capacity = capacity;
-    p->stamps = calloc(capacity, sizeof(*p->stamps));
-    if (!p->stamps) { free(p); qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating profiler stamp ring"); return false; }
-    if (!clock_read(p, &p->epoch, error)) { free(p->stamps); free(p); return false; }
+    p->total_index.storage = &p->storage;
+    p->stamps = array_alloc(&p->storage, capacity, sizeof(*p->stamps), _Alignof(timer_stamp), error);
+    if (!p->stamps || !clock_read(p, &p->epoch, error)) { (void)qa_profiler_destroy(p, NULL); return false; }
     *out = p; return true;
 }
 bool qa_profiler_destroy(qa_profiler *p, qa_error *error) {
     if (!p) return true;
     if (p->busy || p->stack_count) return tools_fail(error, "profiler teardown requires scopes and callbacks to return");
-    clear(p); free(p->totals); free(p->stack); free(p->stamps); free(p); return true;
+    clear(p);
+    if (p->stamps) for (size_t i = 0; i < p->stamp_capacity; ++i) qa_arena_destroy(&p->stamps[i].storage);
+    qa_id_index_destroy(&p->total_index);
+    qa_arena_destroy(&p->stamp_input); qa_arena_destroy(&p->storage); free(p); return true;
 }
 bool qa_profiler_enable(qa_profiler *p, bool enabled, qa_error *error) {
     if (!p || p->pending_restore || p->busy) return tools_fail(error, "cannot change pending profiler mode or an active callback");
@@ -79,11 +116,14 @@ bool qa_profiler_push(qa_profiler *p, const char *name, qa_error *error) {
         return true;
     }
     if (p->stack_count == p->stack_capacity) {
-        void *copy = grow(p->stack, &p->stack_capacity, sizeof(*p->stack), error); if (!copy) return false; p->stack = copy;
+        void *copy = grow(&p->storage, p->stack, &p->stack_capacity, sizeof(*p->stack), _Alignof(timer_scope), error);
+        if (!copy) return false;
+        p->stack = copy;
     }
-    char *copy = tools_copy(name, error); if (!copy) return false;
-    double now; if (!clock_read(p, &now, error)) { free(copy); return false; }
-    p->stack[p->stack_count++] = (timer_scope){.name = copy, .start = now}; return true;
+    qa_string_id label;
+    if (!label_admit(p, name, &label, error)) return false;
+    double now; if (!clock_read(p, &now, error)) return false;
+    p->stack[p->stack_count++] = (timer_scope){.name = label, .start = now}; return true;
 }
 bool qa_profiler_pop(qa_profiler *p, qa_error *error) {
     if (!p || p->pending_restore || p->busy) return tools_fail(error, "invalid or pending profiler scope retirement");
@@ -95,19 +135,24 @@ bool qa_profiler_pop(qa_profiler *p, qa_error *error) {
     }
     if (!p->stack_count) return tools_fail(error, "unbalanced profiler pop");
     double now; if (!clock_read(p, &now, error)) return false;
-    timer_scope scope = p->stack[p->stack_count - 1]; size_t index = 0;
-    while (index < p->total_count && strcmp(p->totals[index].name, scope.name)) ++index;
-    qa_timer_report empty = {0}, *total = index < p->total_count ? &p->totals[index] : &empty;
+    timer_scope scope = p->stack[p->stack_count - 1];
+    qa_id_index_entry *entry = qa_id_index_find(&p->total_index, scope.name, 0);
+    size_t index = entry ? entry->value : p->total_count;
+    timer_total empty = {0}, *total = index < p->total_count ? &p->totals[index] : &empty;
     if (total->calls == UINT64_MAX) return tools_fail(error, "profiler call count exceeds native range");
     double elapsed = fmax(0, now - scope.start), self = fmax(0, elapsed - scope.children);
     if (!isfinite(elapsed) || !isfinite(total->total_ms + elapsed) || !isfinite(total->self_ms + self) ||
         (p->stack_count > 1 && !isfinite(p->stack[p->stack_count - 2].children + elapsed))) return tools_fail(error, "profiler timing exceeds native range");
     if (index == p->total_count) {
+        if (!qa_id_index_reserve(&p->total_index, 1, error)) return false;
         if (p->total_count == p->total_capacity) {
-            void *grown = grow(p->totals, &p->total_capacity, sizeof(*p->totals), error); if (!grown) return false; p->totals = grown;
+            void *grown = grow(&p->storage, p->totals, &p->total_capacity, sizeof(*p->totals), _Alignof(timer_total), error);
+            if (!grown) return false;
+            p->totals = grown;
         }
-        p->totals[index] = (qa_timer_report){.name = scope.name}; ++p->total_count;
-    } else free(scope.name);
+        p->totals[index] = (timer_total){.name = scope.name}; ++p->total_count;
+        qa_id_index_insert(&p->total_index, scope.name, 0, index);
+    }
     total = &p->totals[index];
     --p->stack_count;
     if (p->stack_count) p->stack[p->stack_count - 1].children += elapsed;
@@ -117,25 +162,29 @@ bool qa_profiler_pop(qa_profiler *p, qa_error *error) {
 bool qa_profiler_stamp(qa_profiler *p, const char *name, qa_error *error) {
     if (!p || !name || p->pending_restore || p->busy) return tools_fail(error, "invalid or pending profiler stamp");
     if (!p->enabled) return true;
-    char *copy = tools_copy(name, error); if (!copy) return false;
-    double now;
-    if (!clock_read(p, &now, error) || !isfinite(now - p->epoch)) { free(copy); return tools_fail(error, "profiler stamp exceeds native clock range"); }
+    qa_arena_reset(&p->stamp_input);
+    char *copy = qa_arena_text(&p->stamp_input, name, error); if (!copy) return false;
     size_t index = (p->stamp_first + p->stamp_count) % p->stamp_capacity;
+    timer_stamp *stamp = p->stamps + index;
+    if (!qa_arena_reserve(&stamp->storage, strlen(copy) + 1, error)) return false;
+    double now;
+    if (!clock_read(p, &now, error) || !isfinite(now - p->epoch)) return tools_fail(error, "profiler stamp exceeds native clock range");
+    qa_arena_reset(&stamp->storage);
+    stamp->name = qa_arena_text(&stamp->storage, copy, error);
     if (p->stamp_count == p->stamp_capacity) {
-        free((char *)p->stamps[index].name); p->stamp_first = (p->stamp_first + 1) % p->stamp_capacity;
+        p->stamp_first = (p->stamp_first + 1) % p->stamp_capacity;
     } else ++p->stamp_count;
-    p->stamps[index] = (qa_timer_stamp){copy, now - p->epoch}; return true;
-}
-static char *copy_label(qa_arena *arena, const char *label, qa_error *error) {
-    size_t n = strlen(label);
-    char *text = qa_arena_alloc(arena, n + 1, 1, error); if (text) memcpy(text, label, n + 1); return text;
+    stamp->milliseconds = now - p->epoch; return true;
 }
 bool qa_profiler_report(const qa_profiler *p, qa_arena *scratch, const qa_timer_report **out, size_t *count, qa_error *error) {
     if (!p || !scratch || !out || !count || p->pending_restore || p->busy) return tools_fail(error, "invalid or pending profiler report");
     qa_timer_report *rows = p->total_count ? qa_arena_alloc(scratch, p->total_count * sizeof(*rows), _Alignof(qa_timer_report), error) : NULL;
     if (p->total_count && !rows) return false;
     for (size_t i = 0; i < p->total_count; ++i) {
-        rows[i] = p->totals[i]; rows[i].name = copy_label(scratch, rows[i].name, error); if (!rows[i].name) return false;
+        const timer_total *total = p->totals + i;
+        rows[i] = (qa_timer_report){.name = qa_arena_text(scratch, qa_strings_cstr(p->names, total->name), error),
+            .calls = total->calls, .total_ms = total->total_ms, .self_ms = total->self_ms, .maximum_ms = total->maximum_ms};
+        if (!rows[i].name) return false;
     }
     *out = rows; *count = p->total_count; return true;
 }
@@ -144,7 +193,9 @@ bool qa_profiler_stamps(const qa_profiler *p, qa_arena *scratch, const qa_timer_
     qa_timer_stamp *rows = p->stamp_count ? qa_arena_alloc(scratch, p->stamp_count * sizeof(*rows), _Alignof(qa_timer_stamp), error) : NULL;
     if (p->stamp_count && !rows) return false;
     for (size_t i = 0; i < p->stamp_count; ++i) {
-        rows[i] = p->stamps[(p->stamp_first + i) % p->stamp_capacity]; rows[i].name = copy_label(scratch, rows[i].name, error); if (!rows[i].name) return false;
+        const timer_stamp *stamp = p->stamps + (p->stamp_first + i) % p->stamp_capacity;
+        rows[i] = (qa_timer_stamp){qa_arena_text(scratch, stamp->name, error), stamp->milliseconds};
+        if (!rows[i].name) return false;
     }
     *out = rows; *count = p->stamp_count; return true;
 }
@@ -155,8 +206,9 @@ bool tools_profiler_empty(const qa_tools_options *options, qa_profiler **out, qa
     if (!p) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating empty profiler"); return false; }
     p->clock = options->profiler_milliseconds ? options->profiler_milliseconds : options->milliseconds;
     p->context = options->context; p->stamp_capacity = 4096; p->pending_restore = true;
-    p->stamps = calloc(p->stamp_capacity, sizeof *p->stamps);
-    if (!p->stamps) { free(p); qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating empty profiler ring"); return false; }
+    p->total_index.storage = &p->storage;
+    p->stamps = array_alloc(&p->storage, p->stamp_capacity, sizeof *p->stamps, _Alignof(timer_stamp), error);
+    if (!p->stamps) { (void)qa_profiler_destroy(p, NULL); return false; }
     *out = p; return true;
 }
 bool tools_profiler_rebind_ready(const qa_profiler *p, const void *context, qa_error *error) {
@@ -166,6 +218,7 @@ void tools_profiler_rebind(qa_profiler *p, void *context) { p->context = context
 void tools_profiler_exchange(qa_profiler *stable, qa_profiler *candidate) {
     size_t disabled_depth = stable->disabled_depth;
     qa_profiler old = *stable; *stable = *candidate; *candidate = old;
+    stable->total_index.storage = &stable->storage; candidate->total_index.storage = &candidate->storage;
     candidate->disabled_depth = 0; candidate->mode_pending = false;
     if (disabled_depth) {
         stable->disabled_depth = disabled_depth;
@@ -173,42 +226,58 @@ void tools_profiler_exchange(qa_profiler *stable, qa_profiler *candidate) {
         stable->enabled = false;
     }
 }
+static bool label_fields(qa_source_save_io *io, qa_profiler *p, qa_string_id *label) {
+    char *name = io->direction == QA_SOURCE_SAVE_WRITE ? (char *)qa_strings_cstr(p->names, *label) : NULL;
+    bool ok = tool_save_text(io, &name);
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        if (ok && name) ok = label_admit(p, name, label, io->error);
+        bool present = name != NULL; free(name);
+        if (!ok) io->failed = true;
+        return ok && present;
+    }
+    return ok && name;
+}
 bool tools_profiler_fields(qa_source_save_io *io, qa_profiler **holder, const qa_tools_options *options) {
     qa_profiler *p = *holder;
     if (io->direction == QA_SOURCE_SAVE_READ) {
         p = calloc(1, sizeof *p);
         if (!p) { io->failed = true; qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "allocating restored profiler"); return false; }
         *holder = p; p->clock = options->profiler_milliseconds ? options->profiler_milliseconds : options->milliseconds; p->context = options->context;
+        p->total_index.storage = &p->storage;
     } else if (!qa_profiler_idle(p) || p->pending_restore) return tool_save_fail(io, "profiler continuation requires restored state and returned scopes");
-    if (!qa_source_save_count(io, &p->total_count, SIZE_MAX / sizeof *p->totals) ||
-        !qa_source_save_count(io, &p->total_capacity, SIZE_MAX / sizeof *p->totals) || p->total_count > p->total_capacity ||
+    if (!qa_source_save_count(io, &p->total_count, SIZE_MAX / sizeof(qa_timer_report)) ||
+        !qa_source_save_count(io, &p->total_capacity, SIZE_MAX / sizeof(qa_timer_report)) || p->total_count > p->total_capacity ||
         !qa_source_save_count(io, &p->stack_capacity, SIZE_MAX / sizeof *p->stack) ||
-        !qa_source_save_count(io, &p->stamp_capacity, SIZE_MAX / sizeof *p->stamps) || !p->stamp_capacity ||
+        !qa_source_save_count(io, &p->stamp_capacity, SIZE_MAX / sizeof(qa_timer_stamp)) || !p->stamp_capacity ||
         !qa_source_save_count(io, &p->stamp_count, p->stamp_capacity) ||
         !qa_source_save_count(io, &p->stamp_first, p->stamp_capacity - 1) ||
         !qa_source_save_f64(io, &p->epoch) || !isfinite(p->epoch) || !qa_source_save_bool(io, &p->enabled))
         return tool_save_fail(io, "invalid profiler continuation metadata");
     if (io->direction == QA_SOURCE_SAVE_READ) {
-        p->totals = p->total_capacity ? calloc(p->total_capacity, sizeof *p->totals) : NULL;
-        p->stack = p->stack_capacity ? calloc(p->stack_capacity, sizeof *p->stack) : NULL;
-        p->stamps = calloc(p->stamp_capacity, sizeof *p->stamps);
+        p->totals = array_alloc(&p->storage, p->total_capacity, sizeof *p->totals, _Alignof(timer_total), io->error);
+        p->stack = array_alloc(&p->storage, p->stack_capacity, sizeof *p->stack, _Alignof(timer_scope), io->error);
+        p->stamps = array_alloc(&p->storage, p->stamp_capacity, sizeof *p->stamps, _Alignof(timer_stamp), io->error);
         if ((p->total_capacity && !p->totals) || (p->stack_capacity && !p->stack) || !p->stamps)
             return tool_save_fail(io, "allocating profiler continuation collections");
+        for (size_t i = 0; i < p->stamp_capacity; ++i) qa_arena_init(&p->stamps[i].storage, sizeof(char));
+        if (!qa_id_index_reserve(&p->total_index, p->total_count, io->error)) { io->failed = true; return false; }
     }
     for (size_t i = 0; i < p->total_count; ++i) {
-        qa_timer_report *v = &p->totals[i]; char *name = (char *)v->name;
-        bool ok = tool_save_text(io, &name); v->name = name;
-        if (!ok || !name || !qa_source_save_u64(io, &v->calls) || !qa_source_save_f64(io, &v->total_ms) ||
+        timer_total *v = &p->totals[i];
+        if (!label_fields(io, p, &v->name) || !qa_source_save_u64(io, &v->calls) || !qa_source_save_f64(io, &v->total_ms) ||
             !qa_source_save_f64(io, &v->self_ms) || !qa_source_save_f64(io, &v->maximum_ms) ||
             !isfinite(v->total_ms) || !isfinite(v->self_ms) || !isfinite(v->maximum_ms) ||
             v->total_ms < 0 || v->self_ms < 0 || v->maximum_ms < 0 || v->self_ms > v->total_ms || v->maximum_ms > v->total_ms)
             return tool_save_fail(io, "invalid profiler continuation aggregate");
-        for (size_t j = 0; j < i; ++j) if (!strcmp(p->totals[j].name, name)) return tool_save_fail(io, "duplicate profiler continuation label");
+        if (io->direction == QA_SOURCE_SAVE_READ) {
+            if (qa_id_index_find(&p->total_index, v->name, 0)) return tool_save_fail(io, "duplicate profiler continuation label");
+            qa_id_index_insert(&p->total_index, v->name, 0, i);
+        }
     }
     for (size_t i = 0; i < p->stamp_count; ++i) {
-        qa_timer_stamp *v = &p->stamps[(p->stamp_first + i) % p->stamp_capacity]; char *name = (char *)v->name;
-        bool ok = tool_save_text(io, &name); v->name = name;
-        if (!ok || !name || !qa_source_save_f64(io, &v->milliseconds) || !isfinite(v->milliseconds))
+        timer_stamp *v = &p->stamps[(p->stamp_first + i) % p->stamp_capacity];
+        if (!tool_save_arena_text(io, &v->storage, &v->name) || !v->name ||
+            !qa_source_save_f64(io, &v->milliseconds) || !isfinite(v->milliseconds))
             return tool_save_fail(io, "invalid profiler continuation stamp");
     }
     return true;
@@ -235,14 +304,11 @@ bool tools_timer_command(qa_tools *tools, const qa_command_invocation *call, qa_
                 length += added + (i > 1 ? 1 : 0);
             }
             if (!length) return tools_fail(error, "usage: timerstamp <label>");
-            char *label = malloc(length + 1);
-            if (!label) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating timer stamp label"); return false; }
-            size_t at = 0;
-            for (size_t i = 1; i < call->argc; ++i) {
-                if (i > 1) label[at++] = ' ';
-                size_t added = strlen(call->argv[i]); memcpy(label + at, call->argv[i], added); at += added;
-            }
-            label[at] = 0; bool success = qa_profiler_stamp(tools->profiler, label, error); free(label); return success;
+            qa_arena storage = {0};
+            char *label = qa_arena_alloc(&storage, length + 1, 1, error);
+            bool success = label && qa_text_join_words(call->argv + 1, call->argc - 1, label, length + 1, error) &&
+                qa_profiler_stamp(tools->profiler, label, error);
+            qa_arena_destroy(&storage); return success;
         }
     }
     const char *action = call->argc > 1 ? call->argv[1] : "report";

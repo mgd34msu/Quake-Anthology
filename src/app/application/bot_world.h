@@ -13,8 +13,7 @@ typedef enum application_bot_world_source {
 typedef struct application_bot_memory_alias { uint32_t offset,length; } application_bot_memory_alias;
 typedef struct application_bot_memory_view { uint8_t *data; size_t size; } application_bot_memory_view;
 typedef struct application_bot_world_metadata {
-    const char *model;
-    qa_string_id classname;
+    qa_string_id model,classname;
     int32_t frame,max_health;
     bool hidden,worldspawn;
 } application_bot_world_metadata;

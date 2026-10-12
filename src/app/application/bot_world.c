@@ -1,5 +1,6 @@
 #include "bot_world.h"
 #include "../../bots/save_fields.h"
+#include "qa/id_index.h"
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,8 +16,9 @@ struct application_bot_world {
     uint32_t order_count,free_count,next_entity;
     uint64_t next_generation;
     bool *begun;
-    bot_world_text *userinfos,*strings,*models;
-    size_t userinfo_count,string_count,model_count;
+    bot_world_text *userinfos,*strings;
+    size_t userinfo_count,string_count;
+    qa_id_index models;
     uint8_t memory[APPLICATION_BOT_MEMORY_BYTES];
     uint32_t alloc_point;
     size_t calls,drop_depth;
@@ -125,16 +127,19 @@ static int32_t inline_index(const char *name) {
     long index=strtol(name+1,NULL,10);
     return index>INT32_MAX?INT32_MAX:index<INT32_MIN?INT32_MIN:(int32_t)index;
 }
-static bool model_index(application_bot_world *world,const char *name,int32_t *out,qa_error *error) {
-    if(!name || !out) return fail(error,QA_ERROR_ARGUMENT,"shared bot model query requires actual source text");
+static bool model_index(application_bot_world *world,qa_string_id model,int32_t *out,qa_error *error) {
+    if(!out) return fail(error,QA_ERROR_ARGUMENT,"shared bot model query requires actual source text");
+    if(!model) {*out=0;return true;}
+    qa_id_index_entry *entry=qa_id_index_find(&world->models,model,0);
+    if(entry) {*out=(int32_t)entry->value;return true;}
+    const char *name=qa_strings_cstr(qa_session_strings(world->services.session),model);
+    if(!name) return fail(error,QA_ERROR_ARGUMENT,"shared bot model query requires actual source text");
     if(!*name) {*out=0;return true;}
     if(*name=='*') {*out=inline_index(name);return true;}
-    for(size_t i=0;i<world->model_count;++i) if(!strcmp(world->models[i].text,name)) {
-        *out=(int32_t)world->models[i].id;return true;
-    }
-    uint64_t id=(uint64_t)world->services.base_model_count+world->model_count;
+    uint64_t id=(uint64_t)world->services.base_model_count+world->models.count;
     if(id>INT32_MAX) return fail(error,QA_ERROR_ARGUMENT,"shared bot model registry exceeds its source index domain");
-    if(!text_set(&world->models,&world->model_count,(uint32_t)id,name,error)) return false;
+    if(!qa_id_index_reserve(&world->models,1,error)) return false;
+    qa_id_index_insert(&world->models,model,0,(size_t)id);
     *out=(int32_t)id;return true;
 }
 bool application_bot_world_create(const application_bot_world_services *services,bool restoring,
@@ -165,7 +170,7 @@ bool application_bot_world_destroy(application_bot_world *world,qa_error *error)
     if(!world) return true;
     if(world->calls) return fail(error,QA_ERROR_ARGUMENT,"shared bot world is executing a source observation");
     text_free(world->userinfos,world->userinfo_count);text_free(world->strings,world->string_count);
-    text_free(world->models,world->model_count);qa_actor_index_destroy(&world->actor_entities);
+    qa_id_index_destroy(&world->models);qa_actor_index_destroy(&world->actor_entities);
     free(world->begun);free(world);return true;
 }
 bool application_bot_world_refresh(application_bot_world *world,qa_error *error) {
@@ -242,7 +247,10 @@ bool application_bot_world_read(application_bot_world *world,int32_t number,
         if(okay && has_metadata) {
             okay=model_index(world,metadata.model,&observed.state.modelindex,error);
             observed.state.frame=metadata.frame;observed.classname=metadata.classname;observed.hidden=metadata.hidden;
-            if(okay && metadata.model[0]=='*') {observed.inline_model=inline_index(metadata.model);observed.has_inline_model=true;}
+            qa_bytes model=qa_strings_text(qa_session_strings(world->services.session),metadata.model);
+            if(okay && model.size && model.data[0]=='*') {
+                observed.inline_model=observed.state.modelindex;observed.has_inline_model=true;
+            }
         }
         observed.present=live(world,actor) && has_body;
         qa_linked_body linked;
@@ -340,7 +348,13 @@ bool application_bot_world_configstring_set(application_bot_world *world,uint32_
     return idle(world,error) && text_set(&world->strings,&world->string_count,index,text,error);
 }
 bool application_bot_world_model_index(application_bot_world *world,const char *name,int32_t *out,qa_error *error) {
-    return idle(world,error) && model_index(world,name,out,error);
+    if(!idle(world,error)) return false;
+    if(!name || !out) return fail(error,QA_ERROR_ARGUMENT,"shared bot model query requires actual source text");
+    if(!*name) {*out=0;return true;}
+    if(*name=='*') {*out=inline_index(name);return true;}
+    qa_string_id model;
+    return qa_strings_intern_cstr(qa_session_strings(world->services.session),name,&model,error) &&
+        model_index(world,model,out,error);
 }
 bool application_bot_world_configstring(application_bot_world *world,uint32_t index,char *out,size_t capacity,qa_error *error) {
     if(!idle(world,error) || !out || !capacity) return false;
@@ -444,19 +458,24 @@ static bool topology(const application_bot_world *world,qa_error *error) {
         if(!seen[i] || !generation || generation>=world->next_generation) goto invalid;
         for(uint32_t j=0;j<i;++j) if(generation==world->rows[j].generation) goto invalid;
     }
-    const bot_world_text *tables[]={world->userinfos,world->strings,world->models};
-    const size_t counts[]={world->userinfo_count,world->string_count,world->model_count};
-    for(size_t table=0;table<3;++table) {
+    const bot_world_text *tables[]={world->userinfos,world->strings};
+    const size_t counts[]={world->userinfo_count,world->string_count};
+    for(size_t table=0;table<2;++table) {
         if(counts[table] && !tables[table]) goto invalid;
         for(size_t i=0;i<counts[table];++i) {
             const bot_world_text *entry=&tables[table][i];
             if(!entry->text) goto invalid;
-            for(size_t j=0;j<i;++j) if(entry->id==tables[table][j].id ||
-               (table==2 && !strcmp(entry->text,tables[table][j].text))) goto invalid;
-            if(table==2 && (!entry->text[0] || entry->text[0]=='*' ||
-               entry->id<world->services.base_model_count ||
-               (uint64_t)entry->id>=(uint64_t)world->services.base_model_count+world->model_count || entry->id>INT32_MAX)) goto invalid;
+            for(size_t j=0;j<i;++j) if(entry->id==tables[table][j].id) goto invalid;
         }
+    }
+    for(size_t i=0;i<world->models.count;++i) {
+        const qa_id_index_entry *entry=&world->models.entries[i];
+        const char *name=qa_strings_cstr(qa_session_strings(world->services.session),entry->key);
+        if(!name || !*name || *name=='*' || entry->value<world->services.base_model_count ||
+           (uint64_t)entry->value>=(uint64_t)world->services.base_model_count+world->models.count ||
+           entry->value>INT32_MAX) goto invalid;
+        for(size_t j=0;j<i;++j) if(entry->value==world->models.entries[j].value ||
+           entry->key==world->models.entries[j].key) goto invalid;
     }
     return true;
 invalid:
@@ -480,6 +499,28 @@ static bool text_fields(qa_source_save_io *io,bot_world_text **table,size_t *cou
     }
     return true;
 }
+static bool model_fields(qa_source_save_io *io,application_bot_world *world) {
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    size_t count=world->models.count;
+    if(!qa_source_save_count(io,&count,SIZE_MAX/sizeof(bot_world_text))) return false;
+    if(reading && count) {
+        if(io->offset>io->input.size || count>(io->input.size-io->offset)/13)
+            return bot_save_fail(io,QA_ERROR_FORMAT,"truncated shared bot private string table");
+        if(!qa_id_index_reserve(&world->models,count,io->error)) return false;
+    }
+    for(size_t i=0;i<count;++i) {
+        uint32_t id=reading?0:(uint32_t)world->models.entries[i].value;
+        qa_string_id model=reading?QA_STRING_NONE:world->models.entries[i].key;
+        if(!qa_source_save_u32(io,&id) || !qa_source_save_string(io,&model)) return false;
+        if(!model) return bot_save_fail(io,QA_ERROR_FORMAT,"absent shared bot private string entry");
+        if(reading) {
+            if(!qa_strings_cstr(qa_session_strings(world->services.session),model))
+                return bot_save_fail(io,QA_ERROR_FORMAT,"source text contains embedded NUL");
+            qa_id_index_insert(&world->models,model,0,id);
+        }
+    }
+    return true;
+}
 static bool fields(qa_source_save_io *io,application_bot_world *world) {
     static const uint8_t magic[8]={'Q','A','B','W','O','R','L','D'};
     if(!bot_save_signature(io,magic)) return false;
@@ -498,7 +539,7 @@ static bool fields(qa_source_save_io *io,application_bot_world *world) {
         if(!qa_source_save_actor(io,&world->rows[i].actor) || !qa_source_save_u64(io,&world->rows[i].generation)) return false;
     for(uint32_t i=0;i<world->services.max_clients;++i) if(!qa_source_save_bool(io,&world->begun[i])) return false;
     return text_fields(io,&world->userinfos,&world->userinfo_count) && text_fields(io,&world->strings,&world->string_count) &&
-        text_fields(io,&world->models,&world->model_count) && qa_source_save_u32(io,&world->alloc_point) &&
+        model_fields(io,world) && qa_source_save_u32(io,&world->alloc_point) &&
         qa_source_save_bytes(io,world->memory,sizeof(world->memory));
 }
 bool application_bot_world_capture(application_bot_world *world,qa_buffer *out,qa_error *error) {
