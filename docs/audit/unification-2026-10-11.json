@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "674addf26de3c407308b02a4f71346ddd77d8746",
+  "verified_main": "3aef868756c4744263011a876fa5865c41766da1",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -27915,7 +27915,7 @@
       "job": "09",
       "area": "bots_navigation",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "Evaluation, mutation and release stack growth use the common arena; persistent workspace owns backing while copied traversal metadata borrows it. Existing busy protection, authoritative callback reads, child/next order and random draws remain. Initial and larger-depth allocation remain open because live callbacks can alter topology; no fixed new traversal cap or preflight authority is introduced. Normal production build and seven existing core suites passed; no live selection or zero-allocation claim."
     },
     {
       "id": "09-05",
@@ -40718,6 +40718,33 @@
       ],
       "record_directory": "/tmp/qa-ta3196-prepared-device-buffers-20261012",
       "conclusion": "Music PCM and device automatic PCM, encoding and raw-conversion storage are prepared at cold admission using actual chunk/device bounds and common arenas. Device candidate publication/abort owns storage independently; original QADV saved capacities and head restore exactly. Larger valid public requests and smaller legacy saved reservations retain growth. Vorbis workspace admission remains open. Normal production build and seven existing core suites passed; the suites do not directly exercise SDL device behavior, and no live audio or zero-allocation claim is made."
+    },
+    {
+      "commit": "3aef868756c4744263011a876fa5865c41766da1",
+      "source_tree": "bbfecd4ea9f5046f8cb58e87e45500de74b0ea0e",
+      "finding_ids": [
+        "09-04"
+      ],
+      "files_rechecked": [
+        "src/bots/library/internal.h",
+        "src/bots/library/source_fuzzy_operations.h",
+        "src/bots/library/source_fuzzy_operations.c",
+        "src/bots/library/weights.c",
+        "src/core/arena.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-fuzzy-storage-20261012",
+      "conclusion": "Evaluation, mutation and release stack growth use the common arena; persistent workspace owns backing while copied traversal metadata borrows it. Existing busy protection, authoritative callback reads, child/next order and random draws remain. Initial and larger-depth allocation remain open because live callbacks can alter topology; no fixed new traversal cap or preflight authority is introduced. Normal production build and seven existing core suites passed; no live selection or zero-allocation claim."
     }
   ],
   "verification_limits": [

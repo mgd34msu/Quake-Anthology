@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `674addf2`.
+Follow-up source changes were reviewed through main `3aef8687`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -266,3 +266,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 | `01-identity-gear-pointer` | `65cf64a8` | One load-sized common pointer index retains interleaved duplicate priority and retired binding lifetime; admission/restore/free paths migrated. Normal build and seven core suites passed. |
 
 | `06-02` partial | `674addf2` | Device PCM/encoding/conversion storage prepared in common arenas; candidate and legacy save ownership preserved. Normal build/seven suites passed; no SDL behavior proof. Vorbis and larger valid-request growth remain open. |
+
+| `09-04` partial | `3aef8687` | Fuzzy evaluation/mutation/release use common arena ownership, retaining live reads and callback order. First and deeper traversal admission remain open. Normal build and seven suites passed. |

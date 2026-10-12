@@ -4,6 +4,7 @@
 #include "guest_q3_native_catalog.h"
 #include "qa/game_q3.h"
 #include "qa/inventory.h"
+#include "qa/id_index.h"
 #include "qa/json.h"
 #include <limits.h>
 #include <stdio.h>
@@ -27,6 +28,8 @@ struct application_q3_catalog {
     size_t selection_count;
     qa_item_id *stored;
     size_t stored_count;
+    qa_arena storage[2], source_storage;
+    unsigned published;
     application_q3_catalog_record *records;
     size_t record_count;
     uint32_t source_address, source_count;
@@ -172,7 +175,8 @@ static bool read_word(application_q3_catalog *c, uint32_t address, int32_t *out,
     uint8_t bytes[4]; if (!read_bytes(c, address, bytes, 4, e)) return false;
     uint32_t value = little(bytes); memcpy(out, &value, 4); return true;
 }
-static bool read_string(application_q3_catalog *c, int32_t pointer, const char **out, qa_error *e)
+static bool read_string(application_q3_catalog *c, int32_t pointer, qa_arena *storage,
+    const char **out, qa_error *e)
 {
     size_t extent = c->live ? qa_qvm_memory_size(c->vm) : qa_qvm_image_initialized_data(c->image).size;
     if (pointer <= 0 || (uint32_t)pointer >= extent) return fail(e, QA_ERROR_FORMAT, "Catalog string leaves original data");
@@ -183,32 +187,40 @@ static bool read_string(application_q3_catalog *c, int32_t pointer, const char *
         ++length;
     } while (byte);
     if (length == 1) return fail(e, QA_ERROR_FORMAT, "Catalog source name is empty");
-    char *text = malloc(length);
+    char *text = qa_arena_alloc(storage, length, 1, e);
     if (!text) return fail(e, QA_ERROR_MEMORY, "Retaining original catalog string");
-    if (!read_bytes(c, (uint32_t)pointer, text, length, e)) { free(text); return false; }
+    if (!read_bytes(c, (uint32_t)pointer, text, length, e)) return false;
     *out = text; return true;
 }
-static void records_free(application_q3_catalog_record *records, size_t count)
-{ for (size_t i = 0; i < count; ++i) { free((void *)records[i].class_name); free((void *)records[i].pickup_name); } free(records); }
-static bool item_id(application_q3_catalog *c, const application_q3_catalog_record *record, bool weapon, qa_item_id *out, qa_error *e)
+static bool item_id(application_q3_catalog *c, const application_q3_catalog_record *record,
+    bool weapon, qa_arena *storage, qa_item_id *out, qa_error *e)
 {
     if (weapon) for (size_t i = 0; i < c->selection_count; ++i)
         if (c->selection[i].value == record->tag) { *out = c->selection[i].item; return true; }
-    size_t count; const qa_q3_item *stock = qa_q3_items(QA_Q3_TEAM_ARENA, &count);
-    int32_t tag = 0;
-    for (size_t i = 1; i < count; ++i)
-        if (stock[i].kind == (weapon ? QA_Q3_ITEM_WEAPON : QA_Q3_ITEM_AMMO) && !strcmp(stock[i].classname, record->class_name)) { tag = stock[i].tag; break; }
+    const qa_q3_item *stock = qa_q3_find_item(QA_Q3_TEAM_ARENA, record->class_name, NULL);
+    int32_t tag = stock && stock->kind == (weapon ? QA_Q3_ITEM_WEAPON : QA_Q3_ITEM_AMMO) ? stock->tag : 0;
     size_t capacity = strlen(record->class_name) + strlen(c->instance) + strlen(c->artifact_path) + 96;
-    char *text = malloc(capacity);
+    char *text = qa_arena_alloc(storage, capacity, 1, e);
     if (!text) return fail(e, QA_ERROR_MEMORY, "Retaining original catalog identity");
     const char *canonical = qa_q3_weapon_identity_name((qa_q3_weapon)tag);
     if (canonical)
         snprintf(text, capacity, "q3:%s/%s", weapon ? "weapon" : "ammo", canonical);
     else snprintf(text, capacity, "q3:guest/%s/%s/%s", c->instance, c->artifact_path, record->class_name);
-    bool ok = qa_strings_intern_cstr(c->strings, text, out, e); free(text); return ok;
+    return qa_strings_intern_cstr(c->strings, text, out, e);
 }
 static bool stored(const application_q3_catalog *c, qa_item_id item)
 { for (size_t i = 0; i < c->stored_count; ++i) if (c->stored[i] == item) return true; return false; }
+static bool inventory_projection(qa_arena *storage, const application_q3_catalog_weapon *weapons,
+    size_t count, guest_inventory_weapon **out, qa_error *e)
+{
+    if (count > SIZE_MAX / sizeof(**out)) return fail(e, QA_ERROR_MEMORY, "Inventory catalog is too large");
+    guest_inventory_weapon *rows = count ? qa_arena_alloc(storage, count * sizeof(*rows),
+        _Alignof(guest_inventory_weapon), e) : NULL;
+    if (count && !rows) return fail(e, QA_ERROR_MEMORY, "Retaining source inventory catalog projection");
+    for (size_t i = 0; i < count; ++i)
+        rows[i] = (guest_inventory_weapon){(uint32_t)weapons[i].weapon, weapons[i].item, weapons[i].ammo};
+    *out = rows; return true;
+}
 static bool refresh(application_q3_catalog *c, bool full_records, bool roster, qa_error *e)
 {
     if (!c->table) return true;
@@ -223,9 +235,16 @@ static bool refresh(application_q3_catalog *c, bool full_records, bool roster, q
         (size_t)count > SIZE_MAX / sizeof(application_q3_catalog_record) ||
         (size_t)count > SIZE_MAX / sizeof(application_q3_catalog_weapon))
         return fail(e, QA_ERROR_FORMAT, "Catalog table leaves original source data");
-    application_q3_catalog_record *records = count ? calloc((size_t)count, sizeof(*records)) : NULL;
-    application_q3_catalog_weapon *weapons = count ? calloc((size_t)count, sizeof(*weapons)) : NULL;
-    if (count && (!records || !weapons)) { free(records); free(weapons); return fail(e, QA_ERROR_MEMORY, "Retaining original catalog records"); }
+    unsigned candidate = 1 - c->published;
+    qa_arena *storage = c->storage + candidate;
+    qa_arena_reset(storage);
+    application_q3_catalog_record *records = count ? qa_arena_alloc(storage, (size_t)count * sizeof(*records),
+        _Alignof(application_q3_catalog_record), e) : NULL;
+    application_q3_catalog_weapon *weapons = roster && count ? qa_arena_alloc(storage, (size_t)count * sizeof(*weapons),
+        _Alignof(application_q3_catalog_weapon), e) : NULL;
+    if (count && (!records || (roster && !weapons))) return fail(e, QA_ERROR_MEMORY, "Retaining original catalog records");
+    qa_id_index tags = {.storage = storage};
+    if (!qa_id_index_reserve(&tags, (size_t)count, e)) return false;
     size_t used = 0, weapon_count = 0; bool ok = true;
     for (int32_t i = 0; ok && i < count; ++i) {
         uint32_t at = (uint32_t)address + (uint32_t)i * c->stride; int32_t words[4];
@@ -237,7 +256,9 @@ static bool refresh(application_q3_catalog *c, bool full_records, bool roster, q
         if (!ok) continue;
         application_q3_catalog_record *r = records + used++;
         *r = (application_q3_catalog_record){.index=(uint32_t)i,.address=at,.type=words[2],.tag=words[3]};
-        ok = read_string(c, words[0], &r->class_name, e) && read_string(c, words[1], &r->pickup_name, e);
+        ok = read_string(c, words[0], storage, &r->class_name, e) && read_string(c, words[1], storage, &r->pickup_name, e);
+        if (ok && !qa_id_index_find(&tags, (uint32_t)r->tag, (uint32_t)r->type))
+            qa_id_index_insert(&tags, (uint32_t)r->tag, (uint32_t)r->type, used - 1);
     }
     for (size_t i = 0; roster && ok && i < used; ++i) {
         application_q3_catalog_record *r = records + i;
@@ -248,17 +269,14 @@ static bool refresh(application_q3_catalog *c, bool full_records, bool roster, q
             break;
         }
         if (r->type != c->weapon_type) continue;
-        bool duplicate = false;
-        for (size_t j = 0; j < weapon_count; ++j) if (weapons[j].weapon == r->tag) duplicate = true;
-        if (duplicate) continue;
+        if (qa_id_index_find(&tags, (uint32_t)r->tag, (uint32_t)c->weapon_type)->value != i) continue;
         application_q3_catalog_weapon *w = weapons + weapon_count;
-        w->weapon = r->tag; w->label = r->pickup_name;
+        *w = (application_q3_catalog_weapon){.weapon = r->tag, .label = r->pickup_name};
         ok = r->tag > 0 && (c->private_inventory || r->tag <= 15);
         if (!ok) { fail(e, QA_ERROR_FORMAT, "Catalog weapon exceeds its original inventory representation"); break; }
-        ok = item_id(c, r, true, &w->item, e);
-        for (size_t j = 0; ok && j < used; ++j) if (records[j].type == c->ammo_type && records[j].tag == r->tag) {
-            ok = item_id(c, records + j, false, &w->ammo, e); break;
-        }
+        ok = item_id(c, r, true, storage, &w->item, e);
+        qa_id_index_entry *ammo = qa_id_index_find(&tags, (uint32_t)r->tag, (uint32_t)c->ammo_type);
+        if (ok && ammo) ok = item_id(c, records + ammo->value, false, storage, &w->ammo, e);
         bool selected = !c->selected;
         for (size_t j = 0; j < c->selection_count; ++j)
             if (c->selection[j].value == w->weapon && c->selection[j].item == w->item) selected = true;
@@ -266,7 +284,7 @@ static bool refresh(application_q3_catalog *c, bool full_records, bool roster, q
             ok = fail(e, QA_ERROR_FORMAT, "Catalog weapon lacks its declared selection or inventory storage");
         if (ok) ++weapon_count;
     }
-    if (!ok) { records_free(records, used); free(weapons); return false; }
+    if (!ok) return false;
     bool same = full_records == c->records_full && used == c->record_count &&
         (!roster || weapon_count == c->weapon_count);
     for (size_t i = 0; same && i < used; ++i) {
@@ -277,23 +295,26 @@ static bool refresh(application_q3_catalog *c, bool full_records, bool roster, q
     for (size_t i = 0; roster && same && i < weapon_count; ++i)
         same = weapons[i].weapon == c->weapons[i].weapon && weapons[i].item == c->weapons[i].item &&
             weapons[i].ammo == c->weapons[i].ammo;
-    if (same) { records_free(records, used); free(weapons); return true; }
-    records_free(c->records, c->record_count);
-    c->records = records; c->record_count = used; c->records_full = full_records;
-    if (roster) {
-        free(c->weapons); c->weapons = weapons; c->weapon_count = weapon_count;
-    } else {
-        free(weapons);
+    if (same) return true;
+    if (!roster) {
+        weapon_count = c->weapon_count;
+        weapons = weapon_count ? qa_arena_alloc(storage, weapon_count * sizeof(*weapons),
+            _Alignof(application_q3_catalog_weapon), e) : NULL;
+        if (weapon_count && !weapons) return fail(e, QA_ERROR_MEMORY, "Retaining original catalog records");
+        if (weapon_count) memcpy(weapons, c->weapons, weapon_count * sizeof(*weapons));
         /* A subsequent live weapons read always revalidates the roster. The
          * immutable roster keeps names from this same newly admitted table. */
-        for (size_t i = 0; i < c->weapon_count; ++i) {
-            c->weapons[i].label = NULL;
-            for (size_t j = 0; j < used; ++j)
-                if (records[j].type == c->weapon_type && records[j].tag == c->weapons[i].weapon) {
-                    c->weapons[i].label = records[j].pickup_name; break;
-                }
+        for (size_t i = 0; i < weapon_count; ++i) {
+            qa_id_index_entry *source = qa_id_index_find(&tags, (uint32_t)weapons[i].weapon, (uint32_t)c->weapon_type);
+            weapons[i].label = source ? records[source->value].pickup_name : NULL;
         }
     }
+    guest_inventory_weapon *inventory;
+    if (!inventory_projection(storage, weapons, weapon_count, &inventory, e)) return false;
+    c->records = records; c->record_count = used; c->records_full = full_records;
+    c->weapons = weapons; c->weapon_count = weapon_count;
+    c->inventory = inventory; c->inventory_count = weapon_count;
+    c->published = candidate;
     return true;
 }
 bool application_q3_catalog_current(const application_q3_catalog *c, const qa_qvm_image *image, const qa_qvm *vm, qa_qvm_abi abi)
@@ -375,9 +396,11 @@ bool application_q3_catalog_create(qa_qvm_image *image, qa_qvm *vm, qa_qvm_abi a
             c->weapon_type = 1; c->ammo_type = 2;
         } else {
             c->weapon_count = missionpack ? 13 : 10;
-            c->weapons = calloc(c->weapon_count, sizeof(*c->weapons));
+            c->weapons = qa_arena_alloc(c->storage + c->published, c->weapon_count * sizeof(*c->weapons),
+                _Alignof(application_q3_catalog_weapon), e);
             ok = c->weapons != NULL;
             if (!ok) fail(e, QA_ERROR_MEMORY, "Retaining source default weapon roster");
+            if (ok) memset(c->weapons, 0, c->weapon_count * sizeof(*c->weapons));
             size_t count; const qa_q3_item *stock = qa_q3_items(QA_Q3_TEAM_ARENA, &count);
             for (size_t i = 0; ok && i < c->weapon_count; ++i) {
                 uint32_t slot = (uint32_t)i + 1; char text[64];
@@ -394,6 +417,9 @@ bool application_q3_catalog_create(qa_qvm_image *image, qa_qvm *vm, qa_qvm_abi a
                         w->label = stock[j].name; break;
                     }
             }
+            if (ok) ok = inventory_projection(c->storage + c->published, c->weapons,
+                c->weapon_count, &c->inventory, e);
+            if (ok) c->inventory_count = c->weapon_count;
         }
     }
     qa_json_destroy(doc);
@@ -405,9 +431,9 @@ void application_q3_catalog_destroy(application_q3_catalog *c)
 {
     if (!c) return;
     application_q3_native_catalog_destroy(c->native);
-    records_free(c->records, c->record_count);
-    records_free(c->source_records, c->source_record_count);
-    free(c->weapons); free(c->inventory); free(c->selection); free(c->stored);
+    qa_arena_destroy(c->storage); qa_arena_destroy(c->storage + 1);
+    qa_arena_destroy(&c->source_storage);
+    free(c->selection); free(c->stored);
     qa_qvm_image_release(c->image);
     free(c->instance); free(c->artifact_path); free(c);
 }
@@ -425,8 +451,14 @@ bool application_q3_catalog_records(application_q3_catalog *c,
                 .address={.value=c->source_address}, .count={.value=c->source_count},
                 .stride=52, .fields={0,28,36,40}, .weapon_type=1, .ammo_type=2, .table=true
             };
-            if (!refresh(&source, true, false, e)) return false;
+            if (!refresh(&source, true, false, e)) {
+                qa_arena_destroy(source.storage); qa_arena_destroy(source.storage + 1);
+                return false;
+            }
             c->source_records = source.records; c->source_record_count = source.record_count;
+            c->source_storage = source.storage[source.published];
+            source.storage[source.published] = (qa_arena){0};
+            qa_arena_destroy(source.storage); qa_arena_destroy(source.storage + 1);
             c->source_records_ready = true;
         }
         *out = c->source_records; *count = c->source_record_count; return true;
@@ -462,10 +494,12 @@ bool application_q3_catalog_ammo_label(application_q3_catalog *c, qa_item_id ite
         if ((c->live || !c->record_count) && !refresh(c, false, false, e)) return false;
         records = c->records; count = c->record_count; ammo_type = c->ammo_type;
     } else return fail(e, QA_ERROR_NOT_FOUND, "GAME catalog has no retained Source ammo records");
+    qa_arena *storage = c->storage + (1 - c->published);
+    qa_arena_reset(storage);
     for (size_t i = 0; i < count; ++i) {
         if (records[i].type != ammo_type) continue;
         qa_item_id actual;
-        if (!item_id(c, records + i, false, &actual, e)) return false;
+        if (!item_id(c, records + i, false, storage, &actual, e)) return false;
         if (actual == item) { *out = records[i].pickup_name; return true; }
     }
     return fail(e, QA_ERROR_NOT_FOUND, "Ammo item is absent from the actual Source catalog");
@@ -479,17 +513,5 @@ bool application_q3_catalog_inventory_read(void *context, q3g_role *role,
         return fail(e, QA_ERROR_ARGUMENT, "Inventory catalog belongs to another physical GAME executor");
     const application_q3_catalog_weapon *weapons; size_t used;
     if (!application_q3_catalog_weapons(c, &weapons, &used, e)) return false;
-    bool same = used == c->inventory_count;
-    for (size_t i = 0; same && i < used; ++i)
-        same = c->inventory[i].weapon == (uint32_t)weapons[i].weapon &&
-            c->inventory[i].item == weapons[i].item && c->inventory[i].ammo == weapons[i].ammo;
-    if (!same) {
-        if (used > SIZE_MAX / sizeof(*c->inventory)) return fail(e, QA_ERROR_MEMORY, "Inventory catalog is too large");
-        guest_inventory_weapon *next = used ? malloc(used * sizeof(*next)) : NULL;
-        if (used && !next) return fail(e, QA_ERROR_MEMORY, "Retaining source inventory catalog projection");
-        for (size_t i = 0; i < used; ++i)
-            next[i] = (guest_inventory_weapon){(uint32_t)weapons[i].weapon, weapons[i].item, weapons[i].ammo};
-        free(c->inventory); c->inventory = next; c->inventory_count = used;
-    }
     *out = c->inventory; *count = c->inventory_count; return true;
 }

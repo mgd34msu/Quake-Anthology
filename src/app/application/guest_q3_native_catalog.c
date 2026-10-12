@@ -1,5 +1,6 @@
 #include "guest_q3_native_catalog.h"
 #include "guest_q3_private.h"
+#include "qa/id_index.h"
 #include "qa/json.h"
 
 typedef struct native_catalog_locator {
@@ -16,6 +17,8 @@ struct application_q3_native_catalog {
     native_catalog_locator address, count;
     uint32_t stride, fields[4], string_limit;
     int32_t weapon_type, ammo_type;
+    qa_arena storage[2];
+    unsigned published;
     application_q3_catalog_record *records;
     size_t record_count;
     application_q3_catalog_weapon *weapons;
@@ -76,18 +79,10 @@ static bool locator(application_q3_native_catalog *c, const qa_json_document *do
     return true;
 }
 
-static void records_free(application_q3_catalog_record *records, size_t count)
-{
-    for (size_t i = 0; i < count; ++i) {
-        free((void *)records[i].class_name); free((void *)records[i].pickup_name);
-    }
-    free(records);
-}
-
 void application_q3_native_catalog_destroy(application_q3_native_catalog *c)
 {
     if (!c) return;
-    records_free(c->records, c->record_count); free(c->weapons);
+    qa_arena_destroy(c->storage); qa_arena_destroy(c->storage + 1);
     qa_native_module_release(c->module); qa_resource_release(c->items_resource); free(c);
 }
 
@@ -217,33 +212,33 @@ static bool table(application_q3_native_catalog *c, qa_native_instance *instance
 }
 
 static bool string(qa_native_instance *instance, uint64_t pointer, uint32_t maximum,
-    const char **out, qa_error *error)
+    qa_arena *storage, const char **out, qa_error *error)
 {
-    qa_buffer text = {0};
-    if (!qa_native_read_string(instance, pointer, maximum, &text, error)) return false;
-    if (!text.size) { qa_buffer_free(&text); return fail(error, QA_ERROR_FORMAT, "Native item source name is empty"); }
-    *out = (const char *)text.data; return true;
+    qa_bytes text;
+    if (!qa_native_string_span(instance, pointer, maximum, &text, error)) return false;
+    char *copy = qa_arena_alloc(storage, text.size + 1, 1, error);
+    if (!copy) return false;
+    if (text.data) memcpy(copy, text.data, text.size + 1);
+    else if (!qa_native_read(instance, pointer, copy, text.size + 1, error)) return false;
+    if (!text.size) return fail(error, QA_ERROR_FORMAT, "Native item source name is empty");
+    *out = copy; return true;
 }
 
 static bool identity(application_q3_native_catalog *c, const application_q3_catalog_record *record,
-    bool weapon, qa_item_id *out, qa_error *error)
+    bool weapon, qa_arena *storage, qa_item_id *out, qa_error *error)
 {
-    size_t count;
-    const qa_q3_item *known = qa_q3_items(QA_Q3_TEAM_ARENA, &count);
+    const qa_q3_item *known = qa_q3_find_item(QA_Q3_TEAM_ARENA, record->class_name, NULL);
     const char *canonical = NULL;
-    for (size_t i = 1; i < count; ++i)
-        if (known[i].kind == (weapon ? QA_Q3_ITEM_WEAPON : QA_Q3_ITEM_AMMO) &&
-            !strcmp(known[i].classname, record->class_name) && known[i].tag > 0)
-            canonical = qa_q3_weapon_identity_name((qa_q3_weapon)known[i].tag);
+    if (known && known->kind == (weapon ? QA_Q3_ITEM_WEAPON : QA_Q3_ITEM_AMMO) && known->tag > 0)
+        canonical = qa_q3_weapon_identity_name((qa_q3_weapon)known->tag);
     const char *instance = c->role->engine->provider->launch->selection.instance;
     size_t length = strlen(record->class_name) + strlen(instance) + strlen(c->role->path);
     if (length > SIZE_MAX - 96) return fail(error, QA_ERROR_MEMORY, "Native item identity exceeds storage");
-    char *text = malloc(length + 96);
+    char *text = qa_arena_alloc(storage, length + 96, 1, error);
     if (!text) return fail(error, QA_ERROR_MEMORY, "Retaining native Source item identity");
     if (canonical) snprintf(text, length + 96, "q3:%s/%s", weapon ? "weapon" : "ammo", canonical);
     else snprintf(text, length + 96, "q3:guest/%s/%s/%s", instance, c->role->path, record->class_name);
-    bool ok = qa_strings_intern_cstr(qa_session_strings(c->role->engine->provider->application->session), text, out, error);
-    free(text); return ok;
+    return qa_strings_intern_cstr(qa_session_strings(c->role->engine->provider->application->session), text, out, error);
 }
 
 static bool refresh_held(application_q3_native_catalog *c, bool restoring, qa_error *error)
@@ -257,9 +252,16 @@ static bool refresh_held(application_q3_native_catalog *c, bool restoring, qa_er
     if (rows > SIZE_MAX / sizeof(application_q3_catalog_record) ||
         rows > SIZE_MAX / sizeof(application_q3_catalog_weapon))
         return fail(error, QA_ERROR_MEMORY, "Native item table exceeds owned catalog storage");
-    application_q3_catalog_record *records = count ? calloc(count, sizeof(*records)) : NULL;
-    application_q3_catalog_weapon *weapons = count ? calloc(count, sizeof(*weapons)) : NULL;
-    if (count && (!records || !weapons)) { free(records); free(weapons); return fail(error, QA_ERROR_MEMORY, "Reading native item table"); }
+    unsigned candidate = 1 - c->published;
+    qa_arena *storage = c->storage + candidate;
+    qa_arena_reset(storage);
+    application_q3_catalog_record *records = count ? qa_arena_alloc(storage, rows * sizeof(*records),
+        _Alignof(application_q3_catalog_record), error) : NULL;
+    application_q3_catalog_weapon *weapons = count ? qa_arena_alloc(storage, rows * sizeof(*weapons),
+        _Alignof(application_q3_catalog_weapon), error) : NULL;
+    if (count && (!records || !weapons)) return fail(error, QA_ERROR_MEMORY, "Reading native item table");
+    qa_id_index tags = {.storage = storage}, items = {.storage = storage};
+    if (!qa_id_index_reserve(&tags, rows, error) || !qa_id_index_reserve(&items, rows, error)) return false;
     size_t used = 0, weapon_count = 0; bool ok = true;
     for (uint32_t i = 0; ok && i < count; ++i) {
         uint64_t at = address + (uint64_t)i * c->stride, values[4];
@@ -272,36 +274,32 @@ static bool refresh_held(application_q3_native_catalog *c, bool restoring, qa_er
         uint32_t type = (uint32_t)values[2], tag = (uint32_t)values[3];
         *record = (application_q3_catalog_record){.index = i, .address = at};
         memcpy(&record->type, &type, sizeof(type)); memcpy(&record->tag, &tag, sizeof(tag));
-        ok = string(instance, values[0], c->string_limit, &record->class_name, error);
-        if (ok && values[1]) ok = string(instance, values[1], c->string_limit, &record->pickup_name, error);
+        ok = string(instance, values[0], c->string_limit, storage, &record->class_name, error);
+        if (ok && values[1]) ok = string(instance, values[1], c->string_limit, storage, &record->pickup_name, error);
         if (ok && !record->pickup_name && (record->type == c->weapon_type || record->type == c->ammo_type))
             ok = fail(error, QA_ERROR_FORMAT, "Native weapon or ammo has no actual Source label");
+        if (ok && !qa_id_index_find(&tags, (uint32_t)record->tag, (uint32_t)record->type))
+            qa_id_index_insert(&tags, (uint32_t)record->tag, (uint32_t)record->type, used - 1);
     }
     for (size_t i = 0; ok && i < used; ++i) {
         application_q3_catalog_record *record = records + i;
         if (record->type != c->weapon_type) continue;
-        bool duplicate = false;
-        for (size_t j = 0; j < weapon_count; ++j) if (weapons[j].weapon == record->tag) duplicate = true;
-        if (duplicate) continue;
+        if (qa_id_index_find(&tags, (uint32_t)record->tag, (uint32_t)c->weapon_type)->value != i) continue;
         if (record->tag <= 0) { ok = fail(error, QA_ERROR_FORMAT, "Native weapon has no positive Source selection"); break; }
         application_q3_catalog_weapon *weapon = weapons + weapon_count;
         *weapon = (application_q3_catalog_weapon){.weapon = record->tag, .label = record->pickup_name};
-        ok = identity(c, record, true, &weapon->item, error);
-        for (size_t j = 0; ok && j < used; ++j)
-            if (records[j].type == c->ammo_type && records[j].tag == record->tag) {
-                ok = identity(c, records + j, false, &weapon->ammo, error); break;
-            }
-        for (size_t j = 0; ok && j < weapon_count; ++j)
-            if (weapons[j].item == weapon->item)
-                ok = fail(error, QA_ERROR_FORMAT, "Native Source selection repeats its item identity");
-        if (ok) ++weapon_count;
+        ok = identity(c, record, true, storage, &weapon->item, error);
+        qa_id_index_entry *ammo = qa_id_index_find(&tags, (uint32_t)record->tag, (uint32_t)c->ammo_type);
+        if (ok && ammo) ok = identity(c, records + ammo->value, false, storage, &weapon->ammo, error);
+        if (ok && qa_id_index_find(&items, weapon->item, 0))
+            ok = fail(error, QA_ERROR_FORMAT, "Native Source selection repeats its item identity");
+        if (ok) { qa_id_index_insert(&items, weapon->item, 0, weapon_count); ++weapon_count; }
     }
     uint64_t current_address = 0; uint32_t current_count = 0;
     if (ok) ok = retained_current(c, c->role, restoring) &&
         table(c, instance, &current_address, &current_count, error) &&
         current_address == address && current_count == count;
     if (!ok) {
-        records_free(records, used); free(weapons);
         if (!error || !error->code) fail(error, QA_ERROR_ARGUMENT, "Native catalog changed its actual source table during read");
         return false;
     }
@@ -316,9 +314,9 @@ static bool refresh_held(application_q3_native_catalog *c, bool restoring, qa_er
     for (size_t i = 0; same && i < weapon_count; ++i)
         same = weapons[i].weapon == c->weapons[i].weapon && weapons[i].item == c->weapons[i].item &&
             weapons[i].ammo == c->weapons[i].ammo;
-    if (same) { records_free(records, used); free(weapons); return true; }
-    records_free(c->records, c->record_count); free(c->weapons);
+    if (same) return true;
     c->records = records; c->record_count = used; c->weapons = weapons; c->weapon_count = weapon_count;
+    c->published = candidate;
     return true;
 }
 
@@ -354,9 +352,11 @@ bool application_q3_native_catalog_ammo_label(application_q3_native_catalog *c,
 {
     if (!item || !out) return fail(error, QA_ERROR_ARGUMENT, "Native ammo label requires its actual item and output");
     if (!refresh(c, error)) return false;
+    qa_arena *storage = c->storage + (1 - c->published);
+    qa_arena_reset(storage);
     for (size_t i = 0; i < c->record_count; ++i) if (c->records[i].type == c->ammo_type) {
         qa_item_id actual;
-        if (!identity(c, c->records + i, false, &actual, error)) return false;
+        if (!identity(c, c->records + i, false, storage, &actual, error)) return false;
         if (actual == item) { *out = c->records[i].pickup_name; return true; }
     }
     return fail(error, QA_ERROR_NOT_FOUND, "Ammo is absent from the actual native GAME table");
