@@ -738,6 +738,37 @@ bool qa_audio_engine_position(qa_audio_engine *engine, uint64_t actor, qa_vec3 p
     bool result = position_impl(engine, actor, position, error);
     leave(engine); return result;
 }
+void qa_audio_engine_actors_visit(const qa_audio_engine *engine, qa_audio_actor_visitor visit,
+    void *context)
+{
+    if (!engine || !visit) return;
+    for (size_t i = 0; i < engine->seat_count; ++i) {
+        const audio_seat *seat = engine->seats[i];
+        if (seat->listener.actor != QA_AUDIO_NO_ACTOR) visit(context, seat->listener.actor);
+        qa_audio_mixer_actors_visit(seat->mixer, visit, context);
+    }
+    for (size_t i = 0; i < engine->round_mixer_count; ++i)
+        qa_audio_mixer_actors_visit(engine->round_mixers[i].mixer, visit, context);
+}
+typedef struct position_retention {
+    bool (*keep)(void *, uint64_t);
+    void *context;
+} position_retention;
+
+static bool position_actor_kept(void *context, const qa_audio_position *position)
+{
+    const position_retention *retention = context;
+    return retention->keep(retention->context, position->actor);
+}
+
+void qa_audio_engine_positions_retain(qa_audio_engine *engine,
+    bool (*keep)(void *, uint64_t), void *context)
+{
+    if (!enter(engine, false, NULL)) return;
+    position_retention retention = {keep, context};
+    qa_audio_positions_retain(&engine->positions, position_actor_kept, &retention);
+    leave(engine);
+}
 bool qa_audio_engine_loop(qa_audio_engine *engine, const qa_audio_loop *loop, qa_error *error) {
     if (!enter(engine, false, error)) return false;
     bool result = loop_impl(engine, loop, error);

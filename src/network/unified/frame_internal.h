@@ -91,6 +91,9 @@ extern const qa_unified_record_layout qa_unified_simulation_event_layout;
 typedef bool (*qa_unified_actor_remap_fn)(void *, qa_actor_id, qa_actor_id *, qa_error *);
 bool qa_unified_record_actor_remap(const qa_unified_record_layout *, void *,
     qa_unified_actor_remap_fn, void *, qa_error *);
+/* Read-only numeric ActorIds from already-admitted records; uses the same layout walk. */
+void qa_unified_record_actors_visit(const qa_unified_record_layout *, const void *,
+    void (*visit)(void *, qa_actor_id), void *context);
 
 void qa_unified_record_dispose(const qa_unified_record_layout *, void *);
 bool qa_unified_record_equal(const qa_unified_record_layout *, const void *, const void *,

@@ -127,16 +127,12 @@ qa_vec3 qa_audio_positions_read(const qa_audio_positions *positions,
     return has_projected ? projected : fallback;
 }
 
-void qa_audio_positions_projection_clear(qa_audio_positions *positions,
-    qa_audio_position_projection *projection)
+void qa_audio_positions_retain(qa_audio_positions *positions,
+    bool (*keep)(void *, const qa_audio_position *), void *context)
 {
-    if (!projection->id) {
-        qa_audio_positions_clear(positions);
-        return;
-    }
     size_t retained = 0;
     for (size_t row = 0; row < positions->count; ++row)
-        if (positions->rows[row].projection != projection->id)
+        if (keep(context, &positions->rows[row]))
             positions->rows[retained++] = positions->rows[row];
     if (retained != positions->count) {
         positions->count = retained;
@@ -144,6 +140,22 @@ void qa_audio_positions_projection_clear(qa_audio_positions *positions,
         for (size_t row = 0; row < retained; ++row)
             qa_id_index_insert(&positions->actors, 0, positions->rows[row].actor, row);
     }
+}
+
+static bool outside_projection(void *context, const qa_audio_position *position)
+{
+    const qa_audio_position_projection *projection = context;
+    return position->projection != projection->id;
+}
+
+void qa_audio_positions_projection_clear(qa_audio_positions *positions,
+    qa_audio_position_projection *projection)
+{
+    if (!projection->id) {
+        qa_audio_positions_clear(positions);
+        return;
+    }
+    qa_audio_positions_retain(positions, outside_projection, projection);
     /* Global positions persist after this mixer stops, but it must not hear
      * them again until the next update. Newly created mixers inherit them. */
     projection->reset_revision = ++positions->revision;

@@ -116,6 +116,7 @@ struct qa_audio_mixer {
 bool qa_audio_mixer_mix_float(qa_audio_mixer *, float *, size_t, qa_error *);
 bool qa_audio_mixer_create_positions(const qa_audio_mixer_options *, qa_audio_positions *,
     qa_audio_mixer **, qa_error *);
+void qa_audio_mixer_actors_visit(const qa_audio_mixer *, qa_audio_actor_visitor, void *);
 
 bool qa_audio_mixer_round_lock(qa_audio_mixer *, qa_error *);
 void qa_audio_mixer_round_stop(qa_audio_mixer *);

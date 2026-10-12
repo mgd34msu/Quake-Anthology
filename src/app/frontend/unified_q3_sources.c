@@ -47,6 +47,28 @@ struct frontend_unified_q3_source_frame {
     uint64_t revision;
     qa_unified_document *packet;
 };
+static void source_actors_visit(const received_source *source,
+    void (*visit)(void *, qa_actor_id), void *context)
+{
+    if (!source) return;
+    if (source->view.viewer.registry) visit(context, source->view.viewer);
+    for (size_t i = 0; i < QA_Q3_ENTITIES; ++i)
+        if (source->entities[i].actor.registry) visit(context, source->entities[i].actor);
+    for (size_t i = 0; i < source->view.player_count; ++i)
+        if (source->players[i].actor.registry) visit(context, source->players[i].actor);
+}
+void frontend_unified_q3_sources_actors_visit(const frontend_unified_q3_sources *o,
+    void (*visit)(void *, qa_actor_id), void *context)
+{
+    if (!o) return;
+    for (size_t i = 0; i < o->count; ++i) source_actors_visit(o->rows[i], visit, context);
+    if (o->prepared)
+        for (size_t i = 0; i < o->prepared->count; ++i)
+            source_actors_visit(o->prepared->rows[i], visit, context);
+    for (const frontend_unified_q3_source_retirement *row = o->retirements; row; row = row->next)
+        source_actors_visit(row->row, visit, context);
+}
+
 static bool fail(qa_error *e, qa_status code, const char *message)
 { qa_error_set(e, code, 0, "%s", message); return false; }
 static void source_free(received_source *r)

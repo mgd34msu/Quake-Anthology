@@ -8,7 +8,6 @@
 #include "remote_q2_effects.h"
 
 typedef struct frontend_unified_identity {
-    struct frontend_unified_identity *next;
     qa_saved_actor_id wire;
     qa_actor_id actual;
 } frontend_unified_identity;
@@ -43,7 +42,8 @@ struct frontend_remote_unified {
     frontend_unified_metadata *metadata;
     qa_unified_frame_lease *metadata_lease;
     size_t metadata_count;
-    frontend_unified_identity *identities;
+    qa_id_index wire_identities;
+    qa_actor_index actual_identities;
     qa_arena identity_storage;
     qa_pool identity_records;
     qa_actor_id wire_player;
@@ -56,6 +56,9 @@ struct frontend_remote_unified {
     bool restore_pending;
     bool retirement_pending;
 };
+/* Existing admitted wire lifetime only; no actor creation or live authority. */
+bool frontend_remote_unified_actor_captured(const frontend_remote_unified *,
+    qa_actor_id wire, qa_actor_id *out);
 bool frontend_unified_fail(qa_error *, qa_status, const char *);
 bool frontend_unified_document_equal(const qa_unified_document *, const qa_unified_document *);
 bool frontend_unified_document_restore_bind(qa_unified_document **, const qa_unified_document *, bool, qa_error *);

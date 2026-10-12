@@ -34,6 +34,7 @@ struct qa_application_q3_round_services;
 struct qa_application_startup_hooks;
 struct qa_application_equipment_event;
 struct qa_unified_presentation_payload;
+struct qa_unified_simulation_payload;
 typedef struct qa_application_q3_equipment_services qa_application_q3_equipment_services;
 typedef struct qa_application_q3_body_services qa_application_q3_body_services;
 
@@ -673,7 +674,9 @@ typedef struct qa_application_event_view {
     const qa_application_protocol_event *protocol;
     const struct qa_application_equipment_event *equipment;
     const struct qa_unified_presentation_payload *presentation;
+    const struct qa_unified_simulation_payload *simulation;
     qa_actor_id presentation_recipient;
+    qa_actor_id simulation_recipient;
     uint64_t presentation_time_ns;
     const struct qa_application_q2_audience *q2_audience;
     const struct qa_application_q2_protocol_delivery *q2_delivery;
@@ -707,6 +710,12 @@ const struct application_unified_event_record *qa_application_event_range_next(
  * The caller's subscription retains records while callbacks use the view. */
 bool qa_application_event_raw_next(const qa_application *,qa_application_event_range *,
     uint64_t kind_mask,qa_application_event_view *);
+/* Read-only views of every live lease, including lookup-retired records.
+ * The visitor must not change event storage or release leases. */
+void qa_application_events_visit_retained(const qa_application *,
+    void (*visit)(void *, const qa_application_event_view *), void *context);
+void qa_application_audio_source_actors_visit(const qa_application *,
+    void (*visit)(void *, qa_actor_id), void *context);
 
 /* Initialize a cursor with its record ID and optional starting projection.
  * Reads walk attached views once, including the raw record on the first read.

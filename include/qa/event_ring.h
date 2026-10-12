@@ -63,6 +63,10 @@ void qa_event_lease_retain(qa_event_lease *);
 void qa_event_lease_release(qa_event_lease *);
 uint64_t qa_event_lease_id(const qa_event_lease *);
 const void *qa_event_lease_record(const qa_event_lease *);
+/* Visits every live record, including leases whose lookup slot has retired.
+ * The visitor is read-only: it must not change the ring or release leases. */
+void qa_event_ring_visit_retained(const qa_event_ring *,
+    void (*visit)(void *, const void *), void *context);
 
 /* Diagnostic occupancy, including alignment and pages pinned by leases. */
 size_t qa_event_ring_bytes_used(const qa_event_ring *);

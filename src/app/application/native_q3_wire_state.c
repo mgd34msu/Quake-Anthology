@@ -111,6 +111,23 @@ struct application_native_q3_wire_carry {
     qa_buffer bytes;
 };
 
+void qa_application_audio_source_actors_visit(const qa_application *app,
+    void (*visit)(void *, qa_actor_id), void *context)
+{
+    for (const application_provider *provider = app ? app->live_providers : NULL;
+         provider; provider = provider->next_live) {
+        const struct application_native_q3_wire *wire = provider->native_q3_wire;
+        if (!wire) continue;
+        for (size_t i = 0; i < QA_Q3_SOURCE_CLIENTS; ++i) {
+            if (!wire->slot_readers[i]) continue;
+            const native_q3_wire_client *client = wire->clients + i;
+            if (client->actor.registry) visit(context, client->actor);
+            for (size_t j = 0; j < QA_Q3_SOURCE_ENTITIES; ++j)
+                if (client->source_actors[j].registry) visit(context, client->source_actors[j]);
+        }
+    }
+}
+
 static struct application_native_q3_wire *wire_owner(application_provider *provider,
     qa_error *error)
 {

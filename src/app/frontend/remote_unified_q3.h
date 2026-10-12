@@ -47,4 +47,6 @@ bool frontend_unified_q3_current(const frontend_unified_q3 *);
 bool frontend_unified_q3_destroy(frontend_unified_q3 **, qa_error *);
 bool frontend_unified_q3_visit(const frontend_unified_q3 *,const qa_application_content_visitor *,qa_error *);
 bool frontend_unified_q3_checkpoint_ready(const frontend_unified_q3 *);
+void frontend_unified_q3_actors_visit(const frontend_unified_q3 *,
+    void (*visit)(void *, qa_actor_id), void *context);
 #endif

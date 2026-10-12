@@ -98,4 +98,6 @@ bool frontend_unified_q3_sources_checkpoint_stage_read(const frontend_unified_q3
     const frontend_unified_q3_source_frame *, bool staged, size_t,
     frontend_unified_q3_source_view *, qa_error *);
 
+void frontend_unified_q3_sources_actors_visit(const frontend_unified_q3_sources *,
+    void (*visit)(void *, qa_actor_id), void *context);
 #endif

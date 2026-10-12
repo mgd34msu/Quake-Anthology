@@ -437,6 +437,13 @@ bool qa_audio_engine_listeners(qa_audio_engine *engine, const qa_audio_listener 
                                size_t count, qa_error *error);
 bool qa_audio_engine_position(qa_audio_engine *engine, uint64_t actor, qa_vec3 origin,
                               qa_error *error);
+typedef void (*qa_audio_actor_visitor)(void *, uint64_t);
+/* Read-only actual listeners, voices and loops, including scheduled sounds.
+ * Cached positions are not holders. The visitor must not mutate the engine. */
+void qa_audio_engine_actors_visit(const qa_audio_engine *, qa_audio_actor_visitor, void *);
+/* Discard unheld cached positions in one pass after actor users retire. */
+void qa_audio_engine_positions_retain(qa_audio_engine *,
+    bool (*keep)(void *, uint64_t), void *context);
 void qa_audio_engine_geometry(qa_audio_engine *engine, qa_audio_transmission_fn fn, void *user);
 void qa_audio_engine_pause(qa_audio_engine *engine, bool paused);
 void qa_audio_engine_gain(qa_audio_engine *engine, float gain);

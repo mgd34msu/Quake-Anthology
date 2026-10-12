@@ -95,4 +95,6 @@ const qa_command_context *frontend_unified_q3_client_checkpoint_stage_context(
 qa_cvars *frontend_unified_q3_client_checkpoint_stage_cvars(
     const frontend_unified_q3_client *, const frontend_unified_q3_client_frame *);
 
+void frontend_unified_q3_client_actors_visit(const frontend_unified_q3_client *,
+    void (*visit)(void *, qa_actor_id), void *context);
 #endif

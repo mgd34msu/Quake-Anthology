@@ -30,6 +30,8 @@ bool qa_audio_positions_set(qa_audio_positions *, const qa_audio_position_projec
 qa_vec3 qa_audio_positions_read(const qa_audio_positions *, const qa_audio_position_projection *,
     uint64_t, uint64_t, bool);
 void qa_audio_positions_projection_clear(qa_audio_positions *, qa_audio_position_projection *);
+void qa_audio_positions_retain(qa_audio_positions *,
+    bool (*)(void *, const qa_audio_position *), void *);
 void qa_audio_positions_clear(qa_audio_positions *);
 void qa_audio_positions_destroy(qa_audio_positions *);
 

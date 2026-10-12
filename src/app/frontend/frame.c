@@ -1095,6 +1095,7 @@ bool qa_frontend_step(qa_frontend *frontend,qa_error *error)
     *fault = (qa_error){0};
     ok = complete_travel(frontend,fault);
 completed:
+    frontend_audio_collect(frontend);
 #ifdef QA_ALLOCATION_GATE
     (void)qa_allocation_gate_end(playing, ok);
 #endif
@@ -1106,5 +1107,7 @@ bool frontend_replay_frame(qa_frontend *frontend,const frontend_replay_timing *t
     bool playing=false;
     if(qa_platform_events_frame(frontend->platform_events,timing->wall_ns)!=QA_PLATFORM_EVENT_ACCEPTED)
         return frontend_fail(error,QA_ERROR_MEMORY,"Recovery frame time does not fit the platform queue");
-    return frontend_step(frontend,timing,&playing,error);
+    bool ok = frontend_step(frontend,timing,&playing,error);
+    frontend_audio_collect(frontend);
+    return ok;
 }

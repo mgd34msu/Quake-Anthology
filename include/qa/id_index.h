@@ -30,6 +30,10 @@ bool qa_id_index_next(const qa_id_index *, qa_id_index_cursor *, size_t *value);
  * the index invalidates cursors and pointers into its entries. */
 bool qa_id_index_remove(qa_id_index *, qa_string_id, uint64_t discriminator);
 bool qa_id_index_remove_value(qa_id_index *, qa_string_id, uint64_t discriminator, size_t value);
+/* Keeps selected entries in admission order, rebuilding buckets once without
+ * allocating. Invalidates cursors and entry pointers. Returns entries removed. */
+size_t qa_id_index_retain(qa_id_index *,
+    bool (*keep)(void *, const qa_id_index_entry *), void *context);
 void qa_id_index_clear(qa_id_index *);
 void qa_id_index_destroy(qa_id_index *);
 #endif

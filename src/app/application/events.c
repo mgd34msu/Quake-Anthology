@@ -1566,15 +1566,13 @@ bool qa_application_event_raw_next(const qa_application *app,qa_application_even
     return false;
 }
 
-bool qa_application_event_read(const qa_application *app, qa_application_event_cursor *cursor,
+static bool event_read_record(const application_event_envelope *record, qa_application_event_cursor *cursor,
     qa_application_event_view *out)
 {
-    const application_event_envelope *record;
     const application_protocol_record *protocol;
     const application_equipment_event_record *equipment;
     const application_event_view *view;
     if (!cursor->started) {
-        record = application_event_stream_at(app, cursor->id);
         if (!record) return false;
         protocol = record->protocols; equipment = record->equipment; view = record->views;
         size_t index = cursor->projection;
@@ -1596,7 +1594,9 @@ bool qa_application_event_read(const qa_application *app, qa_application_event_c
         .equipment = equipment ? &equipment->event : NULL,
         .equipment_owner = equipment ? equipment->owner : 0,
         .presentation = view ? view->event.presentation : NULL,
+        .simulation = view ? view->event.simulation : NULL,
         .presentation_recipient = view ? view->event.recipient : (qa_actor_id){0},
+        .simulation_recipient = view ? view->event.simulation_recipient : (qa_actor_id){0},
         .presentation_time_ns = view ? view->event.time_ns : 0};
     cursor->protocol = protocol ? protocol->next : NULL;
     cursor->equipment = equipment ? equipment->next : NULL;
@@ -1632,6 +1632,34 @@ bool qa_application_event_read(const qa_application *app, qa_application_event_c
     case QA_APPLICATION_EVENT_EQUIPMENT: break;
     }
     return true;
+}
+
+bool qa_application_event_read(const qa_application *app, qa_application_event_cursor *cursor,
+    qa_application_event_view *out)
+{
+    return event_read_record(cursor->started ? cursor->record :
+        application_event_stream_at(app, cursor->id), cursor, out);
+}
+
+typedef struct retained_event_visit {
+    void (*visit)(void *, const qa_application_event_view *);
+    void *context;
+} retained_event_visit;
+
+static void retained_event_read(void *opaque, const void *record)
+{
+    const retained_event_visit *visitor = opaque;
+    qa_application_event_cursor cursor = {0};
+    qa_application_event_view view;
+    while (event_read_record(record, &cursor, &view))
+        visitor->visit(visitor->context, &view);
+}
+
+void qa_application_events_visit_retained(const qa_application *app,
+    void (*visit)(void *, const qa_application_event_view *), void *context)
+{
+    retained_event_visit visitor = {.visit = visit, .context = context};
+    qa_event_ring_visit_retained(app ? app->event_ring : NULL, retained_event_read, &visitor);
 }
 
 static bool clear_events(qa_application *application, qa_error *error)

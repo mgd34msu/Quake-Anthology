@@ -1894,6 +1894,21 @@ static void test_raw_audio_custody(void)
     qa_audio_raw_destroy(copy); qa_audio_raw_destroy(restored);
 }
 
+static bool audio_position_not_actor(void *opaque, const qa_audio_position *position)
+{
+    return position->actor != *(const uint64_t *)opaque;
+}
+typedef struct audio_actor_roots {
+    uint64_t sound, origin;
+    unsigned found;
+} audio_actor_roots;
+static void audio_actor_root(void *opaque, uint64_t actor)
+{
+    audio_actor_roots *roots = opaque;
+    if (actor == roots->sound) roots->found |= 1;
+    if (actor == roots->origin) roots->found |= 2;
+}
+
 static void test_shared_audio_preparation(void)
 {
     qa_error error = {0}; char directory[] = "/tmp/qa-audio-assets-XXXXXX";
@@ -1942,6 +1957,14 @@ static void test_shared_audio_preparation(void)
     CHECK(qa_audio_positions_read(&shared, &seats[2]->position_projection, actor, owner, true).x == 4);
     CHECK(qa_audio_positions_set(&shared, NULL, actor, QA_AUDIO_NO_OWNER, qa_v3(5, 0, 0), true, &error));
     CHECK(qa_audio_positions_read(&shared, &seats[0]->position_projection, actor, owner, true).x == 5);
+    CHECK(qa_audio_positions_set(&shared, NULL, other, QA_AUDIO_NO_OWNER, qa_v3(9, 0, 0), true, &error));
+    uint64_t revision = shared.revision;
+    qa_audio_positions_retain(&shared, audio_position_not_actor, &actor);
+    CHECK(shared.count == 1 && shared.revision == revision);
+    for (size_t seat = 0; seat < 3; ++seat) {
+        CHECK(qa_audio_positions_read(&shared, &seats[seat]->position_projection, actor, owner, true).x == 0);
+        CHECK(qa_audio_positions_read(&shared, &seats[seat]->position_projection, other, owner, true).x == 9);
+    }
     for (size_t seat = 0; seat < 3; ++seat) qa_audio_mixer_destroy(seats[seat]);
     qa_audio_positions_destroy(&shared);
     CHECK(mkdtemp(directory));
@@ -2050,6 +2073,19 @@ static void test_shared_audio_preparation(void)
         CHECK(qa_audio_engine_apply(engine,&(qa_audio_event){.kind=QA_AUDIO_EVENT_STOP_OWNER,
             .all=true,.sound={.audience=QA_AUDIO_WORLD}},&error));
         CHECK(counts.starts==counts.stops);
+        qa_audio_event delayed = event;
+        delayed.sound.actor = actor;
+        delayed.sound.origin_kind = QA_AUDIO_ACTOR;
+        delayed.sound.origin_actor = other;
+        delayed.sound.delay_seconds = 1;
+        CHECK(qa_audio_engine_apply(engine, &delayed, &error));
+        audio_actor_roots roots = {.sound = actor, .origin = other};
+        qa_audio_engine_actors_visit(engine, audio_actor_root, &roots);
+        CHECK(roots.found == 3);
+        qa_audio_engine_stop_all(engine);
+        roots.found = 0;
+        qa_audio_engine_actors_visit(engine, audio_actor_root, &roots);
+        CHECK(roots.found == 0);
         qa_audio_engine_destroy(engine);CHECK(counts.starts==counts.stops);
         const int16_t leased_pcm[] = {1200, -1200, 600, -600};
         qa_audio_sample *leased_sample = NULL;
@@ -3674,6 +3710,11 @@ static void test_provider_identity_views(void)
     qa_id_index_destroy(&app.provider_index);
 }
 
+static bool index_value_at_least(void *opaque, const qa_id_index_entry *entry)
+{
+    return entry->value >= *(const size_t *)opaque;
+}
+
 static void test_actor_index_lifetimes(void)
 {
     qa_error error={0}; qa_actor_registry *registry=NULL; qa_actor_index index={0};
@@ -3693,6 +3734,25 @@ static void test_actor_index_lifetimes(void)
     CHECK(qa_id_index_remove(&candidates, 1, identity));
     cursor = qa_id_index_begin(&candidates, 1, other_identity);
     CHECK(qa_id_index_next(&candidates, &cursor, &retained) && retained == 40);
+    qa_id_index_insert(&candidates, 1, identity, 10);
+    qa_id_index_insert(&candidates, 1, identity, 20);
+    qa_id_index_insert(&candidates, 1, identity, 30);
+    qa_id_index_entry *entries = candidates.entries;
+    size_t *buckets = candidates.buckets;
+    size_t minimum = 20;
+    CHECK(qa_id_index_retain(&candidates, index_value_at_least, &minimum) == 1);
+    CHECK(candidates.entries == entries && candidates.buckets == buckets);
+    cursor = qa_id_index_begin(&candidates, 1, identity);
+    CHECK(qa_id_index_next(&candidates, &cursor, &retained) && retained == 30);
+    CHECK(qa_id_index_next(&candidates, &cursor, &retained) && retained == 20);
+    CHECK(!qa_id_index_next(&candidates, &cursor, &retained));
+    cursor = qa_id_index_begin(&candidates, 1, other_identity);
+    CHECK(qa_id_index_next(&candidates, &cursor, &retained) && retained == 40);
+    CHECK(qa_id_index_retain(&candidates, index_value_at_least, &minimum) == 0);
+    minimum = 50;
+    CHECK(qa_id_index_retain(&candidates, index_value_at_least, &minimum) == 3);
+    cursor = qa_id_index_begin(&candidates, 1, identity);
+    CHECK(!qa_id_index_next(&candidates, &cursor, &retained));
     qa_id_index_destroy(&candidates);
     uint8_t bytes[16384]; qa_arena storage;
     CHECK(qa_arena_init_buffer(&storage,bytes,sizeof(bytes),&error));
@@ -4115,6 +4175,16 @@ static void event_ring_final_record(void *record)
     CHECK(record != NULL);
     ++event_ring_final_records;
 }
+typedef struct event_ring_visit_check {
+    const void *expected[2];
+    size_t count;
+} event_ring_visit_check;
+static void event_ring_visit_record(void *opaque, const void *record)
+{
+    event_ring_visit_check *check = opaque;
+    CHECK(check->count < sizeof(check->expected) / sizeof(*check->expected));
+    CHECK(record == check->expected[check->count++]);
+}
 
 static void test_event_ring_cold_growth(void)
 {
@@ -4164,6 +4234,10 @@ static void test_event_ring_cold_growth(void)
     CHECK(qa_event_ring_at(ring, 4) == retained);
     CHECK(qa_event_ring_at(ring, 5) == large);
     qa_event_ring_retire(ring, 6);
+    event_ring_visit_check visited = {.expected = {retained, large}};
+    qa_event_ring_visit_retained(ring, event_ring_visit_record, &visited);
+    CHECK(visited.count == 2);
+    qa_event_ring *retired_owner = ring;
     qa_event_ring_destroy(&ring);
     CHECK(event_ring_final_records == 0);
     CHECK(ring == NULL && !strcmp(retained, "held"));
@@ -4173,6 +4247,9 @@ static void test_event_ring_cold_growth(void)
     CHECK(event_ring_final_records == 0);
     qa_event_lease_release(held);
     CHECK(event_ring_final_records == 1);
+    visited = (event_ring_visit_check){.expected = {large}};
+    qa_event_ring_visit_retained(retired_owner, event_ring_visit_record, &visited);
+    CHECK(visited.count == 1);
     CHECK(large[0] == 'x' && large[65535] == 'x');
     qa_event_lease_release(large_lease);
 }

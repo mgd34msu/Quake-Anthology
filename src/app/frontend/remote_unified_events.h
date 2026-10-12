@@ -73,4 +73,6 @@ bool frontend_unified_events_sound_stop_loop(frontend_unified_events *, qa_actor
 uint64_t frontend_unified_events_audio_owner(const frontend_unified_events *);
 bool frontend_unified_events_audio_actor(frontend_unified_events *, qa_actor_id, uint64_t *, qa_error *);
 bool frontend_unified_events_checkpoint_ready(const frontend_unified_events *);
+void frontend_unified_events_actors_visit(const frontend_unified_events *,
+    void (*visit)(void *, qa_actor_id), void *context);
 #endif

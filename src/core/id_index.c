@@ -79,28 +79,46 @@ qa_id_index_entry *qa_id_index_find(qa_id_index *index, qa_string_id key, uint64
     qa_id_index_cursor cursor = qa_id_index_begin(index, key, discriminator);
     return (qa_id_index_entry *)next_entry(index, &cursor);
 }
-static bool remove_entries(qa_id_index *index, qa_string_id key, uint64_t discriminator,
-                           const size_t *value)
+size_t qa_id_index_retain(qa_id_index *index,
+    bool (*keep)(void *, const qa_id_index_entry *), void *context)
 {
-    qa_id_index_cursor cursor = qa_id_index_begin(index, key, discriminator);
-    size_t candidate;
-    bool found = false;
-    while (qa_id_index_next(index, &cursor, &candidate))
-        if (!value || candidate == *value) { found = true; break; }
-    if (!found) return false;
+    if (!index->count) return 0;
+    size_t previous = index->count;
     size_t count = 0;
     memset(index->buckets, 0, index->capacity * 2 * sizeof(*index->buckets));
     for (size_t i = 0; i < index->count; ++i) {
         qa_id_index_entry entry = index->entries[i];
-        if (entry.key == key && entry.discriminator == discriminator &&
-            (!value || entry.value == *value)) continue;
+        if (!keep(context, &entry)) continue;
         size_t slot = bucket(entry.key, entry.discriminator, index->capacity);
         entry.next = index->buckets[slot];
         index->entries[count] = entry;
         index->buckets[slot] = ++count;
     }
     index->count = count;
-    return true;
+    return previous - count;
+}
+typedef struct index_remove {
+    qa_string_id key;
+    uint64_t discriminator;
+    const size_t *value;
+} index_remove;
+static bool keep_unmatched(void *opaque, const qa_id_index_entry *entry)
+{
+    const index_remove *remove = opaque;
+    return entry->key != remove->key || entry->discriminator != remove->discriminator ||
+        (remove->value && entry->value != *remove->value);
+}
+static bool remove_entries(qa_id_index *index, qa_string_id key, uint64_t discriminator,
+                           const size_t *value)
+{
+    qa_id_index_cursor cursor = qa_id_index_begin(index, key, discriminator);
+    size_t candidate;
+    while (qa_id_index_next(index, &cursor, &candidate)) {
+        if (value && candidate != *value) continue;
+        index_remove remove = {key, discriminator, value};
+        return qa_id_index_retain(index, keep_unmatched, &remove) != 0;
+    }
+    return false;
 }
 bool qa_id_index_remove(qa_id_index *index, qa_string_id key, uint64_t discriminator)
 {

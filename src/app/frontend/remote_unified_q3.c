@@ -123,6 +123,17 @@ struct frontend_unified_q3 {
     qa_ui_preferences preferences;
     bool busy, prepared, has_frame;
 };
+void frontend_unified_q3_actors_visit(const frontend_unified_q3 *o,
+    void (*visit)(void *, qa_actor_id), void *context)
+{
+    if (!o) return;
+    for (const unified_q3_ballistic *row = o->ballistics; row; row = row->next)
+        if (row->actor.registry && (row->projectile || row->flash || row->bolt || row->last_fire))
+            visit(context, row->actor);
+    for (const unified_q3_character *row = o->characters; row; row = row->next)
+        if (row->visible && row->actor.registry) visit(context, row->actor);
+}
+
 static bool actor(frontend_unified_q3 *o,qa_actor_id wire,qa_actor_id *out,qa_error *e)
 {
     return frontend_remote_unified_source_actor(o->replica,

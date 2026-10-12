@@ -72,4 +72,6 @@ bool frontend_remote_unified_presentation_body(const frontend_remote_unified *,
     qa_actor_id,qa_body_state *,qa_error *);
 bool frontend_remote_unified_presentation_point_contents(const frontend_remote_unified *,
     const qa_point_query *,qa_point_contents *,qa_error *);
+void frontend_remote_unified_presentation_actors_visit(const frontend_remote_unified *,
+    void (*visit)(void *, qa_actor_id), void *context);
 #endif

@@ -738,37 +738,49 @@ bool qa_unified_record_measure(const qa_unified_record_layout *layout, const voi
     *out = total; return true;
 }
 
-static bool actors_remap(const qa_unified_record_layout *layout, void *value,
-    qa_unified_actor_remap_fn callback, void *context, unsigned depth, qa_error *error)
+static bool actors_walk(const qa_unified_record_layout *layout, const void *value, void *writable,
+    qa_unified_actor_remap_fn remap, void (*visit)(void *, qa_actor_id),
+    void *context, unsigned depth, qa_error *error)
 {
     if (depth > RECORD_DEPTH) return fail(error, "Typed Unified actor walk exceeds its fixed layout");
     if (layout == &qa_unified_actor_layout) {
-        qa_actor_id *actor = value;
+        const qa_actor_id *actor = value;
         if (!actor->registry && !actor->generation && !actor->slot) return true;
-        qa_actor_id replacement;
-        if (!callback(context, *actor, &replacement, error)) return false;
-        *actor = replacement; return true;
+        if (remap) {
+            qa_actor_id replacement;
+            if (!remap(context, *actor, &replacement, error)) return false;
+            *(qa_actor_id *)writable = replacement;
+        } else visit(context, *actor);
+        return true;
     }
     for (size_t i = 0; i < layout->field_count; ++i) {
-        const qa_unified_field *f = layout->fields + i; void *p = field_write(value, f);
+        const qa_unified_field *f = layout->fields + i;
+        const void *p = field_read(value, f);
+        void *output = writable ? field_write(writable, f) : NULL;
         switch (f->kind) {
         case QA_UNIFIED_FIELD_RECORD:
-            if (!actors_remap(f->record, p, callback, context, depth + 1, error)) return false;
+            if (!actors_walk(f->record, p, output, remap, visit, context, depth + 1, error)) return false;
             break;
         case QA_UNIFIED_FIELD_VARIANT: case QA_UNIFIED_FIELD_VARIANT_BOOL: {
             const qa_unified_record_layout *selected = variant_layout(f, value);
-            if (!selected || !actors_remap(selected, p, callback, context, depth + 1, error)) return false;
+            if (!selected || !actors_walk(selected, p, output, remap, visit, context, depth + 1, error)) return false;
             break;
         }
         case QA_UNIFIED_FIELD_POINTER:
-            if (pointer_read(p) && !actors_remap(f->record, pointer_read(p), callback, context, depth + 1, error)) return false;
+            if (pointer_read(p) && !actors_walk(f->record, pointer_read(p),
+                output ? pointer_read(output) : NULL, remap, visit, context, depth + 1, error)) return false;
             break;
         case QA_UNIFIED_FIELD_ARRAY: case QA_UNIFIED_FIELD_INLINE_ARRAY: case QA_UNIFIED_FIELD_FIXED: {
-            size_t count = f->kind == QA_UNIFIED_FIELD_FIXED ? f->maximum : *(size_t *)((uint8_t *)value + f->count_offset);
-            void *rows = f->kind == QA_UNIFIED_FIELD_ARRAY ? pointer_read(p) : p;
+            size_t count = f->kind == QA_UNIFIED_FIELD_FIXED ? f->maximum :
+                *(const size_t *)((const uint8_t *)value + f->count_offset);
+            const void *rows = f->kind == QA_UNIFIED_FIELD_ARRAY ? pointer_read(p) : p;
+            void *output_rows = f->kind == QA_UNIFIED_FIELD_ARRAY ?
+                (output ? pointer_read(output) : NULL) : output;
             if (count > f->maximum || (count && !rows)) return fail(error, "Typed Unified actor walk lost its real rows");
             for (size_t row = 0; row < count; ++row)
-                if (!actors_remap(f->record, (uint8_t *)rows + row * f->record->size, callback, context, depth + 1, error)) return false;
+                if (!actors_walk(f->record, (const uint8_t *)rows + row * f->record->size,
+                    output_rows ? (uint8_t *)output_rows + row * f->record->size : NULL,
+                    remap, visit, context, depth + 1, error)) return false;
             break;
         }
         default: break;
@@ -780,5 +792,11 @@ bool qa_unified_record_actor_remap(const qa_unified_record_layout *layout, void 
     qa_unified_actor_remap_fn callback, void *context, qa_error *error)
 {
     if (!layout || !value || !callback) return fail(error, "Typed Unified actor walk requires its real owner");
-    return actors_remap(layout, value, callback, context, 0, error);
+    return actors_walk(layout, value, value, callback, NULL, context, 0, error);
+}
+void qa_unified_record_actors_visit(const qa_unified_record_layout *layout, const void *value,
+    void (*visit)(void *, qa_actor_id), void *context)
+{
+    if (layout && value && visit)
+        (void)actors_walk(layout, value, NULL, NULL, visit, context, 0, NULL);
 }

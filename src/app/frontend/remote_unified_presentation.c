@@ -15,15 +15,12 @@
 #include "unified_q3_video.h"
 #include "video_guests.h"
 #include "qa/source_frame_time.h"
+#include "../../network/unified/frame_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
-typedef struct unified_audio_identity {
-    qa_actor_id actor;
-    uint64_t audio;
-} unified_audio_identity;
 typedef struct unified_presentation unified_presentation;
 typedef struct unified_q3_client_row {
     struct unified_q3_client_row *next;
@@ -54,8 +51,7 @@ struct unified_presentation {
     frontend_unified_q3_sources *q3_sources;
     frontend_unified_q3_source_frame *q3_source_frame;
     unified_q3_client_row *q3_clients,*retired_q3;
-    unified_audio_identity *audio;
-    size_t audio_capacity;
+    frontend_audio_domain audio;
     qa_scene_light *draw_lights;
     size_t q2_light_offset,q2_light_count,draw_light_count;
     uint64_t light_frame;
@@ -66,6 +62,38 @@ struct unified_presentation {
     const frontend_unified_q3_video *video;
 };
 static bool input(void *,frontend_remote_unified *,const qa_usercmd *,double,qa_error *);
+typedef struct presentation_actor_visit {
+    const frontend_remote_unified *replica;
+    void (*visit)(void *, qa_actor_id);
+    void *context;
+} presentation_actor_visit;
+static void presentation_wire_actor(void *opaque, qa_actor_id wire)
+{
+    const presentation_actor_visit *visitor = opaque;
+    qa_actor_id actual;
+    if (frontend_remote_unified_actor_captured(visitor->replica, wire, &actual))
+        visitor->visit(visitor->context, actual);
+}
+void frontend_remote_unified_presentation_actors_visit(const frontend_remote_unified *replica,
+    void (*visit)(void *, qa_actor_id), void *context)
+{
+    if (!replica || !visit || replica->options.consumers.input != input) return;
+    const unified_presentation *p = replica->options.consumers.context;
+    if (!p || p->replica != replica) return;
+    frontend_unified_events_actors_visit(p->events, visit, context);
+    frontend_unified_q3_sources_actors_visit(p->q3_sources, visit, context);
+    frontend_unified_q3_actors_visit(p->q3, visit, context);
+    for (const unified_q3_client_row *row = p->q3_clients; row; row = row->next)
+        frontend_unified_q3_client_actors_visit(row->client, visit, context);
+    for (const unified_q3_client_row *row = p->retired_q3; row; row = row->next)
+        frontend_unified_q3_client_actors_visit(row->client, visit, context);
+    presentation_actor_visit visitor = {.replica=replica, .visit=visit, .context=context};
+    qa_unified_record_actors_visit(&qa_unified_frame_layout,
+        qa_unified_document_frame(replica->frame), presentation_wire_actor, &visitor);
+    qa_unified_record_actors_visit(&qa_unified_frame_layout,
+        qa_unified_document_frame(replica->prepared_frame), presentation_wire_actor, &visitor);
+}
+
 static bool q3_row_source(const unified_q3_client_row *,bool,frontend_unified_q3_source_view *,qa_error *);
 static unified_q3_client_row *q3_roster_at(const unified_presentation *p,size_t index)
 {
@@ -103,12 +131,8 @@ static bool audio_actor(void *context, qa_actor_id actor, uint64_t *out, qa_erro
     qa_saved_actor_id wire;
     if (!frontend_remote_unified_wire_actor(p->replica, actor, &wire))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified audio actor has no actual wire identity");
-    unified_audio_identity *row = p->audio + actor.slot;
-    if (qa_actor_id_equal(row->actor, actor)) { *out = row->audio; return true; }
-    uint64_t audio;
-    if (!frontend_source_identity_allocate(p->frontend, &audio, error)) return false;
-    *row = (unified_audio_identity){.actor = actor, .audio = audio};
-    *out = audio; return true;
+    *out = frontend_audio_bind(p->frontend, &p->audio, actor, true, error);
+    return *out != QA_AUDIO_NO_ACTOR;
 }
 static bool presentation_validate(void *context,const qa_unified_presentation_event *row,qa_error *error)
 {
@@ -363,7 +387,7 @@ static bool close_children(unified_presentation *p, qa_error *error)
     p->media = NULL; p->received = false;
     p->draw_lights=NULL;
     p->q2_light_offset=0; p->q2_light_count=0; p->draw_light_count=0;
-    memset(p->audio, 0, p->audio_capacity * sizeof(*p->audio));
+    frontend_audio_domain_close(p->frontend, &p->audio);
     p->audio_owner = 0;
     return true;
 }
@@ -394,6 +418,8 @@ static bool offer_ready(void *context, frontend_remote_unified *replica, qa_exec
     unified_presentation *p = context;
     if (!p || p->video || p->replica != replica || !p->media || recipe != frontend_remote_unified_recipe(replica))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified child construction precedes actual recipe publication");
+    if (!frontend_audio_domain_prepare(p->frontend, &p->audio,
+        frontend_remote_unified_registry(replica), error)) return false;
     if (!p->audio_owner && !frontend_source_identity_allocate(p->frontend,&p->audio_owner,error)) return false;
     frontend_unified_event_options options = {.audio_owner=p->audio_owner,.context=p,
         .presentation_validate=presentation_validate,.simulation_validate=simulation_validate,
@@ -1303,7 +1329,7 @@ static void dispose(void *context)
 {
     unified_presentation *p=context;
     qa_unified_frame_pool_destroy(&p->render_storage);
-    free(p->audio);
+    frontend_audio_domain_close(p->frontend, &p->audio);
     free(p);
 }
 static frontend_remote_unified_consumers consumers(unified_presentation *p)
@@ -1322,11 +1348,6 @@ bool frontend_remote_unified_presentation_create(qa_frontend *frontend,
     if (!p) return frontend_unified_fail(error, QA_ERROR_MEMORY, "Allocating readonly unified presentation owner");
     p->render_storage=qa_unified_frame_pool_create(64u*1024u*1024u,3,error);
     if(!p->render_storage) { free(p);return false; }
-    p->audio_capacity = source->identity_capacity;
-    p->audio = calloc(p->audio_capacity, sizeof(*p->audio));
-    if (!p->audio) {
-        dispose(p); return frontend_unified_fail(error, QA_ERROR_MEMORY, "Reserving unified actor audio identities");
-    }
     p->frontend = frontend;
     frontend_remote_unified_options options = *source;
     options.consumers = consumers(p);

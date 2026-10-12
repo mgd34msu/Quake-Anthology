@@ -6,6 +6,7 @@
 #include "legacy_render_policy.h"
 #include "qa/audio.h"
 #include "qa/pool.h"
+#include "qa/stamp.h"
 #include "qa/console_draw.h"
 #include "qa/console_io.h"
 #include "qa/console_seat.h"
@@ -91,9 +92,21 @@ typedef struct frontend_music_sources frontend_music_sources;
 typedef struct frontend_view_settings frontend_view_settings;
 typedef struct frontend_equipment_events frontend_equipment_events;
 typedef struct qa_application_q3_round_cut qa_application_q3_round_cut;
+typedef struct frontend_audio_registry {
+    const qa_actor_registry *actors;
+    qa_actor_index index;
+    size_t slot;
+    struct frontend_audio_registry *next;
+} frontend_audio_registry;
+typedef struct frontend_audio_domain {
+    frontend_audio_registry *registry;
+    struct frontend_audio_domain *next;
+} frontend_audio_domain;
 typedef struct frontend_audio_identity {
     qa_actor_id actor;
     uint64_t id;
+    size_t slot;
+    frontend_audio_registry *registry;
     bool retired;
     struct frontend_audio_identity *next;
 } frontend_audio_identity;
@@ -340,8 +353,12 @@ struct qa_frontend {
     uint64_t next_source_id;
     bool source_restoring;
     bool archive_enabled, archive_saved;
-    qa_actor_index audio_actors;
-    qa_id_index audio_reverse;
+    frontend_audio_domain audio_local;
+    frontend_audio_domain *audio_domains;
+    frontend_audio_registry *audio_registries;
+    qa_id_index audio_registry_index, audio_reverse;
+    qa_pool audio_registry_records;
+    qa_stamp_set audio_marks;
     qa_arena audio_identity_storage;
     qa_pool audio_ids;
     frontend_audio_identity *audio_first, *audio_last;
@@ -469,6 +486,12 @@ void frontend_binding_cancel(void *, uint32_t);
 void frontend_bindings_destroy(frontend_seat *);
 void frontend_wheel_command(void *, qa_input_seat *, bool, bool);
 uint64_t frontend_audio_actor(qa_frontend *, qa_actor_id, qa_error *);
+void frontend_audio_collect(qa_frontend *);
+bool frontend_audio_domain_prepare(qa_frontend *, frontend_audio_domain *,
+    const qa_actor_registry *, qa_error *);
+void frontend_audio_domain_close(qa_frontend *, frontend_audio_domain *);
+uint64_t frontend_audio_bind(qa_frontend *, frontend_audio_domain *,
+    qa_actor_id, bool retained, qa_error *);
 bool frontend_audio_identities_prepare(qa_frontend *, qa_error *);
 void frontend_audio_identities_destroy(qa_frontend *);
 bool frontend_audio_actor_for_id(const qa_frontend *, uint64_t, qa_actor_id *);

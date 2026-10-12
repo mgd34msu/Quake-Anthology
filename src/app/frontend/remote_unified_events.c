@@ -25,6 +25,7 @@ typedef struct unified_component_owner {
 } unified_component_owner;
 typedef struct unified_received_event {
     qa_unified_held delivery;
+    const qa_unified_frame_events *events;
     struct unified_received_event *next_retained;
     qa_event_lease *lease;
     bool *mirrored;
@@ -58,6 +59,34 @@ struct frontend_unified_events {
 
 const qa_unified_document *frontend_unified_events_document(const frontend_unified_events *o)
 { return o && o->delivery ? o->delivery->delivery.document : NULL; }
+
+typedef struct received_actor_visit {
+    const frontend_unified_events *owner;
+    void (*visit)(void *, qa_actor_id);
+    void *context;
+} received_actor_visit;
+static void received_actor(void *opaque, qa_actor_id wire)
+{
+    const received_actor_visit *visitor = opaque;
+    qa_actor_id actual;
+    if (frontend_remote_unified_actor_captured(visitor->owner->replica, wire, &actual))
+        visitor->visit(visitor->context, actual);
+}
+static void received_actors(void *opaque, const void *payload)
+{
+    const unified_received_event *record = payload;
+    received_actor_visit *visitor = opaque;
+    if (record->events)
+        qa_unified_record_actors_visit(&qa_unified_events_layout, record->events,
+            received_actor, visitor);
+}
+void frontend_unified_events_actors_visit(const frontend_unified_events *o,
+    void (*visit)(void *, qa_actor_id), void *context)
+{
+    if (!o) return;
+    received_actor_visit visitor = {.owner=o, .visit=visit, .context=context};
+    qa_event_ring_visit_retained(o->records, received_actors, &visitor);
+}
 
 static void records_retire(frontend_unified_events *o)
 {
@@ -414,6 +443,7 @@ static bool record_finish(frontend_unified_events *o,qa_event_transaction *trans
         memset(record->mirrored,0,events->presentation_count*sizeof(*record->mirrored));
     }
     if (!qa_unified_document_retain(document,&record->delivery.document,error)) return false;
+    record->events = events;
     uint64_t id=qa_event_ring_commit(transaction,record,NULL);
     events->received=qa_event_ring_retain(o->records,id);
     return true;

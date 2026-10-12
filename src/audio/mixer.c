@@ -1002,6 +1002,26 @@ static bool collect_loop_mixes(qa_audio_mixer *mixer, qa_error *error) {
     return true;
 }
 
+static void sound_actors_visit(const qa_audio_play *sound, qa_audio_actor_visitor visit,
+    void *context)
+{
+    if (sound->actor != QA_AUDIO_NO_ACTOR) visit(context, sound->actor);
+    if (sound->origin_kind == QA_AUDIO_ACTOR && sound->origin_actor != QA_AUDIO_NO_ACTOR)
+        visit(context, sound->origin_actor);
+}
+
+void qa_audio_mixer_actors_visit(const qa_audio_mixer *mixer, qa_audio_actor_visitor visit,
+    void *context)
+{
+    if (mixer->listener.actor != QA_AUDIO_NO_ACTOR) visit(context, mixer->listener.actor);
+    for (size_t i = 0; i < mixer->voice_count; ++i)
+        if (mixer->voices[i].state != QA_MIXER_FREE)
+            sound_actors_visit(&mixer->voices[i].sound, visit, context);
+    for (size_t i = 0; i < mixer->loop_count; ++i)
+        if (mixer->loops[i].active)
+            sound_actors_visit(&mixer->loops[i].request.sound, visit, context);
+}
+
 qa_vec3 qa_audio_mixer_listener_origin(const qa_audio_mixer *mixer) {
     return mixer->listener.origin;
 }

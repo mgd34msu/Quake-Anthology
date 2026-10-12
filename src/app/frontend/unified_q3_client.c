@@ -85,6 +85,22 @@ struct frontend_unified_q3_client {
     int32_t local_server;
     bool busy, registered, initialized;
 };
+void frontend_unified_q3_client_actors_visit(const frontend_unified_q3_client *c,
+    void (*visit)(void *, qa_actor_id), void *context)
+{
+    if (!c) return;
+    for (size_t h = 0; h < sizeof(c->histories) / sizeof(c->histories[0]); ++h)
+        for (size_t i = 0; i < QA_Q3_ENTITIES; ++i)
+            if (c->histories[h].actors[i].registry) visit(context, c->histories[h].actors[i]);
+    for (size_t i = 0; i < c->snapshots.capacity; ++i) {
+        const client_snapshot *row = qa_pool_at(&c->snapshots, i);
+        if (!row->references) continue;
+        if (row->player_actor.registry) visit(context, row->player_actor);
+        for (size_t j = 0; j < QA_Q3_ENTITIES; ++j)
+            if (row->bindings[j].registry) visit(context, row->bindings[j]);
+    }
+}
+
 static bool fail(qa_error *e, qa_status code, const char *s)
 { qa_error_set(e,code,0,"%s",s); return false; }
 static bool activation(const frontend_unified_q3_client *c, const frontend_unified_q3_source_view *v)

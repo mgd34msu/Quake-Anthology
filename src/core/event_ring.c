@@ -20,6 +20,7 @@ struct qa_event_ring {
     event_storage *storage;
     event_page *pages;
     qa_event_lease **records;
+    qa_event_lease *first_lease, *last_lease;
     size_t page_bytes, page_count, record_capacity, tail, live_leases;
     size_t payload_bytes, bytes_used, free_bytes, free_pages;
     uint64_t first, next;
@@ -28,6 +29,7 @@ struct qa_event_ring {
 
 struct qa_event_lease {
     qa_event_ring *owner;
+    struct qa_event_lease *previous, *next;
     void *record;
     void (*final_record)(void *);
     uint64_t id;
@@ -176,6 +178,10 @@ void qa_event_lease_release(qa_event_lease *lease)
     if (--lease->references) return;
     qa_event_ring *owner = lease->owner;
     size_t last = lease->last_page;
+    if (lease->previous) lease->previous->next = lease->next;
+    else owner->first_lease = lease->next;
+    if (lease->next) lease->next->previous = lease->previous;
+    else owner->last_lease = lease->previous;
     if (lease->final_record) lease->final_record(lease->record);
     for (size_t index = lease->first_page;;) {
         event_page *page = owner->pages + index;
@@ -196,6 +202,14 @@ qa_event_lease *qa_event_ring_retain(qa_event_ring *owner, uint64_t id)
 
 uint64_t qa_event_lease_id(const qa_event_lease *lease) { return lease->id; }
 const void *qa_event_lease_record(const qa_event_lease *lease) { return lease->record; }
+
+void qa_event_ring_visit_retained(const qa_event_ring *owner,
+    void (*visit)(void *, const void *), void *context)
+{
+    if (!owner) return;
+    for (const qa_event_lease *lease = owner->first_lease; lease; lease = lease->next)
+        visit(context, lease->record);
+}
 
 void qa_event_ring_retire(qa_event_ring *owner, uint64_t next)
 {
@@ -352,8 +366,12 @@ uint64_t qa_event_ring_commit(qa_event_transaction *transaction, void *record,
     qa_event_ring *owner = transaction->owner;
     uint64_t id = owner->next++;
     *transaction->lease = (qa_event_lease){.owner = owner, .record = record,
+        .previous = owner->last_lease,
         .final_record = final_record, .id = id,
         .first_page = transaction->first_page, .last_page = transaction->last_page, .references = 1};
+    if (owner->last_lease) owner->last_lease->next = transaction->lease;
+    else owner->first_lease = transaction->lease;
+    owner->last_lease = transaction->lease;
     for (size_t index = transaction->first_page;; index = owner->pages[index].next) {
         ++owner->pages[index].records;
         if (index == transaction->last_page) break;
