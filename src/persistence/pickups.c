@@ -207,13 +207,9 @@ bool qa_persistence_pickups_restore(qa_session *session, qa_pickups *service,
         else qa_pool_release(&scratch->observation_storage->records, owner->slot);
     }
     if (ok) ok = persistence_serial_unique(serials, serial_count, error) && qa_source_save_finish(&io, NULL) && safe(session, service, error);
-    if (ok) {
-        size_t registrations = 0;
-        for (pickup_registration *r = scratch->registrations; r; r = r->next) ++registrations;
-        qa_id_index *index = &scratch->observation_storage->registration_index;
-        ok = qa_id_index_reserve(index, registrations, error);
-        for (pickup_registration *r = scratch->registrations; ok && r; r = r->next)
-            qa_id_index_insert(index, 0, r->serial, (size_t)(uintptr_t)r);
+    for (pickup_registration *r = scratch->registrations; ok && r; r = r->next) {
+        ok = qa_pickups_registration_index_reserve(scratch, r, error);
+        if (ok) qa_pickups_registration_index_insert(scratch, r);
     }
     if (ok) {
         pickup_registration *old = service->registrations;

@@ -8,6 +8,7 @@ typedef struct pickup_rule {
 } pickup_rule;
 typedef struct pickup_registration {
     struct pickup_registration *next;
+    struct pickup_registration *actor_next, *actor_tail;
     qa_actor_id actor;
     qa_actor_owner owner;
     uint64_t serial;
@@ -29,6 +30,7 @@ typedef struct pickup_observation_storage {
     qa_arena arena;
     qa_pool records;
     qa_id_index registration_index;
+    qa_actor_index registration_actors;
 } pickup_observation_storage;
 struct qa_pickup_execution {
     struct qa_pickup_execution *previous;
@@ -60,4 +62,6 @@ struct qa_pickups {
 };
 bool qa_pickups_checkpoint_write_current(qa_pickups *, pickup_registration *, const qa_pickup_write *, uint64_t);
 pickup_observation_owner *qa_pickups_observation_take(qa_pickups *, qa_error *);
+bool qa_pickups_registration_index_reserve(qa_pickups *, const pickup_registration *, qa_error *);
+void qa_pickups_registration_index_insert(qa_pickups *, pickup_registration *);
 #endif
