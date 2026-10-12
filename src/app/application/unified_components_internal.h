@@ -5,6 +5,8 @@
 #include "guest_q3_components.h"
 #include "unified_q2_components.h"
 
+enum { APPLICATION_UNIFIED_COMPONENT_CURSORS = 256 };
+
 typedef struct component_cursor {
     qa_actor_owner owner;
     uint64_t generation;
@@ -27,7 +29,8 @@ struct application_unified_component_publisher {
     uint64_t revision, serial;
     uint32_t epoch;
     component_cursor *rows;
-    size_t count, capacity;
+    size_t count;
+    qa_arena storage;
     native_cursor native;
     application_unified_component_capture *pending;
 };
@@ -50,6 +53,6 @@ struct application_unified_component_capture {
     bool sealed, committed;
 };
 
-bool application_unified_components_reserve(application_unified_component_publisher *, size_t, qa_error *);
+bool application_unified_components_storage_create(application_unified_component_publisher *, qa_error *);
 
 #endif

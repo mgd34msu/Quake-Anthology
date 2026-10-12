@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `ebe76596`.
+Follow-up source changes were reviewed through main `b4ccf402`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -378,3 +378,7 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `1909b408` / J37-04: Physical route and binding admission prepare common arena-backed held/button spans; releases reuse admitted storage and repeats remain suppressed. Existing shared input checks passed, including eight overlapping inputs. Normal build and seven core suites passed; new authored source admission remains cold. Records: `/tmp/qa-ta3196-held-input-arena-20261012`.
 
 - `ebe76596` / 04-027: Player-seat readers use the common index prepared from roster capacity and rebuilt at row/seat mutations and restore. Candidate order and actual live/non-retiring/role checks remain unchanged. Normal build and seven core suites passed; no runtime/performance claim. Records: `/tmp/qa-ta3196-player-seat-index-20261012`.
+
+- `f72824b4` / partial adoption: The bot fallback reads the exact canonical actor slot rather than scanning live actors to recover it. Existing roster preference, slot bounds and liveness remain. Normal build and seven core suites passed; no live or performance claim. Records: `/tmp/qa-ta3196-bot-canonical-slot-20261012`.
+
+- `b4ccf402` / partial adoption: Native Q2 combat retains the live numeric team without interning. All shared combat, guest component, player, missile, mode and bot consumers use the common reference and equality. Existing counted-name save encoding and color policies are preserved by core behavior checks. Normal build and seven core suites passed; no live or whole-frame allocation claim. Records: `/tmp/qa-ta3196-live-team-ref-20261012-v4`.

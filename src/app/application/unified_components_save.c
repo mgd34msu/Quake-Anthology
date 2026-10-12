@@ -65,10 +65,10 @@ static bool cursor_fields(qa_source_save_io *io, component_cursor *row)
 static bool rows_fields(qa_source_save_io *io, component_cursor **rows, size_t *count,
     qa_unified_frame_lease *lease)
 {
-    if (!qa_source_save_count(io, count, 256)) return false;
-    if (io->direction == QA_SOURCE_SAVE_READ && *count) {
-        *rows = lease ? qa_unified_frame_lease_alloc(lease, *count, sizeof(**rows),
-            _Alignof(component_cursor), io->error) : calloc(*count, sizeof(**rows));
+    if (!qa_source_save_count(io, count, APPLICATION_UNIFIED_COMPONENT_CURSORS)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ && *count && lease) {
+        *rows = qa_unified_frame_lease_alloc(lease, *count, sizeof(**rows),
+            _Alignof(component_cursor), io->error);
         if (!*rows) return application_fail(io->error, QA_ERROR_MEMORY, "Retaining component recipient cursors");
     }
     for (size_t i = 0; i < *count; ++i) {
@@ -222,6 +222,7 @@ static bool publisher_restore(qa_bytes bytes, qa_application *app,
         return application_fail(e, QA_ERROR_ARGUMENT, "Component restore requires its genuine imported recipient");
     application_unified_component_publisher *p = calloc(1, sizeof(*p));
     if (!p) return application_fail(e, QA_ERROR_MEMORY, "Restoring recipient component publisher");
+    if (!application_unified_components_storage_create(p, e)) { free(p); return false; }
     p->application = app; p->recipient = client; p->actor = player->actor;
     application_unified_source saved = *retained;
     qa_source_save_io io = {0};
@@ -231,8 +232,7 @@ static bool publisher_restore(qa_bytes bytes, qa_application *app,
         (obsolete || drop || source_current(app, retained, client, player));
     if (!ok && !io.failed && (!e || e->code == QA_OK)) bad(e, "Saved component publisher differs from its imported Source");
     qa_source_save_dispose(&io);
-    if (!ok) { free(p->rows); free(p); return false; }
-    p->capacity = p->count;
+    if (!ok) { qa_arena_destroy(&p->storage); free(p); return false; }
     *out = p;
     return true;
 }
@@ -412,7 +412,7 @@ bool application_unified_components_capture_restore(qa_bytes bytes, application_
     qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, source->session, bytes, e) && capture_fields(&io, v) &&
         qa_source_save_finish(&io, NULL) && application_unified_components_bind_frame(v, frame, e) &&
-        capture_documents(v, e) && application_unified_components_reserve(p, v->count, e) &&
+        capture_documents(v, e) &&
         owners_valid(p->application, source, v->rows, v->count, &v->native, true, false, e) && source_current(p->application, source, p->recipient, player);
     if (!ok && !io.failed && (!e || e->code == QA_OK)) bad(e, "Saved component token differs from its imported publisher");
     qa_source_save_dispose(&io);

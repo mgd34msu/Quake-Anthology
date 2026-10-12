@@ -35,7 +35,7 @@ static bool native_prepare(application_unified_component_capture *v, bool *chang
     for (size_t i = 0; i < v->count; ++i)
         if (v->rows[i].owner == p->owner)
             return application_fail(e, QA_ERROR_FORMAT, "Native and original components alias one presentation owner");
-    if (v->count >= 256)
+    if (v->count >= APPLICATION_UNIFIED_COMPONENT_CURSORS)
         return application_fail(e, QA_ERROR_FORMAT, "Combined components exceed their wire owner extent");
     const native_cursor *old = &v->owner->native;
     *changed |= !native_same(v) || old->configuration_revision != v->native.configuration_revision ||
@@ -130,16 +130,16 @@ bool application_unified_components_create(qa_application *app, qa_net_client_id
         return application_fail(e, QA_ERROR_ARGUMENT, "Component publisher requires its actual admitted recipient");
     application_unified_component_publisher *p = calloc(1, sizeof(*p));
     if (!p) return application_fail(e, QA_ERROR_MEMORY, "Retaining recipient component publication");
+    if (!application_unified_components_storage_create(p, e)) { free(p); return false; }
     p->application = app; p->recipient = recipient; p->actor = actor; *out = p;
     return true;
 }
-bool application_unified_components_reserve(application_unified_component_publisher *p,
-    size_t count, qa_error *e)
+bool application_unified_components_storage_create(application_unified_component_publisher *p,
+    qa_error *e)
 {
-    if (count <= p->capacity) return true;
-    component_cursor *rows = realloc(p->rows, count * sizeof(*rows));
-    if (!rows) return application_fail(e, QA_ERROR_MEMORY, "Growing recipient component cursors");
-    p->rows = rows; p->capacity = count; return true;
+    p->rows = qa_arena_alloc(&p->storage, APPLICATION_UNIFIED_COMPONENT_CURSORS * sizeof(*p->rows),
+        _Alignof(component_cursor), e);
+    return p->rows != NULL;
 }
 bool application_unified_components_idle(const application_unified_component_publisher *p)
 { return !p || !p->pending; }
@@ -149,7 +149,7 @@ bool application_unified_components_destroy(application_unified_component_publis
     application_unified_component_publisher *p = *out;
     if (!application_unified_components_idle(p))
         return application_fail(e, QA_ERROR_ARGUMENT, "Component publisher retains its prepared reliable update");
-    free(p->rows); free(p); *out = NULL; return true;
+    qa_arena_destroy(&p->storage); free(p); *out = NULL; return true;
 }
 
 bool application_unified_components_current(const application_unified_component_capture *v)
@@ -182,13 +182,12 @@ bool application_unified_components_prepare(application_unified_component_publis
     v->owner = p; v->source = *source; v->player = *player; v->roster = p->application->components;
     v->epoch = epoch; v->serial = p->serial; v->revision = p->epoch == epoch ? p->revision : 0; p->pending = v;
     size_t capacity = application_q3_components_publication_count(v->roster);
-    if (capacity > 256) { application_unified_components_dispose(v); return application_fail(e, QA_ERROR_FORMAT, "Component roster exceeds its wire owner extent"); }
+    if (capacity > APPLICATION_UNIFIED_COMPONENT_CURSORS) { application_unified_components_dispose(v); return application_fail(e, QA_ERROR_FORMAT, "Component roster exceeds its wire owner extent"); }
     v->rows = qa_unified_frame_lease_alloc(v->lease, capacity, sizeof(*v->rows),
         _Alignof(component_cursor), e);
     v->leases = qa_unified_frame_lease_alloc(v->lease, capacity, sizeof(*v->leases),
         _Alignof(application_q3_component_publication_lease *), e);
-    bool ok = (!capacity || (v->rows && v->leases)) &&
-        application_unified_components_reserve(p, capacity, e);
+    bool ok = !capacity || (v->rows && v->leases);
     if (!ok) application_fail(e, QA_ERROR_MEMORY, "Retaining actual component rows and Source leases");
     qa_vec3 origin, axis[3];
     if (ok && capacity) ok = camera(values, &origin, axis, e);
