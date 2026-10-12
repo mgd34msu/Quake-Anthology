@@ -207,7 +207,11 @@ bool frontend_remote_q2_effects_create(const frontend_remote_q2_effects_source *
         owner->flashlight_capacity*sizeof(*owner->flashlights)+owner->light_capacity*sizeof(*owner->sampled_lights)+
         owner->draw_capacity*sizeof(*owner->draws)+5*_Alignof(max_align_t);
     if (!qa_arena_reserve(&owner->semantic_storage,bytes,error) ||
-        !frontend_q2_entity_cache_prepare(&owner->entity_trails,source->actor_capacity,error)) return false;
+        !frontend_q2_entity_cache_prepare(&owner->entity_trails,source->actor_capacity,error) ||
+        !qa_id_index_reserve(&owner->source_beam_index,owner->source_beam_capacity,error) ||
+        !qa_id_index_reserve(&owner->source_light_index[0],owner->source_light_capacity,error) ||
+        !qa_id_index_reserve(&owner->source_light_index[1],owner->source_light_capacity,error) ||
+        !qa_id_index_reserve(&owner->flashlight_index,owner->flashlight_capacity,error)) return false;
     owner->source_beams=qa_arena_alloc(&owner->semantic_storage,
         owner->source_beam_capacity*sizeof(*owner->source_beams),_Alignof(q2fx_source_beam),error);
     owner->source_lights=qa_arena_alloc(&owner->semantic_storage,
@@ -245,6 +249,9 @@ bool frontend_remote_q2_effects_destroy(frontend_remote_q2_effects **slot, qa_er
     if (!owner) return true;
     if (!frontend_remote_q2_effects_idle(owner)) return q2fx_fail(error, QA_ERROR_ARGUMENT, "Q2 effects still own an active source callback or policy");
     qa_scene_image_release(owner->particle_image); qa_arena_destroy(&owner->entity_trails.storage);
+    qa_id_index_destroy(&owner->source_beam_index);
+    qa_id_index_destroy(&owner->source_light_index[0]); qa_id_index_destroy(&owner->source_light_index[1]);
+    qa_id_index_destroy(&owner->flashlight_index);
     qa_arena_destroy(&owner->semantic_storage);
     free(owner); *slot = NULL; return true;
 }
@@ -257,6 +264,9 @@ void frontend_remote_q2_effects_reset(frontend_remote_q2_effects *owner)
     memset(owner->entity_trails.rows,0,owner->entity_trails.capacity*sizeof(*owner->entity_trails.rows));
     owner->light_count=owner->transient_light_count=owner->draw_count=0;
     owner->source_beam_count=owner->source_light_count=owner->flashlight_count=0;
+    qa_id_index_clear(&owner->source_beam_index);
+    qa_id_index_clear(&owner->source_light_index[0]); qa_id_index_clear(&owner->source_light_index[1]);
+    qa_id_index_clear(&owner->flashlight_index);
     owner->sampled=owner->event_received=owner->event_failed=false;
     owner->weapon_muzzle=(q2fx_weapon_muzzle){0};owner->beam_random=(frontend_q2_beam_random){0};
     owner->dirty=true;

@@ -3,6 +3,7 @@
 #include "remote_q2_effects.h"
 #include "selected_effects_particles.h"
 #include "q2_temporary_beams.h"
+#include "qa/id_index.h"
 
 enum { Q2FX_POOL = 32, Q2FX_LASER_CAPACITY = 256, Q2FX_LIGHT_CAPACITY = 32 };
 typedef struct q2fx_explosion {
@@ -80,10 +81,13 @@ struct frontend_remote_q2_effects {
     size_t light_count, light_capacity, transient_light_count;
     q2fx_source_beam *source_beams;
     size_t source_beam_count, source_beam_capacity;
+    qa_id_index source_beam_index;
     q2fx_source_light *source_lights;
     size_t source_light_count, source_light_capacity;
+    qa_id_index source_light_index[2];
     q2fx_flashlight *flashlights;
     size_t flashlight_count, flashlight_capacity;
+    qa_id_index flashlight_index;
     q2fx_model_draw *draws;
     size_t draw_count, draw_capacity;
     double time, server_time;

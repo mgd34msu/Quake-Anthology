@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "74c952c1d761824f716ef62df2b2ee8be71d9d99",
+  "verified_main": "e19d15b25d7ac93588f664956dc63db610f2cb59",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 201,
-    "open_source_observation": 170,
+    "fixed_source_build_core": 202,
+    "open_source_observation": 169,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -28452,8 +28452,9 @@
       "severity": "medium",
       "job": "11",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "e19d15b25d7ac93588f664956dc63db610f2cb59"
     },
     {
       "id": "J11-05",
@@ -42678,6 +42679,31 @@
       ],
       "record_directory": "/tmp/qa-ta3196-client-owner-preparation-20261012-v1",
       "conclusion": "QC finale polling storage/index now prepared at source construction, reused on reset and reconstructed on restore with inactive owner/save encoding preserved. Restart uses shared dimension projection with live registry or existing edit. Normal build and seven core suites passed; no live/gate claim."
+    },
+    {
+      "commit": "e19d15b25d7ac93588f664956dc63db610f2cb59",
+      "source_tree": "6b2b48c8d4e94cc5dd0fef24b516c86e721b30a4",
+      "finding_ids": [
+        "J11-04"
+      ],
+      "files_rechecked": [
+        "include/qa/map_sidecars.h",
+        "src/app/composition/recipe_import.c",
+        "src/content/map_sidecars.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-one-sidecar-rule-20261012-v1",
+      "conclusion": "Recipe and content sidecar admission/restore use one shared map inventory and entity application rule; duplicate inventory/path bodies removed. Optional misses, scoped ownership and existing formats/save fields retained. Normal build and seven core suites passed; cold allocations remain, no timing claim."
     }
   ],
   "verification_limits": [

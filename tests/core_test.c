@@ -54,6 +54,7 @@
 #include "../src/world/collision/internal.h"
 #include "qa/network_q2_kex.h"
 #include "qa/network_q2_messages.h"
+#include "qa/network_q2_unicast.h"
 #include "../src/app/frontend/selected_effects_q1_temporary.h"
 #include "../src/network/q2/session_internal.h"
 #include "../src/app/application/internal.h"
@@ -80,6 +81,47 @@
         exit(EXIT_FAILURE); \
     } \
 } while (0)
+
+static void test_unicast_claim_storage(void)
+{
+    qa_q2_unicast_cache *cache = NULL;
+    qa_error error = {0};
+    qa_q2_unicast_claim claim = {.client = {.owner = 1, .generation = 2, .slot = 3},
+        .connection_epoch = 4, .source = 5, .map_revision = 6,
+        .source_frame = 7, .source_time_ns = 8, .key = 1};
+    bool duplicate;
+    CHECK(qa_q2_unicast_cache_create(&cache, &error));
+    for (uint32_t key = 1; key <= 80; ++key) {
+        claim.key = key;
+        CHECK(qa_q2_unicast_reserve(cache, &error));
+        CHECK(qa_q2_unicast_remember(cache, &claim, &error));
+    }
+    for (uint32_t key = 1; key <= 80; ++key) {
+        claim.key = key;
+        CHECK(qa_q2_unicast_check(cache, &claim, &duplicate, &error) && duplicate);
+    }
+    qa_q2_unicast_claim other = claim;
+    other.client.owner += UINT64_C(1) << 32;
+    CHECK(qa_q2_unicast_check(cache, &other, &duplicate, &error) && !duplicate);
+    CHECK(qa_q2_unicast_remember(cache, &other, &error));
+    CHECK(qa_q2_unicast_check(cache, &claim, &duplicate, &error) && duplicate);
+    qa_q2_unicast_claim previous = claim;
+    ++claim.connection_epoch;
+    CHECK(qa_q2_unicast_remember(cache, &claim, &error));
+    CHECK(qa_q2_unicast_check(cache, &previous, &duplicate, &error) && !duplicate);
+    CHECK(qa_q2_unicast_check(cache, &other, &duplicate, &error) && duplicate);
+    qa_q2_unicast_remove_client(cache, claim.client);
+    CHECK(qa_q2_unicast_check(cache, &claim, &duplicate, &error) && !duplicate);
+    CHECK(qa_q2_unicast_check(cache, &other, &duplicate, &error) && duplicate);
+    ++other.source_frame;
+    CHECK(qa_q2_unicast_remember(cache, &other, &error));
+    previous = other;
+    --previous.source_frame;
+    CHECK(qa_q2_unicast_check(cache, &previous, &duplicate, &error) && !duplicate);
+    qa_q2_unicast_remove_source(cache, other.source);
+    CHECK(qa_q2_unicast_check(cache, &other, &duplicate, &error) && !duplicate);
+    qa_q2_unicast_cache_destroy(cache);
+}
 
 static void test_compiled_sound_names(void)
 {
@@ -4366,6 +4408,7 @@ int main(int argc, char **argv)
     test_shared_random();
     test_q2_hud_configuration();
     test_compiled_sound_names();
+    test_unicast_claim_storage();
     test_shared_team_values();
     test_module_observation_storage();
     test_console_restore_pages();

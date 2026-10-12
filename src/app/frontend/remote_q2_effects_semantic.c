@@ -21,23 +21,66 @@ static void *reserve(void *rows, size_t capacity, size_t count, qa_error *e)
     q2fx_fail(e,QA_ERROR_MEMORY,"Q2 semantic effect actor capacity exhausted");return NULL;
 }
 
+static bool actor_find(const frontend_remote_q2_effects *o,
+    frontend_remote_q2_effects_presentation_kind kind, qa_actor_id actor, size_t *out)
+{
+    const qa_id_index *index=kind<=FRONTEND_REMOTE_Q2_ALL_BEAMS?&o->source_beam_index:
+        kind==FRONTEND_REMOTE_Q2_FLASHLIGHT?&o->flashlight_index:
+        &o->source_light_index[kind==FRONTEND_REMOTE_Q2_SHADOW_LIGHT];
+    qa_id_index_cursor cursor=qa_id_index_begin(index,actor.slot,actor.generation);
+    size_t value,first=SIZE_MAX;
+    while (qa_id_index_next(index,&cursor,&value)) {
+        qa_actor_id current=kind<=FRONTEND_REMOTE_Q2_ALL_BEAMS?o->source_beams[value].beam.actor:
+            kind==FRONTEND_REMOTE_Q2_FLASHLIGHT?o->flashlights[value].actor:o->source_lights[value].light.actor;
+        if (value<first && qa_actor_id_equal(current,actor)) first=value;
+    }
+    if (first==SIZE_MAX) return false;
+    *out=first; return true;
+}
+static void compact_index(qa_id_index *index, size_t removed)
+{
+    for (size_t i=0;i<index->count;++i)
+        if (index->entries[i].value>removed) --index->entries[i].value;
+}
 static void beam_remove(frontend_remote_q2_effects *o, size_t index)
 {
+    qa_actor_id actor=o->source_beams[index].beam.actor;
+    (void)qa_id_index_remove_value(&o->source_beam_index,actor.slot,actor.generation,index);
     --o->source_beam_count;
     memmove(o->source_beams+index,o->source_beams+index+1,
         (o->source_beam_count-index)*sizeof(*o->source_beams));
+    compact_index(&o->source_beam_index,index);
+}
+static void light_remove(frontend_remote_q2_effects *o, size_t index)
+{
+    const q2fx_source_light *row=o->source_lights+index;
+    (void)qa_id_index_remove_value(&o->source_light_index[row->shadow],row->light.actor.slot,
+        row->light.actor.generation,index);
+    --o->source_light_count;
+    memmove(o->source_lights+index,o->source_lights+index+1,
+        (o->source_light_count-index)*sizeof(*o->source_lights));
+    compact_index(&o->source_light_index[0],index); compact_index(&o->source_light_index[1],index);
+}
+static void flashlight_remove(frontend_remote_q2_effects *o, size_t index)
+{
+    qa_actor_id actor=o->flashlights[index].actor;
+    (void)qa_id_index_remove_value(&o->flashlight_index,actor.slot,actor.generation,index);
+    --o->flashlight_count;
+    memmove(o->flashlights+index,o->flashlights+index+1,
+        (o->flashlight_count-index)*sizeof(*o->flashlights));
+    compact_index(&o->flashlight_index,index);
 }
 static bool beam_set(frontend_remote_q2_effects *o, const q2fx_source_beam *value, qa_error *e)
 {
     size_t index=o->source_beam_count;
-    for (size_t i=0;i<o->source_beam_count;++i)
-        if (qa_actor_id_equal(o->source_beams[i].beam.actor,value->beam.actor)) { index=i; break; }
+    (void)actor_find(o,FRONTEND_REMOTE_Q2_MONSTER_BEAM,value->beam.actor,&index);
     if (index==o->source_beam_count) {
         q2fx_source_beam *rows=reserve(o->source_beams,o->source_beam_capacity,o->source_beam_count,e);
         if (!rows) return false;
         o->source_beams=rows;
     }
     if (index<o->source_beam_count) beam_remove(o,index);
+    qa_id_index_insert(&o->source_beam_index,value->beam.actor.slot,value->beam.actor.generation,o->source_beam_count);
     o->source_beams[o->source_beam_count++]=*value; o->dirty=true; return true;
 }
 bool frontend_remote_q2_effects_monster_beam(frontend_remote_q2_effects *o, qa_actor_id actor,
@@ -64,13 +107,9 @@ static bool light_set(frontend_remote_q2_effects *o, const frontend_remote_q2_ef
 {
     if (!light_valid(v) || !intake(o,v->actor,e)) return false;
     size_t index=o->source_light_count;
-    for (size_t i=0;i<o->source_light_count;++i) if (o->source_lights[i].shadow==shadow &&
-        qa_actor_id_equal(o->source_lights[i].light.actor,v->actor)) { index=i; break; }
+    (void)actor_find(o,shadow?FRONTEND_REMOTE_Q2_SHADOW_LIGHT:FRONTEND_REMOTE_Q2_SOURCE_LIGHT,v->actor,&index);
     if (!shadow && !v->visible) {
-        if (index<o->source_light_count) {
-            --o->source_light_count;
-            memmove(o->source_lights+index,o->source_lights+index+1,(o->source_light_count-index)*sizeof(*o->source_lights));
-        }
+        if (index<o->source_light_count) light_remove(o,index);
         o->dirty=true; return true;
     }
     uint64_t identity, revision;
@@ -81,6 +120,7 @@ static bool light_set(frontend_remote_q2_effects *o, const frontend_remote_q2_ef
         q2fx_source_light *rows=reserve(o->source_lights,o->source_light_capacity,index,e);
         if (!rows) return false;
         o->source_lights=rows;
+        qa_id_index_insert(&o->source_light_index[shadow],v->actor.slot,v->actor.generation,index);
         identity=qa_scene_identity(); revision=0; ++o->source_light_count;
     }
     o->source_lights[index]=(q2fx_source_light){*v,identity,revision,shadow}; o->dirty=true; return true;
@@ -100,17 +140,15 @@ bool frontend_remote_q2_effects_flashlight(frontend_remote_q2_effects *o, qa_act
 {
     if (!intake(o,actor,e) || hand<-1 || hand>1) return false;
     size_t index=o->flashlight_count;
-    for (size_t i=0;i<o->flashlight_count;++i) if (qa_actor_id_equal(o->flashlights[i].actor,actor)) { index=i; break; }
+    (void)actor_find(o,FRONTEND_REMOTE_Q2_FLASHLIGHT,actor,&index);
     if (!enabled) {
-        if (index<o->flashlight_count) {
-            --o->flashlight_count;
-            memmove(o->flashlights+index,o->flashlights+index+1,(o->flashlight_count-index)*sizeof(*o->flashlights));
-        }
+        if (index<o->flashlight_count) flashlight_remove(o,index);
     } else if (index<o->flashlight_count) o->flashlights[index].hand=hand;
     else {
         q2fx_flashlight *rows=reserve(o->flashlights,o->flashlight_capacity,index,e);
         if (!rows) return false;
         o->flashlights=rows;
+        qa_id_index_insert(&o->flashlight_index,actor.slot,actor.generation,index);
         o->flashlights[o->flashlight_count++]=(q2fx_flashlight){actor,qa_scene_identity(),hand};
     }
     o->dirty=true; return true;
@@ -119,6 +157,9 @@ bool frontend_remote_q2_effects_retire_presentation(frontend_remote_q2_effects *
 {
     if (!o || !frontend_remote_q2_effects_idle(o) || !q2fx_source_current(o,e)) return false;
     o->source_beam_count=0; o->source_light_count=0; o->flashlight_count=0; o->dirty=true;
+    qa_id_index_clear(&o->source_beam_index);
+    qa_id_index_clear(&o->source_light_index[0]); qa_id_index_clear(&o->source_light_index[1]);
+    qa_id_index_clear(&o->flashlight_index);
     return true;
 }
 bool frontend_remote_q2_effects_remove_actor_presentation(frontend_remote_q2_effects *o, qa_actor_id actor,
@@ -127,25 +168,12 @@ bool frontend_remote_q2_effects_remove_actor_presentation(frontend_remote_q2_eff
     if (!o || !frontend_remote_q2_effects_idle(o) || !actor.registry ||
         (uint32_t)kind>FRONTEND_REMOTE_Q2_FLASHLIGHT || !q2fx_source_current(o,e)) return false;
     bool changed=false;
-    if (kind<=FRONTEND_REMOTE_Q2_ALL_BEAMS) for (size_t i=0;i<o->source_beam_count;) {
-        q2fx_source_beam *b=o->source_beams+i;
-        if (qa_actor_id_equal(b->beam.actor,actor) && (kind==FRONTEND_REMOTE_Q2_ALL_BEAMS || kind==FRONTEND_REMOTE_Q2_MONSTER_BEAM)) {
-            beam_remove(o,i); changed=true;
-        } else ++i;
-    }
-    if (kind==FRONTEND_REMOTE_Q2_SHADOW_LIGHT || kind==FRONTEND_REMOTE_Q2_SOURCE_LIGHT)
-        for (size_t i=0;i<o->source_light_count;) {
-            q2fx_source_light *v=o->source_lights+i;
-            if (qa_actor_id_equal(v->light.actor,actor) && v->shadow==(kind==FRONTEND_REMOTE_Q2_SHADOW_LIGHT)) {
-                --o->source_light_count; changed=true;
-                memmove(o->source_lights+i,o->source_lights+i+1,(o->source_light_count-i)*sizeof(*o->source_lights));
-            } else ++i;
-        }
-    if (kind==FRONTEND_REMOTE_Q2_FLASHLIGHT) for (size_t i=0;i<o->flashlight_count;) {
-        if (qa_actor_id_equal(o->flashlights[i].actor,actor)) {
-            --o->flashlight_count; changed=true;
-            memmove(o->flashlights+i,o->flashlights+i+1,(o->flashlight_count-i)*sizeof(*o->flashlights));
-        } else ++i;
+    size_t index;
+    while (actor_find(o,kind,actor,&index)) {
+        if (kind<=FRONTEND_REMOTE_Q2_ALL_BEAMS) beam_remove(o,index);
+        else if (kind==FRONTEND_REMOTE_Q2_FLASHLIGHT) flashlight_remove(o,index);
+        else light_remove(o,index);
+        changed=true;
     }
     if (changed) o->dirty=true;
     return true;
@@ -208,18 +236,14 @@ bool q2fx_semantic_prepare(frontend_remote_q2_effects *o, const frontend_remote_
     for (size_t i=0;i<o->source_light_count;) {
         bool present;
         if (!live(o,o->source_lights[i].light.actor,&present,e)) return false;
-        if (!present) {
-            --o->source_light_count;
-            memmove(o->source_lights+i,o->source_lights+i+1,(o->source_light_count-i)*sizeof(*o->source_lights));
-        } else ++i;
+        if (!present) light_remove(o,i);
+        else ++i;
     }
     for (size_t i=0;i<o->flashlight_count;) {
         bool present;
         if (!live(o,o->flashlights[i].actor,&present,e)) return false;
-        if (!present) {
-            --o->flashlight_count;
-            memmove(o->flashlights+i,o->flashlights+i+1,(o->flashlight_count-i)*sizeof(*o->flashlights));
-        } else ++i;
+        if (!present) flashlight_remove(o,i);
+        else ++i;
     }
     return true;
 }
