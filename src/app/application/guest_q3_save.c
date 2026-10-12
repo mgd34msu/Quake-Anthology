@@ -1335,6 +1335,10 @@ bool application_guest_q3_save_restore(application_provider *provider, qa_bytes 
             *context = (guest_projection_actor){.projection = role->projection, .actor = record->actor,
                 .slot = record->slot, .inventory_bound = record->bound, .inventory_prepared = record->bound,
                 .inventory_lease = {record->serial ? record->actor : (qa_actor_id){0}, record->serial}};
+            if (!qa_actor_index_remember(&role->projection->actor_contexts,
+                record->actor, (size_t)(uintptr_t)context, error)) {
+                free(context); return false;
+            }
             *tail = context; tail = &context->next;
         }
     }

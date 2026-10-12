@@ -463,6 +463,7 @@ bool application_q3_guest_round_reset(application_provider *provider, qa_error *
             if (!application_guest_projection_detach(game, context->actor, error))
                 return q3g_round_fail(engine, error, error);
             game->projection->actors = context->next;
+            qa_actor_index_forget_retained(&game->projection->actor_contexts, context->actor);
             free(context);
         }
     }

@@ -49,6 +49,7 @@ typedef struct application_guest_projection {
     guest_public_inventory_profile public_inventory;
     guest_inventory_catalog_services inventory_catalog;
     guest_projection_actor *actors;
+    qa_actor_index actor_contexts;
     const application_q3_combat_profile *state;
     bool has_inventory, inventory_public, located_inventory;
 } application_guest_projection;

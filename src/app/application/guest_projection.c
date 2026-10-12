@@ -6,6 +6,13 @@
 #include "guest_native_q2_private.h"
 #include "guest_q3_combat_state.h"
 
+static guest_projection_actor *actor_context(application_guest_projection *p, qa_actor_id actor)
+{
+    size_t value;
+    return qa_actor_index_find_retained(&p->actor_contexts, actor, &value) ?
+        (guest_projection_actor *)(uintptr_t)value : NULL;
+}
+
 static bool current(guest_projection_actor *context, qa_q3_host_game_data *data,
                     qa_error *error)
 {
@@ -384,7 +391,10 @@ bool application_guest_projection_prepare(q3g_role *role, qa_bytes primary, qa_e
     if (role->projection) return true;
     application_guest_projection *p = calloc(1, sizeof(*p));
     if (!p) return application_fail(error, QA_ERROR_MEMORY, "Preparing qualified guest projection");
-    if (!application_guest_projection_profile_read(role, primary, p, error)) {
+    if (!application_guest_projection_profile_read(role, primary, p, error) ||
+        !qa_actor_index_create(&p->actor_contexts,
+            qa_session_actors(role->engine->provider->application->session), NULL, error)) {
+        qa_actor_index_destroy(&p->actor_contexts);
         application_guest_projection_profile_free(p); free(p); return false;
     }
     role->projection = p; return true;
@@ -459,13 +469,14 @@ bool application_guest_projection_admit(q3g_role *role, qa_actor_id actor, qa_er
     if (!p || !p->has_inventory)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Guest inventory requires a qualified original storage interface");
     if (!inventory_refresh(p, error)) return false;
-    guest_projection_actor *context;
-    for (context = p->actors; context; context = context->next)
-        if (qa_actor_id_equal(context->actor, actor)) break;
+    guest_projection_actor *context = actor_context(p, actor);
     if (!context) {
         context = calloc(1, sizeof(*context));
         if (!context) return application_fail(error, QA_ERROR_MEMORY, "Retaining guest actor projection ownership");
         *context = (guest_projection_actor){.next = p->actors, .projection = p, .actor = actor, .slot = slot};
+        if (!qa_actor_index_remember(&p->actor_contexts, actor, (size_t)(uintptr_t)context, error)) {
+            free(context); return false;
+        }
         p->actors = context;
     }
     if (!context->inventory_bound) {
@@ -482,8 +493,8 @@ bool application_guest_projection_detach(q3g_role *role, qa_actor_id actor, qa_e
     application_guest_projection *p = role->projection;
     if (!p) return true;
     qa_application *app = role->engine->provider->application;
-    for (guest_projection_actor *context = p->actors; context; context = context->next) {
-        if (!qa_actor_id_equal(context->actor, actor) || !context->inventory_bound) continue;
+    guest_projection_actor *context = actor_context(p, actor);
+    if (context && context->inventory_bound) {
         bool unpublished = context->inventory_prepared &&
             !qa_inventory_primary_current(app->inventory, context->inventory_lease, context);
         if (!unpublished && qa_actors_get(qa_session_actors(app->session), actor) &&
@@ -505,9 +516,7 @@ bool application_guest_projection_inventory_binding(q3g_role *role,
     uint32_t slot;
     if (!qa_q3_host_actor_slot(role->host, actor, &slot, error))
         return false;
-    guest_projection_actor *context = projection->actors;
-    while (context && !qa_actor_id_equal(context->actor, actor))
-        context = context->next;
+    guest_projection_actor *context = actor_context(projection, actor);
     guest_projection_actor temporary = {.projection = projection, .actor = actor, .slot = slot};
     qa_q3_host_game_data data;
     if (!current(&temporary, &data, error))
@@ -523,6 +532,9 @@ bool application_guest_projection_inventory_binding(q3g_role *role,
                                     "Retaining restored guest inventory callback context");
         *context = temporary;
         context->next = projection->actors;
+        if (!qa_actor_index_remember(&projection->actor_contexts, actor, (size_t)(uintptr_t)context, error)) {
+            free(context); return false;
+        }
         projection->actors = context;
     }
     context->inventory_lease = (qa_inventory_lease){actor, serial};
@@ -570,6 +582,12 @@ bool application_guest_projection_close(q3g_role *role, qa_error *error)
     if (!p) return true;
     for (guest_projection_actor *context = p->actors; context; context = context->next)
         if (!application_guest_projection_detach(role, context->actor, error)) return false;
-    while (p->actors) { guest_projection_actor *next = p->actors->next; free(p->actors); p->actors = next; }
+    while (p->actors) {
+        guest_projection_actor *context = p->actors;
+        p->actors = context->next;
+        qa_actor_index_forget_retained(&p->actor_contexts, context->actor);
+        free(context);
+    }
+    qa_actor_index_destroy(&p->actor_contexts);
     application_guest_projection_profile_free(p); free(p); role->projection = NULL; return true;
 }
