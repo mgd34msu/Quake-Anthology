@@ -69,6 +69,10 @@ typedef struct application_qc_precache {
 typedef struct application_qc_cvar_handles {
     qa_cvar_handle qw_movement[9], sv_aim, teamplay, deathmatch, pausable, hostname, cheats;
 } application_qc_cvar_handles;
+typedef struct application_qc_command_export {
+    const qa_qc_function *function;
+    uint32_t index;
+} application_qc_command_export;
 struct application_qc_state {
     struct application_qc_items *items;
     struct application_qc_combat *combat;
@@ -79,6 +83,8 @@ struct application_qc_state {
     application_provider *provider;
     const qa_qc_game_fields *field_bindings;
     const qa_qc_engine_globals *global_bindings;
+    application_qc_command_export command_exports[2];
+    size_t command_depth;
     qa_world *world;
     qa_builtin_services services;
     qa_builtin_random random;

@@ -267,10 +267,10 @@ static bool string_prepare(qc_strings *strings, uint32_t offset, qa_error *error
     return qc_strings_identity(strings, (int32_t)offset, &identity, error);
 }
 
-static bool string_refresh(qc_strings *strings, uint32_t offset,
-                            uint32_t capacity, qa_error *error)
+static void string_refresh(qc_strings *strings, uint32_t offset,
+                            uint32_t capacity)
 {
-    if (strings->identities == NULL) return true;
+    if (strings->identities == NULL) return;
     qa_id_index *index = &strings->identities_by_offset;
     /* Invalidate the whole rewritten buffer before admission can fail. A later
      * read then resolves the committed bytes instead of returning an old ID. */
@@ -288,13 +288,6 @@ static bool string_refresh(qc_strings *strings, uint32_t offset,
         if (affected)
             entry->value = QA_STRING_NONE;
     }
-    for (size_t i = 0; i < index->count; ++i) {
-        const qa_id_index_entry *entry = index->entries + i;
-        if (entry->value == QA_STRING_NONE
-            && !string_prepare(strings, (uint32_t)entry->discriminator, error))
-            return false;
-    }
-    return string_prepare(strings, offset, error);
 }
 
 bool qc_strings_allocate(qc_strings *strings, const char *text, int32_t *out,
@@ -378,15 +371,16 @@ bool qc_strings_engine(qc_strings *strings, const char *name, const char *text,
                                "QC engine string exceeds its buffer");
         bool changed = memcmp(strings->bytes + entry->offset, text, length + 1u) != 0;
         string_encode(strings, entry->offset, text, length);
-        if (!(changed ? string_refresh(strings, entry->offset, entry->capacity, error)
-                       : string_prepare(strings, entry->offset, error)))
-            return false;
+        if (changed) string_refresh(strings, entry->offset, entry->capacity);
         *out = strings->quakeworld ? -(int32_t)i - 1
                                    : (int32_t)entry->offset;
         return true;
     }
 
-    if (capacity == 0 || capacity > (size_t)INT32_MAX || length >= capacity)
+    if (capacity == 0)
+        return memory_fail(error, QA_ERROR_NOT_FOUND, 0,
+                           "QC engine string buffer is not admitted");
+    if (capacity > (size_t)INT32_MAX || length >= capacity)
         return memory_fail(error, QA_ERROR_ARGUMENT, length,
                            "invalid QC engine string capacity");
     if (strings->quakeworld && strings->engine_count >= QC_QW_ENGINE_STRINGS)
@@ -404,7 +398,6 @@ bool qc_strings_engine(qc_strings *strings, const char *name, const char *text,
 
     uint32_t index = strings->engine_count;
     if (!qc_strings_engine_admit(strings, name, offset, (uint32_t)capacity, error)) return false;
-    if (!string_prepare(strings, offset, error)) return false;
     *out = strings->quakeworld ? -(int32_t)index - 1 : (int32_t)offset;
     return true;
 }
@@ -986,6 +979,11 @@ bool qa_qc_string_allocate(qa_qc_instance *instance, const char *text,
         return memory_fail(error, QA_ERROR_ARGUMENT, 0,
                            "invalid QC string allocation");
     return qc_strings_allocate(&instance->strings, text, out, error);
+}
+
+size_t qa_qc_string_available(const qa_qc_instance *instance)
+{
+    return (size_t)INT32_MAX - instance->strings.used;
 }
 
 bool qa_qc_engine_string(qa_qc_instance *instance, const char *name,

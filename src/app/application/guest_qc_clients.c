@@ -3,6 +3,7 @@
 #include "guest_qc_pickups.h"
 #include "guest_qc_combat.h"
 #include "guest_qc_protection.h"
+#include "control_frame.h"
 #include "qa/application_network_qw.h"
 #include "guest_qc_rerelease.h"
 #include "qa/text.h"
@@ -284,14 +285,13 @@ bool application_qc_console_command(application_provider *provider, qa_actor_id 
     bool client = row && row->connected && row->spawned;
     if (actor.registry && (!client || !qa_actors_get(qa_session_actors(provider->application->session), actor)))
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC command actor has no live source client");
-    const char *name = client_command ? "SV_ParseClientCommand" : "ConsoleCmd";
-    uint32_t function_index;
-    const qa_qc_function *function = qa_qc_program_find_function(provider->state.qc.program, name, &function_index);
+    const application_qc_command_export *export=&engine->command_exports[client_command?1:0];
+    uint32_t function_index=export->index;
+    const qa_qc_function *function=export->function;
     if (!function) return true;
     if (!function_index || function->parameter_count > 1 ||
         (function->parameter_count && function->parameter_sizes[0] != 1))
         return application_fail(error, QA_ERROR_FORMAT, "QuakeC console export has an incompatible source signature");
-    qa_qc_game_value argument = {QA_QC_GAME_STRING, {.string = text}};
     qa_qc_game_global globals[] = {
         {"self", {QA_QC_GAME_ACTOR, {.actor = actor}}},
         {"time", {QA_QC_GAME_FLOAT, {.number = (float)((double)engine->source_time_ns / 1e9)}}}
@@ -300,25 +300,42 @@ bool application_qc_console_command(application_provider *provider, qa_actor_id 
     int32_t prior = 0;
     qa_qc_instance *vm = provider->state.qc.instance;
     bool staged = !function->parameter_count;
-    if (staged) {
-        size_t length = strlen(text);
-        if (length > SIZE_MAX - 17) return application_fail(error, QA_ERROR_MEMORY, "QuakeC command text extent overflow");
-        char *key = malloc(length + 17);
-        if (!key) return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC command string identity");
-        memcpy(key, "qc-command-text:", 16);
-        memcpy(key + 16, text, length + 1);
-        int32_t reference;
-        bool ok = qa_qc_global_int(vm, 4, &prior, error) &&
-            qa_qc_engine_string(vm, key, text, length + 1, &reference, error);
-        free(key);
-        if (!ok) return false;
+    qa_unified_frame_lease *storage=application_control_storage_acquire(provider->application,error);
+    if(!storage) return false;
+    size_t depth=engine->command_depth++,length=strlen(text),capacity=1;
+    while(capacity<=length) {
+        if(capacity>(size_t)INT32_MAX/2) {capacity=INT32_MAX;break;}
+        capacity*=2;
+    }
+    int key_length=snprintf(NULL,0,"qc-command-slot:%zu:%zu",depth,capacity);
+    char *key=qa_unified_frame_lease_alloc(storage,(size_t)key_length+1,1,1,error);
+    int32_t reference=0;
+    bool ok=key!=NULL;
+    if(ok) {
+        snprintf(key,(size_t)key_length+1,"qc-command-slot:%zu:%zu",depth,capacity);
+        ok=!staged||qa_qc_global_int(vm,4,&prior,error);
+        if(ok) {
+            qa_error lookup={0};
+            ok=qa_qc_engine_string(vm,key,text,0,&reference,&lookup);
+            if(!ok&&lookup.code==QA_ERROR_NOT_FOUND) {
+                if(capacity>qa_qc_string_available(vm)&&length<(size_t)INT32_MAX)
+                    capacity=length+1;
+                snprintf(key,(size_t)key_length+1,"qc-command-slot:%zu:%zu",depth,capacity);
+                ok=qa_qc_engine_string(vm,key,text,capacity,&reference,error);
+            } else if(!ok&&error) *error=lookup;
+        }
+    }
+    bool parm_staged=false;
+    if(ok&&staged) {
         uint32_t word;
         memcpy(&word, &reference, sizeof(word));
-        if (!qa_qc_stage_globals(vm, 4, &word, 1, error)) return false;
+        ok=qa_qc_stage_globals(vm,4,&word,1,error);
+        parm_staged=ok;
     }
-    bool ok = qa_qc_game_call(provider->state.qc.game, name, &argument, function->parameter_count,
-                               globals, 2, result, error);
-    if (staged) {
+    qa_qc_game_value argument={QA_QC_GAME_INTEGER,{.integer=reference}};
+    if(ok) ok=qa_qc_game_call_index(provider->state.qc.game,function_index,&argument,
+        function->parameter_count,globals,2,result,error);
+    if(parm_staged) {
         uint32_t word;
         memcpy(&word, &prior, sizeof(word));
         qa_error unwind = {0};
@@ -327,6 +344,8 @@ bool application_qc_console_command(application_provider *provider, qa_actor_id 
             ok = false;
         }
     }
+    --engine->command_depth;
+    qa_unified_frame_lease_release(storage);
     if (!ok || !application_qc_publish_client_outputs(engine, error)) return false;
     float value;
     memcpy(&value, result, sizeof(value));

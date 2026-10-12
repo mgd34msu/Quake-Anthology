@@ -48,6 +48,10 @@ bool application_qc_console_prepare(qa_application *app, application_provider *p
     engine->provider = provider; engine->world = world; engine->loading = true; engine->check_cluster = -1;
     engine->field_bindings = qa_qc_program_resolved_fields(provider->state.qc.program);
     engine->global_bindings = qa_qc_program_resolved_globals(provider->state.qc.program);
+    static const char *const command_exports[]={"ConsoleCmd","SV_ParseClientCommand"};
+    for(size_t i=0;i<sizeof(command_exports)/sizeof(*command_exports);++i)
+        engine->command_exports[i].function=qa_qc_program_find_function(provider->state.qc.program,
+            command_exports[i],&engine->command_exports[i].index);
     engine->immutable_string_bytes = qa_qc_program_strings(provider->state.qc.program).size;
     engine->services = application_builtin_services(app, world, app->physics);
     engine->profile = selected;

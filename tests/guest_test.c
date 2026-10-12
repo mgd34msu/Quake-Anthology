@@ -288,18 +288,22 @@ static double guest_source_time(void *opaque)
     return ((guest_fixture *)opaque)->source_time;
 }
 
-static void string_buffer_growth(const qa_qc_program *program, qa_qc_profile profile)
+static void string_buffer_growth(guest_fixture *shared, qa_actor_owner owner,
+    const qa_qc_program *program, qa_qc_profile profile)
 {
     qa_error error = {0};
     qa_qc_instance *instance = NULL;
     GAME_CHECK(qa_qc_instance_create(program,
-        &(qa_qc_options){.profile = profile, .entity_capacity = 4}, &instance, &error));
+        &(qa_qc_options){.profile = profile, .entity_capacity = 4,
+            .host = {.session = shared->session, .world = shared->world,
+                .owner = owner, .default_definition = owner}}, &instance, &error));
     char payload[4096];
     memset(payload, 'x', sizeof(payload) - 1); payload[sizeof(payload) - 1] = 0;
     int32_t dynamic, first, same;
     const char *text;
     GAME_CHECK(qa_qc_string_allocate(instance, payload, &dynamic, &error));
     GAME_CHECK(qa_qc_string(instance, dynamic, &text, &error));
+    int32_t first_offset = (int32_t)((size_t)INT32_MAX - qa_qc_string_available(instance));
     GAME_CHECK(qa_qc_engine_string(instance, "first", text + 7, 16384, &first, &error));
     GAME_CHECK(qa_qc_string(instance, first, &text, &error));
     GAME_CHECK(strlen(text) == sizeof(payload) - 8 && !strcmp(text, payload + 7));
@@ -317,6 +321,23 @@ static void string_buffer_growth(const qa_qc_program *program, qa_qc_profile pro
     GAME_CHECK(qa_qc_engine_string(instance, "first", "final", 16384, &same, &error));
     GAME_CHECK(same == first);
     GAME_CHECK(qa_qc_string(instance, dynamic, &text, &error) && !strcmp(text, payload));
+    size_t available = qa_qc_string_available(instance);
+    GAME_CHECK(qa_qc_engine_string(instance, "first", "abcdefghij", 0, &same, &error));
+    qa_string_id identity;
+    GAME_CHECK(qa_qc_string_identity(instance, first_offset + 3, &identity, &error));
+    GAME_CHECK(!strcmp(qa_strings_cstr(qa_session_strings(shared->session), identity), "defghij"));
+    GAME_CHECK(qa_qc_engine_string(instance, "first", "wxyz", 0, &same, &error));
+    GAME_CHECK(qa_qc_string_identity(instance, first_offset + 3, &identity, &error));
+    GAME_CHECK(!strcmp(qa_strings_cstr(qa_session_strings(shared->session), identity), "z"));
+    const char *lazy = profile == QA_QC_QUAKEWORLD ? "lazy-qw-command-identity" : "lazy-nq-command-identity";
+    GAME_CHECK(qa_qc_engine_string(instance, "first", lazy, 0, &same, &error));
+    qa_strings *strings = qa_session_strings(shared->session);
+    GAME_CHECK(qa_strings_find(strings, (qa_bytes){(const uint8_t *)lazy, strlen(lazy)}) == QA_STRING_NONE);
+    GAME_CHECK(qa_qc_string_identity(instance, same, &identity, &error));
+    GAME_CHECK(!strcmp(qa_strings_cstr(strings, identity), lazy));
+    GAME_CHECK(qa_qc_string_available(instance) == available);
+    GAME_CHECK(!qa_qc_engine_string(instance, "missing-update-only", "x", 0, &same, &error));
+    GAME_CHECK(error.code == QA_ERROR_NOT_FOUND && qa_qc_string_available(instance) == available);
     GAME_CHECK(qa_qc_instance_destroy(instance, &error));
 }
 
@@ -683,10 +704,10 @@ void test_guest(void)
     GAME_CHECK(qa_session_add(fixture.session, &component, &error));
     execution(fixture.instance, fixture.program);
     shared_entities(&fixture, owner);
-    string_buffer_growth(fixture.program, QA_QC_NETQUAKE);
+    string_buffer_growth(&fixture, owner, fixture.program, QA_QC_NETQUAKE);
     checkpoint_strings(fixture.program, QA_QC_NETQUAKE);
     qa_qc_program *qw = guest_program(QA_QC_API_QUAKEWORLD);
-    string_buffer_growth(qw, QA_QC_QUAKEWORLD);
+    string_buffer_growth(&fixture, owner, qw, QA_QC_QUAKEWORLD);
     checkpoint_strings(qw, QA_QC_QUAKEWORLD);
     qa_qc_program_destroy(qw);
     checkpoint_entities(&fixture, owner);

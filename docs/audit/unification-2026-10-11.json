@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "2df8a6108cc38144c4ea04594124d2d66b776731",
+  "verified_main": "134fff3f8f8954fd012d7e8826fd37ebddc61a3e",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 181,
-    "open_source_observation": 190,
+    "fixed_source_build_core": 182,
+    "open_source_observation": 189,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -34376,8 +34376,9 @@
       "severity": "high",
       "job": "26",
       "area": "module_hosts",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "134fff3f8f8954fd012d7e8826fd37ebddc61a3e"
     },
     {
       "id": "26-06",
@@ -42146,6 +42147,33 @@
       ],
       "record_directory": "/tmp/qa-ta3196-monster-placement-storage-20261012",
       "conclusion": "Placement uses one independent control lease with common visit stamps and reusable ordered offsets; retained barriers use the targets-owned common pool. Setter, restore and disposal share that owner, preserving authored retry order, full actor IDs and persisted bytes. Normal build and seven core suites passed; historical pool growth remains explicit, with no live or zero-allocation claim."
+    },
+    {
+      "commit": "134fff3f8f8954fd012d7e8826fd37ebddc61a3e",
+      "source_tree": "456226908e6887113b66b5b145b97cf4b601c144",
+      "finding_ids": [
+        "26-05"
+      ],
+      "files_rechecked": [
+        "src/app/application/native_q2_source_actors.c",
+        "src/compat/native_host/host.c",
+        "src/compat/native_host/internal.h",
+        "src/compat/native_host/movement.c",
+        "src/compat/native_host/world.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-native-touch-pool-20261012",
+      "conclusion": "Native touch tickets and outer metadata now use existing common pools, and ClientThink/Pmove/touch share retained 96-byte call scratch. Classic/RR encoding, four arguments and observable callback/refusal custody are retained. Scratch addresses now reuse host-owned allocation backing rather than per-contact free/unmap observers. Reaction ABI buffers and actual loan peaks may still allocate; normal build and seven core suites passed, with no live or whole-engine zero-allocation claim."
     }
   ],
   "verification_limits": [

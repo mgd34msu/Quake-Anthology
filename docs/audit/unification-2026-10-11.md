@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `2df8a610`.
+Follow-up source changes were reviewed through main `134fff3f`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 181 have source fixes
+There are **374 overlapping source-review observations**: 182 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 190 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 189 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -360,3 +360,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `50d1200c` / 02-01: The Q3 weapon namespace is admitted once from the immutable GAME artifact profile. Hot validity checks retain the actual VM, image, path pointer and ABI, with disposal still ordered before role teardown. Normal build and seven core suites passed; no live or performance claim. Records: `/tmp/qa-ta3196-q3-weapon-model-namespace-20261012`.
 
 - `2df8a610` / 02-19: Placement uses one independent control lease with common visit stamps and reusable ordered offsets; retained barriers use the targets-owned common pool. Setter, restore and disposal share that owner, preserving authored retry order, full actor IDs and persisted bytes. Normal build and seven core suites passed; historical pool growth remains explicit, with no live or zero-allocation claim. Records: `/tmp/qa-ta3196-monster-placement-storage-20261012`.
+
+- `134fff3f` / 26-05: Native touch tickets and outer metadata now use existing common pools, and ClientThink/Pmove/touch share retained 96-byte call scratch. Classic/RR encoding, four arguments and observable callback/refusal custody are retained. Scratch addresses now reuse host-owned allocation backing rather than per-contact free/unmap observers. Reaction ABI buffers and actual loan peaks may still allocate; normal build and seven core suites passed, with no live or whole-engine zero-allocation claim. Records: `/tmp/qa-ta3196-native-touch-pool-20261012`.

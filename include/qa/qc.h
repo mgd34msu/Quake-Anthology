@@ -619,14 +619,15 @@ bool qa_qc_project_entity_vector(qa_qc_instance *, int32_t reference,
 bool qa_qc_string(const qa_qc_instance *, int32_t id,
                   const char **out, qa_error *error);
 /* Identity belongs to the host session's canonical string table. Mutable
- * engine strings refresh it at rewrite; an unprepared valid alias is admitted
- * on its first read. Guest references and checkpoint encoding are unchanged. */
+ * engine strings invalidate it at rewrite and resolve it on the next read.
+ * Guest references and checkpoint encoding are unchanged. */
 bool qa_qc_string_identity(qa_qc_instance *, int32_t id,
                            qa_string_id *out, qa_error *error);
 bool qa_qc_string_allocate(qa_qc_instance *, const char *text,
                            int32_t *out, qa_error *error);
-/* Named buffers may also refresh canonical string projections during a
- * checkpoint callback; capture records their post-callback contents. */
+size_t qa_qc_string_available(const qa_qc_instance *);
+/* Capacity zero updates an existing named buffer only; an absent buffer
+ * returns QA_ERROR_NOT_FOUND. Checkpoint callbacks retain their post-write bytes. */
 bool qa_qc_engine_string(qa_qc_instance *, const char *name, const char *text,
                          size_t capacity, int32_t *out, qa_error *error);
 
