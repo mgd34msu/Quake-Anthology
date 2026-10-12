@@ -112,6 +112,26 @@ bool qa_scene_model_materials_admit(qa_scene_model *model, const qa_model_skin_m
         node = node->replacement_next;
     }
 }
+bool qa_scene_model_materials_ready(const qa_scene_model *model, const qa_material_library *materials)
+{
+    if (!model || !materials) return true;
+    const qa_scene_model *node = model;
+    for (;;) {
+        for (size_t i = 0; i < node->source->mesh_count; ++i)
+            for (size_t j = 0; j < node->source->meshes[i].shader_count; ++j) {
+                const scene_model_image *image = node->meshes[i].shaders[j];
+                if (!image) continue;
+                qa_id_index_cursor cursor = qa_id_index_begin(&node->resource_bindings,
+                    image->name_id, (uint64_t)(uintptr_t)materials);
+                size_t value;
+                if (!qa_id_index_next(&node->resource_bindings, &cursor, &value)) return false;
+            }
+        if (node->replacement) { node = node->replacement; continue; }
+        while (node != model && !node->replacement_next) node = node->replacement_parent;
+        if (node == model) return true;
+        node = node->replacement_next;
+    }
+}
 static bool model_array(size_t count, size_t size, void **out, qa_error *error) {
     if (count > SIZE_MAX / size) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "model array exceeds addressable storage"); return false;

@@ -144,11 +144,15 @@ bool q3n_selected_authored_prepare(q3n_selected_authored_media *owner, bool view
     owner->busy = false;
     free(models); return okay;
 }
+bool q3n_selected_authored_ready(const q3n_selected_authored_media *owner, bool view)
+{
+    return q3n_selected_authored_idle(owner) && owner->gun_ready &&
+        (view ? owner->view_ready : owner->world_ready);
+}
 bool q3n_selected_authored_read(const q3n_selected_authored_media *owner, bool view,
     q3n_selected_weapon_media *out, qa_error *error)
 {
-    if (!q3n_selected_authored_idle(owner) || !out || !owner->gun_ready ||
-        (view ? !owner->view_ready : !owner->world_ready) || !q3n_selected_authored_valid(owner, error))
+    if (!q3n_selected_authored_ready(owner, view) || !out || !q3n_selected_authored_valid(owner, error))
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Authored Q3 media has no completed admitted route");
     *out = tuple(owner, view); return true;
 }

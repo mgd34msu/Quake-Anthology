@@ -32,6 +32,7 @@ bool q3n_selected_authored_options_read(const q3n_selected_authored_media *,
  * Held admission independently loads the source-derived barrel/flash/shaders. */
 bool q3n_selected_authored_prepare(q3n_selected_authored_media *, bool view,
     void *context, bool (*current)(void *), q3n_selected_weapon_media *, qa_error *);
+bool q3n_selected_authored_ready(const q3n_selected_authored_media *, bool view);
 bool q3n_selected_authored_read(const q3n_selected_authored_media *, bool view,
     q3n_selected_weapon_media *, qa_error *);
 size_t q3n_selected_authored_attachment_count(const q3n_selected_authored_media *);

@@ -143,6 +143,23 @@ static bool item_now(q3n_media *m, uint32_t number, qa_error *e)
         !model(m, item->secondary_model, &visual->models[1], e)) return false;
     return true;
 }
+static bool powerup_icons(q3n_media *m, qa_error *e)
+{
+    const qa_q3_item *items = qa_q3_items(m->options.product, NULL);
+    memset(m->view.powerups, 0, sizeof(m->view.powerups));
+    for (uint32_t i = 1; i < m->view.item_count; ++i) {
+        const qa_q3_item *item = &items[i];
+        if ((item->kind != QA_Q3_ITEM_POWERUP && item->kind != QA_Q3_ITEM_TEAM &&
+             item->kind != QA_Q3_ITEM_PERSISTENT) || item->tag < 0 || item->tag >= 16)
+            continue;
+        q3n_powerup_media *powerup = &m->view.powerups[item->tag];
+        if (powerup->item_index) continue;
+        int32_t icon;
+        if (!shader(m, item->icon, false, &icon, e)) return false;
+        *powerup = (q3n_powerup_media){.item_index = i, .icon = icon};
+    }
+    return true;
+}
 static bool flash_sound(q3n_media *m, q3n_weapon_media *w, const char *path, qa_error *e)
 { return sound(m, path, false, &w->flash_sounds[0], e); }
 static bool specific(q3n_media *m, uint32_t number, q3n_weapon_media *w, qa_error *e)
@@ -768,6 +785,7 @@ static bool load_graphics_now(q3n_media *m,const q3n_media_load *load,qa_error *
         if (!load->loading(load->context,NULL,(int32_t)i,e) || !load_valid(m,load,e)) return false;
         if (!item_now(m,i,e)) return false;
     }
+    if (!powerup_icons(m,e)) return false;
     DRAW_GROUP(marks);
     for (uint32_t i=1;i<load->inline_models;++i) {
         if (m->view.inline_count==SIZE_MAX/sizeof(*m->inline_models)) return q3p_fail(e,QA_ERROR_MEMORY,"Native inline model extent overflow");

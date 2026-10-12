@@ -22,6 +22,8 @@ typedef struct frontend_equipment_gear_owner_view {
 bool frontend_equipment_gear_prepare(qa_frontend *,
     const application_equipment_gear_presentation *, bool view,
     void *context, bool (*current)(void *), frontend_equipment_gear_presenter **, qa_error *);
+frontend_equipment_gear_presenter *frontend_equipment_gear_presenter_read(const qa_frontend *,
+    const application_equipment_gear_presentation *);
 bool frontend_equipment_gear_retain(frontend_equipment_gear_presenter *, qa_error *);
 void frontend_equipment_gear_release(frontend_equipment_gear_presenter *);
 bool frontend_equipment_gear_idle(const qa_frontend *);

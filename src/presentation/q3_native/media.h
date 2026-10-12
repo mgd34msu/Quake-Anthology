@@ -35,6 +35,10 @@ typedef struct q3n_item_media {
     int32_t models[2], icon, pickup_sound;
     bool registered;
 } q3n_item_media;
+typedef struct q3n_powerup_media {
+    uint32_t item_index;
+    int32_t icon;
+} q3n_powerup_media;
 typedef struct q3n_weapon_media {
     int32_t item_index;
     int32_t weapon_model, barrel_model, hands_model, flash_model, ammo_model;
@@ -120,6 +124,7 @@ typedef struct q3n_media_view {
     qa_q3_product product;
     size_t item_count, inline_count;
     q3n_item_media items[256];
+    q3n_powerup_media powerups[16];
     q3n_weapon_media weapons[16];
     int32_t graphics[Q3N_GRAPHIC_COUNT], sounds[Q3N_SOUND_COUNT];
     int32_t number_shaders[11], bot_skill_shaders[5], crosshairs[10];

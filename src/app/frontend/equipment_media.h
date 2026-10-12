@@ -35,12 +35,12 @@ typedef struct frontend_equipment_media_view {
  * physical inventories separately; it never calls this constructor. */
 bool frontend_equipment_media_prepare(qa_frontend *, const qa_application_equipment_view *,
     frontend_equipment_media **, qa_error *);
-/* A genuine authored Q3 declaration, including none, precedes native held
- * presentation. Absence leaves authored=false and creates no media row. */
-bool frontend_equipment_media_prepare_q3_held(qa_frontend *, const qa_application_equipment_view *,
-    frontend_equipment_media **, bool *authored, qa_error *);
-bool frontend_equipment_media_prepare_source_held(qa_frontend *,const qa_application_equipment_view *,
-    frontend_equipment_media **,bool *authored,qa_error *);
+/* Bind the selected held model to the actual recipient's material library
+ * before entering its draw. Authored none declarations also select a row. */
+bool frontend_equipment_media_held_prepare(qa_frontend *, const qa_application_equipment_view *,
+    const qa_q3_presentation_assets *, frontend_equipment_media **, bool *authored, qa_error *);
+frontend_equipment_media *frontend_equipment_media_held_read(const qa_frontend *,
+    const qa_application_equipment_view *, const qa_q3_presentation_assets *);
 bool frontend_equipment_media_prepare_source_icon(qa_frontend *,const qa_application_equipment_view *,
     frontend_equipment_media **,const qa_material **,qa_error *);
 /* Ordinary native HUD pictures borrow the actual selected provider's material

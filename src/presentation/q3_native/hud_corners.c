@@ -41,14 +41,11 @@ static bool team_overlay(q3n_hud_draw *d,float *y,bool right,bool upper)
         if(weapon<0 || weapon>=16)return q3ne_fail(d->error,QA_ERROR_FORMAT,"Team overlay source weapon is invalid");
         if(!q3nh_picture(d,xx,*y,cell,cell,m->weapons[weapon].weapon_icon?m->weapons[weapon].weapon_icon:m->graphics[Q3N_G_DEFER]))return false;
         xx=right?x:x+width-cell;
-        size_t item_count; const qa_q3_item *items=qa_q3_items(d->owner->product,&item_count);
         for(unsigned powerup=0;powerup<16;++powerup)if(ci->dynamic.powerups&(1<<powerup)) {
-            for(size_t j=1;j<item_count;++j)if((items[j].kind==QA_Q3_ITEM_POWERUP || items[j].kind==QA_Q3_ITEM_TEAM ||
-                items[j].kind==QA_Q3_ITEM_PERSISTENT) && items[j].tag==(int32_t)powerup) {
-                int32_t shader; if(!qa_q3_register_shader(d->frame->assets,items[j].icon,false,&shader,d->error) ||
-                   !q3nh_picture(d,xx,*y,cell,cell,shader))return false;
-                xx+=right?-cell:cell; break;
-            }
+            const q3n_powerup_media *icon=&m->powerups[powerup];
+            if(!icon->item_index)continue;
+            if(!q3nh_picture(d,xx,*y,cell,cell,icon->icon))return false;
+            xx+=right?-cell:cell;
         }
         *y+=cell;
     }
@@ -148,12 +145,10 @@ static bool powerups(q3n_hud_draw *d,float y)
         for(unsigned k=count;k>j;--k) { sorted[k]=sorted[k-1]; remaining[k]=remaining[k-1]; }
         sorted[j]=i; remaining[j]=time; ++count;
     }
-    size_t item_count; const qa_q3_item *items=qa_q3_items(d->owner->product,&item_count); const q3n_event_state *g=q3n_events_state(d->frame->events);
+    const q3n_media_view *m=q3n_media_read(d->frame->media); const q3n_event_state *g=q3n_events_state(d->frame->events);
     for(unsigned i=0;i<count;++i) {
-        const qa_q3_item *item=NULL;
-        for(size_t j=1;j<item_count;++j)if((items[j].kind==QA_Q3_ITEM_POWERUP || items[j].kind==QA_Q3_ITEM_TEAM || items[j].kind==QA_Q3_ITEM_PERSISTENT) &&
-           items[j].tag==(int32_t)sorted[i]) { item=&items[j]; break; }
-        if(!item)continue;
+        const q3n_powerup_media *icon=&m->powerups[sorted[i]];
+        if(!icon->item_index)continue;
         y-=48; const float red[4]={1,0.2f,0.2f,1};
         if(!q3nh_color(d,red) || !q3nh_field(d,528,y,2,remaining[i]/1000))return false;
         float color[4],*modulation=NULL;
@@ -166,8 +161,7 @@ static bool powerups(q3n_hud_draw *d,float y)
             float pulse=(1 + -(((float)d->frame->time + -(float)g->powerup_time) / 200));
             size=(48 * (1 + (0.5f * pulse)));
         }
-        int32_t shader;
-        if(!qa_q3_register_shader(d->frame->assets,item->icon,false,&shader,d->error) || !q3nh_picture(d,640-size,y+24-size/2,size,size,shader))return false;
+        if(!q3nh_picture(d,640-size,y+24-size/2,size,size,icon->icon))return false;
     }
     return q3nh_color(d,NULL);
 }

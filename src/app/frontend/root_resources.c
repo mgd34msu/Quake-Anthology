@@ -7,6 +7,7 @@
 #include "native_q3_client.h"
 #include "qa/map_sidecars.h"
 #include "source_acoustics.h"
+#include "particle_delivery.h"
 
 bool frontend_world_scratch_create(const qa_scene_world *world, frontend_world_scratch *out, qa_error *error)
 {
@@ -251,7 +252,8 @@ bool frontend_root_resources_sync(qa_frontend *f,qa_error *error)
     owner->installed=true; f->root_resources=owner; f->root_resources_pending=NULL;
     return (!f->q1_sky || frontend_q1_sky_map(f->q1_sky,error)) &&
         frontend_event_resources_prepare(f,error) && frontend_material_remaps(f,f->materials,error) && frontend_source_publish_world(f,error) &&
-        frontend_native_q3_publish_world(f,error) && frontend_acoustics_source_bind(f,error);
+        frontend_native_q3_publish_world(f,error) && frontend_particle_admit(f,error) &&
+        frontend_acoustics_source_bind(f,error);
 fail: {
     qa_error cleanup={0};
     (void)dispose(&f->root_resources_pending,&cleanup);

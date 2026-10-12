@@ -1,6 +1,38 @@
 #include "qa/q3_assets_save.h"
 #include "equipment_gear_private.h"
 
+static equipment_gear_content *content_find(const qa_frontend *frontend, qa_actor_owner namespace)
+{
+    equipment_gear_content *owner = frontend && frontend->equipment_gear ?
+        frontend->equipment_gear->contents : NULL;
+    while (owner && owner->view.source.owner != namespace) owner = owner->next;
+    return owner;
+}
+
+static frontend_equipment_gear_presenter *presenter_find(const equipment_gear_content *owner,
+    qa_actor_id actor)
+{
+    frontend_equipment_gear_presenter *presenter = owner ? owner->presenters : NULL;
+    while (presenter && !qa_actor_id_equal(presenter->actor, actor)) presenter = presenter->next;
+    return presenter;
+}
+
+frontend_equipment_gear_presenter *frontend_equipment_gear_presenter_read(const qa_frontend *frontend,
+    const application_equipment_gear_presentation *source)
+{
+    equipment_gear_content *owner = content_find(frontend, source->source.gear_owner);
+    if (!owner || owner->view.source.selected_owner != source->source.selected_owner ||
+        owner->view.source.service_owner != source->source.service_owner ||
+        owner->view.source.descriptor != source->source.descriptor ||
+        owner->view.source.artifact != source->source.artifact ||
+        owner->view.source.acquisition != source->source.acquisition ||
+        owner->view.source.files != source->source.content ||
+        owner->view.definition != source->source.definition ||
+        owner->view.product != source->gear.player.product ||
+        !q3n_selected_authored_ready(owner->view.media, false)) return NULL;
+    return presenter_find(owner, source->actor);
+}
+
 bool frontend_equipment_gear_source(qa_frontend *frontend, qa_actor_owner namespace,
     qa_application_equipment_content *out, const application_q3_grapple_definition **definition,
     qa_error *error)
@@ -126,8 +158,7 @@ bool frontend_equipment_gear_prepare(qa_frontend *frontend,
         if (!frontend->equipment_gear) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining frontend gear media roster");
     }
     frontend_equipment_gear *equipment = frontend->equipment_gear;
-    equipment_gear_content *owner = equipment->contents;
-    while (owner && owner->view.source.owner != source->source.gear_owner) owner = owner->next;
+    equipment_gear_content *owner = content_find(frontend, source->source.gear_owner);
     bool fresh = !owner, okay = true; equipment->admitting = true;
     qa_application_equipment_content actual = {0}; const application_q3_grapple_definition *definition = NULL;
     okay = frontend_equipment_gear_source(frontend, source->source.gear_owner, &actual, &definition, error);
@@ -140,8 +171,8 @@ bool frontend_equipment_gear_prepare(qa_frontend *frontend,
     if (okay && (definition != owner->view.definition || !qa_application_equipment_content_current(
             frontend->application, &owner->view.source)))
         okay = frontend_fail(error, QA_ERROR_ARGUMENT, "Gear registry was superseded by a different source");
-    frontend_equipment_gear_presenter *presenter = okay ? owner->presenters : NULL, *candidate = NULL;
-    while (presenter && !qa_actor_id_equal(presenter->actor, source->actor)) presenter = presenter->next;
+    frontend_equipment_gear_presenter *presenter = okay ? presenter_find(owner, source->actor) : NULL;
+    frontend_equipment_gear_presenter *candidate = NULL;
     if (okay && !presenter) {
         candidate = calloc(1, sizeof(*candidate));
         if (!candidate) okay = frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual gear actor presenter");

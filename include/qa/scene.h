@@ -1059,6 +1059,7 @@ void qa_scene_model_destroy(qa_scene_model *);
 bool qa_scene_model_skin_admit(qa_scene_model *, const qa_model_skin_map *, qa_error *);
 bool qa_scene_model_materials_admit(qa_scene_model *, const qa_model_skin_map *,
     qa_material_library *, qa_error *);
+bool qa_scene_model_materials_ready(const qa_scene_model *, const qa_material_library *);
 bool qa_scene_model_lerp_tag(const qa_scene_model *, qa_string_id name,
     uint32_t from, uint32_t to, float fraction, qa_model_tag *);
 enum { QA_MODEL_PATH_PLAYER_SHADE = 1u, QA_MODEL_PATH_FLAME_FULLBRIGHT = 2u,

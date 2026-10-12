@@ -33,6 +33,7 @@
 #include "network_q3_restart.h"
 #include "equipment_events.h"
 #include "particle_clock.h"
+#include "particle_delivery.h"
 #include "round.h"
 #include "qa/source_frame_time.h"
 #include "qa/application_startup_prepare.h"
@@ -999,7 +1000,8 @@ static bool frontend_step(qa_frontend *frontend,
                 ok = qa_profiler_push(profiler, frontend->profiler_labels[FRONTEND_PROFILE_SCENE_UPDATES], error);
                 if (ok) ok = frontend_profiler_end(profiler,
                     (frontend->options.dedicated || (frontend_scene_sync(frontend, error) &&
-                        frontend_particle_source_complete(frontend, error) && frontend_map_events(frontend, error))) &&
+                        frontend_particle_source_complete(frontend, error) &&
+                        frontend_particle_admit(frontend, error) && frontend_map_events(frontend, error))) &&
                     (!frontend->qc_messages || frontend_qc_messages_drain(frontend->qc_messages, error)) &&
                     (frontend->options.dedicated || (frontend_particle_events(frontend, error) &&
                         frontend_player_events(frontend, error))), error);
