@@ -5,8 +5,8 @@
 #include "qa/source_save.h"
 #include "qa/vfs_view_save.h"
 #include "qa/catalog_save.h"
+#include "qa/text.h"
 #include <limits.h>
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -57,12 +57,6 @@ static char *copy(const char *text, qa_error *error)
     if (!out) { fail(error, QA_ERROR_MEMORY, "Retaining remote Q3 content identity"); return NULL; }
     memcpy(out, text, length + 1); return out;
 }
-static unsigned lower(unsigned ch) { return ch >= 'A' && ch <= 'Z' ? ch + 'a' - 'A' : ch; }
-static bool equal(const char *left, const char *right)
-{
-    while (*left && *right) if (lower((unsigned char)*left++) != lower((unsigned char)*right++)) return false;
-    return !*left && !*right;
-}
 static const char *last_component(const char *path)
 { const char *slash = strrchr(path, '/'); return slash ? slash + 1 : path; }
 static int32_t number(const char *text)
@@ -70,65 +64,6 @@ static int32_t number(const char *text)
     char *end; long long value = strtoll(text, &end, 10);
     if (end == text) return 0;
     return value < INT32_MIN ? INT32_MIN : value > INT32_MAX ? INT32_MAX : (int32_t)value;
-}
-static size_t number_space(const unsigned char *text)
-{
-    if (*text == ' ' || (*text >= '\t' && *text <= '\r')) return 1;
-    if (text[0] == 0xc2 && text[1] == 0xa0) return 2;
-    if (text[0] == 0xe1 && text[1] && text[2] && text[1] == 0x9a && text[2] == 0x80) return 3;
-    if (text[0] == 0xe2 && text[1] && text[2] &&
-        ((text[1] == 0x80 && ((text[2] >= 0x80 && text[2] <= 0x8a) || text[2] == 0xa8 || text[2] == 0xa9 || text[2] == 0xaf)) ||
-         (text[1] == 0x81 && text[2] == 0x9f))) return 3;
-    if (text[0] == 0xe3 && text[1] && text[2] && text[1] == 0x80 && text[2] == 0x80) return 3;
-    if (text[0] == 0xef && text[1] && text[2] && text[1] == 0xbb && text[2] == 0xbf) return 3;
-    return 0;
-}
-static bool game_type(const char *text, int32_t *out)
-{
-    const unsigned char *start = (const unsigned char *)text, *end = start + strlen(text);
-    size_t space;
-    while ((space = number_space(start)) != 0) start += space;
-    while (end > start) {
-        size_t width = 0;
-        for (size_t i = 1; i <= 3 && i <= (size_t)(end - start); ++i)
-            if (number_space(end - i) == i) { width = i; break; }
-        if (!width) break;
-        end -= width;
-    }
-    if (start == end) { *out = 0; return true; }
-    if (end - start >= 2 && start[0] == '0' &&
-        (lower(start[1]) == 'x' || lower(start[1]) == 'b' || lower(start[1]) == 'o')) {
-        unsigned radix = lower(start[1]) == 'x' ? 16 : lower(start[1]) == 'b' ? 2 : 8;
-        unsigned value = 0; const unsigned char *cursor = start + 2;
-        if (cursor == end) return false;
-        for (; cursor < end; ++cursor) {
-            unsigned digit = *cursor >= '0' && *cursor <= '9' ? (unsigned)(*cursor - '0') :
-                lower(*cursor) >= 'a' && lower(*cursor) <= 'f' ? (unsigned)(lower(*cursor) - 'a' + 10) : radix;
-            if (digit >= radix || value > 4 || digit > 4 || value * radix + digit > 4) return false;
-            value = value * radix + digit;
-        }
-        *out = (int32_t)value; return true;
-    }
-    const unsigned char *cursor = start;
-    if (*cursor == '+' || *cursor == '-') ++cursor;
-    bool digits = false;
-    while (cursor < end && *cursor >= '0' && *cursor <= '9') { digits = true; ++cursor; }
-    if (cursor < end && *cursor == '.') {
-        ++cursor;
-        while (cursor < end && *cursor >= '0' && *cursor <= '9') { digits = true; ++cursor; }
-    }
-    if (!digits) return false;
-    if (cursor < end && (*cursor == 'e' || *cursor == 'E')) {
-        ++cursor;
-        if (cursor < end && (*cursor == '+' || *cursor == '-')) ++cursor;
-        const unsigned char *exponent = cursor;
-        while (cursor < end && *cursor >= '0' && *cursor <= '9') ++cursor;
-        if (cursor == exponent) return false;
-    }
-    if (cursor != end) return false;
-    char *parsed; double value = strtod((const char *)start, &parsed);
-    if (parsed != (const char *)end || !isfinite(value) || value < 0 || value > 4 || value != (double)(int32_t)value) return false;
-    *out = (int32_t)value; return true;
 }
 static double loose_random(void *context) { (void)context; return 1; }
 static bool matching_view(frontend_q3_content *, const qa_vfs *, qa_error *);
@@ -255,7 +190,7 @@ static bool inventory(frontend_q3_content *content, const qa_mount_id *saved_ord
         if (info.format != QA_ARCHIVE_PK3)
             return fail(error, QA_ERROR_FORMAT, "Private remote Q3 package is not a genuine PK3 archive");
         const char *name = last_component(path); size_t length = strlen(name);
-        if (length <= 4 || !equal(name + length - 4, ".pk3"))
+        if (length <= 4 || !qa_text_ascii_equal(name + length - 4, ".pk3"))
             return fail(error, QA_ERROR_FORMAT, "Mounted Q3 package lacks its physical PK3 basename");
         mount->game = copy(last_component(product->directory), error);
         mount->basename = malloc(length - 3);
@@ -320,9 +255,9 @@ static bool create(const frontend_q3_content_request *request, qa_vfs **imported
         !qa_q3_info_value(qa_q3_configstring(content->gamestate, 0), "mapname", map, sizeof(map), error)) {
         fail(error, QA_ERROR_FORMAT, "Remote Q3 gamestate lacks its genuine protocol and client ordinal"); goto failed;
     }
-    int32_t selected_game_type;
-    if (!qa_q3_info_value(qa_q3_configstring(content->gamestate, 0), "g_gametype", info, sizeof(info), error) ||
-        !game_type(info, &selected_game_type)) {
+    bool game_type_read = qa_q3_info_value(qa_q3_configstring(content->gamestate, 0), "g_gametype", info, sizeof(info), error);
+    int32_t selected_game_type = game_type_read ? qa_parse_decimal_i32(info, QA_DECIMAL_SIGNED_WRAP) : 0;
+    if (!game_type_read || selected_game_type < 0 || selected_game_type > 4) {
         fail(error, QA_ERROR_FORMAT, "Remote Q3 gamestate changes the selected baseq3 game type contract"); goto failed;
     }
     size_t map_length = strlen(map);
@@ -800,8 +735,8 @@ bool frontend_q3_content_download_destination(const frontend_q3_content *content
     size_t directory_length = (size_t)(slash - remote); char directory[64];
     if (directory_length >= sizeof(directory)) return fail(error, QA_ERROR_FORMAT, "Q3 download directory exceeds source path storage");
     memcpy(directory, remote, directory_length); directory[directory_length] = 0;
-    const char *physical = equal(directory, content->selected_directory) ? selected + 1 :
-        equal(directory, content->base_directory) ? base + 1 : NULL;
+    const char *physical = qa_text_ascii_equal(directory, content->selected_directory) ? selected + 1 :
+        qa_text_ascii_equal(directory, content->base_directory) ? base + 1 : NULL;
     if (!physical) { *out = copy(remote, error); return *out != NULL; }
     size_t length = strlen(physical) + strlen(slash) + 1; char *mapped = malloc(length);
     if (!mapped) return fail(error, QA_ERROR_MEMORY, "Retaining physical Q3 download destination spelling");

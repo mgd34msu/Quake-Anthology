@@ -6,6 +6,7 @@
 #include "qa/ui_language.h"
 #include "qa/q1_chat_commands.h"
 #include "qa/source_frame_time.h"
+#include "qa/text.h"
 #include <math.h>
 #include <limits.h>
 #include <stdio.h>
@@ -66,16 +67,6 @@ static bool retain_policy(frontend_network_q1_client *o,qa_error *error)
 }
 static bool same_protocol(qa_net_protocol_id a,qa_net_protocol_id b)
 { return a.kind==b.kind && a.revision==b.revision && a.flags==b.flags; }
-static bool named(const char *a,const char *b)
-{
-    while(*a && *b) {
-        unsigned char left=(unsigned char)*a++,right=(unsigned char)*b++;
-        if(left>='A' && left<='Z') left+=(unsigned char)('a'-'A');
-        if(right>='A' && right<='Z') right+=(unsigned char)('a'-'A');
-        if(left!=right) return false;
-    }
-    return *a==*b;
-}
 static bool parent(const frontend_network_q1_client *o)
 { return o && !o->closing && o->options.current(o->options.context,o); }
 bool frontend_network_q1_client_owns_input(const frontend_network_q1_client *o,uint32_t physical)
@@ -161,11 +152,11 @@ static qa_command_result forward(void *context,const qa_command_invocation *comm
     if(!frontend_remote_q1_source_read(o->source,&view,error)) return QA_COMMAND_FAILED;
     if(!view.domain.client.owner) return QA_COMMAND_UNHANDLED;
     if(command->argc && command->argv && command->argv[0] &&
-        (named(command->argv[0],"use") || named(command->argv[0],"weapnext") || named(command->argv[0],"weapprev"))) {
+        (qa_text_ascii_equal(command->argv[0],"use") || qa_text_ascii_equal(command->argv[0],"weapnext") || qa_text_ascii_equal(command->argv[0],"weapprev"))) {
         frontend_remote_q1_player_view player; bool present=false;
         if(!frontend_remote_q1_player_read(view.receiver,&player,&present,error) || !present) return QA_COMMAND_FAILED;
-        const char *name=named(command->argv[0],"use")?"use":
-            named(command->argv[0],"weapnext")?"weapnext":"weapprev";
+        const char *name=qa_text_ascii_equal(command->argv[0],"use")?"use":
+            qa_text_ascii_equal(command->argv[0],"weapnext")?"weapnext":"weapprev";
         return frontend_remote_q1_player_command(view.receiver,player.actor,name,command->argv+1,
             command->argc-1,error)?QA_COMMAND_HANDLED:QA_COMMAND_FAILED;
     }
@@ -224,13 +215,13 @@ static bool skin_command(void *context,const qa_command_invocation *call,qa_erro
         if(!pending_invocation(o,call,error)) return false;
         /* The actual startup command can select allskins before a transport
          * exists. Its private value moves into the real child after bind. */
-        if(named(call->argv[0],"allskins")) {
+        if(qa_text_ascii_equal(call->argv[0],"allskins")) {
             const char *value=call->argc>1?call->argv[1]:"";
             if(!value) return false;
             size_t size=strlen(value)+1; char *copy=malloc(size);
             if(!copy) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining startup allskins command");
             memcpy(copy,value,size); free(o->pending_allskins); o->pending_allskins=copy;
-        } else if(named(call->argv[0],"stopdownload"))
+        } else if(qa_text_ascii_equal(call->argv[0],"stopdownload"))
             frontend_console_print(o->options.frontend,&call->context,
                 "Downloads paused. Use retrydownload to resume.\n");
         return pending_invocation(o,call,error);

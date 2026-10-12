@@ -298,13 +298,8 @@ bool qa_application_startup_replay_variables(qa_application *app, qa_console *co
         qa_command_context actual;
         if (!qa_application_startup_bootstrap_images_ready(app) ||
             !qa_application_startup_root_read(app, NULL, &actual_console, &registry, &actual, error) ||
-            console != actual_console || command->session != actual.session ||
-            command->owner != actual.owner || command->client != actual.client ||
-            command->seat != actual.seat || command->origin != actual.origin ||
-            command->dialect != actual.dialect || command->cvar_view != actual.cvar_view ||
-            command->registry != actual.registry || command->generation != actual.generation ||
-            command->console_text != actual.console_text || command->direct != actual.direct ||
-            command->script || !qa_actor_id_equal(command->actor, actual.actor) ||
+            console != actual_console || command->script ||
+            !qa_command_context_equal(command, &actual, QA_COMMAND_CONTEXT_IGNORE_SCRIPT) ||
             !qa_cvars_edit_returned_is(qa_cvars_prepared_edit(registry), registry))
             return application_fail(error, QA_ERROR_ARGUMENT, "Variable replay lost its returned ENGINE bootstrap context");
         return application_startup_seed_root(app, console, &actual, error);

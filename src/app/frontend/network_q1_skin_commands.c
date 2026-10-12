@@ -2,17 +2,8 @@
 #include "remote_q1_private.h"
 #include "remote_q1_skins.h"
 #include "internal.h"
+#include "qa/text.h"
 
-static bool named(const char *a, const char *b)
-{
-    while (*a && *b) {
-        unsigned char left = (unsigned char)*a++, right = (unsigned char)*b++;
-        if (left >= 'A' && left <= 'Z') left += 'a' - 'A';
-        if (right >= 'A' && right <= 'Z') right += 'a' - 'A';
-        if (left != right) return false;
-    }
-    return *a == *b;
-}
 static bool invocation_current(frontend_remote_q1 *row, const qa_command_invocation *call,
     qa_error *error)
 {
@@ -32,8 +23,8 @@ qa_command_result frontend_network_q1_skin_command(frontend_remote_q1 *row,
     const qa_command_invocation *call, qa_error *error)
 {
     if (!call || !call->argc || !call->argv || !call->argv[0]) return QA_COMMAND_UNHANDLED;
-    bool skins = named(call->argv[0], "skins"), all = named(call->argv[0], "allskins");
-    bool cancel = named(call->argv[0], "stopdownload"), retry = named(call->argv[0], "retrydownload");
+    bool skins = qa_text_ascii_equal(call->argv[0], "skins"), all = qa_text_ascii_equal(call->argv[0], "allskins");
+    bool cancel = qa_text_ascii_equal(call->argv[0], "stopdownload"), retry = qa_text_ascii_equal(call->argv[0], "retrydownload");
     if ((!skins && !all && !cancel && !retry) || !row ||
         !qa_q1_is_qw(row->options.domain.protocol)) return QA_COMMAND_UNHANDLED;
     if (!row->skins || !invocation_current(row, call, error)) return QA_COMMAND_FAILED;
