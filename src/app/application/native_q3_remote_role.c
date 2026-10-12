@@ -430,22 +430,15 @@ bool application_native_q3_remote_role_command(application_provider *provider, u
     struct application_native_q3_remote_role *row = find(provider, seat);
     if (!row || row->retiring || !tokens || tokens->truncated || row->argument_revision == UINT64_MAX)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT argv lost its actual command owner");
-    size_t bytes = 0;
-    for (size_t i = 0; i < tokens->count; ++i) bytes += strlen(qa_q3_token(tokens, i)) + 1;
-    qa_command_tokens copy = {.count = tokens->count};
-    copy.values = calloc(tokens->count ? tokens->count : 1, sizeof(*copy.values));
-    copy.storage = malloc(bytes ? bytes : 1); copy.args_text = malloc(bytes + 1);
-    if (!copy.values || !copy.storage || !copy.args_text) {
-        qa_command_tokens_free(&copy); return application_fail(error, QA_ERROR_MEMORY, "Retaining reached native CLIENT arguments");
-    }
-    size_t cursor = 0, args = 0;
-    for (size_t i = 0; i < tokens->count; ++i) {
-        const char *value = qa_q3_token(tokens, i); size_t length = strlen(value);
-        copy.values[i] = copy.storage + cursor; memcpy(copy.storage + cursor, value, length + 1); cursor += length + 1;
-        if (i) { if (i > 1) copy.args_text[args++] = ' '; memcpy(copy.args_text + args, value, length); args += length; }
-    }
-    copy.args_text[args] = 0;
-    qa_command_tokens_free(&row->arguments); row->arguments = copy; ++row->argument_revision; return true;
+    char *values[sizeof(tokens->offsets)/sizeof(*tokens->offsets)];
+    for (size_t i = 0; i < tokens->count; ++i) values[i] = (char *)qa_q3_token(tokens, i);
+    qa_command_tokens reached = {.count = tokens->count, .values = values, .borrowed = true}, copy = {0};
+    unsigned retired = row->argument_storage_slot, next = retired ^ 1u;
+    qa_arena_reset(&row->argument_storage[next]);
+    if (!qa_command_tokens_copy(&reached, &copy, true, qa_arena_alloc_callback,
+        &row->argument_storage[next], error)) return false;
+    qa_command_tokens_free(&row->arguments); row->arguments = copy; row->argument_storage_slot = next;
+    qa_arena_reset(&row->argument_storage[retired]); ++row->argument_revision; return true;
 }
 bool application_native_q3_remote_role_arguments(application_provider *provider, uint32_t seat,
     const qa_command_tokens **out, uint64_t *revision, qa_error *error)
@@ -707,6 +700,7 @@ static bool role_destroy(application_provider *provider,
     qa_cvars_remove_owner(row->cvars, row->service_owner);
     qa_cvars_detach_callbacks(row->cvars); qa_cvars_destroy(row->cvars);
     qa_command_tokens_free(&row->arguments); qa_buffer_free(&row->modules_restore);
+    qa_arena_destroy(&row->argument_storage[0]); qa_arena_destroy(&row->argument_storage[1]);
     qa_launch_instance_lease_release(row->descriptor); free(row->system_info); free(row);
     return true;
 }

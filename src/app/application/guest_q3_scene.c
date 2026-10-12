@@ -17,10 +17,10 @@ bool application_q3_scene_command_tokens(const application_q3_scene_command *com
         char index[16]; snprintf(index,sizeof(index),"%u",command->output->index);
         char *values[]={"cs",index,(char *)command->text};
         qa_command_tokens arguments={.count=3,.values=values,.args_text=""};
-        return qa_command_tokens_copy(&arguments,out,allocate,context,error);
+        return qa_command_tokens_copy(&arguments,out,false,allocate,context,error);
     }
     if(command->addressed && command->arguments)
-        return qa_command_tokens_copy(command->arguments,out,allocate,context,error);
+        return qa_command_tokens_copy(command->arguments,out,false,allocate,context,error);
     return qa_command_tokenize(command->addressed?command->text:"",QA_RULESET_Q3,false,
         out,allocate,context,error);
 }

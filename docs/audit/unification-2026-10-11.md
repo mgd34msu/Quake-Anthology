@@ -27,7 +27,7 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 165 have source fixes
+There are **374 overlapping source-review observations**: 167 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
 review. The remaining 209 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
@@ -330,3 +330,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `01977991` / 02-17: shared control leases own both live QC word captures. Normal build and seven core suites passed; larger shared-storage peaks remain open. Records: `/tmp/qa-ta3196-qc-combat-capture-20261012`.
 
 - `79bb8019` / 08-02, 30-02: All world text uses retained output-event pages and one drawing adapter. Private font/QC stores deleted; actual local drawing owns one-frame lifetime, dedicated delivery uses source time, and Q2 save bytes stay unchanged. Normal build/seven core suites passed; live presentation remains untested. Records: `/tmp/qa-ta3196-world-text-owner-20261012`.
+
+- `53103fa2` / 26-18, 26-19: QVM source observers use common pools, arenas and full-width binding indexes; immutable function entries are prepared at admission. Callback ordering, nesting and restore identity mapping retained. Normal build/seven core suites passed; unbounded registration and nesting peaks can still grow common storage. Records: `/tmp/qa-ta3196-qvm-observer-pools-20261012`.

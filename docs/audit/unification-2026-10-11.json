@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "79bb8019dd361bb4a32d5a6df11ce3c2c975f5cd",
+  "verified_main": "53103fa26aaa29ec90bfbfabf3eb3b15fc9bc4da",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 165,
-    "open_source_observation": 206,
+    "fixed_source_build_core": 167,
+    "open_source_observation": 204,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -34740,8 +34740,9 @@
       "severity": "medium",
       "job": "26",
       "area": "module_hosts",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "53103fa26aaa29ec90bfbfabf3eb3b15fc9bc4da"
     },
     {
       "id": "26-19",
@@ -34774,8 +34775,9 @@
       "severity": "high",
       "job": "26",
       "area": "module_hosts",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "53103fa26aaa29ec90bfbfabf3eb3b15fc9bc4da"
     },
     {
       "id": "26-20",
@@ -41731,6 +41733,33 @@
       ],
       "record_directory": "/tmp/qa-ta3196-world-text-owner-20261012",
       "conclusion": "All world text uses retained output-event pages and one drawing adapter. Private font/QC stores deleted; actual local drawing owns one-frame lifetime, dedicated delivery uses source time, and Q2 save bytes stay unchanged. Normal build/seven core suites passed; live presentation remains untested."
+    },
+    {
+      "commit": "53103fa26aaa29ec90bfbfabf3eb3b15fc9bc4da",
+      "source_tree": "68635d6cbc007f0e790ecc041504b924a40089c9",
+      "finding_ids": [
+        "26-18",
+        "26-19"
+      ],
+      "files_rechecked": [
+        "src/compat/qvm/execute.c",
+        "src/compat/qvm/internal.h",
+        "src/compat/qvm/memory.c",
+        "src/compat/qvm/module.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-qvm-observer-pools-20261012",
+      "conclusion": "QVM source observers use common pools, arenas and full-width binding indexes; immutable function entries are prepared at admission. Callback ordering, nesting and restore identity mapping retained. Normal build/seven core suites passed; unbounded registration and nesting peaks can still grow common storage."
     }
   ],
   "verification_limits": [

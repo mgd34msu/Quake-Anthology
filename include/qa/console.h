@@ -60,8 +60,9 @@ bool qa_command_tokenize(const char *text, qa_ruleset_id dialect,
 bool qa_command_tokenize_span(const char *, size_t, qa_ruleset_id, bool, qa_command_tokens *,
     void *(*allocate)(void *, size_t, size_t, qa_error *), void *, qa_error *);
 void qa_command_tokens_free(qa_command_tokens *tokens);
-/* Copy literal tokens without reparsing into the caller's allocator. */
-bool qa_command_tokens_copy(const qa_command_tokens *, qa_command_tokens *,
+/* Copy literal tokens without reparsing. join_args uses Q3's space-joined tail;
+ * otherwise the supplied Args text is preserved. */
+bool qa_command_tokens_copy(const qa_command_tokens *, qa_command_tokens *, bool join_args,
     void *(*allocate)(void *, size_t, size_t, qa_error *), void *context, qa_error *);
 /* First source separator, or length when absent. Quotes protect semicolons;
  * line feeds always split, and Q3 also splits at carriage returns. */

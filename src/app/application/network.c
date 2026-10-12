@@ -1541,26 +1541,15 @@ bool qa_application_network_q3_client_command(qa_application *app, qa_actor_owne
     q3g_role *role = external_cgame(app, owner, seat);
     if (!role || !tokens || tokens->truncated)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 server command lacks the current cgame argument owner");
-    size_t bytes = 0;
-    for (size_t i = 0; i < tokens->count; ++i) bytes += strlen(qa_q3_token(tokens, i)) + 1;
-    qa_command_tokens copy = {.count = tokens->count};
-    copy.values = calloc(tokens->count ? tokens->count : 1, sizeof(*copy.values));
-    copy.storage = malloc(bytes ? bytes : 1); copy.args_text = malloc(bytes + 1);
-    if (!copy.values || !copy.storage || !copy.args_text) {
-        qa_command_tokens_free(&copy); return application_fail(error, QA_ERROR_MEMORY, "Retaining Q3 cgame command arguments");
-    }
-    size_t cursor = 0, args = 0;
-    for (size_t i = 0; i < tokens->count; ++i) {
-        const char *value = qa_q3_token(tokens, i); size_t length = strlen(value);
-        copy.values[i] = copy.storage + cursor;
-        memcpy(copy.storage + cursor, value, length + 1); cursor += length + 1;
-        if (i) {
-            if (i > 1) copy.args_text[args++] = ' ';
-            memcpy(copy.args_text + args, value, length); args += length;
-        }
-    }
-    copy.args_text[args] = 0;
-    qa_command_tokens_free(&role->arguments); role->arguments = copy; return true;
+    char *values[sizeof(tokens->offsets) / sizeof(*tokens->offsets)];
+    for (size_t i = 0; i < tokens->count; ++i) values[i] = (char *)qa_q3_token(tokens, i);
+    qa_command_tokens reached = {.count = tokens->count, .values = values, .borrowed = true}, copy = {0};
+    unsigned retired = role->argument_storage_slot, next = retired ^ 1u;
+    qa_arena_reset(&role->argument_storage[next]);
+    if (!qa_command_tokens_copy(&reached, &copy, true, qa_arena_alloc_callback,
+            &role->argument_storage[next], error)) return false;
+    qa_command_tokens_free(&role->arguments); role->arguments = copy; role->argument_storage_slot = next;
+    qa_arena_reset(&role->argument_storage[retired]); return true;
 }
 
 bool qa_application_network_q3_record_read(qa_application *app,qa_actor_id actor,

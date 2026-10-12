@@ -149,7 +149,7 @@ void qa_command_tokens_free(qa_command_tokens *tokens)
     *tokens = (qa_command_tokens){0};
 }
 
-bool qa_command_tokens_copy(const qa_command_tokens *from, qa_command_tokens *out,
+bool qa_command_tokens_copy(const qa_command_tokens *from, qa_command_tokens *out, bool join_args,
     void *(*allocate)(void *, size_t, size_t, qa_error *), void *context, qa_error *error)
 {
     if (!from || !out || !allocate || (from->count && !from->values)) {
@@ -170,7 +170,8 @@ bool qa_command_tokens_copy(const qa_command_tokens *from, qa_command_tokens *ou
         allocate(context, from->count * sizeof(*copy.values), _Alignof(char *), error);
     copy.storage = !size ? NULL : allocate(context, size, 1, error);
     const char *args = from->args_text ? from->args_text : "";
-    copy.args_text = allocate(context, strlen(args) + 1, 1, error);
+    size_t args_capacity = join_args ? (size ? size : 1) : strlen(args) + 1;
+    copy.args_text = allocate(context, args_capacity, 1, error);
     if ((from->count && !copy.values) || (size && !copy.storage) || !copy.args_text) {
         qa_command_tokens_free(&copy);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining literal command tokens");
@@ -181,7 +182,13 @@ bool qa_command_tokens_copy(const qa_command_tokens *from, qa_command_tokens *ou
         size_t length = strlen(from->values[i]) + 1;
         copy.values[i] = at; memcpy(at, from->values[i], length); at += length;
     }
-    strcpy(copy.args_text, args); *out = copy; return true;
+    if (join_args) {
+        if (!qa_text_join_words(from->count ? (const char *const *)copy.values + 1 : NULL,
+                from->count ? from->count - 1 : 0, copy.args_text, args_capacity, error)) {
+            qa_command_tokens_free(&copy); return false;
+        }
+    } else strcpy(copy.args_text, args);
+    *out = copy; return true;
 }
 
 int32_t qac_integer(const char *text)

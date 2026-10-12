@@ -181,6 +181,8 @@ bool q3g_role_destroy(q3g_role *role, qa_error *error)
     qa_native_module_release(role->module);
     if (!role->artifact) qa_native_declaration_destroy(role->declaration);
     qa_command_tokens_free(&role->arguments);
+    qa_arena_destroy(&role->argument_storage[0]);
+    qa_arena_destroy(&role->argument_storage[1]);
     free(role->path); free(role);
     return true;
 }

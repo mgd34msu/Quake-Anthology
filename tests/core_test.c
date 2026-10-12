@@ -1040,10 +1040,18 @@ static void test_literal_tokens(void)
     char first[]="print",second[]="quoted; text";
     char *values[]={first,second};
     qa_command_tokens literal={.count=2,.values=values,.args_text="quoted; text"};
-    CHECK(qa_command_tokens_copy(&literal,&owned,qa_arena_alloc_callback,&literal_storage,&error));
+    CHECK(qa_command_tokens_copy(&literal,&owned,false,qa_arena_alloc_callback,&literal_storage,&error));
     qa_unified_frame_pool *pool=qa_unified_frame_pool_create(128*1024,2,&error); CHECK(pool);
     qa_unified_frame_lease *lease=qa_unified_frame_lease_acquire(pool,&error); CHECK(lease);
-    CHECK(qa_command_tokens_copy(&literal,&pooled,tokens_frame_allocate,lease,&error));
+    CHECK(qa_command_tokens_copy(&literal,&pooled,false,tokens_frame_allocate,lease,&error));
+    qa_command_tokens joined={0},preserved={0};
+    literal.args_text="";
+    CHECK(qa_command_tokens_copy(&literal,&preserved,false,tokens_frame_allocate,lease,&error));
+    CHECK(qa_command_tokens_copy(&literal,&joined,true,tokens_frame_allocate,lease,&error));
+    CHECK(!*preserved.args_text && !strcmp(joined.args_text,"quoted; text"));
+    CHECK(joined.count==2 && !strcmp(joined.values[1],"quoted; text"));
+    qa_command_tokens_free(&joined);qa_command_tokens_free(&preserved);
+    literal.args_text="quoted; text";
     for (qa_ruleset_id dialect=QA_RULESET_NETQUAKE;dialect<=QA_RULESET_Q3;++dialect) {
         qa_arena token_storage={0}; qa_arena_init(&token_storage,0);
         qa_command_tokens arena={0},frame={0},span={0};
