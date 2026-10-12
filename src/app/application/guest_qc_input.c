@@ -1,11 +1,13 @@
 #include "qa/input.h"
 #include "guest_qc_profile.h"
 #include "guest_qc_objectives.h"
+#include "control_frame.h"
 #include <float.h>
 
 typedef struct saved_input saved_input;
 struct application_qc_input_scope {
     struct application_qc_input_scope *previous;
+    qa_unified_frame_lease *storage;
     qa_actor_id actor;
     int32_t reference;
     const application_qc_input_binding *binding;
@@ -21,6 +23,7 @@ struct saved_input {
 };
 struct application_qc_parked_input {
     struct application_qc_parked_input *next;
+    qa_unified_frame_lease *storage;
     struct application_qc_input_scope *head, *tail, *parent;
 };
 float application_qc_input_scalar(const qa_usercmd *command, application_qc_input_id input)
@@ -139,7 +142,7 @@ static bool dispose_scope(struct application_qc_state *engine, struct applicatio
                 ok = false;
             }
     }
-    free(scope->saved); free(scope);
+    qa_unified_frame_lease_release(scope->storage);
     return ok;
 }
 static bool close_scope(struct application_qc_state *engine, bool failed, qa_error *error)
@@ -179,8 +182,14 @@ bool application_qc_input_park(application_provider *provider, qa_actor_id actor
                 return application_fail(error, QA_ERROR_ARGUMENT, "QC input scope still owns a parked child");
         if (scope == tail) break;
     }
-    struct application_qc_parked_input *parked = calloc(1, sizeof(*parked));
-    if (!parked) return application_fail(error, QA_ERROR_MEMORY, "Allocating parked QC input ownership");
+    qa_unified_frame_lease *storage = application_control_storage_acquire(provider->application, error);
+    struct application_qc_parked_input *parked = storage ? qa_unified_frame_lease_alloc(storage,
+        1, sizeof(*parked), _Alignof(struct application_qc_parked_input), error) : NULL;
+    if (!parked) {
+        qa_unified_frame_lease_release(storage);
+        return application_fail(error, QA_ERROR_MEMORY, "Allocating parked QC input ownership");
+    }
+    parked->storage = storage;
     parked->head = head; parked->tail = tail; parked->parent = tail->previous;
     parked->next = engine->parked_inputs; engine->parked_inputs = parked;
     tail->previous = NULL; engine->input_scope = parked->parent;
@@ -211,7 +220,7 @@ bool application_qc_input_resume(application_provider *provider, struct applicat
             return application_fail(error, QA_ERROR_NOT_FOUND, "Parked QC input actor changed generation");
     }
     parked->tail->previous = parked->parent; engine->input_scope = parked->head;
-    *owner = parked->next; free(parked);
+    *owner = parked->next; qa_unified_frame_lease_release(parked->storage);
     return true;
 }
 bool application_qc_input_parked_abort(application_provider *provider, struct application_qc_parked_input *parked,
@@ -230,7 +239,7 @@ bool application_qc_input_parked_abort(application_provider *provider, struct ap
         if (!dispose_scope(engine, scope, true, error)) ok = false;
         scope = previous;
     }
-    free(parked);
+    qa_unified_frame_lease_release(parked->storage);
     return ok;
 }
 static bool close_through(struct application_qc_state *engine, struct application_qc_input_scope *scope,
@@ -297,10 +306,20 @@ bool application_qc_input(application_provider *provider, qa_actor_id actor, qa_
         return false;
     }
     if (before) {
-        scope = calloc(1, sizeof(*scope));
-        if (!scope) return application_fail(error, QA_ERROR_MEMORY, "Allocating QC input scope");
-        scope->saved = profile->field_count ? calloc(profile->field_count, sizeof(*scope->saved)) : NULL;
-        if (profile->field_count && !scope->saved) { free(scope); return application_fail(error, QA_ERROR_MEMORY, "Allocating QC nested input storage"); }
+        qa_unified_frame_lease *storage = application_control_storage_acquire(provider->application, error);
+        scope = storage ? qa_unified_frame_lease_alloc(storage, 1, sizeof(*scope),
+            _Alignof(struct application_qc_input_scope), error) : NULL;
+        if (!scope) {
+            qa_unified_frame_lease_release(storage);
+            return application_fail(error, QA_ERROR_MEMORY, "Allocating QC input scope");
+        }
+        scope->storage = storage;
+        scope->saved = profile->field_count ? qa_unified_frame_lease_alloc(storage,
+            profile->field_count, sizeof(*scope->saved), _Alignof(saved_input), error) : NULL;
+        if (profile->field_count && !scope->saved) {
+            qa_unified_frame_lease_release(storage);
+            return application_fail(error, QA_ERROR_MEMORY, "Allocating QC nested input storage");
+        }
         scope->saved_count = profile->field_count; scope->actor = actor; scope->reference = reference;
         scope->movement_slice = movement_slice; scope->previous = engine->input_scope;
         for (struct application_qc_input_scope *outer = scope->previous; outer; outer = outer->previous)
@@ -342,8 +361,12 @@ bool application_qc_input(application_provider *provider, qa_actor_id actor, qa_
         const application_qc_input_binding *binding = &profile->input[i];
         if (binding->before != before || binding->movement_slice != movement_slice) continue;
         bool local_entered[16] = {0}; uint32_t local_before[16][3];
-        bool *entered = binding->output_count <= 16 ? local_entered : calloc(binding->output_count, sizeof(*entered));
-        uint32_t (*previous)[3] = binding->output_count <= 16 ? local_before : calloc(binding->output_count, sizeof(*previous));
+        bool *entered = binding->output_count <= 16 ? local_entered :
+            qa_unified_frame_lease_alloc(scope->storage, binding->output_count,
+                sizeof(*entered), _Alignof(bool), error);
+        uint32_t (*previous)[3] = binding->output_count <= 16 ? local_before :
+            qa_unified_frame_lease_alloc(scope->storage, binding->output_count,
+                sizeof(*previous), _Alignof(uint32_t[3]), error);
         if (!entered || !previous) { ok = application_fail(error, QA_ERROR_MEMORY, "Allocating QC input capture"); }
         scope->binding = binding; scope->entered = entered;
         for (size_t j = 0; ok && j < binding->output_count; ++j)
@@ -372,8 +395,6 @@ bool application_qc_input(application_provider *provider, qa_actor_id actor, qa_
             }
         }
         scope->binding = NULL; scope->entered = NULL;
-        if (entered != local_entered) free(entered);
-        if (previous != local_before) free(previous);
         if (!live) break;
     }
     if (engine->input_scope != scope) ok = application_fail(error, QA_ERROR_ARGUMENT, "QC input callback left an unmatched nested scope");
