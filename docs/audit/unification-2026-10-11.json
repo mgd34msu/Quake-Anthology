@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "5debf46f4b82d486fa98f7505b185cbe03699ae8",
+  "verified_main": "5923d872a43873180cd0503fc06ca6c50ac07be6",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 112,
-    "open_source_observation": 259,
+    "fixed_source_build_core": 113,
+    "open_source_observation": 258,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -27139,14 +27139,15 @@
       "severity": "medium",
       "job": "06",
       "area": "audio_input_ui",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof",
+      "status": "fixed_source_build_core",
+      "verification": "Private qac_text type, helpers and every caller are deleted. Console execution and seat text use scoped common command arenas; dedicated UTF-8 input reuses its admitted reservation; cold config/help/search return exact owned buffers. CFG quoting, source dialect text, nested lifetimes and QDCN field layout remain. Existing core suite checks unread checkpoint round-trip and maximal accepted malformed UTF-8 repair. Large execute_now and persistent/cold owned allocations remain separate work; no global zero-heap claim.",
       "partial_followups": [
         {
           "commit": "b256f052bc30fc646ce1214505693a2e1c2503c1",
           "verification": "Every commands.c qac_text use is replaced by scoped common arena storage and shared word joining. Nested dispatch scope and drain text survive post_dispatch and queue consumption. Dialect suffixes, script completion and persistent alias/cvar ownership retained. Outside owned-output/retained-line qac_text consumers and large execute_now copies remain open."
         }
-      ]
+      ],
+      "fixed_commit": "5923d872a43873180cd0503fc06ca6c50ac07be6"
     },
     {
       "id": "06-06",
@@ -39859,6 +39860,35 @@
       ],
       "record_directory": "/tmp/qa-ta3196-bot-goal-alias-index-20261012",
       "conclusion": "Goal config, weight, index and map-info source aliases now use the common ID index. Ordered source links, raw allocator-backed reads, full weight-pointer identity, import/history candidates and unchanged saved fields remain. Initial-chat aliases in 09-01 remain open; admission storage growth is not closed. Matching normal build and seven core suites pass."
+    },
+    {
+      "commit": "5923d872a43873180cd0503fc06ca6c50ac07be6",
+      "source_tree": "9020e23bcf4c37ca5d908e686feabd0fac9823b7",
+      "finding_ids": [
+        "06-05"
+      ],
+      "files_rechecked": [
+        "src/console/cvars.c",
+        "src/console/dedicated.c",
+        "src/console/discovery.c",
+        "src/console/internal.h",
+        "src/console/seat.c",
+        "src/console/text.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-console-owned-text-20261012",
+      "conclusion": "Private qac_text type, helpers and every caller are deleted. Console execution and seat text use scoped common command arenas; dedicated UTF-8 input reuses its admitted reservation; cold config/help/search return exact owned buffers. CFG quoting, source dialect text, nested lifetimes and QDCN field layout remain. Existing core suite checks unread checkpoint round-trip and maximal accepted malformed UTF-8 repair. Large execute_now and persistent/cold owned allocations remain separate work; no global zero-heap claim."
     }
   ],
   "verification_limits": [

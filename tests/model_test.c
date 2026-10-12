@@ -77,6 +77,31 @@ static void truncated(const fixture *f) {
     }
 }
 
+static void skin_bindings(void) {
+    qa_strings *strings=NULL;qa_error error={0};qa_model_skin_map map={0};
+    CHECK(qa_strings_create(&strings,&error));
+    const char skin[]="body,first\nbody,second\nhead,third\n";
+    CHECK(qa_model_skin_map_load((qa_bytes){(const uint8_t *)skin,sizeof skin-1},strings,&map,&error));
+    struct {qa_string_id surface;uint64_t padding;} meshes[3]={0};
+    CHECK(qa_strings_intern_cstr(strings,"body",&meshes[0].surface,&error));
+    CHECK(qa_strings_intern_cstr(strings,"head",&meshes[1].surface,&error));
+    CHECK(qa_strings_intern_cstr(strings,"missing",&meshes[2].surface,&error));
+    const size_t *first=NULL,*other=NULL,*again=NULL;
+    uint64_t first_id=UINT64_C(0x100000001),other_id=UINT64_C(0x200000001);
+    CHECK(qa_model_skin_map_resolve(&map,first_id,&meshes[0].surface,sizeof meshes[0],3,&first,&error));
+    CHECK(first[0]==0 && first[1]==2 && first[2]==SIZE_MAX);
+    CHECK(qa_model_skin_map_resolve(&map,other_id,&meshes[1].surface,sizeof meshes[0],2,&other,&error));
+    CHECK(other!=first && other[0]==2 && other[1]==SIZE_MAX);
+    for(uint64_t id=3;id<80;++id) {
+        CHECK(qa_model_skin_map_resolve(&map,id,&meshes[0].surface,sizeof meshes[0],3,&again,&error));
+        CHECK(again[0]==0 && again[1]==2 && again[2]==SIZE_MAX);
+    }
+    CHECK(qa_model_skin_map_resolve(&map,first_id,&meshes[0].surface,sizeof meshes[0],3,&again,&error));
+    CHECK(again==first && first[0]==0 && first[1]==2 && first[2]==SIZE_MAX);
+    CHECK(other[0]==2 && other[1]==SIZE_MAX);
+    qa_model_skin_map_free(&map);qa_strings_destroy(strings);
+}
+
 static fixture mdl(void) {
     fixture f = {0};
     text(&f, "IDPO", 4);
@@ -331,6 +356,7 @@ static fixture md5(void) {
 }
 
 int main(void) {
+    skin_bindings();
     const float local[3] = {1, 2, 3};
     for (qa_angle_math_rule rule = QA_ANGLE_FLOAT_MATH; rule <= QA_ANGLE_FLOAT_NATIVE_MATH; ++rule) {
         qa_model_transform placement;
