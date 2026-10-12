@@ -55,6 +55,8 @@ typedef struct qa_q3_player {
     int32_t generic1, loopSound, jumppadEnt, ping, pmoveFramecount;
     int32_t jumppadFrame, entityEventSequence;
 } qa_q3_player;
+/* Collision projection leaves predictable events owned by the source program. */
+void qa_q3_player_entity_kinematics(const qa_q3_player *, qa_q3_entity *);
 /* Original BG conversion consumes predictable events in the caller's player
  * state. Existing unrelated entity fields remain unchanged. */
 void qa_q3_player_entity_state(qa_q3_player *, qa_q3_entity *,

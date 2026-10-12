@@ -185,18 +185,6 @@ static bool store(qa_q3_snapshot_slot *slot, const qa_q3_snapshot *input, qa_q3_
             return fail(error, QA_ERROR_FORMAT, "Invalid actual Q3 collision entity number");
     return qa_q3_slot_store(slot, &retail, error);
 }
-/* Only collision kinematics of BG_PlayerStateToEntityState are needed here.
- * The source program remains the owner of predictable-event consumption. */
-static void player_kinematics(const qa_q3_player *p, qa_q3_entity *e)
-{
-    e->number = p->clientNum;
-    e->eType = p->pmType == 2 || p->pmType == 5 || p->stats[0] <= -40 ? 10 : 1;
-    e->pos.type = 1; memcpy(e->pos.base, p->origin, sizeof(e->pos.base));
-    memcpy(e->pos.delta, p->velocity, sizeof(e->pos.delta));
-    e->apos.type = 1; memcpy(e->apos.base, p->viewangles, sizeof(e->apos.base));
-    e->eFlags = p->stats[0] <= 0 ? p->eFlags | 1 : p->eFlags & ~1;
-    e->groundEntityNum = p->groundEntityNum;
-}
 static void solid_list(qa_q3_prediction_scene *s)
 {
     const qa_q3_snapshot *snap = s->has_next && !s->next_teleport && !s->this_teleport ?
@@ -219,7 +207,7 @@ static bool initial(qa_q3_prediction_scene *s, const qa_q3_snapshot *snap, qa_er
 {
     if (!store(&s->snapshots[0], snap, s->product, error)) return false;
     s->has_snap = true;
-    player_kinematics(&s->snapshots[0].value.player, &s->entities[s->snapshots[0].value.player.clientNum].current);
+    qa_q3_player_entity_kinematics(&s->snapshots[0].value.player, &s->entities[s->snapshots[0].value.player.clientNum].current);
     published(&s->entities[s->snapshots[0].value.player.clientNum], &s->snapshots[0].value);
     solid_list(s);
     for (size_t i = 0; i < s->snapshots[0].value.entity_count; ++i) {
@@ -233,7 +221,7 @@ static bool next_snapshot(qa_q3_prediction_scene *s, const qa_q3_snapshot *snap,
 {
     if (!store(&s->snapshots[1], snap, s->product, error)) return false;
     s->has_next = true;
-    player_kinematics(&s->snapshots[1].value.player, &s->entities[s->snapshots[1].value.player.clientNum].next);
+    qa_q3_player_entity_kinematics(&s->snapshots[1].value.player, &s->entities[s->snapshots[1].value.player.clientNum].next);
     s->entities[s->snapshots[0].value.player.clientNum].interpolate = true;
     for (size_t i = 0; i < s->snapshots[1].value.entity_count; ++i) {
         const qa_q3_entity *row = &s->snapshots[1].value.entities[i]; prediction_entity *e = &s->entities[row->number];
@@ -250,7 +238,7 @@ static void transition(qa_q3_prediction_scene *s)
     for (size_t i = 0; i < s->snapshots[0].value.entity_count; ++i)
         s->entities[s->snapshots[0].value.entities[i].number].valid = false;
     qa_q3_snapshot_slot old = s->snapshots[0]; s->snapshots[0] = s->snapshots[1]; s->snapshots[1] = old;
-    player_kinematics(&s->snapshots[0].value.player, &s->entities[s->snapshots[0].value.player.clientNum].current);
+    qa_q3_player_entity_kinematics(&s->snapshots[0].value.player, &s->entities[s->snapshots[0].value.player.clientNum].current);
     published(&s->entities[s->snapshots[0].value.player.clientNum], &s->snapshots[0].value);
     s->entities[s->snapshots[0].value.player.clientNum].interpolate = false;
     for (size_t i = 0; i < s->snapshots[0].value.entity_count; ++i) {
