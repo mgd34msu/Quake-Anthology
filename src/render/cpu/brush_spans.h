@@ -9,6 +9,8 @@ void cpu_raster_queue_rows(qa_cpu_renderer *, int64_t, int64_t,
 bool cpu_brush_draw_queued(qa_cpu_renderer *, const qa_scene_draw *, qa_error *,
                            bool *handled);
 bool cpu_brush_flush(qa_cpu_renderer *, qa_error *);
+bool cpu_brush_prepare(qa_cpu_renderer *, const qa_scene_frame *, size_t first,
+    bool begin, qa_error *);
 void cpu_brush_clear(qa_cpu_renderer *);
 void cpu_brush_destroy(qa_cpu_renderer *);
 

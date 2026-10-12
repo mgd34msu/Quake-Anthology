@@ -433,6 +433,7 @@ void qa_gl_destroy(qa_gl_renderer *renderer)
         render_resource_destroy(&renderer->texture_index);
         render_resource_destroy(&renderer->source_image_index);
         render_resource_destroy(&renderer->mesh_index);
+        qa_arena_destroy(&renderer->work_storage);
         free(renderer);
         return;
     }
@@ -449,6 +450,7 @@ void qa_gl_destroy(qa_gl_renderer *renderer)
         gl_state_delete_textures(renderer, 1, &renderer->fog_depth);
     gl_resources_destroy(renderer);
     gl_programs_destroy(renderer);
+    qa_arena_destroy(&renderer->work_storage);
     free(renderer);
 }
 
@@ -839,12 +841,13 @@ static bool skeletal_draw_prepare(qa_gl_renderer *renderer, qa_scene_draw *draw,
             count > (size_t)PTRDIFF_MAX / sizeof(*renderer->skin_sampled)) {
             qa_error_set(error, QA_ERROR_MEMORY, 0, "Skeletal fallback vertex span overflows"); return false;
         }
-        qa_scene_vertex *vertices = malloc(count * sizeof(*vertices));
-        qa_model_vertex *sampled = malloc(count * sizeof(*sampled));
+        qa_scene_vertex *vertices = qa_arena_alloc(&renderer->work_storage,
+            count * sizeof(*vertices), _Alignof(qa_scene_vertex), error);
+        qa_model_vertex *sampled = vertices ? qa_arena_alloc(&renderer->work_storage,
+            count * sizeof(*sampled), _Alignof(qa_model_vertex), error) : NULL;
         if (!vertices || !sampled) {
-            free(vertices); free(sampled); qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating skeletal fallback vertices"); return false;
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating skeletal fallback vertices"); return false;
         }
-        free(renderer->skin_vertices); free(renderer->skin_sampled);
         renderer->skin_vertices = vertices; renderer->skin_sampled = sampled;
         renderer->skin_vertex_capacity = count;
     }
@@ -1256,6 +1259,36 @@ static bool gl_swap(qa_gl_renderer *renderer, bool source_front_buffer, qa_error
     return true;
 }
 
+static bool work_frame_begin(qa_gl_renderer *renderer, qa_error *error)
+{
+    /* Upload calls consume these CPU spans before returning. Queued GPU
+     * draws retain native buffer offsets and their existing stream lifetime. */
+    qa_arena_reset(&renderer->work_storage);
+    renderer->skin_palettes = NULL;
+    renderer->skin_sampled = NULL;
+    renderer->skin_vertices = NULL;
+    renderer->world_indices = NULL;
+    renderer->particle_vertices = NULL;
+    renderer->particle_indices = NULL;
+    renderer->skin_palette_count = 0;
+#define GL_WORK_PREPARE(field, capacity, type) \
+    if (renderer->capacity) { \
+        renderer->field = qa_arena_alloc(&renderer->work_storage, \
+            renderer->capacity * sizeof(*renderer->field), _Alignof(type), error); \
+        if (!renderer->field) return false; \
+    }
+    GL_WORK_PREPARE(skin_palettes, skin_palette_capacity, gl_skin_palette);
+    GL_WORK_PREPARE(skin_sampled, skin_vertex_capacity, qa_model_vertex);
+    GL_WORK_PREPARE(skin_vertices, skin_vertex_capacity, qa_scene_vertex);
+    GL_WORK_PREPARE(world_indices, world_index_capacity, uint32_t);
+    GL_WORK_PREPARE(particle_vertices, particle_capacity, qa_scene_vertex);
+    GL_WORK_PREPARE(particle_indices, particle_capacity, uint32_t);
+#undef GL_WORK_PREPARE
+    for (size_t i = 0; i < renderer->particle_capacity; ++i)
+        renderer->particle_indices[i] = (uint32_t)i;
+    return true;
+}
+
 static bool gl_execute_range(qa_gl_renderer *renderer, const qa_scene_frame *frame,
                    size_t first, bool begin, bool finish, qa_error *error)
 {
@@ -1287,6 +1320,7 @@ static bool gl_execute_range(qa_gl_renderer *renderer, const qa_scene_frame *fra
             renderer->controls.source.frame->source_clear_draw_buffer = false;
     }
     if (begin) {
+        if (!work_frame_begin(renderer, error)) return false;
         if (!frame->source_backend) renderer->controls.finish_called = false;
         renderer->presented = false;
         gl_textures_prune(renderer);

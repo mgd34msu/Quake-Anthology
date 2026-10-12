@@ -423,6 +423,54 @@ static bool draw_valid(const qa_scene_draw *draw, qa_error *error) {
   return true;
 }
 static double distance(const cpu_vertex *, unsigned, const qa_scene_view *);
+static bool vertices_reserve(qa_cpu_renderer *renderer, size_t count,
+                               qa_error *error) {
+  if (renderer->vertices && count <= renderer->vertex_capacity) return true;
+  if (!count && !renderer->vertex_capacity) return true;
+  if (count > SIZE_MAX / sizeof(cpu_vertex)) {
+    qa_error_set(error, QA_ERROR_MEMORY, 0,
+                 "CPU transformed vertex storage overflow");
+    return false;
+  }
+  size_t capacity = renderer->vertex_capacity ? renderer->vertex_capacity : 256;
+  while (capacity < count && capacity <= SIZE_MAX / 2) capacity *= 2;
+  if (capacity < count || capacity > SIZE_MAX / sizeof(cpu_vertex)) capacity = count;
+  cpu_vertex *vertices = qa_arena_grow(&renderer->work_storage, renderer->vertices,
+      renderer->vertices ? renderer->vertex_capacity * sizeof(*vertices) : 0,
+      capacity * sizeof(*vertices), _Alignof(cpu_vertex), error);
+  if (!vertices) return false;
+  renderer->vertices = vertices;
+  renderer->vertex_capacity = capacity;
+  return true;
+}
+
+static size_t draw_vertex_extent(const qa_scene_draw *draw) {
+  size_t count = 0;
+  /* A brush mesh may name the complete resident world vertex array. Its
+   * winding uses separate span storage; admit transform scratch only when a
+   * draw needs the triangle path. A rejected brush admits its actual fallback
+   * extent through vertices_reserve below. */
+  if (!draw->brush.present && draw->mesh.index_count)
+    count = draw->source_vertex_storage ? draw->source_vertex_storage : draw->mesh.vertex_count;
+  if (draw->brush.present && draw->brush.chain)
+    for (const qa_scene_brush_surface *brush = draw->brush.chain; brush; brush = brush->next)
+      if (!brush->present && brush->mesh.index_count && brush->mesh.vertex_count > count)
+        count = brush->mesh.vertex_count;
+  return count;
+}
+
+bool cpu_raster_prepare(qa_cpu_renderer *renderer, const qa_scene_frame *frame,
+                         size_t first, bool begin, qa_error *error) {
+  size_t count = 0;
+  for (size_t i = first; i < frame->command_count; ++i)
+    if (frame->commands[i].kind == QA_SCENE_COMMAND_DRAW) {
+      size_t extent = draw_vertex_extent(&frame->commands[i].data.draw);
+      if (extent > count) count = extent;
+    }
+  return vertices_reserve(renderer, count, error) &&
+      cpu_brush_prepare(renderer, frame, first, begin, error);
+}
+
 static bool transform(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                       qa_render_primitive_mode mode, qa_error *error) {
   size_t count = draw->mesh.vertex_count;
@@ -433,28 +481,7 @@ static bool transform(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
       referenced[index]=true;
       if (index>=count) count=index+1;
     }
-  if (count > SIZE_MAX / sizeof(cpu_vertex)) {
-    qa_error_set(error, QA_ERROR_MEMORY, 0,
-                 "CPU transformed vertex storage overflow");
-    return false;
-  }
-  if (count > renderer->vertex_capacity) {
-    size_t capacity =
-        renderer->vertex_capacity ? renderer->vertex_capacity : 256;
-    while (capacity < count && capacity <= SIZE_MAX / 2)
-      capacity *= 2;
-    if (capacity < count || capacity > SIZE_MAX / sizeof(cpu_vertex))
-      capacity = count;
-    cpu_vertex *vertices =
-        realloc(renderer->vertices, capacity * sizeof(*vertices));
-    if (!vertices) {
-      qa_error_set(error, QA_ERROR_MEMORY, 0,
-                   "Allocating CPU transformed vertices");
-      return false;
-    }
-    renderer->vertices = vertices;
-    renderer->vertex_capacity = capacity;
-  }
+  if (!vertices_reserve(renderer, count, error)) return false;
   const float *model = draw->model.m;
   bool normal_required = draw->lighting != QA_LIGHT_VERTEX;
   bool world_required = normal_required || renderer->view.clip_enabled;

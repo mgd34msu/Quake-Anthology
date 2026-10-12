@@ -10,19 +10,26 @@ bool gl_particles_prepare(qa_gl_renderer *renderer, const qa_scene_particle_batc
         return false;
     }
     size_t needed = batch->count * 3;
-    if (needed > renderer->particle_capacity) {
+    if (needed > renderer->particle_capacity ||
+        (renderer->particle_capacity && (!renderer->particle_vertices || !renderer->particle_indices))) {
         size_t capacity = renderer->particle_capacity ? renderer->particle_capacity : 768;
         while (capacity < needed) {
             if (capacity > (size_t)INT_MAX / 2) { capacity = needed; break; }
             capacity *= 2;
         }
-        qa_scene_vertex *vertices = realloc(renderer->particle_vertices, capacity * sizeof(*vertices));
+        if (capacity > SIZE_MAX / sizeof(*renderer->particle_vertices)) capacity = needed;
+        qa_scene_vertex *vertices = qa_arena_grow(&renderer->work_storage, renderer->particle_vertices,
+            renderer->particle_vertices ? renderer->particle_capacity * sizeof(*vertices) : 0,
+            capacity * sizeof(*vertices), _Alignof(qa_scene_vertex), error);
         if (!vertices) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Growing GL particle vertices"); return false; }
-        renderer->particle_vertices = vertices;
-        uint32_t *indices = realloc(renderer->particle_indices, capacity * sizeof(*indices));
+        uint32_t *indices = qa_arena_grow(&renderer->work_storage, renderer->particle_indices,
+            renderer->particle_indices ? renderer->particle_capacity * sizeof(*indices) : 0,
+            capacity * sizeof(*indices), _Alignof(uint32_t), error);
         if (!indices) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Growing GL particle indices"); return false; }
+        renderer->particle_vertices = vertices;
+        size_t first = renderer->particle_indices ? renderer->particle_capacity : 0;
         renderer->particle_indices = indices;
-        for (size_t i = renderer->particle_capacity; i < capacity; ++i) indices[i] = (uint32_t)i;
+        for (size_t i = first; i < capacity; ++i) indices[i] = (uint32_t)i;
         renderer->particle_capacity = capacity;
     }
     memset(draw, 0, sizeof(*draw));
@@ -67,8 +74,6 @@ bool gl_particles_prepare(qa_gl_renderer *renderer, const qa_scene_particle_batc
 
 void gl_particles_destroy(qa_gl_renderer *renderer)
 {
-    free(renderer->particle_vertices);
-    free(renderer->particle_indices);
     renderer->particle_vertices = NULL;
     renderer->particle_indices = NULL;
     renderer->particle_capacity = 0;
