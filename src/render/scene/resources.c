@@ -422,8 +422,56 @@ uint64_t qa_scene_identity(void)
 static void names_release(scene_names *names)
 {
     if (--names->references != 0) return;
+    for (size_t i = 0; i < names->revisions.capacity; ++i) {
+        owned_image *image = qa_pool_at(&names->revisions, i);
+        qa_arena_destroy(&image->storage);
+    }
+    qa_arena_destroy(&names->storage);
     qa_strings_destroy(names->strings);
     free(names);
+}
+
+static bool image_storage_available(scene_names *names, qa_pool *pool, qa_error *error)
+{
+    if (pool->head != SIZE_MAX) return true;
+    size_t previous = pool->capacity;
+    if (!qa_pool_extend(pool, &names->storage, previous ? previous : 1, error)) return false;
+    if (pool == &names->revisions)
+        for (size_t i = previous; i < pool->capacity; ++i)
+            *(owned_image *)qa_pool_at(pool, i) = (owned_image){0};
+    return true;
+}
+
+static image_lineage *image_lineage_create(scene_names *names, qa_error *error)
+{
+    if (!image_storage_available(names, &names->lineages, error)) return NULL;
+    size_t slot;
+    image_lineage *lineage = qa_pool_take(&names->lineages, &slot);
+    *lineage = (image_lineage){.revision = 1, .references = 1,
+        .storage_names = names, .storage_slot = slot};
+    ++names->references;
+    return lineage;
+}
+
+static void image_lineage_release(image_lineage *lineage)
+{
+    if (!lineage || --lineage->references != 0) return;
+    scene_names *names = lineage->storage_names;
+    qa_pool_release(&names->lineages, lineage->storage_slot);
+    names_release(names);
+}
+
+static owned_image *image_revision_take(scene_names *names, qa_error *error)
+{
+    if (!image_storage_available(names, &names->revisions, error)) return NULL;
+    size_t slot;
+    owned_image *owned = qa_pool_take(&names->revisions, &slot);
+    qa_arena storage = owned->storage;
+    *owned = (owned_image){.storage = storage, .names = names,
+        .storage_names = names, .storage_slot = slot, .image = {.references = 1}};
+    /* Name publication may move to another bank; the slot keeps its backing. */
+    names->references += 2;
+    return owned;
 }
 
 void qa_scene_image_retain(const qa_scene_image *image)
@@ -448,7 +496,6 @@ void qa_scene_image_release(const qa_scene_image *image)
     }
     for (size_t i = 1; i < image->animation_count; ++i)
         qa_scene_image_release(image->animation[i]);
-    free((void *)image->animation);
     qa_scene_image_release(owned->sampling_source);
     qa_scene_image_release(owned->source_variant_source);
     while (owned->recipient_bindings) {
@@ -462,11 +509,12 @@ void qa_scene_image_release(const qa_scene_image *image)
         qa_resource_release(owned->asset->source); qa_resource_release(owned->asset->palette_source);
         free(owned->asset->path); free(owned->asset);
     }
-    for (size_t i = 0; i < image->level_count; ++i) free((void *)owned->levels[i].pixels);
-    free(owned->levels);
-    if (--owned->lineage->references == 0) free(owned->lineage);
-    names_release(owned->names);
-    free(owned);
+    image_lineage_release(owned->lineage);
+    scene_names *names = owned->names, *storage_names = owned->storage_names;
+    qa_arena_reset(&owned->storage);
+    qa_pool_release(&storage_names->revisions, owned->storage_slot);
+    names_release(names);
+    names_release(storage_names);
     qa_scene_resources_destroy(parent_owner);
 }
 
@@ -508,10 +556,11 @@ static bool level_valid(const qa_scene_image_level *level, qa_error *error)
     return true;
 }
 
-bool qa_scene_image_create(qa_scene_resources *resources, const char *name, qa_scene_image_kind kind,
-                           const qa_scene_image_level *levels, size_t count, qa_scene_wrap wrap,
-                           qa_scene_filter filter, qa_vec4 border, qa_scene_image **out,
-                           qa_error *error)
+static bool image_create(qa_scene_resources *resources, const char *name, qa_scene_image_kind kind,
+                        const qa_scene_image_level *levels, size_t count, qa_scene_wrap wrap,
+                        qa_scene_filter filter, qa_vec4 border, size_t changed_level,
+                        const qa_scene_image_level *replacement, image_lineage *lineage,
+                        qa_scene_image **out, qa_error *error)
 {
     if (resources == NULL || name == NULL || out == NULL || count == 0 || levels == NULL ||
         count > (size_t)PTRDIFF_MAX / sizeof(*levels) || kind < QA_SCENE_RGBA8 || kind > QA_SCENE_DEPTH32F ||
@@ -522,25 +571,37 @@ bool qa_scene_image_create(qa_scene_resources *resources, const char *name, qa_s
         return false;
     }
     if (!admission_ready(resources, error)) return false;
+    size_t bytes = count * sizeof(*levels);
     for (size_t i = 0; i < count; ++i) {
-        if (!level_valid(&levels[i], error)) return false;
-        if (i != 0 && (levels[i].width != (levels[i-1].width > 1 ? levels[i-1].width / 2 : 1) ||
-                       levels[i].height != (levels[i-1].height > 1 ? levels[i-1].height / 2 : 1))) {
-            qa_error_set(error, QA_ERROR_ARGUMENT, i, "scene mip dimensions are not successive levels");
+        const qa_scene_image_level *row = replacement && i == changed_level ? replacement : levels + i;
+        if (!level_valid(row, error)) return false;
+        if (i != 0) {
+            const qa_scene_image_level *previous = replacement && changed_level == i - 1 ? replacement : levels + i - 1;
+            if (row->width != (previous->width > 1 ? previous->width / 2 : 1) ||
+                row->height != (previous->height > 1 ? previous->height / 2 : 1)) {
+                qa_error_set(error, QA_ERROR_ARGUMENT, i, "scene mip dimensions are not successive levels");
+                return false;
+            }
+        }
+        if (row->bytes > (size_t)PTRDIFF_MAX - bytes) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "scene image storage size overflow");
             return false;
         }
+        bytes += row->bytes;
     }
     qa_string_id id;
     if (!qa_strings_intern_cstr(resources->names->strings, name, &id, error)) return false;
-    owned_image *owned = calloc(1, sizeof(*owned));
+    owned_image *owned = image_revision_take(resources->names, error);
     if (owned == NULL) goto allocation_failed;
-    owned->levels = calloc(count, sizeof(*owned->levels));
-    if (owned->levels == NULL) { free(owned); goto allocation_failed; }
-    owned->lineage = malloc(sizeof(*owned->lineage));
-    if (owned->lineage == NULL) { free(owned->levels); free(owned); goto allocation_failed; }
-    *owned->lineage = (image_lineage){.revision = 1, .references = 1};
-    owned->names = resources->names;
-    ++owned->names->references;
+    if (!qa_arena_reserve(&owned->storage, bytes, error)) {
+        qa_scene_image_release(&owned->image); goto allocation_failed;
+    }
+    owned->levels = qa_arena_alloc(&owned->storage, count * sizeof(*owned->levels),
+        _Alignof(qa_scene_image_level), error);
+    if (owned->levels == NULL) { qa_scene_image_release(&owned->image); goto allocation_failed; }
+    owned->lineage = lineage ? lineage : image_lineage_create(resources->names, error);
+    if (owned->lineage == NULL) { qa_scene_image_release(&owned->image); goto allocation_failed; }
+    if (lineage) ++lineage->references;
     owned->image = (qa_scene_image){.identity = qa_scene_identity(), .revision = 1,
         .name = qa_strings_cstr(resources->names->strings, id), .kind = kind, .wrap = wrap,
         .filter = filter, .border = border, .levels = owned->levels, .level_count = count,
@@ -552,10 +613,11 @@ bool qa_scene_image_create(qa_scene_resources *resources, const char *name, qa_s
     }
     owned->creation_sequence = owned->image.identity;
     for (size_t i = 0; i < count; ++i) {
-        void *pixels = malloc(levels[i].bytes);
+        const qa_scene_image_level *row = replacement && i == changed_level ? replacement : levels + i;
+        void *pixels = qa_arena_alloc(&owned->storage, row->bytes, 1, error);
         if (pixels == NULL) { qa_scene_image_release(&owned->image); goto allocation_failed; }
-        memcpy(pixels, levels[i].pixels, levels[i].bytes);
-        owned->levels[i] = levels[i];
+        memcpy(pixels, row->pixels, row->bytes);
+        owned->levels[i] = *row;
         owned->levels[i].pixels = pixels;
     }
     *out = &owned->image;
@@ -567,6 +629,15 @@ bool qa_scene_image_create(qa_scene_resources *resources, const char *name, qa_s
 allocation_failed:
     qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate scene image");
     return false;
+}
+
+bool qa_scene_image_create(qa_scene_resources *resources, const char *name, qa_scene_image_kind kind,
+                           const qa_scene_image_level *levels, size_t count, qa_scene_wrap wrap,
+                           qa_scene_filter filter, qa_vec4 border, qa_scene_image **out,
+                           qa_error *error)
+{
+    return image_create(resources, name, kind, levels, count, wrap, filter, border,
+        0, NULL, NULL, out, error);
 }
 bool qa_scene_image_stream_create(qa_scene_resources *resources, const char *name,
     uint32_t width, uint32_t height, qa_scene_image **out, qa_error *error)
@@ -678,28 +749,23 @@ bool qa_scene_image_replace(qa_scene_resources *resources, const qa_scene_image 
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid scene image replacement");
         return false;
     }
-    qa_scene_image_level *levels = malloc(source->level_count * sizeof(*levels));
-    if (levels == NULL) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate image replacement levels");
-        return false;
-    }
-    memcpy(levels, source->levels, source->level_count * sizeof(*levels));
-    levels[level] = *replacement;
     qa_scene_image *image = NULL;
-    bool ok = qa_scene_image_create(resources, source->name, source->kind, levels, source->level_count,
-                                    source->wrap, source->filter, source->border, &image, error);
-    free(levels);
+    bool ok = image_create(resources, source->name, source->kind, source->levels, source->level_count,
+        source->wrap, source->filter, source->border, level, replacement,
+        ((const owned_image *)source)->lineage, &image, error);
     if (!ok) return false;
     if (source->animation_count > 1) {
         if (source->animation_count > (size_t)PTRDIFF_MAX / sizeof(*source->animation)) {
             qa_scene_image_release(image);
             qa_error_set(error, QA_ERROR_MEMORY, 0, "image replacement animation overflow"); return false;
         }
-        const qa_scene_image **frames = calloc(source->animation_count, sizeof(*frames));
+        const qa_scene_image **frames = qa_arena_alloc(&((owned_image *)image)->storage,
+            source->animation_count * sizeof(*frames), _Alignof(qa_scene_image *), error);
         if (frames == NULL) {
             qa_scene_image_release(image);
             qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot preserve image animation"); return false;
         }
+        memset(frames, 0, source->animation_count * sizeof(*frames));
         for (size_t i = 1; i < source->animation_count; ++i) {
             frames[i] = source->animation[i];
             qa_scene_image_retain(frames[i]);
@@ -708,9 +774,6 @@ bool qa_scene_image_replace(qa_scene_resources *resources, const qa_scene_image 
         image->animation_count = source->animation_count;
     }
     owned_image *owned = (owned_image *)image;
-    free(owned->lineage);
-    owned->lineage = ((const owned_image *)source)->lineage;
-    ++owned->lineage->references;
     image->identity = source->identity;
     image->revision = ++owned->lineage->revision;
     image->logical_width = source->logical_width;
@@ -758,11 +821,13 @@ bool qa_scene_image_sample(qa_scene_resources *resources, const qa_scene_image *
             qa_scene_image_release(image);
             qa_error_set(error, QA_ERROR_MEMORY, 0, "image sampling animation exceeds address space"); return false;
         }
-        const qa_scene_image **frames = calloc(source->animation_count, sizeof(*frames));
+        const qa_scene_image **frames = qa_arena_alloc(&((owned_image *)image)->storage,
+            source->animation_count * sizeof(*frames), _Alignof(qa_scene_image *), error);
         if (frames == NULL) {
             qa_scene_image_release(image);
             qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate sampled image animation"); return false;
         }
+        memset(frames, 0, source->animation_count * sizeof(*frames));
         image->animation = frames; image->animation_count = source->animation_count;
         for (size_t i = 1; i < source->animation_count; ++i) {
             const qa_scene_image *frame = source->animation[i];
@@ -772,7 +837,7 @@ bool qa_scene_image_sample(qa_scene_resources *resources, const qa_scene_image *
                 qa_scene_image_release(image); return false;
             }
             owned_image *owned = (owned_image *)sampled;
-            free(owned->lineage); owned->lineage = ((owned_image *)image)->lineage;
+            image_lineage_release(owned->lineage); owned->lineage = ((owned_image *)image)->lineage;
             ++owned->lineage->references;
             sampled->identity = image->identity; sampled->revision = ++owned->lineage->revision;
             sampled->logical_width = source->logical_width; sampled->logical_height = source->logical_height;
@@ -823,7 +888,7 @@ bool qa_scene_image_source_scratch_version(qa_scene_resources *resources, size_t
     if (!qa_scene_image_create(resources, initial->name, QA_SCENE_RGBA8, &level, 1,
         initial->wrap, QA_SCENE_LINEAR, initial->border, &image, error)) return false;
     owned_image *owned = (owned_image *)image;
-    free(owned->lineage); owned->lineage = ((const owned_image *)initial)->lineage;
+    image_lineage_release(owned->lineage); owned->lineage = ((const owned_image *)initial)->lineage;
     ++owned->lineage->references;
     image->identity = initial->identity; image->revision = ++owned->lineage->revision;
     image->source_q3 = true; image->source_texture_unit = initial->source_texture_unit;
@@ -842,6 +907,12 @@ qa_scene_resources *qa_scene_resources_create_detached(qa_vfs *vfs, qa_error *er
     resources->recipient_generation = 1;
     if (!qa_strings_create(&resources->names->strings, error)) {
         free(resources->names); free(resources); return NULL;
+    }
+    if (!qa_pool_prepare(&resources->names->revisions, &resources->names->storage,
+            0, sizeof(owned_image), _Alignof(owned_image), error) ||
+        !qa_pool_prepare(&resources->names->lineages, &resources->names->storage,
+            0, sizeof(image_lineage), _Alignof(image_lineage), error)) {
+        names_release(resources->names); free(resources); return NULL;
     }
     resources->vfs = vfs;
     if (vfs && !qa_vfs_retain(vfs, error)) {
@@ -1286,7 +1357,7 @@ bool qa_scene_resource_policy_image(qa_scene_resource_policy *ticket, const qa_s
                 image->level_count, next->wrap, image->filter, next->border, out, error);
             if (ok) {
                 owned_image *mapped = (owned_image *)*out;
-                free(mapped->lineage); mapped->lineage = ((const owned_image *)next)->lineage;
+                image_lineage_release(mapped->lineage); mapped->lineage = ((const owned_image *)next)->lineage;
                 ++mapped->lineage->references;
                 if (mapped->lineage->revision < ((const owned_image *)image)->lineage->revision)
                     mapped->lineage->revision = ((const owned_image *)image)->lineage->revision;
@@ -2054,11 +2125,13 @@ static bool decode_asset_pixels(qa_scene_resources *resources, const char *reque
             qa_gif_free(&gif); return false;
         }
         if (gif.frame_count > 1) {
-            const qa_scene_image **frames = calloc(gif.frame_count, sizeof(*frames));
+            const qa_scene_image **frames = qa_arena_alloc(&((owned_image *)first)->storage,
+                gif.frame_count * sizeof(*frames), _Alignof(qa_scene_image *), error);
             if (frames == NULL) {
                 qa_scene_image_release(first); qa_gif_free(&gif);
                 qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate GIF frame resources"); return false;
             }
+            memset(frames, 0, gif.frame_count * sizeof(*frames));
             first->animation = frames; first->animation_count = gif.frame_count;
             for (size_t i = 1; i < gif.frame_count; ++i) {
                 qa_scene_image *frame = NULL;
@@ -2066,7 +2139,7 @@ static bool decode_asset_pixels(qa_scene_resources *resources, const char *reque
                     qa_scene_image_release(first); qa_gif_free(&gif); return false;
                 }
                 owned_image *owned = (owned_image *)frame;
-                free(owned->lineage);
+                image_lineage_release(owned->lineage);
                 owned->lineage = ((owned_image *)first)->lineage;
                 ++owned->lineage->references;
                 frame->identity = first->identity;

@@ -1,4 +1,5 @@
 #include "roq_internal.h"
+#include "qa/arena.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -6,6 +7,7 @@
 struct qa_roq_decoder {
     roq_stream stream;
     qa_roq_scratch *scratch;
+    qa_arena audio_storage;
     int16_t *audio;
     size_t audio_capacity;
     uint32_t width, height;
@@ -109,6 +111,17 @@ bool qa_roq_decoder_create(qa_media_input *input, const qa_roq_decoder_options *
     decoder->rate = qa_load_u16le(decoder->stream.state.header + 6);
     if (!decoder->rate)
         decoder->rate = 30;
+    if (!decoder->silent) {
+        decoder->audio_capacity = (ROQ_FILE_BYTES - 8u) * 2u;
+        size_t bytes = decoder->audio_capacity * sizeof(*decoder->audio);
+        qa_arena_init(&decoder->audio_storage, bytes);
+        decoder->audio = qa_arena_alloc(&decoder->audio_storage, bytes, _Alignof(int16_t), error);
+        if (!decoder->audio) {
+            qa_roq_decoder_destroy(decoder);
+            return false;
+        }
+        qa_arena_seal(&decoder->audio_storage);
+    }
     *out = decoder;
     return true;
 }
@@ -117,7 +130,7 @@ void qa_roq_decoder_destroy(qa_roq_decoder *decoder) {
         return;
     qa_media_input_release(decoder->stream.input);
     qa_roq_scratch_release(decoder->scratch);
-    free(decoder->audio);
+    qa_arena_destroy(&decoder->audio_storage);
     free(decoder);
 }
 static bool code(vq_reader *reader, unsigned *out, qa_error *error) {
@@ -255,16 +268,7 @@ static bool read_frame(qa_roq_decoder *decoder, const roq_chunk *chunk, qa_roq_e
 }
 static bool read_audio(qa_roq_decoder *decoder, const roq_chunk *chunk, uint8_t channels,
                        qa_roq_event *out, qa_error *error) {
-    size_t count = chunk->bytes.size, capacity = channels == 1 ? count * 2 : count;
-    if (capacity > decoder->audio_capacity) {
-        int16_t *grown = realloc(decoder->audio, capacity * sizeof(*grown));
-        if (!grown) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating RoQ audio scratch");
-            return false;
-        }
-        decoder->audio = grown;
-        decoder->audio_capacity = capacity;
-    }
+    size_t count = chunk->bytes.size;
     size_t frames;
     if (!qa_roq_audio_decode(chunk->bytes, count, chunk->flags,
                              channels == 1 ? QA_ROQ_MONO_TO_STEREO : QA_ROQ_STEREO_TO_STEREO, false,

@@ -2,6 +2,7 @@
 #define QA_CINEMATIC_INTERNAL_H
 
 #include "qa/cinematic.h"
+#include "qa/arena.h"
 
 struct qa_cinematic {
     qa_cinematic_options options;
@@ -25,8 +26,7 @@ struct qa_cinematic {
     uint64_t image_sequence;
     bool raw_attached;
     uint64_t audio_loop;
-    int16_t *pcm;
-    size_t pcm_capacity;
+    qa_arena pcm_storage;
 };
 bool cinematic_fail(qa_error *, const char *);
 bool cinematic_elapsed(qa_cinematic *, double *, qa_error *);

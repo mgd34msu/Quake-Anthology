@@ -1,13 +1,27 @@
 #ifndef QA_SCENE_RESOURCES_INTERNAL_H
 #define QA_SCENE_RESOURCES_INTERNAL_H
 #include "qa/id_index.h"
+#include "qa/pool.h"
 #include "qa/scene.h"
 #include "qa/strings.h"
 
 typedef struct owned_image owned_image;
 typedef struct qa_scene_resources_capture qa_scene_resources_capture;
-typedef struct scene_names { qa_strings *strings; size_t references; owned_image *images; size_t image_count; qa_scene_resources *owner; } scene_names;
-typedef struct image_lineage { uint64_t revision; size_t references; } image_lineage;
+typedef struct scene_names {
+    qa_strings *strings;
+    size_t references;
+    owned_image *images;
+    size_t image_count;
+    qa_scene_resources *owner;
+    qa_arena storage;
+    qa_pool revisions, lineages;
+} scene_names;
+typedef struct image_lineage {
+    uint64_t revision;
+    size_t references;
+    scene_names *storage_names;
+    size_t storage_slot;
+} image_lineage;
 typedef struct recipient_image_binding {
     struct recipient_image_binding *next;
     const qa_scene_image *source;
@@ -32,6 +46,9 @@ struct owned_image {
     qa_scene_image image;
     bool embedded_png;
     scene_names *names;
+    scene_names *storage_names;
+    size_t storage_slot;
+    qa_arena storage;
     qa_scene_image_level *levels;
     image_lineage *lineage;
     uint64_t creation_sequence;
