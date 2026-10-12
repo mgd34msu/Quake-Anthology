@@ -35,18 +35,14 @@ static bool picked_slots(q2_original_record_io *io, q2_item_state *state, uint32
                 return false;
             }
         }
-        uint32_t *slots = count ? malloc(count * sizeof(*slots)) : NULL;
-        if (count && !slots) {
+        if (!q2_item_picked_reserve(state, count, io->error)) {
             qa_buffer_free(&text);
-            qa_error_set(io->error, QA_ERROR_MEMORY, count, "Restoring original Q2 pickup clients");
             return false;
         }
-        size_t next = 0;
+        q2_item_picked_clear(state);
         for (size_t i = 0; i < text.size; ++i)
-            if (text.data[i] == '1') slots[next++] = (uint32_t)i;
+            if (text.data[i] == '1') state->picked_slots[state->picked_count++] = (uint32_t)i;
         qa_buffer_free(&text);
-        free(state->picked_slots);
-        state->picked_slots = slots; state->picked_count = state->picked_capacity = count;
         return true;
     }
     uint32_t extent = 0;

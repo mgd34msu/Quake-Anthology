@@ -275,6 +275,10 @@ bool qa_modes_create(const qa_modes_options *options, qa_modes **out, qa_error *
         qa_error_set(e, QA_ERROR_MEMORY, 0, "allocating mode stores");
         return false;
     }
+    if (!mode_item_scopes_prepare(m, e)) {
+        qa_modes_destroy(m);
+        return false;
+    }
     size_t capacity = m->actor_capacity;
     if (capacity > SIZE_MAX / sizeof(qa_actor_id)) {
         qa_modes_destroy(m);
@@ -316,10 +320,11 @@ void qa_modes_destroy(qa_modes *m) {
             free(v->sorted);
             free(v->ranks);
             free(v->spawns);
-            free(v->items);
+            qa_arena_destroy(&v->item_storage);
             mode_horde_free(v);
         }
     qa_arena_destroy(&m->snapshot_storage);
+    mode_item_scopes_destroy(m);
     free(m->players);
     free(m->objects);
     free(m->instances);
@@ -412,7 +417,7 @@ bool qa_modes_remove(qa_modes *m, qa_mode_id id, qa_error *e) {
     free(v->sorted);
     free(v->ranks);
     free(v->spawns);
-    free(v->items);
+    qa_arena_destroy(&v->item_storage);
     mode_horde_free(v);
     *v = (mode_instance){.id = id};
     for (size_t i = 0; i < m->players_order.count; ++i)

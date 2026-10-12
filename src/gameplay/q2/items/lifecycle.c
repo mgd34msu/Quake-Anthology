@@ -2,6 +2,45 @@
 #include "internal.h"
 #include "qa/game_q2_source.h"
 
+bool q2_item_picked_reserve(q2_item_state *item, size_t count, qa_error *e) {
+    if (count <= item->picked_capacity)
+        return true;
+    size_t capacity = count;
+    if (item->picked_capacity <= SIZE_MAX / 2 && capacity < item->picked_capacity * 2)
+        capacity = item->picked_capacity * 2;
+    if (capacity > SIZE_MAX / sizeof(*item->picked_slots)) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "Q2 instanced pickup capacity overflow");
+        return false;
+    }
+    uint32_t *slots = qa_arena_grow(item->picked_storage, item->picked_slots,
+        item->picked_count * sizeof(*slots), capacity * sizeof(*slots), _Alignof(uint32_t), e);
+    if (!slots)
+        return false;
+    item->picked_slots = slots;
+    item->picked_capacity = capacity;
+    return true;
+}
+void q2_item_picked_clear(q2_item_state *item) {
+    item->picked_count = 0;
+}
+static bool picked_prepare(qa_q2_game *g, qa_error *e) {
+    size_t clients = g->wire_clients;
+    if (!clients) {
+        if (g->player_runtime)
+            clients = g->player_runtime->rules.max_clients;
+        else {
+            qa_q2_player_rules rules;
+            qa_q2_player_rules_default(&rules);
+            clients = rules.max_clients;
+        }
+    }
+    for (size_t i = 0; i < g->item_runtime->records.capacity; ++i) {
+        q2_item_storage *value = qa_pool_at(&g->item_runtime->records, i);
+        if (!q2_item_picked_reserve(&value->item, clients, e))
+            return false;
+    }
+    return true;
+}
 bool q2_items_init(qa_q2_game *g, qa_error *e) {
     g->item_runtime = calloc(1, sizeof(*g->item_runtime));
     if (!g->item_runtime) {
@@ -12,8 +51,15 @@ bool q2_items_init(qa_q2_game *g, qa_error *e) {
             g->actor_records.capacity, sizeof(q2_item_storage),
             _Alignof(q2_item_storage), e))
         return false;
+    for (size_t i = 0; i < g->item_runtime->records.capacity; ++i) {
+        q2_item_storage *value = qa_pool_at(&g->item_runtime->records, i);
+        *value = (q2_item_storage){.item = {.storage = &g->item_runtime->records,
+            .storage_slot = i, .picked_storage = &g->item_runtime->picked_storage}};
+    }
     g->item_runtime->options.weapon_respawn_seconds = 30;
     g->item_runtime->options.instanced_coop = g->options.rules == QA_RULESET_Q2_RERELEASE;
+    if (g->options.cooperative && g->item_runtime->options.instanced_coop && !picked_prepare(g, e))
+        return false;
     g->item_runtime->food_classname=g->runtime_names[Q2_NAME_RESOURCE_FOODCUBE];
     return q2_item_catalog(g, e);
 }
@@ -24,6 +70,7 @@ void q2_items_close(qa_q2_game *g) {
         free(g->item_runtime->admissions);
         free(g->item_runtime->by_id);
         free(g->item_runtime->definitions);
+        qa_arena_destroy(&g->item_runtime->picked_storage);
         qa_arena_destroy(&g->item_runtime->storage);
         free(g->item_runtime);
         g->item_runtime = NULL;
@@ -36,9 +83,11 @@ q2_item_state *q2_item_state_take(qa_q2_game *g, qa_error *e) {
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Q2 item state pool exhausted");
         return NULL;
     }
-    *value = (q2_item_storage){0};
-    value->item.storage = &g->item_runtime->records;
-    value->item.storage_slot = slot;
+    uint32_t *picked_slots = value->item.picked_slots;
+    size_t picked_capacity = value->item.picked_capacity;
+    *value = (q2_item_storage){.item = {.storage = &g->item_runtime->records,
+        .storage_slot = slot, .picked_storage = &g->item_runtime->picked_storage,
+        .picked_slots = picked_slots, .picked_capacity = picked_capacity}};
     return &value->item;
 }
 q2_companion *q2_item_companion(q2_item_state *item) {
@@ -53,7 +102,7 @@ void q2_items_release_state(q2_actor *a) {
             q2_entity_unbind(a->entity_game, a);
             a->entity_game = NULL;
         }
-        free(a->item->picked_slots);
+        q2_item_picked_clear(a->item);
         qa_pool_release(a->item->storage, a->item->storage_slot);
         a->item = NULL;
     }
@@ -72,6 +121,8 @@ bool qa_q2_items_configure(qa_q2_game *g, const qa_q2_item_options *options, qa_
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 item options");
         return false;
     }
+    if (g->options.cooperative && options->instanced_coop && !picked_prepare(g, e))
+        return false;
     g->item_runtime->options = *options;
     return true;
 }

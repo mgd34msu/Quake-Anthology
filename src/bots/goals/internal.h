@@ -4,6 +4,7 @@
 #include "qa/bot_bsp.h"
 #include "qa/bots_allocator.h"
 #include "qa/id_index.h"
+#include "qa/arena.h"
 #include "source_state.h"
 #include <stdlib.h>
 #include <string.h>
@@ -68,6 +69,7 @@ struct qa_bot_goals {
     uint32_t location_head, camp_head;
     bot_source_goal *source;
     size_t source_count, source_capacity;
+    qa_arena source_storage;
     qa_actor_index source_actors;
 };
 static inline uint64_t bot_goal_weights_discriminator(const qa_bot_weights *weights) {
@@ -108,6 +110,7 @@ bool bot_goal_entities(qa_bot_goals *, const qa_bot_goal_entity **, size_t *, vo
 void bot_goal_entities_end(qa_bot_goals *, void *);
 bool bot_goal_equal_name(const char *, const char *);
 void bot_goal_sources_clear(qa_bot_goals *);
+bool bot_goal_sources_reserve(qa_bot_goals *,size_t,qa_error *);
 bool bot_goal_sources_reindex(qa_bot_goals *,qa_error *);
 const bot_source_goal *bot_goal_source_number(const qa_bot_goals *,int32_t);
 bool bot_goal_memory_bind(qa_bot_goals *,qa_bot_memory *,qa_error *);

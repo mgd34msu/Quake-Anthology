@@ -139,6 +139,7 @@ bool qa_bot_goals_create(qa_bot_items *items, const qa_bot_goal_options *options
     }
     g->options = *options;
     g->services = *services;
+    qa_arena_init(&g->source_storage,0);
     qa_strings_retain(g->services.strings);
     g->items = items;
     g->configured = true;

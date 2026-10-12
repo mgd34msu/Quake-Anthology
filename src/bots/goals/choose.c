@@ -66,13 +66,7 @@ static bool source_binding(qa_bot_goals *g, const qa_bot_pickup_goal *current,
             if (capacity <= g->source_capacity || capacity > SIZE_MAX / sizeof(*g->source)) {
                 return bot_goal_fail(e, "source pickup goal storage overflow");
             }
-            bot_source_goal *source = realloc(g->source, capacity * sizeof(*source));
-            if (!source) {
-                qa_error_set(e, QA_ERROR_MEMORY, capacity, "growing retained source pickup goals");
-                return false;
-            }
-            g->source = source;
-            g->source_capacity = capacity;
+            if (!bot_goal_sources_reserve(g, capacity, e)) return false;
         }
         index = g->source_count;
         if (!qa_actor_index_remember(&g->source_actors, current->actor, index, e)) return false;

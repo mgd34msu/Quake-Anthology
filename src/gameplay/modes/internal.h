@@ -5,6 +5,7 @@
 #include "qa/modes_save.h"
 #include "qa/modes_q3_session.h"
 #include "qa/arena.h"
+#include "qa/pool.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -53,6 +54,7 @@ typedef struct mode_instance {
     size_t spawn_count;
     qa_mode_item_binding *items;
     size_t item_count, item_capacity;
+    qa_arena item_storage;
     qa_actor_id bases[3], ball, tag, tag_owner, last_ball_touch;
     bool base_admitting[3];
     qa_actor_id last_spawns[4];
@@ -284,6 +286,10 @@ typedef enum mode_name {
     MODE_NAME_COUNT
 } mode_name;
 
+typedef struct mode_item_scope {
+    qa_arena storage;
+} mode_item_scope;
+
 struct qa_modes {
     qa_modes_options options;
     qa_string_id runtime_names[MODE_NAME_COUNT];
@@ -299,6 +305,9 @@ struct qa_modes {
     size_t restored_objective_count;
     bool source_restored;
     qa_arena snapshot_storage;
+    qa_arena item_scope_storage;
+    qa_pool item_scopes;
+    size_t item_scope_bytes;
     qa_world_actor_snapshot players_order, observations;
 };
 
@@ -326,6 +335,9 @@ bool mode_count(qa_modes *, qa_actor_id, qa_item_id, double *, qa_error *);
 bool mode_set_count(qa_modes *, qa_actor_id, qa_item_id, double, qa_error *);
 bool mode_object_count(qa_modes *, mode_instance *, mode_object *, qa_actor_id, double, qa_error *);
 bool mode_inventory_item(qa_modes *, mode_instance *, qa_item_id, qa_item_id *, qa_error *);
+bool mode_items_reserve(mode_instance *, size_t, qa_error *);
+bool mode_item_scopes_prepare(qa_modes *, qa_error *);
+void mode_item_scopes_destroy(qa_modes *);
 bool mode_reserve_objective(qa_modes *, const qa_objective_binding *, qa_objective_lease *, qa_error *);
 bool mode_commit_objective(qa_modes *, qa_objective_lease);
 bool mode_set_phase(qa_modes *, mode_instance *, qa_mode_phase, uint64_t, qa_error *);

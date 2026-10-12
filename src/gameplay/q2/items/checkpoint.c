@@ -150,11 +150,12 @@ bool qa_q2_item_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_item_checkpoi
         v->touchable = s->touchable;
         v->temporary = s->temporary;
         v->visual = s->visual;
-        v->picked_count = v->picked_capacity = s->picked_count;
-        void *copy;
-        if (!q2_saved_array(s->picked_slots, s->picked_count, sizeof(*s->picked_slots), &copy, e))
+        if (!q2_item_picked_reserve(v, s->picked_count, e))
             goto fail;
-        v->picked_slots = copy;
+        q2_item_picked_clear(v);
+        if (s->picked_count)
+            memcpy(v->picked_slots, s->picked_slots, s->picked_count * sizeof(*s->picked_slots));
+        v->picked_count = s->picked_count;
         v->owner = s->owner;
         if (s->companion.kind != Q2_COMPANION_NONE) {
             v->companion = q2_item_companion(v);

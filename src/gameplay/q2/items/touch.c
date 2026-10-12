@@ -45,20 +45,8 @@ bool qa_q2_item_visible_to(qa_q2_game *g, qa_actor_id pickup, qa_actor_id player
 static bool mark_picked(q2_item_state *item, uint32_t player, qa_error *e) {
     if (was_picked(item, player))
         return true;
-    if (item->picked_count == item->picked_capacity) {
-        size_t capacity = item->picked_capacity ? item->picked_capacity * 2 : 4;
-        if (capacity < item->picked_capacity || capacity > SIZE_MAX / sizeof(*item->picked_slots)) {
-            qa_error_set(e, QA_ERROR_MEMORY, 0, "Q2 instanced pickup capacity overflow");
-            return false;
-        }
-        uint32_t *slots = realloc(item->picked_slots, capacity * sizeof(*slots));
-        if (!slots) {
-            qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 pickup seat ownership");
-            return false;
-        }
-        item->picked_slots = slots;
-        item->picked_capacity = capacity;
-    }
+    if (!q2_item_picked_reserve(item, item->picked_count + 1, e))
+        return false;
     item->picked_slots[item->picked_count++] = player;
     return true;
 }

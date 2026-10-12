@@ -269,8 +269,7 @@ static bool fields(qa_source_save_io *io, qa_bot_goals *goals, const qa_bot_save
              (goals->source_capacity & (goals->source_capacity - 1)) || !goals->source_count ||
              (goals->source_capacity > 64 && goals->source_count <= goals->source_capacity / 2))))
             ok = bot_save_fail(io, QA_ERROR_FORMAT, "Truncated retained source goals");
-        if (ok && goals->source_capacity && !(goals->source = calloc(goals->source_capacity, sizeof(*goals->source))))
-            ok = bot_save_fail(io, QA_ERROR_MEMORY, "Restoring retained source goal capacity");
+        if (ok) ok = bot_goal_sources_reserve(goals,goals->source_capacity,io->error);
     }
     for (size_t i = 0; ok && i < goals->source_count; ++i) {
         bot_source_goal *source = &goals->source[i];
@@ -313,7 +312,7 @@ bool qa_bot_goals_save_restore(qa_session *session, qa_bot_goals *goals, qa_byte
         bot_goal_aliases_reindex(&scratch,error) && bot_goal_sources_reindex(&scratch,error) && topology(&scratch, error);
     for(bot_goal_weights *row=scratch.weights;ok && row;row=row->next)
         ok=qa_bot_weight_workspace_prepare(scratch.workspace,row->weights,error);
-    if (ok) { qa_bot_goals old = *goals; *goals = scratch; clear(&old); }
+    if (ok) { qa_bot_goals old = *goals; *goals = scratch; scratch=(qa_bot_goals){0}; clear(&old); }
     else clear(&scratch);
     if (!ok && (!error || error->code == QA_OK)) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid complete bot goal continuation");
     qa_source_save_dispose(&io); return ok;

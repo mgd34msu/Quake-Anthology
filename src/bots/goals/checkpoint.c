@@ -42,6 +42,7 @@ static bool copy(const qa_bot_goals *source,qa_bot_goals *out,qa_error *error)
     *out=*source;
     out->items=NULL;out->states=NULL;out->weights=NULL;out->indexes=NULL;out->last_indexes=NULL;
     out->prepared_indexes=NULL;out->info=NULL;out->source=NULL;
+    out->source_storage=(qa_arena){0};
     out->aliases=(qa_id_index){0};
     out->source_actors=(qa_actor_index){0};
     qa_strings_retain(out->services.strings);
@@ -68,8 +69,7 @@ static bool copy(const qa_bot_goals *source,qa_bot_goals *out,qa_error *error)
     if(source->source_capacity) {
         if(source->source_capacity>SIZE_MAX/sizeof(*source->source) || source->source_count>source->source_capacity)
             {bot_goal_fail(error,"Invalid retained source-goal checkpoint capacity");goto failed;}
-        out->source=calloc(source->source_capacity,sizeof(*source->source));
-        if(!out->source) goto memory_failure;
+        if(!bot_goal_sources_reserve(out,source->source_capacity,error)) goto failed;
     }
     for(size_t i=0;i<source->source_count;++i) {
         const bot_source_goal *row=&source->source[i];

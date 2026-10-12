@@ -2,6 +2,67 @@
 #include <inttypes.h>
 #include <stdio.h>
 
+bool mode_items_reserve(mode_instance *v, size_t capacity, qa_error *e) {
+    if (capacity <= v->item_capacity)
+        return true;
+    if (capacity > SIZE_MAX / sizeof(*v->items))
+        return mode_fail(e, "mode item capacity exhausted");
+    qa_mode_item_binding *items = qa_arena_grow(&v->item_storage, v->items,
+        v->item_count * sizeof(*v->items), capacity * sizeof(*v->items),
+        _Alignof(qa_mode_item_binding), e);
+    if (!items)
+        return false;
+    v->items = items;
+    v->item_capacity = capacity;
+    return true;
+}
+
+bool mode_item_scopes_prepare(qa_modes *m, qa_error *e) {
+    size_t capacity = m->actor_capacity;
+    if (capacity > (SIZE_MAX - (_Alignof(qa_item_definition) - 1)) /
+                       sizeof(qa_item_definition)) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "mode item catalog storage overflow");
+        return false;
+    }
+    m->item_scope_bytes = capacity * sizeof(qa_item_definition) +
+        _Alignof(qa_item_definition) - 1;
+    if (!qa_pool_prepare(&m->item_scopes, &m->item_scope_storage, 1,
+            sizeof(mode_item_scope), _Alignof(mode_item_scope), e))
+        return false;
+    mode_item_scope *scope = qa_pool_at(&m->item_scopes, 0);
+    *scope = (mode_item_scope){0};
+    return !m->item_scope_bytes || qa_arena_reserve(&scope->storage, m->item_scope_bytes, e);
+}
+
+void mode_item_scopes_destroy(qa_modes *m) {
+    for (size_t i = 0; i < m->item_scopes.capacity; ++i) {
+        mode_item_scope *scope = qa_pool_at(&m->item_scopes, i);
+        qa_arena_destroy(&scope->storage);
+    }
+    qa_arena_destroy(&m->item_scope_storage);
+}
+
+static mode_item_scope *item_scope_take(qa_modes *m, size_t *slot, qa_error *e) {
+    if (m->item_scopes.head == SIZE_MAX) {
+        size_t next = m->item_scopes.capacity;
+        if (!qa_pool_extend(&m->item_scopes, &m->item_scope_storage, 1, e))
+            return NULL;
+        mode_item_scope *scope = qa_pool_at(&m->item_scopes, next);
+        *scope = (mode_item_scope){0};
+    }
+    mode_item_scope *scope = qa_pool_take(&m->item_scopes, slot);
+    if (m->item_scope_bytes && !qa_arena_reserve(&scope->storage, m->item_scope_bytes, e)) {
+        qa_pool_release(&m->item_scopes, *slot);
+        return NULL;
+    }
+    return scope;
+}
+
+static void item_scope_release(qa_modes *m, mode_item_scope *scope, size_t slot) {
+    qa_arena_reset(&scope->storage);
+    qa_pool_release(&m->item_scopes, slot);
+}
+
 bool mode_inventory_item(qa_modes *m, mode_instance *v, qa_item_id source,
                          qa_item_id *out, qa_error *e) {
     for (size_t i = 0; i < v->item_count; ++i)
@@ -20,26 +81,25 @@ bool mode_inventory_item(qa_modes *m, mode_instance *v, qa_item_id source,
         return mode_fail(e, "mode item identity too long");
     if (v->item_count == v->item_capacity) {
         size_t capacity = v->item_capacity ? v->item_capacity * 2 : 8;
-        if (capacity < v->item_capacity || capacity > SIZE_MAX / sizeof(*v->items))
+        if (capacity < v->item_capacity)
             return mode_fail(e, "mode item capacity exhausted");
-        void *items = realloc(v->items, capacity * sizeof(*v->items));
-        if (!items) {
-            qa_error_set(e, QA_ERROR_MEMORY, 0, "retaining mode item identities");
+        if (!mode_items_reserve(v, capacity, e))
             return false;
-        }
-        v->items = items;
-        v->item_capacity = capacity;
     }
     size_t size = (size_t)length + name.size;
-    unsigned char *text = malloc(size);
+    size_t slot;
+    mode_item_scope *scope = item_scope_take(m, &slot, e);
+    if (!scope)
+        return false;
+    unsigned char *text = qa_arena_alloc(&scope->storage, size, 1, e);
     if (!text) {
-        qa_error_set(e, QA_ERROR_MEMORY, 0, "scoping mode item identity");
+        item_scope_release(m, scope, slot);
         return false;
     }
     memcpy(text, prefix, (size_t)length);
     memcpy(text + length, name.data, name.size);
     bool ok = qa_strings_intern(strings, (qa_bytes){text, size}, out, e);
-    free(text);
+    item_scope_release(m, scope, slot);
     if (ok)
         v->items[v->item_count++] = (qa_mode_item_binding){source, *out};
     return ok;
@@ -142,16 +202,21 @@ static bool collect_items(qa_modes *m, qa_actor_id actor,
 bool qa_modes_publish_items(qa_modes *m, qa_actor_id actor, qa_error *e) {
     mode_player *player = mode_player_get(m, actor);
     if (!player) return mode_fail(e, "unknown mode item owner");
-    qa_item_definition *added = calloc(m->actor_capacity, sizeof(*added));
+    size_t slot;
+    mode_item_scope *scope = item_scope_take(m, &slot, e);
+    if (!scope)
+        return false;
+    qa_item_definition *added = qa_arena_alloc(&scope->storage,
+        (size_t)m->actor_capacity * sizeof(*added), _Alignof(qa_item_definition), e);
     if (!added) {
-        qa_error_set(e, QA_ERROR_MEMORY, 0, "publishing mode item catalog");
+        item_scope_release(m, scope, slot);
         return false;
     }
     size_t count;
     bool ok = collect_items(m, actor, added, &count, e) &&
         qa_inventory_replace_definitions(m->options.services.inventory, actor,
             m->options.owner, added, count, item_action, player, player->items, &player->items, e);
-    free(added);
+    item_scope_release(m, scope, slot);
     return ok;
 }
 bool qa_modes_inventory_group(qa_modes *m, qa_actor_id actor, uint64_t serial,

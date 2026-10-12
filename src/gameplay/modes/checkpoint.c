@@ -422,12 +422,13 @@ static bool restore_instance(qa_modes *m, const qa_mode_checkpoint *saved, qa_er
     v->sorted = calloc(m->actor_capacity, sizeof(*v->sorted));
     v->ranks = calloc(m->actor_capacity, sizeof(*v->ranks));
     v->spawns = saved->spawn_count ? malloc(saved->spawn_count * sizeof(*v->spawns)) : NULL;
-    v->items = saved->item_count ? malloc(saved->item_count * sizeof(*v->items)) : NULL;
     if (!v->members || !v->bindings || !v->ghosts || !v->sorted || !v->ranks ||
-        (saved->spawn_count && !v->spawns) || (saved->item_count && !v->items)) {
+        (saved->spawn_count && !v->spawns)) {
         qa_error_set(e, QA_ERROR_MEMORY, 0, "restoring mode instance");
         return false;
     }
+    if (!mode_items_reserve(v, saved->item_count, e))
+        return false;
     for (size_t i = 0; i < saved->member_count; ++i)
         v->members[saved->members[i].actor.slot] = saved->members[i];
     for (size_t i = 0; i < saved->member_count; ++i) {

@@ -17,10 +17,20 @@ bool bot_goal_equal_name(const char *a, const char *b) {
     return true;
 }
 void bot_goal_sources_clear(qa_bot_goals *g) {
-    free(g->source);
+    qa_arena_destroy(&g->source_storage);
     g->source=NULL;
     g->source_count=g->source_capacity=0;
     qa_actor_index_clear(&g->source_actors);
+}
+bool bot_goal_sources_reserve(qa_bot_goals *g,size_t capacity,qa_error *e) {
+    if(!capacity || (g->source && capacity<=g->source_capacity)) return true;
+    size_t retained=g->source?g->source_count:0;
+    bot_source_goal *source=qa_arena_grow(&g->source_storage,g->source,
+        retained*sizeof(*source),capacity*sizeof(*source),_Alignof(bot_source_goal),e);
+    if(!source) return false;
+    memset(source+retained,0,(capacity-retained)*sizeof(*source));
+    g->source=source;g->source_capacity=capacity;
+    return true;
 }
 bool bot_goal_sources_reindex(qa_bot_goals *g,qa_error *e) {
     qa_actor_index index={0};

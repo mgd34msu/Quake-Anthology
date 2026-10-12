@@ -30,6 +30,7 @@ typedef struct q2_item_state {
     uint64_t due_ns, expires_ns;
     q2_item_think think;
     bool targets_used, retained, visible, touchable, temporary, dispatching;
+    qa_arena *picked_storage;
     uint32_t *picked_slots;
     size_t picked_count, picked_capacity;
     qa_entity_visual visual;
@@ -61,6 +62,7 @@ typedef struct q2_item_storage {
 } q2_item_storage;
 typedef struct q2_items {
     qa_arena storage;
+    qa_arena picked_storage;
     qa_pool records;
     qa_q2_item_definition *definitions;
     const qa_q2_item_definition **by_id;
@@ -80,6 +82,8 @@ static inline qa_string_id q2_item_classname(qa_q2_game *g, const qa_q2_item_def
 
 q2_power_state *q2_powers(qa_q2_game *, qa_actor_id, qa_error *);
 q2_item_state *q2_item_state_take(qa_q2_game *, qa_error *);
+bool q2_item_picked_reserve(q2_item_state *, size_t, qa_error *);
+void q2_item_picked_clear(q2_item_state *);
 q2_companion *q2_item_companion(q2_item_state *);
 bool q2_item_usable(const qa_q2_item_definition *);
 bool q2_item_bind_actions(qa_q2_game *, qa_actor_id, q2_power_state *, qa_error *);

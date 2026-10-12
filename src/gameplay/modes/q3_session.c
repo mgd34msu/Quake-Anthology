@@ -101,7 +101,7 @@ bool qa_modes_q3_round_reset(qa_modes *m, qa_mode_id id, int32_t source_time_ms,
     memset(sorted, 0, m->actor_capacity * sizeof(*sorted));
     memset(ranks, 0, m->actor_capacity * sizeof(*ranks));
     free(v->spawns);
-    free(v->items);
+    qa_arena_destroy(&v->item_storage);
     *v = (mode_instance){.id = id, .active = true, .members = members,
         .bindings = bindings, .ghosts = ghosts, .sorted = sorted, .ranks = ranks,
         .rune_cursor = SIZE_MAX, .rune_forward = true};
