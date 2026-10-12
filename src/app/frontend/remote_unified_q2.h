@@ -1,6 +1,7 @@
 #ifndef QA_FRONTEND_REMOTE_UNIFIED_Q2_H
 #define QA_FRONTEND_REMOTE_UNIFIED_Q2_H
 #include "remote_unified_events.h"
+#include "remote_unified_render.h"
 #include "remote_q2_effects.h"
 #include "qa/persistence_content.h"
 #include "qa/ui.h"
@@ -17,7 +18,8 @@ bool frontend_unified_q2_owner_validate(frontend_unified_q2 *, const qa_unified_
 bool frontend_unified_q2_owner_retire(frontend_unified_q2 *, const qa_unified_presentation_event *, qa_error *);
 bool frontend_unified_q2_presentation(frontend_unified_q2 *, const qa_unified_presentation_event *, bool *, qa_error *);
 bool frontend_unified_q2_simulation(frontend_unified_q2 *, const qa_unified_simulation_event *, qa_error *);
-bool frontend_unified_q2_frame_prepare(frontend_unified_q2 *, const qa_unified_document *, qa_error *);
+bool frontend_unified_q2_frame_prepare(frontend_unified_q2 *, const qa_unified_document *,
+    const frontend_unified_render *, qa_error *);
 bool frontend_unified_q2_frame_ready(frontend_unified_q2 *, const qa_unified_document *, qa_error *);
 void frontend_unified_q2_frame_commit(frontend_unified_q2 *);
 void frontend_unified_q2_frame_abort(frontend_unified_q2 *);

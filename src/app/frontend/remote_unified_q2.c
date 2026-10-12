@@ -27,6 +27,7 @@
 #include "qa/console_cvar_observer.h"
 #include "qa/arena.h"
 #include "qa/allocation_gate.h"
+#include "qa/stamp.h"
 
 #include <float.h>
 #include <math.h>
@@ -136,6 +137,7 @@ struct frontend_unified_q2 {
     qa_scene_fog fog_start,fog_target;
     double fog_started_ms,fog_duration_ms;
     qa_unified_document *frame, *prepared_frame;
+    const frontend_unified_render *render,*prepared_render;
     qa_unified_document *status_metadata, *prepared_status_metadata;
     qa_hud *hud;
     frontend_unified_q2_rr_hud *rr_hud;
@@ -398,10 +400,10 @@ static bool pose_actor(q2_bank *b,qa_actor_id id,frontend_remote_q2_effects_pose
     if (!d) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 effect pose has no committed received frame");
     const qa_unified_frame *frame=qa_unified_document_frame(d);
     if (!frame || !frame->visuals) return false;
-    for (size_t i=0;i<frame->visuals->model_count;++i) {
-        const qa_unified_model_state *row=frame->visuals->models+i; qa_actor_id actual;
-        if (!frontend_remote_unified_source_actor(o->replica,frame,row->actor,false,&actual,e)) return false;
-        if (!qa_actor_id_equal(actual,id)) continue;
+    size_t ordinal;
+    if (qa_actor_index_find_retained(frontend_unified_render_model_index(o->render),id,&ordinal)) {
+        const qa_unified_model_state *row; qa_actor_id actual;
+        if (!frontend_unified_render_model_read(o->render,ordinal,&row,&actual)) return false;
         frontend_remote_q2_effects_pose p={.actor=id,.origin=row->origin,.angles=row->angles,
             .frame=(int32_t)row->visual.frame,.scale=row->visual.scale};
         q2_visual *visual=visual_read(o,id);
@@ -1452,7 +1454,8 @@ bool frontend_unified_q2_simulation(frontend_unified_q2 *o,const qa_unified_simu
     return true;
 }
 
-bool frontend_unified_q2_frame_prepare(frontend_unified_q2 *o,const qa_unified_document *d,qa_error *e)
+bool frontend_unified_q2_frame_prepare(frontend_unified_q2 *o,const qa_unified_document *d,
+    const frontend_unified_render *render,qa_error *e)
 {
     if (!o || o->busy || o->prepared_frame || !d || !current(o,e)) return false;
     const qa_unified_frame *frame=qa_unified_document_frame(d);
@@ -1460,6 +1463,7 @@ bool frontend_unified_q2_frame_prepare(frontend_unified_q2 *o,const qa_unified_d
     double seconds=frame->world->presentation_seconds;
     uint64_t n=frame->world->source.number;
     if (!qa_unified_document_retain(d,&o->prepared_frame,e)) return false;
+    o->prepared_render=render;
     if (!status_prepare(o,frame,e) || !frontend_unified_q2_rr_frame_prepare(o->rr_hud,d,e)) {
         frontend_unified_q2_frame_abort(o); return false;
     }
@@ -1469,6 +1473,7 @@ void frontend_unified_q2_frame_commit(frontend_unified_q2 *o)
 {
     if (!o || !o->prepared_frame || o->busy) return;
     qa_unified_document_destroy(o->frame); o->frame=o->prepared_frame; o->prepared_frame=NULL;
+    o->render=o->prepared_render; o->prepared_render=NULL;
     o->seconds=o->prepared_seconds; o->frame_number=o->prepared_number;
     native_clear(&o->status);
     o->status=o->prepared_status;o->prepared_status=(q2_native){0};
@@ -1496,6 +1501,7 @@ void frontend_unified_q2_frame_abort(frontend_unified_q2 *o)
     if (o && !o->busy) {
         frontend_unified_q2_rr_frame_abort(o->rr_hud);
         qa_unified_document_destroy(o->prepared_frame); o->prepared_frame=NULL;
+        o->prepared_render=NULL;
         native_clear(&o->prepared_status);
         qa_unified_document_destroy(o->prepared_status_metadata);o->prepared_status_metadata=NULL;
     }
@@ -1563,7 +1569,8 @@ bool frontend_unified_q2_model_after(frontend_unified_q2 *o,qa_actor_id a,qa_str
     }
     return true;
 }
-static bool sample_entities(q2_bank *b,frontend_remote_q2_effects_pose **out,size_t *count,qa_error *e)
+static bool sample_entities(q2_bank *b,qa_stamp_set *visited,
+    frontend_remote_q2_effects_pose **out,size_t *count,qa_error *e)
 {
     frontend_unified_q2 *o=b->owner; *out=NULL; *count=0; if (!o->frame) return true;
     const qa_unified_frame *frame=qa_unified_document_frame(o->frame);
@@ -1571,16 +1578,18 @@ static bool sample_entities(q2_bank *b,frontend_remote_q2_effects_pose **out,siz
     size_t n=frame->visuals->model_count;
     frontend_remote_q2_effects_pose *rows=o->effect_poses;
     size_t used=0; bool okay=true;
+    qa_stamp_set_begin(visited);
+    const qa_actor_index *models=frontend_unified_render_model_index(o->render);
     for (size_t i=0;okay && i<n;++i) {
         const qa_unified_model_state *row=frame->visuals->models+i; qa_actor_id a;
         if (row->family!=QA_GAME_Q2 || row->content!=b->content_name) continue;
-        okay=frontend_remote_unified_source_actor(o->replica,frame,row->actor,false,&a,e); if (!okay) break;
+        okay=frontend_unified_render_model_read(o->render,i,&row,&a); if (!okay) break;
         q2_visual *v=visual_read(o,a);
         if (!v || !v->visible || v->activation!=b->activation || !v->source_provider ||
             v->source_provider!=b->source_provider) continue;
-        bool duplicate=false;
-        for (size_t k=0;k<used;++k) if (qa_actor_id_equal(rows[k].actor,a)) { duplicate=true; break; }
-        if (duplicate) continue;
+        size_t first;
+        if (!qa_actor_index_find_retained(models,a,&first)) return false;
+        if (!qa_stamp_set_mark(visited,first)) continue;
         if(used==o->effect_pose_capacity) {
             qa_allocation_gate_capacity_exhausted();
             return frontend_unified_fail(e,QA_ERROR_MEMORY,"Q2 effect actor capacity exhausted");
@@ -1733,13 +1742,22 @@ bool frontend_unified_q2_lights(frontend_unified_q2 *o,const qa_scene_view *view
         .gun_offset=o->view_gun_offset,.frame_seconds=o->effects_frame_seconds,.world_input=world,
         .viewer_origin=o->viewer_origin,.player_fov=o->player_fov,
         .viewer_origin_present=o->viewer_origin_present && o->viewer_origin_frame==o->frontend->frame_number};
+    qa_stamp_set visited={0};
+    if (!reflected && has_effects && o->frame) {
+        const qa_unified_frame *frame=qa_unified_document_frame(o->frame);
+        size_t models=frame->visuals->model_count;
+        uint32_t *marks=models?qa_arena_alloc(&o->frontend->frame.storage,models*sizeof(*marks),
+            _Alignof(uint32_t),e):NULL;
+        if (models && !marks) return false;
+        qa_stamp_set_init(&visited,marks,models);
+    }
     o->light_count=0; ++o->busy; bool okay=true;
     for (q2_bank *b=o->banks;okay && b;b=b->next) if (b->effects) {
         const qa_scene_light *lights; size_t n;
         frontend_remote_q2_effects_pose *rows=NULL;
         if (reflected) okay=frontend_remote_q2_effects_view_lights(b->effects,&sample,&lights,&n,e);
         else {
-            okay=sample_entities(b,&rows,&sample.entity_count,e); sample.entities=rows;
+            okay=sample_entities(b,&visited,&rows,&sample.entity_count,e); sample.entities=rows;
             if (okay) okay=frontend_remote_q2_effects_frame(b->effects,&sample,e) &&
                 frontend_remote_q2_effects_prepare(b->effects,&sample,&lights,&n,e);
         }

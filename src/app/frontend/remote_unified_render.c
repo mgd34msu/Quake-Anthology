@@ -53,6 +53,7 @@ struct frontend_unified_render {
     qa_bytes area_bits;
     qa_unified_frame_lease *storage;
     unified_render_model *models;
+    qa_actor_index model_index;
     size_t model_count;
     const qa_font **world_text_fonts;
     qa_hud *hud;
@@ -390,9 +391,19 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
             .warning=ui->arsenal_warning==QA_AMMO_EMPTY || ui->arsenal_warning==QA_AMMO_LOW};
     }
     size_t count=received->visuals->model_count;
+    r->model_index.registry=qa_actors_identity(replica->actors);
+    r->model_index.retained.storage=qa_unified_frame_lease_arena(storage);
+    if (okay) okay=qa_id_index_reserve(&r->model_index.retained,count,e);
     if (okay && count) { r->models=qa_unified_frame_lease_alloc(storage,count,sizeof(*r->models),_Alignof(unified_render_model),e); okay=r->models!=NULL;
         if (!okay) frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining received unified model bindings"); }
-    for (size_t i=0;okay && i<count;++i) { r->model_count=i+1; okay=model_read(r,received->visuals->models+i,r->models+i,e); }
+    for (size_t i=0;okay && i<count;++i) {
+        r->model_count=i+1;
+        okay=model_read(r,received->visuals->models+i,r->models+i,e);
+        size_t first;
+        if (okay && r->models[i].actor.registry &&
+            !qa_actor_index_find_retained(&r->model_index,r->models[i].actor,&first))
+            okay=qa_actor_index_remember(&r->model_index,r->models[i].actor,i,e);
+    }
     size_t text_count=received->visuals->world_text_count;
     if (okay && text_count) {
         r->world_text_fonts=qa_unified_frame_lease_alloc(storage,text_count,
@@ -781,6 +792,15 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
         for(size_t i=0;i<r->model_count;++i) { r->models[i].submitted=false; r->models[i].submitted_cycle=0; }
     r->busy=false; return okay;
 }
+const qa_actor_index *frontend_unified_render_model_index(const frontend_unified_render *r)
+{ return &r->model_index; }
+bool frontend_unified_render_model_read(const frontend_unified_render *r,size_t ordinal,
+    const qa_unified_model_state **source,qa_actor_id *actual)
+{
+    if (ordinal>=r->model_count) return false;
+    const unified_render_model *model=r->models+ordinal;
+    *source=model->source; *actual=model->actor; return true;
+}
 bool frontend_unified_render_idle(const frontend_unified_render *r)
 { return !r || (!r->busy && (!r->hud || qa_hud_idle(r->hud))); }
 bool frontend_unified_render_destroy(frontend_unified_render **slot,qa_error *e)
@@ -790,6 +810,7 @@ bool frontend_unified_render_destroy(frontend_unified_render **slot,qa_error *e)
     if (r->busy || (r->hud && !qa_hud_idle(r->hud)))
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified received render frame still has callbacks");
     qa_unified_frame_lease *storage=r->storage;
+    qa_actor_index_destroy(&r->model_index);
     qa_unified_document_destroy(r->frame);
     qa_unified_frame_lease_release(storage);
     *slot=NULL;return true;

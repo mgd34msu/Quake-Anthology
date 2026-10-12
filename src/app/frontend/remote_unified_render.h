@@ -71,6 +71,9 @@ bool frontend_unified_render_client_presentation_read(const frontend_unified_ren
 bool frontend_unified_render_draw(frontend_unified_render *,
     const frontend_unified_prediction_view *, const frontend_unified_render_children *,
     float stereo, qa_audio_listener *, qa_error *);
+const qa_actor_index *frontend_unified_render_model_index(const frontend_unified_render *);
+bool frontend_unified_render_model_read(const frontend_unified_render *,size_t ordinal,
+    const qa_unified_model_state **source,qa_actor_id *actual);
 bool frontend_unified_render_idle(const frontend_unified_render *);
 bool frontend_unified_render_destroy(frontend_unified_render **, qa_error *);
 #endif

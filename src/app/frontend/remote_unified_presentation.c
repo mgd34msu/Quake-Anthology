@@ -928,7 +928,7 @@ static bool frame(void *context, frontend_remote_unified *replica, const qa_unif
         frame_abort(p); return false;
     }
     bool okay = frontend_unified_events_frame_prepare(p->events,doc,error) &&
-        frontend_unified_q1_frame_prepare(p->q1,doc,error) && frontend_unified_q2_frame_prepare(p->q2,doc,error) &&
+        frontend_unified_q1_frame_prepare(p->q1,doc,error) && frontend_unified_q2_frame_prepare(p->q2,doc,p->candidate_render,error) &&
         frontend_unified_q3_frame_prepare(p->q3,doc,error);
     if (!okay) { frame_abort(p); return false; }
     p->frame_prepared = true; *state=FRONTEND_UNIFIED_FRAME_READY; return true;

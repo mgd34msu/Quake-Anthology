@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "b1e23546b6f83e8c014adb324c705d8eca4badcb",
+  "verified_main": "1c094417247be3f1985c68511d503ea75af3da79",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 148,
-    "open_source_observation": 223,
+    "fixed_source_build_core": 149,
+    "open_source_observation": 222,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -35880,8 +35880,9 @@
       "severity": "medium",
       "job": "31",
       "area": "render_presentation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "One native/remote/compiled media-row updater uses the existing command-local stable snapshot. Reached revision/sequence and reentrant registration retained. Matching normal build and seven core suites; no live asset claim.",
+      "fixed_commit": "1c094417247be3f1985c68511d503ea75af3da79"
     },
     {
       "id": "J32-01",
@@ -41175,6 +41176,31 @@
       ],
       "record_directory": "/tmp/qa-ta3196-native-message-references-20261012",
       "conclusion": "Reference bound follows two-byte entity encoding, not a new cap. Failed writes, checkpoint import and teardown refusal retain ownership and protocol/save layout. Normal build and seven suites; source review only for live native guest paths."
+    },
+    {
+      "commit": "1c094417247be3f1985c68511d503ea75af3da79",
+      "source_tree": "1676b5df3c0cb929eaa7d1daa802877d3fce34eb",
+      "finding_ids": [
+        "31-11"
+      ],
+      "files_rechecked": [
+        "src/presentation/q3_native/media.c",
+        "src/presentation/q3_native/media.h",
+        "src/presentation/q3_native/server_commands.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-q3-media-updates-20261012",
+      "conclusion": "Duplicate heap-copy/update bodies deleted. Stable nested command text survives external registration callbacks; native reached sequence, model/sound slot mapping and sexed sounds preserved. Normal build/seven suites, no live or speed claim."
     }
   ],
   "verification_limits": [
