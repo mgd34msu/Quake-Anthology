@@ -538,6 +538,8 @@ bool frontend_tools_console_retire(qa_frontend *, qa_console *, qa_error *);
 bool frontend_tools_sync(qa_frontend *, qa_error *);
 bool frontend_tools_capture_clock(qa_frontend *,const qa_cvars *,uint64_t,uint64_t *,qa_error *);
 bool frontend_tools_pump(qa_frontend *, qa_error *);
+bool frontend_tools_intake(qa_frontend *, qa_platform_events *, uint64_t, qa_error *);
+bool frontend_tools_stream_receive(qa_frontend *, const qa_sys_event *, qa_bytes, qa_error *);
 bool frontend_tools_camera(qa_frontend *, uint32_t, bool portal, qa_scene_view *, qa_error *);
 bool frontend_debug_clock_read(void *, const qa_debug_clock *, double *milliseconds);
 bool frontend_tools_debug(qa_frontend *, const qa_scene_view *, qa_error *);

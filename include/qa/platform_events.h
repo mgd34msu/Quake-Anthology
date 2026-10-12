@@ -25,6 +25,7 @@ typedef enum qa_sys_event_kind {
     QA_PLATFORM_EVENT_INPUT_FRAME,
     QA_PLATFORM_EVENT_USERCMD,
     QA_PLATFORM_EVENT_CONSOLE_COMMAND,
+    QA_PLATFORM_EVENT_STREAM,
     QA_PLATFORM_EVENT_KIND_COUNT
 } qa_sys_event_kind;
 
@@ -35,6 +36,9 @@ typedef enum qa_sys_controller_action {
 } qa_sys_controller_action;
 typedef enum qa_sys_device_action { QA_SYS_DEVICE_ADDED, QA_SYS_DEVICE_REMOVED, QA_SYS_DEVICE_REMAPPED } qa_sys_device_action;
 typedef enum qa_sys_window_action { QA_SYS_WINDOW_OTHER, QA_SYS_WINDOW_FOCUS_GAINED, QA_SYS_WINDOW_FOCUS_LOST, QA_SYS_WINDOW_RESIZED } qa_sys_window_action;
+typedef enum qa_sys_stream_action {
+    QA_SYS_STREAM_ACCEPT, QA_SYS_STREAM_BYTES, QA_SYS_STREAM_PEER_CLOSE, QA_SYS_STREAM_LISTENER_ERROR
+} qa_sys_stream_action;
 
 /* SDL and socket records convert here at physical intake. Payload bytes live
  * in the queue's fixed arena until this event is consumed. */
@@ -56,6 +60,8 @@ typedef struct qa_sys_event {
             qa_net_poll_kind result; int32_t destination; } packet;
         struct { int32_t operation; } input_frame;
         struct { uint32_t seat; } usercmd;
+        struct { uint64_t source_id, peer_id; qa_sys_stream_action action;
+            double accepted_wall_ms; } stream;
     } data;
     uint32_t offset, length;
 } qa_sys_event;

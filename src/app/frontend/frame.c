@@ -435,6 +435,9 @@ bool frontend_platform_drain(qa_frontend *frontend, bool input_ready, qa_error *
         case QA_PLATFORM_EVENT_QUIT:
             qa_application_request_stop(frontend->application);
             break;
+        case QA_PLATFORM_EVENT_STREAM:
+            ok=frontend_tools_stream_receive(frontend,&event,payload,error);
+            break;
         case QA_PLATFORM_EVENT_PACKET: {
             int32_t destination = event.data.packet.destination;
             bool tracked = destination >= 0 && (size_t)destination < sizeof(packets_blocked) / sizeof(*packets_blocked);
@@ -520,7 +523,8 @@ static bool platform_collect(qa_frontend *frontend, uint64_t now, qa_error *erro
     qa_input_platform_collect(frontend->input,frontend->platform_events,now);
     if (frontend->terminal && !qa_platform_console_pump(frontend->terminal,frontend->platform_events,
         0,65536,now,error)) return false;
-    return frontend_network_intake(frontend,frontend->platform_events,now,error);
+    return frontend_network_intake(frontend,frontend->platform_events,now,error) &&
+        frontend_tools_intake(frontend,frontend->platform_events,now,error);
 }
 static bool platform_events(qa_frontend *frontend, qa_error *error)
 {

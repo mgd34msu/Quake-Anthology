@@ -541,6 +541,15 @@ bool frontend_tools_sync(qa_frontend *f, qa_error *error) {
     }
     return consoles_sync(f, error);
 }
+bool frontend_tools_intake(qa_frontend *f, qa_platform_events *events, uint64_t now, qa_error *error) {
+    return !f || !f->tools || !f->tools->llm ||
+        qa_llm_callback_collect(f->tools->llm, events, now, error);
+}
+bool frontend_tools_stream_receive(qa_frontend *f, const qa_sys_event *event,
+    qa_bytes bytes, qa_error *error) {
+    return !f || !f->tools || !f->tools->llm ||
+        qa_llm_callback_event(f->tools->llm, event, bytes, error);
+}
 bool frontend_tools_pump(qa_frontend *f, qa_error *error) {
     if (!f || !f->tools) return true;
     if (!frontend_tools_sync(f, error)) return false;

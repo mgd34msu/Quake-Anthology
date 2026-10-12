@@ -70,8 +70,14 @@ if(QA_ALLOCATION_GATE)
         "LINKER:--wrap=realloc" "LINKER:--wrap=free")
 endif()
 
-add_library(qa_platform_events STATIC src/platform/events.c)
+add_library(qa_platform_events STATIC
+    src/platform/events.c
+    src/platform/stream.c
+    src/network/transport/socket_events.c)
 target_link_libraries(qa_platform_events PUBLIC qa_core)
+if(WIN32)
+    target_link_libraries(qa_platform_events PRIVATE ws2_32)
+endif()
 
 add_library(qa_jobs STATIC src/platform/jobs.c)
 target_link_libraries(qa_jobs PUBLIC qa_core PRIVATE SDL2::SDL2)
@@ -1031,7 +1037,6 @@ add_library(qa_network STATIC
     src/network/socks.c
     src/network/transport.c
     src/network/transport/ipx_native.c
-    src/network/transport/socket_events.c
     src/network/unified/channel.c
     src/network/unified/channel_storage.c
     src/network/unified/composition.c

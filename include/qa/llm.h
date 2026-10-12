@@ -3,6 +3,7 @@
 #include "qa/http.h"
 #include "qa/console.h"
 #include "qa/vfs.h"
+#include "qa/platform_events.h"
 
 typedef enum qa_llm_provider { QA_LLM_SUBSCRIPTION, QA_LLM_OPENAI_API, QA_LLM_OTHER_API } qa_llm_provider;
 typedef struct qa_llm_model {
@@ -50,6 +51,8 @@ bool qa_llm_read(const qa_llm *, qa_llm_snapshot *, qa_error *);
 bool qa_llm_create(const qa_llm_options *, qa_llm **, qa_error *);
 bool qa_llm_destroy(qa_llm *, qa_error *);
 bool qa_llm_tick(qa_llm *, qa_error *);
+bool qa_llm_callback_collect(qa_llm *, qa_platform_events *, uint64_t time_ns, qa_error *);
+bool qa_llm_callback_event(qa_llm *, const qa_sys_event *, qa_bytes, qa_error *);
 bool qa_llm_callbacks_idle(const qa_llm *);
 bool qa_llm_request(qa_llm *, const char *prompt, const char *instructions,
                     const qa_llm_observer *, qa_llm_request_id *, qa_error *);

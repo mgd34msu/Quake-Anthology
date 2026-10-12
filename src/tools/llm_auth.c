@@ -1,39 +1,11 @@
 #include "qa/platform_services.h"
+#include "qa/platform_stream.h"
 #include "llm_internal.h"
 #include "qa/text.h"
 #include <math.h>
-#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <windows.h>
-typedef SOCKET auth_socket;
-#define AUTH_INVALID INVALID_SOCKET
-#define auth_close closesocket
-static bool blocked(void) { return WSAGetLastError() == WSAEWOULDBLOCK; }
-static bool nonblocking(auth_socket fd) { u_long value = 1; return ioctlsocket(fd, FIONBIO, &value) == 0; }
-#else
-#include <errno.h>
-#include <fcntl.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <unistd.h>
-typedef int auth_socket;
-#define AUTH_INVALID (-1)
-#define auth_close close
-static bool blocked(void) { return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR; }
-static bool nonblocking(auth_socket fd) {
-    int flags = fcntl(fd, F_GETFL, 0), descriptor = fcntl(fd, F_GETFD, 0);
-#ifdef SO_NOSIGPIPE
-    int no_signal = 1;
-    if (setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &no_signal, sizeof no_signal) != 0) return false;
-#endif
-    return flags >= 0 && descriptor >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 && fcntl(fd, F_SETFD, descriptor | FD_CLOEXEC) == 0;
-}
-#endif
 static const char client_id[] = "app_EMoamEEZ73f0CkXaXp7hrann";
 struct llm_auth {
     qa_llm *owner;
@@ -41,14 +13,15 @@ struct llm_auth {
     llm_credentials previous;
     llm_text response;
     qa_http_request_id http_id;
-    auth_socket listener, peer;
+    qa_platform_stream *stream;
+    uint64_t peer;
     char state[44], verifier[44], redirect[96], input[8193];
     size_t input_size, output_sent;
     const char *output;
     double deadline, peer_deadline;
     uint64_t generation;
     qa_error error;
-    bool refresh, active, result, committed, winsock;
+    bool refresh, active, result, committed;
 };
 static size_t encode64(const uint8_t *in, size_t n, char *out) {
     static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
@@ -153,16 +126,16 @@ done:
     qa_json_destroy(d); qa_buffer_free(&decoded.buffer);
     return ok || llm_fail(error, "subscription access token has invalid account metadata");
 }
-static void close_peer(llm_auth *a) { if (a->peer != AUTH_INVALID) auth_close(a->peer); a->peer = AUTH_INVALID; a->input_size = a->output_sent = 0; a->output = NULL; }
-static void close_listener(llm_auth *a) { if (a->listener != AUTH_INVALID) auth_close(a->listener); a->listener = AUTH_INVALID; }
+static void close_peer(llm_auth *a) {
+    qa_platform_stream_close_peer(a->stream);
+    a->peer = 0; a->input_size = a->output_sent = 0; a->output = NULL;
+}
+static void close_listener(llm_auth *a) { qa_platform_stream_stop_listener(a->stream); }
 void llm_auth_cancel(qa_llm *s) {
     llm_auth *a = s->auth; s->auth = NULL; s->signing_in = false;
     if (!a) return;
     if (a->active) qa_http_cancel(s->options.http, a->http_id);
-    close_peer(a); close_listener(a);
-#ifdef _WIN32
-    if (a->winsock) WSACleanup();
-#endif
+    qa_platform_stream_destroy(a->stream);
     qa_arena_destroy(&a->storage); qa_arena_destroy(&a->previous.storage); qa_buffer_free(&a->response.buffer); free(a);
 }
 void qa_llm_cancel_sign_in(qa_llm *s) {
@@ -208,7 +181,7 @@ static llm_auth *auth_new(qa_llm *s, bool refresh, qa_error *error) {
     if (s->auth_generation == UINT64_MAX) { llm_fail(error, "subscription authorization generation exhausted"); return NULL; }
     llm_auth *a = calloc(1, sizeof *a);
     if (!a) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating subscription authorization"); return NULL; }
-    a->owner = s; a->listener = a->peer = AUTH_INVALID; a->refresh = refresh; a->generation = ++s->auth_generation;
+    a->owner = s; a->refresh = refresh; a->generation = ++s->auth_generation;
     s->auth = a; return a;
 }
 bool qa_llm_sign_in(qa_llm *s, qa_error *error) {
@@ -224,16 +197,8 @@ bool qa_llm_sign_in(qa_llm *s, qa_error *error) {
     if (!qa_platform_entropy(bytes, sizeof bytes, error)) goto done;
     encode64(bytes, sizeof bytes, a->verifier);
     pkce_challenge(a->verifier, challenge);
-#ifdef _WIN32
-    WSADATA data; if (WSAStartup(MAKEWORD(2, 2), &data) != 0) { llm_fail(error, "could not initialize subscription callback sockets"); goto done; } a->winsock = true;
-#endif
-    a->listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-#ifdef _WIN32
-    BOOL exclusive = TRUE;
-    if (a->listener != AUTH_INVALID && setsockopt(a->listener, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *)&exclusive, sizeof exclusive) != 0) { llm_fail(error, "could not reserve local subscription callback socket"); goto done; }
-#endif
-    struct sockaddr_in address = {0}; address.sin_family = AF_INET; address.sin_addr.s_addr = htonl(INADDR_LOOPBACK); address.sin_port = htons(s->options.callback_port);
-    if (a->listener == AUTH_INVALID || !nonblocking(a->listener) || bind(a->listener, (struct sockaddr *)&address, sizeof address) != 0 || listen(a->listener, 4) != 0) { llm_fail(error, "could not open local subscription callback; close other sign-in windows and retry"); goto done; }
+    if (!qa_platform_stream_create(s->options.callback_port, 4, sizeof(a->input) - 1,
+        &a->stream, error)) { llm_fail(error, "could not open local subscription callback; close other sign-in windows and retry"); goto done; }
     (void)snprintf(a->redirect, sizeof a->redirect, "http://localhost:%u/auth/callback", (unsigned)s->options.callback_port);
     if (!form_value(&query, "response_type", "code", error) || !form_value(&query, "client_id", client_id, error) || !form_value(&query, "redirect_uri", a->redirect, error) ||
         !form_value(&query, "scope", "openid profile email offline_access", error) || !form_value(&query, "state", a->state, error) || !form_value(&query, "code_challenge", challenge, error) ||
@@ -286,6 +251,48 @@ static bool callback_request(llm_auth *a, qa_error *error) {
     close_listener(a); a->output = reply_ok;
     qa_error failure = {0};
     if (!token_submit(a, code, &failure)) { a->result = true; a->error = failure; if (error) *error = failure; }
+    return true;
+}
+bool qa_llm_callback_collect(qa_llm *s, qa_platform_events *events, uint64_t time_ns,
+    qa_error *error) {
+    if (!s || !s->auth || !s->auth->stream) return true;
+    double now = llm_wall_milliseconds(s);
+    if (!isfinite(now)) return llm_fail(error, "invalid subscription clock");
+    return qa_platform_stream_collect(s->auth->stream, events, time_ns, now, error);
+}
+bool qa_llm_callback_event(qa_llm *s, const qa_sys_event *event, qa_bytes bytes,
+    qa_error *error) {
+    llm_auth *a = s ? s->auth : NULL;
+    if (!a || event->data.stream.source_id != qa_platform_stream_source_id(a->stream))
+        return true;
+    ++s->busy;
+    qa_platform_stream_consumed(a->stream, event);
+    switch (event->data.stream.action) {
+    case QA_SYS_STREAM_ACCEPT:
+        a->peer = event->data.stream.peer_id;
+        a->peer_deadline = event->data.stream.accepted_wall_ms + 5000;
+        break;
+    case QA_SYS_STREAM_BYTES:
+        if (a->peer != event->data.stream.peer_id) break;
+        memcpy(a->input + a->input_size, bytes.data, bytes.size);
+        a->input_size += bytes.size;
+        a->input[a->input_size] = 0;
+        if (memchr(a->input, 0, a->input_size)) a->output = reply_bad;
+        else if (strstr(a->input, "\r\n\r\n")) (void)callback_request(a, error);
+        else if (a->input_size == sizeof(a->input) - 1) a->output = reply_bad;
+        break;
+    case QA_SYS_STREAM_PEER_CLOSE:
+        if (a->peer == event->data.stream.peer_id) close_peer(a);
+        break;
+    case QA_SYS_STREAM_LISTENER_ERROR:
+        a->result = true;
+        llm_fail(&a->error, "subscription callback listener failed");
+        close_listener(a);
+        break;
+    }
+    qa_platform_stream_read_room(a->stream,
+        a->output ? 0 : sizeof(a->input) - 1 - a->input_size);
+    --s->busy;
     return true;
 }
 static bool token_text(const qa_json_document *d, qa_json_id root, const char *key, qa_arena *arena, const char **out, qa_error *error) {
@@ -344,41 +351,16 @@ bool llm_auth_tick(qa_llm *s, qa_error *error) {
     double now = llm_wall_milliseconds(s);
     if (!isfinite(now)) return llm_fail(error, "invalid subscription clock");
     if (!a->result && now >= a->deadline) { if (a->active) qa_http_cancel(s->options.http, a->http_id); a->active = false; a->result = true; llm_fail(&a->error, "subscription authorization timed out; try again"); close_listener(a); }
-    if (a->peer == AUTH_INVALID && a->listener != AUTH_INVALID) {
-        a->peer = accept(a->listener, NULL, NULL);
-        if (a->peer != AUTH_INVALID) { if (!nonblocking(a->peer)) close_peer(a); else a->peer_deadline = now + 5000; }
-        else if (!blocked()) { a->result = true; llm_fail(&a->error, "subscription callback listener failed"); close_listener(a); }
-    }
-    if (a->peer != AUTH_INVALID && now >= a->peer_deadline) close_peer(a);
-    if (a->peer != AUTH_INVALID && !a->output) {
-        size_t available = sizeof a->input - 1 - a->input_size;
-#ifdef _WIN32
-        int got = recv(a->peer, a->input + a->input_size, (int)available, 0);
-#else
-        ssize_t got = recv(a->peer, a->input + a->input_size, available, 0);
-#endif
-        if (got > 0) {
-            a->input_size += (size_t)got; a->input[a->input_size] = 0;
-            if (memchr(a->input, 0, a->input_size)) a->output = reply_bad;
-            else if (strstr(a->input, "\r\n\r\n")) (void)callback_request(a, error);
-            else if (a->input_size == sizeof a->input - 1) a->output = reply_bad;
-        }
-        else if (got == 0 || !blocked()) close_peer(a);
-    }
-    if (a->peer != AUTH_INVALID && a->output) {
-        int flags = 0;
-#ifdef MSG_NOSIGNAL
-        flags = MSG_NOSIGNAL;
-#endif
+    if (a->peer && now >= a->peer_deadline) close_peer(a);
+    if (a->peer && a->output) {
         size_t length = strlen(a->output);
         size_t remaining = length - a->output_sent;
-#ifdef _WIN32
-        int sent = send(a->peer, a->output + a->output_sent, (int)remaining, flags);
-#else
-        ssize_t sent = send(a->peer, a->output + a->output_sent, remaining, flags);
-#endif
-        if (sent > 0) { a->output_sent += (size_t)sent; if (a->output_sent == length) close_peer(a); }
-        else if (!blocked()) close_peer(a);
+        size_t sent = 0; bool open = false;
+        qa_platform_stream_write(a->stream,
+            (qa_bytes){(const uint8_t *)a->output + a->output_sent, remaining},
+            &sent, &open, error);
+        a->output_sent += sent;
+        if (!open || a->output_sent == length) close_peer(a);
     }
     if (a->result && !a->committed) {
         a->committed = true;
@@ -386,7 +368,7 @@ bool llm_auth_tick(qa_llm *s, qa_error *error) {
         s->auth_error = a->error; s->signing_in = false;
         if (!a->refresh && a->error.code == QA_OK) (void)llm_discover_start(s, QA_LLM_SUBSCRIPTION, &s->catalogs[QA_LLM_SUBSCRIPTION].error);
     }
-    if (!a->refresh && a->committed && a->peer == AUTH_INVALID) llm_auth_cancel(s);
+    if (!a->refresh && a->committed && !a->peer) llm_auth_cancel(s);
     return true;
 }
 bool llm_auth_credential(qa_llm *s, const char *rejected, uint64_t *ticket, qa_arena *arena, llm_subscription *out, bool *ready, qa_error *error) {
