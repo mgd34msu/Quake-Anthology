@@ -35,6 +35,65 @@ static qa_scene_world_options world_options(qa_game_family family)
     return (qa_scene_world_options){.images = image_options(family, QA_IMAGE_USAGE_WALL),
         .subdivisions = 64, .q1_water_alpha = 1, .q2_light_modulate = 1, .q3_overbright = 1};
 }
+static bool media_storage_prepare(frontend_unified_media *owner, qa_error *error)
+{
+    if (!qa_pool_prepare(&owner->skin_rows, &owner->storage, 1,
+        sizeof(unified_media_skin), _Alignof(unified_media_skin), error)) return false;
+    *(unified_media_skin *)qa_pool_at(&owner->skin_rows, 0) = (unified_media_skin){0};
+    if (!qa_pool_prepare(&owner->model_rows, &owner->storage, 1,
+        sizeof(unified_media_model), _Alignof(unified_media_model), error)) return false;
+    *(unified_media_model *)qa_pool_at(&owner->model_rows, 0) = (unified_media_model){0};
+    return true;
+}
+static bool media_rows_available(frontend_unified_media *owner, qa_pool *pool, qa_error *error)
+{
+    if (pool->head != SIZE_MAX) return true;
+    size_t previous = pool->capacity;
+    if (!qa_pool_extend(pool, &owner->storage, previous ? previous : 1, error)) return false;
+    for (size_t i = previous; i < pool->capacity; ++i)
+        memset(qa_pool_at(pool, i), 0, pool->stride);
+    return true;
+}
+static bool media_options_copy(qa_arena *storage, const qa_scene_image_options *source,
+    qa_scene_image_options *out, qa_error *error)
+{
+    if (source->palette_rgb.size > SIZE_MAX - source->translation.size)
+        return frontend_unified_fail(error, QA_ERROR_MEMORY, "Image options exceed storage extent");
+    size_t bytes = source->palette_rgb.size + source->translation.size;
+    uint8_t *copy = bytes ? qa_arena_alloc(storage, bytes, 1, error) : NULL;
+    if (bytes && !copy) return false;
+    *out = *source;
+    if (source->palette_rgb.size) {
+        memcpy(copy, source->palette_rgb.data, source->palette_rgb.size);
+        out->palette_rgb.data = copy;
+    }
+    if (source->translation.size) {
+        memcpy(copy + source->palette_rgb.size, source->translation.data, source->translation.size);
+        out->translation.data = copy + source->palette_rgb.size;
+    }
+    return true;
+}
+static void media_skin_release(frontend_unified_media *owner, unified_media_skin *row)
+{
+    qa_arena_reset(&row->storage);
+    qa_pool_release(&owner->skin_rows, row->storage_slot);
+}
+static void media_model_release(frontend_unified_media *owner, unified_media_model *row)
+{
+    qa_scene_world_destroy(row->world); qa_scene_model_destroy(row->scene); qa_model_free(&row->decoded);
+    frontend_model_release(row->source_lease);
+    qa_resource_release(row->resource); qa_vfs_acquisition_dispose(&row->opening);
+    qa_arena_reset(&row->storage);
+    qa_pool_release(&owner->model_rows, row->storage_slot);
+}
+static void media_storage_destroy(frontend_unified_media *owner)
+{
+    for (size_t i = 0; i < owner->skin_rows.capacity; ++i)
+        qa_arena_destroy(&((unified_media_skin *)qa_pool_at(&owner->skin_rows, i))->storage);
+    for (size_t i = 0; i < owner->model_rows.capacity; ++i)
+        qa_arena_destroy(&((unified_media_model *)qa_pool_at(&owner->model_rows, i))->storage);
+    qa_arena_destroy(&owner->storage);
+}
 static bool bank(frontend_unified_media *owner, qa_string_id content_name, unified_media_bank **out, qa_error *error)
 {
     if (!owner || owner->importing || owner->busy || !content_name || !out || !frontend_unified_media_current(owner))
@@ -169,7 +228,7 @@ bool frontend_unified_media_create(qa_frontend *frontend, qa_executable_recipe *
     const qa_product *presentation = qa_catalog_product(qa_executable_recipe_catalog(recipe), choices->world.presentation);
     if (presentation) owner->world_rules = qa_product_ruleset(presentation, presentation->family);
     qa_resource *map = qa_executable_recipe_map(recipe); qa_bsp_view bsp;
-    bool okay = product && map && bank(owner, qa_application_content_name(frontend->application, qa_executable_recipe_catalog(recipe), product->id), &owner->world_bank, error) &&
+    bool okay = media_storage_prepare(owner, error) && product && map && bank(owner, qa_application_content_name(frontend->application, qa_executable_recipe_catalog(recipe), product->id), &owner->world_bank, error) &&
         qa_bsp_open(qa_resource_bytes(map), &bsp, error) && qa_bsp_validate(&bsp, error);
     if (okay) {
         qa_game_family family = bsp.family == QA_BSP_Q1 ? QA_GAME_Q1 : bsp.family == QA_BSP_Q2 ? QA_GAME_Q2 : QA_GAME_Q3;
@@ -241,26 +300,20 @@ bool frontend_unified_media_skin(frontend_unified_media *owner, const frontend_u
             *out = row->material; return true;
         }
     }
-    if (options->palette_rgb.size > SIZE_MAX - sizeof(unified_media_skin) ||
-        options->translation.size > SIZE_MAX - sizeof(unified_media_skin) - options->palette_rgb.size)
-        return frontend_unified_fail(error, QA_ERROR_MEMORY, "Skin binding exceeds storage extent");
-    if (!qa_id_index_reserve(&files->skin_index, 1, error)) return false;
-    unified_media_skin *row = calloc(1, sizeof(*row) + options->palette_rgb.size + options->translation.size);
-    if (!row) return frontend_unified_fail(error, QA_ERROR_MEMORY, "Retaining skin binding");
-    row->path = path; row->options = *options;
-    if (options->palette_rgb.size) {
-        memcpy(row->bytes, options->palette_rgb.data, options->palette_rgb.size);
-        row->options.palette_rgb.data = row->bytes;
-    }
-    if (options->translation.size) {
-        memcpy(row->bytes + options->palette_rgb.size, options->translation.data, options->translation.size);
-        row->options.translation.data = row->bytes + options->palette_rgb.size;
+    if (!qa_id_index_reserve(&files->skin_index, 1, error) ||
+        !media_rows_available(owner, &owner->skin_rows, error)) return false;
+    size_t slot;
+    unified_media_skin *row = qa_pool_take(&owner->skin_rows, &slot);
+    qa_arena storage = row->storage;
+    *row = (unified_media_skin){.storage = storage, .storage_slot = slot, .path = path};
+    if (!media_options_copy(&row->storage, options, &row->options, error)) {
+        media_skin_release(owner, row); return false;
     }
     owner->busy = true;
     bool okay = qa_material_register(files->materials, qa_strings_cstr(owner->strings, path),
         &row->options, false, &row->material, error);
     owner->busy = false;
-    if (!okay) { free(row); return false; }
+    if (!okay) { media_skin_release(owner, row); return false; }
     if (binding) binding->skin = row;
     qa_id_index_insert(&files->skin_index, path, 0, (size_t)(uintptr_t)row);
     row->next = files->skins; files->skins = row; *out = row->material; return true;
@@ -307,19 +360,15 @@ bool frontend_unified_media_model(frontend_unified_media *owner, qa_string_id co
     }
     if (owner->frontend->resource_inventory)
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified model creation overlaps retained resource inventory");
-    if (!qa_id_index_reserve(&files->model_index, 1, error)) return false;
-    unified_media_model *row = calloc(1, sizeof(*row));
-    if (!row) return frontend_unified_fail(error, QA_ERROR_MEMORY, "Retaining unified model geometry");
-    row->path = path_name;
-    row->bank = files; row->family = family; row->options = *options; owner->busy = true;
-    if (options->palette_rgb.size) { row->palette = malloc(options->palette_rgb.size);
-        if (row->palette) { memcpy(row->palette, options->palette_rgb.data, options->palette_rgb.size);
-            row->options.palette_rgb.data = row->palette; } }
-    if (options->translation.size) { row->translation = malloc(options->translation.size);
-        if (row->translation) { memcpy(row->translation, options->translation.data, options->translation.size);
-            row->options.translation.data = row->translation; } }
-    bool okay = row->path && (!options->palette_rgb.size || row->palette) &&
-        (!options->translation.size || row->translation) &&
+    if (!qa_id_index_reserve(&files->model_index, 1, error) ||
+        !media_rows_available(owner, &owner->model_rows, error)) return false;
+    size_t slot;
+    unified_media_model *row = qa_pool_take(&owner->model_rows, &slot);
+    qa_arena storage = row->storage;
+    *row = (unified_media_model){.storage = storage, .storage_slot = slot,
+        .path = path_name, .bank = files, .family = family};
+    owner->busy = true;
+    bool okay = media_options_copy(&row->storage, options, &row->options, error) &&
         qa_vfs_acquire_receipt(files->files, path, &row->resource, &row->opening, error);
     size_t length = strlen(path);
     bool brush = length >= 4 && !strcmp(path + length - 4, ".bsp");
@@ -344,9 +393,7 @@ bool frontend_unified_media_model(frontend_unified_media *owner, qa_string_id co
             &row->opening, &row->decoded, row->scene, error);
     owner->busy = false;
     if (!okay) {
-        qa_scene_world_destroy(row->world); qa_scene_model_destroy(row->scene); qa_model_free(&row->decoded);
-        qa_resource_release(row->resource); qa_vfs_acquisition_dispose(&row->opening);
-        free(row->palette); free(row->translation); free(row); return false;
+        media_model_release(owner, row); return false;
     }
     qa_id_index_insert(&files->model_index, path_name, family, (size_t)(uintptr_t)row);
     row->next = owner->models; owner->models = row;
@@ -507,10 +554,7 @@ bool frontend_unified_media_destroy(frontend_unified_media *owner, qa_error *err
     while (owner->models) {
         unified_media_model *row = owner->models; owner->models = row->next;
         qa_id_index_remove_value(&row->bank->model_index, row->path, row->family, (size_t)(uintptr_t)row);
-        qa_scene_world_destroy(row->world); qa_scene_model_destroy(row->scene); qa_model_free(&row->decoded);
-        frontend_model_release(row->source_lease);
-        qa_resource_release(row->resource); qa_vfs_acquisition_dispose(&row->opening);
-        free(row->palette); free(row->translation); free(row);
+        media_model_release(owner, row);
     }
     while (owner->banks) {
         unified_media_bank *row = owner->banks; owner->banks = row->next;
@@ -518,7 +562,11 @@ bool frontend_unified_media_destroy(frontend_unified_media *owner, qa_error *err
         if (row->product)
             qa_id_index_remove_value(&owner->bank_index, QA_STRING_NONE, (uint64_t)(uintptr_t)row->product,
                 (size_t)(uintptr_t)row);
-        while (row->skins) { unified_media_skin *skin = row->skins; row->skins = skin->next; free(skin); }
+        while (row->skins) {
+            unified_media_skin *skin = row->skins; row->skins = skin->next;
+            qa_id_index_remove_value(&row->skin_index, skin->path, 0, (size_t)(uintptr_t)skin);
+            media_skin_release(owner, skin);
+        }
         qa_id_index_destroy(&row->skin_index); qa_id_index_destroy(&row->model_index);
         qa_buffer_free(&row->saved_assets);
         qa_audio_bank_destroy(row->sounds); qa_font_library_destroy(row->fonts);
@@ -526,5 +574,6 @@ bool frontend_unified_media_destroy(frontend_unified_media *owner, qa_error *err
     }
     qa_id_index_destroy(&owner->inline_index); qa_id_index_destroy(&owner->bank_index);
     qa_strings_destroy(owner->strings);
+    media_storage_destroy(owner);
     free(owner); return true;
 }

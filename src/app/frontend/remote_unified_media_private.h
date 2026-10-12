@@ -4,13 +4,15 @@
 #include "remote_unified_media.h"
 #include "model_inventory.h"
 #include "qa/id_index.h"
+#include "qa/pool.h"
 
 typedef struct unified_media_skin {
     struct unified_media_skin *next;
     qa_string_id path;
     qa_scene_image_options options;
     const qa_material *material;
-    uint8_t bytes[];
+    qa_arena storage;
+    size_t storage_slot;
 } unified_media_skin;
 typedef struct unified_media_bank {
     struct unified_media_bank *next;
@@ -39,7 +41,8 @@ typedef struct unified_media_model {
     unified_media_skin *skin;
     qa_game_family family;
     qa_scene_image_options options;
-    uint8_t *palette, *translation;
+    qa_arena storage;
+    size_t storage_slot;
     qa_resource *resource;
     qa_vfs_acquisition opening;
     qa_model decoded;
@@ -55,6 +58,8 @@ struct frontend_unified_media {
     qa_executable_recipe *recipe;
     unified_media_bank *banks;
     unified_media_model *models;
+    qa_arena storage;
+    qa_pool skin_rows, model_rows;
     qa_id_index bank_index, inline_index;
     qa_scene_world *world;
     qa_ruleset_id world_rules;
