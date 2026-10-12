@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `10ce2370`.
+Follow-up source changes were reviewed through main `c5993e77`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 159 have source fixes
+There are **374 overlapping source-review observations**: 162 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 210 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 209 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -324,3 +324,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 | `03-18`, `04-005` follow-up | `cba4fbb4` | Seven equipment/campaign name selections use the common provider index; cross-session IDs resolved in the destination. Normal build/seven suites passed; historical candidate views remain in flight. |
 
 | `02-16` | `10ce2370` | Common full-actor index replaces native CLIENT observer membership scans; original generation, publication and refusal lifetimes retained. Normal build/seven suites passed; no live claim. |
+
+| `J20-09` | `c5993e77` | Q1 info readers share parsing and ordered indexed storage; raw serialization shared, saves unchanged. Storage-only duplicate value corrected. Normal build/seven suites passed; input growth remains. |

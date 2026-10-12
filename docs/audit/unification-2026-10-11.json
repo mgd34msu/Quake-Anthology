@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "10ce237075361a40d32b64f267224814759eb10d",
+  "verified_main": "c5993e771f70860c9f3e7f6acf014a402258a421",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 161,
-    "open_source_observation": 210,
+    "fixed_source_build_core": 162,
+    "open_source_observation": 209,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -32807,8 +32807,9 @@
       "severity": "medium",
       "job": "20",
       "area": "gameplay_q1",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Both reached reader/serializer owners and import/teardown checked. Normal build/seven core suites passed; replacement/input growth remains, no zero-allocation claim.",
+      "fixed_commit": "c5993e771f70860c9f3e7f6acf014a402258a421"
     },
     {
       "id": "J20-10",
@@ -41622,6 +41623,35 @@
       ],
       "record_directory": "/tmp/qa-ta3196-native-client-index-20261012",
       "conclusion": "Common full-actor index replaces observer membership scans. Ordered capture/teardown arrays and original generation/publication/refusal predicates retained; restored rows rebuild index. Normal build/seven suites passed; no live CLIENT claim."
+    },
+    {
+      "commit": "c5993e771f70860c9f3e7f6acf014a402258a421",
+      "source_tree": "4161e3ea308eb1e3e2cf2ed1a59150f22248ffe8",
+      "finding_ids": [
+        "J20-09"
+      ],
+      "files_rechecked": [
+        "include/qa/text.h",
+        "src/core/text.c",
+        "src/gameplay/q1/checkpoint/player.c",
+        "src/gameplay/q1/internal.h",
+        "src/gameplay/q1/source_clients.c",
+        "src/network/q3/admission.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-userinfo-owner-20261012",
+      "conclusion": "Q1 info decoding shares iterator and ordered ID-index/arena ownership; raw writer shared with Q3 info boundary. Last duplicate value/first insertion order correction confined to one stored string. Save count/IDs/order and admission versus storage-only effects preserved. Normal build/seven suites and info capacity/duplicate/raw-byte cases passed; initial/larger input allocation remains."
     }
   ],
   "verification_limits": [

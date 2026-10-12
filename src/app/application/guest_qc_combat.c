@@ -612,8 +612,14 @@ static bool continued_damage(void *context, qa_combat *combat, const qa_damage_r
         memcmp(&request->point, &entered->original.point, sizeof(qa_vec3)) ||
         memcmp(&request->normal, &entered->original.normal, sizeof(qa_vec3)))
         return reject(error, "QC Source damage geometry changes require an actual replacement");
-    uint32_t *saved = profile->location_count ? calloc(profile->location_count, sizeof(*saved)) : NULL;
-    if (profile->location_count && !saved) return application_fail(error, QA_ERROR_MEMORY, "Staging transformed QC damage context");
+    qa_unified_frame_lease *storage = profile->location_count ?
+        application_control_storage_acquire(owner->engine->provider->application, error) : NULL;
+    uint32_t *saved = storage ? qa_unified_frame_lease_alloc(storage, profile->location_count,
+        sizeof(*saved), _Alignof(uint32_t), error) : NULL;
+    if (profile->location_count && !saved) {
+        qa_unified_frame_lease_release(storage);
+        return application_fail(error, QA_ERROR_MEMORY, "Staging transformed QC damage context");
+    }
     size_t staged = 0; bool ok = current(entered->actor, error);
     for (size_t i = 0; ok && i < profile->location_count; ++i) {
         const damage_location *location = profile->locations + i; int32_t prior;
@@ -660,7 +666,7 @@ static bool continued_damage(void *context, qa_combat *combat, const qa_damage_r
             ok = false;
         }
     }
-    free(saved);
+    qa_unified_frame_lease_release(storage);
     actor_reclaim(entered->actor);
     if (!ok && error) *error = first;
     return ok;
@@ -1348,8 +1354,14 @@ bool application_qc_combat_damage_amount(struct application_qc_state *engine, qa
         if (!qa_qc_global_int(vm, scale->constants[i], &actual, error) || (uint32_t)actual != scale->initial[i])
             return reject(error, "QC scaling constant changed from its actual qualified artifact");
     }
-    uint32_t *saved = scale->scratch_count ? calloc(scale->scratch_count, sizeof(*saved)) : NULL;
-    if (scale->scratch_count && !saved) return application_fail(error, QA_ERROR_MEMORY, "Borrowing QC scale scratch words");
+    qa_unified_frame_lease *storage = scale->scratch_count ?
+        application_control_storage_acquire(engine->provider->application, error) : NULL;
+    uint32_t *saved = storage ? qa_unified_frame_lease_alloc(storage, scale->scratch_count,
+        sizeof(*saved), _Alignof(uint32_t), error) : NULL;
+    if (scale->scratch_count && !saved) {
+        qa_unified_frame_lease_release(storage);
+        return application_fail(error, QA_ERROR_MEMORY, "Borrowing QC scale scratch words");
+    }
     bool ok = true; size_t staged = 0;
     for (size_t i = 0; ok && i < scale->scratch_count; ++i) {
         int32_t actual;
@@ -1375,7 +1387,9 @@ bool application_qc_combat_damage_amount(struct application_qc_state *engine, qa
             ok = false;
         }
     }
-    free(saved); if (!ok && error) *error = first; return ok;
+    qa_unified_frame_lease_release(storage);
+    if (!ok && error) *error = first;
+    return ok;
 }
 bool application_qc_combat_damage_scale_declared(const struct application_qc_state *engine)
 {
