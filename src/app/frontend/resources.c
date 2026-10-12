@@ -4,6 +4,7 @@
 #include "menu_fonts.h"
 #include "menu_art.h"
 #include "shared_resource_policy.h"
+#include "qa/platform_services.h"
 #include <stdio.h>
 
 /* The empty-content launcher has no source charset yet. Its bootstrap grid
@@ -47,19 +48,16 @@ bool frontend_resources(qa_frontend *frontend, qa_error *error)
     const char *font_directory = frontend->options.font_directory;
     char *bundled_directory = NULL;
     if (!font_directory) {
-        char *base = SDL_GetBasePath();
-        if (!base) {
-            qa_error_set(error, QA_ERROR_IO, 0, "Reading engine font directory: %s", SDL_GetError());
-            return false;
-        }
-        size_t bytes = strlen(base) + sizeof("engine-data/fonts");
+        qa_buffer base = {0};
+        if (!qa_platform_directory_read(QA_PLATFORM_DIRECTORY_EXECUTABLE, &base, error)) return false;
+        size_t bytes = base.size + sizeof("engine-data/fonts");
         bundled_directory = malloc(bytes);
         if (!bundled_directory) {
-            SDL_free(base);
+            qa_buffer_free(&base);
             return frontend_fail(error, QA_ERROR_MEMORY, "Retaining engine font directory");
         }
-        snprintf(bundled_directory, bytes, "%sengine-data/fonts", base);
-        SDL_free(base);
+        snprintf(bundled_directory, bytes, "%sengine-data/fonts", (const char *)base.data);
+        qa_buffer_free(&base);
         font_directory = bundled_directory;
     }
     qa_mount_id mount;

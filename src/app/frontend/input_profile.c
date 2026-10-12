@@ -1,18 +1,18 @@
 #include "qa/catalog_save.h"
 #include "input_profile.h"
 #include "qa/application_profile.h"
+#include "qa/platform_services.h"
 #include "config_scripts.h"
 #include "global_settings_storage.h"
-#include <SDL.h>
 
 bool frontend_input_profile_default_options(qa_frontend *f,qa_error *error)
 {
     if (!f || f->application || f->default_user_root)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Default input profile root belongs to normal frontend construction");
     if (f->options.application.user_root) return true;
-    f->default_user_root=SDL_GetPrefPath("quake-anthology","content");
-    if (!f->default_user_root)
-        return frontend_fail(error,QA_ERROR_IO,"Platform could not create the actual default user-content directory");
+    qa_buffer root={0};
+    if (!qa_platform_directory_read(QA_PLATFORM_DIRECTORY_USER_SETTINGS,&root,error)) return false;
+    f->default_user_root=(char *)root.data;
     f->options.application.user_root=f->default_user_root;
     return true;
 }
@@ -91,5 +91,5 @@ void frontend_input_profile_destroy(qa_frontend *f)
     if (!f) return;
     qa_vfs_destroy(f->input_config); f->input_config=NULL; f->input_product=0;
     qa_catalog_release(f->input_catalog); f->input_catalog=NULL;
-    SDL_free(f->default_user_root); f->default_user_root=NULL;
+    free(f->default_user_root); f->default_user_root=NULL;
 }

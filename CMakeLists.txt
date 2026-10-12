@@ -874,7 +874,7 @@ add_library(qa_render_cpu STATIC
     src/render/cpu/fog.c)
 target_link_libraries(qa_render_cpu PUBLIC qa_scene PRIVATE SDL2::SDL2 qa_jobs)
 
-add_library(qa_display STATIC src/platform/display.c)
+add_library(qa_display STATIC src/platform/display.c src/platform/directories.c)
 target_link_libraries(qa_display PUBLIC qa_core PRIVATE SDL2::SDL2)
 
 add_library(qa_render_gl STATIC

@@ -6,6 +6,7 @@
 #include "qa/vfs_view_save.h"
 #include "qa/json_writer.h"
 #include "qa/text.h"
+#include "qa/platform_services.h"
 #include <inttypes.h>
 #include <math.h>
 #include <stdarg.h>
@@ -439,18 +440,21 @@ bool frontend_tools_create(qa_frontend *f, qa_error *error) {
     const qa_cvar_view *debug_width = qa_cvars_read(qa_application_cvars(f->application), services->debug_width_handle);
     if (!debug_width || debug_width->owner!=QA_FRONTEND_COMMAND_OWNER)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Tools require their actual declared ENGINE debug width");
-    char *base = SDL_GetBasePath();
-    if (!base) return frontend_fail(error, QA_ERROR_IO, "could not locate executable private settings directory");
+    qa_buffer base = {0};
+    if (!qa_platform_directory_read(QA_PLATFORM_DIRECTORY_EXECUTABLE, &base, error)) return false;
     services->private_resources = qa_resource_pool_create(error);
     services->settings = services->private_resources ? qa_vfs_create(services->private_resources, error) : NULL;
-    bool mounted = services->settings && qa_vfs_mount_directory(services->settings, base, QA_ARCHIVE_EXACT, true, &services->private_mount, error); SDL_free(base);
+    bool mounted = services->settings && qa_vfs_mount_directory(services->settings, (const char *)base.data,
+        QA_ARCHIVE_EXACT, true, &services->private_mount, error);
+    qa_buffer_free(&base);
     if (!mounted || !qa_http_create(&services->http, error)) return false;
     if (f->options.application.user_root) {
         size_t n = strlen(f->options.application.user_root); services->output_root = malloc(n + 1);
         if (services->output_root) memcpy(services->output_root, f->options.application.user_root, n + 1);
     } else {
-        char *root = SDL_GetPrefPath("quake-anthology", "content");
-        if (root) { size_t n = strlen(root); services->output_root = malloc(n + 1); if (services->output_root) memcpy(services->output_root, root, n + 1); SDL_free(root); }
+        qa_buffer root = {0};
+        if (!qa_platform_directory_read(QA_PLATFORM_DIRECTORY_USER_SETTINGS, &root, error)) return false;
+        services->output_root = (char *)root.data;
     }
     if (!services->output_root) return frontend_fail(error, QA_ERROR_MEMORY, "retaining tool output directory");
     if (!files_sync(f, error)) return false;

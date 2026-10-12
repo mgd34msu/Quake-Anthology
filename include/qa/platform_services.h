@@ -53,6 +53,15 @@ bool qa_platform_calendar(int64_t unix_ms, bool local, qa_platform_calendar_fiel
 bool qa_platform_calendar_format(int64_t unix_ms, const char *format,
                                  char *text, size_t capacity);
 
+typedef enum qa_platform_directory_kind {
+    QA_PLATFORM_DIRECTORY_EXECUTABLE,
+    QA_PLATFORM_DIRECTORY_USER_SETTINGS
+} qa_platform_directory_kind;
+/* Publishes a qa_buffer-owned, NUL-terminated UTF-8 path into an empty output.
+ * Size excludes NUL. Retains native trailing separators; USER_SETTINGS creates
+ * the platform's quake-anthology/content directory. Failure leaves out intact. */
+bool qa_platform_directory_read(qa_platform_directory_kind, qa_buffer *, qa_error *);
+
 /* Read returns a qa_buffer-owned, NUL-terminated UTF-8 string; size excludes NUL. */
 bool qa_platform_clipboard_read(qa_buffer *, qa_error *);
 bool qa_platform_clipboard_write(const char *, qa_error *);

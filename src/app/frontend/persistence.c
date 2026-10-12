@@ -344,9 +344,13 @@ static bool restore_frontend(qa_frontend **slot,const qa_application_persistence
             f->native_runtime=source->native_runtime;
             qa_native_runtime_retain(f->native_runtime);
             if (source->default_user_root) {
-                f->default_user_root=SDL_strdup(source->default_user_root);
+                size_t root_bytes=strlen(source->default_user_root)+1;
+                f->default_user_root=malloc(root_bytes);
                 if (!f->default_user_root) ok=frontend_fail(error,QA_ERROR_MEMORY,"Retaining the candidate default user-content path");
-                else f->options.application.user_root=f->default_user_root;
+                else {
+                    memcpy(f->default_user_root,source->default_user_root,root_bytes);
+                    f->options.application.user_root=f->default_user_root;
+                }
             }
             f->options.application.player_profile_root=qa_application_player_profile_root(source->application);
         }

@@ -17,6 +17,7 @@
 #include "remote_unified.h"
 #include "qa/audio_acoustics_prepare.h"
 #include "qa/display_save.h"
+#include "qa/platform_services.h"
 #include "qc_messages.h"
 #include "remote_q1_client.h"
 #include "q3_color_policy.h"
@@ -681,12 +682,12 @@ static bool create_frontend(const qa_frontend_options *options,bool launch_game,
         qa_native_runtime_retain(native_runtime);
         frontend->options.application.native_runtime_config=qa_native_runtime_configuration(native_runtime);
     } else {
-        char *executable=SDL_GetBasePath();
-        if (!executable) { qa_error_set(error,QA_ERROR_IO,0,"Reading native executable directory: %s",SDL_GetError()); goto fail; }
-        qa_native_runtime_options native={.executable_directory=executable,.root=options->native_runtime_root,
+        qa_buffer executable={0};
+        if (!qa_platform_directory_read(QA_PLATFORM_DIRECTORY_EXECUTABLE,&executable,error)) goto fail;
+        qa_native_runtime_options native={.executable_directory=(const char *)executable.data,.root=options->native_runtime_root,
             .overrides=options->application.native_runtime_config};
         bool ready=qa_native_runtime_create(&native,&frontend->native_runtime,error);
-        SDL_free(executable);
+        qa_buffer_free(&executable);
         if (!ready) goto fail;
         frontend->options.application.native_runtime_config=qa_native_runtime_configuration(frontend->native_runtime);
     }

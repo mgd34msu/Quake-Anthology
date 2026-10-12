@@ -4,7 +4,6 @@
 #include "qa/platform_events.h"
 #include "qa/json.h"
 #include "qa/tokenizer.h"
-#include <SDL.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -207,16 +206,16 @@ bool qa_frontend_options_resolve_locations(qa_frontend_options *options,qa_error
     bool ok=folder && canonical(folder,&owner->content,error);
     free(folder);
     if (!ok && (!error || error->code==QA_OK)) fail(error,QA_ERROR_ARGUMENT,"Executable path has no containing directory");
-    char *default_user=NULL;
+    qa_buffer default_user={0};
     const char *user_path=options->application.user_root;
     if (ok && !user_path) {
-        default_user=SDL_GetPrefPath("quake-anthology","content"); user_path=default_user;
-        if (!user_path) ok=fail(error,QA_ERROR_IO,"Cannot find the platform user settings directory");
+        ok=qa_platform_directory_read(QA_PLATFORM_DIRECTORY_USER_SETTINGS,&default_user,error);
+        user_path=(const char *)default_user.data;
     }
     if (ok) ok=qa_fs_path_create_directory(user_path,error) && qa_fs_root_open(user_path,&user,error) &&
         qa_fs_root_join(user,"",&owner->user,error) && qa_fs_root_join(user,settings_file,&owner->settings,error) &&
         read_settings(user,&saved,&saved_count,error);
-    SDL_free(default_user);
+    qa_buffer_free(&default_user);
     for (size_t i=0;ok && i<options->save_game_path_count;++i) {
         char *path=NULL;
         ok=canonical(options->save_game_paths[i],&path,error) && path_add(&saved,&saved_count,path,error);
