@@ -1,31 +1,10 @@
 #include "internal.h"
 
 void q2_rerelease_seed(qa_q2_game *g, uint32_t seed) {
-    q2_mt_random *r = &g->rerelease_random;
-    r->words[0] = seed;
-    for (uint32_t i = 1; i < 624; ++i)
-        r->words[i] = UINT32_C(1812433253) * (r->words[i - 1] ^ (r->words[i - 1] >> 30)) + i;
-    r->index = 624;
-    r->draws = 0;
+    qa_mt19937_seed(&g->rerelease_random, seed);
 }
 uint32_t q2_rerelease_word(qa_q2_game *g) {
-    q2_mt_random *r = &g->rerelease_random;
-    if (r->index == 624) {
-        for (uint32_t i = 0; i < 624; ++i) {
-            uint32_t joined = (r->words[i] & UINT32_C(0x80000000)) |
-                              (r->words[(i + 1) % 624] & UINT32_C(0x7fffffff));
-            r->words[i] = r->words[(i + 397) % 624] ^ (joined >> 1) ^
-                          ((joined & 1u) != 0 ? UINT32_C(0x9908b0df) : 0);
-        }
-        r->index = 0;
-    }
-    uint32_t value = r->words[r->index++];
-    value ^= value >> 11;
-    value ^= (value << 7) & UINT32_C(0x9d2c5680);
-    value ^= (value << 15) & UINT32_C(0xefc60000);
-    value ^= value >> 18;
-    ++r->draws;
-    return value;
+    return qa_mt19937_next(&g->rerelease_random);
 }
 uint32_t q2_random_bounded(qa_q2_game *g, uint32_t bound) {
     if (bound <= 1)

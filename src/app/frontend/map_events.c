@@ -2,6 +2,7 @@
 #include "internal.h"
 #include "scene_lights.h"
 #include "qa/pool.h"
+#include "qa/random.h"
 #include "qc_rerelease_events.h"
 #include "qa/scene_resource_save.h"
 #include "round.h"
@@ -107,7 +108,7 @@ struct frontend_event_state {
     frontend_retained_light *lights;
     frontend_retained_bounds *bounds;
     qa_builtin_random light_random;
-    uint32_t step_random[624], step_cursor;
+    qa_mt19937 step_random;
     qa_audio_asset *last_step;
     qa_actor_owner last_step_owner;
     bool audio_reading;
@@ -250,12 +251,7 @@ static bool state_read(qa_frontend *frontend, frontend_event_state **out, qa_err
         }
         qa_arena_seal(&state->storage);
         qa_builtin_random_seed(&frontend->events->light_random, 1);
-        frontend->events->step_random[0] = 1;
-        for (uint32_t i = 1; i < 624; ++i) {
-            uint32_t prior = frontend->events->step_random[i - 1];
-            frontend->events->step_random[i] = 1812433253u * (prior ^ (prior >> 30)) + i;
-        }
-        frontend->events->step_cursor = 624;
+        qa_mt19937_seed(&frontend->events->step_random, 1);
         if (frontend->audio && !frontend->options.dedicated)
             qa_application_events_audio_consume(frontend->application, qa_application_events_local_first(frontend->application));
     }
@@ -748,26 +744,11 @@ bool frontend_event_debug(qa_frontend *frontend, const qa_scene_view *view, qa_e
     }
     return true;
 }
-static uint32_t step_random(frontend_event_state *state)
-{
-    if (state->step_cursor == 624) {
-        for (unsigned i = 0; i < 624; ++i) {
-            uint32_t value = (state->step_random[i] & UINT32_C(0x80000000)) |
-                (state->step_random[(i + 1) % 624] & UINT32_C(0x7fffffff));
-            state->step_random[i] = state->step_random[(i + 397) % 624] ^ (value >> 1) ^
-                ((value & 1) ? UINT32_C(0x9908b0df) : 0);
-        }
-        state->step_cursor = 0;
-    }
-    uint32_t value = state->step_random[state->step_cursor++];
-    value ^= value >> 11; value ^= (value << 7) & UINT32_C(0x9d2c5680);
-    value ^= (value << 15) & UINT32_C(0xefc60000); return value ^ (value >> 18);
-}
 static uint32_t step_uniform(frontend_event_state *state, uint32_t count)
 {
     if (count < 2) return 0;
     uint32_t reject = (0u - count) % count, value;
-    do value = step_random(state); while (value < reject);
+    do value = qa_mt19937_next(&state->step_random); while (value < reject);
     return value % count;
 }
 static bool footsteps_read(qa_frontend *frontend, frontend_event_resources *resources, qa_string_id material,

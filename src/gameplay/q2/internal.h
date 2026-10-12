@@ -6,6 +6,7 @@
 #include "qa/game_q2_wire.h"
 #include "qa/game_q2_source.h"
 #include "qa/pool.h"
+#include "qa/random.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -477,10 +478,6 @@ typedef struct q2_actor {
     bool restore_definitions, restore_power_inventory, restore_targets;
     qa_inventory_entry restore_hand_ammo;
 } q2_actor;
-typedef struct q2_mt_random {
-    uint32_t words[624], index;
-    uint64_t draws;
-} q2_mt_random;
 typedef struct q2_shadow_slot {
     qa_actor_id actor;
     uint32_t source_slot;
@@ -533,7 +530,7 @@ struct qa_q2_game {
     struct q2_players *player_runtime;
     struct q2_entities *entity_runtime;
     qa_builtin_random random;
-    q2_mt_random rerelease_random;
+    qa_mt19937 rerelease_random;
     qa_actor_id current_actor;
     uint64_t sequence, actor_sequence, now_ns, frame_ns;
     qa_actor_index wire_index;

@@ -5,6 +5,7 @@
 #include "qa/arena.h"
 #include "qa/native.h"
 #include "qa/pool.h"
+#include "qa/random.h"
 #include "qa/network_unified_frame_pool.h"
 #include "qa/network_unified_control.h"
 #include "qa/unified_frame_metadata.h"
@@ -268,6 +269,18 @@ static void test_source_text(void)
     CHECK(!qa_text_to_source_bytes((qa_bytes){non_source,sizeof(non_source)},roundtrip,sizeof(roundtrip),&restored,&error));
     CHECK(!qa_text_to_source_bytes((qa_bytes){malformed,sizeof(malformed)},roundtrip,sizeof(roundtrip),&restored,&error));
     CHECK(qa_text_to_source_bytes((qa_bytes){0},roundtrip,1,&restored,&error) && !restored && !roundtrip[0]);
+}
+static void test_shared_random(void)
+{
+    const uint32_t expected[]={3499211612u,581869302u,3890346734u,3586334585u,545404204u};
+    qa_mt19937 game,presentation;
+    qa_mt19937_seed(&game,5489);
+    qa_mt19937_seed(&presentation,1);
+    for (size_t i=0;i<sizeof(expected)/sizeof(*expected);++i)
+        CHECK(qa_mt19937_next(&game)==expected[i]);
+    CHECK(game.draws==5 && presentation.draws==0);
+    CHECK(qa_mt19937_next(&presentation)==1791095845u);
+    CHECK(game.draws==5 && presentation.draws==1);
 }
 static void test_q2_hud_configuration(void)
 {
@@ -2981,6 +2994,7 @@ int main(int argc, char **argv)
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
     test_source_text();
+    test_shared_random();
     test_q2_hud_configuration();
     test_compiled_sound_names();
     test_shared_campaign_modes();
