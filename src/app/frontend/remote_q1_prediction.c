@@ -273,7 +273,7 @@ static bool receive_player(frontend_remote_q1 *row,const qa_vec3 *camera_origin,
     qa_qw_movement_state state=p->initialized?p->received:(qa_qw_movement_state){0};
     for(size_t i=0;i<p->count;++i) if(p->history[i].sequence==p->acknowledged && p->history[i].predicted)
         state=p->history[i].continuation;
-    state.origin=qa_qw_origin_from_vec3(camera_origin?*camera_origin:vector(own->origin)); state.velocity=vector(own->velocity);
+    state.origin=camera_origin?*camera_origin:vector(own->origin); state.velocity=vector(own->velocity);
     state.angles=row->view_angles; state.dead=row->data.health<=0; state.spectator=row->qw.spectator?1:0;
     p->view_height=own->flags&QA_QW_PF_GIB?8:own->flags&QA_QW_PF_DEAD?-16:22;
     p->received=p->predicted=state; p->received_sequence=p->acknowledged; p->initialized=true;

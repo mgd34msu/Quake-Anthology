@@ -67,7 +67,13 @@ bool qa_persistence_movement(qa_source_save_io *io, qa_movement_state *state)
     }
     case QA_RULESET_QUAKEWORLD: {
         qa_qw_movement_state *s = &state->data.qw;
-        FIELD(f64, s->origin.x); FIELD(f64, s->origin.y); FIELD(f64, s->origin.z);
+        float *components[] = {&s->origin.x, &s->origin.y, &s->origin.z};
+        for (size_t axis = 0; axis < 3; ++axis) {
+            double value = *components[axis];
+            if (!qa_source_save_f64(io, &value)) return false;
+            if (io->direction == QA_SOURCE_SAVE_READ && !qa_float_round_finite(value, components[axis]))
+                return fail(io, "Saved QW origin exceeds finite movement float bounds");
+        }
         V(s->velocity); V(s->angles); U(s->old_buttons); F(s->water_jump_time_seconds);
         B(s->dead); I(s->spectator); return qa_persistence_ground(io, &s->ground);
     }

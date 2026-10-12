@@ -12,10 +12,6 @@ static bool fail(qa_move_context *c, const char *message) {
     return false;
 }
 static bool valid_origin(const qa_movement_state *state) {
-    if (state->kind == QA_RULESET_QUAKEWORLD) {
-        qa_qw_origin value = state->data.qw.origin;
-        return isfinite(value.x) && isfinite(value.y) && isfinite(value.z);
-    }
     return qa_vec_finite(qa_movement_origin(state));
 }
 float qa_move_component(qa_vec3 v, unsigned axis) { return axis == 0 ? v.x : axis == 1 ? v.y : v.z; }
@@ -71,7 +67,7 @@ qa_movement_state qa_movement_state_default(qa_ruleset_id kind, qa_vec3 origin) 
         s.data.nq.origin=origin; s.data.nq.old_origin=origin;
         s.data.nq.move_type=3; s.data.nq.health=100; s.data.nq.flags=4096;
         s.data.nq.water_type=-1; break;
-    case QA_RULESET_QUAKEWORLD: s.data.qw.origin=qa_qw_origin_from_vec3(origin); break;
+    case QA_RULESET_QUAKEWORLD: s.data.qw.origin=origin; break;
     case QA_RULESET_Q2_CLASSIC:
         s.data.q2.gravity=800; (void)qa_movement_set_origin(&s,origin,NULL); break;
     case QA_RULESET_Q2_RERELEASE:
@@ -102,7 +98,7 @@ qa_vec3 qa_movement_origin(const qa_movement_state *s) {
     if (!s) return qa_v3(0,0,0);
     switch (s->kind) {
     case QA_RULESET_NETQUAKE: return s->data.nq.origin;
-    case QA_RULESET_QUAKEWORLD: return qa_qw_origin_to_vec3(s->data.qw.origin);
+    case QA_RULESET_QUAKEWORLD: return s->data.qw.origin;
     case QA_RULESET_Q2_CLASSIC: return qa_v3((float)qa_q2_movement_coordinate(&s->data.q2,false,0)*0.125f,(float)qa_q2_movement_coordinate(&s->data.q2,false,1)*0.125f,(float)qa_q2_movement_coordinate(&s->data.q2,false,2)*0.125f);
     case QA_RULESET_Q2_RERELEASE: return s->data.q2r.origin;
     case QA_RULESET_Q3: return s->data.q3.origin;
@@ -128,7 +124,7 @@ static bool write_vector(qa_movement_state *s, qa_vec3 value, bool velocity, qa_
     case QA_RULESET_NETQUAKE:
         if (velocity) s->data.nq.velocity=value; else s->data.nq.origin=value; break;
     case QA_RULESET_QUAKEWORLD:
-        if (velocity) s->data.qw.velocity=value; else s->data.qw.origin=qa_qw_origin_from_vec3(value); break;
+        if (velocity) s->data.qw.velocity=value; else s->data.qw.origin=value; break;
     case QA_RULESET_Q2_CLASSIC: {
         int32_t words[3];
         for (unsigned axis=0;axis<3;axis++) {

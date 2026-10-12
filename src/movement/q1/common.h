@@ -49,18 +49,6 @@ bool q1_finish(q1_move *, qa_movement_ground, int32_t water_level, int32_t water
 qa_trace_shape q1_shape(const q1_move *);
 float q1_speed(const q1_move *, float);
 
-/* QW donor arithmetic evaluates these expressions in binary64, then stores
- * each vector component as float. The input center is not stored first. */
-static inline qa_qw_origin q1_qw_add(qa_qw_origin origin, qa_vec3 delta) {
-    return qa_qw_origin_from_vec3(qa_v3((float)(origin.x + delta.x),
-                                     (float)(origin.y + delta.y),
-                                     (float)(origin.z + delta.z)));
-}
-static inline qa_qw_origin q1_qw_ma(qa_qw_origin origin, double dt, qa_vec3 velocity) {
-    return qa_qw_origin_from_vec3(qa_v3((float)(origin.x + dt * velocity.x),
-                                     (float)(origin.y + dt * velocity.y),
-                                     (float)(origin.z + dt * velocity.z)));
-}
 static inline qa_movement_ground q1_no_ground(void) {
     return (qa_movement_ground){ .hit = QA_TRACE_HIT_NONE };
 }

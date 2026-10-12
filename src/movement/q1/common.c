@@ -143,21 +143,14 @@ bool q1_fly(q1_move *m, double dt, q1_fly_result *out) {
     qa_vec3 *velocity = m->qw ? &c->state->data.qw.velocity : &c->state->data.nq.velocity;
     qa_vec3 primal = *velocity, original = *velocity, planes[5];
     size_t plane_count = 0;
-    double remaining = dt;
+    float remaining = (float)dt;
     *out = (q1_fly_result){0};
     for (unsigned bump = 0; bump < 4; ++bump) {
         if (q1_stopped(m)) return false;
         if (!m->qw && velocity->x == 0 && velocity->y == 0 && velocity->z == 0) break;
         qa_trace_result trace;
-        qa_vec3 start, end;
-        if (m->qw) {
-            qa_qw_origin origin = c->state->data.qw.origin;
-            start = qa_qw_origin_to_vec3(origin);
-            end = qa_qw_origin_to_vec3(q1_qw_ma(origin, remaining, *velocity));
-        } else {
-            start = c->state->data.nq.origin;
-            end = qa_vec_ma(start, (float)remaining, *velocity);
-        }
+        qa_vec3 start = m->qw ? c->state->data.qw.origin : c->state->data.nq.origin;
+        qa_vec3 end = qa_vec_ma(start, remaining, *velocity);
         if (!q1_move_trace(m, start, end, &trace)) return false;
         if (trace.all_solid || (m->qw && trace.start_solid)) {
             *velocity = qa_v3(0, 0, 0);
@@ -165,7 +158,7 @@ bool q1_fly(q1_move *m, double dt, q1_fly_result *out) {
             return true;
         }
         if (trace.fraction > 0) {
-            if (m->qw) c->state->data.qw.origin = qa_qw_origin_from_vec3(trace.end);
+            if (m->qw) c->state->data.qw.origin = trace.end;
             else c->state->data.nq.origin = trace.end;
             if (!m->qw) original = *velocity;
             plane_count = 0;
@@ -198,8 +191,7 @@ bool q1_fly(q1_move *m, double dt, q1_fly_result *out) {
         if (m->qw) {
             if (!qa_move_contact(c, &trace, false, false)) return false;
         } else if (!q1_touch(m, &trace, true)) return false;
-        remaining = m->qw ? remaining - remaining * trace.fraction :
-            (float)((float)remaining - (float)((float)remaining * trace.fraction));
+        remaining = (float)((float)remaining - (float)((float)remaining * trace.fraction));
         if (plane_count >= 5) {
             *velocity = qa_v3(0, 0, 0);
             if (!m->qw) out->blocked = 3;

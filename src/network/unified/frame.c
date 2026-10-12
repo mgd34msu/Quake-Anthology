@@ -37,7 +37,8 @@ static size_t scalar_size(qa_unified_field_kind kind)
     case QA_UNIFIED_FIELD_BOOL: return sizeof(bool);
     case QA_UNIFIED_FIELD_U8: case QA_UNIFIED_FIELD_I8: return 1;
     case QA_UNIFIED_FIELD_U16: case QA_UNIFIED_FIELD_I16: return 2;
-    case QA_UNIFIED_FIELD_U32: case QA_UNIFIED_FIELD_I32: case QA_UNIFIED_FIELD_F32: return 4;
+    case QA_UNIFIED_FIELD_U32: case QA_UNIFIED_FIELD_I32:
+    case QA_UNIFIED_FIELD_F32: case QA_UNIFIED_FIELD_F32_AS_F64: return 4;
     case QA_UNIFIED_FIELD_U64: case QA_UNIFIED_FIELD_I64: case QA_UNIFIED_FIELD_F64: return 8;
     case QA_UNIFIED_FIELD_SIZE: return sizeof(size_t);
     default: return 0;
@@ -140,6 +141,11 @@ static bool scalar_write(qa_unified_builder *b, qa_unified_field_kind kind, cons
             return byte(b, 1, e) && signed_write(b, (int32_t)v, e);
         return byte(b, 2, e) && little_write(b, word, 4, e);
     }
+    case QA_UNIFIED_FIELD_F32_AS_F64: {
+        float v; memcpy(&v, value, sizeof(v));
+        double wide = v;
+        return scalar_write(b, QA_UNIFIED_FIELD_F64, &wide, e);
+    }
     case QA_UNIFIED_FIELD_F64: {
         double v; uint64_t word; memcpy(&v, value, 8); memcpy(&word, value, 8);
         if (!word) return byte(b, 0, e);
@@ -176,6 +182,13 @@ static bool scalar_read(record_reader *r, qa_unified_field_kind kind, void *out)
         else if (kind == QA_UNIFIED_FIELD_I32) { if (s < INT32_MIN || s > INT32_MAX) break; int32_t v = (int32_t)s; memcpy(out, &v, 4); }
         else memcpy(out, &s, 8);
         return true;
+    case QA_UNIFIED_FIELD_F32_AS_F64: {
+        double value; float narrow;
+        if (!scalar_read(r, QA_UNIFIED_FIELD_F64, &value)) return false;
+        if (!qa_float_round_finite(value, &narrow)) break;
+        memcpy(out, &narrow, sizeof(narrow));
+        return true;
+    }
     case QA_UNIFIED_FIELD_F32: case QA_UNIFIED_FIELD_F64: {
         uint8_t tag;
         if (!read_bytes(r, &tag, 1)) return false;

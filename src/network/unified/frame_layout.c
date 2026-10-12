@@ -107,7 +107,7 @@ static const qa_unified_record_layout qa_qw_movement_state_layout;
 static const qa_unified_record_layout qa_q2r_movement_state_layout;
 static const qa_unified_record_layout qa_q3_movement_state_layout;
 static const qa_unified_record_layout qa_q1_movement_parameters_layout;
-static const qa_unified_record_layout qa_qw_origin_layout;
+static const qa_unified_record_layout qa_unified_vector_f64_layout;
 
 static const qa_unified_field qa_unified_frame_components_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_frame_components, revision, QA_UNIFIED_FIELD_U64),
@@ -993,7 +993,7 @@ static const qa_unified_field qa_nq_movement_state_fields[] = {
 static const qa_unified_record_layout qa_nq_movement_state_layout = QA_UNIFIED_LAYOUT(qa_nq_movement_state, qa_nq_movement_state_fields);
 
 static const qa_unified_field qa_qw_movement_state_fields[] = {
-    QA_UNIFIED_RECORD(qa_qw_movement_state, origin, qa_qw_origin_layout),
+    QA_UNIFIED_RECORD(qa_qw_movement_state, origin, qa_unified_vector_f64_layout),
     QA_UNIFIED_RECORD(qa_qw_movement_state, velocity, qa_unified_vector_layout),
     QA_UNIFIED_RECORD(qa_qw_movement_state, angles, qa_unified_vector_layout),
     QA_UNIFIED_FIELD(qa_qw_movement_state, old_buttons, QA_UNIFIED_FIELD_U32),
@@ -1054,12 +1054,12 @@ static const qa_unified_field qa_q1_movement_parameters_fields[] = {
 };
 static const qa_unified_record_layout qa_q1_movement_parameters_layout = QA_UNIFIED_LAYOUT(qa_q1_movement_parameters, qa_q1_movement_parameters_fields);
 
-static const qa_unified_field qa_qw_origin_fields[] = {
-    QA_UNIFIED_FIELD(qa_qw_origin, x, QA_UNIFIED_FIELD_F64),
-    QA_UNIFIED_FIELD(qa_qw_origin, y, QA_UNIFIED_FIELD_F64),
-    QA_UNIFIED_FIELD(qa_qw_origin, z, QA_UNIFIED_FIELD_F64),
+static const qa_unified_field qa_unified_vector_f64_fields[] = {
+    QA_UNIFIED_FIELD(qa_vec3, x, QA_UNIFIED_FIELD_F32_AS_F64),
+    QA_UNIFIED_FIELD(qa_vec3, y, QA_UNIFIED_FIELD_F32_AS_F64),
+    QA_UNIFIED_FIELD(qa_vec3, z, QA_UNIFIED_FIELD_F32_AS_F64),
 };
-static const qa_unified_record_layout qa_qw_origin_layout = QA_UNIFIED_LAYOUT(qa_qw_origin, qa_qw_origin_fields);
+static const qa_unified_record_layout qa_unified_vector_f64_layout = QA_UNIFIED_LAYOUT(qa_vec3, qa_unified_vector_f64_fields);
 
 
 #define MEMBER_FIELD(type, arm, member, kind) \
@@ -1917,7 +1917,8 @@ static bool finite_record(const qa_unified_record_layout *layout, const void *re
 {
     for (size_t i = 0; i < layout->field_count; ++i) {
         const qa_unified_field *f = layout->fields + i; const uint8_t *field = (const uint8_t *)record + f->offset;
-        if (f->kind == QA_UNIFIED_FIELD_F32 && !isfinite(*(const float *)field)) return false;
+        if ((f->kind == QA_UNIFIED_FIELD_F32 || f->kind == QA_UNIFIED_FIELD_F32_AS_F64) &&
+            !isfinite(*(const float *)field)) return false;
         if (f->kind == QA_UNIFIED_FIELD_F64 && !isfinite(*(const double *)field)) return false;
         if (f->kind == QA_UNIFIED_FIELD_RECORD && !finite_record(f->record, field)) return false;
         if (f->kind == QA_UNIFIED_FIELD_FIXED)

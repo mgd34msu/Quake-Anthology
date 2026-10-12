@@ -700,9 +700,7 @@ bool application_qc_control_state(application_provider *provider, qa_actor_id ac
         nq->flags = (uint32_t)flag_bits; nq->teleport_time_seconds = teleport; nq->ideal_pitch = ideal;
     } else if (state->kind == QA_RULESET_QUAKEWORLD && engine->profile == QA_QC_QUAKEWORLD) {
         qa_qw_movement_state *qw = &state->data.qw; float teleport;
-        qw->origin.x = (double)origin.x + minimum.x + 16;
-        qw->origin.y = (double)origin.y + minimum.y + 16;
-        qw->origin.z = (double)origin.z + minimum.z + 24;
+        qw->origin = qa_vec_add(origin, qa_vec_sub(minimum, qa_v3(-16, -16, -24)));
         qw->angles = view; qw->dead = health <= 0; qw->spectator = spectator ? 1 : 0;
         if (!control_scalar(engine, reference, actor, engine->field_bindings->teleport_time, &teleport, error)) return false;
         qw->water_jump_time_seconds = teleport;
@@ -753,10 +751,11 @@ bool application_qc_control_body(application_provider *provider, qa_actor_id act
         body->ground = qa_actor_reference_source(provider->owner, 0);
     if (engine->profile != QA_QC_QUAKEWORLD || state->kind != QA_RULESET_QUAKEWORLD) return true;
     if (!control_vector(engine, reference, actor, engine->field_bindings->mins, &minimum, error) ||
-        !control_vector(engine, reference, actor, engine->field_bindings->angles, &body->angles, error) ||
-        !control_word((double)state->data.qw.origin.x - minimum.x - 16, &body->origin.x, error) ||
-        !control_word((double)state->data.qw.origin.y - minimum.y - 16, &body->origin.y, error) ||
-        !control_word((double)state->data.qw.origin.z - minimum.z - 24, &body->origin.z, error)) return false;
+        !control_vector(engine, reference, actor, engine->field_bindings->angles, &body->angles, error)) return false;
+    qa_vec3 origin = qa_vec_sub(state->data.qw.origin, qa_vec_sub(minimum, qa_v3(-16, -16, -24)));
+    if (!control_word(origin.x, &body->origin.x, error) ||
+        !control_word(origin.y, &body->origin.y, error) ||
+        !control_word(origin.z, &body->origin.z, error)) return false;
     return true;
 }
 bool application_qc_control_profile(application_provider *provider, qa_actor_id actor,
@@ -821,10 +820,10 @@ static bool control_store_state(struct application_qc_state *engine, int32_t ref
     if (state->kind == QA_RULESET_QUAKEWORLD && engine->profile == QA_QC_QUAKEWORLD) {
         const qa_qw_movement_state *qw = &state->data.qw; qa_vec3 minimum;
         if (!control_vector(engine, reference, actor, engine->field_bindings->mins, &minimum, error)) return false;
-        qa_vec3 origin;
-        if (!control_word((double)qw->origin.x - minimum.x - 16, &origin.x, error) ||
-            !control_word((double)qw->origin.y - minimum.y - 16, &origin.y, error) ||
-            !control_word((double)qw->origin.z - minimum.z - 24, &origin.z, error)) return false;
+        qa_vec3 origin = qa_vec_sub(qw->origin, qa_vec_sub(minimum, qa_v3(-16, -16, -24)));
+        if (!control_word(origin.x, &origin.x, error) ||
+            !control_word(origin.y, &origin.y, error) ||
+            !control_word(origin.z, &origin.z, error)) return false;
         if (!control_store_vector(engine, reference, actor, engine->field_bindings->origin, origin, error) ||
             !control_store_vector(engine, reference, actor, engine->field_bindings->velocity, qw->velocity, error) ||
             !control_store_vector(engine, reference, actor, engine->field_bindings->v_angle, qw->angles, error) ||

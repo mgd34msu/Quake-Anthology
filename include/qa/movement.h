@@ -14,13 +14,14 @@ typedef enum qa_numeric_rounding {
 
 /* Facts from the native C movement constructor. External Source execution
  * leaves its recipe absent; the independent copied prediction kernel retains
- * its own C recipe. This describes storage and evaluation, not each operation. */
+ * its own C recipe. This describes evaluation and boundary representation. */
 typedef struct qa_movement_numeric {
     qa_string_id id;
     uint32_t radix, scalar_mantissa_bits, double_mantissa_bits;
     int32_t evaluation_method;
     qa_numeric_rounding rounding;
-    bool native_c, qw_origin_binary64;
+    bool native_c;
+    bool qw_origin_binary64; /* Existing F64 wire/save width, not vector storage. */
 } qa_movement_numeric;
 
 typedef enum qa_q1_edition { QA_Q1_CLASSIC, QA_Q1_RERELEASE, QA_Q1_QUAKE64 } qa_q1_edition;
@@ -64,21 +65,8 @@ typedef struct qa_nq_movement_state {
     float ideal_pitch;
     bool fix_angle;
 } qa_nq_movement_state;
-/* QW input centers an authored float origin with its authored float mins in
- * binary64. It can retain that value when SpectatorMove returns before any
- * vector store. QW vector operations still store float components. */
-typedef struct qa_qw_origin { double x, y, z; } qa_qw_origin;
-static inline qa_qw_origin qa_qw_origin_from_vec3(qa_vec3 value) {
-    return (qa_qw_origin){value.x, value.y, value.z};
-}
-/* Projection at a float body/collision boundary; it does not replace the
- * authoritative QW origin with the projected components. */
-static inline qa_vec3 qa_qw_origin_to_vec3(qa_qw_origin value) {
-    return qa_v3((float)value.x, (float)value.y, (float)value.z);
-}
 typedef struct qa_qw_movement_state {
-    qa_qw_origin origin;
-    qa_vec3 velocity, angles;
+    qa_vec3 origin, velocity, angles;
     uint32_t old_buttons;
     float water_jump_time_seconds;
     bool dead;

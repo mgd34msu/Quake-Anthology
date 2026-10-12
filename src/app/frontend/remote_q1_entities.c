@@ -26,7 +26,7 @@ bool remote_q1_view_damage(frontend_remote_q1 *row, const qa_nq_message *message
          * real playerinfo remain the actual CL simulated/source owners. */
         qa_qw_movement_state predicted; float height; bool present;
         if (!remote_q1_prediction_read(row,&predicted,&height,&present)) return false;
-        if (present) origin = qa_qw_origin_to_vec3(predicted.origin);
+        if (present) origin = predicted.origin;
         else {
             if (!row->qw_player_valid[row->qw.player_slot])
                 return remote_q1_fail(error,QA_ERROR_FORMAT,"QW damage has no actual simulated player");
@@ -190,7 +190,7 @@ bool frontend_remote_q1_player_read(frontend_remote_q1 *row, frontend_remote_q1_
     qa_qw_movement_state predicted; float height; bool predicted_present;
     if (!remote_q1_prediction_read(row, &predicted, &height, &predicted_present)) return false;
     if (predicted_present) {
-        out->origin = qa_qw_origin_to_vec3(predicted.origin); out->velocity = predicted.velocity;
+        out->origin = predicted.origin; out->velocity = predicted.velocity;
         out->view_height = height; out->grounded = predicted.ground.hit != QA_TRACE_HIT_NONE; out->ideal_pitch = 0;
     }
     if (qa_q1_is_qw(row->options.domain.protocol) && row->qw.spectator) out->pitch_drift_disabled = true;
