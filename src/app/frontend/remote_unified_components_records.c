@@ -176,6 +176,8 @@ void q3remote_component_frame_free(remote_component_frame *f)
     if(!f) return;
     qa_unified_frame_lease *lease=f->lease;
     q3remote_component_state_free(&f->source);
+    qa_id_index_destroy(&f->source_slots);
+    qa_id_index_destroy(&f->actor_rows);
     if(!lease) {
         if(!f->packet) free((void *)f->snapshot.entities);
         free(f->actors);
@@ -268,11 +270,17 @@ bool q3remote_component_frame_read(frontend_unified_components *o,remote_compone
     if(ok) f->snapshot=source->snapshot;
     size_t count=source->binding_count; bool has_viewer=false;
     if(ok&&count) { f->actors=lease?qa_unified_frame_lease_alloc(lease,count,sizeof(*f->actors),_Alignof(application_q3_scene_actor),e):calloc(count,sizeof(*f->actors)); if(!f->actors) ok=q3remote_component_fail(e,QA_ERROR_MEMORY,"Retaining real replica actor bindings"); }
+    f->source_slots.storage=f->actor_rows.storage=lease?qa_unified_frame_lease_arena(lease):NULL;
+    if(ok) ok=qa_id_index_reserve(&f->source_slots,count,e)&&qa_id_index_reserve(&f->actor_rows,count,e);
     for(size_t i=0;ok&&i<count;++i) {
         const qa_unified_component_binding *binding=source->bindings+i;
         f->actors[i].slot=binding->slot; f->actors[i].owned=binding->owned;
         ok=frontend_remote_unified_source_actor(o->replica,frame,binding->actor,false,&f->actors[i].actor,e);
         has_viewer|=ok&&binding->slot==(uint32_t)source->client_number&&!binding->owned&&qa_actor_id_equal(f->actors[i].actor,viewer);
+    }
+    if(ok) for(size_t i=count;i--;) {
+        qa_id_index_insert(&f->source_slots,f->actors[i].slot,0,i);
+        qa_id_index_insert(&f->actor_rows,f->actors[i].actor.slot,f->actors[i].actor.generation,i);
     }
     f->has_scene=source->scene;
     if(ok) ok=has_viewer&&f->has_scene!=row->state.player_events;

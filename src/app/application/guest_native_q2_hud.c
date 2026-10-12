@@ -47,11 +47,12 @@ static bool debug_import(struct application_native_q2 *engine,
     size_t count = 0;
     uint32_t lifetime = 0;
     bool handled = false;
+    qa_clock_state clock;
     bool okay = qa_debug_native_q2(call->instance, call->import,
         qa_unified_frame_lease_arena(storage), &lines, &count, &lifetime, &handled, error);
-    if (okay && handled)
+    if (okay && handled && qa_session_clock(app->session, engine->provider->owner, &clock))
         okay = qa_application_debug_emit(app, &(qa_application_debug_event){
-            .provider = engine->provider->owner, .time_ns = engine->frame.time_ns,
+            .provider = engine->provider->owner, .time_ns = clock.frame.time_ns,
             .lines = lines, .count = count, .lifetime_ms = lifetime}, error);
     qa_unified_frame_lease_release(storage);
     return okay && handled;

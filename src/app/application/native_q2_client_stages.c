@@ -343,19 +343,20 @@ void application_native_q2_stages_released(struct application_native_q2 *n,qa_ac
     struct application_native_q2_stages *o=n?n->stages:NULL;
     application_native_q2_client_outputs_release(n,actor);
     if(!o||!o->interval_ns||!n->provider->state.native.host) return;
+    uint32_t slot;
+    if(!qa_native_host_slot_for_actor(n->provider->state.native.host,actor,&slot)||!slot) return;
     qa_error error={0};qa_native_entity_table table;
     if(!qa_native_entity_table_get(instance(n),&table,&error)) {application_fault(n->provider->application,&error);return;}
-    for(uint32_t slot=1;slot<table.count;++slot) {
-        qa_native_slot_binding binding;
-        if(!qa_native_slot(instance(n),slot,&binding,&error)) {application_fault(n->provider->application,&error);return;}
-        if(binding.kind!=QA_NATIVE_SLOT_OWNED||!qa_actor_id_equal(binding.actor,actor)) continue;
-        for(size_t i=0;i<o->pending_count;++i) if(o->pending[i]==slot) return;
-        if(o->pending_count==o->pending_capacity) {
-            application_fail(&error,QA_ERROR_MEMORY,"Native actor release queue capacity exhausted");
-            application_fault(n->provider->application,&error);return;
-        }
-        o->pending[o->pending_count++]=slot;return;
+    if(slot>=table.count) return;
+    qa_native_slot_binding binding;
+    if(!qa_native_slot(instance(n),slot,&binding,&error)) {application_fault(n->provider->application,&error);return;}
+    if(binding.kind!=QA_NATIVE_SLOT_OWNED||!qa_actor_id_equal(binding.actor,actor)) return;
+    for(size_t i=0;i<o->pending_count;++i) if(o->pending[i]==slot) return;
+    if(o->pending_count==o->pending_capacity) {
+        application_fail(&error,QA_ERROR_MEMORY,"Native actor release queue capacity exhausted");
+        application_fault(n->provider->application,&error);return;
     }
+    o->pending[o->pending_count++]=slot;
 }
 bool application_native_q2_stages_capture(struct application_native_q2 *n,qa_buffer *out,qa_error *e)
 {

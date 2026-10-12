@@ -35,6 +35,7 @@ typedef struct remote_component_frame {
     qa_actor_id viewer;
     qa_q3_snapshot snapshot;
     application_q3_scene_actor *actors;
+    qa_id_index source_slots,actor_rows;
     remote_component_state source;
     bool has_scene;
 } remote_component_frame;

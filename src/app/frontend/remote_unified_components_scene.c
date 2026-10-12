@@ -105,10 +105,12 @@ static bool source_actor(void *context,uint32_t slot,qa_actor_id *out,bool *owne
     remote_component *r=context; *out=(qa_actor_id){0}; *owned=*found=false;
     if(!published(r)||!r->frame||(r->acquired&&!source_current(r,&r->entered)))
         return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote actor mapping lacks its actual component frame");
-    const application_q3_scene_context *source=r->acquired?&r->entered:&r->frame->context;
-    for(size_t i=0;i<source->actor_count;++i) if(source->actors[i].slot==slot) {
-        *out=source->actors[i].actor; *owned=source->actors[i].owned;
-        *found=qa_actors_get(frontend_remote_unified_registry(r->parent->replica),*out)!=NULL; break;
+    remote_component_frame *frame=r->acquired&&r->entered.baseline&&!r->state.player_events?r->baseline:r->frame;
+    qa_id_index_entry *entry=qa_id_index_find(&frame->source_slots,slot,0);
+    if(entry) {
+        const application_q3_scene_actor *binding=frame->actors+entry->value;
+        *out=binding->actor; *owned=binding->owned;
+        *found=qa_actors_get(frontend_remote_unified_registry(r->parent->replica),*out)!=NULL;
     }
     return true;
 }
@@ -116,8 +118,8 @@ static bool source_live(void *context,qa_actor_id actor)
 {
     remote_component *r=context;
     if(!published(r)||!r->frame||!qa_actors_get(frontend_remote_unified_registry(r->parent->replica),actor)) return false;
-    for(size_t i=0;i<r->frame->context.actor_count;++i) if(qa_actor_id_equal(r->frame->actors[i].actor,actor)) return true;
-    return false;
+    qa_id_index_entry *entry=qa_id_index_find(&r->frame->actor_rows,actor.slot,actor.generation);
+    return entry&&qa_actor_id_equal(r->frame->actors[entry->value].actor,actor);
 }
 static bool weapon_presented(void *context,qa_actor_id actor,bool *out,qa_error *e)
 {
