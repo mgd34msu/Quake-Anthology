@@ -129,6 +129,7 @@ bool qa_strings_intern(qa_strings *strings, qa_bytes text, qa_string_id *out, qa
     if(text.size>=10&&!memcmp(text.data,"item_flag_",10)) flags|=QA_NAME_ITEM_FLAG;
     if(text.size>=9&&!memcmp(text.data,"info_flag",9)) flags|=QA_NAME_INFO_FLAG;
     if(text.size>=4&&!memcmp(text.data,"func",4)) flags|=QA_NAME_FUNC;
+    if(text.size>=8&&!memcmp(text.data,"q1:ammo/",8)) flags|=QA_NAME_Q1_AMMO;
     static const struct { const char *text; size_t size; uint32_t folded, exact; } team_names[] = {
         {"red", 3, QA_NAME_TEAM_RED_ALIAS, QA_NAME_TEAM_RED_EXACT},
         {"team:red", 8, QA_NAME_TEAM_RED_ALIAS, QA_NAME_TEAM_RED_EXACT},

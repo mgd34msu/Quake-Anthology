@@ -67,10 +67,9 @@ static bool player_ui_read(const qa_q1_game_operation *operation, qa_actor_id ac
         if (!qa_inventory_count_read(g->services.inventory, actor, g->weapons[i], &count, error)) return false;
         if (count > 0) value.items |= bits[i];
     }
-    static const char *const keys[] = {"q1:key/silver", "q1:key/gold"};
+    static const q1_runtime_name keys[] = {Q1_NAME_KEY_SILVER, Q1_NAME_KEY_GOLD};
     for (unsigned i = 0; i < 2; ++i) {
-        qa_string_id key = qa_strings_find(qa_session_strings(g->services.session),
-            (qa_bytes){(const uint8_t *)keys[i], strlen(keys[i])});
+        qa_string_id key = g->runtime_names[keys[i]];
         double count;
         if (!key) continue;
         if (!qa_inventory_count_read(g->services.inventory, actor, key, &count, error)) return false;

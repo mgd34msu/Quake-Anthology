@@ -39,7 +39,8 @@ static bool fire(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return false;
     missile->state.projectile.kind = Q1_MG3_OGRE_ROCKET;
     missile->state.projectile.expires = g->time + 0.2;
-    return qa_builtin_resource(&g->services, "ogre_missile", &missile->classname, error);
+    missile->classname = g->runtime_names[Q1_NAME_OGRE_MISSILE];
+    return true;
 }
 bool q1_rocket_ogre_frame(qa_q1_game *g, q1_actor *entity, uint16_t name, qa_error *error) {
     q1_monster *monster = &entity->state.monster;

@@ -124,8 +124,7 @@ static bool split_grenade(qa_q1_game *g, q1_actor *grenade, qa_error *error) {
         if (!q1_projectile_spawn(g, q1_ref_actor(g, grenade->owner), QA_Q1_MULTI_GRENADE, Q1_MULTI_GRENADE,
                                  body.origin, velocity, &mini, error))
             return false;
-        if (!qa_builtin_resource(&g->services, "MiniGrenade", &mini->classname, error))
-            return false;
+        mini->classname = g->runtime_names[Q1_NAME_MINI_GRENADE];
         mini->physics.motion = QA_PHYSICS_BOUNCE;
         mini->physics.angular_velocity = qa_v3(300, 300, 300);
         mini->state.projectile.mini = true;
@@ -253,10 +252,9 @@ bool q1_rogue_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error
             if (!q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_LAVA_MAN])) {
                 bool player = is_player(g, other);
                 float damage = player ? powered ? 18 : 9 : powered ? 30 : 15;
-                qa_string_id cause;
-                if (!qa_builtin_resource(&g->services, powered ? "rogue:super-lava" : "rogue:lava",
-                                         &cause, error) ||
-                    !q1_damage_typed(g, other, entity->id, q1_ref_actor(g, entity->owner), damage, p->weapon,
+                qa_string_id cause = g->runtime_names[powered ? Q1_NAME_ROGUE_SUPER_LAVA :
+                    Q1_NAME_ROGUE_LAVA];
+                if (!q1_damage_typed(g, other, entity->id, q1_ref_actor(g, entity->owner), damage, p->weapon,
                                      player ? powered ? QA_Q1_ARMOR_HALF : QA_Q1_ARMOR_BYPASS
                                             : QA_Q1_ARMOR_NORMAL,
                                      cause, error))

@@ -98,9 +98,8 @@ bool q1_mg3_upgrade(qa_q1_game *g, q1_player *player, unsigned type, uint32_t fl
         return false;
     bool okay = upgrade_current(g, actor, player, error);
     for (size_t i = 0; okay && i < written; ++i) {
-        qa_bytes name = qa_strings_text(qa_session_strings(g->services.session), entries[i].item);
-        if (name.size < sizeof("q1:ammo/") - 1 ||
-            memcmp(name.data, "q1:ammo/", sizeof("q1:ammo/") - 1) ||
+        if (!(qa_strings_name_flags(qa_session_strings(g->services.session),
+                                   entries[i].item) & QA_NAME_Q1_AMMO) ||
             entries[i].count <= entries[i].capacity) continue;
         entries[i].count = entries[i].capacity;
         okay = qa_inventory_configure(inventory, actor, &entries[i], NULL, NULL, error) &&

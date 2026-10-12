@@ -10,15 +10,25 @@ bool q1_message_args(qa_q1_game *g, qa_actor_id actor, const char *text,
         return true;
     if (!text[0])
         return true;
+    qa_string_id resource;
+    return qa_builtin_resource(&g->services, text, &resource, error) &&
+        q1_message_resource_args(g, actor, resource, 0, arguments, count, error);
+}
+bool q1_message_resource_args(qa_q1_game *g, qa_actor_id actor, qa_string_id text,
+    uint32_t flags, const qa_builtin_message_arg *arguments, size_t count, qa_error *error) {
+    if (g->destroy_pending ||
+        !qa_strings_text(qa_session_strings(g->services.session), text).size)
+        return true;
     qa_builtin_event event = {.kind = QA_BUILTIN_MESSAGE,
                               .family = QA_GAME_Q1,
                               .provider = g->options.provider,
                               .actor = actor,
                               .time_ns = g->time_ns,
                               .arguments = arguments,
-                              .argument_count = count};
-    return qa_builtin_resource(&g->services, text, &event.text, error) &&
-           qa_builtin_emit(&g->services, &event, error);
+                              .argument_count = count,
+                              .text = text,
+                              .flags = flags};
+    return qa_builtin_emit(&g->services, &event, error);
 }
 
 bool qa_q1_player_auto_switch(qa_q1_game *g, qa_actor_id actor, qa_q1_auto_switch setting,
@@ -36,13 +46,13 @@ bool qa_q1_player_auto_switch(qa_q1_game *g, qa_actor_id actor, qa_q1_auto_switc
 static const struct {
     qa_q1_weapon base, powered;
     qa_q1_ammo ammo;
-    const char *message;
+    q1_runtime_name message;
 } combos[] = {
-    {QA_Q1_NAILGUN, QA_Q1_LAVA_NAILGUN, QA_Q1_LAVA_NAILS, "$qc_lava_enabled"},
-    {QA_Q1_SUPER_NAILGUN, QA_Q1_LAVA_SUPER_NAILGUN, QA_Q1_LAVA_NAILS, "$qc_super_lava_enabled"},
-    {QA_Q1_GRENADE, QA_Q1_MULTI_GRENADE, QA_Q1_MULTI_ROCKETS, "$qc_multi_gl_enabled"},
-    {QA_Q1_ROCKET, QA_Q1_MULTI_ROCKET, QA_Q1_MULTI_ROCKETS, "$qc_multi_rl_enabled"},
-    {QA_Q1_LIGHTNING, QA_Q1_PLASMA, QA_Q1_PLASMA_CELLS, "$qc_plasma_enabled"}};
+    {QA_Q1_NAILGUN, QA_Q1_LAVA_NAILGUN, QA_Q1_LAVA_NAILS, Q1_NAME_QC_LAVA_ENABLED},
+    {QA_Q1_SUPER_NAILGUN, QA_Q1_LAVA_SUPER_NAILGUN, QA_Q1_LAVA_NAILS, Q1_NAME_QC_SUPER_LAVA_ENABLED},
+    {QA_Q1_GRENADE, QA_Q1_MULTI_GRENADE, QA_Q1_MULTI_ROCKETS, Q1_NAME_QC_MULTI_GL_ENABLED},
+    {QA_Q1_ROCKET, QA_Q1_MULTI_ROCKET, QA_Q1_MULTI_ROCKETS, Q1_NAME_QC_MULTI_RL_ENABLED},
+    {QA_Q1_LIGHTNING, QA_Q1_PLASMA, QA_Q1_PLASMA_CELLS, Q1_NAME_QC_PLASMA_ENABLED}};
 bool q1_enable_combos(qa_q1_game *g, q1_player *player, qa_error *error) {
     if (g->options.program != QA_Q1_ROGUE || !player->arsenal)
         return true;
@@ -64,7 +74,8 @@ bool q1_enable_combos(qa_q1_game *g, q1_player *player, qa_error *error) {
             return false;
         if (!q1_alive(g, player->id))
             return true;
-        if (given != 0 && !q1_message(g, player->id, combos[i].message, error))
+        if (given != 0 && !q1_message_resource_args(g, player->id,
+            g->runtime_names[combos[i].message], 0, NULL, 0, error))
             return false;
         if (!q1_alive(g, player->id))
             return true;
@@ -97,7 +108,8 @@ bool q1_enable_combos_read(qa_q1_game *g, qa_actor_id actor, q1_player *player,
         double given;
         if (!qa_inventory_give(g->services.inventory, actor, powered.item, 1, &given, error) ||
             !combo_player_current(g, actor, player, error) ||
-            !q1_message(g, actor, combos[i].message, error) ||
+            !q1_message_resource_args(g, actor, g->runtime_names[combos[i].message],
+                                      0, NULL, 0, error) ||
             !combo_player_current(g, actor, player, error)) return false;
     }
     return true;
@@ -134,13 +146,13 @@ bool q1_power_frame(qa_q1_game *g, q1_player *player, double seconds,
     uint64_t frame_ns, qa_error *error) {
     static const struct {
         qa_q1_power power;
-        const char *warning, *lost;
+        q1_runtime_name warning, lost;
         q1_runtime_name sound;
-    } timers[] = {{QA_Q1_WETSUIT, "$qc_wetsuit_fade", "", Q1_NAME_RESOURCE_ITEMS_SUIT2_WAV},
-                  {QA_Q1_EMPATHY, "$qc_empathy_fade", "", Q1_NAME_RESOURCE_ITEMS_SUIT2_WAV},
-                  {QA_Q1_SHIELD, "$qc_shield_failing", "$qc_shield_lost", Q1_NAME_RESOURCE_SHIELD_FADEOUT_WAV},
-                  {QA_Q1_ANTIGRAV, "$qc_antigrav_failing", "$qc_antigrav_lost", Q1_NAME_RESOURCE_BELT_FADEOUT_WAV},
-                  {QA_Q1_LAVA_SUIT, "$mg3_qc_lavasuit_wearing_out", "", Q1_NAME_RESOURCE_ITEMS_SUIT2_WAV}};
+    } timers[] = {{QA_Q1_WETSUIT, Q1_NAME_QC_WETSUIT_FADE, Q1_NAME_COUNT, Q1_NAME_RESOURCE_ITEMS_SUIT2_WAV},
+                  {QA_Q1_EMPATHY, Q1_NAME_QC_EMPATHY_FADE, Q1_NAME_COUNT, Q1_NAME_RESOURCE_ITEMS_SUIT2_WAV},
+                  {QA_Q1_SHIELD, Q1_NAME_QC_SHIELD_FAILING, Q1_NAME_QC_SHIELD_LOST, Q1_NAME_RESOURCE_SHIELD_FADEOUT_WAV},
+                  {QA_Q1_ANTIGRAV, Q1_NAME_QC_ANTIGRAV_FAILING, Q1_NAME_QC_ANTIGRAV_LOST, Q1_NAME_RESOURCE_BELT_FADEOUT_WAV},
+                  {QA_Q1_LAVA_SUIT, Q1_NAME_MG3_LAVASUIT_WEARING_OUT, Q1_NAME_COUNT, Q1_NAME_RESOURCE_ITEMS_SUIT2_WAV}};
     qa_actor_id actor = player->id;
     if (!q1_enable_combos(g, player, error))
         return false;
@@ -153,7 +165,8 @@ bool q1_power_frame(qa_q1_game *g, q1_player *player, double seconds,
         if (!player->power_order[power])
             continue;
         if (expires < seconds + 3 && !(player->power_warned & (1u << power))) {
-            if (!q1_message(g, actor, timers[i].warning, error) ||
+            if (!q1_message_resource_args(g, actor, g->runtime_names[timers[i].warning],
+                                          0, NULL, 0, error) ||
                 !timer_current(g, actor, player, error) ||
                 !q1_sound_resource(g, actor, g->runtime_names[timers[i].sound], 0, 1, 1, error) ||
                 !timer_current(g, actor, player, error))
@@ -174,7 +187,9 @@ bool q1_power_frame(qa_q1_game *g, q1_player *player, double seconds,
         if (!q1_alive(g, player->id))
             return true;
         if (expires <= seconds && !(player->power_lost & (1u << power))) {
-            if (!q1_message(g, actor, timers[i].lost, error) ||
+            qa_string_id lost = timers[i].lost == Q1_NAME_COUNT ? QA_STRING_NONE :
+                g->runtime_names[timers[i].lost];
+            if (!q1_message_resource_args(g, actor, lost, 0, NULL, 0, error) ||
                 !timer_current(g, actor, player, error)) return false;
             player->power_lost |= (uint16_t)(1u << power);
             if (power == QA_Q1_ANTIGRAV) {
@@ -330,9 +345,8 @@ bool qa_q1_game_damage_effect(qa_q1_game *g, qa_damage_effect_stage stage,
     if (stage == QA_DAMAGE_BEFORE_QUAD) {
         if (player->power_expires[QA_Q1_WETSUIT] != 0 &&
             request->attack.cause.kind == QA_CAUSE_Q1) {
-            qa_bytes cause = qa_strings_text(qa_session_strings(g->services.session),
-                                             request->attack.cause.source.q1.death_type);
-            if (cause.size == 9 && !memcmp(cause.data, "discharge", 9)) {
+            if (request->attack.cause.source.q1.death_type ==
+                g->runtime_names[Q1_NAME_RESOURCE_DISCHARGE]) {
                 effect->allowed = false;
                 return true;
             }
@@ -360,10 +374,8 @@ bool qa_q1_game_damage_effect(qa_q1_game *g, qa_damage_effect_stage stage,
         if (attacker.registry && !qa_actor_id_equal(attacker, request->target) &&
             player->power_expires[QA_Q1_EMPATHY] != 0 &&
             (!inflictor || inflictor->power_expires[QA_Q1_EMPATHY] == 0)) {
-            qa_string_id cause;
+            qa_string_id cause = g->runtime_names[Q1_NAME_HIPNOTIC_EMPATHY];
             effect->amount *= 0.5f;
-            if (!qa_builtin_resource(&g->services, "hipnotic:empathy", &cause, error))
-                return false;
             return !q1_alive(g, attacker) ||
                    q1_damage_typed(g, attacker, request->target, request->target, effect->amount,
                                    QA_Q1_WEAPON_COUNT, QA_Q1_ARMOR_NORMAL, cause, error);
@@ -398,9 +410,8 @@ bool q1_sphere_pickup(qa_q1_game *g, q1_actor *item, qa_actor_id actor, bool *ta
     sphere->state.projectile.expires = g->time + 30;
     sphere->state.projectile.activator = q1_ref_from(g, sphere->id);
     sphere->state.projectile.attack = q1_attack(g, sphere->id, sphere->id, QA_Q1_WEAPON_COUNT);
-    if (!qa_builtin_resource(&g->services, "rogue:vengeance",
-                             &sphere->state.projectile.attack.cause.source.q1.death_type, error))
-        return false;
+    sphere->state.projectile.attack.cause.source.q1.death_type =
+        g->runtime_names[Q1_NAME_ROGUE_VENGEANCE];
     sphere->physics.motion = QA_PHYSICS_FLY_MISSILE;
     sphere->physics.solid = QA_PHYSICS_NOT_SOLID;
     sphere->physics.angular_velocity = qa_v3(40, 40, 40);
@@ -423,7 +434,8 @@ static bool sphere_attack(qa_q1_game *g, q1_actor *sphere, qa_error *error) {
         return true;
     qa_actor_id enemy = q1_ref_actor(g, sphere->state.projectile.enemy);
     if (!q1_alive(g, enemy) || q1_health(g, enemy) < 1) {
-        if (!q1_message(g, q1_ref_actor(g, sphere->owner), "$qc_you_are_denied_vengeance", error))
+        if (!q1_message_resource_args(g, q1_ref_actor(g, sphere->owner),
+            g->runtime_names[Q1_NAME_QC_DENIED_VENGEANCE], 0, NULL, 0, error))
             return false;
         return q1_remove(g, sphere, error);
     }
@@ -473,7 +485,8 @@ bool q1_power_think(qa_q1_game *g, q1_actor *entity, q1_think_kind kind, qa_erro
                                   &consumed, error))
             return false;
         if (g->time > entity->state.projectile.expires) {
-            if (!q1_message(g, player->id, "$qc_vengeance_lost", error))
+            if (!q1_message_resource_args(g, player->id,
+                g->runtime_names[Q1_NAME_QC_VENGEANCE_LOST], 0, NULL, 0, error))
                 return false;
             return q1_remove(g, entity, error);
         }

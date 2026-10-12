@@ -15,11 +15,9 @@ static const q1_actor *state_const(const qa_q1_game *game, qa_actor_id actor,
     qa_error *error) {
     if (!rogue(game, error)) return NULL;
     const q1_actor *state = q1_entity_const(game, actor);
-    qa_bytes classname = state ?
-        qa_strings_text(qa_session_strings(game->services.session), state->classname) : (qa_bytes){0};
     if (!state || !state->native || state->kind != Q1_ROGUE_TEAM_STATE ||
-        !q1_ref_present(state->owner) || classname.size != sizeof("rogue_team_state") - 1 ||
-        memcmp(classname.data, "rogue_team_state", classname.size)) {
+        !q1_ref_present(state->owner) ||
+        state->classname != game->runtime_names[Q1_NAME_CLASS_ROGUE_TEAM_STATE]) {
         fail(error, actor, "Rogue word has no genuine team-state actor");
         return NULL;
     }

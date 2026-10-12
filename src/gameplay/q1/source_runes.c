@@ -1,7 +1,8 @@
 #include "maps/internal.h"
 
-static const char *const rune_names[QA_Q1_RUNE_COUNT] = {
-    "resistance", "strength", "haste", "regeneration"};
+static const q1_runtime_name rune_words[QA_Q1_RUNE_COUNT] = {
+    Q1_NAME_RUNE_RESISTANCE, Q1_NAME_RUNE_STRENGTH, Q1_NAME_RUNE_HASTE,
+    Q1_NAME_RUNE_REGENERATION};
 static const q1_runtime_name rune_classes[QA_Q1_RUNE_COUNT] = {
     Q1_NAME_CLASS_ITEM_RUNE_RESISTANCE, Q1_NAME_CLASS_ITEM_RUNE_STRENGTH, Q1_NAME_CLASS_ITEM_RUNE_HASTE, Q1_NAME_CLASS_ITEM_RUNE_REGENERATION};
 static const q1_runtime_name rune_models[QA_Q1_RUNE_COUNT] = {
@@ -56,10 +57,8 @@ bool qa_q1_source_rune_read(const qa_q1_game *game, qa_actor_id actor,
         game->options.program != QA_Q1_CTF || !entity || !entity->native ||
         entity->kind != Q1_SOURCE_CTF_RUNE)
         return fail(error, actor, "CTF rune observation requires its genuine native entity");
-    qa_strings *strings = qa_session_strings(game->services.session);
-    qa_bytes word = qa_strings_text(strings, entity->state.source_rune.rune);
     for (unsigned i = 0; i < QA_Q1_RUNE_COUNT; ++i)
-        if (word.size == strlen(rune_names[i]) && !memcmp(word.data, rune_names[i], word.size)) {
+        if (entity->state.source_rune.rune == game->runtime_names[rune_words[i]]) {
             *out = (qa_q1_source_rune)i;
             return true;
         }
@@ -112,9 +111,8 @@ static bool drop(qa_q1_game *game, qa_q1_source_rune rune, qa_vec3 origin,
     entity->physics.solid = QA_PHYSICS_TRIGGER;
     entity->physics.motion = QA_PHYSICS_TOSS;
     entity->state.source_rune.movement_flags |= UINT32_C(256);
-    if (!qa_strings_intern_cstr(qa_session_strings(game->services.session), rune_names[rune],
-        &entity->state.source_rune.rune, error) ||
-        !actor_current(game, actor, entity, Q1_SOURCE_CTF_RUNE, error)) return false;
+    entity->state.source_rune.rune = game->runtime_names[rune_words[rune]];
+    if (!actor_current(game, actor, entity, Q1_SOURCE_CTF_RUNE, error)) return false;
     qa_body_state body;
     if (!qa_world_body_read(game->services.world, actor, &body, error) ||
         !actor_current(game, actor, entity, Q1_SOURCE_CTF_RUNE, error)) return false;
@@ -157,9 +155,7 @@ bool q1_source_runes_start(qa_q1_game *game, qa_error *error) {
     if (game->options.program != QA_Q1_CTF || !game->options.deathmatch) return true;
     q1_actor *owner = world(game, error);
     if (!owner) return false;
-    qa_strings *strings = qa_session_strings(game->services.session);
-    qa_bytes map = qa_strings_text(strings, game->maps->options.current_map);
-    if (map.size == 5 && !memcmp(map.data, "start", 5)) return true;
+    if (game->maps->options.current_map == game->runtime_names[Q1_NAME_START_MAP]) return true;
     if (owner->ctf_runes_spawned != 0) return true;
     owner->ctf_runes_spawned = 1;
     q1_actor *timer;

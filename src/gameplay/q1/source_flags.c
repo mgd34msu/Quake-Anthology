@@ -80,11 +80,8 @@ bool qa_q1_source_flag_read(const qa_q1_game *game, qa_actor_id actor,
     if (!out || !game || game->continuation_pending || game->options.program != QA_Q1_CTF ||
         !entity || !entity->native || entity->kind != Q1_SOURCE_CTF_FLAG)
         return fail(error, actor, "CTF flag observation lost its native source owner");
-    qa_bytes name = qa_strings_text(qa_session_strings(game->services.session), entity->classname);
-    bool blue = name.size == sizeof("item_flag_team2") - 1 &&
-        !memcmp(name.data, "item_flag_team2", name.size);
-    if (!blue && (name.size != sizeof("item_flag_team1") - 1 ||
-        memcmp(name.data, "item_flag_team1", name.size)))
+    bool blue = entity->classname == game->runtime_names[Q1_NAME_ITEM_FLAG_TEAM2];
+    if (!blue && entity->classname != game->runtime_names[Q1_NAME_ITEM_FLAG_TEAM1])
         return fail(error, actor, "CTF flag observation names a different source class");
     *out = (qa_q1_source_flag_view){.actor = actor, .owner = q1_ref_actor(game, entity->owner),
         .base = entity->state.source_flag.base, .angles = entity->state.source_flag.angles,

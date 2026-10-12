@@ -915,9 +915,8 @@ static bool item_original(void *context, const qa_pickup_offer *offer, bool *tak
         if (armor.points >= 200)
             return true;
         qa_string_id identity = armor.item;
-        if (armor.kind != QA_ARMOR_Q1 &&
-            !qa_builtin_resource(&g->services, "q1:item_armor1", &identity, error))
-            return false;
+        if (armor.kind != QA_ARMOR_Q1)
+            identity = g->runtime_names[Q1_NAME_ITEM_ARMOR1];
         armor = (qa_regular_armor){
             .kind = QA_ARMOR_Q1,
             .item = identity,
@@ -1129,8 +1128,8 @@ static bool pickup_grant(qa_q1_game *g, q1_actor *entity, qa_actor_id recipient,
 static bool mg3_upgrade_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id recipient,
     q1_player *player, qa_error *error) {
     q1_pickup *item = &entity->state.pickup;
-    static const char *const labels[] = {"$mg3_qc_upgrade_health", "$mg3_qc_upgrade_shell",
-        "$mg3_qc_upgrade_nail", "$mg3_qc_upgrade_rocket", "$mg3_qc_upgrade_cell"};
+    static const q1_runtime_name labels[] = {Q1_NAME_MG3_UPGRADE_HEALTH, Q1_NAME_MG3_UPGRADE_SHELL,
+        Q1_NAME_MG3_UPGRADE_NAIL, Q1_NAME_MG3_UPGRADE_ROCKET, Q1_NAME_MG3_UPGRADE_CELL};
     if (item->upgrade >= sizeof(labels) / sizeof(*labels)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, entity->id.slot, "MG3 upgrade lacks its actual source type");
         return false;
@@ -1141,14 +1140,14 @@ static bool mg3_upgrade_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id recip
         &collected, &maximum, error)) return false;
     item_touch touch = {.game = g, .entity = entity, .recipient = recipient, .original_ran = true};
     if (!touch_live(&touch)) return true;
-    qa_string_id label;
-    if (!qa_builtin_resource(&g->services, labels[item->upgrade], &label, error)) return false;
+    qa_string_id label = g->runtime_names[labels[item->upgrade]];
     if (!touch_live(&touch)) return true;
     qa_builtin_message_arg arguments[] = {
         {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = label},
         {.kind = QA_BUILTIN_MESSAGE_NUMBER, .value.number = maximum}};
-    if (!q1_message_args(g, recipient, collected ? "$mg3_qc_upgrade_fail" :
-        "$mg3_qc_upgrade_success", arguments, collected ? 1 : 2, error)) return false;
+    if (!q1_message_resource_args(g, recipient,
+        g->runtime_names[collected ? Q1_NAME_MG3_UPGRADE_FAIL : Q1_NAME_MG3_UPGRADE_SUCCESS],
+        0, arguments, collected ? 1 : 2, error)) return false;
     return !touch_live(&touch) || item_complete(&touch, NULL, true, error);
 }
 
@@ -1173,9 +1172,8 @@ bool q1_mg3_debug_upgrade(qa_q1_game *g, qa_actor_id recipient, unsigned type,
     entity->state.pickup.kind = Q1_ITEM_MG3_UPGRADE;
     entity->state.pickup.upgrade = (uint8_t)type;
     entity->state.pickup.upgrade_flag = flag;
-    qa_string_id sound;
-    if (!qa_builtin_resource(&g->services, type == 0 ? "player/tornoff2.wav" :
-        "weapons/lock4.wav", &sound, error)) return false;
+    qa_string_id sound = g->runtime_names[type == 0 ? Q1_NAME_RESOURCE_PLAYER_TORNOFF2_WAV :
+        Q1_NAME_RESOURCE_WEAPONS_LOCK4_WAV];
     if (g->destroy_pending || q1_player_get(g, recipient) != player || !q1_alive(g, recipient) ||
         q1_entity(g, created) != entity || !q1_alive(g, created)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, recipient.slot, "MG3 upgrade resource admission retired its source binding");
@@ -1212,7 +1210,8 @@ bool q1_pickup_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id recipient, qa_
                 !qa_inventory_configure(g->services.inventory, recipient, &entry, NULL, NULL,
                                         error) ||
                 !qa_q1_player_select(g, recipient, item->weapon, error) ||
-                !q1_message(g, recipient, "$mg3_map2_secret_weapon", error))
+                !q1_message_resource_args(g, recipient, g->runtime_names[Q1_NAME_MG3_SECRET_WEAPON],
+                                          0, NULL, 0, error))
                 return false;
         }
         item_touch touch = {
@@ -1396,10 +1395,10 @@ bool q1_backpack_definition(qa_q1_game *g, q1_actor *pack, qa_error *error) {
     item->duration = 30;
     item->respawn = -1;
     item->avoid_underwater_lightning = g->options.edition == QA_Q1_RERELEASE;
-    if (!qa_builtin_resource(&g->services, "q1:item_backpack", &item->item, error) ||
-        !q1_model(g, pack, g->runtime_names[Q1_NAME_RESOURCE_PROGS_BACKPACK_MDL], error) ||
-        !qa_builtin_resource(&g->services, "weapons/lock4.wav", &item->sound, error))
+    item->item = g->runtime_names[Q1_NAME_ITEM_BACKPACK];
+    if (!q1_model(g, pack, g->runtime_names[Q1_NAME_RESOURCE_PROGS_BACKPACK_MDL], error))
         return false;
+    item->sound = g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_LOCK4_WAV];
     item->original_model = pack->model;
     return true;
 }

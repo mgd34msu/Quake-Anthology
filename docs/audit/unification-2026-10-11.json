@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "e45c4387f08ffb7eef73036f56c462ff5318e37c",
+  "verified_main": "69dd092d574a95edc3f4b6e3f8e9396dbf16e4f1",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 224,
-    "open_source_observation": 147,
+    "fixed_source_build_core": 229,
+    "open_source_observation": 142,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -26666,8 +26666,9 @@
       "severity": "medium",
       "job": "05",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "69dd092d574a95edc3f4b6e3f8e9396dbf16e4f1"
     },
     {
       "id": "05-I2",
@@ -26684,8 +26685,9 @@
       "severity": "medium",
       "job": "05",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "69dd092d574a95edc3f4b6e3f8e9396dbf16e4f1"
     },
     {
       "id": "05-I3",
@@ -26702,8 +26704,9 @@
       "severity": "medium",
       "job": "05",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "69dd092d574a95edc3f4b6e3f8e9396dbf16e4f1"
     },
     {
       "id": "05-D1",
@@ -26755,8 +26758,9 @@
       "severity": "medium",
       "job": "05",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "69dd092d574a95edc3f4b6e3f8e9396dbf16e4f1"
     },
     {
       "id": "05-N1",
@@ -29960,8 +29964,9 @@
       "severity": "medium",
       "job": "16",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "69dd092d574a95edc3f4b6e3f8e9396dbf16e4f1"
     },
     {
       "id": "16-002",
@@ -43269,6 +43274,43 @@
       ],
       "record_directory": "/tmp/qa-ta3196-q3-bound-sounds-spawn-ids-20261012-v1",
       "conclusion": "Q3 fixed sound/index and spawnpoint consumers use retained canonical IDs with configstring revision invalidation; original first-use ordinals and spawn policies are preserved. Normal build and seven core suites passed; no live or performance claim."
+    },
+    {
+      "commit": "69dd092d574a95edc3f4b6e3f8e9396dbf16e4f1",
+      "source_tree": "70059ae816511999c22b13bd5734ce18c4aaf23f",
+      "finding_ids": [
+        "05-I1",
+        "05-I2",
+        "05-I3",
+        "05-I4",
+        "16-001"
+      ],
+      "files_rechecked": [
+        "src/app/application/composition.c",
+        "src/app/application/internal.h",
+        "src/app/application/lifetime.c",
+        "src/app/application/save_policy.c",
+        "src/app/application/selected_q3_character.c",
+        "src/app/application/services.c",
+        "src/app/application/unified_q2_components.c",
+        "src/app/application/unified_q2_events.c",
+        "src/app/application/unified_q3_sources.c",
+        "src/app/frontend/q1_sky.c",
+        "src/app/frontend/q1_sky_private.h"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-indexed-provider-and-sky-identity-20261012-v1",
+      "conclusion": "Provider/client/sky identity callers use common full-generation indexes; source validity, reentrant route membership and retained sky precedence are preserved. Normal build and seven core suites passed; no live or allocation claim."
     }
   ],
   "verification_limits": [

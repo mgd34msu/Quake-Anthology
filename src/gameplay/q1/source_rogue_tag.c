@@ -226,11 +226,8 @@ bool qa_q1_source_rogue_tag_score(qa_q1_game *game, qa_actor_id victim,
         okay = write_value(game, source, true, source->state.source_tag.frags + 1, error);
         double frags = source->state.source_tag.frags;
         if (okay && frags == 5 && q1_player_get(game, attacker)) {
-            qa_string_id text = 0;
-            okay = qa_strings_intern_cstr(qa_session_strings(game->services.session), "$qc_got_quad", &text, error);
-            qa_builtin_event event = {.kind = QA_BUILTIN_MESSAGE, .family = QA_GAME_Q1,
-                .provider = game->options.provider, .actor = attacker, .text = text, .time_ns = game->time_ns};
-            if (okay) okay = qa_builtin_emit(&game->services, &event, error) &&
+            okay = q1_message_resource_args(game, attacker,
+                game->runtime_names[Q1_NAME_QC_GOT_QUAD], 0, NULL, 0, error) &&
                 current(game, source->id, source, error) &&
                 q1_power_give(game, attacker, QA_Q1_QUAD, 30, error) &&
                 current(game, source->id, source, error);

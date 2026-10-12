@@ -20,6 +20,50 @@
 #define Q1_SOURCE_INITIAL_TIME_NS UINT64_C(1000000000)
 
 #define Q1_RUNTIME_NAME_LIST(X) \
+    X(ACH_FIND_SECRET, "ACH_FIND_SECRET") \
+    X(RUNE_RESISTANCE, "resistance") \
+    X(RUNE_STRENGTH, "strength") \
+    X(RUNE_HASTE, "haste") \
+    X(RUNE_REGENERATION, "regeneration") \
+    X(ITEM_CTF_RUNE_RESISTANCE, "q1:ctf/rune/resistance") \
+    X(ITEM_CTF_RUNE_STRENGTH, "q1:ctf/rune/strength") \
+    X(ITEM_CTF_RUNE_HASTE, "q1:ctf/rune/haste") \
+    X(ITEM_CTF_RUNE_REGENERATION, "q1:ctf/rune/regeneration") \
+    X(ITEM_ARMOR1, "q1:item_armor1") \
+    X(ITEM_ARMOR_INV, "q1:item_armorInv") \
+    X(ITEM_BACKPACK, "q1:item_backpack") \
+    X(OGRE_MISSILE, "ogre_missile") \
+    X(MINI_GRENADE, "MiniGrenade") \
+    X(EXIT, "exit") \
+    X(TRIGGER, "trigger") \
+    X(ROGUE_VENGEANCE, "rogue:vengeance") \
+    X(ROGUE_LAVA, "rogue:lava") \
+    X(ROGUE_SUPER_LAVA, "rogue:super-lava") \
+    X(QC_GOT_QUAD, "$qc_got_quad") \
+    X(MG3_UPGRADE_HEALTH, "$mg3_qc_upgrade_health") \
+    X(MG3_UPGRADE_SHELL, "$mg3_qc_upgrade_shell") \
+    X(MG3_UPGRADE_NAIL, "$mg3_qc_upgrade_nail") \
+    X(MG3_UPGRADE_ROCKET, "$mg3_qc_upgrade_rocket") \
+    X(MG3_UPGRADE_CELL, "$mg3_qc_upgrade_cell") \
+    X(MG3_UPGRADE_FAIL, "$mg3_qc_upgrade_fail") \
+    X(MG3_UPGRADE_SUCCESS, "$mg3_qc_upgrade_success") \
+    X(MG3_SECRET_WEAPON, "$mg3_map2_secret_weapon") \
+    X(QC_NO_WEAPON, "$qc_no_weapon") \
+    X(QC_NOT_ENOUGH_AMMO, "$qc_not_enough_ammo") \
+    X(QC_LAVA_ENABLED, "$qc_lava_enabled") \
+    X(QC_SUPER_LAVA_ENABLED, "$qc_super_lava_enabled") \
+    X(QC_MULTI_GL_ENABLED, "$qc_multi_gl_enabled") \
+    X(QC_MULTI_RL_ENABLED, "$qc_multi_rl_enabled") \
+    X(QC_PLASMA_ENABLED, "$qc_plasma_enabled") \
+    X(QC_WETSUIT_FADE, "$qc_wetsuit_fade") \
+    X(QC_EMPATHY_FADE, "$qc_empathy_fade") \
+    X(QC_SHIELD_FAILING, "$qc_shield_failing") \
+    X(QC_SHIELD_LOST, "$qc_shield_lost") \
+    X(QC_ANTIGRAV_FAILING, "$qc_antigrav_failing") \
+    X(QC_ANTIGRAV_LOST, "$qc_antigrav_lost") \
+    X(MG3_LAVASUIT_WEARING_OUT, "$mg3_qc_lavasuit_wearing_out") \
+    X(QC_DENIED_VENGEANCE, "$qc_you_are_denied_vengeance") \
+    X(QC_VENGEANCE_LOST, "$qc_vengeance_lost") \
     X(TOSS_ORIGIN, "_toss_origin") \
     X(INFO_STARTENDTEXT_USE, "info_startendtext_use") \
     X(EFFECT_FINALE_USE, "effect_finale_use") \
@@ -1780,6 +1824,8 @@ bool q1_message(qa_q1_game *, qa_actor_id, const char *, qa_error *);
 bool q1_spawn_bubble(qa_q1_game *, qa_vec3 origin, qa_vec3 velocity, bool split, qa_error *);
 bool q1_message_args(qa_q1_game *, qa_actor_id, const char *, const qa_builtin_message_arg *,
                      size_t, qa_error *);
+bool q1_message_resource_args(qa_q1_game *, qa_actor_id, qa_string_id, uint32_t flags,
+    const qa_builtin_message_arg *, size_t, qa_error *);
 bool q1_toss_backpack(qa_q1_game *, qa_actor_id, qa_vec3, qa_vec3, const float[QA_Q1_AMMO_COUNT],
                       q1_actor **, qa_error *);
 void q1_drop_offer(const qa_q1_game *, const q1_actor *, qa_actor_id,

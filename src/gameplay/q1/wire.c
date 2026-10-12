@@ -472,9 +472,8 @@ bool qa_q1_wire_board_observe(const qa_q1_wire_receipt *receipt, uint32_t slot,
         if (!qa_q1_source_client_read(g, actor, &view) || view.slot != slot || !isfinite(view.frags))
             return fail(error, "Q1 source client observation lost its actual publication");
         value = (q1_wire_client){.actor = actor, .frags = view.frags,
-            .colors = (uint8_t)((view.shirt << 4) | view.pants), .present = true};
-        if (!qa_strings_intern_cstr(qa_session_strings(g->services.session), view.name, &value.name, error))
-            return false;
+            .colors = (uint8_t)((view.shirt << 4) | view.pants), .present = true,
+            .name = view.name_id};
     }
     q1_wire_client *previous = &g->wire->board[slot];
     bool membership = previous->present != value.present ||

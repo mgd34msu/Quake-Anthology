@@ -38,12 +38,11 @@ bool qa_q1_source_inventory_initialize(qa_q1_game *game, qa_actor_id actor, qa_e
     for (int ammo = QA_Q1_SHELLS; ok && ammo <= QA_Q1_CELLS; ++ammo)
         ok = configure(&operation, actor, player, game->ammo[ammo],
             ammo == QA_Q1_SHELLS ? 25 : 0, qa_q1_ammo_capacity((qa_q1_ammo)ammo), false, error);
-    const char *keys[] = {"q1:key/silver", "q1:key/gold"};
+    static const q1_runtime_name keys[] = {Q1_NAME_KEY_SILVER, Q1_NAME_KEY_GOLD};
     for (size_t i = 0; ok && i < sizeof(keys) / sizeof(*keys); ++i) {
-        qa_item_id item;
-        ok = qa_builtin_resource(&game->services, keys[i], &item, error) &&
-            source_current(&operation, actor, player, error) &&
-            configure(&operation, actor, player, item, 0, 1, false, error);
+        ok = source_current(&operation, actor, player, error) &&
+             configure(&operation, actor, player, game->runtime_names[keys[i]],
+                       0, 1, false, error);
     }
     int first = game->options.program == QA_Q1_HIPNOTIC ? QA_Q1_LASER : QA_Q1_LAVA_NAILGUN;
     int last = game->options.program == QA_Q1_HIPNOTIC ? QA_Q1_PROXIMITY : QA_Q1_PLASMA;

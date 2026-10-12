@@ -208,9 +208,9 @@ bool q1_map_multi_fire(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, q
                                       .family = QA_GAME_Q1,
                                       .provider = g->options.provider,
                                       .actor = activator,
-                                      .time_ns = g->time_ns};
-            if (!qa_builtin_resource(&g->services, "ACH_FIND_SECRET", &event.text, error) ||
-                !qa_builtin_emit(&g->services, &event, error))
+                                      .time_ns = g->time_ns,
+                                      .text = g->runtime_names[Q1_NAME_ACH_FIND_SECRET]};
+            if (!qa_builtin_emit(&g->services, &event, error))
                 return false;
             if (!q1_alive(g, entity->id))
                 return true;
@@ -347,11 +347,9 @@ static bool cvar(qa_q1_game *g, qa_q1_source_setting setting, float *value, qa_e
     return isfinite(*value) || q1_map_fail(error, "nonfinite Q1 map cvar");
 }
 static bool damage(qa_q1_game *g, q1_actor *entity, qa_actor_id other, float amount,
-                   const char *cause, qa_error *error) {
-    qa_string_id type;
-    return qa_builtin_resource(&g->services, cause, &type, error) &&
-           q1_damage_typed(g, other, entity->id, entity->id, amount, QA_Q1_WEAPON_COUNT,
-                           QA_Q1_ARMOR_NORMAL, type, error);
+                    qa_string_id cause, qa_error *error) {
+    return q1_damage_typed(g, other, entity->id, entity->id, amount, QA_Q1_WEAPON_COUNT,
+                           QA_Q1_ARMOR_NORMAL, cause, error);
 }
 static bool changelevel(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *error) {
     if (!q1_map_player(g, other))
@@ -360,10 +358,9 @@ static bool changelevel(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_e
     if (!cvar(g, QA_Q1_SOURCE_NOEXIT, &no_exit, error) || !cvar(g, QA_Q1_SOURCE_SAMELEVEL, &same_level, error))
         return false;
     const qa_q1_map_options *options = &g->maps->options;
-    const char *current =
-        qa_strings_cstr(qa_session_strings(g->services.session), options->current_map);
-    if (no_exit == 1 || (no_exit == 2 && (!current || strcmp(current, "start"))))
-        return damage(g, entity, other, 50000, "exit", error);
+    if (no_exit == 1 || (no_exit == 2 &&
+        options->current_map != g->runtime_names[Q1_NAME_START_MAP]))
+        return damage(g, entity, other, 50000, g->runtime_names[Q1_NAME_EXIT], error);
     if (!qa_q1_level_touch(options->level, entity->id, other, error))
         return false;
     if (!q1_alive(g, entity->id))
@@ -465,7 +462,7 @@ bool q1_map_trigger_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contac
         if (entity->physics.solid != QA_PHYSICS_TRIGGER || !q1_damageable(g, other))
             return true;
         entity->physics.solid = QA_PHYSICS_NOT_SOLID;
-        if (!damage(g, entity, other, entity->damage, "trigger", error))
+        if (!damage(g, entity, other, entity->damage, g->runtime_names[Q1_NAME_TRIGGER], error))
             return false;
         return !q1_alive(g, entity->id) || q1_map_schedule(g, entity, 1, Q1_MAP_REARM, error);
     case Q1_MAP_PUSH:

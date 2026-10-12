@@ -93,16 +93,6 @@ static bool grant(qa_q1_game_operation *operation, qa_actor_id actor,
             NULL, NULL, error) && source_current(operation, actor, player, slot, error);
 }
 
-static bool named_grant(qa_q1_game_operation *operation, qa_actor_id actor,
-    const q1_player *player, uint32_t slot, const char *name, double count,
-    qa_error *error)
-{
-    qa_item_id item;
-    return qa_builtin_resource(&operation->game->services, name, &item, error) &&
-        source_current(operation, actor, player, slot, error) &&
-        grant(operation, actor, player, slot, item, count, 1, error);
-}
-
 static bool deathmatch_birth(qa_q1_game *game, qa_actor_id actor, bool dm4, qa_error *error)
 {
     if (!game || game->options.rules != QA_RULESET_QUAKEWORLD || game->options.program != QA_Q1_ID1 ||
@@ -138,8 +128,10 @@ static bool deathmatch_birth(qa_q1_game *game, qa_actor_id actor, bool dm4, qa_e
         okay = grant(&operation, actor, player, slot, game->weapons[weapons[i]], 1, 1, error);
     }
     qa_item_id armor;
-    if (okay) okay = qa_builtin_resource(&game->services, "q1:item_armorInv", &armor, error) &&
-        source_current(&operation, actor, player, slot, error);
+    if (okay) {
+        armor = game->runtime_names[Q1_NAME_ITEM_ARMOR_INV];
+        okay = source_current(&operation, actor, player, slot, error);
+    }
     if (okay) {
         qa_armor protection = {.regular = {.kind = QA_ARMOR_Q1, .item = armor,
             .points = 200, .protection.q1_absorption = .8f}};
@@ -217,14 +209,15 @@ bool qa_q1_source_ctf_spawn_arsenal(qa_q1_game *game, qa_actor_id actor,
             "ThreeWave birth lost its actual source map");
         goto finish;
     }
-    bool start = !strcmp(map, "start");
+    bool start = qa_q1_game_map_name(game) == game->runtime_names[Q1_NAME_START_MAP];
     if (!qa_q1_player_powers_clear(game, actor, error) ||
         !source_current(&operation, actor, player, slot, error)) goto finish;
-    static const char *const cleared[] = {"q1:key/silver", "q1:key/gold",
-        "q1:ctf/rune/resistance", "q1:ctf/rune/strength",
-        "q1:ctf/rune/haste", "q1:ctf/rune/regeneration"};
+    static const q1_runtime_name cleared[] = {Q1_NAME_KEY_SILVER, Q1_NAME_KEY_GOLD,
+        Q1_NAME_ITEM_CTF_RUNE_RESISTANCE, Q1_NAME_ITEM_CTF_RUNE_STRENGTH,
+        Q1_NAME_ITEM_CTF_RUNE_HASTE, Q1_NAME_ITEM_CTF_RUNE_REGENERATION};
     for (size_t i = 0; i < sizeof(cleared) / sizeof(*cleared); ++i)
-        if (!named_grant(&operation, actor, player, slot, cleared[i], 0, error)) goto finish;
+        if (!grant(&operation, actor, player, slot, game->runtime_names[cleared[i]],
+                   0, 1, error)) goto finish;
     for (unsigned weapon = QA_Q1_AXE; weapon <= QA_Q1_LIGHTNING; ++weapon)
         if (!grant(&operation, actor, player, slot, game->weapons[weapon],
             weapon == QA_Q1_AXE || (weapon == QA_Q1_SHOTGUN && !start) ? 1 : 0,
@@ -237,10 +230,9 @@ bool qa_q1_source_ctf_spawn_arsenal(qa_q1_game *game, qa_actor_id actor,
         native_grapple_enabled && !start && !grapple_disabled ? 1 : 0, 1, error)) goto finish;
     qa_armor armor = {0};
     if (!start) {
-        qa_item_id item;
-        if (!qa_builtin_resource(&game->services, "q1:item_armor1", &item, error) ||
-            !source_current(&operation, actor, player, slot, error)) goto finish;
-        armor.regular = (qa_regular_armor){.kind = QA_ARMOR_Q1, .item = item,
+        if (!source_current(&operation, actor, player, slot, error)) goto finish;
+        armor.regular = (qa_regular_armor){.kind = QA_ARMOR_Q1,
+            .item = game->runtime_names[Q1_NAME_ITEM_ARMOR1],
             .points = 50, .protection.q1_absorption = 0.3f};
     }
     bool selected;

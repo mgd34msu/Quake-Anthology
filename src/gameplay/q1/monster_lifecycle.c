@@ -17,8 +17,7 @@ static bool retaliate(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_
     }
     if (classname == entity->classname && m->species->species != QA_Q1_ARMY)
         return true;
-    qa_bytes text = qa_strings_text(qa_session_strings(g->services.session), classname);
-    if (text.size == 10 && !memcmp(text.data, "worldspawn", 10))
+    if (classname == g->runtime_names[Q1_NAME_WORLDSPAWN])
         return true;
     if (q1_ref_equal(m->enemy, q1_ref_from(g, attacker)))
         return true;
