@@ -63,11 +63,11 @@ void frontend_player_retire(frontend_seat *seat)
 }
 bool frontend_player_events(qa_frontend *frontend, qa_error *error)
 {
-    for (uint64_t i=qa_application_events_local_first(frontend->application);
-        i<qa_application_events_next(frontend->application);++i) {
-        qa_application_event_view output;
-        if (!qa_application_event_read(frontend->application, &(qa_application_event_cursor){.id = i, .projection = 0}, &output) ||
-            output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
+    qa_application_event_range range = {.next = qa_application_events_local_first(frontend->application),
+        .end = UINT64_MAX};
+    qa_application_event_view output;
+    while (qa_application_event_raw_next(frontend->application, &range,
+        UINT64_C(1) << QA_APPLICATION_EVENT_BUILTIN, &output)) {
         qa_builtin_event event = *output.value.builtin;
         if (event.kind==QA_BUILTIN_SOURCE_PROMPT || event.kind==QA_BUILTIN_CLEAR_PROMPT) {
             for (unsigned seat=0;seat<frontend->options.seats && !frontend->options.dedicated;++seat)
@@ -93,11 +93,10 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
             }
         }
     }
-    for (uint64_t i = qa_application_events_local_first(frontend->application);
-        i < qa_application_events_next(frontend->application); ++i) {
-        qa_application_event_view output;
-        if (!qa_application_event_read(frontend->application, &(qa_application_event_cursor){.id = i, .projection = 0}, &output) ||
-            output.kind != QA_APPLICATION_EVENT_Q2_PLAYER) continue;
+    range = (qa_application_event_range){.next = qa_application_events_local_first(frontend->application),
+        .end = UINT64_MAX};
+    while (qa_application_event_raw_next(frontend->application, &range,
+        UINT64_C(1) << QA_APPLICATION_EVENT_Q2_PLAYER, &output)) {
         qa_application_q2_player_event observed = *output.value.q2_player;
         const qa_q2_player_event *event = &observed.event;
         for (unsigned j = 0; j < frontend->options.seats; ++j) {
@@ -143,11 +142,10 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
         }
     }
     qa_strings *strings = qa_session_strings(qa_application_session(frontend->application));
-    for (uint64_t i = qa_application_events_local_first(frontend->application);
-        i < qa_application_events_next(frontend->application); ++i) {
-        qa_application_event_view output;
-        if (!qa_application_event_read(frontend->application, &(qa_application_event_cursor){.id = i, .projection = 0}, &output) ||
-            output.kind != QA_APPLICATION_EVENT_Q2_MAP) continue;
+    range = (qa_application_event_range){.next = qa_application_events_local_first(frontend->application),
+        .end = UINT64_MAX};
+    while (qa_application_event_raw_next(frontend->application, &range,
+        UINT64_C(1) << QA_APPLICATION_EVENT_Q2_MAP, &output)) {
         qa_application_q2_map_event observed = *output.value.q2_map;
         const qa_q2_map_event *event = &observed.event;
         if (event->kind != QA_Q2_MAP_HELP && event->kind != QA_Q2_MAP_HELP_COMPUTER && event->kind != QA_Q2_MAP_STORY) continue;

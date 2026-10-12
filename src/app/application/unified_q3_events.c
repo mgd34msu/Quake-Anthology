@@ -100,11 +100,12 @@ bool application_q3_command_lookup(application_q3_command_cursor *cursor,int32_t
     if((int64_t)cursor->sequence-sequence>=QA_Q3_RELIABLE)
         return application_fail(error,QA_ERROR_FORMAT,"Q3 server command has left its retained window");
     if(cursor->delivery.application) {
-        uint64_t end=qa_application_events_next(cursor->application);
-        for(uint64_t id=cursor->delivery.next;id<end;++id) {
-            qa_application_event_view view;
-            if(qa_application_event_read(cursor->application,&(qa_application_event_cursor){.id=id},&view) &&
-                view.kind==QA_APPLICATION_EVENT_Q3_COMMAND && view.value.q3_command->stream==cursor->serial &&
+        qa_application_event_range events={.next=cursor->delivery.next,
+            .end=qa_application_events_next(cursor->application)};
+        qa_application_event_view view;
+        while(qa_application_event_raw_next(cursor->application,&events,
+            UINT64_C(1)<<QA_APPLICATION_EVENT_Q3_COMMAND,&view)) {
+            if(view.value.q3_command->stream==cursor->serial &&
                 view.value.q3_command->sequence==sequence) {
                 *text=view.value.q3_command->text; return true;
             }

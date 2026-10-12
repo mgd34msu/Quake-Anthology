@@ -148,11 +148,11 @@ static bool before_render(void *context, const q3n_frame *frame, qa_error *error
         frame->application != owner->frontend->application ||
         !qa_application_native_q3_presentation_current(frame->application, &frame->source))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effects require their actual entered native frame");
-    uint64_t next = qa_application_events_next(frame->application);
-    for (uint64_t i = qa_application_events_local_first(frame->application); i < next; ++i) {
-        qa_application_event_view output;
-        if (!qa_application_event_read(frame->application, &(qa_application_event_cursor){.id = i, .projection = 0}, &output) ||
-            output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
+    qa_application_event_range range = {.next = qa_application_events_local_first(frame->application),
+        .end = qa_application_events_next(frame->application)};
+    qa_application_event_view output;
+    while (qa_application_event_raw_next(frame->application, &range,
+        UINT64_C(1) << QA_APPLICATION_EVENT_BUILTIN, &output)) {
         qa_builtin_event event = *output.value.builtin;
         if (event.family != QA_GAME_Q3) continue;
         effect_pose_scope scope = {.owner = owner, .actor = event.actor}; bool found;
@@ -160,7 +160,7 @@ static bool before_render(void *context, const q3n_frame *frame, qa_error *error
         if (!found) continue;
         frontend_selected_effects_pose pose = {event.actor, scope.origin, &scope, effect_pose_current};
         qa_application_effect_event actual; bool admitted;
-        if (!qa_application_effect_event_read(frame->application, i, &actual, error) ||
+        if (!qa_application_effect_event_read(frame->application, range.id, &actual, error) ||
             !frontend_selected_effects_event(owner->frontend, frame, &actual, &pose, &admitted, error)) return false;
     }
     return frontend_selected_effects_prepare(owner->frontend, frame, error) &&

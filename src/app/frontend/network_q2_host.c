@@ -646,14 +646,15 @@ static bool publish_events(q2_host_peer *peer,const qa_net_client *client,qa_err
     peer->event_cursor=peer->player_event_cursor=cursor;
     const qa_q2_codec *codec;
     if(!qa_network_q2_server_codec(peer->host->options.runtime,peer->client,&codec,error)) return false;
-    while(cursor<next) {
-        uint64_t event_id=cursor;
+    qa_application_event_range events={.next=cursor,.end=next};
+    qa_application_event_view output;
+    while(qa_application_event_raw_next(app,&events,UINT64_MAX,&output)) {
+        uint64_t event_id=events.id;
+        peer->event_cursor=peer->player_event_cursor=event_id;
         qa_application_protocol_event event;
         qa_application_q2_protocol_delivery delivery;
         qa_application_q2_player_event player;
         bool reliable=false,print=false;
-        qa_application_event_view output={0};
-        (void)qa_application_event_read(app, &(qa_application_event_cursor){.id = cursor, .projection = 0}, &output);
         if(output.protocol) {
             event=*output.protocol; delivery=*output.q2_delivery;
             if(!event.signon && delivery.original) {
@@ -670,7 +671,7 @@ static bool publish_events(q2_host_peer *peer,const qa_net_client *client,qa_err
                 peer->event_capacity,&peer->event_packet,error)) return false;
             reliable=true; print=true;
         }
-        ++cursor;
+        cursor=events.next;
         peer->event_cursor=peer->player_event_cursor=cursor;
         if(!peer->event_packet.size) continue;
         peer->event_reliable=reliable; peer->event_player=print; peer->event_pending=true;
@@ -678,6 +679,8 @@ static bool publish_events(q2_host_peer *peer,const qa_net_client *client,qa_err
         if(!publish_event_packet(peer,error)) return false;
         if(!peer->committed || peer->retiring) return true;
     }
+    cursor=next;
+    peer->event_cursor=peer->player_event_cursor=cursor;
     (void)qa_event_receipts_submit(&peer->event_receipts,peer->event_receipts.through,cursor,0);
     return generation==qa_application_protocol_events_generation(app) ||
         frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 publication replaced its retained Source event generation");
@@ -987,11 +990,12 @@ static bool demo_publish(frontend_network_q2_host *host,qa_error *error)
     if(cursor<first) cursor=first;
     host->demo_event_generation=generation;
     host->demo_event_cursor=host->demo_player_event_cursor=cursor;
-    while(cursor<next) {
+    qa_application_event_range events={.next=cursor,.end=next};
+    qa_application_event_view output;
+    while(qa_application_event_raw_next(app,&events,UINT64_MAX,&output)) {
+        host->demo_event_cursor=host->demo_player_event_cursor=events.id;
         qa_application_protocol_event event; qa_application_q2_protocol_delivery delivery;
         qa_application_q2_player_event player; qa_bytes bytes={0}; bool ok=true;
-        qa_application_event_view output={0};
-        (void)qa_application_event_read(app, &(qa_application_event_cursor){.id = cursor, .projection = 0}, &output);
         if(output.protocol) {
             event=*output.protocol; delivery=*output.q2_delivery;
             if(!event.signon && delivery.original)
@@ -1006,9 +1010,10 @@ static bool demo_publish(frontend_network_q2_host *host,qa_error *error)
         }
         if(ok && bytes.size) ok=demo_host_packet(host,(qa_bytes){bytes.data,bytes.size},error);
         if(!ok) return false;
-        ++cursor;
+        cursor=events.next;
         host->demo_event_cursor=host->demo_player_event_cursor=cursor;
     }
+    host->demo_event_cursor=host->demo_player_event_cursor=next;
     qa_q2_wire_frame frame;
     if(!qa_application_network_q2_frame(host->discovery,&host->demo_actor,1,&frame,error)) return false;
     qa_net_writer writer; qa_net_writer_init(&writer,host->demo_bytes,sizeof(host->demo_bytes),error);

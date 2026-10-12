@@ -1152,6 +1152,16 @@ static void test_shared_effect_cursor(void)
     CHECK(qa_application_q3_effect_emit(&app,&event,&error));
     event.entity.event=21; event.recipient=&second;
     CHECK(qa_application_q3_effect_emit(&app,&event,&error));
+    qa_application_event_range range={.next=1,.end=2};
+    qa_application_event_view raw;
+    CHECK(qa_application_event_raw_next(&app,&range,UINT64_C(1)<<QA_APPLICATION_EVENT_Q3_EFFECT,&raw));
+    CHECK(range.id==1 && raw.value.q3_effect->recipient==&first);
+    CHECK(!qa_application_event_raw_next(&app,&range,UINT64_MAX,&raw));
+    range.end=3;
+    CHECK(qa_application_event_raw_next(&app,&range,UINT64_MAX,&raw));
+    CHECK(range.id==2 && raw.value.q3_effect->recipient==&second);
+    range=(qa_application_event_range){.next=1,.end=3};
+    CHECK(!qa_application_event_raw_next(&app,&range,UINT64_C(1)<<QA_APPLICATION_EVENT_LOG,&raw));
     app.event_local_cursor=app.event_source_cursor=qa_application_events_next(&app);
     application_events_retire(&app);
     CHECK(qa_application_events_first(&app)==1);
@@ -1164,6 +1174,8 @@ static void test_shared_effect_cursor(void)
     CHECK(qa_application_events_first(&app)==1);
     qa_application_events_consumed(&second,2);
     CHECK(qa_application_events_first(&app)==2);
+    range=(qa_application_event_range){.next=1,.end=3};
+    CHECK(qa_application_event_raw_next(&app,&range,UINT64_MAX,&raw) && range.id==2);
     cursor=(qa_application_event_cursor){.id=2};
     CHECK(qa_application_event_read(&app,&cursor,&view) && view.value.q3_effect->recipient==&second &&
         view.value.q3_effect->entity.event==21);

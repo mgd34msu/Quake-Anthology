@@ -774,12 +774,14 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
              * sound/entity events from the current server frame on first bind. */
             owner->output_events_next = events_next;
         }
-        for (uint64_t i = first; i < events_next; ++i) {
-            qa_application_event_view output;
-            if (!qa_application_event_read(owner->app, &(qa_application_event_cursor){.id = i}, &output)) continue;
+        qa_application_event_range events = {.next = first, .end = events_next};
+        qa_application_event_view output;
+        while (qa_application_event_raw_next(owner->app, &events,
+            (UINT64_C(1) << QA_APPLICATION_EVENT_Q2_MAP) |
+            (UINT64_C(1) << QA_APPLICATION_EVENT_BUILTIN), &output)) {
             if (output.kind == QA_APPLICATION_EVENT_Q2_MAP) {
                 const qa_application_q2_map_event *record = output.value.q2_map;
-                if (i >= owner->output_events_next && record->provider == owner->host.source.source_owner &&
+                if (events.id >= owner->output_events_next && record->provider == owner->host.source.source_owner &&
                     !map_config_event(owner, &record->event, error)) return false;
             } else if (output.kind == QA_APPLICATION_EVENT_BUILTIN) {
                 const qa_builtin_event *event = output.value.builtin;

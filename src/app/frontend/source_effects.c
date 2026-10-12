@@ -108,17 +108,17 @@ bool frontend_source_effects_begin(qa_frontend *frontend, const qa_q3_host *host
         !qa_ui_preferences_read(qa_application_cvars(scope->application),qa_application_ui_preference_handles(scope->application), seat, &scope->preferences, error))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Source effects lost their physical map, preferences or audio binding");
     scope->admitted = true;
-    uint64_t next = qa_application_events_next(scope->application);
-    for (uint64_t i = qa_application_events_local_first(scope->application); i < next; ++i) {
-        qa_application_event_view output;
-        if (!qa_application_event_read(scope->application, &(qa_application_event_cursor){.id = i, .projection = 0}, &output) ||
-            output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
+    qa_application_event_range range = {.next = qa_application_events_local_first(scope->application),
+        .end = qa_application_events_next(scope->application)};
+    qa_application_event_view output;
+    while (qa_application_event_raw_next(scope->application, &range,
+        UINT64_C(1) << QA_APPLICATION_EVENT_BUILTIN, &output)) {
         qa_builtin_event queued = *output.value.builtin;
         if (!frontend_source_effects_current(scope))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Source effects owner changed during render entry");
         if (queued.family != QA_GAME_Q3 || queued.kind != QA_BUILTIN_ANIMATION) continue;
         qa_application_effect_event event;
-        if (!qa_application_effect_event_read(scope->application, i, &event, error)) return false;
+        if (!qa_application_effect_event_read(scope->application, range.id, &event, error)) return false;
         if (event.source.primary != client->source_owner) continue;
         source_pose actual = {.scope = scope, .actor = queued.actor}; bool found;
         if (!pose_origin(scope, queued.actor, &actual.origin, &found, error)) return false;

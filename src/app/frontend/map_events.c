@@ -464,11 +464,12 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
             *link = entry->next; qa_pool_release(&state->bound_records, entry->slot);
         } else link = &entry->next;
     }
-    for (uint64_t i = qa_application_events_local_first(frontend->application);
-        i < qa_application_events_next(frontend->application); ++i) {
-        qa_application_event_view output;
-        if (!qa_application_event_read(frontend->application,
-            &(qa_application_event_cursor){.id = i, .projection = 0}, &output)) continue;
+    qa_application_event_range range = {.next = qa_application_events_local_first(frontend->application),
+        .end = UINT64_MAX};
+    qa_application_event_view output;
+    while (qa_application_event_raw_next(frontend->application, &range,
+        (UINT64_C(1) << QA_APPLICATION_EVENT_DEBUG) |
+        (UINT64_C(1) << QA_APPLICATION_EVENT_BUILTIN), &output)) {
         if (output.kind == QA_APPLICATION_EVENT_DEBUG) {
             const qa_application_debug_event *debug = output.value.debug;
             qa_tools *tools = frontend_tools_owner(frontend);
@@ -481,7 +482,6 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
                 return false;
             continue;
         }
-        if (output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
         qa_builtin_event event = *output.value.builtin;
         bool handled;
         if (!frontend_qc_rerelease_event(frontend,&event,&handled,error)) return false;
@@ -531,11 +531,10 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
             view->q1_style_owners[event.code]=event.provider;
         }
     }
-    for (uint64_t i = qa_application_events_local_first(frontend->application);
-        i < qa_application_events_next(frontend->application); ++i) {
-        qa_application_event_view output;
-        if (!qa_application_event_read(frontend->application, &(qa_application_event_cursor){.id = i, .projection = 0}, &output) ||
-            output.kind != QA_APPLICATION_EVENT_Q2_MAP) continue;
+    range = (qa_application_event_range){.next = qa_application_events_local_first(frontend->application),
+        .end = UINT64_MAX};
+    while (qa_application_event_raw_next(frontend->application, &range,
+        UINT64_C(1) << QA_APPLICATION_EVENT_Q2_MAP, &output)) {
         qa_application_q2_map_event source = *output.value.q2_map;
         const qa_q2_map_event *event = &source.event;
         if (event->kind == QA_Q2_MAP_DYNAMIC_LIGHT) {
@@ -1104,16 +1103,19 @@ static bool audio_events_read(qa_frontend *frontend, frontend_event_state *state
     }
     state->audio_reading = true;
     bool ok = true;
-    for (uint64_t id = qa_application_events_audio_first(frontend->application); id < next; ++id) {
-        qa_application_event_view output;
-        if (!qa_application_event_read(frontend->application, &(qa_application_event_cursor){.id = id}, &output)) continue;
+    uint64_t consumed = qa_application_events_audio_first(frontend->application);
+    qa_application_event_range range = {.next = consumed, .end = next};
+    qa_application_event_view output;
+    while (qa_application_event_raw_next(frontend->application, &range,
+        (UINT64_C(1) << QA_APPLICATION_EVENT_AUDIO) |
+        (UINT64_C(1) << QA_APPLICATION_EVENT_BUILTIN) |
+        (UINT64_C(1) << QA_APPLICATION_EVENT_CLIENT_SOUND), &output)) {
         if(output.kind==QA_APPLICATION_EVENT_AUDIO) {
             ok=qa_audio_engine_apply(frontend->audio,output.value.audio,error);
-            qa_application_events_audio_consume(frontend->application,id+1);
+            consumed=range.id+1;
             if(!ok) break;
             continue;
         }
-        if (output.kind != QA_APPLICATION_EVENT_BUILTIN && output.kind != QA_APPLICATION_EVENT_CLIENT_SOUND) continue;
         const qa_builtin_event *event = output.value.builtin;
         if (event->kind == QA_BUILTIN_MUZZLE) continue; /* Its decoded cues are client-sound records. */
         state->audio_time_ns = event->time_ns ? event->time_ns : frontend->time_ns;
@@ -1124,10 +1126,10 @@ static bool audio_events_read(qa_frontend *frontend, frontend_event_state *state
             }
         } else ok = frontend_event_sound(frontend, event, error);
         if (!ok) break;
-        qa_application_events_audio_consume(frontend->application, id + 1);
+        consumed = range.id + 1;
     }
     state->audio_reading = false;
-    if (ok) qa_application_events_audio_consume(frontend->application, next);
+    qa_application_events_audio_consume(frontend->application, ok ? next : consumed);
     return ok;
 }
 bool frontend_audio_event(void *context,const qa_audio_event *event,qa_error *error)

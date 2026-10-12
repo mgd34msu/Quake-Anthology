@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "11620e3a73ee3b5d4b6c296198e91af968e173cb",
+  "verified_main": "27bde296e3512238f72c8b6d4130c82a52d4f15b",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 60,
-    "open_source_observation": 311,
+    "fixed_source_build_core": 70,
+    "open_source_observation": 301,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -28492,8 +28492,9 @@
       "severity": "high",
       "job": "12",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Named source callers migrated and replaced implementation deleted; matching normal production build and seven core suites passed. No live, performance or whole-frame allocation claim.",
+      "fixed_commit": "2a7903a1062931dc6a0472fdabe7d8d5e3031a4d"
     },
     {
       "id": "J12-02",
@@ -28522,8 +28523,9 @@
       "severity": "medium",
       "job": "12",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Named source callers migrated and replaced implementation deleted; matching normal production build and seven core suites passed. No live, performance or whole-frame allocation claim.",
+      "fixed_commit": "2a7903a1062931dc6a0472fdabe7d8d5e3031a4d"
     },
     {
       "id": "J12-03",
@@ -28552,8 +28554,9 @@
       "severity": "low",
       "job": "12",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Named source callers migrated and replaced implementation deleted; matching normal production build and seven core suites passed. No live, performance or whole-frame allocation claim.",
+      "fixed_commit": "2a7903a1062931dc6a0472fdabe7d8d5e3031a4d"
     },
     {
       "id": "J12-04",
@@ -28578,8 +28581,9 @@
       "severity": "low",
       "job": "12",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Named source callers migrated and replaced implementation deleted; matching normal production build and seven core suites passed. No live, performance or whole-frame allocation claim.",
+      "fixed_commit": "2a7903a1062931dc6a0472fdabe7d8d5e3031a4d"
     },
     {
       "id": "J12-05",
@@ -28808,8 +28812,9 @@
       "severity": "low",
       "job": "12",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Named source callers migrated and replaced implementation deleted; matching normal production build and seven core suites passed. No live, performance or whole-frame allocation claim.",
+      "fixed_commit": "2a7903a1062931dc6a0472fdabe7d8d5e3031a4d"
     },
     {
       "id": "J12-12",
@@ -29140,8 +29145,9 @@
       "severity": "medium",
       "job": "13",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Named source callers migrated and replaced implementation deleted; matching normal production build and seven core suites passed. No live, performance or whole-frame allocation claim.",
+      "fixed_commit": "3df0a4c44409d11b04e963ffefff4b92098a9a9b"
     },
     {
       "id": "J14-01",
@@ -29220,7 +29226,7 @@
       "job": "14",
       "area": "frontend",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "Partial in da60a3cf: full-generation forward/history actor indexes and reverse uint64 bus index replace lookup scans. Aliases retire on successful round reset; same-round history and pool/index growth remain. Normal build and seven core suites passed; not whole-frame zero allocation or per-voice reclamation."
     },
     {
       "id": "J14-04",
@@ -30612,7 +30618,7 @@
       "job": "17",
       "area": "frontend",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "Partial in da60a3cf: full-generation forward/history actor indexes and reverse uint64 bus index replace lookup scans. Aliases retire on successful round reset; same-round history and pool/index growth remain. Normal build and seven core suites passed; not whole-frame zero allocation or per-voice reclamation."
     },
     {
       "id": "17-04",
@@ -33654,8 +33660,9 @@
       "severity": "high",
       "job": "24",
       "area": "gameplay_q3",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Named source callers migrated and replaced implementation deleted; matching normal production build and seven core suites passed. No live, performance or whole-frame allocation claim.",
+      "fixed_commit": "bfc1881c66a1c08790770d354669567e19ead357"
     },
     {
       "id": "J24-08",
@@ -34816,8 +34823,9 @@
       "severity": "medium",
       "job": "27",
       "area": "network",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Named source callers migrated and replaced implementation deleted; matching normal production build and seven core suites passed. No live, performance or whole-frame allocation claim.",
+      "fixed_commit": "ac8eec3618ca0997b0947bdddc558f5bd9b5b3e5"
     },
     {
       "id": "27-05",
@@ -35762,8 +35770,9 @@
       "severity": "medium",
       "job": "32",
       "area": "render_presentation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Named source callers migrated and replaced implementation deleted; matching normal production build and seven core suites passed. No live, performance or whole-frame allocation claim.",
+      "fixed_commit": "27bde296e3512238f72c8b6d4130c82a52d4f15b"
     },
     {
       "id": "J32-02",
@@ -36701,8 +36710,9 @@
       "severity": "medium",
       "job": "35",
       "area": "network_q3",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Named source callers migrated and replaced implementation deleted; matching normal production build and seven core suites passed. No live, performance or whole-frame allocation claim.",
+      "fixed_commit": "a9c32f98a50d3862bde7ee484895e6b968f38c70"
     },
     {
       "id": "Q3NET-35-04",
@@ -38203,6 +38213,214 @@
       ],
       "record_directory": "/tmp/qa-ta3196-platform-directories-20261011",
       "conclusion": "One platform directory service replaces frontend SDL directory discovery; engine and SDL allocator ownership remain distinct."
+    },
+    {
+      "commit": "bfc1881c66a1c08790770d354669567e19ead357",
+      "files_rechecked": [
+        "docs/audit/unification-2026-10-11.json",
+        "docs/audit/unification-2026-10-11.md",
+        "include/qa/game_q3.h",
+        "src/app/application/providers.c",
+        "src/gameplay/q3/game.c",
+        "src/gameplay/q3/internal.h",
+        "src/gameplay/q3/items.c",
+        "src/gameplay/q3/missiles.c",
+        "src/gameplay/q3/save.c",
+        "src/gameplay/q3/source_wire.c"
+      ],
+      "source_tree": "ec1ceca0fe34e1569a2129d219ad44a47060d751",
+      "record_directory": "/tmp/qa-ta3196-canonical-q3-teams-20261011",
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ]
+    },
+    {
+      "commit": "da60a3cf55154c20bc334a105cff1fa5302ac100",
+      "files_rechecked": [
+        "src/app/frontend/audio_identity.c",
+        "src/app/frontend/frame.c",
+        "src/app/frontend/internal.h",
+        "src/app/frontend/lifetime.c",
+        "src/app/frontend/native_q2_baseline.c",
+        "src/app/frontend/round.c",
+        "src/app/frontend/source.c",
+        "src/app/frontend/source_acoustics.c"
+      ],
+      "source_tree": "359f26f005653fe9fb347448f1666a30f707643c",
+      "record_directory": "/tmp/qa-ta3196-common-audio-identities-20261011",
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ]
+    },
+    {
+      "commit": "3df0a4c44409d11b04e963ffefff4b92098a9a9b",
+      "files_rechecked": [
+        "include/qa/collision.h",
+        "include/qa/physics.h",
+        "include/qa/world.h",
+        "src/gameplay/q1/runtime.c",
+        "src/movement/entity.c",
+        "src/world/body.c",
+        "src/world/checkpoint.c",
+        "src/world/collision/contents.c",
+        "src/world/collision/internal.h",
+        "src/world/collision/world_internal.h",
+        "src/world/entity_internal.h",
+        "src/world/spatial.c"
+      ],
+      "source_tree": "54ea0a198944427dfb39f159133906fab10b608d",
+      "record_directory": "/tmp/qa-ta3196-role-spatial-policy-20261011",
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ]
+    },
+    {
+      "commit": "a9c32f98a50d3862bde7ee484895e6b968f38c70",
+      "files_rechecked": [
+        "CMakeLists.txt",
+        "include/qa/command_lexer.h",
+        "src/console/commands.c",
+        "src/console/internal.h",
+        "src/console/text.c",
+        "src/core/command_lexer.c",
+        "src/network/q3/admission.c",
+        "tests/core_test.c"
+      ],
+      "source_tree": "5f560e8fe399707a1ceb12366ed18c4ec10859b0",
+      "record_directory": "/tmp/qa-ta3196-common-command-lexer-20261011",
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ]
+    },
+    {
+      "commit": "ac8eec3618ca0997b0947bdddc558f5bd9b5b3e5",
+      "files_rechecked": [
+        "src/network/q2/handshake.c",
+        "tests/core_test.c"
+      ],
+      "source_tree": "1e622385d92411baedff08da292c6c8dda8d0916",
+      "record_directory": "/tmp/qa-ta3196-borrowed-kex-userinfo-20261011",
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ]
+    },
+    {
+      "commit": "2a7903a1062931dc6a0472fdabe7d8d5e3031a4d",
+      "files_rechecked": [
+        "src/movement/common.c",
+        "src/movement/entity/q3_mover.c",
+        "src/movement/entity/trajectory.c",
+        "src/movement/internal.h",
+        "src/movement/prediction.c",
+        "src/movement/q1/common.c",
+        "src/movement/q1/common.h",
+        "src/movement/q1/netquake.c",
+        "src/movement/q1/quakeworld.c",
+        "src/movement/q2/classic.c",
+        "src/movement/q2/rerelease.c",
+        "src/player_services/arena_catalog.c",
+        "src/player_services/arena_progress.c",
+        "src/player_services/team_arena_progress.c"
+      ],
+      "source_tree": "db35bf9be2168bf5591ed1df5daeb8f2a925b308",
+      "record_directory": "/tmp/qa-ta3196-common-movement-20261011",
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ]
+    },
+    {
+      "commit": "27bde296e3512238f72c8b6d4130c82a52d4f15b",
+      "files_rechecked": [
+        "include/qa/math.h",
+        "include/qa/model.h",
+        "include/qa/scene.h",
+        "src/app/frontend/q2_entity_effects.c",
+        "src/app/frontend/remote_unified_render.c",
+        "src/app/frontend/scene_lights.c",
+        "src/app/frontend/view_settings.c",
+        "src/core/math.c",
+        "src/formats/model/transform.c",
+        "src/gameplay/q3/map/misc.c",
+        "src/gameplay/q3/weapons.c",
+        "src/presentation/q3/render.c",
+        "src/presentation/q3_native/effects.c",
+        "src/presentation/q3_native/marks.c",
+        "src/presentation/q3_native/packet.c",
+        "src/presentation/q3_native/weapon.c",
+        "src/render/scene/effects.c",
+        "src/render/scene/effects/internal.h",
+        "src/render/scene/effects/primitives.c",
+        "src/render/scene/effects/sky.c",
+        "src/render/scene/math.c",
+        "src/render/scene/models.c",
+        "src/render/scene/world.c",
+        "src/render/scene/world/internal.h",
+        "src/render/scene/world/q3.c",
+        "src/world/collision/contents.c",
+        "src/world/collision/q1.c",
+        "tests/core_test.c"
+      ],
+      "source_tree": "da9db53caf444321275bfa9ff8a8cbf3470a32f2",
+      "record_directory": "/tmp/qa-ta3196-common-render-math-20261011",
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ]
     }
   ],
   "verification_limits": [

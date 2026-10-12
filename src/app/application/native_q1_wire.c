@@ -643,11 +643,11 @@ static bool entity_read(qa_application *app, application_native_q1_wire_source *
     qa_physics_properties physics;
     value.step = !player && qa_q1_game_physics_read(source->provider->state.q1, actor, &physics) &&
                  physics.motion == QA_PHYSICS_STEP;
-    for (uint64_t id = qa_application_events_local_first(app), next = qa_application_events_next(app);
-         id < next; ++id) {
-        qa_application_event_view output;
-        if (!qa_application_event_read(app, &(qa_application_event_cursor){.id = id, .projection = 0}, &output) ||
-            output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
+    qa_application_event_range events = {.next = qa_application_events_local_first(app),
+        .end = qa_application_events_next(app)};
+    qa_application_event_view output;
+    while (qa_application_event_raw_next(app, &events,
+        UINT64_C(1) << QA_APPLICATION_EVENT_BUILTIN, &output)) {
         const qa_builtin_event event = *output.value.builtin;
         if (event.family == QA_GAME_Q1 &&
             event.kind == QA_BUILTIN_MUZZLE && qa_actor_id_equal(event.actor, actor)) value.effects |= 2;

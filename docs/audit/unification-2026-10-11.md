@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `11620e3a`.
+Follow-up source changes were reviewed through main `27bde296`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 60 have source fixes
+There are **374 overlapping source-review observations**: 70 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 311 records are not 350 unique bugs: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 301 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -70,7 +70,7 @@ implementation in the same slice.
 | Event delivery | `J12-05`: tool/LLM output bypasses ordered LOG records. `J15-08`: connect transitions retain a private queue. | Move the remaining producers/consumers onto retained records and ordered cursors. Preserve decode order, recipients and source timing. |
 | Mixed module lifecycle | `02-12/13/20/21`: provider/map, client, respawn and selected-service gates lack composition adapters. | Implement shared role dispatch and the missing original guest lifecycle/service adapters. Removing a gate alone cannot supply a missing adapter. |
 | Trace policy and queries | The named Q2 role-policy and Q3 trigger-overflow observations below are fixed. Other private spatial and visibility walks remain in the ledger. | Migrate each remaining query to shared caller-owned storage and retained role policy, preserving ordering and original collision rules. |
-| Numeric and identity domains | `01-combat-source-width`, `03-16`: valid original int32 values lose admissibility through binary32 exactness checks. `J24-07`: numeric Q3 teams and interned team IDs are conflated. | Preserve original widths at module/protocol boundaries and explicit canonical team conversion. Never substitute a string ID for a protocol number. |
+| Numeric and identity domains | `01-combat-source-width`, `03-16`: valid original int32 values lose admissibility through binary32 exactness checks. The named Q3 team-domain observation is fixed below. | Preserve original widths at module/protocol boundaries and explicit canonical team conversion. Never substitute a string ID for a protocol number. |
 | Entity/name/resource indexing | Private actor/source-number lists, model/picture caches, roster/reverse maps and runtime name conversions remain across application, frontend, bots and hosts. | Existing common indexes and retained IDs, keyed to the correct historical generation and ownership. Keep necessary namespace translation and previous snapshots. |
 | Stamps, spatial and math | Private visit arrays, visibility/mark/light walks, angle/vector/matrix operations and parsers remain. | Common caller-owned stamp/query scratch and existing math/text primitives. Retain exact rounding, trace rules and original draw semantics. |
 | Runtime storage | First-use/nested snapshots, reaction registration, guest invocation staging, packet/decode scratch, UI metadata and renderer buffers still grow or allocate during play. | Load-owned common pool/arena storage or frame leases according to actual lifetime. Preserve nested calls, retransmission, capacity and failure ownership; no arbitrary new cap. |
@@ -117,7 +117,6 @@ results.
 | `J24-02` | `f6e429e7` | Q3 once-per-Source-frame actor visits use the common stamp set, including slot reuse. |
 | `16-005` | `684e6060` | QC shapes enter common DEBUG; private growth/pruning/shape arenas are deleted. One store preserves width1, provider-clock pause, nanosecond lifetime and instant multi-seat visibility. |
 | `04-002` | `157d1f55` | Disconnect scopes retain exact reason text in the existing control lease; cross-frame wire ownership stays intact. |
-
 | `J00-01`, `J23-05`, `J24-03` | `cdd63e09` | Shared borrowed info pairs preserve exact/case-folded first-match and merge semantics. |
 | `J00-04` | `66a629b5` | Native attack scopes use the existing common control lease. |
 | `16-002` | `74f135d5` | One angle interpolation implements explicit single-turn and normalized-delta source policies. |
@@ -167,3 +166,11 @@ maps are necessary; resource construction occurs on misses; active-menu rebuilds
 are conditional; reached and authoritative config dictionaries are distinct;
 and missing module adapters are capability work, not permission to delete
 original lifecycle checks blindly.
+
+| `J24-07` | `bfc1881c` | Shared combat compares canonical team IDs. Original red/blue numbers are produced only at the Q3 boundary. |
+| `J14-03`, `17-03` partial | `da60a3cf` | Full-generation actor and uint64 bus indexes replace lookup scans. Same-round history and pool/index growth remain; round reset reclaims aliases. |
+| `J13-08` | `3df0a4c4` | Spatial insertion and trigger delivery retain role rules instead of selecting by family during each operation. |
+| `Q3NET-35-03` | `a9c32f98` | Console and Q3 network use one token-span lexer, with their original token limits and partial receipts. DEL remains an ordinary byte; the audit's claimed DEL discrepancy was incorrect. |
+| `27-04` | `ac8eec36` | KEX userinfo projects common borrowed info pairs. Pair/key/value limits, defaults and seat overrides remain. Shipped callers use distinct source and destination buffers. |
+| `J12-01/02/03/04/11` | `2a7903a1` | QuakeWorld touch de-duplication reads retained movement contacts. Numeric and source-text adapters use common primitives; shared contacts can still grow. |
+| `J32-01` | `27bde296` | Render/effect rotation, perpendicular selection, portal remap, transformed bounds and matrix directions use common primitives with explicit original arithmetic policies. |

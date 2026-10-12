@@ -902,11 +902,11 @@ static bool source_actions(frontend_qw_host *host, qa_error *error)
 {
     qa_application *app=host->frontend->application;
     if(!host->commands.application) return true;
-    while (host->commands.next<qa_application_events_next(app)) {
-        uint64_t id=host->commands.next;
-        qa_application_event_view view;
-        if(!qa_application_event_read(app,&(qa_application_event_cursor){.id=id},&view) ||
-            view.kind!=QA_APPLICATION_EVENT_QW_COMMAND || view.value.qw_command->recipient!=host) {
+    qa_application_event_range events={.next=host->commands.next,.end=UINT64_MAX};
+    qa_application_event_view view;
+    while(qa_application_event_raw_next(app,&events,UINT64_MAX,&view)) {
+        uint64_t id=events.id;
+        if(view.kind!=QA_APPLICATION_EVENT_QW_COMMAND || view.value.qw_command->recipient!=host) {
             qa_application_events_consumed(&host->commands,id+1);
             continue;
         }

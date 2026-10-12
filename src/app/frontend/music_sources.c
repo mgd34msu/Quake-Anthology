@@ -131,21 +131,23 @@ bool frontend_music_cue_drain(qa_frontend *f, qa_error *error)
     if(!owner || !owner->requests.application) return true;
     bool okay=true;
     qa_error first_error={0};
-    while(owner->requests.next<qa_application_events_next(f->application)) {
-        uint64_t id=owner->requests.next;
-        qa_application_event_view view;
-        if(qa_application_event_read(f->application,&(qa_application_event_cursor){.id=id},&view) &&
-            view.kind==QA_APPLICATION_EVENT_MUSIC && view.value.music->recipient==f) {
+    qa_application_event_range range={.end=UINT64_MAX};
+    qa_application_event_view view;
+    while(owner->requests.application) {
+        range.next=owner->requests.next;
+        if(!qa_application_event_raw_next(f->application,&range,
+            UINT64_C(1)<<QA_APPLICATION_EVENT_MUSIC,&view)) break;
+        if(view.value.music->recipient==f) {
             qa_application_music_event cue=*view.value.music;
-            qa_event_lease *lease=qa_application_event_retain(f->application,id);
-            qa_application_events_consumed(&owner->requests,id+1);
+            qa_event_lease *lease=qa_application_event_retain(f->application,range.id);
+            owner->requests.next=range.next;
             qa_error delivery={0};
             bool delivered=cue_deliver(f,cue.sounds,cue.family,cue.state,cue.origin,cue.published,
                 cue.action==QA_MUSIC_CUE_START?cue.intro:"",
                 cue.action==QA_MUSIC_CUE_START?cue.loop:"",&delivery);
             qa_event_lease_release(lease);
             if(!delivered && okay) { first_error=delivery;okay=false; }
-        } else qa_application_events_consumed(&owner->requests,id+1);
+        } else owner->requests.next=range.next;
     }
     qa_application_events_unsubscribe(&owner->requests);
     if(!okay && error) *error=first_error;

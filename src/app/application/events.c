@@ -1431,6 +1431,21 @@ const application_unified_event_record *qa_application_event_range_next(
     }
 }
 
+bool qa_application_event_raw_next(const qa_application *app,qa_application_event_range *cursor,
+    uint64_t kind_mask,qa_application_event_view *out)
+{
+    uint64_t first=qa_application_events_first(app),end=qa_application_events_next(app);
+    if(cursor->next<first) cursor->next=first;
+    if(cursor->end<end) end=cursor->end;
+    while(cursor->next<end) {
+        cursor->id=cursor->next++;
+        qa_application_event_cursor record={.id=cursor->id};
+        if(qa_application_event_read(app,&record,out) &&
+            (kind_mask&(UINT64_C(1)<<out->kind))) return true;
+    }
+    return false;
+}
+
 bool qa_application_event_read(const qa_application *app, qa_application_event_cursor *cursor,
     qa_application_event_view *out)
 {

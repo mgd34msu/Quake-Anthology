@@ -1167,11 +1167,11 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
     bool physical;
     if (!client_sample(frontend, &q2_sample, &server, &back_lerp, &physical, error)) return false;
     if (!frontend_native_q2_messages(frontend,error)) return false;
-    for (uint64_t i = qa_application_events_local_first(frontend->application);
-        i < qa_application_events_next(frontend->application); ++i) {
-        qa_application_event_view output;
-        if (!qa_application_event_read(frontend->application, &(qa_application_event_cursor){.id = i, .projection = 0}, &output) ||
-            output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
+    qa_application_event_range range = {.next = qa_application_events_local_first(frontend->application),
+        .end = UINT64_MAX};
+    qa_application_event_view output;
+    while (qa_application_event_raw_next(frontend->application, &range,
+        UINT64_C(1) << QA_APPLICATION_EVENT_BUILTIN, &output)) {
         qa_builtin_event event = *output.value.builtin;
         if (event.family==QA_GAME_Q2 && (event.kind==QA_BUILTIN_TELEPORT ||
             (event.kind==QA_BUILTIN_Q2_ENTITY_EVENT && (event.code==6 || event.code==7))) &&
@@ -1204,11 +1204,10 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
             if (!frontend_particle_q2_temporary(frontend,&message,&audience,&temporary,NULL,error)) return false;
         }
     }
-    for (uint64_t i = qa_application_events_local_first(frontend->application);
-        i < qa_application_events_next(frontend->application); ++i) {
-        qa_application_event_view output;
-        if (!qa_application_event_read(frontend->application, &(qa_application_event_cursor){.id = i, .projection = 0}, &output) ||
-            output.kind != QA_APPLICATION_EVENT_Q2_MAP) continue;
+    range = (qa_application_event_range){.next = qa_application_events_local_first(frontend->application),
+        .end = UINT64_MAX};
+    while (qa_application_event_raw_next(frontend->application, &range,
+        UINT64_C(1) << QA_APPLICATION_EVENT_Q2_MAP, &output)) {
         qa_application_q2_map_event source = *output.value.q2_map;
         if (source.event.kind != QA_Q2_MAP_STEAM && source.event.kind != QA_Q2_MAP_FORCE_WALL) continue;
         qa_application_q2_audience audience=*output.q2_audience;
