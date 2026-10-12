@@ -197,13 +197,7 @@ bool qa_navigation_route(qa_navigation *n, qa_nav_workspace *w, const qa_nav_rou
         return false;
     }
     if (!route->storage.first && !route->storage.pages) nav_arena_init(&route->storage, &n->storage);
-    route->found = false;
-    route->node_count = 0;
-    route->edge_count = 0;
-    route->point_count = 0;
-    route->travel_seconds = 0;
-    qa_nav_graph_release(route->graph);
-    route->graph = NULL;
+    qa_nav_route_reset(route);
     nav_refresh(n);
     uint32_t start = q->start_node, goal = q->goal_node;
     bool found;
@@ -296,11 +290,7 @@ bool qa_navigation_admit_edge(qa_navigation *n, qa_actor_id actor, uint32_t id, 
         return false;
     }
     if (!route->storage.first && !route->storage.pages) nav_arena_init(&route->storage, &n->storage);
-    route->found = false;
-    route->node_count = route->edge_count = route->point_count = 0;
-    route->travel_seconds = 0;
-    qa_nav_graph_release(route->graph);
-    route->graph = NULL;
+    qa_nav_route_reset(route);
     nav_refresh(n);
     bool allowed;
     if (!nav_edge_allowed(n, NULL, actor, index, NULL, &allowed, e)) return false;
@@ -332,11 +322,7 @@ bool qa_navigation_admit_movement(qa_navigation *n, qa_actor_id actor, qa_vec3 f
         return false;
     }
     if (!route->storage.first && !route->storage.pages) nav_arena_init(&route->storage, &n->storage);
-    route->found = false;
-    route->node_count = route->edge_count = route->point_count = 0;
-    route->travel_seconds = 0;
-    qa_nav_graph_release(route->graph);
-    route->graph = NULL;
+    qa_nav_route_reset(route);
     if (!nav_route_point(route, from, e)) return false;
     nav_prediction prediction = {.navigation = n};
     bool admitted;

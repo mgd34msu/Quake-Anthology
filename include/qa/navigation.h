@@ -265,7 +265,7 @@ typedef struct qa_nav_route_query {
 } qa_nav_route_query;
 typedef struct qa_nav_route {
     qa_arena storage;
-    qa_nav_graph *graph; /* Retained on success; released by route_free/reuse. */
+    qa_nav_graph *graph; /* Retained on success; released by route reset/free. */
     uint32_t *nodes, *edges;
     qa_vec3 *points;
     size_t node_count, edge_count, point_count;
@@ -278,6 +278,8 @@ typedef struct qa_nav_route {
  * result; false return reports an invalid input or failed engine operation. */
 bool qa_navigation_route(qa_navigation *, qa_nav_workspace *, const qa_nav_route_query *,
                          qa_nav_route *, qa_error *);
+/* Clear the result and graph reference while retaining output storage. */
+void qa_nav_route_reset(qa_nav_route *);
 void qa_nav_route_free(qa_nav_route *);
 bool qa_nav_route_reserve(qa_nav_route *, size_t nodes, size_t edges, size_t points, qa_error *);
 /* Admits one authored connection through the selected real movement kernel.

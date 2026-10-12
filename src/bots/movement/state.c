@@ -3,7 +3,7 @@
 #include <stdio.h>
 
 void bot_move_route_clear(bot_move_record *record) {
-    qa_nav_route_free(&record->route);
+    qa_nav_route_reset(&record->route);
     record->route_map=(qa_nav_map){0};record->route_actor=(qa_actor_id){0};
     record->route_goal=record->route_flags=record->route_move_flags=0;
     record->route_cursor=0;
@@ -211,7 +211,7 @@ void qa_bot_moves_destroy(qa_bot_moves *m) {
     if (!m || m->busy)
         return;
     if (!qa_bot_memory_release(m->memory,NULL)) return;
-    for(uint32_t i=0;i<m->maximum;++i) bot_move_route_clear(&m->slots[i].state);
+    for(uint32_t i=0;i<m->maximum;++i) qa_nav_route_free(&m->slots[i].state.route);
     qa_nav_prediction_result_free(&m->prediction);
     qa_nav_route_free(&m->trajectory);
     qa_nav_workspace_destroy(m->workspace);
@@ -229,7 +229,8 @@ bool qa_bot_moves_shutdown(qa_bot_moves *m,qa_error *e) {
         m->busy=false;
         if(!ok) return false;
         bot_move_route_clear(&m->slots[i].state);
-        m->slots[i]=(bot_move_slot){0};
+        qa_nav_route route=m->slots[i].state.route;
+        m->slots[i]=(bot_move_slot){.state={.route=route}};
     }
     return true;
 }
@@ -273,7 +274,9 @@ bool qa_bot_moves_allocate(qa_bot_moves *m, uint32_t *out, qa_error *e) {
                                            true,NULL,&allocation,e);
             m->busy=false;
             if(!ok) return false;
-            m->slots[i] = (bot_move_slot){.used=true,.state={.owner=m,.allocation=allocation}};
+            qa_nav_route route=m->slots[i].state.route;
+            m->slots[i] = (bot_move_slot){.used=true,
+                .state={.owner=m,.allocation=allocation,.route=route}};
             *out = i + 1;
             break;
         }
@@ -288,7 +291,8 @@ bool qa_bot_moves_free(qa_bot_moves *m, uint32_t id, qa_error *e) {
     m->busy=false;
     if(!ok) return false;
     bot_move_route_clear(record);
-    m->slots[id - 1] = (bot_move_slot){0};
+    qa_nav_route route=record->route;
+    m->slots[id - 1] = (bot_move_slot){.state={.route=route}};
     return true;
 }
 bool qa_bot_moves_initialize(qa_bot_moves *m, uint32_t id, const qa_bot_move_input *input,

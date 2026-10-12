@@ -406,10 +406,20 @@ bool nav_route_point(qa_nav_route *route, qa_vec3 point, qa_error *e) {
     route->points[route->point_count++] = point;
     return true;
 }
-void qa_nav_route_free(qa_nav_route *r) {
+void qa_nav_route_reset(qa_nav_route *r) {
     if (r == NULL)
         return;
     qa_nav_graph_release(r->graph);
+    r->graph = NULL;
+    r->node_count = r->edge_count = r->point_count = 0;
+    r->travel_seconds = 0;
+    r->generation = 0;
+    r->found = false;
+}
+void qa_nav_route_free(qa_nav_route *r) {
+    if (r == NULL)
+        return;
+    qa_nav_route_reset(r);
     qa_arena_destroy(&r->storage);
     *r = (qa_nav_route){0};
 }
