@@ -1,5 +1,6 @@
 #include "network_q2_private.h"
 #include "visual_visibility.h"
+#include "control_frame.h"
 #include "qa/hud_q2.h"
 #include "qa/text.h"
 #include <math.h>
@@ -72,6 +73,7 @@ static struct application_native_q2 *original_engine(qa_application_network_q2 *
 }
 
 struct application_q2_wire_capture {
+    qa_unified_frame_lease *storage;
     qa_application_native_q2_entity_prefix *rows;
     uint32_t count, capacity;
     qa_application_native_q2_presentation source;
@@ -85,8 +87,35 @@ void application_network_q2_capture_dispose(application_provider *provider)
 {
     struct application_q2_wire_capture *capture = provider->q2_wire_capture;
     if (!capture) return;
-    free(capture->rows); free(capture);
     provider->q2_wire_capture = NULL;
+    qa_unified_frame_lease_release(capture->storage);
+}
+
+bool application_network_q2_capture_prepare(qa_application_network_q2 *owner, qa_error *error)
+{
+    application_provider *provider = application_network_q2_provider(owner);
+    if (!provider) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 capture lost its actual physical Source owner");
+    struct application_q2_wire_capture *capture = provider->q2_wire_capture;
+    if (capture && owner->entity_capacity <= capture->capacity) return true;
+    bool created = capture == NULL;
+    if (created) {
+        qa_unified_frame_lease *storage = application_control_storage_acquire(owner->app, error);
+        if (!storage) return false;
+        capture = qa_unified_frame_lease_alloc(storage,
+            1, sizeof(*capture), _Alignof(struct application_q2_wire_capture), error);
+        if (!capture) { qa_unified_frame_lease_release(storage); return false; }
+        capture->storage = storage;
+    }
+    qa_application_native_q2_entity_prefix *rows = qa_unified_frame_lease_alloc(capture->storage,
+        owner->entity_capacity, sizeof(*rows), _Alignof(qa_application_native_q2_entity_prefix), error);
+    if (!rows) {
+        if (created) qa_unified_frame_lease_release(capture->storage);
+        return false;
+    }
+    if (capture->capacity) memcpy(rows, capture->rows, (size_t)capture->capacity * sizeof(*rows));
+    capture->rows = rows; capture->capacity = (uint32_t)owner->entity_capacity;
+    provider->q2_wire_capture = capture;
+    return true;
 }
 
 static bool capture_source(qa_application_network_q2 *owner,
@@ -97,11 +126,7 @@ static bool capture_source(qa_application_network_q2 *owner,
     qa_application *app = owner->app;
     uint64_t frame = application_frame_revision(app), mutation = app->snapshot_mutation;
     uint64_t actors = qa_actors_revision(qa_session_actors(app->session));
-    if (!provider->q2_wire_capture) {
-        provider->q2_wire_capture = calloc(1, sizeof(*provider->q2_wire_capture));
-        if (!provider->q2_wire_capture)
-            return application_fail(error, QA_ERROR_MEMORY, "Retaining completed Q2 Source capture");
-    }
+    if (!provider->q2_wire_capture && !application_network_q2_capture_prepare(owner, error)) return false;
     struct application_q2_wire_capture *capture = provider->q2_wire_capture;
     *out = capture;
     if (capture->ready && capture->application_frame == frame && capture->mutation == mutation &&
@@ -112,11 +137,6 @@ static bool capture_source(qa_application_network_q2 *owner,
     if (!qa_application_native_q2_presentation_extent(app, &owner->host.source, &count, error)) return false;
     if (count > owner->entity_capacity)
         return application_fail(error, QA_ERROR_FORMAT, "Q2 entity publication exceeds its admitted physical extent");
-    if (count > capture->capacity) {
-        qa_application_native_q2_entity_prefix *rows = realloc(capture->rows, (size_t)count * sizeof(*rows));
-        if (!rows) return application_fail(error, QA_ERROR_MEMORY, "Growing completed Q2 Source capture");
-        capture->rows = rows; capture->capacity = count;
-    }
     if (count) memset(capture->rows, 0, (size_t)count * sizeof(*capture->rows));
     bool builtin = owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN;
     for (uint32_t slot = builtin ? 1u : 0u; slot < count; ++slot) {

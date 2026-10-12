@@ -87,9 +87,9 @@ typedef struct q3_wire_entity {
 } q3_wire_entity;
 
 struct application_q3_wire_capture {
+    qa_unified_frame_lease *storage;
     q3_wire_entity *records;
     qa_q3_visibility_entity *entities;
-    size_t capacity;
     uint32_t count, stride;
     uint64_t address, application_frame, mutation, actors_revision;
     uint64_t publication, map_revision, source_frame, source_time, elapsed, debt;
@@ -107,19 +107,29 @@ void application_q3_wire_capture_dispose(application_provider *provider)
 {
     struct application_q3_wire_capture *capture = provider->q3_wire_capture;
     if (!capture) return;
-    free(capture->records); free(capture->entities); free(capture);
     provider->q3_wire_capture = NULL;
+    qa_unified_frame_lease_release(capture->storage);
 }
 
 static struct application_q3_wire_capture *capture_workspace(application_provider *provider,
     qa_error *error)
 {
     if (!provider->q3_wire_capture) {
-        provider->q3_wire_capture = calloc(1, sizeof(*provider->q3_wire_capture));
-        if (!provider->q3_wire_capture)
-            application_fail(error, QA_ERROR_MEMORY, "Retaining Q3 source snapshot workspace");
-        else qa_stamp_set_init(&provider->q3_wire_capture->visibility_marks,
-            provider->q3_wire_capture->visibility_storage, QA_Q3_ENTITIES);
+        qa_unified_frame_lease *storage = application_control_storage_acquire(provider->application, error);
+        if (!storage) return NULL;
+        struct application_q3_wire_capture *capture = qa_unified_frame_lease_alloc(storage,
+            1, sizeof(*capture), _Alignof(struct application_q3_wire_capture), error);
+        if (!capture) { qa_unified_frame_lease_release(storage); return NULL; }
+        capture->storage = storage;
+        capture->records = qa_unified_frame_lease_alloc(storage, QA_Q3_ENTITIES,
+            sizeof(*capture->records), _Alignof(q3_wire_entity), error);
+        capture->entities = qa_unified_frame_lease_alloc(storage, QA_Q3_ENTITIES,
+            sizeof(*capture->entities), _Alignof(qa_q3_visibility_entity), error);
+        if (!capture->records || !capture->entities) {
+            qa_unified_frame_lease_release(storage); return NULL;
+        }
+        qa_stamp_set_init(&capture->visibility_marks, capture->visibility_storage, QA_Q3_ENTITIES);
+        provider->q3_wire_capture = capture;
     }
     return provider->q3_wire_capture;
 }
@@ -159,16 +169,6 @@ static bool capture_entities(application_provider *provider, qa_q3_game *game,
         capture->source_time == clock.frame.time_ns && capture->elapsed == clock.elapsed_ns &&
         capture->debt == clock.debt_ns && capture->paused == clock.paused) return true;
     capture->ready = false;
-    if (count > capture->capacity) {
-        q3_wire_entity *records = malloc((size_t)count * sizeof(*records));
-        qa_q3_visibility_entity *entities = malloc((size_t)count * sizeof(*entities));
-        if (!records || !entities) {
-            free(records); free(entities);
-            return application_fail(error, QA_ERROR_MEMORY, "Growing Q3 source snapshot workspace");
-        }
-        free(capture->records); free(capture->entities);
-        capture->records = records; capture->entities = entities; capture->capacity = count;
-    }
     if (count) memset(capture->entities, 0, (size_t)count * sizeof(*capture->entities));
     uint64_t mutation = app->snapshot_mutation;
     qa_world *world = app->world;

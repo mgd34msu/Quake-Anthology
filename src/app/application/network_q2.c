@@ -360,6 +360,8 @@ bool qa_application_network_q2_create(qa_application *app, qa_net_protocol_id pr
     qa_application_network_q2 *owner = calloc(1, sizeof(*owner));
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "Allocating actual Q2 publication owner");
     owner->app = app; owner->server_count = server_count;
+    application_provider *capture_provider = NULL;
+    bool capture_created = false;
     bool ok = qa_application_network_q2_host_source(app, protocol, &owner->host, error);
     if (ok) {
         const application_provider *provider = application_network_q2_provider(owner);
@@ -387,9 +389,18 @@ bool qa_application_network_q2_create(qa_application *app, qa_net_protocol_id pr
             owner->event_actors && owner->events;
         if (!ok) application_fail(error, QA_ERROR_MEMORY, "Retaining genuine Q2 publication rows");
     }
+    if (ok) {
+        capture_provider = application_network_q2_provider(owner);
+        bool present = capture_provider->q2_wire_capture != NULL;
+        ok = application_network_q2_capture_prepare(owner, error);
+        capture_created = ok && !present;
+    }
     if (ok) ok=application_q2_original_configure(owner,error);
     if (ok) *out = owner;
-    else qa_application_network_q2_destroy(owner);
+    else {
+        if (capture_created) application_network_q2_capture_dispose(capture_provider);
+        qa_application_network_q2_destroy(owner);
+    }
     return ok;
 }
 

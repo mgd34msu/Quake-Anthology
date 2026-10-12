@@ -157,6 +157,7 @@ bool application_network_q2_source_config(qa_application_network_q2 *, uint32_t,
 bool application_network_q2_observe(qa_application_network_q2 *, qa_error *);
 bool application_network_q2_source_resources(qa_application_network_q2 *, qa_error *);
 bool application_network_q2_entities(qa_application_network_q2 *, qa_error *);
+bool application_network_q2_capture_prepare(qa_application_network_q2 *, qa_error *);
 void application_network_q2_capture_dispose(application_provider *);
 bool application_network_q2_player_state(qa_application_network_q2 *, qa_actor_id,
     qa_q2_player *, qa_error *);
