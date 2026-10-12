@@ -351,12 +351,7 @@ bool q2_q64_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e) 
             return !q2_actor_live(g, copy_id) ||
                    qa_session_release(g->services.session, copy_id, e);
         }
-        copy->entity->q64 = calloc(1, sizeof(*copy->entity->q64));
-        if (!copy->entity->q64) {
-            qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q64 camera dummy");
-            (void)qa_session_release(g->services.session, copy_id, NULL);
-            return false;
-        }
+        q2_entity_q64_prepare(copy->entity);
         s->enemy = copy->id;
         copy->entity->owner = activator;
         copy->entity->visual = visual;
@@ -416,13 +411,8 @@ bool q2_q64_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     }
     if (s->kind == Q2E_CAMERA && g->options.deathmatch)
         return qa_session_release(g->services.session, a->id, e);
-    if (s->kind != Q2E_SPINNING) {
-        s->q64 = calloc(1, sizeof(*s->q64));
-        if (!s->q64) {
-            qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q64 map continuation");
-            return false;
-        }
-    }
+    if (s->kind != Q2E_SPINNING)
+        q2_entity_q64_prepare(s);
     if (s->kind == Q2E_CAMERA) {
         s->q64->hackflags = q2_actor_field_flags(g, a->id, g->field_keys[QA_TARGET_KEY_HACKFLAGS]);
         s->usable = true;

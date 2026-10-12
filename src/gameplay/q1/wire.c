@@ -27,7 +27,7 @@ static void state_free(q1_wire_state *wire) {
     free(wire->models.rows);
     free(wire->sounds.rows);
     free(wire->board);
-    free(wire->edicts);
+    qa_arena_destroy(&wire->edict_storage);
     free(wire);
 }
 void q1_wire_destroy(qa_q1_game *g) {
@@ -142,7 +142,9 @@ bool qa_q1_wire_begin_world(qa_q1_game *g, const char *path, uint32_t inline_mod
         return fail(error, "Q1 physical Source clients exceed their engine edict capacity");
     }
     wire->next_dynamic = g->options.max_clients + 1;
-    if (!q1_wire_edict_extent(wire, wire->next_dynamic, error)) {
+    uint32_t reserve = wire->edict_limit ? wire->edict_limit :
+        (g->capacity > wire->next_dynamic ? g->capacity : wire->next_dynamic);
+    if (!q1_wire_edict_extent(wire, reserve, error)) {
         state_free(wire);
         return false;
     }
@@ -205,7 +207,8 @@ bool qa_q1_wire_freeze(qa_q1_game *g, qa_error *error) {
 }
 bool q1_wire_edict_extent(q1_wire_state *wire, uint32_t count, qa_error *error) {
     if (count <= wire->edict_capacity) return true;
-    uint32_t capacity = wire->edict_capacity ? wire->edict_capacity : 16;
+    uint32_t capacity = wire->edict_limit ? wire->edict_limit :
+        (wire->edict_capacity ? wire->edict_capacity : 16);
     while (capacity < count) {
         if (capacity > UINT32_MAX / 2) { capacity = count; break; }
         capacity *= 2;
@@ -213,15 +216,15 @@ bool q1_wire_edict_extent(q1_wire_state *wire, uint32_t count, qa_error *error) 
     if (wire->edict_limit && capacity > wire->edict_limit) capacity = wire->edict_limit;
     if (capacity < count || sizeof(*wire->edicts) > SIZE_MAX / capacity)
         return fail(error, "Q1 physical source edict allocation exceeds its extent");
-    q1_wire_edict *edicts = realloc(wire->edicts, (size_t)capacity * sizeof(*edicts));
-    if (!edicts) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "Growing Q1 physical source edict state");
-        return false;
-    }
+    q1_wire_edict *edicts = qa_arena_grow(&wire->edict_storage, wire->edicts,
+        (size_t)wire->edict_capacity * sizeof(*edicts),
+        (size_t)capacity * sizeof(*edicts), _Alignof(q1_wire_edict), error);
+    if (!edicts) return false;
     memset(edicts + wire->edict_capacity, 0,
         (size_t)(capacity - wire->edict_capacity) * sizeof(*edicts));
     wire->edicts = edicts;
     wire->edict_capacity = capacity;
+    if (wire->edict_limit) qa_arena_seal(&wire->edict_storage);
     return true;
 }
 bool q1_wire_allocate_slot(qa_q1_game *g, bool *has_source, uint32_t *slot, qa_error *error) {

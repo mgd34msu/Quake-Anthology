@@ -910,14 +910,7 @@ static bool entity_q64(q2_original_record_io *io, q2_actor *a)
     if (s->kind != Q2E_EYE && s->kind != Q2E_CAMERA && s->kind != Q2E_CAMERA_DUMMY) return true;
     if (io->edition != QA_RULESET_Q2_RERELEASE)
         return entity_error(io, 0, "Q2 camera and eye continuation requires its original rerelease fields");
-    if (!s->q64) {
-        s->q64 = calloc(1, sizeof(*s->q64));
-        if (!s->q64) {
-            qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Restoring original Q2 camera state");
-            return false;
-        }
-    }
-    q2_q64 *v = s->q64;
+    q2_q64 *v = q2_entity_q64_prepare(s);
     if (s->kind == Q2E_EYE) {
         if (io->reading) v->vision_cone = a->physics.yaw_speed;
         return scalar(io, "move_origin", Q2_ORIGINAL_VECTOR, 616, &v->eye_position) &&

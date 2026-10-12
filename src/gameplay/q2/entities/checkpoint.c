@@ -28,15 +28,23 @@ static bool copy_arrays(qa_q2_game *g, const qa_q2_entity_state *from, qa_q2_ent
     } else if (!q2_saved_array(from->fields, from->field_count, sizeof(*from->fields), &copy, e))
         return false;
     to->fields = copy;
-    if (!q2_saved_array(from->mover, from->mover ? 1 : 0, sizeof(*from->mover), &copy, e))
-        return false;
-    to->mover = copy;
+    if (runtime && from->mover) {
+        *q2_entity_mover_prepare(to) = *from->mover;
+    } else {
+        if (!q2_saved_array(from->mover, from->mover ? 1 : 0, sizeof(*from->mover), &copy, e))
+            return false;
+        to->mover = copy;
+    }
     if (!q2_saved_array(from->turret, from->turret ? 1 : 0, sizeof(*from->turret), &copy, e))
         return false;
     to->turret = copy;
-    if (!q2_saved_array(from->q64, from->q64 ? 1 : 0, sizeof(*from->q64), &copy, e))
-        return false;
-    to->q64 = copy;
+    if (runtime && from->q64) {
+        *q2_entity_q64_prepare(to) = *from->q64;
+    } else {
+        if (!q2_saved_array(from->q64, from->q64 ? 1 : 0, sizeof(*from->q64), &copy, e))
+            return false;
+        to->q64 = copy;
+    }
     if (runtime && from->trail) {
         *q2_entity_trail_prepare(to) = *from->trail;
     } else {

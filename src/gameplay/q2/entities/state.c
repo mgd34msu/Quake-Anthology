@@ -70,6 +70,22 @@ q2_entity_state *q2_entity_state_take(qa_q2_game *g, qa_error *e) {
     *(q2_entity_record *)s = (q2_entity_record){0};
     return s;
 }
+q2_mover *q2_entity_mover_prepare(q2_entity_state *s) {
+    if (!s->mover) {
+        q2_entity_record *record = (q2_entity_record *)s;
+        record->mover = (q2_mover){0};
+        s->mover = &record->mover;
+    }
+    return s->mover;
+}
+q2_q64 *q2_entity_q64_prepare(q2_entity_state *s) {
+    if (!s->q64) {
+        q2_entity_record *record = (q2_entity_record *)s;
+        record->q64 = (q2_q64){0};
+        s->q64 = &record->q64;
+    }
+    return s->q64;
+}
 q2_player_trail_node *q2_entity_trail_prepare(q2_entity_state *s) {
     q2_entity_record *record = (q2_entity_record *)s;
     record->trail = (q2_player_trail_node){0};
@@ -77,9 +93,7 @@ q2_player_trail_node *q2_entity_trail_prepare(q2_entity_state *s) {
     return s->trail;
 }
 void q2_entity_state_release(qa_q2_game *g, q2_entity_state *s) {
-    free(s->mover);
     free(s->turret);
-    free(s->q64);
     size_t slot = (size_t)((uint8_t *)s - g->entity_records.values) / g->entity_records.stride;
     qa_pool_release(&g->entity_records, slot);
 }
