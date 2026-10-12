@@ -128,7 +128,7 @@ static bool heap_copy(const bot_fuzzy_heap *source,bot_fuzzy_heap *out,
         }
         tail=&(*tail)->next;
     }
-    return true;
+    return bot_fuzzy_heap_reindex(out,error);
 }
 static bool config_add(bot_fuzzy_history *image,bot_fuzzy_owned *object,bool owned,qa_error *error)
 {

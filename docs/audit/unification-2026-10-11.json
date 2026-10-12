@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "0a292c41544f08ccfe1ba3b4e82473f38c5a912a",
+  "verified_main": "b256f052bc30fc646ce1214505693a2e1c2503c1",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -27140,7 +27140,13 @@
       "job": "06",
       "area": "audio_input_ui",
       "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "verification": "source review; no runtime or performance proof",
+      "partial_followups": [
+        {
+          "commit": "b256f052bc30fc646ce1214505693a2e1c2503c1",
+          "verification": "Every commands.c qac_text use is replaced by scoped common arena storage and shared word joining. Nested dispatch scope and drain text survive post_dispatch and queue consumption. Dialect suffixes, script completion and persistent alias/cvar ownership retained. Outside owned-output/retained-line qac_text consumers and large execute_now copies remain open."
+        }
+      ]
     },
     {
       "id": "06-06",
@@ -39774,6 +39780,29 @@
       ],
       "record_directory": "/tmp/qa-ta3196-shared-vfs-route-20261011",
       "conclusion": "One internal route walker now serves probe and acquisition. Duplicate normalization/overlay/link/prefix/mount walks deleted. Filtering, terminal links, resource/receipt ownership and metadata-only probe semantics preserved without a pre-probe in acquisition. Existing VFS suite checks default/prefix/overlay agreement and terminal miss. Matching normal build and seven core suites pass."
+    },
+    {
+      "commit": "b256f052bc30fc646ce1214505693a2e1c2503c1",
+      "source_tree": "7ba74cfa6b80a553736804414de0f6ce0749c71d",
+      "finding_ids": [
+        "06-05"
+      ],
+      "files_rechecked": [
+        "src/console/commands.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-console-command-arena-20261011",
+      "conclusion": "Every commands.c qac_text use is replaced by scoped common arena storage and shared word joining. Nested dispatch scope and drain text survive post_dispatch and queue consumption. Dialect suffixes, script completion and persistent alias/cvar ownership retained. Outside owned-output/retained-line qac_text consumers and large execute_now copies remain open. Normal production build and seven core suites; no live/global zero-heap claim."
     }
   ],
   "verification_limits": [

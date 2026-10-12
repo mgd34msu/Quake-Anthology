@@ -1,6 +1,7 @@
 #ifndef QA_BOT_LIBRARY_SOURCE_FUZZY_H
 #define QA_BOT_LIBRARY_SOURCE_FUZZY_H
 #include "qa/bots_allocator.h"
+#include "qa/id_index.h"
 
 enum {BOT_FUZZY_CONFIG_BYTES=1092,BOT_FUZZY_SEPARATOR_BYTES=32,BOT_FUZZY_WEIGHTS=128};
 typedef enum bot_fuzzy_pointer_kind {BOT_FUZZY_NAME,BOT_FUZZY_SEPARATOR} bot_fuzzy_pointer_kind;
@@ -15,6 +16,7 @@ typedef struct bot_fuzzy_heap {
     bot_fuzzy_pointer *first,*last;
     uint64_t next_pointer;
     size_t standalone_users;
+    qa_id_index aliases;
 } bot_fuzzy_heap;
 typedef struct bot_fuzzy_config {
     bot_fuzzy_heap *heap;
@@ -33,6 +35,7 @@ typedef enum bot_fuzzy_float {
 } bot_fuzzy_float;
 bool bot_fuzzy_heap_bind(bot_fuzzy_heap *,qa_bot_memory *,qa_error *);
 bool bot_fuzzy_heap_clear(bot_fuzzy_heap *,qa_error *);
+bool bot_fuzzy_heap_reindex(bot_fuzzy_heap *,qa_error *);
 bool bot_fuzzy_name_allocate(bot_fuzzy_heap *,qa_bytes,uint32_t *,qa_error *);
 bool bot_fuzzy_name_read(const bot_fuzzy_heap *,uint32_t,qa_bytes *,qa_error *);
 bool bot_fuzzy_pointer_free(bot_fuzzy_heap *,uint32_t,bot_fuzzy_pointer_kind,qa_error *);

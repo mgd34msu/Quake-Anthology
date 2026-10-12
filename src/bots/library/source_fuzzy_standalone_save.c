@@ -59,7 +59,8 @@ static bool pointer_fields(qa_source_save_io *io,bot_fuzzy_heap *heap)
         if(!ok) return bot_save_fail(io,QA_ERROR_FORMAT,"Invalid standalone fuzzy pointer alias");
         last=row;if(reading) heap->last=row;tail=&row->next;
     }
-    return !*tail && last==heap->last ? true : bot_save_fail(io,QA_ERROR_FORMAT,"Invalid standalone fuzzy pointer tail");
+    if(*tail || last!=heap->last) return bot_save_fail(io,QA_ERROR_FORMAT,"Invalid standalone fuzzy pointer tail");
+    return !reading || bot_fuzzy_heap_reindex(heap,io->error);
 }
 static bool diagnostic_fields(qa_source_save_io *io,bot_fuzzy_owned *config)
 {

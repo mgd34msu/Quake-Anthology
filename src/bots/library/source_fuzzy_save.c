@@ -142,7 +142,7 @@ static bool pointer_fields(qa_source_save_io *io,bot_fuzzy_heap *heap) {
         if(!ok) return false;
         tail=&row->next;
     }
-    return true;
+    return io->direction!=QA_SOURCE_SAVE_READ || bot_fuzzy_heap_reindex(heap,io->error);
 }
 static bool config_fields(qa_source_save_io *io,bot_fuzzy_store *store) {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;size_t count=0;

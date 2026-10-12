@@ -10,11 +10,15 @@ static bool live(const bot_fuzzy_heap *heap,qa_error *error) {
     return heap && heap->memory && !qa_bot_memory_disposed(heap->memory) ? true :
         fail(error,"Fuzzy heap requires its actual live memory owner");
 }
+static bot_fuzzy_pointer *pointer_get(const bot_fuzzy_heap *heap,uint32_t pointer) {
+    qa_id_index_cursor cursor=qa_id_index_begin(&heap->aliases,pointer,0);
+    size_t value;
+    return qa_id_index_next(&heap->aliases,&cursor,&value)?(bot_fuzzy_pointer *)(uintptr_t)value:NULL;
+}
 static bool pointer_span(const bot_fuzzy_heap *heap,uint32_t pointer,bot_fuzzy_pointer_kind kind,
     qa_bot_memory_span *out,qa_error *error) {
     if(!live(heap,error)) return false;
-    const bot_fuzzy_pointer *row=heap->first;
-    while(row && row->pointer!=pointer) row=row->next;
+    const bot_fuzzy_pointer *row=pointer_get(heap,pointer);
     if(!row || row->kind!=kind) return fail(error,"Invalid fuzzy heap pointer");
     return qa_bot_memory_bytes(heap->memory,row->allocation,out,error);
 }
@@ -22,11 +26,14 @@ static bool publish(bot_fuzzy_heap *heap,bot_fuzzy_pointer_kind kind,qa_bot_memo
     uint32_t *out,qa_error *error) {
     if(!heap->next_pointer || heap->next_pointer>UINT32_MAX)
         return fail(error,"Fuzzy heap pointer identities exhausted");
+    if(!qa_id_index_reserve(&heap->aliases,1,error)) return false;
     bot_fuzzy_pointer *row=calloc(1,sizeof(*row));
     if(!row) {qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining fuzzy source pointer");return false;}
     *row=(bot_fuzzy_pointer){(uint32_t)heap->next_pointer++,kind,allocation,NULL};
     if(heap->last) heap->last->next=row;else heap->first=row;
-    heap->last=row;*out=row->pointer;return true;
+    heap->last=row;
+    qa_id_index_insert(&heap->aliases,row->pointer,0,(size_t)(uintptr_t)row);
+    *out=row->pointer;return true;
 }
 bool bot_fuzzy_heap_bind(bot_fuzzy_heap *heap,qa_bot_memory *memory,qa_error *error) {
     if(!heap || heap->memory || heap->first || heap->last || heap->next_pointer ||
@@ -37,8 +44,19 @@ bool bot_fuzzy_heap_bind(bot_fuzzy_heap *heap,qa_bot_memory *memory,qa_error *er
 bool bot_fuzzy_heap_clear(bot_fuzzy_heap *heap,qa_error *error) {
     if(!heap) return fail(error,"Fuzzy heap clear requires its actual owner");
     if(heap->memory && !qa_bot_memory_release(heap->memory,error)) return false;
+    qa_id_index_destroy(&heap->aliases);
     while(heap->first) {bot_fuzzy_pointer *row=heap->first;heap->first=row->next;free(row);}
     *heap=(bot_fuzzy_heap){0};return true;
+}
+bool bot_fuzzy_heap_reindex(bot_fuzzy_heap *heap,qa_error *error) {
+    qa_id_index index={0};
+    for(bot_fuzzy_pointer *row=heap->first;row;row=row->next) {
+        if(!qa_id_index_reserve(&index,1,error)) {
+            qa_id_index_destroy(&index);return false;
+        }
+        qa_id_index_insert(&index,row->pointer,0,(size_t)(uintptr_t)row);
+    }
+    qa_id_index_destroy(&heap->aliases);heap->aliases=index;return true;
 }
 static size_t terminated(qa_bytes bytes) {
     const uint8_t *zero=bytes.size?memchr(bytes.data,0,bytes.size):NULL;
@@ -66,11 +84,12 @@ bool bot_fuzzy_name_read(const bot_fuzzy_heap *heap,uint32_t pointer,qa_bytes *o
 }
 bool bot_fuzzy_pointer_free(bot_fuzzy_heap *heap,uint32_t pointer,bot_fuzzy_pointer_kind kind,qa_error *error) {
     if(!live(heap,error)) return false;
-    bot_fuzzy_pointer **link=&heap->first,*previous=NULL;
-    while(*link && (*link)->pointer!=pointer) {previous=*link;link=&(*link)->next;}
-    bot_fuzzy_pointer *row=*link;
+    bot_fuzzy_pointer *row=pointer_get(heap,pointer);
     if(!row || row->kind!=kind) return fail(error,"Invalid fuzzy heap release pointer");
+    bot_fuzzy_pointer **link=&heap->first,*previous=NULL;
+    while(*link!=row) {previous=*link;link=&(*link)->next;}
     if(!qa_bot_memory_free(heap->memory,row->allocation,error)) return false;
+    qa_id_index_remove(&heap->aliases,pointer,0);
     *link=row->next;if(heap->last==row) heap->last=previous;free(row);return true;
 }
 static bool separator_span(const bot_fuzzy_separator *separator,qa_bot_memory_span *out,qa_error *error) {
