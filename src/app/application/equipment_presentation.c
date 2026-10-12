@@ -490,7 +490,7 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
     qa_application_equipment_view view = {.actor = actor, .provider = provider->owner,
         .primary = primary->owner, .selected = provider != primary,
         .family = provider->product->family, .rate = 10};
-    qa_q3_product q3_product = !strcmp(provider->product->campaign, "missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
+    qa_q3_product q3_product = provider->product->campaign_id == QA_CAMPAIGN_MISSIONPACK ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
     bool standard_q3 = true, declared_source_catalog = false;
     const application_q3_catalog_weapon *q3_weapons=NULL;
     size_t q3_weapon_count=0;

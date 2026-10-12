@@ -48,8 +48,6 @@ bool frontend_unified_components_submit_reflected(frontend_unified_components *,
     const qa_q3_scene_options *,qa_scene_frame *,qa_error *);
 bool frontend_unified_components_recipient_content(const frontend_unified_components *,const char **,
     const qa_recipe_provider **,bool *,qa_error *);
-bool frontend_unified_components_recipient_current(const frontend_unified_components *,const char *,
-    const qa_recipe_provider *);
 bool frontend_unified_components_assets_encode(const frontend_unified_components *,const qa_q3_presentation_assets *,
     uint64_t *frontend_identity,qa_error *);
 bool frontend_unified_components_assets_decode(const frontend_unified_components *,uint64_t frontend_identity,

@@ -1095,7 +1095,7 @@ static bool qualify_base(application_provider *provider, qa_world *world, q3g_re
     struct application_q3_guest *base = calloc(1, sizeof(*base));
     if (!base) return application_fail(error, QA_ERROR_MEMORY, "Qualifying Q3 application source state");
     base->provider = provider;
-    base->product = !strcmp(product->campaign, "missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
+    base->product = product->campaign_id == QA_CAMPAIGN_MISSIONPACK ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
     qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, provider->application->session, saved->state, error) &&
         fields(&io, base) && qa_source_save_finish(&io, NULL);

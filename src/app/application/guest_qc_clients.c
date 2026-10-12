@@ -151,9 +151,9 @@ static bool host_give(struct application_qc_state *engine, int32_t reference,
 {
     const char *item = command->argc > 1 ? command->argv[1] : "";
     float amount = (float)atoi(command->argc > 2 ? command->argv[2] : "");
-    const char *campaign = engine->provider->product->campaign;
-    bool hipnotic = engine->profile != QA_QC_QUAKEWORLD && !strcmp(campaign, "hipnotic");
-    bool rogue = engine->profile != QA_QC_QUAKEWORLD && !strcmp(campaign, "rogue");
+    qa_campaign_id campaign = engine->provider->product->campaign_id;
+    bool hipnotic = engine->profile != QA_QC_QUAKEWORLD && campaign == QA_CAMPAIGN_HIPNOTIC;
+    bool rogue = engine->profile != QA_QC_QUAKEWORLD && campaign == QA_CAMPAIGN_ROGUE;
     uint32_t weapon = 0;
     if (*item >= '0' && *item <= '9') {
         if (hipnotic && *item == '6') weapon = item[1] == 'a' ? UINT32_C(1) << 16 : 16;

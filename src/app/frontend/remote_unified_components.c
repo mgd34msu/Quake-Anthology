@@ -66,18 +66,6 @@ bool frontend_unified_components_recipient_content(const frontend_unified_compon
     }
     return true;
 }
-bool frontend_unified_components_recipient_current(const frontend_unified_components *o,const char *content,
-    const qa_recipe_provider *provider)
-{
-    if(!content||!provider||(!frontend_unified_components_current(o)&&!frontend_unified_components_retained_current(o))) return false;
-    for(size_t i=0;i<q3remote_component_physical_count(o);++i) {
-        const remote_component *r=q3remote_component_physical_at(o,i);
-        if(!r||r->state.provider_row!=provider||!r->state.mod) continue;
-        const qa_product *product=qa_catalog_product(qa_executable_recipe_catalog(o->recipe),r->state.mod->product);
-        if(product&&!strcmp(product->identity,content)) return true;
-    }
-    return false;
-}
 bool frontend_unified_components_assets_encode(const frontend_unified_components *o,const qa_q3_presentation_assets *assets,
     uint64_t *identity,qa_error *e)
 {
