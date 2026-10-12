@@ -2,6 +2,7 @@
 #include "qa/network_q1_decoder_save.h"
 #include "qa/network_qw_source.h"
 #include "qa/text.h"
+#include "qw_output.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -127,6 +128,41 @@ static bool write_index(qa_net_writer *w, qa_net_protocol_id p, uint32_t index)
     if (index>=index_limit(p)) return qa_net_writer_fail(w,"QuakeWorld index exceeds protocol width");
     return p.kind==QA_NET_QW28 ? qa_net_write_u8(w,(uint8_t)index) : qa_net_write_u16(w,(uint16_t)index);
 }
+static int32_t output_integer(double value)
+{ return value>=INT32_MIN && value<=INT32_MAX ? (int32_t)value : INT32_MIN; }
+static bool output_byte(qa_net_writer *w, qw_output_policy policy, double value)
+{
+    return qa_net_write_u8(w,policy==QW_OUTPUT_SOURCE ?
+        (uint8_t)(uint32_t)output_integer(value) : (uint8_t)(uint32_t)value);
+}
+static bool output_index(qa_net_writer *w, qa_net_protocol_id p,
+    qw_output_policy policy, double value)
+{
+    return policy==QW_OUTPUT_SOURCE ? output_byte(w,policy,value) :
+        write_index(w,p,(uint32_t)value);
+}
+static bool output_coord(qa_net_writer *w, qa_net_protocol_id p,
+    qw_output_policy policy, float value)
+{
+    return policy==QW_OUTPUT_SOURCE ?
+        qa_net_write_u16(w,(uint16_t)(uint32_t)qa_source_float_to_i32(value*8.0f)) :
+        qa_q1_write_coord(w,p,value);
+}
+static bool output_angle(qa_net_writer *w, qa_net_protocol_id p,
+    qw_output_policy policy, float value)
+{
+    return policy==QW_OUTPUT_SOURCE ?
+        qa_net_write_u8(w,(uint8_t)(uint32_t)qa_source_float_to_i32(value*256.0f/360.0f)) :
+        qa_q1_write_angle(w,p,value);
+}
+bool qw_output_write_stat(qa_net_writer *w, uint8_t index, double value)
+{
+    bool narrow=value>=0 && value<=255;
+    qa_net_write_u8(w,narrow ? 3 : 38); qa_net_write_u8(w,index);
+    if (narrow) qa_net_write_u8(w,(uint8_t)value);
+    else qa_net_write_u32(w,(uint32_t)output_integer(value));
+    return !w->failed;
+}
 static void read_vector(qa_net_reader *r, qa_net_protocol_id p, float v[3], bool angles)
 { for (unsigned i=0;i<3;++i) v[i]=angles ? qa_q1_read_angle(r,p) : qa_q1_read_coord(r,p); }
 static void write_vector(qa_net_writer *w, qa_net_protocol_id p, const float v[3], bool angles)
@@ -155,10 +191,18 @@ bool qa_qw_write_baseline(qa_net_writer *w, qa_net_protocol_id p, const qa_q1_en
 {
     if (!profile_valid(p) || !entity_valid(p,s) || s->effects || s->qw_flags)
         return qa_net_writer_fail(w,"Unrepresentable QuakeWorld baseline");
-    write_index(w,p,s->model); write_index(w,p,s->frame);
-    qa_net_write_u8(w,(uint8_t)s->colormap); qa_net_write_u8(w,(uint8_t)s->skin);
+    qw_output_entity value=qw_output_entity_checked(s);
+    return qw_output_write_baseline(w,p,QW_OUTPUT_CHECKED,&value);
+}
+bool qw_output_write_baseline(qa_net_writer *w, qa_net_protocol_id p,
+    qw_output_policy policy, const qw_output_entity *s)
+{
+    output_index(w,p,policy,s->model); output_index(w,p,policy,s->frame);
+    output_byte(w,policy,s->colormap); output_byte(w,policy,s->skin);
     if (p.kind==QA_NET_QW29) { qa_net_write_u8(w,s->alpha); qa_net_write_u8(w,s->scale); }
-    for (unsigned i=0;i<3;++i) { qa_q1_write_coord(w,p,s->origin[i]); qa_q1_write_angle(w,p,s->angles[i]); }
+    for (unsigned i=0;i<3;++i) {
+        output_coord(w,p,policy,s->origin[i]); output_angle(w,p,policy,s->angles[i]);
+    }
     return !w->failed;
 }
 bool qa_qw_read_player(qa_net_reader *r, qa_net_protocol_id p, uint32_t player_model, qa_qw_player *out)
@@ -198,16 +242,29 @@ bool qa_qw_write_player(qa_net_writer *w, qa_net_protocol_id p, const qa_qw_play
         if (s->velocity[i]<INT16_MIN || s->velocity[i]>INT16_MAX)
             return qa_net_writer_fail(w,"QuakeWorld player velocity exceeds short range");
     } else if (s->velocity[i]!=0) return qa_net_writer_fail(w,"QuakeWorld player flags omit velocity");
+    qw_output_player value={.slot=s->slot,.msec=s->msec,.flags=s->flags,
+        .origin=s->origin,.velocity=s->velocity,.frame=s->frame,.model=s->model,
+        .skin=s->skin,.effects=s->effects,.weapon_frame=s->weapon_frame,.command=&s->command};
+    return qw_output_write_player(w,p,QW_OUTPUT_CHECKED,&value);
+}
+bool qw_output_write_player(qa_net_writer *w, qa_net_protocol_id p,
+    qw_output_policy policy, const qw_output_player *s)
+{
     qa_net_write_u8(w,s->slot); qa_net_write_u16(w,s->flags);
-    write_vector(w,p,s->origin,false); qa_net_write_u8(w,(uint8_t)s->frame);
+    for (unsigned i=0;i<3;++i) output_coord(w,p,policy,s->origin[i]);
+    output_byte(w,policy,s->frame);
     if (s->flags&QA_QW_PF_MSEC) qa_net_write_u8(w,s->msec);
     qa_qw_command zero={0};
-    if (s->flags&QA_QW_PF_COMMAND) qa_qw_write_delta_command(w,&zero,&s->command);
-    for (unsigned i=0;i<3;++i) if (s->flags&((unsigned)QA_QW_PF_VELOCITY1<<i)) qa_net_write_i16(w,(int16_t)s->velocity[i]);
-    if (s->flags&QA_QW_PF_MODEL) write_index(w,p,s->model);
-    if (s->flags&QA_QW_PF_SKIN) qa_net_write_u8(w,(uint8_t)s->skin);
-    if (s->flags&QA_QW_PF_EFFECTS) qa_net_write_u8(w,(uint8_t)s->effects);
-    if (s->flags&QA_QW_PF_WEAPONFRAME) qa_net_write_u8(w,(uint8_t)s->weapon_frame);
+    if (s->flags&QA_QW_PF_COMMAND) qa_qw_write_delta_command(w,&zero,s->command);
+    for (unsigned i=0;i<3;++i) if (s->flags&((unsigned)QA_QW_PF_VELOCITY1<<i)) {
+        if (policy==QW_OUTPUT_SOURCE)
+            qa_net_write_u16(w,(uint16_t)(uint32_t)qa_source_float_to_i32(s->velocity[i]));
+        else qa_net_write_i16(w,(int16_t)s->velocity[i]);
+    }
+    if (s->flags&QA_QW_PF_MODEL) output_index(w,p,policy,s->model);
+    if (s->flags&QA_QW_PF_SKIN) output_byte(w,policy,s->skin);
+    if (s->flags&QA_QW_PF_EFFECTS) output_byte(w,policy,s->effects);
+    if (s->flags&QA_QW_PF_WEAPONFRAME) output_byte(w,policy,s->weapon_frame);
     return !w->failed;
 }
 
@@ -260,10 +317,12 @@ static bool write_entity_header(qa_net_writer *w, uint32_t number, unsigned bits
     if (extra&X_ENTITY) qa_net_write_u8(w,(uint8_t)(number>>9));
     return !w->failed;
 }
-static bool write_entity(qa_net_writer *w, qa_net_protocol_id p, const qa_q1_entity *from,
-                          const qa_q1_entity *to, bool force)
+static bool write_entity(qa_net_writer *w, qa_net_protocol_id p, qw_output_policy policy,
+    const qw_output_entity *from, const qw_output_entity *to, bool force)
 {
-    qa_q1_entity empty; qa_q1_entity_init(&empty);
+    static const float zero[3]={0};
+    qw_output_entity empty={.origin=zero,.angles=zero,
+        .alpha=QA_Q1_ALPHA_DEFAULT,.scale=QA_Q1_SCALE_DEFAULT};
     if (!from) from=&empty;
     unsigned bits=0,extra=0;
     for (unsigned i=0;i<3;++i) {
@@ -271,29 +330,29 @@ static bool write_entity(qa_net_writer *w, qa_net_protocol_id p, const qa_q1_ent
         if (difference < -0.1 || difference > 0.1) bits|=(unsigned)U_ORIGIN1<<i;
         if (to->angles[i]!=from->angles[i]) bits|=angle_bits[i];
     }
-    if (to->model!=from->model) { bits|=U_MODEL; if (to->model>255) extra|=X_MODEL; }
-    if (to->frame!=from->frame) { bits|=U_FRAME; if (to->frame>255) extra|=X_FRAME; }
+    if (to->model!=from->model) { bits|=U_MODEL; if (policy==QW_OUTPUT_CHECKED && to->model>255) extra|=X_MODEL; }
+    if (to->frame!=from->frame) { bits|=U_FRAME; if (policy==QW_OUTPUT_CHECKED && to->frame>255) extra|=X_FRAME; }
     if (to->colormap!=from->colormap) bits|=U_COLORMAP;
     if (to->skin!=from->skin) bits|=U_SKIN;
     if (to->effects!=from->effects) bits|=U_EFFECTS;
     if (to->alpha!=from->alpha) extra|=X_ALPHA;
     if (to->scale!=from->scale) extra|=X_SCALE;
-    if (to->qw_flags&U_SOLID) bits|=U_SOLID;
+    if (to->solid) bits|=U_SOLID;
     /* A header without SOLID explicitly clears the previous solid state. */
-    force=force || ((to->qw_flags^from->qw_flags)&U_SOLID)!=0;
+    force=force || to->solid!=from->solid;
     if (!bits && !extra && !force) return true;
     write_entity_header(w,to->number,bits,extra);
-    if (bits&U_MODEL) qa_net_write_u8(w,(uint8_t)to->model);
-    if (bits&U_FRAME) qa_net_write_u8(w,(uint8_t)to->frame);
-    if (bits&U_COLORMAP) qa_net_write_u8(w,(uint8_t)to->colormap);
-    if (bits&U_SKIN) qa_net_write_u8(w,(uint8_t)to->skin);
-    if (bits&U_EFFECTS) qa_net_write_u8(w,(uint8_t)to->effects);
+    if (bits&U_MODEL) output_byte(w,policy,to->model);
+    if (bits&U_FRAME) output_byte(w,policy,to->frame);
+    if (bits&U_COLORMAP) output_byte(w,policy,to->colormap);
+    if (bits&U_SKIN) output_byte(w,policy,to->skin);
+    if (bits&U_EFFECTS) output_byte(w,policy,to->effects);
     for (unsigned i=0;i<3;++i) {
-        if (bits&((unsigned)U_ORIGIN1<<i)) qa_q1_write_coord(w,p,to->origin[i]);
-        if (bits&angle_bits[i]) qa_q1_write_angle(w,p,to->angles[i]);
+        if (bits&((unsigned)U_ORIGIN1<<i)) output_coord(w,p,policy,to->origin[i]);
+        if (bits&angle_bits[i]) output_angle(w,p,policy,to->angles[i]);
     }
-    if (extra&X_MODEL) qa_net_write_u8(w,(uint8_t)(to->model>>8));
-    if (extra&X_FRAME) qa_net_write_u8(w,(uint8_t)(to->frame>>8));
+    if (extra&X_MODEL) qa_net_write_u8(w,(uint8_t)((uint32_t)to->model>>8));
+    if (extra&X_FRAME) qa_net_write_u8(w,(uint8_t)((uint32_t)to->frame>>8));
     if (extra&X_ALPHA) qa_net_write_u8(w,to->alpha);
     if (extra&X_SCALE) qa_net_write_u8(w,to->scale);
     return !w->failed;
@@ -361,6 +420,35 @@ static bool read_entities(qa_net_reader *r, qa_qw_decoder *d, uint32_t sequence,
     m->data.packet.frame=qa_qw_decoder_frame(d,sequence);
     return true;
 }
+static void output_entity_read(const void *rows, size_t index, qw_output_entity *out)
+{ *out=qw_output_entity_checked((const qa_q1_entity *)rows+index); }
+static bool output_baseline_read(const void *context, uint32_t number, qw_output_entity *out)
+{
+    const qa_q1_entity *row=qa_qw_decoder_baseline(context,number);
+    if (!row) return false;
+    *out=qw_output_entity_checked(row); return true;
+}
+bool qw_output_write_entities(qa_net_writer *w, qa_net_protocol_id p,
+    qw_output_policy policy, const qw_output_packet *packet)
+{
+    qa_net_write_u8(w,packet->delta ? 48 : 47);
+    if (packet->delta) qa_net_write_u8(w,(uint8_t)packet->previous_sequence);
+    size_t old=0,next=0;
+    while (old<packet->previous_count || next<packet->count) {
+        qw_output_entity a,b;bool has_a=old<packet->previous_count,has_b=next<packet->count;
+        if (has_a) packet->read(packet->previous,old,&a);
+        if (has_b) packet->read(packet->current,next,&b);
+        if (has_a && (!has_b || a.number<b.number)) {
+            write_entity_header(w,a.number,U_REMOVE,0); ++old;
+        } else if (has_b && (!has_a || b.number<a.number)) {
+            qw_output_entity baseline;
+            bool present=packet->baseline(packet->baselines,b.number,&baseline);
+            write_entity(w,p,policy,present ? &baseline : NULL,&b,true); ++next;
+        } else { write_entity(w,p,policy,&a,&b,false); ++old; ++next; }
+        if (w->failed) return false;
+    }
+    return qa_net_write_u16(w,0);
+}
 static bool write_entities(qa_net_writer *w, qa_net_protocol_id p, const qa_qw_service *m, const qa_qw_decoder *d)
 {
     const qa_qw_frame *to=m->data.packet.frame;
@@ -369,19 +457,11 @@ static bool write_entities(qa_net_writer *w, qa_net_protocol_id p, const qa_qw_s
         return qa_net_writer_fail(w,"QuakeWorld frame context protocol mismatch");
     const qa_qw_frame *from=m->data.packet.delta ? qa_qw_decoder_frame(d,m->data.packet.from_sequence) : NULL;
     if (m->data.packet.delta && !from) return qa_net_writer_fail(w,"Missing QuakeWorld output delta frame");
-    qa_net_write_u8(w,from ? 48 : 47);
-    if (from) qa_net_write_u8(w,(uint8_t)from->sequence);
-    size_t old=0,next=0,old_count=from ? from->count : 0;
-    while (old<old_count || next<to->count) {
-        const qa_q1_entity *a=old<old_count ? &from->entities[old] : NULL;
-        const qa_q1_entity *b=next<to->count ? &to->entities[next] : NULL;
-        if (a && (!b || a->number<b->number)) { write_entity_header(w,a->number,U_REMOVE,0); ++old; }
-        else if (b && (!a || b->number<a->number)) {
-            write_entity(w,p,qa_qw_decoder_baseline(d,b->number),b,true); ++next;
-        } else { write_entity(w,p,a,b,false); ++old; ++next; }
-        if (w->failed) return false;
-    }
-    return qa_net_write_u16(w,0);
+    qw_output_packet packet={.current=to->entities,.count=to->count,
+        .previous=from ? from->entities : NULL,.previous_count=from ? from->count : 0,
+        .baselines=d,.read=output_entity_read,.baseline=output_baseline_read,
+        .delta=from!=NULL,.previous_sequence=from ? from->sequence : 0};
+    return qw_output_write_entities(w,p,QW_OUTPUT_CHECKED,&packet);
 }
 
 #define MOVE_FIELDS(X) X(gravity) X(stop_speed) X(max_speed) X(spectator_max_speed) \
@@ -593,12 +673,7 @@ bool qa_qw_service_write(qa_net_writer *w, qa_net_protocol_id p, const qa_qw_ser
     switch (m->kind) {
     case QA_QW_NOP: qa_net_write_u8(w,1); break;
     case QA_QW_DISCONNECT: qa_net_write_u8(w,2); break;
-    case QA_QW_STAT: {
-        bool byte=m->data.stat.value>=0 && m->data.stat.value<=255;
-        qa_net_write_u8(w,byte ? 3 : 38); qa_net_write_u8(w,m->data.stat.index);
-        if (byte) qa_net_write_u8(w,(uint8_t)m->data.stat.value); else qa_net_write_i32(w,m->data.stat.value);
-        break;
-    }
+    case QA_QW_STAT: return qw_output_write_stat(w,m->data.stat.index,m->data.stat.value);
     case QA_QW_SET_VIEW: case QA_QW_MUZZLE_FLASH:
         qa_net_write_u8(w,m->kind==QA_QW_SET_VIEW ? 5 : 39); qa_net_write_u16(w,m->data.entity); break;
     case QA_QW_SOUND: {

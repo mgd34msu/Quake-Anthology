@@ -65,6 +65,92 @@ bool qa_collision_trace_brush(void *context, qa_collision_side_distances_fn dist
     return false;
 }
 
+bool qa_collision_brush_medium(void *context, qa_collision_side_distances_fn distances,
+    size_t first_side, size_t side_count, qa_collision_bits contents,
+    float reached_fraction, qa_collision_medium_interval *out)
+{
+    int32_t medium = qa_collision_q1_medium_class(contents);
+    if (medium == -1 || side_count == 0) return false;
+    qa_collision_medium_interval interval = {0, reached_fraction, medium == -2};
+    for (size_t i = 0; i < side_count; ++i) {
+        qa_collision_side_distances sample = distances(context, first_side + i, true);
+        float first = sample.first, last = sample.last;
+        if (first > 0 && last > 0) return false;
+        if (first <= 0 && last <= 0) continue;
+        float crossing = first / (first - last);
+        if (first > last) interval.first = fmaxf(interval.first, crossing);
+        else interval.last = fminf(interval.last, crossing);
+        if (interval.first > interval.last) return false;
+    }
+    *out = interval;
+    return true;
+}
+
+static void medium_interval_sift(qa_collision_medium_interval *intervals, size_t root, size_t count)
+{
+    while (root < count / 2) {
+        size_t child = root * 2 + 1;
+        if (child + 1 < count && intervals[child].first < intervals[child + 1].first) ++child;
+        if (intervals[root].first >= intervals[child].first) return;
+        qa_collision_medium_interval temporary = intervals[root];
+        intervals[root] = intervals[child];
+        intervals[child] = temporary;
+        root = child;
+    }
+}
+
+static void medium_interval_sort(qa_collision_medium_interval *intervals, size_t count)
+{
+    for (size_t root = count / 2; root != 0; --root)
+        medium_interval_sift(intervals, root - 1, count);
+    for (size_t end = count; end > 1; --end) {
+        qa_collision_medium_interval temporary = intervals[0];
+        intervals[0] = intervals[end - 1];
+        intervals[end - 1] = temporary;
+        medium_interval_sift(intervals, 0, end - 1);
+    }
+}
+
+static bool medium_interval_uncovered(float first, float last,
+    const qa_collision_medium_interval *parts, size_t count)
+{
+    float position = first;
+    for (size_t i = 0; i < count; ++i) {
+        if (parts[i].last < position) continue;
+        if (parts[i].first > position) return true;
+        position = fmaxf(position, parts[i].last);
+        if (position >= last) return false;
+    }
+    return first == last || position < last;
+}
+
+void qa_collision_medium_coverage(qa_collision_medium_interval *intervals, size_t count,
+    qa_collision_medium_interval *solid_scratch, qa_trace_result *result)
+{
+    medium_interval_sort(intervals, count);
+    result->in_open = medium_interval_uncovered(0, result->fraction, intervals, count);
+    result->in_water = false;
+    size_t solid_count = 0;
+    for (size_t i = 0; i < count; ++i) {
+        qa_collision_medium_interval interval = intervals[i];
+        if (!interval.solid) continue;
+        if (solid_count != 0 && interval.first <= solid_scratch[solid_count - 1].last)
+            solid_scratch[solid_count - 1].last = fmaxf(solid_scratch[solid_count - 1].last, interval.last);
+        else solid_scratch[solid_count++] = interval;
+    }
+    size_t solid = 0;
+    for (size_t i = 0; i < count; ++i) {
+        qa_collision_medium_interval liquid = intervals[i];
+        if (liquid.solid) continue;
+        while (solid < solid_count && solid_scratch[solid].last < liquid.first) ++solid;
+        if (solid == solid_count || solid_scratch[solid].first > liquid.first
+            || solid_scratch[solid].last < liquid.last) {
+            result->in_water = true;
+            return;
+        }
+    }
+}
+
 void qa_collision_trace_tree(const qa_collision_tree_trace *trace, int32_t headnode)
 {
     size_t depth = 0;

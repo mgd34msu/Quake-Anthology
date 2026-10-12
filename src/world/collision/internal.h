@@ -38,6 +38,18 @@ bool qa_collision_trace_brush(void *, qa_collision_side_distances_fn,
     const qa_collision_brush_rules *, qa_collision_bits contents,
     qa_trace_result *, qa_collision_brush_contact *);
 
+typedef struct qa_collision_medium_interval {
+    float first, last;
+    bool solid;
+} qa_collision_medium_interval;
+/* Strict medium probes do not apply the contact clipper's epsilon. */
+bool qa_collision_brush_medium(void *, qa_collision_side_distances_fn,
+    size_t first_side, size_t side_count, qa_collision_bits contents,
+    float reached_fraction, qa_collision_medium_interval *);
+/* Both arrays are caller-owned, load-sized to the geometry's brush count. */
+void qa_collision_medium_coverage(qa_collision_medium_interval *intervals, size_t count,
+    qa_collision_medium_interval *solid_scratch, qa_trace_result *);
+
 typedef struct qa_collision_trace_frame {
     int32_t child;
     float first, last;

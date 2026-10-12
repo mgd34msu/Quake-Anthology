@@ -1,20 +1,14 @@
 /* Donor: network/q1/codecs/qw28.ts and bootstrap/network/qw-server.ts. */
 #include "qa/network_qw_source.h"
 #include "qa/text.h"
-#include "qa/math.h"
+#include "qw_output.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
-enum {
-    U_ANGLE1 = 1, U_ANGLE3 = 2, U_MODEL = 4, U_COLORMAP = 8,
-    U_SKIN = 16, U_EFFECTS = 32, U_SOLID = 64,
-    U_ORIGIN1 = 512, U_ORIGIN2 = 1024, U_ORIGIN3 = 2048,
-    U_ANGLE2 = 4096, U_FRAME = 8192, U_REMOVE = 16384, U_MOREBITS = 32768,
-    SOURCE_ENTITY_BYTES = 69
-};
-static const unsigned angle_bits[3] = {U_ANGLE1, U_ANGLE2, U_ANGLE3};
+enum { SOURCE_ENTITY_BYTES = 69 };
+static const qa_net_protocol_id source_protocol = {.kind = QA_NET_QW28};
 typedef struct source_baseline {
     bool present;
     qa_qw_source_entity value;
@@ -51,18 +45,6 @@ static bool frame_valid(const qa_qw_source_frame *frame)
     }
     return true;
 }
-/* Integer Source fields are widened here without rounding through float. */
-static int32_t source_integer(double value)
-{ return value >= INT32_MIN && value <= INT32_MAX ? (int32_t)value : INT32_MIN; }
-static bool byte(qa_net_writer *writer, double value)
-{ return qa_net_write_u8(writer, (uint8_t)(uint32_t)source_integer(value)); }
-static bool short_word(qa_net_writer *writer, int32_t value)
-{ return qa_net_write_u16(writer, (uint16_t)(uint32_t)value); }
-static bool coord(qa_net_writer *writer, float value)
-{ return short_word(writer, qa_source_float_to_i32(value * 8.0f)); }
-static bool angle(qa_net_writer *writer, float value)
-{ return byte(writer, qa_source_float_to_i32(value * 256.0f / 360.0f)); }
-
 qa_qw_source_history *qa_qw_source_history_create(qa_error *error)
 {
     qa_qw_source_history *history = calloc(1, sizeof(*history));
@@ -135,37 +117,13 @@ bool qa_qw_source_write_baseline(qa_net_writer *writer, const qa_qw_source_entit
 {
     if (!entity_valid(entity)) return qa_net_writer_fail(writer, "Invalid QuakeWorld source baseline");
     qa_net_write_u8(writer, 22); qa_net_write_u16(writer, (uint16_t)entity->number);
-    byte(writer, entity->model); byte(writer, entity->frame);
-    byte(writer, entity->colormap); byte(writer, entity->skin);
-    for (size_t i = 0; i < 3; ++i) { coord(writer, entity->origin[i]); angle(writer, entity->angles[i]); }
-    return !writer->failed;
+    qw_output_entity value=qw_output_entity_source(entity);
+    return qw_output_write_baseline(writer,source_protocol,QW_OUTPUT_SOURCE,&value);
 }
 bool qa_qw_source_write_stat(qa_net_writer *writer, uint8_t index, double value)
 {
     if (!number_valid(value)) return qa_net_writer_fail(writer, "Invalid QuakeWorld source stat Number");
-    bool narrow = value >= 0 && value <= 255;
-    qa_net_write_u8(writer, narrow ? 3 : 38); qa_net_write_u8(writer, index);
-    if (narrow) byte(writer, value); else qa_net_write_u32(writer, (uint32_t)source_integer(value));
-    return !writer->failed;
-}
-static bool command(qa_net_writer *writer, const qa_qw_command *value)
-{
-    if (!vector_valid(value->angles)) return qa_net_writer_fail(writer, "Invalid QuakeWorld source player command");
-    unsigned bits = (value->angles[0] != 0 ? 1u : 0u) | (value->angles[1] != 0 ? 128u : 0u) |
-        (value->angles[2] != 0 ? 2u : 0u) | (value->forward != 0 ? 4u : 0u) |
-        (value->side != 0 ? 8u : 0u) | (value->up != 0 ? 16u : 0u) |
-        (value->buttons != 0 ? 32u : 0u) | (value->impulse != 0 ? 64u : 0u);
-    qa_net_write_u8(writer, (uint8_t)bits);
-    for (size_t i = 0; i < 3; ++i)
-        if (value->angles[i] != 0)
-            short_word(writer, qa_angle_to_word(value->angles[i],QA_ANGLE_WORD_NATIVE));
-    if (bits & 4) qa_net_write_i16(writer, value->forward);
-    if (bits & 8) qa_net_write_i16(writer, value->side);
-    if (bits & 16) qa_net_write_i16(writer, value->up);
-    if (bits & 32) qa_net_write_u8(writer, value->buttons);
-    if (bits & 64) qa_net_write_u8(writer, value->impulse);
-    qa_net_write_u8(writer, value->msec);
-    return !writer->failed;
+    return qw_output_write_stat(writer,index,value);
 }
 bool qa_qw_source_write_player(qa_net_writer *writer, const qa_qw_source_player *player)
 {
@@ -174,20 +132,11 @@ bool qa_qw_source_write_player(qa_net_writer *writer, const qa_qw_source_player 
         !number_valid(player->frame) || !number_valid(player->model) || !number_valid(player->skin) ||
         !number_valid(player->effects) || !number_valid(player->weapon_frame))
         return qa_net_writer_fail(writer, "Invalid QuakeWorld source player Numbers");
-    qa_net_write_u8(writer, 42); qa_net_write_u8(writer, player->slot);
-    qa_net_write_u16(writer, player->flags);
-    for (size_t i = 0; i < 3; ++i) coord(writer, player->origin[i]);
-    byte(writer, player->frame);
-    if (player->flags & QA_QW_PF_MSEC) qa_net_write_u8(writer, player->msec);
-    if ((player->flags & QA_QW_PF_COMMAND) && !command(writer, &player->command)) return false;
-    for (size_t i = 0; i < 3; ++i)
-        if (player->flags & (QA_QW_PF_VELOCITY1 << i))
-            short_word(writer, qa_source_float_to_i32(player->velocity[i]));
-    if (player->flags & QA_QW_PF_MODEL) byte(writer, player->model);
-    if (player->flags & QA_QW_PF_SKIN) byte(writer, player->skin);
-    if (player->flags & QA_QW_PF_EFFECTS) byte(writer, player->effects);
-    if (player->flags & QA_QW_PF_WEAPONFRAME) byte(writer, player->weapon_frame);
-    return !writer->failed;
+    qa_net_write_u8(writer, 42);
+    qw_output_player value={.slot=player->slot,.msec=player->msec,.flags=player->flags,
+        .origin=player->origin,.velocity=player->velocity,.frame=player->frame,.model=player->model,
+        .skin=player->skin,.effects=player->effects,.weapon_frame=player->weapon_frame,.command=&player->command};
+    return qw_output_write_player(writer,source_protocol,QW_OUTPUT_SOURCE,&value);
 }
 bool qa_qw_source_write_nails(qa_net_writer *writer, const qa_qw_nail *nails, size_t count)
 {
@@ -210,37 +159,14 @@ bool qa_qw_source_write_nails(qa_net_writer *writer, const qa_qw_nail *nails, si
     }
     return !writer->failed;
 }
-static bool delta_entity(qa_net_writer *writer, const qa_qw_source_entity *from,
-    const qa_qw_source_entity *to, bool force)
+static void output_entity_read(const void *rows, size_t index, qw_output_entity *out)
+{ *out=qw_output_entity_source((const qa_qw_source_entity *)rows+index); }
+static bool output_baseline_read(const void *context, uint32_t number, qw_output_entity *out)
 {
-    qa_qw_source_entity empty = {0};
-    if (!from) from = &empty;
-    unsigned bits = 0;
-    for (size_t i = 0; i < 3; ++i) {
-        double difference = (double)to->origin[i] - (double)from->origin[i];
-        if (difference < -0.1 || difference > 0.1) bits |= (unsigned)U_ORIGIN1 << i;
-        if (to->angles[i] != from->angles[i]) bits |= angle_bits[i];
-    }
-    if (to->model != from->model) bits |= U_MODEL;
-    if (to->frame != from->frame) bits |= U_FRAME;
-    if (to->colormap != from->colormap) bits |= U_COLORMAP;
-    if (to->skin != from->skin) bits |= U_SKIN;
-    if (to->effects != from->effects) bits |= U_EFFECTS;
-    if (bits & 511) bits |= U_MOREBITS;
-    if (to->solid) bits |= U_SOLID;
-    if (!bits && !force) return true;
-    qa_net_write_u16(writer, (uint16_t)(to->number | (bits & ~511u)));
-    if (bits & U_MOREBITS) qa_net_write_u8(writer, (uint8_t)bits);
-    if (bits & U_MODEL) byte(writer, to->model);
-    if (bits & U_FRAME) byte(writer, to->frame);
-    if (bits & U_COLORMAP) byte(writer, to->colormap);
-    if (bits & U_SKIN) byte(writer, to->skin);
-    if (bits & U_EFFECTS) byte(writer, to->effects);
-    for (size_t i = 0; i < 3; ++i) {
-        if (bits & ((unsigned)U_ORIGIN1 << i)) coord(writer, to->origin[i]);
-        if (bits & angle_bits[i]) angle(writer, to->angles[i]);
-    }
-    return !writer->failed;
+    const qa_qw_source_history *history=context;
+    const source_baseline *row=history->baselines+number;
+    if (!row->present) return false;
+    *out=qw_output_entity_source(&row->value); return true;
 }
 bool qa_qw_source_write_entities(qa_net_writer *writer, const qa_qw_source_history *history,
     const qa_qw_source_frame *frame, const qa_qw_source_frame *previous)
@@ -249,23 +175,11 @@ bool qa_qw_source_write_entities(qa_net_writer *writer, const qa_qw_source_histo
         previous->sequence >= frame->sequence || frame->sequence - previous->sequence >= QA_QW_UPDATE_BACKUP ||
         qa_qw_source_history_frame(history, previous->sequence) != previous)))
         return qa_net_writer_fail(writer, "Invalid QuakeWorld source frame or actual delta history");
-    qa_net_write_u8(writer, previous ? 48 : 47);
-    if (previous) qa_net_write_u8(writer, (uint8_t)previous->sequence);
-    size_t current = 0, old = 0;
-    while (current < frame->count || (previous && old < previous->count)) {
-        const qa_qw_source_entity *to = current < frame->count ? frame->entities + current : NULL;
-        const qa_qw_source_entity *from = previous && old < previous->count ? previous->entities + old : NULL;
-        if (from && (!to || from->number < to->number)) {
-            qa_net_write_u16(writer, (uint16_t)(from->number | U_REMOVE)); ++old;
-        } else if (to && from && to->number == from->number) {
-            delta_entity(writer, from, to, false); ++current; ++old;
-        } else {
-            const source_baseline *baseline = history->baselines + to->number;
-            delta_entity(writer, baseline->present ? &baseline->value : NULL, to, true); ++current;
-        }
-        if (writer->failed) return false;
-    }
-    return qa_net_write_u16(writer, 0);
+    qw_output_packet packet={.current=frame->entities,.count=frame->count,
+        .previous=previous ? previous->entities : NULL,.previous_count=previous ? previous->count : 0,
+        .baselines=history,.read=output_entity_read,.baseline=output_baseline_read,
+        .delta=previous!=NULL,.previous_sequence=previous ? previous->sequence : 0};
+    return qw_output_write_entities(writer,source_protocol,QW_OUTPUT_SOURCE,&packet);
 }
 
 static bool save_entity(qa_net_writer *writer, const qa_qw_source_entity *entity)

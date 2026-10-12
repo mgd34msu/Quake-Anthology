@@ -39,6 +39,8 @@
 #include "qa/network_q3_save.h"
 #include "qa/network_q1_channel.h"
 #include "qa/network_q1_nq.h"
+#include "qa/network_qw_source.h"
+#include "../src/world/collision/internal.h"
 #include "qa/network_q2_kex.h"
 #include "qa/network_q2_messages.h"
 #include "../src/app/frontend/selected_effects_q1_temporary.h"
@@ -1891,6 +1893,84 @@ static void test_common_compression(void)
         (qa_buffer){output,1},&written,&error) && written==SIZE_MAX);
 }
 
+static void test_medium_coverage(void)
+{
+    qa_collision_medium_interval parts[4]={{.5f,1,false},{0,.5f,true}},solid[4];
+    qa_trace_result result={.fraction=1};
+    qa_collision_medium_coverage(parts,2,solid,&result);
+    CHECK(!result.in_open && result.in_water);
+    parts[0]=(qa_collision_medium_interval){0,1,false};
+    parts[1]=(qa_collision_medium_interval){0,.5f,true};
+    parts[2]=(qa_collision_medium_interval){.5f,1,true};
+    qa_collision_medium_coverage(parts,3,solid,&result);
+    CHECK(!result.in_open && !result.in_water);
+    result.fraction=0;
+    parts[0]=(qa_collision_medium_interval){0,0,false};
+    qa_collision_medium_coverage(parts,1,solid,&result);
+    CHECK(!result.in_open && result.in_water);
+    parts[1]=(qa_collision_medium_interval){0,0,true};
+    qa_collision_medium_coverage(parts,2,solid,&result);
+    CHECK(!result.in_open && !result.in_water);
+    qa_collision_medium_coverage(NULL,0,NULL,&result);
+    CHECK(result.in_open && !result.in_water);
+}
+
+static void test_qw_shared_output(void)
+{
+    qa_error error={0};qa_net_protocol_id protocol={.kind=QA_NET_QW28};
+    qa_qw_decoder *decoder=qa_qw_decoder_create(protocol,&error);
+    qa_qw_source_history *history=qa_qw_source_history_create(&error);
+    CHECK(decoder && history);
+    qa_qw_source_entity baseline={.number=1,.model=1};
+    CHECK(qa_qw_source_history_baselines(history,&baseline,1,&error));
+    qa_q1_entity original;qa_q1_entity_init(&original);original.number=1;original.model=1;
+    CHECK(qa_qw_decoder_set_baseline(decoder,&original,&error));
+    qa_qw_source_frame frame={.sequence=1,.count=1};frame.entities[0]=baseline;frame.entities[0].solid=true;
+    uint8_t bytes[128];qa_net_writer writer;qa_net_reader reader;qa_qw_service received;
+    qa_net_writer_init(&writer,bytes,sizeof(bytes),&error);
+    CHECK(qa_qw_source_write_entities(&writer,history,&frame,NULL));
+    qa_net_reader_init(&reader,(qa_bytes){bytes,qa_net_writer_size(&writer)},&error);
+    CHECK(qa_qw_service_read(&reader,decoder,1,&received) && qa_net_reader_finish(&reader));
+    CHECK(received.kind==QA_QW_PACKET_ENTITIES && received.data.packet.frame->count==1);
+    CHECK(received.data.packet.frame->entities[0].qw_flags&QA_QW_ENTITY_SOLID);
+    CHECK(qa_qw_source_history_store(history,&frame,&error));
+    frame.sequence=2;frame.entities[0].solid=false;
+    qa_net_writer_init(&writer,bytes,sizeof(bytes),&error);
+    CHECK(qa_qw_source_write_entities(&writer,history,&frame,qa_qw_source_history_frame(history,1)));
+    const uint8_t clear[]={48,1,1,0,0,0};
+    CHECK(qa_net_writer_size(&writer)==sizeof(clear) && !memcmp(bytes,clear,sizeof(clear)));
+    qa_qw_decoder_delta_request(decoder,2,true,1);
+    qa_net_reader_init(&reader,(qa_bytes){bytes,qa_net_writer_size(&writer)},&error);
+    CHECK(qa_qw_service_read(&reader,decoder,2,&received) && qa_net_reader_finish(&reader));
+    CHECK(!(received.data.packet.frame->entities[0].qw_flags&QA_QW_ENTITY_SOLID));
+    CHECK(qa_qw_source_history_store(history,&frame,&error));
+    frame.sequence=3;frame.entities[0].model=257;
+    qa_net_writer_init(&writer,bytes,sizeof(bytes),&error);
+    CHECK(qa_qw_source_write_entities(&writer,history,&frame,qa_qw_source_history_frame(history,2)));
+    const uint8_t changed[]={48,2,1,128,4,1,0,0};
+    CHECK(qa_net_writer_size(&writer)==sizeof(changed) && !memcmp(bytes,changed,sizeof(changed)));
+    CHECK(qa_qw_source_history_store(history,&frame,&error));
+    frame.sequence=4;frame.entities[0].solid=true;
+    qa_net_writer_init(&writer,bytes,sizeof(bytes),&error);
+    CHECK(qa_qw_source_write_entities(&writer,history,&frame,qa_qw_source_history_frame(history,3)));
+    const uint8_t set[]={48,3,1,128,64,0,0};
+    CHECK(qa_net_writer_size(&writer)==sizeof(set) && !memcmp(bytes,set,sizeof(set)));
+    qa_qw_source_history_destroy(history);qa_qw_decoder_destroy(decoder);
+    protocol.kind=QA_NET_QW29;decoder=qa_qw_decoder_create(protocol,&error);CHECK(decoder);
+    qa_qw_frame extended={.sequence=1,.count=1};qa_q1_entity_init(extended.entities);
+    extended.entities[0].number=513;extended.entities[0].model=300;extended.entities[0].frame=301;
+    extended.entities[0].alpha=128;extended.entities[0].scale=24;
+    qa_qw_service packet={.kind=QA_QW_PACKET_ENTITIES,.data.packet.frame=&extended};
+    qa_net_writer_init(&writer,bytes,sizeof(bytes),&error);
+    CHECK(qa_qw_service_write(&writer,protocol,&packet,decoder));
+    qa_net_reader_init(&reader,(qa_bytes){bytes,qa_net_writer_size(&writer)},&error);
+    CHECK(qa_qw_service_read(&reader,decoder,1,&received) && qa_net_reader_finish(&reader));
+    const qa_q1_entity *row=received.data.packet.frame->entities;
+    CHECK(received.data.packet.frame->count==1 && row->number==513 && row->model==300 && row->frame==301);
+    CHECK(row->alpha==128 && row->scale==24);
+    qa_qw_decoder_destroy(decoder);
+}
+
 static qa_input_seat *shared_input_seat(void *user, const qa_command_context *context)
 {
     return context->seat == 0 ? *(qa_input_seat **)user : NULL;
@@ -3271,6 +3351,8 @@ int main(int argc, char **argv)
     test_shared_cvar_archive();
     test_cvar_info_storage();
     test_common_compression();
+    test_medium_coverage();
+    test_qw_shared_output();
     test_shared_input_menu_defaults();
     test_profiler_mode_changes();
     test_source_nonmipped_transparency();

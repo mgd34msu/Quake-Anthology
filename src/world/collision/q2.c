@@ -32,11 +32,6 @@ typedef struct q2_side {
     int64_t texture;
 } q2_side;
 
-typedef struct q2_interval {
-    float first, last;
-    bool solid;
-} q2_interval;
-
 typedef struct q2_plane_support {
     float distance, extent;
     float first, last;
@@ -64,7 +59,7 @@ typedef struct q2_scratch {
     qa_stamp_set trace_marks, expanded_marks;
     qa_shape_kind expanded_kind;
     qa_bounds expanded_bounds;
-    q2_interval *intervals, *solid_intervals;
+    qa_collision_medium_interval *intervals, *solid_intervals;
 } q2_scratch;
 
 typedef struct q2_work {
@@ -398,59 +393,9 @@ static void q2_brush_medium(q2_work *work, uint32_t index, size_t *count)
     const q2_collision *collision = work->collision;
     if (!qa_stamp_set_mark(&work->scratch->trace_marks, index)) return;
     const q2_brush *brush = &collision->brushes[index];
-    int32_t medium = qa_collision_q1_medium_class(brush->contents);
-    if (medium == -1 || brush->sides.count == 0) return;
-    float begin = 0, end = work->result.fraction;
-    for (size_t i = 0; i < (size_t)brush->sides.count; ++i) {
-        const q2_side *side = &collision->sides[(size_t)brush->sides.first + i];
-        const q2_plane_support *distances = q2_endpoint_distances(work, side->plane, true);
-        float first = distances->first;
-        float last = distances->last;
-        if (first > 0 && last > 0) return;
-        if (first <= 0 && last <= 0) continue;
-        float crossing = first / (first - last);
-        if (first > last) begin = fmaxf(begin, crossing);
-        else end = fminf(end, crossing);
-        if (begin > end) return;
-    }
-    work->scratch->intervals[(*count)++] = (q2_interval){begin, end, medium == -2};
-}
-
-static void q2_interval_sift(q2_interval *intervals, size_t root, size_t count)
-{
-    while (root < count / 2) {
-        size_t child = root * 2 + 1;
-        if (child + 1 < count && intervals[child].first < intervals[child + 1].first) ++child;
-        if (intervals[root].first >= intervals[child].first) return;
-        q2_interval temporary = intervals[root];
-        intervals[root] = intervals[child];
-        intervals[child] = temporary;
-        root = child;
-    }
-}
-
-static void q2_interval_sort(q2_interval *intervals, size_t count)
-{
-    for (size_t root = count / 2; root != 0; --root)
-        q2_interval_sift(intervals, root - 1, count);
-    for (size_t end = count; end > 1; --end) {
-        q2_interval temporary = intervals[0];
-        intervals[0] = intervals[end - 1];
-        intervals[end - 1] = temporary;
-        q2_interval_sift(intervals, 0, end - 1);
-    }
-}
-
-static bool q2_uncovered(float first, float last, const q2_interval *parts, size_t count)
-{
-    float position = first;
-    for (size_t i = 0; i < count; ++i) {
-        if (parts[i].last < position) continue;
-        if (parts[i].first > position) return true;
-        position = fmaxf(position, parts[i].last);
-        if (position >= last) return false;
-    }
-    return first == last || position < last;
+    if (qa_collision_brush_medium(work, q2_brush_distances,
+            brush->sides.first, brush->sides.count, brush->contents,
+            work->result.fraction, work->scratch->intervals + *count)) ++*count;
 }
 
 typedef struct q2_media_visit { q2_work *work; size_t leaves, count; } q2_media_visit;
@@ -475,28 +420,8 @@ static void q2_trace_media(q2_work *work, int32_t headnode)
     qa_stamp_set_begin(&work->scratch->trace_marks);
     qa_collision_tree_box(collision->planes, collision->nodes, headnode, bounds,
         QA_BOX_CORNERS, work->scratch->node_stack, q2_media_leaf, &visit, NULL);
-    size_t count = visit.count;
-    q2_interval_sort(work->scratch->intervals, count);
-    work->result.in_open = q2_uncovered(0, work->result.fraction, work->scratch->intervals, count);
-    size_t solid_count = 0;
-    for (size_t i = 0; i < count; ++i) {
-        q2_interval interval = work->scratch->intervals[i];
-        if (!interval.solid) continue;
-        if (solid_count != 0 && interval.first <= work->scratch->solid_intervals[solid_count - 1].last)
-            work->scratch->solid_intervals[solid_count - 1].last = fmaxf(work->scratch->solid_intervals[solid_count - 1].last, interval.last);
-        else work->scratch->solid_intervals[solid_count++] = interval;
-    }
-    size_t solid = 0;
-    for (size_t i = 0; i < count; ++i) {
-        q2_interval liquid = work->scratch->intervals[i];
-        if (liquid.solid) continue;
-        while (solid < solid_count && work->scratch->solid_intervals[solid].last < liquid.first) ++solid;
-        if (solid == solid_count || work->scratch->solid_intervals[solid].first > liquid.first
-            || work->scratch->solid_intervals[solid].last < liquid.last) {
-            work->result.in_water = true;
-            return;
-        }
-    }
+    qa_collision_medium_coverage(work->scratch->intervals, visit.count,
+        work->scratch->solid_intervals, &work->result);
 }
 
 static bool q2_trace(const void *opaque, void *opaque_scratch, const qa_trace_query *query,

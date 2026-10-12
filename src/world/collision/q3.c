@@ -19,7 +19,6 @@ typedef struct q3_model {
     uint32_t *brushes, *surfaces;
     size_t brush_count, surface_count;
 } q3_model;
-typedef struct q3_interval { float first, last; } q3_interval;
 typedef struct q3_map {
     const qa_collision_plane *planes;
     q3_side *sides;
@@ -35,7 +34,7 @@ typedef struct q3_scratch {
     qa_stamp_set visited;
     qa_collision_trace_frame *steps;
     int32_t *pending;
-    q3_interval *intervals;
+    qa_collision_medium_interval *intervals;
 } q3_scratch;
 typedef struct q3_model_scratch {
     qa_stamp_set visited;
@@ -205,50 +204,15 @@ static bool q3_position_leaf(void *context, uint32_t index) {
     return q3_trace_leaf(visit->work, index);
 }
 
-static int q3_compare_interval(const void *first, const void *second) {
-    const q3_interval *a = first, *b = second;
-    return a->first < b->first ? -1 : a->first > b->first ? 1 : 0;
-}
-
-static bool q3_uncovered(q3_interval interval, const q3_interval *parts, size_t count) {
-    float position = interval.first;
-    if (interval.first == interval.last) {
-        for (size_t i = 0; i < count; ++i)
-            if (parts[i].first <= position && parts[i].last >= position) return false;
-        return true;
-    }
-    for (size_t i = 0; i < count; ++i) {
-        if (parts[i].last < position) continue;
-        if (parts[i].first > position) return true;
-        position = fmaxf(position, parts[i].last);
-        if (position >= interval.last) return false;
-    }
-    return position < interval.last;
-}
-
-typedef struct q3_media_work { q3_work *trace; size_t solid_count, liquid_count; } q3_media_work;
+typedef struct q3_media_work { q3_work *trace; size_t count; } q3_media_work;
 static void q3_media_brush(q3_media_work *media, uint32_t index) {
     q3_work *trace = media->trace;
     const q3_map *map = trace->map;
     const q3_brush *brush = &map->brushes[index];
     if (!qa_stamp_set_mark(&trace->scratch->visited, index)) return;
-    int32_t medium = qa_collision_q1_medium_class(brush->contents);
-    bool solid = medium == -2;
-    if ((medium == -1) || brush->sides.count == 0) return;
-    q3_interval interval = {0, trace->result.fraction};
-    for (uint32_t i = 0; i < brush->sides.count; ++i) {
-        qa_collision_plane plane = map->planes[map->sides[brush->sides.first + i].plane];
-        float first = q3_shape_distance(&trace->shape, trace->start, plane);
-        float last = q3_shape_distance(&trace->shape, trace->end, plane);
-        if (first > 0 && last > 0) return;
-        if (first <= 0 && last <= 0) continue;
-        float crossing = first / (first - last);
-        if (first > last) interval.first = fmaxf(interval.first, crossing);
-        else interval.last = fminf(interval.last, crossing);
-        if (interval.first > interval.last) return;
-    }
-    if (solid) trace->scratch->intervals[media->solid_count++] = interval;
-    else trace->scratch->intervals[map->brush_count + media->liquid_count++] = interval;
+    if (qa_collision_brush_medium(trace, q3_brush_distances,
+            brush->sides.first, brush->sides.count, brush->contents,
+            trace->result.fraction, trace->scratch->intervals + media->count)) ++media->count;
 }
 
 static bool q3_media_leaf(void *context, uint32_t index) {
@@ -263,7 +227,7 @@ static bool q3_media_leaf(void *context, uint32_t index) {
 static void q3_trace_media(q3_work *work, uint32_t model) {
     const q3_map *map = work->map;
     q3_scratch *scratch = work->scratch;
-    q3_media_work media = {work, 0, 0};
+    q3_media_work media = {work, 0};
     qa_stamp_set_begin(&scratch->visited);
     if (model != 0) {
         const q3_model *members = &map->models[model];
@@ -276,18 +240,8 @@ static void q3_trace_media(q3_work *work, uint32_t model) {
         qa_collision_tree_box(map->planes, map->nodes, map->node_count != 0 ? 0 : -1,
             envelope, QA_BOX_AXIAL, scratch->pending, q3_media_leaf, &media, NULL);
     }
-    if (media.solid_count > 1) qsort(scratch->intervals, media.solid_count, sizeof(*scratch->intervals), q3_compare_interval);
-    work->result.in_water = false;
-    for (size_t i = 0; i < media.liquid_count; ++i)
-        if (q3_uncovered(scratch->intervals[map->brush_count + i], scratch->intervals, media.solid_count)) {
-            work->result.in_water = true; break;
-        }
-    if (media.liquid_count != 0)
-        memmove(scratch->intervals + media.solid_count, scratch->intervals + map->brush_count,
-                media.liquid_count * sizeof(*scratch->intervals));
-    size_t count = media.solid_count + media.liquid_count;
-    if (count > 1) qsort(scratch->intervals, count, sizeof(*scratch->intervals), q3_compare_interval);
-    work->result.in_open = q3_uncovered((q3_interval){0, work->result.fraction}, scratch->intervals, count);
+    qa_collision_medium_coverage(scratch->intervals, media.count,
+        map->brush_count != 0 ? scratch->intervals + map->brush_count : NULL, &work->result);
 }
 
 static void q3_trace_model(q3_work *work, uint32_t model) {
