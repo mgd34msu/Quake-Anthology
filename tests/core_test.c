@@ -1247,6 +1247,38 @@ static void test_ring_console_capture(void)
     qa_console_destroy(test.app.console);
     application_event_stream_dispose(&test.app);free(test.app.unified_persistent);
 }
+static void test_connection_request_cursor(void)
+{
+    qa_application app={0}; qa_error error={0};
+    CHECK(application_event_stream_create(&app,16,&error));
+    qa_application_event_subscription reader={0};
+    qa_application_events_subscribe(&app,&reader);
+    char server[]="127.0.0.1:26000";
+    qa_application_connection_request_event request={.recipient=&reader,.server=server};
+    CHECK(qa_application_connection_request_emit(&app,&request,&error));
+    server[0]='9'; request.disconnect=true; request.server="";
+    CHECK(qa_application_connection_request_emit(&app,&request,&error));
+    request=(qa_application_connection_request_event){.recipient=&app,.server="localhost"};
+    CHECK(qa_application_connection_request_emit(&app,&request,&error));
+    qa_application_event_range range={.next=reader.next,.end=qa_application_events_next(&app)};
+    qa_application_event_view output; uint64_t mask=UINT64_C(1)<<QA_APPLICATION_EVENT_CONNECTION_REQUEST;
+    CHECK(qa_application_event_raw_next(&app,&range,mask,&output));
+    const qa_application_connection_request_event *first=output.value.connection_request;
+    CHECK(first->recipient==&reader && !first->disconnect && first->server[0]=='1');
+    qa_event_lease *lease=qa_application_event_retain(&app,range.id); CHECK(lease);
+    CHECK(qa_application_event_raw_next(&app,&range,mask,&output));
+    CHECK(output.value.connection_request->disconnect && !*output.value.connection_request->server);
+    CHECK(qa_application_event_raw_next(&app,&range,mask,&output));
+    CHECK(output.value.connection_request->recipient==&app);
+    CHECK(!qa_application_event_raw_next(&app,&range,mask,&output));
+    app.event_local_cursor=app.event_source_cursor=range.end;
+    qa_application_events_consumed(&reader,range.end);
+    qa_application_events_unsubscribe(&reader);
+    CHECK(!strcmp(first->server,"127.0.0.1:26000"));
+    qa_event_lease_release(lease);
+    application_event_stream_dispose(&app);free(app.unified_persistent);
+}
+
 static void test_shared_effect_cursor(void)
 {
     qa_application app={0}; qa_error error={0};
@@ -3578,6 +3610,7 @@ int main(int argc, char **argv)
     test_files();
     test_localization_lookup_generation();
     test_ring_console_capture();
+    test_connection_request_cursor();
     test_shared_effect_cursor();
     test_shared_audio_preparation();
     test_retained_movement_result();

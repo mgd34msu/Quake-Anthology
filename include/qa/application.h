@@ -575,7 +575,8 @@ typedef enum qa_application_event_kind {
     QA_APPLICATION_EVENT_QW_COMMAND,
     QA_APPLICATION_EVENT_MUSIC,
     QA_APPLICATION_EVENT_RANKING_REPORT,
-    QA_APPLICATION_EVENT_DEBUG
+    QA_APPLICATION_EVENT_DEBUG,
+    QA_APPLICATION_EVENT_CONNECTION_REQUEST
 } qa_application_event_kind;
 
 typedef struct qa_application_log_event {
@@ -627,6 +628,13 @@ typedef struct qa_application_ranking_report_event {
     qa_ranking_source_report report;
 } qa_application_ranking_report_event;
 
+/* Transient network request. Admission copies server into the record lease. */
+typedef struct qa_application_connection_request_event {
+    const void *recipient;
+    bool disconnect;
+    const char *server;
+} qa_application_connection_request_event;
+
 struct qa_debug_line;
 typedef struct qa_application_debug_event {
     qa_actor_owner provider;
@@ -660,6 +668,7 @@ typedef struct qa_application_event_view {
         const qa_application_log_event *log;
         const qa_application_ranking_report_event *ranking_report;
         const qa_application_debug_event *debug;
+        const qa_application_connection_request_event *connection_request;
     } value;
     const qa_application_protocol_event *protocol;
     const struct qa_application_equipment_event *equipment;
@@ -726,6 +735,8 @@ bool qa_application_qw_command_emit(qa_application *,const qa_application_qw_com
     bool *overflow,qa_error *);
 bool qa_application_music_emit(qa_application *,const qa_application_music_event *,
     bool *admitted,qa_error *);
+bool qa_application_connection_request_emit(qa_application *,
+    const qa_application_connection_request_event *,qa_error *);
 void qa_application_log_deliver(qa_console *,const qa_application_log_event *,
     bool redirected,void (*print)(void *,const qa_command_context *,const char *),void *context);
 bool qa_application_console_execute_capture(qa_application *,qa_console *,const qa_command_context *,const char *,

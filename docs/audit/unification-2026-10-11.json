@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "27bde296e3512238f72c8b6d4130c82a52d4f15b",
+  "verified_main": "28e8d3af86f491997b2edae393e9b3ffbc25e151",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 70,
-    "open_source_observation": 301,
+    "fixed_source_build_core": 87,
+    "open_source_observation": 284,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -27901,8 +27901,9 @@
       "severity": "low",
       "job": "09",
       "area": "bots_navigation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Bot bindings use qa_actor_index with full identities. Checkpoint rebuild and population/requirements save adapters keep the existing field order and client+1 words by source review; no live bot-save round trip. Matching normal build and seven core suites passed; no live or performance claim.",
+      "fixed_commit": "c99499c40f663920e696ef1ca6cf821d0ed087ed"
     },
     {
       "id": "09-07",
@@ -28162,8 +28163,9 @@
       "severity": "low",
       "job": "10",
       "area": "bots_navigation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Navigation SCC and Unified prediction use caller-owned qa_stamp_set. DFS order/cluster numbering and post-conversion duplicate admission are source-preserved. Cold mark storage grows from byte/bool to uint32; no speed claim. Matching normal build and seven core suites passed; no live or performance claim.",
+      "fixed_commit": "33e131cc7862ed21f95f065f63c61b30b51caeb1"
     },
     {
       "id": "10-07",
@@ -28612,8 +28614,9 @@
       "severity": "medium",
       "job": "12",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Tools and LLM output enters ordered immutable LOG records. One leased final cursor and shared redirect capture preserve context/text/order; core capture checks exercise direct/ring/direct ordering. Matching normal build and seven core suites passed; no live or performance claim.",
+      "fixed_commit": "f3b079bfdec6903c7a8fc17b184366b2adaa5e2e"
     },
     {
       "id": "J12-06",
@@ -28642,8 +28645,9 @@
       "severity": "high",
       "job": "12",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Camera samples use frontend frame storage and common arena text. Current debug snapshots already use the same frame arena; no disposable per-view arena remains at the named adapters. Matching normal build and seven core suites passed; no live or performance claim.",
+      "fixed_commit": "f9ee50f01ecc14a80ee36d965c2359a436b7b6b0"
     },
     {
       "id": "J12-07",
@@ -28722,8 +28726,9 @@
       "severity": "low",
       "job": "12",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "One counted-byte comparison implements exact/ASCII-fold equality. Console and tools copies are deleted; embedded NUL/high-byte/length checks passed. Matching normal build and seven core suites passed; no live or performance claim.",
+      "fixed_commit": "2a47f117a4b8aa454bfb6e8308b0ffd08bc4457f"
     },
     {
       "id": "J12-09",
@@ -28740,8 +28745,9 @@
       "severity": "low",
       "job": "12",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Camera samples use frontend frame storage and common arena text. Current debug snapshots already use the same frame arena; no disposable per-view arena remains at the named adapters. Matching normal build and seven core suites passed; no live or performance claim.",
+      "fixed_commit": "f9ee50f01ecc14a80ee36d965c2359a436b7b6b0"
     },
     {
       "id": "J12-10",
@@ -28835,8 +28841,9 @@
       "severity": "low",
       "job": "12",
       "area": "core_content_build_tools_tests",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Input identity uses the common context comparator, preserving strict script pointer equality. Q3 decimal adapters preserve locale/ASCII distinctions and checksum casts. QVM perpendicular projection uses the shared reciprocal primitive. Matching normal build and seven core suites passed; no live or performance claim.",
+      "fixed_commit": "a42df03f216100efacc2f8d23a6c2b5badc11509"
     },
     {
       "id": "J13-01",
@@ -30916,8 +30923,9 @@
       "severity": "medium",
       "job": "17",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Navigation SCC and Unified prediction use caller-owned qa_stamp_set. DFS order/cluster numbering and post-conversion duplicate admission are source-preserved. Cold mark storage grows from byte/bool to uint32; no speed claim. Matching normal build and seven core suites passed; no live or performance claim.",
+      "fixed_commit": "33e131cc7862ed21f95f065f63c61b30b51caeb1"
     },
     {
       "id": "17-13",
@@ -31204,8 +31212,8 @@
       "severity": "high",
       "job": "18",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof",
+      "status": "fixed_source_build_core",
+      "verification": "Camera samples use frontend frame storage and common arena text. Current debug snapshots already use the same frame arena; no disposable per-view arena remains at the named adapters. Matching normal build and seven core suites passed; no live or performance claim.",
       "original_summary": "Live camera/debug presentation creates and destroys an unreserved common arena per view, so active tools bypass load-sized frame storage.",
       "independent_review": {
         "id": "J18-02",
@@ -31229,7 +31237,8 @@
           }
         ],
         "narrowing": "The arena implementation itself is common, not duplicated. Finding is load-sized storage bypass when tools actually need scratch. Inactive camera/empty debug need not allocate; reserve from actual playback/debug workload and preserve per-view lifetime."
-      }
+      },
+      "fixed_commit": "f9ee50f01ecc14a80ee36d965c2359a436b7b6b0"
     },
     {
       "id": "J18-03",
@@ -33763,8 +33772,9 @@
       "severity": "medium",
       "job": "24",
       "area": "gameplay_q3",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Current caller review confirms typed leased ranking reports, one ring cursor, synchronous provider delivery and save/restore cursor rebinding; no private pending report list. Matching recorded normal build/core checks; no external provider run.",
+      "fixed_commit": "6a08052e3833079eb10bf34e86f31dcac34c4653"
     },
     {
       "id": "J24-11",
@@ -34900,8 +34910,9 @@
       "severity": "medium",
       "job": "28",
       "area": "network",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Live unified handshake reads the existing bounded layout and writes caller-owned storage, without temporary documents. Existing document decode delegates it; core checks compare wire bytes and failure output behavior. Matching normal build and seven core suites passed; no live or performance claim.",
+      "fixed_commit": "24aad7c86a1ebc4136fe534fa3281c8231b8c285"
     },
     {
       "id": "28-02",
@@ -35408,8 +35419,9 @@
       "severity": "medium",
       "job": "31",
       "area": "render_presentation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Raw-record kind-mask iteration replaces the named event walks; Q3 effects retire once at the batch boundary and retain successful-prefix/error retry semantics. Matching normal build and seven core suites passed; no live or performance claim.",
+      "fixed_commit": "e1d581d23892e2095efcbf7de11d53de90e0a0e7"
     },
     {
       "id": "31-04",
@@ -35690,8 +35702,9 @@
       "severity": "medium",
       "job": "31",
       "area": "render_presentation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Presentation converts ABI fields and delegates one qsrc-derived trajectory implementation. Core checks cover wrapped stop boundaries, gravity, milliseconds, half-amplitude sine velocity and invalid-output preservation. Matching normal build and seven core suites passed; no live or performance claim.",
+      "fixed_commit": "748fa6a6d0bfe567737a9d20691f12b82f831ce2"
     },
     {
       "id": "31-11",
@@ -35901,8 +35914,9 @@
       "severity": "medium",
       "job": "32",
       "area": "render_presentation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Legacy numeric style snapshots allocate once from actual face/grid references. Full supplied spans remain validated, including unreachable suffixes; core checks cover extended indices, grid-only styles and shrink/re-expand. Last-submission sampling remains world-owned. Matching normal build and seven core suites passed; no live or performance claim.",
+      "fixed_commit": "28e8d3af86f491997b2edae393e9b3ffbc25e151"
     },
     {
       "id": "J32-05",
@@ -36209,8 +36223,9 @@
       "severity": "medium",
       "job": "32",
       "area": "render_presentation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "CPU and GL output use one gamma-table builder with explicit original arithmetic policies. Source-palette/overbright behavior is unchanged; no pixel or timing claim. Matching normal build and seven core suites passed; no live or performance claim.",
+      "fixed_commit": "15fd4572039f1fe8dafdd939ea88381a806813e8"
     },
     {
       "id": "J32-13",
@@ -36255,8 +36270,9 @@
       "severity": "low",
       "job": "32",
       "area": "render_presentation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Dormant model fingerprint/caster/atlas paths are deleted. Original reached planar and stencil shadow paths and reserved identity slot remain. Matching normal build and seven core suites passed; no live or performance claim.",
+      "fixed_commit": "62d855051d132862f3cff36c32014a4b82a02a11"
     },
     {
       "id": "J33-01",
@@ -36684,8 +36700,9 @@
       "severity": "medium",
       "job": "35",
       "area": "network_q3",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Input identity uses the common context comparator, preserving strict script pointer equality. Q3 decimal adapters preserve locale/ASCII distinctions and checksum casts. QVM perpendicular projection uses the shared reciprocal primitive. Matching normal build and seven core suites passed; no live or performance claim.",
+      "fixed_commit": "a42df03f216100efacc2f8d23a6c2b5badc11509"
     },
     {
       "id": "Q3NET-35-03",
@@ -37276,7 +37293,8 @@
       "commit": "6a08052e3833079eb10bf34e86f31dcac34c4653",
       "source_tree": "616aff083b935dceb6d8665d363ee74ef256fc9e",
       "finding_ids": [
-        "04-023"
+        "04-023",
+        "J24-10"
       ],
       "files_rechecked": [
         "include/qa/application.h",
@@ -38421,6 +38439,369 @@
         "image",
         "model"
       ]
+    },
+    {
+      "commit": "e1d581d23892e2095efcbf7de11d53de90e0a0e7",
+      "source_tree": "b5bd824c997dbe041669ce82f5feec0c774b2c75",
+      "finding_ids": [
+        "31-03"
+      ],
+      "files_rechecked": [
+        "docs/audit/unification-2026-10-11.json",
+        "docs/audit/unification-2026-10-11.md",
+        "include/qa/application.h",
+        "src/app/application/events.c",
+        "src/app/application/native_q1_wire.c",
+        "src/app/application/network_q2.c",
+        "src/app/application/unified_q3_events.c",
+        "src/app/frontend/map_events.c",
+        "src/app/frontend/music_sources.c",
+        "src/app/frontend/native_composition.c",
+        "src/app/frontend/network_q2_host.c",
+        "src/app/frontend/network_qw.c",
+        "src/app/frontend/particle_events.c",
+        "src/app/frontend/player_events.c",
+        "src/app/frontend/source_effects.c",
+        "src/presentation/q3_native/events.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-raw-events-20261011",
+      "conclusion": "Raw-record kind-mask iteration replaces the named event walks; Q3 effects retire once at the batch boundary and retain successful-prefix/error retry semantics."
+    },
+    {
+      "commit": "15fd4572039f1fe8dafdd939ea88381a806813e8",
+      "source_tree": "3a23538c2a916c97d3d2377b4a7fb007c8d7f9e6",
+      "finding_ids": [
+        "J32-12"
+      ],
+      "files_rechecked": [
+        "CMakeLists.txt",
+        "docs/audit/unification-2026-10-11.md",
+        "src/render/cpu/renderer.c",
+        "src/render/gl/internal.h",
+        "src/render/gl/passes.c",
+        "src/render/output_gamma.c",
+        "src/render/output_gamma.h"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-output-gamma-20261011",
+      "conclusion": "CPU and GL output use one gamma-table builder with explicit original arithmetic policies. Source-palette/overbright behavior is unchanged; no pixel or timing claim."
+    },
+    {
+      "commit": "f9ee50f01ecc14a80ee36d965c2359a436b7b6b0",
+      "source_tree": "f2327d2e9a9e0c398ff6a66d6941150d527036f8",
+      "finding_ids": [
+        "J12-06",
+        "J12-09",
+        "J18-02"
+      ],
+      "files_rechecked": [
+        "src/app/frontend/tools.c",
+        "src/tools/camera.c",
+        "src/tools/camera_author.c",
+        "src/tools/camera_internal.h"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-camera-storage-20261011",
+      "conclusion": "Camera samples use frontend frame storage and common arena text. Current debug snapshots already use the same frame arena; no disposable per-view arena remains at the named adapters."
+    },
+    {
+      "commit": "f3b079bfdec6903c7a8fc17b184366b2adaa5e2e",
+      "source_tree": "b3dd1b8e10d45e7e81aee14d3e96995b1fca791c",
+      "finding_ids": [
+        "J12-05"
+      ],
+      "files_rechecked": [
+        "include/qa/application.h",
+        "include/qa/console.h",
+        "src/app/application/events.c",
+        "src/app/frontend/frame.c",
+        "src/app/frontend/internal.h",
+        "src/app/frontend/lifetime.c",
+        "src/app/frontend/source.c",
+        "src/app/frontend/tools.c",
+        "src/console/commands.c",
+        "src/tools/controller.c",
+        "src/tools/llm_console.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-ordered-log-output-20261011",
+      "conclusion": "Tools and LLM output enters ordered immutable LOG records. One leased final cursor and shared redirect capture preserve context/text/order; core capture checks exercise direct/ring/direct ordering."
+    },
+    {
+      "commit": "2a47f117a4b8aa454bfb6e8308b0ffd08bc4457f",
+      "source_tree": "5f53054cada099f570e422fd7c30fed3e0106358",
+      "finding_ids": [
+        "J12-08"
+      ],
+      "files_rechecked": [
+        "include/qa/text.h",
+        "src/app/application/native_commands.c",
+        "src/console/commands.c",
+        "src/console/cvars.c",
+        "src/console/cvars_conversion.c",
+        "src/console/cvars_save.c",
+        "src/console/cvars_store.c",
+        "src/console/discovery.c",
+        "src/console/internal.h",
+        "src/console/program.c",
+        "src/console/text.c",
+        "src/core/text.c",
+        "src/tools/controller.c",
+        "src/tools/diagnostics.c",
+        "src/tools/llm_batch.c",
+        "src/tools/llm_console.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-ascii-equality-20261011",
+      "conclusion": "One counted-byte comparison implements exact/ASCII-fold equality. Console and tools copies are deleted; embedded NUL/high-byte/length checks passed."
+    },
+    {
+      "commit": "62d855051d132862f3cff36c32014a4b82a02a11",
+      "source_tree": "0923875d9d96a1e104d55af9682e09005c8f45a3",
+      "finding_ids": [
+        "J32-13"
+      ],
+      "files_rechecked": [
+        "CMakeLists.txt",
+        "include/qa/scene.h",
+        "include/qa/scene_effects.h",
+        "include/qa/scene_model_save.h",
+        "src/app/frontend/scene_identity.c",
+        "src/render/scene/effects/shadows.c",
+        "src/render/scene/models.c",
+        "src/render/scene/models/internal.h",
+        "src/render/scene/models/shadows.c",
+        "src/render/scene/world.c",
+        "src/render/scene/world/internal.h",
+        "src/render/scene/world/legacy.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-remove-dormant-shadow-fingerprints-20261011",
+      "conclusion": "Dormant model fingerprint/caster/atlas paths are deleted. Original reached planar and stencil shadow paths and reserved identity slot remain."
+    },
+    {
+      "commit": "a42df03f216100efacc2f8d23a6c2b5badc11509",
+      "source_tree": "981789f2f970de149710cc207b87a590e6718bab",
+      "finding_ids": [
+        "J12-12",
+        "Q3NET-35-02"
+      ],
+      "files_rechecked": [
+        "src/compat/qvm/intrinsics.c",
+        "src/network/q3/admission.c",
+        "src/network/q3/pak_references.c",
+        "src/platform/input.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-boundary-primitives-20261011",
+      "conclusion": "Input identity uses the common context comparator, preserving strict script pointer equality. Q3 decimal adapters preserve locale/ASCII distinctions and checksum casts. QVM perpendicular projection uses the shared reciprocal primitive."
+    },
+    {
+      "commit": "24aad7c86a1ebc4136fe534fa3281c8231b8c285",
+      "source_tree": "1889f370ff2d9777d7b7a202c9b175b6a86dff5f",
+      "finding_ids": [
+        "28-01"
+      ],
+      "files_rechecked": [
+        "include/qa/network_unified_session.h",
+        "src/network/unified/bootstrap.c",
+        "src/network/unified/document.c",
+        "src/network/unified/session_handshake.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-bounded-unified-handshake-20261011",
+      "conclusion": "Live unified handshake reads the existing bounded layout and writes caller-owned storage, without temporary documents. Existing document decode delegates it; core checks compare wire bytes and failure output behavior."
+    },
+    {
+      "commit": "748fa6a6d0bfe567737a9d20691f12b82f831ce2",
+      "source_tree": "6c318074ae21ecef9b41a56329c7d7e31e3fb78a",
+      "finding_ids": [
+        "31-10"
+      ],
+      "files_rechecked": [
+        "include/qa/physics.h",
+        "src/movement/entity/trajectory.c",
+        "src/presentation/q3_native/trajectory.c",
+        "src/presentation/q3_native/trajectory.h",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-q3-trajectory-20261011",
+      "conclusion": "Presentation converts ABI fields and delegates one qsrc-derived trajectory implementation. Core checks cover wrapped stop boundaries, gravity, milliseconds, half-amplitude sine velocity and invalid-output preservation."
+    },
+    {
+      "commit": "c99499c40f663920e696ef1ca6cf821d0ed087ed",
+      "source_tree": "789c68a93cee558d1300a90a7a808dca73ca0af0",
+      "finding_ids": [
+        "09-06"
+      ],
+      "files_rechecked": [
+        "src/bots/ai/checkpoint.c",
+        "src/bots/ai/internal.h",
+        "src/bots/ai/roster.c",
+        "src/bots/ai/save.c",
+        "src/bots/runtime/requirements_save.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-bot-actor-index-20261011",
+      "conclusion": "Bot bindings use qa_actor_index with full identities. Checkpoint rebuild and population/requirements save adapters keep the existing field order and client+1 words by source review; no live bot-save round trip."
+    },
+    {
+      "commit": "33e131cc7862ed21f95f065f63c61b30b51caeb1",
+      "source_tree": "968a747039a4f332b0cb8fceaafab490e6e04c1f",
+      "finding_ids": [
+        "10-06",
+        "17-12"
+      ],
+      "files_rechecked": [
+        "src/app/frontend/remote_unified_prediction.c",
+        "src/app/frontend/remote_unified_prediction_private.h",
+        "src/navigation/graph.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-query-stamps-20261011",
+      "conclusion": "Navigation SCC and Unified prediction use caller-owned qa_stamp_set. DFS order/cluster numbering and post-conversion duplicate admission are source-preserved. Cold mark storage grows from byte/bool to uint32; no speed claim."
+    },
+    {
+      "commit": "28e8d3af86f491997b2edae393e9b3ffbc25e151",
+      "source_tree": "013613f9d440a65f44032c4e94151be879413017",
+      "finding_ids": [
+        "J32-04"
+      ],
+      "files_rechecked": [
+        "src/render/scene/world/legacy.c",
+        "src/render/scene/world/legacy/internal.h",
+        "src/render/scene/world/legacy/lighting.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-load-sized-lightstyles-20261011",
+      "conclusion": "Legacy numeric style snapshots allocate once from actual face/grid references. Full supplied spans remain validated, including unreachable suffixes; core checks cover extended indices, grid-only styles and shrink/re-expand. Last-submission sampling remains world-owned."
     }
   ],
   "verification_limits": [

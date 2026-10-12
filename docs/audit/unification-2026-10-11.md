@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `27bde296`.
+Follow-up source changes were reviewed through main `28e8d3af`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 70 have source fixes
+There are **374 overlapping source-review observations**: 87 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 301 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 284 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -153,6 +153,23 @@ tool captures; existing checkpoint fields remain readable.
 | `27-04` | `ac8eec36` | KEX userinfo projects common borrowed info pairs. Pair/key/value limits, defaults and seat overrides remain. Shipped callers use distinct source and destination buffers. |
 | `J12-01/02/03/04/11` | `2a7903a1` | QuakeWorld touch de-duplication reads retained movement contacts. Numeric and source-text adapters use common primitives; shared contacts can still grow. |
 | `J32-01` | `27bde296` | Render/effect rotation, perpendicular selection, portal remap, transformed bounds and matrix directions use common primitives with explicit original arithmetic policies. |
+
+
+| Observations | Commit | Shared replacement |
+| --- | --- | --- |
+| `31-03` | `e1d581d2` | Raw-record kind-mask iteration replaces the named event walks; Q3 effects retire once at the batch boundary and retain successful-prefix/error retry semantics. |
+| `J32-12` | `15fd4572` | CPU and GL output use one gamma-table builder with explicit original arithmetic policies. Source-palette/overbright behavior is unchanged; no pixel or timing claim. |
+| `J12-06`, `J12-09`, `J18-02` | `f9ee50f0` | Camera samples use frontend frame storage and common arena text. Current debug snapshots already use the same frame arena; no disposable per-view arena remains at the named adapters. |
+| `J12-05` | `f3b079bf` | Tools and LLM output enters ordered immutable LOG records. One leased final cursor and shared redirect capture preserve context/text/order; core capture checks exercise direct/ring/direct ordering. |
+| `J12-08` | `2a47f117` | One counted-byte comparison implements exact/ASCII-fold equality. Console and tools copies are deleted; embedded NUL/high-byte/length checks passed. |
+| `J32-13` | `62d85505` | Dormant model fingerprint/caster/atlas paths are deleted. Original reached planar and stencil shadow paths and reserved identity slot remain. |
+| `J12-12`, `Q3NET-35-02` | `a42df03f` | Input identity uses the common context comparator, preserving strict script pointer equality. Q3 decimal adapters preserve locale/ASCII distinctions and checksum casts. QVM perpendicular projection uses the shared reciprocal primitive. |
+| `28-01` | `24aad7c8` | Live unified handshake reads the existing bounded layout and writes caller-owned storage, without temporary documents. Existing document decode delegates it; core checks compare wire bytes and failure output behavior. |
+| `31-10` | `748fa6a6` | Presentation converts ABI fields and delegates one qsrc-derived trajectory implementation. Core checks cover wrapped stop boundaries, gravity, milliseconds, half-amplitude sine velocity and invalid-output preservation. |
+| `09-06` | `c99499c4` | Bot bindings use qa_actor_index with full identities. Checkpoint rebuild and population/requirements save adapters keep the existing field order and client+1 words by source review; no live bot-save round trip. |
+| `10-06`, `17-12` | `33e131cc` | Navigation SCC and Unified prediction use caller-owned qa_stamp_set. DFS order/cluster numbering and post-conversion duplicate admission are source-preserved. Cold mark storage grows from byte/bool to uint32; no speed claim. |
+| `J32-04` | `28e8d3af` | Legacy numeric style snapshots allocate once from actual face/grid references. Full supplied spans remain validated, including unreachable suffixes; core checks cover extended indices, grid-only styles and shrink/re-expand. Last-submission sampling remains world-owned. |
+| `J24-10` recheck | `6a08052e` | The overlapping ranking-queue observation is already resolved by the earlier ring migration; current synchronous delivery, save transfer and teardown callers were rechecked. |
 
 These fixes close the named observations only. They do not establish that all
 callers of every capability have migrated, that all module combinations work,

@@ -101,11 +101,6 @@ typedef struct frontend_q3_peer {
     bool occupied, retiring;
     char reason[256];
 } frontend_q3_peer;
-typedef struct frontend_q3_attempt {
-    struct frontend_q3_attempt *next;
-    bool disconnect;
-    char server[1024];
-} frontend_q3_attempt;
 typedef struct frontend_network_server_lease {
     qa_frontend *frontend;
     qa_q3_host_server_services original;
@@ -235,8 +230,7 @@ struct qa_frontend_network {
     frontend_q3_client q3_clients[QA_NETWORK_MAX_SEATS];
     qa_buffer menu_connections_prefix;
     char client_server[1024];
-    frontend_q3_attempt *q3_attempts, *q3_attempt_tail;
-    size_t q3_attempt_count;
+    qa_application_event_subscription client_attempts;
     unsigned busy;
     bool registered;
     bool detached_transport;
@@ -2824,9 +2818,28 @@ static bool q1_client_create(qa_frontend_network *n,const qa_net_address *remote
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 connection requires its actual selected remote request");
     return q1_client_construct(n,remote,f->options.network_protocol,0,false,error);
 }
+static const qa_application_connection_request_event *client_attempt_next(
+    const qa_frontend_network *n,qa_application_event_range *range)
+{
+    if (!n->client_attempts.application) return NULL;
+    qa_application_event_view output;
+    while (qa_application_event_raw_next(n->client_attempts.application,range,
+        UINT64_C(1)<<QA_APPLICATION_EVENT_CONNECTION_REQUEST,&output))
+        if (output.value.connection_request->recipient==n) return output.value.connection_request;
+    return NULL;
+}
+static bool client_attempts_pending(const qa_frontend_network *n)
+{
+    qa_application_event_range range={.next=n->client_attempts.next,.end=UINT64_MAX};
+    return client_attempt_next(n,&range)!=NULL;
+}
 static bool client_attempts_drain(qa_frontend_network *n, qa_error *error)
 {
-    if (n->q3_attempts && !n->q3_clients[0].q3_client_requested) {
+    if (!client_attempts_pending(n)) {
+        qa_application_events_unsubscribe(&n->client_attempts);
+        return true;
+    }
+    if (!n->q3_clients[0].q3_client_requested) {
         qa_frontend *f=n->frontend;
         if (f->stepping || frontend_config_store_client_preparation(f->config_store)) return true;
         if (!frontend_network_client_only(f) || !q1_client_protocol(f->options.network_protocol) ||
@@ -2834,59 +2847,73 @@ static bool client_attempts_drain(qa_frontend_network *n, qa_error *error)
             f->capture || f->resource_inventory || f->source_restoring || f->preparing ||
             !qa_network_callbacks_idle(n->runtime) || !frontend_network_q1_client_idle(n->q1_client_owner))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Queued connection lost its returned Q1 CLIENT constructor");
-        while (n->q3_attempts) {
+        for (;;) {
+            qa_application_event_range range={.next=n->client_attempts.next,.end=UINT64_MAX};
+            const qa_application_connection_request_event *request=client_attempt_next(n,&range);
+            if (!request) break;
             if (frontend_config_store_client_preparation(f->config_store)) return true;
-            frontend_q3_attempt *request=n->q3_attempts;
-            if (request->disconnect ? *request->server!=0 : *request->server==0)
-                return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 CLIENT connection changed its retained request");
+            qa_event_lease *lease=qa_application_event_retain(n->client_attempts.application,range.id);
+            bool ok=false, consumed=false;
+            if (request->disconnect ? *request->server!=0 : *request->server==0) {
+                frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 CLIENT connection changed its retained request");
+                goto q1_attempt_done;
+            }
             if (n->q1_client_owner) {
                 frontend_network_q1_client_view view;
                 if (!frontend_network_q1_client_metadata_read(n->q1_client_owner,&view,error) ||
                     view.physical.source.configuration_generation!=qa_application_configuration_generation(f->application) ||
                     (view.retired ? !qa_application_client_retirement_current(f->application,&view.physical.source) :
-                        !frontend_client_source_current(&view.physical)))
-                    return frontend_fail(error,QA_ERROR_ARGUMENT,"Queued connection lost its actual Q1 CLIENT namespace");
+                        !frontend_client_source_current(&view.physical))) {
+                    frontend_fail(error,QA_ERROR_ARGUMENT,"Queued connection lost its actual Q1 CLIENT namespace");
+                    goto q1_attempt_done;
+                }
                 if (f->archive_enabled && view.configured && !view.retired &&
-                    !frontend_config_store_save(f->config_store,error)) return false;
-                if (!frontend_network_q1_client_disconnect(n->q1_client_owner,"disconnected",error)) return false;
+                    !frontend_config_store_save(f->config_store,error)) goto q1_attempt_done;
+                if (!frontend_network_q1_client_disconnect(n->q1_client_owner,"disconnected",error)) goto q1_attempt_done;
                 if (!request->disconnect) {
                     qa_error retirement={0};
                     if (!frontend_network_q1_client_destroy(&n->q1_client_owner,&retirement)) {
-                        if (retirement.code==QA_OK) return true;
+                        if (retirement.code==QA_OK) { ok=true; goto q1_attempt_done; }
                         if (error) *error=retirement;
-                        return false;
+                        goto q1_attempt_done;
                     }
                 }
             }
             if (!request->disconnect) {
                 qa_net_address address;
                 if (!qa_net_address_resolve(request->server,f->options.network_port,0,&address,error) ||
-                    !client_transport_family(n,&address,error) || !q1_client_create(n,&address,error)) return false;
-                memcpy(n->client_server,request->server,sizeof(n->client_server));
+                    !client_transport_family(n,&address,error) || !q1_client_create(n,&address,error)) goto q1_attempt_done;
+                memset(n->client_server,0,sizeof(n->client_server));
+                memcpy(n->client_server,request->server,strlen(request->server)+1);
             }
-            n->q3_attempts=request->next; --n->q3_attempt_count;
-            if (!n->q3_attempts) n->q3_attempt_tail=NULL;
-            free(request);
+            consumed=true; ok=true;
+q1_attempt_done:
+            if (consumed) qa_application_events_consumed(&n->client_attempts,range.next);
+            qa_event_lease_release(lease);
+            if (!consumed) return ok;
         }
+        qa_application_events_unsubscribe(&n->client_attempts);
         return true;
     }
-    if (n->q3_attempts && n->q3_clients[0].q3_client_generation != qa_application_configuration_generation(n->frontend->application))
+    if (n->q3_clients[0].q3_client_generation != qa_application_configuration_generation(n->frontend->application))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Queued connection command lost its retained source launch lifetime");
-    while (n->q3_attempts) {
-        if (!n->q3_attempts->disconnect && n->q3_clients[0].q3_client_epoch == UINT64_MAX)
+    for (;;) {
+        qa_application_event_range range={.next=n->client_attempts.next,.end=UINT64_MAX};
+        const qa_application_connection_request_event *request=client_attempt_next(n,&range);
+        if (!request) break;
+        if (!request->disconnect && n->q3_clients[0].q3_client_epoch == UINT64_MAX)
             return frontend_fail(error, QA_ERROR_FORMAT, "Remote Q3 connection attempt generation is exhausted");
-        if (!client_close_attempt(&n->q3_clients[0], error)) return false;
-        frontend_q3_attempt request = *n->q3_attempts;
-        frontend_q3_attempt *entered = n->q3_attempts;
-        n->q3_attempts = entered->next; --n->q3_attempt_count;
-        if (!n->q3_attempts) n->q3_attempt_tail = NULL;
-        free(entered);
-        if (request.disconnect) continue;
-        memcpy(n->client_server, request.server, sizeof(n->client_server));
+        qa_event_lease *lease=qa_application_event_retain(n->client_attempts.application,range.id);
+        bool ok=false;
+        if (!client_close_attempt(&n->q3_clients[0], error)) goto q3_attempt_done;
+        qa_application_events_consumed(&n->client_attempts,range.next);
+        if (request->disconnect) { ok=true; goto q3_attempt_done; }
+        memset(n->client_server,0,sizeof(n->client_server));
+        memcpy(n->client_server,request->server,strlen(request->server)+1);
         memset(n->q3_clients[0].q3_client_message, 0, sizeof(n->q3_clients[0].q3_client_message)); n->q3_clients[0].q3_ui_client_number = 0;
         qa_net_address address;
-        if (!qa_net_address_resolve(request.server, n->frontend->options.network_port, 0, &address, error)) return false;
-        if (!client_transport_family(n,&address,error)) return false;
+        if (!qa_net_address_resolve(request->server, n->frontend->options.network_port, 0, &address, error)) goto q3_attempt_done;
+        if (!client_transport_family(n,&address,error)) goto q3_attempt_done;
         if (!n->q3_clients[0].q3_client_rebind) n->q3_clients[0].q3_client_previous_epoch = n->q3_clients[0].q3_client_epoch;
         if (n->q3_clients[0].q3_client.generation) n->q3_clients[0].q3_client_previous = n->q3_clients[0].q3_client;
         ++n->q3_clients[0].q3_client_epoch; n->q3_clients[0].q3_client = (qa_net_client_id){0};
@@ -2894,13 +2921,18 @@ static bool client_attempts_drain(qa_frontend_network *n, qa_error *error)
         n->q3_clients[0].q3_client_reason[0] = 0; n->q3_clients[0].q3_client_userinfo[0] = 0;
         uint16_t qport = n->q3_clients[0].q3_client_admission.qport;
         qa_q3_client_admission_begin(&n->q3_clients[0].q3_client_admission, &address, qport);
+        ok=true;
+q3_attempt_done:
+        qa_event_lease_release(lease);
+        if (!ok) return false;
     }
+    qa_application_events_unsubscribe(&n->client_attempts);
     return true;
 }
 bool frontend_network_client_attempts_advance(qa_frontend *f,qa_error *error)
 {
     qa_frontend_network *n=f?f->network:NULL;
-    if (!n || n->q3_clients[0].q3_client_requested || !n->q3_attempts) return true;
+    if (!n || n->q3_clients[0].q3_client_requested || !client_attempts_pending(n)) return true;
     if (!f || f->stepping || f->preparing || f->round || f->capture || f->resource_inventory || f->source_restoring)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT commands require their returned frontend phase");
     return n->frontend==f && client_attempts_drain(n,error);
@@ -4066,16 +4098,13 @@ static bool client_attempt_enqueue(qa_frontend_network *n, const char *server,
 {
     if(!disconnect && (!server || !*server || strlen(server)>=sizeof(n->client_server)))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Connection command lacks its retained native server name");
-    if(n->q3_attempt_count==SIZE_MAX)
-        return frontend_fail(error,QA_ERROR_MEMORY,"Remote connection command queue is exhausted");
-    frontend_q3_attempt *request=calloc(1,sizeof(*request));
-    if(!request) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining genuine remote connection command");
-    request->disconnect=disconnect;
-    if(!disconnect) memcpy(request->server,server,strlen(server)+1);
-    if(n->q3_attempt_tail) n->q3_attempt_tail->next=request;
-    else n->q3_attempts=request;
-    n->q3_attempt_tail=request; ++n->q3_attempt_count;
-    return true;
+    bool subscribed=n->client_attempts.application!=NULL;
+    qa_application_events_subscribe(n->frontend->application,&n->client_attempts);
+    qa_application_connection_request_event request={.recipient=n,.disconnect=disconnect,
+        .server=disconnect?"":server};
+    if (qa_application_connection_request_emit(n->frontend->application,&request,error)) return true;
+    if (!subscribed) qa_application_events_unsubscribe(&n->client_attempts);
+    return false;
 }
 static bool client_attempt_queue(qa_frontend_network *n, const qa_command_invocation *call, qa_error *error)
 {
@@ -4125,8 +4154,12 @@ static bool client_attempt_queue(qa_frontend_network *n, const qa_command_invoca
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Connection command lost its actual Q1 CLIENT command namespace");
     }
     const char *server = reconnecting ? n->client_server : disconnect ? "" : call->argv[1];
-    if (reconnecting) for (const frontend_q3_attempt *queued = n->q3_attempts; queued; queued = queued->next)
-        if (!queued->disconnect) server = queued->server;
+    if (reconnecting) {
+        qa_application_event_range range={.next=n->client_attempts.next,.end=UINT64_MAX};
+        const qa_application_connection_request_event *queued;
+        while ((queued=client_attempt_next(n,&range)))
+            if (!queued->disconnect) server=queued->server;
+    }
     return client_attempt_enqueue(n,server,disconnect,error);
 }
 static bool browser_command_current(void *context, qa_error *error)
@@ -4711,10 +4744,7 @@ static bool network_address_fields(qa_source_save_io *io, qa_net_address *v)
 }
 static void client_attempts_dispose(qa_frontend_network *n)
 {
-    while (n->q3_attempts) {
-        frontend_q3_attempt *next = n->q3_attempts->next; free(n->q3_attempts); n->q3_attempts = next;
-    }
-    n->q3_attempt_tail = NULL; n->q3_attempt_count = 0;
+    qa_application_events_unsubscribe(&n->client_attempts);
 }
 static bool network_host_player(qa_frontend_network *n, const frontend_q3_peer *p,
     qa_application_network_player *out, qa_error *error)
@@ -4788,11 +4818,13 @@ static bool network_metadata_check(qa_frontend_network *n, bool hosting, bool fi
         }
     } else if (n->q3_packages || n->q3_generation || n->q3_server_id || n->q3_restarted_server_id || n->q3_checksum_feed || n->q3_server_bit)
         return frontend_fail(error, QA_ERROR_FORMAT, "absent hosting owner retains source state");
-    if (n->q3_attempt_count && !n->q3_clients[0].q3_client_requested) {
+    if (client_attempts_pending(n) && !n->q3_clients[0].q3_client_requested) {
         if (!n->frontend->options.network_connect || !q1_client_protocol(n->frontend->options.network_protocol) ||
             n->frontend->options.dedicated || n->frontend->options.seats!=1)
             return frontend_fail(error,QA_ERROR_FORMAT,"Queued connection has no selected Q1 CLIENT constructor");
-        for (const frontend_q3_attempt *request=n->q3_attempts;request;request=request->next)
+        qa_application_event_range range={.next=n->client_attempts.next,.end=UINT64_MAX};
+        const qa_application_connection_request_event *request;
+        while ((request=client_attempt_next(n,&range)))
             if (request->disconnect ? *request->server!=0 : *request->server==0)
                 return frontend_fail(error,QA_ERROR_FORMAT,"Saved Q1 connection changed its canonical queued request");
     }
