@@ -71,8 +71,6 @@ struct qa_native_process_resources {
     process_file **files;
     size_t references, busy, artifact_count, root_count, root_capacity, file_count, file_capacity;
     uint64_t next_file, allocation_base, trap_base, first_callback;
-    qa_fs_file *bootstrap;
-    qa_fs_identity bootstrap_identity;
     char *bootstrap_path;
     char **argv, **environment;
     uint16_t *command_line, *windows_environment;
@@ -185,11 +183,6 @@ bool qa_native_process_resources_current(const qa_native_process_resources *owne
     if (owner && owner->captured)
         return fail(error, QA_ERROR_ARGUMENT, "Captured native resources have no entered source authority");
     if (!resources_retained(owner, error) || !qa_native_process_platform_current(owner->options.platform, error)) return false;
-    if (owner->options.policy.backend == QA_NATIVE_GUEST_HOST_X86_64) {
-        bool unchanged = false;
-        if (!qa_fs_file_path_unchanged(owner->bootstrap, &owner->bootstrap_identity, &unchanged, error) || !unchanged)
-            return fail(error, QA_ERROR_IO, "Actual native child bootstrap changed");
-    }
     return true;
 }
 static bool current_callback(void *context, qa_error *error)
@@ -906,7 +899,7 @@ static bool resources_create(const qa_native_process_resources_options *options,
         if (!options->runtime || !options->bootstrap || !*options->bootstrap ||
             !qa_native_runtime_profile_launch(options->runtime, &owner->guard, error)) return false;
         owner->bootstrap_path = text_copy(options->bootstrap);
-        if (!owner->bootstrap_path || !qa_fs_file_open(owner->bootstrap_path, &owner->bootstrap, &owner->bootstrap_identity, error)) return false;
+        if (!owner->bootstrap_path) return false;
     }
     bool terminal;
     if (!qa_native_process_platform_sysv_files(options->platform, owner->standards, &terminal, error) ||
@@ -1321,8 +1314,7 @@ static bool resource_copy(const qa_native_process_resources *source,
     if (copy->options.authority.retain) copy->options.authority.retain(copy->options.authority.context);
     copy->options.runtime = source->options.runtime; qa_native_runtime_retain(copy->options.runtime);
     if (!qa_native_process_platform_capture(source->options.platform, &copy->options.platform, error)) return false;
-    copy->bootstrap = source->bootstrap; qa_fs_file_retain(copy->bootstrap);
-    copy->bootstrap_identity = source->bootstrap_identity; copy->bootstrap_path = text_copy(source->bootstrap_path);
+    copy->bootstrap_path = text_copy(source->bootstrap_path);
     if (source->bootstrap_path && !copy->bootstrap_path) return fail(error, QA_ERROR_MEMORY, "Retaining actual child bootstrap name");
     copy->artifacts = calloc(source->artifact_count, sizeof(*copy->artifacts));
     copy->sysv_artifacts = calloc(source->artifact_count, sizeof(*copy->sysv_artifacts));
@@ -1464,7 +1456,7 @@ bool qa_native_process_resources_release(qa_native_process_resources **pointer, 
     for (size_t i = 0; i < owner->root_count; ++i) free(owner->roots[i].prefix);
     for (size_t i = 0; i < owner->options.argc; ++i) if (owner->argv) free(owner->argv[i]);
     for (size_t i = 0; i < owner->options.environment_count; ++i) if (owner->environment) free(owner->environment[i]);
-    qa_fs_file_close(owner->bootstrap); free(owner->bootstrap_path);
+    free(owner->bootstrap_path);
     qa_native_runtime_release(owner->options.runtime);
     if (owner->options.authority.release) owner->options.authority.release(owner->options.authority.context);
     free(owner->artifacts); free(owner->sysv_artifacts); free(owner->windows_artifacts); free(owner->roots); free(owner->files);
