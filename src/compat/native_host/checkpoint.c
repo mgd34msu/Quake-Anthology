@@ -349,6 +349,7 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
     }
     qa_cvars_restore *cvars=NULL;
     native_host_memory_state memory={0};
+    qa_arena reference_storage={0};
     qa_native_host_message_reference *references=NULL;
     size_t registry_extent=(size_t)registry_size,memory_extent=(size_t)memory_size;
     qa_bytes registry, objects;
@@ -370,7 +371,8 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
     }
     if (prepared && restore_cvars && registry.size) prepared=qa_cvars_save_prepare(host->cvars,registry,&cvars,error);
     if (!prepared) {
-        free(slots); free(retained); native_host_memory_dispose(&memory); return false;
+        free(slots); free(retained); qa_arena_destroy(&reference_storage);
+        native_host_memory_dispose(&memory); return false;
     }
     size_t remaining = (io.input.size - io.offset);
     if (message_size > remaining)
@@ -386,9 +388,11 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
     qa_bytes message;
     if (!qa_source_save_span(&io, (size_t)message_size, &message)) goto truncated;
     if (!cvars_only && reference_count) {
-        references = calloc((size_t)reference_count, sizeof(*references));
+        references = qa_arena_alloc(&reference_storage,
+            (size_t)reference_count * sizeof(*references), _Alignof(qa_native_host_message_reference), error);
         if (!references) {
-            free(slots); free(retained); qa_cvars_save_abort(cvars); native_host_memory_dispose(&memory);
+            free(slots); free(retained); qa_arena_destroy(&reference_storage);
+            qa_cvars_save_abort(cvars); native_host_memory_dispose(&memory);
             return native_host_fail(error, QA_ERROR_MEMORY, 0, "Restoring written native Q2 message entity references");
         }
     }
@@ -405,7 +409,8 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
         if (!cvars_only) {
             references[i].offset = (size_t)offset;
             if (!actors || !qa_actors_reference_saved(actors, saved, true, &references[i].actor, error)) {
-                free(slots); free(retained); free(references); qa_cvars_save_abort(cvars); native_host_memory_dispose(&memory);
+                free(slots); free(retained); qa_arena_destroy(&reference_storage);
+                qa_cvars_save_abort(cvars); native_host_memory_dispose(&memory);
                 return false;
             }
         }
@@ -422,6 +427,7 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
         host->restoring = false;
         free(slots);
         free(retained);
+        qa_arena_destroy(&reference_storage);
         qa_cvars_save_abort(cvars); native_host_memory_dispose(&memory);
         return ok;
     }
@@ -504,9 +510,9 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
     if (ok) {
         memcpy(host->message, message.data, message.size);
         host->message_size = message.size;
-        free(host->message_references);
-        host->message_references = references; references = NULL;
-        host->message_reference_count = host->message_reference_capacity = (size_t)reference_count;
+        if (reference_count)
+            memcpy(host->message_references, references, (size_t)reference_count * sizeof(*references));
+        host->message_reference_count = (size_t)reference_count;
         host->message_failed = false;
     }
     if (ok && engine.size) {
@@ -537,14 +543,14 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
     host->restoring = false;
     free(slots);
     free(retained);
-    free(references);
+    qa_arena_destroy(&reference_storage);
     qa_cvars_save_abort(cvars); native_host_memory_dispose(&memory);
     return ok;
 
 truncated:
     free(slots);
     free(retained);
-    free(references);
+    qa_arena_destroy(&reference_storage);
     qa_cvars_save_abort(cvars); native_host_memory_dispose(&memory);
     return native_host_fail(error, QA_ERROR_FORMAT, io.offset,
                             "native host checkpoint payload is truncated");

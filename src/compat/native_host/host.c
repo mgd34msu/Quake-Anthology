@@ -322,8 +322,22 @@ bool qa_native_host_create_q2_game(qa_native_module *module,
                                  ? options->services.maximum_message_bytes
                                  : 65536u;
     host->message = malloc(host->message_capacity);
-    if (!host->message ||
-        !configure_instance(host, module, &options->instance,
+    if (!host->message)
+        return creation_failed(host, out, error);
+    host->message_reference_capacity = host->message_capacity / 2;
+    if (host->message_reference_capacity > SIZE_MAX / sizeof(*host->message_references)) {
+        native_host_fail(error, QA_ERROR_MEMORY, 0, "Native Q2 message reference extent overflows");
+        return creation_failed(host, out, error);
+    }
+    if (host->message_reference_capacity) {
+        host->message_references = qa_arena_alloc(&host->message_reference_storage,
+            host->message_reference_capacity * sizeof(*host->message_references),
+            _Alignof(qa_native_host_message_reference), error);
+        if (!host->message_references)
+            return creation_failed(host, out, error);
+    }
+    qa_arena_seal(&host->message_reference_storage);
+    if (!configure_instance(host, module, &options->instance,
                             error) || !native_host_call_scratch_prepare(host, error) ||
         !native_host_fields_refresh(host, error)) {
         return creation_failed(host, out, error);
@@ -415,7 +429,7 @@ static void free_records(qa_native_host *host)
     }
     free(host->model_entries);
     free(host->message);
-    free(host->message_references);
+    qa_arena_destroy(&host->message_reference_storage);
     free(host->retained_clients);
     free(host->q2_lifetimes);
     free(host->q2_fields);

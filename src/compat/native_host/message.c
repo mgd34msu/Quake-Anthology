@@ -140,21 +140,6 @@ bool native_host_message_write(qa_native_host *host, const qa_native_import_call
         if (!actor.registry || slot > INT16_MAX)
             return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
                                     "native Q2 message entity is not representable");
-        if (host->message_reference_count == host->message_reference_capacity) {
-            size_t capacity = host->message_reference_capacity ? host->message_reference_capacity * 2 : 16;
-            if (capacity < host->message_reference_capacity ||
-                capacity > SIZE_MAX / sizeof(*host->message_references)) {
-                host->message_failed = true;
-                return native_host_fail(error, QA_ERROR_MEMORY, slot, "Native Q2 message reference extent overflows");
-            }
-            void *references = realloc(host->message_references, capacity * sizeof(*host->message_references));
-            if (!references) {
-                host->message_failed = true;
-                return native_host_fail(error, QA_ERROR_MEMORY, slot, "Retaining native Q2 WriteEntity identity");
-            }
-            host->message_references = references;
-            host->message_reference_capacity = capacity;
-        }
         size_t offset = host->message_size;
         if (!append_u16(host, (uint16_t)slot, error)) return false;
         host->message_references[host->message_reference_count++] =

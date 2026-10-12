@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "c512bc6b63157e3b2ef30f5307d13d2cc8bb6a4b",
+  "verified_main": "468d5c40d9ad7c75d576d39179b3f790d9f99c02",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 146,
-    "open_source_observation": 225,
+    "fixed_source_build_core": 147,
+    "open_source_observation": 224,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -30939,8 +30939,9 @@
       "severity": "high",
       "job": "17",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Unified numeric aliases have no reached consumer: typed temporary/muzzle records use full actors. Deleted alias realloc/store/scan, semantic source validation now requires its actual actor_pose. Legacy number callback preserved. Normal build/seven suites; no live effects claim.",
+      "fixed_commit": "468d5c40d9ad7c75d576d39179b3f790d9f99c02"
     },
     {
       "id": "17-10",
@@ -41121,6 +41122,32 @@
       ],
       "record_directory": "/tmp/qa-ta3196-shared-intermission-math-20261012",
       "conclusion": "Private Q3 pose angle, ASCII name equality and roster finite-vector bodies deleted; common policy/math and text primitives used. Boundary finite rejection retained; existing core cardinal cases pass. No live or timing claim."
+    },
+    {
+      "commit": "468d5c40d9ad7c75d576d39179b3f790d9f99c02",
+      "source_tree": "fe16fc7604ea7675e3bc2c345702baaf51d1ee50",
+      "finding_ids": [
+        "17-09"
+      ],
+      "files_rechecked": [
+        "src/app/frontend/remote_unified_q2.c",
+        "src/app/frontend/remote_q2_effects.c",
+        "src/app/frontend/remote_q2_effects.h",
+        "src/app/frontend/particle_events.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-unified-q2-alias-removal-20261012",
+      "conclusion": "Unused Unified number-to-actor alias allocation and scan deleted rather than indexed. Reached full-actor events unchanged; legacy-number source retains required callback. Semantic source uses actor_pose as already defined. Normal build/seven suites; no live or speed claim."
     }
   ],
   "verification_limits": [

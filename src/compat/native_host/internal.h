@@ -146,6 +146,7 @@ struct qa_native_host {
     size_t message_size, message_capacity;
     qa_native_host_message_reference *message_references;
     size_t message_reference_count, message_reference_capacity;
+    qa_arena message_reference_storage;
     bool message_failed;
     bool *retained_clients;
     size_t retained_capacity;
