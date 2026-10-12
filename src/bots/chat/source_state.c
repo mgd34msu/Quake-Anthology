@@ -101,9 +101,7 @@ bool chat_state_initial(const qa_bot_chat *state,qa_bot_chat_asset **out,qa_erro
     if(!pointer) return true;
     if(state->initial && state->initial->initial_source &&
        state->initial->initial_source->initial.pointer==pointer) {*out=state->initial;return true;}
-    if(state->system->library)
-        for(qa_bot_chat_asset *asset=state->system->library->chat_assets;asset;asset=asset->next)
-            if(asset->initial_source && asset->initial_source->published &&
-               asset->initial_source->initial.pointer==pointer) {*out=asset;return true;}
+    *out=chat_initial_asset_find(state->system->library,pointer,true);
+    if(*out) return true;
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"Chat state initial pointer has no retained allocation view");return false;
 }

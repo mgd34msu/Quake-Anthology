@@ -95,7 +95,11 @@ static bool identity(void *context,uint32_t *out,qa_error *error) {
         asset->initial_source->own_failure=true;
         qa_error_set(error,QA_ERROR_MEMORY,0,"Initial chat pointer map exceeds source word extent");return false;
     }
-    *out=highest+1;return true;
+    *out=highest+1;
+    if(!chat_initial_alias_admit(&asset->source_library->chat_initial_aliases,*out,asset,error)) {
+        asset->initial_source->own_failure=true;return false;
+    }
+    return true;
 }
 static bool publish(void *context,bot_chat_initial *initial,qa_error *error) {
     qa_bot_chat_asset *asset=context;
@@ -144,7 +148,7 @@ bool chat_initial_asset_load_from(qa_bot_library *library,const qa_bot_chat_text
     }
     /* The library owns the reader before the first resolver callback. Failed
      * loads retain exactly the reached PC acquisition and heap stages. */
-    asset->next=library->chat_assets;library->chat_assets=asset;
+    chat_asset_admit(library,asset);
     qa_bot_chat_asset_retain(asset);*out=asset;
     bool ok=bot_chat_initial_resource_load(asset->initial_source,source_failure,error);
     if(ok) {asset->source_loaded=true;ok=chat_initial_asset_refresh(asset,error);}

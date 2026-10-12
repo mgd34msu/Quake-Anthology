@@ -58,13 +58,50 @@ void qa_bot_chat_asset_release(qa_bot_chat_asset *a) {
     qa_arena_destroy(&a->arena);
     free(a);
 }
-void bot_chat_assets_close(qa_bot_library *library) {
-    for (qa_bot_chat_asset *a = library->chat_assets; a != NULL;) {
-        qa_bot_chat_asset *next = a->next;
-        qa_bot_chat_asset_release(a);
-        a = next;
+void chat_asset_admit(qa_bot_library *library,qa_bot_chat_asset *asset) {
+    asset->library_order=++library->chat_asset_order;
+    asset->next=library->chat_assets;library->chat_assets=asset;
+}
+bool chat_initial_alias_admit(qa_id_index *aliases,uint32_t pointer,
+    qa_bot_chat_asset *asset,qa_error *error) {
+    if(!pointer) return true;
+    size_t value=(size_t)(uintptr_t)asset,existing;
+    qa_id_index_cursor cursor=qa_id_index_begin(aliases,pointer,0);
+    while(qa_id_index_next(aliases,&cursor,&existing)) if(existing==value) return true;
+    if(!qa_id_index_reserve(aliases,1,error)) return false;
+    qa_id_index_insert(aliases,pointer,0,value);return true;
+}
+void chat_initial_alias_retire(qa_id_index *aliases,const qa_bot_chat_asset *asset) {
+    size_t value=(size_t)(uintptr_t)asset,index=aliases->count;
+    while(index) {
+        qa_id_index_entry entry=aliases->entries[--index];
+        if(entry.value!=value) continue;
+        (void)qa_id_index_remove_value(aliases,entry.key,entry.discriminator,value);
+        index=aliases->count;
     }
-    library->chat_assets = NULL;
+}
+qa_bot_chat_asset *chat_initial_asset_find(const qa_bot_library *library,
+    uint32_t pointer,bool published) {
+    if(!library || !pointer) return NULL;
+    qa_bot_chat_asset *selected=NULL;size_t value;
+    qa_id_index_cursor cursor=qa_id_index_begin(&library->chat_initial_aliases,pointer,0);
+    while(qa_id_index_next(&library->chat_initial_aliases,&cursor,&value)) {
+        qa_bot_chat_asset *asset=(qa_bot_chat_asset *)(uintptr_t)value;
+        if(!asset->initial_source || asset->initial_source->initial.pointer!=pointer ||
+           (published && !asset->initial_source->published)) continue;
+        if(!selected || asset->library_order>selected->library_order) selected=asset;
+    }
+    return selected;
+}
+void bot_chat_assets_close(qa_bot_library *library) {
+    while(library->chat_assets) {
+        qa_bot_chat_asset *a=library->chat_assets;library->chat_assets=a->next;
+        a->next=NULL;
+        chat_initial_alias_retire(&library->chat_initial_aliases,a);
+        qa_bot_chat_asset_release(a);
+    }
+    qa_id_index_destroy(&library->chat_initial_aliases);
+    library->chat_asset_order=0;
 }
 const qa_bot_chat_asset_view *qa_bot_chat_asset_read(const qa_bot_chat_asset *a) {
     if(a && a->initial_source && !chat_initial_asset_refresh((qa_bot_chat_asset *)a,NULL)) return NULL;
@@ -122,7 +159,7 @@ bool chat_asset_setup_load(qa_bot_library *library,qa_bot_chat_asset_kind kind,c
     *out=NULL;*source_failure=false;qa_bot_chat_asset *asset=NULL;
     if(!chat_asset_allocate(kind,path,"",&asset,error)) return false;
     if(!bot_chat_packed_owner(asset,library,library->memory,error)) {qa_bot_chat_asset_release(asset);return false;}
-    asset->next=library->chat_assets;library->chat_assets=asset;
+    chat_asset_admit(library,asset);
     qa_bot_chat_asset_retain(asset);*out=asset;
     return bot_chat_packed_load(asset,system,revision,source_failure,error);
 }

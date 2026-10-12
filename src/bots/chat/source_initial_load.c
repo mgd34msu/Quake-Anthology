@@ -69,9 +69,8 @@ static bool equals(const uint8_t *stored,size_t width,const qa_bot_chat_text_sou
 }
 static bool resolve(qa_bot_library *library,uint32_t pointer,qa_bot_chat_asset **out,qa_error *error) {
     *out=NULL;if(!pointer) return true;
-    for(qa_bot_chat_asset *asset=library->chat_assets;asset;asset=asset->next)
-        if(asset->initial_source && asset->initial_source->published &&
-           asset->initial_source->initial.pointer==pointer) {*out=asset;return true;}
+    *out=chat_initial_asset_find(library,pointer,true);
+    if(*out) return true;
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"Cached chat pointer has no actual initial allocation view");return false;
 }
 static bool load(qa_bot_chat *state,qa_bot_library *library,const qa_bot_chat_text_source *path,

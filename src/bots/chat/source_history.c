@@ -20,6 +20,7 @@ struct bot_chat_history {
     qa_bot_chat *handles[64];
     qa_bot_chat_asset **assets;
     size_t asset_count;
+    qa_id_index initial_aliases;
     chat_resource_image *resources;
     chat_memory_image *external;
 };
@@ -181,6 +182,17 @@ static bool image_copy(qa_bot_runtime *runtime,const bot_chat_history *saved,
         image->system.options.matches,image->system.options.replies};
     for(size_t index=0;ok && index<4;++index)
         if(selected[index]) ok=resource_add(image,saved,selected[index],memory,error);
+    for(size_t index=0;ok && index<image->asset_count;++index) {
+        qa_bot_chat_asset *asset=image->assets[index];
+        const bot_chat_initial_resource *resource=NULL;
+        if(asset->initial_source)
+            ok=chat_initial_alias_admit(&image->initial_aliases,
+                asset->initial_source->initial.pointer,asset,error);
+        for(chat_resource_image *row=image->resources;row;row=row->next)
+            if(row->asset==asset) {resource=row->resource;break;}
+        if(ok && resource)
+            ok=chat_initial_alias_admit(&image->initial_aliases,resource->initial.pointer,asset,error);
+    }
     if(!ok) {
         if(!error || error->code==QA_OK) qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining source chat history maps");
         bot_chat_history_destroy(image);return false;
@@ -194,6 +206,7 @@ bool bot_chat_history_capture(qa_bot_runtime *runtime,bot_chat_history **out,qa_
 }
 void bot_chat_history_destroy(bot_chat_history *image) {
     if(!image) return;
+    qa_id_index_destroy(&image->initial_aliases);
     while(image->external) {
         chat_memory_image *row=image->external;image->external=row->next;
         qa_bot_memory_checkpoint_finish(row->prepared,false);qa_bot_memory_checkpoint_destroy(row->checkpoint);
@@ -244,18 +257,29 @@ void bot_chat_history_finish(bot_chat_history_restore *prepared,bool commit) {
         image->system.options=(qa_bot_chat_options){0};image->system.states=NULL;image->system.console=NULL;image->system.memory=NULL;
         while(runtime->library->chat_assets) {
             qa_bot_chat_asset *asset=runtime->library->chat_assets;runtime->library->chat_assets=asset->next;
+            chat_initial_alias_retire(&runtime->library->chat_initial_aliases,asset);
             asset->next=NULL;qa_bot_chat_asset_release(asset);
         }
         qa_bot_chat_asset **tail=&runtime->library->chat_assets;
         for(size_t index=0;index<image->asset_count;++index) {
             qa_bot_chat_asset *asset=image->assets[index];qa_bot_chat_asset_retain(asset);
+            asset->library_order=image->asset_count-index;
             *tail=asset;asset->next=NULL;tail=&asset->next;
         }
+        runtime->library->chat_asset_order=image->asset_count;
+        qa_id_index_destroy(&runtime->library->chat_initial_aliases);
+        runtime->library->chat_initial_aliases=image->initial_aliases;
+        image->initial_aliases=(qa_id_index){0};
         for(chat_resource_image *row=image->resources;row;row=row->next) {
             if(row->resource) {
+                uint32_t previous=row->asset->initial_source?
+                    row->asset->initial_source->initial.pointer:0;
                 (void)qa_script_adopt_memory(row->resource->reader,NULL);
                 bot_chat_initial_resource_destroy(row->asset->initial_source);
                 row->asset->initial_source=row->resource;row->asset->source_loaded=row->resource->loaded;row->resource=NULL;
+                if(previous && previous!=row->asset->initial_source->initial.pointer)
+                    (void)qa_id_index_remove_value(&runtime->library->chat_initial_aliases,previous,0,
+                        (size_t)(uintptr_t)row->asset);
             }
             if(row->packed) {
                 (void)qa_script_adopt_memory(row->packed->reader,NULL);

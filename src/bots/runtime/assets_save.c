@@ -106,11 +106,8 @@ static bool collect(const qa_bot_runtime *runtime, qa_bot_saved_assets *set, qa_
             qa_bot_memory_span bytes;
             if(!qa_bot_memory_bytes(runtime->memory,runtime->chat_system->initial_cache[index],&bytes,error) || bytes.size!=132) return false;
             uint32_t pointer=qa_load_u32le(bytes.data);
-            for(qa_bot_chat_asset *asset=runtime->library->chat_assets;pointer && asset;asset=asset->next)
-                if(asset->initial_source && asset->initial_source->initial.pointer==pointer) {
-                    if(!add(set,QA_BOT_SAVED_CHAT,asset,error)) return false;
-                    break;
-                }
+            qa_bot_chat_asset *asset=chat_initial_asset_find(runtime->library,pointer,false);
+            if(asset && !add(set,QA_BOT_SAVED_CHAT,asset,error)) return false;
         }
         for (const qa_bot_chat *state = runtime->chat_system->states; state; state = state->next)
             if (!add(set, QA_BOT_SAVED_CHAT, state->initial, error)) return false;

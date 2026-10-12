@@ -59,6 +59,7 @@
 #include "qa/bot_observations_save.h"
 #include "qa/console_save.h"
 #include "../src/console/commands_private.h"
+#include "../src/bots/chat/internal.h"
 
 #include <fcntl.h>
 #include <limits.h>
@@ -133,6 +134,33 @@ static bool saved_console_context(void *user,uint64_t registry,const qa_command_
     qa_command_context *restored,qa_error *error)
 {
     (void)user;(void)registry;(void)error;*restored=*saved;return true;
+}
+
+static void test_chat_initial_aliases(void)
+{
+    qa_error error={0};qa_bot_library library={0};
+    bot_chat_initial_resource first={.initial={.pointer=7},.published=true};
+    bot_chat_initial_resource second={.initial={.pointer=7}};
+    qa_bot_chat_asset older={.initial_source=&first},newer={.initial_source=&second};
+    chat_asset_admit(&library,&older);chat_asset_admit(&library,&newer);
+    CHECK(chat_initial_alias_admit(&library.chat_initial_aliases,7,&newer,&error));
+    CHECK(chat_initial_alias_admit(&library.chat_initial_aliases,7,&older,&error));
+    size_t count=library.chat_initial_aliases.count;
+    CHECK(chat_initial_alias_admit(&library.chat_initial_aliases,7,&older,&error));
+    CHECK(library.chat_initial_aliases.count==count);
+    CHECK(chat_initial_asset_find(&library,7,false)==&newer);
+    CHECK(chat_initial_asset_find(&library,7,true)==&older);
+    second.published=true;
+    CHECK(chat_initial_asset_find(&library,7,true)==&newer);
+    second.initial.pointer=8;
+    CHECK(chat_initial_asset_find(&library,7,false)==&older);
+    CHECK(!chat_initial_asset_find(&library,8,false));
+    CHECK(chat_initial_alias_admit(&library.chat_initial_aliases,8,&newer,&error));
+    CHECK(chat_initial_asset_find(&library,8,true)==&newer);
+    chat_initial_alias_retire(&library.chat_initial_aliases,&newer);
+    CHECK(!chat_initial_asset_find(&library,8,false) && chat_initial_asset_find(&library,7,true)==&older);
+    CHECK(library.chat_initial_aliases.count==1);
+    qa_id_index_destroy(&library.chat_initial_aliases);
 }
 static void test_console_restore_pages(void)
 {
@@ -3863,6 +3891,7 @@ int main(int argc, char **argv)
     test_compiled_sound_names();
     test_module_observation_storage();
     test_console_restore_pages();
+    test_chat_initial_aliases();
     test_shared_campaign_modes();
     test_debug_geometry_wire();
     test_debug_geometry_lifetime();

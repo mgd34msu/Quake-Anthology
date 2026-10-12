@@ -1,6 +1,7 @@
 #ifndef QA_BOTS_LIBRARY_INTERNAL_H
 #define QA_BOTS_LIBRARY_INTERNAL_H
 #include "qa/arena.h"
+#include "qa/id_index.h"
 #include "qa/bot_library.h"
 #include "qa/bots_allocator.h"
 #include "source_fuzzy_operations.h"
@@ -92,6 +93,8 @@ struct qa_bot_library {
     qa_bot_weapons *weapon_configs;
     qa_bot_items *item_configs;
     struct qa_bot_chat_asset *chat_assets;
+    qa_id_index chat_initial_aliases;
+    size_t chat_asset_order;
     struct bot_variable *variables, *variable_buckets[128];
 };
 bool bot_reload_characters(const qa_bot_library *);

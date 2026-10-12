@@ -43,9 +43,7 @@ bool bot_runtime_chat_shutdown(qa_bot_runtime *runtime,qa_error *error) {
         if(span.size!=132) return bot_runtime_fail(error,"Cached chat has an invalid source extent");
         uint32_t pointer=qa_load_u32le(span.data);
         if(pointer) {
-            qa_bot_chat_asset *asset=runtime->library->chat_assets;
-            while(asset && (!asset->initial_source || !asset->initial_source->published ||
-                asset->initial_source->initial.pointer!=pointer)) asset=asset->next;
+            qa_bot_chat_asset *asset=chat_initial_asset_find(runtime->library,pointer,true);
             if(!asset) return bot_runtime_fail(error,"Cached chat has no retained source allocation view");
             if(!bot_chat_initial_free(&asset->initial_source->initial,error)) return false;
         }

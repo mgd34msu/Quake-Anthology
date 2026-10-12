@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "51d654d96a5f0cc3146bbc1681f8619d72809acf",
+  "verified_main": "15c8c63b7c54b714e25985cc6de430613438430b",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 115,
-    "open_source_observation": 256,
+    "fixed_source_build_core": 116,
+    "open_source_observation": 255,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -27184,8 +27184,9 @@
       "severity": "medium",
       "job": "06",
       "area": "audio_input_ui",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Restore and program snapshots use the runtime common pooled chunk constructor/destructor; private heap-backed chunks deleted. Exact cold reservation preserves capacity and live leases. Existing core behavior checks prove failed-restore rollback, scripts/consumed offsets, empty versus completion, unchanged generated-save bytes and repeated pool reuse; pure run probes preserve counters/segment boundaries. Normal build and seven core suites pass. Cold backing growth and independent context/program allocations remain; no zero-heap claim.",
+      "fixed_commit": "15c8c63b7c54b714e25985cc6de430613438430b"
     },
     {
       "id": "06-07",
@@ -40046,6 +40047,35 @@
       ],
       "record_directory": "/tmp/qa-ta3196-media-movie-index-20261012",
       "conclusion": "Material movie image lookup uses common ID index with full uint64 identity and physical ordered rows. Admission, removal, stage publication and abort maintain the index alongside its owner. Original decoder/enable/frame ownership remains. Frontend owner/receipt scans remain open, so 08-06 is partial. Matching normal build and seven core suites pass; no live movie/timing proof."
+    },
+    {
+      "commit": "15c8c63b7c54b714e25985cc6de430613438430b",
+      "source_tree": "cb1235508b8a10e6d4a7233acd8932a9e88714f6",
+      "finding_ids": [
+        "06-06"
+      ],
+      "files_rechecked": [
+        "include/qa/pool.h",
+        "src/console/commands.c",
+        "src/console/commands_private.h",
+        "src/console/commands_save.c",
+        "src/console/program.c",
+        "src/core/pool.c",
+        "tests/core_test.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-console-pooled-restore-20261012",
+      "conclusion": "Restore and program snapshots use the runtime common pooled chunk constructor/destructor; private heap-backed chunks deleted. Exact cold reservation preserves capacity and live leases. Existing core behavior checks prove failed-restore rollback, scripts/consumed offsets, empty versus completion, unchanged generated-save bytes and repeated pool reuse; pure run probes preserve counters/segment boundaries. Normal build and seven core suites pass. Cold backing growth and independent context/program allocations remain; no zero-heap claim."
     }
   ],
   "verification_limits": [

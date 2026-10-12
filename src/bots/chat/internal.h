@@ -39,6 +39,7 @@ struct qa_bot_chat_asset {
     uint32_t *initial_types, *initial_messages;
     uint32_t *graph_templates,*graph_pieces,*graph_alternatives,*graph_keys,*graph_replies,*graph_messages;
     const qa_bot_chat_text_source *loading_path,*loading_name;
+    size_t library_order;
     struct qa_bot_chat_asset *next;
 };
 typedef struct chat_console_cell {
@@ -75,6 +76,10 @@ struct qa_bot_chat {
 bool chat_asset_allocate(qa_bot_chat_asset_kind, const char *, const char *, qa_bot_chat_asset **,
                          qa_error *);
 void chat_asset_view(qa_bot_chat_asset *);
+void chat_asset_admit(qa_bot_library *,qa_bot_chat_asset *);
+bool chat_initial_alias_admit(qa_id_index *,uint32_t,qa_bot_chat_asset *,qa_error *);
+void chat_initial_alias_retire(qa_id_index *,const qa_bot_chat_asset *);
+qa_bot_chat_asset *chat_initial_asset_find(const qa_bot_library *,uint32_t,bool);
 bool chat_asset_finish(qa_bot_chat_asset *, qa_error *);
 bool chat_asset_setup_load(qa_bot_library *,qa_bot_chat_asset_kind,const char *,
     qa_bot_chat_system *,uint64_t,qa_bot_chat_asset **,bool *,qa_error *);

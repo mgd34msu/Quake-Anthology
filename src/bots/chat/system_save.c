@@ -72,8 +72,7 @@ static bool cache_fields(qa_source_save_io *io,qa_bot_chat_system *system,const 
         qa_bot_memory_span bytes;
         if(!qa_bot_memory_bytes(system->memory,system->initial_cache[index],&bytes,io->error) || bytes.size!=132) return false;
         uint32_t pointer=qa_load_u32le(bytes.data);
-        for(qa_bot_chat_asset *row=system->library?system->library->chat_assets:NULL;pointer && row;row=row->next)
-            if(row->initial_source && row->initial_source->initial.pointer==pointer) {asset=row;break;}
+        asset=chat_initial_asset_find(system->library,pointer,false);
         if(pointer && !asset) return bot_save_fail(io,QA_ERROR_FORMAT,"Chat cache has no installed asset recipe");
     }
     if(!asset_field(io,refs,&asset,QA_BOT_CHAT_INITIAL)) return false;
@@ -136,9 +135,8 @@ static bool topology_valid(const qa_bot_chat_system *system,size_t *console_coun
     }
     for(size_t index=0;ok && index<64;++index) if(system->initial_cache[index].owner) {
         qa_bot_memory_span bytes;ok=qa_bot_memory_bytes(system->memory,system->initial_cache[index],&bytes,error);
-        uint32_t pointer=ok?qa_load_u32le(bytes.data):0;bool found=!pointer;
-        if(system->library) for(qa_bot_chat_asset *asset=system->library->chat_assets;!found && asset;asset=asset->next)
-            found=asset->initial_source && asset->initial_source->published && asset->initial_source->initial.pointer==pointer;
+        uint32_t pointer=ok?qa_load_u32le(bytes.data):0;
+        bool found=!pointer || chat_initial_asset_find(system->library,pointer,true);
         ok=ok && found;
         for(size_t prior=0;ok && prior<index;++prior) {
             qa_bot_memory_allocation a=system->initial_cache[index],b=system->initial_cache[prior];
