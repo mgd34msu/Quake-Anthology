@@ -58,6 +58,7 @@ typedef struct application_q2_held_resource {
     bool missing;
     bool model_scope;
     char *model_scope_path;
+    qa_string_id model_scope_name;
     qa_buffer model_scope_bytes;
     uint64_t authority;
     qa_buffer wire_bytes;
@@ -133,6 +134,7 @@ struct qa_application_network_q2 {
     qa_application_network_q2_bindings bindings;
     struct application_q2_recipient_binding *recipient_binding;
     application_q2_held_resource *held_resources;
+    qa_id_index held_names, held_wire_names;
     size_t held_resource_count, held_resource_capacity;
     uint64_t held_resource_serial;
 };
