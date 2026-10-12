@@ -104,15 +104,7 @@ static bool vector_call(const qa_q3_abi_memory *memory, const uint64_t *words,
     if (!vector(memory,offsets[1],&source,error)) return false;
     float denominator = qa_vec_dot(source,source);
     if (denominator == 0) return qa_qvm_error(error,QA_ERROR_ARGUMENT,offsets[1],"QVM perpendicular vector has a zero projection denominator");
-    qa_vec3 axis = qa_v3(1,0,0);
-    float minimum = 1;
-    if (fabsf(source.x) < minimum) { minimum = fabsf(source.x); axis = qa_v3(1,0,0); }
-    if (fabsf(source.y) < minimum) { minimum = fabsf(source.y); axis = qa_v3(0,1,0); }
-    if (fabsf(source.z) < minimum) axis = qa_v3(0,0,1);
-    float inverse = 1.0f / denominator, distance = qa_vec_dot(source,axis) * inverse;
-    qa_vec3 projected = qa_vec_sub(axis,qa_vec_scale(qa_vec_scale(source,inverse),distance));
-    float length = sqrtf(qa_vec_dot(projected,projected));
-    if (length != 0) projected = qa_vec_scale(projected,1.0f / length);
+    qa_vec3 projected = qa_vec_perpendicular(source,QA_PERPENDICULAR_RECIPROCAL_PROJECTION);
     return write_vector(memory,offsets[0],projected,error);
 }
 

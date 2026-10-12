@@ -2114,12 +2114,8 @@ bool qa_input_platform_settings_ready(qa_input_platform_settings_ticket *t,
     return false;
 }
 static bool settings_context_is(qa_command_context a, qa_command_context b) {
-    return a.session == b.session && a.owner == b.owner && a.client == b.client &&
-        a.seat == b.seat && a.dialect == b.dialect && a.origin == b.origin &&
-        a.direct == b.direct && a.console_text == b.console_text && a.script == b.script &&
-        a.registry == b.registry && a.generation == b.generation &&
-        a.actor.registry == b.actor.registry && a.actor.generation == b.actor.generation &&
-        a.actor.slot == b.actor.slot;
+    return a.script == b.script && qa_command_context_equal(&a, &b,
+        QA_COMMAND_CONTEXT_IGNORE_CVAR_VIEW | QA_COMMAND_CONTEXT_IGNORE_SCRIPT);
 }
 bool qa_input_platform_settings_ready_is(const qa_input_platform_settings_ticket *t,
     const qa_input_platform *p, const qa_input_release *const release[4]) {

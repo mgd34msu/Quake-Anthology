@@ -17,17 +17,7 @@ static bool equal(const char *a, const char *b) {
     return *a == *b;
 }
 int32_t qa_q3_parse_integer(const char *s) {
-    bool negative = false;
-    while (isspace((unsigned char)*s)) ++s;
-    if (*s == '-' || *s == '+') negative = *s++ == '-';
-    uint32_t n = 0, limit = negative ? UINT32_C(2147483648) : INT32_MAX;
-    while (*s >= '0' && *s <= '9') {
-        unsigned digit = (unsigned)(*s++ - '0');
-        if (n > (limit - digit) / 10) return negative ? INT32_MIN : INT32_MAX;
-        n = n * 10 + digit;
-    }
-    if (negative) return n == UINT32_C(2147483648) ? INT32_MIN : -(int32_t)n;
-    return (int32_t)n;
+    return qa_parse_decimal_i32(s, QA_DECIMAL_LOCALE_CLAMP);
 }
 const char *qa_q3_token(const qa_q3_tokens *t, size_t i) { return i < t->count ? t->text + t->offsets[i] : ""; }
 bool qa_q3_tokenize(const char *s, qa_q3_tokens *out, qa_error *error) {

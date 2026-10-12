@@ -2,6 +2,7 @@
 #include "qa/network_q3_pak_role.h"
 #include "qa/network_q3_pak_save.h"
 #include "qa/source_save.h"
+#include "qa/text.h"
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
@@ -331,17 +332,6 @@ bool qa_q3_reorder_pure_paths(qa_q3_pure_path *paths, size_t count, const uint32
     return true;
 }
 
-static uint32_t source_checksum(const char *text) {
-    while (*text == ' ' || (*text >= '\t' && *text <= '\r')) ++text;
-    bool negative = *text == '-';
-    if (*text == '-' || *text == '+') ++text;
-    uint32_t value = 0, limit = negative ? UINT32_C(2147483648) : INT32_MAX;
-    while (*text >= '0' && *text <= '9') {
-        uint32_t digit = (unsigned)(*text++ - '0');
-        value = value > (limit - digit) / 10 ? limit : value * 10 + digit;
-    }
-    return negative ? UINT32_C(0) - value : value;
-}
 bool qa_q3_server_pak_set_create(qa_q3_server_pak_set **out, qa_error *error) {
     if (!out) return fail(error, QA_ERROR_ARGUMENT, "Missing Q3 server package set output");
     qa_q3_server_pak_set *set = calloc(1, sizeof(*set));
@@ -357,7 +347,8 @@ bool qa_q3_server_pak_set_checksums(qa_q3_server_pak_set *set, const char *text,
     if (!set || !text) return fail(error, QA_ERROR_ARGUMENT, "Invalid Q3 server package checksums");
     qa_q3_tokens tokens;
     if (!qa_q3_tokenize(text, &tokens, error)) return false;
-    for (size_t i = 0; i < tokens.count; ++i) set->checksums[i] = source_checksum(qa_q3_token(&tokens, i));
+    for (size_t i = 0; i < tokens.count; ++i)
+        set->checksums[i] = (uint32_t)qa_parse_decimal_i32(qa_q3_token(&tokens, i), QA_DECIMAL_ASCII_CLAMP);
     set->count = tokens.count; return true;
 }
 bool qa_q3_server_pak_set_names(qa_q3_server_pak_set *set, const char *text,
