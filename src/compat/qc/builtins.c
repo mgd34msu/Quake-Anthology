@@ -95,7 +95,7 @@ const qa_qc_builtin_requirement *qa_qc_builtin_requirements(qa_qc_profile profil
     return result;
 }
 
-const qa_qc_builtin_requirement *qc_builtin_number(qa_qc_profile profile,
+static const qa_qc_builtin_requirement *builtin_number(qa_qc_profile profile,
                                                     int32_t number)
 {
     size_t count;
@@ -105,7 +105,7 @@ const qa_qc_builtin_requirement *qc_builtin_number(qa_qc_profile profile,
     return NULL;
 }
 
-const qa_qc_builtin_requirement *qc_builtin_name(qa_qc_profile profile,
+static const qa_qc_builtin_requirement *builtin_name(qa_qc_profile profile,
                                                   const char *name)
 {
     size_t count;
@@ -116,7 +116,7 @@ const qa_qc_builtin_requirement *qc_builtin_name(qa_qc_profile profile,
     return NULL;
 }
 
-const qa_qc_builtin_binding *qc_builtin_binding(const qa_qc_instance *instance,
+static const qa_qc_builtin_binding *builtin_binding(const qa_qc_instance *instance,
                                              qa_qc_builtin builtin,
                                              const char *name)
 {
@@ -154,8 +154,34 @@ bool qc_builtin_available(const qa_qc_instance *instance,
                           const qa_qc_builtin_requirement *requirement)
 {
     return requirement != NULL
-        && (qc_builtin_binding(instance, requirement->builtin, requirement->name) != NULL
+        && (builtin_binding(instance, requirement->builtin, requirement->name) != NULL
             || shared_builtin(instance, requirement->builtin));
+}
+
+bool qc_builtin_prepare(qa_qc_instance *instance, qa_error *error)
+{
+    size_t count = instance->program->info.function_count;
+    instance->builtin_targets = calloc(count, sizeof(*instance->builtin_targets));
+    if (count && instance->builtin_targets == NULL)
+        return qc_fail(error, QA_ERROR_MEMORY, 0, "Cannot allocate QuakeC builtin targets");
+    for (uint32_t i = 0; i < count; ++i) {
+        const qa_qc_function *function = instance->program->functions + i;
+        if (!function->named_builtin && function->first_statement >= 0) continue;
+        int32_t number = function->first_statement < 0 ? -function->first_statement : 0;
+        const char *name = function->named_builtin ? function->name : NULL;
+        qc_builtin_target *target = instance->builtin_targets + i;
+        target->pure = name == NULL && qc_builtin_is_pure(instance->options.profile, number);
+        if (target->pure) continue;
+        target->requirement = name == NULL
+            ? builtin_number(instance->options.profile, number)
+            : builtin_name(instance->options.profile, name);
+        if (target->requirement != NULL)
+            target->binding = builtin_binding(instance, target->requirement->builtin,
+                                                target->requirement->name);
+        else if (name != NULL)
+            target->binding = builtin_binding(instance, QA_QC_BUILTIN_NAMED, name);
+    }
+    return true;
 }
 
 bool qc_builtin_is_pure(qa_qc_profile profile, int32_t number)
@@ -207,20 +233,18 @@ static bool find_entity(qa_qc_instance *instance, bool next_only, qa_error *erro
     uint32_t start;
     if (!qc_entity_slot(instance, reference, &start, error)) return false;
     int32_t field = 0;
-    const char *match = NULL;
+    const char *match_text = NULL;
     if (!next_only && (!qa_qc_arg_int(instance, 1, &field, error)
-        || !qa_qc_arg_string(instance, 2, &match, error))) return false;
+        || !qa_qc_arg_string(instance, 2, &match_text, error))) return false;
     if (!next_only && (field < 0 || (uint32_t)field >= instance->layout.field_words))
         return qc_fail(error, QA_ERROR_FORMAT, 0, "find field is outside entity memory");
+    qa_string_id match = QA_STRING_NONE;
     if (!next_only) {
-        bool string_field = false;
-        for (uint32_t i = 0; i < instance->program->info.field_count; ++i) {
-            const qa_qc_definition *definition = &instance->program->fields[i];
-            if (definition->offset == (uint32_t)field && definition->type == QA_QC_STRING) {
-                string_field = true; break;
-            }
-        }
-        if (!string_field) return qc_fail(error, QA_ERROR_FORMAT, 0, "find requires a string field");
+        if (!instance->string_fields[(uint32_t)field])
+            return qc_fail(error, QA_ERROR_FORMAT, 0, "find requires a string field");
+        int32_t id;
+        if (!qa_qc_arg_int(instance, 2, &id, error)
+            || !qc_strings_identity(&instance->strings, id, &match, error)) return false;
     }
     for (uint32_t slot = start + 1u; slot < instance->entity_count; ++slot) {
         if (instance->slots[slot].kind == QA_QC_SLOT_FREE) continue;
@@ -228,12 +252,12 @@ static bool find_entity(qa_qc_instance *instance, bool next_only, qa_error *erro
             if (!qc_prepare_entity_access(instance, slot, (uint32_t)field, 1u,
                                           QA_QC_ENTITY_READ, false, error)) return false;
             int32_t id = qc_load_int(qc_entity_words(instance, slot), (uint32_t)field);
+            if (id == 0) continue;
             const char *text;
-            if (id == 0 || !qc_strings_get(&instance->strings, id, &text, error)) {
-                if (id == 0) continue;
-                return false;
-            }
-            if (strcmp(text, match) != 0) continue;
+            qa_string_id identity;
+            if (!qc_strings_get(&instance->strings, id, &text, error)
+                || !qc_strings_identity(&instance->strings, id, &identity, error)) return false;
+            if (identity != match) continue;
         }
         return qa_qc_return_int(instance, (int32_t)((uint64_t)slot * instance->layout.stride_bytes), error);
     }
@@ -343,17 +367,18 @@ bool qa_qc_program_function_returns_only(const qa_qc_program *program, uint32_t 
         function->first_statement != INT32_MIN && pure_builtin(NULL, -function->first_statement, NULL);
 }
 
-bool qc_builtin_call(qa_qc_instance *instance, int32_t number,
-                     const char *name, qa_error *error)
+bool qc_builtin_call(qa_qc_instance *instance, uint32_t function, qa_error *error)
 {
-    if (name == NULL && qc_builtin_is_pure(instance->options.profile, number))
+    const qa_qc_function *fn = instance->program->functions + function;
+    const qc_builtin_target *target = instance->builtin_targets + function;
+    int32_t number = fn->first_statement < 0 ? -fn->first_statement : 0;
+    const char *name = fn->named_builtin ? fn->name : NULL;
+    if (target->pure)
         return pure_builtin(instance, number, error);
-    const qa_qc_builtin_requirement *requirement = name == NULL
-        ? qc_builtin_number(instance->options.profile, number)
-        : qc_builtin_name(instance->options.profile, name);
-    if (requirement != NULL) return qc_host_builtin(instance, requirement, error);
+    if (target->requirement != NULL)
+        return qc_host_builtin(instance, target->requirement, target->binding, error);
     if (name != NULL) {
-        const qa_qc_builtin_binding *custom = qc_builtin_binding(instance, QA_QC_BUILTIN_NAMED, name);
+        const qa_qc_builtin_binding *custom = target->binding;
         if (custom != NULL) {
             qa_error failure = {0};
             ++instance->callback_depth;

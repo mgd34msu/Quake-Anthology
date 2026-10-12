@@ -74,6 +74,12 @@ typedef struct qc_name_index {
     uint32_t *ordinals;
 } qc_name_index;
 
+typedef struct qc_builtin_target {
+    const qa_qc_builtin_requirement *requirement;
+    const qa_qc_builtin_binding *binding;
+    bool pure;
+} qc_builtin_target;
+
 struct qa_qc_program {
     char *source;
     qa_qc_program_info info;
@@ -92,6 +98,7 @@ struct qa_qc_instance {
     qa_qc_options options;
     qa_qc_entity_layout layout;
     qa_qc_builtin_binding *bindings;
+    qc_builtin_target *builtin_targets;
     char **extensions;
     qa_qc_inline_region *inline_regions;
     uint8_t *globals, *entities;
@@ -241,17 +248,10 @@ bool qc_prepare_entity_access(qa_qc_instance *instance, uint32_t slot,
                               qa_error *error);
 void qc_projection_invalidate(qa_qc_instance *instance);
 
-const qa_qc_builtin_requirement *qc_builtin_number(qa_qc_profile profile,
-                                                    int32_t number);
-const qa_qc_builtin_requirement *qc_builtin_name(qa_qc_profile profile,
-                                                  const char *name);
-const qa_qc_builtin_binding *qc_builtin_binding(const qa_qc_instance *instance,
-                                                qa_qc_builtin builtin,
-                                                const char *name);
+bool qc_builtin_prepare(qa_qc_instance *, qa_error *);
 bool qc_builtin_available(const qa_qc_instance *instance,
                           const qa_qc_builtin_requirement *requirement);
-bool qc_builtin_call(qa_qc_instance *instance, int32_t number,
-                     const char *name, qa_error *error);
+bool qc_builtin_call(qa_qc_instance *instance, uint32_t function, qa_error *error);
 bool qc_builtin_is_pure(qa_qc_profile profile, int32_t number);
 
 bool qc_machine_call(qa_qc_instance *instance, uint32_t function,
@@ -264,6 +264,7 @@ bool qc_machine_inline_continue(qa_qc_instance *instance,
 
 bool qc_host_builtin(qa_qc_instance *instance,
                      const qa_qc_builtin_requirement *requirement,
+                     const qa_qc_builtin_binding *custom,
                      qa_error *error);
 bool qc_host_spawn(qa_qc_instance *instance, int32_t *reference,
                    qa_error *error);
