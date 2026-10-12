@@ -865,7 +865,6 @@ bool frontend_seats_destroy_range(qa_frontend *frontend, unsigned first, unsigne
         free(seat->player_source_titles); free(seat->player_source_products);
         seat->player_source_titles=NULL; seat->player_source_products=NULL;
         free(seat->clipboard); seat->clipboard = NULL;
-        free(seat->wheel_items); free(seat->wheel_definitions); free(seat->wheel_labels);
         *seat=(frontend_seat){.frontend=frontend,.id=i};
     }
     return true;

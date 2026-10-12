@@ -15,38 +15,19 @@ static bool items(void *context, uint32_t id, qa_hud_wheel_mode mode,
     qa_inventory *inventory = qa_application_inventory(seat->frontend->application);
     size_t total;
     if (!qa_inventory_item_definitions(inventory, actor, NULL, 0, &total, error)) return false;
-    if (total > seat->wheel_capacity) {
-        if (total > SIZE_MAX / sizeof(*seat->wheel_definitions) || total > SIZE_MAX / sizeof(*seat->wheel_items))
-            return frontend_fail(error, QA_ERROR_MEMORY, "wheel definition storage overflow");
-        qa_item_definition *definitions = realloc(seat->wheel_definitions, total * sizeof(*definitions));
-        if (!definitions) return frontend_fail(error, QA_ERROR_MEMORY, "allocating wheel definitions");
-        seat->wheel_definitions = definitions;
-        qa_hud_wheel_item *rows = realloc(seat->wheel_items, total * sizeof(*rows));
-        if (!rows) return frontend_fail(error, QA_ERROR_MEMORY, "allocating wheel rows");
-        seat->wheel_items = rows; seat->wheel_capacity = total;
-    }
-    if (!qa_inventory_item_definitions(inventory, actor, seat->wheel_definitions, total, &total, error)) return false;
-    size_t bytes = 0;
+    if (!total) return true;
+    if (total > SIZE_MAX / sizeof(qa_item_definition) || total > SIZE_MAX / sizeof(qa_hud_wheel_item))
+        return frontend_fail(error, QA_ERROR_MEMORY, "wheel definition storage overflow");
+    qa_arena *storage = &seat->frontend->frame.storage;
+    qa_item_definition *definitions = qa_arena_alloc(storage, total * sizeof(*definitions),
+        _Alignof(qa_item_definition), error);
+    qa_hud_wheel_item *rows = definitions ? qa_arena_alloc(storage, total * sizeof(*rows),
+        _Alignof(qa_hud_wheel_item), error) : NULL;
+    if (!rows || !qa_inventory_item_definitions(inventory, actor, definitions, total, &total, error)) return false;
+    uint64_t revision = qa_inventory_definition_revision(inventory, actor);
+    size_t written = 0;
     for (size_t i = 0; i < total; ++i) {
-        const char *label = seat->wheel_definitions[i].label ? seat->wheel_definitions[i].label : "Item";
-        size_t length = strlen(label) + 1;
-        if (length > SIZE_MAX - bytes) return frontend_fail(error, QA_ERROR_MEMORY, "wheel label storage overflow");
-        bytes += length;
-    }
-    if (bytes > seat->wheel_label_capacity) {
-        char *labels = realloc(seat->wheel_labels, bytes);
-        if (!labels) return frontend_fail(error, QA_ERROR_MEMORY, "allocating wheel labels");
-        seat->wheel_labels = labels; seat->wheel_label_capacity = bytes;
-    }
-    size_t offset = 0;
-    for (size_t i = 0; i < total; ++i) {
-        const char *label = seat->wheel_definitions[i].label ? seat->wheel_definitions[i].label : "Item";
-        size_t length = strlen(label) + 1;
-        memcpy(seat->wheel_labels + offset, label, length);
-        seat->wheel_definitions[i].label = seat->wheel_labels + offset; offset += length;
-    }
-    for (size_t i = 0; i < total; ++i) {
-        qa_item_definition definition = seat->wheel_definitions[i];
+        qa_item_definition definition = definitions[i];
         if (definition.weapon != (mode == QA_HUD_WHEEL_WEAPONS) ||
             (mode == QA_HUD_WHEEL_POWERUPS && !(definition.actions & QA_ITEM_USE))) continue;
         double owned;
@@ -64,12 +45,25 @@ static bool items(void *context, uint32_t id, qa_hud_wheel_mode mode,
                 &definition,&available,&found,error)) return false;
             if (found) ammunition=available;
         }
-        seat->wheel_items[(*count)++] = (qa_hud_wheel_item){
+        rows[written++] = (qa_hud_wheel_item){
             .identity = {.key = definition.item, .item = definition.item, .source_ordinal = (int32_t)i},
-            .sort_order = (int32_t)i, .label = definition.label,
+            .sort_order = (int32_t)i, .label = definition.label ? definition.label : "Item",
             .owned = owned > 0, .has_ammunition = ammunition, .has_count = true, .count = amount};
     }
-    *out = seat->wheel_items;
+    if (qa_inventory_definition_revision(inventory, actor) != revision) {
+        size_t retained = 0;
+        for (size_t i = 0; i < written; ++i) {
+            qa_item_definition definition; bool found;
+            if (!qa_inventory_item_definition_find(inventory, actor, NULL, rows[i].identity.item,
+                &definition, &found, error)) return false;
+            if (!found || definition.weapon != (mode == QA_HUD_WHEEL_WEAPONS) ||
+                (mode == QA_HUD_WHEEL_POWERUPS && !(definition.actions & QA_ITEM_USE))) continue;
+            rows[i].label = definition.label ? definition.label : "Item";
+            rows[retained++] = rows[i];
+        }
+        written = retained;
+    }
+    *out = rows; *count = written;
     return true;
 }
 static bool active(void *context, uint32_t id, uint64_t *out, qa_error *error)
@@ -86,22 +80,23 @@ static bool active(void *context, uint32_t id, uint64_t *out, qa_error *error)
 static bool select_item(void *context, uint32_t id, qa_hud_wheel_mode mode,
                         qa_hud_wheel_identity identity, qa_error *error)
 {
-    frontend_seat *seat = context;
+    frontend_seat *seat = context; (void)id;
     qa_actor_id actor; uint32_t launch_seat;
     if (!frontend_seat_launch_id_read(seat->frontend,seat->id,&launch_seat) ||
         !qa_application_player_actor(seat->frontend->application, launch_seat, &actor) ||
         identity.key != identity.item || !identity.item)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "wheel selection no longer belongs to a live player");
-    const qa_hud_wheel_item *rows;size_t count;
-    if(!items(context,id,mode,&rows,&count,error)) return false;
-    for(size_t i=0;i<count;++i) if(rows[i].identity.item==identity.item) {
-        qa_actor_owner owner=seat->wheel_definitions[(size_t)rows[i].identity.source_ordinal].owner;
+    qa_item_definition definition; bool found;
+    if (!qa_inventory_item_definition_find(qa_application_inventory(seat->frontend->application),
+        actor, NULL, identity.item, &definition, &found, error)) return false;
+    if (found && definition.weapon == (mode == QA_HUD_WHEEL_WEAPONS) &&
+        (mode != QA_HUD_WHEEL_POWERUPS || (definition.actions & QA_ITEM_USE))) {
         qa_command_context command=qa_input_seat_context(seat->input);
         command.actor=actor; command.seat=launch_seat;
         command.owner=0; command.registry=command.generation=command.cvar_view=0;
         command.origin=QA_COMMAND_SEAT; command.script=NULL; command.direct=true;
         char text[64];
-        int length=snprintf(text,sizeof(text),"useitem %" PRIu32 " %" PRIu32,owner,identity.item);
+        int length=snprintf(text,sizeof(text),"useitem %" PRIu32 " %" PRIu32,definition.owner,identity.item);
         frontend_queued_command queued={.console=qa_application_console(seat->frontend->application),
             .context=command,.time_ns=seat->frontend->time_ns,.frame_number=seat->frontend->frame_number};
         qa_platform_event_result result=qa_platform_events_push(seat->frontend->platform_events,

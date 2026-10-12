@@ -183,11 +183,6 @@ typedef struct frontend_seat {
     bool player_sources_registered;
     qa_hud *hud;
     qa_hud_wheel *wheel;
-    qa_hud_wheel_item *wheel_items;
-    qa_item_definition *wheel_definitions;
-    size_t wheel_capacity;
-    char *wheel_labels;
-    size_t wheel_label_capacity;
     qa_ui_library *library;
     struct frontend_startup_selection *startup_selection;
     struct frontend_startup_arena *startup_arena;

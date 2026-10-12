@@ -1,4 +1,5 @@
 #include "qa/hud_wheel.h"
+#include "qa/arena.h"
 #include "qa/text.h"
 #include <math.h>
 #include <stdlib.h>
@@ -7,8 +8,9 @@
 typedef enum carousel_state { CAROUSEL_CLOSED, CAROUSEL_OPEN, CAROUSEL_CLOSING } carousel_state;
 struct qa_hud_wheel {
     qa_hud_wheel_options options;
+    qa_arena storage;
     qa_hud_wheel_item *items;
-    size_t count, capacity;
+    size_t count;
     qa_hud_wheel_mode mode;
     carousel_state carousel;
     bool open, busy;
@@ -40,12 +42,11 @@ static bool observe(qa_hud_wheel *w, qa_hud_wheel_mode mode, bool owned_only, qa
     const qa_hud_wheel_item *items = NULL; size_t count = 0;
     if (!w->options.items(w->options.context, w->options.seat, mode, &items, &count, error)) return false;
     if ((count && !items) || count > SIZE_MAX / sizeof(*items)) return wheel_fail(error, "invalid wheel item observation");
-    if (count > w->capacity) {
-        qa_hud_wheel_item *larger = realloc(w->items, count * sizeof(*larger));
-        if (!larger) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating wheel item order"); return false; }
-        w->items = larger; w->capacity = count;
-    }
+    qa_arena_reset(&w->storage);
+    w->items = count ? qa_arena_alloc(&w->storage, count * sizeof(*w->items),
+        _Alignof(qa_hud_wheel_item), error) : NULL;
     w->count = 0;
+    if (count && !w->items) return false;
     for (size_t i = 0; i < count; ++i) {
         if (!items[i].identity.key || !items[i].label ||
             (items[i].has_count && (!isfinite(items[i].count) || !isfinite(items[i].warning_count))))
@@ -81,12 +82,13 @@ bool qa_hud_wheel_create(const qa_hud_wheel_options *options, uint64_t now,
         return wheel_fail(error, "invalid wheel services or geometry");
     qa_hud_wheel *w = calloc(1, sizeof *w);
     if (!w) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating seat wheel"); return false; }
+    qa_arena_init(&w->storage, 0);
     w->options = *options; w->last_update = now; *out = w; return true;
 }
 bool qa_hud_wheel_destroy(qa_hud_wheel *w, qa_error *error) {
     if (!w) return true;
     if (w->busy) return wheel_fail(error, "cannot destroy wheel during its callback");
-    free(w->items); free(w); return true;
+    qa_arena_destroy(&w->storage); free(w); return true;
 }
 bool qa_hud_wheel_open(qa_hud_wheel *w, qa_hud_wheel_mode mode,
                        bool *opened, qa_error *error) {
