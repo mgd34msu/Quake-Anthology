@@ -1,8 +1,10 @@
 #include "guest_q3_mod_private.h"
 #include "qa/text.h"
+#include "control_frame.h"
 
 typedef struct store_delivery {
     struct store_delivery *next;
+    qa_unified_frame_lease *storage;
     uint64_t sequence;
     qa_protection_store store;
 } store_delivery;
@@ -12,6 +14,7 @@ typedef struct watched_channel {
 } watched_channel;
 struct mod_protection_stage {
     mod_protection_stage *previous;
+    qa_unified_frame_lease *storage;
     application_q3_mod *owner;
     qa_actor_id actor;
     qa_protection_observer *observer;
@@ -241,9 +244,9 @@ static void stage_free(mod_protection_stage *stage)
 {
     while (stage->deliveries) {
         store_delivery *next=stage->deliveries->next;
-        free(stage->deliveries); stage->deliveries=next;
+        qa_unified_frame_lease_release(stage->deliveries->storage); stage->deliveries=next;
     }
-    free(stage);
+    qa_unified_frame_lease_release(stage->storage);
 }
 bool q3mod_protection_stages_close(application_q3_mod *o, qa_error *e)
 {
@@ -297,9 +300,11 @@ static bool publish(void *context, qa_qvm *vm, const qa_qvm_committed_write *eve
     mod_protection_stage *inner=o->stages;
     while (inner && !qa_actor_id_equal(inner->actor,s->actor)) inner=inner->previous;
     if (inner!=s || (!change.regular && !change.powered)) return true;
-    store_delivery *delivery=calloc(1,sizeof(*delivery));
-    if (!delivery) return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining committed protection transition");
-    delivery->sequence=event->sequence; delivery->store=change;
+    qa_unified_frame_lease *storage=application_control_storage_acquire(o->services.application,e);
+    if (!storage) return false;
+    store_delivery *delivery=qa_unified_frame_lease_alloc(storage,1,sizeof(*delivery),_Alignof(store_delivery),e);
+    if (!delivery) { qa_unified_frame_lease_release(storage); return false; }
+    delivery->storage=storage; delivery->sequence=event->sequence; delivery->store=change;
     store_delivery **tail=&s->deliveries; while (*tail) tail=&(*tail)->next; *tail=delivery;
     return true;
 }
@@ -312,15 +317,17 @@ static bool after(void *context, qa_qvm *vm, const qa_qvm_committed_write *event
     while (*link && (*link)->sequence!=event->sequence) link=&(*link)->next;
     if (!*link) return true;
     store_delivery *delivery=*link; *link=delivery->next;
-    qa_protection_store change=delivery->store; free(delivery);
+    qa_protection_store change=delivery->store; qa_unified_frame_lease_release(delivery->storage);
     return s->pickup?qa_pickup_store_protection(s->pickup,&change,e):qa_protection_observe(s->observer,&change,e);
 }
 static bool observe(application_q3_mod *o, qa_actor_id actor, qa_protection_observer *observer,qa_pickup_execution *pickup,
     const mod_call *call, const application_q3_mod_inputs *inputs, double *result, qa_error *e)
 {
-    mod_protection_stage *stage=calloc(1,sizeof(*stage));
-    if (!stage) return q3mod_fail(e,QA_ERROR_MEMORY,"Owning actual protection write continuation");
-    *stage=(mod_protection_stage){.owner=o,.actor=actor,.observer=observer,.pickup=pickup,.previous=o->stages,.running=true};
+    qa_unified_frame_lease *storage=application_control_storage_acquire(o->services.application,e);
+    if (!storage) return false;
+    mod_protection_stage *stage=qa_unified_frame_lease_alloc(storage,1,sizeof(*stage),_Alignof(mod_protection_stage),e);
+    if (!stage) { qa_unified_frame_lease_release(storage); return false; }
+    *stage=(mod_protection_stage){.storage=storage,.owner=o,.actor=actor,.observer=observer,.pickup=pickup,.previous=o->stages,.running=true};
     qa_qvm_write_range ranges[4]; size_t n=0;
     mod_actor_resources *resources=q3mod_resources_find(o,actor);
     for (mod_actor_channel *c=resources?resources->channels:NULL;c;c=c->actor_next) if (c->bound) {

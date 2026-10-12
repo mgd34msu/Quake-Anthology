@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "b943a6707db379084134cd56561a5adddd9fad28",
+  "verified_main": "000d42085a772e989cd54d0502752ccaa6e8fec2",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 132,
-    "open_source_observation": 239,
+    "fixed_source_build_core": 133,
+    "open_source_observation": 238,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -23673,8 +23673,9 @@
       "severity": "medium",
       "job": "01",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "All five listed body, record-observation and mod-input grow/copy sites use common qa_arena_grow in their existing owned lease arena. Capacity policy, prefix, newly exposed zero state, alignment and old-span lifetime remain; no replacement publishes on failed growth. Direct arena requests no longer update the lease requested-byte diagnostic, which has no reader on these separate capture leases; network document/world leases retain their existing accounting. Normal production build and seven core suites passed; no live capture or whole-frame allocation claim.",
+      "fix_commit": "000d42085a772e989cd54d0502752ccaa6e8fec2"
     },
     {
       "id": "01-storage-equipment-status",
@@ -40608,6 +40609,34 @@
       ],
       "record_directory": "/tmp/qa-ta3196-common-axis-projection-20261012",
       "conclusion": "One axis-to-angle math implementation serves both camera consumers, with explicit component-float and double/basis projection policy preserving their original arithmetic and nonorthogonal basis behavior. Private guest formula and former inline body are deleted; all production callers migrated. Existing core cases check distinct nonorthogonal roll projections and the handed camera-basis round trip. Normal production build and seven core suites passed; no live visual or timing claim."
+    },
+    {
+      "commit": "000d42085a772e989cd54d0502752ccaa6e8fec2",
+      "source_tree": "8ffcb57858b260216afe3a131091b1a17abe0e2f",
+      "finding_ids": [
+        "01-storage-lease-grow"
+      ],
+      "files_rechecked": [
+        "src/app/application/guest_q3_component_body.c",
+        "src/app/application/guest_q3_component_records_calls.c",
+        "src/app/application/guest_q3_mod_input.c",
+        "src/network/unified/frame_pool.c",
+        "src/network/unified/document.c",
+        "src/core/arena.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-capture-growth-20261012",
+      "conclusion": "All five listed body, record-observation and mod-input grow/copy sites use common qa_arena_grow in their existing owned lease arena. Capacity policy, prefix, newly exposed zero state, alignment and old-span lifetime remain; no replacement publishes on failed growth. Direct arena requests no longer update the lease requested-byte diagnostic, which has no reader on these separate capture leases; network document/world leases retain their existing accounting. Normal production build and seven core suites passed; no live capture or whole-frame allocation claim."
     }
   ],
   "verification_limits": [
