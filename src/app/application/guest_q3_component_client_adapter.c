@@ -114,29 +114,21 @@ static application_player_record *entered(application_q3_component_client_adapte
 }
 static char *info_dictionary(const char *text,qa_error *e)
 {
-    typedef struct info_pair {const char *key,*value;size_t key_size,value_size;} info_pair;
     size_t length=strlen(text);
     if(length>SIZE_MAX-2) {application_fail(e,QA_ERROR_MEMORY,"Component userinfo dictionary overflows");return NULL;}
-    info_pair *pairs=calloc(length/2+2,sizeof(*pairs));
     char *result=malloc(length+2);
-    if(!pairs||!result) {free(pairs);free(result);application_fail(e,QA_ERROR_MEMORY,"Retaining actual client info dictionary");return NULL;}
-    const char *cursor=text+(*text=='\\');size_t count=0,used=0;
-    while(*cursor) {
-        const char *separator=strchr(cursor,'\\');if(!separator) break;
-        const char *value=separator+1,*end=strchr(value,'\\');
-        info_pair pair={cursor,value,(size_t)(separator-cursor),end?(size_t)(end-value):strlen(value)};
-        bool duplicate=false;
-        for(size_t i=0;i<count;++i)
-            if(pairs[i].key_size==pair.key_size&&!memcmp(pairs[i].key,pair.key,pair.key_size)) {duplicate=true;break;}
-        if(!duplicate) {
-            pairs[count++]=pair;
-            result[used++]='\\';memcpy(result+used,pair.key,pair.key_size);used+=pair.key_size;
-            result[used++]='\\';memcpy(result+used,pair.value,pair.value_size);used+=pair.value_size;
+    if(!result) {application_fail(e,QA_ERROR_MEMORY,"Retaining actual client info dictionary");return NULL;}
+    const char *cursor=text;size_t used=0;
+    qa_bytes key,value,existing;
+    result[0]=0;
+    while(qa_info_next(&cursor,&key,&value)) {
+        if(!qa_info_find(result,key,0,&existing)) {
+            result[used++]='\\';memcpy(result+used,key.data,key.size);used+=key.size;
+            result[used++]='\\';memcpy(result+used,value.data,value.size);used+=value.size;
+            result[used]=0;
         }
-        if(!end) break;
-        cursor=end+1;
     }
-    result[used]=0;free(pairs);return result;
+    return result;
 }
 static char *info_replace(const char *text,const char *key,const char *value,bool literal,qa_error *e)
 {
@@ -148,20 +140,19 @@ static char *info_replace(const char *text,const char *key,const char *value,boo
     }
     char *result=malloc(length+key_size+value_size+3);
     if(!result) {free(owned);application_fail(e,QA_ERROR_MEMORY,"Retaining physical Source info edit");return NULL;}
-    const char *cursor=dictionary+(*dictionary=='\\');size_t used=0;bool replaced=false;
-    while(*cursor) {
-        const char *entry=cursor,*separator=strchr(entry,'\\');if(!separator) break;
-        const char *end=strchr(separator+1,'\\');size_t span=end?(size_t)(end-entry):strlen(entry);
-        bool match=(size_t)(separator-entry)==key_size&&!memcmp(entry,key,key_size);
-        if(match) {
+    const char *cursor=dictionary;size_t used=0;bool replaced=false;
+    qa_bytes name,old_value,wanted={(const uint8_t *)key,key_size};
+    while(qa_info_next(&cursor,&name,&old_value)) {
+        if(qa_info_key_equal(name,wanted,0)) {
             replaced=true;
             if(value&&!literal) {
                 result[used++]='\\';memcpy(result+used,key,key_size);used+=key_size;
                 result[used++]='\\';memcpy(result+used,value,value_size);used+=value_size;
             }
-        } else {result[used++]='\\';memcpy(result+used,entry,span);used+=span;}
-        if(!end) break;
-        cursor=end+1;
+        } else {
+            result[used++]='\\';memcpy(result+used,name.data,name.size);used+=name.size;
+            result[used++]='\\';memcpy(result+used,old_value.data,old_value.size);used+=old_value.size;
+        }
     }
     if(value&&(!replaced||literal)) {
         result[used++]='\\';memcpy(result+used,key,key_size);used+=key_size;
@@ -249,19 +240,11 @@ bool application_client_userinfo_key_read(qa_application *app,qa_world *world,qa
     const char *text;
     bool ok=userinfo(a,actor,&text,e);
     if(ok) {
-        const char *cursor=text+(*text=='\\'),*value="";size_t length=0,key_size=strlen(key);
-        while(*cursor) {
-            const char *separator=strchr(cursor,'\\');if(!separator) break;
-            const char *entry=separator+1,*end=strchr(entry,'\\');
-            if((size_t)(separator-cursor)==key_size&&!memcmp(cursor,key,key_size)) {
-                value=entry;length=end?(size_t)(end-entry):strlen(entry);break;
-            }
-            if(!end) break;
-            cursor=end+1;
-        }
-        out->data=malloc(length+1);
+        qa_bytes value;
+        qa_info_find(text,(qa_bytes){(const uint8_t *)key,strlen(key)},0,&value);
+        out->data=malloc(value.size+1);
         if(!out->data) ok=application_fail(e,QA_ERROR_MEMORY,"Retaining physical client info value");
-        else {memcpy(out->data,value,length);out->data[length]=0;out->size=length;}
+        else {memcpy(out->data,value.data,value.size);out->data[value.size]=0;out->size=value.size;}
     }
     qa_error cleanup={0};
     if(!application_q3_component_client_adapter_destroy(&a,&cleanup)) {

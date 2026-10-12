@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "c04c46fbdfcc90c46d373588707879f2ad1c0ecb",
+  "verified_main": "53513c6f6c45ed9cbe776e1e8ddc515841d21b6d",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 127,
-    "open_source_observation": 244,
+    "fixed_source_build_core": 129,
+    "open_source_observation": 242,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -23529,8 +23529,9 @@
       "severity": "medium",
       "job": "01",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Existing Source-slot and full-actor indexes replace private module client/ground scans. Original slot domains, retirement and liveness predicates, physical owner/address checks and current callback behavior remain; no derived actor-slot assumptions. Normal production build and seven core suites passed; no live gameplay or timing claim.",
+      "fix_commit": "53513c6f6c45ed9cbe776e1e8ddc515841d21b6d"
     },
     {
       "id": "01-identity-component-services",
@@ -23551,8 +23552,9 @@
       "severity": "medium",
       "job": "01",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Existing Source-slot and full-actor indexes replace private module client/ground scans. Original slot domains, retirement and liveness predicates, physical owner/address checks and current callback behavior remain; no derived actor-slot assumptions. Normal production build and seven core suites passed; no live gameplay or timing claim.",
+      "fix_commit": "53513c6f6c45ed9cbe776e1e8ddc515841d21b6d"
     },
     {
       "id": "01-gear-restore-capacity",
@@ -40497,6 +40499,35 @@
       ],
       "record_directory": "/tmp/qa-ta3196-animation-decoder-20261012",
       "conclusion": "One model animation.cfg decoder serves native client-info and selected equipment; private lexers, numeric and row loops are deleted. Source COM grammar, 31 records, optional Team Arena fallback rows, leg offsets, generated rows and caller fallback/strict policies remain. The existing number parser carries original bytecode precision as data; FPS division now follows source binary32 rules. Existing model tests cover metadata, reverse/negative loops, zero FPS, optional rows and unchanged output on incomplete records. Normal production build and seven core suites passed; no live model or performance claim."
+    },
+    {
+      "commit": "53513c6f6c45ed9cbe776e1e8ddc515841d21b6d",
+      "source_tree": "2be4072af2733df3f5989225422a203188f52dd8",
+      "finding_ids": [
+        "01-identity-component-services",
+        "01-identity-q2-control"
+      ],
+      "files_rechecked": [
+        "src/app/application/guest_q2_control.c",
+        "src/app/application/guest_q2_control_input.h",
+        "src/app/application/guest_q3_component_services.c",
+        "src/app/application/guest_q3_component_records.c",
+        "src/app/application/guest_native_q2_clients.c",
+        "src/compat/native_host/world.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-module-client-indexes-20261012",
+      "conclusion": "Existing Source-slot and full-actor indexes replace private module client/ground scans. Original slot domains, retirement and liveness predicates, physical owner/address checks and current callback behavior remain; no derived actor-slot assumptions. Normal production build and seven core suites passed; no live gameplay or timing claim."
     }
   ],
   "verification_limits": [
