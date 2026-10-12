@@ -64,6 +64,7 @@ static bool copy(const bot_weapon_pointers *source,bot_weapon_pointers *out,qa_e
         if(out->last) out->last->next=next;else out->first=next;
         out->last=next;
     }
+    if(!bot_weapon_pointers_reindex(out,error)) {bot_weapon_pointers_clear(out);return false;}
     return true;
 failed:
     bot_weapon_pointers_clear(out);
@@ -230,6 +231,7 @@ void bot_weapon_pointer_finish(bot_weapon_pointer_restore *plan,bool commit) {
         *registered=NULL;
         for(size_t i=0;i<plan->old_count;++i) qa_bot_weapons_release(plan->old_registered[i]);
         bot_weapon_pointers old=*plan->owner;*plan->owner=plan->state;
+        bot_weapon_pointers_init(&plan->state);
         bot_weapon_pointers_clear(&old);
         memcpy(plan->destination,plan->states,(size_t)plan->count*sizeof(*plan->states));
         qa_bot_weapons_release(*plan->config_destination);*plan->config_destination=plan->config;

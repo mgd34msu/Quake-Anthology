@@ -71,6 +71,7 @@ void bot_weapon_pointers_init(bot_weapon_pointers *pointers) {
 }
 void bot_weapon_pointers_clear(bot_weapon_pointers *pointers) {
     if(!pointers) return;
+    qa_id_index_destroy(&pointers->aliases);
     while(pointers->first) {
         bot_weapon_pointer *row=pointers->first;pointers->first=row->next;
         if(row->kind==BOT_WEAPON_POINTER_CONFIG) qa_bot_weights_release(row->config);
@@ -82,9 +83,33 @@ void bot_weapon_pointers_clear(bot_weapon_pointers *pointers) {
     }
     bot_weapon_pointers_init(pointers);
 }
+enum {BOT_WEAPON_SOURCE_ALIAS=0,BOT_WEAPON_CONFIG_ALIAS=1};
+static uint64_t config_discriminator(const qa_bot_weights *config) {
+    return ((uint64_t)(uintptr_t)config & UINT64_C(0xffffffff00000000)) | BOT_WEAPON_CONFIG_ALIAS;
+}
+static void *alias(const bot_weapon_pointers *pointers,uint32_t key,uint64_t discriminator) {
+    if(!pointers) return NULL;
+    qa_id_index_cursor cursor=qa_id_index_begin(&pointers->aliases,key,discriminator);
+    size_t value;
+    return qa_id_index_next(&pointers->aliases,&cursor,&value)?(void *)(uintptr_t)value:NULL;
+}
+bool bot_weapon_pointers_reindex(bot_weapon_pointers *pointers,qa_error *error) {
+    qa_id_index index={0};
+    for(bot_weapon_pointer *row=pointers->first;row;row=row->next) {
+        if(!qa_id_index_reserve(&index,1,error)) goto failed;
+        qa_id_index_insert(&index,row->pointer,BOT_WEAPON_SOURCE_ALIAS,(size_t)(uintptr_t)row);
+    }
+    for(bot_weapon_config_identity *row=pointers->configs;row;row=row->next) {
+        if(!qa_id_index_reserve(&index,1,error)) goto failed;
+        qa_id_index_insert(&index,(uint32_t)(uintptr_t)row->config,config_discriminator(row->config),
+            (size_t)(uintptr_t)row);
+    }
+    qa_id_index_destroy(&pointers->aliases);pointers->aliases=index;return true;
+failed:
+    qa_id_index_destroy(&index);return false;
+}
 static bot_weapon_pointer *resolve(const bot_weapon_pointers *pointers,uint32_t pointer,qa_error *error) {
-    bot_weapon_pointer *row=pointers?pointers->first:NULL;
-    while(row && row->pointer!=pointer) row=row->next;
+    bot_weapon_pointer *row=alias(pointers,pointer,BOT_WEAPON_SOURCE_ALIAS);
     if(!row) fail(error,"Invalid source weapon pointer");
     return row;
 }
@@ -96,24 +121,27 @@ static bool pointer_next(bot_weapon_pointers *pointers,uint32_t *out,qa_error *e
 static void append(bot_weapon_pointers *pointers,bot_weapon_pointer *row) {
     if(pointers->last) pointers->last->next=row;else pointers->first=row;
     pointers->last=row;
+    qa_id_index_insert(&pointers->aliases,row->pointer,BOT_WEAPON_SOURCE_ALIAS,(size_t)(uintptr_t)row);
 }
 static void remove_row(bot_weapon_pointers *pointers,bot_weapon_pointer *row) {
     bot_weapon_pointer *previous=NULL,**link=&pointers->first;
     while(*link!=row) {previous=*link;link=&(*link)->next;}
     *link=row->next;if(pointers->last==row) pointers->last=previous;
+    qa_id_index_remove(&pointers->aliases,row->pointer,BOT_WEAPON_SOURCE_ALIAS);
     if(row->kind==BOT_WEAPON_POINTER_CONFIG) qa_bot_weights_release(row->config);
     free(row);
 }
 static bool config_pointer(bot_weapon_pointers *pointers,qa_bot_weights *config,uint32_t *out,qa_error *error) {
-    bot_weapon_config_identity *identity=pointers->configs;
-    while(identity && identity->config!=config) identity=identity->next;
+    bot_weapon_config_identity *identity=alias(pointers,(uint32_t)(uintptr_t)config,config_discriminator(config));
     if(identity) {
-        for(bot_weapon_pointer *row=pointers->first;row;row=row->next) if(row->pointer==identity->pointer) {
+        bot_weapon_pointer *row=alias(pointers,identity->pointer,BOT_WEAPON_SOURCE_ALIAS);
+        if(row) {
             if(row->kind!=BOT_WEAPON_POINTER_CONFIG || row->references>=UINT64_C(9007199254740991))
                 return fail(error,"Weapon configuration identity/reference mismatch");
             ++row->references;*out=row->pointer;return true;
         }
     }
+    if(!qa_id_index_reserve(&pointers->aliases,identity?1:2,error)) return false;
     bot_weapon_pointer *row=calloc(1,sizeof(*row));
     bot_weapon_config_identity *created=identity?NULL:calloc(1,sizeof(*created));
     if(!row || (!identity && !created)) {
@@ -126,6 +154,8 @@ static bool config_pointer(bot_weapon_pointers *pointers,qa_bot_weights *config,
         *created=(bot_weapon_config_identity){.config=config,.pointer=pointer};qa_bot_weights_retain(config);
         if(pointers->last_config) pointers->last_config->next=created;else pointers->configs=created;
         pointers->last_config=created;
+        qa_id_index_insert(&pointers->aliases,(uint32_t)(uintptr_t)config,config_discriminator(config),
+            (size_t)(uintptr_t)created);
     }
     *row=(bot_weapon_pointer){.pointer=pointer,.kind=BOT_WEAPON_POINTER_CONFIG,.config=config,.references=1};
     qa_bot_weights_retain(config);
@@ -173,6 +203,7 @@ bool bot_weapon_indexes_publish(bot_weapon_pointers *pointers,const bot_weapon_r
     if(!pointers || !record) return fail(error,"Weapon index publication requires its actual pointer/state owners");
     if(!qa_bot_memory_bytes(record->memory,indexes,&bytes,error)) return false;
     if(bytes.size%4) return fail(error,"Weapon index allocation has a partial word");
+    if(!qa_id_index_reserve(&pointers->aliases,1,error)) return false;
     bot_weapon_pointer *row=calloc(1,sizeof(*row));
     if(!row) {qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining source weapon indexes pointer");return false;}
     if(!pointer_next(pointers,&row->pointer,error)) {free(row);return false;}

@@ -117,6 +117,9 @@ bool bot_weapon_pointer_fields(qa_source_save_io *io,qa_bot_memory *memory,bot_w
         return io?bot_save_fail(io,QA_ERROR_ARGUMENT,"Missing weapon pointer codec owners"):false;
     if(io->direction==QA_SOURCE_SAVE_WRITE) return fields(io,memory,pointers,refs);
     bot_weapon_pointers candidate;bot_weapon_pointers_init(&candidate);
-    if(!fields(io,memory,&candidate,refs)) {bot_weapon_pointers_clear(&candidate);return false;}
-    bot_weapon_pointers old=*pointers;*pointers=candidate;bot_weapon_pointers_clear(&old);return true;
+    if(!fields(io,memory,&candidate,refs) || !bot_weapon_pointers_reindex(&candidate,io->error)) {
+        bot_weapon_pointers_clear(&candidate);return false;
+    }
+    bot_weapon_pointers old=*pointers;*pointers=candidate;bot_weapon_pointers_init(&candidate);
+    bot_weapon_pointers_clear(&old);return true;
 }

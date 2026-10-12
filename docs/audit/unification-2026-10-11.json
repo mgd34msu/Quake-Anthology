@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "8693af1b71addce839f74c47193711fd235263d9",
+  "verified_main": "34c9ea24e06dd39496726542801e10488437b626",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 106,
-    "open_source_observation": 265,
+    "fixed_source_build_core": 109,
+    "open_source_observation": 262,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -30015,8 +30015,9 @@
       "severity": "medium",
       "job": "16",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "QW camera and skin readers use common vector/angle/info primitives. Source verification corrected the audit arithmetic assumption: stock QW squares floats then applies double sqrt, and direction degrees truncate to integers. Last duplicate info key and spectator trace/order behavior retained. Matching normal production build and seven core suites; no live or performance claim.",
+      "fixed_commit": "34c9ea24e06dd39496726542801e10488437b626"
     },
     {
       "id": "16-007",
@@ -30289,8 +30290,9 @@
       "severity": "medium",
       "job": "16",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Remote rerelease flashlight uses common float AngleVectors; original rerelease q_vec3 semantics support the float rule. The former all-double port formula is deleted. Exact closed retail client output has not been checked live. Matching normal production build and seven core suites; no live or performance claim.",
+      "fixed_commit": "34c9ea24e06dd39496726542801e10488437b626"
     },
     {
       "id": "16-015",
@@ -31009,8 +31011,9 @@
       "severity": "medium",
       "job": "17",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Q3 projectile perpendicular/rotation and Q2 tracker direction use common explicit original-source arithmetic policies. Original first-minimum ties, matrix rotation and float-before-wrap correct prior port arithmetic. Stationary fallback, effect count/spacing and RNG remain unchanged. Matching normal production build and seven core suites; no live or performance claim.",
+      "fixed_commit": "34c9ea24e06dd39496726542801e10488437b626"
     },
     {
       "id": "17-14",
@@ -39592,6 +39595,37 @@
       ],
       "record_directory": "/tmp/qa-ta3196-borrowed-radius-storage-20261011",
       "conclusion": "Q1 native radius, Hipnotic reversed scan and Q2 builtin nearby capture into the existing active caller buffer via the shared borrowed-storage radius API. Intermediate copies/world leases are deleted. Source order, second scratch plane, nested frames and callback cleanup are retained. Private builtin heap-backed reservation and persistent roster lifetimes remain open."
+    },
+    {
+      "commit": "34c9ea24e06dd39496726542801e10488437b626",
+      "source_tree": "5abf148976da90f3f894a936514cb09f2ea47f06",
+      "finding_ids": [
+        "16-006",
+        "16-014",
+        "17-13"
+      ],
+      "files_rechecked": [
+        "include/qa/math.h",
+        "src/app/frontend/remote_q1_camera.c",
+        "src/app/frontend/remote_q1_skins.c",
+        "src/app/frontend/remote_q2_effects_semantic.c",
+        "src/app/frontend/remote_unified_q3.c",
+        "src/app/frontend/selected_effects_q2_particles.c",
+        "src/core/math.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-original-presentation-math-20261011",
+      "conclusion": "Deleted private camera/effect formulas in favor of the common math/info primitives with explicit original arithmetic. Float policy corrections are source-grounded; closed retail client and live visual fidelity unverified."
     }
   ],
   "verification_limits": [

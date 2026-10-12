@@ -2,6 +2,7 @@
 #define QA_BOT_SOURCE_WEAPON_STATE_H
 #include "qa/bot_library.h"
 #include "qa/bots_allocator.h"
+#include "qa/id_index.h"
 
 enum {BOT_WEAPON_STATE_BYTES=8};
 typedef enum bot_weapon_record_word {
@@ -43,10 +44,12 @@ typedef struct bot_weapon_pointers {
     uint64_t next_pointer;
     bot_weapon_pointer *first,*last;
     bot_weapon_config_identity *configs,*last_config;
+    qa_id_index aliases;
 } bot_weapon_pointers;
 void bot_weapon_pointers_init(bot_weapon_pointers *);
 /* Native alias disposal has no source FreeWeightConfig/free-allocation effect. */
 void bot_weapon_pointers_clear(bot_weapon_pointers *);
+bool bot_weapon_pointers_reindex(bot_weapon_pointers *,qa_error *);
 bool bot_weapon_config_get(const bot_weapon_pointers *,const bot_weapon_record *,qa_bot_weights **,qa_error *);
 bool bot_weapon_config_set(bot_weapon_pointers *,const bot_weapon_record *,qa_bot_weights *,qa_error *);
 bool bot_weapon_indexes_get(const bot_weapon_pointers *,const bot_weapon_record *,qa_bot_memory_allocation *,bool *,qa_error *);
