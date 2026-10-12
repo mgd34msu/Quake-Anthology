@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define QA_INPUT_CONSOLE_SOURCE "console"
+
 typedef struct qa_binding_record {
     qa_input_binding view;
     size_t references;

@@ -87,7 +87,7 @@ static bool command(void *user, const qa_command_invocation *cmd, qa_error *erro
             return true;
         }
         uint64_t source;
-        if (!qa_input_command_source(s, cmd->argc > 1 ? cmd->argv[1] : "console", &source, error))
+        if (!qa_input_command_source(s, cmd->argc > 1 ? cmd->argv[1] : QA_INPUT_CONSOLE_SOURCE, &source, error))
             return false;
         return qa_input_seat_action(s, action, source, down, time, error);
     }

@@ -121,6 +121,8 @@ static qa_binding_record *binding_find(const qa_input_seat *s, qa_physical_input
 }
 static bool binding_text_prepare(qa_input_seat *, const qa_input_seat *,
                                  const qa_binding_record *, qa_error *);
+static bool binding_sources_prepare(qa_input_seat *, const qa_input_seat *,
+                                    const qa_binding_record *, qa_error *);
 static bool binding_equal(const qa_input_binding *a, const qa_input_binding *b) {
     return qa_input_physical_equal(a->input, b->input) &&
         a->kind == b->kind && (a->kind == QA_BIND_COMMAND
@@ -166,6 +168,7 @@ qa_input_seat *qa_input_seat_create(const qa_input_seat_options *o, qa_error *er
     s->next_ui = 1;
     qa_arena_seal(&s->binding_text);
     if (!qa_strings_create(&s->command_sources, error) ||
+        !binding_sources_prepare(s, NULL, NULL, error) ||
         !qa_input_reserve((void **)&s->ui, &s->ui_capacity, 1, sizeof(*s->ui), error)) {
         qa_input_seat_destroy(s);
         return NULL;
@@ -658,7 +661,8 @@ static bool binding_command_sources_prepare(qa_input_seat *seat,const qa_binding
 static bool binding_sources_prepare(qa_input_seat *seat,const qa_input_seat *other,
     const qa_binding_record *extra,qa_error *error) {
     if(!seat->options.console) return true;
-    bool ok=true;
+    uint64_t console_source;
+    bool ok=qa_input_command_source(seat,QA_INPUT_CONSOLE_SOURCE,&console_source,error);
     const qa_input_seat *owners[]={seat,other};
     for(size_t owner=0;ok && owner<sizeof(owners)/sizeof(*owners);++owner) {
         const qa_input_seat *source=owners[owner];
