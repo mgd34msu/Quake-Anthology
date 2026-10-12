@@ -272,8 +272,7 @@ static bool pure_builtin(qa_qc_instance *instance, int32_t number,
     case 13:
         if (!instance) return true;
         if (!qa_qc_arg_vector(instance, 0, &vector, error)) return false;
-        if (vector.x == 0 && vector.y == 0) value = 0;
-        else { value = truncf(atan2f(vector.y, vector.x) * 57.29577951308232f); if (value < 0) value += 360; }
+        value = vector.x == 0 && vector.y == 0 ? 0 : qa_vec_yaw(vector, QA_DIRECTION_INTEGER, true);
         return qa_qc_return_float(instance, value, error);
     case 18: return instance && find_entity(instance, false, error);
     case 26:
@@ -308,19 +307,12 @@ static bool pure_builtin(qa_qc_instance *instance, int32_t number,
         return qa_qc_arg_float(instance, 0, &value, error)
             && qa_qc_return_float(instance, fabsf(value), error);
     case 47: return instance && find_entity(instance, true, error);
-    case 51: {
+    case 51:
         if (!instance) return true;
         if (!qa_qc_arg_vector(instance, 0, &vector, error)) return false;
-        float yaw = 0, pitch;
-        if (vector.x == 0 && vector.y == 0) pitch = vector.z > 0 ? 90 : 270;
-        else {
-            yaw = truncf(atan2f(vector.y, vector.x) * 57.29577951308232f);
-            if (yaw < 0) yaw += 360;
-            pitch = truncf(atan2f(vector.z, sqrtf(vector.x * vector.x + vector.y * vector.y)) * 57.29577951308232f);
-            if (pitch < 0) pitch += 360;
-        }
-        return qa_qc_return_vector(instance, qa_v3(pitch, yaw, 0), error);
-    }
+        return qa_qc_return_vector(instance, qa_vec_angles(vector, QA_DIRECTION_INTEGER,
+            QA_VECTOR_WRAPPED | QA_VECTOR_SQUARED_HORIZONTAL | QA_VECTOR_DOUBLE_SQRT |
+            QA_VECTOR_VERTICAL_CARDINAL), error);
     case 81: {
         if (!instance) return true;
         const char *source;

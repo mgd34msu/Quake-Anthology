@@ -92,7 +92,11 @@ static double direction_degrees(double y,double x,qa_direction_math_rule rule)
     case QA_DIRECTION_NATIVE_RATIO:return atan2(y,x)*(180.0/(double)pi);
     default: {
         double degrees=atan2(y,x)*180/3.14159265358979323846264338327950288;
-        return rule==QA_DIRECTION_INTEGER?trunc(degrees):degrees;
+        if(rule==QA_DIRECTION_INTEGER) {
+            double integral=trunc(degrees);
+            return integral==0?0:integral;
+        }
+        return degrees;
     }
     }
 }

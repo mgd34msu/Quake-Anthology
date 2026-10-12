@@ -252,6 +252,16 @@ static void test_shared_direction_angles(void)
     CHECK(view.x==90 && view.y==0);
     qa_vec3 integral=qa_vec_angles(input,QA_DIRECTION_INTEGER,QA_VECTOR_SOURCE);
     CHECK(integral.x== -45 && integral.y==307);
+    float integer_zero=qa_vec_yaw(qa_v3(1,-0.f,0),QA_DIRECTION_INTEGER,true);
+    CHECK(integer_zero==0 && !signbit(integer_zero));
+    unsigned qc_flags=QA_VECTOR_WRAPPED|QA_VECTOR_SQUARED_HORIZONTAL|
+        QA_VECTOR_DOUBLE_SQRT|QA_VECTOR_VERTICAL_CARDINAL;
+    qa_vec3 qc=qa_vec_angles(qa_v3(1,1,1),QA_DIRECTION_INTEGER,qc_flags);
+    CHECK(qc.x==35 && qc.y==45 && qc.z==0);
+    qc=qa_vec_angles(qa_v3(0,0,0),QA_DIRECTION_INTEGER,qc_flags);
+    CHECK(qc.x==270 && qc.y==0 && !signbit(qc.y));
+    qc=qa_vec_angles(qa_v3(1,-0.f,-0.f),QA_DIRECTION_INTEGER,qc_flags);
+    CHECK(qc.x==0 && qc.y==0 && !signbit(qc.x) && !signbit(qc.y));
     qa_vec3 axis[3];qa_angle_axis(wrapped,axis,QA_ANGLE_FLOAT_MATH);
     CHECK(qa_vec_length(qa_vec_sub(axis[0],qa_vec_normalize(input)))<1e-6f);
 }
