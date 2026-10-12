@@ -15,6 +15,7 @@
 #include "qa/console_buffer.h"
 #include "qa/console_dedicated_save.h"
 #include "qa/console_io.h"
+#include "qa/field.h"
 #include "qa/settings.h"
 #include "qa/binary.h"
 #include "qa/json.h"
@@ -428,6 +429,42 @@ static void test_shared_direction_angles(void)
     CHECK(qc.x==0 && qc.y==0 && !signbit(qc.x) && !signbit(qc.y));
     qa_vec3 axis[3];qa_angle_axis(wrapped,axis,QA_ANGLE_FLOAT_MATH);
     CHECK(qa_vec_length(qa_vec_sub(axis[0],qa_vec_normalize(input)))<1e-6f);
+}
+static void test_field_completion(void)
+{
+    qa_error error={0};
+    qa_text_field *field=qa_text_field_create(64,16,&error);
+    CHECK(field);
+    char first[]="food", second[]="Foo", duplicate[]="foo";
+    struct { const char *name; unsigned unused; } names[]={
+        {first,1},{second,2},{duplicate,3}};
+    qa_text_field_set(field,"fo \"caf\xc3\xa9\"");
+    qa_text_field_cursor(field,2);
+    CHECK(qa_text_field_complete(field,(qa_field_completion_names){
+        .data=&names[0].name,.count=3,.stride=sizeof(names[0])},false,&error));
+    qa_field_view view=qa_text_field_read(field);
+    CHECK(!strcmp(view.text,"/Foo \"caf\xc3\xa9\"") && view.cursor==4);
+    memset(first,'x',4); memset(second,'x',3); memset(duplicate,'x',3);
+    CHECK(qa_text_field_complete(field,(qa_field_completion_names){0},false,&error));
+    CHECK(!strcmp(qa_text_field_read(field).text,"/food \"caf\xc3\xa9\""));
+    CHECK(qa_text_field_complete(field,(qa_field_completion_names){0},true,&error));
+    CHECK(!strcmp(qa_text_field_read(field).text,"/Foo \"caf\xc3\xa9\""));
+    qa_text_field_set(field,"\xc3\xa9");
+    const char *unicode[]={"\xc3\xa9lan"};
+    CHECK(qa_text_field_complete(field,(qa_field_completion_names){
+        .data=unicode,.count=1,.stride=sizeof(*unicode)},false,&error));
+    view=qa_text_field_read(field);
+    CHECK(!strcmp(view.text,"/\xc3\xa9lan") && view.cursor==5 && view.length==5);
+    qa_text_field_destroy(field);
+    field=qa_text_field_create(4,4,&error);
+    CHECK(field);
+    qa_text_field_set(field,"foo");
+    const char *long_name[]={"food"};
+    CHECK(qa_text_field_complete(field,(qa_field_completion_names){
+        .data=long_name,.count=1,.stride=sizeof(*long_name)},false,&error));
+    view=qa_text_field_read(field);
+    CHECK(!strcmp(view.text,"foo") && !view.completion);
+    qa_text_field_destroy(field);
 }
 static void test_source_text(void)
 {
@@ -4030,6 +4067,7 @@ int main(int argc, char **argv)
     int recovery_status;
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
+    test_field_completion();
     test_source_text();
     test_shared_random();
     test_q2_hud_configuration();

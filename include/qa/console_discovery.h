@@ -1,6 +1,7 @@
 #ifndef QA_CONSOLE_DISCOVERY_H
 #define QA_CONSOLE_DISCOVERY_H
 #include "qa/console.h"
+#include "qa/arena.h"
 typedef enum qa_console_entry_kind {
     QA_CONSOLE_COMMAND,
     QA_CONSOLE_ALIAS,
@@ -15,11 +16,10 @@ typedef struct qa_console_discovery {
     qa_console_discovery_entry *entries;
     size_t count;
 } qa_console_discovery;
-/* Snapshot array owns its allocation. Entry strings are borrowed from the
- * registries, which must remain unchanged until it has been consumed. */
-bool qa_console_discover(qa_console *, const qa_command_context *, qa_console_discovery *,
+/* The array borrows caller storage. Entry strings borrow the registries,
+ * which must remain unchanged until the view has been consumed. */
+bool qa_console_discover(qa_console *, const qa_command_context *, qa_arena *, qa_console_discovery *,
                          qa_error *);
-void qa_console_discovery_free(qa_console_discovery *);
 bool qa_console_discovery_find(qa_console *, const qa_command_context *, const char *name,
                                qa_console_discovery_entry *out);
 bool qa_console_entry_matches(const qa_console_discovery_entry *, const char *query);

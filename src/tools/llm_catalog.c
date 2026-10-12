@@ -1,5 +1,6 @@
 #include "llm_internal.h"
 #include "qa/console_discovery.h"
+#include "qa/arena.h"
 #include "qa/ruleset.h"
 #include "qa/text.h"
 #include <stdlib.h>
@@ -50,8 +51,12 @@ static const char exec_instructions[] =
     " console commands. Return ONLY literal commands separated by semicolons or newlines, with balanced double quotes. No Markdown, prose, comments, scripts, bindings, waits, macros, LLM calls, or invented names. Maximum 32 commands and 4096 ASCII characters. Use existing variables only. Normal game permissions still apply. If the request cannot be expressed, return nothing. Never include secrets.\n";
 bool llm_console_instructions(qa_console *console, const qa_command_context *context,
                               const char *prompt, bool execute, qa_buffer *out, qa_error *error) {
+    qa_arena storage = {0};
     qa_console_discovery snapshot = {0};
-    if (!qa_console_discover(console, context, &snapshot, error)) return false;
+    if (!qa_console_discover(console, context, &storage, &snapshot, error)) {
+        qa_arena_destroy(&storage);
+        return false;
+    }
     ranked *entries = NULL; size_t count = 0; bool ok = false;
     llm_text names = {0}, documentation = {0}, result = {0};
     size_t name_units = 0;
@@ -108,6 +113,6 @@ bool llm_console_instructions(qa_console *console, const qa_command_context *con
         !llm_text_add(&result, (qa_bytes){documentation.buffer.data, documentation.buffer.size}, error)) goto done;
     *out = result.buffer; result.buffer = (qa_buffer){0}; ok = true;
 done:
-    free(entries); qa_console_discovery_free(&snapshot);
+    free(entries); qa_arena_destroy(&storage);
     qa_buffer_free(&names.buffer); qa_buffer_free(&documentation.buffer); qa_buffer_free(&result.buffer); return ok;
 }

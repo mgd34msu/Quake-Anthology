@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "385eee464c9f98ee631a5f3e92c5ec1cd8107061",
+  "verified_main": "868114bfe89481b416fc665614dd186ea1159ec3",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 139,
-    "open_source_observation": 232,
+    "fixed_source_build_core": 140,
+    "open_source_observation": 231,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -31240,8 +31240,9 @@
       "severity": "medium",
       "job": "17",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "One breadth-first replacement-model graph walk with caller arena storage replaces namespace, inventory and active capture copies. Original callback order, per-root aliases and retained-link replay preserved. Matching normal production build and seven existing core suites passed; no live capture, zero-growth or speed claim.",
+      "fixed_commit": "868114bfe89481b416fc665614dd186ea1159ec3"
     },
     {
       "id": "J18-01",
@@ -40912,6 +40913,33 @@
       ],
       "record_directory": "/tmp/qa-ta3196-common-q3-numeric-20261012",
       "conclusion": "Twenty-five presentation callers use common binary32-to-int, signed-byte decimal-wrap parsing and defined signed32 wrap operations. Old numeric bodies/declarations and callers removed; three already-migrated audit paths unchanged. Common add/sub boundary cases exercise integer wrap without signed overflow. Normal production build and seven existing core suites passed; no live game, frame timing or full-foundation claim."
+    },
+    {
+      "commit": "868114bfe89481b416fc665614dd186ea1159ec3",
+      "source_tree": "ea9fe32476ac0959b45fcd09ff62785a7408177f",
+      "finding_ids": [
+        "17-18"
+      ],
+      "files_rechecked": [
+        "src/app/frontend/scene_identity.c",
+        "src/app/frontend/scene_identity.h",
+        "src/app/frontend/scene_inventory.c",
+        "src/app/frontend/capture.c",
+        "src/core/arena.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-common-scene-walk-20261012",
+      "conclusion": "One common caller-arena BFS body replaces three scoped graph traversals. Namespace checks its original root and projects only after topology admission; inventory/capture preserve pre-child visitor order and per-root duplicate/cycle checks. Active capture retained-link replay unchanged. Growth uses common arenas without extra owner checks or arbitrary limits. Cold payload arrays and linear alias checks remain. Normal production build/seven core suites passed; no live capture, save execution, zero-allocation or timing claim."
     }
   ],
   "verification_limits": [

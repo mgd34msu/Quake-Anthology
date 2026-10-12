@@ -13,7 +13,7 @@ static bool timestamp(qa_source_save_io *io, double *value) {
     return qa_source_save_f64(io, value) &&
         (isfinite(*value) || invalid(io, "nonfinite seat console timestamp"));
 }
-static bool text(qa_source_save_io *io, char **value, size_t maximum) {
+static bool text(qa_source_save_io *io, char **value, size_t maximum, qa_arena *storage) {
     bool present = *value != NULL;
     if (!qa_source_save_bool(io, &present)) return false;
     size_t length = present && io->direction != QA_SOURCE_SAVE_READ ? strlen(*value) : 0;
@@ -24,15 +24,15 @@ static bool text(qa_source_save_io *io, char **value, size_t maximum) {
         if (length == SIZE_MAX || io->offset > io->input.size ||
             length > io->input.size - io->offset)
             return invalid(io, "invalid private seat console text extent");
-        copy = malloc(length + 1);
+        copy = storage ? qa_arena_alloc(storage, length + 1, 1, io->error) : malloc(length + 1);
         if (!copy) return qac_fail(io->error, QA_ERROR_MEMORY, "retaining private console text");
         if (!qa_source_save_bytes(io, copy, length) || memchr(copy, 0, length)) {
-            free(copy);
+            if (!storage) free(copy);
             return invalid(io, "private seat console text contains a NUL byte");
         }
         copy[length] = 0;
     }
-    free(*value);
+    if (!storage) free(*value);
     *value = copy;
     return true;
 }
@@ -60,7 +60,7 @@ static bool field(qa_source_save_io *io, qa_text_field **owned, size_t maximum) 
             p->characters[i] < 32 || p->characters[i] == 127)
             return invalid(io, "invalid seat text field character");
     char *cached = io->direction == QA_SOURCE_SAVE_READ ? NULL : p->text;
-    if (!text(io, &cached, maximum * 4)) return false;
+    if (!text(io, &cached, maximum * 4, NULL)) return false;
     if (!cached) return invalid(io, "seat text field lost its text cache");
     if (io->direction == QA_SOURCE_SAVE_READ) {
         memcpy(p->text, cached, strlen(cached) + 1);
@@ -83,15 +83,17 @@ static bool field(qa_source_save_io *io, qa_text_field **owned, size_t maximum) 
     if (io->direction == QA_SOURCE_SAVE_READ && matches) {
         if (matches > SIZE_MAX / sizeof(*p->matches))
             return invalid(io, "seat completion allocation overflow");
-        p->matches = calloc(matches, sizeof(*p->matches));
+        p->matches = qa_arena_alloc(&p->completion_storage, matches * sizeof(*p->matches),
+                                    _Alignof(char *), io->error);
         if (!p->matches) return qac_fail(io->error, QA_ERROR_MEMORY, "retaining seat completion");
+        memset(p->matches, 0, matches * sizeof(*p->matches));
         p->match_count = matches;
     }
     for (size_t i = 0; i < matches; ++i) {
-        if (!text(io, &p->matches[i], SIZE_MAX - 1)) return false;
+        if (!text(io, &p->matches[i], SIZE_MAX - 1, &p->completion_storage)) return false;
         if (!p->matches[i]) return invalid(io, "seat completion lost a registered name");
     }
-    if (!qa_source_save_count(io, &p->match_index, SIZE_MAX) || !text(io, &p->tail, SIZE_MAX - 1)) return false;
+    if (!qa_source_save_count(io, &p->match_index, SIZE_MAX) || !text(io, &p->tail, SIZE_MAX - 1, &p->completion_storage)) return false;
     if (matches ? !p->tail || p->match_index >= matches : p->tail || p->selected)
         return invalid(io, "invalid seat completion continuation");
     return true;
@@ -107,9 +109,9 @@ static bool history(qa_source_save_io *io, qa_console_history **owned, size_t ca
         *owned = p;
     }
     if (!p || !qa_source_save_count(io, &p->count, capacity) || !qa_source_save_count(io, &p->first, capacity - 1) ||
-        !qa_source_save_count(io, &p->position, p->count) || !text(io, &p->draft, SIZE_MAX - 1)) return false;
+        !qa_source_save_count(io, &p->position, p->count) || !text(io, &p->draft, SIZE_MAX - 1, NULL)) return false;
     for (size_t i = 0; i < capacity; ++i) {
-        if (!text(io, &p->entries[i], SIZE_MAX - 1)) return false;
+        if (!text(io, &p->entries[i], SIZE_MAX - 1, NULL)) return false;
         bool present = false;
         for (size_t j = 0; j < p->count; ++j)
             if ((p->first + j) % capacity == i) present = true;
@@ -162,7 +164,7 @@ static bool lines(qa_source_save_io *io, qa_seat_console *seat) {
         double time = p ? p->time : 0;
         char *line = io->direction == QA_SOURCE_SAVE_READ ? NULL : p->text;
         if (!qa_source_save_u32(io, &dialect) || !qac_dialect_valid((qa_ruleset_id)dialect) ||
-            !timestamp(io, &time) || !text(io, &line, SIZE_MAX - sizeof(staged_line) - 1)) return false;
+            !timestamp(io, &time) || !text(io, &line, SIZE_MAX - sizeof(staged_line) - 1, NULL)) return false;
         if (!line) return invalid(io, "seat publication row has no text");
         if (io->direction == QA_SOURCE_SAVE_READ) {
             size_t length = strlen(line);
@@ -199,7 +201,7 @@ static bool continuation(qa_source_save_io *io, qa_seat_console *seat, const qa_
     if (!qa_source_save_u32(io, &dialect) || !qac_dialect_valid((qa_ruleset_id)dialect) ||
         !qa_source_save_u32(io, &origin) || origin > QA_COMMAND_REMOTE || !qa_source_save_u32(io, &command->seat) ||
         !qa_source_save_bool(io, &command->direct) || !qa_source_save_bool(io, &command->console_text) ||
-        !text(io, &seat->script, SIZE_MAX - 1)) return false;
+        !text(io, &seat->script, SIZE_MAX - 1, NULL)) return false;
     command->dialect = (qa_ruleset_id)dialect;
     command->origin = (qa_command_origin)origin;
     command->script = seat->script;
@@ -252,6 +254,13 @@ bool qa_seat_console_save_capture(qa_seat_console *seat, const qa_seat_console_s
     --seat->active_depth;
     return okay;
 }
+static void field_adopt(qa_text_field *field, qa_text_field *candidate) {
+    qa_arena_destroy(&field->completion_storage);
+    free(field->characters);
+    free(field->text);
+    *field = *candidate;
+    *candidate = (qa_text_field){0};
+}
 bool qa_seat_console_save_restore(qa_seat_console *seat, const qa_seat_console_save_resolvers *resolve,
                                   qa_bytes input, qa_error *error) {
     if ((!input.data && input.size) || !resolve || !resolve->command_decode ||
@@ -271,15 +280,12 @@ bool qa_seat_console_save_restore(qa_seat_console *seat, const qa_seat_console_s
         qa_text_field *field = scratch->field, *chat = scratch->chat;
         qa_console_history *history = scratch->history;
         qa_console_buffer *buffer = scratch->buffer;
-        qa_text_field old_field = *seat->field, old_chat = *seat->chat;
         qa_console_history old_history = *seat->history;
         qa_console_buffer old_buffer = *seat->buffer;
-        *seat->field = *field;
-        *seat->chat = *chat;
+        field_adopt(seat->field, field);
+        field_adopt(seat->chat, chat);
         *seat->history = *history;
         *seat->buffer = *buffer;
-        *field = old_field;
-        *chat = old_chat;
         *history = old_history;
         *buffer = old_buffer;
         qa_seat_console old = *seat;

@@ -256,19 +256,15 @@ fail:
     return false;
 }
 static bool complete(qa_seat_console *seat, qa_error *error) {
+    qa_arena storage = {0};
     qa_console_discovery entries = {0};
-    if (!qa_console_discover(seat->options.commands, &seat->options.command, &entries, error))
-        return false;
-    const char **names = entries.count ? malloc(entries.count * sizeof(*names)) : NULL;
-    if (entries.count && !names) {
-        qa_console_discovery_free(&entries);
-        return qac_fail(error, QA_ERROR_MEMORY, "allocating completion names");
-    }
-    for (size_t i = 0; i < entries.count; ++i)
-        names[i] = entries.entries[i].name;
-    bool ok = qa_text_field_complete(seat->field, names, entries.count, seat->shift, error);
-    free(names);
-    qa_console_discovery_free(&entries);
+    bool ok = qa_console_discover(seat->options.commands, &seat->options.command,
+                                  &storage, &entries, error);
+    if (ok)
+        ok = qa_text_field_complete(seat->field,
+            (qa_field_completion_names){.data = entries.count ? &entries.entries[0].name : NULL,
+                .count = entries.count, .stride = sizeof(*entries.entries)}, seat->shift, error);
+    qa_arena_destroy(&storage);
     return ok;
 }
 static bool selected_inner(qa_seat_console *seat, qa_console_discovery_entry *out) {

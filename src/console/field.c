@@ -18,12 +18,11 @@ static char *copy(const char *text, qa_error *e) {
     return result;
 }
 static void completion_clear(qa_text_field *field) {
-    for (size_t i = 0; i < field->match_count; ++i)
-        free(field->matches[i]);
-    free(field->matches);
-    free(field->tail);
+    qa_arena_reset(&field->completion_storage);
     field->matches = NULL;
     field->tail = NULL;
+    field->completed = NULL;
+    field->completed_capacity = 0;
     field->match_count = 0;
     field->selected = false;
 }
@@ -50,6 +49,7 @@ qa_text_field *qa_text_field_create(size_t maximum, size_t width, qa_error *e) {
         fail(e, "Allocating console field text");
         return NULL;
     }
+    qa_arena_init(&field->completion_storage, maximum * 4 + 1);
     field->maximum = maximum;
     field->width = width;
     field->text[0] = 0;
@@ -58,7 +58,7 @@ qa_text_field *qa_text_field_create(size_t maximum, size_t width, qa_error *e) {
 void qa_text_field_destroy(qa_text_field *field) {
     if (!field)
         return;
-    completion_clear(field);
+    qa_arena_destroy(&field->completion_storage);
     free(field->characters);
     free(field->text);
     free(field);
@@ -230,7 +230,7 @@ done:
 static int compare_names(const void *a, const void *b) {
     return qa_text_ascii_compare(*(const char *const *)a, *(const char *const *)b);
 }
-bool qa_text_field_complete(qa_text_field *field, const char *const *names, size_t count,
+bool qa_text_field_complete(qa_text_field *field, qa_field_completion_names names,
                             bool reverse, qa_error *e) {
     if (!field->match_count) {
         size_t first =
@@ -250,28 +250,31 @@ bool qa_text_field_complete(qa_text_field *field, const char *const *names, size
             char tmp[4];
             end_bytes += qa_utf8_encode(field->characters[i], tmp);
         }
-        if (count > SIZE_MAX / sizeof(char *))
+        if (names.count > SIZE_MAX / sizeof(char *))
             return fail(e, "Completion list overflow");
-        field->matches = count ? calloc(count, sizeof(*field->matches)) : NULL;
-        field->tail = copy(view.text + end_bytes, e);
-        if ((count && !field->matches) || !field->tail) {
+        field->matches = names.count ? qa_arena_alloc(&field->completion_storage,
+            names.count * sizeof(*field->matches), _Alignof(char *), e) : NULL;
+        field->tail = qa_arena_text(&field->completion_storage, view.text + end_bytes, e);
+        if ((names.count && !field->matches) || !field->tail) {
             completion_clear(field);
             return fail(e, "Allocating console completion");
         }
         qa_bytes prefix = {(const uint8_t *)view.text + first, prefix_bytes};
-        for (size_t i = 0; i < count; ++i) {
-            if (!names[i] || !qa_text_bytes_prefix(
-                    (qa_bytes){(const uint8_t *)names[i], strlen(names[i])}, prefix, true))
+        for (size_t i = 0; i < names.count; ++i) {
+            const char *candidate;
+            memcpy(&candidate, (const uint8_t *)names.data + i * names.stride, sizeof(candidate));
+            if (!candidate || !qa_text_bytes_prefix(
+                    (qa_bytes){(const uint8_t *)candidate, strlen(candidate)}, prefix, true))
                 continue;
             bool duplicate = false;
             for (size_t j = 0; j < field->match_count; ++j)
-                if (qa_text_ascii_equal(field->matches[j], names[i])) {
+                if (qa_text_ascii_equal(field->matches[j], candidate)) {
                     duplicate = true;
                     break;
                 }
             if (duplicate)
                 continue;
-            char *name = copy(names[i], e);
+            char *name = qa_arena_text(&field->completion_storage, candidate, e);
             if (!name) {
                 completion_clear(field);
                 return false;
@@ -291,9 +294,15 @@ bool qa_text_field_complete(qa_text_field *field, const char *const *names, size
     size_t selected_bytes = strlen(selected), tail_bytes = strlen(field->tail);
     if (selected_bytes > SIZE_MAX - tail_bytes - 2)
         return fail(e, "Completion text overflow");
-    char *text = malloc(selected_bytes + tail_bytes + 2);
-    if (!text)
-        return fail(e, "Allocating completed console text");
+    size_t capacity = selected_bytes + tail_bytes + 2;
+    if (capacity > field->completed_capacity) {
+        char *text = qa_arena_alloc(&field->completion_storage, capacity, 1, e);
+        if (!text)
+            return fail(e, "Allocating completed console text");
+        field->completed = text;
+        field->completed_capacity = capacity;
+    }
+    char *text = field->completed;
     text[0] = '/';
     memcpy(text + 1, selected, selected_bytes);
     memcpy(text + selected_bytes + 1, field->tail, tail_bytes + 1);
@@ -313,7 +322,6 @@ bool qa_text_field_complete(qa_text_field *field, const char *const *names, size
         field->selected = true;
     } else if (!field->selected)
         completion_clear(field);
-    free(text);
     return true;
 }
 qa_console_history *qa_console_history_create(size_t capacity, qa_error *e) {

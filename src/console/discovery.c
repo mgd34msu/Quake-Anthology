@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/console_discovery.h"
+#include "qa/arena.h"
 #include "qa/json.h"
 #include "qa/text.h"
 #include <stdio.h>
@@ -8,6 +9,7 @@
 
 typedef struct entry_list {
     qa_console_discovery view;
+    qa_arena *storage;
     size_t capacity;
 } entry_list;
 static int compare_entries(const void *a, const void *b) {
@@ -27,7 +29,9 @@ static bool add(entry_list *list, qa_console_discovery_entry entry, qa_error *er
         size_t count = list->capacity ? list->capacity * 2 : 64;
         if (count < list->capacity || count > SIZE_MAX / sizeof(entry))
             return qac_fail(error, QA_ERROR_MEMORY, "console discovery overflow");
-        void *data = realloc(list->view.entries, count * sizeof(entry));
+        void *data = qa_arena_grow(list->storage, list->view.entries,
+                                   list->capacity * sizeof(entry), count * sizeof(entry),
+                                   _Alignof(qa_console_discovery_entry), error);
         if (!data)
             return qac_fail(error, QA_ERROR_MEMORY, "allocating console discovery");
         list->view.entries = data;
@@ -35,12 +39,6 @@ static bool add(entry_list *list, qa_console_discovery_entry entry, qa_error *er
     }
     list->view.entries[list->view.count++] = entry;
     return true;
-}
-void qa_console_discovery_free(qa_console_discovery *view) {
-    if (!view)
-        return;
-    free(view->entries);
-    *view = (qa_console_discovery){0};
 }
 bool qa_console_discovery_find(qa_console *console, const qa_command_context *context,
                                const char *name, qa_console_discovery_entry *out) {
@@ -96,13 +94,13 @@ bool qa_console_discovery_find(qa_console *console, const qa_command_context *co
     return true;
 }
 bool qa_console_discover(qa_console *console, const qa_command_context *context,
-                         qa_console_discovery *out, qa_error *error) {
+                         qa_arena *storage, qa_console_discovery *out, qa_error *error) {
     if (!console || !context || !out)
         return qac_fail(error, QA_ERROR_ARGUMENT, "missing console discovery context");
     qa_command_context captured;
     if (!qa_console_cvar_context(console, context, &captured, error)) return false;
     context = &captured;
-    entry_list list = {0};
+    entry_list list = {.storage = storage};
     const qa_console_entry *entry;
     for (size_t i = 0; (entry = qa_console_context_entry_at(console, context, i)); ++i) {
         const qa_console_entry *visible = qa_console_find(console, context, entry->name);
@@ -151,7 +149,6 @@ bool qa_console_discover(qa_console *console, const qa_command_context *context,
     *out = list.view;
     return true;
 fail:
-    qa_console_discovery_free(&list.view);
     return false;
 }
 static bool contains(const char *text, qa_bytes query) {
@@ -319,6 +316,7 @@ static bool search_command(void *user, const qa_command_invocation *command, qa_
     qa_buffer quote = {0}, out = {0};
     char summary[160], next_page[160];
     qa_console_discovery entries = {0};
+    qa_arena storage = {0};
     bool help = qa_text_ascii_equal(command->argv[0], "help");
     size_t page = 1;
     if (help && command->argc != 2) {
@@ -347,8 +345,8 @@ static bool search_command(void *user, const qa_command_invocation *command, qa_
             return true;
         }
     }
-    if (!qa_console_discover(command->console, &command->context, &entries, error))
-        return false;
+    if (!qa_console_discover(command->console, &command->context, &storage, &entries, error))
+        goto fail;
     const char *query = command->argv[1];
     if (help) {
         const qa_console_discovery_entry *found = NULL;
@@ -370,7 +368,7 @@ static bool search_command(void *user, const qa_command_invocation *command, qa_
             owner->options.print(owner->options.context, &command->context,
                                  (const char *)text.data);
             qa_buffer_free(&text);
-            qa_console_discovery_free(&entries);
+            qa_arena_destroy(&storage);
             return true;
         }
         if (!qa_json_quote((qa_bytes){(const uint8_t *)query, strlen(query)}, &quote, error))
@@ -441,13 +439,13 @@ static bool search_command(void *user, const qa_command_invocation *command, qa_
         used += length;
     }
     out.data[out.size] = 0;
-    qa_console_discovery_free(&entries);
+    qa_arena_destroy(&storage);
     qa_buffer_free(&quote);
     owner->options.print(owner->options.context, &command->context, (const char *)out.data);
     qa_buffer_free(&out);
     return true;
 fail:
-    qa_console_discovery_free(&entries);
+    qa_arena_destroy(&storage);
     qa_buffer_free(&quote);
     qa_buffer_free(&out);
     return false;

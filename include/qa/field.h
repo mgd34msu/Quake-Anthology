@@ -10,6 +10,10 @@ typedef struct qa_field_controls {
     bool (*clipboard)(void *, qa_buffer *, qa_error *);
 } qa_field_controls;
 typedef struct qa_text_field qa_text_field;
+typedef struct qa_field_completion_names {
+    const char *const *data;
+    size_t count, stride;
+} qa_field_completion_names;
 typedef struct qa_field_view {
     const char *text, *completion;
     size_t cursor, scroll, length, width;
@@ -27,7 +31,7 @@ bool qa_text_field_overstrike(const qa_text_field *);
 void qa_text_field_set_overstrike(qa_text_field *, bool);
 bool qa_text_field_key(qa_text_field *, int key, const qa_field_controls *, bool *handled,
                        qa_error *);
-bool qa_text_field_complete(qa_text_field *, const char *const *names, size_t count, bool reverse,
+bool qa_text_field_complete(qa_text_field *, qa_field_completion_names, bool reverse,
                             qa_error *);
 
 typedef struct qa_byte_field {
