@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `53513c6f`.
+Follow-up source changes were reviewed through main `3321b45f`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 129 have source fixes
+There are **374 overlapping source-review observations**: 130 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 242 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 241 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -252,3 +252,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 | `31-06` | `c04c46fb` | One source-faithful animation decoder, shared COM/numeric primitives and caller-specific fallback. Normal build and seven core suites passed. |
 
 | `01-identity-component-services`, `01-identity-q2-control` | `53513c6f` | Shared slot/actor indexes replace private module lookup scans while retaining full generations and physical/client predicates. Normal build and seven core suites passed. |
+
+| `01-text-userinfo-pairs` | `3321b45f` | Common info-pair traversal/lookup replace private parsers, preserving Source-specific dedup and edit order. Normal build and seven core suites passed. |

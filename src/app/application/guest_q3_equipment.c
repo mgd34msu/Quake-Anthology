@@ -16,6 +16,8 @@ typedef struct equipment_hook {
     uint32_t instruction;
     size_t status;
     qa_qvm_function_hook function;
+    const qa_qvm_region_binding *regions;
+    size_t region_count;
 } equipment_hook;
 struct application_q3_equipment {
     application_q3_equipment_module module;
@@ -24,6 +26,7 @@ struct application_q3_equipment {
     application_q3_equipment_draw draw;
     equipment_hook *hooks;
     size_t hook_count;
+    qa_arena region_storage;
     equipment_scope *scopes;
     bool drawing, hud_requested, view_requested;
 };
@@ -108,16 +111,9 @@ static bool status(void *context, const qa_qvm_call *call, int32_t *result, qa_e
     }
     const application_q3_equipment_status *source = owner->profile->status + hook->status;
     qa_qvm_branch_binding branch = {source->decision, status_visibility, hook};
-    qa_qvm_region_binding *regions = source->ammo_count ? calloc(source->ammo_count, sizeof(*regions)) : NULL;
-    if (source->ammo_count && !regions)
-        return application_fail(error, QA_ERROR_MEMORY, "Retaining scoped source ammo boundaries");
-    for (size_t i = 0; i < source->ammo_count; ++i)
-        regions[i] = (qa_qvm_region_binding){source->ammo[i].entry, source->ammo[i].join,
-            skip_ammo, NULL, hook};
-    bool ok = qa_qvm_bind_branches(call, &branch, 1, error) &&
-        qa_qvm_bind_regions(call, regions, source->ammo_count, error);
-    free(regions);
-    return ok && qa_qvm_proceed(call, result, error);
+    return qa_qvm_bind_branches(call, &branch, 1, error) &&
+        qa_qvm_bind_regions(call, hook->regions, hook->region_count, error) &&
+        qa_qvm_proceed(call, result, error);
 }
 
 typedef struct warning_call { int32_t *result; } warning_call;
@@ -298,6 +294,7 @@ bool application_q3_equipment_destroy(application_q3_equipment *owner, qa_error 
         if (hook->binding && !qa_qvm_unbind(owner->module.vm, hook->binding, error)) return false;
         hook->binding = 0;
     }
+    qa_arena_destroy(&owner->region_storage);
     free(owner->hooks); free(owner);
     return true;
 }
@@ -336,6 +333,24 @@ bool application_q3_equipment_create_module(const application_q3_equipment_modul
     owner->hook_count = owner->profile->status_count + 4;
     owner->hooks = calloc(owner->hook_count, sizeof(*owner->hooks));
     if (!owner->hooks) { owner->hook_count = 0; return application_fail(error, QA_ERROR_MEMORY, "Retaining actual equipment binding inventory"); }
+    size_t region_count = 0;
+    if (owner->profile->status_regions)
+        for (size_t i = 0; i < owner->profile->status_count; ++i) {
+            size_t count = owner->profile->status[i].ammo_count;
+            if (count > SIZE_MAX - region_count)
+                return application_fail(error, QA_ERROR_MEMORY, "Equipment ammo binding inventory exceeds address space");
+            region_count += count;
+        }
+    qa_qvm_region_binding *regions = NULL;
+    if (region_count) {
+        size_t alignment = _Alignof(qa_qvm_region_binding);
+        if (region_count > (SIZE_MAX - (alignment - 1)) / sizeof(*regions))
+            return application_fail(error, QA_ERROR_MEMORY, "Equipment ammo binding inventory exceeds address space");
+        size_t bytes = region_count * sizeof(*regions);
+        if (!qa_arena_reserve(&owner->region_storage, bytes + alignment - 1, error)) return false;
+        regions = qa_arena_alloc(&owner->region_storage, bytes, alignment, error);
+        if (!regions) return false;
+    }
     const uint32_t entries[] = {owner->profile->hud, owner->profile->view_entry,
         owner->profile->warning_entry, owner->profile->held_entry};
     const qa_qvm_function_hook functions[] = {hud, view, warning, held};
@@ -343,6 +358,21 @@ bool application_q3_equipment_create_module(const application_q3_equipment_modul
         equipment_hook *hook = owner->hooks + i;
         *hook = (equipment_hook){.owner = owner, .instruction = i < 4 ? entries[i] : owner->profile->status[i - 4].entry,
             .status = i < 4 ? 0 : i - 4, .function = i < 4 ? functions[i] : status};
+        if (i >= 4 && owner->profile->status_regions) {
+            const application_q3_equipment_status *source = owner->profile->status + hook->status;
+            hook->region_count = source->ammo_count;
+            if (source->ammo_count) {
+                hook->regions = regions;
+                for (size_t j = 0; j < source->ammo_count; ++j)
+                    regions[j] = (qa_qvm_region_binding){source->ammo[j].entry, source->ammo[j].join,
+                        skip_ammo, NULL, hook};
+                regions += source->ammo_count;
+            }
+        }
+    }
+    qa_arena_seal(&owner->region_storage);
+    for (size_t i = 0; i < owner->hook_count; ++i) {
+        equipment_hook *hook = owner->hooks + i;
         if (!qa_qvm_bind_function(module->vm, hook->instruction, false, hook->function,
                 hook, &hook->binding, error)) return false;
     }
