@@ -1314,7 +1314,8 @@ const application_control_context *application_control_frame_current(const qa_ap
                  !qa_q3_native_client_slot(source->state.q3, actor, &slot, NULL))) ||
                 (current->source_guestcmd && (!original_q3(source) || !source->component.command_actor ||
                  !source->component.command_actor(source->component.state, app->session, actor))) ||
-                (current->source_q2cmd && (source->kind != APPLICATION_PROVIDER_Q2 ||
+                (current->source_q2cmd && ((source->kind != APPLICATION_PROVIDER_Q2 &&
+                 !native_q2_raw_source_client(source, actor)) ||
                  source != application_world_provider((qa_application *)app, QA_ROLE_ENTITIES, "") ||
                  !source->component.command_actor ||
                  !source->component.command_actor(source->component.state, app->session, actor)))) return NULL;

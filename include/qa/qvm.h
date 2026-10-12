@@ -253,8 +253,10 @@ bool qa_qvm_bind_regions(const qa_qvm_call *, const qa_qvm_region_binding *, siz
 bool qa_qvm_qualify_region(const qa_qvm_image *, uint32_t owner, const qa_qvm_region_evaluation *, qa_error *);
 bool qa_qvm_qualify_source_region(const qa_qvm_image *, uint32_t owner,
                                   uint32_t entry, uint32_t join, qa_error *);
+typedef bool (*qa_qvm_region_input_fn)(void *, size_t index, int32_t *, qa_error *);
+/* Read each live-in once into executor-owned storage before source execution. */
 bool qa_qvm_evaluate_region(qa_qvm *, uint32_t owner, const int32_t *arguments, size_t argument_count,
-                            const qa_qvm_region_evaluation *, const int32_t *inputs,
+                            const qa_qvm_region_evaluation *, qa_qvm_region_input_fn, void *,
                             const qa_qvm_evaluation_stack *, int32_t *, qa_error *);
 /* Consumes the intercepted function's one proceed opportunity, retaining its
  * original caller frame and live argument aliases. */

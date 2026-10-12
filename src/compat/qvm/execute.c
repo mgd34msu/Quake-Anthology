@@ -1666,7 +1666,7 @@ static bool evaluation_stack(qa_qvm *vm, const qa_qvm_evaluation_stack *requeste
     *floor = (uint32_t)start; *top = current; return true;
 }
 bool qa_qvm_evaluate_region(qa_qvm *vm, uint32_t owner, const int32_t *arguments, size_t argument_count,
-                            const qa_qvm_region_evaluation *evaluation, const int32_t *inputs,
+                            const qa_qvm_region_evaluation *evaluation, qa_qvm_region_input_fn read_input, void *context,
                             const qa_qvm_evaluation_stack *requested, int32_t *out, qa_error *error)
 {
     uint32_t floor, top;
@@ -1675,7 +1675,7 @@ bool qa_qvm_evaluate_region(qa_qvm *vm, uint32_t owner, const int32_t *arguments
     if (!qualify(vm->image, owner, evaluation->entry, evaluation->join, evaluation,
                  vm->options.semantics == QA_QVM_INTERPRETED, error)) return false;
     (void)top;
-    if (evaluation->input_count != 0 && inputs == NULL) return error_at(error, owner, "Missing QVM region live-in values");
+    if (evaluation->input_count != 0 && read_input == NULL) return error_at(error, owner, "Missing QVM region live-in values");
     if (evaluation->input_count > SIZE_MAX / (sizeof(uint32_t) + sizeof(int32_t)))
         return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "QVM region inputs are too large");
     size_t bytes = evaluation->input_count * sizeof(uint32_t);
@@ -1684,7 +1684,13 @@ bool qa_qvm_evaluate_region(qa_qvm *vm, uint32_t owner, const int32_t *arguments
     uint32_t *storage=bytes?qa_unified_frame_lease_alloc(lease,bytes,2,_Alignof(uint32_t),error):NULL;
     if (bytes && !storage) {qa_unified_frame_lease_release(lease);return false;}
     int32_t *values = bytes == 0 ? NULL : (int32_t *)(storage + evaluation->input_count);
-    if (bytes != 0) { memcpy(storage, evaluation->inputs, bytes); memcpy(values, inputs, bytes); }
+    if (bytes != 0) {
+        memcpy(storage, evaluation->inputs, bytes);
+        for (size_t i = 0; i < evaluation->input_count; ++i)
+            if (!read_input(context, i, values + i, error)) {
+                qa_unified_frame_lease_release(lease); return false;
+            }
+    }
     qa_qvm_region_evaluation copied = *evaluation; copied.inputs = storage;
     bool ok = invoke(vm, owner, arguments, argument_count, &copied, values, floor, out, NULL, error);
     qa_unified_frame_lease_release(lease); return ok;

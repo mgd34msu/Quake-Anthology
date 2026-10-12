@@ -381,6 +381,19 @@ static int32_t source_value(guest_inventory_word word, const guest_inventory_sou
     return 0;
 }
 
+typedef struct guest_inventory_region_inputs {
+    const guest_public_inventory_profile *profile;
+    const guest_inventory_source *source;
+} guest_inventory_region_inputs;
+
+static bool region_input(void *context, size_t index, int32_t *out, qa_error *error)
+{
+    const guest_inventory_region_inputs *inputs = context;
+    (void)error;
+    *out = source_value(inputs->profile->inputs[index], inputs->source);
+    return true;
+}
+
 bool application_guest_public_inventory_capacity(const guest_public_inventory_profile *p,
     qa_qvm *vm, const guest_inventory_source *source, int32_t *out, qa_error *error)
 {
@@ -433,11 +446,9 @@ bool application_guest_public_inventory_capacity(const guest_public_inventory_pr
                 p->function, arguments, count, stack, error);
             if (ok) value = word.value;
         } else {
-            int32_t *inputs = p->region.input_count ? malloc(p->region.input_count * sizeof(*inputs)) : NULL;
-            if (p->region.input_count && !inputs) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating original capacity values"); return false; }
-            for (size_t i = 0; i < p->region.input_count; ++i) inputs[i] = source_value(p->inputs[i], source);
-            ok = qa_qvm_evaluate_region(vm, p->function, arguments, count, &p->region, inputs, stack, &value, error);
-            free(inputs);
+            guest_inventory_region_inputs inputs = {p, source};
+            ok = qa_qvm_evaluate_region(vm, p->function, arguments, count, &p->region,
+                region_input, &inputs, stack, &value, error);
         }
     }
     if (!ok) return false;
