@@ -128,7 +128,7 @@ bool frontend_remote_q1_receive_qw(frontend_remote_q1 *row, const qa_qw_service 
         return remote_q1_entity_set(&row->qw_batch_players, &entity, error);
     }
     case QA_QW_PACKET_ENTITIES:
-        row->qw_entities.count = 0;
+        remote_q1_entities_reset(&row->qw_entities);
         for (size_t i = 0; i < service->data.packet.frame->count; ++i)
             if (!remote_q1_entity_set(&row->qw_entities, service->data.packet.frame->entities + i, error)) return false;
         row->qw_frame = true; return true;

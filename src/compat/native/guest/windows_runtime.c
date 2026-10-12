@@ -501,6 +501,7 @@ static void dispose(guest_windows *owner)
         for (size_t i = 0; i < owner->crt->pending_file_count; ++i) {
             free(owner->crt->pending_files[i]->name); free(owner->crt->pending_files[i]);
         }
+        qa_id_index_destroy(&owner->crt->file_identities);
         free(owner->crt->pending_files); free(owner->crt->files); free(owner->crt);
     }
     free(owner->msvc); free(owner);
@@ -1080,11 +1081,13 @@ static bool codec_kernel(windows_codec *io, guest_windows_kernel *kernel)
     if (!codec_count(io,&kernel->handle_count,20)) return false;
     if (io->reading && !guest_grow((void **)&kernel->handles,&kernel->handle_capacity,
         kernel->handle_count,sizeof(*kernel->handles),io->error)) return false;
+    if (io->reading && !qa_id_index_reserve(&kernel->handle_identities, kernel->handle_count, io->error)) return false;
     for (size_t i = 0; i < kernel->handle_count; ++i) {
         uint32_t stream = io->reading ? 0 : (uint32_t)kernel->handles[i].stream;
         if (!codec_u64(io,&kernel->handles[i].handle) || !codec_u32(io,&stream) ||
             !codec_u64(io,&kernel->handles[i].stream_offset)) return false;
         memcpy(&kernel->handles[i].stream,&stream,4);
+        if (io->reading) qa_id_index_insert(&kernel->handle_identities, 0, kernel->handles[i].handle, i);
     }
     return true;
 }
@@ -1097,6 +1100,7 @@ static bool codec_crt(windows_codec *io, guest_windows_crt *crt)
         !codec_count(io,&crt->file_count,44)) return false;
     if (io->reading && !guest_grow((void **)&crt->files,&crt->file_capacity,
         crt->file_count,sizeof(*crt->files),io->error)) return false;
+    if (io->reading && !qa_id_index_reserve(&crt->file_identities, crt->file_count * 2, io->error)) return false;
     for (size_t i = 0; i < crt->file_count; ++i) {
         windows_stdio_file *f = crt->files + i;
         if (!codec_u64(io,&f->address) || !codec_u64(io,&f->handle) || !codec_u64(io,&f->capability) ||
@@ -1104,6 +1108,10 @@ static bool codec_crt(windows_codec *io, guest_windows_crt *crt)
             !codec_bytes(io,&f->pushback,1) || !codec_bytes(io,&f->pending,1) ||
             !codec_bool(io,&f->legacy) || !codec_bool(io,&f->binary) || !codec_bool(io,&f->append) ||
             !codec_bool(io,&f->closing) || !codec_bool(io,&f->has_pushback) || !codec_bool(io,&f->has_pending)) return false;
+        if (io->reading) {
+            qa_id_index_insert(&crt->file_identities, WINDOWS_FILE_ADDRESS, f->address, i);
+            qa_id_index_insert(&crt->file_identities, WINDOWS_FILE_HANDLE, f->handle, i);
+        }
     }
     return true;
 }

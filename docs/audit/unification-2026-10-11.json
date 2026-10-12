@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "2e6839a173f7dcab90470387b1f03bb05f196d32",
+  "verified_main": "a80cffa04fad17607c27fa228005104e829e9a97",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 240,
-    "open_source_observation": 131,
+    "fixed_source_build_core": 241,
+    "open_source_observation": 130,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -36771,8 +36771,9 @@
       "severity": "medium",
       "job": "33",
       "area": "shared_gameplay",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "a80cffa04fad17607c27fa228005104e829e9a97"
     },
     {
       "id": "J33-07",
@@ -43557,6 +43558,39 @@
       ],
       "record_directory": "/tmp/qa-ta3196-native-import-resource-indexes-20261012-v1",
       "conclusion": "J25-03 partial: common numeric-ID indexes now cover imports, resource capabilities and native callbacks, including nested re-find and restore enrollment. FILE, kernel-handle and TLS lookups remain assigned to the same worker. Normal build and seven existing core suites passed; no whole-item closure."
+    },
+    {
+      "commit": "a80cffa04fad17607c27fa228005104e829e9a97",
+      "source_tree": "b7c498cc8027d7e1de311000e37679e9d281fc97",
+      "finding_ids": [
+        "J33-06"
+      ],
+      "files_rechecked": [
+        "include/qa/inventory.h",
+        "src/app/application/guest_native_q2_inventory.c",
+        "src/app/application/guest_projection.c",
+        "src/app/application/guest_projection_private.h",
+        "src/app/application/guest_q3_mod_items.c",
+        "src/app/application/guest_qc_items.c",
+        "src/app/application/native_q2_items.c",
+        "src/gameplay/inventory.c",
+        "src/gameplay/inventory_internal.h",
+        "src/gameplay/q3/inventory.c",
+        "src/persistence/inventory.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-indexed-inventory-source-topology-20261012-v1",
+      "conclusion": "Shared inventory retains local item, owner-definition, source ordinal and lease indexes. Topology revisions avoid re-enumerating unchanged fixed bindings; quantities still come from authoritative callbacks, and unversioned dynamic bindings enumerate live. Restore reconstructs derived indexes without save-byte changes. Normal build and seven core suites passed; real admission/nesting peaks and adapter write-side scans are separate open storage/index follow-ups."
     }
   ],
   "verification_limits": [

@@ -149,12 +149,21 @@ static uint64_t standard_get(guest_windows *owner, int32_t id, bool invalid)
 static bool handle_add(guest_windows_kernel *kernel, uint64_t handle, int32_t stream, qa_error *error)
 {
     if (!guest_grow((void **)&kernel->handles, &kernel->handle_capacity,
-        kernel->handle_count + 1, sizeof(*kernel->handles), error)) return false;
-    kernel->handles[kernel->handle_count++] = (windows_file_handle){handle, stream, 0}; return true;
+        kernel->handle_count + 1, sizeof(*kernel->handles), error) ||
+        !qa_id_index_reserve(&kernel->handle_identities, 1, error)) return false;
+    size_t row = kernel->handle_count++;
+    kernel->handles[row] = (windows_file_handle){handle, stream, 0};
+    qa_id_index_insert(&kernel->handle_identities, 0, handle, row); return true;
 }
 
 static windows_file_handle *handle_at(guest_windows_kernel *kernel, uint64_t handle)
-{ for (size_t i = 0; i < kernel->handle_count; ++i) if (kernel->handles[i].handle == handle) return kernel->handles + i; return NULL; }
+{
+    qa_id_index_cursor cursor = qa_id_index_begin(&kernel->handle_identities, 0, handle);
+    size_t row, first = SIZE_MAX;
+    while (qa_id_index_next(&kernel->handle_identities, &cursor, &row))
+        if (row < first) first = row;
+    return first != SIZE_MAX ? kernel->handles + first : NULL;
+}
 
 bool windows_kernel_initialize(guest_windows *owner, const guest_windows_options *options, qa_error *error)
 {
@@ -200,6 +209,7 @@ void windows_kernel_dispose(guest_windows_kernel *kernel)
     if (!kernel) return;
     for (size_t i=0;i<kernel->pending_count;++i) { free(kernel->pending_files[i]->path); free(kernel->pending_files[i]); }
     free(kernel->pending_files);
+    qa_id_index_destroy(&kernel->handle_identities);
     free(kernel->heaps); free(kernel->locks); free(kernel->reservations); free(kernel->standards); free(kernel->handles); free(kernel);
 }
 
@@ -466,6 +476,9 @@ static bool file_operation(windows_service *service, const qa_native_value *args
     if (operation == K_FILE_CLOSE) {
         if (handle->stream < 0 && registered && !guest_runtime_resources_close(owner->resources, address, error)) return false;
         size_t index = (size_t)(handle - kernel->handles);
+        qa_id_index_remove_value(&kernel->handle_identities, 0, address, index);
+        for (size_t i = 0; i < kernel->handle_identities.count; ++i)
+            if (kernel->handle_identities.entries[i].value > index) --kernel->handle_identities.entries[i].value;
         memmove(kernel->handles + index, kernel->handles + index + 1,
             (kernel->handle_count - index - 1) * sizeof(*kernel->handles)); --kernel->handle_count;
         result(out, QA_NATIVE_I32, 1); return true;

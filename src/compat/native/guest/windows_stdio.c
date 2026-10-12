@@ -36,16 +36,16 @@ static bool file_error(guest_windows *r, windows_stdio_file *f, uint32_t value, 
 }
 static windows_stdio_file *file_at(guest_windows *r, uint64_t address)
 {
-    for (size_t i = 0; i < r->crt->file_count; ++i)
-        if (r->crt->files[i].address == address) return r->crt->files + i;
-    return NULL;
+    qa_id_index_cursor cursor = qa_id_index_begin(&r->crt->file_identities, WINDOWS_FILE_ADDRESS, address);
+    size_t row;
+    return qa_id_index_next(&r->crt->file_identities, &cursor, &row) ? r->crt->files + row : NULL;
 }
 bool windows_stdio_file_in_use(const guest_windows *r, uint64_t handle)
 {
     if (!r || !r->crt || !handle) return false;
-    for (size_t i = 0; i < r->crt->file_count; ++i)
-        if (r->crt->files[i].handle == handle) return true;
-    return false;
+    qa_id_index_cursor cursor = qa_id_index_begin(&r->crt->file_identities, WINDOWS_FILE_HANDLE, handle);
+    size_t row;
+    return qa_id_index_next(&r->crt->file_identities, &cursor, &row);
 }
 static bool path_string(guest_windows *r, uint64_t address, qa_arena *scratch,
     char **out, qa_error *e)
@@ -97,7 +97,8 @@ static bool open_file(windows_service *service, uint64_t name_address, uint64_t 
     }
     if (found && (view.mode & rights) != rights) { okay = crt_errno(r, 13, e); goto done; }
     if (crt->next_file > INT32_MAX) { okay = crt_errno(r, 24, e); goto done; }
-    if (!guest_grow((void **)&crt->files, &crt->file_capacity, crt->file_count + 1, sizeof(*crt->files), e)) goto done;
+    if (!guest_grow((void **)&crt->files, &crt->file_capacity, crt->file_count + 1, sizeof(*crt->files), e) ||
+        !qa_id_index_reserve(&crt->file_identities, 2, e)) goto done;
     windows_stdio_file f = {.mode = rights, .descriptor = crt->next_file,
         .legacy = !strcmp(service->library, "msvcrt.dll"), .binary = binary, .append = mode[0] == 'a'};
     f.flags = (uint32_t)(WST_FLAG_UNBUFFERED | (plus ? WST_FLAG_UPDATE : mode[0] == 'r' ? WST_FLAG_READ : WST_FLAG_WRITE));
@@ -144,7 +145,10 @@ static bool open_file(windows_service *service, uint64_t name_address, uint64_t 
     f.handle = view.id; f.capability = view.capability;
     /* Once the real capability is owned, all partial preparation remains
      * represented by this FILE row for checked retirement. */
-    crt->files[crt->file_count++] = f; ++crt->next_file;
+    size_t row = crt->file_count++;
+    crt->files[row] = f; ++crt->next_file;
+    qa_id_index_insert(&crt->file_identities, WINDOWS_FILE_ADDRESS, f.address, row);
+    qa_id_index_insert(&crt->file_identities, WINDOWS_FILE_HANDLE, f.handle, row);
     windows_stdio_file *entry = crt->files + crt->file_count - 1;
     uint64_t start = 0;
     if (mode[0] == 'w' && !fresh && !guest_runtime_resources_truncate(r->resources, f.handle, 0, e)) goto done;
@@ -335,6 +339,10 @@ bool windows_stdio_invoke(windows_service *service, const qa_native_value *args,
         if (!guest_runtime_resources_close(r->resources, f->handle, &failure)) return io_failure(r, f, &failure, e);
         size_t index = (size_t)(f - r->crt->files);
         if (!windows_free(r, f->address, 0, e)) return false;
+        qa_id_index_remove_value(&r->crt->file_identities, WINDOWS_FILE_ADDRESS, f->address, index);
+        qa_id_index_remove_value(&r->crt->file_identities, WINDOWS_FILE_HANDLE, f->handle, index);
+        for (size_t i = 0; i < r->crt->file_identities.count; ++i)
+            if (r->crt->file_identities.entries[i].value > index) --r->crt->file_identities.entries[i].value;
         memmove(f, f + 1, (r->crt->file_count - index - 1) * sizeof(*f)); --r->crt->file_count;
         returned(out, type, 0); return true;
     }

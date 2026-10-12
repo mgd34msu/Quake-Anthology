@@ -457,6 +457,7 @@ void guest_sysv_abandon(guest_sysv_runtime **owner)
     for (size_t i = 0; runtime->objects && i < runtime->object_count; ++i) free(runtime->objects[i].name);
     free(runtime->services); free(runtime->heap); free(runtime->images); free(runtime->destructors);
     free(runtime->unique); free(runtime->objects); free(runtime->trace); free(runtime->loading); free(runtime->open_files);
+    qa_id_index_destroy(&runtime->identities);
     free(runtime); *owner = NULL;
 }
 
@@ -590,7 +591,10 @@ bool guest_sysv_load_commit(guest_sysv_load **owner,
                 entry->bytes ? (size_t)entry->bytes : 1, 0, error))) { image_free(&image); return false; }
     }
     if (!guest_grow((void **)&runtime->images, &runtime->image_capacity,
-        runtime->image_count + 1, sizeof(*runtime->images), error)) { image_free(&image); return false; }
+        runtime->image_count + 1, sizeof(*runtime->images), error) ||
+        (load->has_tls && !load->replacing && !qa_id_index_reserve(&runtime->identities, 1, error))) {
+        image_free(&image); return false;
+    }
     if (load->has_tls) {
         image.tls = load->tls;
         if (!sysv_write(runtime, load->tls.address, tls_template.data, tls_template.size, error)) goto failed;
@@ -611,7 +615,12 @@ bool guest_sysv_load_commit(guest_sysv_load **owner,
         sysv_image *previous = image_find(runtime, load->provider);
         if (!previous || previous->lifecycle != GUEST_SYSV_FINALIZED) goto failed;
         image_free(previous); *previous = image;
-    } else runtime->images[runtime->image_count++] = image;
+    } else {
+        size_t row = runtime->image_count++;
+        runtime->images[row] = image;
+        if (image.tls.module_id)
+            qa_id_index_insert(&runtime->identities, SYSV_TLS_MODULE, image.tls.module_id, row);
+    }
     runtime->loading = NULL; free(load); *owner = NULL; return true;
 failed:
     image_free(&image); runtime->failed = true; return false;
@@ -696,9 +705,10 @@ bool guest_sysv_tls_address(guest_sysv_runtime *runtime, uint64_t module,
     uint64_t offset, uint64_t *out, qa_error *error)
 {
     if (!out || !sysv_current(runtime, error)) return false;
-    const guest_sysv_tls *block = NULL;
-    for (size_t i = 0; i < runtime->image_count; ++i)
-        if (runtime->images[i].tls.module_id == module && module) { block = &runtime->images[i].tls; break; }
+    qa_id_index_cursor cursor = qa_id_index_begin(&runtime->identities, SYSV_TLS_MODULE, module);
+    size_t row;
+    const guest_sysv_tls *block = qa_id_index_next(&runtime->identities, &cursor, &row) ?
+        &runtime->images[row].tls : NULL;
     if (!block || offset >= block->bytes) return sysv_fail(error, QA_ERROR_ARGUMENT, "System V TLS index is outside its actual module block");
     uint64_t dtv, capacity, address;
     size_t p = runtime->target.pointer_bytes;
@@ -1006,6 +1016,7 @@ static bool runtime_fields(qa_source_save_io *io,guest_sysv_runtime *r)
         if (!codec_layout(io,r,&s->result)) return false;
     }
     if (!codec_array(io,(void **)&r->images,&r->image_count,&r->image_capacity,sizeof(*r->images))) return false;
+    if (read && !qa_id_index_reserve(&r->identities, r->image_count, io->error)) return false;
     for (size_t i = 0; i < r->image_count; ++i) {
         sysv_image *image = r->images+i; guest_sysv_provider *p = &image->provider;
         uint32_t lifecycle = image->lifecycle;
@@ -1026,6 +1037,8 @@ static bool runtime_fields(qa_source_save_io *io,guest_sysv_runtime *r)
         if (!codec_addresses(io,&p->preinitializers,&p->preinitializer_count) ||
             !codec_addresses(io,&p->initializers,&p->initializer_count) ||
             !codec_addresses(io,&p->finalizers,&p->finalizer_count)) return false;
+        if (read && image->tls.module_id)
+            qa_id_index_insert(&r->identities, SYSV_TLS_MODULE, image->tls.module_id, i);
     }
     if (!codec_array(io,(void **)&r->destructors,&r->destructor_count,&r->destructor_capacity,sizeof(*r->destructors))) return false;
     for (size_t i = 0; i < r->destructor_count; ++i) {

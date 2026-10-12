@@ -7,6 +7,7 @@
 #include <math.h>
 
 enum { SYSV_MAX_ALLOCATION = 0x10000000, SYSV_MAX_STRING = 0x100000 };
+enum { SYSV_FILE_ADDRESS, SYSV_FILE_HANDLE, SYSV_TLS_MODULE };
 typedef enum sysv_group {
     SYSV_RUNTIME, SYSV_LIBC, SYSV_STDIO, SYSV_CXX, SYSV_LOCALE, SYSV_IOSTREAM, SYSV_FORMAT, SYSV_PLATFORM
 } sysv_group;
@@ -55,6 +56,7 @@ struct guest_sysv_runtime {
     uint64_t file_tables[2];
     uint32_t next_file;
     sysv_file *open_files;
+    qa_id_index identities;
     size_t open_file_count, open_file_capacity;
     uint64_t classic_locale, iostream_refcount, iostream_sync;
     sysv_service **services;

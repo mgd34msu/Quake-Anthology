@@ -40,6 +40,7 @@ struct frontend_remote_q1_effects {
     qa_scene_light scene_lights[LIGHTS];
     remote_trail *trails;
     size_t trail_count, trail_capacity;
+    qa_id_index trail_index;
     uint64_t sample;
     double sampled_seconds, previous_sample;
     double bonus_until;
@@ -51,6 +52,7 @@ static void reset(frontend_remote_q1_effects *fx)
     frontend_fx_q1_state_initialize(&fx->state, LIGHTS, BEAMS);
     qa_builtin_random_seed(&fx->random,1);
     fx->image=NULL;fx->audio=NULL;fx->ambient_count=fx->trail_count=0;
+    qa_id_index_clear(&fx->trail_index);
     memset(fx->beam_models,0,sizeof(fx->beam_models));
     memset(fx->scene_lights,0,sizeof(fx->scene_lights));fx->sample=0;
     fx->sampled_seconds=fx->previous_sample=fx->bonus_until=0;fx->sampled=false;
@@ -61,11 +63,13 @@ bool remote_q1_effects_prepare(frontend_remote_q1 *row, qa_error *error)
     frontend_remote_q1_effects *fx = calloc(1, sizeof(*fx));
     if (!fx) return remote_q1_fail(error, QA_ERROR_MEMORY, "Retaining received Q1 effects");
     size_t ambient_bytes=EFFECT_RECORDS*sizeof(*fx->ambient),trail_bytes=EFFECT_RECORDS*sizeof(*fx->trails);
-    bool okay=qa_arena_reserve(&fx->storage,ambient_bytes+trail_bytes+256,error);
+    size_t index_bytes=EFFECT_RECORDS*(sizeof(*fx->trail_index.entries)+2*sizeof(*fx->trail_index.buckets));
+    fx->trail_index.storage=&fx->storage;
+    bool okay=qa_arena_reserve(&fx->storage,ambient_bytes+trail_bytes+index_bytes+256,error);
     if (okay) {
         fx->ambient=qa_arena_alloc(&fx->storage,ambient_bytes,_Alignof(remote_ambient),error);
         fx->trails=qa_arena_alloc(&fx->storage,trail_bytes,_Alignof(remote_trail),error);
-        okay=fx->ambient && fx->trails;
+        okay=fx->ambient && fx->trails && qa_id_index_reserve(&fx->trail_index,EFFECT_RECORDS,error);
     }
     if (!okay) { qa_arena_destroy(&fx->storage);free(fx);return false; }
     qa_arena_seal(&fx->storage);fx->ambient_capacity=fx->trail_capacity=EFFECT_RECORDS;
@@ -286,7 +290,7 @@ bool remote_q1_effects_clear(frontend_remote_q1 *row, qa_error *error)
 bool remote_q1_effects_destroy(frontend_remote_q1 *row,qa_error *error)
 {
     if (!remote_q1_effects_clear(row,error)) return false;
-    if (row->effects) { qa_arena_destroy(&row->effects->storage);free(row->effects);row->effects=NULL; }
+    if (row->effects) { qa_id_index_destroy(&row->effects->trail_index);qa_arena_destroy(&row->effects->storage);free(row->effects);row->effects=NULL; }
     return true;
 }
 bool remote_q1_effects_music(const frontend_remote_q1 *row,uint64_t *bus,qa_audio_music **player)
@@ -318,19 +322,19 @@ static bool entities(frontend_remote_q1 *row, double seconds, qa_error *error)
         remote_q1_model *model;
         if (!remote_q1_model_read(row,name->path,&view,&model,error)) return false;
         qa_vec3 point = vector(entity->origin), angles = vector(entity->angles);
-        for (size_t j=0;j<row->previous.count;++j) if (row->previous.rows[j].number==entity->number) {
-            const qa_q1_entity *old=row->previous.rows+j;
+        const qa_q1_entity *old=remote_q1_entity_find(&row->previous,entity->number);
+        if(old) {
             if (!entity->step && fabsf(point.x-old->origin[0])<=100 && fabsf(point.y-old->origin[1])<=100 && fabsf(point.z-old->origin[2])<=100)
                 point=qa_vec_add(vector(old->origin),qa_vec_scale(qa_vec_sub(point,vector(old->origin)),(float)row->fraction));
-            break;
         }
-        size_t at=0; while(at<fx->trail_count && fx->trails[at].entity!=entity->number) ++at;
-        if(at==fx->trail_count) {
+        qa_id_index_cursor cursor=qa_id_index_begin(&fx->trail_index,entity->number,0);size_t at=fx->trail_count;
+        if(!qa_id_index_next(&fx->trail_index,&cursor,&at)) {
             if(at==fx->trail_capacity) {
                 qa_allocation_gate_capacity_exhausted();
                 return remote_q1_fail(error,QA_ERROR_FORMAT,"Q1 trail table exceeds received actors");
             }
-            fx->trails[fx->trail_count++]=(remote_trail){entity->number,entity->model,point,fx->sample};
+            fx->trails[at]=(remote_trail){entity->number,entity->model,point,fx->sample};
+            qa_id_index_insert(&fx->trail_index,entity->number,0,fx->trail_count++);
         }
         remote_trail *trail=fx->trails+at; qa_vec3 start=trail->origin,delta=qa_vec_sub(point,start);
         if(trail->model!=entity->model || fabsf(delta.x)>100 || fabsf(delta.y)>100 || fabsf(delta.z)>100) start=point;
@@ -347,6 +351,10 @@ static bool entities(frontend_remote_q1 *row, double seconds, qa_error *error)
     }
     size_t retained=0;
     for(size_t i=0;i<fx->trail_count;++i) if(fx->trails[i].sample==fx->sample) fx->trails[retained++]=fx->trails[i];
+    if(retained!=fx->trail_count) {
+        qa_id_index_clear(&fx->trail_index);
+        for(size_t i=0;i<retained;++i) qa_id_index_insert(&fx->trail_index,fx->trails[i].entity,0,i);
+    }
     fx->trail_count=retained;
     return true;
 }

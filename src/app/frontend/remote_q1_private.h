@@ -27,7 +27,11 @@ typedef struct remote_q1_model_name {
     bool inline_path, inline_valid, axe;
 } remote_q1_model_name;
 
-typedef struct remote_q1_entities { qa_q1_entity *rows; size_t count, capacity; } remote_q1_entities;
+typedef struct remote_q1_entities {
+    qa_q1_entity *rows;
+    size_t count, capacity;
+    qa_id_index numbers;
+} remote_q1_entities;
 typedef struct remote_q1_demo_seed {
     struct remote_q1_demo_seed *next;
     qa_buffer bytes;
@@ -117,6 +121,8 @@ bool remote_q1_mutable(const frontend_remote_q1 *);
 bool remote_q1_domain_equal(const frontend_remote_q1_domain *, const frontend_remote_q1_domain *);
 bool remote_q1_string(char **, const char *, qa_error *);
 bool remote_q1_entity_set(remote_q1_entities *, const qa_q1_entity *, qa_error *);
+const qa_q1_entity *remote_q1_entity_find(const remote_q1_entities *,uint32_t);
+void remote_q1_entities_reset(remote_q1_entities *);
 bool remote_q1_event_admit(frontend_remote_q1 *, const qa_nq_message *, uint64_t, qa_error *);
 bool remote_q1_events_consume(frontend_remote_q1 *, uint64_t, qa_error *);
 bool remote_q1_actor_read(frontend_remote_q1 *, uint32_t, qa_actor_id *, qa_error *);

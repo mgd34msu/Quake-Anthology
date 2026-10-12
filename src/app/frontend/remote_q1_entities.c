@@ -4,8 +4,7 @@
 
 static qa_q1_entity sampled(const frontend_remote_q1 *row, qa_q1_entity value)
 {
-    const qa_q1_entity *old = NULL;
-    for (size_t i = 0; i < row->previous.count; ++i) if (row->previous.rows[i].number == value.number) { old = row->previous.rows + i; break; }
+    const qa_q1_entity *old=remote_q1_entity_find(&row->previous,value.number);
     if (value.step || !old || fabsf(value.origin[0] - old->origin[0]) > 100 ||
         fabsf(value.origin[1] - old->origin[1]) > 100 || fabsf(value.origin[2] - old->origin[2]) > 100) return value;
     for (unsigned i = 0; i < 3; ++i) {
@@ -38,11 +37,8 @@ bool remote_q1_view_damage(frontend_remote_q1 *row, const qa_nq_message *message
     } else {
         /* svc_time starts a new table before svc_damage; the Source entity
          * still belongs to the preceding frame until its actual update. */
-        const qa_q1_entity *entity = NULL;
-        const remote_q1_entities *tables[] = {&row->current, &row->previous};
-        for (size_t table = 0; !entity && table < 2; ++table)
-            for (size_t i = 0; i < tables[table]->count; ++i)
-                if (tables[table]->rows[i].number == row->view_entity) { entity = tables[table]->rows + i; break; }
+        const qa_q1_entity *entity=remote_q1_entity_find(&row->current,row->view_entity);
+        if(!entity) entity=remote_q1_entity_find(&row->previous,row->view_entity);
         if (!entity) return remote_q1_fail(error, QA_ERROR_FORMAT, "NQ damage has no actual received view entity");
         origin = qa_v3(entity->origin[0], entity->origin[1], entity->origin[2]);
         angles = qa_v3(entity->angles[0], entity->angles[1], entity->angles[2]);
@@ -67,11 +63,12 @@ bool remote_q1_view_sample(frontend_remote_q1 *row, qa_error *error)
         !frontend_view_settings_q1_sample(row->frontend->view_settings,
             row->rules, &view, error)) return false;
     qa_vec3 entity_angles = player.angles;
-    for (size_t i = 0; i < row->current.count; ++i) if (row->current.rows[i].number == row->view_entity) {
-        qa_q1_entity entity = sampled(row, row->current.rows[i]);
+    const qa_q1_entity *source=remote_q1_entity_find(&row->current,row->view_entity);
+    if(source) {
+        qa_q1_entity entity = sampled(row, *source);
         entity_angles = qa_v3(entity.angles[0], entity.angles[1], entity.angles[2]);
         row->view_entity_origin = qa_v3(entity.origin[0], entity.origin[1], entity.origin[2]);
-        row->view_entity_angles = entity_angles; row->view_entity_pose_number = entity.number; break;
+        row->view_entity_angles = entity_angles; row->view_entity_pose_number = entity.number;
     }
     if (qw) {
         row->view_entity_origin = player.origin; row->view_entity_angles = row->view_angles;
@@ -113,10 +110,10 @@ bool frontend_remote_q1_entity_at(frontend_remote_q1 *row, size_t index, fronten
             return remote_q1_fail(error, QA_ERROR_NOT_FOUND, "Q1 presentation entity ordinal is absent");
         qa_q1_entity_init(&value); value.number = row->view_entity; value.model = row->data.weapon_model;
         value.frame = row->data.weapon_frame; value.alpha = row->data.weapon_alpha;
-        for (size_t i = 0; i < row->current.count; ++i) if (row->current.rows[i].number == row->view_entity) {
-            qa_q1_entity source = sampled(row, row->current.rows[i]);
+        const qa_q1_entity *received=remote_q1_entity_find(&row->current,row->view_entity);
+        if(received) {
+            qa_q1_entity source = sampled(row, *received);
             for (unsigned j = 0; j < 3; ++j) value.origin[j] = source.origin[j];
-            break;
         }
         value.origin[2] += row->data.viewheight;
         value.angles[0] = row->view_angles.x; value.angles[1] = row->view_angles.y; value.angles[2] = row->view_angles.z;
@@ -173,10 +170,9 @@ bool frontend_remote_q1_player_read(frontend_remote_q1 *row, frontend_remote_q1_
     if (!remote_q1_mutable(row) || !out || !present || row->busy || !remote_q1_live(row, error)) return false;
     *present = row->published && row->loaded && row->view_entity && row->has_data;
     if (!*present) return true;
-    qa_q1_entity value; qa_q1_entity_init(&value);
-    bool found=false;
-    for (size_t i = 0; i < row->current.count; ++i) if (row->current.rows[i].number == row->view_entity) { value = sampled(row, row->current.rows[i]); found=true; break; }
-    if(!found) { *present=false; return true; }
+    const qa_q1_entity *entity=remote_q1_entity_find(&row->current,row->view_entity);
+    if(!entity) { *present=false; return true; }
+    qa_q1_entity value=sampled(row,*entity);
     qa_actor_id actor;
     ++row->busy; bool ok = remote_q1_actor_read(row, row->view_entity, &actor, error); --row->busy;
     if (!ok) return false;
@@ -212,8 +208,7 @@ bool frontend_remote_q1_receive_end(frontend_remote_q1 *row, uint64_t received, 
     if (!remote_q1_mutable(row) || row->busy || !remote_q1_live(row, error)) return false;
     bool own_changed = false;
     if (qa_q1_is_qw(row->options.domain.protocol)) {
-        for (size_t i = 0; i < row->qw_batch_players.count; ++i)
-            if (row->qw_batch_players.rows[i].number == (uint32_t)row->qw.player_slot + 1) own_changed = true;
+        own_changed=remote_q1_entity_find(&row->qw_batch_players,(uint32_t)row->qw.player_slot+1)!=NULL;
         bool frame = row->qw_frame && row->qw_player_valid[row->qw.player_slot];
         if (frame) {
             if (row->frame_number == UINT64_MAX || row->revision == UINT64_MAX)
@@ -245,7 +240,7 @@ bool frontend_remote_q1_receive_end(frontend_remote_q1 *row, uint64_t received, 
             if (!frontend_remote_q1_receive_nq(row, &message, received, error)) return false;
             row->qw_kick = 0;
         }
-        row->qw_frame = false; row->qw_batch_players.count = row->qw_nails.count = 0;
+        row->qw_frame = false;remote_q1_entities_reset(&row->qw_batch_players);remote_q1_entities_reset(&row->qw_nails);
     }
     if (!remote_q1_events_consume(row, received, error)) return false;
     ++row->busy; bool ok = true; qa_actor_id actor;

@@ -1,6 +1,7 @@
 #ifndef QA_NATIVE_GUEST_WINDOWS_KERNEL_H
 #define QA_NATIVE_GUEST_WINDOWS_KERNEL_H
 #include "windows_runtime.h"
+#include "qa/id_index.h"
 typedef struct windows_reservation { uint64_t base, bytes; bool allocated; } windows_reservation;
 typedef struct windows_fls { uint64_t callback, value; bool allocated; } windows_fls;
 typedef struct windows_standard { int32_t id; uint64_t handle; } windows_standard;
@@ -16,6 +17,7 @@ struct guest_windows_kernel {
     uint64_t pointer_secret, process_heap, dynamic_tls, exception_filter;
     windows_standard *standards; size_t standard_count, standard_capacity;
     windows_file_handle *handles; size_t handle_count, handle_capacity;
+    qa_id_index handle_identities;
     windows_pending_file **pending_files; size_t pending_count, pending_capacity;
     uint64_t *heaps, *locks;
     size_t heap_count, heap_capacity, lock_count, lock_capacity;

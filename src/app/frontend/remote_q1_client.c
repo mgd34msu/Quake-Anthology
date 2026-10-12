@@ -222,11 +222,23 @@ static bool grow(void **data, size_t *capacity, size_t count, size_t stride, qa_
 }
 bool remote_q1_entity_set(remote_q1_entities *table, const qa_q1_entity *entity, qa_error *error)
 {
-    for (size_t i = 0; i < table->count; ++i) if (table->rows[i].number == entity->number) {
-        table->rows[i] = *entity; return true;
-    }
-    if (!grow((void **)&table->rows, &table->capacity, table->count + 1, sizeof(*table->rows), error)) return false;
-    table->rows[table->count++] = *entity; return true;
+    qa_id_index_entry *entry=qa_id_index_find(&table->numbers,entity->number,0);
+    if(entry) { table->rows[entry->value]=*entity;return true; }
+    if (!qa_id_index_reserve(&table->numbers,1,error) ||
+        !grow((void **)&table->rows, &table->capacity, table->count + 1, sizeof(*table->rows), error)) return false;
+    table->rows[table->count]=*entity;
+    qa_id_index_insert(&table->numbers,entity->number,0,table->count++);return true;
+}
+const qa_q1_entity *remote_q1_entity_find(const remote_q1_entities *table,uint32_t number)
+{
+    qa_id_index_cursor cursor=qa_id_index_begin(&table->numbers,number,0);size_t ordinal;
+    return qa_id_index_next(&table->numbers,&cursor,&ordinal)?table->rows+ordinal:NULL;
+}
+void remote_q1_entities_reset(remote_q1_entities *table)
+{ table->count=0;qa_id_index_clear(&table->numbers); }
+static void entities_destroy(remote_q1_entities *table)
+{
+    qa_id_index_destroy(&table->numbers);free(table->rows);*table=(remote_q1_entities){0};
 }
 bool remote_q1_actor_read(frontend_remote_q1 *row, uint32_t number, qa_actor_id *out, qa_error *error)
 {
@@ -272,8 +284,8 @@ void remote_q1_clear(frontend_remote_q1 *row)
         row->clients[i] = (remote_q1_client){0};
     }
     free(row->skybox); row->skybox = NULL;
-    row->current.count = row->previous.count = row->statics.count = 0;
-    row->qw_entities.count = row->qw_nails.count = row->qw_batch_players.count = 0;
+    remote_q1_entities_reset(&row->current);remote_q1_entities_reset(&row->previous);remote_q1_entities_reset(&row->statics);
+    remote_q1_entities_reset(&row->qw_entities);remote_q1_entities_reset(&row->qw_nails);remote_q1_entities_reset(&row->qw_batch_players);
     memset(row->qw_player_valid, 0, sizeof(row->qw_player_valid)); memset(row->stats, 0, sizeof(row->stats));
     row->max_clients = row->view_entity = 0; row->view_angles = qa_v3(0, 0, 0);
     row->pending_impulse = 0;
@@ -392,7 +404,7 @@ static bool serverinfo(frontend_remote_q1 *row, const qa_nq_serverinfo *info, qa
 void remote_q1_time_advance(frontend_remote_q1 *row, double seconds, uint64_t received)
 {
     row->previous_seconds = row->seconds; row->seconds = seconds;
-    remote_q1_entities spare = row->previous; row->previous = row->current; row->current = spare; row->current.count = 0;
+    remote_q1_entities spare = row->previous; row->previous = row->current; row->current = spare;remote_q1_entities_reset(&row->current);
     row->received_ns = received; row->fraction = 1; ++row->frame_number;
 }
 static bool trim_space(unsigned char byte)
@@ -413,8 +425,7 @@ static bool reconnect(frontend_remote_q1 *row,const char *text,qa_error *error)
 void remote_q1_publication_update(frontend_remote_q1 *row)
 {
     if(!row->loaded || !row->view_entity || !row->has_data) return;
-    for(size_t i=0;i<row->current.count;++i)
-        if(row->current.rows[i].number==row->view_entity) { row->published=true; return; }
+    if(remote_q1_entity_find(&row->current,row->view_entity)) row->published=true;
 }
 typedef struct remote_q1_event {
     qa_nq_message message;
@@ -666,8 +677,8 @@ bool frontend_remote_q1_destroy(frontend_remote_q1 **owned, qa_error *error)
     ++row->busy; bool ok = remote_q1_effects_destroy(row, error); --row->busy;
     if (!ok) return false;
     remote_q1_clear(row); remote_q1_demo_clear(row);
-    free(row->current.rows); free(row->previous.rows); free(row->statics.rows);
-    free(row->qw_entities.rows); free(row->qw_nails.rows); free(row->qw_batch_players.rows);
+    entities_destroy(&row->current);entities_destroy(&row->previous);entities_destroy(&row->statics);
+    entities_destroy(&row->qw_entities);entities_destroy(&row->qw_nails);entities_destroy(&row->qw_batch_players);
     qa_event_ring_destroy(&row->events);
     *link = row->next;
     free(row->qw_directory); free(row->level_name); qa_catalog_release(row->options.domain.catalog); free(row); *owned = NULL; return true;

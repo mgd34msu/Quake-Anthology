@@ -13,16 +13,16 @@ static uint64_t field(const guest_sysv_runtime *r, uint64_t file, size_t index)
 { return file + index * r->target.pointer_bytes; }
 static sysv_file *opened(guest_sysv_runtime *r, uint64_t address)
 {
-    for (size_t i = 0; i < r->open_file_count; ++i)
-        if (r->open_files[i].address == address) return r->open_files + i;
-    return NULL;
+    qa_id_index_cursor cursor = qa_id_index_begin(&r->identities, SYSV_FILE_ADDRESS, address);
+    size_t row;
+    return qa_id_index_next(&r->identities, &cursor, &row) ? r->open_files + row : NULL;
 }
 bool guest_sysv_file_in_use(const guest_sysv_runtime *r,uint64_t handle)
 {
     if (!r || !handle) return false;
-    for (size_t i = 0; i < r->open_file_count; ++i)
-        if (r->open_files[i].handle == handle) return true;
-    return false;
+    qa_id_index_cursor cursor = qa_id_index_begin(&r->identities, SYSV_FILE_HANDLE, handle);
+    size_t row;
+    return qa_id_index_next(&r->identities, &cursor, &row);
 }
 static bool descriptor(guest_sysv_runtime *r, uint64_t file, int32_t *out, qa_error *error)
 {
@@ -327,25 +327,26 @@ bool sysv_stdio_unget(guest_sysv_runtime *r,uint64_t file,bool wide,uint32_t val
 static bool reserve_file(guest_sysv_runtime *r, uint64_t handle, bool *available, qa_error *error)
 {
     *available = false;
-    for (size_t i = 0; i < r->open_file_count; ++i) if (r->open_files[i].handle == handle) {
-        return sysv_errno(r,16,error);
-    }
+    if (guest_sysv_file_in_use(r, handle)) return sysv_errno(r,16,error);
     if (r->next_file > INT32_MAX) return sysv_errno(r,24,error);
     if (!guest_grow((void **)&r->open_files,&r->open_file_capacity,r->open_file_count+1,
-        sizeof(*r->open_files),error)) return false;
+        sizeof(*r->open_files),error) || !qa_id_index_reserve(&r->identities, 2, error)) return false;
     *available = true; return true;
 }
 static bool publish_file(guest_sysv_runtime *r, const guest_runtime_file_view *view,
     uint32_t rights, bool append, uint64_t *out, qa_error *error)
 {
-    sysv_file *entry = r->open_files+r->open_file_count++;
+    size_t row = r->open_file_count++;
+    sysv_file *entry = r->open_files + row;
     *entry = (sysv_file){.handle=view->id,.capability=view->capability,.descriptor=r->next_file++,
         .mode=rights,.append=append};
+    qa_id_index_insert(&r->identities, SYSV_FILE_HANDLE, entry->handle, row);
     file_layout l = layout(r); size_t p = r->target.pointer_bytes;
     uint32_t flags = UINT32_C(0xfbad0000)|0x2000|(append ? 0x1000u : 0u)|
         ((rights & GUEST_RUNTIME_FILE_READ) ? 0u : 4u)|((rights & GUEST_RUNTIME_FILE_WRITE) ? 0u : 8u);
-    if (!sysv_allocate(r,l.size+p,true,&entry->address,error) ||
-        !sysv_allocate(r,p*2+8,true,&entry->lock,error) ||
+    bool allocated = sysv_allocate(r,l.size+p,true,&entry->address,error);
+    qa_id_index_insert(&r->identities, SYSV_FILE_ADDRESS, entry->address, row);
+    if (!allocated || !sysv_allocate(r,p*2+8,true,&entry->lock,error) ||
         !sysv_allocate(r,p == 8 ? 312 : 180,true,&entry->wide,error) ||
         !sysv_store(r,entry->address,4,flags,error) ||
         !sysv_store(r,entry->address+l.descriptor,4,entry->descriptor,error) ||
@@ -475,6 +476,12 @@ static bool close_file(guest_sysv_runtime *r,uint64_t address,int32_t *out,qa_er
         *allocations[i] = 0;
     }
     size_t index = (size_t)(entry-r->open_files);
+    qa_id_index_remove_value(&r->identities, SYSV_FILE_ADDRESS, address, index);
+    qa_id_index_remove_value(&r->identities, SYSV_FILE_HANDLE, entry->handle, index);
+    for (size_t i = 0; i < r->identities.count; ++i)
+        if ((r->identities.entries[i].key == SYSV_FILE_ADDRESS || r->identities.entries[i].key == SYSV_FILE_HANDLE) &&
+            r->identities.entries[i].value > index)
+            --r->identities.entries[i].value;
     memmove(entry,entry+1,(r->open_file_count-index-1)*sizeof(*entry));
     --r->open_file_count; *out = 0; return true;
 }
@@ -547,6 +554,7 @@ bool sysv_stdio_fields(qa_source_save_io *io,guest_sysv_runtime *r)
             if (!r->open_files) return sysv_fail(io->error,QA_ERROR_MEMORY,"decoding System V FILE owners");
         }
         r->open_file_capacity = r->open_file_count;
+        if (!qa_id_index_reserve(&r->identities, r->open_file_count * 2, io->error)) return false;
     }
     for (size_t i = 0; i < r->open_file_count; ++i) {
         sysv_file *f = r->open_files+i;
@@ -554,6 +562,10 @@ bool sysv_stdio_fields(qa_source_save_io *io,guest_sysv_runtime *r)
         for (size_t j = 0; j < 6; ++j) if (!qa_source_save_u64(io,fields[j])) return false;
         if (!qa_source_save_u32(io,&f->descriptor) || !qa_source_save_u32(io,&f->mode) ||
             !qa_source_save_bool(io,&f->append) || !qa_source_save_bool(io,&f->closing)) return false;
+        if (io->direction == QA_SOURCE_SAVE_READ) {
+            qa_id_index_insert(&r->identities, SYSV_FILE_ADDRESS, f->address, i);
+            qa_id_index_insert(&r->identities, SYSV_FILE_HANDLE, f->handle, i);
+        }
     }
     return true;
 }
