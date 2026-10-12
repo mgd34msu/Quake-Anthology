@@ -52,50 +52,79 @@ static bool observe(qa_map_sidecars *owner, const char *path, qa_error *error)
     row->value.acquisition = &row->acquisition;
     return true;
 }
-static bool has_path(const qa_map_sidecars *owner, const char *path)
+static const char *inventory_path(const char *const *paths, size_t stride, size_t index)
 {
-    for (size_t i = 0; i < owner->count; ++i) if (!strcmp(owner->rows[i].value.path, path)) return true;
-    return false;
+    const char *path;
+    memcpy(&path, (const unsigned char *)paths + index * stride, sizeof(path));
+    return path;
 }
-bool map_sidecars_inventory(const qa_map_sidecars *owner, qa_error *error)
+static size_t inventory_path_index(const char *const *paths, size_t count, size_t stride,
+    const char *path)
 {
-    if (!owner || !owner->map_path || !owner->map || (owner->count && !owner->rows)) return false;
-    char *normalized = qa_vfs_normalize_path(owner->map_path, error);
-    bool valid = normalized && !strcmp(normalized, owner->map_path); free(normalized);
+    for (size_t i = 0; i < count; ++i)
+        if (!strcmp(inventory_path(paths, stride, i), path)) return i;
+    return count;
+}
+bool qa_map_sidecars_apply_inventory(const char *map_path, qa_bsp_view *bsp,
+    const char *const *paths, const qa_resource *const *resources,
+    size_t count, size_t stride, qa_error *error)
+{
+    if (!map_path || !bsp || (count && (!paths || !resources))) return false;
+    char *normalized = qa_vfs_normalize_path(map_path, error);
+    bool valid = normalized && !strcmp(normalized, map_path); free(normalized);
     if (!valid) return false;
-    qa_bsp_view bsp;
-    if (!qa_bsp_open(qa_resource_bytes(owner->map), &bsp, error) || bsp.family != owner->family) return false;
     size_t expected = 0;
-    if (bsp.family == QA_BSP_Q1) {
-        char *ent = q1_path(owner->map_path, ".ent", error), *lit = q1_path(owner->map_path, ".lit", error);
-        bool okay = ent && lit && has_path(owner, ent) && has_path(owner, lit);
+    const qa_resource *entities = NULL;
+    if (bsp->family == QA_BSP_Q1) {
+        char *ent = q1_path(map_path, ".ent", error), *lit = q1_path(map_path, ".lit", error);
+        size_t entity_index = ent ? inventory_path_index(paths, count, stride, ent) : count;
+        size_t light_index = lit ? inventory_path_index(paths, count, stride, lit) : count;
+        bool okay = ent && lit && entity_index < count && light_index < count;
         expected = ent && lit && !strcmp(ent, lit) ? 1 : 2;
         const qa_resource *light = NULL;
-        for (size_t i = 0; lit && i < owner->count; ++i) if (!strcmp(owner->rows[i].value.path, lit)) light = owner->rows[i].value.resource;
+        if (okay) {
+            memcpy(&entities, (const unsigned char *)resources + entity_index * stride, sizeof(entities));
+            memcpy(&light, (const unsigned char *)resources + light_index * stride, sizeof(light));
+        }
         qa_bsp_lighting lighting;
-        if (okay && light) okay = qa_resource_bytes(light).size >= 8 && qa_bsp_select_lighting(&bsp, qa_resource_bytes(light), &lighting, error);
+        if (okay && light) okay = qa_resource_bytes(light).size >= 8 && qa_bsp_select_lighting(bsp, qa_resource_bytes(light), &lighting, error);
         free(ent); free(lit);
         if (!okay) return map_sidecars_fail(error, QA_ERROR_FORMAT, "Q1 sidecar inventory lacks valid entity or lighting observations");
-    } else if (bsp.family == QA_BSP_Q2) {
-        for (size_t i = 0; i < qa_bsp_record_count(&bsp, QA_BSP_TEXINFO); ++i) {
+    } else if (bsp->family == QA_BSP_Q2) {
+        for (size_t i = 0; i < qa_bsp_record_count(bsp, QA_BSP_TEXINFO); ++i) {
             qa_bsp_texinfo texture; char path[1040];
-            if (!qa_bsp_read_texinfo(&bsp, i, &texture, error) || !map_sidecars_texture_path(texture.name, path, error) || !has_path(owner, path)) return false;
+            if (!qa_bsp_read_texinfo(bsp, i, &texture, error) || !map_sidecars_texture_path(texture.name, path, error) ||
+                inventory_path_index(paths, count, stride, path) == count) return false;
         }
-        for (size_t i = 0; i < owner->count; ++i) {
+        for (size_t i = 0; i < count; ++i) {
             bool used = false;
-            for (size_t j = 0; !used && j < qa_bsp_record_count(&bsp, QA_BSP_TEXINFO); ++j) {
+            const char *observed = inventory_path(paths, stride, i);
+            for (size_t j = 0; !used && j < qa_bsp_record_count(bsp, QA_BSP_TEXINFO); ++j) {
                 qa_bsp_texinfo texture; char path[1040];
-                if (!qa_bsp_read_texinfo(&bsp, j, &texture, error) || !map_sidecars_texture_path(texture.name, path, error)) return false;
-                used = !strcmp(path, owner->rows[i].value.path);
+                if (!qa_bsp_read_texinfo(bsp, j, &texture, error) || !map_sidecars_texture_path(texture.name, path, error)) return false;
+                used = !strcmp(path, observed);
             }
             if (!used) return map_sidecars_fail(error, QA_ERROR_FORMAT, "Q2 sidecar observation has no actual map texture");
             ++expected;
         }
     }
-    if (expected != owner->count) return map_sidecars_fail(error, QA_ERROR_FORMAT, "Map sidecar observation inventory differs from the actual map");
+    if (expected != count) return map_sidecars_fail(error, QA_ERROR_FORMAT, "Map sidecar observation inventory differs from the actual map");
+    for (size_t i = 1; i < count; ++i)
+        if (strcmp(inventory_path(paths, stride, i - 1), inventory_path(paths, stride, i)) >= 0) return false;
+    if (entities) bsp->lumps[QA_BSP_ENTITIES] = (qa_bsp_lump){.bytes = qa_resource_bytes(entities), .present = true};
+    return true;
+}
+bool map_sidecars_inventory(const qa_map_sidecars *owner, qa_error *error)
+{
+    if (!owner || !owner->map_path || !owner->map || (owner->count && !owner->rows)) return false;
+    qa_bsp_view bsp;
+    if (!qa_bsp_open(qa_resource_bytes(owner->map), &bsp, error) || bsp.family != owner->family ||
+        !qa_map_sidecars_apply_inventory(owner->map_path, &bsp,
+            owner->count ? &owner->rows[0].value.path : NULL,
+            owner->count ? &owner->rows[0].value.resource : NULL,
+            owner->count, sizeof(*owner->rows), error)) return false;
     for (size_t i = 0; i < owner->count; ++i) {
-        if (owner->rows[i].value.observation >= owner->count ||
-            (i && strcmp(owner->rows[i - 1].value.path, owner->rows[i].value.path) >= 0)) return false;
+        if (owner->rows[i].value.observation >= owner->count) return false;
         for (size_t j = 0; j < i; ++j) if (owner->rows[j].value.observation == owner->rows[i].value.observation) return false;
     }
     return true;
@@ -202,9 +231,10 @@ bool qa_map_sidecars_apply_entities(const qa_map_sidecars *owner, qa_bsp_view *b
     qa_bytes bytes = owner ? qa_resource_bytes(owner->map) : (qa_bytes){0};
     if (!bsp || !qa_map_sidecars_current(owner) || bsp->source.data != bytes.data || bsp->source.size != bytes.size)
         return map_sidecars_fail(error, QA_ERROR_ARGUMENT, "Entity sidecars require the exact held map view");
-    const qa_resource *resource = bsp->family == QA_BSP_Q1 ? extension_resource(owner, ".ent") : NULL;
-    if (resource) bsp->lumps[QA_BSP_ENTITIES] = (qa_bsp_lump){.bytes = qa_resource_bytes(resource), .present = true};
-    return true;
+    return qa_map_sidecars_apply_inventory(owner->map_path, bsp,
+        owner->count ? &owner->rows[0].value.path : NULL,
+        owner->count ? &owner->rows[0].value.resource : NULL,
+        owner->count, sizeof(*owner->rows), error);
 }
 qa_bytes qa_map_sidecars_external_lit(const qa_map_sidecars *owner)
 { const qa_resource *resource = extension_resource(owner, ".lit"); return resource ? qa_resource_bytes(resource) : (qa_bytes){0}; }

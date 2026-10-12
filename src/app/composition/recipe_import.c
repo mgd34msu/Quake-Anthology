@@ -371,51 +371,6 @@ static bool sidecar_scope(qa_executable_recipe *r, size_t view, qa_product_id pr
     }
     return true;
 }
-static const qa_recipe_sidecar *sidecar_path(const qa_executable_recipe *r, const char *path)
-{
-    for (size_t i = 0; i < r->sidecar_count; ++i) if (!strcmp(r->sidecars[i].path, path)) return r->sidecars + i;
-    return NULL;
-}
-static char *q1_sidecar_path(const char *map, const char *extension, qa_error *error)
-{
-    size_t length = strlen(map); char *path = malloc(length + 1);
-    if (!path) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Resolving map sidecar identity"); return NULL; }
-    memcpy(path, map, length + 1);
-    if (length >= 4 && !strcmp(path + length - 4, ".bsp")) memcpy(path + length - 4, extension, 5);
-    return path;
-}
-static bool sidecar_inventory(qa_executable_recipe *r, const qa_launch_resource *map, qa_error *error)
-{
-    if (r->bsp.family == QA_BSP_Q1) {
-        char *ent = q1_sidecar_path(map->path, ".ent", error), *lit = q1_sidecar_path(map->path, ".lit", error);
-        const qa_recipe_sidecar *entities = ent ? sidecar_path(r, ent) : NULL, *lighting = lit ? sidecar_path(r, lit) : NULL;
-        bool okay = entities && lighting && r->sidecar_count == (!strcmp(ent, lit) ? 1u : 2u);
-        if (okay && entities->resource) r->bsp.lumps[QA_BSP_ENTITIES] = (qa_bsp_lump){.bytes = qa_resource_bytes(entities->resource), .present = true};
-        if (okay && lighting->resource) {
-            qa_bsp_lighting result;
-            okay = qa_resource_bytes(lighting->resource).size >= 8 && qa_bsp_select_lighting(&r->bsp, qa_resource_bytes(lighting->resource), &result, error);
-        }
-        free(ent); free(lit); return okay || recipe_fail(error, "Offered Q1 sidecars omit or invalidate actual map inputs");
-    }
-    if (r->bsp.family != QA_BSP_Q2) return !r->sidecar_count || recipe_fail(error, "Q3 map has unexpected sidecar observations");
-    for (size_t i = 0; i < qa_bsp_record_count(&r->bsp, QA_BSP_TEXINFO); ++i) {
-        qa_bsp_texinfo texture; char path[1040];
-        if (!qa_bsp_read_texinfo(&r->bsp, i, &texture, error) || texture.name.size > 1024 || memchr(texture.name.data, 0, texture.name.size)) return false;
-        int size = snprintf(path, sizeof(path), "textures/%.*s.mat", (int)texture.name.size, (const char *)texture.name.data);
-        if (size < 0 || (size_t)size >= sizeof(path) || !sidecar_path(r, path)) return recipe_fail(error, "Offered Q2 sidecars omit an actual map texture");
-    }
-    for (size_t i = 0; i < r->sidecar_count; ++i) {
-        bool used = false;
-        for (size_t j = 0; !used && j < qa_bsp_record_count(&r->bsp, QA_BSP_TEXINFO); ++j) {
-            qa_bsp_texinfo texture; char path[1040];
-            if (!qa_bsp_read_texinfo(&r->bsp, j, &texture, error)) return false;
-            snprintf(path, sizeof(path), "textures/%.*s.mat", (int)texture.name.size, (const char *)texture.name.data);
-            used = !strcmp(path, r->sidecars[i].path);
-        }
-        if (!used) return recipe_fail(error, "Offered Q2 sidecar has no actual map texture");
-    }
-    return true;
-}
 static bool map_read(qa_executable_recipe *r, const qa_json_document *json, qa_json_id id, qa_error *error)
 {
     recipe_reader reader = {.json = json, .recipe = r, .error = error};
@@ -449,7 +404,11 @@ static bool map_read(qa_executable_recipe *r, const qa_json_document *json, qa_j
             if (reader.failed || !unsigned_field(json, resource, &index, error) || r->resources[index]->view != sidecar_view) return recipe_fail(error, "Sidecar bytes leave the genuine map content view");
         }
     }
-    if (!qa_bsp_open(qa_resource_bytes(map->resource), &r->bsp, error) || !sidecar_inventory(r, map, error) ||
+    if (!qa_bsp_open(qa_resource_bytes(map->resource), &r->bsp, error) ||
+        !qa_map_sidecars_apply_inventory(map->path, &r->bsp,
+            r->sidecar_count ? &r->sidecars[0].path : NULL,
+            r->sidecar_count ? &r->sidecars[0].resource : NULL,
+            r->sidecar_count, sizeof(*r->sidecars), error) ||
         !qa_collision_create(&r->bsp, &r->geometry, error) ||
         !qa_collision_bind_resource(r->geometry, (qa_resource *)map->resource, error)) return false;
     if (r->bsp.family == QA_BSP_Q2) for (size_t i = 0; i < qa_bsp_record_count(&r->bsp, QA_BSP_TEXINFO); ++i) {
@@ -632,7 +591,10 @@ bool recipe_metadata_restore(qa_executable_recipe *r, qa_error *error)
                 r->resources[index]->view == sidecar_view;
         }
     }
-    if (okay) okay = sidecar_inventory(r, actual_map, error) &&
+    if (okay) okay = qa_map_sidecars_apply_inventory(actual_map->path, &r->bsp,
+        r->sidecar_count ? &r->sidecars[0].path : NULL,
+        r->sidecar_count ? &r->sidecars[0].resource : NULL,
+        r->sidecar_count, sizeof(*r->sidecars), error) &&
         sidecars_check(r, json, qa_json_get(json, composition, "sidecars"), error);
     size_t views = 0, resources = 0;
     if (okay) okay = array(&reader, qa_json_get(json, recipe, "views"), &views) && views <= r->view_count &&

@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "da8d551a0d15454374e78339c6ef49691521cc5a",
+  "verified_main": "74c952c1d761824f716ef62df2b2ee8be71d9d99",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 199,
-    "open_source_observation": 172,
+    "fixed_source_build_core": 201,
+    "open_source_observation": 170,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -24636,8 +24636,9 @@
       "severity": "medium",
       "job": "02",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "74c952c1d761824f716ef62df2b2ee8be71d9d99"
     },
     {
       "id": "02-16",
@@ -30707,8 +30708,9 @@
       "severity": "high",
       "job": "17",
       "area": "frontend",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "source review; no runtime or performance proof",
+      "fixed_commit": "74c952c1d761824f716ef62df2b2ee8be71d9d99"
     },
     {
       "id": "17-02",
@@ -42646,6 +42648,36 @@
       ],
       "record_directory": "/tmp/qa-ta3196-gameplay-common-storage-20261012-v1",
       "conclusion": "Compass points are constructor-owned before live use, including admitted restore extents; medic uses retained keys and common actor lookup. Operation private frame/request allocations and spare list replaced by common pool, with new-peak growth still open. Normal build and seven core suites passed, including nested continuation behavior; no live or zero-growth claim."
+    },
+    {
+      "commit": "74c952c1d761824f716ef62df2b2ee8be71d9d99",
+      "source_tree": "4e44e9c1b1d4db1ca2f3a059aa0554c24fc08277",
+      "finding_ids": [
+        "02-15",
+        "17-01"
+      ],
+      "files_rechecked": [
+        "src/app/application/guest_qc.c",
+        "src/app/application/guest_qc_rerelease.c",
+        "src/app/application/guest_qc_rerelease.h",
+        "src/app/frontend/restart.c",
+        "src/app/frontend/shared_settings.c",
+        "src/app/frontend/shared_video.c",
+        "src/app/frontend/shared_video.h"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-client-owner-preparation-20261012-v1",
+      "conclusion": "QC finale polling storage/index now prepared at source construction, reused on reset and reconstructed on restore with inactive owner/save encoding preserved. Restart uses shared dimension projection with live registry or existing edit. Normal build and seven core suites passed; no live/gate claim."
     }
   ],
   "verification_limits": [

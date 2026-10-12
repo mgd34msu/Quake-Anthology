@@ -31,6 +31,11 @@ bool qa_map_sidecars_apply_entities(const qa_map_sidecars *, qa_bsp_view *, qa_e
 /* Returns presence separately, so an admitted empty .ent is preserved. */
 bool qa_map_sidecars_external_entities(const qa_map_sidecars *, qa_bytes *);
 qa_bytes qa_map_sidecars_external_lit(const qa_map_sidecars *);
+/* Borrowed path/resource field slots in strided rows; applies the admitted
+ * entity bytes and checks the inventory against the same map rules. */
+bool qa_map_sidecars_apply_inventory(const char *map_path, qa_bsp_view *,
+    const char *const *paths, const qa_resource *const *resources,
+    size_t count, size_t stride, qa_error *);
 bool qa_map_sidecars_apply_materials(const qa_map_sidecars *, qa_collision_geometry *, qa_strings *, qa_error *);
 /* Q2 consumes the first texinfo with this folded 31-byte texture name. The
  * bootstrap observations still use each complete authored name. */
