@@ -67,12 +67,8 @@ static bool knowledge_field(qa_source_save_io *io,application_bots *bots) {
     if(reading && count) {
         if(count>(io->input.size-io->offset)/17)
             return bot_save_fail(io,QA_ERROR_FORMAT,"Truncated weapon-handle knowledge map");
-        owner=calloc(1,sizeof(*owner));
-        if(!owner) return bot_save_fail(io,QA_ERROR_MEMORY,"Restoring actual weapon-handle knowledge owner");
-        bots->knowledge_owner=owner;
-        owner->actors=calloc(count,sizeof(*owner->actors));
-        if(!owner->actors) return bot_save_fail(io,QA_ERROR_MEMORY,"Restoring retained weapon-handle actor map");
-        owner->count=owner->capacity=count;
+        if(!application_bots_knowledge_prepare(bots,count,&owner,io->error)) return false;
+        owner->count=count;
     }
     if(count && (!owner || !owner->actors || owner->count>owner->capacity))
         return bot_save_fail(io,QA_ERROR_FORMAT,"Weapon-handle knowledge map has no actual allocation");
@@ -83,11 +79,20 @@ static bool knowledge_field(qa_source_save_io *io,application_bots *bots) {
            !provider_field(io,bots->application,&entry->provider,true) ||
            (entry->provider->kind!=APPLICATION_PROVIDER_Q1 && entry->provider->kind!=APPLICATION_PROVIDER_Q2 &&
             entry->provider->kind!=APPLICATION_PROVIDER_Q3))
-            return bot_save_fail(io,QA_ERROR_FORMAT,"Invalid actual selected-arsenal knowledge identity");
-        for(size_t j=0;j<i;++j) if(owner->actors[j].handle==entry->handle)
-            return bot_save_fail(io,QA_ERROR_FORMAT,"Duplicate retained weapon-handle knowledge key");
+            goto invalid;
+    }
+    if(reading && count) {
+        if(!application_bots_knowledge_reindex(owner,io->error)) {
+            application_bots_knowledge_release(owner);return false;
+        }
+        application_bot_knowledge_owner *previous=bots->knowledge_owner;
+        bots->knowledge_owner=owner;
+        application_bots_knowledge_release(previous);
     }
     return true;
+invalid:
+    if(reading && count) application_bots_knowledge_release(owner);
+    return bot_save_fail(io,QA_ERROR_FORMAT,"Invalid actual selected-arsenal knowledge identity");
 }
 bool application_bots_content_visit(const qa_application *app,const qa_application_content_visitor *visitor,
     qa_error *error) {

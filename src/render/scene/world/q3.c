@@ -263,7 +263,7 @@ static bool load_surface(qa_scene_world *world, q3_data *data, const qa_bsp_mate
     free(name);
     if (!registered) return false;
     if (surface->material->default_shader) {
-        surface->material = qa_material_find(world->materials, "*default");
+        surface->material = qa_material_library_builtin(world->materials, QA_MATERIAL_BUILTIN_DEFAULT);
         if (!surface->material) {
             qa_error_set(error, QA_ERROR_FORMAT, index, "Q3 material library has no source default shader");
             return false;
@@ -567,7 +567,7 @@ bool qaw_submit_q3(qa_scene_world *world, qaw_surface *surface, const qa_materia
     if (material->remapped) material = material->remapped;
     if (local.source_scratch) {
         local.source_writer = QA_SOURCE_WRITE_BSP_NORMAL;
-        local.source_default_material = qa_material_find(world->materials, "*default");
+        local.source_default_material = qa_material_library_builtin(world->materials, QA_MATERIAL_BUILTIN_DEFAULT);
     }
     if ((material->surface_flags & 0x80u) && !local.source_scratch) return true;
     if (material->sky) {

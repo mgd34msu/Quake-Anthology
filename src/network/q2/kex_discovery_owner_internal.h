@@ -2,10 +2,12 @@
 #define QA_KEX_DISCOVERY_OWNER_INTERNAL_H
 
 #include "qa/network_kex_discovery.h"
+#include "qa/arena.h"
 #include "../transport/kex_discovery_native.h"
 
 struct qa_kex_mdns_owner {
     qa_kex_mdns_socket *socket;
+    qa_arena name_storage, announcement_storage;
     uint16_t advertised_port;
     qa_kex_mdns_hooks hooks;
     qa_kex_mdns_endpoint endpoints[256];
@@ -17,6 +19,9 @@ struct qa_kex_mdns_owner {
 };
 
 bool qa_kex_mdns_owner_valid(const qa_kex_mdns_owner *);
+bool qa_kex_mdns_scratch_prepare(qa_arena *, qa_error *);
+bool qa_kex_mdns_read_scratch(qa_bytes, qa_arena *, qa_kex_mdns_result *, qa_error *);
+bool qa_kex_mdns_owner_storage_prepare(qa_kex_mdns_owner *, qa_error *);
 bool qa_kex_mdns_text_equal(qa_buffer, qa_buffer);
 void qa_kex_mdns_owner_release_records(qa_kex_mdns_owner *);
 

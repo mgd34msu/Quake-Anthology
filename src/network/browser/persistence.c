@@ -90,10 +90,8 @@ static bool restore_sources(qa_server_browser *browser, qa_bytes bytes, uint32_t
     if (ok) ok = qa_net_reader_finish(&reader);
     if (!ok) { free(q3); free(records); return false; }
     for (uint32_t i = 0; i < browser->capacity; ++i) {
-        if (browser->records[i].q3_response.data != records[i].q3_response.data)
-            qa_buffer_free(&browser->records[i].q3_response);
-        if (browser->records[i].status_response.data != records[i].status_response.data)
-            qa_buffer_free(&browser->records[i].status_response);
+        if (browser->records[i].response_data != records[i].response_data)
+            qa_browser_response_clear(browser, &browser->records[i]);
     }
     free(browser->records); free(browser->q3); browser->records = records; browser->q3 = q3; return true;
 }
@@ -197,7 +195,7 @@ static bool browser_restore_checkpoint(qa_bytes bytes, qa_http *http, uint32_t c
     uint32_t body_size = qa_net_read_u32(&r);
     if (!r.failed && body_size <= 1048576 && body_size <= qa_net_reader_remaining(&r)) {
         if (body_size) {
-            b->master_body.data = malloc((size_t)body_size + 1);
+            b->master_body.data = qa_arena_alloc(&b->master_storage, QA_BROWSER_HTTP_BYTES + 1, 1, error);
             if (!b->master_body.data) {
                 qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring HTTP master prefix"); ok = false;
             } else {
@@ -207,7 +205,10 @@ static bool browser_restore_checkpoint(qa_bytes bytes, qa_http *http, uint32_t c
             }
         }
     } else ok = false;
-    if (ok && b->http_master) ok = service_restore_text(&r, &b->master_url, 65535);
+    if (ok && b->http_master) {
+        b->master_url = qa_arena_alloc(&b->master_storage, QA_BROWSER_URL_BYTES + 1, 1, error);
+        ok = b->master_url && qa_net_read_string(&r, b->master_url, QA_BROWSER_URL_BYTES + 1) && *b->master_url;
+    }
     for (uint32_t i = 0; ok && !r.failed && i < capacity; ++i) {
         browser_record *record = &b->records[i]; qa_server_entry *e = &record->entry;
         record->occupied = q3_save_bool(&r); if (!record->occupied) continue;
@@ -225,20 +226,20 @@ static bool browser_restore_checkpoint(qa_bytes bytes, qa_http *http, uint32_t c
             ok = qa_net_reader_fail(&r, "Retained Q3 discovery datagram exceeds encoded extent"); break;
         }
         if (response_size) {
-            record->q3_response.data = malloc(response_size);
-            if (!record->q3_response.data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Importing retained Q3 response"); ok = false; break; }
-            record->q3_response.size = response_size;
-            ok = ok && qa_net_read_data(&r, record->q3_response.data, response_size);
+            qa_bytes response;
+            ok = qa_net_read_bytes(&r, response_size, &response) &&
+                qa_browser_response_store(b, record, response, true, error);
+            if (!ok) break;
         }
         response_size = qa_net_read_u32(&r);
         if (r.failed || response_size > 65535 || response_size > qa_net_reader_remaining(&r)) {
             ok = qa_net_reader_fail(&r, "Retained native discovery datagram exceeds encoded extent"); break;
         }
         if (response_size) {
-            record->status_response.data = malloc(response_size);
-            if (!record->status_response.data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Importing retained native response"); ok = false; break; }
-            record->status_response.size = response_size;
-            ok = ok && qa_net_read_data(&r, record->status_response.data, response_size);
+            qa_bytes response;
+            ok = qa_net_read_bytes(&r, response_size, &response) &&
+                qa_browser_response_store(b, record, response, false, error);
+            if (!ok) break;
         }
     }
     if (ok) ok = qa_browser_q3_restore(&r, b);

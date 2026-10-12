@@ -1,6 +1,5 @@
 #include "internal.h"
 #include "../service_save_fields.h"
-#include <stdlib.h>
 #include <string.h>
 
 static bool entry_write(qa_net_writer *w, const qa_server_entry *v)
@@ -159,26 +158,26 @@ bool qa_browser_q3_save(qa_net_writer *w, const qa_server_browser *b)
 bool qa_browser_q3_restore(qa_net_reader *r, qa_server_browser *b)
 {
     browser_q3 *q = b->q3;
+    browser_status_query *status_queue = q->status_queue;
+    size_t status_capacity = q->status_capacity;
+    browser_q3_broadcast *broadcasts = q->broadcasts;
+    size_t broadcast_capacity = q->broadcast_capacity;
     memset(q, 0, sizeof(*q));
+    q->status_queue = status_queue; q->status_capacity = status_capacity;
+    q->broadcasts = broadcasts; q->broadcast_capacity = broadcast_capacity;
     q->next_entry_order = qa_net_read_u64(r);
     uint64_t status_count = qa_net_read_u64(r);
     if (r->failed || status_count > SIZE_MAX / sizeof(browser_status_query) || status_count > qa_net_reader_remaining(r) / 19)
         return qa_net_reader_fail(r, "Source status queue exceeds encoded extent");
+    if (!qa_browser_queues_prepare(b, (size_t)status_count, 0, r->error)) { r->failed = true; return false; }
     q->status_count = (size_t)status_count;
-    if (status_count) {
-        q->status_queue = calloc((size_t)status_count, sizeof(*q->status_queue));
-        if (!q->status_queue) { qa_error_set(r->error, QA_ERROR_MEMORY, 0, "Importing Q3 status queue"); r->failed = true; return false; }
-    }
     for (size_t i = 0; i < q->status_count; ++i)
         if (!q3_restore_address(r,&q->status_queue[i].address) || !service_restore_protocol(r,&q->status_queue[i].protocol)) return false;
     uint64_t count = qa_net_read_u64(r);
     if (r->failed || count > SIZE_MAX / sizeof(browser_q3_broadcast) || count > qa_net_reader_remaining(r) / 16)
         return qa_net_reader_fail(r, "Q3 broadcast continuation exceeds encoded extent");
+    if (!qa_browser_queues_prepare(b, q->status_count, (size_t)count, r->error)) { r->failed = true; return false; }
     q->broadcast_count = (size_t)count;
-    if (count) {
-        q->broadcasts = calloc((size_t)count, sizeof(*q->broadcasts));
-        if (!q->broadcasts) { qa_error_set(r->error, QA_ERROR_MEMORY, 0, "Importing Q3 broadcast queries"); r->failed = true; return false; }
-    }
     for (size_t i = 0; i < q->broadcast_count; ++i) {
         q->broadcasts[i].query = qa_net_read_u64(r); q->broadcasts[i].sent_ns = qa_net_read_u64(r);
     }

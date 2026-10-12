@@ -79,31 +79,19 @@ bool qa_browser_status_decode(qa_bytes bytes, qa_net_protocol_id protocol,
         if (!qa_browser_kex_decode(bytes, &entry, error)) return false;
         entry.protocol = protocol;
     } else if (protocol.kind == QA_NET_Q3_68) {
-        qa_browser_q3_result *result = calloc(1, sizeof(*result));
-        if (!result) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating Q3 discovery scratch"); return false; }
+        qa_browser_q3_result result_storage = {0}; qa_browser_q3_result *result = &result_storage;
         bool ok = qa_browser_q3_decode(bytes, result, challenge, error);
         if (ok) entry = result->entry;
-        free(result); if (!ok) return false;
+        if (!ok) return false;
     } else {
-        qa_q2_oob *message = malloc(sizeof(*message)); bool recognized = false;
-        if (!message) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating Q2 discovery scratch"); return false; }
+        qa_q2_oob message_storage; qa_q2_oob *message = &message_storage; bool recognized = false;
         char rules[8193];
         bool ok = qa_q2_oob_read(bytes, protocol.kind == QA_NET_Q2REPRO_1038, message, &recognized, error);
         if (ok && recognized) ok = qa_q2_status_read(message, rules, sizeof(rules), q2_player, &entry, &recognized, error);
         if (ok && recognized) ok = info(&entry, rules, error);
-        free(message); if (!ok || !recognized) return qa_browser_fail(error, "Not a Q2 status response");
+        if (!ok || !recognized) return qa_browser_fail(error, "Not a Q2 status response");
     }
     *out = entry; return true;
-}
-bool qa_browser_status_store_response(browser_record *record, qa_bytes bytes, qa_error *error) {
-    if (!record || !bytes.data || !bytes.size || bytes.size > 65535)
-        return qa_browser_fail(error, "Invalid retained native discovery datagram");
-    uint8_t *copy = malloc(bytes.size);
-    if (!copy) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining complete native discovery datagram"); return false; }
-    memcpy(copy, bytes.data, bytes.size);
-    qa_buffer_free(&record->status_response);
-    record->status_response = (qa_buffer){copy, bytes.size};
-    return true;
 }
 bool qa_browser_status_response_valid(const browser_record *record) {
     if (!record->status_response.size) return !record->status_response.data &&
@@ -212,26 +200,18 @@ bool qa_server_browser_details_read(const qa_server_browser *browser, const qa_n
         for (size_t i = 0; ok && i < status.attribute_count; ++i)
             ok = detail_rule(&candidate,status.attributes[i].key,status.attributes[i].value,error);
     } else if (ok && protocol.kind == QA_NET_Q3_68) {
-        qa_browser_q3_result *status = calloc(1,sizeof(*status)); uint64_t challenge;
-        if (!status) { qa_error_set(error,QA_ERROR_MEMORY,0,"Decoding retained Q3 detail rows"); ok=false; }
-        else {
-            ok = qa_browser_q3_decode(bytes,status,&challenge,error);
-            for (uint32_t i=0;ok && i<status->player_count;++i)
-                ok=detail_player(&candidate,status->players[i].score,status->players[i].ping,
-                    status->names+status->players[i].name,error);
-            if(ok) ok=detail_info(&candidate,status->entry.rules,error);
-            free(status);
-        }
+        qa_browser_q3_result status_storage = {0}; qa_browser_q3_result *status = &status_storage; uint64_t challenge;
+        ok = qa_browser_q3_decode(bytes,status,&challenge,error);
+        for (uint32_t i=0;ok && i<status->player_count;++i)
+            ok=detail_player(&candidate,status->players[i].score,status->players[i].ping,
+                status->names+status->players[i].name,error);
+        if(ok) ok=detail_info(&candidate,status->entry.rules,error);
     } else if (ok) {
-        qa_q2_oob *message=malloc(sizeof(*message)); bool recognized=false;
-        if(!message) { qa_error_set(error,QA_ERROR_MEMORY,0,"Decoding retained Q2 detail rows"); ok=false; }
-        else {
-            char rules[8193];
-            ok=qa_q2_oob_read(bytes,protocol.kind==QA_NET_Q2REPRO_1038,message,&recognized,error) && recognized &&
-                qa_q2_status_read(message,rules,sizeof(rules),detail_player,&candidate,&recognized,error) && recognized &&
-                detail_info(&candidate,rules,error);
-            free(message);
-        }
+        qa_q2_oob message_storage; qa_q2_oob *message = &message_storage; bool recognized=false;
+        char rules[8193];
+        ok=qa_q2_oob_read(bytes,protocol.kind==QA_NET_Q2REPRO_1038,message,&recognized,error) && recognized &&
+            qa_q2_status_read(message,rules,sizeof(rules),detail_player,&candidate,&recognized,error) && recognized &&
+            detail_info(&candidate,rules,error);
     }
     if(!ok) { qa_server_browser_details_free(&candidate); return false; }
     *out=candidate;

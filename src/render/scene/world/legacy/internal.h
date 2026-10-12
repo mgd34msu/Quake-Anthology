@@ -8,6 +8,7 @@ typedef struct qawl_texture {
     uint32_t width, height, quake64_shift;
     qa_scene_image *image, *fullbright, *sky[2];
     size_t animation[2][10], animation_count[2];
+    unsigned animation_cycle;
     int32_t next;
 } qawl_texture;
 
@@ -28,7 +29,7 @@ typedef struct qawl_point_light {
 
 typedef struct qawl_world {
     qawl_texture *textures;
-    size_t texture_count;
+    size_t texture_count, q1_mirror_texture;
     const qawl_texture *q1_sky_texture;
     qa_vec4 q1_sky_flat;
     qa_bsp_q1_metadata metadata;
@@ -87,6 +88,7 @@ void qawl_light_atlases_dirty(qa_scene_world *);
 bool qawl_light_styles_prepare(qa_scene_world *, qa_error *);
 bool qawl_light_styles(qa_scene_world *, const qa_scene_world_input *, qa_error *);
 bool qawl_textures_build(qa_scene_world *, qa_error *);
+void qawl_texture_names_bind(qa_scene_world *);
 void qawl_textures_destroy(qawl_world *);
 bool qawl_geometry_build(qa_scene_world *, qaw_surface *, const qa_bsp_face *,
                          const qa_bsp_texinfo *, qa_error *);

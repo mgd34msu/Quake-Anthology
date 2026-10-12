@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/text.h"
+#include "qa/network_q2.h"
 #include "qa/network_q3.h"
 #include <inttypes.h>
 #include <stdio.h>
@@ -62,11 +63,12 @@ bool qa_server_browser_q3_entry(const qa_server_browser *b, const qa_net_address
 }
 static bool send(qa_server_browser *b, const qa_net_address *a, const char *text, qa_error *e)
 {
-    qa_buffer bytes = {0};
-    if (!qa_q3_connectionless_encode(text, &bytes, e)) return false;
+    uint8_t bytes[QA_Q3_MESSAGE_BYTES - 1];
+    qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), e);
+    if (!qa_q2_oob_write(&writer, text)) return false;
     b->callback = true;
-    bool ok = b->hooks.send(b->hooks.context, a, (qa_bytes){bytes.data, bytes.size}, e);
-    b->callback = false; qa_buffer_free(&bytes); return ok;
+    bool ok = b->hooks.send(b->hooks.context, a, (qa_bytes){bytes, qa_net_writer_size(&writer)}, e);
+    b->callback = false; return ok;
 }
 bool qa_server_browser_q3_request(qa_server_browser *b, const qa_net_address *a,
     qa_browser_q3_request_kind kind, uint64_t now, qa_browser_q3_request_id *out, qa_error *e)
@@ -130,11 +132,8 @@ bool qa_server_browser_q3_scan(qa_server_browser *b, uint64_t now, qa_error *e)
     uint64_t query = b->next_query++;
     if (b->q3->broadcast_count >= SIZE_MAX / sizeof(browser_q3_broadcast) - 1)
         return qa_browser_fail(e, "Q3 broadcast allocation extent exhausted");
-    browser_q3_broadcast *broadcasts = realloc(b->q3->broadcasts,
-        (b->q3->broadcast_count + 1) * sizeof(*broadcasts));
-    if (!broadcasts) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining Q3 broadcast query"); return false; }
-    b->q3->broadcasts = broadcasts;
-    broadcasts[b->q3->broadcast_count++] = (browser_q3_broadcast){query, now};
+    if (!qa_browser_queues_prepare(b, b->q3->status_count, b->q3->broadcast_count + 1, e)) return false;
+    b->q3->broadcasts[b->q3->broadcast_count++] = (browser_q3_broadcast){query, now};
     char text[64]; (void)snprintf(text, sizeof(text), "getinfo %" PRIu64, query);
     for (uint16_t i = 0; i < 4; ++i) {
         qa_net_address a = {.kind = QA_NET_IPV4, .port = (uint16_t)(27960 + i), .host.ipv4 = {255,255,255,255}};
@@ -161,10 +160,8 @@ bool qa_browser_status_enqueue(qa_server_browser *b, const qa_net_address *addre
             qa_net_address_equal(&b->q3->status_queue[i].address, address, true)) return true;
     if (b->q3->status_count >= SIZE_MAX / sizeof(browser_status_query) - 1)
         return qa_browser_fail(e, "Discovery queue extent exhausted");
-    browser_status_query *queue = realloc(b->q3->status_queue, (b->q3->status_count + 1) * sizeof(*queue));
-    if (!queue) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining ordered source status query"); return false; }
-    b->q3->status_queue = queue;
-    queue[b->q3->status_count++] = (browser_status_query){*address,dialect}; return true;
+    if (!qa_browser_queues_prepare(b, b->q3->status_count + 1, b->q3->broadcast_count, e)) return false;
+    b->q3->status_queue[b->q3->status_count++] = (browser_status_query){*address,dialect}; return true;
 }
 static unsigned status_family(qa_net_protocol_id dialect)
 {
@@ -246,18 +243,17 @@ static void rules_map(const char *raw, char out[8193])
 }
 bool qa_browser_q3_decode(qa_bytes bytes, qa_browser_q3_result *out, uint64_t *challenge, qa_error *e)
 {
-    qa_q3_connectionless *packet = malloc(sizeof(*packet));
-    qa_q3_tokens *tokens = malloc(sizeof(*tokens));
-    if (!packet || !tokens) { free(packet); free(tokens); qa_error_set(e, QA_ERROR_MEMORY, 0, "Decoding Q3 browser response"); return false; }
+    qa_q3_connectionless packet_storage; qa_q3_connectionless *packet = &packet_storage;
+    qa_q3_tokens tokens_storage; qa_q3_tokens *tokens = &tokens_storage;
     bool ok = qa_q3_connectionless_decode(bytes, QA_Q3_CLIENT, packet, e);
-    if (!ok) { free(packet); free(tokens); return false; }
+    if (!ok) return false;
     char command[32]; const char *original = qa_q3_token(&packet->tokens, 0);
     size_t command_size = strlen(original);
-    if (command_size >= sizeof(command)) { free(packet); free(tokens); return false; }
+    if (command_size >= sizeof(command)) return false;
     for (size_t i = 0; i <= command_size; ++i)
         command[i] = original[i] >= 'A' && original[i] <= 'Z' ? (char)(original[i] + ('a' - 'A')) : original[i];
     bool info = !strcmp(command, "inforesponse"), status = !strcmp(command, "statusresponse");
-    if (!ok || (!info && !status)) { free(packet); free(tokens); return false; }
+    if (!info && !status) return false;
     out->kind = out->response_kind = info ? QA_BROWSER_Q3_INFO : QA_BROWSER_Q3_STATUS;
     char text[QA_Q3_MESSAGE_BYTES]; size_t n = 0;
     while (n < packet->payload_size && packet->payload[n]) {
@@ -314,16 +310,7 @@ bool qa_browser_q3_decode(qa_bytes bytes, qa_browser_q3_result *out, uint64_t *c
     entry->players = (uint32_t)clients; entry->maximum_players = (uint32_t)maximum;
     for (char *p = entry->name; *p; ++p) if ((unsigned char)*p < 32 || *p == 127) *p = ' ';
     for (char *p = entry->map; *p; ++p) if ((unsigned char)*p < 32 || *p == 127) *p = ' ';
-    free(packet); free(tokens); return ok;
-}
-bool qa_browser_q3_store_response(browser_record *record, qa_bytes bytes, qa_error *e)
-{
-    if (!record || !bytes.data || !bytes.size || bytes.size > QA_Q3_MESSAGE_BYTES)
-        return qa_browser_fail(e, "Invalid retained Q3 discovery datagram");
-    uint8_t *data = malloc(bytes.size);
-    if (!data) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining complete Q3 discovery datagram"); return false; }
-    memcpy(data, bytes.data, bytes.size);
-    qa_buffer_free(&record->q3_response); record->q3_response = (qa_buffer){data, bytes.size}; return true;
+    return ok;
 }
 bool qa_browser_q3_response_valid(const browser_record *record)
 {
@@ -331,14 +318,13 @@ bool qa_browser_q3_response_valid(const browser_record *record)
         (record->entry.protocol.kind != QA_NET_Q3_68 || !record->entry.available);
     if (!record->occupied || record->entry.protocol.kind != QA_NET_Q3_68 || !record->entry.available ||
         !record->q3_response.data || record->q3_response.size > QA_Q3_MESSAGE_BYTES) return false;
-    qa_browser_q3_result *decoded = calloc(1, sizeof(*decoded));
-    if (!decoded) return false;
+    qa_browser_q3_result decoded_storage = {0}; qa_browser_q3_result *decoded = &decoded_storage;
     uint64_t challenge; qa_error ignored = {0};
     bool ok = qa_browser_q3_decode((qa_bytes){record->q3_response.data, record->q3_response.size}, decoded, &challenge, &ignored);
     const qa_server_entry *entry = &record->entry;
     if (ok) ok = entry->players == decoded->entry.players && entry->maximum_players == decoded->entry.maximum_players &&
         !strcmp(entry->name, decoded->entry.name) && !strcmp(entry->map, decoded->entry.map) && !strcmp(entry->rules, decoded->entry.rules);
-    free(decoded); return ok;
+    return ok;
 }
 bool qa_server_browser_q3_cached_entry_read(const qa_server_browser *b, const qa_net_address *address,
     qa_browser_q3_cached_entry *out, qa_error *e)
@@ -375,8 +361,7 @@ bool qa_server_browser_q3_cached_entry_validate(const qa_browser_q3_cached_entry
 {
     if (!restored_entry_valid(saved, e)) return false;
     if (saved->response.size) {
-        qa_browser_q3_result *decoded = calloc(1, sizeof(*decoded));
-        if (!decoded) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Qualifying cached Q3 player names"); return false; }
+        qa_browser_q3_result decoded_storage = {0}; qa_browser_q3_result *decoded = &decoded_storage;
         uint64_t challenge; bool ok = qa_browser_q3_decode(saved->response, decoded, &challenge, e);
         const char *p = decoded->entry.rules; uint32_t pairs = 0;
         while (ok && *p) {
@@ -386,7 +371,6 @@ bool qa_server_browser_q3_cached_entry_validate(const qa_browser_q3_cached_entry
         }
         for (uint32_t i = 0; ok && i < decoded->player_count; ++i)
             if (strlen(decoded->names + decoded->players[i].name) > 1024) ok = false;
-        free(decoded);
         if (!ok) return qa_browser_fail(e, "Q3 cached rule or player name exceeds source cache limit");
     }
     return true;
@@ -402,7 +386,7 @@ bool qa_server_browser_q3_restore_entry(qa_server_browser *b, const qa_browser_q
         browser_record *record = &b->records[i];
         if (!record->occupied || record->entry.protocol.kind != QA_NET_Q3_68 ||
             !qa_net_address_equal(&record->entry.address, &entry->address, true)) continue;
-        if (saved->response.size && !qa_browser_q3_store_response(record, saved->response, e)) return false;
+        if (saved->response.size && !qa_browser_response_store(b, record, saved->response, true, e)) return false;
         uint32_t sources = record->entry.sources;
         bool pending = record->entry.pending, timed_out = record->entry.timed_out;
         record->entry = *entry; record->entry.sources = sources;
@@ -418,10 +402,9 @@ bool qa_browser_q3_receive(qa_server_browser *b, const qa_net_datagram *packet, 
     for (size_t i = 0; i < 48; ++i) if (b->q3->requests[i].id && !b->q3->requests[i].result.completed &&
         qa_net_address_equal(&b->q3->requests[i].result.address, &packet->from, true)) possible = true;
     if (!possible) return true;
-    qa_browser_q3_result *decoded = calloc(1, sizeof(*decoded));
-    if (!decoded) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining Q3 browser response"); return false; }
+    qa_browser_q3_result decoded_storage = {0}; qa_browser_q3_result *decoded = &decoded_storage;
     uint64_t challenge = 0; qa_error ignored = {0};
-    if (!qa_browser_q3_decode(packet->payload, decoded, &challenge, &ignored)) { free(decoded); return true; }
+    if (!qa_browser_q3_decode(packet->payload, decoded, &challenge, &ignored)) return true;
     browser_q3_request *match = NULL;
     for (size_t i = 0; i < 48; ++i) {
         browser_q3_request *r = &b->q3->requests[i];
@@ -434,16 +417,16 @@ bool qa_browser_q3_receive(qa_server_browser *b, const qa_net_datagram *packet, 
         if (challenge == b->q3->broadcasts[i].query) {
             broadcast = true; sent = b->q3->broadcasts[i].sent_ns; break;
         }
-    if (packet->received_ns < sent || (!match && !broadcast)) { free(decoded); return true; }
+    if (packet->received_ns < sent || (!match && !broadcast)) return true;
     if (broadcast) {
         b->callback = true; bool local = b->hooks.local && b->hooks.local(b->hooks.context, &packet->from); b->callback = false;
-        if (!local) { free(decoded); return true; }
+        if (!local) return true;
     }
     qa_server_entry previous;
     bool existing = qa_server_browser_q3_entry(b, &packet->from, &previous);
     if (!existing || broadcast) if (!qa_server_browser_add(b, &packet->from, protocol,
-        broadcast ? QA_SERVER_LAN : QA_SERVER_DIRECT, e)) { free(decoded); return false; }
-    if (!qa_server_browser_q3_entry(b, &packet->from, &previous)) { free(decoded); return false; }
+        broadcast ? QA_SERVER_LAN : QA_SERVER_DIRECT, e)) return false;
+    if (!qa_server_browser_q3_entry(b, &packet->from, &previous)) return false;
     decoded->address = packet->from; decoded->sent_ns = sent; decoded->completed_ns = packet->received_ns; decoded->completed = true;
     decoded->entry.address = packet->from; decoded->entry.sources = previous.sources;
     decoded->entry.updated_ns = packet->received_ns; decoded->entry.ping_ns = packet->received_ns - sent;
@@ -451,12 +434,12 @@ bool qa_browser_q3_receive(qa_server_browser *b, const qa_net_datagram *packet, 
     for (uint32_t i = 0; i < b->capacity; ++i) if (b->records[i].occupied &&
         b->records[i].entry.protocol.kind == QA_NET_Q3_68 && qa_net_address_equal(&b->records[i].entry.address, &packet->from, true)) {
         bool pending = b->records[i].entry.pending, timed_out = b->records[i].entry.timed_out;
-        if (!qa_browser_q3_store_response(&b->records[i], packet->payload, e)) { free(decoded); return false; }
+        if (!qa_browser_response_store(b, &b->records[i], packet->payload, true, e)) return false;
         b->records[i].entry = decoded->entry;
         b->records[i].entry.pending = pending; b->records[i].entry.timed_out = timed_out;
         break;
     }
     if (match) { decoded->kind = match->result.kind; match->result = *decoded; }
     qa_browser_changed(b, &decoded->entry, QA_BROWSER_STATUS_RECEIVED);
-    free(decoded); *recognized = true; return true;
+    *recognized = true; return true;
 }

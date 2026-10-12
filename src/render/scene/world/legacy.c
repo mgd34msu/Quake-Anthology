@@ -37,6 +37,19 @@ static bool q2_frames(qawl_world *data, qaw_legacy *legacy, qa_error *error)
     return true;
 }
 
+void qawl_texture_names_bind(qa_scene_world *world)
+{
+    qawl_world *data = world->legacy_data;
+    data->q1_mirror_texture = SIZE_MAX;
+    if (world->bsp.family != QA_BSP_Q1) return;
+    for (size_t i = 0; i < data->texture_count; ++i) {
+        qawl_texture *texture = &data->textures[i];
+        texture->animation_cycle = texture->name[0] == '+' &&
+            toupper((unsigned char)texture->name[1]) >= 'A' ? 1u : 0u;
+        if (!strncmp(texture->name, "window02_1", 10)) data->q1_mirror_texture = i;
+    }
+}
+
 bool qaw_build_legacy(qa_scene_world *world, qa_error *error)
 {
     if (!isfinite(world->options.q1_water_alpha) || !isfinite(world->options.q2_light_modulate)) {
@@ -58,6 +71,7 @@ bool qaw_build_legacy(qa_scene_world *world, qa_error *error)
     bool q1 = world->bsp.family == QA_BSP_Q1;
     if (q1 && !qa_bsp_read_q1_metadata(&world->bsp, &data->metadata, error)) return false;
     if (!qawl_textures_build(world, error)) return false;
+    qawl_texture_names_bind(world);
     for (size_t i = 0; i < world->surface_count; ++i) {
         qaw_surface *surface = &world->surfaces[i];
         qa_bsp_face face;
@@ -246,7 +260,7 @@ static qawl_texture *animated_texture(qa_scene_world *world, const qaw_legacy *l
         if (phase < 0) phase += (int64_t)legacy->frame_count;
         return &data->textures[legacy->frames[(size_t)phase]];
     }
-    unsigned cycle = texture->name[0] == '+' && toupper((unsigned char)texture->name[1]) >= 'A' ? 1u : 0u;
+    unsigned cycle = texture->animation_cycle;
     if (input->alternate_animation && texture->animation_count[cycle ^ 1]) cycle ^= 1;
     size_t count = texture->animation_count[cycle];
     if (!count) return texture;

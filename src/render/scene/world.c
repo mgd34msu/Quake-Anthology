@@ -239,6 +239,7 @@ bool qa_scene_world_image_policy_prepare(qa_scene_world *world, qa_scene_resourc
         qa_scene_world staging = *world;
         staging.resources = destination; staging.legacy_data = &ticket->textures;
         if (!qawl_textures_build(&staging, error)) { world_policy_dispose(ticket); return false; }
+        qawl_texture_names_bind(&staging);
         const qawl_world *current = world->legacy_data;
         if (current->texture_count != ticket->textures.texture_count) {
             world_policy_dispose(ticket);
@@ -347,7 +348,7 @@ bool qa_scene_world_image_policy_ready(qa_scene_world_image_policy *ticket,
                     lightmap, surface->lightmap != NULL, name, &ticket->owner->options.images, &registered, &pending, error);
                 free(name);
                 if (!found) { qa_bsp_materials_free(&source_materials); return false; }
-                const qa_material *fallback = qa_material_find(ticket->owner->materials, "*default");
+                const qa_material *fallback = qa_material_library_builtin(ticket->owner->materials, QA_MATERIAL_BUILTIN_DEFAULT);
                 if (surface->material == registered || surface->material == fallback) {
                     prepared->material = pending->default_shader ? fallback : registered;
                     if (!prepared->material || !qa_scene_material_image_policy_read(materials, prepared->material, &material)) {
@@ -376,12 +377,15 @@ void qa_scene_world_image_policy_publish(qa_scene_world_image_policy *ticket)
     if (world->legacy_data) {
         qawl_world *current = world->legacy_data;
         qawl_texture *textures = current->textures; size_t count = current->texture_count;
+        size_t mirror_texture = current->q1_mirror_texture;
         const qawl_texture *sky_texture = current->q1_sky_texture;
         qa_vec4 sky_flat = current->q1_sky_flat;
         current->textures = ticket->textures.textures; current->texture_count = ticket->textures.texture_count;
+        current->q1_mirror_texture = ticket->textures.q1_mirror_texture;
         current->q1_sky_texture = ticket->textures.q1_sky_texture;
         current->q1_sky_flat = ticket->textures.q1_sky_flat;
         ticket->textures.textures = textures; ticket->textures.texture_count = count;
+        ticket->textures.q1_mirror_texture = mirror_texture;
         ticket->textures.q1_sky_texture = sky_texture;
         ticket->textures.q1_sky_flat = sky_flat;
         for (size_t i = 0; i < 6; ++i) {
@@ -1492,9 +1496,7 @@ bool qa_scene_world_q1_mirror(qa_scene_world *world, const qa_scene_world_input 
     *out = NULL; *found = false;
     if (world->bsp.family != QA_BSP_Q1 || input->no_world || input->view.mirror) return true;
     qawl_world *data = world->legacy_data;
-    size_t texture = SIZE_MAX;
-    for (size_t i = 0; i < data->texture_count; ++i)
-        if (!strncmp(data->textures[i].name, "window02_1", 10)) texture = i;
+    size_t texture = data->q1_mirror_texture;
     if (texture == SIZE_MAX || !world_visible(world, input, NULL, error)) return texture == SIZE_MAX;
     if (world->surface_count > SIZE_MAX / sizeof(uint32_t) ||
         world->node_count > SIZE_MAX / sizeof(qa_collision_tree_frame) - 1)

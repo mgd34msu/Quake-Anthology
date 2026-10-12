@@ -6,6 +6,10 @@
 #include "qa/strings.h"
 
 typedef struct owned_image owned_image;
+typedef struct image_animation_binding {
+    owned_image *parent;
+    size_t frame;
+} image_animation_binding;
 typedef struct qa_scene_resources_capture qa_scene_resources_capture;
 typedef struct scene_names {
     qa_strings *strings;
@@ -15,6 +19,7 @@ typedef struct scene_names {
     qa_scene_resources *owner;
     qa_arena storage;
     qa_pool revisions, lineages;
+    qa_id_index image_relations;
 } scene_names;
 typedef struct image_lineage {
     uint64_t revision;
@@ -55,6 +60,8 @@ struct owned_image {
     const qa_scene_image *sampling_source;
     bool sampling_mipmap;
     const qa_scene_image *source_variant_source;
+    image_animation_binding *animation_bindings;
+    size_t animation_binding_count;
     bool generic_variant, generic_variant_mipmap;
     bool recipient_first_upload;
     recipient_image_binding *recipient_bindings;
@@ -125,6 +132,7 @@ struct qa_scene_resources {
     image_cache *cache;
     image_request *requests;
     qa_id_index request_index;
+    qa_id_index image_index;
     size_t request_capacity;
     image_alias *aliases;
     size_t cache_count, cache_capacity;

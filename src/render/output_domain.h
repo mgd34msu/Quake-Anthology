@@ -1,5 +1,6 @@
 #ifndef QA_RENDER_OUTPUT_DOMAIN_H
 #define QA_RENDER_OUTPUT_DOMAIN_H
+#include "qa/arena.h"
 #include "qa/scene.h"
 #include "qa/source_save.h"
 typedef struct qa_output_domain_region {
@@ -8,11 +9,14 @@ typedef struct qa_output_domain_region {
     bool source;
 } qa_output_domain_region;
 typedef struct qa_output_domains {
+    qa_arena storage;
     qa_output_domain_region *regions;
     size_t count, capacity;
     uint32_t width, height;
 } qa_output_domains;
 void qa_output_domains_extent(qa_output_domains *, uint32_t width, uint32_t height);
+bool qa_output_domains_prepare(qa_output_domains *, const qa_scene_frame *, size_t first,
+    qa_error *);
 bool qa_output_domains_assign(qa_output_domains *, qa_scene_rect, qa_scene_draw_buffer,
     bool source, uint32_t width, uint32_t height, qa_error *);
 bool qa_output_domains_source(const qa_output_domains *, uint32_t x, uint32_t y,

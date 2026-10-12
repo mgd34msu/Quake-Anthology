@@ -9,7 +9,7 @@ static bool text_write(qa_net_writer *w, qa_buffer text)
     return qa_net_write_u32(w, (uint32_t)text.size) && qa_net_write_data(w, text.data, text.size);
 }
 
-static bool text_read(qa_net_reader *r, qa_buffer *out, size_t maximum, bool folded, qa_error *e)
+static bool text_read(qa_net_reader *r, qa_arena *temporary, qa_buffer *out, size_t maximum, bool folded, qa_error *e)
 {
     uint32_t size = qa_net_read_u32(r);
     if (r->failed || size >= maximum || size > qa_net_reader_remaining(r))
@@ -22,9 +22,12 @@ static bool text_read(qa_net_reader *r, qa_buffer *out, size_t maximum, bool fol
     data[size] = 0;
     if (folded) {
         qa_buffer lower = {0};
-        if (!qa_utf8_lower((qa_bytes){data, size}, &lower, e)) { free(data); return false; }
+        qa_arena_reset(temporary);
+        if (!qa_utf8_lower_arena((qa_bytes){data, size}, temporary, &lower, e)) {
+            qa_arena_reset(temporary); free(data); return false;
+        }
         bool same = lower.size == size && (!size || !memcmp(lower.data, data, size));
-        qa_buffer_free(&lower);
+        qa_arena_reset(temporary);
         if (!same) { free(data); return qa_net_reader_fail(r, "Retained DNS target does not preserve its actual Unicode key"); }
     }
     *out = (qa_buffer){data, size};
@@ -79,7 +82,10 @@ bool qa_kex_mdns_owner_restore(qa_bytes bytes, const qa_kex_mdns_hooks *hooks,
     qa_net_reader r;
     qa_net_reader_init(&r, bytes, e);
     r.bit = 32;
-    bool ok = true;
+    /* Validation can lowercase the full saved target extent before rejecting
+     * a noncanonical key, including the existing Unicode expansion bound. */
+    bool ok = qa_arena_reserve(&o->name_storage, QA_KEX_DNS_FOLDED_BYTES * 12u + 1u, e) &&
+        qa_kex_mdns_owner_storage_prepare(o, e);
     o->advertised_port = qa_net_read_u16(&r);
     uint8_t closed = qa_net_read_u8(&r), published = qa_net_read_u8(&r), pending = qa_net_read_u8(&r);
     o->closed = closed != 0;
@@ -93,14 +99,14 @@ bool qa_kex_mdns_owner_restore(qa_bytes bytes, const qa_kex_mdns_hooks *hooks,
         addresses <= 256 && (o->advertised_port || hooks->found);
     for (size_t i = 0; ok && i < endpoints; ++i) {
         qa_kex_mdns_endpoint *p = &o->endpoints[o->endpoint_count++];
-        ok = text_read(&r, &p->instance, QA_KEX_DNS_NAME_BYTES, false, e) &&
-            text_read(&r, &p->target, QA_KEX_DNS_FOLDED_BYTES, true, e);
+        ok = text_read(&r, &o->name_storage, &p->instance, QA_KEX_DNS_NAME_BYTES, false, e) &&
+            text_read(&r, &o->name_storage, &p->target, QA_KEX_DNS_FOLDED_BYTES, true, e);
         p->port = qa_net_read_u16(&r);
         ok = ok && !r.failed;
     }
     for (size_t i = 0; ok && i < addresses; ++i) {
         qa_kex_mdns_address *a = &o->addresses[o->address_count++];
-        ok = text_read(&r, &a->target, QA_KEX_DNS_FOLDED_BYTES, true, e);
+        ok = text_read(&r, &o->name_storage, &a->target, QA_KEX_DNS_FOLDED_BYTES, true, e);
         a->address.kind = (qa_net_address_kind)qa_net_read_u8(&r);
         a->address.port = QA_KEX_LAN_PORT;
         if (a->address.kind == QA_NET_IPV4) ok = ok && qa_net_read_data(&r, a->address.host.ipv4, 4);
@@ -112,6 +118,8 @@ bool qa_kex_mdns_owner_restore(qa_bytes bytes, const qa_kex_mdns_hooks *hooks,
     }
     if (!ok || !qa_net_reader_finish(&r) || !qa_kex_mdns_owner_valid(o)) {
         qa_kex_mdns_owner_release_records(o);
+        qa_arena_destroy(&o->name_storage);
+        qa_arena_destroy(&o->announcement_storage);
         free(o);
         if (!e || e->code == QA_OK) qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid KEX mDNS retained records");
         return false;

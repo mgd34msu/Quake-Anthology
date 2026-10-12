@@ -123,10 +123,14 @@ bool q3n_selected_media_prepare(q3n_selected_media *o, const q3n_selected_media_
 {
     if (!q3n_selected_media_idle(o) || !r || !r->current || !out || !qa_q3_assets_idle(o->options.assets))
         return q3p_fail(e, QA_ERROR_ARGUMENT, "Selected Q3 media admission requires its genuine idle observation and registry");
-    const qa_q3_item *item = q3n_selected_media_item(o->options.product, r->weapon);
-    if (!item || !item->model || !*item->model) return q3p_fail(e, QA_ERROR_ARGUMENT, "Selected Q3 weapon has no authored product model");
+    const q3n_selected_media_row *retained = r->weapon > 0 && r->weapon < 14 ? &o->rows[r->weapon] : NULL;
+    bool admitting = !retained || !retained->world_ready || !o->shaders_ready ||
+        (r->view_required && (!retained->view_ready || !o->animation_resource));
+    const qa_q3_item *item = admitting ? q3n_selected_media_item(o->options.product, r->weapon) : NULL;
+    if (!retained || (admitting && (!item || !item->model || !*item->model)))
+        return q3p_fail(e, QA_ERROR_ARGUMENT, "Selected Q3 weapon has no authored product model");
     if (!current(r, e)) return false;
-    o->busy = true; q3n_selected_media_row row = o->rows[r->weapon]; bool ok = true; char path[128];
+    o->busy = true; q3n_selected_media_row row = *retained; bool ok = true; char path[128];
     if (!row.world_ready) {
         ok = model(o, r, item->model, &row.gun, true, e) &&
             q3n_selected_media_path(item->model, "_barrel.md3", path, e) && model(o, r, path, &row.barrel, false, e) &&
@@ -150,18 +154,22 @@ bool q3n_selected_media_prepare(q3n_selected_media *o, const q3n_selected_media_
         if (ok) row.view_ready = true;
     }
     if (ok) ok = current(r, e);
+    if (ok && admitting) {
+        q3n_selected_media candidate = *o;
+        candidate.rows[r->weapon] = row;
+        ok = q3n_selected_media_valid(&candidate, e);
+    }
     if (ok) { o->rows[r->weapon] = row; *out = tuple(o, &row); }
     o->busy = false; return ok;
 }
 bool q3n_selected_media_read(const q3n_selected_media *o, int32_t weapon,
     bool view_required, q3n_selected_weapon_media *out, qa_error *e)
 {
-    if (!q3n_selected_media_idle(o) || !out || !q3n_selected_media_item(o->options.product, weapon))
+    if (!q3n_selected_media_idle(o) || !out || weapon <= 0 || weapon >= 14)
         return q3p_fail(e, QA_ERROR_ARGUMENT, "Selected Q3 media read requires its exact authored weapon row");
     const q3n_selected_media_row *row = &o->rows[weapon];
     if (!row->world_ready || !o->shaders_ready || (view_required && (!row->view_ready || !o->animation_resource)))
         return q3p_fail(e, QA_ERROR_ARGUMENT, "Selected Q3 weapon media has not completed actual admission");
-    if (!q3n_selected_media_valid(o, e)) return false;
     *out = tuple(o, row); return true;
 }
 bool q3n_selected_media_animation(const q3n_selected_media *o, q3n_selected_animation *out,
@@ -171,7 +179,6 @@ bool q3n_selected_media_animation(const q3n_selected_media *o, q3n_selected_anim
         return q3p_fail(e, QA_ERROR_ARGUMENT, "Selected Q3 animation inventory requires its idle genuine owner");
     *out = (q3n_selected_animation){0}; *character = o->character;
     if (!o->animation_resource) return true;
-    if (!qa_vfs_acquisition_retained(o->animation_content, &o->animation_receipt, e)) return false;
     *out = (q3n_selected_animation){o->animation_content, o->animation_resource, &o->animation_receipt, &o->animation_config};
     return true;
 }
