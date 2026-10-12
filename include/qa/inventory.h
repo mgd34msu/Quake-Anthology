@@ -226,5 +226,5 @@ typedef struct qa_supply_weapon { qa_item_id item, ammo; bool drop; } qa_supply_
 /* Outputs parallel the selected array; zero means the source cannot drop it.
  * Ambiguous/missing mappings fail instead of selecting by declaration order. */
 bool qa_supply_weapon_sources(const qa_supply_profile *, const qa_supply_weapon *selected, size_t selected_count,
-                              const qa_supply_weapon *original, size_t original_count, qa_item_id *sources, qa_error *);
+    const qa_supply_weapon *original, size_t original_count, qa_arena *storage, qa_item_id *sources, qa_error *);
 #endif

@@ -23,7 +23,7 @@ bool application_supplies_for(application_supplies *, application_provider *sour
                                qa_actor_id, qa_supply **, qa_error *);
 bool application_supplies_weapon_sources(application_supplies *, application_provider *source,
     qa_actor_id, const qa_supply_weapon *selected, size_t selected_count,
-    const qa_supply_weapon *original, size_t original_count, qa_item_id *, qa_error *);
+    const qa_supply_weapon *original, size_t original_count, qa_arena *, qa_item_id *, qa_error *);
 /* Pure membership of the admitted selected supply's actual destination rows. */
 bool application_supplies_ammo_destination(application_supplies *, application_provider *,
     qa_actor_id, qa_item_id, bool *found, qa_error *);

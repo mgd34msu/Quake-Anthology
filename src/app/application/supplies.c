@@ -1245,7 +1245,8 @@ bool application_supplies_for(application_supplies *owner, application_provider 
 }
 bool application_supplies_weapon_sources(application_supplies *owner, application_provider *source,
     qa_actor_id actor, const qa_supply_weapon *selected, size_t selected_count,
-    const qa_supply_weapon *original, size_t original_count, qa_item_id *out, qa_error *error) {
+    const qa_supply_weapon *original, size_t original_count, qa_arena *storage,
+    qa_item_id *out, qa_error *error) {
     if (!owner || !source || owner->calls == SIZE_MAX || (selected_count && (!selected || !out)) ||
         (original_count && !original))
         return application_fail(error, QA_ERROR_ARGUMENT, "Weapon source mapping needs its actual supply owner and rosters");
@@ -1255,7 +1256,7 @@ bool application_supplies_weapon_sources(application_supplies *owner, applicatio
     ++owner->calls;
     bool ok = supply_current(pair, actor, error) &&
         qa_supply_weapon_sources(&pair->profile, selected, selected_count,
-            original, original_count, out, error) && supply_current(pair, actor, error);
+            original, original_count, storage, out, error) && supply_current(pair, actor, error);
     supplies_leave(owner); return ok;
 }
 bool application_supplies_source_for(void *opaque, qa_actor_id actor, qa_supply **out,

@@ -889,6 +889,7 @@ bool qa_pickups_run_source(qa_pickups *service, const qa_pickup_offer *offer,
 }
 
 struct qa_supply {
+    qa_arena storage;
     qa_inventory *inventory;
     qa_supply_profile profile;
     qa_supply_hooks hooks;
@@ -906,18 +907,11 @@ typedef struct supply_grants {
     bool acceptance_override, accepted;
 } supply_grants;
 
-static void mappings_free(const qa_supply_mapping *mappings, size_t count)
-{
-    if (!mappings) return;
-    for (size_t i = 0; i < count; ++i) free((void *)mappings[i].destinations);
-    free((void *)mappings);
-}
-
 static void supply_free(qa_supply *supply)
 {
-    mappings_free(supply->profile.weapons, supply->profile.weapon_count);
-    mappings_free(supply->profile.ammo, supply->profile.ammo_count);
-    free((void *)supply->profile.weapon_owners); free((void *)supply->profile.ammo_owners); free(supply);
+    /* The service itself is in this arena, so destruction uses its moved handle. */
+    qa_arena storage = supply->storage;
+    qa_arena_destroy(&storage);
 }
 
 static void supply_leave(qa_supply *supply)
@@ -951,12 +945,14 @@ static bool mapping_contains(const qa_supply_mapping *mapping, qa_item_id item)
     return false;
 }
 
-static bool mappings_copy(const qa_supply_mapping *input, size_t count,
+static bool mappings_copy(qa_arena *storage, const qa_supply_mapping *input, size_t count,
                            const qa_supply_mapping **out, qa_error *e)
 {
     if ((count && !input) || count > SIZE_MAX / sizeof(*input)) return fail(e, QA_ERROR_ARGUMENT, "Invalid supply mappings");
-    qa_supply_mapping *copy = count ? calloc(count, sizeof(*copy)) : NULL;
+    qa_supply_mapping *copy = count ? qa_arena_alloc(storage,
+        count * sizeof(*copy), _Alignof(qa_supply_mapping), e) : NULL;
     if (count && !copy) return fail(e, QA_ERROR_MEMORY, "Cannot allocate supply mappings");
+    if (count) memset(copy, 0, count * sizeof(*copy));
     bool ok = true;
     for (size_t i = 0; ok && i < count; ++i) {
         if (!input[i].source || !input[i].count || !input[i].destinations || input[i].count > SIZE_MAX / sizeof(qa_item_id)) {
@@ -969,13 +965,13 @@ static bool mappings_copy(const qa_supply_mapping *input, size_t count,
                 ok = fail(e, QA_ERROR_ARGUMENT, "Duplicate supply destination item");
         }
         if (!ok) break;
-        qa_item_id *destinations = malloc(input[i].count * sizeof(*destinations));
+        qa_item_id *destinations = qa_arena_alloc(storage,
+            input[i].count * sizeof(*destinations), _Alignof(qa_item_id), e);
         if (!destinations) { ok = fail(e, QA_ERROR_MEMORY, "Cannot copy supply destinations"); break; }
         memcpy(destinations, input[i].destinations, input[i].count * sizeof(*destinations));
         copy[i] = input[i]; copy[i].destinations = destinations;
     }
-    if (!ok) mappings_free(copy, count);
-    else *out = copy;
+    if (ok) *out = copy;
     return ok;
 }
 
@@ -1001,10 +997,11 @@ static bool owners_valid(const qa_supply_source_owner *owners, size_t count,
     return true;
 }
 
-static bool owners_copy(const qa_supply_source_owner *input, size_t count,
+static bool owners_copy(qa_arena *storage, const qa_supply_source_owner *input, size_t count,
                          const qa_supply_source_owner **out, qa_error *e)
 {
-    qa_supply_source_owner *copy = count ? malloc(count * sizeof(*copy)) : NULL;
+    qa_supply_source_owner *copy = count ? qa_arena_alloc(storage,
+        count * sizeof(*copy), _Alignof(qa_supply_source_owner), e) : NULL;
     if (count && !copy) return fail(e, QA_ERROR_MEMORY, "Cannot allocate supply source owners");
     if (count) memcpy(copy, input, count * sizeof(*copy));
     *out = copy; return true;
@@ -1014,19 +1011,23 @@ bool qa_supply_create(qa_inventory *inventory, const qa_supply_profile *profile,
                        const qa_supply_hooks *hooks, qa_supply **out, qa_error *e)
 {
     if (!inventory || !profile || !out) return fail(e, QA_ERROR_ARGUMENT, "Invalid supply service arguments");
-    qa_supply *supply = calloc(1, sizeof(*supply));
-    if (!supply) return fail(e, QA_ERROR_MEMORY, "Cannot allocate pickup supply service");
-    supply->inventory = inventory;
+    qa_arena storage;
+    qa_arena_init(&storage, sizeof(qa_supply));
+    qa_supply *supply = qa_arena_alloc(&storage, sizeof(*supply), _Alignof(qa_supply), e);
+    if (!supply) { qa_arena_destroy(&storage); return false; }
+    *supply = (qa_supply){.storage = storage, .inventory = inventory};
+    storage = (qa_arena){0};
     if (hooks) supply->hooks = *hooks;
     supply->profile.weapon_count = profile->weapon_count; supply->profile.ammo_count = profile->ammo_count;
     supply->profile.weapon_owner_count = profile->weapon_owner_count; supply->profile.ammo_owner_count = profile->ammo_owner_count;
-    bool ok = mappings_copy(profile->weapons, profile->weapon_count, &supply->profile.weapons, e) &&
-        mappings_copy(profile->ammo, profile->ammo_count, &supply->profile.ammo, e) &&
+    bool ok = mappings_copy(&supply->storage, profile->weapons, profile->weapon_count, &supply->profile.weapons, e) &&
+        mappings_copy(&supply->storage, profile->ammo, profile->ammo_count, &supply->profile.ammo, e) &&
         owners_valid(profile->weapon_owners, profile->weapon_owner_count, supply->profile.weapons, profile->weapon_count, e) &&
         owners_unique(profile->ammo_owners, profile->ammo_owner_count, e) &&
-        owners_copy(profile->weapon_owners, profile->weapon_owner_count, &supply->profile.weapon_owners, e) &&
-        owners_copy(profile->ammo_owners, profile->ammo_owner_count, &supply->profile.ammo_owners, e);
+        owners_copy(&supply->storage, profile->weapon_owners, profile->weapon_owner_count, &supply->profile.weapon_owners, e) &&
+        owners_copy(&supply->storage, profile->ammo_owners, profile->ammo_owner_count, &supply->profile.ammo_owners, e);
     if (!ok) { supply_free(supply); return false; }
+    qa_arena_seal(&supply->storage);
     *out = supply; return true;
 }
 
@@ -1470,7 +1471,7 @@ static qa_item_id source_owner(const qa_supply_source_owner *owners, size_t coun
 
 bool qa_supply_weapon_sources(const qa_supply_profile *profile,
     const qa_supply_weapon *selected, size_t selected_count, const qa_supply_weapon *original,
-    size_t original_count, qa_item_id *out, qa_error *e)
+    size_t original_count, qa_arena *storage, qa_item_id *out, qa_error *e)
 {
     if (!profile || (selected_count && (!selected || !out)) || (original_count && !original) ||
         (profile->weapon_count && !profile->weapons) || (profile->ammo_count && !profile->ammo) ||
@@ -1481,8 +1482,10 @@ bool qa_supply_weapon_sources(const qa_supply_profile *profile,
         if (profile->ammo[i].count && !profile->ammo[i].destinations) return fail(e, QA_ERROR_ARGUMENT, "Missing ammo supply destinations");
     if (!owners_valid(profile->weapon_owners, profile->weapon_owner_count, profile->weapons, profile->weapon_count, e) ||
         !owners_unique(profile->ammo_owners, profile->ammo_owner_count, e)) return false;
-    qa_item_id *sources = selected_count ? calloc(selected_count, sizeof(*sources)) : NULL;
+    qa_item_id *sources = selected_count ? qa_arena_alloc(storage,
+        selected_count * sizeof(*sources), _Alignof(qa_item_id), e) : NULL;
     if (selected_count && !sources) return fail(e, QA_ERROR_MEMORY, "Cannot allocate selected weapon source mapping");
+    if (selected_count) memset(sources, 0, selected_count * sizeof(*sources));
     bool ok = true;
     for (size_t i = 0; ok && i < selected_count; ++i) {
         qa_supply_weapon weapon = selected[i];
@@ -1518,5 +1521,5 @@ bool qa_supply_weapon_sources(const qa_supply_profile *profile,
         if (candidates != 1) ok = fail(e, QA_ERROR_ARGUMENT, candidates ? "Selected weapon has ambiguous original drop mapping" : "Selected weapon has no original drop mapping");
     }
     if (ok && selected_count) memcpy(out, sources, selected_count * sizeof(*out));
-    free(sources); return ok;
+    return ok;
 }

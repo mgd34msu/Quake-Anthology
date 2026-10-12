@@ -1033,7 +1033,7 @@ static bool drop_selected(void *context, qa_actor_id actor, application_q3_weapo
         for (size_t i = 0; ok && i < count; ++i)
             original_roster[i] = (qa_supply_weapon){catalog[i].item, catalog[i].ammo, true};
         if (ok) ok = application_supplies_weapon_sources(application(s)->supplies, s->role->engine->provider, actor,
-            selected_roster, view.weapon_count, original_roster, count, sources, error) &&
+            selected_roster, view.weapon_count, original_roster, count, &view.storage, sources, error) &&
             selection_current(s, actor, view.provider, error);
         size_t selected_index = view.weapon_count;
         for (size_t i = 0; ok && i < view.weapon_count; ++i) if (selected_roster[i].item == active) { selected_index = i; break; }
