@@ -46,9 +46,10 @@ bool frontend_selected_character_prepare(qa_frontend *, uint32_t launch_seat,
     bool *admitted, qa_error *);
 bool frontend_selected_character_animation(const frontend_selected_character_pose *,
     q3n_selected_animation *, qa_error *);
+/* Output bytes borrow storage until reset; destroy releases its pose user. */
 bool frontend_selected_character_build(frontend_selected_character_pose *,
     const qa_application_selected_q3_character *, const frontend_selected_character_frame *,
-    frontend_selected_character_output **, qa_error *);
+    qa_arena *, frontend_selected_character_output **, qa_error *);
 size_t frontend_selected_character_output_count(const frontend_selected_character_output *);
 const qa_q3_ref_entity *frontend_selected_character_output_part(
     const frontend_selected_character_output *, uint32_t part);

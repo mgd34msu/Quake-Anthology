@@ -85,14 +85,17 @@ bool frontend_native_character_begin(frontend_native_character *owner, const q3n
         if (!frontend_selected_character_prepare(owner->frontend, frame->seat, owner->owners.seat,
             &source, owner, recipient_current, &pose, &admitted, error)) return false;
         if (!admitted) continue;
-        character_output *output = calloc(1, sizeof(*output));
+        character_output *output = qa_arena_alloc(&owner->frontend->frame.storage,
+            sizeof(*output), _Alignof(character_output), error);
         if (!output) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining admitted full actor body output");
+        *output = (character_output){0};
         if (owner->tail) owner->tail->next = output; else owner->outputs = output; owner->tail = output;
         output->actor = actor; output->first_order = order;
         frontend_selected_character_frame settings = {.time = frame->time,
             .frame_milliseconds = owner->frame_milliseconds, .swing_speed = .3f,
             .personal_model = qa_actor_id_equal(actor, frame->viewing_actor)};
-        if (!frontend_selected_character_build(pose, &source, &settings, &output->output, error) ||
+        if (!frontend_selected_character_build(pose, &source, &settings,
+            &owner->frontend->frame.storage, &output->output, error) ||
             !current(owner, frame)) return false;
         size_t parts = frontend_selected_character_output_count(output->output);
         if (parts > 1022u - order)
@@ -106,7 +109,7 @@ void frontend_native_character_end(frontend_native_character *owner)
     if (!owner) return;
     while (owner->outputs) {
         character_output *output = owner->outputs; owner->outputs = output->next;
-        frontend_selected_character_output_destroy(output->output); free(output->passes); free(output);
+        frontend_selected_character_output_destroy(output->output);
     }
     owner->tail = NULL;
     if (owner->entered && owner->frame) owner->previous_time = owner->frame->time;
@@ -168,7 +171,9 @@ bool frontend_native_character_body(frontend_native_character *owner, const q3n_
         size_t capacity = output->pass_capacity ? output->pass_capacity * 2 : 8;
         if (capacity < output->pass_capacity || capacity > SIZE_MAX / sizeof(*output->passes))
             return frontend_fail(error, QA_ERROR_MEMORY, "Selected body pass extent is exhausted");
-        void *grown = realloc(output->passes, capacity * sizeof(*output->passes));
+        frontend_selected_character_pass *grown = qa_arena_grow(&owner->frontend->frame.storage,
+            output->passes, output->pass_count * sizeof(*grown), capacity * sizeof(*grown),
+            _Alignof(frontend_selected_character_pass), error);
         if (!grown) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual source body material pass");
         output->passes = grown; output->pass_capacity = capacity;
     }

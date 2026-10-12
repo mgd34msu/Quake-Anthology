@@ -343,7 +343,19 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
         if (seat->q2_hud_active) {
             out->source_vitals = true;
             if (!seat->q2_hud.original && seat->q2_view_ready && qa_actor_id_equal(frame->actor, seat->q2_actor)) {
-                out->scores = seat->q2_scores; out->score_count = seat->q2_score_count;
+                if (frame->show_scores && seat->q2_score_count) {
+                    qa_hud_score *rows = qa_arena_alloc(&seat->frontend->frame.storage,
+                        seat->q2_score_count * sizeof(*rows), _Alignof(qa_hud_score), error);
+                    if (!rows) return false;
+                    for (size_t i = 0; i < seat->q2_score_count; ++i) {
+                        const qa_q2_score_row *score = &seat->q2_scores[i];
+                        rows[i] = (qa_hud_score){.name = score->name ? score->name : "",
+                            .score = score->score, .ping = score->ping,
+                            .local = seat->q2_score_local && seat->q2_score_local_slot == score->slot,
+                            .spectator = score->spectator};
+                    }
+                    out->scores = rows; out->score_count = seat->q2_score_count;
+                }
                 if (seat->q2_help) { out->help_title = "Objectives"; out->help_lines = seat->q2_help_lines; out->help_count = 2; }
             }
             return true;

@@ -255,7 +255,7 @@ static bool attach_part(frontend_selected_character *owner, qa_q3_ref_entity *ch
 
 bool frontend_selected_character_build(frontend_selected_character_pose *pose,
     const qa_application_selected_q3_character *source, const frontend_selected_character_frame *frame,
-    frontend_selected_character_output **out, qa_error *error)
+    qa_arena *storage, frontend_selected_character_output **out, qa_error *error)
 {
     frontend_selected_character *owner = pose ? pose->owner : NULL;
     if (!owner || !frame || !out || *out || !current(owner, source) ||
@@ -264,8 +264,10 @@ bool frontend_selected_character_build(frontend_selected_character_pose *pose,
         source->opacity < 0 || source->opacity > 1 || frame->frame_milliseconds < 0 ||
         !isfinite(frame->shader_time) || (frame->has_shadow_plane && !isfinite(frame->shadow_plane)))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected character build requires its genuine idle actor pose and frame");
-    frontend_selected_character_output *output = calloc(1, sizeof(*output));
+    frontend_selected_character_output *output = qa_arena_alloc(storage,
+        sizeof(*output), _Alignof(frontend_selected_character_output), error);
     if (!output) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining selected character body output");
+    *output = (frontend_selected_character_output){0};
     output->pose = pose; output->source = *source;
     q3n_player_pose next = pose->pose;
     bool okay = true;
@@ -323,7 +325,7 @@ bool frontend_selected_character_build(frontend_selected_character_pose *pose,
         }
     }
     if (okay) okay = current(owner, source);
-    if (!okay) { free(output); return false; }
+    if (!okay) return false;
     if (source->present) { pose->pose = next; pose->reset = false; }
     ++pose->users; *out = output; return true;
 }
@@ -434,7 +436,7 @@ bool frontend_selected_character_output_submit(frontend_selected_character_outpu
 void frontend_selected_character_output_destroy(frontend_selected_character_output *output)
 {
     if (!output) return;
-    --output->pose->users; free(output);
+    --output->pose->users;
 }
 
 bool frontend_selected_character_idle(const qa_frontend *frontend)

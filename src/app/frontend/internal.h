@@ -261,11 +261,14 @@ typedef struct frontend_seat {
     qa_actor_owner q2_hud_config_provider;
     qa_hud_value q1_monsters;
     char q1_monster_label[80];
-    char *q2_help_text[2];
+    qa_string_id q2_help_text[2];
     const char *q2_help_lines[2];
-    qa_hud_score *q2_scores;
-    char *q2_score_names;
+    const qa_q2_score_row *q2_scores;
+    qa_event_lease *q2_score_record;
     size_t q2_score_count;
+    uint32_t q2_score_local_slot;
+    bool q2_score_local;
+    uint64_t q2_player_map_revision;
     qa_hud_q2_marker_state q2_hit_marker;
     bool q2_view_ready, q2_help, q2_inventory;
     bool chat_team;

@@ -73,11 +73,8 @@ static void end(void *context)
     if (!owner || !owner->entered) return;
     frontend_native_character_end(owner->character);
     owner->equipment.end_frame(owner->equipment.context);
-    while (owner->primary_poses) {
-        primary_pose *next = owner->primary_poses->next;
-        free(owner->primary_poses); owner->primary_poses = next;
-    }
-    free(owner->effects_roster); owner->effects_roster = NULL;
+    owner->primary_poses = NULL;
+    owner->effects_roster = NULL;
     owner->effects_groups = 0; owner->effects_ready = false;
     owner->frame = NULL; owner->entered = false;
     owner->effects_first = owner->effects_count = 0;
@@ -131,7 +128,8 @@ static bool effects_roster_capture(native_composition *owner, const q3n_frame *f
     size_t count = frontend_selected_effects_count(owner->frontend);
     if (count > SIZE_MAX / sizeof(*owner->effects_roster))
         return frontend_fail(error, QA_ERROR_MEMORY, "Selected effect consumer roster exceeds capacity");
-    effects_consumer *rows = count ? calloc(count, sizeof(*rows)) : NULL;
+    effects_consumer *rows = count ? qa_arena_alloc(&owner->frontend->frame.storage,
+        count * sizeof(*rows), _Alignof(effects_consumer), error) : NULL;
     if (count && !rows) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual selected effect consumer rows");
     for (size_t i = 0; i < count; ++i) {
         rows[i].group = frontend_selected_effects_group_at(owner->frontend, i);
@@ -181,7 +179,8 @@ static bool capture_primary_pose(native_composition *owner, const q3n_frame *fra
         if (qa_actor_id_equal(pose->actor, actual->binding.actor)) return true;
     if (actual->binding.number < 0 || (uint32_t)actual->binding.number >= frame->source.entity_count)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Primary presentation pose lacks its actual physical source row");
-    primary_pose *pose = malloc(sizeof(*pose));
+    primary_pose *pose = qa_arena_alloc(&owner->frontend->frame.storage,
+        sizeof(*pose), _Alignof(primary_pose), error);
     if (!pose) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual primary presentation pose for selected effects");
     *pose = (primary_pose){owner->primary_poses, actual->binding.actor, (uint32_t)actual->binding.number, ref->origin};
     owner->primary_poses = pose; return true;
