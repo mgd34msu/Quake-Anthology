@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "3aef868756c4744263011a876fa5865c41766da1",
+  "verified_main": "90fbdd0fe12a66eeaf58c21f49d3c0305b0f6416",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 135,
-    "open_source_observation": 236,
+    "fixed_source_build_core": 136,
+    "open_source_observation": 235,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -23909,8 +23909,9 @@
       "severity": "medium",
       "job": "01",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "QVM/native catalog candidates use two reusable common owner arenas with actual admitted row and string sizes. Dependent records, names, weapons and QVM inventory triples publish together; unchanged/error retains current publication. Common indexes keep first type/tag match and native duplicate-item qualification. All original live Source reads, pointer widths, count/name bounds, carried IDs/order, borrowed output contract and callback copies remain. Larger valid rows/labels/indexes/string interning can grow; live scans remain. Normal production build and seven existing core suites passed; no live module, zero-allocation or speed claim.",
+      "fix_commit": "90fbdd0fe12a66eeaf58c21f49d3c0305b0f6416"
     },
     {
       "id": "01-storage-protection-continuations",
@@ -40745,6 +40746,37 @@
       ],
       "record_directory": "/tmp/qa-ta3196-common-fuzzy-storage-20261012",
       "conclusion": "Evaluation, mutation and release stack growth use the common arena; persistent workspace owns backing while copied traversal metadata borrows it. Existing busy protection, authoritative callback reads, child/next order and random draws remain. Initial and larger-depth allocation remain open because live callbacks can alter topology; no fixed new traversal cap or preflight authority is introduced. Normal production build and seven existing core suites passed; no live selection or zero-allocation claim."
+    },
+    {
+      "commit": "90fbdd0fe12a66eeaf58c21f49d3c0305b0f6416",
+      "source_tree": "66d6c6792ae4c65baab2f2fae4bc8d71ad68fe20",
+      "finding_ids": [
+        "01-storage-live-catalog"
+      ],
+      "files_rechecked": [
+        "src/app/application/guest_q3_catalog.c",
+        "src/app/application/guest_q3_native_catalog.c",
+        "src/app/application/guest_q3_catalog.h",
+        "src/app/application/guest_q3_native_catalog.h",
+        "src/app/application/unified_player.c",
+        "src/app/application/unified_prediction.c",
+        "src/gameplay/q3/items.c",
+        "src/compat/native/memory.c",
+        "src/core/id_index.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-live-catalog-storage-20261012",
+      "conclusion": "QVM/native catalog candidates use two reusable common owner arenas with actual admitted row and string sizes. Dependent records, names, weapons and QVM inventory triples publish together; unchanged/error retains current publication. Common indexes keep first type/tag match and native duplicate-item qualification. All original live Source reads, pointer widths, count/name bounds, carried IDs/order, borrowed output contract and callback copies remain. Larger valid rows/labels/indexes/string interning can grow; live scans remain. Normal production build and seven existing core suites passed; no live module, zero-allocation or speed claim."
     }
   ],
   "verification_limits": [

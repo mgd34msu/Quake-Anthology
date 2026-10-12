@@ -1,4 +1,5 @@
 #include "codec_internal.h"
+#include "qa/arena.h"
 #include <stdio.h>
 
 #define OV_EXCLUDE_STATIC_CALLBACKS
@@ -235,6 +236,7 @@ typedef struct vorbis_source {
     size_t offset;
     OggVorbis_File file;
     long links;
+    qa_arena scratch_storage;
     int16_t *scratch;
     size_t scratch_bytes;
     bool failed;
@@ -443,6 +445,31 @@ uint64_t qa_audio_stream_position(const qa_audio_stream *stream) {
     return stream ? stream->position : 0;
 }
 
+bool qa_audio_stream_prepare_read(qa_audio_stream *stream, size_t frames, qa_error *error) {
+    if (!stream || stream->kind != STREAM_VORBIS)
+        return true;
+    if (stream->frames < frames)
+        frames = (size_t)stream->frames;
+    size_t bytes;
+    if (!qa_audio_pcm_size(frames, stream->channels, &bytes, error))
+        return false;
+    vorbis_source *source = &stream->source.vorbis;
+    if (bytes <= source->scratch_bytes)
+        return true;
+    qa_arena storage = {0};
+    qa_arena_init(&storage, bytes);
+    int16_t *scratch = qa_arena_alloc(&storage, bytes, _Alignof(int16_t), error);
+    if (!scratch) {
+        qa_arena_destroy(&storage);
+        return false;
+    }
+    qa_arena_destroy(&source->scratch_storage);
+    source->scratch_storage = storage;
+    source->scratch = scratch;
+    source->scratch_bytes = bytes;
+    return true;
+}
+
 static bool vorbis_read_pcm(qa_audio_stream *stream, int16_t *out, size_t count, size_t *frames,
                             qa_error *error) {
     vorbis_source *source = &stream->source.vorbis;
@@ -450,14 +477,8 @@ static bool vorbis_read_pcm(qa_audio_stream *stream, int16_t *out, size_t count,
         return qa_audio_codec_fail(error, QA_ERROR_FORMAT, 0,
                                    "Ogg stream state could not be restored");
     size_t bytes = count * stream->channels * sizeof(int16_t);
-    if (bytes > source->scratch_bytes) {
-        int16_t *scratch = realloc(source->scratch, bytes);
-        if (!scratch)
-            return qa_audio_codec_fail(error, QA_ERROR_MEMORY, 0,
-                                       "Cannot allocate Ogg read buffer");
-        source->scratch = scratch;
-        source->scratch_bytes = bytes;
-    }
+    if (!qa_audio_stream_prepare_read(stream, count, error))
+        return false;
     const uint16_t endian = 1;
     int big_endian = *(const uint8_t *)&endian == 0;
     size_t received = 0;
@@ -549,7 +570,7 @@ void qa_audio_stream_close(qa_audio_stream *stream) {
         qa_audio_sample_release(stream->source.sample);
     else if (stream->kind == STREAM_VORBIS) {
         ov_clear(&stream->source.vorbis.file);
-        free(stream->source.vorbis.scratch);
+        qa_arena_destroy(&stream->source.vorbis.scratch_storage);
     }
     if (stream->release_resource)
         stream->release_resource(stream->resource_owner);

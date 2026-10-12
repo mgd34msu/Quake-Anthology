@@ -1,4 +1,5 @@
 #include "ogv_internal.h"
+#include "../audio/codec_internal.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -191,6 +192,8 @@ static qa_ogv_playback *prepare(qa_ogv_asset *asset, const qa_ogv_options *optio
             qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Unsupported OGV soundtrack channels");
             goto fail;
         }
+        if (!qa_audio_stream_prepare_read(playback->audio, QA_OGV_PCM_FRAMES, error))
+            goto fail;
         playback->pcm = malloc(QA_OGV_PCM_FRAMES * channels * sizeof(*playback->pcm));
         if (!playback->pcm) {
             qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating OGV soundtrack output");

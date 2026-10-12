@@ -188,6 +188,11 @@ void qa_audio_music_start(qa_audio_music *music, qa_audio_stream *intro, qa_audi
             qa_audio_stream_close(loop);
         return;
     }
+    /* Start takes stream ownership even if reservation cannot be made now;
+     * the existing read path retains allocation/decode failure delivery. */
+    (void)qa_audio_stream_prepare_read(intro, MUSIC_CHUNK_FRAMES, NULL);
+    if (intro && loop != intro)
+        (void)qa_audio_stream_prepare_read(loop, MUSIC_CHUNK_FRAMES, NULL);
     qa_audio_stream *previous = music->stream, *previous_loop = music->loop;
     music->stream = intro;
     music->loop = loop;
@@ -470,6 +475,10 @@ bool qa_audio_music_selection_prepare(qa_audio_music *music, qa_audio_music_sele
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Music selection requires its idle player and separately owned prepared streams");
         return false;
     }
+    if (kind == QA_AUDIO_MUSIC_START &&
+        (!qa_audio_stream_prepare_read(intro, MUSIC_CHUNK_FRAMES, error) ||
+         (loop != intro && !qa_audio_stream_prepare_read(loop, MUSIC_CHUNK_FRAMES, error))))
+        return false;
     qa_audio_music_selection *selection = calloc(1, sizeof(*selection));
     if (!selection) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining prepared music selection"); return false; }
     if (kind != QA_AUDIO_MUSIC_KEEP &&

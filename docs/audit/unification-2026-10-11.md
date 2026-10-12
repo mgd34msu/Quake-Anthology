@@ -15,7 +15,7 @@ refutations. The coverage sets match exactly; no file is counted twice.
 ## Scope and limits
 
 The source snapshot is Git tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Follow-up source changes were reviewed through main `3aef8687`.
+Follow-up source changes were reviewed through main `90fbdd0f`.
 Included inputs cover application, platform, gameplay, renderer, audio, input,
 UI, networking, module hosts, public headers, tools, tests, build files and
 generator policy inputs. Large literal/generated tables were read completely
@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 135 have source fixes
+There are **374 overlapping source-review observations**: 136 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 236 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 235 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -268,3 +268,5 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 | `06-02` partial | `674addf2` | Device PCM/encoding/conversion storage prepared in common arenas; candidate and legacy save ownership preserved. Normal build/seven suites passed; no SDL behavior proof. Vorbis and larger valid-request growth remain open. |
 
 | `09-04` partial | `3aef8687` | Fuzzy evaluation/mutation/release use common arena ownership, retaining live reads and callback order. First and deeper traversal admission remain open. Normal build and seven suites passed. |
+
+| `01-storage-live-catalog` | `90fbdd0f` | Reusable common arena publication/candidate banks and first-tag indexes replace per-read private ownership; live reads and callback copies remain. Larger valid inputs can grow. Normal build and seven suites passed. |
