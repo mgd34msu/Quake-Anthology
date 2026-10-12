@@ -25,6 +25,7 @@ struct qa_cinematic {
     const qa_scene_frame *image_frame;
     uint64_t image_sequence;
     bool raw_attached;
+    qa_audio_raw_stream *prepared_raw;
     uint64_t audio_loop;
     qa_arena pcm_storage;
 };

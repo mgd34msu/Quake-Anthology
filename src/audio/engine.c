@@ -36,6 +36,29 @@ static void *grow(void *memory, size_t *capacity, size_t count, size_t size, qa_
     *capacity = next;
     return p;
 }
+static bool bus_reserve(qa_audio_engine *engine, size_t count, qa_error *error) {
+    if (count <= engine->bus_capacity)
+        return true;
+    if (count > SIZE_MAX / sizeof(*engine->buses))
+        return fail(error, QA_ERROR_MEMORY, "Audio array size overflow");
+    size_t next = engine->bus_capacity ? engine->bus_capacity : 8;
+    while (next < count) {
+        if (next > SIZE_MAX / 2) {
+            next = count;
+            break;
+        }
+        next *= 2;
+    }
+    if (next > SIZE_MAX / sizeof(*engine->buses))
+        next = count;
+    audio_bus *buses = qa_arena_grow(&engine->bus_storage, engine->buses,
+        engine->bus_count * sizeof(*buses), next * sizeof(*buses), _Alignof(audio_bus), error);
+    if (!buses)
+        return false;
+    engine->buses = buses;
+    engine->bus_capacity = next;
+    return true;
+}
 static audio_seat *find_seat(qa_audio_engine *engine, uint32_t seat) {
     for (size_t i = 0; i < engine->seat_count; i++)
         if (engine->seats[i]->listener.seat == seat)
@@ -141,6 +164,7 @@ bool qa_audio_engine_create(const qa_audio_engine_options *options, qa_audio_eng
         return fail(error, QA_ERROR_MEMORY, "Audio engine allocation failed");
     engine->options = *options;
     engine->options.mix_frames = frames;
+    qa_arena_init(&engine->bus_storage, 8 * sizeof(*engine->buses));
     if (!engine->options.initial_voices)
         engine->options.initial_voices = 96;
     engine->effects_gain = 0.7f;
@@ -185,7 +209,7 @@ void qa_audio_engine_destroy(qa_audio_engine *engine) {
     free(engine->seats);
     free(engine->round_mixers);
     qa_audio_positions_destroy(&engine->positions);
-    free(engine->buses);
+    qa_arena_destroy(&engine->bus_storage);
     free(engine->sum);
     free(engine->seat_scratch);
     free(engine);
@@ -479,13 +503,8 @@ static bool attach_bus(qa_audio_engine *engine, uint64_t id, uint32_t audience, 
     while (index < engine->bus_count &&
            (engine->buses[index].id != id || (engine->buses[index].raw != NULL) != (raw != NULL)))
         index++;
-    if (index == engine->bus_count) {
-        audio_bus *next =
-            grow(engine->buses, &engine->bus_capacity, index + 1, sizeof(*engine->buses), error);
-        if (!next)
-            return false;
-        engine->buses = next;
-    }
+    if (index == engine->bus_count && !bus_reserve(engine, index + 1, error))
+        return false;
     if (music) qa_audio_music_target_publish(music, engine->music_gain);
     if (index < engine->bus_count) {
         if (engine->buses[index].raw != raw)
@@ -498,6 +517,17 @@ static bool attach_bus(qa_audio_engine *engine, uint64_t id, uint32_t audience, 
     if (index == engine->bus_count)
         engine->bus_count++;
     return true;
+}
+bool qa_audio_engine_stream_prepare(qa_audio_engine *engine, uint64_t id, qa_error *error) {
+    if (!enter(engine, true, error))
+        return false;
+    size_t index = 0;
+    while (index < engine->bus_count &&
+           (engine->buses[index].id != id || !engine->buses[index].raw))
+        ++index;
+    bool okay = index < engine->bus_count || bus_reserve(engine, index + 1, error);
+    leave(engine);
+    return okay;
 }
 bool qa_audio_engine_stream(qa_audio_engine *engine, uint64_t id, uint32_t audience, float gain,
                             qa_audio_raw_stream *stream, qa_error *error) {
@@ -931,6 +961,7 @@ bool qa_audio_engine_round_ready(const qa_audio_engine *engine, qa_error *error)
 }
 struct qa_audio_stream_cut {
     qa_audio_engine *destination, *source;
+    qa_arena prepared_storage;
     audio_bus *prepared;
     size_t source_index;
     bool published, publishing;
@@ -1226,14 +1257,16 @@ bool qa_audio_engine_stream_cut_prepare(qa_audio_engine *destination, qa_audio_e
     }
     qa_audio_stream_cut *cut = calloc(1, sizeof(*cut));
     if (!cut) return fail(error, QA_ERROR_MEMORY, "Allocating audio stream cut");
-    cut->prepared = malloc(sizeof(*cut->prepared));
-    if (!cut->prepared) { free(cut); return fail(error, QA_ERROR_MEMORY, "Reserving audio stream publication"); }
+    qa_arena_init(&cut->prepared_storage, sizeof(*cut->prepared));
+    cut->prepared = qa_arena_alloc(&cut->prepared_storage, sizeof(*cut->prepared),
+        _Alignof(audio_bus), error);
+    if (!cut->prepared) { qa_arena_destroy(&cut->prepared_storage); free(cut); return false; }
     *cut->prepared = (audio_bus){.id=id, .audience=audience, .gain=gain,
         .raw=index == SIZE_MAX ? NULL : source->buses[index].raw,
         .lifetime=QA_AUDIO_MUSIC_WORLD, .active=true};
-    if (!cut_lock(destination, error)) { free(cut->prepared); free(cut); return false; }
+    if (!cut_lock(destination, error)) { qa_arena_destroy(&cut->prepared_storage); free(cut); return false; }
     if (!cut_lock(source, error)) {
-        cut_unlock(destination); free(cut->prepared); free(cut); return false;
+        cut_unlock(destination); qa_arena_destroy(&cut->prepared_storage); free(cut); return false;
     }
     cut->destination = destination; cut->source = source; cut->source_index = index;
     *out = cut;
@@ -1264,7 +1297,9 @@ void qa_audio_engine_stream_cut_publish(qa_audio_stream_cut *cut) {
             (source->bus_count - cut->source_index - 1) * sizeof(*source->buses));
         --source->bus_count;
     }
-    free(destination->buses);
+    qa_arena_destroy(&destination->bus_storage);
+    destination->bus_storage = cut->prepared_storage;
+    cut->prepared_storage = (qa_arena){0};
     destination->buses = cut->prepared; destination->bus_capacity = 1;
     destination->bus_count = cut->prepared->raw ? 1 : 0;
     cut->prepared = NULL; cut->published = true;
@@ -1274,7 +1309,7 @@ void qa_audio_engine_stream_cut_publish(qa_audio_stream_cut *cut) {
 void qa_audio_engine_stream_cut_destroy(qa_audio_stream_cut *cut) {
     if (!cut || cut->publishing) return;
     if (!cut->published) { cut_unlock(cut->source); cut_unlock(cut->destination); }
-    free(cut->prepared); free(cut);
+    qa_arena_destroy(&cut->prepared_storage); free(cut);
 }
 bool qa_audio_engine_reset_round(qa_audio_engine *engine, qa_error *error) {
     if (!qa_audio_engine_round_ready(engine, error)) return false;

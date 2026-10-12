@@ -136,6 +136,7 @@ bool qa_audio_bank_music_cue(qa_audio_bank *bank, const char *name, qa_game_fami
 
 typedef struct qa_audio_raw_stream qa_audio_raw_stream;
 bool qa_audio_raw_create(uint32_t output_rate, qa_audio_raw_stream **out, qa_error *error);
+bool qa_audio_raw_prepare(qa_audio_raw_stream *, size_t frames, unsigned channels, qa_error *);
 void qa_audio_raw_destroy(qa_audio_raw_stream *stream);
 /* queue copies immutable source chunks, retaining fractional phase across them.
  */
@@ -520,6 +521,7 @@ void qa_audio_engine_stream_cut_destroy(qa_audio_stream_cut *cut);
  */
 bool qa_audio_engine_stream(qa_audio_engine *engine, uint64_t id, uint32_t audience, float gain,
                             qa_audio_raw_stream *stream, qa_error *error);
+bool qa_audio_engine_stream_prepare(qa_audio_engine *, uint64_t id, qa_error *);
 bool qa_audio_engine_music(qa_audio_engine *engine, uint64_t id, uint32_t audience, float gain,
                            qa_audio_music *music, qa_error *error);
 void qa_audio_engine_remove_bus(qa_audio_engine *engine, uint64_t id);

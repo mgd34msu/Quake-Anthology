@@ -1,4 +1,5 @@
 #include "cinematic_internal.h"
+#include "roq_internal.h"
 #include "qa/binary.h"
 #include "qa/audio_save.h"
 
@@ -61,9 +62,13 @@ static void reset_audio(qa_cinematic *movie) {
     movie->raw_attached = false;
 }
 static bool before_audio_reset(void *context, qa_error *error) {
-    (void)error;
     qa_cinematic *movie = context;
-    reset_audio(movie);
+    qa_audio_raw_stream *raw = current_raw(movie);
+    if (!raw)
+        return true;
+    if (!qa_audio_raw_queue(raw, NULL, 0, 1, 22050, 0, true, error))
+        return false;
+    qa_audio_raw_pause(raw, false);
     return true;
 }
 static uint32_t audio_audience(const qa_cinematic_options *options) {
@@ -99,6 +104,9 @@ static bool queue_audio(void *context, const qa_media_audio *sound, qa_error *er
     }
     qa_audio_raw_stream *raw = current_raw(movie);
     bool installed = raw != NULL;
+    if (!raw)
+        raw = movie->prepared_raw;
+    bool prepared = raw && raw == movie->prepared_raw;
     uint32_t rate = qa_audio_engine_rate(movie->options.audio);
     if (!raw && !qa_audio_raw_create(rate, &raw, error))
         return false;
@@ -106,7 +114,7 @@ static bool queue_audio(void *context, const qa_media_audio *sound, qa_error *er
         !qa_audio_raw_queue(
             raw, pcm, samples / sound->channels, sound->channels, sound->rate, sound->source_sample,
             sound->reset || !installed || movie->audio_loop != sound->loop, error)) {
-        if (!installed)
+        if (!installed && !prepared)
             qa_audio_raw_destroy(raw);
         return false;
     }
@@ -114,9 +122,11 @@ static bool queue_audio(void *context, const qa_media_audio *sound, qa_error *er
         uint32_t audience = audio_audience(&movie->options);
         if (!qa_audio_engine_stream(movie->options.audio, movie->options.audio_bus, audience,
                                     movie->options.gain, raw, error)) {
-            qa_audio_raw_destroy(raw);
+            if (!prepared)
+                qa_audio_raw_destroy(raw);
             return false;
         }
+        movie->prepared_raw = NULL;
     }
     movie->raw_attached = true;
     movie->audio_loop = sound->loop;
@@ -173,6 +183,7 @@ static void free_movie(qa_cinematic *movie) {
     }
     qa_scene_image_release(movie->image);
     qa_cinematic_asset_release(movie->asset);
+    qa_audio_raw_destroy(movie->prepared_raw);
     free(movie->name);
     qa_arena_destroy(&movie->pcm_storage);
     free(movie);
@@ -252,6 +263,11 @@ bool qa_cinematic_create(const qa_cinematic_source *source, const qa_cinematic_o
                                        .diagnostic = diagnostic};
         ok = qa_roq_playback_create(source->data.roq, &roq, (qa_media_clock){movie, sample},
                                     &movie->movie.roq, error);
+        if (ok && !options->silent)
+            ok = qa_audio_engine_stream_prepare(options->audio, options->audio_bus, error) &&
+                qa_audio_raw_create(qa_audio_engine_rate(options->audio),
+                &movie->prepared_raw, error) &&
+                qa_audio_raw_prepare(movie->prepared_raw, ROQ_FILE_BYTES - 8u, 1, error);
         break;
     }
     case QA_CINEMATIC_OGV: {
@@ -323,7 +339,8 @@ bool qa_cinematic_roq_restart(qa_cinematic *movie, qa_error *error)
         return cinematic_fail(error,"Original RoQ restart requires its returned shared decoder owner");
     movie->busy=true;
     bool ok=pause_clock(movie,false,error) &&
-        qa_roq_playback_restart(movie->movie.roq,(qa_media_clock){movie,sample},false,error);
+        qa_roq_playback_restart(movie->movie.roq,(qa_media_clock){movie,sample},false,error) &&
+        before_audio_reset(movie,error);
     if (ok) {
         movie->status=movie->decoder_status=QA_MEDIA_PLAYING;
         movie->completed=false; movie->faulted=false;
