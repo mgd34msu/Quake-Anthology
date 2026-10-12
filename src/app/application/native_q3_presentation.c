@@ -76,12 +76,7 @@ bool qa_application_native_q3_presentation_current(qa_application *app,
         actual.map_revision == saved->map_revision && actual.source_time_ms == saved->source_time_ms &&
         actual.match_start_time_ms == saved->match_start_time_ms && actual.game_type == saved->game_type &&
         actual.max_clients == saved->max_clients && actual.entity_count == saved->entity_count &&
-        actual.source_frame.provider == saved->source_frame.provider &&
-        actual.source_frame.kind == saved->source_frame.kind && actual.source_frame.phase == saved->source_frame.phase &&
-        actual.source_frame.number == saved->source_frame.number &&
-        actual.source_frame.start_ns == saved->source_frame.start_ns &&
-        actual.source_frame.time_ns == saved->source_frame.time_ns &&
-        actual.source_frame.elapsed_ns == saved->source_frame.elapsed_ns;
+        qa_source_frame_equal(actual.source_frame, saved->source_frame);
 }
 
 static bool binding_current(qa_application *app, const qa_application_native_q3_presentation *view,

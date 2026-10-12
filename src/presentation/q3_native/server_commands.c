@@ -845,13 +845,7 @@ static bool receipt(q3n_server_commands *o, const q3n_frame *f, const q3n_server
         qa_native_q3_wire_receipt_current(&r->wire) &&
         r->sequence == sequence && identity(&r->recipient, recipient(o)) &&
         r->recipient.source_milliseconds == f->source.source_time_ms &&
-        r->recipient.source_frame.provider == f->source.source_frame.provider &&
-        r->recipient.source_frame.kind == f->source.source_frame.kind &&
-        r->recipient.source_frame.phase == f->source.source_frame.phase &&
-        r->recipient.source_frame.number == f->source.source_frame.number &&
-        r->recipient.source_frame.start_ns == f->source.source_frame.start_ns &&
-        r->recipient.source_frame.time_ns == f->source.source_frame.time_ns &&
-        r->recipient.source_frame.elapsed_ns == f->source.source_frame.elapsed_ns &&
+        qa_source_frame_equal(r->recipient.source_frame, f->source.source_frame) &&
         r->publication_generation == o->options.publication_generation && r->map_revision == o->options.map_revision &&
         (!r->present || r->arguments) && o->options.receipt_current(o->options.context, f, r) && q3nc_current(o, f, e) ? true :
         q3nc_fail(e, QA_ERROR_ARGUMENT, "Native CGAME command receipt has another reader or publication generation");

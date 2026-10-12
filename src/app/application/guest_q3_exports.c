@@ -263,12 +263,6 @@ static bool host_context_equal(const qa_q3_host_client_context *a,
         qa_command_context_equal(&a->command_context, &b->command_context, QA_COMMAND_CONTEXT_IGNORE_CVAR_VIEW);
 }
 
-static bool source_frame_equal(qa_source_frame a, qa_source_frame b)
-{
-    return a.provider == b.provider && a.kind == b.kind && a.phase == b.phase &&
-        a.number == b.number && a.start_ns == b.start_ns && a.elapsed_ns == b.elapsed_ns && a.time_ns == b.time_ns;
-}
-
 bool qa_application_q3_body_entry_read(qa_application *app, qa_actor_owner receiver,
     uint32_t seat, qa_application_q3_body_entry *out, qa_error *error)
 {
@@ -302,7 +296,7 @@ bool qa_application_q3_body_entry_read(qa_application *app, qa_actor_owner recei
             actual.frontend_lifetime != value.context.frontend_lifetime ||
             actual.service_owner != value.context.service_owner ||
             actual.source_milliseconds != value.source.source_milliseconds ||
-            !source_frame_equal(actual.source_frame, value.source.source_frame))
+            !qa_source_frame_equal(actual.source_frame, value.source.source_frame))
             return application_fail(error, QA_ERROR_ARGUMENT, "Body Draw changed its real GAME publication");
     }
     *out = value; return true;
@@ -319,7 +313,7 @@ bool qa_application_q3_body_entry_current(qa_application *app,
         actual.local_source == held->local_source && (!held->local_source ||
         (qa_application_q3_client_context_current(app, &held->source) &&
          actual.source.source_milliseconds == held->source.source_milliseconds &&
-         source_frame_equal(actual.source.source_frame, held->source.source_frame)));
+         qa_source_frame_equal(actual.source.source_frame, held->source.source_frame)));
 }
 
 bool qa_application_q3_client_host_read(qa_application *app, qa_actor_owner receiver,

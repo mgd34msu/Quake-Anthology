@@ -3324,10 +3324,7 @@ static bool client_attempt_owner_current(const qa_frontend *f,
         a->client_time_cvars == b->client_time_cvars && a->client_time_owner == b->client_time_owner &&
         a->native_source == b->native_source && a->initialized == b->initialized &&
         a->source_milliseconds == b->source_milliseconds &&
-        a->source_frame.provider == b->source_frame.provider && a->source_frame.kind == b->source_frame.kind &&
-        a->source_frame.phase == b->source_frame.phase && a->source_frame.number == b->source_frame.number &&
-        a->source_frame.start_ns == b->source_frame.start_ns && a->source_frame.elapsed_ns == b->source_frame.elapsed_ns &&
-        a->source_frame.time_ns == b->source_frame.time_ns &&
+        qa_source_frame_equal(a->source_frame, b->source_frame) &&
         qa_command_context_equal(&a->command_context, &b->command_context, QA_COMMAND_CONTEXT_IGNORE_CVAR_VIEW) &&
         a->receiver == attempt->configuration.scope.provider && a->seat == attempt->configuration.scope.seat &&
         a->console == attempt->configuration.console && a->cvars == attempt->configuration.cvars &&
@@ -7161,10 +7158,7 @@ static bool client_restore_receiver_same(const qa_application_q3_client_context 
         a->console==b->console && a->cvars==b->cvars && a->client_time_cvars==b->client_time_cvars &&
         a->client_time_owner==b->client_time_owner && a->native_source==b->native_source &&
         a->initialized==b->initialized && a->source_milliseconds==b->source_milliseconds &&
-        a->source_frame.provider==b->source_frame.provider && a->source_frame.kind==b->source_frame.kind &&
-        a->source_frame.phase==b->source_frame.phase && a->source_frame.number==b->source_frame.number &&
-        a->source_frame.start_ns==b->source_frame.start_ns && a->source_frame.elapsed_ns==b->source_frame.elapsed_ns &&
-        a->source_frame.time_ns==b->source_frame.time_ns &&
+        qa_source_frame_equal(a->source_frame, b->source_frame) &&
         qa_command_context_equal(&a->command_context, &b->command_context, QA_COMMAND_CONTEXT_IGNORE_CVAR_VIEW);
 }
 bool frontend_network_client_restore_domain_current(const qa_frontend *f,

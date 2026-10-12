@@ -303,10 +303,7 @@ static bool source_current(const qa_application *app, const application_unified_
         app->frame_revision == receipt->frame_revision &&
         capacity(source, &maximum, checkpoint, NULL) && maximum == receipt->max_clients &&
         qa_session_clock(app->session, source->owner, &clock) &&
-        clock.frame.provider == receipt->frame.provider && clock.frame.kind == receipt->frame.kind &&
-        clock.frame.phase == receipt->frame.phase && clock.frame.number == receipt->frame.number &&
-        clock.frame.start_ns == receipt->frame.start_ns && clock.frame.time_ns == receipt->frame.time_ns &&
-        clock.frame.elapsed_ns == receipt->frame.elapsed_ns;
+        qa_source_frame_equal(clock.frame, receipt->frame);
 }
 bool application_unified_source_current(const qa_application *app, const application_unified_source *receipt)
 { return source_current(app,receipt,false); }

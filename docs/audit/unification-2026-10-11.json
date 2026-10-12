@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "ed8c3afa58cbd695578a32a42958ec37d185466a",
+  "verified_main": "7b95b723edb4b02a6dd885ad4b07ee18dd437f59",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 121,
-    "open_source_observation": 250,
+    "fixed_source_build_core": 122,
+    "open_source_observation": 249,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -36699,8 +36699,9 @@
       "severity": "medium",
       "job": "33",
       "area": "shared_gameplay",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Fixed mode/object/map names are bound once through the existing mode name table. Repeated DeathBall/teamkill/drop/object model/item consumers read retained IDs; authored item precedence, source/team/relic choices and optional no-model/item behavior remain. Equipment slot and presentation queries use the actual selected Q2 provider existing admitted weapon-item getter, with no second item/name cache. External classname conversion remains at map admission; public LMCTF command projection has no current production caller. Normal production build and seven core suites pass; no gameplay or timing claim.",
+      "fix_commit": "7b95b723edb4b02a6dd885ad4b07ee18dd437f59"
     },
     {
       "id": "J33-09",
@@ -40276,6 +40277,34 @@
       ],
       "record_directory": "/tmp/qa-ta3196-input-binding-arena-20261012",
       "conclusion": "Input binding formatting now uses one sealed shared arena per seat, reserved from current, held-historical and incoming bindings at bind/clone/readiness/replace/remap/restore boundaries across every dialect. Queued down/release text remains exact and held presses retain the original binding across publication. Private scratch realloc/append is deleted; bind argument join uses the common command arena and owned cfg output uses exact-size allocation. Existing core behavior checks exercise long held commands replaced by shorter bindings through configuration publication and direct replacement in all five dialects. Held-key/button-source growth and arbitrary command-source interning remain open; no all-input or whole-frame zero-allocation claim. Matching normal build and seven core suites pass."
+    },
+    {
+      "commit": "7b95b723edb4b02a6dd885ad4b07ee18dd437f59",
+      "source_tree": "a4593b6949cc51ba2d94e06a1537a9f4d065fceb",
+      "finding_ids": [
+        "J33-08"
+      ],
+      "files_rechecked": [
+        "src/gameplay/modes/deathball.c",
+        "src/gameplay/modes/equipment.c",
+        "src/gameplay/modes/internal.h",
+        "src/gameplay/modes/map.c",
+        "src/gameplay/modes/objects.c",
+        "src/gameplay/modes/scoring.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-mode-equipment-names-20261012",
+      "conclusion": "Fixed mode/object/map names are bound once through the existing mode name table. Repeated DeathBall/teamkill/drop/object model/item consumers read retained IDs; authored item precedence, source/team/relic choices and optional no-model/item behavior remain. Equipment slot and presentation queries use the actual selected Q2 provider existing admitted weapon-item getter, with no second item/name cache. External classname conversion remains at map admission; public LMCTF command projection has no current production caller. Normal production build and seven core suites pass; no gameplay or timing claim."
     }
   ],
   "verification_limits": [

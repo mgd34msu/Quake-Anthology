@@ -90,12 +90,6 @@ static bool frame_fields(qa_source_save_io *io, qa_source_frame *frame)
     frame->kind = (qa_ruleset_id)kind; frame->phase = (qa_frame_phase)phase;
     return true;
 }
-static bool frame_equal(const qa_source_frame *a, const qa_source_frame *b)
-{
-    return a->provider == b->provider && a->kind == b->kind && a->phase == b->phase &&
-        a->number == b->number && a->start_ns == b->start_ns &&
-        a->elapsed_ns == b->elapsed_ns && a->time_ns == b->time_ns;
-}
 bool application_unified_save_source(qa_source_save_io *io, qa_application *app,
     const application_unified_source *actual, application_unified_source *saved, bool historical)
 {
@@ -117,7 +111,7 @@ bool application_unified_save_source(qa_source_save_io *io, qa_application *app,
         if (saved->frame_revision > actual->frame_revision || saved->frame.number > actual->frame.number ||
             saved->frame.time_ns > actual->frame.time_ns || saved->frame.start_ns > actual->frame.start_ns ||
             (unsigned)saved->frame.phase > QA_FRAME_EXIT) return false;
-    } else if (saved->frame_revision != actual->frame_revision || !frame_equal(&saved->frame, &actual->frame))
+    } else if (saved->frame_revision != actual->frame_revision || !qa_source_frame_equal(saved->frame, actual->frame))
         return application_fail(io->error, QA_ERROR_FORMAT,
             "Unified saved frame differs from the restored Source clock");
     saved->launch = actual->launch; saved->session = actual->session; saved->world = actual->world;
@@ -134,7 +128,7 @@ bool application_unified_save_source_stamp_equal(const application_unified_sourc
 {
     return a && b && a->owner == b->owner && a->family == b->family && a->publication == b->publication &&
         a->map_revision == b->map_revision && a->frame_revision == b->frame_revision &&
-        a->max_clients == b->max_clients && frame_equal(&a->frame, &b->frame);
+        a->max_clients == b->max_clients && qa_source_frame_equal(a->frame, b->frame);
 }
 bool application_unified_save_retained_source(qa_source_save_io *io, qa_application *app,
     const application_unified_source *actual, application_unified_source *saved)

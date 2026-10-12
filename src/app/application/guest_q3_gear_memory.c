@@ -30,14 +30,14 @@ bool q3gear_vector(application_q3_gear *gear, uint32_t address, qa_vec3 *out, qa
     uint8_t bytes[12];
     if (!qa_qvm_read(gear->vm, address, bytes, sizeof(bytes), error)) return false;
     qa_vec3 value = {qa_load_f32le(bytes), qa_load_f32le(bytes + 4), qa_load_f32le(bytes + 8)};
-    if (!isfinite(value.x) || !isfinite(value.y) || !isfinite(value.z))
+    if (!qa_vec_finite(value))
         return q3gear_fail(error, QA_ERROR_FORMAT, "Separate QVM gear vector is not finite");
     *out = value; return true;
 }
 
 bool q3gear_vector_store(application_q3_gear *gear, uint32_t address, qa_vec3 value, qa_error *error)
 {
-    if (!isfinite(value.x) || !isfinite(value.y) || !isfinite(value.z))
+    if (!qa_vec_finite(value))
         return q3gear_fail(error, QA_ERROR_ARGUMENT, "Separate QVM gear vector is not finite");
     uint8_t bytes[12]; float values[] = {value.x, value.y, value.z};
     for (size_t i = 0; i < 3; ++i) {

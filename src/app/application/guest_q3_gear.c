@@ -243,7 +243,7 @@ bool application_q3_gear_pull(application_q3_gear *gear, qa_actor_id actor, qa_v
     qa_vec3 *velocity, bool *apply, qa_error *error)
 {
     if (!velocity || !apply) return q3gear_fail(error, QA_ERROR_ARGUMENT, "Separate QVM gear pull outputs are absent");
-    if (!isfinite(forward.x) || !isfinite(forward.y) || !isfinite(forward.z))
+    if (!qa_vec_finite(forward))
         return q3gear_fail(error, QA_ERROR_ARGUMENT, "Separate QVM gear pull direction is not finite");
     if (!enter(gear, error)) return false;
     bool okay = q3gear_sync(gear, error), applied = false; qa_vec3 pulled = {0};

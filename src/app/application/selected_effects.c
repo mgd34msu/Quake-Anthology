@@ -147,13 +147,6 @@ bool qa_application_selected_effects_read(qa_application *app, qa_actor_id actor
     *out = view; *found = true; return true;
 }
 
-static bool same_frame(qa_source_frame a, qa_source_frame b)
-{
-    return a.provider == b.provider && a.kind == b.kind && a.phase == b.phase &&
-        a.number == b.number && a.start_ns == b.start_ns && a.time_ns == b.time_ns &&
-        a.elapsed_ns == b.elapsed_ns;
-}
-
 static bool same_source(const qa_application_selected_effects *left,
     const qa_application_selected_effects *saved)
 {
@@ -173,12 +166,12 @@ static bool same_source(const qa_application_selected_effects *left,
         actual.launch == saved->launch && actual.content == saved->content && actual.product == saved->product &&
         actual.family == saved->family && actual.kind == saved->kind &&
         actual.observation == saved->observation && same_native && same_primary &&
-        same_frame(actual.primary_frame, saved->primary_frame) && actual.primary_time_ns == saved->primary_time_ns &&
+        qa_source_frame_equal(actual.primary_frame, saved->primary_frame) && actual.primary_time_ns == saved->primary_time_ns &&
         actual.sample_time_ms == saved->sample_time_ms &&
         actual.publication_generation == saved->publication_generation && actual.map_revision == saved->map_revision &&
         actual.application_frame == saved->application_frame && actual.source_time_ns == saved->source_time_ns &&
         actual.q3_time_ms == saved->q3_time_ms && actual.q3_product == saved->q3_product &&
-        actual.q3_match_start_ms == saved->q3_match_start_ms && same_frame(actual.source_frame, saved->source_frame);
+        actual.q3_match_start_ms == saved->q3_match_start_ms && qa_source_frame_equal(actual.source_frame, saved->source_frame);
 }
 
 bool qa_application_selected_effects_current(qa_application *app,

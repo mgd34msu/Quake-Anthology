@@ -28,12 +28,6 @@ typedef enum q2_observation {
 } q2_observation;
 static bool source_returned(qa_native_host *, qa_error *);
 
-static bool frame_equal(const qa_source_frame *a,const qa_source_frame *b)
-{
-    return a->provider==b->provider&&a->kind==b->kind&&a->phase==b->phase&&a->number==b->number&&
-        a->start_ns==b->start_ns&&a->elapsed_ns==b->elapsed_ns&&a->time_ns==b->time_ns;
-}
-
 static bool stage_ready(qa_native_host *host, qa_source_frame *out, qa_error *error)
 {
     qa_source_frame frame;
@@ -45,7 +39,7 @@ static bool stage_ready(qa_native_host *host, qa_source_frame *out, qa_error *er
         !host->world.session || !host->world.world ||
         !clock_owner || !qa_session_active_frame(host->world.session, clock_owner, &frame) ||
         frame.provider != clock_owner || frame.phase != (completed?QA_FRAME_EXIT:QA_CLIENT_END_FRAME) ||
-        (completed&&!frame_equal(completed,&frame)))
+        (completed&&!qa_source_frame_equal(*completed,frame)))
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
             "Q2 Source observation requires its returned end-frame GAME stage");
     if (out) *out = frame;
@@ -66,10 +60,7 @@ static bool stage_current(qa_native_host *host, const qa_source_frame *before, q
 {
     qa_source_frame after;
     if (!stage_ready(host, &after, error)) return false;
-    return (after.provider == before->provider && after.kind == before->kind &&
-        after.phase == before->phase && after.number == before->number &&
-        after.start_ns == before->start_ns && after.elapsed_ns == before->elapsed_ns &&
-        after.time_ns == before->time_ns) || native_host_fail(error, QA_ERROR_ARGUMENT, 0,
+    return qa_source_frame_equal(after, *before) || native_host_fail(error, QA_ERROR_ARGUMENT, 0,
             "Q2 Source end-frame changed during observation");
 }
 

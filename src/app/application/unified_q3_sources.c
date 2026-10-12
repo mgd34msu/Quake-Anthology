@@ -48,13 +48,6 @@ static bool returned(const application_unified_q3_sources *v)
         qa_actors_revision(qa_session_actors(v->source.session)) == v->actors_revision;
 }
 
-static bool frame_equal(const qa_source_frame *a, const qa_source_frame *b)
-{
-    return a->provider == b->provider && a->kind == b->kind && a->phase == b->phase &&
-        a->number == b->number && a->start_ns == b->start_ns &&
-        a->time_ns == b->time_ns && a->elapsed_ns == b->elapsed_ns;
-}
-
 static bool provider_current(const application_unified_q3_sources *v, const compiled_source *r)
 {
     if (!returned(v)) return false;
@@ -71,7 +64,7 @@ static bool provider_current(const application_unified_q3_sources *v, const comp
     return p->application == v->application && p->kind == APPLICATION_PROVIDER_Q3 &&
         p->constructed && p->attached && !p->close_pending && p->state.q3 == r->game &&
         p->launch == r->launch && p->product == r->content &&
-        qa_session_clock(v->source.session, p->owner, &clock) && frame_equal(&clock.frame, &r->frame) &&
+        qa_session_clock(v->source.session, p->owner, &clock) && qa_source_frame_equal(clock.frame, r->frame) &&
         qa_q3_source_clock(r->game, &time, NULL) && time == r->time &&
         qa_q3_source_match_context_read(r->game, &product, &start, NULL) &&
         product == r->product && start == r->level_start &&

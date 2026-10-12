@@ -16,6 +16,13 @@ typedef struct qa_source_frame {
     uint64_t time_ns;
 } qa_source_frame;
 
+static inline bool qa_source_frame_equal(qa_source_frame a, qa_source_frame b)
+{
+    return a.provider == b.provider && a.kind == b.kind && a.phase == b.phase &&
+        a.number == b.number && a.start_ns == b.start_ns &&
+        a.elapsed_ns == b.elapsed_ns && a.time_ns == b.time_ns;
+}
+
 /* A usercmd is a distinct source admission. Its current source time and
  * completed world counter never imply another world frame has run. */
 

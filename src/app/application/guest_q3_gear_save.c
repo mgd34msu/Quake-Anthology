@@ -31,7 +31,7 @@ static bool binding_fields(qa_source_save_io *io, q3gear_binding *row)
 {
     return qa_source_save_actor(io, &row->actor) && row->actor.registry &&
         qa_source_save_u32(io, &row->pointer) && row->pointer &&
-        qa_source_save_vec3(io, &row->origin) && isfinite(row->origin.x) && isfinite(row->origin.y) && isfinite(row->origin.z) &&
+        qa_source_save_vec3(io, &row->origin) && qa_vec_finite(row->origin) &&
         qa_source_save_bool(io, &row->player) && qa_source_save_bool(io,&row->connected) &&
         qa_source_save_bool(io,&row->begun) && (!row->begun || row->connected) &&
         (row->player || (!row->connected && !row->begun));

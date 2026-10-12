@@ -34,14 +34,6 @@ static bool physical(application_provider *provider, qa_actor_id actor, uint32_t
     return true;
 }
 
-static bool same_frame(const qa_source_frame *first, const qa_source_frame *second)
-{
-    return first->provider == second->provider && first->kind == second->kind &&
-        first->phase == second->phase && first->number == second->number &&
-        first->start_ns == second->start_ns && first->time_ns == second->time_ns &&
-        first->elapsed_ns == second->elapsed_ns;
-}
-
 bool application_native_q3_equipment_current(application_provider *provider,
     const application_native_q3_equipment_view *view)
 {
@@ -56,7 +48,7 @@ bool application_native_q3_equipment_current(application_provider *provider,
         app->publication_generation == view->publication_generation && app->map_revision == view->map_revision &&
         slot == view->source_slot && binding.in_use == view->binding.in_use &&
         qa_session_clock(app->session, provider->owner, &clock) &&
-        same_frame(&clock.frame, &view->source_frame) &&
+        qa_source_frame_equal(clock.frame, view->source_frame) &&
         application_q3_wire_time(provider, &wire_time, NULL) &&
         qa_q3_source_clock(view->game, &time, NULL) && time == view->source_time_ms &&
         (!clock.frame.number || time == wire_time);
