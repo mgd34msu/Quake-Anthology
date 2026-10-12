@@ -90,20 +90,33 @@ qa_targets *qa_targets_create(const qa_target_options *options, qa_error *error)
         qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating target index");
         return NULL;
     }
-    if (!qa_pool_prepare(&targets->barrier_pages, &targets->barrier_storage,
-            targets->capacity, sizeof(qa_monster_barrier), _Alignof(qa_monster_barrier), error)) {
+    if (targets->capacity > (SIZE_MAX - sizeof(target_snapshot_scope)) / sizeof(qa_actor_id)) {
+        qa_targets_destroy(targets);
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Authored target snapshot extent overflows");
+        return NULL;
+    }
+    size_t snapshot_bytes = sizeof(target_snapshot_scope) + targets->capacity * sizeof(qa_actor_id);
+    if (!qa_pool_prepare(&targets->monster_slots, &targets->barrier_storage,
+            targets->capacity, sizeof(target_monster), _Alignof(target_monster), error) ||
+        !qa_pool_prepare(&targets->barrier_pages, &targets->barrier_storage,
+            targets->capacity, sizeof(qa_monster_barrier), _Alignof(qa_monster_barrier), error) ||
+        !qa_pool_prepare(&targets->snapshot_scopes, &targets->scratch, 1,
+            snapshot_bytes, _Alignof(target_snapshot_scope), error)) {
         qa_targets_destroy(targets);
         return NULL;
     }
     return targets;
 }
-static void monster_destroy(target_monster *monster) {
-    if (!monster)
-        return;
+static void monster_barriers_release(target_monster *monster) {
     if (monster->barrier_pages)
         qa_pool_release_run(&monster->targets->barrier_pages,
                             monster->barrier_slot, monster->barrier_pages);
-    free(monster);
+}
+static void monster_destroy(target_monster *monster) {
+    if (!monster)
+        return;
+    monster_barriers_release(monster);
+    qa_pool_release(&monster->targets->monster_slots, monster->storage_slot);
 }
 void qa_targets_destroy(qa_targets *targets) {
     if (!targets)
@@ -244,21 +257,29 @@ bool qa_targets_monster_admit(qa_targets *targets, qa_actor_id actor,
     const qa_target_binding *native = targets ? binding(targets, actor) : NULL;
     if (!native || !authored || !authored->owner || !valid_fields(targets, &authored->fields))
         return fail(error, "Selected monster requires its real native binding and authored map fields");
-    target_monster *row = calloc(1, sizeof(*row));
-    if (!row) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating authored monster target"); return false; }
-    *row = (target_monster){.targets = targets,
+    target_monster candidate = {.targets = targets,
         .native = targets->monsters[actor.slot] ? targets->monsters[actor.slot]->native : *native,
         .authored = *authored};
     if (!targets->monster_resolve || !targets->monster_resolve(targets->monster_context,
-        authored->owner, &row->mission, error)) { free(row); return false; }
+        authored->owner, &candidate.mission, error)) return false;
     bool zombie = (authored->source == QA_RULESET_NETQUAKE || authored->source == QA_RULESET_QUAKEWORLD) &&
         authored->fields.classname == targets->runtime_names[TARGET_NAME_MONSTER_ZOMBIE];
-    row->mission.ambush = (authored->spawnflags & (zombie ? 2u : 1u)) != 0;
-    if (!monster_barriers_set(row, authored->barriers, authored->barrier_count, error)) {
-        monster_destroy(row);
+    candidate.mission.ambush = (authored->spawnflags & (zombie ? 2u : 1u)) != 0;
+    if (!monster_barriers_set(&candidate, authored->barriers, authored->barrier_count, error))
         return false;
+    target_monster *row = targets->monsters[actor.slot];
+    if (row) {
+        candidate.storage_slot = row->storage_slot;
+        monster_barriers_release(row);
+    } else {
+        row = qa_pool_take(&targets->monster_slots, &candidate.storage_slot);
+        if (!row) {
+            monster_barriers_release(&candidate);
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining authored monster target");
+            return false;
+        }
     }
-    monster_destroy(targets->monsters[actor.slot]);
+    *row = candidate;
     targets->monsters[actor.slot] = row;
     targets->bindings[actor.slot] = monster_binding(row);
     qa_targets_changed(targets, actor);
@@ -624,8 +645,8 @@ bool qa_targets_next_authored(qa_targets *targets, qa_string_id classname, qa_ta
     }
     return false;
 }
-static bool snapshot(qa_targets *targets, qa_string_id name, qa_actor_id **out, size_t *count,
-                     qa_error *error) {
+static bool snapshot(qa_targets *targets, qa_string_id name, target_snapshot_scope **scope,
+                     qa_actor_id **out, size_t *count, qa_error *error) {
     *out = NULL;
     *count = 0;
     if (!name)
@@ -635,10 +656,19 @@ static bool snapshot(qa_targets *targets, qa_string_id name, qa_actor_id **out, 
         ++end;
     if (end == at)
         return true;
-    qa_actor_id *actors = qa_arena_alloc(&targets->scratch, (end - at) * sizeof(*actors),
-                                         _Alignof(qa_actor_id), error);
-    if (!actors)
-        return false;
+    if (!*scope) {
+        if (targets->snapshot_scopes.head == SIZE_MAX &&
+            !qa_pool_extend(&targets->snapshot_scopes, &targets->scratch, 1, error))
+            return false;
+        size_t slot;
+        *scope = qa_pool_take(&targets->snapshot_scopes, &slot);
+        if (!*scope) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining authored target snapshot");
+            return false;
+        }
+        (*scope)->storage_slot = slot;
+    }
+    qa_actor_id *actors = (*scope)->actors;
     for (size_t i = at; i < end; ++i)
         actors[i - at] = targets->index[i].actor;
     *out = actors;
@@ -670,7 +700,8 @@ bool qa_targets_invoke(qa_targets *targets, qa_actor_id actor, qa_actor_id other
     use_invocation use = {targets, *entry, targets->binding_serial[actor.slot], other, activator};
     return qa_session_invoke(targets->options.session, actor, QA_INVOKE_USE, invoke, &use, error);
 }
-static bool use_now(qa_targets *targets, qa_target_use request, qa_error *error) {
+static bool use_now(qa_targets *targets, qa_target_use request, target_snapshot_scope **scope,
+                    qa_error *error) {
     bool q1 = request.dialect == QA_RULESET_NETQUAKE || request.dialect == QA_RULESET_QUAKEWORLD;
     bool q3 = request.dialect == QA_RULESET_Q3;
     const qa_target_binding *source_binding = q3 ? binding(targets, request.source) : NULL;
@@ -704,7 +735,7 @@ static bool use_now(qa_targets *targets, qa_target_use request, qa_error *error)
     if (!q3) {
         qa_actor_id *victims;
         size_t count;
-        if (!snapshot(targets, request.fields.killtarget, &victims, &count, error))
+        if (!snapshot(targets, request.fields.killtarget, scope, &victims, &count, error))
             return false;
         for (size_t i = 0; i < count; ++i) {
             const qa_target_binding *entry = binding(targets, victims[i]);
@@ -725,7 +756,7 @@ static bool use_now(qa_targets *targets, qa_target_use request, qa_error *error)
     if (q1) {
         qa_actor_id *actors;
         size_t count;
-        if (!snapshot(targets, request.fields.target, &actors, &count, error))
+        if (!snapshot(targets, request.fields.target, scope, &actors, &count, error))
             return false;
         for (size_t i = 0; i < count; ++i)
             if (live(targets, actors[i]) &&
@@ -773,10 +804,11 @@ static bool prepare_request(const qa_targets *targets, const qa_target_use *requ
     return true;
 }
 static bool execute_request(qa_targets *targets, qa_target_use request, qa_error *error) {
+    target_snapshot_scope *scope = NULL;
     ++targets->depth;
-    bool ok = use_now(targets, request, error);
-    if (!--targets->depth)
-        qa_arena_reset(&targets->scratch);
+    bool ok = use_now(targets, request, &scope, error);
+    --targets->depth;
+    if (scope) qa_pool_release(&targets->snapshot_scopes, scope->storage_slot);
     return ok;
 }
 bool qa_targets_use_now(qa_targets *targets, const qa_target_use *request, qa_error *error) {

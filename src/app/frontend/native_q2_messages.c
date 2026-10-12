@@ -1,23 +1,26 @@
 #include "internal.h"
 #include "native_q2_messages.h"
 #include "particle_delivery.h"
+#include "../application/unified_events.h"
 
 bool frontend_native_q2_messages(qa_frontend *frontend, qa_error *error)
 {
     uint64_t first = qa_application_events_local_first(frontend->application);
     uint64_t next = qa_application_events_next(frontend->application);
-    for (uint64_t id = first; id < next; ++id) {
-        qa_application_event_view output;
-        if (!qa_application_event_read(frontend->application, &(qa_application_event_cursor){.id = id, .projection = 0}, &output) || !output.protocol) continue;
+    qa_application_event_range records = {.next = first, .end = next};
+    qa_application_event_view output;
+    while (qa_application_event_raw_next(frontend->application, &records,
+        UINT64_MAX, &output)) {
+        if (!output.protocol) continue;
         const qa_application_protocol_event *record = output.protocol;
         const qa_application_q2_protocol_delivery *delivery = output.q2_delivery;
         if (!delivery->original) continue;
         frontend_native_q2_print_output(frontend, record);
         if (!delivery->audience.captured || !delivery->audience.count) continue;
-        qa_application_event_view projected;
-        qa_application_event_cursor event_cursor = {.id = id};
-        while ( qa_application_event_read(frontend->application, &event_cursor, &projected)) {
-            const qa_unified_presentation_payload *presentation = projected.presentation;
+        const application_unified_event_record *projected;
+        qa_application_event_range projections = {.next = records.id, .end = records.id + 1};
+        while ((projected = qa_application_event_range_next(frontend->application, &projections, NULL))) {
+            const qa_unified_presentation_payload *presentation = projected->presentation;
             if (!presentation) continue;
             bool temporary = presentation->kind == QA_UNIFIED_PRESENTATION_Q2_TEMPORARY;
             bool muzzle = presentation->kind == QA_UNIFIED_PRESENTATION_Q2_PROTOCOL &&
@@ -30,18 +33,18 @@ bool frontend_native_q2_messages(qa_frontend *frontend, qa_error *error)
             if (!temporary && !muzzle && !print && !sound) continue;
             const qa_application_q2_recipient *recipient = NULL;
             for (size_t i = 0; i < delivery->audience.count; ++i)
-                if (qa_actor_id_equal(delivery->audience.recipients[i].actor, projected.presentation_recipient)) {
+                if (qa_actor_id_equal(delivery->audience.recipients[i].actor, projected->recipient)) {
                     recipient = delivery->audience.recipients + i; break;
                 }
             if (!recipient) continue;
             if (sound) {
                 if (!frontend_native_q2_sound_event(frontend, record,
-                    &presentation->value.q2_protocol, projected.presentation_recipient, error)) return false;
+                    &presentation->value.q2_protocol, projected->recipient, error)) return false;
                 continue;
             }
             if (print) {
                 frontend_native_q2_print_event(frontend, record->provider,
-                    &presentation->value.q2_protocol, projected.presentation_recipient);
+                    &presentation->value.q2_protocol, projected->recipient);
                 continue;
             }
             qa_application_q2_audience audience = delivery->audience;
@@ -56,7 +59,7 @@ bool frontend_native_q2_messages(qa_frontend *frontend, qa_error *error)
                 }
                 qa_builtin_event event = {.kind = QA_BUILTIN_MUZZLE, .family = QA_GAME_Q2,
                     .provider = record->provider, .actor = source->actor,
-                    .time_ns = projected.presentation_time_ns, .origin = origin, .code = source->flash,
+                    .time_ns = projected->time_ns, .origin = origin, .code = source->flash,
                     .flags = source->silenced ? 128u : 0u};
                 if (!frontend_native_q2_muzzle_sound(frontend, record, &audience, &event,
                     source->monster, qa_ruleset_q2_from_tag(delivery->profile != QA_NATIVE_Q2_GAME_API3), error)) return false;

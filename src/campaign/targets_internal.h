@@ -17,8 +17,12 @@ typedef struct target_monster {
     qa_target_binding native;
     qa_monster_mission mission;
     qa_authored_monster authored;
-    size_t barrier_slot, barrier_pages;
+    size_t storage_slot, barrier_slot, barrier_pages;
 } target_monster;
+typedef struct target_snapshot_scope {
+    size_t storage_slot;
+    qa_actor_id actors[];
+} target_snapshot_scope;
 typedef enum target_name {
     TARGET_NAME_MONSTER_ZOMBIE, TARGET_NAME_FUNC_AREAPORTAL,
     TARGET_NAME_FUNC_DOOR, TARGET_NAME_FUNC_DOOR_ROTATING, TARGET_NAME_COUNT
@@ -35,8 +39,9 @@ struct qa_targets {
     target_index *index, *indexed;
     authored_index *authored;
     qa_arena scratch;
+    qa_pool snapshot_scopes;
     qa_arena barrier_storage;
-    qa_pool barrier_pages;
+    qa_pool monster_slots, barrier_pages;
     size_t count, authored_count, capacity, depth;
     uint64_t next_binding_serial;
 };

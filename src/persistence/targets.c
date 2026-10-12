@@ -170,10 +170,13 @@ bool qa_persistence_targets_restore(qa_targets *targets, const qa_persistence_ga
         scratch->bindings = old; scratch->binding_serial = old_serial;
         target_monster **old_monsters = targets->monsters;
         targets->monsters = scratch->monsters; scratch->monsters = old_monsters;
+        qa_pool old_monster_slots = targets->monster_slots;
         qa_pool old_barrier_pages = targets->barrier_pages;
         qa_arena old_barrier_storage = targets->barrier_storage;
+        targets->monster_slots = scratch->monster_slots;
         targets->barrier_pages = scratch->barrier_pages;
         targets->barrier_storage = scratch->barrier_storage;
+        scratch->monster_slots = old_monster_slots;
         scratch->barrier_pages = old_barrier_pages;
         scratch->barrier_storage = old_barrier_storage;
         target_index *old_index = targets->index, *old_indexed = targets->indexed;
