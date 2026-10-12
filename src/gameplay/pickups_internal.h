@@ -28,6 +28,7 @@ typedef struct pickup_observation_owner {
 typedef struct pickup_observation_storage {
     qa_arena arena;
     qa_pool records;
+    qa_id_index registration_index;
 } pickup_observation_storage;
 struct qa_pickup_execution {
     struct qa_pickup_execution *previous;

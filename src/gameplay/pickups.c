@@ -51,18 +51,38 @@ static void registration_free(pickup_registration *registration)
     free(registration->rules); free(registration);
 }
 
+static pickup_registration *registration_find(const qa_pickups *service, qa_pickup_lease lease)
+{
+    if (!service || !lease.serial) return NULL;
+    const qa_id_index *index = &service->observation_storage->registration_index;
+    qa_id_index_cursor cursor = qa_id_index_begin(index, 0, lease.serial);
+    size_t value;
+    if (!qa_id_index_next(index, &cursor, &value)) return NULL;
+    pickup_registration *registration = (pickup_registration *)(uintptr_t)value;
+    return qa_actor_id_equal(registration->actor, lease.actor) ? registration : NULL;
+}
+
 static void sweep(qa_pickups *service)
 {
     if (service->calls) return;
+    bool reindex = false;
     pickup_registration **link = &service->registrations;
     while (*link) {
         pickup_registration *registration = *link;
         if (!registration->active) {
             *link = registration->next;
+            if (!reindex) {
+                qa_id_index_clear(&service->observation_storage->registration_index);
+                reindex = true;
+            }
             qa_inventory_pickup_release(service->inventory, registration->actor, registration);
             registration_free(registration);
         } else link = &registration->next;
     }
+    if (reindex) for (pickup_registration *registration = service->registrations;
+            registration; registration = registration->next)
+        qa_id_index_insert(&service->observation_storage->registration_index, 0, registration->serial,
+            (size_t)(uintptr_t)registration);
     while (service->retired_observations) {
         pickup_observation_owner *retired=service->retired_observations;
         service->retired_observations=retired->retired_next;
@@ -170,6 +190,7 @@ bool qa_pickups_create(qa_actor_registry *actors, qa_combat *combat, qa_inventor
     }
     pickup_observation_storage *storage = service->observation_storage;
     qa_arena_init(&storage->arena, 0);
+    storage->registration_index.storage = &storage->arena;
     size_t capacity = qa_actors_capacity(actors);
     if (capacity > SIZE_MAX / sizeof(*service->observations)) {
         (void)qa_pickups_destroy(service, NULL);
@@ -208,6 +229,7 @@ bool qa_pickups_destroy(qa_pickups *service, qa_error *e)
     for(uint32_t i=0;i<service->observation_capacity;++i)
         if (service->observations[i])
             qa_pool_release(&service->observation_storage->records, service->observations[i]->slot);
+    qa_id_index_destroy(&service->observation_storage->registration_index);
     qa_arena_destroy(&service->observation_storage->arena);
     free(service->observation_storage);free(service);return true;
 }
@@ -406,9 +428,12 @@ bool qa_pickups_bind(qa_pickups *service, qa_actor_id actor, qa_actor_owner owne
     if (ok && !registration_current(service, registration)) ok = fail(e, QA_ERROR_NOT_FOUND, "Pickup resources retired during registration");
     if (ok) ok = registration_conflicts(service, registration, e);
     if (ok && service->serial == UINT64_MAX) ok = fail(e, QA_ERROR_ARGUMENT, "Pickup registration identity exhausted");
+    if (ok) ok = qa_id_index_reserve(&service->observation_storage->registration_index, 1, e);
     if (ok) {
         registration->serial = ++service->serial;
         registration->next = service->registrations; service->registrations = registration;
+        qa_id_index_insert(&service->observation_storage->registration_index, 0, registration->serial,
+            (size_t)(uintptr_t)registration);
         *out = (qa_pickup_lease){actor, registration->serial};
     } else { qa_inventory_pickup_release(service->inventory, actor, registration); registration_free(registration); }
     qa_inventory_unhold(service->inventory);
@@ -418,35 +443,29 @@ bool qa_pickups_bind(qa_pickups *service, qa_actor_id actor, qa_actor_owner owne
 
 bool qa_pickups_registration_current(qa_pickups *service,qa_pickup_lease lease,qa_actor_owner owner)
 {
-    if (!service || !lease.serial) return false;
-    for (pickup_registration *registration = service->registrations; registration; registration = registration->next)
-        if (registration->serial == lease.serial && registration->owner == owner &&
-            qa_actor_id_equal(registration->actor, lease.actor)) {
-            for (size_t i = 0; i < registration->count; ++i)
-                for (size_t j = 0; j < registration->rules[i].rule.write_count; ++j)
-                    if (!write_retained(service, registration, registration->rules[i].rule.writes + j,
-                        registration->rules[i].storage[j])) return false;
-            return registration->active && qa_actors_get(service->actors, registration->actor) != NULL;
-        }
-    return false;
+    pickup_registration *registration = registration_find(service, lease);
+    if (!registration || registration->owner != owner) return false;
+    for (size_t i = 0; i < registration->count; ++i)
+        for (size_t j = 0; j < registration->rules[i].rule.write_count; ++j)
+            if (!write_retained(service, registration, registration->rules[i].rule.writes + j,
+                registration->rules[i].storage[j])) return false;
+    return registration->active && qa_actors_get(service->actors, registration->actor) != NULL;
 }
 
 bool qa_pickups_registration_owned(const qa_pickups *service,qa_pickup_lease lease,qa_actor_owner owner)
 {
-    if (!service || !lease.serial) return false;
-    for (const pickup_registration *registration = service->registrations; registration; registration = registration->next)
-        if (registration->active && registration->serial == lease.serial && registration->owner == owner &&
-            qa_actor_id_equal(registration->actor, lease.actor)) return true;
-    return false;
+    const pickup_registration *registration = registration_find(service, lease);
+    return registration && registration->active && registration->owner == owner;
 }
 
 bool qa_pickups_close(qa_pickups *service, qa_pickup_lease lease, qa_error *e)
 {
     if (!service) return fail(e, QA_ERROR_ARGUMENT, "Missing pickup service");
-    for (pickup_registration *r = service->registrations; r; r = r->next)
-        if (r->serial == lease.serial && qa_actor_id_equal(r->actor, lease.actor)) {
-            r->active = false; qa_inventory_pickup_release(service->inventory, r->actor, r); break;
-        }
+    pickup_registration *registration = registration_find(service, lease);
+    if (registration) {
+        registration->active = false;
+        qa_inventory_pickup_release(service->inventory, registration->actor, registration);
+    }
     sweep(service); return true;
 }
 
