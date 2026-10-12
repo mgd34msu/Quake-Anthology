@@ -32,4 +32,7 @@ struct application_native_q3_remote_role {
     native_q3_remote_lifecycle lifecycle;
     bool initialized, acquired_initialized, retiring;
 };
+
+struct application_native_q3_remote_role *application_native_q3_remote_role_find(
+    const application_provider *, uint32_t seat);
 #endif

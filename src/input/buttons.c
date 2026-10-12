@@ -1,7 +1,24 @@
 #include "qa/input.h"
-#include <stdlib.h>
 #include <string.h>
 
+bool qa_input_button_prepare(qa_input_button *button,size_t capacity,qa_error *error) {
+    if(!button) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Button preparation requires its owner");return false;}
+    size_t current=button->sources?button->capacity:4;
+    if(capacity<=current) return true;
+    if(capacity>SIZE_MAX/sizeof(*button->sources)) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"Button source capacity overflow");
+        return false;
+    }
+    bool sealed=button->source_storage.sealed;
+    button->source_storage.sealed=false;
+    uint64_t *sources=button->sources?button->sources:button->inline_sources;
+    uint64_t *grown=qa_arena_grow(&button->source_storage,sources,
+        button->count*sizeof(*sources),capacity*sizeof(*sources),_Alignof(uint64_t),error);
+    button->source_storage.sealed=sealed;
+    if(!grown) return false;
+    button->sources=grown;button->capacity=capacity;
+    return true;
+}
 bool qa_input_button_down(qa_input_button *button, uint64_t source, double time, qa_error *error) {
     if (!button || !isfinite(time) || time < 0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid button timestamp");
@@ -13,19 +30,16 @@ bool qa_input_button_down(qa_input_button *button, uint64_t source, double time,
             return true;
     size_t capacity = button->sources ? button->capacity : 4;
     if (button->count == capacity) {
+        if(button->source_storage.sealed) {
+            qa_error_set(error,QA_ERROR_MEMORY,0,"Button source exceeds its admitted input storage");
+            return false;
+        }
         if (capacity > SIZE_MAX / 2 / sizeof(*sources)) {
             qa_error_set(error, QA_ERROR_MEMORY, 0, "Button source capacity overflow");
             return false;
         }
-        uint64_t *grown = realloc(button->sources, capacity * 2 * sizeof(*sources));
-        if (!grown) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating button sources");
-            return false;
-        }
-        if (!button->sources)
-            memcpy(grown, button->inline_sources, sizeof(button->inline_sources));
-        button->sources = sources = grown;
-        button->capacity = capacity * 2;
+        if(!qa_input_button_prepare(button,capacity*2,error)) return false;
+        sources=button->sources;
     }
     if (!button->count) {
         button->down_ms = time;
@@ -91,7 +105,7 @@ void qa_input_button_clear(qa_input_button *button) {
 }
 void qa_input_button_destroy(qa_input_button *button) {
     if (button) {
-        free(button->sources);
+        qa_arena_destroy(&button->source_storage);
         memset(button, 0, sizeof(*button));
     }
 }

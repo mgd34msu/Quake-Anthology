@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "9c2b7e483b7bdb161b4000474a8f8cfd44090d72",
+  "verified_main": "216e50cde0233844bc75866ba141194fda0c93ba",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 183,
-    "open_source_observation": 188,
+    "fixed_source_build_core": 184,
+    "open_source_observation": 187,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -27937,8 +27937,9 @@
       "severity": "medium",
       "job": "09",
       "area": "bots_navigation",
-      "status": "open_source_observation",
-      "verification": "Evaluation, mutation and release stack growth use the common arena; persistent workspace owns backing while copied traversal metadata borrows it. Existing busy protection, authoritative callback reads, child/next order and random draws remain. Initial and larger-depth allocation remain open because live callbacks can alter topology; no fixed new traversal cap or preflight authority is introduced. Normal production build and seven existing core suites passed; no live selection or zero-allocation claim."
+      "status": "fixed_source_build_core",
+      "verification": "Evaluation, mutation and release stack growth use the common arena; persistent workspace owns backing while copied traversal metadata borrows it. Existing busy protection, authoritative callback reads, child/next order and random draws remain. Initial and larger-depth allocation remain open because live callbacks can alter topology; no fixed new traversal cap or preflight authority is introduced. Normal production build and seven existing core suites passed; no live selection or zero-allocation claim.",
+      "fixed_commit": "216e50cde0233844bc75866ba141194fda0c93ba"
     },
     {
       "id": "09-05",
@@ -42203,6 +42204,37 @@
       ],
       "record_directory": "/tmp/qa-ta3196-qc-command-slots-20261012",
       "conclusion": "QC exports bind once; both command arities use reusable depth/capacity engine slots and indexed calls. Engine rewrites invalidate canonical projections instead of eagerly interning every command, with original guest references and checkpoint bytes retained. Existing slots reuse without consuming guest extent; absent slots choose geometric or exact capacity before admission. Core checks cover NQ/QW reuse, suffix refresh and lazy identity plus existing checkpoint restoration. Normal build and seven core suites passed; new size/depth peaks may grow common storage."
+    },
+    {
+      "commit": "216e50cde0233844bc75866ba141194fda0c93ba",
+      "source_tree": "f655ea3be23e6fcfea84b11179ff0e78130cc7f0",
+      "finding_ids": [
+        "09-04"
+      ],
+      "files_rechecked": [
+        "include/qa/bot_library.h",
+        "src/bots/goals/core.c",
+        "src/bots/goals/save.c",
+        "src/bots/library/source_fuzzy_operations.c",
+        "src/bots/library/source_fuzzy_operations.h",
+        "src/bots/library/weapons.c",
+        "src/bots/library/weights.c",
+        "src/bots/runtime/handles.c",
+        "src/bots/runtime/save.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-fuzzy-workspace-20261012",
+      "conclusion": "Fuzzy goal and weapon selectors prepare one common sealed traversal arena from all admitted separator aliases at create/bind/restore; ordinary evaluation only reads authoritative source records. Child/next and RNG order remain unchanged, with explicit mutation/free traversal prepared separately. Normal production build and seven core suites passed; genuinely new source admission may increase common storage, and no live or whole-frame allocation claim is made."
     }
   ],
   "verification_limits": [

@@ -4,6 +4,7 @@
 #include "network_unified.h"
 #include "qa/unified_frame_events.h"
 #include "qa/event_ring.h"
+#include "qa/id_index.h"
 
 typedef struct application_unified_event_record {
     qa_unified_presentation_payload *presentation;
@@ -122,6 +123,14 @@ typedef struct application_unified_event_registration {
     qa_native_host_resource_kind kind;
     uint64_t custody;
 } application_unified_event_registration;
+
+static inline uint64_t application_unified_event_registration_discriminator(
+    qa_actor_owner owner, qa_native_host_resource_kind kind)
+{ return ((uint64_t)kind << 32) | owner; }
+
+bool application_unified_event_dictionary_index_build(qa_id_index *,
+    const application_unified_event_resource *, size_t,
+    const application_unified_event_registration *, size_t, qa_error *);
 
 /* Registration consumes no VFS read. It admits only an actual held opening in
  * the emitting Source's retained content view, and retains that acquisition. */

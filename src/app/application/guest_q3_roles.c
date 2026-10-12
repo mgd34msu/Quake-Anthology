@@ -19,6 +19,43 @@
 #include "guest_q3_pickups.h"
 #include "guest_q3_save.h"
 
+qa_id_index_cursor q3g_role_lookup_begin(const struct application_q3_guest *engine,
+    qa_qvm_role kind, uint32_t seat)
+{
+    qa_string_id key = kind == QA_QVM_GAME ? 0 : seat;
+    return engine ? qa_id_index_begin(&engine->role_index, key, (uint64_t)kind) :
+        (qa_id_index_cursor){.key = key, .discriminator = (uint64_t)kind};
+}
+q3g_role *q3g_role_lookup_next(const struct application_q3_guest *engine, qa_id_index_cursor *cursor)
+{
+    size_t value;
+    return engine && qa_id_index_next(&engine->role_index, cursor, &value) ?
+        (q3g_role *)(uintptr_t)value : NULL;
+}
+static q3g_role *reverse_roles(q3g_role *row)
+{
+    q3g_role *previous = NULL;
+    while (row) {
+        q3g_role *next = row->next;
+        row->next = previous; previous = row; row = next;
+    }
+    return previous;
+}
+void q3g_roles_reindex(struct application_q3_guest *engine)
+{
+    qa_id_index_clear(&engine->role_index);
+    engine->roles = reverse_roles(engine->roles);
+    for (q3g_role *row = engine->roles; row; row = row->next)
+        qa_id_index_insert(&engine->role_index, row->kind == QA_QVM_GAME ? 0 : row->seat,
+            (uint64_t)row->kind, (size_t)(uintptr_t)row);
+    engine->roles = reverse_roles(engine->roles);
+}
+void q3g_role_publish(q3g_role **position, q3g_role *role, q3g_role *next)
+{
+    role->next = next; *position = role;
+    q3g_roles_reindex(role->engine);
+}
+
 static bool process_current(void *context, const qa_launch_instance *descriptor,
     qa_actor_owner receiver, uint64_t service_owner, qa_error *error)
 {
@@ -177,6 +214,9 @@ bool q3g_role_consume(q3g_role *role, qa_error *error)
 bool q3g_role_destroy(q3g_role *role, qa_error *error)
 {
     if (!q3g_role_consume(role, error)) return false;
+    qa_id_index_remove_value(&role->engine->role_index, role->kind == QA_QVM_GAME ? 0 : role->seat,
+        (uint64_t)role->kind, (size_t)(uintptr_t)role);
+    --role->engine->owned_role_count;
     qa_qvm_image_release(role->image);
     qa_native_module_release(role->module);
     if (!role->artifact) qa_native_declaration_destroy(role->declaration);
@@ -200,12 +240,15 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         for (q3g_role *prior = engine->roles; prior; prior = prior->next)
             if (prior->service_owner == saved_owner || prior->service_sequence == saved_sequence)
                 return application_fail(error, QA_ERROR_FORMAT, "Duplicate restored Q3 role lifetime identity");
+    if (!qa_id_index_reserve(&engine->role_index,
+        engine->owned_role_count - engine->role_index.count + 1, error)) return false;
     q3g_role *role = calloc(1, sizeof(*role));
     if (!role) return application_fail(error, QA_ERROR_MEMORY, "allocating Q3 role");
+    ++engine->owned_role_count;
     role->engine = engine; role->kind = kind; role->seat = seat; role->primary = primary;
     role->client_source = client_source;
     role->client = UINT32_MAX; role->path = q3g_copy_text(path, error);
-    if (!role->path) { free(role); return false; }
+    if (!role->path) { --engine->owned_role_count; free(role); return false; }
     qa_q3_host_options options = {0};
     qa_application_q3_equipment_services equipment_services = {0};
     qa_application_q3_body_services body_services = {0};
@@ -649,7 +692,7 @@ failed:
     if(options.release_frontend) options.release_frontend(options.frontend_lifetime);
     qa_qvm_compatibility_free(&compatibility);
     /* Keep a failed cleanup reachable by the provider's retirement path. */
-    if (!q3g_role_destroy(role, NULL)) { role->next = engine->roles; engine->roles = role; }
+    if (!q3g_role_destroy(role, NULL)) q3g_role_publish(&engine->roles, role, engine->roles);
     return false;
 }
 
@@ -828,7 +871,7 @@ bool q3g_role_restart(q3g_role *role, q3g_role **out, qa_error *error)
         client_source, &replacement, error) : q3g_role_create(engine, kind, seat, path, primary, &replacement, error);
     free(path);
     if (!ok) return false;
-    replacement->next = engine->roles; engine->roles = replacement;
+    q3g_role_publish(&engine->roles, replacement, engine->roles);
     if (game) { engine->game = replacement; q3g_game_aliases(engine, replacement); }
     *out = replacement; return true;
 }

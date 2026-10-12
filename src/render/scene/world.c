@@ -942,6 +942,83 @@ static bool visibility_matches(const qa_scene_world_input *input,
     return true;
 }
 
+typedef struct qaw_visibility_walk {
+    const qa_scene_world *world;
+    const qa_scene_world_input *input;
+    const qa_stamp_set *node_marks;
+    const qa_scene_light *lights;
+    const qa_scene_plane *planes;
+    size_t light_count, plane_count;
+    qa_bounds *visible_bounds;
+    uint64_t leaf_visits;
+    int32_t eye;
+    bool source;
+} qaw_visibility_walk;
+
+static qa_leaf_visit world_visible_visit(void *context, int32_t child,
+    qa_collision_tree_stage stage, const uint32_t payload[2],
+    qa_collision_tree_branch *branch, qa_error *error)
+{
+    qaw_visibility_walk *walk = context;
+    const qa_scene_world *world = walk->world;
+    const qa_scene_world_input *input = walk->input;
+    qa_scene_world_scratch *scratch = input->scratch;
+    uint32_t plane_bits = payload[1];
+    (void)stage; (void)error;
+    if (child >= 0) {
+        if (walk->node_marks && !qa_stamp_set_test(walk->node_marks, (size_t)child)) {
+            branch->children = 0; return QA_LEAF_CONTINUE;
+        }
+        const qa_bsp_node *node = &world->nodes[child];
+        if (!remaining_planes(bsp_bounds(node->bounds), walk->planes, walk->plane_count, &plane_bits)) {
+            branch->children = 0; return QA_LEAF_CONTINUE;
+        }
+        uint32_t masks[2] = {payload[0], payload[0]};
+        unsigned front = 0;
+        const qa_bsp_plane *plane = &world->planes[node->plane];
+        if (world->bsp.family == QA_BSP_Q3) {
+            masks[0] = masks[1] = 0;
+            for (size_t i = 0; i < walk->light_count; ++i) {
+                uint32_t bit = UINT32_C(1) << i;
+                if ((payload[0] & bit) == 0) continue;
+                float distance = (float)(qa_vec_dot_wide(walk->lights[i].origin, plane->normal) - plane->distance);
+                if (distance > -walk->lights[i].radius) masks[0] |= bit;
+                if (distance < walk->lights[i].radius) masks[1] |= bit;
+            }
+        } else front = qa_vec_dot_wide(input->view.origin, plane->normal) >= plane->distance ? 0u : 1u;
+        branch->first = front;
+        branch->payload[0][0] = masks[0]; branch->payload[1][0] = masks[1];
+        branch->payload[0][1] = branch->payload[1][1] = plane_bits;
+        return QA_LEAF_CONTINUE;
+    }
+    size_t index = (size_t)(-1 - (int64_t)child);
+    const qa_bsp_leaf *leaf = &world->leaves[index];
+    if (world->bsp.family == QA_BSP_Q1 && index == 0) return QA_LEAF_CONTINUE;
+    if (walk->source && !qa_stamp_set_test(&scratch->source_vis, world->node_count + index)) return QA_LEAF_CONTINUE;
+    if (!walk->source && world->bsp.family != QA_BSP_Q1 && input->visible_areas != NULL
+        && (leaf->area < 0 || (uint64_t)leaf->area / 8 >= input->visible_area_bytes
+            || (input->visible_areas[(size_t)leaf->area / 8] & (1u << ((unsigned)leaf->area & 7))) == 0)) return QA_LEAF_CONTINUE;
+    if (!walk->source && world->bsp.family == QA_BSP_Q3 && (input->no_vis || world->leaves[walk->eye].cluster < 0) && leaf->cluster == -1) return QA_LEAF_CONTINUE;
+    if (!walk->source && !input->no_vis && !scratch->pvs_all) {
+        int64_t bit = world->bsp.family == QA_BSP_Q1 ? (int64_t)index - 1 : leaf->cluster;
+        if (bit < 0 || (uint64_t)bit / 8 >= scratch->pvs.size
+            || (scratch->pvs.data[(size_t)bit / 8] & (1u << ((unsigned)bit & 7))) == 0) return QA_LEAF_CONTINUE;
+    }
+    if (!remaining_planes(bsp_bounds(leaf->bounds), walk->planes, walk->plane_count, &plane_bits)) return QA_LEAF_CONTINUE;
+    if (walk->source) {
+        ++walk->leaf_visits;
+        if (input->source_scratch) ++input->source_scratch->owner->counters.leaves;
+    }
+    if (walk->visible_bounds) *walk->visible_bounds = qa_bounds_union(*walk->visible_bounds, bsp_bounds(leaf->bounds));
+    for (size_t i = leaf->faces.first; i < (size_t)leaf->faces.first + leaf->faces.count; ++i) {
+        uint32_t surface = world->leaf_surfaces[i];
+        if (!qa_stamp_set_mark(&scratch->surfaces, surface)) continue;
+        scratch->surface_lights[surface] = payload[0];
+        scratch->visible_surfaces[scratch->visible_count++] = surface;
+    }
+    return QA_LEAF_CONTINUE;
+}
+
 static bool world_visible(const qa_scene_world *world, const qa_scene_world_input *input,
     qa_bounds *visible_bounds, qa_error *error)
 {
@@ -980,63 +1057,16 @@ static bool world_visible(const qa_scene_world *world, const qa_scene_world_inpu
     }
     cache->valid = false;
     if (visible_bounds) cache->bounds_start = *visible_bounds;
-    uint64_t leaf_visits = 0;
     qa_stamp_set_begin(&scratch->surfaces);
     qa_scene_plane planes[6];
     size_t plane_count = input->no_cull ? 0 : qa_scene_frustum(&input->view, planes);
     if (world->bsp.family == QA_BSP_Q3 && plane_count > 4) plane_count = 4;
-    size_t pending = 1;
-    scratch->pending[0] = (qaw_pending){world->node_count == 0 ? -1 : 0,
-        all_lights(light_count), (UINT32_C(1) << plane_count) - 1};
-    while (pending != 0) {
-        qaw_pending item = scratch->pending[--pending];
-        if (item.child >= 0) {
-            if (node_marks && !qa_stamp_set_test(node_marks, (size_t)item.child)) continue;
-            const qa_bsp_node *node = &world->nodes[item.child];
-            if (!remaining_planes(bsp_bounds(node->bounds), planes, plane_count, &item.planes)) continue;
-            uint32_t masks[2] = {item.lights, item.lights};
-            unsigned front = 0;
-            const qa_bsp_plane *plane = &world->planes[node->plane];
-            if (world->bsp.family == QA_BSP_Q3) {
-                masks[0] = masks[1] = 0;
-                for (size_t i = 0; i < light_count; ++i) {
-                    uint32_t bit = UINT32_C(1) << i;
-                    if ((item.lights & bit) == 0) continue;
-                    float distance = (float)(qa_vec_dot_wide(lights[i].origin, plane->normal) - plane->distance);
-                    if (distance > -lights[i].radius) masks[0] |= bit;
-                    if (distance < lights[i].radius) masks[1] |= bit;
-                }
-            } else front = qa_vec_dot_wide(input->view.origin, plane->normal) >= plane->distance ? 0u : 1u;
-            scratch->pending[pending++] = (qaw_pending){node->children[front ^ 1], masks[front ^ 1], item.planes};
-            scratch->pending[pending++] = (qaw_pending){node->children[front], masks[front], item.planes};
-            continue;
-        }
-        size_t index = (size_t)(-1 - (int64_t)item.child);
-        const qa_bsp_leaf *leaf = &world->leaves[index];
-        if (world->bsp.family == QA_BSP_Q1 && index == 0) continue;
-        if (source && !qa_stamp_set_test(&scratch->source_vis, world->node_count + index)) continue;
-        if (!source && world->bsp.family != QA_BSP_Q1 && input->visible_areas != NULL
-            && (leaf->area < 0 || (uint64_t)leaf->area / 8 >= input->visible_area_bytes
-                || (input->visible_areas[(size_t)leaf->area / 8] & (1u << ((unsigned)leaf->area & 7))) == 0)) continue;
-        if (!source && world->bsp.family == QA_BSP_Q3 && (input->no_vis || world->leaves[eye].cluster < 0) && leaf->cluster == -1) continue;
-        if (!source && !input->no_vis && !scratch->pvs_all) {
-            int64_t bit = world->bsp.family == QA_BSP_Q1 ? (int64_t)index - 1 : leaf->cluster;
-            if (bit < 0 || (uint64_t)bit / 8 >= scratch->pvs.size
-                || (scratch->pvs.data[(size_t)bit / 8] & (1u << ((unsigned)bit & 7))) == 0) continue;
-        }
-        if (!remaining_planes(bsp_bounds(leaf->bounds), planes, plane_count, &item.planes)) continue;
-        if (source) {
-            ++leaf_visits;
-            if (input->source_scratch) ++input->source_scratch->owner->counters.leaves;
-        }
-        if (visible_bounds) *visible_bounds = qa_bounds_union(*visible_bounds, bsp_bounds(leaf->bounds));
-        for (size_t i = leaf->faces.first; i < (size_t)leaf->faces.first + leaf->faces.count; ++i) {
-            uint32_t surface = world->leaf_surfaces[i];
-            if (!qa_stamp_set_mark(&scratch->surfaces, surface)) continue;
-            scratch->surface_lights[surface] = item.lights;
-            scratch->visible_surfaces[scratch->visible_count++] = surface;
-        }
-    }
+    qaw_visibility_walk walk = {.world = world, .input = input, .node_marks = node_marks,
+        .lights = lights, .planes = planes, .light_count = light_count, .plane_count = plane_count,
+        .visible_bounds = visible_bounds, .eye = eye, .source = source};
+    uint32_t payload[2] = {all_lights(light_count), (UINT32_C(1) << plane_count) - 1};
+    if (!qa_collision_walk_tree(world->options.geometry, world->node_count == 0 ? -1 : 0,
+        scratch->pending, payload, world_visible_visit, &walk, error)) return false;
     if (cacheable) {
         cache->origin = input->view.origin;
         memcpy(cache->axis, input->view.axis, sizeof(cache->axis));
@@ -1056,7 +1086,7 @@ static bool world_visible(const qa_scene_world *world, const qa_scene_world_inpu
             cache->lights[i] = (qaw_visibility_light){lights[i].origin, lights[i].radius};
         cache->bounds_valid = visible_bounds != NULL;
         if (visible_bounds) cache->bounds = *visible_bounds;
-        cache->surface_count = scratch->visible_count; cache->leaf_visits = leaf_visits;
+        cache->surface_count = scratch->visible_count; cache->leaf_visits = walk.leaf_visits;
         cache->visibility_generation = scratch->surfaces.epoch;
         cache->valid = true;
     }
@@ -1380,7 +1410,54 @@ struct qa_scene_q1_mirror {
     const uint32_t *surfaces;
     qa_scene_view parent, reflected;
 };
-typedef struct mirror_walk { int32_t child; bool faces; } mirror_walk;
+typedef struct qaw_mirror_walk {
+    const qa_scene_world *world;
+    const qa_scene_world_input *input;
+    const qa_scene_plane *frustum;
+    size_t plane_count, texture, count;
+    qa_bsp_range faces;
+    uint32_t *chain;
+    qa_scene_plane plane;
+} qaw_mirror_walk;
+
+static qa_leaf_visit world_mirror_visit(void *context, int32_t child,
+    qa_collision_tree_stage stage, const uint32_t payload[2],
+    qa_collision_tree_branch *branch, qa_error *error)
+{
+    qaw_mirror_walk *walk = context;
+    const qa_scene_world *world = walk->world;
+    const qa_scene_world_input *input = walk->input;
+    (void)payload;
+    if (child < 0) return QA_LEAF_CONTINUE;
+    const qa_bsp_node *node = &world->nodes[child];
+    if (stage == QA_COLLISION_TREE_ENTER) {
+        if (!qa_scene_bounds_visible(bsp_bounds(node->bounds), walk->frustum, walk->plane_count)) {
+            branch->children = 0; return QA_LEAF_CONTINUE;
+        }
+        const qa_bsp_plane *split = &world->planes[node->plane];
+        branch->first = qa_vec_dot(input->view.origin, split->normal) >= split->distance ? 0 : 1;
+        branch->between = true;
+        return QA_LEAF_CONTINUE;
+    }
+    /* The genuine texture chain prepends each face between the near and
+     * far child walks. Its eventual head determines the mirror plane. */
+    for (size_t i = node->faces.first; i < (size_t)node->faces.first + node->faces.count; ++i) {
+        const qaw_surface *surface = &world->surfaces[i];
+        if (i < walk->faces.first || i - walk->faces.first >= walk->faces.count ||
+            !qa_stamp_set_test(&input->scratch->surfaces, i) ||
+            !surface->legacy || surface->legacy->texture != walk->texture ||
+            (!surface->legacy->underwater &&
+             qa_vec_dot(input->view.origin, surface->plane.normal) - surface->plane.distance < -.01f) ||
+            !qa_scene_bounds_visible(surface->mesh.bounds, walk->frustum, walk->plane_count)) continue;
+        if (walk->count == world->surface_count) {
+            world_error(error, QA_ERROR_FORMAT, "Mirror BSP face ownership repeats");
+            return QA_LEAF_FAILED;
+        }
+        walk->chain[walk->count++] = (uint32_t)i;
+        walk->plane = surface->plane;
+    }
+    return QA_LEAF_CONTINUE;
+}
 
 static bool mirror_current(const qa_scene_world *world, const qa_scene_q1_mirror *mirror,
                             const qa_scene_frame *frame)
@@ -1407,7 +1484,6 @@ bool qa_scene_world_q1_mirror(qa_scene_world *world, const qa_scene_world_input 
 {
     if (!frame || !out || !reflected || !found || !valid_input(world, input, error)) return false;
     *out = NULL; *found = false;
-    qa_scene_world_scratch *scratch = input->scratch;
     if (world->bsp.family != QA_BSP_Q1 || input->no_world || input->view.mirror) return true;
     qawl_world *data = world->legacy_data;
     size_t texture = SIZE_MAX;
@@ -1415,50 +1491,25 @@ bool qa_scene_world_q1_mirror(qa_scene_world *world, const qa_scene_world_input 
         if (!strncmp(data->textures[i].name, "window02_1", 10)) texture = i;
     if (texture == SIZE_MAX || !world_visible(world, input, NULL, error)) return texture == SIZE_MAX;
     if (world->surface_count > SIZE_MAX / sizeof(uint32_t) ||
-        world->node_count > (SIZE_MAX / sizeof(mirror_walk) - 1) / 2)
+        world->node_count > SIZE_MAX / sizeof(qa_collision_tree_frame) - 1)
         return world_error(error, QA_ERROR_MEMORY, "Mirror traversal exceeds addressable storage");
     uint32_t *chain = world->surface_count ? qa_arena_alloc(&frame->storage,
         world->surface_count * sizeof(*chain), _Alignof(uint32_t), error) : NULL;
     if (world->surface_count && !chain) return false;
-    size_t capacity = world->node_count * 2 + 1;
-    mirror_walk *pending = qa_arena_alloc(&frame->storage, capacity * sizeof(*pending),
-        _Alignof(mirror_walk), error);
+    size_t capacity = world->node_count + 1;
+    qa_collision_tree_frame *pending = qa_arena_alloc(&frame->storage, capacity * sizeof(*pending),
+        _Alignof(qa_collision_tree_frame), error);
     if (!pending) return false;
     qa_scene_plane frustum[6];
-    size_t plane_count = input->no_cull ? 0 : qa_scene_frustum(&input->view, frustum), count = 0;
-    qa_scene_plane plane = {0};
-    qa_bsp_range faces = world->model_count ? world->models[0].source.faces : (qa_bsp_range){0};
-    size_t queued = world->node_count ? 1 : 0;
-    if (queued) pending[0] = (mirror_walk){.child = 0};
-    while (queued) {
-        mirror_walk item = pending[--queued];
-        if (item.child < 0) continue;
-        const qa_bsp_node *node = &world->nodes[item.child];
-        if (!item.faces) {
-            if (!qa_scene_bounds_visible(bsp_bounds(node->bounds), frustum, plane_count)) continue;
-            const qa_bsp_plane *split = &world->planes[node->plane];
-            unsigned near = qa_vec_dot(input->view.origin, split->normal) >= split->distance ? 0 : 1;
-            pending[queued++] = (mirror_walk){.child = node->children[near ^ 1]};
-            pending[queued++] = (mirror_walk){.child = item.child, .faces = true};
-            pending[queued++] = (mirror_walk){.child = node->children[near]};
-            continue;
-        }
-        /* The genuine texture chain prepends each face between the near and
-         * far child walks. Its eventual head determines the mirror plane. */
-        for (size_t i = node->faces.first; i < (size_t)node->faces.first + node->faces.count; ++i) {
-            const qaw_surface *surface = &world->surfaces[i];
-            if (i < faces.first || i - faces.first >= faces.count ||
-                !qa_stamp_set_test(&scratch->surfaces, i) ||
-                !surface->legacy || surface->legacy->texture != texture ||
-                (!surface->legacy->underwater &&
-                 qa_vec_dot(input->view.origin, surface->plane.normal) - surface->plane.distance < -.01f) ||
-                !qa_scene_bounds_visible(surface->mesh.bounds, frustum, plane_count)) continue;
-            if (count == world->surface_count)
-                return world_error(error, QA_ERROR_FORMAT, "Mirror BSP face ownership repeats");
-            chain[count++] = (uint32_t)i;
-            plane = surface->plane;
-        }
-    }
+    qaw_mirror_walk walk = {.world = world, .input = input, .frustum = frustum,
+        .plane_count = input->no_cull ? 0 : qa_scene_frustum(&input->view, frustum),
+        .texture = texture, .faces = world->model_count ? world->models[0].source.faces : (qa_bsp_range){0},
+        .chain = chain};
+    uint32_t payload[2] = {0};
+    if (world->node_count && !qa_collision_walk_tree(world->options.geometry, 0, pending,
+        payload, world_mirror_visit, &walk, error)) return false;
+    size_t count = walk.count;
+    qa_scene_plane plane = walk.plane;
     if (!count) return true;
     for (size_t i = 0; i < count / 2; ++i) {
         uint32_t index = chain[i]; chain[i] = chain[count - 1 - i]; chain[count - 1 - i] = index;

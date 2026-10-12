@@ -43,8 +43,8 @@ static bool button(qa_source_save_io *io, qa_input_button *value)
     size_t count=value->count;
     if (!qa_source_save_count(io,&count,reading?io->input.size/8:SIZE_MAX)) return false;
     if (reading) {
-        if (count>4 && !allocate(io,(void **)&value->sources,count,sizeof(*value->sources))) return false;
-        value->count=count; value->capacity=value->sources?count:0;
+        if(!qa_input_button_prepare(value,count,io->error)) return false;
+        value->count=count;
     } else if ((value->sources && count>value->capacity) || (!value->sources && count>4)) return false;
     uint64_t *sources=value->sources?value->sources:value->inline_sources;
     for (size_t i=0;i<count;++i) {
@@ -159,7 +159,12 @@ static bool binding_graph(qa_source_save_io *io, qa_input_seat *seat)
         qa_source_save_count(io,&held,reading?io->input.size/21:SIZE_MAX);
     if (ok && reading) {
         ok=allocate(io,(void **)&seat->bindings,live,sizeof(*seat->bindings));
-        if (ok) { seat->binding_count=seat->binding_capacity=live; ok=allocate(io,(void **)&seat->held,held,sizeof(*seat->held)); }
+        if (ok) {
+            seat->binding_count=seat->binding_capacity=live;
+            seat->held=held?qa_arena_alloc(&seat->held_storage,held*sizeof(*seat->held),_Alignof(qa_held_binding),io->error):NULL;
+            ok=!held || seat->held!=NULL;
+            if(ok && held) memset(seat->held,0,held*sizeof(*seat->held));
+        }
         if (ok) seat->held_count=seat->held_capacity=held;
     }
     for (size_t i=0;ok && i<live;++i) {
@@ -372,6 +377,8 @@ bool qa_input_seat_restore(qa_input_seat *seat, qa_bytes bytes, const qa_input_c
     qa_source_save_io io; uint8_t magic[4]; uint32_t ordinal=0, launch_seat=0; uint64_t services=0;
     qa_input_seat *saved=calloc(1,sizeof(*saved));
     if (!saved) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating restored input seat"); return false; }
+    saved->physical_capacity=seat->physical_capacity;
+    saved->physical_prepared=seat->physical_prepared;
     if (!qa_source_save_reader(&io,NULL,bytes,error)) { free(saved); return false; }
     bool ok=qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"QINS",4) &&
         qa_source_save_u64(&io,&services) && refs->services_decode(refs->context,services,&saved->options,error) &&

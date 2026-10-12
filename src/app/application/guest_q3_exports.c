@@ -114,8 +114,11 @@ bool application_guest_console_at(application_provider *provider, size_t index,
     if (application_guest_q3_client_console_source(engine, index, &source) &&
         application_guest_q3_client_console_at(engine, source.scope.kind == QA_APPLICATION_CONSOLE_Q3_UI ? QA_QVM_UI : QA_QVM_CGAME, source.scope.seat, console, cvars)) {
         if (context) *context = source.command;
-        for (q3g_role *role = engine->roles; role; role = role->next)
-            if (role->kind == (source.scope.kind == QA_APPLICATION_CONSOLE_Q3_UI ? QA_QVM_UI : QA_QVM_CGAME) && role->seat == source.scope.seat && qa_q3_host_console(role->host, NULL, NULL) == *console) {
+        qa_qvm_role kind = source.scope.kind == QA_APPLICATION_CONSOLE_Q3_UI ? QA_QVM_UI : QA_QVM_CGAME;
+        qa_id_index_cursor roles = q3g_role_lookup_begin(engine, kind, source.scope.seat);
+        q3g_role *role;
+        while ((role = q3g_role_lookup_next(engine, &roles)))
+            if (qa_q3_host_console(role->host, NULL, NULL) == *console) {
                 *console = qa_q3_host_console(role->host, cvars, context);
                 break;
             }
@@ -128,9 +131,10 @@ bool application_q3_guest_role_loading(const application_provider *provider,
     qa_qvm_role kind, uint32_t seat)
 {
     struct application_q3_guest *engine = q3g_engine((application_provider *)provider);
-    if (engine) for (const q3g_role *role = engine->roles; role; role = role->next)
-        if (role->kind == kind && role->seat == seat && role->ready && !role->retired)
-            return role->source_cleared;
+    qa_id_index_cursor roles = q3g_role_lookup_begin(engine, kind, seat);
+    q3g_role *role;
+    while ((role = q3g_role_lookup_next(engine, &roles)))
+        if (role->seat == seat && role->ready && !role->retired) return role->source_cleared;
     return false;
 }
 
@@ -138,8 +142,9 @@ static q3g_role *find_role(application_provider *provider, qa_qvm_role kind,
                             uint32_t seat, qa_error *error)
 {
     struct application_q3_guest *engine = q3g_engine(provider);
-    if (engine) for (q3g_role *role = engine->roles; role; role = role->next)
-        if (role->kind == kind && (kind == QA_QVM_GAME || role->seat == seat)) return role;
+    qa_id_index_cursor roles = q3g_role_lookup_begin(engine, kind, seat);
+    q3g_role *role = q3g_role_lookup_next(engine, &roles);
+    if (role) return role;
     application_fail(error, QA_ERROR_NOT_FOUND, "Q3 guest role is not installed for this seat");
     return NULL;
 }
@@ -159,9 +164,10 @@ static bool client_context_read(qa_application *app, qa_actor_owner receiver,
         provider->close_pending || !engine || engine->restore_pending || engine->round.phase != Q3G_ROUND_NONE)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 client receiver is not admitted");
     q3g_role *role = NULL;
-    for (q3g_role *current = engine->roles; current; current = current->next)
-        if (current->kind == QA_QVM_CGAME && current->seat == seat && current->ready &&
-            !current->retired && current->host) {
+    qa_id_index_cursor roles = q3g_role_lookup_begin(engine, QA_QVM_CGAME, seat);
+    q3g_role *current;
+    while ((current = q3g_role_lookup_next(engine, &roles)))
+        if (current->ready && !current->retired && current->host) {
             if (role)
                 return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client seat has ambiguous CGAME hosts");
             role = current;
@@ -336,12 +342,13 @@ bool qa_application_q3_client_host_read(qa_application *app, qa_actor_owner rece
     if (!selected)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Local CGAME host is not its actual selected launch seat");
     q3g_role *role = NULL;
-    for (q3g_role *row = engine->roles; row; row = row->next)
-        if (row->kind == QA_QVM_CGAME && row->seat == seat) {
-            if (role)
-                return application_fail(error, QA_ERROR_ARGUMENT, "Local CGAME host has ambiguous physical roles");
-            role = row;
-        }
+    qa_id_index_cursor roles = q3g_role_lookup_begin(engine, QA_QVM_CGAME, seat);
+    q3g_role *row;
+    while ((row = q3g_role_lookup_next(engine, &roles))) {
+        if (role)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Local CGAME host has ambiguous physical roles");
+        role = row;
+    }
     if (engine->constructing_role && engine->constructing_role->kind == QA_QVM_CGAME &&
         engine->constructing_role->seat == seat)
         return application_fail(error, QA_ERROR_ARGUMENT, "Local CGAME host is still being constructed");
@@ -476,10 +483,10 @@ bool qa_application_q3_client_retire(qa_application *app,
     struct application_q3_guest *engine = q3g_engine(provider);
     if (!engine || engine->calls || engine->draining_clients || !application_q3_guest_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client retirement has an active source owner");
+    qa_id_index_cursor roles = q3g_role_lookup_begin(engine, QA_QVM_CGAME, retained->seat);
+    q3g_role *role = q3g_role_lookup_next(engine, &roles);
     q3g_role **position = &engine->roles;
-    while (*position && ((*position)->kind != QA_QVM_CGAME || (*position)->seat != retained->seat))
-        position = &(*position)->next;
-    q3g_role *role = *position;
+    while (*position && *position != role) position = &(*position)->next;
     if (!role || !role->initialized || role->retired || role->service_owner != retained->service_owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client retirement lost its initialized CGAME role");
     q3g_role *next = role->next;
@@ -517,9 +524,10 @@ static bool remote_context_read(qa_application *app, qa_actor_owner receiver,
     if (!engine || engine->restore_pending || engine->round.phase != Q3G_ROUND_NONE)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Remote Q3 context has no admitted original source owner");
     q3g_role *role = NULL;
-    for (q3g_role *current = engine->roles; current; current = current->next)
-        if (current->kind == QA_QVM_CGAME && current->seat == seat && current->ready &&
-            !current->retired && current->host) {
+    qa_id_index_cursor roles = q3g_role_lookup_begin(engine, QA_QVM_CGAME, seat);
+    q3g_role *current;
+    while ((current = q3g_role_lookup_next(engine, &roles)))
+        if (current->ready && !current->retired && current->host) {
             if (role)
                 return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 context has ambiguous CGAME hosts");
             role = current;
@@ -583,12 +591,12 @@ bool application_q3_guest_role_add(application_provider *provider, qa_qvm_role k
     if (!engine || engine->calls || engine->round.phase != Q3G_ROUND_NONE ||
         kind == QA_QVM_GAME || kind > QA_QVM_UI || !path)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 companion creation requires an idle owner and client role");
-    for (q3g_role *role = engine->roles; role; role = role->next)
-        if (role->kind == kind && role->seat == seat)
-            return (role->ready && !role->retired && !strcmp(role->path, path)) || application_fail(error, QA_ERROR_ARGUMENT, "Q3 role seat already has another artifact");
-    q3g_role *role = NULL;
+    qa_id_index_cursor roles = q3g_role_lookup_begin(engine, kind, seat);
+    q3g_role *role = q3g_role_lookup_next(engine, &roles);
+    if (role)
+        return (role->ready && !role->retired && !strcmp(role->path, path)) || application_fail(error, QA_ERROR_ARGUMENT, "Q3 role seat already has another artifact");
     if (!q3g_role_create(engine, kind, seat, path, false, &role, error)) return false;
-    role->next = engine->roles; engine->roles = role; return true;
+    q3g_role_publish(&engine->roles, role, engine->roles); return true;
 }
 
 bool application_q3_guest_role_initialize(application_provider *provider, qa_qvm_role kind,
@@ -639,8 +647,10 @@ bool application_q3_guest_role_initialize(application_provider *provider, qa_qvm
                 qa_q3_configstring(state, 1), error)) return false;
         q3g_role *ui = NULL;
         if (role->local_client && !application_guest_q3_source_ui_received(role, state, &ui, error)) return false;
-        for (q3g_role *candidate = role->engine->roles; candidate; candidate = candidate->next)
-            if (candidate->kind == QA_QVM_UI && candidate->seat == seat && candidate->ready && !candidate->retired) {
+        qa_id_index_cursor roles = q3g_role_lookup_begin(role->engine, QA_QVM_UI, seat);
+        q3g_role *candidate;
+        while ((candidate = q3g_role_lookup_next(role->engine, &roles)))
+            if (candidate->ready && !candidate->retired) {
                 if (ui && ui != candidate) return application_fail(error, QA_ERROR_ARGUMENT, "Ambiguous actual CGAME source UI");
                 ui = candidate;
             }

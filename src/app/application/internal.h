@@ -67,6 +67,7 @@ typedef struct application_provider {
     struct application_native_q2_console *native_q2_console;
     struct application_native_q3_console *native_q3_console;
     struct application_native_q3_remote_role *native_q3_remote_roles;
+    qa_id_index native_q3_remote_seats;
     struct application_native_q3_settings *native_q3_settings;
     struct application_native_q3_ipfilters *native_q3_ipfilters;
     struct application_native_q3_wire *native_q3_wire;
@@ -384,6 +385,7 @@ struct qa_application {
     application_unified_event_owner *unified_event_owners;
     size_t unified_event_owner_count, unified_event_owner_capacity;
     uint64_t unified_event_owner_generation;
+    qa_id_index unified_event_dictionary_index;
     application_unified_event_resource *unified_event_resources;
     size_t unified_event_resource_count, unified_event_resource_capacity;
     application_unified_event_registration *unified_event_registrations;

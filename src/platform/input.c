@@ -31,6 +31,26 @@ static bool native_owner(qa_input_platform *p, qa_error *error) {
     return false;
 }
 static bool initialize_native(qa_input_platform *, double, qa_error *);
+static bool route_sources_prepare(qa_input_seat *seat,unsigned slot,int keyboard,int source,
+    int midi,int32_t controller,qa_error *error) {
+    if(!seat) return true;
+    size_t capacity=0;
+    if(keyboard==(int)slot) capacity+=SDL_NUM_SCANCODES+UINT8_MAX+2;
+    if(controller>=0) capacity+=SDL_CONTROLLER_BUTTON_MAX+QA_AXIS_COUNT*2;
+    if(source==(int)slot) {
+        const qa_source_joystick *controls=NULL;
+        capacity+=sizeof(controls->buttons)/sizeof(controls->buttons[0])+
+            sizeof(controls->axes)/sizeof(controls->axes[0])*2+4;
+    }
+    if(midi==(int)slot) capacity+=256;
+    return qa_input_seat_prepare_sources(seat,capacity,error);
+}
+static bool physical_sources_prepare(qa_input_platform *platform,qa_error *error) {
+    for(unsigned slot=0;slot<QA_INPUT_LOCAL_SEATS;++slot)
+        if(!route_sources_prepare(platform->seats[slot].seat,slot,platform->keyboard,
+            platform->source_slot,platform->midi_slot,platform->seats[slot].instance,error)) return false;
+    return true;
+}
 static const char *const cvar_names[INPUT_CVAR_COUNT] = {
     "in_mouse", "in_nograb", "in_joystick", "in_joystickProfile", "in_midi",
     "in_joystickSeat", "in_midiseat", "in_mididevice", "in_midichannel",
@@ -380,7 +400,7 @@ static bool resolve(qa_input_platform *p, double time, const int32_t retained[4]
         if (p->options.assignment_changed)
             p->options.assignment_changed(p->options.user, slot, previous, r->instance);
     }
-    return ok;
+    return physical_sources_prepare(p,error) && ok;
 }
 static bool haptic_sink(void *user, float low, float high, uint32_t duration, qa_error *error) {
     struct seat_route *r = user;
@@ -676,7 +696,7 @@ bool input_platform_fresh_routes(qa_input_platform *p, qa_input_seat *const seat
     p->midi_channel = integer(p, INPUT_CVAR_MIDI_CHANNEL, 1);
     p->now = time;
     p->native_startup = INPUT_NATIVE_PENDING;
-    return true;
+    return physical_sources_prepare(p,error);
 }
 bool qa_input_platform_routes(qa_input_platform *p, qa_input_seat *const seats[4],
                               const qa_controller_selection selections[4], int keyboard,
@@ -705,6 +725,7 @@ bool qa_input_platform_routes(qa_input_platform *p, qa_input_seat *const seats[4
     if (!resolve(p, time, retained, error))
         ok = false;
     p->source_slot = source_route(p->seats, source, p->joystick_instance);
+    if(!physical_sources_prepare(p,error)) ok=false;
     if (!qa_input_platform_sync_focus(p, error))
         ok = false;
     return ok;
@@ -787,7 +808,7 @@ bool qa_input_platform_keyboard(qa_input_platform *p, int slot, double time, qa_
         memset(p->keys, 0, sizeof(p->keys));
         p->keyboard = slot;
     }
-    return qa_input_platform_sync_focus(p, error) && ok;
+    return physical_sources_prepare(p,error) && qa_input_platform_sync_focus(p, error) && ok;
 }
 bool qa_input_platform_window(qa_input_platform *p, const qa_display *display, double time,
                               qa_error *error) {
@@ -1746,6 +1767,11 @@ static bool settings_prepare(qa_input_platform *p, const qa_input_platform_setti
         t->calibration_routes |= 1u << p->source_slot;
     }
     if (r->source_changed && source >= 0) t->calibration_routes |= 1u << source;
+    for(unsigned slot=0;slot<QA_INPUT_LOCAL_SEATS;++slot) {
+        int32_t controller=t->next_routes[slot].instance;
+        if(!route_sources_prepare(t->routes[slot].seat,slot,t->keyboard,source,midi,controller,error) ||
+           !route_sources_prepare(t->configuration[slot],slot,t->keyboard,source,midi,controller,error)) return false;
+    }
     if (!settings_outputs_prepare(t, error)) return false;
     if (t->window) {
         input_pointer_modes modes = pointer_modes(SDL_GetWindowFlags(t->window), t->focus,
@@ -2682,6 +2708,7 @@ static bool sampled_frame(qa_input_platform *p, const input_frame_sample *sample
     int source = integer(p, INPUT_CVAR_JOYSTICK_SEAT, 1), midi = integer(p, INPUT_CVAR_MIDI_SEAT, 1);
     source = source_route(p->seats, source, p->joystick_instance);
     midi = midi >= 1 && midi <= 4 && p->seats[midi - 1].seat ? midi - 1 : -1;
+    bool sources_changed=source!=p->source_slot || midi!=p->midi_slot;
     if (source != p->source_slot) {
         if (!source_device_release(p, now, error))
             return false;
@@ -2694,6 +2721,7 @@ static bool sampled_frame(qa_input_platform *p, const input_frame_sample *sample
             return false;
         p->midi_slot = midi;
     }
+    if(sources_changed && !physical_sources_prepare(p,error)) return false;
     for (unsigned slot = 0; slot < 4; ++slot) {
         struct seat_route *r = &p->seats[slot];
         struct device *d = device(p, r->instance);

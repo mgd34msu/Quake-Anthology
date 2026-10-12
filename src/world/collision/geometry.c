@@ -619,6 +619,50 @@ bool qa_collision_walk_leaves(const qa_collision_geometry *geometry, qa_trace_sc
     return !walk.failed;
 }
 
+bool qa_collision_walk_tree(const qa_collision_geometry *geometry, int32_t root,
+    qa_collision_tree_frame *scratch, const uint32_t payload[2],
+    qa_collision_tree_visit_fn visit, void *context, qa_error *error)
+{
+    size_t depth = 1;
+    scratch[0] = (qa_collision_tree_frame){.child = root, .payload = {payload[0], payload[1]}};
+    while (depth) {
+        qa_collision_tree_frame *frame = &scratch[depth - 1];
+        if (frame->pending) {
+            if (frame->between) {
+                frame->between = false;
+                qa_leaf_visit next = visit(context, frame->child, QA_COLLISION_TREE_BETWEEN,
+                    frame->payload, NULL, error);
+                if (next != QA_LEAF_CONTINUE) return next == QA_LEAF_STOP;
+            }
+            if (frame->next) {
+                *frame = (qa_collision_tree_frame){.child = frame->next_child,
+                    .payload = {frame->next_payload[0], frame->next_payload[1]}};
+            } else --depth;
+            continue;
+        }
+        qa_collision_tree_branch branch = {.children = 3,
+            .payload = {{frame->payload[0], frame->payload[1]},
+                        {frame->payload[0], frame->payload[1]}}};
+        qa_leaf_visit next = visit(context, frame->child, QA_COLLISION_TREE_ENTER,
+            frame->payload, &branch, error);
+        if (next != QA_LEAF_CONTINUE) return next == QA_LEAF_STOP;
+        if (frame->child < 0) { --depth; continue; }
+        const qa_collision_node *node = &geometry->nodes[(size_t)frame->child];
+        unsigned first = branch.first, second = first ^ 1u;
+        frame->pending = true;
+        frame->between = branch.between;
+        frame->next = (branch.children & (1u << second)) != 0;
+        frame->next_child = node->children[second];
+        frame->next_payload[0] = branch.payload[second][0];
+        frame->next_payload[1] = branch.payload[second][1];
+        if (branch.children & (1u << first)) {
+            scratch[depth++] = (qa_collision_tree_frame){.child = node->children[first],
+                .payload = {branch.payload[first][0], branch.payload[first][1]}};
+        }
+    }
+    return true;
+}
+
 bool qa_collision_walk_segment(const qa_collision_geometry *geometry, qa_trace_scratch *scratch,
     int32_t child, qa_vec3 start, qa_vec3 end, qa_collision_segment_visit_fn visit,
     void *context, qa_error *error)

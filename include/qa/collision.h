@@ -150,6 +150,26 @@ bool qa_collision_point_contents(const qa_collision_geometry *, qa_trace_scratch
 typedef enum qa_leaf_query_rule { QA_LEAF_COLLISION, QA_LEAF_Q1, QA_LEAF_RENDER } qa_leaf_query_rule;
 typedef enum qa_leaf_visit { QA_LEAF_CONTINUE, QA_LEAF_STOP, QA_LEAF_FAILED } qa_leaf_visit;
 typedef qa_leaf_visit (*qa_leaf_visit_fn)(void *, const qa_collision_leaf *, qa_error *);
+typedef enum qa_collision_tree_stage {
+    QA_COLLISION_TREE_ENTER, QA_COLLISION_TREE_BETWEEN
+} qa_collision_tree_stage;
+typedef struct qa_collision_tree_branch {
+    unsigned children, first;
+    bool between;
+    uint32_t payload[2][2];
+} qa_collision_tree_branch;
+typedef struct qa_collision_tree_frame {
+    int32_t child, next_child;
+    uint32_t payload[2], next_payload[2];
+    bool pending, between, next;
+} qa_collision_tree_frame;
+typedef qa_leaf_visit (*qa_collision_tree_visit_fn)(void *, int32_t child,
+    qa_collision_tree_stage, const uint32_t payload[2], qa_collision_tree_branch *, qa_error *);
+/* Caller scratch has one frame per admitted node plus one. Child encoding,
+ * pruning and ordering belong to the visitor; repeated DAG visits are kept. */
+bool qa_collision_walk_tree(const qa_collision_geometry *, int32_t root,
+    qa_collision_tree_frame *, const uint32_t payload[2], qa_collision_tree_visit_fn,
+    void *, qa_error *);
 typedef enum qa_collision_box_rule { QA_BOX_CENTRE, QA_BOX_CORNERS, QA_BOX_AXIAL } qa_collision_box_rule;
 unsigned qa_collision_box_plane_side(qa_bounds, const qa_collision_plane *, qa_collision_box_rule);
 bool qa_collision_walk_leaves(const qa_collision_geometry *, qa_trace_scratch *, qa_bounds,

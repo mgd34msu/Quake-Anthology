@@ -680,12 +680,67 @@ static void live_guest_tests(void)
     }
 }
 
+typedef struct tree_observation {
+    int32_t children[4];
+    qa_collision_tree_stage stages[4];
+    uint32_t payloads[4][2];
+    unsigned count, first, mask, stop_after;
+} tree_observation;
+
+static qa_leaf_visit tree_observe(void *context, int32_t child,
+    qa_collision_tree_stage stage, const uint32_t payload[2],
+    qa_collision_tree_branch *branch, qa_error *error)
+{
+    tree_observation *observed = context;
+    (void)error;
+    unsigned slot = observed->count++;
+    observed->children[slot] = child;
+    observed->stages[slot] = stage;
+    memcpy(observed->payloads[slot], payload, sizeof(observed->payloads[slot]));
+    if (child >= 0 && stage == QA_COLLISION_TREE_ENTER) {
+        branch->first = observed->first;
+        branch->children = observed->mask;
+        branch->between = true;
+        branch->payload[0][0] = 13; branch->payload[0][1] = 17;
+        branch->payload[1][0] = 19; branch->payload[1][1] = 23;
+    }
+    return observed->count == observed->stop_after ? QA_LEAF_STOP : QA_LEAF_CONTINUE;
+}
+
+static void tree_traversal(const qa_collision_geometry *geometry)
+{
+    qa_error error = {0};
+    qa_collision_tree_frame scratch[2];
+    const uint32_t payload[2] = {7, 11};
+    for (unsigned first = 0; first < 2; ++first) {
+        tree_observation observed = {.first = first, .mask = 3};
+        GAME_CHECK(qa_collision_walk_tree(geometry, 0, scratch, payload,
+            tree_observe, &observed, &error));
+        GAME_CHECK(observed.count == 4 && observed.children[0] == 0 &&
+            observed.children[1] == (first ? -1 : -2) &&
+            observed.children[2] == 0 && observed.children[3] == (first ? -2 : -1));
+        GAME_CHECK(observed.stages[2] == QA_COLLISION_TREE_BETWEEN &&
+            observed.payloads[2][0] == 7 && observed.payloads[2][1] == 11 &&
+            observed.payloads[1][0] == (first ? 19u : 13u) &&
+            observed.payloads[3][1] == (first ? 17u : 23u));
+    }
+    tree_observation pruned = {0};
+    GAME_CHECK(qa_collision_walk_tree(geometry, 0, scratch, payload,
+        tree_observe, &pruned, &error));
+    GAME_CHECK(pruned.count == 2 && pruned.stages[1] == QA_COLLISION_TREE_BETWEEN);
+    tree_observation stopped = {.mask = 3, .stop_after = 2};
+    GAME_CHECK(qa_collision_walk_tree(geometry, 0, scratch, payload,
+        tree_observe, &stopped, &error));
+    GAME_CHECK(stopped.count == 2 && stopped.children[1] == -2);
+}
+
 void test_guest(void);
 void test_guest(void)
 {
     qa_error error = {0};
     guest_fixture fixture = {0};
     gameplay_map_create(&fixture.map);
+    tree_traversal(fixture.map.geometry);
     GAME_CHECK(qa_session_create(&(qa_session_options){.actor_capacity = 8,
         .component_capacity = 1},
         &fixture.session, &error));

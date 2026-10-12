@@ -27,9 +27,10 @@ static qa_q3_host *role_host(qa_application *app,
         return NULL;
     }
     q3g_role *selected = NULL;
-    for (q3g_role *role = engine->roles; role; role = role->next)
-        if (role->kind == wanted->role && role->seat == wanted->seat &&
-            role->service_owner == wanted->service_owner) {
+    qa_id_index_cursor roles = q3g_role_lookup_begin(engine, wanted->role, wanted->seat);
+    q3g_role *role;
+    while ((role = q3g_role_lookup_next(engine, &roles)))
+        if (role->seat == wanted->seat && role->service_owner == wanted->service_owner) {
             if (selected) {
                 application_fail(error, QA_ERROR_ARGUMENT, "Q3 scene lease has ambiguous physical roles");
                 return NULL;

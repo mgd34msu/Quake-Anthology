@@ -12,7 +12,9 @@ static bool collision_current(void *context, const qa_q3_host *host, const qa_qv
     application_provider *provider = engine->provider;
     qa_application *app = provider->application;
     bool retained = false;
-    for (q3g_role *r = engine->roles; r; r = r->next) if (r == role) retained = true;
+    qa_id_index_cursor roles = q3g_role_lookup_begin(engine, role->kind, role->seat);
+    q3g_role *r;
+    while ((r = q3g_role_lookup_next(engine, &roles))) if (r == role) retained = true;
     const qa_launch_instance *descriptor = engine->client_descriptor ?
         qa_launch_instance_lease_view(engine->client_descriptor) : provider->launch;
     qa_q3_host_client_context actual;
@@ -66,11 +68,12 @@ bool qa_application_q3_collision_scene_hold(qa_application *app, qa_actor_owner 
     while ((provider = application_provider_lookup_next(app, &cursor))) {
         struct application_q3_guest *engine = q3g_engine(provider);
         if (!engine) continue;
-        for (q3g_role *role = engine->roles; role; role = role->next)
-            if (role->kind == QA_QVM_CGAME && role->seat == seat) {
-                if (found) return application_fail(error, QA_ERROR_ARGUMENT, "Collision hold has ambiguous CGAME inventory");
-                found = role;
-            }
+        qa_id_index_cursor roles = q3g_role_lookup_begin(engine, QA_QVM_CGAME, seat);
+        q3g_role *role;
+        while ((role = q3g_role_lookup_next(engine, &roles))) {
+            if (found) return application_fail(error, QA_ERROR_ARGUMENT, "Collision hold has ambiguous CGAME inventory");
+            found = role;
+        }
     }
     if (!found || found->service_owner != service_owner || !found->ready || found->retired ||
         !found->host || found->source_cleared || found->engine->restore_pending)

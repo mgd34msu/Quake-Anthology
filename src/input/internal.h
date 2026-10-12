@@ -66,6 +66,9 @@ struct qa_input_seat {
     uint64_t binding_revision;
     qa_held_binding *held;
     size_t held_count, held_capacity;
+    qa_arena held_storage;
+    size_t physical_capacity;
+    bool physical_prepared;
     qa_ui_record *ui;
     size_t ui_count, ui_capacity;
     qa_input_ui_token next_ui;

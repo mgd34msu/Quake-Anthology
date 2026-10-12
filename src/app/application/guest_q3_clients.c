@@ -550,7 +550,9 @@ static bool ui_client_state(void *context, const qa_q3_host *host,
         actual.command_context.seat != role->seat || actual.command_context.dialect != QA_RULESET_Q3)
         return application_fail(error, QA_ERROR_ARGUMENT, "UI client state lost its actual local role and GAME source");
     bool retained = false;
-    for (q3g_role *row = engine->roles; row; row = row->next) if (row == role) retained = true;
+    qa_id_index_cursor roles = q3g_role_lookup_begin(engine, role->kind, role->seat);
+    q3g_role *row;
+    while ((row = q3g_role_lookup_next(engine, &roles))) if (row == role) retained = true;
     if (!retained)
         return application_fail(error, QA_ERROR_ARGUMENT, "UI client state lost its retained physical role");
     qa_actor_id actor = {0};
@@ -587,16 +589,16 @@ static bool ui_client_state(void *context, const qa_q3_host *host,
             state.client_number = gamestate->client_number;
             application_provider *hud = application_provider_for(receiver->application, actor, QA_ROLE_HUD, "");
             struct application_q3_guest *presentation = engine;
-            bool own_cgame = false;
-            for (q3g_role *row = engine->roles; row; row = row->next)
-                if (row->kind == QA_QVM_CGAME && row->seat == role->seat) own_cgame = true;
-            if (!own_cgame) presentation = q3g_engine(hud);
+            qa_id_index_cursor candidates = q3g_role_lookup_begin(engine, QA_QVM_CGAME, role->seat);
+            if (!q3g_role_lookup_next(engine, &candidates)) presentation = q3g_engine(hud);
             q3g_role *cgame = NULL;
-            for (q3g_role *row = presentation ? presentation->roles : NULL; row; row = row->next)
-                if (row->kind == QA_QVM_CGAME && row->seat == role->seat && row->ready && !row->retired &&
-                    row->local_client && row->client_source == source && row->client == role->client) {
+            candidates = q3g_role_lookup_begin(presentation, QA_QVM_CGAME, role->seat);
+            q3g_role *candidate;
+            while ((candidate = q3g_role_lookup_next(presentation, &candidates)))
+                if (candidate->ready && !candidate->retired && candidate->local_client &&
+                    candidate->client_source == source && candidate->client == role->client) {
                     if (cgame) return application_fail(error, QA_ERROR_ARGUMENT, "UI client state has ambiguous actual CGAME loads");
-                    cgame = row;
+                    cgame = candidate;
                 }
             bool loaded = cgame && cgame->initialized && cgame->init_succeeded;
             if (cgame && cgame->committed && !loaded) state.phase = 6;
@@ -702,14 +704,16 @@ bool q3g_arsenal_client_admit(application_provider *provider, uint32_t slot, qa_
         engine->calls || engine->restore_pending || !engine->map_ready || !client->gamestate)
         return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal CG admission lost its actual GAME client and seat");
     q3g_role *cgame = NULL, *ui = NULL;
-    for (q3g_role *r = engine->roles; r; r = r->next) if (r->seat == seat) {
-        if (r->kind == QA_QVM_CGAME) {
-            if (cgame) return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal CG has ambiguous actual seat owners");
-            cgame = r;
-        } else if (r->kind == QA_QVM_UI) {
-            if (ui) return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal UI has ambiguous actual seat owners");
-            ui = r;
-        }
+    qa_id_index_cursor roles = q3g_role_lookup_begin(engine, QA_QVM_CGAME, seat);
+    q3g_role *r;
+    while ((r = q3g_role_lookup_next(engine, &roles))) {
+        if (cgame) return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal CG has ambiguous actual seat owners");
+        cgame = r;
+    }
+    roles = q3g_role_lookup_begin(engine, QA_QVM_UI, seat);
+    while ((r = q3g_role_lookup_next(engine, &roles))) {
+        if (ui) return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal UI has ambiguous actual seat owners");
+        ui = r;
     }
     if (!cgame) {
         bool found; uint64_t size;
@@ -728,7 +732,7 @@ bool q3g_arsenal_client_admit(application_provider *provider, uint32_t slot, qa_
         free(normalized); qa_buffer_free(&path); qa_json_destroy(document);
         qa_vfs_acquisition_dispose(&acquisition); qa_resource_release(declaration);
         if (!ok) return false;
-        cgame->next = engine->roles; engine->roles = cgame;
+        q3g_role_publish(&engine->roles, cgame, engine->roles);
     }
     if (!hud && cgame->ready && !cgame->retired && cgame->artifact &&
         !cgame->artifact->weapon_models_profile.present && !cgame->weapon_models) return true;
@@ -738,7 +742,7 @@ bool q3g_arsenal_client_admit(application_provider *provider, uint32_t slot, qa_
         return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal CG changed its genuine matching GAME and registry");
     if (!ui) {
         if (!application_guest_q3_source_ui_create(engine, seat, &ui, error)) return false;
-        ui->next = engine->roles; engine->roles = ui;
+        q3g_role_publish(&engine->roles, ui, engine->roles);
     }
     if (ui->client_source != provider || ui->client_engine != engine || ui->client != slot)
         return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal source UI changed its actual matching GAME");

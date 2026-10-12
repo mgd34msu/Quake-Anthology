@@ -6,6 +6,7 @@
 #include "qa/modes_map.h"
 #include "qa/player_names.h"
 #include "qa/game_q1_travel.h"
+#include "qa/pool.h"
 
 typedef struct application_guest_carry {
     qa_actor_owner owner;
@@ -34,6 +35,9 @@ typedef struct application_player_carry {
     bool q3_client;
 } application_player_carry;
 typedef struct application_player_guest_binding {
+    struct application_player_guest_binding *previous, *next;
+    struct application_player_record *record;
+    size_t storage_slot;
     qa_actor_owner owner;
     uint64_t identity;
     uint32_t source_slot;
@@ -52,7 +56,7 @@ typedef struct application_player_record {
     char *bot_definition;
     float bot_skill;
     int32_t bot_delay_ms;
-    application_player_guest_binding *guests;
+    application_player_guest_binding *guests, *last_guest;
     size_t guest_count;
     qa_q1_travel_state *q1_entry;
     qa_player_feedback feedback;
@@ -95,6 +99,9 @@ struct application_player_roster {
     size_t feedback_count;
     application_player_record *records;
     qa_actor_index actors;
+    qa_arena guest_storage;
+    qa_pool guest_bindings;
+    qa_id_index guest_sources;
     size_t count, capacity;
     application_player_point *points;
     size_t point_count;
@@ -106,6 +113,15 @@ struct application_player_roster {
     qa_string_id spawn_point;
     int32_t world_type;
 };
+static inline application_player_guest_binding *application_player_guest_find(
+    const struct application_player_roster *roster, qa_actor_owner owner, uint32_t source_slot)
+{
+    if (!roster) return NULL;
+    qa_id_index_cursor cursor = qa_id_index_begin(&roster->guest_sources, owner, source_slot);
+    size_t slot;
+    return qa_id_index_next(&roster->guest_sources, &cursor, &slot) ?
+        qa_pool_at(&roster->guest_bindings, slot) : NULL;
+}
 static inline application_player_record *application_player_record_find(
     const struct application_player_roster *roster,qa_actor_id actor)
 {
