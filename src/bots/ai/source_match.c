@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/binary.h"
 #include "source_event_state.h"
 #include "source_match.h"
 
@@ -11,18 +12,11 @@ static const char *const cvar_names[BOT_SOURCE_MATCH_CVARS] = {
 };
 static void frame_controls(qa_bots *);
 
-static int32_t signed_word(uint32_t bits)
-{
-    int32_t value;
-    memcpy(&value, &bits, sizeof(value));
-    return value;
-}
-
 static size_t decimal(int32_t value, char out[32])
 {
     unsigned char reversed[16];
     size_t count = 0;
-    int32_t remaining = value < 0 ? signed_word(0u - (uint32_t)value) : value;
+    int32_t remaining = value < 0 ? qa_i32_from_u32(0u - (uint32_t)value) : value;
     do {
         reversed[count++] = (unsigned char)(48 + remaining % 10);
         remaining /= 10;
@@ -188,7 +182,7 @@ static bool state_current(qa_bots *bots, uint32_t client, qa_actor_id actor,
 
 static float rank(const bot_ai_state *state)
 {
-    return state ? (float)signed_word((uint32_t)bot_ai_num_kills(state) * 2u -
+    return state ? (float)qa_i32_from_u32((uint32_t)bot_ai_num_kills(state) * 2u -
         (uint32_t)bot_ai_num_deaths(state)) : -1;
 }
 
@@ -212,7 +206,7 @@ bool bot_ai_source_interbreed_end_match(qa_bots *bots, qa_error *error)
     if (!globals->interbreed) return true;
     if (!globals->cvars[BOT_SOURCE_INTERBREED_CYCLE].registered)
         return bot_ai_fail(error, "source bot genetics has no cached cycle cvar");
-    globals->interbreed_match_count = signed_word((uint32_t)globals->interbreed_match_count + 1u);
+    globals->interbreed_match_count = qa_i32_from_u32((uint32_t)globals->interbreed_match_count + 1u);
     if (globals->interbreed_match_count < globals->cvars[BOT_SOURCE_INTERBREED_CYCLE].integer_value)
         return true;
     globals->interbreed_match_count = 0;
@@ -298,7 +292,7 @@ bool bot_ai_source_interbreeding(qa_bots *bots, qa_error *error)
         return bot_ai_fail(error, "source bot interbreeding has no cached bot-count cvar");
     for (int32_t index = 0; index < globals->cvars[BOT_SOURCE_INTERBREED_BOTS].integer_value; ++index) {
         char delay[32], number[32], command[640];
-        decimal(signed_word((uint32_t)index * 50u), delay);
+        decimal(qa_i32_from_u32((uint32_t)index * 50u), delay);
         decimal(index, number);
         size_t offset = 0;
         const char *parts[] = {"addbot ", character, " 4 free ", delay, " ", character, number, "\n"};
@@ -352,7 +346,7 @@ bool bot_ai_source_test_aas(qa_bots *bots, qa_vec3 origin, qa_error *error)
         if (!qa_bot_navigation_area_info(navigation, area, &info))
             return bot_ai_fail(error, "BotTestAAS area is outside actual AAS storage");
         char area_text[32], cluster_text[32];
-        decimal(signed_word(area), area_text); decimal(info.area.cluster, cluster_text);
+        decimal(qa_i32_from_u32(area), area_text); decimal(info.area.cluster, cluster_text);
         size_t offset = 0;
         const char *parts[] = {"\rarea ", area_text, ", cluster ", cluster_text, "       "};
         for (size_t part = 0; part < sizeof(parts) / sizeof(parts[0]); ++part) {

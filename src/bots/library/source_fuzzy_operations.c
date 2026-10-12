@@ -1,4 +1,5 @@
 #include "source_fuzzy_operations.h"
+#include "qa/binary.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -43,9 +44,6 @@ static bool inventory_read(const qa_bot_inventory_view *inventory,int32_t index,
     if(inventory->read) return inventory->read(inventory->context,index,out,error);
     if(index<0 || (size_t)index>=inventory->count) return fail(error,"Fuzzy inventory index exceeds its source observation");
     *out=inventory->data[index];return true;
-}
-static int32_t signed_word(uint32_t word) {
-    return word<=INT32_MAX?(int32_t)word:-1-(int32_t)(UINT32_MAX-word);
 }
 static bool leaf(bot_fuzzy_heap *heap,uint32_t pointer,bool undecided,
     const qa_bot_random_source *random,fuzzy_stack *stack,float *last,qa_error *error) {
@@ -96,8 +94,8 @@ bool bot_fuzzy_evaluate(const bot_fuzzy_config *config,int32_t index,const qa_bo
             ok=bot_fuzzy_separator_bind(config->heap,frame->right,&right,error) &&
                 bot_fuzzy_separator_integer_read(&right,BOT_FUZZY_THRESHOLD,&upper,error);
             if(!ok) break;
-            int32_t numerator=signed_word((uint32_t)value-(uint32_t)threshold);
-            int32_t denominator=signed_word((uint32_t)upper-(uint32_t)threshold);
+            int32_t numerator=qa_i32_from_u32((uint32_t)value-(uint32_t)threshold);
+            int32_t denominator=qa_i32_from_u32((uint32_t)upper-(uint32_t)threshold);
             if(!denominator) {ok=fail(error,"Fuzzy interpolation thresholds divide by zero");break;}
             float scale=(float)((int64_t)numerator/(int64_t)denominator);
             float left=scale*frame->left,inverse=1.0f-scale,right_value=inverse*last;

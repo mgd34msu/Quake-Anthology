@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/binary.h"
 #include "source_report.h"
 #include "source_command.h"
 #include "source_inventory.h"
@@ -11,11 +12,6 @@
 #include "source_selectors.h"
 #include "source_flags.h"
 
-static int32_t signed_word(uint32_t bits) {
-    int32_t value;
-    memcpy(&value, &bits, sizeof(value));
-    return value;
-}
 bool bot_ai_source_intermission(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
     *out=false;
     if(!b->services.source_intermission)
@@ -284,12 +280,12 @@ static bool frame(qa_bots *b, int32_t time, qa_error *e) {
     if (period != b->scheduled_think_ms) {
         b->scheduled_think_ms=period;if(!bot_ai_schedule(b,e)) return false;
     }
-    int32_t elapsed = signed_word((uint32_t)time - (uint32_t)b->local_time_ms);
+    int32_t elapsed = qa_i32_from_u32((uint32_t)time - (uint32_t)b->local_time_ms);
     b->local_time_ms = time;
-    b->library_residual_ms = signed_word((uint32_t)b->library_residual_ms + (uint32_t)elapsed);
+    b->library_residual_ms = qa_i32_from_u32((uint32_t)b->library_residual_ms + (uint32_t)elapsed);
     int32_t think = elapsed > period ? elapsed : period;
     if (b->library_residual_ms >= think) {
-        b->library_residual_ms = signed_word((uint32_t)b->library_residual_ms - (uint32_t)think);
+        b->library_residual_ms = qa_i32_from_u32((uint32_t)b->library_residual_ms - (uint32_t)think);
         if (!qa_bot_runtime_start_frame(b->runtime, (float)time / 1000, e) || !observations(b, e)) return false;
         if (b->regular_update_time < b->time) {
             if (!qa_bot_goals_update_items(qa_bot_runtime_goals(b->runtime),
@@ -303,10 +299,10 @@ static bool frame(qa_bots *b, int32_t time, qa_error *e) {
         if (!s || s->retired) continue;
         int32_t residual;
         if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_RESIDUAL,&residual,false,e)) return false;
-        residual = signed_word((uint32_t)residual + (uint32_t)elapsed);
+        residual = qa_i32_from_u32((uint32_t)residual + (uint32_t)elapsed);
         if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_RESIDUAL,&residual,true,e)) return false;
         if (residual < think) continue;
-        residual = signed_word((uint32_t)residual - (uint32_t)think);
+        residual = qa_i32_from_u32((uint32_t)residual - (uint32_t)think);
         if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_RESIDUAL,&residual,true,e)) return false;
         if (!ready(b, s)) continue;
         if (connected(b, s) && !bot_ai_think(b, s, (float)think / 1000, e)) return false;
