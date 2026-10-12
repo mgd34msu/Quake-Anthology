@@ -50,14 +50,20 @@ bool qa_bot_navigation_create(qa_navigation *runtime, qa_world *world, qa_actor_
                               qa_bot_navigation **out, qa_error *e) {
     if (!runtime || !world || !out)
         return bot_nav_fail(e, "missing bot navigation runtime/world/output");
-    qa_bot_navigation *n = calloc(1, sizeof(*n));
+    qa_arena storage = {0};
+    if (!qa_arena_reserve(&storage, sizeof(qa_bot_navigation) +
+            _Alignof(qa_bot_navigation) - 1, e))
+        return false;
+    qa_bot_navigation *n = qa_arena_alloc(&storage, sizeof(*n),
+        _Alignof(qa_bot_navigation), e);
     if (!n) {
-        qa_error_set(e, QA_ERROR_MEMORY, 0, "allocating bot navigation owner");
+        qa_arena_destroy(&storage);
         return false;
     }
-    n->world = world;
+    qa_arena_seal(&storage);
+    *n = (qa_bot_navigation){.owner_storage = storage, .world = world};
     if (observations) n->observations = *observations;
-    if (!qa_nav_workspace_create(NULL, &n->workspace, e) ||
+    if (!qa_nav_workspace_create(&n->owner_storage, &n->workspace, e) ||
         !qa_bot_navigation_bind(n, runtime, actor, e)) {
         qa_bot_navigation_destroy(n);
         return false;
@@ -74,7 +80,8 @@ void qa_bot_navigation_destroy(qa_bot_navigation *n) {
         qa_nav_crossings_free(qa_pool_at(&n->crossing_results, i));
     qa_arena_destroy(&n->crossing_storage);
     qa_arena_destroy(&n->query_storage);
-    free(n);
+    qa_arena storage = n->owner_storage;
+    qa_arena_destroy(&storage);
 }
 bool qa_bot_navigation_create_restored(qa_navigation *runtime, qa_world *world, qa_actor_id actor,
     const qa_bot_navigation_observations *observations, qa_bot_navigation **out, qa_error *e) {

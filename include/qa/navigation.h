@@ -344,6 +344,7 @@ typedef struct qa_nav_prediction_result {
     qa_trace_result last_trace;
     qa_vec3 *trajectory;
     size_t trajectory_count, trajectory_capacity;
+    qa_arena storage;
 } qa_nav_prediction_result;
 bool qa_navigation_predict(qa_navigation *, qa_nav_workspace *, const qa_nav_prediction_query *,
                            qa_nav_prediction_result *, qa_error *);

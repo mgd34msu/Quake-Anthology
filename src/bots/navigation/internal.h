@@ -10,6 +10,7 @@
 #include <string.h>
 
 struct qa_bot_navigation {
+    qa_arena owner_storage;
     qa_navigation *runtime;
     qa_world *world;
     qa_actor_id actor;

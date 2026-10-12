@@ -82,7 +82,6 @@ typedef struct nav_prediction {
     qa_trace_result last_trace;
 } nav_prediction;
 bool nav_workspace_reset(qa_nav_workspace *, const qa_nav_graph *, qa_error *);
-bool nav_reserve(void **, size_t *, size_t, size_t, qa_error *);
 bool nav_storage_reserve(qa_arena *, void **, size_t *, size_t, size_t, size_t, qa_error *);
 bool nav_queue_push(qa_nav_workspace *, nav_queue_entry, qa_error *);
 bool nav_queue_pop(qa_nav_workspace *, nav_queue_entry *);

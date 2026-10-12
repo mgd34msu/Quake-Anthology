@@ -1,23 +1,5 @@
 #include "internal.h"
 
-bool nav_reserve(void **data, size_t *capacity, size_t need, size_t stride, qa_error *e) {
-    if (need <= *capacity)
-        return true;
-    size_t count = *capacity < 64 ? 64 : *capacity;
-    while (count < need && count <= SIZE_MAX / 2)
-        count *= 2;
-    if (count < need || count > SIZE_MAX / stride)
-        goto memory;
-    void *next = realloc(*data, count * stride);
-    if (next == NULL)
-        goto memory;
-    *data = next;
-    *capacity = count;
-    return true;
-memory:
-    qa_error_set(e, QA_ERROR_MEMORY, need, "Growing retained navigation workspace");
-    return false;
-}
 bool qa_navigation_create(qa_nav_graph *g, const qa_navigation_services *s, qa_arena *source, qa_navigation **out,
                           qa_error *e) {
     if (g == NULL || out == NULL || !nav_services_valid(s, false, e)) {
