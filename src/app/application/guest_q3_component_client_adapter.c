@@ -34,7 +34,7 @@ struct application_q3_component_client_adapter {
     application_provider *source;
     qa_actor_owner owner;
     qa_world *world;
-    qa_buffer userinfo;
+    qa_unified_frame_lease *userinfo_storage;
     component_drop *drops,*tail;
     unsigned calls;
     bool draining;
@@ -112,11 +112,11 @@ static application_player_record *entered(application_q3_component_client_adapte
     }
     return player(a,actor);
 }
-static char *info_dictionary(const char *text,qa_error *e)
+static char *info_dictionary(const char *text,qa_arena *storage,qa_error *e)
 {
     size_t length=strlen(text);
     if(length>SIZE_MAX-2) {application_fail(e,QA_ERROR_MEMORY,"Component userinfo dictionary overflows");return NULL;}
-    char *result=malloc(length+2);
+    char *result=storage?qa_arena_alloc(storage,length+2,1,e):malloc(length+2);
     if(!result) {application_fail(e,QA_ERROR_MEMORY,"Retaining actual client info dictionary");return NULL;}
     const char *cursor=text;size_t used=0;
     qa_bytes key,value,existing;
@@ -132,7 +132,7 @@ static char *info_dictionary(const char *text,qa_error *e)
 }
 static char *info_replace(const char *text,const char *key,const char *value,bool literal,qa_error *e)
 {
-    char *owned=literal?NULL:info_dictionary(text,e);if(!literal&&!owned) return NULL;
+    char *owned=literal?NULL:info_dictionary(text,NULL,e);if(!literal&&!owned) return NULL;
     const char *dictionary=literal?text:owned;
     size_t length=strlen(dictionary),key_size=strlen(key),value_size=value?strlen(value):0;
     if(length>SIZE_MAX-3||key_size>SIZE_MAX-length-3||value_size>SIZE_MAX-length-key_size-3) {
@@ -177,13 +177,18 @@ static bool userinfo_read(application_q3_component_client_adapter *a,qa_actor_id
     application_player_record *p=storage(a)?application_player_record_find(a->application->players,actor):NULL;
     application_provider *source=a->source;bool ok;const char *text=NULL;
     ++a->calls;
+    qa_unified_frame_lease *candidate=NULL;
+    qa_arena *projection=scratch;
+    if (!projection && (source->kind==APPLICATION_PROVIDER_Q1 ||
+        (source->kind==APPLICATION_PROVIDER_QC && !key))) {
+        candidate=application_control_storage_acquire(a->application,e);
+        if (!candidate) {--a->calls;return false;}
+        projection=qa_unified_frame_lease_arena(candidate);
+    }
     if(source->kind==APPLICATION_PROVIDER_Q1) {
         qa_buffer bytes={0};
-        ok=qa_q1_source_client_userinfo_read(source->state.q1,actor,true,scratch,&bytes,e);
-        if(ok) {
-            if(!scratch) {qa_buffer_free(&a->userinfo);a->userinfo=bytes;}
-            text=(const char *)bytes.data;
-        }
+        ok=qa_q1_source_client_userinfo_read(source->state.q1,actor,true,projection,&bytes,e);
+        if(ok) text=(const char *)bytes.data;
     } else if(source->kind==APPLICATION_PROVIDER_Q2)
         ok=qa_q2_player_userinfo_read(source->state.q2,actor,&text,e);
     else if(source->kind==APPLICATION_PROVIDER_Q3)
@@ -193,19 +198,25 @@ static bool userinfo_read(application_q3_component_client_adapter *a,qa_actor_id
     } else if(source->kind==APPLICATION_PROVIDER_QC) {
         if(key) {text=p->userinfo?p->userinfo:"";ok=true;}
         else {
-            char *copy=info_dictionary(p->userinfo?p->userinfo:"",e);ok=copy!=NULL;
-            if(ok) {qa_buffer_free(&a->userinfo);a->userinfo=(qa_buffer){(uint8_t *)copy,strlen(copy)};text=copy;}
+            text=info_dictionary(p->userinfo?p->userinfo:"",projection,e);ok=text!=NULL;
         }
     }
     else {text=q3g_engine(source)->clients[p->client_slot].userinfo;
         if(!text) text="";
         ok=true;}
+    --a->calls;
+    ok=ok&&(client_current(a,actor,false)||application_fail(e,QA_ERROR_ARGUMENT,"Component userinfo changed its physical client"));
     if(ok) {
+        if(candidate) {
+            qa_unified_frame_lease *previous=a->userinfo_storage;
+            a->userinfo_storage=candidate;candidate=NULL;
+            qa_unified_frame_lease_release(previous);
+        }
         if(key) qa_info_find(text,*key,0,out);
         else *out=(qa_bytes){(const uint8_t *)text,strlen(text)};
     }
-    --a->calls;
-    return ok&&(client_current(a,actor,false)||application_fail(e,QA_ERROR_ARGUMENT,"Component userinfo changed its physical client"));
+    qa_unified_frame_lease_release(candidate);
+    return ok;
 }
 static bool userinfo(void *context,qa_actor_id actor,const char **out,qa_error *e)
 {
@@ -233,7 +244,7 @@ static bool set_userinfo(void *context,qa_actor_id actor,const char *text,qa_err
         if(ok) {memcpy(client->userinfo,text,size+1);client->userinfo_present=true;}
         else application_fail(e,QA_ERROR_FORMAT,"Component userinfo exceeds actual original Q2 storage");
     } else {
-        char *copy=source->kind==APPLICATION_PROVIDER_QC?info_dictionary(text,e):q3g_copy_text(text,e);ok=copy!=NULL;
+        char *copy=source->kind==APPLICATION_PROVIDER_QC?info_dictionary(text,NULL,e):q3g_copy_text(text,e);ok=copy!=NULL;
         if(ok&&source->kind==APPLICATION_PROVIDER_QC) ok=application_player_userinfo_adopt(p,copy,NULL,e);
         else if(ok) {q3g_client *client=q3g_engine(source)->clients+p->client_slot;free(client->userinfo);client->userinfo=copy;}
     }
@@ -509,7 +520,7 @@ bool application_q3_component_client_adapter_destroy(application_q3_component_cl
     application_q3_component_client_adapter *a=*pointer;
     if(a->calls||a->draining||a->drops)
         return application_fail(e,QA_ERROR_ARGUMENT,"Component client services retain entered calls or requested drops");
-    qa_buffer_free(&a->userinfo);free(a);
+    qa_unified_frame_lease_release(a->userinfo_storage);free(a);
     *pointer=NULL;return true;
 }
 
