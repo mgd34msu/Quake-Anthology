@@ -16,6 +16,13 @@ typedef struct pickup_registration {
     pickup_rule *rules;
     size_t count;
 } pickup_registration;
+/* Claim tokens point into these stable slots until callbacks and claims drain. */
+typedef struct pickup_registration_storage {
+    qa_arena payload;
+    pickup_registration registration;
+    struct pickup_observation_storage *owner;
+    size_t slot;
+} pickup_registration_storage;
 typedef enum pickup_consumption { PICKUP_LIVE, PICKUP_REMOVING, PICKUP_CONSUMED } pickup_consumption;
 typedef struct pickup_observation_owner {
     struct pickup_observation_owner *retired_next;
@@ -29,6 +36,7 @@ typedef struct pickup_observation_owner {
 typedef struct pickup_observation_storage {
     qa_arena arena;
     qa_pool records;
+    qa_pool registrations;
     qa_id_index registration_index;
     qa_actor_index registration_actors;
 } pickup_observation_storage;
@@ -62,6 +70,9 @@ struct qa_pickups {
 };
 bool qa_pickups_checkpoint_write_current(qa_pickups *, pickup_registration *, const qa_pickup_write *, uint64_t);
 pickup_observation_owner *qa_pickups_observation_take(qa_pickups *, qa_error *);
+pickup_registration *qa_pickups_registration_take(qa_pickups *, qa_error *);
+bool qa_pickups_registration_rules_prepare(pickup_registration *, size_t, qa_error *);
+bool qa_pickups_registration_rule_prepare(pickup_registration *, pickup_rule *, qa_error *);
 bool qa_pickups_registration_index_reserve(qa_pickups *, const pickup_registration *, qa_error *);
 void qa_pickups_registration_index_insert(qa_pickups *, pickup_registration *);
 #endif

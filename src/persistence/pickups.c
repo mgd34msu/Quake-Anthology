@@ -43,13 +43,7 @@ static bool rule_fields(qa_source_save_io *io, qa_pickups *service, pickup_regis
         !qa_source_save_count(io, &rule->offered_count, SIZE_MAX / sizeof(qa_item_id)) || !rule->offered_count ||
         !qa_source_save_count(io, &rule->write_count, SIZE_MAX / sizeof(qa_pickup_write)) || !rule->write_count) return false;
     if (reading) {
-        qa_item_id *offered = calloc(rule->offered_count, sizeof(*offered));
-        qa_pickup_write *writes = calloc(rule->write_count, sizeof(*writes));
-        owned->storage = calloc(rule->write_count, sizeof(*owned->storage));
-        rule->offered = offered; rule->writes = writes;
-        if (!offered || !writes || !owned->storage) {
-            qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Allocating restored pickup rule arrays"); return false;
-        }
+        if (!qa_pickups_registration_rule_prepare(registration, owned, io->error)) return false;
         if (!resolve || !resolve->pickup_rule ||
             !resolve->pickup_rule(resolve->context, registration->actor, registration->owner,
                                    registration->serial, rule->id, &source, io->error) ||
@@ -93,10 +87,7 @@ static bool registration_fields(qa_source_save_io *io, qa_pickups *service, pick
         !registration->serial || !qa_source_save_count(io, &registration->count, SIZE_MAX / sizeof(*registration->rules)) ||
         !registration->count) return false;
     if (reading) {
-        registration->rules = calloc(registration->count, sizeof(*registration->rules));
-        if (!registration->rules) {
-            registration->count = 0; qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Allocating restored pickup registration"); return false;
-        }
+        if (!qa_pickups_registration_rules_prepare(registration, registration->count, io->error)) return false;
         registration->active = true;
     }
     for (size_t i = 0; i < registration->count; ++i)
@@ -187,8 +178,8 @@ bool qa_persistence_pickups_restore(qa_session *session, qa_pickups *service,
         eligible == (service->eligible != NULL) && qa_source_save_count(&io, &count, SIZE_MAX / sizeof(pickup_registration));
     pickup_registration **link = &scratch->registrations;
     for (size_t i = 0; ok && i < count; ++i) {
-        *link = calloc(1, sizeof(**link));
-        if (!*link) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating restored pickup owner"); ok = false; break; }
+        *link = qa_pickups_registration_take(scratch, error);
+        if (!*link) { ok = false; break; }
         ok = registration_fields(&io, scratch, *link, resolve) && (*link)->serial <= scratch->serial;
         if (ok) ok = persistence_serial_append(&serials, &serial_count, &serial_capacity, (*link)->serial, scratch->serial, error);
         for (pickup_registration *r = scratch->registrations; ok && r != *link; r = r->next)
