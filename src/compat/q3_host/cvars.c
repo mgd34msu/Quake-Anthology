@@ -34,7 +34,7 @@ static bool namespace_reference(const qa_q3_host *host, const qa_cvars *registry
 
 void q3_cvars_bindings_free(q3_cvar_binding *bindings,size_t count)
 {
-    for (size_t i=0;i<count;++i) { free(bindings[i].name); free(bindings[i].previous_value); }
+    for (size_t i=0;i<count;++i) { free(bindings[i].name); free(bindings[i].previous_value.overflow); }
     free(bindings);
 }
 static char *copy_text(const char *text,qa_error *error)
@@ -60,6 +60,48 @@ static bool binding_text(qa_source_save_io *io,char **out)
     }
     return qa_source_save_bytes(io,*out,length);
 }
+static const char *mirror_text(const q3_cvar_text *text)
+{ return text->overflow ? text->overflow : text->value; }
+static bool mirror_changed(const q3_cvar_text *text,const char *value)
+{ return strcmp(mirror_text(text),value)!=0; }
+static bool mirror_store(q3_cvar_text *text,const char *value,qa_error *error)
+{
+    size_t length=strlen(value);
+    char *overflow=NULL;
+    /* Overlength source observations keep their exact checkpoint continuation. */
+    if (length>=sizeof(text->value)) {
+        overflow=copy_text(value,error);
+        if (!overflow) return false;
+    }
+    if (text->overflow) free(text->overflow);
+    text->overflow=overflow; text->length=length;
+    size_t prefix=length<sizeof(text->value)?length:sizeof(text->value)-1;
+    memcpy(text->value,value,prefix); text->value[prefix]=0;
+    return true;
+}
+static bool mirror_fields(qa_source_save_io *io,q3_cvar_text *text)
+{
+    size_t length=io->direction==QA_SOURCE_SAVE_WRITE?text->length:0;
+    if (!qa_source_save_count(io,&length,SIZE_MAX-1)) return false;
+    if (io->direction==QA_SOURCE_SAVE_WRITE)
+        return qa_source_save_bytes(io,(void *)mirror_text(text),length);
+    if (io->offset>io->input.size || length>io->input.size-io->offset ||
+        memchr(io->input.data+io->offset,0,length))
+        return q3_fail(io->error,QA_ERROR_FORMAT,0,"Invalid Q3 cvar mirror text");
+    char *value=text->value;
+    if (length>=sizeof(text->value)) {
+        text->overflow=malloc(length+1);
+        if (!text->overflow) return q3_fail(io->error,QA_ERROR_MEMORY,0,"Restoring Q3 cvar mirror text");
+        value=text->overflow;
+    }
+    text->length=length; value[length]=0;
+    if (!qa_source_save_bytes(io,value,length)) return false;
+    if (text->overflow) {
+        memcpy(text->value,value,sizeof(text->value)-1);
+        text->value[sizeof(text->value)-1]=0;
+    }
+    return true;
+}
 static bool binding_fields(qa_source_save_io *io,q3_cvar_binding *binding)
 {
     uint32_t reference=binding->reference,dialect=binding->dialect;
@@ -78,18 +120,18 @@ static bool binding_fields(qa_source_save_io *io,q3_cvar_binding *binding)
     if (!qa_cvars_name_valid(binding->dialect,binding->name))
         return q3_fail(io->error,QA_ERROR_FORMAT,0,"Invalid authored Q3 cvar binding name");
     return !binding->read || (qa_source_save_bool(io,&binding->previous_current) &&
-        binding_text(io,&binding->previous_value) &&
+        mirror_fields(io,&binding->previous_value) &&
         qa_source_save_f32(io,&binding->previous_number) &&
         qa_source_save_i32(io,&binding->previous_integer));
 }
 static bool status_fields(qa_source_save_io *io,q3_cvar_status *status)
 {
     if (!qa_source_save_bool(io,&status->read)) return false;
-    if (!status->read) return (!status->revision && !status->previous_value) ||
+    if (!status->read) return (!status->revision && !status->previous_value.length && !status->previous_value.overflow) ||
         q3_fail(io->error,QA_ERROR_FORMAT,0,"Unread status mirror retains an invalid continuation");
     uint32_t bits; memcpy(&bits,&status->previous_number,sizeof(bits));
     bool ok=qa_source_save_u32(io,&status->revision) &&
-        binding_text(io,&status->previous_value) &&
+        mirror_fields(io,&status->previous_value) &&
         qa_source_save_u64(io,&status->previous_modification) &&
         qa_source_save_u32(io,&bits) && qa_source_save_i32(io,&status->previous_integer) &&
         qa_source_save_bool(io,&status->previous_visible);
@@ -128,7 +170,7 @@ bool q3_cvars_bindings_capture(const qa_q3_host *host,qa_buffer *out,qa_error *e
     uint8_t magic[4]={'Q','3','C','B'};
     size_t count=host->cvar_binding_count;
     bool ok=qa_source_save_writer(&io,NULL,error) && qa_source_save_bytes(&io,magic,sizeof(magic)) &&
-        qa_source_save_count(&io,&count,1024);
+        qa_source_save_count(&io,&count,Q3_MAX_CVARS);
     for (size_t i=0;ok && i<count;++i) {
         q3_cvar_binding copy=host->cvar_bindings[i]; qa_cvars *current=NULL;
         ok=binding_namespace(host,&copy,&current,error) && copy.handle<qa_cvars_handle_count(current);
@@ -163,15 +205,16 @@ bool q3_cvars_bindings_decode(qa_bytes bytes,q3_cvar_binding **out,size_t *out_c
 {
     qa_source_save_io io={0}; uint8_t magic[4]; size_t count=0;
     if (!out || *out || !out_count || !out_caches || *out_caches || !out_cache_count ||
-        !out_status || out_status->read || out_status->revision || out_status->previous_value ||
+        !out_status || out_status->read || out_status->revision ||
+        out_status->previous_value.length || out_status->previous_value.overflow ||
         !qa_source_save_reader(&io,NULL,bytes,error))
         return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 cvar decode requires empty actual candidate output");
     bool ok=qa_source_save_bytes(&io,magic,sizeof(magic)) &&
-        qa_source_save_count(&io,&count,1024);
+        qa_source_save_count(&io,&count,Q3_MAX_CVARS);
     if (ok && (memcmp(magic,"Q3CB",4) || count>bytes.size-io.offset))
         ok=q3_fail(error,QA_ERROR_FORMAT,0,"Unsupported Q3 cvar binding continuation");
-    q3_cvar_binding *bindings=ok && count?calloc(count,sizeof(*bindings)):NULL;
-    if (ok && count && !bindings) ok=q3_fail(error,QA_ERROR_MEMORY,0,"Restoring routed Q3 cvar bindings");
+    q3_cvar_binding *bindings=ok?calloc(Q3_MAX_CVARS,sizeof(*bindings)):NULL;
+    if (ok && !bindings) ok=q3_fail(error,QA_ERROR_MEMORY,0,"Restoring routed Q3 cvar bindings");
     for (size_t i=0;ok && i<count;++i) {
         ok=binding_fields(&io,bindings+i);
         for (size_t j=0;ok && j<i;++j)
@@ -196,7 +239,7 @@ bool q3_cvars_bindings_decode(qa_bytes bytes,q3_cvar_binding **out,size_t *out_c
     q3_cvar_status status={0};
     if (ok) ok=status_fields(&io,&status) && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
-    if (!ok) { q3_cvars_bindings_free(bindings,bindings?count:0); free(caches); free(status.previous_value); return false; }
+    if (!ok) { q3_cvars_bindings_free(bindings,bindings?count:0); free(caches); free(status.previous_value.overflow); return false; }
     *out=bindings; *out_count=count; *out_caches=caches; *out_cache_count=cache_count;
     *out_status=status; return true;
 }
@@ -214,9 +257,12 @@ bool q3_cvars_bindings_restore_ready(qa_q3_host *host,qa_error *error)
         uint64_t modification=view->modification_count;
         if (!qa_cvars_vm_rebind(registry,binding->name,&handle,error)) return false;
         binding->handle=handle;
-        binding->registry=binding->previous_current?registry:NULL;
+        binding->registry=registry;
+        binding->value_handle=qa_cvars_resolve(registry,binding->name);
+        binding->status=status_name(binding->name);
         binding->previous_modification=binding->previous_current?modification:0;
     }
+    host->draw_status=qa_cvars_resolve(host->options.cvars,"cg_drawStatus");
     if (host->cvar_cache_count && ((!host->vm && !host->native) || host->options.role!=QA_QVM_CGAME))
         return q3_fail(error,QA_ERROR_FORMAT,0,"Restored cvar cache lacks its original CGAME executor");
     for (size_t i=0;i<host->cvar_cache_count;++i) {
@@ -314,14 +360,6 @@ static bool find(q3_cvar_access access,const char *name,const qa_cvar_view **out
     *out=qa_cvars_find(access.registry,name);
     return access_leave(access,true,error);
 }
-static bool handle_view(q3_cvar_access access,size_t handle,const qa_cvar_view **out,
-    size_t *count,qa_error *error)
-{
-    if (!access_enter(access,error)) return false;
-    *out=qa_cvars_handle(access.registry,handle);
-    if (count) *count=qa_cvars_handle_count(access.registry);
-    return access_leave(access,true,error);
-}
 static bool apply(q3_call *call,q3_cvar_access access,const qa_cvars_edit_command *command,qa_error *error)
 {
     if (call->host->options.console)
@@ -379,76 +417,59 @@ static bool bind_routed(q3_call *call,q3_cvar_access access,size_t handle,
         reference<QA_Q3_HOST_CVAR_ENGINE || reference>QA_Q3_HOST_CVAR_SELECTED_VIEW ||
         !namespace_resolve(host,reference,&resolved,error) || resolved!=access.registry)
         return q3_fail(error,QA_ERROR_ARGUMENT,0,"Routed Q3 cvar lacks its actual factory namespace reference");
+    qa_cvar_handle value_handle=qa_cvars_resolve(access.registry,view->name);
+    bool status=status_name(view->name);
+    if (status && access.registry==host->options.cvars) host->draw_status=value_handle;
     for (size_t i=0;i<host->cvar_binding_count;++i) {
         const q3_cvar_binding *binding=host->cvar_bindings+i;
         if (binding->reference==reference && binding->handle==handle && !strcmp(binding->name,view->name)) {
             *token=-3-(int32_t)i; return true;
         }
     }
-    if (host->cvar_binding_count>=1024)
+    if (host->cvar_binding_count>=Q3_MAX_CVARS)
         return q3_fail(error,QA_ERROR_MEMORY,0,"MAX_CVARS");
     char *name=copy_text(view->name,error);
     if (!name) return false;
-    q3_cvar_binding *grown=realloc(host->cvar_bindings,(host->cvar_binding_count+1)*sizeof(*grown));
-    if (!grown) { free(name); return q3_fail(error,QA_ERROR_MEMORY,0,"Retaining Q3 routed cvar bindings"); }
-    host->cvar_bindings=grown;
-    grown[host->cvar_binding_count]=(q3_cvar_binding){.reference=reference,.handle=handle,
-        .registry=access.registry,.name=name,.dialect=qa_cvars_dialect(access.registry)};
+    host->cvar_bindings[host->cvar_binding_count]=(q3_cvar_binding){.reference=reference,.handle=handle,
+        .registry=access.registry,.value_handle=value_handle,
+        .name=name,.dialect=qa_cvars_dialect(access.registry),.status=status};
     *token=-3-(int32_t)host->cvar_binding_count++; return true;
 }
-static bool routed_view(q3_call *call,q3_cvar_binding *binding,const qa_cvar_view **out,
+static bool routed_view(q3_cvar_binding *binding,const qa_cvar_view **out,
     uint64_t *modification,qa_error *error)
 {
-    qa_cvars *registry=NULL;
-    if (!namespace_resolve(call->host,binding->reference,&registry,error) ||
-        !registry || qa_cvars_dialect(registry)!=binding->dialect)
-        return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 cvar binding lost its actual physical namespace");
-    q3_cvar_access access;
-    if (!access_name(call,binding->name,&access,error)) return false;
-    if (access.registry!=registry)
-        return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 cvar binding changed its admitted namespace");
-    const qa_cvar_view *view=NULL;
-    size_t count=0;
-    if (!handle_view(access,binding->handle,&view,&count,error)) return false;
-    if (binding->handle>=count)
-        return q3_fail(error,QA_ERROR_FORMAT,0,"Cvar_Update: handle out of range");
+    const qa_cvar_view *view=qa_cvars_read(binding->registry,binding->value_handle);
     *out=view;
     if (!view) return true;
-    if (strcmp(view->name,binding->name))
-        return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 cvar handle belongs to another authored declaration");
-    if (!binding->read || binding->registry!=registry || strcmp(binding->previous_value,view->value) ||
+    if (!binding->read || !binding->previous_current || mirror_changed(&binding->previous_value,view->value) ||
         binding->previous_number!=view->number || binding->previous_integer!=view->integer ||
         binding->previous_modification!=view->modification_count) {
         if (binding->revision==UINT64_MAX)
             return q3_fail(error,QA_ERROR_FORMAT,0,"Q3 cvar mirror revision is exhausted");
-        char *value=copy_text(view->value,error);
-        if (!value) return false;
-        free(binding->previous_value); binding->previous_value=value;
-        binding->registry=registry; binding->previous_number=view->number;
+        if (!mirror_store(&binding->previous_value,view->value,error)) return false;
+        binding->previous_number=view->number;
         binding->previous_integer=view->integer; binding->previous_modification=view->modification_count;
-        binding->read=true; ++binding->revision;
+        binding->read=true; binding->previous_current=true; ++binding->revision;
     }
     *modification=binding->revision; return true;
 }
 
-static bool effective_status(q3_call *call,const qa_cvar_view *source,
+static bool effective_status(q3_call *call,const qa_cvar_view *source,bool is_status,
     qa_cvar_view *out,qa_error *error)
 {
     *out=*source;
     qa_q3_host *host=call->host;
-    if (host->options.role!=QA_QVM_CGAME || !status_name(source->name)) return true;
+    if (host->options.role!=QA_QVM_CGAME || !is_status) return true;
     bool visible=true;
     const qa_q3_host_cvar_status_services *services=&host->options.cvar_status;
     if (services->visible && !services->visible(services->context,host,&visible,error)) return false;
     q3_cvar_status *status=&host->cvar_status;
     if (!status->read || status->previous_modification!=source->modification_count ||
-        status->previous_visible!=visible || strcmp(status->previous_value,source->value) ||
+        status->previous_visible!=visible || mirror_changed(&status->previous_value,source->value) ||
         status->previous_number!=source->number || status->previous_integer!=source->integer) {
         if (status->revision==INT32_MAX)
             return q3_fail(error,QA_ERROR_FORMAT,0,"CGAME status cvar revision is exhausted");
-        char *value=copy_text(source->value,error);
-        if (!value) return false;
-        free(status->previous_value); status->previous_value=value;
+        if (!mirror_store(&status->previous_value,source->value,error)) return false;
         status->previous_modification=source->modification_count; status->previous_visible=visible;
         status->previous_number=source->number; status->previous_integer=source->integer;
         status->read=true; ++status->revision;
@@ -457,41 +478,38 @@ static bool effective_status(q3_call *call,const qa_cvar_view *source,
     if (!visible) { out->value="0"; out->number=0; out->integer=0; }
     return true;
 }
-static bool update_fields(q3_call *call,uint64_t pointer,const qa_cvar_view **resolved,qa_error *error)
+static bool update_fields(q3_call *call,uint64_t pointer,bool *resolved_status,qa_error *error)
 {
     uint8_t input[272];
     if (!q3_read(call, pointer, input, sizeof(input), error)) return false;
     int32_t handle = qa_load_i32le(input);
     const qa_cvar_view *view=NULL;
     uint64_t modification=0;
+    bool status=false;
     if (handle<=-3) {
         size_t index=(size_t)(-(int64_t)handle-3);
         if (index>=call->host->cvar_binding_count)
             return q3_fail(error,QA_ERROR_FORMAT,0,"Cvar_Update: handle out of range");
-        if (!routed_view(call,call->host->cvar_bindings+index,&view,&modification,error)) return false;
+        q3_cvar_binding *binding=call->host->cvar_bindings+index;
+        if (!routed_view(binding,&view,&modification,error)) return false;
+        status=binding->status;
     } else if (handle==ENGINE_CHEATS_HANDLE && call->host->options.role==QA_QVM_GAME &&
         call->host->options.engine_cvars) {
         view=qa_cvars_read(call->host->options.engine_cvars,call->host->engine_cheats);
         if (view) modification=(uint32_t)view->modification_count;
     } else if (handle>=0) {
         qa_q3_host_options *options=&call->host->options;
-        if (options->console) {
-            qa_command_context command;
-            if (!qa_console_cvar_context(options->console,&options->command_context,&command,error) ||
-                !qa_console_cvar_handle(options->console,&command,options->cvars,(size_t)handle,&view,error))
-                return false;
-        } else {
-            if ((size_t)handle>=qa_cvars_handle_count(options->cvars))
-                return q3_fail(error,QA_ERROR_FORMAT,0,"Cvar_Update: handle out of range");
-            view=qa_cvars_handle(options->cvars,(size_t)handle);
-        }
+        if ((size_t)handle>=qa_cvars_handle_count(options->cvars))
+            return q3_fail(error,QA_ERROR_FORMAT,0,"Cvar_Update: handle out of range");
+        view=qa_cvars_handle(options->cvars,(size_t)handle);
+        status=view && view==qa_cvars_read(options->cvars,call->host->draw_status);
         if (view) modification=(uint32_t)view->modification_count;
     } else return q3_fail(error,QA_ERROR_FORMAT,0,"Cvar_Update: handle out of range");
-    *resolved=view;
+    status=view && call->host->options.role==QA_QVM_CGAME && status;
+    *resolved_status=status;
     qa_cvar_view effective;
-    bool status=view && call->host->options.role==QA_QVM_CGAME && status_name(view->name);
     if (status) {
-        if (!effective_status(call,view,&effective,error)) return false;
+        if (!effective_status(call,view,status,&effective,error)) return false;
         view=&effective; modification=view->modification_count;
     }
     if (!view || (handle<=-3?
@@ -500,10 +518,10 @@ static bool update_fields(q3_call *call,uint64_t pointer,const qa_cvar_view **re
     size_t length = strlen(view->value);
     int32_t integer = view->integer;
     uint32_t bits; memcpy(&bits, &view->number, sizeof(bits));
-    uint8_t value[256] = {0};
-    if (length <= 255) memcpy(value, view->value, length);
+    uint8_t value[Q3_CVAR_VALUE_BYTES] = {0};
+    if (length < sizeof(value)) memcpy(value, view->value, length);
     if (!q3_write_word(call, pointer + 4, (uint32_t)modification, error)) return false;
-    if (length > 255)
+    if (length >= sizeof(value))
         return q3_fail(error, QA_ERROR_FORMAT, length, "Cvar_Update exceeds MAX_CVAR_VALUE_STRING");
     return q3_write(call, pointer + 16, (qa_bytes){value, sizeof(value)}, error) &&
            q3_write_word(call, pointer + 8, bits, error) &&
@@ -519,7 +537,7 @@ static bool status_name(const char *name)
     }
     return !*name && !*status;
 }
-static bool cache_note(q3_call *call,uint64_t address,const qa_cvar_view *view,qa_error *error)
+static bool cache_note(q3_call *call,uint64_t address,bool status,qa_error *error)
 {
     qa_q3_host *host=call->host;
     if (host->options.role!=QA_QVM_CGAME) return true;
@@ -532,7 +550,7 @@ static bool cache_note(q3_call *call,uint64_t address,const qa_cvar_view *view,q
         if (record->vm==call->vm && record->native==call->native &&
             (call->vm?record->pointer==pointer:record->address==address)) { index=i; break; }
     }
-    if (!view || !status_name(view->name)) {
+    if (!status) {
         if (index<host->cvar_cache_count) {
             memmove(host->cvar_caches+index,host->cvar_caches+index+1,
                 (host->cvar_cache_count-index-1)*sizeof(*host->cvar_caches));
@@ -556,8 +574,8 @@ static bool cache_note(q3_call *call,uint64_t address,const qa_cvar_view *view,q
 }
 static bool update(q3_call *call,uint64_t pointer,qa_error *error)
 {
-    const qa_cvar_view *view=NULL;
-    return update_fields(call,pointer,&view,error) && cache_note(call,pointer,view,error);
+    bool status=false;
+    return update_fields(call,pointer,&status,error) && cache_note(call,pointer,status,error);
 }
 static bool refresh(void *context,const qa_command_context *command,qa_error *error)
 {
@@ -577,8 +595,8 @@ static bool refresh(void *context,const qa_command_context *command,qa_error *er
         const q3_cvar_cache *cache=host->cvar_caches+i;
         q3_call call={.host=host,.memory=cache->memory,.vm=cache->vm,.native=cache->native,
             .native_profile=host->native_profile,.native_host=host->native_host};
-        const qa_cvar_view *view=NULL;
-        if (!update_fields(&call,cache->address,&view,error)) return false;
+        bool status=false;
+        if (!update_fields(&call,cache->address,&status,error)) return false;
         ++i;
     }
     return true;
@@ -733,7 +751,8 @@ static q3_service_result cvars_selected(q3_call *call, int32_t *result, qa_error
         if (ok) ok=find(access,key,&view,error) && classify(call,access,key,&view,error);
     } else if (trap == (ui ? 5 : game ? 7 : 6)) {
         qa_cvar_view effective;
-        if (view && !effective_status(call,view,&effective,error)) ok=false;
+        bool status=view && call->host->options.role==QA_QVM_CGAME && status_name(view->name);
+        if (view && !effective_status(call,view,status,&effective,error)) ok=false;
         else if (view) view=&effective;
         if (ok && view) ok = q3_write_string(call, call->arguments[1], view->value, q3_integer(call, 2), error);
         else if (ok) {

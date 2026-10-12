@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "a3ced3e26e1726571f4815d4420f0562212328b5",
+  "verified_main": "18f15cae1d317ae1183849fbd9ae3bbe69733b16",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 158,
-    "open_source_observation": 213,
+    "fixed_source_build_core": 159,
+    "open_source_observation": 212,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -34446,8 +34446,9 @@
       "severity": "medium",
       "job": "26",
       "area": "module_hosts",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Native SDK cvar metadata uses common ID index and retained canonical handles instead of linked name/order scans. Guest addresses, link order, modified writeback and exact saved fields retained; cold import rebuilds index. Normal build/seven core suites passed; new cvar registration can still allocate, no live/zero-allocation claim.",
+      "fixed_commit": "18f15cae1d317ae1183849fbd9ae3bbe69733b16"
     },
     {
       "id": "26-09",
@@ -41515,6 +41516,32 @@
       ],
       "record_directory": "/tmp/qa-ta3196-native-visibility-index-20261012",
       "conclusion": "Completed Q2 EntityVisible decisions use common full-generation actor index with source-slot alias rows. Release compaction rebuilds the same index; cold restore rebuilds it from unchanged saved48-byte rows. Normal build/seven core suites passed; no live or timing claim."
+    },
+    {
+      "commit": "18f15cae1d317ae1183849fbd9ae3bbe69733b16",
+      "source_tree": "440283203d57ba7c281a33f2f9fc0b76d2169a54",
+      "finding_ids": [
+        "26-08"
+      ],
+      "files_rechecked": [
+        "src/compat/native_host/checkpoint.c",
+        "src/compat/native_host/host.c",
+        "src/compat/native_host/internal.h",
+        "src/compat/native_host/memory.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-native-cvar-index-20261012",
+      "conclusion": "Native SDK cvar metadata uses common ID index and retained canonical handles instead of linked name/order scans. Guest addresses, link order, modified writeback and exact saved fields retained; cold import rebuilds index. Normal build/seven core suites passed; new cvar registration can still allocate, no live/zero-allocation claim."
     }
   ],
   "verification_limits": [

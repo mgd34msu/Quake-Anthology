@@ -311,6 +311,7 @@ bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_e
     host->no_curves = qa_cvars_resolve(options->cvars, "cm_noCurves");
     host->player_curve_clip = qa_cvars_resolve(options->cvars, "cm_playerCurveClip");
     host->engine_cheats = qa_cvars_resolve(options->engine_cvars, "sv_cheats");
+    host->draw_status = qa_cvars_resolve(options->cvars, "cg_drawStatus");
     if (!host->options.service_owner)
         host->options.service_owner = options->owner ? options->owner : (uint64_t)(uintptr_t)host;
     if (options->role == QA_QVM_GAME) {
@@ -336,7 +337,13 @@ bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_e
         qa_arena_destroy(&host->scratch); q3_game_checkpoint_free(host->game); free(host); return false;
     }
     qa_arena_seal(&host->scratch);
+    host->cvar_bindings=calloc(Q3_MAX_CVARS,sizeof(*host->cvar_bindings));
+    if (!host->cvar_bindings) {
+        qa_arena_destroy(&host->scratch); q3_game_checkpoint_free(host->game); free(host);
+        return q3_fail(error,QA_ERROR_MEMORY,0,"Retaining Q3 routed cvar bindings");
+    }
     if (!q3_script_namespace_bind(host, options->script_globals, error)) {
+        q3_cvars_bindings_free(host->cvar_bindings,0);
         qa_arena_destroy(&host->scratch); q3_game_checkpoint_free(host->game); free(host); return false;
     }
     qa_fs_root_retain(write_root); host->options.write_view.root=write_root;
@@ -519,7 +526,7 @@ bool qa_q3_host_destroy(qa_q3_host *host, qa_error *error)
     q3_game_checkpoint_free(host->game);
     q3_cvars_bindings_free(host->cvar_bindings,host->cvar_binding_count);
     free(host->cvar_caches);
-    free(host->cvar_status.previous_value);
+    free(host->cvar_status.previous_value.overflow);
     void *frontend_lifetime=host->options.frontend_lifetime;
     void (*release_frontend)(void *)=host->options.release_frontend;
     host->options.frontend_lifetime=NULL;host->options.release_frontend=NULL;
@@ -552,7 +559,7 @@ void qa_q3_host_native_consumed(qa_q3_host *host)
     if (!host) return;
     q3_game_fields_clear(host);
     free(host->cvar_caches); host->cvar_caches=NULL; host->cvar_cache_count=0;
-    free(host->cvar_status.previous_value); host->cvar_status=(q3_cvar_status){0};
+    free(host->cvar_status.previous_value.overflow); host->cvar_status=(q3_cvar_status){0};
     host->native = NULL;
     host->native_host = NULL;
     host->memory = (qa_native_host_guest_memory){0};
@@ -567,7 +574,7 @@ void qa_q3_host_qvm_consumed(qa_q3_host *host)
     if (!host) return;
     q3_game_fields_clear(host);
     free(host->cvar_caches); host->cvar_caches=NULL; host->cvar_cache_count=0;
-    free(host->cvar_status.previous_value); host->cvar_status=(q3_cvar_status){0};
+    free(host->cvar_status.previous_value.overflow); host->cvar_status=(q3_cvar_status){0};
     host->vm = NULL;
     host->memory = (qa_native_host_guest_memory){0};
     if (host->game) {

@@ -86,17 +86,26 @@ typedef struct q3_entity_span {
     qa_bytes bytes;
 } q3_entity_span;
 
+enum { Q3_MAX_CVARS = 1024, Q3_CVAR_VALUE_BYTES = 256 };
+typedef struct q3_cvar_text {
+    char value[Q3_CVAR_VALUE_BYTES];
+    char *overflow;
+    size_t length;
+} q3_cvar_text;
+
 typedef struct q3_cvar_binding {
     qa_q3_host_cvar_namespace reference;
     size_t handle;
     qa_cvars *registry;
-    char *name,*previous_value;
+    qa_cvar_handle value_handle;
+    char *name;
+    q3_cvar_text previous_value;
     uint64_t previous_modification;
     float previous_number;
     int32_t previous_integer;
     uint64_t revision;
     qa_ruleset_id dialect;
-    bool read,previous_current;
+    bool read,previous_current,status;
 } q3_cvar_binding;
 typedef struct q3_cvar_cache {
     qa_qvm *vm;
@@ -107,7 +116,7 @@ typedef struct q3_cvar_cache {
     bool native_address;
 } q3_cvar_cache;
 typedef struct q3_cvar_status {
-    char *previous_value;
+    q3_cvar_text previous_value;
     uint64_t previous_modification;
     float previous_number;
     int32_t previous_integer;
@@ -117,7 +126,7 @@ typedef struct q3_cvar_status {
 
 struct qa_q3_host {
     qa_q3_host_options options;
-    qa_cvar_handle no_curves, player_curve_clip, engine_cheats;
+    qa_cvar_handle no_curves, player_curve_clip, engine_cheats, draw_status;
     q3_file files[64];
     uint64_t file_serial;
     qa_arena scratch;

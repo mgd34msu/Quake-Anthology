@@ -214,7 +214,7 @@ bool qa_q3_host_checkpoint_portable_state(qa_bytes input, qa_error *error)
     bool valid=cgame || (!cache_count && !status.read);
     q3_cvars_bindings_free(bindings,binding_count);
     free(caches);
-    free(status.previous_value);
+    free(status.previous_value.overflow);
     if (!valid) return q3_fail(error,QA_ERROR_FORMAT,0,"Portable cvar status continuation has no CGAME owner");
     q3_file files[64] = {0};
     q3_write_file_state writable[64] = {0};
@@ -516,7 +516,7 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
     }
     if (host->options.role!=QA_QVM_CGAME && (cache_count || status.read)) {
         q3_game_checkpoint_free(game); q3_cvars_bindings_free(bindings,binding_count);
-        free(caches); free(status.previous_value);
+        free(caches); free(status.previous_value.overflow);
         return q3_fail(error,QA_ERROR_FORMAT,0,"Restored cvar status continuation has no CGAME owner");
     }
     ++host->calls;
@@ -570,6 +570,7 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
         host->bots_shutdown = bots_shutdown != 0;
         host->clip_bounds = clip_bounds; host->clip_brush = clip_brush;
         host->entity_cursor = restored_cursor; host->entity_parser = restored_parser;
+        q3_cvars_bindings_free(host->cvar_bindings,host->cvar_binding_count);
         host->cvar_bindings=bindings; host->cvar_binding_count=binding_count;
         bindings=NULL; binding_count=0;
         host->cvar_caches=caches; host->cvar_cache_count=cache_count;
@@ -582,7 +583,7 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
     q3_game_checkpoint_free(game);
     q3_cvars_bindings_free(bindings,binding_count);
     free(caches);
-    free(status.previous_value);
+    free(status.previous_value.overflow);
     for (size_t i=1;i<64;++i) qa_script_checkpoint_free(&script_states[i]);
     --host->calls;
     return ok;
