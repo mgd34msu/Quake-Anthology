@@ -1,7 +1,7 @@
 {
   "date": "2026-10-11",
   "source_tree": "b01b311cab565aebb3b8745e777ceeabf0fba2c5",
-  "verified_main": "90fbdd0fe12a66eeaf58c21f49d3c0305b0f6416",
+  "verified_main": "51a78052dfec03158225dbe5dfcbe94b753692ba",
   "scope": "All tracked code, headers, tools, tests, build inputs and executable configuration inputs in this repository; non-executable documentation/history and binary assets excluded. Complete reads or complete structured table/schema reads with actual consumers. Not a claim about sibling repositories or runtime parity.",
   "coverage": {
     "files": 3137,
@@ -27039,7 +27039,7 @@
       "job": "06",
       "area": "audio_input_ui",
       "status": "open_source_observation",
-      "verification": "Music PCM and device automatic PCM, encoding and raw-conversion storage are prepared at cold admission using actual chunk/device bounds and common arenas. Device candidate publication/abort owns storage independently; original QADV saved capacities and head restore exactly. Larger valid public requests and smaller legacy saved reservations retain growth. Vorbis workspace admission remains open. Normal production build and seven existing core suites passed; the suites do not directly exercise SDL device behavior, and no live audio or zero-allocation claim is made."
+      "verification": "Music PCM, device automatic PCM/encoding/conversion and Vorbis staging use common arenas; music and OGV admit their actual 16384/4096-frame decoder chunk bounds before playback. Larger public reads keep full staging and unchanged decoder seek rollback. Void direct music start keeps accepted ownership on reservation failure and the existing first-read retry; transactional selection fails before claim. Device legacy saved smaller capacities and arbitrary larger accepted requests can still grow, so the zero-growth observation remains open. Normal production build and seven existing core suites passed; no live SDL/Vorbis audio, libvorbis internals or whole-frame allocation proof."
     },
     {
       "id": "06-03",
@@ -40777,6 +40777,33 @@
       ],
       "record_directory": "/tmp/qa-ta3196-live-catalog-storage-20261012",
       "conclusion": "QVM/native catalog candidates use two reusable common owner arenas with actual admitted row and string sizes. Dependent records, names, weapons and QVM inventory triples publish together; unchanged/error retains current publication. Common indexes keep first type/tag match and native duplicate-item qualification. All original live Source reads, pointer widths, count/name bounds, carried IDs/order, borrowed output contract and callback copies remain. Larger valid rows/labels/indexes/string interning can grow; live scans remain. Normal production build and seven existing core suites passed; no live module, zero-allocation or speed claim."
+    },
+    {
+      "commit": "51a78052dfec03158225dbe5dfcbe94b753692ba",
+      "source_tree": "639b316287c7ae521aee83a9c8ada63260ca3593",
+      "finding_ids": [
+        "06-02"
+      ],
+      "files_rechecked": [
+        "src/audio/codecs.c",
+        "src/audio/codec_internal.h",
+        "src/audio/music.c",
+        "src/media/ogv.c",
+        "src/core/arena.c"
+      ],
+      "build_exit": 0,
+      "core_exit": 0,
+      "core_suites": [
+        "platform_services",
+        "core",
+        "archive",
+        "vfs",
+        "bsp",
+        "image",
+        "model"
+      ],
+      "record_directory": "/tmp/qa-ta3196-prepared-vorbis-storage-20261012",
+      "conclusion": "Music PCM, device automatic PCM/encoding/conversion and Vorbis staging use common arenas; music and OGV admit their actual 16384/4096-frame decoder chunk bounds before playback. Larger public reads keep full staging and unchanged decoder seek rollback. Void direct music start keeps accepted ownership on reservation failure and the existing first-read retry; transactional selection fails before claim. Device legacy saved smaller capacities and arbitrary larger accepted requests can still grow, so the zero-growth observation remains open. Normal production build and seven existing core suites passed; no live SDL/Vorbis audio, libvorbis internals or whole-frame allocation proof."
     }
   ],
   "verification_limits": [

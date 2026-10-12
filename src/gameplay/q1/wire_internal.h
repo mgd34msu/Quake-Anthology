@@ -3,10 +3,13 @@
 
 #include "internal.h"
 #include "qa/game_q1_wire.h"
+#include "qa/id_index.h"
 
 typedef struct q1_wire_table {
     qa_string_id *rows;
     size_t count, capacity;
+    qa_arena ordinal_storage;
+    qa_id_index ordinals;
 } q1_wire_table;
 typedef struct q1_wire_client {
     qa_actor_id actor;

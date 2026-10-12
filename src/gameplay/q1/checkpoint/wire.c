@@ -19,19 +19,25 @@ static bool table(q1_save_io *io, q1_wire_table *rows) {
             return false;
         }
         rows->count = rows->capacity = count;
+        rows->ordinals.storage = &rows->ordinal_storage;
+        if (!qa_id_index_reserve(&rows->ordinals, count, io->values.error)) return false;
     }
     for (uint32_t i = 0; i < count; ++i) {
         Q1_SAVE(io, string, rows->rows[i]);
         if (!i) {
             if (rows->rows[i]) return q1_save_fail(io, "Q1 ordered precache zero is not empty");
+            if (io->values.direction == QA_SOURCE_SAVE_READ)
+                qa_id_index_insert(&rows->ordinals, 0, 0, 0);
             continue;
         }
         const char *path = qa_strings_cstr(qa_session_strings(io->game->services.session), rows->rows[i]);
         if (!path || (unsigned char)*path <= 32)
             return q1_save_fail(io, "Invalid Q1 ordered precache resource");
-        for (uint32_t j = 1; j < i; ++j)
-            if (rows->rows[j] == rows->rows[i])
-                return q1_save_fail(io, "Duplicate Q1 ordered precache declaration");
+        const qa_id_index_entry *entry = qa_id_index_find(&rows->ordinals, rows->rows[i], 0);
+        if (entry && (io->values.direction == QA_SOURCE_SAVE_READ || entry->value != i))
+            return q1_save_fail(io, "Duplicate Q1 ordered precache declaration");
+        if (io->values.direction == QA_SOURCE_SAVE_READ)
+            qa_id_index_insert(&rows->ordinals, rows->rows[i], 0, i);
     }
     return true;
 }

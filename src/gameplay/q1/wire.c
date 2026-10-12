@@ -20,6 +20,10 @@ void q1_wire_changed(q1_wire_state *wire) {
 }
 static void state_free(q1_wire_state *wire) {
     if (!wire) return;
+    qa_id_index_destroy(&wire->models.ordinals);
+    qa_arena_destroy(&wire->models.ordinal_storage);
+    qa_id_index_destroy(&wire->sounds.ordinals);
+    qa_arena_destroy(&wire->sounds.ordinal_storage);
     free(wire->models.rows);
     free(wire->sounds.rows);
     free(wire->board);
@@ -54,8 +58,9 @@ static bool append(qa_q1_game *g, q1_wire_table *table, const char *path, qa_err
         return fail(error, "Q1 precache declaration requires a resource path");
     qa_string_id resource;
     if (!qa_builtin_resource(&g->services, path, &resource, error)) return false;
-    for (size_t i = 1; i < table->count; ++i)
-        if (table->rows[i] == resource) return true;
+    if (qa_id_index_find(&table->ordinals, resource, 0)) return true;
+    table->ordinals.storage = &table->ordinal_storage;
+    if (!qa_id_index_reserve(&table->ordinals, table->count ? 1 : 2, error)) return false;
     if (table->count == table->capacity) {
         size_t next = table->capacity ? table->capacity * 2 : 16;
         if (next < table->capacity || next > SIZE_MAX / sizeof(*table->rows))
@@ -67,9 +72,13 @@ static bool append(qa_q1_game *g, q1_wire_table *table, const char *path, qa_err
         }
         table->rows = rows;
         table->capacity = next;
-        if (!table->count) table->rows[table->count++] = 0;
+        if (!table->count) {
+            table->rows[table->count++] = 0;
+            qa_id_index_insert(&table->ordinals, 0, 0, 0);
+        }
     }
-    table->rows[table->count++] = resource;
+    table->rows[table->count] = resource;
+    qa_id_index_insert(&table->ordinals, resource, 0, table->count++);
     q1_wire_changed(g->wire);
     return true;
 }
@@ -173,8 +182,12 @@ bool qa_q1_wire_begin_world(qa_q1_game *g, const char *path, uint32_t inline_mod
     if (okay) {
         wire->sounds.rows = calloc(1, sizeof(*wire->sounds.rows));
         okay = wire->sounds.rows != NULL;
-        if (okay) wire->sounds.count = wire->sounds.capacity = 1;
-        else qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q1 empty sound slot");
+        if (okay) {
+            wire->sounds.count = wire->sounds.capacity = 1;
+            wire->sounds.ordinals.storage = &wire->sounds.ordinal_storage;
+            okay = qa_id_index_reserve(&wire->sounds.ordinals, 1, error);
+            if (okay) qa_id_index_insert(&wire->sounds.ordinals, 0, 0, 0);
+        } else qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q1 empty sound slot");
     }
     if (!okay) {
         g->wire = previous;
@@ -328,22 +341,25 @@ bool qa_q1_wire_qw_stats_store(const qa_q1_wire_receipt *receipt,uint32_t slot,c
     q1_wire_changed(wire);
     return true;
 }
+static bool table_index(const q1_wire_table *table, qa_string_id resource, uint32_t *out) {
+    qa_id_index_cursor cursor = qa_id_index_begin(&table->ordinals, resource, 0);
+    size_t ordinal;
+    if (!qa_id_index_next(&table->ordinals, &cursor, &ordinal) || ordinal > UINT32_MAX)
+        return false;
+    *out = (uint32_t)ordinal;
+    return true;
+}
 bool qa_q1_wire_index(const qa_q1_wire_receipt *receipt, bool models, qa_string_id resource,
                        uint32_t *out) {
     if (!out || !qa_q1_wire_receipt_current(receipt)) return false;
-    const qa_string_id *rows = models ? receipt->models : receipt->sounds;
-    size_t count = models ? receipt->model_count : receipt->sound_count;
-    for (size_t i = 0; i < count && i <= UINT32_MAX; ++i)
-        if (rows[i] == resource) { *out = (uint32_t)i; return true; }
-    return false;
+    const q1_wire_state *wire = receipt->operation.game->wire;
+    return table_index(models ? &wire->models : &wire->sounds, resource, out);
 }
 bool qa_q1_wire_emission_index(const qa_q1_game *g, bool models, qa_string_id resource,
                                uint32_t *out) {
     if (!g || !g->wire || g->destroy_pending || !out) return false;
     const q1_wire_table *table = models ? &g->wire->models : &g->wire->sounds;
-    for (size_t i = 0; i < table->count && i <= UINT32_MAX; ++i)
-        if (table->rows[i] == resource) { *out = (uint32_t)i; return true; }
-    return false;
+    return table_index(table, resource, out);
 }
 bool qa_q1_wire_emission_slot(const qa_q1_game *g, qa_actor_id actor, uint32_t *out) {
     if (!g || !g->wire || g->destroy_pending || !out) return false;
