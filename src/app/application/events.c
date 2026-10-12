@@ -255,6 +255,14 @@ void application_event_stream_abort(qa_application *app, application_event_write
     if (blocked && error) *error = (qa_error){0};
 }
 
+static void audio_record_release(void *opaque)
+{
+    const application_event_envelope *record = opaque;
+    const qa_audio_play *sound = &record->raw.audio.sound;
+    if (sound->asset) qa_audio_asset_release(sound->asset);
+    else qa_audio_sample_release(sound->sample);
+}
+
 bool application_event_stream_commit(qa_application *app, application_event_write *write,
     qa_error *error)
 {
@@ -275,7 +283,8 @@ bool application_event_stream_commit(qa_application *app, application_event_writ
             write->envelope->raw.builtin.previous_q1_muzzle = *head;
         }
     }
-    uint64_t id = qa_event_ring_commit(&write->transaction, write->envelope);
+    uint64_t id = qa_event_ring_commit(&write->transaction, write->envelope,
+        write->envelope->kind == QA_APPLICATION_EVENT_AUDIO ? audio_record_release : NULL);
     app->event_write = NULL;
     if (!id) {
         app->presentation_event_sequence = write->presentation_before;
@@ -1337,15 +1346,6 @@ qa_event_lease *qa_application_event_retain(qa_application *app,uint64_t id)
 uint64_t qa_application_events_output_failures(const qa_application *app)
 { return app ? app->event_reliable_declines : 0; }
 
-static void event_records_release(qa_application *app,uint64_t next)
-{
-    if(!app->event_ring) return;
-    for(uint64_t id=qa_event_ring_first(app->event_ring);id<next && id<qa_event_ring_next(app->event_ring);++id) {
-        const application_event_envelope *record=application_event_stream_at(app,id);
-        if(record && record->kind==QA_APPLICATION_EVENT_AUDIO)
-            qa_audio_asset_release(record->raw.audio.sound.asset);
-    }
-}
 void application_events_retire(qa_application *app)
 {
     uint64_t next = app->event_local_cursor;
@@ -1356,7 +1356,6 @@ void application_events_retire(qa_application *app)
     if (component < next) next = component;
     for(const qa_application_event_subscription *reader=app->event_subscribers;reader;reader=reader->following)
         if(reader->next<next) next=reader->next;
-    event_records_release(app,next);
     qa_event_ring_retire(app->event_ring, next);
 }
 void application_event_stream_dispose(qa_application *app)
@@ -1366,7 +1365,6 @@ void application_event_stream_dispose(qa_application *app)
         app->event_subscribers=reader->following;
         *reader=(qa_application_event_subscription){0};
     }
-    event_records_release(app,qa_application_events_next(app));
     qa_event_ring_destroy(&app->event_ring);
     application_events_projection_dispose(app);
 }
@@ -1512,10 +1510,18 @@ bool qa_application_audio_emit(qa_application *app,const qa_audio_event *event,q
             application_event_stream_abort(app,&write,error);
             return application_event_stream_decline(app,&write,true,error);
         }
+    } else if(event->sound.sample) {
+        record->sound.sample=qa_audio_sample_retain(event->sound.sample);
+        if(!record->sound.sample) {
+            application_event_stream_abort(app,&write,error);
+            return application_event_stream_decline(app,&write,true,error);
+        }
     }
     qa_audio_asset *asset=record->sound.asset;
+    qa_audio_sample *sample=asset ? NULL : record->sound.sample;
     if(application_event_stream_commit(app,&write,error)) return true;
     qa_audio_asset_release(asset);
+    qa_audio_sample_release(sample);
     return application_event_stream_decline(app,&write,true,error);
 }
 

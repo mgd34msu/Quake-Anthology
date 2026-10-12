@@ -461,7 +461,7 @@ bool remote_q1_event_admit(frontend_remote_q1 *row, const qa_nq_message *message
         else event->message.data.text = copy;
     }
     event->sequence = row->next_event++;
-    return qa_event_ring_commit(&transaction, event) != 0;
+    return qa_event_ring_commit(&transaction, event, NULL) != 0;
 full:
     qa_event_ring_abort(&transaction);
     return remote_q1_fail(error, QA_ERROR_MEMORY, "Received Q1 event storage is full");

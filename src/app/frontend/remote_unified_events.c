@@ -145,7 +145,7 @@ static void metadata_retire(frontend_unified_events *o)
 static void metadata_commit(frontend_unified_events *o,qa_event_transaction *transaction,
     unified_received_event *record)
 {
-    uint64_t id=qa_event_ring_commit(transaction,record);
+    uint64_t id=qa_event_ring_commit(transaction,record,NULL);
     record->lease=qa_event_ring_retain(o->records,id);
     record->next_retained=o->retained; o->retained=record;
     metadata_retire(o);
@@ -414,7 +414,7 @@ static bool record_finish(frontend_unified_events *o,qa_event_transaction *trans
         memset(record->mirrored,0,events->presentation_count*sizeof(*record->mirrored));
     }
     if (!qa_unified_document_retain(document,&record->delivery.document,error)) return false;
-    uint64_t id=qa_event_ring_commit(transaction,record);
+    uint64_t id=qa_event_ring_commit(transaction,record,NULL);
     events->received=qa_event_ring_retain(o->records,id);
     return true;
 }

@@ -106,7 +106,7 @@ qa_platform_event_result qa_platform_events_push(qa_platform_events *events, con
     if (payload.size) memmove(bytes, payload.data, payload.size);
     if (tail.size) memmove(bytes + payload.size, tail.data, tail.size);
     record->event.offset = 0; record->event.length = (uint32_t)size;
-    uint64_t id = qa_event_ring_commit(&transaction, record);
+    uint64_t id = qa_event_ring_commit(&transaction, record, NULL);
     record->lease = qa_event_ring_retain(events->pages, id);
     qa_event_ring_retire(events->pages, id + 1);
     if (events->last) events->last->next = record;

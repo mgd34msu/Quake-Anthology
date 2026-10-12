@@ -32,7 +32,7 @@ bool q3_client_command_admit(qa_q3_client_peer *p,const qa_q3_command *value,qa_
     qa_q3_command *record=qa_event_ring_alloc(&transaction,sizeof(*record),_Alignof(qa_q3_command),e);
     if(!record) { qa_event_ring_abort(&transaction); return false; }
     *record=*value;
-    uint64_t id=qa_event_ring_commit(&transaction,record);
+    uint64_t id=qa_event_ring_commit(&transaction,record,NULL);
     if(!id) return fail(e,QA_ERROR_FORMAT,"Q3 received command history is full");
     size_t slot=(uint32_t)value->sequence & (QA_Q3_RELIABLE-1);
     qa_event_lease *old=p->server_commands[slot];

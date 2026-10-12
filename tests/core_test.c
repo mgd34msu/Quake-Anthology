@@ -2051,7 +2051,22 @@ static void test_shared_audio_preparation(void)
             .all=true,.sound={.audience=QA_AUDIO_WORLD}},&error));
         CHECK(counts.starts==counts.stops);
         qa_audio_engine_destroy(engine);CHECK(counts.starts==counts.stops);
+        const int16_t leased_pcm[] = {1200, -1200, 600, -600};
+        qa_audio_sample *leased_sample = NULL;
+        CHECK(qa_audio_sample_copy(leased_pcm, 4, 1, 44100,
+            QA_AUDIO_NO_LOOP, &leased_sample, &error));
+        uint64_t sample_event = qa_application_events_next(&app);
+        CHECK(qa_application_audio_emit(&app, &(qa_audio_event){.kind = QA_AUDIO_EVENT_PLAY,
+            .sound = {.sample = leased_sample}}, &error));
+        qa_event_lease *sample_lease = qa_application_event_retain(&app, sample_event);
+        CHECK(sample_lease != NULL);
+        qa_audio_sample_release(leased_sample);
         application_event_stream_dispose(&app);free(app.unified_persistent);
+        const application_event_envelope *sample_record = qa_event_lease_record(sample_lease);
+        CHECK(sample_record->kind == QA_APPLICATION_EVENT_AUDIO);
+        CHECK(sample_record->raw.audio.sound.sample->frame_count == 4);
+        CHECK(!memcmp(sample_record->raw.audio.sound.sample->samples, leased_pcm, sizeof(leased_pcm)));
+        qa_event_lease_release(sample_lease);
         if (i + 1 == sizeof(families) / sizeof(*families)) {
             CHECK(first->frame_count == sizeof(held_samples) / sizeof(*held_samples));
             memcpy(held_samples, first->samples, sizeof(held_samples)); held = qa_audio_sample_retain(first); CHECK(held);
@@ -4094,8 +4109,16 @@ static void test_arena_progress_bound_store(void)
     qa_cvars_destroy(cvars);
 }
 
+static unsigned event_ring_final_records;
+static void event_ring_final_record(void *record)
+{
+    CHECK(record != NULL);
+    ++event_ring_final_records;
+}
+
 static void test_event_ring_cold_growth(void)
 {
+    event_ring_final_records = 0;
     qa_error error = {0};
     qa_event_ring *ring = qa_event_ring_create(8192, 1024, 2, &error);
     CHECK(ring != NULL);
@@ -4106,7 +4129,8 @@ static void test_event_ring_cold_growth(void)
         char *text = qa_event_ring_alloc(&transaction, 5, 1, &error);
         CHECK(text != NULL);
         memcpy(text, "held", 5);
-        CHECK(qa_event_ring_commit(&transaction, text) == id);
+        CHECK(qa_event_ring_commit(&transaction, text,
+            id == 4 ? event_ring_final_record : NULL) == id);
         if (id < 4) qa_event_ring_retire(ring, id + 1);
         else retained = text;
     }
@@ -4122,7 +4146,8 @@ static void test_event_ring_cold_growth(void)
     CHECK(qa_event_ring_begin(ring, &transaction));
     CHECK(!qa_event_ring_reserve(ring, 131072, 65536, &error));
     CHECK(qa_event_ring_alloc(&transaction, 40000, 1, &error) == NULL);
-    qa_event_ring_abort(&transaction);
+    CHECK(qa_event_ring_commit(&transaction, NULL, event_ring_final_record) == 0);
+    CHECK(event_ring_final_records == 0);
     qa_event_capacity_read(ring, &after);
     CHECK(after.available_bytes == before.available_bytes);
     CHECK(after.available_records == before.available_records);
@@ -4133,16 +4158,21 @@ static void test_event_ring_cold_growth(void)
     CHECK(large != NULL);
     memset(large, 'x', 65536);
     large[65536] = 0;
-    CHECK(qa_event_ring_commit(&transaction, large) == 5);
+    CHECK(qa_event_ring_commit(&transaction, large, NULL) == 5);
     qa_event_lease *large_lease = qa_event_ring_retain(ring, 5);
     CHECK(large_lease != NULL);
     CHECK(qa_event_ring_at(ring, 4) == retained);
     CHECK(qa_event_ring_at(ring, 5) == large);
     qa_event_ring_retire(ring, 6);
     qa_event_ring_destroy(&ring);
+    CHECK(event_ring_final_records == 0);
     CHECK(ring == NULL && !strcmp(retained, "held"));
     CHECK(qa_event_lease_record(large_lease) == large && strlen(large) == 65536);
+    qa_event_lease_retain(held);
     qa_event_lease_release(held);
+    CHECK(event_ring_final_records == 0);
+    qa_event_lease_release(held);
+    CHECK(event_ring_final_records == 1);
     CHECK(large[0] == 'x' && large[65535] == 'x');
     qa_event_lease_release(large_lease);
 }
@@ -4158,7 +4188,7 @@ static void test_q3_reliable_event_references(void)
     CHECK(text!=NULL);
     for(size_t i=0;i<2500;++i) text[i]=(char)('a'+i%26);
     text[2500]=0;
-    uint64_t id=qa_event_ring_commit(&transaction,text);
+    uint64_t id=qa_event_ring_commit(&transaction,text,NULL);
     CHECK(id!=0);
     qa_event_lease *lease=qa_event_ring_retain(ring,id);
     CHECK(lease!=NULL);

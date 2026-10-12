@@ -325,7 +325,7 @@ static bool persistent_import(qa_source_save_io *io, event_store *store,
         application_event_stream_abort(staging, &write, io->error);
         return event_fail(io, QA_ERROR_FORMAT, "Saved presentation has no persistent state domain");
     }
-    uint64_t id = qa_event_ring_commit(&write.transaction, write.envelope);
+    uint64_t id = qa_event_ring_commit(&write.transaction, write.envelope, NULL);
     staging->event_write = NULL;
     if (!id) {
         staging->presentation_event_sequence = write.presentation_before;

@@ -472,7 +472,7 @@ static bool hook_records(void *context, qa_net_client_id id, const qa_q2_server_
         if (lease && !qa_unified_frame_lease_retain(lease, error)) {
             qa_event_ring_abort(&transaction); return false;
         }
-        if (!qa_event_ring_commit(&transaction, batch)) {
+        if (!qa_event_ring_commit(&transaction, batch, NULL)) {
             if (lease) qa_unified_frame_lease_release(lease);
             return false;
         }

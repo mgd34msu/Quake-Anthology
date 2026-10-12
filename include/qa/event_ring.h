@@ -43,7 +43,10 @@ bool qa_event_ring_begin(qa_event_ring *, qa_event_transaction *);
 /* Matches qa_unified_clone_alloc_fn. Bytes are uninitialized. Requests may
  * span contiguous pages; size is positive and alignment is a power of two. */
 void *qa_event_ring_alloc(void *transaction, size_t size, size_t alignment, qa_error *);
-uint64_t qa_event_ring_commit(qa_event_transaction *, void *record);
+/* final_record runs once on final lease release, before payload reuse. It may
+ * release referenced objects, but must not borrow the ring's caller owner. */
+uint64_t qa_event_ring_commit(qa_event_transaction *, void *record,
+    void (*final_record)(void *));
 void qa_event_ring_abort(qa_event_transaction *);
 
 uint64_t qa_event_ring_first(const qa_event_ring *);

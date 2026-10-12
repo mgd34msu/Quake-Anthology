@@ -239,7 +239,7 @@ static bool reliable_text(qa_q3_reliable *r,const char *text,qa_event_lease **ou
     if(!row) { qa_event_ring_abort(&transaction);return false; }
     size_t count=strlen(text);if(count>=QA_Q3_COMMAND_CHARS) count=QA_Q3_COMMAND_CHARS-1;
     memset(row,0,QA_Q3_COMMAND_CHARS);memcpy(row,text,count);
-    uint64_t id=qa_event_ring_commit(&transaction,row);
+    uint64_t id=qa_event_ring_commit(&transaction,row,NULL);
     if(!id) return fail(error,QA_ERROR_MEMORY,"Q3 command pages are full");
     *out=qa_event_ring_retain(r->storage,id);
     qa_event_ring_retire(r->storage,id+1);

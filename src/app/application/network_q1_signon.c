@@ -204,7 +204,7 @@ bool application_q1_signon_restore(qa_application *app, qa_bytes bytes, qa_error
         }
         if (ok) {
             record->event.event_id = envelope->id;
-            uint64_t id = qa_event_ring_commit(&transaction, envelope);
+            uint64_t id = qa_event_ring_commit(&transaction, envelope, NULL);
             if (!id) ok = application_fail(error, QA_ERROR_MEMORY, "Retaining restored Q1 signon envelope");
             else append(app, record, qa_event_ring_retain(app->event_ring, id));
         }

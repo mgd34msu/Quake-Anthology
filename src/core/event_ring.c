@@ -29,6 +29,7 @@ struct qa_event_ring {
 struct qa_event_lease {
     qa_event_ring *owner;
     void *record;
+    void (*final_record)(void *);
     uint64_t id;
     size_t first_page, last_page, references;
 };
@@ -175,6 +176,7 @@ void qa_event_lease_release(qa_event_lease *lease)
     if (--lease->references) return;
     qa_event_ring *owner = lease->owner;
     size_t last = lease->last_page;
+    if (lease->final_record) lease->final_record(lease->record);
     for (size_t index = lease->first_page;;) {
         event_page *page = owner->pages + index;
         size_t next = page->next;
@@ -342,13 +344,15 @@ void qa_event_ring_abort(qa_event_transaction *transaction)
     owner->writing = false;
 }
 
-uint64_t qa_event_ring_commit(qa_event_transaction *transaction, void *record)
+uint64_t qa_event_ring_commit(qa_event_transaction *transaction, void *record,
+    void (*final_record)(void *))
 {
     if (!transaction->active) return 0;
     if (transaction->blocked) { qa_event_ring_abort(transaction); return 0; }
     qa_event_ring *owner = transaction->owner;
     uint64_t id = owner->next++;
-    *transaction->lease = (qa_event_lease){.owner = owner, .record = record, .id = id,
+    *transaction->lease = (qa_event_lease){.owner = owner, .record = record,
+        .final_record = final_record, .id = id,
         .first_page = transaction->first_page, .last_page = transaction->last_page, .references = 1};
     for (size_t index = transaction->first_page;; index = owner->pages[index].next) {
         ++owner->pages[index].records;
