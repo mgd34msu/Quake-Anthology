@@ -281,17 +281,7 @@ static uint32_t source_rate(const char *text)
     long value = strtol(text, NULL, 10);
     return value < 500 ? 500 : value > 10000 ? 10000 : (uint32_t)value;
 }
-static int32_t source_integer(const char *text)
-{
-    while (*text == ' ' || (*text >= '\t' && *text <= '\r')) ++text;
-    bool negative = *text == '-'; if (*text == '+' || *text == '-') ++text;
-    uint32_t limit = negative ? UINT32_C(2147483648) : INT32_MAX, value = 0;
-    while (*text >= '0' && *text <= '9') {
-        uint32_t digit = (uint32_t)(*text++ - '0');
-        value = value > (limit - digit) / 10 ? limit : value * 10 + digit;
-    }
-    return negative ? value == UINT32_C(2147483648) ? INT32_MIN : -(int32_t)value : (int32_t)value;
-}
+
 bool frontend_qw_command_realtime(const frontend_qw_host *host,qa_actor_owner owner,
     qa_actor_id actor,uint64_t *out,qa_error *error)
 {
@@ -331,7 +321,7 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
         if (!qa_q1_token(&cursor,true,first,sizeof(first),&target,error) ||
             !qa_q1_token(&cursor,true,second,sizeof(second),&extra,error)) return false;
         return qa_application_network_qw_ptrack(host->frontend->application,actor,
-            target && !extra,target?source_integer(first):0,error);
+            target && !extra,target?qa_parse_decimal_i32(first,QA_DECIMAL_ASCII_CLAMP):0,error);
     }
     if (!strcmp(name, "setinfo")) {
         bool key, value;
@@ -359,13 +349,13 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
         qa_application_language_commit(locale);
         free(peer->userinfo); peer->userinfo = copy;
         if (!strcmp(first, "rate") && *second && !qa_network_qw_server_rate(host->runtime, id, peer->rate = source_rate(second), error)) return false;
-        if (!strcmp(first, "msg") && *second) peer->message_level = source_integer(second);
+        if (!strcmp(first, "msg") && *second) peer->message_level = qa_parse_decimal_i32(second,QA_DECIMAL_ASCII_CLAMP);
         return broadcast(host, &(qa_qw_service){.kind = QA_QW_SET_INFO,
             .data.info = {(uint8_t)(peer - host->peers), first, second}}, error);
     }
     if (!strcmp(name, "msg")) {
         if (!qa_q1_token(&cursor, true, first, sizeof(first), &present, error)) return false;
-        if (present) peer->message_level = source_integer(first);
+        if (present) peer->message_level = qa_parse_decimal_i32(first,QA_DECIMAL_ASCII_CLAMP);
         char line[96]; snprintf(line, sizeof(line), "%s %d\n", present ? "Msg level set to" : "Current msg level is", peer->message_level);
         return reliable(peer, &(qa_qw_service){.kind = QA_QW_PRINT, .data.text = {2, line}}, error);
     }
@@ -608,7 +598,7 @@ static bool connect_source(void *context, const qa_qw_connect_request *request,
         .seat = local_player ? local_seat : (qa_net_seat_id){QA_NETWORK_COMMAND_OWNER, 256u + (uint32_t)index},
         .qport = request->qport, .rate = rate && *rate ? source_rate(rate) : 2500,
         .connected_ns = now, .command_time_ns = world.source.source_time_ns, .spectator = spectator,
-        .message_level = message_level_text && *message_level_text ? source_integer(message_level_text) : 0};
+        .message_level = message_level_text && *message_level_text ? qa_parse_decimal_i32(message_level_text,QA_DECIMAL_ASCII_CLAMP) : 0};
     qa_event_receipts_reset(&peer->event_receipts, qa_application_events_local_first(host->frontend->application));
     peer->userinfo = text_copy(info, error);
     if (!peer->userinfo) { qa_qw_info_free(&parsed); return false; }

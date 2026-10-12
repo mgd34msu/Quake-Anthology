@@ -1,6 +1,6 @@
 #include "internal.h"
+#include "qa/text.h"
 #include "qa/network_q3.h"
-#include <errno.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -215,14 +215,7 @@ bool qa_server_browser_q3_master(qa_server_browser *b, int32_t source,
     if (!send(b, a, text, e)) { b->master_pending = false; return false; }
     return true;
 }
-static int32_t atoi32(const char *text)
-{
-    errno = 0; char *end; long long n = strtoll(text, &end, 10);
-    if (end == text) return 0;
-    if (n > INT32_MAX) return INT32_MAX;
-    if (n < INT32_MIN) return INT32_MIN;
-    return (int32_t)n;
-}
+
 static void rules_map(const char *raw, char out[8193])
 {
     out[0] = 0;
@@ -275,7 +268,7 @@ bool qa_browser_q3_decode(qa_bytes bytes, qa_browser_q3_result *out, uint64_t *c
     if (strlen(text) >= 8192) ok = false;
     char value[8192]; qa_server_entry *entry = &out->entry; entry->protocol = protocol;
     if (ok) { strcpy(entry->rules, text); ok = qa_q3_info_value(text, "protocol", value, sizeof(value), e); }
-    if (ok && info && atoi32(value) != 68) ok = false;
+    if (ok && info && qa_parse_decimal_i32(value,QA_DECIMAL_LOCALE_CLAMP) != 68) ok = false;
     if (ok) ok = qa_q3_info_value(text, "challenge", value, sizeof(value), e);
     if (ok) {
         *challenge = 0;
@@ -288,8 +281,8 @@ bool qa_browser_q3_decode(qa_bytes bytes, qa_browser_q3_result *out, uint64_t *c
     if (ok && !*entry->name) ok = qa_q3_info_value(text, "sv_hostname", entry->name, sizeof(entry->name), e);
     if (ok) ok = qa_q3_info_value(text, "mapname", entry->map, sizeof(entry->map), e) &&
         qa_q3_info_value(text, "sv_maxclients", value, sizeof(value), e);
-    int32_t maximum = ok ? atoi32(value) : 0, clients = 0;
-    if (ok && info) { ok = qa_q3_info_value(text, "clients", value, sizeof(value), e); clients = atoi32(value); }
+    int32_t maximum = ok ? qa_parse_decimal_i32(value,QA_DECIMAL_LOCALE_CLAMP) : 0, clients = 0;
+    if (ok && info) { ok = qa_q3_info_value(text, "clients", value, sizeof(value), e); clients = qa_parse_decimal_i32(value,QA_DECIMAL_LOCALE_CLAMP); }
     if (ok) rules_map(text, entry->rules);
     size_t used = strlen(entry->rules);
     if (used >= sizeof(out->status)) used = sizeof(out->status) - 1;
@@ -305,12 +298,12 @@ bool qa_browser_q3_decode(qa_bytes bytes, qa_browser_q3_result *out, uint64_t *c
             const char *name = qa_q3_token(tokens, 2); size_t name_size = strlen(name) + 1;
             if (out->player_count == 1024 || name_size > sizeof(out->names) - out->names_size) { ok = false; break; }
             qa_browser_q3_player *player = &out->players[out->player_count++];
-            player->score = atoi32(qa_q3_token(tokens, 0)); player->ping = atoi32(qa_q3_token(tokens, 1));
+            player->score = qa_parse_decimal_i32(qa_q3_token(tokens, 0),QA_DECIMAL_LOCALE_CLAMP); player->ping = qa_parse_decimal_i32(qa_q3_token(tokens, 1),QA_DECIMAL_LOCALE_CLAMP);
             player->name = (uint16_t)out->names_size;
             memcpy(out->names + out->names_size, name, name_size); out->names_size += (uint32_t)name_size;
             ++clients;
             char row[QA_Q3_MESSAGE_BYTES]; (void)snprintf(row, sizeof(row), "\\%" PRId32 " %" PRId32 " \"%s\"",
-                atoi32(qa_q3_token(tokens, 0)), atoi32(qa_q3_token(tokens, 1)), qa_q3_token(tokens, 2));
+                qa_parse_decimal_i32(qa_q3_token(tokens, 0),QA_DECIMAL_LOCALE_CLAMP), qa_parse_decimal_i32(qa_q3_token(tokens, 1),QA_DECIMAL_LOCALE_CLAMP), qa_q3_token(tokens, 2));
             size_t length = strlen(row), copy = length < sizeof(out->status) - used - 1 ? length : sizeof(out->status) - used - 1;
             memcpy(out->status + used, row, copy); used += copy; out->status[used] = 0;
         }

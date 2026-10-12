@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/text.h"
 #include "qa/game_type.h"
 #include "source_goal_record.h"
 #include "source_team_state.h"
@@ -8,21 +9,13 @@
 #include "qa/network_q3.h"
 #include <stdio.h>
 
-static int32_t source_integer(const char *text) {
-    while(*text && (int8_t)(unsigned char)*text<=32) ++text;
-    bool negative=*text=='-';if(*text=='-' || *text=='+') ++text;
-    uint32_t value=0;
-    while(*text>='0' && *text<='9') value=value*10+(uint32_t)(*text++-'0');
-    if(negative) value=0-value;
-    int32_t result;memcpy(&result,&value,sizeof(result));return result;
-}
 static bool source_team(qa_bots *b,int32_t client,int32_t *out,qa_error *e) {
     if(client<0 || client>=64) {*out=0;return true;}
     char information[1024],team[1024];
     if(!b->services.configstring ||
        !b->services.configstring(b->services.context,544+(uint32_t)client,information,sizeof(information),e) ||
        !qa_q3_info_value(information,"t",team,sizeof(team),e)) return false;
-    *out=source_integer(team);return true;
+    *out=qa_parse_decimal_i32(team,QA_DECIMAL_SIGNED_WRAP);return true;
 }
 static bool source_same_name(const char *a,const char *b) {
     for(;;++a,++b) {
@@ -192,7 +185,7 @@ static int32_t token_number(const char **text) {
     while(**text && (int8_t)(unsigned char)**text>32) ++*text;
     bool empty=*text==start;
     while(**text && (int8_t)(unsigned char)**text<=32) ++*text;
-    return empty?0:source_integer(start);
+    return empty?0:qa_parse_decimal_i32(start,QA_DECIMAL_SIGNED_WRAP);
 }
 static bool ordered(qa_bots *b,bot_ai_state *s,int32_t client,bot_long_term_goal goal,float duration,qa_error *e) {
     bot_ai_decisionmaker_set(s,client);bot_ai_ordered_set(s,true);bot_ai_order_time_set(s,b->time);

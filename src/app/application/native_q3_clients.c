@@ -47,22 +47,7 @@ static int32_t difference(int32_t left, int32_t right)
     return result;
 }
 
-static int32_t integer(const char *text)
-{
-    while (*text) {
-        unsigned char byte = (unsigned char)*text;
-        if ((byte < 128 ? (int)byte : (int)byte - 256) > 32) break;
-        ++text;
-    }
-    bool negative = *text == '-';
-    if (*text == '-' || *text == '+') ++text;
-    uint32_t bits = 0;
-    while (*text >= '0' && *text <= '9') bits = bits * 10u + (uint32_t)(*text++ - '0');
-    if (negative) bits = 0u - bits;
-    int32_t result;
-    memcpy(&result, &bits, sizeof(result));
-    return result;
-}
+
 
 static bool source(application_provider *provider, qa_actor_id actor,
     uint32_t *slot, qa_error *error)
@@ -449,7 +434,7 @@ static bool userinfo_changed(application_provider *provider,
     qa_q3_client_info_value(info, "g_blueteam", blue, sizeof(blue));
     qa_q3_client_info_value(info, "teamtask", task, sizeof(task));
     qa_q3_client_info_value(info, "skill", skill, sizeof(skill));
-    int32_t team_task = integer(task);
+    int32_t team_task = qa_parse_decimal_i32(task,QA_DECIMAL_SIGNED_WRAP);
     int32_t team = sess.team;
     if (qa_game_type_is_team(game_type) && (flags & 8u)) {
         char requested[1024];
@@ -1210,7 +1195,7 @@ static bool follow_command(application_provider *provider, qa_actor_id actor,
         if (length >= sizeof(text)) length = sizeof(text) - 1;
         memcpy(text, command->argv[1], length); text[length] = 0;
         if (text[0] >= '0' && text[0] <= '9') {
-            target = integer(text);
+            target = qa_parse_decimal_i32(text,QA_DECIMAL_SIGNED_WRAP);
             if (target < 0 || (uint32_t)target >= maximum) {
                 char value[12];
                 qa_format_q3_integer(target, value);
@@ -1321,7 +1306,7 @@ static bool team_task(application_provider *provider, qa_actor_id actor,
     size_t length = strlen(current);
     if (length >= sizeof(info)) length = sizeof(info) - 1;
     memcpy(info, current, length); info[length] = 0;
-    qa_format_q3_integer(integer(command->argv[1]), value);
+    qa_format_q3_integer(qa_parse_decimal_i32(command->argv[1],QA_DECIMAL_SIGNED_WRAP), value);
     if (!qa_q3_info_set(info, sizeof(info), "teamtask", value, error) ||
         !application_native_q3_wire_userinfo(provider, slot, info, error)) return false;
     return application_native_q3_client_userinfo_changed(provider, actor, error);

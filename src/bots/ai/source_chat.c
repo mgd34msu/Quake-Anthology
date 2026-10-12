@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/text.h"
 #include "qa/game_type.h"
 #include "source_event_state.h"
 #include "source_team_state.h"
@@ -28,14 +29,7 @@ static bool live(qa_bots *b,bot_ai_state *s) {
 void bot_ai_source_chat_globals_init(bot_source_chat_globals *state) {
     *state=(bot_source_chat_globals){0};
 }
-static int32_t source_integer(const char *text) {
-    while(*text && (int8_t)(unsigned char)*text<=32) ++text;
-    bool negative=*text=='-';if(*text=='-' || *text=='+') ++text;
-    uint32_t value=0;
-    while(*text>='0' && *text<='9') value=value*10+(uint32_t)(*text++-'0');
-    if(negative) value=0-value;
-    int32_t result;memcpy(&result,&value,sizeof(result));return result;
-}
+
 static bool maximum(qa_bots *b,int32_t *cell,int32_t *out,qa_error *e) {
     if(!b->services.configuration) return bot_ai_fail(e,"Source chat has no actual cvar owner");
     if(!*cell) {
@@ -52,7 +46,7 @@ static bool active(qa_bots *b,int32_t client,bool *out,qa_error *e) {
     if(!b->services.configstring(b->services.context,544+(uint32_t)client,text,sizeof(text),e) ||
        !qa_q3_info_value(text,"n",name,sizeof(name),e) ||
        !qa_q3_info_value(text,"t",team,sizeof(team),e)) return false;
-    *out=text[0] && name[0] && source_integer(team)!=3;return true;
+    *out=text[0] && name[0] && qa_parse_decimal_i32(team,QA_DECIMAL_SIGNED_WRAP)!=3;return true;
 }
 static bool active_count(qa_bots *b,bot_ai_state *s,int32_t *out,qa_error *e) {
     *out=0;int32_t max;

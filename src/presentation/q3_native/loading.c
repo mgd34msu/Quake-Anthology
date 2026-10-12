@@ -1,5 +1,6 @@
 /* CG loading information, id Software 1999-2005, GPL-2.0-or-later. */
 #include "qa/game_type.h"
+#include "qa/text.h"
 #include "loading_internal.h"
 
 bool q3nl_fail(qa_error *e,qa_status status,const char *text)
@@ -201,14 +202,7 @@ static void clean(char *text)
     }
     *out=0;
 }
-static int32_t integer(const char *text)
-{
-    while(*text==' ' || (*text>='\t' && *text<='\r'))++text;
-    bool negative=*text=='-'; if(*text=='-' || *text=='+')++text;
-    uint32_t value=0; while(*text>='0' && *text<='9')value=value*10u+(uint32_t)(*text++-'0');
-    if(negative)value=0u-value;
-    int32_t result; memcpy(&result,&value,sizeof(result)); return result;
-}
+
 static bool info_text(const char *info,const char *key,char *out,size_t capacity,qa_error *e)
 {
     char value[8192];
@@ -221,7 +215,7 @@ static bool info_integer(const char *info,const char *key,int32_t *out,qa_error 
 {
     char value[8192];
     if(!qa_q3_info_value(info,key,value,sizeof(value),e))return false;
-    *out=integer(value); return true;
+    *out=qa_parse_decimal_i32(value,QA_DECIMAL_ASCII_WRAP); return true;
 }
 bool q3n_loading_client(q3n_loading *o,const q3n_frame *f,uint32_t number,qa_error *e)
 {
@@ -381,7 +375,7 @@ static bool draw_information(loading_draw *d)
     if(!text(d,96,loading))return false;
     const qa_cvar_view *running=qa_cvars_read(o->cvars,o->sv_running);
     int32_t y=148; char running_text[1024]; snprintf(running_text,sizeof(running_text),"%s",running?running->value:"");
-    if(integer(running_text)==0) {
+    if(qa_parse_decimal_i32(running_text,QA_DECIMAL_ASCII_WRAP)==0) {
         if(!info_text(info,"sv_hostname",buffer,sizeof(buffer),d->error))return false;
         clean(buffer); if(!text(d,y,buffer))return false; y+=27;
         if(pure[0]=='1') { if(!text(d,y,"Pure Server"))return false; y+=27; }

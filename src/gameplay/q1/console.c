@@ -1,25 +1,10 @@
 #include "maps/internal.h"
+#include "qa/text.h"
 #include "qa/game_q1_bots.h"
 #include <ctype.h>
 #include <limits.h>
 #include <stdio.h>
 
-static int32_t source_integer(const char *text) {
-    if (!text)
-        return 0;
-    while (*text && isspace((unsigned char)*text))
-        ++text;
-    bool negative = *text == '-';
-    if (*text == '-' || *text == '+')
-        ++text;
-    uint32_t value = 0, limit = negative ? UINT32_C(2147483648) : INT32_MAX;
-    for (; *text >= '0' && *text <= '9'; ++text) {
-        unsigned digit = (unsigned)(*text - '0');
-        value = value > (limit - digit) / 10 ? limit : value * 10 + digit;
-    }
-    return negative ? value == UINT32_C(2147483648) ? INT32_MIN : -(int32_t)value
-                    : (int32_t)value;
-}
 static bool normalized(const char *a, const char *b) {
     for (;;) {
         while (*a == ' ' || *a == '_')
@@ -71,7 +56,7 @@ bool qa_q1_game_console_operation(const qa_q1_game *g, const qa_command_invocati
     else if (!strcmp(name, "use") || !strcmp(name, "weapnext") || !strcmp(name, "weapprev"))
         *out = QA_Q1_CONSOLE_ARSENAL;
     else if (!strcmp(name, "impulse")) {
-        uint8_t impulse = command->argc > 1 ? (uint8_t)source_integer(command->argv[1]) : 0;
+        uint8_t impulse = command->argc > 1 ? (uint8_t)qa_parse_decimal_i32(command->argv[1],QA_DECIMAL_LOCALE_CLAMP) : 0;
         *out = world_impulse(g, impulse) ? QA_Q1_CONSOLE_WORLD : QA_Q1_CONSOLE_ARSENAL;
     }
     return true;
@@ -247,7 +232,7 @@ static bool give_inner(qa_q1_game *g, qa_actor_id actor, const qa_command_invoca
         return q1_map_fail(error, "Usage: give <all|weapons|ammo|health|armor|keys|item> [amount]");
     const char *input = command->argv[1];
     bool all = normalized(input, "all"), has_amount = command->argc > 2;
-    int32_t amount = has_amount ? source_integer(command->argv[2]) : 0;
+    int32_t amount = has_amount ? qa_parse_decimal_i32(command->argv[2],QA_DECIMAL_LOCALE_CLAMP) : 0;
     if (all || normalized(input, "health") || normalized(input, "h")) {
         qa_builtin_actor_traits traits = {0};
         if (g->services.actor_traits)
@@ -514,7 +499,7 @@ static bool dispatch(qa_q1_game *g, qa_actor_id actor, const qa_command_invocati
         qa_q1_console_operation operation;
         if (qa_q1_game_console_operation(g, command, &operation) && operation == QA_Q1_CONSOLE_WORLD) {
             bool recognized;
-            if (!q1_source_impulse(g, actor, (uint8_t)source_integer(command->argv[1]),
+            if (!q1_source_impulse(g, actor, (uint8_t)qa_parse_decimal_i32(command->argv[1],QA_DECIMAL_LOCALE_CLAMP),
                                      &recognized, error))
                 return false;
             return recognized || q1_map_fail(error, "Q1 world impulse continuation is not installed");
@@ -526,7 +511,7 @@ static bool dispatch(qa_q1_game *g, qa_actor_id actor, const qa_command_invocati
     if (impulse) {
         if (command->argc != 2)
             return q1_map_fail(error, "Usage: impulse <number>");
-        player->input.impulse = (uint8_t)source_integer(command->argv[1]);
+        player->input.impulse = (uint8_t)qa_parse_decimal_i32(command->argv[1],QA_DECIMAL_LOCALE_CLAMP);
         return true;
     }
     if (selecting) {

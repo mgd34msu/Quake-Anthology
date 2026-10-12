@@ -220,6 +220,11 @@ static void test_shared_angle_wrapping(void)
     CHECK(qa_angle_subtract(1,359)==2 && qa_angle_subtract(359,1)==-2);
     CHECK(qa_angle_subtract(180,0)==180 && qa_angle_subtract(-180,0)==-180);
     CHECK(qa_angle_delta(719,1)==-2);
+    CHECK(qa_angle_lerp(350,10,.5f,QA_ANGLE_LERP_SINGLE_TURN)==360);
+    CHECK(qa_angle_lerp(0,720,.5f,QA_ANGLE_LERP_SINGLE_TURN)==180);
+    CHECK(qa_angle_lerp(0,720,.5f,QA_ANGLE_LERP_NORMALIZED_DELTA)==0);
+    CHECK(qa_angle_lerp(0,180,.5f,QA_ANGLE_LERP_NORMALIZED_DELTA)==90);
+    CHECK(qa_angle_lerp(0,-180,.5f,QA_ANGLE_LERP_NORMALIZED_DELTA)==-90);
 }
 static void test_shared_direction_angles(void)
 {
@@ -240,6 +245,17 @@ static void test_shared_direction_angles(void)
 }
 static void test_source_text(void)
 {
+    CHECK(qa_parse_decimal_i32(" \t-2147483649x",QA_DECIMAL_ASCII_CLAMP)==INT32_MIN);
+    CHECK(qa_parse_decimal_i32("+2147483648",QA_DECIMAL_ASCII_CLAMP)==INT32_MAX);
+    CHECK(qa_parse_decimal_i32("2147483648",QA_DECIMAL_SIGNED_WRAP)==INT32_MIN);
+    CHECK(qa_parse_decimal_i32("4294967296",QA_DECIMAL_SIGNED_WRAP)==0);
+    CHECK(qa_parse_decimal_i32("-4294967295",QA_DECIMAL_SIGNED_WRAP)==1);
+    CHECK(qa_parse_decimal_i32("\xff\x01+12.5",QA_DECIMAL_SIGNED_WRAP)==12);
+    CHECK(qa_parse_decimal_i32("\xff\x01+12.5",QA_DECIMAL_CONTROL_WRAP)==0);
+    CHECK(qa_parse_decimal_i32("\x01+12.5",QA_DECIMAL_CONTROL_WRAP)==12);
+    CHECK(qa_parse_decimal_i32("\x01+12.5",QA_DECIMAL_ASCII_WRAP)==0);
+    CHECK(qa_parse_decimal_i32("999999999999999999999999999",QA_DECIMAL_ASCII_CLAMP)==INT32_MAX);
+    CHECK(qa_parse_decimal_i32("-x",QA_DECIMAL_SIGNED_WRAP)==0);
     uint8_t source[256],roundtrip[257];char utf8[513];size_t size,restored;qa_error error={0};
     for (unsigned i=0;i<256;++i) source[i]=(uint8_t)i;
     CHECK(qa_text_from_source_bytes((qa_bytes){source,sizeof(source)},utf8,sizeof(utf8),&size,&error));

@@ -1,9 +1,9 @@
 #include "network_browser.h"
+#include "qa/text.h"
 #include "qa/arena.h"
 #include "qa/console.h"
 #include "qa/network_q3.h"
 #include "../../network/service_save_fields.h"
-#include <errno.h>
 #include <inttypes.h>
 #include <math.h>
 #include <stdio.h>
@@ -120,12 +120,7 @@ static bool row_read(frontend_q3_browser *b, int32_t source, int32_t index, brow
     if (list && index >= 0 && (uint32_t)index < list->capacity) *out = &list->rows[index];
     return true;
 }
-static int32_t integer(const char *text)
-{
-    char *end; errno = 0; long long n = strtoll(text, &end, 10);
-    if (end == text) return 0;
-    return n > INT32_MAX ? INT32_MAX : n < INT32_MIN ? INT32_MIN : (int32_t)n;
-}
+
 static int32_t word(uint32_t bits)
 {
     int32_t result; memcpy(&result, &bits, sizeof(result)); return result;
@@ -189,12 +184,12 @@ static bool row_info(frontend_q3_browser *b, const browser_row *row, char info[1
         !numeric(b, info, "clients", status ? entry.players : 0, e) ||
         !numeric(b, info, "sv_maxclients", status ? entry.maximum_players : 0, e) || !numeric(b, info, "ping", row->ping, e)) return false;
     const char *keys[] = {"minping", "maxping"};
-    for (size_t i = 0; i < 2; ++i) { rule(status ? entry.rules : "", keys[i], value, sizeof(value)); if (!numeric(b, info, keys[i], integer(value), e)) return false; }
+    for (size_t i = 0; i < 2; ++i) { rule(status ? entry.rules : "", keys[i], value, sizeof(value)); if (!numeric(b, info, keys[i], qa_parse_decimal_i32(value,QA_DECIMAL_LOCALE_CLAMP), e)) return false; }
     if (!info_set(b, info, "game", game, e)) return false;
     rule(status ? entry.rules : "", "gametype", value, sizeof(value));
-    if (!numeric(b, info, "gametype", integer(value), e) || !numeric(b, info, "nettype", row->addressed ? 1 : 0, e) ||
+    if (!numeric(b, info, "gametype", qa_parse_decimal_i32(value,QA_DECIMAL_LOCALE_CLAMP), e) || !numeric(b, info, "nettype", row->addressed ? 1 : 0, e) ||
         !info_set(b, info, "addr", address, e)) return false;
-    rule(status ? entry.rules : "", "punkbuster", value, sizeof(value)); return numeric(b, info, "punkbuster", integer(value), e);
+    rule(status ? entry.rules : "", "punkbuster", value, sizeof(value)); return numeric(b, info, "punkbuster", qa_parse_decimal_i32(value,QA_DECIMAL_LOCALE_CLAMP), e);
 }
 static bool server_count(void *ctx, int32_t source, int32_t *out, qa_error *e)
 {
@@ -575,7 +570,7 @@ static bool compare_servers(void *ctx, int32_t source, int32_t key, int32_t dire
     } else if (key >= 2 && key <= 4) {
         double xv = 0, yv = 0;
         if (key == 2) { xv = xe.available ? xe.players : 0; yv = ye.available ? ye.players : 0; }
-        else if (key == 3) { char text[8193]; rule(xe.available ? xe.rules : "", "gametype", text, sizeof(text)); xv = integer(text); rule(ye.available ? ye.rules : "", "gametype", text, sizeof(text)); yv = integer(text); }
+        else if (key == 3) { char text[8193]; rule(xe.available ? xe.rules : "", "gametype", text, sizeof(text)); xv = qa_parse_decimal_i32(text,QA_DECIMAL_LOCALE_CLAMP); rule(ye.available ? ye.rules : "", "gametype", text, sizeof(text)); yv = qa_parse_decimal_i32(text,QA_DECIMAL_LOCALE_CLAMP); }
         else { xv = x->ping; yv = y->ping; }
         *out = xv < yv ? -1 : xv > yv ? 1 : 0;
     }

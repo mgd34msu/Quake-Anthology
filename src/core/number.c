@@ -5,6 +5,7 @@
 #include "qa/math.h"
 
 #include <fenv.h>
+#include <ctype.h>
 #include <errno.h>
 #include <limits.h>
 #include <locale.h>
@@ -54,6 +55,31 @@ static bool ready(qa_error *error) {
 int32_t qa_source_float_to_i32(float value) {
     return value >= -2147483648.0f && value < 2147483648.0f
         ? (int32_t)value : INT32_MIN;
+}
+
+int32_t qa_parse_decimal_i32(const char *text, qa_decimal_rule rule) {
+    if (!text) return 0;
+    const unsigned char *cursor = (const unsigned char *)text;
+    while (*cursor) {
+        unsigned char byte = *cursor;
+        bool space = rule == QA_DECIMAL_LOCALE_CLAMP ? isspace(byte) != 0 :
+            rule == QA_DECIMAL_SIGNED_WRAP ? byte <= 32 || byte >= 128 :
+            rule == QA_DECIMAL_CONTROL_WRAP ? byte <= 32 :
+            byte == ' ' || (byte >= '\t' && byte <= '\r');
+        if (!space) break;
+        ++cursor;
+    }
+    bool negative = *cursor == '-';
+    if (*cursor == '-' || *cursor == '+') ++cursor;
+    uint32_t value = 0, limit = negative ? UINT32_C(2147483648) : INT32_MAX;
+    bool clamp = rule == QA_DECIMAL_ASCII_CLAMP || rule == QA_DECIMAL_LOCALE_CLAMP;
+    while (*cursor >= '0' && *cursor <= '9') {
+        uint32_t digit = (uint32_t)(*cursor++ - '0');
+        value = clamp && value > (limit - digit) / 10 ?
+            limit : value * 10u + digit;
+    }
+    if (negative) value = 0u - value;
+    return value <= INT32_MAX ? (int32_t)value : -1 - (int32_t)(UINT32_MAX - value);
 }
 
 uint16_t qa_angle_to_word(float angle,qa_angle_word_rule rule) {

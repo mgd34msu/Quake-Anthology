@@ -1,6 +1,7 @@
 /* SelectedQ3WeaponPresenter resources; SDK cg_weapons.c/cg_players.c,
  * id Software, GPL-2.0-or-later. */
 #include "selected_media_internal.h"
+#include "qa/text.h"
 #include <stdio.h>
 
 const qa_q3_item *q3n_selected_media_item(qa_q3_product product, int32_t weapon)
@@ -32,14 +33,7 @@ static bool same(const char *a, const char *b)
 }
 static int32_t word(uint32_t value)
 { return value <= INT32_MAX ? (int32_t)value : -1 - (int32_t)(UINT32_MAX - value); }
-static int32_t integer(const char *s)
-{
-    while (*s && (signed char)*s <= 32) ++s;
-    bool negative = *s == '-'; if (*s == '+' || *s == '-') ++s;
-    uint32_t value = 0;
-    while (*s >= '0' && *s <= '9') value = value * 10u + (uint32_t)(*s++ - '0');
-    return word(negative ? 0u - value : value);
-}
+
 static float number(const char *s)
 {
     while (*s && (signed char)*s <= 32) ++s;
@@ -115,16 +109,16 @@ bool q3n_selected_animation_parse(qa_bytes bytes, const char *source_path,
             if (i >= 25) { *a = config.animations[6]; a->reversed = a->flipflop = false; a->present = true; continue; }
             break;
         }
-        a->first_frame = integer(parser.token);
+        a->first_frame = qa_parse_decimal_i32(parser.token,QA_DECIMAL_SIGNED_WRAP);
         if (i == 13) skip = word((uint32_t)a->first_frame - (uint32_t)config.animations[6].first_frame);
         if (i >= 13 && i < 25) a->first_frame = word((uint32_t)a->first_frame - (uint32_t)skip);
         if (!qa_common_parse(&parser, &cursor, true, e)) return false;
         if (!*parser.token) break;
-        a->num_frames = integer(parser.token);
+        a->num_frames = qa_parse_decimal_i32(parser.token,QA_DECIMAL_SIGNED_WRAP);
         if (a->num_frames < 0) { a->num_frames = word(0u - (uint32_t)a->num_frames); a->reversed = true; }
         if (!qa_common_parse(&parser, &cursor, true, e)) return false;
         if (!*parser.token) break;
-        a->loop_frames = integer(parser.token);
+        a->loop_frames = qa_parse_decimal_i32(parser.token,QA_DECIMAL_SIGNED_WRAP);
         if (!qa_common_parse(&parser, &cursor, true, e)) return false;
         if (!*parser.token) break;
         float fps = number(parser.token); if (fps == 0) fps = 1;

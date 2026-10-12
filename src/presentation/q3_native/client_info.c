@@ -1,6 +1,7 @@
 /* Native client media follows content/q3/presentation/players.ts.
  * Source: id Software cg_players.c, GPL-2.0-or-later. */
 #include "qa/game_type.h"
+#include "qa/text.h"
 #include "client_info_internal.h"
 #include <stdarg.h>
 #include <stdio.h>
@@ -106,19 +107,11 @@ static bool same(const char *a, const char *b)
     while (*a && *b && fold((unsigned char)*a) == fold((unsigned char)*b)) { ++a; ++b; }
     return !*a && !*b;
 }
-static int32_t source_integer(const char *text)
-{
-    while (*text && (signed char)*text <= 32) ++text;
-    bool negative = *text == '-'; if (*text == '-' || *text == '+') ++text;
-    uint32_t value = 0;
-    while (*text >= '0' && *text <= '9') value = value * 10u + (uint32_t)(*text++ - '0');
-    if (negative) value = 0u - value;
-    return value <= INT32_MAX ? (int32_t)value : -1 - (int32_t)(UINT32_MAX - value);
-}
+
 static int32_t integer_key(const char *info, const char *key)
 {
     char value[1024]; qa_q3_client_info_value(info, key, value, sizeof(value));
-    return source_integer(value);
+    return qa_parse_decimal_i32(value,QA_DECIMAL_SIGNED_WRAP);
 }
 static qa_vec3 color(int32_t bits)
 {
@@ -275,16 +268,16 @@ static bool parse_animation(q3n_clients *owner, qa_player_animation_config *conf
             }
             break;
         }
-        a->first_frame = source_integer(token);
+        a->first_frame = qa_parse_decimal_i32(token,QA_DECIMAL_SIGNED_WRAP);
         if (index == 13) skip = signed_bits((uint32_t)a->first_frame - (uint32_t)config->animations[6].first_frame);
         if (index >= 13 && index < 25) a->first_frame = signed_bits((uint32_t)a->first_frame - (uint32_t)skip);
         if (!animation_token(owner, &cursor, error)) return false;
         if (!*token) break;
-        a->num_frames = source_integer(token); a->reversed = a->flipflop = false;
+        a->num_frames = qa_parse_decimal_i32(token,QA_DECIMAL_SIGNED_WRAP); a->reversed = a->flipflop = false;
         if (a->num_frames < 0) { a->num_frames = signed_bits(0u - (uint32_t)a->num_frames); a->reversed = true; }
         if (!animation_token(owner, &cursor, error)) return false;
         if (!*token) break;
-        a->loop_frames = source_integer(token);
+        a->loop_frames = qa_parse_decimal_i32(token,QA_DECIMAL_SIGNED_WRAP);
         if (!animation_token(owner, &cursor, error)) return false;
         if (!*token) break;
         float fps = source_float(token); if (fps == 0) fps = 1;
@@ -598,9 +591,9 @@ static bool begin(q3n_clients *owner, qa_application *app, const qa_application_
     if (!source_string(owner, 0, &serverinfo, &revision, error)) return false;
     char value[8192];
     if (!qa_q3_info_value(serverinfo, "g_gametype", value, sizeof(value), error)) return false;
-    int32_t game_type = source_integer(value);
+    int32_t game_type = qa_parse_decimal_i32(value,QA_DECIMAL_SIGNED_WRAP);
     if (!qa_q3_info_value(serverinfo, "sv_maxclients", value, sizeof(value), error)) return false;
-    int32_t max_clients = source_integer(value);
+    int32_t max_clients = qa_parse_decimal_i32(value,QA_DECIMAL_SIGNED_WRAP);
     if (max_clients < 0 || max_clients > 64)
         return q3n_client_fail(error, QA_ERROR_FORMAT, "Invalid native Q3 reached client media serverinfo");
     owner->serverinfo_revision = revision; owner->game_type = game_type; owner->max_clients = (uint32_t)max_clients;

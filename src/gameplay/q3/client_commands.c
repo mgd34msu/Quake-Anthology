@@ -51,22 +51,7 @@ void qa_q3_client_clean_name(const char *source, char out[QA_Q3_NATIVE_NETNAME])
     out[used] = 0;
 }
 
-static int32_t source_integer(const char *text) {
-    while (*text) {
-        unsigned char byte = (unsigned char)*text;
-        int value = byte < 128 ? byte : (int)byte - 256;
-        if (value > 32) break;
-        ++text;
-    }
-    bool negative = *text == '-';
-    if (*text == '-' || *text == '+') ++text;
-    uint32_t bits = 0;
-    while (*text >= '0' && *text <= '9') bits = bits * 10u + (uint32_t)(*text++ - '0');
-    if (negative) bits = 0u - bits;
-    int32_t value;
-    memcpy(&value, &bits, sizeof(value));
-    return value;
-}
+
 
 bool qa_q3_client_userinfo(qa_q3_game *game, qa_actor_id actor, const char *source,
                           bool scoreboard, qa_error *error) {
@@ -98,7 +83,7 @@ bool qa_q3_client_selected_presentation(qa_q3_game *game, qa_actor_id actor,
     char config[8192];
     snprintf(config, sizeof(config), "n\\%s\\t\\%d\\model\\%s\\hmodel\\%s\\g_redteam\\%s\\g_blueteam\\%s\\c1\\%s\\c2\\%s\\hc\\%d\\w\\%d\\l\\%d\\tt\\%d\\tl\\%d",
         q3_client_name(game, client), session.team, model, head, red, blue, color1, color2,
-        client->rule.max_health, session.wins, session.losses, source_integer(task), session.team_leader);
+        client->rule.max_health, session.wins, session.losses, qa_parse_decimal_i32(task,QA_DECIMAL_SIGNED_WRAP), session.team_leader);
     ++game->observation_depth;
     bool okay = qa_q3_configstring_write(game, 544u + slot, config, error);
     uint32_t current;
@@ -127,7 +112,7 @@ bool qa_q3_client_slot_userinfo(qa_q3_game *game, uint32_t slot, const char *sou
     qa_q3_client_info_value(info, "ip", value, sizeof(value));
     if (!strcmp(value, "localhost")) client->rule.local_client = true;
     qa_q3_client_info_value(info, "cg_predictItems", value, sizeof(value));
-    client->rule.predict_item_pickup = source_integer(value) != 0;
+    client->rule.predict_item_pickup = qa_parse_decimal_i32(value,QA_DECIMAL_SIGNED_WRAP) != 0;
     qa_q3_client_info_value(info, "name", value, sizeof(value));
     char cleaned[QA_Q3_NATIVE_NETNAME];
     q3_client_name_bytes(game, client, cleaned);
@@ -140,7 +125,7 @@ bool qa_q3_client_slot_userinfo(qa_q3_game *game, uint32_t slot, const char *sou
     if (scoreboard) memcpy(cleaned, "scoreboard", sizeof("scoreboard"));
     if (!q3_client_name_store(game, client, cleaned, error)) return false;
     qa_q3_client_info_value(info, "handicap", value, sizeof(value));
-    int32_t health = source_integer(value);
+    int32_t health = qa_parse_decimal_i32(value,QA_DECIMAL_SIGNED_WRAP);
     if (health < 1 || health > 100) health = 100;
     entry->state.player.handicap = health;
     if (game->options.product == QA_Q3_TEAM_ARENA &&
@@ -148,6 +133,6 @@ bool qa_q3_client_slot_userinfo(qa_q3_game *game, uint32_t slot, const char *sou
     client->rule.max_health = entry->state.player.max_health = health;
     qa_q3_client_info_value(info, "teamoverlay", value, sizeof(value));
     client->rule.team_info = (game->options.product == QA_Q3_TEAM_ARENA &&
-        qa_game_type_has_allies(game->options.rules.game_type)) || !*value || source_integer(value) != 0;
+        qa_game_type_has_allies(game->options.rules.game_type)) || !*value || qa_parse_decimal_i32(value,QA_DECIMAL_SIGNED_WRAP) != 0;
     return true;
 }

@@ -53,6 +53,16 @@ typedef enum qa_quake_number_policy {
     QA_QUAKE_NUMBER_Q3_VM = 4
 } qa_quake_number_policy;
 double qa_parse_quake_number(const char *, qa_quake_number_policy);
+/* Signed decimal prefix with the caller's original byte/overflow rules.
+ * Missing prefixes produce zero; wrap is modulo 2^32 for every digit. */
+typedef enum qa_decimal_rule {
+    QA_DECIMAL_ASCII_CLAMP,
+    QA_DECIMAL_ASCII_WRAP,
+    QA_DECIMAL_CONTROL_WRAP,
+    QA_DECIMAL_SIGNED_WRAP,
+    QA_DECIMAL_LOCALE_CLAMP
+} qa_decimal_rule;
+int32_t qa_parse_decimal_i32(const char *, qa_decimal_rule);
 /* Original QC/x86 truncation, with INT32_MIN for nonfinite or out-of-range
  * binary32 operands. This is not a wrapping word conversion. */
 int32_t qa_source_float_to_i32(float value);

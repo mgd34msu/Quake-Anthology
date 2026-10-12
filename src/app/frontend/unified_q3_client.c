@@ -1,4 +1,5 @@
 #include "unified_q3_client.h"
+#include "qa/text.h"
 #include "../application/native_q3_client_settings.h"
 #include "../application/native_q3_client.h"
 #include "remote_unified_save.h"
@@ -279,16 +280,7 @@ static bool append(client_history *h, const char *const *values, size_t count, q
     command_release(h->owner,h->commands[index]); h->commands[index] = row;
     h->reliable = sequence; return true;
 }
-static int32_t source_integer(const char *text)
-{
-    while (*text && (signed char)*text <= 32) ++text;
-    bool negative = *text == '-';
-    if (*text == '+' || *text == '-') ++text;
-    uint32_t value = 0;
-    while (*text >= '0' && *text <= '9') value = value*10u+(uint32_t)(*text++-'0');
-    value = negative ? 0u-value : value;
-    int32_t result; memcpy(&result,&value,sizeof(result)); return result;
-}
+
 static bool receive(client_history *h, const frontend_unified_q3_source_view *v, bool initial, bool round, qa_error *e)
 {
     if (!v->has_client || !v->area_mask || v->visible_count > 256 || (h->number && v->time < h->time))
@@ -345,15 +337,15 @@ static bool source_basis(frontend_unified_q3_client *c,const frontend_unified_q3
 {
     char value[8192]; const char *info = qa_q3_configstring(&h->reached->value,0);
     if (!qa_q3_info_value(info,"g_gametype",value,sizeof(value),e)) return false;
-    int32_t game_type = source_integer(value);
+    int32_t game_type = qa_parse_decimal_i32(value,QA_DECIMAL_SIGNED_WRAP);
     if (!qa_q3_info_value(info,"sv_maxclients",value,sizeof(value),e)) return false;
-    int32_t max_clients = source_integer(value);
+    int32_t max_clients = qa_parse_decimal_i32(value,QA_DECIMAL_SIGNED_WRAP);
     *out = (q3n_compiled_source_basis){.application=c->domain->application,
         .registry=frontend_remote_unified_registry(c->replica),.provider=v->provider->source_owner,.receiver=c->receiver,
         .instance=c->instance,.content=v->files,.assets=v->assets,.product=v->product,
         .publication=v->publication,.map_revision=v->map_revision,.serial=revision,.viewer=v->viewer,
         .seat=c->domain->seat.index,.physical_seat=c->domain->physical_seat,.client_number=(int32_t)v->client_number,
-        .time=h->time,.game_type=game_type,.max_clients=max_clients,.level_start_time=source_integer(qa_q3_configstring(&h->reached->value,21)),
+        .time=h->time,.game_type=game_type,.max_clients=max_clients,.level_start_time=qa_parse_decimal_i32(qa_q3_configstring(&h->reached->value,21),QA_DECIMAL_SIGNED_WRAP),
         .snapshot_bit=v->snapshot_bit,
         .initial_command=0,.reached_command=h->command_sequence,.initialized=c->initialized}; return true;
 }
@@ -725,7 +717,7 @@ bool frontend_unified_q3_client_register(frontend_unified_q3_client *c, qa_error
         char token[1024]; size_t length = strlen(running_value);
         if (length >= sizeof(token)) length = sizeof(token)-1;
         memcpy(token,running_value,length); token[length] = 0;
-        c->local_server = source_integer(token);
+        c->local_server = qa_parse_decimal_i32(token,QA_DECIMAL_SIGNED_WRAP);
         const char *team = c->constructor.product == QA_Q3_TEAM_ARENA ? "james" : "sarge";
         const char *head = c->constructor.product == QA_Q3_TEAM_ARENA ? "*james" : "sarge";
         const char *names[] = {"model","headmodel","team_model","team_headmodel"};

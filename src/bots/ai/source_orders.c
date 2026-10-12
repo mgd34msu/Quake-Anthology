@@ -1,5 +1,6 @@
 /* Source ai_cmd.c text orders over the actual botlib and GAME services. */
 #include "internal.h"
+#include "qa/text.h"
 #include "qa/game_type.h"
 #include "source_selectors.h"
 #include "source_goal_record.h"
@@ -47,14 +48,7 @@ static void copy_name(char *out,size_t size,const char *in) {
     size_t length=strlen(in);if(length>=size) length=size-1;
     memcpy(out,in,length);out[length]=0;
 }
-static int32_t integer(const char *text) {
-    while(*text && (int8_t)(unsigned char)*text<=32) ++text;
-    bool negative=*text=='-';if(*text=='-' || *text=='+') ++text;
-    uint32_t value=0;
-    while(*text>='0' && *text<='9') value=value*10+(uint32_t)(*text++-'0');
-    if(negative) value=0-value;
-    int32_t result;memcpy(&result,&value,sizeof(result));return result;
-}
+
 typedef struct source_number {const char *text;size_t length,offset;} source_number;
 static int number_byte(const source_number *n) {
     return n->offset<n->length?(int8_t)(unsigned char)n->text[n->offset]:0;
@@ -124,7 +118,7 @@ bool bot_ai_source_team(qa_bots *b,int32_t client,int32_t *out,qa_error *e) {
     if(client<0 || client>=64) {*out=0;return true;}
     char information[1024],team[1024];
     if(!config(b,client,information,e) || !qa_q3_info_value(information,"t",team,sizeof(team),e)) return false;
-    *out=integer(team);return true;
+    *out=qa_parse_decimal_i32(team,QA_DECIMAL_SIGNED_WRAP);return true;
 }
 bool bot_ai_source_same_team(qa_bots *b,bot_ai_state *s,int32_t client,bool *out,qa_error *e) {
     int32_t self,own,other;*out=false;

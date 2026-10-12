@@ -1,4 +1,5 @@
 #include "qa/arena_progress.h"
+#include "qa/text.h"
 #include "qa/network_q3.h"
 #include <inttypes.h>
 #include <stdio.h>
@@ -15,18 +16,7 @@ static int32_t signed_word(uint32_t bits) {
     memcpy(&result, &bits, sizeof(result));
     return result;
 }
-static int32_t game_integer(const char *text) {
-    const unsigned char *p = (const unsigned char *)text;
-    while (*p && (*p <= 32 || *p >= 128))
-        ++p;
-    bool negative = *p == '-';
-    if (*p == '+' || *p == '-')
-        ++p;
-    uint32_t value = 0;
-    while (*p >= '0' && *p <= '9')
-        value = value * 10u + (uint32_t)(*p++ - '0');
-    return signed_word(negative ? 0u - value : value);
-}
+
 static bool read_value(const qa_arena_progress *progress, qa_cvar_handle handle, const char *prefix,
                        int32_t index, int32_t *out, qa_error *error) {
     if (!progress || !progress->cvars || !out)
@@ -36,7 +26,7 @@ static bool read_value(const qa_arena_progress *progress, qa_cvar_handle handle,
     (void)snprintf(key, sizeof(key), "%s%" PRId32, prefix, index);
     if (!qa_q3_info_value(variable ? variable->value : "", key, value, sizeof(value), error))
         return false;
-    *out = game_integer(value);
+    *out = qa_parse_decimal_i32(value,QA_DECIMAL_SIGNED_WRAP);
     return true;
 }
 static bool write_value(qa_arena_progress *progress, qa_cvar_handle handle, const char *prefix,

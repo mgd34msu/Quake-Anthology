@@ -1,4 +1,5 @@
 #include "remote_frame.h"
+#include "qa/text.h"
 #include "frame.h"
 #include <limits.h>
 #include <stdlib.h>
@@ -13,16 +14,7 @@ struct q3n_remote_source {
 };
 static bool fail(qa_error *e, qa_status code, const char *message)
 { qa_error_set(e, code, 0, "%s", message); return false; }
-static int32_t integer(const char *text)
-{
-    while (*text && (signed char)*text <= 32) ++text;
-    bool negative = *text == '-';
-    if (*text == '+' || *text == '-') ++text;
-    uint32_t value = 0;
-    while (*text >= '0' && *text <= '9') value = value * 10u + (uint32_t)(*text++ - '0');
-    value = negative ? 0u - value : value;
-    int32_t result; memcpy(&result, &value, sizeof(result)); return result;
-}
+
 static bool client_identity(const qa_application_q3_client_context *a,
     const qa_application_q3_client_context *b)
 {
@@ -123,12 +115,12 @@ bool q3n_remote_source_read(const q3n_remote_source *s, q3n_remote_source_view *
         return fail(e, QA_ERROR_ARGUMENT, "Remote CGAME has not adopted its actual reached command receipt");
     const char *info = qa_q3_configstring(view.publication.gamestate, 0); char value[8192];
     if (!qa_q3_info_value(info, "g_gametype", value, sizeof(value), e)) return false;
-    view.game_type = integer(value);
+    view.game_type = qa_parse_decimal_i32(value,QA_DECIMAL_SIGNED_WRAP);
     if (!qa_q3_info_value(info, "sv_maxclients", value, sizeof(value), e)) return false;
-    view.max_clients = integer(value);
+    view.max_clients = qa_parse_decimal_i32(value,QA_DECIMAL_SIGNED_WRAP);
     if (!qa_q3_info_value(info, "dmflags", value, sizeof(value), e)) return false;
-    view.dm_flags = integer(value);
-    view.match_start_time = integer(qa_q3_configstring(view.publication.gamestate, 21));
+    view.dm_flags = qa_parse_decimal_i32(value,QA_DECIMAL_SIGNED_WRAP);
+    view.match_start_time = qa_parse_decimal_i32(qa_q3_configstring(view.publication.gamestate, 21),QA_DECIMAL_SIGNED_WRAP);
     view.reached_command = s->reached_command;
     if (!s->options.publication_current(s->options.context, &view.publication))
         return fail(e, QA_ERROR_ARGUMENT, "Remote source changed during its pure reached serverinfo observation");
@@ -176,7 +168,7 @@ bool q3n_remote_source_reached(q3n_remote_source *s, const q3n_remote_command *c
      * Network result proves consumption, including absent demo commands. */
     s->reached_command = command->sequence;
     if (command->present && !strcmp(qa_q3_token(command->tokens, 0), "cs")) {
-        int32_t index = integer(qa_q3_token(command->tokens, 1));
+        int32_t index = qa_parse_decimal_i32(qa_q3_token(command->tokens, 1),QA_DECIMAL_SIGNED_WRAP);
         if (index < 0 || index >= QA_Q3_CONFIGSTRINGS)
             return fail(e, QA_ERROR_FORMAT, "Remote reached configstring index exceeds MAX_CONFIGSTRINGS");
         s->config_commands[index] = command->sequence;

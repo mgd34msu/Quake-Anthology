@@ -93,19 +93,7 @@ static int signed_byte(unsigned char byte)
     return byte < 128 ? byte : (int)byte - 256;
 }
 
-static int32_t integer(const char *text)
-{
-    while (*text && signed_byte((unsigned char)*text) <= 32) ++text;
-    bool negative = *text == '-';
-    if (*text == '+' || *text == '-') ++text;
-    uint32_t bits = 0;
-    while (*text >= '0' && *text <= '9')
-        bits = bits * 10u + (uint32_t)(*text++ - '0');
-    if (negative) bits = 0u - bits;
-    int32_t result;
-    memcpy(&result, &bits, sizeof(result));
-    return result;
-}
+
 
 /* bg_lib _atoi consumes a delimiter, including the terminating NUL. Empty
  * input and trailing whitespace leave the cursor at NUL instead. */
@@ -115,7 +103,7 @@ static bool scan_integer(const char *buffer, size_t length, size_t *cursor,
     if (*cursor > length)
         return application_fail(error, QA_ERROR_FORMAT,
             "truncated native Q3 session scan exceeds its terminating NUL");
-    *value = integer(buffer + *cursor);
+    *value = qa_parse_decimal_i32(buffer + *cursor,QA_DECIMAL_SIGNED_WRAP);
     while (*cursor < length && signed_byte((unsigned char)buffer[*cursor]) <= 32)
         ++*cursor;
     if (*cursor == length) return true;
@@ -248,7 +236,7 @@ bool application_native_q3_session_initialize(void *opaque, qa_error *error)
     cvar_read(&source, "session", previous);
     int32_t game_type;
     bool ok = application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_GAMETYPE, &game_type, error);
-    if (ok && game_type != integer(previous))
+    if (ok && game_type != qa_parse_decimal_i32(previous,QA_DECIMAL_SIGNED_WRAP))
         ok = qa_q3_source_new_session_set(source.game, true, error) &&
             application_native_q3_console_print(provider,
                 "Gametype changed, clearing session data.\n", error) && source_live(&source, error);

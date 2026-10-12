@@ -1,4 +1,5 @@
 #include "native_q3_chat.h"
+#include "qa/text.h"
 #include "qa/game_type.h"
 #include "native_q3_console.h"
 #include "native_q3_wire_state.h"
@@ -77,26 +78,14 @@ static void concat_arguments(const qa_command_invocation *command, size_t first,
     out[used] = 0;
 }
 
-/* bg_lib treats high byte characters as signed when skipping whitespace and
- * wraps every decimal digit operation, including arbitrarily long prefixes. */
+/* Keep the original command argument extent before decimal conversion. */
 static int32_t command_integer(const char *text)
 {
     char bounded[CHAT_ARGUMENT_BYTES];
     size_t length = bounded_length(text, sizeof(bounded));
     memcpy(bounded, text, length);
     bounded[length] = 0;
-    const unsigned char *cursor = (const unsigned char *)bounded;
-    while (*cursor && (*cursor < 128 ? (int)*cursor : (int)*cursor - 256) <= 32)
-        ++cursor;
-    bool negative = *cursor == '-';
-    if (*cursor == '-' || *cursor == '+') ++cursor;
-    uint32_t value = 0;
-    while (*cursor >= '0' && *cursor <= '9')
-        value = value * 10u + (uint32_t)(*cursor++ - '0');
-    if (negative) value = 0u - value;
-    int32_t result;
-    memcpy(&result, &value, sizeof(result));
-    return result;
+    return qa_parse_decimal_i32(bounded,QA_DECIMAL_SIGNED_WRAP);
 }
 
 static bool scope_live(const chat_scope *scope, qa_error *error)

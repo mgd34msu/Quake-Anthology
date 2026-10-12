@@ -1,4 +1,5 @@
 #include "qa/network_q3.h"
+#include "qa/text.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -10,21 +11,6 @@ static bool fail(qa_error *error, qa_status status, const char *message)
     return false;
 }
 
-static int32_t source_integer(const char *text)
-{
-    while (*text == ' ' || (*text >= '\t' && *text <= '\r')) ++text;
-    bool negative = *text == '-';
-    if (*text == '-' || *text == '+') ++text;
-    uint32_t limit = negative ? UINT32_C(2147483648) : INT32_MAX;
-    uint32_t magnitude = 0;
-    while (*text >= '0' && *text <= '9') {
-        uint32_t digit = (unsigned)(*text++ - '0');
-        if (magnitude > (limit - digit) / 10) magnitude = limit;
-        else magnitude = magnitude * 10 + digit;
-    }
-    if (!negative) return (int32_t)magnitude;
-    return magnitude == UINT32_C(2147483648) ? INT32_MIN : -(int32_t)magnitude;
-}
 
 static int checksum_order(const void *left, const void *right)
 {
@@ -42,24 +28,24 @@ bool qa_q3_verify_pure(const qa_q3_pure_server *server, const qa_q3_tokens *toke
         *out = QA_Q3_PURE_DISABLED;
         return true;
     }
-    if (source_integer(qa_q3_token(tokens, 1)) < server->checksum_feed_server_id) {
+    if (qa_parse_decimal_i32(qa_q3_token(tokens, 1),QA_DECIMAL_ASCII_CLAMP) < server->checksum_feed_server_id) {
         *out = QA_Q3_PURE_OUTDATED;
         return true;
     }
     *out = QA_Q3_PURE_REJECTED;
     if (!server->has_cgame || !server->has_ui || tokens->count < 6) return true;
     const char *cgame = qa_q3_token(tokens, 2), *ui = qa_q3_token(tokens, 3);
-    if (*cgame == '@' || source_integer(cgame) != server->cgame_checksum ||
-        *ui == '@' || source_integer(ui) != server->ui_checksum ||
+    if (*cgame == '@' || qa_parse_decimal_i32(cgame,QA_DECIMAL_ASCII_CLAMP) != server->cgame_checksum ||
+        *ui == '@' || qa_parse_decimal_i32(ui,QA_DECIMAL_ASCII_CLAMP) != server->ui_checksum ||
         *qa_q3_token(tokens, 4) != '@') return true;
     size_t reference_count = tokens->count - 6;
     uint32_t references[1024], loaded[1024];
     uint32_t checksum = (uint32_t)server->checksum_feed ^ (uint32_t)reference_count;
     for (size_t index = 0; index < reference_count; ++index) {
-        references[index] = (uint32_t)source_integer(qa_q3_token(tokens, index + 5));
+        references[index] = (uint32_t)qa_parse_decimal_i32(qa_q3_token(tokens, index + 5),QA_DECIMAL_ASCII_CLAMP);
         checksum ^= references[index];
     }
-    if (checksum != (uint32_t)source_integer(qa_q3_token(tokens, tokens->count - 1))) return true;
+    if (checksum != (uint32_t)qa_parse_decimal_i32(qa_q3_token(tokens, tokens->count - 1),QA_DECIMAL_ASCII_CLAMP)) return true;
     size_t loaded_count = server->loaded_count < 1024 ? server->loaded_count : 1024;
     if (loaded_count != 0) memcpy(loaded, server->loaded, loaded_count * sizeof(*loaded));
     if (loaded_count > 1) qsort(loaded, loaded_count, sizeof(*loaded), checksum_order);

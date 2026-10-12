@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/text.h"
 #include "qa/application_network.h"
 #include "qa/local_lobby.h"
 #include "qa/application_network_qw.h"
@@ -4135,11 +4136,7 @@ static bool browser_command_current(void *context, qa_error *error)
     qa_frontend_network *n = context; frontend_remote_config_view configuration;
     return browser_owner_current(n, error) && client_configuration_view(&n->q3_clients[0], &configuration, error);
 }
-static int32_t browser_integer(const char *text)
-{
-    char *end; long long value = strtoll(text, &end, 10);
-    return end == text ? 0 : value > INT32_MAX ? INT32_MAX : value < INT32_MIN ? INT32_MIN : (int32_t)value;
-}
+
 static bool q3_browser_command(qa_frontend_network *n, const qa_command_invocation *call, qa_error *error)
 {
     uint32_t physical; frontend_remote_config_view configuration;
@@ -4164,8 +4161,8 @@ static bool q3_browser_command(qa_frontend_network *n, const qa_command_invocati
         for (size_t i = 0; i < count; ++i) keywords[i] = call->argv[i + 3];
         if (demo) keywords[count++] = "demo";
         emit(call, "Requesting servers from the master...\n");
-        bool ok = frontend_q3_browser_master(n->q3_browser, browser_integer(call->argv[1]) == 1 ? 1 : 2,
-            master->value, browser_integer(call->argv[2]), keywords, count, error);
+        bool ok = frontend_q3_browser_master(n->q3_browser, qa_parse_decimal_i32(call->argv[1],QA_DECIMAL_LOCALE_CLAMP) == 1 ? 1 : 2,
+            master->value, qa_parse_decimal_i32(call->argv[2],QA_DECIMAL_LOCALE_CLAMP), keywords, count, error);
         free(keywords); return ok;
     }
     if (!strcmp(name, "ping")) {

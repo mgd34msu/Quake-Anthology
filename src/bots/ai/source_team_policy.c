@@ -1,5 +1,6 @@
 /* Q3 ai_team.c and ai_dmq3.c policy over the retained GAME and botlib owners. */
 #include "internal.h"
+#include "qa/text.h"
 #include "qa/game_type.h"
 #include "source_selectors.h"
 #include "source_goal_record.h"
@@ -41,14 +42,7 @@ static int32_t maximum(qa_bots *b, int32_t *cache) {
     }
     return *cache<64?*cache:64;
 }
-static int32_t integer(const char *text) {
-    while(*text && (int8_t)(unsigned char)*text<=32) ++text;
-    bool negative=*text=='-';if(*text=='-' || *text=='+') ++text;
-    uint32_t value=0;
-    while(*text>='0' && *text<='9') value=value*10+(uint32_t)(*text++-'0');
-    if(negative) value=0-value;
-    int32_t result;memcpy(&result,&value,sizeof(result));return result;
-}
+
 static bool team_mates(qa_bots *b, bot_ai_state *s, int32_t maximum_clients,
                        int32_t teammates[64], int32_t *count, qa_error *e) {
     *count=0;
@@ -61,7 +55,7 @@ static bool team_mates(qa_bots *b, bot_ai_state *s, int32_t maximum_clients,
         if(!qa_q3_info_value(information,"n",name,sizeof(name),e)) return false;
         if(!*name) continue;
         if(!qa_q3_info_value(information,"t",team,sizeof(team),e)) return false;
-        if(integer(team)==3) continue;
+        if(qa_parse_decimal_i32(team,QA_DECIMAL_SIGNED_WRAP)==3) continue;
         if(!bot_ai_source_same_team(b,s,i,&same_team,e)) return false;
         if(!alive(b,s)) return true;
         if(same_team) teammates[(*count)++]=i;

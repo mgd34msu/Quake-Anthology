@@ -81,19 +81,7 @@ static void store_text(char text[VOTE_BYTES], const char *source)
     text[length] = 0;
 }
 
-static int32_t integer(const char *text)
-{
-    while (*text) {
-        unsigned char byte = (unsigned char)*text;
-        if ((byte < 128 ? (int)byte : (int)byte - 256) > 32) break;
-        ++text;
-    }
-    bool negative = *text == '-';
-    if (*text == '-' || *text == '+') ++text;
-    uint32_t bits = 0;
-    while (*text >= '0' && *text <= '9') bits = bits * 10u + (uint32_t)(*text++ - '0');
-    return signed_bits(negative ? 0u - bits : bits);
-}
+
 
 static void argument(const qa_command_invocation *command, size_t index,
     char *out, size_t capacity)
@@ -250,7 +238,7 @@ static bool call_vote(vote_scope *scope, const qa_command_invocation *command, q
     if (named(key, "g_gametype")) {
         static const char *const names[] = {"Free For All", "Tournament", "Single Player",
             "Team Deathmatch", "Capture the Flag", "One Flag CTF", "Overload", "Harvester"};
-        int32_t type = integer(parameter);
+        int32_t type = qa_parse_decimal_i32(parameter,QA_DECIMAL_SIGNED_WRAP);
         if (type < 0 || type == 2 || type >= 8) return print_client(scope, "Invalid gametype.\n", error);
         snprintf(formatted, sizeof(formatted), "%s %" PRId32, key, type);
         store_text(vote->text, formatted);
@@ -351,7 +339,7 @@ static bool call_team_vote(vote_scope *scope, const qa_command_invocation *comma
         size_t digits = 0;
         while (digits < 3 && parameter[digits] >= '0' && parameter[digits] <= '9') ++digits;
         if (digits >= 3 || !parameter[digits]) {
-            target = integer(parameter);
+            target = qa_parse_decimal_i32(parameter,QA_DECIMAL_SIGNED_WRAP);
             char message[128], number[32];
             qa_format_q3_integer(target, number);
             if (target < 0 || (uint32_t)target >= scope->maximum) {
@@ -599,7 +587,7 @@ static bool check_team(vote_scope *scope, uint32_t offset, int32_t now, int32_t 
         if (!send(scope, -1, "print \"Team vote passed.\n\"", error)) return false;
         if (!strncmp(vote->text, "leader", 6)) {
             size_t length = strlen(vote->text);
-            if (!leader(scope, (int32_t)offset + 1, integer(vote->text + (length < 7 ? length : 7)), error)) return false;
+            if (!leader(scope, (int32_t)offset + 1, qa_parse_decimal_i32(vote->text + (length < 7 ? length : 7),QA_DECIMAL_SIGNED_WRAP), error)) return false;
         } else if (!append(scope, vote->text, error)) return false;
     } else if (vote->no >= voting / 2) {
         if (!send(scope, -1, "print \"Team vote failed.\n\"", error)) return false;

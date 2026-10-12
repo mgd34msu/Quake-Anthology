@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/text.h"
 #include "qa/console.h"
 #include <ctype.h>
 #include <inttypes.h>
@@ -34,17 +35,7 @@ static void q3_argument(const qa_command_invocation *command, size_t index, char
     memcpy(out, value, count);
     out[count] = 0;
 }
-static int32_t q3_integer(const char *text) {
-    while (*text && (unsigned char)*text <= 32) ++text;
-    bool negative = *text == '-';
-    if (*text == '-' || *text == '+') ++text;
-    uint32_t value = 0;
-    while (*text >= '0' && *text <= '9') value = value * 10u + (uint32_t)(*text++ - '0');
-    if (negative) value = 0u - value;
-    int32_t result;
-    memcpy(&result, &value, sizeof(result));
-    return result;
-}
+
 static void q3_name(const char *text, bool team_vote, char out[1024]) {
     size_t used = 0, maximum = team_vote ? 35 : 1023;
     for (size_t i = 0; i < maximum && text[i]; ++i) {
@@ -59,7 +50,7 @@ static void q3_name(const char *text, bool team_vote, char out[1024]) {
 }
 static qa_actor_id q3_client(qa_modes *m, mode_instance *v, const char *text,
                                bool numeric, bool team_vote, qa_team_id team) {
-    int32_t slot = numeric ? q3_integer(text) : -1;
+    int32_t slot = numeric ? qa_parse_decimal_i32(text,QA_DECIMAL_CONTROL_WRAP) : -1;
     qa_actor_id matched = {0};
     uint32_t matched_slot = UINT32_MAX;
     char wanted[1024];
@@ -149,7 +140,7 @@ static bool q3_call_vote(qa_modes *m, mode_instance *v, qa_actor_id actor,
         if (!*parameter) return q3_message(m, v, actor, "Invalid vote map.\n", e);
         if (!qa_builtin_resource(&m->options.services, parameter, &intent.map, e)) return false;
     } else if (named(key, "g_gametype")) {
-        int32_t type = q3_integer(parameter);
+        int32_t type = qa_parse_decimal_i32(parameter,QA_DECIMAL_CONTROL_WRAP);
         if (type < 0 || type > QA_GAME_TYPE_HARVESTER || type == QA_GAME_TYPE_ARENA_SINGLE_PLAYER)
             return q3_message(m, v, actor, "Invalid gametype.\n", e);
         intent.kind = QA_MATCH_GAME_TYPE;
