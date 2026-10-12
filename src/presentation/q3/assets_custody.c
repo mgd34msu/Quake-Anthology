@@ -99,21 +99,13 @@ bool q3p_assets_fork(qa_q3_presentation_assets *source, qa_q3_presentation_asset
             else q3p_fail(error, QA_ERROR_MEMORY, "Retaining forked numeric sound holder");
         }
     }
-    if (okay && source->name_capacity) {
-        next->names = calloc(source->name_capacity, sizeof(*next->names));
-        okay = next->names != NULL;
-        if (okay) next->name_capacity = source->name_capacity;
-        else q3p_fail(error, QA_ERROR_MEMORY, "Copying retained registry name buckets");
-    }
-    for (size_t i = 0; okay && i < source->name_capacity; ++i) {
-        q3p_name **tail = &next->names[i];
-        for (const q3p_name *entry = source->names[i]; okay && entry; entry = entry->next) {
-            size_t length = strlen(entry->name);
-            q3p_name *copy = length <= SIZE_MAX - sizeof(*copy) - 1 ? malloc(sizeof(*copy) + length + 1) : NULL;
-            if (!copy) { okay = q3p_fail(error, QA_ERROR_MEMORY, "Copying retained registry name"); break; }
-            memcpy(copy, entry, sizeof(*copy) + length + 1); copy->next = NULL;
-            *tail = copy; tail = &copy->next; ++next->name_count;
-        }
+    for (size_t i = 0; okay && i < source->name_index.count; ++i) {
+        const qa_id_index_entry *indexed = source->name_index.entries + i;
+        if (indexed->discriminator == Q3P_SKIN_ALIAS) continue;
+        const q3p_name *entry = qa_pool_at(&source->names, indexed->value);
+        const char *name = qa_strings_cstr(source->options.strings, entry->name);
+        okay = q3p_add_name(next, entry->kind, name, entry->handle, entry->option, error);
+        if (okay) q3p_find_name(next, entry->kind, name)->generated = entry->generated;
     }
     for (q3p_provider_custody *row = source->providers; okay && row; row = row->next)
         okay = qa_q3_assets_provider_hold(next, &row->value, error);
@@ -234,7 +226,7 @@ bool qa_q3_assets_prepare_restored_custody_maps(qa_q3_presentation_assets *asset
     qa_collision_geometry *geometry, qa_error *error)
 {
     if (!assets || !assets->users || assets->busy || assets->capturing || assets->codec_busy ||
-        assets->name_count || assets->name_capacity || assets->model_count || assets->model_capacity ||
+        assets->names.active || assets->names.capacity || assets->model_count || assets->model_capacity ||
         assets->skin_count || assets->skin_capacity || assets->shader_count || assets->shader_capacity ||
         assets->sound_count || assets->sound_capacity || (count && !maps) ||
         count > SIZE_MAX / sizeof(*maps) || (!world != !geometry) ||

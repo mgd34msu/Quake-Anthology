@@ -8,6 +8,8 @@
 #include "qa/scene_effects.h"
 #include "qa/text.h"
 #include "qa/q3_source_scene_bank.h"
+#include "qa/id_index.h"
+#include "qa/pool.h"
 
 #include <limits.h>
 #include <math.h>
@@ -15,13 +17,12 @@
 #include <string.h>
 
 typedef enum q3p_resource_kind { Q3P_MODEL, Q3P_SKIN, Q3P_SHADER, Q3P_SOUND } q3p_resource_kind;
+enum { Q3P_SKIN_ALIAS = Q3P_SOUND + 1 };
 typedef struct q3p_name {
-    struct q3p_name *next;
-    uint64_t hash;
+    qa_string_id name;
     q3p_resource_kind kind;
     int32_t handle;
     bool option, generated;
-    char name[];
 } q3p_name;
 typedef struct q3p_model {
     qa_resource *resource;
@@ -65,8 +66,9 @@ struct qa_q3_presentation_assets {
     qa_q3_presentation_assets *parent;
     q3p_provider_custody *providers;
     q3p_map_custody *maps;
-    q3p_name **names;
-    size_t name_count, name_capacity;
+    qa_arena name_storage;
+    qa_pool names;
+    qa_id_index name_index;
     q3p_model **models;
     size_t model_count, model_capacity;
     q3p_skin **skins;
@@ -152,7 +154,6 @@ void q3p_scene_scratch_clear(qa_q3_presentation *);
 bool q3p_capture_begin(qa_q3_presentation *, bool *owned_assets, qa_error *);
 void q3p_capture_end(qa_q3_presentation *, bool owned_assets);
 q3p_name *q3p_find_name(qa_q3_presentation_assets *, q3p_resource_kind, const char *);
-uint64_t q3p_name_hash(q3p_resource_kind, const char *);
 bool q3p_add_name(qa_q3_presentation_assets *, q3p_resource_kind, const char *,
                    int32_t handle, bool option, qa_error *);
 bool q3p_select(qa_q3_presentation_assets *, const char *, qa_q3_asset_kind,

@@ -50,9 +50,8 @@ int qa_text_bytes_compare(qa_bytes left,qa_bytes right,bool ascii_fold)
     size_t count=left.size<right.size?left.size:right.size;
     if (ascii_fold) {
         for (size_t i=0;i<count;++i) {
-            unsigned char a=left.data[i],b=right.data[i];
-            if (a>='A' && a<='Z') a+='a'-'A';
-            if (b>='A' && b<='Z') b+='a'-'A';
+            unsigned char a=qa_text_ascii_lower(left.data[i]);
+            unsigned char b=qa_text_ascii_lower(right.data[i]);
             if (a!=b) return a<b?-1:1;
         }
     } else if (count) {

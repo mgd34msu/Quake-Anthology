@@ -36,6 +36,10 @@ void qa_strings_retain(qa_strings *strings);
 void qa_strings_destroy(qa_strings *strings);
 bool qa_strings_intern(qa_strings *strings, qa_bytes text, qa_string_id *out, qa_error *error);
 bool qa_strings_intern_cstr(qa_strings *strings, const char *text, qa_string_id *out, qa_error *error);
+/* Normalize ASCII A-Z into the same exact-byte table, without a temporary
+ * input copy. Find only matches the normalized spelling; other IDs stay exact. */
+bool qa_strings_intern_ascii_lower(qa_strings *, qa_bytes, qa_string_id *, qa_error *);
+qa_string_id qa_strings_find_ascii_lower(const qa_strings *, qa_bytes);
 /* Bind a static name table once. The table pointer and names must remain valid
  * for the string table lifetime. The returned IDs are owned by strings. */
 bool qa_strings_bind_names(qa_strings *, const char *const *, size_t count,

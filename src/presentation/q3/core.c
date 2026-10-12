@@ -56,7 +56,7 @@ bool qa_q3_presentation_prepare_restored(qa_q3_presentation *p,qa_scene_frame *f
         p->world_loaded || p->material_view_valid || p->entity_count ||
         p->polygon_count || p->vertex_count || p->light_count || p->movie_sources ||
         ((a->world || a->geometry) && (a->world!=world || a->geometry!=geometry)) ||
-        a->name_count || a->name_capacity || a->model_count || a->model_capacity ||
+        a->names.active || a->names.capacity || a->model_count || a->model_capacity ||
         a->skin_count || a->skin_capacity || a->shader_count || a->shader_capacity || a->sound_count || a->sound_capacity ||
         (!world!=!geometry) || (entities.size && !entities.data) || (!world && (entities.data || entities.size)) ||
         (world && !qa_scene_world_observation_ready(world)))
@@ -261,6 +261,17 @@ bool qa_q3_presentation_world(qa_q3_presentation *p, qa_scene_world *world,
     return true;
 }
 
+static bool keep_registry_name(void *context, const qa_id_index_entry *indexed)
+{
+    qa_q3_presentation_assets *assets = context;
+    if (indexed->discriminator != Q3P_MODEL) return true;
+    const q3p_name *entry = qa_pool_at(&assets->names, indexed->value);
+    const char *name = qa_strings_cstr(assets->options.strings, entry->name);
+    bool retired = name[0] == '*' || (entry->handle > 0 &&
+        (size_t)entry->handle <= assets->model_count && !assets->models[entry->handle - 1]);
+    if (retired) qa_pool_release(&assets->names, indexed->value);
+    return !retired;
+}
 static void retire_registry_map(qa_q3_presentation_assets *assets)
 {
     for (size_t i = 0; i < assets->model_count; ++i) {
@@ -269,17 +280,7 @@ static void retire_registry_map(qa_q3_presentation_assets *assets)
         if (!q3p_model_shared(assets, model)) q3p_model_free(model);
         assets->models[i] = NULL;
     }
-    for (size_t i = 0; i < assets->name_capacity; ++i) {
-        q3p_name **link = &assets->names[i];
-        while (*link) {
-            q3p_name *entry = *link;
-            bool retired = entry->kind == Q3P_MODEL &&
-                (entry->name[0] == '*' || (entry->handle > 0 &&
-                (size_t)entry->handle <= assets->model_count && !assets->models[entry->handle - 1]));
-            if (retired) { *link = entry->next; free(entry); --assets->name_count; }
-            else link = &entry->next;
-        }
-    }
+    qa_id_index_retain(&assets->name_index, keep_registry_name, assets);
     assets->world = NULL; assets->geometry = NULL;
 }
 static void retire_presentation_map(qa_q3_presentation *p)

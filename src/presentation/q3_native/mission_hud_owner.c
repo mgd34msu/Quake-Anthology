@@ -132,7 +132,12 @@ static const qa_q3_item *powerup(int index)
     }
     return NULL; }
 static void item_picture(q3n_mission_hud *o,rectDef_t r,const qa_q3_item *item)
-{ int handle=0; if(o->menus->failed)return; if(item&&item->icon)q3nm_result(qa_q3_register_shader(o->options.assets,item->icon,true,&handle,o->menus->error)); pic(o,r,handle); }
+{
+    if(o->menus->failed)return;
+    const q3n_media_view *media=q3n_media_read(o->frame->media);
+    int handle=item&&item->icon&&item->tag>=0&&item->tag<16?media->powerups[item->tag].icon:0;
+    pic(o,r,handle);
+}
 static void armor(q3n_mission_hud *o,rectDef_t r,bool flat)
 {
     const q3n_media_view *m=q3n_media_read(o->frame->media);

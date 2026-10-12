@@ -846,7 +846,7 @@ bool frontend_remote_q3_runtime_restore_candidate_ready(const frontend_remote_q3
     qa_q3_presentation_assets *a=o?o->services.resources.assets:NULL;
     return attached(o) && o->restoring && o->frontend->source_restoring && !o->frontend->capture &&
         !o->initialized && !o->frames && !o->busy && !o->prepared && !o->faulted && !o->retiring &&
-        a && qa_q3_assets_idle(a) && !a->name_count && !a->model_count && !a->skin_count && !a->shader_count && !a->sound_count &&
+        a && qa_q3_assets_idle(a) && !a->names.active && !a->model_count && !a->skin_count && !a->shader_count && !a->sound_count &&
         q3n_remote_source_read(o->services.source,&source,e) &&
         qa_q3_presentation_binding_read(o->children.presentation,&backend,e) &&
         backend.options.assets==a && backend.options.owner==o->services.resources.identity &&

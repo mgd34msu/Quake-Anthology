@@ -25,6 +25,10 @@ bool qa_text_from_source_bytes(qa_bytes, char *out, size_t capacity, size_t *siz
 bool qa_unicode_whitespace(uint32_t scalar);
 bool qa_text_join_words(const char *const *,size_t,char *,size_t,qa_error *);
 /* Counted bytes, including embedded NULs; folding changes ASCII A-Z only. */
+static inline uint8_t qa_text_ascii_lower(uint8_t input_byte)
+{
+    return input_byte >= 'A' && input_byte <= 'Z' ? input_byte + ('a' - 'A') : input_byte;
+}
 int qa_text_bytes_compare(qa_bytes, qa_bytes, bool ascii_fold);
 bool qa_text_bytes_equal(qa_bytes, qa_bytes, bool ascii_fold);
 bool qa_text_bytes_prefix(qa_bytes text, qa_bytes prefix, bool ascii_fold);

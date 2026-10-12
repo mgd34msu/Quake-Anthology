@@ -22,9 +22,13 @@ struct qa_strings {
     bool bytes_bound;
 };
 
-static uint64_t string_hash(qa_bytes text) {
+static uint8_t string_byte(uint8_t byte, bool ascii_lower) {
+    return ascii_lower ? qa_text_ascii_lower(byte) : byte;
+}
+
+static uint64_t string_hash(qa_bytes text, bool ascii_lower) {
     uint64_t hash=UINT64_C(14695981039346656037);
-    for (size_t i=0;i<text.size;++i) { hash^=text.data[i]; hash*=UINT64_C(1099511628211); }
+    for (size_t i=0;i<text.size;++i) { hash^=string_byte(text.data[i],ascii_lower); hash*=UINT64_C(1099511628211); }
     return hash;
 }
 
@@ -57,14 +61,22 @@ void qa_strings_destroy(qa_strings *strings) {
     free(strings->entries); free(strings->buckets); free(strings);
 }
 
-static qa_string_id find(const qa_strings *strings, qa_bytes text, uint64_t hash, size_t *vacant) {
+static qa_string_id find(const qa_strings *strings, qa_bytes text, uint64_t hash,
+    bool ascii_lower, size_t *vacant) {
     if (!strings->bucket_count) return QA_STRING_NONE;
     size_t position=(size_t)hash & (strings->bucket_count-1);
     while (strings->buckets[position]) {
         qa_string_id id=strings->buckets[position];
         const string_entry *entry=&strings->entries[id-1u];
-        if (entry->hash==hash && entry->text.size==text.size &&
-            (!text.size || !memcmp(entry->text.data,text.data,text.size))) return id;
+        if (entry->hash==hash && entry->text.size==text.size) {
+            if (!ascii_lower) {
+                if (!text.size || !memcmp(entry->text.data,text.data,text.size)) return id;
+            } else {
+                size_t i=0;
+                while (i<text.size && entry->text.data[i]==string_byte(text.data[i],true)) ++i;
+                if (i==text.size) return id;
+            }
+        }
         position=(position+1)&(strings->bucket_count-1);
     }
     if (vacant) *vacant=position;
@@ -73,7 +85,12 @@ static qa_string_id find(const qa_strings *strings, qa_bytes text, uint64_t hash
 
 qa_string_id qa_strings_find(const qa_strings *strings, qa_bytes text) {
     if (!strings || (!text.data && text.size)) return QA_STRING_NONE;
-    return find(strings,text,string_hash(text),NULL);
+    return find(strings,text,string_hash(text,false),false,NULL);
+}
+
+qa_string_id qa_strings_find_ascii_lower(const qa_strings *strings, qa_bytes text) {
+    if (!strings || (!text.data && text.size)) return QA_STRING_NONE;
+    return find(strings,text,string_hash(text,true),true,NULL);
 }
 
 static bool reserve(qa_strings *strings, qa_error *error) {
@@ -108,20 +125,24 @@ static bool reserve(qa_strings *strings, qa_error *error) {
     return true;
 }
 
-bool qa_strings_intern(qa_strings *strings, qa_bytes text, qa_string_id *out, qa_error *error) {
+static bool intern(qa_strings *strings, qa_bytes text, bool ascii_lower,
+    qa_string_id *out, qa_error *error) {
     if (!strings || !out || (!text.data && text.size) || text.size==SIZE_MAX) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"invalid interned string input"); return false;
     }
-    uint64_t hash=string_hash(text);
-    qa_string_id existing=find(strings,text,hash,NULL);
+    uint64_t hash=string_hash(text,ascii_lower);
+    qa_string_id existing=find(strings,text,hash,ascii_lower,NULL);
     if (existing) { *out=existing; return true; }
     if (!reserve(strings,error)) return false;
     uint8_t *copy=qa_arena_alloc(&strings->arena,text.size+1,1,error);
     if (!copy) return false;
-    if (text.size) memcpy(copy,text.data,text.size);
+    if (ascii_lower) {
+        for (size_t i=0;i<text.size;++i) copy[i]=string_byte(text.data[i],true);
+    } else if (text.size) memcpy(copy,text.data,text.size);
     copy[text.size]=0;
     size_t bucket=0;
-    (void)find(strings,text,hash,&bucket);
+    text=(qa_bytes){copy,text.size};
+    (void)find(strings,text,hash,false,&bucket);
     uint32_t flags=0;
     if(text.size&&text.data[0]=='*') flags|=QA_NAME_SEXED_SOUND;
     if(text.size>=8&&!memcmp(text.data,"monster_",8)) flags|=QA_NAME_MONSTER;
@@ -161,6 +182,13 @@ bool qa_strings_intern(qa_strings *strings, qa_bytes text, qa_string_id *out, qa
     qa_string_id id=(qa_string_id)++strings->count;
     strings->buckets[bucket]=id;
     *out=id; return true;
+}
+bool qa_strings_intern(qa_strings *strings, qa_bytes text, qa_string_id *out, qa_error *error) {
+    return intern(strings,text,false,out,error);
+}
+bool qa_strings_intern_ascii_lower(qa_strings *strings, qa_bytes text,
+    qa_string_id *out, qa_error *error) {
+    return intern(strings,text,true,out,error);
 }
 bool qa_strings_intern_cstr(qa_strings *strings, const char *text, qa_string_id *out, qa_error *error) {
     if (!text) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"missing string text"); return false; }

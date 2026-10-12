@@ -367,12 +367,12 @@ static bool pickup(const q3n_frame *f, const qa_q3_entity *s, bool global, qa_er
     int32_t sound=0, number=s->number; bool emit=true;
     if(global) {
         number=q3n_frame_snapshot_player(f)->clientNum; emit=item->sound!=NULL;
-        if(emit && (!qa_q3_register_sound(f->assets,item->sound,false,&sound,error) || !q3ne_current(f,error)))return false;
+        sound=m->items[s->eventParm].pickup_sound;
     } else if(item->kind==QA_Q3_ITEM_POWERUP || item->kind==QA_Q3_ITEM_TEAM)sound=m->sounds[Q3N_S_NORMAL_HEALTH];
     else if(item->kind==QA_Q3_ITEM_PERSISTENT) {
         emit=q3n_frame_product(f)==QA_Q3_TEAM_ARENA && item->tag>=10 && item->tag<=13;
         if(emit) { const q3n_sound types[]={Q3N_S_SCOUT,Q3N_S_GUARD,Q3N_S_DOUBLER,Q3N_S_AMMOREGEN}; sound=m->sounds[types[item->tag-10]]; }
-    } else if(!qa_q3_register_sound(f->assets,item->sound,false,&sound,error) || !q3ne_current(f,error))return false;
+    } else sound=m->items[s->eventParm].pickup_sound;
     if(emit && !q3ne_sound(f,sound,NULL,number,0,false,error))return false;
     if(s->number==q3n_frame_snapshot_player(f)->clientNum) {
         uint64_t starts=(uint64_t)(uint32_t)f->time*UINT64_C(1000000);

@@ -69,29 +69,15 @@ bool qa_q3_assets_services(const qa_q3_presentation_assets *a,
     *out = a->options; *world = a->world; *geometry = a->geometry; return true;
 }
 
-static unsigned char key_byte(q3p_resource_kind kind, unsigned char byte)
-{
-    return kind == Q3P_SHADER && byte >= 'A' && byte <= 'Z' ? byte + ('a' - 'A') : byte;
-}
-
-uint64_t q3p_name_hash(q3p_resource_kind kind, const char *name)
-{
-    uint64_t hash = UINT64_C(1469598103934665603) ^ (uint64_t)kind;
-    for (size_t i = 0; name[i]; ++i) hash = (hash ^ key_byte(kind, (unsigned char)name[i])) * UINT64_C(1099511628211);
-    return hash;
-}
-
 q3p_name *q3p_find_name(qa_q3_presentation_assets *a, q3p_resource_kind kind, const char *name)
 {
-    if (!a->name_capacity) return NULL;
-    uint64_t hash = q3p_name_hash(kind, name);
-    for (q3p_name *entry = a->names[hash & (a->name_capacity - 1)]; entry; entry = entry->next) {
-        if (entry->hash != hash || entry->kind != kind) continue;
-        size_t i = 0;
-        while (entry->name[i] && name[i] && (unsigned char)entry->name[i] == key_byte(kind, (unsigned char)name[i])) ++i;
-        if (!entry->name[i] && !name[i]) return entry;
-    }
-    return NULL;
+    qa_bytes text = {(const uint8_t *)name, strlen(name)};
+    qa_string_id key = kind == Q3P_SHADER ?
+        qa_strings_find_ascii_lower(a->options.strings, text) :
+        qa_strings_find(a->options.strings, text);
+    if (!key) return NULL;
+    const qa_id_index_entry *entry = qa_id_index_find(&a->name_index, key, (uint64_t)kind);
+    return entry ? qa_pool_at(&a->names, entry->value) : NULL;
 }
 
 bool q3p_add_name(qa_q3_presentation_assets *a, q3p_resource_kind kind, const char *name,
@@ -99,32 +85,39 @@ bool q3p_add_name(qa_q3_presentation_assets *a, q3p_resource_kind kind, const ch
 {
     q3p_name *prior = q3p_find_name(a, kind, name);
     if (prior) { prior->handle = handle; return true; }
-    size_t length = strlen(name);
-    if (length > SIZE_MAX - sizeof(q3p_name) - 1)
-        return q3p_fail(error, QA_ERROR_MEMORY, "Q3 resource name exceeds capacity");
-    q3p_name *entry = malloc(sizeof(*entry) + length + 1);
-    if (!entry) return q3p_fail(error, QA_ERROR_MEMORY, "retaining Q3 resource name");
-    if (a->name_count >= a->name_capacity - a->name_capacity / 4) {
-        size_t capacity = a->name_capacity ? a->name_capacity * 2 : 32;
-        if (capacity < a->name_capacity || capacity > SIZE_MAX / sizeof(*a->names)) {
-            free(entry); return q3p_fail(error, QA_ERROR_MEMORY, "Q3 resource name index exceeds capacity");
-        }
-        q3p_name **table = calloc(capacity, sizeof(*table));
-        if (!table) { free(entry); return q3p_fail(error, QA_ERROR_MEMORY, "growing Q3 resource name index"); }
-        for (size_t i = 0; i < a->name_capacity; ++i) {
-            q3p_name *next;
-            for (q3p_name *row = a->names[i]; row; row = next) {
-                next = row->next; size_t bucket = row->hash & (capacity - 1);
-                row->next = table[bucket]; table[bucket] = row;
-            }
-        }
-        free(a->names); a->names = table; a->name_capacity = capacity;
-    }
-    *entry = (q3p_name){.kind = kind, .handle = handle, .option = option, .hash = q3p_name_hash(kind, name)};
-    for (size_t i = 0; i <= length; ++i) entry->name[i] = (char)key_byte(kind, (unsigned char)name[i]);
-    size_t bucket = entry->hash & (a->name_capacity - 1);
-    entry->next = a->names[bucket]; a->names[bucket] = entry; ++a->name_count;
+    qa_bytes text = {(const uint8_t *)name, strlen(name)};
+    qa_string_id key, alias = QA_STRING_NONE;
+    bool okay = kind == Q3P_SHADER ?
+        qa_strings_intern_ascii_lower(a->options.strings, text, &key, error) :
+        qa_strings_intern(a->options.strings, text, &key, error);
+    if (!okay || (kind == Q3P_SKIN &&
+        !qa_strings_intern_ascii_lower(a->options.strings, text, &alias, error)) ||
+        !qa_id_index_reserve(&a->name_index, kind == Q3P_SKIN ? 2 : 1, error)) return false;
+    if (a->names.head == SIZE_MAX && !qa_pool_extend(&a->names, &a->name_storage,
+        a->names.capacity ? a->names.capacity : 1, error)) return false;
+    size_t slot;
+    q3p_name *entry = qa_pool_take(&a->names, &slot);
+    *entry = (q3p_name){.name = key, .kind = kind, .handle = handle, .option = option};
+    qa_id_index_insert(&a->name_index, key, (uint64_t)kind, slot);
+    if (kind == Q3P_SKIN) qa_id_index_insert(&a->name_index, alias, Q3P_SKIN_ALIAS, slot);
     return true;
+}
+
+static const q3p_name *source_skin_name(const qa_q3_presentation_assets *a, const char *name)
+{
+    qa_string_id key = qa_strings_find_ascii_lower(a->options.strings,
+        (qa_bytes){(const uint8_t *)name, strlen(name)});
+    if (!key) return NULL;
+    qa_id_index_cursor cursor = qa_id_index_begin(&a->name_index, key, Q3P_SKIN_ALIAS);
+    const q3p_name *first = NULL;
+    size_t slot;
+    while (qa_id_index_next(&a->name_index, &cursor, &slot)) {
+        const q3p_name *entry = qa_pool_at(&a->names, slot);
+        /* RE_RegisterSkin walks registration slots from oldest to newest.
+         * Failed skins still occupy a slot even though their return handle is 0. */
+        first = entry;
+    }
+    return first;
 }
 
 bool q3p_select(qa_q3_presentation_assets *a, const char *name, qa_q3_asset_kind kind,
@@ -146,6 +139,9 @@ bool qa_q3_presentation_assets_create(const qa_q3_presentation_asset_options *op
     qa_q3_presentation_assets *a = calloc(1, sizeof(*a));
     if (!a) return q3p_fail(error, QA_ERROR_MEMORY, "allocating Q3 presentation resource handles");
     a->options = *options; a->users = 1;
+    a->name_index.storage = &a->name_storage;
+    if (!qa_pool_prepare(&a->names, &a->name_storage, 0,
+        sizeof(q3p_name), _Alignof(q3p_name), error)) { free(a); return false; }
     if (a->options.strings) qa_strings_retain(a->options.strings);
     else if (!qa_strings_create(&a->options.strings, error)) { free(a); return false; }
     static const char *const tag_names[] = {
@@ -185,10 +181,6 @@ bool qa_q3_assets_idle(const qa_q3_presentation_assets *a)
 }
 static void assets_free(qa_q3_presentation_assets *a)
 {
-    for (size_t i = 0; i < a->name_capacity; ++i) {
-        q3p_name *next;
-        for (q3p_name *row = a->names[i]; row; row = next) { next = row->next; free(row); }
-    }
     for (size_t i = 0; i < a->model_count; ++i)
         if (!q3p_model_shared(a, a->models[i])) q3p_model_free(a->models[i]);
     for (size_t i = 0; i < a->skin_count; ++i) {
@@ -201,7 +193,8 @@ static void assets_free(qa_q3_presentation_assets *a)
     q3p_provider_custody_release(a);
     qa_q3_assets_release(a->parent);
     qa_strings_destroy(a->options.strings);
-    free(a->models); free(a->skins); free(a->sounds); free(a->shaders); free(a->names); free(a);
+    qa_id_index_destroy(&a->name_index); qa_arena_destroy(&a->name_storage);
+    free(a->models); free(a->skins); free(a->sounds); free(a->shaders); free(a);
 }
 void q3p_assets_dispose_borrowed(qa_q3_presentation_assets *a)
 {
@@ -263,18 +256,6 @@ bool q3p_skin_materials(const qa_q3_presentation_assets *a, int32_t handle,
     if (!skin->source_registration) return true;
     *out = skin->materials; *count = skin->map.count; return true;
 }
-static bool same_skin_name(const char *a, const char *b)
-{
-    size_t i = 0;
-    while (a[i] && b[i]) {
-        unsigned char x = (unsigned char)a[i], y = (unsigned char)b[i];
-        if (x >= 'A' && x <= 'Z') x = (unsigned char)(x + ('a' - 'A'));
-        if (y >= 'A' && y <= 'Z') y = (unsigned char)(y + ('a' - 'A'));
-        if (x != y) return false;
-        ++i;
-    }
-    return !a[i] && !b[i];
-}
 static bool skin_models_admit(qa_q3_presentation_assets *assets,
     const qa_model_skin_map *skin, qa_error *error)
 {
@@ -295,11 +276,8 @@ static bool register_source_skin(qa_q3_presentation_assets *a, const char *path,
     int32_t *out, qa_error *error)
 {
     if (!*path || strlen(path) >= 64) { *out = 0; return true; }
-    for (size_t i = 0; i < a->name_capacity; ++i)
-        for (const q3p_name *entry = a->names[i]; entry; entry = entry->next)
-            if (entry->kind == Q3P_SKIN && same_skin_name(entry->name, path)) {
-                *out = entry->handle; return true;
-            }
+    const q3p_name *prior = source_skin_name(a, path);
+    if (prior) { *out = prior->handle; return true; }
     if (a->skin_count >= 1023) {
         if (a->options.print) a->options.print(a->options.context, "WARNING: RE_RegisterSkin MAX_SKINS hit\n");
         *out = 0; return true;
@@ -421,9 +399,9 @@ bool qa_q3_register_shader(qa_q3_presentation_assets *a, const char *path, bool 
         &images, QA_MATERIAL_PICTURE, &material, error);
     if (ok && material && material->registration == 0 && qa_material_library_has_source_profile(provider.materials)) {
         const char *default_name = "*default";
-        bool named_default = strcspn(path, ".") == strlen(default_name);
-        for (size_t i = 0; named_default && default_name[i]; ++i)
-            named_default = key_byte(Q3P_SHADER, (unsigned char)path[i]) == (unsigned char)default_name[i];
+        bool named_default = qa_text_bytes_equal(
+            (qa_bytes){(const uint8_t *)path, strcspn(path, ".")},
+            (qa_bytes){(const uint8_t *)default_name, strlen(default_name)}, true);
         if (!named_default && a->options.print) a->options.print(a->options.context, "WARNING: MAX_SHADERS hit\n");
         free(normalized); --a->busy; *out = 0; return true;
     }
@@ -478,9 +456,13 @@ bool qa_q3_register_picture_image(qa_q3_presentation_assets *a, const qa_scene_i
 static const char *registered_name(const qa_q3_presentation_assets *assets, q3p_resource_kind kind, int32_t handle)
 {
     const char *name = NULL;
-    for (size_t i = 0; i < assets->name_capacity; ++i)
-        for (const q3p_name *entry = assets->names[i]; entry; entry = entry->next)
-            if (entry->kind == kind && entry->handle == handle && (!name || strcmp(entry->name, name) < 0)) name = entry->name;
+    for (size_t i = 0; i < assets->name_index.count; ++i) {
+        const qa_id_index_entry *indexed = assets->name_index.entries + i;
+        if (indexed->discriminator != (uint64_t)kind) continue;
+        const q3p_name *entry = qa_pool_at(&assets->names, indexed->value);
+        const char *text = qa_strings_cstr(assets->options.strings, entry->name);
+        if (entry->handle == handle && (!name || strcmp(text, name) < 0)) name = text;
+    }
     return name;
 }
 static bool registered_model_read(const qa_q3_presentation_assets *assets, size_t index,
