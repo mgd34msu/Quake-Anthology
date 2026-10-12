@@ -345,11 +345,7 @@ bool qa_application_network_q2_recipient(qa_application *app, qa_actor_owner sou
             engine->world != app->world || !provider->state.native.host ||
             (engine->profile != QA_NATIVE_Q2_GAME_API3 && engine->profile != QA_NATIVE_Q2_GAME_API2023))
             return application_fail(error, QA_ERROR_ARGUMENT, "Q2 recipient lost its actual original GAME Source");
-        for (uint32_t i = 1; i < 257; ++i) {
-            if (!qa_actor_id_equal(engine->clients[i].actor, actor)) continue;
-            if (slot) return application_fail(error, QA_ERROR_FORMAT, "Q2 recipient aliases two actual Source clients");
-            slot = i;
-        }
+        slot = application_native_q2_client_slot(engine, actor);
         if (!slot)
             return application_fail(error, QA_ERROR_ARGUMENT, "Q2 recipient has no physical Source client");
         qa_native_slot_binding physical;

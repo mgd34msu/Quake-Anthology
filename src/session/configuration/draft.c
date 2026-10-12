@@ -1,4 +1,39 @@
 #include "internal.h"
+#include <stdatomic.h>
+
+static atomic_uint_fast64_t draft_revisions;
+static void draft_changed(qa_launch_draft *draft)
+{ draft->revision = atomic_fetch_add_explicit(&draft_revisions, 1, memory_order_relaxed) + 1; }
+
+static bool rules_equal(const qa_mode_rules *a, const qa_mode_rules *b)
+{
+    return a->source == b->source && a->kind == b->kind && a->ruleset == b->ruleset &&
+        a->teams[0] == b->teams[0] && a->teams[1] == b->teams[1] && a->teams[2] == b->teams[2] &&
+        a->forced_team == b->forced_team && a->frag_limit == b->frag_limit &&
+        a->capture_limit == b->capture_limit && a->warmup_seconds == b->warmup_seconds &&
+        a->competition == b->competition && a->setup_seconds == b->setup_seconds &&
+        a->countdown_seconds == b->countdown_seconds && a->match_seconds == b->match_seconds &&
+        a->max_game_players == b->max_game_players && a->election_percent == b->election_percent &&
+        a->teamplay == b->teamplay && a->rune_mask == b->rune_mask && a->vote_limit == b->vote_limit &&
+        a->flags == b->flags && a->referee_flags == b->referee_flags &&
+        a->time_limit_minutes == b->time_limit_minutes && a->obelisk_health == b->obelisk_health &&
+        a->obelisk_regen == b->obelisk_regen && a->obelisk_regen_ns == b->obelisk_regen_ns &&
+        a->obelisk_respawn_ns == b->obelisk_respawn_ns && a->enabled == b->enabled &&
+        a->friendly_fire == b->friendly_fire && a->force_join == b->force_join &&
+        a->match_lock == b->match_lock && a->paused == b->paused && a->auto_lock == b->auto_lock &&
+        a->relics == b->relics && a->single_player_active == b->single_player_active &&
+        a->tournament_restart == b->tournament_restart && a->start_map == b->start_map &&
+        a->force_balance == b->force_balance && a->voting_disabled == b->voting_disabled &&
+        a->rogue_deathmatch == b->rogue_deathmatch;
+}
+static bool equipment_equal(const qa_equipment_selection *a, const qa_equipment_selection *b)
+{
+    return a->grapple == b->grapple && a->binding == b->binding &&
+        a->retain_on_weapon_change == b->retain_on_weapon_change &&
+        a->release_on_jump == b->release_on_jump && a->release_on_teleport == b->release_on_teleport &&
+        a->grenades.enabled == b->grenades.enabled && a->grenades.infinite_ammo == b->grenades.infinite_ammo &&
+        a->grenades.initial_ammo == b->grenades.initial_ammo && a->grenades.capacity == b->grenades.capacity;
+}
 
 bool launch_grow(void **data, size_t *capacity, size_t count, size_t size, qa_error *error)
 {
@@ -49,6 +84,7 @@ bool launch_empty(qa_catalog *catalog, qa_launch_draft **out, qa_error *error)
     if (!d) { qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate launch draft"); return false; }
     if (!qa_strings_create(&d->strings, error)) { free(d); return false; }
     qa_catalog_retain(catalog); d->catalog = catalog;
+    draft_changed(d);
     *out = d; return true;
 }
 bool qa_launch_draft_create(qa_catalog *catalog, qa_product_id product, const char *map,
@@ -75,6 +111,7 @@ void qa_launch_draft_destroy(qa_launch_draft *d)
     qa_strings_destroy(d->strings); qa_catalog_release(d->catalog); free(d);
 }
 const qa_launch_choices *qa_launch_draft_choices(const qa_launch_draft *d) { return d ? &d->choices : NULL; }
+uint64_t qa_launch_draft_revision(const qa_launch_draft *d) { return d ? d->revision : 0; }
 qa_catalog *qa_launch_draft_catalog(const qa_launch_draft *d) { return d ? d->catalog : NULL; }
 
 bool qa_launch_set_world(qa_launch_draft *d, const qa_launch_world *input, qa_error *error)
@@ -86,7 +123,14 @@ bool qa_launch_set_world(qa_launch_draft *d, const qa_launch_world *input, qa_er
     v.spawn_point = launch_text(d, input->explicit_spawn_point ? input->spawn_point : "", error);
     v.environment_path = launch_text(d, input->environment_path, error);
     if (!v.map || !v.start_command || !v.spawn_point || !v.environment_path) return false;
-    d->choices.world = v; return true;
+    const qa_launch_world *old = &d->choices.world;
+    if (old->preset == v.preset && old->geometry == v.geometry && old->presentation == v.presentation &&
+        old->map == v.map && old->start_command == v.start_command && old->spawn_point == v.spawn_point &&
+        old->explicit_spawn_point == v.explicit_spawn_point && old->explicit_presentation == v.explicit_presentation &&
+        old->doppler == v.doppler && old->campaign == v.campaign && old->environment == v.environment &&
+        old->environment_product == v.environment_product && old->environment_path == v.environment_path &&
+        old->skill == v.skill) return true;
+    d->choices.world = v; draft_changed(d); return true;
 }
 bool qa_launch_set_provider(qa_launch_draft *d, const qa_launch_provider *input, qa_error *error)
 {
@@ -98,19 +142,29 @@ bool qa_launch_set_provider(qa_launch_draft *d, const qa_launch_provider *input,
     v.instance = launch_text(d, input->instance, error); v.implementation = launch_text(d, input->implementation, error);
     v.artifact = launch_text(d, input->artifact, error); v.component = launch_text(d, input->component, error);
     if (!v.instance || !v.implementation || !v.artifact || !v.component) return false;
+    size_t index = d->choices.provider_count;
+    for (size_t i = 0; i < index; ++i) if (d->choices.providers[i].instance == v.instance) { index = i; break; }
+    if (index < d->choices.provider_count) {
+        const qa_launch_provider *old = &d->choices.providers[index];
+        if (old->product == v.product && old->runtime == v.runtime && old->implementation == v.implementation &&
+            old->artifact == v.artifact && old->component == v.component && old->options.size == v.options.size &&
+            (!v.options.size || !memcmp(old->options.data, v.options.data, v.options.size)) &&
+            old->clock.kind == v.clock.kind && old->clock.initial_time_ns == v.clock.initial_time_ns &&
+            old->clock.interval_ns == v.clock.interval_ns && old->clock.minimum_frame_ns == v.clock.minimum_frame_ns &&
+            old->clock.maximum_frame_ns == v.clock.maximum_frame_ns && old->clock.initial_lead_ns == v.clock.initial_lead_ns &&
+            old->clock.maximum_steps == v.clock.maximum_steps) return true;
+    }
     v.options.data = NULL;
     if (input->options.size) {
         uint8_t *bytes = malloc(input->options.size);
         if (!bytes) { qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot retain provider options"); return false; }
         memcpy(bytes, input->options.data, input->options.size); v.options.data = bytes;
     }
-    size_t index = d->choices.provider_count;
-    for (size_t i = 0; i < index; ++i) if (!strcmp(d->choices.providers[i].instance, v.instance)) { index = i; break; }
     if (!launch_grow((void **)&d->choices.providers, &d->provider_capacity, index + 1, sizeof(v), error)) { free((void *)v.options.data); return false; }
     qa_launch_provider *items = (qa_launch_provider *)d->choices.providers;
     if (index < d->choices.provider_count) free((void *)items[index].options.data);
     else ++d->choices.provider_count;
-    items[index] = v; return true;
+    items[index] = v; draft_changed(d); return true;
 }
 bool qa_launch_remove_provider(qa_launch_draft *d, const char *name, qa_error *error)
 {
@@ -118,7 +172,7 @@ bool qa_launch_remove_provider(qa_launch_draft *d, const char *name, qa_error *e
     qa_launch_provider *items = (qa_launch_provider *)d->choices.providers;
     for (size_t i = 0; i < d->choices.provider_count; ++i) if (!strcmp(items[i].instance, name)) {
         free((void *)items[i].options.data);
-        memmove(items + i, items + i + 1, (--d->choices.provider_count - i) * sizeof(*items)); break;
+        memmove(items + i, items + i + 1, (--d->choices.provider_count - i) * sizeof(*items)); draft_changed(d); break;
     }
     return true;
 }
@@ -148,11 +202,14 @@ bool qa_launch_bind(qa_launch_draft *d, const qa_launch_binding *input, qa_error
     size_t index = d->choices.binding_count;
     for (size_t i = 0; i < index; ++i) {
         const qa_launch_binding *b = &d->choices.bindings[i];
-        if (b->role == v.role && launch_scope_equal(b->scope, v.scope) && !strcmp(b->selector, v.selector)) { index = i; break; }
+        if (b->role == v.role && launch_scope_equal(b->scope, v.scope) && b->selector == v.selector) {
+            if (b->instance == v.instance && b->definition == v.definition) return true;
+            index = i; break;
+        }
     }
     if (!launch_grow((void **)&d->choices.bindings, &d->binding_capacity, index + 1, sizeof(v), error)) return false;
     if (index == d->choices.binding_count) ++d->choices.binding_count;
-    ((qa_launch_binding *)d->choices.bindings)[index] = v; return true;
+    ((qa_launch_binding *)d->choices.bindings)[index] = v; draft_changed(d); return true;
 }
 bool qa_launch_unbind(qa_launch_draft *d, qa_launch_scope scope, qa_launch_role role,
                       const char *selector, qa_error *error)
@@ -163,17 +220,17 @@ bool qa_launch_unbind(qa_launch_draft *d, qa_launch_scope scope, qa_launch_role 
     qa_launch_binding *items = (qa_launch_binding *)d->choices.bindings;
     for (size_t i = 0; i < d->choices.binding_count; ++i)
         if (items[i].role == role && launch_scope_equal(items[i].scope, scope) && !strcmp(items[i].selector, selector ? selector : "")) {
-            memmove(items + i, items + i + 1, (--d->choices.binding_count - i) * sizeof(*items)); break;
+            memmove(items + i, items + i + 1, (--d->choices.binding_count - i) * sizeof(*items)); draft_changed(d); break;
         }
     return true;
 }
 
-#define UPSERT(field,cap,type,equal) \
+#define UPSERT(field,cap,type,equal,unchanged) \
     size_t index = d->choices.field##_count; \
-    for (size_t i = 0; i < index; ++i) { const type *old = &d->choices.field[i]; if (equal) { index = i; break; } } \
+    for (size_t i = 0; i < index; ++i) { const type *old = &d->choices.field[i]; if (equal) { if (unchanged) return true; index = i; break; } } \
     if (!launch_grow((void **)&d->choices.field, &d->cap, index + 1, sizeof(v), error)) return false; \
     if (index == d->choices.field##_count) ++d->choices.field##_count; \
-    ((type *)d->choices.field)[index] = v; return true
+    ((type *)d->choices.field)[index] = v; draft_changed(d); return true
 
 /* Singular count member names keep public spans conventional. */
 bool qa_launch_set_mod(qa_launch_draft *d, const qa_launch_mod_selection *input, qa_error *error)
@@ -186,9 +243,10 @@ bool qa_launch_set_mod(qa_launch_draft *d, const qa_launch_mod_selection *input,
     }
     size_t n = d->choices.mod_count, i = 0;
     while (i < n && strcmp(d->choices.mods[i].instance, v.instance)) ++i;
+    if (i < n && d->choices.mods[i].component == v.component && d->choices.mods[i].enabled == v.enabled) return true;
     if (!launch_grow((void **)&d->choices.mods, &d->mod_capacity, i + 1, sizeof(v), error)) return false;
     if (i == n) ++d->choices.mod_count;
-    ((qa_launch_mod_selection *)d->choices.mods)[i] = v; return true;
+    ((qa_launch_mod_selection *)d->choices.mods)[i] = v; draft_changed(d); return true;
 }
 bool qa_launch_set_mode(qa_launch_draft *d, const qa_launch_mode *input, qa_error *error)
 {
@@ -199,16 +257,22 @@ bool qa_launch_set_mode(qa_launch_draft *d, const qa_launch_mode *input, qa_erro
     for (size_t i = 0; i < 3; ++i) { v.teams[i] = launch_text(d, input->teams[i], error); if (!v.teams[i]) return false; }
     size_t n = d->choices.mode_count, i = 0;
     while (i < n && strcmp(d->choices.modes[i].instance, v.instance)) ++i;
+    if (i < n) {
+        const qa_launch_mode *old = &d->choices.modes[i];
+        if (old->teams[0] == v.teams[0] && old->teams[1] == v.teams[1] && old->teams[2] == v.teams[2] &&
+            old->forced_team == v.forced_team && old->primary_score == v.primary_score &&
+            rules_equal(&old->rules, &v.rules)) return true;
+    }
     if (!launch_grow((void **)&d->choices.modes, &d->mode_capacity, i + 1, sizeof(v), error)) return false;
     if (i == n) ++d->choices.mode_count;
-    ((qa_launch_mode *)d->choices.modes)[i] = v; return true;
+    ((qa_launch_mode *)d->choices.modes)[i] = v; draft_changed(d); return true;
 }
 bool qa_launch_remove_mode(qa_launch_draft *d, const char *name, qa_error *error)
 {
     if (!valid_draft(d, name, error)) return false;
     qa_launch_mode *items = (qa_launch_mode *)d->choices.modes;
     for (size_t i = 0; i < d->choices.mode_count; ++i) if (!strcmp(items[i].instance, name)) {
-        memmove(items + i, items + i + 1, (--d->choices.mode_count - i) * sizeof(*items)); break;
+        memmove(items + i, items + i + 1, (--d->choices.mode_count - i) * sizeof(*items)); draft_changed(d); break;
     }
     return true;
 }
@@ -219,7 +283,10 @@ bool qa_launch_set_equipment(qa_launch_draft *d, const qa_launch_equipment *inpu
     v.instance = launch_text(d, input->instance, error); v.grapple_source = launch_text(d, input->grapple_source, error);
     v.grenade_source = launch_text(d, input->grenade_source, error);
     if (!v.instance || !*v.instance || !v.grapple_source || !v.grenade_source) return false;
-    UPSERT(equipment, equipment_capacity, qa_launch_equipment, launch_scope_equal(old->scope, v.scope) && !strcmp(old->instance, v.instance));
+    UPSERT(equipment, equipment_capacity, qa_launch_equipment,
+        launch_scope_equal(old->scope, v.scope) && old->instance == v.instance,
+        old->grapple_source == v.grapple_source && old->grenade_source == v.grenade_source &&
+            equipment_equal(&old->selection, &v.selection));
 }
 bool qa_launch_set_seat(qa_launch_draft *d, const qa_launch_seat *input, qa_error *error)
 {
@@ -236,16 +303,25 @@ bool qa_launch_set_seat(qa_launch_draft *d, const qa_launch_seat *input, qa_erro
         (input->character_head_model && !v.character_head_model) || (input->character_head_skin && !v.character_head_skin)) return false;
     size_t n = d->choices.seat_count, i = 0;
     while (i < n && d->choices.seats[i].id != v.id) ++i;
+    if (i < n) {
+        const qa_launch_seat *old = &d->choices.seats[i];
+        if (qa_actor_id_equal(old->actor, v.actor) && old->name == v.name && old->team == v.team &&
+            old->input_device == v.input_device && old->local == v.local && old->spectator == v.spectator &&
+            old->bot == v.bot && old->bot_skill == v.bot_skill && old->bot_definition == v.bot_definition &&
+            old->bot_delay_ms == v.bot_delay_ms && old->character_model == v.character_model &&
+            old->character_skin == v.character_skin && old->character_head_model == v.character_head_model &&
+            old->character_head_skin == v.character_head_skin) return true;
+    }
     if (!launch_grow((void **)&d->choices.seats, &d->seat_capacity, i + 1, sizeof(v), error)) return false;
     if (i == n) ++d->choices.seat_count;
-    ((qa_launch_seat *)d->choices.seats)[i] = v; return true;
+    ((qa_launch_seat *)d->choices.seats)[i] = v; draft_changed(d); return true;
 }
 bool qa_launch_remove_seat(qa_launch_draft *d, uint32_t id, qa_error *error)
 {
     if (!d) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "seat removal requires a draft"); return false; }
     qa_launch_seat *items = (qa_launch_seat *)d->choices.seats;
     for (size_t i = 0; i < d->choices.seat_count; ++i) if (items[i].id == id) {
-        memmove(items + i, items + i + 1, (--d->choices.seat_count - i) * sizeof(*items)); break;
+        memmove(items + i, items + i + 1, (--d->choices.seat_count - i) * sizeof(*items)); draft_changed(d); break;
     }
     return true;
 }
@@ -254,7 +330,10 @@ bool qa_launch_set_loadout(qa_launch_draft *d, const qa_launch_loadout *input, q
     if (!valid_draft(d, input, error)) return false;
     qa_launch_loadout v = *input; v.item = launch_text(d, input->item, error);
     if (!v.item || !*v.item) return false;
-    UPSERT(loadout, loadout_capacity, qa_launch_loadout, launch_scope_equal(old->scope, v.scope) && !strcmp(old->item, v.item));
+    UPSERT(loadout, loadout_capacity, qa_launch_loadout,
+        launch_scope_equal(old->scope, v.scope) && old->item == v.item,
+        old->quantity == v.quantity && old->capacity == v.capacity &&
+            old->override_capacity == v.override_capacity && old->drop_on_death == v.drop_on_death);
 }
 bool qa_launch_set_monster(qa_launch_draft *d, const qa_launch_monster *input, qa_error *error)
 {
@@ -265,9 +344,11 @@ bool qa_launch_set_monster(qa_launch_draft *d, const qa_launch_monster *input, q
     if (!v.authored_classname || !v.instance || !v.classname) return false;
     size_t n = d->choices.monster_count, i = 0;
     while (i < n && strcmp(d->choices.monsters[i].authored_classname, v.authored_classname)) ++i;
+    if (i < n && d->choices.monsters[i].instance == v.instance &&
+        d->choices.monsters[i].classname == v.classname && d->choices.monsters[i].map_defined == v.map_defined) return true;
     if (!launch_grow((void **)&d->choices.monsters, &d->monster_capacity, i + 1, sizeof(v), error)) return false;
     if (i == n) ++d->choices.monster_count;
-    ((qa_launch_monster *)d->choices.monsters)[i] = v; return true;
+    ((qa_launch_monster *)d->choices.monsters)[i] = v; draft_changed(d); return true;
 }
 #undef UPSERT
 
@@ -284,9 +365,11 @@ bool qa_launch_set_weapon_behavior(qa_launch_draft *d, const qa_launch_weapon_be
         if (old->role == v.role && launch_scope_equal(old->scope, v.scope) && !strcmp(old->weapon, v.weapon)) break;
         ++i;
     }
+    if (i < n && d->choices.behaviors[i].instance == v.instance &&
+        d->choices.behaviors[i].behavior == v.behavior && d->choices.behaviors[i].enabled == v.enabled) return true;
     if (!launch_grow((void **)&d->choices.behaviors, &d->behavior_capacity, i + 1, sizeof(v), error)) return false;
     if (i == n) ++d->choices.behavior_count;
-    ((qa_launch_weapon_behavior *)d->choices.behaviors)[i] = v; return true;
+    ((qa_launch_weapon_behavior *)d->choices.behaviors)[i] = v; draft_changed(d); return true;
 }
 
 static bool rebase_product(const qa_catalog *source, const qa_catalog *target,

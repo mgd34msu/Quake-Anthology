@@ -112,6 +112,15 @@ typedef struct frontend_pause_cvars {
     qa_cvars *cvars;
     qa_cvar_handle cl_paused, sv_paused;
 } frontend_pause_cvars;
+typedef struct frontend_binding_publication {
+    const qa_input_seat *input;
+    const qa_launch_draft *draft;
+    const qa_catalog *catalog;
+    qa_actor_id actor;
+    uint64_t bindings, draft_edits, catalog_generation, inventory, configuration, query;
+    qa_ruleset_id dialect;
+    qa_game_family entities_family;
+} frontend_binding_publication;
 typedef struct frontend_seat {
     struct qa_frontend *frontend;
     frontend_pause_cvars pause_cvars;
@@ -157,6 +166,8 @@ typedef struct frontend_seat {
     qa_ui_row *binding_rows;
     char *binding_labels, *binding_command;
     size_t binding_capacity, binding_label_capacity, selected_binding;
+    frontend_binding_publication binding_publication;
+    uint64_t binding_revision, binding_query_revision;
     qa_physical_input pending_binding;
     bool binding_conflict;
     char binding_query[321];

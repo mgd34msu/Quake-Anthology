@@ -451,6 +451,7 @@ void qa_input_seat_configuration_publish(qa_input_seat *active, qa_input_seat *c
 bool qa_input_seat_unbind(qa_input_seat *, qa_physical_input);
 void qa_input_seat_unbind_all(qa_input_seat *);
 size_t qa_input_seat_binding_count(const qa_input_seat *);
+uint64_t qa_input_seat_binding_revision(const qa_input_seat *);
 const qa_input_binding *qa_input_seat_binding_at(const qa_input_seat *, size_t);
 const qa_input_binding *qa_input_seat_binding(const qa_input_seat *, qa_physical_input);
 bool qa_input_seat_remap_controller(qa_input_seat *, int32_t device, qa_error *);

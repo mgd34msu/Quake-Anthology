@@ -8,6 +8,7 @@ struct qa_launch_draft {
     qa_catalog *catalog;
     qa_strings *strings;
     qa_launch_choices choices;
+    uint64_t revision;
     size_t provider_capacity, binding_capacity, mod_capacity, mode_capacity;
     size_t equipment_capacity, seat_capacity, loadout_capacity, monster_capacity;
     size_t behavior_capacity;

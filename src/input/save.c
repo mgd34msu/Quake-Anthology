@@ -389,7 +389,9 @@ bool qa_input_seat_restore(qa_input_seat *seat, qa_bytes bytes, const qa_input_c
             qa_console_release *program=saved->release->records[i].program;
             if (program) (void)qa_console_release_restore_claim(program,NULL);
         }
+        uint64_t revision = seat->binding_revision + !qa_input_bindings_equal(seat, saved);
         qa_input_seat old=*seat; *seat=*saved; *saved=old;
+        seat->binding_revision = revision;
         if (seat->release) seat->release->seat=seat;
     } else release_storage_discard(saved);
     qa_input_seat_destroy(saved); qa_source_save_dispose(&io);

@@ -145,6 +145,7 @@ bool qa_launch_draft_rebase(const qa_launch_draft *, qa_catalog *,
 bool qa_launch_snapshot_draft_copy(const qa_launch_snapshot *, qa_launch_draft **, qa_error *);
 void qa_launch_draft_destroy(qa_launch_draft *);
 const qa_launch_choices *qa_launch_draft_choices(const qa_launch_draft *);
+uint64_t qa_launch_draft_revision(const qa_launch_draft *);
 qa_catalog *qa_launch_draft_catalog(const qa_launch_draft *);
 bool qa_launch_set_world(qa_launch_draft *, const qa_launch_world *, qa_error *);
 bool qa_launch_set_provider(qa_launch_draft *, const qa_launch_provider *, qa_error *);

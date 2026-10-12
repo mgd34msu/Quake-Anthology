@@ -1,6 +1,7 @@
 #include "map_players_private.h"
 #include "network_q2_private.h"
 #include "guest_native_q2_original_save.h"
+#include "qa/text.h"
 #include <math.h>
 #include <stdio.h>
 
@@ -318,13 +319,10 @@ bool qa_application_network_q2_player(qa_application_network_q2 *owner, qa_actor
     } else {
         application_provider *provider = application_network_q2_provider(owner);
         struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
-        for (uint32_t i = 1; engine && i <= owner->host.client_slots; ++i) {
-            if (!engine->clients[i].connected || !qa_actor_id_equal(engine->clients[i].actor, actor)) continue;
-            if (slot) return application_fail(error, QA_ERROR_FORMAT, "Original Q2 player aliases physical client rows");
-            slot = i;
-        }
+        slot = application_native_q2_client_slot(engine, actor);
         qa_native_host_q2_entity physical;
-        if (!slot || !qa_native_host_q2_wire_entity(provider->state.native.host, slot, &physical, error) ||
+        if (!slot || slot > owner->host.client_slots || !engine->clients[slot].connected ||
+            !qa_native_host_q2_wire_entity(provider->state.native.host, slot, &physical, error) ||
             !qa_actor_id_equal(physical.binding.actor, actor) || physical.binding.source_slot != slot ||
             physical.binding.owner != owner->host.source.source_owner)
             return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 player lost its real edict binding");
@@ -569,24 +567,11 @@ bool qa_application_network_q2_download_source(qa_application_network_q2 *owner,
 
 static void original_name(const char *userinfo, char out[32])
 {
-    out[0] = 0;
-    const char *cursor = userinfo;
-    if (*cursor == '\\') ++cursor;
-    while (*cursor) {
-        const char *key = cursor;
-        while (*cursor && *cursor != '\\') ++cursor;
-        size_t key_size = (size_t)(cursor - key);
-        if (!*cursor) return;
-        const char *value = ++cursor;
-        while (*cursor && *cursor != '\\') ++cursor;
-        if (key_size == 4 && !memcmp(key, "name", 4)) {
-            size_t size = (size_t)(cursor - value);
-            if (size > 31) size = 31;
-            memcpy(out, value, size); out[size] = 0;
-            return;
-        }
-        if (*cursor) ++cursor;
-    }
+    qa_bytes name;
+    qa_info_find(userinfo, (qa_bytes){(const uint8_t *)"name", 4}, 0, &name);
+    size_t size = name.size < 31 ? name.size : 31;
+    if (size) memcpy(out, name.data, size);
+    out[size] = 0;
 }
 
 bool qa_application_network_q2_status(qa_application_network_q2 *owner, qa_q2_status *out, qa_error *error)

@@ -14,13 +14,13 @@
 #include "qa/application_equipment.h"
 #include "qa/native_host_q2_wire.h"
 #include "qa/qc_weapon_visual.h"
+#include "qa/qc_observation.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
 #include "qa/game_q1_bots.h"
 
 #include <limits.h>
 #include <math.h>
-#include <stdio.h>
 #include <string.h>
 
 bool qa_application_equipment_q3_metadata_read(const qa_application *app,
@@ -229,12 +229,6 @@ bool qa_application_equipment_q3_source_draw_match(qa_application *app,
     *matching = true; return true;
 }
 
-static qa_item_id identity(qa_application *app, const char *name)
-{
-    return name ? qa_strings_find(qa_session_strings(app->session),
-        (qa_bytes){(const uint8_t *)name, strlen(name)}) : 0;
-}
-
 static bool primary_visibility(qa_application *app, qa_actor_id actor,
     bool *visible, qa_error *error)
 {
@@ -287,15 +281,6 @@ static bool primary_visibility(qa_application *app, qa_actor_id actor,
     return true;
 }
 
-static qa_item_id q3_identity(qa_application *app, qa_q3_weapon weapon, bool ammo)
-{
-    const char *name = qa_q3_weapon_identity_name(weapon);
-    if (!name || (ammo && (weapon == QA_Q3_W_GAUNTLET || weapon == QA_Q3_W_GRAPPLE))) return 0;
-    char key[64];
-    snprintf(key, sizeof(key), "q3:%s/%s", ammo ? "ammo" : "weapon", name);
-    return identity(app, key);
-}
-
 static bool item_definition(qa_application *app, qa_application_equipment_view *view,
     qa_error *error)
 {
@@ -336,16 +321,9 @@ static bool qc_model(application_provider *provider, qa_actor_id actor,
         return true;
     }
     qa_qc_weapon_visual source = {0};
-    bool found = false;
-    for (uint32_t slot = 1; slot < qa_qc_entity_count(provider->state.qc.instance); ++slot) {
-        qa_qc_slot_binding binding;
-        if (!qa_qc_slot(provider->state.qc.instance, slot, &binding))
-            return application_fail(error, QA_ERROR_FORMAT, "QC equipment physical binding is absent");
-        if (binding.kind == QA_QC_SLOT_FREE || !qa_actor_id_equal(binding.actor, actor)) continue;
-        if (!qa_qc_weapon_visual_read(provider->state.qc.instance, slot, actor, &source, error)) return false;
-        found = true; break;
-    }
-    if (!found) return application_fail(error, QA_ERROR_NOT_FOUND, "QC equipment has no physical source actor");
+    uint32_t slot;
+    if(!qa_qc_actor_observation_slot(provider->state.qc.instance,actor,&slot,error) ||
+        !qa_qc_weapon_visual_read(provider->state.qc.instance,slot,actor,&source,error)) return false;
     out->has_frame = source.has_frame;
     if (source.has_frame) {
         double frame = trunc((double)source.frame);
@@ -364,18 +342,25 @@ static bool qc_model(application_provider *provider, qa_actor_id actor,
 }
 
 static bool q3_warning(qa_application *app, qa_application_equipment_view *view,
-    qa_q3_product product, qa_error *error)
+    qa_q3_product product, const qa_q3_game *game,
+    const application_q3_catalog_weapon *weapons,size_t weapon_count,qa_error *error)
 {
     uint32_t total = 0;
     for (qa_q3_weapon weapon = QA_Q3_W_MACHINEGUN; weapon < QA_Q3_WEAPON_COUNT; ++weapon) {
         if (product == QA_Q3_ARENA && weapon > QA_Q3_W_GRAPPLE) continue;
-        qa_item_id item = q3_identity(app, weapon, false);
+        qa_item_id item=0,ammo=0;
+        if(game) {
+            item=qa_q3_weapon_item(game,weapon,false);
+            ammo=qa_q3_weapon_item(game,weapon,true);
+        } else if((size_t)weapon<=weapon_count) {
+            const application_q3_catalog_weapon *row=weapons+(size_t)(weapon-1);
+            item=row->item; ammo=row->ammo;
+        }
         double owned = 0;
         if (item && !qa_inventory_count_read(app->inventory, view->actor, item, &owned, error)) return false;
         if (!qa_application_equipment_current(app, view))
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 warning lost its actual selected arsenal");
         if (owned <= 0) continue;
-        qa_item_id ammo = q3_identity(app, weapon, true);
         double count = -1;
         if (ammo && !qa_inventory_count_read(app->inventory, view->actor, ammo, &count, error)) return false;
         if (!qa_application_equipment_current(app, view))
@@ -507,6 +492,8 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
         .family = provider->product->family, .rate = 10};
     qa_q3_product q3_product = !strcmp(provider->product->campaign, "missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
     bool standard_q3 = true, declared_source_catalog = false;
+    const application_q3_catalog_weapon *q3_weapons=NULL;
+    size_t q3_weapon_count=0;
     double required = 1;
     double low_threshold = 0;
     bool q1 = provider->kind == APPLICATION_PROVIDER_Q1;
@@ -524,7 +511,7 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
         if (!qa_q2_weapon_read(provider->state.q2, actor, &state, error)) return false;
         const qa_q2_weapon_definition *definition = qa_q2_weapon_definition_at(provider->state.q2, state.weapon);
         if (definition) {
-            view.item = identity(app, definition->item);
+            view.item = qa_q2_weapon_item(provider->state.q2,state.weapon,false);
             view.view_model = qa_q2_weapon_view_model(provider->state.q2, &state);
             required = definition->quantity;
             low_threshold = definition->warning;
@@ -591,8 +578,10 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
                 return application_fail(error, QA_ERROR_FORMAT, "Original equipment leaves its real source catalog");
             view.has_weapon_status = found;
             standard_q3 = application_q3_catalog_standard(engine->game->catalog) &&
-                view.item == q3_identity(app, (qa_q3_weapon)view.source_weapon, false);
+                view.item == (view.source_weapon>QA_Q3_W_NONE && view.source_weapon<QA_Q3_WEAPON_COUNT
+                    ?engine->model_names.weapon_items[view.source_weapon]:0);
             if (standard_q3) {
+                q3_weapons=weapons; q3_weapon_count=count;
                 view.q3_weapon = (qa_q3_weapon)view.source_weapon;
                 q3_product = engine->product;
             }
@@ -622,7 +611,9 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
         view.has_ammo_to_start &= owned > 0;
     }
     view.low_ammo = view.family == QA_GAME_Q2 && view.finite_ammo && view.ammo_count <= low_threshold;
-    if (standard_q3 && view.family == QA_GAME_Q3 && !q3_warning(app, &view, q3_product, error)) return false;
+    if (standard_q3 && view.family == QA_GAME_Q3 && !q3_warning(app,&view,q3_product,
+        provider->kind==APPLICATION_PROVIDER_Q3?provider->state.q3:NULL,
+        q3_weapons,q3_weapon_count,error)) return false;
     if (!q1_visibility(app, &view, error)) return false;
     if (!qa_application_equipment_current(app, &view))
         return application_fail(error, QA_ERROR_ARGUMENT, "Equipment observation changed its actual actor or selected arsenal");

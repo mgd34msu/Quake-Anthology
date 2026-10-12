@@ -62,6 +62,7 @@ struct qa_input_seat {
     uint8_t impulse;
     qa_binding_record **bindings;
     size_t binding_count, binding_capacity;
+    uint64_t binding_revision;
     qa_held_binding *held;
     size_t held_count, held_capacity;
     qa_ui_record *ui;
@@ -81,6 +82,7 @@ bool qa_input_physical_equal(qa_physical_input, qa_physical_input);
 uint64_t qa_input_physical_source(qa_physical_input);
 bool qa_input_command_source(qa_input_seat *, const char *, uint64_t *, qa_error *);
 void qa_input_binding_record_release(qa_binding_record *);
+bool qa_input_bindings_equal(const qa_input_seat *, const qa_input_seat *);
 bool qa_input_ascii_equal(const char *, const char *);
 bool qa_input_recipient_command_equal(const qa_command_context *,const qa_command_context *);
 #endif

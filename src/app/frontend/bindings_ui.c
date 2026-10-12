@@ -177,7 +177,12 @@ static bool action(void *context, uint32_t id, qa_ui_id control, const qa_ui_act
 {
     frontend_seat *seat = context; (void)id;
     if (control == 2 && event->kind == QA_UI_CHANGE_TEXT) {
-        snprintf(seat->binding_query, sizeof(seat->binding_query), "%s", event->value.text ? event->value.text : "");
+        char query[sizeof(seat->binding_query)];
+        snprintf(query, sizeof(query), "%s", event->value.text ? event->value.text : "");
+        if (strcmp(seat->binding_query, query)) {
+            memcpy(seat->binding_query, query, strlen(query) + 1);
+            ++seat->binding_query_revision;
+        }
         return set_selected(seat, NULL, error);
     }
     if (control == 1 && (event->kind == QA_UI_SELECT || event->kind == QA_UI_ROW_ACTIVATE || event->kind == QA_UI_ROW_DELETE)) {
@@ -321,6 +326,14 @@ static char *retain_text(char **cursor, const char *text)
     char *out = *cursor; size_t size = strlen(text) + 1;
     memcpy(out, text, size); *cursor += size; return out;
 }
+static bool publication_equal(const frontend_binding_publication *a, const frontend_binding_publication *b)
+{
+    return a->input == b->input && a->draft == b->draft && a->catalog == b->catalog &&
+        qa_actor_id_equal(a->actor, b->actor) && a->bindings == b->bindings &&
+        a->draft_edits == b->draft_edits && a->catalog_generation == b->catalog_generation &&
+        a->inventory == b->inventory && a->configuration == b->configuration && a->query == b->query &&
+        a->dialect == b->dialect && a->entities_family == b->entities_family;
+}
 static bool menu(void *context, uint32_t id, qa_ui_menu *out, qa_error *error)
 {
     frontend_seat *seat = context; (void)id;
@@ -346,7 +359,7 @@ static bool menu(void *context, uint32_t id, qa_ui_menu *out, qa_error *error)
     const qa_input_weapon_binding *weapons=NULL; size_t weapon_count=0;
     if (seat->library && !qa_ui_library_weapon_bindings(seat->library,&weapons,&weapon_count,error)) return false;
     qa_input_weapon_binding *live_weapons=NULL;
-    qa_actor_id actor;
+    qa_actor_id actor = {0};
     if (frontend_seat_actor_read(seat->frontend,seat->id,&actor)) {
         qa_inventory *inventory=qa_application_inventory(seat->frontend->application); size_t definitions=0;
         if (!qa_inventory_item_definitions(inventory,actor,NULL,0,&definitions,error)) return false;
@@ -369,6 +382,17 @@ static bool menu(void *context, uint32_t id, qa_ui_menu *out, qa_error *error)
         }
         free(items); weapons=live_weapons; weapon_count=count;
     }
+    const qa_launch_draft *draft = seat->library ? qa_ui_library_draft(seat->library) : NULL;
+    frontend_binding_publication publication = {
+        .input = seat->input, .draft = draft, .catalog = catalog, .actor = actor,
+        .bindings = qa_input_seat_binding_revision(seat->input),
+        .draft_edits = qa_launch_draft_revision(draft),
+        .catalog_generation = catalog ? qa_catalog_generation(catalog) : 0,
+        .inventory = actor.registry ? qa_inventory_definition_revision(
+            qa_application_inventory(seat->frontend->application), actor) : 0,
+        .configuration = qa_application_configuration_generation(seat->frontend->application),
+        .query = seat->binding_query_revision, .dialect = dialect, .entities_family = entities_family
+    };
     size_t bound_count=qa_input_seat_binding_count(seat->input);
     size_t base=sizeof(shared_actions)/sizeof(*shared_actions)+5;
     if (weapon_count>SIZE_MAX/2 || bound_count>SIZE_MAX-base || weapon_count>SIZE_MAX-base-bound_count) {
@@ -510,10 +534,11 @@ static bool menu(void *context, uint32_t id, qa_ui_menu *out, qa_error *error)
         seat->controls[0].value.list.rows=seat->binding_rows; seat->controls[0].value.list.count=count ? count : 1;
         seat->controls[0].value.list.selected=seat->selected_binding; seat->controls[0].value.list.row_height=24;
         seat->controls[0].value.list.column_widths=columns; seat->controls[0].value.list.column_count=2;
-        uint64_t revision = UINT64_C(14695981039346656037);
-        for (size_t i = 0; i < count; ++i) for (const unsigned char *p=(const unsigned char *)seat->binding_rows[i].key; *p; ++p)
-            revision=(revision^*p)*UINT64_C(1099511628211);
-        seat->controls[0].value.list.revision=revision;
+        if (ok && !publication_equal(&seat->binding_publication, &publication)) {
+            seat->binding_publication = publication;
+            ++seat->binding_revision;
+        }
+        seat->controls[0].value.list.revision=seat->binding_revision;
         seat->controls[1].kind=QA_UI_FIELD; seat->controls[1].value.field.text=seat->binding_query;
         seat->controls[1].value.field.maximum=80;
         seat->controls[2].enabled=current!=NULL;

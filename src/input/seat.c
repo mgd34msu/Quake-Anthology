@@ -77,6 +77,18 @@ static qa_binding_record *binding_find(const qa_input_seat *s, qa_physical_input
         }
     return NULL;
 }
+static bool binding_equal(const qa_input_binding *a, const qa_input_binding *b) {
+    return a->input.kind == b->input.kind && a->input.device == b->input.device &&
+        a->input.code == b->input.code && a->input.positive == b->input.positive &&
+        a->kind == b->kind && (a->kind == QA_BIND_COMMAND
+            ? !strcmp(a->command, b->command) : a->action == b->action);
+}
+bool qa_input_bindings_equal(const qa_input_seat *a, const qa_input_seat *b) {
+    if (a->binding_count != b->binding_count) return false;
+    for (size_t i = 0; i < a->binding_count; ++i)
+        if (!binding_equal(&a->bindings[i]->view, &b->bindings[i]->view)) return false;
+    return true;
+}
 static bool context_ready(const qa_input_seat_options *options,
                           const qa_command_context *context, qa_error *error) {
     if (!options || !context || options->seat >= 4 || context->origin != QA_COMMAND_SEAT ||
@@ -348,6 +360,9 @@ bool qa_input_seat_bind(qa_input_seat *s, const qa_input_binding *binding, qa_er
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid input binding");
         return false;
     }
+    size_t index = 0;
+    qa_binding_record *old = binding_find(s, binding->input, &index);
+    if (old && binding_equal(&old->view, binding)) return true;
     size_t n = binding->kind == QA_BIND_COMMAND ? strlen(binding->command) : 0;
     if (n > SIZE_MAX - sizeof(qa_binding_record) - 1) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Binding length overflow");
@@ -365,11 +380,10 @@ bool qa_input_seat_bind(qa_input_seat *s, const qa_input_binding *binding, qa_er
         record->view.command = record->text;
     } else
         record->view.command = NULL;
-    size_t index = 0;
-    qa_binding_record *old = binding_find(s, binding->input, &index);
     if (old) {
         s->bindings[index] = record;
         qa_input_binding_record_release(old);
+        ++s->binding_revision;
         return true;
     }
     if (!qa_input_reserve((void **)&s->bindings, &s->binding_capacity, s->binding_count + 1,
@@ -378,6 +392,7 @@ bool qa_input_seat_bind(qa_input_seat *s, const qa_input_binding *binding, qa_er
         return false;
     }
     s->bindings[s->binding_count++] = record;
+    ++s->binding_revision;
     return true;
 }
 bool qa_input_seat_unbind(qa_input_seat *s, qa_physical_input input) {
@@ -390,15 +405,18 @@ bool qa_input_seat_unbind(qa_input_seat *s, qa_physical_input input) {
             (s->binding_count - index - 1) * sizeof(*s->bindings));
     --s->binding_count;
     qa_input_binding_record_release(old);
+    ++s->binding_revision;
     return true;
 }
 void qa_input_seat_unbind_all(qa_input_seat *s) {
     if (!qa_input_release_action_access(s,NULL)) return;
+    if (s->binding_count) ++s->binding_revision;
     for (size_t i = 0; i < s->binding_count; ++i)
         qa_input_binding_record_release(s->bindings[i]);
     s->binding_count = 0;
 }
 size_t qa_input_seat_binding_count(const qa_input_seat *s) { return s->binding_count; }
+uint64_t qa_input_seat_binding_revision(const qa_input_seat *s) { return s->binding_revision; }
 const qa_input_binding *qa_input_seat_binding_at(const qa_input_seat *s, size_t i) {
     return i < s->binding_count ? &s->bindings[i]->view : NULL;
 }
@@ -407,11 +425,13 @@ const qa_input_binding *qa_input_seat_binding(const qa_input_seat *s, qa_physica
     return b ? &b->view : NULL;
 }
 static void replace_bindings(qa_input_seat *s, qa_input_seat *candidate) {
+    uint64_t revision = s->binding_revision + !qa_input_bindings_equal(s, candidate);
     qa_input_seat_unbind_all(s);
     free(s->bindings);
     s->bindings = candidate->bindings;
     s->binding_count = candidate->binding_count;
     s->binding_capacity = candidate->binding_capacity;
+    s->binding_revision = revision;
 }
 bool qa_input_seat_replace_bindings(qa_input_seat *s, const qa_input_binding *bindings,
                                     size_t count, qa_error *error) {
@@ -464,9 +484,14 @@ bool qa_input_seat_configuration_clone(const qa_input_seat *source,qa_input_seat
             copy->bindings[i]=source->bindings[i]; ++copy->bindings[i]->references; ++copy->binding_count;
         }
     }
+    copy->binding_revision = source->binding_revision;
     *out=copy; return true;
 }
 void qa_input_seat_configuration_publish(qa_input_seat *active, qa_input_seat *candidate) {
+    if (!qa_input_bindings_equal(active, candidate)) {
+        ++active->binding_revision;
+        ++candidate->binding_revision;
+    }
     qa_binding_record **bindings = active->bindings;
     size_t count = active->binding_count, capacity = active->binding_capacity;
     qa_gamepad_tuning gamepad = active->options.gamepad;

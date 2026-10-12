@@ -9,11 +9,6 @@ static void vector(float out[3], qa_vec3 value)
     out[0] = value.x; out[1] = value.y; out[2] = value.z;
 }
 
-static const char *text(qa_application_network_q2 *owner, qa_string_id id)
-{
-    return id ? qa_strings_cstr(qa_session_strings(owner->app->session), id) : "";
-}
-
 static uint32_t clamp(float value, uint32_t minimum, uint32_t maximum)
 {
     if (value < (float)minimum) return minimum;
@@ -329,14 +324,14 @@ bool application_network_q2_source_resources(qa_application_network_q2 *owner, q
         const qa_q2_wire_source_entity *source = &capture->rows[slot].source.builtin;
         if (!source->binding.in_use) continue;
         for (unsigned i = 0; !source->flare && i < 4; ++i)
-            if (!application_network_q2_resource(owner, 0, text(owner, source->visual.models[i]),
+            if (!application_network_q2_resource_id(owner, 0, source->visual.models[i],
                 &ignored, error)) return false;
         if (source->flare && (source->visual.render_flags & 256) &&
             !application_network_q2_resource_id(owner, 2, source->flare_image, &ignored, error)) return false;
-        if (!application_network_q2_resource(owner, 1, text(owner, source->loop_sound), &ignored, error) ||
-            !application_network_q2_resource(owner, 1, text(owner, source->precache_sound), &ignored, error) ||
-            (source->has_weapon && !application_network_q2_resource(owner, 1,
-                text(owner, source->weapon.loop_sound), &ignored, error))) return false;
+        if (!application_network_q2_resource_id(owner, 1, source->loop_sound, &ignored, error) ||
+            !application_network_q2_resource_id(owner, 1, source->precache_sound, &ignored, error) ||
+            (source->has_weapon && !application_network_q2_resource_id(owner, 1,
+                source->weapon.loop_sound, &ignored, error))) return false;
     }
     owner->source_resource_revision = capture->revision;
     return true;
