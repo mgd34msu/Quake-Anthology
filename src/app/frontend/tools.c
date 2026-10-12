@@ -514,10 +514,10 @@ bool frontend_tools_pump(qa_frontend *f, qa_error *error) {
 bool frontend_tools_camera(qa_frontend *f, uint32_t seat, bool portal, qa_scene_view *view, qa_error *error) {
     if (!f || !f->tools) return true;
     if (seat >= f->options.seats) return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid camera presentation seat");
-    qa_arena scratch = {0}; qa_scene_view result;
-    bool ok = qa_tools_apply_camera(f->tools->owner, view, portal, &scratch, &result, error);
+    qa_scene_view result;
+    bool ok = qa_tools_apply_camera(f->tools->owner, view, portal, &f->frame.storage, &result, error);
     if (ok) *view = result;
-    qa_arena_destroy(&scratch); return ok;
+    return ok;
 }
 bool frontend_debug_clock_read(void *context, const qa_debug_clock *source, double *milliseconds) {
     qa_frontend *frontend = context;

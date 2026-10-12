@@ -11,6 +11,5 @@ struct qa_camera_document {
 };
 bool camera_fail(qa_error *, const char *);
 void *camera_array(qa_arena *, size_t, size_t, size_t alignment, qa_error *);
-char *camera_text(qa_arena *, const char *, qa_error *);
 bool camera_number(qa_bytes, bool allow_empty, double *, qa_error *);
 #endif

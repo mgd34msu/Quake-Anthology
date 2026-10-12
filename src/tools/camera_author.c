@@ -32,7 +32,7 @@ bool qa_camera_sample_json(qa_camera_document *document, double step, qa_buffer 
         }
         qa_json_writer_end(&w); qa_json_writer_end(&w);
         if (w.failed) { if (error) *error = w.failure; goto done; }
-        qa_arena_destroy(&scratch);
+        qa_arena_reset(&scratch);
         double next = now + step;
         if (!isfinite(next) || next <= now) { tools_fail(error, "camera sample clock cannot advance"); goto done; }
         now = next;

@@ -16,14 +16,6 @@ void *camera_array(qa_arena *arena, size_t count, size_t item, size_t alignment,
     if (count > SIZE_MAX / item) { qa_error_set(error, QA_ERROR_MEMORY, 0, "camera array size overflow"); return NULL; }
     return qa_arena_alloc(arena, count * item, alignment, error);
 }
-char *camera_text(qa_arena *arena, const char *text, qa_error *error) {
-    if (!text) text = "";
-    size_t n = strlen(text);
-    if (n == SIZE_MAX) { camera_fail(error, "camera text too long"); return NULL; }
-    char *out = qa_arena_alloc(arena, n + 1, 1, error);
-    if (out) memcpy(out, text, n + 1);
-    return out;
-}
 static double distance_between(qa_vec3 a, qa_vec3 b) {
     return hypot(hypot((double)a.x - b.x, (double)a.y - b.y), (double)a.z - b.z);
 }
@@ -32,7 +24,7 @@ static bool path_copy(qa_camera_document *d, const qa_camera_path *path, qa_came
     if (path->kind < QA_CAMERA_FIXED || path->kind > QA_CAMERA_SPLINE || !path->name ||
         !isfinite(path->time_ms) || path->time_ms < 0 || !isfinite(path->base_velocity) ||
         (path->velocity_count && !path->velocities)) return camera_fail(error, "invalid camera path");
-    *out = *path; out->name = camera_text(&d->storage, path->name, error);
+    *out = *path; out->name = qa_arena_text(&d->storage, path->name ? path->name : "", error);
     if (!out->name) return false;
     qa_camera_velocity *velocities = camera_array(&d->storage, path->velocity_count, sizeof(*velocities), _Alignof(qa_camera_velocity), error);
     if (path->velocity_count && !velocities) return false;
@@ -150,7 +142,7 @@ bool qa_camera_create(const qa_camera_definition *source, qa_camera_document **o
         if (event.type > 9 || !event.parameter || !isfinite(event.time_ms) || event.time_ms < 0) {
             camera_fail(error, "invalid camera event"); goto failed;
         }
-        event.parameter = camera_text(&d->storage, event.parameter, error); if (!event.parameter) goto failed;
+        event.parameter = qa_arena_text(&d->storage, event.parameter ? event.parameter : "", error); if (!event.parameter) goto failed;
         if (event.type == 1) { double seconds; if (!wait_seconds(event.parameter, &seconds, error)) goto failed; }
         if (event.type == 4) {
             bool found = false;
