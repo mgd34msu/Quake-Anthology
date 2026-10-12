@@ -1237,7 +1237,7 @@ bool q1_monster_start(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!qa_combat_read_traits(g->services.combat, entity->id, &combat, error))
         return false;
     combat.can_take_damage = true;
-    combat.team=g->runtime_names[Q1_NAME_MONSTER_TEAM];
+    combat.team=qa_team_named(g->runtime_names[Q1_NAME_MONSTER_TEAM]);
     if (!qa_combat_set_traits(g->services.combat, entity->id, &combat, error) ||
         !q1_link(g, entity, error))
         return false;

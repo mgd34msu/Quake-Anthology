@@ -94,8 +94,9 @@ static bool team(flag_call *call, qa_actor_id actor, int *out, qa_error *error) 
     if (!player_current(call, actor, &observer, error) ||
         !qa_combat_read_traits(call->app->combat, actor, &combat, error) ||
         !player_current(call, actor, &observer, error)) return false;
-    *out = combat.team == call->view.rules.teams[0] ? 0 :
-        combat.team == call->view.rules.teams[1] ? 1 : -1;
+    qa_strings *strings = qa_session_strings(call->app->session);
+    *out = qa_team_equal(strings, combat.team, qa_team_named(call->view.rules.teams[0])) ? 0 :
+        qa_team_equal(strings, combat.team, qa_team_named(call->view.rules.teams[1])) ? 1 : -1;
     return true;
 }
 static bool seconds(flag_call *call, double *out, qa_error *error) {
@@ -713,8 +714,9 @@ bool application_native_q1_ctf_damage_effect(application_provider *source,
         okay = qa_combat_read_traits(call.app->combat, request->target, &combat, error) &&
             current(&call, error) && last_team(&call, request->target, &last, error);
         if (okay) {
-            int team_index = combat.team == call.view.rules.teams[0] ? 0 :
-                combat.team == call.view.rules.teams[1] ? 1 : -1;
+            qa_strings *strings = qa_session_strings(call.app->session);
+            int team_index = qa_team_equal(strings, combat.team, qa_team_named(call.view.rules.teams[0])) ? 0 :
+                qa_team_equal(strings, combat.team, qa_team_named(call.view.rules.teams[1])) ? 1 : -1;
             int last_index = last == 5 ? 0 : last == 14 ? 1 : -1;
             effect->allowed = effect->allowed && team_index == last_index;
         }

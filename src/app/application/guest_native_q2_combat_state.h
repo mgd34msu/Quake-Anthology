@@ -3,7 +3,6 @@
 #include "guest_native_q2_calls.h"
 #include "qa/gameplay.h"
 #include "qa/game_q2.h"
-#include "qa/id_index.h"
 struct application_native_q2;
 typedef struct application_q2_armor_row {
     uint32_t index;
@@ -26,7 +25,7 @@ typedef struct application_q2_combat_profile {
     uint64_t godmode, no_knockback, power_armor;
     uint32_t model_team, skin_team;
     qa_team_id coop_team;
-    qa_id_index numeric_teams;
+    qa_string_id numeric_team_namespace;
     application_q2_combat_team client_teams[257];
     char *userinfo_storage;
     uint32_t damage_entry, regular_entry, power_entry, process_entry;

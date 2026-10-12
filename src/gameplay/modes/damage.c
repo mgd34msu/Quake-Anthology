@@ -29,15 +29,15 @@ bool mode_damage(qa_modes *m, mode_instance *v, qa_game_family family,
     qa_damage_outcome_release(&result);
     return ok;
 }
-qa_team_id qa_modes_combat_team(qa_modes *m, qa_mode_id id, qa_actor_id actor,
-                                qa_team_id fallback) {
+qa_team_ref qa_modes_combat_team(qa_modes *m, qa_mode_id id, qa_actor_id actor,
+                                qa_team_ref fallback) {
     mode_instance *v = mode_get(m, id);
     if (!v || !v->value.rules.enabled || !mode_member_get(m, v, actor))
         return fallback;
     if (v->value.rules.source == QA_MODE_LMCTF && (v->value.rules.flags & 128u))
-        return 0;
+        return (qa_team_ref){0};
     qa_team_id team;
-    return qa_modes_team(m, v->id, actor, &team, NULL) ? team : fallback;
+    return qa_modes_team(m, v->id, actor, &team, NULL) ? qa_team_named(team) : fallback;
 }
 bool qa_modes_damage_effect(qa_modes *m, qa_mode_id id, qa_damage_effect_stage stage,
                             const qa_damage_request *request, qa_damage_effect *effect,

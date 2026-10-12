@@ -47,7 +47,8 @@ static bool actor_valid(const qa_q3_game *game, const q3_actor *actor, qa_error 
                trajectory_valid(&m->trajectory, error) && qa_vec_finite(m->normal) &&
                qa_vec_finite(m->damage_point) && isfinite(m->damage) && m->damage >= 0 &&
                isfinite(m->splash) && m->splash >= 0 && isfinite(m->radius) && m->radius >= 0 &&
-               string_valid(game, m->team) && string_valid(game, m->loop_sound) &&
+               qa_team_valid(qa_session_strings(game->options.services.session), m->team) &&
+               string_valid(game, m->loop_sound) &&
                reference_valid(game, m->owner, error) && reference_valid(game, m->pass, error) &&
                reference_valid(game, m->attached, error) &&
                reference_valid(game, m->trigger, error);

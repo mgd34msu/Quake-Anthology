@@ -94,6 +94,55 @@ static void test_compiled_sound_names(void)
     qa_strings_destroy(strings);
 }
 
+static void test_shared_team_values(void)
+{
+    qa_error error={0};qa_session *session=NULL;
+    CHECK(qa_session_create(&(qa_session_options){.actor_capacity=1,.component_capacity=1},&session,&error));
+    qa_strings *strings=qa_session_strings(session);
+    qa_string_id q2,q3,named,leading,red,folded,blue;
+    CHECK(qa_strings_intern_cstr(strings,"q2",&q2,&error));
+    CHECK(qa_strings_intern_cstr(strings,"q3",&q3,&error));
+    CHECK(qa_strings_intern_cstr(strings,"q2:256",&named,&error));
+    CHECK(qa_strings_intern_cstr(strings,"q2:0256",&leading,&error));
+    CHECK(qa_strings_intern_cstr(strings,"team:red",&red,&error));
+    CHECK(qa_strings_intern_cstr(strings,"TeAm:ReD",&folded,&error));
+    CHECK(qa_strings_intern_cstr(strings,"q2:2",&blue,&error));
+    qa_team_ref numeric=qa_team_number(q2,256),maximum=qa_team_number(q2,INT32_MAX),none={0};
+    size_t count=qa_strings_count(strings);
+    CHECK(qa_team_present(numeric) && qa_team_valid(strings,maximum));
+    CHECK(!qa_team_present(qa_team_number(q2,0)) && !qa_team_present(qa_team_number(q2,-1)));
+    CHECK(qa_team_equal(strings,none,qa_team_named(0)));
+    CHECK(qa_team_equal(strings,numeric,qa_team_named(named)));
+    CHECK(qa_team_equal(strings,qa_team_named(named),numeric));
+    CHECK(!qa_team_equal(strings,numeric,qa_team_named(leading)));
+    CHECK(!qa_team_equal(strings,numeric,qa_team_number(q3,256)));
+    CHECK(!qa_team_equal(strings,numeric,maximum));
+    CHECK(qa_team_color_number(strings,qa_team_named(red),QA_TEAM_COLOR_EXACT)==1);
+    CHECK(qa_team_color_number(strings,qa_team_named(folded),QA_TEAM_COLOR_EXACT)==0);
+    CHECK(qa_team_color_number(strings,qa_team_named(folded),QA_TEAM_COLOR_ALIASES)==1);
+    CHECK(qa_team_color_number(strings,qa_team_named(blue),QA_TEAM_COLOR_ALIASES)==2);
+    CHECK(qa_team_color_number(strings,qa_team_number(q2,2),QA_TEAM_COLOR_ALIASES)==2);
+    CHECK(qa_team_color_number(strings,qa_team_number(q3,1),QA_TEAM_COLOR_EXACT)==0);
+    CHECK(qa_team_color_number(strings,maximum,QA_TEAM_COLOR_ALIASES)==0);
+    CHECK(qa_strings_count(strings)==count);
+    qa_team_ref teams[]={none,qa_team_named(red),numeric,maximum};
+    for(size_t i=0;i<sizeof(teams)/sizeof(*teams);++i) {
+        qa_source_save_io io={0};qa_buffer saved={0},legacy={0};qa_team_id name;
+        CHECK(qa_team_name(strings,teams[i],&name,&error));
+        CHECK(qa_source_save_writer(&io,session,&error));
+        CHECK(qa_source_save_string(&io,&name) && qa_source_save_finish(&io,&legacy));
+        CHECK(qa_source_save_writer(&io,session,&error));
+        CHECK(qa_source_save_team(&io,&teams[i]) && qa_source_save_finish(&io,&saved));
+        CHECK(saved.size==legacy.size && !memcmp(saved.data,legacy.data,saved.size));
+        qa_team_ref restored={0};
+        CHECK(qa_source_save_reader(&io,session,(qa_bytes){legacy.data,legacy.size},&error));
+        CHECK(qa_source_save_team(&io,&restored) && qa_source_save_finish(&io,NULL));
+        CHECK(qa_team_equal(strings,teams[i],restored));
+        qa_buffer_free(&saved);qa_buffer_free(&legacy);
+    }
+    CHECK(qa_session_destroy(session,&error));
+}
+
 static void test_module_observation_storage(void)
 {
     qa_error error={0};qa_session *session=NULL;
@@ -4256,6 +4305,7 @@ int main(int argc, char **argv)
     test_shared_random();
     test_q2_hud_configuration();
     test_compiled_sound_names();
+    test_shared_team_values();
     test_module_observation_storage();
     test_console_restore_pages();
     test_chat_initial_aliases();

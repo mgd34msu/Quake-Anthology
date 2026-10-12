@@ -844,7 +844,7 @@ bool q1_aim(qa_q1_game *g, qa_actor_id actor, qa_vec3 forward, qa_vec3 *out, qa_
         return false;
     qa_combat_state attacker;
     bool has_team =
-        qa_combat_read(g->services.combat, actor, &attacker, NULL) && attacker.team != 0;
+        qa_combat_read(g->services.combat, actor, &attacker, NULL) && qa_team_present(attacker.team);
     float best = g->options.aim_threshold;
     qa_vec3 selected = {0};
     bool found = false;
@@ -859,7 +859,8 @@ bool q1_aim(qa_q1_game *g, qa_actor_id actor, qa_vec3 forward, qa_vec3 *out, qa_
         if (!q1_target(g, target, &observation) ||
             (!observation.aimed_damage && !observation.player) ||
             !qa_combat_read(g->services.combat, target, &combat, NULL) || !combat.can_take_damage ||
-            (g->options.teamplay && has_team && attacker.team == combat.team))
+            (g->options.teamplay && has_team &&
+             qa_team_equal(qa_session_strings(g->services.session), attacker.team, combat.team)))
             continue;
         if (trace.hit == QA_TRACE_HIT_ACTOR && qa_actor_id_equal(trace.actor, target)) {
             *out = forward;

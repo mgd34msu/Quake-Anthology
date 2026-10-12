@@ -70,12 +70,12 @@ static bool mode_teams(qa_application *app, bool *ctf, bool *lmctf,
     return true;
 }
 
-static bool same_players(const qa_builtin_actor_traits *target,
+static bool same_players(const qa_strings *strings, const qa_builtin_actor_traits *target,
                           const qa_builtin_actor_traits *attacker,
                           const qa_combat_state *target_state,
                           const qa_combat_state *attacker_state) {
     return target->player && attacker->player && attacker_state &&
-        target_state->team != 0 && target_state->team == attacker_state->team;
+        qa_team_present(target_state->team) && qa_team_equal(strings, target_state->team, attacker_state->team);
 }
 
 qa_actor_owner application_native_q2_attack_inventory(void *opaque, qa_actor_id actor,
@@ -165,7 +165,7 @@ static bool prepare(void *opaque, qa_damage_request *request, bool *allowed,
     if (!same && team_game) {
         qa_combat_state attacker_state;
         if (!qa_combat_read(app->combat, request->attack.attacker, &attacker_state, error)) return false;
-        same = same_players(&target, &attacker, &target_state, &attacker_state);
+        same = same_players(qa_session_strings(app->session), &target, &attacker, &target_state, &attacker_state);
     }
     if (same) {
         bool disabled = (rules.deathmatch_flags & 256u) != 0;
@@ -212,7 +212,7 @@ static bool describe(void *opaque, const qa_damage_request *request,
     bool ctf, lmctf, railgun;
     if (!mode_teams(app, &ctf, &lmctf, &railgun, error)) return false;
     bool same = !qa_actor_id_equal(request->target, request->attack.attacker) &&
-        same_players(&target, &attacker, target_state, attacker_state);
+        same_players(qa_session_strings(app->session), &target, &attacker, target_state, attacker_state);
     qa_body_state body;
     if (!qa_world_body_read(app->world, request->target, &body, error)) return false;
     qa_vec3 forward;

@@ -57,7 +57,7 @@ bool bot_ai_same_team(qa_bots *b, bot_ai_state *s, qa_actor_id other, bool *same
         qa_combat_state self,target;
         if(!qa_combat_read(b->services.shared.combat,s->view.actor,&self,e) ||
            !qa_combat_read(b->services.shared.combat,other,&target,e)) return false;
-        *same=self.team && self.team==target.team;
+        *same=qa_team_present(self.team) && qa_team_equal(qa_session_strings(b->services.shared.session),self.team,target.team);
         return true;
     }
     if (mode.rules.kind == QA_MODE_COOPERATIVE || mode.rules.kind == QA_MODE_HORDE) {

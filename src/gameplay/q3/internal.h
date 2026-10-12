@@ -79,7 +79,7 @@ bool q3_source_row_body_ensure(qa_q3_game *, uint32_t, qa_actor_id *, qa_error *
 bool q3_spawn_raw_actor(qa_q3_game *, qa_string_id, qa_actor_id *, qa_error *);
 bool q3_source_client_body_ensure(qa_q3_game *, uint32_t, qa_actor_id *, qa_error *);
 int32_t q3_source_team(qa_q3_game *, qa_actor_id);
-int32_t q3_team_number(const qa_q3_game *, qa_team_id);
+int32_t q3_team_number(const qa_q3_game *, qa_team_ref);
 bool q3_obelisk_step(qa_q3_game *, qa_actor_id, qa_error *);
 bool q3_obelisk_touch(qa_q3_game *, qa_actor_id, qa_actor_id, qa_error *);
 bool q3_obelisk_reconnect(qa_q3_game *, qa_actor_id, qa_error *);

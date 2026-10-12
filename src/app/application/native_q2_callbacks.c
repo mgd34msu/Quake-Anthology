@@ -446,7 +446,7 @@ static bool projected_current(void *context,qa_actor_id actor,uint32_t slot)
         binding.kind==QA_NATIVE_SLOT_BORROWED&&qa_actor_id_equal(binding.actor,actor)&&
         binding.owner==o->engine->provider->owner&&binding.source_slot==slot;
 }
-static bool projection_match_read(void *context,qa_actor_id actor,qa_string_id *team,
+static bool projection_match_read(void *context,qa_actor_id actor,qa_team_ref *team,
     double *score,bool *found,qa_error *e)
 {
     application_native_q2_callbacks *o=context; qa_application *app=o->engine->provider->application;
@@ -455,7 +455,7 @@ static bool projection_match_read(void *context,qa_actor_id actor,qa_string_id *
     if(!app->modes||!app->primary_mode_ready) return true;
     qa_mode_player_view view;
     if(!qa_modes_player_read_optional(app->modes,app->primary_mode,actor,&view,found,e)) return false;
-    if(*found) { *team=view.state.team; *score=view.state.score; }
+    if(*found) { *team=qa_team_named(view.state.team); *score=view.state.score; }
     return true;
 }
 static bool projection_match_write(void *context,qa_actor_id actor,bool team,qa_string_id value,double score,qa_error *e)

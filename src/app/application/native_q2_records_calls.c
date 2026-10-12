@@ -105,11 +105,11 @@ static bool scalar_read(application_native_q2_records *o,qa_actor_id actor,const
         if(!inventory_read(o,actor,field->item,&count,&capacity,e)) return false;
         *value=field->kind==NQR_COUNT?count:capacity; return true;
     }
-    qa_string_id team=0; double score=0; bool found=false;
+    qa_team_ref team={0}; double score=0; bool found=false;
     if(!o->options.match_read||!o->options.match_read(o->options.context,actor,&team,&score,&found,e)) return false;
-    if(!found) { team=0; score=0; }
+    if(!found) { team=(qa_team_ref){0}; score=0; }
     if(field->kind==NQR_SCORE) { *value=score; return true; }
-    for(size_t i=0;i<field->team_count;++i) if(field->teams[i].team==team) { *value=field->teams[i].value; return true; }
+    for(size_t i=0;i<field->team_count;++i) if(qa_team_equal(o->options.strings,qa_team_named(field->teams[i].team),team)) { *value=field->teams[i].value; return true; }
     return nqr_fail(e,QA_ERROR_FORMAT,"Canonical team has no declared native source alias");
 }
 static bool pose(application_native_q2_records *o,nqr_actor *actor,qa_error *e)

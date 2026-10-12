@@ -53,10 +53,10 @@ static bool scalar_read(application_q3_component_records *r,qa_actor_id actor,co
 {
     if(f->kind==COMPONENT_HEALTH) { qa_combat_state state; if(!qa_combat_read(r->options.combat,actor,&state,e)) return false; *value=state.health; return true; }
     if(f->kind==COMPONENT_INVENTORY) return qa_inventory_count_read(r->options.inventory,actor,f->item,value,e);
-    qa_string_id team=0; double score=0;
+    qa_team_ref team={0}; double score=0;
     if(!r->options.match_read||!r->options.match_read(r->options.context,actor,&team,&score,e)) return false;
     if(f->kind==COMPONENT_SCORE) { *value=score; return true; }
-    for(size_t i=0;i<f->team_count;++i) if(f->teams[i].team==team) { *value=f->teams[i].value; return true; }
+    for(size_t i=0;i<f->team_count;++i) if(qa_team_equal(r->options.strings,qa_team_named(f->teams[i].team),team)) { *value=f->teams[i].value; return true; }
     return q3records_fail(e,QA_ERROR_FORMAT,"Actual shared team has no component source alias");
 }
 bool application_q3_component_records_refresh(application_q3_component_records *r,qa_error *e)

@@ -22,7 +22,8 @@ bool q1_boss_damageable(qa_q1_game *g, q1_actor *e, bool enabled, qa_error *erro
     if (!qa_combat_read_traits(g->services.combat, e->id, &traits, error))
         return false;
     traits.can_take_damage = enabled;
-    if (e->physics.flags & QA_PHYSICS_MONSTER) traits.team = g->runtime_names[Q1_NAME_MONSTER_TEAM];
+    if (e->physics.flags & QA_PHYSICS_MONSTER)
+        traits.team = qa_team_named(g->runtime_names[Q1_NAME_MONSTER_TEAM]);
     return qa_combat_set_traits(g->services.combat, e->id, &traits, error);
 }
 static void ghost_destination(qa_q1_game *g, q1_actor *e) {

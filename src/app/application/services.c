@@ -555,8 +555,8 @@ bool application_actor_released(void *opaque, qa_session *session,
     return ok;
 }
 
-static qa_team_id combat_team(void *opaque, qa_actor_id actor,
-                              qa_team_id fallback)
+static qa_team_ref combat_team(void *opaque, qa_actor_id actor,
+                              qa_team_ref fallback)
 {
     qa_application *application = opaque;
     return application->modes != NULL && application->primary_mode_ready

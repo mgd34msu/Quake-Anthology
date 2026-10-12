@@ -129,7 +129,8 @@ static bool allowed(qa_q1_game *g, q1_actor *hook, qa_actor_id actor, bool pulse
         qa_combat_state owner, enemy;
         bool is_player = q1_target(g, actor, &target) && target.player;
         *out = !is_player || !qa_combat_read(g->services.combat, q1_ref_actor(g, hook->owner), &owner, NULL) ||
-               !qa_combat_read(g->services.combat, actor, &enemy, NULL) || owner.team != enemy.team;
+               !qa_combat_read(g->services.combat, actor, &enemy, NULL) ||
+               !qa_team_equal(qa_session_strings(g->services.session), owner.team, enemy.team);
     }
     return true;
 }

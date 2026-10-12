@@ -30,7 +30,7 @@ static bool bound(void *context,qa_actor_id actor,uint32_t slot,bool owned,bool 
 }
 static bool released(void *context,qa_actor_id actor,qa_error *e)
 { application_q3_component *c=context; return application_q3_component_source_release_actor(c->source,actor,e); }
-static bool match_read(void *context,qa_actor_id actor,qa_string_id *team,double *score,qa_error *e)
+static bool match_read(void *context,qa_actor_id actor,qa_team_ref *team,double *score,qa_error *e)
 { application_q3_component *c=context; return c->options.match_read&&c->options.match_read(c->options.context,actor,team,score,e); }
 static bool match_write(void *context,qa_actor_id actor,bool team,qa_string_id id,double score,qa_error *e)
 { application_q3_component *c=context; return c->options.match_write&&c->options.match_write(c->options.context,actor,team,id,score,e); }

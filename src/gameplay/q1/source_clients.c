@@ -142,7 +142,7 @@ static bool apply(qa_q1_game *game,q1_player *player,qa_error *error) {
     if(name && !qa_strings_intern_cstr(qa_session_strings(game->services.session),name,&team,error)) return false;
     qa_combat_state combat;
     if(!qa_combat_read_traits(game->services.combat,player->id,&combat,error)) return false;
-    combat.team=team;
+    combat.team=qa_team_named(team);
     if(!qa_combat_set_traits(game->services.combat,player->id,&combat,error)) return false;
     if(!q1_alive(game,player->id)) return true;
     const char *automatic=info_named(game,player,game->runtime_names[Q1_NAME_USERINFO_AUTOSWITCH]);

@@ -24,7 +24,7 @@ bool q1_major_boss_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_error *er
     qa_combat_state traits;
     if (!qa_combat_read_traits(g->services.combat, e->id, &traits, error))
         return false;
-    traits.team=g->runtime_names[Q1_NAME_MONSTER_TEAM];
+    traits.team=qa_team_named(g->runtime_names[Q1_NAME_MONSTER_TEAM]);
     if (final) {
         m->source.boss.immune = true;
         ++g->total_monsters;

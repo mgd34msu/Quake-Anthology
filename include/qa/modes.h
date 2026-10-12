@@ -631,7 +631,7 @@ bool qa_modes_haste_weapon(qa_modes *, qa_mode_id, qa_actor_id, qa_item_id weapo
 /* Actual firing cooldown producer; observations use haste_weapon above. */
 bool qa_modes_weapon_attack_delay(qa_modes *, qa_mode_id, qa_actor_id, qa_item_id weapon,
                                   float *delay, qa_error *);
-qa_team_id qa_modes_combat_team(qa_modes *, qa_mode_id, qa_actor_id, qa_team_id fallback);
+qa_team_ref qa_modes_combat_team(qa_modes *, qa_mode_id, qa_actor_id, qa_team_ref fallback);
 bool qa_modes_has_relic(qa_modes *, qa_mode_id, qa_actor_id, qa_relic_kind);
 bool qa_modes_tech_sound(qa_modes *, qa_mode_id, qa_actor_id, qa_relic_kind, bool quad,
                          bool silenced, bool *handled, qa_error *);

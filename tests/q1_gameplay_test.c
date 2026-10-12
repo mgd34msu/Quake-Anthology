@@ -128,7 +128,7 @@ static void fixture_create(q1_fixture *fixture, qa_q1_edition edition, uint8_t s
         &fixture->session, &error));
     GAME_CHECK(qa_world_create(qa_session_actor_registry(fixture->session),
         fixture->map.geometry, NULL, 0, &fixture->world, &error));
-    GAME_CHECK(qa_combat_create(qa_session_actor_registry(fixture->session),
+    GAME_CHECK(qa_combat_create(qa_session_actor_registry(fixture->session), qa_session_strings(fixture->session),
         &(qa_combat_hooks){.context = fixture, .reaction = reacted, .effect = damage_effect},
         &fixture->combat, &error));
     GAME_CHECK(qa_inventory_create(qa_session_actor_registry(fixture->session),

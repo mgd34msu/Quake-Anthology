@@ -1,5 +1,6 @@
 #include "qa/strings.h"
 #include "qa/arena.h"
+#include "qa/text.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -128,6 +129,24 @@ bool qa_strings_intern(qa_strings *strings, qa_bytes text, qa_string_id *out, qa
     if(text.size>=10&&!memcmp(text.data,"item_flag_",10)) flags|=QA_NAME_ITEM_FLAG;
     if(text.size>=9&&!memcmp(text.data,"info_flag",9)) flags|=QA_NAME_INFO_FLAG;
     if(text.size>=4&&!memcmp(text.data,"func",4)) flags|=QA_NAME_FUNC;
+    static const struct { const char *text; size_t size; uint32_t folded, exact; } team_names[] = {
+        {"red", 3, QA_NAME_TEAM_RED_ALIAS, QA_NAME_TEAM_RED_EXACT},
+        {"team:red", 8, QA_NAME_TEAM_RED_ALIAS, QA_NAME_TEAM_RED_EXACT},
+        {"blue", 4, QA_NAME_TEAM_BLUE_ALIAS, QA_NAME_TEAM_BLUE_EXACT},
+        {"team:blue", 9, QA_NAME_TEAM_BLUE_ALIAS, QA_NAME_TEAM_BLUE_EXACT},
+        {"5", 1, QA_NAME_TEAM_RED_ALIAS, 0}, {"14", 2, QA_NAME_TEAM_BLUE_ALIAS, 0},
+        {"q2:1", 4, QA_NAME_TEAM_RED_ALIAS, 0}, {"q3:1", 4, QA_NAME_TEAM_RED_ALIAS, 0},
+        {"q2:2", 4, QA_NAME_TEAM_BLUE_ALIAS, 0}, {"q3:2", 4, QA_NAME_TEAM_BLUE_ALIAS, 0},
+        {"q2", 2, QA_NAME_TEAM_COLOR_NAMESPACE, 0}, {"q3", 2, QA_NAME_TEAM_COLOR_NAMESPACE, 0}
+    };
+    for (size_t i = 0; i < sizeof(team_names) / sizeof(*team_names); ++i) {
+        qa_bytes candidate = {(const uint8_t *)team_names[i].text, team_names[i].size};
+        if (qa_text_bytes_equal(text, candidate, true)) {
+            flags |= team_names[i].folded;
+            if (team_names[i].exact && qa_text_bytes_equal(text, candidate, false)) flags |= team_names[i].exact;
+            break;
+        }
+    }
     if(text.size>=4 && text.data[text.size-4]=='.' &&
         (text.data[text.size-3]=='b'||text.data[text.size-3]=='B') &&
         (text.data[text.size-2]=='s'||text.data[text.size-2]=='S') &&

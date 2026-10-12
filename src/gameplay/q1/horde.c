@@ -165,8 +165,10 @@ bool qa_q1_horde_spawn(qa_q1_game *g, const char *classname, qa_vec3 origin, qa_
     if (!qa_combat_read_traits(g->services.combat, actor, &combat, error))
         return false;
     combat.can_take_damage = true;
-    if (!qa_builtin_resource(&g->services, "q1:monsters", &combat.team, error))
+    qa_team_id team;
+    if (!qa_builtin_resource(&g->services, "q1:monsters", &team, error))
         return false;
+    combat.team = qa_team_named(team);
     if (!qa_combat_set_traits(g->services.combat, actor, &combat, error) ||
         !qa_world_body_write(g->services.world, actor, &body, error) ||
         !qa_physics_walk_move(g->services.physics, actor, 0, 0, (float)g->elapsed, true, true,

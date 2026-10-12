@@ -41,11 +41,15 @@ bool q3mod_actors_state(void *context,qa_combat_state *out,qa_error *e)
         if(o->mass_kind==MOD_ACTOR_MASS_FLOAT32) memcpy(&value.mass,&raw,4); else value.mass=(float)raw;
         if(!isfinite(value.mass)||value.mass<0) return q3mod_fail(e,QA_ERROR_FORMAT,"Source actor mass is invalid");
     }
+    qa_team_id named_team=0;
     if(o->has_team_field) { if(!o->options.team(o->options.context,r->actor,&value.team,e)) return false; }
-    else if(o->legacy&&(team==1||team==2)) {
-        const char *name=team==1?"q3:1":"q3:2";
-        if(!qa_strings_intern(qa_session_strings(o->options.session),(qa_bytes){(const uint8_t *)name,4},&value.team,e)) return false;
-    } else if(!o->legacy) for(size_t i=0;i<o->team_count;++i) if(o->teams[i].value==team) value.team=o->teams[i].team;
+    else {
+        if(o->legacy&&(team==1||team==2)) {
+            const char *name=team==1?"q3:1":"q3:2";
+            if(!qa_strings_intern(qa_session_strings(o->options.session),(qa_bytes){(const uint8_t *)name,4},&named_team,e)) return false;
+        } else if(!o->legacy) for(size_t i=0;i<o->team_count;++i) if(o->teams[i].value==team) named_team=o->teams[i].team;
+        value.team=qa_team_named(named_team);
+    }
     if(!row_current(r,e)) return false;
     *out=value; return true;
 }

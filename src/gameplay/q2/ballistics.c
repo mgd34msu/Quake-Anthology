@@ -77,7 +77,8 @@ bool q2_prepare_damage(void *context, qa_damage_request *request, bool *allowed,
         if (!qa_combat_read(g->services.combat, request->target, &target, e) ||
             !qa_combat_read(g->services.combat, request->attack.attacker, &attacker, e))
             return false;
-        same_team = target.team != 0 && target.team == attacker.team;
+        same_team = qa_team_present(target.team) &&
+            qa_team_equal(qa_session_strings(g->services.session), target.team, attacker.team);
     }
     if (same_team) {
         request->attack.cause.source.q2.friendly_fire = true;

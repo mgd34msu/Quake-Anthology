@@ -92,9 +92,7 @@ static bool target(void *context, qa_actor_id actor, application_q3_gear_target 
     result.player = qa_application_control_read(app, actor, &control);
     if (result.player) {
         result.body.angles = control.view_angles; result.view_height = control.view_height;
-        const char *team = qa_strings_cstr(qa_session_strings(services->session), combat.team);
-        result.team = team && (!strcmp(team, "red") || !strcmp(team, "team:red")) ? 1 :
-            team && (!strcmp(team, "blue") || !strcmp(team, "team:blue")) ? 2 : 0;
+        result.team = qa_team_color_number(qa_session_strings(services->session), combat.team, QA_TEAM_COLOR_EXACT);
         if (services->player_info && services->player_info(services->context, actor, &player) && player.spectator)
             result.team = 3;
         application_provider *primary = runtime->options.world_source;

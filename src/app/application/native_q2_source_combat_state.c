@@ -128,7 +128,7 @@ static bool state_at(application_native_q2_source_combat_state *o,qa_actor_id ac
     state.health=(float)health;state.mass=(float)mass;state.can_take_damage=damageable!=0;
     state.invulnerable=(value&o->invulnerable)!=0;state.no_knockback=(value&o->no_knockback)!=0;
     qa_application *app=o->engine->provider->application;
-    state.team=app->modes?qa_modes_combat_team(app->modes,app->primary_mode,actor,0):0;
+    state.team=app->modes?qa_modes_combat_team(app->modes,app->primary_mode,actor,(qa_team_ref){0}):(qa_team_ref){0};
     *out=state;return true;
 }
 bool application_native_q2_source_combat_state_read(application_native_q2_source_combat_state *o,

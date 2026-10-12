@@ -171,11 +171,23 @@ bool q3_death_rewards(qa_q3_game *game, qa_actor_id victim, const qa_damage_requ
         killer->kind != Q3_ACTOR_PLAYER)
         return true;
     uint32_t attacker_slot, receiver_slot;
-    int32_t victim_team = qa_q3_native_client_slot(game, victim, &receiver_slot, NULL)
-        ? game->clients[receiver_slot].rule.session.team : (int32_t)vc.team;
-    int32_t killer_team = qa_q3_native_client_slot(game, attacker, &attacker_slot, NULL)
-        ? game->clients[attacker_slot].rule.session.team : (int32_t)kc.team;
-    if (qa_game_type_has_allies(game->options.rules.game_type) && victim_team == killer_team)
+    bool native_victim = qa_q3_native_client_slot(game, victim, &receiver_slot, NULL);
+    bool native_killer = qa_q3_native_client_slot(game, attacker, &attacker_slot, NULL);
+    bool same_team;
+    if (native_victim && native_killer)
+        same_team = game->clients[receiver_slot].rule.session.team ==
+                    game->clients[attacker_slot].rule.session.team;
+    else if (!native_victim && !native_killer)
+        same_team = qa_team_equal(qa_session_strings(game->options.services.session),
+                                  vc.team, kc.team);
+    else {
+        int32_t native_team = native_victim ? game->clients[receiver_slot].rule.session.team
+                                           : game->clients[attacker_slot].rule.session.team;
+        qa_team_ref other_team = native_victim ? kc.team : vc.team;
+        same_team = native_team ? native_team == q3_team_number(game, other_team)
+                                : !qa_team_present(other_team);
+    }
+    if (qa_game_type_has_allies(game->options.rules.game_type) && same_team)
         return true;
     qa_q3_player_state *player = &killer->state.player;
     if (method == 2) {

@@ -320,7 +320,9 @@ static bool denied_powerup(qa_q3_game *game, qa_actor_id pickup, qa_actor_id rec
         if (!candidate || candidate->kind != Q3_ACTOR_PLAYER)
             continue;
         if (combat.health <= 0 ||
-            (qa_game_type_has_allies(game->options.rules.game_type) && receiver.team == combat.team))
+            (qa_game_type_has_allies(game->options.rules.game_type) &&
+             qa_team_equal(qa_session_strings(game->options.services.session),
+                           receiver.team, combat.team)))
             continue;
         qa_body_state body;
         if (!qa_world_body_read(game->options.services.world, actor, &body, error))

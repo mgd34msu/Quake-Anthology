@@ -584,7 +584,7 @@ static bool client_spawn(application_provider *provider, qa_actor_id actor,
     }
     if (!qa_q3_player_begin_command(provider->state.q3, actor, &accepted, error) ||
         !qa_q3_client_spectator(provider->state.q3, actor, spectator, error) ||
-        !qa_q3_spawn_player(provider->state.q3, actor, &body, member.state.team, error) ||
+        !qa_q3_spawn_player(provider->state.q3, actor, &body, qa_team_named(member.state.team), error) ||
         !application_supplies_spawn(app->supplies, provider, actor, error) ||
         !qa_q3_client_ready(provider->state.q3, actor, false, error) ||
         !source(provider, actor, &slot, error)) return false;

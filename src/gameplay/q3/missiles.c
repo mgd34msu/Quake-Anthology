@@ -754,7 +754,9 @@ bool q3_missile_trigger(qa_q3_game *game, qa_actor_id actor, qa_actor_id player,
         entry->state.missile.phase != Q3_MISSILE_PROX_ARMED)
         return true;
     if (qa_vec_length(qa_vec_sub(body.origin, origin)) > entry->state.missile.radius ||
-        (qa_game_type_has_allies(game->options.rules.game_type) && entry->state.missile.team == combat.team))
+        (qa_game_type_has_allies(game->options.rules.game_type) &&
+         qa_team_equal(qa_session_strings(game->options.services.session),
+                       entry->state.missile.team, combat.team)))
         return true;
     qa_trace_policy policy = qa_collision_default_policy(QA_GAME_Q3);
     policy.contents_mask = qa_collision_contents_mask(1, QA_GAME_Q3);

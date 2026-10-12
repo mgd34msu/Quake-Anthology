@@ -20,7 +20,7 @@ typedef struct application_q3_mod_actors_options {
      * projection; the component decides whether that projection exists. */
     bool (*pointer)(void *,qa_actor_id,uint32_t *,qa_error *);
     bool (*actor)(void *,int32_t,qa_actor_id *,qa_error *);
-    bool (*team)(void *,qa_actor_id,qa_team_id *,qa_error *);
+    bool (*team)(void *,qa_actor_id,qa_team_ref *,qa_error *);
     /* Fill actual canonical attack provenance before the source damage entry
      * enters the shared operation. This owner adds its retained attack ordinal. */
     bool (*damage_context)(void *,qa_damage_request *,qa_error *);

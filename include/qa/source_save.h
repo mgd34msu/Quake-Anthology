@@ -57,6 +57,8 @@ bool qa_source_save_count(qa_source_save_io *, size_t *, size_t maximum);
 /* Counted values distinguish absent and empty strings. Text decode borrows
  * the restored session table and rejects embedded NUL; IDs allow counted bytes. */
 bool qa_source_save_string(qa_source_save_io *, qa_string_id *);
+struct qa_team_ref;
+bool qa_source_save_team(qa_source_save_io *, struct qa_team_ref *);
 bool qa_source_save_text(qa_source_save_io *, const char **);
 /* Same counted text bytes, checked against the actual owner on READ without
  * interning or retaining a decoded string. Null and empty remain distinct. */

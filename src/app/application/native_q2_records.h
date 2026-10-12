@@ -43,7 +43,7 @@ typedef struct application_native_q2_records_options {
     bool (*bound)(void *,qa_actor_id,uint32_t source_slot,qa_error *);
     bool (*binding_current)(void *,qa_actor_id,uint32_t source_slot);
     bool (*released)(void *,qa_actor_id,uint32_t source_slot,qa_error *);
-    bool (*match_read)(void *,qa_actor_id,qa_string_id *,double *,bool *found,qa_error *);
+    bool (*match_read)(void *,qa_actor_id,qa_team_ref *,double *,bool *found,qa_error *);
     bool (*match_write)(void *,qa_actor_id,bool team,qa_string_id,double,qa_error *);
     bool (*time)(void *,double *,qa_error *);
     /* Runs PROJECT/RELEASE without creating another projection transfer. */

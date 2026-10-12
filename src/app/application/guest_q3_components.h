@@ -25,7 +25,7 @@ typedef struct application_q3_components_options {
     qa_bytes entity_text;
     application_q3_component_clients clients;
     void *context;
-    bool (*match_read)(void *,qa_actor_id,qa_string_id *,double *,qa_error *);
+    bool (*match_read)(void *,qa_actor_id,qa_team_ref *,double *,qa_error *);
     bool (*match_write)(void *,qa_actor_id,bool,qa_string_id,double,qa_error *);
     application_q3_component_scene_factory scene_factory;
     void *weapon_context;

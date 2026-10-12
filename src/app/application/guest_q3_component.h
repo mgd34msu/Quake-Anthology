@@ -39,7 +39,7 @@ typedef struct application_q3_component_options {
     void *context;
     bool (*current)(void *);
     bool (*storage_current)(void *);
-    bool (*match_read)(void *,qa_actor_id,qa_string_id *,double *,qa_error *);
+    bool (*match_read)(void *,qa_actor_id,qa_team_ref *,double *,qa_error *);
     bool (*match_write)(void *,qa_actor_id,bool,qa_string_id,double,qa_error *);
     application_q3_component_clients clients;
     application_q3_mod_operation_services operations[Q3_MOD_OPERATION_COUNT];

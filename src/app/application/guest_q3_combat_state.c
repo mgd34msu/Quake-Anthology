@@ -212,13 +212,15 @@ bool application_q3_combat_state_read(void *opaque, qa_combat_state *out, qa_err
         return fail(error, QA_ERROR_FORMAT, "Original Q3 source mass is not finite and nonnegative");
     if (a->player) {
         int32_t team;
+        qa_team_id named_team = 0;
         if (!application_q3_combat_word_read(a, a->player + 248 + d->state.team_stat * 4, &team, error)) return false;
         for (size_t i = 0; i < d->state.team_count; ++i)
-            if (d->state.teams[i].value == team) { state.team = d->state.teams[i].team; break; }
+            if (d->state.teams[i].value == team) { named_team = d->state.teams[i].team; break; }
         const application_q3_weapon_profile *weapons = application_q3_weapons_profile(a->role->weapons);
         if (weapons && weapons->has_match)
             for (size_t i = 0; i < weapons->team_count; ++i)
-                if (weapons->teams[i].source == state.team) { state.team = weapons->teams[i].team; break; }
+                if (weapons->teams[i].source == named_team) { named_team = weapons->teams[i].team; break; }
+        state.team = qa_team_named(named_team);
     }
     *out = state; return true;
 }

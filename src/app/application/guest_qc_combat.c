@@ -375,7 +375,7 @@ static bool read(void *context, qa_combat_state *out, qa_error *error)
         !raw_float(actor, profile->invincible, NULL, &invincible, error)) return false;
     out->mass = 200; out->can_take_damage = damage != 0;
     out->invulnerable = invincible > (float)((double)actor->owner->engine->source_time_ns / 1e9);
-    out->no_knockback = false; out->team = 0;
+    out->no_knockback = false; out->team = (qa_team_ref){0};
     return true;
 }
 static bool write_health(void *context, float value, qa_error *error)

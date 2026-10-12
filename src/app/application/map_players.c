@@ -2122,7 +2122,7 @@ bool application_players_native_q1_spawn_pose(qa_application *app, application_p
 }
 
 static bool spawn_q3_player_roles(qa_application *application, qa_actor_id actor,
-    const qa_body_state *body, qa_team_id team, qa_error *error)
+    const qa_body_state *body, qa_team_ref team, qa_error *error)
 {
     for (size_t j = 0; j < application->provider_count; ++j) {
         application_provider *provider = application->providers[j];
@@ -2171,16 +2171,6 @@ static bool q1_initial_travel(qa_application *app, application_provider *source,
         application_fail(error, QA_ERROR_ARGUMENT, "Q1 initial travel lost its source player");
 }
 
-static bool source_team_name(const char *text, const char *name)
-{
-    while (*text && *name) {
-        unsigned char byte = (unsigned char)*text++;
-        if (byte >= 'A' && byte <= 'Z') byte += 'a' - 'A';
-        if (byte != (unsigned char)*name++) return false;
-    }
-    return !*text && !*name;
-}
-
 static bool q1_selected_q3_pose(void *opaque, qa_actor_id actor,
     qa_q3_selected_source_pose *out, qa_error *error)
 {
@@ -2209,11 +2199,7 @@ static bool q1_selected_q3_pose(void *opaque, qa_actor_id actor,
         !qa_application_control_read(app, actor, &control))
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Selected Q3 respawn has no actual Q1 source pose");
-    const char *team = combat.team ? qa_strings_cstr(qa_session_strings(app->session), combat.team) : "";
-    int32_t source_team = source_team_name(team, "team:red") || source_team_name(team, "red") ||
-        !strcmp(team, "5") || source_team_name(team, "q3:1") || source_team_name(team, "q2:1") ? 1 :
-        source_team_name(team, "team:blue") || source_team_name(team, "blue") || !strcmp(team, "14") ||
-        source_team_name(team, "q3:2") || source_team_name(team, "q2:2") ? 2 : 0;
+    int32_t source_team = qa_team_color_number(qa_session_strings(app->session), combat.team, QA_TEAM_COLOR_ALIASES);
     double quad_time=qa_q1_game_power_expires(source->state.q1, actor, QA_Q1_QUAD)*1000.0;
     if (!isfinite(quad_time) || quad_time< -0x1p63 || quad_time>=0x1p63)
         return application_fail(error,QA_ERROR_ARGUMENT,"Selected Q3 powerup exceeds its actual source clock domain");
@@ -2759,9 +2745,11 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                 if (!q1_player_current(application, map_source, character, arsenal,
                         actor, false, &ordinal, error) ||
                     !qa_combat_read_traits(application->combat, actor, &combat, error)) return false;
-            } else if (application->primary_mode_ready &&
-                !qa_modes_team(application->modes, application->primary_mode, actor, &combat.team, error))
-                return false;
+            } else if (application->primary_mode_ready) {
+                qa_team_id team;
+                if (!qa_modes_team(application->modes, application->primary_mode, actor, &team, error)) return false;
+                combat.team = qa_team_named(team);
+            }
             if (!qa_combat_set_traits(application->combat, actor, &combat, error)) return false;
         }
         if (!reserved_player && map_source->kind == APPLICATION_PROVIDER_Q2 && map_source != character) {
@@ -4635,7 +4623,7 @@ bool application_players_guest_attach(qa_application *application,
                 .connected = info->connected, .bot = true}, error)) goto failed;
         for (size_t i = 0; i < application->mode_count; ++i)
             if (!qa_modes_join(application->modes, application->mode_ids[i], actor,
-                                 combat.team, info->spectator, error)) goto failed;
+                                 combat.team.kind == QA_TEAM_NAMED ? combat.team.name : 0, info->spectator, error)) goto failed;
     }
     application_provider *arsenal = application_provider_for(application, actor, QA_ROLE_ARSENAL, "");
     if (arsenal == NULL)

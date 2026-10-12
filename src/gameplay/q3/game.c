@@ -525,14 +525,15 @@ bool q3_trace(qa_q3_game *game, qa_vec3 start, qa_vec3 end, qa_actor_id pass, ui
     query.policy.contents_mask = qa_collision_contents_mask(mask, QA_GAME_Q3);
     return qa_world_trace(game->options.services.world, &query, trace, error);
 }
-int32_t q3_team_number(const qa_q3_game *game, qa_team_id team)
+int32_t q3_team_number(const qa_q3_game *game, qa_team_ref team)
 {
-    if (!team) return 0;
+    if (!qa_team_present(team)) return 0;
     qa_team_source_value teams[2] = {{.value = 1}, {.value = 2}};
     if (game->options.hooks.source_team_mapping)
         game->options.hooks.source_team_mapping(game->options.hooks.context, teams);
     for (size_t i = 0; i < 2; ++i)
-        if (teams[i].team == team) return teams[i].value;
+        if (qa_team_equal(qa_session_strings(game->options.services.session),
+                          qa_team_named(teams[i].team), team)) return teams[i].value;
     return 0;
 }
 bool q3_accuracy(qa_q3_game *game, qa_actor_id target, qa_actor_id attacker) {
@@ -550,7 +551,7 @@ bool q3_accuracy(qa_q3_game *game, qa_actor_id target, qa_actor_id attacker) {
         !qa_actors_get(qa_session_actors(game->options.services.session), attacker) ||
         !qa_actors_get(qa_session_actors(game->options.services.session), target)) return false;
     if (!qa_game_type_has_allies(game->options.rules.game_type)) return true;
-    return ac.team != tc.team;
+    return !qa_team_equal(qa_session_strings(game->options.services.session), ac.team, tc.team);
 }
 bool q3_is_player(qa_q3_game *game, qa_actor_id actor) {
     const q3_actor *entry = q3_actor_const(game, actor);
@@ -621,7 +622,9 @@ bool q3_combat_describe(void *context, const qa_damage_request *request,
             .falling = method == 19,
             .juiced = method == 27,
             .proximity_protected = qa_game_type_has_allies(game->options.rules.game_type) && method == 25 && attacker &&
-                                   target->team && target->team == attacker->team,
+                                   qa_team_present(target->team) &&
+                                   qa_team_equal(qa_session_strings(game->options.services.session),
+                                                 target->team, attacker->team),
             .missionpack = game->options.product == QA_Q3_TEAM_ARENA,
             .knockback_scale = game->options.rules.knockback}};
     return true;

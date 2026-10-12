@@ -29,7 +29,7 @@ static bool actor(void *context,int32_t word,qa_actor_id *out,qa_error *e)
     if(row&&!row->retired&&q3records_live(c->records,row->actor)) *out=row->actor;
     return true;
 }
-static bool team(void *context,qa_actor_id actor,qa_team_id *out,qa_error *e)
+static bool team(void *context,qa_actor_id actor,qa_team_ref *out,qa_error *e)
 {
     application_q3_component *c=context; double score;
     return c->options.match_read&&c->options.match_read(c->options.context,actor,out,&score,e);

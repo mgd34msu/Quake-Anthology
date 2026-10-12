@@ -9,6 +9,29 @@ typedef uint32_t qa_item_id;
 /* Session-interned identity; zero is unteamed. Original protocol team numbers
  * are translated by their adapters, never used as private shared-world IDs. */
 typedef uint32_t qa_team_id;
+typedef enum qa_team_kind { QA_TEAM_NONE, QA_TEAM_NAMED, QA_TEAM_NUMBER } qa_team_kind;
+typedef struct qa_team_ref {
+    qa_team_kind kind;
+    union {
+        qa_team_id name;
+        struct { qa_string_id namespace_id; int32_t value; } number;
+    };
+} qa_team_ref;
+static inline qa_team_ref qa_team_named(qa_team_id name) {
+    return (qa_team_ref){.kind = name ? QA_TEAM_NAMED : QA_TEAM_NONE, .name = name};
+}
+static inline qa_team_ref qa_team_number(qa_string_id namespace_id, int32_t value) {
+    return value > 0 ? (qa_team_ref){.kind = QA_TEAM_NUMBER, .number = {namespace_id, value}}
+                     : (qa_team_ref){0};
+}
+static inline bool qa_team_present(qa_team_ref team) { return team.kind != QA_TEAM_NONE; }
+bool qa_team_equal(const qa_strings *, qa_team_ref, qa_team_ref);
+bool qa_team_valid(const qa_strings *, qa_team_ref);
+typedef enum qa_team_color_rule { QA_TEAM_COLOR_EXACT, QA_TEAM_COLOR_ALIASES } qa_team_color_rule;
+int32_t qa_team_color_number(const qa_strings *, qa_team_ref, qa_team_color_rule);
+/* Materialize a numeric team's existing namespace:decimal save name only at
+ * an explicit name boundary; live comparisons never intern it. */
+bool qa_team_name(qa_strings *, qa_team_ref, qa_team_id *, qa_error *);
 typedef struct qa_team_source_value { int32_t value; qa_team_id team; } qa_team_source_value;
 typedef struct qa_team_source_scalar { double value; qa_string_id team; } qa_team_source_scalar;
 typedef struct qa_operation qa_operation;
@@ -107,7 +130,7 @@ typedef struct qa_combat_state {
     float health, mass;
     qa_armor armor;
     bool can_take_damage, invulnerable, no_knockback;
-    qa_team_id team;
+    qa_team_ref team;
 } qa_combat_state;
 typedef enum qa_reaction { QA_REACTION_NONE, QA_REACTION_PAIN, QA_REACTION_DEATH } qa_reaction;
 typedef enum qa_mutation_kind { QA_MUTATION_HEALTH, QA_MUTATION_ARMOR, QA_MUTATION_SOURCE_VELOCITY, QA_MUTATION_IMPULSE } qa_mutation_kind;
@@ -206,7 +229,7 @@ typedef struct qa_combat_hooks {
      * Absent bodies leave found=false; impact points are not body centers. */
     bool (*inflictor_center)(void *, const qa_damage_request *, double center[3],
                               bool *found, qa_error *);
-    qa_team_id (*team)(void *, qa_actor_id, qa_team_id);
+    qa_team_ref (*team)(void *, qa_actor_id, qa_team_ref);
     bool (*damage_allowed)(void *, const qa_damage_request *);
     bool (*impulse)(void *, qa_actor_id, qa_vec3, qa_actor_owner, qa_error *);
     bool (*before_reaction)(void *, const qa_damage_outcome *, qa_error *);
@@ -291,7 +314,7 @@ typedef struct qa_combat_policy {
  * every registry release before retiring provider callback contexts. Hooks and
  * bindings can reenter through public services, but cannot destroy an active
  * service. Read/validation callbacks must not mutate the state they expose. */
-bool qa_combat_create(qa_actor_registry *, const qa_combat_hooks *, qa_combat **, qa_error *);
+bool qa_combat_create(qa_actor_registry *, qa_strings *, const qa_combat_hooks *, qa_combat **, qa_error *);
 bool qa_combat_destroy(qa_combat *, qa_error *);
 bool qa_combat_idle(const qa_combat *);
 void qa_combat_actor_released(qa_combat *, qa_actor_record);

@@ -52,7 +52,7 @@ static int32_t calendar(void *context,qa_q3_host_calendar *out)
     component_game_row *row = context;
     return qa_application_q3_calendar(row->roster->options.application, out);
 }
-static bool match_read(void *context,qa_actor_id actor,qa_string_id *team,double *score,qa_error *e)
+static bool match_read(void *context,qa_actor_id actor,qa_team_ref *team,double *score,qa_error *e)
 {
     component_game_row *row=context; application_q3_components_options *options=&row->roster->options;
     return options->match_read&&options->match_read(options->context,actor,team,score,e);

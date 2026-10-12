@@ -133,17 +133,31 @@ static bool match_team(void *context, qa_team_id *out, qa_error *error)
     ++s->calls;
     bool ok = qa_combat_read(application(s)->combat, match->actor, &state, error) &&
         match_current(match, &source, error);
-    if (ok) *out = state.team;
+    if (ok) {
+        if (state.team.kind == QA_TEAM_NUMBER) {
+            const application_q3_weapon_profile *profile = &s->role->weapons->profile;
+            ok = false;
+            for (size_t i = 0; i < profile->team_count; ++i)
+                if (qa_team_equal(qa_session_strings(application(s)->session), state.team,
+                    qa_team_named(profile->teams[i].team))) { *out = profile->teams[i].team; ok = true; break; }
+            if (!ok) application_fail(error, QA_ERROR_ARGUMENT, "Shared team has no declared original command");
+        } else *out = state.team.kind == QA_TEAM_NAMED ? state.team.name : 0;
+    }
     --s->calls; return ok;
 }
 static bool match_set_team(void *context, qa_team_id team, qa_error *error)
 {
     q3_weapon_match *match = context; application_q3_weapons_services *s = match->services;
-    q3_weapon_actor source; qa_team_id current;
+    q3_weapon_actor source; qa_combat_state current;
     if (s->closing_match)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Original match team mutation lost its current owner");
-    if (!match_current(match, &source, error) || !match_team(match, &current, error)) return false;
-    if (current == team) return true;
+    if (!match_current(match, &source, error)) return false;
+    ++s->calls;
+    bool current_ok = qa_combat_read(application(s)->combat, match->actor, &current, error) &&
+        match_current(match, &source, error);
+    --s->calls;
+    if (!current_ok) return false;
+    if (qa_team_equal(qa_session_strings(application(s)->session), current.team, qa_team_named(team))) return true;
     const application_q3_weapon_team_command *command;
     if (!application_q3_weapons_team_command(s->role->weapons, match->actor, team, &command, error)) return false;
     if (command->argument_count > SIZE_MAX / sizeof(const char *))
@@ -375,15 +389,6 @@ static bool selected_qvm(void *context, qa_actor_id actor, uint32_t selection,
     q3_weapon_actor source;
     if (!q3_weapon_services_source(s, actor, &source, error)) return false;
     *out = s; *present = true; return true;
-}
-static bool team_name(const char *actual, const char *name)
-{
-    if (!actual) return false;
-    while (*actual && *name) {
-        if (tolower((unsigned char)*actual) != (unsigned char)*name) return false;
-        ++actual; ++name;
-    }
-    return !*actual && !*name;
 }
 bool application_q3_weapons_services_grenade_interval(void *context, qa_actor_id actor,
     qa_actor_owner owner, uint64_t native, uint64_t *out, bool *handled, qa_error *error)
@@ -737,11 +742,7 @@ bool application_q3_weapons_services_pose(void *context, qa_actor_id actor,
     if (ok) {
         pose.view_angles = qa_v3(player.viewangles[0], player.viewangles[1], player.viewangles[2]);
         pose.view_height = (float)player.viewheight;
-        const char *team = qa_strings_cstr(qa_session_strings(application(s)->session), combat.team);
-        pose.team = team_name(team, "team:red") || team_name(team, "red") || team_name(team, "5") ||
-            team_name(team, "q3:1") || team_name(team, "q2:1") ? 1 :
-            team_name(team, "team:blue") || team_name(team, "blue") || team_name(team, "14") ||
-            team_name(team, "q3:2") || team_name(team, "q2:2") ? 2 : 0;
+        pose.team = qa_team_color_number(qa_session_strings(application(s)->session), combat.team, QA_TEAM_COLOR_ALIASES);
         *out = pose;
     }
     --s->calls; return ok;

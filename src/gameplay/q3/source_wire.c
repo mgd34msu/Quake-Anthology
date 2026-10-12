@@ -1550,7 +1550,8 @@ bool q3_wire_damage(qa_q3_game *game, const qa_damage_outcome *outcome, qa_error
             damage_attacker(game, target, attacker);
             return true;
         }
-        same_team = combat.team == attacking.team;
+        same_team = qa_team_equal(qa_session_strings(game->options.services.session),
+                                  combat.team, attacking.team);
     }
     if (!row(game, target) || !current(game, attacker_slot, attacker)) return true;
     q3_wire_client *client = &game->wire->clients[attacker_slot];

@@ -52,7 +52,7 @@ static bool state(qa_source_save_io *io, qa_combat_state *value)
     return qa_source_save_f32(io, &value->health) && isfinite(value->health) &&
         qa_source_save_f32(io, &value->mass) && isfinite(value->mass) && armor(io, &value->armor) &&
         qa_source_save_bool(io, &value->can_take_damage) && qa_source_save_bool(io, &value->invulnerable) &&
-        qa_source_save_bool(io, &value->no_knockback) && qa_source_save_string(io, &value->team);
+        qa_source_save_bool(io, &value->no_knockback) && qa_source_save_team(io, &value->team);
 }
 
 static bool attack(qa_source_save_io *io, qa_attack *value)
@@ -105,11 +105,11 @@ static bool attack(qa_source_save_io *io, qa_attack *value)
     return fail(io->error, "Invalid saved last-attack cause");
 }
 
-static bool same_state(const qa_combat_state *a, const qa_combat_state *b)
+static bool same_state(const qa_strings *strings, const qa_combat_state *a, const qa_combat_state *b)
 {
     return a->health == b->health && a->mass == b->mass && qa_armor_equal(a->armor, b->armor) &&
         a->can_take_damage == b->can_take_damage && a->invulnerable == b->invulnerable &&
-        a->no_knockback == b->no_knockback && a->team == b->team;
+        a->no_knockback == b->no_knockback && qa_team_equal(strings, a->team, b->team);
 }
 static bool same_attack(const qa_attack *a, const qa_attack *b)
 {
@@ -220,7 +220,8 @@ static bool record(qa_source_save_io *io, qa_combat *combat, qa_inventory *inven
             qa_combat_state observed;
             if (!resolve || !resolve->combat || !resolve->combat(resolve->context, entry->actor, entry->serial, &entry->binding, io->error) ||
                 binding_mask(&entry->binding) != mask || (mask & 7u) != 7u ||
-                !source_primary(combat, &entry->binding, &observed, io->error) || !same_state(&primary, &observed))
+                !source_primary(combat, &entry->binding, &observed, io->error) ||
+                !same_state(qa_session_strings(io->session), &primary, &observed))
                 return fail(io->error, "Restored source combat authority differs from saved primary");
             for (size_t i = 0; i < 2; ++i)
                 if (entry->binding.source_armor_stages[i] != source_stages[i] ||
@@ -298,7 +299,8 @@ bool qa_persistence_combat_capture(qa_session *session, qa_combat *combat, qa_in
             copy.power_inventory != current->power_inventory || copy.power_item != current->power_item ||
             copy.has_last_attack != current->has_last_attack ||
             (copy.has_last_attack && !same_attack(&copy.last_attack, &current->last_attack)) ||
-            !same_state(&copy.state, &current->state))) ok = fail(error, "Combat storage changed during capture");
+            !same_state(qa_session_strings(session), &copy.state, &current->state)))
+            ok = fail(error, "Combat storage changed during capture");
         for (size_t channel = 0; ok && channel < 2; ++channel)
             if (copy.protection[channel].serial != current->protection[channel].serial ||
                 copy.protection[channel].reserved != current->protection[channel].reserved ||

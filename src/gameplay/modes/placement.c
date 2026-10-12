@@ -224,9 +224,9 @@ static bool q1_spawnpoint(qa_modes *m, mode_instance *v, mode_member *member,
             if (!qa_modes_q1_source_read(m, id, actor, QA_Q1_CTF_KILLED, &killed, e) ||
                 !qa_combat_read_traits(m->options.services.combat, actor, &combat, e))
                 return false;
-            team = combat.team;
-            side = team == v->value.rules.teams[0] ? 0 :
-                team == v->value.rules.teams[1] ? 1 : -1;
+            qa_strings *strings = qa_session_strings(m->options.services.session);
+            side = qa_team_equal(strings, combat.team, qa_team_named(v->value.rules.teams[0])) ? 0 :
+                qa_team_equal(strings, combat.team, qa_team_named(v->value.rules.teams[1])) ? 1 : -1;
         }
         bool observer;
         if (!mode_q1_source_current(m, v, actor, &observer, e)) return false;

@@ -5,9 +5,6 @@
 #include "qa/text.h"
 #include <math.h>
 
-static bool numeric_team_admit(application_q2_combat_profile *, int64_t,
-    qa_team_id *, qa_error *);
-
 static bool word(const qa_json_document *doc, qa_json_id object, const char *name,
     uint32_t *out, qa_error *error)
 {
@@ -237,11 +234,8 @@ bool application_q2_combat_profile_read(struct application_native_q2 *engine,
         !p->damage_entry || !p->power_entry || !p->time)
         return application_fail(error, QA_ERROR_FORMAT, "Native combat metadata lacks bounded source storage");
     if (p->kex) {
-        if (!qa_id_index_reserve(&p->numeric_teams, UINT8_MAX, error)) return false;
-        for (int64_t team = 1; team <= UINT8_MAX; ++team) {
-            qa_team_id identity;
-            if (!numeric_team_admit(p, team, &identity, error)) return false;
-        }
+        if (!qa_strings_intern_cstr(qa_session_strings(engine->provider->application->session),
+            "q2", &p->numeric_team_namespace, error)) return false;
     } else {
         if (!qa_strings_intern_cstr(qa_session_strings(engine->provider->application->session),
             "q2:coop", &p->coop_team, error)) return false;
@@ -287,7 +281,7 @@ void application_q2_combat_profile_free(application_q2_combat_profile *p)
     if (!p) return;
     for (size_t i = 0; i < 6; ++i) application_q2_call_free(&p->calls[i]);
     qa_json_destroy(p->document); free(p->regular); free(p->userinfo_storage);
-    qa_id_index_destroy(&p->numeric_teams); memset(p, 0, sizeof(*p));
+    memset(p, 0, sizeof(*p));
 }
 static qa_native_instance *native(const application_q2_combat_profile *p)
 { return qa_native_host_instance(p->engine->provider->state.native.host); }
@@ -356,28 +350,10 @@ static bool count(const application_q2_combat_profile *p, qa_native_address clie
     if (index >= p->inventory_count || !integer_read(p, client + p->inventory + (uint64_t)index * 4, 4, &value, error)) return false;
     *out = (double)value; return true;
 }
-static bool numeric_team_admit(application_q2_combat_profile *p, int64_t number,
-    qa_team_id *out, qa_error *error)
-{
-    *out = 0;
-    if (number <= 0) return true;
-    qa_id_index_entry *retained = qa_id_index_find(&p->numeric_teams, (uint32_t)number, 0);
-    if (retained) {
-        *out = (qa_team_id)retained->value;
-        return true;
-    }
-    char text[48];
-    snprintf(text, sizeof(text), "q2:%lld", (long long)number);
-    if (!qa_id_index_reserve(&p->numeric_teams, 1, error) ||
-        !qa_strings_intern_cstr(qa_session_strings(p->engine->provider->application->session),
-            text, out, error)) return false;
-    qa_id_index_insert(&p->numeric_teams, (uint32_t)number, 0, *out);
-    return true;
-}
 bool application_q2_combat_team_refresh(application_q2_combat_profile *p,
     uint32_t slot, qa_error *error)
 {
-    if (!slot || slot >= 257) return true;
+    if (p->kex || !slot || slot >= 257) return true;
     const qa_actor_registry *actors = qa_session_actors(p->engine->provider->application->session);
     if (!qa_actors_get(actors, p->engine->clients[slot].actor)) {
         qa_native_slot_binding binding;
@@ -388,19 +364,6 @@ bool application_q2_combat_team_refresh(application_q2_combat_profile *p,
     if (!qa_native_entity_address(native(p), slot, &address, error) ||
         !pointer_read(p, address + p->client_pointer, &client, error)) return false;
     if (!client) return true;
-    if (p->kex) {
-        int64_t team;
-        if (p->team != UINT32_MAX) {
-            if (!integer_read(p, client + p->team, 4, &team, error)) return false;
-        } else {
-            qa_q2_player player;
-            if (!qa_native_host_q2_player(p->engine->provider->state.native.host,
-                slot, &player, error)) return false;
-            team = player.team_id;
-        }
-        qa_team_id identity;
-        return numeric_team_admit(p, team, &identity, error);
-    }
     qa_bytes info;
     if (!qa_native_string_span(native(p), client + p->userinfo,
         p->userinfo_bytes, &info, error)) return false;
@@ -566,7 +529,7 @@ bool application_q2_combat_state_read(void *opaque, qa_combat_state *out, qa_err
         !pointer_read(p, a->address + p->client_pointer, &client, error) ||
         !qa_native_rva(native(p), p->time, p->kex ? 8 : 4, &time, error) ||
         !integer_read(p, time, p->kex ? 8 : 4, &now, error)) return false;
-    out->health = (float)health; out->mass = (float)mass; out->team = 0;
+    out->health = (float)health; out->mass = (float)mass; out->team = qa_team_named(0);
     if ((double)out->health != (double)health || (double)out->mass != (double)mass)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Native health or mass exceeds exact shared combat representation");
     if (client) {
@@ -580,7 +543,7 @@ bool application_q2_combat_state_read(void *opaque, qa_combat_state *out, qa_err
                 if (!qa_native_host_q2_player(p->engine->provider->state.native.host, a->slot, &player, error)) return false;
                 team = player.team_id;
             }
-            if (!numeric_team_admit(p, team, &out->team, error)) return false;
+            if (team > 0) out->team = qa_team_number(p->numeric_team_namespace, (int32_t)team);
         } else {
             uint8_t bytes[4];
             if (!qa_native_read(native(p), client + p->invincible, bytes, 4, error)) return false;
@@ -590,10 +553,10 @@ bool application_q2_combat_state_read(void *opaque, qa_combat_state *out, qa_err
             const qa_cvar_view *coop = qa_cvars_read(p->engine->cvars, p->engine->combat_cvars.coop),
                 *rules = qa_cvars_read(p->engine->cvars, p->engine->combat_cvars.dmflags);
             if (coop && coop->number != 0) {
-                out->team = p->coop_team;
+                out->team = qa_team_named(p->coop_team);
             } else if (rules && ((uint32_t)rules->integer & (p->model_team | p->skin_team))) {
                 const application_q2_combat_team *team = &p->client_teams[a->slot];
-                out->team = (uint32_t)rules->integer & p->model_team ? team->model : team->skin;
+                out->team = qa_team_named((uint32_t)rules->integer & p->model_team ? team->model : team->skin);
             }
         }
     } else if (p->kex) {

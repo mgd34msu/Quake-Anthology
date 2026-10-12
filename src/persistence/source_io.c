@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/binary.h"
 #include "qa/persistence_fields.h"
+#include "qa/gameplay.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,6 +32,17 @@ bool qa_source_save_string(qa_source_save_io *io, qa_string_id *value)
         if (!present) *value = QA_STRING_NONE;
         else if (!qa_strings_intern(qa_session_strings(io->session), bytes, value, io->error)) { io->failed = true; return false; }
     }
+    return true;
+}
+bool qa_source_save_team(qa_source_save_io *io, qa_team_ref *value)
+{
+    qa_team_id name = 0;
+    if (io->direction == QA_SOURCE_SAVE_WRITE &&
+        !qa_team_name(qa_session_strings(io->session), *value, &name, io->error)) {
+        io->failed = true; return false;
+    }
+    if (!qa_source_save_string(io, &name)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ) *value = qa_team_named(name);
     return true;
 }
 bool qa_source_save_text(qa_source_save_io *io, const char **value)

@@ -371,7 +371,7 @@ static bool create_application(const qa_application_options *options,
                              &application->inventory, error))
         goto fail;
     qa_combat_hooks combat_hooks = application_combat_hooks(application);
-    if (!qa_combat_create(qa_session_actor_registry(application->session), &combat_hooks,
+    if (!qa_combat_create(qa_session_actor_registry(application->session), qa_session_strings(application->session), &combat_hooks,
                           &application->combat, error))
         goto fail;
     if (!application_q3_mod_operations_create(application->session, application->combat,

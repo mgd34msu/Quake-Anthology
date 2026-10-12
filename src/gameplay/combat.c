@@ -1,7 +1,70 @@
 #include "combat_internal.h"
 #include "qa/inventory.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+static size_t team_decimal(qa_team_ref team, char text[12]) {
+    return (size_t)snprintf(text, 12, "%d", team.number.value);
+}
+bool qa_team_equal(const qa_strings *strings, qa_team_ref a, qa_team_ref b) {
+    if (a.kind == b.kind) {
+        switch (a.kind) {
+        case QA_TEAM_NONE: return true;
+        case QA_TEAM_NAMED: return a.name == b.name;
+        case QA_TEAM_NUMBER: return a.number.namespace_id == b.number.namespace_id &&
+                                   a.number.value == b.number.value;
+        }
+    }
+    if (a.kind == QA_TEAM_NAMED && b.kind == QA_TEAM_NUMBER) {
+        qa_bytes name = qa_strings_text(strings, a.name);
+        qa_bytes prefix = qa_strings_text(strings, b.number.namespace_id);
+        char number[12]; size_t length = team_decimal(b, number);
+        return prefix.data && name.size >= prefix.size &&
+            name.size - prefix.size == length + 1 &&
+            !memcmp(name.data, prefix.data, prefix.size) && name.data[prefix.size] == ':' &&
+            !memcmp(name.data + prefix.size + 1, number, length);
+    }
+    return a.kind == QA_TEAM_NUMBER && b.kind == QA_TEAM_NAMED && qa_team_equal(strings, b, a);
+}
+bool qa_team_valid(const qa_strings *strings, qa_team_ref team) {
+    switch (team.kind) {
+    case QA_TEAM_NONE: return true;
+    case QA_TEAM_NAMED: return team.name && qa_strings_text(strings, team.name).data;
+    case QA_TEAM_NUMBER: return team.number.value > 0 &&
+        qa_strings_text(strings, team.number.namespace_id).data;
+    }
+    return false;
+}
+int32_t qa_team_color_number(const qa_strings *strings, qa_team_ref team, qa_team_color_rule rule) {
+    if (team.kind == QA_TEAM_NUMBER) {
+        return rule == QA_TEAM_COLOR_ALIASES &&
+            (qa_strings_name_flags(strings, team.number.namespace_id) & QA_NAME_TEAM_COLOR_NAMESPACE) &&
+            team.number.value <= 2 ? team.number.value : 0;
+    }
+    if (team.kind != QA_TEAM_NAMED) return 0;
+    uint32_t flags = qa_strings_name_flags(strings, team.name);
+    uint32_t red = rule == QA_TEAM_COLOR_ALIASES ? QA_NAME_TEAM_RED_ALIAS : QA_NAME_TEAM_RED_EXACT;
+    uint32_t blue = rule == QA_TEAM_COLOR_ALIASES ? QA_NAME_TEAM_BLUE_ALIAS : QA_NAME_TEAM_BLUE_EXACT;
+    return flags & red ? 1 : flags & blue ? 2 : 0;
+}
+bool qa_team_name(qa_strings *strings, qa_team_ref team, qa_team_id *out, qa_error *error) {
+    if (team.kind != QA_TEAM_NUMBER) { *out = team.kind == QA_TEAM_NAMED ? team.name : 0; return true; }
+    qa_bytes prefix = qa_strings_text(strings, team.number.namespace_id);
+    char number[12]; size_t length = team_decimal(team, number);
+    if (prefix.size > SIZE_MAX - length - 1) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Team name exceeds storage"); return false;
+    }
+    size_t size = prefix.size + length + 1;
+    uint8_t local[64];
+    uint8_t *text = size <= sizeof(local) ? local : malloc(size);
+    if (!text) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Preparing saved team name"); return false; }
+    if (prefix.size) memcpy(text, prefix.data, prefix.size);
+    text[prefix.size] = ':'; memcpy(text + prefix.size + 1, number, length);
+    bool ok = qa_strings_intern(strings, (qa_bytes){text, size}, out, error);
+    if (text != local) free(text);
+    return ok;
+}
 
 bool qa_combat_argument(qa_error *error, const char *message) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message); return false;
@@ -169,7 +232,7 @@ bool qa_combat_primary_read(qa_combat *combat, qa_actor_id actor, qa_combat_stat
     if (!state_valid(&state, error)) return false;
     *out = state; *local = !entry->external; return true;
 }
-bool qa_combat_create(qa_actor_registry *actors, const qa_combat_hooks *hooks, qa_combat **out, qa_error *error) {
+bool qa_combat_create(qa_actor_registry *actors, qa_strings *strings, const qa_combat_hooks *hooks, qa_combat **out, qa_error *error) {
     if (!actors || !out) return qa_combat_argument(error, "combat requires an actor registry and output");
     size_t count = qa_actors_capacity(actors);
     if (count > SIZE_MAX / sizeof(qa_combat_record)) return memory_error(error);
@@ -183,7 +246,7 @@ bool qa_combat_create(qa_actor_registry *actors, const qa_combat_hooks *hooks, q
         free(combat->records); free(combat);
         return allocation_failed ? memory_error(error) : false;
     }
-    combat->actors = actors; combat->next_serial = 1;
+    combat->actors = actors; combat->strings = strings; combat->next_serial = 1;
     if (hooks) combat->hooks = *hooks;
     *out = combat; return true;
 }

@@ -12,6 +12,11 @@ typedef uint32_t qa_string_id;
 #define QA_NAME_SEXED_SOUND (1u << 4)
 #define QA_NAME_INFO_FLAG (1u << 5)
 #define QA_NAME_FUNC (1u << 6)
+#define QA_NAME_TEAM_RED_EXACT (1u << 7)
+#define QA_NAME_TEAM_BLUE_EXACT (1u << 8)
+#define QA_NAME_TEAM_RED_ALIAS (1u << 9)
+#define QA_NAME_TEAM_BLUE_ALIAS (1u << 10)
+#define QA_NAME_TEAM_COLOR_NAMESPACE (1u << 11)
 typedef struct qa_strings qa_strings;
 
 /* Exact byte identity, with no case folding or path normalization. Normalize

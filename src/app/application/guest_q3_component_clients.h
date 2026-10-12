@@ -17,7 +17,7 @@ bool application_q3_component_client_adapter_idle(const application_q3_component
 bool application_q3_component_client_adapter_transport_bind(application_q3_component_client_adapter *,
     void *,bool (*)(void *,qa_actor_owner,qa_actor_id,const char *,qa_error *),qa_error *);
 application_q3_component_clients application_q3_component_client_adapter_services(application_q3_component_client_adapter *);
-bool application_q3_component_client_match_read(void *,qa_actor_id,qa_string_id *,double *,qa_error *);
+bool application_q3_component_client_match_read(void *,qa_actor_id,qa_team_ref *,double *,qa_error *);
 bool application_q3_component_client_match_write(void *,qa_actor_id,bool,qa_string_id,double,qa_error *);
 /* The selected value borrows source text or the caller's Q1 projection arena.
  * Copy it before mutating userinfo or releasing the arena. */

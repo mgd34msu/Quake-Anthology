@@ -36,6 +36,7 @@ typedef struct qa_combat_cursor {
 } qa_combat_cursor;
 struct qa_combat {
     qa_actor_registry *actors;
+    qa_strings *strings;
     qa_combat_record *records;
     qa_damage_journal_store *journals;
     qa_combat_hooks hooks;

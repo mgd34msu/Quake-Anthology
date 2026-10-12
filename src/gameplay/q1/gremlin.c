@@ -193,9 +193,9 @@ static bool gorge_damage(qa_q1_game *g, q1_actor *entity, qa_actor_id target, fl
         return true;
     }
     qa_combat_state self;
-    if (g->options.teamplay == 1 && combat.team &&
+    if (g->options.teamplay == 1 && qa_team_present(combat.team) &&
         qa_combat_read_traits(g->services.combat, entity->id, &self, NULL) &&
-        self.team == combat.team)
+        qa_team_equal(qa_session_strings(g->services.session), self.team, combat.team))
         return true;
     return qa_combat_set_health(g->services.combat, target, combat.health - damage, error);
 }

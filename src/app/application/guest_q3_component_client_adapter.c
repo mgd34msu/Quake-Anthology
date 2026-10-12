@@ -374,7 +374,7 @@ static bool source_set_team(application_q3_component_client_adapter *a,qa_actor_
 {
     application_provider *source=a->source;qa_combat_state current_team;
     if(!qa_combat_read(a->application->combat,actor,&current_team,e)) return false;
-    if(current_team.team==team) return true;
+    if(qa_team_equal(qa_session_strings(a->application->session),current_team.team,qa_team_named(team))) return true;
     const char *text=team?qa_strings_cstr(qa_session_strings(a->application->session),team):NULL;
     if(team&&!text) return application_fail(e,QA_ERROR_ARGUMENT,"Component team lost its actual identity");
     struct application_q3_guest *engine=q3g_engine(source);
@@ -444,7 +444,7 @@ static bool source_set_team(application_q3_component_client_adapter *a,qa_actor_
     }
     return application_fail(e,QA_ERROR_UNSUPPORTED,"Component team needs its physical Source command authority");
 }
-bool application_q3_component_client_match_read(void *context,qa_actor_id actor,qa_string_id *team,double *score,qa_error *e)
+bool application_q3_component_client_match_read(void *context,qa_actor_id actor,qa_team_ref *team,double *score,qa_error *e)
 {
     application_q3_component_client_adapter *a=context;qa_combat_state state;double points;
     if(!team||!score)

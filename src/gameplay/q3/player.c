@@ -494,7 +494,7 @@ bool q3_ammo_timer_store(qa_q3_game *game, qa_actor_id actor, qa_q3_weapon weapo
                                                      actor, weapon, value, error);
 }
 static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_state *spawn,
-                        qa_team_id team, qa_error *error) {
+                        qa_team_ref team, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER || !spawn)
         return q3_fail(error, "missing Q3 spawn admission");
@@ -741,7 +741,7 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
     return native_client || player->spawn_count <= 1 || q3_player_event(game, actor, 42, 0, error);
 }
 bool qa_q3_spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_state *spawn,
-                        qa_team_id team, qa_error *error) {
+                        qa_team_ref team, qa_error *error) {
     if (!game || !spawn || game->source_restored || game->observation_depth == SIZE_MAX)
         return q3_fail(error, "invalid Q3 player spawn boundary");
     qa_body_state captured = *spawn;

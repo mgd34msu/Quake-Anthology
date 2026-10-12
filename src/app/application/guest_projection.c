@@ -416,8 +416,10 @@ static bool player_state(q3g_role *role, qa_actor_id actor, qa_combat_state *out
         int32_t team = player.persistant[3];
         if (team == 1 || team == 2) {
             qa_strings *strings = qa_session_strings(role->engine->provider->application->session);
-            if (!qa_strings_intern_cstr(strings, team == 1 ? "q3:1" : "q3:2", &state.team, error))
+            qa_team_id named_team;
+            if (!qa_strings_intern_cstr(strings, team == 1 ? "q3:1" : "q3:2", &named_team, error))
                 return false;
+            state.team = qa_team_named(named_team);
         }
         *out = state;
         return true;

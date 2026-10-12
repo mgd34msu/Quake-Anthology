@@ -141,7 +141,9 @@ static bool check_team(source_birth *call, qa_error *error) {
         !read_number(call, call->actor, QA_Q1_CTF_LAST_TEAM, &last, error) ||
         !qa_combat_read_traits(call->app->combat, call->actor, &combat, error) ||
         !current(call, error)) return false;
-    bool red_team = combat.team == view.rules.teams[0], blue_team = combat.team == view.rules.teams[1];
+    qa_strings *strings = qa_session_strings(call->app->session);
+    bool red_team = qa_team_equal(strings, combat.team, qa_team_named(view.rules.teams[0])),
+        blue_team = qa_team_equal(strings, combat.team, qa_team_named(view.rules.teams[1]));
     if (last >= 0 && (red_team || blue_team))
         return write_number(call, QA_Q1_CTF_LAST_TEAM, red_team ? 5 : 14, error);
     size_t red = 0, blue = 0;
@@ -154,8 +156,8 @@ static bool check_team(source_birth *call, qa_error *error) {
             call->kind, actor, &source_observer, error) ||
             !qa_combat_read_traits(call->app->combat, actor, &combat, error) ||
             !current(call, error)) return false;
-        if (combat.team == view.rules.teams[0]) ++red;
-        else if (combat.team == view.rules.teams[1]) ++blue;
+        if (qa_team_equal(strings, combat.team, qa_team_named(view.rules.teams[0]))) ++red;
+        else if (qa_team_equal(strings, combat.team, qa_team_named(view.rules.teams[1]))) ++blue;
     }
     bool use_blue = blue < red;
     if (blue == red) {
@@ -165,7 +167,7 @@ static bool check_team(source_birth *call, qa_error *error) {
     }
     if (!qa_combat_read_traits(call->app->combat, call->actor, &combat, error) ||
         !current(call, error)) return false;
-    combat.team = view.rules.teams[use_blue ? 1 : 0];
+    combat.team = qa_team_named(view.rules.teams[use_blue ? 1 : 0]);
     return qa_combat_set_traits(call->app->combat, call->actor, &combat, error) &&
         current(call, error) && write_number(call, QA_Q1_CTF_LAST_TEAM, use_blue ? 14 : 5, error) &&
         qa_q1_source_client_colors(call->operation.game, call->actor, use_blue ? 13 : 4,
@@ -336,7 +338,9 @@ static bool frame_team(source_birth *call, double *out, qa_error *error) {
     if (!qa_modes_read(call->app->modes, call->mode, &view, error) ||
         !qa_combat_read_traits(call->app->combat, call->actor, &combat, error) ||
         !current(call, error)) return false;
-    *out = combat.team == view.rules.teams[0] ? 5 : combat.team == view.rules.teams[1] ? 14 : 0;
+    qa_strings *strings = qa_session_strings(call->app->session);
+    *out = qa_team_equal(strings, combat.team, qa_team_named(view.rules.teams[0])) ? 5 :
+        qa_team_equal(strings, combat.team, qa_team_named(view.rules.teams[1])) ? 14 : 0;
     return true;
 }
 static bool set_team(source_birth *call, double team, qa_error *error) {
@@ -345,7 +349,7 @@ static bool set_team(source_birth *call, double team, qa_error *error) {
     if (!qa_modes_read(call->app->modes, call->mode, &view, error) ||
         !qa_combat_read_traits(call->app->combat, call->actor, &combat, error) ||
         !current(call, error)) return false;
-    combat.team = team == 5 ? view.rules.teams[0] : team == 14 ? view.rules.teams[1] : 0;
+    combat.team = qa_team_named(team == 5 ? view.rules.teams[0] : team == 14 ? view.rules.teams[1] : 0);
     return qa_combat_set_traits(call->app->combat, call->actor, &combat, error) &&
         current(call, error) && write_number(call, QA_Q1_CTF_LAST_TEAM, team, error) &&
         qa_q1_source_client_colors(call->operation.game, call->actor,

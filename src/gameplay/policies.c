@@ -5,8 +5,8 @@ static bool self_damage(const qa_damage_request *request) {
     return request->attack.attacker.registry &&
            qa_actor_id_equal(request->target, request->attack.attacker);
 }
-static bool same_team(const qa_combat_state *target, const qa_combat_state *attacker) {
-    return attacker && target->team && target->team == attacker->team;
+static bool same_team(const qa_combat *combat, const qa_combat_state *target, const qa_combat_state *attacker) {
+    return attacker && qa_team_present(target->team) && qa_team_equal(combat->strings, target->team, attacker->team);
 }
 static bool current(qa_combat *combat, const qa_damage_request *request, qa_combat_state *victim,
                     qa_combat_state *attacker, bool *has_attacker, qa_error *error) {
@@ -289,7 +289,7 @@ static bool q1_damage(qa_combat *combat, const qa_combat_policy *policy,
     if (!current(combat, request, &target, &attacker, &has_attacker, error))
         return false;
     if (protected_health || (!source.skip_base_team_health && source.teamplay == 1 &&
-                             same_team(&target, has_attacker ? &attacker : NULL)))
+                             same_team(combat, &target, has_attacker ? &attacker : NULL)))
         return true;
     value = (qa_damage_effect){.amount = damage, .allowed = true};
     if (!effect(combat, policy, QA_DAMAGE_BEFORE_HEALTH, request, &value, error))
@@ -345,7 +345,7 @@ static bool q2_damage(qa_combat *combat, const qa_combat_policy *policy,
     if (!integer(input.amount, &damage, error))
         return false;
     if (!self_damage(request) && source.team_damage_enabled &&
-        same_team(&target, has_attacker ? &attacker : NULL) && !source.friendly_fire &&
+        same_team(combat, &target, has_attacker ? &attacker : NULL) && !source.friendly_fire &&
         !source.nuke)
         damage = 0;
     if (source.reject_friendly_damage && !flags.no_protection && !source.nuke)
@@ -542,7 +542,7 @@ static bool q3_damage(qa_combat *combat, const qa_combat_policy *policy,
     if (!flags.no_protection) {
         bool check_team = !source.missionpack || (!source.juiced && !flags.no_team_protection);
         if ((check_team && !self_damage(request) &&
-             same_team(&target, has_attacker ? &attacker : NULL) && !source.friendly_fire) ||
+             same_team(combat, &target, has_attacker ? &attacker : NULL) && !source.friendly_fire) ||
             source.proximity_protected)
             return true;
         if (target.invulnerable) {

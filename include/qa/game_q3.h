@@ -367,7 +367,7 @@ bool qa_q3_player_request_weapon(qa_q3_game *, qa_actor_id, qa_q3_weapon, qa_err
 bool qa_q3_player_quad(qa_q3_game *, qa_actor_id, uint64_t duration_ns, qa_error *);
 /* Extend an active native quad deadline; otherwise start from this source's clock. */
 bool qa_q3_player_quad_stack(qa_q3_game *, qa_actor_id, uint64_t duration_ns, qa_error *);
-bool qa_q3_spawn_player(qa_q3_game *, qa_actor_id, const qa_body_state *, qa_team_id, qa_error *);
+bool qa_q3_spawn_player(qa_q3_game *, qa_actor_id, const qa_body_state *, qa_team_ref, qa_error *);
 typedef struct qa_q3_selected_source_pose {
     qa_vec3 view_angles;
     float view_height;
@@ -531,7 +531,7 @@ typedef struct qa_q3_projectile_state {
     qa_q3_weapon weapon;
     qa_trajectory trajectory;
     qa_actor_id owner, pass, attached, trigger;
-    qa_team_id team;
+    qa_team_ref team;
     qa_vec3 normal, damage_point;
     float damage, splash, radius;
     int32_t method, splash_method, think_at, event_at;
