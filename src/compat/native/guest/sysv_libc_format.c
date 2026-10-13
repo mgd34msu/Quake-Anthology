@@ -26,10 +26,10 @@ typedef struct formatter {
     qa_native_target target;
     qa_buffer output;
     size_t output_capacity, supplied_count;
-    bool supplied, owned_output;
+    bool supplied, owned_output, ucrt, full;
     guest_abi_plan *entry_plan;
     size_t fixed_count;
-    uint64_t destination,capacity,format,arguments,used,total;
+    uint64_t destination,capacity,format,arguments,used,total,options;
     qa_buffer text;
     format_token *tokens;
     size_t token_count,token_capacity,sequence;
@@ -39,7 +39,7 @@ typedef struct formatter {
     bool positional,sequential,conflict,fortify;
     format_value *values;
     format_reader reader;
-    unsigned rounding;
+    unsigned rounding, exponent_digits;
     int format_errno;
 } formatter;
 
@@ -90,6 +90,11 @@ static bool format_store(formatter *f, uint64_t address, size_t bytes, uint64_t 
     for (size_t i = 0; i < bytes; ++i) data[i] = (uint8_t)(value >> (i*8));
     return qa_native_guest_write(f->guest, address, (qa_bytes){data, bytes}, error);
 }
+static bool format_write(formatter *f, uint64_t address, const void *data, size_t bytes, qa_error *error)
+{
+    if (f->runtime) return sysv_write(f->runtime,address,data,bytes,error);
+    return qa_native_guest_write(f->guest,address,(qa_bytes){data,bytes},error);
+}
 static bool format_string(formatter *f, qa_error *error)
 {
     size_t capacity = 0;
@@ -100,14 +105,15 @@ static bool format_string(formatter *f, qa_error *error)
         if (!sysv_format_span_grow(f->scratch, (void **)&f->text.data, &capacity, f->text.size+1, 1, error)) return false;
         f->text.data[f->text.size++] = (uint8_t)byte;
     }
-    return sysv_fail(error, QA_ERROR_ARGUMENT, "guest format exceeds its terminated string limit");
+    return f->ucrt ? guest_fail(error,QA_ERROR_FORMAT,f->format,"Windows string exceeds source read limit") :
+        sysv_fail(error,QA_ERROR_ARGUMENT,"guest format exceeds its terminated string limit");
 }
 static bool number(formatter *f,size_t *at,int *out)
 {
     uint64_t value = 0;
     while (*at < f->text.size && f->text.data[*at] >= '0' && f->text.data[*at] <= '9') {
         unsigned digit = f->text.data[(*at)++]-'0';
-        if (value > ((uint64_t)INT32_MAX-digit)/10) return invalid(f,75);
+        if (value > ((uint64_t)INT32_MAX-digit)/10) return invalid(f,f->ucrt ? 132 : 75);
         value = value*10+digit;
     }
     *out = (int)value; return true;
@@ -206,7 +212,7 @@ static bool parse(formatter *f,qa_error *error)
 static bool reader_initialize(formatter *f,qa_error *error)
 {
     format_reader *r = &f->reader; r->initialized = true; r->cursor = f->arguments;
-    if (f->runtime->target.pointer_bytes == 4) return true;
+    if (f->target.os == QA_NATIVE_OS_WINDOWS || f->target.pointer_bytes == 4) return true;
     r->descriptor = f->arguments; uint64_t gp,fp;
     if (!r->descriptor || !sysv_unsigned(f->runtime,r->descriptor,4,&gp,error) ||
         !sysv_unsigned(f->runtime,r->descriptor+4,4,&fp,error) ||
@@ -221,7 +227,7 @@ static bool next_argument(formatter *f,format_type type,format_value *out,qa_err
     format_reader *r = &f->reader;
     if (!r->initialized && !reader_initialize(f,error)) return false;
     bool extended = type == FT_EXTENDED, floating = extended || type == FT_DOUBLE;
-    size_t p = f->runtime->target.pointer_bytes;
+    size_t p = f->target.pointer_bytes;
     size_t bytes = extended ? p == 8 ? 16 : 12 : floating || type == FT_I64 ? 8 : type == FT_POINTER ? p : 4;
     uint64_t address;
     if (r->descriptor && !extended && (floating ? r->fp < 176 : r->gp < 48)) {
@@ -240,10 +246,10 @@ static bool next_argument(formatter *f,format_type type,format_value *out,qa_err
         if (r->descriptor && !sysv_put_pointer(f->runtime,r->descriptor+8,r->cursor,error)) return false;
     }
     *out = (format_value){0}; uint64_t bits;
-    if (!sysv_unsigned(f->runtime,address,extended ? 8 : bytes,&bits,error)) return false;
+    if (!format_unsigned(f,address,extended ? 8 : bytes,&bits,error)) return false;
     if (floating) {
         uint64_t high = 0;
-        if (extended && !sysv_unsigned(f->runtime,address+8,2,&high,error)) return false;
+        if (extended && !format_unsigned(f,address+8,2,&high,error)) return false;
         out->floating = sysv_format_decode(bits,(uint16_t)high,extended);
     } else out->integer = bits;
     return true;
@@ -296,6 +302,7 @@ static bool amount_get(formatter *f,format_amount amount,int64_t *out,qa_error *
 }
 static bool output_append(formatter *f,const void *data,size_t bytes,qa_error *error)
 {
+    if (f->ucrt && (!bytes || f->full || f->format_errno)) return true;
     if (f->owned_output) {
         if (f->output.size > f->capacity || bytes > f->capacity-f->output.size ||
             f->total > INT32_MAX || bytes > INT32_MAX-f->total)
@@ -307,34 +314,31 @@ static bool output_append(formatter *f,const void *data,size_t bytes,qa_error *e
     uint64_t available = f->destination && f->capacity > f->used ? f->capacity-f->used : 0;
     size_t copied = available < bytes ? (size_t)available : bytes;
     if (copied) {
-        if (f->destination > UINT64_MAX-f->used || !sysv_write(f->runtime,f->destination+f->used,data,copied,error)) return false;
+        if (f->destination > UINT64_MAX-f->used || !format_write(f,f->destination+f->used,data,copied,error)) return false;
         f->used += copied;
     }
+    if (f->ucrt && f->destination && !(f->options&2) && copied < bytes) {
+        f->full = true; return true;
+    }
     f->total += bytes;
-    return f->total <= INT32_MAX || invalid(f,75);
+    return f->total <= INT32_MAX || invalid(f,f->ucrt ? 132 : 75);
 }
 static bool output_repeat(formatter *f,uint8_t byte,uint64_t count,qa_error *error)
 {
-    if (f->owned_output) {
-        if (count > f->capacity-f->output.size)
-            return sysv_fail(error, QA_ERROR_ARGUMENT, "formatted source padding exceeds its actual output limit");
-        uint8_t block[4096]; memset(block, byte, sizeof(block));
-        while (count) {
-            size_t bytes = count > sizeof(block) ? sizeof(block) : (size_t)count;
-            if (!output_append(f, block, bytes, error)) return false;
-            count -= bytes;
-        }
-        return true;
-    }
+    if (f->owned_output && count > f->capacity-f->output.size)
+        return sysv_fail(error, QA_ERROR_ARGUMENT, "formatted source padding exceeds its actual output limit");
+    bool bounded = f->ucrt && f->destination && !(f->options&2);
     uint64_t available = f->destination && f->capacity > f->used ? f->capacity-f->used : 0;
-    uint64_t copied = count < available ? count : available, at = 0;
+    uint64_t copied = f->owned_output || bounded || count < available ? count : available;
     uint8_t block[4096]; memset(block,byte,sizeof(block));
-    while (at < copied) {
+    for (uint64_t at = 0; at < copied && !f->full && !f->format_errno; ) {
         size_t bytes = copied-at > sizeof(block) ? sizeof(block) : (size_t)(copied-at);
         if (!output_append(f,block,bytes,error)) return false;
         at += bytes;
     }
-    f->total += count-copied; return f->total <= INT32_MAX || invalid(f,75);
+    if (f->owned_output || bounded || f->format_errno) return true;
+    f->total += count-copied;
+    return f->total <= INT32_MAX || invalid(f,f->ucrt ? 132 : 75);
 }
 static bool readonly_format(formatter *f)
 {
@@ -368,7 +372,7 @@ static bool body_string(formatter *f,uint64_t address,bool wide,int64_t precisio
         uint64_t value;
         if (address > UINT64_MAX-i*width || !format_unsigned(f,address+i*width,width,&value,error)) return false;
         if (!value) return true;
-        if (wide && value > (f->target.os == QA_NATIVE_OS_WINDOWS ? 255u : 127u)) return invalid(f,84);
+        if (wide && value > (f->target.os == QA_NATIVE_OS_WINDOWS ? 255u : 127u)) return invalid(f,f->ucrt ? 42 : 84);
         if (!sysv_format_span_grow(arena, (void **)&out->data,&capacity,out->size+1,1,error)) return false;
         out->data[out->size++] = (uint8_t)value;
     }
@@ -412,7 +416,8 @@ static bool conversion(formatter *f,const format_token *token,qa_error *error)
         if (precision >= 0) zero = false;
     } else if (strchr("fFeEgGaA",code)) {
         ok = sysv_format_float_dialect(value.floating,code,(int)precision,(token->flags&FF_ALTERNATE) != 0,
-            f->rounding,f->target.os == QA_NATIVE_OS_WINDOWS,&body_storage,&body,error);
+            f->rounding,f->target.os == QA_NATIVE_OS_WINDOWS,f->exponent_digits ? f->exponent_digits : 2,
+            &body_storage,&body,error);
         if (value.floating.negative) prefix[prefix_bytes++] = '-'; else if (token->flags&FF_PLUS) prefix[prefix_bytes++] = '+';
         else if (token->flags&FF_SPACE) prefix[prefix_bytes++] = ' ';
         if (value.floating.kind) zero = false;
@@ -436,7 +441,7 @@ static bool conversion(formatter *f,const format_token *token,qa_error *error)
     } else if (code == 'c' || code == 'C') {
         bool wide = token->length == FL_L || (code == 'C' && token->length != FL_H);
         uint32_t character = wide ? f->target.os == QA_NATIVE_OS_WINDOWS ? (uint16_t)value.integer : (uint32_t)value.integer : (uint8_t)value.integer;
-        if (wide && character > (f->target.os == QA_NATIVE_OS_WINDOWS ? 255u : 127u)) return invalid(f,84);
+        if (wide && character > (f->target.os == QA_NATIVE_OS_WINDOWS ? 255u : 127u)) return invalid(f,f->ucrt ? 42 : 84);
         integer_body[0] = (char)character; integer_count = 1; zero = false;
     } else if (code == 'n') {
         if (f->target.os == QA_NATIVE_OS_WINDOWS) return invalid(f,22);
@@ -453,6 +458,13 @@ static bool conversion(formatter *f,const format_token *token,qa_error *error)
     if (ok) ok = output_append(f,body.data,body.size,error) && output_append(f,integer_body,integer_count,error);
     if (ok && left) ok = output_repeat(f,' ',padding,error);
     qa_arena_destroy(&body_storage); return ok;
+}
+static bool render_tokens(formatter *f,qa_error *error)
+{
+    for (size_t i = 0; i < f->token_count && !f->full && !f->format_errno; ++i)
+        if (!(f->tokens[i].code ? conversion(f,f->tokens+i,error) :
+            output_append(f,f->text.data+f->tokens[i].start,f->tokens[i].bytes,error))) return false;
+    return true;
 }
 static bool format_layouts(formatter *f, guest_abi_layout **out, qa_error *error)
 {
@@ -542,9 +554,7 @@ bool sysv_format_call(sysv_service *service,const qa_native_value *args,qa_nativ
                 ok = f->types[i] ? next_argument(f,f->types[i],f->values+i,error) : invalid(f,22);
         }
     }
-    for (size_t i = 0; i < f->token_count && ok; ++i)
-        ok = f->tokens[i].code ? conversion(f,f->tokens+i,error) :
-            output_append(f,f->text.data+f->tokens[i].start,f->tokens[i].bytes,error);
+    if (ok) ok = render_tokens(f,error);
 finish:
     if (ok || f->format_errno) {
         ok = true;
@@ -601,9 +611,7 @@ static bool render_output(formatter *f, size_t maximum, qa_buffer *out, qa_error
         f->rounding = f->target.os == QA_NATIVE_OS_WINDOWS ? (cpu.mxcsr>>13)&3 : (cpu.fp_control>>10)&3;
         f->owned_output = true; f->capacity = maximum;
     }
-    for (size_t i = 0; okay && i < f->token_count; ++i)
-        okay = f->tokens[i].code ? conversion(f, f->tokens+i, error) :
-            output_append(f, f->text.data+f->tokens[i].start, f->tokens[i].bytes, error);
+    if (okay) okay = render_tokens(f,error);
     if (okay && f->format_errno) okay = sysv_fail(error, QA_ERROR_ARGUMENT, "guest source format conversion failed");
     if (okay) {
         if (!f->output.data) {
@@ -654,4 +662,36 @@ bool guest_format_render_entry(qa_native_guest *guest, const qa_native_signature
     if (okay) okay = entry_values(f,error);
     if (okay) okay = render_output(f, maximum, out, error);
     formatter_free(f); return okay;
+}
+
+bool guest_format_render_va(qa_native_guest *guest, uint64_t format, uint64_t arguments,
+    uint64_t destination, uint64_t capacity, uint64_t options, qa_arena *arena,
+    int32_t *result, uint32_t *format_errno, qa_error *error)
+{
+    formatter owner = {.guest=guest,.target=guest->options.image.target,.scratch=arena,
+        .format=format,.arguments=arguments,.destination=destination,.capacity=capacity,
+        .options=options,.ucrt=true,.rounding=4,.exponent_digits=options&16 ? 3 : 2};
+    formatter *f = &owner;
+    if (!format_string(f,error) || (!parse(f,error) && !f->format_errno)) return false;
+    if (options&32) {
+        qa_native_guest_cpu cpu;
+        if (!qa_native_guest_cpu_read(guest,&cpu,error)) return false;
+        f->rounding = (cpu.mxcsr>>13)&3;
+    }
+    if (!render_tokens(f,error) && !f->format_errno) return false;
+    int32_t returned = f->format_errno ? -1 : (int32_t)f->total;
+    if (destination) {
+        if (options&1) {
+            if (f->used < capacity && !format_store(f,destination+f->used,1,0,error)) return false;
+            if (f->full || f->total > capacity) returned = -1;
+        } else {
+            if (capacity) {
+                uint64_t at = f->format_errno && (options&2) ? 0 : f->used >= capacity ? capacity-1 : f->used;
+                if (!format_store(f,destination+at,1,0,error)) return false;
+            }
+            if (!(options&2) && (!capacity || f->used == capacity)) returned = !capacity ? -1 : -2;
+        }
+    }
+    *result = returned; *format_errno = (uint32_t)f->format_errno;
+    return true;
 }

@@ -13,6 +13,6 @@ sysv_format_binary sysv_format_decode(uint64_t, uint16_t, bool);
 bool sysv_format_float(sysv_format_binary, char, int, bool, unsigned,
     qa_arena *, qa_buffer *, qa_error *);
 bool sysv_format_float_dialect(sysv_format_binary, char, int, bool, unsigned,
-    bool, qa_arena *, qa_buffer *, qa_error *);
+    bool, unsigned exponent_digits, qa_arena *, qa_buffer *, qa_error *);
 bool sysv_format_span_grow(qa_arena *, void **, size_t *, size_t, size_t, qa_error *);
 #endif

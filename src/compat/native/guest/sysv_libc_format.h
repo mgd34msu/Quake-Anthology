@@ -19,5 +19,11 @@ bool guest_format_render(qa_native_guest *, uint64_t, const qa_native_value *,
  * Positional arguments are gathered before conversion, as in the source. */
 bool guest_format_render_entry(qa_native_guest *, const qa_native_signature *,
     uint64_t, size_t, qa_arena *, qa_buffer *, qa_error *);
+/* UCRT's actual va_list and destination use the same parser/conversions as
+ * entry rendering. Options select its counting/termination and float policy;
+ * format errors are returned as guest errno values, not host failures. */
+bool guest_format_render_va(qa_native_guest *, uint64_t format, uint64_t arguments,
+    uint64_t destination, uint64_t capacity, uint64_t options, qa_arena *,
+    int32_t *result, uint32_t *format_errno, qa_error *);
 
 #endif

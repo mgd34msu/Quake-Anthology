@@ -96,7 +96,8 @@ static bool exact_decimal(sysv_format_binary value,char **out,size_t *length,int
 }
 static bool round_up(bool remainder,int half,bool odd,bool negative,unsigned mode)
 {
-    return remainder && (mode == 0 ? half > 0 || (!half && odd) : mode == 1 ? negative : mode == 2 ? !negative : false);
+    return remainder && (mode == 0 ? half > 0 || (!half && odd) : mode == 4 ? half >= 0 :
+        mode == 1 ? negative : mode == 2 ? !negative : false);
 }
 static bool scaled_digits(const char *exact,size_t length,int scale,int places,
     bool negative,unsigned mode,char **out,size_t *out_length,qa_arena *arena,qa_error *error)
@@ -187,9 +188,9 @@ static bool hex_float(sysv_format_binary value,int precision,bool alternate,unsi
     return ok;
 }
 bool sysv_format_float_dialect(sysv_format_binary value,char conversion,int precision,bool alternate,
-    unsigned mode,bool windows,qa_arena *arena,qa_buffer *out,qa_error *error)
+    unsigned mode,bool windows,unsigned exponent_digits,qa_arena *arena,qa_buffer *out,qa_error *error)
 {
-    if (!out || out->data || out->size || precision > SYSV_MAX_STRING || mode > 3)
+    if (!out || out->data || out->size || precision > SYSV_MAX_STRING || mode > 4)
         return sysv_fail(error,QA_ERROR_ARGUMENT,"invalid guest floating format request");
     bool upper = conversion >= 'A' && conversion <= 'Z'; char lower = upper ? (char)(conversion-'A'+'a') : conversion;
     bool ok;
@@ -220,7 +221,7 @@ bool sysv_format_float_dialect(sysv_format_binary value,char conversion,int prec
                     size_t tail = count-1;
                     if (lower == 'g' && !alternate) while (tail && digits[tail] == '0') --tail;
                     ok = append(arena,out,digits,1,error) && (!(tail || alternate) ||
-                        (append(arena,out,".",1,error) && append(arena,out,digits+1,tail,error))) && suffix(arena,out,exponent,'e',2,error);
+                        (append(arena,out,".",1,error) && append(arena,out,digits+1,tail,error))) && suffix(arena,out,exponent,'e',exponent_digits,error);
                 } else if (ok) {
                     size_t decimal_places = (size_t)((int)significant-1-exponent);
                     ok = fixed(arena,out,digits,count,decimal_places,alternate,error);
@@ -240,4 +241,4 @@ bool sysv_format_float_dialect(sysv_format_binary value,char conversion,int prec
 }
 bool sysv_format_float(sysv_format_binary value,char conversion,int precision,bool alternate,
     unsigned mode,qa_arena *arena,qa_buffer *out,qa_error *error)
-{ return sysv_format_float_dialect(value,conversion,precision,alternate,mode,false,arena,out,error); }
+{ return sysv_format_float_dialect(value,conversion,precision,alternate,mode,false,2,arena,out,error); }
