@@ -572,6 +572,7 @@ bool qa_q1_weapon_names_bind(qa_strings *, qa_item_id items[QA_Q1_WEAPON_COUNT],
 typedef struct qa_q1_weapon_profile {
     const char *item, *label;
     const char *ammo;
+    int32_t ammo_index;
 } qa_q1_weapon_profile;
 /* Borrowed native source identities; no game or inventory admission occurs. */
 bool qa_q1_weapon_profile_identity(qa_q1_program, qa_q1_weapon, qa_q1_weapon_profile *);

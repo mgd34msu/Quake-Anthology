@@ -20,6 +20,8 @@ typedef struct frontend_q3_browser_options {
 typedef struct frontend_q3_browser_access {
     frontend_q3_browser *browser;
     const qa_cvars *cvars;
+    qa_cvar_handle max_ping, status_resend_time;
+    uint64_t cvar_identity, cvar_declarations;
     void *context;
     bool (*current)(void *, qa_error *);
 } frontend_q3_browser_access;

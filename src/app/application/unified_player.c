@@ -195,10 +195,16 @@ bool application_ui_names_prepare(qa_application *app, qa_error *error)
     for (unsigned i = 0; i < QA_Q1_AMMO_COUNT; ++i)
         if (!qa_strings_intern_cstr(strings, qa_q1_ammo_identity((qa_q1_ammo)i),
                 &names->q1_ammo[i], error)) return false;
+    qa_id_index_clear(&app->q2_view_weapons);
+    if (!qa_id_index_reserve(&app->q2_view_weapons,QA_Q2_WEAPON_COUNT,error)) return false;
     for (unsigned i = 0; i < QA_Q2_WEAPON_COUNT; ++i) {
         const qa_q2_weapon_definition *weapon = qa_q2_base_weapon_definition((qa_q2_weapon)i);
-        if (weapon && (!qa_strings_intern_cstr(strings, weapon->item, &names->q2_weapons[i], error) ||
-            (weapon->ammo && !qa_strings_intern_cstr(strings, weapon->ammo, &names->q2_ammo[i], error)))) return false;
+        if (!weapon) continue;
+        qa_string_id model;
+        if (!qa_strings_intern_cstr(strings, weapon->item, &names->q2_weapons[i], error) ||
+            (weapon->ammo && !qa_strings_intern_cstr(strings, weapon->ammo, &names->q2_ammo[i], error)) ||
+            !qa_strings_intern_cstr(strings,weapon->view_model,&model,error)) return false;
+        qa_id_index_insert(&app->q2_view_weapons,model,0,(size_t)(uintptr_t)weapon);
     }
     static const char *const keys[] = {"q1:key/silver", "q1:key/gold"};
     static const char *const q1[] = {"q1:item_artifact_super_damage", "q1:item_artifact_invulnerability",
@@ -1211,7 +1217,13 @@ bool application_unified_player_values(qa_application *app, const application_un
             if (o.q2.gunindex >= application_native_q2_resource_range(engine, QA_NATIVE_HOST_MODEL).count ||
                 base > UINT32_MAX - (uint32_t)o.q2.gunindex || base + (uint32_t)o.q2.gunindex >= engine->hud_names.layout.max_configs)
                 ok = application_fail(error, QA_ERROR_FORMAT, "Native Q2 UI gun model leaves its real source namespace");
-            else o.native_weapon = qa_q2_base_weapon_view_model(qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->hud_names.values[base + (uint32_t)o.q2.gunindex]));
+            else {
+                qa_id_index_cursor model=qa_id_index_begin(&app->q2_view_weapons,
+                    engine->hud_names.values[base+(uint32_t)o.q2.gunindex],0);
+                size_t definition;
+                if (qa_id_index_next(&app->q2_view_weapons,&model,&definition))
+                    o.native_weapon=(const qa_q2_weapon_definition *)(uintptr_t)definition;
+            }
         }
     }
     bool qc = qc_arsenal(&o);

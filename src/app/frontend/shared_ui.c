@@ -14,7 +14,9 @@ typedef struct prepared_seat {
     qa_ui_preferences preferences;
     char *language;
     qa_localization *catalog,*previous_catalog;
-    char *previous_language;
+    qa_cvar_handle language_handle,previous_language_handle;
+    uint64_t language_identity,language_revision;
+    uint64_t previous_language_identity,previous_language_revision;
     qa_ui_presentation_ticket *presentation;
     qa_sound_caption_language *sound;
     frontend_cinematic_language *cinematic;
@@ -70,9 +72,11 @@ bool frontend_shared_ui_prepare(qa_frontend *f,const qa_cvars_edit *edit,
     if (frame>INT64_MAX) return fail(e,"Prepared caption clock exceeds the real audio range");
     owner->view=qa_vfs_clone(f->ui_mounts,e);
     if (!owner->view) return false;
+    const qa_ui_preference_handles *handles=qa_application_ui_preference_handles(f->application);
+    uint64_t language_identity=qa_cvars_view_identity(qa_cvars_edit_registry(edit));
     for (unsigned i=0;i<owner->count;++i) {
         prepared_seat *seat=owner->seat+i;
-        if (!qa_ui_preferences_edit_read(edit,qa_application_ui_preference_handles(f->application),i,&seat->preferences,e) ||
+        if (!qa_ui_preferences_edit_read(edit,handles,i,&seat->preferences,e) ||
             !frontend_menu_font_selection(f,i,seat->preferences.typeface==QA_UI_TYPEFACE_BOLD,&seat->fonts,e) ||
             !qa_ui_presentation_prepare(seat->ui,&seat->fonts,seat->preferences.text_scale,
                 seat->preferences.color_mode,&seat->presentation,e)) return false;
@@ -81,7 +85,13 @@ bool frontend_shared_ui_prepare(qa_frontend *f,const qa_cvars_edit *edit,
         if (!seat->language) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining prepared physical UI language");
         memcpy(seat->language,seat->preferences.language,size); seat->preferences.language=seat->language;
         frontend_ui_seat_features *state=owner->features->seats+i;
-        seat->previous_catalog=state->localization; seat->previous_language=state->language;
+        seat->language_handle=handles->seats[i][QA_UI_PREF_LANGUAGE];
+        seat->language_identity=language_identity;
+        seat->language_revision=qa_cvars_edit_read(edit,seat->language_handle)->modification_count;
+        seat->previous_catalog=state->localization;
+        seat->previous_language_handle=state->language_handle;
+        seat->previous_language_identity=state->language_identity;
+        seat->previous_language_revision=state->language_revision;
         if (!qa_localization_acquire(owner->features->catalogs,owner->view,seat->language,
             &(qa_localization_options){.profile=owner->features->ui_profile},&seat->catalog,e) ||
             !qa_sound_caption_language_prepare(state->captions,seat->language,(int64_t)frame,&seat->sound,e) ||
@@ -96,6 +106,12 @@ static bool same_preferences(const qa_ui_preferences *a,const qa_ui_preferences 
         a->reduced_flashes==b->reduced_flashes && a->captions==b->captions && a->crosshair==b->crosshair &&
         a->typeface==b->typeface && a->color_mode==b->color_mode && !strcmp(a->language,b->language);
 }
+static bool language_current(const frontend_ui_seat_features *state,const prepared_seat *seat)
+{
+    return state->language_handle.slot==seat->previous_language_handle.slot &&
+        state->language_identity==seat->previous_language_identity &&
+        state->language_revision==seat->previous_language_revision;
+}
 bool frontend_shared_ui_ready(const frontend_shared_ui *owner,qa_error *e)
 {
     if (!current(owner,e) || !owner->prepared || owner->published ||
@@ -107,7 +123,7 @@ bool frontend_shared_ui_ready(const frontend_shared_ui *owner,qa_error *e)
         const frontend_ui_seat_features *state=owner->features->seats+i;
         qa_ui_preferences proposed;
         if (!qa_ui_preferences_edit_read(owner->edit,qa_application_ui_preference_handles(owner->application),i,&proposed,e) || !same_preferences(&seat->preferences,&proposed) ||
-            state->language!=seat->previous_language || state->localization!=seat->previous_catalog)
+            !language_current(state,seat) || state->localization!=seat->previous_catalog)
             return fail(e,"Prepared UI preference or active catalog changed before publication");
         if (!qa_ui_presentation_ready(seat->presentation,e) || !qa_sound_caption_language_ready(seat->sound,e) ||
             (seat->cinematic && !frontend_ui_cinematic_language_ready(seat->cinematic,e))) return false;
@@ -123,7 +139,7 @@ bool frontend_shared_ui_ready_is(const frontend_shared_ui *owner)
         const prepared_seat *seat=owner->seat+i;
         const frontend_ui_seat_features *state=owner->features->seats+i;
         if (!qa_ui_preferences_edit_ready_is(owner->edit,qa_application_ui_preference_handles(owner->application),i,&seat->preferences) ||
-            state->language!=seat->previous_language || state->localization!=seat->previous_catalog ||
+            !language_current(state,seat) || state->localization!=seat->previous_catalog ||
             !qa_ui_presentation_ready(seat->presentation,NULL) || !qa_sound_caption_language_ready(seat->sound,NULL) ||
             (seat->cinematic && !frontend_ui_cinematic_language_ready_is(seat->cinematic))) return false;
     }
@@ -136,8 +152,9 @@ static void publish(frontend_shared_ui *owner,bool consume)
         frontend_ui_seat_features *state=owner->features->seats+i;
         qa_ui_presentation_publish(seat->presentation); seat->presentation=NULL;
         owner->seats[i].fonts=seat->fonts;
-        state->language=seat->language; state->localization=seat->catalog;
-        seat->language=seat->previous_language; seat->catalog=seat->previous_catalog;
+        state->language_handle=seat->language_handle; state->language_identity=seat->language_identity;
+        state->language_revision=seat->language_revision; state->localization=seat->catalog;
+        seat->catalog=seat->previous_catalog;
         if (consume) {
             qa_sound_caption_language_commit(seat->sound); seat->sound=NULL;
             if (seat->cinematic) {

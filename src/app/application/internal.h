@@ -291,6 +291,7 @@ struct qa_application {
     qa_cvar_handle bot_minplayers;
     qa_ui_preference_handles ui_preference_handles;
     qa_application_ui_names ui_names;
+    qa_id_index q2_view_weapons;
     qa_string_id movement_numeric_id;
     application_content_names *content_names;
     qa_console *console;

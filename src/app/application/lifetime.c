@@ -380,6 +380,7 @@ bool application_finalize(qa_application *application, qa_error *error)
     qa_id_index_destroy(&application->provider_index);
     qa_actor_index_destroy(&application->native_client_actors);
     free(application->ui_names.q2_effects);
+    qa_id_index_destroy(&application->q2_view_weapons);
     while(application->content_names) {
         application_content_names *row=application->content_names;application->content_names=row->next;
         qa_catalog_release((qa_catalog *)row->catalog);free(row);

@@ -1,10 +1,11 @@
 #ifndef QA_MATERIAL_LIBRARY_INTERNAL_H
 #define QA_MATERIAL_LIBRARY_INTERNAL_H
 #include "internal.h"
+#include "qa/id_index.h"
 
 enum { QA_MATERIAL_MAX_STAGES = 8, QA_MATERIAL_MAX_ANIMATION = 8,
        QA_MATERIAL_MAX_TCMODS = 4, QA_MATERIAL_MAX_DEFORMS = 3,
-       QA_MATERIAL_BUCKETS = 1024, QA_MATERIAL_MAX_REGISTERED = 16384 };
+       QA_MATERIAL_MAX_REGISTERED = 16384 };
 
 typedef struct qa_material_catalog_source {
     qa_resource *resource;
@@ -18,6 +19,7 @@ typedef struct qa_material_catalog_source {
 
 typedef struct qa_material_script {
     char *name;
+    qa_string_id name_id;
     uint8_t *text;
     size_t size;
     qa_material_catalog_source *source;
@@ -33,6 +35,7 @@ typedef struct qa_material_video_receipt {
 } qa_material_video_receipt;
 typedef struct qa_material_record {
     qa_material material;
+    qa_string_id name_id;
     qa_scene_image_options options;
     qa_material_registration_kind kind;
     uint64_t world_identity;
@@ -41,7 +44,6 @@ typedef struct qa_material_record {
     char *base_name;
     const qa_scene_image *base_image;
     qa_material_video_receipt *videos;
-    struct qa_material_record *next;
     struct qa_material_record *admission_parent;
     struct qa_material_record *source_variant_parent;
     qa_q3_image_upload_options source_variant_upload;
@@ -50,11 +52,13 @@ typedef struct qa_material_record {
 
 typedef struct qa_material_remap_record {
     char *original, *replacement;
+    qa_string_id original_id, replacement_id;
     float time_offset;
     struct qa_material_remap_record *next;
 } qa_material_remap_record;
 typedef struct qa_material_generated {
     char *name;
+    qa_string_id name_id;
     const qa_scene_image *image;
     const qa_material *picture;
     struct qa_material_generated *next;
@@ -65,9 +69,10 @@ struct qa_material_library {
     qa_scene_resources *resources;
     qa_material_order *order;
     qa_scene_image *fog_image, *dlight_image;
-    qa_material_script *scripts[QA_MATERIAL_BUCKETS];
+    qa_strings *names;
+    qa_id_index script_names, record_names, remap_names;
+    qa_material_script *scripts;
     qa_material_catalog_source *catalog_sources, *catalog_tail, *catalog_current;
-    qa_material_record *records[QA_MATERIAL_BUCKETS];
     qa_material_record **ordered;
     const qa_material *builtins[QA_MATERIAL_BUILTIN_COUNT];
     size_t count, capacity;
@@ -104,7 +109,7 @@ bool qa_material_order_image_policy_associated(const qa_material_order *);
 
 char *qa_material_string(const char *, qa_error *);
 char *qa_material_name(const char *, qa_error *);
-unsigned qa_material_hash(const char *);
+qa_material_script *qa_material_script_find(const qa_material_library *, qa_string_id);
 void qa_material_stage_init(qa_material_stage *);
 void qa_material_stage_clear(qa_material_stage *);
 void qa_material_clear(qa_material *);

@@ -95,7 +95,7 @@ bool qa_q1_weapon_profile_identity(qa_q1_program program, qa_q1_weapon weapon,
     int ammo = q1_weapon_declared_ammo(weapon);
     *out = (qa_q1_weapon_profile){.item=qa_q1_weapon_identity(weapon),
         .label=weapon_labels[weapon].display,
-        .ammo=ammo<0?NULL:qa_q1_ammo_identity((qa_q1_ammo)ammo)};
+        .ammo=ammo<0?NULL:qa_q1_ammo_identity((qa_q1_ammo)ammo),.ammo_index=ammo};
     return true;
 }
 static bool supported(const qa_q1_game *g, qa_q1_weapon weapon) {

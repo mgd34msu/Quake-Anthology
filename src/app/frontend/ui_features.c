@@ -66,7 +66,7 @@ bool frontend_ui_features_destroy(qa_frontend *f, qa_error *error)
     frontend_ui_cinematic_destroy(f);
     for (unsigned i = 0; i < QA_INPUT_LOCAL_SEATS; ++i) {
         qa_sound_captions_destroy(owner->seats[i].captions);
-        qa_localization_release(owner->seats[i].localization); free(owner->seats[i].language);
+        qa_localization_release(owner->seats[i].localization);
         qa_save_slot_listing_free(&owner->seats[i].saves);
         free(owner->seats[i].save_qualification);
         free(owner->seats[i].save_rows); free(owner->seats[i].save_details); free(owner->seats[i].save_name);
@@ -162,19 +162,24 @@ bool frontend_ui_features_sync(qa_frontend *f, qa_error *error)
     if (!frontend_accessibility_sync(f, error)) return false;
     uint64_t frame = f->audio ? qa_audio_engine_clock(f->audio) : 0;
     if (frame > INT64_MAX) return frontend_fail(error, QA_ERROR_FORMAT, "Caption delivery clock exceeds source range");
+    const qa_cvars *cvars=qa_application_cvars(f->application);
+    const qa_ui_preference_handles *handles=qa_application_ui_preference_handles(f->application);
+    uint64_t identity=qa_cvars_view_identity(cvars);
     for (unsigned i = 0; !f->options.dedicated && i < f->options.seats; ++i) {
         qa_ui_preferences preferences;
-        if (!qa_ui_preferences_read(qa_application_cvars(f->application),qa_application_ui_preference_handles(f->application), i, &preferences, error) ||
+        if (!qa_ui_preferences_read(cvars,handles, i, &preferences, error) ||
             !qa_sound_captions_prepare(owner->seats[i].captions, preferences.language, (int64_t)frame, error)) return false;
         frontend_ui_seat_features *seat=owner->seats+i;
-        if (!seat->language || strcmp(seat->language,preferences.language)) {
+        qa_cvar_handle language_handle=handles->seats[i][QA_UI_PREF_LANGUAGE];
+        const qa_cvar_view *language=qa_cvars_read(cvars,language_handle);
+        if (!seat->localization || seat->language_identity!=identity ||
+            seat->language_handle.slot!=language_handle.slot || seat->language_revision!=language->modification_count) {
             qa_localization *catalog=NULL;
             if (!qa_localization_acquire(owner->catalogs,f->ui_mounts,preferences.language,
                 &(qa_localization_options){.profile=owner->ui_profile},&catalog,error)) return false;
-            size_t size=strlen(preferences.language)+1; char *language=malloc(size);
-            if (!language) { qa_localization_release(catalog); return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual seat UI language"); }
-            memcpy(language,preferences.language,size); free(seat->language); qa_localization_release(seat->localization);
-            seat->language=language; seat->localization=catalog;
+            qa_localization_release(seat->localization);
+            seat->language_handle=language_handle; seat->language_identity=identity;
+            seat->language_revision=language->modification_count; seat->localization=catalog;
         }
     }
     return frontend_campaign_menu_sync(f,error);

@@ -502,8 +502,7 @@ bool application_qc_weapon_binding_at(struct application_qc_state *engine,size_t
     qa_q1_weapon_profile profile;
     if(!qa_q1_weapon_profile_identity(ordinal<8?QA_Q1_ID1:QA_Q1_HIPNOTIC,original_weapons[ordinal].weapon,&profile))
         return application_fail(error,QA_ERROR_FORMAT,"QC UI binding has no original SDK identity");
-    qa_item_id item=qa_strings_find(qa_session_strings(p->application->session),
-        (qa_bytes){(const uint8_t *)profile.item,strlen(profile.item)});
+    qa_item_id item=profile.item?p->application->ui_names.q1_weapons[original_weapons[ordinal].weapon]:0;
     if(!item) return application_fail(error,QA_ERROR_NOT_FOUND,"QC UI weapon was not admitted in the actual inventory namespace");
     *out=(qa_application_qc_weapon_ui_binding){item,profile.label,original_weapons[ordinal].bit,original_weapons[ordinal].impulse};
     *via=ordinal==10?16u:0u;
@@ -531,8 +530,7 @@ bool qa_application_qc_message_player_ui_definition(qa_application *app,const qa
         qa_q1_weapon_profile profile;
         if(!qa_q1_weapon_profile_identity(ordinal<8?QA_Q1_ID1:QA_Q1_HIPNOTIC,original_weapons[ordinal].weapon,&profile))
             return application_fail(error,QA_ERROR_FORMAT,"QC catalog has no actual SDK weapon profile");
-        qa_item_id ammo=profile.ammo?qa_strings_find(qa_session_strings(app->session),
-            (qa_bytes){(const uint8_t *)profile.ammo,strlen(profile.ammo)}):0;
+        qa_item_id ammo=profile.ammo_index<0?0:app->ui_names.q1_ammo[profile.ammo_index];
         if(profile.ammo && !ammo)
             return application_fail(error,QA_ERROR_NOT_FOUND,"QC SDK ammunition was not admitted in its actual namespace");
         definition=(qa_item_definition){.item=binding.item,.ammo=ammo,.owner=p->owner,

@@ -111,10 +111,11 @@ bool qa_material_script_catalog(qa_material_library *library, qa_bytes source, q
         if (lexer.failed) return false;
         char *key = qa_material_name(name.text, error);
         if (!key) return false;
-        unsigned bucket = qa_material_hash(key);
-        qa_material_script *existing = library->scripts[bucket];
-        while (existing && strcmp(existing->name, key)) existing = existing->next;
+        qa_string_id name_id;
+        if (!qa_strings_intern_cstr(library->names, key, &name_id, error)) { free(key); return false; }
+        qa_material_script *existing = qa_material_script_find(library, name_id);
         if (existing) { free(key); continue; }
+        if (!qa_id_index_reserve(&library->script_names, 1, error)) { free(key); return false; }
         qa_material_script *script = calloc(1, sizeof(*script));
         size_t length = end - opening.start;
         uint8_t *text = malloc(length ? length : 1);
@@ -125,14 +126,16 @@ bool qa_material_script_catalog(qa_material_library *library, qa_bytes source, q
         }
         memcpy(text, source.data + opening.start, length);
         script->name = key;
+        script->name_id = name_id;
         script->text = text;
         script->size = length;
         script->source = library->catalog_current;
         script->source_offset = opening.start;
         script->name_offset = name.start;
         script->name_size = name.end - name.start;
-        script->next = library->scripts[bucket];
-        library->scripts[bucket] = script;
+        script->next = library->scripts;
+        library->scripts = script;
+        qa_id_index_insert(&library->script_names, name_id, 0, (size_t)(uintptr_t)script);
     }
     return !lexer.failed;
 }

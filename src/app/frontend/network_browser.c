@@ -47,7 +47,16 @@ static bool current(frontend_q3_browser *b, qa_error *e)
 static bool access_current(void *context, qa_error *e)
 {
     frontend_q3_browser_access *a = context;
-    return a && a->browser && a->cvars && a->current && a->current(a->context, e) && current(a->browser, e);
+    if (!(a && a->browser && a->cvars && a->current && a->current(a->context, e) && current(a->browser, e))) return false;
+    uint64_t identity = qa_cvars_view_identity(a->cvars);
+    uint64_t declarations = qa_cvars_declaration_revision(a->cvars);
+    if (a->cvar_identity != identity || a->cvar_declarations != declarations) {
+        a->max_ping = qa_cvars_resolve(a->cvars, "cl_maxPing");
+        a->status_resend_time = qa_cvars_resolve(a->cvars, "cl_serverStatusResendTime");
+        a->cvar_identity = identity;
+        a->cvar_declarations = declarations;
+    }
+    return true;
 }
 static bool same(const qa_net_address *a, const qa_net_address *b)
 { return qa_net_address_equal(a, b, true); }
@@ -351,7 +360,7 @@ static bool get_ping(void *ctx, int32_t index, int32_t capacity,
         !writer->write(writer->context, address, e) || !access_current(ctx, e)) return false;
     double measured; if (!ping_time(a->browser, slot, &measured, e) || !access_current(ctx, e)) return false;
     int32_t duration = elapsed(a->browser->options.now_ns(a->browser->options.context), slot->start);
-    const qa_cvar_view *maximum = qa_cvars_find(a->cvars, "cl_maxPing");
+    const qa_cvar_view *maximum = qa_cvars_read(a->cvars, a->max_ping);
     int32_t threshold = maximum && maximum->integer > 100 ? maximum->integer : 100;
     *out = measured != 0 ? (int32_t)measured : duration < threshold ? 0 : duration;
     return publish_ping(a->browser, &slot->address, measured, e);
@@ -491,7 +500,7 @@ static bool server_status(void *ctx, const char *remote, int32_t capacity,
         if (!writer->write || !writer->write(writer->context, result->status, e) || !access_current(ctx, e)) return false;
         slot->retrieved = true; slot->start = 0; *present = true; return true;
     }
-    const qa_cvar_view *resend = qa_cvars_find(a->cvars, "cl_serverStatusResendTime");
+    const qa_cvar_view *resend = qa_cvars_read(a->cvars, a->status_resend_time);
     double interval = resend ? resend->number : 0;
     double duration = (double)a->browser->options.now_ns(a->browser->options.context) / 1000000.0 - (double)slot->start / 1000000.0;
     if (!matching || !slot->request || duration > interval) {

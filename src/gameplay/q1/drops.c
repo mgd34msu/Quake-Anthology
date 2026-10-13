@@ -159,9 +159,8 @@ bool qa_q1_ctf_toss_ammo(qa_q1_game *g, qa_actor_id actor, const qa_q1_drop_inpu
         return false;
     pack->state.pickup.drop = Q1_DROP_CTF_AMMO;
     pack->state.pickup.weapon = QA_Q1_WEAPON_COUNT;
-    if (!qa_builtin_resource(&g->services, "q1:item_backpack",
-                              &pack->state.pickup.item, error) ||
-        !q1_model(g, pack, g->runtime_names[Q1_NAME_RESOURCE_PROGS_BACKPACK_MDL], error))
+    pack->state.pickup.item = g->runtime_names[Q1_NAME_ITEM_BACKPACK];
+    if (!q1_model(g, pack, g->runtime_names[Q1_NAME_RESOURCE_PROGS_BACKPACK_MDL], error))
         goto fail;
     for (size_t i = 0; i < sizeof(drop_ammunition) / sizeof(*drop_ammunition); ++i) {
         const drop_ammo *rule = &drop_ammunition[i];
