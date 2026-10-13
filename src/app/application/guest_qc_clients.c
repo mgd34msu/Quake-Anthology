@@ -722,21 +722,20 @@ bool application_qc_actor_traits(application_provider *provider, qa_actor_id act
     if (engine == NULL || out == NULL) return false;
     qa_error ignored = {0}; int32_t reference; float flags, health, damage; int32_t name;
     const qa_qc_definition *classname = provider->state.qc.engine->field_bindings->classname;
-    const char *text;
+    qa_string_id identity;
     if (classname == NULL || classname->type != QA_QC_STRING ||
         !application_qc_reference(engine, actor, &reference, &ignored) ||
         !application_qc_float(engine, reference, engine->field_bindings->flags, &flags, &ignored) ||
         !application_qc_float(engine, reference, engine->field_bindings->health, &health, &ignored) ||
         !application_qc_float(engine, reference, engine->field_bindings->takedamage, &damage, &ignored) ||
         !qa_qc_entity_int(provider->state.qc.instance, reference, classname->offset, &name, &ignored) ||
-        !qa_qc_string(provider->state.qc.instance, name, &text, &ignored)) return false;
+        !qa_qc_string_identity(provider->state.qc.instance, name, &identity, &ignored)) return false;
     if (!isfinite(flags) || (double)flags < INT32_MIN || (double)flags > INT32_MAX) return false;
     uint32_t bits = (uint32_t)(int32_t)flags;
     qa_builtin_actor_traits value = {.monster = (bits & 32u) != 0, .no_target = (bits & 128u) != 0,
         .grounded = (bits & 512u) != 0, .aimed_damage = damage == 2, .damageable_target = damage != 0,
-        .max_health = health, .view_height = 22};
+        .max_health = health, .view_height = 22, .classname = identity};
     const application_qc_client *client = application_qc_client_for_actor(engine, actor);
     value.player = client && client->connected;
-    if (!qa_builtin_resource(&engine->services, text, &value.classname, &ignored)) return false;
     *out = value; return true;
 }
