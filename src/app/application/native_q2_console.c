@@ -96,6 +96,7 @@ static const q2_source_cvar lmctf[] = {
     {"runes", "15", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_GAMEPLAY}, {"countdown_time", "15", 0, QA_CVAR_SAVE_GAMEPLAY}, {"autolock", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
     {"fastswitch", "0", 0, QA_CVAR_SAVE_GAMEPLAY}, {"disabled_weps", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
     {"refpassword", "", 0, QA_CVAR_SAVE_SETTING},
+    {"skinset", "0", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_GAMEPLAY},
 };
 
 struct application_native_q2_console {
@@ -108,7 +109,7 @@ struct application_native_q2_console {
     } weapon_cvars;
     qa_cvar_handle combat_cvars[APPLICATION_Q2_COMBAT_SETTING_COUNT];
     qa_cvar_handle cheats, password, spectator_password, deathmatch;
-    qa_cvar_handle referee_password, rcon_password;
+    qa_cvar_handle referee_password, rcon_password, skin_set;
     application_q2_source_scripts scripts;
     size_t calls;
     qa_cvar_observer_token observers[sizeof(engine_cvars) / sizeof(*engine_cvars) + sizeof(common) / sizeof(*common) + sizeof(rerelease) / sizeof(*rerelease) + sizeof(rogue) / sizeof(*rogue) + sizeof(lmctf) / sizeof(*lmctf) + 2];
@@ -122,6 +123,7 @@ static void source_cvars_bind(struct application_native_q2_console *owner) {
     owner->deathmatch = qa_cvars_resolve(owner->cvars, "deathmatch");
     owner->referee_password = qa_cvars_resolve(owner->cvars, "refpassword");
     owner->rcon_password = qa_cvars_resolve(owner->cvars, "rcon_password");
+    owner->skin_set = qa_cvars_resolve(owner->cvars, "skinset");
     owner->weapon_cvars.infinite_ammo = qa_cvars_resolve(owner->cvars, "g_infinite_ammo");
     owner->weapon_cvars.instant_switch = qa_cvars_resolve(owner->cvars, "g_instant_weapon_switch");
     owner->weapon_cvars.quick_switch = qa_cvars_resolve(owner->cvars, "g_quick_weapon_switch");
@@ -144,8 +146,8 @@ qa_cvars *application_native_q2_console_registry(const application_provider *pro
     return provider && provider->kind == APPLICATION_PROVIDER_Q2 && provider->native_q2_console ?
         provider->native_q2_console->cvars : NULL;
 }
-bool application_native_mode_command_settings(void *opaque, qa_mode_id mode,
-                                              qa_mode_command_settings *out) {
+bool application_native_mode_source_settings(void *opaque, qa_mode_id mode,
+                                             qa_mode_source_settings *out) {
     application_provider *provider = application_mode_provider(opaque, mode);
     struct application_native_q2_console *owner = provider ? provider->native_q2_console : NULL;
     if (!owner)
@@ -154,8 +156,10 @@ bool application_native_mode_command_settings(void *opaque, qa_mode_id mode,
     const qa_cvar_view *rcon = qa_cvars_read(owner->cvars, owner->rcon_password);
     if (!referee || !rcon)
         return false;
-    *out = (qa_mode_command_settings){.referee_password = referee->value,
-                                      .rcon_password = rcon->value};
+    const qa_cvar_view *skin = qa_cvars_read(owner->cvars, owner->skin_set);
+    *out = (qa_mode_source_settings){.referee_password = referee->value,
+                                    .rcon_password = rcon->value,
+                                    .skin_set = skin ? skin->integer : 0};
     return true;
 }
 const qa_hud_cvar_handles *application_native_q2_console_hud_controls(const application_provider *provider) {
@@ -626,6 +630,9 @@ bool application_native_q2_source_mode_rules(application_provider *provider, qa_
     if (rules->source == QA_MODE_Q2_DEATHBALL &&
         !application_native_q2_source_integer(provider, "goallimit", &rules->capture_limit, error)) return false;
     if (rules->source == QA_MODE_LMCTF) {
+        const qa_cvar_view *skin = qa_cvars_read(cvars, provider->native_q2_console->skin_set);
+        if (skin && skin->integer > 3 && !qa_cvars_set(cvars, skin->name, "3", true, error))
+            return false;
         int32_t flags, referee, runes, automatic;
         if (!application_native_q2_source_integer(provider, "ctfflags", &flags, error) ||
             !application_native_q2_source_integer(provider, "refset", &referee, error) ||

@@ -293,13 +293,14 @@ typedef struct qa_mode_loot_spawn {
     uint32_t spawnflags;
     bool bounce;
 } qa_mode_loot_spawn;
-typedef struct qa_mode_command_settings {
+typedef struct qa_mode_source_settings {
     const char *referee_password, *rcon_password;
-} qa_mode_command_settings;
+    int32_t skin_set;
+} qa_mode_source_settings;
 typedef struct qa_modes_hooks {
     void *context;
-    /* Strings are borrowed from the selected mode source during the command. */
-    bool (*command_settings)(void *, qa_mode_id, qa_mode_command_settings *);
+    /* Strings are borrowed from the selected mode source during the call. */
+    bool (*source_settings)(void *, qa_mode_id, qa_mode_source_settings *);
     /* Legacy mode records retain only the Q2 edition bit. Import borrows the
      * enclosing source's full ruleset without adding a saved selector. */
     qa_ruleset_id (*source_ruleset)(void *, qa_mode_id, qa_mode_origin, qa_actor_owner,

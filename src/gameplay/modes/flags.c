@@ -276,6 +276,15 @@ static bool capture(qa_modes *m, mode_instance *v, mode_object *flag, mode_objec
         }
     }
     if (source == QA_MODE_LMCTF) {
+        qa_mode_source_settings settings = {0};
+        if (m->options.hooks.source_settings)
+            m->options.hooks.source_settings(m->options.hooks.context, v->id, &settings);
+        int32_t skin = settings.skin_set > 3 ? 3 : settings.skin_set;
+        if (skin >= 0 && index < 2 &&
+            !mode_sound_full(m, v, capture_base->actor,
+                m->runtime_names[(index == 0 ? MODE_NAME_SOUND_CTF_REDSCORE1 :
+                    MODE_NAME_SOUND_CTF_BLUESCORE1) + skin], 5, 1, 0, e))
+            return false;
         qa_body_state body;
         if (!qa_world_body_read(m->options.services.world, capture_base->actor, &body, e))
             return false;

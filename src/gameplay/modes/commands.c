@@ -172,9 +172,9 @@ static bool lmctf_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
                            const qa_command_invocation *command, bool *handled, qa_error *e) {
     const char *name = command->argv[0];
     if (named(name, "referee")) {
-        qa_mode_command_settings settings;
-        if (!m->options.hooks.command_settings ||
-            !m->options.hooks.command_settings(m->options.hooks.context, v->id, &settings))
+        qa_mode_source_settings settings;
+        if (!m->options.hooks.source_settings ||
+            !m->options.hooks.source_settings(m->options.hooks.context, v->id, &settings))
             return true;
         *handled = true;
         const char *password = command->args_text ? command->args_text : "";

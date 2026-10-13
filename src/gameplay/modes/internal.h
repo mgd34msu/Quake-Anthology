@@ -340,7 +340,15 @@ typedef struct mode_objective {
     X(Q1_CTF_RUNE_STRENGTH, "q1:ctf/rune/strength") \
     X(Q1_CTF_RUNE_HASTE, "q1:ctf/rune/haste") \
     X(Q1_CTF_RUNE_REGENERATION, "q1:ctf/rune/regeneration") \
-    X(Q2_ITEM_TECH5, "q2:item_tech5")
+    X(Q2_ITEM_TECH5, "q2:item_tech5") \
+    X(SOUND_CTF_REDSCORE1, "ctf/redscore1.wav") \
+    X(SOUND_CTF_REDSCORE2, "ctf/redscore2.wav") \
+    X(SOUND_CTF_REDSCORE3, "ctf/redscore3.wav") \
+    X(SOUND_CTF_REDSCORE4, "ctf/redscore4.wav") \
+    X(SOUND_CTF_BLUESCORE1, "ctf/bluescore1.wav") \
+    X(SOUND_CTF_BLUESCORE2, "ctf/bluescore2.wav") \
+    X(SOUND_CTF_BLUESCORE3, "ctf/bluescore3.wav") \
+    X(SOUND_CTF_BLUESCORE4, "ctf/bluescore4.wav")
 
 typedef enum mode_name {
 #define MODE_NAME_ENUM(key, text) MODE_NAME_##key,
