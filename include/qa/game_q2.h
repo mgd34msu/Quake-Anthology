@@ -256,6 +256,7 @@ bool qa_q2_monster_spawn(qa_q2_game *, qa_actor_id, const qa_q2_monster_spawn_op
 bool qa_q2_monster_action(qa_q2_game *, qa_actor_id, qa_q2_monster_action_kind, qa_actor_id other,
                           float value, qa_error *);
 
+struct qa_map_rotation_entry;
 typedef struct qa_q2_hooks {
     void *context;
     /* Source preparation stamps sequence/time first. The application supplies
@@ -266,7 +267,11 @@ typedef struct qa_q2_hooks {
     qa_actor_owner (*inventory_provider)(void *, qa_actor_id, qa_item_id);
     /* Rerelease EndDMLevel publishes its actual shuffled Source map list.
      * The installed source owner also refreshes the GAME rotation cache. */
-    bool (*rotation_changed)(void *, const qa_string_id *, size_t, qa_error *);
+    bool (*rotation_changed)(void *, const struct qa_map_rotation_entry *, size_t, qa_error *);
+    /* Optional file-backed rotation, borrowed until rotation_release. Empty
+     * input selects the ordinary Source cvar list. */
+    bool (*rotation_source)(void *, qa_bytes *, bool *player_limits, void **lease, qa_error *);
+    void (*rotation_release)(void *, void *lease);
     bool (*weapon_view)(void *, const qa_q2_weapon_presentation *, qa_error *);
     bool (*noise)(void *, qa_actor_id, qa_vec3, bool secondary, qa_error *);
     bool (*equipment_animation)(void *, qa_actor_id, bool reverse, bool *handled, qa_error *);

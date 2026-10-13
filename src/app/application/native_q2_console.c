@@ -120,6 +120,7 @@ static const q2_source_cvar lmctf[] = {
     {"refpassword", "", 0, QA_CVAR_SAVE_SETTING},
     {"skinset", "0", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_GAMEPLAY},
     {"flag_init", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
+    {"maplist_file", "maplist.txt", 0, QA_CVAR_SAVE_GAMEPLAY},
 };
 
 struct application_native_q2_console {
@@ -132,7 +133,7 @@ struct application_native_q2_console {
     } weapon_cvars;
     qa_cvar_handle combat_cvars[APPLICATION_Q2_COMBAT_SETTING_COUNT];
     qa_cvar_handle cheats, password, spectator_password, deathmatch, max_spectators;
-    qa_cvar_handle referee_password, rcon_password, skin_set, flag_init;
+    qa_cvar_handle referee_password, rcon_password, skin_set, flag_init, maplist_file;
     qa_cvar_handle ctf_cvars[Q2_CTF_CVAR_COUNT];
     application_q2_source_scripts scripts;
     size_t calls;
@@ -150,6 +151,7 @@ static void source_cvars_bind(struct application_native_q2_console *owner) {
     owner->rcon_password = qa_cvars_resolve(owner->cvars, "rcon_password");
     owner->skin_set = qa_cvars_resolve(owner->cvars, "skinset");
     owner->flag_init = qa_cvars_resolve(owner->cvars, "flag_init");
+    owner->maplist_file = qa_cvars_resolve(owner->cvars, "maplist_file");
     for (size_t i = 0; i < Q2_CTF_CVAR_COUNT; ++i)
         owner->ctf_cvars[i] = qa_cvars_resolve(owner->cvars, ctf[i].name);
     owner->weapon_cvars.infinite_ammo = qa_cvars_resolve(owner->cvars, "g_infinite_ammo");
@@ -415,7 +417,8 @@ static bool changed(void *opaque, qa_cvars *registry, const char *name, qa_error
         char value[2] = {(char)('0' + required), 0};
         if (!qa_cvars_set(registry, "needpass", value, true, error)) return false;
     }
-    bool reset_rotation = !strcmp(name, "sv_maplist") || !strcmp(name, "g_map_list");
+    bool reset_rotation = !strcmp(name, "sv_maplist") || !strcmp(name, "g_map_list") ||
+        !strcmp(name, "maplist_file");
     return !owner->provider->state.q2 ||
         qa_q2_source_apply(owner->provider->state.q2, registry, reset_rotation, error);
 }
@@ -633,13 +636,62 @@ bool application_native_q2_console_restore(application_provider *provider, qa_by
     qa_cvars_restore *ticket = NULL;
     bool okay = qa_cvars_save_prepare(cvars, bytes, &ticket, error) && qa_cvars_save_commit(ticket, error);
     if (!okay) qa_cvars_save_abort(ticket);
+    const qa_cvar_view *lm = okay ? qa_cvars_find(cvars, "ctfflags") : NULL;
+    if (lm && lm->declared)
+        okay = definitions(provider, lmctf, sizeof(lmctf) / sizeof(*lmctf), error);
     if (okay) {
         qa_hud_cvars_bind(cvars, QA_HUD_CVAR_USE_FONT, &provider->native_q2_console->hud_cvars);
         source_cvars_bind(provider->native_q2_console);
     }
     return okay && observe(provider->native_q2_console, error);
 }
-bool application_native_q2_rotation_changed(void *context, const qa_string_id *maps, size_t count, qa_error *error) {
+bool application_native_q2_rotation_source(void *opaque, qa_bytes *out,
+    bool *player_limits, void **lease, qa_error *error) {
+    application_provider *provider = opaque;
+    *out = (qa_bytes){0};
+    *player_limits = false;
+    *lease = NULL;
+    qa_application *app = provider->application;
+    const qa_launch_snapshot *snapshot = app->routing_snapshot ?
+        app->routing_snapshot : qa_application_launch(app);
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
+    bool lmctf_selected = false;
+    for (size_t i = 0; choices && i < choices->mode_count; ++i) {
+        const qa_launch_mode *mode = &choices->modes[i];
+        if (mode->rules.source == QA_MODE_LMCTF &&
+            !strcmp(mode->instance, provider->launch->selection.instance)) {
+            lmctf_selected = true;
+            break;
+        }
+    }
+    if (!lmctf_selected) return true;
+    struct application_native_q2_console *owner = provider->native_q2_console;
+    const qa_cvar_view *setting = owner ?
+        qa_cvars_read(owner->cvars, owner->maplist_file) : NULL;
+    const char *path = setting && *setting->value ? setting->value : "maplist.txt";
+    const char *paths[2] = {path, "maplist.txt"};
+    size_t count = strcmp(path, paths[1]) ? 2 : 1;
+    for (size_t i = 0; i < count; ++i) {
+        qa_resource *resource = NULL;
+        qa_error local = {0};
+        if (qa_vfs_acquire(provider->launch->content, paths[i], &resource, NULL, &local)) {
+            *out = qa_resource_bytes(resource);
+            *player_limits = true;
+            *lease = resource;
+            return true;
+        }
+        if (local.code != QA_ERROR_NOT_FOUND) {
+            if (error) *error = local;
+            return false;
+        }
+    }
+    return true;
+}
+void application_native_q2_rotation_release(void *opaque, void *lease) {
+    (void)opaque;
+    qa_resource_release(lease);
+}
+bool application_native_q2_rotation_changed(void *context, const qa_map_rotation_entry *maps, size_t count, qa_error *error) {
     application_provider *provider = context;
     qa_console *console = NULL; qa_cvars *cvars = NULL; qa_command_context raw, command;
     if (!provider || !maps || !count || !provider->state.q2 ||
@@ -653,7 +705,7 @@ bool application_native_q2_rotation_changed(void *context, const qa_string_id *m
     qa_strings *strings = qa_session_strings(provider->application->session);
     size_t size = count;
     for (size_t i = 0; i < count; ++i) {
-        const char *map = qa_strings_cstr(strings, maps[i]);
+        const char *map = qa_strings_cstr(strings, maps[i].map);
         if (!map || !*map || strlen(map) > SIZE_MAX - size)
             return application_fail(error, QA_ERROR_FORMAT, "Q2 shuffled rotation has no genuine map token");
         size += strlen(map);
@@ -662,7 +714,7 @@ bool application_native_q2_rotation_changed(void *context, const qa_string_id *m
     if (!list) return application_fail(error, QA_ERROR_MEMORY, "Publishing actual shuffled Q2 Source rotation");
     char *cursor = list;
     for (size_t i = 0; i < count; ++i) {
-        const char *map = qa_strings_cstr(strings, maps[i]); size_t length = strlen(map);
+        const char *map = qa_strings_cstr(strings, maps[i].map); size_t length = strlen(map);
         memcpy(cursor, map, length); cursor += length;
         if (i + 1 < count) *cursor++ = ' ';
     }

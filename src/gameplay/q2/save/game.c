@@ -168,7 +168,7 @@ static bool unit_players(qa_q2_game *g, const qa_q2_game *current,
         }
     }
     for (size_t i = 0; i < players->map_list_count; ++i)
-        if (!unit_string(g, current, rules->map_list[i], players->map_list + i, e)) return false;
+        if (!unit_string(g, current, rules->map_list[i].map, players->map_list + i, e)) return false;
     return true;
 }
 

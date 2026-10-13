@@ -880,6 +880,8 @@ static bool construct_q2(qa_application *application,
         .prepare_damage = application_native_q2_damage_prepare,
         .inventory_provider = application_native_q2_attack_inventory,
         .rotation_changed = application_native_q2_rotation_changed,
+        .rotation_source = application_native_q2_rotation_source,
+        .rotation_release = application_native_q2_rotation_release,
         .fired = application_native_q1_source_fired};
     if (!qa_q2_create(&services, &options, &hooks, &provider->state.q2,
                       error))

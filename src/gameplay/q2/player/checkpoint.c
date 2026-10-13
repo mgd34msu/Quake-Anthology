@@ -261,7 +261,8 @@ bool qa_q2_players_capture(qa_q2_game *g, bool level_only, qa_q2_players_checkpo
     if(s.map_list_count) {
         s.map_list=malloc(s.map_list_count*sizeof(*s.map_list));
         if(!s.map_list) {qa_error_set(e,QA_ERROR_MEMORY,0,"Capturing actual Q2 rotation order");return false;}
-        memcpy(s.map_list,p->rotation_maps,s.map_list_count*sizeof(*s.map_list));
+        for (size_t i = 0; i < s.map_list_count; ++i)
+            s.map_list[i] = p->rotation_maps[i].map;
     }
     *out = s;
     return true;
@@ -271,7 +272,7 @@ bool qa_q2_players_restore(qa_q2_game *g, const qa_q2_players_checkpoint *s, qa_
         s->pain_animation >= 3 || !q2_saved_resource(g, s->next_map) ||
         !q2_saved_landmark(g, &s->landmark) || !qa_vec_finite(s->camera_origin) ||
         !qa_vec_finite(s->camera_angles) || !q2_saved_resource(g,s->next_map_rule) ||
-        s->map_list_count>UINT32_MAX || s->map_list_count>SIZE_MAX/sizeof(*s->map_list) ||
+        s->map_list_count>UINT32_MAX || s->map_list_count>SIZE_MAX/sizeof(qa_map_rotation_entry) ||
         (s->map_list_count && !s->map_list)) {
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid Q2 players runtime checkpoint");
         return false;
@@ -312,9 +313,16 @@ bool qa_q2_players_restore(qa_q2_game *g, const qa_q2_players_checkpoint *s, qa_
     next.next_map = s->next_map;
     next.camera_origin = s->camera_origin;
     next.camera_angles = s->camera_angles;
-    qa_string_id *rotation=s->map_list_count?malloc(s->map_list_count*sizeof(*rotation)):NULL;
+    qa_map_rotation_entry *rotation=s->map_list_count?malloc(s->map_list_count*sizeof(*rotation)):NULL;
     if(s->map_list_count && !rotation) {qa_error_set(e,QA_ERROR_MEMORY,0,"Restoring actual Q2 rotation order");return false;}
-    if(s->map_list_count) memcpy(rotation,s->map_list,s->map_list_count*sizeof(*rotation));
+    for (size_t i = 0; i < s->map_list_count; ++i) {
+        rotation[i] = (qa_map_rotation_entry){.map = s->map_list[i], .maximum_players = INT32_MAX};
+        for (size_t j = 0; j < next.rules.map_list_count; ++j)
+            if (next.rotation_maps[j].map == rotation[i].map) {
+                rotation[i] = next.rotation_maps[j];
+                break;
+            }
+    }
     free(next.rotation_maps);next.rotation_maps=rotation;next.rules.map_list=rotation;
     next.rules.map_list_count=s->map_list_count;next.rules.next_map=s->next_map_rule;
     next.rules.map_list_shuffle=s->map_list_shuffle;

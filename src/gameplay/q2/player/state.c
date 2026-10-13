@@ -150,10 +150,10 @@ bool qa_q2_players_configure(qa_q2_game *g, const qa_q2_player_rules *r,
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"Q2 rotation nextmap has no actual source string");return false;
     }
     for(size_t i=0;i<r->map_list_count;++i)
-        if(!qa_strings_text(strings,r->map_list[i]).data) {
+        if(!qa_strings_text(strings,r->map_list[i].map).data) {
             qa_error_set(e,QA_ERROR_ARGUMENT,i,"Q2 rotation entry has no actual source string");return false;
         }
-    qa_string_id *rotation=r->map_list_count?malloc(r->map_list_count*sizeof(*rotation)):NULL;
+    qa_map_rotation_entry *rotation=r->map_list_count?malloc(r->map_list_count*sizeof(*rotation)):NULL;
     if(r->map_list_count && !rotation) {qa_error_set(e,QA_ERROR_MEMORY,0,"Copying actual Q2 rotation rules");return false;}
     if(r->map_list_count) memcpy(rotation,r->map_list,r->map_list_count*sizeof(*rotation));
     const char *values[] = {r->password, r->spectator_password, r->spawn_point, r->map_name,

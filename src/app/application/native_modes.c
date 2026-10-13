@@ -624,6 +624,10 @@ bool application_native_mode_rogue_runes_read(void *opaque, qa_mode_id mode,
 bool application_native_mode_map_allowed(void *opaque, qa_mode_id mode, qa_string_id map) {
     qa_application *app = opaque;
     application_provider *source = application_mode_provider(app, mode);
+    qa_mode_view view;
+    if (source && source->kind == APPLICATION_PROVIDER_Q2 &&
+        qa_modes_read(app->modes, mode, &view, NULL) && view.rules.source == QA_MODE_LMCTF &&
+        !qa_q2_players_rotation_contains(source->state.q2, map)) return false;
     char *path = NULL;
     bool allowed = application_source_map_path(source,
         app && app->session ? qa_strings_cstr(qa_session_strings(app->session), map) : NULL,

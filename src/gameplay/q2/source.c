@@ -1,5 +1,6 @@
 #include "player/internal.h"
 #include "qa/game_q2_source.h"
+#include "qa/text.h"
 
 static const char *setting_name(const qa_q2_game *game, qa_q2_source_setting setting) {
     static const char *const names[QA_Q2_SOURCE_SETTING_COUNT] = {
@@ -157,55 +158,150 @@ static char *copy(const char *value) {
     if (out) memcpy(out, value, size);
     return out;
 }
-static bool separator(unsigned char value, bool classic) {
-    return value <= ' ' || (classic && value == ',');
-}
-static bool rotation(qa_q2_game *game, const qa_cvars *cvars, qa_string_id **out,
-                     size_t *count, qa_error *error) {
-    bool classic = !rerelease(cvars);
-    const char *list = text(cvars, classic ? "sv_maplist" : "g_map_list");
-    size_t total = 0;
-    for (const char *p = list; *p;) {
-        while (*p && separator((unsigned char)*p, classic)) ++p;
-        if (!*p) break;
-        ++total;
-        while (*p && !separator((unsigned char)*p, classic)) ++p;
-    }
-    if (total > UINT32_MAX || total > SIZE_MAX / sizeof(**out)) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "Q2 source map list exceeds native storage");
-        return false;
-    }
-    qa_string_id *maps = total ? malloc(total * sizeof(*maps)) : NULL;
-    if (total && !maps) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining Q2 source map rotation");
-        return false;
-    }
-    size_t written = 0;
-    for (const char *p = list; *p;) {
-        while (*p && separator((unsigned char)*p, classic)) ++p;
-        const char *start = p;
-        while (*p && !separator((unsigned char)*p, classic)) ++p;
-        if (p == start) break;
-        if (!qa_strings_intern(qa_session_strings(game->services.session),
-                (qa_bytes){(const uint8_t *)start, (size_t)(p - start)}, &maps[written++], error)) {
-            free(maps);
-            return false;
-        }
-    }
-    *out = maps;
-    *count = written;
-    return true;
+static bool rotation_token(qa_bytes *input, bool commas, qa_bytes *out) {
+    size_t first = 0;
+    while (first < input->size && (input->data[first] <= ' ' ||
+                                  (commas && input->data[first] == ','))) ++first;
+    size_t end = first;
+    while (end < input->size && input->data[end] > ' ' &&
+           (!commas || input->data[end] != ',')) ++end;
+    *out = (qa_bytes){input->data + first, end - first};
+    input->data += end;
+    input->size -= end;
+    return end != first;
 }
 
-static bool same_rotation(const qa_string_id *first, const qa_string_id *second, size_t count) {
+static bool rotation_row(qa_bytes *input, bool limits, bool commas, qa_bytes *name,
+                          qa_map_rotation_entry *row) {
+    while (input->size) {
+        qa_bytes fields = *input;
+        if (limits) {
+            size_t end = 0;
+            while (end < fields.size && fields.data[end] != '\n') ++end;
+            fields.size = end;
+            size_t consumed = end + (end < input->size);
+            input->data += consumed;
+            input->size -= consumed;
+        }
+        if (!rotation_token(&fields, commas, name)) {
+            if (!limits) *input = fields;
+            continue;
+        }
+        *row = (qa_map_rotation_entry){.maximum_players = limits ? 99 : INT32_MAX};
+        if (limits) {
+            int32_t *values[] = {&row->minimum_players, &row->maximum_players};
+            for (size_t i = 0; i < 2; ++i) {
+                qa_bytes number;
+                if (!rotation_token(&fields, false, &number)) break;
+                size_t digit = number.size && (number.data[0] == '+' || number.data[0] == '-');
+                if (digit >= number.size || number.data[digit] < '0' || number.data[digit] > '9')
+                    break;
+                qa_number_cursor cursor = {.text = number};
+                *values[i] = qa_parse_decimal_i32_cursor(&cursor, QA_DECIMAL_ASCII_CLAMP, false);
+            }
+        } else *input = fields;
+        return true;
+    }
+    return false;
+}
+
+static bool rotation(qa_q2_game *game, const qa_cvars *cvars,
+                     qa_map_rotation_entry **out, size_t *count, bool *player_limits,
+                     qa_error *error) {
+    bool classic = !rerelease(cvars), limits = false;
+    qa_bytes source = {0};
+    void *lease = NULL;
+    if (game->hooks.rotation_source &&
+        !game->hooks.rotation_source(game->hooks.context, &source, &limits, &lease, error))
+        return false;
+    if (!source.size) {
+        const char *list = text(cvars, classic ? "sv_maplist" : "g_map_list");
+        source = (qa_bytes){(const uint8_t *)list, strlen(list)};
+        limits = false;
+    }
+    uint8_t *lowercase = limits && source.size ? malloc(source.size) : NULL;
+    if (limits && source.size && !lowercase) {
+        if (lease) game->hooks.rotation_release(game->hooks.context, lease);
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Reading map rotation names");
+        return false;
+    }
+    if (lowercase) {
+        for (size_t i = 0; i < source.size; ++i) {
+            unsigned char c = source.data[i];
+            lowercase[i] = c >= 'A' && c <= 'Z' ? (unsigned char)(c + 'a' - 'A') : c;
+        }
+        source.data = lowercase;
+    }
+    qa_bytes input = source, name;
+    qa_map_rotation_entry row;
+    size_t total = 0;
+    while (rotation_row(&input, limits, classic && !limits, &name, &row)) ++total;
+    if (!total && limits) {
+        free(lowercase);
+        lowercase = NULL;
+        limits = false;
+        const char *list = text(cvars, classic ? "sv_maplist" : "g_map_list");
+        source = (qa_bytes){(const uint8_t *)list, strlen(list)};
+        input = source;
+        while (rotation_row(&input, false, classic, &name, &row)) ++total;
+    }
+    if (total > UINT32_MAX || total > SIZE_MAX / sizeof(**out)) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Map rotation exceeds native storage");
+        goto fail;
+    }
+    qa_map_rotation_entry *maps = total ? malloc(total * sizeof(*maps)) : NULL;
+    if (total && !maps) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining map rotation");
+        goto fail;
+    }
+    qa_strings *strings = qa_session_strings(game->services.session);
+    input = source;
+    size_t written = 0;
+    while (rotation_row(&input, limits, classic && !limits, &name, &row)) {
+        if (!qa_strings_intern(strings, name, &row.map, error)) {
+            free(maps);
+            goto fail;
+        }
+        maps[written++] = row;
+    }
+    if (limits) {
+        for (size_t i = 1; i < written; ++i) {
+            row = maps[i];
+            size_t j = i;
+            while (j && strcmp(qa_strings_cstr(strings, maps[j - 1].map),
+                               qa_strings_cstr(strings, row.map)) > 0) {
+                maps[j] = maps[j - 1];
+                --j;
+            }
+            maps[j] = row;
+        }
+    }
+    free(lowercase);
+    if (lease) game->hooks.rotation_release(game->hooks.context, lease);
+    *out = maps;
+    *count = written;
+    *player_limits = limits;
+    return true;
+fail:
+    free(lowercase);
+    if (lease) game->hooks.rotation_release(game->hooks.context, lease);
+    return false;
+}
+
+static bool rotation_entry_equal(qa_map_rotation_entry first, qa_map_rotation_entry second) {
+    return first.map == second.map && first.minimum_players == second.minimum_players &&
+           first.maximum_players == second.maximum_players;
+}
+
+static bool same_rotation(const qa_map_rotation_entry *first,
+                          const qa_map_rotation_entry *second, size_t count) {
     if (!count) return true;
     if (!first || !second) return false;
-    if (!memcmp(first, second, count * sizeof(*first))) return true;
     for (size_t i = 0; i < count; ++i) {
         size_t first_count = 0, second_count = 0;
         for (size_t j = 0; j < count; ++j) {
-            first_count += first[j] == first[i];
-            second_count += second[j] == first[i];
+            first_count += rotation_entry_equal(first[j], first[i]);
+            second_count += rotation_entry_equal(second[j], first[i]);
         }
         if (first_count != second_count) return false;
     }
@@ -245,9 +341,10 @@ bool qa_q2_source_apply(qa_q2_game *game, const qa_cvars *cvars, bool reset_rota
         return false;
     }
     char *strings[3] = {copy(rules.password), copy(rules.spectator_password), copy(rules.start_items)};
-    qa_string_id *maps = NULL;
+    qa_map_rotation_entry *maps = NULL;
     size_t map_count = 0;
-    if (!strings[0] || !strings[1] || !strings[2] || !rotation(game, cvars, &maps, &map_count, error)) {
+    bool player_limits = false;
+    if (!strings[0] || !strings[1] || !strings[2] || !rotation(game, cvars, &maps, &map_count, &player_limits, error)) {
         for (size_t i = 0; i < 3; ++i) free(strings[i]);
         free(maps);
         if (!error || !error->code) qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining Q2 source player strings");
@@ -265,6 +362,8 @@ bool qa_q2_source_apply(qa_q2_game *game, const qa_cvars *cvars, bool reset_rota
     }
     rules.map_list = players->rotation_maps;
     rules.map_list_count = map_count;
+    rules.map_list_file = player_limits;
+    rules.map_list_random = player_limits && ((uint32_t)qa_source_to_i32(number(cvars, "ctfflags")) & 4096u);
     players->rules = rules;
     game->item_runtime->options = items;
     game->options.deathmatch = number(cvars, "deathmatch") != 0;

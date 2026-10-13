@@ -106,12 +106,16 @@ typedef struct qa_q2_player_event {
     qa_q2_hand hand;
     bool visible, reliable, health, armor, shield, first;
 } qa_q2_player_event;
+typedef struct qa_map_rotation_entry {
+    qa_string_id map;
+    int32_t minimum_players, maximum_players;
+} qa_map_rotation_entry;
 typedef struct qa_q2_player_rules {
     const char *password, *spectator_password, *spawn_point, *map_name, *start_items;
-    const qa_string_id *map_list;
+    const qa_map_rotation_entry *map_list;
     size_t map_list_count;
     qa_string_id next_map;
-    bool map_list_shuffle;
+    bool map_list_shuffle, map_list_random, map_list_file;
     uint32_t max_spectators, max_clients;
     bool cheats, teamplay, coop_squad_respawn, coop_instanced_items, coop_lives, coop_player_collision;
     int coop_num_lives;
@@ -298,6 +302,7 @@ bool qa_q2_players_end_deathmatch_level(qa_q2_game *,qa_error *);
 bool qa_q2_player_noise_read(const qa_q2_game *, bool secondary, qa_q2_player_noise_record *);
 bool qa_q2_player_help_computer(qa_q2_game *, qa_actor_id, qa_error *);
 void qa_q2_player_rules_default(qa_q2_player_rules *);
+bool qa_q2_players_rotation_contains(const qa_q2_game *, qa_string_id map);
 bool qa_q2_players_configure(qa_q2_game *, const qa_q2_player_rules *,
                              const qa_q2_player_services *, qa_error *);
 bool qa_q2_player_connect(qa_q2_game *, const char *, bool bot, qa_q2_connection_result *,
