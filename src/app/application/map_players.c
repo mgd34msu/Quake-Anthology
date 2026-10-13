@@ -770,6 +770,8 @@ static bool q3_replacement_client(qa_application *application,
 static bool extra_travel_player(qa_application *application,
     const qa_launch_choices *choices, const application_player_record *record)
 {
+    if (application_player_identity(record)->bot && application_map_travel_kills_bots(application))
+        return false;
     if (application_player_identity(record)->bot && !record->remote)
         for (size_t i = 0; i < choices->seat_count; ++i)
             if (choices->seats[i].id == record->seat) return false;

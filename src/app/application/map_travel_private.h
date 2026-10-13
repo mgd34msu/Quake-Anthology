@@ -12,6 +12,7 @@ struct application_map_state {
     qa_product_id geometry;
     qa_q2_landmark landmark;
     qa_string_id nextserver;
+    qa_map_launch_policy map_launch;
     bool pending, busy, has_landmark, carry_players, complete_campaign;
     bool loading, load_carry, load_new_unit;
     bool publication_complete, match_finished;

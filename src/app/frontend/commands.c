@@ -60,8 +60,9 @@ static bool world_command(qa_frontend *f,const qa_application_startup_source *so
     const qa_command_invocation *call,bool *handled,qa_error *error)
 {
     const char *name=call->argv[0];
+    qa_map_launch_policy policy=qa_application_map_launch_command(name);
     *handled=false;
-    if (!client_name(name,"map") && !client_name(name,"gamemap") &&
+    if (policy==QA_MAP_LAUNCH_DEFAULT && !client_name(name,"gamemap") &&
         !client_name(name,"changelevel") && !client_name(name,"killserver")) return true;
     if (call->context.origin==QA_COMMAND_REMOTE) {
         *handled=true;
@@ -70,7 +71,9 @@ static bool world_command(qa_frontend *f,const qa_application_startup_source *so
     bool parked=frontend_config_store_parked_current(f->config_store,source);
     bool q2=parked || source->scope.kind==QA_APPLICATION_CONSOLE_Q2_GAME ||
         source->scope.kind==QA_APPLICATION_CONSOLE_NATIVE_Q2;
-    bool map=client_name(name,"map"),gamemap=client_name(name,"gamemap");
+    bool map=policy!=QA_MAP_LAUNCH_DEFAULT,gamemap=client_name(name,"gamemap");
+    if (policy==QA_MAP_LAUNCH_Q3_MAP && source->scope.kind!=QA_APPLICATION_CONSOLE_Q3_GAME)
+        policy=QA_MAP_LAUNCH_DEFAULT;
     bool changelevel=client_name(name,"changelevel");
     if (client_name(name,"killserver")) {
         *handled=true;
@@ -103,7 +106,7 @@ static bool world_command(qa_frontend *f,const qa_application_startup_source *so
             return true;
         }
         const char *destination=call->argv[1];
-        if (!q2 || (map && !strchr(destination,'.'))) {
+        if (policy==QA_MAP_LAUNCH_DEFAULT && (!q2 || (map && !strchr(destination,'.')))) {
             size_t length=strlen(destination);
             bool prefix=!strncmp(destination,"maps/",5);
             bool suffix=length>=4 && !strcmp(destination+length-4,".bsp");
@@ -130,17 +133,18 @@ static bool world_command(qa_frontend *f,const qa_application_startup_source *so
         qa_application_travel_request request={
             .provider=source->scope.provider,.cause=call->context.actor,.expression=destination,
             .new_unit=map,.carry_players=!map && !stopping && !parked,
-            .complete_campaign=changelevel};
-        bool queued=q2?qa_application_queue_travel(f->application,&request,error):
+            .complete_campaign=changelevel,.map_launch=policy};
+        bool queued=q2 && policy==QA_MAP_LAUNCH_DEFAULT?qa_application_queue_travel(f->application,&request,error):
             qa_application_queue_map_travel(f->application,&request,error);
         /* Q2 resumes the remaining command buffer only after ClientBegin in
          * the new world. Travel is asynchronous here, so retain that tail as
          * soon as the actual request has been accepted. */
         qa_application_travel_view travel;
-        if (q2 && queued && qa_application_travel_read(f->application,&travel) &&
+        bool pending=queued && qa_application_travel_read(f->application,&travel);
+        if (q2 && pending &&
             travel.target.kind==QA_TRAVEL_MAP && !qa_console_defer(call->console,error)) return false;
-        if (queued) frontend_demo_dispatch_manual_game(f->demos);
-        if (queued && stopping) f->server_stop_follow_map=true;
+        if (pending) frontend_demo_dispatch_manual_game(f->demos);
+        if (pending && stopping) f->server_stop_follow_map=true;
         return queued;
     }
     return true;
@@ -191,7 +195,7 @@ static bool command(void *context, const qa_command_invocation *invocation, qa_e
     bool sound_handled;
     if (!frontend_sound_command(frontend, invocation, &sound_handled, error)) return false;
     if (sound_handled) return true;
-    if (client_name(name,"map") || client_name(name,"gamemap") ||
+    if (qa_application_map_launch_command(name)!=QA_MAP_LAUNCH_DEFAULT || client_name(name,"gamemap") ||
         client_name(name,"changelevel") || client_name(name,"killserver")) {
         qa_application_startup_source source; bool present=false,handled=false;
         if (!frontend_config_store_primary_server_read(frontend->config_store,&source,&present,error)) return false;
@@ -258,7 +262,7 @@ bool frontend_commands(qa_frontend *frontend, qa_error *error)
         "menu_anthology", "library", "mods", "settings", "rankings", "assistance", "controls", "save", "load",
         "cinematic", "cinematicpause", "stopcinematic", "cd", "music", "sky", "actualimagegrid",
         "play", "soundinfo", "s_info", "soundlist", "s_list", "stopsound", "s_stop",
-        "map", "gamemap", "changelevel", "killserver"};
+        "map", "devmap", "spmap", "spdevmap", "gamemap", "changelevel", "killserver"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (!qa_console_register_owned(console, names[i], "Native frontend command", 0,
             QA_FRONTEND_COMMAND_OWNER, true, command, frontend, error)) return false;

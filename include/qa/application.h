@@ -81,6 +81,13 @@ typedef enum qa_application_guest_menu {
     QA_APPLICATION_GUEST_MENU_MAIN,
     QA_APPLICATION_GUEST_MENU_INGAME
 } qa_application_guest_menu;
+typedef enum qa_map_launch_policy {
+    QA_MAP_LAUNCH_DEFAULT,
+    QA_MAP_LAUNCH_Q3_MAP,
+    QA_MAP_LAUNCH_Q3_DEVMAP,
+    QA_MAP_LAUNCH_Q3_SPMAP,
+    QA_MAP_LAUNCH_Q3_SPDEVMAP
+} qa_map_launch_policy;
 typedef struct qa_application_travel_request {
     qa_actor_owner provider;
     qa_actor_id cause;
@@ -88,6 +95,7 @@ typedef struct qa_application_travel_request {
     const char *expression;
     const qa_q2_landmark *landmark;
     bool new_unit, carry_players, complete_campaign;
+    qa_map_launch_policy map_launch;
 } qa_application_travel_request;
 typedef struct qa_application_travel_view {
     qa_travel_target target;
@@ -779,6 +787,7 @@ bool qa_application_apply(qa_application *, const qa_launch_draft *, qa_error *)
  * strings are copied on queueing; read views borrow until the route advances.
  * A caller completes non-map targets after presentation or playback ends. */
 bool qa_application_load_map(qa_application *, const qa_application_map_request *, qa_error *);
+qa_map_launch_policy qa_application_map_launch_command(const char *name);
 bool qa_application_queue_travel(qa_application *, const qa_application_travel_request *, qa_error *);
 /* Queue one literal map path in request.expression. Q2 route separators and
  * unit/spawn markers are ordinary path bytes in this typed map operation. */

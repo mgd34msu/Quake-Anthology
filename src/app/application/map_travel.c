@@ -8,6 +8,7 @@
 #include "save_content.h"
 #include "guest_qc_original_save.h"
 #include "qa/save.h"
+#include "qa/text.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -26,6 +27,29 @@ static struct application_map_state *map_state(qa_application *application,
         }
     }
     return application->map_state;
+}
+
+qa_map_launch_policy qa_application_map_launch_command(const char *name)
+{
+    static const struct {
+        const char *name;
+        qa_map_launch_policy policy;
+    } commands[] = {
+        {"map", QA_MAP_LAUNCH_Q3_MAP},
+        {"devmap", QA_MAP_LAUNCH_Q3_DEVMAP},
+        {"spmap", QA_MAP_LAUNCH_Q3_SPMAP},
+        {"spdevmap", QA_MAP_LAUNCH_Q3_SPDEVMAP}
+    };
+    if (name) for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); ++i)
+        if (qa_text_ascii_equal(name, commands[i].name)) return commands[i].policy;
+    return QA_MAP_LAUNCH_DEFAULT;
+}
+
+bool application_map_travel_kills_bots(const qa_application *application)
+{
+    const struct application_map_state *state = application ? application->map_state : NULL;
+    return state && state->busy && state->loading &&
+        state->map_launch >= QA_MAP_LAUNCH_Q3_DEVMAP;
 }
 
 static bool map_safe(const qa_application *application)
@@ -288,6 +312,42 @@ static bool set_map_draft(qa_launch_draft *draft, const char *path,
     return ok;
 }
 
+static bool map_launch_draft(qa_application *application, qa_launch_draft *draft,
+    qa_map_launch_policy policy, qa_error *error)
+{
+    if (policy == QA_MAP_LAUNCH_DEFAULT) return true;
+    qa_cvars *cvars = qa_application_cvars(application);
+    if (!qa_cvars_apply_latched(cvars, "g_gametype", error)) return false;
+    qa_cvar_view game_type;
+    if (!qa_cvars_effective_view(cvars, "g_gametype", &game_type, error)) return false;
+    /* SV_Map_f keeps cheats disabled for both sp* commands. */
+    bool single_player = policy == QA_MAP_LAUNCH_Q3_SPMAP || policy == QA_MAP_LAUNCH_Q3_SPDEVMAP;
+    int32_t type = single_player ? QA_GAME_TYPE_ARENA_SINGLE_PLAYER :
+        game_type.integer == QA_GAME_TYPE_ARENA_SINGLE_PLAYER ? QA_GAME_TYPE_FFA : game_type.integer;
+    if ((single_player || type != game_type.integer) &&
+        !qa_cvars_set(cvars, "g_gametype", single_player ? "2" : "0", true, error)) return false;
+    if (single_player && (!qa_cvars_set(cvars, "g_doWarmup", "0", true, error) ||
+        !qa_cvars_set(cvars, "sv_maxclients", "8", false, error))) return false;
+    const qa_launch_choices *choices = qa_launch_draft_choices(draft);
+    for (size_t i = 0; i < choices->mode_count; ++i) {
+        if (!choices->modes[i].primary_score) continue;
+        qa_launch_mode mode = choices->modes[i];
+        mode.rules.kind = qa_mode_from_game_type(type);
+        mode.rules.single_player_active = single_player;
+        if (single_player) mode.rules.warmup_seconds = 0;
+        if (!qa_launch_set_mode(draft, &mode, error)) return false;
+        break;
+    }
+    if (policy >= QA_MAP_LAUNCH_Q3_DEVMAP)
+        for (size_t i = 0; i < qa_launch_draft_choices(draft)->seat_count;) {
+            const qa_launch_seat *seat = qa_launch_draft_choices(draft)->seats + i;
+            if (seat->bot) {
+                if (!qa_launch_remove_seat(draft, seat->id, error)) return false;
+            } else ++i;
+        }
+    return true;
+}
+
 bool application_campaign_restore_draft(qa_application *previous,
     qa_launch_draft *draft, qa_error *error)
 {
@@ -338,6 +398,7 @@ bool qa_application_load_map(qa_application *application,
         application_fail(error, QA_ERROR_ARGUMENT,
                          "initial map load requires a content preset");
     if (ok) ok=set_map_draft(draft,path,request,false,error);
+    if (ok && state->busy) ok=map_launch_draft(application,draft,state->map_launch,error);
     if (ok) {
         bool previous_force = application->map_force_reload;
         state->load_revision = state->revision;
@@ -381,6 +442,7 @@ static bool queue_travel(qa_application *application,
     if (state->revision == UINT64_MAX)
         return application_fail(error, QA_ERROR_MEMORY,
                                 "travel continuation identity is exhausted");
+    literal_map |= request->map_launch != QA_MAP_LAUNCH_DEFAULT;
     qa_travel_route route = {0};
     if (literal_map) {
         route.storage = map_path(request->expression, error);
@@ -398,6 +460,36 @@ static bool queue_travel(qa_application *application,
                                              .spawn_point = ""};
     } else if (!qa_q2_travel_parse(request->expression, &route, error))
         return false;
+    if (request->map_launch != QA_MAP_LAUNCH_DEFAULT) {
+        application_provider *source = application_provider_lookup(application,
+            request->provider, APPLICATION_PROVIDER_PUBLISHED);
+        if (!source) source = application_world_provider(application, QA_ROLE_ENTITIES, "");
+        qa_q3_product_policy product;
+        if (request->map_launch != QA_MAP_LAUNCH_Q3_MAP &&
+            qa_application_q3_product_policy_read(application, &product) && product.prerelease_demo) {
+            qa_travel_route_free(&route);
+            return source ? application_source_log(source, "Unknown map command\n", true, error) : true;
+        }
+        bool found = false;
+        uint64_t size = 0;
+        bool probed = source && source->launch && source->launch->content &&
+            qa_vfs_probe(source->launch->content, route.targets[0].name, &found, &size, error);
+        if (!probed || !found) {
+            bool ok = probed;
+            if (probed) {
+                size_t length = strlen(route.targets[0].name);
+                char *message = malloc(length + sizeof("Can't find map \n"));
+                if (!message) ok = application_fail(error, QA_ERROR_MEMORY, "Retaining map lookup message");
+                else {
+                    snprintf(message, length + sizeof("Can't find map \n"), "Can't find map %s\n", route.targets[0].name);
+                    ok = application_source_log(source, message, true, error);
+                    free(message);
+                }
+            }
+            qa_travel_route_free(&route);
+            return ok;
+        }
+    }
     route.targets[0].new_unit |= request->new_unit;
     if (state->pending) {
         const qa_travel_target *old = &state->route.targets[state->cursor];
@@ -406,6 +498,7 @@ static bool queue_travel(qa_application *application,
                     state->geometry == request->geometry &&
                     state->carry_players == request->carry_players &&
                     state->complete_campaign == request->complete_campaign &&
+                    state->map_launch == request->map_launch &&
                     qa_actor_id_equal(state->cause, request->cause) &&
                     state->has_landmark == (request->landmark != NULL) &&
                     state->route.count - state->cursor == route.count;
@@ -441,6 +534,7 @@ static bool queue_travel(qa_application *application,
     state->geometry = request->geometry;
     state->carry_players = request->carry_players;
     state->complete_campaign = request->complete_campaign;
+    state->map_launch = request->map_launch;
     state->has_landmark = request->landmark != NULL;
     state->landmark = request->landmark != NULL ? *request->landmark : (qa_q2_landmark){0};
     state->pending = true;
@@ -683,6 +777,7 @@ void application_map_load_finish(qa_application *application, bool published)
             qa_travel_route_free(&state->route);
             state->cursor = 0;
             state->nextserver = QA_STRING_NONE;
+            state->map_launch = QA_MAP_LAUNCH_DEFAULT;
         }
         state->pending = false;
         state->has_landmark = false;
@@ -714,8 +809,12 @@ bool qa_application_finish_travel_publication(qa_application *application,
         state->match_finished = true;
     }
     if (!qa_application_rankings_start(application, error)) return false;
+    if (state->map_launch != QA_MAP_LAUNCH_DEFAULT &&
+        !qa_cvars_set(qa_application_cvars(application), "sv_cheats",
+            state->map_launch == QA_MAP_LAUNCH_Q3_DEVMAP ? "1" : "0", true, error)) return false;
     state->publication_complete = false;
     state->match_finished = false;
+    state->map_launch = QA_MAP_LAUNCH_DEFAULT;
     return true;
 }
 
@@ -810,7 +909,13 @@ bool application_map_server_command(application_provider *provider,
     const char *start = text;
     while (*text && *text != ' ' && *text != '\t' && *text != '\n' && *text != '\r') ++text;
     size_t length = (size_t)(text - start);
-    bool map = length == 3 && !memcmp(start, "map", 3);
+    char name[12];
+    if (length >= sizeof(name)) return true;
+    memcpy(name, start, length); name[length] = '\0';
+    qa_map_launch_policy policy = qa_application_map_launch_command(name);
+    bool map = policy != QA_MAP_LAUNCH_DEFAULT;
+    if (policy == QA_MAP_LAUNCH_Q3_MAP && provider->launch->selection.clock.kind != QA_RULESET_Q3)
+        policy = QA_MAP_LAUNCH_DEFAULT;
     bool gamemap = length == 7 && !memcmp(start, "gamemap", 7);
     bool changelevel = length == 11 && !memcmp(start, "changelevel", 11);
     if (!map && !gamemap && !changelevel)
@@ -836,7 +941,7 @@ bool application_map_server_command(application_provider *provider,
     bool ok = queue_travel(provider->application,
         &(qa_application_travel_request){.provider = provider->owner,
             .expression = expression, .new_unit = map, .carry_players = !map,
-            .complete_campaign = changelevel}, false, error);
+            .complete_campaign = changelevel, .map_launch = policy}, policy != QA_MAP_LAUNCH_DEFAULT, error);
     free(expression);
     return ok;
 }
@@ -946,7 +1051,9 @@ bool application_map_checkpoint_capture(qa_application *application, bool depart
                 ok = application_fail(error, QA_ERROR_ARGUMENT, "map continuation changed during capture");
         }
     }
-    if (ok) ok = application_campaign_fields(&io,application,departed) && qa_source_save_finish(&io, out);
+    if (ok) ok = application_campaign_fields(&io,application,departed);
+    uint32_t policy = present ? (uint32_t)application->map_state->map_launch : QA_MAP_LAUNCH_DEFAULT;
+    if (ok) ok = qa_source_save_u32(&io, &policy) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
     return ok;
 }
@@ -1004,6 +1111,7 @@ static bool campaign_route_copy(const struct application_map_state *source,
     destination->revision=source->revision;
     destination->carry_players=source->carry_players;
     destination->complete_campaign=source->complete_campaign;
+    destination->map_launch=source->map_launch;
     destination->pending=false; destination->has_landmark=false;
     destination->publication_complete=true; destination->match_finished=false;
     return true;
@@ -1084,7 +1192,15 @@ bool application_map_checkpoint_restore(qa_application *candidate, qa_bytes byte
         if (!state) ok = application_fail(error, QA_ERROR_MEMORY, "allocating isolated map continuation");
         else ok = map_checkpoint_fields(&io, state, &state->geometry, candidate->catalog);
     }
-    if (ok) ok = application_campaign_fields(&io,candidate,false) && qa_source_save_finish(&io, NULL);
+    if (ok) ok = application_campaign_fields(&io,candidate,false);
+    uint32_t policy = QA_MAP_LAUNCH_DEFAULT;
+    if (ok && io.offset < io.input.size) ok = qa_source_save_u32(&io, &policy);
+    if (ok && policy > QA_MAP_LAUNCH_Q3_SPDEVMAP) {
+        qa_error_set(error, QA_ERROR_FORMAT, io.offset, "Invalid map launch policy");
+        ok = false;
+    }
+    if (ok) ok = qa_source_save_finish(&io, NULL);
+    if (ok && state) state->map_launch = (qa_map_launch_policy)policy;
     if (ok && state) ok = own_map_route(&state->route, &state->route, error);
     qa_source_save_dispose(&io);
     if (!ok) {
