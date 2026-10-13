@@ -171,7 +171,9 @@ bool qa_modes_player_death_component(qa_modes *m, qa_mode_id id, const qa_damage
     dead->spawn_state = 1;
     return ((native_q1_ctf && v->value.rules.source == QA_MODE_THREEWAVE) ||
             qa_modes_drop(m, id, victim, true, e)) && mode_update_ghosts(m, v, e) &&
-           qa_modes_rank(m, id, e);
+           (v->value.rules.source == QA_MODE_Q2_CTF && v->value.rules.enabled
+                ? qa_modes_scoreboard(m, id, victim, true, e)
+                : qa_modes_rank(m, id, e));
 }
 bool qa_modes_player_death(qa_modes *m, qa_mode_id id, const qa_damage_outcome *outcome,
                            qa_error *e) {
@@ -185,5 +187,6 @@ bool qa_modes_player_respawn(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_e
     p->stats.hurt_carrier = false;
     p->stats.flag_since_ns = 0;
     p->stats.tokens = 0;
-    return mode_horde_respawn(m, v, actor, e);
+    return mode_horde_respawn(m, v, actor, e) &&
+           (v->value.rules.source != QA_MODE_Q2_CTF || mode_ui_close(m, v, actor, e));
 }
