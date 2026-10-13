@@ -2,6 +2,7 @@
 #define QA_AUDIO_ENGINE_INTERNAL_H
 #include "qa/audio.h"
 #include "qa/arena.h"
+#include "qa/id_index.h"
 #include "qa/audio_acoustics_prepare.h"
 #include "qa/audio_music_engine.h"
 #include "positions_private.h"
@@ -30,6 +31,7 @@ struct qa_audio_engine {
     size_t round_mixer_count, round_mixer_capacity;
     qa_audio_positions positions;
     qa_arena bus_storage;
+    qa_id_index bus_index;
     audio_bus *buses;
     size_t bus_count, bus_capacity;
     float *sum, *seat_scratch;

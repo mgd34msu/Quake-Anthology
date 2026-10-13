@@ -37,6 +37,12 @@ static void *grow(void *memory, size_t *capacity, size_t count, size_t size, qa_
     return p;
 }
 static bool bus_reserve(qa_audio_engine *engine, size_t count, qa_error *error) {
+    if (count > SIZE_MAX / 2)
+        return fail(error, QA_ERROR_MEMORY, "Audio array size overflow");
+    size_t entries = count * 2;
+    if (!qa_id_index_reserve(&engine->bus_index,
+            entries > engine->bus_index.count ? entries - engine->bus_index.count : 0, error))
+        return false;
     if (count <= engine->bus_capacity)
         return true;
     if (count > SIZE_MAX / sizeof(*engine->buses))
@@ -58,6 +64,22 @@ static bool bus_reserve(qa_audio_engine *engine, size_t count, qa_error *error) 
     engine->buses = buses;
     engine->bus_capacity = next;
     return true;
+}
+enum { BUS_RAW = 1, BUS_MUSIC };
+static void bus_index_bind(qa_audio_engine *engine) {
+    qa_id_index_clear(&engine->bus_index);
+    for (size_t i = 0; i < engine->bus_count; ++i) {
+        const audio_bus *bus = &engine->buses[i];
+        if (bus->raw) qa_id_index_insert(&engine->bus_index, BUS_RAW, bus->id, i);
+        if (bus->music) qa_id_index_insert(&engine->bus_index, BUS_MUSIC, bus->id, i);
+    }
+}
+static size_t bus_first(const qa_audio_engine *engine, uint64_t id, qa_string_id kind) {
+    qa_id_index_cursor cursor = qa_id_index_begin(&engine->bus_index, kind, id);
+    size_t index = SIZE_MAX, row;
+    while (qa_id_index_next(&engine->bus_index, &cursor, &row))
+        if (row < index) index = row;
+    return index;
 }
 static audio_seat *find_seat(qa_audio_engine *engine, uint32_t seat) {
     for (size_t i = 0; i < engine->seat_count; i++)
@@ -165,6 +187,7 @@ bool qa_audio_engine_create(const qa_audio_engine_options *options, qa_audio_eng
     engine->options = *options;
     engine->options.mix_frames = frames;
     qa_arena_init(&engine->bus_storage, 8 * sizeof(*engine->buses));
+    engine->bus_index.storage = &engine->bus_storage;
     if (!engine->options.initial_voices)
         engine->options.initial_voices = 96;
     engine->effects_gain = 0.7f;
@@ -209,6 +232,7 @@ void qa_audio_engine_destroy(qa_audio_engine *engine) {
     free(engine->seats);
     free(engine->round_mixers);
     qa_audio_positions_destroy(&engine->positions);
+    qa_id_index_destroy(&engine->bus_index);
     qa_arena_destroy(&engine->bus_storage);
     free(engine->sum);
     free(engine->seat_scratch);
@@ -482,6 +506,7 @@ static void stop_all_impl(qa_audio_engine *engine, bool retain_menu) {
         qa_audio_music_destroy(bus.music);
     }
     engine->bus_count = retained;
+    bus_index_bind(engine);
 }
 static bool attach_bus(qa_audio_engine *engine, uint64_t id, uint32_t audience, float gain,
                        qa_audio_raw_stream *raw, qa_audio_music *music,
@@ -499,11 +524,13 @@ static bool attach_bus(qa_audio_engine *engine, uint64_t id, uint32_t audience, 
         if (engine->buses[i].id != id &&
             ((raw && engine->buses[i].raw == raw) || (music && engine->buses[i].music == music)))
             return fail(error, QA_ERROR_ARGUMENT, "Audio bus already has an owner");
-    size_t index = 0;
-    while (index < engine->bus_count &&
-           (engine->buses[index].id != id || (engine->buses[index].raw != NULL) != (raw != NULL)))
-        index++;
-    if (index == engine->bus_count && !bus_reserve(engine, index + 1, error))
+    qa_id_index_cursor cursor = qa_id_index_begin(&engine->bus_index,
+        raw ? BUS_RAW : BUS_MUSIC, id);
+    size_t index = engine->bus_count, row;
+    while (qa_id_index_next(&engine->bus_index, &cursor, &row))
+        if ((engine->buses[row].raw != NULL) == (raw != NULL) && row < index)
+            index = row;
+    if (!bus_reserve(engine, engine->bus_count + (index == engine->bus_count), error))
         return false;
     if (music) qa_audio_music_target_publish(music, engine->music_gain);
     if (index < engine->bus_count) {
@@ -516,16 +543,14 @@ static bool attach_bus(qa_audio_engine *engine, uint64_t id, uint32_t audience, 
         .raw=raw, .music=music, .lifetime=lifetime, .active=active};
     if (index == engine->bus_count)
         engine->bus_count++;
+    bus_index_bind(engine);
     return true;
 }
 bool qa_audio_engine_stream_prepare(qa_audio_engine *engine, uint64_t id, qa_error *error) {
     if (!enter(engine, true, error))
         return false;
-    size_t index = 0;
-    while (index < engine->bus_count &&
-           (engine->buses[index].id != id || !engine->buses[index].raw))
-        ++index;
-    bool okay = index < engine->bus_count || bus_reserve(engine, index + 1, error);
+    bool okay = bus_first(engine, id, BUS_RAW) != SIZE_MAX ||
+        bus_reserve(engine, engine->bus_count + 1, error);
     leave(engine);
     return okay;
 }
@@ -548,8 +573,11 @@ bool qa_audio_engine_music_output(qa_audio_engine *engine, uint64_t id,
     if (!music) return fail(error, QA_ERROR_ARGUMENT, "Music output requires its actual player");
     if (!enter(engine, true, error)) return false;
     audio_bus *found = NULL;
-    for (size_t i = 0; i < engine->bus_count; ++i)
-        if (engine->buses[i].id == id && engine->buses[i].music == music) found = &engine->buses[i];
+    qa_id_index_cursor cursor = qa_id_index_begin(&engine->bus_index, BUS_MUSIC, id);
+    size_t i;
+    while (qa_id_index_next(&engine->bus_index, &cursor, &i))
+        if (engine->buses[i].music == music && (!found || &engine->buses[i] > found))
+            found = &engine->buses[i];
     if (found) found->active = active;
     bool changed = found != NULL;
     leave(engine);
@@ -561,9 +589,10 @@ bool qa_audio_engine_music_source_is(const qa_audio_engine *engine, uint64_t id,
         engine->operation_depth || engine->callback_depth || engine->bus_count > engine->bus_capacity ||
         (engine->bus_count && !engine->buses)) return false;
     const audio_bus *found = NULL;
-    for (size_t i = 0; i < engine->bus_count; ++i) {
+    qa_id_index_cursor cursor = qa_id_index_begin(&engine->bus_index, BUS_MUSIC, id);
+    size_t i;
+    while (qa_id_index_next(&engine->bus_index, &cursor, &i)) {
         const audio_bus *row = &engine->buses[i];
-        if (row->id != id || !row->music) continue;
         if (found || row->raw || row->music != music) return false;
         found = row;
     }
@@ -605,16 +634,18 @@ static void remove_bus(qa_audio_engine *engine, uint64_t id, bool raw, bool musi
     if (!engine || engine->destroying || engine->destroy_pending || engine->round_resetting ||
         engine->acoustics_readers)
         return;
-    for (size_t i = 0; i < engine->bus_count;)
-        if (engine->buses[i].id == id &&
-            ((raw && engine->buses[i].raw) || (music && engine->buses[i].music))) {
-            qa_audio_raw_destroy(engine->buses[i].raw);
-            qa_audio_music_destroy(engine->buses[i].music);
-            memmove(engine->buses + i, engine->buses + i + 1,
-                    (engine->bus_count - i - 1) * sizeof(*engine->buses));
-            engine->bus_count--;
-        } else
-            i++;
+    for (;;) {
+        size_t i = raw ? bus_first(engine, id, BUS_RAW) : SIZE_MAX;
+        size_t music_index = music ? bus_first(engine, id, BUS_MUSIC) : SIZE_MAX;
+        if (music_index < i) i = music_index;
+        if (i == SIZE_MAX) break;
+        qa_audio_raw_destroy(engine->buses[i].raw);
+        qa_audio_music_destroy(engine->buses[i].music);
+        memmove(engine->buses + i, engine->buses + i + 1,
+                (engine->bus_count - i - 1) * sizeof(*engine->buses));
+        engine->bus_count--;
+        bus_index_bind(engine);
+    }
 }
 void qa_audio_engine_remove_bus(qa_audio_engine *engine, uint64_t id) {
     remove_bus(engine, id, true, true);
@@ -962,6 +993,7 @@ bool qa_audio_engine_round_ready(const qa_audio_engine *engine, qa_error *error)
 struct qa_audio_stream_cut {
     qa_audio_engine *destination, *source;
     qa_arena prepared_storage;
+    qa_id_index prepared_index;
     audio_bus *prepared;
     size_t source_index;
     bool published, publishing;
@@ -1237,14 +1269,15 @@ bool qa_audio_engine_stream_cut_prepare(qa_audio_engine *destination, qa_audio_e
         (destination->bus_capacity && !destination->buses) || (source->bus_capacity && !source->buses))
         return fail(error, QA_ERROR_ARGUMENT, "Audio stream cut has invalid rate or ownership storage");
     size_t index = SIZE_MAX;
-    for (size_t i = 0; i < source->bus_count; ++i) {
-        const audio_bus *bus = &source->buses[i];
-        if (bus->id != id || !bus->raw) continue;
+    qa_id_index_cursor cursor = qa_id_index_begin(&source->bus_index, BUS_RAW, id);
+    size_t candidate;
+    while (qa_id_index_next(&source->bus_index, &cursor, &candidate)) {
+        const audio_bus *bus = &source->buses[candidate];
         if (index != SIZE_MAX || bus->music || bus->audience != audience ||
             memcmp(&bus->gain, &gain, sizeof(gain)) ||
             qa_audio_raw_rate(bus->raw) != destination->options.sample_rate)
             return fail(error, QA_ERROR_ARGUMENT, "Audio stream cut has another source route");
-        index = i;
+        index = candidate;
     }
     if (index != SIZE_MAX) {
         qa_audio_raw_stream *raw = source->buses[index].raw;
@@ -1258,12 +1291,19 @@ bool qa_audio_engine_stream_cut_prepare(qa_audio_engine *destination, qa_audio_e
     qa_audio_stream_cut *cut = calloc(1, sizeof(*cut));
     if (!cut) return fail(error, QA_ERROR_MEMORY, "Allocating audio stream cut");
     qa_arena_init(&cut->prepared_storage, sizeof(*cut->prepared));
+    cut->prepared_index.storage = &cut->prepared_storage;
     cut->prepared = qa_arena_alloc(&cut->prepared_storage, sizeof(*cut->prepared),
         _Alignof(audio_bus), error);
     if (!cut->prepared) { qa_arena_destroy(&cut->prepared_storage); free(cut); return false; }
     *cut->prepared = (audio_bus){.id=id, .audience=audience, .gain=gain,
         .raw=index == SIZE_MAX ? NULL : source->buses[index].raw,
         .lifetime=QA_AUDIO_MUSIC_WORLD, .active=true};
+    if (cut->prepared->raw) {
+        if (!qa_id_index_reserve(&cut->prepared_index, 1, error)) {
+            qa_arena_destroy(&cut->prepared_storage); free(cut); return false;
+        }
+        qa_id_index_insert(&cut->prepared_index, BUS_RAW, id, 0);
+    }
     if (!cut_lock(destination, error)) { qa_arena_destroy(&cut->prepared_storage); free(cut); return false; }
     if (!cut_lock(source, error)) {
         cut_unlock(destination); qa_arena_destroy(&cut->prepared_storage); free(cut); return false;
@@ -1276,8 +1316,7 @@ bool qa_audio_engine_stream_cut_current(const qa_audio_stream_cut *cut) {
     if (!cut || cut->published || cut->publishing || !cut->prepared || !cut_engine_current(cut->destination) ||
         !cut_engine_current(cut->source)) return false;
     if (cut->source_index == SIZE_MAX) {
-        for (size_t i = 0; i < cut->source->bus_count; ++i)
-            if (cut->source->buses[i].id == cut->prepared->id && cut->source->buses[i].raw) return false;
+        if (bus_first(cut->source, cut->prepared->id, BUS_RAW) != SIZE_MAX) return false;
         return cut->prepared->raw == NULL;
     }
     if (cut->source_index >= cut->source->bus_count) return false;
@@ -1296,12 +1335,17 @@ void qa_audio_engine_stream_cut_publish(qa_audio_stream_cut *cut) {
         memmove(source->buses + cut->source_index, source->buses + cut->source_index + 1,
             (source->bus_count - cut->source_index - 1) * sizeof(*source->buses));
         --source->bus_count;
+        bus_index_bind(source);
     }
+    qa_id_index_destroy(&destination->bus_index);
     qa_arena_destroy(&destination->bus_storage);
     destination->bus_storage = cut->prepared_storage;
     cut->prepared_storage = (qa_arena){0};
     destination->buses = cut->prepared; destination->bus_capacity = 1;
     destination->bus_count = cut->prepared->raw ? 1 : 0;
+    destination->bus_index = cut->prepared_index;
+    destination->bus_index.storage = &destination->bus_storage;
+    cut->prepared_index = (qa_id_index){0};
     cut->prepared = NULL; cut->published = true;
     cut_unlock(source); cut_unlock(destination);
     cut->publishing = false;
@@ -1309,6 +1353,7 @@ void qa_audio_engine_stream_cut_publish(qa_audio_stream_cut *cut) {
 void qa_audio_engine_stream_cut_destroy(qa_audio_stream_cut *cut) {
     if (!cut || cut->publishing) return;
     if (!cut->published) { cut_unlock(cut->source); cut_unlock(cut->destination); }
+    qa_id_index_destroy(&cut->prepared_index);
     qa_arena_destroy(&cut->prepared_storage); free(cut);
 }
 bool qa_audio_engine_reset_round(qa_audio_engine *engine, qa_error *error) {
@@ -1351,15 +1396,17 @@ bool qa_audio_engine_reset_round(qa_audio_engine *engine, qa_error *error) {
 }
 
 qa_audio_music *qa_audio_engine_bus_music(qa_audio_engine *engine, uint64_t bus) {
-    if (engine && !engine->destroy_pending && !engine->destroying)
-        for (size_t i = 0; i < engine->bus_count; ++i)
-            if (engine->buses[i].id == bus && engine->buses[i].music) return engine->buses[i].music;
+    if (engine && !engine->destroy_pending && !engine->destroying) {
+        size_t i = bus_first(engine, bus, BUS_MUSIC);
+        if (i != SIZE_MAX) return engine->buses[i].music;
+    }
     return NULL;
 }
 qa_audio_raw_stream *qa_audio_engine_bus_stream(qa_audio_engine *engine, uint64_t bus) {
-    if (engine && !engine->destroy_pending && !engine->destroying)
-        for (size_t i = 0; i < engine->bus_count; ++i)
-            if (engine->buses[i].id == bus && engine->buses[i].raw) return engine->buses[i].raw;
+    if (engine && !engine->destroy_pending && !engine->destroying) {
+        size_t i = bus_first(engine, bus, BUS_RAW);
+        if (i != SIZE_MAX) return engine->buses[i].raw;
+    }
     return NULL;
 }
 bool qa_audio_engine_music_ready(const qa_audio_engine *engine, uint64_t id,
@@ -1369,9 +1416,10 @@ bool qa_audio_engine_music_ready(const qa_audio_engine *engine, uint64_t id,
         engine->destroying || engine->round_resetting || engine->bus_count > engine->bus_capacity ||
         (engine->bus_count && !engine->buses) || !isfinite(gain) || gain < 0) return false;
     const audio_bus *bus = NULL;
-    for (size_t i = 0; i < engine->bus_count; ++i) {
+    qa_id_index_cursor cursor = qa_id_index_begin(&engine->bus_index, BUS_MUSIC, id);
+    size_t i;
+    while (qa_id_index_next(&engine->bus_index, &cursor, &i)) {
         const audio_bus *row = engine->buses + i;
-        if (row->id != id || !row->music) continue;
         if (bus || row->raw) return false;
         bus = row;
     }
@@ -1384,8 +1432,8 @@ bool qa_audio_engine_raw_ready(const qa_audio_engine *engine, uint64_t id,
     if (!engine || engine->operation_depth || engine->callback_depth || engine->destroy_pending || engine->destroying) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Raw queue qualification requires an idle restored engine"); return false;
     }
-    const audio_bus *bus = NULL;
-    for (size_t i=0;i<engine->bus_count;++i) if (engine->buses[i].id==id && engine->buses[i].raw) { bus=&engine->buses[i]; break; }
+    size_t i = bus_first(engine, id, BUS_RAW);
+    const audio_bus *bus = i == SIZE_MAX ? NULL : &engine->buses[i];
     if ((bus!=NULL)!=present || (bus && (bus->audience!=audience || memcmp(&bus->gain,&gain,sizeof(gain))))) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Restored cinematic queue presence or route differs"); return false;
     }

@@ -405,8 +405,11 @@ static bool origins(qa_source_save_io *io, qa_vfs *vfs)
                 ok = found;
             }
         }
-        for (const resource_origin *prior = vfs->origins; ok && (io->direction == QA_SOURCE_SAVE_READ) && prior != row; prior = prior->next)
-            if (prior->mount == row->mount && prior->resource == row->resource) ok = false;
+        if (ok && io->direction == QA_SOURCE_SAVE_READ) {
+            qa_vfs_resource_origin prior;
+            ok = !qa_vfs_resource_origin_read(vfs, row->mount, resource, &prior) &&
+                vfs_origin_index(vfs, row, io->error);
+        }
         if (!ok) return vfs_save_fail(io, QA_ERROR_FORMAT, "Invalid retained resource origin");
         if (io->direction != QA_SOURCE_SAVE_READ) source = source->next;
     }
@@ -567,6 +570,11 @@ bool qa_vfs_create_restored(qa_resource_pool *pool, const qa_vfs_checkpoint_refs
     *out = candidate;
     return true;
 }
+static void history_rebind(qa_vfs *vfs)
+{
+    if (vfs->history) vfs->history->previous = &vfs->history;
+    for (retained_read *row = vfs->history; row; row = row->next) row->view = vfs;
+}
 bool qa_vfs_restore(qa_vfs *vfs, const qa_vfs_checkpoint_refs *refs, qa_bytes bytes, qa_error *error)
 {
     if (!vfs || !vfs->pool) {
@@ -580,6 +588,8 @@ bool qa_vfs_restore(qa_vfs *vfs, const qa_vfs_checkpoint_refs *refs, qa_bytes by
     qa_vfs displaced = *vfs;
     *vfs = *candidate;
     *candidate = displaced;
+    history_rebind(vfs);
+    history_rebind(candidate);
     qa_vfs_destroy(candidate);
     return true;
 }

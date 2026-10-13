@@ -210,22 +210,25 @@ bool remote_q1_live(const frontend_remote_q1 *row, qa_error *error)
 }
 bool remote_q1_mutable(const frontend_remote_q1 *row)
 { return row && !row->sky_policy && !row->frontend->capture && !row->frontend->resource_inventory && !row->frontend->source_restoring; }
-static bool grow(void **data, size_t *capacity, size_t count, size_t stride, qa_error *error)
-{
-    if (count <= *capacity) return true;
-    size_t next = *capacity ? *capacity : 16;
-    while (next < count) { if (next > SIZE_MAX / 2) { next = count; break; } next *= 2; }
-    if (next > SIZE_MAX / stride) return remote_q1_fail(error, QA_ERROR_MEMORY, "Q1 presentation array exceeds storage");
-    void *value = realloc(*data, next * stride);
-    if (!value) return remote_q1_fail(error, QA_ERROR_MEMORY, "Retaining Q1 presentation array");
-    *data = value; *capacity = next; return true;
-}
 bool remote_q1_entity_set(remote_q1_entities *table, const qa_q1_entity *entity, qa_error *error)
 {
     qa_id_index_entry *entry=qa_id_index_find(&table->numbers,entity->number,0);
     if(entry) { table->rows[entry->value]=*entity;return true; }
-    if (!qa_id_index_reserve(&table->numbers,1,error) ||
-        !grow((void **)&table->rows, &table->capacity, table->count + 1, sizeof(*table->rows), error)) return false;
+    if (!qa_id_index_reserve(&table->numbers,1,error)) return false;
+    size_t needed=table->count+1;
+    if (needed>table->capacity) {
+        size_t capacity=table->capacity?table->capacity:16;
+        while (capacity<needed) {
+            if (capacity>SIZE_MAX/2) { capacity=needed; break; }
+            capacity*=2;
+        }
+        if (capacity>SIZE_MAX/sizeof(*table->rows))
+            return remote_q1_fail(error,QA_ERROR_MEMORY,"Q1 presentation array exceeds storage");
+        qa_q1_entity *rows=qa_arena_grow(table->numbers.storage,table->rows,
+            table->count*sizeof(*rows),capacity*sizeof(*rows),_Alignof(qa_q1_entity),error);
+        if (!rows) return false;
+        table->rows=rows; table->capacity=capacity;
+    }
     table->rows[table->count]=*entity;
     qa_id_index_insert(&table->numbers,entity->number,0,table->count++);return true;
 }
@@ -238,7 +241,7 @@ void remote_q1_entities_reset(remote_q1_entities *table)
 { table->count=0;qa_id_index_clear(&table->numbers); }
 static void entities_destroy(remote_q1_entities *table)
 {
-    qa_id_index_destroy(&table->numbers);free(table->rows);*table=(remote_q1_entities){0};
+    qa_id_index_destroy(&table->numbers);*table=(remote_q1_entities){0};
 }
 bool remote_q1_actor_read(frontend_remote_q1 *row, uint32_t number, qa_actor_id *out, qa_error *error)
 {
@@ -310,6 +313,9 @@ bool frontend_remote_q1_create(qa_frontend *f, const frontend_remote_q1_options 
     if (!options->current(options->context, d, error)) return false;
     frontend_remote_q1 *row = calloc(1, sizeof(*row));
     if (!row) return remote_q1_fail(error, QA_ERROR_MEMORY, "Retaining remote Q1 presentation");
+    remote_q1_entities *tables[]={&row->current,&row->previous,&row->statics,
+        &row->qw_entities,&row->qw_nails,&row->qw_batch_players};
+    for (size_t i=0;i<sizeof(tables)/sizeof(*tables);++i) tables[i]->numbers.storage=&row->entity_storage;
     row->frontend = f; row->options = *options; row->protocol = d->protocol;
     row->rules = qa_q1_is_qw(d->protocol) ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE;
     frontend_view_settings_q1_motion_bind(d->cvars,&row->motion_refs);
@@ -323,7 +329,7 @@ bool frontend_remote_q1_create(qa_frontend *f, const frontend_remote_q1_options 
     row->fraction = 1; row->revision = row->next_event = 1;
     row->events = qa_event_ring_create(16u * 1024u * 1024u, 16384, 65536, error);
     if (!row->events || !remote_q1_effects_prepare(row,error)) {
-        qa_event_ring_destroy(&row->events); free(row); return false;
+        qa_event_ring_destroy(&row->events); qa_arena_destroy(&row->entity_storage); free(row); return false;
     }
     row->event_cursor = qa_event_ring_first(row->events);
     qa_catalog_retain(d->catalog);
@@ -679,6 +685,7 @@ bool frontend_remote_q1_destroy(frontend_remote_q1 **owned, qa_error *error)
     remote_q1_clear(row); remote_q1_demo_clear(row);
     entities_destroy(&row->current);entities_destroy(&row->previous);entities_destroy(&row->statics);
     entities_destroy(&row->qw_entities);entities_destroy(&row->qw_nails);entities_destroy(&row->qw_batch_players);
+    qa_arena_destroy(&row->entity_storage);
     qa_event_ring_destroy(&row->events);
     *link = row->next;
     free(row->qw_directory); free(row->level_name); qa_catalog_release(row->options.domain.catalog); free(row); *owned = NULL; return true;

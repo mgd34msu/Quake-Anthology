@@ -4,6 +4,7 @@
 #include "model_inventory.h"
 #include "remote_q1_camera.h"
 #include "q1_sky.h"
+#include "qa/arena.h"
 #include "qa/world.h"
 #include "qa/event_ring.h"
 
@@ -91,6 +92,7 @@ struct frontend_remote_q1 {
     qa_q1_clientdata data;
     bool bound, loaded, retired, has_data, intermission, published;
     unsigned busy;
+    qa_arena entity_storage;
     remote_q1_entities current, previous, statics, qw_entities, qw_nails, qw_batch_players;
     char **models, **sounds;
     bool *sound_available;

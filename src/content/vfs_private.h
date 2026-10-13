@@ -71,16 +71,18 @@ typedef struct resource_origin {
     uint64_t resource;
     qa_vfs_resource_origin receipt;
 } resource_origin;
+typedef struct read_names {
+    qa_string_id paths[4];
+} read_names;
 struct retained_read {
     struct retained_read *next;
     struct retained_read **previous;
-    struct retained_read *hash_next;
-    struct retained_read **hash_previous;
     struct retained_read *resource_next;
     struct retained_read **resource_previous;
     qa_vfs *view;
     size_t position;
     uint64_t resource;
+    read_names names;
     qa_vfs_read_reference recipe;
 };
 struct qa_vfs {
@@ -96,15 +98,17 @@ struct qa_vfs {
     qa_fs_identity *pure;
     size_t pure_count;
     qa_vfs_read_reference *reads;
+    read_names *read_names;
     size_t read_count, read_capacity;
-    size_t *read_slots;
-    size_t read_slot_count;
+    qa_id_index read_index;
     uint64_t read_generation;
     resource_origin *origins;
+    qa_id_index origin_index;
     retained_read *history;
-    retained_read **history_buckets;
+    qa_id_index history_index;
     retained_read **history_rows;
-    size_t history_count, history_capacity, history_bucket_count;
+    size_t history_count, history_capacity;
+    qa_strings *recipe_names;
     bool q3_demo;
 };
 static inline void vfs_lookup_changed(qa_vfs *vfs) {
@@ -126,6 +130,7 @@ void vfs_mount_free(mount *);
 bool vfs_root_reference_add(mount *, const qa_fs_object_reference *, qa_error *);
 bool vfs_read_record(qa_vfs *, mount *, qa_resource *, const char *, const char *, const char *, const char *, bool, const qa_vfs_read_opening *, qa_error *);
 bool vfs_origin_record(qa_vfs *, const mount *, const qa_resource *, qa_error *);
+bool vfs_origin_index(qa_vfs *, resource_origin *, qa_error *);
 bool vfs_history_record(qa_vfs *, const qa_vfs_read_reference *, qa_error *);
 bool vfs_history_index(qa_vfs *, retained_read *, qa_resource *, qa_error *);
 bool vfs_read_valid(const qa_vfs *, const qa_vfs_read_reference *, qa_error *);
