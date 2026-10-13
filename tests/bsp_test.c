@@ -386,7 +386,15 @@ static void remaining_records(void)
             CHECK(qa_bsp_read_texinfo(&map, 0, &t, &error));
             CHECK(t.projection[0][0] == 0.5f && t.projection[1][3] == 3.5f && t.flags == 7);
             if (q1) CHECK(t.texture == 9);
-            else CHECK(equal_text(t.name, "test/wall") && t.next == -1);
+            else {
+                CHECK(equal_text(t.name, "test/wall") && t.next == -1);
+                size_t link = map.lumps[QA_BSP_TEXINFO].offset + 72;
+                qa_store_u32le(file.data + link, 0);
+                CHECK(qa_bsp_read_texinfo(&map, 0, &t, &error) && t.next == -1);
+                qa_store_u32le(file.data + link, 1);
+                CHECK(qa_bsp_read_texinfo(&map, 0, &t, &error) && t.next == 1);
+                qa_store_u32le(file.data + link, UINT32_MAX);
+            }
             CHECK(qa_bsp_read_index(&map, QA_BSP_SURFEDGES, 0, &value, &error) && value == -123);
         }
         if (!q1) {

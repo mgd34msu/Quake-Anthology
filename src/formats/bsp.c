@@ -558,6 +558,7 @@ bool qa_bsp_read_texinfo(const qa_bsp_view *map, size_t index, qa_bsp_texinfo *o
     else {
         value.flags = r_i32(&r); value.value = r_i32(&r);
         value.name = r_string(&r, 32); value.next = r_i32(&r);
+        if (map->family == QA_BSP_Q2 && value.next <= 0) value.next = -1;
     }
     if (!end_record(&r, error)) return false;
     *out = value;
