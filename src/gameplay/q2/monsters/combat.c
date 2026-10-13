@@ -1696,20 +1696,13 @@ static bool pain_actor(q2m_context *context, qa_error *error) {
     if (!q2m_set_move(context, draw < .5f ? Q2M_MOVE_actor_move_flipoff : Q2M_MOVE_actor_move_taunt,
                        true, error))
       return false;
-    const qa_actor_record *record =
-        qa_actors_get(qa_session_actors(game->services.session), context->actor->id);
-    if (!record || !record->has_source) {
-      qa_error_set(error, QA_ERROR_ARGUMENT, context->actor->id.slot,
-                   "Q2 actor taunt requires its actual source entity number");
-      return false;
-    }
-    static const char *const names[] = {
-        "Hellrot", "Tokay", "Killme", "Disruptor", "Adrianator", "Rambear", "Titus", "Bitterman"};
+    const char *name = q2m_actor_name(game, context->actor->id);
+    if (!name) return true;
     static const char *const messages[] = {"Watch it", "#$@*&", "Idiot", "Check your targets"};
     unsigned message = rerelease ? q2_random_bounded(game, 4)
                                  : qa_builtin_random_integer(&game->random) % 3u;
     char text[64];
-    snprintf(text, sizeof(text), "%s: %s!\n", names[record->source_slot % 8u], messages[message]);
+    snprintf(text, sizeof(text), "%s: %s!\n", name, messages[message]);
     return q2_player_print(game, attacker, 3, text, error);
   }
   static const q2m_move_id moves[] = {

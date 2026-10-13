@@ -379,6 +379,8 @@ bool q2m_count(q2m_context *, qa_q2_monster_count, qa_error *);
 bool q2m_lifecycle_admitted(q2m_context *, bool automatic, bool reviving, qa_error *);
 bool q2m_lifecycle_tick(q2m_context *, bool *handled, qa_error *);
 bool q2m_lifecycle_use(q2m_context *, qa_actor_id, qa_error *);
+const char *q2m_actor_name(const qa_q2_game *, qa_actor_id);
+bool q2m_actor_scripted_use(const struct qa_q2_monster *);
 bool q2m_lifecycle_killed(q2m_context *, qa_error *);
 bool q2m_lifecycle_route(q2m_context *, bool found_target, bool *routed, qa_error *);
 bool q2m_show(q2m_context *, qa_error *);

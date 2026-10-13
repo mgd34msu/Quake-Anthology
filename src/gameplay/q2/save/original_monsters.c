@@ -804,7 +804,8 @@ static bool stationary_source(const q2_original_record_io *io, const struct qa_q
 static bool schedule_record(qa_q2_game *game, q2_original_record_io *io,
     q2_actor *actor, struct qa_q2_monster *m)
 {
-    const char *think = "monster_think", *use = "monster_use", *touch = NULL;
+    const char *think = "monster_think", *touch = NULL;
+    const char *use = q2m_actor_scripted_use(m) ? "actor_use" : "monster_use";
     uint64_t due = m->next_frame_ns;
     switch (m->start_phase) {
     case Q2M_START_ACTIVE: break;
@@ -886,7 +887,7 @@ static bool schedule_record(qa_q2_game *game, q2_original_record_io *io,
     m->death_ns = selected >= 15 && selected <= 17 ? due : 0;
     m->start_phase = (selected >= 1 && selected <= 3) || selected == 14 ? Q2M_START_PENDING :
         selected == 4 || selected == 18 ? Q2M_START_TRIGGER : Q2M_START_ACTIVE;
-    use = is_statue ? "Use_Boss3" : "monster_use";
+    use = is_statue ? "Use_Boss3" : q2m_actor_scripted_use(m) ? "actor_use" : "monster_use";
     if (selected == 9 && !m->corpse) {
         bool dormant = false;
         const char *spawn_use = stationary_source(io, m) ? "stationarymonster_triggered_spawn_use" :

@@ -187,6 +187,8 @@ bool qa_q2_monster_route_contact(const qa_q2_game *, qa_actor_id monster,
 bool qa_q2_monster_touch_path_corner(qa_q2_game *, qa_actor_id monster,
                                      const qa_q2_monster_path_corner *,
                                      bool *accepted, qa_error *);
+bool qa_q2_monster_touch_actor_target(qa_q2_game *, qa_actor_id monster,
+                                    qa_actor_id corner, qa_error *);
 bool qa_q2_monster_touch_combat_point(qa_q2_game *, qa_actor_id monster,
                                       const qa_q2_monster_combat_point *,
                                       bool *accepted, bool *finished,

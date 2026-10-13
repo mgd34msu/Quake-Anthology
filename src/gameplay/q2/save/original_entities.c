@@ -60,6 +60,7 @@ static const original_entity_class entity_classes[] = {
     CLASS("misc_transport", Q2E_TRAIN, "misc_strogg_ship_use", NULL, NULL, NULL),
     CLASS("func_rotating", Q2E_ROTATING, "rotating_use", "rotating_touch", "rotating_blocked", NULL),
     CLASS("path_corner", Q2E_PATH, NULL, "path_corner_touch", NULL, NULL),
+    CLASS("target_actor", Q2E_PATH, NULL, "target_actor_touch", NULL, NULL),
     CLASS("point_combat", Q2E_COMBAT_POINT, NULL, "point_combat_touch", NULL, NULL),
     CLASS("door_trigger", Q2E_DOOR_TRIGGER, NULL, "Touch_DoorTrigger", NULL, NULL),
     CLASS("func_plat", Q2E_PLAT, "Use_Plat", NULL, "plat_blocked", NULL),

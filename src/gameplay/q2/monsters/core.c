@@ -151,6 +151,22 @@ bool q2m_sound(q2m_context *context, q2_runtime_name path, int channel,
   return q2m_sound_volume(context, path, channel, attenuation, 1.0f, error);
 }
 
+const char *q2m_actor_name(const qa_q2_game *game, qa_actor_id actor) {
+  static const char *const names[] = {
+      "Hellrot", "Tokay", "Killme", "Disruptor", "Adrianator", "Rambear",
+      "Titus", "Bitterman"};
+  uint32_t number;
+  return q2_wire_binding_number(game, actor, &number)
+      ? names[number % (sizeof(names) / sizeof(*names))] : NULL;
+}
+
+bool q2m_actor_scripted_use(const struct qa_q2_monster *monster) {
+  return monster->definition->species == Q2M_ACTOR &&
+      monster->start_phase != Q2M_START_DORMANT &&
+      monster->start_phase != Q2M_START_TRIGGER &&
+      (monster->start_phase == Q2M_START_PENDING || !(monster->spawnflags & 2u));
+}
+
 const q2m_frame *q2m_frame_at(const struct qa_q2_monster *monster, const q2m_move *move,
                               int frame, qa_error *error) {
   const q2m_move_set *set = monster->move_set;
@@ -887,6 +903,46 @@ bool q2_monster_dodge(qa_q2_game *game, qa_actor_id target,
   return true;
 }
 
+static bool actor_use(q2m_context *context, qa_error *error) {
+  qa_q2_game *game = context->game;
+  q2_entity_state *entity = context->actor->entity;
+  if (!entity)
+    return true;
+  qa_actor_id goal = {0};
+  q2_entity_pick(game, entity->target, &goal);
+  context->monster->goal = context->monster->move_target = goal;
+  context->actor->physics.goal = qa_actor_reference_lifetime(goal);
+  qa_authored_target target;
+  if (!goal.registry ||
+      !qa_targets_read(game->entity_runtime->services.targets, goal, &target) ||
+      target.classname != game->runtime_names[Q2_NAME_TARGET_ACTOR]) {
+    entity->target = 0;
+    context->monster->pause_ns = game->options.rules == QA_RULESET_Q2_RERELEASE
+        ? UINT64_MAX : UINT64_C(100000000) * Q2M_SECOND;
+    return q2m_callback_run(context, Q2M_CALLBACK_actor_stand, error);
+  }
+  qa_body_state body;
+  if (!qa_world_body_read(game->services.world, goal, &body, error))
+    return false;
+  if (!q2m_alive(context))
+    return true;
+  qa_vec3 direction = qa_vec_sub(body.origin, context->body.origin);
+  bool rerelease = game->options.rules == QA_RULESET_Q2_RERELEASE;
+  context->body.angles.y = context->monster->ideal_yaw =
+      qa_vec_yaw(direction, rerelease ? QA_DIRECTION_NATIVE_RATIO : QA_DIRECTION_INTEGER,
+                 rerelease || direction.x != 0);
+  context->actor->physics.ideal_yaw = context->monster->ideal_yaw;
+  if (!q2m_write_body(context, false, error))
+    return false;
+  if (!q2m_alive(context))
+    return true;
+  if (!q2m_callback_run(context, Q2M_CALLBACK_actor_walk, error))
+    return false;
+  if (q2m_alive(context))
+    entity->target = 0;
+  return true;
+}
+
 static bool monster_action(qa_q2_game *game, qa_actor_id id,
                           qa_q2_monster_action_kind action, qa_actor_id other,
                           float value, qa_error *error) {
@@ -910,6 +966,8 @@ static bool monster_action(qa_q2_game *game, qa_actor_id id,
   struct qa_q2_monster *monster = context.monster;
   switch (action) {
   case QA_Q2_MONSTER_USE:
+    if (q2m_actor_scripted_use(monster))
+      return actor_use(&context, error);
     return q2m_lifecycle_use(&context, other, error);
   case QA_Q2_MONSTER_TOUCH:
     if ((monster->definition->flags & Q2M_TOUCH_ATTACK) == 0)
@@ -1263,6 +1321,116 @@ bool qa_q2_monster_touch_path_corner(qa_q2_game *game, qa_actor_id id,
   return true;
 }
 
+bool qa_q2_monster_touch_actor_target(qa_q2_game *game, qa_actor_id id,
+                                     qa_actor_id corner, qa_error *error) {
+  q2m_context context;
+  if (!public_monster_context(game, id, &context, error))
+    return false;
+  if (!context.actor || !qa_actor_id_equal(context.monster->move_target, corner) ||
+      context.monster->enemy.registry)
+    return true;
+  q2_actor *waypoint = q2_ent(game, corner);
+  if (!waypoint)
+    return true;
+  q2_entity_state *entity = waypoint->entity;
+  context.monster->goal = context.monster->move_target = (qa_actor_id){0};
+  context.actor->physics.goal = (qa_actor_reference){0};
+
+  if (entity->message) {
+    const char *name = q2m_actor_name(game, id);
+    const char *message = qa_strings_cstr(qa_session_strings(game->services.session),
+                                        entity->message);
+    if (name && message) {
+      /* PF_cprintf uses a 1024-byte print buffer in the original server. */
+      char text[1024];
+      snprintf(text, sizeof(text), "%s: %s\n", name, message);
+      if (!q2_player_print(game, (qa_actor_id){0}, 3, text, error))
+        return false;
+      if (!q2m_alive(&context) || q2_ent(game, corner) != waypoint ||
+          waypoint->entity != entity)
+        return true;
+    }
+  }
+  if (entity->spawnflags & 1u) {
+    context.body.velocity.x = entity->direction.x * entity->speed;
+    context.body.velocity.y = entity->direction.y * entity->speed;
+    bool grounded = qa_actor_reference_present(context.body.ground);
+    if (grounded) {
+      context.body.ground = (qa_actor_reference){0};
+      context.body.velocity.z = entity->direction.z;
+    }
+    if (!q2m_write_body(&context, false, error))
+      return false;
+    if (!q2m_alive(&context))
+      return true;
+    if (grounded && !q2m_sound(&context, QA_Q2_SFX_PLAYER_MALE_JUMP1, 2, 1, error))
+      return false;
+    if (!q2m_alive(&context) || q2_ent(game, corner) != waypoint ||
+        waypoint->entity != entity)
+      return true;
+  }
+  qa_string_id path_target = q2_field_id(entity, game->field_keys[QA_TARGET_KEY_PATHTARGET]);
+  if (!(entity->spawnflags & 2u) && (entity->spawnflags & 4u)) {
+    qa_actor_id enemy = {0};
+    q2_entity_pick(game, path_target, &enemy);
+    context.monster->enemy = enemy;
+    context.actor->physics.enemy = qa_actor_reference_lifetime(enemy);
+    if (enemy.registry) {
+      context.monster->goal = enemy;
+      context.actor->physics.goal = qa_actor_reference_lifetime(enemy);
+      if (entity->spawnflags & 32u)
+        context.monster->brutal = true;
+      if (entity->spawnflags & 16u)
+        context.monster->stand_ground = true;
+      if (!q2m_callback_run(&context, entity->spawnflags & 16u
+              ? Q2M_CALLBACK_actor_stand : Q2M_CALLBACK_actor_run, error))
+        return false;
+      if (!q2m_alive(&context) || q2_ent(game, corner) != waypoint ||
+          waypoint->entity != entity)
+        return true;
+    }
+  }
+  if (!(entity->spawnflags & 6u) && path_target) {
+    qa_string_id saved = entity->target;
+    entity->target = path_target;
+    bool okay = q2_entity_targets(game, waypoint, id, false, error);
+    bool retained = q2_ent(game, corner) == waypoint && waypoint->entity == entity;
+    if (retained)
+      entity->target = saved;
+    if (!okay)
+      return false;
+    if (!retained || !q2m_alive(&context))
+      return true;
+    if (!q2m_refresh(&context, error))
+      return false;
+  }
+  qa_actor_id next = {0};
+  q2_entity_pick(game, entity->target, &next);
+  context.monster->move_target = next;
+  if (!context.monster->goal.registry)
+    context.monster->goal = next;
+  context.actor->physics.goal = qa_actor_reference_lifetime(context.monster->goal);
+  if (!next.registry && !context.monster->enemy.registry) {
+    context.monster->pause_ns = game->options.rules == QA_RULESET_Q2_RERELEASE
+        ? UINT64_MAX : q2m_after(game->now_ns, 100000000.0);
+    return q2m_callback_run(&context, Q2M_CALLBACK_actor_stand, error);
+  }
+  if (qa_actor_id_equal(next, context.monster->goal)) {
+    qa_body_state body;
+    if (!qa_world_body_read(game->services.world, next, &body, error))
+      return false;
+    if (!q2m_alive(&context))
+      return true;
+    qa_vec3 direction = qa_vec_sub(body.origin, context.body.origin);
+    bool rerelease = game->options.rules == QA_RULESET_Q2_RERELEASE;
+    context.monster->ideal_yaw = qa_vec_yaw(direction,
+        rerelease ? QA_DIRECTION_NATIVE_RATIO : QA_DIRECTION_INTEGER,
+        rerelease || direction.x != 0);
+    context.actor->physics.ideal_yaw = context.monster->ideal_yaw;
+  }
+  return true;
+}
+
 bool qa_q2_monster_touch_combat_point(qa_q2_game *game, qa_actor_id id,
                                       const qa_q2_monster_combat_point *step,
                                       bool *accepted, bool *finished,
@@ -1584,6 +1752,9 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   q2_actor *actor = q2_actor_get(game, id, true, error);
   if (actor == NULL)
     return false;
+  if (definition->species == Q2M_ACTOR && !selected &&
+      (!actor->entity || !actor->entity->targetname || !actor->entity->target))
+    return qa_session_release(game->services.session, id, error);
   if (actor->monster != previous) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                  "Q2 actor already has native monster state");

@@ -139,18 +139,28 @@ static bool set_route(q2m_context *context, qa_actor_id goal, bool spawn_dead, q
             return true;
     }
     struct qa_q2_monster *monster = context->monster;
+    bool actor = monster->definition->species == Q2M_ACTOR;
+    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
     monster->move_target = monster->goal = goal;
     context->actor->physics.goal = qa_actor_reference_lifetime(goal);
     if (goal.registry == 0) {
-        monster->pause_ns = q2m_after(context->game->now_ns, 100000000.0);
-        return spawn_dead || q2m_set_move(context, monster->definition->stand_move, false, error);
+        monster->pause_ns = actor ? rerelease ? UINT64_MAX : UINT64_C(100000000) * Q2M_SECOND
+                                 : q2m_after(context->game->now_ns, 100000000.0);
+        return spawn_dead || (actor ? q2m_callback_run(context, Q2M_CALLBACK_actor_stand, error)
+                                   : q2m_set_move(context, monster->definition->stand_move, false, error));
     }
-    qa_vec3 angles = qa_vec_angles(qa_vec_sub(target.origin, context->body.origin),QA_DIRECTION_FLOAT,QA_VECTOR_VIEW);
-    monster->ideal_yaw = context->body.angles.y = angles.y;
+    qa_vec3 direction = qa_vec_sub(target.origin, context->body.origin);
+    monster->ideal_yaw = context->body.angles.y = actor
+        ? qa_vec_yaw(direction, rerelease ? QA_DIRECTION_NATIVE_RATIO : QA_DIRECTION_INTEGER,
+                     rerelease || direction.x != 0)
+        : qa_vec_angles(direction, QA_DIRECTION_FLOAT, QA_VECTOR_VIEW).y;
+    if (actor)
+        context->actor->physics.ideal_yaw = monster->ideal_yaw;
     if (!q2m_write_body(context, false, error))
         return false;
     return !q2m_alive(context) || spawn_dead ||
-           q2m_set_move(context, monster->definition->walk_move, false, error);
+           (actor ? q2m_callback_run(context, Q2M_CALLBACK_actor_walk, error)
+                  : q2m_set_move(context, monster->definition->walk_move, false, error));
 }
 
 static bool authored_route(q2m_context *context, bool spawn_dead, qa_error *error) {
@@ -270,7 +280,7 @@ static bool start(q2m_context *context, qa_error *error) {
         return true;
     if (spawn_dead)
         return dead_at_spawn(context, error);
-    if (monster->spawnflags & 2u) {
+    if ((monster->spawnflags & 2u) && monster->start_phase != Q2M_START_TRIGGER) {
         monster->start_phase = Q2M_START_DORMANT;
         monster->triggered = true;
         monster->visible = false;
@@ -319,7 +329,6 @@ static bool trigger_spawn(q2m_context *context, qa_error *error) {
     if (!qa_q2_entities_killbox(context->game, context->actor->id, context->actor->id, &clear, error)) return false;
     if (!q2m_alive(context)) return true;
     struct qa_q2_monster *monster = context->monster;
-    monster->spawnflags &= ~2u;
     monster->triggered = false;
     if (context->actor->entity)
         context->actor->entity->spawnflags = monster->spawnflags;

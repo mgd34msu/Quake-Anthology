@@ -12,6 +12,7 @@
 #define QA_Q2_SOUND__GURP1 "*gurp1.wav"
 #define QA_Q2_SOUND__GURP2 "*gurp2.wav"
 #define QA_Q2_SOUND__JUMP1 "*jump1.wav"
+#define QA_Q2_SOUND_PLAYER_MALE_JUMP1 "player/male/jump1.wav"
 #define QA_Q2_SOUND__PAIN100_1 "*pain100_1.wav"
 #define QA_Q2_SOUND__PAIN100_2 "*pain100_2.wav"
 #define QA_Q2_SOUND__PAIN25_1 "*pain25_1.wav"
@@ -901,7 +902,8 @@
     X(SOLDIER_SOLSRCH1) \
     X(MAKRON_SPINE) \
     X(MISC_TALK) \
-    X(MISC_TRIGGER1)
+    X(MISC_TRIGGER1) \
+    X(PLAYER_MALE_JUMP1)
 
 typedef enum qa_q2_sound_index {
     QA_Q2_SFX_NONE,

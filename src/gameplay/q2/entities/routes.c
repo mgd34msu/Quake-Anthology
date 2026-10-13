@@ -70,6 +70,8 @@ static qa_actor_id external_activator(qa_q2_game *g, qa_actor_id actor,
     return actor;
 }
 bool q2_route_touch(qa_q2_game *g, q2_actor *a, qa_actor_id actor, qa_error *e) {
+    if (a->entity->classname == g->runtime_names[Q2_NAME_TARGET_ACTOR])
+        return qa_q2_monster_touch_actor_target(g, actor, a->id, e);
     bool combat = a->entity->kind == Q2E_COMBAT_POINT;
     q2_actor *monster = q2_actor_get(g, actor, false, NULL);
     qa_q2_entity_services *services = &g->entity_runtime->services;

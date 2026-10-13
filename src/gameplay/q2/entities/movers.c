@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/text.h"
 
 static bool rotating_accelerated(const qa_q2_game *g, const q2_entity_state *s) {
     uint32_t flag = g->options.rules == QA_RULESET_Q2_RERELEASE ? 0x10000u :
@@ -38,6 +39,7 @@ static bool rotate_use(qa_q2_game *g, q2_actor *a, qa_error *e) {
 bool q2_mover_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     q2_entity_state *s = a->entity;
     const char *name = qa_strings_cstr(qa_session_strings(g->services.session), s->classname);
+    bool actor_target = s->classname == g->runtime_names[Q2_NAME_TARGET_ACTOR];
     *handled = true;
     if (!strcmp(name, "func_door") || !strcmp(name, "func_door_rotating"))
         s->kind = Q2E_DOOR;
@@ -53,19 +55,29 @@ bool q2_mover_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         s->kind = Q2E_TRAIN;
     else if (!strcmp(name, "func_rotating"))
         s->kind = Q2E_ROTATING;
-    else if (!strcmp(name, "path_corner"))
+    else if (!strcmp(name, "path_corner") || actor_target)
         s->kind = Q2E_PATH;
     else if (!strcmp(name, "point_combat"))
         s->kind = Q2E_COMBAT_POINT;
     else
         return q2_brush_spawn(g, a, handled, e);
     if (s->kind == Q2E_PATH || s->kind == Q2E_COMBAT_POINT) {
-        if (s->kind == Q2E_PATH && !s->targetname)
+        if (s->kind == Q2E_PATH && !actor_target && !s->targetname)
             return qa_session_release(g->services.session, a->id, e);
         qa_body_state b;
         if (!qa_world_body_read(g->services.world, a->id, &b, e))
             return false;
         b.bounds = (qa_bounds){{-8, -8, -8}, {8, 8, 8}};
+        if (actor_target && (s->spawnflags & 1)) {
+            if (s->speed == 0) s->speed = 200;
+            int32_t height = qa_parse_decimal_i32(
+                q2_field_text(g, s, g->field_keys[QA_TARGET_KEY_HEIGHT]), QA_DECIMAL_LOCALE_CLAMP);
+            if (height == 0) height = 200;
+            if (b.angles.y == 0) b.angles.y = 360;
+            s->direction = q2_movedir(b.angles);
+            s->direction.z = (float)height;
+            b.angles = qa_v3(0, 0, 0);
+        }
         s->touchable = true;
         s->visual.visible = false;
         return q2_entity_body(g, a, &b, false, e) && q2_entity_solid(g, a, QA_PHYSICS_TRIGGER, e);
