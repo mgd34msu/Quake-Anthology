@@ -400,7 +400,7 @@ static bool row_search(frontend_startup_server_browser *o,const frontend_network
     qa_arena_reset(&o->work_storage);
     browser_text raw={0}; qa_server_browser_details details={0}; bool okay=true;
     if(row->entry.available) {
-        okay=frontend_network_menu_details_read(o->seat->frontend,view,&row->entry,&details,e);
+        okay=frontend_network_menu_details_read(o->seat->frontend,view,&row->entry,&o->work_storage,&details,e);
         if(okay)okay=text_add(&o->work_storage,&raw,row->entry.name,e) && text_add(&o->work_storage,&raw,row->entry.map,e);
         const qa_buffer *game=NULL;
         for(size_t i=0;okay && i<details.rule_count;++i) {
@@ -415,7 +415,7 @@ static bool row_search(frontend_startup_server_browser *o,const frontend_network
     }
     if(okay)okay=text_add(&o->work_storage,&raw,row->address,e) &&
         qa_utf8_lower_arena((qa_bytes){raw.data,raw.size},&o->work_storage,out,e);
-    qa_server_browser_details_free(&details); return okay;
+    return okay;
 }
 static bool refresh(frontend_startup_server_browser *o,const frontend_network_menu_view *view,qa_error *e)
 {
@@ -520,7 +520,7 @@ static bool build_details(frontend_startup_server_browser *o,const frontend_netw
     if(!row)return detail_line(o,"Select a server first.",e);
     if(!row->entry.available)return detail_line(o,row->address,e) && detail_line(o,"No status response yet.",e);
     qa_server_browser_details details={0}; size_t *rules=NULL;
-    bool okay=frontend_network_menu_details_read(o->seat->frontend,view,&row->entry,&details,e);
+    bool okay=frontend_network_menu_details_read(o->seat->frontend,view,&row->entry,&o->details_storage,&details,e);
     char line[1200];
     if(okay)okay=detail_line(o,details.entry.name,e) && detail_line(o,row->address,e);
     snprintf(line,sizeof(line),"Map: %s  Players: %u/%u",details.entry.map,details.entry.players,details.entry.maximum_players);
@@ -552,7 +552,7 @@ static bool build_details(frontend_startup_server_browser *o,const frontend_netw
         okay=counted_detail(o,&rule->name,": ",&rule->value,e);
     }
     if(okay)okay=frontend_network_menu_details_current(o->seat->frontend,view,&details);
-    qa_server_browser_details_free(&details); return okay;
+    return okay;
 }
 static bool trim_copy(const char *text,char *out,size_t capacity,qa_error *e)
 {

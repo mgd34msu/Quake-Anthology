@@ -117,37 +117,63 @@ bool qa_browser_status_response_valid(const qa_server_browser *browser, const br
         !strcmp(decoded.name, record->entry.name) && !strcmp(decoded.map, record->entry.map) &&
         !strcmp(decoded.rules, record->entry.rules);
 }
-static bool detail_text(qa_buffer *out, qa_bytes text, qa_error *error) {
+typedef struct detail_builder {
+    qa_server_browser_details *out;
+    qa_arena *storage;
+    size_t player_capacity, rule_capacity;
+} detail_builder;
+static bool detail_text(qa_arena *storage, qa_buffer *out, qa_bytes text, qa_error *error) {
     if (text.size == SIZE_MAX || (text.size && !text.data))
         return qa_browser_fail(error, "Invalid discovery detail text");
-    out->data = malloc(text.size + 1);
-    if (!out->data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Copying received discovery detail text"); return false; }
+    out->data = storage ? qa_arena_alloc(storage, text.size + 1, 1, error) : malloc(text.size + 1);
+    if (!out->data) {
+        if (!storage) qa_error_set(error, QA_ERROR_MEMORY, 0, "Copying received discovery detail text");
+        return false;
+    }
     if (text.size) memcpy(out->data, text.data, text.size);
     out->data[text.size] = 0; out->size = text.size;
     return true;
 }
+static void *detail_rows(detail_builder *builder, void *rows, size_t count,
+    size_t *capacity, size_t stride, size_t alignment, qa_error *error) {
+    if (count < *capacity) return rows;
+    size_t needed = count + 1;
+    size_t extent = *capacity <= SIZE_MAX / 2 ? *capacity * 2 : needed;
+    if (extent < needed || extent > SIZE_MAX / stride) extent = needed;
+    void *next = builder->storage ? qa_arena_grow(builder->storage, rows,
+        count * stride, extent * stride, alignment, error) : realloc(rows, extent * stride);
+    if (!next) {
+        if (!builder->storage) qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining received discovery detail rows");
+        return NULL;
+    }
+    *capacity = extent; return next;
+}
 static bool detail_player(void *context, int32_t score, int32_t ping, const char *name, qa_error *error) {
-    qa_server_browser_details *out = context;
+    detail_builder *builder = context; qa_server_browser_details *out = builder->out;
     if (out->player_count >= SIZE_MAX / sizeof(*out->players))
         return qa_browser_fail(error, "Discovery detail row extent exhausted");
-    qa_server_browser_player *rows = realloc(out->players, (out->player_count + 1) * sizeof(*rows));
-    if (!rows) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining received discovery player"); return false; }
+    qa_server_browser_player *rows = detail_rows(builder, out->players, out->player_count,
+        &builder->player_capacity, sizeof(*rows), _Alignof(qa_server_browser_player), error);
+    if (!rows) return false;
     out->players = rows;
     qa_server_browser_player *row = rows + out->player_count++;
     *row = (qa_server_browser_player){.score = score, .ping = ping};
-    return detail_text(&row->name, (qa_bytes){(const uint8_t *)name, strlen(name)}, error);
+    return detail_text(builder->storage, &row->name, (qa_bytes){(const uint8_t *)name, strlen(name)}, error);
 }
-static bool detail_rule(qa_server_browser_details *out, qa_bytes name, qa_bytes value, qa_error *error) {
+static bool detail_rule(detail_builder *builder, qa_bytes name, qa_bytes value, qa_error *error) {
+    qa_server_browser_details *out = builder->out;
     if (out->rule_count >= SIZE_MAX / sizeof(*out->rules))
         return qa_browser_fail(error, "Discovery rule extent exhausted");
-    qa_server_browser_rule *rows = realloc(out->rules, (out->rule_count + 1) * sizeof(*rows));
-    if (!rows) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining received discovery rule"); return false; }
+    qa_server_browser_rule *rows = detail_rows(builder, out->rules, out->rule_count,
+        &builder->rule_capacity, sizeof(*rows), _Alignof(qa_server_browser_rule), error);
+    if (!rows) return false;
     out->rules = rows;
     qa_server_browser_rule *row = rows + out->rule_count++;
     *row = (qa_server_browser_rule){0};
-    return detail_text(&row->name, name, error) && detail_text(&row->value, value, error);
+    return detail_text(builder->storage, &row->name, name, error) &&
+        detail_text(builder->storage, &row->value, value, error);
 }
-static bool detail_info(qa_server_browser_details *out, const char *text, qa_error *error) {
+static bool detail_info(detail_builder *builder, const char *text, qa_error *error) {
     const char *p = text;
     while (*p) {
         if (*p++ != '\\') return qa_browser_fail(error, "Received discovery rules lack an info delimiter");
@@ -157,7 +183,7 @@ static bool detail_info(qa_server_browser_details *out, const char *text, qa_err
         size_t name_size = (size_t)(p++ - name);
         const char *value = p;
         while (*p && *p != '\\') ++p;
-        if (!detail_rule(out, (qa_bytes){(const uint8_t *)name,name_size},
+        if (!detail_rule(builder, (qa_bytes){(const uint8_t *)name,name_size},
             (qa_bytes){(const uint8_t *)value,(size_t)(p-value)},error)) return false;
     }
     return true;
@@ -181,30 +207,31 @@ static const browser_record *detail_record(const qa_server_browser *browser,
     }
     return NULL;
 }
-bool qa_server_browser_details_read(const qa_server_browser *browser, const qa_net_address *address,
-    qa_net_protocol_id protocol, qa_server_browser_details *out, qa_error *error) {
+static bool details_read(const qa_server_browser *browser, const qa_net_address *address,
+    qa_net_protocol_id protocol, qa_arena *storage, qa_server_browser_details *out, qa_error *error) {
     const browser_record *r = detail_record(browser,address,protocol);
     if (!out || out->response.data || out->response.size || out->players || out->player_count ||
         out->rules || out->rule_count || !r)
         return qa_browser_fail(error,"Discovery details require an empty output and actual retained entry");
     qa_server_browser_details candidate = {.entry = r->entry};
+    detail_builder builder = {.out = &candidate, .storage = storage};
     qa_bytes bytes = protocol.kind == QA_NET_Q3_68 ?
         (qa_bytes){r->q3_response.data,r->q3_response.size} :
         (qa_bytes){r->status_response.data,r->status_response.size};
     if (!r->entry.available) { *out = candidate; return true; }
     if (!bytes.data || !bytes.size)
         return qa_browser_fail(error,"Available discovery entry lost its received detail datagram");
-    bool ok = detail_text(&candidate.response,bytes,error);
+    bool ok = detail_text(storage,&candidate.response,bytes,error);
     if (ok && protocol.kind <= QA_NET_QW29) {
         size_t slot;
         qa_arena *scratch = qa_browser_decode_acquire(browser, &slot, error);
         qa_q1_discovery status = {0};
         ok = scratch && qa_q1_discovery_read(bytes,qa_q1_is_qw(protocol),scratch,&status,error);
         for (size_t i = 0; ok && i < status.player_count; ++i)
-            ok = detail_player(&candidate,status.player_details[i].score,status.player_details[i].ping,status.player_details[i].name,error);
+            ok = detail_player(&builder,status.player_details[i].score,status.player_details[i].ping,status.player_details[i].name,error);
         for (size_t i = 0; ok && i < status.rules.count; ++i) {
             const char *name=status.rules.rules[i].name,*value=status.rules.rules[i].value;
-            ok = detail_rule(&candidate,(qa_bytes){(const uint8_t *)name,strlen(name)},
+            ok = detail_rule(&builder,(qa_bytes){(const uint8_t *)name,strlen(name)},
                 (qa_bytes){(const uint8_t *)value,strlen(value)},error);
         }
         qa_q1_discovery_free(&status);
@@ -213,14 +240,14 @@ bool qa_server_browser_details_read(const qa_server_browser *browser, const qa_n
         qa_kex_status_view status;
         ok = qa_kex_status_read(bytes,&status,error);
         for (size_t i = 0; ok && i < status.attribute_count; ++i)
-            ok = detail_rule(&candidate,status.attributes[i].key,status.attributes[i].value,error);
+            ok = detail_rule(&builder,status.attributes[i].key,status.attributes[i].value,error);
     } else if (ok && protocol.kind == QA_NET_Q3_68) {
         qa_browser_q3_result status_storage = {0}; qa_browser_q3_result *status = &status_storage; uint64_t challenge;
         ok = qa_browser_q3_decode(bytes,status,&challenge,error);
         for (uint32_t i=0;ok && i<status->player_count;++i)
-            ok=detail_player(&candidate,status->players[i].score,status->players[i].ping,
+            ok=detail_player(&builder,status->players[i].score,status->players[i].ping,
                 status->names+status->players[i].name,error);
-        if(ok) ok=detail_info(&candidate,status->entry.rules,error);
+        if(ok) ok=detail_info(&builder,status->entry.rules,error);
     } else if (ok) {
         qa_q2_oob message_storage; qa_q2_oob *message = &message_storage; bool recognized=false;
         char rules[8193];
@@ -229,14 +256,26 @@ bool qa_server_browser_details_read(const qa_server_browser *browser, const qa_n
             size_t slot;
             qa_arena *scratch = qa_browser_decode_acquire(browser, &slot, error);
             ok = scratch && qa_q2_status_read(message,rules,sizeof(rules),scratch,
-                detail_player,&candidate,&recognized,error) && recognized &&
-                detail_info(&candidate,rules,error);
+                detail_player,&builder,&recognized,error) && recognized &&
+                detail_info(&builder,rules,error);
             if (scratch) qa_browser_decode_release(browser, slot);
         }
     }
-    if(!ok) { qa_server_browser_details_free(&candidate); return false; }
+    if(!ok) {
+        if (!storage) qa_server_browser_details_free(&candidate);
+        return false;
+    }
     *out=candidate;
     return true;
+}
+bool qa_server_browser_details_read(const qa_server_browser *browser, const qa_net_address *address,
+    qa_net_protocol_id protocol, qa_server_browser_details *out, qa_error *error) {
+    return details_read(browser,address,protocol,NULL,out,error);
+}
+bool qa_server_browser_details_read_arena(const qa_server_browser *browser, const qa_net_address *address,
+    qa_net_protocol_id protocol, qa_arena *storage, qa_server_browser_details *out, qa_error *error) {
+    if (!storage) return qa_browser_fail(error,"Discovery detail rows require caller storage");
+    return details_read(browser,address,protocol,storage,out,error);
 }
 bool qa_server_browser_details_current(const qa_server_browser *browser, const qa_server_browser_details *view) {
     const browser_record *r=view?detail_record(browser,&view->entry.address,view->entry.protocol):NULL;

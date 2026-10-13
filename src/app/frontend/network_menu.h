@@ -45,7 +45,7 @@ bool frontend_network_menu_status_read(const qa_frontend *,const frontend_networ
 bool frontend_network_menu_rows(const qa_frontend *, const frontend_network_menu_view *,
     qa_net_protocol_id, qa_server_entry *, size_t capacity, size_t *count, qa_arena *, qa_error *);
 bool frontend_network_menu_details_read(const qa_frontend *, const frontend_network_menu_view *,
-    const qa_server_entry *, qa_server_browser_details *, qa_error *);
+    const qa_server_entry *, qa_arena *, qa_server_browser_details *, qa_error *);
 bool frontend_network_menu_details_current(const qa_frontend *, const frontend_network_menu_view *,
     const qa_server_browser_details *);
 typedef struct frontend_network_menu_direct { qa_net_address address; char remote[256]; } frontend_network_menu_direct;

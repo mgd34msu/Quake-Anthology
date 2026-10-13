@@ -8062,12 +8062,12 @@ bool frontend_network_menu_download_rows(const qa_frontend *f, const frontend_ne
     return menu_admitted(f,view,error);
 }
 bool frontend_network_menu_details_read(const qa_frontend *f, const frontend_network_menu_view *view,
-    const qa_server_entry *entry, qa_server_browser_details *out, qa_error *error)
+    const qa_server_entry *entry, qa_arena *storage, qa_server_browser_details *out, qa_error *error)
 {
     if(!entry || !menu_admitted(f,view,error) ||
-        !qa_server_browser_details_read(view->browser,&entry->address,entry->protocol,out,error)) return false;
+        !qa_server_browser_details_read_arena(view->browser,&entry->address,entry->protocol,storage,out,error)) return false;
     if(!menu_admitted(f,view,error) || !qa_server_browser_details_current(view->browser,out)) {
-        qa_server_browser_details_free(out);
+        *out=(qa_server_browser_details){0};
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Discovery detail receipt changed during its actual observation");
     }
     return true;

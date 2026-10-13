@@ -1,6 +1,7 @@
 #ifndef QA_SERVER_BROWSER_DETAILS_H
 #define QA_SERVER_BROWSER_DETAILS_H
 #include "qa/server_browser.h"
+#include "qa/arena.h"
 
 typedef struct qa_server_browser_player { int32_t score, ping; qa_buffer name; } qa_server_browser_player;
 typedef struct qa_server_browser_rule { qa_buffer name, value; } qa_server_browser_rule;
@@ -16,6 +17,10 @@ typedef struct qa_server_browser_details {
  * rule text preserves full retail values, including embedded NUL bytes. */
 bool qa_server_browser_details_read(const qa_server_browser *, const qa_net_address *,
     qa_net_protocol_id, qa_server_browser_details *, qa_error *);
+/* Borrows caller arena storage until reset or destroy. Do not pass this result
+ * to qa_server_browser_details_free, which releases only owned read results. */
+bool qa_server_browser_details_read_arena(const qa_server_browser *, const qa_net_address *,
+    qa_net_protocol_id, qa_arena *, qa_server_browser_details *, qa_error *);
 bool qa_server_browser_details_current(const qa_server_browser *, const qa_server_browser_details *);
 void qa_server_browser_details_free(qa_server_browser_details *);
 #endif
