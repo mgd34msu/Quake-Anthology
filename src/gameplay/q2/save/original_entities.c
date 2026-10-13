@@ -85,6 +85,7 @@ static const original_entity_class entity_classes[] = {
     SCENERY("misc_gib_arm", Q2S_GIB, NULL, "gib_touch", "gib_die"),
     SCENERY("misc_gib_leg", Q2S_GIB, NULL, "gib_touch", "gib_die"),
     SCENERY("viewthing", Q2S_ANIMATION, NULL, NULL, NULL),
+    SCENERY("makron_torso", Q2S_ANIMATION, NULL, NULL, "gib_die"),
     SCENERY("misc_blackhole", Q2S_BLACKHOLE, "misc_blackhole_use", NULL, NULL),
     SCENERY("misc_eastertank", Q2S_ANIMATION, NULL, NULL, NULL),
     SCENERY("misc_easterchick", Q2S_ANIMATION, NULL, NULL, NULL),
@@ -138,6 +139,9 @@ static bool entity_error(q2_original_record_io *io, size_t field, const char *me
 static const original_entity_class *entity_class(qa_q2_game *g, const q2_entity_state *s)
 {
     const char *name = qa_strings_cstr(qa_session_strings(g->services.session), s->classname);
+    if (q2_entity_makron_torso(s))
+        name = qa_strings_cstr(qa_session_strings(g->services.session),
+            g->runtime_names[Q2_NAME_RESOURCE_MAKRON_TORSO]);
     if (!name) return NULL;
     for (size_t i = 0; i < sizeof(entity_classes) / sizeof(*entity_classes); ++i)
         if (!strcmp(name, entity_classes[i].name)) return entity_classes + i;
@@ -168,8 +172,14 @@ static bool read_entity(qa_q2_game *g, q2_original_record_io *io, q2_actor *a)
 {
     qa_string_id classname = 0;
     if (!q2_original_string(g, io, "classname", 280, &classname)) return false;
+    bool torso;
+    if (!q2_original_function_matches(g, io, "think", 436, "makron_torso_think", &torso))
+        return false;
     if (!a->entity) {
-        q2_entity_state state = {.classname = classname};
+        q2_entity_state state = {.classname = classname,
+            .kind = torso ? Q2E_SCENERY : Q2E_POINT,
+            .scenery = torso ? Q2S_ANIMATION : Q2S_NONE,
+            .animation_first = torso ? 346 : 0, .animation_end = torso ? 365 : 0};
         const original_entity_class *type = entity_class(g, &state);
         if (!type) {
             /* Original generated trigger edicts have the default classname. */
@@ -204,6 +214,12 @@ static bool read_entity(qa_q2_game *g, q2_original_record_io *io, q2_actor *a)
         a->entity->scenery = type ? type->scenery : Q2S_NONE;
         if (type && !strcmp(type->name, "plat2_trigger")) a->entity->stage = 2;
     } else a->entity->classname = classname;
+    if (torso) {
+        a->entity->kind = Q2E_SCENERY;
+        a->entity->scenery = Q2S_ANIMATION;
+        a->entity->animation_first = 346;
+        a->entity->animation_end = 365;
+    }
     if (a->entity->kind == Q2E_LIGHT) {
         bool dynamic;
         if (!q2_original_function_matches(g, io, "use", 448, "dynamic_light_use", &dynamic)) return false;
@@ -409,6 +425,7 @@ static const original_entity_think entity_thinks[] = {
     ANIM("misc_satellite_dish_think", Q2S_SATELLITE, -1),
     ANIM("misc_blackhole_think", Q2S_BLACKHOLE, -1),
     ANIM("TH_viewthing", Q2S_ANIMATION, -1),
+    ANIM("makron_torso_think", Q2S_ANIMATION, -1),
     ANIM("misc_eastertank_think", Q2S_ANIMATION, -1),
     ANIM("misc_easterchick_think", Q2S_ANIMATION, -1),
     ANIM("misc_easterchick2_think", Q2S_ANIMATION, -1),
@@ -468,6 +485,8 @@ static const char *scenery_think(qa_q2_game *g, const q2_entity_state *s)
     case Q2S_SATELLITE: return "misc_satellite_dish_think";
     case Q2S_BLACKHOLE: return "misc_blackhole_think";
     case Q2S_ANIMATION:
+        if (q2_entity_makron_torso(s))
+            return "makron_torso_think";
         return !strcmp(name, "viewthing") ? "TH_viewthing" :
             !strcmp(name, "misc_eastertank") ? "misc_eastertank_think" :
             !strcmp(name, "misc_easterchick") ? "misc_easterchick_think" :
@@ -1045,9 +1064,10 @@ bool q2_original_entity_record(qa_q2_game *g, q2_original_record_io *io, q2_acto
             const char *name = qa_strings_cstr(qa_session_strings(g->services.session), s->classname);
             if (s->scenery == Q2S_BLACKHOLE) { s->animation_first = 0; s->animation_end = 19; }
             else if (s->scenery == Q2S_ANIMATION) {
-                s->animation_first = !strcmp(name, "misc_eastertank") ? 254 :
+                bool torso = q2_entity_makron_torso(s);
+                s->animation_first = torso ? 346 : !strcmp(name, "misc_eastertank") ? 254 :
                     !strcmp(name, "misc_easterchick") ? 208 : !strcmp(name, "misc_easterchick2") ? 248 : 0;
-                s->animation_end = !strcmp(name, "misc_eastertank") ? 293 :
+                s->animation_end = torso ? 365 : !strcmp(name, "misc_eastertank") ? 293 :
                     !strcmp(name, "misc_easterchick") ? 247 : !strcmp(name, "misc_easterchick2") ? 287 : 7;
             }
         }

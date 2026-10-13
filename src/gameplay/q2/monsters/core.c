@@ -2,6 +2,7 @@
 #include "reinforcements.h"
 #include "medic.h"
 #include "qa/game_q2_combat.h"
+#include "qa/text.h"
 #include "../entities/internal.h"
 
 static bool actor_current(const q2m_context *context) {
@@ -1859,6 +1860,17 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   }
   monster->initialized = true;
   ++actor->character_birth_epoch;
+  if (definition->species == Q2M_FLYER &&
+      game->options.rules == QA_RULESET_Q2_CLASSIC && actor->entity &&
+      context.body.origin.z == -104 && game->player_runtime->rules.map_name &&
+      qa_text_ascii_equal(game->player_runtime->rules.map_name,
+          qa_strings_cstr(qa_session_strings(game->services.session),
+              game->runtime_names[Q2_NAME_RESOURCE_JAIL5]))) {
+    qa_string_id target = actor->entity->target;
+    if (!qa_q2_entity_set_target(game, id, 0, error) ||
+        !qa_q2_entity_set_targetname(game, id, target, error)) return false;
+    if (!q2m_alive(&context)) return true;
+  }
   if (definition->species == Q2M_STALKER && (monster->spawnflags & 8u)) {
     actor->physics.gravity_direction.z = 1;
     context.body.angles.z = 180;

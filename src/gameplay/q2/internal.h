@@ -322,7 +322,10 @@
     X(RESOURCE_MODELS_ITEMS_DEFENDER_TRIS_MD2, "models/items/defender/tris.md2") \
     X(RESOURCE_MODELS_ITEMS_HUNTER_TRIS_MD2, "models/items/hunter/tris.md2") \
     X(RESOURCE_MODELS_ITEMS_VENGNCE_TRIS_MD2, "models/items/vengnce/tris.md2") \
-    X(TELSA, "telsa")
+    X(TELSA, "telsa") \
+    X(RESOURCE_JAIL5, "jail5") \
+    X(RESOURCE_MAKRON_TORSO, "makron_torso") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS3_RIDER_TRIS_MD2, "models/monsters/boss3/rider/tris.md2")
 
 typedef uint32_t q2_runtime_name;
 enum {

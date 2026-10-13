@@ -3,6 +3,7 @@
 #include "reinforcements.h"
 #include "medic.h"
 #include "qa/game_q2_entities.h"
+#include "../entities/internal.h"
 #include "muzzle_data.h"
 #include "qa/text.h"
 
@@ -2660,6 +2661,72 @@ static bool infantry_sever_head(q2m_context *context, qa_error *error) {
              0, body.origin, body.angles, error);
 }
 
+static bool makron_torso(q2m_context *context, qa_error *error) {
+  qa_q2_game *game = context->game;
+  bool rerelease = game->options.rules == QA_RULESET_Q2_RERELEASE;
+  qa_string_id model = context->monster->model ? context->monster->model :
+      game->runtime_names[Q2_NAME_RESOURCE_MODELS_MONSTERS_BOSS3_RIDER_TRIS_MD2];
+  qa_body_state body = {.origin = context->body.origin, .angles = context->body.angles,
+      .bounds = {{-8, -8, 0}, {8, 8, 8}}};
+  qa_entity_visual visual = {.models = {model}, .frame = 346, .old_frame = 346,
+      .scale = 1, .alpha = 1, .visible = true};
+  q2_actor *actor;
+  if (rerelease) {
+    qa_actor_id id;
+    if (!q2_spawn_gib(game, context->actor->id,
+          Q2_NAME_RESOURCE_MODELS_MONSTERS_BOSS3_RIDER_TRIS_MD2,
+          0, 0, 0, context->monster->entity_scale, &id, error)) return false;
+    if (!q2m_alive(context) || !id.registry) return true;
+    actor = q2_actor_get(game, id, false, error);
+    if (!actor || !qa_world_body_read(game->services.world, id, &body, error)) return false;
+    visual.effects = 2;
+    visual.render_flags = actor->projectile.render_flags;
+    visual.scale = actor->projectile.scale;
+    visual.skin = 1;
+    body.origin = context->body.origin;
+    body.origin.z += context->body.bounds.maxs.z - body.bounds.maxs.z - 15;
+    body.angles = context->body.angles;
+    qa_vec3 forward, up;
+    qa_angle_vectors(body.angles, &forward, NULL, &up, QA_ANGLE_FLOAT_MATH);
+    body.velocity = qa_vec_add(body.velocity, qa_vec_scale(up, 120));
+    body.velocity = qa_vec_add(body.velocity, qa_vec_scale(forward, -120));
+    body.origin = qa_vec_add(body.origin, qa_vec_scale(forward, -10));
+    body.angles.x = 90;
+    actor->physics.angular_velocity = qa_v3(0, 0, 0);
+  } else {
+    body.origin.y -= 84;
+    if (!q2_admit_growth_part(game, Q2_NAME_RESOURCE_MAKRON_TORSO, body, &actor,
+          game->options.rules, error)) return false;
+    if (!q2m_alive(context)) return true;
+  }
+  qa_actor_id id = actor->id;
+  actor->entity = q2_entity_state_take(game, error);
+  if (!actor->entity) {
+    (void)qa_session_release(game->services.session, id, NULL);
+    return false;
+  }
+  actor->entity_game = game;
+  *actor->entity = (q2_entity_state){.kind = Q2E_SCENERY, .scenery = Q2S_ANIMATION,
+      .classname = game->runtime_names[Q2_NAME_RESOURCE_MAKRON_TORSO],
+      .ordinal = UINT32_MAX, .visual = visual, .animation_first = 346, .animation_end = 365};
+  actor->projectile = (q2_projectile){0};
+  if (!q2_entity_bind(game, actor, error)) {
+    (void)qa_session_release(game->services.session, id, NULL);
+    return false;
+  }
+  if (!q2_entity_schedule(game, actor, Q2ET_SCENERY, rerelease ? .1f : .2f) ||
+      !q2_entity_body(game, actor, &body, true, error)) return false;
+  if (q2_actor_live(game, id) &&
+      (!q2_entity_show(game, actor, error) ||
+       (q2_actor_live(game, id) && !q2_actor_loop(game, id, &actor->entity->loop_sound,
+           game->runtime_names[QA_Q2_SFX_MAKRON_SPINE], 0, false, error)))) return false;
+  if (rerelease && q2m_alive(context)) {
+    context->body.bounds = (qa_bounds){{-60, -60, 0}, {60, 60, 48}};
+    return q2m_write_body(context, true, error);
+  }
+  return true;
+}
+
 bool q2m_die(q2m_context *context, qa_error *error) {
   if (!q2m_alive(context))
     return true;
@@ -2976,6 +3043,8 @@ bool q2m_die(q2m_context *context, qa_error *error) {
     return false;
   if (!q2m_alive(context))
     return true;
+  if (species == Q2M_MAKRON)
+    return makron_torso(context, error);
   if (infantry_head && q2m_random(context->game) <= .25f)
     return infantry_sever_head(context, error);
   if (soldier_ground_death) {

@@ -45,6 +45,9 @@ static bool identify(qa_q2_game *g, q2_original_record_io *io,
     q2_actor *a, q2_projectile_kind *kind)
 {
     const char *name = classname(g, a);
+    bool torso;
+    if (!matches(g, io, "think", 436, "makron_torso_think", &torso)) return false;
+    if (torso) { *kind = Q2_PROJECTILE_NONE; return true; }
     static const struct { const char *name; q2_projectile_kind kind; } names[] = {
         {"bolt", Q2_BOLT}, {"rocket", Q2_ROCKET}, {"grenade", Q2_GRENADE},
         {"hgrenade", Q2_GRENADE}, {"hand_grenade", Q2_GRENADE},

@@ -4,6 +4,10 @@
 #include <errno.h>
 
 typedef qa_q2_entity_state q2_entity_state;
+static inline bool q2_entity_makron_torso(const q2_entity_state *s) {
+    return s->kind == Q2E_SCENERY && s->scenery == Q2S_ANIMATION &&
+           s->animation_first == 346 && s->animation_end == 365;
+}
 typedef struct q2_entity_record {
     q2_entity_state state;
     q2_mover mover;

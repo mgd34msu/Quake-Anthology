@@ -842,13 +842,25 @@ bool q2_scenery_think(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         return q2_entity_show(g, a, e) &&
                (!q2_actor_live(g, a->id) || q2_entity_schedule(g, a, Q2ET_SCENERY, .1f));
     case Q2S_BLACKHOLE:
-    case Q2S_ANIMATION:
+    case Q2S_ANIMATION: {
+        bool torso = q2_entity_makron_torso(s);
         s->visual.frame++;
         if (s->visual.frame >= s->animation_end)
             s->visual.frame = s->animation_first;
+        if (torso && g->options.rules == QA_RULESET_Q2_RERELEASE) {
+            qa_body_state body;
+            if (!qa_world_body_read(g->services.world, a->id, &body, e)) return false;
+            if (body.angles.x > 0) {
+                body.angles.x = fmaxf(0, body.angles.x - 15);
+                if (!q2_entity_body(g, a, &body, true, e)) return false;
+                if (!q2_actor_live(g, a->id)) return true;
+            }
+        }
         return q2_entity_show(g, a, e) &&
                (!q2_actor_live(g, a->id) ||
-                q2_entity_schedule(g, a, Q2ET_SCENERY, (float)g->frame_ns / Q2_NS));
+                q2_entity_schedule(g, a, Q2ET_SCENERY,
+                    torso ? .1f : (float)g->frame_ns / Q2_NS));
+    }
     case Q2S_SATELLITE:
         s->visual.frame++;
         return q2_entity_show(g, a, e) && (!q2_actor_live(g, a->id) || s->visual.frame >= 38 ||
@@ -1008,6 +1020,10 @@ bool q2_scenery_reaction(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *ou
         return barrel_die(g, a, out->request.attack.attacker, out->result.applied_damage, e);
     case Q2S_GIB:
         return qa_session_release(g->services.session, a->id, e);
+    case Q2S_ANIMATION:
+        return g->options.rules != QA_RULESET_Q2_RERELEASE ||
+            !q2_entity_makron_torso(s) ||
+            qa_session_release(g->services.session, a->id, e);
     case Q2S_SOLDIER: {
         qa_combat_state state;
         if (!qa_combat_read(g->services.combat, a->id, &state, e))
