@@ -326,6 +326,7 @@ qa_string_id qa_q2_weapon_view_model(const qa_q2_game *, const qa_q2_weapon_stat
 bool qa_q2_weapon_restore(qa_q2_game *, qa_actor_id, const qa_q2_weapon_state *, qa_error *);
 bool qa_q2_weapon_select(qa_q2_game *, qa_actor_id, qa_q2_weapon, bool allow_empty,
                          qa_q2_selection *, qa_error *);
+bool qa_q2_weapon_use(qa_q2_game *, qa_actor_id, qa_q2_weapon, qa_q2_selection *, qa_error *);
 bool qa_q2_lmctf_plasma_mode(qa_q2_game *, qa_actor_id, bool *bounce, qa_error *);
 bool qa_q2_weapon_holster(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_weapon_resume(qa_q2_game *, qa_actor_id, const qa_q2_weapon_input *, qa_q2_weapon,

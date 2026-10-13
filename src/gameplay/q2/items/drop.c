@@ -96,6 +96,46 @@ fail:
         qa_session_release(g->services.session, id, NULL);
     return false;
 }
+typedef enum q2_drop_decision {
+    Q2_DROP_ALLOWED, Q2_DROP_CURRENT, Q2_DROP_EMPTY, Q2_DROP_STAY, Q2_DROP_INFINITE
+} q2_drop_decision;
+static q2_drop_decision drop_policy(const qa_q2_game *g, const q2_actor *actor,
+                                   const qa_q2_item_definition *item, qa_q2_weapon weapon,
+                                   int count) {
+    if (count < 1)
+        return Q2_DROP_EMPTY;
+    bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
+    if (item && item->kind == QA_Q2_ITEM_AMMO) {
+        if (rerelease && item->infinite_quantity && actor && actor->input.infinite_ammo)
+            return Q2_DROP_INFINITE;
+        int amount = count < item->quantity ? count : item->quantity;
+        if (weapon != QA_Q2_WEAPON_NONE && actor->weapon.weapon == weapon &&
+            (rerelease || weapon == QA_Q2_GRENADES) && count - amount <= 0)
+            return Q2_DROP_CURRENT;
+        return Q2_DROP_ALLOWED;
+    }
+    if (weapon == QA_Q2_WEAPON_NONE)
+        return Q2_DROP_ALLOWED;
+    if ((g->options.deathmatch_flags & 4u) && (!rerelease || g->options.deathmatch))
+        return Q2_DROP_STAY;
+    return (actor->weapon.weapon == weapon || actor->weapon.pending == weapon) && count == 1
+        ? Q2_DROP_CURRENT : Q2_DROP_ALLOWED;
+}
+bool qa_q2_weapon_can_drop(qa_q2_game *g, qa_actor_id id, qa_q2_weapon weapon, bool *out,
+                          qa_error *e) {
+    q2_actor *actor = q2_actor_get(g, id, false, e);
+    if (actor && !actor->weapon_bound) {
+        qa_error_set(e, QA_ERROR_NOT_FOUND, 0, "Actor has no Q2 arsenal");
+        return false;
+    }
+    if (!actor || !out || !qa_q2_weapon_definition_at(g, weapon))
+        return false;
+    int count;
+    if (!q2_count(g, id, g->items[weapon], &count, e))
+        return false;
+    *out = drop_policy(g, actor, q2_item_by_id(g, g->items[weapon]), weapon, count) == Q2_DROP_ALLOWED;
+    return true;
+}
 bool qa_q2_item_drop(qa_q2_game *g, qa_actor_id owner, qa_item_id id,
                      const qa_q2_drop_options *options, qa_actor_id *out, bool *dropped,
                      qa_error *e) {
@@ -115,11 +155,24 @@ bool qa_q2_item_drop(qa_q2_game *g, qa_actor_id owner, qa_item_id id,
         return false;
     if (count < 1)
         return true;
-    if (!options->player_death && d->weapon != QA_Q2_WEAPON_NONE) {
-        bool allowed;
-        if (!qa_q2_weapon_can_drop(g, owner, d->weapon, &allowed, e))
-            return false;
-        if (!allowed)
+    if (!options->player_death) {
+        q2_actor *actor = q2_actor_get(g, owner, false, d->weapon != QA_Q2_WEAPON_NONE ? e : NULL);
+        if (d->weapon != QA_Q2_WEAPON_NONE) {
+            if (!actor)
+                return false;
+            if (!actor->weapon_bound) {
+                qa_error_set(e, QA_ERROR_NOT_FOUND, 0, "Actor has no Q2 arsenal");
+                return false;
+            }
+        }
+        q2_drop_decision decision = drop_policy(g, actor, d, d->weapon, count);
+        if (decision == Q2_DROP_CURRENT)
+            return qa_builtin_emit(&g->services,
+                &(qa_builtin_event){.kind = QA_BUILTIN_MESSAGE, .family = QA_GAME_Q2,
+                    .provider = g->options.owner, .actor = owner, .time_ns = g->now_ns,
+                    .code = 2, .text = g->runtime_names[g->options.rules == QA_RULESET_Q2_RERELEASE
+                        ? Q2_NAME_RR_DROP_CURRENT_WEAPON : Q2_NAME_DROP_CURRENT_WEAPON]}, e);
+        if (decision != Q2_DROP_ALLOWED)
             return true;
     }
     int amount = d->kind == QA_Q2_ITEM_AMMO ? (count < d->quantity ? count : d->quantity) : 1;

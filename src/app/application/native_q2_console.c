@@ -106,7 +106,7 @@ struct application_native_q2_console {
         qa_cvar_handle infinite_ammo, instant_switch, quick_switch, no_stack_double;
     } weapon_cvars;
     qa_cvar_handle combat_cvars[APPLICATION_Q2_COMBAT_SETTING_COUNT];
-    qa_cvar_handle cheats, password, spectator_password;
+    qa_cvar_handle cheats, password, spectator_password, deathmatch;
     application_q2_source_scripts scripts;
     size_t calls;
     qa_cvar_observer_token observers[sizeof(engine_cvars) / sizeof(*engine_cvars) + sizeof(common) / sizeof(*common) + sizeof(rerelease) / sizeof(*rerelease) + sizeof(rogue) / sizeof(*rogue) + sizeof(lmctf) / sizeof(*lmctf) + 2];
@@ -117,6 +117,7 @@ static void source_cvars_bind(struct application_native_q2_console *owner) {
     owner->cheats = qa_cvars_resolve(owner->cvars, "cheats");
     owner->password = qa_cvars_resolve(owner->cvars, "password");
     owner->spectator_password = qa_cvars_resolve(owner->cvars, "spectator_password");
+    owner->deathmatch = qa_cvars_resolve(owner->cvars, "deathmatch");
     owner->weapon_cvars.infinite_ammo = qa_cvars_resolve(owner->cvars, "g_infinite_ammo");
     owner->weapon_cvars.instant_switch = qa_cvars_resolve(owner->cvars, "g_instant_weapon_switch");
     owner->weapon_cvars.quick_switch = qa_cvars_resolve(owner->cvars, "g_quick_weapon_switch");
@@ -691,7 +692,9 @@ bool application_native_q2_source_weapon_input(application_provider *provider, q
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 weapon input requires its source registry");
     if (dialect(provider) == QA_RULESET_Q2_RERELEASE) {
         struct application_native_q2_console *owner = provider->native_q2_console;
-        input->infinite_ammo = qa_cvars_read(owner->cvars, owner->weapon_cvars.infinite_ammo)->integer != 0;
+        input->infinite_ammo = qa_cvars_read(owner->cvars, owner->weapon_cvars.infinite_ammo)->integer != 0 ||
+            (qa_cvars_read(owner->cvars, owner->deathmatch)->integer != 0 &&
+             qa_cvars_read(owner->cvars, owner->combat_cvars[APPLICATION_Q2_COMBAT_INSTAGIB])->integer != 0);
         input->instant_switch = qa_cvars_read(owner->cvars, owner->weapon_cvars.instant_switch)->integer != 0;
         input->quick_switch = qa_cvars_read(owner->cvars, owner->weapon_cvars.quick_switch)->integer != 0;
         input->no_stack_double = qa_cvars_read(owner->cvars, owner->weapon_cvars.no_stack_double)->integer != 0;

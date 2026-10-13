@@ -325,7 +325,13 @@
     X(TELSA, "telsa") \
     X(RESOURCE_JAIL5, "jail5") \
     X(RESOURCE_MAKRON_TORSO, "makron_torso") \
-    X(RESOURCE_MODELS_MONSTERS_BOSS3_RIDER_TRIS_MD2, "models/monsters/boss3/rider/tris.md2")
+    X(RESOURCE_MODELS_MONSTERS_BOSS3_RIDER_TRIS_MD2, "models/monsters/boss3/rider/tris.md2") \
+    X(USE_NO_AMMO, "No {0} for {1}.\n") \
+    X(USE_INSUFFICIENT_AMMO, "Not enough {0} for {1}.\n") \
+    X(DROP_CURRENT_WEAPON, "Can't drop current weapon\n") \
+    X(RR_NO_AMMO, "$g_no_ammo") \
+    X(RR_INSUFFICIENT_AMMO, "$g_not_enough_ammo") \
+    X(RR_DROP_CURRENT_WEAPON, "$g_cant_drop_weapon")
 
 typedef uint32_t q2_runtime_name;
 enum {

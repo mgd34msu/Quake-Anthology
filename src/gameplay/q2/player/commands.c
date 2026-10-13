@@ -715,14 +715,14 @@ bool q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_
         qa_q2_selection selection;
         if (equal_name(command, "weaplast"))
             return !a->weapon.last_weapon ||
-                   qa_q2_weapon_select(g, id, a->weapon.last_weapon, false, &selection, e);
+                   qa_q2_weapon_use(g, id, a->weapon.last_weapon, &selection, e);
         int direction = equal_name(command, "weapprev") ? 1 : -1;
         for (int step = 1; step < QA_Q2_WEAPON_COUNT; step++) {
             int index = ((int)a->weapon.weapon + direction * step + QA_Q2_WEAPON_COUNT) %
                         QA_Q2_WEAPON_COUNT;
             if (!index || !qa_q2_weapon_definition_at(g, (qa_q2_weapon)index))
                 continue;
-            if (!qa_q2_weapon_select(g, id, (qa_q2_weapon)index, false, &selection, e))
+            if (!qa_q2_weapon_use(g, id, (qa_q2_weapon)index, &selection, e))
                 return false;
             if (selection == QA_Q2_SELECTED)
                 break;

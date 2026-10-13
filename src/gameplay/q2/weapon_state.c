@@ -3,6 +3,7 @@
 #include "qa/game_q2_items.h"
 #include "qa/game_q2_player.h"
 #include "qa/game_q2_source.h"
+#include "items/internal.h"
 
 static bool run(q2_weapon_call *, qa_error *);
 static q2_actor *weapon_actor(qa_q2_game *g, qa_actor_id id, qa_error *e) {
@@ -66,8 +67,27 @@ bool qa_q2_weapon_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_weapon_stat
     a->weapon_bound = true;
     return true;
 }
-bool qa_q2_weapon_select(qa_q2_game *g, qa_actor_id id, qa_q2_weapon weapon, bool allow_empty,
-                         qa_q2_selection *out, qa_error *e) {
+static bool selection_feedback(qa_q2_game *g, qa_actor_id actor, qa_q2_weapon weapon,
+                               qa_q2_selection selection, qa_error *e) {
+    const qa_q2_item_definition *ammo = q2_item_by_id(g, g->ammo[weapon]);
+    const qa_q2_item_definition *item = q2_item_by_id(g, g->items[weapon]);
+    if (!ammo || !item || !q2_actor_live(g, actor))
+        return true;
+    bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
+    q2_runtime_name format = selection == QA_Q2_NO_AMMO
+        ? rerelease ? Q2_NAME_RR_NO_AMMO : Q2_NAME_USE_NO_AMMO
+        : rerelease ? Q2_NAME_RR_INSUFFICIENT_AMMO : Q2_NAME_USE_INSUFFICIENT_AMMO;
+    qa_builtin_message_arg arguments[] = {
+        {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = ammo->name_id},
+        {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = item->name_id}};
+    return qa_builtin_emit(&g->services,
+        &(qa_builtin_event){.kind = QA_BUILTIN_MESSAGE, .family = QA_GAME_Q2,
+            .provider = g->options.owner, .actor = actor, .time_ns = g->now_ns,
+            .text = g->runtime_names[format], .code = 2,
+            .arguments = arguments, .argument_count = 2}, e);
+}
+static bool select_weapon(qa_q2_game *g, qa_actor_id id, qa_q2_weapon weapon, bool allow_empty,
+                         bool feedback, qa_q2_selection *out, qa_error *e) {
     q2_actor *a = weapon_actor(g, id, e);
     if (a == NULL || out == NULL)
         return false;
@@ -121,24 +141,20 @@ bool qa_q2_weapon_select(qa_q2_game *g, qa_actor_id id, qa_q2_weapon weapon, boo
             return false;
         if (count < d->quantity) {
             *out = count <= 0 ? QA_Q2_NO_AMMO : QA_Q2_INSUFFICIENT_AMMO;
-            return true;
+            return !feedback || selection_feedback(g, id, weapon, *out, e);
         }
     }
     a->weapon.pending = weapon;
     *out = QA_Q2_SELECTED;
     return true;
 }
-bool qa_q2_weapon_can_drop(qa_q2_game *g, qa_actor_id id, qa_q2_weapon weapon, bool *out,
-                           qa_error *e) {
-    q2_actor *a = weapon_actor(g, id, e);
-    if (a == NULL || out == NULL || qa_q2_weapon_definition_at(g, weapon) == NULL)
-        return false;
-    int count;
-    if (!q2_count(g, id, g->items[weapon], &count, e))
-        return false;
-    *out = (g->options.deathmatch_flags & 4u) == 0 && count > 0 &&
-           !((a->weapon.weapon == weapon || a->weapon.pending == weapon) && count == 1);
-    return true;
+bool qa_q2_weapon_select(qa_q2_game *g, qa_actor_id id, qa_q2_weapon weapon, bool allow_empty,
+                         qa_q2_selection *out, qa_error *e) {
+    return select_weapon(g, id, weapon, allow_empty, false, out, e);
+}
+bool qa_q2_weapon_use(qa_q2_game *g, qa_actor_id id, qa_q2_weapon weapon,
+                      qa_q2_selection *out, qa_error *e) {
+    return select_weapon(g, id, weapon, false, true, out, e);
 }
 bool qa_q2_weapon_holster(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     q2_actor *a = weapon_actor(g, id, e);

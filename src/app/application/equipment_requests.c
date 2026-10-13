@@ -24,7 +24,7 @@ typedef struct equipment_q2_request {
 static bool q2_request(void *context,qa_actor_id actor,qa_error *e)
 {
     equipment_q2_request *request=context;
-    return qa_q2_weapon_select(request->game,actor,request->weapon,false,&request->result,e);
+    return qa_q2_weapon_use(request->game,actor,request->weapon,&request->result,e);
 }
 bool application_equipment_primary_accepts(void *context,qa_actor_id actor,qa_actor_owner owner,
     qa_item_id item,bool *accepted,qa_error *e)

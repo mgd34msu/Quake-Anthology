@@ -180,7 +180,7 @@ static bool item_use_duration(void *context, qa_actor_id id, qa_error *e) {
         return true;
     if (d->weapon != QA_Q2_WEAPON_NONE) {
         qa_q2_selection selected;
-        if (!qa_q2_weapon_select(g, id, d->weapon, false, &selected, e))
+        if (!qa_q2_weapon_use(g, id, d->weapon, &selected, e))
             return false;
         *used = selected == QA_Q2_SELECTED || selected == QA_Q2_CURRENT;
         return true;
