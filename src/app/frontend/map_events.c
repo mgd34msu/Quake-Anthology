@@ -1120,7 +1120,7 @@ static bool audio_events_read(qa_frontend *frontend, frontend_event_state *state
     bool listeners = false;
     for (unsigned i = 0; i < frontend->options.seats; ++i)
         listeners = listeners || qa_audio_engine_seat_mixer(frontend->audio, i) != NULL;
-    if (frontend_round_audio_pending(frontend) || !listeners) {
+    if (frontend_round_audio_pending(frontend)) {
         qa_application_events_audio_consume(frontend->application, next);
         return true;
     }
@@ -1133,8 +1133,15 @@ static bool audio_events_read(qa_frontend *frontend, frontend_event_state *state
         (UINT64_C(1) << QA_APPLICATION_EVENT_AUDIO) |
         (UINT64_C(1) << QA_APPLICATION_EVENT_BUILTIN) |
         (UINT64_C(1) << QA_APPLICATION_EVENT_CLIENT_SOUND), &output)) {
+        if (!listeners && (output.kind != QA_APPLICATION_EVENT_AUDIO ||
+            output.value.audio->kind != QA_AUDIO_EVENT_STOP_SOUNDS)) {
+            consumed = range.id + 1;
+            continue;
+        }
         if(output.kind==QA_APPLICATION_EVENT_AUDIO) {
             ok=qa_audio_engine_apply(frontend->audio,output.value.audio,error);
+            if (ok && output.value.audio->kind == QA_AUDIO_EVENT_STOP_SOUNDS && frontend->device)
+                qa_audio_device_clear(frontend->device);
             consumed=range.id+1;
             if(!ok) break;
             continue;

@@ -109,6 +109,8 @@ bool qa_audio_bank_sexed(qa_audio_bank *bank, const char *base, const char *mode
 /* Borrowed cached entry, or NULL; acquiring ownership requires retain. */
 qa_audio_asset *qa_audio_bank_get(const qa_audio_bank *bank, uint64_t resource_id,
                                   qa_game_family family);
+size_t qa_audio_bank_record_count(const qa_audio_bank *);
+qa_audio_asset *qa_audio_bank_record_at(const qa_audio_bank *, size_t);
 qa_audio_asset *qa_audio_asset_retain(qa_audio_asset *asset);
 void qa_audio_asset_release(qa_audio_asset *asset);
 qa_audio_sample *qa_audio_asset_sample(const qa_audio_asset *asset);
@@ -481,7 +483,8 @@ bool qa_audio_engine_play(qa_audio_engine *engine, const qa_audio_play *sound, i
 bool qa_audio_engine_loop(qa_audio_engine *engine, const qa_audio_loop *loop, qa_error *error);
 typedef enum qa_audio_event_kind {
     QA_AUDIO_EVENT_PLAY, QA_AUDIO_EVENT_LOOP, QA_AUDIO_EVENT_CLEAR,
-    QA_AUDIO_EVENT_STOP, QA_AUDIO_EVENT_POSITION, QA_AUDIO_EVENT_STOP_OWNER
+    QA_AUDIO_EVENT_STOP, QA_AUDIO_EVENT_POSITION, QA_AUDIO_EVENT_STOP_OWNER,
+    QA_AUDIO_EVENT_STOP_SOUNDS
 } qa_audio_event_kind;
 typedef struct qa_audio_event {
     qa_audio_event_kind kind;
@@ -502,6 +505,7 @@ bool qa_audio_engine_stop_loop(qa_audio_engine *engine, uint64_t actor, uint64_t
 bool qa_audio_engine_stop_owner(qa_audio_engine *engine, uint64_t owner, uint32_t audience,
                                 qa_error *error);
 void qa_audio_engine_stop_all(qa_audio_engine *engine);
+bool qa_audio_engine_stop_sounds(qa_audio_engine *, qa_error *);
 typedef struct qa_audio_stream_cut qa_audio_stream_cut;
 /* Preallocates publication storage and locks both idle engines and their mixers.
  * The source keeps its raw stream until publication; cancellation leaves both

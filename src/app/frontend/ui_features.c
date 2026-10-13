@@ -10,6 +10,7 @@
 #include "qa/ui_presentation_prepare.h"
 #include "qa/application_q1_composition.h"
 #include "qa/game_q1_source_obituary.h"
+#include "music_sources.h"
 #include <limits.h>
 
 frontend_ui_seat_features *frontend_ui_features_seat(frontend_seat *seat)
@@ -33,7 +34,7 @@ bool frontend_ui_features_prepare(qa_frontend *f, qa_error *error)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "UI features require their empty actual frontend owner");
     frontend_ui_features *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "Allocating actual UI feature owner");
-    owner->frontend = f; f->ui_features = owner;
+    owner->frontend = f; owner->menu_sound_family = QA_GAME_Q1; f->ui_features = owner;
     owner->tracks = qa_caption_library_create(error); owner->catalogs = qa_localization_pool_create(error);
     if (!owner->tracks || !owner->catalogs || !qa_audio_bank_create(f->ui_mounts, qa_session_strings(qa_application_session(f->application)), &owner->sounds, error)) return false;
     for (unsigned i = 0; !f->options.dedicated && i < QA_INPUT_LOCAL_SEATS; ++i) {
@@ -77,6 +78,43 @@ bool frontend_ui_features_destroy(qa_frontend *f, qa_error *error)
     qa_caption_library_destroy(owner->tracks); qa_localization_pool_destroy(owner->catalogs);
     free(owner->fallbacks); free(owner); f->ui_features = NULL; return true;
 }
+static bool sound_bank(frontend_seat *seat, qa_audio_bank **out,
+    qa_game_family *family, qa_error *error)
+{
+    qa_frontend *f = seat->frontend;
+    *out = f->ui_features->sounds;
+    *family = f->ui_features->menu_sound_family;
+    qa_command_context command;
+    qa_application_client_source source;
+    qa_console *console;
+    qa_cvars *cvars;
+    if (seat->input && qa_input_seat_recipient_read(seat->input, &console, &cvars, &command) &&
+        command.owner && command.owner <= UINT32_MAX &&
+        qa_application_client_physical_read(f->application, (qa_actor_owner)command.owner,
+            command.seat, &source, NULL)) {
+        *family = frontend_music_family(qa_launch_instance_catalog(source.descriptor),
+            source.descriptor->selection.product);
+        return frontend_event_sounds(f, source.context.receiver, *family, out, error);
+    }
+    return true;
+}
+static bool local_sound(frontend_seat *seat, qa_audio_bank *bank,
+    qa_game_family family, const char *name, bool *found, qa_error *error)
+{
+    qa_frontend *f = seat->frontend;
+    qa_audio_asset *asset = NULL;
+    if (!qa_audio_bank_register(bank, name, family, &asset, error)) return false;
+    if (found) *found = asset != NULL;
+    if (!asset) return true;
+    qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset,
+        .name = qa_audio_asset_name(asset), .family = family, .actor = QA_AUDIO_NO_ACTOR,
+        .owner = QA_AUDIO_NO_OWNER, .audience = seat->id, .origin_kind = QA_AUDIO_LOCAL,
+        .channel = -1, .volume = 1, .attenuation = 0};
+    bool okay = frontend_audio_event(f, &(qa_audio_event){.kind = QA_AUDIO_EVENT_PLAY,
+        .sound = sound, .milliseconds = (int32_t)((f->time_ns / 1000000) & INT32_MAX)}, error);
+    qa_audio_asset_release(asset);
+    return okay;
+}
 void frontend_ui_sound(void *context, uint32_t physical, qa_ui_sound event)
 {
     frontend_seat *seat = context;
@@ -84,18 +122,100 @@ void frontend_ui_sound(void *context, uint32_t physical, qa_ui_sound event)
     frontend_ui_seat_features *features = frontend_ui_features_seat(seat);
     if (!features || physical != seat->id || !f->audio || !f->ui_features->sounds ||
         f->ui_features->audio_error.code != QA_OK) return;
-    const char *name = event == QA_UI_MOVE ? "misc/menu1.wav" :
-        event == QA_UI_CHANGE ? "misc/menu3.wav" : "misc/menu2.wav";
-    qa_audio_asset *asset = NULL;
-    qa_error *error = &f->ui_features->audio_error;
-    if (!qa_audio_bank_register(f->ui_features->sounds, name, QA_GAME_Q1, &asset, error) || !asset) return;
-    qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset,
-        .name = name, .family = QA_GAME_Q1, .actor = QA_AUDIO_NO_ACTOR,
-        .owner = QA_AUDIO_NO_OWNER, .audience = physical, .origin_kind = QA_AUDIO_LOCAL,
-        .channel = -1, .volume = 1, .attenuation = 0};
-    (void)frontend_audio_event(f, &(qa_audio_event){.kind = QA_AUDIO_EVENT_PLAY,
-        .sound = sound, .milliseconds = (int32_t)((f->time_ns / 1000000) & INT32_MAX)}, error);
-    qa_audio_asset_release(asset);
+    qa_audio_bank *bank;
+    qa_game_family family;
+    qa_error error = {0};
+    if (!sound_bank(seat, &bank, &family, &error)) return;
+    const char *name;
+    if (family == QA_GAME_Q1)
+        name = event == QA_UI_OPEN ? "misc/menu2.wav" :
+            event == QA_UI_MOVE ? "misc/menu1.wav" : "misc/menu3.wav";
+    else
+        name = event == QA_UI_OPEN ? "misc/menu1.wav" :
+            event == QA_UI_CLOSE ? "misc/menu3.wav" :
+            family == QA_GAME_Q3 && event == QA_UI_REJECT ? "misc/menu4.wav" : "misc/menu2.wav";
+    (void)local_sound(seat, bank, family, name, NULL, &error);
+}
+bool frontend_sound_command(qa_frontend *f, const qa_command_invocation *call,
+    bool *handled, qa_error *error)
+{
+    const char *name = call->argv[0];
+    bool info = !strcmp(name, "soundinfo") || !strcmp(name, "s_info");
+    bool list = !strcmp(name, "soundlist") || !strcmp(name, "s_list");
+    bool stop = !strcmp(name, "stopsound") || !strcmp(name, "s_stop");
+    bool play = !strcmp(name, "play");
+    *handled = info || list || stop || play;
+    if (!*handled) return true;
+    if (info) {
+        char text[512];
+        if (!f->device) {
+            frontend_console_print(f, &call->context, "Sound output is unavailable.\n");
+            return true;
+        }
+        qa_audio_device_options options = qa_audio_device_configuration(f->device);
+        const char *device = qa_audio_device_name(f->device);
+        snprintf(text, sizeof(text), "Sound device: %s\nRate: %u Hz\nChannels: %u\nSample bits: %u\nBuffer: %u frames\n",
+            device ? device : "default", options.format.sample_rate, options.format.channels,
+            options.format.sample_bits, options.buffer_frames);
+        frontend_console_print(f, &call->context, text);
+        return true;
+    }
+    if (stop) {
+        return !f->audio || frontend_audio_event(f,
+            &(qa_audio_event){.kind = QA_AUDIO_EVENT_STOP_SOUNDS}, error);
+    }
+    if (play && call->argc < 2) {
+        frontend_console_print(f, &call->context, "usage: play <sound> [...]\n");
+        return true;
+    }
+    uint32_t physical;
+    if (!f->audio || !f->ui_features || !frontend_command_seat_read(f, &call->context, &physical)) {
+        frontend_console_print(f, &call->context, "No local sound listener.\n");
+        return true;
+    }
+    frontend_seat *seat = f->seats + physical;
+    qa_audio_bank *bank;
+    qa_game_family family;
+    if (!sound_bank(seat, &bank, &family, error)) return false;
+    if (list) {
+        unsigned long long total = 0;
+        for (size_t i = 0; i < qa_audio_bank_record_count(bank); ++i) {
+            qa_audio_asset *asset = qa_audio_bank_record_at(bank, i);
+            const qa_audio_sample *sample = qa_audio_asset_sample(asset);
+            if (!sample) continue;
+            unsigned long long bytes = sample->frame_count * sample->channels * sizeof(*sample->samples);
+            total += bytes;
+            char text[1200];
+            snprintf(text, sizeof(text), "%c %u Hz %u channels %llu frames %llu bytes %s\n",
+                sample->loop_start == UINT64_MAX ? ' ' : 'L', sample->sample_rate, sample->channels,
+                (unsigned long long)sample->frame_count, bytes, qa_audio_asset_name(asset));
+            frontend_console_print(f, &call->context, text);
+        }
+        char text[80];
+        snprintf(text, sizeof(text), "Total resident PCM: %llu bytes\n", total);
+        frontend_console_print(f, &call->context, text);
+        return true;
+    }
+    for (size_t i = 1; i < call->argc; ++i) {
+        const char *path = call->argv[i];
+        const char *slash = strrchr(path, '/');
+        if (!strchr(slash ? slash + 1 : path, '.')) {
+            size_t length = strlen(path);
+            char *extended = qa_arena_alloc(&f->frame.storage, length + sizeof(".wav"), 1, error);
+            if (!extended) return false;
+            memcpy(extended, path, length);
+            memcpy(extended + length, ".wav", sizeof(".wav"));
+            path = extended;
+        }
+        bool found;
+        if (!local_sound(seat, bank, family, path, &found, error)) return false;
+        if (!found) {
+            frontend_console_print(f, &call->context, "Couldn't load sound ");
+            frontend_console_print(f, &call->context, path);
+            frontend_console_print(f, &call->context, "\n");
+        }
+    }
+    return true;
 }
 bool frontend_ui_audio_prepare_asset(qa_frontend *f, qa_audio_asset *asset, qa_error *error)
 {
@@ -151,6 +271,17 @@ void frontend_ui_audio_event(void *context, const qa_audio_voice_event *event)
     if (!owner || !event || event->seat >= f->options.seats || f->options.dedicated || owner->audio_error.code != QA_OK) return;
     owner->handling = true;
     (void)qa_sound_captions_event(owner->seats[event->seat].captions, event, &owner->audio_error);
+    if (event->started && event->asset && f->input) {
+        const qa_vfs *files = qa_audio_asset_files(event->asset);
+        const char *name = qa_audio_asset_name(event->asset);
+        qa_error tactile_error = {0};
+        if (files && name && !qa_input_platform_tactile(f->input, event->seat,
+                (qa_vfs *)files, name, (double)(f->wall_time_ns / 1000000), &tactile_error)) {
+            frontend_print(f, "Controller vibration: ");
+            frontend_print(f, tactile_error.message);
+            frontend_print(f, "\n");
+        }
+    }
     owner->handling = false;
 }
 bool frontend_ui_features_sync(qa_frontend *f, qa_error *error)

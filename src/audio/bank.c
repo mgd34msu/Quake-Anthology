@@ -81,6 +81,12 @@ qa_game_family qa_audio_asset_family(const qa_audio_asset *asset) {
 const qa_vfs *qa_audio_bank_files(const qa_audio_bank *bank) {
     return bank ? bank->view : NULL;
 }
+size_t qa_audio_bank_record_count(const qa_audio_bank *bank) {
+    return bank ? bank->count : 0;
+}
+qa_audio_asset *qa_audio_bank_record_at(const qa_audio_bank *bank, size_t index) {
+    return bank && index < bank->count ? bank->entries[index].asset : NULL;
+}
 
 bool qa_audio_bank_create(qa_vfs *view, qa_strings *strings, qa_audio_bank **out, qa_error *error) {
     if (view == NULL || strings == NULL || out == NULL) {

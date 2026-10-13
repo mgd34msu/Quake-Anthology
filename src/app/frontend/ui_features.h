@@ -13,6 +13,7 @@ bool frontend_ui_audio_prepare_q2_source(qa_frontend *, qa_audio_bank *, qa_acto
 bool frontend_ui_audio_prepare_asset(qa_frontend *, qa_audio_asset *, qa_error *);
 void frontend_ui_audio_event(void *, const qa_audio_voice_event *);
 void frontend_ui_sound(void *, uint32_t, qa_ui_sound);
+bool frontend_sound_command(qa_frontend *, const qa_command_invocation *, bool *, qa_error *);
 bool frontend_ui_features_assets_read(const qa_frontend *, qa_audio_asset ***, size_t *, qa_error *);
 bool frontend_ui_features_content_visit(const qa_frontend *, const qa_application_content_visitor *, qa_error *);
 bool frontend_ui_features_captions(frontend_seat *, const qa_active_caption **, size_t *, qa_error *);

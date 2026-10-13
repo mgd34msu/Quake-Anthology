@@ -25,6 +25,23 @@ static const char *const actions[QA_INPUT_ACTION_COUNT] = {
 const char *qa_input_action_command(qa_input_action action) {
     return (unsigned)action < QA_INPUT_ACTION_COUNT ? actions[action] : NULL;
 }
+static const char *binding_action_name(qa_input_action action) {
+    switch (action) {
+    case QA_INPUT_MOVE_LEFT: return "move-left";
+    case QA_INPUT_MOVE_RIGHT: return "move-right";
+    case QA_INPUT_MOVE_UP: return "move-up";
+    case QA_INPUT_MOVE_DOWN: return "move-down";
+    case QA_INPUT_WALK: return "walk";
+    case QA_INPUT_TURN_LEFT: return "turn-left";
+    case QA_INPUT_TURN_RIGHT: return "turn-right";
+    case QA_INPUT_LOOK_UP: return "look-up";
+    case QA_INPUT_LOOK_DOWN: return "look-down";
+    case QA_INPUT_NEXT_WEAPON: return "next-weapon";
+    case QA_INPUT_PREVIOUS_WEAPON: return "previous-weapon";
+    case QA_INPUT_MENU: return "menu";
+    default: return qa_input_action_command(action) + 1;
+    }
+}
 struct qa_input_console {
     qa_input_console_options options;
     char names[96][32];
@@ -57,18 +74,16 @@ bool qa_input_bindings_command(qa_input_seat *s, const qa_command_invocation *cm
             }
             if (b->kind == QA_BIND_COMMAND)
                 binding_print(print, user, b->command);
-            else {
-                (void)snprintf(line, sizeof(line), "action %u", (unsigned)b->action);
-                binding_print(print, user, line);
-            }
+            else
+                binding_print(print, user, binding_action_name(b->action));
             binding_print(print, user, "\n");
         }
         return true;
     }
     bool unbind = qa_input_ascii_equal(name, "unbind");
-    if (cmd->argc < 2 || (dedicated && unbind && cmd->argc != 2)) {
-        binding_print(print, user, !unbind ? "bind <key> [command]\n" : dedicated
-            ? "unbind <key> : remove commands from a key\n" : "unbind <key>\n");
+    if (cmd->argc < 2 || (unbind && cmd->argc != 2)) {
+        binding_print(print, user, !unbind ? "bind <key> [command]\n"
+            : "unbind <key> : remove commands from a key\n");
         return true;
     }
     int32_t device = 0;
@@ -79,12 +94,9 @@ bool qa_input_bindings_command(qa_input_seat *s, const qa_command_invocation *cm
         }
     qa_physical_input physical;
     if (!qa_input_physical_parse(cmd->argv[1], device, &physical)) {
-        if (dedicated) {
-            binding_print(print, user, "Unknown key ");
-            binding_print(print, user, cmd->argv[1]);
-            binding_print(print, user, "\n");
-        } else
-            binding_print(print, user, "Unknown key\n");
+        binding_print(print, user, "Unknown key ");
+        binding_print(print, user, cmd->argv[1]);
+        binding_print(print, user, "\n");
         return true;
     }
     if (unbind) {
@@ -103,13 +115,17 @@ bool qa_input_bindings_command(qa_input_seat *s, const qa_command_invocation *cm
     }
     if (cmd->argc == 2) {
         const qa_input_binding *b = qa_input_seat_binding(s, physical);
+        char key[128], line[256];
+        if (!qa_input_physical_name(physical, key, sizeof(key))) return true;
         if (dedicated) {
-            char key[128];
-            if (!qa_input_physical_name(physical, key, sizeof(key))) return true;
             binding_print(print, user, key);
             binding_print(print, user, " = ");
+        } else {
+            (void)snprintf(line, sizeof(line), "%s = ", key);
+            binding_print(print, user, line);
         }
-        binding_print(print, user, b && b->kind == QA_BIND_COMMAND ? b->command : b ? "Action binding" : "Unbound");
+        binding_print(print, user, b && b->kind == QA_BIND_COMMAND ? b->command
+            : b ? binding_action_name(b->action) : "Unbound");
         binding_print(print, user, "\n");
         return true;
     }
@@ -301,6 +317,10 @@ bool qa_input_default_binding_at(qa_ruleset_id dialect, int32_t device, size_t i
         index >= sizeof(default_rows) / sizeof(*default_rows)) return false;
     qa_input_binding binding = {.kind = QA_BIND_COMMAND, .command = default_rows[index][1]};
     if (!qa_input_physical_parse(default_rows[index][0], device, &binding.input)) return false;
+    if (qa_ruleset_read(dialect)->family != QA_GAME_Q1 &&
+        ((binding.input.kind == QA_PHYSICAL_KEY && binding.input.code == QA_KEY_SPACE) ||
+         (binding.input.kind == QA_PHYSICAL_BUTTON && binding.input.code == 0)))
+        binding.command = "+moveup";
     *out = binding; return true;
 }
 static bool default_bindings(qa_input_seat *s, int32_t device, bool replace, qa_error *error) {

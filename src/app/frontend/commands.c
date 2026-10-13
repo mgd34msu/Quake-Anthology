@@ -10,6 +10,7 @@
 #include "q1_sky.h"
 #include "source_renderer_runtime.h"
 #include "q1_help.h"
+#include "ui_features.h"
 #include <stdio.h>
 
 static const qa_ui_id menu_destinations[] = {FRONTEND_HOME, FRONTEND_LIBRARY, FRONTEND_MODS,
@@ -187,6 +188,9 @@ static bool command(void *context, const qa_command_invocation *invocation, qa_e
 {
     qa_frontend *frontend = context;
     const char *name = invocation->argv[0];
+    bool sound_handled;
+    if (!frontend_sound_command(frontend, invocation, &sound_handled, error)) return false;
+    if (sound_handled) return true;
     if (client_name(name,"map") || client_name(name,"gamemap") ||
         client_name(name,"changelevel") || client_name(name,"killserver")) {
         qa_application_startup_source source; bool present=false,handled=false;
@@ -230,6 +234,10 @@ static bool command(void *context, const qa_command_invocation *invocation, qa_e
     if (!frontend_command_seat_read(frontend,&invocation->context,&slot))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "command requires a local player");
     frontend_seat *seat = &frontend->seats[slot];
+    if (!strcmp(name,"clear")) {
+        qa_console_buffer_clear(qa_seat_console_buffer(seat->console));
+        return true;
+    }
     if (!strcmp(name,"help"))return menu_command(seat,&invocation->context,FRONTEND_Q1_HELP,false,error);
     if (!strcmp(name, "toggleconsole")) return qa_seat_console_toggle(seat->console, false, false, error);
     if (!strcmp(name, "menu") || !strcmp(name,"togglemenu"))
@@ -246,9 +254,10 @@ static bool command(void *context, const qa_command_invocation *invocation, qa_e
 bool frontend_commands(qa_frontend *frontend, qa_error *error)
 {
     qa_console *console = qa_application_console(frontend->application);
-    const char *names[] = {"quit", "help", "toggleconsole", "menu", "togglemenu", "messagemode", "messagemode2", "weapnext", "weapprev",
+    const char *names[] = {"quit", "help", "clear", "toggleconsole", "menu", "togglemenu", "messagemode", "messagemode2", "weapnext", "weapprev",
         "menu_anthology", "library", "mods", "settings", "rankings", "assistance", "controls", "save", "load",
         "cinematic", "cinematicpause", "stopcinematic", "cd", "music", "sky", "actualimagegrid",
+        "play", "soundinfo", "s_info", "soundlist", "s_list", "stopsound", "s_stop",
         "map", "gamemap", "changelevel", "killserver"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (!qa_console_register_owned(console, names[i], "Native frontend command", 0,

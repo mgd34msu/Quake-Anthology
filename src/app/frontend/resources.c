@@ -75,6 +75,7 @@ bool frontend_resources(qa_frontend *frontend, qa_error *error)
         &frontend->console_background, error)) return false;
     frontend->fonts = qa_font_library_create(frontend->ui_mounts, frontend->ui_images, error);
     if (!frontend->fonts || !frontend_ui_features_prepare(frontend, error)) return false;
+    frontend->ui_features->menu_sound_family = selected ? selected->family : QA_GAME_Q1;
     if (selected) {
         if (!frontend_menu_charset(frontend, selected, error) || !frontend_menu_typography(frontend, typography, error)) return false;
     } else {

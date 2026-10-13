@@ -275,11 +275,15 @@ double qa_input_event_time(uint32_t timestamp, uint32_t ticks, double now, bool 
     uint32_t age = ticks - timestamp;
     return subframe && age <= 30 ? fmax(0, now - (double)age) : now;
 }
-static const char *const pad_names[] = {
-    "a_button",  "b_button",   "x_button",    "y_button",      "back",           "guide",
-    "start",     "left_stick", "right_stick", "left_shoulder", "right_shoulder", "dpad_up",
-    "dpad_down", "dpad_left",  "dpad_right",  "misc",          "paddle1",        "paddle2",
-    "paddle3",   "paddle4",    "touchpad"};
+static const struct { const char *token, *label; } pad_names[] = {
+    {"a_button", "A"}, {"b_button", "B"}, {"x_button", "X"}, {"y_button", "Y"},
+    {"back", "Back"}, {"guide", "Guide"}, {"start", "Start"},
+    {"left_stick", "Left stick press"}, {"right_stick", "Right stick press"},
+    {"left_shoulder", "Left shoulder"}, {"right_shoulder", "Right shoulder"},
+    {"dpad_up", "D-pad up"}, {"dpad_down", "D-pad down"},
+    {"dpad_left", "D-pad left"}, {"dpad_right", "D-pad right"},
+    {"misc", "Miscellaneous"}, {"paddle1", "Paddle 1"}, {"paddle2", "Paddle 2"},
+    {"paddle3", "Paddle 3"}, {"paddle4", "Paddle 4"}, {"touchpad", "Touchpad"}};
 bool qa_input_physical_parse(const char *name, int32_t device, qa_physical_input *out) {
     if (!name || !out || device < 0)
         return false;
@@ -300,7 +304,7 @@ bool qa_input_physical_parse(const char *name, int32_t device, qa_physical_input
     }
     const char *pad = strncmp(lower, "gamepad_", 8) == 0 ? lower + 8 : lower;
     for (size_t i = 0; i < sizeof(pad_names) / sizeof(*pad_names); ++i)
-        if (strcmp(pad, pad_names[i]) == 0) {
+        if (strcmp(pad, pad_names[i].token) == 0) {
             *out = (qa_physical_input){
                 .kind = QA_PHYSICAL_BUTTON, .device = device, .code = (uint32_t)i};
             return true;
@@ -334,19 +338,20 @@ bool qa_input_physical_name(qa_physical_input input, char *out, size_t size) {
     case QA_PHYSICAL_BUTTON:
         if (input.code < sizeof(pad_names) / sizeof(*pad_names))
             n = snprintf(out, size, "Pad %lld %s", (long long)input.device + 1,
-                         pad_names[input.code]);
+                         pad_names[input.code].label);
         else
             n = snprintf(out, size, "Pad %lld Button %u", (long long)input.device + 1,
                          input.code + 1);
         break;
     case QA_PHYSICAL_AXIS: {
-        static const char *const axes[] = {"Left stick horizontal",  "Left stick vertical",
-                                           "Right stick horizontal", "Right stick vertical",
-                                           "Left trigger",           "Right trigger"};
+        static const char *const axes[][2] = {{"Left stick left", "Left stick right"},
+            {"Left stick up", "Left stick down"}, {"Right stick left", "Right stick right"},
+            {"Right stick up", "Right stick down"}, {"Left trigger released", "Left trigger"},
+            {"Right trigger released", "Right trigger"}};
         if (input.code >= QA_AXIS_COUNT)
             return false;
-        n = snprintf(out, size, "Pad %lld %s %s", (long long)input.device + 1, axes[input.code],
-                     input.positive ? "+" : "-");
+        n = snprintf(out, size, "Pad %lld %s", (long long)input.device + 1,
+                     axes[input.code][input.positive ? 1 : 0]);
         break;
     }
     default:

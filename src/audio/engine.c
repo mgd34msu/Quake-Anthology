@@ -485,9 +485,7 @@ static bool stop_owner_impl(qa_audio_engine *engine, uint64_t owner, uint32_t au
         }
     return true;
 }
-static void stop_all_impl(qa_audio_engine *engine, bool retain_menu) {
-    if (!engine)
-        return;
+static void stop_mixers(qa_audio_engine *engine) {
     for (size_t i = 0; i < engine->seat_count; i++) {
         audio_seat *seat = engine->seats[i];
         if (engine->round_resetting) qa_audio_mixer_round_stop(seat->mixer);
@@ -495,6 +493,16 @@ static void stop_all_impl(qa_audio_engine *engine, bool retain_menu) {
         qa_audio_reverb_reset(seat->reverb);
         seat->underwater = (qa_audio_underwater){0};
     }
+}
+static void stop_sounds_impl(qa_audio_engine *engine) {
+    stop_mixers(engine);
+    for (size_t i = 0; i < engine->bus_count; ++i)
+        qa_audio_music_stop(engine->buses[i].music);
+}
+static void stop_all_impl(qa_audio_engine *engine, bool retain_menu) {
+    if (!engine)
+        return;
+    stop_mixers(engine);
     size_t retained = 0;
     for (size_t i = 0; i < engine->bus_count; i++) {
         audio_bus bus = engine->buses[i];
@@ -840,10 +848,13 @@ bool qa_audio_engine_apply(qa_audio_engine *engine, const qa_audio_event *operat
     if (!enter(engine, true, error)) return false;
     bool okay = true;
     audio_seat *seat = find_seat(engine, operation->sound.audience);
-    if (operation->sound.audience == QA_AUDIO_WORLD ? !engine->seat_count : !seat) {
+    if (operation->kind != QA_AUDIO_EVENT_STOP_SOUNDS &&
+        (operation->sound.audience == QA_AUDIO_WORLD ? !engine->seat_count : !seat)) {
         leave(engine); return true;
     }
     switch (operation->kind) {
+    case QA_AUDIO_EVENT_STOP_SOUNDS:
+        stop_sounds_impl(engine); break;
     case QA_AUDIO_EVENT_PLAY:
         okay = play_impl(engine, &operation->sound, operation->milliseconds, error); break;
     case QA_AUDIO_EVENT_LOOP: {
@@ -941,6 +952,13 @@ void qa_audio_engine_stop_all(qa_audio_engine *engine) {
         return;
     stop_all_impl(engine, false);
     leave(engine);
+}
+bool qa_audio_engine_stop_sounds(qa_audio_engine *engine, qa_error *error) {
+    if (!enter(engine, false, error))
+        return false;
+    stop_sounds_impl(engine);
+    leave(engine);
+    return true;
 }
 bool qa_audio_engine_mix(qa_audio_engine *engine, int16_t *stereo, size_t frames, qa_error *error) {
     if (!enter(engine, true, error))
