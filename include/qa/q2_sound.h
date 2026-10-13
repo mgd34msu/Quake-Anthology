@@ -130,6 +130,7 @@
 #define QA_Q2_SOUND_INFANTRY_INFATCK2 "infantry/infatck2.wav"
 #define QA_Q2_SOUND_INFANTRY_INFATCK3 "infantry/infatck3.wav"
 #define QA_Q2_SOUND_INFANTRY_INFDETH1 "infantry/infdeth1.wav"
+#define QA_Q2_SOUND_INFANTRY_INFDETH2 "infantry/infdeth2.wav"
 #define QA_Q2_SOUND_INFANTRY_INFLIES1 "infantry/inflies1.wav"
 #define QA_Q2_SOUND_INFANTRY_INFPAIN1 "infantry/infpain1.wav"
 #define QA_Q2_SOUND_INFANTRY_INFPAIN2 "infantry/infpain2.wav"
@@ -294,6 +295,8 @@
 #define QA_Q2_SOUND_SOLDIER_SOLATCK2 "soldier/solatck2.wav"
 #define QA_Q2_SOUND_SOLDIER_SOLATCK3 "soldier/solatck3.wav"
 #define QA_Q2_SOUND_SOLDIER_SOLDETH1 "soldier/soldeth1.wav"
+#define QA_Q2_SOUND_SOLDIER_SOLDETH2 "soldier/soldeth2.wav"
+#define QA_Q2_SOUND_SOLDIER_SOLDETH3 "soldier/soldeth3.wav"
 #define QA_Q2_SOUND_SOLDIER_SOLIDLE1 "soldier/solidle1.wav"
 #define QA_Q2_SOUND_SOLDIER_SOLPAIN1 "soldier/solpain1.wav"
 #define QA_Q2_SOUND_SOLDIER_SOLPAIN2 "soldier/solpain2.wav"
@@ -568,6 +571,7 @@
     X(INFANTRY_INFATCK2) \
     X(INFANTRY_INFATCK3) \
     X(INFANTRY_INFDETH1) \
+    X(INFANTRY_INFDETH2) \
     X(INFANTRY_INFLIES1) \
     X(INFANTRY_INFPAIN1) \
     X(INFANTRY_INFPAIN2) \
@@ -732,6 +736,8 @@
     X(SOLDIER_SOLATCK2) \
     X(SOLDIER_SOLATCK3) \
     X(SOLDIER_SOLDETH1) \
+    X(SOLDIER_SOLDETH2) \
+    X(SOLDIER_SOLDETH3) \
     X(SOLDIER_SOLIDLE1) \
     X(SOLDIER_SOLPAIN1) \
     X(SOLDIER_SOLPAIN2) \

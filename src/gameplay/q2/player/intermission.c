@@ -181,6 +181,17 @@ bool qa_q2_players_intermission(qa_q2_game *g, const char *map, const qa_q2_land
     if (!prepare_intermission(g, end_unit, e))
         return false;
     if (rr) q2_campaign_update(g);
+    if (rr && end_unit) {
+        qa_actor_id world;
+        if (q2_map_find(g, g->runtime_names[Q2_NAME_WORLDSPAWN], UINT32_MAX, 0, &world)) {
+            qa_string_id achievement = q2_actor_field(g, world,
+                g->field_keys[QA_TARGET_KEY_ACHIEVEMENT]);
+            if (qa_strings_text(qa_session_strings(g->services.session), achievement).size &&
+                !q2_map_event(g, &(qa_q2_map_event){.kind = QA_Q2_MAP_ACHIEVEMENT,
+                    .actor = world, .text = achievement}, e))
+                return false;
+        }
+    }
     if (rr && end_unit && !(flags & 16) &&
         !q2_campaign_end_unit(g, (qa_actor_id){0}, q2_deadline(p->intermission_ns, 5 * Q2_NS), e))
         return false;

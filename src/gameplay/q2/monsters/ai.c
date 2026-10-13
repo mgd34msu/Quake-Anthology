@@ -1092,6 +1092,12 @@ bool q2m_hunt_target(q2m_context *context, bool animate_state, qa_error *error) 
     return true;
   context->monster->goal = qa_actor_reference_resolve(qa_session_actors(context->game->services.session), context->actor->physics.goal = qa_actor_reference_lifetime(id));
   if (animate_state) {
+    bool tank_callback = context->monster->definition->species == Q2M_TANK ||
+                         context->monster->definition->species == Q2M_TANK_COMMANDER;
+    if (tank_callback && !q2m_callback_run(context, Q2M_CALLBACK_tank_run, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
     bool actor_callback = context->monster->definition->species == Q2M_ACTOR;
     if (actor_callback && !q2m_callback_run(context,
         context->monster->stand_ground ? Q2M_CALLBACK_actor_stand : Q2M_CALLBACK_actor_run, error))
@@ -1103,12 +1109,12 @@ bool q2m_hunt_target(q2m_context *context, bool animate_state, qa_error *error) 
         context->monster->stand_ground ? Q2M_CALLBACK_medic_stand : Q2M_CALLBACK_medic_run, error))
       return false;
     bool handled = false;
-    if (!actor_callback && !medic_callback && !context->monster->stand_ground &&
+    if (!tank_callback && !actor_callback && !medic_callback && !context->monster->stand_ground &&
         !q2m_medic_callback(context, Q2M_CALLBACK_medic_run, &handled, error))
       return false;
     if (!q2m_alive(context))
       return true;
-    if (!actor_callback && !medic_callback && !handled && !q2m_set_move(context,
+    if (!tank_callback && !actor_callback && !medic_callback && !handled && !q2m_set_move(context,
         context->monster->stand_ground ? context->monster->definition->stand_move
                                       : context->monster->definition->run_move,
         context->monster->definition->species == Q2M_FIXBOT, error))
@@ -2502,7 +2508,17 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
                 : Q2M_MOVE_boss5_move_attack2;
     break;
   case Q2M_TANK:
-  case Q2M_TANK_COMMANDER:
+  case Q2M_TANK_COMMANDER: {
+    double health;
+    if (!attack_health(context, monster->enemy, &health, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    if (context->game->options.rules == QA_RULESET_Q2_RERELEASE ? health <= 0 : health < 0) {
+      monster->brutal = false;
+      *move = Q2M_MOVE_tank_move_attack_strike;
+      break;
+    }
     if (blind) {
       monster->manual_steering = true;
       *move = Q2M_MOVE_tank_move_attack_pre_rocket;
@@ -2523,6 +2539,7 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
     } else
       *move = Q2M_MOVE_tank_move_attack_blast;
     break;
+  }
   case Q2M_BOSS2: {
     bool guns = distance <= 125.0f || q2m_random(context->game) <= 0.6f;
     bool n64 = context->game->options.rules == QA_RULESET_Q2_RERELEASE &&

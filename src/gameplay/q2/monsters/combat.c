@@ -754,8 +754,11 @@ static q2_runtime_name death_sound(q2m_species species) {
   case Q2M_TURRET_DRIVER:
     return QA_Q2_SFX_INFANTRY_INFDETH1;
   case Q2M_SOLDIER_LIGHT:
+    return QA_Q2_SFX_SOLDIER_SOLDETH2;
   case Q2M_SOLDIER:
+    return QA_Q2_SFX_SOLDIER_SOLDETH1;
   case Q2M_SOLDIER_SS:
+    return QA_Q2_SFX_SOLDIER_SOLDETH3;
   case Q2M_SOLDIER_RIPPER:
   case Q2M_SOLDIER_HYPER:
   case Q2M_SOLDIER_LASER:
@@ -2771,7 +2774,53 @@ bool q2m_die(q2m_context *context, qa_error *error) {
   context->combat.can_take_damage = damageable_corpse;
   q2m_move_id move = monster->definition->death1_move;
   q2_runtime_name sound = death_sound(species);
+  bool soldier_ground_death = false;
   switch (species) {
+  case Q2M_INFANTRY:
+  case Q2M_TURRET_DRIVER: {
+    unsigned choice = context->game->options.rules == QA_RULESET_Q2_RERELEASE
+        ? q2_random_bounded(context->game, 3)
+        : qa_builtin_random_integer(&context->game->random) % 3u;
+    static const q2m_move_id moves[3] = {Q2M_MOVE_infantry_move_death1,
+                                       Q2M_MOVE_infantry_move_death2,
+                                       Q2M_MOVE_infantry_move_death3};
+    move = moves[choice];
+    sound = choice == 1 ? QA_Q2_SFX_INFANTRY_INFDETH1 : QA_Q2_SFX_INFANTRY_INFDETH2;
+    break;
+  }
+  case Q2M_SOLDIER_LIGHT:
+  case Q2M_SOLDIER:
+  case Q2M_SOLDIER_SS: {
+    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+    if (!rerelease)
+      monster->skin |= 1;
+    int weapon_skin = (rerelease ? monster->count : monster->skin) | 1;
+    sound = weapon_skin == 1 ? QA_Q2_SFX_SOLDIER_SOLDETH2
+            : weapon_skin == 3 ? QA_Q2_SFX_SOLDIER_SOLDETH1 : QA_Q2_SFX_SOLDIER_SOLDETH3;
+    if (fabsf(context->body.origin.z + monster->view_height - monster->last_damage_point.z) <= 4 &&
+        (!rerelease || context->body.velocity.z < 65)) {
+      move = Q2M_MOVE_soldier_move_death3;
+      break;
+    }
+    if (rerelease && monster->move != NULL &&
+        (monster->move->id == Q2M_MOVE_soldier_move_trip ||
+         monster->move->id == Q2M_MOVE_soldier_move_attack5)) {
+      move = Q2M_MOVE_soldier_move_death4;
+      soldier_ground_death = true;
+      break;
+    }
+    unsigned count = rerelease && context->body.velocity.z <= 65 &&
+                     qa_vec_length(context->body.velocity) <= 150 ? 4u : 5u;
+    unsigned choice = rerelease ? q2_random_bounded(context->game, count)
+        : qa_builtin_random_integer(&context->game->random) % count;
+    static const q2m_move_id moves[5] = {Q2M_MOVE_soldier_move_death1,
+                                       Q2M_MOVE_soldier_move_death2,
+                                       Q2M_MOVE_soldier_move_death4,
+                                       Q2M_MOVE_soldier_move_death5,
+                                       Q2M_MOVE_soldier_move_death6};
+    move = moves[choice];
+    break;
+  }
   case Q2M_BERSERK:
     move = monster->pending_damage >= 50.0f ? Q2M_MOVE_berserk_move_death1
                                             : Q2M_MOVE_berserk_move_death2;
@@ -2833,15 +2882,16 @@ bool q2m_die(q2m_context *context, qa_error *error) {
     sound = Q2_NAME_NONE;
     break;
   case Q2M_INSANE: {
-    move = (monster->frame >= 99 && monster->frame <= 159) ||
+    move = monster->spawnflags & 8u ? Q2M_MOVE_NONE
+           : (monster->frame >= 98 && monster->frame <= 159) ||
                    (monster->frame >= 227 && monster->frame <= 235)
                ? Q2M_MOVE_insane_move_crawl_death
                : Q2M_MOVE_insane_move_stand_death;
-    unsigned variant = 1u + (unsigned)floorf(q2m_random(context->game) * 4.0f);
-    if (variant > 4u)
-      variant = 4u;
+    unsigned variant = context->game->options.rules == QA_RULESET_Q2_RERELEASE
+        ? q2_random_bounded(context->game, 4)
+        : qa_builtin_random_integer(&context->game->random) % 4u;
     static const q2_runtime_name deaths[4] = {QA_Q2_SFX_PLAYER_MALE_DEATH1, QA_Q2_SFX_PLAYER_MALE_DEATH2, QA_Q2_SFX_PLAYER_MALE_DEATH3, QA_Q2_SFX_PLAYER_MALE_DEATH4};
-    sound=deaths[variant-1];
+    sound=deaths[variant];
     break;
   }
   case Q2M_GEKK:
@@ -2865,7 +2915,8 @@ bool q2m_die(q2m_context *context, qa_error *error) {
     break;
   }
   if (!q2m_damageable(context, damageable_corpse, error) ||
-      (sound != Q2_NAME_NONE && !q2m_sound(context, sound, 2, 1.0f, error)) ||
+      (sound != Q2_NAME_NONE && !q2m_sound(context, sound, 2,
+                                          species == Q2M_INSANE ? 2.0f : 1.0f, error)) ||
       !q2m_emit(context, QA_BUILTIN_DEATH, Q2_NAME_NONE, 0, context->body.origin,
                 context->body.origin, monster->pending_damage, error))
     return false;
@@ -2880,8 +2931,15 @@ bool q2m_die(q2m_context *context, qa_error *error) {
     return q2m_release(context, error);
   }
 
-  return move == Q2M_MOVE_NONE ? q2m_corpse(context, error)
-                      : q2m_set_move(context, move, true, error);
+  if (move == Q2M_MOVE_NONE)
+    return q2m_corpse(context, error);
+  if (!q2m_set_move(context, move, true, error))
+    return false;
+  if (soldier_ground_death) {
+    context->monster->next_frame = context->monster->move->first_frame + 12;
+    return q2m_callback_run(context, Q2M_CALLBACK_soldier_death_shrink, error);
+  }
+  return true;
 }
 
 bool q2m_hover_explode(q2m_context *context, qa_error *error) {

@@ -21,7 +21,7 @@ static const q2m_transition transitions[Q2M_CALLBACK_COUNT] = {
     [Q2M_CALLBACK_flyer_kamikaze]={ Q2M_MOVE_flyer_move_kamikaze},
     [Q2M_CALLBACK_flyer_loop_melee]={ Q2M_MOVE_flyer_move_loop_melee},
     [Q2M_CALLBACK_gekk_chant]={ Q2M_MOVE_gekk_move_chant},
-    [Q2M_CALLBACK_gekk_face]={ Q2M_MOVE_gekk_move_attack},
+    [Q2M_CALLBACK_gekk_face]={ Q2M_MOVE_gekk_move_run},
     [Q2M_CALLBACK_gekk_run_start]={ Q2M_MOVE_gekk_move_run_start},
     [Q2M_CALLBACK_gekk_swim_loop]={ Q2M_MOVE_gekk_move_swim_loop},
     [Q2M_CALLBACK_guardian_atk1_finish]={ Q2M_MOVE_guardian_atk1_out},
@@ -39,7 +39,6 @@ static const q2m_transition transitions[Q2M_CALLBACK_COUNT] = {
     [Q2M_CALLBACK_soldier_blind]={ Q2M_MOVE_soldier_move_blind},
     [Q2M_CALLBACK_stalker_false_death]={ Q2M_MOVE_stalker_move_false_death},
     [Q2M_CALLBACK_tank_doattack_rocket]={ Q2M_MOVE_tank_move_attack_fire_rocket},
-    [Q2M_CALLBACK_tank_poststrike]={ Q2M_MOVE_tank_move_run},
 };
 
 static bool trace_point(q2m_context *, qa_vec3, qa_vec3, uint32_t,
@@ -2345,8 +2344,40 @@ static bool callback_turret_run(q2m_context *context, q2m_callback_id callback, 
   return true;
 }
 
+static bool tank_run(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *monster = context->monster;
+  qa_builtin_actor_traits enemy = {0};
+  bool brutal = monster->enemy.registry != 0 &&
+      context->game->services.actor_traits != NULL &&
+      context->game->services.actor_traits(context->game->services.context,
+                                           monster->enemy, &enemy) && enemy.player;
+  if (!q2m_alive(context))
+    return true;
+  monster->brutal = brutal;
+  q2m_move_id move = monster->stand_ground ? Q2M_MOVE_tank_move_stand
+      : monster->move != NULL &&
+        (monster->move->id == Q2M_MOVE_tank_move_walk ||
+         monster->move->id == Q2M_MOVE_tank_move_start_run)
+          ? Q2M_MOVE_tank_move_run : Q2M_MOVE_tank_move_start_run;
+  return q2m_set_move(context, move, false, error);
+}
+
 static bool end_transition(q2m_context *context, q2m_callback_id callback,
                            bool *handled, qa_error *error) {
+  if (callback == Q2M_CALLBACK_tank_run || callback == Q2M_CALLBACK_tank_poststrike) {
+    *handled = true;
+    if (callback == Q2M_CALLBACK_tank_poststrike) {
+      context->monster->enemy = (qa_actor_id){0};
+      context->actor->physics.enemy = (qa_actor_reference){0};
+      if (context->actor->entity != NULL)
+        context->actor->entity->enemy = (qa_actor_id){0};
+      if (context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
+        context->monster->pause_ns = UINT64_MAX;
+        return q2m_set_move(context, Q2M_MOVE_tank_move_stand, false, error);
+      }
+    }
+    return tank_run(context, error);
+  }
   if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
       (context->monster->definition->species == Q2M_MEDIC ||
        context->monster->definition->species == Q2M_MEDIC_COMMANDER) &&
@@ -4846,6 +4877,8 @@ static bool callback_gekk_check_underwater_44(q2m_context *context, q2m_callback
 static bool callback_gekk_stop_skid_45(q2m_context *context, q2m_callback_id callback,
                                        qa_error *error) {
     (void)callback;
+    if (!qa_actor_reference_present(context->body.ground))
+        return true;
     context->body.velocity = qa_v3(0, 0, 0);
     return q2m_write_body(context, true, error);
 }
@@ -5091,8 +5124,8 @@ static bool callback_gekk_idle_loop_73(q2m_context *context, q2m_callback_id cal
     (void)callback;
     (void)error;
     struct qa_q2_monster *monster = context->monster;
-    if (q2m_random(context->game) > 0.75f && context->combat.health < monster->base_health)
-        monster->next_frame = 297;
+    if (q2m_random(context->game) > 0.75f && context->combat.health < monster->max_health)
+        monster->next_frame = 203;
     return true;
 }
 
