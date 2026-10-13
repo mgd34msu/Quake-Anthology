@@ -16,6 +16,8 @@ bool q2_player_map_think(qa_q2_game *, q2_actor *, q2_entity_think, qa_error *);
 typedef struct q2_entities {
     qa_q2_entity_services services;
     qa_actor_id poi, poi_dynamic;
+    qa_vec3 poi_origin;
+    bool poi_valid;
     qa_string_id poi_image, story;
     int poi_stage, steam_id, total_secrets, found_secrets, total_goals, found_goals;
     uint64_t last_autosave_ns;

@@ -744,14 +744,16 @@ bool q2_map_poi(qa_q2_game *g, qa_actor_id player, qa_vec3 *origin, qa_string_id
                 bool *present, qa_error *e) {
     (void)player;
     q2_entities *r = g->entity_runtime;
-    qa_actor_id id = q2_actor_live(g, r->poi_dynamic) ? r->poi_dynamic : r->poi;
-    *present = q2_actor_live(g, id);
+    *present = r->poi_valid;
     if (!*present)
         return true;
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, id, &body, e))
-        return false;
-    *origin = body.origin;
+    *origin = r->poi_origin;
+    if (q2_actor_live(g, r->poi_dynamic)) {
+        qa_body_state body;
+        if (!qa_world_body_read(g->services.world, r->poi_dynamic, &body, e))
+            return false;
+        *origin = body.origin;
+    }
     *image = r->poi_image;
     return true;
 }

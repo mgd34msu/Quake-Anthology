@@ -107,6 +107,7 @@ static bool campaign_level(q2_save_io *io, qa_q2_campaign_level *s) {
 }
 bool q2_save_entities(q2_save_io *io, qa_q2_entities_checkpoint *s) {
     Q2R(poi); Q2R(poi_dynamic); Q2N(poi_image); Q2N(story);
+    Q2V(poi_origin); Q2B(poi_valid);
     Q2I(poi_stage); Q2I(steam_id); Q2I(total_secrets); Q2I(found_secrets);
     Q2I(total_goals); Q2I(found_goals); Q2T(last_autosave_ns);
     for (size_t i = 0; i < 2; ++i) {

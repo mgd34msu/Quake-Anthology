@@ -253,6 +253,8 @@ bool qa_q2_entities_capture(qa_q2_game *g, bool level_only, qa_q2_entities_check
         return false;
     q2_entities *r = g->entity_runtime;
     qa_q2_entities_checkpoint s = {.poi_image = r->poi_image,
+                                   .poi_origin = r->poi_origin,
+                                   .poi_valid = r->poi_valid,
                                    .story = r->story,
                                    .poi_stage = r->poi_stage,
                                    .steam_id = r->steam_id,
@@ -321,7 +323,7 @@ bool qa_q2_entities_capture(qa_q2_game *g, bool level_only, qa_q2_entities_check
 }
 bool qa_q2_entities_restore(qa_q2_game *g, const qa_q2_entities_checkpoint *s, qa_error *e) {
     if (!g || !s || !q2_saved_fog(&s->world_fog) ||
-        !qa_vec_finite(s->sky_axis) || !isfinite(s->sky_rotation) ||
+        !qa_vec_finite(s->sky_axis) || !qa_vec_finite(s->poi_origin) || !isfinite(s->sky_rotation) ||
         !q2_saved_resource(g, s->poi_image) || !q2_saved_resource(g, s->story) ||
         !q2_saved_resource(g, s->sky) || !q2_saved_resource(g, s->goals) ||
         !q2_saved_resource(g, s->primary) || !q2_saved_resource(g, s->secondary) ||
@@ -372,6 +374,8 @@ bool qa_q2_entities_restore(qa_q2_game *g, const qa_q2_entities_checkpoint *s, q
         }
     }
     next.poi_image = s->poi_image;
+    next.poi_origin = s->poi_origin;
+    next.poi_valid = s->poi_valid;
     next.story = s->story;
     next.poi_stage = s->poi_stage;
     next.steam_id = s->steam_id;

@@ -372,6 +372,8 @@ typedef struct qa_q2_healthbar_checkpoint {
 } qa_q2_healthbar_checkpoint;
 typedef struct qa_q2_entities_checkpoint {
     qa_q2_saved_reference poi, poi_dynamic;
+    qa_vec3 poi_origin;
+    bool poi_valid;
     qa_string_id poi_image, story;
     int poi_stage, steam_id, total_secrets, found_secrets, total_goals, found_goals;
     uint64_t last_autosave_ns;

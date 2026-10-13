@@ -466,6 +466,37 @@ static bool level_perception(qa_q2_game *g, q2_original_record_io *io)
     return true;
 }
 
+static bool level_poi(qa_q2_game *g, q2_original_record_io *io,
+    const qa_q2_save_level *engine)
+{
+    if (io->edition != QA_RULESET_Q2_RERELEASE) return true;
+    q2_entities *entities = g->entity_runtime;
+    bool valid = entities->poi_valid;
+    qa_vec3 origin = entities->poi_origin;
+    int32_t stage = entities->poi_stage;
+    qa_string_id image = entities->poi_image;
+    qa_actor_id dynamic = entities->poi_dynamic;
+    if (!q2_original_scalar(io, "valid_poi", Q2_ORIGINAL_BOOL,
+            UINT16_MAX, UINT16_MAX, UINT16_MAX, &valid) ||
+        !q2_original_scalar(io, "current_poi", Q2_ORIGINAL_VECTOR,
+            UINT16_MAX, UINT16_MAX, UINT16_MAX, &origin) ||
+        !q2_original_scalar(io, "current_poi_stage", Q2_ORIGINAL_I32,
+            UINT16_MAX, UINT16_MAX, UINT16_MAX, &stage) ||
+        !q2_original_resource(g, io, engine, "current_poi_image",
+            UINT16_MAX, UINT16_MAX, UINT16_MAX, 544, &image) ||
+        !q2_original_reference(g, io, "current_dynamic_poi", UINT16_MAX, &dynamic))
+        return false;
+    if (io->reading) {
+        entities->poi = (qa_actor_id){0};
+        entities->poi_valid = valid;
+        entities->poi_origin = origin;
+        entities->poi_stage = stage;
+        entities->poi_image = image;
+        entities->poi_dynamic = dynamic;
+    }
+    return true;
+}
+
 static bool level_state(qa_q2_game *g, q2_original_record_io *io,
     const qa_q2_save_level *engine, q2_original_level_state *state)
 {
@@ -493,7 +524,7 @@ static bool level_state(qa_q2_game *g, q2_original_record_io *io,
         !q2_original_scalar(io, "framenum", Q2_ORIGINAL_U32, 0, 0, 0, &state->frame)) return false;
     qa_string_id changemap = io->reading ? QA_STRING_NONE : players->next_map;
     if (!q2_original_string(g, io, "changemap", 204, &changemap)) return false;
-    if (!level_perception(g, io)) return false;
+    if (!level_perception(g, io) || !level_poi(g, io, engine)) return false;
     if (io->reading) {
         if (state->body_queue >= 8 || state->found_secrets > state->total_secrets ||
             state->found_goals > state->total_goals)

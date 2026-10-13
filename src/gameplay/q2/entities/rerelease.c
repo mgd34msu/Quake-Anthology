@@ -336,7 +336,12 @@ bool q2_rerelease_poi(qa_q2_game *g, q2_actor *source, qa_actor_id activator, qa
         return true;
     if (v->count)
         r->poi_stage = v->count;
+    qa_body_state selected_body;
+    if (!qa_world_body_read(g->services.world, selected->id, &selected_body, e))
+        return false;
     r->poi = selected->id;
+    r->poi_origin = selected_body.origin;
+    r->poi_valid = true;
     r->poi_dynamic = (qa_actor_id){0};
     if (v->spawnflags & 4)
         for (q2_actor *m = g->first_actor; m; m = m->live_next)
