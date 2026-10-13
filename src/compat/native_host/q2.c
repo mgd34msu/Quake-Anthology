@@ -75,6 +75,43 @@ static bool print_import(qa_native_host *host, const qa_native_import_call *call
     return ok;
 }
 
+static bool localized_print_import(qa_native_host *host, const qa_native_import_call *call,
+                                    qa_error *error)
+{
+    if (!host->engine.localized_print)
+        return native_host_fail(error, QA_ERROR_UNSUPPORTED, call->slot,
+                                "native Q2 localized print service is unbound");
+    /* API2023 game.h declares MAX_LOCALIZATION_ARGS as eight. */
+    enum { maximum_arguments = 8 };
+    uint64_t count = call->arguments[4].as.u64;
+    if (count > maximum_arguments)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, call->slot,
+                                "native Q2 localization exceeds its original argument count");
+    qa_bytes base;
+    if (!call_text(host, call, 2, &base, error)) return false;
+    const char *arguments[maximum_arguments];
+    qa_native_address array = native_argument_address(call, 3);
+    for (size_t i = 0; i < (size_t)count; ++i) {
+        size_t offset = i * host->pointer_bytes;
+        if (array > UINT64_MAX - offset)
+            return native_host_fail(error, QA_ERROR_ARGUMENT, call->slot,
+                                    "native Q2 localization argument address overflows");
+        uint8_t pointer[8]; qa_bytes argument;
+        if (!native_host_read(host, array + offset, pointer, host->pointer_bytes, error) ||
+            !native_host_string_read(host, host->pointer_bytes == 4 ?
+                qa_load_u32le(pointer) : qa_load_u64le(pointer), &argument, error)) return false;
+        arguments[i] = (const char *)argument.data;
+    }
+    qa_native_host_localized_print print = {.level = native_argument_i32(call, 1),
+        .base = (const char *)base.data, .arguments = arguments,
+        .argument_count = (size_t)count};
+    qa_actor_id client = {0};
+    qa_native_address entity = native_argument_address(call, 0);
+    if (entity && !(print.level & 8) &&
+        !native_host_actor_for_address(host, entity, false, &client, NULL, error)) return false;
+    return host->engine.localized_print(host->engine.context, client, &print, error);
+}
+
 static bool configstring_get(qa_native_host *host, int32_t index,
                              qa_native_address *out, qa_error *error)
 {
@@ -502,6 +539,8 @@ bool native_host_q2_import(qa_native_host *host, const qa_native_import_call *ca
     case QA_NATIVE_Q2_IMPORT_Center_Print:
     case QA_NATIVE_Q2_IMPORT_Com_Error:
     return print_import(host, call, error);
+    case QA_NATIVE_Q2_IMPORT_Loc_Print:
+    return localized_print_import(host, call, error);
     case QA_NATIVE_Q2_IMPORT_TagMalloc:
     case QA_NATIVE_Q2_IMPORT_TagFree:
     case QA_NATIVE_Q2_IMPORT_FreeTags:
@@ -583,6 +622,11 @@ bool native_host_q2_import(qa_native_host *host, const qa_native_import_call *ca
     case QA_NATIVE_Q2_IMPORT_multicast:
     case QA_NATIVE_Q2_IMPORT_unicast:
     return native_host_message_send(host, call, error);
+    case QA_NATIVE_Q2_IMPORT_ReportMatchDetails_Multicast:
+    /* q2repro src/server/game.c PF_ReportMatchDetails_Multicast consumes
+     * the pending telemetry without publishing it when no platform uses it. */
+    native_host_message_clear(host);
+    return true;
     case QA_NATIVE_Q2_IMPORT_WriteChar:
     case QA_NATIVE_Q2_IMPORT_WriteByte:
     case QA_NATIVE_Q2_IMPORT_WriteShort:

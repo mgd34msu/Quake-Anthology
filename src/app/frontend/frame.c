@@ -550,9 +550,19 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
         frontend_logs_drain(frontend,range.id);
         qa_builtin_event event = *output.value.builtin;
         if (!frontend_ranking_event(frontend,&event,error)) return false;
-        const char *text = qa_strings_cstr(strings, event.text);
+        const char *text = event.message_format ? event.message_format : qa_strings_cstr(strings, event.text);
         if ((event.kind == QA_BUILTIN_MESSAGE || event.kind == QA_BUILTIN_CENTERPRINT) && text) {
             bool center = event.kind == QA_BUILTIN_CENTERPRINT;
+            frontend_q2_print_policy q2 = {.notify = true};
+            if (event.family == QA_GAME_Q2) {
+                const qa_launch_snapshot *launch = qa_application_launch(frontend->application);
+                const char *instance = qa_application_provider_instance(frontend->application, event.provider);
+                const qa_launch_instance *source = instance ? qa_launch_snapshot_find(launch, instance) : NULL;
+                q2 = frontend_ui_q2_print_policy(center, event.message_format ? event.flags : (uint32_t)event.code,
+                    source && source->selection.clock.kind == QA_RULESET_Q2_RERELEASE,
+                    qa_application_cvars(frontend->application), &frontend->engine_cvars.hud);
+                center = q2.center;
+            }
             uint64_t center_duration = UINT64_C(4000000000);
             if (center) {
                 const qa_cvar_view *duration = qa_cvars_read(qa_application_cvars(frontend->application), frontend->engine_cvars.scr_centertime);
@@ -565,18 +575,23 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
                 qa_actor_id actor; uint32_t launch_seat;
                 if (event.actor.registry && (!frontend_seat_launch_id_read(frontend,seat,&launch_seat) ||
                     !qa_application_player_actor(frontend->application, launch_seat, &actor) || !qa_actor_id_equal(actor, event.actor))) continue;
-                char localized[1024]; const char *recipient_text;
-                if (!frontend_ui_source_message(frontend,seat,&event,localized,&recipient_text,error)) return false;
+                const char *recipient_text;
+                if (!frontend_ui_source_message(frontend,seat,&event,&recipient_text,error)) return false;
+                const char *console_text=recipient_text;
+                if (event.family==QA_GAME_Q2 && !center &&
+                    !frontend_ui_console_text(&frontend->frame.storage,recipient_text,q2.notify,&console_text,error)) return false;
                 bool ok = center ? qa_hud_center_print(frontend->seats[seat].hud,
-                    recipient_text, frontend->time_ns, center_duration,(qa_hud_center_policy){.instant=true,.character_ns=0,.columns=event.family==QA_GAME_Q1?40u:0u}, error) :
-                    qa_seat_console_print(frontend->seats[seat].console, recipient_text, error);
+                    recipient_text, frontend->time_ns, event.family==QA_GAME_Q2 ? q2.duration_ns : center_duration,
+                    event.family==QA_GAME_Q2 ? q2.center_policy :
+                        (qa_hud_center_policy){.instant=true,.character_ns=0,.columns=event.family==QA_GAME_Q1?40u:0u}, error) :
+                    qa_seat_console_print(frontend->seats[seat].console, console_text, error);
                 if (!ok) return false;
                 if (!printed) { fputs(recipient_text,stdout); printed=true; }
             }
             if (!printed && frontend->options.dedicated) {
-                char localized[1024]; const char *recipient_text;
+                const char *recipient_text;
                 if (!event.actor.registry) {
-                    if (!frontend_ui_source_message(frontend,0,&event,localized,&recipient_text,error)) return false;
+                    if (!frontend_ui_source_message(frontend,0,&event,&recipient_text,error)) return false;
                     fputs(recipient_text,stdout);
                 } else fputs(text,stdout);
             }

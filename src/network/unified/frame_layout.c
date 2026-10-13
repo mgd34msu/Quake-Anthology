@@ -1282,8 +1282,14 @@ static const qa_unified_field message_string_fields[] = {
 static const qa_unified_record_layout message_string_layout = {
     sizeof(qa_string_id), message_string_fields, 1, SIZE_MAX, QA_UNIFIED_KEY_NONE,
 };
+static const qa_unified_field message_text_fields[] = {
+    {QA_UNIFIED_FIELD_STRING, 0, NULL, 0, 0, NULL},
+};
+static const qa_unified_record_layout message_text_layout = {
+    sizeof(const char *), message_text_fields, 1, SIZE_MAX, QA_UNIFIED_KEY_NONE,
+};
 static const qa_unified_record_layout *const message_argument_variants[] = {
-    &message_string_layout, &double_layout,
+    &message_string_layout, &double_layout, &message_text_layout,
 };
 static const qa_unified_field qa_builtin_message_arg_fields[] = {
     QA_UNIFIED_FIELD(qa_builtin_message_arg, kind, QA_UNIFIED_FIELD_I32),
@@ -1311,6 +1317,7 @@ static const qa_unified_field qa_builtin_event_fields[] = {
     QA_UNIFIED_RECORD(qa_builtin_event, other, qa_unified_actor_layout),
     QA_UNIFIED_FIELD(qa_builtin_event, resource, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_FIELD(qa_builtin_event, text, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_builtin_event, message_format, QA_UNIFIED_FIELD_STRING),
     QA_UNIFIED_FIELD(qa_builtin_event, item, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_RECORD(qa_builtin_event, origin, qa_unified_vector_layout),
     QA_UNIFIED_RECORD(qa_builtin_event, end, qa_unified_vector_layout),
@@ -2060,7 +2067,8 @@ bool qa_unified_frame_check(const qa_unified_frame *frame, size_t *bytes, qa_err
 static bool message_arguments_check(const qa_builtin_message_arg *rows, size_t count)
 {
     for (size_t i=0;i<count;++i)
-        if (rows[i].kind!=QA_BUILTIN_MESSAGE_STRING && rows[i].kind!=QA_BUILTIN_MESSAGE_NUMBER) return false;
+        if (rows[i].kind!=QA_BUILTIN_MESSAGE_STRING && rows[i].kind!=QA_BUILTIN_MESSAGE_NUMBER &&
+            (rows[i].kind!=QA_BUILTIN_MESSAGE_TEXT || !rows[i].value.literal)) return false;
     return true;
 }
 static bool q2_temporary_check(const qa_unified_q2_temporary *event)

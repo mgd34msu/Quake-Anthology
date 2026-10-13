@@ -1660,6 +1660,36 @@ static void test_shared_text_interpolation(void)
     CHECK(!strcmp(out,"xz"));
     CHECK(qa_localize(catalog,"$FORMAT",values,2,false,true,out,3)==2);
     CHECK((unsigned char)out[0]==0xe2 && (unsigned char)out[1]==0x82 && !out[2]);
+    qa_buffer complete={0};
+    CHECK(qa_localize_presentation_arena(catalog,"$FORMAT",values,2,false,&scratch,&complete,&error));
+    CHECK(complete.size==5 && !strcmp((const char *)complete.data,"\xe2\x82\xacxz"));
+    char long_argument[4097]; memset(long_argument,'a',sizeof(long_argument)-1);
+    long_argument[sizeof(long_argument)-1]=0;
+    const char *long_values[]={long_argument,"$MISSING"};
+    CHECK(qa_localize_presentation_arena(catalog,"$FORMAT",long_values,2,false,&scratch,&complete,&error));
+    CHECK(complete.size==4105 && !memcmp(complete.data,long_argument,4096));
+    CHECK(!strcmp((const char *)complete.data+4096,"x$MISSING"));
+    char long_format[2051]; memset(long_format,'b',2047); memcpy(long_format+2047,"{0}",4);
+    CHECK(qa_localize_presentation_arena(catalog,long_format,values,2,true,&scratch,&complete,&error));
+    CHECK(complete.size==2050 && !strcmp((const char *)complete.data+2047,values[0]));
+    qa_builtin_message_arg retained_args[]={{.kind=QA_BUILTIN_MESSAGE_TEXT,
+        .value.literal=long_argument}};
+    qa_unified_presentation_payload message={.kind=QA_UNIFIED_PRESENTATION_BUILTIN,
+        .value.builtin={.kind=QA_BUILTIN_MESSAGE,.family=QA_GAME_Q2,
+            .message_format=long_format,.arguments=retained_args,.argument_count=1,.flags=16}};
+    qa_unified_presentation_payload decoded={0}; qa_buffer wire={0};
+    CHECK(qa_unified_record_delta_encode(&qa_unified_presentation_payload_layout,
+        &message,NULL,65536,&wire,NULL,&error));
+    CHECK(qa_unified_record_delta_decode(&qa_unified_presentation_payload_layout,
+        (qa_bytes){wire.data,wire.size},NULL,&decoded,NULL,NULL,NULL,NULL,NULL,&error));
+    CHECK(decoded.value.builtin.flags==16 && decoded.value.builtin.argument_count==1);
+    CHECK(!strcmp(decoded.value.builtin.message_format,long_format));
+    CHECK(decoded.value.builtin.arguments[0].kind==QA_BUILTIN_MESSAGE_TEXT);
+    long_argument[0]='z'; long_format[0]='c';
+    CHECK(decoded.value.builtin.message_format[0]=='b');
+    CHECK(decoded.value.builtin.arguments[0].value.literal[0]=='a');
+    qa_unified_record_dispose(&qa_unified_presentation_payload_layout,&decoded);
+    qa_buffer_free(&wire);
     qa_localization_release(catalog); qa_arena_destroy(&scratch);
 }
 

@@ -265,7 +265,7 @@ static const char *parse_format(const char *text, qa_localization_entry *out) {
         if (!closed)
             return "Unterminated localization argument";
         out->arguments[out->argument_count++] = (qa_localization_argument){
-            .start = (uint16_t)start, .end = (uint16_t)at, .index = (uint8_t)index};
+            .start = start, .end = at, .index = (uint8_t)index};
     }
     return NULL;
 }
@@ -416,65 +416,84 @@ static size_t localize(const qa_localization *, const char *, const char *const 
                        size_t, bool, bool, bool, char *, size_t);
 typedef struct localized_argument {
     const qa_localization *catalog;
-    bool preserve_unknown;
+    bool preserve_unknown, bounded;
 } localized_argument;
 static qa_bytes resolve_localized_argument(void *context, const char *text,
                                            char out[QA_INTERPOLATION_ARGUMENT_CAPACITY]) {
     const localized_argument *argument = context;
+    if (!argument->bounded) {
+        const char *value = text;
+        if (*text == '$') {
+            const qa_localization_entry *entry = qa_localization_find(argument->catalog, text + 1);
+            if (entry) value = entry->argument_count ? text + 1 : entry->format;
+            else if (!argument->preserve_unknown) value = text + 1;
+        }
+        return (qa_bytes){(const uint8_t *)value, strlen(value)};
+    }
     size_t size = localize(argument->catalog, text, NULL, 0, false, false,
                            argument->preserve_unknown, out, QA_INTERPOLATION_ARGUMENT_CAPACITY);
     return (qa_bytes){(const uint8_t *)out, size};
 }
-static size_t localize(const qa_localization *catalog, const char *base, const char *const *arguments,
-                   size_t argument_count, bool allow_in_place, bool raw_bytes, bool preserve_unknown,
-                   char *out, size_t capacity) {
-    if (!capacity)
-        return 0;
-    out[0] = 0;
+typedef struct localization_format {
+    qa_localization_entry parsed;
+    localized_argument argument;
+    qa_text_interpolation interpolation;
+    const char *text;
+} localization_format;
+static void localization_prepare(const qa_localization *catalog, const char *base,
+    const char *const *arguments, size_t argument_count, bool allow_in_place,
+    bool raw_bytes, bool preserve_unknown, char *format, size_t format_capacity,
+    localization_format *prepared) {
+    *prepared = (localization_format){.argument = {catalog, preserve_unknown, format != NULL},
+        .interpolation = {.keep_missing = true,
+            .truncation = raw_bytes ? QA_INTERPOLATION_PIECES_RAW : QA_INTERPOLATION_PIECES_UTF8}};
     const qa_localization_entry *entry = NULL;
-    qa_localization_entry parsed = {0};
-    char format[1024];
     const char *original = base;
-    if (*base == '$')
-        entry = qa_localization_find(catalog, ++base);
+    if (*base == '$') entry = qa_localization_find(catalog, ++base);
     else if (allow_in_place) {
         bool has_args = false;
         for (size_t i = 0; base[i]; ++i)
             if (base[i] == '{') {
-                if (!base[++i])
-                    break;
-                if (base[i] != '{') {
-                    has_args = true;
-                    break;
-                }
+                if (!base[++i]) break;
+                if (base[i] != '{') { has_args = true; break; }
             }
         if (has_args) {
-            append(format, 0, sizeof(format), base, strlen(base), false);
-            if (!parse_format(format, &parsed)) {
-                parsed.format = format;
-                entry = &parsed;
+            const char *text = base;
+            if (format) {
+                append(format, 0, format_capacity, base, strlen(base), false);
+                text = format;
+            }
+            if (!parse_format(text, &prepared->parsed)) {
+                prepared->parsed.format = text;
+                entry = &prepared->parsed;
             }
         }
     }
-    if (!entry) {
-        const char *text = preserve_unknown ? original : base;
-        return append(out, 0, capacity, text, strlen(text), raw_bytes);
-    }
-    if (!entry->argument_count)
-        return append(out, 0, capacity, entry->format, strlen(entry->format), raw_bytes);
+    prepared->text = preserve_unknown ? original : base;
+    if (!entry) return;
+    if (!entry->argument_count) { prepared->text = entry->format; return; }
     for (size_t i = 0; i < entry->argument_count; ++i)
-        if (entry->arguments[i].index >= argument_count)
-            return append(out, 0, capacity, base, strlen(base), raw_bytes);
+        if (entry->arguments[i].index >= argument_count) { prepared->text = base; return; }
     for (size_t i = 0; i < argument_count; ++i)
-        if (!arguments || !arguments[i])
-            return append(out, 0, capacity, base, strlen(base), raw_bytes);
-    localized_argument argument = {catalog, preserve_unknown};
-    qa_text_interpolation interpolation = {.spans = entry->arguments,
-        .span_count = entry->argument_count, .values = arguments, .value_count = argument_count,
-        .context = &argument, .resolve = resolve_localized_argument,
-        .truncation = raw_bytes ? QA_INTERPOLATION_PIECES_RAW : QA_INTERPOLATION_PIECES_UTF8};
-    size_t used;
-    (void)qa_text_interpolate(entry->format, &interpolation, out, capacity, NULL, &used, NULL);
+        if (!arguments || !arguments[i]) { prepared->text = base; return; }
+    prepared->text = entry->format;
+    prepared->interpolation.spans = entry->arguments;
+    prepared->interpolation.span_count = entry->argument_count;
+    prepared->interpolation.values = arguments;
+    prepared->interpolation.value_count = argument_count;
+    prepared->interpolation.context = &prepared->argument;
+    prepared->interpolation.resolve = resolve_localized_argument;
+}
+static size_t localize(const qa_localization *catalog, const char *base, const char *const *arguments,
+                   size_t argument_count, bool allow_in_place, bool raw_bytes, bool preserve_unknown,
+                   char *out, size_t capacity) {
+    if (!capacity) return 0;
+    char format[1024];
+    localization_format prepared;
+    localization_prepare(catalog, base, arguments, argument_count, allow_in_place,
+        raw_bytes, preserve_unknown, format, sizeof(format), &prepared);
+    size_t used = 0;
+    (void)qa_text_interpolate(prepared.text, &prepared.interpolation, out, capacity, NULL, &used, NULL);
     return used;
 }
 size_t qa_localize(const qa_localization *catalog, const char *base, const char *const *arguments,
@@ -483,6 +502,21 @@ size_t qa_localize(const qa_localization *catalog, const char *base, const char 
 size_t qa_localize_presentation(const qa_localization *catalog, const char *base,
     const char *const *arguments, size_t argument_count, bool allow_in_place, char *out, size_t capacity)
 { return localize(catalog, base, arguments, argument_count, allow_in_place, false, true, out, capacity); }
+bool qa_localize_presentation_arena(const qa_localization *catalog, const char *base,
+    const char *const *arguments, size_t argument_count, bool allow_in_place,
+    qa_arena *arena, qa_buffer *out, qa_error *error) {
+    localization_format prepared;
+    localization_prepare(catalog, base, arguments, argument_count, allow_in_place,
+        false, true, NULL, 0, &prepared);
+    size_t length = 0, used = 0;
+    if (!qa_text_interpolate(prepared.text, &prepared.interpolation, NULL, 0, &length, NULL, error))
+        return false;
+    char *text = qa_arena_alloc(arena, length + 1, 1, error);
+    if (!text || !qa_text_interpolate(prepared.text, &prepared.interpolation, text, length + 1,
+            NULL, &used, error)) return false;
+    *out = (qa_buffer){(uint8_t *)text, used};
+    return true;
+}
 const char *qa_localization_language(const char *locale) {
     static const char *const codes[] = {"en", "fr", "de", "it", "ru", "es"};
     static const char *const names[] = {"english", "french",  "german",

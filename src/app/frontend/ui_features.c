@@ -12,6 +12,7 @@
 #include "qa/game_q1_source_obituary.h"
 #include "music_sources.h"
 #include <limits.h>
+#include <math.h>
 
 frontend_ui_seat_features *frontend_ui_features_seat(frontend_seat *seat)
 {
@@ -322,14 +323,95 @@ const char *frontend_ui_localize(void *context,const char *text)
     (void)qa_localize_presentation(seat->localization,text,NULL,0,false,seat->localized,sizeof(seat->localized));
     return seat->localized;
 }
-bool frontend_ui_source_message(qa_frontend *f,uint32_t seat,const qa_builtin_event *event,
-    char output[1024],const char **out,qa_error *error)
+bool frontend_ui_source_text(qa_frontend *f,uint32_t seat,qa_game_family family,
+    qa_vfs *view,qa_product_edition edition,qa_strings *strings,const char *format,
+    const qa_builtin_message_arg *args,size_t count,qa_arena *storage,qa_buffer *out,qa_error *error)
 {
-    if (!f || !f->application || !f->ui_features || !event || !output || !out || seat>=f->options.seats ||
+    if (count>SIZE_MAX/(sizeof(const char *)+32))
+        return frontend_fail(error,QA_ERROR_MEMORY,"Localized source argument count overflows");
+    const char **arguments=count?qa_arena_alloc(storage,
+        count*(sizeof(*arguments)+32),_Alignof(const char *),error):NULL;
+    if (count && !arguments) return false;
+    char *numbers=arguments?(char *)(arguments+count):NULL;
+    for (size_t i=0;i<count;++i) {
+        switch (args[i].kind) {
+        case QA_BUILTIN_MESSAGE_NUMBER:
+            arguments[i]=numbers+i*32;
+            if (!qa_format_number(args[i].value.number,numbers+i*32,error)) return false;
+            break;
+        case QA_BUILTIN_MESSAGE_STRING:
+            arguments[i]=qa_strings_cstr(strings,args[i].value.text);
+            break;
+        case QA_BUILTIN_MESSAGE_TEXT:
+            arguments[i]=args[i].value.literal;
+            break;
+        default: arguments[i]=NULL; break;
+        }
+        if (!arguments[i])
+            return frontend_fail(error,QA_ERROR_FORMAT,"Localized source argument has no genuine string value");
+    }
+    qa_localization *catalog=NULL;
+    bool ok=true;
+    if (view && (family==QA_GAME_Q1 || edition==QA_EDITION_RERELEASE || format[0]=='$')) {
+        qa_ui_preferences preferences;
+        ok=qa_ui_preferences_read(qa_application_cvars(f->application),
+            qa_application_ui_preference_handles(f->application),seat,&preferences,error) &&
+            qa_localization_acquire(f->ui_features->catalogs,view,preferences.language,
+                &(qa_localization_options){.profile=family==QA_GAME_Q1 ?
+                    QA_LOCALIZATION_Q1_RERELEASE : QA_LOCALIZATION_Q2_RERELEASE},&catalog,error);
+    }
+    if (ok && family==QA_GAME_Q1 && edition!=QA_EDITION_RERELEASE &&
+        (format[0]!='$' || !qa_localization_find(catalog,format+1))) {
+        char *text=qa_arena_alloc(storage,1024,1,error);
+        ok=text && qa_q1_classic_text(format,arguments,count,storage,text,1024,error);
+        if (ok) *out=(qa_buffer){(uint8_t *)text,strlen(text)};
+    } else if (ok) ok=qa_localize_presentation_arena(catalog,format,arguments,count,true,storage,out,error);
+    qa_localization_release(catalog);
+    return ok;
+}
+frontend_q2_print_policy frontend_ui_q2_print_policy(bool legacy_center,uint32_t flags,
+    bool rerelease,const qa_cvars *cvars,const qa_hud_cvar_handles *handles)
+{
+    uint32_t type=flags&7u;
+    const qa_cvar_view *time=qa_cvars_read(cvars,handles->center_time);
+    const qa_cvar_view *speed=qa_cvars_read(cvars,handles->print_speed);
+    double seconds=time && isfinite(time->number)?fmax(0,time->number):
+        rerelease?5:2.5;
+    double interval=0.04;
+    if (speed && isfinite(speed->number)) {
+        bool seconds_view=qa_cvars_role(cvars)==QA_CVAR_ROLE_CGAME &&
+            qa_cvars_dialect(cvars)==QA_RULESET_Q2_RERELEASE;
+        interval=seconds_view?fmax(0,speed->number):speed->number>0?1/speed->number:0;
+    }
+    long double duration_ns=(long double)seconds*1e9L;
+    long double character_ns=(long double)interval*1e9L;
+    return (frontend_q2_print_policy){.center=legacy_center || type==4 || type==5,
+        .chat=type==3,.notify=(flags&16u)==0,
+        .duration_ns=duration_ns>=(long double)UINT64_MAX?UINT64_MAX:(uint64_t)duration_ns,
+        .center_policy={.instant=type!=4,
+            .character_ns=character_ns>=(long double)UINT64_MAX?UINT64_MAX:(uint64_t)character_ns}};
+}
+bool frontend_ui_console_text(qa_arena *storage,const char *text,bool notify,
+    const char **out,qa_error *error)
+{
+    *out=text;
+    if (notify) return true;
+    size_t length=strlen(text);
+    if (length>SIZE_MAX-13)
+        return frontend_fail(error,QA_ERROR_MEMORY,"Console print extent overflows");
+    char *copy=qa_arena_alloc(storage,length+13,1,error);
+    if (!copy) return false;
+    memcpy(copy,"[skipnotify]",12);memcpy(copy+12,text,length+1);
+    *out=copy;return true;
+}
+bool frontend_ui_source_message(qa_frontend *f,uint32_t seat,const qa_builtin_event *event,
+    const char **out,qa_error *error)
+{
+    if (!f || !f->application || !f->ui_features || !event || !out || seat>=f->options.seats ||
         f->source_restoring || f->ui_features->handling)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Localized source message requires its actual recipient boundary");
     qa_strings *strings=qa_session_strings(qa_application_session(f->application));
-    const char *format=qa_strings_cstr(strings,event->text);
+    const char *format=event->message_format?event->message_format:qa_strings_cstr(strings,event->text);
     if (!format) return frontend_fail(error,QA_ERROR_FORMAT,"Source message has no actual format string");
     *out=format;
     if ((event->family==QA_GAME_Q1 && (event->flags&QA_Q1_SOURCE_MESSAGE_LITERAL)) ||
@@ -343,49 +425,21 @@ bool frontend_ui_source_message(qa_frontend *f,uint32_t seat,const qa_builtin_ev
             !qa_application_player_actor(f->application,launch_seat,&actor) || !qa_actor_id_equal(actor,event->actor))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Localized source message belongs to another recipient");
     }
-    if (event->argument_count>SIZE_MAX/(sizeof(const char *)+32))
-        return frontend_fail(error,QA_ERROR_MEMORY,"Localized source argument count overflows");
-    const char **arguments=event->argument_count?qa_arena_alloc(&f->frame.storage,
-        event->argument_count*(sizeof(*arguments)+32),_Alignof(const char *),error):NULL;
-    if (event->argument_count && !arguments) return frontend_fail(error,QA_ERROR_MEMORY,"Reading genuine source localization arguments");
-    char *numbers=arguments?(char *)(arguments+event->argument_count):NULL;
-    bool ok=true;
-    for (size_t i=0;ok && i<event->argument_count;++i) {
-        if (event->arguments[i].kind==QA_BUILTIN_MESSAGE_NUMBER) {
-            arguments[i]=numbers+i*32;
-            ok=qa_format_number(event->arguments[i].value.number,numbers+i*32,error);
-        } else if (event->arguments[i].kind!=QA_BUILTIN_MESSAGE_STRING ||
-            !(arguments[i]=qa_strings_cstr(strings,event->arguments[i].value.text)))
-            ok=frontend_fail(error,QA_ERROR_FORMAT,"Localized source argument has no genuine string value");
+    qa_vfs *view=NULL;qa_product_edition edition=QA_EDITION_CLASSIC;
+    if (event->family==QA_GAME_Q1 || format[0]=='$') {
+        view=qa_application_provider_files(f->application,event->provider);
+        if (!view) return frontend_fail(error,QA_ERROR_NOT_FOUND,"Localized source message lost its actual content view");
+        const qa_launch_snapshot *publication=qa_application_launch(f->application);
+        const char *instance=qa_application_provider_instance(f->application,event->provider);
+        const qa_launch_instance *source=instance?qa_launch_snapshot_find(publication,instance):NULL;
+        const qa_product *product=source?qa_catalog_product(qa_launch_snapshot_catalog(publication),source->selection.product):NULL;
+        if (!product) return frontend_fail(error,QA_ERROR_ARGUMENT,"Localized event lost its actual published source edition");
+        edition=product->edition;
     }
-    if (event->family!=QA_GAME_Q1 && format[0]!='$') {
-        if (ok) {
-            (void)qa_localize_presentation(NULL,format,arguments,event->argument_count,true,output,1024);
-            *out=output;
-        }
-        return ok;
-    }
-    qa_vfs *view=ok?qa_application_provider_files(f->application,event->provider):NULL;
-    if (ok && !view) ok=frontend_fail(error,QA_ERROR_NOT_FOUND,"Localized source message lost its actual content view");
-    const qa_launch_snapshot *publication=qa_application_launch(f->application);
-    const char *instance=ok?qa_application_provider_instance(f->application,event->provider):NULL;
-    const qa_launch_instance *source=instance?qa_launch_snapshot_find(publication,instance):NULL;
-    const qa_product *product=source?qa_catalog_product(qa_launch_snapshot_catalog(publication),source->selection.product):NULL;
-    if (ok && !product)
-        ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Localized event lost its actual published source edition");
-    qa_ui_preferences preferences; qa_localization *catalog=NULL;
-    if (ok) ok=qa_ui_preferences_read(qa_application_cvars(f->application),qa_application_ui_preference_handles(f->application),seat,&preferences,error) &&
-        qa_localization_acquire(f->ui_features->catalogs,view,preferences.language,
-            &(qa_localization_options){.profile=event->family==QA_GAME_Q1 ? QA_LOCALIZATION_Q1_RERELEASE :
-                QA_LOCALIZATION_Q2_RERELEASE},&catalog,error);
-    if (ok) {
-        if (event->family==QA_GAME_Q1 && product->edition!=QA_EDITION_RERELEASE &&
-            (format[0]!='$' || !qa_localization_find(catalog,format+1)))
-            ok=qa_q1_classic_text(format,arguments,event->argument_count,&f->frame.storage,output,1024,error);
-        else (void)qa_localize_presentation(catalog,format,arguments,event->argument_count,true,output,1024);
-        if (ok) *out=output;
-    }
-    qa_localization_release(catalog); return ok;
+    qa_buffer text;
+    if (!frontend_ui_source_text(f,seat,event->family,view,edition,strings,format,
+        event->arguments,event->argument_count,&f->frame.storage,&text,error)) return false;
+    *out=(const char *)text.data;return true;
 }
 bool frontend_ui_source_prompt_text(qa_frontend *f,uint32_t seat,const qa_builtin_event *event,
     qa_string_id field,char output[1024],const char **out,qa_error *error)

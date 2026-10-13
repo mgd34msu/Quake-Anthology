@@ -429,7 +429,8 @@ void frontend_engine_cvars_bind(qa_frontend *frontend)
         .cg_gunY=qa_cvars_resolve(registry,"cg_gunY"),
         .cg_gunZ=qa_cvars_resolve(registry,"cg_gunZ"),
         .cg_gun_frame=qa_cvars_resolve(registry,"cg_gun_frame")};
-    qa_hud_cvars_bind(registry,QA_HUD_CVAR_DRAW_GUN,&frontend->engine_cvars.hud);
+    qa_hud_cvars_bind(registry,QA_HUD_CVAR_DRAW_GUN | QA_HUD_CVAR_CENTER_TIME |
+        QA_HUD_CVAR_PRINT_SPEED,&frontend->engine_cvars.hud);
     frontend->engine_cvars.q2_marker=qa_hud_q2_marker_bind(registry);
     frontend_legacy_cvars_bind(registry,&frontend->engine_cvars.legacy);
     frontend_render_cvars_bind(frontend);

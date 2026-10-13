@@ -633,10 +633,11 @@ static bool prompt_set(frontend_unified_q1 *o,const q1_event *p,qa_error *e)
 static bool localize_piece(q1_group *g,const qa_builtin_event *value,qa_buffer *out,qa_error *e)
 {
     size_t count=value->argument_count; if (count>8)return fail(e,"Q1 message exceeds its Source arguments");
-    const char *base=qa_strings_cstr(g->parent->replica->strings,value->text); if (!base) base=""; const char *argv[8]={0}; char numeric[8][32];
+    const char *base=value->message_format ? value->message_format : qa_strings_cstr(g->parent->replica->strings,value->text); if (!base) base=""; const char *argv[8]={0}; char numeric[8][32];
     for (size_t i=0;i<count;++i) {
         const qa_builtin_message_arg *arg=value->arguments+i;
         if (arg->kind==QA_BUILTIN_MESSAGE_STRING) argv[i]=qa_strings_cstr(g->parent->replica->strings,arg->value.text);
+        else if (arg->kind==QA_BUILTIN_MESSAGE_TEXT) argv[i]=arg->value.literal;
         else {if(!qa_format_number(arg->value.number,numeric[i],e))return false;argv[i]=numeric[i];}
     }
     out->data=(uint8_t *)g->parent->localized_text;

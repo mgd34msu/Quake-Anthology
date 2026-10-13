@@ -904,7 +904,7 @@ static bool emit_message(application_provider *p, const qa_builtin_event *event,
 }
 static bool emit_text(qa_application *app, application_provider *wire,
     const qa_builtin_event *event, qa_nq_svc op, qa_error *error) {
-    const char *format = text(app, event->text);
+    const char *format = event->message_format ? event->message_format : text(app, event->text);
     if (!format) return application_fail(error, QA_ERROR_FORMAT, "Q1 wire text lost its source format");
     bool formatted = !(event->flags & QA_Q1_SOURCE_MESSAGE_LITERAL) &&
         ((event->flags & 2u) || event->argument_count || *format == '$');
@@ -922,6 +922,8 @@ static bool emit_text(qa_application *app, application_provider *wire,
         if (event->arguments[i].kind == QA_BUILTIN_MESSAGE_NUMBER) {
             arguments[i] = numbers + i * 32;
             okay = qa_format_number(event->arguments[i].value.number, numbers + i * 32, error);
+        } else if (event->arguments[i].kind == QA_BUILTIN_MESSAGE_TEXT) {
+            arguments[i] = event->arguments[i].value.literal;
         } else if (event->arguments[i].kind == QA_BUILTIN_MESSAGE_STRING) {
             arguments[i] = text(app, event->arguments[i].value.text);
             if (!arguments[i]) okay = application_fail(error, QA_ERROR_FORMAT, "Q1 wire argument lost its source string");

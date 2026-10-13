@@ -10,7 +10,7 @@
 
 static bool source(application_provider *p, qa_clock_state *clock, qa_error *e)
 {
-    return (p && p->application && p->constructed && !p->close_pending &&
+    return (p && p->application && !p->close_pending &&
         p->application->session && qa_session_clock(p->application->session, p->owner, clock)) ||
         application_fail(e, QA_ERROR_ARGUMENT, "Q2 event lost its actual Source clock owner");
 }
@@ -144,10 +144,6 @@ bool application_unified_q2_native_builtin(qa_application *app, const qa_builtin
     default: break;
     }
     if (!reached) return true;
-    if (v->kind == QA_BUILTIN_MESSAGE || v->kind == QA_BUILTIN_CENTERPRINT)
-        for (size_t i = 0; i < v->argument_count; ++i)
-            if (v->arguments[i].kind != QA_BUILTIN_MESSAGE_STRING)
-                return application_fail(e, QA_ERROR_UNSUPPORTED, "Q2 localized Source event requires its authored string argument");
     qa_unified_presentation_payload presentation = {.kind = QA_UNIFIED_PRESENTATION_BUILTIN};
     presentation.value.builtin = *v;
     qa_unified_simulation_payload simulation = {0}; const qa_unified_simulation_payload *sim = NULL;

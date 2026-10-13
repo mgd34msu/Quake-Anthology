@@ -4,7 +4,7 @@
 #include "qa/console.h"
 
 typedef struct qa_hud_cvar_handles {
-    qa_cvar_handle language, use_font, center_time, draw_gun;
+    qa_cvar_handle language, use_font, center_time, draw_gun, print_speed;
     qa_cvar_handle deathmatch, swap, teamplay;
 } qa_hud_cvar_handles;
 
@@ -15,7 +15,8 @@ enum {
     QA_HUD_CVAR_DRAW_GUN = 1u << 3,
     QA_HUD_CVAR_DEATHMATCH = 1u << 4,
     QA_HUD_CVAR_SWAP = 1u << 5,
-    QA_HUD_CVAR_TEAMPLAY = 1u << 6
+    QA_HUD_CVAR_TEAMPLAY = 1u << 6,
+    QA_HUD_CVAR_PRINT_SPEED = 1u << 7
 };
 
 static inline void qa_hud_cvars_bind(const qa_cvars *registry, unsigned fields,
@@ -29,6 +30,7 @@ static inline void qa_hud_cvars_bind(const qa_cvars *registry, unsigned fields,
         .deathmatch = fields & QA_HUD_CVAR_DEATHMATCH ? qa_cvars_resolve(registry, "deathmatch") : (qa_cvar_handle){0},
         .swap = fields & QA_HUD_CVAR_SWAP ? qa_cvars_resolve(registry, "cl_hudswap") : (qa_cvar_handle){0},
         .teamplay = fields & QA_HUD_CVAR_TEAMPLAY ? qa_cvars_resolve(registry, "teamplay") : (qa_cvar_handle){0},
+        .print_speed = fields & QA_HUD_CVAR_PRINT_SPEED ? qa_cvars_resolve(registry, "scr_printspeed") : (qa_cvar_handle){0},
     };
 }
 

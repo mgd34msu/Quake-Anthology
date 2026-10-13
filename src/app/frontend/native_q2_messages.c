@@ -27,7 +27,8 @@ bool frontend_native_q2_messages(qa_frontend *frontend, qa_error *error)
                 presentation->value.q2_protocol.kind == QA_Q2_SVC_MUZZLEFLASH;
             bool print = presentation->kind == QA_UNIFIED_PRESENTATION_Q2_PROTOCOL &&
                 (presentation->value.q2_protocol.kind == QA_Q2_SVC_PRINT ||
-                 presentation->value.q2_protocol.kind == QA_Q2_SVC_CENTERPRINT);
+                 presentation->value.q2_protocol.kind == QA_Q2_SVC_CENTERPRINT ||
+                 presentation->value.q2_protocol.kind == QA_Q2_SVC_LOCALIZED_PRINT);
             bool sound = presentation->kind == QA_UNIFIED_PRESENTATION_Q2_PROTOCOL &&
                 presentation->value.q2_protocol.kind == QA_Q2_SVC_SOUND;
             if (!temporary && !muzzle && !print && !sound) continue;
@@ -43,8 +44,8 @@ bool frontend_native_q2_messages(qa_frontend *frontend, qa_error *error)
                 continue;
             }
             if (print) {
-                frontend_native_q2_print_event(frontend, record->provider,
-                    &presentation->value.q2_protocol, projected->recipient);
+                if (!frontend_native_q2_print_event(frontend, record->provider,
+                    &presentation->value.q2_protocol, projected->recipient, error)) return false;
                 continue;
             }
             qa_application_q2_audience audience = delivery->audience;

@@ -7,6 +7,7 @@
 #include "remote_unified_presentation.h"
 #include "remote_unified_save.h"
 #include "remote_q2_footsteps.h"
+#include "ui_features.h"
 #include "received_music.h"
 #include "material_movies.h"
 #include "legacy_render_policy.h"
@@ -174,7 +175,7 @@ struct frontend_unified_q2 {
     float player_fov;
     uint64_t viewer_origin_frame;
     bool viewer_origin_present;
-    qa_localization_pool *localizations;
+    qa_hud_cvar_handles print_cvars;
     q2_activation *help_owner[2];
     int32_t inventory[256];
     qa_hud_q2_table table;
@@ -769,11 +770,11 @@ bool frontend_unified_q2_create(qa_frontend *f,frontend_remote_unified *r,fronte
     qa_arena_seal(&o->pose_storage);qa_arena_seal(&o->text_storage);
     qa_arena_seal(&o->help_storage[0]);qa_arena_seal(&o->help_storage[1]);
     o->effects_wall_ns=f->wall_time_ns;
-    o->localizations=qa_localization_pool_create(e);
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(r);
     o->marker_cvars=qa_hud_q2_marker_bind(domain->cvars);
+    qa_hud_cvars_bind(domain->cvars,QA_HUD_CVAR_CENTER_TIME | QA_HUD_CVAR_PRINT_SPEED,&o->print_cvars);
     o->hud=f->seats[domain->physical_seat].hud;
-    if (!o->localizations || !current(o,e) ||
+    if (!current(o,e) ||
         !frontend_unified_q2_rr_create(f,r,media,events,&o->rr_hud,e)) {
         qa_error cleanup={0}; frontend_unified_q2_destroy(out,&cleanup); return false;
     }
@@ -1074,29 +1075,37 @@ static bool localized(frontend_unified_q2 *o,const qa_unified_presentation_event
     const char *text=input?input:"";
     *out=(qa_buffer){(uint8_t *)text,strlen(text)};
     if (row->q2_profile!=2 && !count)return true;
-    q2_bank *b=NULL;const char **arguments=count?qa_arena_alloc(storage,count*sizeof(*arguments),_Alignof(const char *),e):NULL;
-    bool okay=(!count || arguments);
-    for (size_t i=0;okay && i<count;++i){okay=args[i].kind==QA_BUILTIN_MESSAGE_STRING;arguments[i]=qa_strings_cstr(o->replica->strings,args[i].value.text);if (!arguments[i])arguments[i]="";}
+    q2_bank *bank=NULL;
+    if (row->q2_profile==2 && !bank_name(o,row->content_id,NULL,QA_STRING_NONE,0,false,&bank,e))return false;
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
-    qa_ui_preferences preferences;qa_localization *catalog=NULL;qa_localization_options opts={.profile=QA_LOCALIZATION_Q2_RERELEASE};
-    if (row->q2_profile==2) okay=okay && bank_name(o,row->content_id,NULL,QA_STRING_NONE,0,false,&b,e) &&
-        qa_ui_preferences_read(qa_application_cvars(domain->application),qa_application_ui_preference_handles(domain->application),domain->physical_seat,&preferences,e) &&
-        qa_localization_acquire(o->localizations,b->files,preferences.language,&opts,&catalog,e);
-    if (okay){char output[1024];size_t n=qa_localize_presentation(catalog,text,arguments,count,true,output,sizeof(output));
-        char *copy=qa_arena_alloc(storage,n+1,1,e);if (!copy)okay=false;else{memcpy(copy,output,n+1);*out=(qa_buffer){(uint8_t *)copy,n};}}
-    qa_localization_release(catalog);
-    if (okay)okay=player_names_expand(o,storage,out,e);
-    return okay;
+    return frontend_ui_source_text(o->frontend,domain->physical_seat,QA_GAME_Q2,
+        bank?bank->files:NULL,row->q2_profile==2?QA_EDITION_RERELEASE:QA_EDITION_CLASSIC,
+        o->replica->strings,text,args,count,storage,out,e) && player_names_expand(o,storage,out,e);
+}
+static frontend_q2_print_policy print_policy(frontend_unified_q2 *o,
+    const qa_unified_presentation_event *row,bool center,uint32_t flags)
+{
+    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
+    return frontend_ui_q2_print_policy(center,flags,row->q2_profile==2,domain->cvars,&o->print_cvars);
 }
 static bool received_text(frontend_unified_q2 *o,const qa_unified_presentation_event *row,const char *input,
-    const qa_builtin_message_arg *args,size_t count,bool center,bool console,bool chat,bool instant,double duration,qa_error *e)
+    const qa_builtin_message_arg *args,size_t count,frontend_q2_print_policy policy,bool console,qa_error *e)
 {
     qa_arena_reset(&o->text_storage);
     qa_buffer text={0};if (!localized(o,row,input,args,count,&o->text_storage,&text,e))return false;
-    bool okay=center?qa_hud_center_print(o->hud,(const char *)text.data,nanoseconds(row->seconds),nanoseconds(duration),(qa_hud_center_policy){.instant=instant,.character_ns=UINT64_C(50000000)},e):
-        qa_hud_notify(o->hud,(const char *)text.data,chat,nanoseconds(row->seconds),UINT64_C(3000000000),e);
-    if (okay && console){const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
-        qa_console_emit(domain->console,&domain->command_context,(const char *)text.data);}
+    bool okay=true;
+    if (policy.center) okay=qa_hud_center_print(o->hud,(const char *)text.data,
+        nanoseconds(row->seconds),policy.duration_ns,policy.center_policy,e);
+    else if (policy.notify) okay=qa_hud_notify(o->hud,(const char *)text.data,policy.chat,
+        nanoseconds(row->seconds),UINT64_C(3000000000),e);
+    if (okay && console) {
+        const char *message;
+        okay=frontend_ui_console_text(&o->text_storage,(const char *)text.data,policy.notify,&message,e);
+        if (okay) {
+            const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
+            qa_console_emit(domain->console,&domain->command_context,message);
+        }
+    }
     return okay;
 }
 static bool viewer_matches(frontend_unified_q2 *o,qa_actor_id source,bool *matches,qa_error *e)
@@ -1292,7 +1301,7 @@ static bool builtin_receive(frontend_unified_q2 *o,const qa_unified_presentation
 {
     const qa_builtin_event *v=&row->payload.value.builtin;q2_bank *b=NULL;qa_actor_id a;
     const char *resource=qa_strings_cstr(o->replica->strings,v->resource);
-    const char *text=qa_strings_cstr(o->replica->strings,v->text);
+    const char *text=v->message_format?v->message_format:qa_strings_cstr(o->replica->strings,v->text);
     const qa_application_ui_names *names=qa_application_ui_names_read(o->frontend->application);
     switch (v->kind){
     case QA_BUILTIN_SOUND:case QA_BUILTIN_STOP_SOUND:return sound_receive(o,row,v->resource,v->actor,v->origin,v->channel,v->volume,v->attenuation,
@@ -1304,8 +1313,10 @@ static bool builtin_receive(frontend_unified_q2 *o,const qa_unified_presentation
     case QA_BUILTIN_MESSAGE:case QA_BUILTIN_CENTERPRINT:{bool matches;
         if (!viewer_matches(o,v->actor,&matches,e))return false;
         if (!matches)return true;
-        bool center=v->kind==QA_BUILTIN_CENTERPRINT;*mirrored=center || v->argument_count!=0;
-        return received_text(o,row,text,v->arguments,v->argument_count,center,!center,v->code==3,true,3,e);}
+        frontend_q2_print_policy policy=print_policy(o,row,v->kind==QA_BUILTIN_CENTERPRINT,
+            (uint32_t)v->code | (v->flags&16u));
+        *mirrored=policy.center || v->argument_count!=0;
+        return received_text(o,row,text,v->arguments,v->argument_count,policy,!policy.center,e);}
     case QA_BUILTIN_Q2_ENTITY_EVENT:return visual_apply(o,row,e);
     case QA_BUILTIN_ITEM:{if (v->code==1)return visual_apply(o,row,e);bool matches;
         if (!viewer_matches(o,v->actor,&matches,e))return false;
@@ -1364,8 +1375,9 @@ static bool protocol_receive(frontend_unified_q2 *o,const qa_unified_presentatio
     case QA_Q2_SVC_PRINT:case QA_Q2_SVC_CENTERPRINT:case QA_Q2_SVC_LOCALIZED_PRINT:{bool matches;
         if (!viewer_matches(o,v->actor,&matches,e))return false;
         if (!matches)return true;
-        bool center=v->kind==QA_Q2_SVC_CENTERPRINT;*mirrored=center || v->kind==QA_Q2_SVC_LOCALIZED_PRINT;
-        return received_text(o,row,v->text,v->arguments,v->argument_count,center,!center,v->level==3,v->instant,3,e);}
+        frontend_q2_print_policy policy=print_policy(o,row,v->kind==QA_Q2_SVC_CENTERPRINT,(uint32_t)v->level);
+        *mirrored=policy.center || v->kind==QA_Q2_SVC_LOCALIZED_PRINT;
+        return received_text(o,row,v->text,v->arguments,v->argument_count,policy,!policy.center,e);}
     case QA_Q2_SVC_COMMAND:*mirrored=true;return frontend_remote_unified_command_text(o->replica,v->text?v->text:"",e);
     case QA_Q2_SVC_DISCONNECT:*mirrored=true;return frontend_remote_unified_source_disconnect(o->replica,v->text?v->text:"",e);
     default:return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q2 protocol presentation has no installed CLIENT handler");
@@ -1420,7 +1432,7 @@ bool frontend_unified_q2_presentation(frontend_unified_q2 *o,const qa_unified_pr
         if (!matches)return true;
         switch(v->kind){
         case QA_Q2_PLAYER_VIEW:case QA_Q2_PLAYER_SCOREBOARD:case QA_Q2_PLAYER_INVENTORY:return player_overlay(o,row,e) && frontend_unified_q2_rr_overlay(o->rr_hud,row,e);
-        case QA_Q2_PLAYER_PRINT:return received_text(o,row,v->text,NULL,0,false,true,v->level==3,true,3,e);
+        case QA_Q2_PLAYER_PRINT:return received_text(o,row,v->text,NULL,0,print_policy(o,row,false,(uint32_t)v->level),true,e);
         case QA_Q2_PLAYER_STUFFTEXT:*mirrored=true;return frontend_remote_unified_command_text(o->replica,v->text?v->text:"",e);
         case QA_Q2_PLAYER_HELP:o->help_visible=v->visible;if (v->visible){inventory_clear(o);o->score_visible=false;}return frontend_unified_q2_rr_overlay(o->rr_hud,row,e);
         case QA_Q2_PLAYER_FLASHLIGHT:{qa_actor_id a;q2_bank *b=NULL;if (!source_actor(o,v->actor,&a,e) || !source_bank(o,row,true,&b,e))return false;
@@ -1939,7 +1951,6 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
     qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->prepared_frame);
     qa_unified_document_destroy(o->status_metadata); qa_unified_document_destroy(o->prepared_status_metadata);
     free(o->help);
-    qa_localization_pool_destroy(o->localizations);
     inventory_clear(o); scores_clear(o);
     qa_unified_document_destroy(o->story_document);sky_clear(o);
     while (o->visuals) { q2_visual *v=o->visuals; o->visuals=v->next; visual_clear(v); }

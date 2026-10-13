@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "native_q2_save.h"
 #include "native_q2_messages.h"
+#include "ui_features.h"
 #include "capture.h"
 #include "resource_bindings.h"
 #include "shared_resource_policy.h"
@@ -376,28 +377,49 @@ void frontend_native_q2_print_output(qa_frontend *frontend, const qa_application
     }
     fputs(print->data.print.text, stdout);
 }
-void frontend_native_q2_print_event(qa_frontend *frontend, qa_actor_owner owner,
-    const qa_unified_q2_protocol_event *print, qa_actor_id recipient)
+bool frontend_native_q2_print_event(qa_frontend *frontend, qa_actor_owner owner,
+    const qa_unified_q2_protocol_event *print, qa_actor_id recipient, qa_error *error)
 {
-    if (frontend->options.dedicated || frontend->native_print) return;
+    bool localized = print->kind == QA_Q2_SVC_LOCALIZED_PRINT;
+    if (!localized && (frontend->options.dedicated || frontend->native_print)) return true;
     frontend_native_q2 *source = frontend->native_q2;
     while (source && source->owner != owner) source = source->next;
-    if (!source) return;
-    for (uint32_t seat = 0; seat < frontend->options.seats; ++seat) {
+    if (!source) return true;
+    uint32_t seats=frontend->options.dedicated?1u:frontend->options.seats;
+    for (uint32_t seat = 0; seat < seats; ++seat) {
         qa_actor_id actor;
-        if (frontend_network_local_input_owned(frontend,seat) ||
+        if (!frontend->options.dedicated && (frontend_network_local_input_owned(frontend,seat) ||
             !frontend_seat_actor_read(frontend,seat,&actor) ||
-            !qa_actor_id_equal(actor,recipient)) continue;
-        qa_error error = {0};
-        bool ok;
-        if (print->kind == QA_Q2_SVC_CENTERPRINT || print->level == 4 || print->level == 5) {
-            const qa_cvar_view *time = qa_cvars_read(source->cvars, source->hud_cvars.center_time);
-            double seconds = time && isfinite(time->number) ? fmax(0, fmin(time->number, 86400)) : 2.5;
-            ok = qa_hud_center_print(frontend->seats[seat].hud, print->text, frontend->time_ns,
-                (uint64_t)(seconds * 1000000000),(qa_hud_center_policy){.instant=true,.character_ns=0}, &error);
-        } else ok = qa_seat_console_print(frontend->seats[seat].console, print->text, &error);
-        if (!ok) fprintf(stderr, "native Q2 print: %s\n", error.message);
+            !qa_actor_id_equal(actor,recipient))) continue;
+        const char *text = print->text;
+        if (localized) {
+            qa_buffer formatted;
+            if (!source_files(source, error) || !frontend_ui_source_text(frontend, seat, QA_GAME_Q2,
+                source->mounts, QA_EDITION_RERELEASE,
+                qa_session_strings(qa_application_session(source->application)), text,
+                print->arguments, print->argument_count, &frontend->frame.storage, &formatted, error)) return false;
+            text = (const char *)formatted.data;
+        }
+        frontend_q2_print_policy policy = frontend_ui_q2_print_policy(
+            print->kind == QA_Q2_SVC_CENTERPRINT, (uint32_t)print->level,
+            source->profile != QA_NATIVE_Q2_GAME_API3, source->cvars, &source->hud_cvars);
+        if (frontend->native_print) {
+            qa_native_host_print output = {.kind = frontend->options.dedicated ? QA_NATIVE_HOST_PRINT_BROADCAST :
+                policy.center ? QA_NATIVE_HOST_PRINT_CENTER : QA_NATIVE_HOST_PRINT_CLIENT,
+                .client = recipient, .level = print->level, .text = text};
+            frontend->native_print(frontend->native_output_context, &output);
+        } else if (frontend->options.dedicated) {
+            fputs(text,stdout);
+        } else if (policy.center) {
+            if (!qa_hud_center_print(frontend->seats[seat].hud, text, frontend->time_ns,
+                policy.duration_ns, policy.center_policy, error)) return false;
+        } else {
+            const char *console;
+            if (!frontend_ui_console_text(&frontend->frame.storage, text, policy.notify, &console, error) ||
+                !qa_seat_console_print(frontend->seats[seat].console, console, error)) return false;
+        }
     }
+    return true;
 }
 bool frontend_native_q2_sound_event(qa_frontend *frontend, const qa_application_protocol_event *message,
     const qa_unified_q2_protocol_event *event, qa_actor_id target, qa_error *error)
@@ -590,7 +612,8 @@ bool frontend_native_q2_services(void *context, qa_application *application, qa_
         break;
     }
     qa_hud_cvars_bind(source->cvars,
-        QA_HUD_CVAR_LANGUAGE | QA_HUD_CVAR_USE_FONT | QA_HUD_CVAR_CENTER_TIME, &source->hud_cvars);
+        QA_HUD_CVAR_LANGUAGE | QA_HUD_CVAR_USE_FONT | QA_HUD_CVAR_CENTER_TIME | QA_HUD_CVAR_PRINT_SPEED,
+        &source->hud_cvars);
     engine->context = source;
     engine->hud_view = platform_hud_view;
     engine->resource_precache = platform_resource_precache;

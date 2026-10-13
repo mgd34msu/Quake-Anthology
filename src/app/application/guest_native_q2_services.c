@@ -49,6 +49,45 @@ static void print(void *opaque, const qa_native_host_print *source)
     }
 }
 
+static bool localized_print(void *opaque, qa_actor_id client,
+    const qa_native_host_localized_print *source, qa_error *error)
+{
+    struct application_native_q2 *engine = opaque;
+    qa_q2_server_event event = {.kind = QA_Q2_SVC_LOCALIZED_PRINT,
+        .data.localized = {.flags = (uint8_t)source->level,
+            .arg_count = source->argument_count}};
+    size_t base_size = strlen(source->base) + 1;
+    bool fits = base_size <= sizeof(event.data.localized.base);
+    size_t argument_sizes[8];
+    for (size_t i = 0; i < source->argument_count; ++i) {
+        argument_sizes[i] = strlen(source->arguments[i]) + 1;
+        fits = fits && argument_sizes[i] <= sizeof(event.data.localized.args[i]);
+    }
+    if (fits) {
+        memcpy(event.data.localized.base, source->base, base_size);
+        for (size_t i = 0; i < source->argument_count; ++i)
+            memcpy(event.data.localized.args[i], source->arguments[i], argument_sizes[i]);
+        return protocol(engine, &event, client, true, error);
+    }
+    /* The original native pointer contract also admits text beyond the wire row. */
+    qa_application *app = engine->provider->application;
+    qa_builtin_message_arg arguments[8];
+    qa_clock_state clock = {0};
+    uint32_t level = (uint32_t)source->level;
+    qa_builtin_event message = {.kind = (level & 7u) == 4u || (level & 7u) == 5u ?
+        QA_BUILTIN_CENTERPRINT : QA_BUILTIN_MESSAGE, .family = QA_GAME_Q2,
+        .provider = engine->provider->owner, .actor = client, .code = (int32_t)(level & 7u),
+        .flags = level, .message_format = source->base,
+        .arguments = arguments, .argument_count = source->argument_count,
+        .time_ns = qa_session_clock(app->session, engine->provider->owner, &clock) ?
+            clock.frame.time_ns : qa_session_elapsed(app->session)};
+    for (size_t i = 0; i < source->argument_count; ++i) {
+        arguments[i] = (qa_builtin_message_arg){.kind = QA_BUILTIN_MESSAGE_TEXT,
+            .value.literal = source->arguments[i]};
+    }
+    return application_emit(app, &message, error);
+}
+
 static bool config_get(void *opaque, int32_t index, qa_string_id *out, qa_error *error)
 {
     struct application_native_q2 *engine = opaque;
@@ -312,6 +351,7 @@ qa_native_host_engine_services application_native_q2_services(struct application
 {
     return (qa_native_host_engine_services){.context = engine,
         .strings = qa_session_strings(engine->provider->application->session), .print = print,
+        .localized_print = localized_print,
         .configstring_get = config_get, .configstring_set = config_set, .resource_index = resource,
         .command = command, .message = message, .sound = sound, .server_frame = server_frame,
         .source_frame = source_frame,

@@ -28,6 +28,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+static bool valid_arguments(const qa_application *, const qa_builtin_message_arg *, size_t, qa_error *);
+static bool retain_protocol_text(qa_application *, const char **, qa_error *);
+
 struct application_event_projection {
     qa_arena storage;
     qa_id_index slots;
@@ -188,18 +191,7 @@ static bool valid_event(qa_application *application,
                 found = true;
         if (!found) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 animation lost its actual native source");
     }
-    for (size_t index = 0; index < event->argument_count; ++index) {
-        const qa_builtin_message_arg *argument = &event->arguments[index];
-        if ((argument->kind == QA_BUILTIN_MESSAGE_STRING &&
-             !valid_string(application, argument->value.text)) ||
-            (argument->kind == QA_BUILTIN_MESSAGE_NUMBER &&
-             !isfinite(argument->value.number)) ||
-            (argument->kind != QA_BUILTIN_MESSAGE_STRING &&
-             argument->kind != QA_BUILTIN_MESSAGE_NUMBER))
-            return application_fail(error, QA_ERROR_ARGUMENT,
-                                    "gameplay emitted an invalid message argument");
-    }
-    return true;
+    return valid_arguments(application, event->arguments, event->argument_count, error);
 }
 
 bool application_event_stream_create(qa_application *app, size_t actors, qa_error *error)
@@ -468,12 +460,26 @@ static bool valid_arguments(const qa_application *application,
              !valid_string(application, argument->value.text)) ||
             (argument->kind == QA_BUILTIN_MESSAGE_NUMBER &&
              !isfinite(argument->value.number)) ||
+            (argument->kind == QA_BUILTIN_MESSAGE_TEXT && !argument->value.literal) ||
             (argument->kind != QA_BUILTIN_MESSAGE_STRING &&
-             argument->kind != QA_BUILTIN_MESSAGE_NUMBER))
+             argument->kind != QA_BUILTIN_MESSAGE_NUMBER && argument->kind != QA_BUILTIN_MESSAGE_TEXT))
             return application_fail(error, QA_ERROR_ARGUMENT,
                                     "map event has an invalid message argument");
     }
     return true;
+}
+
+static qa_builtin_message_arg *retain_message_arguments(qa_application *app,
+    const qa_builtin_message_arg *source, size_t count, qa_error *error)
+{
+    qa_builtin_message_arg *arguments = application_event_stream_alloc(app,
+        count * sizeof(*arguments), _Alignof(qa_builtin_message_arg), error);
+    if (!arguments) return NULL;
+    memcpy(arguments, source, count * sizeof(*arguments));
+    for (size_t i = 0; i < count; ++i)
+        if (arguments[i].kind == QA_BUILTIN_MESSAGE_TEXT &&
+            !retain_protocol_text(app, &arguments[i].value.literal, error)) return NULL;
+    return arguments;
 }
 
 static bool q2_map_capacity(application_provider *provider, const qa_q2_map_event *event,
@@ -558,12 +564,8 @@ bool application_emit_q2_map(application_provider *provider,
         !application_unified_world_text_emit(application, provider->owner, event, error)) goto abort;
     qa_builtin_message_arg *arguments = NULL;
     if (event->argument_count != 0) {
-        size_t bytes = event->argument_count * sizeof(*event->arguments);
-        arguments = application_event_stream_alloc(application, bytes,
-                                   _Alignof(qa_builtin_message_arg), error);
-        if (arguments == NULL)
-            goto abort;
-        memcpy(arguments, event->arguments, bytes);
+        arguments = retain_message_arguments(application, event->arguments, event->argument_count, error);
+        if (!arguments) goto abort;
     }
     qa_q2_campaign_level *levels = NULL;
     if (event->level_count) {
@@ -774,13 +776,11 @@ static bool emit_event(qa_application *application, const qa_builtin_event *even
         return builtin_capacity(application,event,audience,&write,error);
     application_event_record *record = &write.envelope->raw.builtin;
     record->event = *event;
+    if (!retain_protocol_text(application, &record->event.message_format, error)) goto abort;
     if (event->argument_count) {
-        size_t bytes = event->argument_count * sizeof(*event->arguments);
-        qa_builtin_message_arg *arguments = application_event_stream_alloc(application, bytes,
-            _Alignof(qa_builtin_message_arg), error);
-        if (!arguments) goto abort;
-        memcpy(arguments, event->arguments, bytes);
-        record->event.arguments = arguments;
+        record->event.arguments = retain_message_arguments(application,
+            event->arguments, event->argument_count, error);
+        if (!record->event.arguments) goto abort;
     }
     if (event->prompt_choice_count) {
         size_t bytes = event->prompt_choice_count * sizeof(*event->prompt_choices);

@@ -212,9 +212,10 @@ static bool emit_to(q2_projection *p, const qa_q2_server_record *record, qa_acto
     qa_string_id sound_id=0; char *name = NULL;
     switch (event->kind) {
     case QA_Q2_SVC_PRINT: case QA_Q2_SVC_CENTERPRINT: {
-        bool center = event->kind == QA_Q2_SVC_CENTERPRINT || event->data.print.level == 4 || event->data.print.level == 5;
+        uint32_t type = event->data.print.level & 7u;
+        bool center = event->kind == QA_Q2_SVC_CENTERPRINT || type == 4 || type == 5;
         r->level = event->data.print.level; r->text = (char *)event->data.print.text;
-        r->instant = event->kind == QA_Q2_SVC_PRINT && event->data.print.level == 4;
+        r->instant = event->kind == QA_Q2_SVC_CENTERPRINT || type != 4;
         simulation.value.message = (qa_unified_message_event){.kind = center ? QA_UNIFIED_MESSAGE_CENTER_PRINT : QA_UNIFIED_MESSAGE_PRINT,
             .text = r->text, .level = r->level};
         pres = &presentation; sim = &simulation; link = center; break;
@@ -334,12 +335,11 @@ static bool emit_to(q2_projection *p, const qa_q2_server_record *record, qa_acto
         r->first = event->data.help_path.start; r->origin = vec(event->data.help_path.position);
         r->direction = vec(event->data.help_path.direction); pres = &presentation; break;
     case QA_Q2_SVC_LOCALIZED_PRINT:
-        r->level = event->data.localized.flags & 7u; r->text = (char *)event->data.localized.base;
+        r->level = event->data.localized.flags; r->text = (char *)event->data.localized.base;
         r->arguments = args; r->argument_count = event->data.localized.arg_count;
         for (size_t i = 0; ok && i < r->argument_count; ++i) {
-            args[i].kind = QA_BUILTIN_MESSAGE_STRING;
-            ok = qa_strings_intern_cstr(qa_session_strings(p->provider->application->session),
-                event->data.localized.args[i], &args[i].value.text, e);
+            args[i].kind = QA_BUILTIN_MESSAGE_TEXT;
+            args[i].value.literal = event->data.localized.args[i];
         }
         pres = &presentation; break;
     case QA_Q2_SVC_DISCONNECT:

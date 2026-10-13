@@ -2,6 +2,7 @@
 #define QA_LOCALIZATION_H
 
 #include "qa/vfs.h"
+#include "qa/arena.h"
 
 typedef struct qa_localization qa_localization;
 typedef struct qa_localization_pool qa_localization_pool;
@@ -16,7 +17,7 @@ typedef struct qa_localization_options {
     void (*warning)(void *context, const char *key, const char *message);
 } qa_localization_options;
 typedef struct qa_localization_argument {
-    uint16_t start, end;
+    size_t start, end;
     uint8_t index;
 } qa_localization_argument;
 typedef struct qa_localization_entry {
@@ -47,6 +48,11 @@ size_t qa_localize(const qa_localization *catalog, const char *base, const char 
 size_t qa_localize_presentation(const qa_localization *, const char *base,
     const char *const *arguments, size_t argument_count, bool allow_in_place,
     char *out, size_t capacity);
+/* Complete presentation text borrowed from the caller's arena until reset.
+ * Uses the same catalog and format grammar, without a fixed output buffer. */
+bool qa_localize_presentation_arena(const qa_localization *, const char *base,
+    const char *const *arguments, size_t argument_count, bool allow_in_place,
+    qa_arena *, qa_buffer *out, qa_error *);
 const char *qa_localization_language(const char *locale);
 bool qa_localization_language_valid(const char *language);
 

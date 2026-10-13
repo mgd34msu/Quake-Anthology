@@ -43,13 +43,15 @@ enum { QA_BUILTIN_SOUND_POSITIONED = 4u };
 
 typedef enum qa_builtin_message_arg_kind {
     QA_BUILTIN_MESSAGE_STRING,
-    QA_BUILTIN_MESSAGE_NUMBER
+    QA_BUILTIN_MESSAGE_NUMBER,
+    QA_BUILTIN_MESSAGE_TEXT
 } qa_builtin_message_arg_kind;
 typedef struct qa_builtin_message_arg {
     qa_builtin_message_arg_kind kind;
     union {
         qa_string_id text;
         double number;
+        const char *literal;
     } value;
 } qa_builtin_message_arg;
 
@@ -105,6 +107,8 @@ typedef struct qa_builtin_event {
     qa_actor_id actor, other;
     uint64_t time_ns;
     qa_string_id resource, text;
+    /* Borrowed dynamic format; the event store copies it before publication. */
+    const char *message_format;
     /* Q2 pickup's authored canonical item, distinct from icon and display name. */
     qa_item_id item;
     qa_vec3 origin, end, direction;
