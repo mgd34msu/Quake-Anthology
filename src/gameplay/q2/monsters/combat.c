@@ -2807,7 +2807,8 @@ bool q2m_die(q2m_context *context, qa_error *error) {
     monster->dead = true;
     monster->gibbed = true;
     monster->can_take_damage = false;
-    if (!q2m_sound(context, QA_Q2_SFX_MISC_UDEATH, 2, 1.0f, error))
+    if (!q2m_sound(context, QA_Q2_SFX_MISC_UDEATH, 2,
+                   species == Q2M_INSANE ? 2.0f : 1.0f, error))
       return false;
     if (!q2m_alive(context))
       return true;
