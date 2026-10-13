@@ -144,7 +144,9 @@ static const original_field character_fields[] = {
     FIELD(q1_character, view_offset, "view_ofs", VECTOR),
     FIELD(q1_character, walk_frame, "walkframe", U16),
     FIELD(q1_character, pain_until, "pain_finished", DOUBLE),
-    FIELD(q1_character, fall_speed, "jump_flag", FLOAT)
+    FIELD(q1_character, fall_speed, "jump_flag", FLOAT),
+    FIELD(q1_character, step_origin, "old_velocity", VECTOR),
+    FIELD(q1_character, step_distance, "spawnsilent", FLOAT)
 };
 static const original_field monster_fields[] = {
     FIELD(q1_monster, enemy, "enemy", REF),
@@ -556,27 +558,65 @@ static bool monster_functions(const q1_monster *monster, qa_q1_save_record *reco
 typedef struct original_player_animation {
     uint16_t first, count;
     const char *prefix;
-    bool attack;
+    bool attack, hammer, death;
 } original_player_animation;
 static const original_player_animation player_animations[] = {
-    {29,6,"player_axpain",false}, {35,6,"player_pain",false},
-    {103,2,"player_nail",true}, {105,2,"player_light",true},
-    {107,6,"player_rocket",true}, {113,6,"player_shot",true},
-    {119,4,"player_axe",true}, {125,4,"player_axeb",true},
-    {131,4,"player_axec",true}, {137,4,"player_axed",true}
+    {29,6,"player_axpain",false,false,false}, {35,6,"player_pain",false,false,false},
+    {103,2,"player_nail",true,false,false}, {105,2,"player_light",true,false,false},
+    {107,6,"player_rocket",true,false,false}, {113,6,"player_shot",true,false,false},
+    {119,4,"player_axe",true,false,false}, {125,4,"player_axeb",true,false,false},
+    {131,4,"player_axec",true,false,false}, {137,4,"player_axed",true,false,false},
+    {18,6,"player_hampain",false,true,false},
+    {24,8,"player_die_ham",false,true,true},
+    {32,6,"player_hammer",true,true,false},
+    {38,6,"player_mjolnir",true,true,false}
 };
-static bool player_functions(const q1_player *player, qa_q1_save_record *record, qa_error *error) {
+static bool player_model_named(const qa_strings *strings, qa_string_id model, const char *name) {
+    const char *actual = qa_strings_cstr(strings, model);
+    return actual && !strcmp(actual, name);
+}
+static bool player_functions(qa_q1_program program, const qa_strings *strings,
+    const q1_player *player, qa_q1_save_record *record, qa_error *error) {
     const q1_character *c = &player->character_state;
     const char *think = c->locomotion == 2 ? "player_run" : "player_stand1";
     char name[48]; double next = c->next_animation;
-    if (c->life != QA_Q1_ALIVE || c->pose.custom_model)
-        return fail(error, "Original player animation requires its living stock Source model");
+    bool hammer = program == QA_Q1_HIPNOTIC && player->weapon == QA_Q1_MJOLNIR;
+    bool head = program == QA_Q1_HIPNOTIC && c->life != QA_Q1_ALIVE &&
+        player_model_named(strings, c->model, "progs/h_player.mdl");
+    if (c->pose.custom_model && (!hammer ||
+        !player_model_named(strings, c->pose.model, "progs/playham.mdl") ||
+        c->pose.stand.first != 6 || c->pose.stand.count != 12 ||
+        c->pose.run.first != 0 || c->pose.run.count != 6 ||
+        c->pose.pain.first != 18 || c->pose.pain.count != 6 ||
+        c->pose.death.first != 24 || c->pose.death.count != 8))
+        return fail(error, "Original player model has no compiled Source pose");
+    if (c->life != QA_Q1_ALIVE && !head && (!hammer || !c->death_animation ||
+        c->animation.first != 24 || c->frame < 24 || c->frame > 31))
+        return fail(error, "Original dead player has no compiled Source animation");
+    if (head) {
+        think = "HeadThink";
+        next = c->head_fly_ns ? (double)c->head_fly_ns / 1000000000.0 : -1;
+        if (!number(record, "gorging", 1, false, error)) return false;
+    }
     for (size_t i = 0; i < sizeof(player_animations) / sizeof(*player_animations); ++i) {
         const original_player_animation *a = player_animations + i;
-        if (!c->animation.count || c->animation.first != a->first) continue;
-        unsigned frame = c->animation_frame + 2;
+        if (head || a->hammer != hammer) continue;
+        bool source_attack = a->hammer && a->attack && c->life == QA_Q1_ALIVE &&
+            c->pose.source_frame && c->pose.frame >= a->first && c->pose.frame < a->first + a->count;
+        if (!source_attack && ((!c->animation.count && !a->death) || c->animation.first != a->first)) continue;
+        unsigned frame = source_attack ? (unsigned)(c->pose.frame - a->first + 2) : (unsigned)c->animation_frame + 2u;
+        if (source_attack) next = player->animation_at + (frame - 1) * .1;
         if (player->continuous) {
             frame = c->frame == a->first ? 2 : 1; next = player->next_weapon_frame;
+        }
+        if (a->death) {
+            if (c->life != QA_Q1_DYING) {
+                if (c->frame != a->first + a->count - 1)
+                    return fail(error, "Original dead player requires its terminal Source frame");
+                frame = a->count; next = -1;
+            }
+            else if (frame > a->count)
+                return fail(error, "Original terminal player frame requires its Source dead state");
         }
         if (frame <= a->count) { snprintf(name, sizeof(name), "%s%u", a->prefix, frame); think = name; }
         else think = "player_run";
@@ -584,7 +624,7 @@ static bool player_functions(const q1_player *player, qa_q1_save_record *record,
     }
     return callback(record, "think", think, error) && number(record, "nextthink", next, false, error) &&
         callback(record, "th_pain", "player_pain", error) && callback(record, "th_die", "PlayerDie", error) &&
-        number(record, "deadflag", 0, false, error);
+        number(record, "deadflag", c->life, false, error);
 }
 typedef struct original_projectile {
     q1_projectile_kind kind;
@@ -825,8 +865,10 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         model_name = entity->state.pickup.original_model;
     if (model_name && !qa_q1_wire_index(receipt, true, model_name, &model))
         return fail(error, "Original model is outside its real Source precache");
-    if (!number(record, "movetype", player ? movement->data.nq.move_type : motion[physics.motion], false, error) ||
-        !number(record, "solid", player ? 3 : solid[physics.solid], false, error) ||
+    int player_motion = player ? visible.life == QA_Q1_ALIVE ? movement->data.nq.move_type :
+        visible.motion == QA_PHYSICS_BOUNCE ? 10 : 6 : 0;
+    if (!number(record, "movetype", player ? player_motion : motion[physics.motion], false, error) ||
+        !number(record, "solid", player ? visible.life == QA_Q1_ALIVE ? 3 : 0 : solid[physics.solid], false, error) ||
         !number(record, "flags", flags, false, error) || !number(record, "modelindex", model, false, error) ||
         !FIELDS(receipt, record, &combat, combat_fields, error) ||
         !number(record, "takedamage", combat.can_take_damage ? player || entity->aimed_damage ? 2 : 1 : 0, false, error) ||
@@ -863,12 +905,12 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         }
         if (!number(record, "items", wire.items, false, error) || !number(record,"items2",wire.items2,false,error) ||
             !number(record, "weapon", wire.weapon, false, error) ||
-            !text(record, "weaponmodel", qa_strings_cstr(qa_session_strings(game->services.session), wire.weapon_model),
+            !text(record, "weaponmodel", visible.weapon_visible ? qa_strings_cstr(qa_session_strings(game->services.session), wire.weapon_model) : NULL,
                 QA_Q1_SAVE_STRING, error)) return false;
         const char *name=NULL;
         if (!qa_q1_source_client_info(game,player->id,"name",&name) ||
             !text(record,"netname",name?name:"",QA_Q1_SAVE_STRING,error)) return false;
-        return player_functions(player, record, error);
+        return player_functions(game->options.program, qa_session_strings(game->services.session), player, record, error);
     }
     const char *think = entity->think == Q1_THINK_EXPLODE &&
         entity->kind == Q1_PROJECTILE && entity->state.projectile.kind == Q1_OGRE_GRENADE ?
@@ -980,6 +1022,12 @@ bool qa_q1_game_original_capture(qa_q1_game *game, const qa_qc_program *program,
         okay = number(globals, name, save->spawn_parameters[i], true, error);
     }
     if (okay && game->options.program == QA_Q1_HIPNOTIC) {
+        const qa_qc_definition *hammer = qa_qc_program_find_global(program, "modelindex_hammer");
+        if (hammer && hammer->save) {
+            uint32_t ordinal;
+            okay = qa_q1_wire_index(&receipt, true, game->runtime_names[Q1_NAME_RESOURCE_PROGS_PLAYHAM_MDL], &ordinal) &&
+                number(globals, "modelindex_hammer", ordinal, true, error);
+        }
         uint32_t mines = 0;
         for (uint32_t i=0; i<game->capacity; ++i) {
             const q1_actor *entity = game->actors[i];
@@ -987,7 +1035,7 @@ bool qa_q1_game_original_capture(qa_q1_game *game, const qa_qc_program *program,
                 entity->state.projectile.kind == Q1_PROXIMITY && !entity->state.projectile.detonating)
                 ++mines;
         }
-        okay = number(globals,"NumProximityGrenades",mines,true,error);
+        if (okay) okay = number(globals,"NumProximityGrenades",mines,true,error);
     }
     if (okay) okay = source_order(program, globals, true, error);
     for (uint32_t slot = 0; okay && slot < save->entity_count; ++slot) {
@@ -995,7 +1043,7 @@ bool qa_q1_game_original_capture(qa_q1_game *game, const qa_qc_program *program,
         if (!qa_q1_wire_actor_at(&receipt, slot, &id)) continue;
         q1_actor *entity = q1_entity(game, id); q1_player *player = q1_player_get(game, id);
         if (!entity && !player) { okay = fail(error, "Original physical Source row lacks its native state"); break; }
-        if (entity && entity->think == Q1_THINK_AXE) continue;
+        if (entity && (entity->think == Q1_THINK_AXE || entity->think == Q1_THINK_HAMMER_STRIKE)) continue;
         okay = entity_capture(&receipt, entity, player, movement, save->entities + slot, error) &&
             source_order(program, save->entities + slot, false, error);
     }
@@ -1211,25 +1259,67 @@ static bool restore_inventory(qa_q1_game *game, q1_player *player,
         return fail(error, "Original selected weapon lacks its genuine compiled Source identity");
     return true;
 }
-static bool restore_player(q1_player *player, const qa_q1_save_record *record, qa_error *error) {
+static bool restore_player(qa_q1_program program, qa_strings *strings, q1_player *player,
+    const qa_q1_save_record *record, qa_error *error) {
     q1_character *c = &player->character_state;
     const char *think = saved(record, "think");
-    c->life = QA_Q1_ALIVE; c->animation = (qa_q1_frame_range){0};
+    float dead = saved_number(record, "deadflag");
+    if (dead < QA_Q1_ALIVE || dead > QA_Q1_RESPAWNABLE || truncf(dead) != dead || !isfinite(dead))
+        return fail(error, "Original deadflag has no native Source state");
+    c->life = (qa_q1_life)dead; c->animation = (qa_q1_frame_range){0};
     c->death_animation = c->attack_animation = false;
-    c->pose.axe_pose = player->weapon == QA_Q1_AXE;
+    c->pose = (qa_q1_character_pose){.axe_pose = player->weapon == QA_Q1_AXE};
     c->locomotion = think && !strcmp(think, "player_run") ? 2 : 1;
     c->next_animation = saved_number(record, "nextthink");
+    c->head_fly_ns = c->head_fly_epoch = 0;
     player->continuous = false; player->animation_at = -1;
     player->animation_base = 1; player->next_weapon_frame = c->next_animation;
+    bool hammer = program == QA_Q1_HIPNOTIC && player->weapon == QA_Q1_MJOLNIR;
+    bool head = program == QA_Q1_HIPNOTIC && c->life != QA_Q1_ALIVE &&
+        player_model_named(strings, c->model, "progs/h_player.mdl");
+    if (head) {
+        double next = c->next_animation;
+        if (!think || strcmp(think, "HeadThink") || (next != -1 &&
+            (!isfinite(next) || next <= 0 || next >= 18446744073.709551616)))
+            return fail(error, "Original head has no compiled Source think time");
+        if (!c->birth_epoch) c->birth_epoch = 1;
+        c->head_fly_ns = next > 0 ? (uint64_t)(next * 1000000000.0) : 0;
+        c->head_fly_epoch = c->head_fly_ns ? c->birth_epoch : 0;
+        c->next_animation = next;
+        return true;
+    }
+    if (hammer) {
+        qa_string_id model;
+        if (!qa_strings_intern_cstr(strings, "progs/playham.mdl", &model, error)) return false;
+        c->model = model;
+        c->pose = (qa_q1_character_pose){.custom_model = true, .model = model,
+            .stand = {6,12}, .run = {0,6}, .pain = {18,6}, .death = {24,8}};
+        if (c->life == QA_Q1_ALIVE && c->frame >= 32 && c->frame < 44) {
+            player->animation_base = c->frame < 38 ? 32 : 38;
+            player->animation_at = c->next_animation - (c->frame - player->animation_base + 1) * .1;
+            c->pose.source_frame = true; c->pose.frame = c->frame;
+            return true;
+        }
+    }
     if (!think || !*think || !strcmp(think, "player_run") || !strcmp(think, "player_stand1")) return true;
     for (size_t i = 0; i < sizeof(player_animations) / sizeof(*player_animations); ++i) {
         const original_player_animation *a = player_animations + i; size_t prefix = strlen(a->prefix);
-        if (strncmp(think, a->prefix, prefix)) continue;
+        if (a->hammer != hammer || strncmp(think, a->prefix, prefix)) continue;
         unsigned frame = (unsigned)strtoul(think + prefix, NULL, 10);
         if (!frame || frame > a->count) continue;
+        if (a->hammer && a->attack && c->life == QA_Q1_ALIVE && frame >= 2) {
+            player->animation_base = a->first;
+            player->animation_at = c->next_animation - (frame - 1) * .1;
+            c->pose.source_frame = true; c->pose.frame = (int32_t)(a->first + frame - 2u);
+            return true;
+        }
         c->animation = (qa_q1_frame_range){a->first, a->count};
         c->animation_frame = frame >= 2 ? (uint16_t)(frame - 2) : a->count - 1;
         c->attack_animation = a->attack;
+        c->death_animation = a->death;
+        if (a->death && c->life != QA_Q1_DYING) {
+            c->animation.count = 0; c->animation_frame = a->count - 1;
+        }
         player->continuous = a->first == 103 || a->first == 105;
         if (a->attack && !player->continuous) {
             player->animation_base = a->first == 125 || a->first == 137 ? 5 : 1;
@@ -1518,6 +1608,9 @@ static bool admit_globals(original_admission *admission,const qa_qc_program *pro
      * ordered precache owner before the inverse can mutate an edict. */
     if (!admit_word(admission,"modelindex_eyes",error) ||
         !admit_word(admission,"modelindex_player",error)) return false;
+    const qa_qc_definition *hammer = qa_qc_program_find_global(program,"modelindex_hammer");
+    if (native_program==QA_Q1_HIPNOTIC && hammer && hammer->save &&
+        !admit_word(admission,"modelindex_hammer",error)) return false;
     qa_qc_program_info info=qa_qc_program_describe(program);
     for (size_t i=0;i<admission->record->count;++i) {
         const qa_q1_save_pair *pair=admission->record->pairs+i;
@@ -1683,9 +1776,6 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
     qa_q1_save_record callbacks={0};q1_map_kind defaults=Q1_MAP_FIELDS;bool okay=false;
     if (slot==1) {
         q1_player player={0};qa_nq_movement_state movement={0};
-        if (!(saved_number(record,"health")>0)) {
-            unsupported(error,"Source dead player has no living native inverse");goto done;
-        }
         if (!admit_text(admission,"classname","player",error) ||
             !ADMIT_FIELDS(admission,&movement,movement_fields,error) ||
             !ADMIT_FIELDS(admission,&player,player_fields,error) ||
@@ -1723,8 +1813,7 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
         if (program==QA_Q1_ROGUE)
             for (unsigned i=0;i<4;++i)
                 if (!admit_number(admission,ammo_fields[i],ammo[rogue_display_ammo((uint32_t)selected,i)],error)) goto done;
-        if (!admit_number(admission,"deadflag",0,error) ||
-            !admit_number(admission,"colormap",1,error) || !admit_string(admission,"netname",error) ||
+        if (!admit_number(admission,"colormap",1,error) || !admit_string(admission,"netname",error) ||
             !admit_string(admission,"weaponmodel",error)) goto done;
         if (!isfinite(saved_number(record,"max_health")) || !isfinite(saved_number(record,"idealpitch"))) {
             unsupported(error,"Source player scalar has no finite native state");goto done;
@@ -1733,10 +1822,15 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
         qa_vec3 water_jump;
         if (!saved_vector(saved(record,"movedir"),&water_jump,error)) goto done;
         admitted_key(admission,"movedir");
-        if (!restore_player(&player,record,error) || !player_functions(&player,&callbacks,error) ||
+        if (!restore_player(program,admission->strings,&player,record,error) ||
+            !player_functions(program,admission->strings,&player,&callbacks,error) ||
             strcmp(saved(record,"think")?saved(record,"think"):"",saved(&callbacks,"think")?saved(&callbacks,"think"):"")) {
             unsupported(error,"Source player animation is not preserved by the native inverse");goto done;
         }
+        if (!admit_number(admission,"deadflag",(float)player.character_state.life,error)) goto done;
+        if (program==QA_Q1_HIPNOTIC &&
+            player_model_named(admission->strings,player.character_state.model,"progs/h_player.mdl") &&
+            !admit_number(admission,"gorging",1,error)) goto done;
         admitted_key(admission,"think");admitted_key(admission,"nextthink");
     } else {
         original_class source;
@@ -1951,7 +2045,7 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
         player->drown_at = player->character_state.pain_until;
         player->character_state.hazard_at = player->hazard_at;
         player->character_state.input.axe_pose = player->weapon == QA_Q1_AXE;
-        if (!restore_player(player, record, error)) return false;
+        if (!restore_player(game->options.program,qa_session_strings(game->services.session),player,record,error)) return false;
         movement->kind = QA_RULESET_NETQUAKE;
         movement->data.nq = (qa_nq_movement_state){.origin = body.origin,.old_origin = body.origin,
             .velocity = body.velocity,.angles = body.angles,.angular_velocity = physics.angular_velocity,
@@ -2092,6 +2186,11 @@ static bool original_model_fits(const qa_q1_wire_receipt *receipt,
     const char *expected=qa_strings_cstr(strings,receipt->models[index]);
     bool equal=!strcmp(model,expected?expected:"");
     const char *use=saved(record,"use"),*classname=saved(record,"classname");
+    if (!equal && classname && !strcmp(classname,"player") &&
+        !strcmp(model,"progs/player.mdl") && expected &&
+        (!strcmp(expected,"progs/eyes.mdl") ||
+         (receipt->operation.game->options.program==QA_Q1_HIPNOTIC && !strcmp(expected,"progs/playham.mdl"))))
+        equal=true;
     if (!equal && index==0 && model[0]=='*' && classname &&
         original_hidden_map_model(q1_map_classify(classname), use && !strcmp(use,"trigger_multiple")) &&
         saved_number(record,"solid")==0 && saved_number(record,"movetype")==0) {
@@ -2237,6 +2336,10 @@ static bool original_precache_fits(qa_q1_game *game,const qa_q1_save_data *save,
         !qa_q1_wire_index(receipt,true,game->player_model,&index) ||
         saved_number(&save->globals,"modelindex_player")!=(float)index)
         return unsupported(error,"Original player model globals differ from the constructed Source precache");
+    if (game->options.program==QA_Q1_HIPNOTIC && saved(&save->globals,"modelindex_hammer") &&
+        (!qa_q1_wire_index(receipt,true,game->runtime_names[Q1_NAME_RESOURCE_PROGS_PLAYHAM_MDL],&index) ||
+         saved_number(&save->globals,"modelindex_hammer")!=(float)index))
+        return unsupported(error,"Original hammer model global differs from the constructed Source precache");
     for (size_t i=0;i<save->entity_count;++i)
         if (save->entities[i].count && !original_model_fits(receipt,strings,save->entities+i,error)) return false;
     const qa_q1_save_record *record=save->entities+1;q1_player player={0};
@@ -2246,7 +2349,7 @@ static bool original_precache_fits(qa_q1_game *game,const qa_q1_save_data *save,
         return unsupported(error,"Original selected weapon lacks its compiled model identity");
     const char *value=saved(record,"weaponmodel");char *model=NULL;
     if (!qa_q1_save_string_decode(value?value:"",&model,error)) return false;
-    const char *expected=qa_strings_cstr(strings,q1_weapon_model(game,&player));
+    const char *expected=saved_number(record,"deadflag")!=0 ? NULL : qa_strings_cstr(strings,q1_weapon_model(game,&player));
     bool equal=!strcmp(model,expected?expected:"");free(model);
     if (!equal) return unsupported(error,"Original weapon model differs from its compiled Source weapon");
     return original_door_fits(game,save,receipt,error) && original_pickup_fits(game,save,receipt,error);
@@ -2348,15 +2451,22 @@ bool qa_q1_game_original_restore(qa_q1_game *game, const qa_qc_program *program,
     }
     if (okay) {
         const char *next = saved(save->entities+1,"think");
+        const q1_player *player=q1_player_get(game,slots[1]);
         for (size_t i=0; next && okay && i<sizeof(player_animations)/sizeof(*player_animations); ++i) {
             const original_player_animation *a=player_animations+i;
-            if (a->first<119 || strncmp(next,a->prefix,strlen(a->prefix))) continue;
+            bool hammer=game->options.program==QA_Q1_HIPNOTIC && a->hammer && a->attack &&
+                player && player->character_state.life==QA_Q1_ALIVE && player->weapon==QA_Q1_MJOLNIR;
+            if ((!hammer && a->first<119) || strncmp(next,a->prefix,strlen(a->prefix))) continue;
             unsigned frame=(unsigned)strtoul(next+strlen(a->prefix),NULL,10);
-            if (frame==2 || frame==3) {
+            if (frame==2 || frame==3 || (hammer && frame==4)) {
                 q1_actor *timer;
-                double due=saved_number(save->entities+1,"nextthink")+(frame==2?.1:0);
-                okay=q1_create(game,game->runtime_names[Q1_NAME_CLASS_AXE_STRIKE],Q1_TIMER,slots[1],&timer,error) &&
-                    q1_schedule(game,timer,due-game->time,Q1_THINK_AXE,error);
+                double due=saved_number(save->entities+1,"nextthink")+(hammer?(4-frame)*.1:frame==2?.1:0);
+                okay=q1_create(game,game->runtime_names[hammer?Q1_NAME_CLASS_HIPNOTIC_HAMMER_STRIKE:Q1_NAME_CLASS_AXE_STRIKE],
+                    Q1_TIMER,slots[1],&timer,error);
+                if (okay) {
+                    if (hammer) timer->state.projectile.weapon=QA_Q1_MJOLNIR;
+                    okay=q1_schedule(game,timer,due-game->time,hammer?Q1_THINK_HAMMER_STRIKE:Q1_THINK_AXE,error);
+                }
             }
             break;
         }

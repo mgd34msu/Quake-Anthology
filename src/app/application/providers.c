@@ -559,6 +559,13 @@ static bool q1_character_drop_inventory(void *context, qa_actor_id actor, qa_err
     qa_q1_game_operation_end(&operation);
     return okay;
 }
+static bool q1_character_pose(void *opaque, qa_actor_id actor, qa_q1_character_pose *out)
+{
+    application_provider *character=opaque;
+    application_provider *arsenal=application_provider_for(character->application,actor,QA_ROLE_ARSENAL,"");
+    return arsenal && arsenal!=character && arsenal->kind==APPLICATION_PROVIDER_Q1 &&
+        qa_q1_player_character_pose(arsenal->state.q1,actor,out);
+}
 static bool construct_q1(qa_application *application,
                          application_provider *provider, qa_world *world,
                          const qa_product *product,
@@ -594,6 +601,7 @@ static bool construct_q1(qa_application *application,
                        .combat_provider = q1_combat_provider,
                        .supply = application_supplies_source_for,
                        .drop_inventory = q1_character_drop_inventory,
+                       .character_pose = q1_character_pose,
                        .request_respawn = application_native_q1_request_respawn,
                        .console_suicide = application_native_q1_suicide,
                        .console_cheat = application_native_q1_console_cheat,

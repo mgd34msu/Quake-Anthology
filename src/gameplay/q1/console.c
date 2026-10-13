@@ -74,17 +74,17 @@ static bool program_weapon(qa_q1_program program, qa_q1_weapon weapon) {
         return program == QA_Q1_MG3;
     return weapon == QA_Q1_CTF_GRAPPLE && program == QA_Q1_CTF;
 }
-static const struct { const char *console, *display; } weapon_labels[QA_Q1_WEAPON_COUNT] = {
-    {"Axe", "Axe"}, {"Shotgun", "Shotgun"},
-    {"Super Shotgun", "Double-barrelled Shotgun"}, {"Nailgun", "Nailgun"},
-    {"Super Nailgun", "Super Nailgun"}, {"Grenade Launcher", "Grenade Launcher"},
-    {"Rocket Launcher", "Rocket Launcher"}, {"Lightning Gun", "Thunderbolt"},
-    {"Laser Cannon", "Laser Cannon"}, {"Mjolnir", "Mjolnir"},
-    {"Proximity Gun", "Proximity Gun"}, {"Lava Nailgun", "Lava Nailgun"},
-    {"Lava Super Nailgun", "Lava Supernailgun"}, {"Multi Grenade", "Multi Grenade"},
-    {"Multi Rocket", "Multi Rocket"}, {"Plasma Gun", "Plasma"},
-    {"Grapple", "Grapple"}, {"Laser Cannon", "Laser"},
-    {"Mjolnir", "Mjolnir"}, {"Grapple", "Grapple"}};
+static const struct { const char *console, *display, *localized; } weapon_labels[QA_Q1_WEAPON_COUNT] = {
+    {"Axe", "Axe", "$qc_axe"}, {"Shotgun", "Shotgun", "$qc_shotgun"},
+    {"Super Shotgun", "Double-barrelled Shotgun", "$qc_double_shotgun"}, {"Nailgun", "Nailgun", "$qc_nailgun"},
+    {"Super Nailgun", "Super Nailgun", "$qc_super_nailgun"}, {"Grenade Launcher", "Grenade Launcher", "$qc_grenade_launcher"},
+    {"Rocket Launcher", "Rocket Launcher", "$qc_rocket_launcher"}, {"Lightning Gun", "Thunderbolt", "$qc_thunderbolt"},
+    {"Laser Cannon", "Laser Cannon", "$qc_laser_cannon"}, {"Mjolnir", "Mjolnir", "$qc_mjolnir"},
+    {"Proximity Gun", "Proximity Gun", "$qc_prox_gun"}, {"Lava Nailgun", "Lava Nailgun", "$qc_got_lava_nailgun"},
+    {"Lava Super Nailgun", "Lava Supernailgun", "$qc_got_super_lava_nailgun"}, {"Multi Grenade", "Multi Grenade", "$qc_got_multi_gl"},
+    {"Multi Rocket", "Multi Rocket", "$qc_got_multi_rl"}, {"Plasma Gun", "Plasma", "$qc_got_plasma_gun"},
+    {"Grapple", "Grapple", NULL}, {"Laser Cannon", "Laser", NULL},
+    {"Mjolnir", "Mjolnir", NULL}, {"Grapple", "Grapple", NULL}};
 bool qa_q1_weapon_profile_identity(qa_q1_program program, qa_q1_weapon weapon,
     qa_q1_weapon_profile *out) {
     if (!out)
@@ -95,6 +95,7 @@ bool qa_q1_weapon_profile_identity(qa_q1_program program, qa_q1_weapon weapon,
     int ammo = q1_weapon_declared_ammo(weapon);
     *out = (qa_q1_weapon_profile){.item=qa_q1_weapon_identity(weapon),
         .label=weapon_labels[weapon].display,
+        .localized_label=weapon_labels[weapon].localized,
         .ammo=ammo<0?NULL:qa_q1_ammo_identity((qa_q1_ammo)ammo),.ammo_index=ammo};
     return true;
 }

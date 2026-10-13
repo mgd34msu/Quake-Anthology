@@ -732,7 +732,7 @@ typedef struct item_touch {
     qa_actor_id recipient;
     qa_pickup_cargo cargo[QA_Q1_AMMO_COUNT + 1];
     size_t cargo_count;
-    bool original_ran, leave, external;
+    bool original_ran, leave, external, new_backpack_weapon;
 } item_touch;
 
 static size_t backpack_cargo(const qa_q1_game *g, const q1_pickup *item,
@@ -886,6 +886,7 @@ static bool item_original(void *context, const qa_pickup_offer *offer, bool *tak
             if (!supply(g, actor, &selected, error) ||
                 !qa_supply_owns(selected, actor, g->weapons[item->weapon], &owned, error))
                 return false;
+            touch->new_backpack_weapon = !owned;
             bool auto_switch = !player || g->options.edition != QA_Q1_RERELEASE ||
                                player->auto_switch == QA_Q1_SWITCH_ALWAYS ||
                                (player->auto_switch == QA_Q1_SWITCH_NEW && !owned);
@@ -949,6 +950,56 @@ static bool dispatch_targets(item_touch *touch, qa_error *error) {
     return g->services.use_targets(g->services.context, entity->id, touch->recipient,
                                    entity->target, entity->killtarget, entity->delay, error);
 }
+static bool mission_pickup_message(item_touch *touch, qa_error *error) {
+    qa_q1_game *g = touch->game;
+    const q1_pickup *item = &touch->entity->state.pickup;
+    if (!item->mission)
+        return true;
+    if (item->kind == Q1_ITEM_HORN)
+        return q1_message_resource_args(g, touch->recipient,
+            g->runtime_names[Q1_NAME_QC_GOT_HORN], 2u, NULL, 0, error);
+    qa_string_id label = QA_STRING_NONE;
+    switch (item->kind) {
+    case Q1_ITEM_WEAPON:
+        label = q1_weapon_pickup_name(g, item->weapon);
+        break;
+    case Q1_ITEM_AMMO:
+        if (item->item == g->ammo[QA_Q1_LAVA_NAILS])
+            label = g->runtime_names[Q1_NAME_QC_LAVA_NAILS];
+        else if (item->item == g->ammo[QA_Q1_MULTI_ROCKETS])
+            label = g->runtime_names[Q1_NAME_QC_MULTI_ROCKETS];
+        else if (item->item == g->ammo[QA_Q1_PLASMA_CELLS])
+            label = g->runtime_names[Q1_NAME_MESSAGE_PLASMA];
+        break;
+    case Q1_ITEM_POWER: {
+        q1_runtime_name name = Q1_NAME_COUNT;
+        switch ((qa_q1_power)(unsigned)item->count) {
+        case QA_Q1_WETSUIT: name = Q1_NAME_QC_WETSUIT; break;
+        case QA_Q1_EMPATHY: name = Q1_NAME_QC_EMPATHY_SHIELDS; break;
+        case QA_Q1_SHIELD: name = Q1_NAME_QC_POWER_SHIELD; break;
+        case QA_Q1_ANTIGRAV: name = Q1_NAME_QC_ANTI_GRAV_BELT; break;
+        case QA_Q1_INVULNERABILITY: name = Q1_NAME_QC_PENTAGRAM_OF_PROTECTION; break;
+        case QA_Q1_INVISIBILITY: name = Q1_NAME_QC_RING_OF_SHADOWS; break;
+        case QA_Q1_QUAD: name = Q1_NAME_QC_QUAD_DAMAGE; break;
+        default: break;
+        }
+        if (name != Q1_NAME_COUNT)
+            label = g->runtime_names[name];
+        break;
+    }
+    case Q1_ITEM_SPHERE:
+        label = g->runtime_names[Q1_NAME_QC_VENGEANCE_SPHERE];
+        break;
+    default:
+        break;
+    }
+    if (!label)
+        return true;
+    qa_builtin_message_arg argument = {.kind = QA_BUILTIN_MESSAGE_STRING,
+                                       .value.text = label};
+    return q1_message_resource_args(g, touch->recipient,
+        g->runtime_names[Q1_NAME_QC_GOT_ITEM], 2u, &argument, 1, error);
+}
 static bool item_complete(void *context, const qa_pickup_offer *offer, bool taken,
                           qa_error *error) {
     (void)offer;
@@ -967,6 +1018,10 @@ static bool item_complete(void *context, const qa_pickup_offer *offer, bool take
         player->mega_rot_at = g->time + 5;
         player->source_superhealth = true;
     }
+    if (!mission_pickup_message(touch, error))
+        return false;
+    if (!touch_live(touch))
+        return true;
     qa_builtin_event sound = {
         .kind = QA_BUILTIN_SOUND,
         .family = QA_GAME_Q1,
