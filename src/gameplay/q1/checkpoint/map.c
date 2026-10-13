@@ -264,10 +264,27 @@ bool q1_save_map(q1_save_io *io, q1_map_state *m, q1_door_group **groups, size_t
     }
     return true;
 }
+static bool fog(q1_save_io *io, qa_q1_fog_state *value) {
+    Q1_SAVE(io, bool, value->initialized);
+    if (!value->initialized) return true;
+    Q1_SAVE(io, float, value->density);
+    Q1_SAVE(io, vector, value->color);
+    Q1_SAVE(io, float, value->previous_density);
+    Q1_SAVE(io, vector, value->previous_color);
+    Q1_SAVE(io, u64, value->start_ns);
+    Q1_SAVE(io, float, value->duration);
+    Q1_SAVE(io, float, value->sky_factor);
+    return (isfinite(value->density) && qa_vec_finite(value->color) &&
+        isfinite(value->previous_density) && qa_vec_finite(value->previous_color) &&
+        isfinite(value->duration) && value->duration >= 0 && isfinite(value->sky_factor)) ||
+        q1_save_fail(io, "Invalid saved Q1 fog transition");
+}
+
 bool q1_save_map_runtime(q1_save_io *io, q1_map_runtime *m) {
     Q1_SAVE(io, string, m->options.current_map);
     Q1_SAVE(io, bool, m->options.registered);
     Q1_SAVE(io, actor, m->world_actor);
+    if (!fog(io, &m->world_fog)) return false;
     for (size_t i = 0; i < 2; ++i)
         Q1_SAVE(io, ref, m->electrodes[i]);
     Q1_SAVE(io, ref, m->time_machine);
@@ -356,8 +373,7 @@ bool q1_save_map_runtime(q1_save_io *io, q1_map_runtime *m) {
         Q1_SAVE(io, ref, row->fog_active);
         Q1_SAVE(io, ref, row->secret_marker);
         Q1_SAVE(io, ref, row->exit_marker);
-        Q1_SAVE(io, vector, row->fog_color);
-        Q1_SAVE(io, float, row->fog_density);
+        if (!fog(io, &row->fog)) return false;
         Q1_SAVE(io, double, row->fly_sound);
         Q1_SAVE(io, double, row->lore_active);
         Q1_SAVE(io, double, row->voted);

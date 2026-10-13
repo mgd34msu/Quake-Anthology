@@ -256,7 +256,7 @@ typedef struct qa_q1_spawn {
     qa_vec3 origin, angles;
     uint32_t spawnflags, source_slot, upgrade_flag;
     bool has_source;
-    float health, speed, wait, delay, damage, count;
+    float health, speed, wait, delay, damage, count, yaw_speed;
     const struct qa_q1_map_fields *map_fields;
     const qa_q1_boss_fields *boss_fields;
     const qa_authored_monster *authored_monster;

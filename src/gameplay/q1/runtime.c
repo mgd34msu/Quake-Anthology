@@ -1518,6 +1518,7 @@ static bool spawn_actor(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_s
     entity->native = true;
     entity->initial_angles = spawn->angles;
     entity->physics = qa_physics_properties_default(g->options.rules);
+    entity->physics.yaw_speed = spawn->yaw_speed;
     entity->spawnflags = spawn->spawnflags;
     entity->source_movement_flags = spawn->source_movement_flags;
     entity->max_health = spawn->health;

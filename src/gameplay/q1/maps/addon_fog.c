@@ -1,14 +1,28 @@
 #include "internal.h"
 
+void qa_q1_fog_sample(const qa_q1_fog_state *fog, uint64_t now_ns,
+    float *density, qa_vec3 *color) {
+    double elapsed = now_ns >= fog->start_ns ? (double)(now_ns - fog->start_ns) / 1e9 : 0;
+    float t = fog->duration <= 0 ? 1 : (float)fmin(1, elapsed / fog->duration);
+    *density = fog->previous_density + (fog->density - fog->previous_density) * t;
+    *color = qa_vec_add(fog->previous_color,
+        qa_vec_scale(qa_vec_sub(fog->color, fog->previous_color), t));
+}
+
 bool qa_q1_game_map_fog_read(const qa_q1_game *g, qa_actor_id player, qa_q1_fog_state *out) {
-    if (!g || !out || !g->maps || !g->maps->addon_contacts || player.slot >= g->capacity ||
-        g->destroy_pending || !qa_actors_get(qa_session_actors(g->services.session), player))
+    if (!g || !out || !g->maps || !g->maps->addon_contacts ||
+        g->destroy_pending)
         return false;
+    *out = g->maps->world_fog;
+    if (!player.registry) return out->initialized;
+    if (player.slot >= g->capacity ||
+        !qa_actors_get(qa_session_actors(g->services.session), player)) return false;
     const q1_addon_contact *row = &g->maps->addon_contacts[player.slot];
-    if (!qa_actor_id_equal(row->actor, player))
-        return false;
-    *out = (qa_q1_fog_state){q1_ref_actor(g, row->fog_active), row->fog_density, row->fog_color};
-    return true;
+    if (qa_actor_id_equal(row->actor, player) && row->fog.initialized) {
+        *out = row->fog;
+        out->active = q1_ref_actor(g, row->fog_active);
+    }
+    return out->initialized;
 }
 static q1_actor *fog_actor(qa_q1_game *g, qa_actor_id id) {
     q1_actor *e = q1_entity(g, id);
@@ -65,12 +79,18 @@ static bool set_fog(qa_q1_game *g, qa_actor_id source, qa_actor_id player,
     q1_addon_contact *row = q1_map_addon_contact(g, player, true, error);
     if (!row)
         return !q1_alive(g, player);
-    row->fog_density = value.density;
-    row->fog_color = value.color;
+    if (!row->fog.initialized) row->fog = g->maps->world_fog;
+    qa_q1_fog_sample(&row->fog, g->time_ns, &row->fog.previous_density, &row->fog.previous_color);
+    row->fog.density = value.density;
+    row->fog.color = value.color;
+    row->fog.start_ns = g->time_ns;
+    row->fog.duration = duration > 0 ? duration : 0;
+    row->fog.sky_factor = 0;
+    row->fog.initialized = true;
     if (!g->maps->options.fog_player)
         return q1_map_fail(error, "Q1 addon fog requires the selected presentation owner");
     return g->maps->options.fog_player(g->maps->options.context, player, value.density,
-                                      value.color, duration, error);
+                                      value.color, row->fog.duration, error);
 }
 bool q1_map_addon_fog_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (e->map->kind == Q1_MAP_FOG_INFO) {

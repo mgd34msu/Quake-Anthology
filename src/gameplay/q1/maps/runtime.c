@@ -4,6 +4,7 @@
 #include "../wire_internal.h"
 #include <errno.h>
 #include <limits.h>
+#include <stdio.h>
 
 bool q1_map_fail(qa_error *error, const char *message) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message);
@@ -97,6 +98,8 @@ bool qa_q1_game_maps_bind(qa_q1_game *g, const qa_q1_map_options *options, qa_er
         return false;
     }
     g->maps->options = *options;
+    g->maps->world_fog = (qa_q1_fog_state){.color = {.3f, .3f, .3f},
+        .previous_color = {.3f, .3f, .3f}, .sky_factor = .5f, .initialized = true};
     g->maps->lightning_end = -1;
     if (!q1_targets_adopt(g, options->targets, error)) {
         qa_arena_destroy(&g->maps->storage);
@@ -1327,6 +1330,16 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
         entity->physics.motion = QA_PHYSICS_PUSH;
         entity->physics.solid = QA_PHYSICS_BRUSH;
         g->maps->world_actor = entity->id;
+        qa_q1_fog_state *fog = &g->maps->world_fog;
+        *fog = (qa_q1_fog_state){.color = {.3f, .3f, .3f}, .sky_factor = .5f,
+            .initialized = true};
+        if (spawn->map_fields && spawn->map_fields->fog)
+            sscanf(spawn->map_fields->fog, "%f %f %f %f", &fog->density,
+                &fog->color.x, &fog->color.y, &fog->color.z);
+        if (!isfinite(fog->density) || !qa_vec_finite(fog->color))
+            return q1_map_fail(error, "Nonfinite authored world fog");
+        fog->previous_density = fog->density;
+        fog->previous_color = fog->color;
         if (!q1_body_queue_initialize(g, error)) return false;
         static const char *const styles[] = {"m",
                                              "mmnmmommommnonmmonqnmmo",

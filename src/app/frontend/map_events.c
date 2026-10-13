@@ -80,10 +80,7 @@ typedef struct frontend_retained_bounds {
 typedef struct frontend_q1_fog {
     qa_actor_owner owner;
     qa_actor_id recipient;
-    qa_vec3 start_color, target_color;
-    float start_density, target_density, sky_factor;
-    uint64_t time;
-    double duration;
+    qa_q1_fog_state value;
 } frontend_q1_fog;
 typedef struct frontend_event_view {
     qa_string_id q1_patterns[FRONTEND_STYLES], q2_patterns[FRONTEND_STYLES];
@@ -184,50 +181,24 @@ static qa_game_family audio_family(qa_game_family family)
 {
     return family == QA_GAME_Q3 ? QA_GAME_Q3 : family == QA_GAME_Q2 ? QA_GAME_Q2 : QA_GAME_Q1;
 }
-static void q1_fog_sample(const frontend_q1_fog *fog, uint64_t now, float *density, qa_vec3 *color)
-{
-    double elapsed = now >= fog->time ? (double)(now - fog->time) / 1e9 : 0;
-    float t = fog->duration <= 0 ? 1 : (float)fmin(1, elapsed / fog->duration);
-    *density = fog->start_density + (fog->target_density - fog->start_density) * t;
-    *color = qa_vec_add(fog->start_color, qa_vec_scale(qa_vec_sub(fog->target_color, fog->start_color), t));
-}
 static bool q1_fog_initialize(qa_frontend *frontend, unsigned seat, frontend_q1_fog *fog, qa_error *error)
 {
+    (void)error;
     qa_actor_owner owner = 0; qa_actor_id recipient;
     if (!qa_application_q1_fog_owner(frontend->application, &owner) ||
         !frontend_seat_actor_read(frontend,seat,&recipient)) {
         *fog = (frontend_q1_fog){0}; return true;
     }
-    if (fog->owner == owner && qa_actor_id_equal(fog->recipient, recipient)) return true;
-    frontend_q1_fog initial = {.owner = owner, .recipient = recipient,
-        .start_color = {.3f, .3f, .3f}, .target_color = {.3f, .3f, .3f}, .sky_factor = .5f};
-    if (frontend->map_resource) {
-        qa_bsp_view bsp;
-        if (!qa_bsp_open(qa_resource_bytes(frontend->map_resource), &bsp, error)) return false;
-        if (bsp.family == QA_BSP_Q1) {
-            qa_entities entities = {0};
-            if (!qa_entities_parse(bsp.lumps[QA_BSP_ENTITIES].bytes, QA_ENTITY_Q1, &entities, error)) return false;
-            if (entities.count) for (size_t i = 0; i < entities.records[0].property_count; ++i) {
-                const qa_entity_property *property = &entities.properties[entities.records[0].first_property + i];
-                qa_bytes key = property->key;
-                if (key.size && key.data[0] == '_') ++key.data, --key.size;
-                while (key.size && key.data[key.size - 1] == ' ') --key.size;
-                if (key.size != 3 || memcmp(key.data, "fog", 3)) continue;
-                if (property->value.size == SIZE_MAX) { qa_entities_free(&entities); return frontend_fail(error, QA_ERROR_MEMORY, "fog text exceeds native storage"); }
-                char *text = malloc(property->value.size + 1);
-                if (!text) { qa_entities_free(&entities); return frontend_fail(error, QA_ERROR_MEMORY, "reading worldspawn fog"); }
-                memcpy(text, property->value.data, property->value.size); text[property->value.size] = 0;
-                sscanf(text, "%f %f %f %f", &initial.target_density, &initial.target_color.x,
-                    &initial.target_color.y, &initial.target_color.z);
-                free(text);
-            }
-            qa_entities_free(&entities);
-        }
+    qa_q1_fog_state saved;
+    if (qa_application_q1_fog_read(frontend->application, recipient, &saved)) {
+        *fog = (frontend_q1_fog){.owner = owner, .recipient = recipient, .value = saved};
+        return true;
     }
-    if (!isfinite(initial.target_density) || !qa_vec_finite(initial.target_color))
-        return frontend_fail(error, QA_ERROR_FORMAT, "non-finite worldspawn fog");
-    initial.start_density = initial.target_density; initial.start_color = initial.target_color;
-    *fog = initial; return true;
+    if (fog->owner != owner || !qa_actor_id_equal(fog->recipient, recipient))
+        *fog = (frontend_q1_fog){.owner = owner, .recipient = recipient,
+            .value = {.color = {.3f, .3f, .3f}, .previous_color = {.3f, .3f, .3f},
+                .sky_factor = .5f, .initialized = true}};
+    return true;
 }
 static bool state_read(qa_frontend *frontend, frontend_event_state **out, qa_error *error)
 {
@@ -522,10 +493,11 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
                     if (frontend_network_local_input_owned(frontend,seat)) continue;
                     frontend_q1_fog *fog = &state->views[seat].q1_fog;
                     if (fog->owner != event.provider || !qa_actor_id_equal(fog->recipient, event.actor)) continue;
-                    q1_fog_sample(fog, event.time_ns, &fog->start_density, &fog->start_color);
-                    fog->target_density = event.value; fog->target_color = event.origin;
-                    fog->time = event.time_ns; fog->duration = event.end.x;
-                    fog->sky_factor = 0;
+                    qa_q1_fog_sample(&fog->value, event.time_ns,
+                        &fog->value.previous_density, &fog->value.previous_color);
+                    fog->value.density = event.value; fog->value.color = event.origin;
+                    fog->value.start_ns = event.time_ns; fog->value.duration = event.end.x;
+                    fog->value.sky_factor = 0; fog->value.initialized = true;
                 }
             }
             if (event.resource == names->debug_bounds) {
@@ -693,12 +665,12 @@ bool frontend_event_world(qa_frontend *frontend, unsigned seat, qa_scene_world_i
         qa_clock_state clock; float density; qa_vec3 color;
         if (!qa_session_clock(qa_application_session(frontend->application), view->q1_fog.owner, &clock))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 fog source clock retired");
-        q1_fog_sample(&view->q1_fog, clock.frame.time_ns, &density, &color);
+        qa_q1_fog_sample(&view->q1_fog.value, clock.frame.time_ns, &density, &color);
         color.x = roundf(fminf(1, fmaxf(0, color.x)) * 255) / 255;
         color.y = roundf(fminf(1, fmaxf(0, color.y)) * 255) / 255;
         color.z = roundf(fminf(1, fmaxf(0, color.z)) * 255) / 255;
         world->fog = (qa_scene_fog){.kind = QA_FOG_EXP2, .effect = QA_FOG_COLOR,
-            .density = density, .color = color, .sky_factor = view->q1_fog.sky_factor, .far_depth = 1};
+            .density = density, .color = color, .sky_factor = view->q1_fog.value.sky_factor, .far_depth = 1};
     }
     uint64_t now = qa_session_elapsed(qa_application_session(frontend->application));
     qa_actor_owner q1_owner=0,q2_owner=0;

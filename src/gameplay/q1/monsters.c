@@ -968,7 +968,9 @@ static bool monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spe
     entity->aimed_damage = true;
     entity->physics.motion = QA_PHYSICS_STEP;
     entity->physics.solid = QA_PHYSICS_BOX;
-    entity->physics.yaw_speed = spec->flags & (QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING) ? 10 : 20;
+    if (entity->physics.yaw_speed == 0)
+        entity->physics.yaw_speed = !addon &&
+            (spec->flags & (QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING)) ? 10 : 20;
     if (spec->species == QA_Q1_SCOURGE) {
         entity->physics.yaw_speed = 60;
         entity->state.monster.attack_state = 3;
@@ -1179,7 +1181,8 @@ bool q1_monster_start(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         m->addon.started = true;
         entity->physics.solid = QA_PHYSICS_BOX;
         entity->physics.motion = QA_PHYSICS_STEP;
-        entity->physics.yaw_speed = 20;
+        if (entity->physics.yaw_speed == 0)
+            entity->physics.yaw_speed = 20;
         entity->aimed_damage = true;
         if (!q1_model(g, entity, g->runtime_names[m->species->model], error))
             return false;

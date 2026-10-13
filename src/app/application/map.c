@@ -67,6 +67,22 @@ static bool entity_optional_text(const qa_entities *entities, size_t entity,
     return *out != NULL;
 }
 
+static bool entity_fog_text(const qa_entities *entities, size_t entity,
+                            qa_arena *arena, const char **out, qa_error *error)
+{
+    size_t count;
+    const qa_entity_property *properties=entity_properties(entities,entity,&count);
+    qa_bytes value={0};
+    for (size_t i=0;i<count;++i) {
+        qa_bytes key=properties[i].key;
+        if (key.size && key.data[0]=='_') { ++key.data; --key.size; }
+        while (key.size && key.data[key.size-1]==' ') --key.size;
+        if (key.size==3 && !memcmp(key.data,"fog",3)) value=properties[i].value;
+    }
+    *out=value.data?arena_text(arena,value,error):NULL;
+    return !value.data || *out!=NULL;
+}
+
 static bool entity_number(const qa_entities *entities, size_t entity,
                           const char *key, double fallback, double *out,
                           qa_error *error)
@@ -1883,7 +1899,8 @@ static bool q1_spawn_entity(application_provider *provider,
         bool has_angles;
         if (!entity_vector(entities, index, "origin", qa_v3(0, 0, 0), &spawn.origin, NULL, error) ||
             !entity_vector(entities, index, "angles", qa_v3(0, 0, 0), &spawn.angles, &has_angles, error) ||
-            !entity_float(entities, index, "angle", 0, &angle, error)) return false;
+            !entity_float(entities, index, "angle", 0, &angle, error) ||
+            !entity_float(entities, index, "yaw_speed", 0, &spawn.yaw_speed, error)) return false;
         if (!has_angles) spawn.angles = angle == -1 ? qa_v3(-90, 0, 0) :
             angle == -2 ? qa_v3(90, 0, 0) : qa_v3(0, angle, 0);
         return qa_q1_game_spawn(provider->state.q1, &spawn, out, error);
@@ -1928,6 +1945,7 @@ static bool q1_spawn_entity(application_provider *provider,
         !entity_optional_text(entities, index, "category", arena, &fields.category, error) ||
         !entity_optional_text(entities, index, "fog_info_entity", arena,
                               &fields.fog_info_entity, error) ||
+        !entity_fog_text(entities, index, arena, &fields.fog, error) ||
         !entity_optional_text(entities, index, "wave1", arena,
                               &boss.wave1, error) ||
         !entity_optional_text(entities, index, "wave2", arena,
@@ -1969,6 +1987,7 @@ static bool q1_spawn_entity(application_provider *provider,
                     error) ||
         !entity_float(entities, index, "health", 0, &spawn.health, error) ||
         !entity_float(entities, index, "speed", 0, &spawn.speed, error) ||
+        !entity_float(entities, index, "yaw_speed", 0, &spawn.yaw_speed, error) ||
         !entity_float(entities, index, "wait", 0, &spawn.wait, error) ||
         !entity_float(entities, index, "delay", 0, &spawn.delay, error) ||
         !entity_float(entities, index, "dmg", 0, &spawn.damage, error) ||

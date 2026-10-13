@@ -345,8 +345,7 @@ typedef struct q1_addon_contact {
     qa_actor_id actor;
     q1_ref fog_active;
     q1_ref secret_marker, exit_marker;
-    qa_vec3 fog_color;
-    float fog_density;
+    qa_q1_fog_state fog;
     double fly_sound, lore_active, voted;
     float hunger_time, super_time;
     bool sheltered, has_hunger;
@@ -442,6 +441,7 @@ struct q1_map_runtime {
     q1_addon_contact *addon_contacts;
     uint32_t frame_tick_count;
     qa_actor_id world_actor;
+    qa_q1_fog_state world_fog;
     q1_ref electrodes[2];
     q1_ref time_machine, ending_actor;
     double lightning_end;

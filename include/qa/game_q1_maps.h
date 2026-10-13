@@ -15,7 +15,7 @@ typedef struct qa_q1_map_fields {
     const char *model, *map, *noise, *noise1, *noise2, *noise3, *mdl;
     const char *endtext, *intermissiontext, *netname, *event;
     const char *spawn_function, *spawn_classname;
-    const char *group, *path, *category, *fog_info_entity;
+    const char *group, *path, *category, *fog_info_entity, *fog;
     qa_vec3 mangle, movedir, view_offset, rotate;
     qa_vec3 dest, dest2, pos2, angular_velocity;
     qa_vec3 particle_size;
@@ -42,7 +42,13 @@ typedef struct qa_q1_fog_state {
     qa_actor_id active;
     float density;
     qa_vec3 color;
+    float previous_density;
+    qa_vec3 previous_color;
+    uint64_t start_ns;
+    float duration, sky_factor;
+    bool initialized;
 } qa_q1_fog_state;
+void qa_q1_fog_sample(const qa_q1_fog_state *, uint64_t now_ns, float *density, qa_vec3 *color);
 bool qa_q1_game_map_fog_read(const qa_q1_game *, qa_actor_id, qa_q1_fog_state *);
 typedef struct qa_q1_map_finale_view {
     uint32_t stage;
