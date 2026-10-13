@@ -10,6 +10,11 @@
 
 #define UI_MENU_FONT_SCALE 2.6f
 
+typedef struct ui_palette {
+    qa_vec4 text, disabled, accent, control, focused, panel;
+} ui_palette;
+ui_palette ui_palette_read(const qa_ui *, bool contrast, bool narrow);
+
 typedef struct ui_cursor { qa_ui_id menu, control; float scroll; } ui_cursor;
 typedef struct ui_field {
     qa_ui_id menu, control;

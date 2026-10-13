@@ -471,6 +471,10 @@ bool frontend_source_remap(qa_frontend *, const char *, const char *, float, qa_
 bool frontend_visuals_remap(qa_frontend *, const char *, const char *, float, qa_error *);
 bool frontend_resources(qa_frontend *, qa_error *);
 bool frontend_seats_create(qa_frontend *, qa_error *);
+struct qa_unified_player_ui;
+bool frontend_hud_inventory_rows(frontend_seat *, const qa_hud_frame *,
+    const qa_inventory_entry *, size_t, qa_item_id, const struct qa_unified_player_ui *,
+    const qa_strings *, qa_hud_data *, qa_error *);
 bool frontend_seats_create_range(qa_frontend *, unsigned first, qa_error *);
 bool frontend_seats_destroy_range(qa_frontend *, unsigned first, unsigned last, qa_error *);
 bool frontend_seats_destroy(qa_frontend *, qa_error *);

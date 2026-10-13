@@ -336,6 +336,77 @@ static bool weapon_picture(qa_hud *hud, qa_scene_frame *scene, qa_scene_rect tar
     }
     return true;
 }
+static bool inventory_text(qa_hud *hud, qa_scene_frame *scene, qa_scene_rect target,
+    const char *value, float x, float y, float width, float height,
+    qa_vec4 color, qa_font_alignment alignment, bool localize, qa_error *error)
+{
+    qa_ui *ui = hud->options.ui;
+    if (localize && value && ui->options.localize)
+        value = ui->options.localize(ui->options.context, value);
+    if (!value || !*value) return true;
+    qa_font_layout measured;
+    qa_font_layout_options options = {.text = {(const uint8_t *)value, strlen(value)},
+        .scale = 1, .color = color, .color_codes = QA_FONT_COLOR_LITERAL,
+        .force_color = ui->color_mode != QA_UI_COLOR_STANDARD};
+    if (!qa_font_layout_build(&ui->options.fonts, &options, &scene->storage, &measured, error)) return false;
+    float scale = ui->text_scale * 1.5f;
+    if (measured.width > 0) scale = fminf(scale, width / measured.width);
+    if (measured.height > 0) scale = fminf(scale, height / measured.height);
+    return ui_draw_source_text(ui, scene, target, x,
+        y + (height - measured.height * scale) * .5f, value, color,
+        scale / ui->text_scale, alignment, error);
+}
+static bool inventory_draw(qa_hud *hud, const qa_hud_frame *frame,
+    qa_scene_frame *scene, const qa_hud_inventory_row *items, size_t count, qa_error *error)
+{
+    qa_ui *ui = hud->options.ui;
+    qa_font_info font;
+    if (!qa_font_describe(ui->options.fonts.primary ? ui->options.fonts.primary : ui->options.fonts.classic, &font))
+        return ui_fail(error, "HUD inventory lost its retained font metrics");
+    float height = fmaxf(20, ceilf(font.line_height * ui->text_scale * 1.5f));
+    size_t page = (size_t)fmaxf(1, floorf(270 / height));
+    size_t visible = 0, selected = 0;
+    bool selection_found = false;
+    for (size_t i = 0; i < count; ++i) {
+        if (items[i].count <= 0) continue;
+        if (items[i].selected && !selection_found) {
+            selected = visible; selection_found = true;
+        }
+        ++visible;
+    }
+    size_t maximum = visible > page ? visible - page : 0;
+    size_t top = selected > page / 2 ? selected - page / 2 : 0;
+    if (top > maximum) top = maximum;
+    ui_palette colors = ui_palette_read(ui, ui->high_contrast, false);
+    if (!ui_fill(ui, scene, frame->safe_area, (qa_scene_rect_f){128, 72, 384, 328}, colors.panel, error) ||
+        !inventory_text(hud, scene, frame->safe_area, "Inventory", 320, 84, 352, 24,
+            colors.accent, QA_FONT_ALIGN_CENTER, true, error)) return false;
+    size_t ordinal = 0, shown = 0;
+    for (size_t i = 0; i < count && shown < page; ++i) {
+        const qa_hud_inventory_row *item = items + i;
+        if (item->count <= 0 || ordinal++ < top) continue;
+        float y = 114 + (float)shown++ * height;
+        float row_height = fminf(height, 384 - y);
+        if (item->selected && !ui_fill(ui, scene, frame->safe_area,
+            (qa_scene_rect_f){136, y, 368, row_height}, colors.focused, error)) return false;
+        float picture_size = fminf(20, row_height);
+        if (item->icon) {
+            qa_scene_rect_f picture = {ui->bias_x + 188 * ui->scale,
+                ui->bias_y + (y + (row_height - picture_size) * .5f) * ui->scale,
+                picture_size * ui->scale, picture_size * ui->scale};
+            if (!weapon_picture(hud, scene, frame->safe_area, item->icon, picture, frame->time_ns, error)) return false;
+        }
+        char quantity[32];
+        if (!qa_format_number(item->count, quantity, error) ||
+            !inventory_text(hud, scene, frame->safe_area, item->binding, 144, y, 40, row_height,
+                colors.accent, QA_FONT_ALIGN_LEFT, false, error) ||
+            !inventory_text(hud, scene, frame->safe_area, item->label, 212, y, 196, row_height,
+                item->selected ? colors.accent : colors.text, QA_FONT_ALIGN_LEFT, true, error) ||
+            !inventory_text(hud, scene, frame->safe_area, quantity, 494, y, 80, row_height,
+                colors.text, QA_FONT_ALIGN_RIGHT, false, error)) return false;
+    }
+    return true;
+}
 typedef struct hud_status_layout {
     qa_scene_rect_f rect;
     float cap, top, text_scale, scale, label_top;
@@ -984,7 +1055,8 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
         if (hud->options.read && !hud->options.read(hud->options.context, frame, &data, error)) return false;
         if ((data.vital_count && !data.vitals) || (data.bar_count && !data.bars) ||
             (data.timer_count && !data.timers) || (data.score_count && !data.scores) ||
-            (data.help_count && !data.help_lines) || (data.caption_count && !data.captions))
+            (data.help_count && !data.help_lines) || (data.caption_count && !data.captions) ||
+            (data.inventory_count && !data.inventory))
             return ui_fail(error, "HUD source returned invalid spans");
         if (frame->weapon_only) return weapon_draw(hud, frame, &data, scene, error);
         if (hud->options.source_draw && !hud->options.source_draw(hud->options.context,
@@ -1001,7 +1073,7 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
         qa_inventory *inventory = qa_application_inventory(hud->options.application);
         qa_item_definition *definitions = NULL;
         size_t definition_count = 0;
-        if (frame->actor.registry && ((frame->show_inventory && !data.source_vitals) ||
+        if (frame->actor.registry && ((frame->show_inventory && !data.source_vitals && !data.inventory_present) ||
             (data.selected_weapon && !data.source_vitals && !data.weapon.present))) {
             if (!qa_inventory_item_definitions(inventory, frame->actor, NULL, 0, &definition_count, error)) return false;
             if (definition_count > SIZE_MAX / sizeof(*definitions)) return ui_fail(error, "HUD item definition overflow");
@@ -1073,22 +1145,33 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
             } else if (!ui_fill(ui, scene, target, (qa_scene_rect_f){center_x-size*.125f, center_y-size*.5f, size*.25f, size}, data.crosshair_color, error) ||
                        !ui_fill(ui, scene, target, (qa_scene_rect_f){center_x-size*.5f, center_y-size*.125f, size, size*.25f}, data.crosshair_color, error)) return false;
         }
-        if (frame->show_inventory && !data.source_vitals && frame->actor.registry) {
-            size_t count = 0;
-            if (!qa_inventory_entries(inventory, frame->actor, NULL, 0, &count, error)) return false;
-            if (count > SIZE_MAX / sizeof(qa_inventory_entry)) return ui_fail(error, "HUD inventory overflow");
-            qa_inventory_entry *entries = count ? qa_arena_alloc(&scene->storage, count * sizeof(*entries),
-                _Alignof(qa_inventory_entry), error) : NULL;
-            if (count && (!entries || !qa_inventory_entries(inventory, frame->actor, entries, count, &count, error))) return false;
-            float y = 110;
-            for (size_t i = 0; i < count; ++i) {
-                if (entries[i].count <= 0) continue;
-                for (size_t j = 0; j < definition_count; ++j) {
-                    if (definitions[j].item != entries[i].item) continue;
-                    if (!number(hud, scene, target, 320, y, definitions[j].label, entries[i].count, false, error)) return false;
-                    y += 30; break;
+        if (frame->show_inventory && (data.inventory_present || (!data.source_vitals && frame->actor.registry))) {
+            const qa_hud_inventory_row *rows = data.inventory;
+            size_t row_count = data.inventory_count;
+            if (!data.inventory_present) {
+                size_t count = 0;
+                if (!qa_inventory_entries(inventory, frame->actor, NULL, 0, &count, error)) return false;
+                if (count > SIZE_MAX / sizeof(qa_inventory_entry)) return ui_fail(error, "HUD inventory overflow");
+                qa_inventory_entry *entries = count ? qa_arena_alloc(&scene->storage, count * sizeof(*entries),
+                    _Alignof(qa_inventory_entry), error) : NULL;
+                if (count && (!entries || !qa_inventory_entries(inventory, frame->actor, entries, count, &count, error))) return false;
+                if (count > SIZE_MAX / sizeof(qa_hud_inventory_row)) return ui_fail(error, "HUD inventory row overflow");
+                qa_hud_inventory_row *canonical_rows = count ? qa_arena_alloc(&scene->storage, count * sizeof(*canonical_rows),
+                    _Alignof(qa_hud_inventory_row), error) : NULL;
+                if (count && !canonical_rows) return false;
+                rows = canonical_rows; row_count = 0;
+                for (size_t i = 0; i < count; ++i) {
+                    if (entries[i].count <= 0) continue;
+                    for (size_t j = 0; j < definition_count; ++j) {
+                        if (definitions[j].item != entries[i].item) continue;
+                        canonical_rows[row_count++] = (qa_hud_inventory_row){.item = entries[i].item,
+                            .label = definitions[j].label, .count = entries[i].count,
+                            .selected = entries[i].item == data.selected_weapon};
+                        break;
+                    }
                 }
             }
+            if (!inventory_draw(hud, frame, scene, rows, row_count, error)) return false;
         }
         if (frame->show_scores) {
             for (size_t i = 0; i < data.score_count; ++i) {

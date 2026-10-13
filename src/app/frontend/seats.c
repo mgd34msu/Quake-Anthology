@@ -28,6 +28,7 @@
 #include "qa/game_q1_ui.h"
 #include "qa/hud_q2.h"
 #include "qa/game_q2_items.h"
+#include "qa/unified_frame_player.h"
 #include "qa/text.h"
 #include "material_movies.h"
 #include "qc_messages.h"
@@ -183,16 +184,93 @@ static const qa_scene_image *local_q2_picture(void *context, qa_string_id name, 
 }
 static qa_string_id local_q2_config_picture(void *context,int32_t index,unsigned variant)
 { return qa_hud_q2_names_picture(((local_q2_hud *)context)->names,index,variant); }
-static const char *local_q2_binding(void *context, const char *command)
+static const char *hud_binding(frontend_seat *seat,const char *command,char *out,size_t size)
 {
-    local_q2_hud *hud = context;
-    for (size_t i = 0; i < qa_input_seat_binding_count(hud->seat->input); ++i) {
-        const qa_input_binding *binding = qa_input_seat_binding_at(hud->seat->input, i);
+    for (size_t i = 0; i < qa_input_seat_binding_count(seat->input); ++i) {
+        const qa_input_binding *binding = qa_input_seat_binding_at(seat->input, i);
         const char *text = binding->kind == QA_BIND_COMMAND ? binding->command : qa_input_action_command(binding->action);
         if (text && !SDL_strcasecmp(text, command) &&
-            qa_input_physical_name(binding->input, hud->binding, sizeof(hud->binding))) return hud->binding;
+            qa_input_physical_name(binding->input,out,size)) return out;
     }
     return "";
+}
+static const char *local_q2_binding(void *context, const char *command)
+{
+    local_q2_hud *hud=context;
+    return hud_binding(hud->seat,command,hud->binding,sizeof(hud->binding));
+}
+
+bool frontend_hud_inventory_rows(frontend_seat *seat,const qa_hud_frame *frame,
+    const qa_inventory_entry *entries,size_t count,qa_item_id selected,
+    const qa_unified_player_ui *received,const qa_strings *strings,qa_hud_data *out,qa_error *error)
+{
+    if(count>SIZE_MAX/sizeof(qa_hud_inventory_row))
+        return frontend_fail(error,QA_ERROR_MEMORY,"HUD inventory row storage overflow");
+    qa_arena *storage=&seat->frontend->frame.storage;
+    qa_hud_inventory_row *rows=count?qa_arena_alloc(storage,count*sizeof(*rows),_Alignof(qa_hud_inventory_row),error):NULL;
+    if(count && !rows)return false;
+    size_t written=0;
+    for(size_t i=0;i<count;++i) {
+        const qa_inventory_entry *entry=entries+i;
+        if(entry->count<=0)continue;
+        const char *label=NULL;
+        qa_item_definition definition={0}; bool defined=false;
+        if(received) {
+            for(size_t j=0;j<received->item_count;++j)
+                if(received->items[j].id==entry->item) {label=received->items[j].label;break;}
+            if(!label && received->weapon_status && received->weapon_status->item==entry->item)
+                label=received->weapon_status->label;
+        } else if(!qa_inventory_item_definition_find(qa_application_inventory(seat->frontend->application),
+            frame->actor,NULL,entry->item,&definition,&defined,error))return false;
+        if(defined)label=definition.label;
+        if(!label) {
+            label=qa_strings_cstr(strings,entry->item);
+            if(!label)label="Item";
+            if(!strncmp(label,"q2:",3))label+=3;
+            if(strchr(label,'_')) {
+                char *display=qa_arena_text(storage,label,error);
+                if(!display)return false;
+                for(char *p=display;*p;++p)if(*p=='_')*p=' ';
+                label=display;
+            }
+        }
+        char key[64],command[64]; const char *binding="";
+        if(defined) {
+            snprintf(command,sizeof(command),"useitem %u %u",definition.owner,entry->item);
+            binding=hud_binding(seat,command,key,sizeof(key));
+        }
+        if(!*binding) {
+            size_t length=strlen(label);
+            if(length>SIZE_MAX-5)return frontend_fail(error,QA_ERROR_MEMORY,"HUD inventory binding text overflow");
+            char *use=qa_arena_alloc(storage,length+5,1,error);
+            if(!use)return false;
+            memcpy(use,"use ",4); memcpy(use+4,label,length+1);
+            binding=hud_binding(seat,use,key,sizeof(key));
+        }
+        const char *retained_binding=*binding?qa_arena_text(storage,binding,error):NULL;
+        if(*binding && !retained_binding)return false;
+        rows[written++]=(qa_hud_inventory_row){.item=entry->item,.label=label,
+            .binding=retained_binding,.icon=entry->item==out->selected_weapon?out->weapon.icon:NULL,
+            .count=entry->count,.selected=entry->item==selected};
+    }
+    out->inventory=rows; out->inventory_count=written; out->inventory_present=true;
+    return true;
+}
+
+static bool hud_inventory_data(frontend_seat *seat,const qa_hud_frame *frame,qa_hud_data *out,qa_error *error)
+{
+    qa_inventory *inventory=qa_application_inventory(seat->frontend->application);
+    size_t count=0;
+    if(!qa_inventory_entries(inventory,frame->actor,NULL,0,&count,error))return false;
+    if(count>SIZE_MAX/sizeof(qa_inventory_entry))
+        return frontend_fail(error,QA_ERROR_MEMORY,"HUD inventory storage overflow");
+    qa_inventory_entry *entries=count?qa_arena_alloc(&seat->frontend->frame.storage,
+        count*sizeof(*entries),_Alignof(qa_inventory_entry),error):NULL;
+    if(count && (!entries || !qa_inventory_entries(inventory,frame->actor,entries,count,&count,error)))return false;
+    qa_item_id selected=seat->q2_view_ready && qa_actor_id_equal(frame->actor,seat->q2_actor)?
+        seat->q2_view.selected_item:out->selected_weapon;
+    return frontend_hud_inventory_rows(seat,frame,entries,count,selected,NULL,
+        qa_session_strings(qa_application_session(seat->frontend->application)),out,error);
 }
 static bool hud_source_draw(void *context, const qa_hud_frame *frame,
     qa_scene_frame *scene, qa_error *error)
@@ -466,8 +544,10 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
     bool source_slot = false;
     if (!hud_weapon_data(seat,frame,out,source.source_hud,
         !source.source_hud,&source_slot,error)) return false;
-    if (source_slot) return true;
-    return qa_application_weapon_read(seat->frontend->application, frame->actor, &out->selected_weapon, error);
+    if (!source_slot && !qa_application_weapon_read(seat->frontend->application,frame->actor,&out->selected_weapon,error)) return false;
+    if(frame->show_inventory && !source.source_hud && !frame->source_status_native && !frame->weapon_only)
+        return hud_inventory_data(seat,frame,out,error);
+    return true;
 }
 static bool input_handler(void *context, qa_input_seat *input, qa_input_focus kind, const qa_input_event *event)
 {

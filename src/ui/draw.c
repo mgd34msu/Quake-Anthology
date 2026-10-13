@@ -263,11 +263,8 @@ static bool list_draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
             control->rect.y + (control->rect.height - thumb) * (float)state->top / (float)maximum,
             12, thumb}, active ? accent : disabled, error);
 }
-typedef struct menu_colors {
-    qa_vec4 text, disabled, accent, control, focused, panel;
-} menu_colors;
-static menu_colors menu_palette(const qa_ui *ui, bool contrast, bool narrow) {
-    menu_colors colors = {
+ui_palette ui_palette_read(const qa_ui *ui, bool contrast, bool narrow) {
+    ui_palette colors = {
         .text = {.9f, .92f, .94f, 1}, .disabled = {.48f, .5f, .53f, 1},
         .accent = {1, .73f, .35f, 1}, .control = {.06f, .08f, .1f, .83f},
         .focused = {.23f, .16f, .09f, .97f},
@@ -321,7 +318,7 @@ bool qa_ui_menu_text(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
     if (!text || !*text || !target.width || !target.height) return true;
     if (!style->source && ui->options.localize) text = ui->options.localize(ui->options.context, text);
     if (!text || !*text) return true;
-    menu_colors colors = menu_palette(ui, ui->high_contrast, false);
+    ui_palette colors = ui_palette_read(ui, ui->high_contrast, false);
     const qa_font_selection *fonts = style->heading && ui->options.title_fonts.classic
         ? &ui->options.title_fonts : &ui->options.fonts;
     qa_font_layout_options options = {.text = {(const uint8_t *)text, strlen(text)},
@@ -419,7 +416,7 @@ static bool draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect viewport, float
     qa_ui_menu menu;
     if (!ui_active(ui, &menu, error)) return false;
     if (!ui->depth) return true;
-    menu_colors colors = menu_palette(ui, contrast, menu.narrow);
+    ui_palette colors = ui_palette_read(ui, contrast, menu.narrow);
     if (!menu.picture_only && ((startup && !menu_backdrop(ui, frame, viewport, error)) ||
         !menu_panel(ui, frame, viewport, menu.narrow, colors.panel, error) ||
         !menu_title(ui, frame, viewport, &menu, error) ||

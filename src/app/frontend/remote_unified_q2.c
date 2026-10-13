@@ -711,6 +711,13 @@ static bool hud_read(void *ctx,const qa_hud_frame *frame,qa_hud_data *out,qa_err
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
     if (!o->busy || frame->seat!=d->physical_seat) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 message HUD lost its CLIENT seat");
     *out=(qa_hud_data){.source_vitals=true};
+    if(frame->show_inventory) {
+        const qa_unified_frame *received=qa_unified_document_frame(o->frame);
+        const qa_unified_player_ui empty={0};
+        const qa_unified_player_ui *source=received && received->player?&received->player->ui:&empty;
+        if(!frontend_hud_inventory_rows(o->frontend->seats+d->physical_seat,frame,o->items,o->item_count,
+            o->selected_item,source,o->replica->strings,out,e))return false;
+    }
     if (o->help_visible) {
         out->help_title="Help computer";
         if (o->help_text[0] && o->help_text[1]) { out->help_lines=(const char *const *)o->help_text; out->help_count=2; }
@@ -1884,27 +1891,10 @@ bool frontend_unified_q2_hud(frontend_unified_q2 *o,qa_ui *ui,qa_scene_rect view
     ++o->busy;
     qa_hud_options options=hud_options(o);
     bool okay=qa_hud_draw_content(o->hud,&options,&(qa_hud_frame){.seat=d->physical_seat,.actor=player,.time_ns=nanoseconds(o->seconds),
-        .viewport=viewport,.safe_area=viewport,.scale=1,.visible=true},frame,e);
+        .viewport=viewport,.safe_area=viewport,.scale=1,.visible=true,
+        .show_inventory=o->inventory_visible && !o->status.hud && !replacement},frame,e);
     --o->busy;
     if (okay) okay=marker_draw(o,viewport,frame,e);
-    if (okay && o->inventory_visible && !o->status.hud && !replacement) {
-        okay=overlay_text(ui,viewport,frame,"Inventory",160,80,(qa_vec4){1,1,1,1},e);
-        size_t visible=0;
-        for (size_t i=0;okay && i<o->item_count;++i) {
-            const qa_inventory_entry *item=o->items+i;
-            if (item->count<=0)continue;
-            char count[32];if (!qa_format_number(item->count,count,e)){okay=false;break;}
-            const char *label=qa_strings_cstr(o->replica->strings,item->item);
-            if (!strncmp(label,"q2:",3))label+=3;
-            size_t label_size=strlen(label);if (label_size>SIZE_MAX-64){okay=false;break;}
-            char *row=qa_arena_alloc(&frame->storage,label_size+64,1,e);if (!row){okay=false;break;}
-            snprintf(row,label_size+64,"%s  ",count);size_t offset=strlen(count)+2;
-            for (size_t k=0;k<label_size;++k)row[offset+k]=label[k]=='_'?' ':label[k];
-            row[offset+label_size]=0;
-            okay=overlay_text(ui,viewport,frame,row,160,108+(float)visible++*16,
-                item->item==o->selected_item?(qa_vec4){1,.8f,.3f,1}:(qa_vec4){1,1,1,1},e);
-        }
-    }
     if (okay && (o->score_visible || qa_input_seat_action_active(o->frontend->seats[d->physical_seat].input,QA_INPUT_SCORES)))
         for (size_t i=0;okay && i<o->score_count;++i) {
             const qa_q2_score_row *score=o->score_rows+i;size_t length=strlen(score->name)+128;

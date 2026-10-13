@@ -87,6 +87,13 @@ typedef struct qa_hud_weapon {
     bool present, finite_ammo, has_ammo_to_start, low_ammo;
     bool native_status, suppress_active_warning, aggregate_low, aggregate_empty;
 } qa_hud_weapon;
+typedef struct qa_hud_inventory_row {
+    qa_item_id item;
+    const char *label, *binding;
+    const qa_material *icon;
+    double count;
+    bool selected;
+} qa_hud_inventory_row;
 /* Providers return borrowed source data for this draw only. Canonical health,
  * armor and inventory are read by the common HUD unless source_vitals is set.
  * Providers and source draws may inspect but must not mutate the application,
@@ -108,6 +115,9 @@ typedef struct qa_hud_data {
     bool crosshair_visible, source_vitals;
     qa_item_id selected_weapon;
     qa_hud_weapon weapon;
+    const qa_hud_inventory_row *inventory;
+    size_t inventory_count;
+    bool inventory_present;
     const char *help_title;
     const char *const *help_lines;
     size_t help_count;
