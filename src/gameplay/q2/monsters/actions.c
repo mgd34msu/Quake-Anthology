@@ -273,9 +273,12 @@ static bool duck_action(q2m_context *context, q2m_callback_id callback,
   }
   if (shared) {
     if (rerelease && !m->ducked) return true;
-    if (!rerelease) m->next_duck_ns = q2m_after(context->game->now_ns, 5);
+    if (!rerelease) m->next_duck_ns = q2m_after(context->game->now_ns,
+        context->game->options.product == QA_Q2_ROGUE ? .5 : 5);
     else if (m->next_duck_ns > context->game->now_ns)
       m->next_duck_ns = context->game->now_ns + (m->next_duck_ns - context->game->now_ns) / 2;
+    if (!rerelease && context->game->options.product == QA_Q2_ROGUE)
+      return publish_duck(context, false, error);
   }
   return set_duck(context, false, error);
 }

@@ -2361,23 +2361,31 @@ static bool pending_attack(const struct qa_q2_monster *monster, bool blind) {
          (blind && monster->attack_state == Q2M_BLIND);
 }
 
-bool q2m_check_attack(q2m_context *context, bool *selected, bool *started, qa_error *error) {
-  *selected = *started = false;
+static void sound_target_refresh(q2m_context *context) {
+  struct qa_q2_monster *monster = context->monster;
+  qa_q2_player_noise_record noise;
+  for (unsigned channel = 0; channel != 2; ++channel) {
+    if (qa_q2_player_noise_read(context->game, channel != 0, &noise) &&
+        qa_actor_id_equal(noise.owner, monster->sound_target.actor)) {
+      monster->sound_target.origin = noise.origin;
+      monster->sound_target.time_ns = noise.time_ns;
+      break;
+    }
+  }
+}
+
+bool q2m_check_attack(q2m_context *context, bool *selected, bool *started,
+                      bool *enemy_visible, qa_error *error) {
+  *selected = *started = *enemy_visible = false;
   struct qa_q2_monster *monster = context->monster;
   bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   bool rogue = rerelease || context->game->options.product == QA_Q2_ROGUE;
+  if (rerelease && monster->temporary_stand_ground)
+    monster->stand_ground = monster->temporary_stand_ground = false;
   if (monster->combat_point)
     return true;
   if (monster->sound_target.present) {
-    qa_q2_player_noise_record noise;
-    for (unsigned channel = 0; channel != 2; ++channel) {
-      if (qa_q2_player_noise_read(context->game, channel != 0, &noise) &&
-          qa_actor_id_equal(noise.owner, monster->sound_target.actor)) {
-        monster->sound_target.origin = noise.origin;
-        monster->sound_target.time_ns = noise.time_ns;
-        break;
-      }
-    }
+    sound_target_refresh(context);
     if (monster->sound_target.time_ns >= context->game->now_ns ||
         context->game->now_ns - monster->sound_target.time_ns <= 5 * Q2M_SECOND) {
       monster->hostile_ns = q2m_after(context->game->now_ns, 1);
@@ -2454,6 +2462,7 @@ bool q2m_check_attack(q2m_context *context, bool *selected, bool *started, qa_er
   bool visible;
   if (!q2m_visible(context, monster->enemy, &visible, error))
     return false;
+  *enemy_visible = visible;
   if (!q2m_alive(context))
     return true;
   if (visible) {
@@ -3818,6 +3827,10 @@ bool q2m_move_to_goal(q2m_context *context, float distance, qa_error *error) {
                                      &target, &ignored);
   if (has_goal)
     goal = target.origin;
+  if (monster->sound_target.present) {
+    goal = monster->sound_target.origin;
+    has_goal = true;
+  }
   bool ordinary_enemy = !monster->hint_path && !monster->combat_point &&
                         !monster->sound_target.present &&
                         monster->enemy.registry != 0;
@@ -3882,6 +3895,81 @@ static bool frame_move(q2m_context *context, float distance, qa_error *error) {
   if (!walk_move(context, context->body.angles.y, distance, &(bool){false}, error))
     return false;
   return !q2m_alive(context) || q2m_refresh(context, error);
+}
+
+static bool run_slide(q2m_context *context, float distance, qa_error *error) {
+  struct qa_q2_monster *monster = context->monster;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+  bool extended = rerelease || context->game->options.product == QA_Q2_ROGUE;
+  qa_body_state enemy;
+  bool present;
+  if (!attack_body(context, monster->enemy, &enemy, &present, error))
+    return false;
+  if (!q2m_alive(context) || !present)
+    return true;
+  monster->ideal_yaw = vector_yaw(qa_vec_sub(enemy.origin, context->body.origin));
+  if ((!extended || !monster->manual_steering) && !q2m_change_yaw(context, error))
+    return false;
+  if (!q2m_alive(context))
+    return true;
+  if (rerelease && !(context->actor->physics.flags & QA_PHYSICS_FLYING))
+    distance = fminf(distance, 8.0f / ((float)context->game->frame_ns / 10000000.0f));
+  float side = monster->lefty ? 90.0f : -90.0f;
+  bool moved;
+  if (!walk_move(context, monster->ideal_yaw + side, distance, &moved, error))
+    return false;
+  if (!q2m_alive(context))
+    return true;
+  if (!q2m_refresh(context, error))
+    return false;
+  if (moved)
+    return true;
+  if (extended && monster->dodging) {
+    if (!q2m_callback_run(context, Q2M_CALLBACK_monster_done_dodge, error))
+      return false;
+    if (q2m_alive(context))
+      monster->attack_state = Q2M_STRAIGHT;
+    return true;
+  }
+  monster->lefty = !monster->lefty;
+  if (!walk_move(context, monster->ideal_yaw - side, distance, &moved, error))
+    return false;
+  if (!q2m_alive(context))
+    return true;
+  if (!q2m_refresh(context, error))
+    return false;
+  if (extended && !moved) {
+    if (monster->dodging &&
+        !q2m_callback_run(context, Q2M_CALLBACK_monster_done_dodge, error))
+      return false;
+    if (q2m_alive(context))
+      monster->attack_state = Q2M_STRAIGHT;
+  }
+  return true;
+}
+
+static bool run_sighting(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *monster = context->monster;
+  qa_body_state enemy;
+  bool present;
+  if (!attack_body(context, monster->enemy, &enemy, &present, error))
+    return false;
+  if (!q2m_alive(context) || !present)
+    return true;
+  monster->lost_sight = false;
+  monster->last_sighting = enemy.origin;
+  monster->trail_ns = context->game->now_ns;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+  if (rerelease || context->game->options.product == QA_Q2_ROGUE) {
+    monster->blind_fire_target = rerelease
+        ? qa_vec_add(enemy.origin, qa_vec_scale(enemy.velocity, -.1f)) : enemy.origin;
+    monster->blind_fire_delay = 0.0f;
+  }
+  if (rerelease) {
+    monster->saved_goal = enemy.origin;
+    monster->has_saved_goal = true;
+  }
+  return true;
 }
 
 static bool prone_shot(q2m_context *context, bool *eligible, qa_error *error) {
@@ -4110,8 +4198,8 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind,
         return false;
       if (!q2m_alive(context))
         return true;
-      bool selected = false, started = false;
-      if (!q2m_check_attack(context, &selected, &started, error))
+      bool selected = false, started = false, visible;
+      if (!q2m_check_attack(context, &selected, &started, &visible, error))
         return false;
       return !q2m_alive(context) || !selected || started || attack_selected(context, error);
     }
@@ -4137,8 +4225,58 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind,
     return idle_search(context, true, error);
   }
   case Q2M_AI_RUN: {
+    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+    bool rogue = !rerelease && context->game->options.product == QA_Q2_ROGUE;
+    bool extended = rerelease || rogue;
     if (monster->combat_point)
       return q2m_move_to_goal(context, distance, error);
+    if (rogue) {
+      monster->ducked = false;
+      if (context->body.bounds.maxs.z != monster->normal_height &&
+          !q2m_callback_run(context, Q2M_CALLBACK_monster_duck_up, error))
+        return false;
+      if (!q2m_alive(context))
+        return true;
+    }
+    bool already_moved = false;
+    if (monster->sound_target.present) {
+      sound_target_refresh(context);
+      bool touching;
+      if (rerelease) {
+        qa_body_state noise = {.origin = monster->sound_target.origin,
+            .bounds = {{-8, -8, -8}, {8, 8, 8}}};
+        touching = boxes_close(&context->body, &noise,
+            distance * ((float)Q2M_TENTH / (float)context->game->frame_ns));
+      } else {
+        touching = qa_vec_length(qa_vec_sub(context->body.origin,
+                                           monster->sound_target.origin)) < 64.0f;
+      }
+      bool facing = fabsf(qa_angle_delta(monster->ideal_yaw,
+                                       context->body.angles.y)) <= 45.0f;
+      if (touching && (!rerelease || facing)) {
+        monster->stand_ground = monster->temporary_stand_ground = true;
+        if (rerelease) {
+          context->body.angles.y = monster->ideal_yaw;
+          if (!q2m_write_body(context, false, error))
+            return false;
+          if (!q2m_alive(context))
+            return true;
+          monster->close_sight_tripped = false;
+        }
+        return q2m_set_move(context, monster->definition->stand_move, false, error);
+      }
+      if (!(rerelease && touching ? q2m_change_yaw(context, error)
+                                  : q2m_move_to_goal(context, distance, error)))
+        return false;
+      if (!q2m_alive(context))
+        return true;
+      already_moved = extended;
+      bool found;
+      if (!q2m_find_target(context, &found, error))
+        return false;
+      if (!q2m_alive(context) || !found)
+        return true;
+    }
     if (monster->enemy.registry == 0) {
       bool found;
       if (!q2m_find_target(context, &found, error))
@@ -4146,16 +4284,64 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind,
       if (!q2m_alive(context))
         return true;
     }
-    if (monster->enemy.registry != 0) {
-      bool selected, started;
-      if (!q2m_check_attack(context, &selected, &started, error))
+    bool selected, started, visible;
+    if (!q2m_check_attack(context, &selected, &started, &visible, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    if (selected && !started && !attack_selected(context, error))
+      return false;
+    if (!q2m_alive(context) || (!extended && selected))
+      return true;
+    if (extended) {
+      if (!visible && monster->attack_state == Q2M_SLIDING)
+        monster->attack_state = Q2M_STRAIGHT;
+      if (monster->dodging)
+        monster->attack_state = Q2M_SLIDING;
+    }
+    if (monster->attack_state == Q2M_SLIDING) {
+      if (!already_moved && !run_slide(context, distance, error))
+        return false;
+      if (!q2m_alive(context) || !extended ||
+          (!selected && monster->attack_state == Q2M_SLIDING))
+        return true;
+    } else if (extended && monster->charging && !monster->manual_steering) {
+      if (!q2m_face_enemy(context, error))
         return false;
       if (!q2m_alive(context))
         return true;
-      if (selected)
-        return started || attack_selected(context, error);
     }
-    return q2m_move_to_goal(context, distance, error);
+    if (selected) {
+      if ((distance != 0.0f || (rerelease && monster->alternate_fly)) &&
+          !already_moved && monster->attack_state == Q2M_STRAIGHT &&
+          !monster->stand_ground && !q2m_move_to_goal(context, distance, error))
+        return false;
+      return !q2m_alive(context) || !visible || run_sighting(context, error);
+    }
+    if (visible) {
+      if (!already_moved && !q2m_move_to_goal(context, distance, error))
+        return false;
+      if (!q2m_alive(context))
+        return true;
+      if (!run_sighting(context, error))
+        return false;
+      return !rerelease || !q2m_alive(context) ||
+             q2m_distance(context, monster->enemy) > 50.0f || q2m_change_yaw(context, error);
+    }
+    if (context->game->options.cooperative) {
+      bool found;
+      if (!q2m_find_target(context, &found, error))
+        return false;
+      if (!q2m_alive(context) || (found && !rerelease))
+        return true;
+    }
+    bool timeout = monster->search_ns && context->game->now_ns > monster->search_ns &&
+                   context->game->now_ns - monster->search_ns > 20 * Q2M_SECOND;
+    if (!already_moved && !q2m_move_to_goal(context, distance, error))
+      return false;
+    if (timeout && q2m_alive(context))
+      monster->search_ns = 0;
+    return true;
   }
   case Q2M_AI_CHARGE: {
     bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
