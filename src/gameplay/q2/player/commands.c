@@ -127,6 +127,16 @@ static bool select_item(qa_q2_game *g, q2_actor *a, int direction, int filter, q
     a->selected_item_name_until_ns = 0;
     return true;
 }
+bool qa_q2_player_inventory_validate(qa_q2_game *g, qa_actor_id actor, qa_error *e) {
+    q2_actor *a = g ? q2_actor_get(g, actor, false, NULL) : NULL;
+    if (!a || !a->client)
+        return true;
+    int owned = 0;
+    if (a->client->info.selected_item &&
+        !q2_count(g, actor, a->client->info.selected_item, &owned, e))
+        return false;
+    return owned || select_item(g, a, 1, 0, e);
+}
 static bool use_item(qa_q2_game *g, q2_actor *a, const qa_q2_item_definition *d, qa_error *e) {
     if (!d)
         return q2_player_print(g, a->id, 2, "unknown item\n", e);
@@ -144,7 +154,8 @@ static bool use_item(qa_q2_game *g, q2_actor *a, const qa_q2_item_definition *d,
         return false;
     if (q2_actor_live(g, a->id) && a->client)
         a->client->info.selected_item = d->item;
-    return true;
+    return g->options.rules != QA_RULESET_Q2_RERELEASE ||
+           qa_q2_player_inventory_validate(g, a->id, e);
 }
 static bool supplemental_action(qa_q2_game *g, q2_actor *a, const char *name, qa_item_action action,
                                 bool *handled, qa_error *e) {
@@ -159,9 +170,12 @@ static bool supplemental_action(qa_q2_game *g, q2_actor *a, const char *name, qa
     int count;
     if (!q2_count(g, a->id, item.definition.item, &count, e))
         return false;
-    return count ? qa_inventory_item_action(g->services.inventory, a->id, item.definition.item,
-                                            action, e)
-                 : q2_player_print(g, a->id, 2, "Out of item.\n", e);
+    if (!count)
+        return q2_player_print(g, a->id, 2, "Out of item.\n", e);
+    if (!qa_inventory_item_action(g->services.inventory, a->id, item.definition.item, action, e))
+        return false;
+    return g->options.rules != QA_RULESET_Q2_RERELEASE ||
+           qa_q2_player_inventory_validate(g, a->id, e);
 }
 static bool drop_item(qa_q2_game *g, q2_actor *a, const qa_q2_item_definition *d, qa_error *e) {
     if (!d)
@@ -176,7 +190,10 @@ static bool drop_item(qa_q2_game *g, q2_actor *a, const qa_q2_item_definition *d
         return false;
     if (!owned)
         return q2_player_print(g, a->id, 2, "Out of item.\n", e);
-    return qa_inventory_item_action(g->services.inventory, a->id, d->item, QA_ITEM_DROP, e);
+    if (!qa_inventory_item_action(g->services.inventory, a->id, d->item, QA_ITEM_DROP, e))
+        return false;
+    return g->options.rules != QA_RULESET_Q2_RERELEASE ||
+           qa_q2_player_inventory_validate(g, a->id, e);
 }
 static bool item_command(qa_q2_game *g, q2_actor *a, const char *text, bool using, qa_error *e) {
     const qa_q2_item_definition *item = qa_q2_item_lookup(g, text);
@@ -703,10 +720,7 @@ bool q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_
         return !s->rule.show_inventory || q2_player_publish_inventory(g, a, e);
     }
     if (equal_name(command, "invuse") || equal_name(command, "invdrop")) {
-        int owned = 0;
-        if (s->info.selected_item && !q2_count(g, id, s->info.selected_item, &owned, e))
-            return false;
-        if (!owned && !select_item(g, a, 1, 0, e))
+        if (!qa_q2_player_inventory_validate(g, id, e))
             return false;
         const qa_q2_item_definition *d = q2_item_by_id(g, s->info.selected_item);
         if (!d)

@@ -222,6 +222,25 @@ static bool ctf_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
             ? MODE_NAME_CTF_ID_ENABLED : MODE_NAME_CTF_ID_DISABLED;
         return mode_message(m, v, actor, m->runtime_names[message], NULL, 0, e);
     }
+    if (named(name, "drop") && command->argc == 2 && named(command->argv[1], "tech") &&
+        v->value.rules.enabled) {
+        bool rerelease = v->value.rules.ruleset == QA_RULESET_Q2_RERELEASE;
+        if (rerelease && !mode_alive(m, actor)) {
+            *handled = true;
+            return true;
+        }
+        mode_member *member = mode_member_get(m, v, actor);
+        mode_object *tech = member ? mode_object_get(m, member->relic) : NULL;
+        if (!tech) {
+            *handled = rerelease;
+            return true;
+        }
+        qa_item_id item;
+        if (!mode_inventory_item(m, v, tech->spec.item, &item, e))
+            return false;
+        *handled = true;
+        return qa_inventory_item_action(m->options.services.inventory, actor, item, QA_ITEM_DROP, e);
+    }
     if (named(name, "yes") || named(name, "no")) {
         *handled = true;
         return qa_modes_vote_cast(m, v->id, actor, 0, named(name, "yes"), e);

@@ -461,10 +461,18 @@ static qa_command_result command_dispatch(qa_application *application,
             return QA_COMMAND_FAILED;
         if (handled) return QA_COMMAND_HANDLED;
     }
+    uint64_t inventory_revision = qa_inventory_revision(application->inventory, actor);
     if (actor.registry != 0 && application->primary_mode_ready &&
         !qa_modes_console_command(application->modes, application->primary_mode,
                                     actor, &command, &handled, error))
         return QA_COMMAND_FAILED;
+    if (handled && q3_command_named(command.argv[0], "drop") &&
+        qa_inventory_revision(application->inventory, actor) != inventory_revision) {
+        application_provider *character = application_provider_for(application, actor, QA_ROLE_CHARACTER, "");
+        if (character && character->kind == APPLICATION_PROVIDER_Q2 &&
+            character->component.clock.kind == QA_RULESET_Q2_RERELEASE &&
+            !qa_q2_player_inventory_validate(character->state.q2, actor, error)) return QA_COMMAND_FAILED;
+    }
     if (handled)
         return QA_COMMAND_HANDLED;
     application_provider *provider = command.context.owner != 0
