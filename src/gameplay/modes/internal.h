@@ -449,6 +449,16 @@ typedef struct mode_objective {
     X(LMCTF_VOTE_NEEDS_BALLOTS, "Vote Fails: you need at least 2 ballots cast!\n") \
     X(LMCTF_VOTE_SKIP_PASSED, "Vote to skip level Passes with {0} percent majority\n") \
     X(LMCTF_VOTE_FAILED, "Vote Fails with {0} percent majority\n") \
+    X(LMCTF_VOTE_MENU_TITLE, "LMCTF Vote Menu") \
+    X(LMCTF_VOTE_MENU_SEPARATOR, "------------------") \
+    X(LMCTF_VOTE_MENU_SKIP, "Skip to next map") \
+    X(LMCTF_VOTE_MENU_YES, "Vote YES") \
+    X(LMCTF_VOTE_MENU_NO, "Vote NO") \
+    X(LMCTF_VOTE_MENU_IDLE, "Vote:     Idle") \
+    X(LMCTF_VOTE_MENU_STARTED, "Vote:     Started") \
+    X(LMCTF_VOTE_MENU_BALLOT_NONE, "You have not voted") \
+    X(LMCTF_VOTE_MENU_BALLOT_YES, "You have voted YES") \
+    X(LMCTF_VOTE_MENU_BALLOT_NO, "You have voted NO") \
     X(LMCTF_TEAM_SWITCH_OFF, "Sorry.  Team switching has been turned\n off on this server.\n") \
     X(LMCTF_TEAM_LOCKED, "Teams are currently locked.\n") \
     X(LMCTF_CURRENT_TEAM, "You are currently on the {0} team.\n") \
@@ -673,6 +683,7 @@ bool mode_ui_command(qa_modes *, mode_instance *, qa_actor_id,
 bool mode_ui_close(qa_modes *, mode_instance *, qa_actor_id, qa_error *);
 bool mode_ui_open_join(qa_modes *, mode_instance *, qa_actor_id, qa_error *);
 bool mode_ui_open_admin(qa_modes *, mode_instance *, qa_actor_id, qa_error *);
+bool mode_ui_open_lmctf_vote(qa_modes *, mode_instance *, qa_actor_id, qa_error *);
 bool mode_ui_ctf_settings_apply(qa_modes *, mode_instance *, qa_actor_id,
                                 const qa_mode_ctf_settings *, qa_error *);
 bool mode_ui_ctf_match(qa_modes *, mode_instance *, qa_actor_id, qa_error *);

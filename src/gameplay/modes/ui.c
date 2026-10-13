@@ -6,6 +6,7 @@
 
 typedef enum menu_action {
     MENU_NONE, MENU_RED, MENU_BLUE, MENU_CHASE, MENU_CREDITS, MENU_BACK, MENU_MATCH,
+    MENU_VOTE_SKIP, MENU_VOTE_YES, MENU_VOTE_NO,
     MENU_ADMIN_SETTINGS, MENU_ADMIN_MATCH, MENU_ADMIN_CANCEL,
     MENU_SETTING_MATCH, MENU_SETTING_SETUP, MENU_SETTING_START, MENU_SETTING_WEAPONS_STAY,
     MENU_SETTING_INSTANT_ITEMS, MENU_SETTING_QUAD_DROP, MENU_SETTING_INSTANT_WEAPONS,
@@ -79,6 +80,14 @@ static const menu_entry settings_entries[] = {
     MENU_ENTRY(SETTINGS_MATCH_LOCK, LEFT, SETTING_MATCH_LOCK), MENU_BLANK,
     MENU_ENTRY(APPLY, LEFT, SETTINGS_APPLY), MENU_ENTRY(CANCEL, LEFT, SETTINGS_CANCEL)
 };
+static const menu_entry lmctf_vote_entries[] = {
+    {MODE_NAME_LMCTF_VOTE_MENU_TITLE, MENU_LEFT, MENU_NONE},
+    {MODE_NAME_LMCTF_VOTE_MENU_SEPARATOR, MENU_LEFT, MENU_NONE},
+    {MODE_NAME_LMCTF_VOTE_MENU_SKIP, MENU_LEFT, MENU_VOTE_SKIP},
+    MENU_BLANK, MENU_BLANK, MENU_BLANK,
+    {MODE_NAME_LMCTF_VOTE_MENU_IDLE, MENU_LEFT, MENU_NONE},
+    MENU_BLANK, MENU_BLANK
+};
 #undef MENU_ENTRY
 #undef MENU_BLANK
 
@@ -125,10 +134,28 @@ static size_t menu_rows(qa_modes *m, mode_instance *v, mode_member *member, qa_m
         entries = admin_entries; count = sizeof(admin_entries) / sizeof(*entries); break;
     case QA_MODE_MENU_SETTINGS:
         entries = settings_entries; count = sizeof(settings_entries) / sizeof(*entries); break;
+    case QA_MODE_MENU_LMCTF_VOTE:
+        entries = lmctf_vote_entries;
+        count = sizeof(lmctf_vote_entries) / sizeof(*entries);
+        break;
     case QA_MODE_MENU_NONE: case QA_MODE_MENU_SCOREBOARD: return 0;
     }
     for (size_t i = 0; i < count; ++i)
         rows[i] = (menu_row){menu_text(m, entries[i].name), entries[i].align, entries[i].action};
+    if (page == QA_MODE_MENU_LMCTF_VOTE) {
+        if (v->votes[0].active) {
+            rows[2] = (menu_row){NULL, MENU_LEFT, MENU_NONE};
+            rows[3] = (menu_row){menu_text(m, MODE_NAME_LMCTF_VOTE_MENU_YES),
+                                 MENU_LEFT, MENU_VOTE_YES};
+            rows[4] = (menu_row){menu_text(m, MODE_NAME_LMCTF_VOTE_MENU_NO),
+                                 MENU_LEFT, MENU_VOTE_NO};
+            rows[6].text = menu_text(m, MODE_NAME_LMCTF_VOTE_MENU_STARTED);
+            rows[8].text = menu_text(m, member->ballots[0] > 0
+                ? MODE_NAME_LMCTF_VOTE_MENU_BALLOT_YES : member->ballots[0] < 0
+                ? MODE_NAME_LMCTF_VOTE_MENU_BALLOT_NO : MODE_NAME_LMCTF_VOTE_MENU_BALLOT_NONE);
+        }
+        return count;
+    }
     if (page == QA_MODE_MENU_ADMIN) {
         mode_name match = MODE_NAME_COUNT;
         if (v->value.phase == QA_MODE_SETUP)
@@ -229,7 +256,8 @@ static bool menu_publish(qa_modes *m, mode_instance *v, qa_actor_id actor,
     member = mode_member_get(m, v, actor);
     if (!member)
         return true;
-    if (opened && (member->menu.cursor < 0 || (size_t)member->menu.cursor >= count ||
+    bool lmctf = member->menu.page == QA_MODE_MENU_LMCTF_VOTE;
+    if ((opened || lmctf) && (member->menu.cursor < 0 || (size_t)member->menu.cursor >= count ||
                     rows[member->menu.cursor].action == MENU_NONE))
         member->menu.cursor = menu_first(rows, count);
     char layout[QA_MODE_MENU_LAYOUT_BYTES] = "xv 32 yv 8 picn inventory ";
@@ -238,14 +266,16 @@ static bool menu_publish(qa_modes *m, mode_instance *v, qa_actor_id actor,
         const char *text = rows[i].text;
         if (!text || !*text)
             continue;
-        bool alternate = *text == '*';
+        bool alternate = !lmctf && *text == '*';
         if (alternate) ++text;
-        int x = rows[i].align == MENU_CENTER ? 162 - (int)strlen(text) * 4 :
+        int x = lmctf ? 55 : rows[i].align == MENU_CENTER ? 162 - (int)strlen(text) * 4 :
                 rows[i].align == MENU_RIGHT ? 260 - (int)strlen(text) * 8 : 64;
         bool selected = member->menu.cursor == (int8_t)i;
         int written = snprintf(layout + length, sizeof(layout) - length,
-            "yv %zu xv %d %s \"%s%s\" ", 32 + i * 8, x - (selected ? 8 : 0),
-            selected || alternate ? "string2" : "string", selected ? "\x0d" : "", text);
+            "yv %zu xv %d %s \"%s%s\" ", 32 + i * 8, x - (!lmctf && selected ? 8 : 0),
+            lmctf ? (selected ? "string" : "string2") :
+                     (selected || alternate ? "string2" : "string"),
+            selected ? "\x0d" : lmctf ? " " : "", text);
         if (written < 0 || (size_t)written >= sizeof(layout) - length) {
             layout[length] = 0;
             break;
@@ -604,6 +634,11 @@ bool mode_ui_open_admin(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_err
         return true;
     return menu_open(m, v, actor, QA_MODE_MENU_ADMIN, e);
 }
+bool mode_ui_open_lmctf_vote(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_error *e) {
+    if (v->value.rules.source != QA_MODE_LMCTF || !v->value.rules.enabled)
+        return true;
+    return menu_open(m, v, actor, QA_MODE_MENU_LMCTF_VOTE, e);
+}
 static bool menu_settings_open(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_error *e) {
     qa_mode_source_settings settings = {0};
     if (!m->options.hooks.source_settings ||
@@ -645,6 +680,14 @@ static bool menu_select(qa_modes *m, mode_instance *v, qa_actor_id actor,
         return mode_ui_close(m, v, actor, e) &&
                (!mode_member_get(m, v, actor) || qa_modes_vote_start(m, v->id, actor, 0, &intent, e));
     }
+    case MENU_VOTE_SKIP: {
+        qa_match_intent intent = {.kind = QA_MATCH_NEXT_MAP};
+        return qa_modes_vote_start(m, v->id, actor, 0, &intent, e) &&
+               mode_ui_open_lmctf_vote(m, v, actor, e);
+    }
+    case MENU_VOTE_YES: case MENU_VOTE_NO:
+        return qa_modes_vote_cast(m, v->id, actor, 0, action == MENU_VOTE_YES, e) &&
+               mode_ui_open_lmctf_vote(m, v, actor, e);
     case MENU_ADMIN_SETTINGS: return menu_settings_open(m, v, actor, e);
     case MENU_ADMIN_MATCH:
         return mode_ui_close(m, v, actor, e) &&
@@ -697,6 +740,33 @@ static bool menu_named(const char *text, const char *name) {
     return qa_text_bytes_equal((qa_bytes){(const uint8_t *)text, strlen(text)},
                                (qa_bytes){(const uint8_t *)name, strlen(name)}, true);
 }
+static bool menu_navigate(qa_modes *m, mode_instance *v, qa_actor_id actor,
+                          mode_member *member, const char *name, bool *handled, qa_error *e) {
+    if (member->menu.page == QA_MODE_MENU_NONE || member->menu.page == QA_MODE_MENU_SCOREBOARD)
+        return true;
+    bool next = menu_named(name, "invnext"), previous = menu_named(name, "invprev");
+    bool select = menu_named(name, "invuse");
+    if (!next && !previous && !select)
+        return true;
+    *handled = true;
+    menu_row rows[18]; char level[33], counts[2][32], fields[8][64];
+    size_t count = menu_rows(m, v, member, member->menu.page, rows, level, counts, fields);
+    member = mode_member_get(m, v, actor);
+    if (!member || member->menu.cursor < 0 || !count)
+        return true;
+    if (select)
+        return (size_t)member->menu.cursor >= count ? true :
+               menu_select(m, v, actor, rows[member->menu.cursor].action, e);
+    size_t cursor = (size_t)member->menu.cursor;
+    for (size_t step = 0; step < count; ++step) {
+        cursor = next ? (cursor + 1) % count : (cursor + count - 1) % count;
+        if (rows[cursor].action != MENU_NONE) {
+            member->menu.cursor = (int8_t)cursor;
+            break;
+        }
+    }
+    return menu_publish(m, v, actor, false, e);
+}
 bool mode_ui_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
                        const qa_command_invocation *command, bool *handled, qa_error *e) {
     mode_member *member = mode_member_get(m, v, actor);
@@ -718,8 +788,23 @@ bool mode_ui_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
         }
         return true;
     }
-    if (lmctf)
-        return true;
+    if (lmctf) {
+        if (menu_named(name, "lmctf-vote")) {
+            if (command->argc == 1) {
+                *handled = true;
+                return mode_ui_open_lmctf_vote(m, v, actor, e);
+            }
+            if (menu_named(command->argv[1], "skip")) {
+                *handled = true;
+                return menu_select(m, v, actor, MENU_VOTE_SKIP, e);
+            }
+        } else if (menu_named(name, "voteyes") || menu_named(name, "voteno")) {
+            *handled = true;
+            return menu_select(m, v, actor, menu_named(name, "voteyes")
+                ? MENU_VOTE_YES : MENU_VOTE_NO, e);
+        }
+        return menu_navigate(m, v, actor, member, name, handled, e);
+    }
     if (menu_named(name, "inven")) {
         member->player.scoreboard = false;
         if (member->menu.page == QA_MODE_MENU_SCOREBOARD) {
@@ -794,30 +879,7 @@ bool mode_ui_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
                 return menu_select(m, v, actor, wanted, e);
         return true;
     }
-    if (member->menu.page == QA_MODE_MENU_NONE || member->menu.page == QA_MODE_MENU_SCOREBOARD)
-        return true;
-    bool next = menu_named(name, "invnext"), previous = menu_named(name, "invprev");
-    bool select = menu_named(name, "invuse");
-    if (!next && !previous && !select)
-        return true;
-    *handled = true;
-    menu_row rows[18]; char level[33], counts[2][32], fields[8][64];
-    size_t count = menu_rows(m, v, member, member->menu.page, rows, level, counts, fields);
-    member = mode_member_get(m, v, actor);
-    if (!member || member->menu.cursor < 0 || !count)
-        return true;
-    if (select)
-        return (size_t)member->menu.cursor >= count ? true :
-               menu_select(m, v, actor, rows[member->menu.cursor].action, e);
-    size_t cursor = (size_t)member->menu.cursor;
-    for (size_t step = 0; step < count; ++step) {
-        cursor = next ? (cursor + 1) % count : (cursor + count - 1) % count;
-        if (rows[cursor].action != MENU_NONE) {
-            member->menu.cursor = (int8_t)cursor;
-            break;
-        }
-    }
-    return menu_publish(m, v, actor, false, e);
+    return menu_navigate(m, v, actor, member, name, handled, e);
 }
 bool qa_modes_layout_read(qa_modes *m, qa_mode_id id, qa_actor_id actor,
                            const char **text, bool *visible, uint64_t *revision,

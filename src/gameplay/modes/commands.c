@@ -452,15 +452,6 @@ static bool lmctf_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
         return qa_modes_observe(m, v->id, actor,
             v->value.rules.teams[named(name, "observe_blue") ? 1 : 0], &accepted, e);
     }
-    if (named(name, "lmctf-vote") && command->argc > 1 && named(command->argv[1], "skip")) {
-        *handled = true;
-        qa_match_intent intent = {.kind = QA_MATCH_NEXT_MAP};
-        return qa_modes_vote_start(m, v->id, actor, 0, &intent, e);
-    }
-    if (named(name, "voteyes") || named(name, "voteno")) {
-        *handled = true;
-        return qa_modes_vote_cast(m, v->id, actor, 0, named(name, "voteyes"), e);
-    }
     if (named(name, "referee")) {
         qa_mode_source_settings settings;
         if (!m->options.hooks.source_settings ||
