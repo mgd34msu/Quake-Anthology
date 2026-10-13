@@ -99,6 +99,29 @@ typedef struct mode_objective {
     bool active, reserved;
 } mode_objective;
 #define MODE_NAME_LIST(X) \
+    X(CHAT_TEAM, "({0}): {1}\n") \
+    X(ITEM_QUAD, "item_quad") \
+    X(ITEM_INVULNERABILITY, "item_invulnerability") \
+    X(WEAPON_BFG, "weapon_bfg") \
+    X(WEAPON_RAILGUN, "weapon_railgun") \
+    X(WEAPON_ROCKETLAUNCHER, "weapon_rocketlauncher") \
+    X(WEAPON_HYPERBLASTER, "weapon_hyperblaster") \
+    X(WEAPON_CHAINGUN, "weapon_chaingun") \
+    X(WEAPON_GRENADELAUNCHER, "weapon_grenadelauncher") \
+    X(WEAPON_MACHINEGUN, "weapon_machinegun") \
+    X(WEAPON_SUPERSHOTGUN, "weapon_supershotgun") \
+    X(WEAPON_SHOTGUN, "weapon_shotgun") \
+    X(ITEM_POWER_SCREEN, "item_power_screen") \
+    X(ITEM_POWER_SHIELD, "item_power_shield") \
+    X(ITEM_ARMOR_BODY, "item_armor_body") \
+    X(ITEM_ARMOR_COMBAT, "item_armor_combat") \
+    X(ITEM_ARMOR_JACKET, "item_armor_jacket") \
+    X(ITEM_SILENCER, "item_silencer") \
+    X(ITEM_BREATHER, "item_breather") \
+    X(ITEM_ENVIRO, "item_enviro") \
+    X(ITEM_ADRENALINE, "item_adrenaline") \
+    X(ITEM_BANDOLIER, "item_bandolier") \
+    X(ITEM_PACK, "item_pack") \
     X(SOUND_WEAPONS_PKUP_WAV, "weapons/pkup.wav") \
     X(SOUND_RUNES_END1_WAV, "runes/end1.wav") \
     X(SOUND_RUNES_END2_WAV, "runes/end2.wav") \

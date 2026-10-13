@@ -332,6 +332,12 @@ static qa_command_result chat_command(qa_application *application,
     }
     if (!provider || provider->client_only_owned) return QA_COMMAND_UNHANDLED;
     bool handled = false;
+    if (mode == QA_Q1_CHAT_TEAM && actor.registry && application->primary_mode_ready) {
+        if (!qa_modes_team_chat(application->modes, application->primary_mode, actor,
+                command->args_text ? command->args_text : "", &handled, error))
+            return QA_COMMAND_FAILED;
+        if (handled) return QA_COMMAND_HANDLED;
+    }
     if (provider->kind == APPLICATION_PROVIDER_QC) {
         if (provider->state.qc.qualified) {
             const struct application_qc_profile *profile = provider->state.qc.qualified;
@@ -408,6 +414,13 @@ static qa_command_result command_dispatch(qa_application *application,
         return okay ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
     }
     qa_q1_chat_mode chat = qa_q1_chat_command_read(QA_RULESET_NETQUAKE, command.argv[0], true);
+    if (chat == QA_Q1_CHAT_UNKNOWN && q3_command_named(command.argv[0], "steam") &&
+        application->primary_mode_ready) {
+        qa_mode_view view;
+        if (qa_modes_read(application->modes, application->primary_mode, &view, NULL) &&
+            view.rules.enabled && view.rules.source == QA_MODE_Q2_CTF)
+            chat = QA_Q1_CHAT_TEAM;
+    }
     if (chat != QA_Q1_CHAT_UNKNOWN)
         return chat_command(application, invocation, &command, chat, error);
     qa_command_result flight = application_native_engine_fly(application, invocation,

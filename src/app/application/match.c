@@ -219,10 +219,44 @@ static qa_ruleset_id mode_source_ruleset(void *opaque, qa_mode_id mode,
     return qa_mode_defaults(source, QA_MODE_FFA).ruleset;
 }
 
+static bool mode_chat_allowed(void *opaque, qa_mode_id mode, qa_actor_id actor,
+                               bool *allowed, qa_error *error)
+{
+    application_provider *source = application_mode_provider(opaque, mode);
+    *allowed = true;
+    return !source || source->kind != APPLICATION_PROVIDER_Q2 ||
+        qa_q2_player_chat_allowed(source->state.q2, actor, allowed, error);
+}
+
+static bool mode_chat_item(void *opaque, qa_mode_id mode, qa_actor_id actor,
+                            qa_item_id item, qa_string_id *classname, const char **label)
+{
+    qa_application *application = opaque;
+    application_provider *source = application_mode_provider(application, mode);
+    *classname = 0;
+    *label = NULL;
+    if (!source || source->kind != APPLICATION_PROVIDER_Q2)
+        return false;
+    qa_authored_target target;
+    if (!item && !qa_targets_read(application->targets, actor, &target))
+        return false;
+    for (size_t i = 0; i < qa_q2_item_count(source->state.q2); ++i) {
+        const qa_q2_item_definition *definition = qa_q2_item_at(source->state.q2, i);
+        if (item ? definition->item != item : definition->classname_id != target.classname)
+            continue;
+        *classname = definition->classname_id;
+        *label = definition->name;
+        return true;
+    }
+    return false;
+}
+
 static qa_modes_hooks mode_hooks(qa_application *application)
 {
     return (qa_modes_hooks){.context = application,
                             .source_settings = application_native_mode_source_settings,
+                            .chat_allowed = mode_chat_allowed,
+                            .chat_item = mode_chat_item,
                             .source_ruleset = mode_source_ruleset,
                             .q1_composition_expected = application_native_q1_composition_expected,
                             .q1_composition_current = application_native_q1_composition_current,

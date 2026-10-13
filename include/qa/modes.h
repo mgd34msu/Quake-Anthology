@@ -302,6 +302,8 @@ typedef struct qa_modes_hooks {
     void *context;
     /* Strings are borrowed from the selected mode source during the call. */
     bool (*source_settings)(void *, qa_mode_id, qa_mode_source_settings *);
+    bool (*chat_allowed)(void *, qa_mode_id, qa_actor_id, bool *, qa_error *);
+    bool (*chat_item)(void *, qa_mode_id, qa_actor_id, qa_item_id, qa_string_id *, const char **);
     /* Legacy mode records retain only the Q2 edition bit. Import borrows the
      * enclosing source's full ruleset without adding a saved selector. */
     qa_ruleset_id (*source_ruleset)(void *, qa_mode_id, qa_mode_origin, qa_actor_owner,
@@ -555,6 +557,8 @@ bool qa_modes_admin(qa_modes *, qa_mode_id, qa_actor_id, qa_mode_admin_action, q
 bool qa_modes_can_move(qa_modes *, qa_mode_id, qa_actor_id);
 bool qa_modes_console_command(qa_modes *, qa_mode_id, qa_actor_id,
                                const qa_command_invocation *, bool *handled, qa_error *);
+bool qa_modes_team_chat(qa_modes *, qa_mode_id, qa_actor_id, const char *, bool *handled,
+                        qa_error *);
 typedef struct qa_mode_location {
     qa_actor_id actor;
     qa_string_id message;

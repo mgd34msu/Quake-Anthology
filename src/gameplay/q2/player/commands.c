@@ -219,6 +219,11 @@ static bool flood_allowed(qa_q2_game *g, q2_actor *a, bool *allowed, qa_error *e
     s->rule.flood_times[s->rule.flood_count++] = g->now_ns;
     return true;
 }
+bool qa_q2_player_chat_allowed(qa_q2_game *g, qa_actor_id actor, bool *allowed, qa_error *e) {
+    *allowed = true;
+    q2_actor *a = g ? q2_actor_get(g, actor, false, NULL) : NULL;
+    return !a || !a->client || !g->player_runtime || flood_allowed(g, a, allowed, e);
+}
 static void team_name(const char *skin, bool model, char *out, size_t capacity) {
     const char *slash = strchr(skin, '/');
     if (!slash)
