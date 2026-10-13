@@ -224,6 +224,24 @@ typedef struct mode_objective {
     X(SOUND_CTF_FLAGTK_WAV, "ctf/flagtk.wav") \
     X(SOUND_CTF_FLAGRET_WAV, "ctf/flagret.wav") \
     X(SOUND_CTF_FLAGCAP_WAV, "ctf/flagcap.wav") \
+    X(LMCTF_RED, "red") \
+    X(LMCTF_BLUE, "blue") \
+    X(LMCTF_UNKNOWN, "unknown") \
+    X(LMCTF_FLAG_TAKEN, "{0} stole the {1} flag.\n") \
+    X(LMCTF_YOUR_FLAG_TAKEN, "{0} stole your flag!\n") \
+    X(LMCTF_FLAG_RETURNED, "{0} returned the {1} flag.\n") \
+    X(LMCTF_YOUR_FLAG_RETURNED, "{0} returned your flag!\n") \
+    X(LMCTF_FLAG_CAPTURED, "{0} captured the {1} flag.\n") \
+    X(LMCTF_YOUR_FLAG_CAPTURED, "{0} captured your flag!\n") \
+    X(LMCTF_RETURN_ASSIST, "{0} helped {1} return the {2} flag.\n") \
+    X(LMCTF_CAPTURE_FRAG_ASSIST, "{0} assisted the capture by killing the flag carrier.\n") \
+    X(LMCTF_CAPTURE_RETURN_ASSIST, "{0} assisted the capture by returning the flag.\n") \
+    X(LMCTF_CAPTURE_DEFEND_ASSIST, "{0} assisted the capture by defending the flag.\n") \
+    X(SOUND_CTF_R_RETURNED_WAV, "ctf/r_returned.wav") \
+    X(SOUND_CTF_B_RETURNED_WAV, "ctf/b_returned.wav") \
+    X(SOUND_CTF_R_STOLEN_WAV, "ctf/r_stolen.wav") \
+    X(SOUND_CTF_B_STOLEN_WAV, "ctf/b_stolen.wav") \
+    X(RESOURCE_Q2_BFG_EXPLOSION, "q2:bfg-explosion") \
     X(QC_RUNE_RESISTANCE, "$qc_rune_resistance") \
     X(QC_RUNE_STRENGTH, "$qc_rune_strength") \
     X(QC_RUNE_HASTE, "$qc_rune_haste") \
@@ -352,6 +370,7 @@ bool mode_sound_channel(qa_modes *, mode_instance *, qa_actor_id, qa_string_id, 
                         float, qa_error *);
 bool mode_sound_full(qa_modes *, mode_instance *, qa_actor_id, qa_string_id, int32_t,
                     float, float, qa_error *);
+bool mode_builtin_emit(qa_modes *, mode_instance *, const qa_builtin_event *, qa_error *);
 bool mode_message(qa_modes *, mode_instance *, qa_actor_id, qa_string_id,
                    const qa_builtin_message_arg *, size_t, qa_error *);
 bool mode_count(qa_modes *, qa_actor_id, qa_item_id, double *, qa_error *);

@@ -97,9 +97,7 @@ bool mode_alive(qa_modes *m, qa_actor_id actor) {
 static bool sound_event(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_string_id sound,
                           int32_t channel, float volume, float attenuation, qa_error *e) {
     qa_builtin_event event = {.kind = QA_BUILTIN_SOUND,
-                              .provider = m->options.owner,
                               .actor = actor,
-                              .time_ns = v->value.time_ns,
                               .volume = volume,
                               .attenuation = attenuation};
     qa_body_state body;
@@ -107,13 +105,8 @@ static bool sound_event(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_str
     if (!mode_live(m, actor)) return mode_fail(e, "mode sound actor retired during body read");
     event.origin = body.origin;
     event.channel = channel;
-    event.family = v->value.rules.source <= QA_MODE_Q1_HORDE ? QA_GAME_Q1
-                   : v->value.rules.source < QA_MODE_Q3      ? QA_GAME_Q2
-                                                             : QA_GAME_Q3;
     event.resource = sound;
-    return m->options.hooks.emit
-               ? m->options.hooks.emit(m->options.hooks.context, v->id, &event, e)
-               : qa_builtin_emit(&m->options.services, &event, e);
+    return mode_builtin_emit(m, v, &event, e);
 }
 bool mode_sound(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_string_id sound, float volume,
                 qa_error *e) {
@@ -127,15 +120,21 @@ bool mode_sound_full(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_string
                      int32_t channel, float volume, float attenuation, qa_error *e) {
     return MODE_CALLBACK(m,sound_event(m,v,actor,sound,channel,volume,attenuation,e));
 }
+bool mode_builtin_emit(qa_modes *m, mode_instance *v, const qa_builtin_event *event, qa_error *e) {
+    qa_builtin_event output = *event;
+    output.provider = m->options.owner;
+    output.time_ns = v->value.time_ns;
+    output.family = v->value.rules.source <= QA_MODE_Q1_HORDE ? QA_GAME_Q1 :
+                    v->value.rules.source < QA_MODE_Q3 ? QA_GAME_Q2 : QA_GAME_Q3;
+    return MODE_CALLBACK(m, m->options.hooks.emit ?
+        m->options.hooks.emit(m->options.hooks.context, v->id, &output, e) :
+        qa_builtin_emit(&m->options.services, &output, e));
+}
 bool mode_message(qa_modes *m, mode_instance *v, qa_actor_id recipient, qa_string_id text,
                   const qa_builtin_message_arg *args, size_t count, qa_error *e) {
-    qa_builtin_event event={.kind=QA_BUILTIN_MESSAGE,.provider=m->options.owner,
-        .family=v->value.rules.source<=QA_MODE_Q1_HORDE?QA_GAME_Q1:
-            v->value.rules.source<QA_MODE_Q3?QA_GAME_Q2:QA_GAME_Q3,
-        .actor=recipient,.time_ns=v->value.time_ns,.text=text,.arguments=args,.argument_count=count};
-    return MODE_CALLBACK(m,m->options.hooks.emit?
-        m->options.hooks.emit(m->options.hooks.context,v->id,&event,e):
-        qa_builtin_emit(&m->options.services,&event,e));
+    qa_builtin_event event={.kind=QA_BUILTIN_MESSAGE,.actor=recipient,.code=2,
+        .text=text,.arguments=args,.argument_count=count};
+    return mode_builtin_emit(m, v, &event, e);
 }
 bool mode_count(qa_modes *m, qa_actor_id actor, qa_item_id item, double *count, qa_error *e) {
     qa_inventory_entry entry;
