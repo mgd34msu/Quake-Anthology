@@ -1,4 +1,5 @@
 #include "qa/q2_sound.h"
+#include "qa/text.h"
 #include "internal.h"
 
 bool q2_entity_init_trigger(qa_q2_game *g, q2_actor *a, qa_error *e) {
@@ -84,6 +85,14 @@ bool q2_trigger_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     *handled = true;
     if (!strcmp(name, "trigger_once") || !strcmp(name, "trigger_multiple")) {
         s->kind = Q2E_MULTI;
+        int32_t sounds = qa_source_to_i32(q2_field_float(g, s,
+            g->field_keys[QA_TARGET_KEY_SOUNDS], 0));
+        if (sounds == 1)
+            s->noise = g->runtime_names[QA_Q2_SFX_MISC_SECRET];
+        else if (sounds == 2)
+            s->noise = g->runtime_names[QA_Q2_SFX_MISC_TALK];
+        else if (sounds == 3)
+            s->noise = g->runtime_names[QA_Q2_SFX_MISC_TRIGGER1];
         if (!strcmp(name, "trigger_once")) {
             if (s->spawnflags & 1)
                 s->spawnflags = (s->spawnflags & ~1u) | 4;

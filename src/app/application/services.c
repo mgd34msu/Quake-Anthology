@@ -1242,16 +1242,29 @@ static bool target_message(void *opaque, const qa_target_use *request,
                                 "Target message lost its actual Source clock owner");
     const qa_ruleset_descriptor *ruleset = qa_ruleset_read(request->dialect);
     qa_game_family family = ruleset ? ruleset->family : QA_GAME_Q1;
-    return application_emit(
+    bool q2 = family == QA_GAME_Q2;
+    qa_builtin_actor_traits traits = {0};
+    if (q2 && builtin_traits(application, request->activator, &traits) && traits.monster)
+        return true;
+    if (!application_emit(
         opaque,
         &(qa_builtin_event){.kind = QA_BUILTIN_CENTERPRINT,
                             .family = family,
                             .provider = provider->owner,
-                            .actor = request->activator,
+                            .actor = request->fields.broadcast_message ? (qa_actor_id){0} : request->activator,
                             .other = request->source,
                             .time_ns = request->time_ns,
                             .text = request->fields.message},
-        error);
+        error)) return false;
+    if (!q2 || request->fields.silent_message) return true;
+    qa_body_state body;
+    if (!qa_world_body_read(application->world, request->activator, &body, NULL)) return true;
+    return application_emit(application,
+        &(qa_builtin_event){.kind = QA_BUILTIN_SOUND, .family = family,
+            .provider = provider->owner, .actor = request->activator,
+            .time_ns = request->time_ns,
+            .resource = request->fields.message_sound ? request->fields.message_sound : application->ui_names.q2_talk_sound,
+            .origin = body.origin, .channel = 0, .volume = 1, .attenuation = 1}, error);
 }
 
 static bool target_remap_shader(void *opaque, qa_string_id original,

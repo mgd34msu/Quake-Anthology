@@ -989,8 +989,22 @@ static bool entity_effects(qa_q2_game *g, q2_original_record_io *io, q2_entity_s
     if (s->kind == Q2E_ROTATING &&
         !q2_original_resource(g, io, engine, "moveinfo.sound_middle", 704, 704, 704, 288,
             &s->noise)) return false;
-    if (speaker || s->kind == Q2E_SOUND_FX || s->kind == Q2E_EARTHQUAKE ||
-        (s->kind == Q2E_SCENERY && s->scenery == Q2S_EXPLOSIVE))
+    bool silent_relay = false;
+    if (io->edition == QA_RULESET_Q2_RERELEASE && s->kind == Q2E_RELAY) {
+        int32_t noise_index = s->spawnflags & 1u ? -1 : 0;
+        if ((io->reading || noise_index < 0) &&
+            !scalar(io, "noise_index", Q2_ORIGINAL_I32, 576, &noise_index)) return false;
+        silent_relay = noise_index < 0;
+        if (io->reading) {
+            if (silent_relay) {
+                s->spawnflags |= 1u;
+                s->noise = 0;
+            } else s->spawnflags &= ~1u;
+        }
+    }
+    if (!silent_relay && (speaker || s->kind == Q2E_SOUND_FX || s->kind == Q2E_EARTHQUAKE ||
+        s->message || s->kind == Q2E_MULTI || s->kind == Q2E_RELAY ||
+        (s->kind == Q2E_SCENERY && s->scenery == Q2S_EXPLOSIVE)))
         if (!q2_original_resource(g, io, engine, "noise_index", 576, 576, 576, 288, &s->noise))
             return false;
     if (speaker) {

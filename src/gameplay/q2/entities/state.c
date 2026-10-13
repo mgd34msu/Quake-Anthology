@@ -545,6 +545,9 @@ bool qa_q2_entity_authored(qa_q2_game *g, qa_actor_id id, qa_authored_target *ou
                                     .target = s->target,
                                     .killtarget = s->killtarget,
                                     .message = s->message,
+                                    .message_sound = s->noise,
+                                    .silent_message = g->options.rules == QA_RULESET_Q2_RERELEASE &&
+                                        s->kind == Q2E_RELAY && (s->spawnflags & 1u),
                                     .delay_seconds = s->delay,
                                     .wait_seconds = s->wait};
     }
@@ -562,6 +565,8 @@ bool qa_q2_entity_authored(qa_q2_game *g, qa_actor_id id, qa_authored_target *ou
         out->message = s->message;
         out->delay_seconds = s->delay;
     }
+    out->broadcast_message = g->options.rules == QA_RULESET_Q2_RERELEASE &&
+        g->options.cooperative;
     return true;
 }
 bool qa_q2_entity_use_targets(qa_q2_game *g, qa_actor_id id, qa_actor_id activator,

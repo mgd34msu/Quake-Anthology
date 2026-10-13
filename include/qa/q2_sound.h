@@ -230,6 +230,8 @@
 #define QA_Q2_SOUND_MISC_POWER2 "misc/power2.wav"
 #define QA_Q2_SOUND_MISC_SECRET "misc/secret.wav"
 #define QA_Q2_SOUND_MISC_TALK1 "misc/talk1.wav"
+#define QA_Q2_SOUND_MISC_TALK "misc/talk.wav"
+#define QA_Q2_SOUND_MISC_TRIGGER1 "misc/trigger1.wav"
 #define QA_Q2_SOUND_MISC_UDEATH "misc/udeath.wav"
 #define QA_Q2_SOUND_MISC_W_PKUP "misc/w_pkup.wav"
 #define QA_Q2_SOUND_MISC_WELDER1 "misc/welder1.wav"
@@ -897,7 +899,9 @@
     X(INFANTRY_INFIDLE1) \
     X(SOLDIER_SOLSGHT1) \
     X(SOLDIER_SOLSRCH1) \
-    X(MAKRON_SPINE)
+    X(MAKRON_SPINE) \
+    X(MISC_TALK) \
+    X(MISC_TRIGGER1)
 
 typedef enum qa_q2_sound_index {
     QA_Q2_SFX_NONE,

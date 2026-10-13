@@ -700,6 +700,37 @@ bool q2_original_config_layout(qa_ruleset_id edition, const qa_q2_save_level *le
     return qa_q2_config_layout_read(&codec, layout, error);
 }
 
+static int32_t resource_index(const qa_q2_save_level *level, uint32_t base,
+    uint32_t count, const char *text, uint32_t *free_slot)
+{
+    for (uint32_t i = 1; i < count; ++i) {
+        const char *entry = qa_q2_save_configstring(level, base + i);
+        if (!strcmp(entry, text)) return (int32_t)i;
+        if (free_slot && !*free_slot && !*entry) *free_slot = i;
+    }
+    return 0;
+}
+
+bool q2_original_sound_admit(qa_q2_game *g, qa_q2_save_level *level,
+    qa_string_id sound, qa_error *error)
+{
+    if (!sound) return true;
+    qa_q2_config_layout layout;
+    if (!q2_original_config_layout(g->options.rules, level, &layout, error)) return false;
+    const char *text = qa_strings_cstr(qa_session_strings(g->services.session), sound);
+    uint32_t free_slot = 0;
+    if (!text) {
+        qa_error_set(error, QA_ERROR_FORMAT, sound, "Original Q2 sound name is unavailable");
+        return false;
+    }
+    if (!*text || resource_index(level, layout.sounds, layout.max_sounds, text, &free_slot)) return true;
+    if (!free_slot) {
+        qa_error_set(error, QA_ERROR_UNSUPPORTED, sound, "Original Q2 sound table is full");
+        return false;
+    }
+    return qa_q2_save_configstring_set(level, layout.sounds + free_slot, text, error);
+}
+
 bool q2_original_resource(qa_q2_game *g, q2_original_record_io *io,
     const qa_q2_save_level *level, const char *name, uint16_t base, uint16_t xatrix,
     uint16_t rogue, uint32_t table_base, qa_string_id *resource)
@@ -718,10 +749,7 @@ bool q2_original_resource(qa_q2_game *g, q2_original_record_io *io,
     if (!io->reading && *resource) {
         const char *text = qa_strings_cstr(qa_session_strings(g->services.session), *resource);
         if (!level || !text) return fail(io, *resource, "Q2 original resource has no actual engine table");
-        for (uint32_t i = 1; i < count; ++i)
-            if (!strcmp(qa_q2_save_configstring(level, table_base + i), text)) {
-                index = (int32_t)i; break;
-            }
+        index = resource_index(level, table_base, count, text, NULL);
         if (!index) {
             qa_error_set(io->error, QA_ERROR_UNSUPPORTED, *resource,
                 "Q2 Source %s resource '%s' is absent from engine table %u", name, text, table_base);

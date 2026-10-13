@@ -23,6 +23,7 @@
 #include "qa/game_q3_wire.h"
 #include "qa/native_host_q2_wire.h"
 #include "qa/text.h"
+#include "qa/q2_sound.h"
 
 #include <math.h>
 #include <limits.h>
@@ -177,6 +178,7 @@ bool application_ui_names_prepare(qa_application *app, qa_error *error)
         {"i_health", &names->q2_health_icon}, {"i_help", &names->q2_help_icon},
         {"q2:remote-armor", &names->q2_remote_armor},
         {"music", &names->music}, {"q1:fog", &names->fog}, {"misc/talk.wav", &names->talk_sound},
+        {QA_Q2_SOUND_MISC_TALK1, &names->q2_talk_sound},
         {"rank_status", &names->ranking_status}, {"rank_menu", &names->ranking_menu},
         {"misc/flare.tga", &names->flare_image}, {"default", &names->material_default}, {"ladder", &names->material_ladder},
         {"debug-bounds", &names->debug_bounds}, {"debug-graph", &names->debug_graph},

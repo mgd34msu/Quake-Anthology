@@ -9,6 +9,8 @@ typedef struct qa_authored_target {
     qa_string_id classname, targetname, target, killtarget, message;
     qa_string_id shader_old, shader_new;
     float delay_seconds, wait_seconds;
+    qa_string_id message_sound;
+    bool silent_message, broadcast_message;
 } qa_authored_target;
 typedef enum qa_monster_activation_kind {
     QA_MONSTER_ACTIVE, QA_MONSTER_DORMANT, QA_MONSTER_SCHEDULED

@@ -40,7 +40,7 @@ static bool valid_fields(const qa_targets *targets, const qa_authored_target *fi
            valid_string(targets, fields->classname) && valid_string(targets, fields->targetname) &&
            valid_string(targets, fields->target) && valid_string(targets, fields->killtarget) &&
            valid_string(targets, fields->message) && valid_string(targets, fields->shader_old) &&
-           valid_string(targets, fields->shader_new);
+           valid_string(targets, fields->shader_new) && valid_string(targets, fields->message_sound);
 }
 static qa_string_id nonempty(const qa_targets *targets, qa_string_id id) {
     return qa_strings_text(qa_session_strings(targets->options.session), id).size ? id : 0;
@@ -51,6 +51,7 @@ static void normalize(const qa_targets *targets, qa_authored_target *fields) {
     fields->target = nonempty(targets, fields->target);
     fields->killtarget = nonempty(targets, fields->killtarget);
     fields->message = nonempty(targets, fields->message);
+    fields->message_sound = nonempty(targets, fields->message_sound);
     /* Source shader fields distinguish an absent pointer from a present empty
      * byte path. AddRemap accepts the latter as a real table key or value. */
 }

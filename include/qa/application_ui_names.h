@@ -46,7 +46,7 @@ typedef struct qa_application_ui_names {
     qa_string_id flare_image, material_default, material_ladder;
     qa_string_id ranking_status, ranking_menu;
     qa_string_id client_counts[257];
-    qa_string_id landing_sounds[3], q1_player_model, q2_health_icon, q2_help_icon;
+    qa_string_id landing_sounds[3], q1_player_model, q2_health_icon, q2_help_icon, q2_talk_sound;
     qa_string_id cutscene, sell_screen, monster_muzzle, entity_event, entity_event_plain;
     qa_string_id cp, chat, tchat, print;
     qa_string_id q2_parasite, q2_medic_cable, q2_grapple_cable, q2_lightning;

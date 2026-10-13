@@ -111,6 +111,7 @@ bool q2_original_item(qa_q2_game *, q2_original_record_io *, const char *,
 bool q2_original_config_layout(qa_ruleset_id, const qa_q2_save_level *, qa_q2_config_layout *, qa_error *);
 bool q2_original_resource(qa_q2_game *, q2_original_record_io *, const qa_q2_save_level *,
     const char *, uint16_t, uint16_t, uint16_t, uint32_t, qa_string_id *);
+bool q2_original_sound_admit(qa_q2_game *, qa_q2_save_level *, qa_string_id, qa_error *);
 bool q2_original_object_begin(q2_original_record_io *, const char *, q2_original_record_io *, bool *);
 bool q2_original_object_end(q2_original_record_io *);
 bool q2_original_game_open(qa_q2_game *, qa_bytes, qa_json_document **,

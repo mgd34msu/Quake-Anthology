@@ -687,7 +687,15 @@ bool qa_q2_game_original_capture(qa_q2_game *game, bool autosave, bool transitio
         return false;
     }
     qa_buffer game_bytes = {0}, level_bytes = {0};
-    bool okay = original_player_models(game, engine, error) &&
+    bool okay = true;
+    if (!autosave) for (q2_actor *actor = game->first_actor; okay && actor; actor = actor->live_next) {
+        const q2_entity_state *entity = actor->entity;
+        if (entity && (entity->message || entity->kind == Q2E_MULTI || entity->kind == Q2E_RELAY) &&
+            !(game->options.rules == QA_RULESET_Q2_RERELEASE && entity->kind == Q2E_RELAY &&
+              (entity->spawnflags & 1u)))
+            okay = q2_original_sound_admit(game, engine, entity->noise, error);
+    }
+    okay = okay && original_player_models(game, engine, error) &&
         (transition || q2_original_write_game(game, autosave, engine, &game_bytes, error));
     if (okay && !autosave) okay = write_level(game, transition, engine, &level_bytes, error);
     if (!okay) { qa_buffer_free(&game_bytes); qa_buffer_free(&level_bytes); return false; }
