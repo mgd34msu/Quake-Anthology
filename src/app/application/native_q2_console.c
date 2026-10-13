@@ -91,6 +91,26 @@ static const q2_source_cvar rogue[] = {
     {"sv_stopspeed", "100", 0, QA_CVAR_SAVE_GAMEPLAY}, {"huntercam", "1", (uint32_t)QA_CVAR_SERVERINFO | (uint32_t)QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY},
     {"strong_mines", "0", 0, QA_CVAR_SAVE_GAMEPLAY}, {"randomrespawn", "0", 0, QA_CVAR_SAVE_GAMEPLAY}, {"gamerules", "0", QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY},
 };
+typedef enum q2_ctf_cvar {
+    Q2_CTF_COMPETITION, Q2_CTF_MATCHLOCK, Q2_CTF_ELECTION_PERCENT,
+    Q2_CTF_MATCHTIME, Q2_CTF_SETUPTIME, Q2_CTF_STARTTIME,
+    Q2_CTF_FORCEJOIN, Q2_CTF_INSTANTWEAP, Q2_CTF_CAPTURELIMIT,
+    Q2_CTF_ADMIN_PASSWORD, Q2_CTF_WARP_LIST, Q2_CTF_ENABLED, Q2_CTF_CVAR_COUNT
+} q2_ctf_cvar;
+static const q2_source_cvar ctf[Q2_CTF_CVAR_COUNT] = {
+    [Q2_CTF_COMPETITION] = {"competition", "0", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_GAMEPLAY},
+    [Q2_CTF_MATCHLOCK] = {"matchlock", "1", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_GAMEPLAY},
+    [Q2_CTF_ELECTION_PERCENT] = {"electpercentage", "66", 0, QA_CVAR_SAVE_GAMEPLAY},
+    [Q2_CTF_MATCHTIME] = {"matchtime", "20", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_GAMEPLAY},
+    [Q2_CTF_SETUPTIME] = {"matchsetuptime", "10", 0, QA_CVAR_SAVE_GAMEPLAY},
+    [Q2_CTF_STARTTIME] = {"matchstarttime", "20", 0, QA_CVAR_SAVE_GAMEPLAY},
+    [Q2_CTF_FORCEJOIN] = {"ctf_forcejoin", "", 0, QA_CVAR_SAVE_GAMEPLAY},
+    [Q2_CTF_INSTANTWEAP] = {"instantweap", "0", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_GAMEPLAY},
+    [Q2_CTF_CAPTURELIMIT] = {"capturelimit", "0", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_GAMEPLAY},
+    [Q2_CTF_ADMIN_PASSWORD] = {"admin_password", "", 0, QA_CVAR_SAVE_SETTING},
+    [Q2_CTF_WARP_LIST] = {"warp_list", "q2ctf1 q2ctf2 q2ctf3 q2ctf4 q2ctf5", 0, QA_CVAR_SAVE_GAMEPLAY},
+    [Q2_CTF_ENABLED] = {"ctf", "1", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_GAMEPLAY},
+};
 static const q2_source_cvar lmctf[] = {
     {"ctfflags", "0", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_GAMEPLAY}, {"refset", "0", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_GAMEPLAY},
     {"runes", "15", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_GAMEPLAY}, {"countdown_time", "15", 0, QA_CVAR_SAVE_GAMEPLAY}, {"autolock", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
@@ -111,9 +131,10 @@ struct application_native_q2_console {
     qa_cvar_handle combat_cvars[APPLICATION_Q2_COMBAT_SETTING_COUNT];
     qa_cvar_handle cheats, password, spectator_password, deathmatch;
     qa_cvar_handle referee_password, rcon_password, skin_set, flag_init;
+    qa_cvar_handle ctf_cvars[Q2_CTF_CVAR_COUNT];
     application_q2_source_scripts scripts;
     size_t calls;
-    qa_cvar_observer_token observers[sizeof(engine_cvars) / sizeof(*engine_cvars) + sizeof(common) / sizeof(*common) + sizeof(rerelease) / sizeof(*rerelease) + sizeof(rogue) / sizeof(*rogue) + sizeof(lmctf) / sizeof(*lmctf) + 2];
+    qa_cvar_observer_token observers[sizeof(engine_cvars) / sizeof(*engine_cvars) + sizeof(common) / sizeof(*common) + sizeof(rerelease) / sizeof(*rerelease) + sizeof(rogue) / sizeof(*rogue) + sizeof(lmctf) / sizeof(*lmctf) + Q2_CTF_CVAR_COUNT + 2];
     size_t observer_count;
 };
 
@@ -126,6 +147,8 @@ static void source_cvars_bind(struct application_native_q2_console *owner) {
     owner->rcon_password = qa_cvars_resolve(owner->cvars, "rcon_password");
     owner->skin_set = qa_cvars_resolve(owner->cvars, "skinset");
     owner->flag_init = qa_cvars_resolve(owner->cvars, "flag_init");
+    for (size_t i = 0; i < Q2_CTF_CVAR_COUNT; ++i)
+        owner->ctf_cvars[i] = qa_cvars_resolve(owner->cvars, ctf[i].name);
     owner->weapon_cvars.infinite_ammo = qa_cvars_resolve(owner->cvars, "g_infinite_ammo");
     owner->weapon_cvars.instant_switch = qa_cvars_resolve(owner->cvars, "g_instant_weapon_switch");
     owner->weapon_cvars.quick_switch = qa_cvars_resolve(owner->cvars, "g_quick_weapon_switch");
@@ -428,8 +451,12 @@ static bool observe(struct application_native_q2_console *owner, qa_error *error
             for (size_t i = 0; i < sizeof(rogue) / sizeof(*rogue); ++i)
                 if (!observe_name(owner, rogue[i].name, error)) return false;
     }
-    const qa_cvar_view *ctf = qa_cvars_find(owner->cvars, "ctfflags");
-    if (ctf && ctf->declared)
+    const qa_cvar_view *ctf_enabled = qa_cvars_read(owner->cvars, owner->ctf_cvars[Q2_CTF_ENABLED]);
+    if (ctf_enabled && ctf_enabled->declared)
+        for (size_t i = 0; i < Q2_CTF_CVAR_COUNT; ++i)
+            if (!observe_name(owner, ctf[i].name, error)) return false;
+    const qa_cvar_view *lm = qa_cvars_find(owner->cvars, "ctfflags");
+    if (lm && lm->declared)
         for (size_t i = 0; i < sizeof(lmctf) / sizeof(*lmctf); ++i)
             if (!observe_name(owner, lmctf[i].name, error)) return false;
     const qa_cvar_view *goal = qa_cvars_find(owner->cvars, "goallimit");
@@ -470,6 +497,8 @@ bool application_native_q2_console_prepare(application_provider *provider, const
     for (size_t i = 0; okay && i < choices->mode_count; ++i) {
         const qa_launch_mode *mode = &choices->modes[i];
         if (strcmp(provider->launch->selection.instance, mode->instance)) continue;
+        if (mode->rules.source == QA_MODE_Q2_CTF)
+            okay = definitions(provider, ctf, Q2_CTF_CVAR_COUNT, error);
         if (mode->rules.source == QA_MODE_LMCTF)
             okay = definitions(provider, lmctf, sizeof(lmctf) / sizeof(*lmctf), error);
         if (mode->rules.source == QA_MODE_Q2_DEATHBALL)
@@ -629,8 +658,31 @@ bool application_native_q2_source_mode_rules(application_provider *provider, qa_
     rules->time_limit_minutes = time;
     rules->frag_limit = frags;
     qa_cvars *cvars = application_native_q2_console_registry(provider);
-    const qa_cvar_view *captures = qa_cvars_find(cvars, "capturelimit");
+    const qa_cvar_view *captures = qa_cvars_read(cvars,
+        provider->native_q2_console->ctf_cvars[Q2_CTF_CAPTURELIMIT]);
     if (captures && rules->source == QA_MODE_Q2_CTF) rules->capture_limit = captures->integer;
+    if (rules->source == QA_MODE_Q2_CTF) {
+        struct application_native_q2_console *owner = provider->native_q2_console;
+        const qa_cvar_view *value = qa_cvars_read(cvars, owner->ctf_cvars[Q2_CTF_COMPETITION]);
+        if (value && value->declared) rules->competition = value->integer;
+        value = qa_cvars_read(cvars, owner->ctf_cvars[Q2_CTF_MATCHLOCK]);
+        if (value && value->declared) rules->match_lock = value->integer != 0;
+        value = qa_cvars_read(cvars, owner->ctf_cvars[Q2_CTF_ELECTION_PERCENT]);
+        if (value && value->declared) rules->election_percent = value->integer;
+        value = qa_cvars_read(cvars, owner->ctf_cvars[Q2_CTF_MATCHTIME]);
+        if (value && value->declared) rules->match_seconds = qa_source_to_i32(value->number * 60.0f);
+        value = qa_cvars_read(cvars, owner->ctf_cvars[Q2_CTF_SETUPTIME]);
+        if (value && value->declared) rules->setup_seconds = qa_source_to_i32(value->number * 60.0f);
+        value = qa_cvars_read(cvars, owner->ctf_cvars[Q2_CTF_STARTTIME]);
+        if (value && value->declared) rules->countdown_seconds = value->integer;
+        value = qa_cvars_read(cvars, owner->ctf_cvars[Q2_CTF_FORCEJOIN]);
+        if (value && value->declared)
+            rules->forced_team = qa_text_ascii_equal(value->value, "red") ? rules->teams[0] :
+                qa_text_ascii_equal(value->value, "blue") ? rules->teams[1] : 0;
+        uint32_t flags = qa_q2_source_deathmatch_flags(cvars);
+        rules->force_join = (flags & UINT32_C(131072)) != 0;
+        rules->relics = (flags & UINT32_C(524288)) == 0;
+    }
     if (rules->source == QA_MODE_Q2_DEATHBALL &&
         !application_native_q2_source_integer(provider, "goallimit", &rules->capture_limit, error)) return false;
     if (rules->source == QA_MODE_LMCTF) {
@@ -670,6 +722,11 @@ bool application_native_q2_source_modes_refresh(application_provider *provider, 
             rules.flags != view.rules.flags || rules.referee_flags != view.rules.referee_flags ||
             rules.rune_mask != view.rules.rune_mask || rules.countdown_seconds != view.rules.countdown_seconds ||
             rules.auto_lock != view.rules.auto_lock ||
+            rules.competition != view.rules.competition || rules.match_lock != view.rules.match_lock ||
+            rules.election_percent != view.rules.election_percent ||
+            rules.match_seconds != view.rules.match_seconds || rules.setup_seconds != view.rules.setup_seconds ||
+            rules.forced_team != view.rules.forced_team || rules.force_join != view.rules.force_join ||
+            rules.relics != view.rules.relics ||
             rules.friendly_fire != view.rules.friendly_fire || rules.ruleset != view.rules.ruleset)
             if (!qa_modes_configure(app->modes, id, &rules, error)) return false;
     }
@@ -729,5 +786,9 @@ bool application_native_q2_source_weapon_input(application_provider *provider, q
         input->quick_switch = qa_cvars_read(owner->cvars, owner->weapon_cvars.quick_switch)->integer != 0;
         input->no_stack_double = qa_cvars_read(owner->cvars, owner->weapon_cvars.no_stack_double)->integer != 0;
     }
+    struct application_native_q2_console *owner = provider->native_q2_console;
+    const qa_cvar_view *instant = qa_cvars_read(owner->cvars, owner->ctf_cvars[Q2_CTF_INSTANTWEAP]);
+    if (instant && instant->declared && instant->integer)
+        input->instant_switch = true;
     return true;
 }

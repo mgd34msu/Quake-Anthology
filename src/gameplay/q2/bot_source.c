@@ -159,7 +159,7 @@ bool qa_q2_bot_weapon_read(qa_q2_game *game, qa_actor_id id, qa_q2_weapon weapon
     }
     state.phase = QA_Q2_ACTIVATING;
     if (call.rules == QA_RULESET_Q2_RERELEASE) interval = q2_animation_native(&call);
-    out->activate = call.rules == QA_RULESET_Q2_RERELEASE && call.input.instant_switch ? 0 :
+    out->activate = call.input.instant_switch ? 0 :
         (float)definition->activate_last * (float)((double)interval / 1e9);
     if (out->ballistic) {
         if (!game->services.physics) {

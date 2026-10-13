@@ -6,8 +6,7 @@ static bool lmctf_clock_message(qa_modes *m, mode_instance *v, mode_name text, i
                                        .value.number = value};
     return mode_message(m, v, (qa_actor_id){0}, m->runtime_names[text], &argument, 1, e);
 }
-static bool lmctf_result_message(qa_modes *m, mode_instance *v, qa_error *e) {
-    int64_t scores[2] = {0};
+static bool match_team_scores(qa_modes *m, mode_instance *v, int64_t scores[2], qa_error *e) {
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
         qa_actor_id actor = m->players_order.actors[ordinal];
         mode_member *p = mode_member_get(m, v, actor);
@@ -18,9 +17,21 @@ static bool lmctf_result_message(qa_modes *m, mode_instance *v, qa_error *e) {
             continue;
         p = mode_member_get(m, v, actor);
         int index = mode_team_index(v, team);
-        if (p && index >= 0 && index < 2)
-            scores[index] += p->stats.score;
+        if (p && index >= 0 && index < 2) {
+            int32_t score = p->stats.score;
+            if (v->value.rules.source == QA_MODE_Q2_CTF &&
+                !qa_modes_score(m, v->id, actor, &score, e))
+                return false;
+            scores[index] = v->value.rules.source == QA_MODE_Q2_CTF
+                ? mode_add_i32((int32_t)scores[index], score) : scores[index] + score;
+        }
     }
+    return true;
+}
+static bool lmctf_result_message(qa_modes *m, mode_instance *v, qa_error *e) {
+    int64_t scores[2] = {0};
+    if (!match_team_scores(m, v, scores, e))
+        return false;
     bool blue = scores[1] > scores[0];
     bool tied = scores[0] == scores[1];
     qa_builtin_message_arg arguments[2] = {
@@ -29,6 +40,40 @@ static bool lmctf_result_message(qa_modes *m, mode_instance *v, qa_error *e) {
     return mode_message(m, v, (qa_actor_id){0}, m->runtime_names[tied ? MODE_NAME_LMCTF_MATCH_TIED :
         blue ? MODE_NAME_LMCTF_MATCH_BLUE_WINS : MODE_NAME_LMCTF_MATCH_RED_WINS],
         arguments, tied ? 1 : 2, e);
+}
+static bool ctf_result_message(qa_modes *m, mode_instance *v, qa_error *e) {
+    int64_t scores[2] = {0};
+    if (!mode_message_level(m, v, (qa_actor_id){0},
+            m->runtime_names[MODE_NAME_CTF_MATCH_COMPLETED], NULL, 0, 3, e) ||
+        !match_team_scores(m, v, scores, e))
+        return false;
+    qa_string_id teams[2] = {m->runtime_names[MODE_NAME_CTF_RED],
+                            m->runtime_names[MODE_NAME_CTF_BLUE]};
+    for (int i = 0; i < 2; ++i) {
+        qa_builtin_message_arg arguments[3] = {
+            {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = teams[i]},
+            {.kind = QA_BUILTIN_MESSAGE_NUMBER, .value.number = v->value.team_captures[i]},
+            {.kind = QA_BUILTIN_MESSAGE_NUMBER, .value.number = (double)scores[i]}};
+        if (!mode_message(m, v, (qa_actor_id){0}, m->runtime_names[MODE_NAME_CTF_TEAM_RESULT],
+                          arguments, 3, e))
+            return false;
+    }
+    bool captures = v->value.team_captures[0] != v->value.team_captures[1];
+    if (!captures && scores[0] == scores[1])
+        return mode_message_level(m, v, (qa_actor_id){0}, m->runtime_names[MODE_NAME_CTF_TIED],
+                                  NULL, 0, 3, e);
+    int winner = captures ? v->value.team_captures[1] > v->value.team_captures[0]
+                          : scores[1] > scores[0];
+    double margin = captures
+        ? (double)v->value.team_captures[winner] - v->value.team_captures[!winner]
+        : (double)scores[winner] - (double)scores[!winner];
+    qa_builtin_message_arg arguments[3] = {
+        {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = teams[winner]},
+        {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = teams[!winner]},
+        {.kind = QA_BUILTIN_MESSAGE_NUMBER, .value.number = margin}};
+    return mode_message_level(m, v, (qa_actor_id){0},
+        m->runtime_names[captures ? MODE_NAME_CTF_WON_CAPTURES : MODE_NAME_CTF_WON_POINTS],
+        arguments, 3, 3, e);
 }
 
 static int rank_compare(const void *left, const void *right) {
@@ -199,27 +244,51 @@ bool qa_modes_ready(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool ready, q
     mode_player *p = mode_player_get(m, actor);
     if (!member || !p)
         return mode_fail(e, "unknown ready player");
-    member->player.ready = ready;
-    if (v->value.rules.source == QA_MODE_Q2_CTF && v->value.rules.competition > 1) {
-        if (!ready && v->value.phase == QA_MODE_COUNTDOWN)
-            return mode_set_phase(
-                m, v, QA_MODE_SETUP,
-                v->value.time_ns + (uint64_t)v->value.rules.setup_seconds * MODE_SECOND, e);
-        if (v->value.phase != QA_MODE_SETUP || !ready ||
-            !playing_team(m, v, v->value.rules.teams[0]) ||
-            !playing_team(m, v, v->value.rules.teams[1]))
-            return true;
-        for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-            uint32_t i = m->players_order.actors[ordinal].slot;
-            mode_member *a = &v->members[i];
-            mode_player *x = a->joined ? mode_player_get(m, a->actor) : NULL;
-            if (x && !a->player.spectator && !a->player.ready)
+    if (v->value.rules.source == QA_MODE_Q2_CTF) {
+        qa_team_id team;
+        if (!qa_modes_team(m, id, actor, &team, e))
+            return false;
+        mode_name refusal;
+        if (!team)
+            refusal = MODE_NAME_CTF_PICK_TEAM;
+        else if (v->value.phase != QA_MODE_SETUP &&
+                 (ready || v->value.phase != QA_MODE_COUNTDOWN))
+            refusal = MODE_NAME_CTF_NOT_SETUP;
+        else if (member->player.ready == ready)
+            refusal = ready ? MODE_NAME_CTF_ALREADY_READY : MODE_NAME_CTF_NOT_READY;
+        else {
+            member->player.ready = ready;
+            qa_builtin_message_arg name = {.kind = QA_BUILTIN_MESSAGE_STRING,
+                                           .value.text = p->identity->name};
+            if (!mode_message(m, v, (qa_actor_id){0}, m->runtime_names[ready
+                    ? MODE_NAME_CTF_PLAYER_READY : MODE_NAME_CTF_PLAYER_NOT_READY], &name, 1, e))
+                return false;
+            if (!ready && v->value.phase == QA_MODE_COUNTDOWN)
+                return mode_message_level(m, v, (qa_actor_id){0},
+                    m->runtime_names[MODE_NAME_CTF_MATCH_HALTED], NULL, 0, 3, e) &&
+                    mode_set_phase(m, v, QA_MODE_SETUP,
+                        v->value.time_ns + (uint64_t)v->value.rules.setup_seconds * MODE_SECOND, e);
+            if (!ready ||
+                !playing_team(m, v, v->value.rules.teams[0]) ||
+                !playing_team(m, v, v->value.rules.teams[1]))
                 return true;
+            for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
+                uint32_t i = m->players_order.actors[ordinal].slot;
+                mode_member *a = &v->members[i];
+                mode_player *x = a->joined ? mode_player_get(m, a->actor) : NULL;
+                qa_team_id current;
+                if (x && x->connected && !x->connecting &&
+                    qa_modes_team(m, id, a->actor, &current, NULL) && current && !a->player.ready)
+                    return true;
+            }
+            return mode_message_level(m, v, (qa_actor_id){0},
+                m->runtime_names[MODE_NAME_CTF_ALL_READY], NULL, 0, 3, e) &&
+                mode_set_phase(m, v, QA_MODE_COUNTDOWN,
+                    v->value.time_ns + (uint64_t)v->value.rules.countdown_seconds * MODE_SECOND, e);
         }
-        return mode_set_phase(
-            m, v, QA_MODE_COUNTDOWN,
-            v->value.time_ns + (uint64_t)v->value.rules.countdown_seconds * MODE_SECOND, e);
+        return mode_message(m, v, actor, m->runtime_names[refusal], NULL, 0, e);
     }
+    member->player.ready = ready;
     return true;
 }
 static bool ghost_assign(qa_modes *m, mode_instance *v, mode_member *p, qa_error *e) {
@@ -251,11 +320,19 @@ static bool ghost_assign(qa_modes *m, mode_instance *v, mode_member *p, qa_error
                                             .stats = p->stats,
                                             .code = code,
                                             .score = score};
+    qa_builtin_message_arg argument = {.kind = QA_BUILTIN_MESSAGE_NUMBER,
+                                       .value.number = code};
     return mode_event(m, v, QA_MODE_GHOST_CODE, p->actor, (qa_actor_id){0}, (qa_actor_id){0}, team,
-                      (int32_t)code, 0, e);
+                      (int32_t)code, 0, e) &&
+           mode_message_level(m, v, p->actor, m->runtime_names[MODE_NAME_CTF_GHOST_CODE],
+                              &argument, 1, 3, e) &&
+           mode_message(m, v, p->actor, m->runtime_names[MODE_NAME_CTF_GHOST_HELP],
+                        &argument, 1, e);
 }
 static bool begin_play(qa_modes *m, mode_instance *v, qa_error *e) {
     bool reset = v->value.rules.source == QA_MODE_Q2_CTF || v->value.rules.source == QA_MODE_LMCTF;
+    bool ctf_match = v->value.rules.source == QA_MODE_Q2_CTF &&
+                     v->value.phase == QA_MODE_COUNTDOWN;
     v->value.started_ns = v->value.time_ns;
     v->restart_sent = false;
     v->remaining_seconds = v->value.rules.source == QA_MODE_LMCTF
@@ -286,6 +363,12 @@ static bool begin_play(qa_modes *m, mode_instance *v, qa_error *e) {
         p->stats = (qa_mode_statistics){0};
         p->player.ready = false;
         p->spawn_state = 0;
+        if (ctf_match) {
+            qa_builtin_event message = {.kind = QA_BUILTIN_CENTERPRINT, .actor = p->actor,
+                                        .text = m->runtime_names[MODE_NAME_CTF_MATCH_STARTED]};
+            if (!mode_builtin_emit(m, v, &message, e))
+                return false;
+        }
         if (p->player.spectator)
             continue;
         if (v->value.rules.source == QA_MODE_Q2_CTF) {
@@ -301,6 +384,64 @@ static bool begin_play(qa_modes *m, mode_instance *v, qa_error *e) {
             return false;
     }
     return qa_modes_rank(m, v->id, e);
+}
+static bool ctf_setup_timeout(qa_modes *m, mode_instance *v, qa_error *e) {
+    v->value.rules.competition = 1;
+    if (!mode_set_phase(m, v, QA_MODE_PLAYING, 0, e) ||
+        (m->options.hooks.source_cvar_set &&
+         !MODE_CALLBACK(m, m->options.hooks.source_cvar_set(m->options.hooks.context, v->id,
+             m->runtime_names[MODE_NAME_CVAR_COMPETITION], "1", e))))
+        return false;
+    v->value.started_ns = v->value.time_ns;
+    v->remaining_seconds = 0;
+    v->ready_since_ns = 0;
+    v->restart_sent = false;
+    for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
+        qa_actor_id actor = m->players_order.actors[ordinal];
+        mode_member *member = mode_member_get(m, v, actor);
+        if (!member || !mode_player_get(m, actor))
+            continue;
+        if (m->options.hooks.release_grapple &&
+            !MODE_CALLBACK(m, m->options.hooks.release_grapple(m->options.hooks.context, actor, e)))
+            return false;
+        if (!mode_live(m, actor))
+            continue;
+        if (!qa_modes_drop(m, v->id, actor, true, e) ||
+            !mode_join(m, v, actor, 0, true, false, e))
+            return false;
+        member = mode_member_get(m, v, actor);
+        if (!member)
+            continue;
+        member->player.ready = false;
+        member->spawn_state = 0;
+        member->respawn_ns = 0;
+        member->ghost_code = 0;
+        qa_combat_state state;
+        if (!qa_combat_read_traits(m->options.services.combat, actor, &state, e))
+            return false;
+        state.invulnerable = false;
+        if (!qa_combat_set_traits(m->options.services.combat, actor, &state, e) ||
+            (m->options.hooks.respawn &&
+             !MODE_CALLBACK(m, m->options.hooks.respawn(m->options.hooks.context,
+                 v->id, actor, false, e))))
+            return false;
+    }
+    if (!qa_builtin_observations(&m->options.services, &m->observations, e))
+        return false;
+    for (size_t ordinal = 0; ordinal < m->observations.count; ++ordinal) {
+        mode_object *object = mode_object_get(m, m->observations.actors[ordinal]);
+        if (!object || object->mode.slot != v->id.slot ||
+            object->mode.generation != v->id.generation)
+            continue;
+        if (object->spec.kind == QA_MODE_OBJECT_FLAG) {
+            if (!mode_flag_reset(m, v, object, false, e))
+                return false;
+        } else if (object->spec.kind == QA_MODE_OBJECT_RELIC &&
+                   !qa_session_release(m->options.services.session, object->actor, e))
+            return false;
+    }
+    v->relic_spawn_ns = 0;
+    return mode_relic_spawn_all(m, v, e) && qa_modes_rank(m, v->id, e);
 }
 bool qa_modes_start(qa_modes *m, qa_mode_id id, qa_error *e) {
     mode_instance *v = mode_get(m, id);
@@ -365,7 +506,11 @@ bool qa_modes_end(qa_modes *m, qa_mode_id id, qa_string_id reason, qa_error *e) 
         return lmctf_result_message(m, v, e) &&
                mode_set_phase(m, v, QA_MODE_FINISHED, v->value.time_ns + 300 * MODE_SECOND, e);
     if (v->value.rules.source < QA_MODE_Q3) {
+        bool ctf_match = v->value.rules.source == QA_MODE_Q2_CTF &&
+                         v->value.phase == QA_MODE_PLAYING && v->value.deadline_ns;
         if (!mode_set_phase(m, v, QA_MODE_FINISHED, 0, e))
+            return false;
+        if (ctf_match && !ctf_result_message(m, v, e))
             return false;
         v->restart_sent = true;
         return mode_intent(m, v, QA_MATCH_NEXT_MAP, (qa_actor_id){0}, 0, 0, e);
@@ -627,6 +772,8 @@ bool mode_match_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
     if (v->value.phase == QA_MODE_SETUP) {
         if (now >= v->value.deadline_ns) {
             if (r->competition < 3) {
+                if (r->source == QA_MODE_Q2_CTF)
+                    return ctf_setup_timeout(m, v, e);
                 r->competition = 1;
                 return begin_play(m, v, e);
             }
@@ -687,7 +834,8 @@ bool mode_match_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
         for (int i = 0; i < 3; ++i)
             if (v->value.team_captures[i] >= r->capture_limit ||
                 (r->source >= QA_MODE_Q3 && v->value.team_scores[i] >= r->capture_limit))
-                return qa_modes_end(m, v->id, 0, e);
+                return qa_modes_end(m, v->id, r->source == QA_MODE_Q2_CTF
+                    ? m->runtime_names[MODE_NAME_CTF_CAPTURELIMIT] : 0, e);
     }
     if (r->frag_limit > 0 && (r->source < QA_MODE_Q3 || v->value.playing >= 2) &&
         r->kind < QA_MODE_CTF) {
@@ -710,18 +858,22 @@ bool qa_modes_ghost_rejoin(qa_modes *m, qa_mode_id id, qa_actor_id actor, uint32
                            qa_error *e) {
     mode_instance *v = mode_get(m, id);
     mode_player *player = mode_player_get(m, actor);
-    if (!v || !player || v->value.rules.source != QA_MODE_Q2_CTF ||
-        v->value.phase != QA_MODE_PLAYING)
+    if (!v || !player || v->value.rules.source != QA_MODE_Q2_CTF)
         return mode_fail(e, "ghost restore requires an active CTF match");
     qa_team_id current;
     if (!qa_modes_team(m, v->id, actor, &current, e))
         return false;
     if (current)
-        return mode_fail(e, "ghost restore requires an unassigned player");
+        return mode_message(m, v, actor, m->runtime_names[MODE_NAME_CTF_ALREADY_PLAYING],
+                            NULL, 0, e);
+    if (v->value.phase != QA_MODE_PLAYING || !v->value.deadline_ns)
+        return mode_message(m, v, actor, m->runtime_names[MODE_NAME_CTF_NO_MATCH], NULL, 0, e);
     for (uint32_t i = 0; i < m->actor_capacity; ++i) {
         mode_ghost *ghost = &v->ghosts[i];
         if (!code || ghost->code != code)
             continue;
+        if (!mode_message(m, v, actor, m->runtime_names[MODE_NAME_CTF_GHOST_ACCEPTED], NULL, 0, e))
+            return false;
         if (mode_live(m, ghost->actor)) {
             mode_member *old = mode_member_get(m, v, ghost->actor);
             if (old)
@@ -736,8 +888,18 @@ bool qa_modes_ghost_rejoin(qa_modes *m, qa_mode_id id, qa_actor_id actor, uint32
         member->stats = ghost->stats;
         member->ghost_code = code;
         ghost->actor = actor;
-        return !m->options.hooks.respawn ||
-               m->options.hooks.respawn(m->options.hooks.context, v->id, actor, true, e);
+        if (m->options.hooks.respawn &&
+            !m->options.hooks.respawn(m->options.hooks.context, v->id, actor, true, e))
+            return false;
+        player = mode_player_get(m, actor);
+        if (!player)
+            return true;
+        qa_builtin_message_arg arguments[2] = {
+            {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = player->identity->name},
+            {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = m->runtime_names[
+                ghost->team == v->value.rules.teams[0] ? MODE_NAME_CTF_RED : MODE_NAME_CTF_BLUE]}};
+        return mode_message(m, v, (qa_actor_id){0}, m->runtime_names[MODE_NAME_CTF_GHOST_REINSTATED],
+                            arguments, 2, e);
     }
-    return mode_fail(e, "unknown ghost code");
+    return mode_message(m, v, actor, m->runtime_names[MODE_NAME_CTF_GHOST_INVALID], NULL, 0, e);
 }

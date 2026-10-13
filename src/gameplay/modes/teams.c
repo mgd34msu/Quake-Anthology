@@ -97,7 +97,9 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
     }
     if (!observer && ((v->value.rules.forced_team && team != v->value.rules.forced_team) ||
                       (v->value.rules.match_lock &&
-                       (v->value.phase == QA_MODE_COUNTDOWN || v->value.phase == QA_MODE_PLAYING))))
+                       (v->value.phase == QA_MODE_COUNTDOWN ||
+                        (v->value.phase == QA_MODE_PLAYING &&
+                         (source != QA_MODE_Q2_CTF || v->value.deadline_ns))))))
         return true;
     if (source >= QA_MODE_Q3) {
         if (!native && !observer && v->value.rules.force_balance &&

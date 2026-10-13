@@ -302,6 +302,7 @@ typedef struct qa_modes_hooks {
     void *context;
     /* Strings are borrowed from the selected mode source during the call. */
     bool (*source_settings)(void *, qa_mode_id, qa_mode_source_settings *);
+    bool (*source_cvar_set)(void *, qa_mode_id, qa_string_id, const char *, qa_error *);
     bool (*chat_allowed)(void *, qa_mode_id, qa_actor_id, bool *, qa_error *);
     bool (*chat_item)(void *, qa_mode_id, qa_actor_id, qa_item_id, qa_string_id *, const char **);
     /* Legacy mode records retain only the Q2 edition bit. Import borrows the

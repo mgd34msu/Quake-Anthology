@@ -99,6 +99,30 @@ typedef struct mode_objective {
     bool active, reserved;
 } mode_objective;
 #define MODE_NAME_LIST(X) \
+    X(CVAR_COMPETITION, "competition") \
+    X(CTF_PICK_TEAM, "Pick a team first (hit <TAB> for menu)\n") \
+    X(CTF_NOT_SETUP, "A match is not being setup.\n") \
+    X(CTF_ALREADY_READY, "You have already commited.\n") \
+    X(CTF_NOT_READY, "You haven't commited.\n") \
+    X(CTF_PLAYER_READY, "{0} is ready.\n") \
+    X(CTF_PLAYER_NOT_READY, "{0} is no longer ready.\n") \
+    X(CTF_ALL_READY, "All players have commited.  Match starting\n") \
+    X(CTF_MATCH_HALTED, "Match halted.\n") \
+    X(CTF_MATCH_STARTED, "******************\n\nMATCH HAS STARTED!\n\n******************") \
+    X(CTF_GHOST_CODE, "Your ghost code is **** {0} ****\n") \
+    X(CTF_GHOST_HELP, "If you lose connection, you can rejoin with your score intact by typing \"ghost {0}\".\n") \
+    X(CTF_GHOST_USAGE, "Usage:  ghost <code>\n") \
+    X(CTF_ALREADY_PLAYING, "You are already in the game.\n") \
+    X(CTF_NO_MATCH, "No match is in progress.\n") \
+    X(CTF_GHOST_ACCEPTED, "Ghost code accepted, your position has been reinstated.\n") \
+    X(CTF_GHOST_REINSTATED, "{0} has been reinstated to {1} team.\n") \
+    X(CTF_GHOST_INVALID, "Invalid ghost code.\n") \
+    X(CTF_MATCH_COMPLETED, "MATCH COMPLETED!\n") \
+    X(CTF_TEAM_RESULT, "{0} TEAM:  {1} captures, {2} points\n") \
+    X(CTF_WON_CAPTURES, "{0} team won over the {1} team by {2} CAPTURES!\n") \
+    X(CTF_WON_POINTS, "{0} team won over the {1} team by {2} POINTS!\n") \
+    X(CTF_TIED, "TIE GAME!\n") \
+    X(CTF_CAPTURELIMIT, "Capturelimit hit.\n") \
     X(CHAT_TEAM, "({0}): {1}\n") \
     X(ITEM_QUAD, "item_quad") \
     X(ITEM_INVULNERABILITY, "item_invulnerability") \
@@ -449,6 +473,8 @@ bool mode_sound_full(qa_modes *, mode_instance *, qa_actor_id, qa_string_id, int
 bool mode_builtin_emit(qa_modes *, mode_instance *, const qa_builtin_event *, qa_error *);
 bool mode_message(qa_modes *, mode_instance *, qa_actor_id, qa_string_id,
                    const qa_builtin_message_arg *, size_t, qa_error *);
+bool mode_message_level(qa_modes *, mode_instance *, qa_actor_id, qa_string_id,
+                        const qa_builtin_message_arg *, size_t, int32_t, qa_error *);
 bool mode_count(qa_modes *, qa_actor_id, qa_item_id, double *, qa_error *);
 bool mode_set_count(qa_modes *, qa_actor_id, qa_item_id, double, qa_error *);
 bool mode_object_count(qa_modes *, mode_instance *, mode_object *, qa_actor_id, double, qa_error *);

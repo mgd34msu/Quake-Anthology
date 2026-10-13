@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "native_maps.h"
+#include "native_q2_console.h"
 #include "match_intents.h"
 #include "native_q3_clients.h"
 #include "native_q3_objectives.h"
@@ -228,6 +229,17 @@ static bool mode_chat_allowed(void *opaque, qa_mode_id mode, qa_actor_id actor,
         qa_q2_player_chat_allowed(source->state.q2, actor, allowed, error);
 }
 
+static bool mode_source_cvar_set(void *opaque, qa_mode_id mode, qa_string_id name,
+                                 const char *value, qa_error *error)
+{
+    qa_application *application = opaque;
+    application_provider *source = application_mode_provider(application, mode);
+    qa_cvars *cvars = source && source->kind == APPLICATION_PROVIDER_Q2
+        ? application_native_q2_console_registry(source) : application->cvars;
+    return qa_cvars_set(cvars,
+        qa_strings_cstr(qa_session_strings(application->session), name), value, true, error);
+}
+
 static bool mode_chat_item(void *opaque, qa_mode_id mode, qa_actor_id actor,
                             qa_item_id item, qa_string_id *classname, const char **label)
 {
@@ -255,6 +267,7 @@ static qa_modes_hooks mode_hooks(qa_application *application)
 {
     return (qa_modes_hooks){.context = application,
                             .source_settings = application_native_mode_source_settings,
+                            .source_cvar_set = mode_source_cvar_set,
                             .chat_allowed = mode_chat_allowed,
                             .chat_item = mode_chat_item,
                             .source_ruleset = mode_source_ruleset,
@@ -520,6 +533,10 @@ bool application_match_prepare_modes(qa_application *application,
             !qa_strings_intern_cstr(qa_session_strings(application->session),
                                     choices->modes[index].forced_team,
                                     &rules.forced_team, error))
+            return false;
+        if (source && source->kind == APPLICATION_PROVIDER_Q2 &&
+            rules.source >= QA_MODE_Q2 && rules.source < QA_MODE_Q3 &&
+            !application_native_q2_source_mode_rules(source, &rules, error))
             return false;
         qa_mode_id id;
         if (!qa_modes_add(publication->modes, &rules, &id, error))

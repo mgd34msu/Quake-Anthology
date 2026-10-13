@@ -130,11 +130,16 @@ bool mode_builtin_emit(qa_modes *m, mode_instance *v, const qa_builtin_event *ev
         m->options.hooks.emit(m->options.hooks.context, v->id, &output, e) :
         qa_builtin_emit(&m->options.services, &output, e));
 }
-bool mode_message(qa_modes *m, mode_instance *v, qa_actor_id recipient, qa_string_id text,
-                  const qa_builtin_message_arg *args, size_t count, qa_error *e) {
-    qa_builtin_event event={.kind=QA_BUILTIN_MESSAGE,.actor=recipient,.code=2,
+bool mode_message_level(qa_modes *m, mode_instance *v, qa_actor_id recipient, qa_string_id text,
+                        const qa_builtin_message_arg *args, size_t count, int32_t level,
+                        qa_error *e) {
+    qa_builtin_event event={.kind=QA_BUILTIN_MESSAGE,.actor=recipient,.code=level,
         .text=text,.arguments=args,.argument_count=count};
     return mode_builtin_emit(m, v, &event, e);
+}
+bool mode_message(qa_modes *m, mode_instance *v, qa_actor_id recipient, qa_string_id text,
+                  const qa_builtin_message_arg *args, size_t count, qa_error *e) {
+    return mode_message_level(m, v, recipient, text, args, count, 2, e);
 }
 bool mode_count(qa_modes *m, qa_actor_id actor, qa_item_id item, double *count, qa_error *e) {
     qa_inventory_entry entry;
@@ -1012,7 +1017,9 @@ bool mode_join(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_team_id team
         team != v->value.rules.forced_team)
         return mode_fail(e, "selected team is restricted by match rules");
     if (!observer && !ghost_rejoin && v->value.rules.match_lock &&
-        (v->value.phase == QA_MODE_PLAYING || v->value.phase == QA_MODE_COUNTDOWN))
+        (v->value.phase == QA_MODE_COUNTDOWN ||
+         (v->value.phase == QA_MODE_PLAYING &&
+          (v->value.rules.source != QA_MODE_Q2_CTF || v->value.deadline_ns))))
         return mode_fail(e, "match is locked");
     if (v->members[actor.slot].joined && !qa_modes_drop(m, id, actor, false, e))
         return false;
@@ -1053,7 +1060,16 @@ bool mode_join(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_team_id team
 }
 bool qa_modes_join(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_id team, bool observer,
                    qa_error *e) {
-    return mode_join(m, mode_get(m, id), actor, team, observer, false, e);
+    mode_instance *v = mode_get(m, id);
+    if (v && v->value.rules.source == QA_MODE_Q2_CTF && !team && !observer) {
+        if (v->value.rules.force_join && v->value.phase == QA_MODE_PLAYING) {
+            if (!qa_builtin_players(&m->options.services, &m->players_order, e) ||
+                !qa_modes_choose_team(m, id, actor, &team, e))
+                return false;
+        } else
+            observer = true;
+    }
+    return mode_join(m, v, actor, team, observer, false, e);
 }
 bool qa_modes_choose_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_id *out,
                           qa_error *e) {

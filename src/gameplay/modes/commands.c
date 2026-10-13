@@ -344,11 +344,13 @@ static bool console_command(qa_modes *m, qa_mode_id id, qa_actor_id actor,
         *handled = true;
         return qa_modes_vote_cast(m, id, actor, 0, named(arg, "yes") || named(arg, "y"), e);
     }
-    if (named(name, "ghost")) {
-        int32_t code;
+    if (named(name, "ghost") && v->value.rules.source == QA_MODE_Q2_CTF) {
         *handled = true;
-        return !integer_argument(arg, &code) || code < 0 ||
-               qa_modes_ghost_rejoin(m, id, actor, (uint32_t)code, e);
+        if (command->argc < 2)
+            return mode_message(m, v, actor, m->runtime_names[MODE_NAME_CTF_GHOST_USAGE],
+                                NULL, 0, e);
+        return qa_modes_ghost_rejoin(m, id, actor,
+            (uint32_t)qa_parse_decimal_i32(arg, QA_DECIMAL_CONTROL_WRAP), e);
     }
     if (named(name, "impulse") && v->value.rules.source == QA_MODE_THREEWAVE) {
         int32_t impulse;
