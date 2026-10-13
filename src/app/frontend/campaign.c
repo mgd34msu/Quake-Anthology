@@ -8,11 +8,13 @@
 #include "qa/q3_product_policy.h"
 #include "qa/audio_save.h"
 #include "qa/application_startup_prepare.h"
+#include "qa/application_network_q2.h"
+#include "qa/game_q2_bots.h"
 #include <SDL.h>
 #include <inttypes.h>
 #include <stdio.h>
 
-typedef enum campaign_kind { CAMPAIGN_BASE, CAMPAIGN_TEAM, CAMPAIGN_NONE } campaign_kind;
+typedef enum campaign_kind { CAMPAIGN_BASE, CAMPAIGN_TEAM, CAMPAIGN_Q2, CAMPAIGN_NONE } campaign_kind;
 typedef struct campaign_player { int32_t client,rank,score; } campaign_player;
 struct frontend_campaign {
     qa_frontend *frontend;
@@ -24,7 +26,7 @@ struct frontend_campaign {
     uint64_t map_revision;
     int32_t match_start;
     campaign_kind kind;
-    qa_cvar_handle nextmap, skill, selection;
+    qa_cvar_handle nextmap, skill, selection, deathmatch;
     qa_cvar_handle archive[8], round_identity, time_to_beat, saved_rules[6], result_fields[3];
     uint64_t selection_modification, progression_revision, result_declarations;
     int32_t menu_selection;
@@ -39,7 +41,7 @@ struct frontend_campaign {
     size_t player_count;
     int32_t player_client;
     qa_team_arena_score_result team_result;
-    bool result,announced,movie_played,music_attached,draining;
+    bool result,announced,movie_played,music_attached,draining,match_prepared;
 
 };
 static const char *const base_archive_names[8]={"g_spScores1","g_spScores2","g_spScores3","g_spScores4",
@@ -64,6 +66,17 @@ static char *campaign_copy(const char *text,qa_error *error)
 }
 static const char *campaign_value(const qa_cvars *cvars,qa_cvar_handle handle)
 { const qa_cvar_view *value=qa_cvars_read(cvars,handle); return value?value->value:""; }
+static bool campaign_match_record(qa_player_progress *profile,qa_game_family source,uint32_t seat,
+    const char *round,const char *map,double score,qa_error *error)
+{
+    char participant[64]; (void)snprintf(participant,sizeof(participant),"local-seat:%" PRIu32,seat);
+    qa_progress_event event={.kind=QA_PROGRESS_MATCH_COMPLETED,.source=source,
+        .participant={(const uint8_t *)participant,strlen(participant)},
+        .event={(const uint8_t *)round,strlen(round)},
+        .value.match={.map={(const uint8_t *)map,strlen(map)},.score=score}};
+    bool inserted=false;
+    return qa_player_progress_record(profile,&event,&inserted,error);
+}
 static int32_t campaign_word(uint32_t value)
 { int32_t result; memcpy(&result,&value,sizeof(result)); return result; }
 static int32_t campaign_number(const qa_command_invocation *request,size_t index)
@@ -117,17 +130,149 @@ static campaign_kind campaign_kind_of(const qa_application_q3_campaign *view, qa
     return CAMPAIGN_NONE;
 }
 static bool campaign_source_matches(const frontend_campaign *, const qa_application_q3_campaign *);
+static bool campaign_q2_bind(qa_frontend *f,const qa_application_native_q2_presentation *view,qa_error *error)
+{
+    frontend_campaign *owner=f->campaign;
+    if(owner && owner->kind==CAMPAIGN_Q2 && owner->source==view->source_owner &&
+        owner->map_revision==view->map_revision) {
+        if(owner->publication!=view->publication) {
+            qa_launch_snapshot_retain(view->publication);
+            qa_launch_snapshot_release(owner->publication);owner->publication=view->publication;
+        }
+        return true;
+    }
+    if(!frontend_campaign_destroy(f,error)) return false;
+    qa_application_network_q2_host host;
+    if(!qa_application_network_q2_host_source(f->application,
+        qa_q2_default_protocol(view->edition==QA_RULESET_Q2_RERELEASE),&host,error)) return false;
+    owner=calloc(1,sizeof(*owner));
+    if(!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining Q2 match progress");
+    owner->frontend=f;owner->source=view->source_owner;owner->content=view->content;
+    owner->cvars=host.cvars;owner->publication=view->publication;owner->map_revision=view->map_revision;
+    owner->kind=CAMPAIGN_Q2;
+    qa_launch_snapshot_retain(owner->publication);f->campaign=owner;
+    owner->deathmatch=qa_cvars_resolve(owner->cvars,"deathmatch");
+    owner->round_identity=qa_cvars_resolve(owner->cvars,"qts_matchRoundIdentity");
+    if(qa_cvars_declare_save_policy(owner->cvars,"qts_matchRoundIdentity",QA_CVAR_SAVE_GAMEPLAY,error)) return true;
+    (void)frontend_campaign_destroy(f,NULL);return false;
+}
+static bool campaign_q2_deathmatch(const frontend_campaign *owner,qa_ruleset_id edition)
+{
+    const qa_cvar_view *value=qa_cvars_read(owner->cvars,owner->deathmatch);
+    return value && (edition==QA_RULESET_Q2_RERELEASE?value->integer!=0:value->number!=0);
+}
+static bool campaign_q2_prepare(qa_frontend *f,const qa_application_native_q2_presentation *view,
+    const char *map,qa_error *error)
+{
+    frontend_campaign *owner=f->campaign;
+    if(owner->match_prepared) return true;
+    const char *previous=campaign_value(owner->cvars,owner->round_identity);
+    const char *tail=!strncmp(previous,"q2:",3)?strchr(previous+3,':'):NULL;
+    char generation[32];
+    int generation_bytes=snprintf(generation,sizeof(generation),":%" PRIu64 ":",view->map_revision);
+    bool retained=tail && !strncmp(tail,generation,(size_t)generation_bytes) &&
+        !strcmp(tail+generation_bytes,map);
+    if(!retained) {
+        qa_player_progress *profile=qa_application_player_progress(f->application);
+        char prefix[64];
+        int prefix_bytes=snprintf(prefix,sizeof(prefix),"q2:%zu:%" PRIu64 ":",
+            qa_player_progress_count(profile),view->map_revision);
+        size_t map_bytes=strlen(map);
+        char *identity=qa_arena_alloc(&f->frame.storage,(size_t)prefix_bytes+map_bytes+1,_Alignof(char),error);
+        if(!identity) return false;
+        memcpy(identity,prefix,(size_t)prefix_bytes);memcpy(identity+prefix_bytes,map,map_bytes+1);
+        if(!qa_cvars_set(owner->cvars,"qts_matchRoundIdentity",identity,true,error)) return false;
+    }
+    owner->match_prepared=true;return true;
+}
+static bool campaign_q2_player(qa_frontend *f,const qa_application_native_q2_presentation *view,
+    uint32_t ordinal,uint32_t *seat,int32_t *score,bool *playing,bool *intermission,qa_error *error)
+{
+    *playing=false;*intermission=false;
+    qa_actor_id actor;
+    if(!frontend_seat_launch_id_read(f,ordinal,seat) || !frontend_seat_actor_read(f,ordinal,&actor)) return true;
+    if(view->kind==QA_APPLICATION_NATIVE_Q2_BUILTIN) {
+        qa_q2_player_info player;
+        if(!qa_q2_player_read((qa_q2_game *)view->source.game,actor,&player) || !player.connected || player.spectator)
+            return true;
+        *score=player.score;
+    } else {
+        qa_native_host *host=(qa_native_host *)view->source.original.host;
+        uint32_t slot;
+        if(!qa_native_host_slot_for_actor(host,actor,&slot)) return true;
+        qa_q2_player player;
+        if(!qa_native_host_q2_wire_player(host,slot,actor,&player,error)) return false;
+        if(player.stats[17]!=0) return true;
+        *score=player.stats[14];
+        *intermission=view->edition==QA_RULESET_Q2_RERELEASE && (player.stats[13]&8)!=0;
+    }
+    *playing=true;return true;
+}
+bool frontend_campaign_match_complete(qa_frontend *f,qa_actor_owner source,qa_error *error)
+{
+    if(!f || f->options.dedicated || frontend_network_remote(f) || f->capture) return true;
+    qa_application_native_q2_presentation view;bool found;
+    if(!qa_application_native_q2_presentation_selected(f->application,&view,&found,error)) return false;
+    if(!found || view.source_owner!=source) return true;
+    if(!campaign_q2_bind(f,&view,error)) return false;
+    frontend_campaign *owner=f->campaign;
+    if(owner->result || !campaign_q2_deathmatch(owner,view.edition)) return true;
+    qa_application_map_view map;
+    if(!qa_application_map_read(f->application,&map)) return true;
+    if(!campaign_q2_prepare(f,&view,map.name,error)) return false;
+    qa_player_progress *profile=qa_application_player_progress(f->application);
+    if(!profile) {owner->result=true;return true;}
+    const char *identity=campaign_value(owner->cvars,owner->round_identity);
+    size_t length=strlen(identity);
+    char *round=qa_arena_alloc(&f->frame.storage,length+sizeof("match:"),_Alignof(char),error);
+    if(!round) return false;
+    memcpy(round,"match:",sizeof("match:")-1);memcpy(round+sizeof("match:")-1,identity,length+1);
+    for(uint32_t ordinal=0;ordinal<f->options.seats;++ordinal) {
+        uint32_t seat;int32_t score;bool playing,intermission;
+        if(!campaign_q2_player(f,&view,ordinal,&seat,&score,&playing,&intermission,error)) return false;
+        if(playing && !campaign_match_record(profile,QA_GAME_Q2,seat,round,map.name,score,error)) return false;
+    }
+    owner->result=true;return true;
+}
+static bool campaign_q2_sync(qa_frontend *f,qa_error *error)
+{
+    qa_application_map_view map;
+    if(f->options.dedicated || frontend_network_remote(f) || !qa_application_map_read(f->application,&map))
+        return frontend_campaign_destroy(f,error);
+    qa_application_native_q2_presentation view;bool found;
+    if(!qa_application_native_q2_presentation_selected(f->application,&view,&found,error)) return false;
+    if(!found) return frontend_campaign_destroy(f,error);
+    if(!campaign_q2_bind(f,&view,error)) return false;
+    if(!campaign_q2_deathmatch(f->campaign,view.edition) || f->campaign->result) return true;
+    if(!campaign_q2_prepare(f,&view,map.name,error)) return false;
+    bool completed=false;
+    if(view.kind==QA_APPLICATION_NATIVE_Q2_BUILTIN) {
+        uint64_t time,started;
+        if(!qa_q2_bot_clock_read(view.source.game,&time,&completed,&started,error)) return false;
+    } else if(view.edition==QA_RULESET_Q2_RERELEASE) {
+        for(uint32_t ordinal=0;!completed && ordinal<f->options.seats;++ordinal) {
+            uint32_t seat;int32_t score;bool playing;
+            if(!campaign_q2_player(f,&view,ordinal,&seat,&score,&playing,&completed,error)) return false;
+        }
+    }
+    return !completed || frontend_campaign_match_complete(f,view.source_owner,error);
+}
 bool frontend_campaign_sync(qa_frontend *f,qa_error *error)
 {
     if (!f || !f->application || f->capture) return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign setup requires its actual frontend source owner");
     if (qa_application_startup_pending(f->application)) return true;
+    if (!campaign_has_q3(f)) {
+        qa_error progress={0};
+        if (!campaign_q2_sync(f,&progress))
+            qa_application_feature_report(f->application,"match progress",&progress);
+        return true;
+    }
     frontend_campaign *owner = f->campaign;
     qa_application_map_view map;
     if (owner && owner->publication == qa_application_launch(f->application) &&
         owner->configuration_generation == qa_application_configuration_generation(f->application) &&
         qa_application_map_read(f->application, &map) && owner->map_revision == map.revision &&
         owner->cvar_revision == qa_cvars_revision(owner->cvars)) return true;
-    if (!campaign_has_q3(f)) return frontend_campaign_destroy(f,error);
     qa_application_q3_campaign view;
     if (!qa_application_q3_campaign_read(f->application,0,&view,error)) return false;
     qa_cvar_handle nextmap = view.nextmap;
@@ -200,7 +345,7 @@ bool frontend_campaign_source_command(void *context,qa_application *application,
         strcmp(name,"arena-play") && strcmp(name,"arena-retry") && strcmp(name,"arena-next")) return true;
     qa_frontend *f=context;
     if (!f || application!=f->application || f->source_restoring || f->capture || !frontend_campaign_sync(f,error)) return false;
-    if (!f->campaign) return true;
+    if (!f->campaign || f->campaign->kind==CAMPAIGN_Q2) return true;
     qa_application_q3_campaign view;
     bool postgame=!strcmp(name,"postgame") || !strcmp(name,"spPostgame");
     if (!qa_application_q3_campaign_read(application,f->campaign->source,&view,error) ||
@@ -297,11 +442,7 @@ static bool campaign_base_complete(qa_frontend *f,const qa_application_q3_campai
     if (ok && !duplicate && local) {
         if (!view->profile) ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Local arena completion requires its actual application profile owner");
         else {
-            char participant[64]; (void)snprintf(participant,sizeof(participant),"local-seat:%" PRIu32,seat);
-            qa_progress_event event={.kind=QA_PROGRESS_MATCH_COMPLETED,.source=QA_GAME_Q3,
-                .participant={(const uint8_t *)participant,strlen(participant)},.event={(const uint8_t *)round,strlen(round)},
-                .value.match={.map={(const uint8_t *)arena->map,strlen(arena->map)},.score=game.frags}};
-            bool inserted=false; ok=qa_player_progress_record(view->profile,&event,&inserted,error) &&
+            ok=campaign_match_record(view->profile,QA_GAME_Q3,seat,round,arena->map,game.frags,error) &&
                 qa_application_q3_campaign_current(f->application,view);
         }
     }
@@ -390,7 +531,7 @@ bool frontend_campaign_ui_read(qa_frontend *f,uint32_t seat,frontend_campaign_ui
     *out=(frontend_campaign_ui_view){0};
     if (qa_application_startup_pending(f->application)) return true;
     frontend_campaign *owner=f->campaign;
-    if (!owner || owner->draining || frontend_network_remote(f)) return true;
+    if (!owner || owner->kind==CAMPAIGN_Q2 || owner->draining || frontend_network_remote(f)) return true;
     qa_actor_owner receiver=0;
     if (!frontend_source_cgame_recipient(f,seat,&receiver,error)) return false;
     if (!receiver) return true;

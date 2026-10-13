@@ -3,6 +3,7 @@
 #include "commands.h"
 #include "save_commands.h"
 #include "campaign_cinematic.h"
+#include "campaign.h"
 #include "config_store.h"
 #include "view_settings.h"
 #include "system_cinematic.h"
@@ -141,6 +142,12 @@ static bool world_command(qa_frontend *f,const qa_application_startup_source *so
          * soon as the actual request has been accepted. */
         qa_application_travel_view travel;
         bool pending=queued && qa_application_travel_read(f->application,&travel);
+        if(pending && gamemap && q2 && !parked && call->context.origin==QA_COMMAND_SERVER &&
+            call->context.owner==source->scope.provider) {
+            qa_error progress={0};
+            if(!frontend_campaign_match_complete(f,source->scope.provider,&progress))
+                qa_application_feature_report(f->application,"match progress",&progress);
+        }
         if (q2 && pending &&
             travel.target.kind==QA_TRAVEL_MAP && !qa_console_defer(call->console,error)) return false;
         if (pending) frontend_demo_dispatch_manual_game(f->demos);
