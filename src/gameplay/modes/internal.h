@@ -7,6 +7,7 @@
 #include "qa/arena.h"
 #include "qa/pool.h"
 #include "qa/id_index.h"
+#include "qa/q2_sound.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -263,6 +264,18 @@ typedef struct mode_objective {
     X(LMCTF_TEAMS_UNLOCKED, "Teams are now unlocked\n") \
     X(LMCTF_GAME_PAUSED, "Game Paused\n") \
     X(LMCTF_GAME_UNPAUSED, "Game Unpaused\n") \
+    X(LMCTF_VOTE_NEEDS_PLAYERS, "You need at least four players on the server to initiate a vote\n") \
+    X(LMCTF_VOTE_ALREADY_STARTED, "Vote has already been started\n") \
+    X(LMCTF_VOTE_SKIP_STARTED, "{0} started vote to skip level.\n") \
+    X(LMCTF_VOTE_NOT_STARTED, "A vote has not been initiated.\n") \
+    X(LMCTF_VOTE_YES, "You have voted YES\n") \
+    X(LMCTF_VOTE_NO, "You have voted NO\n") \
+    X(LMCTF_VOTE_ENDED, "Vote session has ended\n") \
+    X(LMCTF_VOTE_RESULT, "VOTE RESULT: YES:{0}  NO:{1}  Abstained:{2}\n") \
+    X(LMCTF_VOTE_NEEDS_BALLOTS, "Vote Fails: you need at least 2 ballots cast!\n") \
+    X(LMCTF_VOTE_SKIP_PASSED, "Vote to skip level Passes with {0} percent majority\n") \
+    X(LMCTF_VOTE_FAILED, "Vote Fails with {0} percent majority\n") \
+    X(SOUND_MISC_SECRET_WAV, QA_Q2_SOUND_MISC_SECRET) \
     X(SOUND_CTF_R_RETURNED_WAV, "ctf/r_returned.wav") \
     X(SOUND_CTF_B_RETURNED_WAV, "ctf/b_returned.wav") \
     X(SOUND_CTF_R_STOLEN_WAV, "ctf/r_stolen.wav") \

@@ -84,18 +84,25 @@ bool qa_modes_vote_start(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
     if (source == QA_MODE_LMCTF)
         for (uint32_t i = 0; i < m->actor_capacity; ++i)
             v->members[i].ballots[slot] = 0;
+    size_t count = source == QA_MODE_LMCTF ? voters(m, v, team) : 0;
+    if (source == QA_MODE_LMCTF && count < 4)
+        return mode_message(m, v, actor, m->runtime_names[MODE_NAME_LMCTF_VOTE_NEEDS_PLAYERS],
+                            NULL, 0, e);
     qa_mode_vote *vote = &v->votes[slot];
-    if (vote->active)
+    if (vote->active) {
+        if (source == QA_MODE_LMCTF)
+            return mode_message(m, v, actor, m->runtime_names[MODE_NAME_LMCTF_VOTE_ALREADY_STARTED],
+                                NULL, 0, e);
         return mode_fail(e, "vote already in progress");
+    }
     if (vote->passed) {
         if (source < QA_MODE_Q3)
             return mode_fail(e, "vote is waiting to execute");
         if (!execute_vote(m, v, vote, e))
             return false;
     }
-    size_t count = voters(m, v, team);
-    if (source == QA_MODE_LMCTF && count < 4)
-        return mode_fail(e, "LMCTF votes need four players");
+    if (source != QA_MODE_LMCTF)
+        count = voters(m, v, team);
     if (source == QA_MODE_Q2_CTF && (count < 2 || v->value.rules.election_percent <= 0))
         return mode_fail(e, "CTF election needs two players and an enabled threshold");
     if (!count)
@@ -142,16 +149,37 @@ bool qa_modes_vote_start(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
         member->ballots[slot] = 1;
         vote->yes = 1;
     }
-    return mode_event(m, v, QA_MODE_VOTE_STARTED, actor, (qa_actor_id){0}, (qa_actor_id){0}, team,
-                      needed, (int32_t)intent->kind, e);
+    if (!mode_event(m, v, QA_MODE_VOTE_STARTED, actor, (qa_actor_id){0}, (qa_actor_id){0}, team,
+                    needed, (int32_t)intent->kind, e))
+        return false;
+    if (source == QA_MODE_LMCTF && intent->kind == QA_MATCH_NEXT_MAP) {
+        mode_player *player = mode_player_get(m, actor);
+        if (!player)
+            return true;
+        qa_builtin_message_arg argument = {.kind = QA_BUILTIN_MESSAGE_STRING,
+            .value.text = player->identity->name};
+        return mode_message(m, v, (qa_actor_id){0}, m->runtime_names[MODE_NAME_LMCTF_VOTE_SKIP_STARTED],
+                            &argument, 1, e) &&
+               mode_sound_full(m, v, actor, m->runtime_names[MODE_NAME_SOUND_MISC_SECRET_WAV],
+                               3, 1, 0, e);
+    }
+    return true;
 }
 bool qa_modes_vote_cast(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_id team, bool yes,
                         qa_error *e) {
     mode_instance *v = mode_get(m, id);
     mode_member *member = mode_member_get(m, v, actor);
     int slot = v ? vote_slot(v, team) : -1;
-    if (!member || slot < 0 || !v->votes[slot].active)
+    if (!member || slot < 0)
         return mode_fail(e, "no active vote");
+    if (!v->votes[slot].active) {
+        if (v->value.rules.source == QA_MODE_LMCTF) {
+            qa_builtin_event message = {.kind = QA_BUILTIN_MESSAGE, .actor = actor,
+                .text = m->runtime_names[MODE_NAME_LMCTF_VOTE_NOT_STARTED]};
+            return mode_builtin_emit(m, v, &message, e);
+        }
+        return mode_fail(e, "no active vote");
+    }
     qa_mode_vote *vote = &v->votes[slot];
     mode_player *p = mode_player_get(m, actor);
     if (!p || !p->connected ||
@@ -175,6 +203,9 @@ bool qa_modes_vote_cast(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_i
         ++vote->yes;
     else
         ++vote->no;
+    if (v->value.rules.source == QA_MODE_LMCTF)
+        return mode_message(m, v, actor, m->runtime_names[yes ? MODE_NAME_LMCTF_VOTE_YES :
+            MODE_NAME_LMCTF_VOTE_NO], NULL, 0, e);
     return true;
 }
 bool qa_modes_vote_read(qa_modes *m, qa_mode_id id, qa_team_id team, qa_mode_vote *out,
@@ -247,6 +278,7 @@ bool mode_vote_frame(qa_modes *m, mode_instance *v, qa_error *e) {
             if (v->value.time_ns <= vote->deadline_ns)
                 continue;
             vote->yes = vote->no = 0;
+            int32_t abstained = 0;
             for (size_t i = 0; i < m->players_order.count; ++i) {
                 qa_actor_id actor = m->players_order.actors[i];
                 mode_member *member = mode_member_get(m, v, actor);
@@ -257,6 +289,8 @@ bool mode_vote_frame(qa_modes *m, mode_instance *v, qa_error *e) {
                     ++vote->yes;
                 else if (member->ballots[slot] < 0)
                     ++vote->no;
+                else
+                    ++abstained;
             }
             int32_t total = vote->yes + vote->no;
             int32_t percent = total ? 100 * vote->yes / total : 0;
@@ -264,6 +298,26 @@ bool mode_vote_frame(qa_modes *m, mode_instance *v, qa_error *e) {
                 ++percent;
             finished = true;
             pass = total >= 2 && percent >= 75;
+            qa_builtin_message_arg tally[3] = {
+                {.kind = QA_BUILTIN_MESSAGE_NUMBER, .value.number = vote->yes},
+                {.kind = QA_BUILTIN_MESSAGE_NUMBER, .value.number = vote->no},
+                {.kind = QA_BUILTIN_MESSAGE_NUMBER, .value.number = abstained}};
+            if (!mode_message(m, v, (qa_actor_id){0}, m->runtime_names[MODE_NAME_LMCTF_VOTE_ENDED],
+                              NULL, 0, e) ||
+                !mode_message(m, v, (qa_actor_id){0}, m->runtime_names[MODE_NAME_LMCTF_VOTE_RESULT],
+                              tally, 3, e))
+                return false;
+            if (total < 2) {
+                if (!mode_message(m, v, (qa_actor_id){0}, m->runtime_names[MODE_NAME_LMCTF_VOTE_NEEDS_BALLOTS],
+                                  NULL, 0, e))
+                    return false;
+            } else if (!pass || vote->intent.kind == QA_MATCH_NEXT_MAP) {
+                qa_builtin_message_arg result = {.kind = QA_BUILTIN_MESSAGE_NUMBER,
+                    .value.number = pass ? percent : 100 - percent};
+                if (!mode_message(m, v, (qa_actor_id){0}, m->runtime_names[pass ?
+                        MODE_NAME_LMCTF_VOTE_SKIP_PASSED : MODE_NAME_LMCTF_VOTE_FAILED], &result, 1, e))
+                    return false;
+            }
         } else if (source == QA_MODE_Q2_CTF) {
             if (vote->yes >= vote->needed) {
                 finished = true;
