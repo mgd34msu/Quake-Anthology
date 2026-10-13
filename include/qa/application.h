@@ -96,6 +96,8 @@ typedef struct qa_application_travel_request {
     const qa_q2_landmark *landmark;
     bool new_unit, carry_players, complete_campaign;
     qa_map_launch_policy map_launch;
+    /* Start this selected match on the destination's clock after publication. */
+    qa_mode_id start_match_mode;
 } qa_application_travel_request;
 typedef struct qa_application_travel_view {
     qa_travel_target target;

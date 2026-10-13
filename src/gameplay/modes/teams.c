@@ -87,14 +87,15 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
         return false;
     qa_mode_source source = v->value.rules.source;
     if (source == QA_MODE_LMCTF && !observer) {
-        if (v->value.rules.flags & 8u) {
+        if (command && (v->value.rules.flags & 8u)) {
             qa_builtin_event event = {.kind = QA_BUILTIN_CENTERPRINT, .actor = actor,
                 .text = m->runtime_names[MODE_NAME_LMCTF_TEAM_SWITCH_OFF]};
             return !command || mode_builtin_emit(m, v, &event, e);
         }
         if (v->value.rules.match_lock)
-            return !command || mode_message(m, v, actor,
-                m->runtime_names[MODE_NAME_LMCTF_TEAM_LOCKED], NULL, 0, e);
+            return mode_message(m, v, actor,
+                m->runtime_names[command ? MODE_NAME_LMCTF_TEAM_LOCKED :
+                    MODE_NAME_LMCTF_TEAM_MENU_LOCKED], NULL, 0, e);
     }
     if (source == QA_MODE_LMCTF && !qa_modes_can_move(m, id, actor))
         return true;

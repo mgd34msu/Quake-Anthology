@@ -30,7 +30,7 @@ enum { QA_MODE_MENU_LAYOUT_BYTES = 1400 };
 typedef enum qa_mode_menu_page {
     QA_MODE_MENU_NONE, QA_MODE_MENU_JOIN, QA_MODE_MENU_CREDITS, QA_MODE_MENU_NO_CHASE,
     QA_MODE_MENU_SCOREBOARD, QA_MODE_MENU_ADMIN, QA_MODE_MENU_SETTINGS,
-    QA_MODE_MENU_LMCTF_VOTE
+    QA_MODE_MENU_LMCTF_VOTE, QA_MODE_MENU_LMCTF_MAIN, QA_MODE_MENU_LMCTF_OBSERVER
 } qa_mode_menu_page;
 typedef struct qa_mode_ctf_settings {
     int32_t match_minutes, setup_minutes, start_seconds;

@@ -459,8 +459,26 @@ typedef struct mode_objective {
     X(LMCTF_VOTE_MENU_BALLOT_NONE, "You have not voted") \
     X(LMCTF_VOTE_MENU_BALLOT_YES, "You have voted YES") \
     X(LMCTF_VOTE_MENU_BALLOT_NO, "You have voted NO") \
+    X(LMCTF_MENU_TITLE, "LM CTF Option Menu") \
+    X(LMCTF_MENU_SEPARATOR, "------------------") \
+    X(LMCTF_MENU_OBSERVER_OPTIONS, "Observer Options") \
+    X(LMCTF_MENU_BECOME_OBSERVER, "Become Observer") \
+    X(LMCTF_MENU_CHANGE_TEAM, "Change Team") \
+    X(LMCTF_MENU_VOTING, "Voting Menu") \
+    X(LMCTF_OBSERVER_MENU_TITLE, "LMCTF Observer Menu") \
+    X(LMCTF_OBSERVER_MENU_SEPARATOR, "-------------------") \
+    X(LMCTF_OBSERVER_MENU_PLAY, "Play CTF") \
+    X(LMCTF_OBSERVER_MENU_RED, "Observe Red") \
+    X(LMCTF_OBSERVER_MENU_BLUE, "Observe_Blue") \
+    X(LMCTF_OBSERVER_MENU_ALL, "Observe_All") \
+    X(LMCTF_GOTOMAP_NOT_REFEREE, "You are not a Referee.\n") \
+    X(LMCTF_MATCH_NOT_REFEREE, "You are not a Referee\n") \
+    X(LMCTF_MATCH_USAGE, "USAGE: match <mapname>\n") \
+    X(LMCTF_MAP_NOT_LISTED, "{0} is not a map from the maplist.\n") \
+    X(LMCTF_MATCH_STARTING, "Match countdown beginning.\n") \
     X(LMCTF_TEAM_SWITCH_OFF, "Sorry.  Team switching has been turned\n off on this server.\n") \
     X(LMCTF_TEAM_LOCKED, "Teams are currently locked.\n") \
+    X(LMCTF_TEAM_MENU_LOCKED, "Teams are locked\n") \
     X(LMCTF_CURRENT_TEAM, "You are currently on the {0} team.\n") \
     X(LMCTF_CURRENT_TEAM_NUMBER, "You are currently team {0}.\n") \
     X(LMCTF_TEAM_USAGE, "Use 'team red' or 'team blue' to change teams.\n") \

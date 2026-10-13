@@ -491,6 +491,15 @@ static bool queue_travel(qa_application *application,
         }
     }
     route.targets[0].new_unit |= request->new_unit;
+    size_t match_index = 0;
+    bool start_match = request->start_match_mode.generation != 0;
+    if (start_match) {
+        while (match_index < application->mode_count &&
+            (application->mode_ids[match_index].slot != request->start_match_mode.slot ||
+             application->mode_ids[match_index].generation != request->start_match_mode.generation))
+            ++match_index;
+        start_match = match_index < application->mode_count;
+    }
     if (state->pending) {
         const qa_travel_target *old = &state->route.targets[state->cursor];
         const qa_travel_target *next = &route.targets[0];
@@ -499,6 +508,8 @@ static bool queue_travel(qa_application *application,
                     state->carry_players == request->carry_players &&
                     state->complete_campaign == request->complete_campaign &&
                     state->map_launch == request->map_launch &&
+                    state->start_match == start_match &&
+                    (!start_match || state->match_mode_index == match_index) &&
                     qa_actor_id_equal(state->cause, request->cause) &&
                     state->has_landmark == (request->landmark != NULL) &&
                     state->route.count - state->cursor == route.count;
@@ -535,6 +546,8 @@ static bool queue_travel(qa_application *application,
     state->carry_players = request->carry_players;
     state->complete_campaign = request->complete_campaign;
     state->map_launch = request->map_launch;
+    state->start_match = start_match;
+    state->match_mode_index = match_index;
     state->has_landmark = request->landmark != NULL;
     state->landmark = request->landmark != NULL ? *request->landmark : (qa_q2_landmark){0};
     state->pending = true;
@@ -815,6 +828,7 @@ void application_map_load_finish(qa_application *application, bool published)
             state->cursor = 0;
             state->nextserver = QA_STRING_NONE;
             state->map_launch = QA_MAP_LAUNCH_DEFAULT;
+            state->start_match = false;
         }
         state->pending = false;
         state->has_landmark = false;
@@ -843,6 +857,10 @@ bool qa_application_finish_travel_publication(qa_application *application,
     struct application_map_state *state = application->map_state;
     if (!state->match_finished) {
         if (!qa_application_finish_match_travel(application, revision, error)) return false;
+        if (state->start_match && state->match_mode_index < application->mode_count &&
+            !qa_modes_start(application->modes, application->mode_ids[state->match_mode_index], error))
+            return false;
+        state->start_match = false;
         state->match_finished = true;
     }
     if (!qa_application_rankings_start(application, error)) return false;
@@ -1102,7 +1120,11 @@ bool application_map_checkpoint_capture(qa_application *application, bool depart
     }
     if (ok) ok = application_campaign_fields(&io,application,departed);
     uint32_t policy = present ? (uint32_t)application->map_state->map_launch : QA_MAP_LAUNCH_DEFAULT;
-    if (ok) ok = qa_source_save_u32(&io, &policy) && qa_source_save_finish(&io, out);
+    bool start_match = present && application->map_state->start_match;
+    size_t match_index = start_match ? application->map_state->match_mode_index : 0;
+    if (ok) ok = qa_source_save_u32(&io, &policy) && qa_source_save_bool(&io, &start_match);
+    if (ok && start_match) ok = qa_source_save_count(&io, &match_index, SIZE_MAX);
+    if (ok) ok = qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
     return ok;
 }
@@ -1161,6 +1183,8 @@ static bool campaign_route_copy(const struct application_map_state *source,
     destination->carry_players=source->carry_players;
     destination->complete_campaign=source->complete_campaign;
     destination->map_launch=source->map_launch;
+    destination->start_match=source->start_match;
+    destination->match_mode_index=source->match_mode_index;
     destination->pending=false; destination->has_landmark=false;
     destination->publication_complete=true; destination->match_finished=false;
     return true;
@@ -1248,8 +1272,16 @@ bool application_map_checkpoint_restore(qa_application *candidate, qa_bytes byte
         qa_error_set(error, QA_ERROR_FORMAT, io.offset, "Invalid map launch policy");
         ok = false;
     }
+    bool start_match = false;
+    size_t match_index = 0;
+    if (ok && io.offset < io.input.size) ok = qa_source_save_bool(&io, &start_match);
+    if (ok && start_match) ok = qa_source_save_count(&io, &match_index, SIZE_MAX);
     if (ok) ok = qa_source_save_finish(&io, NULL);
-    if (ok && state) state->map_launch = (qa_map_launch_policy)policy;
+    if (ok && state) {
+        state->map_launch = (qa_map_launch_policy)policy;
+        state->start_match = start_match;
+        state->match_mode_index = match_index;
+    }
     if (ok && state) ok = own_map_route(&state->route, &state->route, error);
     qa_source_save_dispose(&io);
     if (!ok) {

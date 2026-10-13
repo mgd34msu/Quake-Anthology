@@ -16,6 +16,8 @@ struct application_map_state {
     bool pending, busy, has_landmark, carry_players, complete_campaign;
     bool loading, load_carry, load_new_unit;
     bool publication_complete, match_finished;
+    bool start_match;
+    size_t match_mode_index;
     uint64_t load_revision;
     qa_string_id load_nextserver;
     uint64_t entry_generation, save_request_revision;

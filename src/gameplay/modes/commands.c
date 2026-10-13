@@ -446,6 +446,42 @@ static bool ctf_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
 static bool lmctf_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
                            const qa_command_invocation *command, bool *handled, qa_error *e) {
     const char *name = command->argv[0];
+    if (named(name, "gotomap") || named(name, "match")) {
+        *handled = true;
+        bool match = named(name, "match");
+        mode_member *member = mode_member_get(m, v, actor);
+        if (!member || !(member->extra_flags & 2))
+            return mode_message(m, v, actor, m->runtime_names[match ?
+                MODE_NAME_LMCTF_MATCH_NOT_REFEREE : MODE_NAME_LMCTF_GOTOMAP_NOT_REFEREE],
+                NULL, 0, e);
+        const char *argument = command->args_text ? command->args_text : "";
+        if (!*argument)
+            return !match || mode_message(m, v, actor,
+                m->runtime_names[MODE_NAME_LMCTF_MATCH_USAGE], NULL, 0, e);
+        qa_strings *strings = qa_session_strings(m->options.services.session);
+        qa_bytes text = {(const uint8_t *)argument, strlen(argument)};
+        qa_string_id map = match ? qa_strings_find(strings, text) :
+            qa_strings_find_ascii_lower(strings, text);
+        bool accepted;
+        if (!qa_modes_admin(m, v->id, actor, match ? QA_MODE_ADMIN_MATCH_MAP :
+                            QA_MODE_ADMIN_MAP, map, &accepted, e))
+            return false;
+        if (accepted)
+            return true;
+        char lowercase[1024];
+        if (!match) {
+            size_t length = text.size < sizeof(lowercase) - 1 ?
+                text.size : sizeof(lowercase) - 1;
+            for (size_t i = 0; i < length; ++i)
+                lowercase[i] = (char)qa_text_ascii_lower(text.data[i]);
+            lowercase[length] = 0;
+            argument = lowercase;
+        }
+        qa_builtin_message_arg value = {.kind = QA_BUILTIN_MESSAGE_TEXT,
+            .value.literal = argument};
+        return mode_message(m, v, actor, m->runtime_names[MODE_NAME_LMCTF_MAP_NOT_LISTED],
+                             &value, 1, e);
+    }
     if (named(name, "observe_red") || named(name, "observe_blue")) {
         *handled = true;
         bool accepted;
@@ -695,6 +731,10 @@ bool qa_modes_admin(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_mode_admin
             !m->options.hooks.map_allowed(m->options.hooks.context, id, map))
             return true;
         *accepted = true;
+        if (v->value.rules.source == QA_MODE_LMCTF && action == QA_MODE_ADMIN_MATCH_MAP &&
+            !mode_message(m, v, actor, m->runtime_names[MODE_NAME_LMCTF_MATCH_STARTING],
+                           NULL, 0, e))
+            return false;
         return mode_intent(
             m, v, action == QA_MODE_ADMIN_MATCH_MAP ? QA_MATCH_START : QA_MATCH_SELECTED_MAP, actor,
             0, map, e);

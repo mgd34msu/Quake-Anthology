@@ -127,10 +127,14 @@ static bool mode_intent(void *opaque, const qa_match_intent *intent,
     if (source && source->kind == APPLICATION_PROVIDER_Q2) {
         if (intent->kind == QA_MATCH_NEXT_MAP)
             return qa_q2_players_end_deathmatch_level(source->state.q2, error);
-        if (intent->kind == QA_MATCH_SELECTED_MAP)
-            return qa_q2_players_intermission(source->state.q2,
-                qa_strings_cstr(qa_session_strings(application->session), intent->map),
-                NULL, 0, error);
+        if (intent->kind == QA_MATCH_SELECTED_MAP ||
+            (intent->kind == QA_MATCH_START && intent->map)) {
+            qa_application_travel_request request = {.provider = source->owner,
+                .cause = intent->actor, .geometry = source->product->id,
+                .expression = qa_strings_cstr(qa_session_strings(application->session), intent->map)};
+            if (intent->kind == QA_MATCH_START) request.start_match_mode = intent->mode;
+            return application_source_queue_map_travel(application, &request, error);
+        }
     }
     if (intent->kind == QA_MATCH_NEXT_MAP || intent->kind == QA_MATCH_SELECTED_MAP ||
         intent->kind == QA_MATCH_RESTART_MAP ||
