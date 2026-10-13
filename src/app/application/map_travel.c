@@ -599,10 +599,47 @@ bool qa_application_travel_read(const qa_application *application,
     return true;
 }
 
+static bool coop_victory_restart(qa_application *application,
+    const struct application_map_state *state)
+{
+    const qa_travel_target *target = state->route.targets + state->cursor;
+    if (target->kind != QA_TRAVEL_PICTURE ||
+        !qa_text_ascii_equal(target->name, "victory.pcx")) return false;
+    const qa_launch_snapshot *current = qa_application_launch(application);
+    const qa_launch_choices *choices = current ? qa_launch_snapshot_choices(current) :
+        qa_launch_draft_choices(state->restart_draft);
+    const qa_launch_binding *binding = qa_launch_binding_for(choices,
+        (qa_launch_scope){.kind = QA_SCOPE_WORLD}, QA_ROLE_ENTITIES, "");
+    const qa_launch_provider *selected = NULL;
+    if (binding && current) {
+        const qa_launch_instance *instance = qa_launch_snapshot_find(current, binding->instance);
+        if (instance) selected = &instance->selection;
+    } else if (binding) {
+        /* The retained draft owns this cold selection after GAME shutdown. */
+        for (size_t i = 0; i < choices->provider_count; ++i)
+            if (!strcmp(choices->providers[i].instance, binding->instance)) {
+                selected = choices->providers + i;
+                break;
+            }
+    }
+    qa_catalog *catalog = current ? qa_launch_snapshot_catalog(current) :
+        qa_launch_draft_catalog(state->restart_draft);
+    const qa_product *product = selected ? qa_catalog_product(catalog, selected->product) : NULL;
+    if (!product || product->family != QA_GAME_Q2) return false;
+    const qa_cvar_view *coop = qa_cvars_find(qa_application_cvars(application), "coop");
+    return coop && (selected->clock.kind == QA_RULESET_Q2_RERELEASE ?
+        coop->integer != 0 : coop->number != 0);
+}
+
 static bool nextserver_prepare(qa_application *application,
                                 struct application_map_state *state,
                                 qa_string_id *out, qa_error *error)
 {
+    if (coop_victory_restart(application, state)) {
+        static const char restart[] = "gamemap \"*base1\"";
+        return qa_strings_intern(qa_session_strings(application->session),
+            (qa_bytes){(const uint8_t *)restart, sizeof(restart) - 1}, out, error);
+    }
     qa_buffer text = {0};
     if (!qa_q2_nextserver(&state->route, state->cursor, &text, error))
         return false;
@@ -830,11 +867,23 @@ bool qa_application_complete_travel(qa_application *application,
     if (state->revision == UINT64_MAX)
         return application_fail(error, QA_ERROR_MEMORY,
                                 "travel continuation identity is exhausted");
-    qa_string_id nextserver;
-    if (!nextserver_prepare(application, state, &nextserver, error))
+    bool restart = coop_victory_restart(application, state);
+    qa_travel_route continuation = {0};
+    if (restart && !qa_q2_travel_parse("*base1", &continuation, error))
         return false;
+    qa_string_id nextserver;
+    if (!nextserver_prepare(application, state, &nextserver, error)) {
+        qa_travel_route_free(&continuation);
+        return false;
+    }
     state->nextserver = nextserver;
-    state->pending = ++state->cursor < state->route.count;
+    if (restart) {
+        qa_travel_route_free(&state->route);
+        state->route = continuation;
+        state->cursor = 0;
+        state->pending = true;
+        state->has_landmark = false;
+    } else state->pending = ++state->cursor < state->route.count;
     ++state->revision;
     return true;
 }
