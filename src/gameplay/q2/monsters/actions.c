@@ -2152,10 +2152,8 @@ static bool conditional_transition(q2m_context *context, q2m_callback_id callbac
     }
     bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
     if (rerelease) {
-      qa_vec3 start;
       bool clear;
-      if (!q2m_project_flash(context, 57, &start, error) ||
-          !q2m_clear_shot(context, start, &clear, error))
+      if (!q2m_clear_flash_shot(context, 57, &clear, error))
         return false;
       if (!q2m_alive(context))
         return true;

@@ -444,6 +444,7 @@ bool q2m_move_to_goal(q2m_context *, float, qa_error *);
 bool q2m_change_yaw(q2m_context *, qa_error *);
 bool q2m_face_enemy(q2m_context *, qa_error *);
 bool q2m_clear_shot(q2m_context *, qa_vec3, bool *, qa_error *);
+bool q2m_clear_flash_shot(q2m_context *, int, bool *, qa_error *);
 
 bool q2m_project_flash(const q2m_context *, int flash, qa_vec3 *,
                        qa_error *);

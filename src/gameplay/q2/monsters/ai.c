@@ -1017,7 +1017,7 @@ bool q2m_visible(q2m_context *context, qa_actor_id id, bool *visible,
   return true;
 }
 
-bool q2m_clear_shot(q2m_context *context, qa_vec3 start, bool *clear,
+bool q2m_clear_shot(q2m_context *context, qa_vec3 offset, bool *clear,
                     qa_error *error) {
   *clear = false;
   struct qa_q2_monster *monster = context->monster;
@@ -1038,6 +1038,10 @@ bool q2m_clear_shot(q2m_context *context, qa_vec3 start, bool *clear,
   }
   if (!q2m_alive(context) || !alive || !q2_actor_live(context->game, target_id))
     return true;
+  q2m_context projection = *context;
+  projection.body.angles.y = monster->ideal_yaw;
+  projection.body.angles.z = 0;
+  qa_vec3 start = q2m_project_offset(&projection, offset);
   bool blind = monster->manual_steering || monster->attack_state == Q2M_BLIND ||
                (rerelease && monster->lost_sight);
   qa_vec3 end = blind ? monster->blind_fire_target
@@ -1670,6 +1674,14 @@ static bool visual_candidate(q2m_context *context, qa_actor_id candidate,
   return true;
 }
 
+bool q2m_clear_flash_shot(q2m_context *context, int flash, bool *clear,
+                          qa_error *error) {
+  qa_vec3 offset;
+  if (!q2m_muzzle_offset(context, flash, &offset, error))
+    return false;
+  return q2m_clear_shot(context, offset, clear, error);
+}
+
 static bool sight_reaction(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   q2m_species species = monster->definition->species;
@@ -1709,15 +1721,8 @@ static bool sight_reaction(q2m_context *context, qa_error *error) {
       return true;
     if (monster->count < 4)
       return q2m_set_move(context, Q2M_MOVE_soldier_move_attack6, false, error);
-    qa_vec3 offset;
-    if (!q2m_muzzle_offset(context, 88, &offset, error))
-      return false;
-    q2m_context projection = *context;
-    projection.body.angles.y = monster->ideal_yaw;
-    projection.body.angles.z = 0;
     bool clear;
-    if (!q2m_clear_shot(context, q2m_project_offset(&projection, offset), &clear,
-                      error))
+    if (!q2m_clear_flash_shot(context, 88, &clear, error))
       return false;
     return !q2m_alive(context) || !clear ||
            q2m_set_move(context, Q2M_MOVE_soldier_move_attack4, false, error);
@@ -2532,7 +2537,7 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
   case Q2M_PARASITE:
     if (context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
       bool clear;
-      if (!q2m_clear_shot(context, q2m_project_offset(context, qa_v3(-1.7f, 0, 1.2f)),
+      if (!q2m_clear_shot(context, qa_v3(-1.7f, 0, 1.2f),
                           &clear, error))
         return false;
       if (!q2m_alive(context))
@@ -2590,19 +2595,16 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
         *move = Q2M_MOVE_soldier_move_attack6;
         break;
       }
-      qa_vec3 start;
       if (monster->count < 4) {
         bool attack1 = false, attack2;
         if (monster->style != 0 || monster->count < 2 || monster->count > 3 ||
             distance > 286.0f) {
-          if (!q2m_project_flash(context, 39, &start, error) ||
-              !q2m_clear_shot(context, start, &attack1, error))
+          if (!q2m_clear_flash_shot(context, 39, &attack1, error))
             return false;
           if (!q2m_alive(context))
             return true;
         }
-        if (!q2m_project_flash(context, 40, &start, error) ||
-            !q2m_clear_shot(context, start, &attack2, error))
+        if (!q2m_clear_flash_shot(context, 40, &attack2, error))
           return false;
         if (!q2m_alive(context))
           return true;
@@ -2614,8 +2616,7 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
                                       : Q2M_MOVE_soldier_move_attack2;
       } else {
         bool clear;
-        if (!q2m_project_flash(context, 88, &start, error) ||
-            !q2m_clear_shot(context, start, &clear, error))
+        if (!q2m_clear_flash_shot(context, 88, &clear, error))
           return false;
         if (!q2m_alive(context))
           return true;
@@ -2700,15 +2701,8 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
             *move = Q2M_MOVE_NONE;
             break;
           }
-          qa_vec3 offset;
-          if (!q2m_muzzle_offset(context, 61, &offset, error))
-            return false;
-          q2m_context projection = *context;
-          projection.body.angles.y = monster->ideal_yaw;
-          projection.body.angles.z = 0;
           bool clear;
-          if (!q2m_clear_shot(context, q2m_project_offset(&projection, offset),
-                              &clear, error))
+          if (!q2m_clear_flash_shot(context, 61, &clear, error))
             return false;
           if (!q2m_alive(context))
             return true;
