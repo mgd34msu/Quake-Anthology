@@ -2397,9 +2397,14 @@ static bool q2_property_id(application_provider *provider,
 {
     qa_bytes value;
     *out = QA_STRING_NONE;
-    return !qa_entity_value(entities, index, key, &value) ||
-           qa_strings_intern(qa_session_strings(provider->application->session),
-                             value, out, error);
+    if (!qa_entity_value(entities, index, key, &value)) return true;
+    qa_strings *strings = qa_session_strings(provider->application->session);
+    if (provider->kind == APPLICATION_PROVIDER_Q2) {
+        qa_string_id field = qa_strings_find(strings,
+            (qa_bytes){(const uint8_t *)key, strlen(key)});
+        return qa_q2_entity_field_admit(provider->state.q2, field, value, out, error);
+    }
+    return qa_strings_intern(strings, value, out, error);
 }
 
 static bool monster_authored_fields(application_provider *map, const qa_entities *entities,

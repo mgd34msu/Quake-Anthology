@@ -589,9 +589,6 @@ bool q2m_spawn_makron_entity(q2m_context *context, qa_actor_id *child,
   qa_entity_property properties[] = {
       {.key = {(const uint8_t *)"classname", sizeof("classname") - 1},
        .value = {(const uint8_t *)"monster_makron", sizeof("monster_makron") - 1}},
-      {.key = {(const uint8_t *)"target", sizeof("target") - 1},
-       .value = qa_strings_text(
-           qa_session_strings(context->game->services.session), parent.target)},
   };
   qa_actor_definition definition;
   definition=context->game->runtime_names[Q2_NAME_RESOURCE_MONSTER_MAKRON];
@@ -609,11 +606,13 @@ bool q2m_spawn_makron_entity(q2m_context *context, qa_actor_id *child,
            qa_session_release(context->game->services.session, id, error);
   qa_q2_map_fields fields = {
       .properties = properties,
-      .count = parent.target != 0 ? 2 : 1,
+      .count = 1,
       .ordinal = UINT32_MAX,
   };
   bool handled;
-  if (!qa_q2_entity_spawn(context->game, id, &fields, &handled, error)) {
+  if (!qa_q2_entity_spawn(context->game, id, &fields, &handled, error) ||
+      (q2_actor_live(context->game, id) &&
+       !qa_q2_entity_set_target(context->game, id, parent.target, error))) {
     qa_error original = error != NULL ? *error : (qa_error){0};
     if (q2_actor_live(context->game, id))
       qa_session_release(context->game->services.session, id, NULL);

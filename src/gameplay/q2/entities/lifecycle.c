@@ -15,6 +15,44 @@ static uint32_t flags(qa_q2_game *g, q2_entity_state *s) {
     v = trunc(v);
     return (uint32_t)(v < 0 ? v + 4294967296.0 : v);
 }
+static bool string_field(const qa_q2_game *g, qa_string_id key) {
+    static const qa_target_key common[] = {
+        QA_TARGET_KEY_CLASSNAME, QA_TARGET_KEY_MODEL, QA_TARGET_KEY_TARGET,
+        QA_TARGET_KEY_TARGETNAME, QA_TARGET_KEY_PATHTARGET, QA_TARGET_KEY_DEATHTARGET,
+        QA_TARGET_KEY_KILLTARGET, QA_TARGET_KEY_COMBATTARGET, QA_TARGET_KEY_MESSAGE,
+        QA_TARGET_KEY_TEAM, QA_TARGET_KEY_MAP, QA_TARGET_KEY_NOISE, QA_TARGET_KEY_ITEM,
+        QA_TARGET_KEY_GRAVITY, QA_TARGET_KEY_SKY, QA_TARGET_KEY_NEXTMAP};
+    static const qa_target_key rerelease[] = {
+        QA_TARGET_KEY_HEALTHTARGET, QA_TARGET_KEY_ITEMTARGET, QA_TARGET_KEY_MESSAGE2,
+        QA_TARGET_KEY_MUSIC, QA_TARGET_KEY_ACHIEVEMENT, QA_TARGET_KEY_SHADOWLIGHTSTYLETARGET,
+        QA_TARGET_KEY_GOALS, QA_TARGET_KEY_IMAGE, QA_TARGET_KEY_START_ITEMS,
+        QA_TARGET_KEY_REINFORCEMENTS, QA_TARGET_KEY_NOISE_START, QA_TARGET_KEY_NOISE_MIDDLE,
+        QA_TARGET_KEY_NOISE_END};
+    for (size_t i = 0; i < sizeof(common) / sizeof(*common); ++i)
+        if (key == g->field_keys[common[i]]) return true;
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE)
+        for (size_t i = 0; i < sizeof(rerelease) / sizeof(*rerelease); ++i)
+            if (key == g->field_keys[rerelease[i]]) return true;
+    return false;
+}
+bool qa_q2_entity_field_admit(qa_q2_game *g, qa_string_id key, qa_bytes raw,
+                            qa_string_id *out, qa_error *e) {
+    qa_bytes value = raw;
+    if (raw.data && raw.size && raw.size != SIZE_MAX &&
+        memchr(raw.data, '\\', raw.size) && string_field(g, key)) {
+        uint8_t *decoded = qa_arena_alloc(&g->entity_fields, raw.size, 1, e);
+        if (!decoded) return false;
+        size_t count = 0;
+        for (size_t i = 0; i < raw.size; ++i) {
+            uint8_t byte = raw.data[i];
+            if (byte == '\\' && i + 1 < raw.size)
+                byte = raw.data[++i] == 'n' ? '\n' : '\\';
+            decoded[count++] = byte;
+        }
+        value = (qa_bytes){decoded, count};
+    }
+    return qa_strings_intern(qa_session_strings(g->services.session), value, out, e);
+}
 bool qa_q2_entity_spawn(qa_q2_game *g, qa_actor_id id, const qa_q2_map_fields *fields,
                         bool *handled, qa_error *e) {
     if (!g || !fields || !handled || (fields->count && !fields->properties) ||
@@ -43,8 +81,10 @@ bool qa_q2_entity_spawn(qa_q2_game *g, qa_actor_id id, const qa_q2_map_fields *f
         }
         qa_strings *strings = qa_session_strings(g->services.session);
         for (size_t i = 0; i < fields->count; i++) {
-            if (!qa_strings_intern(strings, fields->properties[i].key, &s->fields[i].key, e) ||
-                !qa_strings_intern(strings, fields->properties[i].value, &s->fields[i].value, e)) {
+            if (!qa_strings_intern_ascii_lower(strings, fields->properties[i].key,
+                    &s->fields[i].key, e) ||
+                !qa_q2_entity_field_admit(g, s->fields[i].key, fields->properties[i].value,
+                    &s->fields[i].value, e)) {
                 q2_entity_state_release(g, s);
                 return false;
             }

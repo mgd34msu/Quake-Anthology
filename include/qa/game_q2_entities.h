@@ -404,6 +404,9 @@ bool qa_q2_entities_restore(qa_q2_game *, const qa_q2_entities_checkpoint *, qa_
 void qa_q2_entities_checkpoint_free(qa_q2_entities_checkpoint *);
 bool qa_q2_entities_validate_links(qa_q2_game *, qa_error *);
 bool qa_q2_entities_configure(qa_q2_game *, const qa_q2_entity_services *, qa_error *);
+/* Declared string fields follow ED_NewString; other field bytes stay raw. */
+bool qa_q2_entity_field_admit(qa_q2_game *, qa_string_id key, qa_bytes value,
+                            qa_string_id *out, qa_error *);
 /* Actual application unit travel clears report rows; visited-map history is
  * retained across units, matching the Source campaign lifetime. */
 bool qa_q2_campaign_leave_unit(qa_q2_game *, qa_error *);

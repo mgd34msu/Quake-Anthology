@@ -91,6 +91,7 @@
     X(MAXYAW, "maxyaw") \
     X(MDL, "mdl") \
     X(MESSAGE, "message") \
+    X(MESSAGE2, "message2") \
     X(MINPITCH, "minpitch") \
     X(MINS, "mins") \
     X(MINYAW, "minyaw") \
@@ -98,6 +99,8 @@
     X(MODEL2, "model2") \
     X(MONSTER_SLOTS, "monster_slots") \
     X(MOVEDIR, "movedir") \
+    X(MUSIC, "music") \
+    X(NEXTMAP, "nextmap") \
     X(NOISE, "noise") \
     X(NOISE1, "noise1") \
     X(NOISE_END, "noise_end") \
@@ -147,6 +150,7 @@
     X(SPAWNSILENT, "spawnsilent") \
     X(SPEED, "speed") \
     X(STATE, "state") \
+    X(START_ITEMS, "start_items") \
     X(STEAM, "steam") \
     X(STOREDNEXTTHINK, "storednextthink") \
     X(STYLE, "style") \
