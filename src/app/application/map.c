@@ -2408,6 +2408,18 @@ static bool q2_property_id(application_provider *provider,
     return qa_strings_intern(strings, value, out, error);
 }
 
+static bool authored_spawnflags(application_provider *provider, const qa_entities *entities,
+    size_t index, uint32_t *out, qa_error *error)
+{
+    if (qa_ruleset_read(provider->component.clock.kind)->family != QA_GAME_Q2)
+        return entity_u32(entities, index, "spawnflags", 0, out, error);
+    qa_bytes value = {0};
+    (void)qa_entity_value(entities, index, "spawnflags", &value);
+    qa_number_cursor cursor = {.text = value};
+    *out = (uint32_t)qa_parse_decimal_i32_cursor(&cursor, QA_DECIMAL_ASCII_WRAP, false);
+    return true;
+}
+
 static bool monster_authored_fields(application_provider *map, const qa_entities *entities,
     size_t index, uint32_t ordinal, qa_authored_monster *row, qa_error *error)
 {
@@ -2434,7 +2446,7 @@ static bool monster_authored_fields(application_provider *map, const qa_entities
         !q2_property_id(map, entities, index, "itemtarget", &row->item_target, error) ||
         !q2_property_id(map, entities, index, "healthtarget", &row->health_target, error) ||
         !q2_property_id(map, entities, index, "combattarget", &row->combat_target, error) ||
-        !entity_u32(entities, index, "spawnflags", 0, &row->spawnflags, error) ||
+        !authored_spawnflags(map, entities, index, &row->spawnflags, error) ||
         !entity_float(entities, index, "delay", 0, &row->fields.delay_seconds, error) ||
         !entity_float(entities, index, "wait", 0, &row->fields.wait_seconds, error) ||
         !entity_vector(entities, index, "origin", qa_v3(0, 0, 0), &row->authored_origin, NULL, error)) return false;
@@ -2521,8 +2533,7 @@ static bool q2_spawn_native_fields(application_provider *map_provider,
                       actor) != NULL) {
         qa_q2_item_spawn item = {.classname = authored};
         int32_t count;
-        if (!entity_u32(entities, index, "spawnflags", 0,
-                        &item.spawnflags, error) ||
+        if (!authored_spawnflags(map_provider, entities, index, &item.spawnflags, error) ||
             !entity_i32(entities, index, "count", 0, &count, error) ||
             !entity_float(entities, index, "delay", 0, &item.delay, error) ||
             !q2_property_id(map_provider, entities, index, "target",
@@ -2549,8 +2560,7 @@ static bool q2_spawn_native_fields(application_provider *map_provider,
         if (authored_monster) {
             ok = qa_q2_monster_spawn(actor_provider->state.q2, actor, &options, error);
             handled = ok;
-        } else if (!entity_u32(entities, index, "spawnflags", 0,
-                        &options.spawnflags, error) ||
+        } else if (!authored_spawnflags(map_provider, entities, index, &options.spawnflags, error) ||
             !entity_float(entities, index, "scale", 0, &options.scale,
                           error) ||
             !entity_float(entities, index, "health_multiplier", 0,
@@ -2774,7 +2784,7 @@ static bool q2_spawn_map(application_provider *provider,
     for (size_t index = 0; index < entities->count; ++index) {
         uint32_t flags = 0;
         if (index) {
-            if (!entity_u32(entities, index, "spawnflags", 0, &flags, error)) {
+            if (!authored_spawnflags(provider, entities, index, &flags, error)) {
                 ok = false;
                 break;
             }

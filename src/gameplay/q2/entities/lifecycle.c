@@ -8,12 +8,7 @@ static int integer(float n) {
 }
 static uint32_t flags(qa_q2_game *g, q2_entity_state *s) {
     const char *text = q2_field_text(g, s, g->field_keys[QA_TARGET_KEY_SPAWNFLAGS]);
-    double v;
-    if (!qa_parse_number((qa_bytes){(const uint8_t *)text, strlen(text)}, &v, NULL) ||
-        !isfinite(v) || v < INT32_MIN || v > UINT32_MAX)
-        return 0;
-    v = trunc(v);
-    return (uint32_t)(v < 0 ? v + 4294967296.0 : v);
+    return (uint32_t)qa_parse_decimal_i32(text, QA_DECIMAL_ASCII_WRAP);
 }
 static bool string_field(const qa_q2_game *g, qa_string_id key) {
     static const qa_target_key common[] = {
