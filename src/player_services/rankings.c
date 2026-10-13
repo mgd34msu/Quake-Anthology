@@ -1,5 +1,6 @@
 #include "qa/rankings.h"
 #include "qa/rankings_save.h"
+#include "qa/id_index.h"
 #include "save_io.h"
 #include <math.h>
 #include <stdio.h>
@@ -12,6 +13,7 @@ struct qa_rankings {
     qa_ranking_observers observers;
     qa_ranking_state state;
     ranked_player *players;
+    qa_id_index slots;
     size_t count, capacity;
     uint64_t match;
     bool configured, has_match, busy, restore_pending, restore_loaded, backend_failed;
@@ -57,11 +59,15 @@ static bool leave(qa_rankings *rankings, bool ok, qa_error *error) {
     return ok;
 }
 static size_t find(const qa_rankings *rankings, int32_t slot) {
-    if (rankings)
-        for (size_t i = 0; i < rankings->count; ++i)
-            if (rankings->players[i].slot == slot)
-                return i;
-    return SIZE_MAX;
+    if (!rankings || slot < 0) return SIZE_MAX;
+    qa_id_index_cursor cursor = qa_id_index_begin(&rankings->slots, (uint32_t)slot, 0);
+    size_t row;
+    return qa_id_index_next(&rankings->slots, &cursor, &row) ? row : SIZE_MAX;
+}
+static void slots_bind(qa_rankings *rankings) {
+    qa_id_index_clear(&rankings->slots);
+    for (size_t i = 0; i < rankings->count; ++i)
+        qa_id_index_insert(&rankings->slots, (uint32_t)rankings->players[i].slot, 0, i);
 }
 qa_ranking_state qa_rankings_state(const qa_rankings *rankings) {
     return rankings ? rankings->state : (qa_ranking_state){.kind = QA_RANKING_DISABLED};
@@ -78,6 +84,7 @@ static void notify(qa_rankings *rankings, int32_t slot, const qa_ranking_player 
 static bool player(qa_rankings *rankings, int32_t slot, qa_ranking_player value, qa_error *error) {
     size_t index = find(rankings, slot);
     if (index == SIZE_MAX) {
+        if (!qa_id_index_reserve(&rankings->slots, 1, error)) return false;
         if (rankings->count == rankings->capacity) {
             size_t count = rankings->capacity ? rankings->capacity * 2 : 16;
             if (count < rankings->capacity || count > SIZE_MAX / sizeof(*rankings->players))
@@ -91,6 +98,7 @@ static bool player(qa_rankings *rankings, int32_t slot, qa_ranking_player value,
             rankings->capacity = count;
         }
         index = rankings->count++;
+        qa_id_index_insert(&rankings->slots, (uint32_t)slot, 0, index);
     }
     rankings->players[index] = (ranked_player){slot, value};
     notify(rankings, slot, &rankings->players[index].state);
@@ -283,6 +291,7 @@ bool qa_rankings_disconnect(qa_rankings *rankings, int32_t slot, qa_error *error
             memmove(rankings->players + index, rankings->players + index + 1,
                     (rankings->count - index - 1) * sizeof(*rankings->players));
             --rankings->count;
+            slots_bind(rankings);
         }
         qa_ranking_player fresh = {.kind = QA_RANKING_NEW_PLAYER};
         notify(rankings, slot, &fresh);
@@ -327,6 +336,7 @@ bool qa_rankings_end(qa_rankings *rankings, qa_error *error) {
     rankings->has_match = false;
     rankings->match = 0;
     rankings->count = 0;
+    qa_id_index_clear(&rankings->slots);
     state(rankings, QA_RANKING_DISABLED, NULL);
     if (failures && error) {
         *error = first;
@@ -345,6 +355,7 @@ bool qa_rankings_close(qa_rankings *rankings, qa_error *error) {
     if (rankings->busy)
         return fail(error, "Cannot close active ranking operation");
     bool ok = rankings->restore_pending || qa_rankings_end(rankings, error);
+    qa_id_index_destroy(&rankings->slots);
     free(rankings->players);
     free(rankings);
     return ok;
@@ -425,7 +436,12 @@ static bool rankings_fields(qa_source_save_io *io, qa_rankings *r) {
         copy.state.kind = (qa_ranking_player_kind)kind;
         if (reading) r->players[i] = copy;
     }
-    return rankings_ready(r, io->error);
+    if (!rankings_ready(r, io->error)) return false;
+    if (reading) {
+        if (!qa_id_index_reserve(&r->slots, r->count, io->error)) return false;
+        slots_bind(r);
+    }
+    return true;
 }
 static bool provider_same(const qa_ranking_provider *a, const qa_ranking_provider *b) {
     return a->context == b->context && a->begin == b->begin && a->login == b->login &&
@@ -528,12 +544,14 @@ bool qa_rankings_restore(qa_rankings *owner, const qa_rankings_checkpoint_refs *
     if (ok) {
         owner->state = scratch.state; owner->match = scratch.match; owner->has_match = scratch.has_match;
         owner->players = scratch.players; scratch.players = NULL;
+        owner->slots = scratch.slots; scratch.slots = (qa_id_index){0};
         owner->count = scratch.count; owner->capacity = scratch.capacity;
         owner->restore_loaded = true;
     } else if (error && error->code == QA_OK)
         qa_error_set(error, QA_ERROR_FORMAT, io.offset, "Unqualified rankings continuation binding");
     qa_source_save_dispose(&io);
     qa_buffer_free(&provider_key); qa_buffer_free(&observer_key);
+    qa_id_index_destroy(&scratch.slots);
     free(endpoint); free(scratch.players);
     owner->busy = false;
     return ok;
