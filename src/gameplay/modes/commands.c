@@ -171,6 +171,12 @@ static bool q3_call_vote(qa_modes *m, mode_instance *v, qa_actor_id actor,
 static bool lmctf_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
                            const qa_command_invocation *command, bool *handled, qa_error *e) {
     const char *name = command->argv[0];
+    if (named(name, "observe_red") || named(name, "observe_blue")) {
+        *handled = true;
+        bool accepted;
+        return qa_modes_observe(m, v->id, actor,
+            v->value.rules.teams[named(name, "observe_blue") ? 1 : 0], &accepted, e);
+    }
     if (named(name, "lmctf-vote") && command->argc > 1 && named(command->argv[1], "skip")) {
         *handled = true;
         qa_match_intent intent = {.kind = QA_MATCH_NEXT_MAP};
@@ -275,6 +281,19 @@ static bool console_command(qa_modes *m, qa_mode_id id, qa_actor_id actor,
             qa_team_id current;
             if (!qa_modes_team(m, id, actor, &current, e))
                 return false;
+            if (v->value.rules.source == QA_MODE_LMCTF) {
+                int index = mode_team_index(v, current);
+                qa_builtin_message_arg argument = index >= 0 && index < 2 ?
+                    (qa_builtin_message_arg){.kind = QA_BUILTIN_MESSAGE_STRING,
+                        .value.text = m->runtime_names[index ? MODE_NAME_LMCTF_BLUE :
+                            MODE_NAME_LMCTF_RED]} :
+                    (qa_builtin_message_arg){.kind = QA_BUILTIN_MESSAGE_NUMBER,
+                        .value.number = current};
+                return mode_message(m, v, actor, m->runtime_names[index >= 0 && index < 2 ?
+                    MODE_NAME_LMCTF_CURRENT_TEAM : MODE_NAME_LMCTF_CURRENT_TEAM_NUMBER],
+                    &argument, 1, e) && mode_message(m, v, actor,
+                        m->runtime_names[MODE_NAME_LMCTF_TEAM_USAGE], NULL, 0, e);
+            }
             return mode_event(m, v, QA_MODE_ROSTER, actor, (qa_actor_id){0}, (qa_actor_id){0},
                                 current, 0, 0, e);
         }
@@ -301,7 +320,7 @@ static bool console_command(qa_modes *m, qa_mode_id id, qa_actor_id actor,
         }
         return ok;
     }
-    if (named(name, "spectator") || named(name, "observe")) {
+    if (named(name, "spectator") || named(name, "observe") || named(name, "observer")) {
         *handled = true;
         return qa_modes_observe(m, id, actor, 0, &accepted, e);
     }

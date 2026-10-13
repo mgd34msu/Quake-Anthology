@@ -70,6 +70,18 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
     if (!qa_modes_team(m, v->id, actor, &previous, e))
         return false;
     qa_mode_source source = v->value.rules.source;
+    if (source == QA_MODE_LMCTF && !observer) {
+        if (v->value.rules.flags & 8u) {
+            qa_builtin_event event = {.kind = QA_BUILTIN_CENTERPRINT, .actor = actor,
+                .text = m->runtime_names[MODE_NAME_LMCTF_TEAM_SWITCH_OFF]};
+            return !command || mode_builtin_emit(m, v, &event, e);
+        }
+        if (v->value.rules.match_lock)
+            return !command || mode_message(m, v, actor,
+                m->runtime_names[MODE_NAME_LMCTF_TEAM_LOCKED], NULL, 0, e);
+    }
+    if (source == QA_MODE_LMCTF && !qa_modes_can_move(m, id, actor))
+        return true;
     if (command && v->value.rules.source >= QA_MODE_Q3) {
         if (member->team_switch_ns > v->value.time_ns)
             return true;
@@ -86,11 +98,6 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
     if (!observer && ((v->value.rules.forced_team && team != v->value.rules.forced_team) ||
                       (v->value.rules.match_lock &&
                        (v->value.phase == QA_MODE_COUNTDOWN || v->value.phase == QA_MODE_PLAYING))))
-        return true;
-    if (source == QA_MODE_LMCTF && !observer &&
-        (v->value.rules.match_lock || (v->value.rules.flags & 8u)))
-        return true;
-    if (source == QA_MODE_LMCTF && !qa_modes_can_move(m, id, actor))
         return true;
     if (source >= QA_MODE_Q3) {
         if (!native && !observer && v->value.rules.force_balance &&
@@ -210,6 +217,19 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
     if (!mode_event(m, v, QA_MODE_ROSTER, actor, (qa_actor_id){0}, (qa_actor_id){0}, team,
                     observer ? 0 : 1, 0, e))
         return false;
+    if (source == QA_MODE_LMCTF && !observer) {
+        player = mode_player_get(m, actor);
+        int index = mode_team_index(v, team);
+        if (player && index >= 0 && index < 2) {
+            qa_builtin_message_arg args[] = {
+                {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = player->identity->name},
+                {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = m->runtime_names[
+                    index ? MODE_NAME_LMCTF_BLUE : MODE_NAME_LMCTF_RED]}};
+            if (!mode_message(m, v, (qa_actor_id){0},
+                m->runtime_names[MODE_NAME_LMCTF_TEAM_CHANGED], args, 2, e))
+                return false;
+        }
+    }
     return !m->options.hooks.respawn ||
            MODE_CALLBACK(m, m->options.hooks.respawn(m->options.hooks.context, id, actor, true, e));
 }

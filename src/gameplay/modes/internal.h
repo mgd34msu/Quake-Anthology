@@ -275,6 +275,12 @@ typedef struct mode_objective {
     X(LMCTF_VOTE_NEEDS_BALLOTS, "Vote Fails: you need at least 2 ballots cast!\n") \
     X(LMCTF_VOTE_SKIP_PASSED, "Vote to skip level Passes with {0} percent majority\n") \
     X(LMCTF_VOTE_FAILED, "Vote Fails with {0} percent majority\n") \
+    X(LMCTF_TEAM_SWITCH_OFF, "Sorry.  Team switching has been turned\n off on this server.\n") \
+    X(LMCTF_TEAM_LOCKED, "Teams are currently locked.\n") \
+    X(LMCTF_CURRENT_TEAM, "You are currently on the {0} team.\n") \
+    X(LMCTF_CURRENT_TEAM_NUMBER, "You are currently team {0}.\n") \
+    X(LMCTF_TEAM_USAGE, "Use 'team red' or 'team blue' to change teams.\n") \
+    X(LMCTF_TEAM_CHANGED, "{0} is now on the {1} team.\n") \
     X(SOUND_MISC_SECRET_WAV, QA_Q2_SOUND_MISC_SECRET) \
     X(SOUND_CTF_R_RETURNED_WAV, "ctf/r_returned.wav") \
     X(SOUND_CTF_B_RETURNED_WAV, "ctf/b_returned.wav") \
