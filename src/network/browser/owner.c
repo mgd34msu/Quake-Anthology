@@ -321,7 +321,7 @@ bool qa_server_browser_master_udp(qa_server_browser *browser, const qa_net_addre
     uint8_t bytes[128]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
     bool encoded = protocol.kind == QA_NET_Q3_68
         ? qa_q2_oob_write(&writer, text)
-        : qa_net_write_data(&writer, text, sizeof("query"));
+        : qa_net_write_data(&writer, text, sizeof("query") - 1);
     if (!encoded) return false;
     browser->callback = true;
     bool ok = browser->hooks.send(browser->hooks.context, address, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);

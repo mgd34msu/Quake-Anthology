@@ -400,7 +400,22 @@ bool qa_server_admin_receive(qa_server_admin *admin, const qa_net_datagram *pack
     } else while (offset < text.size && (text.data[offset] == ' ' || text.data[offset] == '\t')) ++offset;
     size_t length = text.size - offset;
     if (admin->options.dialect == QA_RULESET_Q3 && length > 1023) length = 1023;
-    char command[16385]; memcpy(command, text.data + offset, length); command[length] = 0;
+    char command[16385];
+    if (admin->options.dialect == QA_RULESET_Q2_CLASSIC) {
+        size_t used = 0;
+        for (;;) {
+            if (!qa_tokenizer_next(&lexer, &token, &found, error)) return false;
+            if (!found) break;
+            if (!qa_token_copy(&token, command + used, sizeof(command) - used, error))
+                return false;
+            used += token.text.size;
+            command[used++] = ' ';
+        }
+        command[used] = 0;
+    } else {
+        memcpy(command, text.data + offset, length);
+        command[length] = 0;
+    }
     admin->callback = true;
     const char *full = admin->options.hooks.password(admin->options.hooks.context, false);
     bool is_full = full && *full && equal_secret(full, supplied);
@@ -416,8 +431,13 @@ bool qa_server_admin_receive(qa_server_admin *admin, const qa_net_datagram *pack
     bool ok;
     if (!is_full && !is_limited) {
         *out = disabled ? QA_ADMIN_DISABLED : QA_ADMIN_DENIED;
-        ok = write_output(&output, disabled ? "No rconpassword set on the server.\n" :
-            admin->options.dialect==QA_RULESET_Q3?"Bad rconpassword.\n":"Bad rconpassword or command not permitted.\n", error);
+        bool q2 = admin->options.dialect == QA_RULESET_Q2_CLASSIC ||
+                  admin->options.dialect == QA_RULESET_Q2_RERELEASE;
+        const char *denial = q2 ? valid_limited ? "This command is not permitted.\n" :
+            "Bad rcon_password.\n" : disabled ? "No rconpassword set on the server.\n" :
+            admin->options.dialect == QA_RULESET_Q3 ? "Bad rconpassword.\n" :
+            "Bad rconpassword or command not permitted.\n";
+        ok = write_output(&output, denial, error);
     } else {
         *out = QA_ADMIN_EXECUTED;
         admin->executing=true;
