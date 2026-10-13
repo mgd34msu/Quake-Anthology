@@ -759,7 +759,7 @@ bool mode_object_drop(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id
         o->physics.motion = QA_PHYSICS_STATIONARY;
         if (!mode_object_hide(m, o, true, e) || !mode_object_sync(m, child, e))
             return false;
-        return mode_object_notify(m, v, o, e);
+        return mode_flag_drop_announce(m, v, o, actor, e) && mode_object_notify(m, v, o, e);
     }
     if (!qa_world_body_write(m->options.services.world, o->actor, &body, e) ||
         !mode_object_hide(m, o, false, e))

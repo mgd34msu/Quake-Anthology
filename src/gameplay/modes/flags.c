@@ -18,6 +18,24 @@ static qa_string_id flag_team_name(qa_modes *m, mode_instance *v, qa_team_id tea
     return m->runtime_names[index == 0 ? MODE_NAME_CTF_RED :
                             index == 1 ? MODE_NAME_CTF_BLUE : MODE_NAME_CTF_UNKNOWN];
 }
+static bool ctf_bonus_message(qa_modes *m, mode_instance *v, qa_actor_id actor,
+                               qa_team_id team, int message, int amount, qa_error *e) {
+    if (v->value.rules.source != QA_MODE_Q2_CTF)
+        return true;
+    if (message == MODE_NAME_CTF_CARRIER_FRAG_BONUS) {
+        qa_builtin_message_arg argument = {
+            .kind = QA_BUILTIN_MESSAGE_NUMBER, .value.number = amount};
+        return mode_message_level(m, v, actor, m->runtime_names[message], &argument, 1, 2, e);
+    }
+    mode_player *player = mode_player_get(m, actor);
+    if (!player)
+        return true;
+    qa_builtin_message_arg arguments[2] = {
+        {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = player->identity->name},
+        {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = flag_team_name(m, v, team)}};
+    return mode_message_level(m, v, (qa_actor_id){0}, m->runtime_names[message],
+                              arguments, 2, 2, e);
+}
 static bool flag_message(qa_modes *m, mode_instance *v, qa_actor_id actor,
                          qa_actor_id other, qa_team_id team, int message, int yours, qa_error *e) {
     mode_player *player = mode_player_get(m, actor);
@@ -35,7 +53,9 @@ static bool flag_message(qa_modes *m, mode_instance *v, qa_actor_id actor,
     if (team || !player)
         arguments[count++].value.text = flag_team_name(m, v, team);
     if (!yours)
-        return mode_message(m, v, (qa_actor_id){0}, m->runtime_names[message], arguments, count, e);
+        return mode_message_level(m, v, (qa_actor_id){0}, m->runtime_names[message],
+                                  arguments, count,
+                                  v->value.rules.source == QA_MODE_Q2_CTF ? 3 : 2, e);
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
         mode_member *member = &v->members[m->players_order.actors[ordinal].slot];
         mode_player *recipient = member->joined ? mode_player_get(m, member->actor) : NULL;
@@ -52,9 +72,11 @@ static bool flag_message(qa_modes *m, mode_instance *v, qa_actor_id actor,
 }
 bool mode_flag_drop_announce(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id actor,
                              qa_error *e) {
-    return o->spec.kind != QA_MODE_OBJECT_FLAG || v->value.rules.source != QA_MODE_LMCTF ||
-           flag_message(m, v, actor, (qa_actor_id){0}, o->spec.team,
-                        MODE_NAME_LMCTF_FLAG_DROPPED, 0, e);
+    if (o->spec.kind != QA_MODE_OBJECT_FLAG)
+        return true;
+    int message = v->value.rules.source == QA_MODE_Q2_CTF ? MODE_NAME_CTF_FLAG_DROPPED
+                  : v->value.rules.source == QA_MODE_LMCTF ? MODE_NAME_LMCTF_FLAG_DROPPED : 0;
+    return !message || flag_message(m, v, actor, (qa_actor_id){0}, o->spec.team, message, 0, e);
 }
 static bool flag_announce(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id origin,
                           qa_actor_id actor, qa_mode_event_kind kind, bool from_home, qa_error *e) {
@@ -538,6 +560,9 @@ bool mode_flag_bonus(qa_modes *m, mode_instance *v, qa_actor_id attacker, qa_act
             !points(m, v, attacker, carrier_points, e))
             return false;
         if (!q1) {
+            if (!ctf_bonus_message(m, v, attacker, team, MODE_NAME_CTF_CARRIER_FRAG_BONUS,
+                                   carrier_points, e))
+                return false;
             for (uint32_t i = 0; i < m->actor_capacity; ++i) {
                 qa_team_id t;
                 mode_member *p = &v->members[i];
@@ -571,7 +596,9 @@ bool mode_flag_bonus(qa_modes *m, mode_instance *v, qa_actor_id attacker, qa_act
                                            mode_visible(m, victim, base_actor, false)));
     if (!lm && danger) {
         dead->stats.hurt_carrier = false;
-        if (!award_defense(m, v, killer, victim, ta ? 5 : 2, true, e))
+        if (!award_defense(m, v, killer, victim, ta ? 5 : 2, true, e) ||
+            !ctf_bonus_message(m, v, attacker, team, MODE_NAME_CTF_DEFEND_AGGRESSIVE_CARRIER,
+                               0, e))
             return false;
         if (!q1)
             return true;
@@ -599,7 +626,10 @@ bool mode_flag_bonus(qa_modes *m, mode_instance *v, qa_actor_id attacker, qa_act
             killer->stats.defended_ns = now;
         }
     } else if (!lm && near_base) {
-        if (!award_defense(m, v, killer, victim, ta ? 10 : 1, false, e))
+        if (!award_defense(m, v, killer, victim, ta ? 10 : 1, false, e) ||
+            !ctf_bonus_message(m, v, attacker, team,
+                base->value.visible ? MODE_NAME_CTF_DEFEND_FLAG : MODE_NAME_CTF_DEFEND_BASE,
+                0, e))
             return false;
         if (!q1)
             return true;
@@ -630,7 +660,8 @@ bool mode_flag_bonus(qa_modes *m, mode_instance *v, qa_actor_id attacker, qa_act
         } else if (near) {
             if ((lm && !flag_message(m, v, attacker, (qa_actor_id){0}, team,
                     MODE_NAME_LMCTF_DEFEND_CARRIER, 0, e)) ||
-                !award_defense(m, v, killer, victim, lm ? 2 : ta ? 2 : 1, true, e))
+                !award_defense(m, v, killer, victim, lm ? 2 : ta ? 2 : 1, true, e) ||
+                !ctf_bonus_message(m, v, attacker, team, MODE_NAME_CTF_DEFEND_CARRIER, 0, e))
                 return false;
         }
         break;

@@ -66,7 +66,7 @@ static bool ctf_id_view(qa_modes *m, qa_actor_id actor,
     uint32_t index = 0;
     if (trace.fraction < 1 && trace.actor.registry && m->options.services.player_info &&
         m->options.services.player_info(m->options.services.context, trace.actor, &info)) {
-        if (!resources->player_skin(resources->player_context, actor, &index, error))
+        if (!resources->player_skin(resources->player_context, trace.actor, &index, error))
             return false;
         qa_q2_wire_stat_word((int32_t)(index & UINT16_MAX), stat);
         return true;

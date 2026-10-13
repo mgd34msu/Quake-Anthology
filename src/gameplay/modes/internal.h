@@ -376,6 +376,7 @@ typedef struct mode_objective {
     X(CTF_UNKNOWN, "UKNOWN") \
     X(CTF_FLAG_TAKEN, "{0} got the {1} flag!\n") \
     X(CTF_FLAG_RETURNED, "{0} returned the {1} flag!\n") \
+    X(CTF_FLAG_DROPPED, "{0} lost the {1} flag!\n") \
     X(CTF_FLAG_CAPTURED, "{0} captured the {1} flag!\n") \
     X(CTF_FLAG_AUTO_RETURN, "The {0} flag has returned!\n") \
     X(CTF_RETURN_ASSIST, "{0} gets an assist for returning the flag!\n") \
@@ -474,6 +475,11 @@ typedef struct mode_objective {
     X(LMCTF_HELP_SEPARATOR, "--------------") \
     X(LMCTF_MENU_NEXT_PAGE, "<next page>") \
     X(LMCTF_HELP_UNAVAILABLE, "No help available.") \
+    X(CTF_CARRIER_FRAG_BONUS, "BONUS: {0} points for fragging enemy flag carrier.\n") \
+    X(CTF_DEFEND_AGGRESSIVE_CARRIER, "{0} defends {1}'s flag carrier against an agressive enemy\n") \
+    X(CTF_DEFEND_BASE, "{0} defends the {1} base.\n") \
+    X(CTF_DEFEND_FLAG, "{0} defends the {1} flag.\n") \
+    X(CTF_DEFEND_CARRIER, "{0} defends the {1}'s flag carrier.\n") \
     X(LMCTF_OBSERVER_MENU_TITLE, "LMCTF Observer Menu") \
     X(LMCTF_OBSERVER_MENU_SEPARATOR, "-------------------") \
     X(LMCTF_OBSERVER_MENU_PLAY, "Play CTF") \
