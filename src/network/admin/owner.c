@@ -505,7 +505,7 @@ bool qa_server_admin_refresh_masters(qa_server_admin *admin,qa_cvars *registry,q
     qa_buffer_free(&admin->master_names); admin->master_names=(qa_buffer){names,size}; return true;
 }
 static bool heartbeat(qa_server_admin *admin, bool shutdown, qa_error *error) {
-    uint8_t bytes[128]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
+    uint8_t bytes[1400]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
     bool ok;
     if (admin->options.dialect == QA_RULESET_QUAKEWORLD) {
         uint32_t players=0;
@@ -514,6 +514,16 @@ static bool heartbeat(qa_server_admin *admin, bool shutdown, qa_error *error) {
     }
     else if (admin->options.dialect == QA_RULESET_Q3)
         ok = qa_q2_oob_write(&writer, shutdown ? "heartbeat flatline\n" : "heartbeat QuakeArena-1\n");
+    else if (!shutdown && (admin->options.dialect == QA_RULESET_Q2_CLASSIC ||
+                           admin->options.dialect == QA_RULESET_Q2_RERELEASE)) {
+        qa_q2_status status = {0};
+        qa_error unavailable = {0};
+        if (!admin->options.hooks.q2_status ||
+            !admin->options.hooks.q2_status(admin->options.hooks.context, &status, &unavailable) ||
+            !status.server_info)
+            return true;
+        ok = qa_q2_status_write(&writer, &status, "heartbeat\n", sizeof(bytes) - 16);
+    }
     else ok = qa_q2_oob_write(&writer, shutdown ? "shutdown\n" : "heartbeat\n");
     if (!ok) return false;
     size_t group=master_group(admin->options.dialect);

@@ -4,12 +4,12 @@
 #include <string.h>
 #include <errno.h>
 #include <limits.h>
-bool qa_q2_status_write(qa_net_writer *w,const qa_q2_status *s,size_t limit) {
+bool qa_q2_status_write(qa_net_writer *w,const qa_q2_status *s,const char *command,size_t limit) {
     if(!s||!s->server_info||(s->player_count&&!s->players)||!limit)
     return qa_net_writer_fail(w,"Invalid Q2 status arguments");
     size_t used=strlen(s->server_info)+1;
     if(used>=limit)return qa_net_writer_fail(w,"Q2 serverinfo exceeds status packet capacity");
-    if(!qa_q2_oob_write(w,"print\n")||!qa_net_write_data(w,s->server_info,used-1)||!qa_net_write_u8(w,'\n'))return false;
+    if(!qa_q2_oob_write(w,command)||!qa_net_write_data(w,s->server_info,used-1)||!qa_net_write_u8(w,'\n'))return false;
     for(size_t i=0;i<s->player_count;i++) {
         const qa_q2_status_player *p=&s->players[i];
         if(!p->name||strpbrk(p->name,"\r\n"))return qa_net_writer_fail(w,"Invalid Q2 status player name");

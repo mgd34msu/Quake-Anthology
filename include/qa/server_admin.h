@@ -1,6 +1,7 @@
 #ifndef QA_SERVER_ADMIN_H
 #define QA_SERVER_ADMIN_H
 #include "qa/network.h"
+#include "qa/network_q2.h"
 #include "qa/console.h"
 
 typedef struct qa_server_admin qa_server_admin;
@@ -14,6 +15,7 @@ typedef struct qa_admin_hooks {
     bool (*send)(void *, const qa_net_address *, qa_bytes, qa_error *);
     bool (*travel)(void *, const char *map, qa_error *);
     bool (*players)(void *,uint32_t *,qa_error *);
+    bool (*q2_status)(void *,qa_q2_status *,qa_error *);
     uint32_t (*random)(void *);
     void (*record)(void *, const qa_net_address *, qa_admin_result);
     qa_cvars *(*rate_registry)(void *);

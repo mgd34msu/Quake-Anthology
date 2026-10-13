@@ -247,7 +247,7 @@ typedef struct qa_q2_status_player { int32_t score, ping; const char *name; } qa
 typedef struct qa_q2_status { const char *server_info; const qa_q2_status_player *players; size_t player_count; } qa_q2_status;
 typedef bool (*qa_q2_status_player_fn)(void *, int32_t score, int32_t ping, const char *name, qa_error *);
 /* Status messages use original byte strings and stop at the packet budget. */
-bool qa_q2_status_write(qa_net_writer *, const qa_q2_status *, size_t body_limit);
+bool qa_q2_status_write(qa_net_writer *, const qa_q2_status *, const char *command, size_t body_limit);
 /* Player names borrow invocation scratch only for the callback. Optional
  * storage supplies that scratch; NULL uses owning temporary storage. */
 bool qa_q2_status_read(const qa_q2_oob *, char *server_info, size_t, qa_arena *, qa_q2_status_player_fn, void *, bool *recognized, qa_error *);

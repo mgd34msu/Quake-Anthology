@@ -122,9 +122,9 @@ static bool rejects(void *context,const qa_net_address *address,bool *out,qa_err
     if(!out || !address || !current(host,error)) return false;
     *out=qa_server_admin_rejects(host->options.admin,address); return true;
 }
-static bool discovery(void *context,qa_q2_discovery *out,qa_error *error)
+bool frontend_network_q2_host_discovery_read(frontend_network_q2_host *host,
+    qa_q2_discovery *out,qa_error *error)
 {
-    frontend_network_q2_host *host=context;
     if(!out || !current(host,error)) return false;
     uint32_t count=0;
     for(uint32_t i=1;i<=host->source.client_slots;++i) {
@@ -135,6 +135,8 @@ static bool discovery(void *context,qa_q2_discovery *out,qa_error *error)
     return qa_application_network_q2_discovery(host->discovery,&out->status,&out->name,&out->map,error) &&
         (out->players=count,out->maximum=host->source.client_slots,true);
 }
+static bool discovery(void *context,qa_q2_discovery *out,qa_error *error)
+{ return frontend_network_q2_host_discovery_read(context,out,error); }
 static bool download_server(void *context,const char **out,qa_error *error)
 {
     frontend_network_q2_host *host=context;

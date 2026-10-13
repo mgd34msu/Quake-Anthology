@@ -221,7 +221,7 @@ static bool server_receive(qa_network_q2_bootstrap *owner, const qa_net_datagram
     qa_q2_discovery discovery = {0};
     if (!hooks->discovery(hooks->context, &discovery, error)) return false;
     bool present = true, ok;
-    if (!strcmp(command, "status")) ok = qa_q2_status_write(&writer, &discovery.status, 1400);
+    if (!strcmp(command, "status")) ok = qa_q2_status_write(&writer, &discovery.status, "print\n", 1384);
     else {
         errno = 0; char *end; unsigned long version = strtoul(message->argc ? message->argv[0] : "", &end, 10);
         if (errno || *end || version > UINT32_MAX) version = 0;

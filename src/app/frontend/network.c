@@ -1527,6 +1527,15 @@ static bool player_count(void *context,uint32_t *out,qa_error *error)
     }
     *out=count; return true;
 }
+static bool q2_admin_status(void *context,qa_q2_status *out,qa_error *error)
+{
+    qa_frontend_network *n=context;
+    if (!n->q2_host) return false;
+    qa_q2_discovery discovery;
+    if (!frontend_network_q2_host_discovery_read(n->q2_host,&discovery,error)) return false;
+    *out=discovery.status;
+    return true;
+}
 static uint32_t random_rotation(void *context)
 {
     qa_frontend_network *n = context;
@@ -1554,7 +1563,7 @@ static bool admin_options(qa_frontend_network *n,qa_admin_options *out,qa_error 
         .public_server=n->frontend->options.network_host && n->frontend->options.dedicated &&
             (q2?published && published->number!=0:dialect!=QA_RULESET_Q3 || (dedicated && dedicated->integer==2)),
         .hooks={.context=n,.password=password,.execute=admin_execute,.send=send_address,
-            .travel=travel,.players=player_count,.random=random_rotation,
+            .travel=travel,.players=player_count,.q2_status=q2_admin_status,.random=random_rotation,
             .rate_registry=admin_rate_registry,.print=admin_print}};
     return true;
 }
