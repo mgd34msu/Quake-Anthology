@@ -340,6 +340,8 @@ struct qa_q2_monster {
   qa_vec3 widow_previous_target;
   qa_vec3 controller_direction;
   qa_attack last_attack;
+  qa_vec3 inflictor_origin;
+  bool has_inflictor_origin;
   double pending_damage, pending_kick;
   int64_t monster_slots, monster_used;
   int water_level, water_type;

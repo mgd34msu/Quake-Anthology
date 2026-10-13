@@ -1500,6 +1500,15 @@ static bool initialize_combat(qa_q2_game *game, q2_actor *actor,
     combat.armor.powered.cells =
         monster->definition->flags & Q2M_BOSS ? 400.0f : 200.0f;
   }
+  if (monster->definition->species == Q2M_GLADB)
+    combat.armor.powered = (qa_powered_armor){
+        .kind = QA_POWER_SHIELD,
+        .cells = game->options.rules == QA_RULESET_Q2_RERELEASE ? 250.0f : 400.0f};
+  else if (monster->definition->species == Q2M_SUPERTANK &&
+           (monster->spawnflags & 8u) &&
+           (game->options.product == QA_Q2_XATRIX ||
+            game->options.rules == QA_RULESET_Q2_RERELEASE))
+    combat.armor.powered = (qa_powered_armor){.kind = QA_POWER_SHIELD, .cells = 400.0f};
   if (monster->definition->species == Q2M_WIDOW ||
       monster->definition->species == Q2M_WIDOW2) {
     combat.armor.powered = (qa_powered_armor){0};
@@ -1701,6 +1710,10 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
     monster->skin = 2;
   else if (definition->species == Q2M_CHICK_HEAT)
     monster->skin = game->options.rules == QA_RULESET_Q2_RERELEASE ? 2 : 3;
+  else if (definition->species == Q2M_GLADB && game->options.rules==QA_RULESET_Q2_RERELEASE) {
+    monster->skin=2;
+    monster->style=1;
+  }
   else if (definition->species == Q2M_INSANE && (options->spawnflags & 8u) == 0)
     monster->skin = (int)floorf(q2m_random(game) * 3.0f);
   if (definition->species == Q2M_TANK_COMMANDER &&
@@ -1793,9 +1806,14 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   }
   actor->monster = monster;
   q2m_context context = {.game = game, .actor = actor, .monster = monster};
+  const char *model = definition->model;
+  if (definition->species == Q2M_CHICK &&
+      game->options.product == QA_Q2_ROGUE &&
+      game->options.rules == QA_RULESET_Q2_CLASSIC)
+    model = "models/monsters/bitch2/tris.md2";
   if (!qa_builtin_resource(&game->services, options->classname,
                            &monster->classname, error) ||
-      !qa_builtin_resource(&game->services, definition->model, &monster->model,
+      !qa_builtin_resource(&game->services, model, &monster->model,
                            error) ||
       !initialize_body(game, actor, monster, error)) {
     if (q2m_alive(&context)) {
@@ -2323,6 +2341,16 @@ bool q2_monster_reaction(qa_q2_game *game, const qa_damage_outcome *outcome,
     monster->pending_damage += outcome->result.applied_damage;
     monster->pending_kick += outcome->result.has_feedback ? outcome->result.knockback :
                                                           outcome->request.knockback;
+  }
+  if (dying && game->options.rules == QA_RULESET_Q2_RERELEASE &&
+      monster->definition->species == Q2M_INFANTRY) {
+    qa_body_state inflictor;
+    qa_error ignored = {0};
+    monster->inflictor_origin = qa_v3(0, 0, 0);
+    monster->has_inflictor_origin = qa_world_body_read(
+        game->services.world, outcome->request.attack.inflictor, &inflictor, &ignored);
+    if (monster->has_inflictor_origin)
+      monster->inflictor_origin = inflictor.origin;
   }
   bool reacts = (q2_feedback && game->options.rules == QA_RULESET_Q2_CLASSIC) ||
       (outcome->result.has_q2_damage ? outcome->result.q2_damage > 0.0f :

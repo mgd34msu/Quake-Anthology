@@ -32,6 +32,7 @@ bool q2_save_monster(q2_save_io *io, qa_q2_monster_checkpoint *s) {
     Q2V(fly_recovery_direction); Q2V(last_damage_point); Q2V(saved_attack_position);
     Q2V(controller_direction);
     if (!q2_save_attack(io, &s->last_attack)) return false;
+    Q2B(has_inflictor_origin); Q2V(inflictor_origin);
     Q2R(attack_attacker); Q2R(attack_inflictor); Q2R(attack_projectile);
     if (!q2_save_scalar(io, &s->pending_damage) || !q2_save_scalar(io, &s->pending_kick)) return false;
     Q2F(controller_damage); Q2T(controller_ns);

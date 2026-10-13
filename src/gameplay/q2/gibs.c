@@ -31,7 +31,8 @@ static bool gib_contents(qa_q2_game *g, qa_vec3 point, int32_t *contents, qa_err
     return true;
 }
 bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, q2_runtime_name model, float damage,
-                  uint32_t flags, int skin, float scale, qa_error *e) {
+                  uint32_t flags, int skin, float scale, qa_actor_id *out, qa_error *e) {
+    if (out != NULL) *out = (qa_actor_id){0};
     bool head = (flags & Q2_GIB_HEAD) != 0, metal = (flags & Q2_GIB_METALLIC) != 0,
          rr = g->options.rules == QA_RULESET_Q2_RERELEASE,
          debris = rr && (flags & Q2_GIB_DEBRIS) != 0;
@@ -146,7 +147,12 @@ bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, q2_runtime_name model, floa
         if (!gib_contents(g, origin, &a->physics.water_type, e)) return false;
         a->physics.water_level = ((uint32_t)a->physics.water_type & (8u | 16u | 32u)) ? 1 : 0;
     }
-    return q2_projectile_event(g, id, QA_BUILTIN_ANIMATION, g->runtime_names[model], 0, origin, angles, e);
+    if (!q2_projectile_event(g, id, QA_BUILTIN_ANIMATION, g->runtime_names[model], 0, origin, angles, e))
+        return false;
+    if (out != NULL && q2_actor_live(g, id) && g->actors[id.slot] == a &&
+        a->projectile.visible)
+        *out = id;
+    return true;
 }
 static bool debris(qa_q2_game *g, qa_body_state body, q2_runtime_name model, float speed,
                    qa_vec3 origin, qa_error *e) {

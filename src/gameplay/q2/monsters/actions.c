@@ -2125,14 +2125,29 @@ static bool conditional_transition(q2m_context *context, q2m_callback_id callbac
       monster->manual_steering = false;
       return q2m_set_move(context, Q2M_MOVE_chick_move_end_attack1, false, error);
     }
+    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+    if (rerelease) {
+      qa_vec3 start;
+      bool clear;
+      if (!q2m_project_flash(context, 57, &start, error) ||
+          !q2m_clear_shot(context, start, &clear, error))
+        return false;
+      if (!q2m_alive(context))
+        return true;
+      if (!clear)
+        return q2m_set_move(context, Q2M_MOVE_chick_move_end_attack1, false, error);
+    }
     bool visible;
     if (!visible_enemy(context, &visible, error))
       return false;
-    float chance = context->game->options.rules == QA_RULESET_Q2_RERELEASE ? 0.7f
+    if (!q2m_alive(context))
+      return true;
+    float chance = rerelease ? 0.7f
                    : context->game->options.product == QA_Q2_ROGUE
                        ? 0.6f + 0.05f * (float)context->game->options.skill
                        : 0.6f;
-    bool repeat = visible && q2m_distance(context, monster->enemy) >= 80.0f &&
+    float distance = q2m_distance(context, monster->enemy);
+    bool repeat = visible && (rerelease ? distance > 20.0f : distance >= 80.0f) &&
                   q2m_random(context->game) <= chance;
     return q2m_set_move(
         context, repeat ? Q2M_MOVE_chick_move_attack1 : Q2M_MOVE_chick_move_end_attack1,
@@ -2344,16 +2359,20 @@ static bool callback_turret_run(q2m_context *context, q2m_callback_id callback, 
   return true;
 }
 
-static bool tank_run(q2m_context *context, qa_error *error) {
-  struct qa_q2_monster *monster = context->monster;
+static bool run_brutality(q2m_context *context) {
+  struct qa_q2_monster *monster=context->monster;
   qa_builtin_actor_traits enemy = {0};
   bool brutal = monster->enemy.registry != 0 &&
       context->game->services.actor_traits != NULL &&
       context->game->services.actor_traits(context->game->services.context,
                                            monster->enemy, &enemy) && enemy.player;
-  if (!q2m_alive(context))
-    return true;
+  if (!q2m_alive(context)) return false;
   monster->brutal = brutal;
+  return true;
+}
+static bool tank_run(q2m_context *context, qa_error *error) {
+  if (!run_brutality(context)) return true;
+  struct qa_q2_monster *monster = context->monster;
   q2m_move_id move = monster->stand_ground ? Q2M_MOVE_tank_move_stand
       : monster->move != NULL &&
         (monster->move->id == Q2M_MOVE_tank_move_walk ||
@@ -2478,6 +2497,8 @@ static bool end_transition(q2m_context *context, q2m_callback_id callback,
   if ((q2m_callbacks[callback].flags & Q2M_CALLBACK_RUN) != 0 || (q2m_callbacks[callback].flags & Q2M_CALLBACK_RUN_LOOP) != 0 ||
       (callback == Q2M_CALLBACK_mutant_walk_loop)) {
     *handled = true;
+    if (callback==Q2M_CALLBACK_shambler_run &&
+        context->game->options.rules==QA_RULESET_Q2_RERELEASE && !run_brutality(context)) return true;
     if (callback == Q2M_CALLBACK_guncmdr_run) {
       context->monster->dodging = false;
       if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
@@ -2592,8 +2613,17 @@ static bool foundational_species_callback(q2m_context *context,
                      q2m_random(context->game) < 0.5f ? QA_Q2_SFX_CHICK_CHKIDLE1
                                                       : QA_Q2_SFX_CHICK_CHKIDLE2,
                      2, 2.0f, error);
-  if (callback == Q2M_CALLBACK_Chick_PreAttack1)
-    return q2m_sound(context, QA_Q2_SFX_CHICK_CHKATCK1, 2, 1.0f, error);
+  if (callback == Q2M_CALLBACK_Chick_PreAttack1) {
+    if (!q2m_sound(context, QA_Q2_SFX_CHICK_CHKATCK1, 2, 1.0f, error))
+      return false;
+    if (q2m_alive(context) && monster->manual_steering &&
+        (context->game->options.rules == QA_RULESET_Q2_RERELEASE ||
+         context->game->options.product == QA_Q2_ROGUE))
+      monster->ideal_yaw = qa_vec_yaw(
+          qa_vec_sub(monster->blind_fire_target, context->body.origin),
+          QA_DIRECTION_FLOAT, false);
+    return true;
+  }
   if (callback == Q2M_CALLBACK_ChickReload)
     return q2m_sound(context, QA_Q2_SFX_CHICK_CHKATCK5, 2, 1.0f, error);
   if (callback == Q2M_CALLBACK_ChickRocket) {
@@ -2716,12 +2746,42 @@ static bool foundational_species_callback(q2m_context *context,
                              1000.0f, true, effect ? 64u : 0u, error);
   }
   if (callback == Q2M_CALLBACK_floater_zap) {
+    qa_body_state target;
+    qa_builtin_actor_traits traits;
+    bool available;
+    if (!target_body(context, &target, &traits, &available) || !available ||
+        !q2m_alive(context))
+      return true;
+    qa_vec3 origin = q2m_project_offset(context, qa_v3(18.5f, -0.9f, 10.0f));
+    qa_vec3 direction = qa_vec_normalize(qa_vec_sub(target.origin, context->body.origin));
     if (!q2m_sound(context, QA_Q2_SFX_FLOATER_FLTATCK2, 1, 1.0f, error))
       return false;
-    return !q2m_alive(context) ||
-           q2m_damage_enemy(context, FLT_MAX, 4, 0,
-                            5.0f + floorf(q2m_random(context->game) * 6.0f),
-                            -10.0f, NULL, error);
+    if (!q2m_alive(context))
+      return true;
+    qa_builtin_event event = {
+        .kind = QA_BUILTIN_IMPACT,
+        .family = QA_GAME_Q2,
+        .provider = context->game->options.owner,
+        .actor = context->actor->id,
+        .other = monster->enemy,
+        .time_ns = context->game->now_ns,
+        .resource = context->game->runtime_names[Q2_NAME_RESOURCE_Q2_SPLASH],
+        .origin = origin,
+        .direction = direction,
+        .count = 32,
+        .code = 1,
+        .q2_multicast = {QA_BUILTIN_Q2_MULTICAST_PVS, origin},
+    };
+    if (!qa_builtin_emit(&context->game->services, &event, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    float damage = 5.0f +
+        (float)(context->game->options.rules == QA_RULESET_Q2_RERELEASE
+                    ? q2_random_bounded(context->game, 6)
+                    : qa_builtin_random_integer(&context->game->random) % 6u);
+    return q2m_damage_enemy(context, FLT_MAX, Q2M_MOD_UNKNOWN, 4u, damage,
+                           -10.0f, NULL, error);
   }
 
   if (callback == Q2M_CALLBACK_flyer_pop_blades)

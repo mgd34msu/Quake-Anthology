@@ -25,7 +25,7 @@ bool q2_client_sphere_camera(qa_q2_game *g, qa_actor_id id, qa_actor_id sphere, 
                 if (!q2_spawn_gib(g, id,
                                   i == 4 ? Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SKULL_TRIS_MD2
                                          : Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SM_MEAT_TRIS_MD2,
-                                  50, 0, 0, 1, e))
+                                  50, 0, 0, 1, NULL, e))
                     return false;
             if (!q2_actor_live(g, id))
                 return true;

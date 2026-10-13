@@ -270,5 +270,5 @@ bool q2m_hover_dying(q2m_context *c, qa_error *error) {
                         organic ? Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SM_MEAT_TRIS_MD2
                                 : Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SM_METAL_TRIS_MD2,
                         120, organic ? 0 : Q2_GIB_METALLIC,
-                        c->monster->skin, c->monster->entity_scale != 0 ? c->monster->entity_scale : 1, error);
+                        c->monster->skin, c->monster->entity_scale != 0 ? c->monster->entity_scale : 1, NULL, error);
 }

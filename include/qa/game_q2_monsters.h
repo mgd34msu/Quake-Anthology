@@ -124,6 +124,8 @@ typedef struct qa_q2_monster_checkpoint {
   qa_vec3 fly_ideal_position, fly_recovery_direction, last_damage_point;
   qa_vec3 saved_attack_position, controller_direction;
   qa_attack last_attack;
+  qa_vec3 inflictor_origin;
+  bool has_inflictor_origin;
   qa_q2_saved_reference attack_attacker, attack_inflictor, attack_projectile;
   double pending_damage, pending_kick;
   float controller_damage;

@@ -47,6 +47,7 @@
 #define QA_Q2_SOUND_BOSSTANK_BTKPAIN2 "bosstank/btkpain2.wav"
 #define QA_Q2_SOUND_BOSSTANK_BTKPAIN3 "bosstank/btkpain3.wav"
 #define QA_Q2_SOUND_BRAIN_BRNATCK1 "brain/brnatck1.wav"
+#define QA_Q2_SOUND_BRAIN_BRNLENS1 "brain/brnlens1.wav"
 #define QA_Q2_SOUND_BRAIN_BRNATCK3 "brain/brnatck3.wav"
 #define QA_Q2_SOUND_BRAIN_BRNDETH1 "brain/brndeth1.wav"
 #define QA_Q2_SOUND_BRAIN_BRNPAIN1 "brain/brnpain1.wav"
@@ -488,6 +489,7 @@
     X(BOSSTANK_BTKPAIN2) \
     X(BOSSTANK_BTKPAIN3) \
     X(BRAIN_BRNATCK1) \
+    X(BRAIN_BRNLENS1) \
     X(BRAIN_BRNATCK3) \
     X(BRAIN_BRNDETH1) \
     X(BRAIN_BRNPAIN1) \

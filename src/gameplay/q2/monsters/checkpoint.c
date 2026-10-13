@@ -73,6 +73,7 @@ static bool finite_checkpoint(const qa_q2_monster_checkpoint *state) {
          qa_vec_finite(state->fly_ideal_position) &&
          qa_vec_finite(state->fly_recovery_direction) &&
          qa_vec_finite(state->last_damage_point) &&
+         (!state->has_inflictor_origin || qa_vec_finite(state->inflictor_origin)) &&
          qa_vec_finite(state->saved_attack_position) &&
          qa_vec_finite(state->widow_previous_target) &&
          qa_vec_finite(state->controller_direction) &&
@@ -212,6 +213,8 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
       .widow_previous_target = monster->widow_previous_target,
       .controller_direction = monster->controller_direction,
       .last_attack = monster->last_attack,
+      .inflictor_origin = monster->inflictor_origin,
+      .has_inflictor_origin = monster->has_inflictor_origin,
       .pending_damage = monster->pending_damage,
       .pending_kick = monster->pending_kick,
       .controller_damage = monster->controller_damage,
@@ -625,6 +628,8 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   Q2M_RESTORE(saved_attack_position);
   Q2M_RESTORE(widow_previous_target);
   Q2M_RESTORE(last_attack);
+  Q2M_RESTORE(inflictor_origin);
+  Q2M_RESTORE(has_inflictor_origin);
   Q2M_RESTORE(pending_damage);
   Q2M_RESTORE(pending_kick);
   Q2M_RESTORE(monster_slots);

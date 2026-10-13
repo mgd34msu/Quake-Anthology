@@ -471,9 +471,9 @@ static const q2m_definition rerelease_gunner =
             Q2M_ATTACK_BULLET, Q2M_ATTACK_GRENADE, 3, 50, 600);
 
 static const q2m_definition rerelease_gladb = MONSTER(
-    "monster_gladb", "models/monsters/gladb/tris.md2",
+    "monster_gladb", "models/monsters/gladiatr/tris.md2",
     "rerelease/gladiator:gladiatorMoves", Q2M_GLADB, Q2M_WALK,
-    BOUNDS(-32, -32, -24, 32, 32, 64), 250, -175, 350, 1, 0, 20,
+    BOUNDS(-32, -32, -24, 32, 32, 42), 250, -175, 350, 1, 0, 20,
     Q2M_HAS_MELEE | Q2M_HAS_RANGED | Q2M_POWER_SHIELD, Q2M_MOVE_gladiator_move_stand,
     Q2M_MOVE_gladiator_move_stand, Q2M_MOVE_gladiator_move_walk, Q2M_MOVE_gladiator_move_run,
     Q2M_MOVE_gladb_move_attack_gun, Q2M_MOVE_NONE, Q2M_MOVE_gladiator_move_attack_melee,
@@ -530,6 +530,14 @@ bool q2m_definitions_bind(qa_q2_game *game, qa_error *error) {
     if (game->options.rules == QA_RULESET_Q2_RERELEASE)
       for (size_t j = 0; j < sizeof(rerelease) / sizeof(*rerelease); ++j)
         if (!strcmp(row->classname, rerelease[j]->classname)) { *row = *rerelease[j]; break; }
+    if (game->options.rules == QA_RULESET_Q2_RERELEASE) {
+      if (row->species == Q2M_BRAIN) {
+        row->flags |= Q2M_HAS_RANGED;
+        row->idle_sound = QA_Q2_SFX_BRAIN_BRNLENS1;
+      } else if (row->species == Q2M_GLADIATOR) {
+        row->bounds.maxs.z = 42;
+      }
+    }
     if (!qa_builtin_resource(&game->services, row->classname, &row->classname_id, error)) {
       qa_id_index_destroy(&move_sets);
       return false;
