@@ -274,21 +274,6 @@ static bool call_vote(vote_scope *scope, const qa_command_invocation *command, q
         config_integer(scope, 10, vote->yes, error) && config_integer(scope, 11, vote->no, error);
 }
 
-void application_native_q3_name_key(const char *text,char *out,size_t capacity)
-{
-    if (!capacity) return;
-    size_t used = 0;
-    for (size_t index = 0; index < capacity-1 && text[index]; ++index) {
-        unsigned char byte = (unsigned char)text[index];
-        if (byte == '^' && index + 1 < capacity-1 && text[index + 1] && text[index + 1] != '^') ++index;
-        else if (byte >= 32 && byte <= 126) {
-            if (byte >= 'A' && byte <= 'Z') byte += 'a' - 'A';
-            out[used++] = (char)byte;
-        }
-    }
-    out[used] = 0;
-}
-
 static bool team_parameter(const qa_command_invocation *command, char text[VOTE_BYTES], qa_error *error)
 {
     size_t used = 0;
@@ -353,16 +338,17 @@ static bool call_team_vote(vote_scope *scope, const qa_command_invocation *comma
                 return print_client(scope, message, error);
             }
         } else {
-            char wanted[36];
-            application_native_q3_name_key(parameter,wanted,sizeof(wanted));
-            for (target = 0; (uint32_t)target < scope->maximum; ++target) {
+            qa_string_id wanted = qa_q3_client_name_key(scope->game, parameter, QA_Q3_NATIVE_NETNAME);
+            uint32_t first = 0, found;
+            target = (int32_t)scope->maximum;
+            while (qa_q3_client_name_slot(scope->game, wanted, first, &found) && found < scope->maximum) {
                 qa_q3_native_client other;
                 qa_q3_client_session other_session;
-                char cleaned[36];
-                if (!client(scope, (uint32_t)target, &other, &other_session, error)) return false;
+                first = found + 1;
+                if (!client(scope, found, &other, &other_session, error)) return false;
                 if (other.rule.connected == QA_Q3_CLIENT_DISCONNECTED || other_session.team != sess.team) continue;
-                application_native_q3_name_key(other.netname,cleaned,sizeof(cleaned));
-                if (!strcmp(wanted, cleaned)) break;
+                target = (int32_t)found;
+                break;
             }
             if ((uint32_t)target >= scope->maximum) {
                 char message[VOTE_BYTES + 64];

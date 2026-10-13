@@ -9,6 +9,7 @@
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_source.h"
 #include "qa/cvars_save.h"
+#include "qa/text.h"
 
 #include <stdlib.h>
 #include <ctype.h>
@@ -430,11 +431,22 @@ static bool operator_kick(void *context,const qa_command_invocation *call,qa_err
     }
     if (!application_native_q3_console_borrow(provider,error)) return false;
     uint32_t maximum; bool ok=qa_q3_source_max_clients(provider->state.q3,&maximum,error),matched=false;
-    const char *target=call->argv[1]; char wanted[1024];
-    application_native_q3_name_key(target,wanted,sizeof(wanted));
-    bool all=strlen(target)==3 && !strcmp(wanted,"all"),
-        allbots=strlen(target)==7 && !strcmp(wanted,"allbots");
-    for (uint32_t slot=0;ok && slot<maximum;++slot) {
+    const char *target=call->argv[1];
+    qa_string_id wanted=qa_q3_client_name_key(provider->state.q3,target,1024);
+    bool all=qa_text_ascii_equal(target,"all"), allbots=qa_text_ascii_equal(target,"allbots");
+    int32_t parsed=qa_parse_decimal_i32(target,QA_DECIMAL_SIGNED_WRAP);
+    char number[12]; qa_format_q3_integer(parsed,number);
+    uint32_t numbered=parsed>=0 && !strcmp(target,number) ? (uint32_t)parsed : UINT32_MAX;
+    for (uint32_t next=0;ok && next<maximum;) {
+        uint32_t slot=next;
+        if (!all && !allbots) {
+            slot=UINT32_MAX;
+            uint32_t named_slot;
+            if (qa_q3_client_name_slot(provider->state.q3,wanted,next,&named_slot)) slot=named_slot;
+            if (numbered>=next && numbered<slot) slot=numbered;
+            if (slot>=maximum) break;
+        }
+        next=slot+1;
         qa_actor_id dropping; const char *reason; bool pending;
         ok=application_native_q3_wire_drop_client_read(provider,slot,&dropping,&reason,&pending,error);
         if (!ok || pending) continue;
@@ -444,11 +456,7 @@ static bool operator_kick(void *context,const qa_command_invocation *call,qa_err
         if (!ok || !admitted) continue;
         ok=qa_q3_client_read(provider->state.q3,wire.actor,&client,error);
         if (!ok) break;
-        char number[16],name[QA_Q3_NATIVE_NETNAME];
-        snprintf(number,sizeof(number),"%u",slot);
-        application_native_q3_name_key(client.netname,name,sizeof(name));
-        if (!(all || (allbots && wire.bot) || (!allbots &&
-            (!strcmp(target,number) || !strcmp(wanted,name))))) continue;
+        if (allbots && !wire.bot) continue;
         if (wire.seat!=UINT32_MAX) {
             if (!all && !allbots) {
                 qa_console_emit(owner->console,&call->context,"Cannot kick host player\n"); matched=true;

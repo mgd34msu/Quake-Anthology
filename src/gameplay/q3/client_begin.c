@@ -308,8 +308,10 @@ bool qa_q3_client_connect(qa_q3_game *game, qa_actor_id actor, bool bot, qa_erro
     uint32_t client_slot;
     if (!q3_client_slot(game, actor, &client_slot)) return false;
     q3_wire_client_clear(game, client_slot);
+    q3_client_name_clear(game, client_slot);
     *client = (q3_client_state){.rule = {.connected = QA_Q3_CLIENT_CONNECTING,
-        .source_model_shape = client->rule.source_model_shape}, .player = client->player};
+        .source_model_shape = client->rule.source_model_shape}, .name_key = client->name_key,
+        .player = client->player};
     if (!client->player->present) client->player->bot = bot;
     q3_actor *entry = q3_actor_get(game, actor);
     uint32_t selections = entry->state.player.selections;

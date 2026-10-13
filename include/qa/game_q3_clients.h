@@ -106,6 +106,8 @@ bool qa_q3_client_taunt_kill_clear(qa_q3_game *, qa_actor_id, qa_error *);
  * text is terminated and source byte characters are retained. */
 void qa_q3_client_info_value(const char *, const char *, char *, size_t);
 void qa_q3_client_clean_name(const char *, char [QA_Q3_NATIVE_NETNAME]);
+qa_string_id qa_q3_client_name_key(const qa_q3_game *, const char *, size_t source_capacity);
+bool qa_q3_client_name_slot(const qa_q3_game *, qa_string_id, uint32_t first_slot, uint32_t *);
 bool qa_q3_client_userinfo(qa_q3_game *, qa_actor_id, const char *,
                           bool scoreboard, qa_error *);
 bool qa_q3_client_slot_userinfo(qa_q3_game *, uint32_t, const char *,

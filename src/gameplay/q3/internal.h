@@ -124,12 +124,13 @@ typedef struct q3_current_origin {
 } q3_current_origin;
 typedef struct q3_client_state {
     qa_q3_client_rule_tail rule;
-    qa_string_id source_name;
+    qa_string_id source_name, name_key;
     qa_actor_player *player;
 } q3_client_state;
 typedef struct q3_client_names {
     qa_string_id source[QA_Q3_NATIVE_CLIENTS];
     qa_string_id player[QA_Q3_NATIVE_CLIENTS];
+    qa_string_id key[QA_Q3_NATIVE_CLIENTS];
 } q3_client_names;
 
 struct qa_q3_game {
@@ -170,7 +171,7 @@ struct qa_q3_game {
     q3_client_state clients[QA_Q3_NATIVE_CLIENTS];
     q3_actor client_actors[QA_Q3_NATIVE_CLIENTS];
     qa_q3_source_binding source_entities[QA_Q3_SOURCE_ENTITIES];
-    qa_id_index source_classnames;
+    qa_id_index source_classnames, client_names;
     qa_actor_index foreign_clients;
     uint32_t source_count;
     bool new_session;
@@ -208,6 +209,7 @@ void q3_source_commit(qa_q3_game *, const qa_q3_checkpoint *, qa_actor_index *, 
 const char *q3_client_name(const qa_q3_game *, const q3_client_state *);
 void q3_client_name_bytes(const qa_q3_game *, const q3_client_state *, char[QA_Q3_NATIVE_NETNAME]);
 bool q3_client_name_store(qa_q3_game *, q3_client_state *, const char[QA_Q3_NATIVE_NETNAME], qa_error *);
+void q3_client_name_clear(qa_q3_game *, uint32_t);
 int32_t q3_client_ping_value(const q3_client_state *);
 void q3_client_projection(const qa_q3_game *, const q3_client_state *, qa_q3_native_client *);
 q3_actor *q3_actor_get(qa_q3_game *, qa_actor_id);

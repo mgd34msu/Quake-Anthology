@@ -1,5 +1,57 @@
 #include "map/internal.h"
 #include "qa/game_q3_source.h"
+#include "qa/game_q3_clients.h"
+
+static bool normalized_name(const char *text, size_t source_capacity,
+    char out[QA_Q3_NATIVE_NETNAME]) {
+    size_t used = 0;
+    for (size_t index = 0; source_capacity && index < source_capacity - 1 && text[index]; ++index) {
+        unsigned char byte = (unsigned char)text[index];
+        uint8_t color;
+        if (index + 1 < source_capacity - 1 &&
+            qa_text_q3_color_escape(byte, (unsigned char)text[index + 1], &color))
+            ++index;
+        else if (byte >= 32 && byte <= 126) {
+            if (used == QA_Q3_NATIVE_NETNAME - 1) return false;
+            out[used++] = (char)qa_text_ascii_lower(byte);
+        }
+    }
+    out[used] = 0;
+    return true;
+}
+
+qa_string_id qa_q3_client_name_key(const qa_q3_game *game, const char *text,
+    size_t source_capacity) {
+    char key[QA_Q3_NATIVE_NETNAME];
+    if (!game || !text || !normalized_name(text, source_capacity, key)) return QA_STRING_NONE;
+    return qa_strings_find(qa_session_strings(game->options.services.session),
+        (qa_bytes){(const uint8_t *)key, strlen(key)});
+}
+
+bool qa_q3_client_name_slot(const qa_q3_game *game, qa_string_id key,
+    uint32_t first, uint32_t *out) {
+    if (!game || !key || !out) return false;
+    qa_id_index_cursor cursor = qa_id_index_begin(&game->client_names, key, 0);
+    size_t value, selected = QA_Q3_NATIVE_CLIENTS;
+    while (qa_id_index_next(&game->client_names, &cursor, &value))
+        if (value >= first && value < selected) selected = value;
+    if (selected == QA_Q3_NATIVE_CLIENTS) return false;
+    *out = (uint32_t)selected;
+    return true;
+}
+
+static void client_name_key_store(qa_q3_game *game, q3_client_state *client, qa_string_id key) {
+    if (client->name_key == key) return;
+    uint32_t slot = (uint32_t)(client - game->clients);
+    if (client->name_key) qa_id_index_remove_value(&game->client_names, client->name_key, 0, slot);
+    qa_id_index_insert(&game->client_names, key, 0, slot);
+    client->name_key = key;
+}
+void q3_client_name_clear(qa_q3_game *game, uint32_t slot) {
+    q3_client_state *client = &game->clients[slot];
+    client_name_key_store(game, client, game->runtime_names[Q3_NAME_EMPTY]);
+    client->source_name = QA_STRING_NONE;
+}
 
 q3_client_state *q3_client_at(qa_q3_game *game, uint32_t slot) {
     return game && slot < QA_Q3_NATIVE_CLIENTS ? &game->clients[slot] : NULL;
@@ -18,8 +70,15 @@ void q3_client_name_bytes(const qa_q3_game *game, const q3_client_state *client,
 }
 bool q3_client_name_store(qa_q3_game *game, q3_client_state *client,
     const char name[QA_Q3_NATIVE_NETNAME], qa_error *error) {
-    return qa_strings_intern(qa_session_strings(game->options.services.session),
-        (qa_bytes){(const uint8_t *)name, QA_Q3_NATIVE_NETNAME}, &client->source_name, error);
+    qa_strings *strings = qa_session_strings(game->options.services.session);
+    qa_string_id source, key;
+    char normalized[QA_Q3_NATIVE_NETNAME];
+    normalized_name(name, QA_Q3_NATIVE_NETNAME, normalized);
+    if (!qa_strings_intern(strings, (qa_bytes){(const uint8_t *)name, QA_Q3_NATIVE_NETNAME}, &source, error) ||
+        !qa_strings_intern_cstr(strings, normalized, &key, error)) return false;
+    client_name_key_store(game, client, key);
+    client->source_name = source;
+    return true;
 }
 int32_t q3_client_ping_value(const q3_client_state *client) {
     return client->rule.has_followed_player ? client->rule.followed_player.ping
@@ -70,10 +129,12 @@ void q3_source_state_reset(qa_q3_game *game) {
     memset(game->death_continuations, 0, sizeof(game->death_continuations));
     memset(game->current_origins, 0, sizeof(game->current_origins));
     memset(game->clients, 0, sizeof(game->clients));
+    qa_id_index_clear(&game->client_names);
     memset(game->client_actors, 0, sizeof(game->client_actors));
     for (uint32_t i = 0; i < QA_Q3_NATIVE_CLIENTS; ++i) {
         game->client_actors[i] = (q3_actor){.kind = Q3_ACTOR_PLAYER, .alpha = 1};
         game->clients[i].rule.source_model_shape = QA_SHAPE_BOX;
+        client_name_key_store(game, &game->clients[i], game->runtime_names[Q3_NAME_EMPTY]);
     }
     memset(game->source_entities, 0, sizeof(game->source_entities));
     qa_id_index_clear(&game->source_classnames);
@@ -652,9 +713,12 @@ bool q3_source_prepare(qa_q3_game *game, const qa_q3_checkpoint *saved,
     qa_strings *strings = qa_session_strings(game->options.services.session);
     for (uint32_t slot = 0; slot < QA_Q3_NATIVE_CLIENTS; ++slot) {
         const char *name = saved->clients[slot].netname;
+        char key[QA_Q3_NATIVE_NETNAME];
+        normalized_name(name, QA_Q3_NATIVE_NETNAME, key);
         if (!qa_strings_intern(strings, (qa_bytes){(const uint8_t *)name, QA_Q3_NATIVE_NETNAME},
                 &names->source[slot], error) ||
-            !qa_strings_intern_cstr(strings, name, &names->player[slot], error)) {
+            !qa_strings_intern_cstr(strings, name, &names->player[slot], error) ||
+            !qa_strings_intern_cstr(strings, key, &names->key[slot], error)) {
             qa_actor_index_destroy(out);
             return false;
         }
@@ -678,11 +742,13 @@ void q3_source_commit(qa_q3_game *game, const qa_q3_checkpoint *saved,
         if (game->source_entities[slot].in_use && classname)
             qa_id_index_insert(&game->source_classnames, classname, 0, slot);
     }
+    qa_id_index_clear(&game->client_names);
     for (uint32_t slot = 0; slot < QA_Q3_NATIVE_CLIENTS; ++slot) {
         qa_actor_player *player = qa_actors_player(qa_session_actors(game->options.services.session),
             saved->source_entities[slot].actor);
         game->clients[slot] = (q3_client_state){.rule = saved->clients[slot].rule,
-            .source_name = names->source[slot], .player = player};
+            .source_name = names->source[slot], .name_key = names->key[slot], .player = player};
+        qa_id_index_insert(&game->client_names, names->key[slot], 0, slot);
         if (player && !player->present) {
             player->name = names->player[slot];
             player->ping = saved->clients[slot].ping;

@@ -277,6 +277,8 @@ bool qa_q3_create(const qa_q3_options *options, qa_q3_game **out, qa_error *erro
             QA_Q3_SOURCE_ENTITIES, error)) goto fail;
     if (!qa_id_index_reserve(&game->source_classnames,
             QA_Q3_SOURCE_ENTITIES, error)) goto fail;
+    if (!qa_id_index_reserve(&game->client_names,
+            QA_Q3_NATIVE_CLIENTS, error)) goto fail;
     if (!qa_targets_bind_field_keys(qa_session_strings(options->services.session), game->field_keys, error))
         goto fail;
     for (unsigned i = 0; i < Q3_NAME_COUNT; ++i)
@@ -315,6 +317,7 @@ fail:
     (void)qa_physics_dispose(&game->physics, NULL);
     q3_wire_destroy(game);
     qa_id_index_destroy(&game->source_classnames);
+    qa_id_index_destroy(&game->client_names);
     qa_actor_index_destroy(&game->foreign_clients);
     free(game->kamikaze_cooldowns);
     free(game->player_binding_tokens);
@@ -354,6 +357,7 @@ bool qa_q3_destroy(qa_q3_game *game, qa_error *error) {
     q3_configstrings_clear(game);
     q3_wire_destroy(game);
     qa_id_index_destroy(&game->source_classnames);
+    qa_id_index_destroy(&game->client_names);
     qa_actor_index_destroy(&game->foreign_clients);
     for(uint32_t i=0;i<game->capacity;++i)
         if(game->item_observations[i].serial)
