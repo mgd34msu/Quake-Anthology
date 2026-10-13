@@ -46,9 +46,40 @@ static bool sound(qa_q2_game *g, q2_actor *a, bool start, qa_error *e) {
                             : 3;
     if (attenuation == -1)
         attenuation = 0;
-    if ((!qa_actor_reference_present(s->team_master) || qa_actor_id_equal(qa_actor_reference_resolve(actors, s->team_master), a->id)) &&
-        !q2_entity_sound(g, a, edge, 2, 1, attenuation, 0, e))
-        return false;
+    if (!qa_actor_reference_present(s->team_master) ||
+        qa_actor_id_equal(qa_actor_reference_resolve(actors, s->team_master), a->id)) {
+        int channel = g->options.rules == QA_RULESET_Q2_RERELEASE && !button ? 10 : 2;
+        qa_vec3 origin = {0}; bool positioned = false;
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE && !button && edge &&
+            edge != g->runtime_names[Q2_NAME_RESOURCE_EMPTY] && qa_actor_reference_present(s->team_master)) {
+            size_t count = 0;
+            for (q2_actor *part = q2_ent(g, qa_actor_reference_resolve(actors, s->team_master)); part;) {
+                qa_actor_reference next = part->entity->team_next;
+                qa_linked_body linked; qa_bounds bounds;
+                if (qa_world_linked(g->services.world, part->id, &linked)) bounds = linked.absolute_bounds;
+                else {
+                    qa_body_state body;
+                    if (!qa_world_body_read(g->services.world, part->id, &body, e)) return false;
+                    bounds = qa_bounds_translate(body.bounds, body.origin);
+                }
+                origin = qa_vec_add(origin, qa_vec_scale(qa_vec_add(bounds.mins, bounds.maxs), .5f));
+                ++count;
+                part = q2_ent(g, qa_actor_reference_resolve(actors, next));
+            }
+            if (count > 1) {
+                float divisor = (float)count;
+                origin = qa_v3(origin.x / divisor, origin.y / divisor, origin.z / divisor);
+                qa_point_contents contents;
+                if (!qa_world_point_contents(g->services.world,
+                    &(qa_point_query){.point = origin,
+                        .policy = {.behavior = &qa_trace_behaviors[g->options.rules],
+                            .contents_mask = qa_collision_bit(QA_CONTENT_SOLID)}}, &contents, e)) return false;
+                positioned = !qa_collision_bits_overlap(contents.contents, qa_collision_bit(QA_CONTENT_SOLID));
+            }
+        }
+        if (!(positioned ? q2_emit_sound(g, a->id, QA_BUILTIN_SOUND, &origin, edge, channel, 1, attenuation,
+                QA_BUILTIN_SOUND_POSITIONED, e) : q2_entity_sound(g, a, edge, channel, 1, attenuation, 0, e))) return false;
+    }
     return !q2_actor_live(g, a->id) ||
            q2_entity_sound(g, a, middle, 2, 1, attenuation, start ? 1 : -1, e);
 }
