@@ -336,6 +336,18 @@ static bool weapon_picture(qa_hud *hud, qa_scene_frame *scene, qa_scene_rect tar
     }
     return true;
 }
+static float weapon_icon_aspect(const qa_material *material)
+{
+    for(size_t i=0;i<material->stage_count;++i) {
+        const qa_material_stage *stage=material->stages+i;
+        if(!stage->image_count || !stage->images[0] || !stage->images[0]->level_count)continue;
+        const qa_scene_image *image=stage->images[0];
+        uint32_t width=image->logical_width?image->logical_width:image->levels[0].width;
+        uint32_t height=image->logical_height?image->logical_height:image->levels[0].height;
+        return width && height?(float)width/(float)height:1;
+    }
+    return 1;
+}
 static bool inventory_text(qa_hud *hud, qa_scene_frame *scene, qa_scene_rect target,
     const char *value, float x, float y, float width, float height,
     qa_vec4 color, qa_font_alignment alignment, bool localize, qa_error *error)
@@ -391,9 +403,11 @@ static bool inventory_draw(qa_hud *hud, const qa_hud_frame *frame,
             (qa_scene_rect_f){136, y, 368, row_height}, colors.focused, error)) return false;
         float picture_size = fminf(20, row_height);
         if (item->icon) {
-            qa_scene_rect_f picture = {ui->bias_x + 188 * ui->scale,
-                ui->bias_y + (y + (row_height - picture_size) * .5f) * ui->scale,
-                picture_size * ui->scale, picture_size * ui->scale};
+            float aspect=weapon_icon_aspect(item->icon);
+            float icon_width=fminf(picture_size,picture_size*aspect),icon_height=icon_width/aspect;
+            qa_scene_rect_f picture = {ui->bias_x + (188+(picture_size-icon_width)*.5f) * ui->scale,
+                ui->bias_y + (y + (row_height - icon_height) * .5f) * ui->scale,
+                icon_width * ui->scale, icon_height * ui->scale};
             if (!weapon_picture(hud, scene, frame->safe_area, item->icon, picture, frame->time_ns, error)) return false;
         }
         char quantity[32];
@@ -526,6 +540,7 @@ static bool weapon_draw(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_dat
 {
     const qa_hud_weapon *weapon = &data->weapon;
     if (!weapon->present) return true;
+    const qa_material *picture=weapon->icon?weapon->icon:weapon->finite_ammo?weapon->ammo_icon:NULL;
     if (!weapon->label || (weapon->finite_ammo && !isfinite(weapon->ammo_count)))
         return ui_fail(error, "Weapon HUD lost its actual source status");
     qa_ui *ui = hud->options.ui;
@@ -549,43 +564,47 @@ static bool weapon_draw(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_dat
     if (weapon->finite_ammo && !qa_format_number(weapon->ammo_count, numeric, error)) return false;
     qa_font_layout measured;
     if (!weapon_layout(hud, scene, numeric, 1, 0, color, &measured, error)) return false;
-    bool stacked = weapon->icon && measured.width * text_scale * 1.5f > rect.width - 66;
-    float aspect = 1;
-    if (weapon->icon) {
-        for (size_t i = 0; i < weapon->icon->stage_count; ++i) {
-            const qa_material_stage *stage = weapon->icon->stages + i;
-            if (!stage->image_count || !stage->images[0] || !stage->images[0]->level_count) continue;
-            const qa_scene_image *image = stage->images[0];
-            uint32_t w = image->logical_width ? image->logical_width : image->levels[0].width;
-            uint32_t h = image->logical_height ? image->logical_height : image->levels[0].height;
-            if (w && h) aspect = (float)w / (float)h;
-            break;
-        }
-        float max_width = compact || stacked ? 24 : warning ? 30 : 48;
-        float max_height = compact ? 24 : stacked ? fminf(24, rect.height - label_top - 4) : warning ? 20 : 32;
+    bool ammo_icon=weapon->finite_ammo && weapon->ammo_icon && weapon->ammo_icon!=picture;
+    bool compact_pair=compact && ammo_icon && picture &&
+        rect.width-36<18+cap*text_scale;
+    float ammo_column=ammo_icon && !compact_pair?(compact?18:28):0;
+    bool stacked = picture && measured.width * text_scale * 1.5f > rect.width - 66 - ammo_column;
+    if (picture) {
+        float aspect=weapon_icon_aspect(picture);
+        float max_width = compact_pair?14:compact || stacked ? 24 : warning ? 30 : 48;
+        float max_height = compact_pair?14:compact ? 24 : stacked ? fminf(24, rect.height - label_top - 4) : warning ? 20 : 32;
         float icon_width = fminf(max_width, max_height * aspect);
-        float column = compact || stacked ? 24 : 48;
+        float column = compact_pair?14:compact || stacked ? 24 : 48;
         qa_scene_rect_f icon_rect = {pixels.x + (4 + (column - icon_width) * .5f) * scale,
             pixels.y + (compact ? 4 : stacked ? label_top : 5) * scale, icon_width * scale, icon_width / aspect * scale};
-        if (!weapon_picture(hud, scene, frame->safe_area, weapon->icon, icon_rect, frame->time_ns, error)) return false;
+        if (!weapon_picture(hud, scene, frame->safe_area, picture, icon_rect, frame->time_ns, error)) return false;
     }
-    float left = compact ? weapon->icon ? 32 : 4 : !weapon->icon || stacked ? 8 : 58;
+    float left = compact ? picture ? compact_pair?22:32 : 4 : !picture || stacked ? 8 : 58;
     float available = rect.width - left - (compact ? 4 : 8);
+    if(ammo_icon) {
+        float aspect=weapon_icon_aspect(weapon->ammo_icon);
+        float maximum=compact?14:20;
+        float width=fminf(maximum,maximum*aspect),height=width/aspect;
+        qa_scene_rect_f ammo_picture={pixels.x+(compact_pair?4:left+(ammo_column-4-width)*.5f)*scale,
+            pixels.y+(compact_pair?18:4)*scale,width*scale,height*scale};
+        if(!weapon_picture(hud,scene,frame->safe_area,weapon->ammo_icon,ammo_picture,frame->time_ns,error))return false;
+    }
     if (weapon->finite_ammo) {
-        float number_scale = compact ? text_scale : fminf(text_scale * 1.5f, available / fmaxf(1, measured.width));
-        if (!weapon_text(hud, scene, frame->safe_area, numeric, pixels.x + left * scale,
-            pixels.y + (4 - top * number_scale) * scale, number_scale * scale, available * scale,
+        float number_available=available-ammo_column;
+        float number_scale=fminf(compact?text_scale:text_scale*1.5f,number_available/fmaxf(1,measured.width));
+        if (!weapon_text(hud, scene, frame->safe_area, numeric, pixels.x + (left+ammo_column) * scale,
+            pixels.y + (4 - top * number_scale) * scale, number_scale * scale, number_available * scale,
             rect.height * scale, cap, color, false, error)) return false;
     }
     if (compact) {
-        if (!weapon->finite_ammo && !weapon->icon &&
+        if (!weapon->finite_ammo && !picture &&
             !weapon_text(hud, scene, frame->safe_area, weapon->label, pixels.x + left,
                 pixels.y + 4 - top * text_scale, text_scale, available, 10, cap, color, false, error)) return false;
         const char *compact_warning = weapon->aggregate_low ? "LOW AMMO" : warning;
         return !compact_warning || weapon_text(hud, scene, frame->safe_area, compact_warning,
             pixels.x + left, pixels.y + 18 - top * text_scale, text_scale, available, 10, cap, color, false, error);
     }
-    if (warning || !weapon->icon) {
+    if (warning || !picture) {
         const char *label = warning ? warning : weapon->label;
         float label_left = compact ? left : stacked ? 32 : warning ? 4 : left;
         float label_available = rect.width - label_left - 4;

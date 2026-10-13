@@ -209,6 +209,8 @@ bool frontend_hud_inventory_rows(frontend_seat *seat,const qa_hud_frame *frame,
     qa_arena *storage=&seat->frontend->frame.storage;
     qa_hud_inventory_row *rows=count?qa_arena_alloc(storage,count*sizeof(*rows),_Alignof(qa_hud_inventory_row),error):NULL;
     if(count && !rows)return false;
+    qa_actor_owner inventory_owner=received?0:qa_application_selected_owner(
+        seat->frontend->application,frame->actor,QA_ROLE_INVENTORY);
     size_t written=0;
     for(size_t i=0;i<count;++i) {
         const qa_inventory_entry *entry=entries+i;
@@ -249,8 +251,20 @@ bool frontend_hud_inventory_rows(frontend_seat *seat,const qa_hud_frame *frame,
         }
         const char *retained_binding=*binding?qa_arena_text(storage,binding,error):NULL;
         if(*binding && !retained_binding)return false;
+        const qa_material *picture=entry->item==out->selected_weapon?
+            entry->item==selected?out->weapon.icon:
+                out->weapon.unselected_icon?out->weapon.unselected_icon:out->weapon.icon:NULL;
+        qa_actor_owner provider=defined?(definition.owner?definition.owner:inventory_owner):0;
+        if(!picture && provider) {
+            frontend_equipment_hud_icons icons={0};
+            if(!frontend_equipment_media_native_item_icons_read(seat->frontend,provider,entry->item,&icons,error))return false;
+            picture=entry->item==selected?
+                icons.selected_weapon?icons.selected_weapon:icons.weapon:
+                icons.weapon?icons.weapon:icons.selected_weapon;
+            if(!picture)picture=icons.ammo;
+        }
         rows[written++]=(qa_hud_inventory_row){.item=entry->item,.label=label,
-            .binding=retained_binding,.icon=entry->item==out->selected_weapon?out->weapon.icon:NULL,
+            .binding=retained_binding,.icon=picture,
             .count=entry->count,.selected=entry->item==selected};
     }
     out->inventory=rows; out->inventory_count=written; out->inventory_present=true;
@@ -382,11 +396,15 @@ static bool hud_weapon_data(frontend_seat *seat, const qa_hud_frame *frame, qa_h
     }
     out->selected_weapon = equipment.item;
     if (!equipment.has_weapon_status || frame->source_status_native || qa_input_seat_focus(seat->input) != QA_INPUT_GAME) return true;
-    const qa_material *picture = NULL;
-    if (*source_slot ? !frontend_equipment_media_source_icon_read(seat->frontend, &equipment, &picture, error) :
-        !frontend_equipment_media_native_icon_read(seat->frontend, &equipment, &picture, error)) return false;
+    frontend_equipment_hud_icons icons={0};
+    if(*source_slot) {
+        if(!frontend_equipment_media_source_icon_read(seat->frontend,&equipment,&icons.weapon,error))return false;
+        icons.selected_weapon=icons.weapon;
+    } else if(!frontend_equipment_media_native_icons_read(seat->frontend,&equipment,&icons,error))return false;
+    const qa_material *picture=icons.selected_weapon?icons.selected_weapon:icons.weapon?icons.weapon:icons.ammo;
     qa_bytes provider = qa_strings_text(qa_session_strings(qa_application_session(seat->frontend->application)), equipment.provider);
     out->weapon = (qa_hud_weapon){.present = true, .label = equipment.label, .icon = picture,
+        .unselected_icon=icons.weapon?icons.weapon:picture,.ammo_icon=icons.ammo,
         .ammo_count = equipment.ammo_count, .finite_ammo = equipment.finite_ammo,
         .has_ammo_to_start = equipment.has_ammo_to_start, .low_ammo = equipment.low_ammo,
         .native_status = native_status || frame->weapon_only,

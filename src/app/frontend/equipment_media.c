@@ -9,9 +9,37 @@
 #include "renderer_materials.h"
 #include "qa/media_library_prepare.h"
 #include "qa/q3_assets_custody.h"
+#include "qa/game_q2_items.h"
+#include "qa/unified_frame_player.h"
 #include <stdio.h>
 #include <math.h>
 
+typedef struct native_hud_icon_spec {
+    qa_unified_inventory_icon_kind kind;
+    qa_string_id path, lump;
+} native_hud_icon_spec;
+typedef struct native_hud_icons {
+    qa_strings *strings;
+    frontend_visual_owner_view owner;
+    uint64_t lookup_generation;
+    native_hud_icon_spec declarations[3];
+    frontend_equipment_hud_icons pictures;
+} native_hud_icons;
+
+static void native_icons_release(native_hud_icons *icons)
+{
+    qa_material_library_destroy(icons->owner.materials);
+    qa_scene_resources_destroy(icons->owner.images);
+    qa_vfs_destroy(icons->owner.mounts);
+    qa_strings_destroy(icons->strings);
+    *icons = (native_hud_icons){0};
+}
+
+static bool stock_grip_admit(void *context,qa_scene_model *scene,qa_error *error)
+{
+    const char *const *path=context;
+    return frontend_held_stock_q2_attachment(*path,scene,error);
+}
 bool frontend_held_attachment_prepare(qa_vfs *files, const char *model_path,
     qa_scene_model *scene, qa_error *error)
 {
@@ -27,7 +55,8 @@ bool frontend_held_attachment_prepare(qa_vfs *files, const char *model_path,
     qa_error local = {0};
     bool ok = qa_vfs_acquire(files, path, &resource, NULL, &local);
     free(path);
-    if (!ok && local.code == QA_ERROR_NOT_FOUND) return true;
+    if (!ok && local.code == QA_ERROR_NOT_FOUND)
+        return qa_scene_model_visit(scene,stock_grip_admit,&model_path,error);
     if (!ok) { if (error) *error = local; return false; }
     frontend_held_attachment attachment = {0};
     ok = frontend_held_attachment_read(qa_resource_bytes(resource), &attachment, error);
@@ -153,6 +182,10 @@ bool frontend_equipment_retire(qa_frontend *frontend, qa_error *error)
         qa_strings_destroy(lookup->strings);
     }
     qa_id_index_destroy(&frontend->equipment->held_lookups);
+    for (size_t i = 0; i < frontend->equipment->native_hud_icons.count; ++i)
+        native_icons_release((native_hud_icons *)(uintptr_t)
+            frontend->equipment->native_hud_icons.entries[i].value);
+    qa_id_index_destroy(&frontend->equipment->native_hud_icons);
     qa_id_index_destroy(&frontend->equipment->q1_hud_pictures);
     frontend->equipment->q1_hud_strings = NULL;
     qa_arena_destroy(&frontend->equipment->held_storage);
@@ -552,78 +585,269 @@ static bool q1_hud_pictures_bind(qa_frontend *f, qa_error *error)
     equipment->q1_hud_strings = strings;
     return true;
 }
-static bool native_icon_declaration(qa_frontend *f,
-    const qa_application_equipment_view *view, char key[192], char declaration[256], bool *present, qa_error *error)
+static native_hud_icons *native_icons_find(const qa_frontend *f, qa_actor_owner provider, qa_item_id item)
 {
-    *present = false;
-    if (!f || !view || view->source_slot ||
-        !qa_application_equipment_current(f->application, view))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Native HUD icon requires its actual equipment source");
-    if (view->family != QA_GAME_Q1 || !view->item) return true;
-    qa_id_index_entry *entry = f->equipment && f->equipment->q1_hud_strings ==
-        qa_session_strings(qa_application_session(f->application))
-        ? qa_id_index_find(&f->equipment->q1_hud_pictures, view->item, 0) : NULL;
-    if (!entry) return true;
-    const q1_hud_picture *picture = q1_hud_pictures + entry->value;
-    const qa_launch_snapshot *launch = qa_application_launch(f->application);
-    const char *instance = qa_application_provider_instance(f->application, view->provider);
-    const qa_launch_instance *source = instance ? qa_launch_snapshot_find(launch, instance) : NULL;
-    const qa_product *product = source ? qa_catalog_product(qa_launch_snapshot_catalog(launch), source->selection.product) : NULL;
-    if (!product || product->family != view->family)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Native HUD icon lost its actual product declaration");
-    char path[128], lump[64] = "";
-    if (product->edition == QA_EDITION_RERELEASE) {
-        snprintf(path, sizeof(path), "gfx/weapons/%s%s_2.lmp",
-            !strncmp(picture->wheel, "ui_", 3) ? "" : "ww_", picture->wheel);
-    } else {
-        const char *icon = picture->classic ? picture->classic : picture->ammo;
-        if (!icon) return true;
-        snprintf(path, sizeof(path), "%s", "gfx.wad");
-        snprintf(lump, sizeof(lump), "%s%s", picture->classic && strncmp(icon, "r_", 2) ? "inv2_" : "", icon);
-    }
-    if (!frontend_equipment_icon_key(path,lump,key,192,error)) return false;
-    int size = lump[0] ? snprintf(declaration, 256,
-            "{\"kind\":\"wad-picture\",\"path\":\"%s\",\"lump\":\"%s\"}", path, lump) :
-            snprintf(declaration, 256, "{\"kind\":\"image\",\"path\":\"%s\"}", path);
-    if (size < 0 || size >= 256)
-        return frontend_fail(error, QA_ERROR_MEMORY, "Native HUD icon declaration exceeds its actual extent");
-    *present = true; return true;
+    qa_id_index_entry *entry = f->equipment ?
+        qa_id_index_find(&f->equipment->native_hud_icons, item, provider) : NULL;
+    return entry ? (native_hud_icons *)(uintptr_t)entry->value : NULL;
 }
-bool frontend_equipment_media_native_icon_prepare(qa_frontend *f,
-    const qa_application_equipment_view *view, const qa_material **out, qa_error *error)
+static bool native_icons_current(const qa_frontend *f, const native_hud_icons *icons,
+    const frontend_visual_owner_view *owner)
 {
-    char key[192], declaration[256]; bool present;
-    if (!out || *out) return false;
-    if (f && view && view->family == QA_GAME_Q1 && view->item &&
-        !q1_hud_pictures_bind(f, error)) return false;
-    if (!native_icon_declaration(f, view, key, declaration, &present, error)) return false;
-    if (!present) return true;
-    frontend_visual_owner_view media;
-    if (!frontend_visual_media_acquire(f, view->provider, view->family, &media, error)) return false;
-    const qa_material *material = qa_material_find(media.materials, key);
-    if (!material) {
-        qa_resource *resource = NULL;
-        bool okay = frontend_equipment_icon_load((qa_bytes){(const uint8_t *)declaration, strlen(declaration)},
-            media.family, media.mounts, media.images, media.materials, &material, &resource, error);
-        qa_resource_release(resource);
+    return icons && icons->strings == qa_session_strings(qa_application_session(f->application)) &&
+        icons->owner.owner == owner->owner && icons->owner.family == owner->family &&
+        icons->owner.mounts == owner->mounts && icons->owner.images == owner->images &&
+        icons->owner.materials == owner->materials &&
+        icons->lookup_generation == qa_vfs_lookup_generation(owner->mounts);
+}
+static bool native_icon_bind(qa_strings *strings, qa_unified_inventory_icon_kind kind,
+    const char *path, const char *lump, native_hud_icon_spec *out, qa_error *error)
+{
+    *out = (native_hud_icon_spec){0};
+    if (!path || !*path) return true;
+    out->kind = kind;
+    return qa_strings_intern_cstr(strings, path, &out->path, error) &&
+        (!lump || !*lump || qa_strings_intern_cstr(strings, lump, &out->lump, error));
+}
+static bool native_icon_load(qa_strings *strings, const frontend_visual_owner_view *owner,
+    const native_hud_icon_spec *spec, const qa_material **out, qa_error *error)
+{
+    if (!spec->path) return true;
+    const char *path = qa_strings_cstr(strings, spec->path);
+    const char *lump = spec->lump ? qa_strings_cstr(strings, spec->lump) : "";
+    size_t a = strlen(path), b = strlen(lump);
+    if (b > SIZE_MAX - 2 || a > SIZE_MAX - b - 2)
+        return frontend_fail(error, QA_ERROR_MEMORY, "Native icon identity exceeds address space");
+    qa_arena storage = {0};
+    size_t key_bytes = a + b + 2;
+    char *key = qa_arena_alloc(&storage, key_bytes, 1, error);
+    bool okay = key && frontend_equipment_icon_key(path, lump, key, key_bytes, error);
+    const qa_material *material = okay ? qa_material_find(owner->materials, key) : NULL;
+    if (okay && !material) {
+        const char *format = spec->kind == QA_UNIFIED_INVENTORY_ICON_SHADER ?
+            "{\"kind\":\"shader\",\"name\":\"%s\"}" :
+            spec->kind == QA_UNIFIED_INVENTORY_ICON_WAD_PICTURE ?
+                "{\"kind\":\"wad-picture\",\"path\":\"%s\",\"lump\":\"%s\"}" :
+                "{\"kind\":\"image\",\"path\":\"%s\"}";
+        size_t fixed = strlen(format) + 1;
+        if (a > SIZE_MAX - b || a + b > SIZE_MAX - fixed) {
+            okay = frontend_fail(error, QA_ERROR_MEMORY, "Native icon declaration exceeds address space");
+        } else {
+            size_t bytes = a + b + fixed;
+            char *declaration = qa_arena_alloc(&storage, bytes, 1, error);
+            okay = declaration != NULL;
+            if (okay) {
+                if (spec->kind == QA_UNIFIED_INVENTORY_ICON_SHADER)
+                    snprintf(declaration, bytes, "{\"kind\":\"shader\",\"name\":\"%s\"}", path);
+                else if (spec->kind == QA_UNIFIED_INVENTORY_ICON_WAD_PICTURE)
+                    snprintf(declaration, bytes, "{\"kind\":\"wad-picture\",\"path\":\"%s\",\"lump\":\"%s\"}", path, lump);
+                else snprintf(declaration, bytes, "{\"kind\":\"image\",\"path\":\"%s\"}", path);
+                qa_resource *source = NULL;
+                qa_error local = {0};
+                okay = frontend_equipment_icon_load(
+                    (qa_bytes){(const uint8_t *)declaration, strlen(declaration)}, owner->family,
+                    owner->mounts, owner->images, owner->materials, &material, &source, &local);
+                qa_resource_release(source);
+                if (!okay && local.code == QA_ERROR_NOT_FOUND) okay = true;
+                else if (!okay && error) *error = local;
+            }
+        }
+    }
+    qa_arena_destroy(&storage);
+    if (okay) *out = material;
+    return okay;
+}
+static bool native_icons_admit(qa_frontend *f, const frontend_visual_owner_view *owner,
+    qa_actor_owner provider, qa_item_id item, const native_hud_icon_spec declarations[3], qa_error *error)
+{
+    native_hud_icons *icons = native_icons_find(f, provider, item);
+    if (native_icons_current(f, icons, owner)) return true;
+    qa_id_index *index = &f->equipment->native_hud_icons;
+    index->storage = &f->equipment->held_storage;
+    if (!icons) {
+        if (!qa_id_index_reserve(index, 1, error)) return false;
+        icons = qa_arena_alloc(&f->equipment->held_storage, sizeof(*icons), _Alignof(native_hud_icons), error);
+        if (!icons) return false;
+        *icons = (native_hud_icons){0};
+    }
+    native_hud_icons candidate = {.lookup_generation = qa_vfs_lookup_generation(owner->mounts)};
+    if (!qa_vfs_retain(owner->mounts, error)) return false;
+    candidate.owner.mounts = owner->mounts;
+    if (!qa_scene_resources_retain(owner->images, error)) goto failed;
+    candidate.owner.images = owner->images;
+    if (!qa_material_library_retain(owner->materials, error)) goto failed;
+    candidate.owner = *owner;
+    candidate.strings = qa_session_strings(qa_application_session(f->application));
+    qa_strings_retain(candidate.strings);
+    memcpy(candidate.declarations, declarations, sizeof(candidate.declarations));
+    if (!native_icon_load(candidate.strings, owner, declarations, &candidate.pictures.weapon, error) ||
+        !native_icon_load(candidate.strings, owner, declarations + 1, &candidate.pictures.selected_weapon, error) ||
+        !native_icon_load(candidate.strings, owner, declarations + 2, &candidate.pictures.ammo, error)) goto failed;
+    if (owner->family == QA_GAME_Q1 && !candidate.pictures.selected_weapon)
+        candidate.pictures.selected_weapon = candidate.pictures.ammo;
+    native_icons_release(icons);
+    *icons = candidate;
+    qa_id_index_entry *entry = qa_id_index_find(index, item, provider);
+    if (entry) entry->value = (size_t)(uintptr_t)icons;
+    else qa_id_index_insert(index, item, provider, (size_t)(uintptr_t)icons);
+    return true;
+failed:
+    native_icons_release(&candidate);
+    return false;
+}
+static bool q1_native_icons(qa_frontend *f, const frontend_visual_owner_view *owner,
+    qa_actor_owner provider, qa_item_id item, const qa_product *product, qa_error *error)
+{
+    native_hud_icon_spec declarations[3] = {0};
+    qa_strings *strings = qa_session_strings(qa_application_session(f->application));
+    qa_id_index_entry *entry = qa_id_index_find(&f->equipment->q1_hud_pictures, item, 0);
+    if (entry && product) {
+        const q1_hud_picture *picture = q1_hud_pictures + entry->value;
+        if (product->edition == QA_EDITION_RERELEASE) {
+            for (size_t i = 0; i < 2; ++i) {
+                char path[128];
+                snprintf(path, sizeof(path), "gfx/weapons/%s%s_%u.lmp",
+                    !strncmp(picture->wheel, "ui_", 3) ? "" : "ww_", picture->wheel, (unsigned)i + 1);
+                if (!native_icon_bind(strings, QA_UNIFIED_INVENTORY_ICON_IMAGE, path, NULL, declarations + i, error)) return false;
+            }
+        } else if (picture->classic) {
+            for (size_t i = 0; i < 2; ++i) {
+                char lump[64];
+                snprintf(lump, sizeof(lump), "%s%s", !strncmp(picture->classic, "r_", 2) ? "" :
+                    i ? "inv2_" : "inv_", picture->classic);
+                if (!native_icon_bind(strings, QA_UNIFIED_INVENTORY_ICON_WAD_PICTURE,
+                    "gfx.wad", lump, declarations + i, error)) return false;
+            }
+        }
+        if (picture->ammo && !native_icon_bind(strings, QA_UNIFIED_INVENTORY_ICON_WAD_PICTURE,
+            "gfx.wad", picture->ammo, declarations + 2, error)) return false;
+    }
+    return native_icons_admit(f, owner, provider, item, declarations, error);
+}
+static bool q2_native_icons(qa_frontend *f, const frontend_visual_owner_view *owner,
+    qa_actor_owner provider, const qa_q2_game *game, bool rerelease, qa_error *error)
+{
+    qa_strings *strings = qa_session_strings(qa_application_session(f->application));
+    size_t count = qa_q2_item_count(game);
+    for (size_t i = 0; i < count; ++i) {
+        const qa_q2_item_definition *weapon = qa_q2_item_at(game, i);
+        if (!weapon) continue;
+        native_hud_icon_spec declarations[3] = {0};
+        const qa_q2_item_definition *ammo = NULL;
+        for (size_t j = 0; weapon->ammo && j < count; ++j) {
+            const qa_q2_item_definition *candidate = qa_q2_item_at(game, j);
+            if (candidate && candidate->item == weapon->ammo) { ammo = candidate; break; }
+        }
+        const qa_string_id icons[2] = {weapon->icon_id, ammo ? ammo->icon_id : QA_STRING_NONE};
+        for (size_t j = 0; j < 2; ++j) {
+            if (!icons[j]) continue;
+            const char *name = qa_strings_cstr(strings, icons[j]);
+            size_t length = strlen(name);
+            if (length > SIZE_MAX - sizeof("pics/.pcx"))
+                return frontend_fail(error, QA_ERROR_MEMORY, "Q2 icon path exceeds address space");
+            qa_arena storage = {0};
+            size_t bytes = length + sizeof("pics/.pcx");
+            char *path = qa_arena_alloc(&storage, bytes, 1, error);
+            bool okay = path && qa_scene_q2_picture_path(name, rerelease, path, bytes, error) &&
+                native_icon_bind(strings, QA_UNIFIED_INVENTORY_ICON_IMAGE, path, NULL,
+                    declarations + (j ? 2 : 0), error);
+            qa_arena_destroy(&storage);
+            if (!okay) return false;
+        }
+        declarations[1] = declarations[0];
+        if (!native_icons_admit(f, owner, provider, weapon->item, declarations, error)) return false;
+    }
+    return true;
+}
+static bool q3_native_icons(qa_frontend *f, const frontend_visual_owner_view *owner,
+    qa_actor_owner provider, const qa_q3_game *game, qa_error *error)
+{
+    const qa_q3_model_names *names;
+    if (!qa_application_equipment_q3_metadata_read(f->application, provider, &names, NULL)) return true;
+    size_t count;
+    const qa_q3_item *items = qa_q3_items(names->product, &count);
+    qa_strings *strings = qa_session_strings(qa_application_session(f->application));
+    for (size_t i = 0; i < count; ++i) {
+        const qa_q3_item *weapon = items + i;
+        qa_item_id item = weapon->kind == QA_Q3_ITEM_WEAPON ? names->weapon_items[weapon->tag] :
+            game ? qa_q3_item_identity(game, (uint32_t)i) : QA_STRING_NONE;
+        if (!item) continue;
+        native_hud_icon_spec declarations[3] = {0};
+        if (!native_icon_bind(strings, QA_UNIFIED_INVENTORY_ICON_SHADER, weapon->icon, NULL, declarations, error)) return false;
+        declarations[1] = declarations[0];
+        for (size_t j = 0; weapon->kind == QA_Q3_ITEM_WEAPON && j < count; ++j) {
+            const qa_q3_item *ammo = items + j;
+            if (ammo->kind != QA_Q3_ITEM_AMMO || ammo->tag != weapon->tag) continue;
+            if (!native_icon_bind(strings, QA_UNIFIED_INVENTORY_ICON_SHADER, ammo->icon, NULL, declarations + 2, error)) return false;
+            break;
+        }
+        if (!native_icons_admit(f, owner, provider, item, declarations, error)) return false;
+    }
+    return true;
+}
+bool frontend_equipment_media_native_icons_prepare(qa_frontend *f,
+    const qa_application_equipment_view *view, frontend_equipment_hud_icons *out, qa_error *error)
+{
+    if (!out || !f || !view || view->source_slot || !qa_application_equipment_current(f->application, view))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Native HUD icons require their actual equipment source");
+    *out = (frontend_equipment_hud_icons){0};
+    if (!view->item) return true;
+    if (!q1_hud_pictures_bind(f, error)) return false;
+    frontend_visual_owner_view owner;
+    if (!frontend_visual_media_acquire(f, view->provider, view->family, &owner, error)) return false;
+    native_hud_icons *icons = native_icons_find(f, view->provider, view->item);
+    if (!native_icons_current(f, icons, &owner)) {
+        qa_id_index_cursor cursor = application_provider_lookup_begin(f->application,
+            view->provider, APPLICATION_PROVIDER_PUBLISHED);
+        application_provider *source = application_provider_lookup_next(f->application, &cursor);
+        bool okay = true;
+        if (view->family == QA_GAME_Q1)
+            okay = q1_native_icons(f, &owner, view->provider, view->item, source ? source->product : NULL, error);
+        else if (view->family == QA_GAME_Q2 && source && source->kind == APPLICATION_PROVIDER_Q2)
+            okay = q2_native_icons(f, &owner, view->provider, source->state.q2,
+                source->launch->selection.clock.kind == QA_RULESET_Q2_RERELEASE, error);
+        else if (view->family == QA_GAME_Q3 && source && source->product && source->product->family == QA_GAME_Q3)
+            okay = q3_native_icons(f, &owner, view->provider,
+                source->kind == APPLICATION_PROVIDER_Q3 ? source->state.q3 : NULL, error);
         if (!okay) return false;
+        icons = native_icons_find(f, view->provider, view->item);
+        if (!native_icons_current(f, icons, &owner)) {
+            const native_hud_icon_spec empty[3] = {0};
+            if (!native_icons_admit(f, &owner, view->provider, view->item, empty, error)) return false;
+            icons = native_icons_find(f, view->provider, view->item);
+        }
     }
     if (!qa_application_equipment_current(f->application, view) ||
-        !qa_vfs_lookup_equal(qa_application_provider_files(f->application, view->provider), media.mounts))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Native HUD icon changed its actual equipment or media owner");
-    *out = material; return true;
+        !qa_vfs_lookup_equal(qa_application_provider_files(f->application, view->provider), owner.mounts))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Native HUD icons changed their actual equipment or media owner");
+    *out = icons->pictures;
+    return true;
 }
-bool frontend_equipment_media_native_icon_read(qa_frontend *f,
-    const qa_application_equipment_view *view, const qa_material **out, qa_error *error)
+bool frontend_equipment_media_native_icons_read(qa_frontend *f,
+    const qa_application_equipment_view *view, frontend_equipment_hud_icons *out, qa_error *error)
 {
-    char key[192], declaration[256]; bool present;
-    if (!out || *out || !native_icon_declaration(f, view, key, declaration, &present, error)) return false;
-    if (!present) return true;
-    frontend_visual_owner_view media;
-    if (!frontend_visual_media_read(f, view->provider, view->family, &media, error)) return false;
-    *out = qa_material_find(media.materials, key);
-    if (*out) return true;
-    return frontend_fail(error, QA_ERROR_ARGUMENT, "Native HUD icon has not completed its actual media preparation");
+    if (!out || !f || !view || view->source_slot || !qa_application_equipment_current(f->application, view))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Native HUD icons require their actual equipment source");
+    *out = (frontend_equipment_hud_icons){0};
+    if (!view->item) return true;
+    frontend_visual_owner_view owner;
+    if (!frontend_visual_media_read(f, view->provider, view->family, &owner, error)) return false;
+    const native_hud_icons *icons = native_icons_find(f, view->provider, view->item);
+    if (native_icons_current(f, icons, &owner)) *out = icons->pictures;
+    return true;
+}
+bool frontend_equipment_media_native_item_icons_read(const qa_frontend *f,
+    qa_actor_owner provider, qa_item_id item, frontend_equipment_hud_icons *out, qa_error *error)
+{
+    (void)error;
+    if (!f || !out) return false;
+    *out = (frontend_equipment_hud_icons){0};
+    const native_hud_icons *icons = native_icons_find(f, provider, item);
+    if (!icons || icons->strings != qa_session_strings(qa_application_session(f->application))) return true;
+    frontend_visual_owner_view owner;
+    if (frontend_visual_media_read(f, provider, icons->owner.family, &owner, NULL) &&
+        native_icons_current(f, icons, &owner)) *out = icons->pictures;
+    return true;
 }
 
 qa_hud_q1_variant frontend_q1_hud_variant(const qa_product *product)

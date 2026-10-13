@@ -10,6 +10,9 @@ struct frontend_equipment_held_output {
     frontend_equipment_media_view media;
     frontend_equipment_media *media_owner;
     qa_q3_presentation_assets *assets;
+    const qa_q3_presentation_assets *parent_assets;
+    qa_scene_model *carrier_scene;
+    qa_game_family carrier_family;
     qa_q3_ref_entity parent;
     qa_model_transform transform;
     qa_q3_ref_entity *passes;
@@ -78,56 +81,62 @@ bool frontend_equipment_held_output_create_from(qa_frontend *frontend,
     output->media_owner = media;
     if (retained.declaration->none) { *out = output; return true; }
     qa_q3_asset_model_holder holder;
-    qa_model_tag tag;
-    qa_model_transform socket;
-    bool authored = false;
-    bool found = false;
     bool ok = parent->model > 0 &&
         qa_q3_assets_model_holder(parent_assets, (size_t)parent->model - 1, &holder, error);
     if (ok && (!holder.present || !holder.sources[0]))
         ok = frontend_fail(error, QA_ERROR_FORMAT, "Held replacement parent has no actual registered model holder");
-    if (ok) authored = holder.scenes[0] && qa_scene_model_grip_defined(holder.scenes[0]);
-    if (ok && authored) {
-        qa_scene_model_input input = {.family = holder.provider.family,
-            .frame = (uint32_t)parent->frame, .old_frame = (uint32_t)parent->old_frame,
-            .back_lerp = parent->back_lerp, .previous_origin = parent->old_origin,
-            .flags = (uint32_t)parent->flags, .seconds = (double)frontend->time_ns * 1e-9};
-        parent_transform(parent, &input.transform);
-        ok = qa_scene_model_grip_sample(holder.scenes[0], &input, &frontend->frame, &socket, &found, error);
-        if (ok && !found) {
-            output->hidden_attachment = true;
-            *out = output;
-            return true;
-        }
-    } else if (ok) ok = qa_q3_presentation_tag(parent_assets, parent->model,
-        qa_q3_presentation_tag_id(parent_assets, QA_Q3_TAG_WEAPON),
-        parent->old_frame, parent->frame, 1 - parent->back_lerp, &tag, &found, error);
-    if (ok && !found)
-        ok = frontend_fail(error, QA_ERROR_FORMAT, "Original source torso has no weapon attachment");
     if (ok && (!retained.held || !retained.held->model || !retained.held_scene ||
             retained.held->reference_frame > INT32_MAX))
         ok = frontend_fail(error, QA_ERROR_FORMAT, "Held replacement has no real prepared model and scene");
-    if (ok) {
-        qa_model_transform parent_pose, tagged;
-        parent_transform(parent, &parent_pose);
-        if (!authored) {
-            qa_model_transform_identity(&socket);
-            memcpy(socket.origin, tag.origin, sizeof(socket.origin));
-            memcpy(socket.axes, tag.axes, sizeof(socket.axes));
-        }
-        qa_model_transform_compose(&parent_pose, &socket, &tagged);
-        qa_model_transform_compose(&tagged,
-            authored ? &retained.held->inverse_grip : &retained.held->alignment, &output->transform);
-        for (size_t i = 0; ok && i < 3; ++i) {
-            ok = isfinite(output->transform.origin[i]) && isfinite(output->transform.scale[i]);
-            for (size_t j = 0; ok && j < 3; ++j)
-                ok = isfinite(output->transform.axes[i][j]);
-        }
-        if (!ok) frontend_fail(error, QA_ERROR_FORMAT, "Actual held attachment exceeds finite transform coordinates");
-    } else if (parent->model <= 0)
-        frontend_fail(error, QA_ERROR_FORMAT, "Held replacement parent has no physical model handle");
     if (!ok) { frontend_equipment_held_output_destroy(output); return false; }
-    *out = output;
+    output->parent_assets=parent_assets;output->carrier_scene=holder.scenes[0];
+    output->carrier_family=holder.provider.family;
+    *out=output;return true;
+}
+
+static bool held_transform(frontend_equipment_held_output *output,const qa_scene_view *view,
+    qa_scene_frame *frame,qa_error *error)
+{
+    const qa_q3_ref_entity *parent=&output->parent;
+    const frontend_equipment_media_view *retained=&output->media;
+    qa_model_transform socket;
+    bool authored=false,found=false;
+    output->hidden_attachment=retained->declaration->none;
+    if (output->hidden_attachment) return true;
+    if (output->carrier_scene) {
+        qa_scene_model_input input={.view=*view,.family=output->carrier_family,
+            .frame=(uint32_t)parent->frame,.old_frame=(uint32_t)parent->old_frame,
+            .back_lerp=parent->back_lerp,.previous_origin=parent->old_origin,
+            .flags=(uint32_t)parent->flags,.seconds=(double)output->frontend->time_ns*1e-9};
+        parent_transform(parent,&input.transform);
+        if (!qa_scene_model_grip_sample(output->carrier_scene,&input,frame,&socket,&found,error)) return false;
+        authored=found;
+        if (!found && qa_scene_model_grip_defined(output->carrier_scene)) {
+            output->hidden_attachment=true;return true;
+        }
+    }
+    if (!authored) {
+        qa_model_tag tag;
+        if (!qa_q3_presentation_tag(output->parent_assets,parent->model,
+            qa_q3_presentation_tag_id(output->parent_assets,QA_Q3_TAG_WEAPON),
+            parent->old_frame,parent->frame,1-parent->back_lerp,&tag,&found,error)) return false;
+        if (!found) return frontend_fail(error,QA_ERROR_FORMAT,"Original source torso has no weapon attachment");
+        qa_model_transform_identity(&socket);
+        memcpy(socket.origin,tag.origin,sizeof(socket.origin));
+        memcpy(socket.axes,tag.axes,sizeof(socket.axes));
+    }
+    qa_model_transform parent_pose,tagged;
+    parent_transform(parent,&parent_pose);
+    qa_model_transform_compose(&parent_pose,&socket,&tagged);
+    qa_model_transform_compose(&tagged,authored?&retained->held->inverse_grip:&retained->held->alignment,
+        &output->transform);
+    for (size_t i=0;i<3;++i) {
+        if (!isfinite(output->transform.origin[i]) || !isfinite(output->transform.scale[i]))
+            return frontend_fail(error,QA_ERROR_FORMAT,"Actual held attachment exceeds finite transform coordinates");
+        for (size_t j=0;j<3;++j)
+            if (!isfinite(output->transform.axes[i][j]))
+                return frontend_fail(error,QA_ERROR_FORMAT,"Actual held attachment exceeds finite transform coordinates");
+    }
     return true;
 }
 
@@ -157,7 +166,7 @@ bool frontend_equipment_held_output_pass(frontend_equipment_held_output *output,
     pass.non_normalized_axes = false;
     memset(pass.color, 255, sizeof(pass.color));
     if (material) memcpy(pass.color, source->color, sizeof(pass.color));
-    pass.origin = qa_v3(output->transform.origin[0], output->transform.origin[1], output->transform.origin[2]);
+    pass.origin = output->parent.origin;
     pass.old_origin = pass.origin;
     output->passes[output->count++] = pass;
     return true;
@@ -176,11 +185,18 @@ bool frontend_equipment_held_output_submit(frontend_equipment_held_output *outpu
         first_order > 1022 || output->count > 1022 - first_order ||
         qa_q3_presentation_resources(presentation) != output->assets)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Held output requires its actual source renderer and reserved scene order");
-    for (size_t i = 0; i < output->count; ++i)
+    if (!output->count) return true;
+    if (!held_transform(output,&options->world.view,frame,error)) return false;
+    if (output->hidden_attachment) return true;
+    for (size_t i=0;i<output->count;++i) {
+        qa_q3_ref_entity pass=output->passes[i];
+        pass.origin=qa_v3(output->transform.origin[0],output->transform.origin[1],output->transform.origin[2]);
+        pass.old_origin=pass.origin;
         if (!qa_q3_presentation_selected_model(presentation, output->media.held_scene,
                 output->media.held->model, output->media.held_parent.path,
-                &output->transform, output->passes + i, options,
+                &output->transform, &pass, options,
                 first_order + (uint32_t)i, frame, error)) return false;
+    }
     return true;
 }
 

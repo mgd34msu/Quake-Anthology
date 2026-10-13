@@ -579,7 +579,6 @@ static bool model_read(qa_frontend *frontend, frontend_visual_owner *owner, qa_s
     if (ok && colored && model->model->format == QA_MODEL_MDL)
         images.translation = (qa_bytes){translation, sizeof(translation)};
     if (ok) ok=qa_scene_model_create(model->model, path, owner->images, owner->materials, &images, owner->strings, &model->scene, error);
-    if (ok) ok = frontend_held_attachment_prepare(owner->mounts, path, model->scene, error);
     qa_scene_model_content_lease native = {0};
     if (ok) ok = visual_content_lease(model->content, false, &native, error) && qa_scene_model_source_bind(model->scene, &native, error);
     if (native.release) native.release(native.context);
@@ -613,6 +612,7 @@ static bool model_read(qa_frontend *frontend, frontend_visual_owner *owner, qa_s
         frontend_model_policy_select(&policy, owner->family, model->model, 0, true),
         frontend_model_policy_distance(&policy, model->model),
         model->replacement ? &model->replacement_description : NULL, error);
+    if (ok) ok = frontend_held_attachment_prepare(owner->mounts,path,model->scene,error);
     uint64_t resource = qa_resource_id(model->resource);
     if (ok) ok = qa_id_index_reserve(&owner->model_index, resource ? 2 : 1, error);
     if (!ok) {
@@ -777,8 +777,8 @@ static bool model_opening_initialize(qa_frontend *f, qa_game_family family, qa_v
         qa_material_library_resource_owner(qa_scene_model_material_owner(root)) != qa_scene_model_resource_owner(root) ||
         qa_resource_pool_find(qa_vfs_resources(files), qa_resource_id(resource)) != resource)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Initial model policy requires its genuine decoded parent and first opening");
-    if (!frontend_held_attachment_prepare(files, attachment_path, root, error)) return false;
-    if (native->format != QA_MODEL_MDL && native->format != QA_MODEL_MD2) return true;
+    if (native->format != QA_MODEL_MDL && native->format != QA_MODEL_MD2)
+        return frontend_held_attachment_prepare(files,attachment_path,root,error);
     frontend_model_policy policy;
     if (!frontend_model_policy_read(f, &policy, error)) return false;
     frontend_visual_content *content = NULL; qa_model_replacement replacement = {0};
@@ -796,6 +796,7 @@ static bool model_opening_initialize(qa_frontend *f, qa_game_family family, qa_v
     if (ok) ok = qa_scene_model_replacement_policy_bind(root,
         frontend_model_policy_select(&policy, family, native, 0, true),
         frontend_model_policy_distance(&policy, native), content ? &replacement : NULL, error);
+    if (ok) ok = frontend_held_attachment_prepare(files,attachment_path,root,error);
     visual_content_release(content); return ok;
 }
 bool frontend_visual_registered_model_initialize(qa_frontend *f, const qa_q3_model_opening *opening,

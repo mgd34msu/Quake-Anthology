@@ -47,6 +47,7 @@ struct frontend_equipment {
     qa_arena held_storage;
     qa_id_index held_lookups;
     qa_id_index q1_hud_pictures;
+    qa_id_index native_hud_icons;
     const qa_strings *q1_hud_strings;
     bool admitting;
 };

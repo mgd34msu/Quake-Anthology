@@ -1062,6 +1062,9 @@ struct qa_scene_model_input {
 bool qa_scene_model_create(const qa_model *, const char *source_path, qa_scene_resources *, qa_material_library *,
                            const qa_scene_image_options *, qa_strings *, qa_scene_model **, qa_error *);
 void qa_scene_model_destroy(qa_scene_model *);
+/* Visits the admitted root and replacement tree without allocating. */
+typedef bool (*qa_scene_model_visit_fn)(void *,qa_scene_model *,qa_error *);
+bool qa_scene_model_visit(qa_scene_model *,qa_scene_model_visit_fn,void *,qa_error *);
 bool qa_scene_model_skin_admit(qa_scene_model *, const qa_model_skin_map *, qa_error *);
 bool qa_scene_model_materials_admit(qa_scene_model *, const qa_model_skin_map *,
     qa_material_library *, qa_error *);

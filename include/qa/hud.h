@@ -83,6 +83,7 @@ typedef struct qa_hud_frame {
 typedef struct qa_hud_weapon {
     const char *label;
     const qa_material *icon;
+    const qa_material *unselected_icon, *ammo_icon;
     double ammo_count;
     bool present, finite_ammo, has_ammo_to_start, low_ammo;
     bool native_status, suppress_active_warning, aggregate_low, aggregate_empty;

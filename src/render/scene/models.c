@@ -68,55 +68,68 @@ const qa_scene_model *qa_scene_model_replacement_first(const qa_scene_model *mod
 const qa_scene_model *qa_scene_model_replacement_next(const qa_scene_model *model) { return model ? model->replacement_next : NULL; }
 const qa_model_replacement *qa_scene_model_replacement_description(const qa_scene_model *model) { return model ? model->replacement_source : NULL; }
 uint64_t qa_scene_model_identity(const qa_scene_model *model) { return model ? model->identity : 0; }
+static qa_scene_model *model_next(const qa_scene_model *root, const qa_scene_model *node)
+{
+    if (node->replacement) return node->replacement;
+    while (node != root && !node->replacement_next) node=node->replacement_parent;
+    return node==root?NULL:node->replacement_next;
+}
+bool qa_scene_model_visit(qa_scene_model *model,qa_scene_model_visit_fn visit,void *context,qa_error *error)
+{
+    for (qa_scene_model *node=model;node;node=model_next(model,node))
+        if (!visit(context,node,error)) return false;
+    return true;
+}
+typedef struct model_bindings {
+    const qa_model_skin_map *skin;
+    qa_material_library *materials;
+} model_bindings;
+static bool skin_admit(void *context,qa_scene_model *node,qa_error *error)
+{
+    model_bindings *bindings=context;
+    return node->source->format==QA_MODEL_MDL || qa_model_skin_map_bind(bindings->skin,node->identity,
+        node->source->mesh_count?&node->meshes[0].surface:NULL,sizeof(*node->meshes),node->source->mesh_count,error);
+}
 bool qa_scene_model_skin_admit(qa_scene_model *model, const qa_model_skin_map *skin,
     qa_error *error)
 {
-    if (!model || !skin) return true;
-    qa_scene_model *node = model;
-    for (;;) {
-        if (node->source->format != QA_MODEL_MDL && !qa_model_skin_map_bind(skin, node->identity,
-            node->source->mesh_count ? &node->meshes[0].surface : NULL,
-            sizeof(*node->meshes), node->source->mesh_count, error)) return false;
-        if (node->replacement) { node = node->replacement; continue; }
-        while (node != model && !node->replacement_next) node = node->replacement_parent;
-        if (node == model) return true;
-        node = node->replacement_next;
+    model_bindings bindings={.skin=skin};
+    return !skin || qa_scene_model_visit(model,skin_admit,&bindings,error);
+}
+static bool materials_admit(void *context,qa_scene_model *node,qa_error *error)
+{
+    model_bindings *input=context;
+    const qa_model_skin_map *skin=input->skin;
+    qa_material_library *materials=input->materials;
+    if (materials) {
+        for (size_t i = 0; i < node->source->mesh_count; ++i)
+            for (size_t j = 0; j < node->source->meshes[i].shader_count; ++j) {
+                const scene_model_image *image = node->meshes[i].shaders[j];
+                if (image && !scene_model_resource_admit(node, materials, image->name_id, error)) return false;
+            }
     }
+    if (skin && node->source->format != QA_MODEL_MDL) {
+        const size_t *bindings = NULL;
+        if (!qa_model_skin_map_resolve(skin, node->identity,
+            node->source->mesh_count ? &node->meshes[0].surface : NULL,
+            sizeof(*node->meshes), node->source->mesh_count, &bindings, error)) return false;
+        for (size_t i = 0; bindings && i < node->source->mesh_count; ++i)
+            if (bindings[i] != SIZE_MAX && !scene_model_resource_admit(node, materials,
+                skin->mappings[bindings[i]].shader_id, error)) return false;
+    }
+    return true;
 }
 bool qa_scene_model_materials_admit(qa_scene_model *model, const qa_model_skin_map *skin,
     qa_material_library *materials, qa_error *error)
 {
-    if (!model) return true;
-    if (skin && !qa_scene_model_skin_admit(model, skin, error)) return false;
-    qa_scene_model *node = model;
-    for (;;) {
-        if (materials) {
-            for (size_t i = 0; i < node->source->mesh_count; ++i)
-                for (size_t j = 0; j < node->source->meshes[i].shader_count; ++j) {
-                    const scene_model_image *image = node->meshes[i].shaders[j];
-                    if (image && !scene_model_resource_admit(node, materials, image->name_id, error)) return false;
-                }
-        }
-        if (skin && node->source->format != QA_MODEL_MDL) {
-            const size_t *bindings = NULL;
-            if (!qa_model_skin_map_resolve(skin, node->identity,
-                node->source->mesh_count ? &node->meshes[0].surface : NULL,
-                sizeof(*node->meshes), node->source->mesh_count, &bindings, error)) return false;
-            for (size_t i = 0; bindings && i < node->source->mesh_count; ++i)
-                if (bindings[i] != SIZE_MAX && !scene_model_resource_admit(node, materials,
-                    skin->mappings[bindings[i]].shader_id, error)) return false;
-        }
-        if (node->replacement) { node = node->replacement; continue; }
-        while (node != model && !node->replacement_next) node = node->replacement_parent;
-        if (node == model) return true;
-        node = node->replacement_next;
-    }
+    model_bindings input={.skin=skin,.materials=materials};
+    return qa_scene_model_skin_admit(model,skin,error) &&
+        qa_scene_model_visit(model,materials_admit,&input,error);
 }
 bool qa_scene_model_materials_ready(const qa_scene_model *model, const qa_material_library *materials)
 {
     if (!model || !materials) return true;
-    const qa_scene_model *node = model;
-    for (;;) {
+    for (const qa_scene_model *node=model;node;node=model_next(model,node)) {
         for (size_t i = 0; i < node->source->mesh_count; ++i)
             for (size_t j = 0; j < node->source->meshes[i].shader_count; ++j) {
                 const scene_model_image *image = node->meshes[i].shaders[j];
@@ -126,11 +139,8 @@ bool qa_scene_model_materials_ready(const qa_scene_model *model, const qa_materi
                 size_t value;
                 if (!qa_id_index_next(&node->resource_bindings, &cursor, &value)) return false;
             }
-        if (node->replacement) { node = node->replacement; continue; }
-        while (node != model && !node->replacement_next) node = node->replacement_parent;
-        if (node == model) return true;
-        node = node->replacement_next;
     }
+    return true;
 }
 static bool model_array(size_t count, size_t size, void **out, qa_error *error) {
     if (count > SIZE_MAX / size) {
@@ -1634,6 +1644,31 @@ static bool sample_animation_pose(qa_scene_model *model, qa_scene_model_input *i
     return true;
 }
 
+static bool model_replacement_select(qa_scene_model **selected_model, qa_scene_model_input *input, qa_error *error)
+{
+    qa_scene_model *model=*selected_model;
+    if (model->source->format == QA_MODEL_MDL && input->indexed_skin) {
+        input->replacement = NULL;
+    } else if (model->replacement_policy_set) {
+        input->replacement = NULL;
+        qa_scene_model *selected = model->selected_replacement;
+        double dx = (double)input->transform.origin[0] - input->view.origin.x;
+        double dy = (double)input->transform.origin[1] - input->view.origin.y;
+        double dz = (double)input->transform.origin[2] - input->view.origin.z;
+        double distance = sqrt(dx * dx + dy * dy + dz * dz);
+        if (selected && model->replacement_policy_enabled &&
+            (input->shadow_only || model->replacement_distance <= 0 || !(distance > model->replacement_distance))) {
+            input->replacement = selected->replacement_source;
+            model = selected; input->animation = input->replacement->animation;
+        }
+    } else if (input->replacement) {
+        if (!prepare_replacement(model, input->replacement, error)) return false;
+        model = model->replacement; input->animation = input->replacement->animation;
+    }
+    *selected_model=model;
+    return true;
+}
+
 bool qa_scene_model_grip_sample(qa_scene_model *model, const qa_scene_model_input *original,
     qa_scene_frame *frame, qa_model_transform *out, bool *found, qa_error *error)
 {
@@ -1642,8 +1677,9 @@ bool qa_scene_model_grip_sample(qa_scene_model *model, const qa_scene_model_inpu
         return false;
     }
     *found = false;
-    if (!model->grip_defined) return true;
     qa_scene_model_input input = *original;
+    if (!model->grip_defined && !model_replacement_select(&model,&input,error)) return false;
+    if (!model->grip_defined) return true;
     if (model->replacement_source && !input.animation) {
         input.replacement = model->replacement_source;
         input.animation = model->replacement_source->animation;
@@ -1728,24 +1764,7 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
         return qa_scene_beam(frame, &input.view, model_origin(&input), input.previous_origin,
                               (float)input.frame, tint, qa_scene_white(model->resources), error);
     }
-    if (model->source->format == QA_MODEL_MDL && input.indexed_skin) {
-        input.replacement = NULL;
-    } else if (model->replacement_policy_set) {
-        input.replacement = NULL;
-        qa_scene_model *selected = model->selected_replacement;
-        double dx = (double)input.transform.origin[0] - input.view.origin.x;
-        double dy = (double)input.transform.origin[1] - input.view.origin.y;
-        double dz = (double)input.transform.origin[2] - input.view.origin.z;
-        double distance = sqrt(dx * dx + dy * dy + dz * dz);
-        if (selected && model->replacement_policy_enabled &&
-            (input.shadow_only || model->replacement_distance <= 0 || !(distance > model->replacement_distance))) {
-            input.replacement = selected->replacement_source;
-            model = selected; input.animation = input.replacement->animation;
-        }
-    } else if (input.replacement) {
-        if (!prepare_replacement(model, input.replacement, error)) return false;
-        model = model->replacement; input.animation = input.replacement->animation;
-    }
+    if (!model_replacement_select(&model,&input,error)) return false;
     repair_frames(model, &input);
     bool source_md4 = input.source_order && model->source_topology && model->source->format == QA_MODEL_MD4;
     if (source_md4) {

@@ -1,4 +1,5 @@
 #include "equipment_held_stock.h"
+#include "qa/scene_model_save.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -55,6 +56,103 @@ static const qa_model_transform q2_female_classic = {
     .scale = {1, 1, 1}
 };
 
+static const char *q2_carrier_name(const char *path, bool *female)
+{
+    static const struct { const char *path; bool female; } roots[] = {
+        {"players/male/", false}, {"players/female/", true}, {"players/cyborg/", false},
+        {"players/hold/male/", false}, {"players/hold/female/", true}, {"players/hold/cyborg/", false}
+    };
+    for (size_t i = 0; path && i < sizeof(roots) / sizeof(*roots); ++i) {
+        size_t length = strlen(roots[i].path);
+        if (!strncmp(path, roots[i].path, length)) {
+            *female = roots[i].female;
+            return path + length;
+        }
+    }
+    return NULL;
+}
+
+static qa_model_transform q2_admitted_grip(bool female)
+{
+    qa_model_transform grip = female ? q2_female : q2_male;
+    if (!female) {
+        grip.origin[0] = -2.5316379070281982f;
+        grip.origin[1] = -9.270092010498047f;
+        grip.origin[2] = 4.795251846313477f;
+    }
+    return grip;
+}
+
+static const struct {
+    const char *name;
+    uint32_t width, height, vertices, texcoords, triangles;
+    uint64_t frames173_bytes, frames174_bytes, female173_bytes;
+} q2_layouts[] = {
+    {"weapon.md2", 184,132,140,138,148,109272,0,109244},
+    {"w_shotgun.md2", 184,132,140,138,148,109272,0,109244},
+    {"a_grenades.md2", 72,36,44,44,48,39252,0,0},
+    {"a_grenades.md2", 168,84,32,46,60,0,31329,0},
+    {"a_tesla.md2", 296,194,216,216,252,165204,0,165260},
+    {"a_trap.md2", 264,184,330,309,200,243888,0,0},
+    {"w_bfg.md2", 308,165,118,199,192,96244,96757,0},
+    {"w_blaster.md2", 312,183,86,171,144,72136,72520,0},
+    {"w_chainfist.md2", 320,200,193,288,266,150640,151453,0},
+    {"w_chaingun.md2", 308,168,74,122,124,63072,63409,0},
+    {"w_disrupt.md2", 280,194,199,259,270,154352,155189,0},
+    {"w_etfrifle.md2", 240,194,133,210,218,107320,107893,0},
+    {"w_glauncher.md2", 308,176,111,181,198,91080,0,0},
+    {"w_glauncher.md2", 308,176,97,175,178,0,81120,0},
+    {"w_grapple.md2", 304,194,73,115,130,62384,62717,0},
+    {"w_hyperblaster.md2", 292,194,85,144,142,71232,71613,0},
+    {"w_machinegun.md2", 312,106,77,128,134,65104,65453,0},
+    {"w_phalanx.md2", 240,200,161,259,200,126740,127481,0},
+    {"w_plasma.md2", 272,195,124,210,208,100684,101221,0},
+    {"w_plauncher.md2", 320,200,111,181,198,91080,91565,0},
+    {"w_railgun.md2", 292,194,112,188,192,91684,92173,0},
+    {"w_ripper.md2", 304,200,110,287,191,91344,91881,0},
+    {"w_rlauncher.md2", 284,194,119,186,202,96704,97221,0},
+    {"w_sshotgun.md2", 308,169,103,188,182,85104,85556,0}
+};
+
+bool frontend_held_stock_q2_attachment(const char *path, qa_scene_model *scene, qa_error *error)
+{
+    const qa_model *model = qa_scene_model_source(scene);
+    if (!model || model->format != QA_MODEL_MD5 || qa_scene_model_grip_defined(scene))
+        return true;
+    bool female = false;
+    const char *name = q2_carrier_name(path, &female);
+    if (!name) return true;
+    if (!strncmp(name, "md5/", 4)) name += 4;
+    const char *dot = strrchr(name, '.');
+    if (!dot || (strcmp(dot, ".md2") && strcmp(dot, ".md5mesh"))) return true;
+    size_t stem = (size_t)(dot - name);
+    bool stock = false;
+    for (size_t i = 0; i < sizeof(q2_layouts) / sizeof(*q2_layouts); ++i)
+        if (strlen(q2_layouts[i].name) == stem + 4 &&
+            !memcmp(q2_layouts[i].name, name, stem)) {
+            stock = true;
+            break;
+        }
+    if (!stock) return true;
+    for (uint32_t joint = 0; joint < model->bone_count; ++joint) {
+        qa_bytes joint_name = qa_model_bone_name(model->bones + joint);
+        if (joint_name.size != sizeof("Weapon") - 1 ||
+            memcmp(joint_name.data, "Weapon", sizeof("Weapon") - 1)) continue;
+        qa_model_tag tag;
+        qa_model_joint_tag(model->bind_pose + joint, &tag);
+        qa_model_transform socket, inverse, grip;
+        qa_model_transform_identity(&socket);
+        memcpy(socket.origin, tag.origin, sizeof(socket.origin));
+        memcpy(socket.axes, tag.axes, sizeof(socket.axes));
+        socket.scale[0] = socket.scale[1] = socket.scale[2] = model->bind_pose[joint].scale;
+        if (!qa_model_transform_inverse(&socket, &inverse)) return true;
+        qa_model_transform reference = q2_admitted_grip(female);
+        qa_model_transform_compose(&inverse, &reference, &grip);
+        return qa_scene_model_grip_bind(scene, "Weapon", 0, NULL, &grip, error);
+    }
+    return true;
+}
+
 bool frontend_held_stock_q2_grip(const char *path, const qa_resource *source, const qa_model *model,
     qa_model_transform *out, bool *found, qa_error *error)
 {
@@ -63,18 +161,8 @@ bool frontend_held_stock_q2_grip(const char *path, const qa_resource *source, co
         return false;
     }
     *found = false;
-    const char *name = NULL;
     bool female = false;
-    static const struct { const char *path; bool female; } roots[] = {
-        {"players/male/", false}, {"players/female/", true}, {"players/cyborg/", false},
-        {"players/hold/male/", false}, {"players/hold/female/", true}, {"players/hold/cyborg/", false}
-    };
-    for (size_t i = 0; path && i < sizeof(roots) / sizeof(*roots); ++i) {
-        size_t length = strlen(roots[i].path);
-        if (!strncmp(path, roots[i].path, length)) {
-            name = path + length; female = roots[i].female; break;
-        }
-    }
+    const char *name = q2_carrier_name(path, &female);
     if (!name || model->format != QA_MODEL_MD2 || model->mesh_count != 1 || model->skin_count != 1)
         return true;
     const qa_model_mesh *mesh = model->meshes;
@@ -85,49 +173,15 @@ bool frontend_held_stock_q2_grip(const char *path, const qa_resource *source, co
         *out = female ? q2_female_classic : q2_male_classic;
         *found = true; return true;
     }
-    static const struct {
-        const char *name;
-        uint32_t width, height, vertices, texcoords, triangles;
-        uint64_t frames173_bytes, frames174_bytes, female173_bytes;
-    } layouts[] = {
-        {"weapon.md2", 184,132,140,138,148,109272,0,109244},
-        {"w_shotgun.md2", 184,132,140,138,148,109272,0,109244},
-        {"a_grenades.md2", 72,36,44,44,48,39252,0,0},
-        {"a_grenades.md2", 168,84,32,46,60,0,31329,0},
-        {"a_tesla.md2", 296,194,216,216,252,165204,0,165260},
-        {"a_trap.md2", 264,184,330,309,200,243888,0,0},
-        {"w_bfg.md2", 308,165,118,199,192,96244,96757,0},
-        {"w_blaster.md2", 312,183,86,171,144,72136,72520,0},
-        {"w_chainfist.md2", 320,200,193,288,266,150640,151453,0},
-        {"w_chaingun.md2", 308,168,74,122,124,63072,63409,0},
-        {"w_disrupt.md2", 280,194,199,259,270,154352,155189,0},
-        {"w_etfrifle.md2", 240,194,133,210,218,107320,107893,0},
-        {"w_glauncher.md2", 308,176,111,181,198,91080,0,0},
-        {"w_glauncher.md2", 308,176,97,175,178,0,81120,0},
-        {"w_grapple.md2", 304,194,73,115,130,62384,62717,0},
-        {"w_hyperblaster.md2", 292,194,85,144,142,71232,71613,0},
-        {"w_machinegun.md2", 312,106,77,128,134,65104,65453,0},
-        {"w_phalanx.md2", 240,200,161,259,200,126740,127481,0},
-        {"w_plasma.md2", 272,195,124,210,208,100684,101221,0},
-        {"w_plauncher.md2", 320,200,111,181,198,91080,91565,0},
-        {"w_railgun.md2", 292,194,112,188,192,91684,92173,0},
-        {"w_ripper.md2", 304,200,110,287,191,91344,91881,0},
-        {"w_rlauncher.md2", 284,194,119,186,202,96704,97221,0},
-        {"w_sshotgun.md2", 308,169,103,188,182,85104,85556,0}
-    };
-    for (size_t i = 0; i < sizeof(layouts) / sizeof(*layouts); ++i) {
+    for (size_t i = 0; i < sizeof(q2_layouts) / sizeof(*q2_layouts); ++i) {
         uint64_t expected = model->frame_count == 173 ?
-            (female && layouts[i].female173_bytes ? layouts[i].female173_bytes : layouts[i].frames173_bytes) :
-            model->frame_count == 174 ? layouts[i].frames174_bytes : 0;
-        if (!expected || bytes != expected || strcmp(name, layouts[i].name) ||
-            model->skin_width != layouts[i].width || model->skin_height != layouts[i].height ||
-            mesh->vertex_count != layouts[i].vertices || mesh->texcoord_count != layouts[i].texcoords ||
-            mesh->triangle_count != layouts[i].triangles) continue;
-        *out = female ? q2_female : q2_male;
-        if (!female) {
-            out->origin[0] = -2.5316379070281982f; out->origin[1] = -9.270092010498047f;
-            out->origin[2] = 4.795251846313477f;
-        }
+            (female && q2_layouts[i].female173_bytes ? q2_layouts[i].female173_bytes : q2_layouts[i].frames173_bytes) :
+            model->frame_count == 174 ? q2_layouts[i].frames174_bytes : 0;
+        if (!expected || bytes != expected || strcmp(name, q2_layouts[i].name) ||
+            model->skin_width != q2_layouts[i].width || model->skin_height != q2_layouts[i].height ||
+            mesh->vertex_count != q2_layouts[i].vertices || mesh->texcoord_count != q2_layouts[i].texcoords ||
+            mesh->triangle_count != q2_layouts[i].triangles) continue;
+        *out = q2_admitted_grip(female);
         *found = true; return true;
     }
     return true;

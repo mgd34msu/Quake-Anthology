@@ -45,10 +45,15 @@ bool frontend_equipment_media_prepare_source_icon(qa_frontend *,const qa_applica
     frontend_equipment_media **,const qa_material **,qa_error *);
 /* Ordinary native HUD pictures borrow the actual selected provider's material
  * owner; installed image/resource recipes retain their existing custody. */
-bool frontend_equipment_media_native_icon_prepare(qa_frontend *,const qa_application_equipment_view *,
-    const qa_material **,qa_error *);
-bool frontend_equipment_media_native_icon_read(qa_frontend *,const qa_application_equipment_view *,
-    const qa_material **,qa_error *);
+typedef struct frontend_equipment_hud_icons {
+    const qa_material *weapon, *selected_weapon, *ammo;
+} frontend_equipment_hud_icons;
+bool frontend_equipment_media_native_icons_prepare(qa_frontend *,const qa_application_equipment_view *,
+    frontend_equipment_hud_icons *,qa_error *);
+bool frontend_equipment_media_native_icons_read(qa_frontend *,const qa_application_equipment_view *,
+    frontend_equipment_hud_icons *,qa_error *);
+bool frontend_equipment_media_native_item_icons_read(const qa_frontend *,qa_actor_owner,
+    qa_item_id,frontend_equipment_hud_icons *,qa_error *);
 qa_hud_q1_variant frontend_q1_hud_variant(const qa_product *);
 bool frontend_q1_hud_prepare(qa_vfs *,qa_scene_resources *,qa_material_library *,qa_hud_q1_variant,qa_error *);
 bool frontend_q1_hud_read(qa_material_library *,const qa_q1_clientdata *,const qa_product *,

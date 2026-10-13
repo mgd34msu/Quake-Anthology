@@ -11,5 +11,6 @@ bool frontend_held_stock(qa_game_family, const char *view_model, const char *ite
 /* Stock Q2 grips require the canonical path, byte length and parsed MD2 layout. */
 bool frontend_held_stock_q2_grip(const char *source_path, const qa_resource *, const qa_model *,
     qa_model_transform *, bool *found, qa_error *);
+bool frontend_held_stock_q2_attachment(const char *path,qa_scene_model *,qa_error *);
 
 #endif
