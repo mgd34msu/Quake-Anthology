@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "qa/arena.h"
+#include <stdio.h>
 #include <stdatomic.h>
 
 static atomic_uint_fast64_t draft_revisions;
@@ -233,7 +235,7 @@ bool qa_launch_unbind(qa_launch_draft *d, qa_launch_scope scope, qa_launch_role 
     ((type *)d->choices.field)[index] = v; draft_changed(d); return true
 
 /* Singular count member names keep public spans conventional. */
-bool qa_launch_set_mod(qa_launch_draft *d, const qa_launch_mod_selection *input, qa_error *error)
+bool launch_mod_record(qa_launch_draft *d, const qa_launch_mod_selection *input, qa_error *error)
 {
     if (!valid_draft(d, input, error)) return false;
     qa_launch_mod_selection v = *input;
@@ -247,6 +249,162 @@ bool qa_launch_set_mod(qa_launch_draft *d, const qa_launch_mod_selection *input,
     if (!launch_grow((void **)&d->choices.mods, &d->mod_capacity, i + 1, sizeof(v), error)) return false;
     if (i == n) ++d->choices.mod_count;
     ((qa_launch_mod_selection *)d->choices.mods)[i] = v; draft_changed(d); return true;
+}
+
+static size_t mod_component(const qa_launch_choices *choices, const char *key, bool enabled)
+{
+    for (size_t i = 0; i < choices->mod_count; ++i)
+        if ((!enabled || choices->mods[i].enabled) && !strcmp(choices->mods[i].component, key)) return i;
+    return choices->mod_count;
+}
+
+static const char *dependency_instance(qa_launch_draft *d, const char *key, qa_error *error)
+{
+    size_t length = strlen(key) + 64;
+    char *name = malloc(length);
+    if (!name) { qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot retain mod dependency identity"); return NULL; }
+    const char *result = NULL;
+    for (size_t suffix = 0;; ++suffix) {
+        snprintf(name, length, "mod:%s:%zu", key, suffix);
+        bool occupied = launch_provider(&d->choices, name) != NULL;
+        for (size_t i = 0; !occupied && i < d->choices.mod_count; ++i)
+            occupied = !strcmp(d->choices.mods[i].instance, name);
+        if (!occupied) { result = launch_text(d, name, error); break; }
+    }
+    free(name); return result;
+}
+
+static bool mod_enable_dependencies(qa_launch_draft *d, qa_error *error)
+{
+    bool changed;
+    do {
+        changed = false;
+        for (size_t i = 0; i < d->choices.mod_count; ++i) {
+            if (!d->choices.mods[i].enabled) continue;
+            const qa_catalog_mod *mod = qa_catalog_mod_find(d->catalog, d->choices.mods[i].component);
+            if (!mod) continue;
+            for (size_t j = 0; j < mod->requires_count; ++j) {
+                const char *key = mod->requires[j];
+                if (mod_component(&d->choices, key, true) < d->choices.mod_count) continue;
+                size_t index = mod_component(&d->choices, key, false);
+                const char *instance;
+                if (index < d->choices.mod_count) instance = d->choices.mods[index].instance;
+                else {
+                    if (!qa_catalog_mod_find(d->catalog, key)) {
+                        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Required mod is not installed: %s", key); return false;
+                    }
+                    instance = dependency_instance(d, key, error);
+                    if (!instance) return false;
+                }
+                qa_launch_mod_selection selection = {.instance = instance, .component = key, .enabled = true};
+                if (!launch_mod_record(d, &selection, error)) return false;
+                changed = true;
+            }
+        }
+    } while (changed);
+    return true;
+}
+
+static void mod_disable_dependents(qa_launch_draft *d, const qa_launch_choices *previous)
+{
+    bool changed;
+    do {
+        changed = false;
+        for (size_t i = 0; i < d->choices.mod_count; ++i) {
+            qa_launch_mod_selection *selection = (qa_launch_mod_selection *)d->choices.mods + i;
+            if (!selection->enabled) continue;
+            const qa_catalog_mod *mod = qa_catalog_mod_find(d->catalog, selection->component);
+            if (!mod) continue;
+            for (size_t j = 0; j < mod->requires_count; ++j)
+                if (mod_component(&d->choices, mod->requires[j], true) == d->choices.mod_count &&
+                    mod_component(previous, mod->requires[j], true) < previous->mod_count) {
+                    selection->enabled = false; changed = true; break;
+                }
+        }
+    } while (changed);
+}
+
+typedef struct mod_visit { size_t index, next; } mod_visit;
+
+bool launch_mod_order(qa_launch_draft *d, qa_error *error)
+{
+    size_t count = d->choices.mod_count;
+    if (!count) return true;
+    qa_arena scratch = {0};
+    if (!qa_arena_reserve(&scratch, count * (sizeof(mod_visit) + 1) + _Alignof(mod_visit), error)) {
+        qa_arena_destroy(&scratch); return false;
+    }
+    qa_arena_seal(&scratch);
+    uint8_t *marks = qa_arena_alloc(&scratch, count, 1, error);
+    mod_visit *stack = qa_arena_alloc(&scratch, count * sizeof(*stack), _Alignof(mod_visit), error);
+    qa_launch_mod_selection *ordered = malloc(count * sizeof(*ordered));
+    if (!marks || !stack || !ordered) {
+        if (!ordered) qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot order selected mods");
+        qa_arena_destroy(&scratch); free(ordered); return false;
+    }
+    memset(marks, 0, count);
+    size_t written = 0;
+    bool okay = true;
+    for (size_t root = 0; okay && root < count; ++root) {
+        if (!d->choices.mods[root].enabled || marks[root]) continue;
+        size_t depth = 1;
+        stack[0] = (mod_visit){.index = root}; marks[root] = 1;
+        while (okay && depth) {
+            mod_visit *visit = &stack[depth - 1];
+            const qa_catalog_mod *mod = qa_catalog_mod_find(d->catalog, d->choices.mods[visit->index].component);
+            if (!mod || visit->next == mod->requires_count) {
+                ordered[written++] = d->choices.mods[visit->index]; marks[visit->index] = 2; --depth; continue;
+            }
+            const char *key = mod->requires[visit->next++];
+            size_t next = mod_component(&d->choices, key, true);
+            if (next == count || marks[next] == 2) continue;
+            if (marks[next] == 1) {
+                char cycle[sizeof(((qa_error *)0)->message)] = {0};
+                size_t used = 0, first = 0;
+                while (stack[first].index != next) ++first;
+                for (size_t i = first; i <= depth && used < sizeof(cycle) - 1; ++i) {
+                    const char *component = i == depth ? key : d->choices.mods[stack[i].index].component;
+                    int length = snprintf(cycle + used, sizeof(cycle) - used, "%s%s", i == first ? "" : " -> ", component);
+                    if (length < 0 || (size_t)length >= sizeof(cycle) - used) break;
+                    used += (size_t)length;
+                }
+                qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Mod dependency cycle: %s", cycle);
+                okay = false; break;
+            }
+            stack[depth++] = (mod_visit){.index = next}; marks[next] = 1;
+        }
+    }
+    if (okay) {
+        for (size_t i = 0; i < count; ++i) if (!d->choices.mods[i].enabled) ordered[written++] = d->choices.mods[i];
+        free((void *)d->choices.mods); d->choices.mods = ordered; d->mod_capacity = count;
+    } else free(ordered);
+    qa_arena_destroy(&scratch); return okay;
+}
+
+bool qa_launch_set_mod(qa_launch_draft *d, const qa_launch_mod_selection *input, qa_error *error)
+{
+    if (!valid_draft(d, input, error)) return false;
+    qa_launch_draft edited = *d;
+    edited.choices.mods = NULL; edited.choices.mod_count = 0; edited.mod_capacity = 0;
+    bool okay = true;
+    for (size_t i = 0; okay && i < d->choices.mod_count; ++i)
+        okay = launch_mod_record(&edited, d->choices.mods + i, error);
+    qa_launch_mod_selection selection = *input;
+    if (okay) okay = launch_mod_record(&edited, &selection, error);
+    if (okay && selection.enabled) okay = mod_enable_dependencies(&edited, error);
+    else if (okay) mod_disable_dependents(&edited, &d->choices);
+    if (okay) okay = launch_mod_order(&edited, error);
+    bool changed = d->choices.mod_count != edited.choices.mod_count;
+    for (size_t i = 0; okay && !changed && i < d->choices.mod_count; ++i) {
+        const qa_launch_mod_selection *a = d->choices.mods + i, *b = edited.choices.mods + i;
+        changed = a->instance != b->instance || a->component != b->component || a->enabled != b->enabled;
+    }
+    if (okay && changed) {
+        free((void *)d->choices.mods); d->choices.mods = edited.choices.mods;
+        d->choices.mod_count = edited.choices.mod_count; d->mod_capacity = edited.mod_capacity;
+        edited.choices.mods = NULL; draft_changed(d);
+    }
+    free((void *)edited.choices.mods); return okay;
 }
 bool qa_launch_set_mode(qa_launch_draft *d, const qa_launch_mode *input, qa_error *error)
 {
@@ -412,7 +570,8 @@ bool qa_launch_draft_rebase(const qa_launch_draft *source, qa_catalog *catalog,
             !qa_launch_set_provider(d, &provider, error)) goto fail;
     }
     for (size_t i = 0; i < v->binding_count; ++i) if (!qa_launch_bind(d, &v->bindings[i], error)) goto fail;
-    for (size_t i = 0; i < v->mod_count; ++i) if (!qa_launch_set_mod(d, &v->mods[i], error)) goto fail;
+    for (size_t i = 0; i < v->mod_count; ++i) if (!launch_mod_record(d, &v->mods[i], error)) goto fail;
+    if (!launch_mod_order(d, error)) goto fail;
     for (size_t i = 0; i < v->mode_count; ++i) if (!qa_launch_set_mode(d, &v->modes[i], error)) goto fail;
     for (size_t i = 0; i < v->equipment_count; ++i) if (!qa_launch_set_equipment(d, &v->equipment[i], error)) goto fail;
     for (size_t i = 0; i < v->seat_count; ++i) if (!qa_launch_set_seat(d, &v->seats[i], error)) goto fail;

@@ -518,7 +518,8 @@ bool qa_launch_identity_decode(qa_catalog *catalog, const qa_actor_registry *reg
         DONE(qa_launch_bind(draft, &v, error));
     if (ok) EACH("mods", 3)
         qa_launch_mod_selection v = {0}; v.instance = read_text(&r); v.component = read_text(&r); v.enabled = read_bool(&r);
-        DONE(qa_launch_set_mod(draft, &v, error));
+        DONE(launch_mod_record(draft, &v, error));
+    if (ok) ok = launch_mod_order(draft, error);
     if (ok) EACH("modes", 7)
         qa_launch_mode v = read_mode(&r, qa_launch_draft_choices(draft));
         DONE(qa_launch_set_mode(draft, &v, error));

@@ -20,4 +20,6 @@ bool launch_scope_valid(qa_launch_scope);
 const qa_launch_provider *launch_provider(const qa_launch_choices *, const char *);
 bool launch_defaults(qa_launch_draft *, qa_product_id, const char *, qa_error *);
 bool launch_empty(qa_catalog *, qa_launch_draft **, qa_error *);
+bool launch_mod_record(qa_launch_draft *, const qa_launch_mod_selection *, qa_error *);
+bool launch_mod_order(qa_launch_draft *, qa_error *);
 #endif

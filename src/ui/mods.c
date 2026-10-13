@@ -69,7 +69,8 @@ static bool row_add(qa_ui_mods *mods, const qa_catalog_mod *mod,
     mods->selections[i] = (mod_row){.component = key,
         .instance = selection ? selection->instance : NULL, .enabled = selection && selection->enabled};
     snprintf(mods->selections[i].state, sizeof(mods->selections[i].state), "%s%s%s",
-        selection && selection->enabled ? "Enabled" : mod && !mod->unavailable ? "Disabled" : "Unavailable",
+        selection && selection->enabled ? mod && !mod->unavailable ? "Enabled" : "Enabled / Unavailable" :
+            mod && !mod->unavailable ? "Disabled" : "Unavailable",
         selection ? " / " : "", selection ? selection->instance : "");
     mods->rows[i] = (qa_ui_row){.key = selection ? selection->instance : key, .label = title,
         .detail = mods->selections[i].state, .enabled = true};
@@ -185,9 +186,9 @@ static bool factory(void *context, uint32_t seat, qa_ui_menu *out, qa_error *err
     }
     const qa_catalog_mod *current = mods->count ? qa_catalog_mod_find(mods->catalog, mods->selections[mods->selected].component) : NULL;
     mods->controls[2].enabled = mods->count && (mods->selections[mods->selected].enabled || (current && !current->unavailable));
+    const char *unavailable = current ? current->unavailable : mods->count ? "This mod is no longer installed" : NULL;
     snprintf(mods->display, sizeof(mods->display), "%s%s%s", mods->status,
-        current && current->unavailable && *mods->status ? " / " : "",
-        current && current->unavailable ? current->unavailable : "");
+        unavailable && *mods->status ? " / " : "", unavailable ? unavailable : "");
     mods->controls[6].label = mods->display;
     mods->controls[6].rect = (qa_scene_rect_f){48, 400, 544, 48};
     mods->controls[6].enabled = false;

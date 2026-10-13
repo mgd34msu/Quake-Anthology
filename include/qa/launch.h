@@ -130,8 +130,8 @@ typedef struct qa_launch_choices {
     const qa_launch_weapon_behavior *behaviors; size_t behavior_count;
 } qa_launch_choices;
 
-/* A draft copies all strings/arrays/options and holds its catalog. Editing one
- * choice never silently rewrites another choice. Borrowed views expire on edit. */
+/* A draft copies its choices and holds its catalog. Mod edits enable required
+ * dependencies or disable their dependents. Borrowed views expire on edit. */
 bool qa_launch_draft_create(qa_catalog *, qa_product_id preset, const char *map,
                              qa_launch_draft **, qa_error *);
 /* Save/migration reconstruct every choice explicitly, without preset defaults. */
