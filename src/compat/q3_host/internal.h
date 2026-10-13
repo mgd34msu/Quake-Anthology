@@ -4,6 +4,7 @@
 #include "qa/q3_host.h"
 #include "qa/binary.h"
 #include "qa/arena.h"
+#include "qa/id_index.h"
 #include "qa/script.h"
 #include "qa/common_parse.h"
 #include "qa/navigation_asset.h"
@@ -138,7 +139,9 @@ struct qa_q3_host {
     q3_cvar_binding *cvar_bindings;
     size_t cvar_binding_count;
     q3_cvar_cache *cvar_caches;
-    size_t cvar_cache_count;
+    size_t cvar_cache_count, cvar_cache_capacity;
+    qa_arena cvar_cache_storage;
+    qa_id_index cvar_cache_addresses;
     q3_cvar_status cvar_status;
     qa_actor_definition slot_definition;
     unsigned calls;
@@ -222,6 +225,9 @@ void q3_cvars_bindings_free(q3_cvar_binding *,size_t);
 bool q3_cvars_bindings_capture(const qa_q3_host *,qa_buffer *,qa_error *);
 bool q3_cvars_bindings_decode(qa_bytes,q3_cvar_binding **,size_t *,q3_cvar_cache **,size_t *,q3_cvar_status *,qa_error *);
 bool q3_cvars_bindings_restore_ready(qa_q3_host *,qa_error *);
+bool q3_cvars_cache_reserve(qa_q3_host *,size_t,qa_error *);
+void q3_cvars_cache_install(qa_q3_host *,const q3_cvar_cache *,size_t);
+void q3_cvars_cache_clear(qa_q3_host *);
 q3_service_result q3_files(q3_call *, int32_t *, qa_error *);
 q3_service_result q3_information(q3_call *, int32_t *, qa_error *);
 q3_service_result q3_client_state(q3_call *, int32_t *, qa_error *);

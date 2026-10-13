@@ -346,6 +346,8 @@ bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_e
         q3_cvars_bindings_free(host->cvar_bindings,0);
         qa_arena_destroy(&host->scratch); q3_game_checkpoint_free(host->game); free(host); return false;
     }
+    qa_arena_init(&host->cvar_cache_storage, 0);
+    host->cvar_cache_addresses.storage = &host->cvar_cache_storage;
     qa_fs_root_retain(write_root); host->options.write_view.root=write_root;
     *out = host; return true;
 }
@@ -517,7 +519,8 @@ bool qa_q3_host_destroy(qa_q3_host *host, qa_error *error)
     qa_arena_destroy(&host->scratch);
     q3_game_checkpoint_free(host->game);
     q3_cvars_bindings_free(host->cvar_bindings,host->cvar_binding_count);
-    free(host->cvar_caches);
+    qa_id_index_destroy(&host->cvar_cache_addresses);
+    qa_arena_destroy(&host->cvar_cache_storage);
     free(host->cvar_status.previous_value.overflow);
     void *frontend_lifetime=host->options.frontend_lifetime;
     void (*release_frontend)(void *)=host->options.release_frontend;
@@ -550,7 +553,7 @@ void qa_q3_host_native_consumed(qa_q3_host *host)
 {
     if (!host) return;
     q3_game_fields_clear(host);
-    free(host->cvar_caches); host->cvar_caches=NULL; host->cvar_cache_count=0;
+    q3_cvars_cache_clear(host);
     free(host->cvar_status.previous_value.overflow); host->cvar_status=(q3_cvar_status){0};
     host->native = NULL;
     host->native_host = NULL;
@@ -565,7 +568,7 @@ void qa_q3_host_qvm_consumed(qa_q3_host *host)
 {
     if (!host) return;
     q3_game_fields_clear(host);
-    free(host->cvar_caches); host->cvar_caches=NULL; host->cvar_cache_count=0;
+    q3_cvars_cache_clear(host);
     free(host->cvar_status.previous_value.overflow); host->cvar_status=(q3_cvar_status){0};
     host->vm = NULL;
     host->memory = (qa_native_host_guest_memory){0};

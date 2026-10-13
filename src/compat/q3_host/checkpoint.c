@@ -519,6 +519,10 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
         free(caches); free(status.previous_value.overflow);
         return q3_fail(error,QA_ERROR_FORMAT,0,"Restored cvar status continuation has no CGAME owner");
     }
+    if (!q3_cvars_cache_reserve(host,cache_count,error)) {
+        q3_game_checkpoint_free(game); q3_cvars_bindings_free(bindings,binding_count);
+        free(caches); free(status.previous_value.overflow); return false;
+    }
     ++host->calls;
     q3_file files[64] = {0}; q3_script *scripts[64] = {0};
     q3_write_file_state writable[64]={0};
@@ -573,8 +577,7 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
         q3_cvars_bindings_free(host->cvar_bindings,host->cvar_binding_count);
         host->cvar_bindings=bindings; host->cvar_binding_count=binding_count;
         bindings=NULL; binding_count=0;
-        host->cvar_caches=caches; host->cvar_cache_count=cache_count;
-        caches=NULL; cache_count=0;
+        q3_cvars_cache_install(host,caches,cache_count);
         host->cvar_status=status; status=(q3_cvar_status){0};
         host->restore_pending = true;
     } else {

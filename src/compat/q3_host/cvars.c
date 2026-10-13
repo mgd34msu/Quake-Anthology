@@ -7,6 +7,7 @@
 /* Registry handles are nonnegative size_t values admitted through INT32_MAX.
  * This opaque signed source token cannot alias any real private handle. */
 enum { ENGINE_CHEATS_HANDLE = -2 };
+enum { CACHE_QVM_ADDRESS = 1, CACHE_NATIVE_ADDRESS = 2 };
 static bool status_name(const char *);
 
 static qa_q3_host_cvar_namespace private_namespace(const qa_q3_host *host)
@@ -164,6 +165,57 @@ static bool cache_fields(qa_source_save_io *io,q3_cvar_cache *cache)
     if (ok && io->direction==QA_SOURCE_SAVE_READ) cache->address=address;
     return ok;
 }
+bool q3_cvars_cache_reserve(qa_q3_host *host,size_t count,qa_error *error)
+{
+    size_t maximum=SIZE_MAX/sizeof(*host->cvar_caches);
+    if (count>maximum)
+        return q3_fail(error,QA_ERROR_MEMORY,0,"Q3 cvar cache inventory exceeds address space");
+    if (!qa_id_index_reserve(&host->cvar_cache_addresses,
+        count>host->cvar_cache_count?count-host->cvar_cache_count:0,error)) return false;
+    if (count<=host->cvar_cache_capacity) return true;
+    size_t capacity=host->cvar_cache_capacity?host->cvar_cache_capacity:32;
+    while (capacity<count) {
+        if (capacity>maximum/2) { capacity=count; break; }
+        capacity*=2;
+    }
+    q3_cvar_cache *rows=qa_arena_grow(&host->cvar_cache_storage,host->cvar_caches,
+        host->cvar_cache_count*sizeof(*rows),capacity*sizeof(*rows),_Alignof(q3_cvar_cache),error);
+    if (!rows) return false;
+    host->cvar_caches=rows; host->cvar_cache_capacity=capacity;
+    return true;
+}
+void q3_cvars_cache_install(qa_q3_host *host,const q3_cvar_cache *rows,size_t count)
+{
+    qa_id_index_clear(&host->cvar_cache_addresses);
+    if (count) memcpy(host->cvar_caches,rows,count*sizeof(*rows));
+    host->cvar_cache_count=count;
+    for (size_t i=0;i<count;++i) {
+        const q3_cvar_cache *cache=host->cvar_caches+i;
+        qa_id_index_insert(&host->cvar_cache_addresses,cache->native_address?CACHE_NATIVE_ADDRESS:CACHE_QVM_ADDRESS,
+            cache->native_address?cache->address:(uint32_t)cache->pointer,i);
+    }
+}
+void q3_cvars_cache_clear(qa_q3_host *host)
+{
+    qa_id_index_destroy(&host->cvar_cache_addresses);
+    qa_arena_reset(&host->cvar_cache_storage);
+    host->cvar_cache_addresses=(qa_id_index){.storage=&host->cvar_cache_storage};
+    host->cvar_caches=NULL; host->cvar_cache_count=host->cvar_cache_capacity=0;
+}
+static void cache_remove(qa_q3_host *host,size_t index)
+{
+    const q3_cvar_cache *cache=host->cvar_caches+index;
+    qa_id_index_remove(&host->cvar_cache_addresses,cache->native_address?CACHE_NATIVE_ADDRESS:CACHE_QVM_ADDRESS,
+        cache->native_address?cache->address:(uint32_t)cache->pointer);
+    memmove(host->cvar_caches+index,host->cvar_caches+index+1,
+        (host->cvar_cache_count-index-1)*sizeof(*host->cvar_caches));
+    --host->cvar_cache_count;
+    for (size_t i=index;i<host->cvar_cache_count;++i) {
+        cache=host->cvar_caches+i;
+        qa_id_index_find(&host->cvar_cache_addresses,cache->native_address?CACHE_NATIVE_ADDRESS:CACHE_QVM_ADDRESS,
+            cache->native_address?cache->address:(uint32_t)cache->pointer)->value=i;
+    }
+}
 bool q3_cvars_bindings_capture(const qa_q3_host *host,qa_buffer *out,qa_error *error)
 {
     qa_source_save_io io={0};
@@ -227,18 +279,24 @@ bool q3_cvars_bindings_decode(qa_bytes bytes,q3_cvar_binding **out,size_t *out_c
         ok=q3_fail(error,QA_ERROR_FORMAT,0,"Q3 cache inventory exceeds retained bytes");
     q3_cvar_cache *caches=ok && cache_count?calloc(cache_count,sizeof(*caches)):NULL;
     if (ok && cache_count && !caches) ok=q3_fail(error,QA_ERROR_MEMORY,0,"Restoring original Q3 cvar caches");
+    qa_id_index cache_addresses={0};
+    if (ok) ok=qa_id_index_reserve(&cache_addresses,cache_count,error);
     for (size_t i=0;ok && i<cache_count;++i) {
         ok=cache_fields(&io,caches+i);
         if (ok && caches[i].handle<=-3 && (uint64_t)(-(int64_t)caches[i].handle-3)>=count)
             ok=q3_fail(error,QA_ERROR_FORMAT,0,"Original Q3 cache has no routed handle owner");
-        for (size_t j=0;ok && j<i;++j)
-            if (caches[j].native_address==caches[i].native_address &&
-                (caches[i].native_address ? caches[j].address==caches[i].address : caches[j].pointer==caches[i].pointer))
+        if (ok) {
+            qa_string_id key=caches[i].native_address?CACHE_NATIVE_ADDRESS:CACHE_QVM_ADDRESS;
+            uint64_t address=caches[i].native_address?caches[i].address:(uint32_t)caches[i].pointer;
+            if (qa_id_index_find(&cache_addresses,key,address))
                 ok=q3_fail(error,QA_ERROR_FORMAT,0,"Duplicate original Q3 cvar cache pointer");
+            else qa_id_index_insert(&cache_addresses,key,address,i);
+        }
     }
     q3_cvar_status status={0};
     if (ok) ok=status_fields(&io,&status) && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
+    qa_id_index_destroy(&cache_addresses);
     if (!ok) { q3_cvars_bindings_free(bindings,bindings?count:0); free(caches); free(status.previous_value.overflow); return false; }
     *out=bindings; *out_count=count; *out_caches=caches; *out_cache_count=cache_count;
     *out_status=status; return true;
@@ -544,18 +602,12 @@ static bool cache_note(q3_call *call,uint64_t address,bool status,qa_error *erro
     int32_t pointer=0;
     if (call->vm && (!call->source_call ||
         !qa_qvm_call_argument(call->source_call,0,&pointer,error))) return false;
-    size_t index=host->cvar_cache_count;
-    for (size_t i=0;i<host->cvar_cache_count;++i) {
-        const q3_cvar_cache *record=host->cvar_caches+i;
-        if (record->vm==call->vm && record->native==call->native &&
-            (call->vm?record->pointer==pointer:record->address==address)) { index=i; break; }
-    }
+    qa_string_id key=call->native?CACHE_NATIVE_ADDRESS:CACHE_QVM_ADDRESS;
+    uint64_t source_address=call->vm?(uint32_t)pointer:address;
+    qa_id_index_entry *entry=qa_id_index_find(&host->cvar_cache_addresses,key,source_address);
+    size_t index=entry?entry->value:host->cvar_cache_count;
     if (!status) {
-        if (index<host->cvar_cache_count) {
-            memmove(host->cvar_caches+index,host->cvar_caches+index+1,
-                (host->cvar_cache_count-index-1)*sizeof(*host->cvar_caches));
-            --host->cvar_cache_count;
-        }
+        if (entry) cache_remove(host,index);
         return true;
     }
     uint8_t token[4];
@@ -563,9 +615,9 @@ static bool cache_note(q3_call *call,uint64_t address,bool status,qa_error *erro
     if (index==host->cvar_cache_count) {
         if (host->cvar_cache_count==SIZE_MAX/sizeof(*host->cvar_caches))
             return q3_fail(error,QA_ERROR_MEMORY,0,"Q3 cvar cache inventory exceeds address space");
-        q3_cvar_cache *grown=realloc(host->cvar_caches,(index+1)*sizeof(*grown));
-        if (!grown) return q3_fail(error,QA_ERROR_MEMORY,0,"Retaining original CGAME cvar cache address");
-        host->cvar_caches=grown; ++host->cvar_cache_count;
+        if (!q3_cvars_cache_reserve(host,index+1,error)) return false;
+        qa_id_index_insert(&host->cvar_cache_addresses,key,source_address,index);
+        ++host->cvar_cache_count;
     }
     host->cvar_caches[index]=(q3_cvar_cache){.vm=call->vm,.native=call->native,
         .memory=call->memory,.pointer=pointer,.address=address,.native_address=call->native!=NULL,
@@ -588,9 +640,7 @@ static bool refresh(void *context,const qa_command_context *command,qa_error *er
         qa_q3_host_cvar_cache record; bool found=false;
         if (!qa_q3_host_cvar_cache_read(host,i,&record,&found,error)) return false;
         if (!found) {
-            memmove(host->cvar_caches+i,host->cvar_caches+i+1,
-                (host->cvar_cache_count-i-1)*sizeof(*host->cvar_caches));
-            --host->cvar_cache_count; continue;
+            cache_remove(host,i); continue;
         }
         const q3_cvar_cache *cache=host->cvar_caches+i;
         q3_call call={.host=host,.memory=cache->memory,.vm=cache->vm,.native=cache->native,
