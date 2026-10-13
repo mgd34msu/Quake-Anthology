@@ -73,6 +73,10 @@ bool qa_application_network_q2_configs(qa_application_network_q2 *,
     const qa_q2_config_entry **, size_t *, qa_error *);
 bool qa_application_network_q2_config_values(qa_application_network_q2 *,
     const qa_string_id **, size_t *, uint64_t *revision, qa_error *);
+/* Borrow the current transient match config. Its text uses fixed storage;
+ * transport recipients retain only its revision, never intern timer strings. */
+bool qa_application_network_q2_match_status(const qa_application_network_q2 *,
+    qa_q2_config_entry *, uint64_t *revision);
 bool qa_application_network_q2_frame(qa_application_network_q2 *,
     const qa_actor_id *, size_t seats, qa_q2_wire_frame *, qa_error *);
 bool qa_application_network_q2_motion(qa_application_network_q2 *,

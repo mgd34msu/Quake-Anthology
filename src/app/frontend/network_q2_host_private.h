@@ -16,6 +16,7 @@ typedef struct q2_host_peer {
     qa_string_id *configs;
     size_t config_count;
     uint64_t config_revision;
+    uint64_t match_status_revision;
     qa_string_id *signon_configs;
     size_t signon_config_count;
     uint64_t signon_config_revision;
@@ -68,6 +69,7 @@ struct frontend_network_q2_host {
     qa_string_id *demo_configs,*demo_signon_configs;
     size_t demo_config_count;
     uint64_t demo_config_revision;
+    uint64_t demo_match_status_revision;
     uint64_t demo_event_cursor, demo_player_event_cursor;
     uint64_t demo_event_generation, demo_map_revision, demo_frame;
     bool demo_held, demo_frame_set;

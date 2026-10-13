@@ -140,6 +140,11 @@ static bool hud_select(qa_application *app, qa_actor_id actor, hud_selection *ou
         value->statusbar = qa_q2_wire_statusbar(hud->state.q2);
         if (app->primary_mode_ready) {
             value->modes = app->modes; value->mode = app->primary_mode;
+            bool visible; uint64_t revision;
+            if (!qa_modes_q2_match_status(value->modes, value->mode,
+                &value->match_status, &visible, &revision, error)) return false;
+            if (!visible) value->match_status = NULL;
+            value->config_revision += revision;
             qa_string_id images[QA_MODE_Q2_HUD_IMAGES], statusbar;
             if (qa_modes_q2_hud_resources(value->modes, value->mode, images, &statusbar)) {
                 value->statusbar_id = statusbar;
@@ -244,7 +249,8 @@ bool qa_application_native_q2_hud_read(qa_application *app, qa_actor_id actor,
         .config_revision = source->config_revision, .edition = source->edition,
         .deathmatch = source->deathmatch, .cooperative = source->cooperative, .original = source->original,
         .game = source->game, .modes = source->modes, .mode = source->mode, .actor = actor,
-        .statusbar_id = source->statusbar_id, .statusbar = source->statusbar, .strings = source->strings,
+        .statusbar_id = source->statusbar_id, .statusbar = source->statusbar,
+        .match_status = source->match_status, .strings = source->strings,
         .names = source->names, .configstrings = source->configstrings, .config_changes = source->config_changes,
         .configstring_count = source->configstring_count, .layout = ""};
     application_provider *clock_owner = original ? original : hud;

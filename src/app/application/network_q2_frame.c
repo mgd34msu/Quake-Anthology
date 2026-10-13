@@ -580,6 +580,7 @@ bool application_network_q2_player_state(qa_application_network_q2 *owner, qa_ac
         .game = game, .skin_base = owner->skin_base};
     if (!qa_q2_wire_stats(game, &view, &(qa_q2_wire_stat_resources){
         .context = owner, .items_base = owner->item_base, .image = hud_image,
+        .match_index = owner->config_layout.max_clients - 1,
         .player_context = &players, .player_skin = qa_application_native_q2_hud_player_skin,
         .modes = owner->app->primary_mode_ready ? owner->app->modes : NULL,
         .mode = owner->app->primary_mode, .actor = actor,

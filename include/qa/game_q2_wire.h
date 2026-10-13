@@ -90,6 +90,7 @@ bool qa_q2_player_movement_restore(qa_q2_game *, qa_actor_id, const qa_body_stat
 typedef struct qa_q2_wire_stat_resources {
     void *context;
     uint32_t items_base;
+    uint32_t match_index;
     bool (*image)(void *, qa_string_id, uint32_t *, qa_error *);
     void *player_context;
     bool (*player_skin)(void *, qa_actor_id, uint32_t *, qa_error *);

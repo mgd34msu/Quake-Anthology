@@ -35,6 +35,7 @@ typedef struct qa_unified_q2_hud_configuration {
     qa_net_protocol_id protocol;
     qa_q2_config_name *configstrings;
     size_t configstring_count;
+    char *match_status;
 } qa_unified_q2_hud_configuration;
 typedef struct qa_unified_configuration_state {
     qa_actor_id actor;

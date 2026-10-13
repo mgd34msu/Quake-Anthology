@@ -109,7 +109,8 @@ typedef enum qa_mode_event_kind {
     QA_MODE_TEAM_RULES,
     QA_MODE_FLAG_STATUS,
     QA_MODE_TEAM_STANDING,
-    QA_MODE_HORDE_KILL_STREAK
+    QA_MODE_HORDE_KILL_STREAK,
+    QA_MODE_MATCH_STATUS
 } qa_mode_event_kind;
 typedef struct qa_mode_event {
     qa_mode_event_kind kind;
@@ -120,6 +121,7 @@ typedef struct qa_mode_event {
     int32_t value, detail;
     uint64_t time_ns;
     int32_t print_level;
+    const char *status_text;
 } qa_mode_event;
 typedef enum qa_match_intent_kind {
     QA_MATCH_NEXT_MAP,
@@ -474,6 +476,8 @@ bool qa_modes_read(qa_modes *, qa_mode_id, qa_mode_view *, qa_error *);
 const char *qa_modes_q2_statusbar_text(void);
 bool qa_modes_q2_hud_resources(qa_modes *, qa_mode_id,
     qa_string_id images[QA_MODE_Q2_HUD_IMAGES], qa_string_id *statusbar);
+bool qa_modes_q2_match_status(qa_modes *, qa_mode_id, const char **text,
+    bool *visible, uint64_t *revision, qa_error *);
 bool qa_modes_q2_hud_stats(qa_modes *, qa_mode_id, qa_actor_id, uint64_t source_frame,
     const struct qa_q2_wire_stat_resources *, int16_t stats[64], qa_error *);
 bool qa_modes_q3_settings_read(const qa_modes *, qa_mode_id, qa_mode_q3_settings *,

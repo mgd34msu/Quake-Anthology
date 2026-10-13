@@ -79,8 +79,27 @@ bool application_network_q2_current(qa_application_network_q2 *owner, qa_error *
 
 const char *application_network_q2_config_text(const qa_application_network_q2 *owner, uint32_t index)
 {
+    if (owner->match_status_ready && index == owner->config_layout.max_clients - 1)
+        return owner->match_status;
     const char *text = qa_strings_cstr(qa_session_strings(owner->app->session), owner->configs[index]);
     return text ? text : "";
+}
+
+static void match_status_set(qa_application_network_q2 *owner, const char *text)
+{
+    if (owner->match_status_ready && !strcmp(owner->match_status, text)) return;
+    snprintf(owner->match_status, sizeof(owner->match_status), "%s", text);
+    owner->match_status_ready = true;
+    ++owner->match_status_revision;
+    ++owner->config_revision;
+}
+bool qa_application_network_q2_match_status(const qa_application_network_q2 *owner,
+    qa_q2_config_entry *out, uint64_t *revision)
+{
+    if (!owner->match_status_ready) return false;
+    *out = (qa_q2_config_entry){(uint16_t)(owner->config_layout.max_clients - 1), owner->match_status};
+    *revision = owner->match_status_revision;
+    return true;
 }
 
 bool application_network_q2_config_id(qa_application_network_q2 *owner, uint32_t index,
@@ -271,6 +290,8 @@ static bool observe_original(qa_application_network_q2 *owner, qa_error *error)
         if (!application_network_q2_config_id(owner, i, engine->hud_names.values[i], error)) return false;
     bool ok = true;
     for (uint32_t i = shared; ok && i < owner->air_index; ++i) ok = application_network_q2_config(owner, i, "", error);
+    if (ok) ok = application_network_q2_config_id(owner, owner->air_index,
+        engine->hud_names.values[source_air], error);
     const uint32_t source[] = {engine->hud_names.layout.lights, engine->hud_names.layout.items,
         engine->hud_names.layout.player_skins, engine->hud_names.layout.player_skins + 256};
     for (unsigned range = 0; ok && range < 4; ++range) {
@@ -500,7 +521,9 @@ bool qa_application_network_q2_configs(qa_application_network_q2 *owner,
         !application_network_q2_source_resources(owner, error)) return false;
     size_t found = 0;
     for (uint32_t i = 0; i < owner->config_count; ++i)
-        if (owner->configs[i]) owner->entries[found++] = (qa_q2_config_entry){(uint16_t)i, application_network_q2_config_text(owner, i)};
+        if (owner->configs[i] || (owner->match_status_ready && *owner->match_status &&
+            i == owner->config_layout.max_clients - 1))
+            owner->entries[found++] = (qa_q2_config_entry){(uint16_t)i, application_network_q2_config_text(owner, i)};
     *out = owner->entries; *count = found; return true;
 }
 
@@ -761,11 +784,13 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
         owner->observed_client_slots = owner->host.client_slots;
     }
     owner->map_configs_ready = true;
-    const qa_cvar_view *air = qa_cvars_read(owner->host.cvars, owner->sv_airaccelerate);
-    if (!air) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 observation lost its physical Source air acceleration");
-    if(!owner->air_config_ready || owner->observed_air_modification!=air->modification_count) {
-        if(!application_network_q2_config(owner,owner->air_index,air->value,error)) return false;
-        owner->observed_air_modification=air->modification_count;owner->air_config_ready=true;
+    if (owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN) {
+        const qa_cvar_view *air = qa_cvars_read(owner->host.cvars, owner->sv_airaccelerate);
+        if (!air) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 observation lost its physical Source air acceleration");
+        if(!owner->air_config_ready || owner->observed_air_modification!=air->modification_count) {
+            if(!application_network_q2_config(owner,owner->air_index,air->value,error)) return false;
+            owner->observed_air_modification=air->modification_count;owner->air_config_ready=true;
+        }
     }
     if (owner->n64_index != UINT32_MAX && owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN) {
         if (!owner->builtin_metadata_ready && !config_number(owner, owner->n64_index,
@@ -778,6 +803,15 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
     }
     if (owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN) {
         qa_q2_game *game = (qa_q2_game *)owner->host.source.source.game;
+        if (!owner->match_status_ready && owner->app->primary_mode_ready) {
+            qa_string_id mode_statusbar;
+            if (qa_modes_q2_hud_resources(owner->app->modes, owner->app->primary_mode, NULL, &mode_statusbar)) {
+                const char *text; bool visible; uint64_t revision;
+                if (!qa_modes_q2_match_status(owner->app->modes, owner->app->primary_mode,
+                    &text, &visible, &revision, error)) return false;
+                if (visible || revision) match_status_set(owner, text);
+            }
+        }
         uint64_t events_next = qa_application_events_next(owner->app);
         uint64_t first = qa_application_events_local_first(owner->app);
         if (owner->output_events_next > first) first = owner->output_events_next;
@@ -796,11 +830,22 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
         qa_application_event_view output;
         while (qa_application_event_raw_next(owner->app, &events,
             (UINT64_C(1) << QA_APPLICATION_EVENT_Q2_MAP) |
+            (UINT64_C(1) << QA_APPLICATION_EVENT_PROTOCOL) |
             (UINT64_C(1) << QA_APPLICATION_EVENT_BUILTIN), &output)) {
             if (output.kind == QA_APPLICATION_EVENT_Q2_MAP) {
                 const qa_application_q2_map_event *record = output.value.q2_map;
                 if (events.id >= owner->output_events_next && record->provider == owner->host.source.source_owner &&
                     !map_config_event(owner, &record->event, error)) return false;
+            } else if (output.kind == QA_APPLICATION_EVENT_PROTOCOL) {
+                const qa_application_protocol_event *record = output.protocol;
+                qa_q2_codec codec = {.protocol = record->encoding_protocol};
+                qa_q2_config_layout layout;
+                if (events.id >= owner->output_events_next &&
+                    record->provider == owner->host.source.source_owner && record->q2 &&
+                    record->q2->kind == QA_Q2_SVC_CONFIGSTRING &&
+                    qa_q2_config_layout_read(&codec, &layout, NULL) &&
+                    record->q2->data.config.index == layout.max_clients - 1)
+                    match_status_set(owner, record->q2->data.config.value);
             } else if (output.kind == QA_APPLICATION_EVENT_BUILTIN) {
                 const qa_builtin_event *event = output.value.builtin;
                 if (event->family != QA_GAME_Q2 || event->provider != owner->host.source.source_owner ||

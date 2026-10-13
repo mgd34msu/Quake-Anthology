@@ -155,6 +155,7 @@ static void configs_reset(q2_host_peer *peer)
 {
     peer->config_count=peer->signon_config_count=0;
     peer->config_revision=peer->signon_config_revision=0;
+    peer->match_status_revision=0;
 }
 static void peer_reset(q2_host_peer *peer,bool reserved)
 {
@@ -548,22 +549,30 @@ bool frontend_network_q2_host_tick(frontend_network_q2_host *host,uint64_t now,q
 }
 typedef bool (*config_emit_fn)(void *, const qa_q2_server_event *, qa_error *);
 static bool configs_publish(frontend_network_q2_host *host,qa_application_network_q2 *source,
-    qa_string_id *values,size_t capacity,uint64_t *revision,
+    qa_string_id *values,size_t capacity,uint64_t *revision,uint64_t *match_revision,
     config_emit_fn emit,void *context,qa_error *error)
 {
     const qa_string_id *actual;size_t count;uint64_t next_revision;
     if(!qa_application_network_q2_config_values(source,&actual,&count,&next_revision,error)) return false;
-    if(*revision==next_revision) return true;
+    qa_q2_config_entry match; uint64_t changed;
+    bool has_match = qa_application_network_q2_match_status(source, &match, &changed);
+    if(*revision==next_revision && (!has_match || *match_revision==changed)) return true;
     for(size_t i=capacity;i<count;++i) if(actual[i])
         return frontend_fail(error,QA_ERROR_FORMAT,"Q2 config publication leaves its negotiated namespace");
     const qa_strings *strings=qa_session_strings(qa_application_session(host->options.frontend->application));
     for(size_t c=0;c<capacity;++c) {
+        if (has_match && c == match.index) continue;
         qa_string_id next=c<count?actual[c]:QA_STRING_NONE;
         if(values[c]==next) continue;
         const char *text=next?qa_strings_cstr(strings,next):"";
         qa_q2_server_event event={.kind=QA_Q2_SVC_CONFIGSTRING,.data.config={(uint16_t)c,text}};
         if(!emit(context,&event,error)) return false;
         values[c]=next;
+    }
+    if (has_match && *match_revision != changed) {
+        qa_q2_server_event event = {.kind=QA_Q2_SVC_CONFIGSTRING,.data.config={match.index,match.value}};
+        if (!emit(context,&event,error)) return false;
+        *match_revision=changed;
     }
     *revision=next_revision;return true;
 }
@@ -575,7 +584,7 @@ static bool config_transport(void *context, const qa_q2_server_event *event, qa_
 static bool publish_configs(q2_host_peer *peer,qa_error *error)
 {
     return configs_publish(peer->host,peer->source,peer->configs,peer->config_count,
-        &peer->config_revision,config_transport,peer,error);
+        &peer->config_revision,&peer->match_status_revision,config_transport,peer,error);
 }
 
 static bool event_drop(q2_host_peer *peer,qa_error *error)
@@ -989,7 +998,7 @@ static bool demo_publish(frontend_network_q2_host *host,qa_error *error)
     if(host->demo_frame_set && host->demo_frame==source_frame) return true;
     const qa_net_client *client=demo_client(host,error);
     if(!client || !configs_publish(host,host->discovery,host->demo_configs,host->demo_config_count,
-        &host->demo_config_revision,demo_host_config,host,error)) return false;
+        &host->demo_config_revision,&host->demo_match_status_revision,demo_host_config,host,error)) return false;
     qa_application *app=host->options.frontend->application;
     uint64_t generation=qa_application_protocol_events_generation(app);
     uint64_t first=qa_application_events_local_first(app),next=qa_application_events_next(app);

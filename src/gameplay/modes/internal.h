@@ -44,6 +44,12 @@ typedef struct mode_rank_entry {
     uint32_t order;
     uint8_t group;
 } mode_rank_entry;
+typedef struct mode_match_status {
+    char text[64];
+    uint64_t revision, emitted_revision, seconds;
+    qa_mode_phase phase;
+    bool initialized, visible, setup_timed, dirty;
+} mode_match_status;
 typedef struct mode_instance {
     qa_mode_id id;
     qa_mode_view value;
@@ -72,6 +78,7 @@ typedef struct mode_instance {
     uint64_t serial;
     int32_t tag_count, remaining_seconds;
     bool active, countdown_announced, restart_sent;
+    mode_match_status match_status;
     qa_mode_q3_settings q3_settings;
     int32_t q3_started_ms, q3_warmup_ms;
     uint64_t q3_warmup_seen;

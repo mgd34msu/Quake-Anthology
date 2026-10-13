@@ -170,6 +170,8 @@ static bool local_q2_image(void *context, qa_string_id name, uint32_t *out, qa_e
 static const char *local_q2_config(void *context, int32_t index)
 {
     local_q2_hud *hud = context;
+    if (!hud->source->original && index == (int32_t)hud->config.max_clients - 1)
+        return hud->source->match_status ? hud->source->match_status : "";
     qa_string_id name = qa_hud_q2_names_picture(hud->names, index, 0);
     return name ? qa_strings_cstr(hud->source->strings, name) : "";
 }
@@ -257,6 +259,7 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
         .game = source->game, .skin_base = hud.config.player_skins};
     if (!source->original && !qa_q2_wire_stats(source->game, &source->view,
         &(qa_q2_wire_stat_resources){.context = &hud, .items_base = hud.config.items,
+            .match_index = hud.config.max_clients - 1,
             .image = local_q2_image, .player_context = &players,
             .player_skin = qa_application_native_q2_hud_player_skin,
             .modes = source->modes, .mode = source->mode,

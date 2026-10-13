@@ -102,7 +102,7 @@ typedef struct qa_application_native_q2_hud_source {
     qa_modes *modes;
     qa_mode_id mode;
     qa_string_id statusbar_id;
-    const char *statusbar;
+    const char *statusbar, *match_status;
     const qa_strings *strings;
     const qa_hud_q2_names *names;
     const qa_string_id *configstrings;
@@ -141,7 +141,7 @@ typedef struct qa_application_native_q2_hud {
     qa_actor_id actor;
     qa_q2_player_view view;
     qa_string_id statusbar_id;
-    const char *statusbar, *layout;
+    const char *statusbar, *layout, *match_status;
     uint64_t layout_revision;
     const qa_strings *strings;
     const qa_hud_q2_names *names;

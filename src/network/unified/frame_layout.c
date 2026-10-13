@@ -926,6 +926,7 @@ static const qa_unified_field qa_unified_q2_hud_configuration_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_q2_hud_configuration, cooperative, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_RECORD(qa_unified_q2_hud_configuration, protocol, component_protocol_layout),
     QA_UNIFIED_ARRAY(qa_unified_q2_hud_configuration, configstrings, configstring_count, q2_config_name_layout, 16384),
+    {QA_UNIFIED_FIELD_STRING, offsetof(qa_unified_q2_hud_configuration, match_status), NULL, 0, 64, NULL},
 };
 static const qa_unified_record_layout qa_unified_q2_hud_configuration_layout = QA_UNIFIED_LAYOUT(qa_unified_q2_hud_configuration, qa_unified_q2_hud_configuration_fields);
 

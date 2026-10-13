@@ -791,6 +791,9 @@ static void native_clear(q2_native *v)
 static const char *native_config(void *context,int32_t index)
 {
     const q2_native *v=context;
+    if (v->configuration && v->configuration->match_status &&
+        index == (int32_t)v->bank->hud_names.layout.max_clients - 1)
+        return v->configuration->match_status;
     qa_string_id id=qa_hud_q2_names_picture(&v->bank->hud_names,index,0);
     const char *text=qa_strings_cstr(v->bank->hud_names.strings,id);
     return text?text:"";

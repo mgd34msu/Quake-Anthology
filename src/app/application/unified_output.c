@@ -86,6 +86,12 @@ static bool q2_configuration(qa_application *app, qa_unified_frame_lease *lease,
     out->data_provider = hud.data_provider; out->revision = hud.config_revision;
     out->deathmatch = hud.deathmatch; out->cooperative = hud.cooperative;
     out->protocol = qa_q2_default_protocol(hud.edition != QA_RULESET_Q2_CLASSIC);
+    if (hud.match_status) {
+        size_t length = strlen(hud.match_status) + 1;
+        out->match_status = application_unified_frame_alloc(lease, length, 1, error);
+        if (!out->match_status) return false;
+        memcpy(out->match_status, hud.match_status, length);
+    }
     size_t capacity;
     if (!qa_application_native_q2_hud_configs(app, &hud, NULL, 0, &capacity, error)) return false;
     out->configstrings = application_unified_frame_alloc(lease, capacity, sizeof(*out->configstrings), error);
@@ -135,6 +141,7 @@ static bool q2_hud_state(qa_application *app, const qa_application_native_q2_hud
             .game = hud->game, .skin_base = layout.player_skins};
         if (!qa_q2_wire_stats(hud->game, &hud->view,
             &(qa_q2_wire_stat_resources){.context = &images, .items_base = layout.items, .image = q2_stat_image,
+                .match_index = layout.max_clients - 1,
                 .player_context = &players, .player_skin = qa_application_native_q2_hud_player_skin,
                 .modes = hud->modes, .mode = hud->mode, .actor = hud->actor,
                 .source_frame = (uint64_t)(uint32_t)hud->server_frame},

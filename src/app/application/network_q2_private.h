@@ -103,6 +103,9 @@ struct qa_application_network_q2 {
     application_q2_numeric_config numeric_configs[3];
     uint64_t observed_map_revision,observed_air_modification;
     uint64_t config_revision;
+    char match_status[64];
+    uint64_t match_status_revision;
+    bool match_status_ready;
     bool air_config_ready;
     uint32_t observed_client_slots;
     bool map_configs_ready, builtin_metadata_ready;

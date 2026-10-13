@@ -2,6 +2,96 @@
 #include <inttypes.h>
 #include <stdio.h>
 
+static bool ctf_match_status_refresh(qa_modes *m, mode_instance *v, qa_error *e) {
+    mode_match_status *status = &v->match_status;
+    qa_mode_phase phase = v->value.phase;
+    bool ctf = v->value.rules.enabled && v->value.rules.source == QA_MODE_Q2_CTF;
+    bool timed_play = phase == QA_MODE_PLAYING && v->value.deadline_ns;
+    bool post = phase >= QA_MODE_EXIT_PENDING;
+    bool retained_post = post && v->value.rules.competition > 1 && v->remaining_seconds > 0;
+    bool visible = ctf && (phase == QA_MODE_SETUP || phase == QA_MODE_COUNTDOWN ||
+                           timed_play || (post && status->visible) || retained_post);
+    uint64_t seconds = v->value.deadline_ns > v->value.time_ns
+        ? (v->value.deadline_ns - v->value.time_ns) / MODE_SECOND : 0;
+    bool setup_timed = v->value.rules.competition < 3;
+    bool changed = status->visible != visible;
+    if (visible && post && !status->initialized && retained_post) {
+        snprintf(status->text, sizeof(status->text), "%02d:%02d MATCH",
+            v->remaining_seconds / 60, v->remaining_seconds % 60);
+        changed = true;
+    }
+    if (visible && !post && seconds &&
+        (!status->initialized || status->phase != phase || status->seconds != seconds ||
+         status->setup_timed != setup_timed || status->dirty)) {
+        char text[sizeof(status->text)] = {0};
+        if (phase == QA_MODE_SETUP) {
+            size_t not_ready = 0;
+            for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
+                qa_actor_id actor = m->players_order.actors[ordinal];
+                mode_member *member = mode_member_get(m, v, actor);
+                mode_player *player = member ? mode_player_get(m, actor) : NULL;
+                if (!player || !player->connected || member->player.ready)
+                    continue;
+                qa_team_id team;
+                if (!qa_modes_team(m, v->id, actor, &team, e))
+                    return false;
+                member = mode_member_get(m, v, actor);
+                if (member && team && !member->player.ready)
+                    ++not_ready;
+            }
+            if (setup_timed)
+                snprintf(text, sizeof(text), "%02" PRIu64 ":%02" PRIu64
+                    " SETUP: %zu not ready", seconds / 60, seconds % 60, not_ready);
+            else
+                snprintf(text, sizeof(text), "SETUP: %zu not ready", not_ready);
+        } else
+            snprintf(text, sizeof(text), "%02" PRIu64 ":%02" PRIu64 " %s",
+                seconds / 60, seconds % 60,
+                phase == QA_MODE_COUNTDOWN ? "UNTIL START" : "MATCH");
+        if (memcmp(status->text, text, sizeof(text))) {
+            memcpy(status->text, text, sizeof(text));
+            changed = true;
+        }
+        v->remaining_seconds = (int32_t)seconds;
+    }
+    status->initialized = true;
+    status->visible = visible;
+    status->phase = phase;
+    status->seconds = seconds;
+    status->setup_timed = setup_timed;
+    status->dirty = false;
+    if (changed)
+        ++status->revision;
+    return true;
+}
+static bool ctf_match_status_publish(qa_modes *m, mode_instance *v, qa_error *e) {
+    mode_match_status *status = &v->match_status;
+    if (status->revision == status->emitted_revision || !m->options.hooks.event)
+        return true;
+    uint64_t revision = status->revision;
+    qa_mode_event event = {.kind = QA_MODE_MATCH_STATUS, .mode = v->id,
+        .time_ns = v->value.time_ns, .status_text = status->text};
+    if (!MODE_CALLBACK(m, m->options.hooks.event(m->options.hooks.context, &event, e)))
+        return false;
+    status->emitted_revision = revision;
+    return true;
+}
+bool qa_modes_q2_match_status(qa_modes *m, qa_mode_id id, const char **text,
+    bool *visible, uint64_t *revision, qa_error *e) {
+    *text = "";
+    *visible = false;
+    *revision = 0;
+    mode_instance *v = mode_get(m, id);
+    if (!v || !v->value.rules.enabled || v->value.rules.source != QA_MODE_Q2_CTF)
+        return true;
+    if (!ctf_match_status_refresh(m, v, e))
+        return false;
+    *text = v->match_status.text;
+    *visible = v->match_status.visible;
+    *revision = v->match_status.revision;
+    return true;
+}
+
 static bool lmctf_clock_message(qa_modes *m, mode_instance *v, mode_name text, int32_t value,
                                  qa_error *e) {
     qa_builtin_message_arg argument = {.kind = QA_BUILTIN_MESSAGE_NUMBER,
@@ -207,6 +297,8 @@ bool mode_set_phase(qa_modes *m, mode_instance *v, qa_mode_phase phase, uint64_t
     v->value.phase = phase;
     v->value.deadline_ns = deadline;
     v->countdown_announced = false;
+    if (!ctf_match_status_refresh(m, v, e) || !ctf_match_status_publish(m, v, e))
+        return false;
     return mode_event(m, v, QA_MODE_PHASE, (qa_actor_id){0}, (qa_actor_id){0}, (qa_actor_id){0}, 0,
                       (int32_t)phase, 0, e);
 }
@@ -268,6 +360,7 @@ bool qa_modes_ready(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool ready, q
             refusal = ready ? MODE_NAME_CTF_ALREADY_READY : MODE_NAME_CTF_NOT_READY;
         else {
             member->player.ready = ready;
+            v->match_status.dirty = true;
             qa_builtin_message_arg name = {.kind = QA_BUILTIN_MESSAGE_STRING,
                                            .value.text = p->identity->name};
             if (!mode_message(m, v, (qa_actor_id){0}, m->runtime_names[ready
@@ -727,8 +820,10 @@ bool mode_match_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
             v->value.deadline_ns += elapsed;
         if (r->auto_lock)
             r->match_lock = false;
-        return true;
+        return ctf_match_status_refresh(m, v, e) && ctf_match_status_publish(m, v, e);
     }
+    if (!ctf_match_status_refresh(m, v, e) || !ctf_match_status_publish(m, v, e))
+        return false;
     if (v->value.phase == QA_MODE_EXIT_PENDING)
         return now >= v->value.deadline_ns ? intermission(m, v, e) : true;
     if (v->value.phase == QA_MODE_INTERMISSION) {
@@ -790,7 +885,8 @@ bool mode_match_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
     if (v->value.phase == QA_MODE_FINISHED)
         return true;
     if (v->value.phase == QA_MODE_SETUP) {
-        if (now >= v->value.deadline_ns) {
+        if (now >= v->value.deadline_ns || (r->source == QA_MODE_Q2_CTF &&
+            v->value.deadline_ns - now < MODE_SECOND)) {
             if (r->competition < 3) {
                 if (r->source == QA_MODE_Q2_CTF)
             return mode_ctf_reset(m, v, false, e);
@@ -830,7 +926,8 @@ bool mode_match_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
                 return mode_set_phase(m, v, QA_MODE_WAITING, 0, e);
             }
         }
-        if (now <= v->value.deadline_ns)
+        if (r->source == QA_MODE_Q2_CTF ? now < v->value.deadline_ns &&
+                v->value.deadline_ns - now >= MODE_SECOND : now <= v->value.deadline_ns)
             return true;
         if (r->source >= QA_MODE_Q3) {
             if (v->restart_sent)
@@ -841,7 +938,7 @@ bool mode_match_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
         return begin_play(m, v, e);
     }
     if (r->source == QA_MODE_Q2_CTF && r->competition > 1 && v->value.deadline_ns &&
-        now >= v->value.deadline_ns)
+        (now >= v->value.deadline_ns || v->value.deadline_ns - now < MODE_SECOND))
         return qa_modes_end(m, v->id, 0, e);
     if (r->source == QA_MODE_Q2_CTF && r->competition > 1)
         return true;

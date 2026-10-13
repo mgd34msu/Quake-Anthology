@@ -169,6 +169,10 @@ bool qa_modes_q2_hud_stats(qa_modes *m, qa_mode_id id, qa_actor_id actor,
     if (member && member->player.ctf_id_view &&
         !ctf_id_view(m, actor, resources, &projected[10], error))
         return false;
+    const char *match_text; bool match_visible; uint64_t match_revision;
+    if (!qa_modes_q2_match_status(m, id, &match_text, &match_visible, &match_revision, error))
+        return false;
+    qa_q2_wire_stat_word(match_visible ? (int32_t)resources->match_index : 0, &projected[11]);
     memcpy(stats + 17, projected, sizeof(projected));
     return true;
 }

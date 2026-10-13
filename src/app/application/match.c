@@ -42,6 +42,16 @@ static bool mode_event(void *opaque, const qa_mode_event *event,
     if (source == NULL)
         return application_fail(error, QA_ERROR_NOT_FOUND,
                                 "mode event lost its selected source content owner");
+    if (event->kind == QA_MODE_MATCH_STATUS) {
+        qa_mode_view view; qa_q2_config_layout layout;
+        if (!qa_modes_read(application->modes, event->mode, &view, error)) return false;
+        qa_q2_codec codec = {.protocol = qa_q2_default_protocol(view.rules.ruleset != QA_RULESET_Q2_CLASSIC)};
+        if (!qa_q2_config_layout_read(&codec, &layout, error)) return false;
+        qa_q2_server_event config = {.kind = QA_Q2_SVC_CONFIGSTRING,
+            .data.config = {(uint16_t)(layout.max_clients - 1), event->status_text}};
+        return application_emit_protocol(source, &(qa_application_protocol_event){
+            .q2 = &config, .encoding_protocol = codec.protocol, .reliable = true}, error) != APPLICATION_EVENT_FAILED;
+    }
     return application_emit(
         application,
         &(qa_builtin_event){.kind = event->kind == QA_MODE_MESSAGE
