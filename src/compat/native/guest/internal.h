@@ -51,7 +51,7 @@ struct qa_native_guest {
     guest_host_child *child;
     guest_profile_guard_receipt profile;
     guest_profile_cpu_domain source_domain;
-    uc_hook store_hook, fault_hook;
+    uc_hook store_hook, fault_hook, cpuid_hook;
     qa_arena scratch_storage;
     qa_pool scratch_pages;
     guest_backing *backings;

@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "unicorn_state.h"
 #include "native_cpu_codec.h"
+#include "profile/instruction.h"
 
 static const int registers32[8] = {UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_EDX,
     UC_X86_REG_EBX, UC_X86_REG_ESP, UC_X86_REG_EBP, UC_X86_REG_ESI, UC_X86_REG_EDI};
@@ -172,6 +173,30 @@ static bool record_fault(uc_engine *cpu, uc_mem_type type, uint64_t address,
     return false;
 }
 
+static int virtual_cpuid(uc_engine *cpu, void *context)
+{
+    qa_native_guest *guest = context;
+    guest_run *run = guest->run;
+    uint64_t leaf = 0, subleaf = 0;
+    uint32_t output[4];
+    bool okay = word(guest, UC_X86_REG_RAX, &leaf, false, &run->failure) &&
+        word(guest, UC_X86_REG_RCX, &subleaf, false, &run->failure);
+    if (okay) {
+        guest_profile_x64_cpuid((uint32_t)leaf, (uint32_t)subleaf, output);
+        const int registers[4] = {UC_X86_REG_RAX, UC_X86_REG_RBX,
+            UC_X86_REG_RCX, UC_X86_REG_RDX};
+        for (size_t i = 0; okay && i < 4; ++i) {
+            uint64_t value = output[i];
+            okay = word(guest, registers[i], &value, true, &run->failure);
+        }
+    }
+    if (!okay) {
+        run->recording_failed = true;
+        uc_emu_stop(cpu);
+    }
+    return 1;
+}
+
 bool guest_cpu_open(qa_native_guest *guest, bool fresh, qa_error *error)
 {
     if (guest->options.backend == QA_NATIVE_GUEST_HOST_X86_64) {
@@ -216,6 +241,15 @@ bool guest_cpu_open(qa_native_guest *guest, bool fresh, qa_error *error)
         store_pointer, guest, 1, 0), error)) return false;
     if (!guest_uc(guest, uc_hook_add(guest->cpu, &guest->fault_hook, UC_HOOK_MEM_INVALID,
         fault_pointer, guest, 1, 0), error)) return false;
+    if (wide) {
+        uc_cb_insn_cpuid_t cpuid_callback = virtual_cpuid;
+        void *cpuid_pointer = NULL;
+        if (sizeof(cpuid_callback) != sizeof(cpuid_pointer))
+            return guest_fail(error, QA_ERROR_UNSUPPORTED, 0, "Unicorn hook API requires the actual host function-pointer representation");
+        memcpy(&cpuid_pointer, &cpuid_callback, sizeof(cpuid_pointer));
+        if (!guest_uc(guest, uc_hook_add(guest->cpu, &guest->cpuid_hook, UC_HOOK_INSN,
+            cpuid_pointer, guest, 1, 0, UC_X86_INS_CPUID), error)) return false;
+    }
     /* The real hook API initializes Unicorn after selecting the CPU model. */
     if (!guest_uc(guest, qa_unicorn_memory_bind(guest->cpu), error) ||
         !guest_uc(guest, qa_unicorn_store_bind(guest->cpu, guest->store_hook), error)) return false;

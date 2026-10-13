@@ -412,6 +412,68 @@ static bool info_value(qa_native_host *host, const qa_native_import_call *call,
     return ok;
 }
 
+enum { NATIVE_Q2_INFO_KEY = 64, NATIVE_Q2_INFO_VALUE = 256,
+       NATIVE_Q2_INFO_STRING = 2048 };
+
+static bool info_part_valid(qa_bytes part, size_t limit)
+{
+    return part.size < limit && !memchr(part.data, '\\', part.size) &&
+           !memchr(part.data, '"', part.size) && !memchr(part.data, ';', part.size);
+}
+
+static bool info_change(qa_native_host *host, const qa_native_import_call *call,
+                        qa_native_value *result, bool set, qa_error *error)
+{
+    qa_bytes info, key, value = {0};
+    if (!call_text(host, call, 0, &info, error) ||
+        !call_text(host, call, 1, &key, error) ||
+        (set && !call_text(host, call, 2, &value, error))) return false;
+    result->as.u8 = 0;
+    if (set && (!info_part_valid(key, NATIVE_Q2_INFO_KEY) ||
+                !info_part_valid(value, NATIVE_Q2_INFO_VALUE))) return true;
+
+    size_t capacity = info.size + 1 + (set ? key.size + value.size + 2 : 0);
+    char *output = qa_arena_alloc(&host->text_storage, capacity, 1, error);
+    if (!output) return false;
+    memcpy(output, info.data, info.size + 1);
+    bool removed = false;
+    const char *cursor = output;
+    qa_bytes pair_key, pair_value;
+    while (*cursor) {
+        const char *start = cursor;
+        if (!qa_info_next(&cursor, &pair_key, &pair_value)) break;
+        if (qa_info_key_equal(pair_key, key, 0)) {
+            memmove((char *)start, cursor, strlen(cursor) + 1);
+            cursor = start;
+            removed = true;
+        }
+    }
+
+    bool accepted = removed, appended = false;
+    size_t length = strlen(output);
+    if (set) {
+        accepted = !value.size ||
+            (length < NATIVE_Q2_INFO_STRING &&
+             key.size + value.size + 2 < NATIVE_Q2_INFO_STRING - length);
+        if (accepted && value.size) {
+            const qa_bytes parts[] = {{(const uint8_t *)"\\", 1}, key,
+                                     {(const uint8_t *)"\\", 1}, value};
+            for (size_t part = 0; part < sizeof(parts) / sizeof(*parts); ++part)
+                for (size_t index = 0; index < parts[part].size; ++index) {
+                    uint8_t byte = parts[part].data[index] & 127u;
+                    if (byte >= 32 && byte < 127) output[length++] = (char)byte;
+                }
+            output[length] = 0;
+            appended = true;
+        }
+    }
+    if ((removed || appended) &&
+        !native_host_write(host, native_argument_address(call, 0), output,
+                           length + 1, error)) return false;
+    result->as.u8 = accepted ? 1u : 0u;
+    return true;
+}
+
 static bool q2_application(qa_native_host *host, const qa_native_import_call *call,
                            qa_native_value *result, qa_error *error)
 {
@@ -553,6 +615,10 @@ bool native_host_q2_import(qa_native_host *host, const qa_native_import_call *ca
     }
     case QA_NATIVE_Q2_IMPORT_Info_ValueForKey:
     return info_value(host, call, result, error);
+    case QA_NATIVE_Q2_IMPORT_Info_RemoveKey:
+    return info_change(host, call, result, false, error);
+    case QA_NATIVE_Q2_IMPORT_Info_SetValueForKey:
+    return info_change(host, call, result, true, error);
     default:
     return q2_application(host, call, result, error);
     }
