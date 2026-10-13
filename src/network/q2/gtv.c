@@ -4,6 +4,8 @@
 #include <limits.h>
 #include <zlib.h>
 
+enum { GTV_REQUEST_MESSAGE_BYTES = 256, GTV_REQUEST_PACKET_BYTES = GTV_REQUEST_MESSAGE_BYTES + 2 };
+
 static void gtv_wipe(void *data, size_t size)
 { volatile uint8_t *p=data; while (size--) *p++=0; }
 static bool gtv_error(qa_error *error, const char *text)
@@ -20,7 +22,7 @@ static bool gtv_packet(uint8_t opcode, qa_bytes body, qa_buffer *out, qa_error *
 }
 bool qa_gtv_request_read(qa_bytes bytes, qa_gtv_request *out, qa_error *error)
 {
-    if (!out || !bytes.size || bytes.size>256 || !bytes.data) return gtv_error(error,"Invalid GTV request size");
+    if (!out || !bytes.size || bytes.size>GTV_REQUEST_MESSAGE_BYTES || !bytes.data) return gtv_error(error,"Invalid GTV request size");
     qa_net_reader r; qa_net_reader_init(&r,bytes,error); qa_gtv_request q={0};
     uint8_t opcode=qa_net_read_u8(&r);
     if (opcode>QA_GTV_REQUEST_COMMAND) return gtv_error(error,"Unknown GTV request opcode");
@@ -38,11 +40,12 @@ bool qa_gtv_request_read(qa_bytes bytes, qa_gtv_request *out, qa_error *error)
     if (!qa_net_reader_finish(&r)) { gtv_wipe(&q,sizeof(q)); return false; }
     *out=q; gtv_wipe(&q,sizeof(q)); return true;
 }
-bool qa_gtv_request_write(const qa_gtv_request *q, qa_buffer *out, qa_error *error)
+static bool gtv_request_encode(const qa_gtv_request *q, uint8_t bytes[GTV_REQUEST_PACKET_BYTES],
+                                 size_t *size, qa_error *error)
 {
-    if (!q || !out || q->kind<QA_GTV_REQUEST_HELLO || q->kind>QA_GTV_REQUEST_COMMAND)
+    if (!q || q->kind<QA_GTV_REQUEST_HELLO || q->kind>QA_GTV_REQUEST_COMMAND)
         return gtv_error(error,"Invalid GTV request");
-    uint8_t bytes[256]; qa_net_writer w; qa_net_writer_init(&w,bytes,sizeof(bytes),error);
+    qa_net_writer w; qa_net_writer_init(&w,bytes+2,GTV_REQUEST_MESSAGE_BYTES,error);
     qa_net_write_u8(&w,(uint8_t)q->kind);
     switch (q->kind) {
     case QA_GTV_REQUEST_HELLO:
@@ -56,8 +59,21 @@ bool qa_gtv_request_write(const qa_gtv_request *q, qa_buffer *out, qa_error *err
         qa_net_write_string(&w,q->command); break;
     case QA_GTV_REQUEST_PING: case QA_GTV_REQUEST_STOP: break;
     }
-    bool ok=false;
-    if (!w.failed) ok=gtv_packet(bytes[0],(qa_bytes){bytes+1,qa_net_writer_size(&w)-1},out,error);
+    if (w.failed) return false;
+    size_t message_size=qa_net_writer_size(&w);
+    qa_store_u16le(bytes,(uint16_t)message_size);
+    *size=message_size+2; return true;
+}
+bool qa_gtv_request_write(const qa_gtv_request *q, qa_buffer *out, qa_error *error)
+{
+    if (!out) return gtv_error(error,"Invalid GTV request");
+    uint8_t bytes[GTV_REQUEST_PACKET_BYTES]; size_t size=0;
+    bool ok=gtv_request_encode(q,bytes,&size,error);
+    if (ok) {
+        uint8_t *owned=malloc(size);
+        if (!owned) { qa_error_set(error,QA_ERROR_MEMORY,0,"GTV packet allocation failed"); ok=false; }
+        else { memcpy(owned,bytes,size); *out=(qa_buffer){owned,size}; }
+    }
     gtv_wipe(bytes,sizeof(bytes)); return ok;
 }
 
@@ -87,7 +103,7 @@ bool qa_gtv_client_create(const qa_gtv_identity *identity, uint32_t flags,
     if (!identity || !identity->username || !identity->password || !identity->version || !send || !out)
         return gtv_error(error,"Missing GTV client identity or callback");
     size_t a=strlen(identity->username), b=strlen(identity->password), d=strlen(identity->version);
-    if (a>255 || b>255 || d>255 || a+b+d+14>256) return gtv_error(error,"GTV identity exceeds message limit");
+    if (a>255 || b>255 || d>255 || a+b+d+14>GTV_REQUEST_MESSAGE_BYTES) return gtv_error(error,"GTV identity exceeds message limit");
     qa_gtv_client *c=calloc(1,sizeof(*c));
     if (!c) { qa_error_set(error,QA_ERROR_MEMORY,0,"GTV client allocation failed"); return false; }
     if (!qa_q2_mvd_framer_create(false,QA_Q2_MVD_MESSAGE_BYTES,&c->frames,error)) { free(c); return false; }
@@ -111,9 +127,10 @@ bool qa_gtv_client_start(qa_gtv_client *c, qa_error *error)
 }
 static bool gtv_send_request(qa_gtv_client *c, const qa_gtv_request *q, qa_error *error)
 {
-    qa_buffer bytes={0}; if (!qa_gtv_request_write(q,&bytes,error)) return false;
-    bool ok=c->send(c->send_user,(qa_bytes){bytes.data,bytes.size},error);
-    gtv_wipe(bytes.data,bytes.size); qa_buffer_free(&bytes); return ok;
+    uint8_t bytes[GTV_REQUEST_PACKET_BYTES]; size_t size=0;
+    bool ok=gtv_request_encode(q,bytes,&size,error);
+    if (ok) ok=c->send(c->send_user,(qa_bytes){bytes,size},error);
+    gtv_wipe(bytes,sizeof(bytes)); return ok;
 }
 static bool gtv_connected(const qa_gtv_client *c)
 { return c && c->started && c->phase>=GTV_CONNECTED && c->phase<GTV_CLOSED; }

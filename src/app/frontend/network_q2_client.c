@@ -2,6 +2,7 @@
 #include "qa/network_q3.h"
 #include "qa/application_network.h"
 #include "qa/network_q2_bootstrap_save.h"
+#include "qa/event_ring.h"
 #include "remote_q2_effects_bridge.h"
 #include "neutral_config.h"
 #include "view_settings.h"
@@ -41,6 +42,9 @@ struct frontend_network_q2_client {
     qa_q2_mvd_frame mvd_frame;
     qa_q2_player mvd_spectator;
     qa_net_reader mvd_cursor;
+    qa_event_ring *mvd_records;
+    qa_event_lease *mvd_payload;
+    uint64_t mvd_record_cursor;
     qa_collision_geometry *mvd_geometry;
     qa_trace_scratch *mvd_trace;
     frontend_remote_q2 *mvd_receiver;
@@ -465,6 +469,13 @@ bool frontend_network_q2_client_create(const frontend_network_q2_client_options 
     if (options->demo && options->demo_format==FRONTEND_DEMO_MVD) {
         owner->mvd_pool=qa_unified_frame_pool_create(0,0,error);
         if (!owner->mvd_pool) return false;
+        if (options->live_mvd) {
+            size_t bytes=1024u*1024u;
+            size_t records=bytes/qa_event_ring_record_storage_size(sizeof(qa_bytes)+1);
+            owner->mvd_records=qa_event_ring_create(bytes,16384,records,error);
+            if (!owner->mvd_records) return false;
+            owner->mvd_record_cursor=qa_event_ring_first(owner->mvd_records);
+        }
     }
     if (!owner->options.seat.owner) owner->options.seat=(qa_net_seat_id){QA_NETWORK_COMMAND_OWNER,0};
     qa_frontend *f=options->frontend;
@@ -632,6 +643,8 @@ bool frontend_network_q2_client_destroy(frontend_network_q2_client **owned,qa_er
     if(owner->receiver && !qa_application_client_provider_release(owner->domain.application,owner->receiver,error)) return false;
     owner->receiver=0; owner->closing=true;
     qa_network_q2_bootstrap_destroy(owner->bootstrap);
+    qa_event_lease_release(owner->mvd_payload);
+    qa_event_ring_destroy(&owner->mvd_records);
     qa_unified_frame_lease_release(owner->mvd_header_storage);
     qa_unified_frame_lease_release(owner->mvd_frame_storage);
     qa_trace_scratch_destroy(owner->mvd_trace);
@@ -1055,12 +1068,51 @@ bool frontend_network_q2_client_demo_record(frontend_network_q2_client *owner,
         .detach=demo_detach,.release=demo_release};
     return true;
 }
+static bool mvd_watch_full(frontend_network_q2_client *owner)
+{
+    snprintf(owner->reason,sizeof(owner->reason),"GTV watch buffer exceeded its 1 MiB limit");
+    owner->retired=true;
+    frontend_console_print(owner->options.frontend,NULL,owner->reason);
+    return true;
+}
+bool frontend_network_q2_client_mvd_feed(frontend_network_q2_client *owner,qa_bytes bytes,qa_error *error)
+{
+    (void)error;
+    if (!owner || !owner->options.live_mvd || !owner->mvd_records) return false;
+    if (owner->retired || !bytes.size) return true;
+    qa_event_transaction transaction;
+    if (!qa_event_ring_begin(owner->mvd_records,&transaction)) return mvd_watch_full(owner);
+    qa_error failure={0};
+    qa_bytes *record=qa_event_ring_alloc(&transaction,sizeof(*record),_Alignof(qa_bytes),&failure);
+    uint8_t *payload=qa_event_ring_alloc(&transaction,bytes.size,1,&failure);
+    if (!record || !payload) {
+        qa_event_ring_abort(&transaction); return mvd_watch_full(owner);
+    }
+    memcpy(payload,bytes.data,bytes.size);
+    *record=(qa_bytes){payload,bytes.size};
+    return qa_event_ring_commit(&transaction,record,NULL)!=0 || mvd_watch_full(owner);
+}
+static bool mvd_next_packet(frontend_network_q2_client *owner,frontend_demo_reader *reader,
+    frontend_demo_packet *packet,bool *present,frontend_demo_end *end,qa_error *error)
+{
+    if (!owner->options.live_mvd)
+        return frontend_demo_read_next(reader,NULL,NULL,packet,present,end,error);
+    qa_event_lease_release(owner->mvd_payload); owner->mvd_payload=NULL;
+    owner->mvd_cursor=(qa_net_reader){0}; owner->mvd_cursor_held=false;
+    const qa_bytes *record=qa_event_ring_at(owner->mvd_records,owner->mvd_record_cursor);
+    *present=record!=NULL;
+    if (!record) return true;
+    owner->mvd_payload=qa_event_ring_retain(owner->mvd_records,owner->mvd_record_cursor++);
+    *packet=(frontend_demo_packet){.format=FRONTEND_DEMO_MVD,.value.message=*record};
+    qa_event_ring_retire(owner->mvd_records,owner->mvd_record_cursor);
+    return true;
+}
 static bool demo_advance(void *context,frontend_demo_reader *reader,uint64_t elapsed,uint64_t time_ns,uint64_t frame,
     bool timedemo,frontend_demo_end *end,qa_error *error)
 {
     (void)time_ns;(void)frame;
     frontend_network_q2_client *owner=context;
-    if(!reader || !end || !demo_current(owner)) return false;
+    if((!reader && !owner->options.live_mvd) || !end || !demo_current(owner)) return false;
     *end=FRONTEND_DEMO_RUNNING;
     if(owner->retired) { *end=FRONTEND_DEMO_DISCONNECTED; return true; }
     bool ready=false;
@@ -1116,8 +1168,14 @@ static bool demo_advance(void *context,frontend_demo_reader *reader,uint64_t ela
             if (!owner->mvd_frame_pending && !owner->mvd_header_pending && !owner->mvd_viewpoint_changed) {
                 if (!owner->mvd_cursor_held || !qa_net_reader_remaining(&owner->mvd_cursor)) {
                     frontend_demo_packet packet; bool present=false;
-                    if (!frontend_demo_read_next(reader,NULL,NULL,&packet,&present,end,error)) return false;
-                    if (!present) return true;
+                    if (!mvd_next_packet(owner,reader,&packet,&present,end,error)) return false;
+                    if (!present) {
+                        if (owner->options.live_mvd && view.frame->valid && owner->demo_clock_started) {
+                            owner->demo_ms=fmin(owner->demo_ms,(double)view.frame->server_frame*step);
+                            return frontend_remote_q2_demo_clock(source.receiver,owner->demo_ms,error);
+                        }
+                        return true;
+                    }
                     if (packet.format!=FRONTEND_DEMO_MVD) return false;
                     qa_net_reader_init(&owner->mvd_cursor,packet.value.message,error);
                     owner->mvd_cursor_held=true;
@@ -1142,6 +1200,12 @@ static bool demo_advance(void *context,frontend_demo_reader *reader,uint64_t ela
             !qa_network_q2_client_demo_receive(owner->options.runtime,owner->domain.client,
                 packet.value.message,owner->options.frontend->wall_time_ns,error)) return false;
     }
+}
+bool frontend_network_q2_client_mvd_advance(frontend_network_q2_client *owner,uint64_t elapsed,
+    uint64_t time_ns,uint64_t frame,frontend_demo_end *end,qa_error *error)
+{
+    return owner && owner->options.live_mvd &&
+        demo_advance(owner,NULL,elapsed,time_ns,frame,false,end,error);
 }
 bool frontend_network_q2_client_demo_playback(frontend_network_q2_client *owner,
     frontend_demo_playback_source *out,qa_error *error)

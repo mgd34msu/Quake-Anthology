@@ -20,6 +20,7 @@ typedef struct frontend_network_q2_client_options {
     uint32_t physical_seat;
     qa_kex_lan *lobby;
     bool demo;
+    bool live_mvd;
     frontend_demo_format demo_format;
     uint8_t demo_viewpoint;
     void *context;
@@ -38,6 +39,9 @@ bool frontend_network_q2_client_demo_record(frontend_network_q2_client *,
 bool frontend_network_q2_client_demo_playback(frontend_network_q2_client *,
     frontend_demo_playback_source *, qa_error *);
 void frontend_network_q2_client_demo_viewpoint(frontend_network_q2_client *, uint8_t);
+bool frontend_network_q2_client_mvd_feed(frontend_network_q2_client *, qa_bytes, qa_error *);
+bool frontend_network_q2_client_mvd_advance(frontend_network_q2_client *,
+    uint64_t elapsed_ns,uint64_t time_ns,uint64_t frame,frontend_demo_end *,qa_error *);
 bool frontend_network_q2_client_receive(frontend_network_q2_client *,
     const qa_net_datagram *, bool *, qa_error *);
 bool frontend_network_q2_client_tick(frontend_network_q2_client *, uint64_t, qa_error *);
