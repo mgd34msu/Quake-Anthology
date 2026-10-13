@@ -799,21 +799,35 @@ typedef enum token_kind { TOKEN_END, TOKEN_TEXT, TOKEN_OPEN, TOKEN_CLOSE } token
 typedef struct entity_token { token_kind kind; qa_bytes text; size_t offset; } entity_token;
 typedef struct entity_parser { qa_bytes text; size_t offset; qa_entity_syntax syntax; } entity_parser;
 
+static bool entity_q2_syntax(qa_entity_syntax syntax)
+{
+    return syntax == QA_ENTITY_Q2_CLASSIC || syntax == QA_ENTITY_Q2_RERELEASE;
+}
+
+static bool entity_token_space(qa_entity_syntax syntax, uint8_t byte)
+{
+    if (syntax == QA_ENTITY_Q2_RERELEASE)
+        return byte == ' ' || byte == '\t' || byte == '\r' || byte == '\n';
+    return byte <= 32 || (syntax == QA_ENTITY_Q2_CLASSIC && byte >= 128);
+}
+
 static bool entity_token_next(entity_parser *parser, bool allow_newline,
                                entity_token *out, qa_error *error)
 {
     const uint8_t *text = parser->text.data;
     size_t length = parser->text.size;
+    bool q2 = entity_q2_syntax(parser->syntax);
     bool newline = false;
     for (;;) {
-        while (parser->offset < length && text[parser->offset] <= 32) {
+        while (parser->offset < length && entity_token_space(parser->syntax, text[parser->offset])) {
             uint8_t byte = text[parser->offset++];
             newline |= byte == '\n' || byte == '\r';
         }
         if (parser->offset < length && length - parser->offset >= 2 && text[parser->offset] == '/') {
             if (text[parser->offset + 1] == '/') {
                 parser->offset += 2;
-                while (parser->offset < length && text[parser->offset] != '\n' && text[parser->offset] != '\r')
+                while (parser->offset < length && text[parser->offset] != '\n' &&
+                    (q2 || text[parser->offset] != '\r'))
                     ++parser->offset;
                 continue;
             }
@@ -848,7 +862,7 @@ static bool entity_token_next(entity_parser *parser, bool allow_newline,
         else if (parser->syntax == QA_ENTITY_Q1)
             return fail(error, QA_ERROR_FORMAT, start, "unterminated entity quote");
     } else {
-        while (parser->offset < length && text[parser->offset] > 32) {
+        while (parser->offset < length && !entity_token_space(parser->syntax, text[parser->offset])) {
             uint8_t byte = text[parser->offset];
             if (parser->syntax == QA_ENTITY_Q1 && (byte == '{' || byte == '}')) break;
             ++parser->offset;
@@ -856,6 +870,15 @@ static bool entity_token_next(entity_parser *parser, bool allow_newline,
         out->text = (qa_bytes){text + start, parser->offset - start};
     }
     out->kind = TOKEN_TEXT;
+    if (q2) {
+        size_t limit = parser->syntax == QA_ENTITY_Q2_CLASSIC ? 128u : 512u;
+        if (first == '"') {
+            size_t retained = parser->syntax == QA_ENTITY_Q2_RERELEASE ? limit - 1 : limit;
+            if (out->text.size > retained) out->text.size = retained;
+        } else if (out->text.size >= limit) out->text.size = 0;
+        if (out->text.size && out->text.data[0] == '{') out->kind = TOKEN_OPEN;
+        if (out->text.size && out->text.data[0] == '}') out->kind = TOKEN_CLOSE;
+    }
     if (parser->syntax == QA_ENTITY_Q3) {
         if (out->text.size >= 1024)
             return fail(error, QA_ERROR_FORMAT, start, "Q3 entity token exceeds 1023 bytes");
@@ -881,10 +904,10 @@ static bool entity_pass(qa_bytes text, qa_entity_syntax syntax, qa_entities *res
             entity_token key, value;
             if (!entity_token_next(&parser, true, &key, error)) return false;
             if (key.kind == TOKEN_CLOSE) break;
-            if (key.kind != TOKEN_TEXT && !(syntax == QA_ENTITY_Q3 && key.kind == TOKEN_OPEN))
+            if (key.kind != TOKEN_TEXT && !(syntax != QA_ENTITY_Q1 && key.kind == TOKEN_OPEN))
                 return fail(error, QA_ERROR_FORMAT, key.offset, "expected entity key or closing brace");
             if (!entity_token_next(&parser, syntax != QA_ENTITY_Q3, &value, error)) return false;
-            if (value.kind != TOKEN_TEXT && !(syntax == QA_ENTITY_Q3 && value.kind == TOKEN_OPEN))
+            if (value.kind != TOKEN_TEXT && !(syntax != QA_ENTITY_Q1 && value.kind == TOKEN_OPEN))
                 return fail(error, QA_ERROR_FORMAT, value.offset, "missing entity value");
             if (store) result->properties[properties] = (qa_entity_property){key.text, value.text};
             ++properties;
@@ -900,7 +923,8 @@ static bool entity_pass(qa_bytes text, qa_entity_syntax syntax, qa_entities *res
 static bool entity_count(qa_bytes *text, qa_entity_syntax syntax, qa_entities *out,
                          qa_error *error)
 {
-    if ((text->size > 0 && text->data == NULL) || (syntax != QA_ENTITY_Q1 && syntax != QA_ENTITY_Q3))
+    if ((text->size > 0 && text->data == NULL) ||
+        (syntax != QA_ENTITY_Q1 && syntax != QA_ENTITY_Q3 && !entity_q2_syntax(syntax)))
         return fail(error, QA_ERROR_ARGUMENT, 0, "invalid entity parser request");
     if (text->size > 0) *text = string_span(text->data, text->size);
     return entity_pass(*text, syntax, out, false, error);
@@ -1516,9 +1540,12 @@ bool qa_bsp_validate(const qa_bsp_view *map, qa_error *error)
     for (size_t i = 0; i < QA_BSP_LUMP_COUNT; ++i) counts[i] = qa_bsp_record_count(map,(qa_bsp_lump_kind)i);
     if (map->family == QA_BSP_Q2 && (counts[QA_BSP_MODELS] == 0 || counts[QA_BSP_NODES] == 0 || counts[QA_BSP_LEAVES] == 0))
         return fail(error,QA_ERROR_FORMAT,0,"Q2 map requires models, nodes and leaves");
-    qa_entities entities = {0};
-    qa_bytes text = map->lumps[QA_BSP_ENTITIES].bytes;
-    if (!entity_count(&text,map->family == QA_BSP_Q3 ? QA_ENTITY_Q3 : QA_ENTITY_Q1,&entities,error)) return false;
+    /* Q2 hands entity text to the selected GAME; its edition owns the grammar. */
+    if (map->family != QA_BSP_Q2) {
+        qa_entities entities = {0};
+        qa_bytes text = map->lumps[QA_BSP_ENTITIES].bytes;
+        if (!entity_count(&text,map->family == QA_BSP_Q3 ? QA_ENTITY_Q3 : QA_ENTITY_Q1,&entities,error)) return false;
+    }
     for (size_t i = 0; i < counts[QA_BSP_PLANES]; ++i) {
         qa_bsp_plane plane;
         if (!qa_bsp_read_plane(map,i,&plane,error)) return false;

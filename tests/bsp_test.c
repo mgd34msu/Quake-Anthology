@@ -452,6 +452,42 @@ static void entities(void)
     char oversized[1100];
     memcpy(oversized, "{ key \"", 7); memset(oversized + 7, 'a', 1024); memcpy(oversized + 1031, "\" }", 3);
     CHECK(!qa_entities_parse((qa_bytes){(const uint8_t *)oversized,1034}, QA_ENTITY_Q3, &result, &error));
+    const qa_entity_syntax q2[] = {QA_ENTITY_Q2_CLASSIC, QA_ENTITY_Q2_RERELEASE};
+    for (size_t i = 0; i < sizeof(q2)/sizeof(q2[0]); ++i) {
+        CHECK(qa_entities_parse((qa_bytes){(const uint8_t *)oversized,1034}, q2[i], &result, &error));
+        CHECK(qa_entity_value(&result,0,"key",&value) && value.size==(i?511u:128u));
+        CHECK(value.data==(const uint8_t *)oversized+7);
+        qa_entities_free(&result);
+        memcpy(oversized,"{ key ",6);
+        memset(oversized+6,'a',512);
+        memcpy(oversized+518," }",2);
+        CHECK(qa_entities_parse((qa_bytes){(const uint8_t *)oversized,520},q2[i],&result,&error));
+        CHECK(qa_entity_value(&result,0,"key",&value) && value.size==0);
+        qa_entities_free(&result);
+        memcpy(oversized,"{ key \"",7);
+        memset(oversized+7,'a',1024);
+        memcpy(oversized+1031,"\" }",3);
+    }
+    const char *brace_word="{ key value{suffix }";
+    CHECK(qa_entities_parse((qa_bytes){(const uint8_t *)brace_word,strlen(brace_word)},
+        QA_ENTITY_Q2_CLASSIC,&result,&error));
+    CHECK(qa_entity_value(&result,0,"key",&value) && equal_text(value,"value{suffix"));
+    qa_entities_free(&result);
+    const uint8_t high_byte[]={'{',' ','k','e','y',' ',128,'v',' ','}'};
+    CHECK(qa_entities_parse((qa_bytes){high_byte,sizeof(high_byte)},
+        QA_ENTITY_Q2_CLASSIC,&result,&error));
+    CHECK(qa_entity_value(&result,0,"key",&value) && equal_text(value,"v"));
+    qa_entities_free(&result);
+    CHECK(qa_entities_parse((qa_bytes){high_byte,sizeof(high_byte)},
+        QA_ENTITY_Q2_RERELEASE,&result,&error));
+    CHECK(qa_entity_value(&result,0,"key",&value) && value.size==2 && value.data[0]==128);
+    qa_entities_free(&result);
+    const char *partial_close="{ \"k\" \"v\" \"}";
+    CHECK(qa_entities_parse((qa_bytes){(const uint8_t *)partial_close,strlen(partial_close)},
+        QA_ENTITY_Q2_RERELEASE,&result,&error) && result.count==1);
+    qa_entities_free(&result);
+    CHECK(!qa_entities_parse((qa_bytes){(const uint8_t *)partial_close,strlen(partial_close)},
+        QA_ENTITY_Q1,&result,&error));
     CHECK(qa_entities_parse((qa_bytes){NULL,0}, QA_ENTITY_Q1, &result, &error) && result.count == 0);
     qa_entities_free(&result);
 }

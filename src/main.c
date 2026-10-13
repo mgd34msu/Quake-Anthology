@@ -73,7 +73,8 @@ static int inspect_bsp(const char *name, qa_bytes bytes)
     qa_entities entities = {0};
     if (!qa_bsp_open(bytes, &map, &error))
         return report_error(name, &error);
-    qa_entity_syntax syntax = map.family == QA_BSP_Q3 ? QA_ENTITY_Q3 : QA_ENTITY_Q1;
+    qa_entity_syntax syntax = map.family == QA_BSP_Q3 ? QA_ENTITY_Q3 :
+        map.family == QA_BSP_Q2 ? QA_ENTITY_Q2_CLASSIC : QA_ENTITY_Q1;
     if (!qa_entities_parse(map.lumps[QA_BSP_ENTITIES].bytes, syntax,
                            &entities, &error))
         return report_error(name, &error);

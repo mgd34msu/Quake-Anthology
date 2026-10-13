@@ -243,8 +243,10 @@ bool application_map_prepare_content(qa_application *application,
     if (publication->map_provider == NULL)
         return application_fail(error, QA_ERROR_NOT_FOUND,
                                 "selected entity provider is absent");
-    qa_entity_syntax syntax = publication->map.family == QA_BSP_Q3
-                                  ? QA_ENTITY_Q3 : QA_ENTITY_Q1;
+    qa_ruleset_id entities = publication->map_provider->component.clock.kind;
+    qa_entity_syntax syntax = entities == QA_RULESET_Q2_CLASSIC ? QA_ENTITY_Q2_CLASSIC :
+        entities == QA_RULESET_Q2_RERELEASE ? QA_ENTITY_Q2_RERELEASE :
+        entities == QA_RULESET_Q3 ? QA_ENTITY_Q3 : QA_ENTITY_Q1;
     if (!qa_entities_parse(publication->map.lumps[QA_BSP_ENTITIES].bytes,
                            syntax, &publication->entities, error))
         return false;

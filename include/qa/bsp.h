@@ -248,7 +248,9 @@ bool qa_bsp_visibility(const qa_bsp_view *map, int32_t selector, bool phs,
                        uint32_t fallback_clusters, uint8_t *output,
                        size_t capacity, size_t *written, qa_error *error);
 
-typedef enum qa_entity_syntax { QA_ENTITY_Q1, QA_ENTITY_Q3 } qa_entity_syntax;
+typedef enum qa_entity_syntax {
+    QA_ENTITY_Q1, QA_ENTITY_Q3, QA_ENTITY_Q2_CLASSIC, QA_ENTITY_Q2_RERELEASE
+} qa_entity_syntax;
 typedef struct qa_entity_property { qa_bytes key, value; } qa_entity_property;
 typedef struct qa_entity_record { size_t first_property, property_count; } qa_entity_record;
 typedef struct qa_entities {
