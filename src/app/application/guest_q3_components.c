@@ -410,6 +410,8 @@ bool application_q3_components_content_visit(const application_q3_components *ow
     for(size_t i=0;i<owner->count;++i) {
         const component_game_row *row=owner->rows[i];
         if(!visitor->catalog(visitor->context,row->provider->product_catalog,e)||!visitor->view(visitor->context,row->publication.content,e)) return false;
+        if(visitor->writable && row->write_resolver &&
+            !visitor->writable(visitor->context,row->write_resolver,e)) return false;
     }
     return true;
 }

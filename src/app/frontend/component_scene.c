@@ -693,7 +693,7 @@ bool frontend_component_scene_prepare(void *context,const application_q3_compone
         !request->publication_read || !request->source.current || !request->source.actor ||
         request->physical_seat>=f->options.seats || f->options.dedicated || f->capture || f->resource_inventory ||
         request->restoring!=f->source_restoring || request->host->role!=QA_QVM_CGAME ||
-        request->host->mounts!=request->content || !request->host->cvars || !request->host->console)
+        !request->host->mounts || !request->host->cvars || !request->host->console)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Component renderer needs its actual private CGAME constructor receipt");
     if (request->origin==APPLICATION_Q3_COMPONENT_SCENE_LOCAL) {
         if (!request->descriptor || request->recipe || request->recipe_provider)
@@ -746,7 +746,7 @@ bool frontend_component_scene_prepare(void *context,const application_q3_compone
         constructor_policy(&owner->restored_policy,&saved->policy); owner->has_restore_policy=true;
         free(saved); saved=NULL;
     } else {
-        owner->files=qa_vfs_clone(request->content,e);
+        owner->files=qa_vfs_clone(request->host->mounts,e);
         if (owner->files) { owner->pool=qa_vfs_resources(owner->files); qa_resource_pool_retain(owner->pool); }
     }
     if (!request->restoring && !frontend_q3_source_color_ensure(f,e)) return false;

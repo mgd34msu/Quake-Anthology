@@ -3,6 +3,7 @@
 
 #include "qa/application.h"
 #include "qa/source_save.h"
+#include "qa/catalog_write.h"
 
 typedef struct qa_application_content_graph qa_application_content_graph;
 typedef struct qa_application_content_visitor {
@@ -10,6 +11,7 @@ typedef struct qa_application_content_visitor {
     bool (*pool)(void *, const qa_resource_pool *, qa_error *);
     bool (*catalog)(void *, const qa_catalog *, qa_error *);
     bool (*view)(void *, const qa_vfs *, qa_error *);
+    bool (*writable)(void *, const qa_catalog_write_resolver *, qa_error *);
 } qa_application_content_visitor;
 typedef bool (*qa_application_content_visit_fn)(void *, const qa_application *,
     const qa_application_content_visitor *, qa_error *);

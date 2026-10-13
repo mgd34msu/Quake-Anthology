@@ -492,6 +492,7 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
     }
     if (!application_native_process_prepare(provider->application, provider->launch,
         provider->owner, provider->owner, &artifact, 1, 0, &module.image,
+        NULL, NULL,
         process_current, engine, capture, lower_recipe, &engine->process, error)) return false;
     instance.process = &engine->process.process;
     bool ok;

@@ -748,16 +748,18 @@ static bool prepare(void *context, const qa_application_native_q3_module_prepara
     }
     qa_catalog *catalog = qa_launch_instance_catalog(request->source->descriptor);
     qa_product_id product = request->source->descriptor->selection.product;
-    if (ok && qa_catalog_product_write_root(catalog, product))
-        ok = qa_catalog_write_resolver_create(catalog, product, &lease->write_resolver, error);
+    if (ok && !host->write_view.root && qa_catalog_product_write_root(catalog, product))
+        ok = qa_catalog_write_resolver_create(catalog, product, NULL, host->mounts,
+            &lease->write_resolver, error);
     if (!ok) return false;
     host->client = lease->network; host->keys = frontend_key_profile_state(lease->keys); host->seat = input(owner);
     if (request->role == QA_QVM_UI) {
         host->client.ui_state_context = lease; host->client.ui_state = ui_state;
     }
     host->game_directory = frontend_key_profile_game_directory(lease->keys);
-    host->write_view = (qa_q3_host_write_view){.root = qa_catalog_write_resolver_root(lease->write_resolver),
-        .resolver = qa_catalog_write_resolver_services(lease->write_resolver)};
+    if (lease->write_resolver)
+        host->write_view = (qa_q3_host_write_view){.root = qa_catalog_write_resolver_root(lease->write_resolver),
+            .resolver = qa_catalog_write_resolver_services(lease->write_resolver)};
     host->input = (qa_q3_host_input_services){&lease->namespaces, frontend_config_host_bindings};
     host->cvar_entry = (qa_q3_host_cvar_entry_services){&lease->namespaces, frontend_config_host_cvar_entered};
     host->console_field = qa_seat_console_field(f->seats[physical_seat(owner)].console, false);

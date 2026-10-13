@@ -21,13 +21,15 @@ typedef struct content_catalog {
 typedef enum content_view_kind {
     CONTENT_VIEW_UNUSED, CONTENT_VIEW_CATALOG, CONTENT_VIEW_PRODUCT,
     CONTENT_VIEW_LAUNCH, CONTENT_VIEW_QW_CONTENT, CONTENT_VIEW_QW_BASE,
-    CONTENT_VIEW_QW_AUTHORITY
+    CONTENT_VIEW_QW_AUTHORITY, CONTENT_VIEW_COMPONENT
 } content_view_kind;
 typedef struct content_view {
     qa_vfs *value;
     uint64_t pool, catalog, source_catalog, source;
     qa_catalog_mount_selection selection;
     qa_product_id product;
+    const char *component;
+    qa_catalog_write_resolver *write_resolver;
     content_view_kind kind;
     bool owned, needed;
 } content_view;
@@ -191,6 +193,26 @@ static bool add_catalog(void *opaque, const qa_catalog *catalog, qa_error *error
     if (row->catalog) return fail(error, QA_ERROR_FORMAT, "Two catalogs claim the same private VFS destructor");
     row->catalog = id; row->kind=CONTENT_VIEW_CATALOG;
     if (row->owned) { qa_vfs_destroy(row->value); row->owned=false; }
+    return true;
+}
+static bool add_writable(void *opaque, const qa_catalog_write_resolver *resolver, qa_error *error)
+{
+    qa_application_content_graph *g = opaque;
+    qa_catalog_write_view description = qa_catalog_write_resolver_view(resolver);
+    if (!description.files) return true;
+    if (!add_catalog(g, description.catalog, error) ||
+        !add_view(g, description.installed, error) || !add_view(g, description.files, error)) return false;
+    if (!description.component) return true;
+    uint64_t base = qa_application_content_view_id(g, description.installed);
+    uint64_t id = qa_application_content_view_id(g, description.files);
+    content_view *view = g->views + id - 1;
+    if (view->kind == CONTENT_VIEW_COMPONENT) return true;
+    view->component = copy_text(description.component, error);
+    if (!view->component) return false;
+    view->kind = CONTENT_VIEW_COMPONENT;
+    view->source_catalog = qa_application_content_catalog_id(g, description.catalog);
+    view->source = base;
+    view->product = description.product;
     return true;
 }
 static bool reference_add(qa_application_content_graph *g, uint64_t pool,
@@ -403,7 +425,8 @@ bool application_save_content_collect(qa_application *app, qa_application_conten
             }
         }
     }
-    const qa_application_content_visitor visitor = {.context = g, .pool = add_pool, .catalog = add_catalog, .view = add_view};
+    const qa_application_content_visitor visitor = {.context = g, .pool = add_pool,
+        .catalog = add_catalog, .view = add_view, .writable = add_writable};
     if (ok) ok = qa_map_sidecars_content_visit(app->map_sidecars, &visitor, error);
     if (ok) ok = qa_application_q3_content_visit(app, &visitor, error);
     if (ok) ok = application_q3_components_content_visit(app->components,&visitor,error);
@@ -452,6 +475,8 @@ void application_save_content_destroy(qa_application_content_graph *g)
     }
     for (size_t i = 0; g->views && i < g->view_count; ++i) {
         if (g->views[i].owned) qa_vfs_destroy(g->views[i].value);
+        qa_catalog_write_resolver_destroy(g->views[i].write_resolver);
+        free((void *)g->views[i].component);
         free((void *)g->views[i].selection.additional);
     }
     for (size_t i = 0; g->pools && i < g->pool_count; ++i) {
@@ -788,6 +813,14 @@ static bool prepare_manifest(qa_application_content_graph *g,qa_error *error)
                 memcpy(copy,source->selection.additional,bytes); v->selection.additional=copy;
             }
         }
+        for (size_t j=0; !v->kind && j<g->view_count; ++j) {
+            const content_view *source=g->views+j;
+            if (source->kind!=CONTENT_VIEW_COMPONENT || !qa_vfs_lookup_equal(v->value,source->value)) continue;
+            v->component=copy_text(source->component,error);
+            if (!v->component) return false;
+            v->kind=CONTENT_VIEW_COMPONENT; v->source_catalog=source->source_catalog;
+            v->source=source->source; v->product=source->product;
+        }
         if (!v->kind) return fail(error,QA_ERROR_UNSUPPORTED,"Used content view has no actual product or launch constructor");
     }
     /* Register the products before their table is written. */
@@ -803,7 +836,8 @@ static bool prepare_manifest(qa_application_content_graph *g,qa_error *error)
     }
     for (size_t i=0;i<g->view_count;++i) {
         content_view *v=g->views+i; uint32_t handle=0;
-        if (v->kind==CONTENT_VIEW_PRODUCT && !product_add(g,v->source_catalog,v->product,&handle,error)) return false;
+        if ((v->kind==CONTENT_VIEW_PRODUCT || v->kind==CONTENT_VIEW_COMPONENT) &&
+            !product_add(g,v->source_catalog,v->product,&handle,error)) return false;
         if (v->kind==CONTENT_VIEW_LAUNCH) {
             if (!product_add(g,v->source_catalog,v->selection.assets,&handle,error) ||
                 !product_add(g,v->source_catalog,v->selection.geometry,&handle,error) ||
@@ -837,13 +871,15 @@ static bool manifest_fields(qa_source_save_io *io,qa_application_content_graph *
     for (size_t i=0;i<g->view_count;++i) {
         content_view *v=g->views+i;
         uint32_t kind=v->needed?(uint32_t)v->kind:CONTENT_VIEW_UNUSED;
-        if (!qa_source_save_u32(io,&kind) || kind>CONTENT_VIEW_QW_AUTHORITY) return false;
+        if (!qa_source_save_u32(io,&kind) || kind>CONTENT_VIEW_COMPONENT) return false;
         if (io->direction==QA_SOURCE_SAVE_READ) {
             v->kind=(content_view_kind)kind; v->needed=kind!=CONTENT_VIEW_UNUSED;
         }
         if (!kind) continue;
         FIELD(u64,v,pool); FIELD(u64,v,catalog); FIELD(u64,v,source_catalog);
         if (kind==CONTENT_VIEW_PRODUCT && !product_field(io,g,v->source_catalog,&v->product)) return false;
+        if (kind==CONTENT_VIEW_COMPONENT &&
+            (!product_field(io,g,v->source_catalog,&v->product) || !text_field(io,&v->component))) return false;
         if (kind==CONTENT_VIEW_LAUNCH && !selection_fields(io,g,v->source_catalog,&v->selection)) return false;
         if (kind>=CONTENT_VIEW_QW_CONTENT) FIELD(u64,v,source);
     }
@@ -1031,6 +1067,16 @@ static bool resolve_manifest(qa_application_content_graph *g,const qa_applicatio
         }
     }
     for (size_t i=0;i<g->source_count;++i) if (!open_source(g,g->sources+i,options,error)) return false;
+    for (size_t i=0;i<g->view_count;++i) {
+        content_view *v=g->views+i;
+        if (v->kind!=CONTENT_VIEW_COMPONENT) continue;
+        qa_catalog *catalog=qa_application_content_catalog(g,v->source_catalog);
+        qa_vfs *base=qa_application_content_view(g,v->source);
+        v->product=current_product(g,v->source_catalog,v->product);
+        if (!qa_catalog_write_resolver_create(catalog,v->product,v->component,base,
+            &v->write_resolver,error)) return false;
+        v->value=qa_catalog_write_resolver_files(v->write_resolver);
+    }
     for (size_t i=0;i<g->reference_count;++i) {
         content_reference *r=g->references+i;
         qa_vfs *view=qa_application_content_view(g,r->view);

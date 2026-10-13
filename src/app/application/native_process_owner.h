@@ -1,11 +1,13 @@
 #ifndef QA_APPLICATION_NATIVE_PROCESS_OWNER_H
 #define QA_APPLICATION_NATIVE_PROCESS_OWNER_H
 #include "internal.h"
+#include "qa/catalog_write.h"
 
 typedef struct application_native_process_owner {
     qa_native_process_platform *platform;
     qa_native_process_resources *resources;
     qa_native_process_options process;
+    qa_catalog_write_resolver *write_resolver;
 } application_native_process_owner;
 typedef struct application_native_process_artifact {
     const qa_resource *resource;
@@ -15,7 +17,7 @@ typedef struct application_native_process_artifact {
 
 bool application_native_process_prepare(qa_application *, const qa_launch_instance *,
     qa_actor_owner, uint64_t, const application_native_process_artifact *, size_t,
-    size_t, const qa_native_image_info *,
+    size_t, const qa_native_image_info *, const qa_vfs *, qa_fs_root *,
     bool (*)(void *, const qa_launch_instance *, qa_actor_owner, uint64_t, qa_error *),
     void *, const qa_native_process_resources *, qa_bytes, application_native_process_owner *, qa_error *);
 bool application_native_process_release(application_native_process_owner *, qa_error *);

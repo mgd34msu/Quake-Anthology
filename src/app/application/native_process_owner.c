@@ -73,7 +73,7 @@ failed:
 bool application_native_process_prepare(qa_application *application,
     const qa_launch_instance *descriptor, qa_actor_owner receiver, uint64_t service_owner,
     const application_native_process_artifact *artifacts, size_t count, size_t primary,
-    const qa_native_image_info *image,
+    const qa_native_image_info *image, const qa_vfs *files, qa_fs_root *write_root,
     bool (*current)(void *, const qa_launch_instance *, qa_actor_owner, uint64_t, qa_error *),
     void *context, const qa_native_process_resources *capture, qa_bytes recipe,
     application_native_process_owner *owner, qa_error *error)
@@ -93,6 +93,17 @@ bool application_native_process_prepare(qa_application *application,
         binding_release(authority);
         return rebound && qa_native_process_resources_options_read(owner->resources, &owner->process, error);
     }
+    if (!files && !application->baseline_write_root) {
+        if (!owner->write_resolver &&
+            !qa_catalog_write_resolver_create(qa_launch_instance_catalog(descriptor), descriptor->selection.product,
+                descriptor->selection.component, descriptor->content, &owner->write_resolver, error)) {
+            binding_release(authority); return false;
+        }
+        files = qa_catalog_write_resolver_files(owner->write_resolver);
+        write_root = qa_catalog_write_resolver_root(owner->write_resolver);
+    }
+    if (!files) files = descriptor->content;
+    if (application->baseline_write_root) write_root = application->baseline_write_root;
     qa_native_process_resource_policy policy = application->native_process_policy;
     bool native_target = image->target.arch == QA_NATIVE_ARCH_X86_64 &&
         image->target.pointer_bytes == 8 &&
@@ -129,28 +140,25 @@ bool application_native_process_prepare(qa_application *application,
     qa_native_process_resource_root *roots = NULL;
     bool created = false;
     if (admitted_count != count) goto cleanup;
-    size_t mounts = qa_vfs_mount_count(descriptor->content);
+    size_t mounts = qa_vfs_mount_count(files);
     if (mounts == SIZE_MAX || mounts + 1 > SIZE_MAX / sizeof(qa_native_process_resource_root)) {
         application_fail(error, QA_ERROR_MEMORY, "Native directory authority inventory overflows"); goto cleanup;
     }
     roots = calloc(mounts + 1, sizeof(*roots));
     if (!roots) { application_fail(error, QA_ERROR_MEMORY, "Holding actual native directory authorities"); goto cleanup; }
-    qa_catalog *catalog = qa_launch_instance_catalog(descriptor);
-    qa_fs_root *writable = application->baseline_write_root ? application->baseline_write_root :
-        qa_catalog_product_write_root(catalog, descriptor->selection.product);
     bool selected = false;
     for (size_t i = 0; i < mounts; ++i) {
         qa_vfs_mount_info mount;
-        if (!qa_vfs_mount_at(descriptor->content, i, &mount) || mount.is_archive) continue;
-        qa_fs_root *root = qa_vfs_mount_root(descriptor->content, mount.id);
+        if (!qa_vfs_mount_at(files, i, &mount) || mount.is_archive) continue;
+        qa_fs_root *root = qa_vfs_mount_root(files, mount.id);
         if (!root) continue;
-        bool write = writable && qa_fs_root_same_object(root, writable);
+        bool write = write_root && qa_fs_root_same_object(root, write_root);
         roots[options.root_count++] = (qa_native_process_resource_root){"", root,
             QA_FS_OPENED_READ | (write ? QA_FS_OPENED_WRITE : 0u)};
         selected |= write;
     }
-    if (writable && !selected)
-        roots[options.root_count++] = (qa_native_process_resource_root){"", writable,
+    if (write_root && !selected)
+        roots[options.root_count++] = (qa_native_process_resource_root){"", write_root,
             QA_FS_OPENED_READ | QA_FS_OPENED_WRITE};
     options.roots = roots;
     created = recipe.size ?
@@ -169,6 +177,8 @@ bool application_native_process_release(application_native_process_owner *owner,
     if (!owner) return true;
     if (!qa_native_process_resources_release(&owner->resources, error)) return false;
     if (!qa_native_process_platform_release(&owner->platform, error)) return false;
+    qa_catalog_write_resolver_destroy(owner->write_resolver);
+    owner->write_resolver = NULL;
     owner->process = (qa_native_process_options){0};
     return true;
 }

@@ -642,6 +642,10 @@ bool qa_application_q3_content_visit(const qa_application *app,
                 !visitor->catalog(visitor->context, qa_launch_instance_catalog(descriptor), error) ||
                 !visitor->view(visitor->context, artifact->view, error)) return false;
         }
+        if (visitor->writable)
+            for (q3g_role *role = engine->roles; role; role = role->next)
+                if (role->write_resolver &&
+                    !visitor->writable(visitor->context, role->write_resolver, error)) return false;
     }
     return true;
 }
