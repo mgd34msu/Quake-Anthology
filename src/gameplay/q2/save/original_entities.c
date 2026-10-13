@@ -229,6 +229,24 @@ static bool read_entity(qa_q2_game *g, q2_original_record_io *io, q2_actor *a)
     return true;
 }
 
+static bool entity_field_store(qa_q2_game *g, q2_original_record_io *io,
+    q2_entity_state *s, qa_string_id key, qa_string_id value)
+{
+    size_t i;
+    for (i = 0; i < s->field_count; ++i)
+        if (s->fields[i].key == key) break;
+    if (i == s->field_count) {
+        if (!value) return true;
+        q2_field *fields = qa_arena_grow(&g->entity_fields, s->fields,
+            i * sizeof(*fields), (i + 1) * sizeof(*fields), _Alignof(q2_field), io->error);
+        if (!fields) return false;
+        s->fields = fields;
+        s->field_count++;
+    }
+    s->fields[i] = (q2_field){key, value};
+    return true;
+}
+
 static bool entity_strings(qa_q2_game *g, q2_original_record_io *io, q2_entity_state *s)
 {
     if (!io->reading) return true; /* The common edict owns the single string tail. */
@@ -246,22 +264,63 @@ static bool entity_strings(qa_q2_game *g, q2_original_record_io *io, q2_entity_s
         qa_string_id key;
         if (!qa_strings_intern(qa_session_strings(g->services.session),
             (qa_bytes){(const uint8_t *)names[i], strlen(names[i])}, &key, io->error)) return false;
-        size_t j;
-        for (j = 0; j < s->field_count; ++j)
-            if (s->fields[j].key == key) break;
-        if (j == s->field_count) {
-            if (!value) continue;
-            q2_field *fields = qa_arena_grow(&g->entity_fields, s->fields,
-                j * sizeof(*fields), (j + 1) * sizeof(*fields), _Alignof(q2_field), io->error);
-            if (!fields) {
-                qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Restoring original Q2 target fields");
-                return false;
-            }
-            s->fields = fields;
-            s->field_count++;
-        }
-        s->fields[j] = (q2_field){key, value};
+        if (!entity_field_store(g, io, s, key, value)) return false;
     }
+    return true;
+}
+
+static bool entity_fog(qa_q2_game *g, q2_original_record_io *io, q2_entity_state *s)
+{
+    if (io->edition != QA_RULESET_Q2_RERELEASE) return true;
+    static const struct {
+        const char *name[2];
+        qa_target_key key[2];
+        size_t offset;
+        q2_original_field_kind kind;
+    } fields[] = {
+#define FOG(member, name, key, kind) \
+        {{name, name "_off"}, {QA_TARGET_KEY_##key, QA_TARGET_KEY_##key##_OFF}, \
+            offsetof(qa_q2_fog, member), Q2_ORIGINAL_##kind}
+        FOG(color, "fog.color", FOG_COLOR, VECTOR),
+        FOG(density, "fog.density", FOG_DENSITY, F32),
+        FOG(sky_factor, "fog.sky_factor", FOG_SKY_FACTOR, F32),
+        FOG(falloff, "heightfog.falloff", HEIGHTFOG_FALLOFF, F32),
+        FOG(height_density, "heightfog.density", HEIGHTFOG_DENSITY, F32),
+        FOG(start_color, "heightfog.start_color", HEIGHTFOG_START_COLOR, VECTOR),
+        FOG(start_distance, "heightfog.start_dist", HEIGHTFOG_START_DIST, F32),
+        FOG(end_color, "heightfog.end_color", HEIGHTFOG_END_COLOR, VECTOR),
+        FOG(end_distance, "heightfog.end_dist", HEIGHTFOG_END_DIST, F32)
+#undef FOG
+    };
+    qa_q2_fog fog[2] = {0};
+    for (size_t i = 0; i < sizeof(fields) / sizeof(*fields); ++i)
+        for (unsigned off = 0; off < 2; ++off) {
+            qa_string_id key = g->field_keys[fields[i].key[off]];
+            void *value = (uint8_t *)&fog[off] + fields[i].offset;
+            if (!io->reading) {
+                if (fields[i].kind == Q2_ORIGINAL_VECTOR)
+                    *(qa_vec3 *)value = q2_field_vec(g, s, key, qa_v3(0, 0, 0));
+                else *(float *)value = q2_field_float(g, s, key, 0);
+            }
+            if (!q2_original_scalar(io, fields[i].name[off], fields[i].kind,
+                UINT16_MAX, UINT16_MAX, UINT16_MAX, value)) return false;
+            if (io->reading) {
+                qa_string_id text = QA_STRING_NONE;
+                char number[128];
+                int length = 0;
+                if (fields[i].kind == Q2_ORIGINAL_VECTOR) {
+                    qa_vec3 vector = *(qa_vec3 *)value;
+                    if (vector.x || vector.y || vector.z)
+                        length = snprintf(number, sizeof(number), "%.9g %.9g %.9g",
+                            (double)vector.x, (double)vector.y, (double)vector.z);
+                } else if (*(float *)value)
+                    length = snprintf(number, sizeof(number), "%.9g", (double)*(float *)value);
+                if ((length && !qa_strings_intern(qa_session_strings(g->services.session),
+                    (qa_bytes){(const uint8_t *)number, (size_t)length}, &text, io->error)) ||
+                    !entity_field_store(g, io, s, key, text)) return false;
+            }
+        }
+    if (io->reading && s->kind == Q2E_WORLD) g->entity_runtime->world_fog = fog[0];
     return true;
 }
 
@@ -973,7 +1032,7 @@ bool q2_original_entity_record(qa_q2_game *g, q2_original_record_io *io, q2_acto
         !scalar(io, "last_move_time", Q2_ORIGINAL_TIME, 476, &s->sound_ns) ||
         (!driver && !entity_think(g, io, s)) || !entity_motion(g, io, a) || !entity_curve(g, io, s) ||
         !entity_turret(g, io, s) ||
-        !entity_effects(g, io, s, engine) || !entity_q64(io, a) ||
+        !entity_effects(g, io, s, engine) || !entity_fog(g, io, s) || !entity_q64(io, a) ||
         (!driver && !entity_callbacks(g, io, a)) || !entity_references(g, io, s)) return false;
     if (io->reading) {
         s->damage = (float)damage;

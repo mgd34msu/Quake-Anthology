@@ -742,10 +742,58 @@ bool q2_original_resource(qa_q2_game *g, q2_original_record_io *io,
     return true;
 }
 
+static bool persistent_fog_record(q2_original_record_io *io, qa_q2_player_state *player)
+{
+    if (io->edition != QA_RULESET_Q2_RERELEASE) return true;
+    qa_q2_fog fog = player->rule.wanted_fog;
+    float wanted[5] = {fog.density, fog.color.x, fog.color.y, fog.color.z, fog.sky_factor};
+    float start[4] = {fog.start_color.x, fog.start_color.y, fog.start_color.z, fog.start_distance};
+    float end[4] = {fog.end_color.x, fog.end_color.y, fog.end_color.z, fog.end_distance};
+    const q2_original_field wanted_field = {"wanted_fog", 0, 5, Q2_ORIGINAL_F32,
+        {UINT16_MAX, UINT16_MAX, UINT16_MAX}};
+    const q2_original_field start_field = {"start", 0, 4, Q2_ORIGINAL_F32,
+        {UINT16_MAX, UINT16_MAX, UINT16_MAX}};
+    const q2_original_field end_field = {"end", 0, 4, Q2_ORIGINAL_F32,
+        {UINT16_MAX, UINT16_MAX, UINT16_MAX}};
+    if (!q2_original_value(io, &wanted_field, wanted)) return false;
+    q2_original_record_io height;
+    bool present;
+    if (!q2_original_object_begin(io, "wanted_heightfog", &height, &present)) return false;
+    if (present) {
+        if (!q2_original_value(&height, &start_field, start) ||
+            !q2_original_value(&height, &end_field, end) ||
+            !q2_original_scalar(&height, "falloff", Q2_ORIGINAL_F32,
+                UINT16_MAX, UINT16_MAX, UINT16_MAX, &fog.falloff) ||
+            !q2_original_scalar(&height, "density", Q2_ORIGINAL_F32,
+                UINT16_MAX, UINT16_MAX, UINT16_MAX, &fog.height_density)) return false;
+    } else {
+        memset(start, 0, sizeof(start));
+        memset(end, 0, sizeof(end));
+        fog.falloff = fog.height_density = 0;
+    }
+    if (!q2_original_object_end(io)) return false;
+    if (io->reading) {
+        fog.density = wanted[0];
+        fog.color = qa_v3(wanted[1], wanted[2], wanted[3]);
+        fog.sky_factor = wanted[4];
+        fog.start_color = qa_v3(start[0], start[1], start[2]);
+        fog.start_distance = start[3];
+        fog.end_color = qa_v3(end[0], end[1], end[2]);
+        fog.end_distance = end[3];
+        player->rule.wanted_fog = fog;
+        /* The original saves only wanted fog; the next ClientEndServerFrame
+         * sends it immediately rather than resuming a client-side fade. */
+        player->rule.fog = (qa_q2_fog){0};
+        player->rule.fog_transition = 0;
+    }
+    return true;
+}
+
 static bool persistent_record(qa_q2_game *g, q2_original_record_io *io,
     qa_q2_player_state *player, qa_q2_player_carry *carry, bool coop, qa_q2_weapon *last_weapon)
 {
-    if (!q2_original_record(io, Q2_ORIGINAL_PERSISTENT, player)) return false;
+    if (!q2_original_record(io, Q2_ORIGINAL_PERSISTENT, player) ||
+        (!coop && !persistent_fog_record(io, player))) return false;
     int32_t health = 0, maximum_health = 0;
     if (!io->reading) {
         if (!isfinite(carry->health) || trunc(carry->health) != carry->health ||
