@@ -115,7 +115,7 @@ static bool apply_shadow_lights(qa_scene_draw *draw, const qa_scene_model_input 
                                  qa_scene_frame *frame, qa_error *error) {
     if (!input->shadow_light_count || !input->shadow_lights || input->family != QA_GAME_Q2 ||
         input->view_model || (input->flags & (4u | 8u | 16u | 1024u | 2048u | 4096u | 65536u | 131072u)) ||
-        (input->infrared && (input->flags & 32768u))) return true;
+        (!input->view.software && input->view.infrared && (input->flags & 32768u))) return true;
     if (input->shadow_light_count > SIZE_MAX / sizeof(qa_scene_shadow_light)) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "model shadow light span is too large"); return false;
     }
@@ -315,6 +315,9 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
     if (!recipient_image(model, input, &draw.textures[0], error)) return false;
     draw.texture_count = 1;
     draw.environment = QA_TEXTURE_MODULATE;
+    draw.q2_infrared = input->family == QA_GAME_Q2 && input->view.infrared &&
+        (input->flags & 32768u) && draw.textures[0]->indexed.indices.data && !shell_image && !input->shadow_only &&
+        (!(input->flags & 32u) || input->color.w > .66);
     qa_scene_state_default(&draw.state);
     draw.state.cull = model_cull(model, input);
     bool transparent = input->color.w < 1;
@@ -336,6 +339,7 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
         draw.vertex_inputs = (qa_scene_vertex_inputs){.constant_color = true,
             .color = {1, 1, 1, input->color.w}};
         draw.textures[0] = qa_scene_image_at_time(image->fullbright, input->seconds);
+        draw.q2_infrared = false;
         if (!recipient_image(model, input, &draw.textures[0], error)) return false;
         draw.state.depth_write = false;
         draw.state.depth_test = transparent ? QA_DEPTH_LEQUAL : QA_DEPTH_EQUAL;

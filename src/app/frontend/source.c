@@ -47,6 +47,7 @@
 #include "selected_effects.h"
 #include "source_effects.h"
 #include "particle_delivery.h"
+#include "particle_clock.h"
 #include "config_store.h"
 #include "shared_resource_policy.h"
 #include "shared_register.h"
@@ -596,6 +597,18 @@ bool frontend_source_prepare_scene(qa_frontend *frontend,qa_application *applica
             product && product->family == QA_GAME_Q3 ? QA_GAME_Q3 : QA_GAME_Q1;
     }
     options->split_screen = frontend->options.seats > 1;
+    options->world.view.software = frontend->cpu != NULL;
+    const frontend_seat *player = frontend->seats + seat;
+    qa_actor_id actor;
+    if (frontend_seat_actor_read(frontend, seat, &actor)) {
+        qa_application_native_q2_player_sample sample = {0};
+        uint32_t old_frame = 0; float back_lerp = 0; bool found = false;
+        if (!frontend_particle_q2_player_sample(frontend, seat, actor, &sample, &old_frame,
+                &back_lerp, &found, error)) return false;
+        if (found) options->world.view.infrared = (sample.render_flags & 4u) != 0;
+        else if (player->q2_view_ready && qa_actor_id_equal(player->q2_actor, actor))
+            options->world.view.infrared = player->q2_view.infrared;
+    }
     if (!frontend_tools_camera(frontend,seat,options->world.view.clip_enabled,&options->world.view,error) ||
         (!options->world.no_world && !frontend_event_world(frontend,seat,&options->world,error))) return false;
     if (!options->world.no_world && options->world_family==QA_GAME_Q3 && frontend->q1_sky) {

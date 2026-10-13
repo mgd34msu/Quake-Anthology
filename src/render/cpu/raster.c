@@ -1509,8 +1509,14 @@ static bool cpu_draw_impl(qa_cpu_renderer *renderer, const qa_scene_draw *input,
     if (resolved.textures[i] && resolved.textures[i]->streamed &&
         !cpu_stream_image_admit(renderer, resolved.textures[i], error)) return false;
   for (size_t i = 0; i < resolved.texture_count; ++i)
-    if (!cpu_sampler_prepare(renderer, resolved.textures[i], &samplers[i]))
+    if (!cpu_sampler_prepare(renderer, resolved.textures[i], i == 0 && draw->q2_infrared, &samplers[i]))
       resolved.textures[i] = NULL;
+  if (resolved.texture_count && samplers[0].q2_infrared) {
+    resolved.state.blend_source = QA_BLEND_ONE;
+    resolved.state.blend_destination = QA_BLEND_ZERO;
+    resolved.state.depth_write = true;
+    renderer->pipeline = resolved.state;
+  }
   if (mode == QA_RENDER_PRIMITIVES_NONE) return true;
   if (draw->brush.present && draw->brush.chain) {
     for (const qa_scene_brush_surface *brush = draw->brush.chain; brush; brush = brush->next) {

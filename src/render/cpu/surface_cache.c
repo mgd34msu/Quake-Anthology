@@ -382,9 +382,9 @@ bool cpu_surface_cache_prepare(qa_cpu_renderer *renderer,
                           4 / height)
     return false;
   cpu_sampler base, light = {0};
-  if (!cpu_sampler_prepare(renderer, draw->textures[0], &base) ||
+  if (!cpu_sampler_prepare(renderer, draw->textures[0], false, &base) ||
       (draw->texture_count == 2 &&
-       !cpu_sampler_prepare(renderer, draw->textures[1], &light)))
+       !cpu_sampler_prepare(renderer, draw->textures[1], false, &light)))
     return false;
   /* Build from the selected Source texture mip, not a screen-pixel sampler.
    * Filtering of the finished lit surface belongs to the span consumer. */

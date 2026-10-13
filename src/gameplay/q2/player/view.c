@@ -182,7 +182,7 @@ static bool effects(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
     q2_client_state *s = a->client;
     bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     s->rule.visual.effects = 0;
-    s->rule.visual.render_flags = g->options.rules == QA_RULESET_Q2_RERELEASE ? 32768 : 0;
+    s->rule.visual.render_flags = rr || g->options.product == QA_Q2_ROGUE ? 32768 : 0;
     if (combat->health > 0) {
         if (s->rule.power_armor_ns > g->now_ns) {
             if (combat->armor.powered.kind == QA_POWER_SCREEN)
@@ -397,6 +397,7 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
         uint64_t remaining = powers.ir_until_ns - g->now_ns;
         bool active = rr ? remaining > 3 * Q2_NS || (remaining / Q2_MS) % 1000 < 500
                          : flashing(powers.ir_until_ns, g->now_ns);
+        view.infrared = active;
         if (active)
             view.blend = blend_add(view.blend, qa_v3(1, 0, 0), .2f);
     }

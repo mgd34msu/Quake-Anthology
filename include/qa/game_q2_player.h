@@ -47,8 +47,12 @@ typedef struct qa_q2_player_view {
     int32_t hit_marker_damage;
     qa_item_id selected_item, timer_item;
     int timer_seconds;
-    bool underwater, spectator;
+    bool underwater, spectator, infrared;
 } qa_q2_player_view;
+static inline uint32_t qa_q2_player_view_flags(const qa_q2_player_view *view)
+{
+    return (view->underwater ? 1u : 0u) | (view->infrared ? 4u : 0u);
+}
 typedef struct qa_q2_score_row {
     uint32_t slot;
     const char *name;

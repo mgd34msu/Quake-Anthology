@@ -103,7 +103,8 @@ bool qa_application_native_q2_presentation_player(qa_application *app,
                 .gun_rate=weapon.gun_rate,
                 .movement_type=source->edition==QA_RULESET_Q2_CLASSIC ? movement.state.data.q2.type : movement.state.data.q2r.type,
                 .movement_flags=source->edition==QA_RULESET_Q2_CLASSIC ? movement.state.data.q2.flags : movement.state.data.q2r.flags,
-                .view_height=movement.view_height,.edition=source->edition,.present=true};
+                .view_height=movement.view_height,.render_flags=qa_q2_player_view_flags(&view.view),
+                .edition=source->edition,.present=true};
         }
     }
     if (!qa_vec_finite(value.origin) || !qa_vec_finite(value.view_angles) ||

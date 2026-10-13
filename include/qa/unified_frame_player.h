@@ -15,7 +15,7 @@ typedef struct qa_unified_player_view {
     float view_height, field_of_view;
     float blend[4], damage_blend[4];
     bool has_field_of_view, has_client_view_offset_delta, has_blend, has_damage_blend;
-    bool foreign_character_death, has_pitch_drift, grounded, pitch_drift_disabled;
+    bool foreign_character_death, has_pitch_drift, grounded, pitch_drift_disabled, infrared;
     float ideal_pitch;
 } qa_unified_player_view;
 typedef struct qa_unified_client_presentation {

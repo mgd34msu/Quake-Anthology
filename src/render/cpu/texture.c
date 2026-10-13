@@ -31,6 +31,24 @@ static int64_t texel_axis(qa_scene_wrap wrap, uint32_t extent,
   return coordinate < 0 ? coordinate + extent
          : coordinate >= extent ? coordinate - extent : coordinate;
 }
+static const uint8_t q2_infrared_indices[256] = {
+  79, 78, 77, 76, 75, 74, 73, 72, 71, 70, 69, 68, 67, 66, 65, 64,
+  64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+  64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+  208, 208, 208, 208, 208, 208, 208, 208, 64, 66, 68, 70, 72, 74, 76, 78,
+  64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+  64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+  64, 66, 68, 70, 72, 74, 76, 78, 68, 67, 66, 65, 64, 65, 66, 67,
+  68, 69, 70, 71, 72, 73, 74, 75, 76, 76, 77, 77, 78, 78, 79, 79,
+  64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+  64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+  64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+  64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+  64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+  64, 65, 66, 67, 68, 69, 70, 71, 64, 65, 66, 67, 68, 69, 70, 71,
+  64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+  208, 208, 64, 64, 70, 71, 72, 64, 66, 68, 70, 64, 65, 66, 67, 68
+};
 static void texel(const cpu_sampler *sampler,
                   const qa_scene_image_level *level,
                   const cpu_framebuffer *target, int64_t x, int64_t y,
@@ -45,7 +63,12 @@ static void texel(const cpu_sampler *sampler,
     return;
   }
   size_t index = (size_t)y * level->width + (size_t)x;
-  if (target) {
+  if (sampler->q2_infrared) {
+    const qa_scene_indexed_image *indexed = &image->indexed;
+    uint8_t color = indexed->colormap.data[q2_infrared_indices[indexed->indices.data[index]]];
+    for (size_t c = 0; c < 3; ++c) out[c] = indexed->palette_rgb.data[(size_t)color * 3 + c] / 255.0f;
+    out[3] = 1;
+  } else if (target) {
     index =
         (size_t)(target->height - 1 - (uint32_t)y) * target->width + (size_t)x;
     if (image->kind == QA_SCENE_DEPTH32F) {
@@ -80,7 +103,8 @@ static void texel(const cpu_sampler *sampler,
   }
 }
 bool cpu_sampler_prepare(const qa_cpu_renderer *renderer,
-                          const qa_scene_image *image, cpu_sampler *sampler) {
+                          const qa_scene_image *image, bool q2_infrared,
+                          cpu_sampler *sampler) {
   *sampler = (cpu_sampler){.image = image};
   if (!image) return true;
   if (image->streamed) {
@@ -95,6 +119,13 @@ bool cpu_sampler_prepare(const qa_cpu_renderer *renderer,
     sampler->target_components = renderer->texture_components[0];
   }
   sampler->alpha = qa_render_source_texture_alpha(image);
+  if (q2_infrared && image->indexed.indices.data) {
+    sampler->indexed_level = (qa_scene_image_level){image->indexed.width,
+        image->indexed.height, image->indexed.indices.data, image->indexed.indices.size};
+    sampler->q2_infrared = true;
+    sampler->level_count = 1;
+    return true;
+  }
   bool magnification_linear;
   qa_scene_filter filter;
   if (image->source_q3)
@@ -170,7 +201,8 @@ static void sample_levels(const cpu_sampler *sampler,
       continue;
     }
     size_t mip = levels[lane];
-    const qa_scene_image_level *level = image->levels + mip;
+    const qa_scene_image_level *level = sampler->q2_infrared ?
+        &sampler->indexed_level : image->levels + mip;
     const cpu_framebuffer *target = mip == 0 ? sampler->target : NULL;
     int64_t x0, y0;
     unsigned count = linear[lane] ? 4u : 1u;

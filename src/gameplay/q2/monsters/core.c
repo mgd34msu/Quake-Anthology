@@ -1612,7 +1612,8 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   }
   monster->spawnflags = selected ? mission.ambush ? 1u : 0 : options->spawnflags;
   monster->old_frame = -1;
-  monster->render_flags = game->options.rules == QA_RULESET_Q2_CLASSIC ? 64u : 32768u;
+  monster->render_flags = (game->options.rules == QA_RULESET_Q2_CLASSIC ? 64u : 0u) |
+      (game->options.rules == QA_RULESET_Q2_RERELEASE || game->options.product == QA_Q2_ROGUE ? 32768u : 0u);
   monster->entity_scale = options->scale > 0.0f ? options->scale
       : game->options.rules == QA_RULESET_Q2_RERELEASE ? 0 : 1;
   if (definition->species == Q2M_GUN_COMMANDER &&

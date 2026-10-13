@@ -710,6 +710,8 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
             !qa_vec_finite(view.axis[0]) || !qa_vec_finite(view.axis[1]) || !qa_vec_finite(view.axis[2]))
             return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified compiled camera lost its actual physical view");
     }
+    view.infrared = native_view ? (native_camera->render_flags & 4u) != 0 : received->player->view.infrared;
+    view.software = r->frontend->cpu != NULL;
     view.origin=qa_vec_add(view.origin,qa_vec_scale(view.axis[1],stereo));
     r->busy=true;
     qa_scene_world_input world={.view=view,.seconds=r->seconds,.milliseconds=r->milliseconds,.identity_light=1,

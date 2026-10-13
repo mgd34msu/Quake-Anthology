@@ -235,6 +235,13 @@ static uint32_t stencil_operation(uint32_t current,
 static void packet_color(const qa_scene_draw *draw, const cpu_sampler samplers[2],
     const cpu_fragment_packet *packet, size_t texture_count,
     const cpu_texture_color texel[2], cpu_texture_color *color) {
+  if (texture_count && samplers[0].q2_infrared) {
+    for (size_t lane = 0; lane < CPU_PIXEL_LANES; ++lane) {
+      for (size_t c = 0; c < 3; ++c) color->channel[c][lane] = texel[0].channel[c][lane];
+      color->channel[3][lane] = packet->active & (1u << lane) ? 1.0f : 0.0f;
+    }
+    return;
+  }
   qa_scene_texture_environment environment = draw->environment;
   bool lightmap = environment >= QA_TEXTURE_LIGHTMAP_MODULATE;
 #if defined(__SSE2__)
@@ -320,7 +327,8 @@ static void packet_sample(const qa_scene_draw *draw, const cpu_sampler samplers[
     cpu_texture_color texel[2], cpu_texture_color *color) {
   for (size_t unit = 0; unit < texture_count; ++unit)
     cpu_sample_texture(samplers + unit, packet->texture + unit, texel + unit);
-  if (draw->lighting == QA_LIGHT_VERTEX || draw->environment >= QA_TEXTURE_LIGHTMAP_MODULATE)
+  if ((texture_count && samplers[0].q2_infrared) ||
+      draw->lighting == QA_LIGHT_VERTEX || draw->environment >= QA_TEXTURE_LIGHTMAP_MODULATE)
     packet_color(draw, samplers, packet, texture_count, texel, color);
 }
 static inline bool fragment_color(const qa_cpu_renderer *renderer, const qa_scene_draw *draw,
@@ -328,7 +336,8 @@ static inline bool fragment_color(const qa_cpu_renderer *renderer, const qa_scen
     size_t texture_count, const cpu_texture_color texel[2],
     const cpu_texture_color *prepared, size_t lane, float color[4]) {
   const qa_scene_state *state = &draw->state;
-  if (draw->lighting == QA_LIGHT_VERTEX || draw->environment >= QA_TEXTURE_LIGHTMAP_MODULATE) {
+  if ((texture_count && samplers[0].q2_infrared) ||
+      draw->lighting == QA_LIGHT_VERTEX || draw->environment >= QA_TEXTURE_LIGHTMAP_MODULATE) {
     for (size_t c = 0; c < 4; ++c) color[c] = prepared->channel[c][lane];
     if (draw->environment >= QA_TEXTURE_LIGHTMAP_MODULATE) return true;
   } else {

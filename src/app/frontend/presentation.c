@@ -365,7 +365,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
             }
         }
         qa_scene_view view = {.viewport = rect, .seat = i, .clear_color = true, .clear_depth = true,
-            .color = {.015f, .02f, .03f, 1}, .depth = 1};
+            .color = {.015f, .02f, .03f, 1}, .depth = 1, .software = frontend->cpu != NULL};
         bool legacy_receiver=false,legacy_clear=true;
         if (!frontend_remote_q1_initial_clear(frontend,i,&legacy_receiver,&legacy_clear,error)) return false;
         if (!legacy_receiver && !frontend_remote_q2_initial_clear(frontend,i,&legacy_receiver,&legacy_clear,error)) return false;
@@ -396,6 +396,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
                 if (!qa_application_visual_read(frontend->application, actor, &appearance, error)) return false;
                 const qa_product *character = qa_catalog_product(qa_application_catalog(frontend->application), appearance.character_content);
                 qa_vec3 offset=q2_client_view_ready ? q2_client_view.view_offset : seat->q2_view.offset;
+                view.infrared=q2_client_view_ready ? (q2_client_view.render_flags&4u)!=0 : seat->q2_view.infrared;
                 qa_vec3 origin=camera.origin;
                 if (q2_client_view_ready) {
                     uint32_t authored;

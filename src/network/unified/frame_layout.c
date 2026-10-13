@@ -690,6 +690,7 @@ static const qa_unified_field qa_unified_player_view_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_player_view, grounded, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_unified_player_view, pitch_drift_disabled, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_unified_player_view, ideal_pitch, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_unified_player_view, infrared, QA_UNIFIED_FIELD_BOOL),
 };
 static const qa_unified_record_layout qa_unified_player_view_layout = QA_UNIFIED_LAYOUT(qa_unified_player_view, qa_unified_player_view_fields);
 
@@ -1383,6 +1384,7 @@ static const qa_unified_field qa_unified_q2_player_view_fields[] = {
     QA_UNIFIED_FIELD(qa_q2_player_view, timer_seconds, QA_UNIFIED_FIELD_I32),
     QA_UNIFIED_FIELD(qa_q2_player_view, underwater, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_q2_player_view, spectator, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_q2_player_view, infrared, QA_UNIFIED_FIELD_BOOL),
 };
 static const qa_unified_record_layout qa_unified_q2_player_view_layout = QA_UNIFIED_LAYOUT(qa_q2_player_view, qa_unified_q2_player_view_fields);
 

@@ -573,7 +573,8 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
         origin.z += row->height_current + (row->height_previous - row->height_current) * (100 - elapsed) * 0.01f;
     }
     qa_scene_view view = {.viewport = frontend_viewport(f, seat), .origin = origin,
-        .clear_color = policy.lighting.clear, .clear_depth = true, .depth = 1, .seat = seat};
+        .clear_color = policy.lighting.clear, .clear_depth = true, .depth = 1, .seat = seat,
+        .infrared = (frame->player.rdflags & 4u) != 0, .software = f->cpu != NULL};
     qa_angle_axis(angles, view.axis,QA_ANGLE_FLOAT_MATH); view.origin = qa_vec_add(view.origin, qa_vec_scale(view.axis[1], stereo));
     float fov = continuous ? before->player.fov + (frame->player.fov - before->player.fov) * row->fraction : frame->player.fov;
     if (!(fov > 0 && fov < 180) || !view.viewport.width || !view.viewport.height) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 decoded camera has no valid projection");

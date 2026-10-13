@@ -48,6 +48,10 @@ typedef enum qa_scene_filter {
 typedef enum qa_scene_image_kind { QA_SCENE_RGBA8, QA_SCENE_RGB8, QA_SCENE_DEPTH32F } qa_scene_image_kind;
 /* Color pixels occupy four bytes even for RGB8; depth pixels are float32. */
 typedef struct qa_scene_image_level { uint32_t width, height; const void *pixels; size_t bytes; } qa_scene_image_level;
+typedef struct qa_scene_indexed_image {
+    uint32_t width, height;
+    qa_bytes indices, palette_rgb, colormap;
+} qa_scene_indexed_image;
 /* Versions own their pixels. Backends key residency by identity and revision.
  * Streamed images keep their storage and issue ordered, copied region updates;
  * their pixels describe current contents for cold backend admission. */
@@ -80,6 +84,7 @@ typedef struct qa_scene_image {
     bool recipient_upload_pixels, recipient_mipmap;
     bool streamed;
     uint64_t stream_writes; /* actual pixel writes, not a resource version */
+    qa_scene_indexed_image indexed;
 } qa_scene_image;
 /* The entered renderer recipient maps a reached immutable version into its
  * own upload domain. It preserves the original material and model identity. */
@@ -592,6 +597,7 @@ typedef struct qa_scene_draw {
     float shadow_near, shade_scale;
     bool model_shade_scale;
     bool luminance_alpha;
+    bool q2_infrared;
     /* Reached Q3 Source stage submission, independent of queue grouping. */
     bool source_primitives;
     /* Producer-owned convex polygon: its triangles cover each sample once. */
@@ -616,7 +622,7 @@ typedef struct qa_scene_view {
     qa_scene_rect viewport;
     qa_vec3 origin, axis[3];
     qa_scene_matrix projection;
-    bool clear_color, clear_depth, clear_stencil, clip_enabled, mirror;
+    bool clear_color, clear_depth, clear_stencil, clip_enabled, mirror, infrared, software;
     qa_vec4 color;
     float depth;
     qa_scene_plane clip_plane;
@@ -1023,7 +1029,7 @@ struct qa_scene_model_input {
     const qa_model_animation *animation;
     const qa_scene_model_attachment *attachments;
     size_t attachment_count;
-    bool view_model, player, infrared, monochrome, no_cull, planar_shadow, shadow_only;
+    bool view_model, player, monochrome, no_cull, planar_shadow, shadow_only;
     bool q1_double_eyes;
     bool non_normalized_axis;
     bool source_order, fog_has_surface;

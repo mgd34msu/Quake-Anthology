@@ -943,6 +943,7 @@ bool qa_scene_image_sample(qa_scene_resources *resources, const qa_scene_image *
     image->recipient_mipmap = source->recipient_mipmap && mipmap;
     image->recipient_upload_pixels = source->recipient_upload_pixels;
     qa_scene_image_retain(source);
+    image->indexed = source->indexed;
     if (((const owned_image *)source)->asset &&
         !scene_image_asset_copy(image, ((const owned_image *)source)->asset, error)) {
         qa_scene_image_release(image); return false;
@@ -980,6 +981,7 @@ bool qa_scene_image_sample(qa_scene_resources *resources, const qa_scene_image *
             sampled->recipient_upload_pixels = frame->recipient_upload_pixels;
             owned->embedded_png = ((const owned_image *)frame)->embedded_png;
             owned->sampling_source = frame; owned->sampling_mipmap = mipmap;
+            sampled->indexed = frame->indexed;
             qa_scene_image_retain(frame);
             frames[i] = sampled;
             if (((const owned_image *)frame)->asset &&
@@ -1334,6 +1336,10 @@ static bool policy_prepare(qa_scene_resources *owner,
             } else {
                 destination->palettes[family].size = owner->palettes[family].size;
                 memcpy(destination->palettes[family].data, owner->palettes[family].data, owner->palettes[family].size);
+                if (family == QA_GAME_Q2) {
+                    memcpy(destination->q2_colormap, owner->q2_colormap, sizeof(owner->q2_colormap));
+                    destination->q2_colormap_present = owner->q2_colormap_present;
+                }
                 if (owner->palette_resources[family]) {
                     ok = qa_vfs_acquisition_copy(&owner->palette_openings[family],
                         &destination->palette_openings[family], error);
@@ -1746,6 +1752,11 @@ void qa_scene_resource_policy_publish(qa_scene_resource_policy *ticket)
             destination->palette_resources[family] = NULL;
             owner->palette_openings[family] = destination->palette_openings[family];
             destination->palette_openings[family] = (qa_vfs_acquisition){0};
+            if (family == QA_GAME_Q2) {
+                memcpy(owner->q2_colormap, destination->q2_colormap, sizeof(owner->q2_colormap));
+                owner->q2_colormap_present = destination->q2_colormap_present;
+                destination->q2_colormap_present = false;
+            }
         }
         owner->policies[family] = destination->policies[family]; owner->has_policy[family] = destination->has_policy[family];
     }
@@ -1824,7 +1835,7 @@ static bool palette_admit(qa_scene_resources *resources, qa_game_family family,
         qa_resource_release(resource); qa_vfs_acquisition_dispose(&opening);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate scene palette"); return false;
     }
-    bool ok = true;
+    bool ok = true; uint8_t colormap[256]; bool colormap_present = false;
     if (family == QA_GAME_Q1) {
         if (bytes.size != 768) { qa_error_set(error, QA_ERROR_FORMAT, 0, "Q1 palette requires exactly 256 RGB colors"); ok = false; }
         else memcpy(palette, bytes.data, 768);
@@ -1835,10 +1846,17 @@ static bool palette_admit(qa_scene_resources *resources, qa_game_family family,
             qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 colormap has no complete palette"); ok = false;
         }
         if (ok) for (size_t i = 0; i < 256; ++i) memcpy(palette + i * 3, decoded.palette.data + i * 4, 3);
+        if (ok && decoded.indices.size >= sizeof(colormap)) {
+            memcpy(colormap, decoded.indices.data, sizeof(colormap)); colormap_present = true;
+        }
         qa_image_free(&decoded);
     }
     if (!ok) { free(palette); qa_resource_release(resource); qa_vfs_acquisition_dispose(&opening); return false; }
     *stored = (qa_buffer){palette,768};
+    if (family == QA_GAME_Q2) {
+        if (colormap_present) memcpy(resources->q2_colormap, colormap, sizeof(colormap));
+        resources->q2_colormap_present = colormap_present;
+    }
     resources->palette_resources[family] = resource; resources->palette_openings[family] = opening;
     *out = (qa_bytes){palette,768};
     return true;
@@ -2156,12 +2174,42 @@ typedef struct image_decode_context {
     const qa_resource *source;
     bool generic_upload;
 } image_decode_context;
+typedef struct indexed_decode {
+    qa_scene_indexed_image image;
+    uint8_t palette[768], colormap[256];
+} indexed_decode;
+static qa_bytes q2_colormap_read(const qa_scene_resources *resources)
+{
+    return resources->q2_colormap_present ?
+        (qa_bytes){resources->q2_colormap, sizeof(resources->q2_colormap)} : (qa_bytes){0};
+}
+static bool image_indexed_bind(qa_scene_image *image, const qa_scene_indexed_image *source, qa_error *error)
+{
+    if (!source->indices.size || source->palette_rgb.size != 768 || source->colormap.size != 256) return true;
+    if (source->indices.size > (size_t)PTRDIFF_MAX - 1024) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining indexed skin exceeds address space"); return false;
+    }
+    uint8_t *storage = qa_arena_alloc(&((owned_image *)image)->storage, source->indices.size + 1024, 1, error);
+    if (!storage) return false;
+    memcpy(storage, source->indices.data, source->indices.size);
+    memcpy(storage + source->indices.size, source->palette_rgb.data, 768);
+    memcpy(storage + source->indices.size + 768, source->colormap.data, 256);
+    image->indexed = (qa_scene_indexed_image){source->width, source->height,
+        {storage, source->indices.size}, {storage + source->indices.size, 768},
+        {storage + source->indices.size + 768, 256}};
+    return true;
+}
 static bool decode_palette(qa_scene_resources *resources, qa_game_family family,
-    const image_decode_context *context, uint8_t *storage, qa_bytes *out, qa_error *error)
+    const image_decode_context *context, uint8_t *storage, uint8_t *colormap_storage,
+    qa_bytes *out, qa_bytes *colormap, qa_error *error)
 {
     const image_alias *alias = context ? context->alias : NULL;
-    if (!alias)
-        return palette_observed(resources, family, out, context ? context->observation : NULL, error);
+    if (colormap) *colormap = (qa_bytes){0};
+    if (!alias) {
+        bool ok = palette_observed(resources, family, out, context ? context->observation : NULL, error);
+        if (ok && family == QA_GAME_Q2 && colormap) *colormap = q2_colormap_read(resources);
+        return ok;
+    }
     if (!alias->palette_attempted) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Retained indexed image lacks its actual palette attempt"); return false;
     }
@@ -2181,34 +2229,48 @@ static bool decode_palette(qa_scene_resources *resources, qa_game_family family,
             qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 colormap has no complete palette"); ok = false;
         }
         if (ok) for (size_t i = 0; i < 256; ++i) memcpy(storage + i * 3, decoded.palette.data + i * 4, 3);
+        if (ok && colormap && decoded.indices.size >= 256) {
+            memcpy(colormap_storage, decoded.indices.data, 256);
+            *colormap = (qa_bytes){colormap_storage,256};
+        }
         qa_image_free(&decoded); if (!ok) return false;
     }
     *out = (qa_bytes){storage,768}; return true;
 }
 static bool indexed_rgba(qa_scene_resources *resources, qa_image *image,
-    const qa_scene_image_options *options, bool pcx, const image_decode_context *context, qa_error *error)
+    const qa_scene_image_options *options, bool pcx, const image_decode_context *context,
+    indexed_decode *retained, qa_error *error)
 {
     qa_bytes palette = options->palette_rgb;
+    qa_bytes colormap = q2_colormap_read(resources);
     uint8_t local_palette[768];
+    uint8_t *palette_storage = retained ? retained->palette : local_palette;
     bool q2_indexed = pcx && options->family == QA_GAME_Q2 &&
         (options->usage == QA_IMAGE_USAGE_SKIN || options->usage == QA_IMAGE_USAGE_SPRITE);
     if (q2_indexed && palette.size == 0) {
         qa_error local = {0};
-        if (!decode_palette(resources, options->family, context, local_palette, &palette, &local) && local.code != QA_ERROR_NOT_FOUND) {
+        if (!decode_palette(resources, options->family, context, palette_storage,
+            retained ? retained->colormap : NULL, &palette, retained ? &colormap : NULL, &local) && local.code != QA_ERROR_NOT_FOUND) {
             if (error != NULL) *error = local;
             return false;
         }
     }
     q2_indexed = q2_indexed && palette.size != 0;
     if ((pcx || palette.size == 0) && image->palette.size >= 1024 && !q2_indexed) {
-        for (size_t i = 0; i < 256; ++i) memcpy(local_palette + i*3, image->palette.data + i*4, 3);
-        palette = (qa_bytes){local_palette,sizeof(local_palette)};
+        for (size_t i = 0; i < 256; ++i) memcpy(palette_storage + i*3, image->palette.data + i*4, 3);
+        palette = (qa_bytes){palette_storage,sizeof(local_palette)};
     }
-    if (palette.size == 0 && !decode_palette(resources, options->family, context, local_palette, &palette, error)) return false;
+    if (palette.size == 0 && !decode_palette(resources, options->family, context, palette_storage,
+        retained ? retained->colormap : NULL, &palette, retained ? &colormap : NULL, error)) return false;
     if (palette.size != 768 || image->index_bytes != 1 || image->indices.size != (size_t)image->width * image->height) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "scene indexed image requires an 8-bit palette image"); return false;
     }
     if (q2_indexed && options->usage == QA_IMAGE_USAGE_SKIN && !flood_skin(image, palette, error)) return false;
+    if (retained && q2_indexed && options->usage == QA_IMAGE_USAGE_SKIN) {
+        if (palette.data != retained->palette) memcpy(retained->palette, palette.data, 768);
+        retained->image = (qa_scene_indexed_image){image->width, image->height,
+            {image->indices.data,image->indices.size}, {retained->palette,768}, colormap};
+    }
     qa_palette_options conversion = {.transparent_index = options->transparent ? options->transparent_index : -1,
         .fullbright_first = -1, .fullbright_last = -1,
         .translation = options->translation.size == 256 ? options->translation.data : NULL,
@@ -2299,7 +2361,7 @@ static bool decode_asset_pixels(qa_scene_resources *resources, const char *reque
                 for (size_t i = 0; i < 4 && ok; ++i) {
                     images[i] = (qa_image){.width = mip.levels[i].width, .height = mip.levels[i].height,
                         .indices = mip.levels[i].indices, .index_bytes = 1};
-                    ok = indexed_rgba(resources, &images[i], options, false, context, error);
+                    ok = indexed_rgba(resources, &images[i], options, false, context, NULL, error);
                     images[i].indices = (qa_buffer){0};
                     if (ok) levels[i] = (qa_scene_image_level){images[i].width,images[i].height,
                         images[i].rgba.data,images[i].rgba.size};
@@ -2324,12 +2386,16 @@ static bool decode_asset_pixels(qa_scene_resources *resources, const char *reque
     else if (suffix_equal(path, ".bmp")) ok = qa_image_decode_bmp(bytes, options->source_q3 ? QA_IMAGE_Q3 : QA_IMAGE_FORMAT, &decoded, error);
     else if (suffix_equal(path, ".jpg") || suffix_equal(path, ".jpeg")) ok = qa_image_decode_jpeg(bytes, &decoded, error);
     else qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "unsupported scene image extension: %s", path);
+    indexed_decode indexed = {0};
     if (ok && decoded.indices.size != 0 && (pcx || decoded.rgba.size == 0 || options->translation.size != 0 || options->fullbright_only))
-        ok = indexed_rgba(resources, &decoded, options, pcx, context, error);
+        ok = indexed_rgba(resources, &decoded, options, pcx, context, &indexed, error);
     if (!recipient && suffix_equal(path, ".lmp") && options->family != QA_GAME_Q2 && !options->source_q3) upload.mipmap = false;
     if (ok && options->family == QA_GAME_Q1 && options->transparent)
         alpha_edge_fill(&decoded, QA_GAME_Q1, NULL);
     if (ok) ok = image_from_rgba(resources, image_name, &decoded, &upload, out, error);
+    if (ok && !image_indexed_bind(*out, &indexed.image, error)) {
+        qa_scene_image_release(*out); *out = NULL; ok = false;
+    }
     qa_image_free(&decoded);
     return ok;
 }
@@ -2402,7 +2468,7 @@ bool scene_image_asset_source_bind(qa_scene_image *image, const qa_resource *sou
 }
 bool scene_resource_indexed_image(qa_scene_resources *resources, const char *name,
     const qa_indexed_level *indices, size_t count, const qa_scene_image_options *options,
-    const qa_palette_options *colors, bool generate_mips, qa_vec4 border,
+    const qa_palette_options *colors, qa_bytes colormap, bool generate_mips, qa_vec4 border,
     qa_scene_image **out, qa_error *error)
 {
     qa_image expanded[4] = {0}; qa_scene_image_level levels[4]; qa_mip_chain chain = {0};
@@ -2432,7 +2498,14 @@ bool scene_resource_indexed_image(qa_scene_resources *resources, const char *nam
     }
     if (ok) ok = qa_scene_image_create(resources, name, QA_SCENE_RGBA8, generated ? generated : levels,
         generated ? chain.count + 1 : count, options->wrap, options->filter, border, out, error);
-    if (ok) (*out)->texture_mode = image_uses_texture_mode(options);
+    if (ok) {
+        (*out)->texture_mode = image_uses_texture_mode(options);
+        if (options->family == QA_GAME_Q2 && options->usage == QA_IMAGE_USAGE_SKIN &&
+            !image_indexed_bind(*out, &(qa_scene_indexed_image){indices[0].width, indices[0].height,
+                {indices[0].indices.data,indices[0].indices.size}, options->palette_rgb,colormap}, error)) {
+            qa_scene_image_release(*out); *out = NULL; ok = false;
+        }
+    }
     free(generated); qa_mip_chain_free(&chain);
     for (size_t i = 0; i < 4; ++i) qa_image_free(expanded + i);
     return ok;
@@ -2497,8 +2570,9 @@ static bool image_slice_decode(qa_scene_resources *resources, const char *name,
         free(pixels); return ok;
     }
     qa_scene_image_options options = recipe->options;
-    uint8_t palette[768];
-    if (!options.palette_rgb.size && !decode_palette(resources, options.family, context, palette, &options.palette_rgb, error)) return false;
+    uint8_t palette[768], colormap_storage[256]; qa_bytes colormap = q2_colormap_read(resources);
+    if (!options.palette_rgb.size && !decode_palette(resources, options.family, context, palette,
+        colormap_storage, &options.palette_rgb, &colormap, error)) return false;
     qa_indexed_level indexed[4] = {0}; qa_buffer flooded = {0};
     for (size_t i = 0; i < recipe->level_count; ++i) indexed[i] = (qa_indexed_level){recipe->widths[i], recipe->heights[i],
         {(uint8_t *)bytes.data + recipe->offsets[i], (size_t)recipe->widths[i] * recipe->heights[i]}};
@@ -2517,7 +2591,7 @@ static bool image_slice_decode(qa_scene_resources *resources, const char *name,
         .fullbright_last = recipe->fullbright_last, .translation = options.translation.size ? options.translation.data : NULL,
         .layer = recipe->layer};
     bool ok = scene_resource_indexed_image(resources, name, indexed, recipe->level_count, &options, &colors,
-        recipe->generate_mips, (qa_vec4){0}, out, error);
+        colormap, recipe->generate_mips, (qa_vec4){0}, out, error);
     qa_buffer_free(&flooded); return ok;
 }
 static bool image_asset_bind(qa_scene_resources *resources, qa_scene_image *image, const char *path,
@@ -2820,6 +2894,7 @@ bool qa_scene_image_source_q3_variant(qa_scene_resources *resources, const qa_sc
     image_variant_forget(variant);
     variant->source_variant_source = source; variant->source_variant_upload = *profile;
     qa_scene_image_retain(source);
+    if (!variant->image.indexed.indices.data) variant->image.indexed = source->indexed;
     image_variant_remember(variant);
     if (original->sampling_source && !qa_scene_image_source_admit(resources, *out,
         source->source_texture_unit, error)) {
@@ -3009,6 +3084,7 @@ bool qa_scene_image_generic_variant(qa_scene_resources *resources, const qa_scen
     }
     image_variant_forget(variant);
     variant->source_variant_source = source; qa_scene_image_retain(source);
+    if (!variant->image.indexed.indices.data) variant->image.indexed = source->indexed;
     variant->generic_variant = true; variant->generic_variant_mipmap = mipmap;
     image_variant_remember(variant);
     if (source == source_owner->source_fog) variant->image.border = (qa_vec4){1,1,1,1};

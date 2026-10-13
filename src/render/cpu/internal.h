@@ -120,8 +120,9 @@ typedef struct cpu_sampler {
   const qa_scene_image *image;
   const cpu_framebuffer *target;
   const float *components, *target_components;
+  qa_scene_image_level indexed_level;
   size_t level_count;
-  bool linear, magnification_linear, blend, alpha;
+  bool linear, magnification_linear, blend, alpha, q2_infrared;
   float magnification_limit;
 } cpu_sampler;
 static inline bool cpu_sampler_requires_derivatives(const cpu_sampler *sampler) {
@@ -193,7 +194,8 @@ void cpu_write_fragment(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                         const cpu_sampler samplers[2], const cpu_fragment *fragment,
                         cpu_fragment_admission admission);
 bool cpu_sampler_prepare(const qa_cpu_renderer *renderer,
-                          const qa_scene_image *image, cpu_sampler *sampler);
+                          const qa_scene_image *image, bool q2_infrared,
+                          cpu_sampler *sampler);
 bool cpu_stream_image_admit(qa_cpu_renderer *, const qa_scene_image *, qa_error *);
 const qa_scene_image *cpu_stream_image_read(const qa_cpu_renderer *, const qa_scene_image *);
 bool cpu_image_region_update(qa_cpu_renderer *, const qa_scene_image_region *, qa_error *);

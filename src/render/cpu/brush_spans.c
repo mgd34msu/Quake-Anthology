@@ -416,7 +416,7 @@ static bool prepare_mips(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   double ty = (surface->t.y - t * surface->q.y) / q;
   double squared = fmax(sx * sx + tx * tx, sy * sy + ty * ty);
   cpu_sampler sampler;
-  if (!cpu_sampler_prepare(renderer, draw->textures[0], &sampler)) return false;
+  if (!cpu_sampler_prepare(renderer, draw->textures[0], false, &sampler)) return false;
   bool magnification = !(squared > sampler.magnification_limit);
   bool blend = sampler.blend;
   surface->linear = magnification ? sampler.magnification_linear : sampler.linear;

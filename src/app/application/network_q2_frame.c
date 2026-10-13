@@ -565,7 +565,7 @@ bool application_network_q2_player_state(qa_application_network_q2 *owner, qa_ac
     vector(value.gunoffset, view.gun_offset);
     value.blend[0] = view.blend.x; value.blend[1] = view.blend.y;
     value.blend[2] = view.blend.z; value.blend[3] = view.blend.w;
-    value.fov = view.fov; value.rdflags = view.underwater ? 1 : 0;
+    value.fov = view.fov; value.rdflags = qa_q2_player_view_flags(&view);
     if (entity.has_weapon) {
         const qa_q2_weapon_definition *definition = qa_q2_weapon_definition_at(game, entity.weapon.weapon);
         if (entity.weapon.weapon != QA_Q2_WEAPON_NONE && (!definition ||

@@ -617,18 +617,25 @@ static bool view(qa_unified_player_view *out, player_observation *o, qa_error *e
     float height = control.view_height, fov = 90;
     float rgba[4] = {0}, damage_rgba[4] = {0};
     bool has_blend = false, has_damage = false, foreign_death = false, has_fov = false;
-    bool has_death_yaw = false;
+    bool has_death_yaw = false, infrared = false;
     double death_yaw = 0;
     qa_combat_state view_combat = o->combat;
     if (!qa_actor_id_equal(o->ui_actor, o->player->actor) &&
         (!qa_combat_read(o->app->combat, o->player->actor, &view_combat, e) || !current(o, e))) return false;
+    application_provider *character = application_provider_for(o->app, o->player->actor, QA_ROLE_CHARACTER, "");
+    qa_q2_wire_view q2_character = {0};
+    if (character && character->kind == APPLICATION_PROVIDER_Q2) {
+        if (!qa_q2_wire_view_read(character->state.q2, o->player->actor, &q2_character, e) ||
+            !q2_character.present || !current(o, e)) return false;
+        infrared = q2_character.view.infrared;
+    }
     if (o->primary->kind == APPLICATION_PROVIDER_Q2) {
-        qa_q2_wire_view source;
-        if (!qa_q2_wire_view_read(o->primary->state.q2, o->player->actor, &source, e) ||
-            !source.present || !current(o, e)) return false;
+        qa_q2_wire_view source = q2_character;
+        if (o->primary != character &&
+            (!qa_q2_wire_view_read(o->primary->state.q2, o->player->actor, &source, e) ||
+             !source.present || !current(o, e))) return false;
         fov = source.view.fov; has_fov = true;
     }
-    application_provider *character = application_provider_for(o->app, o->player->actor, QA_ROLE_CHARACTER, "");
     if (o->primary->kind == APPLICATION_PROVIDER_QC && !camera.cutscene) {
         const application_unified_player_camera *local = o->external->camera;
         qa_vec3 offset = qa_v3(0, 0, 0);
@@ -663,16 +670,16 @@ static bool view(qa_unified_player_view *out, player_observation *o, qa_error *e
         height = classic ? ps.viewoffset[2] : (float)ps.pmove.viewheight;
         angles = from_array(ps.viewangles);
         kick = from_array(ps.kick_angles); fov = ps.fov; has_fov = true;
+        infrared = (ps.rdflags & 4u) != 0;
         memcpy(rgba, ps.blend, sizeof(rgba)); memcpy(damage_rgba, ps.damage_blend, sizeof(damage_rgba));
         has_blend = true; has_damage = !classic;
     } else if (o->has_q3 && o->primary->kind != APPLICATION_PROVIDER_Q3) {
         origin = from_array(o->q3.origin); angles = from_array(o->q3.viewangles); height = (float)o->q3.viewheight;
     } else if (character && character->kind == APPLICATION_PROVIDER_Q2) {
-        qa_q2_wire_view source;
-        if (!qa_q2_wire_view_read(character->state.q2, o->player->actor, &source, e) ||
-            !source.present || !current(o, e)) return false;
+        qa_q2_wire_view source = q2_character;
         origin = qa_vec_add(camera.origin, qa_v3(source.view.offset.x, source.view.offset.y, 0));
         height = source.view.offset.z; fov = source.view.fov; has_fov = true;
+        infrared = source.view.infrared;
         if (o->primary->kind == APPLICATION_PROVIDER_Q2 && o->primary->product->edition == QA_EDITION_RERELEASE && !o->intermission)
             height += control.view_height;
         angles = o->intermission || view_combat.health <= 0 ? source.view.angles : control.view_angles;
@@ -739,7 +746,7 @@ static bool view(qa_unified_player_view *out, player_observation *o, qa_error *e
     out->origin = origin; out->angles = angles;
     if (has_death_yaw) out->angles.y = (float)death_yaw;
     out->view_height = height; out->kick_angles = kick;
-    out->has_field_of_view = has_fov; out->field_of_view = fov;
+    out->has_field_of_view = has_fov; out->field_of_view = fov; out->infrared = infrared;
     out->has_client_view_offset_delta = camera.has_client_view_offset;
     out->client_view_offset_delta = client_delta;
     out->has_blend = has_blend; out->has_damage_blend = has_damage;

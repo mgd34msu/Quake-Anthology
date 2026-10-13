@@ -40,7 +40,7 @@ qa_vec3 scene_model_alias_light(const qa_scene_model_input *input, uint32_t path
             light.y = fmaxf(light.y * 0.8f, light.y + pulse);
             light.z = fmaxf(light.z * 0.8f, light.z + pulse);
         }
-        if (input->infrared && (input->flags & 32768)) light = qa_v3(1, 0, 0);
+        if (!input->view.software && input->view.infrared && (input->flags & 32768)) light = qa_v3(1, 0, 0);
     } else if (input->family == QA_GAME_Q1) {
         float sampled[3] = {light.x, light.y, light.z};
         bool player = input->player || (path_flags & QA_MODEL_PATH_PLAYER_SHADE);

@@ -213,8 +213,11 @@ static bool upload_indexed(qa_scene_model *model, const char *name, const qa_ind
         .fullbright_first = (int)first_fullbright, .fullbright_last = sprite ? 254 : 255,
         .translation = model->options.translation.size ? model->translation : NULL, .layer = layer};
     qa_scene_image_options image_options = model->options;
+    const qa_scene_resources *resources = model->resources;
+    qa_bytes colormap = resources->q2_colormap_present ?
+        (qa_bytes){resources->q2_colormap, sizeof(resources->q2_colormap)} : (qa_bytes){0};
     bool ok = scene_resource_indexed_image(model->resources, name, indices, 1, &image_options, &options,
-        model->options.mipmap && !sprite, (qa_vec4){0}, out, error);
+        colormap, model->options.mipmap && !sprite, (qa_vec4){0}, out, error);
     if (ok) {
         (*out)->recipient_upload_pixels = true;
         (*out)->recipient_mipmap = model->options.mipmap && !sprite;
