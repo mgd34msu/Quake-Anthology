@@ -1641,7 +1641,9 @@ static bool apply_converted_as(cvar_target target,const char *name,const char *v
         if (silent) { writes[i].clear_latch=false; writes[i].mark=!qac_q1(qa_cvars_dialect(registry)); }
     }
     bool okay=write_group(target,writes,count,error);
-    if (okay && count && writes[0].pending) print_message(target,name," will be changed upon restarting.\n");
+    if (okay && count && writes[0].pending)
+        print_message(target,name,qac_q2(qac_cvars_view_options(registry,target.values).dialect)?
+            " will be changed for next game.\n":" will be changed upon restarting.\n");
     free(converted.allocated_value);
     return okay;
 }
