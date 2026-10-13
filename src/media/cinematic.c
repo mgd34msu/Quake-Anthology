@@ -23,8 +23,12 @@ static bool wall_time(qa_cinematic *movie, double *out, qa_error *error) {
     return true;
 }
 bool cinematic_elapsed(qa_cinematic *movie, double *out, qa_error *error) {
-    if (movie->format==QA_CINEMATIC_ROQ && movie->options.roq_scratch)
-        return wall_time(movie,out,error);
+    if (movie->format==QA_CINEMATIC_ROQ && movie->options.roq_scratch) {
+        if (!wall_time(movie,out,error)) return false;
+        *out += movie->source_clock_offset;
+        return isfinite(*out) && *out >= 0 ? true :
+            cinematic_fail(error,"Invalid restored cinematic Source clock");
+    }
     double now = movie->paused_at;
     if (!movie->paused && !wall_time(movie, &now, error))
         return false;
@@ -85,6 +89,27 @@ static bool queue_audio(void *context, const qa_media_audio *sound, qa_error *er
         sound->pcm.size % ((size_t)sound->channels * sound->sample_bytes) ||
         (sound->pcm.size && !sound->pcm.data))
         return cinematic_fail(error, "Invalid cinematic audio");
+    qa_media_audio resumed;
+    if (movie->restoring) {
+        if (!movie->restore_audio || sound->loop < movie->restore_loop) return true;
+        if (sound->loop > movie->restore_loop) movie->restoring = false;
+    }
+    if (movie->restoring) {
+        double sample = ceil(movie->restore_source_ms * sound->rate / 1000);
+        if (sample >= 0x1p64) return true;
+        uint64_t first = (uint64_t)sample;
+        size_t frames = sound->pcm.size / ((size_t)sound->channels * sound->sample_bytes);
+        if (first > sound->source_sample) {
+            uint64_t skip = first - sound->source_sample;
+            if (skip >= frames) return true;
+            resumed = *sound;
+            size_t bytes = (size_t)skip * sound->channels * sound->sample_bytes;
+            resumed.pcm.data += bytes;
+            resumed.pcm.size -= bytes;
+            resumed.source_sample = first;
+            sound = &resumed;
+        }
+    }
     size_t samples = sound->pcm.size / sound->sample_bytes;
     if (samples > SIZE_MAX / sizeof(int16_t))
         return cinematic_fail(error, "Cinematic PCM size overflow");
@@ -130,6 +155,7 @@ static bool queue_audio(void *context, const qa_media_audio *sound, qa_error *er
     }
     movie->raw_attached = true;
     movie->audio_loop = sound->loop;
+    movie->restoring = false;
     return true;
 }
 static void diagnostic(void *context, const char *text) {
@@ -188,8 +214,8 @@ static void free_movie(qa_cinematic *movie) {
     qa_arena_destroy(&movie->pcm_storage);
     free(movie);
 }
-bool qa_cinematic_create(const qa_cinematic_source *source, const qa_cinematic_options *options,
-                         qa_cinematic **out, qa_error *error) {
+static bool create(const qa_cinematic_source *source, const qa_cinematic_options *options,
+    const qa_cinematic_checkpoint *checkpoint, qa_cinematic **out, qa_error *error) {
     if (!source || !source->name || !options || !options->clock.sample || !out ||
         source->format < QA_CINEMATIC_CIN || source->format > QA_CINEMATIC_IMAGE ||
         options->target.kind < QA_CINEMATIC_SEAT || options->target.kind > QA_CINEMATIC_MATERIAL ||
@@ -206,6 +232,11 @@ bool qa_cinematic_create(const qa_cinematic_source *source, const qa_cinematic_o
         return false;
     }
     movie->options = *options;
+    if (checkpoint) {
+        movie->restoring = true;
+        movie->restore_source_ms = checkpoint->source_ms;
+        movie->restore_loop = checkpoint->loop;
+    }
     movie->format = source->format;
     movie->status = movie->decoder_status = QA_MEDIA_PLAYING;
     movie->image_revision = UINT64_MAX;
@@ -301,10 +332,52 @@ bool qa_cinematic_create(const qa_cinematic_source *source, const qa_cinematic_o
         free_movie(movie);
         return false;
     }
+    if (checkpoint) {
+        double elapsed = checkpoint->source_ms;
+        qa_media_status status = movie->status;
+        movie->restore_audio = true;
+        switch (movie->format) {
+        case QA_CINEMATIC_CIN:
+            ok = cinematic_cin_resume(movie->movie.cin, checkpoint->source_ms, checkpoint->loop,
+                &elapsed, &status, error); break;
+        case QA_CINEMATIC_ROQ:
+            ok = cinematic_roq_resume(movie->movie.roq, checkpoint->source_ms, checkpoint->loop,
+                &elapsed, &status, error); break;
+        case QA_CINEMATIC_OGV:
+            ok = cinematic_ogv_resume(movie->movie.ogv, checkpoint->source_ms, checkpoint->loop,
+                &elapsed, &status, error); break;
+        case QA_CINEMATIC_IMAGE: break;
+        }
+        if (!ok) { free_movie(movie); return false; }
+        double now = movie->start_ms;
+        movie->source_clock_offset = elapsed - now;
+        movie->start_ms = now - elapsed;
+        movie->status = movie->decoder_status = status;
+        movie->paused = checkpoint->paused || status != QA_MEDIA_PLAYING;
+        movie->paused_at = now;
+        if (checkpoint->paused && status == QA_MEDIA_PLAYING) movie->status = QA_MEDIA_PAUSED;
+        qa_audio_raw_pause(current_raw(movie), movie->paused);
+        if (status == QA_MEDIA_ENDED) {
+            movie->completed = true;
+            reset_audio(movie);
+            if (movie->options.complete)
+                movie->options.complete(movie->options.context, movie->options.target, QA_CINEMATIC_FINISHED);
+        }
+    }
     picture(movie);
     movie->dirty = movie->has_picture;
     *out = movie;
     return true;
+}
+bool qa_cinematic_create(const qa_cinematic_source *source, const qa_cinematic_options *options,
+    qa_cinematic **out, qa_error *error) {
+    return create(source, options, NULL, out, error);
+}
+bool qa_cinematic_restore(const qa_cinematic_source *source, const qa_cinematic_options *options,
+    const qa_cinematic_checkpoint *checkpoint, qa_cinematic **out, qa_error *error) {
+    if (!checkpoint || !checkpoint->resource || !isfinite(checkpoint->source_ms) || checkpoint->source_ms < 0)
+        return cinematic_fail(error, "Invalid saved cinematic position");
+    return create(source, options, checkpoint, out, error);
 }
 static bool finish(qa_cinematic *movie, qa_cinematic_end reason, qa_error *error) {
     if (movie->completed)
@@ -462,6 +535,24 @@ bool qa_cinematic_time(qa_cinematic *movie, double *elapsed, double *source, uin
     }
     movie->busy = false;
     return ok;
+}
+bool qa_cinematic_checkpoint_read(qa_cinematic *movie, qa_cinematic_checkpoint *out, qa_error *error) {
+    if (!movie || !out || movie->busy || movie->faulted)
+        return cinematic_fail(error, "Cannot save unavailable cinematic");
+    qa_cinematic_checkpoint checkpoint = {.resource = movie->name, .paused = movie->paused};
+    double elapsed;
+    if (!cinematic_elapsed(movie, &elapsed, error)) return false;
+    switch (movie->format) {
+    case QA_CINEMATIC_CIN:
+        cinematic_cin_position(movie->movie.cin, elapsed, &checkpoint.source_ms, &checkpoint.loop); break;
+    case QA_CINEMATIC_ROQ:
+        cinematic_roq_position(movie->movie.roq, elapsed, &checkpoint.source_ms, &checkpoint.loop); break;
+    case QA_CINEMATIC_OGV:
+        cinematic_ogv_position(movie->movie.ogv, elapsed, &checkpoint.source_ms, &checkpoint.loop); break;
+    case QA_CINEMATIC_IMAGE: checkpoint.source_ms = elapsed; break;
+    }
+    *out = checkpoint;
+    return true;
 }
 bool qa_cinematic_audio_rebind_ready(qa_cinematic *movie, qa_audio_engine *engine,
     uint64_t bus, qa_error *error)

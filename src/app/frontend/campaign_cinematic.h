@@ -26,7 +26,9 @@ bool frontend_cinematic_view_read(qa_frontend *,frontend_cinematic_view *,bool *
 bool frontend_cinematic_view_current(const qa_frontend *,const qa_vfs *,const char *path,uint32_t physical_seat);
 bool frontend_cinematic_running(const qa_frontend *);
 bool frontend_cinematic_idle(const qa_frontend *);
-/* Standalone screen playback follows the source save/load rejection. */
+/* Playback is captured only after command and decoder callbacks return. */
 bool frontend_cinematic_capture_ready(const qa_frontend *);
+bool frontend_cinematic_save_capture(qa_frontend *,qa_buffer *,qa_error *);
+bool frontend_cinematic_save_restore(qa_frontend *,qa_bytes,qa_error *);
 bool frontend_cinematic_destroy(qa_frontend *,qa_error *);
 #endif

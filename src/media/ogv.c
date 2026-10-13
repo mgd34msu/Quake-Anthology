@@ -1,4 +1,5 @@
 #include "ogv_internal.h"
+#include "cinematic_internal.h"
 #include "../audio/codec_internal.h"
 #include <math.h>
 #include <stdlib.h>
@@ -418,4 +419,31 @@ fault:
 }
 const qa_media_frame *qa_ogv_playback_frame(const qa_ogv_playback *playback) {
     return playback && playback->has_frame ? &playback->frame : NULL;
+}
+bool cinematic_ogv_resume(qa_ogv_playback *playback, double source_ms, uint64_t loop,
+    double *elapsed_ms, qa_media_status *status, qa_error *error) {
+    playback->loop = loop;
+    playback->frame.loop = loop;
+    if (playback->audio) {
+        uint32_t rate = qa_audio_stream_rate(playback->audio);
+        uint64_t total = qa_audio_stream_frames(playback->audio);
+        double requested = ceil(source_ms * rate / 1000);
+        uint64_t sample = requested >= (double)total ? total : (uint64_t)requested;
+        if (!qa_audio_stream_seek(playback->audio, sample, error)) return false;
+        playback->reset_audio = true;
+    }
+    qa_media_tick tick;
+    if (!qa_ogv_playback_tick(playback, source_ms, &tick, error)) return false;
+    if (playback->loop != loop) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Saved OGV time exceeds its loop pass");
+        return false;
+    }
+    *elapsed_ms = source_ms;
+    *status = tick.status;
+    return true;
+}
+void cinematic_ogv_position(const qa_ogv_playback *playback, double elapsed_ms,
+    double *source_ms, uint64_t *loop) {
+    *source_ms = fmax(0, elapsed_ms - playback->epoch_ms);
+    *loop = playback->loop;
 }

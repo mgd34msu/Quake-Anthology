@@ -1,4 +1,4 @@
-#include "qa/media.h"
+#include "cinematic_internal.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -139,4 +139,25 @@ bool qa_cin_playback_tick(qa_cin_playback *player, double now, bool game_focus, 
     }
     *out = (qa_media_tick){.status = player->status, .frame = qa_cin_playback_frame(player), .changed = changed, .looped = looped};
     return true;
+}
+bool cinematic_cin_resume(qa_cin_playback *player, double source_ms, uint64_t loop,
+    double *elapsed_ms, qa_media_status *status, qa_error *error) {
+    player->loop = loop;
+    if (!qa_cin_playback_restart(player, 0, error)) return false;
+    double desired = trunc(trunc(source_ms) * 14 / 1000);
+    qa_media_tick tick = {0};
+    while (player->status == QA_MEDIA_PLAYING && player->loop == loop &&
+        desired > (double)qa_cin_decoder_index(player->decoder)) {
+        double next = ceil(((double)qa_cin_decoder_index(player->decoder) + 1) * 1000 / 14);
+        if (!qa_cin_playback_tick(player, next, true, &tick, error)) return false;
+    }
+    if (player->loop != loop) return fail(error, "Saved CIN time exceeds its loop pass");
+    *elapsed_ms = player->epoch_ms + source_ms;
+    *status = player->status;
+    return true;
+}
+void cinematic_cin_position(const qa_cin_playback *player, double elapsed_ms,
+    double *source_ms, uint64_t *loop) {
+    *source_ms = fmax(0, elapsed_ms - player->epoch_ms);
+    *loop = player->loop;
 }

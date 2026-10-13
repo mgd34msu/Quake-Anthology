@@ -114,9 +114,16 @@ static bool complete_state(void *context,qa_application *candidate,const qa_save
     const qa_save_metadata *metadata=qa_save_image_metadata(image);
     if (metadata && metadata->purpose==QA_SAVE_TRANSITION &&
         !qa_application_campaign_reenter(candidate,operation->active->application,error)) return false;
-    return frontend_config_store_rebuild_finish(f->config_store,error) && frontend_scene_sync(f,error) &&
+    bool ok=frontend_config_store_rebuild_finish(f->config_store,error) && frontend_scene_sync(f,error) &&
         frontend_tools_sync(f,error) && frontend_network_create_detached(f,source,error) &&
         frontend_qc_messages_drain(f->qc_messages,error);
+    const qa_save_record *movie=qa_save_image_find(image,QA_SAVE_MEDIA,"");
+    if (ok && movie) {
+        if (strcmp(movie->owner.schema,"cinematic-state"))
+            return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Unknown cinematic state layout");
+        ok=frontend_cinematic_save_restore(f,movie->payload,error);
+    }
+    return ok;
 }
 static bool validate(void *context,qa_application *application,const qa_save_image *image,qa_error *error)
 {
@@ -318,6 +325,17 @@ bool frontend_persistence_capture(qa_frontend *f,const qa_application_persistenc
     frontend_persistence operation={0};
     bool ok=operation_init(&operation,f,services,error) &&
         qa_application_persistence_capture(f->application,&operation.ops,purpose,out,error);
+    if (ok && purpose!=QA_SAVE_TRANSITION && frontend_cinematic_running(f)) {
+        qa_buffer movie={0};
+        ok=frontend_cinematic_save_capture(f,&movie,error);
+        if (ok) {
+            qa_save_record record={.owner={QA_SAVE_MEDIA,"","cinematic-state",""},
+                .payload={movie.data,movie.size}};
+            ok=qa_save_image_record_append(*out,&record,error);
+        }
+        qa_buffer_free(&movie);
+        if (!ok) (void)qa_save_image_destroy_checked(out,error);
+    }
     native_capture_close(&operation); operation_close(&operation); return ok;
 }
 static bool restore_frontend(qa_frontend **slot,const qa_application_persistence_ops *services,

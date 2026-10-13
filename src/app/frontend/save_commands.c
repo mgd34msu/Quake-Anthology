@@ -658,7 +658,8 @@ static bool restore_saved(qa_frontend **slot, frontend_save_commands *owner,
 static bool write_game(qa_frontend *f,qa_fs_root *root,const char *name,
     qa_save_purpose purpose,uint64_t nonce,qa_save_image **image,qa_q1_save_data **source,qa_q2_save_data **q2,qa_error *error)
 {
-    const qa_product *product=qa_application_save_original_product(f->application);
+    const qa_product *product=frontend_cinematic_running(f)?NULL:
+        qa_application_save_original_product(f->application);
     bool original=false,written=false;
     if (product && product->family==QA_GAME_Q1 && product->edition!=QA_EDITION_QUAKEWORLD) {
         original=true;

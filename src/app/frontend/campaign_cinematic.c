@@ -8,6 +8,7 @@
 #include "cinematic_captions.h"
 #include "ui_features.h"
 #include "shared_render_controls.h"
+#include "qa/source_save.h"
 #include <ctype.h>
 
 typedef struct cinematic_request {
@@ -17,7 +18,8 @@ typedef struct cinematic_request {
     uint32_t seat;
     uint64_t travel_revision;
     qa_actor_owner travel_provider;
-    bool loop, hold;
+    bool loop, hold, restore, focus_paused;
+    qa_cinematic_checkpoint playback;
 } cinematic_request;
 struct frontend_cinematic {
     qa_frontend *frontend;
@@ -119,7 +121,11 @@ bool frontend_cinematic_running(const qa_frontend *f)
 { return frontend_system_cinematic_running(f) ||
     (f && f->cinematic && f->cinematic->movie && current(f->cinematic)); }
 bool frontend_cinematic_capture_ready(const qa_frontend *f)
-{ return f && !f->cinematic; }
+{
+    const frontend_cinematic *owner=f?f->cinematic:NULL;
+    return f && frontend_cinematic_idle(f) && (!owner ||
+        (!owner->pending && !owner->stopping && (!owner->movie || current(owner))));
+}
 bool frontend_cinematic_destroy(qa_frontend *f,qa_error *error)
 {
     if (!f || !f->cinematic) return true;
@@ -241,7 +247,10 @@ static bool prepare(frontend_cinematic *owner,qa_error *error)
         .audio_audience={.kind=QA_CINEMATIC_AUDIO_WORLD},.context=owner,
         .complete=completed,.diagnostic=diagnostic};
     qa_cinematic_source source=qa_cinematic_asset_source(owner->asset);
-    ok=qa_cinematic_create(&source,&options,&owner->movie,error);
+    ok=owner->request.restore ? qa_cinematic_restore(&source,&options,
+        &owner->request.playback,&owner->movie,error) :
+        qa_cinematic_create(&source,&options,&owner->movie,error);
+    if (ok && owner->request.restore) owner->focus_paused=owner->request.focus_paused;
     if (ok) ok=frontend_ui_cinematic_prepare(f,owner->request.files,owner->request.path,owner->request.seat,error);
     qa_audio_stream_cut *cut=NULL;
     if (ok) ok=qa_cinematic_audio_rebind_ready(owner->movie,staging,QA_FRONTEND_COMMAND_OWNER,error);
@@ -265,6 +274,87 @@ static bool prepare(frontend_cinematic *owner,qa_error *error)
     }
     qa_audio_engine_stream_cut_destroy(cut); qa_audio_engine_destroy(staging);
     return ok;
+}
+bool frontend_cinematic_save_capture(qa_frontend *f,qa_buffer *out,qa_error *error)
+{
+    if (!out || !frontend_cinematic_capture_ready(f))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic save requires returned playback callbacks");
+    frontend_cinematic *owner=f->cinematic;
+    bool present=owner && owner->movie;
+    qa_source_save_io io;
+    if (!qa_source_save_writer(&io,NULL,error)) return false;
+    bool ok=qa_source_save_bool(&io,&present);
+    if (ok && present) {
+        qa_cinematic_checkpoint playback;
+        ok=qa_cinematic_checkpoint_read(owner->movie,&playback,error);
+        char *path=owner->request.path;
+        uint32_t seat=owner->request.seat;
+        bool loop=owner->request.loop,hold=owner->request.hold;
+        bool focus_paused=owner->focus_paused,travel=owner->request.travel_revision!=0;
+        if (ok) ok=qa_source_save_owned_text(&io,&path) &&
+            qa_source_save_f64(&io,&playback.source_ms) && qa_source_save_u64(&io,&playback.loop) &&
+            qa_source_save_bool(&io,&playback.paused) && qa_source_save_u32(&io,&seat) &&
+            qa_source_save_bool(&io,&loop) && qa_source_save_bool(&io,&hold) &&
+            qa_source_save_bool(&io,&focus_paused) && qa_source_save_bool(&io,&travel);
+    }
+    ok=ok && qa_source_save_finish(&io,out);
+    qa_source_save_dispose(&io);
+    return ok;
+}
+bool frontend_cinematic_save_restore(qa_frontend *f,qa_bytes bytes,qa_error *error)
+{
+    if (!f || !f->application || f->options.dedicated || !frontend_cinematic_idle(f))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic restore requires its local rebuilt frontend");
+    qa_source_save_io io;
+    if (!qa_source_save_reader(&io,NULL,bytes,error)) return false;
+    bool present=false,travel=false;
+    cinematic_request request={.restore=true};
+    bool ok=qa_source_save_bool(&io,&present);
+    if (ok && present) ok=qa_source_save_owned_text(&io,&request.path) &&
+        qa_source_save_f64(&io,&request.playback.source_ms) && qa_source_save_u64(&io,&request.playback.loop) &&
+        qa_source_save_bool(&io,&request.playback.paused) && qa_source_save_u32(&io,&request.seat) &&
+        qa_source_save_bool(&io,&request.loop) && qa_source_save_bool(&io,&request.hold) &&
+        qa_source_save_bool(&io,&request.focus_paused) && qa_source_save_bool(&io,&travel);
+    ok=ok && qa_source_save_finish(&io,NULL);
+    qa_source_save_dispose(&io);
+    if (!ok || !present) { request_free(&request); return ok; }
+    if (!request.path || request.seat>=f->options.seats ||
+        !isfinite(request.playback.source_ms) || request.playback.source_ms<0) {
+        request_free(&request);
+        return frontend_fail(error,QA_ERROR_FORMAT,"Invalid saved cinematic resource or playback position");
+    }
+    char *path=resource_path(request.path,error);
+    if (!path) { request_free(&request); return false; }
+    free(request.path); request.path=path;
+    qa_vfs *files=NULL;
+    if (travel) {
+        qa_application_travel_view route;
+        qa_application_startup_source authority; bool found=false;
+        ok=qa_application_travel_read(f->application,&route) &&
+            frontend_config_store_primary_server_read(f->config_store,&authority,&found,error) && found;
+        if (ok) {
+            request.travel_revision=route.revision; request.travel_provider=route.provider;
+            request.command=authority.command; request.command.script=NULL;
+            files=frontend_config_store_parked_current(f->config_store,&authority) ?
+                authority.descriptor->content : qa_application_context_files(f->application,&request.command,NULL);
+        }
+    } else {
+        ok=qa_console_context_read(qa_application_console(f->application),&request.command,error);
+        if (ok) {
+            request.command.seat=request.seat; request.command.origin=QA_COMMAND_SEAT;
+            (void)frontend_seat_launch_id_read(f,request.seat,&request.command.seat);
+            request.command.script=NULL;
+            ok=qa_application_capture_command_context(f->application,&request.command,&request.command,error);
+            if (ok) files=qa_application_context_files(f->application,&request.command,NULL);
+        }
+    }
+    if (ok && files) request.files=qa_vfs_clone(files,error);
+    if (!ok || !request.files) {
+        request_free(&request);
+        return frontend_fail(error,QA_ERROR_FORMAT,"Saved cinematic content route is unavailable");
+    }
+    request.playback.resource=request.path;
+    return queue_request(f,&request,error) && frontend_cinematic_drain(f,error);
 }
 static bool finish(frontend_cinematic *owner,qa_error *error)
 {

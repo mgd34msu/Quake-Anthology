@@ -32,7 +32,8 @@ static bool text_valid(const char *text, bool empty)
 
 bool persistence_owner_valid(const qa_save_owner *owner, qa_error *error)
 {
-    if (!owner || (!qa_save_shared_state_kind(owner->kind, QA_SAVE_MANUAL) && owner->kind!=QA_SAVE_PROVIDER) ||
+    if (!owner || (!qa_save_shared_state_kind(owner->kind, QA_SAVE_MANUAL) &&
+        owner->kind!=QA_SAVE_PROVIDER && owner->kind!=QA_SAVE_MEDIA) ||
         !text_valid(owner->instance, owner->kind != QA_SAVE_PROVIDER) ||
         !text_valid(owner->schema, false) || !text_valid(owner->backend, true) ||
         (owner->kind != QA_SAVE_PROVIDER && owner->instance[0]))
@@ -212,6 +213,35 @@ static bool image_create(const qa_save_metadata *metadata, const qa_save_record 
 bool qa_save_image_create(const qa_save_metadata *metadata, const qa_save_record *records,
                           size_t count, qa_save_image **out, qa_error *error)
 { return image_create(metadata, records, count, false, out, error); }
+
+bool qa_save_image_record_append(qa_save_image *image, const qa_save_record *record, qa_error *error)
+{
+    if (!image || image->retiring || !record || !record->payload.data || !record->payload.size ||
+        image->count>=QA_SAVE_OWNER_LIMIT)
+        return persistence_fail(error,QA_ERROR_ARGUMENT,"Invalid optional save record");
+    if (!persistence_owner_valid(&record->owner,error)) return false;
+    if (qa_save_image_find(image,record->owner.kind,record->owner.instance))
+        return persistence_fail(error,QA_ERROR_FORMAT,"Duplicate save record");
+    qa_save_record copy={.owner=record->owner};
+    copy.owner.instance=text_copy(record->owner.instance);
+    copy.owner.schema=text_copy(record->owner.schema);
+    copy.owner.backend=text_copy(record->owner.backend);
+    uint8_t *payload=malloc(record->payload.size);
+    copy.payload=(qa_bytes){payload,record->payload.size};
+    if (!copy.owner.instance || !copy.owner.schema || !copy.owner.backend || !payload) {
+        record_free(&copy);
+        return persistence_fail(error,QA_ERROR_MEMORY,"Copying optional save state");
+    }
+    memcpy(payload,record->payload.data,record->payload.size);
+    qa_save_record *records=realloc(image->records,(image->count+1)*sizeof(*records));
+    if (!records) {
+        record_free(&copy);
+        return persistence_fail(error,QA_ERROR_MEMORY,"Appending optional save state");
+    }
+    image->records=records; records[image->count++]=copy;
+    qa_buffer_free(image->encoded);
+    return true;
+}
 
 bool persistence_image_create_owned(const qa_save_metadata *metadata, qa_save_record *records,
                                     size_t count, qa_save_image **out, qa_error *error)

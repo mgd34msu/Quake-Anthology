@@ -1,4 +1,5 @@
 #include "roq_internal.h"
+#include "cinematic_internal.h"
 #include "qa/arena.h"
 
 #include <math.h>
@@ -30,7 +31,7 @@ static bool clock_sample(qa_media_clock clock, double *out, qa_error *error) {
     return true;
 }
 static bool reset(qa_roq_playback *playback, qa_media_clock clock, bool loop, qa_error *error) {
-    double now;
+    double now = 0;
     if (!clock_sample(clock, &now, error))
         return false;
     if (loop && playback->loop == UINT64_MAX)
@@ -280,6 +281,49 @@ bool qa_roq_playback_restart(qa_roq_playback *playback, qa_media_clock clock, bo
     playback->busy = false;
     playback->faulted = !ok;
     return ok;
+}
+static double resume_clock(void *context) { return *(const double *)context; }
+bool cinematic_roq_resume(qa_roq_playback *playback, double source_ms, uint64_t loop,
+    double *elapsed_ms, qa_media_status *status, qa_error *error) {
+    double zero = 0;
+    qa_media_clock clock = {&zero, resume_clock};
+    if (!qa_roq_playback_restart(playback, clock, true, error)) return false;
+    playback->loop = loop;
+    playback->busy = true;
+    playback->clock = clock;
+    double wanted = trunc((double)(float)(source_ms * 3 / 100)) - 1;
+    qa_roq_decode_hooks hooks = {
+        .context = playback, .before_stereo = before_stereo, .info = info, .audio = audio};
+    bool ok = true;
+    while (ok && wanted >= 0 && playback->status == QA_MEDIA_PLAYING &&
+        (!playback->has_frame || (double)playback->frame.index < wanted ||
+        qa_roq_decoder_in_packet(playback->decoder))) {
+        qa_roq_event event;
+        ok = qa_roq_decoder_chunk(playback->decoder, &hooks, &event, error);
+        if (!ok) break;
+        if (event.kind == QA_ROQ_FRAME) ok = publish(playback, &event, error);
+        else if (event.kind == QA_ROQ_END)
+            playback->status = playback->options.hold && !qa_roq_decoder_invalid(playback->decoder) ?
+                QA_MEDIA_HELD : QA_MEDIA_ENDED;
+    }
+    if (ok) {
+        *elapsed_ms = source_ms;
+        double checked = 0;
+        ok = clock_sample((qa_media_clock){elapsed_ms, resume_clock}, &checked, error);
+        if (ok) {
+            playback->last = (uint32_t)(float)checked;
+            *status = playback->status;
+        }
+    }
+    playback->clock = (qa_media_clock){0};
+    playback->busy = false;
+    playback->faulted = !ok;
+    return ok;
+}
+void cinematic_roq_position(const qa_roq_playback *playback, double elapsed_ms,
+    double *source_ms, uint64_t *loop) {
+    *source_ms = fmax(0, elapsed_ms - playback->epoch);
+    *loop = playback->loop;
 }
 const qa_media_frame *qa_roq_playback_frame(const qa_roq_playback *playback) {
     return playback->has_frame ? &playback->frame : NULL;

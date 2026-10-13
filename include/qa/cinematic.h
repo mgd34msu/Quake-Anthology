@@ -69,6 +69,15 @@ typedef struct qa_cinematic_options {
     void (*diagnostic)(void *, const char *);
 } qa_cinematic_options;
 typedef struct qa_cinematic qa_cinematic;
+typedef struct qa_cinematic_checkpoint {
+    const char *resource;
+    double source_ms;
+    uint64_t loop;
+    bool paused;
+} qa_cinematic_checkpoint;
+bool qa_cinematic_checkpoint_read(qa_cinematic *, qa_cinematic_checkpoint *, qa_error *);
+bool qa_cinematic_restore(const qa_cinematic_source *, const qa_cinematic_options *,
+                          const qa_cinematic_checkpoint *, qa_cinematic **, qa_error *);
 typedef struct qa_media_library qa_media_library;
 /* One asset cache can serve multiple independently ordered VFS views. Resolve
  * a view first, then share by retained resource, format and admission mode. */

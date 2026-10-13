@@ -56,6 +56,8 @@ typedef bool (*qa_save_native_release_fn)(qa_native_resource_inventory **, qa_er
  * Outputs remain unchanged on failure. Existing outputs must be freed first. */
 bool qa_save_image_create(const qa_save_metadata *, const qa_save_record *, size_t,
                            qa_save_image **, qa_error *);
+/* Adds a copied optional state record without replacing attached native owners. */
+bool qa_save_image_record_append(qa_save_image *, const qa_save_record *, qa_error *);
 bool qa_save_image_decode(qa_bytes, qa_save_image **, qa_error *);
 /* Encoding borrows immutable image storage until the image is destroyed. */
 bool qa_save_image_encode(const qa_save_image *, qa_bytes *, qa_error *);
