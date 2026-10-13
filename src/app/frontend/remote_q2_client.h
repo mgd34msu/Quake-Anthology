@@ -109,6 +109,7 @@ bool frontend_remote_q2_destroy_all(qa_frontend *, qa_error *);
 bool frontend_remote_q2_draw(qa_frontend *, uint32_t physical_seat, float stereo,
     qa_audio_listener *, bool *rendered, qa_error *);
 bool frontend_remote_q2_sample(qa_frontend *, uint64_t now_ns, qa_error *);
+void frontend_remote_q2_input_center(qa_frontend *, uint32_t physical_seat);
 bool frontend_remote_q2_input(qa_frontend *, uint32_t physical_seat,
     const qa_seat_input_sample *, uint64_t sequence, qa_q2_usercmd *, bool *handled,
     bool *command_ready, qa_error *);

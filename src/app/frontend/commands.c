@@ -186,7 +186,11 @@ static void center(void *context, qa_input_seat *input)
 {
     qa_frontend *frontend = context;
     for (unsigned i = 0; i < frontend->options.seats; ++i)
-        if (frontend->seats[i].input == input) qa_input_command_center(&frontend->seats[i].builder, 0);
+        if (frontend->seats[i].input == input) {
+            frontend_network_input_center(frontend, i);
+            qa_input_command_center(&frontend->seats[i].builder, 0);
+            break;
+        }
 }
 static bool command(void *context, const qa_command_invocation *invocation, qa_error *error)
 {

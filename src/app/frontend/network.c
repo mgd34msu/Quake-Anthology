@@ -28,6 +28,7 @@
 #include "network_declarations.h"
 #include "remote_config.h"
 #include "remote_input.h"
+#include "remote_unified_input.h"
 #include "remote_prediction.h"
 #include "network_predictor.h"
 #include "network_session.h"
@@ -6448,6 +6449,13 @@ bool frontend_network_q3_input_owned(const qa_frontend *f, uint32_t physical)
 {
     frontend_q3_client *n = q3_client_physical(f, physical);
     return n && n->q3_client_requested && n->runtime;
+}
+void frontend_network_input_center(qa_frontend *frontend, uint32_t physical)
+{
+    frontend_q3_client *client = q3_client_physical(frontend, physical);
+    if (client && client->q3_client_requested) frontend_remote_input_center(client->q3_input);
+    frontend_remote_q2_input_center(frontend, physical);
+    frontend_remote_unified_input_center(frontend, physical);
 }
 bool frontend_network_q1_input_owned(const qa_frontend *f,uint32_t physical)
 {

@@ -25,4 +25,5 @@ bool frontend_remote_unified_input_prepare(qa_frontend *, uint32_t physical,
     uint64_t *sequence, bool *owned, bool *sample_needed, qa_error *);
 bool frontend_remote_unified_input(qa_frontend *, uint32_t physical,
     const qa_seat_input_sample *, uint64_t sequence, double source_elapsed_ms, bool *handled, qa_error *);
+void frontend_remote_unified_input_center(qa_frontend *, uint32_t physical);
 #endif

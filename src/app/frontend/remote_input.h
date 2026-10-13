@@ -42,6 +42,8 @@ bool frontend_remote_input_create(const frontend_remote_input_options *, fronten
 void frontend_remote_input_destroy(frontend_remote_input *);
 /* Called only by the genuine network clear-active producer. */
 void frontend_remote_input_clear(frontend_remote_input *);
+/* Center the source-relative builder against its current received snapshot. */
+void frontend_remote_input_center(frontend_remote_input *);
 /* Consumes an already sampled physical receipt. This owner neither samples
  * input nor sends packets. Failure leaves the builder and output unchanged. */
 bool frontend_remote_input_build(frontend_remote_input *, const qa_seat_input_sample *,

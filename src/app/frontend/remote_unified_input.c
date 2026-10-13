@@ -2,6 +2,7 @@
 #include "remote_unified_private.h"
 #include "remote_unified_save.h"
 #include "remote_unified_prediction_private.h"
+#include "remote_unified_presentation.h"
 #include "neutral_config.h"
 #include "config_store.h"
 #include "qa/input.h"
@@ -253,6 +254,19 @@ static bool physical(qa_frontend *f,uint32_t ordinal,frontend_remote_unified **o
         *out=p;
     }
     return true;
+}
+void frontend_remote_unified_input_center(qa_frontend *frontend,uint32_t physical_seat)
+{
+    frontend_remote_unified *replica;
+    frontend_unified_presentation_children children;
+    qa_error ignored = {0};
+    if (!physical(frontend,physical_seat,&replica,&ignored) || !replica || replica->retired ||
+        !frontend_remote_unified_presentation_children_read(replica,&children,&ignored) || !children.input) return;
+    frontend_unified_input *input=children.input;
+    qa_input_command_center(&input->builder,0);
+    /* A retained command keeps its original payload. Its continuation must
+     * not overwrite the newer console view when that command is accepted. */
+    if (input->has_pending) qa_input_command_center(&input->pending_builder,0);
 }
 bool frontend_remote_unified_input_prepare(qa_frontend *f,uint32_t ordinal,uint64_t *sequence,
     bool *owned,bool *needed,qa_error *e)

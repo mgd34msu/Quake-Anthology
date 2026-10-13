@@ -31,6 +31,20 @@ void frontend_remote_input_clear(frontend_remote_input *input)
     qa_input_command_clear(&input->builder);
     input->angles_ready = false;
 }
+void frontend_remote_input_center(frontend_remote_input *input)
+{
+    if (!input) return;
+    frontend_remote_input_source source = {0};
+    bool present = false;
+    qa_error ignored = {0};
+    if (!input->options.source_read(input->options.context, &source, &present, &ignored) || !present) return;
+    if (!input->angles_ready) {
+        if (!source.has_initial_angles) return;
+        input->builder.angles = source.initial_angles;
+        input->angles_ready = true;
+    }
+    qa_input_command_center(&input->builder, source.frame.delta_angles.x);
+}
 static bool source_valid(const frontend_remote_input_source *source)
 {
     const qa_application_q3_client_context *receiver = &source->receiver;

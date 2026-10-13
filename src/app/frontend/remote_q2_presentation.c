@@ -352,6 +352,29 @@ bool frontend_remote_q2_sample(qa_frontend *f, uint64_t now, qa_error *error)
     }
     return true;
 }
+static qa_vec3 player_delta_angles(const qa_q2_frame_player *frame)
+{
+    const qa_q2_pmove *move = &frame->player.pmove;
+    return move->float_delta_angles ? vector(move->delta_angles_f) :
+        qa_v3(move->delta_angles[0] * (360.0f / 65536), move->delta_angles[1] * (360.0f / 65536),
+            move->delta_angles[2] * (360.0f / 65536));
+}
+void frontend_remote_q2_input_center(qa_frontend *frontend, uint32_t physical_seat)
+{
+    qa_error ignored = {0};
+    frontend_remote_q2 *row = seat_owner(frontend, physical_seat, &ignored);
+    if (!row || !row->bound || row->options.demo || !row->media_ready) return;
+    const qa_q2_frame_player *frame = frame_player(row, &row->frame);
+    if (!frame) return;
+    qa_vec3 delta = player_delta_angles(frame);
+    if (!row->input_set || row->input.kind != row->movement_rules) {
+        qa_input_command_clear(&row->input);
+        row->input.kind = row->movement_rules;
+        row->input.angles = qa_vec_sub(vector(frame->player.viewangles), delta);
+        row->input_set = true;
+    }
+    qa_input_command_center(&row->input, delta.x);
+}
 bool frontend_remote_q2_input(qa_frontend *f, uint32_t seat, const qa_seat_input_sample *sample,
     uint64_t sequence, qa_q2_usercmd *out, bool *handled, bool *command_ready, qa_error *error)
 {
@@ -367,9 +390,7 @@ bool frontend_remote_q2_input(qa_frontend *f, uint32_t seat, const qa_seat_input
     qa_ruleset_id kind = row->movement_rules;
     qa_input_command_tuning tuning;
     if (!qa_input_settings_read(row->options.domain.cvars, row->options.domain.cvars, &row->input_tuning, kind, &tuning, error)) return false;
-    qa_vec3 delta = frame->player.pmove.float_delta_angles ? vector(frame->player.pmove.delta_angles_f) :
-        qa_v3(frame->player.pmove.delta_angles[0] * (360.0f / 65536), frame->player.pmove.delta_angles[1] * (360.0f / 65536),
-            frame->player.pmove.delta_angles[2] * (360.0f / 65536));
+    qa_vec3 delta = player_delta_angles(frame);
     if (!row->input_set || row->input.kind != kind) {
         qa_input_command_clear(&row->input); row->input.kind = kind;
         if (!qa_input_command_angles(&row->input, qa_vec_sub(vector(frame->player.viewangles), delta), error)) return false;
