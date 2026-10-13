@@ -262,6 +262,9 @@ typedef struct qa_nav_route_query {
     size_t disabled_count;
     void *context;
     bool (*edge_filter)(void *, const qa_nav_edge *);
+    bool advisory;
+    bool (*node_filter)(void *, const qa_nav_node *);
+    float (*edge_cost)(void *, const qa_nav_node *, const qa_nav_edge *, const qa_nav_node *);
 } qa_nav_route_query;
 typedef struct qa_nav_route {
     qa_arena storage;

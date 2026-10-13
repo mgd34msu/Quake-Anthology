@@ -102,11 +102,31 @@ typedef struct qa_native_host_q2_hud_view {
     int32_t scale;
 } qa_native_host_q2_hud_view;
 
+typedef struct qa_native_host_q2_path_request {
+    qa_vec3 start, goal;
+    uint32_t flags;
+    float move_distance, draw_time, min_height, max_height, radius, drop_height, jump_height;
+    bool ignore_node_flags;
+    int64_t point_capacity;
+    void *point_context;
+    bool (*point)(void *, qa_vec3, qa_error *);
+} qa_native_host_q2_path_request;
+typedef struct qa_native_host_q2_path_info {
+    int32_t point_count;
+    float distance_squared;
+    qa_vec3 first, second;
+    int32_t link_type, return_code;
+} qa_native_host_q2_path_info;
+
 typedef struct qa_native_host_engine_services {
     void *context;
     qa_strings *strings;
     void (*print)(void *, const qa_native_host_print *);
     bool (*localized_print)(void *, qa_actor_id, const qa_native_host_localized_print *, qa_error *);
+    bool (*bot_move_to)(void *, qa_actor_id, qa_vec3, float, int32_t *, qa_error *);
+    bool (*bot_follow)(void *, qa_actor_id, qa_actor_id, int32_t *, qa_error *);
+    bool (*path_to_goal)(void *, const qa_native_host_q2_path_request *,
+                         qa_native_host_q2_path_info *, qa_error *);
     bool (*configstring_get)(void *, int32_t, qa_string_id *, qa_error *);
     bool (*configstring_set)(void *, int32_t, const char *, qa_error *);
     bool (*resource_index)(void *, qa_native_host_resource_kind, const char *, int32_t *,

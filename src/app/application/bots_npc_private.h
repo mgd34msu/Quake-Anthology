@@ -44,6 +44,12 @@ typedef struct application_bots_npc {
     qa_arena prediction_storage;
     qa_pool predictions;
     size_t prediction_points;
+    npc_graph *advisory_graph;
+    qa_navigation *advisory_navigation;
+    qa_arena advisory_storage;
+    qa_pool advisory_queries;
+    size_t advisory_depth;
+    bool advisory_loaded;
     bool busy;
 } application_bots_npc;
 

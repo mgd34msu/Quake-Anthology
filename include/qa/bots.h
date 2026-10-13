@@ -21,6 +21,8 @@ typedef struct qa_bot_order {
     qa_bot_order_status status;
     qa_vec3 point;
     qa_actor_id target;
+    float tolerance;
+    bool has_tolerance;
 } qa_bot_order;
 typedef enum qa_bot_source_callback {
     QA_BOT_PRE_THINK, QA_BOT_POST_THINK, QA_BOT_BEGIN_FRAME, QA_BOT_END_FRAME
@@ -215,8 +217,8 @@ bool qa_bots_level_reset(qa_bots *, qa_error *);
 bool qa_bots_source_begin(qa_bots *,qa_actor_id,qa_vec3,int32_t weapon,qa_error *);
 bool qa_bots_source_memory_bind(qa_bots *,qa_error *);
 bool qa_bots_read(const qa_bots *, qa_actor_id, qa_bot_view *, qa_error *);
-bool qa_bots_move_to(qa_bots *, qa_actor_id, qa_vec3, qa_bot_order_status *, qa_error *);
-bool qa_bots_follow(qa_bots *, qa_actor_id, qa_actor_id target, qa_bot_order_status *, qa_error *);
+bool qa_bots_order(qa_bots *, qa_actor_id, const qa_bot_order *,
+                   qa_bot_order_status *, bool *started, qa_error *);
 bool qa_bots_clear_order(qa_bots *, qa_actor_id, qa_error *);
 qa_bot_order_status qa_bots_order_status(const qa_bots *, qa_actor_id);
 typedef struct qa_bots_checkpoint qa_bots_checkpoint;

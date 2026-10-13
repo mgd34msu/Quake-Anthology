@@ -4,6 +4,18 @@ static float edge_seconds(const qa_navigation *n, uint32_t index) {
     return isnan(n->admission_seconds[index]) ? n->graph->edges[index].travel_seconds
                                              : n->admission_seconds[index];
 }
+static bool edge_cost(const qa_navigation *n, const qa_nav_route_query *q, uint32_t index,
+                      float *out, qa_error *e) {
+    const qa_nav_edge *edge = n->graph->edges + index;
+    *out = q->edge_cost ? q->edge_cost(q->context,
+        n->graph->nodes + nav_node_index(n->graph, edge->from), edge,
+        n->graph->nodes + nav_node_index(n->graph, edge->to)) : edge_seconds(n, index);
+    if (!isfinite(*out) || *out < 0) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, edge->id, "Navigation edge cost must be finite and nonnegative");
+        return false;
+    }
+    return true;
+}
 static bool relax_edge(qa_navigation *n, qa_nav_workspace *w, const qa_nav_route_query *q,
                        uint32_t index, qa_error *e) {
     if (qa_stamp_set_test(&w->rejected, index)) return true;
@@ -14,7 +26,9 @@ static bool relax_edge(qa_navigation *n, qa_nav_workspace *w, const qa_nav_route
     bool allowed;
     if (!nav_edge_allowed(n, w, q->actor, index, q, &allowed, e)) return false;
     if (!allowed) return true;
-    float cost = w->costs[from] + edge_seconds(n, index);
+    float weight;
+    if (!edge_cost(n, q, index, &weight, e)) return false;
+    float cost = w->costs[from] + weight;
     if (cost >= w->costs[to]) return true;
     w->costs[to] = cost;
     w->parents[to] = index;
@@ -25,7 +39,9 @@ static bool repair_edge(qa_navigation *n, qa_nav_workspace *w, const qa_nav_rout
     const qa_nav_graph *g = n->graph;
     const qa_nav_edge *edge = g->edges + index;
     uint32_t from = nav_node_index(g, edge->from), to = nav_node_index(g, edge->to);
-    float cost = w->costs[from] + edge_seconds(n, index);
+    float weight;
+    if (!edge_cost(n, q, index, &weight, e)) return false;
+    float cost = w->costs[from] + weight;
     if (w->parents[to] != index || (!qa_stamp_set_test(&w->rejected, index) && cost <= w->costs[to]))
         return relax_edge(n, w, q, index, e);
     size_t count = 1;
@@ -237,12 +253,12 @@ bool qa_navigation_route(qa_navigation *n, qa_nav_workspace *w, const qa_nav_rou
             break;
         route->point_count = 0;
         route->travel_seconds = 0;
-        ok = nav_route_point(route, q->start, e);
+        ok = q->advisory || nav_route_point(route, q->start, e);
         if (!ok)
             break;
         nav_prediction prediction = {.navigation = n};
         bool failed = false, goal_admitted = true;
-        for (size_t i = 0; ok && i < count; ++i) {
+        for (size_t i = 0; !q->advisory && ok && i < count; ++i) {
             bool admitted;
             ok = traverse(n, &prediction, q->actor, w->path[i], route, &admitted, e);
             if (!ok || !admitted) {
@@ -254,7 +270,7 @@ bool qa_navigation_route(qa_navigation *n, qa_nav_workspace *w, const qa_nav_rou
                 break;
             }
         }
-        if (ok && !failed && nav_distance(cursor(route), q->goal) > 1) {
+        if (!q->advisory && ok && !failed && nav_distance(cursor(route), q->goal) > 1) {
             ok = nav_predict(&prediction, q->actor, cursor(route), q->goal, QA_NAV_WALK, route,
                              &goal_admitted, e);
         }
@@ -267,11 +283,18 @@ bool qa_navigation_route(qa_navigation *n, qa_nav_workspace *w, const qa_nav_rou
         if (!ok)
             break;
         route->nodes[0] = start;
+        if (q->advisory) ok = nav_route_point(route, n->graph->nodes[first].origin, e);
         for (size_t i = 0; i < count; ++i) {
             const qa_nav_edge *edge = n->graph->edges + w->path[i];
             route->edges[i] = edge->id;
             route->nodes[i + 1] = edge->to;
+            if (q->advisory && ok) {
+                ok = nav_route_point(route,
+                    n->graph->nodes[nav_node_index(n->graph, edge->to)].origin, e);
+                route->travel_seconds += edge_seconds(n, w->path[i]);
+            }
         }
+        if (!ok) break;
         route->node_count = count + 1;
         route->edge_count = count;
         route->generation = n->generation;

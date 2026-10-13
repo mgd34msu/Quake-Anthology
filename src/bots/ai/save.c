@@ -360,13 +360,45 @@ static bool fields(qa_source_save_io *io, qa_bots *bots,const bot_source_orders_
     }
     return snapshot_fields(io,&bots->entities) && snapshot_fields(io,&bots->players);
 }
+static bool order_tolerance_fields(qa_source_save_io *io, qa_bots *bots)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    if (reading && io->offset == io->input.size) return true;
+    uint32_t count = 0;
+    if (!reading)
+        for (size_t i = 0; i < 64; ++i)
+            if (bots->source_cells[i] && bots->source_cells[i]->view.order.has_tolerance) ++count;
+    U(count);
+    if (count > 64) return false;
+    uint32_t next = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t slot = 0;
+        float tolerance = 0;
+        if (!reading) {
+            while (next < 64 && (!bots->source_cells[next] ||
+                !bots->source_cells[next]->view.order.has_tolerance)) ++next;
+            slot = next++;
+            tolerance = bots->source_cells[slot]->view.order.tolerance;
+        }
+        U(slot); F(tolerance);
+        if (slot >= 64 || !bots->source_cells[slot] || !isfinite(tolerance) || tolerance < 0) return false;
+        if (reading) {
+            qa_bot_order *order = &bots->source_cells[slot]->view.order;
+            if (order->has_tolerance || order->kind != QA_BOT_ORDER_POINT) return false;
+            order->tolerance = tolerance;
+            order->has_tolerance = true;
+        }
+    }
+    return true;
+}
 bool qa_bots_population_capture(const qa_bots *bots, qa_buffer *out, qa_error *error)
 {
     if (!bots || !out || bots->restore_pending || !qa_bots_can_destroy(bots) ||
         !qa_bot_runtime_can_destroy(bots->runtime) || bots->runtime->restore_pending || !topology(bots, error)) return false;
     qa_source_save_io io = {0}; qa_bots view = *bots;
     bool ok = qa_source_save_writer(&io, bots->services.shared.session, error) && signature(&io) &&
-        fields(&io,&view,&bots->source_orders) && qa_source_save_finish(&io, out);
+        fields(&io,&view,&bots->source_orders) && order_tolerance_fields(&io,&view) &&
+        qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); return ok;
 }
 bool qa_bots_population_restore(qa_bots *bots, qa_bytes bytes, qa_error *error)
@@ -381,7 +413,8 @@ bool qa_bots_population_restore(qa_bots *bots, qa_bytes bytes, qa_error *error)
     qa_bots scratch = {.runtime = bots->runtime, .services = bots->services}; qa_source_save_io io = {0};
     bool ok = bot_ai_observations_prepare(&scratch,error) &&
         qa_source_save_reader(&io, bots->services.shared.session, bytes, error) && signature(&io) &&
-        fields(&io,&scratch,&scratch.source_orders) && scratch.client_capacity == bots->client_capacity &&
+        fields(&io,&scratch,&scratch.source_orders) && order_tolerance_fields(&io,&scratch) &&
+        scratch.client_capacity == bots->client_capacity &&
         qa_source_save_finish(&io, NULL) && topology(&scratch, error);
     for(uint32_t i=0;ok && i<64;++i) if(scratch.source_cells[i])
         ok=bot_ai_source_order_rebase(&scratch.source_orders,&scratch.source_cells[i]->source_order,

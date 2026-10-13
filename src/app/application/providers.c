@@ -1716,6 +1716,7 @@ static bool deconstruct_provider(application_provider *provider, qa_error *error
     case APPLICATION_PROVIDER_NATIVE:
         if (provider->state.native.q2_engine != NULL) {
             ok = application_native_q2_deconstruct(provider, error);
+            if (ok) application_bots_npc_destroy(provider);
             break;
         }
         if (provider->state.native.engine != NULL) {

@@ -4,14 +4,20 @@
 
 static bool same_order(const qa_bot_order *a, const qa_bot_order *b) {
     if (a->kind != b->kind) return false;
-    return a->kind == QA_BOT_ORDER_POINT ? qa_vec_length(qa_vec_sub(a->point, b->point)) < 8 :
+    return a->kind == QA_BOT_ORDER_POINT ? qa_vec_length(qa_vec_sub(a->point, b->point)) < 8 &&
+        a->has_tolerance == b->has_tolerance && (!a->has_tolerance || a->tolerance == b->tolerance) :
         a->kind == QA_BOT_ORDER_FOLLOW ? qa_actor_id_equal(a->target, b->target) : true;
 }
-static bool set_order(qa_bots *b, qa_actor_id actor, const qa_bot_order *order,
-                         qa_bot_order_status *out, qa_error *e) {
+bool qa_bots_order(qa_bots *b, qa_actor_id actor, const qa_bot_order *order,
+                   qa_bot_order_status *out, bool *started, qa_error *e) {
     if (!bot_ai_mutable(b, e)) return false;
-    if (!out) return bot_ai_fail(e, "missing explicit bot order status");
+    if (!order || !out) return bot_ai_fail(e, "missing explicit bot order/status");
     *out = QA_BOT_ORDER_ERROR;
+    if (started) *started = false;
+    if ((order->kind != QA_BOT_ORDER_POINT && order->kind != QA_BOT_ORDER_FOLLOW) ||
+        (order->kind == QA_BOT_ORDER_POINT && (!qa_vec_finite(order->point) ||
+            (order->has_tolerance && (!isfinite(order->tolerance) || order->tolerance < 0)))) ||
+        (order->kind == QA_BOT_ORDER_FOLLOW && !bot_ai_live(b, order->target))) return true;
     bot_ai_state *s = bot_ai_actor(b, actor);
     if (!s || !bot_ai_live(b, actor)) return true;
     if (!same_order(&s->view.order, order)) {
@@ -19,27 +25,11 @@ static bool set_order(qa_bots *b, qa_actor_id actor, const qa_bot_order *order,
         if (s->view.decision == QA_BOT_ACTIVATING) s->view.decision = QA_BOT_SEEK_LONG_TERM;
         s->view.order = *order;
         s->view.order.status = QA_BOT_ORDER_ACTIVE;
+        if (started) *started = true;
         if (!qa_bot_moves_reset_avoid(qa_bot_runtime_moves(b->runtime), s->movement, false, e)) return false;
     }
     *out = qa_bots_order_status(b, actor);
     return true;
-}
-bool qa_bots_move_to(qa_bots *b, qa_actor_id actor, qa_vec3 point,
-                       qa_bot_order_status *out, qa_error *e) {
-    if (!out) return bot_ai_fail(e, "missing explicit bot order status");
-    if (!qa_vec_finite(point)) { *out = QA_BOT_ORDER_ERROR; return true; }
-    qa_bot_order order = {.kind = QA_BOT_ORDER_POINT, .point = point};
-    return set_order(b, actor, &order, out, e);
-}
-bool qa_bots_follow(qa_bots *b, qa_actor_id actor, qa_actor_id target,
-                      qa_bot_order_status *out, qa_error *e) {
-    if (!b || !out) return bot_ai_fail(e, "missing bot follow owner/status");
-    if (!bot_ai_live(b, target)) {
-        *out = QA_BOT_ORDER_ERROR;
-        return true;
-    }
-    qa_bot_order order = {.kind = QA_BOT_ORDER_FOLLOW, .target = target};
-    return set_order(b, actor, &order, out, e);
 }
 bool qa_bots_clear_order(qa_bots *b, qa_actor_id actor, qa_error *e) {
     if (!bot_ai_mutable(b, e)) return false;
@@ -84,7 +74,7 @@ bool bot_ai_order_goal(qa_bots *b, bot_ai_state *s, qa_bot_goal *goal, bool *fou
     float own_radius = radius(self.bounds);
     float clearance = follow ? sqrtf(2) * (own_radius + radius(target.bounds)) : 0;
     if (qa_vec_length(qa_vec_sub(origin, bot_ai_origin(s))) <=
-        (follow ? clearance + own_radius : own_radius * 2)) {
+        (follow ? clearance + own_radius : order->has_tolerance ? order->tolerance : own_radius * 2)) {
         order->status = QA_BOT_ORDER_SUCCESS;
         return true;
     }
@@ -107,9 +97,10 @@ bool bot_ai_order_goal(qa_bots *b, bot_ai_state *s, qa_bot_goal *goal, bool *fou
         entity = observed.number;
     }
     order->status = QA_BOT_ORDER_ACTIVE;
+    float goal_radius = !follow && order->has_tolerance ? order->tolerance : own_radius;
     *goal = (qa_bot_goal){.origin = destination, .area = (int32_t)area,
-        .mins = qa_v3(-own_radius, -own_radius, -own_radius),
-        .maxs = qa_v3(own_radius, own_radius, own_radius), .entity = entity};
+        .mins = qa_v3(-goal_radius, -goal_radius, -goal_radius),
+        .maxs = qa_v3(goal_radius, goal_radius, goal_radius), .entity = entity};
     *found = true;
     return true;
 }

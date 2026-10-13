@@ -3,7 +3,7 @@
 bool nav_static_node(const qa_navigation *n, uint32_t index, const qa_nav_route_query *q) {
     const qa_nav_node *node = n->graph->nodes + index;
     qa_nav_profile p;
-    if (!nav_node_profile(&n->graph->view.profile, node, &p) || n->enabled[index] == 0)
+    if (n->enabled[index] == 0 || (q && q->node_filter && !q->node_filter(q->context, node)))
         return false;
     if (q != NULL)
         for (size_t i = 0; i < q->disabled_count; ++i)
@@ -11,6 +11,8 @@ bool nav_static_node(const qa_navigation *n, uint32_t index, const qa_nav_route_
                 return false;
     if (node->source.kind == QA_NAV_ORIGIN_AAS && (node->flags & 8) != 0 && n->enabled[index] != 1)
         return false;
+    if (q && q->advisory) return true;
+    if (!nav_node_profile(&n->graph->view.profile, node, &p)) return false;
     if (node->source.kind == QA_NAV_ORIGIN_NAV3 &&
         ((node->flags & 8192) != 0 || (p.monster && (node->flags & 256) != 0) ||
          ((node->flags & 512) != 0 && (p.capabilities & QA_NAV_CAPABILITY(QA_NAV_CROUCH)) == 0)))
@@ -20,7 +22,8 @@ bool nav_static_node(const qa_navigation *n, uint32_t index, const qa_nav_route_
 bool nav_static_edge(const qa_navigation *n, uint32_t index, const qa_nav_route_query *q) {
     const qa_nav_edge *edge = n->graph->edges + index;
     const qa_nav_profile *p = &n->graph->view.profile;
-    if (edge->mode == QA_NAV_UNKNOWN || (p->capabilities & QA_NAV_CAPABILITY(edge->mode)) == 0 ||
+    if ((!(q && q->advisory) && (edge->mode == QA_NAV_UNKNOWN ||
+            (p->capabilities & QA_NAV_CAPABILITY(edge->mode)) == 0)) ||
         n->blocked[index])
         return false;
     if (q != NULL &&
@@ -28,9 +31,10 @@ bool nav_static_edge(const qa_navigation *n, uint32_t index, const qa_nav_route_
          (q->has_travel_flags && (qa_nav_edge_travel_flag(edge) & q->travel_flags) == 0)))
         return false;
     uint32_t from = nav_node_index(n->graph, edge->from), to = nav_node_index(n->graph, edge->to);
-    if (!nav_static_node(n, from, q) || !nav_static_node(n, to, q) ||
-        (edge->mode == QA_NAV_DROP && edge->start.z - edge->end.z > p->maximum_drop))
+    if (!nav_static_node(n, from, q) || !nav_static_node(n, to, q))
         return false;
+    if (q && q->advisory) return true;
+    if (edge->mode == QA_NAV_DROP && edge->start.z - edge->end.z > p->maximum_drop) return false;
     if (edge->source.kind == QA_NAV_ORIGIN_AAS) {
         if ((q != NULL && q->has_travel_flags &&
              (qa_nav_aas_travel_flag(edge->source_travel_type) & q->travel_flags) == 0) ||
@@ -58,6 +62,7 @@ bool nav_node_allowed(qa_navigation *n, qa_actor_id actor, uint32_t index,
     *allowed = false;
     if (!nav_static_node(n, index, q))
         return true;
+    if (q && q->advisory) { *allowed = true; return true; }
     const qa_nav_node *node = n->graph->nodes + index;
     qa_nav_profile p;
     if (!nav_node_profile(&n->graph->view.profile, node, &p))
@@ -123,6 +128,7 @@ bool nav_edge_allowed(qa_navigation *n, qa_nav_workspace *w, qa_actor_id actor, 
     *allowed = false;
     if (!nav_static_edge(n, index, q))
         return true;
+    if (q && q->advisory) { *allowed = true; return true; }
     const qa_nav_edge *edge = n->graph->edges + index;
     uint32_t to = nav_node_index(n->graph, edge->to);
     qa_nav_entity_state elevator, train, source;

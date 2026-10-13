@@ -46,8 +46,9 @@ bool application_qc_bot_order(struct application_qc_state *engine,qa_qc_instance
         return false;
     }
     qa_bot_order_status status=QA_BOT_ORDER_ERROR;
-    bool ok=follow?qa_bots_follow(bots->population,actor,target,&status,error):
-        qa_bots_move_to(bots->population,actor,point,&status,error);
+    qa_bot_order order={.kind=follow?QA_BOT_ORDER_FOLLOW:QA_BOT_ORDER_POINT,
+        .point=point,.target=target};
+    bool ok=qa_bots_order(bots->population,actor,&order,&status,NULL,error);
     _Static_assert(QA_BOT_ORDER_ERROR==0 && QA_BOT_ORDER_SUCCESS==1 && QA_BOT_ORDER_ACTIVE==2,
         "Native bot order statuses must match the rerelease source contract");
     return ok && qa_qc_return_float(vm,(float)status,error);

@@ -7,6 +7,8 @@
 #include "native_q2_delivery.h"
 #include "native_q2_callbacks.h"
 #include "unified_events.h"
+#include "bots_private.h"
+#include "bots_npc.h"
 #include "qa/network_q2_messages.h"
 #include "qa/native_host_q2_wire.h"
 #include "qa/application_network_q2.h"
@@ -101,6 +103,38 @@ static bool config_get(void *opaque, int32_t index, qa_string_id *out, qa_error 
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 configstring exceeds its original API table");
     *out = engine->hud_names.values[index];
     return true;
+}
+
+static bool bot_order(struct application_native_q2 *engine,qa_actor_id actor,
+    const qa_bot_order *order,int32_t *out,qa_error *error)
+{
+    application_bots *bots=engine->provider->application->bots;
+    *out=0;
+    if(!bots || !bots->population) return true;
+    qa_bot_order_status status;bool started;
+    if(!qa_bots_order(bots->population,actor,order,&status,&started,error)) return false;
+    *out=status==QA_BOT_ORDER_ERROR?0:status==QA_BOT_ORDER_SUCCESS?3:started?1:2;
+    return true;
+}
+
+static bool bot_move_to(void *opaque,qa_actor_id actor,qa_vec3 point,float tolerance,
+    int32_t *out,qa_error *error)
+{
+    qa_bot_order order={.kind=QA_BOT_ORDER_POINT,.point=point,.tolerance=tolerance,.has_tolerance=true};
+    return bot_order(opaque,actor,&order,out,error);
+}
+
+static bool bot_follow(void *opaque,qa_actor_id actor,qa_actor_id target,int32_t *out,qa_error *error)
+{
+    qa_bot_order order={.kind=QA_BOT_ORDER_FOLLOW,.target=target};
+    return bot_order(opaque,actor,&order,out,error);
+}
+
+static bool path_to_goal(void *opaque,const qa_native_host_q2_path_request *request,
+    qa_native_host_q2_path_info *info,qa_error *error)
+{
+    struct application_native_q2 *engine=opaque;
+    return application_bots_npc_path(engine->provider,request,info,error);
 }
 
 static bool register_file(struct application_native_q2 *, qa_native_host_resource_kind,
@@ -352,6 +386,7 @@ qa_native_host_engine_services application_native_q2_services(struct application
     return (qa_native_host_engine_services){.context = engine,
         .strings = qa_session_strings(engine->provider->application->session), .print = print,
         .localized_print = localized_print,
+        .bot_move_to=bot_move_to,.bot_follow=bot_follow,.path_to_goal=path_to_goal,
         .configstring_get = config_get, .configstring_set = config_set, .resource_index = resource,
         .command = command, .message = message, .sound = sound, .server_frame = server_frame,
         .source_frame = source_frame,

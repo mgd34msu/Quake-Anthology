@@ -1,5 +1,6 @@
 #include "bots_npc_private.h"
 #include "control_frame.h"
+#include "guest_native_q2_private.h"
 #include "qa/game_q1_bots.h"
 #include "qa/binary.h"
 #include "qa/persistence_navigation.h"
@@ -18,6 +19,19 @@ typedef struct npc_prediction {
     bool initialized;
 } npc_prediction;
 
+typedef struct npc_advisory_query {
+    qa_arena storage;
+    qa_nav_workspace *workspace;
+    qa_nav_route route;
+} npc_advisory_query;
+
+static bool native_source(const application_provider *source)
+{
+    const struct application_native_q2 *engine=source && source->kind==APPLICATION_PROVIDER_NATIVE?
+        source->state.native.q2_engine:NULL;
+    return engine && engine->provider==source && engine->profile==QA_NATIVE_Q2_GAME_API2023;
+}
+
 bool application_npc_current(const application_bots_npc *owner,qa_error *error)
 {
     application_provider *source=owner?owner->source:NULL;
@@ -25,8 +39,11 @@ bool application_npc_current(const application_bots_npc *owner,qa_error *error)
     bool game=source && ((source->kind==APPLICATION_PROVIDER_Q1 && source->state.q1) ||
         (source->kind==APPLICATION_PROVIDER_QC && source->product &&
          source->product->family==QA_GAME_Q1 && source->state.qc.game));
-    return (game && source->constructed &&
-        source->attached && !source->close_pending &&
+    bool entered=native_source(source) &&
+        ((source->constructed && source->attached) || source->state.native.q2_engine->calls) &&
+        source->state.native.q2_engine->prepared && !source->state.native.q2_engine->shutting_down &&
+        source->state.native.q2_engine->world==owner->world;
+    return (((game && source->constructed && source->attached) || entered) && !source->close_pending &&
         app->world==owner->world && app->physics==owner->physics &&
         app->map_resource==owner->map_resource) ||
         application_fail(error,QA_ERROR_ARGUMENT,"Monster navigation lost its actual source world");
@@ -166,6 +183,14 @@ void application_npc_owner_free(application_bots_npc *owner)
         npc_graph *graph=owner->graphs;owner->graphs=graph->next;
         application_npc_graph_free(graph);
     }
+    for(size_t i=0;i<owner->advisory_queries.capacity;++i) {
+        npc_advisory_query *query=qa_pool_at(&owner->advisory_queries,i);
+        qa_nav_route_free(&query->route);qa_nav_workspace_destroy(query->workspace);
+        qa_arena_destroy(&query->storage);
+    }
+    qa_navigation_destroy(owner->advisory_navigation);
+    application_npc_graph_free(owner->advisory_graph);
+    qa_arena_destroy(&owner->advisory_storage);
     qa_actor_index_destroy(&owner->actor_routes);
     qa_arena_destroy(&owner->prediction_storage);
     qa_vfs_destroy(owner->files);qa_resource_release(owner->map_resource);
@@ -179,17 +204,20 @@ void application_bots_npc_destroy(application_provider *source)
 }
 bool application_bots_npc_idle(const application_provider *source)
 {
-    return !source || !source->bots_npc || !source->bots_npc->busy;
+    return !source || !source->bots_npc ||
+        (!source->bots_npc->busy && !source->bots_npc->advisory_depth);
 }
 bool application_bots_npc_content_visit(const application_provider *source,
     const qa_application_content_visitor *visitor,qa_error *error)
 {
     const application_bots_npc *owner=source?source->bots_npc:NULL;
     if(!owner) return true;
-    if(!visitor || !visitor->view || owner->busy || !application_npc_current(owner,error))
+    if(!visitor || !visitor->view || !application_bots_npc_idle(source) ||
+       !application_npc_current(owner,error))
         return application_fail(error,QA_ERROR_ARGUMENT,"Monster navigation content is borrowed or stale");
     if(owner->files && !visitor->view(visitor->context,owner->files,error)) return false;
-    for(npc_graph *graph=owner->graphs;graph;graph=graph->next) {
+    for(npc_graph *graph=owner->advisory_graph?owner->advisory_graph:owner->graphs;graph;
+        graph=graph==owner->advisory_graph?owner->graphs:graph->next) {
         if(!graph->asset) continue;
         qa_resource_pool *pool=qa_vfs_resources(owner->files);
         if(!pool || qa_resource_pool_find(pool,qa_resource_id(graph->asset))!=graph->asset ||
@@ -216,9 +244,10 @@ bool application_bots_npc_horde(void *opaque)
 bool application_npc_owner_create(application_provider *source,bool prepared,application_bots_npc **out,qa_error *error)
 {
     qa_application *app=source?source->application:NULL;
-    if(!source || (source->kind!=APPLICATION_PROVIDER_Q1 && source->kind!=APPLICATION_PROVIDER_QC) ||
+    if(!source || (source->kind!=APPLICATION_PROVIDER_Q1 && source->kind!=APPLICATION_PROVIDER_QC &&
+           !native_source(source)) ||
        !app->map_resource || !out)
-        return application_fail(error,QA_ERROR_ARGUMENT,"Monster navigation needs its actual Q1 source map");
+        return application_fail(error,QA_ERROR_ARGUMENT,"Monster navigation needs its actual source map");
     qa_unified_frame_lease *storage=application_control_storage_acquire(app,error);
     if(!storage) return false;
     application_bots_npc *owner=qa_unified_frame_lease_alloc(storage,1,sizeof(*owner),_Alignof(application_bots_npc),error);
@@ -234,12 +263,12 @@ bool application_npc_owner_create(application_provider *source,bool prepared,app
             qa_q1_source_respawn_options_read(source->state.q1,&options,&time,error);
     else if(okay) {
         qa_ruleset_id kind=source->launch->selection.clock.kind;
-        if(kind!=QA_RULESET_NETQUAKE && kind!=QA_RULESET_QUAKEWORLD)
+        if(!native_source(source) && kind!=QA_RULESET_NETQUAKE && kind!=QA_RULESET_QUAKEWORLD)
             okay=application_fail(error,QA_ERROR_ARGUMENT,"Original monster source has no Q1 movement clock");
         options.rules=kind;
     }
     if(okay) okay=qa_bsp_open(qa_resource_bytes(owner->map_resource),&owner->geometry,error);
-    if(okay) {
+    if(okay && !native_source(source)) {
         qa_bsp_model model;
         okay=qa_bsp_read_model(&owner->geometry,0,&model,error) &&
             prediction_extent(owner,model.bounds.min,model.bounds.max,error);
@@ -370,6 +399,247 @@ static bool graph_for(application_bots_npc *owner,qa_bounds bounds,uint32_t flag
     if(!okay) {application_npc_graph_free(graph);return false;}
     graph->next=owner->graphs;owner->graphs=graph;
     *out=graph;return true;
+}
+
+static bool advisory_prepare(application_bots_npc *owner,qa_error *error)
+{
+    if(owner->advisory_loaded) return true;
+    npc_graph *graph=NULL;
+    if(!application_npc_graph_create(owner,&graph,error)) return false;
+    bool okay=graph_resource(owner,graph,error);
+    qa_nav_asset *asset=NULL;
+    if(okay && graph->asset) {
+        uint32_t word=qa_collision_map_checksum(owner->source->application->geometry);int32_t checksum;
+        memcpy(&checksum,&word,sizeof(checksum));
+        okay=qa_nav_asset_read(qa_resource_bytes(graph->asset),&checksum,&asset,error);
+        qa_nav_profile profile={.movement=qa_movement_profile_default(QA_RULESET_Q2_RERELEASE),
+            .shape={.kind=QA_SHAPE_POINT},.policy={.behavior=&qa_trace_behaviors[QA_RULESET_Q2_RERELEASE],
+                .q1_hull=-1,.contents_mask=qa_collision_contents_mask(0x30003,QA_GAME_Q2)},
+            .minimum_floor_normal=.7f,.capabilities=(UINT32_C(1)<<QA_NAV_TRAVEL_COUNT)-1};
+        qa_navigation_services services={.context=owner,.world=owner->world,.revision=revision,
+            .topology_geometry_only=true};
+        if(okay) okay=qa_nav_graph_from_asset(&owner->map,asset,&profile,&services,
+            &graph->storage,&graph->graph,error);
+        services.topology_geometry_only=false;
+        if(okay) okay=qa_navigation_create(graph->graph,&services,&graph->storage,
+            &owner->advisory_navigation,error);
+    }
+    qa_nav_asset_release(asset);
+    if(!okay) {application_npc_graph_free(graph);return false;}
+    owner->advisory_graph=graph;owner->advisory_loaded=true;
+    return true;
+}
+
+typedef struct npc_path_filter {
+    const qa_native_host_q2_path_request *request;
+    const qa_nav_graph_view *graph;
+    const qa_navigation *navigation;
+} npc_path_filter;
+
+static bool advisory_node(void *opaque,const qa_nav_node *node)
+{
+    const qa_native_host_q2_path_request *request=((npc_path_filter *)opaque)->request;
+    if(node->source.kind!=QA_NAV_ORIGIN_NAV3) return true;
+    if(node->flags&8192) return false;
+    if(request->ignore_node_flags) return !(node->flags&1024);
+    if(node->flags&(1|2|8|256|512)) return false;
+    uint32_t medium=request->flags&3;
+    return !(medium==2 && (node->flags&16)) && !(medium==1 && !(node->flags&16)) &&
+        !(!(request->flags&32) && (node->flags&4));
+}
+
+static bool advisory_edge(void *opaque,const qa_nav_edge *edge)
+{
+    npc_path_filter *filter=opaque;
+    const qa_native_host_q2_path_request *request=filter->request;
+    if(request->ignore_node_flags) return true;
+    if(request->flags==1 && edge->mode!=QA_NAV_WALK && edge->mode!=QA_NAV_SWIM) return false;
+    switch(edge->mode) {
+    case QA_NAV_WALK: case QA_NAV_SWIM: return !edge->has_entity;
+    case QA_NAV_DROP: {
+        const qa_nav_node *from=qa_navigation_node(filter->navigation,edge->from);
+        const qa_nav_node *to=qa_navigation_node(filter->navigation,edge->to);
+        return (request->flags&4) && (request->drop_height<=0 ||
+            from->origin.z-to->origin.z<=request->drop_height);
+    }
+    case QA_NAV_JUMP: {
+        bool barrier=edge->source_travel_type==5;
+        const qa_nav_node *from=qa_navigation_node(filter->navigation,edge->from);
+        const qa_nav_node *to=qa_navigation_node(filter->navigation,edge->to);
+        return (request->flags&(barrier?16u:8u)) && (!barrier || request->jump_height<=0 ||
+            to->origin.z-from->origin.z<=request->jump_height);
+    }
+    case QA_NAV_MOVER: return (request->flags&32)!=0;
+    default: return false;
+    }
+}
+
+static float advisory_cost(void *opaque,const qa_nav_node *from,const qa_nav_edge *edge,
+    const qa_nav_node *to)
+{
+    const qa_nav_source_view *source=qa_nav_asset_kex(((npc_path_filter *)opaque)->graph->asset);
+    return edge->mode==QA_NAV_TELEPORT?1:
+        qa_vec_length(qa_vec_sub(from->origin,to->origin))*(source?source->heuristic:1);
+}
+
+static qa_trace_policy advisory_policy(void)
+{
+    return (qa_trace_policy){.behavior=&qa_trace_behaviors[QA_RULESET_Q2_RERELEASE],
+        .q1_hull=-1,.contents_mask=qa_collision_contents_mask(0x30003,QA_GAME_Q2)};
+}
+
+static bool advisory_nearest(application_bots_npc *owner,npc_path_filter *filter,qa_vec3 point,
+    const qa_nav_node **out,qa_error *error)
+{
+    const qa_native_host_q2_path_request *request=filter->request;
+    float best=request->radius>0?request->radius:512;
+    float lower=point.z-(request->min_height>0?request->min_height:64);
+    float upper=point.z+(request->max_height>0?request->max_height:64);
+    *out=NULL;
+    for(size_t i=0;i<filter->graph->node_count;++i) {
+        const qa_nav_node *node=filter->graph->nodes+i;
+        bool enabled,overridden;
+        if(!qa_navigation_enabled(owner->advisory_navigation,node->id,&enabled,&overridden))
+            return application_fail(error,QA_ERROR_FORMAT,"Advisory node lost its shared runtime");
+        if(!enabled || !advisory_node(filter,node) || node->origin.z<lower || node->origin.z>upper) continue;
+        float distance=hypotf(node->origin.x-point.x,node->origin.y-point.y);
+        if(distance>best) continue;
+        qa_trace_query query={.start=point,.end=qa_vec_add(node->origin,qa_v3(0,0,32)),
+            .shape={.kind=QA_SHAPE_POINT},.policy=advisory_policy()};
+        qa_trace_result trace;
+        if(!qa_world_trace(owner->world,&query,&trace,error)) return false;
+        if(trace.fraction<1 || trace.start_solid || trace.all_solid) continue;
+        *out=node;best=distance;
+    }
+    return true;
+}
+
+static bool advisory_scope(application_bots_npc *owner,npc_advisory_query **out,size_t *slot,
+    qa_error *error)
+{
+    qa_pool *pool=&owner->advisory_queries;
+    if(!pool->stride) {
+        qa_arena_init_pool(&owner->advisory_storage,qa_unified_frame_lease_arena(owner->storage)->pages);
+        if(!qa_pool_prepare(pool,&owner->advisory_storage,
+            qa_actors_capacity(qa_session_actors(owner->source->application->session)),
+            sizeof(npc_advisory_query),_Alignof(npc_advisory_query),error)) return false;
+        for(size_t i=0;i<pool->capacity;++i) *(npc_advisory_query *)qa_pool_at(pool,i)=(npc_advisory_query){0};
+    }
+    if(pool->head==SIZE_MAX) {
+        size_t prior=pool->capacity;
+        if(!qa_pool_extend(pool,&owner->advisory_storage,prior?prior:1,error)) return false;
+        for(size_t i=prior;i<pool->capacity;++i) *(npc_advisory_query *)qa_pool_at(pool,i)=(npc_advisory_query){0};
+    }
+    npc_advisory_query *query=qa_pool_take(pool,slot);
+    if(!query) return application_fail(error,QA_ERROR_MEMORY,"Retaining advisory query scope");
+    if(!query->storage.pages)
+        qa_arena_init_pool(&query->storage,owner->advisory_storage.pages);
+    if((!query->workspace && !qa_nav_workspace_create(&query->storage,&query->workspace,error)) ||
+        !qa_nav_workspace_prepare(query->workspace,qa_nav_workspace_limits_read(
+            qa_navigation_graph(owner->advisory_navigation)),error)) {
+        qa_pool_release(pool,*slot);return false;
+    }
+    ++owner->advisory_depth;*out=query;return true;
+}
+
+static bool advisory_result(const qa_native_host_q2_path_request *request,
+    const qa_nav_route *route,const qa_navigation *navigation,qa_native_host_q2_path_info *info,
+    qa_error *error)
+{
+    const qa_nav_edge *edge=route->edge_count?qa_navigation_edge(navigation,route->edges[0]):NULL;
+    const qa_nav_node *first=qa_navigation_node(navigation,route->nodes[0]);
+    size_t begin=0;
+    if(!request->ignore_node_flags && edge && (edge->mode==QA_NAV_WALK || edge->mode==QA_NAV_CROUCH)) {
+        qa_vec3 offset=qa_vec_sub(request->start,first->origin);
+        float length=hypotf(offset.x,offset.y);
+        const qa_nav_node *next=qa_navigation_node(navigation,route->nodes[1]);
+        qa_vec3 direction=qa_vec_sub(next->origin,first->origin);
+        if((length<=first->radius && fabsf(offset.z)<=64) ||
+            (length>0 && offset.x*direction.x+offset.y*direction.y>first->radius*length)) begin=1;
+    }
+    first=qa_navigation_node(navigation,route->nodes[begin]);
+    const qa_nav_node *last=qa_navigation_node(navigation,route->nodes[route->node_count-1]);
+    float distance=0;qa_vec3 at=request->start;
+    for(size_t i=begin;i<route->node_count;++i) {
+        qa_vec3 point=qa_navigation_node(navigation,route->nodes[i])->origin;
+        distance+=qa_vec_length(qa_vec_sub(at,point));at=point;
+    }
+    distance+=qa_vec_length(qa_vec_sub(at,request->goal));
+    info->distance_squared=distance*distance;
+    bool add_start=qa_vec_length(qa_vec_sub(request->start,first->origin))>64;
+    bool add_goal=qa_vec_length(qa_vec_sub(request->goal,last->origin))>64;
+    size_t count=route->node_count-begin+add_start+add_goal;
+    if(count>INT32_MAX) return application_fail(error,QA_ERROR_FORMAT,"Native path count exceeds its I32 result");
+    info->point_count=(int32_t)count;
+    if(request->point_capacity>0) {
+        size_t written=0;
+        if(add_start && !request->point(request->point_context,request->start,error)) return false;
+        written+=add_start;
+        for(size_t i=begin;i<route->node_count && written<(uint64_t)request->point_capacity;++i,++written)
+            if(!request->point(request->point_context,qa_navigation_node(navigation,route->nodes[i])->origin,error)) return false;
+        if(add_goal && written<(uint64_t)request->point_capacity &&
+            !request->point(request->point_context,request->goal,error)) return false;
+    }
+    info->return_code=request->ignore_node_flags?3:edge && edge->has_hint?2:4;
+    if(!request->ignore_node_flags) {
+        info->first=edge && edge->has_hint?edge->hint.start:first->origin;
+        info->second=edge && edge->has_hint?edge->hint.end:begin+1<route->node_count?
+            qa_navigation_node(navigation,route->nodes[begin+1])->origin:request->goal;
+    }
+    info->link_type=!edge?0:edge->mode==QA_NAV_DROP?1:edge->mode==QA_NAV_JUMP?
+        (edge->source_travel_type==5?3:2):edge->mode==QA_NAV_MOVER?4:0;
+    return true;
+}
+
+bool application_bots_npc_path(void *opaque,const qa_native_host_q2_path_request *request,
+    qa_native_host_q2_path_info *info,qa_error *error)
+{
+    application_provider *source=opaque;
+    *info=(qa_native_host_q2_path_info){.return_code=8};
+    if(!source->application->map_resource || !source->application->world) return true;
+    if(source->bots_npc && source->bots_npc->map_resource!=source->application->map_resource) {
+        if(!application_bots_npc_idle(source))
+            return application_fail(error,QA_ERROR_ARGUMENT,"Advisory map changed inside a query");
+        application_bots_npc_destroy(source);
+    }
+    if(!source->bots_npc && !application_npc_owner_create(source,false,&source->bots_npc,error)) return false;
+    application_bots_npc *owner=source->bots_npc;
+    if(!application_npc_current(owner,error) || !advisory_prepare(owner,error)) return false;
+    const qa_nav_graph_view *graph=qa_navigation_graph(owner->advisory_navigation);
+    if(!graph || !graph->node_count) return true;
+    if(!(request->flags&3)) {info->return_code=12;return true;}
+    npc_path_filter filter={.request=request,.graph=graph,.navigation=owner->advisory_navigation};
+    const qa_nav_node *start,*goal;
+    if(!advisory_nearest(owner,&filter,request->start,&start,error)) return false;
+    if(!start) {info->return_code=9;return true;}
+    if(!advisory_nearest(owner,&filter,request->goal,&goal,error)) return false;
+    if(!goal) {info->return_code=10;return true;}
+    if(start==goal || qa_vec_length(qa_vec_sub(request->start,goal->origin))<=request->move_distance) {
+        info->return_code=0;return true;
+    }
+    if(!request->ignore_node_flags) {
+        const qa_vec3 points[]={request->start,request->goal};
+        for(size_t i=0;i<2;++i) {
+            qa_point_contents contents;
+            qa_point_query query={.point=points[i],.policy=advisory_policy()};
+            if(!qa_world_point_contents(owner->world,&query,&contents,error)) return false;
+            if(qa_collision_bits_overlap(contents.merged,qa_collision_contents_mask(3,QA_GAME_Q2))) {
+                info->return_code=(int32_t)(6+i);return true;
+            }
+        }
+    }
+    npc_advisory_query *query=NULL;size_t slot=SIZE_MAX;
+    if(!advisory_scope(owner,&query,&slot,error)) return false;
+    qa_nav_route_query path={.start=request->start,.goal=request->goal,
+        .start_node=start->id,.goal_node=goal->id,.context=&filter,.edge_filter=advisory_edge,
+        .node_filter=advisory_node,.edge_cost=advisory_cost,.advisory=true};
+    bool okay=qa_navigation_route(owner->advisory_navigation,query->workspace,&path,&query->route,error);
+    info->return_code=11;
+    if(okay && query->route.found)
+        okay=advisory_result(request,&query->route,owner->advisory_navigation,info,error);
+    qa_nav_route_reset(&query->route);--owner->advisory_depth;
+    qa_pool_release(&owner->advisory_queries,slot);
+    return okay;
 }
 bool application_npc_actor_create(application_bots_npc *owner,qa_actor_id id,npc_graph *graph,
     npc_actor **out,qa_error *error)

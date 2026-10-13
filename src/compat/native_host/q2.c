@@ -523,6 +523,92 @@ static bool q2_application(qa_native_host *host, const qa_native_import_call *ca
     return host->q2_application(host->q2_application_context, &application, result, error);
 }
 
+static bool bot_order_import(qa_native_host *host,const qa_native_import_call *call,
+    qa_native_value *result,bool follow,qa_error *error)
+{
+    result->as.i32=0;
+    qa_native_address address=native_argument_address(call,0);
+    if(!address) return true;
+    qa_actor_id actor;
+    if(!native_host_actor_for_address(host,address,false,&actor,NULL,error)) return false;
+    if(!actor.registry) return true;
+    if(follow) {
+        if(!host->engine.bot_follow)
+            return native_host_fail(error,QA_ERROR_UNSUPPORTED,call->slot,"Native Q2 bot follow service is unbound");
+        address=native_argument_address(call,1);
+        if(!address) return true;
+        qa_actor_id target;
+        if(!native_host_actor_for_address(host,address,false,&target,NULL,error)) return false;
+        if(!target.registry) return true;
+        return host->engine.bot_follow(host->engine.context,actor,target,&result->as.i32,error);
+    }
+    if(!host->engine.bot_move_to)
+        return native_host_fail(error,QA_ERROR_UNSUPPORTED,call->slot,"Native Q2 bot point service is unbound");
+    qa_vec3 point;
+    if(!native_host_read_vec3(host,native_argument_address(call,1),&point,error)) return false;
+    return host->engine.bot_move_to(host->engine.context,actor,point,
+        call->arguments[2].as.f32,&result->as.i32,error);
+}
+
+typedef struct native_path_sink {
+    qa_native_host *host;
+    qa_native_address address;
+    uint64_t written,capacity;
+} native_path_sink;
+
+static bool path_point(void *opaque,qa_vec3 point,qa_error *error)
+{
+    native_path_sink *sink=opaque;
+    if(sink->written>=sink->capacity || sink->written>UINT64_MAX/12 ||
+        sink->address>UINT64_MAX-sink->written*12)
+        return native_host_fail(error,QA_ERROR_ARGUMENT,0,"Native Q2 path point address exceeds its buffer");
+    if(!native_host_write_vec3(sink->host,sink->address+sink->written*12,point,error)) return false;
+    ++sink->written;return true;
+}
+
+static bool path_import(qa_native_host *host,const qa_native_import_call *call,
+    qa_native_value *result,qa_error *error)
+{
+    if(!host->engine.path_to_goal)
+        return native_host_fail(error,QA_ERROR_UNSUPPORTED,call->slot,"Native Q2 path service is unbound");
+    qa_native_target target=qa_native_module_describe(qa_native_get_module(host->instance)).image.target;
+    bool sysv32=target.abi==QA_NATIVE_ABI_SYSTEM_V_I386;
+    size_t pointer_offset=sysv32?60:64,count_offset=sysv32?64:72;
+    uint8_t bytes[80];
+    if(!native_host_read(host,native_argument_address(call,0),bytes,sysv32?72:80,error)) return false;
+    qa_native_address output=native_argument_address(call,1);
+    if(output && !qa_native_range_check(host->instance,output,40,QA_NATIVE_MEMORY_WRITE,error)) return false;
+    qa_native_host_q2_path_request request={
+        .start={qa_load_f32le(bytes),qa_load_f32le(bytes+4),qa_load_f32le(bytes+8)},
+        .goal={qa_load_f32le(bytes+12),qa_load_f32le(bytes+16),qa_load_f32le(bytes+20)},
+        .flags=qa_load_u32le(bytes+24),.move_distance=qa_load_f32le(bytes+28),
+        .draw_time=qa_load_f32le(bytes+32),.ignore_node_flags=bytes[36]!=0,
+        .min_height=qa_load_f32le(bytes+40),.max_height=qa_load_f32le(bytes+44),
+        .radius=qa_load_f32le(bytes+48),.drop_height=qa_load_f32le(bytes+52),
+        .jump_height=qa_load_f32le(bytes+56)};
+    uint64_t count=qa_load_u64le(bytes+count_offset);
+    memcpy(&request.point_capacity,&count,sizeof(count));
+    native_path_sink sink={.host=host,.capacity=count,.address=target.pointer_bytes==4?
+        qa_load_u32le(bytes+pointer_offset):qa_load_u64le(bytes+pointer_offset)};
+    if(request.point_capacity<0 || (request.point_capacity && !sink.address) ||
+        !qa_vec_finite(request.start) || !qa_vec_finite(request.goal) ||
+        !isfinite(request.move_distance) || !isfinite(request.draw_time) ||
+        !isfinite(request.min_height) || !isfinite(request.max_height) ||
+        !isfinite(request.radius) || !isfinite(request.drop_height) || !isfinite(request.jump_height))
+        return native_host_fail(error,QA_ERROR_ARGUMENT,call->slot,"Invalid native Q2 path request");
+    request.point=path_point;request.point_context=&sink;
+    qa_native_host_q2_path_info info;
+    if(!host->engine.path_to_goal(host->engine.context,&request,&info,error)) return false;
+    if(output) {
+        qa_store_u32le(bytes,(uint32_t)info.point_count);qa_store_f32le(bytes+4,info.distance_squared);
+        qa_store_f32le(bytes+8,info.first.x);qa_store_f32le(bytes+12,info.first.y);qa_store_f32le(bytes+16,info.first.z);
+        qa_store_f32le(bytes+20,info.second.x);qa_store_f32le(bytes+24,info.second.y);qa_store_f32le(bytes+28,info.second.z);
+        qa_store_u32le(bytes+32,(uint32_t)info.link_type);qa_store_u32le(bytes+36,(uint32_t)info.return_code);
+        if(!native_host_write(host,output,bytes,40,error)) return false;
+    }
+    result->as.u8=info.return_code<5?1:0;return true;
+}
+
 bool native_host_q2_import(qa_native_host *host, const qa_native_import_call *call,
                            qa_native_value *result, qa_error *error)
 {
@@ -650,6 +736,11 @@ bool native_host_q2_import(qa_native_host *host, const qa_native_import_call *ca
     case QA_NATIVE_Q2_IMPORT_Bot_UnRegisterEdict:
     return native_host_q2_bot_register(host, native_argument_address(call, 0),
             (dispatch == QA_NATIVE_Q2_IMPORT_Bot_RegisterEdict), error);
+    case QA_NATIVE_Q2_IMPORT_Bot_MoveToPoint:
+    case QA_NATIVE_Q2_IMPORT_Bot_FollowActor:
+    return bot_order_import(host,call,result,dispatch==QA_NATIVE_Q2_IMPORT_Bot_FollowActor,error);
+    case QA_NATIVE_Q2_IMPORT_GetPathToGoal:
+    return path_import(host,call,result,error);
     case QA_NATIVE_Q2_IMPORT_ServerFrame:
     {
         result->as.u32 = host->engine.server_frame
