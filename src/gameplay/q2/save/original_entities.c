@@ -86,6 +86,7 @@ static const original_entity_class entity_classes[] = {
     SCENERY("misc_gib_leg", Q2S_GIB, NULL, "gib_touch", "gib_die"),
     SCENERY("viewthing", Q2S_ANIMATION, NULL, NULL, NULL),
     SCENERY("makron_torso", Q2S_ANIMATION, NULL, NULL, "gib_die"),
+    SCENERY("monster_boss3_stand", Q2S_ANIMATION, "Use_Boss3", NULL, NULL),
     SCENERY("misc_blackhole", Q2S_BLACKHOLE, "misc_blackhole_use", NULL, NULL),
     SCENERY("misc_eastertank", Q2S_ANIMATION, NULL, NULL, NULL),
     SCENERY("misc_easterchick", Q2S_ANIMATION, NULL, NULL, NULL),
@@ -248,6 +249,12 @@ static bool read_entity(qa_q2_game *g, q2_original_record_io *io, q2_actor *a)
         a->entity->scenery = Q2S_ANIMATION;
         a->entity->animation_first = 346;
         a->entity->animation_end = 365;
+    }
+    if (classname == g->runtime_names[Q2_NAME_MONSTER_BOSS3_STAND]) {
+        a->entity->kind = Q2E_SCENERY;
+        a->entity->scenery = Q2S_ANIMATION;
+        a->entity->animation_first = 414;
+        a->entity->animation_end = 474;
     }
     if (a->entity->kind == Q2E_LIGHT) {
         bool dynamic;
@@ -455,6 +462,7 @@ static const original_entity_think entity_thinks[] = {
     ANIM("misc_blackhole_think", Q2S_BLACKHOLE, -1),
     ANIM("TH_viewthing", Q2S_ANIMATION, -1),
     ANIM("makron_torso_think", Q2S_ANIMATION, -1),
+    ANIM("Think_Boss3Stand", Q2S_ANIMATION, -1),
     ANIM("misc_eastertank_think", Q2S_ANIMATION, -1),
     ANIM("misc_easterchick_think", Q2S_ANIMATION, -1),
     ANIM("misc_easterchick2_think", Q2S_ANIMATION, -1),
@@ -516,6 +524,8 @@ static const char *scenery_think(qa_q2_game *g, const q2_entity_state *s)
     case Q2S_ANIMATION:
         if (q2_entity_makron_torso(s))
             return "makron_torso_think";
+        if (q2_entity_boss3_stand(s))
+            return "Think_Boss3Stand";
         return !strcmp(name, "viewthing") ? "TH_viewthing" :
             !strcmp(name, "misc_eastertank") ? "misc_eastertank_think" :
             !strcmp(name, "misc_easterchick") ? "misc_easterchick_think" :
@@ -1108,9 +1118,10 @@ bool q2_original_entity_record(qa_q2_game *g, q2_original_record_io *io, q2_acto
             if (s->scenery == Q2S_BLACKHOLE) { s->animation_first = 0; s->animation_end = 19; }
             else if (s->scenery == Q2S_ANIMATION) {
                 bool torso = q2_entity_makron_torso(s);
-                s->animation_first = torso ? 346 : !strcmp(name, "misc_eastertank") ? 254 :
+                bool boss = q2_entity_boss3_stand(s);
+                s->animation_first = boss ? 414 : torso ? 346 : !strcmp(name, "misc_eastertank") ? 254 :
                     !strcmp(name, "misc_easterchick") ? 208 : !strcmp(name, "misc_easterchick2") ? 248 : 0;
-                s->animation_end = torso ? 365 : !strcmp(name, "misc_eastertank") ? 293 :
+                s->animation_end = boss ? 474 : torso ? 365 : !strcmp(name, "misc_eastertank") ? 293 :
                     !strcmp(name, "misc_easterchick") ? 247 : !strcmp(name, "misc_easterchick2") ? 287 : 7;
             }
         }

@@ -2,15 +2,21 @@
 #include "internal.h"
 #include "qa/text.h"
 
-static bool model(qa_q2_game *g, q2_actor *a, const char *name, qa_bounds bounds,
-                  qa_physics_solid solid, qa_error *e) {
+static bool model_resource(qa_q2_game *g, q2_actor *a, qa_string_id resource,
+                           qa_bounds bounds, qa_physics_solid solid, qa_error *e) {
     qa_body_state b;
-    if (!qa_builtin_resource(&g->services, name, &a->entity->visual.models[0], e) ||
-        !qa_world_body_read(g->services.world, a->id, &b, e))
+    a->entity->visual.models[0] = resource;
+    if (!qa_world_body_read(g->services.world, a->id, &b, e))
         return false;
     b.bounds = bounds;
     return q2_entity_body(g, a, &b, false, e) && q2_entity_solid(g, a, solid, e) &&
            (!q2_actor_live(g, a->id) || q2_entity_show(g, a, e));
+}
+static bool model(qa_q2_game *g, q2_actor *a, const char *name, qa_bounds bounds,
+                  qa_physics_solid solid, qa_error *e) {
+    qa_string_id resource;
+    return qa_builtin_resource(&g->services, name, &resource, e) &&
+           model_resource(g, a, resource, bounds, solid, e);
 }
 static bool health(qa_q2_game *g, q2_actor *a, double value, double mass, bool damageable,
                    bool invulnerable, qa_error *e) {
@@ -28,23 +34,30 @@ static bool damageable(qa_q2_game *g, q2_actor *a, bool enabled, qa_error *e) {
     state.can_take_damage = enabled;
     return qa_combat_set_traits(g->services.combat, a->id, &state, e);
 }
+static bool effect_resource(qa_q2_game *g, q2_actor *a, qa_string_id resource,
+                            qa_vec3 origin, int count, int color,
+                            qa_builtin_q2_multicast_kind audience, qa_error *e) {
+    return qa_builtin_emit(&g->services,
+                           &(qa_builtin_event){.kind = QA_BUILTIN_IMPACT,
+                                               .family = QA_GAME_Q2,
+                                               .provider = g->options.owner,
+                                               .actor = a->id,
+                                               .resource = resource,
+                                               .origin = origin,
+                                               .count = count,
+                                               .code = color,
+                                               .q2_multicast = {audience, origin},
+                                               .time_ns = g->now_ns},
+                           e);
+}
 static bool effect(qa_q2_game *g, q2_actor *a, const char *name, int count, int color,
                    qa_error *e) {
     qa_body_state body;
     qa_string_id resource;
     return qa_world_body_read(g->services.world, a->id, &body, e) &&
            qa_builtin_resource(&g->services, name, &resource, e) &&
-           qa_builtin_emit(&g->services,
-                           &(qa_builtin_event){.kind = QA_BUILTIN_IMPACT,
-                                               .family = QA_GAME_Q2,
-                                               .provider = g->options.owner,
-                                               .actor = a->id,
-                                               .resource = resource,
-                                               .origin = body.origin,
-                                               .count = count,
-                                               .code = color,
-                                               .time_ns = g->now_ns},
-                           e);
+           effect_resource(g, a, resource, body.origin, count, color,
+                           QA_BUILTIN_Q2_MULTICAST_NONE, e);
 }
 static bool explode(qa_q2_game *g, q2_actor *a, int type, qa_error *e) {
     return effect(g, a, type == 1 ? "q2:explosion1" : "q2:explosion2", 1, 0, e) &&
@@ -401,8 +414,10 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
                  {"misc_amb4", Q2S_AMBIENCE},
                  {"misc_nuke", Q2S_NUKE},
                  {"target_mal_laser", Q2S_MAL_LASER}};
-    *handled = false;
-    for (size_t i = 0; i < sizeof(names) / sizeof(*names); i++)
+    *handled = s->classname == g->runtime_names[Q2_NAME_MONSTER_BOSS3_STAND];
+    if (*handled)
+        s->scenery = Q2S_ANIMATION;
+    for (size_t i = 0; !*handled && i < sizeof(names) / sizeof(*names); i++)
         if (!strcmp(name, names[i].name)) {
             s->scenery = names[i].kind;
             *handled = true;
@@ -533,6 +548,23 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             return false;
         return !q2_actor_live(g, a->id) || animate(g, a, 0, 19, .2f, e);
     case Q2S_ANIMATION:
+        if (s->classname == g->runtime_names[Q2_NAME_MONSTER_BOSS3_STAND]) {
+            if (g->options.deathmatch)
+                return qa_session_release(g->services.session, a->id, e);
+            a->physics.motion = QA_PHYSICS_STEP;
+            s->usable = true;
+            s->animation_first = 414;
+            s->animation_end = 474;
+            s->visual.frame = 414;
+            if (!model_resource(g, a,
+                    g->runtime_names[Q2_NAME_RESOURCE_MODELS_MONSTERS_BOSS3_RIDER_TRIS_MD2],
+                    (qa_bounds){{-32, -32, 0}, {32, 32, 90}}, QA_PHYSICS_BOX, e))
+                return false;
+            return !q2_actor_live(g, a->id) ||
+                   animate(g, a, 414, 474,
+                       g->options.rules == QA_RULESET_Q2_RERELEASE ?
+                           (float)g->frame_ns / Q2_NS : .1f, e);
+        }
         if (!strcmp(name, "viewthing")) {
             s->visual.render_flags = 64;
             if (!model(g, a, "models/objects/banner/tris.md2",
@@ -731,6 +763,24 @@ bool q2_scenery_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id a
         return q2_entity_schedule(g, a, Q2ET_SCENERY, .1f);
     case Q2S_BLACKHOLE:
         return qa_session_release(g->services.session, a->id, e);
+    case Q2S_ANIMATION: {
+        if (!q2_entity_boss3_stand(s))
+            return true;
+        bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
+        qa_body_state body;
+        if (!qa_world_body_read(g->services.world, a->id, &body, e) ||
+            !effect_resource(g, a, g->runtime_names[Q2_NAME_RESOURCE_Q2_BOSSTPORT],
+                body.origin, 1, 0,
+                rerelease ? QA_BUILTIN_Q2_MULTICAST_PHS : QA_BUILTIN_Q2_MULTICAST_PVS, e))
+            return false;
+        if (!q2_actor_live(g, a->id))
+            return true;
+        if (!rerelease)
+            return qa_session_release(g->services.session, a->id, e);
+        s->visual.visible = false;
+        return q2_entity_solid(g, a, QA_PHYSICS_NOT_SOLID, e) &&
+               (!q2_actor_live(g, a->id) || q2_entity_show(g, a, e));
+    }
     case Q2S_COMMANDER:
         if (!q2_entity_sound(g, a, g->runtime_names[QA_Q2_SFX_TANK_PAIN], 4, 1, 1, 0, e))
             return false;
@@ -859,7 +909,7 @@ bool q2_scenery_think(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         return q2_entity_show(g, a, e) &&
                (!q2_actor_live(g, a->id) ||
                 q2_entity_schedule(g, a, Q2ET_SCENERY,
-                    torso ? .1f : (float)g->frame_ns / Q2_NS));
+                    torso || q2_entity_boss3_stand(s) ? .1f : (float)g->frame_ns / Q2_NS));
     }
     case Q2S_SATELLITE:
         s->visual.frame++;

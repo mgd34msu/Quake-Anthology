@@ -332,7 +332,8 @@
     X(RR_NO_AMMO, "$g_no_ammo") \
     X(RR_INSUFFICIENT_AMMO, "$g_not_enough_ammo") \
     X(RR_DROP_CURRENT_WEAPON, "$g_cant_drop_weapon") \
-    X(FUNC_DOOR, "func_door")
+    X(FUNC_DOOR, "func_door") \
+    X(MONSTER_BOSS3_STAND, "monster_boss3_stand")
 
 typedef uint32_t q2_runtime_name;
 enum {

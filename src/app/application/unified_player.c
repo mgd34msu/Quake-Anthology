@@ -83,6 +83,7 @@ static bool q2_effect_names_prepare(qa_application *app, qa_error *error)
         {"bfg-explosion", QA_Q2_TE_BFG_EXPLOSION+1, 0, false},
         {"bfg-bigexplosion", QA_Q2_TE_BFG_BIGEXPLOSION+1, 0, false},
         {"boss-teleport", QA_Q2_TE_BOSSTPORT+1, 0, false},
+        {"bosstport", QA_Q2_TE_BOSSTPORT+1, 0, false},
         {"other-teleport", QA_Q2_TE_TELEPORT_EFFECT+1, 0, false},
         {"player-teleport", QA_Q2_TE_TELEPORT_EFFECT+1, 0, false},
         {"heatbeam-sparks", QA_Q2_TE_HEATBEAM_SPARKS+1, 0, false},

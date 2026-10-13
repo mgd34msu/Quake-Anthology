@@ -97,7 +97,6 @@ static const monster_source_binding monster_bindings[] = {
     {"misc_actor", 0, 0},
     {"monster_berserk", 0, 1},
     {"monster_boss2", 0, 2},
-    {"monster_boss3_stand", 0, 3},
     {"monster_brain", 0, 4},
     {"monster_chick", 0, 5},
     {"monster_flipper", 0, 6},
@@ -121,7 +120,6 @@ static const monster_source_binding monster_bindings[] = {
     {"misc_actor", 1, 0},
     {"monster_berserk", 1, 1},
     {"monster_boss2", 1, 2},
-    {"monster_boss3_stand", 1, 3},
     {"monster_boss5", 1, 21},
     {"monster_brain", 1, 22},
     {"monster_chick", 1, 5},
@@ -153,7 +151,6 @@ static const monster_source_binding monster_bindings[] = {
     {"misc_actor", 2, 0},
     {"monster_berserk", 2, 27},
     {"monster_boss2", 2, 2},
-    {"monster_boss3_stand", 2, 3},
     {"monster_brain", 2, 28},
     {"monster_carrier", 2, 29},
     {"monster_chick", 2, 30},
@@ -186,7 +183,6 @@ static const monster_source_binding monster_bindings[] = {
     {"monster_arachnid", 3, 48},
     {"monster_berserk", 3, 49},
     {"monster_boss2", 3, 50},
-    {"monster_boss3_stand", 3, 3},
     {"monster_boss5", 3, 51},
     {"monster_brain", 3, 52},
     {"monster_carrier", 3, 53},
@@ -796,8 +792,7 @@ static bool summons_record(qa_q2_game *game, q2_original_record_io *io,
 
 static bool statue(const struct qa_q2_monster *m)
 {
-    return m->definition->species == Q2M_BOSS3_STAND ||
-        m->definition->species == Q2M_TANK_STAND;
+    return m->definition->species == Q2M_TANK_STAND;
 }
 
 static bool stationary_source(const q2_original_record_io *io, const struct qa_q2_monster *m)
@@ -834,7 +829,7 @@ static bool schedule_record(qa_q2_game *game, q2_original_record_io *io,
         break;
     }
     if (statue(m)) {
-        think = m->definition->species == Q2M_BOSS3_STAND ? "Think_Boss3Stand" : "Think_TankStand";
+        think = "Think_TankStand";
         use = "Use_Boss3";
     } else if (m->turret_attached) {
         think = actor->entity && actor->entity->think == Q2ET_TURRET_LINK ?
@@ -864,11 +859,12 @@ static bool schedule_record(qa_q2_game *game, q2_original_record_io *io,
     static const char *const think_names[] = {
         "monster_think", "walkmonster_start_go", "flymonster_start_go", "swimmonster_start_go",
         "monster_triggered_spawn", "M_FliesOn", "M_FliesOff", "monster_dead_think", "hover_deadthink",
-        NULL, "Think_Boss3Stand", "Think_TankStand", "turret_driver_link", "turret_driver_think",
+        NULL, NULL /* Former boss3 prop slot. */, "Think_TankStand", "turret_driver_link", "turret_driver_think",
         "stationarymonster_start_go", "BossExplode", "BossExplode2", "WidowExplode", "stationarymonster_triggered_spawn"
     };
     size_t selected = sizeof(think_names) / sizeof(*think_names);
     for (size_t i = 0; i < sizeof(think_names) / sizeof(*think_names); ++i) {
+        if (i == 10) continue;
         bool matches = false;
         if (!q2_original_function_matches(game, io, "think", 436, think_names[i], &matches)) return false;
         if (matches) { selected = i; break; }
@@ -876,8 +872,8 @@ static bool schedule_record(qa_q2_game *game, q2_original_record_io *io,
     if (selected == sizeof(think_names) / sizeof(*think_names))
         return monster_error(io, "think", "Unknown native monster Source schedule");
     if (!q2_original_scalar(io, "nextthink", Q2_ORIGINAL_TIME, 428, 428, 428, &due)) return false;
-    bool is_statue = selected == 10 || selected == 11;
-    if (is_statue != statue(m) || (selected == 10 && m->definition->species != Q2M_BOSS3_STAND) ||
+    bool is_statue = selected == 11;
+    if (is_statue != statue(m) ||
         (selected == 11 && m->definition->species != Q2M_TANK_STAND) ||
         ((selected == 12 || selected == 13) && m->definition->species != Q2M_TURRET_DRIVER) ||
         (selected == 14 && !stationary_source(io, m)) ||

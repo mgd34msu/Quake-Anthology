@@ -5050,7 +5050,6 @@ static const qa_monster_catalog_slot slots_q2[] = {
     {"monster_arachnid", QA_MONSTER_ARTILLERY},
     {"monster_berserk", QA_MONSTER_MELEE},
     {"monster_boss2", QA_MONSTER_BOSS},
-    {"monster_boss3_stand", QA_MONSTER_BOSS},
     {"monster_boss5", QA_MONSTER_BOSS},
     {"monster_brain", QA_MONSTER_HYBRID},
     {"monster_carrier", QA_MONSTER_BOSS},

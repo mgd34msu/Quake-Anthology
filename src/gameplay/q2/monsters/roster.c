@@ -440,13 +440,6 @@ static const q2m_definition definitions[] = {
             Q2M_NO_GIB | Q2M_DO_NOT_COUNT, Q2M_MOVE_tank_move_stand, Q2M_MOVE_tank_move_stand,
             Q2M_MOVE_tank_move_stand, Q2M_MOVE_tank_move_stand, Q2M_MOVE_NONE, Q2M_MOVE_NONE, Q2M_MOVE_NONE, Q2M_MOVE_NONE, Q2M_MOVE_NONE,
             Q2M_MOVE_NONE, Q2M_MOVE_NONE, Q2M_MOVE_NONE, Q2M_ATTACK_NONE, Q2M_ATTACK_NONE, 0, 0, 0),
-    MONSTER("monster_boss3_stand", "models/monsters/boss3/rider/tris.md2",
-            "base/boss32:boss32Moves", Q2M_BOSS3_STAND, Q2M_STATIONARY,
-            BOUNDS(-32, -32, 0, 32, 32, 90), 1, 0, 500, 1, 0, 0,
-            Q2M_NO_GIB | Q2M_DO_NOT_COUNT, Q2M_MOVE_makron_move_stand,
-            Q2M_MOVE_makron_move_stand, Q2M_MOVE_makron_move_stand, Q2M_MOVE_makron_move_stand, Q2M_MOVE_NONE,
-            Q2M_MOVE_NONE, Q2M_MOVE_NONE, Q2M_MOVE_NONE, Q2M_MOVE_NONE, Q2M_MOVE_NONE, Q2M_MOVE_NONE, Q2M_MOVE_NONE, Q2M_ATTACK_NONE,
-            Q2M_ATTACK_NONE, 0, 0, 0),
 };
 
 static const q2m_definition rerelease_jorg = MONSTER(
