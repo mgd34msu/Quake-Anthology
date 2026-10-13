@@ -4418,21 +4418,23 @@ static bool fixbot_roam(q2m_context *context, qa_error *error) {
     return false;
   if (!q2m_alive(context) || acquired) return true;
   if (!q2m_set_move(context, Q2M_MOVE_fixbot_move_roamgoal, false, error)) return false;
-  if (m->spawnflags & 1u) {
+  if (m->spawnflags & Q2M_FIXBOT_LANDING) {
     if (!fixbot_goal_create(context, -1, error)) return false;
     if (!q2m_alive(context)) return true;
-    m->spawnflags = 8;
+    m->spawnflags = Q2M_FIXBOT_WORKING;
   }
-  if (m->spawnflags & 2u) {
+  if (m->spawnflags & Q2M_FIXBOT_TAKEOFF) {
     if (!fixbot_goal_create(context, 1, error)) return false;
     if (!q2m_alive(context)) return true;
-    m->spawnflags = 8;
+    m->spawnflags = Q2M_FIXBOT_WORKING;
   }
-  if (m->spawnflags & 4u) {
+  if (m->spawnflags & Q2M_FIXBOT_FIXIT) {
     if (!q2m_set_move(context, Q2M_MOVE_fixbot_move_roamgoal, false, error)) return false;
     if (!q2m_alive(context)) return true;
-    m->spawnflags = 8;
+    m->spawnflags = Q2M_FIXBOT_WORKING;
   }
+  if (context->actor->entity)
+    context->actor->entity->spawnflags = m->spawnflags;
   return m->spawnflags || q2m_set_move(context, Q2M_MOVE_fixbot_move_stand2, false, error);
 }
 

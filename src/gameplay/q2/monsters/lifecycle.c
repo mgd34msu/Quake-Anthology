@@ -336,7 +336,9 @@ static bool trigger_spawn(q2m_context *context, qa_error *error) {
     if (!q2m_alive(context))
         return true;
     qa_builtin_actor_traits target;
-    bool acquire = monster->enemy.registry != 0 && !(monster->spawnflags & 1u) &&
+    bool scripted_fixbot = monster->definition->species == Q2M_FIXBOT &&
+        (monster->spawnflags & (Q2M_FIXBOT_LANDING | Q2M_FIXBOT_TAKEOFF | Q2M_FIXBOT_FIXIT));
+    bool acquire = !scripted_fixbot && monster->enemy.registry != 0 && !(monster->spawnflags & 1u) &&
                    traits(context, monster->enemy, &target) && !target.no_target;
     if (!q2m_alive(context))
         return true;
@@ -345,6 +347,8 @@ static bool trigger_spawn(q2m_context *context, qa_error *error) {
             return false;
     } else {
         monster->enemy = qa_actor_reference_resolve(qa_session_actors(context->game->services.session), context->actor->physics.enemy = (qa_actor_reference){0});
+        if (context->actor->entity)
+            context->actor->entity->enemy = (qa_actor_id){0};
     }
     return !q2m_alive(context) || q2m_link(context, error);
 }
