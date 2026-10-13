@@ -2,11 +2,38 @@
 #include <inttypes.h>
 #include <stdio.h>
 
+enum { MODE_ITEM_SOURCE, MODE_ITEM_INVENTORY };
+
+static void item_remember(mode_instance *v, size_t row) {
+    const qa_mode_item_binding *item = &v->items[row];
+    qa_id_index_insert(&v->item_index, item->source, MODE_ITEM_SOURCE, row);
+    qa_id_index_insert(&v->item_index, item->inventory, MODE_ITEM_INVENTORY, row);
+}
+
+void mode_items_reindex(mode_instance *v) {
+    qa_id_index_clear(&v->item_index);
+    for (size_t i = 0; i < v->item_count; ++i)
+        item_remember(v, i);
+}
+
+static size_t item_find(const mode_instance *v, qa_item_id item, bool inventory) {
+    qa_id_index_cursor cursor = qa_id_index_begin(&v->item_index, item,
+        inventory ? MODE_ITEM_INVENTORY : MODE_ITEM_SOURCE);
+    size_t row, found = SIZE_MAX;
+    while (qa_id_index_next(&v->item_index, &cursor, &row))
+        if (found == SIZE_MAX || (inventory ? row > found : row < found))
+            found = row;
+    return found;
+}
+
 bool mode_items_reserve(mode_instance *v, size_t capacity, qa_error *e) {
     if (capacity <= v->item_capacity)
         return true;
-    if (capacity > SIZE_MAX / sizeof(*v->items))
+    if (capacity > SIZE_MAX / sizeof(*v->items) || capacity > SIZE_MAX / 2)
         return mode_fail(e, "mode item capacity exhausted");
+    v->item_index.storage = &v->item_storage;
+    if (!qa_id_index_reserve(&v->item_index, capacity * 2 - v->item_index.count, e))
+        return false;
     qa_mode_item_binding *items = qa_arena_grow(&v->item_storage, v->items,
         v->item_count * sizeof(*v->items), capacity * sizeof(*v->items),
         _Alignof(qa_mode_item_binding), e);
@@ -65,11 +92,11 @@ static void item_scope_release(qa_modes *m, mode_item_scope *scope, size_t slot)
 
 bool mode_inventory_item(qa_modes *m, mode_instance *v, qa_item_id source,
                          qa_item_id *out, qa_error *e) {
-    for (size_t i = 0; i < v->item_count; ++i)
-        if (v->items[i].source == source) {
-            *out = v->items[i].inventory;
-            return true;
-        }
+    size_t found = item_find(v, source, false);
+    if (found != SIZE_MAX) {
+        *out = v->items[found].inventory;
+        return true;
+    }
     qa_strings *strings = qa_session_strings(m->options.services.session);
     qa_bytes name = qa_strings_text(strings, source);
     if (!name.size)
@@ -100,8 +127,11 @@ bool mode_inventory_item(qa_modes *m, mode_instance *v, qa_item_id source,
     memcpy(text + length, name.data, name.size);
     bool ok = qa_strings_intern(strings, (qa_bytes){text, size}, out, e);
     item_scope_release(m, scope, slot);
-    if (ok)
-        v->items[v->item_count++] = (qa_mode_item_binding){source, *out};
+    if (ok) {
+        size_t row = v->item_count++;
+        v->items[row] = (qa_mode_item_binding){source, *out};
+        item_remember(v, row);
+    }
     return ok;
 }
 static bool item_use(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_item_id item, qa_item_action action,
@@ -113,10 +143,8 @@ static bool item_use(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_item_id i
     mode_member *p = mode_member_get(m, v, actor);
     if (!p || !v->value.rules.enabled)
         return true;
-    qa_item_id source = 0;
-    for (size_t i = 0; i < v->item_count; ++i)
-        if (v->items[i].inventory == item)
-            source = v->items[i].source;
+    size_t row = item_find(v, item, true);
+    qa_item_id source = row != SIZE_MAX ? v->items[row].source : 0;
     if (!source)
         return true;
     mode_object *object = mode_object_get(m, p->relic);
@@ -151,13 +179,12 @@ static bool item_action(void *context, qa_item_id item, qa_item_action action, q
         mode_instance *v = &m->instances[i];
         if (!v->active)
             continue;
-        for (size_t j = 0; j < v->item_count; ++j)
-            if (v->items[j].inventory == item) {
-                bool handled;
-                if (!qa_modes_item_action(m, v->id, p->actor, item, action, &handled, e))
-                    return false;
-                return handled || mode_fail(e, "mode item is not held");
-            }
+        if (item_find(v, item, true) != SIZE_MAX) {
+            bool handled;
+            if (!qa_modes_item_action(m, v->id, p->actor, item, action, &handled, e))
+                return false;
+            return handled || mode_fail(e, "mode item is not held");
+        }
     }
     return mode_fail(e, "unknown mode inventory handle");
 }

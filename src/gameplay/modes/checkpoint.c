@@ -453,6 +453,7 @@ static bool restore_instance(qa_modes *m, const qa_mode_checkpoint *saved, qa_er
     v->item_count = v->item_capacity = saved->item_count;
     if (v->item_count)
         memcpy(v->items, saved->items, v->item_count * sizeof(*v->items));
+    mode_items_reindex(v);
     return mode_horde_restore(m, v, saved->horde, e);
 }
 static bool checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved,

@@ -89,10 +89,8 @@ static bool upper(q3n_hud_draw *d)
             if(qa_i32_sub(d->frame->time,g->attacker_time)>10000)g->attacker_time=0;
             else {
                 if(!q3nh_head(d,580,y,60,60,client,qa_v3(0,180,0)))return false;
-                const char *info; uint64_t revision; char name[64];
-                if(!q3n_frame_configstring(d->frame,544u+(uint32_t)client,
-                    &info,&revision,d->error) || !qa_q3_info_value(info,"n",name,sizeof(name),d->error) ||
-                   !q3nh_right(d,640,y+60,name,0.5f))return false;
+                const q3n_client_info *info=q3n_clients_get(d->frame->clients,(uint32_t)client);
+                if(!info || !q3nh_right(d,640,y+60,info->name,0.5f))return false;
             }
         }
     }

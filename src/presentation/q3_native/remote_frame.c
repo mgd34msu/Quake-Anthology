@@ -129,21 +129,20 @@ bool q3n_remote_source_read(const q3n_remote_source *s, q3n_remote_source_view *
 bool q3n_remote_source_current(const q3n_remote_source_view *view)
 {
     if (!view || !view->owner) return false;
-    q3n_remote_source_view actual;
-    return q3n_remote_source_read(view->owner, &actual, NULL) && basis_identity(&view->basis, &actual.basis) &&
-        view->basis.restart_generation == actual.basis.restart_generation &&
-        publication_equal(&view->publication, &actual.publication) && view->reached_command == actual.reached_command &&
-        view->game_type == actual.game_type && view->max_clients == actual.max_clients &&
-        view->dm_flags == actual.dm_flags &&
-        view->match_start_time == actual.match_start_time;
+    qa_native_q3_remote_client_basis basis; q3n_remote_publication publication;
+    return observe(view->owner, &basis, &publication, NULL) && basis_identity(&view->basis, &basis) &&
+        view->basis.restart_generation == basis.restart_generation &&
+        publication_equal(&view->publication, &publication) && view->reached_command == view->owner->reached_command &&
+        reached_valid(view->reached_command, &publication);
 }
 bool q3n_remote_source_configstring(const q3n_remote_source *s, uint32_t index,
     const char **text, uint64_t *revision, qa_error *e)
 {
-    q3n_remote_source_view view;
-    if (!text || !revision || index >= QA_Q3_CONFIGSTRINGS || !q3n_remote_source_read(s, &view, e))
+    qa_native_q3_remote_client_basis basis; q3n_remote_publication publication;
+    if (!text || !revision || index >= QA_Q3_CONFIGSTRINGS || !observe(s, &basis, &publication, e) ||
+        !reached_valid(s->reached_command, &publication))
         return fail(e, QA_ERROR_ARGUMENT, "Remote configstring requires its real reached source and row");
-    *text = qa_q3_configstring(view.publication.gamestate, index);
+    *text = qa_q3_configstring(publication.gamestate, index);
     *revision = (uint32_t)s->config_commands[index]; return true;
 }
 bool q3n_remote_command_current(const q3n_remote_source *s, const q3n_remote_command *command)
@@ -177,8 +176,9 @@ bool q3n_remote_source_reached(q3n_remote_source *s, const q3n_remote_command *c
 }
 bool q3n_remote_source_command(q3n_remote_source *s, int32_t sequence, q3n_remote_command *out, qa_error *e)
 {
-    q3n_remote_source_view before;
-    if (!s || !out || s->busy || !q3n_remote_source_read(s, &before, e) ||
+    qa_native_q3_remote_client_basis basis; q3n_remote_publication publication;
+    if (!s || !out || s->busy || !observe(s, &basis, &publication, e) ||
+        !reached_valid(s->reached_command, &publication) ||
         s->reached_command == INT32_MAX || sequence != s->reached_command + 1)
         return fail(e, QA_ERROR_ARGUMENT, "Remote command read requires the next actual CGAME cursor");
     s->busy = true; q3n_remote_command command = {0};

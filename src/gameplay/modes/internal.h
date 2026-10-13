@@ -6,6 +6,7 @@
 #include "qa/modes_q3_session.h"
 #include "qa/arena.h"
 #include "qa/pool.h"
+#include "qa/id_index.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -55,6 +56,7 @@ typedef struct mode_instance {
     qa_mode_item_binding *items;
     size_t item_count, item_capacity;
     qa_arena item_storage;
+    qa_id_index item_index;
     qa_actor_id bases[3], ball, tag, tag_owner, last_ball_touch;
     bool base_admitting[3];
     qa_actor_id last_spawns[4];
@@ -336,6 +338,7 @@ bool mode_set_count(qa_modes *, qa_actor_id, qa_item_id, double, qa_error *);
 bool mode_object_count(qa_modes *, mode_instance *, mode_object *, qa_actor_id, double, qa_error *);
 bool mode_inventory_item(qa_modes *, mode_instance *, qa_item_id, qa_item_id *, qa_error *);
 bool mode_items_reserve(mode_instance *, size_t, qa_error *);
+void mode_items_reindex(mode_instance *);
 bool mode_item_scopes_prepare(qa_modes *, qa_error *);
 void mode_item_scopes_destroy(qa_modes *);
 bool mode_reserve_objective(qa_modes *, const qa_objective_binding *, qa_objective_lease *, qa_error *);

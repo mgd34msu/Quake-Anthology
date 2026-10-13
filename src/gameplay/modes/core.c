@@ -320,6 +320,7 @@ void qa_modes_destroy(qa_modes *m) {
             free(v->sorted);
             free(v->ranks);
             free(v->spawns);
+            qa_id_index_destroy(&v->item_index);
             qa_arena_destroy(&v->item_storage);
             mode_horde_free(v);
         }
@@ -417,6 +418,7 @@ bool qa_modes_remove(qa_modes *m, qa_mode_id id, qa_error *e) {
     free(v->sorted);
     free(v->ranks);
     free(v->spawns);
+    qa_id_index_destroy(&v->item_index);
     qa_arena_destroy(&v->item_storage);
     mode_horde_free(v);
     *v = (mode_instance){.id = id};
