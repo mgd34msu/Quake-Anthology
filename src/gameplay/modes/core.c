@@ -1030,7 +1030,8 @@ bool mode_join(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_team_id team
     uint64_t binding_serial = v->bindings[actor.slot].serial;
     bool fresh = !member->joined || !qa_actor_id_equal(member->actor, actor);
     if (fresh)
-        *member = (mode_member){.actor = actor, .joined = true, .extra_flags = 48};
+        *member = (mode_member){.actor = actor, .joined = true,
+            .extra_flags = v->value.rules.source == QA_MODE_LMCTF ? 32 : 48};
     if (!qa_modes_set_team(m, id, actor, team, e)) {
         if (mode_member_get(m, v, actor) == member &&
             v->bindings[actor.slot].serial == binding_serial)

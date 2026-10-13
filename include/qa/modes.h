@@ -30,7 +30,8 @@ enum { QA_MODE_MENU_LAYOUT_BYTES = 1400 };
 typedef enum qa_mode_menu_page {
     QA_MODE_MENU_NONE, QA_MODE_MENU_JOIN, QA_MODE_MENU_CREDITS, QA_MODE_MENU_NO_CHASE,
     QA_MODE_MENU_SCOREBOARD, QA_MODE_MENU_ADMIN, QA_MODE_MENU_SETTINGS,
-    QA_MODE_MENU_LMCTF_VOTE, QA_MODE_MENU_LMCTF_MAIN, QA_MODE_MENU_LMCTF_OBSERVER
+    QA_MODE_MENU_LMCTF_VOTE, QA_MODE_MENU_LMCTF_MAIN, QA_MODE_MENU_LMCTF_OBSERVER,
+    QA_MODE_MENU_LMCTF_HELP
 } qa_mode_menu_page;
 typedef struct qa_mode_ctf_settings {
     int32_t match_minutes, setup_minutes, start_seconds;
@@ -39,6 +40,7 @@ typedef struct qa_mode_ctf_settings {
 typedef struct qa_mode_menu_state {
     qa_mode_menu_page page;
     int8_t cursor;
+    uint32_t text_page;
     uint64_t revision, refresh_frame;
     char layout[QA_MODE_MENU_LAYOUT_BYTES];
     qa_mode_ctf_settings settings;
@@ -336,6 +338,8 @@ typedef struct qa_mode_loot_spawn {
 typedef struct qa_mode_source_settings {
     const char *referee_password, *rcon_password;
     const char *admin_password, *warp_list, *level_name;
+    const qa_string_id *help_lines;
+    size_t help_line_count;
     int32_t skin_set;
     bool flag_initialized;
     qa_mode_ctf_settings ctf;

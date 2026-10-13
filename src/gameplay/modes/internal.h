@@ -465,6 +465,15 @@ typedef struct mode_objective {
     X(LMCTF_MENU_BECOME_OBSERVER, "Become Observer") \
     X(LMCTF_MENU_CHANGE_TEAM, "Change Team") \
     X(LMCTF_MENU_VOTING, "Voting Menu") \
+    X(LMCTF_MENU_SKIN, "Change Skin") \
+    X(LMCTF_MENU_RADIO, "Radio Sounds") \
+    X(LMCTF_MENU_VOICE, "Voice Sounds") \
+    X(LMCTF_MENU_REFEREE, "Referee Menu") \
+    X(LMCTF_MENU_HELP, "Help") \
+    X(LMCTF_HELP_TITLE, "LMCTF Commands") \
+    X(LMCTF_HELP_SEPARATOR, "--------------") \
+    X(LMCTF_MENU_NEXT_PAGE, "<next page>") \
+    X(LMCTF_HELP_UNAVAILABLE, "No help available.") \
     X(LMCTF_OBSERVER_MENU_TITLE, "LMCTF Observer Menu") \
     X(LMCTF_OBSERVER_MENU_SEPARATOR, "-------------------") \
     X(LMCTF_OBSERVER_MENU_PLAY, "Play CTF") \
@@ -476,6 +485,11 @@ typedef struct mode_objective {
     X(LMCTF_MATCH_USAGE, "USAGE: match <mapname>\n") \
     X(LMCTF_MAP_NOT_LISTED, "{0} is not a map from the maplist.\n") \
     X(LMCTF_MATCH_STARTING, "Match countdown beginning.\n") \
+    X(LMCTF_RADIO_OFF, "Your radio is now off.\n") \
+    X(LMCTF_RADIO_SOUND, "Your radio is now on for sound.\n") \
+    X(LMCTF_RADIO_TEXT, "Your radio is now text.\n") \
+    X(LMCTF_RADIO_BOTH, "Your radio is now on for text and sound.\n") \
+    X(LMCTF_RADIO_USAGE, "Format: radio <off/text/on/both>\n") \
     X(LMCTF_TEAM_SWITCH_OFF, "Sorry.  Team switching has been turned\n off on this server.\n") \
     X(LMCTF_TEAM_LOCKED, "Teams are currently locked.\n") \
     X(LMCTF_TEAM_MENU_LOCKED, "Teams are locked\n") \
@@ -702,6 +716,7 @@ bool mode_ui_close(qa_modes *, mode_instance *, qa_actor_id, qa_error *);
 bool mode_ui_open_join(qa_modes *, mode_instance *, qa_actor_id, qa_error *);
 bool mode_ui_open_admin(qa_modes *, mode_instance *, qa_actor_id, qa_error *);
 bool mode_ui_open_lmctf_vote(qa_modes *, mode_instance *, qa_actor_id, qa_error *);
+bool mode_radio_set(qa_modes *, mode_instance *, qa_actor_id, unsigned, qa_error *);
 bool mode_ui_ctf_settings_apply(qa_modes *, mode_instance *, qa_actor_id,
                                 const qa_mode_ctf_settings *, qa_error *);
 bool mode_ui_ctf_match(qa_modes *, mode_instance *, qa_actor_id, qa_error *);

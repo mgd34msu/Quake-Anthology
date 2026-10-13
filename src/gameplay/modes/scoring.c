@@ -196,6 +196,8 @@ bool qa_modes_player_respawn(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_e
     p->stats.hurt_carrier = false;
     p->stats.flag_since_ns = 0;
     p->stats.tokens = 0;
+    if (v->value.rules.source == QA_MODE_LMCTF)
+        p->extra_flags |= 32;
     return mode_horde_respawn(m, v, actor, e) &&
            (v->value.rules.source != QA_MODE_Q2_CTF || mode_ui_close(m, v, actor, e));
 }

@@ -9,6 +9,7 @@ typedef enum menu_action {
     MENU_VOTE_SKIP, MENU_VOTE_YES, MENU_VOTE_NO,
     MENU_LM_MAIN, MENU_LM_OBSERVER_MENU, MENU_LM_VOTE, MENU_LM_CHANGE_TEAM, MENU_LM_PLAY,
     MENU_LM_OBSERVE_RED, MENU_LM_OBSERVE_BLUE, MENU_LM_OBSERVE_ALL,
+    MENU_LM_HELP, MENU_LM_HELP_NEXT,
     MENU_ADMIN_SETTINGS, MENU_ADMIN_MATCH, MENU_ADMIN_CANCEL,
     MENU_SETTING_MATCH, MENU_SETTING_SETUP, MENU_SETTING_START, MENU_SETTING_WEAPONS_STAY,
     MENU_SETTING_INSTANT_ITEMS, MENU_SETTING_QUAD_DROP, MENU_SETTING_INSTANT_WEAPONS,
@@ -91,13 +92,15 @@ static const menu_entry lmctf_vote_entries[] = {
     MENU_BLANK, MENU_BLANK
 };
 static const menu_entry lmctf_main_entries[] = {
-    {MODE_NAME_LMCTF_MENU_TITLE, MENU_LEFT, MENU_NONE},
+    {MODE_NAME_LMCTF_MENU_TITLE, MENU_LEFT, MENU_LM_HELP},
     {MODE_NAME_LMCTF_MENU_SEPARATOR, MENU_LEFT, MENU_NONE},
     MENU_BLANK,
     {MODE_NAME_LMCTF_MENU_BECOME_OBSERVER, MENU_LEFT, MENU_LM_OBSERVE_ALL},
     {MODE_NAME_LMCTF_MENU_CHANGE_TEAM, MENU_LEFT, MENU_LM_CHANGE_TEAM},
     MENU_BLANK, MENU_BLANK, MENU_BLANK,
-    {MODE_NAME_LMCTF_MENU_VOTING, MENU_LEFT, MENU_LM_VOTE}
+    {MODE_NAME_LMCTF_MENU_VOTING, MENU_LEFT, MENU_LM_VOTE},
+    MENU_BLANK,
+    {MODE_NAME_LMCTF_MENU_HELP, MENU_LEFT, MENU_LM_HELP}
 };
 static const menu_entry lmctf_observer_entries[] = {
     MENU_BLANK,
@@ -108,7 +111,17 @@ static const menu_entry lmctf_observer_entries[] = {
     MENU_BLANK,
     {MODE_NAME_LMCTF_OBSERVER_MENU_RED, MENU_LEFT, MENU_LM_OBSERVE_RED},
     {MODE_NAME_LMCTF_OBSERVER_MENU_BLUE, MENU_LEFT, MENU_LM_OBSERVE_BLUE},
-    {MODE_NAME_LMCTF_OBSERVER_MENU_ALL, MENU_LEFT, MENU_LM_OBSERVE_ALL}
+    {MODE_NAME_LMCTF_OBSERVER_MENU_ALL, MENU_LEFT, MENU_LM_OBSERVE_ALL},
+    MENU_BLANK,
+    {MODE_NAME_LMCTF_MENU_HELP, MENU_LEFT, MENU_LM_HELP}
+};
+static const menu_entry lmctf_help_entries[] = {
+    {MODE_NAME_LMCTF_HELP_TITLE, MENU_LEFT, MENU_LM_MAIN},
+    {MODE_NAME_LMCTF_HELP_SEPARATOR, MENU_LEFT, MENU_NONE},
+    MENU_BLANK, MENU_BLANK, MENU_BLANK, MENU_BLANK, MENU_BLANK,
+    MENU_BLANK, MENU_BLANK, MENU_BLANK, MENU_BLANK, MENU_BLANK,
+    MENU_BLANK, MENU_BLANK, MENU_BLANK, MENU_BLANK, MENU_BLANK,
+    {MODE_NAME_LMCTF_MENU_NEXT_PAGE, MENU_LEFT, MENU_LM_HELP_NEXT}
 };
 #undef MENU_ENTRY
 #undef MENU_BLANK
@@ -168,6 +181,10 @@ static size_t menu_rows(qa_modes *m, mode_instance *v, mode_member *member, qa_m
         entries = lmctf_observer_entries;
         count = sizeof(lmctf_observer_entries) / sizeof(*entries);
         break;
+    case QA_MODE_MENU_LMCTF_HELP:
+        entries = lmctf_help_entries;
+        count = sizeof(lmctf_help_entries) / sizeof(*entries);
+        break;
     case QA_MODE_MENU_NONE: case QA_MODE_MENU_SCOREBOARD: return 0;
     }
     for (size_t i = 0; i < count; ++i)
@@ -184,6 +201,21 @@ static size_t menu_rows(qa_modes *m, mode_instance *v, mode_member *member, qa_m
     }
     if (page == QA_MODE_MENU_LMCTF_OBSERVER)
         return count;
+    if (page == QA_MODE_MENU_LMCTF_HELP) {
+        qa_mode_source_settings settings = {0};
+        if (m->options.hooks.source_settings)
+            m->options.hooks.source_settings(m->options.hooks.context, v->id, &settings);
+        size_t lines = settings.help_line_count ? settings.help_line_count : 1;
+        if (member->menu.text_page > lines / 15)
+            member->menu.text_page = 0;
+        size_t start = (size_t)member->menu.text_page * 15;
+        for (size_t i = 0; i < 15 && start + i < lines; ++i)
+            rows[2 + i].text = settings.help_line_count
+                ? qa_strings_cstr(qa_session_strings(m->options.services.session),
+                                  settings.help_lines[start + i])
+                : menu_text(m, MODE_NAME_LMCTF_HELP_UNAVAILABLE);
+        return count;
+    }
     if (page == QA_MODE_MENU_LMCTF_VOTE) {
         if (v->votes[0].active) {
             rows[2] = (menu_row){NULL, MENU_LEFT, MENU_NONE};
@@ -651,6 +683,8 @@ static bool menu_open(qa_modes *m, mode_instance *v, qa_actor_id actor,
     mode_member *member = mode_member_get(m, v, actor);
     if (!member)
         return true;
+    if (member->menu.page != page)
+        member->menu.text_page = 0;
     member->menu.page = page;
     member->menu.cursor = -1;
     member->player.scoreboard = false;
@@ -739,6 +773,12 @@ static bool menu_select(qa_modes *m, mode_instance *v, qa_actor_id actor,
         return menu_open(m, v, actor, QA_MODE_MENU_LMCTF_OBSERVER, e);
     case MENU_LM_VOTE:
         return mode_ui_open_lmctf_vote(m, v, actor, e);
+    case MENU_LM_HELP:
+        return menu_open(m, v, actor, QA_MODE_MENU_LMCTF_HELP, e);
+    case MENU_LM_HELP_NEXT:
+        if (admin_member)
+            ++admin_member->menu.text_page;
+        return menu_open(m, v, actor, QA_MODE_MENU_LMCTF_HELP, e);
     case MENU_LM_CHANGE_TEAM: case MENU_LM_PLAY: {
         qa_team_id team;
         if (action == MENU_LM_PLAY) {

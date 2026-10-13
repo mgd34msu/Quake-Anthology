@@ -135,6 +135,9 @@ struct application_native_q2_console {
     qa_cvar_handle cheats, password, spectator_password, deathmatch, max_spectators;
     qa_cvar_handle referee_password, rcon_password, skin_set, flag_init, maplist_file;
     qa_cvar_handle ctf_cvars[Q2_CTF_CVAR_COUNT];
+    qa_string_id help_lines[1000];
+    size_t help_line_count;
+    bool help_ready;
     application_q2_source_scripts scripts;
     size_t calls;
     qa_cvar_observer_token observers[sizeof(engine_cvars) / sizeof(*engine_cvars) + sizeof(common) / sizeof(*common) + sizeof(rerelease) / sizeof(*rerelease) + sizeof(rogue) / sizeof(*rogue) + sizeof(lmctf) / sizeof(*lmctf) + Q2_CTF_CVAR_COUNT + 2];
@@ -210,6 +213,8 @@ bool application_native_mode_source_settings(void *opaque, qa_mode_id mode,
                                     .rcon_password = rcon ? rcon->value : "",
                                     .admin_password = admin ? admin->value : "",
                                     .warp_list = warp ? warp->value : "",
+                                    .help_lines = owner->help_lines,
+                                    .help_line_count = owner->help_line_count,
                                     .level_name = qa_strings_cstr(qa_session_strings(app->session), level),
                                     .skin_set = skin ? skin->integer : 0,
                                     .flag_initialized = flag && flag->number != 0,
@@ -736,6 +741,39 @@ bool application_native_q2_source_player_rules(application_provider *provider, q
                                                qa_error *error) {
     return qa_q2_source_player_rules(application_native_q2_console_registry(provider), rules, error);
 }
+static bool menu_help_prepare(application_provider *provider, qa_error *error) {
+    struct application_native_q2_console *owner = provider->native_q2_console;
+    if (owner->help_ready) return true;
+    qa_resource *resource = NULL;
+    if (!qa_vfs_acquire(provider->launch->content, "help.txt", &resource, NULL, NULL)) {
+        owner->help_ready = true;
+        return true;
+    }
+    qa_bytes bytes = qa_resource_bytes(resource);
+    qa_strings *strings = qa_session_strings(provider->application->session);
+    size_t offset = 0, count = 0;
+    bool okay = true;
+    while (offset < bytes.size && count < sizeof(owner->help_lines) / sizeof(*owner->help_lines)) {
+        size_t first = offset;
+        while (offset < bytes.size && bytes.data[offset] != '\n') ++offset;
+        size_t length = offset - first;
+        if (length && bytes.data[first + length - 1] == '\r') --length;
+        if (length > 24) length = 24;
+        if (!qa_strings_intern(strings, (qa_bytes){bytes.data + first, length},
+                &owner->help_lines[count], error)) {
+            okay = false;
+            break;
+        }
+        ++count;
+        if (offset < bytes.size) ++offset;
+    }
+    qa_resource_release(resource);
+    if (okay) {
+        owner->help_line_count = count;
+        owner->help_ready = true;
+    }
+    return okay;
+}
 bool application_native_q2_source_mode_rules(application_provider *provider, qa_mode_rules *rules,
                                              qa_error *error) {
     if (!rules || rules->source < QA_MODE_Q2 || rules->source >= QA_MODE_Q3)
@@ -775,6 +813,7 @@ bool application_native_q2_source_mode_rules(application_provider *provider, qa_
     if (rules->source == QA_MODE_Q2_DEATHBALL &&
         !application_native_q2_source_integer(provider, "goallimit", &rules->capture_limit, error)) return false;
     if (rules->source == QA_MODE_LMCTF) {
+        if (!menu_help_prepare(provider, error)) return false;
         const qa_cvar_view *skin = qa_cvars_read(cvars, provider->native_q2_console->skin_set);
         if (skin && skin->integer > 3 && !qa_cvars_set(cvars, skin->name, "3", true, error))
             return false;

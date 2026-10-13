@@ -443,9 +443,33 @@ static bool ctf_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
     qa_match_intent intent = {.kind = QA_MATCH_SELECTED_MAP, .actor = actor, .map = map};
     return qa_modes_vote_start(m, v->id, actor, 0, &intent, e);
 }
+bool mode_radio_set(qa_modes *m, mode_instance *v, qa_actor_id actor,
+                     unsigned selection, qa_error *e) {
+    static const int32_t flags[] = {0, 32, 16, 48};
+    static const mode_name messages[] = {MODE_NAME_LMCTF_RADIO_OFF,
+        MODE_NAME_LMCTF_RADIO_SOUND, MODE_NAME_LMCTF_RADIO_TEXT, MODE_NAME_LMCTF_RADIO_BOTH};
+    if (selection >= sizeof(flags) / sizeof(*flags))
+        return mode_message(m, v, actor, m->runtime_names[MODE_NAME_LMCTF_RADIO_USAGE],
+                            NULL, 0, e);
+    mode_member *member = mode_member_get(m, v, actor);
+    if (!member)
+        return true;
+    member->extra_flags = (member->extra_flags & ~48) | flags[selection];
+    return mode_message(m, v, actor, m->runtime_names[messages[selection]], NULL, 0, e);
+}
 static bool lmctf_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
                            const qa_command_invocation *command, bool *handled, qa_error *e) {
     const char *name = command->argv[0];
+    if (named(name, "radio")) {
+        *handled = true;
+        const char *argument = command->args_text ? command->args_text : "";
+        unsigned selection = 4;
+        if (*argument == '0' || !strcmp(argument, "off")) selection = 0;
+        else if (*argument == '1' || !strcmp(argument, "on")) selection = 1;
+        else if (*argument == '2' || !strcmp(argument, "text")) selection = 2;
+        else if (*argument == '3' || !strcmp(argument, "both")) selection = 3;
+        return mode_radio_set(m, v, actor, selection, e);
+    }
     if (named(name, "gotomap") || named(name, "match")) {
         *handled = true;
         bool match = named(name, "match");
