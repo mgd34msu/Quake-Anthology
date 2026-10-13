@@ -553,6 +553,10 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
         if (event.kind == QA_BUILTIN_EFFECT && event.resource ==
             qa_application_ui_names_read(frontend->application)->debug_graph)
             frontend_ui_graph_sample(frontend, event.value, event.code);
+        if (event.kind == QA_BUILTIN_EFFECT && event.resource ==
+            qa_application_ui_names_read(frontend->application)->debug_graph_packet)
+            frontend_ui_graph_network(frontend, event.flags, (uint32_t)event.count,
+                event.code != 0, event.value);
         if (!frontend_ranking_event(frontend,&event,error)) return false;
         const char *text = event.message_format ? event.message_format : qa_strings_cstr(strings, event.text);
         if ((event.kind == QA_BUILTIN_MESSAGE || event.kind == QA_BUILTIN_CENTERPRINT) && text) {

@@ -831,6 +831,17 @@ bool application_emit(void *opaque, const qa_builtin_event *event, qa_error *err
     return ok;
 }
 
+bool qa_application_debug_graph_packet(qa_application *app, uint32_t dropped,
+    uint32_t suppressed, bool has_ping, double ping_ms, qa_error *error)
+{
+    if (!app || !app->session) return false;
+    return application_emit(app, &(qa_builtin_event){.kind = QA_BUILTIN_EFFECT,
+        .family = QA_GAME_Q2, .time_ns = qa_session_elapsed(app->session),
+        .resource = app->ui_names.debug_graph_packet, .flags = dropped,
+        .count = (int32_t)suppressed, .code = has_ping,
+        .value = has_ping ? (float)fmin(900, fmax(0, ping_ms)) : 0}, error);
+}
+
 bool qa_application_log_emit(qa_application *app,const qa_command_context *context,
     const char *text,uint32_t flags,qa_error *error)
 {

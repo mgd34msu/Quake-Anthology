@@ -746,6 +746,8 @@ void qa_application_player_feedback_read(const qa_application *, qa_actor_id,
 bool qa_application_client_sound(qa_application *, const qa_builtin_event *, qa_actor_id recipient, qa_error *);
 bool qa_application_audio_emit(qa_application *, const qa_audio_event *, qa_error *);
 bool qa_application_debug_emit(qa_application *, const qa_application_debug_event *, qa_error *);
+bool qa_application_debug_graph_packet(qa_application *, uint32_t dropped, uint32_t suppressed,
+    bool has_ping, double ping_ms, qa_error *);
 bool qa_application_q3_effect_emit(qa_application *,const qa_application_q3_effect_event *,qa_error *);
 void qa_application_events_subscribe(qa_application *,qa_application_event_subscription *);
 void qa_application_events_unsubscribe(qa_application_event_subscription *);

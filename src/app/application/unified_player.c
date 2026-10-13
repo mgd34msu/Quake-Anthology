@@ -180,6 +180,7 @@ bool application_ui_names_prepare(qa_application *app, qa_error *error)
         {"rank_status", &names->ranking_status}, {"rank_menu", &names->ranking_menu},
         {"misc/flare.tga", &names->flare_image}, {"default", &names->material_default}, {"ladder", &names->material_ladder},
         {"debug-bounds", &names->debug_bounds}, {"debug-graph", &names->debug_graph},
+        {"debug-graph-packet", &names->debug_graph_packet},
         {"colored-explosion", &names->colored_explosion},
         {"q1:rerelease-debug", &names->q1_rerelease_debug},
         {"developer-message", &names->developer_message}, {"source pickup", &names->source_pickup},

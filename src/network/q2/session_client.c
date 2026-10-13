@@ -246,12 +246,15 @@ bool qa_network_q2_client_stufftext(qa_network_runtime *runtime, qa_net_client_i
     *waiting = false;
     return session && server_command(session, source_seat, text, waiting, error);
 }
-bool q2_client_receive(q2_session *session, qa_bytes bytes, uint32_t acknowledged, uint64_t now, qa_error *error)
+bool q2_client_receive(q2_session *session, qa_bytes bytes, uint32_t acknowledged, uint32_t dropped,
+    uint64_t now, qa_error *error)
 {
     q2_client *client = &session->state.client;
     if (client->receive_held || client->batch.count || client->preparation_held)
         return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 receiver has an unconsumed Source preparation");
-    q2_records records = {.received_ns = now};
+    q2_records records = {.received_ns = now, .dropped = dropped,
+        .suppressed_count = client->suppressed_count,
+        .packet_telemetry = !client->policy.messages.demo};
     records.lease=qa_unified_frame_lease_acquire(client->record_pool,error);
     if (!records.lease) return false;
     if (!qa_q2_messages_read(client->messages, bytes, q2_record_retain, &records, error)) { q2_records_free(&records); return false; }
@@ -267,6 +270,7 @@ bool q2_client_receive(q2_session *session, qa_bytes bytes, uint32_t acknowledge
         }
     }
     client->batch = records; client->acknowledged = acknowledged;
+    client->suppressed_count = records.suppressed_count;
     client->receive_held = true; client->acknowledgement_held = true; return true;
 }
 bool qa_network_q2_client_record(qa_network_runtime *runtime, qa_net_client_id id,
@@ -296,7 +300,7 @@ bool qa_network_q2_client_demo_receive(qa_network_runtime *runtime, qa_net_clien
     if (!session || !session->state.client.policy.messages.demo ||
         !qa_network_callbacks_idle(runtime) || session->busy)
         return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 demo requires its returned retained CLIENT receiver");
-    return qa_network_received(runtime, id, now, error) && q2_client_receive(session, bytes, 0, now, error);
+    return qa_network_received(runtime, id, now, error) && q2_client_receive(session, bytes, 0, 0, now, error);
 }
 bool qa_network_q2_client_continue(qa_network_runtime *runtime, qa_net_client_id id, qa_error *error)
 {
@@ -309,6 +313,12 @@ bool qa_network_q2_client_continue(qa_network_runtime *runtime, qa_net_client_id
         client->acknowledgement_held = false;
         ok = client->policy.messages.demo || (current(session, error) && client->hooks.acknowledged(client->hooks.context, id,
             client->acknowledged, client->batch.received_ns, error) && current(session, error));
+        if (ok && client->batch.packet_telemetry) {
+            client->batch.packet_telemetry = false;
+            if (client->hooks.packet)
+                client->hooks.packet(client->hooks.context, id, client->acknowledged,
+                    client->batch.received_ns, client->batch.dropped, client->batch.suppressed_count);
+        }
     }
     if (ok && (client->selecting_server_data || client->preparing_game_state)) ok = prepare(session, &waiting, error);
     while (ok && !waiting && !session->retiring && client->batch.cursor < client->batch.count) {
@@ -476,6 +486,7 @@ bool q2_client_restart(q2_session *session, qa_error *error)
 {
     if (!sent_continue(session, error) || !cancel(session, error)) return false;
     q2_client *client = &session->state.client; session->active = false; client->last_frame = -1;
+    client->suppressed_count = 0;
     client->command_count = 0; client->command_number = 0; client->command_offset = 0; client->has_server_data = false;
     q2_records_free(&client->batch); client->receive_held = client->acknowledgement_held = false;
     memset(client->oldest, 0, sizeof(client->oldest)); memset(client->previous, 0, sizeof(client->previous));

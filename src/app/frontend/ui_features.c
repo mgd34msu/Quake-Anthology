@@ -115,14 +115,16 @@ static void graph_repeat(frontend_ui_features *owner, uint32_t count, int32_t co
             frontend_ui_graph_sample(owner->frontend, 30, color);
     }
 }
-void frontend_ui_graph_network(qa_frontend *f, uint32_t dropped, uint32_t suppressed, double ping_ms)
+void frontend_ui_graph_network(qa_frontend *f, uint32_t dropped, uint32_t suppressed,
+    bool has_ping, double ping_ms)
 {
     frontend_ui_features *owner = f->ui_features;
     if (!owner || graph_value(owner, FRONTEND_GRAPH_DEBUG, 0) != 0 ||
         graph_value(owner, FRONTEND_GRAPH_TIME, 0) != 0) return;
     graph_repeat(owner, dropped, 0x40);
     graph_repeat(owner, suppressed, 0xdf);
-    frontend_ui_graph_sample(f, (float)fmin(30.0, trunc(ping_ms / 30.0)), 0xd0);
+    if (has_ping)
+        frontend_ui_graph_sample(f, (float)fmin(30.0, trunc(ping_ms / 30.0)), 0xd0);
 }
 static qa_vec4 graph_color(qa_bytes palette, int32_t index)
 {

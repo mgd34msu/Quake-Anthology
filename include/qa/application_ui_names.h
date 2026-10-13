@@ -40,7 +40,7 @@ typedef struct qa_application_ui_names {
     qa_item_id q2_weapons[QA_Q2_WEAPON_COUNT], q2_ammo[QA_Q2_WEAPON_COUNT], q2_powers[7];
     qa_item_id q2_remote_armor;
     qa_item_id q3_powers[6], q3_invulnerability;
-    qa_string_id music, fog, debug_bounds, debug_graph, colored_explosion, developer_message, source_pickup;
+    qa_string_id music, fog, debug_bounds, debug_graph, debug_graph_packet, colored_explosion, developer_message, source_pickup;
     qa_string_id q1_rerelease_debug;
     qa_string_id q1_temp_sounds[FRONTEND_FX_Q1_SOUND_COUNT], q1_beam_models[QA_Q1_BEAM_MODELS], talk_sound;
     qa_string_id flare_image, material_default, material_ladder;

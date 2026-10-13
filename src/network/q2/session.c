@@ -166,7 +166,8 @@ static bool receive(void *state, qa_network_runtime *runtime, qa_net_client_id i
         if (!ok && error) *error = boundary;
         return ok;
     }
-    return q2_client_receive(session, received.payload, received.acknowledged, packet->received_ns, error);
+    return q2_client_receive(session, received.payload, received.acknowledged, received.dropped,
+        packet->received_ns, error);
 }
 static bool flush(void *state, qa_network_runtime *runtime, qa_net_client_id id, uint64_t now, qa_error *error)
 {

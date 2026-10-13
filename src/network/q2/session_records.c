@@ -127,13 +127,18 @@ bool q2_record_retain(void *context, const qa_q2_server_record *record, qa_error
     case QA_Q2_SVC_CONFIGSTRING:
         if (!text_copy(batch->lease,record->event.data.config.value, &owner.text, error)) goto failure;
         copy.event.data.config.value = (const char *)owner.text.data; break;
+    case QA_Q2_SVC_SERVERDATA:
+        batch->suppressed_count = 0;
+        break;
     case QA_Q2_SVC_FRAME:
         owner.frame_pooled=record->event.data.frame && record->event.data.frame->lease;
         owner.frame = owner.frame_pooled?qa_unified_frame_lease_alloc(record->event.data.frame->lease,
             1,sizeof(*owner.frame),_Alignof(qa_q2_wire_frame),error):calloc(1, sizeof(*owner.frame));
         if (!owner.frame) { q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 decoded frame"); goto failure; }
         if (!qa_q2_frame_clone(record->event.data.frame, owner.frame, error)) goto failure;
-        copy.event.data.frame = owner.frame; break;
+        copy.event.data.frame = owner.frame;
+        batch->suppressed_count = owner.frame->suppressed_count;
+        break;
     case QA_Q2_SVC_INVENTORY: {
         size_t count = record->event.data.inventory.count;
         if (count > SIZE_MAX / sizeof(int16_t) ||

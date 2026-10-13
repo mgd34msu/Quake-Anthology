@@ -23,6 +23,9 @@ typedef struct q2_records {
     size_t count, capacity, cursor;
     uint64_t received_ns;
     qa_unified_frame_lease *lease;
+    uint32_t dropped;
+    uint8_t suppressed_count;
+    bool packet_telemetry;
 } q2_records;
 typedef struct q2_command_group {
     qa_q2_usercmd commands[QA_NETWORK_MAX_SEATS];
@@ -76,6 +79,7 @@ typedef struct q2_client {
     bool sent_pending;
     uint64_t loading_generation, command_number;
     uint32_t acknowledged;
+    uint8_t suppressed_count;
     size_t command_offset;
     int32_t last_frame;
     char *drop_reason;
@@ -113,7 +117,7 @@ void q2_server_clear(q2_server *);
 bool q2_client_submit(q2_session *, const qa_usercmd *, qa_error *);
 bool q2_client_send(q2_session *, uint64_t, qa_error *);
 bool q2_client_restart(q2_session *, qa_error *);
-bool q2_client_receive(q2_session *, qa_bytes, uint32_t, uint64_t, qa_error *);
+bool q2_client_receive(q2_session *, qa_bytes, uint32_t, uint32_t, uint64_t, qa_error *);
 void q2_client_clear(q2_client *);
 bool q2_download_begin(q2_session *, const char *, const char *, qa_error *);
 bool q2_download_next(q2_session *, qa_error *);

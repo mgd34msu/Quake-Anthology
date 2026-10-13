@@ -161,6 +161,8 @@ typedef struct qa_network_q2_client_hooks {
     /* This records consumer invokes client_stufftext for COMMAND records.
      * Other clients retain the network state machine's direct dispatch. */
     bool records_commands;
+    void (*packet)(void *, qa_net_client_id, uint32_t acknowledged, uint64_t received_ns,
+        uint32_t dropped, uint32_t suppressed);
 } qa_network_q2_client_hooks;
 typedef struct qa_network_q2_client_policy {
     qa_q2_channel_options channel;

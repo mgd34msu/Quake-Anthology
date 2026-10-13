@@ -511,6 +511,16 @@ static bool hook_ack(void *context, qa_net_client_id id, uint32_t sequence, uint
     }
     return true;
 }
+static void hook_packet(void *context, qa_net_client_id id, uint32_t acknowledged,
+    uint64_t received_ns, uint32_t dropped, uint32_t suppressed)
+{
+    (void)id;
+    frontend_remote_q2 *row = context;
+    const remote_q2_sent_command *sent = row->sent + (acknowledged & 63u);
+    bool has_ping = sent->valid && sent->packet_sequence == acknowledged && received_ns >= sent->sent_ns;
+    double ping_ms = has_ping ? (double)(received_ns - sent->sent_ns) / 1000000.0 : 0;
+    qa_application_debug_graph_packet(row->frontend->application, dropped, suppressed, has_ping, ping_ms, NULL);
+}
 static bool hook_sent(void *context, qa_net_client_id id, qa_net_seat_id seat, uint32_t sequence,
     uint64_t command_number, const qa_q2_usercmd *command, uint64_t ns, qa_error *error)
 {
@@ -581,7 +591,7 @@ bool frontend_remote_q2_hooks(frontend_remote_q2 *row, qa_network_q2_client_hook
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 session hooks require their actual retained Source");
     *out = (qa_network_q2_client_hooks){row, hook_current, hook_serverdata, hook_prepare, hook_frame,
         hook_records, hook_download, hook_cancel, hook_ack, hook_sent, hook_command,
-        hook_server_command, hook_drop, true}; return true;
+        hook_server_command, hook_drop, true, hook_packet}; return true;
 }
 bool frontend_remote_q2_metadata_read(const frontend_remote_q2 *row, frontend_remote_q2_view *out, qa_error *error)
 {
