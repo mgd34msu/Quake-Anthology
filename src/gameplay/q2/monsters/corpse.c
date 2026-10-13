@@ -147,7 +147,7 @@ bool q2m_corpse_callback(q2m_context *c, q2m_callback_id callback, qa_error *err
     c->body.bounds = bounds;
     if (hanging)
         c->actor->physics.flags |= QA_PHYSICS_FLYING;
-    else
+    if (!hanging || rerelease)
         c->actor->physics.motion = QA_PHYSICS_TOSS;
     if (!hover && !widow2) {
         c->actor->physics.solid = QA_PHYSICS_CORPSE;

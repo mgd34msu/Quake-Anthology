@@ -78,8 +78,10 @@ static bool selection_feedback(qa_q2_game *g, qa_actor_id actor, qa_q2_weapon we
         ? rerelease ? Q2_NAME_RR_NO_AMMO : Q2_NAME_USE_NO_AMMO
         : rerelease ? Q2_NAME_RR_INSUFFICIENT_AMMO : Q2_NAME_USE_INSUFFICIENT_AMMO;
     qa_builtin_message_arg arguments[] = {
-        {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = ammo->name_id},
-        {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = item->name_id}};
+        {.kind = QA_BUILTIN_MESSAGE_STRING,
+            .value.text = rerelease ? ammo->localized_name_id : ammo->name_id},
+        {.kind = QA_BUILTIN_MESSAGE_STRING,
+            .value.text = rerelease ? item->definite_name_id : item->name_id}};
     return qa_builtin_emit(&g->services,
         &(qa_builtin_event){.kind = QA_BUILTIN_MESSAGE, .family = QA_GAME_Q2,
             .provider = g->options.owner, .actor = actor, .time_ns = g->now_ns,

@@ -200,6 +200,93 @@ static void bind_rules(qa_q2_item_definition *d) {
     default: break;
     }
 }
+static bool bind_localized_names(qa_q2_game *g, qa_q2_item_definition *d, qa_error *e) {
+    d->localized_name_id = d->definite_name_id = d->name_id;
+    if (g->options.rules != QA_RULESET_Q2_RERELEASE) return true;
+    static const struct { const char *classname, *name, *definite; } names[] = {
+        {"item_armor_body", "$item_body_armor", "$item_body_armor_def"},
+        {"item_armor_combat", "$item_combat_armor", "$item_combat_armor_def"},
+        {"item_armor_jacket", "$item_jacket_armor", "$item_jacket_armor_def"},
+        {"item_armor_shard", "$item_armor_shard", "$item_armor_shard_def"},
+        {"item_power_screen", "$item_power_screen", "$item_power_screen_def"},
+        {"item_power_shield", "$item_power_shield", "$item_power_shield_def"},
+        {"weapon_grapple", "$item_grapple", "$item_grapple_def"},
+        {"weapon_blaster", "$item_blaster", "$item_blaster_def"},
+        {"weapon_chainfist", "$item_chainfist", "$item_chainfist_def"},
+        {"weapon_shotgun", "$item_shotgun", "$item_shotgun_def"},
+        {"weapon_supershotgun", "$item_super_shotgun", "$item_super_shotgun_def"},
+        {"weapon_machinegun", "$item_machinegun", "$item_machinegun_def"},
+        {"weapon_etf_rifle", "$item_etf_rifle", "$item_etf_rifle_def"},
+        {"weapon_chaingun", "$item_chaingun", "$item_chaingun_def"},
+        {"ammo_grenades", "$item_grenades", "$item_grenades_def"},
+        {"ammo_trap", "$item_trap", "$item_trap_def"},
+        {"ammo_tesla", "$item_tesla", "$item_tesla_def"},
+        {"weapon_grenadelauncher", "$item_grenade_launcher", "$item_grenade_launcher_def"},
+        {"weapon_proxlauncher", "$item_prox_launcher", "$item_prox_launcher_def"},
+        {"weapon_rocketlauncher", "$item_rocket_launcher", "$item_rocket_launcher_def"},
+        {"weapon_hyperblaster", "$item_hyperblaster", "$item_hyperblaster_def"},
+        {"weapon_boomer", "$item_ionripper", "$item_ionripper_def"},
+        {"weapon_plasmabeam", "$item_plasma_beam", "$item_plasma_beam_def"},
+        {"weapon_railgun", "$item_railgun", "$item_railgun_def"},
+        {"weapon_phalanx", "$item_phalanx", "$item_phalanx_def"},
+        {"weapon_bfg", "$item_bfg10k", "$item_bfg10k_def"},
+        {"weapon_disintegrator", "$item_disruptor", "$item_disruptor_def"},
+        {"ammo_shells", "$item_shells", "$item_shells_def"},
+        {"ammo_bullets", "$item_bullets", "$item_bullets_def"},
+        {"ammo_cells", "$item_cells", "$item_cells_def"},
+        {"ammo_rockets", "$item_rockets", "$item_rockets_def"},
+        {"ammo_slugs", "$item_slugs", "$item_slugs_def"},
+        {"ammo_magslug", "$item_mag_slug", "$item_mag_slug_def"},
+        {"ammo_flechettes", "$item_flechettes", "$item_flechettes_def"},
+        {"ammo_prox", "$item_prox", "$item_prox_def"},
+        {"ammo_nuke", "$item_am_bomb", "$item_am_bomb_def"},
+        {"ammo_disruptor", "$item_rounds", "$item_rounds_def"},
+        {"item_quad", "$item_quad_damage", "$item_quad_damage_def"},
+        {"item_quadfire", "$item_dualfire_damage", "$item_dualfire_damage_def"},
+        {"item_invulnerability", "$item_invulnerability", "$item_invulnerability_def"},
+        {"item_invisibility", "$item_invisibility", "$item_invisibility_def"},
+        {"item_silencer", "$item_silencer", "$item_silencer_def"},
+        {"item_breather", "$item_rebreather", "$item_rebreather_def"},
+        {"item_enviro", "$item_environment_suit", "$item_environment_suit_def"},
+        {"item_ancient_head", "$item_ancient_head", "$item_ancient_head_def"},
+        {"item_adrenaline", "$item_adrenaline", "$item_adrenaline_def"},
+        {"item_bandolier", "$item_bandolier", "$item_bandolier_def"},
+        {"item_pack", "$item_ammo_pack", "$item_ammo_pack_def"},
+        {"item_ir_goggles", "$item_ir_goggles", "$item_ir_goggles_def"},
+        {"item_double", "$item_double_damage", "$item_double_damage_def"},
+        {"item_sphere_vengeance", "$item_vengeance_sphere", "$item_vengeance_sphere_def"},
+        {"item_sphere_hunter", "$item_hunter_sphere", "$item_hunter_sphere_def"},
+        {"item_sphere_defender", "$item_defender_sphere", "$item_defender_sphere_def"},
+        {"item_doppleganger", "$item_doppleganger", "$item_doppleganger_def"},
+        {"key_data_cd", "$item_data_cd", "$item_data_cd_def"},
+        {"key_power_cube", "$item_power_cube", "$item_power_cube_def"},
+        {"key_explosive_charges", "$item_explosive_charges", "$item_explosive_charges_def"},
+        {"key_yellow_key", "$item_yellow_key", "$item_yellow_key_def"},
+        {"key_power_core", "$item_power_core", "$item_power_core_def"},
+        {"key_pyramid", "$item_pyramid_key", "$item_pyramid_key_def"},
+        {"key_data_spinner", "$item_data_spinner", "$item_data_spinner_def"},
+        {"key_pass", "$item_security_pass", "$item_security_pass_def"},
+        {"key_blue_key", "$item_blue_key", "$item_blue_key_def"},
+        {"key_red_key", "$item_red_key", "$item_red_key_def"},
+        {"key_green_key", "$item_green_key", "$item_green_key_def"},
+        {"key_commander_head", "$item_commanders_head", "$item_commanders_head_def"},
+        {"key_airstrike_target", "$item_airstrike_marker", "$item_airstrike_marker_def"},
+        {"key_nuke_container", "$item_antimatter_pod", "$item_antimatter_pod_def"},
+        {"key_nuke", "$item_antimatter_bomb", "$item_antimatter_bomb_def"},
+        {"item_health_small", "$item_stimpack", "$item_stimpack_def"},
+        {"item_health", "$item_small_medkit", "$item_small_medkit_def"},
+        {"item_health_large", "$item_large_medkit", "$item_large_medkit"},
+        {"item_health_mega", "$item_mega_health", "$item_mega_health_def"},
+        {"item_flashlight", "$item_flashlight", "$item_flashlight_def"},
+        {"item_compass", "$item_compass", "$item_compass_def"},
+    };
+    for (size_t i = 0; i < N(names); ++i) {
+        if (strcmp(d->classname, names[i].classname)) continue;
+        return qa_builtin_resource(&g->services, names[i].name, &d->localized_name_id, e) &&
+            qa_builtin_resource(&g->services, names[i].definite, &d->definite_name_id, e);
+    }
+    return true;
+}
 static bool same(const char *a, const char *b) {
     while (*a && *b && tolower((unsigned char)*a) == tolower((unsigned char)*b)) {
         ++a;
@@ -402,7 +489,8 @@ bool q2_item_catalog(qa_q2_game *g, qa_error *e) {
         if (!qa_builtin_resource(&g->services, d->model, &d->model_id, e) ||
             !qa_builtin_resource(&g->services, d->icon, &d->icon_id, e) ||
             !qa_builtin_resource(&g->services, d->name, &d->name_id, e) ||
-            !qa_builtin_resource(&g->services, d->sound, &d->sound_id, e)) return false;
+            !qa_builtin_resource(&g->services, d->sound, &d->sound_id, e) ||
+            !bind_localized_names(g, d, e)) return false;
         r->by_id[i]=d;
         if (d->kind == QA_Q2_ITEM_POWER && !r->powers[d->powerup]) r->powers[d->powerup]=d->item;
         if (d->kind == QA_Q2_ITEM_HEALTH || d->kind == QA_Q2_ITEM_ARMOR ||

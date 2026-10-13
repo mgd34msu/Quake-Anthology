@@ -66,6 +66,7 @@ typedef struct qa_q2_item_definition {
     qa_q2_item_kind kind;
     qa_item_id item, ammo;
     qa_string_id classname_id, model_id, icon_id, name_id, sound_id;
+    qa_string_id localized_name_id, definite_name_id;
     uint32_t rule_flags, disabled_weapon_mask;
     qa_q2_weapon weapon;
     int quantity, capacity;
