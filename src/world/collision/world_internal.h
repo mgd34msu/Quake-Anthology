@@ -66,9 +66,9 @@ struct qa_world {
     size_t release_pending, release_peak;
     qa_world_query_rules query_rules;
 };
-static inline qa_collision_geometry *qa_world_model_geometry(const qa_world *world,
+static inline qa_collision_geometry *qa_world_model_geometry(qa_collision_geometry *geometry,
     const qa_actor_collision *collision)
-{ return collision->model_geometry ? collision->model_geometry : world->geometry; }
+{ return collision->model_geometry ? collision->model_geometry : geometry; }
 static inline qa_world_body *qa_world_raw_body(const qa_world *world, uint32_t slot)
 {
     if(world==NULL || slot>=world->capacity) return NULL;

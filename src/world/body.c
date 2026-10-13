@@ -495,7 +495,7 @@ static bool valid_collision(qa_world *world,const qa_actor_collision *collision,
             (!qa_actor_reference_present(collision->owner) || collision->owner.value.actor.registry!=qa_actors_identity(world->actors)))
         || collision->role<QA_COLLISION_SOLID || collision->role>QA_COLLISION_BOTH))
         return fail(error,code,"Invalid actor collision policy");
-    if(collision!=NULL && collision->inline_model && collision->model>=qa_collision_model_count(qa_world_model_geometry(world,collision)))
+    if(collision!=NULL && collision->inline_model && collision->model>=qa_collision_model_count(qa_world_model_geometry(world->geometry,collision)))
         return fail(error,code,"Actor inline model is unavailable");
     return true;
 }

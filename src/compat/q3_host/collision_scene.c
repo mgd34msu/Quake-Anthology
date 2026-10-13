@@ -3,6 +3,7 @@
 #include "qa/physics.h"
 #include "qa/pool.h"
 #include "qa/scene_marks.h"
+#include "../../world/collision/query.h"
 #include <math.h>
 
 bool q3_collision_mark_fragments(q3_call *call, int32_t *result, qa_error *error)
@@ -76,10 +77,13 @@ typedef struct q3_collision_binding {
 
 typedef struct collision_row {
     qa_q3_entity state;
-    qa_vec3 origin, angles;
+    qa_vec3 origin, angles, clip_origin;
+    qa_bounds bounds;
+    qa_entity_body_fields fields;
 } collision_row;
 
 typedef struct collision_capture {
+    const qa_q3_host_collision_scene *scene;
     qa_q3_host_collision_view view;
     collision_row *rows;
     uint8_t *record;
@@ -216,6 +220,7 @@ static collision_capture *capture_take(qa_q3_host_collision_scene *scene, qa_err
     }
     size_t slot;
     collision_capture *capture = qa_pool_take(&scene->captures, &slot);
+    capture->scene = scene;
     capture->slot = slot;
     capture->view = (qa_q3_host_collision_view){0};
     if (!capture->rows)
@@ -395,6 +400,82 @@ static bool skip(const qa_q3_host_collision_scene *scene, const collision_row *r
     return true;
 }
 
+static bool query_row(void *context, size_t index, qa_entity_pose pose,
+    qa_actor_id pass, qa_world_query_row *out, bool *present, qa_error *error)
+{
+    collision_capture *capture = context;
+    const qa_q3_host_collision_scene *scene = capture->scene;
+    collision_row *row = capture->rows + index;
+    bool ignored;
+    *present = false;
+    if (!skip(scene, row, pass, &ignored, error)) return false;
+    bool brush = row->state.solid == 0xffffff;
+    if (ignored || (pose == QA_ENTITY_CONTENTS_POSE && (!brush || !row->state.modelindex)))
+        return true;
+    if (brush && row->state.modelindex < 0)
+        return q3_fail(error, QA_ERROR_FORMAT, index, pose == QA_ENTITY_CONTENTS_POSE ?
+            "CG contents inline model is negative" : "CG inline model is negative");
+    static const qa_vec3 zero = {0};
+    row->bounds = (qa_bounds){0};
+    row->clip_origin = row->origin;
+    if (pose == QA_ENTITY_CLIP_POSE) {
+        if (brush) {
+            const qa_q3_trajectory *position = &row->state.pos;
+            qa_trajectory trajectory = {(qa_trajectory_type)position->type, position->time, position->duration,
+                qa_v3(position->base[0], position->base[1], position->base[2]),
+                qa_v3(position->delta[0], position->delta[1], position->delta[2])};
+            if (!qa_trajectory_position(&trajectory, capture->view.physics_time,
+                scene->binding->profile.trajectory_gravity, &row->clip_origin, error)) return false;
+        } else {
+            int32_t x = row->state.solid & 255, down = (row->state.solid >> 8) & 255;
+            int32_t up = ((row->state.solid >> 16) & 255) - 32;
+            row->bounds = (qa_bounds){qa_v3(-(float)x, -(float)x, -(float)down),
+                qa_v3((float)x, (float)x, (float)up)};
+        }
+    }
+    row->fields = (qa_entity_body_fields){0};
+    row->fields.pose[QA_ENTITY_CONTROL_POSE].origin = qa_entity_vector_bytes(row->state.origin);
+    row->fields.pose[QA_ENTITY_CONTROL_POSE].angles = qa_entity_vector_bytes(row->state.angles);
+    row->fields.pose[QA_ENTITY_CLIP_POSE].origin = qa_entity_vector_bytes(&row->clip_origin);
+    row->fields.pose[QA_ENTITY_CLIP_POSE].angles = qa_entity_vector_bytes(brush ? &row->angles : &zero);
+    row->fields.pose[QA_ENTITY_CONTENTS_POSE].origin = qa_entity_vector_bytes(row->state.origin);
+    row->fields.pose[QA_ENTITY_CONTENTS_POSE].angles = qa_entity_vector_bytes(row->state.angles);
+    row->fields.minimum = qa_entity_vector_bytes(&row->bounds.mins);
+    row->fields.maximum = qa_entity_vector_bytes(&row->bounds.maxs);
+    qa_entity_body_fields_prepare(&row->fields);
+    *out = (qa_world_query_row){.fields = &row->fields,
+        .collision = {.family = QA_GAME_Q3, .shape = QA_SHAPE_BOX,
+            .inline_model = brush, .model = brush ? (uint32_t)row->state.modelindex : 0,
+            .contents = brush ? (qa_collision_bits){UINT64_MAX, UINT64_MAX} : qa_collision_bit(QA_CONTENT_BODY),
+            .role = QA_COLLISION_SOLID}};
+    *present = true;
+    return true;
+}
+
+static bool query_hit(void *context, size_t index, qa_trace_result *hit, qa_error *error)
+{
+    const collision_capture *capture = context;
+    const collision_row *row = capture->rows + index;
+    qa_actor_id mapped = {0}; bool present = false;
+    if (row->state.number != QA_Q3_ENTITY_WORLD) {
+        if (!actor(capture->scene, (uint32_t)row->state.number, &mapped, &present, error)) return false;
+        if (!present) return q3_fail(error, QA_ERROR_NOT_FOUND, index,
+            "CG solid hit has no actual Source actor");
+    }
+    hit->actor = mapped;
+    hit->hit = row->state.number == QA_Q3_ENTITY_WORLD ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_ACTOR;
+    hit->model = row->state.solid == 0xffffff ? (uint32_t)row->state.modelindex : 0;
+    return true;
+}
+
+static qa_world_borrowed_query query_view(collision_capture *capture)
+{
+    return (qa_world_borrowed_query){.geometry = capture->view.geometry, .scratch = capture->scratch,
+        .rules = {.brush_contents_only = true, .merge = QA_WORLD_MERGE_Q3_CLIENT},
+        .count = capture->view.solid_count, .context = capture, .read = query_row,
+        .hit = query_hit, .q3_source = true};
+}
+
 bool qa_q3_host_collision_trace(qa_q3_host_collision_scene *scene, const qa_trace_query *query,
     qa_trace_result *out, qa_error *error)
 {
@@ -410,46 +491,9 @@ bool qa_q3_host_collision_trace(qa_q3_host_collision_scene *scene, const qa_trac
     qa_trace_query q = *query;
     q.target = (qa_collision_target){.pose_rules=QA_RULESET_Q3};
     q.policy.behavior = &qa_trace_behaviors[QA_RULESET_Q3];
-    if (ok) ok = qa_collision_trace_q3_model(cached->view.geometry, cached->scratch, &q, 0, false, &result, error);
-    result.hit = result.fraction != 1 ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_NONE;
-    result.actor = (qa_actor_id){0};
-    for (size_t i = 0; ok && i < cached->view.solid_count; ++i) {
-        const collision_row *row = cached->rows + i;
-        bool ignored;
-        ok = skip(scene, row, q.pass_actor, &ignored, error);
-        if (!ok || ignored) continue;
-        qa_trace_result hit;
-        if (row->state.solid == 0xffffff) {
-            const qa_q3_trajectory *position = &row->state.pos;
-            qa_trajectory trajectory = {(qa_trajectory_type)position->type, position->time, position->duration,
-                qa_v3(position->base[0], position->base[1], position->base[2]),
-                qa_v3(position->delta[0], position->delta[1], position->delta[2])};
-            if (row->state.modelindex < 0) { ok = q3_fail(error, QA_ERROR_FORMAT, i, "CG inline model is negative"); break; }
-            ok = qa_trajectory_position(&trajectory, cached->view.physics_time,
-                scene->binding->profile.trajectory_gravity, &q.target.origin, error);
-            q.target.angles = row->angles;
-            if (ok) ok = qa_collision_trace_q3_model(cached->view.geometry, cached->scratch, &q,
-                (uint32_t)row->state.modelindex, true, &hit, error);
-        } else {
-            int32_t x = row->state.solid & 255, down = (row->state.solid >> 8) & 255;
-            int32_t up = ((row->state.solid >> 16) & 255) - 32;
-            qa_bounds bounds = {qa_v3(-(float)x, -(float)x, -(float)down), qa_v3((float)x, (float)x, (float)up)};
-            q.target.origin = row->origin; q.target.angles = qa_v3(0, 0, 0);
-            ok = qa_collision_trace_q3_box(&q, bounds, true, &hit, error);
-        }
-        if (!ok) break;
-        if (hit.all_solid || hit.fraction < result.fraction) {
-            qa_actor_id mapped = {0}; bool present = false;
-            if (row->state.number != QA_Q3_ENTITY_WORLD) {
-                ok = actor(scene, (uint32_t)row->state.number, &mapped, &present, error);
-                if (ok && !present) ok = q3_fail(error, QA_ERROR_NOT_FOUND, i, "CG solid hit has no actual Source actor");
-            }
-            if (!ok) break;
-            result = hit; result.actor = mapped;
-            result.hit = row->state.number == QA_Q3_ENTITY_WORLD ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_ACTOR;
-            result.model = row->state.solid == 0xffffff ? (uint32_t)row->state.modelindex : 0;
-        } else if (hit.start_solid) result.start_solid = true;
-        if (result.all_solid) break;
+    if (ok) {
+        qa_world_borrowed_query borrowed = query_view(cached);
+        ok = qa_world_trace_borrowed(&borrowed, &q, &result, error);
     }
     if (cached) qa_pool_release(&scene->captures, cached->slot);
     --scene->readers;
@@ -471,21 +515,9 @@ bool qa_q3_host_collision_point_contents(qa_q3_host_collision_scene *scene, cons
     if (ok && !cached->view.snapshot_address) ok = q3_fail(error, QA_ERROR_NOT_FOUND, 0, "CG has no selected collision snapshot yet");
     qa_point_query q = *query;
     q.target = (qa_collision_target){.pose_rules=QA_RULESET_Q3}; q.policy.behavior = &qa_trace_behaviors[QA_RULESET_Q3];
-    if (ok) ok = qa_collision_point_contents(cached->view.geometry, cached->scratch, &q, &result, error);
-    for (size_t i = 0; ok && i < cached->view.solid_count; ++i) {
-        const collision_row *row = cached->rows + i;
-        bool ignored;
-        ok = skip(scene, row, q.pass_actor, &ignored, error);
-        if (!ok || ignored || row->state.solid != 0xffffff || !row->state.modelindex) continue;
-        if (row->state.modelindex < 0) { ok = q3_fail(error, QA_ERROR_FORMAT, i, "CG contents inline model is negative"); break; }
-        q.target = (qa_collision_target){true, (uint32_t)row->state.modelindex,
-            qa_v3(row->state.origin[0], row->state.origin[1], row->state.origin[2]),
-            qa_v3(row->state.angles[0], row->state.angles[1], row->state.angles[2]), QA_RULESET_Q3};
-        qa_point_contents hit;
-        ok = qa_collision_point_contents(cached->view.geometry, cached->scratch, &q, &hit, error);
-        if (ok) { result.contents = qa_collision_bits_union(result.contents, hit.contents);
-            result.stored = qa_collision_bits_union(result.stored, hit.stored);
-            result.merged = qa_collision_bits_union(result.merged, hit.merged); }
+    if (ok) {
+        qa_world_borrowed_query borrowed = query_view(cached);
+        ok = qa_world_point_contents_borrowed(&borrowed, &q, &result, error);
     }
     if (cached) qa_pool_release(&scene->captures, cached->slot);
     --scene->readers;
