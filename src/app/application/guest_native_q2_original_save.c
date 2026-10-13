@@ -157,9 +157,8 @@ static bool capture_server(qa_application *app,application_provider *source,
     if (ok && purpose==QA_SAVE_LEVEL_ENTRY)
         (void)snprintf(out->comment,QA_Q2_SAVE_COMMENT_BYTES,"ENTERING %s",name?name:"");
     else if (ok) {
-        qa_platform_timespec now; qa_platform_calendar_fields local;
-        ok=qa_platform_clock_read(QA_PLATFORM_CLOCK_REALTIME,&now,error) &&
-            qa_platform_calendar(now.seconds*INT64_C(1000),true,&local,error);
+        qa_platform_calendar_fields local;
+        ok=qa_platform_calendar(app->utc_ms,true,&local,error);
         if (ok) (void)snprintf(out->comment,QA_Q2_SAVE_COMMENT_BYTES,"%2i:%02i %2i/%2i  %s",
             local.hour,local.minute,local.month,local.day,name?name:"");
     }

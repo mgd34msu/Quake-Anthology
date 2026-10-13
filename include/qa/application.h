@@ -817,6 +817,7 @@ size_t qa_application_player_count(const qa_application *);
 bool qa_application_advance(qa_application *, uint64_t elapsed_ns, qa_error *);
 /* Wall time is observed at platform TIME intake, separate from simulation. */
 void qa_application_real_time(qa_application *, int64_t utc_ms);
+int64_t qa_application_utc_milliseconds(const qa_application *);
 int32_t qa_application_q3_calendar(const qa_application *, qa_q3_host_calendar *);
 
 #endif

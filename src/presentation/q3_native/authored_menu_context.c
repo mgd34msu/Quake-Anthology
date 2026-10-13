@@ -3,7 +3,7 @@
 #endif
 #define CGAME 1
 #define MISSIONPACK 1
-#include "qa/platform_services.h"
+#include "qa/application.h"
 #include "authored_menu_context.h"
 #include "qa/text.h"
 #include "qa/console_cvars_prepare.h"
@@ -153,17 +153,16 @@ void *q3menu_alloc(int native_size,int source_size,q3menu_allocation_kind kind)
 int q3menu_source_open(const char *path)
 {
     q3menu_context *context = q3menu_active();
-    qa_platform_timespec now;
-    qa_platform_calendar_fields local_time;
-    if (!qa_platform_clock_read(QA_PLATFORM_CLOCK_REALTIME,&now,NULL) ||
-        !qa_platform_calendar(now.seconds*INT64_C(1000),true,&local_time,NULL) ||
-        local_time.year<0 || local_time.year>9999) {
+    qa_q3_host_calendar local_time;
+    (void)qa_application_q3_calendar(context->application,&local_time);
+    int64_t actual_year=(int64_t)local_time.year+1900;
+    if (!local_time.day || actual_year<0 || actual_year>9999) {
         q3menu_error(0,"Cannot capture authored source builtin date and time"); return 0;
     }
     static const char *months[]={"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
     unsigned day = (unsigned)local_time.day;
-    unsigned year = (unsigned)local_time.year;
-    memcpy(context->script_date, months[local_time.month-1], 3);
+    unsigned year = (unsigned)actual_year;
+    memcpy(context->script_date, months[local_time.month], 3);
     context->script_date[3] = ' ';
     context->script_date[4] = day < 10 ? ' ' : (char)('0' + day / 10);
     context->script_date[5] = (char)('0' + day % 10);

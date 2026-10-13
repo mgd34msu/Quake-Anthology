@@ -27,6 +27,7 @@ typedef struct q3menu_allocation { uint32_t offset, source_size; q3menu_allocati
 typedef struct q3menu_context {
     displayContextDef_t *display;
     void *owner;
+    struct qa_application *application;
     qa_cvars *cvars;
     qa_cvar_handle developer;
     uint64_t declaration_revision;
@@ -65,7 +66,7 @@ typedef struct q3menu_context {
 q3menu_context *q3menu_active(void);
 q3menu_context *q3menu_enter(q3menu_context *);
 void q3menu_leave(q3menu_context *);
-q3menu_context *q3menu_create(displayContextDef_t *, void *, qa_cvars *, qa_error *);
+q3menu_context *q3menu_create(displayContextDef_t *, void *, struct qa_application *, qa_cvars *, qa_error *);
 void q3menu_bind_item(q3menu_context *, itemDef_t *);
 void q3menu_cvar_text(qa_cvar_handle, const char *, char *, int);
 float q3menu_cvar_number(qa_cvar_handle, const char *);

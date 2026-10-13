@@ -51,8 +51,8 @@ static double profiler_milliseconds(void *context) {
     return native + tools->profiler_offset;
 }
 static double wall_milliseconds(void *context) {
-    (void)context;
-    return qa_platform_utc_ms();
+    qa_frontend *frontend=context;
+    return (double)qa_application_utc_milliseconds(frontend->application);
 }
 static bool open_browser(void *context, const char *url, qa_error *error) {
     (void)context;

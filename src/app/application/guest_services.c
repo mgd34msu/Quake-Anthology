@@ -167,6 +167,8 @@ static uint32_t guest_milliseconds(void *context)
 
 void qa_application_real_time(qa_application *application, int64_t utc_ms)
 { application->utc_ms = utc_ms; }
+int64_t qa_application_utc_milliseconds(const qa_application *application)
+{ return application->utc_ms; }
 
 int32_t qa_application_q3_calendar(const qa_application *application, qa_q3_host_calendar *out)
 {

@@ -5784,11 +5784,12 @@ static qboolean Menu_OverActiveItem(menuDef_t *menu, float x, float y) {
 	return qfalse;
 }
 
-q3menu_context *q3menu_create(displayContextDef_t *display, void *owner, qa_cvars *cvars, qa_error *error)
+q3menu_context *q3menu_create(displayContextDef_t *display, void *owner, struct qa_application *application,
+    qa_cvars *cvars, qa_error *error)
 {
     q3menu_context *context = calloc(1, sizeof(*context));
     if (!context) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating authored menu context"); return NULL; }
-    context->display = display; context->owner = owner; context->cvars=cvars;
+    context->display = display; context->owner = owner; context->application=application; context->cvars=cvars;
     memcpy(context->bindings, binding_defaults, sizeof(binding_defaults));
     memcpy(context->item_keywords, item_keyword_defaults, sizeof(item_keyword_defaults));
     memcpy(context->menu_keywords, menu_keyword_defaults, sizeof(menu_keyword_defaults));

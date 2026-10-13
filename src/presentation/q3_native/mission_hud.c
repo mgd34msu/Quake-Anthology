@@ -306,7 +306,7 @@ static bool allocate(const q3n_mission_hud_options *options,const qa_native_q3_c
         .ownerDrawWidth=q3nm_owner_width,.registerSound=sound,.startBackgroundTrack=music,.stopBackgroundTrack=music_stop,
         .playCinematic=movie,.stopCinematic=movie_stop,.drawCinematic=movie_draw,.runCinematicFrame=movie_run};
     o->hud_files=qa_cvars_resolve(q3nm_registry(o),"cg_hudFiles");
-    o->menus=q3menu_create(&o->display,o,q3nm_registry(o),e); if(!o->menus) { free(o); return false; }
+    o->menus=q3menu_create(&o->display,o,options->application,q3nm_registry(o),e); if(!o->menus) { free(o); return false; }
     o->menus->scripts=(qa_script_services){.context=o,.read=source_read,.release=source_release,.diagnostic=source_diagnostic};
     if(!qa_script_defines_create(&o->menus->global_defines,e)) { q3menu_destroy(o->menus); free(o); return false; }
     o->menus->script_options=(qa_script_options){.lexer_flags=QA_SCRIPT_NO_STRING_ESCAPES,.builtins=true,.globals=o->menus->global_defines};
