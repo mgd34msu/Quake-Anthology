@@ -3622,6 +3622,7 @@ static bool idle_search(q2m_context *context, bool search, qa_error *error) {
   int channel = 2;
   float attenuation = search ? 1.0f : 2.0f;
   bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+  bool empty_search = false;
 
   switch (species) {
   case Q2M_INFANTRY:
@@ -3663,6 +3664,26 @@ static bool idle_search(q2m_context *context, bool search, qa_error *error) {
   case Q2M_MEDIC_COMMANDER:
     callback = search ? Q2M_CALLBACK_medic_search : Q2M_CALLBACK_medic_idle;
     break;
+  case Q2M_GEKK:
+    if (search) {
+      callback = Q2M_CALLBACK_gekk_search;
+    } else {
+      bool swimming = rerelease
+          ? !(monster->spawnflags & 32u) && context->actor->physics.water_level >= 2
+          : context->actor->physics.water_level != 0;
+      move = swimming ? Q2M_MOVE_gekk_move_swim_start : Q2M_MOVE_gekk_move_idle;
+    }
+    break;
+  case Q2M_STALKER:
+    if (!search) move = Q2M_MOVE_stalker_move_idle;
+    break;
+  case Q2M_SHAMBLER:
+    if (!search && rerelease) sound = QA_Q2_SFX_SHAMBLER_SIDLE;
+    break;
+  case Q2M_WIDOW:
+  case Q2M_TURRET:
+    empty_search = search;
+    break;
   case Q2M_BERSERK:
     if (search) {
       sound = QA_Q2_SFX_BERSERK_BERSRCH1;
@@ -3692,6 +3713,7 @@ static bool idle_search(q2m_context *context, bool search, qa_error *error) {
     }
     break;
   case Q2M_BOSS2:
+  case Q2M_WIDOW2:
     if (search) {
       sound = QA_Q2_SFX_BOSSHOVR_BHVUNQV1;
       attenuation = 0;
@@ -3707,7 +3729,7 @@ static bool idle_search(q2m_context *context, bool search, qa_error *error) {
   default:
     break;
   }
-  if ((!sound && move == Q2M_MOVE_NONE && callback == Q2M_CALLBACK_NONE) ||
+  if ((!sound && move == Q2M_MOVE_NONE && callback == Q2M_CALLBACK_NONE && !empty_search) ||
       (!search && (monster->spawnflags & 1u)) ||
       context->game->now_ns <= monster->idle_ns)
     return true;
@@ -3719,16 +3741,24 @@ static bool idle_search(q2m_context *context, bool search, qa_error *error) {
         return false;
     } else {
       if (third) {
-        float choice = q2m_random(context->game);
-        if (choice > 0.6f) sound = third;
-        else if (choice > 0.3f) sound = alternate;
+        float choice = rerelease ? q2_rerelease_float(context->game, 0, 1)
+                                 : q2m_random(context->game);
+        if (choice > (rerelease ? 0.6f : 0.6)) sound = third;
+        else if (choice > (rerelease ? 0.3f : 0.3)) sound = alternate;
       } else if (alternate) {
         if (species == Q2M_BERSERK ? q2_random_bounded(context->game, 2) == 0
-                                  : q2m_random(context->game) >= 0.5f)
+                                  : (rerelease ? q2_rerelease_float(context->game, 0, 1)
+                                               : q2m_random(context->game)) >= 0.5f)
           sound = alternate;
-      } else if (species == Q2M_BOSS2 && q2m_random(context->game) >= 0.5f) {
+      } else if ((species == Q2M_BOSS2 || species == Q2M_WIDOW2) &&
+                 (rerelease ? q2_rerelease_float(context->game, 0, 1)
+                            : q2m_random(context->game)) >= 0.5f) {
         sound = 0;
       }
+      if (species == Q2M_STALKER &&
+          (rerelease ? q2_rerelease_float(context->game, 0, 1)
+                     : q2m_random(context->game)) >= (rerelease ? 0.35f : 0.35))
+        move = Q2M_MOVE_stalker_move_idle2;
       if (move != Q2M_MOVE_NONE && species != Q2M_BRAIN) {
         if (!q2m_set_move(context, move, false, error))
           return false;
@@ -3924,6 +3954,11 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind,
            q2m_change_yaw(context, error);
   }
   case Q2M_AI_STAND2:
+    if (monster->definition->species == Q2M_GEKK && (monster->spawnflags & 8u)) {
+      if (!frame_move(context, distance, error))
+        return false;
+      return !q2m_alive(context) || idle_search(context, false, error);
+    }
     return q2m_run_ai(context, Q2M_AI_STAND, distance, error);
   case Q2M_AI_MOVE_TO_GOAL:
     return q2m_move_to_goal(context, distance, error);

@@ -5411,9 +5411,36 @@ static bool callback_widow2_finaldeath_93(q2m_context *context, q2m_callback_id 
 
 static bool callback_gekk_search_94(q2m_context *context, q2m_callback_id callback,
                                     qa_error *error) {
-    (void)context;
-    (void)callback;
-    (void)error;
+    if (callback != Q2M_CALLBACK_gekk_search)
+        return true;
+    struct qa_q2_monster *monster = context->monster;
+    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+    q2_runtime_name sound = QA_Q2_SFX_GEK_GK_IDLE1;
+    if (monster->spawnflags & 8u) {
+        float choice = rerelease ? q2_rerelease_float(context->game, 0, 1)
+                                 : q2m_random(context->game);
+        sound = choice < (rerelease ? .33f : .33) ? QA_Q2_SFX_GEK_GEK_LOW
+                : choice < (rerelease ? .66f : .66) ? QA_Q2_SFX_GEK_GEK_MID
+                                                   : QA_Q2_SFX_GEK_GEK_HIGH;
+    }
+    if (!q2m_sound(context, sound, 2, 1.0f, error))
+        return false;
+    if (!q2m_alive(context))
+        return true;
+    double health = rerelease
+        ? context->combat.health + 10 + q2_random_bounded(context->game, 10)
+        : truncf((float)context->combat.health +
+                 (10.0f + 10.0f * q2m_random(context->game)));
+    if (health > monster->max_health)
+        health = monster->max_health;
+    if (!qa_combat_set_health(context->game->services.combat, context->actor->id,
+                              health, error))
+        return false;
+    if (!q2m_alive(context))
+        return true;
+    context->combat.health = health;
+    monster->skin = health < truncf(monster->max_health / 4) ? 2
+                    : health < truncf(monster->max_health / 2) ? 1 : 0;
     return true;
 }
 

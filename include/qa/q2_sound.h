@@ -116,6 +116,10 @@
 #define QA_Q2_SOUND_FLYER_FLYPAIN1 "flyer/flypain1.wav"
 #define QA_Q2_SOUND_FLYER_FLYPAIN2 "flyer/flypain2.wav"
 #define QA_Q2_SOUND_GEK_GK_ATCK1 "gek/gk_atck1.wav"
+#define QA_Q2_SOUND_GEK_GK_IDLE1 "gek/gk_idle1.wav"
+#define QA_Q2_SOUND_GEK_GEK_LOW "gek/gek_low.wav"
+#define QA_Q2_SOUND_GEK_GEK_MID "gek/gek_mid.wav"
+#define QA_Q2_SOUND_GEK_GEK_HIGH "gek/gek_high.wav"
 #define QA_Q2_SOUND_GEK_GK_ATCK2 "gek/gk_atck2.wav"
 #define QA_Q2_SOUND_GEK_GK_ATCK3 "gek/gk_atck3.wav"
 #define QA_Q2_SOUND_GEK_GK_DETH1 "gek/gk_deth1.wav"
@@ -947,7 +951,11 @@
     X(BOSSHOVR_BHVUNQV1) \
     X(BOSSTANK_BTKUNQV1) \
     X(BOSSTANK_BTKUNQV2) \
-    X(GUNCMDR_GCDRSRCH1)
+    X(GUNCMDR_GCDRSRCH1) \
+    X(GEK_GK_IDLE1) \
+    X(GEK_GEK_LOW) \
+    X(GEK_GEK_MID) \
+    X(GEK_GEK_HIGH)
 
 typedef enum qa_q2_sound_index {
     QA_Q2_SFX_NONE,
