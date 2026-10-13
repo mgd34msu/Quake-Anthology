@@ -179,12 +179,14 @@ bool application_native_mode_source_settings(void *opaque, qa_mode_id mode,
         return false;
     const qa_cvar_view *referee = qa_cvars_read(owner->cvars, owner->referee_password);
     const qa_cvar_view *rcon = qa_cvars_read(owner->cvars, owner->rcon_password);
-    if (!referee || !rcon)
-        return false;
     const qa_cvar_view *skin = qa_cvars_read(owner->cvars, owner->skin_set);
     const qa_cvar_view *flag = qa_cvars_read(owner->cvars, owner->flag_init);
-    *out = (qa_mode_source_settings){.referee_password = referee->value,
-                                    .rcon_password = rcon->value,
+    const qa_cvar_view *admin = qa_cvars_read(owner->cvars, owner->ctf_cvars[Q2_CTF_ADMIN_PASSWORD]);
+    const qa_cvar_view *warp = qa_cvars_read(owner->cvars, owner->ctf_cvars[Q2_CTF_WARP_LIST]);
+    *out = (qa_mode_source_settings){.referee_password = referee ? referee->value : "",
+                                    .rcon_password = rcon ? rcon->value : "",
+                                    .admin_password = admin ? admin->value : "",
+                                    .warp_list = warp ? warp->value : "",
                                     .skin_set = skin ? skin->integer : 0,
                                     .flag_initialized = flag && flag->number != 0};
     return true;

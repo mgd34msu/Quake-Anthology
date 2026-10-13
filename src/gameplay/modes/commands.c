@@ -168,6 +168,98 @@ static bool q3_call_vote(qa_modes *m, mode_instance *v, qa_actor_id actor,
     }
     return qa_modes_vote_start(m, v->id, actor, team, &intent, e);
 }
+bool mode_ctf_named_message(qa_modes *m, mode_instance *v, qa_actor_id subject,
+    mode_name text, qa_string_id map, int32_t level, qa_error *e) {
+    mode_player *player = mode_player_get(m, subject);
+    if (!player)
+        return true;
+    qa_builtin_message_arg args[] = {
+        {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = player->identity->name},
+        {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = map}};
+    return mode_message_level(m, v, (qa_actor_id){0}, m->runtime_names[text],
+                               args, map ? 2 : 1, level, e);
+}
+bool mode_ctf_admin_grant(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_error *e) {
+    mode_member *member = mode_member_get(m, v, actor);
+    if (!member || member->admin)
+        return true;
+    member->admin = true;
+    return mode_event(m, v, QA_MODE_ROSTER, actor, (qa_actor_id){0}, (qa_actor_id){0},
+                       0, 1, QA_MATCH_ADMIN, e) &&
+           mode_ctf_named_message(m, v, actor, MODE_NAME_CTF_ADMIN_GRANTED, 0, 2, e) &&
+           mode_message(m, v, actor, m->runtime_names[MODE_NAME_CTF_ADMIN_HELP], NULL, 0, e);
+}
+static bool ctf_warp_list(qa_modes *m, mode_instance *v, qa_actor_id actor,
+                            const char *list, qa_error *e) {
+    qa_string_id text;
+    if (!qa_builtin_resource(&m->options.services, list, &text, e))
+        return false;
+    qa_builtin_message_arg argument = {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = text};
+    return mode_message(m, v, actor, m->runtime_names[MODE_NAME_CTF_WARP_LEVELS],
+                         &argument, 1, e);
+}
+static bool ctf_warp_allowed(const char *list, const char *map) {
+    qa_bytes wanted = {(const uint8_t *)map, strlen(map)};
+    while (*list) {
+        list += strspn(list, " \t\n\r");
+        size_t size = strcspn(list, " \t\n\r");
+        if (size && qa_text_bytes_equal((qa_bytes){(const uint8_t *)list, size}, wanted, true))
+            return true;
+        list += size;
+    }
+    return false;
+}
+static bool ctf_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
+                          const qa_command_invocation *command, bool *handled, qa_error *e) {
+    const char *name = command->argv[0];
+    if (named(name, "yes") || named(name, "no")) {
+        *handled = true;
+        return qa_modes_vote_cast(m, v->id, actor, 0, named(name, "yes"), e);
+    }
+    if (named(name, "ctf-menu") && command->argc > 1 && named(command->argv[1], "match")) {
+        *handled = true;
+        qa_match_intent intent = {.kind = QA_MATCH_CANCEL, .actor = actor};
+        return qa_modes_vote_start(m, v->id, actor, 0, &intent, e);
+    }
+    if (!named(name, "admin") && !named(name, "warp"))
+        return true;
+    qa_mode_source_settings settings = {0};
+    if (!m->options.hooks.source_settings ||
+        !m->options.hooks.source_settings(m->options.hooks.context, v->id, &settings))
+        return true;
+    mode_member *member = mode_member_get(m, v, actor);
+    if (!member)
+        return true;
+    *handled = true;
+    if (named(name, "admin")) {
+        if (member->admin)
+            return true;
+        if (command->argc > 1 && settings.admin_password && *settings.admin_password &&
+            !strcmp(settings.admin_password, command->argv[1]))
+            return mode_ctf_admin_grant(m, v, actor, e);
+        qa_match_intent intent = {.kind = QA_MATCH_ADMIN, .actor = actor};
+        return qa_modes_vote_start(m, v->id, actor, 0, &intent, e);
+    }
+    const char *list = settings.warp_list ? settings.warp_list : "";
+    if (command->argc < 2)
+        return mode_message(m, v, actor, m->runtime_names[MODE_NAME_CTF_WARP_USAGE], NULL, 0, e) &&
+               ctf_warp_list(m, v, actor, list, e);
+    qa_string_id map;
+    if (!ctf_warp_allowed(list, command->argv[1]))
+        return mode_message(m, v, actor, m->runtime_names[MODE_NAME_CTF_WARP_UNKNOWN], NULL, 0, e) &&
+               ctf_warp_list(m, v, actor, list, e);
+    if (!qa_builtin_resource(&m->options.services, command->argv[1], &map, e))
+        return false;
+    if (!m->options.hooks.map_allowed ||
+        !MODE_CALLBACK(m, m->options.hooks.map_allowed(m->options.hooks.context, v->id, map)))
+        return mode_message(m, v, actor, m->runtime_names[MODE_NAME_CTF_WARP_UNKNOWN], NULL, 0, e) &&
+               ctf_warp_list(m, v, actor, list, e);
+    if (member->admin)
+        return mode_ctf_named_message(m, v, actor, MODE_NAME_CTF_WARPING, map, 2, e) &&
+               mode_intent(m, v, QA_MATCH_SELECTED_MAP, actor, 0, map, e);
+    qa_match_intent intent = {.kind = QA_MATCH_SELECTED_MAP, .actor = actor, .map = map};
+    return qa_modes_vote_start(m, v->id, actor, 0, &intent, e);
+}
 static bool lmctf_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
                            const qa_command_invocation *command, bool *handled, qa_error *e) {
     const char *name = command->argv[0];
@@ -247,6 +339,12 @@ static bool console_command(qa_modes *m, qa_mode_id id, qa_actor_id actor,
     const char *arg = command->argc > 1 ? command->argv[1] : "";
     if (!arg)
         return mode_fail(e, "missing mode command argument");
+    if (v->value.rules.source == QA_MODE_Q2_CTF) {
+        if (!ctf_command(m, v, actor, command, handled, e))
+            return false;
+        if (*handled)
+            return true;
+    }
     if (v->value.rules.source == QA_MODE_LMCTF) {
         if (!lmctf_command(m, v, actor, command, handled, e))
             return false;

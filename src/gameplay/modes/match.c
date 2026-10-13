@@ -1,4 +1,6 @@
 #include "internal.h"
+#include <inttypes.h>
+#include <stdio.h>
 
 static bool lmctf_clock_message(qa_modes *m, mode_instance *v, mode_name text, int32_t value,
                                  qa_error *e) {
@@ -385,12 +387,17 @@ static bool begin_play(qa_modes *m, mode_instance *v, qa_error *e) {
     }
     return qa_modes_rank(m, v->id, e);
 }
-static bool ctf_setup_timeout(qa_modes *m, mode_instance *v, qa_error *e) {
-    v->value.rules.competition = 1;
-    if (!mode_set_phase(m, v, QA_MODE_PLAYING, 0, e) ||
+bool mode_ctf_reset(qa_modes *m, mode_instance *v, bool setup, qa_error *e) {
+    int32_t competition = setup && v->value.rules.competition >= 3
+        ? v->value.rules.competition : setup ? 2 : 1;
+    v->value.rules.competition = competition;
+    char value[16];
+    snprintf(value, sizeof(value), "%" PRId32, competition);
+    if (!mode_set_phase(m, v, setup ? QA_MODE_SETUP : QA_MODE_PLAYING,
+            setup ? v->value.time_ns + (uint64_t)v->value.rules.setup_seconds * MODE_SECOND : 0, e) ||
         (m->options.hooks.source_cvar_set &&
          !MODE_CALLBACK(m, m->options.hooks.source_cvar_set(m->options.hooks.context, v->id,
-             m->runtime_names[MODE_NAME_CVAR_COMPETITION], "1", e))))
+             m->runtime_names[MODE_NAME_CVAR_COMPETITION], value, e))))
         return false;
     v->value.started_ns = v->value.time_ns;
     v->remaining_seconds = 0;
@@ -773,7 +780,7 @@ bool mode_match_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
         if (now >= v->value.deadline_ns) {
             if (r->competition < 3) {
                 if (r->source == QA_MODE_Q2_CTF)
-                    return ctf_setup_timeout(m, v, e);
+            return mode_ctf_reset(m, v, false, e);
                 r->competition = 1;
                 return begin_play(m, v, e);
             }

@@ -100,6 +100,24 @@ typedef struct mode_objective {
 } mode_objective;
 #define MODE_NAME_LIST(X) \
     X(CVAR_COMPETITION, "competition") \
+    X(CTF_ELECTION_DISABLED, "Elections are disabled, only an admin can process this action.\n") \
+    X(CTF_ELECTION_RUNNING, "Election already in progress.\n") \
+    X(CTF_ELECTION_NEEDS_PLAYERS, "Not enough players for election.\n") \
+    X(CTF_ELECTION_MATCH_REQUEST, "{0} has requested to switch to competition mode.\n") \
+    X(CTF_ELECTION_ADMIN_REQUEST, "{0} has requested admin rights.\n") \
+    X(CTF_ELECTION_MAP_REQUEST, "{0} has requested warping to level {1}.\n") \
+    X(CTF_ELECTION_DIRECTIONS, "Type YES or NO to vote on this request.\n") \
+    X(CTF_ELECTION_TALLY, "Votes: {0}  Needed: {1}  Time left: {2}s\n") \
+    X(CTF_ELECTION_NONE, "No election is in progress.\n") \
+    X(CTF_ELECTION_ALREADY_VOTED, "You already voted.\n") \
+    X(CTF_ELECTION_SELF_VOTE, "You can't vote for yourself.\n") \
+    X(CTF_ELECTION_TIMEOUT, "Election timed out and has been cancelled.\n") \
+    X(CTF_WARPING, "{0} is warping to level {1}.\n") \
+    X(CTF_ADMIN_GRANTED, "{0} has become an admin.\n") \
+    X(CTF_ADMIN_HELP, "Type 'admin' to access the adminstration menu.\n") \
+    X(CTF_WARP_USAGE, "Where do you want to warp to?\n") \
+    X(CTF_WARP_LEVELS, "Available levels are: {0}\n") \
+    X(CTF_WARP_UNKNOWN, "Unknown CTF level.\n") \
     X(CTF_PICK_TEAM, "Pick a team first (hit <TAB> for menu)\n") \
     X(CTF_TEAM_JOINED, "{0} joined the {1} team.\n") \
     X(CTF_TEAM_CHANGED, "{0} changed to the {1} team.\n") \
@@ -469,6 +487,10 @@ bool mode_event(qa_modes *, mode_instance *, qa_mode_event_kind, qa_actor_id, qa
                 qa_actor_id, qa_team_id, int32_t, int32_t, qa_error *);
 bool mode_intent(qa_modes *, mode_instance *, qa_match_intent_kind, qa_actor_id, qa_team_id,
                  qa_string_id, qa_error *);
+bool mode_ctf_reset(qa_modes *, mode_instance *, bool setup, qa_error *);
+bool mode_ctf_admin_grant(qa_modes *, mode_instance *, qa_actor_id, qa_error *);
+bool mode_ctf_named_message(qa_modes *, mode_instance *, qa_actor_id subject,
+    mode_name, qa_string_id map, int32_t level, qa_error *);
 bool mode_alive(qa_modes *, qa_actor_id);
 bool mode_sound(qa_modes *, mode_instance *, qa_actor_id, qa_string_id, float, qa_error *);
 bool mode_sound_channel(qa_modes *, mode_instance *, qa_actor_id, qa_string_id, int32_t,

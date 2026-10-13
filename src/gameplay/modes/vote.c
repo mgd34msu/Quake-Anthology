@@ -1,6 +1,33 @@
 #include "internal.h"
+#include "qa/text.h"
 
 static bool execute_vote(qa_modes *, mode_instance *, qa_mode_vote *, qa_error *);
+static bool ctf_election_request(qa_modes *m, mode_instance *v, const qa_mode_vote *vote,
+                                 int32_t level, qa_error *e) {
+    mode_name text;
+    if (vote->intent.kind == QA_MATCH_CANCEL)
+        text = MODE_NAME_CTF_ELECTION_MATCH_REQUEST;
+    else if (vote->intent.kind == QA_MATCH_ADMIN)
+        text = MODE_NAME_CTF_ELECTION_ADMIN_REQUEST;
+    else if (vote->intent.kind == QA_MATCH_SELECTED_MAP)
+        text = MODE_NAME_CTF_ELECTION_MAP_REQUEST;
+    else
+        return true;
+    return mode_ctf_named_message(m, v, vote->initiator, text,
+        vote->intent.kind == QA_MATCH_SELECTED_MAP ? vote->intent.map : QA_STRING_NONE, level, e);
+}
+static bool ctf_election_tally(qa_modes *m, mode_instance *v, const qa_mode_vote *vote,
+                               int32_t level, qa_error *e) {
+    int32_t seconds = vote->deadline_ns >= v->value.time_ns
+        ? (int32_t)((vote->deadline_ns - v->value.time_ns) / MODE_SECOND)
+        : -(int32_t)((v->value.time_ns - vote->deadline_ns) / MODE_SECOND);
+    qa_builtin_message_arg arguments[3] = {
+        {.kind = QA_BUILTIN_MESSAGE_NUMBER, .value.number = vote->yes},
+        {.kind = QA_BUILTIN_MESSAGE_NUMBER, .value.number = vote->needed},
+        {.kind = QA_BUILTIN_MESSAGE_NUMBER, .value.number = seconds}};
+    return mode_message_level(m, v, (qa_actor_id){0}, m->runtime_names[MODE_NAME_CTF_ELECTION_TALLY],
+                              arguments, 3, level, e);
+}
 bool mode_intent_command_valid(const qa_modes *m, qa_mode_source source,
                                const qa_match_intent *intent, bool required) {
     bool snapshot = source >= QA_MODE_Q3 &&
@@ -50,6 +77,14 @@ bool qa_modes_vote_start(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
     if (slot < 0)
         return mode_fail(e, "unknown vote team");
     qa_mode_source source = v->value.rules.source;
+    if (source == QA_MODE_Q2_CTF) {
+        if (v->value.rules.voting_disabled || !v->value.rules.election_percent)
+            return mode_message(m, v, actor, m->runtime_names[MODE_NAME_CTF_ELECTION_DISABLED],
+                                NULL, 0, e);
+        if (v->votes[slot].active)
+            return mode_message(m, v, actor, m->runtime_names[MODE_NAME_CTF_ELECTION_RUNNING],
+                                NULL, 0, e);
+    }
     if (!mode_intent_command_valid(m, source, intent, intent->kind != QA_MATCH_SELECTED_MAP))
         return mode_fail(e, "vote lacks its actual bounded source command");
     if ((intent->kind == QA_MATCH_SELECTED_MAP ||
@@ -81,7 +116,7 @@ bool qa_modes_vote_start(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
         (!native && v->value.rules.vote_limit &&
          member->vote_calls[slot] >= (uint32_t)v->value.rules.vote_limit))
         return mode_fail(e, "player cannot initiate this vote");
-    if (source == QA_MODE_LMCTF)
+    if (source == QA_MODE_LMCTF || source == QA_MODE_Q2_CTF)
         for (uint32_t i = 0; i < m->actor_capacity; ++i)
             v->members[i].ballots[slot] = 0;
     size_t count = source == QA_MODE_LMCTF ? voters(m, v, team) : 0;
@@ -103,8 +138,9 @@ bool qa_modes_vote_start(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
     }
     if (source != QA_MODE_LMCTF)
         count = voters(m, v, team);
-    if (source == QA_MODE_Q2_CTF && (count < 2 || v->value.rules.election_percent <= 0))
-        return mode_fail(e, "CTF election needs two players and an enabled threshold");
+    if (source == QA_MODE_Q2_CTF && count < 2)
+        return mode_message(m, v, actor, m->runtime_names[MODE_NAME_CTF_ELECTION_NEEDS_PLAYERS],
+                            NULL, 0, e);
     if (!count)
         return mode_fail(e, "vote has no eligible players");
     if (team) {
@@ -116,9 +152,9 @@ bool qa_modes_vote_start(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
     }
     uint64_t duration = (source == QA_MODE_Q2_CTF ? 20 : 30) * MODE_SECOND;
     int32_t needed = source == QA_MODE_Q2_CTF
-                         ? (int32_t)(count * (size_t)v->value.rules.election_percent / 100)
+                         ? qa_source_to_i32((float)count * (float)v->value.rules.election_percent / 100.0f)
                          : (int32_t)(count / 2 + 1);
-    if (needed < 1)
+    if (needed < 1 && source != QA_MODE_Q2_CTF)
         needed = 1;
     qa_match_intent retained = *intent;
     if (source >= QA_MODE_Q3 && intent->kind == QA_MATCH_SELECTED_MAP) {
@@ -132,7 +168,7 @@ bool qa_modes_vote_start(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
         if (!mode_intent_command_valid(m, source, &retained, true))
             return mode_fail(e, "selected-map vote has an invalid source command snapshot");
     }
-    if (source != QA_MODE_LMCTF)
+    if (source != QA_MODE_LMCTF && source != QA_MODE_Q2_CTF)
         for (uint32_t i = 0; i < m->actor_capacity; ++i)
             v->members[i].ballots[slot] = 0;
     *vote = (qa_mode_vote){.intent = retained,
@@ -152,6 +188,10 @@ bool qa_modes_vote_start(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
     if (!mode_event(m, v, QA_MODE_VOTE_STARTED, actor, (qa_actor_id){0}, (qa_actor_id){0}, team,
                     needed, (int32_t)intent->kind, e))
         return false;
+    if (source == QA_MODE_Q2_CTF)
+        return ctf_election_request(m, v, vote, 3, e) &&
+               mode_message(m, v, (qa_actor_id){0}, m->runtime_names[MODE_NAME_CTF_ELECTION_DIRECTIONS],
+                            NULL, 0, e) && ctf_election_tally(m, v, vote, 2, e);
     if (source == QA_MODE_LMCTF && intent->kind == QA_MATCH_NEXT_MAP) {
         mode_player *player = mode_player_get(m, actor);
         if (!player)
@@ -173,6 +213,9 @@ bool qa_modes_vote_cast(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_i
     if (!member || slot < 0)
         return mode_fail(e, "no active vote");
     if (!v->votes[slot].active) {
+        if (v->value.rules.source == QA_MODE_Q2_CTF)
+            return mode_message(m, v, actor, m->runtime_names[MODE_NAME_CTF_ELECTION_NONE],
+                                NULL, 0, e);
         if (v->value.rules.source == QA_MODE_LMCTF) {
             qa_builtin_event message = {.kind = QA_BUILTIN_MESSAGE, .actor = actor,
                 .text = m->runtime_names[MODE_NAME_LMCTF_VOTE_NOT_STARTED]};
@@ -190,10 +233,15 @@ bool qa_modes_vote_cast(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_i
     if (team && (!qa_modes_team(m, v->id, actor, &own, e) || own != team))
         return mode_fail(e, "player is outside voting team");
     int8_t before = member->ballots[slot];
-    if (v->value.rules.source != QA_MODE_LMCTF && before)
+    if (v->value.rules.source != QA_MODE_LMCTF && before) {
+        if (v->value.rules.source == QA_MODE_Q2_CTF)
+            return mode_message(m, v, actor, m->runtime_names[MODE_NAME_CTF_ELECTION_ALREADY_VOTED],
+                                NULL, 0, e);
         return mode_fail(e, "player already voted");
+    }
     if (v->value.rules.source == QA_MODE_Q2_CTF && qa_actor_id_equal(actor, vote->initiator))
-        return mode_fail(e, "CTF election initiator cannot vote");
+        return mode_message(m, v, actor, m->runtime_names[MODE_NAME_CTF_ELECTION_SELF_VOTE],
+                            NULL, 0, e);
     if (before > 0)
         --vote->yes;
     else if (before < 0)
@@ -206,6 +254,17 @@ bool qa_modes_vote_cast(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_i
     if (v->value.rules.source == QA_MODE_LMCTF)
         return mode_message(m, v, actor, m->runtime_names[yes ? MODE_NAME_LMCTF_VOTE_YES :
             MODE_NAME_LMCTF_VOTE_NO], NULL, 0, e);
+    if (v->value.rules.source == QA_MODE_Q2_CTF) {
+        if (yes && vote->yes == vote->needed) {
+            vote->active = false;
+            vote->passed = true;
+            vote->execute_ns = v->value.time_ns;
+            return mode_event(m, v, QA_MODE_VOTE_PASSED, vote->initiator, (qa_actor_id){0},
+                              (qa_actor_id){0}, vote->team, vote->yes, vote->no, e) &&
+                   execute_vote(m, v, vote, e);
+        }
+        return ctf_election_request(m, v, vote, 2, e) && ctf_election_tally(m, v, vote, 3, e);
+    }
     return true;
 }
 bool qa_modes_vote_read(qa_modes *m, qa_mode_id id, qa_team_id team, qa_mode_vote *out,
@@ -220,6 +279,15 @@ bool qa_modes_vote_read(qa_modes *m, qa_mode_id id, qa_team_id team, qa_mode_vot
 static bool execute_vote(qa_modes *m, mode_instance *v, qa_mode_vote *vote, qa_error *e) {
     qa_match_intent intent = vote->intent;
     vote->passed = false;
+    if (v->value.rules.source == QA_MODE_Q2_CTF) {
+        if (intent.kind == QA_MATCH_CANCEL)
+            return mode_ctf_reset(m, v, true, e);
+        if (intent.kind == QA_MATCH_ADMIN)
+            return mode_ctf_admin_grant(m, v, vote->initiator, e);
+        if (intent.kind == QA_MATCH_SELECTED_MAP &&
+            !mode_ctf_named_message(m, v, vote->initiator, MODE_NAME_CTF_WARPING, intent.map, 2, e))
+            return false;
+    }
     if (intent.kind == QA_MATCH_START)
         return qa_modes_start(m, v->id, e);
     if (intent.kind == QA_MATCH_CANCEL)
@@ -319,11 +387,10 @@ bool mode_vote_frame(qa_modes *m, mode_instance *v, qa_error *e) {
                     return false;
             }
         } else if (source == QA_MODE_Q2_CTF) {
-            if (vote->yes >= vote->needed) {
-                finished = true;
-                pass = true;
-            } else
-                finished = v->value.time_ns >= vote->deadline_ns;
+            finished = v->value.time_ns >= vote->deadline_ns;
+            if (finished && !mode_message_level(m, v, (qa_actor_id){0},
+                    m->runtime_names[MODE_NAME_CTF_ELECTION_TIMEOUT], NULL, 0, 3, e))
+                return false;
         } else {
             size_t count = voters(m, v, vote->team);
             if (vote->yes > (int32_t)(count / 2)) {
