@@ -36,10 +36,9 @@ struct application_native_q2_inventory_rows {
     original_slot *slots;
     size_t slot_count;
     uint32_t prototypes[4];
-    qa_arena storage, commands, cache_storage;
-    qa_pool cache_pages;
+    qa_arena storage, commands;
     inventory_rows_cache caches[257];
-    size_t row_capacity, storage_bytes;
+    size_t storage_bytes;
     size_t calls;
     bool prepared;
 };
@@ -204,23 +203,16 @@ bool application_native_q2_inventory_rows_prepare(application_native_q2_inventor
     --owner->engine->calls;
     --owner->calls;
     if (!okay) { slots_free(slots, used); return false; }
-    qa_strings *strings=qa_session_strings(owner->engine->provider->application->session);
-    size_t names=qa_strings_count(strings),text_bytes=0;
-    for (size_t i=1;i<=names;++i) text_bytes+=qa_strings_text(strings,(qa_string_id)i).size+1;
-    owner->row_capacity=count+names;
-    owner->storage_bytes=owner->row_capacity*2*(sizeof(application_native_q2_inventory_row)+
-        sizeof(qa_item_admission)+sizeof(qa_inventory_entry))+text_bytes*4+(size_t)count*4096+65536;
-    if (!qa_arena_reserve(&owner->storage,owner->storage_bytes,error) ||
-        !qa_arena_reserve(&owner->commands,owner->storage_bytes,error)) {slots_free(slots,used);return false;}
-    qa_arena_seal(&owner->storage);qa_arena_seal(&owner->commands);
-    size_t cache_bytes=owner->storage_bytes+sizeof(owner->caches)/sizeof(*owner->caches)*
-        (size_t)count*(sizeof(application_native_q2_inventory_row)+256);
-    size_t pages=(cache_bytes+4095)/4096;
-    if(!qa_pool_reserve_pages(&owner->cache_pages,&owner->cache_storage,pages,4096,_Alignof(max_align_t),error)) {
-        slots_free(slots,used);return false;
+    if(used>SIZE_MAX/sizeof(application_native_q2_inventory_row)||
+        used>SIZE_MAX/sizeof(qa_item_definition)) {
+        slots_free(slots,used);
+        return application_fail(error,QA_ERROR_MEMORY,"Original inventory storage extent overflows");
     }
+    owner->storage_bytes=used*sizeof(application_native_q2_inventory_row);
+    if (!qa_arena_reserve(&owner->storage,owner->storage_bytes,error) ||
+        !qa_arena_reserve(&owner->commands,used*sizeof(qa_item_definition),error)) {slots_free(slots,used);return false;}
     for(size_t i=0;i<sizeof(owner->caches)/sizeof(*owner->caches);++i)
-        qa_arena_init_pool(&owner->caches[i].storage,&owner->cache_pages);
+        qa_arena_init(&owner->caches[i].storage,0);
     owner->slots = slots;
     owner->slot_count = used;
     memcpy(owner->prototypes, prototypes, sizeof(prototypes));
@@ -255,14 +247,11 @@ bool application_native_q2_inventory_row_copy(qa_arena *storage,
     return true;
 }
 
-static bool append(application_native_q2_inventory_rows *owner,qa_arena *storage,application_native_q2_inventory_readout *out,
+static bool append(qa_arena *storage,application_native_q2_inventory_readout *out,
     const application_native_q2_inventory_row *row,qa_error *error)
 {
     size_t index=out->count;
     for(size_t i=0;i<out->count;++i) if(out->rows[i].item==row->item) {index=i;break;}
-    if(index==out->count && out->count==owner->row_capacity) {
-        qa_error_set(error,QA_ERROR_CAPACITY,0,"Mixed inventory exceeds load-sized rows");return false;
-    }
     if (!application_native_q2_inventory_row_copy(storage, row, out->rows + index, error)) return false;
     if(index==out->count) ++out->count;
     return true;
@@ -311,19 +300,20 @@ static bool ammo_label(qa_application *app, application_provider *arsenal,
         "Selected ammunition lacks its actual source catalog label");
 }
 
-typedef struct selected_catalog { qa_item_definition *items; size_t count, capacity; qa_arena *storage; } selected_catalog;
+typedef struct selected_catalog { qa_item_definition *items; size_t count; qa_arena *storage; } selected_catalog;
+static bool catalog_prepare(selected_catalog *catalog,size_t count,qa_error *error)
+{
+    if(count>SIZE_MAX/sizeof(*catalog->items))
+        return application_fail(error,QA_ERROR_MEMORY,"Weapon catalog storage extent overflows");
+    catalog->items=count?qa_arena_alloc(catalog->storage,count*sizeof(*catalog->items),
+        _Alignof(qa_item_definition),error):NULL;
+    return !count||catalog->items;
+}
 static bool catalog_append(selected_catalog *catalog,const qa_item_definition *definition,qa_error *error)
 {
-    if(catalog->count==catalog->capacity) {
-        qa_error_set(error,QA_ERROR_CAPACITY,0,"Weapon catalog exceeds load-sized rows");return false;
-    }
-    if(!catalog->items) catalog->items=qa_arena_alloc(catalog->storage,catalog->capacity*sizeof(*catalog->items),
-        _Alignof(qa_item_definition),error);
-    qa_item_definition *grown=catalog->items;
-    if(!grown) return false;
     char *label=qa_arena_text(catalog->storage,definition->label,error);
     if(!label) return false;
-    grown[catalog->count]=*definition;grown[catalog->count++].label=label;
+    catalog->items[catalog->count]=*definition;catalog->items[catalog->count++].label=label;
     return true;
 }
 static bool catalog_read(qa_application *app, application_provider *arsenal, qa_actor_id actor,
@@ -331,6 +321,7 @@ static bool catalog_read(qa_application *app, application_provider *arsenal, qa_
     if (arsenal->kind == APPLICATION_PROVIDER_QC) {
         qa_application_qc_player_ui view;
         if (!qa_application_qc_selected_player_ui_read(app, actor, QA_ROLE_ARSENAL, &view, error)) return false;
+        if(!catalog_prepare(out,view.binding_count,error))return false;
         for (size_t i = 0; i < view.binding_count; ++i) {
             qa_item_definition definition;
             if (!qa_application_qc_message_player_ui_definition(app, &view, i, &definition, error) ||
@@ -349,6 +340,7 @@ static bool catalog_read(qa_application *app, application_provider *arsenal, qa_
             return application_fail(error, QA_ERROR_ARGUMENT, "Selected GAME catalog lacks its actual begun client");
         q3g_role *game = engine->game;
         if (!application_q3_catalog_weapons(game->catalog, &weapons, &count, error)) return false;
+        if(!catalog_prepare(out,count,error))return false;
         for (size_t i = 0; i < count; ++i) {
             qa_item_definition definition = {.item = weapons[i].item, .ammo = weapons[i].ammo,
                 .owner = arsenal->owner, .label = weapons[i].label, .weapon = true};
@@ -359,6 +351,14 @@ static bool catalog_read(qa_application *app, application_provider *arsenal, qa_
             current_slot == slot && application_q3_catalog_role_current(game->catalog, game) ? true :
             application_fail(error, QA_ERROR_ARGUMENT, "Selected GAME catalog changed during inventory observation");
     }
+    size_t count=0;
+    for (size_t g = 0; g < snapshot->group_count; ++g) {
+        const qa_inventory_source_group *group = snapshot->groups + g;
+        if (group->owner != arsenal->owner || !group->definitions_only) continue;
+        for (size_t i = 0; i < group->count; ++i)
+            count+=group->items[i].definition.weapon;
+    }
+    if(!catalog_prepare(out,count,error))return false;
     for (size_t g = 0; g < snapshot->group_count; ++g) {
         const qa_inventory_source_group *group = snapshot->groups + g;
         if (group->owner != arsenal->owner || !group->definitions_only) continue;
@@ -375,7 +375,7 @@ static bool row_count(application_native_q2_inventory_rows *owner,
     qa_arena *storage, application_native_q2_inventory_readout *out, qa_error *error) {
     qa_application *app = owner->engine->provider->application;
     return qa_inventory_count_read(app->inventory, source->actor, row->item, &row->count, error) &&
-        player_current(owner, source, arsenal, map_revision, config_revision, error) && append(owner, storage, out, row, error);
+        player_current(owner, source, arsenal, map_revision, config_revision, error) && append(storage, out, row, error);
 }
 
 static void component_icon(qa_strings *strings, const application_q3_component_item_metadata *metadata,
@@ -424,7 +424,7 @@ static bool rows(void *context, qa_actor_id actor,
     uint64_t map_revision = app->map_revision, config_revision = owner->engine->config_changes.revision;
     if (!player_current(owner, &source, arsenal, map_revision, config_revision, error)) return false;
     qa_inventory_source_snapshot snapshot = {0};
-    selected_catalog catalog = {.storage=&owner->commands,.capacity=owner->row_capacity};
+    selected_catalog catalog = {.storage=&owner->commands};
     uint64_t inventory_revision=qa_inventory_definition_revision(app->inventory,actor);
     inventory_rows_cache *cache=owner->caches+source.slot;
     if(cache->valid && qa_actor_id_equal(actor,cache->actor) &&
@@ -456,12 +456,20 @@ static bool rows(void *context, qa_actor_id actor,
     }
     if (okay && (selected || component_count)) {
         result.present = true;
-        size_t capacity = owner->slot_count + catalog.count * 2;
-        for (size_t g = 0; g < snapshot.group_count; ++g) capacity += snapshot.groups[g].count;
-        if (capacity > owner->row_capacity) capacity = owner->row_capacity;
-        result.rows = capacity ? qa_arena_alloc(&cache->storage, capacity * sizeof(*result.rows),
+        size_t capacity=owner->slot_count;
+        if(catalog.count>(SIZE_MAX-capacity)/2)
+            okay=application_fail(error,QA_ERROR_MEMORY,"Mixed inventory row extent overflows");
+        if(okay)capacity+=catalog.count*2;
+        for (size_t g = 0; okay && g < snapshot.group_count; ++g) {
+            if(snapshot.groups[g].count>SIZE_MAX-capacity)
+                okay=application_fail(error,QA_ERROR_MEMORY,"Mixed inventory row extent overflows");
+            else capacity+=snapshot.groups[g].count;
+        }
+        if(okay&&capacity>SIZE_MAX/sizeof(*result.rows))
+            okay=application_fail(error,QA_ERROR_MEMORY,"Mixed inventory row storage overflows");
+        result.rows = okay && capacity ? qa_arena_alloc(&cache->storage, capacity * sizeof(*result.rows),
             _Alignof(application_native_q2_inventory_row), error) : NULL;
-        okay = !capacity || result.rows;
+        okay = okay && (!capacity || result.rows);
 
         for (size_t i = 0; okay && selected && i < catalog.count; ++i) {
             const qa_item_definition *definition = catalog.items + i;
@@ -616,7 +624,7 @@ static bool use(void *context, qa_actor_id actor, qa_item_id item, qa_error *err
         component_owner, item, &component, error);
     bool weapon = has_component && component.weapon;
     qa_arena_reset(&owner->commands);
-    selected_catalog catalog = {.storage=&owner->commands,.capacity=owner->row_capacity};
+    selected_catalog catalog = {.storage=&owner->commands};
     if (okay && !weapon && arsenal != owner->engine->provider) {
         if (arsenal->kind == APPLICATION_PROVIDER_QC || arsenal->kind == APPLICATION_PROVIDER_QVM ||
             (arsenal->kind == APPLICATION_PROVIDER_NATIVE && arsenal->state.native.engine)) {
@@ -679,7 +687,6 @@ bool application_native_q2_inventory_rows_destroy(application_native_q2_inventor
     if (!application_native_q2_inventory_rows_idle(owner))
         return application_fail(error, QA_ERROR_ARGUMENT, "Mixed inventory is still borrowing its actual source owner");
     for(size_t i=0;i<sizeof(owner->caches)/sizeof(*owner->caches);++i) qa_arena_destroy(&owner->caches[i].storage);
-    qa_arena_destroy(&owner->cache_storage);
     qa_arena_destroy(&owner->storage);qa_arena_destroy(&owner->commands);
     slots_free(owner->slots, owner->slot_count);
     free(owner);

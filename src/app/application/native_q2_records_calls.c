@@ -21,21 +21,23 @@ bool nqr_call_storage_prepare(application_native_q2_records *o,qa_error *e)
             maximum+=count;
         }
     }
-    /* Baselines are immutable and shared when all frames rebase. Reserve for
-     * the existing 64-deep callback limit plus ordered, reentrant commits. */
-    const size_t buffers=2*NQR_CALL_DEPTH+4;
-    if(maximum>SIZE_MAX/buffers||watches>SIZE_MAX/sizeof(qa_native_write_observer *)) return nqr_fail(e,QA_ERROR_MEMORY,"Native callback storage overflows");
     qa_arena_init(&o->call_storage,0);
-    if(!qa_pool_prepare(&o->scopes,&o->call_storage,NQR_CALL_DEPTH,sizeof(application_native_q2_record_scope),
+    if(!qa_pool_prepare(&o->scopes,&o->call_storage,1,sizeof(application_native_q2_record_scope),
             _Alignof(application_native_q2_record_scope),e)||
-        !qa_pool_prepare(&o->snapshots,&o->call_storage,NQR_CALL_DEPTH+2,sizeof(nqr_snapshot),_Alignof(nqr_snapshot),e)||
-        !qa_pool_prepare(&o->observations,&o->call_storage,maximum*buffers,sizeof(nqr_observation),_Alignof(nqr_observation),e)||
-        !qa_pool_prepare(&o->pickup_scopes,&o->call_storage,NQR_CALL_DEPTH,sizeof(application_native_q2_pickup_scope),
+        !qa_pool_prepare(&o->snapshots,&o->call_storage,1,sizeof(nqr_snapshot),_Alignof(nqr_snapshot),e)||
+        !qa_pool_prepare(&o->observations,&o->call_storage,maximum,sizeof(nqr_observation),_Alignof(nqr_observation),e)||
+        !qa_pool_prepare(&o->pickup_scopes,&o->call_storage,1,sizeof(application_native_q2_pickup_scope),
             _Alignof(application_native_q2_pickup_scope),e)||
-        !qa_pool_prepare(&o->pickup_watches,&o->call_storage,watches?NQR_CALL_DEPTH:0,watches?watches*sizeof(qa_native_write_observer *):1,
+        !qa_pool_prepare(&o->pickup_watches,&o->call_storage,watches,sizeof(qa_native_write_observer *),
             _Alignof(qa_native_write_observer *),e)) return false;
-    qa_arena_seal(&o->call_storage);
     return true;
+}
+static nqr_observation *observation_run(application_native_q2_records *o,size_t count,
+    size_t *slot,qa_error *e)
+{
+    if(!qa_pool_run_available(&o->observations,count)&&
+        !qa_pool_extend(&o->observations,&o->call_storage,count,e))return NULL;
+    return qa_pool_take_run(&o->observations,count,slot);
 }
 static void snapshot_release(application_native_q2_records *o,nqr_snapshot *snapshot)
 {
@@ -51,11 +53,13 @@ static bool observations(application_native_q2_records *o,nqr_snapshot **out,qa_
             for(size_t j=0;j<o->records[i].field_count;++j)
                 count+=o->records[i].fields[j].writable&&nqr_applies(o,actor,o->records+i,o->records[i].fields+j);
     size_t slot;
+    if(o->snapshots.head==SIZE_MAX&&!qa_pool_extend(&o->snapshots,&o->call_storage,
+        o->snapshots.capacity,e))return false;
     nqr_snapshot *snapshot=qa_pool_take(&o->snapshots,&slot);
     if(!snapshot) return nqr_fail(e,QA_ERROR_MEMORY,"Native snapshot pool exhausted");
     *snapshot=(nqr_snapshot){.storage_slot=slot,.count=count,.references=1};
-    if(count) snapshot->rows=qa_pool_take_run(&o->observations,count,&snapshot->rows_slot);
-    if(count&&!snapshot->rows) { snapshot->count=0;snapshot_release(o,snapshot);return nqr_fail(e,QA_ERROR_MEMORY,"Native observation pool exhausted"); }
+    if(count) snapshot->rows=observation_run(o,count,&snapshot->rows_slot,e);
+    if(count&&!snapshot->rows) { snapshot->count=0;snapshot_release(o,snapshot);return false; }
     size_t used=0;bool ok=true;
     for(nqr_actor *actor=o->actors;ok&&actor;actor=actor->next) {
         if(actor->retired) continue;
@@ -223,8 +227,8 @@ static bool capture(application_native_q2_records *o,qa_error *e)
     application_native_q2_record_scope *frame=o->frame;
     if(!frame||o->projection_depth) return true;
     size_t slot=0,count=0,capacity=frame->snapshot->count;
-    nqr_observation *changed=capacity?qa_pool_take_run(&o->observations,capacity,&slot):NULL;
-    if(capacity&&!changed) return nqr_fail(e,QA_ERROR_MEMORY,"Native changed-field pool exhausted");
+    nqr_observation *changed=capacity?observation_run(o,capacity,&slot,e):NULL;
+    if(capacity&&!changed) return false;
     bool ok=true;
     for(size_t i=0;ok&&i<capacity;++i) {
         nqr_observation row=frame->snapshot->rows[i];uint8_t raw[12];
@@ -253,11 +257,11 @@ static bool capture(application_native_q2_records *o,qa_error *e)
         nqr_observation *next=frame->pending?qa_pool_grow_run(&o->observations,&next_slot,frame->pending_capacity,needed):NULL;
         if(next) memmove(next,frame->pending,frame->pending_count*sizeof(*next));
         else {
-            next=qa_pool_take_run(&o->observations,needed,&next_slot);
+            next=observation_run(o,needed,&next_slot,e);
             if(next&&frame->pending_count) memcpy(next,frame->pending,frame->pending_count*sizeof(*next));
             if(next&&frame->pending_capacity) qa_pool_release_run(&o->observations,frame->pending_slot,frame->pending_capacity);
         }
-        if(!next) ok=nqr_fail(e,QA_ERROR_MEMORY,"Native pending write pool exhausted");
+        if(!next) ok=false;
         else {frame->pending=next;frame->pending_slot=next_slot;frame->pending_capacity=needed;}
     }
     if(ok&&used) memcpy(frame->pending+frame->pending_count,changed,used*sizeof(*changed));
@@ -369,9 +373,9 @@ bool application_native_q2_records_begin(application_native_q2_records *o,applic
 {
     if(!out||*out||!nqr_current(o,e)||o->closing||o->restoring||o->lifecycle_depth)
         return nqr_fail(e,QA_ERROR_ARGUMENT,"Native record transfer requires its actual executable source owner");
-    unsigned depth=0; for(application_native_q2_record_scope *f=o->frame;f;f=f->outer) ++depth;
-    if(depth>=NQR_CALL_DEPTH) return nqr_fail(e,QA_ERROR_ARGUMENT,"Native record transfer exceeds actual callback depth");
     if(!application_native_q2_records_commit(o,e)||!nqr_releases(o,e)||!application_native_q2_records_refresh(o,e)) return false;
+    if(o->scopes.head==SIZE_MAX&&!qa_pool_extend(&o->scopes,&o->call_storage,
+        o->scopes.capacity,e))return false;
     size_t slot;
     application_native_q2_record_scope *frame=qa_pool_take(&o->scopes,&slot);
     if(!frame) return nqr_fail(e,QA_ERROR_MEMORY,"Retaining entered native projection scope");
@@ -417,7 +421,7 @@ bool application_native_q2_records_pickup_end(application_native_q2_records *o,
         s->watches[--s->count]=NULL;
     }
     o->pickup=s->outer;
-    if(s->capacity) qa_pool_release(&o->pickup_watches,s->watches_slot);
+    if(s->capacity) qa_pool_release_run(&o->pickup_watches,s->watches_slot,s->capacity);
     qa_pool_release(&o->pickup_scopes,s->storage_slot);*scope=NULL;return true;
 }
 bool application_native_q2_records_pickup_begin(application_native_q2_records *o,qa_actor_id actor,
@@ -442,11 +446,15 @@ bool application_native_q2_records_pickup_begin(application_native_q2_records *o
             ++capacity;
         }
     }
+    if(o->pickup_scopes.head==SIZE_MAX&&!qa_pool_extend(&o->pickup_scopes,&o->call_storage,
+        o->pickup_scopes.capacity,e))return false;
+    if(capacity&&!qa_pool_run_available(&o->pickup_watches,capacity)&&
+        !qa_pool_extend(&o->pickup_watches,&o->call_storage,capacity,e))return false;
     size_t storage_slot;
     application_native_q2_pickup_scope *s=qa_pool_take(&o->pickup_scopes,&storage_slot);
     if(!s) return nqr_fail(e,QA_ERROR_MEMORY,"Retaining native pickup resource observation scope");
     *s=(application_native_q2_pickup_scope){.storage_slot=storage_slot};
-    s->watches=capacity?qa_pool_take(&o->pickup_watches,&s->watches_slot):NULL;
+    s->watches=capacity?qa_pool_take_run(&o->pickup_watches,capacity,&s->watches_slot):NULL;
     if(capacity&&!s->watches) { qa_pool_release(&o->pickup_scopes,storage_slot);return nqr_fail(e,QA_ERROR_MEMORY,"Owning actual native pickup write subscriptions"); }
     s->owner=o; s->outer=o->pickup; s->frame=o->frame; s->actor=actor;
     s->execution=execution; s->protection_item=protection_item; s->context=context; s->capacity=capacity;

@@ -480,7 +480,7 @@ bool application_native_q2_items_create(const application_native_q2_items_option
         /* Layout parsing installs no actor leases or write subscriptions. */
         (void)application_native_q2_items_destroy(&o,NULL);return false;
     }
-    if (!actor_storage_prepare(o,e)||!qa_pool_prepare(&o->receipt_pool, &o->receipt_storage, NQR_CALL_DEPTH,
+    if (!actor_storage_prepare(o,e)||!qa_pool_prepare(&o->receipt_pool, &o->receipt_storage, 1,
         sizeof(application_native_q2_item_receipt), _Alignof(application_native_q2_item_receipt), e)) {
         (void)application_native_q2_items_destroy(&o, NULL);
         return false;
@@ -577,6 +577,8 @@ bool application_native_q2_items_receipt_begin(application_native_q2_items *o,qa
     if(!out||*out||!a||!a->ready||a->restore_inventory||a->entered==UINT_MAX)
         return fail(e,"Native item receipt requires its actual admitted Source lease");
     if(!current(a,e)) return false;
+    if(o->receipt_pool.head==SIZE_MAX&&!qa_pool_extend(&o->receipt_pool,&o->receipt_storage,
+        o->receipt_pool.capacity,e))return false;
     size_t slot;
     application_native_q2_item_receipt *r=qa_pool_take(&o->receipt_pool, &slot);
     if(!r) {qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining lexical native item receipt");return false;}

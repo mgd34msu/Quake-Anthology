@@ -170,6 +170,8 @@ static bool rows(application_native_q2_inventory_scanner *o,qa_actor_id actor, b
         if(borrowed[i].presentation.lump) bytes+=strlen(borrowed[i].presentation.lump)+1;
     }
     r.storage_pages=(bytes+o->readout_pages.stride-1)/o->readout_pages.stride;
+    if(!qa_pool_run_available(&o->readout_pages,r.storage_pages)&&
+        !qa_pool_extend(&o->readout_pages,&o->readout_storage,r.storage_pages,e))return false;
     void *memory=qa_pool_take_run(&o->readout_pages,r.storage_pages,&r.storage_slot);
     if(!memory) return application_fail(e,QA_ERROR_CAPACITY,"Native inventory exhausted load-sized readout pages");
     r.storage=&o->readout_pages;
@@ -613,8 +615,8 @@ bool application_native_q2_inventory_scanner_activate(application_native_q2_inve
         return application_fail(e, QA_ERROR_ARGUMENT, "Native scanner activation requires its returned source map");
     if(!o->readout_pages.values) {
         size_t bytes=o->options.storage_bytes(o->options.context),stride=4096;
-        size_t pages=(bytes+stride-1)/stride+NQR_CALL_DEPTH;
-        if(!qa_pool_reserve_pages(&o->readout_pages,&o->readout_storage,pages,stride,_Alignof(max_align_t),e)) return false;
+        size_t pages=bytes/stride+(bytes%stride!=0);
+        if(!qa_pool_prepare(&o->readout_pages,&o->readout_storage,pages,stride,_Alignof(max_align_t),e)) return false;
     }
     for (size_t i = 0; i < 5; ++i) if (!o->entries[i].binding && !qa_native_observe_entry(instance(o),
         o->entries[i].address, &o->entries[i].signature, entry_call, o->entries + i, &o->entries[i].binding, e)) return false;

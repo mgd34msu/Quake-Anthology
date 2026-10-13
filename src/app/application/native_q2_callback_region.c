@@ -246,9 +246,9 @@ bool application_native_q2_callback_region_prepare(qa_native_instance *instance,
     if(recipe.count>(SIZE_MAX-stack_offset)/sizeof(region_stack_input))
         return fail(error, QA_ERROR_MEMORY, "Native region scratch extent overflows");
     qa_arena_init(&owned->storage,0);
-    if(!qa_pool_prepare(&owned->scopes,&owned->storage,64,stack_offset+recipe.count*sizeof(region_stack_input),
+    if(!qa_pool_prepare(&owned->scopes,&owned->storage,1,stack_offset+recipe.count*sizeof(region_stack_input),
         _Alignof(application_native_q2_callback_region),error)) return false;
-    qa_arena_seal(&owned->storage); return true;
+    return true;
 }
 void application_native_q2_callback_region_dispose(application_native_q2_region_recipe *recipe)
 { if (recipe) { qa_arena_destroy(&recipe->storage); free(recipe->inputs); free(recipe); } }
@@ -428,6 +428,8 @@ bool application_native_q2_callback_region_execute(qa_native_instance *instance,
     if (!current(context, error)) return false;
     region_recipe *recipe = prepared;
     if (input_count != recipe->count) return fail(error, QA_ERROR_FORMAT, "Native region input count differs from its source declaration");
+    if(recipe->scopes.head==SIZE_MAX&&!qa_pool_extend(&recipe->scopes,&recipe->storage,
+        recipe->scopes.capacity,error)) return false;
     size_t slot;
     application_native_q2_callback_region *scope = qa_pool_take(&recipe->scopes,&slot);
     if (!scope) return fail(error, QA_ERROR_MEMORY, "Owning native source region execution");

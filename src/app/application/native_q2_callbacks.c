@@ -20,10 +20,17 @@
 #include <float.h>
 #include <math.h>
 
+typedef struct native_scratch_block {
+    struct native_scratch_block *next;
+    qa_pool pages;
+    qa_native_address address;
+} native_scratch_block;
+
 struct application_native_q2_scratch {
     size_t storage_slot;
     struct application_native_q2_scratch *next;
     qa_native_address address;
+    native_scratch_block *block;
     size_t scratch_slot, scratch_count;
 };
 typedef application_native_q2_scratch native_temporary;
@@ -143,9 +150,9 @@ struct application_native_q2_callbacks {
     struct { qa_json_id *calls; size_t count; } stages[NATIVE_CALLBACK_STAGE_COUNT];
     bool descriptors_bound;
     qa_arena storage;
-    qa_pool receipts, scratch_pages, region_values;
-    qa_native_address scratch;
-    size_t scratch_bytes;
+    qa_pool receipts, region_values;
+    native_scratch_block *scratch, *scratch_tail;
+    size_t scratch_pages_per_call;
 
     const qa_native_module *module;
     const qa_native_declaration *declaration;
@@ -568,21 +575,45 @@ static const application_q3_mod_value *input(const application_native_callback_i
 }
 static void *receipt_take(application_native_q2_callbacks *o,qa_error *e)
 {
+    if(o->receipts.head==SIZE_MAX&&!qa_pool_extend(&o->receipts,&o->storage,
+        o->receipts.capacity,e))return NULL;
     size_t slot; native_receipt *receipt=qa_pool_take(&o->receipts,&slot);
     if(!receipt) { application_fail(e,QA_ERROR_MEMORY,"Native callback receipt pool exhausted"); return NULL; }
     memset(receipt,0,sizeof(*receipt)); receipt->storage_slot=slot; return receipt;
 }
 static void receipt_release(application_native_q2_callbacks *o,void *receipt)
 { qa_pool_release(&o->receipts,((native_receipt *)receipt)->storage_slot); }
+static native_scratch_block *scratch_block_add(application_native_q2_callbacks *o,size_t pages,qa_error *e)
+{
+    if(pages>SIZE_MAX/16) {
+        application_fail(e,QA_ERROR_MEMORY,"Native scratch extent overflows");return NULL;
+    }
+    native_scratch_block *block=qa_arena_alloc(&o->storage,sizeof(*block),_Alignof(native_scratch_block),e);
+    if(!block)return NULL;
+    *block=(native_scratch_block){0};
+    if(!qa_pool_prepare(&block->pages,&o->storage,pages,16,16,e)||
+        !qa_native_allocate(instance(o),pages*16,INT32_MIN+13,&block->address,e))return NULL;
+    if(o->scratch_tail)o->scratch_tail->next=block;
+    else o->scratch=block;
+    o->scratch_tail=block;
+    return block;
+}
 static bool temporary_storage(application_native_q2_callbacks *o,size_t capacity,
     native_temporary **owned,qa_native_address *out,uint8_t **bytes,qa_error *e)
 {
     native_temporary *t=receipt_take(o,e);
     if(!t) return false;
     size_t pages=capacity/16+(capacity%16!=0);
-    uint8_t *host=qa_pool_take_run(&o->scratch_pages,pages,&t->scratch_slot);
+    native_scratch_block *block=o->scratch;
+    while(block&&!qa_pool_run_available(&block->pages,pages))block=block->next;
+    if(!block&&pages) {
+        size_t count=pages>o->scratch_pages_per_call?pages:o->scratch_pages_per_call;
+        block=scratch_block_add(o,count,e);
+        if(!block) {receipt_release(o,t);return false;}
+    }
+    uint8_t *host=block?qa_pool_take_run(&block->pages,pages,&t->scratch_slot):NULL;
     if(!host) { receipt_release(o,t); return application_fail(e,QA_ERROR_MEMORY,"Native callback scratch exhausted"); }
-    t->scratch_count=pages; t->address=o->scratch+t->scratch_slot*16;
+    t->block=block;t->scratch_count=pages;t->address=block->address+t->scratch_slot*16;
     t->next=*owned; *owned=t; *out=t->address; *bytes=host;
     memset(host,0,pages*16); return true;
 }
@@ -747,7 +778,7 @@ static bool cleanup(application_native_q2_callbacks *o,native_global **globals,n
     }
     while(!*globals&&*allocations) {
         native_temporary *t=*allocations;
-        qa_pool_release_run(&o->scratch_pages,t->scratch_slot,t->scratch_count);
+        qa_pool_release_run(&t->block->pages,t->scratch_slot,t->scratch_count);
         *allocations=t->next; receipt_release(o,t);
     }
     if(!ok&&e) *e=first;
@@ -890,8 +921,12 @@ static bool call_native_common(application_native_q2_callbacks *o,qa_json_id cal
     if(ok&&region!=QA_JSON_NONE) {
         ok=region_current(region_scope,e);
         if(ok&&region_count) {
-            region_values=qa_pool_take_run(&o->region_values,region_count,&region_values_slot);
-            if(!region_values) ok=application_fail(e,QA_ERROR_MEMORY,"Lowering original native region inputs");
+            ok=qa_pool_run_available(&o->region_values,region_count)||
+                qa_pool_extend(&o->region_values,&o->storage,region_count,e);
+            if(ok) {
+                region_values=qa_pool_take_run(&o->region_values,region_count,&region_values_slot);
+                if(!region_values) ok=application_fail(e,QA_ERROR_MEMORY,"Lowering original native region inputs");
+            }
         }
         for(size_t i=0;ok&&i<region_count;++i) {
             size_t storage;
@@ -1600,15 +1635,12 @@ static bool descriptors_bind(application_native_q2_callbacks *o,qa_error *e)
         qa_arena_init(&o->storage,0);
         /* Each admitted damage transfer may hold three native vectors beside
          * its authored callback arguments, until the synchronous call returns. */
-        if(max_receipts>SIZE_MAX/NQR_CALL_DEPTH-1||max_values>SIZE_MAX/NQR_CALL_DEPTH||
-            max_bytes>SIZE_MAX/NQR_CALL_DEPTH-63)
+        if(max_receipts==SIZE_MAX||max_bytes>SIZE_MAX-63)
             return application_fail(e,QA_ERROR_MEMORY,"Native callback storage extent overflows");
-        o->scratch_bytes=(((max_bytes+15)/16)*16+48)*NQR_CALL_DEPTH;
-        if(!qa_pool_prepare(&o->receipts,&o->storage,(max_receipts+1)*NQR_CALL_DEPTH,sizeof(native_receipt),_Alignof(native_receipt),e)||
-            !qa_pool_prepare(&o->scratch_pages,&o->storage,o->scratch_bytes/16,16,16,e)||
-            !qa_pool_prepare(&o->region_values,&o->storage,max_values*NQR_CALL_DEPTH,sizeof(qa_native_value),_Alignof(qa_native_value),e)||
-            !qa_native_allocate(instance(o),o->scratch_bytes,INT32_MIN+13,&o->scratch,e)) return false;
-        qa_arena_seal(&o->storage);
+        o->scratch_pages_per_call=(max_bytes+15)/16+3;
+        if(!qa_pool_prepare(&o->receipts,&o->storage,max_receipts+1,sizeof(native_receipt),_Alignof(native_receipt),e)||
+            !qa_pool_prepare(&o->region_values,&o->storage,max_values,sizeof(qa_native_value),_Alignof(qa_native_value),e)||
+            !scratch_block_add(o,o->scratch_pages_per_call,e)) return false;
     }
     static const char *const stage_names[]={"initialize","admit","userinfo","disconnect","command","frame","endFrame"};
     qa_json_id root=qa_json_root(d),clients=qa_json_get(d,root,"clients");
@@ -1741,8 +1773,12 @@ bool application_native_q2_callbacks_close(struct application_native_q2 *n,qa_er
     if(!application_native_q2_records_destroy(&o->records,e)) return false;
     while(o->skips) {native_skip *skip=o->skips;o->skips=skip->next;free(skip);}
     qa_buffer_free(&o->restored_weapons);
-    if(o->scratch&&!qa_native_free(instance(o),o->scratch,e)) return false;
-    o->scratch=0; qa_arena_destroy(&o->storage);
+    while(o->scratch) {
+        native_scratch_block *block=o->scratch;
+        if(!qa_native_free(instance(o),block->address,e))return false;
+        o->scratch=block->next;
+    }
+    o->scratch_tail=NULL;qa_arena_destroy(&o->storage);
     application_native_q2_source_invocation_destroy(n);
     descriptors_clear(o);
     free(o->registrations); free(o->record_nodes); free(o->input_nodes); qa_json_destroy(o->document); free(o); n->callbacks=NULL; return true;

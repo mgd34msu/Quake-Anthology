@@ -6,8 +6,6 @@
 #include "qa/inventory.h"
 #include "guest_q3_mod.h"
 
-enum { NQR_CALL_DEPTH = 64 };
-
 struct application_native_q2;
 struct qa_application;
 struct application_native_q2_records;
