@@ -3,6 +3,7 @@
 #include "remote_unified_save.h"
 #include "../application/unified_output.h"
 #include "qa/binary.h"
+#include "qa/id_index.h"
 #include "qa/network_unified_frame.h"
 #include "qa/network_unified_control.h"
 #include "../../network/unified/frame_internal.h"
@@ -47,6 +48,7 @@ struct frontend_unified_events {
     unified_received_event *delivery;
     unified_event_resource *resources;
     unified_component_owner *components;
+    qa_id_index resource_index, component_index, pending_resources;
     qa_hud *hud;
     uint32_t epoch;
     uint64_t frame, prepared_frame;
@@ -204,9 +206,10 @@ static bool actor(frontend_unified_events *o,qa_actor_id source,qa_actor_id *out
 }
 static unified_component_owner *component_find(const frontend_unified_events *o,qa_string_id id,uint64_t generation)
 {
-    for (unified_component_owner *c=o->components;c;c=c->next)
-        if (c->generation==generation && c->provider==id) return c;
-    return NULL;
+    qa_id_index_cursor cursor=qa_id_index_begin(&o->component_index,id,generation);
+    size_t value;
+    return qa_id_index_next(&o->component_index,&cursor,&value)?
+        (unified_component_owner *)(uintptr_t)value:NULL;
 }
 static bool component_read(frontend_unified_events *o,const qa_source_owner *owner,qa_string_id provider,qa_string_id content,
     unified_component_owner *out,qa_error *e)
@@ -246,11 +249,13 @@ bool frontend_unified_events_component_admit_created(frontend_unified_events *o,
         if (okay && c->cancelled) { c->cancelled=false; *created=true; }
         return okay;
     }
+    if (!qa_id_index_reserve(&o->component_index,1,e)) return false;
     qa_event_transaction transaction;
     unified_received_event *record=record_begin(o,&transaction,e);
     if (!record) return false;
     record->component=candidate; c=&record->component;
     metadata_commit(o,&transaction,record);
+    qa_id_index_insert(&o->component_index,c->provider,c->generation,(size_t)(uintptr_t)c);
     c->next=o->components; o->components=c; *created=true; return true;
 }
 bool frontend_unified_events_component_cancel(frontend_unified_events *o,const qa_source_owner *owner,qa_string_id provider,qa_error *e)
@@ -303,7 +308,11 @@ bool frontend_unified_events_create(qa_frontend *f,frontend_remote_unified *r,
     if (!out || *out) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified event output must be empty");
     frontend_unified_events *o=allocate(f,r,m,opts,e);
     if (!o) return false;
-    if (!current(o,e)) { qa_event_ring_destroy(&o->records); free(o); return false; }
+    if (!current(o,e)) {
+        qa_id_index_destroy(&o->resource_index);qa_id_index_destroy(&o->component_index);
+        qa_id_index_destroy(&o->pending_resources);
+        qa_event_ring_destroy(&o->records); free(o); return false;
+    }
     o->owns_audio=true; *out=o; return true;
 }
 static bool resource_read_typed(frontend_unified_events *o, const qa_unified_resource_declaration *row,
@@ -328,8 +337,16 @@ static bool resource_read_typed(frontend_unified_events *o, const qa_unified_res
         frontend_unified_fail(e,QA_ERROR_FORMAT,"Declared Source resource is outside its actual admitted recipe"); }
     return okay;
 }
+static unified_event_resource *resource_find(frontend_unified_events *o,qa_string_id key)
+{
+    qa_id_index_entry *entry=qa_id_index_find(&o->resource_index,key,0);
+    return entry?(unified_event_resource *)(uintptr_t)entry->value:NULL;
+}
 static bool declare_resources(frontend_unified_events *o, const qa_unified_resources_control *resources, qa_error *e)
 {
+    qa_id_index_clear(&o->pending_resources);
+    if (!qa_id_index_reserve(&o->resource_index,resources->count,e) ||
+        !qa_id_index_reserve(&o->pending_resources,resources->count,e)) return false;
     qa_event_transaction transaction={0};
     unified_received_event *record=NULL;
     unified_event_resource *head=NULL,**tail=&head;
@@ -338,11 +355,10 @@ static bool declare_resources(frontend_unified_events *o, const qa_unified_resou
         unified_event_resource value={0};
         okay=resource_read_typed(o,resources->values+i,&value,e);
         if (!okay) break;
-        unified_event_resource *same=o->resources;
-        while (same && same->id!=value.id) same=same->next;
+        unified_event_resource *same=resource_find(o,value.id);
         if (!same) {
-            same=head;
-            while (same && same->id!=value.id) same=same->next;
+            qa_id_index_entry *entry=qa_id_index_find(&o->pending_resources,value.id,0);
+            same=entry?(unified_event_resource *)(uintptr_t)entry->value:NULL;
         }
         if (same) {
             okay=(same->resource==value.resource && same->content==value.content && same->path==value.path) ||
@@ -357,17 +373,18 @@ static bool declare_resources(frontend_unified_events *o, const qa_unified_resou
             _Alignof(unified_event_resource),e);
         if (!r) { okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Received resource storage is full"); break; }
         *r=value; *tail=r; tail=&r->next;
+        qa_id_index_insert(&o->pending_resources,r->id,0,(size_t)(uintptr_t)r);
     }
-    if (!okay || !head) { qa_event_ring_abort(&transaction); return okay; }
+    if (!okay || !head) {
+        qa_id_index_clear(&o->pending_resources);
+        qa_event_ring_abort(&transaction); return okay;
+    }
     metadata_commit(o,&transaction,record);
+    for (unified_event_resource *r=head;r;r=r->next)
+        qa_id_index_insert(&o->resource_index,r->id,0,(size_t)(uintptr_t)r);
+    qa_id_index_clear(&o->pending_resources);
     *tail=o->resources; o->resources=head;
     return true;
-}
-static unified_event_resource *resource_find(frontend_unified_events *o,qa_string_id key)
-{
-    for (unified_event_resource *r=o->resources;r;r=r->next)
-        if (r->id==key) return r;
-    return NULL;
 }
 static bool rows_valid(frontend_unified_events *o,const qa_unified_frame_events *events,bool children,qa_error *e)
 {
@@ -728,6 +745,8 @@ bool frontend_unified_events_destroy(frontend_unified_events **slot,qa_error *e)
         const unified_received_event *record=qa_event_ring_at(o->records,id);
         qa_unified_document_destroy(record->delivery.document);
     }
+    qa_id_index_destroy(&o->resource_index);qa_id_index_destroy(&o->component_index);
+    qa_id_index_destroy(&o->pending_resources);
     for (unified_event_resource *r=o->resources;r;r=r->next) qa_audio_asset_release(r->asset);
     while (o->retained) {
         unified_received_event *record=o->retained; o->retained=record->next_retained;

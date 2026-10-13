@@ -45,14 +45,12 @@ bool application_native_q2_source_invocation_prepare(struct application_native_q
         storage->declared |= qa_json_string_equal(d,
             qa_json_get(d, qa_json_get(d, qa_json_at(d, rows, i), "absorb"), "abi"), "source-region");
     qa_arena_init(&storage->arena, 0);
-    if (regions > SIZE_MAX / NQR_CALL_DEPTH ||
-        !qa_pool_prepare(&storage->scopes, &storage->arena, storage->declared ? NQR_CALL_DEPTH : 0,
+    if (!qa_pool_prepare(&storage->scopes, &storage->arena, storage->declared ? 1 : 0,
             sizeof(struct application_native_q2_source_invocation), _Alignof(struct application_native_q2_source_invocation), e) ||
-        !qa_pool_prepare(&storage->retirements, &storage->arena, storage->declared ? regions * NQR_CALL_DEPTH : 0,
+        !qa_pool_prepare(&storage->retirements, &storage->arena, storage->declared ? regions : 0,
             sizeof(source_retirement), _Alignof(source_retirement), e)) {
         qa_arena_destroy(&storage->arena); free(storage); return false;
     }
-    qa_arena_seal(&storage->arena);
     n->source_storage = storage;
     return true;
 }
@@ -107,6 +105,8 @@ bool application_native_q2_source_invocation_begin(struct application_native_q2 
 {
     if(!n||!out||*out)return application_fail(e,QA_ERROR_ARGUMENT,"Source invocation requires its actual empty owner");
     if(!n->callbacks||!n->source_storage||!n->source_storage->declared)return true;
+    if(n->source_storage->scopes.head==SIZE_MAX&&!qa_pool_extend(&n->source_storage->scopes,
+        &n->source_storage->arena,n->source_storage->scopes.capacity,e))return false;
     size_t slot;
     struct application_native_q2_source_invocation *s=qa_pool_take(&n->source_storage->scopes,&slot);
     if(!s)return application_fail(e,QA_ERROR_MEMORY,"Retaining actual Source invocation scope");
@@ -126,6 +126,8 @@ bool application_native_q2_source_invocation_guard(struct application_native_q2 
     source_retirement *r=s->root->retirements;
     while(r&&!qa_error_same(&r->error,retirement))r=r->next;
     if(!r) {
+        if(n->source_storage->retirements.head==SIZE_MAX&&!qa_pool_extend(&n->source_storage->retirements,
+            &n->source_storage->arena,n->source_storage->retirements.capacity,e))return false;
         size_t slot;
         r=qa_pool_take(&n->source_storage->retirements,&slot);
         if(!r)return application_fail(e,QA_ERROR_MEMORY,"Retaining reached Source region authority");

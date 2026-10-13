@@ -2571,19 +2571,20 @@ static bool q2_spawn_fields(application_provider *map_provider,
     const qa_launch_choices *choices, const qa_entities *entities, size_t index,
     bool has_source, uint32_t source_slot, qa_actor_id *out, qa_error *error)
 {
-    qa_arena arena;
-    qa_arena_init(&arena, 256);
     qa_bytes name;
+    if (!qa_entity_value(entities, index, "classname", &name))
+        return application_fail(error, QA_ERROR_FORMAT, "Q2 map entity has no classname");
+    qa_unified_frame_lease *storage = application_control_storage_acquire(map_provider->application, error);
+    if (!storage) return false;
+    qa_arena *arena = qa_unified_frame_lease_arena(storage);
     const char *authored = NULL, *classname = NULL;
     application_provider *selected = NULL;
     bool monster = false;
-    bool ok = qa_entity_value(entities, index, "classname", &name);
-    if (!ok) application_fail(error, QA_ERROR_FORMAT, "Q2 map entity has no classname");
-    if (ok) ok = (authored = arena_text(&arena, name, error)) != NULL;
+    bool ok = (authored = arena_text(arena, name, error)) != NULL;
     if (ok) ok = monster_route(map_provider, choices, authored, &selected, &classname, &monster, error) &&
         native_entity_spawn(map_provider, selected, authored, classname, monster,
-            entities, index, has_source, source_slot, &arena, out, error);
-    qa_arena_destroy(&arena);
+            entities, index, has_source, source_slot, arena, out, error);
+    qa_unified_frame_lease_release(storage);
     return ok;
 }
 
