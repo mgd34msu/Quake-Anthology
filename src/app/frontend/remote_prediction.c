@@ -162,23 +162,6 @@ static void event_parameter(prediction_player *player, int32_t value, int32_t pa
     if (player->view.movement.kind == QA_RULESET_Q3)
         ++player->view.movement.data.q3.event_sequence;
 }
-static void torso(prediction_player *player, int32_t value, bool continuing, bool dead)
-{
-    qa_q3_player *p = &player->view.player;
-    if (dead ||
-        (continuing && ((p->torsoAnim & ~128) == value || p->torsoTimer > 0))) return;
-    p->torsoAnim = ((p->torsoAnim & 128) ^ 128) | value;
-}
-static void legs(prediction_player *player, int32_t value, bool force, bool dead)
-{
-    qa_q3_player *p = &player->view.player;
-    int32_t timer = force ? 0 : p->legsTimer;
-    if (dead || timer > 0 || (!force && (p->legsAnim & ~128) == value)) {
-        p->legsTimer = timer; return;
-    }
-    p->legsTimer = timer;
-    p->legsAnim = ((p->legsAnim & 128) ^ 128) | value;
-}
 static void drop_timers(prediction_player *player, uint32_t elapsed)
 {
     qa_q3_player *p = &player->view.player;
@@ -195,14 +178,16 @@ static void begin_drop(prediction_player *player, bool animate)
     event(player, 22);
     player->view.player.weaponState = 2;
     player->view.player.weaponTime = add_word(player->view.player.weaponTime, 200);
-    if (animate) torso(player, 9, false, player->environment.health <= 0);
+    if (animate) qa_q3_animation_set(&player->view.player.torsoAnim, &player->view.player.torsoTimer,
+        9, false, false, player->environment.health <= 0);
 }
 static void finish_change(prediction_player *player, int32_t requested, bool animate)
 {
     qa_q3_player *p = &player->view.player;
     p->weapon = weapon_owned(p, requested) ? requested : 0;
     p->weaponState = 1; p->weaponTime = add_word(p->weaponTime, 250);
-    if (animate) torso(player, 10, false, player->environment.health <= 0);
+    if (animate) qa_q3_animation_set(&p->torsoAnim, &p->torsoTimer,
+        10, false, false, player->environment.health <= 0);
 }
 /* PM_Weapon operates on the copied native PS and private fractional/slot
  * continuation. It never reaches GAME inventory, events or holdable code. */
@@ -257,12 +242,14 @@ static bool weapon(replay_context *context, const qa_usercmd *command,
     if (p->weaponState == 2) { finish_change(player, requested, animate); return true; }
     if (p->weaponState == 1) {
         p->weaponState = 0;
-        if (animate) torso(player, p->weapon == 1 ? 12 : 11, false, player->environment.health <= 0);
+        if (animate) qa_q3_animation_set(&p->torsoAnim, &p->torsoTimer,
+            p->weapon == 1 ? 12 : 11, false, false, player->environment.health <= 0);
         return true;
     }
     /* The actual client predictor supplies gauntletHit=false. */
     if (!attack || p->weapon == 1) { p->weaponTime = 0; p->weaponState = 0; return true; }
-    if (animate) torso(player, p->weapon == 1 ? 8 : 7, false, player->environment.health <= 0);
+    if (animate) qa_q3_animation_set(&p->torsoAnim, &p->torsoTimer,
+        p->weapon == 1 ? 8 : 7, false, false, player->environment.health <= 0);
     p->weaponState = 3;
     int32_t ammo = p->weapon == 1 || p->weapon == 10 ? -1 :
         p->weapon >= 0 && p->weapon < 16 ? p->ammo[p->weapon] : 0;
@@ -334,19 +321,14 @@ static qa_movement_control phase(void *opaque, qa_movement_phase value,
             call->state->data.q3.event_sequence += emitted;
         }
     } else if (character && value == QA_MOVE_DROP_TIMERS) drop_timers(player, call->milliseconds);
-    else if (character && value == QA_MOVE_TORSO) torso(player, 11, true, dead);
-    else if (character && value == QA_MOVE_GESTURE && p->torsoTimer == 0) {
-        uint32_t buttons = call->command->buttons;
-        if (buttons & 8u) {
-            torso(player, 6, false, dead); p->torsoTimer = 34 * 66 + 50; event(player, 76);
+    else if (character && value == QA_MOVE_TORSO && p->weaponState == 0)
+        qa_q3_animation_set(&p->torsoAnim, &p->torsoTimer, p->weapon == 1 ? 12 : 11, false, true, dead);
+    else if (character && value == QA_MOVE_GESTURE) {
+        int32_t emitted = qa_q3_animation_gesture(p->product, call->command->buttons,
+            &p->torsoAnim, &p->torsoTimer, dead);
+        if (emitted) {
+            event(player, emitted);
             if (call->state->kind == QA_RULESET_Q3) ++call->state->data.q3.event_sequence;
-        } else if (p->product == QA_Q3_TEAM_ARENA) {
-            static const uint32_t gesture_buttons[] = {128,256,512,1024,32,64};
-            static const int32_t gesture_animations[] = {25,26,27,28,29,30};
-            for (size_t i = 0; i < sizeof(gesture_buttons) / sizeof(gesture_buttons[0]); ++i)
-                if (buttons & gesture_buttons[i]) {
-                    torso(player, gesture_animations[i], false, dead); p->torsoTimer = 600; break;
-                }
         }
     }
     return QA_MOVEMENT_CONTINUE;
@@ -385,7 +367,7 @@ static qa_movement_control effect(void *opaque, const qa_movement_effect *value,
             }
             bool dead = call->state->kind == QA_RULESET_Q3 ?
                 call->state->data.q3.movement_type >= 3 : player->environment.health <= 0;
-            legs(player, animation, value->force, dead);
+            qa_q3_animation_set(&p->legsAnim, &p->legsTimer, animation, value->force, true, dead);
             if (landing) p->legsTimer = 130;
         }
     }

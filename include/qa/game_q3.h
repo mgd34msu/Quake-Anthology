@@ -12,6 +12,10 @@
 #include "qa/game_q3_supply.h"
 
 typedef struct qa_q3_game qa_q3_game;
+void qa_q3_animation_set(int32_t *animation, int32_t *timer, int32_t requested,
+                         bool force, bool continuing, bool dead);
+int32_t qa_q3_animation_gesture(qa_q3_product product, uint32_t buttons,
+                              int32_t *torso, int32_t *timer, bool dead);
 bool qa_q3_game_random(qa_q3_game *, float *, qa_error *);
 bool qa_q3_game_rand(qa_q3_game *, uint32_t *, qa_error *);
 bool qa_q3_game_grant_arsenal(qa_q3_game *, qa_actor_id, bool ammo, qa_error *);

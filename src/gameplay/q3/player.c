@@ -3,6 +3,36 @@
 
 static bool player_timers(qa_q3_game *, qa_actor_id, int32_t, bool, qa_error *);
 
+void qa_q3_animation_set(int32_t *animation, int32_t *timer, int32_t requested,
+    bool force, bool continuing, bool dead) {
+    if (force) {
+        *timer = 0;
+        continuing = false;
+    }
+    if (dead || (continuing && ((*animation & ~128) == requested || *timer > 0))) return;
+    *animation = ((*animation & 128) ^ 128) | requested;
+}
+
+int32_t qa_q3_animation_gesture(qa_q3_product product, uint32_t buttons,
+    int32_t *torso, int32_t *timer, bool dead) {
+    if (*timer != 0) return 0;
+    int32_t animation = 6, duration = 34 * 66 + 50, event = 76;
+    if (!(buttons & 8u)) {
+        if (product != QA_Q3_TEAM_ARENA) return 0;
+        static const uint32_t order_buttons[] = {128, 256, 512, 1024, 32, 64};
+        size_t order = 0;
+        while (order < sizeof(order_buttons) / sizeof(order_buttons[0]) &&
+            !(buttons & order_buttons[order])) ++order;
+        if (order == sizeof(order_buttons) / sizeof(order_buttons[0])) return 0;
+        animation = 25 + (int32_t)order;
+        duration = 600;
+        event = 0;
+    }
+    qa_q3_animation_set(torso, timer, animation, false, false, dead);
+    *timer = duration;
+    return event;
+}
+
 bool qa_q3_selected_client_effects_read(const qa_q3_game *game, qa_actor_id actor,
     qa_q3_selected_client_effects *out, qa_error *error) {
     const q3_actor *entry = q3_actor_const(game, actor);
@@ -750,8 +780,8 @@ bool qa_q3_spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_state
     return result;
 }
 static void torso(qa_q3_player_state *player, int32_t animation, bool dead) {
-    if (!dead)
-        player->torso_animation = ((player->torso_animation & 128) ^ 128) | animation;
+    qa_q3_animation_set(&player->torso_animation, &player->torso_timer_ms,
+        animation, false, false, dead);
 }
 static bool map_ammo_regeneration(qa_q3_game *game, qa_actor_id actor, qa_q3_weapon weapon,
                                   qa_item_id ammo, qa_error *error) {
@@ -2125,9 +2155,19 @@ qa_movement_control qa_q3_movement_phase_selected(void *context, qa_movement_pha
         int32_t elapsed = (int32_t)call->milliseconds;
         p->legs_timer_ms = p->legs_timer_ms > elapsed ? p->legs_timer_ms - elapsed : 0;
         p->torso_timer_ms = p->torso_timer_ms > elapsed ? p->torso_timer_ms - elapsed : 0;
-    } else if (phase == QA_MOVE_TORSO && !p->dead && !p->torso_timer_ms &&
-               p->weapon_phase == QA_Q3_READY)
-        p->torso_animation = (p->torso_animation & 128) | (p->weapon == QA_Q3_W_GAUNTLET ? 12 : 11);
+    } else if (phase == QA_MOVE_GESTURE) {
+        int32_t event = qa_q3_animation_gesture(game->options.product, call->command->buttons,
+            &p->torso_animation, &p->torso_timer_ms, p->dead);
+        if (event) {
+            if (!q3_player_event(game, call->actor, event, 0, error)) return QA_MOVEMENT_ERROR;
+            entry = q3_actor_get(game, call->actor);
+            if (!entry || entry->kind != Q3_ACTOR_PLAYER) return QA_MOVEMENT_REMOVED;
+            if (call->state->kind == QA_RULESET_Q3 && source_command_active(game, call->actor))
+                call->state->data.q3.event_sequence = entry->state.player.event_sequence;
+        }
+    } else if (phase == QA_MOVE_TORSO && p->weapon_phase == QA_Q3_READY)
+        qa_q3_animation_set(&p->torso_animation, &p->torso_timer_ms,
+            p->weapon == QA_Q3_W_GAUNTLET ? 12 : 11, false, true, p->dead);
 phase_done:
     entry = q3_actor_get(game, call->actor);
     if (!entry)
@@ -2171,11 +2211,12 @@ qa_movement_control qa_q3_movement_effect(void *context, const qa_movement_effec
                        effect->value == 12 ? 10 : 5, qa_v3(0, 0, 0), qa_v3(0, 0, 0), false, NULL,
                        error))
             return QA_MOVEMENT_ERROR;
-    } else if (effect->kind == QA_MOVE_EFFECT_ANIMATION && !p->dead) {
+    } else if (effect->kind == QA_MOVE_EFFECT_ANIMATION) {
         if (effect->animation_kind == QA_MOVE_ANIMATION_LEGS_TIMER)
             p->legs_timer_ms = effect->value;
         else if (!p->legs_timer_ms || effect->force) {
             int32_t animation = effect->value;
+            bool landing = false;
             if (effect->animation_kind == QA_MOVE_ANIMATION_LOCOMOTION) {
                 switch ((qa_movement_locomotion)effect->value) {
                 case QA_MOVE_IDLE:
@@ -2198,15 +2239,16 @@ qa_movement_control qa_q3_movement_effect(void *context, const qa_movement_effec
                     break;
                 case QA_MOVE_LAND:
                     animation = effect->backwards ? 21 : 19;
-                    p->legs_timer_ms = 130;
+                    landing = true;
                     break;
                 case QA_MOVE_SWIM:
                     animation = 17;
                     break;
                 }
             }
-            if ((p->legs_animation & ~128) != animation || effect->force)
-                p->legs_animation = ((p->legs_animation & 128) ^ 128) | animation;
+            qa_q3_animation_set(&p->legs_animation, &p->legs_timer_ms,
+                animation, effect->force, true, p->dead);
+            if (landing) p->legs_timer_ms = 130;
         }
     }
     return q3_actor_get(game, call->actor) ? QA_MOVEMENT_CONTINUE : QA_MOVEMENT_REMOVED;
