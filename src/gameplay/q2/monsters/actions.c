@@ -23,7 +23,6 @@ static const q2m_transition transitions[Q2M_CALLBACK_COUNT] = {
     [Q2M_CALLBACK_gekk_chant]={ Q2M_MOVE_gekk_move_chant},
     [Q2M_CALLBACK_gekk_face]={ Q2M_MOVE_gekk_move_run},
     [Q2M_CALLBACK_gekk_run_start]={ Q2M_MOVE_gekk_move_run_start},
-    [Q2M_CALLBACK_gekk_swim_loop]={ Q2M_MOVE_gekk_move_swim_loop},
     [Q2M_CALLBACK_guardian_atk1_finish]={ Q2M_MOVE_guardian_atk1_out},
     [Q2M_CALLBACK_guardian_atk2]={ Q2M_MOVE_guardian_move_atk2_fire},
     [Q2M_CALLBACK_guardian_atk2_out]={ Q2M_MOVE_guardian_move_atk2_out},
@@ -75,6 +74,32 @@ static bool set_existing_move(q2m_context *context, q2m_move_id name,
 static bool set_definition_move(q2m_context *context, q2m_move_id name,
                                 qa_error *error) {
   return name == Q2M_MOVE_NONE || q2m_set_move(context, name, false, error);
+}
+
+static bool gekk_locomotion(q2m_context *context, q2m_move_id move,
+                            qa_error *error) {
+  struct qa_q2_monster *monster = context->monster;
+  bool swimming = move != Q2M_MOVE_gekk_move_leapatk2;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+  if (swimming)
+    context->actor->physics.flags |= QA_PHYSICS_SWIMMING;
+  else
+    context->actor->physics.flags &= ~(uint32_t)QA_PHYSICS_SWIMMING;
+  if (rerelease)
+    monster->alternate_fly = swimming;
+  if (move != Q2M_MOVE_gekk_move_swim_loop) {
+    monster->yaw_speed = swimming ? 10 : 20;
+    context->actor->physics.yaw_speed = monster->yaw_speed;
+    monster->view_height = swimming ? 10 : 25;
+    float width = rerelease ? 18 : 24;
+    context->body.bounds = (qa_bounds){.mins = {-width, -width, -24},
+                                      .maxs = {width, width, swimming ? 16 : 24}};
+    if (!q2m_write_body(context, false, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+  }
+  return q2m_set_move(context, move, false, error);
 }
 
 static bool enemy_alive(q2m_context *context) {
@@ -2469,6 +2494,10 @@ static bool end_transition(q2m_context *context, q2m_callback_id callback,
     return set_definition_move(context, context->monster->definition->run_move,
                                error);
   }
+  if (callback == Q2M_CALLBACK_gekk_swim_loop) {
+    *handled = true;
+    return gekk_locomotion(context, Q2M_MOVE_gekk_move_swim_loop, error);
+  }
   if ((callback == Q2M_CALLBACK_supertank_dead) ||
       (callback == Q2M_CALLBACK_boss5_dead) ||
       (callback == Q2M_CALLBACK_boss2_dead) ||
@@ -2981,20 +3010,6 @@ static bool foundational_species_callback(q2m_context *context,
     bool has_enemy = monster->enemy.registry != 0 &&
                      qa_world_body_read(context->game->services.world,
                                         monster->enemy, &enemy, &ignored);
-    bool long_jump = false;
-    if (has_enemy) {
-      float minimum = enemy.origin.z + enemy.bounds.mins.z;
-      float height = enemy.bounds.maxs.z - enemy.bounds.mins.z;
-      bool overlaps = context->body.origin.z + context->body.bounds.mins.z <=
-                          minimum + 0.75f * height &&
-                      context->body.origin.z + context->body.bounds.maxs.z >=
-                          minimum + 0.25f * height;
-      float dx = context->body.origin.x - enemy.origin.x;
-      float dy = context->body.origin.y - enemy.origin.y;
-      float distance = hypotf(dx, dy);
-      long_jump = overlaps && distance >= 100.0f &&
-                  (distance == 100.0f || q2m_random(context->game) >= 0.9f);
-    }
     if (!q2m_sound(context, QA_Q2_SFX_GEK_GK_SGHT1, 2, 1.0f, error))
       return false;
     if (!q2m_alive(context))
@@ -3005,6 +3020,7 @@ static bool foundational_species_callback(q2m_context *context,
       context->body.origin.z = enemy.origin.z;
     else
       context->body.origin.z += 1.0f;
+    bool long_jump = has_enemy && q2m_gekk_check_jump(context, &enemy);
     float forward_speed = from_water  ? long_jump ? 300.0f : 150.0f
                           : long_jump ? 700.0f
                                       : 250.0f;
@@ -3016,6 +3032,9 @@ static bool foundational_species_callback(q2m_context *context,
     monster->ducked = true;
     monster->touch_active = true;
     monster->jump_ns = q2m_after(context->game->now_ns, 3.0);
+    monster->attack_ns = monster->jump_ns;
+    if (context->game->options.rules == QA_RULESET_Q2_RERELEASE)
+      monster->style = 1;
     return q2m_write_body(context, true, error);
   }
   if (callback == Q2M_CALLBACK_gekk_check_landing) {
@@ -4930,10 +4949,11 @@ static bool callback_gekk_check_underwater_44(q2m_context *context, q2m_callback
                                               qa_error *error) {
     (void)callback;
     struct qa_q2_monster *monster = context->monster;
-    q2m_move_id move = context->actor->physics.water_level > 1 ? Q2M_MOVE_gekk_move_swim_start
-                                                               : monster->definition->run_move;
-    bool found;
-    return set_existing_move(context, move, false, &found, error);
+    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+    bool water = rerelease
+        ? !(monster->spawnflags & 32u) && context->actor->physics.water_level >= 2
+        : context->actor->physics.water_level != 0;
+    return !water || gekk_locomotion(context, Q2M_MOVE_gekk_move_swim_start, error);
 }
 
 static bool callback_gekk_stop_skid_45(q2m_context *context, q2m_callback_id callback,
@@ -5411,10 +5431,30 @@ static bool callback_widow2_finaldeath_93(q2m_context *context, q2m_callback_id 
 
 static bool callback_gekk_search_94(q2m_context *context, q2m_callback_id callback,
                                     qa_error *error) {
-    if (callback != Q2M_CALLBACK_gekk_search)
-        return true;
     struct qa_q2_monster *monster = context->monster;
     bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+    if (callback == Q2M_CALLBACK_gekk_swim) {
+        bool selected = true;
+        if (rerelease && !q2m_gekk_check_attack(context, &selected, error))
+            return false;
+        if (!q2m_alive(context))
+            return true;
+        qa_physics_properties enemy;
+        bool dry = selected && monster->enemy.registry != 0 &&
+            context->game->services.physics != NULL &&
+            context->game->services.physics->services.read != NULL &&
+            context->game->services.physics->services.read(
+                context->game->services.physics->services.context,
+                monster->enemy, &enemy) && enemy.water_level < (rerelease ? 2 : 1);
+        if (!q2m_alive(context))
+            return true;
+        if (dry && (rerelease ? q2_rerelease_float(context->game, 0, 1)
+                              : q2m_random(context->game)) > (rerelease ? .7f : .7))
+            return gekk_locomotion(context, Q2M_MOVE_gekk_move_leapatk2, error);
+        return q2m_set_move(context, Q2M_MOVE_gekk_move_swim_start, false, error);
+    }
+    if (callback != Q2M_CALLBACK_gekk_search)
+        return true;
     q2_runtime_name sound = QA_Q2_SFX_GEK_GK_IDLE1;
     if (monster->spawnflags & 8u) {
         float choice = rerelease ? q2_rerelease_float(context->game, 0, 1)

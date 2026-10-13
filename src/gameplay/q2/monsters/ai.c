@@ -2237,8 +2237,110 @@ static bool widow_check_attack(q2m_context *context, bool *selected, qa_error *e
   return true;
 }
 
+bool q2m_gekk_check_jump(q2m_context *context, const qa_body_state *target) {
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+  qa_bounds self_bounds = qa_bounds_translate(context->body.bounds, context->body.origin);
+  qa_bounds target_bounds = qa_bounds_translate(target->bounds, target->origin);
+  qa_linked_body linked;
+  if (qa_world_linked(context->game->services.world, context->actor->id, &linked))
+    self_bounds = linked.absolute_bounds;
+  if (qa_world_linked(context->game->services.world, context->monster->enemy, &linked))
+    target_bounds = linked.absolute_bounds;
+  float self_bottom = self_bounds.mins.z;
+  float target_bottom = target_bounds.mins.z;
+  if (rerelease) {
+    if (self_bottom + 125.0f < target_bottom)
+      return false;
+  } else {
+    float target_height = target->bounds.maxs.z - target->bounds.mins.z;
+    if (self_bottom > target_bottom + .75 * target_height ||
+        self_bounds.maxs.z < target_bottom + .25 * target_height)
+      return false;
+  }
+  qa_vec3 delta = qa_vec_sub(context->body.origin, target->origin);
+  delta.z = 0;
+  float distance = qa_vec_length(delta);
+  if (distance < 100.0f)
+    return false;
+  if (distance > 100.0f) {
+    float draw = rerelease ? q2_rerelease_float(context->game, 0, 1)
+                           : q2m_random(context->game);
+    if (draw < (rerelease ? context->actor->physics.water_level >= 2 ? .2f : .9f
+                          : .9))
+      return false;
+  }
+  return true;
+}
+
+bool q2m_gekk_check_attack(q2m_context *context, bool *selected,
+                           qa_error *error) {
+  *selected = false;
+  struct qa_q2_monster *monster = context->monster;
+  qa_actor_id enemy = monster->enemy;
+  double health;
+  if (!attack_health(context, enemy, &health, error))
+    return false;
+  if (!q2m_alive(context) || health <= 0)
+    return true;
+  qa_body_state target;
+  bool present;
+  if (!attack_body(context, enemy, &target, &present, error))
+    return false;
+  if (!q2m_alive(context) || !present)
+    return true;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+  float distance = q2m_body_distance(context->game->options.rules,
+                                     &context->body, &target);
+  if (rerelease ? distance <= 20.0f && monster->melee_ns <= context->game->now_ns
+               : distance < 80.0f) {
+    monster->attack_state = Q2M_MELEE;
+    *selected = true;
+    return true;
+  }
+  if (rerelease) {
+    if (monster->attack_state == Q2M_STRAIGHT &&
+        monster->attack_ns > context->game->now_ns)
+      return true;
+    bool visible;
+    if (!q2m_visible(context, enemy, &visible, error))
+      return false;
+    if (!q2m_alive(context) || !visible)
+      return true;
+  }
+  if (q2m_gekk_check_jump(context, &target)) {
+    monster->attack_state = Q2M_MISSILE;
+    *selected = true;
+    return true;
+  }
+  qa_vec3 delta = qa_vec_sub(context->body.origin, target.origin);
+  delta.z = 0;
+  float horizontal = qa_vec_length(delta);
+  qa_bounds self_bounds = qa_bounds_translate(context->body.bounds, context->body.origin);
+  qa_bounds target_bounds = qa_bounds_translate(target.bounds, target.origin);
+  qa_linked_body linked;
+  if (rerelease) {
+    if (qa_world_linked(context->game->services.world, context->actor->id, &linked))
+      self_bounds = linked.absolute_bounds;
+    if (qa_world_linked(context->game->services.world, enemy, &linked))
+      target_bounds = linked.absolute_bounds;
+  }
+  bool close = horizontal >= 100.0f ||
+      (rerelease ? self_bounds.maxs.z > target_bounds.mins.z
+                : context->body.origin.z < target.origin.z);
+  bool swimming = rerelease
+      ? (context->actor->physics.flags & QA_PHYSICS_SWIMMING) != 0
+      : context->actor->physics.water_level != 0;
+  if (close && !swimming) {
+    monster->attack_state = Q2M_MISSILE;
+    *selected = true;
+  }
+  return true;
+}
+
 static bool check_attack_slot(q2m_context *context, bool *selected, bool *started,
                               qa_error *error) {
+  if (context->monster->definition->species == Q2M_GEKK)
+    return q2m_gekk_check_attack(context, selected, error);
   bool handled;
   if (!q2m_medic_check_attack(context, &handled, selected, started, error))
     return false;
@@ -2752,13 +2854,58 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
     q2m_fixbot_flight(context, false, false);
     break;
   case Q2M_GEKK:
-    if (melee)
-      *move = q2m_random(context->game) < 0.5f ? Q2M_MOVE_gekk_move_attack1
+    if (melee) {
+      if (context->actor->physics.water_level >= (rerelease ? 2 : 1))
+        *move = Q2M_MOVE_gekk_move_attack;
+      else {
+        float draw = rerelease ? q2_rerelease_float(context->game, 0, 1)
+                               : q2m_random(context->game);
+        *move = draw > (rerelease ? .66f : .66) ? Q2M_MOVE_gekk_move_attack1
                                                : Q2M_MOVE_gekk_move_attack2;
-    else if (distance < 80.0f)
-      *move = Q2M_MOVE_gekk_move_leapatk;
-    else
+      }
+    } else if (rerelease && (context->actor->physics.flags & QA_PHYSICS_SWIMMING)) {
+      qa_physics_properties target;
+      bool submerged = context->game->services.physics != NULL &&
+          context->game->services.physics->services.read != NULL &&
+          context->game->services.physics->services.read(
+              context->game->services.physics->services.context,
+              monster->enemy, &target) && target.water_level >= 2;
+      if (!q2m_alive(context))
+        return true;
+      if (submerged && distance <= 440.0f) {
+        *move = Q2M_MOVE_NONE;
+      } else {
+        context->actor->physics.flags &= ~(uint32_t)QA_PHYSICS_SWIMMING;
+        monster->alternate_fly = false;
+        *move = Q2M_MOVE_gekk_move_leapatk;
+        monster->next_frame = 75;
+      }
+    } else if (!rerelease) {
+      if ((context->actor->physics.flags & QA_PHYSICS_SWIMMING) ||
+          context->actor->physics.water_level != 0) {
+        *move = Q2M_MOVE_NONE;
+      } else if ((q2m_random(context->game) > .5 && distance >= 80.0f) ||
+                 q2m_random(context->game) > .8) {
+        *move = Q2M_MOVE_gekk_move_spit;
+      } else {
+        *move = Q2M_MOVE_gekk_move_leapatk;
+      }
+    } else if (distance >= 940.0f) {
+      if (q2_rerelease_float(context->game, 0, 1) > .5f)
+        *move = Q2M_MOVE_gekk_move_spit;
+      else {
+        *move = Q2M_MOVE_gekk_move_run_start;
+        monster->attack_ns = q2m_after(context->game->now_ns, 2);
+      }
+    } else if (q2_rerelease_float(context->game, 0, 1) > .7f) {
       *move = Q2M_MOVE_gekk_move_spit;
+    } else if ((monster->spawnflags & 16u) ||
+               q2_rerelease_float(context->game, 0, 1) > .7f) {
+      *move = Q2M_MOVE_gekk_move_run_start;
+      monster->attack_ns = q2m_after(context->game->now_ns, 1.4);
+    } else {
+      *move = Q2M_MOVE_gekk_move_leapatk;
+    }
     break;
   case Q2M_STALKER:
     if (melee)
@@ -2941,13 +3088,13 @@ static bool attack_selected(q2m_context *context, qa_error *error) {
     return false;
   if (!q2m_alive(context))
     return true;
-  if (move == Q2M_MOVE_NONE)
+  if (move == Q2M_MOVE_NONE && monster->definition->species != Q2M_GEKK)
     return true;
   bool immediate = context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
                    (monster->definition->species == Q2M_JORG ||
                     monster->definition->species == Q2M_MEDIC ||
                     monster->definition->species == Q2M_MEDIC_COMMANDER);
-  if (!q2m_set_move(context, move, immediate, error))
+  if (move != Q2M_MOVE_NONE && !q2m_set_move(context, move, immediate, error))
     return false;
   if (!q2m_alive(context))
     return true;
@@ -2960,6 +3107,10 @@ static bool attack_selected(q2m_context *context, qa_error *error) {
     case Q2M_SOLDIER_RIPPER:
     case Q2M_SOLDIER_HYPER:
     case Q2M_SOLDIER_LASER:
+      break;
+    case Q2M_GEKK:
+      monster->attack_ns = q2m_after(context->game->now_ns,
+          (double)q2_rerelease_time_ms(context->game, 1000, 2000) / 1000.0);
       break;
     default:
       monster->attack_ns = q2m_after(context->game->now_ns, 1 + q2m_random(context->game));
