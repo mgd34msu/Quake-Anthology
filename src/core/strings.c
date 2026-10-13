@@ -178,6 +178,7 @@ static bool intern(qa_strings *strings, qa_bytes text, bool ascii_lower,
         (text.data[text.size-3]=='b'||text.data[text.size-3]=='B') &&
         (text.data[text.size-2]=='s'||text.data[text.size-2]=='S') &&
         (text.data[text.size-1]=='p'||text.data[text.size-1]=='P')) flags|=QA_NAME_BRUSH_PATH;
+    if (text.size>=4 && !memcmp(copy+text.size-4,".mdl",4)) flags|=QA_NAME_MDL_PATH;
     strings->entries[strings->count]=(string_entry){{copy,text.size},hash,flags};
     qa_string_id id=(qa_string_id)++strings->count;
     strings->buckets[bucket]=id;

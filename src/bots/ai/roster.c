@@ -29,6 +29,12 @@ bool bot_ai_observations_prepare(qa_bots *b,qa_error *e) {
     qa_actor_id *actors=capacity?qa_arena_alloc(&b->observation_storage,
         2*capacity*sizeof(*actors),_Alignof(qa_actor_id),e):NULL;
     if(capacity && !actors) return false;
+    b->activation_scratch=qa_arena_alloc(&b->observation_storage,
+        64*sizeof(*b->activation_scratch),_Alignof(bot_ai_activation_scratch),e);
+    if(!b->activation_scratch) return false;
+    for(size_t i=0;i<64;++i)
+        qa_stamp_set_init(&b->activation_scratch[i].visits,b->activation_scratch[i].marks,
+            QA_BOT_SOURCE_ACTIVATION_COUNT);
     b->entities=(qa_world_actor_snapshot){.actors=actors,.world=b->services.shared.world,.borrowed=true};
     b->players=(qa_world_actor_snapshot){.actors=actors?actors+capacity:NULL,
         .world=b->services.shared.world,.borrowed=true};
@@ -185,7 +191,8 @@ void bot_ai_source_cell_clear(qa_bots *b,bot_ai_state *s) {
         b->clients[s->view.client]=NULL;
     b->source_clients[source]=0;
     if(s->counted) --b->count;
-    *s=(bot_ai_state){.acquired_source_client=source,.source_record=record,.source_span=span};
+    *s=(bot_ai_state){.acquired_source_client=source,.source_record=record,.source_span=span,
+        .activation_visits=&b->activation_scratch[source].visits};
     bot_ai_source_order_init(&s->source_order);
 }
 bool bot_ai_source_shutdown_client(qa_bots *b,bot_ai_state *s,bool restart,qa_error *e) {
@@ -379,6 +386,7 @@ static bool admit(qa_bots *b,const qa_bot_admission *a,bool *rejected,qa_error *
         bot_ai_source_setup_init(&s->source_setup);
         b->source_cells[source_client]=s;
     }
+    s->activation_visits=&b->activation_scratch[source_client].visits;
     bool source_inuse;
     if(!bot_ai_storage_bool(b,s,QA_BOT_SOURCE_INUSE,&source_inuse,false,e)) return false;
     if(source_inuse) {

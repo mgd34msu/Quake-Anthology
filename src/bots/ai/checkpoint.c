@@ -18,6 +18,8 @@ struct qa_bots_checkpoint {
     bot_goal_history *goals;
     bot_chat_history *chat;
     bot_checkpoint_record *records;
+    qa_arena validation_storage;
+    bot_ai_activation_scratch *activation_scratch;
     uint32_t count,bot_count,client_capacity;
     qa_bot_controls controls;
     int32_t local_time_ms,library_residual_ms,scheduled_think_ms;
@@ -52,6 +54,7 @@ void qa_bots_checkpoint_destroy(qa_bots_checkpoint *checkpoint) {
     bot_fuzzy_history_destroy(checkpoint->fuzzy);
     bot_define_history_destroy(checkpoint->defines);
     qa_bot_memory_checkpoint_destroy(checkpoint->memory);
+    qa_arena_destroy(&checkpoint->validation_storage);
     free(checkpoint->records);free(checkpoint);
 }
 static bool capture(qa_bots *b,qa_bots_checkpoint **out,qa_error *e) {
@@ -61,6 +64,15 @@ static bool capture(qa_bots *b,qa_bots_checkpoint **out,qa_error *e) {
     for(uint32_t i=0;i<64;++i) if(b->source_cells[i]) ++acquired;
     if(acquired && !(checkpoint->records=calloc(acquired,sizeof(*checkpoint->records)))) {
         free(checkpoint);goto memory;
+    }
+    if(acquired) {
+        checkpoint->activation_scratch=qa_arena_alloc(&checkpoint->validation_storage,
+            acquired*sizeof(*checkpoint->activation_scratch),_Alignof(bot_ai_activation_scratch),e);
+        if(!checkpoint->activation_scratch) goto failed;
+        for(uint32_t i=0;i<acquired;++i)
+            qa_stamp_set_init(&checkpoint->activation_scratch[i].visits,
+                checkpoint->activation_scratch[i].marks,QA_BOT_SOURCE_ACTIVATION_COUNT);
+        qa_arena_seal(&checkpoint->validation_storage);
     }
     checkpoint->client_capacity=b->client_capacity;checkpoint->controls=b->controls;
     checkpoint->local_time_ms=b->local_time_ms;checkpoint->library_residual_ms=b->library_residual_ms;
@@ -95,10 +107,12 @@ static bool capture(qa_bots *b,qa_bots_checkpoint **out,qa_error *e) {
         bot_checkpoint_record *record=&checkpoint->records[checkpoint->count++];
         if(!qa_bot_source_record_read(&b->services.memory,s->source_record,record->source_bytes,e)) goto failed;
         record->state=*s;
+        record->state.activation_visits=NULL;
         record->state.admitted_character=NULL;
         record->state.admitted_name=NULL;
         if(!bot_ai_source_order_rebase(&b->source_orders,&record->state.source_order,&checkpoint->source_orders,e)) goto failed;
         bot_ai_state captured=record->state;
+        captured.activation_visits=&checkpoint->activation_scratch[checkpoint->count-1].visits;
         captured.source_span=(qa_bot_source_span){record->source_bytes,QA_BOT_STATE_SOURCE_BYTES};
         if(!bot_ai_activation_validate(&captured,e)) goto failed;
         if(s->view.actor.registry && (!s->admitted_character || !s->admitted_name)) {bot_ai_fail(e,"bot original admission settings are absent");goto failed;}
@@ -148,7 +162,6 @@ static bool validate(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
         const bot_ai_state *saved=&record->state;
         bot_ai_state captured=*saved;
         captured.source_span=(qa_bot_source_span){(uint8_t *)record->source_bytes,QA_BOT_STATE_SOURCE_BYTES};
-        if(!bot_ai_activation_validate(&captured,e)) return false;
         if(!bot_ai_source_order_rebase(&checkpoint->source_orders,&captured.source_order,&b->source_orders,e)) return false;
         bot_ai_state *live=saved->acquired_source_client<64?b->source_cells[saved->acquired_source_client]:NULL;
         if(!live || live->retired || !qa_actor_id_equal(live->view.actor,saved->view.actor) ||
@@ -175,6 +188,8 @@ static bool validate(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
            (live->chat && !qa_bot_runtime_chat(b->runtime,live->chat)) ||
            (live->weapons && !qa_bot_runtime_weapon_has_handle(b->runtime,live->weapons)))
             return bot_ai_fail(e,"bot checkpoint resource or actor binding changed");
+        captured.activation_visits=&b->activation_scratch[saved->acquired_source_client].visits;
+        if(!bot_ai_activation_validate(&captured,e)) return false;
     }
     return true;
 }
@@ -281,6 +296,7 @@ bool qa_bots_restore(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
             const bot_checkpoint_record *record=&checkpoint->records[i];
             bot_ai_state *state=b->source_cells[record->state.acquired_source_client];
             free(state->admitted_character);free(state->admitted_name);*state=record->state;
+            state->activation_visits=&b->activation_scratch[record->state.acquired_source_client].visits;
             state->source_span=prepared[i].source_span;
             state->source_order=prepared[i].source_order;
             state->admitted_character=prepared[i].character_request;prepared[i].character_request=NULL;

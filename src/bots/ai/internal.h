@@ -4,6 +4,7 @@
 #include "qa/bots.h"
 #include "qa/bots_memory.h"
 #include "qa/arena.h"
+#include "qa/stamp.h"
 #include "source_orders.h"
 #include "source_team_policy.h"
 #include "source_events.h"
@@ -55,10 +56,15 @@ typedef struct bot_ai_player {
     float air_time, teleport_time;
     uint64_t spawn_sequence, teleport_sequence;
 } bot_ai_player;
+typedef struct bot_ai_activation_scratch {
+    qa_stamp_set visits;
+    uint32_t marks[QA_BOT_SOURCE_ACTIVATION_COUNT];
+} bot_ai_activation_scratch;
 typedef struct bot_ai_state {
     uint32_t acquired_source_client;
     qa_bot_source_record source_record;
     qa_bot_source_span source_span;
+    qa_stamp_set *activation_visits;
     bot_ai_view view;
     bot_ai_player player;
     uint32_t character, goals, weapons, chat, movement;
@@ -87,6 +93,7 @@ struct qa_bots {
     uint32_t actor_save_capacity;
     qa_bot_controls controls;
     qa_arena observation_storage;
+    bot_ai_activation_scratch *activation_scratch;
     qa_world_actor_snapshot entities, players;
     int32_t local_time_ms, library_residual_ms, scheduled_think_ms;
     float time, regular_update_time;

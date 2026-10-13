@@ -116,14 +116,14 @@ bool bot_ai_activation_validate(const bot_ai_state *s,qa_error *e) {
         if(count<0 || count>32) return bot_ai_fail(e,"BotState activation area count exceeds its actual row");
         if(next && !activation_index(s,next,&index,e)) return false;
     }
-    bool seen[QA_BOT_SOURCE_ACTIVATION_COUNT]={0};
+    qa_stamp_set_begin(s->activation_visits);
     uint32_t address=qa_load_u32le(s->source_span.data+QA_BOT_SOURCE_ACTIVATION_STACK);
     while(address) {
         uint32_t index;if(!activation_index(s,address,&index,e)) return false;
         const uint8_t *p=s->source_span.data+activation_offset(index);
-        if(seen[index] || !qa_load_u32le(p))
+        if(!qa_stamp_set_mark(s->activation_visits,index) || !qa_load_u32le(p))
             return bot_ai_fail(e,"BotState activation stack has a cycle or inactive row");
-        seen[index]=true;address=qa_load_u32le(p+240);
+        address=qa_load_u32le(p+240);
     }
     return true;
 }

@@ -30,6 +30,7 @@ typedef struct qawl_point_light {
 typedef struct qawl_world {
     qawl_texture *textures;
     size_t texture_count, q1_mirror_texture;
+    qa_stamp_set texture_visits;
     const qawl_texture *q1_sky_texture;
     qa_vec4 q1_sky_flat;
     qa_bsp_q1_metadata metadata;

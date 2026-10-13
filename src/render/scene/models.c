@@ -1439,7 +1439,7 @@ static bool model_beam(qa_scene_model *model, const qa_scene_model_input *input,
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model beam segment length must be positive"); return false;
     }
     qa_vec3 difference = qa_vec_sub(input->previous_origin, model_origin(input));
-    double distance = sqrt((double)difference.x * difference.x + (double)difference.y * difference.y + (double)difference.z * difference.z);
+    double distance = sqrt(qa_vec_dot_wide(difference, difference));
     if (!isfinite(distance)) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model beam distance is nonfinite"); return false; }
     if (distance == 0) return true;
     if (ceil(distance / segment_length) > (double)(SIZE_MAX / sizeof(qa_scene_draw))) {

@@ -337,7 +337,10 @@ static bool fields(qa_source_save_io *io, qa_bots *bots,const bot_source_orders_
         if (reading && !(bots->source_cells[i] = calloc(1, sizeof(*bots->source_cells[i]))))
             return bot_save_fail(io, QA_ERROR_MEMORY, "Restoring native bot continuation");
         bot_ai_state *state=bots->source_cells[i];
-        if(reading) state->acquired_source_client=i;
+        if(reading) {
+            state->acquired_source_client=i;
+            state->activation_visits=&bots->activation_scratch[i].visits;
+        }
         if(!qa_bot_source_record_fields(io,&bots->services.memory,&state->source_record) ||
            !bot_ai_source_alias_bind(bots,state,io->error)) return false;
         if (!state_fields(io,state,waypoints,&bots->source_orders)) return false;

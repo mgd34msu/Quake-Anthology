@@ -884,7 +884,7 @@ static bool control_qw_input(struct application_qc_state *engine, int32_t refere
     if (!control_word(-sr * sp * cy + -cr * -sy, &right.x, error) ||
         !control_word(-sr * sp * sy + -cr * cy, &right.y, error) ||
         !control_word(-sr * cp, &right.z, error)) return false;
-    double side = (double)velocity.x * right.x + (double)velocity.y * right.y + (double)velocity.z * right.z;
+    double side = qa_vec_dot_wide(velocity, right);
     double roll = (fabs(side) < 200 ? fabs(side) * 2 / 200 : 2) * (side < 0 ? -1 : 1) * 4;
     return control_word(pitch, &angles.x, error) && control_word(yaw, &angles.y, error) &&
         control_word(roll, &angles.z, error) && control_store_vector(engine, reference, actor, engine->field_bindings->angles, angles, error);

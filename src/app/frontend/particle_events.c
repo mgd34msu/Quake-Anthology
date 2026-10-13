@@ -47,7 +47,8 @@ typedef struct frontend_particle_owner {
     uint64_t q2_interval_ns;
     qa_ruleset_id q2_edition;
     frontend_fx_q1_state *q1;
-    bool q1_quakeworld, q1_rerelease;
+    qa_ruleset_id q1_rules;
+    bool q1_rerelease;
     qa_scene_model *q1_beam_models[QA_Q1_BEAM_MODELS]; /* borrowed from the actual appearance owner */
     qa_frontend *frontend;
     uint32_t seat;
@@ -809,7 +810,8 @@ static bool particle_owner_admit(qa_frontend *frontend, qa_actor_owner provider,
             !qa_pool_extend(&state->q1_records,&state->q1_storage,1,error))) return false;
     size_t slot;owner=qa_pool_take(&state->owner_records,&slot);
     if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Provider particle storage is full");
-    *owner=(frontend_particle_owner){.slot=slot,.q1_slot=SIZE_MAX,.seat=UINT32_MAX};
+    *owner=(frontend_particle_owner){.slot=slot,.q1_slot=SIZE_MAX,.seat=UINT32_MAX,
+        .q1_rules=QA_RULESET_NETQUAKE};
     owner->frontend=frontend;owner->provider = provider; owner->family = family;
     owner->scene_world=frontend->scene_world;
     owner->world_source = world_source; owner->map_generation = map_generation; owner->recipient = recipient;
@@ -823,7 +825,7 @@ static bool particle_owner_admit(qa_frontend *frontend, qa_actor_owner provider,
         const char *instance = qa_application_provider_instance(frontend->application, provider);
         const qa_launch_instance *source = instance ?
             qa_launch_snapshot_find(qa_application_launch(frontend->application), instance) : NULL;
-        owner->q1_quakeworld = source && source->selection.clock.kind == QA_RULESET_QUAKEWORLD;
+        if (source) owner->q1_rules = source->selection.clock.kind;
         const qa_product *product = source ? qa_catalog_product(qa_application_catalog(frontend->application),
             source->selection.product) : NULL;
         owner->q1_rerelease = product && product->edition == QA_EDITION_RERELEASE;
@@ -1189,18 +1191,21 @@ static bool entity_effects_prepare(qa_frontend *frontend,uint32_t seat,qa_actor_
         qa_application_visual_view view;bool found;
         if (!frontend_particle_visual_read(frontend,record->id,&view,&found,error)) return false;
         if (!found) continue;
-        const char *path = qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), view.visual.models[0]);
-        size_t length = path ? strlen(path) : 0;
-        bool mdl = length >= 4 && !strcmp(path + length - 4, ".mdl");
+        const qa_strings *strings=qa_session_strings(qa_application_session(frontend->application));
+        const qa_model *source=NULL;
+        uint32_t model_flags=qa_strings_name_flags(strings,view.visual.models[0]);
+        if (!view.visual.has_inline_model && qa_strings_text(strings,view.visual.models[0]).size &&
+            !(model_flags&QA_NAME_BRUSH_PATH) &&
+            (view.family==QA_GAME_Q1 || view.q1_effects || (model_flags&QA_NAME_MDL_PATH))) {
+            frontend_visual_model_view model;
+            if (!frontend_visual_model_cached_read(frontend,view.provider,view.family,
+                    view.visual.models[0],&model) &&
+                !frontend_visual_model_acquire(frontend,view.provider,view.family,
+                    view.visual.models[0],view.model_resources[0],&model,error)) return false;
+            source=model.model;
+        }
+        bool mdl=source && source->format==QA_MODEL_MDL;
         if (view.family==QA_GAME_Q1 || view.q1_effects || mdl) {
-            const qa_model *source = NULL;
-            if (!view.visual.has_inline_model && path && *path && path[0] != '*' &&
-                !(length >= 4 && !strcmp(path + length - 4, ".bsp"))) {
-                frontend_visual_model_view model;
-                if (!frontend_visual_model_acquire(frontend,view.provider,view.family,view.visual.models[0],
-                        view.model_resources[0],&model,error)) return false;
-                source = model.model;
-            }
             if (!frontend_particle_visual_admit(frontend,&view,source,error) ||
                 !frontend_particle_q1_entity(frontend,&view,source,error)) return false;
         }
@@ -1307,7 +1312,7 @@ static bool q1_particle_event(qa_frontend *frontend, const qa_builtin_event *eve
     if (raw) frontend_fx_q1_particle_event(&owner->q1->particles, &owner->random, event->origin,
         event->direction, event->code, event->count, seconds);
     else if (blood) {
-        if (owner->q1_quakeworld) {
+        if (owner->q1_rules==QA_RULESET_QUAKEWORLD) {
             temporary = (qa_q1_temp){.kind = QA_Q1_TEMP_POINT, .type = 12,
                 .count = event->flags & QA_Q1_IMPACT_GROUPED ? (uint8_t)(int32_t)event->value : 1,
                 .origin = {event->origin.x, event->origin.y, event->origin.z}};
@@ -1315,7 +1320,7 @@ static bool q1_particle_event(qa_frontend *frontend, const qa_builtin_event *eve
         } else frontend_fx_q1_particle_event(&owner->q1->particles, &owner->random, event->origin,
             qa_v3(0, 0, 0), 73, (int32_t)(event->value * 2), seconds);
     } else return q1_temporary_apply(frontend, owner, &temporary, event->actor,
-        owner->q1_quakeworld, seconds, false, error);
+        owner->q1_rules==QA_RULESET_QUAKEWORLD, seconds, false, error);
     return true;
 }
 
@@ -1353,7 +1358,7 @@ bool frontend_particle_q1_entity(qa_frontend *frontend, const qa_application_vis
     qa_vec3 light_origin;
     frontend_fx_q1_light_recipe recipe;
     bool light_present=frontend_fx_q1_entity_effects(&owner->q1->particles,&owner->random,start,origin,
-        view->body.angles,effects,flags,owner->q1_quakeworld,owner->q1_rerelease,
+        view->body.angles,effects,flags,owner->q1_rules==QA_RULESET_QUAKEWORLD,owner->q1_rerelease,
         seconds,&light_origin,&recipe);
     if (light_present) {
         frontend_fx_q1_state_light(owner->q1, view->actor, 0, light_origin, seconds, &recipe);

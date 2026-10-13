@@ -52,10 +52,6 @@ typedef struct patch_builder {
 
 /* Generation keeps full intermediates until storing a vector or distance.
  * Trace dot products use the shared native float operations. */
-static double patch_dot(qa_vec3 a, qa_vec3 b) {
-    return (double)a.x*b.x + (double)a.y*b.y + (double)a.z*b.z;
-}
-
 static qa_vec3 patch_cross(qa_vec3 a, qa_vec3 b) {
     return qa_v3((float)((double)a.y*b.z - (double)a.z*b.y),
                  (float)((double)a.z*b.x - (double)a.x*b.z),
@@ -63,7 +59,7 @@ static qa_vec3 patch_cross(qa_vec3 a, qa_vec3 b) {
 }
 
 static qa_vec3 patch_normalize(qa_vec3 v) {
-    double length = sqrt(patch_dot(v, v));
+    double length = sqrt(qa_vec_dot_wide(v, v));
     if (length == 0.0) return v;
     double inverse = 1.0 / length;
     return qa_v3((float)(v.x*inverse), (float)(v.y*inverse), (float)(v.z*inverse));
@@ -193,17 +189,17 @@ static int32_t find_plane(patch_builder *builder, qa_vec3 a, qa_vec3 b, qa_vec3 
     double bx = (double)b.x-a.x, by = (double)b.y-a.y, bz = (double)b.z-a.z;
     qa_vec3 normal = patch_normalize(qa_v3((float)(ay*bz-az*by), (float)(az*bx-ax*bz), (float)(ax*by-ay*bx)));
     if (qa_vec_length(normal) == 0.0f) return -1;
-    patch_plane plane = make_plane(normal, (float)patch_dot(a, normal));
+    patch_plane plane = make_plane(normal, (float)qa_vec_dot_wide(a, normal));
     if (!qa_vec_finite(normal) || !isfinite(plane.distance)) {
         builder_fail(builder, "Nonfinite Q3 patch collision plane");
         return -1;
     }
     for (size_t i = 0; i < builder->plane_count; ++i) {
         patch_plane previous = builder->planes[i];
-        if (!(patch_dot(normal, previous.normal) >= 0.0)) continue;
-        float da = (float)(patch_dot(a, previous.normal)-previous.distance);
-        float db = (float)(patch_dot(b, previous.normal)-previous.distance);
-        float dc = (float)(patch_dot(c, previous.normal)-previous.distance);
+        if (!(qa_vec_dot_wide(normal, previous.normal) >= 0.0)) continue;
+        float da = (float)(qa_vec_dot_wide(a, previous.normal)-previous.distance);
+        float db = (float)(qa_vec_dot_wide(b, previous.normal)-previous.distance);
+        float dc = (float)(qa_vec_dot_wide(c, previous.normal)-previous.distance);
         if (fabs((double)da) <= 0.1 && fabs((double)db) <= 0.1 && fabs((double)dc) <= 0.1)
             return (int32_t)i;
     }
@@ -228,7 +224,7 @@ static patch_winding base_winding(patch_plane plane) {
         if (magnitude > maximum) { maximum = magnitude; major = axis; }
     }
     qa_vec3 initial = major == 2 ? qa_v3(1, 0, 0) : qa_v3(0, 0, 1);
-    double projected = patch_dot(initial, n);
+    double projected = qa_vec_dot_wide(initial, n);
     qa_vec3 up = patch_normalize(qa_v3((float)(initial.x-projected*n.x),
                                      (float)(initial.y-projected*n.y),
                                      (float)(initial.z-projected*n.z)));
@@ -260,7 +256,7 @@ static bool chop_winding(patch_builder *builder, patch_winding *winding, patch_p
     int sides[PATCH_MAX_WINDING];
     bool front = false, back = false;
     for (unsigned i = 0; i < winding->count; ++i) {
-        float distance = (float)(patch_dot(winding->points[i], plane.normal)-plane.distance);
+        float distance = (float)(qa_vec_dot_wide(winding->points[i], plane.normal)-plane.distance);
         distances[i] = distance;
         sides[i] = distance > 0.1f ? 1 : distance < -0.1f ? -1 : 0;
         front |= sides[i] > 0;
@@ -373,10 +369,10 @@ static bool bevel_facet(patch_builder *builder, patch_facet *facet) {
                 qa_vec3 normal = patch_cross(edge, qa_vec_scale(axes[axis], (float)direction));
                 if (qa_vec_length(normal) < 0.5f) continue;
                 normal = patch_normalize(normal);
-                patch_plane plane = make_plane(normal, (float)patch_dot(winding.points[i], normal));
+                patch_plane plane = make_plane(normal, (float)qa_vec_dot_wide(winding.points[i], normal));
                 bool outside = false;
                 for (unsigned j = 0; j < winding.count; ++j) {
-                    float distance = (float)(patch_dot(winding.points[j], normal)-plane.distance);
+                    float distance = (float)(qa_vec_dot_wide(winding.points[j], normal)-plane.distance);
                     if ((double)distance > 0.1) { outside = true; break; }
                 }
                 if (outside || duplicate_border(builder, facet, plane)) continue;
@@ -405,7 +401,7 @@ static bool make_facet(patch_builder *builder, int32_t surface, const int32_t *r
         patch_plane plane = builder->planes[raw[i]];
         bool front = false, back = false;
         for (unsigned j = 0; j < vertex_count; ++j) {
-            float distance = (float)(patch_dot(vertices[j], plane.normal)-plane.distance);
+            float distance = (float)(qa_vec_dot_wide(vertices[j], plane.normal)-plane.distance);
             front |= (double)distance > 0.1;
             back |= (double)distance < -0.1;
         }
@@ -573,7 +569,7 @@ static double box_offset(patch_plane source, qa_vec3 normal, const qa_q3_shape *
     qa_vec3 corner = qa_v3((source.signbits & 1u) != 0 ? shape->extents.x : shape->mins.x,
                            (source.signbits & 2u) != 0 ? shape->extents.y : shape->mins.y,
                            (source.signbits & 4u) != 0 ? shape->extents.z : shape->mins.z);
-    return patch_dot(corner, normal);
+    return qa_vec_dot_wide(corner, normal);
 }
 
 static patch_plane expanded_plane(patch_plane source, const qa_q3_shape *shape, const patch_border *border) {

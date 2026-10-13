@@ -5,6 +5,7 @@
 #include "remote_q2_source.h"
 #include "network_q2_events.h"
 #include "qa/launch_identity.h"
+#include "qa/input.h"
 #include <stdio.h>
 
 static bool demo_publish(frontend_network_q2_host *, qa_error *);
@@ -46,10 +47,12 @@ static bool input(void *context,qa_net_client_id id,qa_net_seat_id seat,
         .sequence=sequence,.server_frame=wire->server_frame,.milliseconds=wire->msec,.buttons=wire->buttons,
         .impulse=wire->impulse,.light_level=wire->lightlevel,
         .forward_move=wire->forwardmove,.side_move=wire->sidemove,.up_move=wire->upmove};
-    raw.angles=qa_v3((float)wire->angles[0]*(360.0f/65536.0f),
-        (float)wire->angles[1]*(360.0f/65536.0f),(float)wire->angles[2]*(360.0f/65536.0f));
-    if(wire->float_angles) raw.angles=qa_q2_usercmd_angles(wire);
     for(size_t i=0;i<3;++i) raw.angle_words[i]=wire->angles[i];
+    if(wire->float_angles) raw.angles=qa_q2_usercmd_angles(wire);
+    else qa_input_command_convert(&raw,NULL,
+        &(qa_input_command_basis){.kind=raw.kind,.units=1,.words=true,.signed_shorts=true},
+        &(qa_input_command_basis){.kind=raw.kind,.units=1,.words=true},
+        (qa_input_axis_rule){.quantization=QA_INPUT_AXIS_EXACT},&raw);
     if(raw.kind==QA_RULESET_Q2_RERELEASE) {
         if(wire->upmove>0) raw.buttons|=8u;
         if(wire->upmove<0) raw.buttons|=16u;

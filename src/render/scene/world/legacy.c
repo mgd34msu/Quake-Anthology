@@ -11,19 +11,16 @@
 
 static bool q2_frames(qawl_world *data, qaw_legacy *legacy, qa_error *error)
 {
-    bool *visited = calloc(data->texture_count ? data->texture_count : 1, sizeof(*visited));
-    if (!visited) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Cannot allocate texture animation traversal"); return false; }
+    qa_stamp_set_begin(&data->texture_visits);
     int64_t current = (int64_t)legacy->texture;
     while (current >= 0) {
         if ((uint64_t)current >= data->texture_count) {
-            free(visited); qa_error_set(error, QA_ERROR_FORMAT, (size_t)current, "Q2 texture animation index outside table"); return false;
+            qa_error_set(error, QA_ERROR_FORMAT, (size_t)current, "Q2 texture animation index outside table"); return false;
         }
-        if (visited[current]) break;
-        visited[current] = true;
+        if (!qa_stamp_set_mark(&data->texture_visits, (size_t)current)) break;
         ++legacy->frame_count;
         current = data->textures[current].next;
     }
-    free(visited);
     if (legacy->frame_count > SIZE_MAX / sizeof(*legacy->frames)) {
         qa_error_set(error, QA_ERROR_FORMAT, legacy->frame_count, "Q2 texture animation is too long"); return false;
     }
@@ -71,6 +68,13 @@ bool qaw_build_legacy(qa_scene_world *world, qa_error *error)
     bool q1 = world->bsp.family == QA_BSP_Q1;
     if (q1 && !qa_bsp_read_q1_metadata(&world->bsp, &data->metadata, error)) return false;
     if (!qawl_textures_build(world, error)) return false;
+    if (!q1) {
+        uint32_t *marks = calloc(data->texture_count ? data->texture_count : 1, sizeof(*marks));
+        if (!marks) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Cannot allocate texture animation traversal"); return false;
+        }
+        qa_stamp_set_init(&data->texture_visits, marks, data->texture_count);
+    }
     qawl_texture_names_bind(world);
     for (size_t i = 0; i < world->surface_count; ++i) {
         qaw_surface *surface = &world->surfaces[i];
@@ -235,6 +239,7 @@ void qaw_destroy_legacy(qa_scene_world *world)
     if (data) {
         qawl_light_atlases_destroy(data);
         qawl_textures_destroy(data);
+        free(data->texture_visits.marks);
         free(data->q1_styles); free(data->q2_styles);
         free(data->point_lights);
         free(data);
