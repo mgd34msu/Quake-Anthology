@@ -1173,7 +1173,7 @@ static bool frame(qa_modes *m, qa_mode_id id, uint64_t now, uint64_t elapsed,
         return qa_modes_rank(m, id, e) && mode_update_ghosts(m, v, e);
     return mode_vote_frame(m, v, e) && mode_horde_frame(m, v, elapsed, e) &&
            mode_match_frame(m, v, elapsed, e) && mode_team_info_frame(m, v, e) &&
-           mode_update_ghosts(m, v, e);
+           mode_update_ghosts(m, v, e) && mode_ui_frame(m, v, e);
 }
 bool qa_modes_frame(qa_modes *m, qa_mode_id id, uint64_t now, uint64_t elapsed, qa_error *e) {
     if (!m || m->callback_depth)

@@ -65,6 +65,14 @@ static bool mode_layout(void *opaque, qa_mode_id mode, qa_actor_id actor,
 {
     application_provider *source = application_mode_provider(opaque, mode);
     if (!source || source->close_pending) return true;
+    qa_application *app = opaque;
+    application_provider *player = application_provider_for(app, actor, QA_ROLE_CHARACTER, "");
+    qa_q2_player_info info;
+    if (visible && player && player->kind == APPLICATION_PROVIDER_Q2 &&
+        qa_q2_player_read(player->state.q2, actor, &info)) {
+        if (!qa_q2_player_command(player->state.q2, actor, "putaway", 0, NULL,
+                                  error)) return false;
+    }
     return application_emit_q2_player(source, &(qa_q2_player_event){
         .kind = QA_Q2_PLAYER_LAYOUT, .actor = actor, .text = text,
         .visible = visible, .reliable = true}, error);
@@ -77,7 +85,7 @@ bool application_mode_layout_read(qa_application *app, qa_actor_id actor,
     bool visible = false;
     uint64_t changed = 0;
     if (app->modes && app->primary_mode_ready)
-        qa_modes_layout_read(app->modes, app->primary_mode, actor, &layout, &visible, &changed);
+        qa_modes_layout_read(app->modes, app->primary_mode, actor, &layout, &visible, &changed, NULL);
     if (text) *text = layout;
     if (revision) *revision = changed;
     return visible;
@@ -85,7 +93,20 @@ bool application_mode_layout_read(qa_application *app, qa_actor_id actor,
 
 bool qa_application_player_menu_open(qa_application *app, qa_actor_id actor)
 {
-    return app && application_mode_layout_read(app, actor, NULL, NULL);
+    qa_mode_menu_page page = QA_MODE_MENU_NONE;
+    if (app && app->modes && app->primary_mode_ready)
+        qa_modes_layout_read(app->modes, app->primary_mode, actor, NULL, NULL, NULL, &page);
+    return page != QA_MODE_MENU_NONE && page != QA_MODE_MENU_SCOREBOARD;
+}
+
+static bool mode_source_frame(void *opaque, qa_mode_id mode, uint64_t *frame)
+{
+    qa_application *app = opaque;
+    application_provider *source = application_mode_provider(app, mode);
+    qa_clock_state clock;
+    if (!source || !qa_session_clock(app->session, source->owner, &clock)) return false;
+    *frame = clock.frame_number;
+    return true;
 }
 
 static bool mode_intent(void *opaque, const qa_match_intent *intent,
@@ -308,6 +329,7 @@ static qa_modes_hooks mode_hooks(qa_application *application)
                             .chat_allowed = mode_chat_allowed,
                             .chat_item = mode_chat_item,
                             .layout = mode_layout,
+                            .source_frame = mode_source_frame,
                             .source_ruleset = mode_source_ruleset,
                             .q1_composition_expected = application_native_q1_composition_expected,
                             .q1_composition_current = application_native_q1_composition_current,

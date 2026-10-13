@@ -399,11 +399,12 @@ bool qa_modes_observe(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_id 
     return true;
 }
 bool qa_modes_scoreboard(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool visible, qa_error *e) {
-    mode_member *member = mode_member_get(m, mode_get(m, id), actor);
+    mode_instance *v = mode_get(m, id);
+    mode_member *member = mode_member_get(m, v, actor);
     if (!member)
         return mode_fail(e, "unknown scoreboard participant");
     member->player.scoreboard = visible;
-    return qa_modes_rank(m, id, e);
+    return qa_modes_rank(m, id, e) && mode_ui_scoreboard(m, v, actor, visible, e);
 }
 static bool suicide(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool *handled, qa_error *e) {
     mode_instance *v = mode_get(m, id);

@@ -28,12 +28,13 @@ typedef struct qa_mode_id {
 } qa_mode_id;
 enum { QA_MODE_MENU_LAYOUT_BYTES = 1400 };
 typedef enum qa_mode_menu_page {
-    QA_MODE_MENU_NONE, QA_MODE_MENU_JOIN, QA_MODE_MENU_CREDITS, QA_MODE_MENU_NO_CHASE
+    QA_MODE_MENU_NONE, QA_MODE_MENU_JOIN, QA_MODE_MENU_CREDITS, QA_MODE_MENU_NO_CHASE,
+    QA_MODE_MENU_SCOREBOARD
 } qa_mode_menu_page;
 typedef struct qa_mode_menu_state {
     qa_mode_menu_page page;
     int8_t cursor;
-    uint64_t revision;
+    uint64_t revision, refresh_frame;
     char layout[QA_MODE_MENU_LAYOUT_BYTES];
 } qa_mode_menu_state;
 typedef enum qa_mode_source {
@@ -336,6 +337,7 @@ typedef struct qa_modes_hooks {
     bool (*chat_allowed)(void *, qa_mode_id, qa_actor_id, bool *, qa_error *);
     bool (*chat_item)(void *, qa_mode_id, qa_actor_id, qa_item_id, qa_string_id *, const char **);
     bool (*layout)(void *, qa_mode_id, qa_actor_id, const char *, bool visible, qa_error *);
+    bool (*source_frame)(void *, qa_mode_id, uint64_t *);
     /* Legacy mode records retain only the Q2 edition bit. Import borrows the
      * enclosing source's full ruleset without adding a saved selector. */
     qa_ruleset_id (*source_ruleset)(void *, qa_mode_id, qa_mode_origin, qa_actor_owner,
@@ -531,7 +533,7 @@ bool qa_modes_observe(qa_modes *, qa_mode_id, qa_actor_id, qa_team_id filter, bo
                       qa_error *);
 bool qa_modes_scoreboard(qa_modes *, qa_mode_id, qa_actor_id, bool visible, qa_error *);
 bool qa_modes_layout_read(qa_modes *, qa_mode_id, qa_actor_id, const char **,
-                         bool *visible, uint64_t *revision);
+                         bool *visible, uint64_t *revision, qa_mode_menu_page *);
 bool qa_modes_choose_team(qa_modes *, qa_mode_id, qa_actor_id, qa_team_id *, qa_error *);
 bool qa_modes_statistics(qa_modes *, qa_mode_id, qa_actor_id, qa_mode_statistics *, qa_error *);
 bool qa_modes_source_award(qa_modes *, qa_mode_id, qa_actor_id, int32_t source_award, qa_error *);

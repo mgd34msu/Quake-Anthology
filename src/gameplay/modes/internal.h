@@ -305,6 +305,11 @@ typedef struct mode_objective {
     X(LABEL_TAG_TOKEN, "Tag Token") \
     QA_MODE_Q2_HUD_IMAGE_NAMES(X) \
     X(CTF_STATUSBAR, NULL) \
+    X(CTF_SCORE_HEADER, "if 24 xv 8 yv 8 pic 24 endif xv 40 yv 28 string \"%4d/%-3d\" xv 98 yv 12 num 2 18 if 25 xv 168 yv 8 pic 25 endif xv 200 yv 28 string \"%4d/%-3d\" xv 256 yv 12 num 2 20 ") \
+    X(CTF_SCORE_SPECTATORS, "Spectators") \
+    X(CTF_SCORE_MORE, "..and %d more") \
+    X(PIC_SBFCTF1, "sbfctf1") \
+    X(PIC_SBFCTF2, "sbfctf2") \
     X(PIC_A_REDFLAG, "a_redflag") \
     X(PIC_A_STRENGTH, "a_strength") \
     X(PIC_A_HASTE, "a_haste") \
@@ -599,6 +604,8 @@ bool mode_ui_command(qa_modes *, mode_instance *, qa_actor_id,
                      const qa_command_invocation *, bool *, qa_error *);
 bool mode_ui_close(qa_modes *, mode_instance *, qa_actor_id, qa_error *);
 bool mode_ui_open_join(qa_modes *, mode_instance *, qa_actor_id, qa_error *);
+bool mode_ui_scoreboard(qa_modes *, mode_instance *, qa_actor_id, bool visible, qa_error *);
+bool mode_ui_frame(qa_modes *, mode_instance *, qa_error *);
 bool mode_ui_request_team(qa_modes *, mode_instance *, qa_actor_id, qa_team_id,
                          bool *, qa_error *);
 bool mode_ctf_ghost_assign(qa_modes *, mode_instance *, mode_member *, qa_error *);

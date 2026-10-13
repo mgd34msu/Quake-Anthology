@@ -17,6 +17,12 @@ typedef struct menu_row {
     menu_align align;
     menu_action action;
 } menu_row;
+typedef struct score_row {
+    uint32_t slot;
+    int32_t score, ping;
+    bool carrier;
+} score_row;
+enum { SCORE_TEAM_ROWS = 16, SCORE_BYTES = 1000, SCORE_SPECTATORS = SCORE_BYTES / 12 };
 
 #define MENU_ENTRY(name, align, action) {MODE_NAME_CTF_MENU_##name, MENU_##align, MENU_##action}
 #define MENU_BLANK {MODE_NAME_COUNT, MENU_CENTER, MENU_NONE}
@@ -83,7 +89,7 @@ static size_t menu_rows(qa_modes *m, mode_instance *v, mode_member *member, qa_m
         entries = credits_entries; count = sizeof(credits_entries) / sizeof(*entries); break;
     case QA_MODE_MENU_NO_CHASE:
         entries = no_chase_entries; count = sizeof(no_chase_entries) / sizeof(*entries); break;
-    case QA_MODE_MENU_NONE: return 0;
+    case QA_MODE_MENU_NONE: case QA_MODE_MENU_SCOREBOARD: return 0;
     }
     for (size_t i = 0; i < count; ++i)
         rows[i] = (menu_row){menu_text(m, entries[i].name), entries[i].align, entries[i].action};
@@ -137,6 +143,17 @@ static int8_t menu_first(const menu_row *rows, size_t count) {
             return (int8_t)i;
     return -1;
 }
+static bool layout_publish(qa_modes *m, mode_instance *v, qa_actor_id actor,
+                           const char *layout, bool force, qa_error *e) {
+    mode_member *member = mode_member_get(m, v, actor);
+    if (!member || (!force && !strcmp(member->menu.layout, layout)))
+        return true;
+    memcpy(member->menu.layout, layout, strlen(layout) + 1);
+    ++member->menu.revision;
+    return !m->options.hooks.layout || MODE_CALLBACK(m,
+        m->options.hooks.layout(m->options.hooks.context, v->id, actor,
+                               member->menu.layout, member->menu.page != QA_MODE_MENU_NONE, e));
+}
 static bool menu_publish(qa_modes *m, mode_instance *v, qa_actor_id actor,
                           bool opened, qa_error *e) {
     mode_member *member = mode_member_get(m, v, actor);
@@ -170,25 +187,195 @@ static bool menu_publish(qa_modes *m, mode_instance *v, qa_actor_id actor,
         }
         length += (size_t)written;
     }
-    if (!opened && !strcmp(member->menu.layout, layout))
-        return true;
-    memcpy(member->menu.layout, layout, length + 1);
-    ++member->menu.revision;
-    return !m->options.hooks.layout || MODE_CALLBACK(m,
-        m->options.hooks.layout(m->options.hooks.context, v->id, actor,
-                               member->menu.layout, true, e));
+    return layout_publish(m, v, actor, layout, opened, e);
 }
 bool mode_ui_close(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_error *e) {
     mode_member *member = mode_member_get(m, v, actor);
     if (!member || member->menu.page == QA_MODE_MENU_NONE)
         return true;
+    if (member->menu.page == QA_MODE_MENU_SCOREBOARD)
+        member->player.scoreboard = false;
     member->menu.page = QA_MODE_MENU_NONE;
     member->menu.cursor = -1;
-    member->menu.layout[0] = 0;
-    ++member->menu.revision;
-    return !m->options.hooks.layout || MODE_CALLBACK(m,
-        m->options.hooks.layout(m->options.hooks.context, v->id, actor,
-                               member->menu.layout, false, e));
+    return layout_publish(m, v, actor, "", true, e);
+}
+static void score_insert(score_row *rows, size_t capacity, size_t *count, score_row row,
+                         bool ranked) {
+    size_t at = 0;
+    while (at < *count &&
+           ((ranked && rows[at].score > row.score) ||
+            ((!ranked || rows[at].score == row.score) && rows[at].slot <= row.slot)))
+        ++at;
+    if (at == capacity)
+        return;
+    size_t end = *count < capacity ? (*count)++ : capacity - 1;
+    while (end > at) {
+        rows[end] = rows[end - 1];
+        --end;
+    }
+    rows[at] = row;
+}
+static bool score_rows(qa_modes *m, mode_instance *v,
+                       score_row teams[2][SCORE_TEAM_ROWS], size_t used[2],
+                       int32_t counts[2], int32_t scores[2],
+                       score_row spectators[SCORE_SPECTATORS], size_t *spectator_count,
+                       qa_error *e) {
+    for (size_t i = 0; i < m->players_order.count; ++i) {
+        qa_actor_id actor = m->players_order.actors[i];
+        mode_member *member = mode_member_get(m, v, actor);
+        mode_player *player = member ? mode_player_get(m, actor) : NULL;
+        qa_builtin_player_info info;
+        if (!player || !player->connected || !m->options.services.player_info ||
+            !m->options.services.player_info(m->options.services.context, actor, &info))
+            continue;
+        qa_team_id team;
+        int32_t score;
+        if (!qa_modes_team(m, v->id, actor, &team, e) ||
+            !qa_modes_score(m, v->id, actor, &score, e))
+            return false;
+        member = mode_member_get(m, v, actor);
+        if (!member)
+            continue;
+        score_row row = {.slot = info.slot, .score = score,
+                         .ping = info.ping > 999 ? 999 : info.ping};
+        int index = mode_team_index(v, team);
+        if (index >= 0 && index < 2) {
+            mode_object *flag = mode_object_get(m, member->flag);
+            row.carrier = flag && flag->spec.team == v->value.rules.teams[index ^ 1];
+            counts[index] = mode_add_i32(counts[index], 1);
+            scores[index] = mode_add_i32(scores[index], score);
+            score_insert(teams[index], SCORE_TEAM_ROWS, &used[index], row, true);
+        } else if (!team) {
+            qa_physics *physics = m->options.services.physics;
+            qa_physics_properties properties;
+            if (physics && physics->services.read &&
+                physics->services.read(physics->services.context, actor, &properties) &&
+                properties.solid == QA_PHYSICS_NOT_SOLID)
+                score_insert(spectators, SCORE_SPECTATORS, spectator_count, row, false);
+        }
+    }
+    return true;
+}
+static void score_admit(char *layout, size_t *length, const char *entry, size_t entry_length) {
+    if (*length + entry_length < SCORE_BYTES) {
+        memcpy(layout + *length, entry, entry_length + 1);
+        *length += entry_length;
+    }
+}
+static bool scoreboard_publish(qa_modes *m, mode_instance *v, qa_actor_id actor,
+                              bool force, qa_error *e) {
+    score_row teams[2][SCORE_TEAM_ROWS], spectators[SCORE_SPECTATORS];
+    size_t used[2] = {0}, spectator_count = 0;
+    int32_t counts[2] = {0}, scores[2] = {0};
+    if (!score_rows(m, v, teams, used, counts, scores, spectators, &spectator_count, e))
+        return false;
+    char layout[QA_MODE_MENU_LAYOUT_BYTES], entry[1024];
+    int written = snprintf(layout, sizeof(layout), menu_text(m, MODE_NAME_CTF_SCORE_HEADER),
+                           scores[0], counts[0], scores[1], counts[1]);
+    if (written < 0 || (size_t)written >= sizeof(layout))
+        return true;
+    size_t length = (size_t)written;
+    int last[2] = {0};
+    for (size_t i = 0; i < SCORE_TEAM_ROWS; ++i) {
+        if (i >= used[0] && i >= used[1])
+            break;
+        size_t entry_length = 0;
+        entry[0] = 0;
+        for (unsigned team = 0; team < 2; ++team) {
+            if (i >= used[team])
+                continue;
+            const score_row *row = &teams[team][i];
+            written = snprintf(entry + entry_length, sizeof(entry) - entry_length,
+                "ctf %u %zu %u %d %d ", team * 160, 42 + i * 8,
+                row->slot, row->score, row->ping);
+            if (written < 0 || (size_t)written >= sizeof(entry) - entry_length)
+                break;
+            entry_length += (size_t)written;
+            if (row->carrier) {
+                written = snprintf(entry + entry_length, sizeof(entry) - entry_length,
+                    "xv %u yv %zu picn %s ", 56 + team * 160, 42 + i * 8,
+                    menu_text(m, team ? MODE_NAME_PIC_SBFCTF1 : MODE_NAME_PIC_SBFCTF2));
+                if (written < 0 || (size_t)written >= sizeof(entry) - entry_length)
+                    break;
+                entry_length += (size_t)written;
+            }
+            size_t previous = length;
+            score_admit(layout, &length, entry, entry_length);
+            if (length != previous)
+                last[team] = (int)i;
+        }
+    }
+    int y = ((last[0] > last[1] ? last[0] : last[1]) + 2) * 8 + 42;
+    if (length + 50 < SCORE_BYTES && spectator_count) {
+        written = snprintf(entry, sizeof(entry), "xv 0 yv %d string2 \"%s\" ", y,
+                           menu_text(m, MODE_NAME_CTF_SCORE_SPECTATORS));
+        if (written >= 0 && (size_t)written < sizeof(entry)) {
+            size_t entry_length = (size_t)written;
+            memcpy(layout + length, entry, entry_length + 1);
+            length += entry_length;
+            y += 8;
+            for (size_t i = 0; i < spectator_count; ++i) {
+                const score_row *row = &spectators[i];
+                written = snprintf(entry + entry_length, sizeof(entry) - entry_length,
+                    "ctf %u %d %u %d %d ", (i & 1u) ? 160 : 0, y,
+                    row->slot, row->score, row->ping);
+                if (written < 0 || (size_t)written >= sizeof(entry) - entry_length)
+                    break;
+                entry_length += (size_t)written;
+                score_admit(layout, &length, entry, entry_length);
+                if (i & 1u) y += 8;
+            }
+        }
+    }
+    for (unsigned team = 0; team < 2; ++team) {
+        if (counts[team] - last[team] <= 1)
+            continue;
+        char more[64];
+        snprintf(more, sizeof(more), menu_text(m, MODE_NAME_CTF_SCORE_MORE),
+                 counts[team] - last[team] - 1);
+        written = snprintf(layout + length, sizeof(layout) - length,
+            "xv %u yv %d string \"%s\" ", 8 + team * 160,
+            42 + (last[team] + 1) * 8, more);
+        if (written < 0 || (size_t)written >= sizeof(layout) - length) {
+            layout[length] = 0;
+            break;
+        }
+        length += (size_t)written;
+    }
+    return layout_publish(m, v, actor, layout, force, e);
+}
+bool mode_ui_scoreboard(qa_modes *m, mode_instance *v, qa_actor_id actor,
+                        bool visible, qa_error *e) {
+    mode_member *member = mode_member_get(m, v, actor);
+    if (!member || v->value.rules.source != QA_MODE_Q2_CTF || !v->value.rules.enabled)
+        return true;
+    if (!visible)
+        return mode_ui_close(m, v, actor, e);
+    member->menu.page = QA_MODE_MENU_SCOREBOARD;
+    member->menu.cursor = -1;
+    member->menu.refresh_frame = UINT64_MAX;
+    if (m->options.hooks.source_frame)
+        m->options.hooks.source_frame(m->options.hooks.context, v->id,
+                                      &member->menu.refresh_frame);
+    return scoreboard_publish(m, v, actor, true, e);
+}
+bool mode_ui_frame(qa_modes *m, mode_instance *v, qa_error *e) {
+    uint64_t frame;
+    if (v->value.rules.source != QA_MODE_Q2_CTF || !v->value.rules.enabled ||
+        !m->options.hooks.source_frame ||
+        !m->options.hooks.source_frame(m->options.hooks.context, v->id, &frame) || (frame & 31u))
+        return true;
+    for (size_t i = 0; i < m->players_order.count; ++i) {
+        qa_actor_id actor = m->players_order.actors[i];
+        mode_member *member = mode_member_get(m, v, actor);
+        if (!member || !member->player.scoreboard ||
+            member->menu.page != QA_MODE_MENU_SCOREBOARD || member->menu.refresh_frame == frame)
+            continue;
+        member->menu.refresh_frame = frame;
+        if (!scoreboard_publish(m, v, actor, true, e))
+            return false;
+    }
+    return true;
 }
 static bool menu_open(qa_modes *m, mode_instance *v, qa_actor_id actor,
                        qa_mode_menu_page page, qa_error *e) {
@@ -254,8 +441,12 @@ bool mode_ui_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
     if (!member || v->value.rules.source != QA_MODE_Q2_CTF || !v->value.rules.enabled)
         return true;
     const char *name = command->argv[0];
-    if (menu_named(name, "score") || menu_named(name, "+scores") || menu_named(name, "-scores"))
-        return mode_ui_close(m, v, actor, e);
+    if (menu_named(name, "score") || menu_named(name, "+scores") || menu_named(name, "-scores")) {
+        *handled = true;
+        bool visible = menu_named(name, "score") ? !member->player.scoreboard
+                       : !menu_named(name, "-scores");
+        return qa_modes_scoreboard(m, v->id, actor, visible, e);
+    }
     if (menu_named(name, "putaway")) {
         member->player.scoreboard = false;
         if (member->menu.page != QA_MODE_MENU_NONE) {
@@ -266,6 +457,13 @@ bool mode_ui_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
     }
     if (menu_named(name, "inven")) {
         member->player.scoreboard = false;
+        if (member->menu.page == QA_MODE_MENU_SCOREBOARD) {
+            if (!mode_ui_close(m, v, actor, e))
+                return false;
+            member = mode_member_get(m, v, actor);
+            if (!member)
+                return true;
+        }
         if (member->menu.page != QA_MODE_MENU_NONE) {
             *handled = true;
             return mode_ui_close(m, v, actor, e);
@@ -310,7 +508,7 @@ bool mode_ui_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
                 return menu_select(m, v, actor, wanted, e);
         return true;
     }
-    if (member->menu.page == QA_MODE_MENU_NONE)
+    if (member->menu.page == QA_MODE_MENU_NONE || member->menu.page == QA_MODE_MENU_SCOREBOARD)
         return true;
     bool next = menu_named(name, "invnext"), previous = menu_named(name, "invprev");
     bool select = menu_named(name, "invuse");
@@ -336,12 +534,14 @@ bool mode_ui_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
     return menu_publish(m, v, actor, false, e);
 }
 bool qa_modes_layout_read(qa_modes *m, qa_mode_id id, qa_actor_id actor,
-                           const char **text, bool *visible, uint64_t *revision) {
+                           const char **text, bool *visible, uint64_t *revision,
+                           qa_mode_menu_page *page) {
     mode_member *member = mode_member_get(m, mode_get(m, id), actor);
-    if (!member || !text || !visible || !revision)
+    if (!member)
         return false;
-    *text = member->menu.layout;
-    *visible = member->menu.page != QA_MODE_MENU_NONE;
-    *revision = member->menu.revision;
+    if (text) *text = member->menu.layout;
+    if (visible) *visible = member->menu.page != QA_MODE_MENU_NONE;
+    if (revision) *revision = member->menu.revision;
+    if (page) *page = member->menu.page;
     return true;
 }
