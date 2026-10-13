@@ -37,8 +37,7 @@ static bool published(void *context)
 {
     remote_component *r=context;
     if(!retained(r)||r->retired||!frontend_unified_components_current(r->parent)) return false;
-    for(size_t i=0;i<r->parent->count;++i) if(r->parent->rows[i]==r) return true;
-    return false;
+    return q3remote_component_find(r->parent,r->state.provider_name,NULL)==r;
 }
 static bool source_current(void *context,const application_q3_scene_context *view)
 {

@@ -194,28 +194,48 @@ static bool registration(void *context, const qa_qvm_call *call, int32_t *result
     application_q3_weapon_model_record record = {0}; bool present = false;
     if (ok && !cancelled) ok = application_q3_weapon_models_record(owner, weapon, &record, NULL, &present, error);
     if (!ok || !present) { --owner->calls; return ok; }
-    size_t index = owner->count, row = owner->count;
-    for (size_t i = 0; i < owner->count; ++i) {
-        if (owner->records[i].weapon == weapon) index = i;
-        if (owner->records[i].row == record.row) row = i;
-    }
+    const qa_id_index_entry *entry = qa_id_index_find(&owner->receipts, (uint32_t)weapon,
+        APPLICATION_Q3_WEAPON_RECEIPT);
+    size_t index = entry ? entry->value : owner->count;
+    entry = qa_id_index_find(&owner->receipts, record.row, APPLICATION_Q3_SOURCE_ROW_RECEIPT);
+    size_t row = entry ? entry->value : owner->count;
     if (index == owner->count && row != owner->count) index = row;
     else if (index != owner->count && row != owner->count && row != index) {
         memmove(owner->records + row, owner->records + row + 1,
             (owner->count - row - 1) * sizeof(*owner->records));
         --owner->count;
         if (row < index) --index;
-    }
-    if (ok && index == owner->count) {
-        if (owner->count >= owner->module.profile->count || owner->count == SIZE_MAX / sizeof(*owner->records))
-            ok = application_fail(error, QA_ERROR_MEMORY, "CG registration receipts exceed the real declared table");
-        else {
-            application_q3_weapon_model_record *records = realloc(owner->records, (owner->count + 1) * sizeof(*records));
-            if (!records) ok = application_fail(error, QA_ERROR_MEMORY, "Retaining actual CG weapon registration receipt");
-            else { owner->records = records; ++owner->count; }
+        qa_id_index_clear(&owner->receipts);
+        for (size_t i = 0; i < owner->count; ++i) {
+            qa_id_index_insert(&owner->receipts, (uint32_t)owner->records[i].weapon,
+                APPLICATION_Q3_WEAPON_RECEIPT, i);
+            qa_id_index_insert(&owner->receipts, owner->records[i].row,
+                APPLICATION_Q3_SOURCE_ROW_RECEIPT, i);
         }
     }
-    if (ok) owner->records[index] = record;
+    bool retained = index < owner->count;
+    if (ok && !retained) {
+        if (owner->count >= owner->module.profile->count || owner->count == SIZE_MAX / sizeof(*owner->records))
+            ok = application_fail(error, QA_ERROR_MEMORY, "CG registration receipts exceed the real declared table");
+        else ++owner->count;
+    }
+    if (ok) {
+        bool changed = !retained;
+        if (retained) {
+            const application_q3_weapon_model_record *previous = owner->records + index;
+            changed = previous->weapon != record.weapon || previous->row != record.row;
+            if (changed) {
+                qa_id_index_remove(&owner->receipts, (uint32_t)previous->weapon,
+                    APPLICATION_Q3_WEAPON_RECEIPT);
+                qa_id_index_remove(&owner->receipts, previous->row, APPLICATION_Q3_SOURCE_ROW_RECEIPT);
+            }
+        }
+        owner->records[index] = record;
+        if (changed) {
+            qa_id_index_insert(&owner->receipts, (uint32_t)record.weapon, APPLICATION_Q3_WEAPON_RECEIPT, index);
+            qa_id_index_insert(&owner->receipts, record.row, APPLICATION_Q3_SOURCE_ROW_RECEIPT, index);
+        }
+    }
     --owner->calls; return ok;
 }
 bool application_q3_weapon_models_create(const application_q3_weapon_models_module *module,
@@ -229,6 +249,15 @@ bool application_q3_weapon_models_create(const application_q3_weapon_models_modu
     application_q3_weapon_models *owner = calloc(1, sizeof(*owner));
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "Retaining original CG weapon model owner");
     owner->module = *module; *out = owner;
+    size_t count = module->profile->count;
+    if (count > SIZE_MAX / sizeof(*owner->records) || count > SIZE_MAX / 2)
+        return application_fail(error, QA_ERROR_MEMORY, "CG model receipt inventory exceeds address space");
+    if (count) {
+        owner->records = calloc(count, sizeof(*owner->records));
+        if (!owner->records)
+            return application_fail(error, QA_ERROR_MEMORY, "Retaining actual CG weapon registration receipts");
+    }
+    if (!qa_id_index_reserve(&owner->receipts, count * 2, error)) return false;
     if (!application_q3_weapon_models_current(owner, error)) return false;
     if (module->profile->present && !application_q3_weapon_models_profile_namespace(module->profile,
         module->game_image, qa_qvm_get_abi(module->game_vm), module->game_artifact_path, error)) return false;
@@ -243,7 +272,7 @@ bool application_q3_weapon_models_destroy(application_q3_weapon_models *owner, q
     if (!application_q3_weapon_models_idle(owner) || !qa_qvm_can_destroy(owner->module.vm))
         return application_fail(error, QA_ERROR_ARGUMENT, "CG weapon model teardown retains an actual source call");
     if (owner->binding && !qa_qvm_unbind(owner->module.vm, owner->binding, error)) return false;
-    free(owner->records); free(owner); return true;
+    qa_id_index_destroy(&owner->receipts); free(owner->records); free(owner); return true;
 }
 size_t application_q3_weapon_models_descriptor_count(const application_q3_weapon_models *owner)
 { return owner && owner->module.profile->present ? 1 : 0; }
@@ -263,9 +292,10 @@ bool application_q3_weapon_models_read(application_q3_weapon_models *owner, int3
 {
     if (!owner || !out || !present) return application_fail(error, QA_ERROR_ARGUMENT, "CG weapon read needs its actual retained owner");
     *present = false;
-    size_t i = 0;
-    while (i < owner->count && owner->records[i].weapon != weapon) ++i;
-    if (i == owner->count) return application_q3_weapon_models_current(owner, error);
+    const qa_id_index_entry *entry = qa_id_index_find(&owner->receipts, (uint32_t)weapon,
+        APPLICATION_Q3_WEAPON_RECEIPT);
+    if (!entry) return application_q3_weapon_models_current(owner, error);
+    size_t i = entry->value;
     application_q3_weapon_model_record actual = {0}; bool found = false; const char *path = NULL;
     if (!application_q3_weapon_models_record(owner, weapon, &actual, &path, &found, error)) return false;
     if (!found || actual.row != owner->records[i].row ||

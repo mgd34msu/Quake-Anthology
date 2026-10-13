@@ -102,6 +102,7 @@ struct frontend_unified_components {
     frontend_unified_events *events;
     remote_component **rows;
     qa_unified_frame_lease *rows_lease;
+    qa_id_index providers;
     size_t count;
     remote_component *retired;
     uint64_t revision;
@@ -135,4 +136,5 @@ bool q3remote_component_packet_read(remote_component *,size_t,frontend_component
 void q3remote_component_admissions_clear(remote_component *);
 size_t q3remote_component_physical_count(const frontend_unified_components *);
 remote_component *q3remote_component_physical_at(const frontend_unified_components *,size_t);
+remote_component *q3remote_component_find(const frontend_unified_components *,qa_string_id,size_t *);
 #endif

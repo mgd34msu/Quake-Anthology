@@ -67,21 +67,29 @@ bool application_q3_weapon_models_restore(application_q3_weapon_models *owner, q
     if (ok && count > (io.input.size - io.offset) / (8 + 4 * APPLICATION_Q3_WEAPON_MODEL_FIELDS))
         ok = application_fail(error, QA_ERROR_FORMAT, "Truncated CG weapon model receipt inventory");
     application_q3_weapon_model_record *records = NULL;
-    if (ok && count > SIZE_MAX / sizeof(*records))
+    qa_id_index receipts = {0};
+    size_t capacity = owner->module.profile->count;
+    if (ok && (capacity > SIZE_MAX / sizeof(*records) || capacity > SIZE_MAX / 2))
         ok = application_fail(error, QA_ERROR_MEMORY, "Saved CG model receipt inventory exceeds address space");
-    if (ok && count) {
-        records = calloc(count, sizeof(*records));
+    if (ok && capacity) {
+        records = calloc(capacity, sizeof(*records));
         if (!records) ok = application_fail(error, QA_ERROR_MEMORY, "Restoring actual CG weapon model receipts");
     }
+    if (ok) ok = qa_id_index_reserve(&receipts, capacity * 2, error);
     for (size_t i = 0; ok && i < count; ++i) {
         ok = record_fields(&io, owner->module.profile, records + i);
-        for (size_t j = 0; ok && j < i; ++j)
-            if (records[i].weapon == records[j].weapon || records[i].row == records[j].row)
-                ok = application_fail(error, QA_ERROR_FORMAT, "Saved CG model receipts repeat a source weapon or table row");
+        if (ok && (qa_id_index_find(&receipts, (uint32_t)records[i].weapon, APPLICATION_Q3_WEAPON_RECEIPT) ||
+            qa_id_index_find(&receipts, records[i].row, APPLICATION_Q3_SOURCE_ROW_RECEIPT)))
+            ok = application_fail(error, QA_ERROR_FORMAT, "Saved CG model receipts repeat a source weapon or table row");
+        if (ok) {
+            qa_id_index_insert(&receipts, (uint32_t)records[i].weapon, APPLICATION_Q3_WEAPON_RECEIPT, i);
+            qa_id_index_insert(&receipts, records[i].row, APPLICATION_Q3_SOURCE_ROW_RECEIPT, i);
+        }
     }
     if (ok) ok = qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
-    if (!ok) { free(records); return false; }
-    owner->records = records; owner->count = count; owner->imported = true;
+    if (!ok) { qa_id_index_destroy(&receipts); free(records); return false; }
+    qa_id_index_destroy(&owner->receipts); free(owner->records);
+    owner->records = records; owner->receipts = receipts; owner->count = count; owner->imported = true;
     *saved_binding = binding; return true;
 }

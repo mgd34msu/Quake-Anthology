@@ -114,10 +114,13 @@ bool frontend_unified_components_checkpoint_ready(const frontend_unified_compone
 }
 bool frontend_unified_components_idle(const frontend_unified_components *o)
 { return (!o||!o->prepared)&&frontend_unified_components_checkpoint_ready(o); }
-static remote_component *find(frontend_unified_components *o,qa_string_id provider)
+remote_component *q3remote_component_find(const frontend_unified_components *o,qa_string_id provider,size_t *ordinal)
 {
-    for(size_t i=0;i<o->count;++i) if(o->rows[i]&&o->rows[i]->state.provider_name==provider) return o->rows[i];
-    return NULL;
+    qa_id_index_cursor cursor=qa_id_index_begin(&o->providers,provider,0);
+    size_t index;
+    if(!qa_id_index_next(&o->providers,&cursor,&index)||!o->rows[index]) return NULL;
+    if(ordinal) *ordinal=index;
+    return o->rows[index];
 }
 bool frontend_unified_components_control(frontend_unified_components *o,const qa_unified_document *d,qa_error *e)
 {
@@ -138,16 +141,24 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
         qa_unified_frame_lease_release(staging); qa_unified_frame_lease_release(roster);
         return false;
     }
+    qa_id_index providers={.storage=roster?qa_unified_frame_lease_arena(roster):NULL};
+    if(count&&!qa_id_index_reserve(&providers,count,e)) {
+        qa_id_index_destroy(&providers);
+        qa_unified_frame_lease_release(staging); qa_unified_frame_lease_release(roster);
+        return false;
+    }
     bool ok=true;
     for(size_t i=0;ok&&i<count;++i) {
         const qa_unified_component_q3 *row=update->sources+i;
         qa_string_id provider=qa_strings_find(o->replica->strings,
             (qa_bytes){(const uint8_t *)row->owner.provider,strlen(row->owner.provider)});
-        remote_component *previous=find(o,provider);
+        remote_component *previous=q3remote_component_find(o,provider,NULL);
         if(previous&&(previous->state.owner_generation!=row->owner.generation||previous->state.generation!=row->generation)) previous=NULL;
         ok=q3remote_component_state_read(o,d,row,previous,states+i,e);
-        for(size_t k=0;ok&&k<i;++k) if(states[k].provider_name==states[i].provider_name) ok=q3remote_component_fail(e,QA_ERROR_FORMAT,"Reliable components duplicate a genuine provider");
+        if(ok&&qa_id_index_find(&providers,states[i].provider_name,0))
+            ok=q3remote_component_fail(e,QA_ERROR_FORMAT,"Reliable components duplicate a genuine provider");
         if(!ok) break;
+        qa_id_index_insert(&providers,states[i].provider_name,0,i);
         if(previous) next[i]=previous;
         else {
             next[i]=calloc(1,sizeof(*next[i]));
@@ -165,11 +176,11 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
     /* Retire old physical clients before replacing their activation metadata.
      * Refusal leaves both old owners and all newly created candidates reachable. */
     for(size_t i=0;ok&&i<o->count;++i) {
-        bool retained=false; for(size_t k=0;k<count;++k) if(next[k]==o->rows[i]) retained=true;
+        remote_component *previous=o->rows[i];
+        qa_id_index_entry *replacement=previous?qa_id_index_find(&providers,previous->state.provider_name,0):NULL;
+        bool retained=replacement&&next[replacement->value]==previous;
         if(!retained&&o->rows[i]) {
-            bool retire=false;
-            for(size_t k=0;k<count;++k) if(states[k].provider_name==o->rows[i]->state.provider_name)
-                retire=states[k].owner_generation!=o->rows[i]->state.owner_generation;
+            bool retire=replacement&&states[replacement->value].owner_generation!=previous->state.owner_generation;
             if(retire) ok=frontend_unified_events_component_retire(o->events,&o->rows[i]->state.presentation_owner,o->rows[i]->state.provider_name,e);
             if(ok) {
                 remote_component *row=o->rows[i];
@@ -177,6 +188,7 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
                 if(ok) {
                     remote_component **tail=&o->retired; while(*tail) tail=&(*tail)->retired_next;
                     *tail=row; o->rows[i]=NULL;
+                    qa_id_index_remove_value(&o->providers,row->state.provider_name,0,i);
                 }
             }
         }
@@ -189,7 +201,10 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
                 frontend_unified_events_cursor_bind(o->events,&next[i]->event_cursor);
         }
         qa_unified_frame_lease *previous_roster=o->rows_lease;
+        qa_id_index previous_providers=o->providers;
         o->rows=next; o->rows_lease=roster; o->count=count; o->revision=revision; roster=NULL;
+        o->providers=providers; providers=(qa_id_index){0};
+        qa_id_index_destroy(&previous_providers);
         qa_unified_frame_lease_release(previous_roster);
     } else {
         if(publishing) o->failed=true;
@@ -202,6 +217,7 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
         for(size_t i=0;i<count;++i) if(created[i]) { free(next[i]); next[i]=NULL; }
     }
     for(size_t i=0;i<count;++i) q3remote_component_state_free(states+i);
+    qa_id_index_destroy(&providers);
     qa_unified_frame_lease_release(staging); qa_unified_frame_lease_release(roster); return ok;
 }
 void frontend_unified_components_frame_abort(frontend_unified_component_frame **slot)
@@ -242,7 +258,7 @@ bool frontend_unified_components_frame_prepare(frontend_unified_components *o,co
     bool ok=true;
     for(size_t i=0;ok&&i<count;++i) {
         const qa_unified_component_source *source=frames->sources+i; remote_component *row=NULL; size_t index=0;
-        for(;index<o->count;++index) if(source->provider==o->rows[index]->state.provider_name) { row=o->rows[index]; break; }
+        row=q3remote_component_find(o,source->provider,&index);
         if(!row||candidate->rows[index]) ok=q3remote_component_fail(e,QA_ERROR_FORMAT,"Received component frame duplicated or changed its provider");
         else ok=q3remote_component_frame_read(o,row,d,source,candidate->rows+index,e);
     }
@@ -282,13 +298,16 @@ bool frontend_unified_components_destroy(frontend_unified_components **slot,qa_e
     if(!frontend_unified_components_idle(o)) return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component retirement retains actual guest output");
     o->closing=true;
     for(size_t i=0;i<o->count;++i) {
+        qa_string_id provider=o->rows[i]?o->rows[i]->state.provider_name:QA_STRING_NONE;
         if(!q3remote_component_close(o->rows+i,e)) return false;
+        if(provider) qa_id_index_remove_value(&o->providers,provider,0,i);
     }
     while(o->retired) {
         remote_component *row=o->retired,*next=row->retired_next;
         if(!q3remote_component_close(&row,e)) return false;
         o->retired=next;
     }
+    qa_id_index_destroy(&o->providers);
     qa_unified_frame_lease_release(o->rows_lease); free(o); *slot=NULL; return true;
 }
 bool frontend_unified_components_visit(const frontend_unified_components *o,const qa_application_content_visitor *visitor,qa_error *e)
