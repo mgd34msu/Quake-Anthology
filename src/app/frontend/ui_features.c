@@ -93,8 +93,8 @@ void frontend_ui_sound(void *context, uint32_t physical, qa_ui_sound event)
         .name = name, .family = QA_GAME_Q1, .actor = QA_AUDIO_NO_ACTOR,
         .owner = QA_AUDIO_NO_OWNER, .audience = physical, .origin_kind = QA_AUDIO_LOCAL,
         .channel = -1, .volume = 1, .attenuation = 0};
-    (void)qa_audio_engine_play(f->audio, &sound,
-        (int32_t)((f->time_ns / 1000000) & INT32_MAX), error);
+    (void)frontend_audio_event(f, &(qa_audio_event){.kind = QA_AUDIO_EVENT_PLAY,
+        .sound = sound, .milliseconds = (int32_t)((f->time_ns / 1000000) & INT32_MAX)}, error);
     qa_audio_asset_release(asset);
 }
 bool frontend_ui_audio_prepare_asset(qa_frontend *f, qa_audio_asset *asset, qa_error *error)
