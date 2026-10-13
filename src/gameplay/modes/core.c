@@ -95,13 +95,13 @@ bool mode_alive(qa_modes *m, qa_actor_id actor) {
            state.health > 0;
 }
 static bool sound_event(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_string_id sound,
-                          int32_t channel, float volume, qa_error *e) {
+                          int32_t channel, float volume, float attenuation, qa_error *e) {
     qa_builtin_event event = {.kind = QA_BUILTIN_SOUND,
                               .provider = m->options.owner,
                               .actor = actor,
                               .time_ns = v->value.time_ns,
                               .volume = volume,
-                              .attenuation = 1};
+                              .attenuation = attenuation};
     qa_body_state body;
     if (!qa_world_body_read(m->options.services.world, actor, &body, e)) return false;
     if (!mode_live(m, actor)) return mode_fail(e, "mode sound actor retired during body read");
@@ -117,11 +117,25 @@ static bool sound_event(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_str
 }
 bool mode_sound(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_string_id sound, float volume,
                 qa_error *e) {
-    return MODE_CALLBACK(m, sound_event(m, v, actor, sound, 3, volume, e));
+    return mode_sound_full(m,v,actor,sound,3,volume,1,e);
 }
 bool mode_sound_channel(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_string_id sound,
                         int32_t channel, float volume, qa_error *e) {
-    return MODE_CALLBACK(m, sound_event(m, v, actor, sound, channel, volume, e));
+    return mode_sound_full(m,v,actor,sound,channel,volume,1,e);
+}
+bool mode_sound_full(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_string_id sound,
+                     int32_t channel, float volume, float attenuation, qa_error *e) {
+    return MODE_CALLBACK(m,sound_event(m,v,actor,sound,channel,volume,attenuation,e));
+}
+bool mode_message(qa_modes *m, mode_instance *v, qa_actor_id recipient, qa_string_id text,
+                  const qa_builtin_message_arg *args, size_t count, qa_error *e) {
+    qa_builtin_event event={.kind=QA_BUILTIN_MESSAGE,.provider=m->options.owner,
+        .family=v->value.rules.source<=QA_MODE_Q1_HORDE?QA_GAME_Q1:
+            v->value.rules.source<QA_MODE_Q3?QA_GAME_Q2:QA_GAME_Q3,
+        .actor=recipient,.time_ns=v->value.time_ns,.text=text,.arguments=args,.argument_count=count};
+    return MODE_CALLBACK(m,m->options.hooks.emit?
+        m->options.hooks.emit(m->options.hooks.context,v->id,&event,e):
+        qa_builtin_emit(&m->options.services,&event,e));
 }
 bool mode_count(qa_modes *m, qa_actor_id actor, qa_item_id item, double *count, qa_error *e) {
     qa_inventory_entry entry;
