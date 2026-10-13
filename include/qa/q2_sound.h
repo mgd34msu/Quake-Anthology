@@ -135,6 +135,9 @@
 #define QA_Q2_SOUND_INFANTRY_INFLIES1 "infantry/inflies1.wav"
 #define QA_Q2_SOUND_INFANTRY_INFPAIN1 "infantry/infpain1.wav"
 #define QA_Q2_SOUND_INFANTRY_INFPAIN2 "infantry/infpain2.wav"
+#define QA_Q2_SOUND_INFANTRY_INFSGHT1 "infantry/infsght1.wav"
+#define QA_Q2_SOUND_INFANTRY_INFSRCH1 "infantry/infsrch1.wav"
+#define QA_Q2_SOUND_INFANTRY_INFIDLE1 "infantry/infidle1.wav"
 #define QA_Q2_SOUND_INFANTRY_MELEE2 "infantry/melee2.wav"
 #define QA_Q2_SOUND_INSANE_INSANE1 "insane/insane1.wav"
 #define QA_Q2_SOUND_INSANE_INSANE10 "insane/insane10.wav"
@@ -173,6 +176,7 @@
 #define QA_Q2_SOUND_MAKRON_RAIL_UP "makron/rail_up.wav"
 #define QA_Q2_SOUND_MAKRON_STEP1 "makron/step1.wav"
 #define QA_Q2_SOUND_MAKRON_STEP2 "makron/step2.wav"
+#define QA_Q2_SOUND_MAKRON_SPINE "makron/spine.wav"
 #define QA_Q2_SOUND_MAKRON_VOICE "makron/voice.wav"
 #define QA_Q2_SOUND_MAKRON_VOICE3 "makron/voice3.wav"
 #define QA_Q2_SOUND_MAKRON_VOICE4 "makron/voice4.wav"
@@ -302,6 +306,8 @@
 #define QA_Q2_SOUND_SOLDIER_SOLPAIN1 "soldier/solpain1.wav"
 #define QA_Q2_SOUND_SOLDIER_SOLPAIN2 "soldier/solpain2.wav"
 #define QA_Q2_SOUND_SOLDIER_SOLPAIN3 "soldier/solpain3.wav"
+#define QA_Q2_SOUND_SOLDIER_SOLSGHT1 "soldier/solsght1.wav"
+#define QA_Q2_SOUND_SOLDIER_SOLSRCH1 "soldier/solsrch1.wav"
 #define QA_Q2_SOUND_SPHERES_D_IDLE "spheres/d_idle.wav"
 #define QA_Q2_SOUND_SPHERES_H_ACTIVE "spheres/h_active.wav"
 #define QA_Q2_SOUND_SPHERES_H_IDLE "spheres/h_idle.wav"
@@ -885,7 +891,13 @@
     X(WORLD_SPARK7) \
     X(WORLD_STP_WATR) \
     X(WORLD_X_ALARM) \
-    X(ZORTEMP_STEP)
+    X(ZORTEMP_STEP) \
+    X(INFANTRY_INFSGHT1) \
+    X(INFANTRY_INFSRCH1) \
+    X(INFANTRY_INFIDLE1) \
+    X(SOLDIER_SOLSGHT1) \
+    X(SOLDIER_SOLSRCH1) \
+    X(MAKRON_SPINE)
 
 typedef enum qa_q2_sound_index {
     QA_Q2_SFX_NONE,

@@ -9,6 +9,8 @@ enum { Q2M_TRAIL_POINTS = 8 };
 
 static float vector_yaw(qa_vec3 direction);
 static bool trail_length(qa_q2_game *, qa_actor_reference, size_t *, qa_error *);
+static bool attack_body(q2m_context *, qa_actor_id, qa_body_state *, bool *,
+                        qa_error *);
 
 typedef struct q2m_player_trail {
   qa_actor_id actor;
@@ -1020,43 +1022,62 @@ bool q2m_clear_shot(q2m_context *context, qa_vec3 start, bool *clear,
   *clear = false;
   struct qa_q2_monster *monster = context->monster;
   qa_actor_id target_id = monster->enemy;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   qa_builtin_actor_traits traits;
   qa_body_state target;
   bool alive;
-  if (!target_alive(context, target_id, &traits, &target, &alive, error))
+  if (rerelease) {
+    if (!attack_body(context, target_id, &target, &alive, error))
+      return false;
+    if (!q2m_alive(context) || !alive)
+      return true;
+    if (!actor_traits(context, target_id, &traits, error))
+      return false;
+  } else if (!target_alive(context, target_id, &traits, &target, &alive, error)) {
     return false;
-  if (!q2m_alive(context) || !alive)
+  }
+  if (!q2m_alive(context) || !alive || !q2_actor_live(context->game, target_id))
     return true;
-  qa_vec3 end =
-      monster->manual_steering || monster->attack_state == Q2M_BLIND
-          ? monster->blind_fire_target
-          : qa_vec_add(target.origin, qa_v3(0, 0, traits.view_height));
+  bool blind = monster->manual_steering || monster->attack_state == Q2M_BLIND ||
+               (rerelease && monster->lost_sight);
+  qa_vec3 end = blind ? monster->blind_fire_target
+                      : qa_vec_add(target.origin, qa_v3(0, 0, traits.view_height));
   qa_trace_query query = {
       .start = start,
       .end = end,
       .pass_actor = context->actor->id,
       .policy = qa_collision_ruleset_policy(context->game->options.rules),
   };
-  query.policy.contents_mask = qa_collision_contents_mask(context->game->options.rules == QA_RULESET_Q2_RERELEASE
-                                   ? Q2M_ATTACK_MASK | UINT32_C(0x40004000)
-                                   : Q2M_ATTACK_MASK, QA_GAME_Q2);
-  qa_trace_result trace;
-  if (!qa_world_trace(context->game->services.world, &query, &trace, error))
-    return false;
-  if (!q2m_alive(context))
-    return true;
-  bool player = false;
-  if (trace.hit == QA_TRACE_HIT_ACTOR && !qa_actor_id_equal(trace.actor, target_id) &&
-      trace.fraction != 1.0f && context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
-    if (!actor_traits(context, trace.actor, &traits, error))
+  query.policy.contents_mask = qa_collision_contents_mask(
+      rerelease ? Q2_PROJECTILE_MASK & ~UINT32_C(0x04000000) : Q2M_ATTACK_MASK,
+      QA_GAME_Q2);
+  unsigned attempts = rerelease && !blind ? 2 : 1;
+  for (unsigned attempt = 0; attempt < attempts; ++attempt) {
+    if (attempt != 0)
+      query.end = target.origin;
+    qa_trace_result trace;
+    if (!qa_world_trace(context->game->services.world, &query, &trace, error))
       return false;
     if (!q2m_alive(context))
       return true;
-    player = traits.player;
+    if ((!rerelease && trace.fraction == 1.0f) ||
+        (rerelease && trace.fraction > 0.8f && !trace.start_solid) ||
+        (trace.hit == QA_TRACE_HIT_ACTOR &&
+         qa_actor_id_equal(trace.actor, target_id))) {
+      *clear = true;
+      return true;
+    }
+    if (rerelease && trace.hit == QA_TRACE_HIT_ACTOR) {
+      if (!actor_traits(context, trace.actor, &traits, error))
+        return false;
+      if (!q2m_alive(context))
+        return true;
+      if (traits.player) {
+        *clear = true;
+        return true;
+      }
+    }
   }
-  *clear = trace.fraction == 1.0f ||
-           (trace.hit == QA_TRACE_HIT_ACTOR &&
-            (qa_actor_id_equal(trace.actor, target_id) || player));
   return true;
 }
 
@@ -1649,6 +1670,70 @@ static bool visual_candidate(q2m_context *context, qa_actor_id candidate,
   return true;
 }
 
+static bool sight_reaction(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *monster = context->monster;
+  q2m_species species = monster->definition->species;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+  if (species == Q2M_INFANTRY) {
+    q2_runtime_name sound = QA_Q2_SFX_INFANTRY_INFSGHT1;
+    if (rerelease && q2_random_bounded(context->game, 2) != 0)
+      sound = QA_Q2_SFX_INFANTRY_INFSRCH1;
+    return q2m_sound(context, sound, rerelease ? 2 : 4, 1.0f, error);
+  }
+  bool heavy = species == Q2M_SOLDIER_RIPPER ||
+               species == Q2M_SOLDIER_HYPER || species == Q2M_SOLDIER_LASER;
+  bool soldier = heavy || species == Q2M_SOLDIER_LIGHT ||
+                 species == Q2M_SOLDIER || species == Q2M_SOLDIER_SS;
+  if (!soldier)
+    return monster->definition->sight_sound == Q2_NAME_NONE ||
+           q2m_sound(context, monster->definition->sight_sound, 2, 1.0f, error);
+  q2_runtime_name sound = q2m_random(context->game) < 0.5f
+                             ? QA_Q2_SFX_SOLDIER_SOLSGHT1
+                             : QA_Q2_SFX_SOLDIER_SOLSRCH1;
+  if (!q2m_sound(context, sound, 2, 1.0f, error))
+    return false;
+  if (!q2m_alive(context) || !q2_actor_live(context->game, monster->enemy))
+    return true;
+  float distance = q2m_distance(context, monster->enemy);
+  if (!q2m_alive(context) || !q2_actor_live(context->game, monster->enemy))
+    return true;
+  if (rerelease) {
+    if (distance < 440.0f)
+      return true;
+    bool visible;
+    if (!q2m_visible(context, monster->enemy, &visible, error))
+      return false;
+    if (!q2m_alive(context) || !visible)
+      return true;
+    if (monster->style != 1 && q2m_random(context->game) <= 0.75f)
+      return true;
+    if (monster->count < 4)
+      return q2m_set_move(context, Q2M_MOVE_soldier_move_attack6, false, error);
+    qa_vec3 offset;
+    if (!q2m_muzzle_offset(context, 88, &offset, error))
+      return false;
+    q2m_context projection = *context;
+    projection.body.angles.y = monster->ideal_yaw;
+    projection.body.angles.z = 0;
+    bool clear;
+    if (!q2m_clear_shot(context, q2m_project_offset(&projection, offset), &clear,
+                      error))
+      return false;
+    return !q2m_alive(context) || !clear ||
+           q2m_set_move(context, Q2M_MOVE_soldier_move_attack4, false, error);
+  }
+  bool rogue = !heavy && context->game->options.product == QA_Q2_ROGUE;
+  if (context->game->options.skill == 0 || distance < (rogue ? 80.0f : 500.0f))
+    return true;
+  if (q2m_random(context->game) <= (rogue ? 0.75f : 0.5f) ||
+      (rogue && monster->skin > 3))
+    return true;
+  q2m_move_id move = !heavy ? Q2M_MOVE_soldier_move_attack6
+                    : monster->skin < 4 ? Q2M_MOVE_soldierh_move_attack6
+                                        : Q2M_MOVE_soldierh_move_attack4;
+  return q2m_set_move(context, move, false, error);
+}
+
 bool q2m_find_target(q2m_context *context, bool *found, qa_error *error) {
   *found = false;
   struct qa_q2_monster *monster = context->monster;
@@ -1784,10 +1869,9 @@ bool q2m_find_target(q2m_context *context, bool *found, qa_error *error) {
   if (!q2m_alive(context))
     return true;
   monster = context->monster;
-  if (monster->definition->sight_sound != Q2_NAME_NONE &&
-      (context->game->options.rules == QA_RULESET_Q2_CLASSIC ||
-       !monster->close_sight_tripped)) {
-    if (!q2m_sound(context, monster->definition->sight_sound, 2, 1.0f, error))
+  if (context->game->options.rules == QA_RULESET_Q2_CLASSIC ||
+      !monster->close_sight_tripped) {
+    if (!sight_reaction(context, error))
       return false;
     if (!q2m_alive(context))
       return true;
@@ -3564,12 +3648,24 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind,
       return true;
     if (context->game->now_ns > monster->pause_ns)
       return q2m_set_move(context, monster->definition->walk_move, false, error);
-    if (monster->definition->idle_sound && !(monster->spawnflags & 1u) &&
+    bool infantry = monster->definition->species == Q2M_INFANTRY;
+    if ((monster->definition->idle_sound || infantry) &&
+        !(monster->spawnflags & 1u) &&
         context->game->now_ns > monster->idle_ns) {
       bool play = monster->idle_ns != 0;
       if (play) {
-        if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
-            monster->definition->species == Q2M_BRAIN) {
+        if (infantry) {
+          if (context->game->options.rules == QA_RULESET_Q2_CLASSIC ||
+              !monster->enemy.registry) {
+            if (!q2m_set_move(context, Q2M_MOVE_infantry_move_fidget, false, error))
+              return false;
+            if (!q2m_alive(context))
+              return true;
+            if (!q2m_sound(context, QA_Q2_SFX_INFANTRY_INFIDLE1, 2, 2.0f, error))
+              return false;
+          }
+        } else if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
+                   monster->definition->species == Q2M_BRAIN) {
           if (!q2m_sound(context, monster->definition->idle_sound, 0, 2.0f, error))
             return false;
           if (!q2m_alive(context))
@@ -3586,9 +3682,16 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind,
             return false;
         }
       }
-      if (q2m_alive(context))
-        monster->idle_ns = q2m_after(context->game->now_ns,
-                                     (play ? 15.0 : 0.0) + q2m_random(context->game) * 15.0);
+      if (q2m_alive(context)) {
+        double delay = context->game->options.rules == QA_RULESET_Q2_RERELEASE
+                           ? (double)q2_rerelease_time_ms(context->game,
+                                                         play ? 15000 : 0,
+                                                         play ? 30000 : 15000) /
+                                 1000.0
+                           : (play ? 15.0 : 0.0) +
+                                 q2m_random(context->game) * 15.0;
+        monster->idle_ns = q2m_after(context->game->now_ns, delay);
+      }
     }
     return true;
   }
