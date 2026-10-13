@@ -53,7 +53,7 @@ static bool mode_event(void *opaque, const qa_mode_event *event,
                             .time_ns = event->time_ns,
                             .text = event->text,
                             .value = (float)event->value,
-                            .code = (int32_t)event->kind,
+                            .code = event->kind == QA_MODE_MESSAGE ? event->print_level : (int32_t)event->kind,
                             .channel = (int32_t)event->team,
                             .frame = event->detail},
         error);

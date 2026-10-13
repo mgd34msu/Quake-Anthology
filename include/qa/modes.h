@@ -92,6 +92,7 @@ typedef struct qa_mode_event {
     qa_string_id text;
     int32_t value, detail;
     uint64_t time_ns;
+    int32_t print_level;
 } qa_mode_event;
 typedef enum qa_match_intent_kind {
     QA_MATCH_NEXT_MAP,

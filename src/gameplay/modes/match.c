@@ -320,7 +320,9 @@ bool qa_modes_end(qa_modes *m, qa_mode_id id, qa_string_id reason, qa_error *e) 
     if (v->value.rules.source == QA_MODE_THREEWAVE)
         v->value.ctf_pregame_over = true;
     qa_mode_event event = {
-        .kind = QA_MODE_MESSAGE, .mode = id, .text = reason, .time_ns = v->value.time_ns};
+        .kind = QA_MODE_MESSAGE, .mode = id, .text = reason, .time_ns = v->value.time_ns,
+        .print_level = reason && qa_ruleset_read(v->value.rules.ruleset)->family == QA_GAME_Q2
+            ? 2 : 0};
     if (m->options.hooks.event &&
         !MODE_CALLBACK(m, m->options.hooks.event(m->options.hooks.context, &event, e)))
         return false;
@@ -499,6 +501,14 @@ static bool lmctf_frame(qa_modes *m, mode_instance *v, qa_error *e) {
         (uint64_t)(v->remaining_seconds > 0 ? v->remaining_seconds : 0) * MODE_SECOND;
     return true;
 }
+static bool limit_end(qa_modes *m, mode_instance *v, mode_name classic, mode_name rerelease,
+                      qa_error *e) {
+    qa_string_id reason = 0;
+    if (qa_ruleset_read(v->value.rules.ruleset)->family == QA_GAME_Q2)
+        reason = m->runtime_names[v->value.rules.ruleset == QA_RULESET_Q2_RERELEASE
+            ? rerelease : classic];
+    return qa_modes_end(m, v->id, reason, e);
+}
 bool mode_match_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error *e) {
     if (!qa_modes_rank(m, v->id, e))
         return false;
@@ -631,7 +641,7 @@ bool mode_match_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
         return true;
     if (r->time_limit_minutes > 0 &&
         now - v->value.started_ns >= (uint64_t)(r->time_limit_minutes * 60.0f * (float)MODE_SECOND))
-        return qa_modes_end(m, v->id, 0, e);
+        return limit_end(m, v, MODE_NAME_Q2_TIMELIMIT_HIT, MODE_NAME_Q2_RR_TIMELIMIT_HIT, e);
     if (r->capture_limit > 0 && r->kind >= QA_MODE_CTF && r->kind <= QA_MODE_HARVESTER) {
         for (int i = 0; i < 3; ++i)
             if (v->value.team_captures[i] >= r->capture_limit ||
@@ -643,14 +653,14 @@ bool mode_match_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
         if (r->source >= QA_MODE_Q3 && r->kind == QA_MODE_TEAM_DEATHMATCH) {
             if (v->value.team_scores[0] >= r->frag_limit ||
                 v->value.team_scores[1] >= r->frag_limit)
-                return qa_modes_end(m, v->id, 0, e);
+                return limit_end(m, v, MODE_NAME_Q2_FRAGLIMIT_HIT, MODE_NAME_Q2_RR_FRAGLIMIT_HIT, e);
         } else
             for (size_t i = 0; i < v->value.playing; ++i) {
                 int32_t score;
                 if (!qa_modes_score(m, v->id, v->sorted[i], &score, e))
                     return false;
                 if (score >= r->frag_limit)
-                    return qa_modes_end(m, v->id, 0, e);
+                    return limit_end(m, v, MODE_NAME_Q2_FRAGLIMIT_HIT, MODE_NAME_Q2_RR_FRAGLIMIT_HIT, e);
             }
     }
     return true;

@@ -123,6 +123,10 @@ typedef struct mode_objective {
     X(CTF_TEAMCHANGE, "ctf:teamchange") \
     X(CTF_REFLECTION, "ctf:reflection") \
     X(MAP_RESTART, "map_restart 0\n") \
+    X(Q2_TIMELIMIT_HIT, "Timelimit hit.\n") \
+    X(Q2_FRAGLIMIT_HIT, "Fraglimit hit.\n") \
+    X(Q2_RR_TIMELIMIT_HIT, "$g_timelimit_hit") \
+    X(Q2_RR_FRAGLIMIT_HIT, "$g_fraglimit_hit") \
     X(KEY_GOLD, "q1:key/gold") \
     X(KEY_SILVER, "q1:key/silver") \
     X(MONSTER_ARMY, "monster_army") \
