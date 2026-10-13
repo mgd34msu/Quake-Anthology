@@ -295,6 +295,11 @@ static bool ctf_id_tail(qa_source_save_io *io, qa_modes_checkpoint *p) {
     for (size_t i = 0; i < p->mode_count; ++i)
         for (size_t j = 0; j < p->modes[i].member_count; ++j)
             FIELD(bool, p->modes[i].members[j].player.ctf_id_view);
+    if (io->direction == QA_SOURCE_SAVE_READ && io->offset == io->input.size)
+        return true;
+    for (size_t i = 0; i < p->mode_count; ++i)
+        for (size_t j = 0; j < p->modes[i].ghost_count; ++j)
+            FIELD(u32, p->modes[i].ghosts[j].number);
     return true;
 }
 static bool header(qa_source_save_io *io) {

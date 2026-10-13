@@ -37,6 +37,14 @@ bool mode_update_ghosts(qa_modes *m, mode_instance *v, qa_error *e) {
         if (!qa_modes_score(m, v->id, ghost->actor, &ghost->score, e))
             return false;
         ghost->stats = p->stats;
+        mode_player *player = mode_player_get(m, ghost->actor);
+        if (player)
+            ghost->name = player->identity->name;
+        if (!ghost->number && m->options.services.player_info) {
+            qa_builtin_player_info info;
+            if (m->options.services.player_info(m->options.services.context, ghost->actor, &info))
+                ghost->number = info.slot + 1;
+        }
     }
     return true;
 }

@@ -209,9 +209,163 @@ static bool ctf_warp_allowed(const char *list, const char *map) {
     }
     return false;
 }
+static qa_actor_id ctf_report_player_next(qa_modes *m, mode_instance *v,
+    uint64_t *cursor, qa_builtin_player_info *out) {
+    qa_actor_id selected = {0};
+    for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
+        qa_actor_id candidate = m->players_order.actors[ordinal];
+        mode_player *player = mode_player_get(m, candidate);
+        qa_builtin_player_info info;
+        if (!player || !player->connected || !mode_member_get(m, v, candidate) ||
+            !m->options.services.player_info ||
+            !m->options.services.player_info(m->options.services.context, candidate, &info) ||
+            !info.connected || info.slot < *cursor ||
+            (selected.registry && info.slot >= out->slot))
+            continue;
+        selected = candidate;
+        *out = info;
+    }
+    if (selected.registry)
+        *cursor = (uint64_t)out->slot + 1;
+    return selected;
+}
+static bool ctf_report(qa_modes *m, mode_instance *v, qa_actor_id actor,
+    const char *text, qa_error *e) {
+    qa_builtin_message_arg argument = {.kind = QA_BUILTIN_MESSAGE_TEXT,
+        .value.literal = text};
+    return mode_message(m, v, actor, m->runtime_names[MODE_NAME_CTF_REPORT], &argument, 1, e);
+}
+static bool ctf_stats(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_error *e) {
+    char text[1400] = "";
+    size_t length = 0;
+    if (v->value.phase == QA_MODE_SETUP) {
+        uint64_t cursor = 0;
+        qa_builtin_player_info info;
+        qa_actor_id candidate;
+        while ((candidate = ctf_report_player_next(m, v, &cursor, &info)).registry) {
+            mode_member *member = mode_member_get(m, v, candidate);
+            qa_team_id team;
+            if (!member || member->player.ready)
+                continue;
+            if (!qa_modes_team(m, v->id, candidate, &team, e))
+                return false;
+            if (mode_team_index(v, team) < 0)
+                continue;
+            int written = snprintf(text + length, sizeof(text) - length,
+                "%s is not ready.\n", info.name ? info.name : "");
+            if (written >= 0 && (size_t)written < sizeof(text) - 50 - length)
+                length += (size_t)written;
+            else
+                text[length] = 0;
+        }
+    }
+    if (!mode_update_ghosts(m, v, e))
+        return false;
+    bool available = false;
+    for (uint32_t i = 0; i < m->actor_capacity; ++i)
+        if (v->ghosts[i].code && v->ghosts[i].actor.registry) {
+            available = true;
+            break;
+        }
+    if (!available) {
+        snprintf(text + length, sizeof(text) - length, "No statistics available.\n");
+        return ctf_report(m, v, actor, text, e);
+    }
+    static const char heading[] = "  #|Name            |Score|Kills|Death|BasDf|CarDf|Effcy|\n";
+    if (length + sizeof(heading) - 1 > sizeof(text) - 50) {
+        snprintf(text + length, sizeof(text) - length, "And more...\n");
+        return ctf_report(m, v, actor, text, e);
+    }
+    memcpy(text + length, heading, sizeof(heading));
+    length += sizeof(heading) - 1;
+    qa_strings *strings = qa_session_strings(m->options.services.session);
+    for (uint32_t i = 0; i < m->actor_capacity; ++i) {
+        const mode_ghost *ghost = &v->ghosts[i];
+        const char *name = qa_strings_cstr(strings, ghost->name);
+        if (!name || !*name)
+            continue;
+        int64_t total = (int64_t)ghost->stats.kills + ghost->stats.deaths;
+        int32_t efficiency = total ? (int32_t)((int64_t)ghost->stats.kills * 100 / total) : 50;
+        int written = snprintf(text + length, sizeof(text) - length,
+            "%3" PRIu32 "|%-16.16s|%5" PRId32 "|%5" PRId32 "|%5" PRId32
+            "|%5" PRId32 "|%5" PRId32 "|%4" PRId32 "%%|\n",
+            ghost->number, name, ghost->score, ghost->stats.kills, ghost->stats.deaths,
+            ghost->stats.defenses, ghost->stats.carrier_defenses, efficiency);
+        if (written < 0 || (size_t)written > sizeof(text) - 50 - length) {
+            snprintf(text + length, sizeof(text) - length, "And more...\n");
+            break;
+        }
+        length += (size_t)written;
+    }
+    return ctf_report(m, v, actor, text, e);
+}
+static bool ctf_player_list(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_error *e) {
+    char text[1400] = "";
+    size_t length = 0;
+    uint64_t cursor = 0;
+    qa_builtin_player_info info;
+    qa_actor_id candidate;
+    while ((candidate = ctf_report_player_next(m, v, &cursor, &info)).registry) {
+        mode_member *member = mode_member_get(m, v, candidate);
+        int32_t score;
+        if (!member)
+            continue;
+        if (!qa_modes_score(m, v->id, candidate, &score, e))
+            return false;
+        uint64_t seconds = v->value.time_ns > info.entered_ns
+            ? (v->value.time_ns - info.entered_ns) / MODE_SECOND : 0;
+        bool readiness = v->value.phase == QA_MODE_SETUP || v->value.phase == QA_MODE_COUNTDOWN;
+        int written = snprintf(text + length, sizeof(text) - length,
+            "%3" PRIu64 " %-16.16s %02" PRIu64 ":%02" PRIu64 " %4" PRId32 " %3" PRId32 "%s%s\n",
+            (uint64_t)info.slot + 1, info.name ? info.name : "", seconds / 60, seconds % 60,
+            info.ping, score, readiness ? (member->player.ready ? " (ready)" : " (notready)") : "",
+            member->admin ? " (admin)" : "");
+        if (written < 0 || (size_t)written > sizeof(text) - 50 - length) {
+            snprintf(text + length, sizeof(text) - length, "And more...\n");
+            break;
+        }
+        length += (size_t)written;
+    }
+    return ctf_report(m, v, actor, text, e);
+}
+static bool ctf_boot(qa_modes *m, mode_instance *v, qa_actor_id actor,
+    const qa_command_invocation *command, qa_error *e) {
+    mode_member *member = mode_member_get(m, v, actor);
+    mode_name message;
+    if (!member || !member->admin)
+        message = MODE_NAME_CTF_BOOT_NOT_ADMIN;
+    else if (command->argc < 2)
+        message = MODE_NAME_CTF_BOOT_USAGE;
+    else {
+        qa_mode_source_settings settings = {0};
+        if (!m->options.hooks.source_settings ||
+            !m->options.hooks.source_settings(m->options.hooks.context, v->id, &settings))
+            return true;
+        int32_t number = qa_parse_decimal_i32(command->argv[1], QA_DECIMAL_CONTROL_WRAP);
+        if (number < 1 || (uint32_t)number > settings.max_clients)
+            message = MODE_NAME_CTF_BOOT_INVALID;
+        else {
+            uint64_t cursor = (uint32_t)number - 1;
+            qa_builtin_player_info info;
+            qa_actor_id target = ctf_report_player_next(m, v, &cursor, &info);
+            if (!target.registry || info.slot != (uint32_t)number - 1)
+                message = MODE_NAME_CTF_BOOT_DISCONNECTED;
+            else
+                return !m->options.hooks.disconnect ||
+                    MODE_CALLBACK(m, m->options.hooks.disconnect(m->options.hooks.context, target, e));
+        }
+    }
+    return mode_message(m, v, actor, m->runtime_names[message], NULL, 0, e);
+}
 static bool ctf_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
                           const qa_command_invocation *command, bool *handled, qa_error *e) {
     const char *name = command->argv[0];
+    if (named(name, "stats") || named(name, "playerlist") || named(name, "boot")) {
+        *handled = true;
+        return named(name, "stats") ? ctf_stats(m, v, actor, e) :
+            named(name, "playerlist") ? ctf_player_list(m, v, actor, e) :
+            ctf_boot(m, v, actor, command, e);
+    }
     if (named(name, "id") && v->value.rules.enabled) {
         mode_member *member = mode_member_get(m, v, actor);
         if (!member)
@@ -252,20 +406,20 @@ static bool ctf_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
     }
     if (!named(name, "admin") && !named(name, "warp"))
         return true;
-    qa_mode_source_settings settings = {0};
-    if (!m->options.hooks.source_settings ||
-        !m->options.hooks.source_settings(m->options.hooks.context, v->id, &settings))
-        return true;
     mode_member *member = mode_member_get(m, v, actor);
     if (!member)
         return true;
     *handled = true;
+    if (named(name, "admin") && member->admin)
+        return mode_ui_open_admin(m, v, actor, e);
+    qa_mode_source_settings settings = {0};
+    if (!m->options.hooks.source_settings ||
+        !m->options.hooks.source_settings(m->options.hooks.context, v->id, &settings))
+        return true;
     if (named(name, "admin")) {
-        if (member->admin)
-            return true;
         if (command->argc > 1 && settings.admin_password && *settings.admin_password &&
             !strcmp(settings.admin_password, command->argv[1]))
-            return mode_ctf_admin_grant(m, v, actor, e);
+            return mode_ctf_admin_grant(m, v, actor, e) && mode_ui_open_admin(m, v, actor, e);
         qa_match_intent intent = {.kind = QA_MATCH_ADMIN, .actor = actor};
         return qa_modes_vote_start(m, v->id, actor, 0, &intent, e);
     }

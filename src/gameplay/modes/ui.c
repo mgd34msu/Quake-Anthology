@@ -4,7 +4,11 @@
 #include <stdio.h>
 
 typedef enum menu_action {
-    MENU_NONE, MENU_RED, MENU_BLUE, MENU_CHASE, MENU_CREDITS, MENU_BACK, MENU_MATCH
+    MENU_NONE, MENU_RED, MENU_BLUE, MENU_CHASE, MENU_CREDITS, MENU_BACK, MENU_MATCH,
+    MENU_ADMIN_SETTINGS, MENU_ADMIN_MATCH, MENU_ADMIN_CANCEL,
+    MENU_SETTING_MATCH, MENU_SETTING_SETUP, MENU_SETTING_START, MENU_SETTING_WEAPONS_STAY,
+    MENU_SETTING_INSTANT_ITEMS, MENU_SETTING_QUAD_DROP, MENU_SETTING_INSTANT_WEAPONS,
+    MENU_SETTING_MATCH_LOCK, MENU_SETTINGS_APPLY, MENU_SETTINGS_CANCEL
 } menu_action;
 typedef enum menu_align { MENU_LEFT, MENU_CENTER, MENU_RIGHT } menu_align;
 typedef struct menu_entry {
@@ -52,6 +56,23 @@ static const menu_entry no_chase_entries[] = {
     MENU_BLANK, MENU_BLANK, MENU_ENTRY(NO_CHASE, LEFT, NONE), MENU_BLANK,
     MENU_ENTRY(BACK, LEFT, BACK)
 };
+static const menu_entry admin_entries[] = {
+    MENU_ENTRY(ADMIN_TITLE, CENTER, NONE), MENU_BLANK,
+    MENU_ENTRY(ADMIN_SETTINGS, LEFT, ADMIN_SETTINGS), MENU_BLANK, MENU_BLANK,
+    MENU_ENTRY(CANCEL, LEFT, ADMIN_CANCEL), MENU_BLANK
+};
+static const menu_entry settings_entries[] = {
+    MENU_ENTRY(SETTINGS_TITLE, CENTER, NONE), MENU_BLANK,
+    MENU_ENTRY(SETTINGS_MATCH_LENGTH, LEFT, SETTING_MATCH),
+    MENU_ENTRY(SETTINGS_SETUP_LENGTH, LEFT, SETTING_SETUP),
+    MENU_ENTRY(SETTINGS_START_LENGTH, LEFT, SETTING_START),
+    MENU_ENTRY(SETTINGS_WEAPONS_STAY, LEFT, SETTING_WEAPONS_STAY),
+    MENU_ENTRY(SETTINGS_INSTANT_ITEMS, LEFT, SETTING_INSTANT_ITEMS),
+    MENU_ENTRY(SETTINGS_QUAD_DROP, LEFT, SETTING_QUAD_DROP),
+    MENU_ENTRY(SETTINGS_INSTANT_WEAPONS, LEFT, SETTING_INSTANT_WEAPONS),
+    MENU_ENTRY(SETTINGS_MATCH_LOCK, LEFT, SETTING_MATCH_LOCK), MENU_BLANK,
+    MENU_ENTRY(APPLY, LEFT, SETTINGS_APPLY), MENU_ENTRY(CANCEL, LEFT, SETTINGS_CANCEL)
+};
 #undef MENU_ENTRY
 #undef MENU_BLANK
 
@@ -79,7 +100,8 @@ static void menu_team_counts(qa_modes *m, mode_instance *v, size_t counts[2]) {
     }
 }
 static size_t menu_rows(qa_modes *m, mode_instance *v, mode_member *member, qa_mode_menu_page page,
-                         menu_row rows[18], char level[33], char counts[2][32]) {
+                         menu_row rows[18], char level[33], char counts[2][32],
+                         char fields[8][64]) {
     const menu_entry *entries = NULL;
     size_t count = 0;
     switch (page) {
@@ -89,10 +111,42 @@ static size_t menu_rows(qa_modes *m, mode_instance *v, mode_member *member, qa_m
         entries = credits_entries; count = sizeof(credits_entries) / sizeof(*entries); break;
     case QA_MODE_MENU_NO_CHASE:
         entries = no_chase_entries; count = sizeof(no_chase_entries) / sizeof(*entries); break;
+    case QA_MODE_MENU_ADMIN:
+        entries = admin_entries; count = sizeof(admin_entries) / sizeof(*entries); break;
+    case QA_MODE_MENU_SETTINGS:
+        entries = settings_entries; count = sizeof(settings_entries) / sizeof(*entries); break;
     case QA_MODE_MENU_NONE: case QA_MODE_MENU_SCOREBOARD: return 0;
     }
     for (size_t i = 0; i < count; ++i)
         rows[i] = (menu_row){menu_text(m, entries[i].name), entries[i].align, entries[i].action};
+    if (page == QA_MODE_MENU_ADMIN) {
+        mode_name match = MODE_NAME_COUNT;
+        if (v->value.phase == QA_MODE_SETUP)
+            match = MODE_NAME_CTF_MENU_ADMIN_FORCE_START;
+        else if (v->value.phase == QA_MODE_PLAYING && v->value.deadline_ns)
+            match = MODE_NAME_CTF_MENU_ADMIN_CANCEL_MATCH;
+        else if (v->value.phase == QA_MODE_PLAYING && v->value.rules.competition)
+            match = MODE_NAME_CTF_MENU_ADMIN_SWITCH_MATCH;
+        if (match != MODE_NAME_COUNT)
+            rows[3] = (menu_row){menu_text(m, match), MENU_LEFT, MENU_ADMIN_MATCH};
+        return count;
+    }
+    if (page == QA_MODE_MENU_SETTINGS) {
+        const qa_mode_ctf_settings *settings = &member->menu.settings;
+        const int32_t lengths[3] = {settings->match_minutes, settings->setup_minutes,
+                                   settings->start_seconds};
+        const bool toggles[5] = {settings->weapons_stay, settings->instant_items,
+            settings->quad_drop, settings->instant_weapons, settings->match_lock};
+        for (size_t i = 0; i < 8; ++i) {
+            if (i < 3)
+                snprintf(fields[i], 64, rows[2 + i].text, lengths[i]);
+            else
+                snprintf(fields[i], 64, rows[2 + i].text,
+                         menu_text(m, toggles[i - 3] ? MODE_NAME_CTF_MENU_YES : MODE_NAME_CTF_MENU_NO));
+            rows[2 + i].text = fields[i];
+        }
+        return count;
+    }
     if (page == QA_MODE_MENU_CREDITS)
         return count;
     bool following = member->player.follow_target.registry != 0;
@@ -159,8 +213,8 @@ static bool menu_publish(qa_modes *m, mode_instance *v, qa_actor_id actor,
     mode_member *member = mode_member_get(m, v, actor);
     if (!member)
         return true;
-    menu_row rows[18]; char level[33], counts[2][32];
-    size_t count = menu_rows(m, v, member, member->menu.page, rows, level, counts);
+    menu_row rows[18]; char level[33], counts[2][32], fields[8][64];
+    size_t count = menu_rows(m, v, member, member->menu.page, rows, level, counts, fields);
     member = mode_member_get(m, v, actor);
     if (!member)
         return true;
@@ -400,9 +454,30 @@ bool mode_ui_open_join(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_erro
     }
     return menu_open(m, v, actor, QA_MODE_MENU_JOIN, e);
 }
+bool mode_ui_open_admin(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_error *e) {
+    mode_member *member = mode_member_get(m, v, actor);
+    if (!member || !member->admin || v->value.rules.source != QA_MODE_Q2_CTF ||
+        !v->value.rules.enabled)
+        return true;
+    return menu_open(m, v, actor, QA_MODE_MENU_ADMIN, e);
+}
+static bool menu_settings_open(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_error *e) {
+    qa_mode_source_settings settings = {0};
+    if (!m->options.hooks.source_settings ||
+        !m->options.hooks.source_settings(m->options.hooks.context, v->id, &settings))
+        return true;
+    mode_member *member = mode_member_get(m, v, actor);
+    if (!member || !member->admin)
+        return true;
+    member->menu.settings = settings.ctf;
+    return menu_open(m, v, actor, QA_MODE_MENU_SETTINGS, e);
+}
 static bool menu_select(qa_modes *m, mode_instance *v, qa_actor_id actor,
                          menu_action action, qa_error *e) {
     bool accepted;
+    mode_member *admin_member = mode_member_get(m, v, actor);
+    if (action >= MENU_ADMIN_SETTINGS && (!admin_member || !admin_member->admin))
+        return true;
     switch (action) {
     case MENU_RED: case MENU_BLUE:
         return mode_ui_close(m, v, actor, e) &&
@@ -427,9 +502,53 @@ static bool menu_select(qa_modes *m, mode_instance *v, qa_actor_id actor,
         return mode_ui_close(m, v, actor, e) &&
                (!mode_member_get(m, v, actor) || qa_modes_vote_start(m, v->id, actor, 0, &intent, e));
     }
+    case MENU_ADMIN_SETTINGS: return menu_settings_open(m, v, actor, e);
+    case MENU_ADMIN_MATCH:
+        return mode_ui_close(m, v, actor, e) &&
+               (!mode_member_get(m, v, actor) || mode_ui_ctf_match(m, v, actor, e));
+    case MENU_ADMIN_CANCEL: return mode_ui_close(m, v, actor, e);
+    case MENU_SETTINGS_APPLY: {
+        qa_mode_ctf_settings settings = admin_member->menu.settings;
+        return mode_ui_ctf_settings_apply(m, v, actor, &settings, e) &&
+               mode_ui_open_admin(m, v, actor, e);
+    }
+    case MENU_SETTINGS_CANCEL: return mode_ui_open_admin(m, v, actor, e);
+    case MENU_SETTING_MATCH:
+        admin_member->menu.settings.match_minutes =
+            (admin_member->menu.settings.match_minutes % 60) + 5;
+        if (admin_member->menu.settings.match_minutes < 5)
+            admin_member->menu.settings.match_minutes = 5;
+        break;
+    case MENU_SETTING_SETUP:
+        admin_member->menu.settings.setup_minutes =
+            (admin_member->menu.settings.setup_minutes % 60) + 5;
+        if (admin_member->menu.settings.setup_minutes < 5)
+            admin_member->menu.settings.setup_minutes = 5;
+        break;
+    case MENU_SETTING_START:
+        admin_member->menu.settings.start_seconds =
+            (admin_member->menu.settings.start_seconds % 600) + 10;
+        if (admin_member->menu.settings.start_seconds < 20)
+            admin_member->menu.settings.start_seconds = 20;
+        break;
+    case MENU_SETTING_WEAPONS_STAY:
+        admin_member->menu.settings.weapons_stay = !admin_member->menu.settings.weapons_stay;
+        break;
+    case MENU_SETTING_INSTANT_ITEMS:
+        admin_member->menu.settings.instant_items = !admin_member->menu.settings.instant_items;
+        break;
+    case MENU_SETTING_QUAD_DROP:
+        admin_member->menu.settings.quad_drop = !admin_member->menu.settings.quad_drop;
+        break;
+    case MENU_SETTING_INSTANT_WEAPONS:
+        admin_member->menu.settings.instant_weapons = !admin_member->menu.settings.instant_weapons;
+        break;
+    case MENU_SETTING_MATCH_LOCK:
+        admin_member->menu.settings.match_lock = !admin_member->menu.settings.match_lock;
+        break;
     case MENU_NONE: return true;
     }
-    return true;
+    return menu_publish(m, v, actor, false, e);
 }
 static bool menu_named(const char *text, const char *name) {
     return qa_text_bytes_equal((qa_bytes){(const uint8_t *)text, strlen(text)},
@@ -479,6 +598,27 @@ bool mode_ui_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
     }
     if (menu_named(name, "ctf-menu")) {
         const char *action = command->argc > 1 ? command->argv[1] : "join";
+        if (menu_named(action, "ready") || menu_named(action, "notready")) {
+            *handled = true;
+            return qa_modes_ready(m, v->id, actor, menu_named(action, "ready"), e);
+        }
+        if (menu_named(action, "observer")) {
+            *handled = true;
+            bool accepted;
+            return qa_modes_observe(m, v->id, actor, 0, &accepted, e);
+        }
+        menu_action admin = menu_named(action, "admin-settings") ? MENU_ADMIN_SETTINGS :
+                            menu_named(action, "admin-start") ? MENU_ADMIN_MATCH :
+                            menu_named(action, "admin-cancel") ? MENU_ADMIN_CANCEL :
+                            menu_named(action, "settings-apply") ? MENU_SETTINGS_APPLY :
+                            menu_named(action, "settings-cancel") ? MENU_SETTINGS_CANCEL : MENU_NONE;
+        if (admin != MENU_NONE) {
+            *handled = true;
+            if ((admin == MENU_SETTINGS_APPLY || admin == MENU_SETTINGS_CANCEL) &&
+                member->menu.page != QA_MODE_MENU_SETTINGS)
+                return true;
+            return menu_select(m, v, actor, admin, e);
+        }
         if (menu_named(action, "match"))
             return mode_ui_close(m, v, actor, e);
         if (menu_named(action, "join")) {
@@ -499,8 +639,8 @@ bool mode_ui_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
         if (wanted == MENU_NONE)
             return true;
         *handled = true;
-        menu_row rows[18]; char level[33], counts[2][32];
-        size_t count = menu_rows(m, v, member, QA_MODE_MENU_JOIN, rows, level, counts);
+        menu_row rows[18]; char level[33], counts[2][32], fields[8][64];
+        size_t count = menu_rows(m, v, member, QA_MODE_MENU_JOIN, rows, level, counts, fields);
         if (!mode_member_get(m, v, actor))
             return true;
         for (size_t i = 0; i < count; ++i)
@@ -515,8 +655,8 @@ bool mode_ui_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
     if (!next && !previous && !select)
         return true;
     *handled = true;
-    menu_row rows[18]; char level[33], counts[2][32];
-    size_t count = menu_rows(m, v, member, member->menu.page, rows, level, counts);
+    menu_row rows[18]; char level[33], counts[2][32], fields[8][64];
+    size_t count = menu_rows(m, v, member, member->menu.page, rows, level, counts, fields);
     member = mode_member_get(m, v, actor);
     if (!member || member->menu.cursor < 0 || !count)
         return true;

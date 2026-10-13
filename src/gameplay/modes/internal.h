@@ -141,7 +141,44 @@ typedef struct mode_objective {
     X(CTF_MENU_KLOK, "Tom 'Bjorn' Klok") \
     X(CTF_MENU_ORIGINAL_ART, "*Original CTF Art Design") \
     X(CTF_MENU_COZZENS, "Brian 'Whaleboy' Cozzens") \
+    X(CTF_MENU_ADMIN_TITLE, "*Administration Menu") \
+    X(CTF_MENU_ADMIN_SETTINGS, "Settings") \
+    X(CTF_MENU_ADMIN_FORCE_START, "Force start match") \
+    X(CTF_MENU_ADMIN_CANCEL_MATCH, "Cancel match") \
+    X(CTF_MENU_ADMIN_SWITCH_MATCH, "Switch to match mode") \
+    X(CTF_MENU_CANCEL, "Cancel") \
+    X(CTF_MENU_SETTINGS_TITLE, "*Settings Menu") \
+    X(CTF_MENU_SETTINGS_MATCH_LENGTH, "Match Len:       %2d mins") \
+    X(CTF_MENU_SETTINGS_SETUP_LENGTH, "Match Setup Len: %2d mins") \
+    X(CTF_MENU_SETTINGS_START_LENGTH, "Match Start Len: %2d secs") \
+    X(CTF_MENU_SETTINGS_WEAPONS_STAY, "Weapons Stay:    %s") \
+    X(CTF_MENU_SETTINGS_INSTANT_ITEMS, "Instant Items:   %s") \
+    X(CTF_MENU_SETTINGS_QUAD_DROP, "Quad Drop:       %s") \
+    X(CTF_MENU_SETTINGS_INSTANT_WEAPONS, "Instant Weapons: %s") \
+    X(CTF_MENU_SETTINGS_MATCH_LOCK, "Match Lock:      %s") \
+    X(CTF_MENU_APPLY, "Apply") \
+    X(CTF_MENU_YES, "Yes") \
+    X(CTF_MENU_NO, "No") \
     X(CVAR_COMPETITION, "competition") \
+    X(CVAR_MATCHTIME, "matchtime") \
+    X(CVAR_MATCHSETUPTIME, "matchsetuptime") \
+    X(CVAR_MATCHSTARTTIME, "matchstarttime") \
+    X(CVAR_DMFLAGS, "dmflags") \
+    X(CVAR_INSTANTWEAP, "instantweap") \
+    X(CVAR_MATCHLOCK, "matchlock") \
+    X(CTF_ADMIN_MATCH_FORCED_START, "Match has been forced to start.\n") \
+    X(CTF_ADMIN_MATCH_FORCED_STOP, "Match has been forced to terminate.\n") \
+    X(CTF_SETTING_MATCH, "{0} changed the match length to {1} minutes.\n") \
+    X(CTF_SETTING_SETUP, "{0} changed the match setup time to {1} minutes.\n") \
+    X(CTF_SETTING_START, "{0} changed the match start time to {1} seconds.\n") \
+    X(CTF_SETTING_TOGGLE, "{0} turned {1} {2}.\n") \
+    X(CTF_SETTING_WEAPONS_STAY, "weapons stay") \
+    X(CTF_SETTING_INSTANT_ITEMS, "instant items") \
+    X(CTF_SETTING_QUAD_DROP, "quad drop") \
+    X(CTF_SETTING_INSTANT_WEAPONS, "instant weapons") \
+    X(CTF_SETTING_MATCH_LOCK, "match lock") \
+    X(CTF_SETTING_ON, "on") \
+    X(CTF_SETTING_OFF, "off") \
     X(CTF_ELECTION_DISABLED, "Elections are disabled, only an admin can process this action.\n") \
     X(CTF_ELECTION_RUNNING, "Election already in progress.\n") \
     X(CTF_ELECTION_NEEDS_PLAYERS, "Not enough players for election.\n") \
@@ -157,6 +194,12 @@ typedef struct mode_objective {
     X(CTF_WARPING, "{0} is warping to level {1}.\n") \
     X(CTF_ADMIN_GRANTED, "{0} has become an admin.\n") \
     X(CTF_ADMIN_HELP, "Type 'admin' to access the adminstration menu.\n") \
+    X(CTF_REPORT, "{0}") \
+    X(CTF_BOOT_NOT_ADMIN, "You are not an admin.\n") \
+    X(CTF_BOOT_USAGE, "Who do you want to kick?\n") \
+    X(CTF_BOOT_NUMBER, "Specify the player number to kick.\n") \
+    X(CTF_BOOT_INVALID, "Invalid player number.\n") \
+    X(CTF_BOOT_DISCONNECTED, "That player number is not connected.\n") \
     X(CTF_WARP_USAGE, "Where do you want to warp to?\n") \
     X(CTF_WARP_LEVELS, "Available levels are: {0}\n") \
     X(CTF_WARP_UNKNOWN, "Unknown CTF level.\n") \
@@ -532,7 +575,7 @@ bool mode_event(qa_modes *, mode_instance *, qa_mode_event_kind, qa_actor_id, qa
                 qa_actor_id, qa_team_id, int32_t, int32_t, qa_error *);
 bool mode_intent(qa_modes *, mode_instance *, qa_match_intent_kind, qa_actor_id, qa_team_id,
                  qa_string_id, qa_error *);
-bool mode_ctf_reset(qa_modes *, mode_instance *, bool setup, qa_error *);
+bool mode_ctf_reset(qa_modes *, mode_instance *, bool setup, bool change_competition, qa_error *);
 bool mode_ctf_admin_grant(qa_modes *, mode_instance *, qa_actor_id, qa_error *);
 bool mode_ctf_named_message(qa_modes *, mode_instance *, qa_actor_id subject,
     mode_name, qa_string_id map, int32_t level, qa_error *);
@@ -613,6 +656,10 @@ bool mode_ui_command(qa_modes *, mode_instance *, qa_actor_id,
                      const qa_command_invocation *, bool *, qa_error *);
 bool mode_ui_close(qa_modes *, mode_instance *, qa_actor_id, qa_error *);
 bool mode_ui_open_join(qa_modes *, mode_instance *, qa_actor_id, qa_error *);
+bool mode_ui_open_admin(qa_modes *, mode_instance *, qa_actor_id, qa_error *);
+bool mode_ui_ctf_settings_apply(qa_modes *, mode_instance *, qa_actor_id,
+                                const qa_mode_ctf_settings *, qa_error *);
+bool mode_ui_ctf_match(qa_modes *, mode_instance *, qa_actor_id, qa_error *);
 bool mode_ui_scoreboard(qa_modes *, mode_instance *, qa_actor_id, bool visible, qa_error *);
 bool mode_ui_frame(qa_modes *, mode_instance *, qa_error *);
 bool mode_ui_request_team(qa_modes *, mode_instance *, qa_actor_id, qa_team_id,

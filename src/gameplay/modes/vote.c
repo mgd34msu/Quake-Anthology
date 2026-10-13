@@ -281,7 +281,7 @@ static bool execute_vote(qa_modes *m, mode_instance *v, qa_mode_vote *vote, qa_e
     vote->passed = false;
     if (v->value.rules.source == QA_MODE_Q2_CTF) {
         if (intent.kind == QA_MATCH_CANCEL)
-            return mode_ctf_reset(m, v, true, e);
+            return mode_ctf_reset(m, v, true, true, e);
         if (intent.kind == QA_MATCH_ADMIN)
             return mode_ctf_admin_grant(m, v, vote->initiator, e);
         if (intent.kind == QA_MATCH_SELECTED_MAP &&

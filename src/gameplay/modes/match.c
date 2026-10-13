@@ -417,11 +417,16 @@ bool mode_ctf_ghost_assign(qa_modes *m, mode_instance *v, mode_member *p, qa_err
     if (!player)
         return true;
     p->ghost_code = code;
+    qa_builtin_player_info info;
+    uint32_t number = m->options.services.player_info &&
+        m->options.services.player_info(m->options.services.context, p->actor, &info)
+        ? info.slot + 1 : 0;
     v->ghosts[p->actor.slot] = (mode_ghost){.actor = p->actor,
                                             .name = player->identity->name,
                                             .team = team,
                                             .stats = p->stats,
                                             .code = code,
+                                            .number = number,
                                             .score = score};
     qa_builtin_message_arg argument = {.kind = QA_BUILTIN_MESSAGE_NUMBER,
                                        .value.number = code};
@@ -490,15 +495,15 @@ static bool begin_play(qa_modes *m, mode_instance *v, qa_error *e) {
     }
     return qa_modes_rank(m, v->id, e);
 }
-bool mode_ctf_reset(qa_modes *m, mode_instance *v, bool setup, qa_error *e) {
-    int32_t competition = setup && v->value.rules.competition >= 3
-        ? v->value.rules.competition : setup ? 2 : 1;
+bool mode_ctf_reset(qa_modes *m, mode_instance *v, bool setup, bool change_competition, qa_error *e) {
+    int32_t competition = !change_competition ? v->value.rules.competition :
+        setup && v->value.rules.competition >= 3 ? v->value.rules.competition : setup ? 2 : 1;
     v->value.rules.competition = competition;
     char value[16];
     snprintf(value, sizeof(value), "%" PRId32, competition);
     if (!mode_set_phase(m, v, setup ? QA_MODE_SETUP : QA_MODE_PLAYING,
             setup ? v->value.time_ns + (uint64_t)v->value.rules.setup_seconds * MODE_SECOND : 0, e) ||
-        (m->options.hooks.source_cvar_set &&
+        (change_competition && m->options.hooks.source_cvar_set &&
          !MODE_CALLBACK(m, m->options.hooks.source_cvar_set(m->options.hooks.context, v->id,
              m->runtime_names[MODE_NAME_CVAR_COMPETITION], value, e))))
         return false;
@@ -657,6 +662,101 @@ static bool intermission(qa_modes *m, mode_instance *v, qa_error *e) {
             !m->options.hooks.intermission(m->options.hooks.context, v->id, p->actor, e))
             return false;
     }
+    return true;
+}
+static bool ctf_setting_write(qa_modes *m, mode_instance *v, mode_name name,
+                              int64_t value, qa_error *e) {
+    char text[32];
+    snprintf(text, sizeof(text), "%" PRId64, value);
+    return !m->options.hooks.source_cvar_set || MODE_CALLBACK(m,
+        m->options.hooks.source_cvar_set(m->options.hooks.context, v->id,
+                                       m->runtime_names[name], text, e));
+}
+bool mode_ui_ctf_settings_apply(qa_modes *m, mode_instance *v, qa_actor_id actor,
+                                const qa_mode_ctf_settings *settings, qa_error *e) {
+    mode_member *member = mode_member_get(m, v, actor);
+    mode_player *player = member ? mode_player_get(m, actor) : NULL;
+    qa_mode_source_settings source;
+    if (!player || !member->admin || !m->options.hooks.source_settings ||
+        !m->options.hooks.source_settings(m->options.hooks.context, v->id, &source))
+        return true;
+    qa_mode_rules rules = v->value.rules;
+    const int32_t selected[] = {settings->match_minutes, settings->setup_minutes,
+                               settings->start_seconds};
+    const int32_t current[] = {rules.match_seconds, rules.setup_seconds,
+                              rules.countdown_seconds};
+    const mode_name variables[] = {MODE_NAME_CVAR_MATCHTIME, MODE_NAME_CVAR_MATCHSETUPTIME,
+                                   MODE_NAME_CVAR_MATCHSTARTTIME};
+    const mode_name notices[] = {MODE_NAME_CTF_SETTING_MATCH, MODE_NAME_CTF_SETTING_SETUP,
+                                 MODE_NAME_CTF_SETTING_START};
+    int32_t seconds[3];
+    for (unsigned i = 0; i < 3; ++i) {
+        int64_t value = (int64_t)selected[i] * (i == 2 ? 1 : 60);
+        if (value < 0 || value > INT32_MAX)
+            return true;
+        seconds[i] = (int32_t)value;
+    }
+    qa_builtin_message_arg arguments[] = {
+        {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = player->identity->name},
+        {.kind = QA_BUILTIN_MESSAGE_NUMBER}
+    };
+    for (unsigned i = 0; i < 3; ++i) {
+        if (seconds[i] == current[i])
+            continue;
+        arguments[1].value.number = selected[i];
+        if (!ctf_setting_write(m, v, variables[i], selected[i], e) ||
+            !mode_message(m, v, (qa_actor_id){0}, m->runtime_names[notices[i]],
+                          arguments, 2, e))
+            return false;
+    }
+    const bool chosen[] = {settings->weapons_stay, settings->instant_items,
+        settings->quad_drop, settings->instant_weapons, settings->match_lock};
+    const bool previous[] = {source.ctf.weapons_stay, source.ctf.instant_items,
+        source.ctf.quad_drop, source.instant_weapons_integer, source.match_lock_integer};
+    const uint32_t bits[] = {4u, 16u, 16384u};
+    const mode_name labels[] = {MODE_NAME_CTF_SETTING_WEAPONS_STAY, MODE_NAME_CTF_SETTING_INSTANT_ITEMS,
+        MODE_NAME_CTF_SETTING_QUAD_DROP, MODE_NAME_CTF_SETTING_INSTANT_WEAPONS,
+        MODE_NAME_CTF_SETTING_MATCH_LOCK};
+    uint32_t flags = source.deathmatch_flags;
+    qa_builtin_message_arg toggles[] = {
+        arguments[0], {.kind = QA_BUILTIN_MESSAGE_STRING}, {.kind = QA_BUILTIN_MESSAGE_STRING}
+    };
+    for (unsigned i = 0; i < 5; ++i) {
+        if (chosen[i] == previous[i])
+            continue;
+        mode_name name = i < 3 ? MODE_NAME_CVAR_DMFLAGS :
+                         i == 3 ? MODE_NAME_CVAR_INSTANTWEAP : MODE_NAME_CVAR_MATCHLOCK;
+        if (i < 3)
+            flags = chosen[i] ? flags | bits[i] : flags & ~bits[i];
+        toggles[1].value.text = m->runtime_names[chosen[i]
+            ? MODE_NAME_CTF_SETTING_ON : MODE_NAME_CTF_SETTING_OFF];
+        toggles[2].value.text = m->runtime_names[labels[i]];
+        if (!ctf_setting_write(m, v, name, i < 3 ? flags : chosen[i], e) ||
+            !mode_message(m, v, (qa_actor_id){0}, m->runtime_names[MODE_NAME_CTF_SETTING_TOGGLE],
+                          toggles, 3, e))
+            return false;
+    }
+    rules.match_seconds = seconds[0];
+    rules.setup_seconds = seconds[1];
+    rules.countdown_seconds = seconds[2];
+    rules.match_lock = settings->match_lock;
+    return qa_modes_configure(m, v->id, &rules, e);
+}
+bool mode_ui_ctf_match(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_error *e) {
+    mode_member *member = mode_member_get(m, v, actor);
+    if (!member || !member->admin)
+        return true;
+    if (v->value.phase == QA_MODE_SETUP)
+        return mode_message_level(m, v, (qa_actor_id){0},
+            m->runtime_names[MODE_NAME_CTF_ADMIN_MATCH_FORCED_START], NULL, 0, 3, e) &&
+            mode_set_phase(m, v, QA_MODE_COUNTDOWN,
+                v->value.time_ns + (uint64_t)v->value.rules.countdown_seconds * MODE_SECOND, e);
+    if (v->value.phase == QA_MODE_PLAYING && v->value.deadline_ns)
+        return mode_message_level(m, v, (qa_actor_id){0},
+            m->runtime_names[MODE_NAME_CTF_ADMIN_MATCH_FORCED_STOP], NULL, 0, 3, e) &&
+            mode_ctf_reset(m, v, true, false, e);
+    if (v->value.phase == QA_MODE_PLAYING && v->value.rules.competition)
+        return mode_ctf_reset(m, v, true, true, e);
     return true;
 }
 static bool exit_intermission(qa_modes *m, mode_instance *v, qa_error *e) {
@@ -889,7 +989,7 @@ bool mode_match_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
             v->value.deadline_ns - now < MODE_SECOND)) {
             if (r->competition < 3) {
                 if (r->source == QA_MODE_Q2_CTF)
-            return mode_ctf_reset(m, v, false, e);
+            return mode_ctf_reset(m, v, false, true, e);
                 r->competition = 1;
                 return begin_play(m, v, e);
             }
@@ -1005,6 +1105,10 @@ bool qa_modes_ghost_rejoin(qa_modes *m, qa_mode_id id, qa_actor_id actor, uint32
         member->stats = ghost->stats;
         member->ghost_code = code;
         ghost->actor = actor;
+        qa_builtin_player_info info;
+        if (m->options.services.player_info &&
+            m->options.services.player_info(m->options.services.context, actor, &info))
+            ghost->number = info.slot + 1;
         if (m->options.hooks.respawn &&
             !m->options.hooks.respawn(m->options.hooks.context, v->id, actor, true, e))
             return false;

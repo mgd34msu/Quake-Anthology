@@ -29,13 +29,18 @@ typedef struct qa_mode_id {
 enum { QA_MODE_MENU_LAYOUT_BYTES = 1400 };
 typedef enum qa_mode_menu_page {
     QA_MODE_MENU_NONE, QA_MODE_MENU_JOIN, QA_MODE_MENU_CREDITS, QA_MODE_MENU_NO_CHASE,
-    QA_MODE_MENU_SCOREBOARD
+    QA_MODE_MENU_SCOREBOARD, QA_MODE_MENU_ADMIN, QA_MODE_MENU_SETTINGS
 } qa_mode_menu_page;
+typedef struct qa_mode_ctf_settings {
+    int32_t match_minutes, setup_minutes, start_seconds;
+    bool weapons_stay, instant_items, quad_drop, instant_weapons, match_lock;
+} qa_mode_ctf_settings;
 typedef struct qa_mode_menu_state {
     qa_mode_menu_page page;
     int8_t cursor;
     uint64_t revision, refresh_frame;
     char layout[QA_MODE_MENU_LAYOUT_BYTES];
+    qa_mode_ctf_settings settings;
 } qa_mode_menu_state;
 typedef enum qa_mode_source {
     QA_MODE_Q1,
@@ -331,6 +336,10 @@ typedef struct qa_mode_source_settings {
     const char *admin_password, *warp_list, *level_name;
     int32_t skin_set;
     bool flag_initialized;
+    qa_mode_ctf_settings ctf;
+    uint32_t deathmatch_flags;
+    uint32_t max_clients;
+    bool instant_weapons_integer, match_lock_integer;
 } qa_mode_source_settings;
 typedef struct qa_modes_hooks {
     void *context;

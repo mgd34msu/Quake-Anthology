@@ -185,6 +185,15 @@ bool application_native_mode_source_settings(void *opaque, qa_mode_id mode,
     const qa_cvar_view *flag = qa_cvars_read(owner->cvars, owner->flag_init);
     const qa_cvar_view *admin = qa_cvars_read(owner->cvars, owner->ctf_cvars[Q2_CTF_ADMIN_PASSWORD]);
     const qa_cvar_view *warp = qa_cvars_read(owner->cvars, owner->ctf_cvars[Q2_CTF_WARP_LIST]);
+    const qa_cvar_view *match = qa_cvars_read(owner->cvars, owner->ctf_cvars[Q2_CTF_MATCHTIME]);
+    const qa_cvar_view *setup = qa_cvars_read(owner->cvars, owner->ctf_cvars[Q2_CTF_SETUPTIME]);
+    const qa_cvar_view *start = qa_cvars_read(owner->cvars, owner->ctf_cvars[Q2_CTF_STARTTIME]);
+    const qa_cvar_view *instant = qa_cvars_read(owner->cvars, owner->ctf_cvars[Q2_CTF_INSTANTWEAP]);
+    const qa_cvar_view *lock = qa_cvars_read(owner->cvars, owner->ctf_cvars[Q2_CTF_MATCHLOCK]);
+    uint32_t flags = qa_q2_source_deathmatch_flags(owner->cvars);
+    uint32_t capacity, clients;
+    if (!qa_q2_wire_policy(provider->state.q2, &capacity, &clients, NULL))
+        return false;
     qa_application *app = provider->application;
     qa_string_id level = app->current_map;
     qa_q2_wire_binding world;
@@ -199,7 +208,19 @@ bool application_native_mode_source_settings(void *opaque, qa_mode_id mode,
                                     .warp_list = warp ? warp->value : "",
                                     .level_name = qa_strings_cstr(qa_session_strings(app->session), level),
                                     .skin_set = skin ? skin->integer : 0,
-                                    .flag_initialized = flag && flag->number != 0};
+                                    .flag_initialized = flag && flag->number != 0,
+                                    .deathmatch_flags = flags,
+                                    .max_clients = clients,
+                                    .instant_weapons_integer = instant && instant->integer != 0,
+                                    .match_lock_integer = lock && lock->integer != 0,
+                                    .ctf = {.match_minutes = match ? qa_source_to_i32(match->number) : 20,
+                                            .setup_minutes = setup ? qa_source_to_i32(setup->number) : 10,
+                                            .start_seconds = start ? qa_source_to_i32(start->number) : 20,
+                                            .weapons_stay = (flags & 4u) != 0,
+                                            .instant_items = (flags & 16u) != 0,
+                                            .quad_drop = (flags & 16384u) != 0,
+                                            .instant_weapons = instant && instant->number != 0,
+                                            .match_lock = lock && lock->number != 0}};
     return true;
 }
 const qa_hud_cvar_handles *application_native_q2_console_hud_controls(const application_provider *provider) {

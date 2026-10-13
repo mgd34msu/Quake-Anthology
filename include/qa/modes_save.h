@@ -31,7 +31,7 @@ typedef struct qa_mode_ghost_state {
     qa_string_id name;
     qa_team_id team;
     qa_mode_statistics stats;
-    uint32_t code;
+    uint32_t code, number;
     int32_t score;
 } qa_mode_ghost_state;
 typedef struct qa_horde_monster_state {
