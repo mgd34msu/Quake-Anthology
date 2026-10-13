@@ -1490,12 +1490,16 @@ bool qa_application_connection_request_emit(qa_application *app,
     application_event_write write;
     if(!application_event_stream_begin(app,QA_APPLICATION_EVENT_CONNECTION_REQUEST,&write,error))
         goto blocked;
-    size_t bytes=strlen(event->server)+1;
-    char *server=application_event_stream_alloc(app,bytes,1,error);
-    if(!server) { application_event_stream_abort(app,&write,error); goto blocked; }
-    memcpy(server,event->server,bytes);
     write.envelope->raw.connection_request=*event;
-    write.envelope->raw.connection_request.server=server;
+    const char *text[]={event->server,event->username,event->password,event->label};
+    const char **stored[]={&write.envelope->raw.connection_request.server,
+        &write.envelope->raw.connection_request.username,&write.envelope->raw.connection_request.password,
+        &write.envelope->raw.connection_request.label};
+    for(size_t i=0;i<sizeof(text)/sizeof(*text);++i) {
+        if(!event_text(app,text[i],stored[i],error)) {
+            application_event_stream_abort(app,&write,error); goto blocked;
+        }
+    }
     if(application_event_stream_commit(app,&write,error)) return true;
 blocked:
     return error && error->code!=QA_OK ? false :

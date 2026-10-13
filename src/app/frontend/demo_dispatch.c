@@ -23,6 +23,8 @@ struct frontend_demo_dispatch {
     qa_frontend *frontend;
     frontend_demo_service *service;
     demo_registration *registrations;
+    qa_application_event_subscription connections;
+    qa_cvar_handle gtv_username, gtv_password;
     char names[8][16];
     size_t name_count;
     int next;
@@ -31,7 +33,8 @@ struct frontend_demo_dispatch {
     char *completion;
 };
 static const char *const demo_commands[]={"playdemo","demo","demomap","timedemo","stopdemo",
-    "record","rerecord","stop","stoprecord","serverrecord","serverstop","mvdrecord","mvdstop","startdemos","demos","demopause","mvdplayer"};
+    "record","rerecord","stop","stoprecord","serverrecord","serverstop","mvdrecord","mvdstop","startdemos","demos","demopause","mvdplayer",
+    "mvdconnect","mvdisconnect","mvdstatus","mvdcommand"};
 static bool registered_command(void *,const qa_command_invocation *,qa_error *);
 static bool completing(void *,const qa_command_context *,frontend_demo_format,frontend_demo_end,bool,qa_error *);
 static bool completed(void *,const qa_command_context *,frontend_demo_format,frontend_demo_end,bool,qa_error *);
@@ -69,6 +72,9 @@ bool frontend_demo_dispatch_create(qa_frontend *f,frontend_demo_dispatch **out,q
     frontend_demo_dispatch *d=calloc(1,sizeof(*d));
     if(!d)return frontend_fail(error,QA_ERROR_MEMORY,"Retaining frontend demo dispatcher");
     *out=d;d->frontend=f;
+    qa_cvars *cvars=qa_application_cvars(f->application);
+    d->gtv_username=qa_cvars_resolve(cvars,"mvd_username");
+    d->gtv_password=qa_cvars_resolve(cvars,"mvd_password");
     frontend_demo_service_options options={.context=d,.current=current,.read=read_recording,
         .record_source=record_source,.playback_source=playback_source,.print=print,
         .completing=completing,.completed=completed};
@@ -205,6 +211,105 @@ static bool named(const char *name,const char *expected) {
     }
     return !*name&&!*expected;
 }
+static bool gtv_option_text(const char *text) {
+    qa_bytes bytes={(const uint8_t *)text,strlen(text)};
+    size_t cursor=0;uint32_t scalar;
+    while(cursor<bytes.size) {
+        if(!qa_utf8_next_strict(bytes,&cursor,&scalar)||!scalar||scalar>255)return false;
+    }
+    return true;
+}
+static bool gtv_stage(frontend_demo_dispatch *d,
+    const qa_application_connection_request_event *request,const qa_command_context *context) {
+    bool subscribed=d->connections.application!=NULL;
+    qa_application_events_subscribe(d->frontend->application,&d->connections);
+    qa_error failure={0};
+    if(qa_application_connection_request_emit(d->frontend->application,request,&failure))return true;
+    if(!subscribed)qa_application_events_unsubscribe(&d->connections);
+    qa_application_feature_report(d->frontend->application,"GTV connection request",&failure);
+    frontend_console_print(d->frontend,context,failure.message);
+    frontend_console_print(d->frontend,context,"\n");
+    return true;
+}
+static bool gtv_command(frontend_demo_dispatch *d,const qa_command_invocation *call,size_t kind) {
+    static const char connect_usage[]="Usage: mvdconnect [-u user] [-p password] [-n name] <address[:port]>\n";
+    static const char disconnect_usage[]="Usage: mvdisconnect [-a|--all|conn_id|name]\n";
+    uint32_t physical_seat;
+    if(call->context.origin==QA_COMMAND_REMOTE||call->context.origin==QA_COMMAND_SERVER||
+        !frontend_command_seat_read(d->frontend,&call->context,&physical_seat)) {
+        frontend_console_print(d->frontend,&call->context,"GTV commands require a local client seat.\n");
+        return true;
+    }
+    qa_application_connection_request_event request={.recipient=d,.physical_seat=physical_seat};
+    if(kind==17) {
+        qa_cvars *cvars=qa_application_cvars(d->frontend->application);
+        const qa_cvar_view *username=qa_cvars_read(cvars,d->gtv_username);
+        const qa_cvar_view *password=qa_cvars_read(cvars,d->gtv_password);
+        request.username=username?username->value:"unnamed";
+        request.password=password?password->value:"";
+        size_t at=1;
+        for(;at<call->argc;++at) {
+            const char *option=call->argv[at];
+            if(!strcmp(option,"--")){++at;break;}
+            if(option[0]!='-')break;
+            if(!strcmp(option,"-h")||!strcmp(option,"--help")) {
+                frontend_console_print(d->frontend,&call->context,connect_usage);return true;
+            }
+            bool user=!strcmp(option,"-u")||!strcmp(option,"--user");
+            bool pass=!strcmp(option,"-p")||!strcmp(option,"--pass");
+            bool label=!strcmp(option,"-n")||!strcmp(option,"--name");
+            if(!user&&!pass&&!label) {
+                frontend_console_print(d->frontend,&call->context,"Unknown mvdconnect option: ");
+                frontend_console_print(d->frontend,&call->context,option);
+                frontend_console_print(d->frontend,&call->context,"\n");return true;
+            }
+            if(++at==call->argc) {
+                frontend_console_print(d->frontend,&call->context,"Missing value for ");
+                frontend_console_print(d->frontend,&call->context,option);
+                frontend_console_print(d->frontend,&call->context,"\n");return true;
+            }
+            if(!gtv_option_text(call->argv[at])) {
+                frontend_console_print(d->frontend,&call->context,"GTV options require non-NUL single-byte text\n");
+                return true;
+            }
+            if(user)request.username=call->argv[at];
+            else if(pass)request.password=call->argv[at];
+            else request.label=call->argv[at];
+        }
+        if(at==call->argc||!*call->argv[at]||at+1!=call->argc) {
+            frontend_console_print(d->frontend,&call->context,connect_usage);return true;
+        }
+        request.server=call->argv[at];
+        return gtv_stage(d,&request,&call->context);
+    }
+    if(kind==18) {
+        if(call->argc>2||(call->argc==2&&
+            (!strcmp(call->argv[1],"-h")||!strcmp(call->argv[1],"--help")))) {
+            frontend_console_print(d->frontend,&call->context,disconnect_usage);return true;
+        }
+        request.disconnect=true;
+        request.server=call->argc==2?call->argv[1]:"";
+        return gtv_stage(d,&request,&call->context);
+    }
+    if(kind==19) {
+        if(call->argc!=1)frontend_console_print(d->frontend,&call->context,"Usage: mvdstatus\n");
+        else frontend_network_gtv_status(d->frontend,&call->context);
+        return true;
+    }
+    if(call->argc<2||!call->args_text||!*call->args_text||
+        (call->argc==2&&(!strcmp(call->argv[1],"-h")||!strcmp(call->argv[1],"--help")))) {
+        frontend_console_print(d->frontend,&call->context,"Usage: mvdcommand <command>\n");return true;
+    }
+    qa_error failure={0};
+    if(!frontend_network_gtv_command(d->frontend,call->args_text,&failure)) {
+        qa_application_feature_report(d->frontend->application,"GTV command",&failure);
+        frontend_console_print(d->frontend,&call->context,failure.message);
+        frontend_console_print(d->frontend,&call->context,"\n");
+    }
+    return true;
+}
+bool frontend_demo_dispatch_gtv_disconnect(frontend_demo_dispatch *d,const qa_command_invocation *call)
+{ return gtv_command(d,call,18); }
 bool frontend_demo_dispatch_command(frontend_demo_dispatch *d,const qa_command_invocation *call,
     bool *handled,qa_error *error) {
     if(!d||!call||!handled||!call->argc||!call->argv||!call->console||
@@ -222,8 +327,9 @@ bool frontend_demo_dispatch_command(frontend_demo_dispatch *d,const qa_command_i
     uint64_t lifetime;qa_command_handler handler=NULL;void *user=NULL;
     if(!entry||!qa_console_registration_read(registered,entry->name,entry->owner,&lifetime,&handler,&user)||
         handler!=registered_command||user!=d)return true;
-    frontend_demo_format format=frontend_network_demo_format(d->frontend,&call->context);
     *handled=true;
+    if(kind>=17)return gtv_command(d,call,kind);
+    frontend_demo_format format=frontend_network_demo_format(d->frontend,&call->context);
     if(kind==3&&format!=FRONTEND_DEMO_NQ&&format!=FRONTEND_DEMO_QW) {
         frontend_console_print(d->frontend,&call->context,"Timedemo is unavailable for this Source profile.\n");return true;
     }
@@ -317,8 +423,35 @@ bool frontend_demo_dispatch_unregister(frontend_demo_dispatch *d,qa_console *con
     }
     *at=r->next;free(r);return true;
 }
+static void gtv_execute(frontend_demo_dispatch *d) {
+    if(!d->connections.application)return;
+    qa_application *app=d->connections.application;
+    qa_application_event_range range={.next=d->connections.next,.end=qa_application_events_next(app)};
+    qa_application_event_view view;
+    while(qa_application_event_raw_next(app,&range,
+        UINT64_C(1)<<QA_APPLICATION_EVENT_CONNECTION_REQUEST,&view)) {
+        const qa_application_connection_request_event *request=view.value.connection_request;
+        if(request->recipient!=d)continue;
+        qa_event_lease *lease=qa_application_event_retain(app,range.id);
+        qa_error failure={0};bool ready=true;
+        if(!request->disconnect) {
+            frontend_demo_dispatch_manual_game(d);
+            ready=frontend_demo_service_stop(d->service,&failure);
+        }
+        if(ready)ready=frontend_network_gtv_request(d->frontend,request,&failure);
+        if(!ready && failure.code==QA_OK) {
+            qa_event_lease_release(lease); range.next=range.id; break;
+        }
+        if(!ready)qa_application_feature_report(d->frontend->application,"GTV connection request",&failure);
+        qa_event_lease_release(lease);
+    }
+    qa_application_events_consumed(&d->connections,range.next);
+    if(d->connections.next>=qa_application_events_next(app))
+        qa_application_events_unsubscribe(&d->connections);
+}
 bool frontend_demo_dispatch_execute(frontend_demo_dispatch *d,qa_error *error) {
     if(!d)return true;
+    gtv_execute(d);
     if(!qa_application_startup_pending(d->frontend->application)) {
         if(d->completion_ready) {
             qa_command_context source;qa_console *console;
@@ -364,6 +497,7 @@ bool frontend_demo_dispatch_capture_ready(const frontend_demo_dispatch *d,qa_err
     if(!d)return true;
     if(!frontend_demo_service_idle(d->service)||frontend_demo_service_pending(d->service)||
         frontend_demo_service_active(d->service)||d->schedule_next||d->completion_ready||d->return_menu||
+        d->connections.application||
         (d->cycle_bound&&d->next>=0))
         return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Active native demo file cursors have no cold adoption recipe");
     return true;
@@ -371,13 +505,15 @@ bool frontend_demo_dispatch_capture_ready(const frontend_demo_dispatch *d,qa_err
 bool frontend_demo_dispatch_stop(frontend_demo_dispatch *d,qa_error *error) {
     if(!d)return true;
     frontend_demo_dispatch_manual_game(d);
-    return frontend_demo_service_stop(d->service,error);
+    if(!frontend_demo_service_stop(d->service,error))return false;
+    qa_application_events_unsubscribe(&d->connections);return true;
 }
 bool frontend_demo_dispatch_destroy(frontend_demo_dispatch **owner,qa_error *error) {
     frontend_demo_dispatch *d=owner?*owner:NULL;if(!d)return true;
     for(demo_registration *r=d->registrations;r;r=r->next)
         if(!qa_console_cvar_returned(r->console))return frontend_fail(error,QA_ERROR_ARGUMENT,"Demo command handler is entered during retirement");
     if(!frontend_demo_service_destroy(&d->service,error))return false;
+    qa_application_events_unsubscribe(&d->connections);
     while(d->registrations) {
         demo_registration *r=d->registrations;
         if(!frontend_demo_dispatch_unregister(d,r->console,r->dispatch,r->lifetime,error))return false;

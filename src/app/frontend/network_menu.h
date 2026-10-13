@@ -11,6 +11,9 @@
 
 frontend_demo_format frontend_network_demo_format(const qa_frontend *,const qa_command_context *);
 bool frontend_network_demo_viewpoint(qa_frontend *, uint8_t player);
+bool frontend_network_gtv_request(qa_frontend *,const qa_application_connection_request_event *,qa_error *);
+bool frontend_network_gtv_command(qa_frontend *,const char *,qa_error *);
+void frontend_network_gtv_status(qa_frontend *,const qa_command_context *);
 bool frontend_network_demo_record(qa_frontend *,const qa_command_context *,frontend_demo_action,
     frontend_demo_record_source *,qa_error *);
 bool frontend_network_demo_playback(qa_frontend *,const qa_command_context *,frontend_demo_format,

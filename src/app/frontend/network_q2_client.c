@@ -987,6 +987,10 @@ static bool mvd_header_decode(frontend_network_q2_client *owner,qa_q2_mvd_comman
     if (!qa_q2_mvd_read_header_arena(&owner->mvd_cursor,command,qa_unified_frame_lease_arena(storage),&decoded)) {
         qa_unified_frame_lease_release(storage); return false;
     }
+    if (!protocol_equal(decoded.profile.protocol,owner->domain.protocol)) {
+        qa_unified_frame_lease_release(storage);
+        return frontend_fail(error,QA_ERROR_UNSUPPORTED,"MVD stream changed protocol profile; reopen the watch");
+    }
     qa_unified_frame_lease_release(owner->mvd_header_storage);
     owner->mvd_header_storage=storage; owner->mvd_header=decoded; owner->mvd_ordinal=0;
     if (!mvd_frame_decode(owner,true,error)) return false;
@@ -1068,10 +1072,15 @@ bool frontend_network_q2_client_demo_record(frontend_network_q2_client *owner,
         .detach=demo_detach,.release=demo_release};
     return true;
 }
+void frontend_network_q2_client_mvd_close(frontend_network_q2_client *owner,const char *reason)
+{
+    if (!owner || !owner->options.live_mvd || owner->retired) return;
+    snprintf(owner->reason,sizeof(owner->reason),"%s",reason?reason:"GTV watch closed");
+    owner->retired=true;
+}
 static bool mvd_watch_full(frontend_network_q2_client *owner)
 {
-    snprintf(owner->reason,sizeof(owner->reason),"GTV watch buffer exceeded its 1 MiB limit");
-    owner->retired=true;
+    frontend_network_q2_client_mvd_close(owner,"GTV watch buffer exceeded its 1 MiB limit");
     frontend_console_print(owner->options.frontend,NULL,owner->reason);
     return true;
 }
@@ -1218,6 +1227,16 @@ bool frontend_network_q2_client_demo_playback(frontend_network_q2_client *owner,
     return true;
 }
 
+bool frontend_network_q2_mvd_protocol(qa_bytes message,qa_net_protocol_id *out,qa_error *error)
+{
+    qa_net_reader wire; qa_net_reader_init(&wire,message,error);
+    qa_q2_mvd_command command;
+    if (!qa_q2_mvd_read_command(&wire,&command)) return false;
+    qa_arena storage={0}; qa_q2_mvd_header header;
+    bool okay=qa_q2_mvd_read_header_arena(&wire,command,&storage,&header);
+    if (okay) *out=header.profile.protocol;
+    qa_arena_destroy(&storage); return okay;
+}
 bool frontend_network_q2_demo_protocol(const frontend_demo_reader *reader,
     qa_net_protocol_id *out,qa_error *error)
 {
@@ -1229,13 +1248,7 @@ bool frontend_network_q2_demo_protocol(const frontend_demo_reader *reader,
         uint16_t length=qa_net_read_u16(&file);
         if (!length || length>QA_Q2_MVD_MESSAGE_BYTES || !qa_net_read_bytes(&file,length,&message))
             return qa_net_reader_fail(&file,"MVD demo has no initial protocol message");
-        qa_net_reader wire; qa_net_reader_init(&wire,message,error);
-        qa_q2_mvd_command command;
-        if (!qa_q2_mvd_read_command(&wire,&command)) return false;
-        qa_arena storage={0}; qa_q2_mvd_header header;
-        bool okay=qa_q2_mvd_read_header_arena(&wire,command,&storage,&header);
-        if (okay) *out=header.profile.protocol;
-        qa_arena_destroy(&storage); return okay;
+        return frontend_network_q2_mvd_protocol(message,out,error);
     }
     if(!out || !frontend_demo_peek_message(reader,&message,error)) return false;
     qa_net_reader wire; qa_net_reader_init(&wire,message,error);

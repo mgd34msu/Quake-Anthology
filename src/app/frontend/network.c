@@ -45,6 +45,7 @@
 #include "network_q2_input.h"
 #include "network_q1_input.h"
 #include "network_q2_client.h"
+#include "network_gtv.h"
 #include "network_q1_client.h"
 #include "neutral_config.h"
 #include "config_store.h"
@@ -215,6 +216,10 @@ struct qa_frontend_network {
     frontend_nq_host *nq_host;
     frontend_qw_host *qw_host;
     frontend_network_q2_client *q2_client_owner;
+    frontend_gtv_watch *gtv;
+    uint32_t gtv_seat;
+    qa_string_id gtv_label;
+    bool gtv_playback;
     frontend_network_q1_client *q1_client_owner;
     frontend_network_q2_host *q2_host;
     frontend_network_unified *unified;
@@ -261,6 +266,7 @@ struct qa_network_q3_round {
     bool queued[64], resolved[64];
     bool begun, bound, finished;
 };
+static bool gtv_close(qa_frontend_network *,qa_error *);
 static frontend_q3_client *q3_client_seat(const qa_frontend *f, uint64_t receiver, uint32_t seat)
 {
     qa_frontend_network *n = f ? f->network : NULL;
@@ -4414,6 +4420,8 @@ void frontend_network_source_admin_unbind(qa_console *console,const qa_command_c
 static bool command(void *context, const qa_command_invocation *call, qa_error *error)
 {
     qa_frontend_network *n = context; const char *name = call->argv[0];
+    if(!strcmp(name,"disconnect") && n->gtv)
+        return frontend_demo_dispatch_gtv_disconnect(n->frontend->demos,call);
     if (!strcmp(name, "connect") || !strcmp(name, "reconnect") || !strcmp(name, "disconnect"))
         return client_attempt_queue(n, call, error);
     if (!strcmp(name, "localservers") || !strcmp(name, "globalservers") || !strcmp(name, "ping") || !strcmp(name, "serverstatus"))
@@ -6107,6 +6115,7 @@ bool frontend_network_retire_clients(qa_frontend *f,qa_error *error)
         !qa_http_callbacks_idle(frontend_tools_http(f)))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT retirement requires its returned frontend and Network callbacks");
     if(!n) return true;
+    if(!gtv_close(n,error)) return false;
     if(!local_clients_destroy(n,error) || !frontend_network_close_client(f,error) ||
         !frontend_network_q2_client_destroy(&n->q2_client_owner,error) ||
         !frontend_network_q1_client_destroy(&n->q1_client_owner,error)) return false;
@@ -6151,6 +6160,7 @@ bool frontend_network_stop_server(qa_frontend *f, bool *complete, qa_error *erro
 bool frontend_network_destroy(qa_frontend *f, qa_error *error)
 {
     qa_frontend_network *n = f->network; if (!n) return true;
+    if(!gtv_close(n,error)) return false;
     if(n->demo_q1_owner || n->demo_q3_sink.append || n->demo_playback)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Demo receivers must detach before Network retirement");
     if (!frontend_network_world_change_ready(f, error) || !qa_http_callbacks_idle(frontend_tools_http(f)))
@@ -6216,6 +6226,7 @@ static bool q1_client_tick_returned(qa_frontend_network *n,qa_error *error)
 static bool q2_client_tick_returned(qa_frontend_network *n,qa_error *error)
 {
     if(!n->q2_client_owner) return true;
+    if(n->gtv && frontend_network_q2_client_retired(n->q2_client_owner)) return true;
     if(!frontend_network_q2_client_tick(n->q2_client_owner,n->frontend->wall_time_ns,error)) return false;
     if(!frontend_network_q2_client_retired(n->q2_client_owner)) return true;
     if(!frontend_demo_dispatch_sources_returned(n->frontend->demos,error)) return false;
@@ -6320,6 +6331,13 @@ bool frontend_network_intake(qa_frontend *f,qa_platform_events *events,uint64_t 
         if (!qa_net_transport_maintenance(endpoint, now, error) ||
             (qa_network_receive_ready(local->runtime) &&
                 !qa_network_events_collect(&source, events, now, 256, error))) { ok = false; break; }
+    }
+    if(ok && n->gtv) {
+        qa_error failure={0};
+        if(!frontend_gtv_watch_collect(n->gtv,events,now,(double)f->wall_time_ns/1000000.0,&failure)) {
+            frontend_network_q2_client_mvd_close(n->q2_client_owner,failure.message);
+            if(failure.code!=QA_OK) frontend_console_print(f,NULL,failure.message);
+        }
     }
     --n->busy;
     return ok;
@@ -8462,6 +8480,147 @@ static bool demo_playback_release(void **owner,qa_error *error)
         !frontend_network_q2_client_destroy(&n->q2_client_owner,error))return false;
     n->demo_source=(frontend_demo_playback_source){0};n->demo_playback=false;*owner=NULL;return true;
 }
+static bool gtv_close(qa_frontend_network *n,qa_error *error)
+{
+    if(!n || !n->gtv) return true;
+    if(n->gtv_playback) {
+        void *owner=n;
+        if(!demo_playback_release(&owner,error)) return false;
+    }
+    frontend_gtv_watch_destroy(n->gtv); n->gtv=NULL;
+    n->gtv_playback=false; n->gtv_label=0;
+    return true;
+}
+static bool playback_clients_retire(qa_frontend_network *n,frontend_demo_format format,qa_error *error)
+{
+    qa_frontend *f=n->frontend;
+    if(format!=FRONTEND_DEMO_Q3 && !frontend_network_local_groups_retire(f,error)) return false;
+    if(n->q1_client_owner && !frontend_network_q1_client_disconnect(n->q1_client_owner,"demo playback",error)) return false;
+    if(!frontend_network_q1_client_destroy(&n->q1_client_owner,error) ||
+        !frontend_network_q2_client_destroy(&n->q2_client_owner,error)) return false;
+    if(n->q3_clients[0].q3_client_requested && !n->q3_clients[0].q3_client_closed &&
+        !client_close_attempt(&n->q3_clients[0],error)) return false;
+    if(n->q3_clients[0].q3_client_requested) n->q3_clients[0].q3_client_attached=false;
+    return true;
+}
+static bool playback_q2_create(qa_frontend_network *n,qa_net_protocol_id wire,
+    uint32_t physical,frontend_demo_format format,bool live,qa_error *error)
+{
+    qa_net_address local={.kind=QA_NET_LOOPBACK,.host.loopback="demo"};
+    frontend_network_q2_client_options options={.frontend=n->frontend,.runtime=n->runtime,
+        .remote=local,.protocol=wire,.physical_seat=physical,.demo=true,.live_mvd=live,
+        .demo_format=format,.context=n,.current=q2_client_current,
+        .download_stage=q2_download_stage,.restore_stage=q2_restore_stage};
+    return frontend_network_q2_client_create(&options,&n->q2_client_owner,error) &&
+        frontend_network_q2_client_demo_playback(n->q2_client_owner,&n->demo_source,error);
+}
+static bool gtv_event(void *context,const qa_gtv_event *event,qa_error *error)
+{
+    qa_frontend_network *n=context;
+    if(event->kind==QA_GTV_EVENT_DATA) {
+        if(!n->gtv_playback) {
+            qa_net_protocol_id wire;
+            if(!frontend_network_q2_mvd_protocol(event->payload,&wire,error) ||
+                !playback_clients_retire(n,FRONTEND_DEMO_MVD,error)) return false;
+            n->demo_format=FRONTEND_DEMO_MVD; n->demo_playback=true; n->demo_first_frame=true;
+            n->gtv_playback=true;
+            if(!playback_q2_create(n,wire,n->gtv_seat,FRONTEND_DEMO_MVD,true,error)) return false;
+        }
+        return frontend_network_q2_client_mvd_feed(n->q2_client_owner,event->payload,error);
+    }
+    if(event->kind==QA_GTV_EVENT_CLOSED) {
+        if(n->gtv_playback) frontend_network_q2_client_mvd_close(n->q2_client_owner,"GTV stream closed");
+        frontend_console_print(n->frontend,NULL,"GTV stream closed.\n");
+    } else if(event->kind==QA_GTV_EVENT_STARTED) {
+        frontend_console_print(n->frontend,NULL,"GTV stream started.\n");
+    } else if(event->kind==QA_GTV_EVENT_SUSPENDED) {
+        frontend_console_print(n->frontend,NULL,"GTV stream suspended.\n");
+    } else if(event->kind==QA_GTV_EVENT_RESUMED) {
+        frontend_console_print(n->frontend,NULL,"GTV stream resumed.\n");
+    }
+    return true;
+}
+static bool gtv_identity_text(const char *text,char output[256],qa_error *error)
+{
+    size_t count=0;
+    if(!qa_text_to_source_bytes((qa_bytes){(const uint8_t *)text,strlen(text)},
+        (uint8_t *)output,256,&count,error)) return false;
+    output[count]=0; return true;
+}
+bool frontend_network_gtv_request(qa_frontend *f,const qa_application_connection_request_event *request,qa_error *error)
+{
+    if(request->disconnect) {
+        qa_frontend_network *n=f->network;
+        if(!n || !n->gtv) { frontend_console_print(f,NULL,"No GTV connections.\n"); return true; }
+        const char *selected=request->server;
+        if(*selected && strcmp(selected,"-a") && strcmp(selected,"--all") &&
+            strcmp(selected,"1") && strcmp(selected,
+                qa_strings_cstr(qa_session_strings(qa_application_session(f->application)),n->gtv_label)))
+            return frontend_fail(error,QA_ERROR_NOT_FOUND,"No such GTV connection");
+        return gtv_close(n,error);
+    }
+    qa_net_address endpoint;
+    char username[256],password[256];
+    if(!qa_net_address_resolve(request->server,27910,0,&endpoint,error) ||
+        !gtv_identity_text(request->username?request->username:"unnamed",username,error) ||
+        !gtv_identity_text(request->password?request->password:"",password,error)) return false;
+    if(!frontend_network_create(f,error)) return false;
+    qa_frontend_network *n=f->network;
+    if(!gtv_close(n,error)) return false;
+    n->gtv_seat=request->physical_seat;
+    if(!qa_strings_intern_cstr(qa_session_strings(qa_application_session(f->application)),
+        request->label?request->label:request->server,&n->gtv_label,error)) return false;
+    qa_gtv_identity identity={username,password,"Quake Anthology"};
+    bool okay=frontend_gtv_watch_create(&endpoint,&identity,gtv_event,n,&n->gtv,error);
+    volatile char *private_text=password;
+    for(size_t i=0;i<sizeof(password);++i) private_text[i]=0;
+    if(okay) frontend_console_print(f,NULL,"Connecting to GTV stream.\n");
+    return okay;
+}
+bool frontend_network_gtv_command(qa_frontend *f,const char *text,qa_error *error)
+{
+    return frontend_gtv_watch_command(f->network?f->network->gtv:NULL,text,error);
+}
+void frontend_network_gtv_status(qa_frontend *f,const qa_command_context *source)
+{
+    const qa_frontend_network *n=f->network;
+    if(!n || !n->gtv) { frontend_console_print(f,source,"No GTV connections.\n"); return; }
+    frontend_console_print(f,source,"GTV 1: ");
+    frontend_console_print(f,source,qa_strings_cstr(qa_session_strings(qa_application_session(f->application)),n->gtv_label));
+    frontend_console_print(f,source,frontend_gtv_watch_closed(n->gtv)?" (closed)\n":
+        n->gtv_playback?" (playing)\n":" (connecting)\n");
+}
+bool frontend_network_stream_receive(qa_frontend *f,const qa_sys_event *event,qa_bytes payload,
+    bool *recognized,qa_error *error)
+{
+    (void)error;
+    qa_frontend_network *n=f->network;
+    qa_error failure={0};
+    if(!frontend_gtv_watch_receive(n?n->gtv:NULL,event,payload,recognized,&failure) && n) {
+        if(n->gtv_playback) frontend_network_q2_client_mvd_close(n->q2_client_owner,failure.message);
+        if(failure.code!=QA_OK) frontend_console_print(f,NULL,failure.message);
+    }
+    return true;
+}
+bool frontend_network_gtv_advance(qa_frontend *f,uint64_t elapsed_ns,qa_error *error)
+{
+    (void)error;
+    qa_frontend_network *n=f->network;
+    if(!n || !n->gtv) return true;
+    qa_error failure={0};
+    bool closed=frontend_gtv_watch_closed(n->gtv) ||
+        (n->gtv_playback && frontend_network_q2_client_retired(n->q2_client_owner));
+    if(!closed && n->gtv_playback && n->demo_source.owner) {
+        frontend_demo_end end=FRONTEND_DEMO_RUNNING;
+        if(!frontend_network_q2_client_mvd_advance(n->q2_client_owner,elapsed_ns,f->time_ns,
+            f->frame_number,&end,&failure)) {
+            frontend_network_q2_client_mvd_close(n->q2_client_owner,failure.message); closed=true;
+            if(failure.code!=QA_OK) frontend_console_print(f,NULL,failure.message);
+        } else closed=end!=FRONTEND_DEMO_RUNNING;
+    }
+    if(closed) (void)gtv_close(n,&failure);
+    return true;
+}
 static bool demo_q3_sequence(void *context,int32_t sequence,qa_error *error)
 {
     qa_frontend_network *n=context;
@@ -8516,6 +8675,7 @@ bool frontend_network_demo_playback(qa_frontend *f,const qa_command_context *sou
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Playback requires its actual physical Source seat");
     if(!frontend_network_create(f,error))return false;
     qa_frontend_network *n=f->network;
+    if(!gtv_close(n,error)) return false;
     if(n->busy||n->demo_playback||n->detached_transport||!qa_network_callbacks_idle(n->runtime)||f->options.dedicated)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Demo playback requires its returned presentation CLIENT");
     if(format==FRONTEND_DEMO_Q2_SERVER)
@@ -8523,14 +8683,9 @@ bool frontend_network_demo_playback(qa_frontend *f,const qa_command_context *sou
     if(format==FRONTEND_DEMO_Q3&&(protocol!=68||!n->q3_clients[0].q3_client_requested||!n->q3_clients[0].q3_cgame_owner))
         return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Q3 demo playback requires protocol 68 and an installed real Q3 CLIENT");
     if(n->demo_q1_owner||n->demo_q3_sink.append)return frontend_fail(error,QA_ERROR_ARGUMENT,"Recording sink must detach before demo playback");
-    if(format!=FRONTEND_DEMO_Q3&&!frontend_network_local_groups_retire(f,error))return false;
-    if(n->q1_client_owner&&!frontend_network_q1_client_disconnect(n->q1_client_owner,"demo playback",error))return false;
-    if(!frontend_network_q1_client_destroy(&n->q1_client_owner,error)||
-        !frontend_network_q2_client_destroy(&n->q2_client_owner,error))return false;
-    if(n->q3_clients[0].q3_client_requested&&!n->q3_clients[0].q3_client_closed&&!client_close_attempt(&n->q3_clients[0],error))return false;
+    if(!playback_clients_retire(n,format,error)) return false;
     if(format==FRONTEND_DEMO_Q3&&n->q3_clients[0].q3_client_epoch==UINT64_MAX)
         return frontend_fail(error,QA_ERROR_FORMAT,"Q3 demo connection epoch is exhausted");
-    if(n->q3_clients[0].q3_client_requested)n->q3_clients[0].q3_client_attached=false;
     n->demo_format=format;n->demo_playback=true;n->demo_first_frame=true;
     *out=(frontend_demo_playback_source){n,demo_playback_current,demo_playback_advance,demo_playback_release};
     qa_net_address local={.kind=QA_NET_LOOPBACK,.host.loopback="demo"};
@@ -8542,11 +8697,7 @@ bool frontend_network_demo_playback(qa_frontend *f,const qa_command_context *sou
     if(format==FRONTEND_DEMO_Q2 || format==FRONTEND_DEMO_MVD) {
         qa_net_protocol_id wire;
         if(!frontend_network_q2_demo_protocol(reader,&wire,error))return false;
-        frontend_network_q2_client_options options={.frontend=f,.runtime=n->runtime,.remote=local,.protocol=wire,
-            .physical_seat=physical,.demo=true,.demo_format=format,.context=n,.current=q2_client_current,
-            .download_stage=q2_download_stage,.restore_stage=q2_restore_stage};
-        return frontend_network_q2_client_create(&options,&n->q2_client_owner,error)&&
-            frontend_network_q2_client_demo_playback(n->q2_client_owner,&n->demo_source,error);
+        return playback_q2_create(n,wire,physical,format,false,error);
     }
     n->q3_clients[0].q3_client_previous_epoch=n->q3_clients[0].q3_client_epoch;n->q3_clients[0].q3_client_previous=n->q3_clients[0].q3_client;
     ++n->q3_clients[0].q3_client_epoch;n->q3_clients[0].q3_client=(qa_net_client_id){0};n->q3_clients[0].q3_client_rebind=true;

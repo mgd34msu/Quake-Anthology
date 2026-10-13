@@ -437,9 +437,12 @@ bool frontend_platform_drain(qa_frontend *frontend, bool input_ready, qa_error *
         case QA_PLATFORM_EVENT_QUIT:
             qa_application_request_stop(frontend->application);
             break;
-        case QA_PLATFORM_EVENT_STREAM:
-            ok=frontend_tools_stream_receive(frontend,&event,payload,error);
+        case QA_PLATFORM_EVENT_STREAM: {
+            bool recognized=false;
+            ok=frontend_network_stream_receive(frontend,&event,payload,&recognized,error);
+            if(ok && !recognized) ok=frontend_tools_stream_receive(frontend,&event,payload,error);
             break;
+        }
         case QA_PLATFORM_EVENT_HTTP:
             ok=frontend_tools_http_receive(frontend,&event,payload,error);
             break;
@@ -809,6 +812,7 @@ static bool continue_mode(qa_frontend *frontend,uint64_t elapsed_ns,bool *ready,
     }
     if (!frontend_demo_dispatch_execute(frontend->demos,error) ||
         !frontend_demo_dispatch_advance(frontend->demos,elapsed_ns,frontend->frame_number,error)) return false;
+    if (!frontend_network_gtv_advance(frontend,elapsed_ns,error)) return false;
     if (!frontend_network_client_attempts_advance(frontend,error)) return false;
     qa_application_client_preparation *client=frontend_config_store_client_preparation(frontend->config_store);
     if (client) {

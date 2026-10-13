@@ -34,12 +34,14 @@ typedef struct frontend_network_q2_client_options {
 bool frontend_network_q2_client_create(const frontend_network_q2_client_options *,
     frontend_network_q2_client **, qa_error *);
 bool frontend_network_q2_demo_protocol(const frontend_demo_reader *, qa_net_protocol_id *, qa_error *);
+bool frontend_network_q2_mvd_protocol(qa_bytes, qa_net_protocol_id *, qa_error *);
 bool frontend_network_q2_client_demo_record(frontend_network_q2_client *,
     frontend_demo_record_source *, qa_error *);
 bool frontend_network_q2_client_demo_playback(frontend_network_q2_client *,
     frontend_demo_playback_source *, qa_error *);
 void frontend_network_q2_client_demo_viewpoint(frontend_network_q2_client *, uint8_t);
 bool frontend_network_q2_client_mvd_feed(frontend_network_q2_client *, qa_bytes, qa_error *);
+void frontend_network_q2_client_mvd_close(frontend_network_q2_client *, const char *reason);
 bool frontend_network_q2_client_mvd_advance(frontend_network_q2_client *,
     uint64_t elapsed_ns,uint64_t time_ns,uint64_t frame,frontend_demo_end *,qa_error *);
 bool frontend_network_q2_client_receive(frontend_network_q2_client *,

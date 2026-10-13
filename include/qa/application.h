@@ -640,11 +640,14 @@ typedef struct qa_application_ranking_report_event {
     qa_ranking_source_report report;
 } qa_application_ranking_report_event;
 
-/* Transient network request. Admission copies server into the record lease. */
+/* Transient network request. Text belongs to the record lease, including
+ * optional stream credentials; it is never interned as session state. */
 typedef struct qa_application_connection_request_event {
     const void *recipient;
     bool disconnect;
     const char *server;
+    const char *username, *password, *label;
+    uint32_t physical_seat;
 } qa_application_connection_request_event;
 
 struct qa_debug_line;
