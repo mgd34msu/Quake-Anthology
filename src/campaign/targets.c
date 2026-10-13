@@ -70,7 +70,8 @@ qa_targets *qa_targets_create(const qa_target_options *options, qa_error *error)
         return NULL;
     }
     static const char *const runtime_names[TARGET_NAME_COUNT] = {
-        "monster_zombie", "func_areaportal", "func_door", "func_door_rotating"
+        "monster_zombie", "func_areaportal", "func_door", "func_door_rotating",
+        "func_door_secret", "func_water"
     };
     for (unsigned i = 0; i < TARGET_NAME_COUNT; ++i)
         if (!qa_strings_intern_cstr(qa_session_strings(options->session), runtime_names[i],
@@ -775,7 +776,10 @@ static bool use_now(qa_targets *targets, qa_target_use request, target_snapshot_
                 bool skip_portal = !q3 && qa_targets_read(targets, current, &destination) &&
                                    (destination.classname == targets->runtime_names[TARGET_NAME_FUNC_AREAPORTAL]) &&
                                    ((request.fields.classname == targets->runtime_names[TARGET_NAME_FUNC_DOOR]) ||
-                                    (request.fields.classname == targets->runtime_names[TARGET_NAME_FUNC_DOOR_ROTATING]));
+                                    (request.fields.classname == targets->runtime_names[TARGET_NAME_FUNC_DOOR_ROTATING]) ||
+                                    (request.dialect == QA_RULESET_Q2_RERELEASE &&
+                                     (request.fields.classname == targets->runtime_names[TARGET_NAME_FUNC_DOOR_SECRET] ||
+                                      request.fields.classname == targets->runtime_names[TARGET_NAME_FUNC_WATER])));
                 if (!skip_portal &&
                     !qa_targets_invoke(targets, current, request.source, request.activator, error))
                     return false;

@@ -143,8 +143,13 @@ static const original_entity_class *entity_class(qa_q2_game *g, const q2_entity_
         name = qa_strings_cstr(qa_session_strings(g->services.session),
             g->runtime_names[Q2_NAME_RESOURCE_MAKRON_TORSO]);
     if (!name) return NULL;
+    bool water = s->kind == Q2E_WATER &&
+        (s->classname == g->runtime_names[Q2_NAME_FUNC_WATER] ||
+         (g->options.rules == QA_RULESET_Q2_CLASSIC &&
+          s->classname == g->runtime_names[Q2_NAME_FUNC_DOOR]));
     for (size_t i = 0; i < sizeof(entity_classes) / sizeof(*entity_classes); ++i)
-        if (!strcmp(name, entity_classes[i].name)) return entity_classes + i;
+        if (water ? entity_classes[i].kind == Q2E_WATER :
+            !strcmp(name, entity_classes[i].name)) return entity_classes + i;
     if (s->kind == Q2E_DOOR_TRIGGER || s->kind == Q2E_PLAT_TRIGGER ||
         s->kind == Q2E_CAMERA_DUMMY ||
         (s->kind == Q2E_SCENERY && s->scenery == Q2S_TELEPORT_TRIGGER))
@@ -172,12 +177,32 @@ static bool read_entity(qa_q2_game *g, q2_original_record_io *io, q2_actor *a)
 {
     qa_string_id classname = 0;
     if (!q2_original_string(g, io, "classname", 280, &classname)) return false;
+    bool water = classname == g->runtime_names[Q2_NAME_FUNC_WATER];
+    if (io->edition == QA_RULESET_Q2_CLASSIC &&
+        classname == g->runtime_names[Q2_NAME_FUNC_DOOR]) {
+        bool door_use;
+        if (!q2_original_function_matches(g, io, "use", 448, "door_use", &door_use))
+            return false;
+        if (door_use) {
+            bool empty, smart;
+            if (!q2_original_function_matches(g, io, "blocked", 440, NULL, &empty))
+                return false;
+            if (empty) water = true;
+            else {
+                if (!q2_original_function_matches(g, io, "blocked", 440,
+                    "smart_water_blocked", &smart)) return false;
+                water = smart;
+            }
+        }
+    }
+    if (water && io->edition == QA_RULESET_Q2_CLASSIC)
+        classname = g->runtime_names[Q2_NAME_FUNC_DOOR];
     bool torso;
     if (!q2_original_function_matches(g, io, "think", 436, "makron_torso_think", &torso))
         return false;
     if (!a->entity) {
         q2_entity_state state = {.classname = classname,
-            .kind = torso ? Q2E_SCENERY : Q2E_POINT,
+            .kind = water ? Q2E_WATER : torso ? Q2E_SCENERY : Q2E_POINT,
             .scenery = torso ? Q2S_ANIMATION : Q2S_NONE,
             .animation_first = torso ? 346 : 0, .animation_end = torso ? 365 : 0};
         const original_entity_class *type = entity_class(g, &state);
@@ -214,6 +239,10 @@ static bool read_entity(qa_q2_game *g, q2_original_record_io *io, q2_actor *a)
         a->entity->scenery = type ? type->scenery : Q2S_NONE;
         if (type && !strcmp(type->name, "plat2_trigger")) a->entity->stage = 2;
     } else a->entity->classname = classname;
+    if (water) a->entity->kind = Q2E_WATER;
+    else if (io->edition == QA_RULESET_Q2_CLASSIC &&
+        classname == g->runtime_names[Q2_NAME_FUNC_DOOR] &&
+        a->entity->kind == Q2E_WATER) a->entity->kind = Q2E_DOOR;
     if (torso) {
         a->entity->kind = Q2E_SCENERY;
         a->entity->scenery = Q2S_ANIMATION;

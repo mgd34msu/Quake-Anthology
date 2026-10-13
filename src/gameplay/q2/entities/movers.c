@@ -43,9 +43,11 @@ bool q2_mover_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         s->kind = Q2E_DOOR;
     else if (!strcmp(name, "func_button"))
         s->kind = Q2E_BUTTON;
-    else if (!strcmp(name, "func_water"))
+    else if (!strcmp(name, "func_water")) {
         s->kind = Q2E_WATER;
-    else if (!strcmp(name, "func_train") || !strcmp(name, "misc_viper") ||
+        if (g->options.rules == QA_RULESET_Q2_CLASSIC)
+            s->classname = g->runtime_names[Q2_NAME_FUNC_DOOR];
+    } else if (!strcmp(name, "func_train") || !strcmp(name, "misc_viper") ||
              !strcmp(name, "misc_strogg_ship") || !strcmp(name, "misc_crashviper") ||
              !strcmp(name, "misc_transport"))
         s->kind = Q2E_TRAIN;

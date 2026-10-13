@@ -331,7 +331,8 @@
     X(DROP_CURRENT_WEAPON, "Can't drop current weapon\n") \
     X(RR_NO_AMMO, "$g_no_ammo") \
     X(RR_INSUFFICIENT_AMMO, "$g_not_enough_ammo") \
-    X(RR_DROP_CURRENT_WEAPON, "$g_cant_drop_weapon")
+    X(RR_DROP_CURRENT_WEAPON, "$g_cant_drop_weapon") \
+    X(FUNC_DOOR, "func_door")
 
 typedef uint32_t q2_runtime_name;
 enum {

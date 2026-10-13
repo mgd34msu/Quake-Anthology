@@ -351,6 +351,14 @@ bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
     return okay;
 }
 
+static qa_string_id source_classname(const q2_actor *actor, const qa_actor_record *record)
+{
+    return actor && actor->projectile.classname ? actor->projectile.classname :
+        actor && actor->entity ? actor->entity->classname :
+        actor && actor->item && actor->item->definition ? actor->item->definition->classname_id :
+        record ? record->definition : 0;
+}
+
 static bool source_strings(qa_q2_game *g, q2_original_record_io *io, q2_actor *actor)
 {
     const qa_actor_record *record = qa_actors_get(qa_session_actors(g->services.session), actor->id);
@@ -362,9 +370,7 @@ static bool source_strings(qa_q2_game *g, q2_original_record_io *io, q2_actor *a
             (qa_bytes){(const uint8_t *)field->name, strlen(field->name)});
         qa_string_id value = q2_actor_field(g, actor->id, key);
         if (i == 1 && !value && actor->entity && actor->entity->has_inline) value = visual.models[0];
-        if (i == 0) value = actor->projectile.classname ? actor->projectile.classname :
-            actor->entity ? actor->entity->classname : actor->item && actor->item->definition ?
-            actor->item->definition->classname_id : record ? record->definition : 0;
+        if (i == 0) value = source_classname(actor, record);
         if (i == 0 && actor->item && actor->item->companion &&
             actor->item->companion->kind == Q2_DOPPLEGANGER_BODY &&
             !qa_builtin_resource(&g->services, "noclass", &value, io->error)) return false;
@@ -715,8 +721,13 @@ static bool level_classname(qa_q2_game *g, const q2_original_level_file *file,
     const q2_original_edict_row *row, qa_string_id *classname, qa_error *error)
 {
     q2_original_record_io io = edict_reader(g, file, row, error);
-    return q2_original_string(g, &io, "classname", 280, classname) &&
-        (*classname || level_error(error, row->number, "Original Q2 live edict has no actual classname"));
+    if (!q2_original_string(g, &io, "classname", 280, classname)) return false;
+    if (io.edition == QA_RULESET_Q2_CLASSIC && *classname == g->runtime_names[Q2_NAME_FUNC_WATER])
+        *classname = g->runtime_names[Q2_NAME_FUNC_DOOR];
+    if (*classname) return true;
+    bool torso;
+    return q2_original_function_matches(g, &io, "think", 436, "makron_torso_think", &torso) &&
+        (torso || level_error(error, row->number, "Original Q2 live edict has no actual classname"));
 }
 
 static bool level_admit(qa_q2_game *g, const q2_original_level_file *file, qa_error *error)
@@ -731,7 +742,8 @@ static bool level_admit(qa_q2_game *g, const q2_original_level_file *file, qa_er
         qa_string_id classname = 0;
         if (row && !level_classname(g, file, row, &classname, error)) return false;
         const qa_actor_record *actual = qa_actors_get(qa_session_actors(g->services.session), id);
-        if (!row || !actual || actual->definition != classname) {
+        q2_actor *actor = q2_actor_get(g, id, false, NULL);
+        if (!row || !actual || source_classname(actor, actual) != classname) {
             if (!qa_session_release(g->services.session, id, error)) return false;
         } else if (!qa_world_unlink(g->services.world, id, error)) return false;
     }
@@ -746,7 +758,8 @@ static bool level_admit(qa_q2_game *g, const q2_original_level_file *file, qa_er
             q2_original_record_io io = edict_reader(g, file, row, error);
             if (!q2_original_body(g, &io, &body) ||
                 !qa_builtin_spawn_actor(&g->services, &(qa_builtin_spawn){.owner = g->options.owner,
-                    .definition = classname, .has_source = true, .source_slot = row->number,
+                    .definition = classname ? classname : g->runtime_names[Q2_NAME_RESOURCE_MAKRON_TORSO],
+                    .has_source = true, .source_slot = row->number,
                     .body = body}, &id, error)) return false;
         }
         q2_actor *actor = q2_actor_get(g, id, true, error);

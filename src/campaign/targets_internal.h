@@ -25,7 +25,8 @@ typedef struct target_snapshot_scope {
 } target_snapshot_scope;
 typedef enum target_name {
     TARGET_NAME_MONSTER_ZOMBIE, TARGET_NAME_FUNC_AREAPORTAL,
-    TARGET_NAME_FUNC_DOOR, TARGET_NAME_FUNC_DOOR_ROTATING, TARGET_NAME_COUNT
+    TARGET_NAME_FUNC_DOOR, TARGET_NAME_FUNC_DOOR_ROTATING,
+    TARGET_NAME_FUNC_DOOR_SECRET, TARGET_NAME_FUNC_WATER, TARGET_NAME_COUNT
 } target_name;
 struct qa_targets {
     qa_target_options options;
