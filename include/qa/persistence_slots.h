@@ -47,7 +47,7 @@ typedef struct qa_save_slot_listing {
 bool qa_save_slot_inspect(qa_fs_root *, const char *name, qa_save_slot_format *,
     qa_save_metadata *, qa_q1_save_slot_metadata *, qa_q2_save_slot_metadata *, qa_error *);
 void qa_q1_save_slot_metadata_dispose(qa_q1_save_slot_metadata *);
-/* Lists immediate regular .sav files and Q2 save directories. Empty selects
+/* Lists nested regular .sav files and atomic Q2 save directories. Empty selects
  * the root; a missing directory publishes an empty listing. Reserved current
  * names, links and invalid slot paths are excluded. Entries sort by exact path.
  * Unreadable or malformed files retain their own error and zero metadata.

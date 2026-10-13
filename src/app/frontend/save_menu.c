@@ -153,7 +153,7 @@ static bool rebuild_entries(frontend_save_menu *owner,int64_t *saved_at,bool ins
         qa_save_slot_entry *entry=state->saves.entries+i;
         char *label=state->save_details+i*128;
         const char *name=entry->name+6;size_t length=strlen(name);
-        if(length>=4 && !strcmp(name+length-4,".sav"))length-=4;
+        if(length>=4 && qa_text_ascii_equal(name+length-4,".sav"))length-=4;
         snprintf(label,128,"%.*s",(int)(length>127?127:length),name);
         if(!strcmp(label,"autosave") || !strncmp(label,"autosave-",9))snprintf(label,128,"Autosave");
         else if(!strcmp(label,"quicksave"))snprintf(label,128,"Quicksave");
