@@ -384,6 +384,7 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
         memcpy(&server_time_ms,&server_time_word,sizeof(server_time_ms));
         qa_input_command_frame frame = {.kind = kind, .sequence = ++seat->sequence,
             .server_time_ms = server_time_ms,
+            .light_level = seat->light_level, .has_light_level = seat->light_level_known,
             .sensitivity = 1, .attack_allowed = true, .grounded = state.ground.hit != QA_TRACE_HIT_NONE};
         if (kind==QA_RULESET_Q2_CLASSIC) {
             const int16_t *delta=state.state.data.q2.delta_angle_shorts;

@@ -1893,6 +1893,7 @@ static const qa_unified_field input_fields[] = {
     QA_UNIFIED_FIELD(qa_usercmd, buttons, QA_UNIFIED_FIELD_U32),
     QA_UNIFIED_FIELD(qa_usercmd, impulse, QA_UNIFIED_FIELD_U8),
     QA_UNIFIED_FIELD(qa_usercmd, light_level, QA_UNIFIED_FIELD_U8),
+    QA_UNIFIED_FIELD(qa_usercmd, has_light_level, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_usercmd, weapon, QA_UNIFIED_FIELD_U8),
     QA_UNIFIED_FIELD(qa_usercmd, has_arsenal, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_RECORD(qa_usercmd, arsenal, input_arsenal_layout),

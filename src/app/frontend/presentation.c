@@ -39,6 +39,29 @@
 #include "qa/application_network_qw.h"
 #include <stdio.h>
 
+void frontend_player_light_sample(qa_frontend *frontend, qa_scene_world *world,
+    const qa_scene_world_input *input)
+{
+    if (!world || input->no_world || input->view.clip_enabled) return;
+    qa_vec3 ambient, directed, direction;
+    if (!qa_scene_world_sample_light_input(world, input, input->view.origin,
+            &ambient, &directed, &direction, NULL)) return;
+    qa_vec3 color = qa_vec_add(ambient, directed);
+    float modulate = input->legacy_policy.present && input->legacy_policy.source_family == QA_GAME_Q2 ?
+        input->legacy_policy.modulate : 1;
+    for (size_t i = 0; i < input->light_count; ++i) {
+        const qa_scene_light *light = input->lights + i;
+        float amount = (light->radius - qa_vec_length(qa_vec_sub(input->view.origin, light->origin))) / 256;
+        if (amount > 0) color = qa_vec_add(color, qa_vec_scale(light->color, amount * modulate));
+    }
+    float level = 150 * (input->view.software && input->legacy_policy.present &&
+        input->legacy_policy.source_family == QA_GAME_Q2 ? color.x :
+        fmaxf(color.x, fmaxf(color.y, color.z)));
+    frontend_seat *seat = frontend->seats + input->view.seat;
+    seat->light_level = (uint8_t)(int32_t)level;
+    seat->light_level_known = true;
+}
+
 static bool source_status_native(const qa_frontend *f,uint32_t physical,qa_actor_id viewer,bool *out,qa_error *error)
 {
     *out=false;

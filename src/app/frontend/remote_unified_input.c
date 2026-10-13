@@ -111,7 +111,8 @@ static bool frame_read(frontend_unified_input *p,double time,
     const qa_unified_player_view *view=&received->player->view;
     qa_input_command_frame frame={.kind=snapshot->state.kind,.sequence=p->retained_sequence,
         .acknowledged_server_seconds=snapshot->command_time_ms/1000,.server_time_ms=trunc(time),
-        .weapon=2,.sensitivity=1,.light_level=128,.attack_allowed=true};
+        .weapon=2,.sensitivity=1,.light_level=p->frontend->seats[p->configuration.physical_seat].light_level,
+        .has_light_level=p->frontend->seats[p->configuration.physical_seat].light_level_known,.attack_allowed=true};
     if(frame.kind==QA_RULESET_Q2_RERELEASE)
         frame.server_frame=(double)received->world->source.number;
     if(view->has_pitch_drift) {

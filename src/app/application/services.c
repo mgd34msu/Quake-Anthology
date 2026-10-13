@@ -1166,6 +1166,11 @@ static bool builtin_traits(void *opaque, qa_actor_id actor,
             }
     }
     if (!matched) return false;
+    qa_player_state player;
+    if (out->player && qa_application_control_read(application, actor, &player)) {
+        out->light_level = player.light_level;
+        out->has_light_level = player.has_light_level;
+    }
     qa_physics_properties physical;
     if (out->player && application->physics && application->physics->services.read(
             application->physics->services.context, actor, &physical))

@@ -187,7 +187,7 @@ typedef struct qa_input_command_frame {
     double light_level, weapon;
     int32_t delta_angle_words[3];
     float sensitivity;
-    bool attack_allowed, has_pitch_drift, grounded, drift_disabled;
+    bool attack_allowed, has_pitch_drift, grounded, drift_disabled, has_light_level;
     float ideal_pitch;
     qa_input_command_numeric_policy numeric_policy;
 } qa_input_command_frame;

@@ -505,6 +505,7 @@ bool frontend_legacy_scene_submit_product(qa_frontend *frontend, qa_scene_world 
     size_t first = frame->command_count;
     size_t scene_first = first;
     if (!scene(actual_world, services, &input, &policy, frame, &blend, error)) return false;
+    frontend_player_light_sample(frontend, actual_world, &input);
     if (policy.mirror_alpha != 1) depth_range(frame, first, 0, .5f);
     if (mirror) {
         qa_scene_world_input child = input;

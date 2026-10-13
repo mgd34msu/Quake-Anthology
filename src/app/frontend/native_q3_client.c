@@ -253,12 +253,16 @@ static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scen
     options->world.child_scratch=scratch?scratch->child:NULL;
     const qa_native_q3_cvar_refs *refs = qa_native_q3_client_cvar_refs(row->view.client);
     qa_cvar_handle shadows = refs ? refs->rows[QA_NATIVE_Q3_CVAR_cg_shadows] : (qa_cvar_handle){0};
-    return frontend_source_prepare_scene(f,f->application,row->view.seat,definition,options,e) &&
+    bool okay=frontend_source_prepare_scene(f,f->application,row->view.seat,definition,options,e) &&
         (!row->composition.prepare_view || row->composition.prepare_view(row->composition.context,definition,options,e)) &&
         frontend_native_components_scene_prepare(row,options,e) &&
         frontend_native_q3_current(row) &&
         frontend_q3_scene_policy_read(f,options,e) &&
         frontend_q3_shadow_mode_read(row->view.cvars,shadows,&options->shadow_mode,e) && frontend_native_q3_current(row);
+    qa_q3_presentation_binding binding;
+    if (okay && qa_q3_presentation_binding_read(row->view.presentation,&binding,NULL))
+        frontend_player_light_sample(f,binding.world,&options->world);
+    return okay;
 }
 static bool submit_view(void *context,const qa_q3_scene_options *options,qa_scene_frame *frame,qa_error *e)
 {

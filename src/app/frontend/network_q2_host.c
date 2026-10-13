@@ -46,6 +46,7 @@ static bool input(void *context,qa_net_client_id id,qa_net_seat_id seat,
     qa_usercmd raw={.kind=source.source.edition,
         .sequence=sequence,.server_frame=wire->server_frame,.milliseconds=wire->msec,.buttons=wire->buttons,
         .impulse=wire->impulse,.light_level=wire->lightlevel,
+        .has_light_level=source.source.edition==QA_RULESET_Q2_CLASSIC,
         .forward_move=wire->forwardmove,.side_move=wire->sidemove,.up_move=wire->upmove};
     for(size_t i=0;i<3;++i) raw.angle_words[i]=wire->angles[i];
     if(wire->float_angles) raw.angles=qa_q2_usercmd_angles(wire);

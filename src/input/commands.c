@@ -278,7 +278,9 @@ void qa_usercmd_build(const qa_input_command_intent *intent,
         .buttons = buttons, .server_time_ms = q3 ? (int32_t)frame->server_time_ms : 0,
         .server_frame = physical || kind == QA_RULESET_Q2_RERELEASE ? (int32_t)frame->server_frame : 0,
         .acknowledged_server_seconds = kind == QA_RULESET_NETQUAKE ? frame->acknowledged_server_seconds : 0,
-        .weapon = physical || q3 ? (uint8_t)(int32_t)frame->weapon : 0, .light_level = kind == QA_RULESET_Q2_CLASSIC ? (uint8_t)(int32_t)frame->light_level : 0,
+        .weapon = physical || q3 ? (uint8_t)(int32_t)frame->weapon : 0,
+        .light_level = frame->has_light_level || kind == QA_RULESET_Q2_CLASSIC ? (uint8_t)(int32_t)frame->light_level : 0,
+        .has_light_level = frame->has_light_level,
         .impulse = kind == QA_RULESET_Q2_RERELEASE || q3 ? 0 : intent->impulse,
         .forward_move = move.x, .side_move = move.y, .up_move = move.z};
     qa_input_command_basis from = {.kind = kind, .units = physical && q3 ? 400 : 1,
@@ -401,5 +403,6 @@ bool qa_usercmd_equal(const qa_usercmd *left, const qa_usercmd *right)
         !memcmp(&left->side_move, &right->side_move, sizeof(float)) &&
         !memcmp(&left->up_move, &right->up_move, sizeof(float)) &&
         left->buttons == right->buttons && left->impulse == right->impulse &&
-        left->light_level == right->light_level && left->weapon == right->weapon;
+        left->light_level == right->light_level && left->has_light_level == right->has_light_level &&
+        left->weapon == right->weapon;
 }

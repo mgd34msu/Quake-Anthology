@@ -337,6 +337,20 @@ static void test_physical_prediction_command(void)
         CHECK(command.milliseconds==100 && command.duration_ns==300000000);
         CHECK(command.forward_move==(kind==QA_RULESET_Q3?127:kind==QA_RULESET_Q2_RERELEASE?201.25f:201));
         CHECK(command.weapon==(kind==QA_RULESET_Q3?239:0));
+        frame.has_light_level=true;
+        frame.light_level=0;
+        qa_usercmd_build(&intent,&frame,300,&command);
+        CHECK(command.has_light_level && command.light_level==0);
+        frame.light_level=37;
+        qa_usercmd_build(&intent,&frame,300,&command);
+        CHECK(command.has_light_level && command.light_level==37);
+        qa_usercmd unknown=command;
+        unknown.has_light_level=false;
+        CHECK(!qa_usercmd_equal(&command,&unknown));
+        qa_input_command_basis from={.kind=kind},to={.kind=QA_RULESET_Q3};
+        qa_usercmd converted;
+        qa_input_command_convert(&command,NULL,&from,&to,(qa_input_axis_rule){0},&converted);
+        CHECK(converted.has_light_level && converted.light_level==37);
     }
 }
 static void test_console_restore_pages(void)

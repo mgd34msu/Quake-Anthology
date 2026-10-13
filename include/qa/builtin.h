@@ -141,6 +141,8 @@ typedef struct qa_builtin_actor_traits {
     /* Semantic source births, qualified by the selected CHARACTER owner. */
     uint64_t birth_epoch;
     bool has_life, dead;
+    uint8_t light_level;
+    bool has_light_level;
 } qa_builtin_actor_traits;
 
 /* Borrowed connection/selected-character projection, never a second player

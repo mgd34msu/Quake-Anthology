@@ -722,6 +722,9 @@ static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scen
         options->world.no_world=true;
         options->world.source_scratch=NULL;
     }
+    if (scope->lease->role==QA_QVM_CGAME)
+        frontend_player_light_sample(source->frontend,
+            source->private_map?source->world:source->frontend->scene_world,&options->world);
     if (scope->lease->role==QA_QVM_CGAME &&
         !frontend_q3_shadow_mode_read(scope->lease->cvars,scope->lease->shadows,&options->shadow_mode,error)) return false;
     return render_current(source,scope) ||

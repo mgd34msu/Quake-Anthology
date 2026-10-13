@@ -335,6 +335,7 @@ bool native_host_pmove(qa_native_host *host, qa_native_address address, qa_error
     input.command.up_move = load_i16(bytes, 40);
     input.command.impulse = bytes[42];
     input.command.light_level = bytes[43];
+    input.command.has_light_level = true;
     input.snap_initial = qa_load_i32le(bytes + 44) != 0;
     input.current_bounds = (qa_bounds){load_vec3(bytes, layout->pmove.mins),
                                       load_vec3(bytes, layout->pmove.maxs)};

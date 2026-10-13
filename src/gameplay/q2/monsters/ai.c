@@ -1847,6 +1847,9 @@ bool q2m_find_target(q2m_context *context, bool *found, qa_error *error) {
     return false;
   if (!q2m_alive(context))
     return true;
+  if (context->game->options.rules == QA_RULESET_Q2_CLASSIC &&
+      selected.player && selected.has_light_level && selected.light_level <= 5)
+    return true;
   if (selected.monster && candidate.slot < context->game->capacity &&
       context->game->actors[candidate.slot] != NULL &&
       qa_actor_id_equal(context->game->actors[candidate.slot]->id, candidate) &&

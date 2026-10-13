@@ -26,8 +26,9 @@ typedef struct qa_player_state {
     uint32_t buttons, previous_buttons;
     int32_t water_level, water_type;
     float view_height, gravity_multiplier;
+    uint8_t light_level;
     qa_movement_mode player_mode;
-    bool flight, cutscene, player_mode_set;
+    bool flight, cutscene, player_mode_set, has_light_level;
 } qa_player_state;
 
 #endif

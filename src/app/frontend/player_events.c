@@ -31,6 +31,7 @@ static void help_line(frontend_seat *seat, unsigned slot, qa_string_id name)
 }
 void frontend_player_retire(frontend_seat *seat)
 {
+    seat->light_level_known = false;
     qa_font_library_destroy(seat->q2_hud_fonts);
     seat->q2_hud_fonts = NULL; seat->q2_hud_classic = NULL;
     seat->q2_hud_font_provider = 0; seat->q2_hud_active = false;

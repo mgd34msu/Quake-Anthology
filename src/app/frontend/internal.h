@@ -203,6 +203,8 @@ typedef struct frontend_seat {
     char *clipboard;
     qa_font_selection fonts;
     qa_input_command_builder builder;
+    uint8_t light_level;
+    bool light_level_known;
     qa_actor_id actor;
     uint64_t sequence, command_angle_revision;
     uint64_t client_clock_ns, client_frame_ns;
@@ -502,6 +504,7 @@ bool frontend_particle_advance(qa_frontend *, qa_error *);
 bool frontend_particle_prepare(qa_frontend *,qa_error *);
 void frontend_particle_retire(qa_frontend *);
 bool frontend_player_events(qa_frontend *, qa_error *);
+void frontend_player_light_sample(qa_frontend *, qa_scene_world *, const qa_scene_world_input *);
 void frontend_player_retire(frontend_seat *);
 void frontend_print(void *, const char *);
 void frontend_console_print(void *, const qa_command_context *, const char *);

@@ -397,6 +397,7 @@ bool frontend_remote_q2_input(qa_frontend *f, uint32_t seat, const qa_seat_input
     }
     qa_input_command_frame basis = {.kind = kind, .sequence = sequence, .server_frame = row->frame.server_frame,
         .server_time_ms = client_time(row),
+        .light_level = f->seats[seat].light_level, .has_light_level = f->seats[seat].light_level_known,
         .acknowledged_server_seconds = (double)row->frame.server_frame * row->frame_ms * 0.001,
         .delta_angles = delta, .sensitivity = 1, .attack_allowed = true};
     qa_usercmd command;
@@ -611,6 +612,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
     if (ok) ok = qa_scene_world_boxed_sky_begin(row->world, &world, &f->frame, &world.boxed_sky, error);
     if (ok) ok = qa_scene_world_q2_alpha_begin(&world, &f->frame, &world.q2_alpha, error);
     if (ok) ok = qa_scene_world_submit(row->world, &world, &f->frame, error);
+    if (ok) frontend_player_light_sample(f, row->world, &world);
     for (size_t i = 0; ok && entities_enabled && i < row->frame.entity_count; ++i) {
         const qa_q2_entity *current = &row->frame.entities[i];
         if (remote_q2_rerelease_presentation(row) && (current->renderfx & (UINT32_C(1) << 21))) {

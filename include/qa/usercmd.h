@@ -43,7 +43,7 @@ typedef struct qa_usercmd {
     qa_net_client_id client;
     qa_net_seat_id seat;
     uint64_t epoch;
-    bool has_arsenal;
+    bool has_arsenal, has_light_level;
     qa_usercmd_arsenal arsenal;
 } qa_usercmd;
 

@@ -156,6 +156,14 @@ static bool command_valid(const qa_usercmd *command)
         isfinite(command->up_move) && isfinite(command->acknowledged_server_seconds);
 }
 
+static void observe_player_light(application_control_record *record, const qa_usercmd *command)
+{
+    if (command->has_light_level) {
+        record->player.light_level = command->light_level;
+        record->player.has_light_level = true;
+    }
+}
+
 static bool unified_valid(const control_unified *receipt)
 {
     if ((unsigned)receipt->movement.kind > QA_RULESET_Q3 || receipt->sequence > QA_UNIFIED_SAFE_INTEGER ||
@@ -260,7 +268,7 @@ static bool q3_raw_valid(const qa_usercmd *command)
     return command_valid(command) && command->kind == QA_RULESET_Q3 &&
         command->milliseconds == 0 && command->server_frame == 0 &&
         command->acknowledged_server_seconds == 0 && command->angles.x == 0 &&
-        command->angles.y == 0 && command->angles.z == 0 && !command->impulse && !command->light_level &&
+        command->angles.y == 0 && command->angles.z == 0 && !command->impulse &&
         command->forward_move >= -128 && command->forward_move <= 127 &&
         command->side_move >= -128 && command->side_move <= 127 &&
         command->up_move >= -128 && command->up_move <= 127 &&
@@ -331,7 +339,7 @@ static bool nq_raw_valid(const qa_usercmd *command)
     return command_valid(command) && command->kind == QA_RULESET_NETQUAKE &&
         !command->milliseconds && !command->server_time_ms && !command->server_frame &&
         !command->angle_words[0] && !command->angle_words[1] && !command->angle_words[2] &&
-        !command->light_level && !command->weapon && command->buttons <= UINT8_MAX &&
+        !command->weapon && command->buttons <= UINT8_MAX &&
         fabs(command->acknowledged_server_seconds) <= FLT_MAX &&
         (double)(float)command->acknowledged_server_seconds == command->acknowledged_server_seconds &&
         command->forward_move >= INT16_MIN && command->forward_move <= INT16_MAX &&
@@ -742,7 +750,8 @@ static bool qc_receipt(qa_application *app, qa_actor_id actor, uint64_t ordinal,
 }
 
 static bool receive_q3_command(qa_application *app, qa_actor_id actor,
-    uint64_t sequence, uint64_t ordinal, const qa_q3_usercmd *raw, qa_error *error)
+    uint64_t sequence, uint64_t ordinal, const qa_q3_usercmd *raw,
+    const qa_usercmd *observation, qa_error *error)
 {
     if (!app || !raw || !app->control_frames || app->state != QA_APPLICATION_RUNNING ||
         (app->operation != APPLICATION_IDLE && app->operation != APPLICATION_ADVANCING) ||
@@ -775,6 +784,10 @@ static bool receive_q3_command(qa_application *app, qa_actor_id actor,
         return application_fail(error, QA_ERROR_MEMORY, "Allocating raw Q3 source command");
     qa_usercmd command;
     qa_usercmd_from_q3(raw, sequence, &command);
+    if (observation) {
+        command.light_level = observation->light_level;
+        command.has_light_level = observation->has_light_level;
+    }
     application_snapshot_mutated(app);
     if (!qc_receipt(app, actor, ordinal, &command, error)) {
         group_release(group); application_fault(app, error); return false;
@@ -796,6 +809,7 @@ static bool receive_q3_command(qa_application *app, qa_actor_id actor,
     input->provider = provider->owner; input->sequence = sequence; input->seen = true;
     input->retained = false; input->domain = CONTROL_COMMAND_Q3_SOURCE;
     input->accepted_time_ns = input->source_time_ns = clock.frame.time_ns; input->qw_receipt_time_ns = 0; input->latest = command;
+    observe_player_light(record, &command);
     input->arsenal = 0; input->weapon = 0; input->impulse = 0;
     if (group && original_q3(provider)) {
         bool ok = execute_original_q3_group(app, group, error);
@@ -813,7 +827,7 @@ static bool receive_q3_command(qa_application *app, qa_actor_id actor,
 bool qa_application_control_q3_command(qa_application *app, qa_actor_id actor,
     uint64_t sequence, const qa_q3_usercmd *raw, qa_error *error)
 {
-    return receive_q3_command(app, actor, sequence, 0, raw, error);
+    return receive_q3_command(app, actor, sequence, 0, raw, NULL, error);
 }
 
 bool qa_application_control_q2_command(qa_application *app, qa_actor_id actor,
@@ -873,6 +887,7 @@ bool qa_application_control_q2_command(qa_application *app, qa_actor_id actor,
     input->retained = false; input->domain = CONTROL_COMMAND_Q2_SOURCE;
     input->accepted_time_ns = input->source_time_ns = clock.frame.time_ns; input->qw_receipt_time_ns = 0;
     input->latest = command; input->arsenal = 0; input->weapon = 0; input->impulse = 0;
+    observe_player_light(record, &command);
     if (frames->tail) frames->tail->next = group; else frames->head = group;
     frames->tail = group;
     return true;
@@ -922,6 +937,7 @@ bool qa_application_control_nq_command(qa_application *app, qa_actor_id actor,
     input->arsenal = 0; input->weapon = 0;
     if (command.impulse) input->impulse = command.impulse;
     command.impulse = 0; input->latest = command;
+    observe_player_light(record, &command);
     return true;
 }
 
@@ -985,6 +1001,7 @@ bool qa_application_control_qw_commands(qa_application *app, qa_actor_id actor,
     input->retained = false; input->domain = CONTROL_COMMAND_QW_SOURCE; input->accepted_time_ns = input->source_time_ns = source_time;
     input->qw_receipt_time_ns = receipt_time;
     input->latest = group->commands[count - 1]; input->arsenal = 0; input->weapon = 0; input->impulse = 0;
+    observe_player_light(record, &input->latest);
     if (frames->tail) frames->tail->next = group; else frames->head = group;
     frames->tail = group;
     return true;
@@ -1062,6 +1079,7 @@ bool qa_application_control_unified_command(qa_application *app, qa_actor_id act
     input->retained = retained; input->domain = CONTROL_COMMAND_UNIFIED;
     input->source_time_ns = 0; input->accepted_time_ns = accepted_clock.frame.time_ns; input->qw_receipt_time_ns = 0;
     input->latest = marker; input->unified = receipt;
+    observe_player_light(record, &receipt.movement);
     input->arsenal = 0; input->weapon = 0; input->impulse = 0;
     if (group) {
         if (frames->tail) frames->tail->next = group; else frames->head = group;
@@ -1094,7 +1112,7 @@ bool application_control_frames_receive(qa_application *app, qa_actor_id actor,
                 return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 input group has invalid commands");
         for (size_t i = 0; i < count; ++i) {
             qa_q3_usercmd raw = q3_source_command(&commands[i], false);
-            if (!receive_q3_command(app, actor, commands[i].sequence, (uint64_t)i, &raw, error)) return false;
+            if (!receive_q3_command(app, actor, commands[i].sequence, (uint64_t)i, &raw, &commands[i], error)) return false;
         }
         return true;
     }
@@ -1168,6 +1186,7 @@ bool application_control_frames_receive(qa_application *app, qa_actor_id actor,
     input->domain = CONTROL_COMMAND_SELECTED; input->source_time_ns = 0; input->accepted_time_ns = accepted_clock.frame.time_ns; input->qw_receipt_time_ns = 0;
     input->arsenal = 0; input->weapon = 0;
     input->latest = latest;
+    observe_player_light(record, &latest);
     if (retained) {
         for (size_t i = 0; i < count; ++i) if (commands[i].impulse) input->impulse = commands[i].impulse;
         input->latest.impulse = 0;
@@ -1573,7 +1592,8 @@ static qa_usercmd selected_command(const application_control_record *record,
     const int32_t words[3], qa_vec3 axes)
 {
     qa_usercmd out = {.kind = record->player.state.kind, .sequence = raw->sequence,
-        .milliseconds = raw->milliseconds, .buttons = raw->buttons & 1u};
+        .milliseconds = raw->milliseconds, .buttons = raw->buttons & 1u,
+        .light_level = raw->light_level, .has_light_level = raw->has_light_level};
     uint32_t time = out.kind == QA_RULESET_Q3 ?
         (uint32_t)record->player.state.data.q3.command_time_ms : (uint32_t)(source_time_ns / UINT64_C(1000000));
     time += raw->milliseconds; memcpy(&out.server_time_ms, &time, sizeof(time));
@@ -1670,7 +1690,7 @@ static bool q2_selected_command(qa_application *app, qa_actor_id actor,
             .minimum = -127, .maximum = 127}, &projected);
     *out = selected_command(record, raw, admission->time_ns, projected.angle_words,
         qa_v3(projected.forward_move, projected.side_move, projected.up_move));
-    out->impulse = raw->impulse; out->light_level = raw->light_level;
+    out->impulse = raw->impulse;
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
     if (arsenal && arsenal->kind == APPLICATION_PROVIDER_Q3) {
         qa_q3_player_state player;
@@ -1696,7 +1716,8 @@ static bool unified_q2_source(const control_unified *receipt, qa_ruleset_id sour
     if ((movement->kind == QA_RULESET_NETQUAKE || movement->kind == QA_RULESET_QUAKEWORLD) && (button_word & 2u)) moves.z = 320;
     uint64_t duration = movement->kind == QA_RULESET_NETQUAKE ? elapsed_ns / UINT64_C(1000000) : selected->milliseconds;
     qa_usercmd command = {.kind = source_kind, .sequence = receipt->sequence,
-        .milliseconds = (uint8_t)duration, .buttons = button_word & 1u, .impulse = selected->impulse};
+        .milliseconds = (uint8_t)duration, .buttons = button_word & 1u, .impulse = selected->impulse,
+        .light_level = selected->light_level, .has_light_level = selected->has_light_level};
     if (receipt->has_arsenal && receipt->has_impulse) command.impulse = receipt->impulse;
     qa_usercmd converted;
     qa_input_command_convert(&input, &moves, &from, &to,
@@ -1707,7 +1728,6 @@ static bool unified_q2_source(const control_unified *receipt, qa_ruleset_id sour
     if (source_kind == QA_RULESET_Q2_CLASSIC) {
         for (unsigned i = 0; i < 3; ++i) command.angle_words[i] =
             converted.angle_words[i] <= INT16_MAX ? converted.angle_words[i] : converted.angle_words[i] - 65536;
-        command.light_level = selected->light_level;
     } else {
         if (!qa_vec_finite(converted.angles) || !isfinite(converted.forward_move) ||
             !isfinite(converted.side_move) || !isfinite(converted.up_move))
