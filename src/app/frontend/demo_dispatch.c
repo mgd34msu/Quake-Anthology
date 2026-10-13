@@ -8,6 +8,8 @@
 #include "qa/application_client.h"
 #include "qa/application_q3_client.h"
 #include "qa/console_cvars_prepare.h"
+#include "qa/text.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -29,7 +31,7 @@ struct frontend_demo_dispatch {
     char *completion;
 };
 static const char *const demo_commands[]={"playdemo","demo","demomap","timedemo","stopdemo",
-    "record","rerecord","stop","stoprecord","serverrecord","serverstop","mvdrecord","mvdstop","startdemos","demos","demopause"};
+    "record","rerecord","stop","stoprecord","serverrecord","serverstop","mvdrecord","mvdstop","startdemos","demos","demopause","mvdplayer"};
 static bool registered_command(void *,const qa_command_invocation *,qa_error *);
 static bool completing(void *,const qa_command_context *,frontend_demo_format,frontend_demo_end,bool,qa_error *);
 static bool completed(void *,const qa_command_context *,frontend_demo_format,frontend_demo_end,bool,qa_error *);
@@ -162,7 +164,7 @@ static bool completing(void *context,const qa_command_context *request,frontend_
     frontend_demo_end end,bool attract,qa_error *error) {
     frontend_demo_dispatch *d=context;(void)attract;
     free(d->completion);d->completion=NULL;d->completion_ready=false;
-    if((format!=FRONTEND_DEMO_Q2&&format!=FRONTEND_DEMO_Q3)||
+    if((format!=FRONTEND_DEMO_Q2&&format!=FRONTEND_DEMO_MVD&&format!=FRONTEND_DEMO_Q3)||
         end==FRONTEND_DEMO_CLOSED||end==FRONTEND_DEMO_TRUNCATED||end==FRONTEND_DEMO_DISCONNECTED)return true;
     if(!frontend_command_seat_read(d->frontend,request,&d->completion_seat)) {
         /* Playback can replace its request's GAME; the genuine input publication
@@ -172,7 +174,7 @@ static bool completing(void *context,const qa_command_context *request,frontend_
     }
     qa_command_context source;qa_console *console;
     if(!seat_source(d,d->completion_seat,&source,&console,error))return false;
-    const char *name=format==FRONTEND_DEMO_Q2?"nextserver":"nextdemo";
+    const char *name=format==FRONTEND_DEMO_Q3?"nextdemo":"nextserver";
     const qa_cvar_view *view;
     if(!qa_console_cvar_read(console,&source,name,&view,error))return false;
     if(!view||!*view->value)return true;
@@ -227,6 +229,17 @@ bool frontend_demo_dispatch_command(frontend_demo_dispatch *d,const qa_command_i
     }
     if(call->context.origin==QA_COMMAND_REMOTE) {
         frontend_console_print(d->frontend,&call->context,"Demo recording and playback are local client commands.\n");return true;
+    }
+    if(kind==16) {
+        double player;
+        qa_error parse_error={0};
+        if(call->argc!=2 || !qa_parse_number((qa_bytes){(const uint8_t *)call->argv[1],strlen(call->argv[1])},
+            &player,&parse_error) || !isfinite(player) || player<0 || player>254 || floor(player)!=player) {
+            frontend_console_print(d->frontend,&call->context,"Usage: mvdplayer <0..254>\n");return true;
+        }
+        if(!frontend_network_demo_viewpoint(d->frontend,(uint8_t)player))
+            frontend_console_print(d->frontend,&call->context,"Viewpoint selection requires MVD playback.\n");
+        return true;
     }
     if(kind==15) {
         if(call->argc!=1) {

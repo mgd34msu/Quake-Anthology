@@ -8160,6 +8160,14 @@ frontend_demo_format frontend_network_demo_format(const qa_frontend *f,const qa_
     if(source&&source->dialect==QA_RULESET_NETQUAKE) return FRONTEND_DEMO_NQ;
     return f&&qa_q1_is_qw(f->options.network_protocol)?FRONTEND_DEMO_QW:FRONTEND_DEMO_NQ;
 }
+bool frontend_network_demo_viewpoint(qa_frontend *f, uint8_t player)
+{
+    qa_frontend_network *n=f?f->network:NULL;
+    if (!n || !n->demo_playback || n->demo_format!=FRONTEND_DEMO_MVD || !n->q2_client_owner)
+        return false;
+    frontend_network_q2_client_demo_viewpoint(n->q2_client_owner,player);
+    return true;
+}
 static bool demo_network_current(const qa_frontend_network *n)
 {
     return n&&n->frontend&&n->frontend->network==n&&!n->detached_transport;
@@ -8510,7 +8518,7 @@ bool frontend_network_demo_playback(qa_frontend *f,const qa_command_context *sou
     qa_frontend_network *n=f->network;
     if(n->busy||n->demo_playback||n->detached_transport||!qa_network_callbacks_idle(n->runtime)||f->options.dedicated)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Demo playback requires its returned presentation CLIENT");
-    if(format==FRONTEND_DEMO_MVD||format==FRONTEND_DEMO_Q2_SERVER)
+    if(format==FRONTEND_DEMO_Q2_SERVER)
         return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Selected demo format has no native CLIENT receiver");
     if(format==FRONTEND_DEMO_Q3&&(protocol!=68||!n->q3_clients[0].q3_client_requested||!n->q3_clients[0].q3_cgame_owner))
         return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Q3 demo playback requires protocol 68 and an installed real Q3 CLIENT");
@@ -8531,11 +8539,11 @@ bool frontend_network_demo_playback(qa_frontend *f,const qa_command_context *sou
         return q1_client_construct(n,&local,wire,physical,true,error)&&
             frontend_network_q1_client_demo_playback(n->q1_client_owner,reader,&n->demo_source,error);
     }
-    if(format==FRONTEND_DEMO_Q2) {
+    if(format==FRONTEND_DEMO_Q2 || format==FRONTEND_DEMO_MVD) {
         qa_net_protocol_id wire;
         if(!frontend_network_q2_demo_protocol(reader,&wire,error))return false;
         frontend_network_q2_client_options options={.frontend=f,.runtime=n->runtime,.remote=local,.protocol=wire,
-            .physical_seat=physical,.demo=true,.context=n,.current=q2_client_current,
+            .physical_seat=physical,.demo=true,.demo_format=format,.context=n,.current=q2_client_current,
             .download_stage=q2_download_stage,.restore_stage=q2_restore_stage};
         return frontend_network_q2_client_create(&options,&n->q2_client_owner,error)&&
             frontend_network_q2_client_demo_playback(n->q2_client_owner,&n->demo_source,error);

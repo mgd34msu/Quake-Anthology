@@ -739,6 +739,27 @@ size_t frontend_remote_q2_model_count(const frontend_remote_q2 *row)
 {
     return row ? row->model_count : 0;
 }
+bool frontend_remote_q2_entity_bounds(const frontend_remote_q2 *row,
+    const qa_q2_entity *entity, qa_bounds *bounds, bool *brush, qa_error *error)
+{
+    *bounds = (qa_bounds){0};
+    *brush = row->collision_models && entity->modelindex < row->hud_names.layout.max_models &&
+        row->collision_models[entity->modelindex].present;
+    if (*brush)
+        return qa_collision_model_bounds(row->geometry,
+            row->collision_models[entity->modelindex].model, bounds, error);
+    if (entity->solid && entity->solid != 31)
+        *bounds = remote_q2_solid_bounds(row, entity->solid);
+    return true;
+}
+void frontend_remote_q2_demo_viewpoint(frontend_remote_q2 *row, int32_t player)
+{
+    if (row->data.clientnum == player && row->data.clientnums[0] == player)
+        return;
+    row->data.clientnum = player;
+    row->data.clientnums[0] = player;
+    row->collision_dirty = true;
+}
 bool frontend_remote_q2_model_at(const frontend_remote_q2 *row, size_t ordinal,
     frontend_remote_q2_model_view *out, qa_error *error)
 {

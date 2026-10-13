@@ -89,6 +89,9 @@ frontend_remote_q2 *frontend_remote_q2_at(const qa_frontend *, size_t);
 size_t frontend_remote_q2_model_count(const frontend_remote_q2 *);
 bool frontend_remote_q2_model_at(const frontend_remote_q2 *, size_t,
     frontend_remote_q2_model_view *, qa_error *);
+bool frontend_remote_q2_entity_bounds(const frontend_remote_q2 *, const qa_q2_entity *,
+    qa_bounds *, bool *brush, qa_error *);
+void frontend_remote_q2_demo_viewpoint(frontend_remote_q2 *, int32_t player);
 qa_font_library *frontend_remote_q2_fonts(const frontend_remote_q2 *);
 bool frontend_remote_q2_create(qa_frontend *, const frontend_remote_q2_options *,
     frontend_remote_q2 **, qa_error *);

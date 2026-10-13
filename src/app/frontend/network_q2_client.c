@@ -4,6 +4,9 @@
 #include "qa/network_q2_bootstrap_save.h"
 #include "remote_q2_effects_bridge.h"
 #include "neutral_config.h"
+#include "view_settings.h"
+#include "qa/bot_bsp.h"
+#include "qa/text.h"
 #include <math.h>
 #include <stdio.h>
 #include <ctype.h>
@@ -32,6 +35,22 @@ struct frontend_network_q2_client {
     bool demo_held, demo_waiting, demo_clock_started;
     double demo_ms;
     uint64_t demo_generation;
+    qa_unified_frame_pool *mvd_pool;
+    qa_unified_frame_lease *mvd_header_storage, *mvd_frame_storage, *mvd_geometry_storage;
+    qa_q2_mvd_header mvd_header;
+    qa_q2_mvd_frame mvd_frame;
+    qa_q2_player mvd_spectator;
+    qa_net_reader mvd_cursor;
+    qa_collision_geometry *mvd_geometry;
+    qa_trace_scratch *mvd_trace;
+    frontend_remote_q2 *mvd_receiver;
+    int32_t *mvd_clusters;
+    size_t mvd_cluster_count;
+    qa_stamp_set mvd_cluster_seen;
+    qa_collision_leaf mvd_view_leaf;
+    int32_t mvd_ordinal;
+    uint8_t mvd_viewpoint;
+    bool mvd_cursor_held, mvd_frame_pending, mvd_header_pending, mvd_viewpoint_changed;
     char reason[1024];
 };
 static bool parent(const frontend_network_q2_client *owner)
@@ -442,6 +461,11 @@ bool frontend_network_q2_client_create(const frontend_network_q2_client_options 
     frontend_network_q2_client *owner=calloc(1,sizeof(*owner));
     if(!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Allocating Q2 CLIENT connection owner");
     *out=owner; owner->options=*options;
+    owner->mvd_viewpoint=options->demo_viewpoint;
+    if (options->demo && options->demo_format==FRONTEND_DEMO_MVD) {
+        owner->mvd_pool=qa_unified_frame_pool_create(0,0,error);
+        if (!owner->mvd_pool) return false;
+    }
     if (!owner->options.seat.owner) owner->options.seat=(qa_net_seat_id){QA_NETWORK_COMMAND_OWNER,0};
     qa_frontend *f=options->frontend;
     if(!frontend_config_store_neutral_pending_options(f->config_store,options->physical_seat,
@@ -607,7 +631,14 @@ bool frontend_network_q2_client_destroy(frontend_network_q2_client **owned,qa_er
     owner->configuration_owned=false;
     if(owner->receiver && !qa_application_client_provider_release(owner->domain.application,owner->receiver,error)) return false;
     owner->receiver=0; owner->closing=true;
-    qa_network_q2_bootstrap_destroy(owner->bootstrap); free(owner); *owned=NULL; return true;
+    qa_network_q2_bootstrap_destroy(owner->bootstrap);
+    qa_unified_frame_lease_release(owner->mvd_header_storage);
+    qa_unified_frame_lease_release(owner->mvd_frame_storage);
+    qa_trace_scratch_destroy(owner->mvd_trace);
+    qa_collision_destroy(owner->mvd_geometry);
+    qa_unified_frame_lease_release(owner->mvd_geometry_storage);
+    qa_unified_frame_pool_destroy(&owner->mvd_pool);
+    free(owner); *owned=NULL; return true;
 }
 bool frontend_network_q2_client_publication_ready(const frontend_network_q2_client *owner,qa_error *error)
 {
@@ -718,6 +749,281 @@ static bool demo_detach(void *context,const frontend_demo_sink *sink,qa_error *e
     owner->demo_sink=(frontend_demo_sink){0}; owner->demo_waiting=false;
     return true;
 }
+static qa_vec3 mvd_player_origin(const frontend_network_q2_client *owner, const qa_q2_player *player)
+{
+    return owner->mvd_header.profile.rerelease ?
+        qa_v3(player->pmove.origin_f[0],player->pmove.origin_f[1],player->pmove.origin_f[2]) :
+        qa_v3((float)player->pmove.origin[0]/8,(float)player->pmove.origin[1]/8,(float)player->pmove.origin[2]/8);
+}
+static void mvd_spectator_prepare(frontend_network_q2_client *owner, const qa_bsp_view *bsp)
+{
+    owner->mvd_spectator=(qa_q2_player){.clientnum=owner->mvd_header.dummy,.fov=90,
+        .pmove={.type=owner->mvd_header.profile.rerelease?3:1}};
+    qa_entities entities={0};
+    qa_error error={0};
+    if (!qa_entities_parse(bsp->lumps[QA_BSP_ENTITIES].bytes,
+        owner->mvd_header.profile.rerelease?QA_ENTITY_Q2_RERELEASE:QA_ENTITY_Q2_CLASSIC,&entities,&error)) {
+        qa_application_feature_report(owner->options.frontend->application,"MVD spectator spawn",&error);
+        qa_entities_free(&entities);
+        return;
+    }
+    static const char *const classes[]={"info_player_intermission","info_player_start","info_player_deathmatch"};
+    for (size_t i=0;i<entities.count;++i) {
+        qa_bytes name;
+        if (!qa_entity_value(&entities,i,"classname",&name)) continue;
+        size_t kind=0;
+        while (kind<3 && !qa_text_bytes_equal(name,
+            (qa_bytes){(const uint8_t *)classes[kind],strlen(classes[kind])},false)) ++kind;
+        if (kind==3) continue;
+        qa_vec3 origin={0}, angles={0}; qa_bytes value;
+        if (qa_entity_value(&entities,i,"origin",&value)) (void)qa_bot_bsp_parse_vector(value,&origin,NULL);
+        if (qa_entity_value(&entities,i,"angles",&value)) (void)qa_bot_bsp_parse_vector(value,&angles,NULL);
+        if (qa_entity_value(&entities,i,"angle",&value)) (void)qa_bot_bsp_parse_float(value,&angles.y,NULL);
+        owner->mvd_spectator.pmove.origin[0]=qa_source_to_i32(origin.x*8);
+        owner->mvd_spectator.pmove.origin[1]=qa_source_to_i32(origin.y*8);
+        owner->mvd_spectator.pmove.origin[2]=qa_source_to_i32(origin.z*8);
+        owner->mvd_spectator.pmove.origin_f[0]=origin.x;
+        owner->mvd_spectator.pmove.origin_f[1]=origin.y;
+        owner->mvd_spectator.pmove.origin_f[2]=origin.z;
+        owner->mvd_spectator.viewangles[0]=angles.x;
+        owner->mvd_spectator.viewangles[1]=angles.y;
+        if (kind==0) break;
+    }
+    qa_entities_free(&entities);
+}
+static bool mvd_geometry_prepare(frontend_network_q2_client *owner, qa_error *error)
+{
+    frontend_remote_q2_source_view source; frontend_remote_q2_view view;
+    if (!frontend_remote_q2_source_read(owner->source,&source,error) ||
+        !frontend_remote_q2_metadata_read(source.receiver,&view,error)) return false;
+    owner->mvd_receiver=source.receiver;
+    if (view.geometry==owner->mvd_geometry) return true;
+    qa_unified_frame_lease *storage=qa_unified_frame_lease_acquire(owner->mvd_pool,error);
+    if (!storage) return false;
+    size_t count=qa_collision_cluster_count(view.geometry);
+    int32_t *clusters=qa_unified_frame_lease_alloc(storage,count,sizeof(*clusters),_Alignof(int32_t),error);
+    uint32_t *marks=qa_unified_frame_lease_alloc(storage,count,sizeof(*marks),_Alignof(uint32_t),error);
+    qa_trace_scratch *scratch=NULL;
+    if ((count && (!clusters || !marks)) || !qa_trace_scratch_create(view.geometry,&scratch,error) ||
+        !qa_collision_retain(view.geometry,error)) {
+        qa_trace_scratch_destroy(scratch); qa_unified_frame_lease_release(storage); return false;
+    }
+    qa_trace_scratch_destroy(owner->mvd_trace);
+    qa_collision_destroy(owner->mvd_geometry);
+    qa_unified_frame_lease_release(owner->mvd_geometry_storage);
+    owner->mvd_geometry=view.geometry; owner->mvd_trace=scratch;
+    owner->mvd_geometry_storage=storage; owner->mvd_clusters=clusters;
+    qa_stamp_set_init(&owner->mvd_cluster_seen,marks,count);
+    mvd_spectator_prepare(owner,qa_collision_bsp(view.geometry));
+    return true;
+}
+static qa_leaf_visit mvd_view_cluster(void *context,const qa_collision_leaf *leaf,qa_error *error)
+{
+    (void)error;
+    frontend_network_q2_client *owner=context;
+    if (leaf->cluster>=0 && qa_stamp_set_mark(&owner->mvd_cluster_seen,(size_t)leaf->cluster))
+        owner->mvd_clusters[owner->mvd_cluster_count++]=(int32_t)leaf->cluster;
+    return QA_LEAF_CONTINUE;
+}
+static bool mvd_area_bits(void *context,const qa_q2_player *player,qa_bytes portals,
+    qa_arena *storage,qa_bytes *out,qa_error *error)
+{
+    frontend_network_q2_client *owner=context;
+    const qa_bsp_view *bsp=qa_collision_bsp(owner->mvd_geometry);
+    size_t count=qa_bsp_record_count(bsp,QA_BSP_AREA_PORTALS);
+    for (size_t i=0;i<count;++i) {
+        qa_bsp_area_portal portal;
+        if (!qa_bsp_read_area_portal(bsp,i,&portal,error)) return false;
+        bool open=portal.portal/8>=portals.size ||
+            (portals.data[portal.portal/8]&(1u<<(portal.portal%8)))!=0;
+        if (!qa_collision_set_portal(owner->mvd_geometry,portal.portal,open,error)) return false;
+    }
+    qa_vec3 origin=mvd_player_origin(owner,player);
+    origin=qa_vec_add(origin,qa_v3(player->viewoffset[0],player->viewoffset[1],player->viewoffset[2]));
+    if (owner->mvd_header.profile.rerelease) origin.z+=(float)player->pmove.viewheight;
+    owner->mvd_cluster_count=0;
+    qa_stamp_set_begin(&owner->mvd_cluster_seen);
+    qa_leaf_list leaves;
+    if (!qa_collision_point_leaf(owner->mvd_geometry,origin,QA_LEAF_COLLISION,&owner->mvd_view_leaf,error) ||
+        !qa_collision_walk_leaves(owner->mvd_geometry,owner->mvd_trace,
+            (qa_bounds){qa_vec_sub(origin,qa_v3(8,8,8)),qa_vec_add(origin,qa_v3(8,8,8))},
+            QA_LEAF_COLLISION,mvd_view_cluster,owner,&leaves,error)) return false;
+    size_t capacity=((size_t)qa_collision_area_count(owner->mvd_geometry)+7)/8;
+    if (!capacity) capacity=1;
+    uint8_t *bits=qa_arena_alloc(storage,capacity,1,error);
+    if (!bits) return false;
+    size_t written=0;
+    if (!qa_collision_area_bits(owner->mvd_geometry,(int32_t)owner->mvd_view_leaf.area,
+        bits,capacity,&written,error)) return false;
+    if (!written) { bits[0]=255; written=1; }
+    *out=(qa_bytes){bits,written}; return true;
+}
+typedef struct mvd_entity_visibility {
+    frontend_network_q2_client *owner;
+    bool phs, visible;
+} mvd_entity_visibility;
+static qa_leaf_visit mvd_entity_leaf(void *context,const qa_collision_leaf *leaf,qa_error *error)
+{
+    mvd_entity_visibility *query=context; frontend_network_q2_client *owner=query->owner;
+    if (leaf->cluster<0) return QA_LEAF_CONTINUE;
+    bool connected;
+    if (!qa_collision_areas_connected(owner->mvd_geometry,(int32_t)owner->mvd_view_leaf.area,
+            (int32_t)leaf->area,&connected,error)) return QA_LEAF_FAILED;
+    if (!connected) return QA_LEAF_CONTINUE;
+    size_t count=query->phs?1:owner->mvd_cluster_count;
+    for (size_t i=0;i<count;++i) {
+        int32_t cluster=query->phs?(int32_t)owner->mvd_view_leaf.cluster:owner->mvd_clusters[i];
+        if (cluster<0) continue;
+        if (!qa_collision_cluster_visible(owner->mvd_geometry,cluster,(int32_t)leaf->cluster,
+            query->phs,&query->visible,error)) return QA_LEAF_FAILED;
+        if (query->visible) return QA_LEAF_STOP;
+    }
+    return QA_LEAF_CONTINUE;
+}
+static bool mvd_entity_visible(void *context,const qa_q2_entity *entity,const qa_q2_player *player,
+    qa_bytes portals,bool *out,qa_error *error)
+{
+    (void)portals;
+    frontend_network_q2_client *owner=context;
+    if (entity->number==(uint32_t)player->clientnum+1) { *out=true; return true; }
+    qa_bounds bounds; bool brush;
+    if (!frontend_remote_q2_entity_bounds(owner->mvd_receiver,entity,&bounds,&brush,error)) return false;
+    qa_vec3 origin=qa_v3(entity->origin[0],entity->origin[1],entity->origin[2]);
+    bounds=qa_collision_link_bounds(bounds,origin,qa_v3(entity->angles[0],entity->angles[1],entity->angles[2]),
+        brush && entity->solid==31,qa_v3(1,1,1),owner->mvd_header.profile.rerelease?
+            QA_RULESET_Q2_RERELEASE:QA_RULESET_Q2_CLASSIC);
+    mvd_entity_visibility query={.owner=owner,.phs=(entity->renderfx&128u)!=0 || entity->sound!=0};
+    qa_leaf_list leaves;
+    bool okay=qa_collision_walk_leaves(owner->mvd_geometry,owner->mvd_trace,bounds,
+        QA_LEAF_COLLISION,mvd_entity_leaf,&query,&leaves,error);
+    *out=query.visible; return okay;
+}
+static bool mvd_route_visible(void *context,uint16_t number,bool phs,const qa_q2_player *player,
+    qa_bytes portals,bool *out,qa_error *error)
+{
+    (void)portals;
+    frontend_network_q2_client *owner=context;
+    qa_collision_leaf from,to;
+    if (!qa_collision_leaf_at(owner->mvd_geometry,number,&from,error) ||
+        !qa_collision_point_leaf(owner->mvd_geometry,mvd_player_origin(owner,player),QA_LEAF_COLLISION,&to,error)) return false;
+    *out=false;
+    if (from.cluster<0 || to.cluster<0) return true;
+    bool connected;
+    if (!qa_collision_areas_connected(owner->mvd_geometry,(int32_t)from.area,(int32_t)to.area,&connected,error)) return false;
+    return !connected || qa_collision_cluster_visible(owner->mvd_geometry,(int32_t)from.cluster,
+        (int32_t)to.cluster,phs,out,error);
+}
+static bool mvd_sound_origin(void *context,const qa_q2_entity *entity,float out[3],qa_error *error)
+{
+    frontend_network_q2_client *owner=context;
+    qa_vec3 origin=qa_v3(entity->origin[0],entity->origin[1],entity->origin[2]);
+    qa_bounds bounds; bool brush;
+    if (!frontend_remote_q2_entity_bounds(owner->mvd_receiver,entity,&bounds,&brush,error)) return false;
+    if (brush && entity->solid==31)
+        origin=qa_vec_add(origin,qa_vec_scale(qa_vec_add(bounds.mins,bounds.maxs),.5f));
+    out[0]=origin.x; out[1]=origin.y; out[2]=origin.z; return true;
+}
+static bool mvd_sound_audible(void *context,const float source[3],const qa_q2_player *player,
+    qa_bytes portals,bool *out,qa_error *error)
+{
+    (void)portals;
+    frontend_network_q2_client *owner=context;
+    qa_collision_leaf from,to;
+    if (!qa_collision_point_leaf(owner->mvd_geometry,qa_v3(source[0],source[1],source[2]),QA_LEAF_COLLISION,&from,error) ||
+        !qa_collision_point_leaf(owner->mvd_geometry,mvd_player_origin(owner,player),QA_LEAF_COLLISION,&to,error)) return false;
+    *out=false;
+    if (from.cluster<0 || to.cluster<0) return true;
+    bool connected;
+    if (!qa_collision_areas_connected(owner->mvd_geometry,(int32_t)from.area,(int32_t)to.area,&connected,error)) return false;
+    return !connected || qa_collision_cluster_visible(owner->mvd_geometry,(int32_t)from.cluster,
+        (int32_t)to.cluster,true,out,error);
+}
+static qa_q2_mvd_projection mvd_projection(frontend_network_q2_client *owner)
+{
+    double fov=90; bool explicit_override;
+    (void)frontend_view_settings_read(owner->options.frontend->view_settings,&fov,&explicit_override);
+    owner->mvd_spectator.fov=(float)(fov<1?90:fmin(fov,160));
+    return (qa_q2_mvd_projection){.context=owner,.spectator=&owner->mvd_spectator,
+        .entity_visible=mvd_entity_visible,.area_bits=mvd_area_bits,
+        .route_visible=mvd_route_visible,.sound_origin=mvd_sound_origin,.sound_audible=mvd_sound_audible};
+}
+static bool mvd_frame_decode(frontend_network_q2_client *owner,bool full,qa_error *error)
+{
+    qa_unified_frame_lease *storage=qa_unified_frame_lease_acquire(owner->mvd_pool,error);
+    qa_unified_frame_lease *scratch=qa_unified_frame_lease_acquire(owner->mvd_pool,error);
+    if (!storage || !scratch) {
+        qa_unified_frame_lease_release(storage); qa_unified_frame_lease_release(scratch); return false;
+    }
+    qa_q2_mvd_frame decoded;
+    bool okay=qa_q2_mvd_read_frame_arena(&owner->mvd_header.profile,&owner->mvd_cursor,
+        full?NULL:&owner->mvd_frame,owner->mvd_header.max_clients,owner->mvd_header.dummy,
+        qa_unified_frame_lease_arena(scratch),qa_unified_frame_lease_arena(storage),&decoded);
+    qa_unified_frame_lease_release(scratch);
+    if (!okay) { qa_unified_frame_lease_release(storage); return false; }
+    qa_unified_frame_lease_release(owner->mvd_frame_storage);
+    owner->mvd_frame_storage=storage; owner->mvd_frame=decoded;
+    owner->mvd_frame_pending=true;
+    uint32_t ordinal=(uint32_t)owner->mvd_ordinal+1; memcpy(&owner->mvd_ordinal,&ordinal,sizeof(ordinal));
+    return true;
+}
+static bool mvd_header_decode(frontend_network_q2_client *owner,qa_q2_mvd_command command,qa_error *error)
+{
+    qa_unified_frame_lease *storage=qa_unified_frame_lease_acquire(owner->mvd_pool,error);
+    if (!storage) return false;
+    qa_q2_mvd_header decoded;
+    if (!qa_q2_mvd_read_header_arena(&owner->mvd_cursor,command,qa_unified_frame_lease_arena(storage),&decoded)) {
+        qa_unified_frame_lease_release(storage); return false;
+    }
+    qa_unified_frame_lease_release(owner->mvd_header_storage);
+    owner->mvd_header_storage=storage; owner->mvd_header=decoded; owner->mvd_ordinal=0;
+    if (!mvd_frame_decode(owner,true,error)) return false;
+    owner->mvd_header_pending=true; owner->demo_clock_started=false;
+    return true;
+}
+static bool mvd_project(void *context,qa_q2_messages *messages,qa_unified_frame_lease *storage,
+    qa_q2_server_emit_fn emit,void *user,qa_error *error)
+{
+    frontend_network_q2_client *owner=context;
+    const qa_q2_mvd_player *selected=qa_q2_mvd_player_select(&owner->mvd_frame,owner->mvd_viewpoint);
+    uint8_t viewpoint=selected?selected->number:
+        owner->mvd_viewpoint<owner->mvd_header.max_clients?owner->mvd_viewpoint:0;
+    if (owner->mvd_header_pending) {
+        bool okay=qa_q2_mvd_project_header(&owner->mvd_header,viewpoint,messages,emit,user,error);
+        if (okay) owner->mvd_header_pending=false;
+        return okay;
+    }
+    if ((owner->mvd_frame_pending || owner->mvd_viewpoint_changed) && !mvd_geometry_prepare(owner,error))
+        return false;
+    qa_q2_mvd_projection projection=mvd_projection(owner);
+    if (owner->mvd_frame_pending || owner->mvd_viewpoint_changed) {
+        owner->mvd_spectator.clientnum=owner->mvd_header.dummy;
+        frontend_remote_q2_demo_viewpoint(owner->mvd_receiver,selected?selected->number:owner->mvd_header.dummy);
+        bool okay=qa_q2_mvd_project_frame(&owner->mvd_header,&owner->mvd_frame,viewpoint,
+            owner->mvd_ordinal,&projection,storage,messages,emit,user,error);
+        if (okay) owner->mvd_frame_pending=owner->mvd_viewpoint_changed=false;
+        return okay;
+    }
+    qa_q2_mvd_command command;
+    if (!qa_q2_mvd_read_command(&owner->mvd_cursor,&command)) return false;
+    if (command.opcode==QA_MVD_SERVERDATA) {
+        if (!mvd_header_decode(owner,command,error)) return false;
+        return mvd_project(owner,messages,storage,emit,user,error);
+    }
+    if (command.opcode==QA_MVD_FRAME || command.opcode==QA_MVD_FRAME_NODELTA) {
+        if (!mvd_frame_decode(owner,command.opcode==QA_MVD_FRAME_NODELTA,error)) return false;
+        return mvd_project(owner,messages,storage,emit,user,error);
+    }
+    qa_q2_mvd_record record;
+    return qa_q2_mvd_read_record(&owner->mvd_header.profile,&owner->mvd_cursor,command,&record) &&
+        qa_q2_mvd_project_record(&owner->mvd_header,&owner->mvd_frame,viewpoint,&record,
+            &projection,messages,emit,user,error);
+}
+void frontend_network_q2_client_demo_viewpoint(frontend_network_q2_client *owner,uint8_t viewpoint)
+{
+    if (owner && owner->options.demo_format==FRONTEND_DEMO_MVD && owner->mvd_viewpoint!=viewpoint) {
+        owner->mvd_viewpoint=viewpoint; owner->mvd_viewpoint_changed=owner->mvd_frame_storage!=NULL;
+    }
+}
 static bool demo_release(void **context,qa_error *error)
 {
     frontend_network_q2_client *owner=context?*context:NULL;
@@ -792,14 +1098,42 @@ static bool demo_advance(void *context,frontend_demo_reader *reader,uint64_t ela
             owner->demo_generation=view.content_generation; owner->demo_clock_started=false;
         }
         double step=view.server_data->server_fps?1000.0/(double)view.server_data->server_fps:100.0;
+        bool mvd=owner->options.demo_format==FRONTEND_DEMO_MVD;
         if(view.frame->valid) {
             double server_ms=(double)view.frame->server_frame*step;
             if(!owner->demo_clock_started) {
                 owner->demo_ms=server_ms; owner->demo_clock_started=true;
-                return frontend_remote_q2_demo_clock(source.receiver,owner->demo_ms,error);
+                if (!mvd) return frontend_remote_q2_demo_clock(source.receiver,owner->demo_ms,error);
             }
-            if(owner->demo_ms<=server_ms)
+            if(owner->demo_ms<=server_ms && (!mvd ||
+                (!owner->mvd_frame_pending && !owner->mvd_viewpoint_changed &&
+                    (!owner->mvd_cursor_held || !qa_net_reader_remaining(&owner->mvd_cursor)))))
                 return frontend_remote_q2_demo_clock(source.receiver,owner->demo_ms,error);
+        }
+        if (mvd) {
+            if (owner->mvd_frame_pending && !owner->mvd_header_pending && !view.media_ready) return true;
+            owner->mvd_cursor.error=error;
+            if (!owner->mvd_frame_pending && !owner->mvd_header_pending && !owner->mvd_viewpoint_changed) {
+                if (!owner->mvd_cursor_held || !qa_net_reader_remaining(&owner->mvd_cursor)) {
+                    frontend_demo_packet packet; bool present=false;
+                    if (!frontend_demo_read_next(reader,NULL,NULL,&packet,&present,end,error)) return false;
+                    if (!present) return true;
+                    if (packet.format!=FRONTEND_DEMO_MVD) return false;
+                    qa_net_reader_init(&owner->mvd_cursor,packet.value.message,error);
+                    owner->mvd_cursor_held=true;
+                }
+                qa_net_reader peek=owner->mvd_cursor; qa_q2_mvd_command next;
+                if (!qa_q2_mvd_read_command(&peek,&next)) return false;
+                if (view.frame->valid && owner->demo_clock_started &&
+                    owner->demo_ms<=(double)view.frame->server_frame*100 &&
+                    (next.opcode==QA_MVD_FRAME || next.opcode==QA_MVD_FRAME_NODELTA))
+                    return frontend_remote_q2_demo_clock(source.receiver,owner->demo_ms,error);
+            }
+            bool projected=qa_network_q2_client_demo_project(owner->options.runtime,owner->domain.client,
+                mvd_project,owner,owner->options.frontend->wall_time_ns,error);
+            owner->mvd_cursor.error=NULL;
+            if (!projected) return false;
+            continue;
         }
         frontend_demo_packet packet; bool present=false;
         if(!frontend_demo_read_next(reader,NULL,NULL,&packet,&present,end,error)) return false;
@@ -824,6 +1158,21 @@ bool frontend_network_q2_demo_protocol(const frontend_demo_reader *reader,
     qa_net_protocol_id *out,qa_error *error)
 {
     qa_bytes message;
+    qa_bytes bytes=frontend_demo_reader_bytes(reader);
+    if (out && bytes.size>=4 && qa_load_u32le(bytes.data)==QA_Q2_MVD_MAGIC) {
+        qa_net_reader file; qa_net_reader_init(&file,bytes,error);
+        (void)qa_net_read_u32(&file);
+        uint16_t length=qa_net_read_u16(&file);
+        if (!length || length>QA_Q2_MVD_MESSAGE_BYTES || !qa_net_read_bytes(&file,length,&message))
+            return qa_net_reader_fail(&file,"MVD demo has no initial protocol message");
+        qa_net_reader wire; qa_net_reader_init(&wire,message,error);
+        qa_q2_mvd_command command;
+        if (!qa_q2_mvd_read_command(&wire,&command)) return false;
+        qa_arena storage={0}; qa_q2_mvd_header header;
+        bool okay=qa_q2_mvd_read_header_arena(&wire,command,&storage,&header);
+        if (okay) *out=header.profile.protocol;
+        qa_arena_destroy(&storage); return okay;
+    }
     if(!out || !frontend_demo_peek_message(reader,&message,error)) return false;
     qa_net_reader wire; qa_net_reader_init(&wire,message,error);
     if(qa_net_read_u8(&wire)!=12)

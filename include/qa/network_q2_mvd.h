@@ -1,6 +1,7 @@
 #ifndef QA_NETWORK_Q2_MVD_H
 #define QA_NETWORK_Q2_MVD_H
 #include "qa/network_q2.h"
+#include "qa/network_q2_messages.h"
 
 #define QA_Q2_MVD_MESSAGE_BYTES 32768u
 #define QA_Q2_MVD_MAGIC UINT32_C(0x3244564d)
@@ -35,6 +36,8 @@ typedef struct qa_q2_mvd_header {
 /* Read starts after SERVERDATA's command byte. The owned result is published
  * only on success. Free it before replacing; write includes the command byte. */
 bool qa_q2_mvd_read_header(qa_net_reader *, qa_q2_mvd_command, qa_q2_mvd_header *);
+bool qa_q2_mvd_read_header_arena(qa_net_reader *, qa_q2_mvd_command,
+    qa_arena *storage, qa_q2_mvd_header *);
 bool qa_q2_mvd_write_header(qa_net_writer *, const qa_q2_mvd_header *);
 void qa_q2_mvd_header_free(qa_q2_mvd_header *);
 bool qa_q2_mvd_read_player(const qa_q2_mvd_profile *, qa_net_reader *, uint8_t number,
@@ -57,6 +60,9 @@ typedef struct qa_q2_mvd_frame {
 bool qa_q2_mvd_read_frame(const qa_q2_mvd_profile *, qa_net_reader *,
                            const qa_q2_mvd_frame *previous, uint16_t max_clients, int16_t dummy,
                            qa_q2_mvd_frame *);
+bool qa_q2_mvd_read_frame_arena(const qa_q2_mvd_profile *, qa_net_reader *,
+    const qa_q2_mvd_frame *, uint16_t max_clients, int16_t dummy,
+    qa_arena *scratch, qa_arena *storage, qa_q2_mvd_frame *);
 bool qa_q2_mvd_write_frame(const qa_q2_mvd_profile *, qa_net_writer *,
                             const qa_q2_mvd_frame *previous, const qa_q2_mvd_frame *);
 void qa_q2_mvd_frame_free(qa_q2_mvd_frame *);
@@ -77,6 +83,29 @@ typedef struct qa_q2_mvd_record {
 bool qa_q2_mvd_read_record(const qa_q2_mvd_profile *, qa_net_reader *,
                             qa_q2_mvd_command, qa_q2_mvd_record *);
 bool qa_q2_mvd_write_record(const qa_q2_mvd_profile *, qa_net_writer *, const qa_q2_mvd_record *);
+
+typedef struct qa_q2_mvd_projection {
+    void *context;
+    const qa_q2_player *spectator;
+    bool (*entity_visible)(void *, const qa_q2_entity *, const qa_q2_player *,
+        qa_bytes portal_bits, bool *, qa_error *);
+    bool (*route_visible)(void *, uint16_t leaf, bool phs, const qa_q2_player *,
+        qa_bytes portal_bits, bool *, qa_error *);
+    bool (*area_bits)(void *, const qa_q2_player *, qa_bytes portal_bits,
+        qa_arena *output, qa_bytes *, qa_error *);
+    bool (*sound_origin)(void *, const qa_q2_entity *, float[3], qa_error *);
+    bool (*sound_audible)(void *, const float[3], const qa_q2_player *,
+        qa_bytes portal_bits, bool *, qa_error *);
+} qa_q2_mvd_projection;
+const qa_q2_mvd_player *qa_q2_mvd_player_select(const qa_q2_mvd_frame *, uint8_t requested);
+bool qa_q2_mvd_project_header(const qa_q2_mvd_header *, uint8_t selected,
+    qa_q2_messages *, qa_q2_server_emit_fn, void *, qa_error *);
+bool qa_q2_mvd_project_frame(const qa_q2_mvd_header *, const qa_q2_mvd_frame *,
+    uint8_t selected, int32_t ordinal, const qa_q2_mvd_projection *,
+    qa_unified_frame_lease *, qa_q2_messages *, qa_q2_server_emit_fn, void *, qa_error *);
+bool qa_q2_mvd_project_record(const qa_q2_mvd_header *, const qa_q2_mvd_frame *,
+    uint8_t selected, const qa_q2_mvd_record *, const qa_q2_mvd_projection *,
+    qa_q2_messages *, qa_q2_server_emit_fn, void *, qa_error *);
 
 typedef struct qa_q2_mvd_framer qa_q2_mvd_framer;
 bool qa_q2_mvd_framer_create(bool read_magic, size_t message_limit, qa_q2_mvd_framer **, qa_error *);

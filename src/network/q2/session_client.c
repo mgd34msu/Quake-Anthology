@@ -246,8 +246,8 @@ bool qa_network_q2_client_stufftext(qa_network_runtime *runtime, qa_net_client_i
     *waiting = false;
     return session && server_command(session, source_seat, text, waiting, error);
 }
-bool q2_client_receive(q2_session *session, qa_bytes bytes, uint32_t acknowledged, uint32_t dropped,
-    uint64_t now, qa_error *error)
+static bool receive(q2_session *session, qa_bytes bytes, uint32_t acknowledged, uint32_t dropped,
+    uint64_t now, qa_q2_demo_project_fn project, void *context, qa_error *error)
 {
     q2_client *client = &session->state.client;
     if (client->receive_held || client->batch.count || client->preparation_held)
@@ -257,7 +257,10 @@ bool q2_client_receive(q2_session *session, qa_bytes bytes, uint32_t acknowledge
         .packet_telemetry = !client->policy.messages.demo};
     records.lease=qa_unified_frame_lease_acquire(client->record_pool,error);
     if (!records.lease) return false;
-    if (!qa_q2_messages_read(client->messages, bytes, q2_record_retain, &records, error)) { q2_records_free(&records); return false; }
+    bool decoded = project ? project(context, client->messages, records.lease,
+        q2_record_retain, &records, error) :
+        qa_q2_messages_read(client->messages, bytes, q2_record_retain, &records, error);
+    if (!decoded) { q2_records_free(&records); return false; }
     session->codec = *qa_q2_messages_codec(client->messages);
     if (client->recording.append) {
         bool full_frame = false;
@@ -272,6 +275,11 @@ bool q2_client_receive(q2_session *session, qa_bytes bytes, uint32_t acknowledge
     client->batch = records; client->acknowledged = acknowledged;
     client->suppressed_count = records.suppressed_count;
     client->receive_held = true; client->acknowledgement_held = true; return true;
+}
+bool q2_client_receive(q2_session *session, qa_bytes bytes, uint32_t acknowledged, uint32_t dropped,
+    uint64_t now, qa_error *error)
+{
+    return receive(session, bytes, acknowledged, dropped, now, NULL, NULL, error);
 }
 bool qa_network_q2_client_record(qa_network_runtime *runtime, qa_net_client_id id,
     const qa_q2_packet_sink *sink, bool attach, qa_error *error)
@@ -293,14 +301,27 @@ bool qa_network_q2_client_record(qa_network_runtime *runtime, qa_net_client_id i
     }
     return true;
 }
-bool qa_network_q2_client_demo_receive(qa_network_runtime *runtime, qa_net_client_id id,
-    qa_bytes bytes, uint64_t now, qa_error *error)
+static q2_session *demo_session(qa_network_runtime *runtime, qa_net_client_id id,
+    uint64_t now, qa_error *error)
 {
     q2_session *session = q2_get(runtime, id, false, error);
     if (!session || !session->state.client.policy.messages.demo ||
         !qa_network_callbacks_idle(runtime) || session->busy)
-        return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 demo requires its returned retained CLIENT receiver");
-    return qa_network_received(runtime, id, now, error) && q2_client_receive(session, bytes, 0, 0, now, error);
+        { q2_fail(error, QA_ERROR_ARGUMENT, "Q2 demo requires its returned retained CLIENT receiver"); return NULL; }
+    return qa_network_received(runtime, id, now, error) ? session : NULL;
+}
+bool qa_network_q2_client_demo_receive(qa_network_runtime *runtime, qa_net_client_id id,
+    qa_bytes bytes, uint64_t now, qa_error *error)
+{
+    q2_session *session = demo_session(runtime, id, now, error);
+    return session && receive(session, bytes, 0, 0, now, NULL, NULL, error);
+}
+bool qa_network_q2_client_demo_project(qa_network_runtime *runtime, qa_net_client_id id,
+    qa_q2_demo_project_fn project, void *context, uint64_t now, qa_error *error)
+{
+    if (!project) return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 demo needs a record producer");
+    q2_session *session = demo_session(runtime, id, now, error);
+    return session && receive(session, (qa_bytes){0}, 0, 0, now, project, context, error);
 }
 bool qa_network_q2_client_continue(qa_network_runtime *runtime, qa_net_client_id id, qa_error *error)
 {

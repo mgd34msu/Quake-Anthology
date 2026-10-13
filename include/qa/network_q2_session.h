@@ -230,6 +230,10 @@ bool qa_network_q2_client_record(qa_network_runtime *, qa_net_client_id,
     const qa_q2_packet_sink *, bool attach, qa_error *);
 bool qa_network_q2_client_demo_receive(qa_network_runtime *, qa_net_client_id,
     qa_bytes, uint64_t now_ns, qa_error *);
+typedef bool (*qa_q2_demo_project_fn)(void *, qa_q2_messages *, qa_unified_frame_lease *,
+    qa_q2_server_emit_fn, void *, qa_error *);
+bool qa_network_q2_client_demo_project(qa_network_runtime *, qa_net_client_id,
+    qa_q2_demo_project_fn, void *, uint64_t now_ns, qa_error *);
 bool qa_network_q2_client_continue(qa_network_runtime *, qa_net_client_id, qa_error *);
 bool qa_network_q2_client_command(qa_network_runtime *, qa_net_client_id,
     const char *, uint8_t wire_seat, qa_error *);

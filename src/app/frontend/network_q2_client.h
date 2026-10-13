@@ -7,6 +7,7 @@
 #include "qa/application_client_save.h"
 #include "qa/network_q2_kex.h"
 #include "qa/source_frame_time.h"
+#include "qa/network_q2_mvd.h"
 typedef struct frontend_network_q2_client frontend_network_q2_client;
 typedef struct frontend_network_q2_client_options {
     qa_frontend *frontend;
@@ -19,6 +20,8 @@ typedef struct frontend_network_q2_client_options {
     uint32_t physical_seat;
     qa_kex_lan *lobby;
     bool demo;
+    frontend_demo_format demo_format;
+    uint8_t demo_viewpoint;
     void *context;
     bool (*current)(void *, const frontend_network_q2_client *);
     bool (*download_stage)(void *, qa_fs_root *, const char *, qa_fs_stage **, uint64_t *, qa_error *);
@@ -34,6 +37,7 @@ bool frontend_network_q2_client_demo_record(frontend_network_q2_client *,
     frontend_demo_record_source *, qa_error *);
 bool frontend_network_q2_client_demo_playback(frontend_network_q2_client *,
     frontend_demo_playback_source *, qa_error *);
+void frontend_network_q2_client_demo_viewpoint(frontend_network_q2_client *, uint8_t);
 bool frontend_network_q2_client_receive(frontend_network_q2_client *,
     const qa_net_datagram *, bool *, qa_error *);
 bool frontend_network_q2_client_tick(frontend_network_q2_client *, uint64_t, qa_error *);

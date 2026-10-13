@@ -1,8 +1,11 @@
 #include "qa/network_q2_mvd.h"
 #include "qa/math.h"
+#include "qa/arena.h"
 #include "q2pro_internal.h"
 #include <stdlib.h>
 #include <errno.h>
+#include <inttypes.h>
+#include <stdio.h>
 
 enum { MP_TYPE=1, MP_ORIGIN=2, MP_ORIGIN_Z=4, MP_VIEWOFFSET=8,
     MP_VIEWANGLES=16, MP_VIEWANGLE_Z=32, MP_KICK=64, MP_BLEND=128,
@@ -77,7 +80,8 @@ static bool mvd_client_limits(qa_q2_mvd_header *h)
     if (errno || *end || n<1 || n>256 || h->dummy < -1 || h->dummy>=n) return false;
     h->max_clients=(uint16_t)n; return true;
 }
-bool qa_q2_mvd_read_header(qa_net_reader *r, qa_q2_mvd_command c, qa_q2_mvd_header *out)
+static bool mvd_read_header(qa_net_reader *r, qa_q2_mvd_command c,
+    qa_arena *storage, qa_q2_mvd_header *out)
 {
     if (!r || !out) return false;
     qa_q2_mvd_header h={0};
@@ -90,9 +94,17 @@ bool qa_q2_mvd_read_header(qa_net_reader *r, qa_q2_mvd_command c, qa_q2_mvd_head
     h.servercount=qa_net_read_i32(r);
     if (!qa_net_read_string(r,h.gamedir,sizeof(h.gamedir))) return false;
     h.dummy=qa_net_read_i16(r);
-    h.configstrings=calloc(h.profile.max_configstrings,sizeof(*h.configstrings));
-    uint16_t *slots=calloc(h.profile.max_configstrings,sizeof(*slots));
-    if (!h.configstrings || !slots) { free(slots); qa_q2_mvd_header_free(&h); qa_error_set(r->error,QA_ERROR_MEMORY,r->bit/8,"MVD config allocation failed"); r->failed=true; return false; }
+    h.configstrings=storage ? qa_arena_alloc(storage,
+        h.profile.max_configstrings*sizeof(*h.configstrings),_Alignof(qa_q2_mvd_config),r->error) :
+        calloc(h.profile.max_configstrings,sizeof(*h.configstrings));
+    uint16_t *slots=storage ? qa_arena_alloc(storage,
+        h.profile.max_configstrings*sizeof(*slots),_Alignof(uint16_t),r->error) :
+        calloc(h.profile.max_configstrings,sizeof(*slots));
+    if (!h.configstrings || !slots) {
+        if (!storage) { free(slots); qa_q2_mvd_header_free(&h); qa_error_set(r->error,QA_ERROR_MEMORY,r->bit/8,"MVD config allocation failed"); }
+        r->failed=true; return false;
+    }
+    if (storage) memset(slots,0,h.profile.max_configstrings*sizeof(*slots));
     for (;;) {
         uint16_t index=qa_net_read_u16(r); qa_bytes value;
         if (r->failed) goto fail;
@@ -100,17 +112,28 @@ bool qa_q2_mvd_read_header(qa_net_reader *r, qa_q2_mvd_command c, qa_q2_mvd_head
         if (index>h.profile.max_configstrings) { qa_net_reader_fail(r,"MVD config index out of range"); goto fail; }
         if (!mvd_text(r,&value)) goto fail;
         size_t slot=slots[index]?(size_t)slots[index]-1:h.config_count;
-        char *copy=malloc(value.size+1);
-        if (!copy) { qa_error_set(r->error,QA_ERROR_MEMORY,r->bit/8,"MVD text allocation failed"); r->failed=true; goto fail; }
+        char *copy=storage ? qa_arena_alloc(storage,value.size+1,1,r->error) : malloc(value.size+1);
+        if (!copy) {
+            if (!storage) qa_error_set(r->error,QA_ERROR_MEMORY,r->bit/8,"MVD text allocation failed");
+            r->failed=true; goto fail;
+        }
         memcpy(copy,value.data,value.size); copy[value.size]=0;
-        if (slot<h.config_count) free(h.configstrings[slot].value);
+        if (slot<h.config_count) { if (!storage) free(h.configstrings[slot].value); }
         else { h.config_count++; slots[index]=(uint16_t)h.config_count; }
         h.configstrings[slot]=(qa_q2_mvd_config){index,copy};
     }
     if (!mvd_client_limits(&h)) { qa_net_reader_fail(r,"Invalid MVD player limits"); goto fail; }
-    free(slots); *out=h; return true;
-fail: free(slots); qa_q2_mvd_header_free(&h); return false;
+    if (!storage) free(slots);
+    *out=h; return true;
+fail:
+    if (!storage) { free(slots); qa_q2_mvd_header_free(&h); }
+    return false;
 }
+bool qa_q2_mvd_read_header(qa_net_reader *r, qa_q2_mvd_command c, qa_q2_mvd_header *out)
+{ return mvd_read_header(r,c,NULL,out); }
+bool qa_q2_mvd_read_header_arena(qa_net_reader *r, qa_q2_mvd_command c,
+    qa_arena *storage, qa_q2_mvd_header *out)
+{ return storage && mvd_read_header(r,c,storage,out); }
 bool qa_q2_mvd_write_header(qa_net_writer *w, const qa_q2_mvd_header *h)
 {
     if (!w || !h) return false;
@@ -308,8 +331,9 @@ static bool mvd_codec(const qa_q2_mvd_profile *p, qa_q2_codec *c, qa_error *erro
     if (p->protocol.kind==QA_NET_Q2PRO_36) c->wire_flags=p->v2?24:8;
     return true;
 }
-bool qa_q2_mvd_read_frame(const qa_q2_mvd_profile *p, qa_net_reader *r,
-                          const qa_q2_mvd_frame *previous, uint16_t max_clients, int16_t dummy, qa_q2_mvd_frame *out)
+static bool mvd_read_frame(const qa_q2_mvd_profile *p, qa_net_reader *r,
+    const qa_q2_mvd_frame *previous, uint16_t max_clients, int16_t dummy,
+    qa_arena *scratch, qa_arena *storage, qa_q2_mvd_frame *out)
 {
     if (!p || !r || !out) return false;
     if ((p->max_entities!=1024 && p->max_entities!=8192) || !max_clients || max_clients>256 ||
@@ -318,12 +342,20 @@ bool qa_q2_mvd_read_frame(const qa_q2_mvd_profile *p, qa_net_reader *r,
     qa_q2_codec c;
     if (!mvd_codec(p,&c,r->error)) { r->failed=true; return false; }
     qa_q2_mvd_frame f={0};
-    qa_q2_player *players=calloc(255,sizeof(*players));
-    qa_q2_entity *entities=calloc(p->max_entities,sizeof(*entities));
-    const qa_q2_entity **old=calloc(p->max_entities,sizeof(*old));
+    qa_q2_player *players=scratch ? qa_arena_alloc(scratch,255*sizeof(*players),_Alignof(qa_q2_player),r->error) :
+        calloc(255,sizeof(*players));
+    qa_q2_entity *entities=scratch ? qa_arena_alloc(scratch,p->max_entities*sizeof(*entities),_Alignof(qa_q2_entity),r->error) :
+        calloc(p->max_entities,sizeof(*entities));
+    const qa_q2_entity **old=scratch ? qa_arena_alloc(scratch,p->max_entities*sizeof(*old),_Alignof(qa_q2_entity *),r->error) :
+        calloc(p->max_entities,sizeof(*old));
     bool active[255]={0};
     if (!players || !entities || !old) {
-        qa_error_set(r->error,QA_ERROR_MEMORY,r->bit/8,"MVD frame allocation failed"); r->failed=true; goto fail;
+        if (!scratch) qa_error_set(r->error,QA_ERROR_MEMORY,r->bit/8,"MVD frame allocation failed");
+        r->failed=true; goto fail;
+    }
+    if (scratch) {
+        memset(players,0,255*sizeof(*players)); memset(entities,0,p->max_entities*sizeof(*entities));
+        memset(old,0,p->max_entities*sizeof(*old));
     }
     if (previous) {
         for (size_t i=0;i<previous->player_count;i++) {
@@ -374,16 +406,32 @@ bool qa_q2_mvd_read_frame(const qa_q2_mvd_profile *p, qa_net_reader *r,
         s->angles[1]=player->viewangles[1]; s->angles[2]=0;
     }
     for (unsigned n=1;n<p->max_entities;n++) if (entities[n].number) f.entity_count++;
-    f.players=f.player_count?malloc(f.player_count*sizeof(*f.players)):NULL;
-    f.entities=f.entity_count?malloc(f.entity_count*sizeof(*f.entities)):NULL;
+    f.players=f.player_count ? storage ?
+        qa_arena_alloc(storage,f.player_count*sizeof(*f.players),_Alignof(qa_q2_mvd_player),r->error) :
+        malloc(f.player_count*sizeof(*f.players)) : NULL;
+    f.entities=f.entity_count ? storage ?
+        qa_arena_alloc(storage,f.entity_count*sizeof(*f.entities),_Alignof(qa_q2_entity),r->error) :
+        malloc(f.entity_count*sizeof(*f.entities)) : NULL;
     if ((f.player_count && !f.players) || (f.entity_count && !f.entities)) {
-        qa_error_set(r->error,QA_ERROR_MEMORY,r->bit/8,"MVD result allocation failed"); r->failed=true; goto fail;
+        if (!storage) qa_error_set(r->error,QA_ERROR_MEMORY,r->bit/8,"MVD result allocation failed");
+        r->failed=true; goto fail;
     }
     size_t at=0; for (unsigned n=0;n<255;n++) if (active[n]) f.players[at++]=(qa_q2_mvd_player){(uint8_t)n,players[n]};
     at=0; for (unsigned n=1;n<p->max_entities;n++) if (entities[n].number) f.entities[at++]=entities[n];
-    free(players); free(entities); free(old); *out=f; return true;
-fail: free(players); free(entities); free(old); qa_q2_mvd_frame_free(&f); return false;
+    if (!scratch) { free(players); free(entities); free(old); }
+    *out=f; return true;
+fail:
+    if (!scratch) { free(players); free(entities); free(old); }
+    if (!storage) qa_q2_mvd_frame_free(&f);
+    return false;
 }
+bool qa_q2_mvd_read_frame(const qa_q2_mvd_profile *p, qa_net_reader *r,
+    const qa_q2_mvd_frame *previous, uint16_t max_clients, int16_t dummy, qa_q2_mvd_frame *out)
+{ return mvd_read_frame(p,r,previous,max_clients,dummy,NULL,NULL,out); }
+bool qa_q2_mvd_read_frame_arena(const qa_q2_mvd_profile *p, qa_net_reader *r,
+    const qa_q2_mvd_frame *previous, uint16_t max_clients, int16_t dummy,
+    qa_arena *scratch, qa_arena *storage, qa_q2_mvd_frame *out)
+{ return scratch && storage && mvd_read_frame(p,r,previous,max_clients,dummy,scratch,storage,out); }
 bool qa_q2_mvd_write_frame(const qa_q2_mvd_profile *p, qa_net_writer *w,
                            const qa_q2_mvd_frame *previous, const qa_q2_mvd_frame *f)
 {
@@ -508,6 +556,175 @@ bool qa_q2_mvd_write_record(const qa_q2_mvd_profile *p, qa_net_writer *w, const 
     }
     default: return qa_net_writer_fail(w,"MVD record requires specialized state encoder");
     }
+}
+
+const qa_q2_mvd_player *qa_q2_mvd_player_select(const qa_q2_mvd_frame *frame, uint8_t requested)
+{
+    if (!frame || !frame->player_count) return NULL;
+    size_t first=0, end=frame->player_count;
+    while (first<end) {
+        size_t middle=first+(end-first)/2;
+        if (frame->players[middle].number<requested) first=middle+1;
+        else end=middle;
+    }
+    return first<frame->player_count && frame->players[first].number==requested ?
+        frame->players+first : frame->players;
+}
+static const qa_q2_player *mvd_view_player(const qa_q2_mvd_frame *frame, uint8_t requested,
+    const qa_q2_mvd_projection *projection)
+{
+    static const qa_q2_player empty={.clientnum=-1,.fov=90,.pmove={.type=1}};
+    const qa_q2_mvd_player *selected=qa_q2_mvd_player_select(frame,requested);
+    return selected ? &selected->state : projection && projection->spectator ? projection->spectator : &empty;
+}
+static bool mvd_project_emit(qa_q2_messages *messages, qa_q2_server_emit_fn emit,
+    void *context, const qa_q2_server_record *record, qa_error *error)
+{ return qa_q2_messages_accept(messages,record,error) && emit(context,record,error); }
+bool qa_q2_mvd_project_header(const qa_q2_mvd_header *header, uint8_t selected,
+    qa_q2_messages *messages, qa_q2_server_emit_fn emit, void *context, qa_error *error)
+{
+    if (!header || !messages || !emit || selected>=header->max_clients) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"MVD signon requires its admitted header and selected view"); return false;
+    }
+    qa_q2_server_record record={.opcode=12,.event={.kind=QA_Q2_SVC_SERVERDATA}};
+    qa_q2_serverdata *data=&record.event.data.serverdata;
+    *data=(qa_q2_serverdata){.servercount=header->servercount,.attractloop=true,
+        .clientnum=selected,.client_count=1,.server_state=2,.server_fps=10};
+    data->clientnums[0]=selected;
+    memcpy(data->gamedir,header->gamedir,sizeof(data->gamedir));
+    for (size_t i=0;i<header->config_count;++i) if (!header->configstrings[i].index) {
+        size_t size=strlen(header->configstrings[i].value);
+        if (size>=sizeof(data->levelname)) {
+            qa_error_set(error,QA_ERROR_FORMAT,0,"MVD level title exceeds Q2 serverdata"); return false;
+        }
+        memcpy(data->levelname,header->configstrings[i].value,size+1);
+        break;
+    }
+    if (header->profile.protocol.kind==QA_NET_Q2PRO_36) {
+        data->protocol_revision=header->profile.protocol.revision;
+        data->wire_flags=header->profile.v2?24:8;
+    }
+    if (!mvd_codec(&header->profile,qa_q2_messages_codec(messages),error) ||
+        !mvd_project_emit(messages,emit,context,&record,error)) return false;
+    for (size_t i=0;i<header->config_count;++i) {
+        record=(qa_q2_server_record){.opcode=13,.event={.kind=QA_Q2_SVC_CONFIGSTRING,
+            .data.config={header->configstrings[i].index,header->configstrings[i].value}}};
+        if (!mvd_project_emit(messages,emit,context,&record,error)) return false;
+    }
+    char precache[64]; (void)snprintf(precache,sizeof(precache),"precache %" PRId32 "\n",header->servercount);
+    record=(qa_q2_server_record){.opcode=11,.event={.kind=QA_Q2_SVC_COMMAND,.data.print={0,precache}}};
+    return mvd_project_emit(messages,emit,context,&record,error);
+}
+bool qa_q2_mvd_project_frame(const qa_q2_mvd_header *header, const qa_q2_mvd_frame *source,
+    uint8_t selected, int32_t ordinal, const qa_q2_mvd_projection *projection,
+    qa_unified_frame_lease *lease, qa_q2_messages *messages, qa_q2_server_emit_fn emit,
+    void *context, qa_error *error)
+{
+    if (!header || !source || !projection || (source->entity_count && !projection->entity_visible) || !projection->area_bits ||
+        !lease || !messages || !emit) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"MVD frame requires its shared projection and frame storage"); return false;
+    }
+    qa_q2_wire_frame *frame=qa_unified_frame_lease_alloc(lease,1,sizeof(*frame),_Alignof(qa_q2_wire_frame),error);
+    if (!frame) return false;
+    *frame=(qa_q2_wire_frame){.valid=true,.server_frame=ordinal,.delta_frame=-1,.player_count=1,.lease=lease};
+    const qa_q2_player *player=mvd_view_player(source,selected,projection);
+    qa_q2_messages_codec(messages)->server_clientnum=player->clientnum;
+    qa_q2_messages_codec(messages)->has_server_clientnum=true;
+    frame->players[0].player=*player;
+    frame->players[0].player.clientnum_present=true;
+    qa_bytes portals={source->portal_bits,source->portal_bytes};
+    if (!projection->area_bits(projection->context,player,portals,
+        qa_unified_frame_lease_arena(lease),&frame->players[0].area_bits,error)) return false;
+    frame->entities=qa_unified_frame_lease_alloc(lease,source->entity_count,sizeof(*frame->entities),
+        _Alignof(qa_q2_entity),error);
+    if (source->entity_count && !frame->entities) return false;
+    for (size_t i=0;i<source->entity_count;++i) {
+        bool visible;
+        if (!projection->entity_visible(projection->context,source->entities+i,player,portals,&visible,error)) return false;
+        if (visible) frame->entities[frame->entity_count++]=source->entities[i];
+    }
+    qa_q2_server_record record={.opcode=20,.event={.kind=QA_Q2_SVC_FRAME,.data.frame=frame}};
+    return mvd_project_emit(messages,emit,context,&record,error);
+}
+static const qa_q2_entity *mvd_source_entity(const qa_q2_mvd_frame *frame, uint16_t number)
+{
+    size_t first=0, end=frame->entity_count;
+    while (first<end) {
+        size_t middle=first+(end-first)/2;
+        if (frame->entities[middle].number<number) first=middle+1;
+        else end=middle;
+    }
+    return first<frame->entity_count && frame->entities[first].number==number ? frame->entities+first : NULL;
+}
+bool qa_q2_mvd_project_record(const qa_q2_mvd_header *header, const qa_q2_mvd_frame *frame,
+    uint8_t selected, const qa_q2_mvd_record *source, const qa_q2_mvd_projection *projection,
+    qa_q2_messages *messages, qa_q2_server_emit_fn emit, void *context, qa_error *error)
+{
+    if (!header || !frame || !source || !messages || !emit) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"MVD record requires its accepted state and Q2 receiver"); return false;
+    }
+    qa_q2_server_record record={0};
+    const qa_q2_player *player=mvd_view_player(frame,selected,projection);
+    qa_bytes portals={frame->portal_bits,frame->portal_bytes};
+    switch (source->command.opcode) {
+    case QA_MVD_NOP: record.opcode=6; record.event.kind=QA_Q2_SVC_NOP; break;
+    case QA_MVD_DISCONNECT: record.opcode=7; record.event.kind=QA_Q2_SVC_DISCONNECT; break;
+    case QA_MVD_RECONNECT: record.opcode=8; record.event.kind=QA_Q2_SVC_RECONNECT; break;
+    case QA_MVD_CONFIGSTRING:
+        record.opcode=13; record.event.kind=QA_Q2_SVC_CONFIGSTRING;
+        record.event.data.config.index=source->data.config.index;
+        record.event.data.config.value=(const char *)source->data.config.text.data; break;
+    case QA_MVD_PRINT:
+        record.opcode=10; record.event.kind=QA_Q2_SVC_PRINT;
+        record.event.data.print.level=source->data.print.level;
+        record.event.data.print.text=(const char *)source->data.print.text.data; break;
+    case QA_MVD_STUFFTEXT:
+        record.opcode=11; record.event.kind=QA_Q2_SVC_COMMAND;
+        record.event.data.print.text=(const char *)source->data.text.data; break;
+    case QA_MVD_SOUND: {
+        const qa_q2_entity *entity=mvd_source_entity(frame,source->data.sound.entity);
+        if (!entity && source->data.sound.entity) return true;
+        if ((entity && (!projection || !projection->sound_origin)) ||
+            (!source->data.sound.global && (!projection || !projection->sound_audible))) {
+            qa_error_set(error,QA_ERROR_ARGUMENT,0,"MVD sound requires shared source geometry"); return false;
+        }
+        qa_q2_kex_sound sound={.flags=(uint8_t)(source->data.sound.flags|12u),.index=source->data.sound.index,
+            .entity=source->data.sound.entity,.channel=source->data.sound.channel,.has_position=true,
+            .volume=source->data.sound.volume,.attenuation=source->data.sound.attenuation,
+            .time_offset=source->data.sound.delay_seconds};
+        if (entity && !projection->sound_origin(projection->context,entity,sound.position,error)) return false;
+        bool audible=true;
+        if (!source->data.sound.global && !projection->sound_audible(projection->context,
+            sound.position,player,portals,&audible,error)) return false;
+        if (!audible) return true;
+        record.opcode=9; record.event.kind=QA_Q2_SVC_SOUND; record.event.data.sound=sound;
+        break;
+    }
+    case QA_MVD_UNICAST: case QA_MVD_UNICAST_RELIABLE:
+    case QA_MVD_ALL: case QA_MVD_PHS: case QA_MVD_PVS:
+    case QA_MVD_ALL_RELIABLE: case QA_MVD_PHS_RELIABLE: case QA_MVD_PVS_RELIABLE: {
+        bool visible=true;
+        switch (source->data.route.recipient) {
+        case QA_MVD_RECIPIENT_PLAYER:
+            if (source->data.route.target>=header->max_clients) {
+                qa_error_set(error,QA_ERROR_FORMAT,0,"MVD unicast exceeds accepted player count"); return false;
+            }
+            visible=source->data.route.target==player->clientnum; break;
+        case QA_MVD_RECIPIENT_ALL: break;
+        case QA_MVD_RECIPIENT_PVS: case QA_MVD_RECIPIENT_PHS:
+            if (!projection || !projection->route_visible) {
+                qa_error_set(error,QA_ERROR_ARGUMENT,0,"MVD multicast requires shared source visibility"); return false;
+            }
+            if (!projection->route_visible(projection->context,source->data.route.target,
+                source->data.route.recipient==QA_MVD_RECIPIENT_PHS,player,portals,&visible,error)) return false;
+            break;
+        }
+        return !visible || qa_q2_messages_read(messages,source->data.route.payload,emit,context,error);
+    }
+    default:
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"MVD state command requires its frame or header projection"); return false;
+    }
+    return mvd_project_emit(messages,emit,context,&record,error);
 }
 
 struct qa_q2_mvd_framer {
