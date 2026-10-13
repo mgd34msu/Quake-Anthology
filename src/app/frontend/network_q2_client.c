@@ -2,7 +2,6 @@
 #include "qa/network_q3.h"
 #include "qa/application_network.h"
 #include "qa/network_q2_bootstrap_save.h"
-#include "qa/event_ring.h"
 #include "remote_q2_effects_bridge.h"
 #include "neutral_config.h"
 #include "view_settings.h"
@@ -42,7 +41,6 @@ struct frontend_network_q2_client {
     qa_q2_mvd_frame mvd_frame;
     qa_q2_player mvd_spectator;
     qa_net_reader mvd_cursor;
-    qa_event_ring *mvd_records;
     qa_event_lease *mvd_payload;
     uint64_t mvd_record_cursor;
     qa_collision_geometry *mvd_geometry;
@@ -455,6 +453,7 @@ bool frontend_network_q2_client_create(const frontend_network_q2_client_options 
     qa_q2_codec codec;
     if(!options || !out || *out || !options->frontend || !options->runtime || !options->current ||
         !options->download_stage ||
+        (options->live_mvd && !options->mvd_records) ||
         options->physical_seat>=options->frontend->options.seats ||
         !qa_q2_codec_init(&codec,options->protocol,error) ||
         (options->protocol.kind==QA_NET_Q2KEX_2023 && !options->lobby && !options->demo &&
@@ -469,13 +468,8 @@ bool frontend_network_q2_client_create(const frontend_network_q2_client_options 
     if (options->demo && options->demo_format==FRONTEND_DEMO_MVD) {
         owner->mvd_pool=qa_unified_frame_pool_create(0,0,error);
         if (!owner->mvd_pool) return false;
-        if (options->live_mvd) {
-            size_t bytes=1024u*1024u;
-            size_t records=bytes/qa_event_ring_record_storage_size(sizeof(qa_bytes)+1);
-            owner->mvd_records=qa_event_ring_create(bytes,16384,records,error);
-            if (!owner->mvd_records) return false;
-            owner->mvd_record_cursor=qa_event_ring_first(owner->mvd_records);
-        }
+        if (options->live_mvd)
+            owner->mvd_record_cursor=qa_event_ring_first(options->mvd_records);
     }
     if (!owner->options.seat.owner) owner->options.seat=(qa_net_seat_id){QA_NETWORK_COMMAND_OWNER,0};
     qa_frontend *f=options->frontend;
@@ -644,7 +638,6 @@ bool frontend_network_q2_client_destroy(frontend_network_q2_client **owned,qa_er
     owner->receiver=0; owner->closing=true;
     qa_network_q2_bootstrap_destroy(owner->bootstrap);
     qa_event_lease_release(owner->mvd_payload);
-    qa_event_ring_destroy(&owner->mvd_records);
     qa_unified_frame_lease_release(owner->mvd_header_storage);
     qa_unified_frame_lease_release(owner->mvd_frame_storage);
     qa_trace_scratch_destroy(owner->mvd_trace);
@@ -1078,28 +1071,28 @@ void frontend_network_q2_client_mvd_close(frontend_network_q2_client *owner,cons
     snprintf(owner->reason,sizeof(owner->reason),"%s",reason?reason:"GTV watch closed");
     owner->retired=true;
 }
-static bool mvd_watch_full(frontend_network_q2_client *owner)
+qa_event_ring *frontend_network_q2_mvd_input_create(qa_error *error)
 {
-    frontend_network_q2_client_mvd_close(owner,"GTV watch buffer exceeded its 1 MiB limit");
-    frontend_console_print(owner->options.frontend,NULL,owner->reason);
-    return true;
+    size_t bytes=1024u*1024u;
+    size_t records=bytes/qa_event_ring_record_storage_size(sizeof(qa_bytes)+1);
+    return qa_event_ring_create(bytes,16384,records,error);
 }
-bool frontend_network_q2_client_mvd_feed(frontend_network_q2_client *owner,qa_bytes bytes,qa_error *error)
+bool frontend_network_q2_mvd_input_feed(qa_event_ring *records,qa_bytes bytes,qa_error *error)
 {
-    (void)error;
-    if (!owner || !owner->options.live_mvd || !owner->mvd_records) return false;
-    if (owner->retired || !bytes.size) return true;
+    if (!bytes.size) return true;
     qa_event_transaction transaction;
-    if (!qa_event_ring_begin(owner->mvd_records,&transaction)) return mvd_watch_full(owner);
-    qa_error failure={0};
-    qa_bytes *record=qa_event_ring_alloc(&transaction,sizeof(*record),_Alignof(qa_bytes),&failure);
-    uint8_t *payload=qa_event_ring_alloc(&transaction,bytes.size,1,&failure);
+    if (!qa_event_ring_begin(records,&transaction)) goto full;
+    qa_bytes *record=qa_event_ring_alloc(&transaction,sizeof(*record),_Alignof(qa_bytes),error);
+    uint8_t *payload=qa_event_ring_alloc(&transaction,bytes.size,1,error);
     if (!record || !payload) {
-        qa_event_ring_abort(&transaction); return mvd_watch_full(owner);
+        qa_event_ring_abort(&transaction);
+        goto full;
     }
     memcpy(payload,bytes.data,bytes.size);
     *record=(qa_bytes){payload,bytes.size};
-    return qa_event_ring_commit(&transaction,record,NULL)!=0 || mvd_watch_full(owner);
+    if (qa_event_ring_commit(&transaction,record,NULL)) return true;
+full:
+    return frontend_fail(error,QA_ERROR_CAPACITY,"GTV watch buffer exceeded its 1 MiB limit");
 }
 static bool mvd_next_packet(frontend_network_q2_client *owner,frontend_demo_reader *reader,
     frontend_demo_packet *packet,bool *present,frontend_demo_end *end,qa_error *error)
@@ -1108,12 +1101,12 @@ static bool mvd_next_packet(frontend_network_q2_client *owner,frontend_demo_read
         return frontend_demo_read_next(reader,NULL,NULL,packet,present,end,error);
     qa_event_lease_release(owner->mvd_payload); owner->mvd_payload=NULL;
     owner->mvd_cursor=(qa_net_reader){0}; owner->mvd_cursor_held=false;
-    const qa_bytes *record=qa_event_ring_at(owner->mvd_records,owner->mvd_record_cursor);
+    const qa_bytes *record=qa_event_ring_at(owner->options.mvd_records,owner->mvd_record_cursor);
     *present=record!=NULL;
     if (!record) return true;
-    owner->mvd_payload=qa_event_ring_retain(owner->mvd_records,owner->mvd_record_cursor++);
+    owner->mvd_payload=qa_event_ring_retain(owner->options.mvd_records,owner->mvd_record_cursor++);
     *packet=(frontend_demo_packet){.format=FRONTEND_DEMO_MVD,.value.message=*record};
-    qa_event_ring_retire(owner->mvd_records,owner->mvd_record_cursor);
+    qa_event_ring_retire(owner->options.mvd_records,owner->mvd_record_cursor);
     return true;
 }
 static bool demo_advance(void *context,frontend_demo_reader *reader,uint64_t elapsed,uint64_t time_ns,uint64_t frame,

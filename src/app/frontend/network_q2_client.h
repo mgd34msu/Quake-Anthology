@@ -8,6 +8,7 @@
 #include "qa/network_q2_kex.h"
 #include "qa/source_frame_time.h"
 #include "qa/network_q2_mvd.h"
+#include "qa/event_ring.h"
 typedef struct frontend_network_q2_client frontend_network_q2_client;
 typedef struct frontend_network_q2_client_options {
     qa_frontend *frontend;
@@ -21,6 +22,8 @@ typedef struct frontend_network_q2_client_options {
     qa_kex_lan *lobby;
     bool demo;
     bool live_mvd;
+    /* The watch retains this input store until its Source is fully released. */
+    qa_event_ring *mvd_records;
     frontend_demo_format demo_format;
     uint8_t demo_viewpoint;
     void *context;
@@ -40,7 +43,8 @@ bool frontend_network_q2_client_demo_record(frontend_network_q2_client *,
 bool frontend_network_q2_client_demo_playback(frontend_network_q2_client *,
     frontend_demo_playback_source *, qa_error *);
 void frontend_network_q2_client_demo_viewpoint(frontend_network_q2_client *, uint8_t);
-bool frontend_network_q2_client_mvd_feed(frontend_network_q2_client *, qa_bytes, qa_error *);
+qa_event_ring *frontend_network_q2_mvd_input_create(qa_error *);
+bool frontend_network_q2_mvd_input_feed(qa_event_ring *, qa_bytes, qa_error *);
 void frontend_network_q2_client_mvd_close(frontend_network_q2_client *, const char *reason);
 bool frontend_network_q2_client_mvd_advance(frontend_network_q2_client *,
     uint64_t elapsed_ns,uint64_t time_ns,uint64_t frame,frontend_demo_end *,qa_error *);
