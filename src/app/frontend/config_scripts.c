@@ -444,15 +444,34 @@ bool frontend_config_files_write_config_text(frontend_config_files *owner,const 
     owner->writing=false; free(seat_name); free(path); return ok;
 }
 bool frontend_config_files_dump(frontend_config_files *owner,const char *name,const qa_command_context *source,
-    const qa_console_buffer *buffer,qa_error *error)
+    const qa_console_buffer *buffer,void (*print)(void *,const qa_command_context *,const char *),
+    void *print_context,qa_error *error)
 {
     if (!owner || !buffer || owner->writing || owner->nonce==UINT64_MAX || !local(source,error)) return false;
     char *path=qa_vfs_normalize_path(name,error); if (!path) return false;
+    size_t length=strlen(path);
+    if ((source->dialect==QA_RULESET_Q2_CLASSIC || source->dialect==QA_RULESET_Q2_RERELEASE) &&
+        (length<4 || strcmp(path+length-4,".txt"))) {
+        if (length>SIZE_MAX-5) { free(path); return fail(error,QA_ERROR_MEMORY,"Console dump path overflow"); }
+        char *extended=realloc(path,length+5);
+        if (!extended) { free(path); return fail(error,QA_ERROR_MEMORY,"Completing console dump filename"); }
+        path=extended; memcpy(path+length,".txt",5); length+=4;
+    }
+    size_t prefix=sizeof("Dumped console text to ")-1;
+    if (length>SIZE_MAX-prefix-sizeof(".\n")) {
+        free(path); return fail(error,QA_ERROR_MEMORY,"Console dump confirmation overflow");
+    }
+    size_t message_bytes=prefix+length+sizeof(".\n");
+    char *message=print?malloc(message_bytes):NULL;
+    if (print && !message) { free(path); return fail(error,QA_ERROR_MEMORY,"Preparing console dump confirmation"); }
+    if (message) snprintf(message,message_bytes,"Dumped console text to %s.\n",path);
     qa_buffer text={0}; owner->writing=true;
     bool ok=qa_console_buffer_dump(buffer,&text,error) &&
         qa_fs_root_replace(qa_vfs_mount_root(owner->console,owner->console_writable),path,
                            (qa_bytes){text.data,text.size},++owner->nonce,error);
-    owner->writing=false; qa_buffer_free(&text); free(path); return ok;
+    owner->writing=false; qa_buffer_free(&text); free(path);
+    if (ok && print) print(print_context,source,message);
+    free(message); return ok;
 }
 static bool names(frontend_config_files *owner,qa_mount_id mount,qa_vfs *view,const char *prefix,qa_vfs_listing *out,qa_error *error)
 {

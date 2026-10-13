@@ -1776,7 +1776,7 @@ static bool config_command(void *context,const qa_command_invocation *command,qa
             seat>=f->options.seats || !f->seats[seat].console)
             return fail(error,QA_ERROR_UNSUPPORTED,"Console dump requires its actual local console buffer");
         return frontend_config_files_dump(source->files,command->argv[1],&command->context,
-            qa_seat_console_buffer(f->seats[seat].console),error);
+            qa_seat_console_buffer(f->seats[seat].console),frontend_console_print,f,error);
     }
     if (command->argc>2) { print(source,"writeconfig [filename]\n"); return true; }
     const char *requested=command->argc==2?command->argv[1]:command->context.dialect==QA_RULESET_Q3?"q3config.cfg":"config.cfg";

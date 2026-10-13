@@ -300,7 +300,7 @@ static bool config_command(void *context,const qa_command_invocation *invocation
         if (invocation->argc!=2) { print(row,&invocation->context,"condump <filename>\n"); return true; }
         qa_seat_console *console=row->owner->frontend->seats[row->physical_seat].console;
         return console && frontend_config_files_dump(row->files,invocation->argv[1],&invocation->context,
-            qa_seat_console_buffer(console),e);
+            qa_seat_console_buffer(console),frontend_console_print,row->owner->frontend,e);
     }
     if (invocation->argc>2) { print(row,&invocation->context,"writeconfig [filename]\n"); return true; }
     const char *name=invocation->argc==2?invocation->argv[1]:"config.cfg";

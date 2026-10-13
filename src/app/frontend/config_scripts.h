@@ -44,7 +44,9 @@ bool frontend_config_files_write_config(frontend_config_files *, const char *, c
 bool frontend_config_files_write_config_text(frontend_config_files *,const char *,
                                              const qa_command_context *,qa_bytes,qa_error *);
 bool frontend_config_files_dump(frontend_config_files *,const char *,const qa_command_context *,
-                                const qa_console_buffer *,qa_error *);
+                                const qa_console_buffer *,
+                                void (*print)(void *, const qa_command_context *, const char *),
+                                void *print_context, qa_error *);
 bool frontend_config_files_visit(const frontend_config_files *,const qa_application_content_visitor *,qa_error *);
 bool frontend_config_files_checkpoint(const frontend_config_files *,const qa_application_content_graph *,qa_buffer *,qa_error *);
 /* Transfers genuine catalog/view authorities from an admitted pure graph.

@@ -382,7 +382,7 @@ static bool config_command(void *context,const qa_command_invocation *command,qa
         qa_frontend *f=row->owner->frontend;
         qa_seat_console *console=f->seats[row->physical_seat].console;
         return console && frontend_config_files_dump(row->files,command->argv[1],&command->context,
-            qa_seat_console_buffer(console),error);
+            qa_seat_console_buffer(console),frontend_console_print,f,error);
     }
     if (command->argc>2) { print(row,"writeconfig [filename]\n"); return true; }
     const char *requested=command->argc==2?command->argv[1]:"q3config.cfg";
