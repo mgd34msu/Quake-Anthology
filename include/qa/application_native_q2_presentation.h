@@ -112,6 +112,16 @@ typedef struct qa_application_native_q2_hud_source {
 /* Selects the actor's actual HUD/data owners without reading mutable player state. */
 bool qa_application_native_q2_hud_source_read(qa_application *, qa_actor_id,
     qa_application_native_q2_hud_source *, bool *found, qa_error *);
+/* Resolves the chosen Q2 client namespace and retains its name/skin text only
+ * when those admitted IDs change. Other characters use their common slot. */
+bool qa_application_native_q2_hud_player_config(qa_application *, const qa_q2_game *,
+    qa_actor_id, uint32_t *slot, qa_string_id *value, bool *found, qa_error *);
+typedef struct qa_application_native_q2_hud_players {
+    qa_application *application;
+    const qa_q2_game *game;
+    uint32_t skin_base;
+} qa_application_native_q2_hud_players;
+bool qa_application_native_q2_hud_player_skin(void *, qa_actor_id, uint32_t *, qa_error *);
 /* A null output returns the required capacity. Written rows use one image
  * roster for local and Unified clients, and carry interned names only. */
 bool qa_application_native_q2_hud_configs(qa_application *,

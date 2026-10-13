@@ -119,7 +119,7 @@ static size_t q2_config_lower_bound(const qa_unified_q2_hud_configuration *confi
     }
     return low;
 }
-static bool q2_hud_state(const qa_application_native_q2_hud *hud,
+static bool q2_hud_state(qa_application *app, const qa_application_native_q2_hud *hud,
     const qa_unified_configuration_state *configuration, qa_unified_frame_player *out, qa_error *error)
 {
     qa_unified_q2_hud_state *state = &out->q2_hud;
@@ -131,8 +131,11 @@ static bool q2_hud_state(const qa_application_native_q2_hud *hud,
         size_t first = q2_config_lower_bound(config, layout.images);
         q2_stat_images images = {.rows = config->configstrings + first,
             .count = q2_config_lower_bound(config, layout.images + layout.max_images) - first, .base = layout.images};
+        qa_application_native_q2_hud_players players = {.application = app,
+            .game = hud->game, .skin_base = layout.player_skins};
         if (!qa_q2_wire_stats(hud->game, &hud->view,
             &(qa_q2_wire_stat_resources){.context = &images, .items_base = layout.items, .image = q2_stat_image,
+                .player_context = &players, .player_skin = qa_application_native_q2_hud_player_skin,
                 .modes = hud->modes, .mode = hud->mode, .actor = hud->actor,
                 .source_frame = (uint64_t)(uint32_t)hud->server_frame},
             state->frame.stats, error)) return false;
@@ -279,7 +282,7 @@ bool application_unified_output_metadata(qa_application *app, const application_
         ++value.q1_revision;
     }
     if (!configuration_changed && !styles_changed && !q3_changed && !q1_changed) {
-        if (has_q2_hud && !q2_hud_state(&hud, player_configuration(previous, frame->player->actor), frame->player, error)) return false;
+        if (has_q2_hud && !q2_hud_state(app, &hud, player_configuration(previous, frame->player->actor), frame->player, error)) return false;
         *proposed = value; return true;
     }
     qa_unified_frame_metadata *metadata = application_unified_frame_alloc(frame->lease, 1, sizeof(*metadata), error);
@@ -298,7 +301,7 @@ bool application_unified_output_metadata(qa_application *app, const application_
         (!styles_changed || styles(app, source, frame->lease, metadata, error)) &&
         (!q3_changed || application_unified_q3_sources_metadata(q3_sources, frame->lease, metadata, error)) &&
         (!q1_changed || q1_world_metadata(q1, frame->lease, metadata, error));
-    if (ok && has_q2_hud) ok = q2_hud_state(&hud,
+    if (ok && has_q2_hud) ok = q2_hud_state(app, &hud,
         player_configuration(configuration_changed ? metadata : previous, frame->player->actor), frame->player, error);
     application_unified_metadata_receipt after;
     if (ok) ok = metadata_revision(app, source, epoch, &after, error) &&

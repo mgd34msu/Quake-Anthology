@@ -1,5 +1,6 @@
 #include "guest_native_q2_private.h"
 #include "native_q2_console.h"
+#include "map_players_private.h"
 #include "qa/application_native_q2_presentation.h"
 #include "qa/game_q2_bots.h"
 #include "qa/game_q2_combat.h"
@@ -39,6 +40,46 @@ typedef struct hud_selection {
     application_provider *hud, *character, *original;
     uint32_t slot;
 } hud_selection;
+
+bool qa_application_native_q2_hud_player_config(qa_application *app, const qa_q2_game *game,
+    qa_actor_id actor, uint32_t *slot, qa_string_id *value, bool *found, qa_error *error)
+{
+    *found = false;
+    application_player_record *record = application_player_record_find(app->players, actor);
+    if (!record || record->retiring || record->deferred) return true;
+    qa_builtin_player_info player;
+    if (!qa_q2_player_projection((qa_q2_game *)game, actor, NULL, &player) &&
+        !qa_application_player_info_read(app, actor, &player)) return true;
+    if (!player.connected) return true;
+    if (!record->q2_config_value || record->q2_config_name != player.name_id ||
+        record->q2_config_skin != player.skin_id) {
+        char text[512];
+        int length = snprintf(text, sizeof(text), "%s\\%s",
+            player.name ? player.name : "", player.skin ? player.skin : "");
+        qa_string_id config;
+        if (length < 0 || (size_t)length >= sizeof(text))
+            return application_fail(error, QA_ERROR_FORMAT, "Q2 player configstring exceeds its wire limit");
+        if (!qa_strings_intern_cstr(qa_session_strings(app->session), text, &config, error)) return false;
+        record->q2_config_name = player.name_id; record->q2_config_skin = player.skin_id;
+        record->q2_config_value = config;
+        ++app->players->q2_config_revision;
+    }
+    *slot = player.slot; *value = record->q2_config_value; *found = true;
+    return true;
+}
+
+bool qa_application_native_q2_hud_player_skin(void *opaque, qa_actor_id actor,
+    uint32_t *index, qa_error *error)
+{
+    const qa_application_native_q2_hud_players *players = opaque;
+    uint32_t slot, capacity, clients; qa_string_id config; bool present;
+    *index = 0;
+    if (!qa_q2_wire_policy(players->game, &capacity, &clients, error)) return false;
+    if (!qa_application_native_q2_hud_player_config(players->application, players->game,
+        actor, &slot, &config, &present, error)) return false;
+    if (present && slot < clients) *index = players->skin_base + slot;
+    return true;
+}
 
 static bool hud_select(qa_application *app, qa_actor_id actor, hud_selection *out, bool *found, qa_error *error)
 {
@@ -88,6 +129,13 @@ static bool hud_select(qa_application *app, qa_actor_id actor, hud_selection *ou
     } else {
         value->game = character && character->kind == APPLICATION_PROVIDER_Q2 ? character->state.q2 : hud->state.q2;
         value->data_provider = character && character->kind == APPLICATION_PROVIDER_Q2 ? character->owner : hud->owner;
+        for (size_t i = 0; app->players && i < app->players->count; ++i) {
+            uint32_t slot; qa_string_id config; bool present;
+            if (!qa_application_native_q2_hud_player_config(app, value->game,
+                app->players->records[i].actor, &slot, &config, &present, error)) return false;
+        }
+        if (app->players)
+            value->config_revision = app->players->revision + app->players->q2_config_revision;
         value->statusbar_id = qa_q2_wire_statusbar_name(hud->state.q2);
         value->statusbar = qa_q2_wire_statusbar(hud->state.q2);
         if (app->primary_mode_ready) {
@@ -133,7 +181,9 @@ bool qa_application_native_q2_hud_configs(qa_application *app,
     size_t mode_image_count = !source->original && source->modes &&
         qa_modes_q2_hud_resources(source->modes, source->mode, mode_images, &mode_statusbar)
         ? QA_MODE_Q2_HUD_IMAGES : 0;
-    size_t required = source->original ? source->configstring_count : 4 + items * 2 + mode_image_count;
+    uint32_t actor_capacity = 0, clients = 0;
+    if (!source->original && !qa_q2_wire_policy(source->game, &actor_capacity, &clients, error)) return false;
+    size_t required = source->original ? source->configstring_count : 4 + items * 2 + mode_image_count + clients;
     if (!rows) { *count = required; return true; }
     if (capacity < required) return application_fail(error, QA_ERROR_MEMORY, "Q2 HUD config storage is too small");
     *count = 0;
@@ -145,9 +195,7 @@ bool qa_application_native_q2_hud_configs(qa_application *app,
     }
     qa_q2_codec codec = {.protocol = qa_q2_default_protocol(source->edition == QA_RULESET_Q2_RERELEASE)};
     qa_q2_config_layout layout;
-    uint32_t actor_capacity, clients;
-    if (!qa_q2_config_layout_read(&codec, &layout, error) ||
-        !qa_q2_wire_policy(source->game, &actor_capacity, &clients, error)) return false;
+    if (!qa_q2_config_layout_read(&codec, &layout, error)) return false;
     rows[0] = (qa_q2_config_name){5, source->statusbar_id};
     rows[1] = (qa_q2_config_name){layout.max_clients, app->ui_names.client_counts[clients]};
     rows[2] = (qa_q2_config_name){0, app->ui_names.q2_health_icon};
@@ -169,6 +217,15 @@ bool qa_application_native_q2_hud_configs(qa_application *app,
     *count = 2 + unique;
     for (size_t i = 0; i < items; ++i)
         rows[(*count)++] = (qa_q2_config_name){layout.items + (uint32_t)i + 1, qa_q2_item_at(source->game, i)->name_id};
+    size_t players = *count;
+    for (uint32_t slot = 0; slot < clients; ++slot)
+        rows[(*count)++] = (qa_q2_config_name){layout.player_skins + slot, QA_STRING_NONE};
+    for (size_t i = 0; app->players && i < app->players->count; ++i) {
+        uint32_t slot; qa_string_id config; bool present;
+        if (!qa_application_native_q2_hud_player_config(app, source->game,
+            app->players->records[i].actor, &slot, &config, &present, error)) return false;
+        if (present && slot < clients) rows[players + slot].value_id = config;
+    }
     qsort(rows, *count, sizeof(*rows), config_index_compare);
     return true;
 }

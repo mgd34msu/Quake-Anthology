@@ -91,6 +91,8 @@ typedef struct qa_q2_wire_stat_resources {
     void *context;
     uint32_t items_base;
     bool (*image)(void *, qa_string_id, uint32_t *, qa_error *);
+    void *player_context;
+    bool (*player_skin)(void *, qa_actor_id, uint32_t *, qa_error *);
     qa_modes *modes;
     qa_mode_id mode;
     qa_actor_id actor;

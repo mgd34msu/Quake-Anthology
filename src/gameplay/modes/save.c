@@ -289,6 +289,14 @@ static bool checkpoint(qa_source_save_io *io, qa_modes *m, qa_modes_checkpoint *
     }
     return true;
 }
+static bool ctf_id_tail(qa_source_save_io *io, qa_modes_checkpoint *p) {
+    if (io->direction == QA_SOURCE_SAVE_READ && io->offset == io->input.size)
+        return true;
+    for (size_t i = 0; i < p->mode_count; ++i)
+        for (size_t j = 0; j < p->modes[i].member_count; ++j)
+            FIELD(bool, p->modes[i].members[j].player.ctf_id_view);
+    return true;
+}
 static bool header(qa_source_save_io *io) {
     static const uint8_t expected[8] = {'Q', 'A', 'M', 'O', 'D', 'E', 'S', 0};
     uint8_t signature[8] = {'Q', 'A', 'M', 'O', 'D', 'E', 'S', 0};
@@ -313,7 +321,8 @@ bool qa_modes_capture(qa_modes *m, qa_buffer *out, qa_error *e) {
     qa_modes_checkpoint saved = {0};
     if (!qa_modes_checkpoint_capture(m, &saved, e)) return false;
     qa_source_save_io storage = {0}, *io = &storage;
-    bool okay = qa_source_save_writer(io, m->options.services.session, e) && header(io) && checkpoint(io, m, &saved);
+    bool okay = qa_source_save_writer(io, m->options.services.session, e) && header(io) &&
+        checkpoint(io, m, &saved) && ctf_id_tail(io, &saved);
     if (okay) okay = qa_source_save_finish(io, out);
     qa_source_save_dispose(io); qa_modes_checkpoint_free(&saved); return okay;
 }
@@ -322,7 +331,7 @@ bool qa_modes_restore_bytes(qa_modes *m, qa_bytes input, qa_error *e) {
     qa_modes_checkpoint saved = {0};
     qa_source_save_io storage = {0}, *io = &storage;
     bool okay = qa_source_save_reader(io, m->options.services.session, input, e) && header(io) &&
-        checkpoint(io, m, &saved) && qa_source_save_finish(io, NULL);
+        checkpoint(io, m, &saved) && ctf_id_tail(io, &saved) && qa_source_save_finish(io, NULL);
     if (okay) okay = mode_checkpoint_restore_source(m, &saved, e);
     qa_source_save_dispose(io); qa_modes_checkpoint_free(&saved); return okay;
 }

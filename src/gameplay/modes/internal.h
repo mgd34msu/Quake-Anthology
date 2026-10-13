@@ -154,6 +154,8 @@ typedef struct mode_objective {
     X(CTF_WARP_LEVELS, "Available levels are: {0}\n") \
     X(CTF_WARP_UNKNOWN, "Unknown CTF level.\n") \
     X(CTF_PICK_TEAM, "Pick a team first (hit <TAB> for menu)\n") \
+    X(CTF_ID_DISABLED, "Disabling player identication display.\n") \
+    X(CTF_ID_ENABLED, "Activating player identication display.\n") \
     X(CTF_TEAM_JOINED, "{0} joined the {1} team.\n") \
     X(CTF_TEAM_CHANGED, "{0} changed to the {1} team.\n") \
     X(CTF_TEAM_ALREADY, "You are already on the {0} team.\n") \

@@ -576,8 +576,11 @@ bool application_network_q2_player_state(qa_application_network_q2 *owner, qa_ac
         value.gunrate = owner->host.source.edition == QA_RULESET_Q2_CLASSIC && entity.weapon.gun_rate == 10 ?
             0 : (uint32_t)entity.weapon.gun_rate;
     }
+    qa_application_native_q2_hud_players players = {.application = owner->app,
+        .game = game, .skin_base = owner->skin_base};
     if (!qa_q2_wire_stats(game, &view, &(qa_q2_wire_stat_resources){
         .context = owner, .items_base = owner->item_base, .image = hud_image,
+        .player_context = &players, .player_skin = qa_application_native_q2_hud_player_skin,
         .modes = owner->app->primary_mode_ready ? owner->app->modes : NULL,
         .mode = owner->app->primary_mode, .actor = actor,
         .source_frame = owner->host.source.clock.frame_number}, value.stats, error)) return false;

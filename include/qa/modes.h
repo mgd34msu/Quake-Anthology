@@ -177,6 +177,7 @@ typedef struct qa_mode_player_state {
     qa_team_id team;
     int32_t score, wins, losses;
     bool spectator, scoreboard, ready, leader;
+    bool ctf_id_view;
     uint64_t spectator_since_ns;
     int8_t automatic_follow;
     /* Chosen Q3 rule member state. Native GAME sessions remain on their

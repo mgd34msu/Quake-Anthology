@@ -52,6 +52,7 @@ typedef struct application_player_record {
     qa_actor_player pending_identity;
     qa_actor_player *player;
     qa_strings *strings;
+    qa_string_id q2_config_name, q2_config_skin, q2_config_value;
     char *userinfo;
     struct qa_unified_frame_lease *userinfo_storage;
     char *bot_definition;
@@ -101,6 +102,7 @@ typedef struct application_player_point {
 } application_player_point;
 struct application_player_roster {
     uint64_t revision;
+    uint64_t q2_config_revision;
     uint64_t feedback_first,feedback_through,feedback_generation,feedback_revision;
     size_t feedback_count;
     application_player_record *records;

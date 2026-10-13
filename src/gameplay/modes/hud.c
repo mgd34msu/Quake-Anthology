@@ -43,6 +43,63 @@ static qa_string_id flag_picture(qa_modes *m, const mode_instance *v, unsigned t
     return m->runtime_names[MODE_NAME_PIC_I_CTF1 + state + team];
 }
 
+static bool ctf_id_view(qa_modes *m, qa_actor_id actor,
+                        const qa_q2_wire_stat_resources *resources,
+                        int16_t *stat, qa_error *error) {
+    qa_body_state viewer;
+    qa_vec3 angles, forward;
+    *stat = 0;
+    if (!resources->player_skin || !m->options.hooks.player_view ||
+        !m->options.hooks.player_view(m->options.hooks.context, actor, &angles) ||
+        !qa_world_body_read(m->options.services.world, actor, &viewer, NULL))
+        return true;
+    qa_angle_vectors(angles, &forward, NULL, NULL, QA_ANGLE_NATIVE_MATH);
+    qa_trace_query query = {
+        .start = viewer.origin, .end = qa_vec_ma(viewer.origin, 1024, forward),
+        .pass_actor = actor,
+        .policy = {.behavior = &qa_trace_behaviors[QA_RULESET_Q2_CLASSIC],
+            .contents_mask = qa_collision_contents_mask(3, QA_GAME_Q2), .q1_hull = -1}};
+    qa_trace_result trace;
+    if (!qa_world_trace(m->options.services.world, &query, &trace, error))
+        return false;
+    qa_builtin_player_info info;
+    uint32_t index = 0;
+    if (trace.fraction < 1 && trace.actor.registry && m->options.services.player_info &&
+        m->options.services.player_info(m->options.services.context, trace.actor, &info)) {
+        if (!resources->player_skin(resources->player_context, actor, &index, error))
+            return false;
+        qa_q2_wire_stat_word((int32_t)(index & UINT16_MAX), stat);
+        return true;
+    }
+
+    float best_dot = 0;
+    uint32_t best_index = 0;
+    qa_physics *physics = m->options.services.physics;
+    for (size_t i = 0; i < m->players_order.count; ++i) {
+        qa_actor_id candidate = m->players_order.actors[i];
+        mode_player *player = mode_player_get(m, candidate);
+        qa_physics_properties properties;
+        qa_body_state body;
+        if (!player || !player->connected || !physics || !physics->services.read ||
+            !physics->services.read(physics->services.context, candidate, &properties) ||
+            properties.solid == QA_PHYSICS_NOT_SOLID ||
+            !qa_world_body_read(m->options.services.world, candidate, &body, NULL))
+            continue;
+        qa_vec3 direction = qa_vec_normalize(qa_vec_sub(body.origin, viewer.origin));
+        float dot = qa_vec_dot(forward, direction);
+        if (dot < best_dot || dot <= .90f || !mode_visible(m, candidate, actor, false))
+            continue;
+        if (!resources->player_skin(resources->player_context, candidate, &index, error))
+            return false;
+        if (!index || (dot == best_dot && index >= best_index))
+            continue;
+        best_dot = dot;
+        best_index = index;
+    }
+    qa_q2_wire_stat_word((int32_t)(best_index & UINT16_MAX), stat);
+    return true;
+}
+
 bool qa_modes_q2_hud_stats(qa_modes *m, qa_mode_id id, qa_actor_id actor,
                           uint64_t source_frame,
                           const qa_q2_wire_stat_resources *resources,
@@ -108,6 +165,10 @@ bool qa_modes_q2_hud_stats(qa_modes *m, qa_mode_id id, qa_actor_id actor,
             return false;
         qa_q2_wire_stat_word((int32_t)(image & UINT16_MAX), &projected[i]);
     }
+    member = mode_member_get(m, mode_get(m, id), actor);
+    if (member && member->player.ctf_id_view &&
+        !ctf_id_view(m, actor, resources, &projected[10], error))
+        return false;
     memcpy(stats + 17, projected, sizeof(projected));
     return true;
 }

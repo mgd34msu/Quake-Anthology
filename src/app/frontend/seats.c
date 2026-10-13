@@ -253,9 +253,13 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
         if(!qa_hud_q2_program_update(seat->q2_hud_layout,source->layout,source->edition==QA_RULESET_Q2_RERELEASE,error))return false;
         seat->q2_hud_layout_revision=source->layout_revision;
     }
+    qa_application_native_q2_hud_players players = {.application = seat->frontend->application,
+        .game = source->game, .skin_base = hud.config.player_skins};
     if (!source->original && !qa_q2_wire_stats(source->game, &source->view,
         &(qa_q2_wire_stat_resources){.context = &hud, .items_base = hud.config.items,
-            .image = local_q2_image, .modes = source->modes, .mode = source->mode,
+            .image = local_q2_image, .player_context = &players,
+            .player_skin = qa_application_native_q2_hud_player_skin,
+            .modes = source->modes, .mode = source->mode,
             .actor = source->actor, .source_frame = (uint64_t)(uint32_t)source->server_frame}, source->stats, error)) return false;
     if (!qa_hud_q2_program_prepare_images(seat->q2_hud_layout,hud.media.images,
         source->edition==QA_RULESET_Q2_RERELEASE,QA_SCENE_NEAREST,error)) return false;

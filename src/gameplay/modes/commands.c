@@ -212,6 +212,16 @@ static bool ctf_warp_allowed(const char *list, const char *map) {
 static bool ctf_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
                           const qa_command_invocation *command, bool *handled, qa_error *e) {
     const char *name = command->argv[0];
+    if (named(name, "id") && v->value.rules.enabled) {
+        mode_member *member = mode_member_get(m, v, actor);
+        if (!member)
+            return true;
+        *handled = true;
+        member->player.ctf_id_view = !member->player.ctf_id_view;
+        mode_name message = member->player.ctf_id_view
+            ? MODE_NAME_CTF_ID_ENABLED : MODE_NAME_CTF_ID_DISABLED;
+        return mode_message(m, v, actor, m->runtime_names[message], NULL, 0, e);
+    }
     if (named(name, "yes") || named(name, "no")) {
         *handled = true;
         return qa_modes_vote_cast(m, v->id, actor, 0, named(name, "yes"), e);
