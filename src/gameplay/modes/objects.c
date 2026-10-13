@@ -327,6 +327,12 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
     if (spec->kind == QA_MODE_OBJECT_FLAG) {
         o->value.skin = team > 0 ? team : 0;
         o->value.frame = family(v) == QA_GAME_Q2 ? 173 : 0;
+        if (v->value.rules.source == QA_MODE_LMCTF) {
+            qa_mode_source_settings settings = {0};
+            if (m->options.hooks.source_settings)
+                m->options.hooks.source_settings(m->options.hooks.context, v->id, &settings);
+            o->value.frame = settings.flag_initialized ? 173 : 0;
+        }
         o->value.effects = family(v) == QA_GAME_Q1   ? (team == 0 ? 32u : 16u)
                            : family(v) == QA_GAME_Q2 ? (team == 0 ? 0x40000u : 0x80000u)
                                                           : 0;

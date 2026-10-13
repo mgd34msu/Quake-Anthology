@@ -97,6 +97,7 @@ static const q2_source_cvar lmctf[] = {
     {"fastswitch", "0", 0, QA_CVAR_SAVE_GAMEPLAY}, {"disabled_weps", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
     {"refpassword", "", 0, QA_CVAR_SAVE_SETTING},
     {"skinset", "0", QA_CVAR_SERVERINFO, QA_CVAR_SAVE_GAMEPLAY},
+    {"flag_init", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
 };
 
 struct application_native_q2_console {
@@ -109,7 +110,7 @@ struct application_native_q2_console {
     } weapon_cvars;
     qa_cvar_handle combat_cvars[APPLICATION_Q2_COMBAT_SETTING_COUNT];
     qa_cvar_handle cheats, password, spectator_password, deathmatch;
-    qa_cvar_handle referee_password, rcon_password, skin_set;
+    qa_cvar_handle referee_password, rcon_password, skin_set, flag_init;
     application_q2_source_scripts scripts;
     size_t calls;
     qa_cvar_observer_token observers[sizeof(engine_cvars) / sizeof(*engine_cvars) + sizeof(common) / sizeof(*common) + sizeof(rerelease) / sizeof(*rerelease) + sizeof(rogue) / sizeof(*rogue) + sizeof(lmctf) / sizeof(*lmctf) + 2];
@@ -124,6 +125,7 @@ static void source_cvars_bind(struct application_native_q2_console *owner) {
     owner->referee_password = qa_cvars_resolve(owner->cvars, "refpassword");
     owner->rcon_password = qa_cvars_resolve(owner->cvars, "rcon_password");
     owner->skin_set = qa_cvars_resolve(owner->cvars, "skinset");
+    owner->flag_init = qa_cvars_resolve(owner->cvars, "flag_init");
     owner->weapon_cvars.infinite_ammo = qa_cvars_resolve(owner->cvars, "g_infinite_ammo");
     owner->weapon_cvars.instant_switch = qa_cvars_resolve(owner->cvars, "g_instant_weapon_switch");
     owner->weapon_cvars.quick_switch = qa_cvars_resolve(owner->cvars, "g_quick_weapon_switch");
@@ -157,9 +159,11 @@ bool application_native_mode_source_settings(void *opaque, qa_mode_id mode,
     if (!referee || !rcon)
         return false;
     const qa_cvar_view *skin = qa_cvars_read(owner->cvars, owner->skin_set);
+    const qa_cvar_view *flag = qa_cvars_read(owner->cvars, owner->flag_init);
     *out = (qa_mode_source_settings){.referee_password = referee->value,
                                     .rcon_password = rcon->value,
-                                    .skin_set = skin ? skin->integer : 0};
+                                    .skin_set = skin ? skin->integer : 0,
+                                    .flag_initialized = flag && flag->number != 0};
     return true;
 }
 const qa_hud_cvar_handles *application_native_q2_console_hud_controls(const application_provider *provider) {

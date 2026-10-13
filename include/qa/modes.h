@@ -296,6 +296,7 @@ typedef struct qa_mode_loot_spawn {
 typedef struct qa_mode_source_settings {
     const char *referee_password, *rcon_password;
     int32_t skin_set;
+    bool flag_initialized;
 } qa_mode_source_settings;
 typedef struct qa_modes_hooks {
     void *context;
