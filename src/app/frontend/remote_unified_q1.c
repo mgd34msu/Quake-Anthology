@@ -133,7 +133,8 @@ struct frontend_unified_q1 {
     q1_continuation weapon,prompt,finale;
     qa_scene_image *finale_image;
     q1_activation *fog_activation,*finale_activation,*intermission_activation;
-    struct {qa_vec3 previous,target;double previous_density,target_density,start,duration,sky_factor;bool active;} fog;
+    qa_q1_fog_state fog;
+    bool fog_active;
     bool finale_banner,intermission;
     double completed_seconds;
     q1_activation *pause_activation;
@@ -262,6 +263,7 @@ static bool parse(frontend_unified_q1 *o,const qa_unified_presentation_event *ro
         return fail(e,"Q1 target has no native presentation operation");
     case QA_BUILTIN_EFFECT:
         if (v->resource==names->music) {p->kind=Q1_MUSIC;p->a=v->code;return true;}
+        if (v->resource==names->fog) {p->kind=Q1_FOG;return true;}
         if (v->resource==names->sell_screen) {p->kind=Q1_SELL_SCREEN;return true;}
         if (v->flags&UINT32_C(0x80000000)) {p->kind=v->code==1?Q1_COMPLETED:Q1_FINALE;p->a=v->code;
             return text_view(text,&p->text,e);}
@@ -609,7 +611,7 @@ bool frontend_unified_q1_owner_retire(frontend_unified_q1 *o,const qa_unified_pr
     if(o->prompt_activation==owner)prompt_clear(o);
     for(size_t i=0;i<Q1_POWERS;++i)if(o->power_activations[i]==owner){o->powers[i]=0;o->power_activations[i]=NULL;}
     if(o->ctf_activation==owner){o->ctf_present=false;o->capture_until=0;o->ctf_activation=NULL;}
-    if(o->fog_activation==owner){o->fog.active=false;o->fog_activation=NULL;}
+    if(o->fog_activation==owner){o->fog_active=false;o->fog_activation=NULL;}
     if(o->intermission_activation==owner){o->intermission=false;o->intermission_activation=NULL;}
     if(o->finale_activation==owner){continuation_clear(&o->finale);
         qa_scene_image_release(o->finale_image);o->finale_image=NULL;o->finale_activation=NULL;qa_hud_clear_center(o->hud,NULL);}
@@ -746,8 +748,12 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
         if(p.flag){o->secrets=p.b;o->total_secrets=p.a;o->secrets_present=true;}
         else {o->monsters=p.b;o->total_monsters=p.a;o->monsters_present=true;}
         break;
-    case Q1_FOG:o->fog.previous=p.origin;o->fog.target=p.end;o->fog.previous_density=p.a;o->fog.target_density=p.b;
-        o->fog.start=p.c;o->fog.duration=p.d;o->fog.sky_factor=p.sky_factor;o->fog.active=true;o->fog_activation=owner;break;
+    case Q1_FOG: {
+        const qa_builtin_event *v=&row->payload.value.builtin;
+        o->fog=(qa_q1_fog_state){.previous_color=v->direction,.color=v->origin,
+            .previous_density=v->volume,.density=v->value,.start_ns=ns(p.seconds),
+            .duration=v->end.x,.sky_factor=v->end.y,.initialized=true};
+        o->fog_active=true;o->fog_activation=owner;break;}
     case Q1_FINALE: {
         o->intermission=false;o->intermission_activation=NULL;
         if(p.a>4)break;
@@ -893,13 +899,10 @@ bool frontend_unified_q1_world_input(frontend_unified_q1 *o,qa_scene_world_input
     for(uint32_t i=0;i<styles.count;++i)if(qa_lightstyles_ordered_present(&styles,i))
         o->scene_styles[i]=frontend_legacy_lightstyle_sample(QA_GAME_Q1,qa_strings_cstr(o->replica->strings,styles.patterns[i]),input->seconds);
     input->lights=o->scene_lights;input->light_count=count;input->q1_styles=o->scene_styles;input->style_count=256;
-    if(o->fog.active){double fraction=o->fog.duration==0?1:fmin(1,fmax(0,(input->seconds-o->fog.start)/o->fog.duration));
-        double density=o->fog.previous_density+(o->fog.target_density-o->fog.previous_density)*fraction;
-        qa_vec3 color=qa_v3((float)(o->fog.previous.x+(o->fog.target.x-o->fog.previous.x)*fraction),
-            (float)(o->fog.previous.y+(o->fog.target.y-o->fog.previous.y)*fraction),
-            (float)(o->fog.previous.z+(o->fog.target.z-o->fog.previous.z)*fraction));
+    if(o->fog_active){float density;qa_vec3 color;
+        qa_q1_fog_sample(&o->fog,ns(input->seconds),&density,&color);
         color.x=roundf(fminf(1,fmaxf(0,color.x))*255)/255;color.y=roundf(fminf(1,fmaxf(0,color.y))*255)/255;color.z=roundf(fminf(1,fmaxf(0,color.z))*255)/255;
-        input->fog=(qa_scene_fog){.kind=QA_FOG_EXP2,.effect=QA_FOG_COLOR,.density=(float)density,.color=color,.sky_factor=(float)o->fog.sky_factor,.far_depth=1};}
+        input->fog=(qa_scene_fog){.kind=QA_FOG_EXP2,.effect=QA_FOG_COLOR,.density=density,.color=color,.sky_factor=o->fog.sky_factor,.far_depth=1};}
     if(sky){input->override_sky=sky->sky_found;for(size_t i=0;i<6;++i)input->sky_images[i]=sky->sky[i];input->sky_axis=qa_v3(0,0,1);input->sky_rotation=0;input->sky_auto_rotate=false;}
     return mutable(o,e);
 }

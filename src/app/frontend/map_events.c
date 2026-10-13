@@ -492,12 +492,12 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
                 for (unsigned seat = 0; seat < frontend->options.seats; ++seat) {
                     if (frontend_network_local_input_owned(frontend,seat)) continue;
                     frontend_q1_fog *fog = &state->views[seat].q1_fog;
-                    if (fog->owner != event.provider || !qa_actor_id_equal(fog->recipient, event.actor)) continue;
-                    qa_q1_fog_sample(&fog->value, event.time_ns,
-                        &fog->value.previous_density, &fog->value.previous_color);
+                    if (fog->owner != event.provider ||
+                        (event.actor.registry && !qa_actor_id_equal(fog->recipient, event.actor))) continue;
+                    fog->value.previous_density=event.volume; fog->value.previous_color=event.direction;
                     fog->value.density = event.value; fog->value.color = event.origin;
                     fog->value.start_ns = event.time_ns; fog->value.duration = event.end.x;
-                    fog->value.sky_factor = 0; fog->value.initialized = true;
+                    fog->value.sky_factor = event.end.y; fog->value.initialized = true;
                 }
             }
             if (event.resource == names->debug_bounds) {

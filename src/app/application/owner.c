@@ -627,7 +627,7 @@ bool qa_application_q1_fog_owner(qa_application *application, qa_actor_owner *ou
     if (!application || !out || application->destroy_requested) return false;
     application_provider *provider = application_world_provider(application, QA_ROLE_ENTITIES, "");
     if (!provider || !provider->constructed || !provider->attached || provider->close_pending ||
-        provider->kind != APPLICATION_PROVIDER_Q1) return false;
+        (provider->kind != APPLICATION_PROVIDER_Q1 && provider->kind != APPLICATION_PROVIDER_QC)) return false;
     *out = provider->owner;
     return true;
 }

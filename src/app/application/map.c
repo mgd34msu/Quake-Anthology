@@ -1,5 +1,6 @@
 #include "map_private.h"
 #include "qa/game_q1_wire.h"
+#include "qa/application_q1_composition.h"
 #include "native_q1_wire.h"
 #include "native_q1_composition.h"
 #include "qa/game_q1_bots.h"
@@ -444,23 +445,46 @@ static bool emit_map_event(application_provider *provider,
     return application_emit(provider->application, &event, error);
 }
 
+bool qa_application_q1_fog_emit(qa_application *app, qa_actor_owner provider, qa_actor_id player,
+    uint64_t time_ns, float density, qa_vec3 color, float duration, float sky_factor, qa_error *error)
+{
+    qa_q1_fog_state previous={.color={.3f,.3f,.3f},.previous_color={.3f,.3f,.3f}};
+    float previous_density=0; qa_vec3 previous_color=previous.color;
+    application_provider *source=application_provider_lookup(app,provider,APPLICATION_PROVIDER_LIVE);
+    if (source && source->kind==APPLICATION_PROVIDER_Q1 &&
+        qa_q1_game_map_fog_read(source->state.q1,player,&previous)) {
+        previous_density=previous.previous_density; previous_color=previous.previous_color;
+    } else {
+        application_unified_persistent_cursor cursor={.provider=provider,.kind=QA_UNIFIED_PRESENTATION_BUILTIN};
+        const application_unified_event_record *record, *last=NULL;
+        while ((record=application_unified_persistent_next(app,&cursor))) {
+            const qa_builtin_event *event=&record->presentation->value.builtin;
+            if (event->kind==QA_BUILTIN_EFFECT && event->resource==app->ui_names.fog &&
+                (!event->actor.registry || qa_actor_id_equal(event->actor,player)) &&
+                (!last || record->order>last->order)) last=record;
+        }
+        if (last) {
+            const qa_builtin_event *event=&last->presentation->value.builtin;
+            previous=(qa_q1_fog_state){.previous_density=event->volume,.previous_color=event->direction,
+                .density=event->value,.color=event->origin,.start_ns=event->time_ns,.duration=event->end.x};
+            qa_q1_fog_sample(&previous,time_ns,&previous_density,&previous_color);
+        }
+    }
+    return application_emit(app,
+        &(qa_builtin_event){.kind = QA_BUILTIN_EFFECT, .family = QA_GAME_Q1,
+            .provider = provider, .time_ns = time_ns,
+            .actor = player, .other = player, .resource = app->ui_names.fog,
+            .origin = color, .direction=previous_color, .volume=previous_density,
+            .end = {duration, sky_factor, 0}, .value = density}, error);
+}
 static bool q1_fog_player(void *opaque, qa_actor_id player, float density,
                             qa_vec3 color, float duration, qa_error *error)
 {
     application_provider *provider = opaque;
-    qa_string_id resource;
-    if (!qa_strings_intern_cstr(qa_session_strings(provider->application->session),
-                                "q1:fog", &resource, error))
-        return false;
-    qa_clock_state clock;
-    if (!qa_session_clock(provider->application->session, provider->owner, &clock))
-        return application_fail(error, QA_ERROR_NOT_FOUND,
-                                "Q1 fog source clock is missing");
-    return application_emit(provider->application,
-        &(qa_builtin_event){.kind = QA_BUILTIN_EFFECT, .family = QA_GAME_Q1,
-            .provider = provider->owner, .time_ns = clock.frame.time_ns,
-            .actor = player, .other = player, .resource = resource,
-            .origin = color, .end = {duration, 0, 0}, .value = density}, error);
+    uint64_t time_ns; double elapsed;
+    if (!qa_q1_game_clock_read(provider->state.q1,&time_ns,&elapsed)) return false;
+    return qa_application_q1_fog_emit(provider->application,provider->owner,player,
+        time_ns,density,color,duration,0,error);
 }
 
 static bool q1_ctf_mode(application_provider *provider, qa_mode_id *out, qa_error *error)

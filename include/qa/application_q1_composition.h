@@ -3,6 +3,9 @@
 
 #include "qa/application.h"
 
+bool qa_application_q1_fog_emit(qa_application *, qa_actor_owner, qa_actor_id,
+    uint64_t time_ns, float density, qa_vec3 color, float duration, float sky_factor, qa_error *);
+
 /* Pure actual CTF GAME/client/roster qualification. An unrelated source or
  * absent source client returns found=false and leaves source_time_ns unchanged.
  * A found recipient carries the genuine current Q1 GAME clock. */

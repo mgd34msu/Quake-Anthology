@@ -9,6 +9,7 @@
 #include "qa/network_q1_decoder_save.h"
 #include "qa/application_network_qw.h"
 #include "qa/application_network.h"
+#include "qa/application_q1_composition.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -349,9 +350,18 @@ static bool project(frontend_qc_messages *owner,qc_recipient *row,const qa_nq_me
     /* Native control/stats remain with their Source owners; this decoder
      * delivers only the actor-qualified transient view effects. */
     if(row->native) return true;
+    bool broadcast=!event->recipient.registry &&
+        (!event->multicast || event->destination==0 || event->destination==3);
+    if(message->op==QA_NQ_FOG) {
+        qa_actor_id recipient=row_actor(row);
+        if((broadcast && !recipient.registry) || (!broadcast && recipient.registry))
+            return qa_application_q1_fog_emit(owner->application,row->camera.source.provider,
+                recipient,event->time_ns,message->data.fog.density,
+                qa_v3(message->data.fog.color[0],message->data.fog.color[1],message->data.fog.color[2]),
+                message->data.fog.seconds<0?0:message->data.fog.seconds,.5f,error);
+        return true;
+    }
     if(message->op==QA_NQ_CDTRACK) {
-        bool broadcast=!event->recipient.registry &&
-            (!event->multicast || event->destination==0 || event->destination==3);
         qa_actor_id recipient=row_actor(row);
         if((broadcast && !recipient.registry) || (!broadcast && recipient.registry))
             if(!qa_application_qc_message_music(owner->application,&row->camera.source,

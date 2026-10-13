@@ -672,7 +672,7 @@ bool application_unified_event_append(qa_application *app,
     return true;
 }
 
-typedef enum persistent_domain { PERSIST_NONE, PERSIST_UNIQUE, PERSIST_SOUND, PERSIST_STYLE, PERSIST_MUSIC, PERSIST_FINALE, PERSIST_SKY, PERSIST_SHADOW, PERSIST_Q3_COMMAND } persistent_domain;
+typedef enum persistent_domain { PERSIST_NONE, PERSIST_UNIQUE, PERSIST_SOUND, PERSIST_STYLE, PERSIST_MUSIC, PERSIST_FINALE, PERSIST_SKY, PERSIST_SHADOW, PERSIST_Q3_COMMAND, PERSIST_FOG } persistent_domain;
 void application_q3_command_key(const qa_application_q3_command_event *command,application_persistent_key *key)
 {
     *key=(application_persistent_key){.domain=PERSIST_Q3_COMMAND,.generation=command->stream,
@@ -692,7 +692,7 @@ void application_unified_persistent_key(qa_application *app, const application_u
         if (v->family == QA_GAME_Q1 && ((v->kind == QA_BUILTIN_SOUND && (v->flags & 1u)) ||
             (v->kind == QA_BUILTIN_EFFECT && !v->actor.registry && !(v->flags & UINT32_C(0x80000000)) &&
                 resource && resource != names->colored_explosion && resource != names->developer_message &&
-                resource != names->music && resource != names->cutscene && resource != names->sell_screen))) {
+                resource != names->music && resource != names->fog && resource != names->cutscene && resource != names->sell_screen))) {
             key.domain = PERSIST_UNIQUE; key.selector = row->presentation_sequence;
         } else if (v->family == QA_GAME_Q2 && (v->kind == QA_BUILTIN_STOP_SOUND ||
             (v->kind == QA_BUILTIN_SOUND && (v->flags & 1u)))) {
@@ -704,6 +704,10 @@ void application_unified_persistent_key(qa_application *app, const application_u
             key.domain = PERSIST_STYLE; key.selector = (uint32_t)v->code;
         } else if (v->family == QA_GAME_Q1 && v->kind == QA_BUILTIN_EFFECT) {
             if (resource == names->music) key.domain = PERSIST_MUSIC;
+            else if (resource == names->fog) {
+                key.domain = PERSIST_FOG; key.actor_registry=v->actor.registry;
+                key.actor_generation=v->actor.generation; key.actor_slot=v->actor.slot;
+            }
             else if ((v->flags & UINT32_C(0x80000000)) ||
                 (resource == names->cutscene || resource == names->sell_screen)) key.domain = PERSIST_FINALE;
         }
