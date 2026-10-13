@@ -40,6 +40,22 @@ static bool team_death(qa_modes *m, mode_instance *v, qa_actor_id actor, bool cl
     }
     return mode_damage(m, v, family, &request, e);
 }
+static bool team_changed_message(qa_modes *m, mode_instance *v, qa_actor_id actor,
+                                 qa_team_id team, bool joined, qa_error *e) {
+    mode_player *player = mode_player_get(m, actor);
+    int index = mode_team_index(v, team);
+    if (!player || index < 0 || index > 1)
+        return true;
+    bool lmctf = v->value.rules.source == QA_MODE_LMCTF;
+    qa_builtin_message_arg args[] = {
+        {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = player->identity->name},
+        {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = m->runtime_names[lmctf
+            ? (index ? MODE_NAME_LMCTF_BLUE : MODE_NAME_LMCTF_RED)
+            : (index ? MODE_NAME_CTF_BLUE : MODE_NAME_CTF_RED)]}};
+    return mode_message(m, v, (qa_actor_id){0}, m->runtime_names[lmctf
+        ? MODE_NAME_LMCTF_TEAM_CHANGED
+        : (joined ? MODE_NAME_CTF_TEAM_JOINED : MODE_NAME_CTF_TEAM_CHANGED)], args, 2, e);
+}
 static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_id team,
                          bool observer, bool automatic, bool command, bool *accepted,
                          qa_error *e) {
@@ -82,6 +98,12 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
     }
     if (source == QA_MODE_LMCTF && !qa_modes_can_move(m, id, actor))
         return true;
+    if (source == QA_MODE_Q2_CTF && command && !observer &&
+        (v->value.phase == QA_MODE_COUNTDOWN ||
+         (v->value.phase == QA_MODE_PLAYING && v->value.deadline_ns) ||
+         v->value.phase >= QA_MODE_EXIT_PENDING))
+        return mode_message(m, v, actor, m->runtime_names[MODE_NAME_CTF_TEAM_MATCH_DENIED],
+                            NULL, 0, e);
     if (command && v->value.rules.source >= QA_MODE_Q3) {
         if (member->team_switch_ns > v->value.time_ns)
             return true;
@@ -93,6 +115,13 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
     if (previous == team && member->player.spectator == observer &&
         source < QA_MODE_Q3) {
         *accepted = true;
+        if (source == QA_MODE_Q2_CTF && !observer) {
+            qa_builtin_message_arg name = {.kind = QA_BUILTIN_MESSAGE_STRING,
+                .value.text = m->runtime_names[team == v->value.rules.teams[0]
+                    ? MODE_NAME_CTF_RED : MODE_NAME_CTF_BLUE]};
+            return mode_message(m, v, actor, m->runtime_names[MODE_NAME_CTF_TEAM_ALREADY],
+                                &name, 1, e);
+        }
         return true;
     }
     if (!observer && ((v->value.rules.forced_team && team != v->value.rules.forced_team) ||
@@ -130,9 +159,6 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
             return true;
         }
     }
-    if (source == QA_MODE_Q2_CTF && !observer &&
-        (v->value.phase == QA_MODE_COUNTDOWN || v->value.phase == QA_MODE_PLAYING))
-        return true;
     if (source == QA_MODE_ROGUE && previous && v->value.rules.teamplay >= 4 &&
         !(v->value.rules.flags & 16u)) {
         if (member->suicide_count > 3 && m->options.hooks.disconnect &&
@@ -219,21 +245,22 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
     if (!mode_event(m, v, QA_MODE_ROSTER, actor, (qa_actor_id){0}, (qa_actor_id){0}, team,
                     observer ? 0 : 1, 0, e))
         return false;
-    if (source == QA_MODE_LMCTF && !observer) {
-        player = mode_player_get(m, actor);
-        int index = mode_team_index(v, team);
-        if (player && index >= 0 && index < 2) {
-            qa_builtin_message_arg args[] = {
-                {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = player->identity->name},
-                {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = m->runtime_names[
-                    index ? MODE_NAME_LMCTF_BLUE : MODE_NAME_LMCTF_RED]}};
-            if (!mode_message(m, v, (qa_actor_id){0},
-                m->runtime_names[MODE_NAME_LMCTF_TEAM_CHANGED], args, 2, e))
-                return false;
+    if (source == QA_MODE_LMCTF && !observer &&
+        !team_changed_message(m, v, actor, team, was_spectator, e))
+        return false;
+    if (m->options.hooks.respawn &&
+        !MODE_CALLBACK(m, m->options.hooks.respawn(m->options.hooks.context, id, actor, true, e)))
+        return false;
+    if (source == QA_MODE_Q2_CTF && !observer) {
+        if (!team_changed_message(m, v, actor, team, was_spectator, e))
+            return false;
+        if (v->value.phase == QA_MODE_SETUP && mode_member_get(m, v, actor)) {
+            qa_builtin_event prompt = {.kind = QA_BUILTIN_CENTERPRINT, .actor = actor,
+                                       .text = m->runtime_names[MODE_NAME_CTF_READY_PROMPT]};
+            return mode_builtin_emit(m, v, &prompt, e);
         }
     }
-    return !m->options.hooks.respawn ||
-           MODE_CALLBACK(m, m->options.hooks.respawn(m->options.hooks.context, id, actor, true, e));
+    return true;
 }
 bool qa_modes_request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_id team,
                            bool observer, bool automatic, bool *accepted, qa_error *e) {

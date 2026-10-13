@@ -101,6 +101,11 @@ typedef struct mode_objective {
 #define MODE_NAME_LIST(X) \
     X(CVAR_COMPETITION, "competition") \
     X(CTF_PICK_TEAM, "Pick a team first (hit <TAB> for menu)\n") \
+    X(CTF_TEAM_JOINED, "{0} joined the {1} team.\n") \
+    X(CTF_TEAM_CHANGED, "{0} changed to the {1} team.\n") \
+    X(CTF_TEAM_ALREADY, "You are already on the {0} team.\n") \
+    X(CTF_TEAM_MATCH_DENIED, "Can't change teams in a match.\n") \
+    X(CTF_READY_PROMPT, "***********************\nType \"ready\" in console\nto ready up.\n***********************") \
     X(CTF_NOT_SETUP, "A match is not being setup.\n") \
     X(CTF_ALREADY_READY, "You have already commited.\n") \
     X(CTF_NOT_READY, "You haven't commited.\n") \
