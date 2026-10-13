@@ -552,6 +552,9 @@ bool qa_modes_object_read(qa_modes *m, qa_actor_id actor, qa_mode_object_view *o
     mode_instance *v = mode_get(m, o->mode);
     if (!v || !v->value.rules.enabled)
         out->visible = false;
+    if (v && v->value.rules.source == QA_MODE_LMCTF &&
+        o->spec.kind == QA_MODE_OBJECT_RELIC && o->spec.relic == QA_RELIC_VAMPIRE)
+        out->effects |= UINT64_C(0x400);
     if (o->spec.kind == QA_MODE_OBJECT_OBELISK) {
         qa_combat_state state;
         if (v && qa_combat_read(m->options.services.combat, actor, &state, NULL))

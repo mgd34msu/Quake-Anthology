@@ -359,6 +359,8 @@ bool qa_application_visual_read(qa_application *application, qa_actor_id actor,
             .source_number = -1, .source_client = -1,
             .visual.models = {object.model}, .visual.frame = object.frame,
             .visual.skin = object.skin, .visual.effects = object.effects, .visual.visible = object.visible,
+            .visual.render_flags = mode.rules.source == QA_MODE_LMCTF &&
+                object.kind == QA_MODE_OBJECT_RELIC && object.relic == QA_RELIC_VAMPIRE ? 1024u : 0,
             .family = mode.rules.source <= QA_MODE_Q1_HORDE ? QA_GAME_Q1
                 : mode.rules.source < QA_MODE_Q3 ? QA_GAME_Q2 : QA_GAME_Q3};
         if (!qa_world_body_read(application->world, actor, &view.body, error))
