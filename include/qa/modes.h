@@ -10,6 +10,16 @@ typedef struct qa_mode_id {
     uint32_t slot;
     uint64_t generation;
 } qa_mode_id;
+enum { QA_MODE_MENU_LAYOUT_BYTES = 1400 };
+typedef enum qa_mode_menu_page {
+    QA_MODE_MENU_NONE, QA_MODE_MENU_JOIN, QA_MODE_MENU_CREDITS, QA_MODE_MENU_NO_CHASE
+} qa_mode_menu_page;
+typedef struct qa_mode_menu_state {
+    qa_mode_menu_page page;
+    int8_t cursor;
+    uint64_t revision;
+    char layout[QA_MODE_MENU_LAYOUT_BYTES];
+} qa_mode_menu_state;
 typedef enum qa_mode_source {
     QA_MODE_Q1,
     QA_MODE_THREEWAVE,
@@ -295,7 +305,7 @@ typedef struct qa_mode_loot_spawn {
 } qa_mode_loot_spawn;
 typedef struct qa_mode_source_settings {
     const char *referee_password, *rcon_password;
-    const char *admin_password, *warp_list;
+    const char *admin_password, *warp_list, *level_name;
     int32_t skin_set;
     bool flag_initialized;
 } qa_mode_source_settings;
@@ -306,6 +316,7 @@ typedef struct qa_modes_hooks {
     bool (*source_cvar_set)(void *, qa_mode_id, qa_string_id, const char *, qa_error *);
     bool (*chat_allowed)(void *, qa_mode_id, qa_actor_id, bool *, qa_error *);
     bool (*chat_item)(void *, qa_mode_id, qa_actor_id, qa_item_id, qa_string_id *, const char **);
+    bool (*layout)(void *, qa_mode_id, qa_actor_id, const char *, bool visible, qa_error *);
     /* Legacy mode records retain only the Q2 edition bit. Import borrows the
      * enclosing source's full ruleset without adding a saved selector. */
     qa_ruleset_id (*source_ruleset)(void *, qa_mode_id, qa_mode_origin, qa_actor_owner,
@@ -495,6 +506,8 @@ bool qa_modes_follow_target(qa_modes *, qa_mode_id, qa_actor_id, qa_actor_id *, 
 bool qa_modes_observe(qa_modes *, qa_mode_id, qa_actor_id, qa_team_id filter, bool *accepted,
                       qa_error *);
 bool qa_modes_scoreboard(qa_modes *, qa_mode_id, qa_actor_id, bool visible, qa_error *);
+bool qa_modes_layout_read(qa_modes *, qa_mode_id, qa_actor_id, const char **,
+                         bool *visible, uint64_t *revision);
 bool qa_modes_choose_team(qa_modes *, qa_mode_id, qa_actor_id, qa_team_id *, qa_error *);
 bool qa_modes_statistics(qa_modes *, qa_mode_id, qa_actor_id, qa_mode_statistics *, qa_error *);
 bool qa_modes_source_award(qa_modes *, qa_mode_id, qa_actor_id, int32_t source_award, qa_error *);

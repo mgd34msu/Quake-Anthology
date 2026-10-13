@@ -1013,7 +1013,8 @@ bool mode_join(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_team_id team
         (team && v->value.rules.kind > QA_MODE_TEAM_DEATHMATCH && mode_team_index(v, team) < 0))
         return mode_fail(e, "invalid mode join");
     qa_mode_id id = v->id;
-    if (!observer && !ghost_rejoin && v->value.rules.forced_team &&
+    if (!observer && !ghost_rejoin && v->value.rules.source != QA_MODE_Q2_CTF &&
+        v->value.rules.forced_team &&
         team != v->value.rules.forced_team)
         return mode_fail(e, "selected team is restricted by match rules");
     if (!observer && !ghost_rejoin && v->value.rules.match_lock &&
@@ -1069,7 +1070,9 @@ bool qa_modes_join(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_id tea
         } else
             observer = true;
     }
-    return mode_join(m, v, actor, team, observer, false, e);
+    if (!mode_join(m, v, actor, team, observer, false, e)) return false;
+    return !observer || !v->value.rules.enabled || v->value.rules.source != QA_MODE_Q2_CTF ||
+           mode_ui_open_join(m, v, actor, e);
 }
 bool qa_modes_choose_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_id *out,
                           qa_error *e) {

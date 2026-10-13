@@ -488,6 +488,7 @@ bool application_native_horde_manager(void *, qa_mode_id, qa_actor_id,
 bool application_native_horde_restart(void *, qa_mode_id, uint32_t, qa_error *);
 bool application_native_mode_select_weapon(void *, qa_actor_id, qa_item_id, qa_error *);
 application_provider *application_mode_provider(qa_application *, qa_mode_id);
+bool application_mode_layout_read(qa_application *, qa_actor_id, const char **, uint64_t *);
 const qa_launch_mode *application_mode_choice(const qa_application *, size_t);
 bool application_match_mode_source_owned(const application_provider *);
 bool application_native_mode_emit(void *, qa_mode_id, const qa_builtin_event *, qa_error *);

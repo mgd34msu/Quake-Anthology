@@ -99,6 +99,41 @@ typedef struct mode_objective {
     bool active, reserved;
 } mode_objective;
 #define MODE_NAME_LIST(X) \
+    X(CTF_MENU_GAME, "*Quake II") \
+    X(CTF_MENU_TITLE, "*ThreeWave Capture the Flag") \
+    X(CTF_MENU_RED, "Join Red Team") \
+    X(CTF_MENU_BLUE, "Join Blue Team") \
+    X(CTF_MENU_RED_MATCH, "Join Red MATCH Team") \
+    X(CTF_MENU_BLUE_MATCH, "Join Blue MATCH Team") \
+    X(CTF_MENU_LOCKED, "MATCH IS LOCKED") \
+    X(CTF_MENU_LOCK_NOTE, "  (entry is not permitted)") \
+    X(CTF_MENU_COUNT, "  (%zu players)") \
+    X(CTF_MENU_CHASE, "Chase Camera") \
+    X(CTF_MENU_LEAVE_CHASE, "Leave Chase Camera") \
+    X(CTF_MENU_CREDITS, "Credits") \
+    X(CTF_MENU_REQUEST_MATCH, "Request Match") \
+    X(CTF_MENU_SETUP, "*MATCH SETUP IN PROGRESS") \
+    X(CTF_MENU_STARTING, "*MATCH STARTING") \
+    X(CTF_MENU_PLAYING, "*MATCH IN PROGRESS") \
+    X(CTF_MENU_CURSOR, "Use [ and ] to move cursor") \
+    X(CTF_MENU_SELECT, "ENTER to select") \
+    X(CTF_MENU_EXIT, "ESC to Exit Menu") \
+    X(CTF_MENU_TAB, "(TAB to Return)") \
+    X(CTF_MENU_VERSION, "v1.09b") \
+    X(CTF_MENU_NO_CHASE, "No one to chase") \
+    X(CTF_MENU_BACK, "Return to Main Menu") \
+    X(CTF_MENU_PROGRAMMING, "*Programming") \
+    X(CTF_MENU_ZOID, "Dave 'Zoid' Kirsch") \
+    X(CTF_MENU_LEVEL_DESIGN, "*Level Design") \
+    X(CTF_MENU_ANTKOW, "Christian Antkow") \
+    X(CTF_MENU_WILLITS, "Tim Willits") \
+    X(CTF_MENU_ART, "*Art") \
+    X(CTF_MENU_CARMACK_STEED, "Adrian Carmack Paul Steed") \
+    X(CTF_MENU_CLOUD, "Kevin Cloud") \
+    X(CTF_MENU_SOUND, "*Sound") \
+    X(CTF_MENU_KLOK, "Tom 'Bjorn' Klok") \
+    X(CTF_MENU_ORIGINAL_ART, "*Original CTF Art Design") \
+    X(CTF_MENU_COZZENS, "Brian 'Whaleboy' Cozzens") \
     X(CVAR_COMPETITION, "competition") \
     X(CTF_ELECTION_DISABLED, "Elections are disabled, only an admin can process this action.\n") \
     X(CTF_ELECTION_RUNNING, "Election already in progress.\n") \
@@ -564,6 +599,13 @@ bool mode_horde_restore(qa_modes *, mode_instance *, const qa_horde_checkpoint *
 void mode_horde_checkpoint_free(qa_horde_checkpoint *);
 bool mode_object_bind_objective(qa_modes *, mode_object *, qa_error *);
 bool mode_join(qa_modes *, mode_instance *, qa_actor_id, qa_team_id, bool, bool, qa_error *);
+bool mode_ui_command(qa_modes *, mode_instance *, qa_actor_id,
+                     const qa_command_invocation *, bool *, qa_error *);
+bool mode_ui_close(qa_modes *, mode_instance *, qa_actor_id, qa_error *);
+bool mode_ui_open_join(qa_modes *, mode_instance *, qa_actor_id, qa_error *);
+bool mode_ui_request_team(qa_modes *, mode_instance *, qa_actor_id, qa_team_id,
+                         bool *, qa_error *);
+bool mode_ctf_ghost_assign(qa_modes *, mode_instance *, mode_member *, qa_error *);
 bool mode_relic_place(qa_modes *, mode_instance *, mode_object *, bool initial, qa_error *);
 bool mode_relic_spawn_all(qa_modes *, mode_instance *, qa_error *);
 bool mode_rogue_relic_drop(qa_modes *, mode_instance *, qa_actor_id, mode_member *, qa_error *);

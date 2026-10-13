@@ -231,6 +231,8 @@ bool qa_application_native_q2_hud_read(qa_application *app, qa_actor_id actor,
             }
             value.inventory[i + 1] = count >= INT32_MIN && count < 2147483648.0 ? (int32_t)count : INT32_MIN;
         }
+        if (application_mode_layout_read(app, actor, &value.layout, &value.layout_revision))
+            value.view.layouts |= 1;
     }
     *out = value; *found = true;
     return true;

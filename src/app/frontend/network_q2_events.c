@@ -225,13 +225,15 @@ bool frontend_network_q2_event_packet(qa_application_network_q2 *publisher, qa_a
     *out = (qa_bytes){size ? storage : NULL, size}; return true;
 }
 
-bool frontend_network_q2_print_packet(const qa_application_q2_player_event *source,
+bool frontend_network_q2_player_packet(const qa_application_q2_player_event *source,
     const qa_net_client *client, uint64_t epoch, const qa_q2_codec *codec, uint8_t *storage,
     size_t capacity, qa_bytes *out, qa_error *error)
 {
     if (!source || !client || !codec || !out || out->data || out->size || !storage || !capacity || !epoch ||
-        source->event.kind != QA_Q2_PLAYER_PRINT || !source->event.text ||
-        source->event.level < 0 || source->event.level > UINT8_MAX ||
+        (source->event.kind != QA_Q2_PLAYER_PRINT && source->event.kind != QA_Q2_PLAYER_LAYOUT) ||
+        !source->event.text ||
+        (source->event.kind == QA_Q2_PLAYER_PRINT &&
+         (source->event.level < 0 || source->event.level > UINT8_MAX)) ||
         (source->recipient_count && !source->recipients) ||
         !client->seats || !client->seat_count || client->seat_count > QA_Q2_MAX_SEATS ||
         client->protocol.kind != codec->protocol.kind || client->protocol.revision != codec->protocol.revision)
@@ -256,7 +258,7 @@ bool frontend_network_q2_print_packet(const qa_application_q2_player_event *sour
         return fail(error, QA_ERROR_FORMAT, "Q2 print needs its genuine single-seat wire");
     q2_event_packet packet = {.codec = *codec};
     qa_net_writer_init(&packet.writer, storage, capacity, error);
-    qa_q2_server_event event = {.kind = QA_Q2_SVC_PRINT,
+    qa_q2_server_event event = {.kind = source->event.kind == QA_Q2_PLAYER_LAYOUT ? QA_Q2_SVC_LAYOUT : QA_Q2_SVC_PRINT,
         .data.print = {(uint8_t)source->event.level, source->event.text}};
     bool ok;
     if (!kex) ok = qa_q2_server_event_write(&packet.codec, &packet.writer, &event);

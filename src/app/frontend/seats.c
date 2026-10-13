@@ -465,6 +465,17 @@ static bool input_handler(void *context, qa_input_seat *input, qa_input_focus ki
     frontend_seat *seat = context;
     qa_error error = {0}; bool handled = false;
     if (event->kind == QA_INPUT_EVENT_KEY && event->down && !event->repeat && event->input.code == QA_KEY_ESCAPE && kind == QA_INPUT_GAME) {
+        qa_actor_id actor;
+        uint32_t launch_seat;
+        if (frontend_seat_launch_id_read(seat->frontend, seat->id, &launch_seat) &&
+            qa_application_player_actor(seat->frontend->application, launch_seat, &actor) &&
+            qa_application_player_menu_open(seat->frontend->application, actor)) {
+            qa_command_context command = qa_input_seat_context(input);
+            command.actor = actor; command.seat = launch_seat;
+            if (!qa_console_append(qa_application_console(seat->frontend->application),
+                &command, "putaway\n", &error)) frontend_print(seat->frontend, error.message);
+            return true;
+        }
         if (!frontend_game_menu(seat, &error)) frontend_print(seat->frontend, error.message);
         return true;
     }

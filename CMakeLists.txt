@@ -594,6 +594,7 @@ add_library(qa_modes STATIC
     src/gameplay/modes/arena.c
     src/gameplay/modes/checkpoint.c
     src/gameplay/modes/commands.c
+    src/gameplay/modes/ui.c
     src/gameplay/modes/chat.c
     src/gameplay/modes/core.c
     src/gameplay/modes/damage.c

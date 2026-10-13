@@ -401,6 +401,7 @@ void qa_application_feature_report(qa_application *, const char *site, const qa_
 /* The actual Quake source pause holds shared simulation and source clocks.
  * Host presentation and transport clocks remain owned by the frontend. */
 bool qa_application_q1_paused(const qa_application *);
+bool qa_application_player_menu_open(qa_application *, qa_actor_id);
 /* The actual driver reports one completed outer frame after its ordinary
  * output work and before draining map/restart intents. Source simulation or
  * restart settlement steps do not publish this revision. */

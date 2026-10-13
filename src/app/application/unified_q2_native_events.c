@@ -51,6 +51,11 @@ bool application_unified_q2_native_player(application_provider *p, const qa_q2_p
     qa_unified_simulation_payload simulation = {.kind = QA_UNIFIED_SIMULATION_MESSAGE};
     int16_t counts[256] = {0};
     const qa_unified_simulation_payload *inventory = NULL;
+    if (v->kind == QA_Q2_PLAYER_LAYOUT) {
+        simulation.value.message = (qa_unified_message_event){.kind = QA_UNIFIED_MESSAGE_Q2_LAYOUT,
+            .text = (char *)(v->visible && v->text ? v->text : "")};
+        inventory = &simulation;
+    }
     if (ok && v->kind == QA_Q2_PLAYER_INVENTORY && v->visible) {
         size_t items = qa_q2_item_count(p->state.q2);
         for (size_t i = 0; i < items && i + 1 < 256; ++i) {

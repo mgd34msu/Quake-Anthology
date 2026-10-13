@@ -60,6 +60,34 @@ static bool mode_event(void *opaque, const qa_mode_event *event,
         error);
 }
 
+static bool mode_layout(void *opaque, qa_mode_id mode, qa_actor_id actor,
+                        const char *text, bool visible, qa_error *error)
+{
+    application_provider *source = application_mode_provider(opaque, mode);
+    if (!source || source->close_pending) return true;
+    return application_emit_q2_player(source, &(qa_q2_player_event){
+        .kind = QA_Q2_PLAYER_LAYOUT, .actor = actor, .text = text,
+        .visible = visible, .reliable = true}, error);
+}
+
+bool application_mode_layout_read(qa_application *app, qa_actor_id actor,
+                                  const char **text, uint64_t *revision)
+{
+    const char *layout = "";
+    bool visible = false;
+    uint64_t changed = 0;
+    if (app->modes && app->primary_mode_ready)
+        qa_modes_layout_read(app->modes, app->primary_mode, actor, &layout, &visible, &changed);
+    if (text) *text = layout;
+    if (revision) *revision = changed;
+    return visible;
+}
+
+bool qa_application_player_menu_open(qa_application *app, qa_actor_id actor)
+{
+    return app && application_mode_layout_read(app, actor, NULL, NULL);
+}
+
 static bool mode_intent(void *opaque, const qa_match_intent *intent,
                         qa_error *error)
 {
@@ -279,6 +307,7 @@ static qa_modes_hooks mode_hooks(qa_application *application)
                             .source_cvar_set = mode_source_cvar_set,
                             .chat_allowed = mode_chat_allowed,
                             .chat_item = mode_chat_item,
+                            .layout = mode_layout,
                             .source_ruleset = mode_source_ruleset,
                             .q1_composition_expected = application_native_q1_composition_expected,
                             .q1_composition_current = application_native_q1_composition_current,

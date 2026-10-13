@@ -13,7 +13,7 @@ bool frontend_network_q2_event_packet(qa_application_network_q2 *, qa_actor_owne
     const qa_net_client *, uint64_t connection_epoch, const qa_q2_codec *, qa_q2_messages *const decoders[2], uint8_t *storage,
     size_t capacity, qa_bytes *, qa_error *);
 
-bool frontend_network_q2_print_packet(const qa_application_q2_player_event *,
+bool frontend_network_q2_player_packet(const qa_application_q2_player_event *,
     const qa_net_client *, uint64_t connection_epoch, const qa_q2_codec *, uint8_t *storage,
     size_t capacity, qa_bytes *, qa_error *);
 

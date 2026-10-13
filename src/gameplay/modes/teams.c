@@ -124,7 +124,8 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
         }
         return true;
     }
-    if (!observer && ((v->value.rules.forced_team && team != v->value.rules.forced_team) ||
+    if (!observer && (((source != QA_MODE_Q2_CTF || !command) &&
+                       v->value.rules.forced_team && team != v->value.rules.forced_team) ||
                       (v->value.rules.match_lock &&
                        (v->value.phase == QA_MODE_COUNTDOWN ||
                         (v->value.phase == QA_MODE_PLAYING &&
@@ -186,9 +187,10 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
             return true;
         mode_stat_add(v, &member->stats.deaths, -1);
     }
-    if (!mode_join(m, v, actor, team, observer, false, e))
+    if (!mode_ui_close(m, v, actor, e) || !mode_join(m, v, actor, team, observer, false, e))
         return false;
     if (source != QA_MODE_THREEWAVE && source != QA_MODE_LMCTF && source < QA_MODE_Q3 &&
+        (source != QA_MODE_Q2_CTF || command) &&
         !qa_modes_set_score(m, id, actor, 0, e))
         return false;
     member = mode_member_get(m, v, actor);
@@ -252,6 +254,13 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
         !MODE_CALLBACK(m, m->options.hooks.respawn(m->options.hooks.context, id, actor, true, e)))
         return false;
     if (source == QA_MODE_Q2_CTF && !observer) {
+        member = mode_member_get(m, v, actor);
+        if (!command && v->value.phase == QA_MODE_PLAYING && v->value.deadline_ns && member) {
+            for (uint32_t i = 0; i < m->actor_capacity; ++i)
+                if (qa_actor_id_equal(v->ghosts[i].actor, actor)) v->ghosts[i].code = 0;
+            member->ghost_code = 0;
+            if (!mode_ctf_ghost_assign(m, v, member, e)) return false;
+        }
         if (!team_changed_message(m, v, actor, team, was_spectator, e))
             return false;
         if (v->value.phase == QA_MODE_SETUP && mode_member_get(m, v, actor)) {
@@ -268,6 +277,10 @@ bool qa_modes_request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_tea
         return mode_fail(e, "invalid team service");
     return MODE_CALLBACK(m,
                          request_team(m, id, actor, team, observer, automatic, true, accepted, e));
+}
+bool mode_ui_request_team(qa_modes *m, mode_instance *v, qa_actor_id actor,
+                          qa_team_id team, bool *accepted, qa_error *e) {
+    return request_team(m, v->id, actor, team, false, false, false, accepted, e);
 }
 static bool followable(qa_modes *m, mode_instance *v, qa_actor_id viewer, qa_actor_id actor) {
     mode_player *p = mode_player_get(m, actor);

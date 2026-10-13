@@ -293,7 +293,7 @@ bool qa_modes_ready(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool ready, q
     member->player.ready = ready;
     return true;
 }
-static bool ghost_assign(qa_modes *m, mode_instance *v, mode_member *p, qa_error *e) {
+bool mode_ctf_ghost_assign(qa_modes *m, mode_instance *v, mode_member *p, qa_error *e) {
     uint32_t code = 10000u + mode_random(m) % 90000u;
     for (uint32_t attempts = 0; attempts < 90000; ++attempts) {
         bool occupied = false;
@@ -374,7 +374,7 @@ static bool begin_play(qa_modes *m, mode_instance *v, qa_error *e) {
         if (p->player.spectator)
             continue;
         if (v->value.rules.source == QA_MODE_Q2_CTF) {
-            if (!ghost_assign(m, v, p, e))
+            if (!mode_ctf_ghost_assign(m, v, p, e))
                 return false;
             p->respawn_ns =
                 v->value.time_ns + MODE_SECOND + (mode_random(m) % 30u) * (MODE_SECOND / 10);
@@ -413,7 +413,7 @@ bool mode_ctf_reset(qa_modes *m, mode_instance *v, bool setup, qa_error *e) {
             return false;
         if (!mode_live(m, actor))
             continue;
-        if (!qa_modes_drop(m, v->id, actor, true, e) ||
+        if (!mode_ui_close(m, v, actor, e) || !qa_modes_drop(m, v->id, actor, true, e) ||
             !mode_join(m, v, actor, 0, true, false, e))
             return false;
         member = mode_member_get(m, v, actor);

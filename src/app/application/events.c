@@ -1001,7 +1001,7 @@ bool application_emit_q2_player(application_provider *provider,
 {
     qa_application *application = provider ? provider->application : NULL;
     if (!application || !application->session || application->destroy_requested ||
-        !event || (unsigned)event->kind > QA_Q2_PLAYER_ALPHA ||
+        !event || (unsigned)event->kind > QA_Q2_PLAYER_LAYOUT ||
         !qa_vec_finite(event->origin) || !qa_vec_finite(event->direction) ||
         !isfinite(event->damage) || !isfinite(event->alpha) ||
         (event->kind == QA_Q2_PLAYER_SCOREBOARD && event->score_count && !event->scores) ||
@@ -1011,12 +1011,18 @@ bool application_emit_q2_player(application_provider *provider,
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q2 player event");
     application_event_write write;
     qa_actor_id recipient = event->kind == QA_Q2_PLAYER_USERINFO ? (qa_actor_id){0} : event->actor;
-    uint16_t channels = event->kind == QA_Q2_PLAYER_PRINT ? protocol_channels(provider) : QA_APPLICATION_OUTPUT_UNIFIED;
+    qa_q2_player_event projected = *event;
+    if (event->kind == QA_Q2_PLAYER_VIEW &&
+        application_mode_layout_read(application, event->actor, NULL, NULL))
+        projected.view.layouts |= 1;
+    event = &projected;
+    bool wire = event->kind == QA_Q2_PLAYER_PRINT || event->kind == QA_Q2_PLAYER_LAYOUT;
+    uint16_t channels = wire ? protocol_channels(provider) : QA_APPLICATION_OUTPUT_UNIFIED;
     if (!application_event_stream_begin(application, QA_APPLICATION_EVENT_Q2_PLAYER, &write, error))
         return q2_player_capacity(application, &write, recipient, channels, error);
     const qa_application_network_q2_recipient_view *recipients = NULL;
     size_t recipient_count = 0;
-    if (event->kind == QA_Q2_PLAYER_PRINT && provider->q2_recipient_binding &&
+    if (wire && provider->q2_recipient_binding &&
         !application_network_q2_print_recipients(provider, event->actor,
             &recipients, &recipient_count, error)) goto abort;
     if (!application_unified_q2_native_player(provider, event, error)) goto abort;

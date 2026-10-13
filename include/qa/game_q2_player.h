@@ -84,7 +84,8 @@ typedef enum qa_q2_player_event_kind {
     QA_Q2_PLAYER_RESTART,
     QA_Q2_PLAYER_DIRECTIONAL_DAMAGE,
     QA_Q2_PLAYER_HELP_PATH,
-    QA_Q2_PLAYER_ALPHA
+    QA_Q2_PLAYER_ALPHA,
+    QA_Q2_PLAYER_LAYOUT
 } qa_q2_player_event_kind;
 typedef struct qa_q2_player_event {
     qa_q2_player_event_kind kind;

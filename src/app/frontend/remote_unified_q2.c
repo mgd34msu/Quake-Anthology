@@ -1432,6 +1432,7 @@ bool frontend_unified_q2_presentation(frontend_unified_q2 *o,const qa_unified_pr
         if (!matches)return true;
         switch(v->kind){
         case QA_Q2_PLAYER_VIEW:case QA_Q2_PLAYER_SCOREBOARD:case QA_Q2_PLAYER_INVENTORY:return player_overlay(o,row,e) && frontend_unified_q2_rr_overlay(o->rr_hud,row,e);
+        case QA_Q2_PLAYER_LAYOUT: return true;
         case QA_Q2_PLAYER_PRINT:return received_text(o,row,v->text,NULL,0,print_policy(o,row,false,(uint32_t)v->level),true,e);
         case QA_Q2_PLAYER_STUFFTEXT:*mirrored=true;return frontend_remote_unified_command_text(o->replica,v->text?v->text:"",e);
         case QA_Q2_PLAYER_HELP:o->help_visible=v->visible;if (v->visible){inventory_clear(o);o->score_visible=false;}return frontend_unified_q2_rr_overlay(o->rr_hud,row,e);

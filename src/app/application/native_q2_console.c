@@ -8,6 +8,8 @@
 #include "qa/console_cvar_observer.h"
 #include "qa/console_cvars_prepare.h"
 #include "qa/game_q2_source.h"
+#include "qa/game_q2_entities.h"
+#include "qa/game_q2_wire.h"
 #include "qa/server_admin.h"
 #include <limits.h>
 #include <math.h>
@@ -183,10 +185,19 @@ bool application_native_mode_source_settings(void *opaque, qa_mode_id mode,
     const qa_cvar_view *flag = qa_cvars_read(owner->cvars, owner->flag_init);
     const qa_cvar_view *admin = qa_cvars_read(owner->cvars, owner->ctf_cvars[Q2_CTF_ADMIN_PASSWORD]);
     const qa_cvar_view *warp = qa_cvars_read(owner->cvars, owner->ctf_cvars[Q2_CTF_WARP_LIST]);
+    qa_application *app = provider->application;
+    qa_string_id level = app->current_map;
+    qa_q2_wire_binding world;
+    qa_authored_target fields;
+    if (provider->kind == APPLICATION_PROVIDER_Q2 &&
+        qa_q2_wire_binding_read(provider->state.q2, 0, &world, NULL) && world.in_use &&
+        qa_q2_entity_authored(provider->state.q2, world.actor, &fields) && fields.message)
+        level = fields.message;
     *out = (qa_mode_source_settings){.referee_password = referee ? referee->value : "",
                                     .rcon_password = rcon ? rcon->value : "",
                                     .admin_password = admin ? admin->value : "",
                                     .warp_list = warp ? warp->value : "",
+                                    .level_name = qa_strings_cstr(qa_session_strings(app->session), level),
                                     .skin_set = skin ? skin->integer : 0,
                                     .flag_initialized = flag && flag->number != 0};
     return true;

@@ -2100,7 +2100,7 @@ static bool presentation_check(const qa_unified_presentation_event *row, qa_erro
     }
     case QA_UNIFIED_PRESENTATION_Q2_PLAYER: {
         const qa_q2_player_event *event=&payload->value.q2_player;
-        okay=event->kind>=QA_Q2_PLAYER_PRINT && event->kind<=QA_Q2_PLAYER_ALPHA &&
+        okay=event->kind>=QA_Q2_PLAYER_PRINT && event->kind<=QA_Q2_PLAYER_LAYOUT &&
             event->respawn_status>=QA_Q2_RESPAWN_READY && event->respawn_status<=QA_Q2_RESPAWN_NO_LIVES &&
             event->hand>=QA_Q2_RIGHT_HAND && event->hand<=QA_Q2_CENTER_HAND;
         break;
