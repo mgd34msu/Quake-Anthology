@@ -119,7 +119,9 @@ static bool open_scene(component_scene_row *row,qa_error *e)
         row->console=options->application->console;
     if(!row->console) return false;
     row->host=(qa_q3_host_options){.role=QA_QVM_CGAME,.abi=game->publication.abi,.session=options->application->session,
-        .world=options->world,.owner=game->publication.owner,.service_owner=row->services,.mounts=game->publication.content,
+        .world=options->world,.owner=game->publication.owner,.service_owner=row->services,
+        .mounts=qa_catalog_write_resolver_files(game->write_resolver),
+        .writable_mount=qa_catalog_write_resolver_mount(game->write_resolver),
         .write_view={.root=qa_catalog_write_resolver_root(game->write_resolver),
             .resolver=qa_catalog_write_resolver_services(game->write_resolver)},
         .cvars=row->cvars,.console=row->console,.command_context={.owner=row->services,.seat=row->seat,.dialect=QA_RULESET_Q3,.origin=QA_COMMAND_LOCAL,.cvar_view=qa_cvars_view_identity(row->cvars)},.common={.context=row,.print=module_print}};

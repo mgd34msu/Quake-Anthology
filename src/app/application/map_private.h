@@ -6,6 +6,7 @@
 #include "qa/game_q2_wire.h"
 
 typedef struct application_player_travel application_player_travel;
+bool application_map_travel_kills_bots(const qa_application *);
 bool application_map_prepare_content(qa_application *, application_publication *, qa_error *);
 bool application_map_prepare_points(qa_application *, application_publication *, qa_error *);
 bool application_map_restore_points(qa_application *, application_player_travel *, qa_error *);

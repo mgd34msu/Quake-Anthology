@@ -332,8 +332,13 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
     qa_catalog *catalog = qa_launch_instance_catalog(descriptor);
     qa_fs_root *write_root = provider->application->baseline_write_root;
     if (!write_root) write_root = qa_catalog_product_write_root(catalog, descriptor->selection.product);
-    if (write_root && !provider->application->baseline_write_root && !qa_catalog_write_resolver_create(catalog, descriptor->selection.product,
-        &role->write_resolver, error)) goto failed;
+    if (!provider->application->baseline_write_root &&
+        (write_root || (descriptor->selection.component && *descriptor->selection.component))) {
+        if (!qa_catalog_write_resolver_create(catalog, descriptor->selection.product,
+            descriptor->selection.component, options.mounts, &role->write_resolver, error)) goto failed;
+        options.mounts = qa_catalog_write_resolver_files(role->write_resolver);
+        options.writable_mount = qa_catalog_write_resolver_mount(role->write_resolver);
+    }
     options.write_view = (qa_q3_host_write_view){
         .root = provider->application->baseline_write_root ? write_root : qa_catalog_write_resolver_root(role->write_resolver),
         .resolver = qa_catalog_write_resolver_services(role->write_resolver)};
@@ -542,7 +547,7 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
             options.console != bound_services.console || !options.cvars || !options.console ||
             options.script_globals != bound_services.script_globals ||
             options.script_globals_owner != bound_services.script_globals_owner ||
-            options.mounts != descriptor->content || options.command_context.owner != provider->owner ||
+            options.mounts != bound_services.mounts || options.command_context.owner != provider->owner ||
             options.write_view.root != bound_services.write_view.root ||
             options.write_view.resolver.context != bound_services.write_view.resolver.context ||
             options.write_view.resolver.root != bound_services.write_view.resolver.root ||

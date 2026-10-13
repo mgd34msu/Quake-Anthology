@@ -112,16 +112,13 @@ bool q3components_create_game(component_game_row *row,qa_error *e)
         .actor_operations=options->application->mod_operations,.damage_context=damage_context};
     qa_catalog *catalog=row->publication.catalog;
     qa_product_id product=row->publication.descriptor->selection.product;
-    if(qa_catalog_product_write_root(catalog,product)&&
-        !qa_catalog_write_resolver_create(catalog,product,&row->write_resolver,e)) return false;
+    if(!qa_catalog_write_resolver_create(catalog,product,row->publication.metadata->key,
+        row->publication.content,&row->write_resolver,e)) return false;
+    create.host.mounts=qa_catalog_write_resolver_files(row->write_resolver);
+    create.host.writable_mount=qa_catalog_write_resolver_mount(row->write_resolver);
     create.host.write_view=(qa_q3_host_write_view){
         .root=qa_catalog_write_resolver_root(row->write_resolver),
         .resolver=qa_catalog_write_resolver_services(row->write_resolver)};
-    for(size_t i=0;i<qa_vfs_mount_count(create.host.mounts);++i) {
-        qa_vfs_mount_info mount;
-        if(qa_vfs_mount_at(create.host.mounts,i,&mount)&&mount.writable&&!mount.is_archive&&
-            qa_fs_root_same_object(create.host.write_view.root,qa_vfs_mount_root(create.host.mounts,mount.id))) { create.host.writable_mount=mount.id; break; }
-    }
     if(!application_q3_mod_operations_read(options->application->mod_operations,create.operations,e)||
         !application_q3_component_create(&create,options->restoring,&row->publication.game,e)) return false;
     row->publication.source=application_q3_component_source_read(row->publication.game); return true;
