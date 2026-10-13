@@ -782,7 +782,7 @@ enum {
 bool q2_widow_legs_think(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_widow_gib_touch(qa_q2_game *, const qa_touch_contact *, qa_error *);
 bool q2_spawn_gib(qa_q2_game *, qa_actor_id source, q2_runtime_name model, float damage, uint32_t flags,
-                  int skin, float scale, qa_error *);
+                  int skin, float scale, qa_actor_id *, qa_error *);
 bool q2_spawn_debris(qa_q2_game *, qa_actor_id source, qa_error *);
 bool q2_spawn_model_debris(qa_q2_game *, qa_actor_id source, q2_runtime_name model, float speed,
                            qa_vec3 origin, qa_error *);

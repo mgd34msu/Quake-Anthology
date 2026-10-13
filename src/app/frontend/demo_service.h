@@ -68,7 +68,7 @@ typedef struct frontend_demo_playback_source {
     /* The existing protocol CLIENT receiver owns priming, packet-time gating,
      * command prediction and presentation clocks. The service owns file framing. */
     bool (*advance)(void *, frontend_demo_reader *, uint64_t elapsed_ns,
-        uint64_t frame, bool timedemo, frontend_demo_end *, qa_error *);
+        uint64_t time_ns, uint64_t frame, bool timedemo, frontend_demo_end *, qa_error *);
     bool (*release)(void **, qa_error *);
 } frontend_demo_playback_source;
 
@@ -76,13 +76,14 @@ typedef enum frontend_demo_action {
     FRONTEND_DEMO_PLAY, FRONTEND_DEMO_STOP_PLAY, FRONTEND_DEMO_RECORD,
     FRONTEND_DEMO_RERECORD, FRONTEND_DEMO_STOP_RECORD,
     FRONTEND_DEMO_SERVER_RECORD, FRONTEND_DEMO_SERVER_STOP,
-    FRONTEND_DEMO_MVD_RECORD, FRONTEND_DEMO_MVD_STOP
+    FRONTEND_DEMO_MVD_RECORD, FRONTEND_DEMO_MVD_STOP, FRONTEND_DEMO_PAUSE
 } frontend_demo_action;
 typedef struct frontend_demo_request {
     frontend_demo_action action;
     qa_command_context source;
     const char *name;
     frontend_demo_format fallback;
+    uint64_t time_ns;
     bool timedemo, attract;
 } frontend_demo_request;
 typedef struct frontend_demo_service_options {
@@ -112,7 +113,8 @@ bool frontend_demo_service_create(const frontend_demo_service_options *, fronten
  * reconnects a channel or enters another command while its caller is entered. */
 bool frontend_demo_stage(frontend_demo_service *, const frontend_demo_request *, qa_error *);
 bool frontend_demo_execute(frontend_demo_service *, qa_error *);
-bool frontend_demo_advance(frontend_demo_service *, uint64_t elapsed_ns, uint64_t frame, qa_error *);
+bool frontend_demo_advance(frontend_demo_service *, uint64_t elapsed_ns, uint64_t time_ns,
+    uint64_t frame, qa_error *);
 /* Detach returned retired/faulted feeds without advancing a playback clock. */
 bool frontend_demo_sources_returned(frontend_demo_service *,qa_error *);
 /* Runs only actual attached local Source feeds, before Source events retire. */

@@ -9,13 +9,62 @@ static q1_player *character(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     }
     return player;
 }
+static void native_pose(const qa_q1_game *g, const q1_player *player,
+    qa_q1_character_pose *pose) {
+    if (!player->arsenal) return;
+    pose->axe_pose = player->weapon == QA_Q1_AXE;
+    double elapsed = player->animation_at < 0 ? -1 :
+        floor((g->time - player->animation_at) / .1);
+    bool attacking = elapsed >= 0 && elapsed < 6;
+    if (player->weapon == QA_Q1_MJOLNIR) {
+        *pose = (qa_q1_character_pose){.custom_model = true,
+            .model = g->runtime_names[Q1_NAME_RESOURCE_PROGS_PLAYHAM_MDL],
+            .stand = {6, 12}, .run = {0, 6}, .pain = {18, 6}, .death = {24, 8}};
+        if (attacking) {
+            pose->source_frame = true;
+            pose->frame = player->animation_base + (int32_t)elapsed;
+        }
+    } else if (player->continuous && (player->weapon == QA_Q1_LASER ||
+        player->weapon == QA_Q1_LAVA_NAILGUN || player->weapon == QA_Q1_LAVA_SUPER_NAILGUN)) {
+        pose->source_frame = true;
+        pose->frame = player->weapon == QA_Q1_LASER
+            ? player->weapon_frame == 1 ? 103 : 104
+            : player->weapon_frame % 2 ? 103 : 104;
+    } else if (attacking && (player->weapon == QA_Q1_PROXIMITY ||
+        player->weapon == QA_Q1_MULTI_GRENADE || player->weapon == QA_Q1_MULTI_ROCKET)) {
+        pose->source_frame = true;
+        pose->frame = 107 + (int32_t)elapsed;
+    } else if (player->weapon == QA_Q1_CTF_GRAPPLE) {
+        qa_q1_grapple_weapon_view grapple;
+        if (qa_q1_grapple_weapon_read(g, player->id, &grapple) && grapple.selected) {
+            pose->axe_pose = grapple.axe_pose;
+            pose->source_frame = grapple.character_frame >= 0;
+            pose->frame = grapple.character_frame;
+        }
+    } else if (player->weapon == QA_Q1_MG3_MJOLNIR &&
+        qa_q1_mg3_hammer_body_frame(g, player->id, &pose->frame))
+        pose->source_frame = true;
+}
+bool qa_q1_player_character_pose(const qa_q1_game *g, qa_actor_id actor,
+    qa_q1_character_pose *out) {
+    if (!g || !out || actor.slot >= g->capacity ||
+        !qa_actors_get(qa_session_actors(g->services.session), actor)) return false;
+    const q1_player *player = g->players[actor.slot];
+    if (!player || !player->arsenal || !qa_actor_id_equal(player->id, actor)) return false;
+    *out = (qa_q1_character_pose){0};
+    native_pose(g, player, out);
+    return true;
+}
 static bool refresh_pose(qa_q1_game *g, q1_player *player, qa_error *error) {
     q1_character *c = &player->character_state;
     if (c->life != QA_Q1_ALIVE)
         return true;
     qa_q1_character_pose pose = {.axe_pose = c->input.axe_pose};
-    if (g->host.character_pose)
-        (void)g->host.character_pose(g->host.context, player->id, &pose);
+    native_pose(g, player, &pose);
+    if (g->host.character_pose) {
+        qa_q1_character_pose selected = pose;
+        if (g->host.character_pose(g->host.context, player->id, &selected)) pose = selected;
+    }
     if (pose.custom_model && (!pose.model || !pose.stand.count || !pose.run.count ||
                               !pose.pain.count || !pose.death.count)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, player->id.slot,
@@ -43,6 +92,41 @@ static void animate(qa_q1_game *g, q1_character *c, qa_q1_frame_range range, boo
     c->animation_frame = 0;
     c->frame = range.first;
     c->next_animation = g->time + 0.1;
+}
+qa_string_id q1_hipnotic_step_sound(qa_q1_game *g) {
+    float roll = q1_random(g);
+    unsigned step = roll < .14f ? 0 : roll < .29f ? 1 : roll < .43f ? 2
+                  : roll < .58f ? 3 : roll < .72f ? 4 : roll < .86f ? 5 : 6;
+    static const q1_runtime_name sounds[] = {
+        Q1_NAME_RESOURCE_MISC_FOOT1_WAV, Q1_NAME_RESOURCE_MISC_FOOT2_WAV,
+        Q1_NAME_RESOURCE_MISC_FOOT3_WAV, Q1_NAME_RESOURCE_MISC_FOOT4_WAV,
+        Q1_NAME_RESOURCE_MISC_FOOT5_WAV, Q1_NAME_RESOURCE_MISC_FOOT6_WAV,
+        Q1_NAME_RESOURCE_MISC_FOOT7_WAV};
+    return g->runtime_names[sounds[step]];
+}
+static bool footsteps(qa_q1_game *g, q1_player *player, const qa_body_state *body,
+    bool grounded, qa_error *error) {
+    const qa_cvar_view *enabled = qa_q1_source_read(g, QA_Q1_SOURCE_FOOTSTEPS);
+    if (g->options.program != QA_Q1_HIPNOTIC || !enabled || enabled->number == 0 ||
+        player->animation_at != -1 || player->continuous) return true;
+    q1_character *c = &player->character_state;
+    if (c->frame >= (c->model == g->runtime_names[Q1_NAME_RESOURCE_PROGS_PLAYHAM_MDL] ? 18 : 29))
+        return true;
+    c->step_distance += qa_vec_length(qa_vec_sub(body->origin, c->step_origin));
+    c->step_origin = body->origin;
+    if (!grounded || c->step_distance <= 95) return true;
+    c->step_distance = c->step_distance > 190 ? 0 : .5f * (c->step_distance - 95);
+    return q1_sound_resource(g, player->id, q1_hipnotic_step_sound(g), 2, 1, .5f, error);
+}
+static bool head_flies(qa_q1_game *g, q1_player *player, qa_error *error) {
+    q1_character *c = &player->character_state;
+    if (!c->head_fly_ns || g->time_ns < c->head_fly_ns) return true;
+    c->head_fly_ns = 0;
+    if (c->head_fly_epoch != c->birth_epoch || c->model != g->player_head_model ||
+        c->life == QA_Q1_ALIVE || q1_health(g, player->id) > 0 || g->options.world_type == 2)
+        return true;
+    return q1_random(g) >= .1f || q1_sound_resource(g, player->id,
+        g->runtime_names[Q1_NAME_RESOURCE_MISC_FLYS_WAV], 6, 3, .7f, error);
 }
 bool qa_q1_character_attach(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     if (!g) {
@@ -111,6 +195,10 @@ bool qa_q1_character_frame(qa_q1_game *g, qa_actor_id actor, const qa_q1_charact
         return false;
     q1_character *c = &player->character_state;
     c->input = *input;
+    if (!head_flies(g, player, error)) return false;
+    player = q1_player_get(g, actor);
+    if (!player || !player->character) return true;
+    c = &player->character_state;
     if (!refresh_pose(g, player, error))
         return false;
     if (c->life == QA_Q1_DEAD && c->next_animation == -1)
@@ -163,6 +251,8 @@ bool qa_q1_character_frame(qa_q1_game *g, qa_actor_id actor, const qa_q1_charact
                                                                                    : 5};
             c->walk_frame %= range.count;
             c->frame = range.first + c->walk_frame++;
+            if (running && !footsteps(g, player, &body, grounded, error)) return false;
+            if (!q1_alive(g, actor)) return true;
         }
     }
     bool pressed = input->attack || input->jump || input->use;
@@ -300,6 +390,10 @@ static bool die(qa_q1_game *g, q1_player *player, const qa_damage_outcome *outco
         c->frame = 0;
         c->animation.count = 0;
         c->life = QA_Q1_DEAD;
+        if (g->options.program == QA_Q1_HIPNOTIC) {
+            c->head_fly_ns = g->time_ns + UINT64_C(1500000000);
+            c->head_fly_epoch = c->birth_epoch;
+        }
         c->view_offset = qa_v3(0, 0, 8);
         float scale = health > -50 ? 0.7f : health > -200 ? 2 : 10;
         float x = 100 * (q1_random(g) * 2 - 1), y = 100 * (q1_random(g) * 2 - 1),

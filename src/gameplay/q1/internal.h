@@ -20,6 +20,36 @@
 #define Q1_SOURCE_INITIAL_TIME_NS UINT64_C(1000000000)
 
 #define Q1_RUNTIME_NAME_LIST(X) \
+    X(QC_LAVA_NAILS, "$qc_lava_nails") \
+    X(QC_MULTI_ROCKETS, "$qc_multi_rockets") \
+    X(MESSAGE_PLASMA, "plasma") \
+    X(QC_GOT_ITEM, "$qc_got_item") \
+    X(QC_GOT_HORN, "$qc_got_horn") \
+    X(QC_BACKPACK_GOT, "$qc_backpack_got") \
+    X(QC_BACKPACK_SHELLS, "$qc_backpack_shells") \
+    X(QC_BACKPACK_NAILS, "$qc_backpack_nails") \
+    X(QC_BACKPACK_ROCKETS, "$qc_backpack_rockets") \
+    X(QC_BACKPACK_CELLS, "$qc_backpack_cells") \
+    X(QC_BACKPACK_LAVA_NAILS, "$qc_backpack_lava_nails") \
+    X(QC_BACKPACK_MULTI_ROCKETS, "$qc_backpack_multi_rockets") \
+    X(QC_BACKPACK_PLASMA_BALLS, "$qc_backpack_plasma_balls") \
+    X(MESSAGE_COMMA, ", ") \
+    X(MESSAGE_NEWLINE, "\n") \
+    X(MESSAGE_STRING, "{0}") \
+    X(MESSAGE_BACKPACK_WEAPON, "the {0}") \
+    X(QC_WETSUIT, "$qc_wetsuit") \
+    X(QC_EMPATHY_SHIELDS, "$qc_empathy_shields") \
+    X(QC_POWER_SHIELD, "$qc_power_shield") \
+    X(QC_ANTI_GRAV_BELT, "$qc_anti_grav_belt") \
+    X(QC_VENGEANCE_SPHERE, "$qc_vengeance_sphere") \
+    X(QC_LASER_CANNON, "$qc_laser_cannon") \
+    X(QC_MJOLNIR, "$qc_mjolnir") \
+    X(QC_PROX_GUN, "$qc_prox_gun") \
+    X(QC_PENTAGRAM_OF_PROTECTION, "$qc_pentagram_of_protection") \
+    X(QC_RING_OF_SHADOWS, "$qc_ring_of_shadows") \
+    X(QC_QUAD_DAMAGE, "$qc_quad_damage") \
+    X(RESOURCE_PROGS_PLAYHAM_MDL, "progs/playham.mdl") \
+    X(RESOURCE_MISC_FLYS_WAV, "misc/flys.wav") \
     X(ACH_FIND_SECRET, "ACH_FIND_SECRET") \
     X(RUNE_RESISTANCE, "resistance") \
     X(RUNE_STRENGTH, "strength") \
@@ -1352,6 +1382,9 @@ typedef struct q1_character {
     qa_vec3 view_offset;
     double next_animation, pain_until, air_until, hazard_at;
     float fall_speed, drown_damage;
+    qa_vec3 step_origin;
+    float step_distance;
+    uint64_t head_fly_ns, head_fly_epoch;
 } q1_character;
 struct qa_q1_source_client_view;
 typedef struct q1_source_info {qa_string_id key,value;} q1_source_info;
@@ -1468,7 +1501,7 @@ struct qa_q1_game {
     float qw_rj;
     qa_vec3 qw_blood_origin, qw_puff_origin;
     qa_item_id weapons[QA_Q1_WEAPON_COUNT], ammo[QA_Q1_AMMO_COUNT];
-    qa_string_id weapon_models[QA_Q1_WEAPON_COUNT];
+    qa_string_id weapon_models[QA_Q1_WEAPON_COUNT], weapon_pickup_names[QA_Q1_WEAPON_COUNT];
     qa_string_id hammer_glow_model, blood_shotgun_model, blood_super_shotgun_model;
     qa_string_id player_model, eyes_model, player_head_model;
     qa_item_id vengeance_item;
@@ -1483,6 +1516,8 @@ struct qa_q1_game {
     uint8_t rune_knight_melee, enemy_range;
     bool enemy_visible;
 };
+qa_string_id q1_weapon_pickup_name(const qa_q1_game *, qa_q1_weapon);
+qa_string_id q1_hipnotic_step_sound(qa_q1_game *);
 void q1_source_client_clear(q1_player *);
 bool q1_source_info_prepare(q1_source_info_store *,size_t pairs,qa_error *);
 bool q1_source_flag_spawn(qa_q1_game *, q1_actor *, bool *, qa_error *);

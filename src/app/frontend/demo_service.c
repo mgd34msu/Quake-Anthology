@@ -34,7 +34,7 @@ typedef struct demo_recording {
     qa_buffer seed;
     qa_error failure;
 } demo_recording;
-enum { DEMO_PENDING_RECORD, DEMO_PENDING_PLAY, DEMO_PENDING_COUNT };
+enum { DEMO_PENDING_RECORD, DEMO_PENDING_PAUSE, DEMO_PENDING_PLAY, DEMO_PENDING_COUNT };
 struct frontend_demo_service {
     frontend_demo_service_options options;
     frontend_demo_request pending[DEMO_PENDING_COUNT];
@@ -45,7 +45,8 @@ struct frontend_demo_service {
     frontend_demo_playback_source playback;
     qa_command_context playback_context;
     char *playback_path, *playback_script;
-    bool timedemo, playback_attract, completion_pending;
+    bool timedemo, playback_attract, completion_pending, paused, clock_started;
+    uint64_t clock_ns, paused_ns;
     frontend_demo_end completion_end;
 };
 
@@ -427,6 +428,7 @@ static bool playback_close(frontend_demo_service *s,qa_error *error) {
     free(s->playback_path);s->playback_path=NULL;
     free(s->playback_script);s->playback_script=NULL;
     s->playback_attract=false;s->completion_pending=false;
+    s->paused=false;s->clock_started=false;s->clock_ns=s->paused_ns=0;
     return true;
 }
 static bool record_failed(frontend_demo_service *,demo_recording **,qa_error *);
@@ -626,7 +628,7 @@ bool frontend_demo_service_create(const frontend_demo_service_options *options,
     s->options=*options;*out=s;return true;
 }
 bool frontend_demo_stage(frontend_demo_service *s,const frontend_demo_request *request,qa_error *error) {
-    if(!s||!request||(unsigned)request->action>FRONTEND_DEMO_MVD_STOP||
+    if(!s||!request||(unsigned)request->action>FRONTEND_DEMO_PAUSE||
         (unsigned)request->fallback>FRONTEND_DEMO_Q2_SERVER||
         request->source.origin==QA_COMMAND_REMOTE||
         ((request->action==FRONTEND_DEMO_PLAY||request->action==FRONTEND_DEMO_RERECORD||
@@ -634,16 +636,30 @@ bool frontend_demo_stage(frontend_demo_service *s,const frontend_demo_request *r
         return fail(error,QA_ERROR_ARGUMENT,"Invalid local demo request");
     char *name=copy_text(request->name,error),*script=copy_text(request->source.script,error);
     if((request->name&&!name)||(request->source.script&&!script)){free(name);free(script);return false;}
-    size_t kind=request->action==FRONTEND_DEMO_PLAY||request->action==FRONTEND_DEMO_STOP_PLAY?
+    size_t kind=request->action==FRONTEND_DEMO_PAUSE?DEMO_PENDING_PAUSE:
+        request->action==FRONTEND_DEMO_PLAY||request->action==FRONTEND_DEMO_STOP_PLAY?
         DEMO_PENDING_PLAY:DEMO_PENDING_RECORD;
+    bool queued=kind!=DEMO_PENDING_PAUSE||!s->queued[kind];
     free(s->pending_name[kind]);free(s->pending_script[kind]);
     s->pending_name[kind]=name;s->pending_script[kind]=script;s->pending[kind]=*request;
-    s->pending[kind].name=name;s->pending[kind].source.script=script;s->queued[kind]=true;return true;
+    s->pending[kind].name=name;s->pending[kind].source.script=script;s->queued[kind]=queued;return true;
+}
+static uint64_t playback_clock(frontend_demo_service *s,uint64_t now) {
+    if(s->clock_started&&s->paused)s->paused_ns+=now-s->clock_ns;
+    s->clock_ns=now;s->clock_started=true;
+    return now-s->paused_ns;
 }
 static bool execute_request(frontend_demo_service *s,const frontend_demo_request *request,qa_error *error) {
     bool okay=s->options.current(s->options.context,&request->source,error);
     if(okay)switch(request->action) {
     case FRONTEND_DEMO_PLAY:okay=play_begin(s,request,error);break;
+    case FRONTEND_DEMO_PAUSE:
+        if(s->playback.owner) {
+            (void)playback_clock(s,request->time_ns);
+            s->paused=!s->paused;
+            if(s->options.print)s->options.print(s->options.context,s->paused?"Demo paused.\n":"Demo resumed.\n");
+        } else if(s->options.print)s->options.print(s->options.context,"Demo pause requires active playback.\n");
+        break;
     case FRONTEND_DEMO_STOP_PLAY: {
         bool active=s->playback.owner!=NULL,attract=s->playback_attract;
         frontend_demo_format format=s->reader?s->reader->format:request->fallback;
@@ -714,15 +730,16 @@ bool frontend_demo_sources_returned(frontend_demo_service *s,qa_error *error) {
     bool okay=sources_returned(s,error);
     s->busy=false;return okay;
 }
-bool frontend_demo_advance(frontend_demo_service *s,uint64_t elapsed,uint64_t frame,qa_error *error) {
+bool frontend_demo_advance(frontend_demo_service *s,uint64_t elapsed,uint64_t now,uint64_t frame,qa_error *error) {
     if(!s||s->busy)return fail(error,QA_ERROR_ARGUMENT,"Demo frame is entered");
     s->busy=true;
     bool okay=sources_returned(s,error);
     if(okay&&s->playback.owner) {
+        uint64_t time=playback_clock(s,now);
         frontend_demo_end end=s->completion_pending?s->completion_end:FRONTEND_DEMO_RUNNING;
-        if(!s->completion_pending) {
+        if(!s->completion_pending&&!s->paused) {
             if(!s->playback.current(s->playback.owner))okay=fail(error,QA_ERROR_ARGUMENT,"Demo lost its actual CLIENT receiver");
-            if(okay)okay=s->playback.advance(s->playback.owner,s->reader,elapsed,frame,s->timedemo,&end,error);
+            if(okay)okay=s->playback.advance(s->playback.owner,s->reader,elapsed,time,frame,s->timedemo,&end,error);
         }
         if(okay&&end!=FRONTEND_DEMO_RUNNING) {
             qa_command_context source=s->playback_context;
@@ -747,7 +764,7 @@ bool frontend_demo_service_idle(const frontend_demo_service *s) {
         (!s->server||!s->server->calls)&&(!s->preparing||!s->preparing->calls));
 }
 bool frontend_demo_service_pending(const frontend_demo_service *s){
-    return s&&(s->queued[DEMO_PENDING_RECORD]||s->queued[DEMO_PENDING_PLAY]);
+    return s&&(s->queued[DEMO_PENDING_RECORD]||s->queued[DEMO_PENDING_PAUSE]||s->queued[DEMO_PENDING_PLAY]);
 }
 bool frontend_demo_service_active(const frontend_demo_service *s){
     return s&&(s->recording||s->server||s->preparing||s->reader||s->playback.owner);

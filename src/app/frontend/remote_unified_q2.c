@@ -1073,15 +1073,16 @@ static bool localized(frontend_unified_q2 *o,const qa_unified_presentation_event
 {
     const char *text=input?input:"";
     *out=(qa_buffer){(uint8_t *)text,strlen(text)};
-    if (row->q2_profile!=2)return true;
+    if (row->q2_profile!=2 && !count)return true;
     q2_bank *b=NULL;const char **arguments=count?qa_arena_alloc(storage,count*sizeof(*arguments),_Alignof(const char *),e):NULL;
-    bool okay=(!count || arguments) && bank_name(o,row->content_id,NULL,QA_STRING_NONE,0,false,&b,e);
+    bool okay=(!count || arguments);
     for (size_t i=0;okay && i<count;++i){okay=args[i].kind==QA_BUILTIN_MESSAGE_STRING;arguments[i]=qa_strings_cstr(o->replica->strings,args[i].value.text);if (!arguments[i])arguments[i]="";}
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     qa_ui_preferences preferences;qa_localization *catalog=NULL;qa_localization_options opts={.profile=QA_LOCALIZATION_Q2_RERELEASE};
-    okay=okay && qa_ui_preferences_read(qa_application_cvars(domain->application),qa_application_ui_preference_handles(domain->application),domain->physical_seat,&preferences,e) &&
+    if (row->q2_profile==2) okay=okay && bank_name(o,row->content_id,NULL,QA_STRING_NONE,0,false,&b,e) &&
+        qa_ui_preferences_read(qa_application_cvars(domain->application),qa_application_ui_preference_handles(domain->application),domain->physical_seat,&preferences,e) &&
         qa_localization_acquire(o->localizations,b->files,preferences.language,&opts,&catalog,e);
-    if (okay){char output[1024];size_t n=qa_localize_presentation(catalog,text,arguments,count,false,output,sizeof(output));
+    if (okay){char output[1024];size_t n=qa_localize_presentation(catalog,text,arguments,count,true,output,sizeof(output));
         char *copy=qa_arena_alloc(storage,n+1,1,e);if (!copy)okay=false;else{memcpy(copy,output,n+1);*out=(qa_buffer){(uint8_t *)copy,n};}}
     qa_localization_release(catalog);
     if (okay)okay=player_names_expand(o,storage,out,e);

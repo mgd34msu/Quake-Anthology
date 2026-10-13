@@ -749,10 +749,10 @@ bool frontend_network_q2_client_demo_record(frontend_network_q2_client *owner,
         .detach=demo_detach,.release=demo_release};
     return true;
 }
-static bool demo_advance(void *context,frontend_demo_reader *reader,uint64_t elapsed,uint64_t frame,
+static bool demo_advance(void *context,frontend_demo_reader *reader,uint64_t elapsed,uint64_t time_ns,uint64_t frame,
     bool timedemo,frontend_demo_end *end,qa_error *error)
 {
-    (void)frame;
+    (void)time_ns;(void)frame;
     frontend_network_q2_client *owner=context;
     if(!reader || !end || !demo_current(owner)) return false;
     *end=FRONTEND_DEMO_RUNNING;

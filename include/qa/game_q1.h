@@ -185,6 +185,7 @@ typedef enum qa_q1_source_setting {
     QA_Q1_SOURCE_MAXSPECTATORS,
     QA_Q1_SOURCE_HOSTNAME,
     QA_Q1_SOURCE_SPECTALK,
+    QA_Q1_SOURCE_FOOTSTEPS,
     QA_Q1_SOURCE_SETTING_COUNT
 } qa_q1_source_setting;
 const qa_cvar_view *qa_q1_source_read(const qa_q1_game *, qa_q1_source_setting);
@@ -576,6 +577,7 @@ typedef struct qa_q1_weapon_profile {
 } qa_q1_weapon_profile;
 /* Borrowed native source identities; no game or inventory admission occurs. */
 bool qa_q1_weapon_profile_identity(qa_q1_program, qa_q1_weapon, qa_q1_weapon_profile *);
+bool qa_q1_player_character_pose(const qa_q1_game *, qa_actor_id, qa_q1_character_pose *);
 const char *qa_q1_ammo_identity(qa_q1_ammo);
 double qa_q1_ammo_capacity(qa_q1_ammo);
 bool qa_q1_weapon_source(qa_q1_program, uint32_t source_value, qa_q1_weapon *);

@@ -821,9 +821,9 @@ static bool demo_playback_release(void **owner, qa_error *error)
     *owner = NULL; return true;
 }
 static bool demo_advance(void *context, frontend_demo_reader *reader, uint64_t elapsed,
-    uint64_t frame_number, bool timedemo, frontend_demo_end *end, qa_error *error)
+    uint64_t time_ns, uint64_t frame_number, bool timedemo, frontend_demo_end *end, qa_error *error)
 {
-    frontend_network_q1_client *o = context; (void)frame_number;
+    frontend_network_q1_client *o = context; (void)time_ns; (void)frame_number;
     if (!reader || !end || !demo_playback_current(o) || !frontend_network_q1_client_idle(o) ||
         !qa_network_callbacks_idle(o->options.runtime)) return false;
     *end = FRONTEND_DEMO_RUNNING;

@@ -8442,27 +8442,28 @@ static bool demo_q3_sequence(void *context,int32_t sequence,qa_error *error)
     qa_frontend_network *n=context;
     return qa_network_q3_client_demo_sequence(n->runtime,n->q3_clients[0].q3_client,sequence,error);
 }
-static bool demo_q3_read(qa_frontend_network *n,frontend_demo_reader *reader,frontend_demo_end *end,qa_error *error)
+static bool demo_q3_read(qa_frontend_network *n,frontend_demo_reader *reader,uint64_t time_ns,
+    frontend_demo_end *end,qa_error *error)
 {
     frontend_demo_packet packet;bool present;
     if(!frontend_demo_read_next(reader,demo_q3_sequence,n,&packet,&present,end,error))return false;
     if(!present)return true;
     if(!qa_network_q3_client_demo_message(n->runtime,n->q3_clients[0].q3_client,packet.value.q3.sequence,
-        packet.value.q3.message,(int32_t)((n->frontend->time_ns/UINT64_C(1000000))&INT32_MAX),error)||
+        packet.value.q3.message,(int32_t)((time_ns/UINT64_C(1000000))&INT32_MAX),error)||
         !client_drain(&n->q3_clients[0],false,error))return false;
     if(n->q3_clients[0].q3_client_retiring)*end=FRONTEND_DEMO_DISCONNECTED;
     return true;
 }
 static bool demo_playback_advance(void *context,frontend_demo_reader *reader,uint64_t elapsed,
-    uint64_t frame,bool timedemo,frontend_demo_end *end,qa_error *error)
+    uint64_t time_ns,uint64_t frame,bool timedemo,frontend_demo_end *end,qa_error *error)
 {
     qa_frontend_network *n=context;
-    if(n->demo_source.owner)return n->demo_source.advance(n->demo_source.owner,reader,elapsed,frame,timedemo,end,error);
+    if(n->demo_source.owner)return n->demo_source.advance(n->demo_source.owner,reader,elapsed,time_ns,frame,timedemo,end,error);
     *end=FRONTEND_DEMO_RUNNING;
     if(!demo_playback_current(n)||n->demo_format!=FRONTEND_DEMO_Q3)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Demo playback lost its actual receiver");
     while(!n->q3_clients[0].q3_client_clock.has_snapshot&&*end==FRONTEND_DEMO_RUNNING)
-        if(!demo_q3_read(n,reader,end,error))return false;
+        if(!demo_q3_read(n,reader,time_ns,end,error))return false;
     if(*end!=FRONTEND_DEMO_RUNNING)return true;
     if(n->demo_first_frame){n->demo_first_frame=false;return true;}
     qa_application_q3_client_context role;
@@ -8472,10 +8473,10 @@ static bool demo_playback_advance(void *context,frontend_demo_reader *reader,uin
         *nudge=qa_cvars_read(role.cvars,n->q3_clients[0].cl_timeNudge);
     if(scale)options.timescale=scale->number;
     if(nudge)options.time_nudge=nudge->integer;
-    if(!qa_q3_clock_advance(&n->q3_clients[0].q3_client_clock,(int32_t)((n->frontend->time_ns/UINT64_C(1000000))&INT32_MAX),
+    if(!qa_q3_clock_advance(&n->q3_clients[0].q3_client_clock,(int32_t)((time_ns/UINT64_C(1000000))&INT32_MAX),
         &options,&n->q3_clients[0].q3_client_active,&n->q3_clients[0].q3_client_time,error))return false;
     while(qa_q3_clock_needs_demo_message(&n->q3_clients[0].q3_client_clock)&&*end==FRONTEND_DEMO_RUNNING)
-        if(!demo_q3_read(n,reader,end,error))return false;
+        if(!demo_q3_read(n,reader,time_ns,end,error))return false;
     if(*end!=FRONTEND_DEMO_RUNNING)return true;
     const qa_net_client *client=qa_net_connections_get(qa_network_connections(n->runtime),n->q3_clients[0].q3_client);
     if(n->q3_clients[0].q3_client_active&&client&&client->phase==QA_NET_PRIMED&&

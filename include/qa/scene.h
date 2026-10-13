@@ -1062,6 +1062,11 @@ bool qa_scene_model_materials_admit(qa_scene_model *, const qa_model_skin_map *,
 bool qa_scene_model_materials_ready(const qa_scene_model *, const qa_material_library *);
 bool qa_scene_model_lerp_tag(const qa_scene_model *, qa_string_id name,
     uint32_t from, uint32_t to, float fraction, qa_model_tag *);
+bool qa_scene_model_grip_bind(qa_scene_model *, const char *joint,
+    uint32_t reference_frame, const uint32_t vertices[3], const qa_model_transform *, qa_error *);
+bool qa_scene_model_grip_defined(const qa_scene_model *);
+bool qa_scene_model_grip_sample(qa_scene_model *, const qa_scene_model_input *,
+    qa_scene_frame *, qa_model_transform *, bool *found, qa_error *);
 enum { QA_MODEL_PATH_PLAYER_SHADE = 1u, QA_MODEL_PATH_FLAME_FULLBRIGHT = 2u,
     QA_MODEL_PATH_DOUBLE_EYES = 4u };
 uint32_t qa_scene_model_path_flags(const qa_scene_model *);

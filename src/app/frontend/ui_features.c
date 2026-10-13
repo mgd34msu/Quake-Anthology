@@ -332,7 +332,7 @@ bool frontend_ui_source_message(qa_frontend *f,uint32_t seat,const qa_builtin_ev
     const char *format=qa_strings_cstr(strings,event->text);
     if (!format) return frontend_fail(error,QA_ERROR_FORMAT,"Source message has no actual format string");
     *out=format;
-    if (event->family!=QA_GAME_Q1 || (event->flags&QA_Q1_SOURCE_MESSAGE_LITERAL) ||
+    if ((event->family==QA_GAME_Q1 && (event->flags&QA_Q1_SOURCE_MESSAGE_LITERAL)) ||
         (event->kind!=QA_BUILTIN_MESSAGE && event->kind!=QA_BUILTIN_CENTERPRINT) ||
         (!(event->flags&2u) && !event->argument_count && format[0]!='$')) return true;
     if (event->argument_count && !event->arguments)
@@ -358,20 +358,28 @@ bool frontend_ui_source_message(qa_frontend *f,uint32_t seat,const qa_builtin_ev
             !(arguments[i]=qa_strings_cstr(strings,event->arguments[i].value.text)))
             ok=frontend_fail(error,QA_ERROR_FORMAT,"Localized source argument has no genuine string value");
     }
+    if (event->family!=QA_GAME_Q1 && format[0]!='$') {
+        if (ok) {
+            (void)qa_localize_presentation(NULL,format,arguments,event->argument_count,true,output,1024);
+            *out=output;
+        }
+        return ok;
+    }
     qa_vfs *view=ok?qa_application_provider_files(f->application,event->provider):NULL;
     if (ok && !view) ok=frontend_fail(error,QA_ERROR_NOT_FOUND,"Localized source message lost its actual content view");
     const qa_launch_snapshot *publication=qa_application_launch(f->application);
     const char *instance=ok?qa_application_provider_instance(f->application,event->provider):NULL;
     const qa_launch_instance *source=instance?qa_launch_snapshot_find(publication,instance):NULL;
     const qa_product *product=source?qa_catalog_product(qa_launch_snapshot_catalog(publication),source->selection.product):NULL;
-    if (ok && (!product || product->family!=QA_GAME_Q1))
-        ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Localized Q1 event lost its actual published source edition");
+    if (ok && !product)
+        ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Localized event lost its actual published source edition");
     qa_ui_preferences preferences; qa_localization *catalog=NULL;
     if (ok) ok=qa_ui_preferences_read(qa_application_cvars(f->application),qa_application_ui_preference_handles(f->application),seat,&preferences,error) &&
         qa_localization_acquire(f->ui_features->catalogs,view,preferences.language,
-            &(qa_localization_options){.profile=QA_LOCALIZATION_Q1_RERELEASE},&catalog,error);
+            &(qa_localization_options){.profile=event->family==QA_GAME_Q1 ? QA_LOCALIZATION_Q1_RERELEASE :
+                QA_LOCALIZATION_Q2_RERELEASE},&catalog,error);
     if (ok) {
-        if (product->edition!=QA_EDITION_RERELEASE &&
+        if (event->family==QA_GAME_Q1 && product->edition!=QA_EDITION_RERELEASE &&
             (format[0]!='$' || !qa_localization_find(catalog,format+1)))
             ok=qa_q1_classic_text(format,arguments,event->argument_count,&f->frame.storage,output,1024,error);
         else (void)qa_localize_presentation(catalog,format,arguments,event->argument_count,true,output,1024);

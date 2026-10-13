@@ -11,9 +11,9 @@ static qa_vec3 rogue_velocity(qa_modes *m, mode_instance *v) {
     float y = -300 + rogue_random(m, v) * 600;
     return qa_v3(x, y, 300);
 }
-static bool rogue_message(qa_modes *m, mode_instance *v, qa_actor_id actor,
-                            qa_string_id text, qa_error *e) {
-    qa_builtin_event event = {.kind = QA_BUILTIN_CENTERPRINT, .family = QA_GAME_Q1,
+static bool relic_message(qa_modes *m, mode_instance *v, qa_actor_id actor,
+                            qa_game_family family, qa_string_id text, qa_error *e) {
+    qa_builtin_event event = {.kind = QA_BUILTIN_CENTERPRINT, .family = family,
         .provider = m->options.owner, .actor = actor, .time_ns = v->value.time_ns,
         .flags = 1, .text = text};
     return MODE_CALLBACK(m, m->options.hooks.emit
@@ -234,7 +234,7 @@ bool mode_relic_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id
         if (p->rogue_rune) {
             bool notice = p->notice_ns < v->value.time_ns;
             p->notice_ns = v->value.time_ns + 5 * MODE_SECOND;
-            return !notice || rogue_message(m, v, actor,
+            return !notice || relic_message(m, v, actor, QA_GAME_Q1,
                 m->runtime_names[MODE_NAME_QC_ALREADY_HAVE_RUNE], e);
         }
         if (o->spec.relic > QA_RELIC_REGENERATION) return true;
@@ -245,7 +245,7 @@ bool mode_relic_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id
         qa_string_id message = m->runtime_names[messages[o->spec.relic]];
         *accepted = true;
         if (!mode_sound(m, v, actor, m->runtime_names[MODE_NAME_SOUND_WEAPONS_PKUP_WAV], 1, e) ||
-            !rogue_message(m, v, actor, message, e)) return false;
+            !relic_message(m, v, actor, QA_GAME_Q1, message, e)) return false;
         return !mode_live(m, rune) || qa_session_release(m->options.services.session, rune, e);
     }
     if (v->value.rules.source == QA_MODE_Q2_CTF &&
@@ -260,6 +260,9 @@ bool mode_relic_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id
         if (v->value.time_ns >= p->notice_ns) {
             p->notice_ns =
                 v->value.time_ns + (v->value.rules.source == QA_MODE_Q2_CTF ? 2 : 5) * MODE_SECOND;
+            if (v->value.rules.source == QA_MODE_Q2_CTF)
+                return relic_message(m, v, actor, QA_GAME_Q2,
+                    m->runtime_names[MODE_NAME_CTF_ALREADY_TECH], e);
             return mode_event(m, v, QA_MODE_MESSAGE, actor, (qa_actor_id){0}, o->actor, 0, 1,
                               QA_MODE_RELIC_TAKEN, e);
         }
@@ -377,7 +380,8 @@ bool qa_modes_after_damage(qa_modes *m, qa_mode_id id, const qa_damage_outcome *
         return mode_fail(e, "invalid mode damage outcome");
     qa_actor_id actor = outcome->request.attack.attacker;
     if (v->value.rules.source != QA_MODE_LMCTF || outcome->result.applied_damage <= 0 ||
-        !qa_modes_has_relic(m, id, actor, QA_RELIC_VAMPIRE) || !mode_alive(m, actor))
+        qa_actor_id_equal(actor, outcome->request.target) ||
+        !qa_modes_has_relic(m, id, actor, QA_RELIC_VAMPIRE))
         return true;
     qa_builtin_actor_traits traits = {0};
     if (m->options.services.actor_traits)
@@ -391,8 +395,6 @@ bool qa_modes_after_damage(qa_modes *m, qa_mode_id id, const qa_damage_outcome *
         return false;
     double damage = outcome->result.applied_damage;
     int32_t gain = (damage >= INT32_MAX ? INT32_MAX : (int32_t)damage) >> (body ? 2 : 1);
-    if (state.health >= 250 || !gain)
-        return true;
     return qa_combat_set_health(m->options.services.combat, actor,
                                 fmin(250, state.health + gain), e) &&
            mode_sound(m, v, actor, m->runtime_names[MODE_NAME_SOUND_BRAIN_BRNATCK3_WAV], 1, e);
@@ -468,21 +470,31 @@ bool mode_relic_frame(qa_modes *m, mode_instance *v, qa_actor_id actor, mode_mem
         if (m->options.services.actor_traits)
             m->options.services.actor_traits(m->options.services.context, actor, &traits);
         double maximum = traits.max_health > 0 ? traits.max_health : 100;
-        if (state.health < maximum + 25 &&
-            !qa_combat_set_health(m->options.services.combat, actor,
+        bool changed = false;
+        if (state.health < maximum + 25) {
+            if (!qa_combat_set_health(m->options.services.combat, actor,
                                   fmin(maximum + 25,
                                       trunc((float)((float)state.health + (float)heart / 3.0f))), e))
-            return false;
+                return false;
+            changed = true;
+        }
+        bool armor_changed = false;
         if (armor.kind == QA_ARMOR_NONE || armor.points == 0) {
             armor = (qa_regular_armor){.kind = QA_ARMOR_Q2,
                                        .points = heart / 4,
                                        .item = m->runtime_names[MODE_NAME_Q2_ITEM_ARMOR_JACKET],
                                        .protection.q2 = {.normal = .3f, .energy = 0}};
-        } else
+            armor_changed = true;
+        } else if (armor.points < 200) {
             armor.points = fmin(200,
                                trunc((float)((float)armor.points + (float)heart / 3.0f)));
-        return qa_combat_set_regular_armor(m->options.services.combat, actor, &armor, e) &&
-               mode_sound(m, v, actor, m->runtime_names[MODE_NAME_SOUND_CTF_REGEN_WAV], 1, e);
+            armor_changed = true;
+        }
+        if (armor_changed &&
+            !qa_combat_set_regular_armor(m->options.services.combat, actor, &armor, e))
+            return false;
+        return !(changed || armor_changed) || mode_sound(m, v, actor,
+            m->runtime_names[MODE_NAME_SOUND_CTF_REGEN_WAV], 1, e);
     }
     if (p->regen_ns >= now)
         return true;

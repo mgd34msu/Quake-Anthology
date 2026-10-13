@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/persistence_slots.h"
 #include "qa/q1_save.h"
+#include "qa/text.h"
 
 void qa_q1_save_slot_metadata_dispose(qa_q1_save_slot_metadata *source)
 {
@@ -146,37 +147,31 @@ void qa_save_slot_listing_free(qa_save_slot_listing *listing)
     *listing = (qa_save_slot_listing){0};
 }
 
-bool qa_save_slots_list(qa_fs_root *root, const char *directory,
-                        qa_save_slot_listing *out, qa_error *error)
+static bool slot_reserve(qa_save_slot_listing *listing, size_t *capacity, qa_error *error)
 {
-    if (!root || !directory || !out)
-        return persistence_fail(error, QA_ERROR_ARGUMENT, "Missing save slot directory or output");
-    char *probe = slot_path(directory, "listing.sav", error);
-    if (!probe)
-        return false;
-    bool valid = qa_save_slot_name(probe, error);
-    free(probe);
-    if (!valid)
-        return false;
+    if (listing->count < *capacity) return true;
+    size_t maximum = SIZE_MAX / sizeof(*listing->entries);
+    if (listing->count == maximum)
+        return persistence_fail(error, QA_ERROR_MEMORY, "Save slot inventory exceeds memory extent");
+    size_t next = *capacity ? (*capacity > maximum / 2 ? maximum : *capacity * 2) : 1;
+    qa_save_slot_entry *entries = realloc(listing->entries, next * sizeof(*entries));
+    if (!entries)
+        return persistence_fail(error, QA_ERROR_MEMORY, "Allocating save slot inventory");
+    listing->entries = entries; *capacity = next;
+    return true;
+}
+
+static bool slot_directory_list(qa_fs_root *root, const char *directory,
+    qa_save_slot_listing *candidate, size_t *capacity, qa_error *error)
+{
     qa_fs_listing files = {0};
     qa_error local = {0};
     if (!qa_fs_root_list(root, directory, &files, &local)) {
         qa_fs_listing_free(&files);
-        if (local.code == QA_ERROR_NOT_FOUND) {
-            *out = (qa_save_slot_listing){0};
-            return true;
-        }
+        if (local.code == QA_ERROR_NOT_FOUND) return true;
         if (error)
             *error = local;
         return false;
-    }
-    qa_save_slot_listing candidate = {0};
-    if (files.count) {
-        candidate.entries = calloc(files.count, sizeof(*candidate.entries));
-        if (!candidate.entries) {
-            qa_fs_listing_free(&files);
-            return persistence_fail(error, QA_ERROR_MEMORY, "Allocating save slot inventory");
-        }
     }
     bool ok = true;
     for (size_t i = 0; ok && i < files.count; ++i) {
@@ -184,7 +179,7 @@ bool qa_save_slots_list(qa_fs_root *root, const char *directory,
             continue;
         size_t leaf_length = strlen(files.entries[i].name);
         if (files.entries[i].kind == QA_FS_REGULAR &&
-            (leaf_length < 5 || strcmp(files.entries[i].name + leaf_length - 4, ".sav"))) continue;
+            (leaf_length < 4 || !qa_text_ascii_equal(files.entries[i].name + leaf_length - 4, ".sav"))) continue;
         char *path = slot_path(directory, files.entries[i].name, error);
         if (!path) {
             ok = false;
@@ -207,10 +202,15 @@ bool qa_save_slots_list(qa_fs_root *root, const char *directory,
                 if (error) *error = status;
                 ok = false; break;
             }
-            if (kind != QA_FS_REGULAR) { free(path); continue; }
+            if (kind != QA_FS_REGULAR) {
+                ok = slot_directory_list(root, path, candidate, capacity, error);
+                free(path);
+                continue;
+            }
         }
-        qa_save_slot_entry *entry = candidate.entries + candidate.count++;
-        entry->name = path;
+        if (!slot_reserve(candidate, capacity, error)) { free(path); ok = false; break; }
+        qa_save_slot_entry *entry = candidate->entries + candidate->count++;
+        *entry = (qa_save_slot_entry){.name = path};
         if (!qa_save_slot_inspect(root, path, &entry->format, &entry->metadata, &entry->source, &entry->q2, &entry->error)) {
             if (entry->error.code == QA_ERROR_MEMORY) {
                 if (error)
@@ -222,7 +222,24 @@ bool qa_save_slots_list(qa_fs_root *root, const char *directory,
         }
     }
     qa_fs_listing_free(&files);
-    if (!ok) {
+    return ok;
+}
+
+bool qa_save_slots_list(qa_fs_root *root, const char *directory,
+                        qa_save_slot_listing *out, qa_error *error)
+{
+    if (!root || !directory || !out)
+        return persistence_fail(error, QA_ERROR_ARGUMENT, "Missing save slot directory or output");
+    char *probe = slot_path(directory, "listing.sav", error);
+    if (!probe)
+        return false;
+    bool valid = qa_save_slot_name(probe, error);
+    free(probe);
+    if (!valid)
+        return false;
+    qa_save_slot_listing candidate = {0};
+    size_t capacity = 0;
+    if (!slot_directory_list(root, directory, &candidate, &capacity, error)) {
         qa_save_slot_listing_free(&candidate);
         return false;
     }

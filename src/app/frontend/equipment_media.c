@@ -12,6 +12,32 @@
 #include <stdio.h>
 #include <math.h>
 
+bool frontend_held_attachment_prepare(qa_vfs *files, const char *model_path,
+    qa_scene_model *scene, qa_error *error)
+{
+    static const char suffix[] = ".attachment.json";
+    size_t length = strlen(model_path);
+    if (length > SIZE_MAX - sizeof(suffix))
+        return frontend_fail(error, QA_ERROR_MEMORY, "Carrier attachment path exceeds address space");
+    char *path = malloc(length + sizeof(suffix));
+    if (!path) return frontend_fail(error, QA_ERROR_MEMORY, "Preparing carrier attachment path");
+    memcpy(path, model_path, length);
+    memcpy(path + length, suffix, sizeof(suffix));
+    qa_resource *resource = NULL;
+    qa_error local = {0};
+    bool ok = qa_vfs_acquire(files, path, &resource, NULL, &local);
+    free(path);
+    if (!ok && local.code == QA_ERROR_NOT_FOUND) return true;
+    if (!ok) { if (error) *error = local; return false; }
+    frontend_held_attachment attachment = {0};
+    ok = frontend_held_attachment_read(qa_resource_bytes(resource), &attachment, error);
+    if (ok) ok = qa_scene_model_grip_bind(scene, attachment.joint, attachment.reference_frame,
+        attachment.joint ? NULL : attachment.vertices, &attachment.grip, error);
+    frontend_held_attachment_free(&attachment);
+    qa_resource_release(resource);
+    return ok;
+}
+
 bool frontend_equipment_media_namespace_current(const qa_frontend *frontend,
     const frontend_equipment_media *row)
 {

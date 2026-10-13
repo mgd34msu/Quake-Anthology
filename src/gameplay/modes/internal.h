@@ -207,6 +207,19 @@ typedef struct mode_objective {
     X(PIC_K_REDKEY, "k_redkey") \
     X(PIC_I_TAGTOKEN, "i_tagtoken") \
     X(QC_ALREADY_HAVE_RUNE, "$qc_already_have_rune") \
+    X(CTF_ALREADY_TECH, "You already have a TECH powerup.") \
+    X(CTF_RED, "RED") \
+    X(CTF_BLUE, "BLUE") \
+    X(CTF_UNKNOWN, "UKNOWN") \
+    X(CTF_FLAG_TAKEN, "{0} got the {1} flag!\n") \
+    X(CTF_FLAG_RETURNED, "{0} returned the {1} flag!\n") \
+    X(CTF_FLAG_CAPTURED, "{0} captured the {1} flag!\n") \
+    X(CTF_FLAG_AUTO_RETURN, "The {0} flag has returned!\n") \
+    X(CTF_RETURN_ASSIST, "{0} gets an assist for returning the flag!\n") \
+    X(CTF_FRAG_ASSIST, "{0} gets an assist for fragging the flag carrier!\n") \
+    X(SOUND_CTF_FLAGTK_WAV, "ctf/flagtk.wav") \
+    X(SOUND_CTF_FLAGRET_WAV, "ctf/flagret.wav") \
+    X(SOUND_CTF_FLAGCAP_WAV, "ctf/flagcap.wav") \
     X(QC_RUNE_RESISTANCE, "$qc_rune_resistance") \
     X(QC_RUNE_STRENGTH, "$qc_rune_strength") \
     X(QC_RUNE_HASTE, "$qc_rune_haste") \
@@ -333,6 +346,10 @@ bool mode_alive(qa_modes *, qa_actor_id);
 bool mode_sound(qa_modes *, mode_instance *, qa_actor_id, qa_string_id, float, qa_error *);
 bool mode_sound_channel(qa_modes *, mode_instance *, qa_actor_id, qa_string_id, int32_t,
                         float, qa_error *);
+bool mode_sound_full(qa_modes *, mode_instance *, qa_actor_id, qa_string_id, int32_t,
+                    float, float, qa_error *);
+bool mode_message(qa_modes *, mode_instance *, qa_actor_id, qa_string_id,
+                   const qa_builtin_message_arg *, size_t, qa_error *);
 bool mode_count(qa_modes *, qa_actor_id, qa_item_id, double *, qa_error *);
 bool mode_set_count(qa_modes *, qa_actor_id, qa_item_id, double, qa_error *);
 bool mode_object_count(qa_modes *, mode_instance *, mode_object *, qa_actor_id, double, qa_error *);

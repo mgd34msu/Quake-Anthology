@@ -33,6 +33,7 @@
 #include "q2_client_lerp.h"
 #include "particle_delivery.h"
 #include "visuals_private.h"
+#include "equipment_held.h"
 #include <limits.h>
 
 static void visual_content_release(void *context)
@@ -578,6 +579,7 @@ static bool model_read(qa_frontend *frontend, frontend_visual_owner *owner, qa_s
     if (ok && colored && model->model->format == QA_MODEL_MDL)
         images.translation = (qa_bytes){translation, sizeof(translation)};
     if (ok) ok=qa_scene_model_create(model->model, path, owner->images, owner->materials, &images, owner->strings, &model->scene, error);
+    if (ok) ok = frontend_held_attachment_prepare(owner->mounts, path, model->scene, error);
     qa_scene_model_content_lease native = {0};
     if (ok) ok = visual_content_lease(model->content, false, &native, error) && qa_scene_model_source_bind(model->scene, &native, error);
     if (native.release) native.release(native.context);
@@ -765,7 +767,7 @@ bool frontend_visual_policy_abort(frontend_visual_policy **owner, qa_error *erro
     visual_policy_dispose(*owner); *owner = NULL; return true;
 }
 static bool model_opening_initialize(qa_frontend *f, qa_game_family family, qa_vfs *files,
-    const qa_resource *resource, const char *path, int64_t rank,
+    const qa_resource *resource, const char *path, const char *attachment_path, int64_t rank,
     const qa_model *native, qa_scene_model *root, qa_error *error)
 {
     if (!f || !f->application || f->capture || f->resource_inventory || f->source_restoring ||
@@ -775,6 +777,7 @@ static bool model_opening_initialize(qa_frontend *f, qa_game_family family, qa_v
         qa_material_library_resource_owner(qa_scene_model_material_owner(root)) != qa_scene_model_resource_owner(root) ||
         qa_resource_pool_find(qa_vfs_resources(files), qa_resource_id(resource)) != resource)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Initial model policy requires its genuine decoded parent and first opening");
+    if (!frontend_held_attachment_prepare(files, attachment_path, root, error)) return false;
     if (native->format != QA_MODEL_MDL && native->format != QA_MODEL_MD2) return true;
     frontend_model_policy policy;
     if (!frontend_model_policy_read(f, &policy, error)) return false;
@@ -803,7 +806,9 @@ bool frontend_visual_registered_model_initialize(qa_frontend *f, const qa_q3_mod
         qa_scene_model_material_owner(root) != opening->provider.materials)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Initial registry model lost its actual provider parent");
     return model_opening_initialize(f, opening->provider.family, opening->provider.mounts,
-        opening->resource, opening->receipt->path, opening->rank, native, root, error);
+        opening->resource, opening->receipt->path,
+        opening->first_requested_path ? opening->first_requested_path : opening->receipt->path,
+        opening->rank, native, root, error);
 }
 bool frontend_visual_model_opening_initialize(qa_frontend *f, qa_game_family family, qa_vfs *files,
     const qa_resource *resource, const qa_vfs_acquisition *receipt, const qa_model *native,
@@ -814,7 +819,8 @@ bool frontend_visual_model_opening_initialize(qa_frontend *f, qa_game_family fam
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Initial native model has no actual retained acquisition");
     int64_t rank;
     if (!opening_rank(files, receipt, &rank, error)) return false;
-    return model_opening_initialize(f, family, files, resource, receipt->path, rank, native, root, error);
+    return model_opening_initialize(f, family, files, resource, receipt->path,
+        receipt->lookup_path ? receipt->lookup_path : receipt->path, rank, native, root, error);
 }
 static bool native_cache_policy_prepare(const frontend_model_policy *policy, qa_game_family family,
     qa_vfs *files, const qa_resource *resource, const qa_vfs_acquisition *opening,

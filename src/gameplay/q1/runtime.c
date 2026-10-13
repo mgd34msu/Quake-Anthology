@@ -62,6 +62,9 @@ static const char *const weapon_models[QA_Q1_WEAPON_COUNT] = {
 const char *qa_q1_weapon_identity(qa_q1_weapon weapon) {
     return (unsigned)weapon < QA_Q1_WEAPON_COUNT ? weapon_names[weapon] : NULL;
 }
+qa_string_id q1_weapon_pickup_name(const qa_q1_game *g, qa_q1_weapon weapon) {
+    return (unsigned)weapon < QA_Q1_WEAPON_COUNT ? g->weapon_pickup_names[weapon] : QA_STRING_NONE;
+}
 bool qa_q1_weapon_names_bind(qa_strings *strings, qa_item_id items[QA_Q1_WEAPON_COUNT],
     qa_string_id models[QA_Q1_WEAPON_COUNT], qa_error *error) {
     for (size_t i = 0; i < QA_Q1_WEAPON_COUNT; ++i)
@@ -731,6 +734,7 @@ static void source_bind(qa_q1_game *game) {
         [QA_Q1_SOURCE_MAXSPECTATORS] = "maxspectators",
         [QA_Q1_SOURCE_HOSTNAME] = "hostname",
         [QA_Q1_SOURCE_SPECTALK] = "sv_spectalk",
+        [QA_Q1_SOURCE_FOOTSTEPS] = "footsteps",
     };
     for (size_t i = 0; i < QA_Q1_SOURCE_SETTING_COUNT; ++i)
         game->source_settings[i] = qa_cvars_resolve(game->host.cvars, names[i]);
@@ -798,6 +802,12 @@ bool qa_q1_game_create(const qa_builtin_services *services, const qa_q1_options 
     qa_builtin_random_seed(&g->random, options->random_seed);
     if (!qa_q1_weapon_names_bind(qa_session_strings(services->session),
             g->weapons, g->weapon_models, error)) goto fail;
+    for (unsigned i = 0; i < QA_Q1_WEAPON_COUNT; ++i) {
+        qa_q1_weapon_profile profile;
+        if (qa_q1_weapon_profile_identity(options->program, (qa_q1_weapon)i, &profile) &&
+            !qa_strings_intern_cstr(qa_session_strings(services->session), profile.label,
+                &g->weapon_pickup_names[i], error)) goto fail;
+    }
     for (size_t i = 0; i < QA_Q1_AMMO_COUNT; ++i)
         if (!qa_builtin_resource(services, ammo_names[i], &g->ammo[i], error))
             goto fail;

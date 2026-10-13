@@ -6,8 +6,52 @@ static bool recent(uint64_t now, uint64_t then, unsigned seconds, bool set) {
 static bool points(qa_modes *m, mode_instance *v, qa_actor_id actor, int32_t amount, qa_error *e) {
     return !amount || qa_modes_add_score(m, v->id, actor, amount, e);
 }
-bool mode_flag_reset(qa_modes *m, mode_instance *v, mode_object *o, bool announce, qa_error *e) {
+static qa_string_id flag_team_name(qa_modes *m, mode_instance *v, qa_team_id team) {
+    int index = mode_team_index(v, team);
+    return m->runtime_names[index == 0 ? MODE_NAME_CTF_RED :
+                            index == 1 ? MODE_NAME_CTF_BLUE : MODE_NAME_CTF_UNKNOWN];
+}
+static bool flag_message(qa_modes *m, mode_instance *v, qa_actor_id actor,
+                         qa_team_id team, int message, qa_error *e) {
+    mode_player *player = mode_player_get(m, actor);
+    if (actor.registry && !player)
+        return true;
+    qa_builtin_message_arg arguments[2] = {{.kind = QA_BUILTIN_MESSAGE_STRING},
+        {.kind = QA_BUILTIN_MESSAGE_STRING}};
+    size_t count = 1;
+    if (player) {
+        arguments[0].value.text = player->identity->name;
+        arguments[1].value.text = flag_team_name(m, v, team);
+        count = team ? 2 : 1;
+    } else {
+        arguments[0].value.text = flag_team_name(m, v, team);
+    }
+    return mode_message(m, v, (qa_actor_id){0}, m->runtime_names[message], arguments, count, e);
+}
+static bool flag_announce(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id origin,
+                          qa_actor_id actor, qa_mode_event_kind kind, qa_error *e) {
+    if (v->value.rules.source != QA_MODE_Q2_CTF)
+        return true;
+    int message = kind == QA_MODE_FLAG_TAKEN ? MODE_NAME_CTF_FLAG_TAKEN :
+                  kind == QA_MODE_FLAG_CAPTURED ? MODE_NAME_CTF_FLAG_CAPTURED :
+                  actor.registry ? MODE_NAME_CTF_FLAG_RETURNED : MODE_NAME_CTF_FLAG_AUTO_RETURN;
+    if (!flag_message(m, v, actor, o->spec.team, message, e))
+        return false;
+    if (kind == QA_MODE_FLAG_TAKEN)
+        return mode_sound_full(m, v, actor, m->runtime_names[MODE_NAME_SOUND_CTF_FLAGTK_WAV],
+            3, 1, 1, e);
+    if (!actor.registry)
+        return true;
+    return mode_sound_full(m, v, origin,
+        m->runtime_names[kind == QA_MODE_FLAG_CAPTURED ? MODE_NAME_SOUND_CTF_FLAGCAP_WAV :
+            MODE_NAME_SOUND_CTF_FLAGRET_WAV], 26, 1, 0, e);
+}
+static bool flag_reset(qa_modes *m, mode_instance *v, mode_object *o, bool announce,
+                        qa_actor_id returning, qa_error *e) {
     if (o->q3_source_owned) return true;
+    qa_actor_id sound_actor = mode_live(m, o->dropped_actor) ? o->dropped_actor : o->actor;
+    if (announce && !flag_announce(m, v, o, sound_actor, returning, QA_MODE_FLAG_RETURNED, e))
+        return false;
     qa_actor_id previous = o->value.carrier;
     mode_member *member = mode_member_get(m, v, previous);
     if (member && qa_actor_id_equal(member->flag, o->actor))
@@ -47,7 +91,10 @@ bool mode_flag_reset(qa_modes *m, mode_instance *v, mode_object *o, bool announc
         return false;
     return mode_object_notify(m, v, o, e);
 }
-static bool capture(qa_modes *m, mode_instance *v, mode_object *flag, qa_actor_id actor,
+bool mode_flag_reset(qa_modes *m, mode_instance *v, mode_object *o, bool announce, qa_error *e) {
+    return flag_reset(m, v, o, announce, (qa_actor_id){0}, e);
+}
+static bool capture(qa_modes *m, mode_instance *v, mode_object *flag, mode_object *base, qa_actor_id actor,
                     qa_team_id team, qa_error *e) {
     qa_mode_source source = v->value.rules.source;
     uint64_t now = v->value.time_ns;
@@ -57,6 +104,8 @@ static bool capture(qa_modes *m, mode_instance *v, mode_object *flag, qa_actor_i
     int index = mode_team_index(v, team);
     if (index < 0)
         return true;
+    if (!flag_announce(m, v, flag, base->actor, actor, QA_MODE_FLAG_CAPTURED, e))
+        return false;
     bool alternate =
         source == QA_MODE_ROGUE && v->value.rules.teamplay == 6 && team == v->value.rules.teams[2];
     int personal = source == QA_MODE_LMCTF        ? 5
@@ -128,6 +177,10 @@ static bool capture(qa_modes *m, mode_instance *v, mode_object *flag, qa_actor_i
                 assist += source == QA_MODE_TEAM_ARENA ? 10 : 2;
         }
         if (assist) {
+            if (source == QA_MODE_Q2_CTF &&
+                ((returned && !flag_message(m, v, p->actor, 0, MODE_NAME_CTF_RETURN_ASSIST, e)) ||
+                 (frag && !flag_message(m, v, p->actor, 0, MODE_NAME_CTF_FRAG_ASSIST, e))))
+                return false;
             if (!points(m, v, p->actor, assist, e))
                 return false;
             mode_stat_add(v, source >= QA_MODE_Q3 ? &carrier->stats.assists : &p->stats.assists, 1);
@@ -188,13 +241,13 @@ bool mode_flag_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id 
         if (carried && ((one && o->spec.team && o->spec.team != team) ||
                         (alternate && o->spec.team && carried->spec.team != o->spec.team))) {
             *accepted = true;
-            return capture(m, v, carried, actor, team, e);
+            return capture(m, v, carried, o, actor, team, e);
         }
         return true;
     }
     if (carried && one && o->spec.team && o->spec.team != team) {
         *accepted = true;
-        return capture(m, v, carried, actor, team, e);
+        return capture(m, v, carried, o, actor, team, e);
     }
     if (o->spec.team == team && !alternate) {
         if (o->value.phase == QA_OBJECTIVE_DROPPED) {
@@ -218,11 +271,11 @@ bool mode_flag_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id 
                     }
                 }
             *accepted = true;
-            return mode_flag_reset(m, v, o, true, e);
+            return flag_reset(m, v, o, true, actor, e);
         }
         if (carried && o->value.phase == QA_OBJECTIVE_HOME && !one) {
             *accepted = true;
-            return capture(m, v, carried, actor, team, e);
+            return capture(m, v, carried, o, actor, team, e);
         }
         return true;
     }
@@ -250,7 +303,8 @@ bool mode_flag_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id 
     if (!mode_object_hide(m, o, source > QA_MODE_Q1_HORDE, e))
         return false;
     *accepted = true;
-    return mode_event(m, v, QA_MODE_FLAG_TAKEN, actor, (qa_actor_id){0}, o->actor, team, 0, 0, e) &&
+    return flag_announce(m, v, o, actor, actor, QA_MODE_FLAG_TAKEN, e) &&
+           mode_event(m, v, QA_MODE_FLAG_TAKEN, actor, (qa_actor_id){0}, o->actor, team, 0, 0, e) &&
            mode_object_notify(m, v, o, e);
 }
 static bool award_defense(qa_modes *m, mode_instance *v, mode_member *p, qa_actor_id victim,

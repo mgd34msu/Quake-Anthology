@@ -45,7 +45,7 @@ static bool throw_gibs(qa_q2_game *g, q2_actor *a, double damage, qa_error *e) {
     if (!q2_player_sound(g, a->id, QA_Q2_SFX_MISC_UDEATH, 4, e))
         return false;
     for (int i = 0; i < 4 && q2_actor_live(g, a->id); i++)
-        if (!q2_spawn_gib(g, a->id, Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SM_MEAT_TRIS_MD2, (float)damage, 0, 0, 1, e))
+        if (!q2_spawn_gib(g, a->id, Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SM_MEAT_TRIS_MD2, (float)damage, 0, 0, 1, NULL, e))
             return false;
     return true;
 }

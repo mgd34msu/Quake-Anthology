@@ -61,6 +61,10 @@ static bool character(q1_save_io *io, q1_character *value) {
     Q1_SAVE(io, double, value->hazard_at);
     Q1_SAVE(io, float, value->fall_speed);
     Q1_SAVE(io, float, value->drown_damage);
+    Q1_SAVE(io, vector, value->step_origin);
+    Q1_SAVE(io, float, value->step_distance);
+    Q1_SAVE(io, u64, value->head_fly_ns);
+    Q1_SAVE(io, u64, value->head_fly_epoch);
     return true;
 }
 bool q1_save_player(q1_save_io *io, q1_player *player) {

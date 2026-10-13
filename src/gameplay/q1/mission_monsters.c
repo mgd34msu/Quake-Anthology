@@ -151,20 +151,7 @@ bool q1_mission_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action 
         if (m->counter == 6)
             m->counter = 0;
         if (m->counter == 2 || m->counter == 5) {
-            float r = q1_random(g);
-            unsigned step = r < 0.14f   ? 1
-                            : r < 0.29f ? 2
-                            : r < 0.43f ? 3
-                            : r < 0.58f ? 4
-                            : r < 0.72f ? 5
-                            : r < 0.86f ? 6
-                                        : 7;
-            static const q1_runtime_name sounds[] = {
-                Q1_NAME_RESOURCE_MISC_FOOT1_WAV, Q1_NAME_RESOURCE_MISC_FOOT2_WAV,
-                Q1_NAME_RESOURCE_MISC_FOOT3_WAV, Q1_NAME_RESOURCE_MISC_FOOT4_WAV,
-                Q1_NAME_RESOURCE_MISC_FOOT5_WAV, Q1_NAME_RESOURCE_MISC_FOOT6_WAV,
-                Q1_NAME_RESOURCE_MISC_FOOT7_WAV};
-            if (!q1_sound_resource(g, entity->id, g->runtime_names[sounds[step - 1]], 2, 1, 0.5f, error))
+            if (!q1_sound_resource(g, entity->id, q1_hipnotic_step_sound(g), 2, 1, 0.5f, error))
                 return false;
         }
         entity->frame += (int32_t)m->counter++;

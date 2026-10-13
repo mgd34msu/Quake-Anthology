@@ -1354,9 +1354,8 @@ static bool pain_gladiator(q2m_context *context, qa_error *error) {
   } else if (rerelease) monster->skin &= ~1;
   const bool gladb = monster->definition->species == Q2M_GLADB;
   const bool airborne = context->body.velocity.z > 100.0f;
-  q2m_move_id ground_move = gladb ? Q2M_MOVE_gladb_move_pain : Q2M_MOVE_gladiator_move_pain;
-  q2m_move_id air_move =
-      gladb ? Q2M_MOVE_gladb_move_pain_air : Q2M_MOVE_gladiator_move_pain_air;
+  q2m_move_id ground_move = monster->definition->pain1_move;
+  q2m_move_id air_move = monster->definition->pain2_move;
   if (context->game->now_ns < monster->pain_ns) {
     if (airborne && monster->move != NULL &&
         monster->move->id == ground_move)
@@ -1876,11 +1875,9 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
   switch (species) {
   case Q2M_GLADIATOR:
   case Q2M_GLADB:
-    move = context->body.velocity.z > 100.0f ? species == Q2M_GLADB
-                                                   ? Q2M_MOVE_gladb_move_pain_air
-                                                   : Q2M_MOVE_gladiator_move_pain_air
-           : species == Q2M_GLADB            ? Q2M_MOVE_gladb_move_pain
-                                             : Q2M_MOVE_gladiator_move_pain;
+    move = context->body.velocity.z > 100.0f
+               ? monster->definition->pain2_move
+               : monster->definition->pain1_move;
     sound = random < 0.5f ? QA_Q2_SFX_GLADIATOR_PAIN : QA_Q2_SFX_GLADIATOR_GLDPAIN2;
     break;
   case Q2M_CARRIER:
@@ -2235,7 +2232,7 @@ static bool spawn_gib_recipe(q2m_context *context,
     const q2m_gib_piece *piece = &pieces[piece_index];
     for (uint8_t copy = 0; copy < piece->count; ++copy)
       if (!q2_spawn_gib(context->game, source, piece->model, (float)damage,
-                        piece->flags, skin, scale * piece->scale, error))
+                        piece->flags, skin, scale * piece->scale, NULL, error))
         return false;
   }
   return true;
@@ -2281,7 +2278,7 @@ static bool spawn_death_gibs(q2m_context *context, double damage,
                            : Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SM_MEAT_TRIS_MD2;
     return q2_spawn_gib(context->game, context->actor->id, head, (float)damage,
                         Q2_GIB_HEAD | Q2_GIB_SKINNED, monster->skin,
-                        monster->entity_scale, error);
+                        monster->entity_scale, NULL, error);
   }
   case Q2M_BERSERK:
     return SPAWN_RECIPE(rerelease_berserk_gibs, damage);
@@ -2332,7 +2329,7 @@ static bool spawn_death_gibs(q2m_context *context, double damage,
            q2_spawn_gib(context->game, context->actor->id,
                         Q2_NAME_RESOURCE_MODELS_MONSTERS_TANK_GIBS_BARM_MD2, (float)damage,
                         Q2_GIB_SKINNED | Q2_GIB_UPRIGHT, monster->skin,
-                        monster->entity_scale, error);
+                        monster->entity_scale, NULL, error);
   case Q2M_GUN_COMMANDER: {
     monster->skin /= 2;
     if (!SPAWN_RECIPE(rerelease_guncmdr_gibs, damage))
@@ -2343,7 +2340,7 @@ static bool spawn_death_gibs(q2m_context *context, double damage,
                            : Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SM_MEAT_TRIS_MD2;
     return q2_spawn_gib(context->game, context->actor->id, head, (float)damage,
                         Q2_GIB_HEAD | Q2_GIB_SKINNED, monster->skin,
-                        monster->entity_scale, error);
+                        monster->entity_scale, NULL, error);
   }
   case Q2M_SHAMBLER:
     return SPAWN_RECIPE(rerelease_shambler_gibs, damage);
@@ -2624,6 +2621,45 @@ static bool widow_death(q2m_context *context, bool sequel, qa_error *error) {
                       error);
 }
 
+static bool infantry_sever_head(q2m_context *context, qa_error *error) {
+  qa_q2_game *game = context->game;
+  qa_actor_id head;
+  float scale = context->monster->entity_scale != 0 ? context->monster->entity_scale : 1;
+  float damage = (float)qa_source_to_i32(context->monster->pending_damage);
+  qa_vec3 inflictor_origin = context->monster->has_inflictor_origin
+                                ? context->monster->inflictor_origin : qa_v3(0, 0, 0);
+  if (!q2_spawn_gib(game, context->actor->id,
+                     Q2_NAME_RESOURCE_MODELS_MONSTERS_INFANTRY_GIBS_HEAD_MD2,
+                     damage, 0, 0, scale, &head, error))
+    return false;
+  if (!q2m_alive(context) || head.registry == 0)
+    return true;
+  q2_actor *actor = q2_actor_get(game, head, false, error);
+  if (actor == NULL)
+    return false;
+  qa_body_state body;
+  if (!qa_world_body_read(game->services.world, head, &body, error))
+    return false;
+  body.angles = context->body.angles;
+  body.origin = qa_vec_add(context->body.origin, qa_v3(0, 0, 32));
+  qa_vec3 direction = qa_vec_sub(context->body.origin, inflictor_origin);
+  float length = qa_vec_length(direction);
+  if (length != 0)
+    direction = qa_v3(direction.x / length, direction.y / length, direction.z / length);
+  body.velocity = qa_vec_scale(direction, 100);
+  body.velocity.z = 200;
+  actor->physics.angular_velocity = qa_vec_scale(actor->physics.angular_velocity, .15f);
+  actor->physics.motion = QA_PHYSICS_TOSS;
+  actor->projectile.skin = 0;
+  if (!qa_world_body_write(game->services.world, head, &body, error) ||
+      !qa_world_link(game->services.world, head, NULL, error))
+    return false;
+  return !q2_actor_live(game, head) ||
+         q2_projectile_event(game, head, QA_BUILTIN_ANIMATION,
+             game->runtime_names[Q2_NAME_RESOURCE_MODELS_MONSTERS_INFANTRY_GIBS_HEAD_MD2],
+             0, body.origin, body.angles, error);
+}
+
 bool q2m_die(q2m_context *context, qa_error *error) {
   if (!q2m_alive(context))
     return true;
@@ -2775,6 +2811,7 @@ bool q2m_die(q2m_context *context, qa_error *error) {
   q2m_move_id move = monster->definition->death1_move;
   q2_runtime_name sound = death_sound(species);
   bool soldier_ground_death = false;
+  bool infantry_head = false;
   switch (species) {
   case Q2M_INFANTRY:
   case Q2M_TURRET_DRIVER: {
@@ -2786,6 +2823,8 @@ bool q2m_die(q2m_context *context, qa_error *error) {
                                        Q2M_MOVE_infantry_move_death3};
     move = moves[choice];
     sound = choice == 1 ? QA_Q2_SFX_INFANTRY_INFDETH1 : QA_Q2_SFX_INFANTRY_INFDETH2;
+    infantry_head = species == Q2M_INFANTRY && choice != 2 &&
+                    context->game->options.rules == QA_RULESET_Q2_RERELEASE;
     break;
   }
   case Q2M_SOLDIER_LIGHT:
@@ -2935,6 +2974,10 @@ bool q2m_die(q2m_context *context, qa_error *error) {
     return q2m_corpse(context, error);
   if (!q2m_set_move(context, move, true, error))
     return false;
+  if (!q2m_alive(context))
+    return true;
+  if (infantry_head && q2m_random(context->game) <= .25f)
+    return infantry_sever_head(context, error);
   if (soldier_ground_death) {
     context->monster->next_frame = context->monster->move->first_frame + 12;
     return q2m_callback_run(context, Q2M_CALLBACK_soldier_death_shrink, error);
@@ -3235,6 +3278,47 @@ bool q2m_touch(q2m_context *context, const qa_touch_contact *contact,
   struct qa_q2_monster *monster = context->monster;
   if (monster->definition->species == Q2M_KAMIKAZE)
     return q2m_kamikaze(context, error);
+  if (monster->definition->species == Q2M_FLYER &&
+      context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
+    qa_error ignored = {0};
+    q2_actor *other = q2_actor_get(context->game, contact->other, false, &ignored);
+    if (other == NULL || other->monster == NULL ||
+        !other->monster->alternate_fly ||
+        !(other->physics.flags & QA_PHYSICS_FLYING) ||
+        monster->duck_ns >= context->game->now_ns)
+      return true;
+    qa_body_state body;
+    if (!qa_world_body_read(context->game->services.world, contact->other,
+                            &body, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    monster->duck_ns = q2m_after(context->game->now_ns, 1);
+    monster->fly_thrusters = false;
+    qa_vec3 direction = qa_vec_normalize(qa_vec_sub(context->body.origin, body.origin));
+    context->body.velocity = qa_vec_scale(direction, 500);
+    if (!q2m_write_body(context, false, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    qa_vec3 impact = contact->has_source_trace ? contact->source_trace.end
+                                              : context->body.origin;
+    qa_builtin_event event = {
+        .kind = QA_BUILTIN_IMPACT,
+        .family = QA_GAME_Q2,
+        .provider = context->game->options.owner,
+        .actor = context->actor->id,
+        .other = contact->other,
+        .resource = context->game->runtime_names[Q2_NAME_RESOURCE_Q2_SPLASH],
+        .time_ns = context->game->now_ns,
+        .origin = impact,
+        .direction = direction,
+        .count = 32,
+        .code = 1,
+        .q2_multicast = {QA_BUILTIN_Q2_MULTICAST_PVS, impact},
+    };
+    return qa_builtin_emit(&context->game->services, &event, error);
+  }
   if (!monster->touch_active)
     return true;
 

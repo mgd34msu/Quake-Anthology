@@ -375,7 +375,7 @@ bool q2m_widow_death_gibs(q2m_context *context, float damage, qa_error *error) {
                  NULL, recipe[i].sized, recipe[i].sound, false, error)) return false;
   if (!q2m_alive(context)) return true;
   if (!q2_spawn_gib(context->game, id, Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_CHEST_TRIS_MD2, damage,
-                     0, 0, 1, error)) return false;
+                     0, 0, 1, NULL, error)) return false;
   return !q2m_alive(context) || q2_spawn_gib(context->game, id,
-      Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_HEAD2_TRIS_MD2, damage, Q2_GIB_HEAD, 0, 1, error);
+      Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_HEAD2_TRIS_MD2, damage, Q2_GIB_HEAD, 0, 1, NULL, error);
 }

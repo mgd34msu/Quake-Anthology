@@ -12,6 +12,7 @@
 #include "qa/targets.h"
 #include "qa/vfs.h"
 #include "qa/network_q2.h"
+#include "qa/network_q2_kex_game.h"
 
 typedef struct qa_native_host qa_native_host;
 
@@ -34,6 +35,13 @@ typedef struct qa_native_host_print {
     int32_t level;
     const char *text;
 } qa_native_host_print;
+
+typedef struct qa_native_host_localized_print {
+    int32_t level;
+    const char *base;
+    const char *const *arguments;
+    size_t argument_count;
+} qa_native_host_localized_print;
 
 typedef struct qa_native_host_sound {
     qa_actor_id actor;
@@ -98,6 +106,7 @@ typedef struct qa_native_host_engine_services {
     void *context;
     qa_strings *strings;
     void (*print)(void *, const qa_native_host_print *);
+    bool (*localized_print)(void *, qa_actor_id, const qa_native_host_localized_print *, qa_error *);
     bool (*configstring_get)(void *, int32_t, qa_string_id *, qa_error *);
     bool (*configstring_set)(void *, int32_t, const char *, qa_error *);
     bool (*resource_index)(void *, qa_native_host_resource_kind, const char *, int32_t *,
