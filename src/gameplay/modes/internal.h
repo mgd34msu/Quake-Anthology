@@ -243,6 +243,12 @@ typedef struct mode_objective {
     X(LMCTF_DEFEND_AGGRESSIVE_CARRIER, "{0} defends the {1} flag carrier from an aggressive enemy.\n") \
     X(LMCTF_DEFEND_CARRIER, "{0} defends the {1} flag carrier.\n") \
     X(LMCTF_KILL_CARRIER, "{0} killed the enemy flag carrier.\n") \
+    X(LMCTF_MATCH_COUNTDOWN, "{0} seconds until match begins.\n") \
+    X(LMCTF_MATCH_MINUTES, "{0} minutes until match ends.\n") \
+    X(LMCTF_MATCH_MINUTE, "{0} minute until match ends.\n") \
+    X(LMCTF_MATCH_RED_WINS, "Red: {0} beats blue: {1}!\n") \
+    X(LMCTF_MATCH_BLUE_WINS, "Blue: {0} beats red: {1}!\n") \
+    X(LMCTF_MATCH_TIED, "Tie game at {0}!\n") \
     X(SOUND_CTF_R_RETURNED_WAV, "ctf/r_returned.wav") \
     X(SOUND_CTF_B_RETURNED_WAV, "ctf/b_returned.wav") \
     X(SOUND_CTF_R_STOLEN_WAV, "ctf/r_stolen.wav") \

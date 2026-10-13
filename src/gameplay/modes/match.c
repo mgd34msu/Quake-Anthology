@@ -1,5 +1,36 @@
 #include "internal.h"
 
+static bool lmctf_clock_message(qa_modes *m, mode_instance *v, mode_name text, int32_t value,
+                                 qa_error *e) {
+    qa_builtin_message_arg argument = {.kind = QA_BUILTIN_MESSAGE_NUMBER,
+                                       .value.number = value};
+    return mode_message(m, v, (qa_actor_id){0}, m->runtime_names[text], &argument, 1, e);
+}
+static bool lmctf_result_message(qa_modes *m, mode_instance *v, qa_error *e) {
+    int64_t scores[2] = {0};
+    for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
+        qa_actor_id actor = m->players_order.actors[ordinal];
+        mode_member *p = mode_member_get(m, v, actor);
+        mode_player *player = p ? mode_player_get(m, actor) : NULL;
+        qa_team_id team;
+        if (!player || !player->connected || player->connecting ||
+            !qa_modes_team(m, v->id, actor, &team, NULL))
+            continue;
+        p = mode_member_get(m, v, actor);
+        int index = mode_team_index(v, team);
+        if (p && index >= 0 && index < 2)
+            scores[index] += p->stats.score;
+    }
+    bool blue = scores[1] > scores[0];
+    bool tied = scores[0] == scores[1];
+    qa_builtin_message_arg arguments[2] = {
+        {.kind = QA_BUILTIN_MESSAGE_NUMBER, .value.number = (double)scores[blue ? 1 : 0]},
+        {.kind = QA_BUILTIN_MESSAGE_NUMBER, .value.number = (double)scores[blue ? 0 : 1]}};
+    return mode_message(m, v, (qa_actor_id){0}, m->runtime_names[tied ? MODE_NAME_LMCTF_MATCH_TIED :
+        blue ? MODE_NAME_LMCTF_MATCH_BLUE_WINS : MODE_NAME_LMCTF_MATCH_RED_WINS],
+        arguments, tied ? 1 : 2, e);
+}
+
 static int rank_compare(const void *left, const void *right) {
     const mode_rank_entry *a = left, *b = right;
     if (a->group != b->group)
@@ -331,7 +362,8 @@ bool qa_modes_end(qa_modes *m, qa_mode_id id, qa_string_id reason, qa_error *e) 
             ? 5 * MODE_SECOND
             : MODE_SECOND;
     if (v->value.rules.source == QA_MODE_LMCTF)
-        return mode_set_phase(m, v, QA_MODE_FINISHED, v->value.time_ns + 300 * MODE_SECOND, e);
+        return lmctf_result_message(m, v, e) &&
+               mode_set_phase(m, v, QA_MODE_FINISHED, v->value.time_ns + 300 * MODE_SECOND, e);
     if (v->value.rules.source < QA_MODE_Q3) {
         if (!mode_set_phase(m, v, QA_MODE_FINISHED, 0, e))
             return false;
@@ -444,7 +476,8 @@ static bool lmctf_frame(qa_modes *m, mode_instance *v, qa_error *e) {
     if (v->value.phase == QA_MODE_COUNTDOWN) {
         if (v->remaining_seconds == 60 || v->remaining_seconds == 30 ||
             v->remaining_seconds == 15 || v->remaining_seconds == 10)
-            if (!mode_event(m, v, QA_MODE_PHASE, (qa_actor_id){0}, (qa_actor_id){0},
+            if (!lmctf_clock_message(m, v, MODE_NAME_LMCTF_MATCH_COUNTDOWN, v->remaining_seconds, e) ||
+                !mode_event(m, v, QA_MODE_PHASE, (qa_actor_id){0}, (qa_actor_id){0},
                             (qa_actor_id){0}, 0, QA_MODE_COUNTDOWN, v->remaining_seconds, e))
                 return false;
         if (v->remaining_seconds <= 0) {
@@ -475,7 +508,9 @@ static bool lmctf_frame(qa_modes *m, mode_instance *v, qa_error *e) {
             }
             v->remaining_seconds = (int32_t)v->value.rules.time_limit_minutes * 60;
             v->value.started_ns = v->value.time_ns;
-            if (!mode_set_phase(m, v, QA_MODE_PLAYING, 0, e))
+            if (!mode_set_phase(m, v, QA_MODE_PLAYING, 0, e) ||
+                !lmctf_clock_message(m, v, MODE_NAME_LMCTF_MATCH_MINUTES,
+                                    v->remaining_seconds / 60, e))
                 return false;
         }
     } else if (v->value.phase == QA_MODE_PLAYING) {
@@ -489,10 +524,16 @@ static bool lmctf_frame(qa_modes *m, mode_instance *v, qa_error *e) {
             }
         }
         if (v->remaining_seconds <= 0) {
+            if (!lmctf_result_message(m, v, e))
+                return false;
             v->remaining_seconds = 300;
             v->value.rules.match_lock = false;
             return mode_set_phase(m, v, QA_MODE_FINISHED, 0, e);
         }
+        if (!(v->remaining_seconds % 60) &&
+            !lmctf_clock_message(m, v, v->remaining_seconds == 60 ? MODE_NAME_LMCTF_MATCH_MINUTE :
+                MODE_NAME_LMCTF_MATCH_MINUTES, v->remaining_seconds / 60, e))
+            return false;
     } else if (v->value.phase == QA_MODE_FINISHED && v->remaining_seconds <= 0)
         return mode_set_phase(m, v, QA_MODE_WAITING, 0, e);
     --v->remaining_seconds;
