@@ -245,7 +245,7 @@ bool qa_q3_source_binding_read(const qa_q3_game *game, uint32_t slot,
     return true;
 }
 bool qa_q3_source_classified_actor_read(const qa_q3_game *game, uint32_t name_flag,
-    qa_actor_id *out, qa_error *error) {
+    bool skip_dropped, qa_actor_id *out, qa_error *error) {
     if (!game || !out) return q3_fail(error, "Q3 classified source read needs its owner and output");
     *out = (qa_actor_id){0};
     uint32_t after = 0;
@@ -263,8 +263,8 @@ bool qa_q3_source_classified_actor_read(const qa_q3_game *game, uint32_t name_fl
             qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "native TEAM base lost its source classname");
             return false;
         }
-        bool dropped;
-        if (!qa_q3_source_dropped_read(game, first, &dropped, error)) return false;
+        bool dropped = false;
+        if (skip_dropped && !qa_q3_source_dropped_read(game, first, &dropped, error)) return false;
         if (!dropped) {
             *out = q3_source_actor(game, first);
             return true;

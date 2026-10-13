@@ -1,6 +1,62 @@
 #include "internal.h"
 #include "qa/game_type.h"
 
+static bool almost_goal(qa_q3_game *game, qa_actor_id victim, qa_actor_id attacker,
+    qa_vec3 origin, uint32_t classname, bool require_visible, qa_error *error) {
+    qa_actor_id goal;
+    if (!qa_q3_source_classified_actor_read(game, classname, require_visible, &goal, error))
+        return false;
+    if (!goal.registry)
+        return true;
+    uint32_t slot;
+    qa_q3_entity entity;
+    qa_q3_wire_visibility visibility;
+    if (!qa_q3_source_actor_slot(game, goal, &slot, error) ||
+        !qa_q3_wire_entity_read(game, slot, &entity, &visibility, error))
+        return false;
+    if (require_visible && (visibility.server_flags & 1u))
+        return true;
+    qa_vec3 destination = qa_v3(entity.origin[0], entity.origin[1], entity.origin[2]);
+    if (!(qa_vec_length_rule(qa_vec_sub(origin, destination), QA_LENGTH_DOUBLE_SQRT) < 200))
+        return true;
+    q3_actor *entry = q3_actor_get(game, victim);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
+    entry->state.player.player_events ^= 4;
+    entry = q3_actor_get(game, attacker);
+    if (entry && entry->kind == Q3_ACTOR_PLAYER)
+        entry->state.player.player_events ^= 4;
+    return true;
+}
+bool q3_player_almost_reward(qa_q3_game *game, qa_actor_id victim,
+    qa_actor_id attacker, qa_error *error) {
+    q3_actor *entry = q3_actor_get(game, victim);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
+    bool flag = entry->state.player.powerups[QA_Q3_P_REDFLAG] ||
+        entry->state.player.powerups[QA_Q3_P_BLUEFLAG] ||
+        entry->state.player.powerups[QA_Q3_P_NEUTRALFLAG];
+    bool cubes = entry->state.player.generic1 != 0;
+    if (!flag && !cubes)
+        return true;
+    int32_t team = entry->state.player.persistent_team;
+    uint32_t slot;
+    if (qa_q3_native_client_slot(game, victim, &slot, NULL))
+        team = game->clients[slot].rule.session.team;
+    qa_body_state body;
+    if (!qa_world_body_read(game->options.services.world, victim, &body, error))
+        return false;
+    bool blue = team == 2;
+    if (flag) {
+        bool blue_goal = game->options.rules.game_type == QA_GAME_TYPE_CTF ? blue : !blue;
+        uint32_t classname = blue_goal ? QA_NAME_Q3_BLUE_FLAG_BASE : QA_NAME_Q3_RED_FLAG_BASE;
+        if (!almost_goal(game, victim, attacker, body.origin, classname, true, error))
+            return false;
+    }
+    return !cubes || almost_goal(game, victim, attacker, body.origin,
+        blue ? QA_NAME_Q3_RED_OBELISK : QA_NAME_Q3_BLUE_OBELISK, false, error);
+}
+
 bool q3_cancel_kamikaze_timers(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     for (uint32_t i = 0; i < game->capacity; ++i) {
         q3_actor *timer = &game->actors[i];

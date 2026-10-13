@@ -315,6 +315,7 @@ bool q3_start_kamikaze(qa_q3_game *, qa_actor_id source, qa_actor_id attacker, b
                        qa_error *);
 bool q3_cancel_kamikaze_timers(qa_q3_game *, qa_actor_id, qa_error *);
 bool q3_schedule_kamikaze(qa_q3_game *, qa_actor_id, qa_vec3 origin, qa_error *);
+bool q3_player_almost_reward(qa_q3_game *, qa_actor_id victim, qa_actor_id attacker, qa_error *);
 bool q3_death_rewards(qa_q3_game *, qa_actor_id, const qa_damage_request *, qa_error *);
 bool q3_mover_set_state(qa_q3_game *, qa_actor_id, int32_t, int32_t, qa_error *);
 bool q3_mover_match_team(qa_q3_game *, qa_actor_id, int32_t, int32_t, qa_error *);

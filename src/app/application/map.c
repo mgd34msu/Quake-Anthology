@@ -20,6 +20,7 @@
 #include "native_q3_ipfilters.h"
 #include "native_q3_settings.h"
 #include "native_q3_session.h"
+#include "native_q3_objectives.h"
 #include "native_maps.h"
 #include "control_frame.h"
 #include "qa/stamp.h"
@@ -2861,6 +2862,9 @@ static bool q3_event(void *opaque, const qa_q3_map_event *event,
         if (!name || !value || !application_native_q3_settings_source_set(provider, name, value, error))
             return false;
     }
+    if (event->kind == QA_Q3_MAP_RETURN_FLAG &&
+        !application_native_q3_return_flag(provider, event->team, error))
+        return false;
     return (event->kind != QA_Q3_MAP_AREA_PORTAL ||
             q3_area_portal(provider,event->actor,event->value != 0,error)) &&
            application_emit_q3_map(provider,event,error);

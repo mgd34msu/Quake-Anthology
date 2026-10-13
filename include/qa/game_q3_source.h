@@ -8,10 +8,10 @@ bool qa_q3_source_physics_object_read(const qa_q3_game *, uint32_t, bool *, qa_e
 /* Borrowed until the next mutation. Constructor-null rows have a null classname;
  * victory models borrow the current original fixed client's netname. */
 bool qa_q3_source_classname_read(const qa_q3_game *, uint32_t, const char **, qa_error *);
-/* Lowest physical source row with the admitted name classification, excluding
- * dropped items. Classname and actor lifetime remain on the source binding. */
+/* Lowest physical source row with the admitted name classification. Classname
+ * and actor lifetime remain on the source binding. */
 bool qa_q3_source_classified_actor_read(const qa_q3_game *, uint32_t name_flag,
-    qa_actor_id *, qa_error *);
+    bool skip_dropped, qa_actor_id *, qa_error *);
 bool qa_q3_source_memory_allocate(qa_q3_game *, uint32_t size, uint32_t *offset, qa_error *);
 bool qa_q3_source_memory_rewind(qa_q3_game *, qa_error *);
 bool qa_q3_source_memory_read(const qa_q3_game *, uint32_t offset, void *, uint32_t size, qa_error *);

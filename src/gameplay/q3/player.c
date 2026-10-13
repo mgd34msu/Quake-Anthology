@@ -1193,6 +1193,8 @@ bool q3_source_initial_death(qa_q3_game *game, const qa_damage_outcome *outcome,
     if (!qa_q3_wire_player_policy_read(game, entry->actor, &policy, error)) return false;
     if (policy.pm_type == 3) return true;
     qa_actor_id actor = entry->actor;
+    if (!q3_player_almost_reward(game, actor, outcome->request.attack.attacker, error))
+        return false;
     qa_actor_id hook = entry->state.player.hook;
     if (q3_actor_get(game, hook) && !qa_session_release(game->options.services.session, hook, error))
         return false;
@@ -1338,6 +1340,9 @@ bool qa_q3_damage_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, q
         return combat.health > -40 ||
                qa_combat_set_health(game->options.services.combat, actor, -39, error);
     }
+    if (!native_client &&
+        !q3_player_almost_reward(game, actor, outcome->request.attack.attacker, error))
+        return false;
     player->dead = true;
     player->flags |= 1u;
     player->respawn_after = q3_add_time(game->now_ms, 1700);

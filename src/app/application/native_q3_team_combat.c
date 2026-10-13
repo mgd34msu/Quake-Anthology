@@ -353,7 +353,7 @@ static bool frag_bonuses(const team_combat_scope *scope, qa_actor_id target,
         }
     }
     qa_actor_id base;
-    if (!qa_q3_source_classified_actor_read(scope->game, base_class, &base, error)) return false;
+    if (!qa_q3_source_classified_actor_read(scope->game, base_class, true, &base, error)) return false;
     if (!base.registry) return true;
     qa_vec3 base_origin, attacker_origin;
     if (!qa_q3_source_current_origin_read(scope->game, base, &base_origin, error) ||
