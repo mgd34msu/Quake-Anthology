@@ -106,6 +106,11 @@ bool qa_modes_q2_hud_stats(qa_modes *m, qa_mode_id id, qa_actor_id actor,
                           int16_t stats[64], qa_error *error) {
     mode_instance *v = mode_get(m, id);
     mode_member *member = mode_member_get(m, v, actor);
+    if (v && v->value.rules.enabled && v->value.rules.source == QA_MODE_LMCTF && member) {
+        qa_q2_wire_stat_word(v->value.team_scores[0], &stats[19]);
+        qa_q2_wire_stat_word(v->value.team_scores[1], &stats[20]);
+        return true;
+    }
     if (!ctf_hud(v) || !member)
         return true;
     qa_team_id team;

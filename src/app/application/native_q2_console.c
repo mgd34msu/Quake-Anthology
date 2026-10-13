@@ -131,7 +131,7 @@ struct application_native_q2_console {
         qa_cvar_handle infinite_ammo, instant_switch, quick_switch, no_stack_double;
     } weapon_cvars;
     qa_cvar_handle combat_cvars[APPLICATION_Q2_COMBAT_SETTING_COUNT];
-    qa_cvar_handle cheats, password, spectator_password, deathmatch;
+    qa_cvar_handle cheats, password, spectator_password, deathmatch, max_spectators;
     qa_cvar_handle referee_password, rcon_password, skin_set, flag_init;
     qa_cvar_handle ctf_cvars[Q2_CTF_CVAR_COUNT];
     application_q2_source_scripts scripts;
@@ -144,6 +144,7 @@ static void source_cvars_bind(struct application_native_q2_console *owner) {
     owner->cheats = qa_cvars_resolve(owner->cvars, "cheats");
     owner->password = qa_cvars_resolve(owner->cvars, "password");
     owner->spectator_password = qa_cvars_resolve(owner->cvars, "spectator_password");
+    owner->max_spectators = qa_cvars_resolve(owner->cvars, "maxspectators");
     owner->deathmatch = qa_cvars_resolve(owner->cvars, "deathmatch");
     owner->referee_password = qa_cvars_resolve(owner->cvars, "refpassword");
     owner->rcon_password = qa_cvars_resolve(owner->cvars, "rcon_password");
@@ -190,6 +191,7 @@ bool application_native_mode_source_settings(void *opaque, qa_mode_id mode,
     const qa_cvar_view *start = qa_cvars_read(owner->cvars, owner->ctf_cvars[Q2_CTF_STARTTIME]);
     const qa_cvar_view *instant = qa_cvars_read(owner->cvars, owner->ctf_cvars[Q2_CTF_INSTANTWEAP]);
     const qa_cvar_view *lock = qa_cvars_read(owner->cvars, owner->ctf_cvars[Q2_CTF_MATCHLOCK]);
+    const qa_cvar_view *spectators = qa_cvars_read(owner->cvars, owner->max_spectators);
     uint32_t flags = qa_q2_source_deathmatch_flags(owner->cvars);
     uint32_t capacity, clients;
     if (!qa_q2_wire_policy(provider->state.q2, &capacity, &clients, NULL))
@@ -211,6 +213,7 @@ bool application_native_mode_source_settings(void *opaque, qa_mode_id mode,
                                     .flag_initialized = flag && flag->number != 0,
                                     .deathmatch_flags = flags,
                                     .max_clients = clients,
+                                    .max_spectators = spectators ? spectators->number : 4,
                                     .instant_weapons_integer = instant && instant->integer != 0,
                                     .match_lock_integer = lock && lock->integer != 0,
                                     .ctf = {.match_minutes = match ? qa_source_to_i32(match->number) : 20,

@@ -331,6 +331,8 @@ bool qa_modes_spawnpoint(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool far
     if (mode_player_get(m, actor) && !qa_modes_team(m, v->id, actor, &team, e))
         return false;
     mode_member *member = mode_member_get(m, v, actor);
+    if (member)
+        member->menu.killer = (qa_actor_id){0};
     bool initial = !member || !member->spawn_state;
     qa_mode_source source = v->value.rules.source;
     size_t selected = SIZE_MAX;

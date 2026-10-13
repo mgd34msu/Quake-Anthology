@@ -522,11 +522,13 @@ static bool console_command(qa_modes *m, qa_mode_id id, qa_actor_id actor,
     const char *arg = command->argc > 1 ? command->argv[1] : "";
     if (!arg)
         return mode_fail(e, "missing mode command argument");
-    if (v->value.rules.source == QA_MODE_Q2_CTF) {
+    if (v->value.rules.source == QA_MODE_Q2_CTF || v->value.rules.source == QA_MODE_LMCTF) {
         if (!mode_ui_command(m, v, actor, command, handled, e))
             return false;
         if (*handled || !mode_member_get(m, v, actor))
             return true;
+    }
+    if (v->value.rules.source == QA_MODE_Q2_CTF) {
         if (!ctf_command(m, v, actor, command, handled, e))
             return false;
         if (*handled)

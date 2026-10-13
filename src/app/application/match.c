@@ -71,7 +71,7 @@ static bool mode_event(void *opaque, const qa_mode_event *event,
 }
 
 static bool mode_layout(void *opaque, qa_mode_id mode, qa_actor_id actor,
-                        const char *text, bool visible, qa_error *error)
+                        const char *text, bool visible, bool reliable, qa_error *error)
 {
     application_provider *source = application_mode_provider(opaque, mode);
     if (!source || source->close_pending) return true;
@@ -85,7 +85,7 @@ static bool mode_layout(void *opaque, qa_mode_id mode, qa_actor_id actor,
     }
     return application_emit_q2_player(source, &(qa_q2_player_event){
         .kind = QA_Q2_PLAYER_LAYOUT, .actor = actor, .text = text,
-        .visible = visible, .reliable = true}, error);
+        .visible = visible, .reliable = reliable}, error);
 }
 
 bool application_mode_layout_read(qa_application *app, qa_actor_id actor,

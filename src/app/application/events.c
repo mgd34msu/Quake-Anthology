@@ -1010,7 +1010,6 @@ bool application_emit_q2_player(application_provider *provider,
         event->inventory_count > SIZE_MAX / sizeof(qa_inventory_entry))
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q2 player event");
     if (event->kind == QA_Q2_PLAYER_SCOREBOARD && application->primary_mode_ready &&
-        qa_modes_q2_hud_resources(application->modes, application->primary_mode, NULL, NULL) &&
         qa_modes_layout_read(application->modes, application->primary_mode, event->actor,
                               NULL, NULL, NULL, NULL))
         return qa_modes_scoreboard(application->modes, application->primary_mode,

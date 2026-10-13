@@ -282,13 +282,13 @@ bool mode_ui_request_team(qa_modes *m, mode_instance *v, qa_actor_id actor,
                           qa_team_id team, bool *accepted, qa_error *e) {
     return request_team(m, v->id, actor, team, false, false, false, accepted, e);
 }
-static bool followable(qa_modes *m, mode_instance *v, qa_actor_id viewer, qa_actor_id actor) {
+static bool followable(qa_modes *m, mode_instance *v, qa_actor_id viewer, qa_actor_id actor,
+                       qa_team_id filter) {
     mode_player *p = mode_player_get(m, actor);
     mode_member *target = mode_member_get(m, v, actor);
-    mode_member *watcher = mode_member_get(m, v, viewer);
-    if (watcher && watcher->player.observer_team) {
+    if (filter) {
         qa_team_id team;
-        if (!qa_modes_team(m, v->id, actor, &team, NULL) || team != watcher->player.observer_team)
+        if (!qa_modes_team(m, v->id, actor, &team, NULL) || team != filter)
             return false;
     }
     return p && target && p->connected && !p->connecting &&
@@ -315,15 +315,15 @@ static bool follow(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_actor_id ta
                            : cycle > 0       ? (start + step) % n
                                              : (start + n - step) % n;
             qa_actor_id candidate = m->players_order.actors[index];
-            if (followable(m, v, actor, candidate)) {
+            if (followable(m, v, actor, candidate, member->player.observer_team)) {
                 target = candidate;
                 automatic = 0;
                 break;
             }
         }
-        if (!followable(m, v, actor, target))
+        if (!followable(m, v, actor, target, member->player.observer_team))
             return true;
-    } else if (target.registry && !followable(m, v, actor, target))
+    } else if (target.registry && !followable(m, v, actor, target, member->player.observer_team))
         return true;
     if (!member->player.spectator) {
         if (v->value.rules.kind == QA_MODE_DUEL) {
@@ -370,13 +370,13 @@ bool qa_modes_follow_target(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_ac
     if (!member->player.spectator)
         return true;
     if (!member->player.automatic_follow) {
-        if (followable(m, v, actor, member->player.follow_target))
+        if (followable(m, v, actor, member->player.follow_target, member->player.observer_team))
             *out = member->player.follow_target;
         return true;
     }
     unsigned count = 0;
     for (size_t i = 0; i < m->players_order.count; ++i)
-        if (followable(m, v, actor, m->players_order.actors[i]) &&
+        if (followable(m, v, actor, m->players_order.actors[i], member->player.observer_team) &&
             ++count == (unsigned)member->player.automatic_follow) {
             *out = m->players_order.actors[i];
             break;
@@ -388,6 +388,34 @@ bool qa_modes_observe(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_id 
     mode_instance *v = mode_get(m, id);
     if (!v || !accepted || (filter && mode_team_index(v, filter) < 0))
         return mode_fail(e, "invalid observer team");
+    if (v->value.rules.source == QA_MODE_LMCTF) {
+        *accepted = false;
+        qa_mode_source_settings settings;
+        bool have_settings = m->options.hooks.source_settings &&
+            m->options.hooks.source_settings(m->options.hooks.context, id, &settings);
+        size_t spectators = 0;
+        bool target = !filter;
+        for (size_t i = 0; i < m->players_order.count; ++i) {
+            qa_actor_id candidate = m->players_order.actors[i];
+            mode_player *player = mode_player_get(m, candidate);
+            mode_member *member = mode_member_get(m, v, candidate);
+            if (!player || !member || !player->connected)
+                continue;
+            if (member->player.spectator)
+                ++spectators;
+            if (!target && followable(m, v, actor, candidate, filter))
+                target = true;
+        }
+        if (have_settings && (double)spectators >= settings.max_spectators)
+            return mode_message(m, v, actor,
+                m->runtime_names[MODE_NAME_LMCTF_SPECTATORS_FULL], NULL, 0, e);
+        if (!target) {
+            qa_builtin_event event = {.kind = QA_BUILTIN_CENTERPRINT, .actor = actor,
+                .text = m->runtime_names[filter == v->value.rules.teams[0]
+                    ? MODE_NAME_LMCTF_NO_RED_CHASE : MODE_NAME_LMCTF_NO_BLUE_CHASE]};
+            return mode_builtin_emit(m, v, &event, e);
+        }
+    }
     if (!qa_modes_request_team(m, id, actor, 0, true, false, accepted, e))
         return false;
     if (!*accepted)

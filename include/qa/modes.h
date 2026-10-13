@@ -41,6 +41,7 @@ typedef struct qa_mode_menu_state {
     uint64_t revision, refresh_frame;
     char layout[QA_MODE_MENU_LAYOUT_BYTES];
     qa_mode_ctf_settings settings;
+    qa_actor_id killer;
 } qa_mode_menu_state;
 typedef enum qa_mode_source {
     QA_MODE_Q1,
@@ -339,6 +340,7 @@ typedef struct qa_mode_source_settings {
     qa_mode_ctf_settings ctf;
     uint32_t deathmatch_flags;
     uint32_t max_clients;
+    double max_spectators;
     bool instant_weapons_integer, match_lock_integer;
 } qa_mode_source_settings;
 typedef struct qa_modes_hooks {
@@ -348,7 +350,8 @@ typedef struct qa_modes_hooks {
     bool (*source_cvar_set)(void *, qa_mode_id, qa_string_id, const char *, qa_error *);
     bool (*chat_allowed)(void *, qa_mode_id, qa_actor_id, bool *, qa_error *);
     bool (*chat_item)(void *, qa_mode_id, qa_actor_id, qa_item_id, qa_string_id *, const char **);
-    bool (*layout)(void *, qa_mode_id, qa_actor_id, const char *, bool visible, qa_error *);
+    bool (*layout)(void *, qa_mode_id, qa_actor_id, const char *, bool visible,
+                   bool reliable, qa_error *);
     bool (*source_frame)(void *, qa_mode_id, uint64_t *);
     /* Legacy mode records retain only the Q2 edition bit. Import borrows the
      * enclosing source's full ruleset without adding a saved selector. */

@@ -77,6 +77,7 @@ bool qa_modes_player_death_component(qa_modes *m, qa_mode_id id, const qa_damage
     mode_member *dead = mode_member_get(m, v, victim), *killer = mode_member_get(m, v, attacker);
     if (!dead)
         return true;
+    dead->menu.killer = attacker;
     mode_stat_add(v, &dead->stats.deaths, 1);
     bool self = qa_actor_id_equal(victim, attacker),
          friendly = killer && !self && qa_modes_same_team(m, v->id, victim, attacker);

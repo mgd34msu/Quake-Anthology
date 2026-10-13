@@ -133,7 +133,7 @@ static bool lmctf_result_message(qa_modes *m, mode_instance *v, qa_error *e) {
         blue ? MODE_NAME_LMCTF_MATCH_BLUE_WINS : MODE_NAME_LMCTF_MATCH_RED_WINS],
         arguments, tied ? 1 : 2, e);
 }
-static bool ctf_scores_freeze(qa_modes *m, mode_instance *v, qa_error *e) {
+static bool team_scores_update(qa_modes *m, mode_instance *v, qa_error *e) {
     int64_t scores[2] = {0};
     if (!match_team_scores(m, v, scores, e))
         return false;
@@ -144,7 +144,7 @@ static bool ctf_scores_freeze(qa_modes *m, mode_instance *v, qa_error *e) {
 static bool ctf_result_message(qa_modes *m, mode_instance *v, qa_error *e) {
     if (!mode_message_level(m, v, (qa_actor_id){0},
             m->runtime_names[MODE_NAME_CTF_MATCH_COMPLETED], NULL, 0, 3, e) ||
-        !ctf_scores_freeze(m, v, e))
+        !team_scores_update(m, v, e))
         return false;
     int32_t scores[2] = {v->value.team_scores[0], v->value.team_scores[1]};
     qa_string_id teams[2] = {m->runtime_names[MODE_NAME_CTF_RED],
@@ -624,7 +624,7 @@ bool qa_modes_end(qa_modes *m, qa_mode_id id, qa_string_id reason, qa_error *e) 
         bool ctf_match = v->value.rules.source == QA_MODE_Q2_CTF &&
                          v->value.phase == QA_MODE_PLAYING && v->value.deadline_ns;
         if (v->value.rules.source == QA_MODE_Q2_CTF && !ctf_match &&
-            !ctf_scores_freeze(m, v, e))
+            !team_scores_update(m, v, e))
             return false;
         if (!mode_set_phase(m, v, QA_MODE_FINISHED, 0, e))
             return false;
@@ -914,7 +914,7 @@ bool mode_match_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
     uint64_t now = v->value.time_ns;
     qa_mode_rules *r = &v->value.rules;
     if (r->source == QA_MODE_LMCTF)
-        return lmctf_frame(m, v, e);
+        return lmctf_frame(m, v, e) && team_scores_update(m, v, e);
     if (r->paused) {
         if (v->value.deadline_ns)
             v->value.deadline_ns += elapsed;

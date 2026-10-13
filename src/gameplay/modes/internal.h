@@ -384,6 +384,22 @@ typedef struct mode_objective {
     X(SOUND_CTF_FLAGRET_WAV, "ctf/flagret.wav") \
     X(SOUND_CTF_FLAGCAP_WAV, "ctf/flagcap.wav") \
     X(LMCTF_RED, "red") \
+    X(LMCTF_SPECTATORS_FULL, "Server spectator limit is full.") \
+    X(LMCTF_NO_RED_CHASE, "No red players to chase.") \
+    X(LMCTF_NO_BLUE_CHASE, "No blue players to chase.") \
+    X(LMCTF_SCORE_HEADER, "xv 0 yv 32 string2 \"Scr Png Name        \" " \
+      "xv 0 yv 40 string2 \"------------------- \" " \
+      "xv 160 yv 32 string2 \"Scr Png Name        \" " \
+      "xv 160 yv 40 string2 \"------------------- \" ") \
+    X(LMCTF_SCORE_RED_OBSERVERS, "Red Observers:") \
+    X(LMCTF_SCORE_BLUE_OBSERVERS, "Blue Observers:") \
+    X(LMCTF_SCORE_OBSERVERS, "Observers:") \
+    X(PIC_TAG1, "tag1") \
+    X(PIC_TAG2, "tag2") \
+    X(PIC_REDLION_I, "redlion_i") \
+    X(PIC_BLUEWOLF_I, "bluewolf_i") \
+    X(PIC_REDTAG, "redtag") \
+    X(PIC_BLUETAG, "bluetag") \
     X(LMCTF_BLUE, "blue") \
     X(LMCTF_UNKNOWN, "unknown") \
     X(LMCTF_FLAG_TAKEN, "{0} stole the {1} flag.\n") \
