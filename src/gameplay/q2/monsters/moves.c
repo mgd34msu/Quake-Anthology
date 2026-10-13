@@ -12369,6 +12369,57 @@ static const uint16_t move_index_43[Q2M_MOVE_COUNT] = {
     [Q2M_MOVE_gekk_move_lduck]=24u,
     [Q2M_MOVE_gekk_move_rduck]=25u,
 };
+
+#define GEKK_SWIM_FRAME(AI, DISTANCE) \
+    {.ai=Q2M_AI_##AI,.distance=DISTANCE,.lerp_frame=-1}
+#define GEKK_SWIM_FRAMES(AI) \
+    GEKK_SWIM_FRAME(AI, 14), GEKK_SWIM_FRAME(AI, 14), \
+    GEKK_SWIM_FRAME(AI, 14), GEKK_SWIM_FRAME(AI, 14), \
+    GEKK_SWIM_FRAME(AI, 16), GEKK_SWIM_FRAME(AI, 16), \
+    GEKK_SWIM_FRAME(AI, 16), GEKK_SWIM_FRAME(AI, 18), \
+    GEKK_SWIM_FRAME(AI, 18), GEKK_SWIM_FRAME(AI, 18), \
+    GEKK_SWIM_FRAME(AI, 20), GEKK_SWIM_FRAME(AI, 20), \
+    GEKK_SWIM_FRAME(AI, 22), GEKK_SWIM_FRAME(AI, 22), \
+    GEKK_SWIM_FRAME(AI, 24), GEKK_SWIM_FRAME(AI, 24), \
+    GEKK_SWIM_FRAME(AI, 26), GEKK_SWIM_FRAME(AI, 26), \
+    GEKK_SWIM_FRAME(AI, 24), GEKK_SWIM_FRAME(AI, 24), \
+    GEKK_SWIM_FRAME(AI, 22), GEKK_SWIM_FRAME(AI, 22), \
+    GEKK_SWIM_FRAME(AI, 22), GEKK_SWIM_FRAME(AI, 22), \
+    GEKK_SWIM_FRAME(AI, 22), GEKK_SWIM_FRAME(AI, 22), \
+    GEKK_SWIM_FRAME(AI, 22), GEKK_SWIM_FRAME(AI, 22), \
+    GEKK_SWIM_FRAME(AI, 18), GEKK_SWIM_FRAME(AI, 18), \
+    GEKK_SWIM_FRAME(AI, 18), GEKK_SWIM_FRAME(AI, 18)
+
+static const q2m_frame gekk_rerelease_standunderwater[] = {
+    GEKK_SWIM_FRAMES(STAND2)
+};
+static const q2m_frame gekk_rerelease_swim_loop[] = {
+    GEKK_SWIM_FRAMES(RUN)
+};
+#undef GEKK_SWIM_FRAMES
+#undef GEKK_SWIM_FRAME
+
+static const q2m_move gekk_rerelease_overrides[] = {
+    {.id=Q2M_MOVE_gekk_move_standunderwater,.first_frame=291,.last_frame=322,
+     .frames=gekk_rerelease_standunderwater},
+    {.id=Q2M_MOVE_gekk_move_swim_loop,.first_frame=291,.last_frame=322,
+     .end=&q2m_callbacks[Q2M_CALLBACK_gekk_swim_loop],
+     .frames=gekk_rerelease_swim_loop},
+};
+
+const q2m_move_set *q2m_gekk_rerelease_moves(void) {
+    static const q2m_move_set value = {
+        .key="rerelease/gekk:gekkMoves",
+        .moves=moves_43,.move_index=move_index_43,
+        .move_count=sizeof(moves_43)/sizeof(*moves_43),
+        .frames=frames_43,.frame_count=sizeof(frames_43)/sizeof(*frames_43),
+        .actions=actions_43,.action_count=sizeof(actions_43)/sizeof(*actions_43),
+        .overrides=gekk_rerelease_overrides,
+        .override_count=sizeof(gekk_rerelease_overrides)/sizeof(*gekk_rerelease_overrides),
+    };
+    return &value;
+}
+
 static const q2m_frame_action actions_44[] = {
     {.callback=&q2m_callbacks[Q2M_CALLBACK_gladb_cleaver_swing],.next_frame=-2147483648},
     {.callback=&q2m_callbacks[Q2M_CALLBACK_GladbMelee],.next_frame=-2147483648},

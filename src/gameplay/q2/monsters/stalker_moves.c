@@ -58,7 +58,7 @@ _Static_assert(sizeof(frames) / sizeof(*frames) == ST_FRAME_COUNT,
 #define MOVE(NAME, FIRST, LAST, END, OFFSET) \
     {Q2M_MOVE_stalker_move_##NAME, \
      Q2M_MOVE_stalker_move_##NAME == Q2M_MOVE_stalker_move_walk ? Q2M_MOVE_WALKING : 0, \
-     FIRST, LAST, END, 0, OFFSET}
+     FIRST, LAST, END, 0, OFFSET, NULL}
 static const q2m_move moves[] = {
     MOVE(idle, 0, 20, &q2m_callbacks[Q2M_CALLBACK_stalker_stand], ST_IDLE_FIRST),
     MOVE(idle2, 21, 33, &q2m_callbacks[Q2M_CALLBACK_stalker_stand], ST_IDLE2_FIRST),

@@ -645,6 +645,8 @@ static const q2m_move_set *definition_moves(const qa_q2_game *game,
                                           const qa_id_index *move_sets) {
   if (game->options.rules == QA_RULESET_Q2_RERELEASE && definition->species == Q2M_STALKER)
     return q2m_stalker_rerelease_moves();
+  if (game->options.rules == QA_RULESET_Q2_RERELEASE && definition->species == Q2M_GEKK)
+    return q2m_gekk_rerelease_moves();
   const char *key = definition->move_set;
   if (game->options.rules == QA_RULESET_Q2_RERELEASE &&
       (definition->species == Q2M_MEDIC || definition->species == Q2M_MEDIC_COMMANDER))
@@ -659,15 +661,19 @@ static const q2m_move_set *definition_moves(const qa_q2_game *game,
 
 const q2m_move *q2m_move_find(const struct qa_q2_monster *monster, q2m_move_id id) {
   if (id == Q2M_MOVE_NONE) return NULL;
-  uint16_t ordinal = monster->move_set->move_index[id];
-  return ordinal ? monster->move_set->moves + ordinal - 1 : NULL;
+  const q2m_move_set *set = monster->move_set;
+  uint16_t ordinal = set->move_index[id];
+  if (!ordinal) return NULL;
+  for (size_t i = 0; i < set->override_count; ++i)
+    if (set->overrides[i].id == id) return set->overrides + i;
+  return set->moves + ordinal - 1;
 }
 
 const q2m_move *q2m_move_named(const struct qa_q2_monster *monster, const char *name) {
   if (!name) return NULL;
   for (size_t i = 0; i < monster->move_set->move_count; ++i)
     if (!strcmp(q2m_move_name(monster->move_set->moves + i), name))
-      return monster->move_set->moves + i;
+      return q2m_move_find(monster, monster->move_set->moves[i].id);
   return NULL;
 }
 

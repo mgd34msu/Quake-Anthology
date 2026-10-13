@@ -170,17 +170,23 @@ bool q2m_actor_scripted_use(const struct qa_q2_monster *monster) {
 const q2m_frame *q2m_frame_at(const struct qa_q2_monster *monster, const q2m_move *move,
                               int frame, qa_error *error) {
   const q2m_move_set *set = monster->move_set;
-  size_t ordinal = (size_t)(move - set->moves);
-  size_t limit = ordinal + 1 < set->move_count ? set->moves[ordinal + 1].frame_first
-                                               : set->frame_count;
-  if (limit < move->frame_first || limit > set->frame_count ||
-      frame < move->first_frame || frame > move->last_frame ||
-      (size_t)(frame - move->first_frame) >= limit - move->frame_first) {
+  const q2m_frame *frames = move->frames;
+  size_t count = (size_t)(move->last_frame - move->first_frame + 1);
+  if (!frames) {
+    size_t ordinal = (size_t)(move - set->moves);
+    size_t limit = ordinal + 1 < set->move_count ? set->moves[ordinal + 1].frame_first
+                                                : set->frame_count;
+    count = limit >= move->frame_first && limit <= set->frame_count
+        ? limit - move->frame_first : 0;
+    frames = count ? set->frames + move->frame_first : NULL;
+  }
+  if (frame < move->first_frame || frame > move->last_frame ||
+      (size_t)(frame - move->first_frame) >= count) {
     qa_error_set(error, QA_ERROR_FORMAT, 0, "%s move %s has no source frame %d",
                   monster->definition->classname, q2m_move_name(move), frame);
     return NULL;
   }
-  const q2m_frame *entry = &set->frames[move->frame_first + (size_t)(frame - move->first_frame)];
+  const q2m_frame *entry = &frames[(size_t)(frame - move->first_frame)];
   if ((size_t)entry->action_first + entry->action_count > set->action_count) {
     qa_error_set(error, QA_ERROR_FORMAT, 0, "%s move %s has an invalid action table",
                   monster->definition->classname, q2m_move_name(move));

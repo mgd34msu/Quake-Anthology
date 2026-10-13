@@ -233,6 +233,7 @@ typedef struct q2m_move {
   const q2m_callback *end;
   float sidestep_scale;
   uint32_t frame_first;
+  const q2m_frame *frames;
 } q2m_move;
 
 typedef struct q2m_move_set {
@@ -244,6 +245,8 @@ typedef struct q2m_move_set {
   size_t frame_count;
   const q2m_frame_action *actions;
   size_t action_count;
+  const q2m_move *overrides;
+  size_t override_count;
 } q2m_move_set;
 
 enum { Q2M_MOVE_WALKING = 1, Q2M_MOVE_DODGING = 2 };
@@ -398,6 +401,7 @@ const q2m_move_set *q2m_moves_find(const qa_id_index *, qa_string_id);
 bool q2m_definitions_bind(qa_q2_game *, qa_error *);
 const q2m_definition *q2m_definition_for(const qa_q2_game *, qa_string_id);
 const q2m_move_set *q2m_stalker_rerelease_moves(void);
+const q2m_move_set *q2m_gekk_rerelease_moves(void);
 const q2m_move *q2m_move_find(const struct qa_q2_monster *, q2m_move_id);
 const q2m_move *q2m_move_named(const struct qa_q2_monster *, const char *);
 const char *q2m_move_name(const q2m_move *);
