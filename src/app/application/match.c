@@ -222,6 +222,7 @@ static qa_ruleset_id mode_source_ruleset(void *opaque, qa_mode_id mode,
 static qa_modes_hooks mode_hooks(qa_application *application)
 {
     return (qa_modes_hooks){.context = application,
+                            .command_settings = application_native_mode_command_settings,
                             .source_ruleset = mode_source_ruleset,
                             .q1_composition_expected = application_native_q1_composition_expected,
                             .q1_composition_current = application_native_q1_composition_current,

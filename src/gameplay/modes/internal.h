@@ -249,6 +249,20 @@ typedef struct mode_objective {
     X(LMCTF_MATCH_RED_WINS, "Red: {0} beats blue: {1}!\n") \
     X(LMCTF_MATCH_BLUE_WINS, "Blue: {0} beats red: {1}!\n") \
     X(LMCTF_MATCH_TIED, "Tie game at {0}!\n") \
+    X(LMCTF_RCON_OFF, "Rcon Mode is off\n") \
+    X(LMCTF_RCON_GRANTED, "You are now an Rcon\n") \
+    X(LMCTF_REFEREE_OFF, "Referee Mode is off\n") \
+    X(LMCTF_REFEREE_GRANTED, "You are now a Referee\n") \
+    X(LMCTF_REFEREE_BAD_PASSWORD, "Incorrect Referee Password\n") \
+    X(LMCTF_LOCK_DENIED, "Only referees can (un)lock teams.\n") \
+    X(LMCTF_ADMIN_DENIED, "Referee-only command denied.\n") \
+    X(LMCTF_MATCH_RUNNING, "Match already running, stop it first\n") \
+    X(LMCTF_MATCH_NOT_RUNNING, "No match running\n") \
+    X(LMCTF_MATCH_STOPPED, "Match stopped by {0}\n") \
+    X(LMCTF_TEAMS_LOCKED, "Teams are now locked\n") \
+    X(LMCTF_TEAMS_UNLOCKED, "Teams are now unlocked\n") \
+    X(LMCTF_GAME_PAUSED, "Game Paused\n") \
+    X(LMCTF_GAME_UNPAUSED, "Game Unpaused\n") \
     X(SOUND_CTF_R_RETURNED_WAV, "ctf/r_returned.wav") \
     X(SOUND_CTF_B_RETURNED_WAV, "ctf/b_returned.wav") \
     X(SOUND_CTF_R_STOLEN_WAV, "ctf/r_stolen.wav") \

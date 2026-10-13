@@ -168,6 +168,54 @@ static bool q3_call_vote(qa_modes *m, mode_instance *v, qa_actor_id actor,
     }
     return qa_modes_vote_start(m, v->id, actor, team, &intent, e);
 }
+static bool lmctf_command(qa_modes *m, mode_instance *v, qa_actor_id actor,
+                           const qa_command_invocation *command, bool *handled, qa_error *e) {
+    const char *name = command->argv[0];
+    if (named(name, "referee")) {
+        qa_mode_command_settings settings;
+        if (!m->options.hooks.command_settings ||
+            !m->options.hooks.command_settings(m->options.hooks.context, v->id, &settings))
+            return true;
+        *handled = true;
+        const char *password = command->args_text ? command->args_text : "";
+        unsigned level;
+        mode_name message;
+        if (!strcmp(settings.rcon_password, password)) {
+            if (!*settings.rcon_password)
+                return mode_message(m, v, actor, m->runtime_names[MODE_NAME_LMCTF_RCON_OFF],
+                                    NULL, 0, e);
+            level = 2;
+            message = MODE_NAME_LMCTF_RCON_GRANTED;
+        } else if (!strcmp(settings.referee_password, password)) {
+            if (!*settings.referee_password)
+                return mode_message(m, v, actor, m->runtime_names[MODE_NAME_LMCTF_REFEREE_OFF],
+                                    NULL, 0, e);
+            level = 1;
+            message = MODE_NAME_LMCTF_REFEREE_GRANTED;
+        } else {
+            level = 0;
+            message = MODE_NAME_LMCTF_REFEREE_BAD_PASSWORD;
+        }
+        return qa_modes_referee(m, v->id, actor, level, e) &&
+               mode_message(m, v, actor, m->runtime_names[message], NULL, 0, e);
+    }
+    qa_mode_admin_action action;
+    if (named(name, "pausematch") || named(name, "unpausematch"))
+        action = QA_MODE_ADMIN_PAUSE_ANY;
+    else if (named(name, "pause_match"))
+        action = QA_MODE_ADMIN_PAUSE;
+    else if (named(name, "lock") || named(name, "unlock"))
+        action = QA_MODE_ADMIN_LOCK;
+    else if (named(name, "startmatch"))
+        action = QA_MODE_ADMIN_START;
+    else if (named(name, "stopmatch"))
+        action = QA_MODE_ADMIN_STOP;
+    else
+        return true;
+    *handled = true;
+    bool accepted;
+    return qa_modes_admin(m, v->id, actor, action, 0, &accepted, e);
+}
 static bool console_command(qa_modes *m, qa_mode_id id, qa_actor_id actor,
                                const qa_command_invocation *command, bool *handled,
                                qa_error *e) {
@@ -184,6 +232,12 @@ static bool console_command(qa_modes *m, qa_mode_id id, qa_actor_id actor,
     const char *arg = command->argc > 1 ? command->argv[1] : "";
     if (!arg)
         return mode_fail(e, "missing mode command argument");
+    if (v->value.rules.source == QA_MODE_LMCTF) {
+        if (!lmctf_command(m, v, actor, command, handled, e))
+            return false;
+        if (*handled)
+            return true;
+    }
     bool accepted;
     if (v->value.rules.source >= QA_MODE_Q3) {
         if (named(name, "follow")) {
@@ -320,8 +374,14 @@ bool qa_modes_admin(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_mode_admin
         return mode_fail(e, "invalid match command");
     *accepted = false;
     bool admin = v->value.rules.source == QA_MODE_Q2_CTF ? p->admin : (p->extra_flags & 2) != 0;
-    if (action != QA_MODE_ADMIN_PAUSE_ANY && !admin)
+    if (action != QA_MODE_ADMIN_PAUSE_ANY && !admin) {
+        if (v->value.rules.source == QA_MODE_LMCTF &&
+            (action == QA_MODE_ADMIN_LOCK || action == QA_MODE_ADMIN_START ||
+             action == QA_MODE_ADMIN_STOP))
+            return mode_message(m, v, actor, m->runtime_names[action == QA_MODE_ADMIN_LOCK ?
+                MODE_NAME_LMCTF_LOCK_DENIED : MODE_NAME_LMCTF_ADMIN_DENIED], NULL, 0, e);
         return true;
+    }
     if (action == QA_MODE_ADMIN_MAP || action == QA_MODE_ADMIN_MATCH_MAP) {
         if (!map || !m->options.hooks.map_allowed ||
             !m->options.hooks.map_allowed(m->options.hooks.context, id, map))
@@ -338,22 +398,50 @@ bool qa_modes_admin(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_mode_admin
         v->value.rules.paused = !v->value.rules.paused;
         if (v->value.rules.auto_lock)
             v->value.rules.match_lock = !v->value.rules.paused;
+        if (v->value.rules.source == QA_MODE_LMCTF) {
+            qa_builtin_event message = {.kind = QA_BUILTIN_CENTERPRINT, .flags = 1,
+                .text = m->runtime_names[v->value.rules.paused ? MODE_NAME_LMCTF_GAME_PAUSED :
+                    MODE_NAME_LMCTF_GAME_UNPAUSED]};
+            if (!mode_builtin_emit(m, v, &message, e))
+                return false;
+        }
         break;
     case QA_MODE_ADMIN_LOCK:
         v->value.rules.match_lock = !v->value.rules.match_lock;
+        if (v->value.rules.source == QA_MODE_LMCTF &&
+            !mode_message(m, v, (qa_actor_id){0}, m->runtime_names[v->value.rules.match_lock ?
+                MODE_NAME_LMCTF_TEAMS_LOCKED : MODE_NAME_LMCTF_TEAMS_UNLOCKED], NULL, 0, e))
+            return false;
         break;
     case QA_MODE_ADMIN_START:
         if (v->value.phase != QA_MODE_WAITING && v->value.phase != QA_MODE_SETUP) {
             *accepted = false;
+            if (v->value.rules.source == QA_MODE_LMCTF)
+                return mode_message(m, v, actor, m->runtime_names[MODE_NAME_LMCTF_MATCH_RUNNING],
+                                    NULL, 0, e);
             return true;
         }
         return qa_modes_start(m, id, e);
     case QA_MODE_ADMIN_STOP:
         if (v->value.phase == QA_MODE_WAITING) {
             *accepted = false;
+            if (v->value.rules.source == QA_MODE_LMCTF)
+                return mode_message(m, v, actor, m->runtime_names[MODE_NAME_LMCTF_MATCH_NOT_RUNNING],
+                                    NULL, 0, e);
             return true;
         }
-        return qa_modes_cancel(m, id, e);
+        if (!qa_modes_cancel(m, id, e))
+            return false;
+        if (v->value.rules.source == QA_MODE_LMCTF) {
+            mode_player *player = mode_player_get(m, actor);
+            if (!player)
+                return true;
+            qa_builtin_message_arg argument = {.kind = QA_BUILTIN_MESSAGE_STRING,
+                .value.text = player->identity->name};
+            return mode_message(m, v, (qa_actor_id){0}, m->runtime_names[MODE_NAME_LMCTF_MATCH_STOPPED],
+                                &argument, 1, e);
+        }
+        return true;
     case QA_MODE_ADMIN_MAP:
     case QA_MODE_ADMIN_MATCH_MAP:
         break;

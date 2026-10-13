@@ -491,6 +491,7 @@ application_provider *application_mode_provider(qa_application *, qa_mode_id);
 const qa_launch_mode *application_mode_choice(const qa_application *, size_t);
 bool application_match_mode_source_owned(const application_provider *);
 bool application_native_mode_emit(void *, qa_mode_id, const qa_builtin_event *, qa_error *);
+bool application_native_mode_command_settings(void *, qa_mode_id, qa_mode_command_settings *);
 bool application_native_mode_q3_clock(void *, qa_mode_id, int32_t *, qa_error *);
 bool application_native_mode_q3_warmup_restart(void *, qa_mode_id, qa_error *);
 bool application_native_q3_settings_register(application_provider *, qa_error *);
