@@ -1695,6 +1695,12 @@ static bool movement_provider(qa_application *application, qa_actor_id actor,
     return true;
 }
 
+bool application_control_numeric_prepare(qa_application *app, qa_error *error)
+{
+    return qa_strings_intern_cstr(qa_session_strings(app->session),
+        "qa:numeric/movement-c", &app->movement_numeric_id, error);
+}
+
 static bool movement_numeric(qa_application *app, application_provider *provider,
     qa_ruleset_id kind, bool prediction, qa_movement_numeric *out, qa_error *error)
 {
@@ -1712,9 +1718,7 @@ static bool movement_numeric(qa_application *app, application_provider *provider
     case FE_TOWARDZERO: rounding = QA_ROUND_ZERO; break;
     default: return application_fail(error, QA_ERROR_UNSUPPORTED, "Native movement has an unknown rounding environment");
     }
-    qa_string_id id;
-    if (!qa_strings_intern_cstr(qa_session_strings(app->session), "qa:numeric/movement-c", &id, error)) return false;
-    *out = (qa_movement_numeric){.id = id, .radix = FLT_RADIX,
+    *out = (qa_movement_numeric){.id = app->movement_numeric_id, .radix = FLT_RADIX,
         .scalar_mantissa_bits = FLT_MANT_DIG, .double_mantissa_bits = DBL_MANT_DIG,
         .evaluation_method = FLT_EVAL_METHOD, .rounding = rounding, .native_c = true,
         .qw_origin_binary64 = kind == QA_RULESET_QUAKEWORLD};
@@ -1741,8 +1745,7 @@ static bool control_numeric_current(qa_application *app, qa_actor_id actor,
     case FE_TOWARDZERO: rounding = QA_ROUND_ZERO; break;
     default: return application_fail(error, QA_ERROR_UNSUPPORTED, "Native movement lost its rounding environment");
     }
-    const char *id = qa_strings_cstr(qa_session_strings(app->session), numeric->id);
-    return (numeric->native_c && id && !strcmp(id, "qa:numeric/movement-c") &&
+    return (numeric->native_c && numeric->id && numeric->id == app->movement_numeric_id &&
         numeric->radix == FLT_RADIX && numeric->scalar_mantissa_bits == FLT_MANT_DIG &&
         numeric->double_mantissa_bits == DBL_MANT_DIG && numeric->evaluation_method == FLT_EVAL_METHOD &&
         numeric->rounding == rounding && numeric->qw_origin_binary64 ==

@@ -291,6 +291,7 @@ struct qa_application {
     qa_cvar_handle bot_minplayers;
     qa_ui_preference_handles ui_preference_handles;
     qa_application_ui_names ui_names;
+    qa_string_id movement_numeric_id;
     application_content_names *content_names;
     qa_console *console;
     const qa_native_runtime_config *native_runtime_config;
@@ -723,6 +724,7 @@ bool application_control_death(qa_application *, qa_actor_id, qa_error *);
 bool application_control_gravity(qa_application *, qa_actor_id, float scale, qa_error *);
 bool application_control_water_read(const qa_application *, qa_actor_id,
     int32_t *water_type, int32_t *water_level, qa_error *);
+bool application_control_numeric_prepare(qa_application *, qa_error *);
 bool application_control_numeric_current(qa_application *, qa_actor_id,
     const qa_movement_numeric *, qa_error *);
 bool application_control_prediction_numeric_current(qa_application *, qa_actor_id,
