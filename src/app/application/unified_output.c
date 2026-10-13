@@ -132,7 +132,9 @@ static bool q2_hud_state(const qa_application_native_q2_hud *hud,
         q2_stat_images images = {.rows = config->configstrings + first,
             .count = q2_config_lower_bound(config, layout.images + layout.max_images) - first, .base = layout.images};
         if (!qa_q2_wire_stats(hud->game, &hud->view,
-            &(qa_q2_wire_stat_resources){.context = &images, .items_base = layout.items, .image = q2_stat_image},
+            &(qa_q2_wire_stat_resources){.context = &images, .items_base = layout.items, .image = q2_stat_image,
+                .modes = hud->modes, .mode = hud->mode, .actor = hud->actor,
+                .source_frame = (uint64_t)(uint32_t)hud->server_frame},
             state->frame.stats, error)) return false;
     }
     state->frame.stat_count = hud->edition == QA_RULESET_Q2_CLASSIC ? 32 : 64;

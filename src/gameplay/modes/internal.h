@@ -303,12 +303,8 @@ typedef struct mode_objective {
     X(LABEL_REGEN_ARTIFACT, "Regen Artifact") \
     X(LABEL_VAMPIRE_ARTIFACT, "Vampire Artifact") \
     X(LABEL_TAG_TOKEN, "Tag Token") \
-    X(PIC_I_CTF1, "i_ctf1") \
-    X(PIC_I_CTF2, "i_ctf2") \
-    X(PIC_TECH1, "tech1") \
-    X(PIC_TECH2, "tech2") \
-    X(PIC_TECH3, "tech3") \
-    X(PIC_TECH4, "tech4") \
+    QA_MODE_Q2_HUD_IMAGE_NAMES(X) \
+    X(CTF_STATUSBAR, NULL) \
     X(PIC_A_REDFLAG, "a_redflag") \
     X(PIC_A_STRENGTH, "a_strength") \
     X(PIC_A_HASTE, "a_haste") \

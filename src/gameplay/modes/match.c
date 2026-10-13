@@ -43,12 +43,20 @@ static bool lmctf_result_message(qa_modes *m, mode_instance *v, qa_error *e) {
         blue ? MODE_NAME_LMCTF_MATCH_BLUE_WINS : MODE_NAME_LMCTF_MATCH_RED_WINS],
         arguments, tied ? 1 : 2, e);
 }
-static bool ctf_result_message(qa_modes *m, mode_instance *v, qa_error *e) {
+static bool ctf_scores_freeze(qa_modes *m, mode_instance *v, qa_error *e) {
     int64_t scores[2] = {0};
+    if (!match_team_scores(m, v, scores, e))
+        return false;
+    v->value.team_scores[0] = (int32_t)scores[0];
+    v->value.team_scores[1] = (int32_t)scores[1];
+    return true;
+}
+static bool ctf_result_message(qa_modes *m, mode_instance *v, qa_error *e) {
     if (!mode_message_level(m, v, (qa_actor_id){0},
             m->runtime_names[MODE_NAME_CTF_MATCH_COMPLETED], NULL, 0, 3, e) ||
-        !match_team_scores(m, v, scores, e))
+        !ctf_scores_freeze(m, v, e))
         return false;
+    int32_t scores[2] = {v->value.team_scores[0], v->value.team_scores[1]};
     qa_string_id teams[2] = {m->runtime_names[MODE_NAME_CTF_RED],
                             m->runtime_names[MODE_NAME_CTF_BLUE]};
     for (int i = 0; i < 2; ++i) {
@@ -343,6 +351,8 @@ static bool begin_play(qa_modes *m, mode_instance *v, qa_error *e) {
     if (reset) {
         memset(v->value.team_scores, 0, sizeof(v->value.team_scores));
         memset(v->value.team_captures, 0, sizeof(v->value.team_captures));
+        v->value.last_capture_ns = 0;
+        v->value.last_capture_team = 0;
         memset(v->ghosts, 0, m->actor_capacity * sizeof(*v->ghosts));
     }
     if (!mode_set_phase(m, v, QA_MODE_PLAYING,
@@ -515,6 +525,9 @@ bool qa_modes_end(qa_modes *m, qa_mode_id id, qa_string_id reason, qa_error *e) 
     if (v->value.rules.source < QA_MODE_Q3) {
         bool ctf_match = v->value.rules.source == QA_MODE_Q2_CTF &&
                          v->value.phase == QA_MODE_PLAYING && v->value.deadline_ns;
+        if (v->value.rules.source == QA_MODE_Q2_CTF && !ctf_match &&
+            !ctf_scores_freeze(m, v, e))
+            return false;
         if (!mode_set_phase(m, v, QA_MODE_FINISHED, 0, e))
             return false;
         if (ctf_match && !ctf_result_message(m, v, e))

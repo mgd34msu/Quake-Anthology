@@ -679,11 +679,16 @@ static bool initialize_builtin(qa_application_network_q2 *owner, qa_error *error
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 gamestate lost its actual source worldspawn");
     const char *map = source_text(owner, owner->app->current_map);
     const char *name = state.value.message ? source_text(owner, state.value.message) : map;
+    qa_string_id mode_images[QA_MODE_Q2_HUD_IMAGES], mode_statusbar;
+    bool mode_hud = owner->app->primary_mode_ready &&
+        qa_modes_q2_hud_resources(owner->app->modes, owner->app->primary_mode,
+            mode_images, &mode_statusbar);
     bool ok = application_network_q2_config(owner, 0, name, error) &&
         application_network_q2_config(owner, 2, world_field(owner, &state.value, "sky", "unit1_"), error) &&
         application_network_q2_config(owner, 3, world_field(owner, &state.value, "skyaxis", "0 0 0"), error) &&
         application_network_q2_config(owner, 4, world_field(owner, &state.value, "skyrotate", "0"), error) &&
-        application_network_q2_config(owner, 5, qa_q2_wire_statusbar(game), error);
+        application_network_q2_config(owner, 5, mode_hud ? source_text(owner, mode_statusbar) :
+            qa_q2_wire_statusbar(game), error);
     qa_q2_entity_checkpoint_free(&state);
     uint32_t ignored;
     if (ok) ok = application_network_q2_resource(owner, 0, qa_resource_path(owner->app->map_resource), &ignored, error);
@@ -697,6 +702,8 @@ static bool initialize_builtin(qa_application_network_q2 *owner, qa_error *error
             application_network_q2_resource(owner, 0, definition->world_model, &ignored, error);
     }
     if (ok) ok = application_network_q2_resource(owner, 2, "i_health", &ignored, error);
+    for (size_t i = 0; ok && mode_hud && i < QA_MODE_Q2_HUD_IMAGES; ++i)
+        ok = application_network_q2_resource_id(owner, 2, mode_images[i], &ignored, error);
     size_t count = qa_q2_item_count(game);
     if (count > owner->skin_base - owner->item_base - 1)
         return application_fail(error, QA_ERROR_FORMAT, "Q2 Source item catalog exceeds its wire config range");

@@ -6,6 +6,22 @@
 
 typedef struct qa_modes qa_modes;
 typedef struct qa_command_invocation qa_command_invocation;
+struct qa_q2_wire_stat_resources;
+#define QA_MODE_Q2_HUD_IMAGE_NAMES(X) \
+    X(PIC_I_CTF1, "i_ctf1") \
+    X(PIC_I_CTF2, "i_ctf2") \
+    X(PIC_I_CTF1D, "i_ctf1d") \
+    X(PIC_I_CTF2D, "i_ctf2d") \
+    X(PIC_I_CTF1T, "i_ctf1t") \
+    X(PIC_I_CTF2T, "i_ctf2t") \
+    X(PIC_I_CTFJ, "i_ctfj") \
+    X(PIC_CTFSB1, "ctfsb1") \
+    X(PIC_CTFSB2, "ctfsb2") \
+    X(PIC_TECH1, "tech1") \
+    X(PIC_TECH2, "tech2") \
+    X(PIC_TECH3, "tech3") \
+    X(PIC_TECH4, "tech4")
+enum { QA_MODE_Q2_HUD_IMAGES = 13 };
 typedef struct qa_mode_id {
     uint32_t slot;
     uint64_t generation;
@@ -204,6 +220,9 @@ typedef struct qa_mode_view {
     qa_mode_phase phase;
     uint64_t time_ns, started_ns, deadline_ns;
     int32_t team_scores[3], team_captures[3];
+    /* Rebuilt presentation hint; not part of the on-disk game state. */
+    uint64_t last_capture_ns;
+    qa_team_id last_capture_team;
     size_t playing, voting, sorted_count;
     bool ready_exit, ctf_pregame_over;
 } qa_mode_view;
@@ -449,6 +468,11 @@ bool qa_modes_add_q1_composition(qa_modes *, const qa_mode_rules *, qa_actor_own
 bool qa_modes_remove(qa_modes *, qa_mode_id, qa_error *);
 bool qa_modes_configure(qa_modes *, qa_mode_id, const qa_mode_rules *, qa_error *);
 bool qa_modes_read(qa_modes *, qa_mode_id, qa_mode_view *, qa_error *);
+const char *qa_modes_q2_statusbar_text(void);
+bool qa_modes_q2_hud_resources(qa_modes *, qa_mode_id,
+    qa_string_id images[QA_MODE_Q2_HUD_IMAGES], qa_string_id *statusbar);
+bool qa_modes_q2_hud_stats(qa_modes *, qa_mode_id, qa_actor_id, uint64_t source_frame,
+    const struct qa_q2_wire_stat_resources *, int16_t stats[64], qa_error *);
 bool qa_modes_q3_settings_read(const qa_modes *, qa_mode_id, qa_mode_q3_settings *,
                                bool *present, qa_error *);
 bool qa_modes_q3_settings_admit(qa_modes *, qa_mode_id, const qa_mode_q3_settings *,

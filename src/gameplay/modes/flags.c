@@ -210,6 +210,10 @@ static bool capture(qa_modes *m, mode_instance *v, mode_object *flag, mode_objec
     mode_stat_add(v, &carrier->stats.captures, 1);
     if (source >= QA_MODE_Q3) mode_stat_add(v, &carrier->stats.q3_capture_count, 1);
     v->value.team_captures[index] = mode_add_i32(v->value.team_captures[index], 1);
+    if (source == QA_MODE_Q2_CTF) {
+        v->value.last_capture_ns = now;
+        v->value.last_capture_team = team;
+    }
     if (source >= QA_MODE_Q3 && !qa_modes_team_score(m, v->id, team, 1, e))
         return false;
     if (!points(m, v, actor, personal, e))

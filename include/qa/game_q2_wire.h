@@ -4,6 +4,7 @@
 #include "qa/game_q2_player.h"
 #include "qa/movement.h"
 #include "qa/lightstyles.h"
+#include "qa/modes.h"
 
 const qa_lightstyles *qa_q2_wire_lightstyles(const qa_q2_game *, qa_error *);
 
@@ -90,7 +91,12 @@ typedef struct qa_q2_wire_stat_resources {
     void *context;
     uint32_t items_base;
     bool (*image)(void *, qa_string_id, uint32_t *, qa_error *);
+    qa_modes *modes;
+    qa_mode_id mode;
+    qa_actor_id actor;
+    uint64_t source_frame;
 } qa_q2_wire_stat_resources;
+void qa_q2_wire_stat_word(int32_t, int16_t *);
 /* One movement-independent native player-view projection for local and wire HUDs. */
 bool qa_q2_wire_stats(const qa_q2_game *, const qa_q2_player_view *,
     const qa_q2_wire_stat_resources *, int16_t stats[64], qa_error *);

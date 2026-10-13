@@ -90,6 +90,14 @@ static bool hud_select(qa_application *app, qa_actor_id actor, hud_selection *ou
         value->data_provider = character && character->kind == APPLICATION_PROVIDER_Q2 ? character->owner : hud->owner;
         value->statusbar_id = qa_q2_wire_statusbar_name(hud->state.q2);
         value->statusbar = qa_q2_wire_statusbar(hud->state.q2);
+        if (app->primary_mode_ready) {
+            value->modes = app->modes; value->mode = app->primary_mode;
+            qa_string_id images[QA_MODE_Q2_HUD_IMAGES], statusbar;
+            if (qa_modes_q2_hud_resources(value->modes, value->mode, images, &statusbar)) {
+                value->statusbar_id = statusbar;
+                value->statusbar = qa_strings_cstr(value->strings, statusbar);
+            }
+        }
     }
     *out = selected; *found = true;
     return true;
@@ -121,7 +129,11 @@ bool qa_application_native_q2_hud_configs(qa_application *app,
     size_t capacity, size_t *count, qa_error *error)
 {
     size_t items = source->original ? 0 : qa_q2_item_count(source->game);
-    size_t required = source->original ? source->configstring_count : 4 + items * 2;
+    qa_string_id mode_images[QA_MODE_Q2_HUD_IMAGES], mode_statusbar;
+    size_t mode_image_count = !source->original && source->modes &&
+        qa_modes_q2_hud_resources(source->modes, source->mode, mode_images, &mode_statusbar)
+        ? QA_MODE_Q2_HUD_IMAGES : 0;
+    size_t required = source->original ? source->configstring_count : 4 + items * 2 + mode_image_count;
     if (!rows) { *count = required; return true; }
     if (capacity < required) return application_fail(error, QA_ERROR_MEMORY, "Q2 HUD config storage is too small");
     *count = 0;
@@ -141,6 +153,8 @@ bool qa_application_native_q2_hud_configs(qa_application *app,
     rows[2] = (qa_q2_config_name){0, app->ui_names.q2_health_icon};
     rows[3] = (qa_q2_config_name){0, app->ui_names.q2_help_icon};
     size_t images = 2;
+    for (size_t i = 0; i < mode_image_count; ++i)
+        rows[2 + images++] = (qa_q2_config_name){0, mode_images[i]};
     for (size_t i = 0; i < items; ++i) {
         qa_string_id icon = qa_q2_item_at(source->game, i)->icon_id;
         if (icon) rows[2 + images++] = (qa_q2_config_name){0, icon};
@@ -172,7 +186,8 @@ bool qa_application_native_q2_hud_read(qa_application *app, qa_actor_id actor,
     qa_application_native_q2_hud value = {.provider = source->provider, .data_provider = source->data_provider,
         .config_revision = source->config_revision, .edition = source->edition,
         .deathmatch = source->deathmatch, .cooperative = source->cooperative, .original = source->original,
-        .game = source->game, .statusbar_id = source->statusbar_id, .statusbar = source->statusbar, .strings = source->strings,
+        .game = source->game, .modes = source->modes, .mode = source->mode, .actor = actor,
+        .statusbar_id = source->statusbar_id, .statusbar = source->statusbar, .strings = source->strings,
         .names = source->names, .configstrings = source->configstrings, .config_changes = source->config_changes,
         .configstring_count = source->configstring_count, .layout = ""};
     application_provider *clock_owner = original ? original : hud;

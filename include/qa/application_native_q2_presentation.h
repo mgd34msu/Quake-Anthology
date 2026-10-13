@@ -99,6 +99,8 @@ typedef struct qa_application_native_q2_hud_source {
     qa_ruleset_id edition;
     bool deathmatch, cooperative, original;
     const qa_q2_game *game;
+    qa_modes *modes;
+    qa_mode_id mode;
     qa_string_id statusbar_id;
     const char *statusbar;
     const qa_strings *strings;
@@ -124,6 +126,9 @@ typedef struct qa_application_native_q2_hud {
     const qa_cvars *cvars;
     const qa_hud_cvar_handles *hud_cvars;
     const qa_q2_game *game;
+    qa_modes *modes;
+    qa_mode_id mode;
+    qa_actor_id actor;
     qa_q2_player_view view;
     qa_string_id statusbar_id;
     const char *statusbar, *layout;

@@ -220,7 +220,8 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
         } else {
             qa_application_native_q2_hud_source selected = {
                 .provider=source->provider,.data_provider=source->data_provider,.config_revision=source->config_revision,
-                .edition=source->edition,.game=source->game,.statusbar_id=source->statusbar_id,.strings=source->strings};
+                .edition=source->edition,.game=source->game,.modes=source->modes,.mode=source->mode,
+                .statusbar_id=source->statusbar_id,.strings=source->strings};
             size_t capacity, count;
             if (!qa_application_native_q2_hud_configs(seat->frontend->application,&selected,NULL,0,&capacity,error)) return false;
             qa_q2_config_name *rows=qa_arena_alloc(&scene->storage,capacity*sizeof(*rows),_Alignof(qa_q2_config_name),error);
@@ -254,7 +255,8 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
     }
     if (!source->original && !qa_q2_wire_stats(source->game, &source->view,
         &(qa_q2_wire_stat_resources){.context = &hud, .items_base = hud.config.items,
-            .image = local_q2_image}, source->stats, error)) return false;
+            .image = local_q2_image, .modes = source->modes, .mode = source->mode,
+            .actor = source->actor, .source_frame = (uint64_t)(uint32_t)source->server_frame}, source->stats, error)) return false;
     if (!qa_hud_q2_program_prepare_images(seat->q2_hud_layout,hud.media.images,
         source->edition==QA_RULESET_Q2_RERELEASE,QA_SCENE_NEAREST,error)) return false;
     qa_hud_q2_options options = {.viewport = frame->safe_area, .scale = frame->scale,

@@ -76,7 +76,7 @@ const char *qa_q2_wire_statusbar(const qa_q2_game *g)
 #undef Q2_CLASSIC_PICKUP
 #undef Q2_RERELEASE_PICKUP
 
-static void stat_word(int32_t value, int16_t *out)
+void qa_q2_wire_stat_word(int32_t value, int16_t *out)
 {
     uint16_t bits = (uint16_t)(uint32_t)value;
     memcpy(out, &bits, sizeof(bits));
@@ -87,7 +87,7 @@ static bool stat_number(double value, int16_t *out, qa_error *error)
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 Source statistic is not finite");
         return false;
     }
-    stat_word(value >= INT32_MIN && value < 2147483648.0 ? (int32_t)value : INT32_MIN, out);
+    qa_q2_wire_stat_word(value >= INT32_MIN && value < 2147483648.0 ? (int32_t)value : INT32_MIN, out);
     return true;
 }
 static bool stat_image(const qa_q2_wire_stat_resources *resources, qa_string_id name,
@@ -113,28 +113,30 @@ bool qa_q2_wire_stats(const qa_q2_game *g, const qa_q2_player_view *view,
         !stat_image(resources, view->armor_icon, &stats[4], error) ||
         !stat_image(resources, view->pickup_icon, &stats[7], error) ||
         !stat_image(resources, view->help_icon, &stats[11], error)) return false;
-    stat_word(view->ammo_count, &stats[3]); stat_word(view->timer_seconds, &stats[10]);
-    stat_word(view->layouts, &stats[13]); stat_word(view->score, &stats[14]);
-    stat_word(view->flashes, &stats[15]); stats[17] = view->spectator ? 1 : 0;
+    qa_q2_wire_stat_word(view->ammo_count, &stats[3]); qa_q2_wire_stat_word(view->timer_seconds, &stats[10]);
+    qa_q2_wire_stat_word(view->layouts, &stats[13]); qa_q2_wire_stat_word(view->score, &stats[14]);
+    qa_q2_wire_stat_word(view->flashes, &stats[15]); stats[17] = view->spectator ? 1 : 0;
 
     for (size_t i = 0; i < qa_q2_item_count(g); ++i) {
         const qa_q2_item_definition *item = qa_q2_item_at(g, i);
         if (view->selected_item && item->item == view->selected_item) {
-            stat_word((int32_t)i + 1, &stats[12]);
+            qa_q2_wire_stat_word((int32_t)i + 1, &stats[12]);
             if (!stat_image(resources, item->icon_id, &stats[6], error)) return false;
         }
         if (view->timer_item && item->item == view->timer_item &&
             !stat_image(resources, item->icon_id, &stats[9], error)) return false;
         if (view->pickup_text && view->pickup_text==item->name_id)
-            stat_word((int32_t)resources->items_base + (int32_t)i + 1, &stats[8]);
+            qa_q2_wire_stat_word((int32_t)resources->items_base + (int32_t)i + 1, &stats[8]);
         if (view->selected_item_name && view->selected_item_name==item->name_id)
-            stat_word((int32_t)resources->items_base + (int32_t)i + 1, &stats[51]);
+            qa_q2_wire_stat_word((int32_t)resources->items_base + (int32_t)i + 1, &stats[51]);
     }
     if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
-        stat_word(view->hit_marker_damage, &stats[50]);
+        qa_q2_wire_stat_word(view->hit_marker_damage, &stats[50]);
         for (unsigned i = 0; i < 3; ++i)
             if (!stat_image(resources, view->key_icons[i], &stats[44 + i], error)) return false;
     } else stats[51] = 0;
+    if (resources->modes && !qa_modes_q2_hud_stats(resources->modes, resources->mode,
+        resources->actor, resources->source_frame, resources, stats, error)) return false;
     memcpy(out, stats, sizeof(stats));
     return true;
 }

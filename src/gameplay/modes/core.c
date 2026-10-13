@@ -274,7 +274,8 @@ bool qa_modes_create(const qa_modes_options *options, qa_modes **out, qa_error *
 #undef MODE_NAME_TEXT
     };
     for (unsigned i = 0; i < MODE_NAME_COUNT; ++i)
-        if (!qa_strings_intern_cstr(qa_session_strings(options->services.session), runtime_names[i],
+        if (!qa_strings_intern_cstr(qa_session_strings(options->services.session),
+                                    i == MODE_NAME_CTF_STATUSBAR ? qa_modes_q2_statusbar_text() : runtime_names[i],
                                     &m->runtime_names[i], e)) {
             qa_modes_destroy(m);
             return false;

@@ -577,7 +577,10 @@ bool application_network_q2_player_state(qa_application_network_q2 *owner, qa_ac
             0 : (uint32_t)entity.weapon.gun_rate;
     }
     if (!qa_q2_wire_stats(game, &view, &(qa_q2_wire_stat_resources){
-        .context = owner, .items_base = owner->item_base, .image = hud_image}, value.stats, error)) return false;
+        .context = owner, .items_base = owner->item_base, .image = hud_image,
+        .modes = owner->app->primary_mode_ready ? owner->app->modes : NULL,
+        .mode = owner->app->primary_mode, .actor = actor,
+        .source_frame = owner->host.source.clock.frame_number}, value.stats, error)) return false;
     if (application_mode_layout_read(owner->app, actor, NULL, NULL)) value.stats[13] |= 1;
     player_profile(owner, &value);
     *out = value;
