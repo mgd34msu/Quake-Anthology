@@ -2617,7 +2617,8 @@ static bool native_entity_spawn(application_provider *map_provider,
 
 static bool q2_spawn_fields(application_provider *map_provider,
     const qa_launch_choices *choices, const qa_entities *entities, size_t index,
-    bool has_source, uint32_t source_slot, qa_actor_id *out, qa_error *error)
+    bool has_source, uint32_t source_slot, const uint32_t *spawnflags,
+    qa_actor_id *out, qa_error *error)
 {
     qa_bytes name;
     if (!qa_entity_value(entities, index, "classname", &name))
@@ -2625,6 +2626,36 @@ static bool q2_spawn_fields(application_provider *map_provider,
     qa_unified_frame_lease *storage = application_control_storage_acquire(map_provider->application, error);
     if (!storage) return false;
     qa_arena *arena = qa_unified_frame_lease_arena(storage);
+    char flags_text[11];
+    qa_entity_record record;
+    qa_entities admitted;
+    if (spawnflags) {
+        size_t count;
+        const qa_entity_property *authored = entity_properties(entities, index, &count);
+        qa_entity_property *properties = qa_arena_alloc(arena,
+            (count + 1) * sizeof(*properties), _Alignof(qa_entity_property), error);
+        if (!properties) {
+            qa_unified_frame_lease_release(storage);
+            return false;
+        }
+        memcpy(properties, authored, count * sizeof(*properties));
+        int length = snprintf(flags_text, sizeof(flags_text), "%u", (unsigned)*spawnflags);
+        qa_entity_property flags = {.key = {(const uint8_t *)"spawnflags", 10},
+            .value = {(const uint8_t *)flags_text, (size_t)length}};
+        bool replaced = false;
+        for (size_t i = 0; i < count; ++i)
+            if (qa_text_bytes_equal(properties[i].key, flags.key, false)) {
+                properties[i].value = flags.value;
+                replaced = true;
+            }
+        if (!replaced)
+            properties[count++] = flags;
+        record = (qa_entity_record){.property_count = count};
+        admitted = (qa_entities){.records = &record, .count = 1,
+            .properties = properties, .property_count = count};
+        entities = &admitted;
+        index = 0;
+    }
     const char *authored = NULL, *classname = NULL;
     application_provider *selected = NULL;
     bool monster = false;
@@ -2679,7 +2710,23 @@ static bool q2_spawn(void *opaque, const char *classname, qa_vec3 origin,
     const qa_launch_snapshot *snapshot =
         qa_configuration_current(provider->application->configuration);
     return q2_spawn_fields(provider, qa_launch_snapshot_choices(snapshot),
-                           &entities, 0, false, UINT32_MAX, out, error);
+                           &entities, 0, false, UINT32_MAX, NULL, out, error);
+}
+
+static bool q2_map_entity_inhibited(const qa_q2_options *rules, uint32_t flags)
+{
+    if (rules->deathmatch)
+        return (flags & 2048u) != 0;
+    if (rules->rules == QA_RULESET_Q2_RERELEASE) {
+        if (rules->cooperative ? (flags & 4096u) != 0 : (flags & 16384u) != 0)
+            return true;
+    } else if (rules->product == QA_Q2_ROGUE && rules->cooperative) {
+        if (flags & 4096u)
+            return true;
+        if ((flags & 1792u) == 1792u)
+            return false;
+    }
+    return (flags & (rules->skill == 0 ? 256u : rules->skill == 1 ? 512u : 1024u)) != 0;
 }
 
 static bool q2_spawn_map(application_provider *provider,
@@ -2687,8 +2734,27 @@ static bool q2_spawn_map(application_provider *provider,
                          const qa_entities *entities,
                          application_player_travel *players, qa_error *error)
 {
-    int32_t clients;
-    if (!application_native_q2_source_integer(provider, "maxclients", &clients, error)) return false;
+    int32_t clients, skill;
+    if (!application_native_q2_source_integer(provider, "maxclients", &clients, error) ||
+        !application_native_q2_source_integer(provider, "skill", &skill, error)) return false;
+    qa_q2_options source = {.rules = provider->component.clock.kind,
+        .product = provider->product->campaign_id == QA_CAMPAIGN_ROGUE ? QA_Q2_ROGUE : QA_Q2_BASE,
+        .skill = skill < 0 ? 0 : skill > 3 ? 3 : skill};
+    if (source.rules == QA_RULESET_Q2_RERELEASE) {
+        int32_t deathmatch, cooperative;
+        if (!application_native_q2_source_integer(provider, "deathmatch", &deathmatch, error) ||
+            !application_native_q2_source_integer(provider, "coop", &cooperative, error)) return false;
+        source.deathmatch = deathmatch != 0;
+        source.cooperative = cooperative != 0;
+    } else {
+        float deathmatch, cooperative;
+        if (!application_native_q2_source_number(provider, "deathmatch", &deathmatch, error) ||
+            !application_native_q2_source_number(provider, "coop", &cooperative, error)) return false;
+        source.deathmatch = deathmatch != 0;
+        source.cooperative = cooperative != 0;
+    }
+    const char *map = qa_strings_cstr(qa_session_strings(provider->application->session),
+        provider->application->current_map);
     qa_q2_entity_services services = q2_entity_services(provider, choices);
     services.spawn = q2_spawn;
     if (!qa_q2_entities_configure(provider->state.q2, &services, error))
@@ -2705,6 +2771,38 @@ static bool q2_spawn_map(application_provider *provider,
                                 "Cannot retain Q2 authored spawn bindings");
     bool ok = true;
     for (size_t index = 0; index < entities->count; ++index) {
+        uint32_t flags = 0;
+        if (index) {
+            if (!entity_u32(entities, index, "spawnflags", 0, &flags, error)) {
+                ok = false;
+                break;
+            }
+            if (source.rules == QA_RULESET_Q2_CLASSIC) {
+                qa_bytes name = {0}, model = {0};
+                (void)qa_entity_value(entities, index, "classname", &name);
+                (void)qa_entity_value(entities, index, "model", &model);
+                if (qa_text_ascii_equal(map, "command") &&
+                    qa_text_bytes_equal(name, (qa_bytes){(const uint8_t *)"trigger_once", 12}, true) &&
+                    qa_text_bytes_equal(model, (qa_bytes){(const uint8_t *)"*27", 3}, true))
+                    flags &= ~1024u;
+                if (source.product == QA_Q2_ROGUE && qa_text_ascii_equal(map, "rhangar2")) {
+                    qa_bytes targetname = {0}, target = {0};
+                    (void)qa_entity_value(entities, index, "targetname", &targetname);
+                    (void)qa_entity_value(entities, index, "target", &target);
+                    if (qa_text_bytes_equal(name, (qa_bytes){(const uint8_t *)"func_door_rotating", 18}, true) &&
+                        qa_text_bytes_equal(targetname, (qa_bytes){(const uint8_t *)"t265", 4}, true))
+                        flags &= ~4096u;
+                    if ((qa_text_bytes_equal(name, (qa_bytes){(const uint8_t *)"trigger_always", 14}, true) &&
+                         qa_text_bytes_equal(target, (qa_bytes){(const uint8_t *)"t265", 4}, true)) ||
+                        (qa_text_bytes_equal(name, (qa_bytes){(const uint8_t *)"func_wall", 9}, true) &&
+                         qa_text_bytes_equal(model, (qa_bytes){(const uint8_t *)"*15", 3}, true)))
+                        flags |= 4096u;
+                }
+            }
+            if (q2_map_entity_inhibited(&source, flags))
+                continue;
+            flags &= ~(source.rules == QA_RULESET_Q2_RERELEASE ? 0xff00u : 0x1f00u);
+        }
         uint32_t source_slot = 0;
         if (index && !qa_q2_wire_spawn_slot(provider->state.q2, &source_slot, error)) {
             ok = false;
@@ -2712,7 +2810,7 @@ static bool q2_spawn_map(application_provider *provider,
         }
         qa_actor_id actor = {0};
         if (!q2_spawn_fields(provider, choices, entities, index, true,
-                             source_slot, &actor, error)) {
+                             source_slot, index ? &flags : NULL, &actor, error)) {
             ok = false;
             break;
         }
