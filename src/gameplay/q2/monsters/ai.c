@@ -3261,6 +3261,8 @@ static bool alternate_fly(q2m_context *context, bool *handled,
       desired += 360.0f;
     context->body.angles.x +=
         context->elapsed * 4.0f * (desired - context->body.angles.x);
+  } else {
+    context->body.angles.x = 0.0f;
   }
   return q2m_write_body(context, false, error);
 }

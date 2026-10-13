@@ -390,14 +390,20 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
             view.timer_seconds = (int)fmin((double)(remaining / Q2_NS), INT_MAX);
             break;
         }
+    if (s->rule.nuke_ns > g->now_ns)
+        view.blend = blend_add(view.blend, qa_v3(1, 1, 1),
+                               q2_seconds_left(s->rule.nuke_ns, g->now_ns) / 2.0f);
+    if (powers.ir_until_ns > g->now_ns) {
+        uint64_t remaining = powers.ir_until_ns - g->now_ns;
+        bool active = rr ? remaining > 3 * Q2_NS || (remaining / Q2_MS) % 1000 < 500
+                         : flashing(powers.ir_until_ns, g->now_ns);
+        if (active)
+            view.blend = blend_add(view.blend, qa_v3(1, 0, 0), .2f);
+    }
     view.blend = blend_add(view.blend, s->rule.damage_blend, s->rule.damage_alpha);
     view.blend = blend_add(view.blend, qa_v3(.85f, .7f, .3f), s->rule.bonus_alpha);
     s->rule.damage_alpha = fmaxf(0, s->rule.damage_alpha - (rr ? dt * .6f : .06f));
     s->rule.bonus_alpha = fmaxf(0, s->rule.bonus_alpha - (rr ? dt : .1f));
-    if (s->rule.nuke_ns > g->now_ns)
-        view.blend = blend_add(
-            view.blend, qa_v3(1, 1, 1),
-            q2_clamp(q2_seconds_left(s->rule.nuke_ns, g->now_ns) / (s->rule.nuke_inside ? 2 : 1), 0, 1));
     view.underwater = (mask & 56) != 0;
     view.armor = combat.armor.regular.kind == QA_ARMOR_NONE ? 0 : combat.armor.regular.points;
     bool powered_armor = combat.armor.powered.kind != QA_POWER_NONE &&
