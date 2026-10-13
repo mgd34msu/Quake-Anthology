@@ -4,13 +4,17 @@
 #include <limits.h>
 #include <stdatomic.h>
 #include <stdlib.h>
+#include <string.h>
+#if !defined(_WIN32)
+#include <netinet/tcp.h>
+#endif
 
 struct qa_platform_stream {
     qa_socket listener, peer;
     uint64_t source_id, peer_id, peer_generation, pending_peer;
     qa_sys_stream_action pending_action;
     size_t maximum_read, read_room;
-    bool pending;
+    bool pending, connecting;
     uint8_t bytes[];
 };
 
@@ -37,27 +41,34 @@ static bool socket_prepare(qa_socket socket)
     return qa_socket_nonblocking(socket);
 }
 
-bool qa_platform_stream_create(uint16_t port, int backlog, size_t maximum_read,
-    qa_platform_stream **out, qa_error *error)
+static qa_platform_stream *stream_create(size_t maximum_read, qa_error *error)
 {
     if (!maximum_read || maximum_read > SIZE_MAX - sizeof(qa_platform_stream)) {
         qa_error_set(error, QA_ERROR_CAPACITY, 0, "Platform stream receive backing is too large");
-        return false;
+        return NULL;
     }
     qa_platform_stream *stream = calloc(1, sizeof(*stream) + maximum_read);
     if (!stream) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating platform stream");
-        return false;
+        return NULL;
     }
     stream->listener = stream->peer = QA_SOCKET_INVALID;
     stream->maximum_read = stream->read_room = maximum_read;
     if (!qa_socket_begin()) {
         qa_error_set(error, QA_ERROR_IO, 0, "Initializing platform stream sockets");
         free(stream);
-        return false;
+        return NULL;
     }
     stream->source_id = source_id_take(error);
-    if (!stream->source_id) { qa_platform_stream_destroy(stream); return false; }
+    if (!stream->source_id) { qa_platform_stream_destroy(stream); return NULL; }
+    return stream;
+}
+
+bool qa_platform_stream_create(uint16_t port, int backlog, size_t maximum_read,
+    qa_platform_stream **out, qa_error *error)
+{
+    qa_platform_stream *stream = stream_create(maximum_read, error);
+    if (!stream) return false;
     stream->listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 #if defined(_WIN32)
     BOOL exclusive = TRUE;
@@ -84,6 +95,56 @@ bool qa_platform_stream_create(uint16_t port, int backlog, size_t maximum_read,
     return true;
 }
 
+bool qa_platform_stream_connect(const qa_net_address *endpoint, size_t maximum_read,
+    qa_platform_stream **out, qa_error *error)
+{
+    if (!endpoint || !endpoint->port ||
+        (endpoint->kind != QA_NET_IPV4 && endpoint->kind != QA_NET_IPV6)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Platform stream requires an IP endpoint");
+        return false;
+    }
+    qa_platform_stream *stream = stream_create(maximum_read, error);
+    if (!stream) return false;
+    struct sockaddr_storage address = {0};
+    qa_socklen address_size;
+    int family;
+    if (endpoint->kind == QA_NET_IPV4) {
+        struct sockaddr_in *ipv4 = (struct sockaddr_in *)&address;
+        family = ipv4->sin_family = AF_INET;
+        ipv4->sin_port = htons(endpoint->port);
+        memcpy(&ipv4->sin_addr, endpoint->host.ipv4, sizeof(ipv4->sin_addr));
+        address_size = (qa_socklen)sizeof(*ipv4);
+    } else {
+        struct sockaddr_in6 *ipv6 = (struct sockaddr_in6 *)&address;
+        family = ipv6->sin6_family = AF_INET6;
+        ipv6->sin6_port = htons(endpoint->port);
+        memcpy(&ipv6->sin6_addr, endpoint->host.ipv6.bytes, sizeof(ipv6->sin6_addr));
+        ipv6->sin6_scope_id = endpoint->host.ipv6.scope;
+        address_size = (qa_socklen)sizeof(*ipv6);
+    }
+    stream->peer = socket(family, SOCK_STREAM, IPPROTO_TCP);
+    int no_delay = 1;
+    if (stream->peer == QA_SOCKET_INVALID || !socket_prepare(stream->peer) ||
+        setsockopt(stream->peer, IPPROTO_TCP, TCP_NODELAY,
+            (const char *)&no_delay, (qa_socklen)sizeof(no_delay)) != 0) {
+        qa_error_set(error, QA_ERROR_IO, 0, "Opening outbound platform stream socket");
+        qa_platform_stream_destroy(stream);
+        return false;
+    }
+    if (connect(stream->peer, (struct sockaddr *)&address, address_size) != 0) {
+        int code = qa_socket_error();
+        if (!qa_socket_again(code) && !qa_socket_interrupted(code)) {
+            qa_error_set(error, QA_ERROR_IO, 0, "Connecting outbound platform stream");
+            qa_platform_stream_destroy(stream);
+            return false;
+        }
+    }
+    stream->peer_id = ++stream->peer_generation;
+    stream->connecting = true;
+    *out = stream;
+    return true;
+}
+
 void qa_platform_stream_stop_listener(qa_platform_stream *stream)
 {
     if (!stream || stream->listener == QA_SOCKET_INVALID) return;
@@ -98,6 +159,7 @@ void qa_platform_stream_close_peer(qa_platform_stream *stream)
     stream->peer = QA_SOCKET_INVALID;
     stream->peer_id = 0;
     stream->pending = false;
+    stream->connecting = false;
     stream->read_room = stream->maximum_read;
 }
 
@@ -135,6 +197,21 @@ bool qa_platform_stream_collect(qa_platform_stream *stream, qa_platform_events *
 {
     (void)error;
     if (!stream || stream->pending) return true;
+    if (stream->connecting) {
+        if (qa_platform_events_admit(events, QA_PLATFORM_EVENT_STREAM, 0) !=
+            QA_PLATFORM_EVENT_ACCEPTED) return true;
+        bool connected = false;
+        qa_error failure = {0};
+        if (!qa_net_socket_connected(stream->peer, &connected, &failure)) {
+            uint64_t peer_id = stream->peer_id;
+            qa_platform_stream_close_peer(stream);
+            event_push(stream, events, time_ns, wall_ms, QA_SYS_STREAM_PEER_CLOSE, peer_id, 0);
+        } else if (connected) {
+            stream->connecting = false;
+            event_push(stream, events, time_ns, wall_ms, QA_SYS_STREAM_ACCEPT, stream->peer_id, 0);
+        }
+        return true;
+    }
     if (stream->peer == QA_SOCKET_INVALID) {
         if (stream->listener == QA_SOCKET_INVALID ||
             qa_platform_events_admit(events, QA_PLATFORM_EVENT_STREAM, 0) !=
@@ -188,7 +265,7 @@ bool qa_platform_stream_write(qa_platform_stream *stream, qa_bytes bytes,
     (void)error;
     *sent = 0;
     *open = stream && stream->peer != QA_SOCKET_INVALID;
-    if (!*open || !bytes.size) return true;
+    if (!*open || stream->connecting || !bytes.size) return true;
     size_t size = bytes.size > INT_MAX ? INT_MAX : bytes.size;
     int flags = 0;
 #if defined(MSG_NOSIGNAL)
