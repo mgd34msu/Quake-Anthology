@@ -6,6 +6,8 @@
 #define Q2_SERVER_CVAR (QA_Q2_SAVE_CVAR_BYTES * 2)
 #define Q2_LEVEL_STRINGS (QA_Q2_SAVE_CONFIGSTRINGS * QA_Q2_SAVE_CONFIGSTRING_BYTES)
 #define Q2_LEVEL_BYTES (Q2_LEVEL_STRINGS + QA_Q2_SAVE_AREA_PORTALS * 4)
+#define Q2_SERVER_REPRO_SIGNATURE UINT32_C(0x32565353)
+#define Q2_LEVEL_REPRO_SIGNATURE UINT32_C(0x32564153)
 
 uint32_t qa_q2_save_configstring_count(const qa_q2_save_level *level)
 {
@@ -158,7 +160,8 @@ bool qa_q2_save_level_copy(const qa_q2_save_level *source, qa_q2_save_level *out
 bool qa_q2_save_configstrings_io(qa_source_save_io *io, qa_q2_save_level *level)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    if (!qa_source_save_bool(io, &level->rerelease)) return false;
+    if (!qa_source_save_bool(io, &level->rerelease) ||
+        !qa_source_save_u32(io, &level->file_signature)) return false;
     uint32_t rows = qa_q2_save_configstring_count(level), width = qa_q2_save_configstring_width(level);
     size_t count = reading ? 0 : level->configstrings.count;
     if (!qa_source_save_count(io, &count, rows)) return false;
@@ -255,9 +258,17 @@ bool qa_q2_save_server_copy(const qa_q2_save_server *source, qa_q2_save_server *
     *out = value; return true;
 }
 
-/* KEX sv_save.cpp writes little-endian lengths and bytes without a NUL. */
-static bool read_text(qa_bytes bytes, size_t *cursor, qa_bytes *text, qa_error *error)
+/* KEX stores lengths; q2repro stores the original message NUL terminator. */
+static bool read_text(qa_bytes bytes, size_t *cursor, qa_bytes *text, bool terminated, qa_error *error)
 {
+    if (terminated) {
+        if (*cursor >= bytes.size)
+            return persistence_fail(error, QA_ERROR_FORMAT, "Quake II server.ssv text is truncated");
+        const uint8_t *end = memchr(bytes.data + *cursor, 0, bytes.size - *cursor);
+        if (!end) return persistence_fail(error, QA_ERROR_FORMAT, "Quake II server.ssv text is unterminated");
+        *text = (qa_bytes){bytes.data + *cursor, (size_t)(end - (bytes.data + *cursor))};
+        *cursor += text->size + 1; return true;
+    }
     if (*cursor > bytes.size || bytes.size - *cursor < 4)
         return persistence_fail(error, QA_ERROR_FORMAT, "Quake II server.ssv text length is truncated");
     uint32_t size = qa_load_u32le(bytes.data + *cursor); *cursor += 4;
@@ -268,25 +279,45 @@ static bool read_text(qa_bytes bytes, size_t *cursor, qa_bytes *text, qa_error *
 
 static bool rerelease_server_decode(qa_bytes bytes, qa_q2_save_server *server, qa_error *error)
 {
-    if (bytes.size < 5 || bytes.data[4] > 1)
-        return persistence_fail(error, QA_ERROR_FORMAT, "Quake II EVAS autosave field is invalid");
-    server->rerelease = true; server->autosave = bytes.data[4] != 0;
-    size_t cursor = 5; qa_bytes text;
-    if (!read_text(bytes, &cursor, &text, error)) return false;
+    bool repro = server->file_signature == Q2_SERVER_REPRO_SIGNATURE;
+    size_t cursor;
+    if (repro) {
+        if (bytes.size < 17 || qa_load_u32le(bytes.data + 4) != 1 || bytes.data[16] > 2)
+            return persistence_fail(error, QA_ERROR_FORMAT, "Quake II SSV2 header or save kind is invalid");
+        server->timestamp = qa_load_u64le(bytes.data + 8);
+        server->save_kind = bytes.data[16]; cursor = 17;
+    } else {
+        if (bytes.size < 5 || bytes.data[4] > 1)
+            return persistence_fail(error, QA_ERROR_FORMAT, "Quake II EVAS autosave field is invalid");
+        server->save_kind = bytes.data[4]; cursor = 5;
+    }
+    server->rerelease = true; server->autosave = server->save_kind == 1;
+    qa_bytes text;
+    if (!read_text(bytes, &cursor, &text, repro, error)) return false;
     if (text.size >= sizeof(server->comment))
         return persistence_fail(error, QA_ERROR_FORMAT, "Quake II EVAS description exceeds CS_NAME");
     memcpy(server->comment, text.data, text.size);
-    if (bytes.size - cursor < 8)
-        return persistence_fail(error, QA_ERROR_FORMAT, "Quake II EVAS timestamp is truncated");
-    server->timestamp = qa_load_u64le(bytes.data + cursor); cursor += 8;
-    if (!read_text(bytes, &cursor, &text, error)) return false;
-    if (!text.size || text.size >= sizeof(server->map_command))
+    if (!repro) {
+        if (bytes.size - cursor < 8)
+            return persistence_fail(error, QA_ERROR_FORMAT, "Quake II EVAS timestamp is truncated");
+        server->timestamp = qa_load_u64le(bytes.data + cursor); cursor += 8;
+    }
+    if (!read_text(bytes, &cursor, &text, repro, error)) return false;
+    if (!text.size || text.size >= (repro ? QA_Q2_SAVE_MAP_BYTES : sizeof(server->map_command)))
         return persistence_fail(error, QA_ERROR_FORMAT, "Quake II EVAS map command exceeds the original reader");
     memcpy(server->map_command, text.data, text.size);
     size_t begin = cursor, count = 0, extent = 0;
-    while (cursor < bytes.size) {
+    while (repro || cursor < bytes.size) {
         qa_bytes name, value;
-        if (!read_text(bytes, &cursor, &name, error) || !read_text(bytes, &cursor, &value, error)) return false;
+        if (!read_text(bytes, &cursor, &name, repro, error)) return false;
+        if (repro && !name.size) {
+            if (cursor != bytes.size)
+                return persistence_fail(error, QA_ERROR_FORMAT, "Quake II SSV2 cvar terminator has trailing bytes");
+            break;
+        }
+        if (!read_text(bytes, &cursor, &value, repro, error)) return false;
+        if (repro && (name.size >= QA_Q2_SAVE_MAP_BYTES || value.size >= 1024))
+            return persistence_fail(error, QA_ERROR_FORMAT, "Quake II SSV2 cvar exceeds the original reader");
         if (!name.size || name.size > SIZE_MAX - value.size - 2 || extent > SIZE_MAX - name.size - value.size - 2 ||
             count == SIZE_MAX / sizeof(*server->cvars))
             return persistence_fail(error, QA_ERROR_FORMAT, "Quake II EVAS cvar roster exceeds its text extent");
@@ -299,7 +330,7 @@ static bool rerelease_server_decode(qa_bytes bytes, qa_q2_save_server *server, q
     server->cvar_count = count; cursor = begin; size_t at = 0;
     for (size_t i = 0; i < count; ++i) {
         qa_bytes name, value;
-        if (!read_text(bytes, &cursor, &name, error) || !read_text(bytes, &cursor, &value, error)) return false;
+        if (!read_text(bytes, &cursor, &name, repro, error) || !read_text(bytes, &cursor, &value, repro, error)) return false;
         server->cvars[i].name = (char *)server->cvar_text.data + at;
         memcpy(server->cvar_text.data + at, name.data, name.size);
         server->cvar_text.data[at + name.size] = 0; at += name.size + 1;
@@ -315,7 +346,9 @@ bool qa_q2_save_server_decode(qa_bytes bytes, qa_q2_save_server *out, qa_error *
     if (!out || !bytes.data)
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Quake II server.ssv requires its actual bytes");
     qa_q2_save_server server = {0}; bool ok;
-    if (bytes.size >= 4 && !memcmp(bytes.data, "EVAS", 4)) {
+    if (bytes.size >= 4 && (!memcmp(bytes.data, "EVAS", 4) ||
+        qa_load_u32le(bytes.data) == Q2_SERVER_REPRO_SIGNATURE)) {
+        server.file_signature = qa_load_u32le(bytes.data);
         ok = rerelease_server_decode(bytes, &server, error);
     } else {
         if (bytes.size < Q2_SERVER_HEADER || (bytes.size - Q2_SERVER_HEADER) % Q2_SERVER_CVAR)
@@ -343,24 +376,34 @@ bool qa_q2_save_server_decode(qa_bytes bytes, qa_q2_save_server *out, qa_error *
     *out = server; return true;
 }
 
-static void write_text(uint8_t *data, size_t *cursor, const char *text)
+static void write_text(uint8_t *data, size_t *cursor, const char *text, bool terminated)
 {
-    size_t size = strlen(text); qa_store_u32le(data + *cursor, (uint32_t)size); *cursor += 4;
+    size_t size = strlen(text);
+    if (!terminated) { qa_store_u32le(data + *cursor, (uint32_t)size); *cursor += 4; }
     memcpy(data + *cursor, text, size); *cursor += size;
+    if (terminated) data[(*cursor)++] = 0;
 }
 
 bool qa_q2_save_server_encode(const qa_q2_save_server *server, qa_buffer *out, qa_error *error)
 {
     if (!server || !out) return persistence_fail(error, QA_ERROR_ARGUMENT, "Quake II server save owner/output are required");
     if (!server_text(server, error)) return false;
+    bool repro = server->file_signature == Q2_SERVER_REPRO_SIGNATURE;
+    if (repro && server->save_kind > 2)
+        return persistence_fail(error, QA_ERROR_FORMAT, "Quake II SSV2 save kind is invalid");
+    if (repro && strlen(server->map_command) >= QA_Q2_SAVE_MAP_BYTES)
+        return persistence_fail(error, QA_ERROR_FORMAT, "Quake II SSV2 map command exceeds the original reader");
     size_t size;
     if (server->rerelease) {
-        size = 21 + strlen(server->comment) + strlen(server->map_command);
+        size = (repro ? 20 : 21) + strlen(server->comment) + strlen(server->map_command);
         for (size_t i = 0; i < server->cvar_count; ++i) {
             size_t name = strlen(server->cvars[i].name), value = strlen(server->cvars[i].value);
-            if (name > UINT32_MAX || value > UINT32_MAX || name > SIZE_MAX - value - 8 || size > SIZE_MAX - name - value - 8)
+            size_t prefix = repro ? 2 : 8;
+            if (name > UINT32_MAX || value > UINT32_MAX || name > SIZE_MAX - value - prefix || size > SIZE_MAX - name - value - prefix)
                 return persistence_fail(error, QA_ERROR_MEMORY, "Quake II EVAS cvars exceed their file extent");
-            size += name + value + 8;
+            if (repro && (name >= QA_Q2_SAVE_MAP_BYTES || value >= 1024))
+                return persistence_fail(error, QA_ERROR_FORMAT, "Quake II SSV2 cvar exceeds the original reader");
+            size += name + value + prefix;
         }
     } else {
         if (server->cvar_count > (SIZE_MAX - Q2_SERVER_HEADER) / Q2_SERVER_CVAR)
@@ -370,14 +413,20 @@ bool qa_q2_save_server_encode(const qa_q2_save_server *server, qa_buffer *out, q
     qa_buffer bytes = {.data = malloc(size), .size = size};
     if (!bytes.data) return persistence_fail(error, QA_ERROR_MEMORY, "Writing Quake II server.ssv");
     if (server->rerelease) {
-        memcpy(bytes.data, "EVAS", 4); bytes.data[4] = server->autosave;
-        size_t cursor = 5; write_text(bytes.data, &cursor, server->comment);
-        qa_store_u64le(bytes.data + cursor, server->timestamp); cursor += 8;
-        write_text(bytes.data, &cursor, server->map_command);
+        size_t cursor;
+        if (repro) {
+            qa_store_u32le(bytes.data, Q2_SERVER_REPRO_SIGNATURE); qa_store_u32le(bytes.data + 4, 1);
+            qa_store_u64le(bytes.data + 8, server->timestamp); bytes.data[16] = server->save_kind;
+            cursor = 17;
+        } else { memcpy(bytes.data, "EVAS", 4); bytes.data[4] = server->autosave; cursor = 5; }
+        write_text(bytes.data, &cursor, server->comment, repro);
+        if (!repro) { qa_store_u64le(bytes.data + cursor, server->timestamp); cursor += 8; }
+        write_text(bytes.data, &cursor, server->map_command, repro);
         for (size_t i = 0; i < server->cvar_count; ++i) {
-            write_text(bytes.data, &cursor, server->cvars[i].name);
-            write_text(bytes.data, &cursor, server->cvars[i].value);
+            write_text(bytes.data, &cursor, server->cvars[i].name, repro);
+            write_text(bytes.data, &cursor, server->cvars[i].value, repro);
         }
+        if (repro) bytes.data[cursor] = 0;
     } else {
         memcpy(bytes.data, server->comment, QA_Q2_SAVE_COMMENT_BYTES);
         memcpy(bytes.data + QA_Q2_SAVE_COMMENT_BYTES, server->map_command, QA_Q2_SAVE_MAP_COMMAND_BYTES);
@@ -453,48 +502,79 @@ static bool write_file(qa_fs_root *root, const char *directory, const char *name
 bool qa_q2_save_level_decode(qa_bytes bytes, qa_q2_save_level *level, qa_error *error)
 {
     if (!level || !bytes.data) return persistence_fail(error, QA_ERROR_ARGUMENT, "Quake II .sv2 requires its actual bytes");
-    if (!level->rerelease) {
+    bool repro = bytes.size >= 4 && qa_load_u32le(bytes.data) == Q2_LEVEL_REPRO_SIGNATURE;
+    if (repro && (bytes.size < 8 || qa_load_u32le(bytes.data + 4) != 1))
+        return persistence_fail(error, QA_ERROR_FORMAT, "Quake II SAV2 header is invalid");
+    if (!repro && !level->rerelease) {
         if (bytes.size != Q2_LEVEL_BYTES)
             return persistence_fail(error, QA_ERROR_FORMAT, "Quake II .sv2 has an invalid configstring/portal extent");
         if (!qa_q2_save_configstrings_capture(level, (qa_bytes){bytes.data, Q2_LEVEL_STRINGS}, error)) return false;
         for (size_t i = 0; i < QA_Q2_SAVE_AREA_PORTALS; ++i)
             level->portal_open[i] = qa_load_i32le(bytes.data + Q2_LEVEL_STRINGS + i * 4);
-        level->portal_count = 0; return true;
+        level->portal_count = 0; level->file_signature = 0; return true;
     }
-    uint32_t rows = qa_q2_save_configstring_count(level), width = qa_q2_save_configstring_width(level);
+    qa_q2_save_level format = *level;
+    format.rerelease = true; format.file_signature = repro ? Q2_LEVEL_REPRO_SIGNATURE : 0;
+    uint32_t rows = qa_q2_save_configstring_count(&format), width = qa_q2_save_configstring_width(&format);
+    qa_q2_config_layout layout = {0};
+    if (repro) {
+        qa_q2_codec codec = {.protocol = qa_q2_default_protocol(true)};
+        if (!qa_q2_config_layout_read(&codec, &layout, error)) return false;
+    }
     qa_buffer table = {.data = calloc(rows, width), .size = (size_t)rows * width};
     if (!table.data) return persistence_fail(error, QA_ERROR_MEMORY, "Reading Quake II rerelease config rows");
-    size_t cursor = 0; bool ok = true;
+    size_t cursor = repro ? 8 : 0; bool ok = true;
     /* Each Source writer visits physical rows in ascending order. */
     int32_t previous = -1;
     for (;;) {
-        if (bytes.size - cursor < 4) { ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease .sv2 lacks its terminator"); break; }
-        int32_t index = qa_load_i32le(bytes.data + cursor); cursor += 4;
-        if (index == -1) break;
-        if (index < 0 || (uint32_t)index >= rows || index <= previous || cursor == bytes.size) {
+        size_t index_bytes = repro ? 2 : 4;
+        if (bytes.size - cursor < index_bytes) { ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease .sv2 lacks its terminator"); break; }
+        int32_t index = repro ? qa_load_u16le(bytes.data + cursor) : qa_load_i32le(bytes.data + cursor);
+        cursor += index_bytes;
+        if (index == (repro ? (int32_t)rows : -1)) break;
+        if (index < 0 || (uint32_t)index >= rows || (!repro && index <= previous) || cursor == bytes.size) {
             ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease config row leaves its physical table"); break;
         }
-        uint8_t size = bytes.data[cursor++];
-        if (size > width || size > bytes.size - cursor) {
-            ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease config row is truncated or too wide"); break;
+        qa_bytes text;
+        if (repro) {
+            if (!read_text(bytes, &cursor, &text, true, error)) { ok = false; break; }
+            size_t extent = width;
+            if ((uint32_t)index >= 5 && (uint32_t)index < layout.air_accelerate)
+                extent = (size_t)(layout.air_accelerate - (uint32_t)index) * width;
+            else if ((uint32_t)index >= layout.player_skins + 256)
+                extent = (size_t)(rows - (uint32_t)index) * width;
+            if (text.size >= extent) {
+                ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II SAV2 config string exceeds the original reader"); break;
+            }
+        } else {
+            uint8_t size = bytes.data[cursor++];
+            if (size > width || size > bytes.size - cursor) {
+                ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease config row is truncated or too wide"); break;
+            }
+            text = (qa_bytes){bytes.data + cursor, size}; cursor += size;
         }
-        memcpy(table.data + (size_t)index * width, bytes.data + cursor, size);
-        cursor += size; previous = index;
+        memcpy(table.data + (size_t)index * width, text.data, text.size);
+        if (repro) table.data[(size_t)index * width + text.size] = 0;
+        previous = index;
     }
     uint16_t portals = 0;
     if (ok) {
-        if (bytes.size - cursor < 2) ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease .sv2 lacks its portal count");
+        size_t count_bytes = repro ? 1 : 2;
+        if (bytes.size - cursor < count_bytes) ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease .sv2 lacks its portal count");
         else {
-            portals = qa_load_u16le(bytes.data + cursor); cursor += 2;
-            if (portals > QA_Q2_SAVE_AREA_PORTALS || bytes.size - cursor != portals)
+            portals = repro ? bytes.data[cursor] : qa_load_u16le(bytes.data + cursor); cursor += count_bytes;
+            if (portals > (repro ? QA_Q2_SAVE_AREA_PORTALS / 8 : QA_Q2_SAVE_AREA_PORTALS) || bytes.size - cursor != portals)
                 ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease portal bytes leave the loaded CM extent");
         }
     }
-    if (ok) ok = qa_q2_save_configstrings_capture(level, (qa_bytes){table.data, table.size}, error);
+    if (ok) ok = qa_q2_save_configstrings_capture(&format, (qa_bytes){table.data, table.size}, error);
     if (ok) {
-        memset(level->portal_open, 0, sizeof(level->portal_open));
-        for (uint16_t i = 0; i < portals; ++i) level->portal_open[i] = bytes.data[cursor + i];
-        level->portal_count = portals;
+        for (size_t i = 0; i < QA_Q2_SAVE_AREA_PORTALS; ++i)
+            format.portal_open[i] = repro ? (i < (size_t)portals * 8 ?
+                ((bytes.data[cursor + i / 8] >> (i & 7)) & 1) : 1) :
+                (i < portals ? bytes.data[cursor + i] : 0);
+        format.portal_count = repro ? portals * 8 : portals;
+        *level = format;
     }
     qa_buffer_free(&table); return ok;
 }
@@ -504,18 +584,20 @@ bool qa_q2_save_level_encode(const qa_q2_save_level *level, qa_buffer *out, qa_e
     if (!level || !out) return persistence_fail(error, QA_ERROR_ARGUMENT, "Quake II .sv2 requires its actual level owner");
     qa_buffer table = {0};
     if (!qa_q2_save_configstrings_expand(level, &table, error)) return false;
+    bool repro = level->file_signature == Q2_LEVEL_REPRO_SIGNATURE;
+    size_t portal_bytes = repro ? ((size_t)level->portal_count + 7) / 8 : level->portal_count;
     size_t size = Q2_LEVEL_BYTES;
     if (level->rerelease) {
         if (level->portal_count > QA_Q2_SAVE_AREA_PORTALS) {
             qa_buffer_free(&table); return persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease portals exceed CM capacity");
         }
-        size = 6 + level->portal_count;
+        size = (repro ? 11 : 6) + portal_bytes;
         uint32_t rows = qa_q2_save_configstring_count(level), width = qa_q2_save_configstring_width(level);
         for (uint32_t i = 0; i < rows; ++i) {
             const uint8_t *row = table.data + (size_t)i * width;
             if (!*row) continue;
             const uint8_t *end = memchr(row, 0, width);
-            size += 5 + (end ? (size_t)(end - row) : width);
+            size += (repro ? 3 : 5) + (end ? (size_t)(end - row) : width);
         }
     }
     qa_buffer bytes = {.data = malloc(size), .size = size};
@@ -526,18 +608,31 @@ bool qa_q2_save_level_encode(const qa_q2_save_level *level, qa_buffer *out, qa_e
             qa_store_u32le(bytes.data + Q2_LEVEL_STRINGS + i * 4, (uint32_t)level->portal_open[i]);
     } else {
         size_t cursor = 0;
+        if (repro) {
+            qa_store_u32le(bytes.data, Q2_LEVEL_REPRO_SIGNATURE); qa_store_u32le(bytes.data + 4, 1); cursor = 8;
+        }
         uint32_t rows = qa_q2_save_configstring_count(level), width = qa_q2_save_configstring_width(level);
         for (uint32_t i = 0; i < rows; ++i) {
             const uint8_t *row = table.data + (size_t)i * width;
             if (!*row) continue;
             const uint8_t *end = memchr(row, 0, width);
             size_t length = end ? (size_t)(end - row) : width;
-            qa_store_u32le(bytes.data + cursor, i); bytes.data[cursor + 4] = (uint8_t)length; cursor += 5;
+            if (repro) { qa_store_u16le(bytes.data + cursor, (uint16_t)i); cursor += 2; }
+            else { qa_store_u32le(bytes.data + cursor, i); bytes.data[cursor + 4] = (uint8_t)length; cursor += 5; }
             memcpy(bytes.data + cursor, row, length); cursor += length;
+            if (repro) bytes.data[cursor++] = 0;
         }
-        qa_store_u32le(bytes.data + cursor, UINT32_MAX); cursor += 4;
-        qa_store_u16le(bytes.data + cursor, level->portal_count); cursor += 2;
-        for (uint16_t i = 0; i < level->portal_count; ++i) bytes.data[cursor + i] = (uint8_t)level->portal_open[i];
+        if (repro) {
+            qa_store_u16le(bytes.data + cursor, (uint16_t)rows); cursor += 2;
+            bytes.data[cursor++] = (uint8_t)portal_bytes;
+            memset(bytes.data + cursor, 0, portal_bytes);
+            for (uint16_t i = 0; i < level->portal_count; ++i)
+                if (level->portal_open[i]) bytes.data[cursor + i / 8] |= (uint8_t)(1u << (i & 7));
+        } else {
+            qa_store_u32le(bytes.data + cursor, UINT32_MAX); cursor += 4;
+            qa_store_u16le(bytes.data + cursor, level->portal_count); cursor += 2;
+            for (uint16_t i = 0; i < level->portal_count; ++i) bytes.data[cursor + i] = (uint8_t)level->portal_open[i];
+        }
     }
     qa_buffer_free(&table); *out = bytes; return true;
 }
@@ -579,7 +674,9 @@ bool qa_q2_save_directory_read(qa_fs_root *root, const char *directory,
         if (!next) { ok = persistence_fail(error, QA_ERROR_MEMORY, "Retaining Quake II saved level"); break; }
         save->levels = next;
         qa_q2_save_level *level = next + save->level_count++;
-        *level = (qa_q2_save_level){.rerelease = save->server.rerelease}; memcpy(level->name, name, size + 1);
+        *level = (qa_q2_save_level){.rerelease = save->server.rerelease,
+            .file_signature = save->server.file_signature == Q2_SERVER_REPRO_SIGNATURE ? Q2_LEVEL_REPRO_SIGNATURE : 0};
+        memcpy(level->name, name, size + 1);
         qa_buffer engine = {0};
         ok = read_file(root, directory, name, ".sav", &level->game, error) &&
             read_file(root, directory, name, ".sv2", &engine, error) &&

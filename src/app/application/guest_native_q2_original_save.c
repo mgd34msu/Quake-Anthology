@@ -103,11 +103,15 @@ static bool capture_portals(qa_application *app,qa_q2_save_level *level,qa_error
     if (!qa_collision_capture_portals(app->geometry,&portals,error)) return false;
     bool ok=portals.family==QA_GAME_Q2 ||
         application_fail(error,QA_ERROR_ARGUMENT,"Original Q2 capture requires actual Q2 area portals");
+    level->portal_count=0;
     for (size_t i=0;ok && i<portals.portal_count;++i) {
         const qa_collision_saved_portal *row=portals.portals+i;
         if (row->portal>=QA_Q2_SAVE_AREA_PORTALS)
             ok=application_fail(error,QA_ERROR_UNSUPPORTED,"Q2 area portal exceeds the original engine file");
-        else level->portal_open[row->portal]=row->primary || row->contributions!=0;
+        else {
+            level->portal_open[row->portal]=row->primary || row->contributions!=0;
+            if (level->portal_count<=row->portal) level->portal_count=(uint16_t)(row->portal+1);
+        }
     }
     qa_collision_portal_checkpoint_free(&portals); return ok;
 }

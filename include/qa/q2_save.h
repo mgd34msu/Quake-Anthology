@@ -24,6 +24,8 @@ typedef struct qa_q2_save_cvar {
 } qa_q2_save_cvar;
 typedef struct qa_q2_save_server {
     bool rerelease, autosave;
+    uint32_t file_signature; /* Detected original container grammar; zero selects the session default. */
+    uint8_t save_kind;
     uint64_t timestamp; /* Original rerelease platform metadata, retained verbatim. */
     char comment[QA_Q2_SAVE_DESCRIPTION_CAPACITY];
     char map_command[QA_Q2_SAVE_MAP_COMMAND_CAPACITY];
@@ -45,6 +47,7 @@ typedef struct qa_q2_save_level {
     /* Opaque bytes produced and consumed by the actual GAME's Write/ReadLevel. */
     qa_buffer game;
     bool rerelease;
+    uint32_t file_signature;
     qa_q2_save_configstrings configstrings;
     uint16_t portal_count; /* Actual rerelease CM portal extent. */
     int32_t portal_open[QA_Q2_SAVE_AREA_PORTALS];
