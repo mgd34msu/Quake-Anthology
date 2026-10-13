@@ -462,6 +462,7 @@ struct q1_map_runtime {
 };
 
 bool q1_map_fail(qa_error *, const char *);
+bool q1_map_coop_inhibited(const qa_q1_game *, const q1_actor *, bool inhibit_coop);
 bool q1_map_storage_prepare(qa_q1_game *, qa_error *);
 q1_map_state *q1_map_storage_take(qa_q1_game *, qa_error *);
 q1_door_group *q1_door_group_take(qa_q1_game *, qa_error *);

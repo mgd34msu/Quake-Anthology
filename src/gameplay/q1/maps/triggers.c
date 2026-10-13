@@ -33,6 +33,10 @@ bool q1_map_trigger_init(qa_q1_game *g, q1_actor *entity, bool zero_direction, q
     entity->physics.motion = QA_PHYSICS_STATIONARY;
     return qa_world_body_write(g->services.world, id, &body, error);
 }
+bool q1_map_coop_inhibited(const qa_q1_game *g, const q1_actor *entity, bool inhibit_coop) {
+    return g->options.coop ? inhibit_coop && (entity->spawnflags & 131072u)
+                           : (entity->spawnflags & 32768u);
+}
 static bool remove_addon_trigger(qa_q1_game *g, q1_actor *entity) {
     if (!addon(g))
         return false;
@@ -43,8 +47,7 @@ static bool remove_addon_trigger(qa_q1_game *g, q1_actor *entity) {
     if (!filtered)
         return false;
     bool inhibit_coop = kind == Q1_MAP_MULTI || kind == Q1_MAP_RELAY;
-    if (g->options.coop ? inhibit_coop && (entity->spawnflags & 131072u)
-                        : (entity->spawnflags & 32768u))
+    if (q1_map_coop_inhibited(g, entity, inhibit_coop))
         return true;
     return g->options.program == QA_Q1_MG3 &&
            (entity->spawnflags & (262144u << qa_q1_mg3_rune_count(*g->maps->options.server_flags)));

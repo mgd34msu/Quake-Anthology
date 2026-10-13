@@ -201,8 +201,7 @@ static bool record_ready(const qa_qc_program *program,const qa_q1_save_record *r
         const qa_qc_definition *d=saved_definition(program,pair->key,entity,&angle,&local);
         if (!d) {
             if (local.code!=QA_OK) { if (error) *error=local;return false; }
-            qa_error_set(error,QA_ERROR_FORMAT,i,"Saved %s '%s' is absent from this original program",
-                entity?"field":"global",pair->key);return false;
+            continue;
         }
         if (d->type==QA_QC_FUNCTION && !qa_qc_program_find_function(program,pair->value,NULL))
             return qc_fail(error,QA_ERROR_FORMAT,i,"Saved function is absent from this original program");
@@ -217,19 +216,6 @@ bool qa_qc_text_program_ready(const qa_qc_program *program,const qa_q1_save_data
         qa_qc_program_describe(program).api!=QA_QC_API_NETQUAKE)
         return qc_fail(error,QA_ERROR_ARGUMENT,0,"Original save requires its actual NetQuake program");
     if (!record_ready(program,&save->globals,false,error)) return false;
-    qa_qc_program_info info=qa_qc_program_describe(program);
-    for (uint32_t i=0;i<info.global_count;++i) {
-        const qa_qc_definition *definition=qa_qc_program_global(program,i);
-        if (!definition->save || (definition->type!=QA_QC_STRING && definition->type!=QA_QC_FLOAT &&
-            definition->type!=QA_QC_ENTITY)) continue;
-        bool present=false;
-        for (size_t j=0;j<save->globals.count;++j)
-            if (!strcmp(save->globals.pairs[j].key,definition->name)) { present=true;break; }
-        if (!present) {
-            qa_error_set(error,QA_ERROR_FORMAT,i,"Original save lacks this program's saved global '%s'",definition->name);
-            return false;
-        }
-    }
     for (size_t i=0;i<save->entity_count;++i)
         if (!record_ready(program,save->entities+i,true,error)) return false;
     return true;

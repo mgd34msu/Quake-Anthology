@@ -267,8 +267,7 @@ bool q1_map_addon_effect_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
     q1_map_kind kind = e->map->kind;
     bool coop_filter = kind == Q1_MAP_ADDON_SHAKE || kind == Q1_MAP_ADDON_FADE_TRIGGER ||
                        kind == Q1_MAP_ADDON_FREEZE;
-    if (coop_filter && !g->options.coop &&
-        (e->spawnflags & (g->options.program == QA_Q1_MG3 ? 131072u : 32768u)))
+    if (coop_filter && q1_map_coop_inhibited(g, e, true))
         return q1_remove(g, e, error);
     e->map->use_enabled = true;
     if (kind == Q1_MAP_ADDON_SHAKE) {

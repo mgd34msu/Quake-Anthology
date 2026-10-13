@@ -218,8 +218,10 @@ bool q1_monster_find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error
     if (g->options.edition == QA_Q1_RERELEASE && !mg3)
         angles.x = -angles.x;
     qa_angle_vectors(angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
-    bool front = qa_vec_dot(qa_vec_normalize(delta), g->forward) >
-                 (mg3 && (entity->spawnflags & 8192) ? 0.866f : 0.3f);
+    float facing = qa_vec_dot(qa_vec_normalize(delta), g->forward);
+    float threshold = mg3 && (entity->spawnflags & 8192) ? 0.866f : 0.3f;
+    bool front = facing > threshold || (mg3 && entity->classname ==
+        g->runtime_names[Q1_NAME_MONSTER_ORB] && -facing > threshold);
     if ((category == 2 && !front) ||
         (category == 1 && observation.hostile_until < g->time && !front))
         return true;
