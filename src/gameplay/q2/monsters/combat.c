@@ -3016,7 +3016,8 @@ bool q2m_die(q2m_context *context, qa_error *error) {
   }
   if (!q2m_damageable(context, damageable_corpse, error) ||
       (sound != Q2_NAME_NONE && !q2m_sound(context, sound, 2,
-                                          species == Q2M_INSANE ? 2.0f : 1.0f, error)) ||
+                                          species == Q2M_INSANE ? 2.0f :
+                                          species == Q2M_MAKRON ? 0.0f : 1.0f, error)) ||
       !q2m_emit(context, QA_BUILTIN_DEATH, Q2_NAME_NONE, 0, context->body.origin,
                 context->body.origin, monster->pending_damage, error))
     return false;
