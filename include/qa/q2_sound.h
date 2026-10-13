@@ -13,6 +13,28 @@
 #define QA_Q2_SOUND__GURP2 "*gurp2.wav"
 #define QA_Q2_SOUND__JUMP1 "*jump1.wav"
 #define QA_Q2_SOUND_PLAYER_MALE_JUMP1 "player/male/jump1.wav"
+#define QA_Q2_SOUND_FLYER_FLYSRCH1 "flyer/flysrch1.wav"
+#define QA_Q2_SOUND_FLOATER_FLTIDLE1 "floater/fltidle1.wav"
+#define QA_Q2_SOUND_TANK_TNKIDLE1 "tank/tnkidle1.wav"
+#define QA_Q2_SOUND_GLADIATOR_GLDIDLE1 "gladiator/gldidle1.wav"
+#define QA_Q2_SOUND_GLADIATOR_GLDSRCH1 "gladiator/gldsrch1.wav"
+#define QA_Q2_SOUND_MUTANT_MUTIDLE1 "mutant/mutidle1.wav"
+#define QA_Q2_SOUND_MUTANT_MUTSRCH1 "mutant/mutsrch1.wav"
+#define QA_Q2_SOUND_BRAIN_BRNSRCH1 "brain/brnsrch1.wav"
+#define QA_Q2_SOUND_BERSERK_BERSRCH1 "berserk/bersrch1.wav"
+#define QA_Q2_SOUND_BERSERK_IDLE "berserk/idle.wav"
+#define QA_Q2_SOUND_GUNNER_GUNSRCH1 "gunner/gunsrch1.wav"
+#define QA_Q2_SOUND_HOVER_HOVSRCH1 "hover/hovsrch1.wav"
+#define QA_Q2_SOUND_HOVER_HOVSRCH2 "hover/hovsrch2.wav"
+#define QA_Q2_SOUND_DAEDALUS_DAEDSRCH1 "daedalus/daedsrch1.wav"
+#define QA_Q2_SOUND_DAEDALUS_DAEDSRCH2 "daedalus/daedsrch2.wav"
+#define QA_Q2_SOUND_BOSS3_BS3SRCH1 "boss3/bs3srch1.wav"
+#define QA_Q2_SOUND_BOSS3_BS3SRCH2 "boss3/bs3srch2.wav"
+#define QA_Q2_SOUND_BOSS3_BS3SRCH3 "boss3/bs3srch3.wav"
+#define QA_Q2_SOUND_BOSSHOVR_BHVUNQV1 "bosshovr/bhvunqv1.wav"
+#define QA_Q2_SOUND_BOSSTANK_BTKUNQV1 "bosstank/btkunqv1.wav"
+#define QA_Q2_SOUND_BOSSTANK_BTKUNQV2 "bosstank/btkunqv2.wav"
+#define QA_Q2_SOUND_GUNCMDR_GCDRSRCH1 "guncmdr/gcdrsrch1.wav"
 #define QA_Q2_SOUND__PAIN100_1 "*pain100_1.wav"
 #define QA_Q2_SOUND__PAIN100_2 "*pain100_2.wav"
 #define QA_Q2_SOUND__PAIN25_1 "*pain25_1.wav"
@@ -903,7 +925,29 @@
     X(MAKRON_SPINE) \
     X(MISC_TALK) \
     X(MISC_TRIGGER1) \
-    X(PLAYER_MALE_JUMP1)
+    X(PLAYER_MALE_JUMP1) \
+    X(FLYER_FLYSRCH1) \
+    X(FLOATER_FLTIDLE1) \
+    X(TANK_TNKIDLE1) \
+    X(GLADIATOR_GLDIDLE1) \
+    X(GLADIATOR_GLDSRCH1) \
+    X(MUTANT_MUTIDLE1) \
+    X(MUTANT_MUTSRCH1) \
+    X(BRAIN_BRNSRCH1) \
+    X(BERSERK_BERSRCH1) \
+    X(BERSERK_IDLE) \
+    X(GUNNER_GUNSRCH1) \
+    X(HOVER_HOVSRCH1) \
+    X(HOVER_HOVSRCH2) \
+    X(DAEDALUS_DAEDSRCH1) \
+    X(DAEDALUS_DAEDSRCH2) \
+    X(BOSS3_BS3SRCH1) \
+    X(BOSS3_BS3SRCH2) \
+    X(BOSS3_BS3SRCH3) \
+    X(BOSSHOVR_BHVUNQV1) \
+    X(BOSSTANK_BTKUNQV1) \
+    X(BOSSTANK_BTKUNQV2) \
+    X(GUNCMDR_GCDRSRCH1)
 
 typedef enum qa_q2_sound_index {
     QA_Q2_SFX_NONE,

@@ -282,7 +282,7 @@ typedef struct q2m_definition {
   q2m_move_id attack_move, attack2_move, melee_move;
   q2m_move_id pain1_move, pain2_move, pain3_move;
   q2m_move_id death1_move, death2_move;
-  q2_runtime_name sight_sound, pain_sound, death_sound, idle_sound;
+  q2_runtime_name sight_sound, pain_sound, death_sound;
 } q2m_definition;
 
 typedef struct q2m_sound_target {

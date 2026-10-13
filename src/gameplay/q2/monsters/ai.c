@@ -3613,6 +3613,148 @@ static bool prone_shot(q2m_context *context, bool *eligible, qa_error *error) {
   return true;
 }
 
+static bool idle_search(q2m_context *context, bool search, qa_error *error) {
+  struct qa_q2_monster *monster = context->monster;
+  q2m_species species = monster->definition->species;
+  q2_runtime_name sound = 0, alternate = 0, third = 0;
+  q2m_move_id move = Q2M_MOVE_NONE;
+  q2m_callback_id callback = Q2M_CALLBACK_NONE;
+  int channel = 2;
+  float attenuation = search ? 1.0f : 2.0f;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+
+  switch (species) {
+  case Q2M_INFANTRY:
+    if (!search) {
+      sound = QA_Q2_SFX_INFANTRY_INFIDLE1;
+      move = Q2M_MOVE_infantry_move_fidget;
+    }
+    break;
+  case Q2M_FLYER:
+  case Q2M_KAMIKAZE:
+    if (!search) sound = QA_Q2_SFX_FLYER_FLYSRCH1;
+    break;
+  case Q2M_FLOATER:
+    if (!search) sound = QA_Q2_SFX_FLOATER_FLTIDLE1;
+    break;
+  case Q2M_TANK:
+  case Q2M_TANK_COMMANDER:
+    if (!search) sound = QA_Q2_SFX_TANK_TNKIDLE1;
+    break;
+  case Q2M_GLADIATOR:
+  case Q2M_GLADB:
+    sound = search ? QA_Q2_SFX_GLADIATOR_GLDSRCH1 : QA_Q2_SFX_GLADIATOR_GLDIDLE1;
+    break;
+  case Q2M_MUTANT:
+    sound = search ? QA_Q2_SFX_MUTANT_MUTSRCH1 : QA_Q2_SFX_MUTANT_MUTIDLE1;
+    if (!search) move = Q2M_MOVE_mutant_move_idle;
+    break;
+  case Q2M_PARASITE:
+    if (!search) move = Q2M_MOVE_parasite_move_start_fidget;
+    break;
+  case Q2M_BRAIN:
+    sound = search ? QA_Q2_SFX_BRAIN_BRNSRCH1 : QA_Q2_SFX_BRAIN_BRNLENS1;
+    if (!search) {
+      channel = 0;
+      move = Q2M_MOVE_brain_move_idle;
+    }
+    break;
+  case Q2M_MEDIC:
+  case Q2M_MEDIC_COMMANDER:
+    callback = search ? Q2M_CALLBACK_medic_search : Q2M_CALLBACK_medic_idle;
+    break;
+  case Q2M_BERSERK:
+    if (search) {
+      sound = QA_Q2_SFX_BERSERK_BERSRCH1;
+      if (rerelease) alternate = QA_Q2_SFX_BERSERK_IDLE;
+    }
+    break;
+  case Q2M_GUNNER:
+    if (search) sound = QA_Q2_SFX_GUNNER_GUNSRCH1;
+    break;
+  case Q2M_GUN_COMMANDER:
+    if (search) sound = QA_Q2_SFX_GUNCMDR_GCDRSRCH1;
+    break;
+  case Q2M_HOVER:
+  case Q2M_DAEDALUS:
+    if (search) {
+      bool daedalus = (rerelease || context->game->options.product == QA_Q2_ROGUE) &&
+                      context->combat.mass >= 225;
+      sound = daedalus ? QA_Q2_SFX_DAEDALUS_DAEDSRCH1 : QA_Q2_SFX_HOVER_HOVSRCH1;
+      alternate = daedalus ? QA_Q2_SFX_DAEDALUS_DAEDSRCH2 : QA_Q2_SFX_HOVER_HOVSRCH2;
+    }
+    break;
+  case Q2M_JORG:
+    if (search) {
+      sound = QA_Q2_SFX_BOSS3_BS3SRCH1;
+      alternate = QA_Q2_SFX_BOSS3_BS3SRCH2;
+      third = QA_Q2_SFX_BOSS3_BS3SRCH3;
+    }
+    break;
+  case Q2M_BOSS2:
+    if (search) {
+      sound = QA_Q2_SFX_BOSSHOVR_BHVUNQV1;
+      attenuation = 0;
+    }
+    break;
+  case Q2M_SUPERTANK:
+  case Q2M_BOSS5:
+    if (search) {
+      sound = QA_Q2_SFX_BOSSTANK_BTKUNQV1;
+      alternate = QA_Q2_SFX_BOSSTANK_BTKUNQV2;
+    }
+    break;
+  default:
+    break;
+  }
+  if ((!sound && move == Q2M_MOVE_NONE && callback == Q2M_CALLBACK_NONE) ||
+      (!search && (monster->spawnflags & 1u)) ||
+      context->game->now_ns <= monster->idle_ns)
+    return true;
+
+  bool play = monster->idle_ns != 0;
+  if (play && !(species == Q2M_INFANTRY && rerelease && monster->enemy.registry)) {
+    if (callback != Q2M_CALLBACK_NONE) {
+      if (!q2m_callback_run(context, callback, error))
+        return false;
+    } else {
+      if (third) {
+        float choice = q2m_random(context->game);
+        if (choice > 0.6f) sound = third;
+        else if (choice > 0.3f) sound = alternate;
+      } else if (alternate) {
+        if (species == Q2M_BERSERK ? q2_random_bounded(context->game, 2) == 0
+                                  : q2m_random(context->game) >= 0.5f)
+          sound = alternate;
+      } else if (species == Q2M_BOSS2 && q2m_random(context->game) >= 0.5f) {
+        sound = 0;
+      }
+      if (move != Q2M_MOVE_NONE && species != Q2M_BRAIN) {
+        if (!q2m_set_move(context, move, false, error))
+          return false;
+        if (!q2m_alive(context))
+          return true;
+      }
+      if (sound && !q2m_sound(context, sound, channel, attenuation, error))
+        return false;
+      if (!q2m_alive(context))
+        return true;
+      if (move != Q2M_MOVE_NONE && species == Q2M_BRAIN &&
+          !q2m_set_move(context, move, false, error))
+        return false;
+    }
+  }
+  if (q2m_alive(context)) {
+    double delay = rerelease
+                       ? (double)q2_rerelease_time_ms(context->game,
+                                                     play ? 15000 : 0,
+                                                     play ? 30000 : 15000) / 1000.0
+                       : (play ? 15.0 : 0.0) + q2m_random(context->game) * 15.0;
+    monster->idle_ns = q2m_after(context->game->now_ns, delay);
+  }
+  return true;
+}
+
 bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind,
                 float distance, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
@@ -3653,52 +3795,7 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind,
       return true;
     if (context->game->now_ns > monster->pause_ns)
       return q2m_set_move(context, monster->definition->walk_move, false, error);
-    bool infantry = monster->definition->species == Q2M_INFANTRY;
-    if ((monster->definition->idle_sound || infantry) &&
-        !(monster->spawnflags & 1u) &&
-        context->game->now_ns > monster->idle_ns) {
-      bool play = monster->idle_ns != 0;
-      if (play) {
-        if (infantry) {
-          if (context->game->options.rules == QA_RULESET_Q2_CLASSIC ||
-              !monster->enemy.registry) {
-            if (!q2m_set_move(context, Q2M_MOVE_infantry_move_fidget, false, error))
-              return false;
-            if (!q2m_alive(context))
-              return true;
-            if (!q2m_sound(context, QA_Q2_SFX_INFANTRY_INFIDLE1, 2, 2.0f, error))
-              return false;
-          }
-        } else if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
-                   monster->definition->species == Q2M_BRAIN) {
-          if (!q2m_sound(context, monster->definition->idle_sound, 0, 2.0f, error))
-            return false;
-          if (!q2m_alive(context))
-            return true;
-          if (!q2m_set_move(context, Q2M_MOVE_brain_move_idle, false, error))
-            return false;
-        } else {
-          bool handled;
-          if (!q2m_medic_callback(context, Q2M_CALLBACK_medic_idle, &handled, error))
-            return false;
-          if (!q2m_alive(context))
-            return true;
-          if (!handled && !q2m_sound(context, monster->definition->idle_sound, 2, 2.0f, error))
-            return false;
-        }
-      }
-      if (q2m_alive(context)) {
-        double delay = context->game->options.rules == QA_RULESET_Q2_RERELEASE
-                           ? (double)q2_rerelease_time_ms(context->game,
-                                                         play ? 15000 : 0,
-                                                         play ? 30000 : 15000) /
-                                 1000.0
-                           : (play ? 15.0 : 0.0) +
-                                 q2m_random(context->game) * 15.0;
-        monster->idle_ns = q2m_after(context->game->now_ns, delay);
-      }
-    }
-    return true;
+    return idle_search(context, false, error);
   }
   case Q2M_AI_WALK: {
     if (!q2m_move_to_goal(context, distance, error))
@@ -3710,17 +3807,7 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind,
       return false;
     if (!q2m_alive(context) || found)
       return true;
-    bool medic = monster->definition->species == Q2M_MEDIC ||
-                 monster->definition->species == Q2M_MEDIC_COMMANDER;
-    if (medic && context->game->now_ns > monster->idle_ns) {
-      bool play = monster->idle_ns != 0, handled;
-      if (play && !q2m_medic_callback(context, Q2M_CALLBACK_medic_search, &handled, error))
-        return false;
-      if (q2m_alive(context))
-        monster->idle_ns = q2m_after(context->game->now_ns,
-            (play ? 15.0 : 0.0) + q2m_random(context->game) * 15.0);
-    }
-    return true;
+    return idle_search(context, true, error);
   }
   case Q2M_AI_RUN: {
     if (monster->combat_point)
