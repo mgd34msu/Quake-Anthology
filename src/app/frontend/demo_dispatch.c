@@ -29,7 +29,7 @@ struct frontend_demo_dispatch {
     char *completion;
 };
 static const char *const demo_commands[]={"playdemo","demo","demomap","timedemo","stopdemo",
-    "record","rerecord","stop","stoprecord","serverrecord","serverstop","mvdrecord","mvdstop","startdemos","demos"};
+    "record","rerecord","stop","stoprecord","serverrecord","serverstop","mvdrecord","mvdstop","startdemos","demos","demopause"};
 static bool registered_command(void *,const qa_command_invocation *,qa_error *);
 static bool completing(void *,const qa_command_context *,frontend_demo_format,frontend_demo_end,bool,qa_error *);
 static bool completed(void *,const qa_command_context *,frontend_demo_format,frontend_demo_end,bool,qa_error *);
@@ -228,7 +228,18 @@ bool frontend_demo_dispatch_command(frontend_demo_dispatch *d,const qa_command_i
     if(call->context.origin==QA_COMMAND_REMOTE) {
         frontend_console_print(d->frontend,&call->context,"Demo recording and playback are local client commands.\n");return true;
     }
-    if(kind>=13)return attract_command(d,call,kind==13,error);
+    if(kind==15) {
+        if(call->argc!=1) {
+            frontend_console_print(d->frontend,&call->context,"Usage: demopause\n");return true;
+        }
+        if(!frontend_demo_playback_path(d->service)) {
+            frontend_console_print(d->frontend,&call->context,"Demo pause requires active playback.\n");return true;
+        }
+        frontend_demo_request request={.action=FRONTEND_DEMO_PAUSE,.source=call->context,
+            .fallback=format,.time_ns=d->frontend->time_ns};
+        return frontend_demo_dispatch_stage(d,&request,error);
+    }
+    if(kind==13||kind==14)return attract_command(d,call,kind==13,error);
     frontend_demo_action action=kind<=3?FRONTEND_DEMO_PLAY:kind==4?FRONTEND_DEMO_STOP_PLAY:
         kind==5?FRONTEND_DEMO_RECORD:kind==6?FRONTEND_DEMO_RERECORD:
         kind<=8?FRONTEND_DEMO_STOP_RECORD:kind==9?FRONTEND_DEMO_SERVER_RECORD:
@@ -328,7 +339,7 @@ bool frontend_demo_dispatch_execute(frontend_demo_dispatch *d,qa_error *error) {
     return false;
 }
 bool frontend_demo_dispatch_advance(frontend_demo_dispatch *d,uint64_t elapsed,uint64_t frame,qa_error *error) {
-    return !d||frontend_demo_advance(d->service,elapsed,frame,error);
+    return !d||frontend_demo_advance(d->service,elapsed,d->frontend->time_ns,frame,error);
 }
 bool frontend_demo_dispatch_publish(frontend_demo_dispatch *d,qa_error *error) {
     return !d||frontend_demo_publish(d->service,error);
