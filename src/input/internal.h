@@ -31,6 +31,7 @@ struct qa_input_release {
     size_t held_count;
     release_record *records;
     size_t count, cursor;
+    release_record *staging;
     release_record *reserved;
     size_t reserved_first, reserved_count;
     double time_ms;
@@ -53,6 +54,7 @@ typedef struct qa_input_recipient_handoff {
 } qa_input_recipient_handoff;
 struct qa_input_seat {
     struct qa_input_release *release;
+    qa_arena release_storage;
     qa_input_recipient_handoff *recipient_pending, *recipient_retired;
     qa_input_seat_options options;
     qa_input_button buttons[QA_INPUT_ACTION_COUNT];
@@ -81,6 +83,9 @@ struct qa_input_seat {
 };
 bool qa_input_release_action_access(const qa_input_seat *, qa_error *);
 bool qa_input_release_mutation_access(const qa_input_seat *, qa_error *);
+qa_input_release *qa_input_release_storage_create(qa_input_seat *, qa_error *);
+bool qa_input_release_storage_prepare(qa_input_release *, size_t key_count, qa_error *);
+void qa_input_release_storage_discard(qa_input_seat *);
 bool qa_input_binding_release_text(qa_input_seat *, const qa_held_binding *, double,
     const char **, qa_error *);
 bool qa_input_reserve(void **, size_t *capacity, size_t needed, size_t stride, qa_error *);

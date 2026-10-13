@@ -53,9 +53,48 @@ bool qa_input_release_action_access(const qa_input_seat *seat,qa_error *error)
         qa_console_release_active(owner->records[owner->cursor].program)) return true;
     return fail(error,"input action is retained by its source release");
 }
+qa_input_release *qa_input_release_storage_create(qa_input_seat *seat,qa_error *error)
+{
+    qa_input_release *owner=qa_arena_alloc(&seat->release_storage,sizeof(*owner),
+        _Alignof(qa_input_release),error);
+    if (owner) { memset(owner,0,sizeof(*owner)); owner->seat=seat; }
+    return owner;
+}
+bool qa_input_release_storage_prepare(qa_input_release *owner,size_t key_count,qa_error *error)
+{
+    size_t held_count=owner->seat->held_count;
+    if (key_count>SIZE_MAX/sizeof(*owner->keys) ||
+        held_count>SIZE_MAX/sizeof(*owner->snapshot) ||
+        held_count>SIZE_MAX/sizeof(*owner->records)) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"Input release storage exceeds address space");
+        return false;
+    }
+    qa_arena *storage=&owner->seat->release_storage;
+    owner->keys=key_count?qa_arena_alloc(storage,key_count*sizeof(*owner->keys),_Alignof(int),error):NULL;
+    owner->snapshot=held_count?qa_arena_alloc(storage,held_count*sizeof(*owner->snapshot),
+        _Alignof(qa_held_binding),error):NULL;
+    owner->records=held_count?qa_arena_alloc(storage,held_count*sizeof(*owner->records),
+        _Alignof(release_record),error):NULL;
+    owner->staging=held_count?qa_arena_alloc(storage,held_count*sizeof(*owner->staging),
+        _Alignof(release_record),error):NULL;
+    if ((key_count && !owner->keys) ||
+        (held_count && (!owner->snapshot || !owner->records || !owner->staging))) return false;
+    if (held_count) {
+        memcpy(owner->snapshot,owner->seat->held,held_count*sizeof(*owner->snapshot));
+        memset(owner->records,0,held_count*sizeof(*owner->records));
+        memset(owner->staging,0,held_count*sizeof(*owner->staging));
+    }
+    owner->held_count=held_count;
+    return true;
+}
+void qa_input_release_storage_discard(qa_input_seat *seat)
+{
+    seat->release=NULL;
+    qa_arena_reset(&seat->release_storage);
+}
 static void storage_free(qa_input_release *owner)
 {
-    free(owner->keys); free(owner->snapshot); free(owner->records); free(owner->reserved); free(owner);
+    qa_input_release_storage_discard(owner->seat);
 }
 static void reserved_discard(qa_input_release *owner)
 {
@@ -64,7 +103,7 @@ static void reserved_discard(qa_input_release *owner)
             qa_console_release_outcome result;
             qa_console_release_abort(owner->reserved[i].program,&result,NULL);
         }
-    free(owner->reserved); owner->reserved=NULL;
+    owner->reserved=NULL;
     owner->reserved_first=owner->reserved_count=0; owner->all_reserved=false;
 }
 static bool prepare(qa_input_seat *seat,const qa_input_release_scope *scope,
@@ -76,18 +115,12 @@ static bool prepare(qa_input_seat *seat,const qa_input_release_scope *scope,
         return fail(error,"source release preparation requires its returned actual input seat and scope");
     if (seat->held_count>SIZE_MAX/sizeof(qa_held_binding) || seat->held_count>SIZE_MAX/sizeof(release_record))
         return fail(error,"source release held records exceed address space");
-    qa_input_release *owner=calloc(1,sizeof(*owner));
-    if (!owner) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating prepared input release"); return false; }
+    qa_input_release *owner=qa_input_release_storage_create(seat,error);
+    if (!owner) return false;
     owner->seat=seat; owner->scope=*scope; owner->time_ms=time; owner->held_count=seat->held_count;
-    owner->keys=scope->key_count?malloc(scope->key_count*sizeof(*owner->keys)):NULL;
-    owner->snapshot=seat->held_count?malloc(seat->held_count*sizeof(*owner->snapshot)):NULL;
-    owner->records=seat->held_count?calloc(seat->held_count,sizeof(*owner->records)):NULL;
-    if ((scope->key_count && !owner->keys) || (seat->held_count && (!owner->snapshot || !owner->records))) {
-        storage_free(owner); qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining physical source release requirements"); return false;
-    }
+    if (!qa_input_release_storage_prepare(owner,scope->key_count,error)) { storage_free(owner); return false; }
     if (scope->key_count) memcpy(owner->keys,scope->keys,scope->key_count*sizeof(*owner->keys));
     owner->scope.keys=owner->keys;
-    if (seat->held_count) memcpy(owner->snapshot,seat->held,seat->held_count*sizeof(*owner->snapshot));
     bool ok=true;
     for (size_t i=0;ok && i<seat->held_count;++i) {
         const qa_held_binding *held=&seat->held[i];
@@ -234,10 +267,8 @@ bool qa_input_release_reserve_all(qa_input_release *owner,const qa_console_relea
     if (!qa_input_seat_context_ready(owner->seat,&owner->seat->options.context,error)) return false;
     if (!parent) parent=qa_input_release_program_parent(owner);
     if (parent && !qa_console_release_parent_ready(parent,owner->seat->options.console,error)) return false;
-    release_record *records=owner->held_count?calloc(owner->held_count,sizeof(*records)):NULL;
-    if (owner->held_count && !records) {
-        qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining dormant ALL source history"); return false;
-    }
+    release_record *records=owner->staging;
+    if (owner->held_count) memset(records,0,owner->held_count*sizeof(*records));
     size_t count=owner->count; bool ok=true;
     for (size_t i=0;ok && i<owner->held_count;++i) {
         const qa_held_binding *held=&owner->snapshot[i];
@@ -259,7 +290,7 @@ bool qa_input_release_reserve_all(qa_input_release *owner,const qa_console_relea
         for (size_t i=owner->count;i<count;++i) if (records[i].program) {
             qa_console_release_outcome result; qa_console_release_abort(records[i].program,&result,NULL);
         }
-        free(records); return false;
+        return false;
     }
     owner->reserved=records; owner->reserved_first=owner->count; owner->reserved_count=count;
     owner->all_reserved=true; return true;
@@ -298,11 +329,12 @@ void qa_input_release_reserved_retirement_publish(qa_input_release *owner,double
 {
     if (!owner->scope.all) {
         if (owner->count) memcpy(owner->reserved,owner->records,owner->count*sizeof(*owner->records));
-        free(owner->records); owner->records=owner->reserved; owner->reserved=NULL;
+        release_record *previous=owner->records;
+        owner->records=owner->reserved; owner->staging=previous; owner->reserved=NULL;
         owner->count=owner->reserved_count; owner->reserved_first=owner->reserved_count=0;
     }
     owner->all_reserved=false;
-    free(owner->keys); owner->keys=NULL;
+    owner->keys=NULL;
     owner->scope=(qa_input_release_scope){.all=true,.controller=-1};
     owner->time_ms=time;
     owner->complete=false; owner->metadata_entered=false;
@@ -330,10 +362,8 @@ bool qa_input_release_extend_all(qa_input_release *owner,double time,
         return fail(error,"Dormant ALL history requires its separate retirement admission");
     if (!qa_input_seat_context_ready(owner->seat,&owner->seat->options.context,error)) return false;
     size_t available=owner->held_count-owner->count,count=0;
-    release_record *added=available?calloc(available,sizeof(*added)):NULL;
-    if (available && !added) {
-        qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining uncovered final input releases"); return false;
-    }
+    release_record *added=owner->staging;
+    if (available) memset(added,0,available*sizeof(*added));
     bool ok=true;
     if (!parent) parent=qa_input_release_program_parent(owner);
     for (size_t i=0;ok && i<owner->held_count;++i) {
@@ -355,10 +385,10 @@ bool qa_input_release_extend_all(qa_input_release *owner,double time,
             qa_console_release_outcome result;
             qa_console_release_abort(added[i].program,&result,NULL);
         }
-        free(added); return false;
+        return false;
     }
     if (count) memcpy(owner->records+owner->count,added,count*sizeof(*added));
-    free(added); owner->count+=count;
+    owner->count+=count;
     owner->scope.all=true; owner->time_ms=time;
     owner->complete=false; owner->metadata_entered=false;
     return true;

@@ -254,20 +254,13 @@ static bool recipient_handoffs(qa_source_save_io *io,qa_input_seat *seat,const q
     }
     return true;
 }
-static void release_storage_discard(qa_input_seat *seat)
-{
-    qa_input_release *owner=seat->release;
-    if (!owner) return;
-    free(owner->keys); free(owner->snapshot); free(owner->records); free(owner->reserved); free(owner);
-    seat->release=NULL;
-}
 static bool release_fields(qa_source_save_io *io,qa_input_seat *seat)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ,present=seat->release!=NULL;
     if (!qa_source_save_bool(io,&present) || !present) return !io->failed;
     if (reading) {
-        if (!allocate(io,(void **)&seat->release,1,sizeof(*seat->release))) return false;
-        seat->release->seat=seat;
+        seat->release=qa_input_release_storage_create(seat,io->error);
+        if (!seat->release) return false;
     }
     qa_input_release *owner=seat->release;
     if (!owner || owner->seat!=seat || owner->advancing || (!owner->scope.all && !reading) ||
@@ -278,7 +271,7 @@ static bool release_fields(qa_source_save_io *io,qa_input_seat *seat)
         !qa_source_save_i32(io,&owner->scope.controller) || owner->scope.controller<-1 ||
         !qa_source_save_count(io,&owner->scope.key_count,reading?io->input.size/4:SIZE_MAX/sizeof(int))) return false;
     owner->scope.all=all;
-    if (reading && !allocate(io,(void **)&owner->keys,owner->scope.key_count,sizeof(*owner->keys))) return false;
+    if (reading && !qa_input_release_storage_prepare(owner,owner->scope.key_count,io->error)) return false;
     for (size_t i=0;i<owner->scope.key_count;++i) {
         int32_t key=reading?0:owner->scope.keys[i];
         if (!qa_source_save_i32(io,&key) || key<0 || key>UINT16_MAX) return false;
@@ -302,11 +295,6 @@ static bool release_fields(qa_source_save_io *io,qa_input_seat *seat)
         !qa_source_save_bytes(io,owner->fault.message,message) || memchr(owner->fault.message,0,message) ||
         (!fault && (message || owner->fault.offset)) || (fault && !owner->entered)) return false;
     owner->fault.code=(qa_status)fault; owner->fault.message[message]=0;
-    if (reading) {
-        if (!allocate(io,(void **)&owner->snapshot,owner->held_count,sizeof(*owner->snapshot)) ||
-            !allocate(io,(void **)&owner->records,owner->count,sizeof(*owner->records))) return false;
-        if (owner->held_count) memcpy(owner->snapshot,seat->held,owner->held_count*sizeof(*owner->snapshot));
-    }
     for (size_t i=0;i<owner->held_count;++i)
         if (!qa_input_physical_equal(owner->snapshot[i].input,seat->held[i].input) ||
             owner->snapshot[i].binding!=seat->held[i].binding) return false;
@@ -402,7 +390,7 @@ bool qa_input_seat_restore(qa_input_seat *seat, qa_bytes bytes, const qa_input_c
         qa_input_seat old=*seat; *seat=*saved; *saved=old;
         seat->binding_revision = revision;
         if (seat->release) seat->release->seat=seat;
-    } else release_storage_discard(saved);
+    } else qa_input_release_storage_discard(saved);
     qa_input_seat_destroy(saved); qa_source_save_dispose(&io);
     if (!ok && error && error->code==QA_OK) fail(error,"Invalid or unqualified retained input seat");
     return ok;

@@ -193,6 +193,7 @@ void qa_input_seat_destroy(qa_input_seat *s) {
     for (size_t i = 0; i < QA_INPUT_ACTION_COUNT; ++i)
         qa_input_button_destroy(&s->buttons[i]);
     qa_strings_destroy(s->command_sources);
+    qa_arena_destroy(&s->release_storage);
     free(s->bindings);
     qa_arena_destroy(&s->held_storage);
     free(s->ui);
