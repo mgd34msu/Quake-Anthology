@@ -2549,6 +2549,32 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
     break;
   case Q2M_INFANTRY:
   case Q2M_TURRET_DRIVER:
+    if (rerelease && species == Q2M_INFANTRY) {
+      monster->dodging = false;
+      if (monster->attack_state == Q2M_SLIDING)
+        monster->attack_state = Q2M_STRAIGHT;
+      *move = Q2M_MOVE_NONE;
+      if (distance <= 20.0f && monster->melee_ns <= context->game->now_ns) {
+        *move = Q2M_MOVE_infantry_move_attack2;
+      } else {
+        bool clear;
+        if (!q2m_clear_flash_shot(context, 26, &clear, error))
+          return false;
+        if (!q2m_alive(context))
+          return true;
+        if (clear) {
+          if (monster->cocked) {
+            *move = Q2M_MOVE_infantry_move_attack1;
+          } else {
+            *move = q2_rerelease_float(context->game, 0, 1) <= 0.1f
+                        ? Q2M_MOVE_infantry_move_attack5
+                        : Q2M_MOVE_infantry_move_attack3;
+            monster->next_frame = 244;
+          }
+        }
+      }
+      break;
+    }
     if (melee ||
         distance <
             (context->game->options.rules == QA_RULESET_Q2_CLASSIC ? 80.0f : 20.0f)) {
@@ -2559,6 +2585,39 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
                                                 : Q2M_MOVE_infantry_move_attack3;
     } else {
       *move = Q2M_MOVE_infantry_move_attack1;
+    }
+    break;
+  case Q2M_CHICK:
+  case Q2M_CHICK_HEAT:
+    if (rerelease && !melee) {
+      bool clear;
+      if (!q2m_clear_flash_shot(context, 57, &clear, error))
+        return false;
+      if (!q2m_alive(context))
+        return true;
+      if (!clear) {
+        *move = Q2M_MOVE_NONE;
+        break;
+      }
+      monster->dodging = false;
+      if (monster->attack_state == Q2M_SLIDING)
+        monster->attack_state = Q2M_STRAIGHT;
+      if (blind) {
+        float chance = monster->blind_fire_delay < 1.0f ? 1.0f
+                       : monster->blind_fire_delay < 7.5f ? 0.4f : 0.1f;
+        random = q2_rerelease_float(context->game, 0, 1);
+        monster->blind_fire_delay +=
+            (float)q2_rerelease_time_ms(context->game, 5500, 6500) / 1000.0f;
+        if (qa_vec_equal(monster->blind_fire_target, qa_v3(0, 0, 0)) ||
+            random > chance) {
+          *move = Q2M_MOVE_NONE;
+          break;
+        }
+        monster->manual_steering = true;
+        monster->attack_ns = q2m_after(context->game->now_ns,
+            (double)q2_rerelease_time_ms(context->game, 0, 2000) / 1000.0);
+      }
+      *move = Q2M_MOVE_chick_move_start_attack1;
     }
     break;
   case Q2M_SOLDIER_LIGHT:
@@ -2803,6 +2862,90 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
     if (context->game->options.rules == QA_RULESET_Q2_RERELEASE ? health <= 0 : health < 0) {
       monster->brutal = false;
       *move = Q2M_MOVE_tank_move_attack_strike;
+      break;
+    }
+    if (rerelease) {
+      *move = Q2M_MOVE_NONE;
+      if (blind) {
+        float chance = monster->blind_fire_delay < 1.0f ? 1.0f
+                       : monster->blind_fire_delay < 7.5f ? 0.4f : 0.1f;
+        random = q2_rerelease_float(context->game, 0, 1);
+        monster->blind_fire_delay +=
+            5.2f + (float)q2_rerelease_time_ms(context->game, 0, 3000) / 1000.0f;
+        if (qa_vec_equal(monster->blind_fire_target, qa_v3(0, 0, 0)) ||
+            random > chance)
+          break;
+        bool rocket, blaster;
+        if (!q2m_clear_flash_shot(context, 23, &rocket, error))
+          return false;
+        if (!q2m_alive(context))
+          return true;
+        if (!q2m_clear_flash_shot(context, 1, &blaster, error))
+          return false;
+        if (!q2m_alive(context))
+          return true;
+        if (!rocket && !blaster)
+          break;
+        bool use_rocket = rocket && blaster
+                              ? q2_random_bounded(context->game, 2) == 0
+                              : rocket;
+        monster->manual_steering = true;
+        if (use_rocket) {
+          *move = Q2M_MOVE_tank_move_attack_fire_rocket;
+        } else {
+          *move = Q2M_MOVE_tank_move_attack_blast;
+          monster->next_frame = 62;
+        }
+        monster->attack_ns = q2m_after(context->game->now_ns,
+            (double)q2_rerelease_time_ms(context->game, 3000, 5000) / 1000.0);
+        monster->pain_ns = q2m_after(context->game->now_ns, 5);
+        break;
+      }
+      qa_body_state enemy;
+      bool present;
+      if (!attack_body(context, monster->enemy, &enemy, &present, error))
+        return false;
+      if (!q2m_alive(context) || !present)
+        return true;
+      float range = qa_vec_length(qa_vec_sub(enemy.origin, context->body.origin));
+      random = q2_rerelease_float(context->game, 0, 1);
+      bool allow_machinegun = true;
+      if (range <= 250.0f) {
+        qa_builtin_actor_traits traits;
+        if (!actor_traits(context, monster->enemy, &traits, error))
+          return false;
+        if (!q2m_alive(context))
+          return true;
+        allow_machinegun = traits.classname !=
+            context->game->runtime_names[Q2_NAME_TESLA_MINE];
+      }
+      bool machinegun = false, rocket = false, blaster;
+      if (allow_machinegun) {
+        if (!q2m_clear_flash_shot(context, 8, &machinegun, error))
+          return false;
+        if (!q2m_alive(context))
+          return true;
+      }
+      if (range > 250.0f) {
+        if (!q2m_clear_flash_shot(context, 23, &rocket, error))
+          return false;
+        if (!q2m_alive(context))
+          return true;
+      }
+      if (machinegun && random < (range <= 125.0f ? 0.5f
+                                 : range <= 250.0f ? 0.25f : 0.33f)) {
+        *move = Q2M_MOVE_tank_move_attack_chain;
+      } else if (range > 250.0f && rocket && random < 0.66f) {
+        *move = Q2M_MOVE_tank_move_attack_pre_rocket;
+        monster->pain_ns = q2m_after(context->game->now_ns, 5);
+      } else {
+        if (!q2m_clear_flash_shot(context, 1, &blaster, error))
+          return false;
+        if (!q2m_alive(context))
+          return true;
+        if (blaster)
+          *move = Q2M_MOVE_tank_move_attack_blast;
+      }
       break;
     }
     if (blind) {
@@ -3082,7 +3225,12 @@ static bool attack_selected(q2m_context *context, qa_error *error) {
     return false;
   if (!q2m_alive(context))
     return true;
-  if (move == Q2M_MOVE_NONE && monster->definition->species != Q2M_GEKK)
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+  q2m_species species = monster->definition->species;
+  if (move == Q2M_MOVE_NONE && species != Q2M_GEKK &&
+      !(rerelease && (species == Q2M_INFANTRY || species == Q2M_CHICK ||
+                     species == Q2M_CHICK_HEAT || species == Q2M_TANK ||
+                     species == Q2M_TANK_COMMANDER)))
     return true;
   bool immediate = context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
                    (monster->definition->species == Q2M_JORG ||
@@ -3092,7 +3240,6 @@ static bool attack_selected(q2m_context *context, qa_error *error) {
     return false;
   if (!q2m_alive(context))
     return true;
-  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   if (rerelease && !melee) {
     switch (monster->definition->species) {
     case Q2M_SOLDIER_LIGHT:
@@ -3103,6 +3250,11 @@ static bool attack_selected(q2m_context *context, qa_error *error) {
     case Q2M_SOLDIER_LASER:
       break;
     case Q2M_GEKK:
+    case Q2M_INFANTRY:
+    case Q2M_CHICK:
+    case Q2M_CHICK_HEAT:
+    case Q2M_TANK:
+    case Q2M_TANK_COMMANDER:
       monster->attack_ns = q2m_after(context->game->now_ns,
           (double)q2_rerelease_time_ms(context->game, 1000, 2000) / 1000.0);
       break;
