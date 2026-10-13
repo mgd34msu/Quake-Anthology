@@ -2,6 +2,7 @@
 #define QA_FRONTEND_EQUIPMENT_HELD_H
 
 #include "qa/model.h"
+#include "qa/scene.h"
 #include "qa/vfs.h"
 
 typedef struct frontend_held_declaration {
@@ -19,12 +20,22 @@ bool frontend_held_declaration_read(qa_resource *, frontend_held_declaration *, 
 bool frontend_held_declaration_value(qa_bytes, frontend_held_declaration *, qa_error *);
 void frontend_held_declaration_free(frontend_held_declaration *);
 
+typedef struct frontend_held_attachment {
+    char *joint;
+    uint32_t reference_frame, vertices[3];
+    qa_model_transform grip;
+} frontend_held_attachment;
+
+bool frontend_held_attachment_read(qa_bytes, frontend_held_attachment *, qa_error *);
+void frontend_held_attachment_free(frontend_held_attachment *);
+bool frontend_held_attachment_prepare(qa_vfs *, const char *model_path, qa_scene_model *, qa_error *);
+
 typedef struct frontend_held_model {
     const qa_model *model;
     qa_model *subset;
     qa_model_mesh *mesh;
     qa_model_triangle *triangles;
-    qa_model_transform alignment;
+    qa_model_transform alignment, inverse_grip;
     uint32_t reference_frame;
 } frontend_held_model;
 

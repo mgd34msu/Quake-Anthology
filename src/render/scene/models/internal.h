@@ -68,6 +68,10 @@ struct qa_scene_model {
     qa_strings *strings;
     qa_arena attachment_storage;
     qa_id_index attachment_names;
+    qa_model_transform grip;
+    qa_string_id grip_joint;
+    uint32_t grip_vertices[3], grip_joint_index;
+    bool grip_defined;
     qa_scene_model_content_lease source_lease, replacement_source_lease, animation_lease;
     qa_scene_resources *resources;
     qa_material_library *materials;

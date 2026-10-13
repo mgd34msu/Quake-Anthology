@@ -145,6 +145,9 @@ bool qa_model_sample_mesh(const qa_model *model, uint32_t mesh, uint32_t frame, 
 bool qa_model_sample_alias(const qa_model *model, uint32_t frame, uint32_t old_frame,
                            float back_lerp, qa_vec3 previous_origin_delta,
                            qa_model_vertex *vertices, size_t count, qa_error *error);
+bool qa_model_sample_alias_vertices(const qa_model *, uint32_t frame, uint32_t old_frame,
+    float back_lerp, qa_vec3 previous_origin_delta, const uint32_t *indices,
+    qa_model_vertex *vertices, size_t count, qa_error *);
 bool qa_model_corner_uv(const qa_model *model, uint32_t mesh, uint32_t triangle, uint32_t corner,
                         float out[2]);
 /* Load-time binding into an empty caller-owned index and retained name table.

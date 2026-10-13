@@ -278,9 +278,9 @@ invalid:
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid model pose or output span");
     return false;
 }
-bool qa_model_sample_alias(const qa_model *model, uint32_t frame, uint32_t old_frame, float back,
-                           qa_vec3 previous_origin_delta, qa_model_vertex *vertices, size_t count,
-                           qa_error *error) {
+static bool model_sample_alias(const qa_model *model, uint32_t frame, uint32_t old_frame, float back,
+                           qa_vec3 previous_origin_delta, const uint32_t *indices,
+                           qa_model_vertex *vertices, size_t count, qa_error *error) {
     if (!model || (model->format != QA_MODEL_MDL && model->format != QA_MODEL_MD2) ||
         !qa_vec_finite(previous_origin_delta)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid alias model or origin compensation");
@@ -288,13 +288,19 @@ bool qa_model_sample_alias(const qa_model *model, uint32_t frame, uint32_t old_f
     }
     if (model->format == QA_MODEL_MD2) {
         if (!model->mesh_count || frame >= model->frame_count || old_frame >= model->frame_count ||
-            !isfinite(back) || count < model->meshes[0].vertex_count ||
-            (!vertices && model->meshes[0].vertex_count)) {
+            !isfinite(back) || (!indices && count < model->meshes[0].vertex_count) ||
+            (!vertices && (indices ? count : model->meshes[0].vertex_count))) {
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid MD2 alias pose or output span");
             return false;
         }
         const qa_model_frame *current = &model->frames[frame], *old = &model->frames[old_frame];
         const qa_model_mesh *surface = &model->meshes[0];
+        if (indices)
+            for (size_t i = 0; i < count; ++i)
+                if (indices[i] >= surface->vertex_count) {
+                    qa_error_set(error, QA_ERROR_ARGUMENT, i, "MD2 sampled vertex exceeds its source");
+                    return false;
+                }
         float move[3], old_scale[3], new_scale[3];
         float delta[3] = {previous_origin_delta.x, previous_origin_delta.y,
                           previous_origin_delta.z};
@@ -304,13 +310,14 @@ bool qa_model_sample_alias(const qa_model *model, uint32_t frame, uint32_t old_f
             old_scale[axis] = back * old->scale[axis];
             new_scale[axis] = (1 - back) * current->scale[axis];
         }
-        for (uint32_t i = 0; i < surface->vertex_count; ++i) {
+        for (size_t i = 0; i < (indices ? count : surface->vertex_count); ++i) {
+            uint32_t vertex = indices ? indices[i] : (uint32_t)i;
             for (unsigned axis = 0; axis < 3; ++axis)
                 vertices[i].position[axis] =
-                    move[axis] + old->packed_vertices.data[(size_t)i * 4 + axis] * old_scale[axis] +
-                    current->packed_vertices.data[(size_t)i * 4 + axis] * new_scale[axis];
+                    move[axis] + old->packed_vertices.data[(size_t)vertex * 4 + axis] * old_scale[axis] +
+                    current->packed_vertices.data[(size_t)vertex * 4 + axis] * new_scale[axis];
             memcpy(vertices[i].normal,
-                   surface->vertices[(size_t)frame * surface->vertex_count + i].normal,
+                   surface->vertices[(size_t)frame * surface->vertex_count + vertex].normal,
                    sizeof(vertices[i].normal));
         }
         return true;
@@ -322,6 +329,25 @@ bool qa_model_sample_alias(const qa_model *model, uint32_t frame, uint32_t old_f
         model_v3_store(vertices[i].position, qa_vec_add(model_v3(vertices[i].position), delta));
     return true;
 }
+bool qa_model_sample_alias(const qa_model *model, uint32_t frame, uint32_t old_frame, float back,
+    qa_vec3 previous_origin_delta, qa_model_vertex *vertices, size_t count, qa_error *error)
+{
+    return model_sample_alias(model, frame, old_frame, back, previous_origin_delta, NULL,
+        vertices, count, error);
+}
+
+bool qa_model_sample_alias_vertices(const qa_model *model, uint32_t frame, uint32_t old_frame, float back,
+    qa_vec3 previous_origin_delta, const uint32_t *indices,
+    qa_model_vertex *vertices, size_t count, qa_error *error)
+{
+    if (!model || model->format != QA_MODEL_MD2 || !indices) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Indexed alias sampling requires an MD2 source");
+        return false;
+    }
+    return model_sample_alias(model, frame, old_frame, back, previous_origin_delta, indices,
+        vertices, count, error);
+}
+
 bool qa_model_corner_uv(const qa_model *model, uint32_t mesh, uint32_t triangle, uint32_t corner,
                         float out[2]) {
     if (!model || mesh >= model->mesh_count || corner >= 3 || !out)

@@ -97,6 +97,49 @@ static bool grip(const qa_json_document *doc, qa_json_id id, qa_model_transform 
     return determinant >= .999 || fail(error, QA_ERROR_FORMAT, "Held grip axes reverse orientation");
 }
 
+void frontend_held_attachment_free(frontend_held_attachment *attachment)
+{
+    if (!attachment) return;
+    free(attachment->joint);
+    *attachment = (frontend_held_attachment){0};
+}
+
+bool frontend_held_attachment_read(qa_bytes bytes, frontend_held_attachment *out, qa_error *error)
+{
+    if (!out) return fail(error, QA_ERROR_ARGUMENT, "Carrier attachment requires output");
+    qa_json_document *doc = NULL;
+    if (!qa_json_parse(bytes, &doc, error)) return false;
+    frontend_held_attachment result = {0};
+    qa_json_id root = qa_json_root(doc), kind = qa_json_get(doc, root, "kind");
+    qa_json_id version = qa_json_get(doc, root, "version");
+    uint32_t value = 1;
+    bool ok = (version == QA_JSON_NONE || index(doc, version, &value, error)) &&
+        (value == 1 || fail(error, QA_ERROR_FORMAT, "Unsupported carrier attachment version")) &&
+        grip(doc, qa_json_get(doc, root, "grip"), &result.grip, error);
+    if (ok && qa_json_string_equal(doc, kind, "joint")) {
+        qa_buffer name = {0};
+        ok = string(doc, qa_json_get(doc, root, "name"), &name, error);
+        if (ok && !name.size) ok = fail(error, QA_ERROR_FORMAT, "Carrier joint name is empty");
+        if (ok) { result.joint = (char *)name.data; name = (qa_buffer){0}; }
+        qa_buffer_free(&name);
+    } else if (ok && qa_json_string_equal(doc, kind, "mesh")) {
+        qa_json_id vertices = qa_json_get(doc, root, "vertices");
+        ok = index(doc, qa_json_get(doc, root, "referenceFrame"), &result.reference_frame, error);
+        if (ok && (qa_json_type(doc, vertices) != QA_JSON_ARRAY || qa_json_size(doc, vertices) != 3))
+            ok = fail(error, QA_ERROR_FORMAT, "Carrier mesh attachment requires three vertices");
+        for (size_t i = 0; ok && i < 3; ++i) {
+            ok = index(doc, qa_json_at(doc, vertices, i), result.vertices + i, error);
+            for (size_t j = 0; ok && j < i; ++j)
+                if (result.vertices[i] == result.vertices[j])
+                    ok = fail(error, QA_ERROR_FORMAT, "Carrier attachment repeats a vertex");
+        }
+    } else if (ok) ok = fail(error, QA_ERROR_FORMAT, "Carrier attachment requires joint or mesh");
+    qa_json_destroy(doc);
+    if (!ok) { frontend_held_attachment_free(&result); return false; }
+    *out = result;
+    return true;
+}
+
 static bool part(const qa_json_document *doc, qa_json_id id, frontend_held_declaration *out,
     qa_error *error)
 {
@@ -192,7 +235,8 @@ bool frontend_held_model_prepare(const frontend_held_declaration *declaration,
     socket.origin[0] = -2.9841071642362156f;
     socket.origin[1] = -.7671715473899474f;
     socket.origin[2] = -2.208833547738882f;
-    if (!qa_model_attachment_align(&declaration->grip, &socket, &result.alignment))
+    if (!qa_model_attachment_align(&declaration->grip, &socket, &result.alignment) ||
+        !qa_model_transform_inverse(&declaration->grip, &result.inverse_grip))
         return fail(error, QA_ERROR_FORMAT, "Held grip cannot align to actual Q3 hand socket");
     for (size_t i = 0; i < 3; ++i) {
         if (!isfinite(result.alignment.origin[i]))

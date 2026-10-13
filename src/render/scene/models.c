@@ -1226,6 +1226,22 @@ static bool md5_deferred_skin(qa_scene_model *model, const qa_scene_model_input 
     return true;
 }
 
+static bool alias_origin_delta(const qa_scene_model_input *input, qa_vec3 *out, qa_error *error)
+{
+    *out = qa_v3(0, 0, 0);
+    if (input->back_lerp == 0) return true;
+    qa_model_transform inverse;
+    if (!qa_model_transform_inverse(&input->transform, &inverse)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "MD2 origin compensation requires a nonsingular transform");
+        return false;
+    }
+    float world_delta[3], local_delta[3];
+    model_store(world_delta, qa_vec_sub(input->previous_origin, model_origin(input)));
+    qa_model_transform_direction(&inverse, world_delta, local_delta);
+    *out = model_vec(local_delta);
+    return true;
+}
+
 static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *input, uint32_t index,
                            bool cull, qa_scene_frame *frame, qa_scene_mesh *out, bool *visible,
                            qa_error *error) {
@@ -1251,15 +1267,7 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
     bool alias = model->source->format == QA_MODEL_MDL || model->source->format == QA_MODEL_MD2;
     if (alias) {
         qa_vec3 delta = qa_v3(0, 0, 0);
-        if (model->source->format == QA_MODEL_MD2 && input->back_lerp != 0) {
-            qa_model_transform inverse;
-            if (!qa_model_transform_inverse(&input->transform, &inverse)) {
-                qa_error_set(error, QA_ERROR_ARGUMENT, 0, "MD2 origin compensation requires a nonsingular transform"); return false;
-            }
-            float world_delta[3], local_delta[3];
-            model_store(world_delta, qa_vec_sub(input->previous_origin, model_origin(input)));
-            qa_model_transform_direction(&inverse, world_delta, local_delta); delta = model_vec(local_delta);
-        }
+        if (model->source->format == QA_MODEL_MD2 && !alias_origin_delta(input, &delta, error)) return false;
         if (!qa_model_sample_alias(model->source, input->frame, input->old_frame, input->back_lerp,
                                     delta, sampled, source->vertex_count, error)) return false;
     } else if (model->source->format == QA_MODEL_MD5) {
@@ -1474,6 +1482,60 @@ static bool model_beam(qa_scene_model *model, const qa_scene_model_input *input,
     return true;
 }
 
+bool qa_scene_model_grip_bind(qa_scene_model *model, const char *joint, uint32_t reference_frame,
+    const uint32_t vertices[3], const qa_model_transform *grip, qa_error *error)
+{
+    if (!model || !grip) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Carrier attachment requires its model and grip");
+        return false;
+    }
+    qa_model_transform prepared = *grip;
+    qa_string_id name = QA_STRING_NONE;
+    uint32_t joint_index = 0;
+    if (joint) {
+        name = qa_strings_find(model->strings, (qa_bytes){(const uint8_t *)joint, strlen(joint)});
+        qa_id_index_entry *entry = qa_id_index_find(&model->attachment_names, name, 0);
+        if (!entry || (model->source->format != QA_MODEL_MD3 && model->source->format != QA_MODEL_MD5)) {
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "Carrier attachment joint is absent from its model");
+            return false;
+        }
+        joint_index = (uint32_t)entry->value;
+    } else {
+        const qa_model *source = model->source;
+        if (!vertices || source->format != QA_MODEL_MD2 || source->mesh_count != 1 ||
+            reference_frame >= source->frame_count) {
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "Carrier mesh attachment requires an MD2 reference frame");
+            return false;
+        }
+        qa_model_vertex triangle[3];
+        const qa_model_mesh *mesh = source->meshes;
+        for (size_t i = 0; i < 3; ++i) {
+            if (vertices[i] >= mesh->vertex_count) {
+                qa_error_set(error, QA_ERROR_FORMAT, i, "Carrier attachment vertex exceeds its source mesh");
+                return false;
+            }
+            triangle[i] = mesh->vertices[(size_t)reference_frame * mesh->vertex_count + vertices[i]];
+        }
+        qa_model_transform initial, inverse;
+        if (!qa_model_triangle_attachment(triangle, &initial) || !qa_model_transform_inverse(&initial, &inverse)) {
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "Carrier attachment reference triangle is degenerate");
+            return false;
+        }
+        qa_model_transform_compose(&inverse, grip, &prepared);
+    }
+    model->grip = prepared;
+    model->grip_joint = name;
+    model->grip_joint_index = joint_index;
+    if (!joint) memcpy(model->grip_vertices, vertices, sizeof(model->grip_vertices));
+    model->grip_defined = true;
+    return true;
+}
+
+bool qa_scene_model_grip_defined(const qa_scene_model *model)
+{
+    return model && model->grip_defined;
+}
+
 bool qa_scene_model_lerp_tag(const qa_scene_model *model, qa_string_id name,
     uint32_t from, uint32_t to, float fraction, qa_model_tag *out) {
     return model && qa_model_lerp_tag(model->source, &model->attachment_names, name,
@@ -1569,6 +1631,60 @@ static bool sample_animation_pose(qa_scene_model *model, qa_scene_model_input *i
     pose->ready = true;
     input->pose = pose->pose;
     input->pose_count = count;
+    return true;
+}
+
+bool qa_scene_model_grip_sample(qa_scene_model *model, const qa_scene_model_input *original,
+    qa_scene_frame *frame, qa_model_transform *out, bool *found, qa_error *error)
+{
+    if (!model || !original || !frame || !out || !found) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Carrier attachment sample requires its actual model pose");
+        return false;
+    }
+    *found = false;
+    if (!model->grip_defined) return true;
+    qa_scene_model_input input = *original;
+    if (model->replacement_source && !input.animation) {
+        input.replacement = model->replacement_source;
+        input.animation = model->replacement_source->animation;
+    }
+    repair_frames(model, &input);
+    qa_model_transform socket;
+    if (model->grip_joint) {
+        qa_model_tag tag;
+        float scale = 1;
+        if (model->source->format == QA_MODEL_MD5) {
+            if (!input.pose) {
+                if (input.animation) {
+                    if (!sample_animation_pose(model, &input, frame, error)) return false;
+                } else {
+                    input.pose = model->source->bind_pose;
+                    input.pose_count = model->source->bone_count;
+                }
+            }
+            if (model->grip_joint_index >= input.pose_count) {
+                qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Carrier attachment pose omits its joint");
+                return false;
+            }
+            const qa_model_pose *pose = &input.pose[model->grip_joint_index];
+            qa_model_joint_tag(pose, &tag);
+            scale = pose->scale;
+        } else if (!qa_scene_model_lerp_tag(model, model->grip_joint, input.old_frame, input.frame,
+            1 - input.back_lerp, &tag)) return true;
+        qa_model_transform_identity(&socket);
+        memcpy(socket.origin, tag.origin, sizeof(socket.origin));
+        memcpy(socket.axes, tag.axes, sizeof(socket.axes));
+        socket.scale[0] = socket.scale[1] = socket.scale[2] = scale;
+    } else {
+        qa_vec3 delta;
+        qa_model_vertex triangle[3];
+        if (!alias_origin_delta(&input, &delta, error) ||
+            !qa_model_sample_alias_vertices(model->source, input.frame, input.old_frame, input.back_lerp,
+                delta, model->grip_vertices, triangle, 3, error)) return false;
+        if (!qa_model_triangle_attachment(triangle, &socket)) return true;
+    }
+    qa_model_transform_compose(&socket, &model->grip, out);
+    *found = true;
     return true;
 }
 
