@@ -67,6 +67,12 @@ bool q2_mover_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         qa_body_state b;
         if (!qa_world_body_read(g->services.world, a->id, &b, e))
             return false;
+        if (actor_target && !s->targetname && g->hooks.source_log) {
+            char message[128];
+            (void)snprintf(message, sizeof(message), "%s with no targetname at (%i %i %i)\n",
+                           name, (int)b.origin.x, (int)b.origin.y, (int)b.origin.z);
+            g->hooks.source_log(g->hooks.context, message);
+        }
         b.bounds = (qa_bounds){{-8, -8, -8}, {8, 8, 8}};
         if (actor_target && (s->spawnflags & 1)) {
             if (s->speed == 0) s->speed = 200;

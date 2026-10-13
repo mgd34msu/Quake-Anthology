@@ -259,6 +259,7 @@ bool qa_q2_monster_action(qa_q2_game *, qa_actor_id, qa_q2_monster_action_kind, 
 struct qa_map_rotation_entry;
 typedef struct qa_q2_hooks {
     void *context;
+    void (*source_log)(void *, const char *);
     /* Source preparation stamps sequence/time first. The application supplies
      * the selected target policy and movement, preserving retained item/source
      * provenance; original foreign damage sees the same prepared request. */

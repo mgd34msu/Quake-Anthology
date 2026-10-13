@@ -834,6 +834,13 @@ bool application_native_q2_arsenal_prepare(application_provider *provider,
             options.equipment_hook_ruleset, error);
 }
 
+static void source_console_log(void *context, const char *text)
+{
+    application_provider *provider=context;
+    qa_error error={0};
+    if (!application_source_log(provider,text,true,&error))
+        qa_application_feature_report(provider->application,"source log",&error);
+}
 static bool q2_equipment_animation(void *context, qa_actor_id actor, bool reverse,
     bool *handled, qa_error *error)
 {
@@ -871,7 +878,7 @@ static bool construct_q2(qa_application *application,
     services.cvar = application_native_q2_cvar;
     if (!q2_arsenal_options(provider, choices, &options, error)) return false;
     qa_targets_monsters_configure(application->targets, application, application_monster_mission);
-    qa_q2_hooks hooks = {.context = provider,
+    qa_q2_hooks hooks = {.context = provider, .source_log = source_console_log,
         .equipment_animation = q2_equipment_animation,
         .selected_firing_interval = application_q3_weapons_services_selected_delay,
         .source_damage_factor = application_q3_weapons_services_q2_damage,
