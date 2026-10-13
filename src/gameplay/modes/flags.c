@@ -6,6 +6,10 @@ static bool recent(uint64_t now, uint64_t then, unsigned seconds, bool set) {
 static bool points(qa_modes *m, mode_instance *v, qa_actor_id actor, int32_t amount, qa_error *e) {
     return !amount || qa_modes_add_score(m, v->id, actor, amount, e);
 }
+static bool flag_near_home(const mode_object *o, qa_vec3 origin) {
+    qa_vec3 delta = qa_vec_sub(origin, o->home);
+    return qa_vec_dot(delta, delta) <= 32 * 32;
+}
 static qa_string_id flag_team_name(qa_modes *m, mode_instance *v, qa_team_id team) {
     int index = mode_team_index(v, team);
     if (v->value.rules.source == QA_MODE_LMCTF)
@@ -45,6 +49,12 @@ static bool flag_message(qa_modes *m, mode_instance *v, qa_actor_id actor,
             return false;
     }
     return true;
+}
+bool mode_flag_drop_announce(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id actor,
+                             qa_error *e) {
+    return o->spec.kind != QA_MODE_OBJECT_FLAG || v->value.rules.source != QA_MODE_LMCTF ||
+           flag_message(m, v, actor, (qa_actor_id){0}, o->spec.team,
+                        MODE_NAME_LMCTF_FLAG_DROPPED, 0, e);
 }
 static bool flag_announce(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id origin,
                           qa_actor_id actor, qa_mode_event_kind kind, bool from_home, qa_error *e) {
@@ -359,8 +369,7 @@ bool mode_flag_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id 
         qa_body_state body;
         if (!qa_world_body_read(m->options.services.world, o->actor, &body, e))
             return false;
-        qa_vec3 delta = qa_vec_sub(body.origin, o->home);
-        from_home = qa_vec_dot(delta, delta) <= 32 * 32;
+        from_home = flag_near_home(o, body.origin);
     }
     if (!mode_object_count(m, v, o, actor, 1, e))
         return false;
@@ -393,8 +402,10 @@ static bool award_defense(qa_modes *m, mode_instance *v, mode_member *p, qa_acto
     else
         mode_stat_add(v, &p->stats.defenses, 1);
     if (v->value.rules.source >= QA_MODE_Q3) mode_stat_add(v, &p->stats.q3_defend_count, 1);
-    p->stats.defended = true;
-    p->stats.defended_ns = v->value.time_ns;
+    if (v->value.rules.source != QA_MODE_LMCTF || (!carrier && amount == 2)) {
+        p->stats.defended = true;
+        p->stats.defended_ns = v->value.time_ns;
+    }
     return points(m, v, p->actor, amount, e) &&
            mode_event(m, v, QA_MODE_AWARD, p->actor, victim, (qa_actor_id){0}, p->last_team, amount,
                       0x10000, e);
@@ -552,22 +563,29 @@ bool mode_flag_bonus(qa_modes *m, mode_instance *v, qa_actor_id attacker, qa_act
         if (!q1)
             return true;
     }
-    if (lm && base) {
-        bool home = base->value.phase == QA_OBJECTIVE_HOME;
+    bool lm_defense = base && base->value.phase != QA_OBJECTIVE_CARRIED;
+    if (lm && lm_defense) {
+        qa_body_state flag;
+        bool flag_read = qa_world_body_read(m->options.services.world, base_actor, &flag, NULL);
+        bool home = flag_read && flag_near_home(base, flag.origin);
         float r = home ? 800 : 600;
+        qa_vec3 center = home ? flag.origin : base->home;
         qa_body_state a, b;
         bool home_near = qa_world_body_read(m->options.services.world, attacker, &a, NULL) &&
                          qa_world_body_read(m->options.services.world, victim, &b, NULL) &&
-                         (qa_vec_length(qa_vec_sub(a.origin, base->home)) < r ||
-                          qa_vec_length(qa_vec_sub(b.origin, base->home)) < r);
-        if (home_near && !award_defense(m, v, killer, victim, home ? 2 : 1, false, e))
+                         (qa_vec_length(qa_vec_sub(a.origin, center)) < r ||
+                          qa_vec_length(qa_vec_sub(b.origin, center)) < r);
+        if (home_near &&
+            (!flag_message(m, v, attacker, (qa_actor_id){0}, team,
+                home ? MODE_NAME_LMCTF_DEFEND_FLAG : MODE_NAME_LMCTF_DEFEND_BASE, 0, e) ||
+             !award_defense(m, v, killer, victim, home ? 2 : 1, false, e)))
             return false;
         if (!home &&
             (mode_near(m, attacker, base_actor, 400) || mode_near(m, victim, base_actor, 400))) {
             killer->stats.defended = true;
             killer->stats.defended_ns = now;
         }
-    } else if (near_base) {
+    } else if (!lm && near_base) {
         if (!award_defense(m, v, killer, victim, ta ? 10 : 1, false, e))
             return false;
         if (!q1)
@@ -577,7 +595,8 @@ bool mode_flag_bonus(qa_modes *m, mode_instance *v, qa_actor_id attacker, qa_act
         uint32_t i = m->players_order.actors[ordinal].slot;
         mode_member *p = &v->members[i];
         qa_team_id t;
-        if (!p->joined || !p->flag.registry || qa_actor_id_equal(p->actor, attacker) ||
+        if ((lm && !lm_defense) || !p->joined || !p->flag.registry ||
+            qa_actor_id_equal(p->actor, attacker) ||
             !qa_modes_team(m, v->id, p->actor, &t, NULL) || t != team)
             continue;
         bool near = mode_near(m, attacker, p->actor, lm ? 500 : radius) ||
@@ -591,16 +610,23 @@ bool mode_flag_bonus(qa_modes *m, mode_instance *v, qa_actor_id attacker, qa_act
                    (base && mode_near(m, attacker, base_actor, radius) &&
                     mode_visible(m, victim, p->actor, true));
         if (lm && danger) {
-            if (!award_defense(m, v, killer, victim, 3, true, e))
+            if (!flag_message(m, v, attacker, (qa_actor_id){0}, team,
+                    MODE_NAME_LMCTF_DEFEND_AGGRESSIVE_CARRIER, 0, e) ||
+                !award_defense(m, v, killer, victim, 3, true, e))
                 return false;
-        } else if (near && !award_defense(m, v, killer, victim, lm ? 2 : ta ? 2 : 1, true, e))
-            return false;
+        } else if (near) {
+            if ((lm && !flag_message(m, v, attacker, (qa_actor_id){0}, team,
+                    MODE_NAME_LMCTF_DEFEND_CARRIER, 0, e)) ||
+                !award_defense(m, v, killer, victim, lm ? 2 : ta ? 2 : 1, true, e))
+                return false;
+        }
         break;
     }
     if (lm && victim_carrier) {
         killer->stats.carrier_killed = true;
         killer->stats.carrier_killed_ns = now;
-        if (!points(m, v, attacker, 2, e))
+        if (!flag_message(m, v, attacker, (qa_actor_id){0}, 0, MODE_NAME_LMCTF_KILL_CARRIER, 0, e) ||
+            !points(m, v, attacker, 2, e))
             return false;
     }
     return true;

@@ -237,6 +237,12 @@ typedef struct mode_objective {
     X(LMCTF_CAPTURE_FRAG_ASSIST, "{0} assisted the capture by killing the flag carrier.\n") \
     X(LMCTF_CAPTURE_RETURN_ASSIST, "{0} assisted the capture by returning the flag.\n") \
     X(LMCTF_CAPTURE_DEFEND_ASSIST, "{0} assisted the capture by defending the flag.\n") \
+    X(LMCTF_FLAG_DROPPED, "{0} lost the {1} flag.\n") \
+    X(LMCTF_DEFEND_FLAG, "{0} defends the {1} flag.\n") \
+    X(LMCTF_DEFEND_BASE, "{0} defends the {1} base.\n") \
+    X(LMCTF_DEFEND_AGGRESSIVE_CARRIER, "{0} defends the {1} flag carrier from an aggressive enemy.\n") \
+    X(LMCTF_DEFEND_CARRIER, "{0} defends the {1} flag carrier.\n") \
+    X(LMCTF_KILL_CARRIER, "{0} killed the enemy flag carrier.\n") \
     X(SOUND_CTF_R_RETURNED_WAV, "ctf/r_returned.wav") \
     X(SOUND_CTF_B_RETURNED_WAV, "ctf/b_returned.wav") \
     X(SOUND_CTF_R_STOLEN_WAV, "ctf/r_stolen.wav") \
@@ -404,6 +410,7 @@ bool mode_ball_touch(qa_modes *, mode_instance *, mode_object *, qa_actor_id, bo
 bool mode_ball_frame(qa_modes *, mode_instance *, mode_object *, qa_error *);
 bool mode_ball_reset(qa_modes *, mode_instance *, mode_object *, qa_error *);
 bool mode_flag_reset(qa_modes *, mode_instance *, mode_object *, bool, qa_error *);
+bool mode_flag_drop_announce(qa_modes *, mode_instance *, mode_object *, qa_actor_id, qa_error *);
 bool mode_object_hide(qa_modes *, mode_object *, bool, qa_error *);
 bool mode_object_drop(qa_modes *, mode_instance *, mode_object *, qa_actor_id, bool, qa_error *);
 bool mode_object_relocate(qa_modes *, mode_instance *, mode_object *, bool, qa_error *);

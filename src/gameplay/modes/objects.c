@@ -755,7 +755,7 @@ bool mode_object_drop(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id
     if (!qa_world_body_write(m->options.services.world, o->actor, &body, e) ||
         !mode_object_hide(m, o, false, e))
         return false;
-    return mode_object_notify(m, v, o, e);
+    return mode_flag_drop_announce(m, v, o, actor, e) && mode_object_notify(m, v, o, e);
 }
 static bool drop(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool death, qa_error *e) {
     mode_instance *v = mode_get(m, id);
