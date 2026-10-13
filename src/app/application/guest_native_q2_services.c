@@ -51,6 +51,17 @@ static void print(void *opaque, const qa_native_host_print *source)
     }
 }
 
+static bool debug_graph(void *opaque, float value, int32_t color, qa_error *error)
+{
+    struct application_native_q2 *engine = opaque;
+    return application_emit(engine->provider->application, &(qa_builtin_event){
+        .kind = QA_BUILTIN_EFFECT, .family = QA_GAME_Q2,
+        .provider = engine->provider->owner,
+        .time_ns = qa_session_elapsed(engine->provider->application->session),
+        .resource = engine->provider->application->ui_names.debug_graph,
+        .value = value, .code = color}, error);
+}
+
 static bool localized_print(void *opaque, qa_actor_id client,
     const qa_native_host_localized_print *source, qa_error *error)
 {
@@ -385,7 +396,7 @@ qa_native_host_engine_services application_native_q2_services(struct application
 {
     return (qa_native_host_engine_services){.context = engine,
         .strings = qa_session_strings(engine->provider->application->session), .print = print,
-        .localized_print = localized_print,
+        .localized_print = localized_print, .debug_graph = debug_graph,
         .bot_move_to=bot_move_to,.bot_follow=bot_follow,.path_to_goal=path_to_goal,
         .configstring_get = config_get, .configstring_set = config_set, .resource_index = resource,
         .command = command, .message = message, .sound = sound, .server_frame = server_frame,

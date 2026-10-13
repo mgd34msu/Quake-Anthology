@@ -550,6 +550,11 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
                 .white = qa_scene_white(frontend->ui_images), .text = {1, 1, 1, 1},
                 .accent = {.9f, .7f, .3f, 1}, .disabled = {.4f, .4f, .4f, 1},
                 .panel = {.05f, .05f, .05f, .85f}, .scale = preferences.hud_scale}, &frontend->frame, error)) return false;
+        if ((live || native_rendered || remote_rendered || source.source_world) && !ui.fullscreen && game_focus) {
+            qa_bytes palette = {0};
+            (void)qa_scene_resources_palette_read(frontend->images, QA_GAME_Q2, &palette);
+            if (!frontend_ui_graph_draw(frontend, &frontend->frame, view.viewport, palette, error)) return false;
+        }
         if (!qa_ui_draw(seat->ui, &frontend->frame, rect, preferences.menu_scale,
             preferences.high_contrast, !(live || native_rendered || remote_rendered || source.source_world), error)) return false;
         qa_input_focus field_focus = qa_input_seat_focus(seat->input);

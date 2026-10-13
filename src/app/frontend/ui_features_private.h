@@ -4,6 +4,16 @@
 #include "qa/persistence_slots.h"
 typedef struct frontend_cinematic_captions frontend_cinematic_captions;
 typedef struct frontend_shared_ui frontend_shared_ui;
+enum {
+    FRONTEND_GRAPH_DEBUG, FRONTEND_GRAPH_TIME, FRONTEND_GRAPH_NETWORK,
+    FRONTEND_GRAPH_HEIGHT, FRONTEND_GRAPH_SCALE, FRONTEND_GRAPH_SHIFT,
+    FRONTEND_GRAPH_CVARS,
+    FRONTEND_GRAPH_SAMPLES = 1024
+};
+typedef struct frontend_graph_sample {
+    float value;
+    int32_t color;
+} frontend_graph_sample;
 typedef struct frontend_caption_collection {
     qa_arena *arena;
     qa_active_caption *values;
@@ -54,6 +64,9 @@ struct frontend_ui_features {
     qa_localization_profile ui_profile;
     qa_audio_bank *sounds;
     qa_game_family menu_sound_family;
+    qa_cvar_handle graph_cvars[FRONTEND_GRAPH_CVARS];
+    frontend_graph_sample graph_samples[FRONTEND_GRAPH_SAMPLES];
+    uint32_t graph_next;
 };
 frontend_ui_seat_features *frontend_ui_features_seat(frontend_seat *);
 #endif

@@ -36,6 +36,11 @@ bool frontend_ui_features_prepare(qa_frontend *f, qa_error *error)
     frontend_ui_features *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "Allocating actual UI feature owner");
     owner->frontend = f; owner->menu_sound_family = QA_GAME_Q1; f->ui_features = owner;
+    static const char *const graph_names[FRONTEND_GRAPH_CVARS] = {
+        "debuggraph", "timegraph", "netgraph", "graphheight", "graphscale", "graphshift"
+    };
+    for (size_t i = 0; i < FRONTEND_GRAPH_CVARS; ++i)
+        owner->graph_cvars[i] = qa_cvars_resolve(qa_application_cvars(f->application), graph_names[i]);
     owner->tracks = qa_caption_library_create(error); owner->catalogs = qa_localization_pool_create(error);
     if (!owner->tracks || !owner->catalogs || !qa_audio_bank_create(f->ui_mounts, qa_session_strings(qa_application_session(f->application)), &owner->sounds, error)) return false;
     for (unsigned i = 0; !f->options.dedicated && i < QA_INPUT_LOCAL_SEATS; ++i) {
@@ -78,6 +83,89 @@ bool frontend_ui_features_destroy(qa_frontend *f, qa_error *error)
     qa_audio_bank_destroy(owner->sounds);
     qa_caption_library_destroy(owner->tracks); qa_localization_pool_destroy(owner->catalogs);
     free(owner->fallbacks); free(owner); f->ui_features = NULL; return true;
+}
+/* Quake II cl_scrn.c: SCR_DebugGraph, SCR_DrawDebugGraph, CL_AddNetgraph. */
+static float graph_value(const frontend_ui_features *owner, unsigned setting, float fallback)
+{
+    const qa_cvar_view *value = qa_cvars_read(qa_application_cvars(owner->frontend->application),
+        owner->graph_cvars[setting]);
+    return value ? value->number : fallback;
+}
+void frontend_ui_graph_sample(qa_frontend *f, float value, int32_t color)
+{
+    frontend_ui_features *owner = f->ui_features;
+    if (!owner) return;
+    owner->graph_samples[owner->graph_next++ & (FRONTEND_GRAPH_SAMPLES - 1)] =
+        (frontend_graph_sample){value, color};
+}
+void frontend_ui_graph_frame(qa_frontend *f, uint64_t elapsed_ns)
+{
+    frontend_ui_features *owner = f->ui_features;
+    if (owner && graph_value(owner, FRONTEND_GRAPH_TIME, 0) != 0)
+        frontend_ui_graph_sample(f, (float)((double)elapsed_ns / 1000000000.0) * 300.0f, 0);
+}
+static void graph_repeat(frontend_ui_features *owner, uint32_t count, int32_t color)
+{
+    if (count >= FRONTEND_GRAPH_SAMPLES) {
+        for (size_t i = 0; i < FRONTEND_GRAPH_SAMPLES; ++i)
+            owner->graph_samples[i] = (frontend_graph_sample){30, color};
+        owner->graph_next += count;
+    } else {
+        for (uint32_t i = 0; i < count; ++i)
+            frontend_ui_graph_sample(owner->frontend, 30, color);
+    }
+}
+void frontend_ui_graph_network(qa_frontend *f, uint32_t dropped, uint32_t suppressed, double ping_ms)
+{
+    frontend_ui_features *owner = f->ui_features;
+    if (!owner || graph_value(owner, FRONTEND_GRAPH_DEBUG, 0) != 0 ||
+        graph_value(owner, FRONTEND_GRAPH_TIME, 0) != 0) return;
+    graph_repeat(owner, dropped, 0x40);
+    graph_repeat(owner, suppressed, 0xdf);
+    frontend_ui_graph_sample(f, (float)fmin(30.0, trunc(ping_ms / 30.0)), 0xd0);
+}
+static qa_vec4 graph_color(qa_bytes palette, int32_t index)
+{
+    size_t color = (uint32_t)index & 255u;
+    if (palette.size >= 768) {
+        const uint8_t *rgb = palette.data + color * 3;
+        return (qa_vec4){rgb[0] / 255.0f, rgb[1] / 255.0f, rgb[2] / 255.0f, 1};
+    }
+    float gray = (float)color / 255.0f;
+    return (qa_vec4){gray, gray, gray, 1};
+}
+bool frontend_ui_graph_draw(qa_frontend *f, qa_scene_frame *frame,
+    qa_scene_rect viewport, qa_bytes palette, qa_error *error)
+{
+    frontend_ui_features *owner = f->ui_features;
+    if (!owner || !viewport.width || !viewport.height ||
+        (graph_value(owner, FRONTEND_GRAPH_DEBUG, 0) == 0 &&
+         graph_value(owner, FRONTEND_GRAPH_TIME, 0) == 0 &&
+         graph_value(owner, FRONTEND_GRAPH_NETWORK, 0) == 0)) return true;
+    float raw_height = graph_value(owner, FRONTEND_GRAPH_HEIGHT, 32);
+    if (!isfinite(raw_height) || raw_height < 1 || (double)raw_height > INT32_MAX) return true;
+    int32_t height = (int32_t)raw_height;
+    int32_t bottom = viewport.y + (int32_t)viewport.height;
+    const qa_scene_image *white = qa_scene_white(f->ui_images);
+    if (!qa_scene_frame_picture(frame, white, viewport,
+            (qa_scene_rect){viewport.x, bottom - height, viewport.width, (uint32_t)height},
+            (qa_vec4){0, 0, 1, 1}, graph_color(palette, 8), error)) return false;
+    float scale = graph_value(owner, FRONTEND_GRAPH_SCALE, 1);
+    float shift = graph_value(owner, FRONTEND_GRAPH_SHIFT, 0);
+    for (uint32_t a = 0; a < viewport.width; ++a) {
+        const frontend_graph_sample *sample = owner->graph_samples +
+            ((owner->graph_next - 1 - a) & (FRONTEND_GRAPH_SAMPLES - 1));
+        float value = sample->value * scale + shift;
+        if (value < 0) value += raw_height * (1 + truncf(-value / raw_height));
+        if (!isfinite(value)) continue;
+        int32_t bar = (int32_t)fmod((double)truncf(value), height);
+        if (bar <= 0) continue;
+        qa_scene_rect column = {viewport.x + (int32_t)(viewport.width - 1 - a),
+            bottom - bar, 1, (uint32_t)bar};
+        if (!qa_scene_frame_picture(frame, white, viewport, column,
+                (qa_vec4){0, 0, 1, 1}, graph_color(palette, sample->color), error)) return false;
+    }
+    return true;
 }
 static bool sound_bank(frontend_seat *seat, qa_audio_bank **out,
     qa_game_family *family, qa_error *error)

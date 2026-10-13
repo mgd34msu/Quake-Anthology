@@ -627,6 +627,9 @@ bool native_host_q2_import(qa_native_host *host, const qa_native_import_call *ca
     return print_import(host, call, error);
     case QA_NATIVE_Q2_IMPORT_Loc_Print:
     return localized_print_import(host, call, error);
+    case QA_NATIVE_Q2_IMPORT_DebugGraph:
+    return !isfinite(call->arguments[0].as.f32) || !host->engine.debug_graph || host->engine.debug_graph(host->engine.context,
+        call->arguments[0].as.f32, native_argument_i32(call, 1), error);
     case QA_NATIVE_Q2_IMPORT_TagMalloc:
     case QA_NATIVE_Q2_IMPORT_TagFree:
     case QA_NATIVE_Q2_IMPORT_FreeTags:

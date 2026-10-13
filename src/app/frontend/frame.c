@@ -8,6 +8,7 @@
 #include "remote_unified.h"
 #include "remote_unified_input.h"
 #include "internal.h"
+#include "qa/application_ui_names.h"
 #include "capture.h"
 #include "save_commands.h"
 #include "campaign.h"
@@ -549,6 +550,9 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
         UINT64_C(1)<<QA_APPLICATION_EVENT_BUILTIN,&output)) {
         frontend_logs_drain(frontend,range.id);
         qa_builtin_event event = *output.value.builtin;
+        if (event.kind == QA_BUILTIN_EFFECT && event.resource ==
+            qa_application_ui_names_read(frontend->application)->debug_graph)
+            frontend_ui_graph_sample(frontend, event.value, event.code);
         if (!frontend_ranking_event(frontend,&event,error)) return false;
         const char *text = event.message_format ? event.message_format : qa_strings_cstr(strings, event.text);
         if ((event.kind == QA_BUILTIN_MESSAGE || event.kind == QA_BUILTIN_CENTERPRINT) && text) {
@@ -887,6 +891,8 @@ static bool frontend_step(qa_frontend *frontend,
             pending.target.kind==QA_TRAVEL_MAP;
         frontend->stepping = true;
         uint64_t raw_elapsed=elapsed_ns;
+        if (ready && !frontend->options.dedicated)
+            frontend_ui_graph_frame(frontend, raw_elapsed);
         if (ready) ok = ok && (replay || (frontend_tools_pump(frontend, error) &&
             frontend_startup_menus_pump(frontend,error) && platform_events(frontend, error)));
         if(ok && ready && !qa_application_should_stop(frontend->application)) ok=commands(frontend,*playing,!replay,error);

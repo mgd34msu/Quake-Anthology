@@ -123,6 +123,7 @@ typedef struct qa_native_host_engine_services {
     qa_strings *strings;
     void (*print)(void *, const qa_native_host_print *);
     bool (*localized_print)(void *, qa_actor_id, const qa_native_host_localized_print *, qa_error *);
+    bool (*debug_graph)(void *, float, int32_t, qa_error *);
     bool (*bot_move_to)(void *, qa_actor_id, qa_vec3, float, int32_t *, qa_error *);
     bool (*bot_follow)(void *, qa_actor_id, qa_actor_id, int32_t *, qa_error *);
     bool (*path_to_goal)(void *, const qa_native_host_q2_path_request *,

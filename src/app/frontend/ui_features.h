@@ -15,6 +15,10 @@ bool frontend_ui_audio_prepare_asset(qa_frontend *, qa_audio_asset *, qa_error *
 void frontend_ui_audio_event(void *, const qa_audio_voice_event *);
 void frontend_ui_sound(void *, uint32_t, qa_ui_sound);
 bool frontend_sound_command(qa_frontend *, const qa_command_invocation *, bool *, qa_error *);
+void frontend_ui_graph_sample(qa_frontend *, float, int32_t);
+void frontend_ui_graph_frame(qa_frontend *, uint64_t elapsed_ns);
+void frontend_ui_graph_network(qa_frontend *, uint32_t dropped, uint32_t suppressed, double ping_ms);
+bool frontend_ui_graph_draw(qa_frontend *, qa_scene_frame *, qa_scene_rect, qa_bytes palette, qa_error *);
 bool frontend_ui_features_assets_read(const qa_frontend *, qa_audio_asset ***, size_t *, qa_error *);
 bool frontend_ui_features_content_visit(const qa_frontend *, const qa_application_content_visitor *, qa_error *);
 bool frontend_ui_features_captions(frontend_seat *, const qa_active_caption **, size_t *, qa_error *);
