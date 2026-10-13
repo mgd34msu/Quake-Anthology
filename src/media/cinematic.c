@@ -3,7 +3,9 @@
 #include "qa/binary.h"
 #include "qa/audio_save.h"
 
+#include <inttypes.h>
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -164,9 +166,10 @@ static void diagnostic(void *context, const char *text) {
         movie->options.diagnostic(movie->options.context, text);
 }
 static void dropped(void *context, uint64_t requested, uint64_t decoded) {
-    (void)requested;
-    (void)decoded;
-    diagnostic(context, "Dropped cinematic frame\n");
+    char message[64];
+    snprintf(message, sizeof(message), "Dropped frame: %" PRIu64 " > %" PRIu64 "\n",
+        requested, decoded + 1);
+    diagnostic(context, message);
 }
 static void picture(qa_cinematic *movie) {
     const qa_media_frame *frame = NULL;
