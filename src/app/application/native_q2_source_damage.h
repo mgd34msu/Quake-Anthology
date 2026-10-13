@@ -8,7 +8,7 @@ bool application_native_q2_source_damage_create(struct application_native_q2 *,
 bool application_native_q2_source_damage_activate(struct application_native_q2_source_damage *,qa_error *);
 bool application_native_q2_source_damage_admit(struct application_native_q2_source_damage *,qa_actor_id,qa_error *);
 bool application_native_q2_source_damage_reaction(struct application_native_q2_source_damage *,qa_actor_id,
-    const qa_damage_result *,qa_attack *,double *,bool *,qa_error *);
+    const qa_damage_result *,qa_attack *,double *,qa_vec3 *,bool *,qa_source_reaction_observer **,qa_error *);
 bool application_native_q2_source_damage_reaction_attack(struct application_native_q2_source_damage *,
     qa_actor_id,qa_actor_id,qa_actor_id,qa_native_address,qa_attack *,qa_error *);
 void application_native_q2_source_damage_released(struct application_native_q2_source_damage *,qa_actor_id);

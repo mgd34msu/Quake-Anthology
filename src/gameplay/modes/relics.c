@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "../combat_internal.h"
+#include "qa/text.h"
 
 static float rogue_random(qa_modes *m, mode_instance *v) {
     return m->options.hooks.source_random
@@ -379,7 +380,7 @@ bool qa_modes_after_damage(qa_modes *m, qa_mode_id id, const qa_damage_outcome *
     if (!v || !outcome)
         return mode_fail(e, "invalid mode damage outcome");
     qa_actor_id actor = outcome->request.attack.attacker;
-    if (v->value.rules.source != QA_MODE_LMCTF || outcome->result.applied_damage <= 0 ||
+    if (v->value.rules.source != QA_MODE_LMCTF || outcome->result.applied_damage == 0 ||
         qa_actor_id_equal(actor, outcome->request.target) ||
         !qa_modes_has_relic(m, id, actor, QA_RELIC_VAMPIRE))
         return true;
@@ -393,8 +394,8 @@ bool qa_modes_after_damage(qa_modes *m, qa_mode_id id, const qa_damage_outcome *
     qa_combat_state state;
     if (!qa_combat_read(m->options.services.combat, actor, &state, e))
         return false;
-    double damage = outcome->result.applied_damage;
-    int32_t gain = (damage >= INT32_MAX ? INT32_MAX : (int32_t)damage) >> (body ? 2 : 1);
+    int32_t take = qa_source_to_i32(outcome->result.applied_damage);
+    int32_t gain = take >> (body ? 2 : 1);
     return qa_combat_set_health(m->options.services.combat, actor,
                                 fmin(250, state.health + gain), e) &&
            mode_sound(m, v, actor, m->runtime_names[MODE_NAME_SOUND_BRAIN_BRNATCK3_WAV], 1, e);

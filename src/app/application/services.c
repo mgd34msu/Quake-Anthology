@@ -602,6 +602,9 @@ static bool before_reaction(void *opaque, const qa_damage_outcome *outcome,
                             qa_error *error)
 {
     qa_application *application = opaque;
+    if (!outcome->stale && application->modes != NULL && application->primary_mode_ready &&
+        !qa_modes_after_damage(application->modes, application->primary_mode, outcome, error))
+        return false;
     if (!application_native_q1_wire_damage(application, outcome, error))
         return false;
     if (!application_native_q1_source_before_reaction(application, outcome, error))
@@ -779,15 +782,12 @@ static bool confirmed_damage(void *opaque, const qa_damage_outcome *outcome,
     qa_application *application = opaque;
     if (outcome->stale)
         return application_unified_damage_emit(application, outcome, error);
-    /* Preserve ordinary cleanup before after-damage, then score a death. The
-     * deferred original source path confirms only the later death boundary. */
+    /* The deferred original source path confirms only the later death boundary. */
     if (!death_cleanup(application, outcome, error))
         return false;
     if (application->modes == NULL || !application->primary_mode_ready)
         return application_unified_damage_emit(application, outcome, error);
-    return qa_modes_after_damage(application->modes, application->primary_mode,
-                                  outcome, error) &&
-           (outcome->result.reaction != QA_REACTION_DEATH ||
+    return (outcome->result.reaction != QA_REACTION_DEATH ||
             qa_modes_player_death(application->modes,
                                   application->primary_mode, outcome, error)) &&
            application_unified_damage_emit(application, outcome, error);

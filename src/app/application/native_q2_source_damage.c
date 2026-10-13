@@ -44,7 +44,14 @@ typedef struct declared_damage_frame {
 } declared_damage_frame;
 typedef struct declared_damage_processing {
     struct declared_damage_processing *outer;
+    declared_damage_frame *parent_frame;
     qa_damage_request request;
+    struct application_native_q2_source_damage *owner;
+    qa_native_entry_observer *entry;
+    const qa_native_value *arguments;
+    size_t count;
+    qa_native_value *result;
+    qa_source_reaction_observer *observer;
 } declared_damage_processing;
 typedef struct declared_damage_scalar {
     uint32_t offset;
@@ -398,6 +405,15 @@ static bool incoming(void *context,qa_native_instance *native,qa_native_entry_ob
     if(ok&&result)*result=(qa_native_value){.type=QA_NATIVE_VOID};
     return ok;
 }
+static bool execute_deferred(void *context,qa_source_reaction_observer *observer,qa_error *e)
+{
+    declared_damage_processing *p=context;
+    p->observer=observer;
+    bool cancelled=false;
+    bool ok=application_native_q2_source_invoke_original(p->owner->engine,p->request.target,
+        p->entry,p->arguments,p->count,p->result,&cancelled,e);
+    p->observer=NULL;return ok;
+}
 static bool process_deferred(void *context,qa_native_instance *native,qa_native_entry_observer *entry,
     const qa_native_value *a,size_t count,qa_native_value *result,qa_error *e)
 {
@@ -409,19 +425,21 @@ static bool process_deferred(void *context,qa_native_instance *native,qa_native_
     if(!qa_native_host_source_actor(o->engine->provider->state.native.host,a[0].as.address,true,&actor,e))return false;
     declared_damage_actor *r=actor_find(o,actor);
     if(!r||!r->bound||!r->pending)return application_native_q2_source_original(o->engine,entry,a,count,result,e);
+    qa_combat *combat=o->engine->provider->application->combat;
+    if(!qa_combat_primary_current(combat,r->actor,r->serial,r))
+        return application_native_q2_source_original(o->engine,entry,a,count,result,e);
     double blood,kick;qa_vec3 point;qa_native_address base;
     if(!address_for(o,actor,&base,e)||base!=a[0].as.address||!scalar_read(o,base,o->blood,&blood,e))return false;
     if(blood==0)return application_native_q2_source_original(o->engine,entry,a,count,result,e);
     if(!scalar_read(o,base,o->knockback,&kick,e)||!vector_read(o,base+o->point,&point,e))return false;
-    declared_damage_processing processing={.outer=o->processing,.request=r->pending_request};
+    declared_damage_processing processing={.outer=o->processing,.parent_frame=o->frames,.request=r->pending_request,
+        .owner=o,.entry=entry,.arguments=a,.count=count,.result=result};
     processing.request.knockback=kick;processing.request.point=point;
     if(!qa_damage_request_validate(&processing.request,e))return false;
     qa_combat_state state;if(!state_read(r,&state,e))return false;
     qa_damage_result reaction={.reaction=state.health<=0?QA_REACTION_DEATH:QA_REACTION_PAIN,.applied_damage=blood};
     r->pending=false;o->processing=&processing;++o->engine->calls;++r->calls;
-    bool cancelled=false;
-    bool ok=qa_combat_source_reaction(o->engine->provider->application->combat,&processing.request,&reaction,e)&&
-        application_native_q2_source_invoke_original(o->engine,actor,entry,a,count,result,&cancelled,e);
+    bool ok=qa_combat_run_source_reaction(combat,&processing.request,&reaction,execute_deferred,&processing,e);
     --o->engine->calls;--r->calls;o->processing=processing.outer;actors_collect(o);return ok;
 }
 bool application_native_q2_source_damage_activate(struct application_native_q2_source_damage *o,qa_error *e)
@@ -507,14 +525,16 @@ bool application_native_q2_source_damage_admit(struct application_native_q2_sour
     r->serial=qa_combat_storage_serial(combat,actor);r->bound=true;return actor_watches(r,e);
 }
 bool application_native_q2_source_damage_reaction(struct application_native_q2_source_damage *o,qa_actor_id actor,
-    const qa_damage_result *result,qa_attack *attack,double *knockback,bool *present,qa_error *e)
+    const qa_damage_result *result,qa_attack *attack,double *knockback,qa_vec3 *point,
+    bool *present,qa_source_reaction_observer **deferred,qa_error *e)
 {
-    *present=false;declared_damage_frame *f=o?o->frames:NULL;
-    if(!f||!f->active||!qa_actor_id_equal(f->target,actor)){
-        declared_damage_processing *p=o?o->processing:NULL;
-        if(p&&qa_actor_id_equal(p->request.target,actor)){*present=true;*attack=p->request.attack;*knockback=p->request.knockback;}
-        return true;}
-    *present=true;*attack=f->request->attack;*knockback=f->request->knockback;
+    *present=false;*deferred=NULL;declared_damage_frame *f=o?o->frames:NULL;
+    declared_damage_processing *p=o?o->processing:NULL;
+    if(p&&f==p->parent_frame&&qa_actor_id_equal(p->request.target,actor)){
+        *present=true;*attack=p->request.attack;*knockback=p->request.knockback;*point=p->request.point;
+        *deferred=p->observer;p->observer=NULL;return true;}
+    if(!f||!f->active||!qa_actor_id_equal(f->target,actor))return true;
+    *present=true;*attack=f->request->attack;*knockback=f->request->knockback;*point=f->request->point;
     if(f->reacting)return true;
     f->reacting=true;f->result=*result;
     return qa_damage_before_reaction(f->observer,result,e);

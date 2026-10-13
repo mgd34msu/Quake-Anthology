@@ -212,6 +212,16 @@ static bool dispatch_reaction(void *context,qa_session *session,qa_error *e)
     return application_q3_mod_actor_dispatch(call->entry->owner->engine->provider->application->mod_operations,
         call->entry->operation,call->request,original,call,&handled,e);
 }
+static bool reaction_invoke(void *context,qa_error *e)
+{
+    native_actor_call *call=context;
+    application_q3_mod_operation operation=call->entry->operation;
+    qa_invocation_kind invocation=operation==Q3_MOD_THINK?QA_INVOKE_THINK:
+        operation==Q3_MOD_USE?QA_INVOKE_USE:operation==Q3_MOD_TOUCH?QA_INVOKE_TOUCH:
+        operation==Q3_MOD_PAIN?QA_INVOKE_PAIN:QA_INVOKE_DIE;
+    return qa_session_invoke(call->entry->owner->engine->provider->application->session,
+        call->actor,invocation,dispatch_reaction,call,e);
+}
 static bool reaction_run(native_source_actor *r,void *context,qa_native_instance *native,qa_native_entry_observer *binding,
     const qa_native_value *arguments,size_t count,qa_native_value *result,qa_error *e)
 {
@@ -248,12 +258,14 @@ static bool reaction_run(native_source_actor *r,void *context,qa_native_instance
         if(!qa_vec_finite(request.source.die.point)) return application_fail(e,QA_ERROR_FORMAT,"Declared death has a nonfinite source point");
     }
     if(!request_eligible(o,entry->operation,&request)){if(result)*result=(qa_native_value){.type=QA_NATIVE_VOID};return true;}
+    qa_source_reaction_observer *deferred=NULL;
+    qa_damage_result reaction={0};qa_vec3 reaction_point={0};
     if(entry->operation==Q3_MOD_PAIN||entry->operation==Q3_MOD_DIE){
         double knockback=0;
-        qa_damage_result reaction={.reaction=entry->operation==Q3_MOD_DIE?QA_REACTION_DEATH:QA_REACTION_PAIN,
+        reaction=(qa_damage_result){.reaction=entry->operation==Q3_MOD_DIE?QA_REACTION_DEATH:QA_REACTION_PAIN,
             .applied_damage=entry->operation==Q3_MOD_DIE?request.source.die.damage:request.source.pain.damage};
         if(!application_native_q2_source_damage_reaction(o->damage,r->actor,&reaction,
-            &request.attack,&knockback,&request.has_attack,e))return false;
+            &request.attack,&knockback,&reaction_point,&request.has_attack,&deferred,e))return false;
         if(!request.has_attack&&o->combat&&o->rerelease){
             size_t mod=entry->operation==Q3_MOD_DIE?5:4;
             qa_actor_id attacker=entry->operation==Q3_MOD_DIE?request.source.die.attacker:request.source.pain.attacker;
@@ -262,14 +274,15 @@ static bool reaction_run(native_source_actor *r,void *context,qa_native_instance
                 r->actor,attacker,inflictor,arguments[mod].as.address,&request.attack,e))return false;
             request.has_attack=true;
         }
-        if(request.has_attack&&entry->operation==Q3_MOD_DIE)request.source.die.kick=knockback;
+        if(entry->operation==Q3_MOD_DIE){
+            if(request.has_attack)request.source.die.kick=knockback;
+            reaction_point=request.source.die.point;}
     }
     native_actor_call call={entry,arguments,count,result,r->actor,&request};
-    qa_invocation_kind invocation=entry->operation==Q3_MOD_THINK?QA_INVOKE_THINK:
-        entry->operation==Q3_MOD_USE?QA_INVOKE_USE:entry->operation==Q3_MOD_TOUCH?QA_INVOKE_TOUCH:
-        entry->operation==Q3_MOD_PAIN?QA_INVOKE_PAIN:QA_INVOKE_DIE;
     ++o->calls;++o->engine->calls;
-    bool ok=qa_session_invoke(o->engine->provider->application->session,r->actor,invocation,dispatch_reaction,&call,e);
+    bool ok=deferred?qa_source_reaction_dispatch(deferred,&reaction,
+        entry->operation==Q3_MOD_DIE?request.source.die.kick:request.source.pain.kick,
+        reaction_point,o->engine->provider->owner,reaction_invoke,&call,e):reaction_invoke(&call,e);
     --o->engine->calls;--o->calls;
     if(ok&&result) *result=(qa_native_value){.type=QA_NATIVE_VOID};
     return ok;
