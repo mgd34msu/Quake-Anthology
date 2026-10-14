@@ -5,6 +5,7 @@
 #include "qa/demo.h"
 #include "qa/filesystem.h"
 #include "qa/network_q1.h"
+#include "qa/network_q2_demo.h"
 
 typedef enum frontend_demo_format {
     FRONTEND_DEMO_NQ, FRONTEND_DEMO_QW, FRONTEND_DEMO_Q2,
@@ -35,6 +36,8 @@ int32_t frontend_demo_forced_track(const frontend_demo_reader *);
 /* The real protocol constructor may inspect its own native header without
  * advancing the framing cursor. This span lives until playback closes. */
 qa_bytes frontend_demo_reader_bytes(const frontend_demo_reader *);
+/* Admission retains the detected Q2 recording kind and exact wire identity. */
+const qa_q2_recording_header *frontend_demo_q2_header(const frontend_demo_reader *);
 /* Q2 protocol admission borrows the next native payload without consuming it. */
 bool frontend_demo_peek_message(const frontend_demo_reader *, qa_bytes *, qa_error *);
 

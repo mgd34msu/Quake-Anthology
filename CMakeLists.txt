@@ -991,6 +991,7 @@ add_library(qa_network STATIC
     src/network/q2/kex_transport_save.c
     src/network/q2/messages.c
     src/network/q2/mvd.c
+  src/network/q2/demo.c
     src/network/q2/q2pro.c
     src/network/q2/q2pro_fields.c
     src/network/q2/r1q2.c

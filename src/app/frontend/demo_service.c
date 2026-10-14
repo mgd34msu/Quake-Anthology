@@ -16,6 +16,8 @@ struct frontend_demo_reader {
     frontend_demo_format format;
     frontend_demo_end end;
     int32_t forced_track;
+    qa_q2_recording_header q2_header;
+    bool q2_admitted;
 };
 enum { DEMO_RECORD_PREFIX_BYTES = 64 };
 typedef struct demo_recording {
@@ -170,8 +172,16 @@ static bool reader_create(qa_buffer *bytes,frontend_demo_format format,
     r->forced_track=-1;
     qa_net_reader_init(&r->cursor,(qa_bytes){r->bytes.data,r->bytes.size},error);
     bool okay=true;
-    if (format==FRONTEND_DEMO_NQ) okay=qa_q1_demo_read_header(&r->cursor,&r->forced_track);
-    else if (format==FRONTEND_DEMO_MVD) okay=qa_q2_mvd_framer_create(true,QA_Q2_MVD_MESSAGE_BYTES,&r->mvd,error);
+    if (format==FRONTEND_DEMO_Q2 || format==FRONTEND_DEMO_Q2_SERVER || format==FRONTEND_DEMO_MVD) {
+        okay=qa_q2_recording_probe((qa_bytes){r->bytes.data,r->bytes.size},&r->q2_header,error);
+        if (okay) {
+            r->q2_admitted=true;
+            r->format=r->q2_header.kind==QA_Q2_RECORDING_MVD?FRONTEND_DEMO_MVD:
+                r->q2_header.kind==QA_Q2_RECORDING_SERVER?FRONTEND_DEMO_Q2_SERVER:FRONTEND_DEMO_Q2;
+        }
+    }
+    if (okay && r->format==FRONTEND_DEMO_NQ) okay=qa_q1_demo_read_header(&r->cursor,&r->forced_track);
+    else if (okay && r->format==FRONTEND_DEMO_MVD) okay=qa_q2_mvd_framer_create(true,QA_Q2_MVD_MESSAGE_BYTES,&r->mvd,error);
     r->cursor.error=NULL;
     if (!okay) { reader_destroy(r); return false; }
     *out=r;
@@ -182,6 +192,9 @@ int32_t frontend_demo_forced_track(const frontend_demo_reader *reader) {
 }
 qa_bytes frontend_demo_reader_bytes(const frontend_demo_reader *reader) {
     return reader?(qa_bytes){reader->bytes.data,reader->bytes.size}:(qa_bytes){0};
+}
+const qa_q2_recording_header *frontend_demo_q2_header(const frontend_demo_reader *reader) {
+    return reader&&reader->q2_admitted?&reader->q2_header:NULL;
 }
 bool frontend_demo_read_next(frontend_demo_reader *r,
     bool (*sequence)(void *,int32_t,qa_error *),void *context,
@@ -212,6 +225,10 @@ bool frontend_demo_read_next(frontend_demo_reader *r,
     } else if (r->format==FRONTEND_DEMO_QW) {
         okay=qa_qw_demo_read_record(&r->cursor,1450,&next.value.qw);
         *present=okay;
+    } else if (r->format==FRONTEND_DEMO_Q2 || r->format==FRONTEND_DEMO_Q2_SERVER) {
+        bool terminated=false;
+        okay=qa_q2_demo_read_packet(&r->cursor,&next.value.message,present,&terminated);
+        if (okay && terminated) r->end=FRONTEND_DEMO_TERMINATOR;
     } else {
         if (r->format==FRONTEND_DEMO_Q3&&remaining<4) {
             r->cursor.bit=r->bytes.size*8;
@@ -597,7 +614,6 @@ static bool play_begin(frontend_demo_service *s,const frontend_demo_request *req
         free(stem);
     } else okay=s->options.read(s->options.context,&request->source,path,&bytes,&found,error);
     if(okay&&!found)okay=fail(error,QA_ERROR_NOT_FOUND,"Could not open demo recording");
-    if(okay&&format==FRONTEND_DEMO_Q2&&bytes.size>=4&&qa_load_u32le(bytes.data)==QA_Q2_MVD_MAGIC)format=FRONTEND_DEMO_MVD;
     if(okay)okay=record_close(&s->preparing,false,error);
     if(okay)okay=record_finish(s,&s->recording,false,error);
     if(okay)okay=record_finish(s,&s->server,true,error);
@@ -609,6 +625,7 @@ static bool play_begin(frontend_demo_service *s,const frontend_demo_request *req
         s->playback_path=path;path=NULL;s->timedemo=request->timedemo;s->playback_attract=request->attract;
     }
     if(okay)okay=reader_create(&bytes,format,&s->reader,error);
+    if(okay)format=s->reader->format;
     if(okay)okay=s->options.playback_source(s->options.context,&request->source,format,protocol,
         s->reader,&s->playback,error);
     if(okay&&(!s->playback.owner||!s->playback.current||!s->playback.advance||!s->playback.release))

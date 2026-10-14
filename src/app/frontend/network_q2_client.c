@@ -1217,20 +1217,9 @@ bool frontend_network_q2_mvd_protocol(qa_bytes message,qa_net_protocol_id *out,q
 bool frontend_network_q2_demo_protocol(const frontend_demo_reader *reader,
     qa_net_protocol_id *out,qa_error *error)
 {
-    qa_bytes message;
-    qa_bytes bytes=frontend_demo_reader_bytes(reader);
-    if (out && bytes.size>=4 && qa_load_u32le(bytes.data)==QA_Q2_MVD_MAGIC) {
-        qa_net_reader file; qa_net_reader_init(&file,bytes,error);
-        (void)qa_net_read_u32(&file);
-        uint16_t length=qa_net_read_u16(&file);
-        if (!length || length>QA_Q2_MVD_MESSAGE_BYTES || !qa_net_read_bytes(&file,length,&message))
-            return qa_net_reader_fail(&file,"MVD demo has no initial protocol message");
-        return frontend_network_q2_mvd_protocol(message,out,error);
-    }
-    if(!out || !frontend_demo_peek_message(reader,&message,error)) return false;
-    qa_net_reader wire; qa_net_reader_init(&wire,message,error);
-    if(qa_net_read_u8(&wire)!=12)
-        return qa_net_reader_fail(&wire,"Q2 demo must begin with genuine serverdata");
-    uint32_t version=qa_net_read_u32(&wire);
-    return !wire.failed && qa_q2_protocol_from_version(version==26?34:version,0,out,error);
+    (void)error;
+    const qa_q2_recording_header *header=frontend_demo_q2_header(reader);
+    if (!header || !out) return false;
+    *out=header->protocol;
+    return true;
 }
