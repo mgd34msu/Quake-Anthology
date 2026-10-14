@@ -147,7 +147,9 @@ bool application_console_create(qa_application *application, qa_error *error)
         .source_command = application_command_fallback, .forward = forward};
     console.context.cvar_view = qa_cvars_view_identity(application->cvars);
     application->console = qa_console_create(&console, error);
-    return application->console != NULL;
+    return application->console != NULL &&
+        qa_console_register(application->console, "modcmd", "Run a command for one enabled component",
+            0, true, application_mod_command, application, error);
 }
 
 static void guest_print(void *context, const char *text)

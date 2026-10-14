@@ -8,8 +8,10 @@
 #include "native_q1_console.h"
 #include "startup_flow.h"
 #include "bots_catalog.h"
+#include "guest_q3_components.h"
 #include "qa/application_players.h"
 #include "qa/application_equipment.h"
+#include "qa/command_lexer.h"
 #include "qa/text.h"
 
 #include <string.h>
@@ -25,6 +27,97 @@ static application_provider *command_owner(const qa_application *application, ui
         if (provider->constructed && provider->attached)
             return provider;
     return NULL;
+}
+
+static bool mod_command_context(qa_application *app, const qa_launch_mod_selection *selection,
+    qa_command_context *context, bool *found, qa_error *error)
+{
+    *found = false;
+    for (size_t i = 0; i < application_q3_components_publication_count(app->components); ++i) {
+        application_q3_component_publication component;
+        if (!application_q3_components_publication_at(app->components, i, &component, error)) return false;
+        if (strcmp(component.descriptor->selection.instance, selection->instance) ||
+            strcmp(component.metadata->key, selection->component)) continue;
+        qa_cvars *cvars = NULL;
+        application_q3_component_console(component.game, &cvars);
+        context->owner = component.owner;
+        context->dialect = QA_RULESET_Q3;
+        context->cvar_view = qa_cvars_view_identity(cvars);
+        *found = true;
+        return true;
+    }
+    for (size_t i = 0;; ++i) {
+        qa_application_startup_source source;
+        bool present;
+        if (!qa_application_console_source_at(app, i, &source, &present, error)) return false;
+        if (!present) return true;
+        if (!source.descriptor ||
+            strcmp(source.descriptor->selection.instance, selection->instance)) continue;
+        context->session = source.command.session;
+        context->owner = source.command.owner;
+        context->dialect = source.command.dialect;
+        context->cvar_view = source.command.cvar_view;
+        *found = true;
+        return true;
+    }
+}
+
+bool application_mod_command(void *opaque, const qa_command_invocation *command, qa_error *error)
+{
+    (void)error;
+    qa_application *app = opaque;
+    qa_error failure = {0};
+    size_t length = strlen(command->raw), offset = 0;
+    qa_command_token_span selector = {0};
+    for (size_t i = 0; i < 2; ++i) {
+        if (!qa_command_token_next(command->raw, length, offset, QA_RULESET_Q3,
+            command->context.console_text, &selector, &failure)) goto rejected;
+        if (!selector.found) goto usage;
+        offset = selector.end;
+    }
+    while (offset < length && qa_command_token_space((unsigned char)command->raw[offset],
+        command->context.console_text)) ++offset;
+    if (!selector.size || offset == length) goto usage;
+    const char *name = command->raw + selector.start;
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(qa_application_launch(app));
+    const qa_launch_mod_selection *selected = NULL;
+    bool ambiguous = false;
+    for (size_t i = 0; choices && i < choices->mod_count; ++i) {
+        const qa_launch_mod_selection *mod = choices->mods + i;
+        if (mod->enabled && strlen(mod->instance) == selector.size &&
+            !memcmp(mod->instance, name, selector.size)) { selected = mod; break; }
+    }
+    if (!selected) for (size_t i = 0; choices && i < choices->mod_count; ++i) {
+        const qa_launch_mod_selection *mod = choices->mods + i;
+        if (!mod->enabled || strlen(mod->component) != selector.size ||
+            memcmp(mod->component, name, selector.size)) continue;
+        if (selected) ambiguous = true;
+        else selected = mod;
+    }
+    if (!selected || ambiguous) {
+        qa_console_emit(command->console, &command->context, ambiguous ?
+            "Several enabled instances use that component; select an instance name.\n" :
+            "The selected mod is not enabled.\n");
+        return true;
+    }
+    qa_command_context context = command->context;
+    bool found;
+    if (!mod_command_context(app, selected, &context, &found, &failure) || !found) {
+        qa_console_emit(command->console, &command->context,
+            failure.code == QA_OK ? "The selected mod has no active command producer.\n" : failure.message);
+        if (failure.code != QA_OK) qa_console_emit(command->console, &command->context, "\n");
+        return true;
+    }
+    if (qa_console_execute_now(command->console, &context, command->raw + offset, &failure)) return true;
+rejected:
+    qa_console_emit(command->console, &command->context, failure.code == QA_OK ?
+        "The selected mod command is empty.\n" : failure.message);
+    if (failure.code != QA_OK) qa_console_emit(command->console, &command->context, "\n");
+    return true;
+usage:
+    qa_console_emit(command->console, &command->context,
+        "Usage: modcmd PRODUCT/COMPONENT_ID <command>\n");
+    return true;
 }
 
 static bool q3_command_named(const char *text, const char *name)
