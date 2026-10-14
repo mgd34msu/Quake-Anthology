@@ -60,6 +60,7 @@
 #include "qa/network_q2_mvd.h"
 #include "qa/network_q2_unicast.h"
 #include "../src/app/frontend/selected_effects_q1_temporary.h"
+#include "../src/app/frontend/shared_video.h"
 #include "../src/network/q2/session_internal.h"
 #include "../src/app/application/internal.h"
 #include "../src/app/application/unified_q3_events.h"
@@ -438,6 +439,28 @@ static void test_console_failed_release(void)
     CHECK(outcome==QA_CONSOLE_RELEASE_COMPLETED && counts.failed==1 && counts.completed==2);
     CHECK(qa_console_release_abort(release,&outcome,&error));
     CHECK(qa_console_destroy_ready(console));qa_console_destroy(console);
+}
+
+static void test_shared_video_mode_recovery(void)
+{
+    qa_error error={0};qa_cvar_video_mode mode;
+    qa_cvar_video_query query={.member="gl_mode",.dialect=QA_RULESET_Q2_CLASSIC,.index=5};
+    CHECK(frontend_shared_video_resolve(NULL,&query,&mode,&error));
+    CHECK(mode.index==5 && mode.width==960 && mode.height==720);
+    query.index=10;query.width=960;query.height=720;
+    CHECK(frontend_shared_video_resolve(NULL,&query,&mode,&error));
+    CHECK(mode.index==5 && mode.width==960 && mode.height==720);
+    query.width=query.height=0;
+    CHECK(frontend_shared_video_resolve(NULL,&query,&mode,&error));
+    CHECK(mode.index==3 && mode.width==640 && mode.height==480);
+    query.member="r_mode";query.index=10;
+    CHECK(frontend_shared_video_resolve(NULL,&query,&mode,&error));
+    CHECK(mode.index==10 && mode.width==2048 && mode.height==1536);
+    query.member="sw_mode";query.index=-1;query.width=320;query.height=200;
+    CHECK(frontend_shared_video_resolve(NULL,&query,&mode,&error));
+    CHECK(mode.index==-1 && mode.width==320 && mode.height==200);
+    query.width=32;
+    CHECK(!frontend_shared_video_resolve(NULL,&query,&mode,&error));
 }
 
 static void test_shared_campaign_modes(void)
@@ -4998,6 +5021,7 @@ int main(int argc, char **argv)
     test_module_observation_storage();
     test_console_restore_pages();
     test_console_failed_release();
+    test_shared_video_mode_recovery();
     test_chat_initial_aliases();
     test_physical_prediction_command();
     test_shared_campaign_modes();
