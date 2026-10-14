@@ -4542,7 +4542,7 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind,
   }
   case Q2M_AI_SLIDE_LEFT:
   case Q2M_AI_SLIDE_RIGHT: {
-    float yaw = context->body.angles.y + (kind == Q2M_AI_SLIDE_LEFT ? 90.0f : -90.0f);
+    float yaw = context->body.angles.y + (kind == Q2M_AI_SLIDE_RIGHT ? 90.0f : -90.0f);
     return walk_move(context, yaw, distance, &(bool){false}, error);
   }
   case Q2M_AI_PARASITE_CHARGE:

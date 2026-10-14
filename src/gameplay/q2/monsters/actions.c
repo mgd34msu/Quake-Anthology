@@ -5305,7 +5305,7 @@ static bool callback_guardian_fire_blaster_79(q2m_context *context, q2m_callback
                                           qa_vec_normalize(qa_vec_sub(target, start)));
     spec.speed = 1000.0f;
     spec.has_projectile_effects = true;
-    spec.projectile_effects = monster->frame % 4 == 0 ? UINT64_C(16) : 0;
+    spec.projectile_effects = monster->frame % 4 == 0 ? UINT64_C(64) : 0;
     if (!q2m_fire(context, &spec, error))
         return false;
     if (!q2m_alive(context) || monster->frame != 173 ||
