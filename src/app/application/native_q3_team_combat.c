@@ -158,6 +158,20 @@ static bool points(const team_combat_scope *scope, qa_actor_id actor,
     return score(scope, actor, slot, origin, amount, false, error);
 }
 
+bool application_native_q3_source_add_score(void *opaque, qa_actor_id actor,
+    qa_vec3 origin, int32_t amount, qa_error *error)
+{
+    team_combat_scope scope;
+    if (!begin(opaque, &scope, error)) return false;
+    qa_q3_native_client value;
+    qa_q3_player_state player;
+    uint32_t slot;
+    bool present;
+    bool okay = client(&scope, actor, &slot, &value, &player, &present, error);
+    if (okay && present) okay = points(&scope, actor, slot, origin, amount, error);
+    return finish(&scope, okay, error);
+}
+
 static bool defend(const team_combat_scope *scope, qa_actor_id actor,
     uint32_t slot, bool base, qa_error *error)
 {

@@ -1,13 +1,13 @@
 #include "internal.h"
 
 static bool map_event(qa_q3_game *game, qa_q3_map_event_kind kind,
-                      qa_q3_map_actor_state *state, qa_actor_id other,
+                      qa_q3_map_actor_state *state, qa_vec3 origin, qa_actor_id other,
                       qa_actor_id activator, qa_error *error) {
     return q3_map_emit(game, &(qa_q3_map_event){.kind = kind,
                                                 .actor = activator,
                                                 .other = other,
                                                 .text = state->message,
-                                                .origin = state->origin,
+                                                .origin = origin,
                                                 .points = state->count,
                                                 .flags = state->spawnflags},
                        error);
@@ -394,12 +394,15 @@ bool q3_map_target_use(qa_q3_game *game, qa_q3_map_actor_state *state,
         if (!q3_map_is_player(game, activator))
             return true;
         state = q3_map_get(game, actor);
-        return !state || map_event(game, QA_Q3_MAP_SCORE, state, actor, activator, error);
+        if (!state) return true;
+        qa_body_state body;
+        if (!qa_world_body_read(game->options.services.world, actor, &body, error)) return false;
+        return map_event(game, QA_Q3_MAP_SCORE, state, body.origin, actor, activator, error);
     }
     case QA_Q3_MAP_TARGET_PRINT:
         if (!activator.registry)
             return q3_map_fail(error, "Q3 target_print requires an activator");
-        return map_event(game, QA_Q3_MAP_PRINT, state, state->actor, activator, error);
+        return map_event(game, QA_Q3_MAP_PRINT, state, state->origin, state->actor, activator, error);
     case QA_Q3_MAP_TARGET_SPEAKER:
         return use_speaker(game, state, activator, error);
     case QA_Q3_MAP_TARGET_PUSH:

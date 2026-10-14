@@ -9,5 +9,7 @@ bool application_native_q3_team_frag_bonuses(void *, qa_actor_id target,
     qa_actor_id attacker_or_none, qa_error *);
 bool application_native_q3_source_death_score(void *, qa_actor_id target,
     qa_actor_id attacker_or_none, qa_error *);
+bool application_native_q3_source_add_score(void *, qa_actor_id,
+    qa_vec3 origin, int32_t amount, qa_error *);
 
 #endif

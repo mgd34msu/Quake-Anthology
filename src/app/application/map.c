@@ -21,6 +21,7 @@
 #include "native_q3_settings.h"
 #include "native_q3_session.h"
 #include "native_q3_objectives.h"
+#include "native_q3_team_combat.h"
 #include "native_maps.h"
 #include "control_frame.h"
 #include "qa/stamp.h"
@@ -2865,6 +2866,9 @@ static bool q3_event(void *opaque, const qa_q3_map_event *event,
                      qa_error *error)
 {
     application_provider *provider = opaque;
+    if (event->kind == QA_Q3_MAP_SCORE &&
+        !application_native_q3_source_add_score(provider, event->actor,
+            event->origin, event->points, error)) return false;
     if (event->kind == QA_Q3_MAP_CVAR) {
         qa_strings *strings = qa_session_strings(provider->application->session);
         const char *name = qa_strings_cstr(strings, event->name);
