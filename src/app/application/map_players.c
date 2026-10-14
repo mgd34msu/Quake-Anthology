@@ -296,7 +296,7 @@ bool qa_application_player_actor(const qa_application *application, uint32_t sea
     return false;
 }
 
-size_t qa_application_player_count(const qa_application *application)
+static size_t player_count(const qa_application *application, bool humans_only)
 {
     if (application == NULL || application->players == NULL ||
         application->session == NULL)
@@ -304,9 +304,16 @@ size_t qa_application_player_count(const qa_application *application)
     size_t count = 0;
     for (size_t i = 0; i < application->players->count; ++i)
         count += !application->players->records[i].retiring &&
-            qa_actors_get(qa_session_actors(application->session), application->players->records[i].actor) != NULL;
+            qa_actors_get(qa_session_actors(application->session), application->players->records[i].actor) != NULL &&
+            (!humans_only || !application_player_identity(application->players->records + i)->bot);
     return count;
 }
+
+size_t qa_application_player_count(const qa_application *application)
+{ return player_count(application, false); }
+
+size_t qa_application_player_human_count(const qa_application *application)
+{ return player_count(application, true); }
 
 bool application_player_source_actor(const qa_application *application,
                                       qa_actor_id actor, qa_actor_id *out)

@@ -124,11 +124,7 @@ static bool menu_paused(qa_frontend *f,bool *out,qa_error *error)
         clients[count]=client; owners[count++]=configuration.declaration_owner;
     }
     if (q3) {
-        qa_application_network_q3_host_slot slots[64];
-        if (!qa_application_network_q3_host_slots(f->application,source.scope.provider,slots,error)) return false;
-        size_t humans=0;
-        for (size_t i=0;i<64;++i) humans+=slots[i].occupied && !slots[i].bot;
-        *out=requested && humans<=1;
+        *out=requested && qa_application_player_human_count(f->application)<=1;
         if (!pause_flag(&f->pause_cvars,source.cvars,source.declaration_owner,true,*out,error)) return false;
     }
     for (size_t i=0;i<count;++i)

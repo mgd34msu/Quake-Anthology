@@ -830,6 +830,7 @@ bool qa_application_save_request_read(const qa_application *, qa_application_sav
 bool qa_application_save_request_complete(qa_application *, const qa_application_save_request *, qa_error *);
 bool qa_application_player_actor(const qa_application *, uint32_t seat, qa_actor_id *);
 size_t qa_application_player_count(const qa_application *);
+size_t qa_application_player_human_count(const qa_application *);
 
 /* Elapsed monotonic duration is supplied by the outer platform loop or replay.
  * The application never reads a hidden wall clock for simulation. */
