@@ -78,6 +78,7 @@ bool application_q3_component_item_read(application_q3_component *,qa_actor_id,q
 bool application_q3_component_inventory_group(application_q3_component *,qa_actor_id,uint64_t,
     const qa_inventory_source_group *,qa_inventory_items *,qa_error *);
 qa_console *application_q3_component_console(application_q3_component *,qa_cvars **);
+const qa_command_context *application_q3_component_command_context(const application_q3_component *);
 const application_q3_mod_profile *application_q3_component_profile(const application_q3_component *);
 bool application_q3_component_checkpoint(application_q3_component *,qa_buffer *,qa_error *);
 bool application_q3_component_restore(application_q3_component *,qa_bytes,const qa_console_save_resolvers *,qa_error *);

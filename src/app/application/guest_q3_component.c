@@ -152,4 +152,6 @@ bool application_q3_component_initialize(application_q3_component *c,qa_error *e
 application_q3_component_source *application_q3_component_source_read(application_q3_component *c) { return c?c->source:NULL; }
 application_q3_mod *application_q3_component_mod(application_q3_component *c) { return c?c->mod:NULL; }
 qa_console *application_q3_component_console(application_q3_component *c,qa_cvars **cvars) { if(cvars) *cvars=c?c->cvars:NULL; return c?c->console:NULL; }
+const qa_command_context *application_q3_component_command_context(const application_q3_component *c)
+{ return &c->options.host.command_context; }
 const application_q3_mod_profile *application_q3_component_profile(const application_q3_component *c) { return c?c->profile:NULL; }

@@ -38,28 +38,19 @@ static bool mod_command_context(qa_application *app, const qa_launch_mod_selecti
         if (!application_q3_components_publication_at(app->components, i, &component, error)) return false;
         if (strcmp(component.descriptor->selection.instance, selection->instance) ||
             strcmp(component.metadata->key, selection->component)) continue;
-        qa_cvars *cvars = NULL;
-        application_q3_component_console(component.game, &cvars);
-        context->owner = component.owner;
-        context->dialect = QA_RULESET_Q3;
-        context->cvar_view = qa_cvars_view_identity(cvars);
+        *context = *application_q3_component_command_context(component.game);
         *found = true;
         return true;
     }
-    for (size_t i = 0;; ++i) {
-        qa_application_startup_source source;
-        bool present;
-        if (!qa_application_console_source_at(app, i, &source, &present, error)) return false;
-        if (!present) return true;
-        if (!source.descriptor ||
-            strcmp(source.descriptor->selection.instance, selection->instance)) continue;
-        context->session = source.command.session;
-        context->owner = source.command.owner;
-        context->dialect = source.command.dialect;
-        context->cvar_view = source.command.cvar_view;
-        *found = true;
+    const qa_launch_instance *instance = qa_launch_snapshot_find(qa_application_launch(app),
+        selection->instance);
+    application_provider *provider = instance ? instance->state : NULL;
+    if (!provider || !provider->constructed || !provider->attached || provider->close_pending)
         return true;
-    }
+    qa_application_startup_source source;
+    if (!application_provider_startup_source_at(provider, 0, &source, found, error)) return false;
+    if (*found) *context = source.command;
+    return true;
 }
 
 bool application_mod_command(void *opaque, const qa_command_invocation *command, qa_error *error)
@@ -100,7 +91,7 @@ bool application_mod_command(void *opaque, const qa_command_invocation *command,
             "The selected mod is not enabled.\n");
         return true;
     }
-    qa_command_context context = command->context;
+    qa_command_context context;
     bool found;
     if (!mod_command_context(app, selected, &context, &found, &failure) || !found) {
         qa_console_emit(command->console, &command->context,
@@ -108,6 +99,11 @@ bool application_mod_command(void *opaque, const qa_command_invocation *command,
         if (failure.code != QA_OK) qa_console_emit(command->console, &command->context, "\n");
         return true;
     }
+    context.origin = command->context.origin;
+    context.seat = command->context.seat;
+    context.client = command->context.client;
+    context.actor = command->context.actor;
+    context.console_text = command->context.console_text;
     if (qa_console_execute_now(command->console, &context, command->raw + offset, &failure)) return true;
 rejected:
     qa_console_emit(command->console, &command->context, failure.code == QA_OK ?
