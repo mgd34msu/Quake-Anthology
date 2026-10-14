@@ -377,14 +377,14 @@ static bool syscall_opcode(const qa_native_guest *guest, uint64_t instruction)
 }
 
 static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
-    size_t budget, uint64_t bypass, qa_native_guest_syscall_fn syscall,
-    void *syscall_context, bool *program_stopped, qa_error *error)
+    size_t budget, size_t quantum, uint64_t bypass, qa_native_guest_syscall_fn syscall,
+    void *syscall_context, qa_native_guest_run_result *out, qa_error *error)
 {
     if (!guest_mutable(guest, error)) return false;
     if (guest->options.backend != QA_NATIVE_GUEST_EMULATED)
         return guest_fail(error, QA_ERROR_UNSUPPORTED, start,
             "exact instruction budgets require the qualified emulated execution backend");
-    if (!budget || (!stop && !syscall) || (guest->run && !guest->callback_depth && !guest->publication_depth) ||
+    if (!out || (!stop && !syscall) || (guest->run && !guest->callback_depth && !guest->publication_depth) ||
         (guest->options.image.target.pointer_bytes == 4 && stop > UINT32_MAX) ||
         !guest_range(guest, start, 1, QA_NATIVE_GUEST_EXECUTE, error))
         return guest_fail(error, QA_ERROR_ARGUMENT, start, "native guest execution requires a genuine executable entry and bounded continuation");
@@ -394,17 +394,17 @@ static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
             "native original invocation requires its actual bound entry");
     }
     guest_run frame = {.parent = guest->run, .remaining = budget, .bypass = bypass};
+    qa_native_guest_run_result completed = {.kind = QA_NATIVE_GUEST_RETURN, .counted = true};
     guest->run = &frame;
     bool okay = instruction_pointer(guest, &start, true, error);
     uint64_t instruction = start;
     while (okay && instruction != stop) {
         if (!guest_mutable(guest, error)) { okay = false; break; }
-        for (guest_run *owner = &frame; owner; owner = owner->parent)
-            if (!owner->remaining) {
-                okay = guest_fail(error, QA_ERROR_ARGUMENT, instruction, "native guest instruction budget exhausted");
-                break;
-            }
-        if (!okay || !guest_range(guest, instruction, 1, QA_NATIVE_GUEST_EXECUTE, error)) { okay = false; break; }
+        bool exhausted = quantum && budget - frame.remaining >= quantum;
+        for (guest_run *owner = &frame; owner && !exhausted; owner = owner->parent)
+            exhausted = !owner->remaining;
+        if (exhausted) { completed.kind = QA_NATIVE_GUEST_BUDGET; break; }
+        if (!guest_range(guest, instruction, 1, QA_NATIVE_GUEST_EXECUTE, error)) { okay = false; break; }
         for (guest_run *owner = &frame; owner; owner = owner->parent) --owner->remaining;
         qa_native_guest_callback *bound = guest_callback_address(guest, instruction);
         qa_native_guest_callback callback = bound ? *bound : (qa_native_guest_callback){0};
@@ -465,7 +465,7 @@ static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
             --guest->callback_depth;
             if (okay) okay = guest_mutable(guest, error);
             if (!okay) break;
-            if (result.stop) { *program_stopped = true; break; }
+            if (result.stop) { completed.kind = QA_NATIVE_GUEST_PROGRAM_STOP; break; }
             qa_native_guest_cpu after;
             okay = qa_native_guest_cpu_read(guest, &after, error);
             if (!okay) break;
@@ -503,9 +503,14 @@ static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
         guest->faulting = false;
         if (okay) okay = instruction_pointer(guest, &instruction, false, error);
     }
+    completed.instructions = budget - frame.remaining;
+    completed.remaining = frame.remaining;
+    for (guest_run *owner = frame.parent; owner; owner = owner->parent)
+        if (owner->remaining < completed.remaining) completed.remaining = owner->remaining;
     guest->run = frame.parent;
     free(frame.writes);
     if (!okay && !guest_callback_cancelled(guest,error)) guest->failed = true;
+    if (okay) *out = completed;
     return okay;
 }
 
@@ -518,34 +523,40 @@ void guest_dispatch_started(qa_native_guest *guest)
 }
 
 bool qa_native_guest_run(qa_native_guest *guest, uint64_t start, uint64_t stop,
-    size_t budget, qa_error *error)
-{ return run(guest, start, stop, budget, 0, NULL, NULL, NULL, error); }
+    size_t budget, size_t quantum, qa_native_guest_run_result *result, qa_error *error)
+{ return run(guest, start, stop, budget, quantum, 0, NULL, NULL, result, error); }
 
 bool qa_native_guest_run_original(qa_native_guest *guest, uint64_t id,
-    uint64_t start, uint64_t stop, size_t budget, qa_error *error)
+    uint64_t start, uint64_t stop, size_t budget, size_t quantum,
+    qa_native_guest_run_result *result, qa_error *error)
 {
-    if (!id) return guest_fail(error, QA_ERROR_ARGUMENT, 0, "native original callback identity is required");
+    if (!id || !result) return guest_fail(error, QA_ERROR_ARGUMENT, 0, "native original callback identity and execution result are required");
     if (guest && guest->options.backend == QA_NATIVE_GUEST_HOST_X86_64) {
-        if (budget) return guest_fail(error, QA_ERROR_ARGUMENT, budget,
-            "hardware original execution has no instruction-budget capability");
-        return guest_native_run_original(guest,id,start,stop,error);
+        if (budget || quantum) return guest_fail(error, QA_ERROR_ARGUMENT, budget,
+            "hardware original execution has no instruction-budget or quantum capability");
+        bool okay = guest_native_run_original(guest,id,start,stop,error);
+        if (okay) *result = (qa_native_guest_run_result){.kind = QA_NATIVE_GUEST_RETURN};
+        return okay;
     }
-    return run(guest, start, stop, budget, id, NULL, NULL, NULL, error);
+    return run(guest, start, stop, budget, quantum, id, NULL, NULL, result, error);
 }
 
 bool qa_native_guest_run_program(qa_native_guest *guest, uint64_t start,
-    uint64_t stop, size_t budget, qa_native_guest_syscall_fn syscall,
-    void *context, bool *program_stopped, qa_error *error)
+    uint64_t stop, size_t budget, size_t quantum, qa_native_guest_syscall_fn syscall,
+    void *context, qa_native_guest_run_result *result, qa_error *error)
 {
     if (!guest_mutable(guest, error)) return false;
-    if (!syscall || !program_stopped || guest->options.image.target.os != QA_NATIVE_OS_LINUX ||
+    if (!syscall || !result || guest->options.image.target.os != QA_NATIVE_OS_LINUX ||
         guest->options.image.target.arch != QA_NATIVE_ARCH_X86_64 ||
         guest->options.image.target.pointer_bytes != 8)
         return guest_fail(error, QA_ERROR_ARGUMENT, start, "program execution requires an actual Linux x64 syscall owner");
-    *program_stopped = false;
     if (guest->options.backend == QA_NATIVE_GUEST_HOST_X86_64) {
-        if (budget) return guest_fail(error, QA_ERROR_ARGUMENT, budget, "hardware program execution has no instruction-budget capability");
-        return guest_native_run_program(guest, start, stop, syscall, context, program_stopped, error);
+        if (budget || quantum) return guest_fail(error, QA_ERROR_ARGUMENT, budget, "hardware program execution has no instruction-budget or quantum capability");
+        bool stopped = false;
+        bool okay = guest_native_run_program(guest, start, stop, syscall, context, &stopped, error);
+        if (okay) *result = (qa_native_guest_run_result){.kind = stopped ?
+            QA_NATIVE_GUEST_PROGRAM_STOP : QA_NATIVE_GUEST_RETURN};
+        return okay;
     }
-    return run(guest, start, stop, budget, 0, syscall, context, program_stopped, error);
+    return run(guest, start, stop, budget, quantum, 0, syscall, context, result, error);
 }

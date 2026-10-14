@@ -161,19 +161,23 @@ bool qa_native_sysv_program_status_read(const qa_native_sysv_program *owner,
     if (!owner || !out) return guest_fail(error, QA_ERROR_ARGUMENT, 0, "Linux status requires its actual kernel owner");
     *out = owner->status; return true;
 }
-bool qa_native_sysv_program_run(qa_native_sysv_program *owner, qa_error *error)
+bool qa_native_sysv_program_run(qa_native_sysv_program *owner, size_t quantum,
+    qa_native_guest_run_result *result, qa_error *error)
 {
-    if (!owner || !owner->complete || owner->busy || owner->status.exited ||
+    if (!owner || !result || !owner->complete || owner->busy || owner->status.exited ||
         !qa_native_guest_idle(owner->guest) || !program_current(owner, error))
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "Linux scheduling requires its live stopped program");
-    owner->busy = true; qa_native_guest_cpu cpu; bool stopped = false;
+    owner->busy = true; qa_native_guest_cpu cpu;
+    qa_native_guest_run_result completed = {0};
     bool okay = qa_native_guest_cpu_read(owner->guest, &cpu, error) && guest_cpu_clock_enter(&owner->clock, owner->guest, error) &&
         qa_native_guest_run_program(owner->guest, cpu.instruction, owner->returned,
-            owner->options.instruction_budget, program_syscall, owner, &stopped, error);
+            owner->options.instruction_budget, quantum, program_syscall, owner, &completed, error);
     if (okay) okay = guest_cpu_clock_leave(&owner->clock, owner->guest, error);
-    if (okay && (!stopped || !owner->status.exited))
+    if (okay && completed.kind != QA_NATIVE_GUEST_BUDGET &&
+        (completed.kind != QA_NATIVE_GUEST_PROGRAM_STOP || !owner->status.exited))
         okay = guest_fail(error, QA_ERROR_FORMAT, cpu.instruction, "Linux program reached a controller return without a kernel exit");
     if (!okay) { owner->failed = true; owner->guest->failed = true; }
+    if (okay) *result = completed;
     owner->clock.depth = 0; owner->busy = false; return okay;
 }
 bool qa_native_sysv_program_dispose(qa_native_sysv_program **slot, qa_error *error)

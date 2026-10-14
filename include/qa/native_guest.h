@@ -160,15 +160,34 @@ bool qa_native_guest_cpu_write(qa_native_guest *, const qa_native_guest_cpu *, q
 bool qa_native_guest_bind(qa_native_guest *, const qa_native_guest_callback *, qa_error *);
 bool qa_native_guest_unbind(qa_native_guest *, uint64_t, qa_error *);
 bool qa_native_guest_observe(qa_native_guest *, qa_native_guest_commit_fn, void *, qa_error *);
-/* Exact stop address, shared nested instruction budget, no host wall clock.
- * A CPU or callback fault makes this owner terminal; it cannot be checkpointed.
- * A caller prepares the actual ABI stack/registers before this raw operation. */
-bool qa_native_guest_run(qa_native_guest *, uint64_t, uint64_t, size_t, qa_error *);
+typedef enum qa_native_guest_stop_kind {
+    QA_NATIVE_GUEST_RETURN, QA_NATIVE_GUEST_BUDGET, QA_NATIVE_GUEST_PROGRAM_STOP
+} qa_native_guest_stop_kind;
+typedef struct qa_native_guest_run_result {
+    qa_native_guest_stop_kind kind;
+    size_t instructions, remaining;
+    /* Hardware execution has no instruction counter; its fields are unused. */
+    bool counted;
+} qa_native_guest_run_result;
+
+/* Exact stop address, shared nested total instruction budget, no host clock.
+ * A nonzero quantum stops between completed source instructions/callbacks;
+ * nested callbacks can exceed it and still consume the shared total budget.
+ * Zero quantum runs until return or total-budget exhaustion. BUDGET is a
+ * successful resumable stop, including budget zero. Emulated counts include
+ * stopped callback/observer dispatch and nested execution. remaining is bounded
+ * by every enclosing run; the caller chooses the next operation's budget.
+ * CPU/callback faults remain terminal. The caller prepares the actual ABI
+ * stack/registers before this raw operation and retains them until RETURN. */
+bool qa_native_guest_run(qa_native_guest *, uint64_t, uint64_t, size_t, size_t,
+    qa_native_guest_run_result *, qa_error *);
 /* Invoke the original instruction at a genuinely bound entry exactly once.
- * Recursion reaches the binding again. Hardware calls use budget zero and the
- * same one-shot bypass in their actual instruction monitor. */
+ * Recursion reaches the binding again. After an emulated BUDGET stop with a
+ * nonzero instruction count, resume with run, so the bypass is not renewed.
+ * Hardware calls use budget and quantum zero and the same one-shot bypass in
+ * their instruction monitor; their successful result has counted=false. */
 bool qa_native_guest_run_original(qa_native_guest *, uint64_t, uint64_t, uint64_t,
-    size_t, qa_error *);
+    size_t, size_t, qa_native_guest_run_result *, qa_error *);
 /* Explicit hardware invocation without instruction budgets. Watched stores
  * and admitted instruction boundaries use the actual child monitor. It
  * observes genuine bound entries without
@@ -187,12 +206,12 @@ typedef bool (*qa_native_guest_syscall_fn)(void *, qa_native_guest *,
 /* Linux x64 PROGRAM execution with an actual kernel-service owner. A genuine
  * syscall stops before any host syscall. A successful returning service commits
  * RAX/RCX/R11 and its two-byte source continuation; stop retains the stopped
- * source CPU for the kernel owner's exit receipt. EMULATED requires a positive
- * shared budget; HOST requires zero. stop may be zero for a program with no
- * return continuation. No syscall authority leaks into nested
- * ordinary library invocations. */
-bool qa_native_guest_run_program(qa_native_guest *, uint64_t, uint64_t, size_t,
-    qa_native_guest_syscall_fn, void *, bool *, qa_error *);
+ * source CPU for a PROGRAM_STOP receipt. EMULATED accepts a shared total budget
+ * and independent quantum as run does; HOST requires both zero and returns
+ * counted=false. stop may be zero for a program with no return continuation.
+ * No syscall authority leaks into nested ordinary library invocations. */
+bool qa_native_guest_run_program(qa_native_guest *, uint64_t, uint64_t, size_t, size_t,
+    qa_native_guest_syscall_fn, void *, qa_native_guest_run_result *, qa_error *);
 
 /* Captures this lower owner's actual CPU, mappings/backing aliases, allocation
  * records/cursor and stable callback IDs. Runtime, image-loader, TLS allocator,

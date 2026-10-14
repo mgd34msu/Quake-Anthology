@@ -742,11 +742,14 @@ static bool invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t 
         cpu.flags &= ~UINT64_C(0x400); cpu.registers[QA_NATIVE_RSP] = sp; cpu.instruction = target;
         okay = qa_native_guest_cpu_write(guest, &cpu, error);
     }
-    if (okay) okay = native ? (bypass ? qa_native_guest_run_original(guest, bypass, target, return_trap, 0, error) :
+    qa_native_guest_run_result execution = {.kind = QA_NATIVE_GUEST_RETURN};
+    if (okay) okay = native ? (bypass ? qa_native_guest_run_original(guest, bypass, target, return_trap, 0, 0, &execution, error) :
         qa_native_guest_run_native(guest, target, return_trap, error)) :
-        bypass ? qa_native_guest_run_original(guest, bypass, target, return_trap, budget, error) :
-        qa_native_guest_run(guest, target, return_trap, budget, error);
+        bypass ? qa_native_guest_run_original(guest, bypass, target, return_trap, budget, 0, &execution, error) :
+        qa_native_guest_run(guest, target, return_trap, budget, 0, &execution, error);
     if (okay) okay = qa_native_guest_cpu_read(guest, &cpu, error);
+    if (okay && execution.kind != QA_NATIVE_GUEST_RETURN)
+        okay = guest_fail(error, QA_ERROR_ARGUMENT, cpu.instruction, "native guest instruction budget exhausted");
     if (okay && cpu.registers[QA_NATIVE_RSP] != sp + plan->word + plan->callee_pop)
         okay = guest_fail(error, QA_ERROR_FORMAT, cpu.registers[QA_NATIVE_RSP], "guest returned with incorrect actual ABI stack cleanup");
     if (okay && plan->memory_result) okay = qa_native_guest_read(guest, cpu.registers[QA_NATIVE_RAX], data, layout->bytes, error);

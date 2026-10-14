@@ -4,6 +4,7 @@
 
 #include "qa/arena.h"
 #include "qa/native.h"
+#include "qa/native_guest.h"
 #include "qa/pool.h"
 #include "qa/operation.h"
 #include "qa/random.h"
@@ -4214,6 +4215,69 @@ static void test_q2_weapon_names(void)
     free(config); qa_strings_destroy(strings);
 }
 
+static void test_native_resumable_budget(void)
+{
+    qa_error error = {0};
+    qa_native_guest *guest = NULL;
+    qa_native_guest_options options = {
+        .image = {.format = QA_NATIVE_IMAGE_ELF64,
+            .target = {.os = QA_NATIVE_OS_LINUX, .arch = QA_NATIVE_ARCH_X86_64,
+                .abi = QA_NATIVE_ABI_SYSTEM_V_X64, .pointer_bytes = 8}},
+        .allocation_base = UINT64_C(0x200000),
+        .maximum_backing_bytes = QA_NATIVE_GUEST_PAGE,
+        .backend = QA_NATIVE_GUEST_EMULATED};
+    CHECK(qa_native_guest_create(&options, &guest, &error));
+    const uint64_t entry = UINT64_C(0x100000), returned = entry + 6;
+    const uint8_t code[] = {0xff, 0xc0, 0xff, 0xc9, 0x75, 0xfa, 0x90};
+    qa_native_guest_mapping mapping;
+    CHECK(qa_native_guest_map(guest, entry, QA_NATIVE_GUEST_PAGE,
+        QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_EXECUTE,
+        (qa_bytes){code, sizeof(code)}, &mapping, &error));
+    qa_native_guest_cpu cpu;
+    CHECK(qa_native_guest_cpu_read(guest, &cpu, &error));
+    cpu.registers[QA_NATIVE_RAX] = 0;
+    cpu.registers[QA_NATIVE_RCX] = 3;
+    cpu.flags = 2;
+    CHECK(qa_native_guest_cpu_write(guest, &cpu, &error));
+    qa_native_guest_run_result result;
+    CHECK(qa_native_guest_run(guest, entry, returned, 20, 2, &result, &error));
+    CHECK(result.kind == QA_NATIVE_GUEST_BUDGET && result.counted &&
+        result.instructions == 2 && result.remaining == 18);
+    CHECK(qa_native_guest_idle(guest) && !qa_native_guest_terminal(guest));
+    CHECK(qa_native_guest_cpu_read(guest, &cpu, &error));
+    CHECK(cpu.instruction == entry + 4 && cpu.registers[QA_NATIVE_RAX] == 1 &&
+        cpu.registers[QA_NATIVE_RCX] == 2);
+    cpu.registers[QA_NATIVE_RBX] = 17;
+    CHECK(qa_native_guest_cpu_write(guest, &cpu, &error));
+    qa_native_guest_cpu paused = cpu;
+    CHECK(qa_native_guest_run(guest, cpu.instruction, returned, 0, 2, &result, &error));
+    CHECK(result.kind == QA_NATIVE_GUEST_BUDGET && result.counted &&
+        result.instructions == 0 && result.remaining == 0);
+    CHECK(qa_native_guest_cpu_read(guest, &cpu, &error));
+    CHECK(cpu.instruction == paused.instruction && cpu.flags == paused.flags &&
+        !memcmp(cpu.registers, paused.registers, sizeof(cpu.registers)));
+    CHECK(qa_native_guest_run(guest, cpu.instruction, returned, 18, 3, &result, &error));
+    CHECK(result.kind == QA_NATIVE_GUEST_BUDGET && result.counted &&
+        result.instructions == 3 && result.remaining == 15);
+    CHECK(qa_native_guest_cpu_read(guest, &cpu, &error));
+    CHECK(cpu.instruction == entry + 4 && cpu.registers[QA_NATIVE_RAX] == 2 &&
+        cpu.registers[QA_NATIVE_RCX] == 1 && cpu.registers[QA_NATIVE_RBX] == 17);
+    CHECK(qa_native_guest_run(guest, cpu.instruction, returned, result.remaining, 4, &result, &error));
+    CHECK(result.kind == QA_NATIVE_GUEST_RETURN && result.counted &&
+        result.instructions == 4 && result.remaining == 11);
+    CHECK(qa_native_guest_cpu_read(guest, &cpu, &error));
+    CHECK(cpu.instruction == returned && cpu.registers[QA_NATIVE_RAX] == 3 &&
+        cpu.registers[QA_NATIVE_RCX] == 0 && cpu.registers[QA_NATIVE_RBX] == 17);
+    CHECK(qa_native_guest_run(guest, entry, returned, 1, 100, &result, &error));
+    CHECK(result.kind == QA_NATIVE_GUEST_BUDGET && result.counted &&
+        result.instructions == 1 && result.remaining == 0);
+    CHECK(qa_native_guest_cpu_read(guest, &cpu, &error));
+    CHECK(cpu.instruction == entry + 2 && cpu.registers[QA_NATIVE_RAX] == 4);
+    CHECK(qa_native_guest_idle(guest) && !qa_native_guest_terminal(guest));
+    CHECK(qa_native_guest_cpu_write(guest, &cpu, &error));
+    CHECK(qa_native_guest_destroy(&guest, &error) && !guest);
+}
+
 static void test_native_import_slot_identity(void)
 {
     CHECK(qa_native_q2_import_dispatch(QA_NATIVE_Q2_GAME_API3,12)==QA_NATIVE_Q2_IMPORT_trace);
@@ -4771,6 +4835,7 @@ int main(int argc, char **argv)
     test_shared_angle_wrapping();
     test_shared_direction_angles();
     test_native_import_slot_identity();
+    test_native_resumable_budget();
     test_q2_weapon_names();
     test_q2_player_media();
     test_literal_tokens();

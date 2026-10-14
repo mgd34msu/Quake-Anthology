@@ -74,9 +74,13 @@ bool qa_native_sysv_program_create(const qa_native_sysv_program_options *,
 qa_native_guest *qa_native_sysv_program_guest(const qa_native_sysv_program *);
 bool qa_native_sysv_program_status_read(const qa_native_sysv_program *,
     qa_native_sysv_program_status *, qa_error *);
-/* Enters the retained current PC with the genuine invocation-scoped syscall
- * owner. A source exit retains its stopped CPU and exact exit status. */
-bool qa_native_sysv_program_run(qa_native_sysv_program *, qa_error *);
+/* Enters the retained current PC with the invocation-scoped syscall owner.
+ * Each invocation uses options.instruction_budget as its shared total bound
+ * and the supplied quantum as an earlier scheduling boundary. BUDGET retains
+ * the resumable source CPU with status.exited=false; PROGRAM_STOP retains its
+ * CPU and exact kernel exit status. Hardware execution requires quantum zero. */
+bool qa_native_sysv_program_run(qa_native_sysv_program *, size_t,
+    qa_native_guest_run_result *, qa_error *);
 bool qa_native_sysv_program_dispose(qa_native_sysv_program **, qa_error *);
 
 #endif
