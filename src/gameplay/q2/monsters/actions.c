@@ -25,7 +25,6 @@ static const q2m_transition transitions[Q2M_CALLBACK_COUNT] = {
     [Q2M_CALLBACK_guardian_atk1_finish]={ Q2M_MOVE_guardian_atk1_out},
     [Q2M_CALLBACK_guardian_atk2]={ Q2M_MOVE_guardian_move_atk2_fire},
     [Q2M_CALLBACK_guardian_atk2_out]={ Q2M_MOVE_guardian_move_atk2_out},
-    [Q2M_CALLBACK_guncmdr_fire_chain]={ Q2M_MOVE_guncmdr_move_fire_chain},
     [Q2M_CALLBACK_guncmdr_grenade_back_dodge_resume]={ Q2M_MOVE_guncmdr_move_attack_grenade_back},
     [Q2M_CALLBACK_guncmdr_grenade_mortar_resume]={ Q2M_MOVE_guncmdr_move_attack_mortar},
     [Q2M_CALLBACK_gunner_fire_chain]={ Q2M_MOVE_gunner_move_fire_chain},
@@ -1269,6 +1268,22 @@ static bool can_walk_forward(q2m_context *context, float distance, bool *moved,
                               error);
 }
 
+static bool guncmdr_chain_move(q2m_context *context, q2m_move_id *move,
+                              qa_error *error) {
+  *move = Q2M_MOVE_guncmdr_move_fire_chain;
+  if (context->monster->stand_ground || !context->monster->enemy.registry)
+    return true;
+  float distance = q2m_distance(context, context->monster->enemy);
+  if (!q2m_alive(context) || distance <= 400.0f)
+    return true;
+  bool advance;
+  if (!can_walk_forward(context, 8.0f, &advance, error))
+    return false;
+  if (q2m_alive(context) && advance)
+    *move = Q2M_MOVE_guncmdr_move_fire_chain_run;
+  return true;
+}
+
 static bool infantry_fire(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   if (!infantry_machinegun(context, error))
@@ -2203,13 +2218,13 @@ static bool conditional_transition(q2m_context *context, q2m_callback_id callbac
     if (!repeat) {
       move = commander ? Q2M_MOVE_guncmdr_move_endfire_chain
                        : Q2M_MOVE_gunner_move_endfire_chain;
-    } else if (commander && !monster->stand_ground &&
-               q2m_distance(context, monster->enemy) > 400.0f) {
-      move = Q2M_MOVE_guncmdr_move_fire_chain_run;
+    } else if (commander) {
+      if (!guncmdr_chain_move(context, &move, error))
+        return false;
     } else {
-      move = commander ? Q2M_MOVE_guncmdr_move_fire_chain : Q2M_MOVE_gunner_move_fire_chain;
+      move = Q2M_MOVE_gunner_move_fire_chain;
     }
-    return q2m_set_move(context, move, false, error);
+    return !q2m_alive(context) || q2m_set_move(context, move, false, error);
   }
 
   if (callback == Q2M_CALLBACK_hover_reattack) {
@@ -2408,6 +2423,13 @@ static bool tank_run(q2m_context *context, qa_error *error) {
 
 static bool end_transition(q2m_context *context, q2m_callback_id callback,
                            bool *handled, qa_error *error) {
+  if (callback == Q2M_CALLBACK_guncmdr_fire_chain) {
+    *handled = true;
+    q2m_move_id move;
+    if (!guncmdr_chain_move(context, &move, error))
+      return false;
+    return !q2m_alive(context) || q2m_set_move(context, move, true, error);
+  }
   if (callback == Q2M_CALLBACK_flyer_check_melee) {
     *handled = true;
     bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
@@ -2512,8 +2534,7 @@ static bool end_transition(q2m_context *context, q2m_callback_id callback,
   if (callback == Q2M_CALLBACK_guncmdr_kick_finished) {
     *handled = true;
     context->monster->melee_ns = q2m_after(context->game->now_ns, 3.0);
-    return set_definition_move(context, context->monster->definition->run_move,
-                               error);
+    return q2m_source_attack(context, false, error);
   }
   if (callback == Q2M_CALLBACK_gekk_swim_loop) {
     *handled = true;
@@ -3593,6 +3614,85 @@ static bool mortar_direction(q2m_context *context, qa_vec3 target,
   qa_angle_vectors(qa_v3(best_pitch, angles.y, angles.z), direction,
                            NULL, NULL,QA_ANGLE_FLOAT_MATH);
   *available = true;
+  return true;
+}
+
+bool q2m_guncmdr_attack_move(q2m_context *context, q2m_move_id *move,
+                            qa_error *error) {
+  struct qa_q2_monster *monster = context->monster;
+  monster->dodging = false;
+  *move = Q2M_MOVE_NONE;
+  qa_body_state enemy;
+  qa_builtin_actor_traits traits;
+  bool available;
+  if (!target_body(context, &enemy, &traits, &available) || !available ||
+      !q2m_alive(context))
+    return true;
+  float distance = q2m_body_distance(context->game->options.rules,
+                                     &context->body, &enemy);
+  bool hazard = monster->hazard.registry != 0;
+  if (!hazard && distance < 20.0f && monster->melee_ns < context->game->now_ns) {
+    *move = Q2M_MOVE_guncmdr_move_attack_kick;
+    return true;
+  }
+  if (hazard) {
+    *move = Q2M_MOVE_guncmdr_move_attack_chain;
+    return true;
+  }
+  bool clear;
+  if (distance <= 100.0f || q2_random_bounded(context->game, 2) == 0) {
+    if (!q2m_clear_flash_shot(context, 240, &clear, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    if (clear) {
+      *move = Q2M_MOVE_guncmdr_move_attack_chain;
+      return true;
+    }
+  }
+  qa_vec3 aim = qa_vec_normalize(qa_vec_sub(enemy.origin, context->body.origin));
+  float gravity = context->game->services.physics
+                      ? context->game->services.physics->gravity : 800.0f;
+  qa_vec3 start, direction;
+  bool pitched;
+  if (distance >= 525.0f ||
+      fabsf(context->body.origin.z + context->body.bounds.mins.z -
+            enemy.origin.z - enemy.bounds.maxs.z) > 64.0f) {
+    if (!q2m_clear_flash_shot(context, 242, &clear, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    if (clear) {
+      if (!q2m_project_flash(context, 242, &start, error) ||
+          !mortar_direction(context, enemy.origin, start, aim, 850.0f,
+                             gravity, true, &direction, &pitched, error))
+        return false;
+      if (!q2m_alive(context))
+        return true;
+      if (pitched) {
+        *move = Q2M_MOVE_guncmdr_move_attack_mortar;
+        return true;
+      }
+    }
+  }
+  if (!q2m_clear_flash_shot(context, 245, &clear, error))
+    return false;
+  if (!q2m_alive(context))
+    return true;
+  if (clear && !monster->stand_ground) {
+    if (!q2m_project_flash(context, 245, &start, error) ||
+        !mortar_direction(context, enemy.origin, start, aim, 600.0f,
+                           gravity, false, &direction, &pitched, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    if (pitched) {
+      *move = Q2M_MOVE_guncmdr_move_attack_grenade_back;
+      return true;
+    }
+  }
+  if (monster->stand_ground)
+    *move = Q2M_MOVE_guncmdr_move_attack_chain;
   return true;
 }
 

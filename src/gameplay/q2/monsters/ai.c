@@ -2885,6 +2885,8 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
                 : Q2M_MOVE_gunner_move_attack_grenade;
     break;
   case Q2M_GUN_COMMANDER:
+    if (rerelease)
+      return q2m_guncmdr_attack_move(context, move, error);
     if (melee) {
       *move = Q2M_MOVE_guncmdr_move_attack_kick;
     } else if (blind || distance > 400.0f) {
@@ -3254,6 +3256,22 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
   return true;
 }
 
+static bool apply_species_attack(q2m_context *context, q2m_move_id move,
+                                 qa_error *error) {
+  if (!q2m_alive(context) || move == Q2M_MOVE_NONE)
+    return true;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+  q2m_species species = context->monster->definition->species;
+  bool immediate = rerelease &&
+      (species == Q2M_JORG || species == Q2M_MEDIC ||
+       species == Q2M_MEDIC_COMMANDER || species == Q2M_GUN_COMMANDER);
+  if (!q2m_set_move(context, move, immediate, error))
+    return false;
+  return !q2m_alive(context) || !rerelease || species != Q2M_GUN_COMMANDER ||
+         move != Q2M_MOVE_guncmdr_move_attack_mortar ||
+         q2m_callback_run(context, Q2M_CALLBACK_monster_duck_down, error);
+}
+
 bool q2m_source_attack(q2m_context *context, bool melee, qa_error *error) {
   if (!q2m_alive(context))
     return true;
@@ -3275,14 +3293,13 @@ bool q2m_source_attack(q2m_context *context, bool melee, qa_error *error) {
     return false;
   if (!q2m_alive(context) || !living)
     return true;
-  context->monster->attack_state = melee ? Q2M_MELEE : Q2M_MISSILE;
+  if (species != Q2M_GUN_COMMANDER ||
+      context->game->options.rules != QA_RULESET_Q2_RERELEASE)
+    context->monster->attack_state = melee ? Q2M_MELEE : Q2M_MISSILE;
   q2m_move_id move;
   if (!select_species_attack(context, &move, error))
     return false;
-  bool immediate = context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
-                   (species == Q2M_JORG || species == Q2M_MEDIC ||
-                    species == Q2M_MEDIC_COMMANDER);
-  return !q2m_alive(context) || move == Q2M_MOVE_NONE || q2m_set_move(context, move, immediate, error);
+  return apply_species_attack(context, move, error);
 }
 
 static bool attack_selected(q2m_context *context, qa_error *error) {
@@ -3313,13 +3330,9 @@ static bool attack_selected(q2m_context *context, qa_error *error) {
   if (move == Q2M_MOVE_NONE && species != Q2M_GEKK &&
       !(rerelease && (species == Q2M_INFANTRY || species == Q2M_CHICK ||
                      species == Q2M_CHICK_HEAT || species == Q2M_TANK ||
-                     species == Q2M_TANK_COMMANDER)))
+                     species == Q2M_TANK_COMMANDER || species == Q2M_GUN_COMMANDER)))
     return true;
-  bool immediate = context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
-                   (monster->definition->species == Q2M_JORG ||
-                    monster->definition->species == Q2M_MEDIC ||
-                    monster->definition->species == Q2M_MEDIC_COMMANDER);
-  if (move != Q2M_MOVE_NONE && !q2m_set_move(context, move, immediate, error))
+  if (!apply_species_attack(context, move, error))
     return false;
   if (!q2m_alive(context))
     return true;
