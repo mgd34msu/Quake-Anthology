@@ -7,7 +7,9 @@ bool qa_application_player_profile_bind(qa_application *app, qa_fs_root *root,
 {
     if (app && root && app->user_files==root && app->progress)
         return true;
-    if (!app || !root || app->destroy_requested || app->operation != APPLICATION_IDLE ||
+    if (!app || !root || app->destroy_requested ||
+        (app->operation != APPLICATION_IDLE &&
+            (app->operation != APPLICATION_PERSISTING || !app->native_restore_image)) ||
         app->frame_preparing || app->q3_round_active || app->q3_world_restart ||
         app->state == QA_APPLICATION_FAULTED || !app->session ||
         !qa_session_safe(app->session) || !application_rankings_idle(app))
