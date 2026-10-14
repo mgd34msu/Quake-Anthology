@@ -49,6 +49,24 @@ typedef enum guest_sysv_lifecycle {
     GUEST_SYSV_LOADED, GUEST_SYSV_INITIALIZING, GUEST_SYSV_INITIALIZED,
     GUEST_SYSV_FINALIZING, GUEST_SYSV_FINALIZED, GUEST_SYSV_FAILED
 } guest_sysv_lifecycle;
+typedef enum guest_sysv_initialize_phase {
+    GUEST_SYSV_INITIALIZE_PRE, GUEST_SYSV_INITIALIZE_DEPENDENCIES,
+    GUEST_SYSV_INITIALIZE_TARGETS
+} guest_sysv_initialize_phase;
+typedef struct guest_sysv_initialize_frame {
+    uint64_t provider;
+    size_t ordinal;
+    guest_sysv_initialize_phase phase;
+} guest_sysv_initialize_frame;
+typedef struct guest_sysv_initialization {
+    qa_arena storage, call_storage;
+    guest_sysv_initialize_frame *frames;
+    size_t count;
+    guest_abi_plan *plan;
+    guest_abi_call *call;
+    qa_native_value arguments[3], result;
+    uint64_t target;
+} guest_sysv_initialization;
 typedef struct guest_sysv_export {
     const char *name, *version;
     uint64_t address, bytes, tls_offset;
@@ -142,6 +160,9 @@ bool guest_sysv_unique(guest_sysv_runtime *, const char *, uint64_t proposed,
 bool guest_sysv_tls_address(guest_sysv_runtime *, uint64_t module,
     uint64_t offset, uint64_t *, qa_error *);
 bool guest_sysv_initialize(guest_sysv_runtime *, uint64_t, size_t, qa_error *);
+bool guest_sysv_initialize_begin(guest_sysv_runtime *, uint64_t, size_t, qa_error *);
+bool guest_sysv_initialize_advance(guest_sysv_runtime *, size_t, bool *, qa_error *);
+void guest_sysv_initialize_cancel(guest_sysv_runtime *);
 bool guest_sysv_finalize(guest_sysv_runtime *, uint64_t, size_t, qa_error *);
 bool guest_sysv_destructor(guest_sysv_runtime *, uint64_t target,
     uint64_t argument, uint64_t dso, qa_error *);

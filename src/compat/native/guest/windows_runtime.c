@@ -172,7 +172,17 @@ static guest_abi_layout layout(guest_windows *owner, qa_native_value_type type)
     return (guest_abi_layout){.kind = type, .bytes = bytes, .alignment = bytes ? bytes : 1};
 }
 
-bool windows_invoke(guest_windows *owner, uint64_t target, const qa_native_value_type *types,
+static void windows_call_close(guest_windows *owner, windows_call *call)
+{
+    guest_abi_call_close(&call->abi);
+    guest_abi_plan_destroy(call->plan);
+    qa_arena_destroy(&call->storage);
+    if (call->busy) --owner->busy;
+    *call = (windows_call){0};
+}
+
+static bool windows_call_begin(guest_windows *owner, windows_call *call,
+    uint64_t target, const qa_native_value_type *types,
     size_t count, qa_native_value_type result_type, const qa_native_value *arguments,
     bool system, qa_native_value *result, qa_error *error)
 {
@@ -183,22 +193,39 @@ bool windows_invoke(guest_windows *owner, uint64_t target, const qa_native_value
     guest_abi_signature signature = {.abi = owner->target.abi,
         .convention = system && owner->target.pointer_bytes == 4 ? GUEST_ABI_STDCALL : GUEST_ABI_DEFAULT,
         .parameters = parameters, .parameter_count = count, .result = layout(owner, result_type)};
-    qa_arena scratch;
-    qa_arena_init_pool(&scratch, &owner->guest->scratch_pages);
-    guest_abi_plan *plan = NULL;
-    if (!guest_abi_plan_create(&signature, NULL, 0, &scratch, &plan, error)) {
-        qa_arena_destroy(&scratch);
-        return false;
+    qa_arena_init_pool(&call->storage, &owner->guest->scratch_pages);
+    bool okay = guest_abi_plan_create(&signature, NULL, 0, &call->storage, &call->plan, error);
+    if (okay) {
+        ++owner->busy; call->busy = true;
+        bool native = owner->execution == QA_NATIVE_GUEST_HOST_X86_64;
+        okay = guest_abi_call_begin(call->plan, owner->guest, target, owner->return_trap,
+            arguments, count, result, owner->instruction_budget, native, 0,
+            &call->storage, &call->abi, error);
     }
-    ++owner->busy;
-    bool okay = owner->execution == QA_NATIVE_GUEST_HOST_X86_64 ?
-        guest_abi_invoke_native(plan, owner->guest, target, owner->return_trap,
-            arguments, count, result, error) :
-        guest_abi_invoke(plan, owner->guest, target, owner->return_trap,
-            arguments, count, result, owner->instruction_budget, error);
-    --owner->busy;
-    guest_abi_plan_destroy(plan);
-    qa_arena_destroy(&scratch);
+    if (!okay) windows_call_close(owner, call);
+    return okay;
+}
+
+static bool windows_call_step(guest_windows *owner, windows_call *call,
+    size_t quantum, bool *returned, qa_error *error)
+{
+    if (!guest_abi_call_step(call->abi, quantum, returned, error)) return false;
+    if (!*returned) return true;
+    if (!guest_abi_call_finish(call->abi, error)) return false;
+    windows_call_close(owner, call);
+    return true;
+}
+
+bool windows_invoke(guest_windows *owner, uint64_t target, const qa_native_value_type *types,
+    size_t count, qa_native_value_type result_type, const qa_native_value *arguments,
+    bool system, qa_native_value *result, qa_error *error)
+{
+    windows_call call = {0};
+    bool returned = false;
+    bool okay = windows_call_begin(owner, &call, target, types, count, result_type,
+        arguments, system, result, error) &&
+        windows_call_step(owner, &call, 0, &returned, error) && returned;
+    windows_call_close(owner, &call);
     return okay;
 }
 
@@ -433,7 +460,7 @@ bool guest_windows_resolve(guest_windows *owner, const char *library, const char
 
 bool guest_windows_idle(const guest_windows *owner)
 {
-    return owner && owner->constructed && !owner->busy && !owner->detached && !owner->publication_pending && !owner->retired && !owner->retiring && qa_native_guest_idle(owner->guest) &&
+    return owner && owner->constructed && !owner->busy && !owner->initialization.image && !owner->detached && !owner->publication_pending && !owner->retired && !owner->retiring && qa_native_guest_idle(owner->guest) &&
         guest_runtime_imports_idle(owner->imports) && guest_runtime_resources_idle(owner->resources);
 }
 
@@ -877,16 +904,35 @@ bool guest_windows_reload_begin(guest_windows *owner, uint64_t id, qa_error *err
     return true;
 }
 
-static bool notification(guest_windows *owner, const windows_image_record *record,
+static bool notification_begin(guest_windows *owner, windows_call *call,
+    const windows_image_record *record,
     uint64_t target, uint32_t reason, qa_native_value_type type, qa_native_value *result, qa_error *error)
 {
     const qa_native_value_type types[] = {QA_NATIVE_ADDRESS, QA_NATIVE_U32, QA_NATIVE_ADDRESS};
     const qa_native_value args[] = {{.type = QA_NATIVE_ADDRESS, .as.address = record->base},
         {.type = QA_NATIVE_U32, .as.u32 = reason}, {.type = QA_NATIVE_ADDRESS, .as.address = 0}};
-    return windows_invoke(owner, target, types, 3, type, args, true, result, error);
+    return windows_call_begin(owner, call, target, types, 3, type, args, true, result, error);
 }
 
-bool guest_windows_initialize(guest_windows *owner, uint64_t id, size_t budget, qa_error *error)
+static bool notification(guest_windows *owner, const windows_image_record *record,
+    uint64_t target, uint32_t reason, qa_native_value_type type, qa_native_value *result, qa_error *error)
+{
+    windows_call call = {0};
+    bool returned = false;
+    bool okay = notification_begin(owner, &call, record, target, reason, type, result, error) &&
+        windows_call_step(owner, &call, 0, &returned, error) && returned;
+    windows_call_close(owner, &call);
+    return okay;
+}
+
+void guest_windows_initialize_cancel(guest_windows *owner)
+{
+    if (!owner || !owner->initialization.image) return;
+    windows_call_close(owner, &owner->initialization.call);
+    owner->initialization = (windows_initialization){0};
+}
+
+bool guest_windows_initialize_begin(guest_windows *owner, uint64_t id, size_t budget, qa_error *error)
 {
     if (!guest_windows_idle(owner) || !call_policy(owner->execution, budget))
         return guest_fail(error, QA_ERROR_ARGUMENT, id, "Windows DLL initialization requires its actual idle execution policy");
@@ -899,18 +945,62 @@ bool guest_windows_initialize(guest_windows *owner, uint64_t id, size_t budget, 
     }
     if (!guest_grow((void **)&owner->initialized_ids, &owner->initialized_capacity,
         owner->initialized_count + 1, sizeof(*owner->initialized_ids), error)) return false;
-    owner->instruction_budget = budget; const guest_pe_view *image = guest_pe_describe(record->image); qa_native_value result;
-    for (size_t i = 0; i < image->tls.callback_count; ++i)
-        if (!notification(owner, record, image->tls.callbacks[i], 1, QA_NATIVE_VOID, &result, error)) return lifecycle_failure(owner);
-    if (image->entry) {
-        if (!notification(owner, record, image->base + image->entry, 1, QA_NATIVE_I32, &result, error)) return lifecycle_failure(owner);
-        if (!result.as.i32) {
-            guest_fail(error, QA_ERROR_ARGUMENT, id, "Windows DLL_PROCESS_ATTACH returned false");
-            return lifecycle_failure(owner);
+    owner->instruction_budget = budget;
+    owner->initialization = (windows_initialization){.image = id};
+    return true;
+}
+
+bool guest_windows_initialize_advance(guest_windows *owner, size_t quantum,
+    bool *complete, qa_error *error)
+{
+    if (!owner || !complete)
+        return guest_fail(error, QA_ERROR_ARGUMENT, 0, "Windows initialization requires its retained owner and completion output");
+    windows_initialization *state = &owner->initialization;
+    *complete = !state->image;
+    if (*complete) return true;
+    windows_image_record *record = (windows_image_record *)windows_image_at(owner, state->image);
+    const guest_pe_view *image = guest_pe_describe(record->image);
+    if (!state->call.abi) {
+        if (state->phase == WINDOWS_INITIALIZE_TLS && state->callback == image->tls.callback_count)
+            state->phase = WINDOWS_INITIALIZE_ENTRY;
+        uint64_t target = state->phase == WINDOWS_INITIALIZE_TLS ?
+            image->tls.callbacks[state->callback] : image->entry ? image->base + image->entry : 0;
+        qa_native_value_type type = state->phase == WINDOWS_INITIALIZE_TLS ? QA_NATIVE_VOID : QA_NATIVE_I32;
+        if (target && !notification_begin(owner, &state->call, record, target, 1, type, &state->result, error))
+            goto failed;
+    }
+    if (state->call.abi) {
+        bool returned = false;
+        if (!windows_call_step(owner, &state->call, quantum, &returned, error)) goto failed;
+        if (!returned) return true;
+        if (state->phase == WINDOWS_INITIALIZE_TLS) {
+            ++state->callback;
+            if (state->callback < image->tls.callback_count || image->entry) return true;
+        } else if (!state->result.as.i32) {
+            guest_fail(error, QA_ERROR_ARGUMENT, state->image, "Windows DLL_PROCESS_ATTACH returned false");
+            goto failed;
         }
     }
+    /* Initialization becomes visible only after every real notification has
+     * returned. The partial image remains owned on any earlier failure. */
     owner->initialized_ids[owner->initialized_count++] = record->id;
-    record->initialized = true; return true;
+    record->initialized = true;
+    owner->initialization = (windows_initialization){0};
+    *complete = true;
+    return true;
+failed:
+    guest_windows_initialize_cancel(owner);
+    return lifecycle_failure(owner);
+}
+
+bool guest_windows_initialize(guest_windows *owner, uint64_t id, size_t budget, qa_error *error)
+{
+    if (!guest_windows_initialize_begin(owner, id, budget, error)) return false;
+    bool complete = false;
+    do {
+        if (!guest_windows_initialize_advance(owner, 0, &complete, error)) return false;
+    } while (!complete);
+    return true;
 }
 
 bool guest_windows_finalize(guest_windows *owner, uint64_t id, size_t budget, qa_error *error)

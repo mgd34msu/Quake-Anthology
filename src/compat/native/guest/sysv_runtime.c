@@ -391,7 +391,7 @@ failed:
 bool guest_sysv_idle(const guest_sysv_runtime *runtime)
 {
     return runtime && runtime->guest && !runtime->failed && !runtime->retired &&
-        !runtime->detached && !runtime->calls && !runtime->loading &&
+        !runtime->detached && !runtime->calls && !runtime->loading && !runtime->initialization.count &&
         qa_native_guest_idle(runtime->guest) && guest_runtime_imports_idle(runtime->imports);
 }
 guest_runtime_imports *guest_sysv_imports(guest_sysv_runtime *runtime)
@@ -426,7 +426,7 @@ uint64_t guest_sysv_thread_pointer(const guest_sysv_runtime *runtime)
 { return runtime ? runtime->thread_pointer : 0; }
 bool guest_sysv_retire(guest_sysv_runtime *runtime, qa_error *error)
 {
-    if (!runtime || runtime->calls || runtime->loading ||
+    if (!runtime || runtime->calls || runtime->loading || runtime->initialization.count ||
         (runtime->guest && !qa_native_guest_idle(runtime->guest)))
         return sysv_fail(error, QA_ERROR_ARGUMENT, "System V process is still executing or loading");
     if (runtime->retired) return true;
@@ -450,6 +450,7 @@ void guest_sysv_abandon(guest_sysv_runtime **owner)
 {
     if (!owner || !*owner) return;
     guest_sysv_runtime *runtime = *owner;
+    guest_sysv_initialize_cancel(runtime);
     guest_runtime_imports_abandon(&runtime->imports);
     for (size_t i = 0; runtime->services && i < runtime->service_count; ++i) service_free(runtime->services[i]);
     for (size_t i = 0; runtime->images && i < runtime->image_count; ++i) image_free(runtime->images + i);
@@ -726,25 +727,26 @@ static bool trace_add(guest_sysv_runtime *runtime, uint64_t provider,
         runtime->trace_count + 1, sizeof(*runtime->trace), error)) return false;
     runtime->trace[runtime->trace_count++] = (guest_sysv_trace){provider, target, finalize}; return true;
 }
-static bool initialize_targets(guest_sysv_runtime *runtime, uint64_t id,
-    bool pre, qa_error *error)
+static void initialize_clear(guest_sysv_runtime *runtime, bool failed)
 {
-    sysv_image *image = image_find(runtime, id);
-    size_t count = pre ? image->provider.preinitializer_count : image->provider.initializer_count;
-    const qa_native_value_type types[] = {QA_NATIVE_I32, QA_NATIVE_ADDRESS, QA_NATIVE_ADDRESS};
-    qa_native_value arguments[] = {{.type = QA_NATIVE_I32, .as.i32 = (int32_t)runtime->options.argc},
-        {.type = QA_NATIVE_ADDRESS, .as.address = runtime->argv},
-        {.type = QA_NATIVE_ADDRESS, .as.address = runtime->envp}};
-    for (size_t i = 0; i < count; ++i) {
-        image = image_find(runtime, id);
-        uint64_t target = pre ? image->provider.preinitializers[i] : image->provider.initializers[i];
-        qa_native_value result = {.type = QA_NATIVE_VOID};
-        if (!sysv_invoke(runtime, target, types, 3, QA_NATIVE_VOID, arguments, &result, error) ||
-            !trace_add(runtime, id, target, false, error)) return false;
-    }
-    return true;
+    guest_sysv_initialization *state = &runtime->initialization;
+    guest_abi_call_close(&state->call);
+    if (failed)
+        for (size_t i = 0; i < state->count; ++i) {
+            sysv_image *image = image_find(runtime, state->frames[i].provider);
+            if (image) image->lifecycle = GUEST_SYSV_FAILED;
+        }
+    guest_abi_plan_destroy(state->plan);
+    qa_arena_destroy(&state->call_storage);
+    qa_arena_destroy(&state->storage);
+    *state = (guest_sysv_initialization){0};
 }
-bool guest_sysv_initialize(guest_sysv_runtime *runtime, uint64_t id,
+void guest_sysv_initialize_cancel(guest_sysv_runtime *runtime)
+{
+    if (runtime) initialize_clear(runtime, true);
+}
+
+bool guest_sysv_initialize_begin(guest_sysv_runtime *runtime, uint64_t id,
     size_t budget, qa_error *error)
 {
     if (!sysv_current(runtime, error)) return false;
@@ -754,23 +756,122 @@ bool guest_sysv_initialize(guest_sysv_runtime *runtime, uint64_t id,
     if (!image) return sysv_fail(error, QA_ERROR_ARGUMENT, "System V initializer image is not loaded");
     if (image->lifecycle == GUEST_SYSV_INITIALIZED || image->lifecycle == GUEST_SYSV_INITIALIZING) return true;
     if (image->lifecycle != GUEST_SYSV_LOADED) return sysv_fail(error, QA_ERROR_ARGUMENT, "System V image cannot initialize from its reached state");
-    runtime->budget = budget; image->lifecycle = GUEST_SYSV_INITIALIZING;
-    if (!initialize_targets(runtime, id, true, error)) goto failed;
-    image = image_find(runtime, id);
-    size_t count = image->provider.needed_count;
-    for (size_t i = 0; i < count; ++i) {
-        image = image_find(runtime, id);
-        uint64_t dependency = 0;
-        for (size_t j = 0; j < runtime->image_count; ++j)
-            if (sysv_equal_text(runtime->images[j].provider.soname, image->provider.needed[i])) {
-                dependency = runtime->images[j].provider.id; break;
-            }
-        if (dependency && !guest_sysv_initialize(runtime, dependency, budget, error)) goto failed;
-    }
-    if (!initialize_targets(runtime, id, false, error)) goto failed;
-    image_find(runtime, id)->lifecycle = GUEST_SYSV_INITIALIZED; return true;
+    if (runtime->initialization.count)
+        return sysv_fail(error, QA_ERROR_ARGUMENT, "System V initialization already retains another image operation");
+    if (runtime->image_count > SIZE_MAX / sizeof(guest_sysv_initialize_frame))
+        return sysv_fail(error, QA_ERROR_MEMORY, "System V initializer stack extent overflows");
+    guest_sysv_initialization *state = &runtime->initialization;
+    qa_arena_init(&state->storage, 0);
+    state->frames = qa_arena_alloc(&state->storage,
+        runtime->image_count * sizeof(*state->frames), _Alignof(guest_sysv_initialize_frame), error);
+    if (!state->frames) goto failed;
+    state->frames[0] = (guest_sysv_initialize_frame){.provider = id};
+    state->count = 1;
+    guest_abi_layout parameters[] = {sysv_layout(runtime, QA_NATIVE_I32),
+        sysv_layout(runtime, QA_NATIVE_ADDRESS), sysv_layout(runtime, QA_NATIVE_ADDRESS)};
+    guest_abi_signature signature = {.abi = runtime->target.abi, .parameters = parameters,
+        .parameter_count = 3, .result = sysv_layout(runtime, QA_NATIVE_VOID)};
+    if (!guest_abi_plan_create(&signature, NULL, 0, &state->storage, &state->plan, error)) goto failed;
+    qa_arena_seal(&state->storage);
+    state->arguments[0] = (qa_native_value){.type = QA_NATIVE_I32, .as.i32 = (int32_t)runtime->options.argc};
+    state->arguments[1] = (qa_native_value){.type = QA_NATIVE_ADDRESS, .as.address = runtime->argv};
+    state->arguments[2] = (qa_native_value){.type = QA_NATIVE_ADDRESS, .as.address = runtime->envp};
+    state->result = (qa_native_value){.type = QA_NATIVE_VOID};
+    runtime->budget = budget;
+    image->lifecycle = GUEST_SYSV_INITIALIZING;
+    return true;
 failed:
-    image_find(runtime, id)->lifecycle = GUEST_SYSV_FAILED; return false;
+    image->lifecycle = GUEST_SYSV_FAILED;
+    guest_sysv_initialize_cancel(runtime);
+    return false;
+}
+
+bool guest_sysv_initialize_advance(guest_sysv_runtime *runtime, size_t quantum,
+    bool *complete, qa_error *error)
+{
+    if (!runtime || !complete)
+        return sysv_fail(error, QA_ERROR_ARGUMENT, "System V initialization requires its retained owner and completion output");
+    guest_sysv_initialization *state = &runtime->initialization;
+    *complete = !state->count;
+    if (*complete) return true;
+    if (!sysv_current(runtime, error)) goto failed;
+    bool executed = false;
+    while (state->count) {
+        guest_sysv_initialize_frame *frame = state->frames + state->count - 1;
+        sysv_image *image = image_find(runtime, frame->provider);
+        if (frame->phase == GUEST_SYSV_INITIALIZE_DEPENDENCIES) {
+            if (frame->ordinal == image->provider.needed_count) {
+                frame->phase = GUEST_SYSV_INITIALIZE_TARGETS; frame->ordinal = 0;
+                continue;
+            }
+            sysv_image *dependency = NULL;
+            const char *name = image->provider.needed[frame->ordinal++];
+            for (size_t i = 0; i < runtime->image_count; ++i)
+                if (sysv_equal_text(runtime->images[i].provider.soname, name)) {
+                    dependency = runtime->images + i; break;
+                }
+            if (!dependency || dependency->lifecycle == GUEST_SYSV_INITIALIZED ||
+                dependency->lifecycle == GUEST_SYSV_INITIALIZING) continue;
+            if (dependency->lifecycle != GUEST_SYSV_LOADED) {
+                sysv_fail(error, QA_ERROR_ARGUMENT, "System V image cannot initialize from its reached state");
+                goto failed;
+            }
+            dependency->lifecycle = GUEST_SYSV_INITIALIZING;
+            /* Each admitted provider enters once; cycles retain that marker. */
+            state->frames[state->count++] = (guest_sysv_initialize_frame){.provider = dependency->provider.id};
+            continue;
+        }
+        bool pre = frame->phase == GUEST_SYSV_INITIALIZE_PRE;
+        size_t count = pre ? image->provider.preinitializer_count : image->provider.initializer_count;
+        if (frame->ordinal == count) {
+            if (pre) { frame->phase = GUEST_SYSV_INITIALIZE_DEPENDENCIES; frame->ordinal = 0; }
+            else { image->lifecycle = GUEST_SYSV_INITIALIZED; --state->count; }
+            continue;
+        }
+        if (executed) return true;
+        if (!state->call) {
+            state->target = pre ? image->provider.preinitializers[frame->ordinal] :
+                image->provider.initializers[frame->ordinal];
+            qa_arena_init_pool(&state->call_storage, &runtime->guest->scratch_pages);
+            ++runtime->calls;
+            bool okay = guest_abi_call_begin(state->plan, runtime->guest, state->target,
+                runtime->options.return_trap, state->arguments, 3, &state->result, runtime->budget,
+                runtime->execution == QA_NATIVE_GUEST_HOST_X86_64, 0,
+                &state->call_storage, &state->call, error);
+            --runtime->calls;
+            if (!okay) goto failed;
+        }
+        bool returned = false;
+        ++runtime->calls;
+        bool okay = guest_abi_call_step(state->call, quantum, &returned, error);
+        if (okay && returned) okay = guest_abi_call_finish(state->call, error);
+        --runtime->calls;
+        if (!okay) goto failed;
+        if (!returned) return true;
+        guest_abi_call_close(&state->call);
+        qa_arena_destroy(&state->call_storage);
+        if (!trace_add(runtime, frame->provider, state->target, false, error)) goto failed;
+        ++frame->ordinal; executed = true;
+    }
+    initialize_clear(runtime, false);
+    *complete = true;
+    return true;
+failed:
+    guest_sysv_initialize_cancel(runtime);
+    return false;
+}
+
+bool guest_sysv_initialize(guest_sysv_runtime *runtime, uint64_t id,
+    size_t budget, qa_error *error)
+{
+    bool retained = runtime && runtime->initialization.count;
+    if (!guest_sysv_initialize_begin(runtime, id, budget, error)) return false;
+    if (retained) return true;
+    bool complete = false;
+    do {
+        if (!guest_sysv_initialize_advance(runtime, 0, &complete, error)) return false;
+    } while (!complete);
+    return true;
 }
 bool guest_sysv_finalize(guest_sysv_runtime *runtime, uint64_t id,
     size_t budget, qa_error *error)

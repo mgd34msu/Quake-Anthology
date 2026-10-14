@@ -74,6 +74,7 @@ struct guest_sysv_runtime {
     guest_sysv_trace *trace;
     size_t trace_count, trace_capacity;
     guest_sysv_load *loading;
+    guest_sysv_initialization initialization;
     size_t budget;
     unsigned calls;
     bool clock_present;

@@ -270,10 +270,40 @@ static bool end(qa_native_windows_process *owner, bool okay)
     if (!okay && owner->guest->failed) owner->failed = true;
     return okay;
 }
-bool qa_native_windows_process_initialize(qa_native_windows_process *owner, uint64_t image, qa_error *error)
+bool qa_native_windows_process_initialize_begin(qa_native_windows_process *owner,
+    uint64_t image, qa_error *error)
 {
     if (!begin(owner, error)) return false;
-    return end(owner, guest_windows_initialize(owner->runtime, image, owner->options.instruction_budget, error));
+    bool okay = guest_windows_initialize_begin(owner->runtime, image,
+        owner->options.instruction_budget, error);
+    if (okay) { owner->initializing = true; return true; }
+    return end(owner, false);
+}
+bool qa_native_windows_process_initialize_advance(qa_native_windows_process *owner,
+    size_t quantum, bool *complete, qa_error *error)
+{
+    if (!owner || !complete)
+        return guest_fail(error, QA_ERROR_ARGUMENT, 0, "Windows initialization requires its retained process and completion output");
+    *complete = !owner->initializing;
+    if (*complete) return true;
+    bool okay = windows_process_current(owner, error) &&
+        guest_windows_initialize_advance(owner->runtime, quantum, complete, error);
+    if (!okay || *complete) {
+        if (!okay) guest_windows_initialize_cancel(owner->runtime);
+        owner->initializing = false;
+        return end(owner, okay);
+    }
+    return true;
+}
+bool qa_native_windows_process_initialize(qa_native_windows_process *owner,
+    uint64_t image, qa_error *error)
+{
+    if (!qa_native_windows_process_initialize_begin(owner, image, error)) return false;
+    bool complete = false;
+    do {
+        if (!qa_native_windows_process_initialize_advance(owner, 0, &complete, error)) return false;
+    } while (!complete);
+    return true;
 }
 bool qa_native_windows_process_reload(qa_native_windows_process *owner, uint64_t id, qa_error *error)
 {
@@ -450,9 +480,13 @@ bool qa_native_windows_process_dispose(qa_native_windows_process **pointer, qa_e
     if (!pointer) return guest_fail(error, QA_ERROR_ARGUMENT, 0, "Windows disposal needs its owning pointer");
     qa_native_windows_process *owner = *pointer;
     if (!owner) return true;
-    if (owner->busy || (owner->guest && (owner->guest->run || owner->guest->stepping ||
+    if ((owner->busy && !owner->initializing) || (owner->guest && (owner->guest->run || owner->guest->stepping ||
         owner->guest->callback_depth || owner->guest->publication_depth)))
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "Windows disposal requires drained source and capability callbacks");
+    if (owner->initializing) {
+        guest_windows_initialize_cancel(owner->runtime);
+        owner->initializing = false; owner->busy = false;
+    }
     owner->disposing = true; owner->busy = true;
     /* Real open capabilities retire while their actual lower/context owner is
      * retained. Detached/provisional candidates only borrow close ownership. */

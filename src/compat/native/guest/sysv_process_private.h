@@ -34,7 +34,7 @@ struct qa_native_sysv_process {
     sysv_process_stream streams[3];
     sysv_process_opened_file *pending_files;
     guest_cpu_clock clock;
-    bool complete, busy, failed, disposing, provisional;
+    bool complete, busy, failed, disposing, provisional, initializing;
 };
 
 bool sysv_process_current(qa_native_sysv_process *, qa_error *);
