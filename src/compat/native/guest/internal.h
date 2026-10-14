@@ -65,6 +65,7 @@ struct qa_native_guest {
     size_t callback_count, callback_capacity;
     uint64_t next_mapping, next_backing, allocation_cursor;
     guest_run *run;
+    struct guest_abi_call *call;
     guest_callback_recovery *recovery;
     qa_native_guest_commit_fn observe;
     void *observe_context;

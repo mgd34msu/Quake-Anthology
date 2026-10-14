@@ -6,6 +6,7 @@
 #include "elf_loader.h"
 #include "profile/artifact.h"
 #include "cpu_clock.h"
+#include "abi.h"
 
 typedef struct sysv_process_image {
     guest_elf *artifact;
@@ -39,5 +40,6 @@ struct qa_native_sysv_process {
 bool sysv_process_current(qa_native_sysv_process *, qa_error *);
 guest_sysv_bindings sysv_process_bindings(qa_native_sysv_process *);
 bool sysv_process_profile(qa_native_sysv_process *, bool, qa_error *);
+bool guest_sysv_process_call_prepare(qa_native_sysv_process *, uint64_t, guest_process_call_options *, qa_error *);
 
 #endif

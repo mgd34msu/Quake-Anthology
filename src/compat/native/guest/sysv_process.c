@@ -460,6 +460,58 @@ bool qa_native_sysv_process_artifact_read(const qa_native_sysv_process *owner, u
     return guest_fail(error, QA_ERROR_NOT_FOUND, provider, "System V retained artifact provider is absent");
 }
 
+static bool call_enter(void *context, qa_error *error)
+{
+    qa_native_sysv_process *owner = context;
+    return sysv_process_current(owner, error) &&
+        (owner->options.guest.backend == QA_NATIVE_GUEST_HOST_X86_64 ||
+         guest_cpu_clock_enter(&owner->clock, owner->guest, error));
+}
+static bool call_leave(void *context, bool okay, qa_error *error)
+{
+    qa_native_sysv_process *owner = context;
+    if (owner->options.guest.backend == QA_NATIVE_GUEST_HOST_X86_64) return okay;
+    qa_error first = error ? *error : (qa_error){0};
+    bool left = guest_cpu_clock_leave(&owner->clock, owner->guest, error);
+    if (!okay && error) *error = first;
+    return okay && left;
+}
+static void call_close(void *context, bool previous_busy, bool okay)
+{
+    qa_native_sysv_process *owner = context;
+    owner->busy = previous_busy;
+    if (!okay && owner->guest->failed) owner->failed = true;
+}
+bool guest_sysv_process_call_prepare(qa_native_sysv_process *owner, uint64_t target,
+    guest_process_call_options *out, qa_error *error)
+{
+    if (!owner || !out)
+        return guest_fail(error, QA_ERROR_ARGUMENT, 0, "System V call needs its process owner");
+    bool enclosing_busy = owner->busy;
+    bool nested = owner->guest &&
+        ((enclosing_busy&&owner->guest->run&&owner->guest->callback_depth)||
+         (owner->guest->publication_depth&&owner->guest->stopped_write_calls)) &&
+        (!owner->guest->publication_depth || owner->guest->stopped_write_calls);
+    bool okay;
+    if (nested) {
+        okay = !owner->failed && !owner->disposing && !owner->provisional &&
+            guest_mutable(owner->guest, error);
+        if (!okay && error && error->code == QA_OK)
+            guest_fail(error, QA_ERROR_ARGUMENT, target, "System V nested invocation has no actual stopped process scope");
+    } else if(!enclosing_busy&&owner->complete&&!owner->failed&&!owner->disposing&&!owner->provisional&&
+        guest_call_prepared(owner->guest)&&guest_sysv_idle(owner->runtime)&&
+        guest_runtime_resources_idle(owner->resources)) {
+        okay = true;
+    } else okay = qa_native_sysv_process_idle(owner) ||
+        guest_fail(error, QA_ERROR_ARGUMENT, 0, "System V operation requires its complete idle process");
+    if (!okay) return false;
+    owner->busy = true;
+    *out = (guest_process_call_options){.return_trap = owner->returned,
+        .budget = owner->options.instruction_budget, .context = owner,
+        .previous_busy = enclosing_busy, .enter = call_enter, .leave = call_leave, .close = call_close};
+    return true;
+}
+
 static bool process_invoke(qa_native_sysv_process *owner, uint64_t original, uint64_t target,
     const qa_native_signature *signature, const qa_native_value *arguments, size_t count,
     qa_native_value *result, qa_error *error)
@@ -474,46 +526,25 @@ static bool process_invoke(qa_native_sysv_process *owner, uint64_t original, uin
     if (!guest_abi_plan_native(signature, NULL, 0, &scratch, &plan, error)) {
         qa_arena_destroy(&scratch); return false;
     }
-    bool enclosing_busy = owner->busy;
-    bool nested = owner->guest &&
-        ((enclosing_busy&&owner->guest->run&&owner->guest->callback_depth)||
-         (owner->guest->publication_depth&&owner->guest->stopped_write_calls)) &&
-        (!owner->guest->publication_depth || owner->guest->stopped_write_calls);
-    bool okay;
-    if (nested) {
-        okay = !owner->failed && !owner->disposing && !owner->provisional &&
-            guest_mutable(owner->guest, error) && sysv_process_current(owner, error);
-        if (!okay && error && error->code == QA_OK)
-            guest_fail(error, QA_ERROR_ARGUMENT, target, "System V nested invocation has no actual stopped process scope");
-    } else if(!enclosing_busy&&owner->complete&&!owner->failed&&!owner->disposing&&!owner->provisional&&
-        guest_call_prepared(owner->guest)&&guest_sysv_idle(owner->runtime)&&
-        guest_runtime_resources_idle(owner->resources)) {
-        okay=sysv_process_current(owner,error);
-        if(okay)owner->busy=true;
-    } else okay = begin(owner, error);
-    if (okay) {
-        owner->busy=true;
+    guest_process_call_options execution;
+    bool prepared = guest_sysv_process_call_prepare(owner, target, &execution, error);
+    bool okay = prepared;
+    if (prepared) {
+        bool entered = execution.enter(execution.context, error);
         bool host = owner->options.guest.backend == QA_NATIVE_GUEST_HOST_X86_64;
-        bool entered = host || guest_cpu_clock_enter(&owner->clock, owner->guest, error);
-        bool invoked = entered && (host && !original ?
+        okay = entered && (host && !original ?
             guest_abi_invoke_native(plan, owner->guest, target, owner->returned,
                 arguments, count, result, error) :
             original ? guest_abi_invoke_original(plan, owner->guest, original, target, owner->returned,
                 arguments, count, result, owner->options.instruction_budget, error) :
             guest_abi_invoke(plan, owner->guest, target, owner->returned,
                 arguments, count, result, owner->options.instruction_budget, error));
-        if (entered && !host) {
-            qa_error failure = error ? *error : (qa_error){0};
-            bool clock = guest_cpu_clock_leave(&owner->clock, owner->guest, error);
-            if (!invoked && error) *error = failure;
-            invoked = invoked && clock;
-        }
-        owner->busy = enclosing_busy;
-        if (!invoked && owner->guest->failed) owner->failed = true;
-        okay = invoked;
+        if (entered) okay = execution.leave(execution.context, okay, error);
+        execution.close(execution.context, execution.previous_busy, okay);
     }
     guest_abi_plan_destroy(plan); qa_arena_destroy(&scratch); return okay;
 }
+
 bool qa_native_sysv_process_invoke(qa_native_sysv_process *owner, uint64_t target,
     const qa_native_signature *signature, const qa_native_value *arguments, size_t count,
     qa_native_value *result, qa_error *error)

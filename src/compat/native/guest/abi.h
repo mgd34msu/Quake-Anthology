@@ -31,6 +31,7 @@ typedef struct guest_abi_signature {
     bool variadic;
 } guest_abi_signature;
 typedef struct guest_abi_plan guest_abi_plan;
+typedef struct guest_abi_call guest_abi_call;
 
 /* NULL arena owns load-time layout/field/location storage; a supplied arena
  * owns call-scoped plans until reset. Extra variadic layouts are supplied
@@ -46,6 +47,26 @@ size_t guest_abi_argument_bytes(const guest_abi_plan *);
 size_t guest_abi_result_bytes(const guest_abi_plan *);
 bool guest_abi_scratch_bytes(size_t, size_t, size_t *, qa_error *);
 size_t guest_abi_format_plan_bytes(size_t);
+
+/* The caller retains storage and plan until close. ADDRESS arguments name
+ * admitted guest memory, not copied host pointees. Result storage is borrowed.
+ * A soft step retains the actual CPU and never decodes a return value. */
+bool guest_abi_call_begin(const guest_abi_plan *, qa_native_guest *, uint64_t,
+    uint64_t, const qa_native_value *, size_t, qa_native_value *, size_t, bool,
+    uint64_t, qa_arena *, guest_abi_call **, qa_error *);
+bool guest_abi_call_step(guest_abi_call *, size_t, bool *, qa_error *);
+bool guest_abi_call_finish(guest_abi_call *, qa_error *);
+void guest_abi_call_close(guest_abi_call **);
+
+typedef struct guest_process_call_options {
+    uint64_t return_trap;
+    size_t budget;
+    void *context;
+    bool previous_busy;
+    bool (*enter)(void *, qa_error *);
+    bool (*leave)(void *, bool, qa_error *);
+    void (*close)(void *, bool, bool);
+} guest_process_call_options;
 
 /* CPU and stack belong to the same lower guest. The caller supplies its actual
  * executable return trap and instruction budget. Successful nested calls

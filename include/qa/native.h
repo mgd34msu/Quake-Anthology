@@ -7,6 +7,7 @@
 
 typedef struct qa_native_module qa_native_module;
 typedef struct qa_native_instance qa_native_instance;
+typedef struct qa_native_loading_call qa_native_loading_call;
 typedef struct qa_native_declaration qa_native_declaration;
 typedef struct qa_native_region_binding qa_native_region_binding;
 struct qa_native_process_options;
@@ -391,6 +392,20 @@ const qa_native_signature *qa_native_entry_signature(const qa_native_instance *i
 bool qa_native_call(qa_native_instance *instance, const char *entry,
                     const qa_native_value *arguments, size_t argument_count,
                     qa_native_value *result, qa_error *error);
+/* Retained loading calls use the same ABI path as synchronous calls. Arguments
+ * and signatures are copied; addressed guest storage and the result buffer
+ * stay owned by the caller until finish or abandon. A soft step yield leaves
+ * the result unpublished and preserves the call's total instruction budget. */
+bool qa_native_loading_call_begin(qa_native_instance *, const char *entry,
+    const qa_native_value *, size_t, qa_native_value *result,
+    qa_native_loading_call **, qa_error *);
+bool qa_native_loading_invoke_begin(qa_native_instance *, qa_native_address,
+    const qa_native_signature *, const qa_native_value *, size_t,
+    qa_native_value *result, qa_native_loading_call **, qa_error *);
+bool qa_native_loading_call_step(qa_native_loading_call *, size_t quantum,
+    bool *returned, qa_error *);
+bool qa_native_loading_call_finish(qa_native_loading_call **, qa_error *);
+bool qa_native_loading_call_abandon(qa_native_loading_call **, qa_error *);
 bool qa_native_initialize(qa_native_instance *instance, qa_error *error);
 bool qa_native_shutdown(qa_native_instance *instance, qa_error *error);
 /* QL API 10 has a mandatory registration phase and parameterized level

@@ -345,6 +345,40 @@ bool qa_native_windows_process_file_remove(qa_native_windows_process *owner, uin
     if (!temporary_file(owner, handle, error)) return false;
     return end(owner, guest_runtime_resources_remove_closed(owner->runtime->resources, handle, error));
 }
+static bool call_enter(void *context, qa_error *error)
+{ return windows_process_current(context, error); }
+static bool call_leave(void *context, bool okay, qa_error *error)
+{ (void)context; (void)error; return okay; }
+static void call_close(void *context, bool previous_busy, bool okay)
+{
+    qa_native_windows_process *owner = context;
+    owner->busy = previous_busy;
+    if (!okay && owner->guest->failed) owner->failed = true;
+}
+bool guest_windows_process_call_prepare(qa_native_windows_process *owner,
+    guest_process_call_options *out, qa_error *error)
+{
+    if (!owner || !out)
+        return guest_fail(error, QA_ERROR_ARGUMENT, 0, "Windows call needs its process owner");
+    bool outer_busy = owner->busy;
+    bool nested = owner->guest &&
+        ((owner->guest->run&&owner->guest->callback_depth)||
+         (owner->guest->publication_depth&&owner->guest->stopped_write_calls)) &&
+        (!owner->guest->publication_depth || owner->guest->stopped_write_calls) && !owner->failed && !owner->disposing &&
+        !owner->provisional && guest_mutable(owner->guest, error);
+    bool prepared=!outer_busy&&owner->complete&&!owner->failed&&!owner->disposing&&!owner->provisional&&
+        guest_call_prepared(owner->guest)&&guest_windows_idle(owner->runtime);
+    bool okay = nested || prepared || qa_native_windows_process_idle(owner) ||
+        guest_fail(error, QA_ERROR_ARGUMENT, 0, "Windows operation requires its complete idle process");
+    if (!okay) return false;
+    owner->busy = true;
+    *out = (guest_process_call_options){.return_trap = owner->runtime->return_trap,
+        .budget = owner->options.instruction_budget,
+        .context = owner, .previous_busy = outer_busy,
+        .enter = call_enter, .leave = call_leave, .close = call_close};
+    return true;
+}
+
 static bool process_invoke(qa_native_windows_process *owner, uint64_t original, uint64_t target,
     const qa_native_signature *signature, const qa_native_value *arguments, size_t count,
     qa_native_value *result, qa_error *error)
@@ -358,28 +392,23 @@ static bool process_invoke(qa_native_windows_process *owner, uint64_t original, 
     if (!guest_abi_plan_native(signature, NULL, 0, &scratch, &plan, error)) {
         qa_arena_destroy(&scratch); return false;
     }
-    bool outer_busy = owner->busy;
-    bool nested = owner->guest &&
-        ((owner->guest->run&&owner->guest->callback_depth)||
-         (owner->guest->publication_depth&&owner->guest->stopped_write_calls)) &&
-        (!owner->guest->publication_depth || owner->guest->stopped_write_calls) && !owner->failed && !owner->disposing &&
-        !owner->provisional && guest_mutable(owner->guest, error);
-    bool prepared=!outer_busy&&owner->complete&&!owner->failed&&!owner->disposing&&!owner->provisional&&
-        guest_call_prepared(owner->guest)&&guest_windows_idle(owner->runtime);
-    bool okay = nested||prepared ? windows_process_current(owner, error) : begin(owner, error);
-    if (okay) {
-        owner->busy = true;
-        okay = owner->options.guest.backend == QA_NATIVE_GUEST_HOST_X86_64 && !original ?
+    guest_process_call_options execution;
+    bool prepared = guest_windows_process_call_prepare(owner, &execution, error);
+    bool okay = prepared;
+    if (prepared) {
+        bool entered = execution.enter(execution.context, error);
+        okay = entered && (owner->options.guest.backend == QA_NATIVE_GUEST_HOST_X86_64 && !original ?
             guest_abi_invoke_native(plan, owner->guest, target, owner->runtime->return_trap, arguments, count, result, error) :
             original ? guest_abi_invoke_original(plan, owner->guest, original, target, owner->runtime->return_trap,
                 arguments, count, result, owner->options.instruction_budget, error) :
             guest_abi_invoke(plan, owner->guest, target, owner->runtime->return_trap, arguments, count, result,
-                owner->options.instruction_budget, error);
-        okay = end(owner, okay);
-        owner->busy = outer_busy;
+                owner->options.instruction_budget, error));
+        if (entered) okay = execution.leave(execution.context, okay, error);
+        execution.close(execution.context, execution.previous_busy, okay);
     }
     guest_abi_plan_destroy(plan); qa_arena_destroy(&scratch); return okay;
 }
+
 bool qa_native_windows_process_invoke(qa_native_windows_process *owner, uint64_t target,
     const qa_native_signature *signature, const qa_native_value *arguments, size_t count,
     qa_native_value *result, qa_error *error)

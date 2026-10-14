@@ -2,6 +2,8 @@
 #include "qa/source_save.h"
 #include "guest/sysv_libc_format.h"
 #include "guest/internal.h"
+#include "guest/sysv_process_private.h"
+#include "guest/windows_process_private.h"
 
 static void process_memory_retiring(void *context, uint64_t address, size_t bytes)
 {
@@ -205,20 +207,146 @@ bool native_process_reload(qa_native_instance *instance, qa_error *error)
 }
 
 static void process_dispatch(void *context)
-{ native_call_started(context); }
+{
+    qa_native_loading_call *call = context;
+    if (call->started) return;
+    call->started = true;
+    native_call_started(call->instance);
+}
+
+static bool call_boundary(qa_native_loading_call *call, bool begin,
+    qa_native_address target, const qa_native_value *arguments, size_t count,
+    qa_native_value *result, const guest_abi_plan *plan, size_t quantum,
+    bool *returned, qa_error *error)
+{
+    qa_native_instance *instance = call->instance;
+    qa_native_instance *previous = native_active_instance;
+    void (*dispatch)(void *) = instance->guest->dispatch_started;
+    void *context = instance->guest->dispatch_context;
+    bool shutdown = instance->pending_shutdown, restart = instance->pending_restart;
+    bool initialize = instance->pending_initialize, shutdown_entry = instance->shutdown_entry;
+    uint32_t active_depth = instance->active_depth;
+    instance->pending_shutdown = call->pending_shutdown;
+    instance->pending_restart = call->pending_restart;
+    instance->pending_initialize = call->pending_initialize;
+    instance->shutdown_entry = call->shutdown_entry;
+    native_active_instance = instance; instance->active_depth = call->active_depth;
+    if (!call->started) {
+        instance->guest->dispatch_started = process_dispatch;
+        instance->guest->dispatch_context = call;
+    }
+    bool entered = call->execution.enter(call->execution.context, error);
+    bool okay = entered && (begin ? guest_abi_call_begin(plan, instance->guest,
+        target, call->execution.return_trap, arguments, count, result,
+        call->execution.budget, instance->guest->options.backend == QA_NATIVE_GUEST_HOST_X86_64,
+        0, &call->scratch, &call->abi, error) :
+        guest_abi_call_step(call->abi, quantum, returned, error));
+    if (entered) okay = call->execution.leave(call->execution.context, okay, error);
+    call->pending_shutdown = instance->pending_shutdown;
+    call->pending_restart = instance->pending_restart;
+    call->pending_initialize = instance->pending_initialize;
+    call->shutdown_entry = instance->shutdown_entry;
+    instance->active_depth = active_depth; native_active_instance = previous;
+    instance->guest->dispatch_started = dispatch;
+    instance->guest->dispatch_context = context;
+    instance->pending_shutdown = shutdown; instance->pending_restart = restart;
+    instance->pending_initialize = initialize; instance->shutdown_entry = shutdown_entry;
+    if (!okay) call->failed = true;
+    return okay;
+}
+
+bool native_process_call_begin(qa_native_instance *instance, qa_native_address target,
+    const qa_native_signature *signature, const qa_native_value *arguments, size_t count,
+    qa_native_value *result, qa_native_loading_call **out, qa_error *error)
+{
+    if (!instance || !signature || !out || *out || signature->variadic ||
+        signature->abi != instance->module->info.image.target.abi)
+        return native_fail(error, QA_ERROR_ARGUMENT, target, "native call needs its fixed source ABI and empty owner");
+    qa_unified_frame_lease *storage = qa_unified_frame_lease_acquire(instance->observation_storage, error);
+    if (!storage) return false;
+    qa_native_loading_call *call = qa_unified_frame_lease_alloc(storage, 1, sizeof(*call),
+        _Alignof(qa_native_loading_call), error);
+    if (!call) { qa_unified_frame_lease_release(storage); return false; }
+    call->instance = instance; call->storage = storage;
+    call->active_depth = instance->active_depth ? instance->active_depth : 1;
+    call->pending_shutdown = instance->pending_shutdown;
+    call->pending_restart = instance->pending_restart;
+    call->restart_requested = instance->pending_restart;
+    call->pending_initialize = instance->pending_initialize;
+    call->shutdown_entry = instance->shutdown_entry;
+    qa_arena_init_pool(&call->scratch, &instance->guest->scratch_pages);
+    guest_abi_plan *plan = NULL;
+    bool okay = guest_abi_plan_native(signature, NULL, 0, &call->scratch, &plan, error);
+    if (okay) okay = instance->process_kind == QA_NATIVE_PROCESS_SYSV ?
+        guest_sysv_process_call_prepare(instance->sysv_process, target, &call->execution, error) :
+        guest_windows_process_call_prepare(instance->windows_process, &call->execution, error);
+    if (okay) {
+        call->previous = instance->loading_call; instance->loading_call = call; *out = call;
+        okay = call_boundary(call, true, target, arguments, count, result, plan, 0, NULL, error);
+    } else {
+        qa_arena_destroy(&call->scratch); qa_unified_frame_lease_release(storage);
+    }
+    return okay;
+}
+
+bool native_process_call_step(qa_native_loading_call *call, size_t quantum,
+    bool *returned, qa_error *error)
+{
+    if (!call || !returned || call->failed)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native loading call requires its retained owner");
+    if (call->returned) { *returned = true; return true; }
+    bool okay = call_boundary(call, false, 0, NULL, 0, NULL, NULL, quantum, returned, error);
+    if (okay) call->returned = *returned;
+    return okay;
+}
+
+static void call_release(qa_native_loading_call **owner, bool okay)
+{
+    qa_native_loading_call *call = *owner;
+    guest_abi_call_close(&call->abi);
+    call->execution.close(call->execution.context, call->execution.previous_busy, okay);
+    call->instance->loading_call = call->previous;
+    qa_unified_frame_lease *storage = call->storage;
+    qa_arena_destroy(&call->scratch); *owner = NULL;
+    qa_unified_frame_lease_release(storage);
+}
+
+bool native_process_call_finish(qa_native_loading_call **owner, qa_error *error)
+{
+    qa_native_loading_call *call = owner ? *owner : NULL;
+    if (!call || !call->returned || call->failed)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native loading call has not returned");
+    qa_native_instance *instance = call->instance, *previous = native_active_instance;
+    uint32_t active_depth = instance->active_depth;
+    native_active_instance = instance; instance->active_depth = call->active_depth;
+    bool okay = guest_abi_call_finish(call->abi, error);
+    instance->active_depth = active_depth; native_active_instance = previous;
+    if (okay) call_release(owner, true);
+    else call->failed = true;
+    return okay;
+}
+
+void native_process_call_abandon(qa_native_loading_call **owner)
+{
+    if (owner && *owner) call_release(owner, false);
+}
 
 bool native_process_invoke(qa_native_instance *instance, qa_native_address address,
     const qa_native_signature *signature, const qa_native_value *arguments, size_t count,
     qa_native_value *result, qa_error *error)
 {
+    qa_native_loading_call receipt = {.instance = instance};
     void (*previous)(void *) = instance->guest->dispatch_started;
     void *context = instance->guest->dispatch_context;
     instance->guest->dispatch_started = process_dispatch;
-    instance->guest->dispatch_context = instance;
+    instance->guest->dispatch_context = &receipt;
     bool okay = instance->process_kind == QA_NATIVE_PROCESS_SYSV ?
-        qa_native_sysv_process_invoke(instance->sysv_process, address, signature, arguments, count, result, error) :
-        qa_native_windows_process_invoke(instance->windows_process, address, signature, arguments, count, result, error);
-    instance->guest->dispatch_started = previous; instance->guest->dispatch_context = context;
+        qa_native_sysv_process_invoke(instance->sysv_process, address, signature,
+            arguments, count, result, error) :
+        qa_native_windows_process_invoke(instance->windows_process, address, signature,
+            arguments, count, result, error);
+    instance->guest->dispatch_started = previous;
+    instance->guest->dispatch_context = context;
     return okay;
 }
 

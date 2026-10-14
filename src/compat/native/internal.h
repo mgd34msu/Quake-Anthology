@@ -131,6 +131,7 @@ struct qa_native_instance {
     const qa_native_write_event *active_write_event;
     struct qa_native_write_scope *write_scope;
     struct qa_native_call_scope *call_scope;
+    qa_native_loading_call *loading_call;
     const qa_native_region_event *active_region_event;
     uint32_t region_callback_depth, region_call_depth;
     qa_native_address region_invocation_entry;
@@ -139,6 +140,20 @@ struct qa_native_instance {
     bool checkpointing, destroying, unloading, pending_shutdown, pending_restart,
         pending_initialize, restart_original_ready, shutdown_entry, failed, process_observing;
     qa_error failure;
+};
+
+struct qa_native_loading_call {
+    qa_native_instance *instance;
+    qa_native_loading_call *previous;
+    qa_unified_frame_lease *storage;
+    qa_arena scratch;
+    guest_abi_call *abi;
+    guest_process_call_options execution;
+    const char *entry;
+    int32_t command;
+    uint32_t active_depth;
+    bool pending_shutdown, pending_restart, pending_initialize;
+    bool restart_requested, shutdown_entry, started, returned, failed, named;
 };
 
 static inline void native_entity_notify(qa_native_instance *instance,
@@ -281,6 +296,12 @@ bool native_process_reload(qa_native_instance *, qa_error *);
 bool native_process_export(const qa_native_instance *, const char *, qa_native_address *, qa_error *);
 bool native_process_invoke(qa_native_instance *, qa_native_address,
     const qa_native_signature *, const qa_native_value *, size_t, qa_native_value *, qa_error *);
+bool native_process_call_begin(qa_native_instance *, qa_native_address,
+    const qa_native_signature *, const qa_native_value *, size_t, qa_native_value *,
+    qa_native_loading_call **, qa_error *);
+bool native_process_call_step(qa_native_loading_call *, size_t, bool *, qa_error *);
+bool native_process_call_finish(qa_native_loading_call **, qa_error *);
+void native_process_call_abandon(qa_native_loading_call **);
 bool native_process_import_bind(native_import_binding *, qa_native_instance *,
     const native_signature_spec *, qa_error *);
 bool native_process_q3_bind(qa_native_instance *, qa_native_address *, qa_error *);

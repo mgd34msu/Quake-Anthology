@@ -66,7 +66,7 @@ bool qa_native_guest_terminal(const qa_native_guest *guest)
 
 bool qa_native_guest_idle(const qa_native_guest *guest)
 {
-    return guest && !guest->run && !guest->callback_depth && !guest->publication_depth &&
+    return guest && !guest->run && !guest->call && !guest->callback_depth && !guest->publication_depth &&
         !guest->stopped_write_calls && !guest->stopped_write_bindings && !guest->recovery &&
         !guest->stepping && !guest->restoring && !guest->failed && !guest->faulting;
 }
@@ -139,7 +139,7 @@ bool qa_native_guest_destroy(qa_native_guest **owner, qa_error *error)
     if (!owner) return guest_fail(error, QA_ERROR_ARGUMENT, 0, "native guest owner is required");
     qa_native_guest *guest = *owner;
     if (!guest) return true;
-    if (guest->run || guest->callback_depth || guest->publication_depth || guest->stepping ||
+    if (guest->run || guest->call || guest->callback_depth || guest->publication_depth || guest->stepping ||
         guest->stopped_write_calls || guest->stopped_write_bindings || guest->recovery)
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "native guest destruction requires drained execution");
     if (guest->memory_retiring) guest->memory_retiring(guest->memory_context, 0, 0);

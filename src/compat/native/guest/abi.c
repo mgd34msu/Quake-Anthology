@@ -31,6 +31,21 @@ typedef struct call_argument {
     uint64_t temporary;
 } call_argument;
 
+struct guest_abi_call {
+    guest_abi_call *previous;
+    const guest_abi_plan *plan;
+    qa_native_guest *guest;
+    qa_native_value *result, discarded;
+    qa_arena scratch;
+    qa_native_guest_cpu enclosing;
+    guest_host_x86_64_state hardware;
+    guest_callback_recovery *recovery;
+    uint8_t *data;
+    uint64_t return_trap, original_sp, sp, bypass;
+    size_t remaining;
+    bool native, nested, recovery_owner, effected, returned, recovered, failed, finished, cancelled;
+};
+
 static void *abi_storage(qa_arena *arena, size_t bytes, size_t alignment, qa_error *error)
 {
     if (!bytes) return NULL;
@@ -635,18 +650,38 @@ static bool write_stack(const argument *arg, qa_native_guest *guest, uint64_t sp
     return true;
 }
 
-static bool invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t target,
+static bool call_failure(guest_abi_call *call, qa_error *error)
+{
+    qa_native_guest *guest = call->guest;
+    guest_callback_recovery *recovery = call->recovery;
+    call->cancelled = guest_callback_cancelled(guest, error);
+    if (call->recovery_owner && recovery->cancelled && !recovery->restored && !recovery->resolved &&
+        call->cancelled && call->plan->result.layout.kind == QA_NATIVE_VOID) {
+        bool restored = call->native ? guest_host_child_cpu_write(guest->child, &call->hardware, error) :
+            qa_native_guest_cpu_write(guest, &call->enclosing, error);
+        if (restored) {
+            recovery->restored = true; call->recovered = true;
+            if (error) *error = (qa_error){0};
+            return true;
+        }
+    }
+    call->failed = true;
+    if (call->effected && !guest_callback_cancelled(guest, error)) guest->failed = true;
+    return false;
+}
+
+static bool call_begin_into(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t target,
     uint64_t return_trap, const qa_native_value *values, size_t count,
-    qa_native_value *result, size_t budget, bool native, uint64_t bypass, qa_error *error)
+    qa_native_value *result, size_t budget, bool native, uint64_t bypass,
+    guest_abi_call *call, qa_error *error)
 {
     if (!plan_guest(plan, guest, error) || !guest_mutable(guest, error)) return false;
-    qa_native_value discarded = {.type = QA_NATIVE_VOID};
-    if (!result && plan->result.layout.kind == QA_NATIVE_VOID) result = &discarded;
     if (native != (guest->options.backend == QA_NATIVE_GUEST_HOST_X86_64) ||
         (native && (budget || plan->x87_result)))
         return guest_fail(error, QA_ERROR_UNSUPPORTED, target,
             "guest ABI execution capability differs from its actual backend");
-    if (count != plan->count || (count && !values) || (!native && !budget) || !result ||
+    if (count != plan->count || (count && !values) || (!native && !budget) || (!result && plan->result.layout.kind != QA_NATIVE_VOID) ||
+        !call ||
         !return_trap || target == return_trap ||
         !guest_range(guest, target, 1, QA_NATIVE_GUEST_EXECUTE, error) ||
         !guest_range(guest, return_trap, 1, QA_NATIVE_GUEST_EXECUTE, error))
@@ -674,11 +709,18 @@ static bool invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t 
     }
     if (needed > SIZE_MAX - plan->stack_alignment - plan->word)
         return guest_fail(error, QA_ERROR_MEMORY, 0, "guest ABI stack reserve overflows");
-    qa_arena scratch; qa_arena_init_pool(&scratch, &guest->scratch_pages);
-    call_argument *arguments = count ? abi_storage(&scratch, count * sizeof(*arguments), _Alignof(call_argument), error) : NULL;
-    uint8_t *data = abi_storage(&scratch, owned, _Alignof(max_align_t), error);
+    call->plan = plan; call->guest = guest;
+    call->return_trap = return_trap;
+    call->remaining = budget; call->native = native; call->bypass = bypass;
+    call->discarded.type = QA_NATIVE_VOID;
+    call->result = result ? result : &call->discarded;
+    qa_arena_init_pool(&call->scratch, &guest->scratch_pages);
+    qa_arena *scratch = &call->scratch;
+    call->previous = guest->call; guest->call = call;
+    call_argument *arguments = count ? abi_storage(scratch, count * sizeof(*arguments), _Alignof(call_argument), error) : NULL;
+    uint8_t *data = abi_storage(scratch, owned, _Alignof(max_align_t), error);
     if ((count && !arguments) || !data) {
-        qa_arena_destroy(&scratch); return guest_fail(error, QA_ERROR_MEMORY, 0, "retaining guest ABI call values");
+        call->failed = true; return guest_fail(error, QA_ERROR_MEMORY, 0, "retaining guest ABI call values");
     }
     size_t offset = layout->bytes < 8 ? 8 : layout->bytes;
     bool okay = true;
@@ -687,16 +729,17 @@ static bool invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t 
         okay = encode_value(&plan->arguments[i].layout, &values[i], arguments[i].data, error);
         offset += plan->arguments[i].layout.bytes < 8 ? 8 : plan->arguments[i].layout.bytes;
     }
-    qa_native_guest_cpu enclosing;
+    qa_native_guest_cpu enclosing = {0};
     if (okay) okay = qa_native_guest_cpu_read(guest, &enclosing, error);
+    call->enclosing = enclosing;
     guest_callback_recovery *recovery=guest->recovery;
     bool recovery_owner=okay&&recovery&&!recovery->invocation;
-    if(recovery_owner) recovery->invocation=&enclosing;
+    if(recovery_owner) recovery->invocation=&call->enclosing;
     bool nested = guest->run != NULL || guest->stopped_write_calls != 0;
     guest_host_x86_64_state hardware = {0};
     if (okay && native && (nested || recovery_owner)) {
         const guest_host_x86_64_capabilities *capability = guest_host_child_capability(guest->child);
-        hardware.xsave = (qa_buffer){qa_arena_alloc(&scratch, capability->xsave_bytes, 64, error),
+        hardware.xsave = (qa_buffer){qa_arena_alloc(scratch, capability->xsave_bytes, 64, error),
             capability->xsave_bytes};
         okay = hardware.xsave.data && guest_host_child_cpu_read(guest->child, &hardware, error);
     }
@@ -742,14 +785,111 @@ static bool invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t 
         cpu.flags &= ~UINT64_C(0x400); cpu.registers[QA_NATIVE_RSP] = sp; cpu.instruction = target;
         okay = qa_native_guest_cpu_write(guest, &cpu, error);
     }
+    call->data = data; call->hardware = hardware; call->recovery = recovery;
+    call->recovery_owner = recovery_owner; call->nested = nested;
+    call->original_sp = original_sp; call->sp = sp; call->effected = effected;
+    if (!okay) okay = call_failure(call, error);
+    return okay;
+}
+
+bool guest_abi_call_begin(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t target,
+    uint64_t return_trap, const qa_native_value *values, size_t count,
+    qa_native_value *result, size_t budget, bool native, uint64_t bypass,
+    qa_arena *storage, guest_abi_call **out, qa_error *error)
+{
+    if (!storage || !out || *out)
+        return guest_fail(error, QA_ERROR_ARGUMENT, 0, "retained ABI call needs its storage and empty owner");
+    guest_abi_call *call = abi_storage(storage, sizeof(*call), _Alignof(guest_abi_call), error);
+    if (!call) return false;
+    *out = call;
+    return call_begin_into(plan, guest, target, return_trap, values, count, result,
+        budget, native, bypass, call, error);
+}
+
+bool guest_abi_call_step(guest_abi_call *call, size_t quantum, bool *returned, qa_error *error)
+{
+    if (!call || !returned || call->failed || call->finished)
+        return guest_fail(error, QA_ERROR_ARGUMENT, 0, "guest ABI execution requires its live call");
+    *returned = call->returned || call->recovered;
+    if (*returned) return true;
+    qa_native_guest *guest = call->guest;
+    qa_native_guest_cpu cpu;
+    bool okay = qa_native_guest_cpu_read(guest, &cpu, error);
     qa_native_guest_run_result execution = {.kind = QA_NATIVE_GUEST_RETURN};
-    if (okay) okay = native ? (bypass ? qa_native_guest_run_original(guest, bypass, target, return_trap, 0, 0, &execution, error) :
-        qa_native_guest_run_native(guest, target, return_trap, error)) :
-        bypass ? qa_native_guest_run_original(guest, bypass, target, return_trap, budget, 0, &execution, error) :
-        qa_native_guest_run(guest, target, return_trap, budget, 0, &execution, error);
-    if (okay) okay = qa_native_guest_cpu_read(guest, &cpu, error);
-    if (okay && execution.kind != QA_NATIVE_GUEST_RETURN)
-        okay = guest_fail(error, QA_ERROR_ARGUMENT, cpu.instruction, "native guest instruction budget exhausted");
+    if (okay) {
+        if (call->native) {
+            okay = call->bypass ? qa_native_guest_run_original(guest, call->bypass,
+                cpu.instruction, call->return_trap, 0, 0, &execution, error) :
+                qa_native_guest_run_native(guest, cpu.instruction, call->return_trap, error);
+        } else {
+            okay = call->bypass ? qa_native_guest_run_original(guest, call->bypass,
+                cpu.instruction, call->return_trap, call->remaining, quantum, &execution, error) :
+                qa_native_guest_run(guest, cpu.instruction, call->return_trap,
+                    call->remaining, quantum, &execution, error);
+            if (okay) {
+                call->remaining = execution.remaining;
+                if (execution.instructions) call->bypass = 0;
+            }
+        }
+    }
+    if (okay && execution.kind == QA_NATIVE_GUEST_RETURN) call->returned = true;
+    else if (okay && execution.kind == QA_NATIVE_GUEST_BUDGET && execution.remaining) {
+        *returned = false; return true;
+    } else if (okay) {
+        okay = qa_native_guest_cpu_read(guest, &cpu, error);
+        if (okay) okay = guest_fail(error, QA_ERROR_ARGUMENT, cpu.instruction,
+            execution.kind == QA_NATIVE_GUEST_BUDGET ? "native guest instruction budget exhausted" :
+            "guest ABI execution stopped without a return");
+    }
+    if (!okay) okay = call_failure(call, error);
+    *returned = call->returned || call->recovered;
+    return okay;
+}
+
+void guest_abi_call_close(guest_abi_call **owner)
+{
+    guest_abi_call *call = owner ? *owner : NULL;
+    if (!call) return;
+    if (!call->guest) { *owner = NULL; return; }
+    if (!call->finished && call->effected && !call->cancelled) call->guest->failed = true;
+    call->guest->call = call->previous;
+    qa_arena_destroy(&call->scratch);
+    *owner = NULL;
+}
+
+static bool invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t target,
+    uint64_t return_trap, const qa_native_value *values, size_t count,
+    qa_native_value *result, size_t budget, bool native, uint64_t bypass, qa_error *error)
+{
+    guest_abi_call record = {0};
+    guest_abi_call *call = &record;
+    bool returned = false;
+    bool okay = call_begin_into(plan, guest, target, return_trap, values,
+        count, result, budget, native, bypass, call, error) &&
+        guest_abi_call_step(call, 0, &returned, error) && returned &&
+        guest_abi_call_finish(call, error);
+    guest_abi_call_close(&call);
+    return okay;
+}
+
+bool guest_abi_call_finish(guest_abi_call *call, qa_error *error)
+{
+    if (!call || call->failed || call->finished || (!call->returned && !call->recovered))
+        return guest_fail(error, QA_ERROR_ARGUMENT, 0, "guest ABI call has not returned");
+    qa_native_guest *guest = call->guest;
+    const guest_abi_plan *plan = call->plan;
+    const guest_abi_layout *layout = &plan->result.layout;
+    qa_native_value *result = call->result;
+    uint8_t *data = call->data;
+    uint64_t sp = call->sp, original_sp = call->original_sp;
+    bool native = call->native, nested = call->nested;
+    qa_native_guest_cpu enclosing = call->enclosing, cpu = {0};
+    guest_host_x86_64_state hardware = call->hardware;
+    if (call->recovered) {
+        *result = (qa_native_value){.type = QA_NATIVE_VOID};
+        call->finished = true; return true;
+    }
+    bool okay = qa_native_guest_cpu_read(guest, &cpu, error);
     if (okay && cpu.registers[QA_NATIVE_RSP] != sp + plan->word + plan->callee_pop)
         okay = guest_fail(error, QA_ERROR_FORMAT, cpu.registers[QA_NATIVE_RSP], "guest returned with incorrect actual ABI stack cleanup");
     if (okay && plan->memory_result) okay = qa_native_guest_read(guest, cpu.registers[QA_NATIVE_RAX], data, layout->bytes, error);
@@ -773,16 +913,10 @@ static bool invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t 
             result->type = QA_NATIVE_BYTES; result->as.bytes.size = layout->bytes;
         } else decode_value(layout, data, result);
     }
-    if(!okay&&recovery_owner&&recovery->cancelled&&!recovery->restored&&!recovery->resolved&&
-        guest_callback_cancelled(guest,error)&&layout->kind==QA_NATIVE_VOID) {
-        okay=native ? guest_host_child_cpu_write(guest->child,&hardware,error) : qa_native_guest_cpu_write(guest,&enclosing,error);
-        if(okay) {
-            recovery->restored=true; *result=(qa_native_value){.type=QA_NATIVE_VOID};
-            if(error) *error=(qa_error){0};
-        }
-    }
-    if (!okay && effected && !guest_callback_cancelled(guest,error)) guest->failed = true;
-    qa_arena_destroy(&scratch); return okay;
+    if (!okay) okay = call_failure(call, error);
+    if (okay && call->recovered) *result = (qa_native_value){.type = QA_NATIVE_VOID};
+    call->finished = okay;
+    return okay;
 }
 
 bool guest_abi_invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t target,

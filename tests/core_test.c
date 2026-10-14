@@ -5,6 +5,7 @@
 #include "qa/arena.h"
 #include "qa/native.h"
 #include "qa/native_guest.h"
+#include "../src/compat/native/guest/abi.h"
 #include "qa/pool.h"
 #include "qa/operation.h"
 #include "qa/random.h"
@@ -4224,11 +4225,16 @@ static void test_native_resumable_budget(void)
             .target = {.os = QA_NATIVE_OS_LINUX, .arch = QA_NATIVE_ARCH_X86_64,
                 .abi = QA_NATIVE_ABI_SYSTEM_V_X64, .pointer_bytes = 8}},
         .allocation_base = UINT64_C(0x200000),
-        .maximum_backing_bytes = QA_NATIVE_GUEST_PAGE,
+        .maximum_backing_bytes = 2 * QA_NATIVE_GUEST_PAGE,
         .backend = QA_NATIVE_GUEST_EMULATED};
     CHECK(qa_native_guest_create(&options, &guest, &error));
     const uint64_t entry = UINT64_C(0x100000), returned = entry + 6;
-    const uint8_t code[] = {0xff, 0xc0, 0xff, 0xc9, 0x75, 0xfa, 0x90};
+    const uint8_t code[] = {
+        0xff, 0xc0, 0xff, 0xc9, 0x75, 0xfa, 0x90,
+        [16] = 0x89, 0xf8,                   /* mov eax, edi */
+        0xb9, 0x03, 0x00, 0x00, 0x00,       /* mov ecx, 3 */
+        0xff, 0xc0, 0xff, 0xc9, 0x75, 0xfa, /* inc eax; dec ecx; jnz */
+        0xc3};                              /* ret */
     qa_native_guest_mapping mapping;
     CHECK(qa_native_guest_map(guest, entry, QA_NATIVE_GUEST_PAGE,
         QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_EXECUTE,
@@ -4274,7 +4280,74 @@ static void test_native_resumable_budget(void)
     CHECK(qa_native_guest_cpu_read(guest, &cpu, &error));
     CHECK(cpu.instruction == entry + 2 && cpu.registers[QA_NATIVE_RAX] == 4);
     CHECK(qa_native_guest_idle(guest) && !qa_native_guest_terminal(guest));
+
+    const uint64_t stack = UINT64_C(0x300000), callable = entry + 16;
+    CHECK(qa_native_guest_map(guest, stack, QA_NATIVE_GUEST_PAGE,
+        QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE,
+        (qa_bytes){0}, &mapping, &error));
+    cpu.registers[QA_NATIVE_RSP] = stack + QA_NATIVE_GUEST_PAGE;
     CHECK(qa_native_guest_cpu_write(guest, &cpu, &error));
+    const uint64_t caller_sp = cpu.registers[QA_NATIVE_RSP], caller_pc = cpu.instruction;
+    qa_arena storage = {0};
+    const qa_native_type parameter = {.kind = QA_NATIVE_I32, .count = 1};
+    const qa_native_signature signature = {
+        .abi = QA_NATIVE_ABI_SYSTEM_V_X64, .parameters = &parameter,
+        .parameter_count = 1, .result = {.kind = QA_NATIVE_I32, .count = 1}};
+    guest_abi_plan *plan = NULL;
+    CHECK(guest_abi_plan_native(&signature, NULL, 0, &storage, &plan, &error));
+    qa_native_value argument = {.type = QA_NATIVE_I32, .as.i32 = 7};
+    qa_native_value value = {.type = QA_NATIVE_I32, .as.i32 = -123};
+    guest_abi_call *call = NULL;
+    CHECK(guest_abi_call_begin(plan, guest, callable, returned, &argument, 1,
+        &value, 20, false, 0, &storage, &call, &error));
+    CHECK(!qa_native_guest_idle(guest) && !qa_native_guest_terminal(guest));
+    CHECK(!qa_native_guest_destroy(&guest, &error) && guest && call);
+    error = (qa_error){0};
+    argument.as.i32 = 900;
+    bool call_returned = false;
+    CHECK(guest_abi_call_step(call, 4, &call_returned, &error));
+    CHECK(!call_returned && value.type == QA_NATIVE_I32 && value.as.i32 == -123);
+    CHECK(qa_native_guest_cpu_read(guest, &cpu, &error));
+    CHECK(cpu.instruction == callable + 11 && cpu.registers[QA_NATIVE_RAX] == 8 &&
+        cpu.registers[QA_NATIVE_RCX] == 2);
+    CHECK(guest_abi_call_step(call, 4, &call_returned, &error));
+    CHECK(!call_returned && value.type == QA_NATIVE_I32 && value.as.i32 == -123);
+    CHECK(qa_native_guest_cpu_read(guest, &cpu, &error));
+    CHECK(cpu.instruction == callable + 7 && cpu.registers[QA_NATIVE_RAX] == 9 &&
+        cpu.registers[QA_NATIVE_RCX] == 1);
+    CHECK(guest_abi_call_step(call, 4, &call_returned, &error));
+    CHECK(call_returned && value.type == QA_NATIVE_I32 && value.as.i32 == -123);
+    CHECK(qa_native_guest_cpu_read(guest, &cpu, &error));
+    CHECK(cpu.instruction == returned && cpu.registers[QA_NATIVE_RAX] == 10 &&
+        cpu.registers[QA_NATIVE_RCX] == 0);
+    CHECK(guest_abi_call_finish(call, &error));
+    CHECK(value.type == QA_NATIVE_I32 && value.as.i32 == 10);
+    CHECK(qa_native_guest_cpu_read(guest, &cpu, &error));
+    CHECK(cpu.registers[QA_NATIVE_RSP] == caller_sp && cpu.instruction == caller_pc);
+    guest_abi_call_close(&call);
+    CHECK(!call && qa_native_guest_idle(guest));
+
+    argument.as.i32 = 7;
+    value.as.i32 = -123;
+    CHECK(guest_abi_invoke(plan, guest, callable, returned, &argument, 1, &value, 20, &error));
+    CHECK(value.type == QA_NATIVE_I32 && value.as.i32 == 10 && qa_native_guest_idle(guest));
+    CHECK(qa_native_guest_cpu_read(guest, &cpu, &error));
+    CHECK(cpu.registers[QA_NATIVE_RSP] == caller_sp && cpu.instruction == caller_pc);
+
+    value.as.i32 = -123;
+    CHECK(guest_abi_call_begin(plan, guest, callable, returned, &argument, 1,
+        &value, 5, false, 0, &storage, &call, &error));
+    CHECK(guest_abi_call_step(call, 3, &call_returned, &error));
+    CHECK(!call_returned && value.type == QA_NATIVE_I32 && value.as.i32 == -123);
+    CHECK(qa_native_guest_cpu_read(guest, &cpu, &error));
+    CHECK(cpu.instruction == callable + 9 && cpu.registers[QA_NATIVE_RAX] == 8 &&
+        cpu.registers[QA_NATIVE_RCX] == 3);
+    CHECK(!guest_abi_call_step(call, 3, &call_returned, &error));
+    CHECK(!call_returned && error.offset == callable + 7 &&
+        value.type == QA_NATIVE_I32 && value.as.i32 == -123 && qa_native_guest_terminal(guest));
+    guest_abi_call_close(&call);
+    CHECK(!call);
+    qa_arena_destroy(&storage);
     CHECK(qa_native_guest_destroy(&guest, &error) && !guest);
 }
 

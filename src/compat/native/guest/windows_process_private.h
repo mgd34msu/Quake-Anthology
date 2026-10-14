@@ -6,6 +6,7 @@
 #include "pe_memory.h"
 #include "windows_runtime.h"
 #include "profile/artifact.h"
+#include "abi.h"
 
 typedef struct windows_process_image {
     uint64_t id;
@@ -34,5 +35,6 @@ guest_windows_capabilities windows_process_capabilities(qa_native_windows_proces
 bool windows_process_same_image(const qa_native_image_info *, const qa_native_image_info *);
 bool windows_process_storage(const qa_native_windows_process *, qa_error *);
 bool windows_process_artifacts(qa_native_windows_process *, bool, qa_error *);
+bool guest_windows_process_call_prepare(qa_native_windows_process *, guest_process_call_options *, qa_error *);
 
 #endif

@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "guest/internal.h"
 
 #include <math.h>
 
@@ -116,7 +117,7 @@ bool qa_native_can_destroy(const qa_native_instance *instance) {
     return instance && !instance->active_depth && !instance->callback_depth &&
         !instance->region_depth && !instance->write_depth &&
         !instance->checkpointing && !instance->destroying && !instance->unloading && !instance->region_scopes &&
-        !instance->write_scope && !instance->call_scope;
+        !instance->write_scope && !instance->call_scope && !instance->loading_call;
 }
 
 bool qa_native_restart_ready(const qa_native_instance *instance, qa_error *error) {
@@ -126,7 +127,7 @@ bool qa_native_restart_ready(const qa_native_instance *instance, qa_error *error
         (instance->lifecycle != QA_NATIVE_INITIALIZED && instance->lifecycle != QA_NATIVE_RESTART_READY) ||
         instance->active_depth || instance->callback_depth || instance->region_depth ||
         instance->write_depth || instance->write_scope ||
-        instance->call_scope || instance->checkpointing ||
+        instance->call_scope || instance->loading_call || instance->checkpointing ||
         instance->destroying || instance->unloading || instance->failed ||
         instance->pending_shutdown || instance->pending_initialize || instance->pending_restart ||
         instance->entry_observers || instance->write_observers || instance->region_scopes || qa_native_terminal(instance))
@@ -210,7 +211,7 @@ const qa_native_module *qa_native_get_module(const qa_native_instance *instance)
 }
 
 bool qa_native_active(const qa_native_instance *instance) {
-    return instance && instance->active_depth;
+    return instance && (instance->active_depth || instance->loading_call);
 }
 
 const qa_native_signature *qa_native_entry_signature(const qa_native_instance *instance,
@@ -219,10 +220,19 @@ const qa_native_signature *qa_native_entry_signature(const qa_native_instance *i
     return entry ? &entry->spec.signature : NULL;
 }
 
+static bool call_completed(qa_native_instance *instance, bool okay, qa_error *error)
+{
+    if (okay && q2_profile(instance->module->info.profile))
+        okay = native_profile_refresh_entities(instance, error);
+    if (!report_latched(instance, error)) okay = false;
+    return okay;
+}
+
 bool native_call_binding(qa_native_instance *instance, const native_entry_binding *binding,
                          const qa_native_value *arguments, size_t count, qa_native_value *result,
                          qa_error *error) {
     if (!instance || !binding || !binding->address || instance->process_host_pending ||
+        (instance->loading_call && !instance->active_depth) ||
         instance->pending_entry_observers)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "live native entry binding is required");
     bool outer = instance->active_depth == 0;
@@ -238,11 +248,7 @@ bool native_call_binding(qa_native_instance *instance, const native_entry_bindin
                               arguments, count, result, error);
     --instance->active_depth;
     native_active_instance = previous;
-    if (ok && q2_profile(instance->module->info.profile))
-        ok = native_profile_refresh_entities(instance, error);
-    if (!report_latched(instance, error))
-        ok = false;
-    return ok;
+    return call_completed(instance, ok, error);
 }
 
 static bool entry_allowed(qa_native_instance *instance, const native_entry_binding *binding,
@@ -325,6 +331,40 @@ static bool entry_allowed(qa_native_instance *instance, const native_entry_bindi
                        "native gameplay entry requires initialized state");
 }
 
+static void call_pending(qa_native_instance *instance, const char *entry,
+    const qa_native_value *arguments, size_t argument_count)
+{
+    bool shutdown = instance->module->info.profile == QA_NATIVE_Q3_VMMAIN ?
+        argument_count && arguments[0].as.i32 == (instance->options.q3_role == QA_QVM_UI ? 2 : 1) :
+        !strcmp(entry, "Shutdown");
+    instance->pending_shutdown = shutdown;
+    instance->pending_restart = shutdown && (instance->module->info.profile == QA_NATIVE_Q3_VMMAIN ?
+        instance->options.q3_role == QA_QVM_GAME && argument_count > 1 &&
+        arguments[1].type == QA_NATIVE_I32 && arguments[1].as.i32 != 0 :
+        instance->module->info.profile == QA_NATIVE_QUAKE_LIVE_GAME_API10 && argument_count &&
+        arguments[0].type == QA_NATIVE_I32 && arguments[0].as.i32 != 0);
+    instance->pending_initialize = instance->module->info.profile == QA_NATIVE_Q3_VMMAIN ?
+        argument_count && arguments[0].as.i32 == (instance->options.q3_role == QA_QVM_UI ? 1 : 0) :
+        instance->module->info.profile == QA_NATIVE_QUAKE_LIVE_GAME_API10 && !strcmp(entry, "Init");
+}
+
+static void call_lifecycle_finish(qa_native_instance *instance, const char *entry,
+    int32_t command, bool restart_shutdown)
+{
+    if (instance->module->info.profile == QA_NATIVE_Q3_VMMAIN) {
+        int32_t init = instance->options.q3_role == QA_QVM_UI ? 1 : 0;
+        if (command == init) instance->lifecycle = QA_NATIVE_INITIALIZED;
+        else if (command == init + 1)
+            instance->lifecycle = restart_shutdown ? QA_NATIVE_RESTART_READY : QA_NATIVE_SHUT_DOWN;
+    } else if (!strcmp(entry, "PreInit") || !strcmp(entry, "RegisterCvars")) {
+        instance->lifecycle = QA_NATIVE_PREINITIALIZED;
+    } else if (!strcmp(entry, "Init")) {
+        instance->lifecycle = QA_NATIVE_INITIALIZED;
+    } else if (!strcmp(entry, "Shutdown")) {
+        instance->lifecycle = restart_shutdown ? QA_NATIVE_RESTART_READY : QA_NATIVE_SHUT_DOWN;
+    }
+}
+
 bool qa_native_call(qa_native_instance *instance, const char *entry,
                     const qa_native_value *arguments, size_t argument_count,
                     qa_native_value *result, qa_error *error) {
@@ -339,18 +379,7 @@ bool qa_native_call(qa_native_instance *instance, const char *entry,
     }
     if (!entry_allowed(instance, binding, arguments, argument_count, error))
         return false;
-    bool shutdown = instance->module->info.profile == QA_NATIVE_Q3_VMMAIN ?
-        argument_count && arguments[0].as.i32 == (instance->options.q3_role == QA_QVM_UI ? 2 : 1) :
-        !strcmp(entry, "Shutdown");
-    instance->pending_shutdown = shutdown;
-    instance->pending_restart = shutdown && (instance->module->info.profile == QA_NATIVE_Q3_VMMAIN ?
-        instance->options.q3_role == QA_QVM_GAME && argument_count > 1 &&
-        arguments[1].type == QA_NATIVE_I32 && arguments[1].as.i32 != 0 :
-        instance->module->info.profile == QA_NATIVE_QUAKE_LIVE_GAME_API10 && argument_count &&
-        arguments[0].type == QA_NATIVE_I32 && arguments[0].as.i32 != 0);
-    instance->pending_initialize = instance->module->info.profile == QA_NATIVE_Q3_VMMAIN ?
-        argument_count && arguments[0].as.i32 == (instance->options.q3_role == QA_QVM_UI ? 1 : 0) :
-        instance->module->info.profile == QA_NATIVE_QUAKE_LIVE_GAME_API10 && !strcmp(entry, "Init");
+    call_pending(instance, entry, arguments, argument_count);
     bool restart_shutdown = instance->pending_restart;
     bool previous_shutdown_entry = instance->shutdown_entry;
     bool called = native_call_binding(instance, binding, arguments, argument_count, result, error);
@@ -359,20 +388,81 @@ bool qa_native_call(qa_native_instance *instance, const char *entry,
     instance->pending_restart = instance->pending_initialize = false;
     if (!called)
         return false;
-    if (instance->module->info.profile == QA_NATIVE_Q3_VMMAIN) {
-        int32_t command = arguments[0].as.i32;
-        int32_t init = instance->options.q3_role == QA_QVM_UI ? 1 : 0;
-        if (command == init)
-            instance->lifecycle = QA_NATIVE_INITIALIZED;
-        else if (command == init + 1)
-            instance->lifecycle = restart_shutdown ? QA_NATIVE_RESTART_READY : QA_NATIVE_SHUT_DOWN;
-    } else if (!strcmp(entry, "PreInit") || !strcmp(entry, "RegisterCvars")) {
-        instance->lifecycle = QA_NATIVE_PREINITIALIZED;
-    } else if (!strcmp(entry, "Init")) {
-        instance->lifecycle = QA_NATIVE_INITIALIZED;
-    } else if (!strcmp(entry, "Shutdown")) {
-        instance->lifecycle = restart_shutdown ? QA_NATIVE_RESTART_READY : QA_NATIVE_SHUT_DOWN;
+    call_lifecycle_finish(instance, entry, instance->module->info.profile == QA_NATIVE_Q3_VMMAIN ?
+        arguments[0].as.i32 : 0, restart_shutdown);
+    return true;
+}
+
+static bool loading_begin_allowed(qa_native_instance *instance, qa_native_loading_call **out,
+    qa_error *error)
+{
+    return (instance && out && !*out && !instance->active_depth && !instance->loading_call &&
+        !instance->checkpointing && !instance->destroying && !instance->unloading &&
+        !instance->process_host_pending && !instance->pending_entry_observers &&
+        qa_native_guest_idle(instance->guest) &&
+        instance->lifecycle != QA_NATIVE_SHUT_DOWN) ||
+        native_fail(error, QA_ERROR_ARGUMENT, 0, "loading requires its idle native source");
+}
+
+bool qa_native_loading_call_begin(qa_native_instance *instance, const char *entry,
+    const qa_native_value *arguments, size_t count, qa_native_value *result,
+    qa_native_loading_call **out, qa_error *error)
+{
+    if (!loading_begin_allowed(instance, out, error)) return false;
+    if (!entry || (count && !arguments))
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native loading needs its entry and counted arguments");
+    const native_entry_binding *binding = native_entry(instance, entry);
+    if (!binding) return native_fail(error, QA_ERROR_NOT_FOUND, 0, "native loading entry is absent");
+    if (!entry_allowed(instance, binding, arguments, count, error)) return false;
+    bool shutdown = instance->pending_shutdown, restart = instance->pending_restart;
+    bool initialize = instance->pending_initialize;
+    call_pending(instance, entry, arguments, count);
+    bool okay = native_process_call_begin(instance, binding->address, &binding->spec.signature,
+        arguments, count, result, out, error);
+    instance->pending_shutdown = shutdown; instance->pending_restart = restart;
+    instance->pending_initialize = initialize;
+    if (*out) {
+        (*out)->entry = binding->spec.name; (*out)->named = true;
+        (*out)->command = instance->module->info.profile == QA_NATIVE_Q3_VMMAIN ? arguments[0].as.i32 : 0;
     }
+    return okay;
+}
+
+bool qa_native_loading_invoke_begin(qa_native_instance *instance, qa_native_address entry,
+    const qa_native_signature *signature, const qa_native_value *arguments, size_t count,
+    qa_native_value *result, qa_native_loading_call **out, qa_error *error)
+{
+    if (!loading_begin_allowed(instance, out, error)) return false;
+    return native_process_call_begin(instance, entry, signature, arguments, count, result, out, error);
+}
+
+bool qa_native_loading_call_step(qa_native_loading_call *call, size_t quantum,
+    bool *returned, qa_error *error)
+{ return native_process_call_step(call, quantum, returned, error); }
+
+bool qa_native_loading_call_finish(qa_native_loading_call **owner, qa_error *error)
+{
+    qa_native_loading_call *call = owner ? *owner : NULL;
+    if (!call) return native_fail(error, QA_ERROR_ARGUMENT, 0, "native loading call owner is absent");
+    qa_native_instance *instance = call->instance;
+    const char *entry = call->entry;
+    int32_t command = call->command;
+    bool named = call->named, restart = call->restart_requested;
+    bool okay = native_process_call_finish(owner, error);
+    if (okay) okay = call_completed(instance, true, error);
+    if (okay && named) call_lifecycle_finish(instance, entry, command, restart);
+    return okay;
+}
+
+bool qa_native_loading_call_abandon(qa_native_loading_call **owner, qa_error *error)
+{
+    qa_native_loading_call *call = owner ? *owner : NULL;
+    if (!owner) return native_fail(error, QA_ERROR_ARGUMENT, 0, "native loading owner slot is absent");
+    if (!call) return true;
+    if (call->instance->active_depth || call->instance->guest->run ||
+        call->instance->guest->callback_depth || call->instance->guest->publication_depth)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native loading retirement requires returned callbacks");
+    native_process_call_abandon(owner);
     return true;
 }
 
@@ -466,7 +556,7 @@ bool qa_native_entry_address(const qa_native_instance *instance, const char *nam
 bool qa_native_restore_ready(const qa_native_instance *instance, qa_error *error) {
     if (!instance || instance->lifecycle != QA_NATIVE_INITIALIZED || instance->active_depth ||
         instance->callback_depth || instance->region_depth || instance->write_depth || instance->write_scope ||
-        instance->call_scope ||
+        instance->call_scope || instance->loading_call ||
         instance->checkpointing || instance->destroying || instance->unloading ||
         instance->failed || instance->pending_shutdown || instance->entry_observers || instance->write_observers ||
         instance->region_scopes)
