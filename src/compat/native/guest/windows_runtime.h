@@ -81,6 +81,9 @@ bool guest_windows_inventory(guest_windows *, const guest_windows_image *, size_
  * A failure after mutation requires whole lower teardown; no Init replay. */
 bool guest_windows_prepare(guest_windows *, const guest_windows_image *, qa_error *);
 bool guest_windows_initialize(guest_windows *, uint64_t, size_t, qa_error *);
+bool guest_windows_initialize_begin(guest_windows *, uint64_t, size_t, qa_error *);
+bool guest_windows_initialize_advance(guest_windows *, size_t, bool *, qa_error *);
+void guest_windows_initialize_cancel(guest_windows *);
 bool guest_windows_finalize(guest_windows *, uint64_t, size_t, qa_error *);
 /* Drop the finalized module's preparation/CFG receipt. Its process-owned TLS
  * slot is retained and repopulated by the actual next prepare. */
@@ -137,6 +140,22 @@ typedef struct windows_image_record {
     const guest_pe *image;
     bool prepared, initialized;
 } windows_image_record;
+typedef struct windows_call {
+    qa_arena storage;
+    guest_abi_plan *plan;
+    guest_abi_call *abi;
+    bool busy;
+} windows_call;
+typedef enum windows_initialize_phase {
+    WINDOWS_INITIALIZE_TLS, WINDOWS_INITIALIZE_ENTRY
+} windows_initialize_phase;
+typedef struct windows_initialization {
+    uint64_t image;
+    size_t callback;
+    windows_initialize_phase phase;
+    qa_native_value result;
+    windows_call call;
+} windows_initialization;
 struct guest_windows {
     qa_native_guest *guest;
     qa_native_target target;
@@ -161,6 +180,7 @@ struct guest_windows {
     guest_windows_kernel *kernel;
     guest_windows_crt *crt;
     guest_windows_msvc *msvc;
+    windows_initialization initialization;
     unsigned busy;
     bool constructed, detached, publication_pending, retired, retiring, files_closed;
 };

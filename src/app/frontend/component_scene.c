@@ -482,14 +482,18 @@ static bool begin(void *context,uint64_t sequence,qa_error *e)
     packets_clear(owner);
     pictures_clear(owner);
     qa_scene_frame_reset(&owner->frame,sequence);
+    owner->frame.weapon_occupation=owner->frontend->frame.weapon_occupation;
     owner->sequence=sequence; owner->begun=true;
-    return qa_q3_presentation_frame(owner->presentation,&owner->frame,frontend_viewport(owner->frontend,owner->request.physical_seat),e);
+    bool okay=qa_q3_presentation_frame(owner->presentation,&owner->frame,frontend_viewport(owner->frontend,owner->request.physical_seat),e);
+    if(!okay) owner->frame.weapon_occupation=NULL;
+    return okay;
 }
 static bool finish(void *context,bool submitted,qa_error *e)
 {
     struct frontend_component_scene *owner=context;
     if (!retained(owner) || !owner->ready || !owner->host_borrow)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Component output finish lost its retained entered renderer");
+    owner->frame.weapon_occupation=NULL;
     bool ok=!owner->frame.source_pending;
     if (!ok) frontend_fail(e,QA_ERROR_ARGUMENT,"Private component output borrowed the physical Source issue queue");
     if (!submitted || !ok) { packets_clear(owner); pictures_clear(owner); }

@@ -38,6 +38,12 @@ typedef bool (*qa_scene_source_diagnostics_read_fn)(void *, qa_scene_source_diag
 typedef struct qa_scene_matrix { float m[16]; } qa_scene_matrix;
 typedef struct qa_scene_rect { int32_t x, y; uint32_t width, height; } qa_scene_rect;
 typedef struct qa_scene_rect_f { float x, y, width, height; } qa_scene_rect_f;
+typedef struct qa_scene_weapon_occupation {
+    uint32_t seat;
+    const qa_scene_rect_f *rects;
+    size_t count;
+    const struct qa_scene_weapon_occupation *next;
+} qa_scene_weapon_occupation;
 typedef struct qa_scene_plane { qa_vec3 normal; float distance; } qa_scene_plane;
 typedef enum qa_scene_wrap { QA_SCENE_REPEAT, QA_SCENE_CLAMP } qa_scene_wrap;
 typedef enum qa_scene_filter {
@@ -703,6 +709,7 @@ typedef struct qa_scene_model_pin {
  * in storage. Frame geometry pins survive command rollback until reset. */
 typedef struct qa_scene_frame {
     qa_scene_image_stream *stream_images;
+    const qa_scene_weapon_occupation *weapon_occupation;
     qa_material_source_scratch *source_pending;
     uint64_t sequence, owner;
     bool source_backend, source_skip_backend, source_clear_draw_buffer;
@@ -732,6 +739,7 @@ typedef struct qa_scene_frame {
     qa_scene_command *sort_commands;
     size_t sort_command_capacity;
 } qa_scene_frame;
+void qa_scene_frame_weapon_bind(qa_scene_frame *, qa_scene_weapon_occupation *);
 /* Construct a frame at load. Transient geometry and persistent arrays use
  * the same reserved page pool, without heap fallback; zero selects 64 MiB. */
 bool qa_scene_frame_init(qa_scene_frame *, uint64_t owner, size_t bytes, qa_error *);
@@ -777,6 +785,7 @@ void qa_scene_state_default(qa_scene_state *);
 void qa_scene_matrix_identity(qa_scene_matrix *);
 qa_scene_matrix qa_scene_matrix_multiply(qa_scene_matrix, qa_scene_matrix);
 qa_scene_matrix qa_scene_view_matrix(const qa_scene_view *);
+qa_scene_view qa_scene_weapon_view(const qa_scene_frame *, qa_scene_view);
 qa_scene_matrix qa_scene_projection(float fov_x, float fov_y, float near_clip, float far_clip);
 qa_vec4 qa_scene_matrix_point(qa_scene_matrix, qa_vec3);
 void qa_scene_vertices_remap(qa_scene_vertex *out,const qa_scene_vertex *in,size_t count,

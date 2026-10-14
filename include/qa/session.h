@@ -119,7 +119,9 @@ bool qa_session_destroy(qa_session *session, qa_error *error);
  * and scheduling before close; foreign actors must first rebind their execution. */
 bool qa_session_add(qa_session *session, const qa_component *component, qa_error *error);
 typedef struct qa_component_admission qa_component_admission;
-/* Prepare reserves capacity without registering callbacks. A nonzero retiring_owner
+/* Prepare reserves capacity without scheduling frames. Its component owns
+ * construction actors; abort retires them through that component's callbacks.
+ * A nonzero retiring_owner
  * reserves that active owner's slot; remove it before commit. This also supports
  * switching to a different owner at full capacity. Commit and abort consume tokens.
  * Commit allocates nothing, calls no provider, and retains the token on failure. */
@@ -127,6 +129,7 @@ bool qa_session_prepare_component(qa_session *, const qa_component *, qa_actor_o
                                    qa_component_admission **, qa_error *);
 bool qa_component_admission_validate(qa_component_admission *, qa_error *);
 bool qa_component_admission_commit(qa_component_admission *, qa_error *);
+const qa_clock_state *qa_component_admission_clock(const qa_component_admission *);
 void qa_component_admission_abort(qa_component_admission *);
 bool qa_session_remove(qa_session *session, qa_actor_owner owner, qa_error *error);
 bool qa_session_pause(qa_session *session, qa_actor_owner owner, bool paused, qa_error *error);

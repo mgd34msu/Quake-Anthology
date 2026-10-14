@@ -97,6 +97,9 @@ bool application_native_q2_stages_time_read(const struct application_native_q2 *
             return application_fail(e,QA_ERROR_ARGUMENT,"Declared source tick lost its actual frame");
         *out=n->frame;return true;
     }
+    if(n->initialization_clock) {
+        *out=n->initialization_clock->frame;return true;
+    }
     application_provider *primary=application_world_provider(app,QA_ROLE_ENTITIES,"");
     qa_clock_state clock;
     if(!primary||!primary->attached||!primary->component_attached||

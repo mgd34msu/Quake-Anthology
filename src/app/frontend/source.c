@@ -611,6 +611,8 @@ bool frontend_source_prepare_scene(qa_frontend *frontend,qa_application *applica
     }
     if (!frontend_tools_camera(frontend,seat,options->world.view.clip_enabled,&options->world.view,error) ||
         (!options->world.no_world && !frontend_event_world(frontend,seat,&options->world,error))) return false;
+    if(!options->world.no_world&&!options->world.view.clip_enabled&&
+        !frontend_hud_content_prepare(frontend,seat,error)) return false;
     if (!options->world.no_world && options->world_family==QA_GAME_Q3 && frontend->q1_sky) {
         qa_actor_id recipient;
         if (frontend_seat_actor_read(frontend,seat,&recipient)) {
@@ -2125,8 +2127,12 @@ static bool companion_capture(qa_frontend *f,uint32_t physical,qa_scene_rect rec
     if (!qa_q3_presentation_binding_read(source->presentation,&previous,error)) return false;
     source_companion *capture=source->companion;
     qa_scene_frame_reset(&capture->frame,f->frame_number);
+    capture->frame.weapon_occupation=f->frame.weapon_occupation;
     if (!qa_scene_frame_material_order(&capture->frame,f->order,error) ||
-        !qa_q3_presentation_frame(source->presentation,&capture->frame,rect,error)) return false;
+        !qa_q3_presentation_frame(source->presentation,&capture->frame,rect,error)) {
+        capture->frame.weapon_occupation=NULL;
+        return false;
+    }
     capture->view=(frontend_source_companion_view){.receipt=receipt,.assets=source->assets,
         .frame_sequence=f->frame_number,.source_time_ms=receipt.client.source.source_milliseconds};
     bool backend=f->frame.source_backend,skip=f->frame.source_skip_backend,clear=f->frame.source_clear_draw_buffer;
@@ -2136,6 +2142,7 @@ static bool companion_capture(qa_frontend *f,uint32_t physical,qa_scene_rect rec
     qa_error draw_error={0},close_error={0};
     bool drawn=qa_application_q3_arsenal_client_draw(f->application,&receipt,&draw_error);
     capture->entered=false;
+    capture->frame.weapon_occupation=NULL;
     bool closed=true;
     if (capture->frame.source_pending)
         closed=qa_material_source_frame_end(capture->frame.source_pending,&capture->frame,false,&close_error);

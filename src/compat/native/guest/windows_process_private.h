@@ -27,7 +27,7 @@ struct qa_native_windows_process {
     size_t image_count;
     uint64_t stack;
     windows_process_stream streams[3];
-    bool complete, busy, failed, disposing, provisional;
+    bool complete, busy, failed, disposing, provisional, initializing;
 };
 
 bool windows_process_current(qa_native_windows_process *, qa_error *);

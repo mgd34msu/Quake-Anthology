@@ -94,6 +94,7 @@ bool frontend_native_q2_rebind_ready(const qa_frontend *, const qa_frontend *, q
 bool frontend_native_q2_callbacks_idle(const qa_frontend *);
 void frontend_native_q2_rebind(qa_frontend *, qa_frontend *);
 typedef struct frontend_event_state frontend_event_state;
+typedef struct frontend_hud_frame frontend_hud_frame;
 typedef struct frontend_particle_state frontend_particle_state;
 typedef struct frontend_capture frontend_capture;
 typedef struct frontend_resource_inventory frontend_resource_inventory;
@@ -182,6 +183,7 @@ typedef struct frontend_seat {
     qa_command_context command_menu_context;
     bool player_sources_registered;
     qa_hud *hud;
+    frontend_hud_frame *hud_frame;
     qa_hud_wheel *wheel;
     qa_ui_library *library;
     struct frontend_startup_selection *startup_selection;
@@ -459,6 +461,7 @@ void frontend_player_sources_discard(qa_frontend *);
 const qa_product *frontend_product_selection(qa_catalog *,const char *);
 const qa_product *frontend_product_current(const qa_frontend *);
 bool frontend_present(qa_frontend *, qa_error *);
+bool frontend_hud_content_prepare(qa_frontend *, uint32_t, qa_error *);
 bool frontend_frame_cancel(qa_frontend *, qa_error *);
 bool frontend_display_ready(qa_frontend *, bool *ready, qa_error *);
 bool frontend_frame_present(qa_frontend *, qa_error *);

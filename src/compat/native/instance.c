@@ -84,7 +84,7 @@ static bool create_process(qa_native_module *module, const qa_native_options *op
     }
     if (!instance->process_host_pending) qa_buffer_free(&instance->process_host);
     if (okay && report_latched(instance, error)) { *out = instance; return true; }
-    native_profile_bind_cancel(instance);
+    native_startup_cancel(instance);
     instance->creating = false;
     instance->lifecycle = QA_NATIVE_SHUT_DOWN;
     qa_error cleanup = {0};
@@ -155,15 +155,29 @@ bool qa_native_can_destroy(const qa_native_instance *instance) {
     return instance_returned(instance) && !instance->loading_call;
 }
 
-bool qa_native_create_paused(const qa_native_instance *instance)
+bool qa_native_startup_paused(const qa_native_instance *instance)
 {
-    if (!instance_returned(instance) || !instance->creating || !instance->profile_loading ||
-        !instance->profile_call || instance->loading_call != instance->profile_call) return false;
+    if (!instance_returned(instance) ||
+        !((instance->creating && instance->profile_loading) || instance->initializing) ||
+        !instance->startup_call || instance->loading_call != instance->startup_call) return false;
     const qa_native_guest *guest = instance->guest;
-    return guest && guest->call == instance->profile_call->abi &&
+    return guest && guest->call == instance->startup_call->abi &&
         !guest->run && !guest->callback_depth && !guest->publication_depth &&
         !guest->stopped_write_calls && !guest->stopped_write_bindings && !guest->recovery &&
         !guest->stepping && !guest->restoring && !guest->faulting;
+}
+
+bool qa_native_startup_cancel(qa_native_instance *instance, qa_error *error)
+{
+    if (!instance)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native startup owner is required");
+    if (!instance->creating && !instance->initializing) return true;
+    if (!qa_native_can_destroy(instance) && !qa_native_startup_paused(instance))
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native startup cancellation requires returned callbacks");
+    native_startup_cancel(instance);
+    instance->creating = false;
+    instance->lifecycle = QA_NATIVE_SHUT_DOWN;
+    return true;
 }
 
 bool qa_native_restart_ready(const qa_native_instance *instance, qa_error *error) {
@@ -216,11 +230,8 @@ bool qa_native_destroy_owned(qa_native_instance **owner, qa_error *error) {
     if (!instance)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native instance is required for destruction");
-    if (instance->creating && (qa_native_can_destroy(instance) || qa_native_create_paused(instance))) {
-        native_profile_bind_cancel(instance);
-        instance->creating = false;
-        instance->lifecycle = QA_NATIVE_SHUT_DOWN;
-    }
+    if ((instance->creating || instance->initializing) &&
+        !qa_native_startup_cancel(instance, error)) return false;
     if (!qa_native_can_destroy(instance))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "active native instance cannot be destroyed");
@@ -517,18 +528,23 @@ bool qa_native_loading_call_abandon(qa_native_loading_call **owner, qa_error *er
     return true;
 }
 
-bool qa_native_initialize(qa_native_instance *instance, qa_error *error) {
+bool qa_native_initialize_begin(qa_native_instance *instance, qa_error *error)
+{
     if (!instance)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native instance is required for initialization");
     switch (instance->module->info.profile) {
     case QA_NATIVE_Q2_GAME_API2023:
-        if (!qa_native_call(instance, "PreInit", NULL, 0, NULL, error))
-            return false;
-        return qa_native_call(instance, "Init", NULL, 0, NULL, error);
     case QA_NATIVE_Q2_GAME_API3:
-    case QA_NATIVE_Q2_CGAME_API2023:
-        return qa_native_call(instance, "Init", NULL, 0, NULL, error);
+    case QA_NATIVE_Q2_CGAME_API2023: {
+        bool preinit = instance->module->info.profile == QA_NATIVE_Q2_GAME_API2023;
+        bool okay = qa_native_loading_call_begin(instance, preinit ? "PreInit" : "Init",
+            NULL, 0, NULL, &instance->startup_call, error);
+        if (okay || instance->startup_call) {
+            instance->initializing = true; instance->initialization_preinit = preinit;
+        }
+        return okay;
+    }
     case QA_NATIVE_Q3_VMMAIN:
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "Q3 initialization requires GAME_INIT arguments through vmMain");
@@ -538,6 +554,35 @@ bool qa_native_initialize(qa_native_instance *instance, qa_error *error) {
                            "restart through qa_native_ql_initialize");
     }
     return false;
+}
+
+bool qa_native_initialize_advance(qa_native_instance *instance, size_t quantum,
+    bool *complete, qa_error *error)
+{
+    if (!instance || !complete)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native initialization requires its owner and completion output");
+    *complete = !instance->initializing;
+    while (instance->initializing) {
+        bool returned = false;
+        if (!qa_native_loading_call_step(instance->startup_call, quantum, &returned, error)) return false;
+        if (!returned) return true;
+        if (!qa_native_loading_call_finish(&instance->startup_call, error)) return false;
+        if (instance->initialization_preinit) {
+            instance->initialization_preinit = false;
+            if (!qa_native_loading_call_begin(instance, "Init", NULL, 0, NULL,
+                &instance->startup_call, error)) return false;
+        } else {
+            instance->initializing = false; *complete = true;
+        }
+    }
+    return true;
+}
+
+bool qa_native_initialize(qa_native_instance *instance, qa_error *error)
+{
+    bool complete = false;
+    return qa_native_initialize_begin(instance, error) &&
+        qa_native_initialize_advance(instance, 0, &complete, error) && complete;
 }
 
 bool qa_native_shutdown(qa_native_instance *instance, qa_error *error) {

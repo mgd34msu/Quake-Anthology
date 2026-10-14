@@ -93,6 +93,7 @@ typedef enum qa_q3_ref_kind {
     QA_Q3_REF_MODEL, QA_Q3_REF_POLY, QA_Q3_REF_SPRITE, QA_Q3_REF_BEAM,
     QA_Q3_REF_RAIL_CORE, QA_Q3_REF_RAIL_RINGS, QA_Q3_REF_LIGHTNING, QA_Q3_REF_PORTAL
 } qa_q3_ref_kind;
+enum { QA_Q3_RF_FIRST_PERSON = 4 };
 typedef struct qa_q3_ref_entity {
     qa_q3_ref_kind kind;
     int32_t flags, model, frame, old_frame, skin, custom_skin, custom_shader;

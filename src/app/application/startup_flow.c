@@ -1,5 +1,6 @@
 #include "startup_flow.h"
 #include "map_travel_private.h"
+#include "map_private.h"
 #include "q3_product.h"
 #include "q3_campaign_launch.h"
 #include "native_q2_console.h"
@@ -44,7 +45,7 @@ struct application_startup_flow {
     bool resources_consuming, resources_finishing;
     bool resource_advancing, resource_waiting;
     bool preparing_resources;
-    bool images_advancing, images_waiting, images_completed, providers_prepared;
+    bool images_advancing, images_waiting, images_completed, providers_prepared, initialization_completed;
     bool candidate_abort_refused;
     bool engine_only, root_admitted, root_preparing, root_prepared, root_settled;
     application_provider *root_definition_provider;
@@ -1097,7 +1098,7 @@ static bool advance_providers(qa_application *app, struct application_startup_fl
             catalog, product, choices, 16384, &prepared,
             &console, &cvars, &command, error);
         flow->loading_provider = provider->kind == APPLICATION_PROVIDER_NATIVE &&
-            provider->state.native.q2_engine && provider->state.native.q2_engine->host_loading ? provider : NULL;
+            provider->state.native.q2_engine && provider->state.native.q2_engine->loading_phase ? provider : NULL;
         if (!ok || !prepared) break;
         if (provider->kind == APPLICATION_PROVIDER_Q2) {
             application_q2_source_scripts scripts = {.context = provider,
@@ -1244,6 +1245,56 @@ static bool advance_root(qa_application *app, struct application_startup_flow *f
     return ok;
 }
 
+static bool advance_primary_initialization(qa_application *app, struct application_startup_flow *flow,
+    bool *complete, qa_error *error)
+{
+    *complete = flow->initialization_completed;
+    if (*complete) return true;
+    application_publication *publication = flow->validated_publication;
+    application_provider *provider = publication->map_provider;
+    struct application_native_q2 *engine = provider && provider->kind == APPLICATION_PROVIDER_NATIVE ?
+        provider->state.native.q2_engine : NULL;
+    if (!publication->travel || !engine || engine->profile == QA_NATIVE_Q2_CGAME_API2023 ||
+        engine->initialized || provider->attached || app->native_restore_image) {
+        flow->initialization_completed = true; *complete = true; return true;
+    }
+    qa_cvars_edit *values = NULL;
+    if (!application_startup_values_enter(app, &values, error)) return false;
+    application_publication *previous_publication = app->startup_publication;
+    const qa_launch_snapshot *routing = app->routing_snapshot;
+    application_provider **providers = app->routing_providers;
+    size_t count = app->routing_provider_count;
+    app->startup_publication = publication;
+    app->routing_snapshot = flow->candidate;
+    app->routing_providers = publication->next;
+    app->routing_provider_count = publication->next_count;
+    qa_string_id name = engine->map_name, spawn = engine->spawn_point;
+    bool ok = engine->map_admission_prepared ||
+        (application_map_identity(app, publication, &name, error) &&
+         application_map_spawn_point(app, qa_launch_snapshot_choices(flow->candidate), &spawn, error));
+    bool done = false;
+    const qa_clock_state *clock = NULL;
+    for (size_t i = 0; i < publication->admission_count; ++i) {
+        application_provider_admission *admission = publication->admissions + i;
+        if (admission->provider == provider) {
+            clock = qa_component_admission_clock(admission->component);
+            break;
+        }
+    }
+    if (ok) ok = application_native_q2_initialize_primary_advance(provider, &publication->map,
+        name, spawn, clock, 16384, &done, error);
+    flow->loading_provider = engine->loading_phase ? provider : NULL;
+    app->startup_publication = previous_publication;
+    app->routing_snapshot = routing;
+    app->routing_providers = providers;
+    app->routing_provider_count = count;
+    qa_error returned = {0};
+    bool left = application_startup_values_leave(values, &returned);
+    if (!left && ok && error) *error = returned;
+    if (ok && left && done) { flow->initialization_completed = true; *complete = true; }
+    return ok && left;
+}
+
 bool qa_application_startup_advance(qa_application *app, bool *complete, qa_error *error)
 {
     if (!app || !complete || app->operation != APPLICATION_IDLE || app->frame_preparing ||
@@ -1317,6 +1368,11 @@ bool qa_application_startup_advance(qa_application *app, bool *complete, qa_erro
             if (ok) flow->validated = true;
         }
         if (ok) ok = application_publication_retire_sources(app, flow->validated_publication, error);
+        if (ok && !flow->initialization_completed) {
+            bool initialized = false;
+            ok = advance_primary_initialization(app, flow, &initialized, error);
+            if (!ok || !initialized) goto returned;
+        }
         for (size_t i = 0; ok && i < flow->count; ++i) {
             startup_source *source = flow->sources + i;
             qa_application_startup_source actual;

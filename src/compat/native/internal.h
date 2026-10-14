@@ -132,10 +132,10 @@ struct qa_native_instance {
     struct qa_native_write_scope *write_scope;
     struct qa_native_call_scope *call_scope;
     qa_native_loading_call *loading_call;
-    qa_native_loading_call *profile_call;
+    qa_native_loading_call *startup_call;
     qa_native_value profile_result;
     qa_native_address profile_output, profile_vm_main;
-    bool creating, profile_loading;
+    bool creating, profile_loading, initializing, initialization_preinit;
     const qa_native_region_event *active_region_event;
     uint32_t region_callback_depth, region_call_depth;
     qa_native_address region_invocation_entry;
@@ -287,7 +287,7 @@ bool native_profile_accepts(const native_profile_spec *profile, const qa_native_
 bool native_profile_bind(qa_native_instance *instance, qa_error *error);
 bool native_profile_bind_begin(qa_native_instance *, qa_error *);
 bool native_profile_bind_advance(qa_native_instance *, size_t, bool *, qa_error *);
-void native_profile_bind_cancel(qa_native_instance *);
+void native_startup_cancel(qa_native_instance *);
 bool native_profile_restore_tables(qa_native_instance *instance, qa_error *error);
 bool native_profile_prepare_tables(qa_native_instance *instance, qa_error *error);
 void native_profile_unbind(qa_native_instance *instance);

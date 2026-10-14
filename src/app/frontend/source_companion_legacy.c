@@ -53,9 +53,16 @@ bool frontend_source_companion_legacy_submit(frontend_source_companion_legacy *o
         if(row->view && owner->options.world.view.clip_enabled) continue;
         const qa_scene_vertex *vertices;
         if(!frontend_source_companion_polygon_vertices(row,&owner->options.world,&frame->storage,&vertices,error)) return false;
+        qa_q3_scene_options projected;
+        const qa_q3_scene_options *options=&owner->options;
+        if(row->view) {
+            projected=*options;
+            projected.world.view=qa_scene_weapon_view(frame,options->world.view);
+            options=&projected;
+        }
         if(!qa_q3_presentation_completed_poly(owner->presentation,owner->capture.assets,owner->world,
             row->polygon.shader,vertices,row->polygon.count,&row->polygon.fog,row->definition->time,
-            &owner->options,frame,error)) return false;
+            options,frame,error)) return false;
     }
     return frontend_source_companion_current(f,&owner->capture);
 }

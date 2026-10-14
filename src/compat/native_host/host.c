@@ -483,10 +483,20 @@ bool qa_native_host_destroy_ready(const qa_native_host *host)
         (!host->instance || qa_native_can_destroy(host->instance));
 }
 
-bool qa_native_host_create_paused(const qa_native_host *host)
+bool qa_native_host_startup_paused(const qa_native_host *host)
 {
-    return host && host->constructing && !host->destroying && !host->reconstruction &&
-        !host->callback_depth && !host->call_scratch.active && qa_native_create_paused(host->instance);
+    return host && (host->constructing || host->initializing) && !host->destroying && !host->reconstruction &&
+        !host->callback_depth && !host->call_scratch.active && qa_native_startup_paused(host->instance);
+}
+
+bool qa_native_host_startup_cancel(qa_native_host *host, qa_error *error)
+{
+    if (!host || host->destroying || host->reconstruction || host->callback_depth || host->call_scratch.active)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "native startup cancellation requires returned host callbacks");
+    if (!host->constructing && !host->initializing) return true;
+    if (!qa_native_startup_cancel(host->instance, error)) return false;
+    host->constructing = false; host->initializing = false;
+    return true;
 }
 
 bool qa_native_host_terminal_retired(const qa_native_host *host)
@@ -499,11 +509,10 @@ bool qa_native_host_destroy_owned(qa_native_host **owner, qa_error *error)
 {
     qa_native_host *host = owner ? *owner : NULL;
     bool construction_ok = true;
-    if (host && host->constructing && !host->destroying && !host->reconstruction && !host->callback_depth &&
-        !host->call_scratch.active && host->instance) {
+    if (host && (host->constructing || host->initializing) && host->instance) {
+        if (!qa_native_host_startup_cancel(host, error)) return false;
         construction_ok = qa_native_destroy_owned(&host->instance, error);
         if (host->instance) return false;
-        host->constructing = false;
     }
     if (!qa_native_host_destroy_ready(host) || host->reconstruction ||
         (qa_native_terminal(host->instance) && !qa_native_host_terminal_retired(host)))
@@ -590,7 +599,7 @@ bool qa_native_host_q3_ui_initialize(qa_native_host *host, bool connecting, qa_e
     return qa_native_host_q3_vm_call(host, 1, &argument, 1, &result, error);
 }
 
-bool qa_native_host_initialize(qa_native_host *host, int32_t level_time,
+bool qa_native_host_initialize_begin(qa_native_host *host, int32_t level_time,
                                int32_t random_seed, bool restart, qa_error *error)
 {
     if (!host || !host->instance)
@@ -612,9 +621,31 @@ bool qa_native_host_initialize(qa_native_host *host, int32_t level_time,
         int32_t result;
         ok = qa_native_host_q3_vm_call(host, 0, arguments, 3, &result, error);
     }
-    else
-        ok = qa_native_initialize(host->instance, error);
+    else {
+        host->initializing = true;
+        ok = qa_native_initialize_begin(host->instance, error);
+    }
     return ok;
+}
+
+bool qa_native_host_initialize_advance(qa_native_host *host, size_t quantum,
+    bool *complete, qa_error *error)
+{
+    if (!host || !complete)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "native host initialization requires its owner");
+    *complete = !host->initializing;
+    if (*complete) return true;
+    bool ok = qa_native_initialize_advance(host->instance, quantum, complete, error);
+    if (ok && *complete) host->initializing = false;
+    return ok;
+}
+
+bool qa_native_host_initialize(qa_native_host *host, int32_t level_time,
+    int32_t random_seed, bool restart, qa_error *error)
+{
+    bool complete = false;
+    return qa_native_host_initialize_begin(host, level_time, random_seed, restart, error) &&
+        qa_native_host_initialize_advance(host, 0, &complete, error) && complete;
 }
 
 bool qa_native_host_shutdown(qa_native_host *host, bool restart, qa_error *error)

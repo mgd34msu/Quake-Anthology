@@ -326,7 +326,8 @@ bool qa_native_host_create_q3_begin(qa_native_module *, const qa_native_host_q3_
                                     qa_native_host **, qa_error *);
 bool qa_native_host_create_advance(qa_native_host *, size_t quantum,
                                    bool *complete, qa_error *);
-bool qa_native_host_create_paused(const qa_native_host *);
+bool qa_native_host_startup_paused(const qa_native_host *);
+bool qa_native_host_startup_cancel(qa_native_host *, qa_error *);
 /* Clears only a consumed host. Failed OS unload retains the original host and
  * every borrowed source service until a later cleanup attempt can consume it. */
 bool qa_native_host_destroy_owned(qa_native_host **, qa_error *);
@@ -391,6 +392,10 @@ bool qa_native_host_q2_trace_encode(qa_native_host *,const qa_trace_result *,qa_
  * resuming reconciliation; CGAME has no GAME actor table to reconcile. */
 bool qa_native_host_initialize(qa_native_host *, int32_t level_time, int32_t random_seed,
                                bool restart, qa_error *);
+bool qa_native_host_initialize_begin(qa_native_host *, int32_t level_time,
+                                      int32_t random_seed, bool restart, qa_error *);
+bool qa_native_host_initialize_advance(qa_native_host *, size_t quantum,
+                                        bool *complete, qa_error *);
 bool qa_native_host_shutdown(qa_native_host *, bool restart, qa_error *);
 bool qa_native_host_spawn_entities(qa_native_host *, const char *map, const char *entities,
                                    const char *spawn_point, qa_error *);

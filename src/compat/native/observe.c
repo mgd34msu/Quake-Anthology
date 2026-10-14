@@ -483,9 +483,12 @@ bool qa_native_invoke_original(qa_native_entry_observer *binding,
         instance->write_scope->event==instance->active_write_event &&
         instance->write_scope->depth==instance->write_depth &&
         instance->active_depth>instance->write_scope->invocation_depth;
+    bool startup_original = instance->initializing && instance->startup_call &&
+        instance->loading_call == instance->startup_call && binding->active_calls &&
+        native_active_instance == instance && instance->callback_depth;
     if ((instance->region_depth && !region_original && !write_original) ||
         (instance->write_depth && !write_original) ||
-        instance->lifecycle != QA_NATIVE_INITIALIZED ||
+        (instance->lifecycle != QA_NATIVE_INITIALIZED && !startup_original) ||
         count != binding->signature.parameter_count || (count && !arguments))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "original native invocation requires an application call boundary");
