@@ -579,7 +579,13 @@ static const qa_q2_player *mvd_view_player(const qa_q2_mvd_frame *frame, uint8_t
 }
 static bool mvd_project_emit(qa_q2_messages *messages, qa_q2_server_emit_fn emit,
     void *context, const qa_q2_server_record *record, qa_error *error)
-{ return qa_q2_messages_accept(messages,record,error) && emit(context,record,error); }
+{
+    if (!qa_q2_messages_accept(messages,record,error)) return false;
+    qa_q2_server_record admitted=*record;
+    if (record->event.kind==QA_Q2_SVC_FRAME)
+        admitted.event.data.frame=qa_q2_messages_latest(messages,record->seat);
+    return emit(context,&admitted,error);
+}
 bool qa_q2_mvd_project_header(const qa_q2_mvd_header *header, uint8_t selected,
     qa_q2_messages *messages, qa_q2_server_emit_fn emit, void *context, qa_error *error)
 {
