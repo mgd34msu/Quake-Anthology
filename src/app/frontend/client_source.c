@@ -583,7 +583,7 @@ static bool sources_returned(const qa_frontend *f,const qa_application_client_pr
             !qa_application_client_prepare_entered(client,QA_CLIENT_PREPARE_RESOURCES) ||
             !(held=qa_application_client_prepare_source(client))) return false;
     }
-    bool found=!client;
+    bool found=false;
     for (const frontend_client_source *s=f?f->client_sources:NULL;s;s=s->next) {
         if (held && s->application.context.lifetime==held->context.lifetime) {
             if (found || s->calls!=1 || s->closing || s->retiring || !s->app_attached ||
@@ -595,7 +595,7 @@ static bool sources_returned(const qa_frontend *f,const qa_application_client_pr
             found=true;
         } else if (!frontend_client_source_idle(s)) return false;
     }
-    return found;
+    return true;
 }
 bool frontend_client_sources_idle(const qa_frontend *f)
 { return sources_returned(f,NULL); }
