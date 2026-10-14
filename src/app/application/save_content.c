@@ -306,7 +306,6 @@ static bool instance_collect(qa_application_content_graph *g, const qa_launch_in
             !qa_vfs_acquisition_retained(source->content, receipt, error))
             return fail(error, QA_ERROR_FORMAT, "Provider artifact lost its actual opening receipt");
         if (!qa_vfs_acquisition_copy(receipt, &row->artifact_acquisition, error)) return false;
-        value->artifact_acquisition = &row->artifact_acquisition;
     }
     if (value->artifact) { qa_resource_retain((qa_resource *)value->artifact); row->artifact_retained = true; }
     if (value->declaration) { qa_resource_retain((qa_resource *)value->declaration); row->declaration_retained = true; }
@@ -778,7 +777,7 @@ static bool prepare_manifest(qa_application_content_graph *g,qa_error *error)
     for (size_t i=0;i<g->instance_count;++i) {
         content_instance *r=g->instances+i;
         qa_launch_restored_instance *s=&r->value.source;
-        if (s->artifact && !reference_add(g,r->artifact_pool,s->artifact,r->value.view,s->artifact_acquisition->path,error)) return false;
+        if (s->artifact && !reference_add(g,r->artifact_pool,s->artifact,r->value.view,r->artifact_acquisition.path,error)) return false;
         if (s->declaration && !reference_add(g,r->declaration_pool,s->declaration,r->value.view,NULL,error)) return false;
         for (size_t j=0;j<s->interface_count;++j)
             if (!reference_add(g,r->interfaces[j].pool,r->interfaces[j].value.resource,r->value.view,r->interfaces[j].value.path,error)) return false;
@@ -1104,7 +1103,6 @@ static bool resolve_manifest(qa_application_content_graph *g,const qa_applicatio
         if ((r->artifact && !v->artifact) || (r->declaration && !v->declaration)) return false;
         if (v->artifact) {
             if (!qa_application_content_acquire(v->content,v->artifact,v->selection.artifact,&r->artifact_acquisition,error)) return false;
-            v->artifact_acquisition=&r->artifact_acquisition;
             qa_resource_retain((qa_resource *)v->artifact); r->artifact_retained=true;
         }
         if (v->declaration) { qa_resource_retain((qa_resource *)v->declaration); r->declaration_retained=true; }
