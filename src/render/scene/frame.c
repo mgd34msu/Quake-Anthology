@@ -77,6 +77,12 @@ bool qa_scene_frame_material_order(qa_scene_frame *frame, qa_material_order *ord
     frame->material_order = order; return true;
 }
 
+void qa_scene_frame_weapon_bind(qa_scene_frame *frame,qa_scene_weapon_occupation *occupation)
+{
+    occupation->next=frame->weapon_occupation;
+    frame->weapon_occupation=occupation;
+}
+
 void qa_scene_frame_reset(qa_scene_frame *frame, uint64_t sequence)
 {
     if (frame == NULL) return;
@@ -84,6 +90,7 @@ void qa_scene_frame_reset(qa_scene_frame *frame, uint64_t sequence)
         qa_error ignored = {0};
         (void)qa_material_source_frame_end(frame->source_pending, frame, false, &ignored);
     }
+    frame->weapon_occupation=NULL;
     for (size_t i = 0; i < frame->image_count; ++i) qa_scene_image_release(frame->images[i]);
     frame->image_count = 0;
     frame->stream_images = NULL;

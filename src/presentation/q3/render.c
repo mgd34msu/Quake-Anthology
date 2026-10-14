@@ -231,14 +231,14 @@ static bool model_input(qa_q3_presentation *p, const qa_q3_presentation_assets *
         !q3p_skin_materials(assets, entity->custom_skin, &skin_materials, &skin_material_count, error)) return false;
     *out = (qa_scene_model_input){
         .view = weapon_view(&options->world.view,
-            options->split_screen && !options->world.no_world && (entity->flags & 4)),
+            options->split_screen && !options->world.no_world && (entity->flags & QA_Q3_RF_FIRST_PERSON)),
         .transform = transform, .previous_origin = entity->old_origin,
         .color = q3p_color(entity->color), .family = QA_GAME_Q3,
         .skin = (uint32_t)entity->skin, .flags = (uint32_t)entity->flags,
         .entity = order, .back_lerp = entity->back_lerp, .radius = entity->radius,
         .rotation = entity->rotation, .shadow_plane = entity->shadow_plane,
         .identity_light = options->world.identity_light, .seconds = options->world.seconds,
-        .custom_material = material, .custom_skin = skin, .view_model = (entity->flags & 4) != 0,
+        .custom_material = material, .custom_skin = skin, .view_model = (entity->flags & QA_Q3_RF_FIRST_PERSON) != 0,
         .custom_skin_materials = skin_materials, .custom_skin_material_count = skin_material_count,
         .no_cull = options->world.no_cull, .non_normalized_axis = entity->non_normalized_axes,
         .source_order = true, .source_scratch = options->world.source_scratch, .shadow_mode = options->shadow_mode,
@@ -383,7 +383,9 @@ static bool submit_model(qa_q3_presentation *p, const qa_q3_presentation_assets 
     if (!q3p_model_get(assets, entity->model, &model, error)) return false;
     if (model && model->registration_bad) model = NULL;
     qa_model_transform transform = entity_transform(entity);
-    qa_scene_view view = weapon_view(&options->world.view, options->split_screen && !options->world.no_world && (entity->flags & 4));
+    qa_scene_view view = weapon_view(&options->world.view, options->split_screen && !options->world.no_world && (entity->flags & QA_Q3_RF_FIRST_PERSON));
+    if((!model||model->world) && (entity->flags&QA_Q3_RF_FIRST_PERSON))
+        view=qa_scene_weapon_view(p->frame,view);
     if (!model) {
         if ((entity->flags & 2) && !view.clip_enabled) return true;
         const qa_material *material = qa_material_find(shader_assets->options.provider.materials, "*default");
@@ -735,6 +737,9 @@ static bool submit_effect(qa_q3_presentation *p, const qa_q3_presentation_assets
                            const int32_t *source_time, qa_error *error)
 {
     if (options->no_entities) return true;
+    qa_scene_view view=options->world.view;
+    if(entity->flags&QA_Q3_RF_FIRST_PERSON)
+        view=qa_scene_weapon_view(p->frame,view);
     const qa_material *material;
     if (!q3p_shader_get(assets, entity->custom_shader, &material, error)) return false;
     if (!material) material = qa_material_find(assets->options.provider.materials, "*default");
@@ -743,6 +748,7 @@ static bool submit_effect(qa_q3_presentation *p, const qa_q3_presentation_assets
     if (!options->world.no_world) qa_scene_world_fog_for_sphere(lighting_world(p), entity->origin, entity->radius, &fog);
     if (options->world.source_scratch) {
         qa_material_context context = effect_context(options);
+        context.view=view;
         if (source_time) { context.seconds = (float)*source_time * .001f; context.milliseconds = *source_time; }
         context.entity = order; context.entity_color = q3p_color(entity->color);
         context.source_entity_cell = options->world.source_entity_cells && !p->submission;
@@ -752,22 +758,23 @@ static bool submit_effect(qa_q3_presentation *p, const qa_q3_presentation_assets
     }
     size_t first = p->frame->command_count;
     if (entity->kind == QA_Q3_REF_BEAM) {
-        if (!qa_scene_q3_beam(p->frame, &options->world.view, entity->origin, entity->old_origin,
+        if (!qa_scene_q3_beam(p->frame, &view, entity->origin, entity->old_origin,
                 qa_scene_white(assets->options.provider.images), &options->state, error)) return false;
     } else {
         qa_scene_mesh mesh;
         qa_vec4 color = q3p_color(entity->color);
         if (entity->kind == QA_Q3_REF_SPRITE) {
-            if (!qa_scene_sprite_geometry(p->frame, &options->world.view, entity->origin,
+            if (!qa_scene_sprite_geometry(p->frame, &view, entity->origin,
                     entity->radius, entity->rotation, color, &mesh, error)) return false;
         } else {
             qa_scene_rail_kind kind = entity->kind == QA_Q3_REF_RAIL_CORE ? QA_RAIL_CORE :
                 entity->kind == QA_Q3_REF_RAIL_RINGS ? QA_RAIL_RINGS : QA_RAIL_LIGHTNING;
             qa_scene_rail_options rail = options->rail;
-            if (!qa_scene_rail_geometry(p->frame, &options->world.view, kind,
+            if (!qa_scene_rail_geometry(p->frame, &view, kind,
                     entity->origin, entity->old_origin, color, &rail, &mesh, error)) return false;
         }
         qa_material_context context = effect_context(options);
+        context.view=view;
         if (source_time) {
             context.seconds = (float)*source_time * .001f;
             context.milliseconds = *source_time;

@@ -1880,6 +1880,10 @@ static bool model_submit(qa_scene_model *model, const qa_scene_model_input *inpu
 bool qa_scene_model_submit(qa_scene_model *model, const qa_scene_model_input *input,
                            qa_scene_frame *frame, qa_error *error) {
     if (!model || !input || !frame) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model, input and frame are required"); return false; }
+    qa_scene_model_input projected;
+    if(input->view_model) {
+        projected=*input; projected.view=qa_scene_weapon_view(frame,input->view); input=&projected;
+    }
     size_t commands = frame->command_count;
     size_t groups = frame->group_count;
     if (model_submit(model, input, frame, 0, error)) return true;

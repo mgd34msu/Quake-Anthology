@@ -39,6 +39,12 @@
 #include "qa/application_network_qw.h"
 #include <stdio.h>
 
+struct frontend_hud_frame {
+    qa_hud_frame frame;
+    qa_hud_content *content;
+    bool available,native_entered,qc_status,source_weapon_status;
+};
+
 void frontend_player_light_sample(qa_frontend *frontend, qa_scene_world *world,
     const qa_scene_world_input *input)
 {
@@ -75,6 +81,18 @@ static bool source_status_native(const qa_frontend *f,uint32_t physical,qa_actor
         *out=*out || replaces;
     }
     return true;
+}
+bool frontend_hud_content_prepare(qa_frontend *frontend,uint32_t physical,qa_error *error)
+{
+    frontend_seat *seat=frontend->seats+physical;
+    frontend_hud_frame *pending=seat->hud_frame;
+    if(!pending||!pending->available||pending->content) return true;
+    if(pending->native_entered&&!pending->source_weapon_status&&!pending->qc_status) return true;
+    pending->frame.weapon_only=pending->native_entered&&!pending->qc_status;
+    if(!source_status_native(frontend,physical,pending->frame.actor,
+        &pending->frame.source_status_native,error)) return false;
+    return qa_hud_prepare_content(seat->hud,NULL,&pending->frame,&frontend->frame,
+        &pending->content,error);
 }
 bool frontend_scene_sync(qa_frontend *frontend,qa_error *error)
 { return frontend_root_resources_sync(frontend,error); }
@@ -330,6 +348,7 @@ static bool local_q3_damage(qa_frontend *f,frontend_seat *seat,qa_actor_id actor
 static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
 {
     *render = false;
+    for(size_t i=0;i<frontend->options.seats;++i) frontend->seats[i].hud_frame=NULL;
     qa_scene_frame_reset(&frontend->frame, frontend->frame_number);
     bool ready;
     if (!frontend_display_ready(frontend, &ready, error)) return false;
@@ -462,6 +481,19 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         if (!frontend_view_background(frontend, rect, &view, error)) return false;
         qa_scene_command begin = {.kind = QA_SCENE_COMMAND_VIEW, .data.view = view};
         if (!qa_scene_frame_emit(&frontend->frame, &begin, error)) return false;
+        if(live) {
+            seat->hud_frame=qa_arena_alloc(&frontend->frame.storage,sizeof(*seat->hud_frame),
+                _Alignof(frontend_hud_frame),error);
+            if(!seat->hud_frame) return false;
+            *seat->hud_frame=(frontend_hud_frame){.frame={.seat=i,.actor=actor,
+                .time_ns=frontend->time_ns,.viewport=view.viewport,.safe_area=rect,
+                .scale=preferences.hud_scale,
+                .show_scores=qa_input_seat_action_active(seat->input,QA_INPUT_SCORES)||
+                    (seat->q2_view_ready&&!seat->q2_help&&(seat->q2_view.layouts&1)),
+                .show_inventory=seat->q2_inventory,.visible=!ui.fullscreen&&game_focus},
+                .available=!source.source_world,.qc_status=qc_status,
+                .source_weapon_status=source_weapon_status};
+        }
         bool remote_rendered=false,remote_listener_present=false,native_rendered=false,common_hud_drawn=false;
         bool unified_rendered=false;
         bool source_center_owned=false;
@@ -486,8 +518,20 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         else {
             if (!frontend_source_frame(frontend, i, rect, error) ||
                 !frontend_native_q2_frame(frontend, i, rect, error)) return false;
-            if (native_ready && !frontend_native_q3_frame(frontend,i,rect,&native_rendered,error)) return false;
+            if(native_ready) {
+                if(seat->hud_frame) {
+                    seat->hud_frame->native_entered=true;
+                    seat->hud_frame->frame.center_owned=true;
+                }
+                bool okay=frontend_native_q3_frame(frontend,i,rect,&native_rendered,error);
+                if(seat->hud_frame) seat->hud_frame->native_entered=false;
+                if(!okay) return false;
+            }
             source_center_owned=native_rendered;
+        }
+        if(live&&!remote_rendered&&!native_rendered&&!common_hud_drawn) {
+            seat->hud_frame->frame.center_owned=false;
+            if(!frontend_hud_content_prepare(frontend,i,error)) return false;
         }
         if (live && !ui.fullscreen && !source.source_world && !native_rendered && frontend->scene_world) {
             bool changed;
@@ -561,14 +605,14 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
             }
         }
         if (!frontend_q3_generic_overlay_begin(frontend,rect,error)) return false;
-        bool component_status=false;
-        if (live && !source_status_native(frontend,i,actor,&component_status,error)) return false;
-        if (live && !common_hud_drawn && (!native_rendered || source_weapon_status || qc_status) && !qa_hud_draw(seat->hud, &(qa_hud_frame){.seat = i, .actor = actor,
-            .weapon_only=native_rendered && !qc_status,.source_status_native=component_status,
-            .center_owned=source_center_owned,
-            .time_ns = frontend->time_ns, .viewport = view.viewport, .safe_area = rect,
-            .scale = preferences.hud_scale, .show_scores = qa_input_seat_action_active(seat->input,QA_INPUT_SCORES) || (seat->q2_view_ready && !seat->q2_help && (seat->q2_view.layouts & 1)),
-            .show_inventory = seat->q2_inventory, .visible = !ui.fullscreen && game_focus}, &frontend->frame, error)) return false;
+        if(live&&!common_hud_drawn&&(!native_rendered||source_weapon_status||qc_status)) {
+            frontend_hud_frame *pending=seat->hud_frame;
+            pending->available=true;pending->native_entered=native_rendered;
+            pending->frame.center_owned=source_center_owned;
+            if(!frontend_hud_content_prepare(frontend,i,error)||
+                !qa_hud_draw_prepared(seat->hud,pending->content,true,&frontend->frame,error)) return false;
+            pending->native_entered=false;
+        }
         if (live && !ui.fullscreen && game_focus && !qa_hud_wheel_draw(seat->wheel,
             &(qa_hud_wheel_draw_options){.viewport = rect, .fonts = seat->fonts,
                 .white = qa_scene_white(frontend->ui_images), .text = {1, 1, 1, 1},
@@ -644,6 +688,7 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
     if (profiling && !qa_profiler_push(profiler, frontend->profiler_labels[FRONTEND_PROFILE_SCENE_BUILD], error)) return false;
     qa_error feature = {0};
     bool ok = scene_build(frontend, &render, &feature);
+    for(size_t i=0;i<frontend->options.seats;++i) frontend->seats[i].hud_frame=NULL;
     if (profiling && !frontend_profiler_end(profiler, true, error)) return false;
     if (!ok) {
         qa_application *app = frontend->application;

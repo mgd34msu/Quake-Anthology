@@ -166,6 +166,11 @@ bool qa_hud_draw(qa_hud *, const qa_hud_frame *, qa_scene_frame *, qa_error *);
  * leaves retained messages untouched; the messages phase draws/expires them once. */
 bool qa_hud_draw_content(qa_hud *, const qa_hud_options *, const qa_hud_frame *,
     qa_scene_frame *, qa_error *);
+typedef struct qa_hud_content qa_hud_content;
+bool qa_hud_prepare_content(qa_hud *, const qa_hud_options *, const qa_hud_frame *,
+    qa_scene_frame *, qa_hud_content **, qa_error *);
+bool qa_hud_draw_prepared(qa_hud *, const qa_hud_content *, bool messages,
+    qa_scene_frame *, qa_error *);
 bool qa_hud_draw_messages(qa_hud *, const qa_hud_frame *, qa_scene_frame *, qa_error *);
 /* Literal already-localized captions use the actual seat UI fonts/preferences.
  * Area is a caller-owned display-pixel region; scale is its viewport fit.

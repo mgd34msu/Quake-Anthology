@@ -51,6 +51,28 @@ qa_scene_matrix qa_scene_projection(float fov_x, float fov_y, float near_clip, f
         0,0,-(far_clip + near_clip) / depth,-1, 0,0,-2 * far_clip * near_clip / depth,0}};
 }
 
+qa_scene_view qa_scene_weapon_view(const qa_scene_frame *frame,qa_scene_view view)
+{
+    const qa_scene_weapon_occupation *occupation=frame->weapon_occupation;
+    while(occupation&&occupation->seat!=view.seat) occupation=occupation->next;
+    if(!occupation) return view;
+    float left=(float)view.viewport.x,top=(float)view.viewport.y;
+    float right=left+(float)view.viewport.width,bottom=top+(float)view.viewport.height;
+    float available=bottom;
+    for(size_t i=0;i<occupation->count;++i) {
+        const qa_scene_rect_f *rect=occupation->rects+i;
+        if(rect->width>0 && rect->height>0 && rect->x<right && rect->x+rect->width>left &&
+            rect->y<bottom && rect->y+rect->height>top+(float)view.viewport.height*.5f)
+            available=fminf(available,fmaxf(top,rect->y));
+    }
+    if(available>top && available<bottom) {
+        float offset=(bottom-available)/(float)view.viewport.height;
+        for(size_t column=0;column<4;++column)
+            view.projection.m[column*4+1]+=offset*view.projection.m[column*4+3];
+    }
+    return view;
+}
+
 static void matrix_transform(qa_scene_matrix matrix,qa_vec3 point,float *out,size_t rows,bool translate)
 {
     for (size_t row = 0; row < rows; ++row) {

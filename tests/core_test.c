@@ -516,6 +516,24 @@ static void test_shared_bounds_and_transform(void)
     qa_scene_vertices_remap(&remapped,&remapped,1,qa_v3(20,30,40),identity,qa_v3(10,10,10),identity);
     CHECK(remapped.position.x==source.position.x && remapped.position.y==source.position.y &&
         remapped.position.z==source.position.z);
+    qa_scene_frame frame={0};
+    qa_scene_view world={.seat=1,.viewport={320,0,320,200},
+        .projection=qa_scene_projection(90,75,1,100)};
+    qa_scene_rect_f left_hud={0,170,320,30};
+    qa_scene_weapon_occupation left={.seat=0,.rects=&left_hud,.count=1};
+    qa_scene_frame_weapon_bind(&frame,&left);
+    qa_scene_view weapon=qa_scene_weapon_view(&frame,world);
+    CHECK(!memcmp(&weapon.projection,&world.projection,sizeof(world.projection)));
+    qa_scene_rect_f right_hud={320,170,320,30};
+    qa_scene_weapon_occupation right={.seat=1,.rects=&right_hud,.count=1};
+    qa_scene_frame_weapon_bind(&frame,&right);
+    weapon=qa_scene_weapon_view(&frame,world);
+    qa_vec4 before=qa_scene_matrix_point(world.projection,qa_v3(0,0,-5));
+    qa_vec4 after=qa_scene_matrix_point(weapon.projection,qa_v3(0,0,-5));
+    CHECK(after.y/after.w>before.y/before.w && after.x==before.x &&
+        after.z==before.z && after.w==before.w);
+    CHECK(weapon.projection.m[0]==world.projection.m[0] &&
+        !memcmp(&weapon.viewport,&world.viewport,sizeof(world.viewport)));
 }
 static void test_shared_vector_geometry(void)
 {

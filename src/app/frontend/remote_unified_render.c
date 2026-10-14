@@ -757,6 +757,13 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
     }
     if (okay) view=world.view;
     qa_scene_rect output = frontend_viewport(r->frontend, d->physical_seat);
+    qa_hud_content *hud_content=NULL;
+    if (okay) okay=qa_hud_prepare_content(r->hud,&(qa_hud_options){.ui=r->frontend->seats[d->physical_seat].ui,
+        .application=d->application,.seat=d->physical_seat,.context=r,.read=hud_read,.presentation=hud_presentation},
+        &(qa_hud_frame){.seat=d->physical_seat,.actor=player,
+        .time_ns=r->seconds>0?(uint64_t)(r->seconds*1e9):0,.viewport=view.viewport,.safe_area=output,.scale=r->preferences.hud_scale,.visible=true,
+        .source_status_native=source_status,.show_scores=qa_input_seat_action_active(r->frontend->seats[d->physical_seat].input,QA_INPUT_SCORES)},
+        &r->frontend->frame,&hud_content,e);
     if (okay) okay=frontend_view_background(r->frontend,output,&view,e);
     if (okay && children && children->lights)
         okay=children->lights(children->context,&view,&world,&world.lights,&world.light_count,e);
@@ -778,10 +785,7 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
             okay=qa_scene_frame_picture(&r->frontend->frame,qa_scene_white(r->frontend->ui_images),
                 view.viewport,view.viewport,(qa_vec4){0,0,1,1},r->feedback_blend,e);
     }
-    if (okay) okay=qa_hud_draw_content(r->hud,&(qa_hud_options){.ui=r->frontend->seats[d->physical_seat].ui,
-        .application=d->application,.seat=d->physical_seat,.context=r,.read=hud_read,.presentation=hud_presentation},&(qa_hud_frame){.seat=d->physical_seat,.actor=player,
-        .time_ns=r->seconds>0?(uint64_t)(r->seconds*1e9):0,.viewport=view.viewport,.safe_area=output,.scale=r->preferences.hud_scale,.visible=true,
-        .source_status_native=source_status,.show_scores=qa_input_seat_action_active(r->frontend->seats[d->physical_seat].input,QA_INPUT_SCORES)},&r->frontend->frame,e);
+    if (okay) okay=qa_hud_draw_prepared(r->hud,hud_content,false,&r->frontend->frame,e);
     if (okay && children && children->hud)
         okay=children->hud(children->context,r->frontend->seats[d->physical_seat].ui,view.viewport,&r->frontend->frame,e);
     if (okay) { *listener=(qa_audio_listener){.seat=d->physical_seat,.actor=player.slot,.origin=view.origin,.gain=1};

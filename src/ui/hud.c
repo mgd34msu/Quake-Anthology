@@ -12,6 +12,19 @@ typedef struct hud_message {
     uint64_t starts, until;
     bool chat;
 } hud_message;
+typedef struct hud_status_layout hud_status_layout;
+struct qa_hud_content {
+    qa_hud_options options;
+    qa_hud_frame frame;
+    qa_ui_presentation presentation;
+    qa_hud_data data;
+    qa_hud_value canonical[2];
+    qa_item_definition *definitions;
+    size_t definition_count;
+    hud_status_layout *vital_layouts,*weapon_layout;
+    qa_scene_weapon_occupation occupation;
+    bool messages_expired;
+};
 struct qa_hud {
     qa_hud_options options;
     qa_arena notice_storage;
@@ -421,11 +434,11 @@ static bool inventory_draw(qa_hud *hud, const qa_hud_frame *frame,
     }
     return true;
 }
-typedef struct hud_status_layout {
+struct hud_status_layout {
     qa_scene_rect_f rect;
     float cap, top, text_scale, scale, label_top;
     bool compact;
-} hud_status_layout;
+};
 static bool status_layout(qa_hud *hud, const qa_hud_frame *frame, size_t count,
     size_t index, bool native, hud_status_layout *out, qa_error *error)
 {
@@ -487,10 +500,9 @@ static bool team_face_draw(qa_hud *hud,const qa_hud_frame *frame,const qa_hud_te
 }
 static bool status_vital(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_value *vital,
     const qa_hud_team_face *team_face,
-    size_t count, size_t index, qa_scene_frame *scene, qa_error *error)
+    const hud_status_layout *prepared, qa_scene_frame *scene, qa_error *error)
 {
-    hud_status_layout layout;
-    if (!status_layout(hud, frame, count, index, false, &layout, error)) return false;
+    hud_status_layout layout=*prepared;
     qa_scene_rect_f rect = layout.rect;
     if (rect.width <= 8 || rect.height <= 8) return true;
     if (!qa_scene_frame_picture_f(scene, hud->options.ui->options.white, frame->safe_area, rect,
@@ -536,7 +548,7 @@ static bool status_vital(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_va
             rect.height - layout.label_top, layout.cap, color, true, error);
 }
 static bool weapon_draw(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_data *data,
-    qa_scene_frame *scene, qa_error *error)
+    const hud_status_layout *prepared, qa_scene_frame *scene, qa_error *error)
 {
     const qa_hud_weapon *weapon = &data->weapon;
     if (!weapon->present) return true;
@@ -544,10 +556,7 @@ static bool weapon_draw(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_dat
     if (!weapon->label || (weapon->finite_ammo && !isfinite(weapon->ammo_count)))
         return ui_fail(error, "Weapon HUD lost its actual source status");
     qa_ui *ui = hud->options.ui;
-    size_t vitals = data->source_vitals ? data->vital_count : 2;
-    size_t count = vitals + (weapon->native_status ? 0 : 1);
-    hud_status_layout layout;
-    if (!status_layout(hud, frame, count, vitals, weapon->native_status, &layout, error)) return false;
+    hud_status_layout layout=*prepared;
     float cap = layout.cap, top = layout.top, scale = layout.scale;
     float text_scale = layout.text_scale / scale, label_top = layout.label_top / scale;
     bool compact = layout.compact;
@@ -1061,73 +1070,76 @@ static bool center_draw(qa_hud *hud, const qa_hud_frame *frame,
         .origin = {x - (float)target.x, y - (float)target.y}, .space = QA_FONT_PIXELS, .shadow_offset = 1};
     return qa_font_draw_layout(scene, &layout, &draw, error);
 }
+static bool content_read(qa_hud *hud, const qa_hud_frame *frame,
+    qa_scene_frame *scene, qa_hud_content *out, qa_error *error)
+{
+    out->data=(qa_hud_data){.crosshair_visible=true,.crosshair_color={1,1,1,1}};
+    if (hud->options.read && !hud->options.read(hud->options.context, frame, &out->data, error)) return false;
+    if ((out->data.vital_count && !out->data.vitals) || (out->data.bar_count && !out->data.bars) ||
+        (out->data.timer_count && !out->data.timers) || (out->data.score_count && !out->data.scores) ||
+        (out->data.help_count && !out->data.help_lines) || (out->data.caption_count && !out->data.captions) ||
+        (out->data.inventory_count && !out->data.inventory))
+        return ui_fail(error, "HUD source returned invalid spans");
+    if (frame->weapon_only) return true;
+    qa_combat_state combat;
+    if (frame->actor.registry && !out->data.source_vitals && !out->data.q1.present && !qa_combat_read(qa_application_combat(hud->options.application),
+        frame->actor, &combat, error)) return false;
+    if (frame->actor.registry && !out->data.source_vitals && !out->data.q1.present) {
+        out->canonical[0] = (qa_hud_value){.label = "Health", .value = combat.health, .warning = combat.health <= 25, .icon = out->data.health_icon};
+        out->canonical[1] = (qa_hud_value){.label = "Armor", .value = combat.armor.regular.points};
+        out->data.vitals = out->canonical; out->data.vital_count = 2;
+    }
+    qa_inventory *inventory = qa_application_inventory(hud->options.application);
+    if (frame->actor.registry && ((frame->show_inventory && !out->data.source_vitals && !out->data.inventory_present) ||
+        (out->data.selected_weapon && !out->data.source_vitals && !out->data.weapon.present))) {
+        if (!qa_inventory_item_definitions(inventory, frame->actor, NULL, 0, &out->definition_count, error)) return false;
+        if (out->definition_count > SIZE_MAX / sizeof(*out->definitions)) return ui_fail(error, "HUD item definition overflow");
+        if (out->definition_count) {
+            out->definitions = qa_arena_alloc(&scene->storage, out->definition_count * sizeof(*out->definitions),
+                                          _Alignof(qa_item_definition), error);
+            if (!out->definitions || !qa_inventory_item_definitions(inventory, frame->actor,
+                out->definitions, out->definition_count, &out->definition_count, error)) return false;
+            for (size_t i = 0; i < out->definition_count; ++i) {
+                const char *label = out->definitions[i].label ? out->definitions[i].label : "";
+                size_t length = strlen(label);
+                char *copy = qa_arena_alloc(&scene->storage, length + 1, 1, error);
+                if (!copy) return false;
+                memcpy(copy, label, length + 1); out->definitions[i].label = copy;
+            }
+        }
+    }
+    if (frame->actor.registry && out->data.selected_weapon && !out->data.source_vitals && !out->data.weapon.present) {
+        for (size_t i = 0; i < out->definition_count; ++i) {
+            const qa_item_definition *weapon = out->definitions + i;
+            if (weapon->item != out->data.selected_weapon || !weapon->ammo) continue;
+            qa_inventory_entry ammo;
+            if (!qa_inventory_entry_read(inventory, frame->actor, weapon->ammo, &ammo, error)) return false;
+            out->data.weapon = (qa_hud_weapon){.present = true, .label = weapon->label,
+                .ammo_count = ammo.count, .finite_ammo = true, .has_ammo_to_start = ammo.count > 0};
+            break;
+        }
+    }
+    return true;
+}
 static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
-    bool content, bool messages, qa_error *error) {
+    const qa_hud_content *prepared, bool messages, qa_error *error) {
+    bool content=prepared!=NULL;
     qa_ui *ui = hud->options.ui;
-    ui->scale = hud_scale(frame->safe_area, frame->scale);
-    if (!isfinite(ui->scale) || ui->scale <= 0) return ui_fail(error, "HUD scale overflow");
-    ui->bias_x = (float)frame->safe_area.x + ((float)frame->safe_area.width - 640 * ui->scale) * .5f;
-    ui->bias_y = (float)frame->safe_area.y + ((float)frame->safe_area.height - 480 * ui->scale) * .5f;
-    qa_hud_data data = {.crosshair_visible = true, .crosshair_color = {1, 1, 1, 1}};
+    qa_hud_data data=prepared?prepared->data:(qa_hud_data){0};
     qa_scene_rect target = frame->safe_area;
     if (content) {
-        if (hud->options.read && !hud->options.read(hud->options.context, frame, &data, error)) return false;
-        if ((data.vital_count && !data.vitals) || (data.bar_count && !data.bars) ||
-            (data.timer_count && !data.timers) || (data.score_count && !data.scores) ||
-            (data.help_count && !data.help_lines) || (data.caption_count && !data.captions) ||
-            (data.inventory_count && !data.inventory))
-            return ui_fail(error, "HUD source returned invalid spans");
-        if (frame->weapon_only) return weapon_draw(hud, frame, &data, scene, error);
+        if (frame->weapon_only) return weapon_draw(hud, frame, &data, prepared->weapon_layout, scene, error);
         if (hud->options.source_draw && !hud->options.source_draw(hud->options.context,
             frame, scene, error)) return false;
-        qa_combat_state combat;
-        if (frame->actor.registry && !data.source_vitals && !data.q1.present && !qa_combat_read(qa_application_combat(hud->options.application),
-            frame->actor, &combat, error)) return false;
-        qa_hud_value canonical[2];
-        if (frame->actor.registry && !data.source_vitals && !data.q1.present) {
-            canonical[0] = (qa_hud_value){.label = "Health", .value = combat.health, .warning = combat.health <= 25, .icon = data.health_icon};
-            canonical[1] = (qa_hud_value){.label = "Armor", .value = combat.armor.regular.points};
-            data.vitals = canonical; data.vital_count = 2;
-        }
-        qa_inventory *inventory = qa_application_inventory(hud->options.application);
-        qa_item_definition *definitions = NULL;
-        size_t definition_count = 0;
-        if (frame->actor.registry && ((frame->show_inventory && !data.source_vitals && !data.inventory_present) ||
-            (data.selected_weapon && !data.source_vitals && !data.weapon.present))) {
-            if (!qa_inventory_item_definitions(inventory, frame->actor, NULL, 0, &definition_count, error)) return false;
-            if (definition_count > SIZE_MAX / sizeof(*definitions)) return ui_fail(error, "HUD item definition overflow");
-            if (definition_count) {
-                definitions = qa_arena_alloc(&scene->storage, definition_count * sizeof(*definitions),
-                                              _Alignof(qa_item_definition), error);
-                if (!definitions || !qa_inventory_item_definitions(inventory, frame->actor,
-                    definitions, definition_count, &definition_count, error)) return false;
-                for (size_t i = 0; i < definition_count; ++i) {
-                    const char *label = definitions[i].label ? definitions[i].label : "";
-                    size_t length = strlen(label);
-                    char *copy = qa_arena_alloc(&scene->storage, length + 1, 1, error);
-                    if (!copy) return false;
-                    memcpy(copy, label, length + 1); definitions[i].label = copy;
-                }
-            }
-        }
-        if (frame->actor.registry && data.selected_weapon && !data.source_vitals && !data.weapon.present) {
-            for (size_t i = 0; i < definition_count; ++i) {
-                const qa_item_definition *weapon = definitions + i;
-                if (weapon->item != data.selected_weapon || !weapon->ammo) continue;
-                qa_inventory_entry ammo;
-                if (!qa_inventory_entry_read(inventory, frame->actor, weapon->ammo, &ammo, error)) return false;
-                data.weapon = (qa_hud_weapon){.present = true, .label = weapon->label,
-                    .ammo_count = ammo.count, .finite_ammo = true, .has_ammo_to_start = ammo.count > 0};
-                break;
-            }
-        }
+        qa_inventory *inventory=qa_application_inventory(hud->options.application);
+        qa_item_definition *definitions=prepared->definitions;
+        size_t definition_count=prepared->definition_count;
         if (data.q1.present && !frame->source_status_native) {
             if (!q1_status_draw(hud, frame, &data, scene, error)) return false;
-        } else if (!weapon_draw(hud, frame, &data, scene, error)) return false;
-        size_t status_count = data.vital_count + (data.weapon.present && !data.weapon.native_status ? 1 : 0);
+        } else if (!weapon_draw(hud, frame, &data, prepared->weapon_layout, scene, error)) return false;
         for (size_t i = 0; !data.q1.present && i < data.vital_count; ++i)
             if (!status_vital(hud, frame, data.vitals + i,i==0?&data.health_team_face:NULL,
-                status_count, i, scene, error)) return false;
+                prepared->vital_layouts+i, scene, error)) return false;
         for (size_t i = 0; i < data.bar_count; ++i) {
             const qa_hud_value *bar = &data.bars[i];
             float width = bar->maximum > 0 ? (float)fmax(0, fmin(1, bar->value / bar->maximum)) * 240 : 0;
@@ -1230,60 +1242,145 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
         (qa_scene_rect_f){(float)target.x+8,(float)target.y+(float)target.height*.60f,
             (float)target.width-16,(float)target.height*.22f},fit,scene,error);
 }
-static bool draw_frame(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
-    bool content, bool messages, qa_error *error) {
+typedef struct hud_frame_scope {
+    qa_ui *ui;
+    qa_ui_presentation presentation;
+    float scale,x,y;
+    bool active;
+} hud_frame_scope;
+static bool frame_enter(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
+    const qa_ui_presentation *prepared, bool messages, hud_frame_scope *scope, qa_error *error)
+{
     if (!hud || !frame || !scene || frame->seat != hud->options.seat || hud->drawing ||
         hud->options.ui->handling ||
         !frame->safe_area.width || !frame->safe_area.height || !isfinite(frame->scale) || frame->scale <= 0 ||
         (double)frame->safe_area.x + frame->safe_area.width > INT32_MAX ||
         (double)frame->safe_area.y + frame->safe_area.height > INT32_MAX)
         return ui_fail(error, "invalid or reentrant seat HUD draw");
-    if (messages) {
-        expire(hud, frame->time_ns);
-    }
+    if (messages) expire(hud,frame->time_ns);
     if (!frame->visible) return true;
-    qa_ui *ui = hud->options.ui;
-    float scale = ui->scale, x = ui->bias_x, y = ui->bias_y;
-    qa_ui_presentation prior = {.fonts = ui->options.fonts, .text_scale = ui->text_scale, .color_mode = ui->color_mode};
-    hud->drawing = true;
-    ui->handling = true;
-    ui->drawing = true;
-    bool ok = true;
-    if (hud->options.presentation) {
-        qa_ui_presentation presentation;
-        ok = hud->options.presentation(hud->options.context, &presentation, error);
-        if (ok && (presentation.fonts.seat != frame->seat || !presentation.fonts.classic ||
-            !isfinite(presentation.text_scale) || presentation.text_scale <= 0))
-            ok = ui_fail(error, "HUD presentation lost its actual seat fonts or text scale");
-        if (ok) {
-            ui->options.fonts = presentation.fonts; ui->text_scale = presentation.text_scale;
-            ui->color_mode = presentation.color_mode;
+    qa_ui *ui=hud->options.ui;
+    *scope=(hud_frame_scope){.ui=ui,.scale=ui->scale,.x=ui->bias_x,.y=ui->bias_y,
+        .presentation={.fonts=ui->options.fonts,.text_scale=ui->text_scale,.color_mode=ui->color_mode},.active=true};
+    hud->drawing=true; ui->handling=true; ui->drawing=true;
+    qa_ui_presentation presentation=scope->presentation;
+    if(prepared) presentation=*prepared;
+    else if(hud->options.presentation &&
+        !hud->options.presentation(hud->options.context,&presentation,error)) return false;
+    if (!prepared && hud->options.presentation && (presentation.fonts.seat != frame->seat || !presentation.fonts.classic ||
+        !isfinite(presentation.text_scale) || presentation.text_scale <= 0))
+        return ui_fail(error,"HUD presentation lost its actual seat fonts or text scale");
+    ui->options.fonts=presentation.fonts; ui->text_scale=presentation.text_scale;
+    ui->color_mode=presentation.color_mode;
+    ui->scale=hud_scale(frame->safe_area,frame->scale);
+    if(!isfinite(ui->scale)||ui->scale<=0) return ui_fail(error,"HUD scale overflow");
+    ui->bias_x=(float)frame->safe_area.x+((float)frame->safe_area.width-640*ui->scale)*.5f;
+    ui->bias_y=(float)frame->safe_area.y+((float)frame->safe_area.height-480*ui->scale)*.5f;
+    return true;
+}
+static void frame_leave(qa_hud *hud,const hud_frame_scope *scope)
+{
+    if(!scope->active) return;
+    qa_ui *ui=scope->ui;
+    hud->drawing=false; ui->handling=false; ui->drawing=false;
+    ui->scale=scope->scale; ui->bias_x=scope->x; ui->bias_y=scope->y;
+    ui->options.fonts=scope->presentation.fonts; ui->text_scale=scope->presentation.text_scale;
+    ui->color_mode=scope->presentation.color_mode;
+}
+static bool content_layout(qa_hud *hud,qa_hud_content *out,qa_scene_frame *scene,qa_error *error)
+{
+    const qa_hud_frame *frame=&out->frame;
+    const qa_hud_data *data=&out->data;
+    size_t vitals=frame->weapon_only||data->q1.present?0:data->vital_count;
+    bool weapon=data->weapon.present && (frame->weapon_only||!data->q1.present||frame->source_status_native);
+    if(vitals>SIZE_MAX-(size_t)weapon || vitals+(size_t)weapon>SIZE_MAX/sizeof(qa_scene_rect_f))
+        return ui_fail(error,"HUD status span overflow");
+    size_t count=vitals+(size_t)weapon;
+    if(count>SIZE_MAX/sizeof(hud_status_layout)) return ui_fail(error,"HUD status span overflow");
+    qa_scene_rect_f *rects=count?qa_arena_alloc(&scene->storage,count*sizeof(*rects),_Alignof(qa_scene_rect_f),error):NULL;
+    hud_status_layout *layouts=count?qa_arena_alloc(&scene->storage,count*sizeof(*layouts),_Alignof(hud_status_layout),error):NULL;
+    if(count&&(!rects||!layouts)) return false;
+    out->vital_layouts=layouts;
+    out->weapon_layout=weapon?layouts+vitals:NULL;
+    out->occupation=(qa_scene_weapon_occupation){.seat=frame->seat,.rects=rects};
+    size_t status_count=data->vital_count+(data->weapon.present&&!data->weapon.native_status?1u:0u);
+    for(size_t i=0;i<vitals;++i) {
+        if(!status_layout(hud,frame,status_count,i,false,layouts+i,error)) return false;
+        rects[out->occupation.count++]=layouts[i].rect;
+    }
+    if(weapon) {
+        size_t base=data->source_vitals?data->vital_count:2;
+        if(!status_layout(hud,frame,base+(data->weapon.native_status?0u:1u),base,
+            data->weapon.native_status,out->weapon_layout,error)) return false;
+        rects[out->occupation.count++]=out->weapon_layout->rect;
+    }
+    return true;
+}
+static bool prepare_content(qa_hud *hud,const qa_hud_options *options,const qa_hud_frame *frame,
+    qa_scene_frame *scene,bool messages,qa_hud_content **out,qa_error *error)
+{
+    if(!hud||!out) return ui_fail(error,"invalid or reentrant seat HUD draw");
+    qa_hud_options prior=hud->options;
+    if(options) hud->options=*options;
+    hud_frame_scope scope={0};
+    bool okay=frame_enter(hud,frame,scene,NULL,messages,&scope,error);
+    qa_hud_content *content=okay?qa_arena_alloc(&scene->storage,sizeof(*content),_Alignof(qa_hud_content),error):NULL;
+    okay=okay&&content;
+    if(okay) {
+        *content=(qa_hud_content){.options=hud->options,.frame=*frame,
+            .occupation={.seat=frame->seat},.messages_expired=messages};
+        if(frame->visible) {
+            qa_ui *ui=hud->options.ui;
+            content->presentation=(qa_ui_presentation){.fonts=ui->options.fonts,
+                .text_scale=ui->text_scale,.color_mode=ui->color_mode};
+            okay=content_read(hud,frame,scene,content,error)&&content_layout(hud,content,scene,error);
         }
     }
-    if (ok) ok = draw(hud, frame, scene, content, messages, error);
-    hud->drawing = false;
-    ui->handling = false;
-    ui->drawing = false;
-    ui->scale = scale; ui->bias_x = x; ui->bias_y = y;
-    ui->options.fonts = prior.fonts; ui->text_scale = prior.text_scale; ui->color_mode = prior.color_mode;
-    return ok;
-}
-bool qa_hud_draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, qa_error *error)
-{
-    return draw_frame(hud, frame, scene, true, true, error);
-}
-bool qa_hud_draw_content(qa_hud *hud, const qa_hud_options *options,
-    const qa_hud_frame *frame, qa_scene_frame *scene, qa_error *error)
-{
-    if (!hud || !options) return ui_fail(error, "invalid or reentrant seat HUD draw");
-    qa_hud_options prior = hud->options;
-    hud->options = *options;
-    bool okay = draw_frame(hud, frame, scene, true, false, error);
-    hud->options = prior;
+    frame_leave(hud,&scope); hud->options=prior;
+    if(okay) {
+        qa_scene_frame_weapon_bind(scene,&content->occupation);
+        *out=content;
+    }
     return okay;
 }
-bool qa_hud_draw_messages(qa_hud *hud, const qa_hud_frame *frame,
-    qa_scene_frame *scene, qa_error *error)
+bool qa_hud_prepare_content(qa_hud *hud,const qa_hud_options *options,const qa_hud_frame *frame,
+    qa_scene_frame *scene,qa_hud_content **out,qa_error *error)
 {
-    return draw_frame(hud, frame, scene, false, true, error);
+    return prepare_content(hud,options,frame,scene,false,out,error);
+}
+static bool draw_frame(qa_hud *hud,const qa_hud_frame *frame,qa_scene_frame *scene,
+    const qa_hud_content *content,bool messages,qa_error *error)
+{
+    hud_frame_scope scope={0};
+    bool okay=frame_enter(hud,frame,scene,content?&content->presentation:NULL,
+        messages&&(!content||!content->messages_expired),&scope,error);
+    if(okay&&frame->visible) okay=draw(hud,frame,scene,content,messages,error);
+    frame_leave(hud,&scope);return okay;
+}
+bool qa_hud_draw_prepared(qa_hud *hud,const qa_hud_content *content,bool messages,
+    qa_scene_frame *scene,qa_error *error)
+{
+    if(!hud||!content) return ui_fail(error,"invalid or reentrant seat HUD draw");
+    qa_hud_options prior=hud->options;
+    hud->options=content->options;
+    bool okay=draw_frame(hud,&content->frame,scene,content,messages,error);
+    hud->options=prior;return okay;
+}
+bool qa_hud_draw(qa_hud *hud,const qa_hud_frame *frame,qa_scene_frame *scene,qa_error *error)
+{
+    qa_hud_content *content=NULL;
+    return prepare_content(hud,NULL,frame,scene,true,&content,error)&&
+        qa_hud_draw_prepared(hud,content,true,scene,error);
+}
+bool qa_hud_draw_content(qa_hud *hud,const qa_hud_options *options,
+    const qa_hud_frame *frame,qa_scene_frame *scene,qa_error *error)
+{
+    if(!hud||!options) return ui_fail(error,"invalid or reentrant seat HUD draw");
+    qa_hud_content *content=NULL;
+    return qa_hud_prepare_content(hud,options,frame,scene,&content,error)&&
+        qa_hud_draw_prepared(hud,content,false,scene,error);
+}
+bool qa_hud_draw_messages(qa_hud *hud,const qa_hud_frame *frame,qa_scene_frame *scene,qa_error *error)
+{
+    return draw_frame(hud,frame,scene,NULL,true,error);
 }
