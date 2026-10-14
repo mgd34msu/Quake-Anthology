@@ -35,6 +35,12 @@ typedef struct application_native_q2_client {
     bool inventory_bound, inventory_prepared;
 } application_native_q2_client;
 
+typedef enum application_native_q2_loading_phase {
+    APPLICATION_NATIVE_Q2_LOADING_NONE,
+    APPLICATION_NATIVE_Q2_LOADING_HOST,
+    APPLICATION_NATIVE_Q2_LOADING_INITIALIZE
+} application_native_q2_loading_phase;
+
 struct application_native_q2 {
     const struct application_native_q2_input_stage *input_stage;
     const qa_usercmd *input_command;
@@ -85,9 +91,11 @@ struct application_native_q2 {
     const qa_vfs *media_files;
     uint64_t media_generation;
     qa_source_frame frame;
+    const qa_clock_state *initialization_clock;
     qa_string_id map_name, spawn_point;
     char *entity_text;
-    bool host_loading;
+    application_native_q2_loading_phase loading_phase;
+    bool map_admission_prepared;
     unsigned calls;
     uint32_t current_client, disconnect_client;
     uint64_t current_command_sequence;
@@ -138,6 +146,8 @@ bool application_guest_native_q2_console_advance(qa_application *, application_p
     qa_command_context *, qa_error *);
 bool application_native_q2_loading_cancel(application_provider *, qa_error *);
 bool application_native_q2_loading_idle(const application_provider *);
+bool application_native_q2_initialize_primary_advance(application_provider *, const qa_bsp_view *,
+    qa_string_id, qa_string_id, const qa_clock_state *, size_t, bool *, qa_error *);
 bool application_native_q2_entity_text(const qa_bsp_view *, char **, qa_error *);
 bool application_native_q2_spawn_map(application_provider *, const qa_bsp_view *,
                                       const qa_entities *, qa_string_id, qa_string_id, qa_error *);

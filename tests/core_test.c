@@ -535,6 +535,43 @@ static void test_shared_bounds_and_transform(void)
     CHECK(weapon.projection.m[0]==world.projection.m[0] &&
         !memcmp(&weapon.viewport,&world.viewport,sizeof(world.viewport)));
 }
+static void construction_actor_released(void *state,qa_session *session,qa_actor_record actor)
+{
+    (void)session; (void)actor;
+    ++*(unsigned *)state;
+}
+static void test_component_construction_actors(void)
+{
+    qa_error error={0}; qa_session *session=NULL;
+    CHECK(qa_session_create(&(qa_session_options){.actor_capacity=2,.component_capacity=1},&session,&error));
+    qa_string_id owner,definition;
+    CHECK(qa_strings_intern_cstr(qa_session_strings(session),"construction-owner",&owner,&error));
+    CHECK(qa_strings_intern_cstr(qa_session_strings(session),"construction-actor",&definition,&error));
+    unsigned released=0;
+    qa_component source={.owner=owner,.state=&released,.clock=qa_clock_defaults(QA_RULESET_Q2_CLASSIC),
+        .actor_released=construction_actor_released};
+    qa_component_admission *admission=NULL;
+    CHECK(qa_session_prepare_component(session,&source,0,&admission,&error));
+    const qa_clock_state *prepared=qa_component_admission_clock(admission);
+    CHECK(prepared && prepared->frame.provider==owner && prepared->frame.kind==QA_RULESET_Q2_CLASSIC);
+    qa_clock_state clock;
+    CHECK(!qa_session_clock(session,owner,&clock));
+    qa_actor_id actor;
+    CHECK(qa_session_actor_allocation_ready(session,owner));
+    CHECK(qa_session_allocate(session,owner,definition,true,0,&actor,&error));
+    qa_actor_owner execution;
+    CHECK(qa_session_execution(session,actor,&execution) && execution==owner);
+    qa_component_admission_abort(admission);
+    CHECK(!qa_actors_get(qa_session_actors(session),actor) && released==1);
+    CHECK(!qa_session_actor_allocation_ready(session,owner));
+    CHECK(qa_session_prepare_component(session,&source,0,&admission,&error));
+    CHECK(qa_session_allocate(session,owner,definition,true,0,&actor,&error));
+    CHECK(qa_component_admission_commit(admission,&error));
+    CHECK(qa_session_clock(session,owner,&clock) && clock.frame.provider==owner);
+    CHECK(qa_actors_get(qa_session_actors(session),actor) && released==1);
+    CHECK(qa_session_remove(session,owner,&error) && released==2);
+    CHECK(qa_session_destroy(session,&error));
+}
 static void test_shared_vector_geometry(void)
 {
     qa_vec3 v=qa_v3(3,4,0);
@@ -4989,6 +5026,7 @@ int main(int argc, char **argv)
     test_q2_record_delivery();
     test_gtv_output_reuse();
     test_actor_index_lifetimes();
+    test_component_construction_actors();
     test_provider_identity_views();
     test_q1_gameplay();
     test_guest();

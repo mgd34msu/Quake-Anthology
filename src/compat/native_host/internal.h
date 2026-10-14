@@ -113,7 +113,7 @@ struct qa_native_host {
     const native_host_edict_layout *edict;
     const native_host_classic_layout *classic;
     qa_native_instance *instance;
-    bool constructing;
+    bool constructing, initializing;
     qa_native_process_resources *owned_process;
     qa_native_process_platform *owned_platform;
     qa_native_host_engine_services engine;

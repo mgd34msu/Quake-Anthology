@@ -360,7 +360,8 @@ bool qa_native_create_begin(qa_native_module *, const qa_native_options *,
                             qa_native_instance **, qa_error *);
 bool qa_native_create_advance(qa_native_instance *, size_t quantum,
                               bool *complete, qa_error *);
-bool qa_native_create_paused(const qa_native_instance *);
+bool qa_native_startup_paused(const qa_native_instance *);
+bool qa_native_startup_cancel(qa_native_instance *, qa_error *);
 /* Clears the owner after actual consumption, including source callback and
  * guest execution faults. A rejected unload or retained original mapping keeps
  * every callback context in *owner. Cleanup never releases a closed loader
@@ -414,6 +415,9 @@ bool qa_native_loading_call_step(qa_native_loading_call *, size_t quantum,
 bool qa_native_loading_call_finish(qa_native_loading_call **, qa_error *);
 bool qa_native_loading_call_abandon(qa_native_loading_call **, qa_error *);
 bool qa_native_initialize(qa_native_instance *instance, qa_error *error);
+bool qa_native_initialize_begin(qa_native_instance *, qa_error *);
+bool qa_native_initialize_advance(qa_native_instance *, size_t quantum,
+                                  bool *complete, qa_error *);
 bool qa_native_shutdown(qa_native_instance *instance, qa_error *error);
 /* QL API 10 has a mandatory registration phase and parameterized level
  * initialization/shutdown. These helpers preserve that source lifecycle while

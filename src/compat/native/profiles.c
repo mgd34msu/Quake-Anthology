@@ -840,7 +840,7 @@ static bool bind_q2_table_begin(qa_native_instance *instance, const native_profi
     qa_native_value argument = {.type = QA_NATIVE_ADDRESS,
                                 .as.address = instance->import_table_address};
     return native_process_call_begin(instance, get_api, &get_signature, &argument, 1,
-        &instance->profile_result, &instance->profile_call, error);
+        &instance->profile_result, &instance->startup_call, error);
 }
 
 static bool bind_q2_table_finish(qa_native_instance *instance, const native_profile_spec *profile,
@@ -892,7 +892,7 @@ static bool bind_q3_begin(qa_native_instance *instance, qa_error *error) {
     if (!native_process_q3_bind(instance, &argument.as.address, error)) return false;
     instance->profile_vm_main = vm_main;
     return native_process_call_begin(instance, dll_entry, &signature, &argument, 1,
-        NULL, &instance->profile_call, error);
+        NULL, &instance->startup_call, error);
 }
 
 static bool bind_q3_finish(qa_native_instance *instance, const native_profile_spec *profile,
@@ -950,7 +950,7 @@ static bool bind_ql_begin(qa_native_instance *instance, const native_profile_spe
     arguments[0].as.address = instance->profile_output;
     arguments[2].as.address = instance->profile_output + pointer_bytes;
     return native_process_call_begin(instance, dll_entry, &signature, arguments,
-        COUNT(arguments), NULL, &instance->profile_call, error);
+        COUNT(arguments), NULL, &instance->startup_call, error);
 }
 
 static bool bind_ql_finish(qa_native_instance *instance, const native_profile_spec *profile,
@@ -1017,9 +1017,9 @@ bool native_profile_bind_advance(qa_native_instance *instance, size_t quantum,
     *complete = !instance->profile_loading;
     if (*complete) return true;
     bool returned = false;
-    if (!native_process_call_step(instance->profile_call, quantum, &returned, error)) return false;
+    if (!native_process_call_step(instance->startup_call, quantum, &returned, error)) return false;
     if (!returned) return true;
-    if (!native_process_call_finish(&instance->profile_call, error)) return false;
+    if (!native_process_call_finish(&instance->startup_call, error)) return false;
     const native_profile_spec *profile = native_profile(instance->module->info.profile);
     bool ok = profile->q2_table ? bind_q2_table_finish(instance, profile, error) :
         profile->q3_vm ? bind_q3_finish(instance, profile, error) : bind_ql_finish(instance, profile, error);
@@ -1027,15 +1027,15 @@ bool native_profile_bind_advance(qa_native_instance *instance, size_t quantum,
     return ok;
 }
 
-void native_profile_bind_cancel(qa_native_instance *instance)
+void native_startup_cancel(qa_native_instance *instance)
 {
-    native_process_call_abandon(&instance->profile_call);
+    native_process_call_abandon(&instance->startup_call);
     if (instance->profile_output && !qa_native_guest_terminal(instance->guest)) {
         qa_error cleanup = {0};
         if (qa_native_guest_free(instance->guest, instance->profile_output, &cleanup))
             instance->profile_output = 0;
     }
-    instance->profile_loading = false;
+    instance->profile_loading = false; instance->initializing = false;
 }
 
 bool native_profile_bind(qa_native_instance *instance, qa_error *error)
@@ -1043,7 +1043,7 @@ bool native_profile_bind(qa_native_instance *instance, qa_error *error)
     bool complete = false;
     bool ok = native_profile_bind_begin(instance, error) &&
         native_profile_bind_advance(instance, 0, &complete, error);
-    if (!ok) native_profile_bind_cancel(instance);
+    if (!ok) native_startup_cancel(instance);
     return ok && complete;
 }
 

@@ -104,8 +104,8 @@ static bool owner_returned(const application_provider *provider, bool own_loadin
         (!engine->console || qa_console_idle(engine->console)) &&
         (!engine->cvars || qa_cvars_observer_idle(engine->cvars)) &&
         (!provider->state.native.host || qa_native_host_destroy_ready(provider->state.native.host) ||
-            (own_loading && engine->host_loading &&
-                qa_native_host_create_paused(provider->state.native.host))));
+            (own_loading && engine->loading_phase &&
+                qa_native_host_startup_paused(provider->state.native.host))));
 }
 bool application_native_q2_idle(const application_provider *provider)
 {
@@ -117,7 +117,7 @@ bool application_native_q2_idle(const application_provider *provider)
 bool application_native_q2_loading_idle(const application_provider *provider)
 {
     const struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
-    return engine && !provider->attached && engine->host_loading && owner_returned(provider, true) &&
+    return engine && !provider->attached && engine->loading_phase && owner_returned(provider, true) &&
         application_native_q2_inventory_scanner_idle(engine->inventory_scanner) &&
         application_native_q2_source_actors_idle(engine->source_actors);
 }
@@ -480,7 +480,9 @@ static bool load_host_advance(struct application_native_q2 *engine, size_t quant
         if (error) *error = engine->activation_error;
         return false;
     }
-    if (provider->state.native.host && !engine->host_loading) { *complete = true; return true; }
+    if (provider->state.native.host && engine->loading_phase != APPLICATION_NATIVE_Q2_LOADING_HOST) {
+        *complete = true; return true;
+    }
     if (!engine->prepared || engine->calls)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 loading requires its complete idle source owner");
     bool ok = true;
@@ -555,14 +557,15 @@ static bool load_host_advance(struct application_native_q2 *engine, size_t quant
         }
         engine->host_constructing = false;
         --engine->calls;
-        engine->host_loading = provider->state.native.host != NULL;
+        engine->loading_phase = provider->state.native.host ? APPLICATION_NATIVE_Q2_LOADING_HOST :
+            APPLICATION_NATIVE_Q2_LOADING_NONE;
     }
-    if (ok && engine->host_loading) {
+    if (ok && engine->loading_phase == APPLICATION_NATIVE_Q2_LOADING_HOST) {
         ++engine->calls; engine->host_constructing = true;
         ok = qa_native_host_create_advance(provider->state.native.host, quantum, complete, error);
         engine->host_constructing = false; --engine->calls;
         if (ok && !*complete) return true;
-        if (ok) engine->host_loading = false;
+        if (ok) engine->loading_phase = APPLICATION_NATIVE_Q2_LOADING_NONE;
     }
     if(ok&&engine->primary_inventory&&!engine->inventory_scanner) {
         ok=application_native_q2_inventory_rows_create(engine,&engine->inventory_rows,error);
@@ -591,10 +594,13 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
 bool application_native_q2_loading_cancel(application_provider *provider, qa_error *error)
 {
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
-    if (!engine || !engine->host_loading) return true;
+    if (!engine || !engine->loading_phase) return true;
     if (engine->calls) return false;
-    bool ok = !provider->state.native.host || qa_native_host_destroy_owned(&provider->state.native.host, error);
-    if (!provider->state.native.host) engine->host_loading = false;
+    bool ok = !provider->state.native.host || qa_native_host_startup_cancel(provider->state.native.host, error);
+    if (ok) {
+        engine->loading_phase = APPLICATION_NATIVE_Q2_LOADING_NONE;
+        engine->initialization_clock = NULL;
+    }
     return ok;
 }
 
@@ -681,24 +687,22 @@ bool application_native_q2_entity_text(const qa_bsp_view *map, char **out, qa_er
     return true;
 }
 
-bool application_native_q2_spawn_map(application_provider *provider, const qa_bsp_view *map,
-    const qa_entities *entities, qa_string_id name, qa_string_id spawn, qa_error *error)
+static bool prepare_map_admission(application_provider *provider, const qa_bsp_view *map,
+    qa_string_id name, qa_string_id spawn, qa_error *error)
 {
-    (void)entities;
-    struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
-    if (!engine || !map || engine->profile == QA_NATIVE_Q2_CGAME_API2023 || !application_native_q2_idle(provider))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 map publication requires an idle game owner");
+    struct application_native_q2 *engine = provider->state.native.q2_engine;
+    if (engine->map_admission_prepared) return true;
     char *copy = NULL;
     if (!application_native_q2_entity_text(map, &copy, error)) return false;
     if (!engine->world_actor.registry && !qa_session_allocate(provider->application->session,
             provider->owner, engine->definition, true, 0, &engine->world_actor, error)) { free(copy); return false; }
     free(engine->entity_text); engine->entity_text = copy;
     engine->map_name = name; engine->spawn_point = spawn;
-    if (!application_native_q2_activate(engine, error)) return false;
+    if (!load_host(engine, error)) return false;
     if (!qa_native_host_world_actor_bind(provider->state.native.host, engine->world_actor, error)) return false;
     if (!application_unified_event_registration_clear(provider->application, provider->owner, error)) return false;
     if (!application_native_q2_config_clear(engine,error)) return false;
-    provider->application->physics->world_actor = engine->world_actor;
+    if (provider->attached) provider->application->physics->world_actor = engine->world_actor;
     for (size_t i = 1; i < 257; ++i) {
         engine->clients[i].protocol_fog = (qa_q2_wire_fog){0};
         engine->clients[i].protocol_fog_actor = engine->clients[i].actor;
@@ -713,6 +717,54 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
     bool ok = application_native_q2_callbacks_validate(engine, error) &&
         (provider->application->operation == APPLICATION_PERSISTING ||
          application_native_q2_stages_prepare(engine, error));
+    --engine->calls;
+    if (ok) engine->map_admission_prepared = true;
+    return ok;
+}
+
+bool application_native_q2_initialize_primary_advance(application_provider *provider,
+    const qa_bsp_view *map, qa_string_id name, qa_string_id spawn,
+    const qa_clock_state *clock, size_t quantum, bool *complete, qa_error *error)
+{
+    struct application_native_q2 *engine = provider->state.native.q2_engine;
+    *complete = engine->initialized;
+    if (*complete) return true;
+    engine->initialization_clock = clock;
+    bool ok = true;
+    if (engine->loading_phase != APPLICATION_NATIVE_Q2_LOADING_INITIALIZE) {
+        ok = prepare_map_admission(provider, map, name, spawn, error);
+        if (ok) {
+            engine->loading_phase = APPLICATION_NATIVE_Q2_LOADING_INITIALIZE;
+            ++engine->calls;
+            ok = qa_native_host_initialize_begin(provider->state.native.host, 0, 0, false, error);
+            --engine->calls;
+        }
+    }
+    if (ok) {
+        ++engine->calls;
+        ok = qa_native_host_initialize_advance(provider->state.native.host, quantum, complete, error);
+        --engine->calls;
+    }
+    if (ok && *complete) {
+        engine->initialized = true;
+        engine->loading_phase = APPLICATION_NATIVE_Q2_LOADING_NONE;
+    }
+    engine->initialization_clock = NULL;
+    return ok;
+}
+
+bool application_native_q2_spawn_map(application_provider *provider, const qa_bsp_view *map,
+    const qa_entities *entities, qa_string_id name, qa_string_id spawn, qa_error *error)
+{
+    (void)entities;
+    struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
+    if (!engine || !map || engine->profile == QA_NATIVE_Q2_CGAME_API2023 || !application_native_q2_idle(provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 map publication requires an idle game owner");
+    if (!prepare_map_admission(provider, map, name, spawn, error)) return false;
+    provider->application->physics->world_actor = engine->world_actor;
+    bool original = application_q2_original_source(provider);
+    ++engine->calls;
+    bool ok = true;
     if (ok && !engine->initialized) {
         ok = qa_native_host_initialize(provider->state.native.host, 0, 0, false, error);
         if (ok) engine->initialized = true;
@@ -723,7 +775,7 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
     if (ok && !original) ok = application_native_q2_combat_activate(engine, error);
     if (ok && !original) ok = application_q2_control_activate(engine, error);
     if (ok) ok = qa_native_host_source_reconcile(provider->state.native.host, error);
-    const char *source_entities = copy;
+    const char *source_entities = engine->entity_text;
     qa_buffer declared_entities = {0};
     bool spawn_entities = true;
     if (ok && engine->callbacks) {
@@ -749,6 +801,7 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
     if(ok)ok=application_native_q2_visibility_prepare(engine,error);
     --engine->calls;
     if (ok) {
+        engine->map_admission_prepared = false;
         engine->map_ready = provider->map_bound = true;
         qa_cvars_set_server_active(engine->cvars, true);
         if (original) return application_native_q2_restore_finish(provider,error) &&
@@ -807,6 +860,7 @@ bool application_native_q2_retire_map(application_provider *provider, qa_error *
     if (!application_native_q2_source_actors_suspend(engine, error)) return false;
     if (!application_native_q2_publication_retire(engine->publication, error)) return false;
     application_native_q2_visibility_destroy(&engine->visibility);
+    engine->map_admission_prepared = false;
     engine->map_ready = provider->map_bound = false;
     qa_cvars_set_server_active(engine->cvars, false);
     return true;

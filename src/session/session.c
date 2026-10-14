@@ -26,6 +26,7 @@ struct qa_component_admission {
     qa_session *session;
     component_state *slot;
     qa_component component;
+    qa_clock_state clock;
     qa_scheduler_admission *scheduler;
 };
 
@@ -88,6 +89,17 @@ static component_state *component(const qa_session *session, qa_actor_owner owne
     for (uint32_t i = 0; i < session->options.component_capacity; ++i)
         if (session->components[i].active && session->components[i].component.owner == owner)
             return &session->components[i];
+    return NULL;
+}
+
+static const qa_component *actor_component(const qa_session *session, qa_actor_owner owner)
+{
+    component_state *entry = component(session, owner);
+    if (entry) return &entry->component;
+    for (uint32_t i = 0; i < session->options.component_capacity; ++i) {
+        const qa_component_admission *token = session->components[i].reservation;
+        if (token && token->component.owner == owner) return &token->component;
+    }
     return NULL;
 }
 
@@ -245,9 +257,9 @@ static void actor_released(void *context, qa_actor_registry *actors, qa_actor_re
     qa_error error = {0};
     if (session->options.actor_released != NULL
         && !session->options.actor_released(session->options.release_context, session, released, &error)) fault(session, &error);
-    component_state *owner = component(session, released.owner);
-    if (owner != NULL && owner->component.actor_released != NULL)
-        owner->component.actor_released(owner->component.state, session, released);
+    const qa_component *owner = actor_component(session, released.owner);
+    if (owner != NULL && owner->actor_released != NULL)
+        owner->actor_released(owner->state, session, released);
     --session->notification_depth;
 }
 
@@ -548,7 +560,8 @@ bool qa_session_prepare_component(qa_session *session, const qa_component *value
     if (slot == NULL) return fail(error, QA_ERROR_MEMORY, "Component capacity exhausted");
     qa_component_admission *token = malloc(sizeof(*token));
     if (token == NULL) return fail(error, QA_ERROR_MEMORY, "Cannot allocate component admission");
-    *token = (qa_component_admission){.session = session, .slot = slot, .component = *value};
+    *token = (qa_component_admission){.session = session, .slot = slot, .component = *value,
+        .clock = initial_clock(session, value)};
     if (!qa_scheduler_prepare(session->scheduler, value->owner, value->clock.kind, retiring_owner, &token->scheduler, error)) {
         free(token);
         return false;
@@ -572,16 +585,37 @@ bool qa_component_admission_commit(qa_component_admission *token, qa_error *erro
     if (!qa_component_admission_validate(token, error)) return false;
     if (!qa_scheduler_admission_commit(token->scheduler, error)) return false;
     qa_session *session = token->session;
+    token->clock.host_origin_ns = session->elapsed_ns;
     *token->slot = (component_state){.component = token->component,
-        .clock = initial_clock(session, &token->component), .order = session->next_order++, .active = true};
+        .clock = token->clock, .order = session->next_order++, .active = true};
+    uint32_t cursor = 0;
+    const qa_actor_record *actor;
+    while (qa_actors_next(session->actors, &cursor, &actor))
+        if (actor->owner == token->component.owner)
+            insert_turn(session, actor, token->slot->order);
     --session->admissions;
     free(token);
     return true;
 }
 
+const qa_clock_state *qa_component_admission_clock(const qa_component_admission *token)
+{
+    return token ? &token->clock : NULL;
+}
+
 void qa_component_admission_abort(qa_component_admission *token)
 {
     if (token == NULL) return;
+    qa_session *session = token->session;
+    bool transitioning = session->transitioning;
+    session->transitioning = true;
+    uint32_t cursor = 0;
+    const qa_actor_record *actor;
+    if (!component(session, token->component.owner))
+        while (qa_actors_next(session->actors, &cursor, &actor))
+            if (actor->owner == token->component.owner)
+                (void)qa_actors_release(session->actors, actor->id, NULL);
+    session->transitioning = transitioning;
     qa_scheduler_admission_abort(token->scheduler);
     token->slot->reservation = NULL;
     --token->session->admissions;
@@ -789,7 +823,7 @@ bool qa_session_actor_allocation_ready(const qa_session *session, qa_actor_owner
 {
     if (!session || session->transitioning || session->faulted) return false;
     const component_state *entry = component((qa_session *)session, owner);
-    return entry && !entry->retiring;
+    return entry ? !entry->retiring : actor_component(session, owner) != NULL;
 }
 
 bool qa_session_allocate(qa_session *session, qa_actor_owner owner,
@@ -801,13 +835,14 @@ bool qa_session_allocate(qa_session *session, qa_actor_owner owner,
     if (qa_strings_text(session->strings, definition).data == NULL)
         return fail(error, QA_ERROR_ARGUMENT, "Actor definition is not interned in this session");
     component_state *entry = component(session, owner);
-    if (entry == NULL || entry->retiring) return fail(error, QA_ERROR_NOT_FOUND, "Actor owner is unavailable");
+    if (entry ? entry->retiring : !actor_component(session, owner))
+        return fail(error, QA_ERROR_NOT_FOUND, "Actor owner is unavailable");
     qa_actor_id actor;
     bool ok = has_source ? qa_actors_allocate_source(session->actors, owner, source_slot, definition, &actor, error)
                          : qa_actors_allocate(session->actors, owner, definition, &actor, error);
     if (!ok) return false;
     session->executions[actor.slot] = (actor_execution){actor, owner};
-    insert_turn(session, qa_actors_get(session->actors, actor), entry->order);
+    if (entry) insert_turn(session, qa_actors_get(session->actors, actor), entry->order);
     accounted_mutation(session);
     *out = actor;
     return true;
