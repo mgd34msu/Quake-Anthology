@@ -1,6 +1,7 @@
 #include "guest_qc_internal.h"
 #include "map_players_private.h"
 #include "qa/application_q1_save.h"
+#include "qa/application_network.h"
 #include "qa/application_save_policy.h"
 #include "native_q1_save.h"
 #include "qa/application_startup_prepare.h"
@@ -145,10 +146,9 @@ static qa_q1_save_data *copy_save(const qa_q1_save_data *source,qa_error *error)
     if (!ok) { qa_q1_save_destroy(out); return NULL; }
     return out;
 }
-bool qa_application_q1_save_capture(qa_application *app,const qa_q1_save_client *client,
-    qa_q1_save_data **out,qa_error *error)
+bool qa_application_q1_save_capture(qa_application *app,qa_q1_save_data **out,qa_error *error)
 {
-    if (!client || !client->level || !out || *out || !app || app->operation!=APPLICATION_IDLE ||
+    if (!out || *out || !app || app->operation!=APPLICATION_IDLE ||
         app->state!=QA_APPLICATION_RUNNING || !app->map_view_ready || app->publication_started ||
         app->client_preparation || !app->world || !app->session || !qa_session_safe(app->session) ||
         !qa_world_idle(app->world) || !application_guests_idle(app))
@@ -158,6 +158,8 @@ bool qa_application_q1_save_capture(qa_application *app,const qa_q1_save_client 
     if (!product || product->family!=QA_GAME_Q1 || product->edition==QA_EDITION_QUAKEWORLD ||
         !provider || !provider->constructed || !provider->attached || !provider->map_bound || provider->close_pending)
         return application_fail(error,QA_ERROR_ARGUMENT,"Original Quake save requires its actual stock NetQuake product");
+    qa_application_network_q1_world world;
+    if(!qa_application_network_q1_world_read(app,provider->owner,&world,error)) return false;
     const char *map=qa_strings_cstr(qa_session_strings(app->session),app->current_map);
     if (!map || !product->directory)
         return application_fail(error,QA_ERROR_FORMAT,"Original source has no genuine map/product directory");
@@ -202,7 +204,7 @@ bool qa_application_q1_save_capture(qa_application *app,const qa_q1_save_client 
             app->operation=APPLICATION_IDLE;
         }
     }
-    if (ok) ok=qa_q1_save_comment(save,client->level,client->killed_monsters,client->total_monsters,error) &&
+    if (ok) ok=qa_q1_save_comment(save,world.level,world.killed_monsters,world.total_monsters,error) &&
         qa_q1_save_singleplayer(save,error) && save->entities[1].count!=0;
     if (!ok) {
         if (error && error->code==QA_OK) application_fail(error,QA_ERROR_FORMAT,"Original source save lacks its physical player record");
