@@ -231,7 +231,12 @@ bool qa_q2_write_scaled(qa_net_writer*w,float f,float scale,unsigned bits,bool s
     return qa_net_write_bits(w,(uint32_t)(int64_t)v,bits);
 }
 bool qa_q2_write_coord(qa_net_writer*w,float f) {
-    return qa_q2_write_scaled(w,f,8.0f,16,true);
+    double scaled=trunc((double)f*8.0);
+    if(!isfinite(scaled) || scaled<INT32_MIN || scaled>INT32_MAX)
+        return qa_net_writer_fail(w,"Invalid Q2 coordinate source integer");
+    /* qcommon/common.c MSG_WriteCoord casts to int, and MSG_WriteShort
+     * writes its low two bytes, including coordinates outside short range. */
+    return qa_net_write_bits(w,(uint32_t)qa_source_to_i32(scaled),16);
 }
 static bool angle(qa_net_writer*w,float f,unsigned bits) {
     if(!isfinite(f))return qa_net_writer_fail(w,"Nonfinite Q2 angle");

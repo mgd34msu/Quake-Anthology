@@ -51,6 +51,7 @@
 #include "config_store.h"
 #include "network_q2_host.h"
 #include "network_q2_host_save.h"
+#include "network_q2_recording.h"
 #include "network_unified.h"
 #include "network_unified_save.h"
 #include "../application/unified_events.h"
@@ -223,6 +224,10 @@ struct qa_frontend_network {
     bool gtv_playback;
     frontend_network_q1_client *q1_client_owner;
     frontend_network_q2_host *q2_host;
+    qa_application_network_q2 *q2_record_source;
+    frontend_network_q2_recording *q2_recording;
+    qa_application_native_q2_presentation q2_record_namespace;
+    uint32_t q2_record_server_count;
     frontend_network_unified *unified;
     frontend_network_unified_client_service *unified_client_service;
     uint64_t unified_map_revision;
@@ -268,6 +273,7 @@ struct qa_network_q3_round {
     bool begun, bound, finished;
 };
 static bool gtv_close(qa_frontend_network *,qa_error *);
+static bool q2_record_source_prepare(qa_frontend_network *,qa_error *);
 static frontend_q3_client *q3_client_seat(const qa_frontend *f, uint64_t receiver, uint32_t seat)
 {
     qa_frontend_network *n = f ? f->network : NULL;
@@ -6164,6 +6170,8 @@ bool frontend_network_destroy(qa_frontend *f, qa_error *error)
     if(!gtv_close(n,error)) return false;
     if(n->demo_q1_owner || n->demo_q3_sink.append || n->demo_playback)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Demo receivers must detach before Network retirement");
+    if(!frontend_network_q2_recording_destroy(&n->q2_recording,error)) return false;
+    qa_application_network_q2_destroy(n->q2_record_source); n->q2_record_source=NULL;
     if (!frontend_network_world_change_ready(f, error) || !qa_http_callbacks_idle(frontend_tools_http(f)))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "network/HTTP callbacks must return before teardown");
     if (!local_clients_destroy(n, error) || !frontend_network_close_client(f, error)) return false;
@@ -6708,6 +6716,11 @@ bool frontend_network_publish(qa_frontend *f, qa_error *error)
 {
     if(f->qc_messages && !frontend_qc_messages_drain(f->qc_messages,error))return false;
     if (f->network && !incomplete_output_close(f->network, error)) return false;
+    if(f->network && f->network->q2_recording) {
+        qa_error recording={0};
+        if(!q2_record_source_prepare(f->network,&recording))
+            qa_application_feature_report(f->application,"Q2 recording Source",&recording);
+    }
     if(!frontend_demo_dispatch_publish(f->demos,error))return false;
     if(!frontend_network_output_drain(f,error)) return false;
     if (!f->network) return true;
@@ -8402,18 +8415,58 @@ static bool local_q3_demo_record(qa_frontend *f,qa_actor_id actor,qa_fs_root *ro
         .root=root,.current=local_q3_demo_current,.seed=local_q3_demo_seed,.attach=local_q3_demo_attach,
         .detach=local_q3_demo_detach,.publish=local_q3_demo_publish,.release=local_q3_demo_release};return true;
 }
+static bool q2_record_source_prepare(qa_frontend_network *n,qa_error *error)
+{
+    qa_application *app=n->frontend->application;
+    qa_application_native_q2_presentation actual;
+    bool found;
+    if(!qa_application_native_q2_presentation_selected(app,&actual,&found,error)) return false;
+    if(!found) return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Recording requires a live Q2 Source game");
+    const qa_application_native_q2_presentation *old=&n->q2_record_namespace;
+    if(n->q2_record_source && old->session==actual.session && old->source_owner==actual.source_owner &&
+        old->publication_generation==actual.publication_generation && old->map_revision==actual.map_revision)
+        return true;
+    qa_net_protocol_id protocol={.kind=actual.edition==QA_RULESET_Q2_RERELEASE?
+        QA_NET_Q2REPRO_1038:QA_NET_Q2_34};
+    if(actual.edition!=QA_RULESET_Q2_RERELEASE && q2_host_protocol(n->frontend->options.network_protocol))
+        protocol=n->frontend->options.network_protocol;
+    int32_t server_count;
+    uint32_t next_count=n->q2_record_server_count+1;
+    memcpy(&server_count,&next_count,sizeof(server_count));
+    qa_application_network_q2 *publisher=NULL;
+    if(!qa_application_network_q2_create(app,protocol,server_count,&publisher,error)) return false;
+    if(!n->q2_recording) {
+        if(!frontend_network_q2_recording_create(n->frontend,publisher,&n->q2_recording,error)) {
+            qa_application_network_q2_destroy(publisher); return false;
+        }
+    } else if(!frontend_network_q2_recording_rebind(n->q2_recording,publisher,error)) {
+        qa_application_network_q2_destroy(publisher); return false;
+    }
+    qa_application_network_q2_destroy(n->q2_record_source);
+    n->q2_record_source=publisher; n->q2_record_namespace=actual;
+    n->q2_record_server_count=next_count;
+    return true;
+}
 bool frontend_network_demo_record(qa_frontend *f,const qa_command_context *source,frontend_demo_action action,
     frontend_demo_record_source *out,qa_error *error)
 {
-    uint32_t physical;
-    if(!f||!out||!frontend_command_seat_read(f,source,&physical))
+    uint32_t physical=0;
+    bool server=action==FRONTEND_DEMO_SERVER_RECORD || action==FRONTEND_DEMO_MVD_RECORD;
+    if(!f||!out||(!frontend_command_seat_read(f,source,&physical) && !(f->options.dedicated && server)))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Recording requires its actual physical Source seat");
     if(!frontend_network_create(f,error))return false;
     qa_frontend_network *n=f->network;
     if(n->busy||n->detached_transport||!qa_network_callbacks_idle(n->runtime)||n->demo_playback)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Recording requires returned live Source receivers");
-    if(action==FRONTEND_DEMO_SERVER_RECORD||action==FRONTEND_DEMO_MVD_RECORD)
-        return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Native server/MVD recording has no installed Source feed");
+    if(server) {
+        qa_fs_root *root=NULL;
+        if(!q2_record_source_prepare(n,error)) return false;
+        if(f->options.dedicated)
+            root=qa_catalog_product_write_root(qa_application_catalog(f->application),
+                n->q2_record_namespace.content_product);
+        else if(!frontend_content_library_demo_root(f,source,&root,error)) return false;
+        return root && frontend_network_q2_recording_source(n->q2_recording,action,root,out,error);
+    }
     if(n->q1_client_owner) {
         if(n->demo_q1_owner)return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 recorder already retains its Source");
         frontend_network_q1_client_view view;

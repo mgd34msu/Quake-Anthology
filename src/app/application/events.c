@@ -844,8 +844,10 @@ bool application_emit(void *opaque, const qa_builtin_event *event, qa_error *err
             }
         }
     }
-    bool ok=application_q3_weapons_services_q2_muzzle(application,event,error) &&
-        emit_event(application,event,&audience,error);
+    qa_builtin_event captured=*event;
+    captured.q2_multicast=multicast;
+    bool ok=application_q3_weapons_services_q2_muzzle(application,&captured,error) &&
+        emit_event(application,&captured,&audience,error);
     application_native_q2_delivery_dispose(&audience);
     return ok;
 }

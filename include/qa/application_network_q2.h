@@ -140,6 +140,8 @@ bool qa_application_network_q2_builtin_records(qa_application_network_q2 *,
     const qa_builtin_event *, const qa_q2_codec *, qa_q2_server_emit_fn, void *, qa_error *);
 bool qa_application_network_q2_player_records(qa_application_network_q2 *,
     const qa_q2_player_event *, const qa_q2_codec *, qa_q2_server_emit_fn, void *, qa_error *);
+bool qa_application_network_q2_map_records(qa_application_network_q2 *,
+    const qa_q2_map_event *, const qa_q2_codec *, qa_q2_server_emit_fn, void *, qa_error *);
 bool qa_application_network_q2_discovery(qa_application_network_q2 *,
     qa_q2_status *, const char **name, const char **map, qa_error *);
 bool qa_application_network_q2_download_server(qa_application_network_q2 *,

@@ -183,6 +183,8 @@ static bool effects(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
     bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     s->rule.visual.effects = 0;
     s->rule.visual.render_flags = rr || g->options.product == QA_Q2_ROGUE ? 32768 : 0;
+    if(rr && combat->health>0 && !g->player_runtime->intermission && s->info.flashlight)
+        s->rule.visual.effects|=UINT64_C(1)<<34;
     if (combat->health > 0) {
         if (s->rule.power_armor_ns > g->now_ns) {
             if (combat->armor.powered.kind == QA_POWER_SCREEN)

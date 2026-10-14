@@ -2,6 +2,7 @@
 #include "unified_events.h"
 #include "unified_q2_native_events.h"
 #include "control_frame.h"
+#include "qa/binary.h"
 #include "qa/localization.h"
 #include "qa/text.h"
 
@@ -235,5 +236,46 @@ bool qa_application_network_q2_player_records(qa_application_network_q2 *owner,
     }
     if ((record.event.kind == QA_Q2_SVC_PRINT || record.event.kind == QA_Q2_SVC_COMMAND) &&
         !record.event.data.print.text) return unsupported(owner, "Q2 player text", "no retained Source text");
+    return emit(user, &record, error);
+}
+
+bool qa_application_network_q2_map_records(qa_application_network_q2 *owner,
+    const qa_q2_map_event *source, const qa_q2_codec *codec, qa_q2_server_emit_fn emit,
+    void *user, qa_error *error)
+{
+    if (!owner || !source || !codec || !emit) return false;
+    uint8_t type;
+    switch (source->kind) {
+    case QA_Q2_MAP_STEAM: type = QA_Q2_TE_STEAM; break;
+    case QA_Q2_MAP_FORCE_WALL: type = QA_Q2_TE_FORCEWALL; break;
+    default: return true;
+    }
+    qa_q2_server_record record = {.opcode = 3, .event = {.kind = QA_Q2_SVC_TEMP_ENTITY}};
+    qa_q2_temp_entity *value = &record.event.data.temporary;
+    if (!qa_q2_temp_entity_prepare(type, false, value))
+        return unsupported(owner, type == QA_Q2_TE_STEAM ? "Q2 steam" : "Q2 force wall",
+            "temporary entity is unsupported by the shared codec");
+    if (type == QA_Q2_TE_STEAM && source->slot == -1) --value->field_count;
+    for (size_t i = 0; i < value->field_count; ++i) {
+        qa_q2_temp_field *field = value->fields + i;
+        switch (field->name) {
+        case QA_Q2_TEMP_POSITION1: vector(field->value.vector, source->origin); break;
+        case QA_Q2_TEMP_POSITION2: case QA_Q2_TEMP_DIRECTION:
+            vector(field->value.vector, source->direction); break;
+        case QA_Q2_TEMP_COUNT: field->value.integer = (uint8_t)source->count; break;
+        case QA_Q2_TEMP_COLOR: field->value.integer = (uint8_t)source->style; break;
+        case QA_Q2_TEMP_TIME: field->value.integer = qa_source_to_i32(source->duration); break;
+        case QA_Q2_TEMP_ENTITY1: case QA_Q2_TEMP_ENTITY2: {
+            int32_t integer = field->name == QA_Q2_TEMP_ENTITY1 ? source->slot :
+                qa_source_to_i32(source->value);
+            uint8_t bytes[2];
+            qa_store_u16le(bytes, (uint16_t)(uint32_t)integer);
+            field->value.integer = qa_load_i16le(bytes);
+            break;
+        }
+        case QA_Q2_TEMP_OFFSET:
+            return unsupported(owner, "Q2 map temporary entity", "map event has no offset field");
+        }
+    }
     return emit(user, &record, error);
 }

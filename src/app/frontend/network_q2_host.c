@@ -668,7 +668,6 @@ static bool publish_events(q2_host_peer *peer,const qa_net_client *client,qa_err
         peer->event_cursor=peer->player_event_cursor=event_id;
         qa_application_protocol_event event;
         qa_application_q2_protocol_delivery delivery;
-        qa_application_q2_player_event player;
         bool reliable=false,print=false;
         if(output.protocol) {
             event=*output.protocol; delivery=*output.q2_delivery;
@@ -678,21 +677,17 @@ static bool publish_events(q2_host_peer *peer,const qa_net_client *client,qa_err
                     peer->host->event_decoders,peer->event_storage,peer->event_capacity,&peer->event_packet,error)) return false;
                 reliable=event.reliable;
             }
-        } else if(output.kind==QA_APPLICATION_EVENT_Q2_PLAYER &&
-            (output.value.q2_player->event.kind==QA_Q2_PLAYER_PRINT ||
-             output.value.q2_player->event.kind==QA_Q2_PLAYER_LAYOUT)) {
-            player=*output.value.q2_player;
-            if(!frontend_network_q2_player_packet(&player,client,
-                qa_network_epoch(peer->host->options.runtime,peer->client),codec,peer->event_storage,
-                peer->event_capacity,&peer->event_packet,error)) return false;
-            reliable=true; print=true;
-        } else if(output.kind==QA_APPLICATION_EVENT_BUILTIN && output.value.builtin->family==QA_GAME_Q2) {
-            const qa_builtin_event *builtin=output.value.builtin;
-            if(!frontend_network_q2_builtin_packet(peer->source,builtin,output.q2_audience,client,
-                peer->slots,qa_network_epoch(peer->host->options.runtime,peer->client),codec,
+        } else {
+            if(!frontend_network_q2_output_packet(peer->source,&output,client,peer->slots,
+                qa_network_epoch(peer->host->options.runtime,peer->client),codec,
                 peer->event_storage,peer->event_capacity,&peer->event_packet,error)) return false;
-            reliable=builtin->kind==QA_BUILTIN_MESSAGE || builtin->kind==QA_BUILTIN_CENTERPRINT ||
-                (builtin->kind==QA_BUILTIN_SOUND && ((builtin->flags&2u) || (builtin->channel&16)));
+            print=output.kind==QA_APPLICATION_EVENT_Q2_PLAYER;
+            reliable=print;
+            if(output.kind==QA_APPLICATION_EVENT_BUILTIN) {
+                const qa_builtin_event *builtin=output.value.builtin;
+                reliable=builtin->kind==QA_BUILTIN_MESSAGE || builtin->kind==QA_BUILTIN_CENTERPRINT ||
+                    (builtin->kind==QA_BUILTIN_SOUND && qa_q2_sound_reliable(codec,builtin->flags,builtin->channel));
+            }
         }
         cursor=events.next;
         peer->event_cursor=peer->player_event_cursor=cursor;
@@ -1026,22 +1021,16 @@ static bool demo_publish(frontend_network_q2_host *host,qa_error *error)
     while(qa_application_event_raw_next(app,&events,UINT64_MAX,&output)) {
         host->demo_event_cursor=host->demo_player_event_cursor=events.id;
         qa_application_protocol_event event; qa_application_q2_protocol_delivery delivery;
-        qa_application_q2_player_event player; qa_bytes bytes={0}; bool ok=true;
+        qa_bytes bytes={0}; bool ok=true;
         if(output.protocol) {
             event=*output.protocol; delivery=*output.q2_delivery;
             if(!event.signon && delivery.original)
                 ok=frontend_network_q2_event_packet(host->discovery,host->source.source.source_owner,&event,&delivery,
                     client,qa_network_epoch(host->options.runtime,client->id),&host->demo_codec,
                     host->event_decoders,host->demo_bytes,sizeof(host->demo_bytes),&bytes,error);
-        } else if(output.kind==QA_APPLICATION_EVENT_Q2_PLAYER &&
-            (output.value.q2_player->event.kind==QA_Q2_PLAYER_PRINT ||
-             output.value.q2_player->event.kind==QA_Q2_PLAYER_LAYOUT)) {
-            player=*output.value.q2_player;
-            ok=frontend_network_q2_player_packet(&player,client,qa_network_epoch(host->options.runtime,client->id),
-                &host->demo_codec,host->demo_bytes,sizeof(host->demo_bytes),&bytes,error);
-        } else if(output.kind==QA_APPLICATION_EVENT_BUILTIN && output.value.builtin->family==QA_GAME_Q2) {
-            ok=frontend_network_q2_builtin_packet(host->discovery,output.value.builtin,output.q2_audience,
-                client,source_slots,qa_network_epoch(host->options.runtime,client->id),&host->demo_codec,
+        } else {
+            ok=frontend_network_q2_output_packet(host->discovery,&output,client,source_slots,
+                qa_network_epoch(host->options.runtime,client->id),&host->demo_codec,
                 host->demo_bytes,sizeof(host->demo_bytes),&bytes,error);
         }
         if(ok && bytes.size) ok=demo_host_packet(host,(qa_bytes){bytes.data,bytes.size},error);

@@ -40,7 +40,7 @@ static bool completing(void *,const qa_command_context *,frontend_demo_format,fr
 static bool completed(void *,const qa_command_context *,frontend_demo_format,frontend_demo_end,bool,qa_error *);
 static bool current(void *context,const qa_command_context *source,qa_error *error) {
     frontend_demo_dispatch *d=context;uint32_t seat;
-    if(!d||!source||!frontend_command_seat_read(d->frontend,source,&seat)||
+    if(!d||!source||(!frontend_command_seat_read(d->frontend,source,&seat) && !d->frontend->options.dedicated)||
         !qa_application_command_context_active(d->frontend->application,source))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Demo request lost its actual local Source seat");
     return true;

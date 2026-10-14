@@ -552,6 +552,13 @@ bool qa_q2_messages_read(qa_q2_messages *m, qa_bytes bytes, qa_q2_server_emit_fn
     return ok;
 }
 
+bool qa_q2_sound_reliable(const qa_q2_codec *codec,uint32_t flags,int32_t channel) {
+    uint32_t bits=(uint32_t)channel;
+    /* Classic SV_StartSound clears channel flags for CHAN_NO_PHS_ADD before
+     * checking CHAN_RELIABLE; the rerelease keeps those flags independent. */
+    return (flags&2u) || ((bits&16u) && (qa_q2_protocol_rerelease(codec->protocol) || !(bits&8u)));
+}
+
 uint8_t qa_q2_sound_flags(const qa_q2_codec *c, const qa_q2_kex_sound *from) {
     qa_q2_kex_sound s = *from;
     bool kex = qa_q2_protocol_kex(c->protocol);

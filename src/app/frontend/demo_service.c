@@ -739,10 +739,17 @@ bool frontend_demo_publish(frontend_demo_service *s,qa_error *error) {
     if(!frontend_demo_service_idle(s))return fail(error,QA_ERROR_ARGUMENT,"Demo publisher is entered");
     s->busy=true;
     bool okay=sources_returned(s,error);
-    demo_recording *owners[]={s->recording,s->server};
+    demo_recording **owners[]={&s->recording,&s->server};
     for(size_t i=0;okay&&i<sizeof(owners)/sizeof(owners[0]);++i) {
-        demo_recording *r=owners[i];
-        if(r&&r->attached&&r->source.publish)okay=r->source.publish(r->source.owner,error);
+        demo_recording *r=*owners[i];
+        if(r&&r->attached&&r->source.publish) {
+            qa_error output={0};
+            if(!r->source.publish(r->source.owner,&output)) {
+                r->faulted=true;
+                r->failure=output;
+                okay=record_failed(s,owners[i],error);
+            }
+        }
     }
     s->busy=false;return okay;
 }

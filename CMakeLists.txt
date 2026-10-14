@@ -1883,6 +1883,7 @@ add_library(qa_frontend STATIC
     src/app/composition/recipe_save.c
     src/app/frontend/native_q3_video.c
     src/app/frontend/network_q2_events.c
+    src/app/frontend/network_q2_recording.c
     src/app/frontend/network_unified_client.c
     src/app/frontend/received_music.c
     src/app/frontend/remote_q3_compiled_video.c

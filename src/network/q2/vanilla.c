@@ -142,9 +142,9 @@ bool qa_q2_classic_write_entity_fields(qa_q2_codec *c, qa_net_writer *w,
         t->instance_bits || t->owner || t->old_frame || t->morefx)
         return qa_net_writer_fail(w, "Classic Q2 cannot represent extended entity fields");
     for (unsigned i = 0; i < 3; ++i)
-        if (!scaled_fits(t->origin[i], 8, INT16_MIN, INT16_MAX) || !isfinite(t->angles[i]) ||
-            ((fresh || (t->renderfx & Q2C_RF_BEAM)) && !scaled_fits(t->old_origin[i], 8, INT16_MIN, INT16_MAX)))
-            return qa_net_writer_fail(w, "Classic Q2 entity coordinates exceed wire range");
+        if (!scaled_fits(t->origin[i], 8, INT32_MIN, INT32_MAX) || !isfinite(t->angles[i]) ||
+            ((fresh || (t->renderfx & Q2C_RF_BEAM)) && !scaled_fits(t->old_origin[i], 8, INT32_MIN, INT32_MAX)))
+            return qa_net_writer_fail(w, "Classic Q2 entity coordinates exceed source integer range");
     const qa_q2_entity *f = from ? from : &zero_entity;
     uint32_t b = t->number >= 256 ? Q2C_U_NUMBER16 : 0;
     static const uint32_t origin_bits[3] = {Q2C_U_ORIGIN1, Q2C_U_ORIGIN2, Q2C_U_ORIGIN3};
