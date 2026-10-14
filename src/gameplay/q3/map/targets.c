@@ -416,8 +416,6 @@ bool q3_map_target_use(qa_q3_game *game, qa_q3_map_actor_state *state,
         return true;
     }
     case QA_Q3_MAP_TARGET_SCORE: {
-        if (!activator.registry)
-            return q3_map_fail(error, "Q3 target_score requires an activator");
         qa_actor_id actor = state->actor;
         if (!q3_map_is_player(game, activator))
             return true;
@@ -428,8 +426,6 @@ bool q3_map_target_use(qa_q3_game *game, qa_q3_map_actor_state *state,
         return map_event(game, QA_Q3_MAP_SCORE, state, body.origin, actor, activator, error);
     }
     case QA_Q3_MAP_TARGET_PRINT:
-        if (!activator.registry)
-            return q3_map_fail(error, "Q3 target_print requires an activator");
         return print_target(game, state, activator, error);
     case QA_Q3_MAP_TARGET_SPEAKER:
         return use_speaker(game, state, activator, error);
