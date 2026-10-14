@@ -686,6 +686,13 @@ static bool publish_events(q2_host_peer *peer,const qa_net_client *client,qa_err
                 qa_network_epoch(peer->host->options.runtime,peer->client),codec,peer->event_storage,
                 peer->event_capacity,&peer->event_packet,error)) return false;
             reliable=true; print=true;
+        } else if(output.kind==QA_APPLICATION_EVENT_BUILTIN && output.value.builtin->family==QA_GAME_Q2) {
+            const qa_builtin_event *builtin=output.value.builtin;
+            if(!frontend_network_q2_builtin_packet(peer->source,builtin,output.q2_audience,client,
+                peer->slots,qa_network_epoch(peer->host->options.runtime,peer->client),codec,
+                peer->event_storage,peer->event_capacity,&peer->event_packet,error)) return false;
+            reliable=builtin->kind==QA_BUILTIN_MESSAGE || builtin->kind==QA_BUILTIN_CENTERPRINT ||
+                (builtin->kind==QA_BUILTIN_SOUND && ((builtin->flags&2u) || (builtin->channel&16)));
         }
         cursor=events.next;
         peer->event_cursor=peer->player_event_cursor=cursor;
@@ -1000,6 +1007,14 @@ static bool demo_publish(frontend_network_q2_host *host,qa_error *error)
     if(!client || !configs_publish(host,host->discovery,host->demo_configs,host->demo_config_count,
         &host->demo_config_revision,&host->demo_match_status_revision,demo_host_config,host,error)) return false;
     qa_application *app=host->options.frontend->application;
+    uint32_t source_slots[QA_Q2_MAX_SEATS]={0};
+    for(size_t i=0;i<client->seat_count;++i) {
+        qa_actor_id actor;
+        qa_network_q2_player player;
+        if(!qa_application_remote_player_actor(app,client->id,client->seats[i].seat,&actor) ||
+            !qa_application_network_q2_player(host->discovery,actor,&player,error)) return false;
+        source_slots[i]=player.source_slot;
+    }
     uint64_t generation=qa_application_protocol_events_generation(app);
     uint64_t first=qa_application_events_local_first(app),next=qa_application_events_next(app);
     uint64_t cursor=host->demo_event_cursor<host->demo_player_event_cursor?host->demo_event_cursor:host->demo_player_event_cursor;
@@ -1024,6 +1039,10 @@ static bool demo_publish(frontend_network_q2_host *host,qa_error *error)
             player=*output.value.q2_player;
             ok=frontend_network_q2_player_packet(&player,client,qa_network_epoch(host->options.runtime,client->id),
                 &host->demo_codec,host->demo_bytes,sizeof(host->demo_bytes),&bytes,error);
+        } else if(output.kind==QA_APPLICATION_EVENT_BUILTIN && output.value.builtin->family==QA_GAME_Q2) {
+            ok=frontend_network_q2_builtin_packet(host->discovery,output.value.builtin,output.q2_audience,
+                client,source_slots,qa_network_epoch(host->options.runtime,client->id),&host->demo_codec,
+                host->demo_bytes,sizeof(host->demo_bytes),&bytes,error);
         }
         if(ok && bytes.size) ok=demo_host_packet(host,(qa_bytes){bytes.data,bytes.size},error);
         if(!ok) return false;

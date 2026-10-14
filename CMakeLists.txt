@@ -1478,6 +1478,7 @@ add_library(qa_application STATIC
     src/app/application/native_q2_callbacks.c
     src/app/application/native_q2_wire_engine.c
     src/app/application/network_q2_resources.c
+    src/app/application/network_q2_builtin.c
     src/app/application/unified_q2_native_events.c
     src/app/application/bots_npc.c
     src/app/application/guest_q3_collision.c

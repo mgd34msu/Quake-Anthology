@@ -65,6 +65,7 @@ bool q2_projectile_event(qa_q2_game *g, qa_actor_id id, qa_builtin_event_kind ki
                               .time_ns = g->now_ns,
                               .origin = origin,
                               .end = end,
+                              .direction = kind == QA_BUILTIN_IMPACT ? end : qa_v3(0, 0, 0),
                               .volume = 1,
                               .attenuation = 1,
                               .code = code,

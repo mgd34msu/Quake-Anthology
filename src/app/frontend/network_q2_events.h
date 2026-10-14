@@ -10,6 +10,9 @@
 bool frontend_network_q2_event_records(qa_application_network_q2 *, qa_actor_owner host_source,
     const qa_application_protocol_event *, const qa_application_q2_protocol_delivery *,
     const qa_q2_codec *, qa_q2_messages *const decoders[2], qa_q2_server_emit_fn, void *, qa_error *);
+bool frontend_network_q2_builtin_packet(qa_application_network_q2 *, const qa_builtin_event *,
+    const qa_application_q2_audience *, const qa_net_client *, const uint32_t *source_slots,
+    uint64_t connection_epoch, const qa_q2_codec *, uint8_t *, size_t, qa_bytes *, qa_error *);
 
 /* Encodes into caller-owned reusable storage for the admitted connection.
  * The caller queues the result before advancing its event cursor.

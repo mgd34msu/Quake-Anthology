@@ -15,6 +15,8 @@ typedef struct q2_event_packet {
     size_t ordinal;
     qa_q2_server_emit_fn record_emit;
     void *record_user;
+    const uint32_t *source_slots;
+    uint32_t recipient_number;
 } q2_event_packet;
 
 static bool fail(qa_error *error, qa_status code, const char *message)
@@ -32,6 +34,8 @@ static bool captured_recipient(const q2_event_packet *packet, uint8_t marker, si
 static bool captured_seat(const q2_event_packet *packet, uint8_t marker, size_t seat)
 {
     const qa_application_q2_audience *audience = &packet->delivery->audience;
+    if(packet->source_slots && !audience->captured)
+        return !packet->recipient_number || packet->source_slots[seat]==packet->recipient_number;
     for (size_t i = 0; i < audience->count; ++i) {
         const qa_application_q2_recipient *recipient = audience->recipients + i;
         if (captured_recipient(packet, marker, seat, recipient)) return true;
@@ -157,46 +161,82 @@ static bool marker(q2_event_packet *packet, uint8_t seat)
     return qa_q2_server_event_write(&packet->codec, &packet->writer, &event);
 }
 
-static bool emit(void *context, const qa_q2_server_record *record, qa_error *error)
+static bool emit_projected(q2_event_packet *packet,const qa_q2_server_record *record,
+    const qa_q2_server_event *event,uint32_t seats,qa_error *error)
 {
-    q2_event_packet *packet = context;
-    size_t ordinal = packet->ordinal++;
-    size_t eligible = 0;
-    if (!packet->record_emit) {
-        if (record->event.kind == QA_Q2_SVC_SEAT) return true;
-        for (size_t i = 0; i < packet->client->seat_count; ++i)
-            if (captured_seat(packet, record->seat, i)) ++eligible;
-        if (!eligible) return true;
-    }
-    qa_q2_server_event event;
-    bool include;
-    if (!translate(packet, record, ordinal, &event, &include, error)) return false;
-    if (!include) return true;
-    if (packet->record_emit) {
-        qa_q2_server_record projected = *record;
-        projected.event = event;
-        return packet->record_emit(packet->record_user, &projected, error);
-    }
-    if (event.kind == QA_Q2_SVC_LAYOUT) {
+    if(!seats) return true;
+    if (event->kind == QA_Q2_SVC_LAYOUT) {
         const qa_application_q2_audience *audience = &packet->delivery->audience;
         for (size_t seat = 0; seat < packet->client->seat_count; ++seat)
             for (size_t i = 0; i < audience->count; ++i) {
                 const qa_application_q2_recipient *recipient = audience->recipients + i;
                 if (captured_recipient(packet, record->seat, seat, recipient) &&
                     !qa_application_network_q2_event_layout(packet->publisher, recipient->actor,
-                        packet->delivery->profile, event.data.print.text, error)) return false;
+                        packet->delivery->profile, event->data.print.text, error)) return false;
             }
     }
     bool kex = packet->codec.protocol.kind == QA_NET_Q2KEX_2023;
-    if (!kex) return qa_q2_server_event_write(&packet->codec, &packet->writer, &event);
-    if (eligible == packet->client->seat_count)
-        return marker(packet, 0) && qa_q2_server_event_write(&packet->codec, &packet->writer, &event) && marker(packet, 1);
+    if (!kex) return qa_q2_server_event_write(&packet->codec, &packet->writer, event);
+    if (seats == (UINT32_C(1)<<packet->client->seat_count)-1)
+        return marker(packet, 0) && qa_q2_server_event_write(&packet->codec, &packet->writer, event) && marker(packet, 1);
     for (size_t i = 0; i < packet->client->seat_count; ++i) {
-        if (!captured_seat(packet, record->seat, i)) continue;
+        if (!(seats&(UINT32_C(1)<<i))) continue;
         uint8_t seat = (uint8_t)(packet->client->seats[i].remote_index + 1u);
-        if (!marker(packet, seat) || !qa_q2_server_event_write(&packet->codec, &packet->writer, &event)) return false;
+        if (!marker(packet, seat) || !qa_q2_server_event_write(&packet->codec, &packet->writer, event)) return false;
     }
     return marker(packet, 1);
+}
+static uint32_t captured_mask(const q2_event_packet *packet,uint8_t marker)
+{
+    uint32_t seats=0;
+    for(size_t i=0;i<packet->client->seat_count;++i)
+        if(captured_seat(packet,marker,i)) seats|=UINT32_C(1)<<i;
+    return seats;
+}
+static bool emit(void *context,const qa_q2_server_record *record,qa_error *error)
+{
+    q2_event_packet *packet=context;
+    size_t ordinal=packet->ordinal++;
+    if(!packet->record_emit && record->event.kind==QA_Q2_SVC_SEAT) return true;
+    uint32_t seats=packet->record_emit?0:captured_mask(packet,record->seat);
+    if(!packet->record_emit && !seats) return true;
+    qa_q2_server_event event;
+    bool include;
+    if(!translate(packet,record,ordinal,&event,&include,error)) return false;
+    if(!include) return true;
+    if(packet->record_emit) {
+        qa_q2_server_record projected=*record;
+        projected.event=event;
+        return packet->record_emit(packet->record_user,&projected,error);
+    }
+    return emit_projected(packet,record,&event,seats,error);
+}
+static bool builtin_emit(void *context,const qa_q2_server_record *record,qa_error *error)
+{
+    q2_event_packet *packet=context;
+    return emit_projected(packet,record,&record->event,captured_mask(packet,record->seat),error);
+}
+bool frontend_network_q2_builtin_packet(qa_application_network_q2 *publisher,
+    const qa_builtin_event *event,const qa_application_q2_audience *audience,
+    const qa_net_client *client,const uint32_t *source_slots,uint64_t epoch,
+    const qa_q2_codec *codec,uint8_t *storage,size_t capacity,qa_bytes *out,qa_error *error)
+{
+    qa_application_q2_protocol_delivery delivery={.profile=qa_q2_protocol_rerelease(codec->protocol)?
+        QA_NATIVE_Q2_GAME_API2023:QA_NATIVE_Q2_GAME_API3};
+    if(audience) delivery.audience=*audience;
+    q2_event_packet packet={.publisher=publisher,.delivery=&delivery,.client=client,
+        .source_slots=source_slots,.epoch=epoch,.codec=*codec};
+    if(event->kind==QA_BUILTIN_MESSAGE || event->kind==QA_BUILTIN_CENTERPRINT) {
+        if(!event->actor.registry) return true;
+        qa_error retired={0};
+        if(!qa_application_network_q2_event_entity(publisher,event->provider,event->actor,
+            &packet.recipient_number,&retired)) return true;
+    }
+    qa_net_writer_init(&packet.writer,storage,capacity,error);
+    if(!qa_application_network_q2_builtin_records(publisher,event,codec,builtin_emit,&packet,error)) return false;
+    size_t size=qa_net_writer_size(&packet.writer);
+    *out=(qa_bytes){size?storage:NULL,size};
+    return true;
 }
 
 static bool decode(q2_event_packet *packet, qa_q2_messages *const decoders[2], qa_error *error)

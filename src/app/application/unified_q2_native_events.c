@@ -39,6 +39,22 @@ static bool emit(application_provider *p, const qa_unified_presentation_payload 
     return application_unified_event_emit(p->application, p->owner, presentation, simulation,
         recipient, recipient, time, slot, has_slot, false, e);
 }
+void application_q2_inventory_counts(const qa_q2_game *game, const qa_q2_player_event *event,
+    int16_t counts[256])
+{
+    memset(counts, 0, 256 * sizeof(*counts));
+    size_t items = qa_q2_item_count(game);
+    for (size_t i = 0; i < items && i + 1 < 256; ++i) {
+        const qa_q2_item_definition *item = qa_q2_item_at(game, i);
+        for (size_t n = 0; n < event->inventory_count; ++n) if (event->inventory[n].item == item->item) {
+            double count = event->inventory[n].count;
+            int32_t value = count >= INT32_MIN && count < 2147483648.0 ? (int32_t)count : INT32_MIN;
+            uint16_t bits = (uint16_t)(uint32_t)value;
+            memcpy(counts + i + 1, &bits, sizeof(bits));
+            break;
+        }
+    }
+}
 bool application_unified_q2_native_player(application_provider *p, const qa_q2_player_event *v, qa_error *e)
 {
     qa_clock_state clock;
@@ -57,17 +73,7 @@ bool application_unified_q2_native_player(application_provider *p, const qa_q2_p
         inventory = &simulation;
     }
     if (ok && v->kind == QA_Q2_PLAYER_INVENTORY && v->visible) {
-        size_t items = qa_q2_item_count(p->state.q2);
-        for (size_t i = 0; i < items && i + 1 < 256; ++i) {
-            const qa_q2_item_definition *item = qa_q2_item_at(p->state.q2, i);
-            for (size_t n = 0; n < v->inventory_count; ++n) if (v->inventory[n].item == item->item) {
-                double count = v->inventory[n].count;
-                int32_t value = count >= INT32_MIN && count < 2147483648.0 ? (int32_t)count : INT32_MIN;
-                uint16_t bits = (uint16_t)(uint32_t)value;
-                memcpy(counts + i + 1, &bits, sizeof(bits));
-                break;
-            }
-        }
+        application_q2_inventory_counts(p->state.q2, v, counts);
         simulation.value.message = (qa_unified_message_event){.kind = QA_UNIFIED_MESSAGE_Q2_INVENTORY,
             .counts = counts, .count = 256};
         inventory = &simulation;

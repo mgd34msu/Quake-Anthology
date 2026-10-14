@@ -816,14 +816,33 @@ bool application_emit(void *opaque, const qa_builtin_event *event, qa_error *err
     if (!application || application->destroy_requested || !application->session)
         return application_fail(error,QA_ERROR_ARGUMENT,"Gameplay event has no live application owner");
     if (!valid_event(application,event,error)) return false;
-    if (event->q2_multicast.kind!=QA_BUILTIN_Q2_MULTICAST_NONE) {
+    qa_builtin_q2_multicast multicast=event->q2_multicast;
+    bool derive=event->family==QA_GAME_Q2 && multicast.kind==QA_BUILTIN_Q2_MULTICAST_NONE &&
+        ((event->kind==QA_BUILTIN_SOUND && !(event->flags&1u)) || event->kind==QA_BUILTIN_MUZZLE);
+    if (multicast.kind!=QA_BUILTIN_Q2_MULTICAST_NONE || derive) {
         qa_id_index_cursor cursor=application_provider_lookup_begin(application,event->provider,
             APPLICATION_PROVIDER_LIVE);
         application_provider *source;
         while((source=application_provider_lookup_next(application,&cursor)))
             if(source->constructed && source->attached && !source->close_pending) break;
-        if (!application_native_q2_delivery_capture(source,&event->q2_multicast,event->end,
-                &audience,error)) return false;
+        if(derive && source && source->kind==APPLICATION_PROVIDER_Q2) {
+            multicast.origin=event->origin;
+            multicast.kind=event->kind==QA_BUILTIN_MUZZLE?QA_BUILTIN_Q2_MULTICAST_PVS:
+                (event->channel&8) || event->attenuation==0?QA_BUILTIN_Q2_MULTICAST_ALL:QA_BUILTIN_Q2_MULTICAST_PHS;
+            if(event->kind==QA_BUILTIN_MUZZLE) {
+                qa_body_state body;
+                qa_error retired={0};
+                if(qa_world_body_read(application->world,event->actor,&body,&retired))
+                    multicast.origin=body.origin;
+            }
+        }
+        if(multicast.kind!=QA_BUILTIN_Q2_MULTICAST_NONE) {
+            qa_error delivery={0};
+            if(!application_native_q2_delivery_capture(source,&multicast,event->end,&audience,&delivery)) {
+                if(!derive) { if(error) *error=delivery; return false; }
+                qa_application_feature_report(application,"Q2 sound/muzzle audience",&delivery);
+            }
+        }
     }
     bool ok=application_q3_weapons_services_q2_muzzle(application,event,error) &&
         emit_event(application,event,&audience,error);

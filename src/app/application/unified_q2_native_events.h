@@ -4,6 +4,8 @@
 #include "internal.h"
 #include "qa/application_native_q2_delivery.h"
 
+void application_q2_inventory_counts(const qa_q2_game *, const qa_q2_player_event *, int16_t counts[256]);
+
 bool application_unified_q2_native_builtin(qa_application *, const qa_builtin_event *,
     const qa_application_q2_audience *, qa_error *);
 bool application_unified_q2_native_map(application_provider *, const qa_q2_map_event *,
