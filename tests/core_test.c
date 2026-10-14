@@ -16,6 +16,7 @@
 #include "qa/unified_frame_events.h"
 #include "qa/console_cvars_prepare.h"
 #include "qa/console_buffer.h"
+#include "qa/console_release.h"
 #include "qa/console_dedicated_save.h"
 #include "qa/console_io.h"
 #include "qa/field.h"
@@ -393,6 +394,50 @@ static void test_console_restore_pages(void)
         CHECK(console->command_pages.capacity==capacity && console->command_storage.sealed);
     }
     qa_buffer_free(&saved);qa_console_destroy(console);CHECK(qa_session_destroy(session,&error));
+}
+
+typedef struct release_command_counts { size_t completed, failed; } release_command_counts;
+static bool release_count_command(void *user,const qa_command_invocation *command,qa_error *error)
+{
+    (void)command;(void)error;
+    ++((release_command_counts *)user)->completed;
+    return true;
+}
+static bool release_fail_command(void *user,const qa_command_invocation *command,qa_error *error)
+{
+    (void)command;
+    ++((release_command_counts *)user)->failed;
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"command rejected");
+    return false;
+}
+static void test_console_failed_release(void)
+{
+    qa_error error={0};release_command_counts counts={0};
+    qa_command_context context={.owner=1,.dialect=QA_RULESET_Q3,.origin=QA_COMMAND_LOCAL};
+    qa_console *console=qa_console_create(&(qa_console_options){.context=context},&error);
+    CHECK(console);
+    CHECK(qa_console_register(console,"releasecount","",1,false,release_count_command,&counts,&error));
+    CHECK(qa_console_register(console,"releasefail","",1,false,release_fail_command,&counts,&error));
+    CHECK(qa_console_append(console,&context,"releasecount\n",&error));
+    qa_console_release *release=NULL;qa_console_release_outcome outcome;
+    CHECK(qa_console_release_prepare(console,&context,"releasefail; releasecount\n",&release,&error));
+    CHECK(!qa_console_release_advance(release,&outcome,&error));
+    CHECK(counts.failed==1 && counts.completed==0 && qa_console_pending(console));
+    error=(qa_error){0};
+    CHECK(qa_console_release_abort(release,&outcome,&error) && outcome==QA_CONSOLE_RELEASE_FAILED);
+    CHECK(qa_console_drain(console,0,NULL,&error));
+    CHECK(counts.failed==1 && counts.completed==1);
+    release=NULL;
+    CHECK(qa_console_release_prepare(console,&context,"wait 2; releasecount\n",&release,&error));
+    CHECK(qa_console_release_advance(release,&outcome,&error));
+    CHECK(qa_console_release_entered(release) && qa_console_pending(console));
+    CHECK(!qa_console_release_abort(release,&outcome,&error));
+    error=(qa_error){0};
+    for (size_t i=0;i<4 && outcome!=QA_CONSOLE_RELEASE_COMPLETED;++i)
+        CHECK(qa_console_release_advance(release,&outcome,&error));
+    CHECK(outcome==QA_CONSOLE_RELEASE_COMPLETED && counts.failed==1 && counts.completed==2);
+    CHECK(qa_console_release_abort(release,&outcome,&error));
+    CHECK(qa_console_destroy_ready(console));qa_console_destroy(console);
 }
 
 static void test_shared_campaign_modes(void)
@@ -4952,6 +4997,7 @@ int main(int argc, char **argv)
     test_q3_player_entity_projection();
     test_module_observation_storage();
     test_console_restore_pages();
+    test_console_failed_release();
     test_chat_initial_aliases();
     test_physical_prediction_command();
     test_shared_campaign_modes();

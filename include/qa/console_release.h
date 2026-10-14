@@ -41,8 +41,9 @@ bool qa_console_release_entered(const qa_console_release *);
  * No source-current callback or command runs. */
 bool qa_console_release_state_read(const qa_console_release *,const qa_console *,
     const qa_command_context *,bool *complete,bool *entered,qa_status *fault);
-/* Refuses while an entered program has pending continuation or failed source
- * history. A refusal retains both the program and its actual console lease. */
+/* Refuses while a healthy entered program has pending continuation. A failed
+ * returned program discards only its undispatched tail and restores the parked
+ * program; completed commands are not replayed. */
 bool qa_console_release_abort(qa_console_release *, qa_console_release_outcome *, qa_error *);
 typedef enum qa_console_release_disposition {
     QA_CONSOLE_RELEASE_RETIRED_ACTOR,
