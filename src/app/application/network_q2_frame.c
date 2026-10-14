@@ -712,3 +712,116 @@ bool qa_application_network_q2_frame(qa_application_network_q2 *owner, const qa_
     *out = value;
     return true;
 }
+
+static bool mvd_profile(const qa_application_network_q2 *owner,
+    qa_q2_mvd_profile *out, qa_error *error)
+{
+    uint16_t revision = 2010, flags = 0;
+    if (owner->host.source.edition == QA_RULESET_Q2_RERELEASE) revision = 3038;
+    else if (owner->config_layout.extended) {
+        revision = 2011;
+        flags = 4;
+        if (owner->host.protocol.flags & 16u) {
+            revision = owner->host.protocol.revision >= 1026 ? 2013 : 2012;
+            flags |= 8;
+        }
+    }
+    return qa_q2_mvd_profile_init(revision, flags, out, error);
+}
+
+bool qa_application_network_q2_mvd_header(qa_application_network_q2 *owner,
+    qa_unified_frame_lease *storage, qa_q2_mvd_header *out, qa_error *error)
+{
+    if (!storage || !out || !application_network_q2_current(owner, error)) return false;
+    const qa_q2_config_entry *configs;
+    size_t count;
+    if (!qa_application_network_q2_configs(owner, &configs, &count, error)) return false;
+    qa_q2_mvd_header value = {.servercount = owner->server_count, .dummy = -1};
+    if (!mvd_profile(owner, &value.profile, error)) return false;
+    if (!owner->host.client_slots || owner->host.client_slots > 256 ||
+        owner->config_count != value.profile.max_configstrings ||
+        owner->clients_index != value.profile.max_clients_index)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Q2 Source namespace cannot be represented by its MVD profile");
+    value.max_clients = (uint16_t)owner->host.client_slots;
+    application_provider *provider = application_network_q2_provider(owner);
+    const char *directory = provider->product->directory;
+    const char *last = directory ? strrchr(directory, '/') : NULL;
+    directory = last ? last + 1 : directory;
+    if (!directory || strlen(directory) >= sizeof(value.gamedir))
+        return application_fail(error, QA_ERROR_FORMAT, "Q2 MVD Source directory is too long");
+    strcpy(value.gamedir, directory);
+    if (count) {
+        value.configstrings = qa_unified_frame_lease_alloc(storage, count,
+            sizeof(*value.configstrings), _Alignof(qa_q2_mvd_config), error);
+        if (!value.configstrings) return false;
+    }
+    qa_arena *arena = qa_unified_frame_lease_arena(storage);
+    for (size_t i = 0; i < count; ++i) {
+        char *text = qa_arena_text(arena, configs[i].value, error);
+        if (!text) return false;
+        value.configstrings[value.config_count++] = (qa_q2_mvd_config){configs[i].index, text};
+    }
+    *out = value;
+    return true;
+}
+
+static bool mvd_portals(qa_application_network_q2 *owner,
+    qa_q2_mvd_frame *frame, qa_error *error)
+{
+    const qa_bsp_view *bsp = qa_collision_bsp(owner->app->geometry);
+    if (!bsp || bsp->family != QA_BSP_Q2)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Q2 MVD recording requires Q2 portal topology");
+    size_t count = qa_bsp_record_count(bsp, QA_BSP_AREA_PORTALS);
+    for (size_t i = 0; i < count; ++i) {
+        qa_bsp_area_portal edge;
+        bool primary;
+        uint32_t contributions;
+        if (!qa_bsp_read_area_portal(bsp, i, &edge, error)) return false;
+        if (edge.portal >= sizeof(frame->portal_bits) * 8)
+            return application_fail(error, QA_ERROR_UNSUPPORTED, "Q2 Source portal number exceeds the MVD portal image");
+        if (!qa_collision_portal_state(owner->app->geometry, edge.portal,
+            &primary, &contributions, error)) return false;
+        size_t byte = edge.portal >> 3;
+        if (primary || contributions) frame->portal_bits[byte] |= (uint8_t)(1u << (edge.portal & 7u));
+        if (byte >= frame->portal_bytes) frame->portal_bytes = (uint8_t)(byte + 1);
+    }
+    return true;
+}
+
+bool qa_application_network_q2_mvd_frame(qa_application_network_q2 *owner,
+    qa_unified_frame_lease *storage, qa_q2_mvd_frame *out, qa_error *error)
+{
+    if (!storage || !out || !application_network_q2_current(owner, error) ||
+        !application_network_q2_observe(owner, error) ||
+        !application_network_q2_source_resources(owner, error) ||
+        !application_network_q2_entities(owner, error)) return false;
+    qa_q2_mvd_frame value = {0};
+    if (!mvd_portals(owner, &value, error)) return false;
+    value.players = qa_unified_frame_lease_alloc(storage, owner->host.client_slots,
+        sizeof(*value.players), _Alignof(qa_q2_mvd_player), error);
+    if (!value.players) return false;
+    for (uint32_t slot = 1; slot <= owner->host.client_slots; ++slot) {
+        qa_application_network_q2_client_slot client;
+        if (!qa_application_network_q2_slot(owner, slot, &client, error)) return false;
+        if (!client.connected) continue;
+        if (slot > 255)
+            return application_fail(error, QA_ERROR_UNSUPPORTED, "Q2 Source client uses the MVD reserved player number");
+        qa_q2_player state;
+        if (!application_network_q2_player_state(owner, client.actor, &state, error)) return false;
+        if (!state.fov) continue;
+        state.clientnum = (int32_t)(slot - 1);
+        state.clientnum_present = true;
+        value.players[value.player_count++] = (qa_q2_mvd_player){(uint8_t)(slot - 1), state};
+    }
+    value.entity_count = owner->source_entity_count;
+    if (value.entity_count) {
+        value.entities = qa_unified_frame_lease_alloc(storage, value.entity_count,
+            sizeof(*value.entities), _Alignof(qa_q2_entity), error);
+        if (!value.entities) return false;
+        memcpy(value.entities, owner->source_entities, value.entity_count * sizeof(*value.entities));
+        for (size_t i = 0; i < value.entity_count; ++i)
+            value.entities[i].instance_bits = value.entities[i].owner = value.entities[i].old_frame = 0;
+    }
+    *out = value;
+    return true;
+}

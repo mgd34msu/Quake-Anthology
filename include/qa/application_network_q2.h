@@ -4,6 +4,7 @@
 #include "qa/application_native_q2_presentation.h"
 #include "qa/network_q2_session.h"
 #include "qa/network_q2_unicast.h"
+#include "qa/network_q2_mvd.h"
 
 typedef struct qa_application_network_q2 qa_application_network_q2;
 typedef struct qa_application_network_q2_host {
@@ -137,6 +138,13 @@ bool qa_application_network_q2_discovery(qa_application_network_q2 *,
     qa_q2_status *, const char **name, const char **map, qa_error *);
 bool qa_application_network_q2_download_server(qa_application_network_q2 *,
     const char **, qa_error *);
+
+/* Full source recording uses the completed shared Source table, not a
+ * recipient-culling projection. The caller leases the returned typed spans. */
+bool qa_application_network_q2_mvd_header(qa_application_network_q2 *,
+    qa_unified_frame_lease *, qa_q2_mvd_header *, qa_error *);
+bool qa_application_network_q2_mvd_frame(qa_application_network_q2 *,
+    qa_unified_frame_lease *, qa_q2_mvd_frame *, qa_error *);
 
 /* Resource/config numbering belongs to this actual source publication owner.
  * Cold import requires an empty owner bound to the restored physical GAME. */
