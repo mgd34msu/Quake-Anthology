@@ -430,6 +430,9 @@
 #define QA_Q2_SOUND_WEAPONS_RAILGR1A "weapons/railgr1a.wav"
 #define QA_Q2_SOUND_WEAPONS_RAILGR1B "weapons/railgr1b.wav"
 #define QA_Q2_SOUND_WEAPONS_RG_HUM "weapons/rg_hum.wav"
+#define QA_Q2_SOUND_WEAPONS_PHALOOP "weapons/phaloop.wav"
+#define QA_Q2_SOUND_FLOATER_FLTSRCH1 "floater/fltsrch1.wav"
+#define QA_Q2_SOUND_FLYER_FLYIDLE1 "flyer/flyidle1.wav"
 #define QA_Q2_SOUND_WEAPONS_RIPPFIRE "weapons/rippfire.wav"
 #define QA_Q2_SOUND_WEAPONS_ROCKFLY "weapons/rockfly.wav"
 #define QA_Q2_SOUND_WEAPONS_ROCKLF1A "weapons/rocklf1a.wav"
@@ -955,7 +958,10 @@
     X(GEK_GK_IDLE1) \
     X(GEK_GEK_LOW) \
     X(GEK_GEK_MID) \
-    X(GEK_GEK_HIGH)
+    X(GEK_GEK_HIGH) \
+    X(WEAPONS_PHALOOP) \
+    X(FLOATER_FLTSRCH1) \
+    X(FLYER_FLYIDLE1)
 
 typedef enum qa_q2_sound_index {
     QA_Q2_SFX_NONE,

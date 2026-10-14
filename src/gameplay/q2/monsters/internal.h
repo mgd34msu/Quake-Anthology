@@ -476,6 +476,7 @@ bool q2m_melee(q2m_context *, float range, float damage, float kick,
 bool q2m_hit(q2m_context *, qa_vec3 aim, float damage, float kick, bool *, qa_error *);
 bool q2m_species_melee(q2m_context *, q2m_callback_id, bool *, qa_error *);
 bool q2m_weapon_sound(q2m_context *, q2_runtime_name path, qa_error *);
+bool q2m_idle_loop(q2m_context *, qa_error *);
 bool q2m_jorg_sound_end(q2m_context *, qa_error *);
 bool q2m_soldier_sound_end(q2m_context *, qa_error *);
 bool q2m_stalker_callback(q2m_context *, q2m_callback_id, bool *, qa_error *);

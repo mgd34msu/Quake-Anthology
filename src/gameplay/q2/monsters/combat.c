@@ -2771,6 +2771,10 @@ bool q2m_die(q2m_context *context, qa_error *error) {
   bool crushed = monster->last_attack.cause.kind == QA_CAUSE_Q2 &&
                  monster->last_attack.cause.source.q2.means_of_death == 20;
   q2m_species species = monster->definition->species;
+  if (!q2m_idle_loop(context, error))
+    return false;
+  if (!q2m_alive(context))
+    return true;
   if (species == Q2M_JORG) {
     if (!q2m_jorg_sound_end(context, error)) return false;
     if (!q2m_alive(context)) return true;
@@ -2802,6 +2806,10 @@ bool q2m_die(q2m_context *context, qa_error *error) {
     monster->dead = true;
     monster->gibbed = true;
     monster->can_take_damage = false;
+    if (!q2m_idle_loop(context, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
     if (!q2m_sound(context, QA_Q2_SFX_MISC_UDEATH, 2,
                    species == Q2M_INSANE ? 2.0f : 1.0f, error))
       return false;

@@ -7,6 +7,10 @@
 bool q2m_show(q2m_context *context, qa_error *error) {
     if (!q2m_alive(context))
         return true;
+    if (!q2m_idle_loop(context, error))
+        return false;
+    if (!q2m_alive(context))
+        return true;
     struct qa_q2_monster *monster = context->monster;
     qa_entity_visual visual = {.models = {monster->model},
                            .frame = monster->frame,

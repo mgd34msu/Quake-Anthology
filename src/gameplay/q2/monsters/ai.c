@@ -2838,7 +2838,7 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
         if (!q2m_alive(context))
           return true;
         if (rerelease) {
-          if (qa_vec_length(qa_vec_sub(context->body.origin, enemy.origin)) <= 112.0f &&
+          if (qa_vec_length(qa_vec_sub(context->body.origin, enemy.origin)) <= 82.0f &&
               monster->melee_ns <= context->game->now_ns) {
             *move = Q2M_MOVE_NONE;
             break;

@@ -1215,12 +1215,46 @@ bool qa_q2_monster_turret_release(qa_q2_game *game, qa_actor_id id,
   return true;
 }
 
+bool q2m_idle_loop(q2m_context *context, qa_error *error) {
+  if (!q2m_alive(context))
+    return true;
+  struct qa_q2_monster *monster = context->monster;
+  q2_runtime_name loop = Q2_NAME_NONE;
+  switch (monster->definition->species) {
+  case Q2M_GLADIATOR:
+  case Q2M_GLADB:
+    if (context->game->options.rules != QA_RULESET_Q2_RERELEASE)
+      return true;
+    if (context->combat.health > 0 && !monster->gibbed)
+      loop = monster->style == 1 ? QA_Q2_SFX_WEAPONS_PHALOOP
+                                 : QA_Q2_SFX_WEAPONS_RG_HUM;
+    break;
+  case Q2M_FLOATER:
+    if (!monster->gibbed)
+      loop = QA_Q2_SFX_FLOATER_FLTSRCH1;
+    break;
+  case Q2M_FLYER:
+  case Q2M_KAMIKAZE:
+    if (!monster->gibbed)
+      loop = QA_Q2_SFX_FLYER_FLYIDLE1;
+    break;
+  default:
+    return true;
+  }
+  if (!monster->visible)
+    loop = Q2_NAME_NONE;
+  qa_string_id wanted = loop ? context->game->runtime_names[loop] : 0;
+  return wanted == monster->weapon_sound || q2m_weapon_sound(context, loop, error);
+}
+
 static qa_bounds monster_bounds(const qa_q2_game *game, const q2m_definition *definition) {
   qa_bounds bounds = definition->bounds;
   if (game->options.rules == QA_RULESET_Q2_RERELEASE) {
     if (definition->species == Q2M_FLIPPER) { bounds.mins.z = -8; bounds.maxs.z = 20; }
     else if (definition->species == Q2M_FLOATER) bounds.maxs.z = 48;
     else if (definition->species == Q2M_FLYER) bounds.maxs.z = 16;
+    else if (definition->species == Q2M_GLADIATOR || definition->species == Q2M_GLADB)
+      bounds.maxs.z = 42;
     else if (definition->species == Q2M_TANK_STAND) bounds.maxs.z = 72;
   }
   return bounds;
