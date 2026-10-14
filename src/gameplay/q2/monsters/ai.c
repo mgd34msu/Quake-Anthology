@@ -2535,6 +2535,18 @@ bool q2m_check_attack(q2m_context *context, bool *selected, bool *started,
   return true;
 }
 
+void q2m_flyer_flight(struct qa_q2_monster *monster, bool melee) {
+  if (melee) {
+    monster->fly_pinned = false;
+    monster->fly_position_ns = 0;
+  }
+  monster->fly_thrusters = melee;
+  monster->fly_acceleration = melee ? 20.0f : 15.0f;
+  monster->fly_speed = melee ? 210.0f : 165.0f;
+  monster->fly_min_distance = melee ? 0.0f : 45.0f;
+  monster->fly_max_distance = melee ? 10.0f : 200.0f;
+}
+
 static bool select_species_attack(q2m_context *context, q2m_move_id *move,
                                   qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
@@ -2754,12 +2766,62 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
       }
     }
     break;
-  case Q2M_FLYER:
-    if (melee)
+  case Q2M_FLYER: {
+    if (!rerelease) {
+      *move = melee ? Q2M_MOVE_flyer_move_start_melee
+                    : Q2M_MOVE_flyer_move_attack2;
+      break;
+    }
+    if (context->combat.mass > 50) {
+      *move = Q2M_MOVE_flyer_move_kamikaze;
+      break;
+    }
+    if (melee) {
       *move = Q2M_MOVE_flyer_move_start_melee;
-    else
+      q2m_flyer_flight(monster, true);
+      break;
+    }
+    monster->attack_state = Q2M_STRAIGHT;
+    bool visible = false;
+    if (monster->enemy.registry != 0 &&
+        !q2m_visible(context, monster->enemy, &visible, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    if (visible && distance <= 225.0f &&
+        q2_rerelease_float(context->game, 0, 1) >
+            (distance / 225.0f) * 0.35f) {
+      *move = Q2M_MOVE_flyer_move_start_melee;
+      q2m_flyer_flight(monster, true);
+    } else {
       *move = Q2M_MOVE_flyer_move_attack2;
+    }
+    if (!monster->fly_pinned && q2_random_bounded(context->game, 2) == 0 &&
+        monster->enemy.registry != 0) {
+      if (!q2m_visible(context, monster->enemy, &visible, error))
+        return false;
+      if (!q2m_alive(context))
+        return true;
+      qa_body_state target;
+      if (visible &&
+          qa_world_body_read(context->game->services.world, monster->enemy,
+                             &target, NULL)) {
+        if (!q2m_alive(context))
+          return true;
+        monster->fly_pinned = true;
+        monster->fly_position_ns = q2m_after(monster->fly_position_ns, 1.7);
+        if (q2_random_bounded(context->game, 2) == 0)
+          monster->fly_ideal_position = qa_vec_add(
+              context->body.origin,
+              qa_vec_scale(context->body.velocity,
+                           q2_rerelease_float(context->game, 0, 1)));
+        else
+          monster->fly_ideal_position =
+              qa_vec_add(monster->fly_ideal_position, target.origin);
+      }
+    }
     break;
+  }
   case Q2M_GLADIATOR:
   case Q2M_GLADB:
     if (!melee && !rerelease && distance <= 112.0f) {

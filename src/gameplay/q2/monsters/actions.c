@@ -17,7 +17,6 @@ static const q2m_transition transitions[Q2M_CALLBACK_COUNT] = {
     [Q2M_CALLBACK_chick_slash]={ Q2M_MOVE_chick_move_slash},
     [Q2M_CALLBACK_fixbot_attack]={ Q2M_MOVE_fixbot_move_attack1},
     [Q2M_CALLBACK_flipper_run_loop]={ Q2M_MOVE_flipper_move_run_loop},
-    [Q2M_CALLBACK_flyer_check_melee]={ Q2M_MOVE_flyer_move_start_melee},
     [Q2M_CALLBACK_flyer_kamikaze]={ Q2M_MOVE_flyer_move_kamikaze},
     [Q2M_CALLBACK_flyer_loop_melee]={ Q2M_MOVE_flyer_move_loop_melee},
     [Q2M_CALLBACK_gekk_chant]={ Q2M_MOVE_gekk_move_chant},
@@ -2409,6 +2408,27 @@ static bool tank_run(q2m_context *context, qa_error *error) {
 
 static bool end_transition(q2m_context *context, q2m_callback_id callback,
                            bool *handled, qa_error *error) {
+  if (callback == Q2M_CALLBACK_flyer_check_melee) {
+    *handled = true;
+    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+    float distance = q2m_distance(context, context->monster->enemy);
+    if (!q2m_alive(context))
+      return true;
+    bool again = rerelease
+        ? distance <= 20.0f && context->monster->melee_ns <= context->game->now_ns
+        : distance < 80.0f && q2m_random(context->game) <= 0.8f;
+    if (rerelease && !again)
+      q2m_flyer_flight(context->monster, false);
+    return q2m_set_move(context, again ? Q2M_MOVE_flyer_move_loop_melee
+                                     : Q2M_MOVE_flyer_move_end_melee,
+                       false, error);
+  }
+  if (callback == Q2M_CALLBACK_flyer_run &&
+      context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
+      context->combat.mass > 50) {
+    *handled = true;
+    return q2m_set_move(context, Q2M_MOVE_flyer_move_kamikaze, false, error);
+  }
   if (callback == Q2M_CALLBACK_tank_run || callback == Q2M_CALLBACK_tank_poststrike) {
     *handled = true;
     if (callback == Q2M_CALLBACK_tank_poststrike) {

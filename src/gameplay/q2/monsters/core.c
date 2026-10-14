@@ -1945,10 +1945,7 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
     case Q2M_FLYER:
       monster->alternate_fly = true;
       monster->fly_buzzard = true;
-      monster->fly_acceleration = 15.0f;
-      monster->fly_speed = 165.0f;
-      monster->fly_min_distance = 45.0f;
-      monster->fly_max_distance = 200.0f;
+      q2m_flyer_flight(monster, false);
       break;
     case Q2M_HOVER:
       monster->alternate_fly = true;

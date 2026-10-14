@@ -436,6 +436,7 @@ bool q2m_perception_alert(q2m_context *, qa_actor_id, qa_error *);
 bool q2m_react_to_damage(q2m_context *, qa_actor_id, qa_error *);
 float q2m_distance(q2m_context *, qa_actor_id);
 float q2m_body_distance(qa_ruleset_id, const qa_body_state *, const qa_body_state *);
+void q2m_flyer_flight(struct qa_q2_monster *, bool melee);
 bool q2m_find_target(q2m_context *, bool *found, qa_error *);
 bool q2m_found_target(q2m_context *, qa_actor_id, qa_error *);
 bool q2m_medic_acquire(q2m_context *, bool preserve_enemy, bool *, qa_error *);

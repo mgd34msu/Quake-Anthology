@@ -871,13 +871,8 @@ static bool pain_flipper_flyer(q2m_context *context, bool flyer, qa_error *error
     return false;
   if (!q2m_alive(context) || (rerelease && !reacts_to_pain(context)))
     return true;
-  if (rerelease && flyer) {
-    m->fly_thrusters = false;
-    m->fly_acceleration = 15;
-    m->fly_speed = 165;
-    m->fly_min_distance = 45;
-    m->fly_max_distance = 200;
-  }
+  if (rerelease && flyer)
+    q2m_flyer_flight(m, false);
   return q2m_set_move(context, flyer ? flyer_moves[index]
                              : index ? Q2M_MOVE_flipper_move_pain2 : Q2M_MOVE_flipper_move_pain1,
                         rerelease, error);
