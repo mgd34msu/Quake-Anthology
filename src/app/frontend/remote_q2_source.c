@@ -464,7 +464,7 @@ bool frontend_remote_q2_source_advance(frontend_remote_q2_source *source, bool *
     const frontend_remote_q2_source_options *options = &source->options;
     frontend_remote_q2_options child = {.domain = source->domain, .context = source, .current = current,
         .retirement_current = retirement_current,
-        .material_scripts = options->client.material_scripts,
+        .material_scripts = options->client.material_scripts, .demo = options->client.demo,
         .download_allowed = allowed, .download_stage = download_stage,
         .restore_stage = options->client.restore_stage ? restore_stage : NULL, .records = records, .disconnected = disconnected,
         .entity_actor = options->client.entity_actor ? entity_actor : NULL,
