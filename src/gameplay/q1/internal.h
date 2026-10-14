@@ -98,6 +98,8 @@
     X(INFO_STARTENDTEXT_USE, "info_startendtext_use") \
     X(EFFECT_FINALE_USE, "effect_finale_use") \
     X(SUB_REMOVE, "SUB_Remove") \
+    X(SUB_USE_TARGETS, "SUB_UseTargets") \
+    X(SUB_NULL, "SUB_Null") \
     X(ENDPOINT1, "endpoint1") \
     X(ENDPOINT2, "endpoint2") \
     X(RESOURCE_SELL_SCREEN, "sell-screen") \

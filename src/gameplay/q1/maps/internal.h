@@ -503,9 +503,10 @@ bool q1_map_rogue_misc_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_rogue_misc_reaction(qa_q1_game *, q1_actor *, const qa_damage_outcome *, qa_error *);
 bool q1_map_rogue_rubble_throw(qa_q1_game *, q1_actor *, qa_error *);
 static inline bool q1_map_is_addon_field(const qa_q1_game *g, q1_map_kind kind) {
-    return (g->options.program == QA_Q1_DOPA || g->options.program == QA_Q1_MG1 ||
+    return (g->options.program == QA_Q1_ROGUE && kind == Q1_MAP_PUSH) ||
+           ((g->options.program == QA_Q1_DOPA || g->options.program == QA_Q1_MG1 ||
             g->options.program == QA_Q1_MG3) &&
-           (kind == Q1_MAP_HURT || kind == Q1_MAP_PUSH || kind == Q1_MAP_SHELTER);
+            (kind == Q1_MAP_HURT || kind == Q1_MAP_PUSH || kind == Q1_MAP_SHELTER));
 }
 bool q1_map_addon_field_spawn(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_addon_field_use(qa_q1_game *, q1_actor *, qa_error *);

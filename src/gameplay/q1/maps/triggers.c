@@ -469,16 +469,7 @@ bool q1_map_trigger_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contac
             return false;
         return !q1_alive(g, entity->id) || q1_map_schedule(g, entity, 1, Q1_MAP_REARM, error);
     case Q1_MAP_PUSH:
-        if (q1_health(g, other) <= 0 && !q1_classnamed(g, other, g->runtime_names[Q1_NAME_GRENADE]))
-            return true;
-        if (!qa_world_body_read(g->services.world, other, &body, error))
-            return false;
-        body.velocity = qa_vec_scale(state->movedir, entity->speed * 10);
-        if (!qa_world_body_write(g->services.world, other, &body, error) ||
-            !changed(g, other, &body, QA_BUILTIN_MOTION_LAUNCH, false, 0, error))
-            return false;
-        return !q1_alive(g, entity->id) || !(entity->spawnflags & 1u) ||
-               q1_remove(g, entity, error);
+        return q1_map_addon_field_touch(g, entity, other, error);
     case Q1_MAP_SETSKILL: {
         if (!q1_map_player(g, other))
             return true;

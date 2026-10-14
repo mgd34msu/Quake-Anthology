@@ -2,7 +2,9 @@
 
 static q1_actor *field(qa_q1_game *g, qa_actor_id id) {
     q1_actor *e = q1_entity(g, id);
-    return e && e->map && q1_map_is_addon_field(g, e->map->kind) ? e : NULL;
+    return e && e->map &&
+                   (e->map->kind == Q1_MAP_PUSH || q1_map_is_addon_field(g, e->map->kind))
+               ? e : NULL;
 }
 q1_addon_contact *q1_map_addon_contact(qa_q1_game *g, qa_actor_id id, bool create, qa_error *error) {
     (void)error;
@@ -60,7 +62,8 @@ bool q1_map_addon_quad_mark(qa_q1_game *g, qa_actor_id id, qa_error *error) {
 }
 bool q1_map_addon_field_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_actor_id id = e->id;
-    if ((!g->options.coop && (e->spawnflags & 32768u)) ||
+    bool rogue = g->options.program == QA_Q1_ROGUE;
+    if ((!rogue && !g->options.coop && (e->spawnflags & 32768u)) ||
         (g->options.program == QA_Q1_MG3 &&
          (e->spawnflags & (262144u << qa_q1_mg3_rune_count(*g->maps->options.server_flags)))))
         return q1_remove(g, e, error);
@@ -87,7 +90,7 @@ bool q1_map_addon_field_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (!e)
         return true;
     e->map->touch_enabled = true;
-    e->map->use_enabled = kind != Q1_MAP_SHELTER;
+    e->map->use_enabled = rogue ? (e->spawnflags & 2u) != 0 : kind != Q1_MAP_SHELTER;
     if (kind == Q1_MAP_HURT) {
         e->damage = e->damage != 0 ? e->damage : 5;
         e->wait = e->wait != 0 ? e->wait : 1;
@@ -97,10 +100,15 @@ bool q1_map_addon_field_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
             return false;
     } else if (kind == Q1_MAP_PUSH) {
         e->speed = e->speed != 0 ? e->speed : 1000;
-        if (e->spawnflags & 4)
-            e->physics.solid = QA_PHYSICS_NOT_SOLID;
-        if (!qa_builtin_resource(&g->services, "trigger_push", &e->map->netname, error))
-            return false;
+        if (rogue) {
+            if (!(e->spawnflags & 2u))
+                e->spawnflags += 4u;
+        } else {
+            if (e->spawnflags & 4)
+                e->physics.solid = QA_PHYSICS_NOT_SOLID;
+            if (!qa_builtin_resource(&g->services, "trigger_push", &e->map->netname, error))
+                return false;
+        }
     } else {
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, id, &body, error))
@@ -126,6 +134,10 @@ bool q1_map_addon_field_use(qa_q1_game *g, q1_actor *e, qa_error *error) {
     }
     if (e->map->kind != Q1_MAP_PUSH)
         return true;
+    if (g->options.program == QA_Q1_ROGUE) {
+        e->spawnflags ^= 4u;
+        return true;
+    }
     qa_actor_id id = e->id;
     bool enable = e->physics.solid != QA_PHYSICS_TRIGGER;
     e->physics.solid = enable ? QA_PHYSICS_TRIGGER : QA_PHYSICS_NOT_SOLID;
@@ -163,6 +175,11 @@ static bool push(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *error)
     qa_vec3 direction = e->map->movedir;
     float speed = e->speed;
     uint32_t flags = e->spawnflags;
+    bool rogue = g->options.program == QA_Q1_ROGUE;
+    bool addon = g->options.program == QA_Q1_DOPA || g->options.program == QA_Q1_MG1 ||
+                 g->options.program == QA_Q1_MG3;
+    if (rogue && !(flags & 4u))
+        return true;
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, other, &body, error))
         return false;
@@ -173,9 +190,10 @@ static bool push(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *error)
     if (!field(g, id) || !q1_alive(g, other))
         return true;
     qa_vec3 delta = qa_vec_scale(direction, speed * 10);
-    qa_vec3 velocity = flags & 2 ? qa_vec_add(body.velocity, qa_vec_scale(delta, (float)g->elapsed))
-                                : delta;
-    if (g->options.program != QA_Q1_MG3 && horde_manager(g)) {
+    qa_vec3 velocity = addon && (flags & 2)
+                          ? qa_vec_add(body.velocity, qa_vec_scale(delta, (float)g->elapsed))
+                          : delta;
+    if (addon && g->options.program != QA_Q1_MG3 && horde_manager(g)) {
         q1_actor *native = q1_entity(g, other);
         if (native)
             native->spawnflags &= ~4u;
@@ -191,25 +209,28 @@ static bool push(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *error)
         }
     }
     bool living = q1_health(g, other) > 0;
-    bool grenade = living ? false : q1_classnamed(g, other, g->runtime_names[Q1_NAME_GRENADE]);
+    bool grenade = !living &&
+        (q1_classnamed(g, other, g->runtime_names[Q1_NAME_GRENADE]) ||
+         (rogue && (q1_classnamed(g, other, g->runtime_names[Q1_NAME_MINI_GRENADE]) ||
+                    q1_classnamed(g, other, g->runtime_names[Q1_NAME_CLASS_MULTIGRENADE]))));
     if (!field(g, id) || !q1_alive(g, other))
         return true;
     if (living || grenade) {
         q1_addon_contact *row = q1_map_addon_contact(g, other, false, NULL);
-        if (row && row->sheltered)
+        if (addon && row && row->sheltered)
             return true;
         bool jump = g->options.program == QA_Q1_MG3 && (flags & 16);
         if (jump && !traits.grounded)
             return true;
         body.velocity = velocity;
-        if (traits.monster)
+        if (addon && traits.monster)
             body.ground = (qa_actor_reference){0};
         if (!motion(g, other, &body, error))
             return false;
         if (!field(g, id) || !q1_alive(g, other))
             return true;
         q1_actor *native = q1_entity(g, other);
-        if (native && traits.monster)
+        if (addon && native && traits.monster)
             native->physics.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
         if (traits.player) {
             row = q1_map_addon_contact(g, other, true, error);

@@ -364,6 +364,8 @@ static bool effect_finale(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 bool q1_map_hip_misc_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_error *error) {
     switch (entity->map->kind) {
     case Q1_MAP_HIP_FINALE:
+        if (entity->map->field_state != 1)
+            entity->activator = q1_ref_from(g, activator);
         return effect_finale(g, entity, error);
     case Q1_MAP_START_ENDTEXT:
         return start_endtext(g, entity, activator, error);
@@ -423,6 +425,10 @@ bool q1_map_hip_misc_think(qa_q1_game *g, q1_actor *entity, q1_map_action action
             return effect_finale(g, entity, error);
         if (function == g->runtime_names[Q1_NAME_SUB_REMOVE])
             return q1_remove(g, entity, error);
+        if (function == g->runtime_names[Q1_NAME_SUB_USE_TARGETS])
+            return q1_map_targets(g, entity, q1_ref_actor(g, entity->activator), error);
+        if (function == g->runtime_names[Q1_NAME_SUB_NULL])
+            return true;
         return q1_map_fail(error, "Hipnotic finale has an unknown native continuation");
     }
     if (action == Q1_MAP_EXPLODER_FIRE)
