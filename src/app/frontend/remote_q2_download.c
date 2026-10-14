@@ -6,6 +6,31 @@
 #include <string.h>
 #include <stdio.h>
 
+enum { Q2_HTTP_FILELIST_BYTES = 1 << 20 };
+typedef struct remote_q2_http_asset {
+    struct remote_q2_http_asset *next;
+    qa_string_id path;
+    qa_download_id job;
+    bool package, game_local, settled;
+} remote_q2_http_asset;
+typedef struct remote_q2_http_downloads {
+    frontend_remote_q2 *owner;
+    qa_downloads *jobs;
+    qa_arena storage;
+    qa_id_index assets;
+    remote_q2_http_asset *first, **tail;
+    qa_http_request_id metadata_request;
+    size_t metadata_size;
+    unsigned metadata_list;
+    bool metadata_done, metadata_success, manifest_seeded, initial_done;
+    uint8_t metadata[Q2_HTTP_FILELIST_BYTES];
+} remote_q2_http_downloads;
+
+static bool refresh(frontend_remote_q2 *, qa_error *);
+static void http_clear(frontend_remote_q2 *);
+static bool http_prepare(frontend_remote_q2 *, const char *, bool *, qa_error *);
+static bool http_request(frontend_remote_q2 *, const char *, bool *, qa_error *);
+
 static unsigned char fold(unsigned char value)
 { return value >= 'A' && value <= 'Z' ? (unsigned char)(value + 'a' - 'A') : value; }
 static bool prefix(const char *value, const char *expected)
@@ -150,6 +175,358 @@ static bool remember(frontend_remote_q2 *row, const char *path, qa_error *error)
     if (!items) { free(copy); return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 download refusal/attempt"); }
     strcpy(copy, path); items[count] = copy; row->download_attempted = items; ++row->download_attempted_count; return true;
 }
+static bool http_enabled(const frontend_remote_q2 *row)
+{
+    const qa_cvar_view *value = qa_cvars_read(row->options.domain.cvars, row->http_downloads);
+    return *row->download_server && value && value->number != 0 && !row->options.demo;
+}
+static bool http_package(const char *path)
+{ return suffix(path, ".pak") || suffix(path, ".pkz") || suffix(path, ".pk3"); }
+static bool http_path_valid(const char *path)
+{
+    if (!path || !*path || path[0] == '.') return false;
+    for (const unsigned char *p = (const unsigned char *)path; *p; ++p)
+        if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+            (*p >= '0' && *p <= '9') || strchr("_+./-", *p))) return false;
+    if (http_package(path)) return !strchr(path, '/');
+    if (!strchr(path, '/')) return false;
+    static const char *const extensions[] = {".bsp", ".dm2", ".ent", ".jpg", ".loc", ".md2", ".md3",
+        ".ogg", ".pcx", ".png", ".sp2", ".tga", ".txt", ".wal", ".wav", ".jpeg", ".bmp", ".gif"};
+    for (size_t i = 0; i < sizeof(extensions) / sizeof(*extensions); ++i)
+        if (suffix(path, extensions[i])) return true;
+    return native_asset(path);
+}
+static qa_fs_root *http_destination(frontend_remote_q2 *row, const char *path)
+{ return prefix(path, "players/") ? row->content.base_write_root : row->content.selected_write_root; }
+static const char *http_asset_path(const remote_q2_http_downloads *owner, const remote_q2_http_asset *asset)
+{ return qa_strings_cstr(qa_session_strings(qa_application_session(owner->owner->options.domain.application)), asset->path); }
+static remote_q2_http_asset *http_asset_find(remote_q2_http_downloads *owner, qa_string_id path)
+{
+    qa_id_index_entry *entry = qa_id_index_find(&owner->assets, path, 0);
+    return entry ? (remote_q2_http_asset *)(uintptr_t)entry->value : NULL;
+}
+static bool http_asset_admit(remote_q2_http_downloads *owner, const char *path, bool game_local,
+    remote_q2_http_asset **out, qa_error *error)
+{
+    qa_strings *strings = qa_session_strings(qa_application_session(owner->owner->options.domain.application));
+    qa_string_id id;
+    if (!qa_strings_intern_cstr(strings, path, &id, error)) return false;
+    remote_q2_http_asset *asset = http_asset_find(owner, id);
+    if (!asset) {
+        if (!qa_id_index_reserve(&owner->assets, 1, error)) return false;
+        asset = qa_arena_alloc(&owner->storage, sizeof(*asset), _Alignof(remote_q2_http_asset), error);
+        if (!asset) return false;
+        *asset = (remote_q2_http_asset){.path = id, .package = http_package(path)};
+        *owner->tail = asset; owner->tail = &asset->next;
+        qa_id_index_insert(&owner->assets, id, 0, (size_t)(uintptr_t)asset);
+    }
+    asset->game_local |= game_local || asset->package;
+    *out = asset; return true;
+}
+static bool http_local_mount(qa_mount_id mount, void *context)
+{
+    frontend_remote_q2 *row = context; qa_product_id product; qa_mount_id catalog_mount;
+    return qa_catalog_product_mount_origin(row->content.catalog, row->content.selected, row->content.mounts,
+        mount, &product, &catalog_mount) && product == row->content.selected;
+}
+static bool http_asset_installed(remote_q2_http_downloads *owner, const remote_q2_http_asset *asset,
+    bool *present, qa_error *error)
+{
+    frontend_remote_q2 *row = owner->owner; const char *path = http_asset_path(owner, asset);
+    if (asset->package) {
+        qa_fs_entry_kind kind;
+        if (!qa_fs_root_status(http_destination(row, path), path, &kind, NULL, error)) return false;
+        *present = kind != QA_FS_MISSING; return true;
+    }
+    if (!asset->game_local) return installed(row, path, present, error);
+    qa_resource *resource = NULL; qa_error issue = {0};
+    *present = qa_vfs_acquire_filtered(row->content.mounts, path, http_local_mount, row, &resource, NULL, &issue);
+    qa_resource_release(resource);
+    if (*present || issue.code == QA_ERROR_NOT_FOUND) return true;
+    if (error) *error = issue;
+    return false;
+}
+static void http_note(frontend_remote_q2 *row, const char *path)
+{
+    qa_error ignored = {0};
+    qa_application_log_emit(row->options.domain.application, &row->options.domain.command_context,
+        http_package(path) ? "HTTP package unavailable; continuing with individual files: " :
+        "HTTP download unavailable; continuing with native downloads: ", QA_APPLICATION_LOG_CONSOLE, &ignored);
+    qa_application_log_emit(row->options.domain.application, &row->options.domain.command_context,
+        path, QA_APPLICATION_LOG_CONSOLE, &ignored);
+    qa_application_log_emit(row->options.domain.application, &row->options.domain.command_context,
+        "\n", QA_APPLICATION_LOG_CONSOLE, &ignored);
+}
+static bool http_permit(void *context, const qa_download_request *request, const char *url, qa_error *error)
+{
+    frontend_remote_q2 *row = context; bool allowed = false;
+    return http_enabled(row) && url && http_path_valid(request->path) &&
+        (!native_asset(request->path) || remote_q2_download_destination(row, request->path)) &&
+        row->options.download_allowed(row->options.context, request->path, &allowed, error) && allowed &&
+        remote_q2_live(row, error);
+}
+static qa_fs_root *http_target_root(void *context, const qa_download_request *request, qa_error *error)
+{ (void)error; return http_destination(context, request->path); }
+static bool http_inspect(void *context, const char *path, qa_fs_stage *stage, uint64_t size, qa_error *error)
+{
+    frontend_remote_q2 *row = context; bool allowed = false;
+    if (!http_enabled(row) || !row->options.download_allowed(row->options.context, path, &allowed, error) ||
+        !allowed || !remote_q2_live(row, error)) return false;
+    if (!http_package(path) && !suffix(path, ".bsp")) return true;
+    qa_fs_stage_mapping *mapping = NULL;
+    if (!qa_fs_stage_map(stage, &mapping, error)) return false;
+    qa_bytes bytes = qa_fs_stage_mapping_bytes(mapping);
+    bool ok = bytes.size == size;
+    if (ok && http_package(path)) {
+        qa_archive *archive = NULL;
+        ok = qa_archive_open_memory(bytes, qa_archive_kind_for_path(path), &archive, error);
+        qa_archive_close(archive);
+    } else if (ok) {
+        qa_bsp_view bsp;
+        ok = qa_bsp_open(bytes, &bsp, error) && qa_bsp_validate(&bsp, error);
+    }
+    qa_fs_stage_unmap(mapping); return ok;
+}
+static bool http_remount(void *context, const char *path, qa_error *error)
+{ (void)path; return refresh(context, error); }
+static const char *http_game(const frontend_remote_q2 *row)
+{ return *row->data.gamedir ? row->data.gamedir : "baseq2"; }
+static char *http_url(remote_q2_http_downloads *owner, const char *game, const char *path,
+    const char *ending, qa_error *error)
+{
+    size_t base = strlen(owner->owner->download_server), a = strlen(game), b = strlen(path), c = strlen(ending);
+    if (a > (SIZE_MAX - base - c - 2) / 3 || b > (SIZE_MAX - base - c - 2) / 3 - a) return NULL;
+    char *out = qa_arena_alloc(&owner->storage, base + (a + b) * 3 + c + 2, 1, error);
+    if (!out) return NULL;
+    memcpy(out, owner->owner->download_server, base); size_t at = base;
+    const char *parts[] = {game, path};
+    static const char hex[] = "0123456789ABCDEF";
+    for (size_t i = 0; i < 2; ++i) {
+        if (i && *path) out[at++] = '/';
+        for (const unsigned char *p = (const unsigned char *)parts[i]; *p; ++p) {
+            unsigned char value = *p;
+            if ((value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') ||
+                (value >= '0' && value <= '9') || strchr("-._~/", value)) out[at++] = (char)value;
+            else { out[at++] = '%'; out[at++] = hex[value >> 4]; out[at++] = hex[value & 15]; }
+        }
+    }
+    memcpy(out + at, ending, c + 1); return out;
+}
+static bool http_parent(remote_q2_http_downloads *owner, const char *path, qa_error *error)
+{
+    const char *slash = strrchr(path, '/');
+    if (!slash) return true;
+    size_t length = (size_t)(slash - path);
+    char *directory = qa_arena_alloc(&owner->storage, length + 1, 1, error);
+    if (!directory) return false;
+    memcpy(directory, path, length); directory[length] = 0;
+    return qa_fs_root_create_directory(http_destination(owner->owner, path), directory, error);
+}
+static bool http_asset_start(remote_q2_http_downloads *owner, remote_q2_http_asset *asset, qa_error *error)
+{
+    const char *path = http_asset_path(owner, asset); bool present = false, allowed = false;
+    if (!http_asset_installed(owner, asset, &present, error)) return false;
+    if (present) { asset->settled = true; return true; }
+    if (!http_enabled(owner->owner)) { asset->settled = true; return true; }
+    if (!owner->owner->options.download_allowed(owner->owner->options.context, path, &allowed, error)) return false;
+    if (!allowed) { asset->settled = true; return true; }
+    char *url = http_url(owner, http_game(owner->owner), path, "", error);
+    qa_download_request request = {.path = path, .maximum_bytes = INT32_MAX};
+    if (!url || !http_parent(owner, path, error) ||
+        !qa_downloads_begin(owner->jobs, &request, url, &asset->job, error)) {
+        http_note(owner->owner, path); asset->settled = true;
+        if (error) *error = (qa_error){0};
+    }
+    return true;
+}
+static bool http_metadata_headers(void *context, qa_http_request_id id,
+    const qa_http_response *response, qa_error *error)
+{
+    (void)context; (void)id;
+    if (response->status == 200 || (response->status >= 300 && response->status < 400)) return true;
+    return remote_q2_fail(error, QA_ERROR_IO, "Optional Q2 filelist is unavailable");
+}
+static bool http_metadata_body(void *context, qa_http_request_id id,
+    const qa_http_response *response, qa_bytes bytes, qa_error *error)
+{
+    (void)id; remote_q2_http_downloads *owner = context;
+    if (response->status != 200) return true;
+    if (bytes.size > sizeof(owner->metadata) - owner->metadata_size)
+        return remote_q2_fail(error, QA_ERROR_CAPACITY, "Q2 filelist exceeds its original 1 MiB limit");
+    if (bytes.size) memcpy(owner->metadata + owner->metadata_size, bytes.data, bytes.size);
+    owner->metadata_size += bytes.size; return true;
+}
+static void http_metadata_complete(void *context, qa_http_request_id id,
+    const qa_http_response *response, const qa_error *error)
+{
+    (void)id; remote_q2_http_downloads *owner = context;
+    owner->metadata_request = 0; owner->metadata_done = true;
+    owner->metadata_success = (!error || error->code == QA_OK) && response->status == 200;
+}
+static bool http_metadata_parse(remote_q2_http_downloads *owner, qa_error *error)
+{
+    for (size_t at = 0; at < owner->metadata_size;) {
+        size_t end = at;
+        while (end < owner->metadata_size && owner->metadata[end] != '\n') ++end;
+        size_t size = end - at;
+        if (size && owner->metadata[at + size - 1] == '\r') --size;
+        if (size && !memchr(owner->metadata + at, 0, size)) {
+            bool game_local = owner->metadata[at] == '@';
+            size_t begin = at + game_local, length = size - game_local;
+            char *path = qa_arena_alloc(&owner->storage, length + 1, 1, error);
+            if (!path) return false;
+            memcpy(path, owner->metadata + begin, length); path[length] = 0;
+            if (http_path_valid(path) && !(game_local && http_package(path))) {
+                qa_error issue = {0}; char *normalized = qa_vfs_normalize_path(path, &issue);
+                if (normalized) {
+                    remote_q2_http_asset *asset;
+                    bool ok = http_asset_admit(owner, normalized, game_local, &asset, error);
+                    free(normalized); if (!ok) return false;
+                }
+            }
+        }
+        at = end + (end < owner->metadata_size);
+    }
+    return true;
+}
+static bool http_owner(frontend_remote_q2 *row, qa_error *error)
+{
+    if (row->download_http) return true;
+    remote_q2_http_downloads *owner = calloc(1, sizeof(*owner));
+    if (!owner) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 HTTP metadata");
+    row->download_http = owner; owner->owner = row; owner->tail = &owner->first;
+    qa_arena_init(&owner->storage, 0); owner->assets.storage = &owner->storage;
+    qa_download_options options = {.jobs = 2, .maximum_pending_bytes = UINT64_C(2) * INT32_MAX,
+        .same_origin_redirects = true,
+        .hooks = {.context = row, .permit = http_permit, .inspect = http_inspect,
+            .remount = http_remount, .target_root = http_target_root}};
+    bool ok = qa_downloads_create(frontend_tools_http(row->frontend), row->content.selected_write_root,
+        &options, &owner->jobs, error);
+    if (!ok) http_clear(row);
+    return ok;
+}
+static bool http_poll(remote_q2_http_downloads *owner, qa_error *error)
+{
+    if (!qa_downloads_pump(owner->jobs, error)) return false;
+    for (remote_q2_http_asset *asset = owner->first; asset; asset = asset->next) if (asset->job) {
+        qa_download_view view;
+        if (!qa_downloads_view(owner->jobs, asset->job, &view)) return false;
+        bool allowed = false;
+        if (!owner->owner->options.download_allowed(owner->owner->options.context, view.path, &allowed, error)) return false;
+        if ((!http_enabled(owner->owner) || !allowed) && view.state == QA_DOWNLOAD_RECEIVING) {
+            qa_downloads_cancel(owner->jobs, asset->job);
+            if (!qa_downloads_view(owner->jobs, asset->job, &view)) return false;
+        }
+        if (view.state == QA_DOWNLOAD_RECEIVING || view.state == QA_DOWNLOAD_INSTALLING || view.publication_pending) continue;
+        if (view.state != QA_DOWNLOAD_COMPLETE) http_note(owner->owner, view.path);
+        qa_downloads_release(owner->jobs, asset->job); asset->job = 0; asset->settled = true;
+    }
+    return true;
+}
+static bool http_manifest_seed(remote_q2_http_downloads *owner, const char *map, qa_error *error)
+{
+    remote_q2_http_asset *asset; frontend_remote_q2 *row = owner->owner;
+    if (http_path_valid(map) && !http_asset_admit(owner, map, false, &asset, error)) return false;
+    for (uint32_t i = 1; i < row->hud_names.layout.max_models; ++i) {
+        const char *path = frontend_remote_q2_config(row, row->hud_names.layout.models + i);
+        if (!*path || path[0] == '*' || path[0] == '#' || !http_path_valid(path)) continue;
+        if (!http_asset_admit(owner, path, false, &asset, error)) return false;
+    }
+    for (uint32_t i = 1; i < row->hud_names.layout.max_sounds; ++i) {
+        const char *name = frontend_remote_q2_config(row, row->hud_names.layout.sounds + i);
+        if (!*name || name[0] == '*') continue;
+        const char *path = name + (name[0] == '#');
+        if (name[0] != '#') {
+            size_t size = strlen(name);
+            char *sound = qa_arena_alloc(&owner->storage, size + sizeof("sound/"), 1, error);
+            if (!sound) return false;
+            memcpy(sound, "sound/", sizeof("sound/") - 1);
+            memcpy(sound + sizeof("sound/") - 1, name, size + 1); path = sound;
+        }
+        if (http_path_valid(path) && !http_asset_admit(owner, path, false, &asset, error)) return false;
+    }
+    owner->manifest_seeded = true; return true;
+}
+static bool http_prepare(frontend_remote_q2 *row, const char *map, bool *waiting, qa_error *error)
+{
+    *waiting = false;
+    if (!row->download_http && !http_enabled(row)) return true;
+    bool allowed = false;
+    if (!row->options.download_allowed(row->options.context, "", &allowed, error)) return false;
+    if (!row->download_http && !allowed) return true;
+    if (!http_owner(row, error)) return false;
+    remote_q2_http_downloads *owner = row->download_http;
+    if (!http_poll(owner, error)) return false;
+    if (owner->initial_done) return true;
+    if (!http_enabled(row) || !allowed) {
+        qa_http_cancel(frontend_tools_http(row->frontend), owner->metadata_request); owner->metadata_request = 0;
+        owner->metadata_list = 2;
+    }
+    if (owner->metadata_request) { *waiting = true; return true; }
+    if (owner->metadata_done) {
+        if (owner->metadata_success && !http_metadata_parse(owner, error)) return false;
+        owner->metadata_done = owner->metadata_success = false;
+        owner->metadata_size = 0; ++owner->metadata_list;
+    }
+    if (owner->metadata_list < 2) {
+        const char *path = map;
+        if (owner->metadata_list && suffix(map, ".bsp")) {
+            size_t size = strlen(map) - 4;
+            char *stem = qa_arena_alloc(&owner->storage, size + 1, 1, error);
+            if (!stem) return false;
+            memcpy(stem, map, size); stem[size] = 0; path = stem;
+        }
+        char *url = http_url(owner, http_game(row), owner->metadata_list ? path : "", ".filelist", error);
+        if (!url) return false;
+        qa_http_request request = {.url = url, .method = "GET", .timeout_ms = 30000, .connect_timeout_ms = 10000,
+            .maximum_response_bytes = Q2_HTTP_FILELIST_BYTES, .maximum_redirects = 5, .same_origin_redirects = true,
+            .callbacks = {owner, http_metadata_headers, http_metadata_body, http_metadata_complete}};
+        qa_error issue = {0};
+        if (!qa_http_submit(frontend_tools_http(row->frontend), &request, &owner->metadata_request, &issue))
+            owner->metadata_done = true;
+        *waiting = true; return true;
+    }
+    if (!owner->manifest_seeded && !http_manifest_seed(owner, map, error)) return false;
+    bool packages = false;
+    for (remote_q2_http_asset *asset = owner->first; asset; asset = asset->next)
+        if (asset->package && !asset->settled) { packages = true; break; }
+    for (remote_q2_http_asset *asset = owner->first; asset; asset = asset->next) {
+        if (asset->settled || asset->job || asset->package != packages) continue;
+        size_t active = qa_downloads_count(owner->jobs);
+        if (active >= 2 || (packages && active)) break;
+        if (!http_asset_start(owner, asset, error)) return false;
+        if (packages && asset->job) break;
+    }
+    for (remote_q2_http_asset *asset = owner->first; asset; asset = asset->next)
+        if (!asset->settled) { *waiting = true; return true; }
+    owner->initial_done = true; return true;
+}
+static bool http_request(frontend_remote_q2 *row, const char *path, bool *waiting, qa_error *error)
+{
+    *waiting = false;
+    if (!http_enabled(row) || !row->download_http) return true;
+    remote_q2_http_asset *asset;
+    if (!http_asset_admit(row->download_http, path, false, &asset, error)) return false;
+    if (!asset->settled && !asset->job && !http_asset_start(row->download_http, asset, error)) return false;
+    *waiting = asset->job != 0; return true;
+}
+static void http_clear(frontend_remote_q2 *row)
+{
+    remote_q2_http_downloads *owner = row->download_http;
+    if (!owner) return;
+    qa_http_cancel(frontend_tools_http(row->frontend), owner->metadata_request);
+    qa_downloads_destroy(owner->jobs);
+    qa_id_index_destroy(&owner->assets); qa_arena_destroy(&owner->storage); free(owner);
+    row->download_http = NULL;
+}
+bool frontend_remote_q2_download_server(frontend_remote_q2 *row, const char *url, qa_error *error)
+{
+    if (!row || !url || strlen(url) >= sizeof(row->download_server))
+        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 HTTP address exceeds the negotiated handshake extent");
+    if (strcmp(row->download_server, url)) { http_clear(row); strcpy(row->download_server, url); }
+    row->http_downloads = qa_cvars_resolve(row->options.domain.cvars, "cl_http_downloads");
+    return true;
+}
 static void block_clear(frontend_remote_q2 *row)
 {
     qa_buffer_free(&row->download_block);
@@ -170,6 +547,7 @@ static bool pending_clear(frontend_remote_q2 *row, qa_error *error)
 { if (!stage_clear(row, error)) return false; block_clear(row); return true; }
 bool remote_q2_download_clear(frontend_remote_q2 *row, qa_error *error)
 {
+    http_clear(row);
     if (!pending_clear(row, error)) return false;
     for (size_t i = 0; i < row->download_attempted_count; ++i) free(row->download_attempted[i]);
     free(row->download_attempted); row->download_attempted = NULL; row->download_attempted_count = 0; return true;
@@ -202,6 +580,9 @@ static bool request(frontend_remote_q2 *row, const char *path, bool *waiting, qa
         free(normalized); return false;
     }
     if (!allowed) { free(normalized); return true; }
+    if (!http_request(row, normalized, waiting, error) || *waiting) {
+        free(normalized); return *waiting;
+    }
     qa_fs_root *root = remote_q2_download_destination(row, normalized);
     if (!root) { free(normalized); return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 download lacks its actual selected/base write capability"); }
     const char *slash = strrchr(normalized, '/'); size_t parent = (size_t)(slash - normalized);
@@ -340,6 +721,8 @@ bool remote_q2_download_prepare(frontend_remote_q2 *row, qa_q2_preparation *resu
     bool waiting = false;
     const char *map = frontend_remote_q2_config(row, row->hud_names.layout.models + 1);
     if (!*map) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 server supplied no map download identity");
+    if (!http_prepare(row, map, &waiting, error)) return false;
+    if (waiting) { *result = QA_Q2_PREPARATION_WAITING; return true; }
     if (!request(row, map, &waiting, error) || waiting) return waiting;
     qa_resource *map_resource = NULL; qa_bsp_view map_view;
     bool admitted = qa_vfs_acquire(row->content.mounts, map, &map_resource, NULL, error) &&

@@ -364,7 +364,7 @@ static bool cancel(void *context,uint64_t generation,qa_error *error)
 static bool prepare(void *context,const qa_net_address *remote,const qa_q2_connect_request *request,
     const char *download_server,uint64_t generation,qa_q2_client_admission *out,qa_q2_preparation *result,qa_error *error)
 {
-    frontend_network_q2_client *owner=context; (void)download_server; (void)generation;
+    frontend_network_q2_client *owner=context; (void)generation;
     if(!parent(owner) || !request || !out || !result || !qa_net_address_equal(remote,&owner->options.remote,true) ||
         request->protocol.kind!=owner->options.protocol.kind || request->social_count>1)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 admission differs from its actual one-seat pending CLIENT");
@@ -375,6 +375,7 @@ static bool prepare(void *context,const qa_net_address *remote,const qa_q2_conne
     if(!frontend_remote_q2_source_pending_capabilities(owner->source,request,&owner->material_scripts,error)) return false;
     frontend_remote_q2_source_view view;
     if(!frontend_remote_q2_source_read(owner->source,&view,error) ||
+        !frontend_remote_q2_download_server(view.receiver,download_server?download_server:"",error) ||
         !frontend_remote_q2_hooks(view.receiver,&owner->admission.hooks,error)) return false;
     owner->binding=(qa_net_seat_binding){owner->options.seat,0};
     owner->admission.connection=(qa_net_connect){.attachment=owner->options.demo?QA_NET_LOCAL_SEAT:QA_NET_REMOTE,.endpoint=*remote,

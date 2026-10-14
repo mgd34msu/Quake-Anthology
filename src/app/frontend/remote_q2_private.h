@@ -35,6 +35,7 @@ struct frontend_remote_q2_image_policy;
 struct frontend_remote_q2_effects;
 struct frontend_q2_entity_pose;
 struct remote_q2_footsteps;
+struct remote_q2_http_downloads;
 typedef struct remote_q2_entity_animation {
     frontend_q2_animation animation;
     int32_t server_frame;
@@ -178,6 +179,9 @@ struct frontend_remote_q2 {
     qa_fs_identity download_identity;
     char **download_attempted;
     size_t download_attempted_count;
+    char download_server[512];
+    qa_cvar_handle http_downloads;
+    struct remote_q2_http_downloads *download_http;
     qa_input_command_builder input;
 };
 void remote_q2_cvars_bind(frontend_remote_q2 *);

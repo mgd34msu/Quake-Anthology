@@ -98,6 +98,7 @@ bool frontend_remote_q2_create(qa_frontend *, const frontend_remote_q2_options *
 /* Commit the real attach result. Pending constructors own no connection ID. */
 bool frontend_remote_q2_bind(frontend_remote_q2 *, const frontend_remote_q2_domain *, qa_error *);
 bool frontend_remote_q2_hooks(frontend_remote_q2 *, qa_network_q2_client_hooks *, qa_error *);
+bool frontend_remote_q2_download_server(frontend_remote_q2 *, const char *, qa_error *);
 /* Both native HOST and retained CLIENT seeds use the actual Q2 wire encoder. */
 bool frontend_remote_q2_demo_seed(qa_q2_codec *, const qa_q2_game_state *,
     const qa_q2_wire_frame *, const frontend_demo_sink *, qa_error *);
