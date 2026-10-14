@@ -6,6 +6,7 @@
 #include "bots_private.h"
 #include "bots_transport.h"
 #include "event_stream.h"
+#include "qa/game_q3_source.h"
 #include <limits.h>
 
 void application_q3_command_init(application_q3_command_cursor *cursor,qa_application *app)
@@ -182,12 +183,48 @@ bool application_unified_q3_attack_providers(void *context, qa_actor_id attacker
     return true;
 }
 
+static bool message_project(qa_application *app, const qa_unified_q3_event *event,
+    qa_q3_tokens *tokens, qa_unified_simulation_payload *out)
+{
+    if (event->kind != QA_UNIFIED_Q3_SERVER_COMMAND) return false;
+    qa_error issue = {0};
+    if (!qa_q3_tokenize(event->text, tokens, &issue)) {
+        qa_application_feature_report(app, "Q3 message projection", &issue);
+        return false;
+    }
+    const char *command = qa_q3_token(tokens, 0);
+    bool center = !strcmp(command, "cp");
+    if (!center && strcmp(command, "print")) return false;
+    *out = (qa_unified_simulation_payload){.kind = QA_UNIFIED_SIMULATION_MESSAGE,
+        .value.message = {.kind = center ? QA_UNIFIED_MESSAGE_CENTER_PRINT : QA_UNIFIED_MESSAGE_PRINT,
+            .text = (char *)qa_q3_token(tokens, 1), .level = 2}};
+    return true;
+}
 static bool source_emit(application_provider *p, const qa_unified_q3_event *event,
     uint64_t ns, qa_error *e)
 {
     qa_unified_presentation_payload payload = {.kind = QA_UNIFIED_PRESENTATION_Q3, .value.q3 = *event};
-    return application_unified_event_emit(p->application, p->owner, &payload, NULL,
-        (qa_actor_id){0}, (qa_actor_id){0}, ns, 0, false, false, e);
+    qa_unified_simulation_payload simulation;
+    const qa_unified_simulation_payload *message = NULL;
+    qa_actor_id recipient = {0};
+    qa_q3_tokens tokens;
+    if (message_project(p->application, event, &tokens, &simulation)) {
+        if (event->client >= 0 && event->client < (int32_t)QA_Q3_SOURCE_CLIENTS) {
+            if (p->kind == APPLICATION_PROVIDER_Q3) {
+                qa_q3_source_binding binding;
+                if (qa_q3_source_binding_read(p->state.q3, (uint32_t)event->client, &binding, NULL) &&
+                    binding.in_use) recipient = binding.actor;
+            } else {
+                struct application_q3_guest *guest = q3g_engine(p);
+                if (guest && guest->clients[event->client].allocated)
+                    recipient = guest->clients[event->client].actor;
+            }
+        }
+        if (event->client == -1 || (recipient.registry &&
+            qa_actors_get(qa_session_actors(p->application->session), recipient))) message = &simulation;
+    }
+    return application_unified_event_emit(p->application, p->owner, &payload, message,
+        (qa_actor_id){0}, recipient, ns, 0, false, message != NULL, e);
 }
 
 static bool component_emit(qa_application *app, const application_q3_component_publication *p,
@@ -197,8 +234,12 @@ static bool component_emit(qa_application *app, const application_q3_component_p
         !p->identity || !p->metadata || !p->generation)
         return application_fail(e, QA_ERROR_ARGUMENT, "Q3 component event lost its admitted physical Source");
     qa_unified_presentation_payload payload = {.kind = QA_UNIFIED_PRESENTATION_Q3, .value.q3 = *event};
-    return application_unified_event_emit(app, p->owner, &payload, NULL, recipient,
-        (qa_actor_id){0}, (uint64_t)(uint32_t)time * UINT64_C(1000000), 0, false, false, e);
+    qa_unified_simulation_payload simulation;
+    qa_q3_tokens tokens;
+    const qa_unified_simulation_payload *message = message_project(app,event,&tokens,&simulation) &&
+        (event->client == -1 || recipient.registry) ? &simulation : NULL;
+    return application_unified_event_emit(app, p->owner, &payload, message, recipient,
+        recipient, (uint64_t)(uint32_t)time * UINT64_C(1000000), 0, false, message != NULL, e);
 }
 
 bool application_unified_q3_component_player(qa_application *app, qa_actor_owner owner,

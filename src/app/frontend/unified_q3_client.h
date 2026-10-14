@@ -84,7 +84,7 @@ bool frontend_unified_q3_client_command(frontend_unified_q3_client *, int32_t,
     frontend_unified_q3_command *, qa_error *);
 bool frontend_unified_q3_command_current(const frontend_unified_q3_command *);
 bool frontend_unified_q3_client_server_command(frontend_unified_q3_client *,
-    uint64_t event_sequence, int32_t recipient, const char *text, qa_error *);
+    uint64_t event_sequence, int32_t recipient, const char *text, bool *consumed, qa_error *);
 /* The factory calls this after the real committed FRAME event queue drains,
  * before the CG cache can borrow its new snapshot. */
 bool frontend_unified_q3_client_seal(frontend_unified_q3_client *, qa_error *);

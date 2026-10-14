@@ -13,6 +13,34 @@ static bool map_event(qa_q3_game *game, qa_q3_map_event_kind kind,
                        error);
 }
 
+static bool print_target(qa_q3_game *game, const qa_q3_map_actor_state *state,
+    qa_actor_id activator, qa_error *error) {
+    char command[QA_Q3_COMMAND_CHARS];
+    const char *message = q3_map_cstr(game, state->message);
+    (void)snprintf(command, sizeof(command), "cp \"%s\"", message ? message : "(null)");
+    uint32_t flags = state->spawnflags;
+    if (!game->options.hooks.server_command) {
+        q3_map_warn(game, state->actor, "Q3 target_print command delivery is unavailable");
+        return true;
+    }
+    uint32_t slot;
+    if ((flags & 4u) && qa_q3_native_client_slot(game, activator, &slot, NULL))
+        return game->options.hooks.server_command(game->options.hooks.context,
+            (int32_t)slot, command, error);
+    if (flags & 3u) {
+        for (int32_t team = 1; team <= 2; ++team) {
+            if (!(flags & (UINT32_C(1) << (unsigned)(team - 1)))) continue;
+            for (uint32_t client = 0; client < game->options.max_clients; ++client)
+                if (game->clients[client].rule.connected == QA_Q3_CLIENT_CONNECTED &&
+                    game->clients[client].rule.session.team == team &&
+                    !game->options.hooks.server_command(game->options.hooks.context,
+                        (int32_t)client, command, error)) return false;
+        }
+        return true;
+    }
+    return game->options.hooks.server_command(game->options.hooks.context, -1, command, error);
+}
+
 static bool allocate_target(qa_q3_game *game, qa_q3_map_actor_state *state,
                             bool link, qa_error *error) {
     state->usable = state->kind != QA_Q3_MAP_TARGET_POSITION &&
@@ -402,7 +430,7 @@ bool q3_map_target_use(qa_q3_game *game, qa_q3_map_actor_state *state,
     case QA_Q3_MAP_TARGET_PRINT:
         if (!activator.registry)
             return q3_map_fail(error, "Q3 target_print requires an activator");
-        return map_event(game, QA_Q3_MAP_PRINT, state, state->origin, state->actor, activator, error);
+        return print_target(game, state, activator, error);
     case QA_Q3_MAP_TARGET_SPEAKER:
         return use_speaker(game, state, activator, error);
     case QA_Q3_MAP_TARGET_PUSH:

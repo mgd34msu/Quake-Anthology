@@ -192,6 +192,25 @@ void q3remote_component_frame_free(remote_component_frame *f)
     qa_unified_document_destroy(f->packet);
     if(lease) qa_unified_frame_lease_release(lease); else free(f);
 }
+bool frontend_unified_components_server_command_admitted(const frontend_unified_components *o,
+    const qa_unified_presentation_event *row)
+{
+    if(!o||!row->owner.provider) return false;
+    remote_component *component=q3remote_component_find(o,row->owner_provider_id,NULL);
+    if(!component||component->state.owner_generation!=row->owner.generation) return false;
+    const remote_component_frame *frame=component->frame;
+    if(!frame||!frame->has_scene) return false;
+    for(size_t i=0;i<frame->source.command_count;++i) {
+        const application_q3_scene_command *command=frame->source.commands+i;
+        if(command->sequence!=row->payload.value.q3.source_sequence) continue;
+        /* Addressed commands were admitted for this frame's actual full viewer;
+         * empty argument rows preserve other recipients' sequence positions. */
+        const qa_command_tokens *args=command->arguments;
+        return command->addressed&&args->count&&
+            (!strcmp(args->values[0],"cp")||!strcmp(args->values[0],"print"));
+    }
+    return false;
+}
 static bool player_event_read(frontend_unified_components *o,const qa_unified_presentation_event *row,
     remote_component **target,application_q3_scene_player_event *out,bool *handled,qa_error *e)
 {

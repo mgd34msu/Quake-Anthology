@@ -1116,15 +1116,21 @@ bool frontend_unified_q3_reflected_world(frontend_unified_q3 *o,const qa_scene_w
         okay=qa_q3_presentation_supplement_draw(b->supplement,&options,scene,e) && current(o,e);
     return leave(o,okay,e);
 }
-static bool source_command_event(frontend_unified_q3 *o,const qa_unified_presentation_event *row,bool command,qa_error *e)
+static bool source_command_event(frontend_unified_q3 *o,const qa_unified_presentation_event *row,bool command,
+    bool *mirrored,qa_error *e)
 {
     const qa_unified_q3_event *v=&row->payload.value.q3;
     bool okay=true;
+    if(command&&frontend_unified_components_server_command_admitted(o->components,row)) *mirrored=true;
     size_t count=frontend_remote_unified_presentation_q3_client_count(o->replica);
     for(size_t i=0;okay&&i<count;++i){
         frontend_unified_q3_client *client=frontend_remote_unified_presentation_q3_client(o->replica,i);
         if(!frontend_unified_q3_client_event_matches(client,row->provider,row->content,o->epoch))continue;
-        if(command)okay=frontend_unified_q3_client_server_command(client,row->sequence,v->client,v->text,e);
+        if(command) {
+            bool consumed=false;
+            okay=frontend_unified_q3_client_server_command(client,row->sequence,v->client,v->text,&consumed,e);
+            if(okay && consumed)*mirrored=true;
+        }
         /* Configstring notifications can be intermediate writes. The CLIENT
          * compares the committed Source dictionary and reaches its own cs. */
         if(okay)okay=current(o,e);
@@ -1155,8 +1161,8 @@ bool frontend_unified_q3_presentation(frontend_unified_q3 *o,const qa_unified_pr
         const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
         qa_console_emit(domain->console,&domain->command_context,v->text);return current(o,e);
     }
-    if(v->kind==QA_UNIFIED_Q3_SERVER_COMMAND)return source_command_event(o,row,true,e);
-    if(v->kind==QA_UNIFIED_Q3_CONFIGSTRING)return source_command_event(o,row,false,e);
+    if(v->kind==QA_UNIFIED_Q3_SERVER_COMMAND)return source_command_event(o,row,true,mirrored,e);
+    if(v->kind==QA_UNIFIED_Q3_CONFIGSTRING)return source_command_event(o,row,false,mirrored,e);
     return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q3 Source event requires the actual retained cgame command/snapshot owner");
 }
 static bool q3_returned(const frontend_unified_q3 *o)

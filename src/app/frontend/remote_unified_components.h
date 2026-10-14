@@ -29,6 +29,8 @@ bool frontend_unified_components_create(qa_frontend *,frontend_remote_unified *,
 bool frontend_unified_components_control(frontend_unified_components *,const qa_unified_document *,qa_error *);
 bool frontend_unified_components_player_event_validate(frontend_unified_components *,const qa_unified_presentation_event *,
     bool *handled,qa_error *);
+bool frontend_unified_components_server_command_admitted(const frontend_unified_components *,
+    const qa_unified_presentation_event *);
 bool frontend_unified_components_checkpoint_ready(const frontend_unified_components *);
 bool frontend_unified_components_frame_prepare(frontend_unified_components *,const qa_unified_document *,
     frontend_unified_component_frame **,bool *ready,qa_error *);

@@ -4,6 +4,7 @@
 #include "../application/unified_output.h"
 #include "qa/binary.h"
 #include "qa/id_index.h"
+#include "qa/hud_controls.h"
 #include "qa/network_unified_frame.h"
 #include "qa/network_unified_control.h"
 #include "../../network/unified/frame_internal.h"
@@ -50,6 +51,7 @@ struct frontend_unified_events {
     unified_component_owner *components;
     qa_id_index resource_index, component_index, pending_resources;
     qa_hud *hud;
+    qa_hud_cvar_handles message_cvars;
     uint32_t epoch;
     uint64_t frame, prepared_frame;
     qa_unified_document *prepared_document;
@@ -297,6 +299,7 @@ static frontend_unified_events *allocate(qa_frontend *f,frontend_remote_unified 
     if (!o->records) { free(o); return NULL; }
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(r);
     o->hud=f->seats[domain->physical_seat].hud;
+    qa_hud_cvars_bind(domain->cvars,QA_HUD_CVAR_CENTER_TIME,&o->message_cvars);
     o->epoch=frontend_remote_unified_epoch(r);
     o->presentation_cursor=o->simulation_cursor=qa_event_ring_first(o->records);
     o->families_ready=true;
@@ -661,8 +664,16 @@ static bool apply_simulation(frontend_unified_events *o,const qa_unified_simulat
     if (row->payload.kind==QA_UNIFIED_SIMULATION_MESSAGE) {
         if (row->payload.linked_presentation && mirrored(o,row->payload.source_presentation_sequence)) return true;
         qa_unified_message_kind kind=row->payload.value.message.kind;
-        if (kind==QA_UNIFIED_MESSAGE_PRINT || kind==QA_UNIFIED_MESSAGE_CENTER_PRINT)
+        if (kind==QA_UNIFIED_MESSAGE_PRINT)
             return message(o,row->payload.value.message.text,e);
+        if (kind==QA_UNIFIED_MESSAGE_CENTER_PRINT) {
+            const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
+            const qa_cvar_view *duration=qa_cvars_read(domain->cvars,o->message_cvars.center_time);
+            double seconds=duration && isfinite(duration->number)?fmax(0,fmin(86400,duration->number)):3;
+            return qa_hud_center_print(o->hud,row->payload.value.message.text,
+                clock_ns(ms*.001),(uint64_t)(seconds*1e9),
+                (qa_hud_center_policy){.instant=true},e);
+        }
     }
     if (!o->options.simulation)
         return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Unified simulation media consumer is not installed");

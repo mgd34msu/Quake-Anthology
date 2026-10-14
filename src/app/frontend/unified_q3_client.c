@@ -691,18 +691,21 @@ bool frontend_unified_q3_command_current(const frontend_unified_q3_command *r)
     return row && row->sequence == r->sequence && &row->arguments == r->arguments;
 }
 bool frontend_unified_q3_client_server_command(frontend_unified_q3_client *c, uint64_t event_sequence,
-    int32_t recipient, const char *text, qa_error *e)
+    int32_t recipient, const char *text, bool *consumed, qa_error *e)
 {
+    *consumed=false;
     if (!c || !text || c->busy || c->prepared || c->video || c->revision == UINT64_MAX || !frontend_unified_q3_client_current(c))
         return fail(e,QA_ERROR_ARGUMENT,"Compiled source command requires its real returned CLIENT");
     client_history *h = c->history;
-    if (h->has_event_sequence && event_sequence <= h->event_sequence) return true;
-    if (recipient < 0 || recipient == (int32_t)c->constructor.client_number) {
+    bool addressed=recipient < 0 || recipient == (int32_t)c->constructor.client_number;
+    if (h->has_event_sequence && event_sequence <= h->event_sequence) { *consumed=addressed; return true; }
+    if (addressed) {
         qa_q3_tokens args;
         if (!qa_q3_tokenize(text,&args,e)) return false;
         const char *values[sizeof(args.offsets)/sizeof(*args.offsets)];
         for (size_t i = 0; i < args.count; ++i) values[i] = qa_q3_token(&args,i);
         if (!append(h,values,args.count,e)) return false;
+        *consumed=true;
     }
     h->event_sequence = event_sequence; h->has_event_sequence = true; ++c->revision; return true;
 }
