@@ -9,7 +9,6 @@
 #include "qa/text.h"
 #include <math.h>
 #include <stdio.h>
-#include <ctype.h>
 
 struct frontend_network_q2_client {
     frontend_network_q2_client_options options;
@@ -310,30 +309,14 @@ static bool entities_changed(void *context, const frontend_remote_q2_domain *dom
     return source_current(owner, domain, error) && qa_application_client_entities_refresh(domain->application,
         &owner->application_source, error);
 }
-static bool permission(frontend_network_q2_client *owner,qa_q2_download_category category)
-{ const qa_cvar_view *value=qa_q2_download_policy_read(&owner->download_policy,owner->domain.cvars,category); return value && value->number!=0; }
-static bool path_prefix(const char *path,const char *prefix)
-{
-    while(*prefix) if(!*path || tolower((unsigned char)*path++)!=(unsigned char)*prefix++) return false;
-    return true;
-}
-static bool path_extension(const char *extension,const char *expected)
-{
-    return extension && path_prefix(extension,expected) && strlen(extension)==strlen(expected);
-}
 static bool download_allowed(void *context,const char *path,bool *allowed,qa_error *error)
 {
     frontend_network_q2_client *owner=context;
     if(!path || !allowed || !source_current(owner,&owner->domain,error)) return false;
     if (owner->options.demo) { *allowed=false; return true; }
     const qa_cvar_view *all=qa_q2_download_policy_read(&owner->download_policy,owner->domain.cvars,QA_Q2_DOWNLOAD_ALL);
-    *allowed=all && all->number>0;
-    qa_q2_download_category category=path_prefix(path,"players/")?QA_Q2_DOWNLOAD_PLAYERS:path_prefix(path,"maps/")?QA_Q2_DOWNLOAD_MAPS:
-        path_prefix(path,"models/")?QA_Q2_DOWNLOAD_MODELS:path_prefix(path,"sound/")?QA_Q2_DOWNLOAD_SOUNDS:QA_Q2_DOWNLOAD_ALL;
-    const char *extension=strrchr(path,'.');
-    if(path_extension(extension,".pak") || path_extension(extension,".pkz")) {
-        for(size_t i=QA_Q2_DOWNLOAD_MAPS;i<QA_Q2_DOWNLOAD_CATEGORY_COUNT;++i) *allowed=*allowed && permission(owner,(qa_q2_download_category)i);
-    } else if(category!=QA_Q2_DOWNLOAD_ALL) *allowed=*allowed && permission(owner,category);
+    *allowed=all && all->number>0 &&
+        qa_q2_download_categories_allowed(&owner->download_policy,owner->domain.cvars,path);
     return true;
 }
 static bool download_stage(void *context,qa_fs_root *root,const char *path,

@@ -1,4 +1,5 @@
 #include "session_internal.h"
+#include "qa/text.h"
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
@@ -55,8 +56,22 @@ const qa_cvar_view *qa_q2_download_policy_read(qa_q2_download_policy *policy,con
     qa_q2_download_policy_bind(policy,cvars);
     return qa_cvars_read(cvars,policy->handles[category]);
 }
-static bool enabled(q2_server *server,const qa_cvars *cvars,qa_q2_download_category category)
-{ const qa_cvar_view *value=qa_q2_download_policy_read(&server->download_policy,cvars,category); return value && value->number!=0; }
+static bool enabled(qa_q2_download_policy *policy,const qa_cvars *cvars,qa_q2_download_category category)
+{ const qa_cvar_view *value=qa_q2_download_policy_read(policy,cvars,category); return value && value->number!=0; }
+bool qa_q2_download_categories_allowed(qa_q2_download_policy *policy,const qa_cvars *cvars,const char *path)
+{
+    const char *extension=strrchr(path,'.');
+    if (extension && (qa_text_ascii_equal(extension,".pak") || qa_text_ascii_equal(extension,".pkz") ||
+        qa_text_ascii_equal(extension,".pk3"))) {
+        for (size_t i=QA_Q2_DOWNLOAD_MAPS;i<QA_Q2_DOWNLOAD_CATEGORY_COUNT;++i)
+            if (!enabled(policy,cvars,(qa_q2_download_category)i)) return false;
+        return true;
+    }
+    qa_q2_download_category category=prefix(path,"players/")?QA_Q2_DOWNLOAD_PLAYERS:
+        (prefix(path,"maps/") || prefix(path,"env/") || prefix(path,"textures/"))?QA_Q2_DOWNLOAD_MAPS:
+        prefix(path,"models/")?QA_Q2_DOWNLOAD_MODELS:prefix(path,"sound/")?QA_Q2_DOWNLOAD_SOUNDS:QA_Q2_DOWNLOAD_ALL;
+    return category==QA_Q2_DOWNLOAD_ALL || enabled(policy,cvars,category);
+}
 bool q2_download_begin(q2_session *session, const char *name, const char *offset_text, qa_error *error)
 {
     q2_server *server = &session->state.server;
@@ -70,11 +85,11 @@ bool q2_download_begin(q2_session *session, const char *name, const char *offset
     if (!source.content || !source.cvars) return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 download lacks its actual mounted Source policy");
     qa_error admission_error = {0}; char *normalized = qa_vfs_normalize_path(name, &admission_error);
     if (!normalized) return refused(session, error);
-    bool allowed = enabled(server,source.cvars,QA_Q2_DOWNLOAD_ALL) &&
-        (!prefix(normalized, "players/") || enabled(server,source.cvars,QA_Q2_DOWNLOAD_PLAYERS)) &&
-        (!prefix(normalized, "models/") || enabled(server,source.cvars,QA_Q2_DOWNLOAD_MODELS)) &&
-        (!prefix(normalized, "sound/") || enabled(server,source.cvars,QA_Q2_DOWNLOAD_SOUNDS)) &&
-        (!prefix(normalized, "maps/") || enabled(server,source.cvars,QA_Q2_DOWNLOAD_MAPS));
+    bool allowed = enabled(&server->download_policy,source.cvars,QA_Q2_DOWNLOAD_ALL) &&
+        (!prefix(normalized, "players/") || enabled(&server->download_policy,source.cvars,QA_Q2_DOWNLOAD_PLAYERS)) &&
+        (!prefix(normalized, "models/") || enabled(&server->download_policy,source.cvars,QA_Q2_DOWNLOAD_MODELS)) &&
+        (!prefix(normalized, "sound/") || enabled(&server->download_policy,source.cvars,QA_Q2_DOWNLOAD_SOUNDS)) &&
+        (!prefix(normalized, "maps/") || enabled(&server->download_policy,source.cvars,QA_Q2_DOWNLOAD_MAPS));
     free(normalized); if (!allowed) return refused(session, error);
     q2_download_close(server);
     qa_resource *resource = NULL; qa_vfs_acquisition opening = {0}; qa_buffer source_bytes = {0}, wire_bytes = {0};

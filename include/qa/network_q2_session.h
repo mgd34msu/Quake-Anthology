@@ -18,6 +18,9 @@ typedef struct qa_q2_download_policy {
 } qa_q2_download_policy;
 void qa_q2_download_policy_bind(qa_q2_download_policy *,const qa_cvars *);
 const qa_cvar_view *qa_q2_download_policy_read(qa_q2_download_policy *,const qa_cvars *,qa_q2_download_category);
+/* ALL admission remains with the caller; archive assets require every
+ * category, and sky/texture dependencies belong to maps. */
+bool qa_q2_download_categories_allowed(qa_q2_download_policy *,const qa_cvars *,const char *path);
 
 typedef struct qa_q2_config_entry {
     uint16_t index;
