@@ -70,12 +70,18 @@ static bool model(void *context, const char *path, bool acquire, qa_scene_model 
 static bool actor(void *context, uint32_t number, frontend_remote_q2_effects_pose *out, qa_error *error)
 {
     frontend_remote_q2 *row = context;
-    if (!row || !out || !row->options.entity_actor || !frontend_remote_q2_entity_received(row, number))
-        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 effect entity has no genuine received CLIENT observer");
+    if (!row || !out || !row->options.entity_actor)
+        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 effect entity requires its retained CLIENT receiver");
     frontend_remote_q2_effects_pose pose = {.number = number};
-    if (!row->options.entity_actor(row->options.context, &row->options.domain, number, &pose.actor, error) ||
-        !qa_actors_get(qa_session_actor_registry(qa_application_session(row->options.domain.application)), pose.actor)) return false;
+    *out = pose;
+    if (!row->options.entity_actor(row->options.context, &row->options.domain, number, &pose.actor, error)) return false;
+    if (!qa_actors_get(qa_session_actor_registry(qa_application_session(row->options.domain.application)), pose.actor)) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Q2 effect entity %u has retired", number);
+        return false;
+    }
+    *out = pose;
     const qa_q2_entity *entity=remote_q2_frame_entity(&row->frame,number);
+    if (!entity && row->previous.valid) entity=remote_q2_frame_entity(&row->previous,number);
     if (entity) {
         pose.origin = vector(entity->origin); pose.angles = vector(entity->angles);
         pose.frame = (int32_t)entity->frame; pose.effects = entity->effects; pose.event = entity->event;
@@ -103,15 +109,21 @@ static bool actor(void *context, uint32_t number, frontend_remote_q2_effects_pos
             pose.angles = vector(player->viewangles); pose.scale = 1; *out = pose; return true;
         }
     }
+    qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Q2 effect entity %u has no retained received pose", number);
     return false;
 }
 static bool viewer(void *context, qa_actor_id *out, qa_error *error)
 {
     frontend_remote_q2 *row = context; uint32_t index;
-    if (!row || !out || !remote_q2_live(row, error) || !row->frame.valid ||
-        !frontend_remote_q2_wire_seat(row, &index, error) || index >= row->frame.player_count) return false;
+    if (!row || !out || !remote_q2_live(row, error) ||
+        !frontend_remote_q2_wire_seat(row, &index, error)) return false;
+    *out = (qa_actor_id){0};
     int32_t number;
-    if (!frontend_remote_q2_player_number(row, &row->frame, index, &number) || number < 0) return false;
+    if (!row->frame.valid || index >= row->frame.player_count ||
+        !frontend_remote_q2_player_number(row, &row->frame, index, &number) || number < 0) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Q2 observer has no received player pose");
+        return false;
+    }
     frontend_remote_q2_effects_pose pose;
     if (!actor(row, (uint32_t)number + 1, &pose, error)) return false;
     *out = pose.actor; return true;
@@ -135,10 +147,12 @@ bool remote_q2_effect_asset(void *context, qa_audio_asset *asset, qa_vec3 origin
     if (actor_id.registry) {
         const qa_actor_record *record = qa_actors_get(qa_session_actor_registry(
             qa_application_session(row->options.domain.application)), actor_id);
-        if (!record || !record->has_source || !frontend_remote_q2_entity_received(row, record->source_slot)) return false;
-        qa_actor_id actual;
-        if (!row->options.entity_actor || !row->options.entity_actor(row->options.context, &row->options.domain,
-            record->source_slot, &actual, error) || !qa_actor_id_equal(actual, actor_id)) return false;
+        if (!record || !record->has_source) {
+            qa_error issue = {0};
+            qa_error_set(&issue, QA_ERROR_NOT_FOUND, 0, "Q2 fixed-position sound actor has retired");
+            qa_application_feature_report(row->options.domain.application, "Q2 effect sound", &issue);
+            return true;
+        }
         actor_number = record->source_slot;
     }
     if (!row->frontend->audio) return true;
@@ -170,11 +184,23 @@ bool remote_q2_effect_sound(void *context, qa_string_id path, qa_vec3 origin, qa
 static bool actor_pose(void *context, qa_actor_id id, frontend_remote_q2_effects_pose *out, qa_error *error)
 {
     frontend_remote_q2 *row = context;
+    *out = (frontend_remote_q2_effects_pose){0};
     if (!row) return false;
     const qa_actor_record *record = qa_actors_get(qa_session_actor_registry(
         qa_application_session(row->options.domain.application)), id);
-    return record && record->has_source && actor(row, record->source_slot, out, error) &&
-        qa_actor_id_equal(out->actor, id);
+    if (!record || !record->has_source) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Q2 effect actor has retired");
+        return false;
+    }
+    qa_error issue = {0};
+    bool present = actor(row, record->source_slot, out, &issue);
+    if (!present && issue.code != QA_ERROR_NOT_FOUND) { if (error) *error = issue; return false; }
+    if (!qa_actor_id_equal(out->actor, id)) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Q2 effect actor generation has retired");
+        return false;
+    }
+    if (!present && error) *error = issue;
+    return present;
 }
 static bool hit_marker(void *context, int32_t damage, qa_error *error)
 {

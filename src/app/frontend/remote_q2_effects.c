@@ -321,16 +321,36 @@ static bool integer_field(const qa_q2_temp_entity *t, qa_q2_temp_field_name name
     if (!f || f->kind != QA_Q2_TEMP_INTEGER) return q2fx_fail(e, QA_ERROR_FORMAT, "Q2 effect lacks its actual integer operand");
     *out = f->value.integer; return true;
 }
+static bool missing_pose(frontend_remote_q2_effects *o, const char *effect,
+    const qa_error *issue, qa_error *e)
+{
+    if (issue->code != QA_ERROR_NOT_FOUND) {
+        if (e) *e = *issue;
+        return false;
+    }
+    fprintf(stderr, "Q2 %s skipped: %s\n", effect, issue->message);
+    return q2fx_source_current(o, e);
+}
 static bool field_actor(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
     qa_q2_temp_field_name name, const qa_actor_id actors[7], qa_actor_id *out, qa_error *e)
 {
     const qa_q2_temp_field *f = field(t, name);
     if (!f || f->kind != QA_Q2_TEMP_INTEGER || f->value.integer <= 0)
         return q2fx_fail(e, QA_ERROR_FORMAT, "Q2 beam lacks its actual received entity");
-    if (actors) { *out = actors[(size_t)(f - t->fields)]; return out->registry; }
-    frontend_remote_q2_effects_pose pose;
-    if (!o->source.actor(o->source.context, (uint32_t)f->value.integer, &pose, e) || !q2fx_source_current(o, e)) return false;
-    *out = pose.actor; return out->registry;
+    if (actors) {
+        *out = actors[(size_t)(f - t->fields)];
+        if (out->registry) return true;
+        qa_error issue = {0};
+        qa_error_set(&issue, QA_ERROR_NOT_FOUND, 0, "Q2 temporary entity actor has retired");
+        return missing_pose(o, "temporary entity", &issue, e);
+    }
+    frontend_remote_q2_effects_pose pose = {0}; qa_error issue = {0};
+    bool present = o->source.actor(o->source.context, (uint32_t)f->value.integer, &pose, &issue);
+    if (!q2fx_source_current(o, e)) return false;
+    if (!present && issue.code != QA_ERROR_NOT_FOUND) { if (e) *e = issue; return false; }
+    *out = pose.actor;
+    /* Positioned effects need the retained Source identity, not its current PVS pose. */
+    return out->registry || missing_pose(o, "temporary entity", &issue, e);
 }
 static void laser(frontend_remote_q2_effects *o, qa_vec3 start, qa_vec3 end, double time)
 {
@@ -477,17 +497,26 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
             qa_vec_angles(dir,QA_DIRECTION_FLOAT,QA_VECTOR_POLAR_PITCH|(dir.x==0?QA_VECTOR_WRAP_YAW:0)),3); break;
     case QA_Q2_TE_FLASHLIGHT:
         if (!field_actor(o,t,QA_Q2_TEMP_ENTITY1,actors,&actor,e)) return false;
+        if (!actor.registry) return true;
         light(o,actor,pos,time,400,100,qa_v3(1,1,1),0,250); break;
     case QA_Q2_TE_POWER_SPLASH: {
         if (!integer_field(t,QA_Q2_TEMP_ENTITY1,&id,e) || id<=0) return false;
-        frontend_remote_q2_effects_pose pose;
+        frontend_remote_q2_effects_pose pose = {0}; qa_error issue = {0};
         if (actors) {
-            if (!field_actor(o,t,QA_Q2_TEMP_ENTITY1,actors,&actor,e) || !o->source.actor_pose ||
-                !o->source.actor_pose(o->source.context,actor,&pose,e) || !qa_actor_id_equal(actor,pose.actor)) return false;
-        } else if (!o->source.actor(o->source.context,(uint32_t)id,&pose,e)) return false;
+            if (!field_actor(o,t,QA_Q2_TEMP_ENTITY1,actors,&actor,e) || !o->source.actor_pose) return false;
+            if (!actor.registry) return true;
+            if (!o->source.actor_pose(o->source.context,actor,&pose,&issue))
+                return missing_pose(o, "power splash", &issue, e);
+            if (!qa_actor_id_equal(actor,pose.actor)) return false;
+        } else if (!o->source.actor(o->source.context,(uint32_t)id,&pose,&issue))
+            return missing_pose(o, "power splash", &issue, e);
         if (!q2fx_source_current(o,e)) return false;
-        if (!pose.bounds_present || !qa_vec_finite(pose.bounds.mins) || !qa_vec_finite(pose.bounds.maxs) || !isfinite(pose.radius))
-            return q2fx_fail(e,QA_ERROR_ARGUMENT,"Power splash requires its actual received collision bounds");
+        if (!pose.bounds_present) {
+            qa_error_set(&issue, QA_ERROR_NOT_FOUND, 0, "Power splash has no received collision bounds");
+            return missing_pose(o, "power splash", &issue, e);
+        }
+        if (!qa_vec_finite(pose.bounds.mins) || !qa_vec_finite(pose.bounds.maxs) || !isfinite(pose.radius))
+            return q2fx_fail(e,QA_ERROR_ARGUMENT,"Power splash has invalid received collision bounds");
         radial_particles(o,qa_vec_add(pose.origin,qa_vec_scale(qa_vec_add(pose.bounds.mins,pose.bounds.maxs),.5f)),time,256,pose.radius,40,208,false); break;
     }
     case QA_Q2_TE_Q2PRO_DAMAGE_DEALT:
@@ -497,6 +526,7 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
     case QA_Q2_TE_GRAPPLE_CABLE_2: case QA_Q2_TE_LIGHTNING_BEAM: {
         if (!field_actor(o,t,QA_Q2_TEMP_ENTITY1,actors,&actor,e)) return false;
         if (t->type==QA_Q2_TE_LIGHTNING && !field_actor(o,t,QA_Q2_TEMP_ENTITY2,actors,&destination,e)) return false;
+        if (!actor.registry || (t->type==QA_Q2_TE_LIGHTNING && !destination.registry)) return true;
         if (t->type==QA_Q2_TE_GRAPPLE_CABLE && !vector_field(t,QA_Q2_TEMP_OFFSET,&offset,e)) return false;
         frontend_q2_beam_recipe recipe;
         if (!frontend_q2_beam_recipe_read(t->type,offset,0,false,&recipe) || !q2fx_model_admit(o,recipe.model,e)) return false;
@@ -773,8 +803,10 @@ static bool weapon_muzzle(frontend_remote_q2_effects *o, qa_actor_id actor_id, u
     const frontend_remote_q2_effects_controls *controls, double server, double interval, qa_error *e)
 {
     if (o->source.rules!=QA_RULESET_Q2_RERELEASE || !controls->muzzleflashes) return true;
-    qa_actor_id viewer;
-    if (!o->source.viewer(o->source.context,&viewer,e) || !q2fx_source_current(o,e)) return false;
+    qa_actor_id viewer; qa_error issue = {0};
+    if (!o->source.viewer(o->source.context,&viewer,&issue))
+        return missing_pose(o, "view-weapon muzzle", &issue, e);
+    if (!q2fx_source_current(o,e)) return false;
     if (!qa_actor_id_equal(viewer,actor_id)) return true;
     q2fx_model model; qa_vec3 offset; float scale;
     switch (flash) {
@@ -873,11 +905,13 @@ bool frontend_remote_q2_effects_muzzle(frontend_remote_q2_effects *o,
     uint32_t entity, uint32_t flash, bool monster, bool silenced, double time, double server, qa_error *e)
 {
     if (!o || !frontend_remote_q2_effects_idle(o) || !isfinite(time) || !isfinite(server) || !entity || !q2fx_source_current(o,e)) return false;
-    frontend_remote_q2_effects_pose pose;
+    frontend_remote_q2_effects_pose pose = {0}; qa_error issue = {0};
     ++o->busy;
-    bool ok=o->source.actor(o->source.context,entity,&pose,e) && q2fx_source_current(o,e) && pose.actor.registry &&
+    bool present=o->source.actor(o->source.context,entity,&pose,&issue);
+    bool ok=present ? q2fx_source_current(o,e) && pose.actor.registry &&
         qa_vec_finite(pose.origin) && qa_vec_finite(pose.angles) &&
-        (monster?monster_muzzle(o,pose,flash,time,server,e):player_muzzle(o,pose,flash,silenced,time,server,e));
+        (monster?monster_muzzle(o,pose,flash,time,server,e):player_muzzle(o,pose,flash,silenced,time,server,e)) :
+        missing_pose(o, "muzzleflash", &issue, e);
     o->dirty=true; --o->busy; return ok && q2fx_source_current(o,e);
 }
 bool frontend_remote_q2_effects_actor_muzzle(frontend_remote_q2_effects *o,
@@ -885,11 +919,13 @@ bool frontend_remote_q2_effects_actor_muzzle(frontend_remote_q2_effects *o,
 {
     if (!o || !frontend_remote_q2_effects_idle(o) || !o->source.actor_pose || !actor_id.registry ||
         !isfinite(time) || !isfinite(server) || !q2fx_source_current(o,e)) return false;
-    frontend_remote_q2_effects_pose pose;
+    frontend_remote_q2_effects_pose pose = {0}; qa_error issue = {0};
     ++o->busy;
-    bool ok=o->source.actor_pose(o->source.context,actor_id,&pose,e) && qa_actor_id_equal(pose.actor,actor_id) &&
+    bool present=o->source.actor_pose(o->source.context,actor_id,&pose,&issue);
+    bool ok=present ? qa_actor_id_equal(pose.actor,actor_id) &&
         q2fx_source_current(o,e) && qa_vec_finite(pose.origin) && qa_vec_finite(pose.angles) &&
-        (monster?monster_muzzle(o,pose,flash,time,server,e):player_muzzle(o,pose,flash,silenced,time,server,e));
+        (monster?monster_muzzle(o,pose,flash,time,server,e):player_muzzle(o,pose,flash,silenced,time,server,e)) :
+        missing_pose(o, "muzzleflash", &issue, e);
     o->dirty=true; --o->busy; return ok && q2fx_source_current(o,e);
 }
 bool frontend_remote_q2_effects_monster_muzzle(frontend_remote_q2_effects *o,
