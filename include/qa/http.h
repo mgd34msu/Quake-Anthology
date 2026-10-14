@@ -12,7 +12,12 @@ typedef struct qa_http_response {
     uint64_t bytes;
     uint64_t range_first, range_last, range_total;
     bool has_range;
+    const char *etag; /* Borrowed opaque HTTP validator; weak tags remain visible. */
+    uint64_t content_length;
+    bool has_content_length, accepts_ranges, identity_encoding;
 } qa_http_response;
+/* One parser also checks opaque validators restored from a continuation. */
+bool qa_http_etag_is_strong(const char *);
 typedef struct qa_http_callbacks {
     void *context;
     /* Header notification occurs for each HTTP response (including redirects).

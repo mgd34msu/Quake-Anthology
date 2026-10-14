@@ -14,6 +14,7 @@ typedef struct http_transfer {
     CURL *easy;
     struct curl_slist *headers;
     char *url, *method, *content_type;
+    char etag[CURL_MAX_HTTP_HEADER + 1];
     qa_buffer body;
     qa_http_callbacks callbacks;
     qa_http_response response;
@@ -22,6 +23,7 @@ typedef struct http_transfer {
     CURLcode result;
     uint32_t timeout_ms, connect_timeout_ms, maximum_redirects, intake_status;
     bool same_origin_redirects;
+    bool etag_seen, content_length_seen, range_units_unusable;
     bool canceled, callbacks_bound, in_multi, paused, terminal, completion_queued, rejected;
 } http_transfer;
 struct qa_http {
@@ -109,6 +111,42 @@ static bool prefix_equal(const char *text, const char *prefix, size_t n) {
     }
     return true;
 }
+static qa_bytes header_value(const char *bytes, size_t n, size_t begin) {
+    while (begin < n && (bytes[begin] == ' ' || bytes[begin] == '\t')) ++begin;
+    while (n > begin && (bytes[n - 1] == '\r' || bytes[n - 1] == '\n' ||
+        bytes[n - 1] == ' ' || bytes[n - 1] == '\t')) --n;
+    return (qa_bytes){(const uint8_t *)bytes + begin, n - begin};
+}
+static bool etag_usable(qa_bytes value) {
+    if (value.size >= 2 && value.data[0] == 'W' && value.data[1] == '/') {
+        value.data += 2; value.size -= 2;
+    }
+    if (value.size < 2 || value.data[0] != '"' || value.data[value.size - 1] != '"') return false;
+    for (size_t i = 1; i + 1 < value.size; ++i)
+        if (value.data[i] == '"' || value.data[i] < 33 || value.data[i] == 127) return false;
+    return true;
+}
+bool qa_http_etag_is_strong(const char *text) {
+    return text && text[0] == '"' &&
+        etag_usable((qa_bytes){(const uint8_t *)text, strlen(text)});
+}
+static bool range_unit(qa_bytes value, bool *unusable) {
+    bool bytes = false;
+    if (!value.size) { *unusable = true; return false; }
+    while (value.size) {
+        const uint8_t *comma = memchr(value.data, ',', value.size);
+        size_t n = comma ? (size_t)(comma - value.data) : value.size;
+        qa_bytes unit = header_value((const char *)value.data, n, 0);
+        if (!unit.size || (unit.size == 4 && prefix_equal((const char *)unit.data, "none", 4))) {
+            *unusable = true; return false;
+        }
+        if (unit.size == 5 && prefix_equal((const char *)unit.data, "bytes", 5)) bytes = true;
+        if (!comma) break;
+        value.data += n + 1; value.size -= n + 1;
+        if (!value.size) { *unusable = true; return false; }
+    }
+    return bytes;
+}
 static bool range_number(const char *text, size_t n, size_t *cursor, uint64_t *out) {
     size_t start = *cursor; uint64_t value = 0;
     while (*cursor < n && text[*cursor] >= '0' && text[*cursor] <= '9') {
@@ -125,6 +163,15 @@ static bool content_range(http_transfer *t, const char *bytes, size_t n) {
     if (n - cursor < 6 || !prefix_equal(bytes + cursor, "bytes ", 6)) return false;
     cursor += 6;
     uint64_t first, last, total;
+    if (n - cursor >= 2 && bytes[cursor] == '*' && bytes[cursor + 1] == '/') {
+        cursor += 2;
+        if (!range_number(bytes, n, &cursor, &total)) return false;
+        while (cursor < n && (bytes[cursor] == ' ' || bytes[cursor] == '\t' ||
+            bytes[cursor] == '\r' || bytes[cursor] == '\n')) ++cursor;
+        /* An unsatisfied range describes no delivered byte interval. The
+         * consumer handles 416 through the same response status path. */
+        return cursor == n && t->response.status == 416 && !t->response.has_range;
+    }
     if (!range_number(bytes, n, &cursor, &first) || cursor >= n || bytes[cursor++] != '-' ||
         !range_number(bytes, n, &cursor, &last) || cursor >= n || bytes[cursor++] != '/' ||
         !range_number(bytes, n, &cursor, &total) || first > last || last >= total) return false;
@@ -172,19 +219,41 @@ static bool header_receive(http_transfer *t, qa_bytes data) {
     if (n >= 5 && !memcmp(bytes, "HTTP/", 5)) {
         t->response_body_start = t->response.bytes;
         free(t->content_type); t->content_type = NULL;
-        t->response.content_type = NULL; t->response.status = 0;
-        t->response.has_range = false;
-        t->response.range_first = t->response.range_last = t->response.range_total = 0;
-        t->response.status = status_code(bytes, n);
+        t->response = (qa_http_response){.status = status_code(bytes, n),
+            .bytes = t->response.bytes, .identity_encoding = true};
+        t->etag[0] = 0;
+        t->etag_seen = t->content_length_seen = t->range_units_unusable = false;
     } else if (n >= 14 && prefix_equal(bytes, "content-range:", 14)) {
         if (!content_range(t, bytes, n)) return fail(&t->failure, QA_ERROR_FORMAT, "HTTP response returned an invalid content range");
+    } else if (n >= 5 && prefix_equal(bytes, "etag:", 5)) {
+        qa_bytes value = header_value(bytes, n, 5);
+        t->response.etag = NULL; t->etag[0] = 0;
+        if (!t->etag_seen && value.size < sizeof(t->etag) && etag_usable(value)) {
+            memcpy(t->etag, value.data, value.size); t->etag[value.size] = 0;
+            t->response.etag = t->etag;
+        }
+        t->etag_seen = true;
+    } else if (n >= 15 && prefix_equal(bytes, "content-length:", 15)) {
+        qa_bytes value = header_value(bytes, n, 15);
+        size_t cursor = 0; uint64_t length = 0;
+        bool valid = range_number((const char *)value.data, value.size, &cursor, &length) && cursor == value.size;
+        if (t->content_length_seen && (!t->response.has_content_length ||
+            t->response.content_length != length)) valid = false;
+        t->response.has_content_length = valid;
+        t->response.content_length = valid ? length : 0;
+        t->content_length_seen = true;
+    } else if (n >= 14 && prefix_equal(bytes, "accept-ranges:", 14)) {
+        bool ranges = range_unit(header_value(bytes, n, 14), &t->range_units_unusable);
+        t->response.accepts_ranges = !t->range_units_unusable && (t->response.accepts_ranges || ranges);
+    } else if (n >= 17 && prefix_equal(bytes, "content-encoding:", 17)) {
+        qa_bytes value = header_value(bytes, n, 17);
+        t->response.identity_encoding = t->response.identity_encoding && value.size == 8 &&
+            prefix_equal((const char *)value.data, "identity", 8);
     } else if (n >= 13 && prefix_equal(bytes, "content-type:", 13)) {
-        size_t begin = 13, end = n;
-        while (begin < end && (bytes[begin] == ' ' || bytes[begin] == '\t')) ++begin;
-        while (end > begin && (bytes[end - 1] == '\r' || bytes[end - 1] == '\n' || bytes[end - 1] == ' ' || bytes[end - 1] == '\t')) --end;
-        char *value = malloc(end - begin + 1);
+        qa_bytes text = header_value(bytes, n, 13);
+        char *value = malloc(text.size + 1);
         if (!value) return fail(&t->failure, QA_ERROR_MEMORY, "allocating HTTP response metadata");
-        memcpy(value, bytes + begin, end - begin); value[end - begin] = 0;
+        memcpy(value, text.data, text.size); value[text.size] = 0;
         free(t->content_type); t->content_type = value; t->response.content_type = value;
     } else if ((n == 2 && bytes[0] == '\r' && bytes[1] == '\n') || (n == 1 && bytes[0] == '\n')) {
         if (t->callbacks.headers && !t->callbacks.headers(t->callbacks.context, t->id, &t->response, &t->failure)) {
@@ -203,8 +272,9 @@ static size_t intake_data(char *bytes, size_t size, size_t count, void *context,
     }
     size_t n = size * count;
     if (t->canceled || t->transport_failure.code != QA_OK) return 0;
+    bool new_response = action == QA_SYS_HTTP_HEADER && n >= 5 && !memcmp(bytes, "HTTP/", 5);
     if (action == QA_SYS_HTTP_HEADER && t->same_origin_redirects) {
-        if (n>=5 && !memcmp(bytes, "HTTP/", 5)) t->intake_status = status_code(bytes, n);
+        if (new_response) t->intake_status = status_code(bytes, n);
         else if (t->intake_status>=300 && t->intake_status<400 && n>=9 &&
             prefix_equal(bytes, "location:", 9) && !redirect_origin(t, bytes, n)) return 0;
     }
@@ -229,7 +299,8 @@ static size_t intake_data(char *bytes, size_t size, size_t count, void *context,
     if (admitted != QA_PLATFORM_EVENT_ACCEPTED) {
         t->paused = true; return CURL_WRITEFUNC_PAUSE;
     }
-    if (action == QA_SYS_HTTP_BODY) t->admitted_bytes += (uint64_t)n;
+    if (new_response) t->admitted_bytes = 0;
+    else if (action == QA_SYS_HTTP_BODY) t->admitted_bytes += (uint64_t)n;
     return n;
 }
 static size_t header_data(char *bytes, size_t size, size_t count, void *context) {
@@ -390,6 +461,7 @@ bool qa_http_submit(qa_http *owner, const qa_http_request *r, qa_http_request_id
         OPTION(CURLOPT_POSTFIELDS, t->body.data ? (char *)t->body.data : "");
         OPTION(CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)t->body.size);
     }
+    if (curl_strequal(t->method, "HEAD")) OPTION(CURLOPT_NOBODY, 1L);
 #undef OPTION
     if (curl_multi_add_handle(owner->multi, t->easy) != CURLM_OK) { fail(error, QA_ERROR_IO, "admitting HTTP transfer"); goto failed; }
     t->in_multi = true;
@@ -475,7 +547,7 @@ static bool transfer_fields(qa_source_save_io *io, http_transfer *t) {
         !qa_source_save_u64(io, &t->response.bytes) ||
         !qa_source_save_u64(io, &t->response_body_start) ||
         t->response_body_start > t->response.bytes ||
-        (t->maximum_bytes && t->response.bytes > t->maximum_bytes) ||
+        (t->maximum_bytes && t->response.bytes - t->response_body_start > t->maximum_bytes) ||
         !qa_source_save_bool(io, &t->response.has_range) ||
         !qa_source_save_u64(io, &t->response.range_first) ||
         !qa_source_save_u64(io, &t->response.range_last) ||
@@ -488,9 +560,35 @@ static bool transfer_fields(qa_source_save_io *io, http_transfer *t) {
         return tool_save_fail(io, "Invalid HTTP response range continuation");
     if (reading) {
         t->response.status = status; t->response.content_type = t->content_type;
-        t->admitted_bytes = t->response.bytes; t->callbacks_bound = t->canceled;
+        t->admitted_bytes = t->response.bytes - t->response_body_start;
+        t->callbacks_bound = t->canceled;
     }
     return true;
+}
+static bool response_metadata_fields(qa_source_save_io *io, http_transfer *t) {
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    size_t n = !reading && t->response.etag ? strlen(t->response.etag) : 0;
+    if (!qa_source_save_count(io, &n, reading ? io->input.size - io->offset : SIZE_MAX)) return false;
+    if (reading) {
+        qa_bytes value;
+        if (!qa_source_save_span(io, n, &value)) return false;
+        t->response.etag = NULL; t->etag[0] = 0;
+        if (n < sizeof(t->etag) && etag_usable(value)) {
+            memcpy(t->etag, value.data, n); t->etag[n] = 0;
+            t->response.etag = t->etag;
+        }
+    } else if (!qa_source_save_bytes(io, (void *)t->response.etag, n)) return false;
+    bool ok = qa_source_save_u64(io, &t->response.content_length) &&
+        qa_source_save_bool(io, &t->response.has_content_length) &&
+        qa_source_save_bool(io, &t->response.accepts_ranges) &&
+        qa_source_save_bool(io, &t->response.identity_encoding) &&
+        qa_source_save_bool(io, &t->etag_seen) &&
+        qa_source_save_bool(io, &t->content_length_seen) &&
+        qa_source_save_bool(io, &t->range_units_unusable) &&
+        qa_source_save_u64(io, &t->admitted_bytes);
+    if (ok && t->maximum_bytes && t->admitted_bytes > t->maximum_bytes)
+        return tool_save_fail(io, "Invalid HTTP response continuation");
+    return ok;
 }
 
 bool qa_http_checkpoint(const qa_http *owner, qa_buffer *out, qa_error *error) {
@@ -502,6 +600,7 @@ bool qa_http_checkpoint(const qa_http *owner, qa_buffer *out, qa_error *error) {
     bool ok = qa_source_save_u64(&io, &next) &&
         qa_source_save_count(&io, &count, SIZE_MAX);
     for (http_transfer *t = owner->transfers; ok && t; t = t->next) ok = transfer_fields(&io, t);
+    for (http_transfer *t = owner->transfers; ok && t; t = t->next) ok = response_metadata_fields(&io, t);
     if (ok) ok = qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); return ok;
 }
@@ -521,6 +620,10 @@ bool qa_http_restore(qa_http *owner, qa_bytes bytes, qa_error *error) {
         for (const http_transfer *previous = head; ok && previous != t; previous = previous->next)
             if (previous->id == t->id) ok = false;
     }
+    /* Older continuations end at the exact transfer-list boundary. New
+     * response metadata follows that unchanged prefix in the same order. */
+    if (ok && io.offset < io.input.size)
+        for (http_transfer *t = head; ok && t; t = t->next) ok = response_metadata_fields(&io, t);
     if (ok) ok = qa_source_save_finish(&io, NULL);
     if (ok) { owner->transfers = head; owner->next_id = next; owner->pending_restore = false; owner->detached = head != NULL; }
     else {

@@ -44,6 +44,9 @@ typedef struct qa_download_options {
     uint64_t maximum_pending_bytes;
     qa_download_hooks hooks;
     bool same_origin_redirects;
+    /* Parallel conditioned HTTP ranges: zero selects four, one stays
+     * sequential; the owner has fixed storage for at most eight per job. */
+    uint32_t range_streams;
 } qa_download_options;
 /* Borrows the application's shared HTTP owner, retains filesystem root. One
  * contained disk stage per active job feeds HTTP and native blocks equally.
