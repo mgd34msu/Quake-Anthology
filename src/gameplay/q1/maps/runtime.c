@@ -1247,7 +1247,7 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
          kind == Q1_MAP_HIP_FINALE || kind == Q1_MAP_START_ENDTEXT))
         kind = Q1_MAP_FIELDS;
     *handled = kind != Q1_MAP_FIELDS;
-    if (!*handled && !spawn->map_fields)
+    if (!*handled && !spawn->map_fields && !entity->map)
         return true;
     q1_map_state *state = q1_map_allocate(g, entity, error);
     if (!state)
@@ -1309,7 +1309,7 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     if (q1_map_is_hip_trigger(kind))
         return q1_map_hip_trigger_spawn(g, entity, error);
     if (kind == Q1_MAP_SPAWNER)
-        return q1_map_hip_spawner_spawn(g, entity, spawn, error);
+        return q1_map_hip_spawner_spawn(g, entity, error);
     if (kind == Q1_MAP_BOBBING_WATER || kind == Q1_MAP_PUSHABLE)
         return q1_map_hip_brush_spawn(g, entity, error);
     if (kind == Q1_MAP_SACRIFICE)

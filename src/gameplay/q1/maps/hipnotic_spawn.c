@@ -7,33 +7,29 @@ static q1_actor *spawner(qa_q1_game *g, qa_actor_id id) {
 bool q1_map_spawn_template_wait(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     return q1_schedule(g, entity, 1, Q1_THINK_SPAWN_TEMPLATE, error);
 }
-static bool make_template(qa_q1_game *g, qa_actor_id mold, const qa_q1_spawn *source,
-                          const char *classname, qa_actor_id *out, qa_error *error) {
+static bool make_template(qa_q1_game *g, qa_actor_id mold, qa_string_id function,
+                          qa_string_id classname, qa_actor_id *out, qa_error *error) {
     q1_actor *owner = spawner(g, mold);
     if (!owner)
         return q1_map_fail(error, "Q1 spawn template lost its source mold");
-    qa_q1_spawn request = *source;
-    request.classname = classname;
-    request.has_source = false;
-    request.source_slot = 0;
-    const qa_strings *strings = qa_session_strings(g->services.session);
-    request.target = qa_strings_cstr(strings, owner->target);
-    request.targetname = qa_strings_cstr(strings, owner->targetname);
-    request.killtarget = qa_strings_cstr(strings, owner->killtarget);
-    request.message = qa_strings_cstr(strings, owner->message);
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, mold, &body, error))
-        return false;
-    if (!spawner(g, mold))
-        return q1_map_fail(error, "Q1 spawn mold retired during its body read");
-    qa_actor_id id;
-    if (!q1_spawn_template(g, &request, &body, &id, error))
-        return false;
+    qa_actor_id id = {0};
+    int32_t previous = g->options.deathmatch;
+    g->options.deathmatch = 0;
+    bool okay = qa_q1_game_clone(g, mold, &id, error);
     q1_actor *entity = q1_entity(g, id);
+    if (okay && entity) {
+        entity->classname = classname;
+        okay = q1_spawn_function(g, entity, function, false, NULL, error);
+    }
+    g->options.deathmatch = previous;
+    if (!okay)
+        goto fail;
+    entity = q1_entity(g, id);
     if (!entity)
         return q1_map_fail(error, "Q1 spawn template removed itself during initialization");
     if (!entity->map && !q1_map_allocate(g, entity, error))
         goto fail;
+    qa_body_state body;
     if (!qa_world_body_read(g->services.world, id, &body, error))
         goto fail;
     entity = q1_entity(g, id);
@@ -56,13 +52,13 @@ fail:
     (void)qa_session_release(g->services.session, id, NULL);
     return false;
 }
-bool q1_map_hip_spawner_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *source,
-                              qa_error *error) {
+bool q1_map_hip_spawner_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_actor_id id = entity->id, master = {0};
     uint32_t total = g->total_monsters;
     if (!q1_map_text(g, entity->map->spawn_function)) {
-        static const char *const classes[] = {"monster_dog", "monster_ogre", "monster_demon1",
-                                              "monster_zombie", "monster_shambler"};
+        static const q1_runtime_name classes[] = {
+            Q1_NAME_MONSTER_DOG, Q1_NAME_MONSTER_OGRE, Q1_NAME_MONSTER_DEMON1,
+            Q1_NAME_MONSTER_ZOMBIE, Q1_NAME_MONSTER_SHAMBLER};
         float chance = q1_random(g);
         unsigned selected = chance < .5f    ? 0
                             : chance < .8f  ? 1
@@ -71,7 +67,8 @@ bool q1_map_hip_spawner_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn
                                             : 4;
         for (unsigned i = 0; i < sizeof(classes) / sizeof(*classes); ++i) {
             qa_actor_id candidate;
-            if (!make_template(g, id, source, classes[i], &candidate, error))
+            qa_string_id classname = g->runtime_names[classes[i]];
+            if (!make_template(g, id, classname, classname, &candidate, error))
                 return false;
             if (i == selected)
                 master = candidate;
@@ -80,9 +77,8 @@ bool q1_map_hip_spawner_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn
     } else {
         if (!q1_map_text(g, entity->map->spawn_classname))
             return q1_map_fail(error, "No spawnclassname defined");
-        const char *classname =
-            qa_strings_cstr(qa_session_strings(g->services.session), entity->map->spawn_classname);
-        if (!make_template(g, id, source, classname, &master, error))
+        if (!make_template(g, id, entity->map->spawn_function, entity->map->spawn_classname,
+                           &master, error))
             return false;
         entity = spawner(g, id);
         if (!entity)

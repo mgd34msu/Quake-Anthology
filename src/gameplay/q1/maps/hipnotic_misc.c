@@ -429,7 +429,19 @@ bool q1_map_hip_misc_think(qa_q1_game *g, q1_actor *entity, q1_map_action action
             return q1_map_targets(g, entity, q1_ref_actor(g, entity->activator), error);
         if (function == g->runtime_names[Q1_NAME_SUB_NULL])
             return true;
-        return q1_map_fail(error, "Hipnotic finale has an unknown native continuation");
+        qa_actor_id actor = entity->id;
+        qa_error local = {0};
+        bool recognized;
+        bool okay = q1_spawn_function(g, entity, function, true, &recognized, &local);
+        if (!okay && !recognized) {
+            if (!q1_message(g, (qa_actor_id){0}, local.message, error))
+                return false;
+            entity = q1_entity(g, actor);
+            return !entity || q1_remove(g, entity, error);
+        }
+        if (!okay && error)
+            *error = local;
+        return okay;
     }
     if (action == Q1_MAP_EXPLODER_FIRE)
         return explode(g, entity, error);

@@ -643,7 +643,7 @@ bool q1_map_train_spawn(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_train_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
 bool q1_map_train_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_hip_brush_spawn(qa_q1_game *, q1_actor *, qa_error *);
-bool q1_map_hip_spawner_spawn(qa_q1_game *, q1_actor *, const qa_q1_spawn *, qa_error *);
+bool q1_map_hip_spawner_spawn(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_hip_spawner_use(qa_q1_game *, q1_actor *, qa_error *);
 static inline bool q1_map_is_hip_trigger(q1_map_kind kind) {
     return kind >= Q1_MAP_HIP_COUNTER && kind <= Q1_MAP_BREAKAWAY;

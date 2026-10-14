@@ -1575,8 +1575,8 @@ bool q1_map_ctf_frame(qa_q1_game *, qa_error *);
 bool q1_map_collision(const q1_actor *, qa_actor_collision *);
 bool q1_bind_target(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_targets_adopt(qa_q1_game *, qa_targets *, qa_error *);
-bool q1_spawn_template(qa_q1_game *, const qa_q1_spawn *, const qa_body_state *, qa_actor_id *,
-                       qa_error *);
+bool q1_spawn_function(qa_q1_game *, q1_actor *, qa_string_id function,
+                       bool keep_classname, bool *recognized, qa_error *);
 bool q1_map_spawn_template_wait(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_multi_explosion_begin(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_mg3_hammer_fire(qa_q1_game *, q1_player *, qa_error *);
@@ -1844,7 +1844,7 @@ bool q1_monster_visible(qa_q1_game *, q1_actor *, qa_actor_id, bool *, qa_error 
 bool q1_monster_melee(qa_q1_game *, q1_actor *, float range, float scale, unsigned rolls,
                       bool visible, qa_error *);
 bool q1_pickup_define(qa_q1_game *, q1_actor *, qa_error *);
-bool q1_pickup_spawn(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_pickup_spawn(qa_q1_game *, q1_actor *, bool *recognized, qa_error *);
 bool q1_pickup_supply_create(qa_q1_game *, qa_error *);
 bool q1_pickup_observe(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_pickup_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);

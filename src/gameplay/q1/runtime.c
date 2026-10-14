@@ -1475,19 +1475,91 @@ bool q1_can_damage(qa_q1_game *g, qa_actor_id target, qa_actor_id from, bool *ou
                                  error);
 }
 
-static bool spawn_actor(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_state *initial,
-                        qa_actor_id *out, qa_error *error) {
+static bool spawn_inhibited(const qa_q1_game *g, const qa_q1_spawn *spawn,
+                           const q1_species *species, bool dormant_mine) {
+    return !strcmp(spawn->classname, "trigger_dragon") ||
+        ((species || dormant_mine) && g->options.deathmatch && !spawn->authored_monster);
+}
+static bool initialize_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn,
+                             const qa_body_state *initial, const q1_species *species,
+                             bool dormant_mine, bool *recognized, qa_error *error) {
+    if (recognized) *recognized = true;
+    qa_actor_id actor = entity->id;
+    if (spawn->authored_monster && (!species || !g->host.monster_admit ||
+        !g->host.monster_admit(g->host.context, actor, spawn->authored_monster, error)))
+        return false;
+    bool flag_handled;
+    if (!q1_source_rogue_flag_spawn(g, entity, &flag_handled, error)) return false;
+    if (flag_handled) {
+        return true;
+    }
+    if (!q1_source_rogue_tag_spawn(g, entity, &flag_handled, error)) return false;
+    if (flag_handled) {
+        return true;
+    }
+    if (!q1_source_flag_spawn(g, entity, &flag_handled, error)) return false;
+    if (flag_handled) {
+        return true;
+    }
+    bool map_handled;
+    if (!q1_map_spawn(g, entity, spawn, &map_handled, error))
+        return false;
+    if (map_handled) {
+        return true;
+    }
+    bool boss_map_handled;
+    if (!q1_final_map_spawn(g, entity, &boss_map_handled, error))
+        return false;
+    if (boss_map_handled) {
+        return true;
+    }
+    if (!strcmp(spawn->classname, "info_szombie_spawn")) {
+        entity->wait = -1;
+    } else if (!strcmp(spawn->classname, "dragon_corner")) {
+        if (!spawn->targetname || !*spawn->targetname) {
+            qa_error_set(error, QA_ERROR_FORMAT, actor.slot, "dragon_corner: no targetname");
+            return false;
+        }
+        entity->physics.solid = QA_PHYSICS_TRIGGER;
+        entity->physics.motion = QA_PHYSICS_STATIONARY;
+        qa_body_state body = *initial;
+        body.bounds = (qa_bounds){{-16, -16, -16}, {16, 16, 16}};
+        if (!qa_world_body_write(g->services.world, actor, &body, error) ||
+            !q1_link(g, entity, error))
+            return false;
+    } else if (!strcmp(spawn->classname, "info_overlord_destination")) {
+        qa_body_state body = *initial;
+        body.angles = qa_v3(0, 0, 0);
+        body.origin.z += 27;
+        if (!qa_world_body_write(g->services.world, actor, &body, error))
+            return false;
+    } else if (dormant_mine) {
+        entity->physics.solid = QA_PHYSICS_BOX;
+        entity->physics.motion = QA_PHYSICS_STEP;
+        qa_body_state body = *initial;
+        body.bounds = (qa_bounds){{-32, -32, -24}, {32, 32, 64}};
+        if (!q1_model(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_DEMON_MDL], error) ||
+            !qa_world_body_write(g->services.world, actor, &body, error) ||
+            !q1_link(g, entity, error))
+            return false;
+    } else if (species ? !q1_monster_spawn(g, entity, species, error)
+                       : !q1_pickup_spawn(g, entity, recognized, error))
+        return false;
+    if (species && spawn->boss_fields &&
+        !q1_major_boss_fields(g, entity, spawn->boss_fields, error))
+        return false;
+    return true;
+}
+
+static bool spawn_actor(qa_q1_game *g, const qa_q1_spawn *spawn, qa_actor_id *out,
+                        qa_error *error) {
     if (!g || !spawn || !spawn->classname || !out) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Q1 native spawn");
         return false;
     }
-    if (!strcmp(spawn->classname, "trigger_dragon")) {
-        *out = (qa_actor_id){0};
-        return true;
-    }
     const q1_species *species = q1_species_find(spawn->classname);
     bool dormant_mine = !strcmp(spawn->classname, "monster_spikemine");
-    if ((species || dormant_mine) && g->options.deathmatch && !spawn->authored_monster) {
+    if (spawn_inhibited(g, spawn, species, dormant_mine)) {
         *out = (qa_actor_id){0};
         return true;
     }
@@ -1503,8 +1575,6 @@ static bool spawn_actor(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_s
                                 .source_slot = spawn->source_slot,
                                 .body = {.origin = spawn->origin, .angles = spawn->angles},
                                 .combat = &combat};
-    if (initial)
-        request.body = *initial;
     if (!request.has_source &&
         !q1_wire_allocate_slot(g, &request.has_source, &request.source_slot, error))
         return false;
@@ -1560,73 +1630,7 @@ static bool spawn_actor(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_s
     }
     if (!q1_bind_target(g, entity, error))
         goto fail;
-    if (spawn->authored_monster && (!species || !g->host.monster_admit ||
-        !g->host.monster_admit(g->host.context, actor, spawn->authored_monster, error)))
-        goto fail;
-    bool flag_handled;
-    if (!q1_source_rogue_flag_spawn(g, entity, &flag_handled, error)) goto fail;
-    if (flag_handled) {
-        *out = q1_alive(g, actor) ? actor : (qa_actor_id){0};
-        return true;
-    }
-    if (!q1_source_rogue_tag_spawn(g, entity, &flag_handled, error)) goto fail;
-    if (flag_handled) {
-        *out = q1_alive(g, actor) ? actor : (qa_actor_id){0};
-        return true;
-    }
-    if (!q1_source_flag_spawn(g, entity, &flag_handled, error)) goto fail;
-    if (flag_handled) {
-        *out = q1_alive(g, actor) ? actor : (qa_actor_id){0};
-        return true;
-    }
-    bool map_handled;
-    if (!q1_map_spawn(g, entity, spawn, &map_handled, error))
-        goto fail;
-    if (map_handled) {
-        *out = q1_alive(g, actor) ? actor : (qa_actor_id){0};
-        return true;
-    }
-    bool boss_map_handled;
-    if (!q1_final_map_spawn(g, entity, &boss_map_handled, error))
-        goto fail;
-    if (boss_map_handled) {
-        *out = actor;
-        return true;
-    }
-    if (!strcmp(spawn->classname, "info_szombie_spawn")) {
-        entity->wait = -1;
-    } else if (!strcmp(spawn->classname, "dragon_corner")) {
-        if (!spawn->targetname || !*spawn->targetname) {
-            qa_error_set(error, QA_ERROR_FORMAT, actor.slot, "dragon_corner: no targetname");
-            goto fail;
-        }
-        entity->physics.solid = QA_PHYSICS_TRIGGER;
-        entity->physics.motion = QA_PHYSICS_STATIONARY;
-        qa_body_state body = request.body;
-        body.bounds = (qa_bounds){{-16, -16, -16}, {16, 16, 16}};
-        if (!qa_world_body_write(g->services.world, actor, &body, error) ||
-            !q1_link(g, entity, error))
-            goto fail;
-    } else if (!strcmp(spawn->classname, "info_overlord_destination")) {
-        qa_body_state body = request.body;
-        body.angles = qa_v3(0, 0, 0);
-        body.origin.z += 27;
-        if (!qa_world_body_write(g->services.world, actor, &body, error))
-            goto fail;
-    } else if (dormant_mine) {
-        entity->physics.solid = QA_PHYSICS_BOX;
-        entity->physics.motion = QA_PHYSICS_STEP;
-        qa_body_state body = request.body;
-        body.bounds = (qa_bounds){{-32, -32, -24}, {32, 32, 64}};
-        if (!q1_model(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_DEMON_MDL], error) ||
-            !qa_world_body_write(g->services.world, actor, &body, error) ||
-            !q1_link(g, entity, error))
-            goto fail;
-    } else if (species ? !q1_monster_spawn(g, entity, species, error)
-                       : !q1_pickup_spawn(g, entity, error))
-        goto fail;
-    if (species && spawn->boss_fields &&
-        !q1_major_boss_fields(g, entity, spawn->boss_fields, error))
+    if (!initialize_spawn(g, entity, spawn, &request.body, species, dormant_mine, NULL, error))
         goto fail;
     *out = q1_alive(g, actor) ? actor : (qa_actor_id){0};
     return true;
@@ -1638,23 +1642,53 @@ bool qa_q1_game_spawn(qa_q1_game *g, const qa_q1_spawn *spawn, qa_actor_id *out,
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(g, &operation, error))
         return false;
-    bool ok = spawn_actor(g, spawn, NULL, out, error);
+    bool ok = spawn_actor(g, spawn, out, error);
     if (out && (!ok || !qa_q1_game_operation_live(&operation)))
         *out = (qa_actor_id){0};
     return operation_finish(&operation, ok, error);
 }
-bool q1_spawn_template(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_state *body,
-                       qa_actor_id *out, qa_error *error) {
-    qa_q1_game_operation operation = {0};
-    if (!qa_q1_game_operation_begin(g, &operation, error))
+bool q1_spawn_function(qa_q1_game *g, q1_actor *entity, qa_string_id function,
+                       bool keep_classname, bool *recognized, qa_error *error) {
+    if (recognized) *recognized = true;
+    qa_actor_id actor = entity->id;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, actor, &body, error))
         return false;
-    int32_t previous = g->options.deathmatch;
-    g->options.deathmatch = 0;
-    bool ok = spawn_actor(g, spawn, body, out, error);
-    g->options.deathmatch = previous;
-    if (out && (!ok || !qa_q1_game_operation_live(&operation)))
-        *out = (qa_actor_id){0};
-    return operation_finish(&operation, ok, error);
+    entity = q1_entity(g, actor);
+    if (!entity)
+        return true;
+    const qa_strings *strings = qa_session_strings(g->services.session);
+    qa_q1_spawn spawn = {.classname = qa_strings_cstr(strings, function),
+        .target = qa_strings_cstr(strings, entity->target),
+        .targetname = qa_strings_cstr(strings, entity->targetname),
+        .killtarget = qa_strings_cstr(strings, entity->killtarget),
+        .message = qa_strings_cstr(strings, entity->message),
+        .origin = body.origin, .angles = body.angles, .spawnflags = entity->spawnflags,
+        .health = entity->max_health, .speed = entity->speed, .wait = entity->wait,
+        .delay = entity->delay, .damage = entity->damage, .count = entity->count,
+        .yaw_speed = entity->physics.yaw_speed,
+        .source_movement_flags = entity->source_movement_flags};
+    if (!q1_wire_spawn_declarations(g, &spawn, error))
+        return false;
+    entity = q1_entity(g, actor);
+    if (!entity)
+        return true;
+    qa_string_id previous = entity->classname;
+    entity->classname = function;
+    qa_scheduler_cancel(qa_session_scheduler(g->services.session), actor);
+    entity->think = Q1_THINK_NONE;
+    entity->next_think = 0;
+    if (entity->map)
+        entity->map->action = Q1_MAP_IDLE;
+    const q1_species *species = q1_species_find(spawn.classname);
+    bool dormant_mine = !strcmp(spawn.classname, "monster_spikemine");
+    bool okay = spawn_inhibited(g, &spawn, species, dormant_mine)
+        ? q1_remove(g, entity, error)
+        : initialize_spawn(g, entity, &spawn, &body, species, dormant_mine, recognized, error);
+    entity = q1_entity(g, actor);
+    if (entity && (keep_classname || entity->classname == function))
+        entity->classname = previous;
+    return okay;
 }
 static bool touch_inner(qa_q1_game *g, const qa_touch_contact *contact, qa_error *error) {
     q1_actor *entity = q1_entity(g, contact->self);

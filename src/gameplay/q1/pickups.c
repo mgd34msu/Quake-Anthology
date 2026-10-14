@@ -369,7 +369,9 @@ static uint32_t upgrade_flag(qa_q1_game *g) {
             return 1u << i;
     return 0;
 }
-bool q1_pickup_define(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+static bool pickup_define(qa_q1_game *g, q1_actor *entity, bool *recognized,
+                          qa_error *error) {
+    if (recognized) *recognized = true;
     q1_pickup *item = &entity->state.pickup;
     const char *model = NULL, *sound = NULL, *id = NULL;
     char model_buffer[96], id_buffer[128];
@@ -655,6 +657,7 @@ bool q1_pickup_define(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         }
     }
     if (!model) {
+        if (recognized) *recognized = false;
         qa_error_set(error, QA_ERROR_NOT_FOUND, entity->id.slot,
                      "Q1 classname has no native pickup definition");
         return false;
@@ -698,12 +701,16 @@ bool q1_pickup_define(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     return !q1_alive(g, actor) || q1_pickup_observe(g, entity, error);
 }
 
-bool q1_pickup_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+bool q1_pickup_define(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    return pickup_define(g, entity, NULL, error);
+}
+bool q1_pickup_spawn(qa_q1_game *g, q1_actor *entity, bool *recognized, qa_error *error) {
+    if (recognized) *recognized = true;
     entity->kind = Q1_PICKUP;
     if (g->options.deathmatch == 0 &&
         (item_name(g, entity, "item_sphere") || item_name(g, entity, "item_random_powerup")))
         return q1_remove(g, entity, error);
-    if (!q1_pickup_define(g, entity, error))
+    if (!pickup_define(g, entity, recognized, error))
         return false;
     entity->physics.solid = QA_PHYSICS_NOT_SOLID;
     entity->physics.motion = QA_PHYSICS_STATIONARY;
