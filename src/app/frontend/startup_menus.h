@@ -26,5 +26,7 @@ bool frontend_startup_menus_pump(qa_frontend *, qa_error *);
 bool frontend_startup_menus_bind(qa_frontend *, qa_error *);
 bool frontend_startup_lobby_launch_stage(frontend_seat *, const qa_lobby_view *,
     const frontend_host_settings *, bool join, qa_error *);
+bool frontend_startup_remote_join_stage(frontend_seat *, const qa_launch_draft *,
+    const qa_net_address *, qa_net_protocol_id, qa_error *);
 bool frontend_startup_lobby_end_stage(qa_frontend *, uint32_t physical, qa_error *);
 #endif

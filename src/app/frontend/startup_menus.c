@@ -157,28 +157,40 @@ bool frontend_startup_lobby_host_stage(frontend_seat *seat, qa_lobby_session *se
     frontend_local_lobby_hosting(seat->frontend->local_lobby,seat->id,&hosting);
     return true;
 }
-bool frontend_startup_lobby_launch_stage(frontend_seat *seat, const qa_lobby_view *room,
-    const frontend_host_settings *hosting, bool join, qa_error *error)
+static bool connection_stage(frontend_seat *seat, const qa_launch_draft *selection,
+    const frontend_host_settings *hosting, const qa_net_address *endpoint,
+    qa_net_protocol_id protocol, bool lobby, qa_error *error)
 {
     qa_frontend *f = seat->frontend;
     qa_launch_draft *draft = NULL;
-    bool staged = qa_launch_draft_rebase(room->selection.launch,
+    bool staged = qa_launch_draft_rebase(selection,
         qa_application_catalog(f->application),&draft,error) &&
         stage(seat,seat->library,draft,false,NULL,0,error);
     qa_launch_draft_destroy(draft);
     if (!staged) return false;
     struct frontend_startup_launch *request = f->startup_launch;
-    request->lobby = true;
-    request->join = join;
-    if (join) {
-        request->endpoint = room->endpoint;
-        request->protocol = room->wire.protocol;
+    request->lobby = lobby;
+    request->join = endpoint != NULL;
+    if (endpoint) {
+        request->endpoint = *endpoint;
+        request->protocol = protocol;
     } else request->hosting = *hosting;
     if (!qa_ui_close_all(seat->ui,(double)f->time_ns/1000000.0,error)) {
         frontend_startup_launch_discard(f);
         return false;
     }
     return true;
+}
+bool frontend_startup_lobby_launch_stage(frontend_seat *seat, const qa_lobby_view *room,
+    const frontend_host_settings *hosting, bool join, qa_error *error)
+{
+    return connection_stage(seat, room->selection.launch, hosting, join ? &room->endpoint : NULL,
+        join ? room->wire.protocol : (qa_net_protocol_id){0}, true, error);
+}
+bool frontend_startup_remote_join_stage(frontend_seat *seat, const qa_launch_draft *selection,
+    const qa_net_address *endpoint, qa_net_protocol_id protocol, qa_error *error)
+{
+    return connection_stage(seat, selection, NULL, endpoint, protocol, false, error);
 }
 static bool addon(void *context, const char *product, const char *map, qa_error *error)
 {
@@ -537,6 +549,7 @@ bool frontend_startup_launch_drain(qa_frontend *f, qa_error *error)
                 free(f->network_connect_text);
                 f->network_connect_text = connect;
                 f->options.network_connect = connect;
+                f->network_connect_protocol = request->protocol;
             }
         }
         request->begun = ok;

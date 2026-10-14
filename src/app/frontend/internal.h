@@ -357,6 +357,7 @@ struct qa_frontend {
     struct frontend_local_lobby *local_lobby;
     bool lobbies_owned;
     char *network_connect_text;
+    qa_net_protocol_id network_connect_protocol;
     struct frontend_demo_dispatch *demos;
     frontend_input_shutdown *input_shutdown;
     frontend_shutdown *shutdown;

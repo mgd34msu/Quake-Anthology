@@ -648,6 +648,8 @@ typedef struct qa_application_connection_request_event {
     const char *server;
     const char *username, *password, *label;
     uint32_t physical_seat;
+    qa_net_protocol_id protocol;
+    const qa_launch_draft *selection;
 } qa_application_connection_request_event;
 
 struct qa_debug_line;

@@ -95,8 +95,8 @@ qa_command_context qa_seat_console_context_read(const qa_seat_console *seat) {
 }
 bool qa_seat_console_context_ready(const qa_seat_console *seat,
                                    const qa_command_context *command, qa_error *error) {
-    if (!qa_seat_console_idle(seat) || !engine_template(command))
-        return qac_fail(error, QA_ERROR_ARGUMENT, "console context requires its idle ENGINE template");
+    if (!qa_seat_console_idle(seat))
+        return qac_fail(error, QA_ERROR_ARGUMENT, "console context requires its returned seat");
     return qac_seat_context_ready(&seat->options, command, error);
 }
 void qa_seat_console_context_publish(qa_seat_console *seat, const qa_command_context *command) {

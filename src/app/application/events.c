@@ -255,6 +255,12 @@ static void audio_record_release(void *opaque)
     else qa_audio_sample_release(sound->sample);
 }
 
+static void connection_record_release(void *opaque)
+{
+    const application_event_envelope *record = opaque;
+    qa_launch_draft_destroy((qa_launch_draft *)record->raw.connection_request.selection);
+}
+
 bool application_event_stream_commit(qa_application *app, application_event_write *write,
     qa_error *error)
 {
@@ -276,7 +282,8 @@ bool application_event_stream_commit(qa_application *app, application_event_writ
         }
     }
     uint64_t id = qa_event_ring_commit(&write->transaction, write->envelope,
-        write->envelope->kind == QA_APPLICATION_EVENT_AUDIO ? audio_record_release : NULL);
+        write->envelope->kind == QA_APPLICATION_EVENT_AUDIO ? audio_record_release :
+        write->envelope->kind == QA_APPLICATION_EVENT_CONNECTION_REQUEST ? connection_record_release : NULL);
     app->event_write = NULL;
     if (!id) {
         app->presentation_event_sequence = write->presentation_before;
@@ -1512,6 +1519,7 @@ bool qa_application_connection_request_emit(qa_application *app,
     if(!application_event_stream_begin(app,QA_APPLICATION_EVENT_CONNECTION_REQUEST,&write,error))
         goto blocked;
     write.envelope->raw.connection_request=*event;
+    write.envelope->raw.connection_request.selection=NULL;
     const char *text[]={event->server,event->username,event->password,event->label};
     const char **stored[]={&write.envelope->raw.connection_request.server,
         &write.envelope->raw.connection_request.username,&write.envelope->raw.connection_request.password,
@@ -1521,7 +1529,14 @@ bool qa_application_connection_request_emit(qa_application *app,
             application_event_stream_abort(app,&write,error); goto blocked;
         }
     }
+    qa_launch_draft *selection=NULL;
+    if(event->selection && !qa_launch_draft_rebase(event->selection,
+        qa_application_catalog(app),&selection,error)) {
+        application_event_stream_abort(app,&write,error); goto blocked;
+    }
+    write.envelope->raw.connection_request.selection=selection;
     if(application_event_stream_commit(app,&write,error)) return true;
+    qa_launch_draft_destroy(selection);
 blocked:
     return error && error->code!=QA_OK ? false :
         application_fail(error,QA_ERROR_MEMORY,"Remote connection command queue is exhausted");
