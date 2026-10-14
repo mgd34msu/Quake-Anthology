@@ -318,6 +318,15 @@ bool qa_native_host_create_q2_cgame(qa_native_module *, const qa_native_host_q2_
                                     qa_native_host **, qa_error *);
 bool qa_native_host_create_q3(qa_native_module *, const qa_native_host_q3_options *,
                               qa_native_host **, qa_error *);
+bool qa_native_host_create_q2_game_begin(qa_native_module *, const qa_native_host_q2_game_options *,
+                                         qa_native_host **, qa_error *);
+bool qa_native_host_create_q2_cgame_begin(qa_native_module *, const qa_native_host_q2_cgame_options *,
+                                          qa_native_host **, qa_error *);
+bool qa_native_host_create_q3_begin(qa_native_module *, const qa_native_host_q3_options *,
+                                    qa_native_host **, qa_error *);
+bool qa_native_host_create_advance(qa_native_host *, size_t quantum,
+                                   bool *complete, qa_error *);
+bool qa_native_host_create_paused(const qa_native_host *);
 /* Clears only a consumed host. Failed OS unload retains the original host and
  * every borrowed source service until a later cleanup attempt can consume it. */
 bool qa_native_host_destroy_owned(qa_native_host **, qa_error *);

@@ -61,6 +61,9 @@ void application_startup_source_script_release(application_provider *, qa_cvars 
 bool application_provider_console_prepare(qa_application *, application_provider *, qa_world *,
     qa_catalog *, const qa_product *, const qa_launch_choices *, qa_console **,
     qa_cvars **, qa_command_context *, qa_error *);
+bool application_provider_console_advance(qa_application *, application_provider *, qa_world *,
+    qa_catalog *, const qa_product *, const qa_launch_choices *, size_t quantum, bool *complete,
+    qa_console **, qa_cvars **, qa_command_context *, qa_error *);
 bool application_publication_begin(qa_application *, const qa_launch_snapshot *,
     const qa_launch_snapshot *, application_publication **, qa_error *);
 bool application_publication_finish(qa_application *, application_publication *, qa_error *);

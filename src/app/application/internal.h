@@ -641,6 +641,9 @@ bool application_guests_idle(const qa_application *);
 struct qa_application_language_ticket;
 bool application_guests_languages_idle(const qa_application *,
     const struct qa_application_language_ticket *const *, size_t);
+bool application_guests_languages_loading_idle(const qa_application *,
+    const struct qa_application_language_ticket *const *, size_t,
+    const application_provider *);
 bool application_q3_guest_services(qa_application *, application_provider *, qa_qvm_role,
                                     uint32_t, uint64_t service_owner, qa_q3_host_options *, qa_error *);
 bool application_q3_guest_native_options(qa_application *, application_provider *,

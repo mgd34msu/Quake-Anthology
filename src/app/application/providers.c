@@ -999,15 +999,16 @@ static bool provider_product_bind(application_provider *provider, qa_catalog *ca
     return true;
 }
 
-static bool provider_console_prepare(qa_application *application,
+static bool provider_console_advance(qa_application *application,
     application_provider *provider, qa_world *world, qa_catalog *catalog,
-    const qa_product *product, const qa_launch_choices *choices, qa_console **console,
+    const qa_product *product, const qa_launch_choices *choices, size_t quantum, bool *complete, qa_console **console,
     qa_cvars **cvars, qa_command_context *command, qa_error *error)
 {
     if (!application || !provider || !world || !catalog || !product || !choices ||
         !console || !cvars || !command || provider->constructed || provider->attached ||
         qa_catalog_product(catalog, product->id) != product)
         return application_fail(error, QA_ERROR_ARGUMENT, "Source preparation needs its actual detached provider and world");
+    *complete = true;
     *console = NULL; *cvars = NULL;
     if (provider->native_q1_console)
         return application_native_q1_console_at(provider, console, cvars, command);
@@ -1056,8 +1057,8 @@ static bool provider_console_prepare(qa_application *application,
             application_guest_q3_console_prepare(application, provider, world, product,
                 choices, console, cvars, command, error) :
             product->family == QA_GAME_Q2 ?
-                application_guest_native_q2_console_prepare(application, provider, world, product,
-                    choices, console, cvars, command, error) :
+                application_guest_native_q2_console_advance(application, provider, world, product,
+                    choices, quantum, complete, console, cvars, command, error) :
                 application_fail(error, QA_ERROR_UNSUPPORTED,
                     "Selected original GAME requires its retained private console preparation");
     }
@@ -1089,20 +1090,30 @@ static bool provider_preparation_leave(qa_application *application,
     return application_startup_values_leave(values, error);
 }
 
-bool application_provider_console_prepare(qa_application *application,
+bool application_provider_console_advance(qa_application *application,
     application_provider *provider, qa_world *world, qa_catalog *catalog,
-    const qa_product *product, const qa_launch_choices *choices, qa_console **console,
+    const qa_product *product, const qa_launch_choices *choices, size_t quantum, bool *complete, qa_console **console,
     qa_cvars **cvars, qa_command_context *command, qa_error *error)
 {
     qa_cvars_edit *values = NULL;
     application_provider *previous = NULL;
     if (!provider_preparation_enter(application, provider, choices, &previous, &values, error)) return false;
-    bool ok = provider_console_prepare(application, provider, world, catalog,
-        product, choices, console, cvars, command, error);
+    bool ok = provider_console_advance(application, provider, world, catalog,
+        product, choices, quantum, complete, console, cvars, command, error);
     qa_error returned = {0};
     bool left = provider_preparation_leave(application, previous, values, &returned);
     if (!left && ok && error) *error = returned;
     return ok && left;
+}
+
+bool application_provider_console_prepare(qa_application *application,
+    application_provider *provider, qa_world *world, qa_catalog *catalog,
+    const qa_product *product, const qa_launch_choices *choices, qa_console **console,
+    qa_cvars **cvars, qa_command_context *command, qa_error *error)
+{
+    bool complete = false;
+    return application_provider_console_advance(application, provider, world, catalog,
+        product, choices, 0, &complete, console, cvars, command, error) && complete;
 }
 
 bool application_provider_startup_source_at(application_provider *provider, size_t index,

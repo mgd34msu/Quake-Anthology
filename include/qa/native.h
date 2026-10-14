@@ -354,6 +354,13 @@ typedef enum qa_native_lifecycle {
  * Failed construction retains any partially live owner in *out for cleanup. */
 bool qa_native_create(qa_native_module *module, const qa_native_options *options,
                       qa_native_instance **out, qa_error *error);
+/* Begin retains the actual binding call. Advance publishes its results only
+ * after return; synchronous creation drives this same operation to completion. */
+bool qa_native_create_begin(qa_native_module *, const qa_native_options *,
+                            qa_native_instance **, qa_error *);
+bool qa_native_create_advance(qa_native_instance *, size_t quantum,
+                              bool *complete, qa_error *);
+bool qa_native_create_paused(const qa_native_instance *);
 /* Clears the owner after actual consumption, including source callback and
  * guest execution faults. A rejected unload or retained original mapping keeps
  * every callback context in *owner. Cleanup never releases a closed loader

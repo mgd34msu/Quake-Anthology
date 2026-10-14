@@ -87,6 +87,7 @@ struct application_native_q2 {
     qa_source_frame frame;
     qa_string_id map_name, spawn_point;
     char *entity_text;
+    bool host_loading;
     unsigned calls;
     uint32_t current_client, disconnect_client;
     uint64_t current_command_sequence;
@@ -132,6 +133,11 @@ bool application_native_q2_frames_exit(void *,qa_session *,const qa_source_frame
 bool application_guest_native_q2_console_prepare(qa_application *, application_provider *, qa_world *,
     const qa_product *, const qa_launch_choices *, qa_console **, qa_cvars **,
     qa_command_context *, qa_error *);
+bool application_guest_native_q2_console_advance(qa_application *, application_provider *, qa_world *,
+    const qa_product *, const qa_launch_choices *, size_t, bool *, qa_console **, qa_cvars **,
+    qa_command_context *, qa_error *);
+bool application_native_q2_loading_cancel(application_provider *, qa_error *);
+bool application_native_q2_loading_idle(const application_provider *);
 bool application_native_q2_entity_text(const qa_bsp_view *, char **, qa_error *);
 bool application_native_q2_spawn_map(application_provider *, const qa_bsp_view *,
                                       const qa_entities *, qa_string_id, qa_string_id, qa_error *);

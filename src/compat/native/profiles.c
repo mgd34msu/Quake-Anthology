@@ -802,7 +802,7 @@ bool native_profile_restore_tables(qa_native_instance *instance, qa_error *error
     return true;
 }
 
-static bool bind_q2_table(qa_native_instance *instance, const native_profile_spec *profile,
+static bool bind_q2_table_begin(qa_native_instance *instance, const native_profile_spec *profile,
                           qa_error *error) {
     size_t pointer_bytes = instance->module->info.image.target.pointer_bytes;
     size_t pointer_region;
@@ -839,14 +839,16 @@ static bool bind_q2_table(qa_native_instance *instance, const native_profile_spe
                                          .result = TYPE(QA_NATIVE_ADDRESS)};
     qa_native_value argument = {.type = QA_NATIVE_ADDRESS,
                                 .as.address = instance->import_table_address};
-    qa_native_value result = {0};
-    bool ok =
-        native_process_invoke(instance, get_api, &get_signature, &argument, 1, &result, error);
-    if (!ok)
-        return false;
-    if (!result.as.address)
+    return native_process_call_begin(instance, get_api, &get_signature, &argument, 1,
+        &instance->profile_result, &instance->profile_call, error);
+}
+
+static bool bind_q2_table_finish(qa_native_instance *instance, const native_profile_spec *profile,
+    qa_error *error)
+{
+    if (!instance->profile_result.as.address)
         return native_fail(error, QA_ERROR_FORMAT, 0, "native Q2 API returned a null export table");
-    instance->export_table = result.as.address;
+    instance->export_table = instance->profile_result.as.address;
     int32_t api_version;
     if (!qa_native_read(instance, instance->export_table, &api_version, sizeof(api_version), error))
         return false;
@@ -876,8 +878,7 @@ static bool bind_q2_table(qa_native_instance *instance, const native_profile_spe
     return native_profile_refresh_entities(instance, error);
 }
 
-static bool bind_q3(qa_native_instance *instance, const native_profile_spec *profile,
-                    qa_error *error) {
+static bool bind_q3_begin(qa_native_instance *instance, qa_error *error) {
     qa_native_address dll_entry, vm_main;
     if (!qa_native_export(instance, "dllEntry", &dll_entry, error) ||
         !qa_native_export(instance, "vmMain", &vm_main, error))
@@ -889,21 +890,25 @@ static bool bind_q3(qa_native_instance *instance, const native_profile_spec *pro
                                      .result = TYPE(QA_NATIVE_VOID)};
     qa_native_value argument = {.type = QA_NATIVE_ADDRESS};
     if (!native_process_q3_bind(instance, &argument.as.address, error)) return false;
-    bool ok =
-        native_process_invoke(instance, dll_entry, &signature, &argument, 1, NULL, error);
-    if (!ok)
-        return false;
+    instance->profile_vm_main = vm_main;
+    return native_process_call_begin(instance, dll_entry, &signature, &argument, 1,
+        NULL, &instance->profile_call, error);
+}
+
+static bool bind_q3_finish(qa_native_instance *instance, const native_profile_spec *profile,
+    qa_error *error)
+{
     instance->entries = calloc(1, sizeof(*instance->entries));
     if (!instance->entries)
         return native_fail(error, QA_ERROR_MEMORY, 0, "allocating native Q3 entry binding");
     instance->entry_count = 1;
     instance->entries[0].spec = profile->entries[0];
     instance->entries[0].spec.signature.abi = instance->module->info.image.target.abi;
-    instance->entries[0].address = vm_main;
+    instance->entries[0].address = instance->profile_vm_main;
     return true;
 }
 
-static bool bind_ql(qa_native_instance *instance, const native_profile_spec *profile,
+static bool bind_ql_begin(qa_native_instance *instance, const native_profile_spec *profile,
                     qa_error *error) {
     enum { QL_IMPORT_SLOTS = 206 };
     size_t pointer_bytes = instance->module->info.image.target.pointer_bytes;
@@ -929,8 +934,6 @@ static bool bind_ql(qa_native_instance *instance, const native_profile_spec *pro
     qa_native_address dll_entry;
     if (!qa_native_export(instance, profile->entry_export, &dll_entry, error))
         return false;
-    qa_native_address exports = 0;
-    int32_t api_version = 0;
     qa_native_type parameters[] = {TYPE(QA_NATIVE_ADDRESS), TYPE(QA_NATIVE_ADDRESS),
                                    TYPE(QA_NATIVE_ADDRESS)};
     qa_native_signature signature = {.abi = instance->module->info.image.target.abi,
@@ -942,21 +945,28 @@ static bool bind_ql(qa_native_instance *instance, const native_profile_spec *pro
         {.type = QA_NATIVE_ADDRESS,
          .as.address = instance->import_table_address},
         {.type = QA_NATIVE_ADDRESS}};
-    uint64_t scratch = 0;
-    if (!qa_native_guest_allocate(instance->guest, pointer_bytes + 4, INT32_C(0x4e414249), &scratch, error)) return false;
-    arguments[0].as.address = scratch; arguments[2].as.address = scratch + pointer_bytes;
-    bool ok = native_process_invoke(instance, dll_entry, &signature, arguments,
-                              COUNT(arguments), NULL, error);
-    if (scratch) {
-        qa_native_address actual_exports = 0;
-        if (ok) ok = read_pointer(instance, scratch, &actual_exports, error) &&
-            qa_native_read(instance, scratch + pointer_bytes, &api_version, 4, error);
-        exports = actual_exports;
-        qa_error cleanup = {0};
-        if (!qa_native_guest_free(instance->guest, scratch, &cleanup) && ok) { if (error) *error = cleanup; ok = false; }
-    }
-    if (!ok)
-        return false;
+    if (!qa_native_guest_allocate(instance->guest, pointer_bytes + 4, INT32_C(0x4e414249),
+        &instance->profile_output, error)) return false;
+    arguments[0].as.address = instance->profile_output;
+    arguments[2].as.address = instance->profile_output + pointer_bytes;
+    return native_process_call_begin(instance, dll_entry, &signature, arguments,
+        COUNT(arguments), NULL, &instance->profile_call, error);
+}
+
+static bool bind_ql_finish(qa_native_instance *instance, const native_profile_spec *profile,
+    qa_error *error)
+{
+    size_t pointer_bytes = instance->module->info.image.target.pointer_bytes;
+    qa_native_address exports = 0;
+    int32_t api_version = 0;
+    bool ok = read_pointer(instance, instance->profile_output, &exports, error) &&
+        qa_native_read(instance, instance->profile_output + pointer_bytes, &api_version, 4, error);
+    qa_error cleanup = {0};
+    if (!qa_native_guest_free(instance->guest, instance->profile_output, &cleanup)) {
+        if (ok && error) *error = cleanup;
+        ok = false;
+    } else instance->profile_output = 0;
+    if (!ok) return false;
     if (api_version != (int32_t)profile->api_version) {
         qa_error_set(error, QA_ERROR_UNSUPPORTED, 0,
                      "Quake Live module reports API %d; expected %u", api_version,
@@ -988,17 +998,53 @@ static bool bind_ql(qa_native_instance *instance, const native_profile_spec *pro
     return true;
 }
 
-bool native_profile_bind(qa_native_instance *instance, qa_error *error) {
+bool native_profile_bind_begin(qa_native_instance *instance, qa_error *error)
+{
     const native_profile_spec *profile = native_profile(instance->module->info.profile);
     if (!profile)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "unknown native module profile");
-    if (profile->q2_table)
-        return bind_q2_table(instance, profile, error);
-    if (profile->q3_vm)
-        return bind_q3(instance, profile, error);
-    if (profile->quake_live)
-        return bind_ql(instance, profile, error);
+    instance->profile_loading = true;
+    instance->profile_result = (qa_native_value){0};
+    if (profile->q2_table) return bind_q2_table_begin(instance, profile, error);
+    if (profile->q3_vm) return bind_q3_begin(instance, error);
+    if (profile->quake_live) return bind_ql_begin(instance, profile, error);
     return native_fail(error, QA_ERROR_ARGUMENT, 0, "native profile has no binding strategy");
+}
+
+bool native_profile_bind_advance(qa_native_instance *instance, size_t quantum,
+    bool *complete, qa_error *error)
+{
+    *complete = !instance->profile_loading;
+    if (*complete) return true;
+    bool returned = false;
+    if (!native_process_call_step(instance->profile_call, quantum, &returned, error)) return false;
+    if (!returned) return true;
+    if (!native_process_call_finish(&instance->profile_call, error)) return false;
+    const native_profile_spec *profile = native_profile(instance->module->info.profile);
+    bool ok = profile->q2_table ? bind_q2_table_finish(instance, profile, error) :
+        profile->q3_vm ? bind_q3_finish(instance, profile, error) : bind_ql_finish(instance, profile, error);
+    if (ok) { instance->profile_loading = false; *complete = true; }
+    return ok;
+}
+
+void native_profile_bind_cancel(qa_native_instance *instance)
+{
+    native_process_call_abandon(&instance->profile_call);
+    if (instance->profile_output && !qa_native_guest_terminal(instance->guest)) {
+        qa_error cleanup = {0};
+        if (qa_native_guest_free(instance->guest, instance->profile_output, &cleanup))
+            instance->profile_output = 0;
+    }
+    instance->profile_loading = false;
+}
+
+bool native_profile_bind(qa_native_instance *instance, qa_error *error)
+{
+    bool complete = false;
+    bool ok = native_profile_bind_begin(instance, error) &&
+        native_profile_bind_advance(instance, 0, &complete, error);
+    if (!ok) native_profile_bind_cancel(instance);
+    return ok && complete;
 }
 
 bool native_profile_prepare_tables(qa_native_instance *instance, qa_error *error) {

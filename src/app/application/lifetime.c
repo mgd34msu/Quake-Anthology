@@ -33,7 +33,8 @@
 #include <stdlib.h>
 
 static bool guests_idle(const qa_application *application,
-    const qa_application_language_ticket *const *languages, size_t language_count)
+    const qa_application_language_ticket *const *languages, size_t language_count,
+    const application_provider *loading_owner)
 {
     if (application == NULL)
         return false;
@@ -75,7 +76,8 @@ static bool guests_idle(const qa_application *application,
                 return false;
         } else if (provider->kind == APPLICATION_PROVIDER_NATIVE &&
                    provider->state.native.q2_engine != NULL) {
-            if (!application_native_q2_idle(provider))
+            if (!(provider == loading_owner ? application_native_q2_loading_idle(provider) :
+                                               application_native_q2_idle(provider)))
                 return false;
         } else if (!application_q3_guest_idle(provider)) {
             return false;
@@ -85,11 +87,16 @@ static bool guests_idle(const qa_application *application,
 }
 
 bool application_guests_idle(const qa_application *application)
-{ return guests_idle(application, NULL, 0); }
+{ return guests_idle(application, NULL, 0, NULL); }
 
 bool application_guests_languages_idle(const qa_application *application,
     const qa_application_language_ticket *const *languages, size_t count)
-{ return (!count || languages) && guests_idle(application, languages, count); }
+{ return (!count || languages) && guests_idle(application, languages, count, NULL); }
+
+bool application_guests_languages_loading_idle(const qa_application *application,
+    const qa_application_language_ticket *const *languages, size_t count,
+    const application_provider *loading_owner)
+{ return (!count || languages) && guests_idle(application, languages, count, loading_owner); }
 
 static void remember(bool result, const qa_error *current, const char *fallback,
                      bool *ok, qa_error *first)

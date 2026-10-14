@@ -65,7 +65,8 @@ static bool create_process(qa_native_module *module, const qa_native_options *op
     native_active_instance = instance; instance->active_depth = 1;
     bool okay = options->process->continuation.size ?
         native_process_restore(instance, options->process, error) :
-        native_process_open(instance, options->process, error) && native_profile_bind(instance, error);
+        native_process_open(instance, options->process, error) && native_profile_bind_begin(instance, error);
+    instance->creating = !options->process->continuation.size;
     instance->active_depth = 0; native_active_instance = previous;
     instance->options.process = NULL;
     instance->options.declaration = NULL;
@@ -83,6 +84,8 @@ static bool create_process(qa_native_module *module, const qa_native_options *op
     }
     if (!instance->process_host_pending) qa_buffer_free(&instance->process_host);
     if (okay && report_latched(instance, error)) { *out = instance; return true; }
+    native_profile_bind_cancel(instance);
+    instance->creating = false;
     instance->lifecycle = QA_NATIVE_SHUT_DOWN;
     qa_error cleanup = {0};
     if (!native_process_close(instance, &cleanup)) { *out = instance; return false; }
@@ -94,9 +97,37 @@ static bool create_process(qa_native_module *module, const qa_native_options *op
     qa_native_module_release(module); free(instance->slots); free(instance); *out = NULL; return false;
 }
 
-bool qa_native_create(qa_native_module *module, const qa_native_options *options,
-                      qa_native_instance **out, qa_error *error) {
+bool qa_native_create_begin(qa_native_module *module, const qa_native_options *options,
+    qa_native_instance **out, qa_error *error)
+{
     return create_process(module, options, out, error);
+}
+
+bool qa_native_create_advance(qa_native_instance *instance, size_t quantum,
+    bool *complete, qa_error *error)
+{
+    if (!instance || !complete)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native construction requires its owner and completion output");
+    *complete = !instance->creating;
+    if (*complete) return true;
+    qa_native_instance *previous = native_active_instance;
+    native_active_instance = instance; instance->active_depth = 1;
+    bool okay = native_profile_bind_advance(instance, quantum, complete, error);
+    instance->active_depth = 0; native_active_instance = previous;
+    if (!report_latched(instance, error)) okay = false;
+    if (okay && *complete) instance->creating = false;
+    return okay;
+}
+
+bool qa_native_create(qa_native_module *module, const qa_native_options *options,
+    qa_native_instance **out, qa_error *error)
+{
+    if (!qa_native_create_begin(module, options, out, error)) return false;
+    bool complete = false;
+    if (qa_native_create_advance(*out, 0, &complete, error) && complete) return true;
+    qa_error cleanup = {0};
+    qa_native_destroy_owned(out, &cleanup);
+    return false;
 }
 
 qa_native_backend qa_native_get_backend(const qa_native_instance *instance) {
@@ -113,11 +144,26 @@ static void free_allocations(qa_native_instance *instance) {
     instance->allocations = NULL;
 }
 
-bool qa_native_can_destroy(const qa_native_instance *instance) {
+static bool instance_returned(const qa_native_instance *instance) {
     return instance && !instance->active_depth && !instance->callback_depth &&
         !instance->region_depth && !instance->write_depth &&
         !instance->checkpointing && !instance->destroying && !instance->unloading && !instance->region_scopes &&
-        !instance->write_scope && !instance->call_scope && !instance->loading_call;
+        !instance->write_scope && !instance->call_scope;
+}
+
+bool qa_native_can_destroy(const qa_native_instance *instance) {
+    return instance_returned(instance) && !instance->loading_call;
+}
+
+bool qa_native_create_paused(const qa_native_instance *instance)
+{
+    if (!instance_returned(instance) || !instance->creating || !instance->profile_loading ||
+        !instance->profile_call || instance->loading_call != instance->profile_call) return false;
+    const qa_native_guest *guest = instance->guest;
+    return guest && guest->call == instance->profile_call->abi &&
+        !guest->run && !guest->callback_depth && !guest->publication_depth &&
+        !guest->stopped_write_calls && !guest->stopped_write_bindings && !guest->recovery &&
+        !guest->stepping && !guest->restoring && !guest->faulting;
 }
 
 bool qa_native_restart_ready(const qa_native_instance *instance, qa_error *error) {
@@ -170,6 +216,11 @@ bool qa_native_destroy_owned(qa_native_instance **owner, qa_error *error) {
     if (!instance)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native instance is required for destruction");
+    if (instance->creating && (qa_native_can_destroy(instance) || qa_native_create_paused(instance))) {
+        native_profile_bind_cancel(instance);
+        instance->creating = false;
+        instance->lifecycle = QA_NATIVE_SHUT_DOWN;
+    }
     if (!qa_native_can_destroy(instance))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "active native instance cannot be destroyed");

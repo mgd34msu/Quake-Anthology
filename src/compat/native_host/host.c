@@ -234,7 +234,8 @@ static bool configure_instance(qa_native_host *host, qa_native_module *module,
         .frame_milliseconds = options->frame_milliseconds,
         .observe = options->observe,
         .process = options->process ? options->process : &owned};
-    return qa_native_create(module, &native, &host->instance, error);
+    host->constructing = true;
+    return qa_native_create_begin(module, &native, &host->instance, error);
 }
 
 static qa_native_host *allocate_host(qa_native_module *module, native_host_kind kind,
@@ -295,7 +296,7 @@ static bool creation_failed(qa_native_host *host, qa_native_host **out, qa_error
     return false;
 }
 
-bool qa_native_host_create_q2_game(qa_native_module *module,
+bool qa_native_host_create_q2_game_begin(qa_native_module *module,
                                    const qa_native_host_q2_game_options *options,
                                    qa_native_host **out, qa_error *error)
 {
@@ -339,16 +340,14 @@ bool qa_native_host_create_q2_game(qa_native_module *module,
             return creation_failed(host, out, error);
     }
     qa_arena_seal(&host->message_reference_storage);
-    if (!configure_instance(host, module, &options->instance,
-                            error) || !native_host_call_scratch_prepare(host, error) ||
-        !native_host_fields_refresh(host, error)) {
+    if (!configure_instance(host, module, &options->instance, error)) {
         return creation_failed(host, out, error);
     }
     *out = host;
     return true;
 }
 
-bool qa_native_host_create_q2_cgame(qa_native_module *module,
+bool qa_native_host_create_q2_cgame_begin(qa_native_module *module,
                                     const qa_native_host_q2_cgame_options *options,
                                     qa_native_host **out, qa_error *error)
 {
@@ -375,7 +374,7 @@ bool qa_native_host_create_q2_cgame(qa_native_module *module,
     return true;
 }
 
-bool qa_native_host_create_q3(qa_native_module *module,
+bool qa_native_host_create_q3_begin(qa_native_module *module,
                               const qa_native_host_q3_options *options,
                               qa_native_host **out, qa_error *error)
 {
@@ -414,6 +413,48 @@ bool qa_native_host_create_q3(qa_native_module *module,
     return true;
 }
 
+bool qa_native_host_create_advance(qa_native_host *host, size_t quantum,
+    bool *complete, qa_error *error)
+{
+    if (!host || !complete)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "native host construction requires its owner");
+    *complete = !host->constructing;
+    if (*complete) return true;
+    if (!qa_native_create_advance(host->instance, quantum, complete, error)) return false;
+    if (!*complete) return true;
+    if (host->kind == NATIVE_HOST_Q2_GAME &&
+        (!native_host_call_scratch_prepare(host, error) || !native_host_fields_refresh(host, error))) return false;
+    host->constructing = false;
+    return true;
+}
+
+static bool complete_creation(qa_native_host **out, qa_error *error)
+{
+    bool complete = false;
+    if (qa_native_host_create_advance(*out, 0, &complete, error) && complete) return true;
+    qa_error cleanup = {0};
+    qa_native_host_destroy_owned(out, &cleanup);
+    return false;
+}
+
+bool qa_native_host_create_q2_game(qa_native_module *module,
+    const qa_native_host_q2_game_options *options, qa_native_host **out, qa_error *error)
+{
+    return qa_native_host_create_q2_game_begin(module, options, out, error) && complete_creation(out, error);
+}
+
+bool qa_native_host_create_q2_cgame(qa_native_module *module,
+    const qa_native_host_q2_cgame_options *options, qa_native_host **out, qa_error *error)
+{
+    return qa_native_host_create_q2_cgame_begin(module, options, out, error) && complete_creation(out, error);
+}
+
+bool qa_native_host_create_q3(qa_native_module *module,
+    const qa_native_host_q3_options *options, qa_native_host **out, qa_error *error)
+{
+    return qa_native_host_create_q3_begin(module, options, out, error) && complete_creation(out, error);
+}
+
 static void free_records(qa_native_host *host)
 {
     qa_actor_index_destroy(&host->actor_slots);
@@ -442,6 +483,12 @@ bool qa_native_host_destroy_ready(const qa_native_host *host)
         (!host->instance || qa_native_can_destroy(host->instance));
 }
 
+bool qa_native_host_create_paused(const qa_native_host *host)
+{
+    return host && host->constructing && !host->destroying && !host->reconstruction &&
+        !host->callback_depth && !host->call_scratch.active && qa_native_create_paused(host->instance);
+}
+
 bool qa_native_host_terminal_retired(const qa_native_host *host)
 {
     return qa_native_host_destroy_ready(host) && qa_native_terminal_retired(host->instance,
@@ -451,12 +498,19 @@ bool qa_native_host_terminal_retired(const qa_native_host *host)
 bool qa_native_host_destroy_owned(qa_native_host **owner, qa_error *error)
 {
     qa_native_host *host = owner ? *owner : NULL;
+    bool construction_ok = true;
+    if (host && host->constructing && !host->destroying && !host->reconstruction && !host->callback_depth &&
+        !host->call_scratch.active && host->instance) {
+        construction_ok = qa_native_destroy_owned(&host->instance, error);
+        if (host->instance) return false;
+        host->constructing = false;
+    }
     if (!qa_native_host_destroy_ready(host) || host->reconstruction ||
         (qa_native_terminal(host->instance) && !qa_native_host_terminal_retired(host)))
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "live native host adapter is required");
     host->destroying = true;
-    bool ok = !host->instance || qa_native_destroy_owned(&host->instance, error);
+    bool ok = (!host->instance || qa_native_destroy_owned(&host->instance, error)) && construction_ok;
     if (host->instance) { host->destroying = false; return false; }
     if (!release_process(host, error)) {
         host->destroying = false;

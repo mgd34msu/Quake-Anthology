@@ -11,6 +11,7 @@
 #include "rankings.h"
 #include "guest_qc_original_save.h"
 #include "guest_native_q2_original_save.h"
+#include "guest_native_q2_private.h"
 #include "qa/console_cvar_observer.h"
 #include <stdlib.h>
 
@@ -35,14 +36,15 @@ struct application_startup_flow {
     const qa_launch_snapshot *resources_candidate;
     void *resources;
     startup_source *sources;
-    size_t count, index, capacity;
+    application_provider *loading_provider;
+    size_t count, index, capacity, provider_ordinal;
     uint64_t generation;
     bool advancing, configured, validated, candidate_finished, cancelling, committed;
     bool resources_ready, resources_consumed, resources_finished;
     bool resources_consuming, resources_finishing;
     bool resource_advancing, resource_waiting;
     bool preparing_resources;
-    bool images_advancing, images_waiting, images_completed;
+    bool images_advancing, images_waiting, images_completed, providers_prepared;
     bool candidate_abort_refused;
     bool engine_only, root_admitted, root_preparing, root_prepared, root_settled;
     application_provider *root_definition_provider;
@@ -448,7 +450,7 @@ static bool candidate_callbacks_idle(qa_application *app, struct application_sta
     if (!flow->committed && (flow->candidate || flow->engine_only) && flow->hooks.candidate_languages &&
         !flow->hooks.candidate_languages(flow->hooks.context, app, flow->candidate, &languages, &count, error))
         return false;
-    return application_guests_languages_idle(app, languages, count) ||
+    return application_guests_languages_loading_idle(app, languages, count, flow->loading_provider) ||
         application_fail(error, QA_ERROR_ARGUMENT, "Startup candidate still has unreturned source callbacks or unowned language admissions");
 }
 
@@ -733,6 +735,15 @@ bool qa_application_startup_abort(qa_application *app, qa_error *error)
     flow->images_waiting = false;
     flow->advancing = true;
     flow->cancelling = true;
+    if (!flow->committed && !flow->engine_only) {
+        for (size_t i = 0; i < qa_launch_snapshot_instance_count(flow->candidate); ++i) {
+            application_provider *provider = qa_launch_snapshot_instance(flow->candidate, i)->state;
+            if (provider && !provider->attached && provider->kind == APPLICATION_PROVIDER_NATIVE &&
+                provider->state.native.q2_engine &&
+                !application_native_q2_loading_cancel(provider, error)) goto fail;
+        }
+        flow->loading_provider = NULL;
+    }
     if (!flow->committed) {
         if (!application_startup_program_abort(&flow->program, error)) goto fail;
         if (!release_phases(flow, error)) goto fail;
@@ -996,7 +1007,17 @@ static bool begin(qa_application *app, const qa_launch_draft *draft,
             .console=flow->console,.cvars=flow->cvars,.command=flow->root_command};
         ok=application_startup_program_prepare(app,flow->publication,&engine,&engine,&flow->program,error);
     }
-    size_t provider_count = ok ? flow->publication->next_count : 0;
+    flow->advancing = false;
+    if (!ok) abort_failed_startup(app, error);
+    return ok;
+}
+
+static bool advance_providers(qa_application *app, struct application_startup_flow *flow,
+    bool *complete, qa_error *error)
+{
+    bool ok = true;
+    *complete = false;
+    size_t provider_count = flow->publication->next_count;
     const qa_launch_choices *choices = qa_launch_snapshot_choices(flow->candidate);
     const qa_launch_snapshot *routing = app->routing_snapshot;
     application_provider **providers = app->routing_providers;
@@ -1019,7 +1040,8 @@ static bool begin(qa_application *app, const qa_launch_draft *draft,
         flow->publication->next[primary] != primary_provider) ++primary;
     if (ok && provider_count && primary == provider_count)
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Startup candidate has no actual primary map source");
-    for (size_t ordinal = 0; ok && ordinal < provider_count; ++ordinal) {
+    for (; ok && flow->provider_ordinal < provider_count; ++flow->provider_ordinal) {
+        size_t ordinal = flow->provider_ordinal;
         size_t i = ordinal == 0 ? primary : ordinal <= primary ? ordinal - 1 : ordinal;
         application_provider *provider = flow->publication->next[i];
         if (provider->constructed && provider->attached) {
@@ -1069,11 +1091,14 @@ static bool begin(qa_application *app, const qa_launch_draft *draft,
         qa_console *console = NULL;
         qa_cvars *cvars = NULL;
         qa_command_context command = {0};
-        ok = product && application_provider_console_prepare(app, provider,
+        bool prepared = false;
+        ok = product && application_provider_console_advance(app, provider,
             flow->publication->initial_world ? flow->publication->initial_world : app->world,
-            catalog, product, choices,
+            catalog, product, choices, 16384, &prepared,
             &console, &cvars, &command, error);
-        if (!ok) break;
+        flow->loading_provider = provider->kind == APPLICATION_PROVIDER_NATIVE &&
+            provider->state.native.q2_engine && provider->state.native.q2_engine->host_loading ? provider : NULL;
+        if (!ok || !prepared) break;
         if (provider->kind == APPLICATION_PROVIDER_Q2) {
             application_q2_source_scripts scripts = {.context = provider,
                 .read = q2_read, .release = q2_release, .complete = q2_complete};
@@ -1099,8 +1124,9 @@ static bool begin(qa_application *app, const qa_launch_draft *draft,
     app->routing_snapshot = routing;
     app->routing_providers = providers;
     app->routing_provider_count = count;
-    flow->advancing = false;
-    if (!ok) abort_failed_startup(app, error);
+    if (ok && flow->provider_ordinal == provider_count) {
+        flow->providers_prepared = true; *complete = true;
+    }
     return ok;
 }
 
@@ -1235,6 +1261,11 @@ bool qa_application_startup_advance(qa_application *app, bool *complete, qa_erro
     flow->resource_waiting = false;
     flow->images_waiting = false;
     bool ok = true;
+    if (!flow->engine_only && !flow->providers_prepared) {
+        bool prepared = false;
+        ok = advance_providers(app, flow, &prepared, error);
+        if (!ok || !prepared) goto returned;
+    }
     if (!flow->images_completed) {
         bool images_complete = false;
         ok = advance_images(app, flow, &images_complete, error);

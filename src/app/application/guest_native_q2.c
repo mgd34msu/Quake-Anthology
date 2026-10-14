@@ -20,6 +20,7 @@
 #include "native_q2_inventory_rows.h"
 
 static bool load_host(struct application_native_q2 *, qa_error *);
+static bool load_host_advance(struct application_native_q2 *, size_t, bool *, qa_error *);
 
 static const uint64_t whole_source_roles = QA_ROLE_BIT(QA_ROLE_ENTITIES) |
     QA_ROLE_BIT(QA_ROLE_MOVEMENT) | QA_ROLE_BIT(QA_ROLE_CHARACTER) |
@@ -89,7 +90,7 @@ static bool process_current(void *context, const qa_launch_instance *descriptor,
     return true;
 }
 
-static bool owner_returned(const application_provider *provider)
+static bool owner_returned(const application_provider *provider, bool own_loading)
 {
     const struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     return !engine || (!engine->baseline && !engine->calls && !engine->source_invocation &&
@@ -102,13 +103,23 @@ static bool owner_returned(const application_provider *provider)
         application_native_q2_inventory_rows_idle(engine->inventory_rows) &&
         (!engine->console || qa_console_idle(engine->console)) &&
         (!engine->cvars || qa_cvars_observer_idle(engine->cvars)) &&
-        (!provider->state.native.host || qa_native_host_destroy_ready(provider->state.native.host)));
+        (!provider->state.native.host || qa_native_host_destroy_ready(provider->state.native.host) ||
+            (own_loading && engine->host_loading &&
+                qa_native_host_create_paused(provider->state.native.host))));
 }
 bool application_native_q2_idle(const application_provider *provider)
 {
     const struct application_native_q2 *engine=provider?provider->state.native.q2_engine:NULL;
-    return owner_returned(provider)&&(!engine||(application_native_q2_inventory_scanner_idle(engine->inventory_scanner)&&
+    return owner_returned(provider, false)&&(!engine||(application_native_q2_inventory_scanner_idle(engine->inventory_scanner)&&
         application_native_q2_source_actors_idle(engine->source_actors)));
+}
+
+bool application_native_q2_loading_idle(const application_provider *provider)
+{
+    const struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
+    return engine && !provider->attached && engine->host_loading && owner_returned(provider, true) &&
+        application_native_q2_inventory_scanner_idle(engine->inventory_scanner) &&
+        application_native_q2_source_actors_idle(engine->source_actors);
 }
 
 static bool frontend_owner_idle(void *context)
@@ -408,9 +419,10 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
     return true;
 }
 
-bool application_guest_native_q2_console_prepare(qa_application *app, application_provider *provider,
+bool application_guest_native_q2_console_advance(qa_application *app, application_provider *provider,
     qa_world *world, const qa_product *product, const qa_launch_choices *choices,
-    qa_console **console, qa_cvars **cvars, qa_command_context *command, qa_error *error)
+    size_t quantum, bool *complete, qa_console **console, qa_cvars **cvars,
+    qa_command_context *command, qa_error *error)
 {
     if (!app || !provider || !world || !product || !choices || !console || !cvars || !command ||
         provider->application != app || provider->constructed || provider->attached || provider->close_pending ||
@@ -419,10 +431,20 @@ bool application_guest_native_q2_console_prepare(qa_application *app, applicatio
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 source preparation lost its actual detached candidate");
     if (!provider->state.native.q2_engine &&
         !prepare_owner(app, provider, world, product, choices, error)) return false;
-    if (!load_host(provider->state.native.q2_engine, error)) return false;
+    if (!load_host_advance(provider->state.native.q2_engine, quantum, complete, error)) return false;
+    if (!*complete) return true;
     struct application_native_q2 *engine = provider->state.native.q2_engine;
     *console = engine->console; *cvars = engine->cvars; *command = engine->command_context;
     return true;
+}
+
+bool application_guest_native_q2_console_prepare(qa_application *app, application_provider *provider,
+    qa_world *world, const qa_product *product, const qa_launch_choices *choices,
+    qa_console **console, qa_cvars **cvars, qa_command_context *command, qa_error *error)
+{
+    bool complete = false;
+    return application_guest_native_q2_console_advance(app, provider, world, product, choices,
+        0, &complete, console, cvars, command, error) && complete;
 }
 
 bool application_construct_native_q2(qa_application *app, application_provider *provider,
@@ -449,87 +471,99 @@ bool application_construct_native_q2(qa_application *app, application_provider *
         application_startup_apply_latched(provider, engine->cvars, error));
 }
 
-static bool load_host(struct application_native_q2 *engine, qa_error *error)
+static bool load_host_advance(struct application_native_q2 *engine, size_t quantum,
+    bool *complete, qa_error *error)
 {
+    *complete = false;
     application_provider *provider = engine->provider;
     if (engine->activation_failed) {
         if (error) *error = engine->activation_error;
         return false;
     }
-    if (provider->state.native.host) return true;
+    if (provider->state.native.host && !engine->host_loading) { *complete = true; return true; }
     if (!engine->prepared || engine->calls)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 loading requires its complete idle source owner");
-    uint64_t interval = provider->component.clock.interval_ns;
-    if (engine->profile == QA_NATIVE_Q2_CGAME_API2023 && !engine->application &&
-        provider->application->native_q2_services &&
-        !provider->application->native_q2_services(provider->application->guest_context,
-            provider->application, provider->owner, engine->profile, &engine->platform,
-            &engine->application, &engine->application_context, error)) return false;
-    qa_native_host_instance_options instance = {.declaration = engine->declaration,
-        .observe = engine->source_attack != NULL || engine->source_combat != NULL ||
-            engine->source_control != NULL || engine->primary_inventory != NULL ||
-            application_native_q2_callbacks_observation_required(engine->callbacks),
-        .runtime = provider->application->native_runtime_config,
-        .tick_rate = interval ? (uint32_t)(UINT64_C(1000000000) / interval) : 0,
-        .frame_seconds = (float)interval / 1000000000.f,
-        .frame_milliseconds = (uint32_t)(interval / UINT64_C(1000000))};
-    qa_native_module_info module = qa_native_module_describe(provider->state.native.module);
-    application_native_process_artifact artifact = {.resource = provider->launch->artifact,
-        .acquisition = provider->launch->artifact_acquisition, .path = provider->launch->selection.artifact};
-    const qa_native_process_resources *capture = NULL;
-    qa_bytes lower_recipe = {0};
-    if (provider->application->native_restore_image && !engine->process.resources) {
-        const qa_application_native_resource_refs *refs = provider->application->native_restore_resources;
-        const qa_save_record *saved = qa_save_image_find(provider->application->native_restore_image,
-            QA_SAVE_PROVIDER, provider->launch->selection.instance);
-        qa_bytes recipe = {0};
-        if (!refs || !refs->resolve)
-            return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 cold construction requires its retained external graph resolver");
-        if (!saved ||
-            !application_native_q2_save_resource_recipe(saved, &recipe, error) ||
-            !refs->resolve(refs->context, provider->launch->selection.instance,
-                qa_resource_id(provider->launch->artifact), recipe, &capture, &lower_recipe, error)) return false;
-    }
-    if (!application_native_process_prepare(provider->application, provider->launch,
-        provider->owner, provider->owner, &artifact, 1, 0, &module.image,
-        NULL, NULL,
-        process_current, engine, capture, lower_recipe, &engine->process, error)) return false;
-    instance.process = &engine->process.process;
-    bool ok;
-    ++engine->calls;
-    engine->host_constructing = true;
-    if (engine->profile == QA_NATIVE_Q2_CGAME_API2023) {
-        qa_native_host_q2_cgame_options options = {.instance = instance,
-            .engine = application_native_q2_services(engine), .application = application_native_q2_import,
-            .application_context = engine, .cvars = engine->cvars,
-            .console = engine->console, .command_context = engine->command_context};
-        uint32_t seat = UINT32_MAX;
-        for (size_t i = 1; i < 257; ++i) if (engine->clients[i].reserved) {
-            if (seat != UINT32_MAX) { engine->host_constructing = false; --engine->calls; return application_fail(error, QA_ERROR_ARGUMENT,
-                "Native Q2 cgame requires an explicitly admitted seat instance"); }
-            seat = engine->clients[i].seat;
+    bool ok = true;
+    if (!provider->state.native.host) {
+        uint64_t interval = provider->component.clock.interval_ns;
+        if (engine->profile == QA_NATIVE_Q2_CGAME_API2023 && !engine->application &&
+            provider->application->native_q2_services &&
+            !provider->application->native_q2_services(provider->application->guest_context,
+                provider->application, provider->owner, engine->profile, &engine->platform,
+                &engine->application, &engine->application_context, error)) return false;
+        qa_native_host_instance_options instance = {.declaration = engine->declaration,
+            .observe = engine->source_attack != NULL || engine->source_combat != NULL ||
+                engine->source_control != NULL || engine->primary_inventory != NULL ||
+                application_native_q2_callbacks_observation_required(engine->callbacks),
+            .runtime = provider->application->native_runtime_config,
+            .tick_rate = interval ? (uint32_t)(UINT64_C(1000000000) / interval) : 0,
+            .frame_seconds = (float)interval / 1000000000.f,
+            .frame_milliseconds = (uint32_t)(interval / UINT64_C(1000000))};
+        qa_native_module_info module = qa_native_module_describe(provider->state.native.module);
+        application_native_process_artifact artifact = {.resource = provider->launch->artifact,
+            .acquisition = provider->launch->artifact_acquisition, .path = provider->launch->selection.artifact};
+        const qa_native_process_resources *capture = NULL;
+        qa_bytes lower_recipe = {0};
+        if (provider->application->native_restore_image && !engine->process.resources) {
+            const qa_application_native_resource_refs *refs = provider->application->native_restore_resources;
+            const qa_save_record *saved = qa_save_image_find(provider->application->native_restore_image,
+                QA_SAVE_PROVIDER, provider->launch->selection.instance);
+            qa_bytes recipe = {0};
+            if (!refs || !refs->resolve)
+                return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 cold construction requires its retained external graph resolver");
+            if (!saved ||
+                !application_native_q2_save_resource_recipe(saved, &recipe, error) ||
+                !refs->resolve(refs->context, provider->launch->selection.instance,
+                    qa_resource_id(provider->launch->artifact), recipe, &capture, &lower_recipe, error)) return false;
         }
-        options.seat = seat; options.seat_bound = seat != UINT32_MAX;
-        ok = qa_native_host_create_q2_cgame(provider->state.native.module, &options,
-            &provider->state.native.host, error);
-    } else {
-        qa_native_host_q2_game_options options = {.instance = instance,
-            .world = {.session = provider->application->session, .world = engine->world,
-                .physics = provider->application->physics, .combat = provider->application->combat,
-                .inventory = provider->application->inventory, .targets = provider->application->targets,
-                .owner = provider->owner, .definition = engine->definition, .world_actor = engine->world_actor,
-                .binding_context = engine, .project_actor = application_native_q2_project,
-                .address_for_actor = application_native_q2_address, .bind_actor = application_native_q2_bind,
-                .reserved_source_slot = engine->callbacks ? application_native_q2_callbacks_reserved_slot : NULL},
-            .services = {.engine = application_native_q2_services(engine),
-                .movement = application_native_q2_movement_services(engine),
-                .application = application_native_q2_import, .application_context = engine},
-            .cvars = engine->cvars, .console = engine->console, .command_context = engine->command_context};
-        ok = qa_native_host_create_q2_game(provider->state.native.module, &options,
-            &provider->state.native.host, error);
+        if (!application_native_process_prepare(provider->application, provider->launch,
+            provider->owner, provider->owner, &artifact, 1, 0, &module.image,
+            NULL, NULL,
+            process_current, engine, capture, lower_recipe, &engine->process, error)) return false;
+        instance.process = &engine->process.process;
+        ++engine->calls;
+        engine->host_constructing = true;
+        if (engine->profile == QA_NATIVE_Q2_CGAME_API2023) {
+            qa_native_host_q2_cgame_options options = {.instance = instance,
+                .engine = application_native_q2_services(engine), .application = application_native_q2_import,
+                .application_context = engine, .cvars = engine->cvars,
+                .console = engine->console, .command_context = engine->command_context};
+            uint32_t seat = UINT32_MAX;
+            for (size_t i = 1; i < 257; ++i) if (engine->clients[i].reserved) {
+                if (seat != UINT32_MAX) { engine->host_constructing = false; --engine->calls; return application_fail(error, QA_ERROR_ARGUMENT,
+                    "Native Q2 cgame requires an explicitly admitted seat instance"); }
+                seat = engine->clients[i].seat;
+            }
+            options.seat = seat; options.seat_bound = seat != UINT32_MAX;
+            ok = qa_native_host_create_q2_cgame_begin(provider->state.native.module, &options,
+                &provider->state.native.host, error);
+        } else {
+            qa_native_host_q2_game_options options = {.instance = instance,
+                .world = {.session = provider->application->session, .world = engine->world,
+                    .physics = provider->application->physics, .combat = provider->application->combat,
+                    .inventory = provider->application->inventory, .targets = provider->application->targets,
+                    .owner = provider->owner, .definition = engine->definition, .world_actor = engine->world_actor,
+                    .binding_context = engine, .project_actor = application_native_q2_project,
+                    .address_for_actor = application_native_q2_address, .bind_actor = application_native_q2_bind,
+                    .reserved_source_slot = engine->callbacks ? application_native_q2_callbacks_reserved_slot : NULL},
+                .services = {.engine = application_native_q2_services(engine),
+                    .movement = application_native_q2_movement_services(engine),
+                    .application = application_native_q2_import, .application_context = engine},
+                .cvars = engine->cvars, .console = engine->console, .command_context = engine->command_context};
+            ok = qa_native_host_create_q2_game_begin(provider->state.native.module, &options,
+                &provider->state.native.host, error);
+        }
+        engine->host_constructing = false;
+        --engine->calls;
+        engine->host_loading = provider->state.native.host != NULL;
     }
-    engine->host_constructing = false;
-    --engine->calls;
+    if (ok && engine->host_loading) {
+        ++engine->calls; engine->host_constructing = true;
+        ok = qa_native_host_create_advance(provider->state.native.host, quantum, complete, error);
+        engine->host_constructing = false; --engine->calls;
+        if (ok && !*complete) return true;
+        if (ok) engine->host_loading = false;
+    }
     if(ok&&engine->primary_inventory&&!engine->inventory_scanner) {
         ok=application_native_q2_inventory_rows_create(engine,&engine->inventory_rows,error);
         if(ok) {
@@ -545,6 +579,22 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
                 "Native Q2 source owner activation failed");
         if (error) *error = engine->activation_error;
     }
+    return ok;
+}
+
+static bool load_host(struct application_native_q2 *engine, qa_error *error)
+{
+    bool complete = false;
+    return load_host_advance(engine, 0, &complete, error) && complete;
+}
+
+bool application_native_q2_loading_cancel(application_provider *provider, qa_error *error)
+{
+    struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
+    if (!engine || !engine->host_loading) return true;
+    if (engine->calls) return false;
+    bool ok = !provider->state.native.host || qa_native_host_destroy_owned(&provider->state.native.host, error);
+    if (!provider->state.native.host) engine->host_loading = false;
     return ok;
 }
 
@@ -716,7 +766,7 @@ bool application_native_q2_retire_map(application_provider *provider, qa_error *
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     if (!engine) return true;
     if (!application_native_q2_callbacks_drain(engine, error)) return false;
-    if (!owner_returned(provider))
+    if (!owner_returned(provider, false))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 map retirement requires drained source callbacks");
     if (engine->profile == QA_NATIVE_Q2_CGAME_API2023 && provider->state.native.host) {
         if (engine->initialized) {
@@ -767,7 +817,7 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     if (!engine) return true;
     if (!application_native_q2_callbacks_drain(engine, error)) return false;
-    if (!owner_returned(provider))
+    if (!owner_returned(provider, false))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 teardown requires drained callbacks");
     if (!application_native_q2_combat_suspend(engine, error)) return false;
     if (!application_native_q2_stages_close(engine, error)) return false;
