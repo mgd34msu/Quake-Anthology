@@ -230,7 +230,7 @@ bool qa_q2_bot_equipment_register_hook(qa_q2_game *g,qa_q2_weapon_rules rules,
         qa_item_id item; qa_string_id model;
         if (!qa_builtin_resource(&g->services,definition.item,&item,error) ||
             !qa_builtin_resource(&g->services,definition.view_model,&model,error)) return false;
-        g->definitions[weapon] = definition;
+        install(g, &definition, 1);
         g->items[weapon] = item;
         g->view_models[weapon] = model;
     }
