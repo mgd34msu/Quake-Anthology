@@ -334,8 +334,9 @@ static bool checkpoint_callbacks(const qa_qvm *vm, const qa_qvm_saved_function *
     size_t count, const qa_qvm_saved_resolver *resolver, bool watches, qa_error *error)
 {
     if (!qa_qvm_live(vm,error)) return false;
-    if ((count && !expected) || (!watches && vm->watches) || vm->lifecycle_depth || vm->write_delivery_depth)
+    if ((count && !expected) || vm->lifecycle_depth || vm->write_delivery_depth)
         return error_at(error,0,"QVM callback inventory has an unqualified write or lifecycle owner");
+    if (!watches && !qa_qvm_memory_checkpoint_watches(vm,NULL,0,error)) return false;
     uint64_t counters[3];
     qa_qvm_execution_checkpoint(vm,counters);
     if (!qa_qvm_execution_checkpoint_ready(vm,counters,false,error)) return false;
