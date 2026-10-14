@@ -8182,7 +8182,8 @@ frontend_demo_format frontend_network_demo_format(const qa_frontend *f,const qa_
 bool frontend_network_demo_viewpoint(qa_frontend *f, uint8_t player)
 {
     qa_frontend_network *n=f?f->network:NULL;
-    if (!n || !n->demo_playback || n->demo_format!=FRONTEND_DEMO_MVD || !n->q2_client_owner)
+    if (!n || !n->demo_playback ||
+        (n->demo_format!=FRONTEND_DEMO_MVD && n->demo_format!=FRONTEND_DEMO_Q2_SERVER) || !n->q2_client_owner)
         return false;
     frontend_network_q2_client_demo_viewpoint(n->q2_client_owner,player);
     return true;
@@ -8690,8 +8691,6 @@ bool frontend_network_demo_playback(qa_frontend *f,const qa_command_context *sou
     if(!gtv_close(n,error)) return false;
     if(n->busy||n->demo_playback||n->detached_transport||!qa_network_callbacks_idle(n->runtime)||f->options.dedicated)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Demo playback requires its returned presentation CLIENT");
-    if(format==FRONTEND_DEMO_Q2_SERVER)
-        return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Selected demo format has no native CLIENT receiver");
     if(format==FRONTEND_DEMO_Q3&&(protocol!=68||!n->q3_clients[0].q3_client_requested||!n->q3_clients[0].q3_cgame_owner))
         return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Q3 demo playback requires protocol 68 and an installed real Q3 CLIENT");
     if(n->demo_q1_owner||n->demo_q3_sink.append)return frontend_fail(error,QA_ERROR_ARGUMENT,"Recording sink must detach before demo playback");
@@ -8706,7 +8705,7 @@ bool frontend_network_demo_playback(qa_frontend *f,const qa_command_context *sou
         return q1_client_construct(n,&local,wire,physical,true,error)&&
             frontend_network_q1_client_demo_playback(n->q1_client_owner,reader,&n->demo_source,error);
     }
-    if(format==FRONTEND_DEMO_Q2 || format==FRONTEND_DEMO_MVD) {
+    if(format==FRONTEND_DEMO_Q2 || format==FRONTEND_DEMO_MVD || format==FRONTEND_DEMO_Q2_SERVER) {
         qa_net_protocol_id wire;
         if(!frontend_network_q2_demo_protocol(reader,&wire,error))return false;
         return playback_q2_create(n,wire,physical,format,false,error);

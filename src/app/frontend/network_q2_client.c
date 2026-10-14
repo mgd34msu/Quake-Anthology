@@ -7,6 +7,7 @@
 #include "view_settings.h"
 #include "qa/bot_bsp.h"
 #include "qa/text.h"
+#include <inttypes.h>
 #include <math.h>
 #include <stdio.h>
 
@@ -61,6 +62,8 @@ static bool parent(const frontend_network_q2_client *owner)
 }
 static bool protocol_equal(qa_net_protocol_id a, qa_net_protocol_id b)
 { return a.kind==b.kind && a.revision==b.revision && a.flags==b.flags; }
+static bool recorded_world(frontend_demo_format format)
+{ return format==FRONTEND_DEMO_MVD || format==FRONTEND_DEMO_Q2_SERVER; }
 static bool attachment(void *context,const qa_application_client_source *source)
 {
     frontend_network_q2_client *owner=context;
@@ -449,7 +452,7 @@ bool frontend_network_q2_client_create(const frontend_network_q2_client_options 
     if(!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Allocating Q2 CLIENT connection owner");
     *out=owner; owner->options=*options;
     owner->mvd_viewpoint=options->demo_viewpoint;
-    if (options->demo && options->demo_format==FRONTEND_DEMO_MVD) {
+    if (options->demo && recorded_world(options->demo_format)) {
         owner->mvd_pool=qa_unified_frame_pool_create(0,0,error);
         if (!owner->mvd_pool) return false;
         if (options->live_mvd)
@@ -974,10 +977,10 @@ static bool mvd_header_decode(frontend_network_q2_client *owner,qa_q2_mvd_comman
     owner->mvd_header_pending=true; owner->demo_clock_started=false;
     return true;
 }
-static bool mvd_project(void *context,qa_q2_messages *messages,qa_unified_frame_lease *storage,
+static bool mvd_project_pending(frontend_network_q2_client *owner,qa_q2_messages *messages,
+    qa_unified_frame_lease *storage,
     qa_q2_server_emit_fn emit,void *user,qa_error *error)
 {
-    frontend_network_q2_client *owner=context;
     const qa_q2_mvd_player *selected=qa_q2_mvd_player_select(&owner->mvd_frame,owner->mvd_viewpoint);
     uint8_t viewpoint=selected?selected->number:
         owner->mvd_viewpoint<owner->mvd_header.max_clients?owner->mvd_viewpoint:0;
@@ -997,6 +1000,18 @@ static bool mvd_project(void *context,qa_q2_messages *messages,qa_unified_frame_
         if (okay) owner->mvd_frame_pending=owner->mvd_viewpoint_changed=false;
         return okay;
     }
+    return true;
+}
+static bool mvd_project(void *context,qa_q2_messages *messages,qa_unified_frame_lease *storage,
+    qa_q2_server_emit_fn emit,void *user,qa_error *error)
+{
+    frontend_network_q2_client *owner=context;
+    if (owner->mvd_header_pending || owner->mvd_frame_pending || owner->mvd_viewpoint_changed)
+        return mvd_project_pending(owner,messages,storage,emit,user,error);
+    const qa_q2_mvd_player *selected=qa_q2_mvd_player_select(&owner->mvd_frame,owner->mvd_viewpoint);
+    uint8_t viewpoint=selected?selected->number:
+        owner->mvd_viewpoint<owner->mvd_header.max_clients?owner->mvd_viewpoint:0;
+    qa_q2_mvd_projection projection=mvd_projection(owner);
     qa_q2_mvd_command command;
     if (!qa_q2_mvd_read_command(&owner->mvd_cursor,&command)) return false;
     if (command.opcode==QA_MVD_SERVERDATA) {
@@ -1012,9 +1027,73 @@ static bool mvd_project(void *context,qa_q2_messages *messages,qa_unified_frame_
         qa_q2_mvd_project_record(&owner->mvd_header,&owner->mvd_frame,viewpoint,&record,
             &projection,messages,emit,user,error);
 }
+typedef struct server_demo_delivery {
+    frontend_network_q2_client *owner;
+    qa_q2_server_emit_fn emit;
+    void *context;
+} server_demo_delivery;
+static bool server_demo_emit(void *context,const qa_q2_server_record *record,qa_error *error)
+{
+    server_demo_delivery *delivery=context;
+    if (record->event.kind==QA_Q2_SVC_SERVERDATA) {
+        const qa_q2_serverdata *data=&record->event.data.serverdata;
+        frontend_network_q2_client *owner=delivery->owner;
+        if (!qa_q2_mvd_profile_init(2010,0,&owner->mvd_header.profile,error)) return false;
+        owner->mvd_header.servercount=data->servercount;
+        owner->mvd_header.max_clients=1;
+        owner->mvd_header.dummy=-1;
+        memcpy(owner->mvd_header.gamedir,data->gamedir,sizeof(data->gamedir));
+        owner->demo_clock_started=false;
+        owner->mvd_frame_pending=false;
+    }
+    return delivery->emit(delivery->context,record,error);
+}
+static bool server_demo_project(void *context,qa_q2_messages *messages,
+    qa_unified_frame_lease *storage,qa_q2_server_emit_fn emit,void *user,qa_error *error)
+{
+    frontend_network_q2_client *owner=context;
+    server_demo_delivery delivery={owner,emit,user};
+    if (!owner->mvd_frame_pending) {
+        qa_unified_frame_lease *decoded=qa_unified_frame_lease_acquire(owner->mvd_pool,error);
+        if (!decoded) return false;
+        qa_q2_wire_frame frame;
+        qa_bytes trailing;
+        bool is_frame;
+        bool okay=qa_q2_server_demo_read(owner->mvd_cursor.bytes,
+            qa_unified_frame_lease_arena(decoded),&frame,&trailing,&is_frame,error);
+        owner->mvd_cursor.bit=owner->mvd_cursor.bytes.size*8;
+        if (!okay || !is_frame) {
+            qa_unified_frame_lease_release(decoded);
+            return okay && qa_q2_messages_read(messages,trailing,server_demo_emit,&delivery,error);
+        }
+        qa_unified_frame_lease_release(owner->mvd_frame_storage);
+        owner->mvd_frame_storage=decoded;
+        owner->mvd_frame=(qa_q2_mvd_frame){.entities=frame.entities,.entity_count=frame.entity_count};
+        owner->mvd_ordinal=frame.server_frame;
+        owner->mvd_frame_pending=true;
+        qa_net_reader_init(&owner->mvd_cursor,trailing,error);
+        frontend_remote_q2_source_view source;
+        frontend_remote_q2_view view;
+        if (!frontend_remote_q2_source_read(owner->source,&source,error) ||
+            !frontend_remote_q2_metadata_read(source.receiver,&view,error)) return false;
+        if (!view.media_ready) {
+            /* SV_ServerRecord writes no precache command. Start the same media
+             * preparation after its signon, before presenting the first frame. */
+            char command[64];
+            snprintf(command,sizeof(command),"precache %" PRId32 "\n",owner->mvd_header.servercount);
+            qa_q2_server_record record={.opcode=11,.event={.kind=QA_Q2_SVC_COMMAND,
+                .data.print={0,command}}};
+            return emit(user,&record,error);
+        }
+    }
+    if (!mvd_project_pending(owner,messages,storage,emit,user,error)) return false;
+    qa_bytes trailing=owner->mvd_cursor.bytes;
+    owner->mvd_cursor.bit=trailing.size*8;
+    return qa_q2_messages_read(messages,trailing,server_demo_emit,&delivery,error);
+}
 void frontend_network_q2_client_demo_viewpoint(frontend_network_q2_client *owner,uint8_t viewpoint)
 {
-    if (owner && owner->options.demo_format==FRONTEND_DEMO_MVD && owner->mvd_viewpoint!=viewpoint) {
+    if (owner && recorded_world(owner->options.demo_format) && owner->mvd_viewpoint!=viewpoint) {
         owner->mvd_viewpoint=viewpoint; owner->mvd_viewpoint_changed=owner->mvd_frame_storage!=NULL;
     }
 }
@@ -1136,7 +1215,7 @@ static bool demo_advance(void *context,frontend_demo_reader *reader,uint64_t ela
             owner->demo_generation=view.content_generation; owner->demo_clock_started=false;
         }
         double step=view.server_data->server_fps?1000.0/(double)view.server_data->server_fps:100.0;
-        bool mvd=owner->options.demo_format==FRONTEND_DEMO_MVD;
+        bool mvd=recorded_world(owner->options.demo_format);
         if(view.frame->valid) {
             double server_ms=(double)view.frame->server_frame*step;
             if(!owner->demo_clock_started) {
@@ -1162,19 +1241,22 @@ static bool demo_advance(void *context,frontend_demo_reader *reader,uint64_t ela
                         }
                         return true;
                     }
-                    if (packet.format!=FRONTEND_DEMO_MVD) return false;
+                    if (packet.format!=owner->options.demo_format) return false;
                     qa_net_reader_init(&owner->mvd_cursor,packet.value.message,error);
                     owner->mvd_cursor_held=true;
                 }
-                qa_net_reader peek=owner->mvd_cursor; qa_q2_mvd_command next;
-                if (!qa_q2_mvd_read_command(&peek,&next)) return false;
-                if (view.frame->valid && owner->demo_clock_started &&
-                    owner->demo_ms<=(double)view.frame->server_frame*100 &&
-                    (next.opcode==QA_MVD_FRAME || next.opcode==QA_MVD_FRAME_NODELTA))
-                    return frontend_remote_q2_demo_clock(source.receiver,owner->demo_ms,error);
+                if (owner->options.demo_format==FRONTEND_DEMO_MVD) {
+                    qa_net_reader peek=owner->mvd_cursor; qa_q2_mvd_command next;
+                    if (!qa_q2_mvd_read_command(&peek,&next)) return false;
+                    if (view.frame->valid && owner->demo_clock_started &&
+                        owner->demo_ms<=(double)view.frame->server_frame*100 &&
+                        (next.opcode==QA_MVD_FRAME || next.opcode==QA_MVD_FRAME_NODELTA))
+                        return frontend_remote_q2_demo_clock(source.receiver,owner->demo_ms,error);
+                }
             }
             bool projected=qa_network_q2_client_demo_project(owner->options.runtime,owner->domain.client,
-                mvd_project,owner,owner->options.frontend->wall_time_ns,error);
+                owner->options.demo_format==FRONTEND_DEMO_Q2_SERVER?server_demo_project:mvd_project,
+                owner,owner->options.frontend->wall_time_ns,error);
             owner->mvd_cursor.error=NULL;
             if (!projected) return false;
             continue;
