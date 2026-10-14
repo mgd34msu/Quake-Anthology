@@ -20,7 +20,8 @@ typedef struct http_transfer {
     qa_error failure, transport_failure;
     uint64_t maximum_bytes, response_body_start, admitted_bytes, terminal_order;
     CURLcode result;
-    uint32_t timeout_ms, connect_timeout_ms, maximum_redirects;
+    uint32_t timeout_ms, connect_timeout_ms, maximum_redirects, intake_status;
+    bool same_origin_redirects;
     bool canceled, callbacks_bound, in_multi, paused, terminal, completion_queued, rejected;
 } http_transfer;
 struct qa_http {
@@ -131,6 +132,41 @@ static bool content_range(http_transfer *t, const char *bytes, size_t n) {
     if (cursor != n || t->response.has_range) return false;
     t->response.range_first = first; t->response.range_last = last; t->response.range_total = total; t->response.has_range = true; return true;
 }
+static unsigned status_code(const char *bytes, size_t n) {
+    const char *space = memchr(bytes, ' ', n);
+    if (space && bytes + n - space >= 4 && space[1] >= '0' && space[1] <= '9' &&
+        space[2] >= '0' && space[2] <= '9' && space[3] >= '0' && space[3] <= '9')
+        return (unsigned)(space[1] - '0') * 100 + (unsigned)(space[2] - '0') * 10 + (unsigned)(space[3] - '0');
+    return 0;
+}
+static bool redirect_origin(http_transfer *t, const char *bytes, size_t n) {
+    size_t begin = 9, end = n;
+    while (begin < end && (bytes[begin] == ' ' || bytes[begin] == '\t')) ++begin;
+    while (end > begin && (bytes[end-1] == '\r' || bytes[end-1] == '\n' || bytes[end-1] == ' ' || bytes[end-1] == '\t')) --end;
+    char *location = malloc(end - begin + 1);
+    CURLU *origin = curl_url(), *target = curl_url();
+    char *effective = NULL, *left[3] = {0}, *right[3] = {0}, *user = NULL, *password = NULL;
+    bool okay = location && origin && target && !memchr(bytes+begin, 0, end-begin);
+    if (okay) {
+        memcpy(location, bytes+begin, end-begin); location[end-begin] = 0;
+        okay = curl_easy_getinfo(t->easy, CURLINFO_EFFECTIVE_URL, &effective) == CURLE_OK && effective &&
+            curl_url_set(origin, CURLUPART_URL, t->url, 0) == CURLUE_OK &&
+            curl_url_set(target, CURLUPART_URL, effective, 0) == CURLUE_OK &&
+            curl_url_set(target, CURLUPART_URL, location, 0) == CURLUE_OK;
+    }
+    const CURLUPart parts[] = {CURLUPART_SCHEME, CURLUPART_HOST, CURLUPART_PORT};
+    for (unsigned i=0; okay && i<3; ++i) {
+        unsigned flags = i==2 ? CURLU_DEFAULT_PORT : 0;
+        okay = curl_url_get(origin, parts[i], &left[i], flags) == CURLUE_OK &&
+            curl_url_get(target, parts[i], &right[i], flags) == CURLUE_OK &&
+            curl_strequal(left[i], right[i]);
+    }
+    if (okay && (curl_url_get(target, CURLUPART_USER, &user, 0) == CURLUE_OK ||
+        curl_url_get(target, CURLUPART_PASSWORD, &password, 0) == CURLUE_OK)) okay = false;
+    for (unsigned i=0; i<3; ++i) { curl_free(left[i]); curl_free(right[i]); }
+    curl_free(user); curl_free(password); curl_url_cleanup(origin); curl_url_cleanup(target); free(location);
+    return okay || fail(&t->transport_failure, QA_ERROR_FORMAT, "HTTP redirect leaves the requested origin");
+}
 static bool header_receive(http_transfer *t, qa_bytes data) {
     const char *bytes = (const char *)data.data; size_t n = data.size;
     if (n >= 5 && !memcmp(bytes, "HTTP/", 5)) {
@@ -139,10 +175,7 @@ static bool header_receive(http_transfer *t, qa_bytes data) {
         t->response.content_type = NULL; t->response.status = 0;
         t->response.has_range = false;
         t->response.range_first = t->response.range_last = t->response.range_total = 0;
-        const char *space = memchr(bytes, ' ', n);
-        if (space && bytes + n - space >= 4 && space[1] >= '0' && space[1] <= '9' &&
-            space[2] >= '0' && space[2] <= '9' && space[3] >= '0' && space[3] <= '9')
-            t->response.status = (unsigned)(space[1] - '0') * 100 + (unsigned)(space[2] - '0') * 10 + (unsigned)(space[3] - '0');
+        t->response.status = status_code(bytes, n);
     } else if (n >= 14 && prefix_equal(bytes, "content-range:", 14)) {
         if (!content_range(t, bytes, n)) return fail(&t->failure, QA_ERROR_FORMAT, "HTTP response returned an invalid content range");
     } else if (n >= 13 && prefix_equal(bytes, "content-type:", 13)) {
@@ -170,6 +203,11 @@ static size_t intake_data(char *bytes, size_t size, size_t count, void *context,
     }
     size_t n = size * count;
     if (t->canceled || t->transport_failure.code != QA_OK) return 0;
+    if (action == QA_SYS_HTTP_HEADER && t->same_origin_redirects) {
+        if (n>=5 && !memcmp(bytes, "HTTP/", 5)) t->intake_status = status_code(bytes, n);
+        else if (t->intake_status>=300 && t->intake_status<400 && n>=9 &&
+            prefix_equal(bytes, "location:", 9) && !redirect_origin(t, bytes, n)) return 0;
+    }
     if (action == QA_SYS_HTTP_BODY && ((uint64_t)n > UINT64_MAX - t->admitted_bytes ||
         (t->maximum_bytes && ((uint64_t)n > t->maximum_bytes ||
             t->admitted_bytes > t->maximum_bytes - (uint64_t)n)))) {
@@ -318,7 +356,7 @@ bool qa_http_submit(qa_http *owner, const qa_http_request *r, qa_http_request_id
     if (!t) return fail(error, QA_ERROR_MEMORY, "allocating HTTP transfer");
     t->owner = owner; t->id = owner->next_id; t->callbacks = r->callbacks; t->maximum_bytes = r->maximum_response_bytes;
     t->timeout_ms = r->timeout_ms; t->connect_timeout_ms = r->connect_timeout_ms;
-    t->maximum_redirects = r->maximum_redirects; t->callbacks_bound = true;
+    t->maximum_redirects = r->maximum_redirects; t->same_origin_redirects = r->same_origin_redirects; t->callbacks_bound = true;
     t->easy = curl_easy_init(); t->url = copy_text(r->url); t->method = copy_text(r->method);
     if (!t->easy || !t->url || !t->method) goto memory;
     if (r->body.size) {
@@ -396,6 +434,15 @@ bool qa_http_next_timeout(const qa_http *owner, uint32_t *milliseconds, bool *pe
     return true;
 }
 
+static bool redirect_policy_fields(qa_source_save_io *io, http_transfer *t) {
+    uint32_t policy = t->maximum_redirects | (t->same_origin_redirects ? UINT32_C(0x80000000) : 0);
+    if (!qa_source_save_u32(io, &policy)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        t->maximum_redirects = policy & UINT32_C(0x7fffffff);
+        t->same_origin_redirects = (policy & UINT32_C(0x80000000)) != 0;
+    }
+    return true;
+}
 static bool transfer_fields(qa_source_save_io *io, http_transfer *t) {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     uint32_t status = t->response.status;
@@ -406,7 +453,7 @@ static bool transfer_fields(qa_source_save_io *io, http_transfer *t) {
         !tool_save_text(io, &t->method) || !header_name(t->method) ||
         !qa_source_save_u32(io, &t->timeout_ms) || !t->timeout_ms || t->timeout_ms > INT32_MAX ||
         !qa_source_save_u32(io, &t->connect_timeout_ms) || t->connect_timeout_ms > INT32_MAX ||
-        !qa_source_save_u32(io, &t->maximum_redirects) || t->maximum_redirects > INT32_MAX ||
+        !redirect_policy_fields(io, t) ||
         !qa_source_save_u64(io, &t->maximum_bytes) || !tool_save_blob(io, &t->body, false) ||
         t->body.size > (size_t)PTRDIFF_MAX ||
         !qa_source_save_count(io, &count, reading ? io->input.size - io->offset : SIZE_MAX))
@@ -512,7 +559,7 @@ bool qa_http_continuation_read(const qa_http *owner, qa_http_request_id id,
         .timeout_ms = t->timeout_ms, .connect_timeout_ms = t->connect_timeout_ms,
         .maximum_redirects = t->maximum_redirects, .maximum_response_bytes = t->maximum_bytes,
         .response_body_start = t->response_body_start, .response = t->response,
-        .failure = t->failure, .canceled = t->canceled};
+        .failure = t->failure, .canceled = t->canceled, .same_origin_redirects = t->same_origin_redirects};
     return true;
 }
 

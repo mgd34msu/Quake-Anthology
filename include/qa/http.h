@@ -31,6 +31,7 @@ typedef struct qa_http_request {
     uint64_t maximum_response_bytes; /* Zero permits arbitrary download length. */
     uint32_t maximum_redirects; /* Zero rejects automatic redirects. */
     qa_http_callbacks callbacks;
+    bool same_origin_redirects;
 } qa_http_request;
 /* Native libcurl multi owner. No worker thread or feature-private HTTP client.
  * Calls require one owner thread. submit copies URL/headers/body before return;

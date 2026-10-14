@@ -35,11 +35,15 @@ typedef struct qa_download_hooks {
      * reports published=true, mounted=false; installed content is retained. */
     bool (*remount)(void *, const char *path, qa_error *);
     void (*changed)(void *, const qa_download_view *);
+    /* Borrowed namespace selected from the request. The job retains it; restore
+     * resolves it again instead of recording host filesystem paths. */
+    qa_fs_root *(*target_root)(void *, const qa_download_request *, qa_error *);
 } qa_download_hooks;
 typedef struct qa_download_options {
     uint32_t jobs;
     uint64_t maximum_pending_bytes;
     qa_download_hooks hooks;
+    bool same_origin_redirects;
 } qa_download_options;
 /* Borrows the application's shared HTTP owner, retains filesystem root. One
  * contained disk stage per active job feeds HTTP and native blocks equally.

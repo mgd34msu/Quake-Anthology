@@ -20,7 +20,7 @@ typedef struct qa_http_continuation_view {
     uint64_t maximum_response_bytes, response_body_start;
     qa_http_response response;
     qa_error failure;
-    bool canceled;
+    bool canceled, same_origin_redirects;
 } qa_http_continuation_view;
 /* Pure borrowed observations of the actual request, available for detached
  * records too. Every pointer expires at the next mutation of its HTTP owner. */
