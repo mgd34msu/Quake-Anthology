@@ -8401,12 +8401,11 @@ static bool gtv_server_prepare(qa_frontend_network *n,qa_error *error)
     int buffers=values[2]?values[2]->integer:2;
     if(buffers<1) buffers=1;
     if(buffers>4) buffers=4;
-    const qa_net_address *bound=qa_network_local_address(n->runtime);
-    qa_net_address endpoint=bound?*bound:(qa_net_address){.kind=QA_NET_IPV4,.port=f->options.network_port};
-    if(endpoint.kind==QA_NET_LOOPBACK) {
-        endpoint=(qa_net_address){.kind=QA_NET_IPV4,.port=f->options.network_port,
-            .host.ipv4={127,0,0,1}};
-    }
+    /* Offline play also owns a UDP browser/client socket with an ephemeral
+     * port. It is not the listener endpoint requested by --port. */
+    const qa_net_address *bound=f->options.network_host?qa_network_local_address(n->runtime):NULL;
+    qa_net_address endpoint=bound?*bound:(qa_net_address){.kind=QA_NET_IPV4,
+        .port=f->options.network_port,.host.ipv4={127,0,0,1}};
     uint64_t timeout=values[4] && values[4]->integer>0?(uint32_t)values[4]->integer:90;
     uint64_t ghost=values[5] && values[5]->integer>0?(uint32_t)values[5]->integer:6;
     frontend_gtv_server_options options={.endpoint=endpoint,.max_viewers=(size_t)viewers,
