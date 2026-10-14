@@ -2459,11 +2459,12 @@ bool q2m_check_attack(q2m_context *context, bool *selected, bool *started,
         return true;
     } else {
       bool walk = monster->move_target.registry != 0 &&
-                  (rogue || !rerelease || !monster->stand_ground);
+                  (!rerelease || !monster->stand_ground);
       if (walk)
         monster->goal = qa_actor_reference_resolve(qa_session_actors(context->game->services.session), context->actor->physics.goal = qa_actor_reference_lifetime(monster->move_target));
       else
-        monster->pause_ns = q2m_after(context->game->now_ns, 100000000);
+        monster->pause_ns = rerelease ? UINT64_MAX
+            : q2m_after(context->game->now_ns, 100000000);
       *selected = *started = true;
       return q2m_set_move(context, walk ? monster->definition->walk_move
                                        : monster->definition->stand_move,

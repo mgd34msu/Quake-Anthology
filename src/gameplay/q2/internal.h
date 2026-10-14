@@ -631,6 +631,10 @@ void q2_wire_release(qa_q2_game *, q2_actor *, qa_actor_record);
 bool q2_wire_names_prepare(qa_q2_game *,qa_error *);
 void q2_wire_reset(qa_q2_game *);
 bool q2_actor_live(const qa_q2_game *, qa_actor_id);
+static inline uint32_t q2_map_spawnflags(qa_ruleset_id rules, uint32_t flags) {
+    return flags & ~(rules == QA_RULESET_Q2_RERELEASE
+        ? UINT32_C(0xff00) : UINT32_C(0x1f00));
+}
 enum q2_environment_flags {
     Q2_ENV_IN_WATER = 8u, Q2_ENV_IMMUNE_SLIME = 64u, Q2_ENV_IMMUNE_LAVA = 128u
 };

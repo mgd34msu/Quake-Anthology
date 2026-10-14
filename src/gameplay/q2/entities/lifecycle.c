@@ -105,6 +105,8 @@ bool qa_q2_entity_spawn(qa_q2_game *g, qa_actor_id id, const qa_q2_map_fields *f
     }
     s->ordinal = fields->ordinal;
     s->spawnflags = flags(g, s);
+    if (s->classname != g->runtime_names[Q2_NAME_WORLDSPAWN])
+        s->spawnflags = q2_map_spawnflags(g->options.rules, s->spawnflags);
     s->targetname = q2_field_id(s, g->field_keys[QA_TARGET_KEY_TARGETNAME]);
     s->target = q2_field_id(s, g->field_keys[QA_TARGET_KEY_TARGET]);
     s->killtarget = q2_field_id(s, g->field_keys[QA_TARGET_KEY_KILLTARGET]);

@@ -1787,7 +1787,8 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
                  options->classname, definition->initial_move);
     return false;
   }
-  monster->spawnflags = selected ? mission.ambush ? 1u : 0 : options->spawnflags;
+  monster->spawnflags = selected ? mission.ambush ? 1u : 0
+      : q2_map_spawnflags(game->options.rules, options->spawnflags);
   monster->old_frame = -1;
   monster->render_flags = (game->options.rules == QA_RULESET_Q2_CLASSIC ? 64u : 0u) |
       (game->options.rules == QA_RULESET_Q2_RERELEASE || game->options.product == QA_Q2_ROGUE ? 32768u : 0u);

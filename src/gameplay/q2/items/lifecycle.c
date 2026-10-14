@@ -286,6 +286,8 @@ bool qa_q2_item_spawn_actor(qa_q2_game *g, qa_actor_id id, const qa_q2_item_spaw
     item->definition = d;
     item->spawn = *spawn;
     item->spawn.classname = d->classname;
+    if (!(item->spawn.spawnflags & 0x30000))
+        item->spawn.spawnflags = q2_map_spawnflags(g->options.rules, item->spawn.spawnflags);
     if (rogue && !rr && item->spawn.spawnflags > 1 && !(d->rule_flags & QA_Q2_ITEM_POWER_CUBE))
         item->spawn.spawnflags = 0;
     if (g->options.cooperative && ((d->rule_flags & QA_Q2_ITEM_POWER_CUBE) ||
