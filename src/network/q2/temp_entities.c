@@ -105,19 +105,28 @@ static unsigned integer_bits(uint8_t type, qa_q2_temp_field_name name) {
     return 8;
 }
 
+bool qa_q2_temp_entity_prepare(uint8_t type, bool extended, qa_q2_temp_entity *out) {
+    const temp_layout *s = layout(type, extended);
+    if (!out || !s) return false;
+    qa_q2_temp_entity value = {.type = type, .field_count = s->count};
+    for (size_t i = 0; i < s->count; ++i) {
+        value.fields[i].name = s->fields[i];
+        value.fields[i].kind = s->fields[i] >= QA_Q2_TEMP_POSITION1 ? QA_Q2_TEMP_VECTOR : QA_Q2_TEMP_INTEGER;
+    }
+    *out = value;
+    return true;
+}
+
 bool qa_q2_temp_entity_read(qa_q2_codec *c, qa_net_reader *r, bool extended, qa_q2_temp_entity *out) {
     if (!out || r->bit % 8) return qa_net_reader_fail(r, "Invalid Q2 temporary entity output or alignment");
     size_t start = r->bit / 8;
-    qa_q2_temp_entity t = {0};
-    t.type = qa_net_read_u8(r);
-    const temp_layout *s = layout(t.type, extended);
-    if (!s) return qa_net_reader_fail(r, "Unknown Q2 temporary entity type");
-    t.field_count = s->count;
+    qa_q2_temp_entity t;
+    uint8_t type = qa_net_read_u8(r);
+    if (!qa_q2_temp_entity_prepare(type, extended, &t))
+        return qa_net_reader_fail(r, "Unknown Q2 temporary entity type");
     for (size_t i = 0; i < t.field_count; ++i) {
         qa_q2_temp_field *f = &t.fields[i];
         f->offset = r->bit / 8 - start;
-        f->name = s->fields[i];
-        f->kind = f->name >= QA_Q2_TEMP_POSITION1 ? QA_Q2_TEMP_VECTOR : QA_Q2_TEMP_INTEGER;
         if (f->kind == QA_Q2_TEMP_VECTOR) {
             if (!(f->name == QA_Q2_TEMP_DIRECTION ? qa_q2_read_dir(r, f->value.vector) :
                   qa_q2_game_position_read(c, r, f->value.vector))) return false;

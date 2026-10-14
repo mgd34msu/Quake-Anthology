@@ -86,6 +86,8 @@ typedef struct qa_q2_temp_entity {
     qa_q2_temp_field fields[7];
     qa_bytes raw;
 } qa_q2_temp_entity;
+/* Initialize the same field layout used by the native wire reader/writer. */
+bool qa_q2_temp_entity_prepare(uint8_t type, bool extended_types, qa_q2_temp_entity *);
 bool qa_q2_temp_entity_read(qa_q2_codec *, qa_net_reader *, bool extended_types, qa_q2_temp_entity *);
 bool qa_q2_temp_entity_write(qa_q2_codec *, qa_net_writer *, bool extended_types, const qa_q2_temp_entity *);
 
