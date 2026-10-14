@@ -65,7 +65,7 @@ static bool create_process(qa_native_module *module, const qa_native_options *op
     native_active_instance = instance; instance->active_depth = 1;
     bool okay = options->process->continuation.size ?
         native_process_restore(instance, options->process, error) :
-        native_process_open(instance, options->process, error) && native_profile_bind_begin(instance, error);
+        native_process_open(instance, options->process, error);
     instance->creating = !options->process->continuation.size;
     instance->active_depth = 0; native_active_instance = previous;
     instance->options.process = NULL;
@@ -112,7 +112,17 @@ bool qa_native_create_advance(qa_native_instance *instance, size_t quantum,
     if (*complete) return true;
     qa_native_instance *previous = native_active_instance;
     native_active_instance = instance; instance->active_depth = 1;
-    bool okay = native_profile_bind_advance(instance, quantum, complete, error);
+    bool okay = true;
+    if (instance->process_initializing) {
+        bool initialized = false;
+        do {
+            okay = native_process_initialize_advance(instance, quantum, &initialized, error);
+        } while (okay && !initialized && !quantum);
+        if (!okay || !initialized) goto returned;
+        okay = native_profile_bind_begin(instance, error);
+    }
+    if (okay) okay = native_profile_bind_advance(instance, quantum, complete, error);
+returned:
     instance->active_depth = 0; native_active_instance = previous;
     if (!report_latched(instance, error)) okay = false;
     if (okay && *complete) instance->creating = false;
@@ -152,13 +162,15 @@ static bool instance_returned(const qa_native_instance *instance) {
 }
 
 bool qa_native_can_destroy(const qa_native_instance *instance) {
-    return instance_returned(instance) && !instance->loading_call;
+    return instance_returned(instance) && !instance->loading_call && !instance->process_initializing;
 }
 
 bool qa_native_startup_paused(const qa_native_instance *instance)
 {
-    if (!instance_returned(instance) ||
-        !((instance->creating && instance->profile_loading) || instance->initializing) ||
+    if (!instance_returned(instance)) return false;
+    if (instance->creating && instance->process_initializing)
+        return native_process_initialization_paused(instance);
+    if (!((instance->creating && instance->profile_loading) || instance->initializing) ||
         !instance->startup_call || instance->loading_call != instance->startup_call) return false;
     const qa_native_guest *guest = instance->guest;
     return guest && guest->call == instance->startup_call->abi &&

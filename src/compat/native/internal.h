@@ -135,6 +135,8 @@ struct qa_native_instance {
     qa_native_loading_call *startup_call;
     qa_native_value profile_result;
     qa_native_address profile_output, profile_vm_main;
+    size_t process_initialization_at;
+    bool process_initializing, process_image_initializing;
     bool creating, profile_loading, initializing, initialization_preinit;
     const qa_native_region_event *active_region_event;
     uint32_t region_callback_depth, region_call_depth;
@@ -298,6 +300,9 @@ bool native_import_bind(native_import_binding *binding, qa_native_instance *inst
                         const native_signature_spec *spec, qa_error *error);
 void native_import_unbind(native_import_binding *binding);
 bool native_process_open(qa_native_instance *, const qa_native_process_options *, qa_error *);
+bool native_process_initialize_advance(qa_native_instance *, size_t, bool *, qa_error *);
+bool native_process_initialization_paused(const qa_native_instance *);
+void native_process_initialization_cancel(qa_native_instance *);
 bool native_process_close(qa_native_instance *, qa_error *);
 bool native_process_reload(qa_native_instance *, qa_error *);
 bool native_process_export(const qa_native_instance *, const char *, qa_native_address *, qa_error *);
