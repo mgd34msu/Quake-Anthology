@@ -60,6 +60,7 @@ void qa_event_ring_retire(qa_event_ring *, uint64_t next);
  * slot. Persistent/display owners release it when their own lifetime ends. */
 qa_event_lease *qa_event_ring_retain(qa_event_ring *, uint64_t id);
 void qa_event_lease_retain(qa_event_lease *);
+/* Optional owners can release a NULL lease during partial admission/cleanup. */
 void qa_event_lease_release(qa_event_lease *);
 uint64_t qa_event_lease_id(const qa_event_lease *);
 const void *qa_event_lease_record(const qa_event_lease *);

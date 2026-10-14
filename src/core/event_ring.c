@@ -175,7 +175,7 @@ void qa_event_lease_retain(qa_event_lease *lease) { ++lease->references; }
 
 void qa_event_lease_release(qa_event_lease *lease)
 {
-    if (--lease->references) return;
+    if (!lease || --lease->references) return;
     qa_event_ring *owner = lease->owner;
     size_t last = lease->last_page;
     if (lease->previous) lease->previous->next = lease->next;

@@ -4300,6 +4300,7 @@ static void event_ring_visit_record(void *opaque, const void *record)
 
 static void test_event_ring_cold_growth(void)
 {
+    qa_event_lease_release(NULL);
     event_ring_final_records = 0;
     qa_error error = {0};
     qa_event_ring *ring = qa_event_ring_create(8192, 1024, 2, &error);
