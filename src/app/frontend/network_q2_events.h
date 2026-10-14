@@ -5,6 +5,12 @@
 #include "qa/application_native_q2_delivery.h"
 #include "qa/network_q2_messages.h"
 
+/* Records borrow the Source/decoder during the callback. Translation uses the
+ * actual HOST identity tables; the consumer retains the original audience. */
+bool frontend_network_q2_event_records(qa_application_network_q2 *, qa_actor_owner host_source,
+    const qa_application_protocol_event *, const qa_application_q2_protocol_delivery *,
+    const qa_q2_codec *, qa_q2_messages *const decoders[2], qa_q2_server_emit_fn, void *, qa_error *);
+
 /* Encodes into caller-owned reusable storage for the admitted connection.
  * The caller queues the result before advancing its event cursor.
  * An empty result means the captured audience excludes that connection. */

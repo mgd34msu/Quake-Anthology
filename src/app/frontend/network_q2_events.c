@@ -13,6 +13,8 @@ typedef struct q2_event_packet {
     qa_q2_codec codec;
     qa_net_writer writer;
     size_t ordinal;
+    qa_q2_server_emit_fn record_emit;
+    void *record_user;
 } q2_event_packet;
 
 static bool fail(qa_error *error, qa_status code, const char *message)
@@ -159,15 +161,22 @@ static bool emit(void *context, const qa_q2_server_record *record, qa_error *err
 {
     q2_event_packet *packet = context;
     size_t ordinal = packet->ordinal++;
-    if (record->event.kind == QA_Q2_SVC_SEAT) return true;
     size_t eligible = 0;
-    for (size_t i = 0; i < packet->client->seat_count; ++i)
-        if (captured_seat(packet, record->seat, i)) ++eligible;
-    if (!eligible) return true;
+    if (!packet->record_emit) {
+        if (record->event.kind == QA_Q2_SVC_SEAT) return true;
+        for (size_t i = 0; i < packet->client->seat_count; ++i)
+            if (captured_seat(packet, record->seat, i)) ++eligible;
+        if (!eligible) return true;
+    }
     qa_q2_server_event event;
     bool include;
     if (!translate(packet, record, ordinal, &event, &include, error)) return false;
     if (!include) return true;
+    if (packet->record_emit) {
+        qa_q2_server_record projected = *record;
+        projected.event = event;
+        return packet->record_emit(packet->record_user, &projected, error);
+    }
     if (event.kind == QA_Q2_SVC_LAYOUT) {
         const qa_application_q2_audience *audience = &packet->delivery->audience;
         for (size_t seat = 0; seat < packet->client->seat_count; ++seat)
@@ -188,6 +197,32 @@ static bool emit(void *context, const qa_q2_server_record *record, qa_error *err
         if (!marker(packet, seat) || !qa_q2_server_event_write(&packet->codec, &packet->writer, &event)) return false;
     }
     return marker(packet, 1);
+}
+
+static bool decode(q2_event_packet *packet, qa_q2_messages *const decoders[2], qa_error *error)
+{
+    if (packet->source->q2) {
+        qa_q2_server_record record = {.event = *packet->source->q2};
+        return emit(packet, &record, error);
+    }
+    qa_q2_messages *decoder = decoders[packet->delivery->profile == QA_NATIVE_Q2_GAME_API2023];
+    qa_q2_messages_reset(decoder);
+    return qa_q2_messages_read(decoder, packet->source->payload, emit, packet, error);
+}
+
+bool frontend_network_q2_event_records(qa_application_network_q2 *publisher, qa_actor_owner host_source,
+    const qa_application_protocol_event *source, const qa_application_q2_protocol_delivery *delivery,
+    const qa_q2_codec *codec, qa_q2_messages *const decoders[2], qa_q2_server_emit_fn callback,
+    void *user, qa_error *error)
+{
+    if (!publisher || !host_source || !source || !delivery || !codec || !callback ||
+        (source->payload.size && !source->payload.data) || (source->reference_count && !source->references) ||
+        (source->resource_count && !source->resources) ||
+        (delivery->profile != QA_NATIVE_Q2_GAME_API3 && delivery->profile != QA_NATIVE_Q2_GAME_API2023))
+        return fail(error, QA_ERROR_ARGUMENT, "Q2 event records require their actual Source and admitted codec");
+    q2_event_packet packet = {.publisher = publisher, .host_source = host_source, .source = source,
+        .delivery = delivery, .codec = *codec, .record_emit = callback, .record_user = user};
+    return decode(&packet, decoders, error);
 }
 
 bool frontend_network_q2_event_packet(qa_application_network_q2 *publisher, qa_actor_owner host_source,
@@ -212,15 +247,7 @@ bool frontend_network_q2_event_packet(qa_application_network_q2 *publisher, qa_a
     q2_event_packet packet = {.publisher = publisher, .host_source = host_source, .source = source,
         .delivery = delivery, .client = client, .epoch = epoch, .codec = *codec};
     qa_net_writer_init(&packet.writer, storage, capacity, error);
-    qa_q2_server_record record = {.event = source->q2 ? *source->q2 : (qa_q2_server_event){0}};
-    bool ok;
-    if (source->q2) ok = emit(&packet, &record, error);
-    else {
-        qa_q2_messages *decoder = decoders[delivery->profile == QA_NATIVE_Q2_GAME_API2023];
-        qa_q2_messages_reset(decoder);
-        ok = qa_q2_messages_read(decoder, source->payload, emit, &packet, error);
-    }
-    if (!ok) return false;
+    if (!decode(&packet, decoders, error)) return false;
     size_t size = qa_net_writer_size(&packet.writer);
     *out = (qa_bytes){size ? storage : NULL, size}; return true;
 }
