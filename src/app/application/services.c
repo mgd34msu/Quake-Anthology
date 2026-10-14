@@ -19,6 +19,7 @@
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
 #include "guest_q3_mod_operations.h"
+#include "guest_q3_private.h"
 #include "guest_qc_combat.h"
 
 #include <stdlib.h>
@@ -1803,8 +1804,29 @@ static bool provider_powerups(application_provider *provider, qa_actor_id actor,
                                                            clock.frame.time_ns);
         break;
     }
+    case APPLICATION_PROVIDER_QVM: {
+        struct application_q3_guest *engine = q3g_engine(provider);
+        q3g_role *role = engine ? engine->game : NULL;
+        if (!role || !role->host || role->weapon_services)
+            return true;
+        uint32_t slot;
+        if (!qa_q3_host_actor_slot(role->host, actor, &slot, NULL) ||
+            slot >= sizeof(engine->clients) / sizeof(*engine->clients) ||
+            !engine->clients[slot].connected)
+            return true;
+        qa_q3_player view;
+        if (!qa_q3_host_source_player(role->host, slot, &view, error))
+            return false;
+        qa_clock_state clock;
+        if (!qa_session_clock(provider->application->session, provider->owner, &clock))
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                                    "Q3 power projection needs its admitted clock");
+        out->quad_until_ns = power_milliseconds(view.powerups[QA_Q3_P_QUAD], clock.frame.time_ns);
+        out->invulnerability_until_ns = power_milliseconds(view.powerups[QA_Q3_P_INVULNERABILITY],
+                                                           clock.frame.time_ns);
+        break;
+    }
     case APPLICATION_PROVIDER_QC:
-    case APPLICATION_PROVIDER_QVM:
     case APPLICATION_PROVIDER_NATIVE:
         return true;
     }
@@ -1823,6 +1845,32 @@ static uint64_t power_translate(uint64_t deadline, uint64_t source_now,
     return UINT64_MAX - observer_now < remaining ? UINT64_MAX : observer_now + remaining;
 }
 
+static bool provider_powerups_project(application_provider *provider,
+                                     qa_actor_owner observer, qa_actor_id actor,
+                                     qa_builtin_powerups *out, bool *present,
+                                     qa_error *error)
+{
+    if (!provider_powerups(provider, actor, out, present, error))
+        return false;
+    if (!*present)
+        return true;
+    qa_application *application = provider->application;
+    qa_clock_state source_clock, observer_clock;
+    if (!qa_session_clock(application->session, provider->owner, &source_clock) ||
+        !qa_session_clock(application->session, observer, &observer_clock))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "power-up projection needs admitted source clocks");
+    out->quad_until_ns = power_translate(out->quad_until_ns,
+        source_clock.frame.time_ns, observer_clock.frame.time_ns);
+    out->double_until_ns = power_translate(out->double_until_ns,
+        source_clock.frame.time_ns, observer_clock.frame.time_ns);
+    out->quad_fire_until_ns = power_translate(out->quad_fire_until_ns,
+        source_clock.frame.time_ns, observer_clock.frame.time_ns);
+    out->invulnerability_until_ns = power_translate(out->invulnerability_until_ns,
+        source_clock.frame.time_ns, observer_clock.frame.time_ns);
+    return true;
+}
+
 static bool builtin_powerups(void *opaque, qa_actor_owner observer,
                              qa_actor_id actor, qa_builtin_powerups *out,
                              qa_error *error)
@@ -1836,30 +1884,24 @@ static bool builtin_powerups(void *opaque, qa_actor_owner observer,
         application, actor, QA_ROLE_EFFECTS, "");
     qa_builtin_powerups result;
     bool present;
-    if (!provider_powerups(provider, actor, &result, &present, error))
+    if (!provider_powerups_project(provider, observer, actor, &result, &present, error))
         return false;
     if (!present) {
         provider = application_provider_for(application, actor, QA_ROLE_CHARACTER, "");
-        if (!provider_powerups(provider, actor, &result, &present, error))
+        if (!provider_powerups_project(provider, observer, actor, &result, &present, error))
             return false;
     }
-    if (!present) {
-        *out = (qa_builtin_powerups){0};
-        return true;
+    application_provider *physical = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    if (physical && physical != provider && physical->kind == APPLICATION_PROVIDER_QVM) {
+        qa_builtin_powerups source;
+        if (!provider_powerups_project(physical, observer, actor, &source, &present, error))
+            return false;
+        if (source.quad_until_ns > result.quad_until_ns) result.quad_until_ns = source.quad_until_ns;
+        if (source.double_until_ns > result.double_until_ns) result.double_until_ns = source.double_until_ns;
+        if (source.quad_fire_until_ns > result.quad_fire_until_ns) result.quad_fire_until_ns = source.quad_fire_until_ns;
+        if (source.invulnerability_until_ns > result.invulnerability_until_ns)
+            result.invulnerability_until_ns = source.invulnerability_until_ns;
     }
-    qa_clock_state source_clock, observer_clock;
-    if (!qa_session_clock(application->session, provider->owner, &source_clock) ||
-        !qa_session_clock(application->session, observer, &observer_clock))
-        return application_fail(error, QA_ERROR_ARGUMENT,
-                                "power-up projection needs admitted source clocks");
-    result.quad_until_ns = power_translate(result.quad_until_ns,
-        source_clock.frame.time_ns, observer_clock.frame.time_ns);
-    result.double_until_ns = power_translate(result.double_until_ns,
-        source_clock.frame.time_ns, observer_clock.frame.time_ns);
-    result.quad_fire_until_ns = power_translate(result.quad_fire_until_ns,
-        source_clock.frame.time_ns, observer_clock.frame.time_ns);
-    result.invulnerability_until_ns = power_translate(result.invulnerability_until_ns,
-        source_clock.frame.time_ns, observer_clock.frame.time_ns);
     *out = result;
     return true;
 }

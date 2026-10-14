@@ -386,6 +386,7 @@ static bool selected_qvm(void *context, qa_actor_id actor, uint32_t selection,
     struct application_q3_guest *engine = q3g_engine(physical);
     q3g_role *role = engine ? engine->game : NULL;
     application_q3_weapons_services *s = role ? role->weapon_services : NULL;
+    if (role && !s) return true;
     q3_weapon_actor source;
     if (!q3_weapon_services_source(s, actor, &source, error)) return false;
     *out = s; *present = true; return true;
@@ -402,6 +403,7 @@ bool application_q3_weapons_services_grenade_interval(void *context, qa_actor_id
     struct application_q3_guest *engine = q3g_engine(physical);
     q3g_role *role = engine ? engine->game : NULL;
     application_q3_weapons_services *s = role ? role->weapon_services : NULL;
+    if (role && !s) return true;
     q3_weapon_actor source; qa_equipment_state equipment;
     if (!q3_weapon_services_source(s, actor, &source, error)) return false;
     if (!app->equipment || !qa_equipment_read(app->equipment, actor, &equipment) ||
@@ -467,6 +469,7 @@ bool application_q3_weapons_services_equipment_animation(void *context, qa_actor
     struct application_q3_guest *engine = q3g_engine(physical);
     q3g_role *role = engine ? engine->game : NULL;
     application_q3_weapons_services *s = role ? role->weapon_services : NULL;
+    if (role && !s) return true;
     q3_weapon_actor source;
     if (!q3_weapon_services_source(s, actor, &source, error)) return false;
     *handled = true;
@@ -504,6 +507,7 @@ bool application_q3_weapons_services_selected_fired(void *context, qa_actor_id a
     struct application_q3_guest *engine = q3g_engine(physical);
     q3g_role *role = engine ? engine->game : NULL;
     application_q3_weapons_services *s = role ? role->weapon_services : NULL;
+    if (role && !s) return true;
     q3_weapon_actor source;
     if (!q3_weapon_services_source(s, actor, &source, error)) return false;
     bool melee = provider->kind == APPLICATION_PROVIDER_Q1 && weapon &&
@@ -535,6 +539,7 @@ bool application_q3_weapons_services_selected_delay(void *context, qa_actor_id a
     struct application_q3_guest *engine = q3g_engine(physical);
     q3g_role *role = engine ? engine->game : NULL;
     application_q3_weapons_services *s = role ? role->weapon_services : NULL;
+    if (role && !s) return true;
     q3_weapon_actor source;
     if (!q3_weapon_services_source(s, actor, &source, error)) return false;
     uint64_t milliseconds = native / UINT64_C(1000000);
@@ -579,6 +584,7 @@ bool application_q3_weapons_services_q2_damage(void *context, qa_actor_id actor,
     struct application_q3_guest *engine = q3g_engine(physical);
     q3g_role *role = engine ? engine->game : NULL;
     application_q3_weapons_services *s = role ? role->weapon_services : NULL;
+    if (role && !s) return true;
     q3_weapon_actor source;
     if (!q3_weapon_services_source(s, actor, &source, error)) return false;
     ++s->calls;
@@ -619,6 +625,7 @@ bool application_q3_weapons_services_q2_powerups(void *context, qa_actor_id acto
     if (!admitted) return true;
     struct application_q3_guest *engine = q3g_engine(physical);
     q3g_role *role = engine ? engine->game : NULL;
+    if (role && !role->weapon_services) return true;
     q3_weapon_actor source;
     if (!q3_weapon_services_source(role ? role->weapon_services : NULL, actor, &source, error)) return false;
     /* The original QVM owns these powers inside its damage and delay calls.
@@ -648,6 +655,7 @@ bool application_q3_weapons_services_q1_damage(void *context, qa_damage_request 
     struct application_q3_guest *engine = q3g_engine(physical);
     q3g_role *role = engine ? engine->game : NULL;
     application_q3_weapons_services *s = role ? role->weapon_services : NULL;
+    if (role && !s) return true;
     q3_weapon_actor source;
     if (!q3_weapon_services_source(s, request->attack.attacker, &source, error)) return false;
     qa_q1_game *game = provider->state.q1;
@@ -681,6 +689,7 @@ bool application_q3_weapons_services_q2_input(void *context, qa_actor_id actor,
     q3g_role *role = engine ? engine->game : NULL;
     application_q3_weapons_services *s = role ? role->weapon_services : NULL;
     q3_weapon_actor source; qa_q3_player player; qa_body_state body;
+    if (role && !s) return true;
     if (!q3_weapon_services_source(s, actor, &source, error)) return false;
     bool available, attacking;
     if (!application_q3_weapons_available(role->weapons, actor, false, &available, error) ||
