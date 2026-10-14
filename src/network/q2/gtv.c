@@ -4,25 +4,33 @@
 #include <limits.h>
 #include <zlib.h>
 
-enum { GTV_REQUEST_MESSAGE_BYTES = 256, GTV_REQUEST_PACKET_BYTES = GTV_REQUEST_MESSAGE_BYTES + 2 };
+enum { GTV_REQUEST_PACKET_BYTES = QA_GTV_REQUEST_MESSAGE_BYTES + 2 };
 
 static void gtv_wipe(void *data, size_t size)
 { volatile uint8_t *p=data; while (size--) *p++=0; }
 static bool gtv_error(qa_error *error, const char *text)
 { qa_error_set(error,QA_ERROR_FORMAT,0,"%s",text); return false; }
-static bool gtv_packet(uint8_t opcode, qa_bytes body, qa_buffer *out, qa_error *error)
+static bool gtv_packet_size(size_t body_size, size_t *packet_size, qa_error *error)
 {
-    if (!out || body.size>=QA_Q2_MVD_MESSAGE_BYTES || (body.size && !body.data))
+    if (body_size>=QA_Q2_MVD_MESSAGE_BYTES)
         return gtv_error(error,"Invalid GTV message size");
-    uint8_t *bytes=malloc(body.size+3);
-    if (!bytes) { qa_error_set(error,QA_ERROR_MEMORY,0,"GTV packet allocation failed"); return false; }
-    qa_store_u16le(bytes,(uint16_t)(body.size+1)); bytes[2]=opcode;
-    if (body.size) memcpy(bytes+3,body.data,body.size);
-    *out=(qa_buffer){bytes,body.size+3}; return true;
+    *packet_size=body_size+3; return true;
+}
+static void gtv_packet_header(uint8_t opcode, size_t body_size, uint8_t header[3])
+{
+    qa_store_u16le(header,(uint16_t)(body_size+1)); header[2]=opcode;
+}
+static bool gtv_destination(uint8_t *destination, size_t capacity, size_t needed, qa_error *error)
+{
+    if (!destination) return gtv_error(error,"Missing GTV destination");
+    if (capacity<needed) {
+        qa_error_set(error,QA_ERROR_CAPACITY,0,"GTV destination is too small"); return false;
+    }
+    return true;
 }
 bool qa_gtv_request_read(qa_bytes bytes, qa_gtv_request *out, qa_error *error)
 {
-    if (!out || !bytes.size || bytes.size>GTV_REQUEST_MESSAGE_BYTES || !bytes.data) return gtv_error(error,"Invalid GTV request size");
+    if (!out || !bytes.size || bytes.size>QA_GTV_REQUEST_MESSAGE_BYTES || !bytes.data) return gtv_error(error,"Invalid GTV request size");
     qa_net_reader r; qa_net_reader_init(&r,bytes,error); qa_gtv_request q={0};
     uint8_t opcode=qa_net_read_u8(&r);
     if (opcode>QA_GTV_REQUEST_COMMAND) return gtv_error(error,"Unknown GTV request opcode");
@@ -45,7 +53,7 @@ static bool gtv_request_encode(const qa_gtv_request *q, uint8_t bytes[GTV_REQUES
 {
     if (!q || q->kind<QA_GTV_REQUEST_HELLO || q->kind>QA_GTV_REQUEST_COMMAND)
         return gtv_error(error,"Invalid GTV request");
-    qa_net_writer w; qa_net_writer_init(&w,bytes+2,GTV_REQUEST_MESSAGE_BYTES,error);
+    qa_net_writer w; qa_net_writer_init(&w,bytes+2,QA_GTV_REQUEST_MESSAGE_BYTES,error);
     qa_net_write_u8(&w,(uint8_t)q->kind);
     switch (q->kind) {
     case QA_GTV_REQUEST_HELLO:
@@ -103,7 +111,7 @@ bool qa_gtv_client_create(const qa_gtv_identity *identity, uint32_t flags,
     if (!identity || !identity->username || !identity->password || !identity->version || !send || !out)
         return gtv_error(error,"Missing GTV client identity or callback");
     size_t a=strlen(identity->username), b=strlen(identity->password), d=strlen(identity->version);
-    if (a>255 || b>255 || d>255 || a+b+d+14>GTV_REQUEST_MESSAGE_BYTES) return gtv_error(error,"GTV identity exceeds message limit");
+    if (a>255 || b>255 || d>255 || a+b+d+14>QA_GTV_REQUEST_MESSAGE_BYTES) return gtv_error(error,"GTV identity exceeds message limit");
     qa_gtv_client *c=calloc(1,sizeof(*c));
     if (!c) { qa_error_set(error,QA_ERROR_MEMORY,0,"GTV client allocation failed"); return false; }
     if (!qa_q2_mvd_framer_create(false,QA_Q2_MVD_MESSAGE_BYTES,&c->frames,error)) { free(c); return false; }
@@ -295,42 +303,81 @@ bool qa_gtv_server_stream_create(qa_gtv_server_stream **out, qa_error *error)
     if (!out) return gtv_error(error,"Missing GTV stream output");
     qa_gtv_server_stream *s=calloc(1,sizeof(*s));
     if (!s) { qa_error_set(error,QA_ERROR_MEMORY,0,"GTV stream allocation failed"); return false; }
+    if (deflateInit(&s->deflate,Z_DEFAULT_COMPRESSION)!=Z_OK) {
+        free(s); return gtv_error(error,"GTV deflate initialization failed");
+    }
     *out=s; return true;
 }
 void qa_gtv_server_stream_destroy(qa_gtv_server_stream *s)
 {
     if (!s) return;
-    if (s->compressed) deflateEnd(&s->deflate);
+    deflateEnd(&s->deflate);
     free(s);
 }
-bool qa_gtv_server_hello(qa_gtv_server_stream *s, uint32_t flags, qa_buffer *out, qa_error *error)
+bool qa_gtv_server_stream_reset(qa_gtv_server_stream *s, qa_error *error)
 {
-    if (!s || !out || s->greeted || s->failed || (flags&~UINT32_C(3))) return gtv_error(error,"Invalid GTV server hello");
-    uint8_t body[4]; qa_store_u32le(body,flags); qa_buffer packet={0};
-    if (!gtv_packet(QA_GTV_HELLO,(qa_bytes){body,sizeof(body)},&packet,error)) return false;
-    if (flags&QA_GTV_DEFLATE) {
-        if (deflateInit(&s->deflate,Z_DEFAULT_COMPRESSION)!=Z_OK) { qa_buffer_free(&packet); return gtv_error(error,"GTV deflate initialization failed"); }
-        s->compressed=true;
-    }
-    s->greeted=true; *out=packet; return true;
+    if (deflateReset(&s->deflate)!=Z_OK) return gtv_error(error,"GTV deflate reset failed");
+    s->greeted=s->compressed=s->failed=false;
+    return true;
+}
+size_t qa_gtv_server_message_capacity(qa_gtv_server_stream *s)
+{
+    return (size_t)deflateBound(&s->deflate,QA_Q2_MVD_MESSAGE_BYTES+2u)+16;
+}
+bool qa_gtv_server_hello(qa_gtv_server_stream *s, uint32_t flags, uint8_t *destination,
+                         size_t capacity, size_t *written, qa_error *error)
+{
+    if (written) *written=0;
+    if (!s || !written || s->greeted || s->failed || (flags&~UINT32_C(3))) return gtv_error(error,"Invalid GTV server hello");
+    size_t packet_size;
+    if (!gtv_packet_size(sizeof(flags),&packet_size,error) ||
+        !gtv_destination(destination,capacity,packet_size,error)) return false;
+    s->compressed=(flags&QA_GTV_DEFLATE)!=0;
+    gtv_packet_header(QA_GTV_HELLO,sizeof(flags),destination);
+    qa_store_u32le(destination+3,flags);
+    s->greeted=true; *written=packet_size; return true;
+}
+bool qa_gtv_server_message_bound(qa_gtv_server_stream *s, size_t body_size,
+                                  size_t *capacity, qa_error *error)
+{
+    if (!s || !capacity || s->failed) return gtv_error(error,"Invalid GTV server stream state");
+    size_t packet_size;
+    if (!gtv_packet_size(body_size,&packet_size,error)) return false;
+    if (!s->compressed) { *capacity=packet_size; return true; }
+    uLong bound=deflateBound(&s->deflate,(uLong)packet_size);
+    if (bound>UINT_MAX-16u) return gtv_error(error,"GTV compression bound overflow");
+    *capacity=(size_t)bound+16; return true;
 }
 bool qa_gtv_server_message(qa_gtv_server_stream *s, qa_gtv_server_opcode opcode,
-                            qa_bytes body, qa_buffer *out, qa_error *error)
+                            qa_bytes body, uint8_t *destination, size_t capacity,
+                            size_t *written, qa_error *error)
 {
-    if (!s || !out || !s->greeted || s->failed || opcode<=QA_GTV_HELLO || opcode>QA_GTV_RECONNECT)
+    if (written) *written=0;
+    bool rejection=opcode==QA_GTV_BAD_REQUEST || opcode==QA_GTV_NO_ACCESS ||
+        opcode==QA_GTV_ERROR || opcode==QA_GTV_DISCONNECT;
+    if (!s || !written || (!s->greeted && !rejection) || s->failed || opcode<=QA_GTV_HELLO || opcode>QA_GTV_RECONNECT)
         return gtv_error(error,"Invalid GTV server stream state");
-    qa_buffer packet={0}; if (!gtv_packet((uint8_t)opcode,body,&packet,error)) return false;
-    if (!s->compressed) { *out=packet; return true; }
-    uLong bound=deflateBound(&s->deflate,(uLong)packet.size)+16;
-    if (bound>UINT_MAX) { qa_buffer_free(&packet); return gtv_error(error,"GTV compression bound overflow"); }
-    uint8_t *bytes=malloc((size_t)bound);
-    if (!bytes) { qa_buffer_free(&packet); qa_error_set(error,QA_ERROR_MEMORY,0,"GTV compressed packet allocation failed"); return false; }
-    s->deflate.next_in=packet.data; s->deflate.avail_in=(uInt)packet.size;
-    s->deflate.next_out=bytes; s->deflate.avail_out=(uInt)bound;
-    int status=deflate(&s->deflate,Z_SYNC_FLUSH);
-    qa_buffer_free(&packet);
-    if (status!=Z_OK || s->deflate.avail_in || !s->deflate.avail_out) {
-        free(bytes); s->failed=true; return gtv_error(error,"GTV compression failed");
+    if (body.size && !body.data) return gtv_error(error,"Invalid GTV message size");
+    size_t needed;
+    if (!qa_gtv_server_message_bound(s,body.size,&needed,error) ||
+        !gtv_destination(destination,capacity,needed,error)) return false;
+    if (!s->compressed) {
+        if (body.size) memmove(destination+3,body.data,body.size);
+        gtv_packet_header((uint8_t)opcode,body.size,destination);
+        *written=needed; return true;
     }
-    *out=(qa_buffer){bytes,(size_t)bound-s->deflate.avail_out}; return true;
+    uint8_t header[3]; gtv_packet_header((uint8_t)opcode,body.size,header);
+    s->deflate.next_in=header; s->deflate.avail_in=(uInt)sizeof(header);
+    s->deflate.next_out=destination; s->deflate.avail_out=(uInt)needed;
+    int status=deflate(&s->deflate,Z_NO_FLUSH);
+    if (status==Z_OK && !s->deflate.avail_in && s->deflate.avail_out) {
+        s->deflate.next_in=(Bytef *)body.data; s->deflate.avail_in=(uInt)body.size;
+        status=deflate(&s->deflate,Z_SYNC_FLUSH);
+    }
+    s->deflate.next_in=Z_NULL;
+    s->deflate.next_out=Z_NULL;
+    if (status!=Z_OK || s->deflate.avail_in || !s->deflate.avail_out) {
+        s->failed=true; return gtv_error(error,"GTV compression failed");
+    }
+    *written=needed-s->deflate.avail_out; return true;
 }

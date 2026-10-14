@@ -207,7 +207,7 @@ bool frontend_shared_settings_advance(frontend_shared_settings *owner,bool valid
             !qa_application_client_prepare_cancel_entered(owner->client)):
             qa_application_startup_resource_phase(owner->application,owner->candidate)) ||
         (validated && !owner->before_complete) || (!validated && owner->after_started)) {
-        if (!owner->release_deferred_warned) {
+        if (!owner->frontend->stepping && !owner->release_deferred_warned) {
             owner->release_deferred_warned=true;
             frontend_console_print(owner->frontend,NULL,"Settings release pending; retaining current settings.\n");
         }

@@ -110,6 +110,7 @@ bool qa_q2_mvd_project_record(const qa_q2_mvd_header *, const qa_q2_mvd_frame *,
 typedef struct qa_q2_mvd_framer qa_q2_mvd_framer;
 bool qa_q2_mvd_framer_create(bool read_magic, size_t message_limit, qa_q2_mvd_framer **, qa_error *);
 void qa_q2_mvd_framer_destroy(qa_q2_mvd_framer *);
+void qa_q2_mvd_framer_reset(qa_q2_mvd_framer *, bool read_magic);
 /* Consume at most one message, preserving any unconsumed input for the caller.
  * This permits an exact plain-hello to compressed-GTV transition in one read. */
 bool qa_q2_mvd_framer_push(qa_q2_mvd_framer *, qa_bytes, size_t *consumed,
@@ -122,7 +123,8 @@ bool qa_q2_mvd_write_frame_prefix(qa_net_writer *, size_t message_bytes);
 bool qa_q2_mvd_write_framed(qa_net_writer *, qa_bytes);
 bool qa_q2_mvd_write_terminator(qa_net_writer *);
 
-enum { QA_GTV_PROTOCOL = 0xed04, QA_GTV_DEFLATE = 1, QA_GTV_STRINGCMDS = 2 };
+enum { QA_GTV_PROTOCOL = 0xed04, QA_GTV_DEFLATE = 1, QA_GTV_STRINGCMDS = 2,
+    QA_GTV_REQUEST_MESSAGE_BYTES = 256 };
 typedef enum qa_gtv_server_opcode { QA_GTV_HELLO, QA_GTV_PONG, QA_GTV_START, QA_GTV_STOP, QA_GTV_DATA,
     QA_GTV_ERROR, QA_GTV_BAD_REQUEST, QA_GTV_NO_ACCESS, QA_GTV_DISCONNECT, QA_GTV_RECONNECT } qa_gtv_server_opcode;
 typedef enum qa_gtv_request_kind { QA_GTV_REQUEST_HELLO, QA_GTV_REQUEST_PING, QA_GTV_REQUEST_START, QA_GTV_REQUEST_STOP, QA_GTV_REQUEST_COMMAND } qa_gtv_request_kind;
@@ -160,10 +162,17 @@ void qa_gtv_client_close(qa_gtv_client *);
 typedef struct qa_gtv_server_stream qa_gtv_server_stream;
 /* The TCP owner first validates and echoes MVD magic. hello produces a plain
  * framed packet; subsequent messages retain one negotiated zlib dictionary.
- * Each output buffer is owned, and its bytes must be queued in call order. */
+ * Output uses caller storage, and its bytes must be queued in call order.
+ * Compressed input and output storage must be disjoint. */
 bool qa_gtv_server_stream_create(qa_gtv_server_stream **, qa_error *);
 void qa_gtv_server_stream_destroy(qa_gtv_server_stream *);
-bool qa_gtv_server_hello(qa_gtv_server_stream *, uint32_t negotiated_flags, qa_buffer *, qa_error *);
-bool qa_gtv_server_message(qa_gtv_server_stream *, qa_gtv_server_opcode, qa_bytes body, qa_buffer *, qa_error *);
+bool qa_gtv_server_stream_reset(qa_gtv_server_stream *, qa_error *);
+size_t qa_gtv_server_message_capacity(qa_gtv_server_stream *);
+bool qa_gtv_server_hello(qa_gtv_server_stream *, uint32_t negotiated_flags,
+    uint8_t *destination, size_t capacity, size_t *written, qa_error *);
+bool qa_gtv_server_message_bound(qa_gtv_server_stream *, size_t body_size,
+    size_t *capacity, qa_error *);
+bool qa_gtv_server_message(qa_gtv_server_stream *, qa_gtv_server_opcode, qa_bytes body,
+    uint8_t *destination, size_t capacity, size_t *written, qa_error *);
 
 #endif

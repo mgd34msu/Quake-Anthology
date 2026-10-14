@@ -746,10 +746,15 @@ bool qa_q2_mvd_framer_create(bool magic, size_t limit, qa_q2_mvd_framer **out, q
     qa_q2_mvd_framer *f=calloc(1,sizeof(*f));
     if (f) f->buffer=malloc(limit+4);
     if (!f || !f->buffer) { free(f); qa_error_set(error,QA_ERROR_MEMORY,0,"MVD framer allocation failed"); return false; }
-    f->limit=limit; f->identified=!magic; f->need=magic?4:2; *out=f; return true;
+    f->limit=limit; qa_q2_mvd_framer_reset(f,magic); *out=f; return true;
 }
 void qa_q2_mvd_framer_destroy(qa_q2_mvd_framer *f)
 { if (f) { free(f->buffer); free(f); } }
+void qa_q2_mvd_framer_reset(qa_q2_mvd_framer *f, bool magic)
+{
+    f->used=0; f->need=magic?4:2;
+    f->identified=!magic; f->finished=f->failed=false;
+}
 bool qa_q2_mvd_framer_push(qa_q2_mvd_framer *f, qa_bytes bytes, size_t *consumed,
                            bool *present, qa_bytes *message, qa_error *error)
 {

@@ -54,6 +54,7 @@
 #include "../src/world/collision/internal.h"
 #include "qa/network_q2_kex.h"
 #include "qa/network_q2_messages.h"
+#include "qa/network_q2_mvd.h"
 #include "qa/network_q2_unicast.h"
 #include "../src/app/frontend/selected_effects_q1_temporary.h"
 #include "../src/network/q2/session_internal.h"
@@ -4685,6 +4686,63 @@ static void test_q3_player_entity_projection(void)
     CHECK(entity.eType == 10 && entity.eFlags == 8);
 }
 
+static bool gtv_send_discard(void *context, qa_bytes bytes, qa_error *error)
+{ (void)context; (void)bytes; (void)error; return true; }
+static bool gtv_data_count(void *context, const qa_gtv_event *event, qa_error *error)
+{
+    (void)error;
+    if (event->kind == QA_GTV_EVENT_DATA) {
+        const uint8_t expected[] = {17, 31, 127};
+        CHECK(event->payload.size == sizeof(expected));
+        CHECK(!memcmp(event->payload.data, expected, sizeof(expected)));
+        ++*(unsigned *)context;
+    }
+    return true;
+}
+static void test_gtv_output_reuse(void)
+{
+    qa_error error = {0}; qa_gtv_server_stream *server = NULL;
+    CHECK(qa_gtv_server_stream_create(&server, &error));
+    size_t capacity = qa_gtv_server_message_capacity(server);
+    uint8_t *bytes = malloc(capacity); CHECK(bytes);
+    qa_q2_mvd_framer *framer = NULL;
+    CHECK(qa_q2_mvd_framer_create(false, QA_Q2_MVD_MESSAGE_BYTES, &framer, &error));
+    size_t size = 0, consumed; bool present; qa_bytes message;
+    CHECK(qa_gtv_server_message(server, QA_GTV_NO_ACCESS, (qa_bytes){0}, bytes, capacity, &size, &error));
+    CHECK(qa_q2_mvd_framer_push(framer, (qa_bytes){bytes, size}, &consumed, &present, &message, &error));
+    CHECK(present && consumed == size && message.size == 1 && message.data[0] == QA_GTV_NO_ACCESS);
+    qa_q2_mvd_framer_reset(framer, false);
+    for (unsigned pass = 0; pass < 2; ++pass) {
+        CHECK(qa_gtv_server_stream_reset(server, &error));
+        qa_gtv_client *client = NULL;
+        CHECK(qa_gtv_client_create(&(qa_gtv_identity){"viewer", "", "test"}, QA_GTV_DEFLATE,
+            gtv_send_discard, NULL, &client, &error));
+        CHECK(qa_gtv_client_start(client, &error));
+        unsigned delivered = 0; uint8_t magic[4]; qa_store_u32le(magic, QA_Q2_MVD_MAGIC);
+        CHECK(qa_gtv_client_receive(client, (qa_bytes){magic, sizeof(magic)}, gtv_data_count, &delivered, &error));
+        CHECK(!qa_gtv_server_hello(server, QA_GTV_DEFLATE, bytes, 6, &size, &error) && !size);
+        error = (qa_error){0};
+        CHECK(qa_gtv_server_hello(server, QA_GTV_DEFLATE, bytes, capacity, &size, &error));
+        CHECK(qa_gtv_client_receive(client, (qa_bytes){bytes, size}, gtv_data_count, &delivered, &error));
+        CHECK(qa_gtv_client_request_start(client, 0, &error));
+        CHECK(qa_gtv_server_message(server, QA_GTV_START, (qa_bytes){0}, bytes, capacity, &size, &error));
+        CHECK(qa_gtv_client_receive(client, (qa_bytes){bytes, size}, gtv_data_count, &delivered, &error));
+        const uint8_t body[] = {17, 31, 127};
+        for (unsigned packet = 0; packet < 2; ++packet) {
+            CHECK(!qa_gtv_server_message(server, QA_GTV_DATA, (qa_bytes){body, sizeof(body)}, bytes, 0, &size, &error) && !size);
+            error = (qa_error){0};
+            CHECK(qa_gtv_server_message(server, QA_GTV_DATA, (qa_bytes){body, sizeof(body)}, bytes, capacity, &size, &error));
+            for (size_t at = 0; at < size;) {
+                size_t count = size - at < 3 ? size - at : 3;
+                CHECK(qa_gtv_client_receive(client, (qa_bytes){bytes + at, count}, gtv_data_count, &delivered, &error));
+                at += count;
+            }
+        }
+        CHECK(delivered == 2); qa_gtv_client_destroy(client);
+    }
+    qa_q2_mvd_framer_destroy(framer); qa_gtv_server_stream_destroy(server); free(bytes);
+}
+
 int main(int argc, char **argv)
 {
     if(!player_feedback_test()) return 1;
@@ -4773,6 +4831,7 @@ int main(int argc, char **argv)
     test_q2_owned_frames();
     test_q2_retained_records();
     test_q2_record_delivery();
+    test_gtv_output_reuse();
     test_actor_index_lifetimes();
     test_provider_identity_views();
     test_q1_gameplay();
