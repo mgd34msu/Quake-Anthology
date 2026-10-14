@@ -2539,8 +2539,8 @@ static bool prepare_source_row(void *context,qa_application *application,const q
         frontend_global_settings_storage_user_store(f->global_settings_storage),
         frontend_global_settings_storage_device_store(f->global_settings_storage),error);
     ok=ok && source->files;
-    if (ok && source->primary) ok=frontend_input_profile_bind_store(f,catalog,product->id,
-        frontend_config_files_store(source->files,false),error);
+    if (ok && source->primary) ok=frontend_input_profile_bind_product(f,
+        qa_launch_snapshot_catalog(candidate),choices->world.preset,error);
     if (ok && product->family==QA_GAME_Q3) {
         qa_q3_product_policy policy;
         ok=f->keys && qa_application_q3_product_policy_read(application,&policy) &&
