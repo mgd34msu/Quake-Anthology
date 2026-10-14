@@ -1,5 +1,4 @@
-#include "internal.h"
-#include "qa/game_q1_maps.h"
+#include "maps/internal.h"
 #include "qa/game_q1_checkpoint.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q1_supply.h"
@@ -26,6 +25,10 @@ static bool mg3_special(const q1_pickup *item) {
     return item->kind >= Q1_ITEM_MG3_SHARD || item->weapon == QA_Q1_MG3_LASER ||
            item->weapon == QA_Q1_MG3_MJOLNIR ||
            (item->kind == Q1_ITEM_POWER && item->count == (float)QA_Q1_LAVA_SUIT);
+}
+static bool mjolnir_teleport(const qa_q1_game *g, const q1_actor *entity) {
+    return g->options.program == QA_Q1_MG3 && entity->state.pickup.kind == Q1_ITEM_WEAPON &&
+           entity->state.pickup.weapon == QA_Q1_MG3_MJOLNIR && (entity->spawnflags & 128u);
 }
 
 int q1_weapon_rank(const qa_q1_game *g, qa_q1_weapon weapon) {
@@ -662,6 +665,13 @@ static bool pickup_define(qa_q1_game *g, q1_actor *entity, bool *recognized,
                      "Q1 classname has no native pickup definition");
         return false;
     }
+    if (mjolnir_teleport(g, entity) && g->maps) {
+        q1_map_state *state = q1_map_allocate(g, entity, error);
+        if (!state)
+            return false;
+        if (!state->height)
+            state->height = Q1_SILENT_TELEPORT_HEIGHT;
+    }
     if (!item->item) {
         if (!id) {
             qa_bytes name =
@@ -1157,6 +1167,9 @@ static bool pickup_grant(qa_q1_game *g, q1_actor *entity, qa_actor_id recipient,
     *accepted = false;
     if (entity->physics.solid != QA_PHYSICS_TRIGGER)
         return true;
+    bool teleport = mjolnir_teleport(g, entity);
+    qa_actor_id pickup = entity->id;
+    float height = entity->map ? entity->map->height : Q1_SILENT_TELEPORT_HEIGHT;
     q1_pickup *item = &entity->state.pickup;
     item_touch touch = {.game = g, .entity = entity, .recipient = recipient, .external = external};
     if (item->kind == Q1_ITEM_BACKPACK)
@@ -1185,7 +1198,12 @@ static bool pickup_grant(qa_q1_game *g, q1_actor *entity, qa_actor_id recipient,
     if (!qa_pickups_touch(g->services.pickups, &offer, &continuation, &outcome, error))
         return false;
     *accepted = outcome == QA_PICKUP_ACCEPTED;
-    return true;
+    if (!teleport)
+        return true;
+    entity = q1_entity(g, pickup);
+    if (entity && entity->map)
+        height = entity->map->height;
+    return q1_map_silent_teleport(g, recipient, height, error);
 }
 static bool mg3_upgrade_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id recipient,
     q1_player *player, qa_error *error) {
