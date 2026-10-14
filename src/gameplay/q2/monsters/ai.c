@@ -4,6 +4,7 @@
 #include "reinforcements.h"
 #include "medic.h"
 #include "../entities/internal.h"
+#include "../entities/hints.h"
 
 enum { Q2M_TRAIL_POINTS = 8 };
 
@@ -11,6 +12,7 @@ static float vector_yaw(qa_vec3 direction);
 static bool trail_length(qa_q2_game *, qa_actor_reference, size_t *, qa_error *);
 static bool attack_body(q2m_context *, qa_actor_id, qa_body_state *, bool *,
                         qa_error *);
+static void attack_enemy(q2m_context *, qa_actor_id);
 
 typedef struct q2m_player_trail {
   qa_actor_id actor;
@@ -1111,12 +1113,7 @@ bool q2m_face_enemy(q2m_context *context, qa_error *error) {
   return q2m_change_yaw(context, error);
 }
 
-bool q2m_hunt_target(q2m_context *context, bool animate_state, qa_error *error) {
-  qa_actor_id id = context->monster->enemy;
-  if (!q2_actor_live(context->game, id))
-    return true;
-  context->monster->goal = qa_actor_reference_resolve(qa_session_actors(context->game->services.session), context->actor->physics.goal = qa_actor_reference_lifetime(id));
-  if (animate_state) {
+bool q2m_run_state(q2m_context *context, qa_error *error) {
     bool tank_callback = context->monster->definition->species == Q2M_TANK ||
                          context->monster->definition->species == Q2M_TANK_COMMANDER;
     if (tank_callback && !q2m_callback_run(context, Q2M_CALLBACK_tank_run, error))
@@ -1127,12 +1124,14 @@ bool q2m_hunt_target(q2m_context *context, bool animate_state, qa_error *error) 
     if (actor_callback && !q2m_callback_run(context,
         context->monster->stand_ground ? Q2M_CALLBACK_actor_stand : Q2M_CALLBACK_actor_run, error))
       return false;
+    if (!q2m_alive(context)) return true;
     bool medic_callback = context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
         (context->monster->definition->species == Q2M_MEDIC ||
          context->monster->definition->species == Q2M_MEDIC_COMMANDER);
     if (medic_callback && !q2m_callback_run(context,
         context->monster->stand_ground ? Q2M_CALLBACK_medic_stand : Q2M_CALLBACK_medic_run, error))
       return false;
+    if (!q2m_alive(context)) return true;
     bool handled = false;
     if (!tank_callback && !actor_callback && !medic_callback && !context->monster->stand_ground &&
         !q2m_medic_callback(context, Q2M_CALLBACK_medic_run, &handled, error))
@@ -1144,7 +1143,15 @@ bool q2m_hunt_target(q2m_context *context, bool animate_state, qa_error *error) 
                                       : context->monster->definition->run_move,
         context->monster->definition->species == Q2M_FIXBOT, error))
       return false;
-  }
+  return true;
+}
+
+bool q2m_hunt_target(q2m_context *context, bool animate_state, qa_error *error) {
+  qa_actor_id id = context->monster->enemy;
+  if (!q2_actor_live(context->game, id))
+    return true;
+  context->monster->goal = qa_actor_reference_resolve(qa_session_actors(context->game->services.session), context->actor->physics.goal = qa_actor_reference_lifetime(id));
+  if (animate_state && !q2m_run_state(context, error)) return false;
   if (!q2m_alive(context))
     return true;
   if (!q2m_refresh(context, error))
@@ -1834,7 +1841,7 @@ bool q2m_find_target(q2m_context *context, bool *found, qa_error *error) {
       return false;
     if (heard) {
       *found = true;
-      return true;
+      return !monster->hint_path || q2_hint_stop(context, error);
     }
     candidate = context->game->options.rules == QA_RULESET_Q2_CLASSIC
                     ? runtime->sight_client
@@ -1872,8 +1879,12 @@ bool q2m_find_target(q2m_context *context, bool *found, qa_error *error) {
     return false;
   if (!q2m_alive(context) || !accepted)
     return true;
-  if (!q2m_found_target(context, candidate, error))
+  if (monster->hint_path) {
+    attack_enemy(context, candidate);
+    if (!q2_hint_stop(context, error)) return false;
+  } else if (!q2m_found_target(context, candidate, error)) {
     return false;
+  }
   if (!q2m_alive(context))
     return true;
   monster = context->monster;
@@ -4238,6 +4249,9 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind,
       if (!q2m_alive(context))
         return true;
     }
+    bool hint_handled;
+    if (!q2_hint_run(context, distance, &hint_handled, error)) return false;
+    if (hint_handled || !q2m_alive(context)) return true;
     bool already_moved = false;
     if (monster->sound_target.present) {
       sound_target_refresh(context);
@@ -4328,6 +4342,9 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind,
       return !rerelease || !q2m_alive(context) ||
              q2m_distance(context, monster->enemy) > 50.0f || q2m_change_yaw(context, error);
     }
+    bool found_hint;
+    if (!q2_hint_check_lost(context, &found_hint, error)) return false;
+    if (found_hint || !q2m_alive(context)) return true;
     if (context->game->options.cooperative) {
       bool found;
       if (!q2m_find_target(context, &found, error))

@@ -337,6 +337,8 @@ struct qa_q2_monster {
   uint64_t corpse_due_ns, corpse_end_ns;
   qa_actor_id enemy, old_enemy, goal, move_target, commander, activator;
   qa_actor_id last_player_enemy;
+  qa_actor_id goal_hint;
+  uint64_t last_hint_ns;
   qa_actor_id resurrect_target, hazard, proboscis;
   qa_actor_id healer, bad_medic[2];
   unsigned medic_tries;
@@ -427,6 +429,7 @@ static inline float q2m_random(qa_q2_game *game) { return q2_random(game); }
 static inline float q2m_crandom(qa_q2_game *game) { return q2_crandom(game); }
 
 bool q2m_visible(q2m_context *, qa_actor_id, bool *, qa_error *);
+bool q2m_hunt_target(q2m_context *, bool animate_state, qa_error *);
 bool q2m_perception_begin(qa_q2_game *, qa_error *);
 qa_actor_id q2m_current_sight_client(const qa_q2_game *);
 bool q2m_perception_alert(q2m_context *, qa_actor_id, qa_error *);
@@ -437,6 +440,7 @@ bool q2m_find_target(q2m_context *, bool *found, qa_error *);
 bool q2m_found_target(q2m_context *, qa_actor_id, qa_error *);
 bool q2m_medic_acquire(q2m_context *, bool preserve_enemy, bool *, qa_error *);
 bool q2m_check_attack(q2m_context *, bool *selected, bool *started, bool *visible, qa_error *);
+bool q2m_run_state(q2m_context *, qa_error *);
 bool q2m_gekk_check_jump(q2m_context *, const qa_body_state *);
 bool q2m_gekk_check_attack(q2m_context *, bool *selected, qa_error *);
 bool q2m_run_ai(q2m_context *, q2m_ai_kind, float, qa_error *);

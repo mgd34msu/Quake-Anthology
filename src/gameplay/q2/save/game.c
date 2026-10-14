@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "../player/internal.h"
+#include "../monsters/internal.h"
 
 #define Q2_SAVE_MAGIC UINT32_C(0x32514151)
 #define Q2_SAVE_LEVEL UINT32_C(0x80000000)
@@ -69,6 +70,83 @@ static bool header(q2_save_io *io) {
     }
     return true;
 }
+
+static uint32_t hint_fields(qa_q2_game *g, const q2_actor *actor) {
+    uint32_t fields = 0;
+    if (actor->entity && actor->entity->classname == g->runtime_names[Q2_NAME_HINT_PATH])
+        fields |= 1u;
+    if (actor->monster && (actor->monster->hint_path || actor->monster->goal_hint.registry ||
+                          actor->monster->last_hint_ns)) fields |= 2u;
+    return fields;
+}
+
+static bool hint_reference(q2_save_io *io, qa_actor_id *actor) {
+    qa_q2_saved_reference saved = {0};
+    if ((!io->reading && !q2_save_reference(io->game, *actor, &saved, io->error)) ||
+        !q2_save_ref(io, &saved)) return false;
+    return !io->reading || q2_resolve_reference(io->game, saved, actor, io->error);
+}
+
+/* The pre-existing continuation ends at the wire section. Only maps with
+ * hint state append these sparse rows; a former end-of-file stays valid. */
+static bool save_hints(q2_save_io *io) {
+    qa_q2_game *g = io->game;
+    q2_entities *runtime = g->entity_runtime;
+    if (io->reading && io->offset == io->input.size) return true;
+    uint32_t rows = 0;
+    if (!io->reading) {
+        for (q2_actor *actor = g->first_actor; actor; actor = actor->live_next)
+            if (q2_actor_live(g, actor->id) && hint_fields(g, actor)) ++rows;
+        if (!rows && !runtime->hints_present && !runtime->hint_count) return true;
+    }
+    uint32_t roots = io->reading ? 0 : (uint32_t)runtime->hint_count;
+    if (!q2_save_bool(io, &runtime->hints_present) || !q2_save_u32(io, &roots)) return false;
+    if (roots > QA_Q2_HINT_CHAIN_LIMIT)
+        return q2_save_fail(io, "Q2 saved hint roots exceed the original chain limit");
+    if (io->reading) {
+        runtime->hint_count = roots;
+        memset(runtime->hint_starts, 0, sizeof(runtime->hint_starts));
+    }
+    for (uint32_t i = 0; i < roots; ++i)
+        if (!hint_reference(io, runtime->hint_starts + i)) return false;
+    if (!q2_save_u32(io, &rows)) return false;
+    if (io->reading && (rows > g->capacity || rows > (io->input.size - io->offset) / 6))
+        return q2_save_fail(io, "Invalid Q2 saved hint actor count");
+    q2_actor *next = g->first_actor;
+    for (uint32_t i = 0; i < rows; ++i) {
+        q2_actor *actor = NULL;
+        uint32_t fields = 0;
+        qa_actor_id id = {0};
+        if (!io->reading) {
+            while (next && (!q2_actor_live(g, next->id) || !hint_fields(g, next)))
+                next = next->live_next;
+            actor = next;
+            next = next->live_next;
+            id = actor->id;
+            fields = hint_fields(g, actor);
+        }
+        if (!hint_reference(io, &id) || !q2_save_u32(io, &fields)) return false;
+        if (io->reading) actor = q2_actor_get(g, id, false, NULL);
+        if (!actor || !fields || (fields & ~3u))
+            return q2_save_fail(io, "Q2 saved hint state has no restored actor");
+        if (fields & 1u) {
+            if (!actor->entity || actor->entity->classname != g->runtime_names[Q2_NAME_HINT_PATH])
+                return q2_save_fail(io, "Q2 saved hint link has no hint node");
+            qa_actor_id hint = io->reading ? (qa_actor_id){0} : qa_actor_reference_resolve(
+                qa_session_actors(g->services.session), actor->entity->hint_next);
+            if (!hint_reference(io, &hint) ||
+                !q2_save_i32(io, &actor->entity->hint_chain_id)) return false;
+            if (io->reading) actor->entity->hint_next = qa_actor_reference_lifetime(hint);
+        }
+        if (fields & 2u) {
+            if (!actor->monster) return q2_save_fail(io, "Q2 saved hint pursuit has no monster");
+            if (!hint_reference(io, &actor->monster->goal_hint) ||
+                !q2_save_u64(io, &actor->monster->last_hint_ns)) return false;
+        }
+    }
+    return true;
+}
+
 bool qa_q2_game_capture(qa_q2_game *g, qa_save_purpose purpose, qa_buffer *out, qa_error *e) {
     if (!g || !out || g->continuation_pending || g->continuation_failed || !q2_checkpoint_idle(g, e)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 capture requires a completed provider turn");
@@ -102,7 +180,7 @@ bool qa_q2_game_capture(qa_q2_game *g, qa_save_purpose purpose, qa_buffer *out, 
          qa_q2_players_capture(g, io.level_only, &players, e) && q2_save_players(&io, &players) &&
          qa_q2_entities_capture(g, io.level_only, &entities, e) && q2_save_entities(&io, &entities) &&
          qa_q2_monsters_capture(g, &monsters, e) && q2_save_monsters(&io, &monsters) &&
-         q2_save_wire(&io);
+         q2_save_wire(&io) && save_hints(&io);
     qa_q2_players_checkpoint_free(&players);
     qa_q2_entities_checkpoint_free(&entities);
     qa_q2_monsters_checkpoint_free(&monsters);
@@ -256,7 +334,7 @@ bool qa_q2_game_restore(qa_q2_game *g, qa_save_purpose purpose, const qa_q2_game
          q2_save_entities(&io, &entities) && (!transition || unit_entities(g, current, &entities, e)) &&
          qa_q2_entities_restore(g, &entities, e) &&
          q2_save_monsters(&io, &monsters) && qa_q2_monsters_restore(g, &monsters, e) &&
-         q2_save_wire(&io);
+         q2_save_wire(&io) && save_hints(&io);
     if (ok && io.offset != data.size) ok = q2_save_fail(&io, "Trailing Q2 continuation data");
     if (ok) ok = qa_q2_entities_validate_links(g, e);
     if (ok) g->actor_sequence = runtime.actor_sequence;

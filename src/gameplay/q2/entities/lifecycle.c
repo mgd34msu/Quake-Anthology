@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "hints.h"
 #include "../items/internal.h"
 #include "qa/text.h"
 #include "qa/game_q2_monsters.h"
@@ -426,6 +427,7 @@ bool qa_q2_entities_post_spawn(qa_q2_game *g, qa_error *e) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing Q2 provider");
         return false;
     }
+    if (!q2_hints_init(g, e)) return false;
     size_t count = 0;
     for (q2_actor *a = g->first_actor; a; a = a->live_next) {
         if (!a->entity || a->projectile.kind != Q2_PROJECTILE_NONE)

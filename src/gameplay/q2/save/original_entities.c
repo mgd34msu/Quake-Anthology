@@ -60,6 +60,7 @@ static const original_entity_class entity_classes[] = {
     CLASS("misc_transport", Q2E_TRAIN, "misc_strogg_ship_use", NULL, NULL, NULL),
     CLASS("func_rotating", Q2E_ROTATING, "rotating_use", "rotating_touch", "rotating_blocked", NULL),
     CLASS("path_corner", Q2E_PATH, NULL, "path_corner_touch", NULL, NULL),
+    CLASS("hint_path", Q2E_PATH, NULL, "hint_path_touch", NULL, NULL),
     CLASS("target_actor", Q2E_PATH, NULL, "target_actor_touch", NULL, NULL),
     CLASS("point_combat", Q2E_COMBAT_POINT, NULL, "point_combat_touch", NULL, NULL),
     CLASS("door_trigger", Q2E_DOOR_TRIGGER, NULL, "Touch_DoorTrigger", NULL, NULL),
@@ -385,6 +386,9 @@ static bool entity_team_references(qa_q2_game *g, q2_original_record_io *io, q2_
 
 static bool entity_references(qa_q2_game *g, q2_original_record_io *io, q2_entity_state *s)
 {
+    if ((io->edition == QA_RULESET_Q2_RERELEASE || io->product == QA_Q2_ROGUE) &&
+        s->classname == g->runtime_names[Q2_NAME_HINT_PATH] &&
+        !q2_original_source_reference(g, io, "hint_chain", 1024, &s->hint_next)) return false;
     if (s->kind == Q2E_TURRET_DRIVER)
         return q2_original_reference(g, io, "owner", 256, &s->owner) &&
             entity_team_references(g, io, s) &&
@@ -1087,6 +1091,10 @@ bool q2_original_entity_record(qa_q2_game *g, q2_original_record_io *io, q2_acto
     if (!s) return true;
     if (io->references_only) return entity_references(g, io, s);
     if (!entity_strings(g, io, s) || !q2_original_record(io, Q2_ORIGINAL_ENTITY, s)) return false;
+    if ((io->edition == QA_RULESET_Q2_RERELEASE || io->product == QA_Q2_ROGUE) &&
+        s->classname == g->runtime_names[Q2_NAME_HINT_PATH] &&
+        !q2_original_scalar(io, "hint_chain_id", Q2_ORIGINAL_I32,
+            UINT16_MAX, UINT16_MAX, 1036, &s->hint_chain_id)) return false;
     if (s->kind == Q2E_DOOR || s->kind == Q2E_BUTTON) {
         int32_t maximum = io->reading ? 0 : qa_source_to_i32(s->health);
         if (!scalar(io, "max_health", Q2_ORIGINAL_I32, 484, &maximum)) return false;

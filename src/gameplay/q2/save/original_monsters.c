@@ -508,6 +508,7 @@ static const q2_original_field monster_fields[] = {
     FIELD("monsterinfo.last_sighting", last_sighting, Q2_ORIGINAL_VECTOR, 856, 856),
     FIELD("monsterinfo.lefty", lefty, Q2_ORIGINAL_BOOL, 872, 872),
     FIELD("monsterinfo.idle_time", idle_ns, Q2_ORIGINAL_TIME, 876, 876),
+    FIELD("monsterinfo.last_hint_time", last_hint_ns, Q2_ORIGINAL_TIME, 65535, 896),
     FIELD("monsterinfo.medicTries", medic_tries, Q2_ORIGINAL_U32, 65535, 904),
     FIELD("monsterinfo.base_height", normal_height, Q2_ORIGINAL_F32, 65535, 932),
     FIELD("monsterinfo.next_duck_time", next_duck_ns, Q2_ORIGINAL_TIME, 65535, 936),
@@ -552,6 +553,7 @@ static bool references_record(qa_q2_game *g, q2_original_record_io *io,
     REF("goalentity", 412, goal); REF("movetarget", 416, move_target);
     REF("activator", 548, activator);
     if (io->edition == QA_RULESET_Q2_RERELEASE || io->product == QA_Q2_ROGUE) {
+        REF("monsterinfo.goal_hint", 900, goal_hint);
         REF("monsterinfo.badMedic1", 908, bad_medic[0]);
         REF("monsterinfo.badMedic2", 912, bad_medic[1]);
         REF("monsterinfo.last_player_enemy", 944, last_player_enemy);

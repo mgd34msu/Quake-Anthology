@@ -80,8 +80,11 @@ bool qa_q2_entity_capture(qa_q2_game *g, qa_actor_id id, qa_q2_entity_checkpoint
     if (!q2_save_reference(g, s->activator, &saved.activator, e) ||
         !q2_save_reference(g, s->owner, &saved.owner, e) ||
         !q2_save_reference(g, s->enemy, &saved.enemy, e) ||
-        !q2_save_reference(g, s->goal, &saved.goal, e))
+        !q2_save_reference(g, s->goal, &saved.goal, e) ||
+        !q2_save_reference(g, qa_actor_reference_resolve(
+            qa_session_actors(g->services.session), s->hint_next), &saved.hint_next, e))
         goto fail;
+    saved.value.hint_next = (qa_actor_reference){0};
     saved.value.activator = saved.value.owner = saved.value.enemy = saved.value.goal =
         (qa_actor_id){0};
     if (s->mover) {
@@ -219,6 +222,9 @@ bool qa_q2_entity_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_entity_chec
         !q2_resolve_reference(g, saved->enemy, &s->enemy, e) ||
         !q2_resolve_reference(g, saved->goal, &s->goal, e))
         goto fail;
+    qa_actor_id hint_next;
+    if (!q2_resolve_reference(g, saved->hint_next, &hint_next, e)) goto fail;
+    s->hint_next = qa_actor_reference_lifetime(hint_next);
     if (s->mover && !q2_resolve_reference(g, saved->destination, &s->mover->destination, e))
         goto fail;
     if (s->turret && !q2_resolve_reference(g, saved->turret_breach, &s->turret->breach, e))
@@ -277,11 +283,15 @@ bool qa_q2_entities_capture(qa_q2_game *g, bool level_only, qa_q2_entities_check
                                    .sky_auto = r->sky_auto,
                                    .has_goals = r->has_goals,
                                    .wind_count = r->wind_count,
+                                   .hint_count = r->hint_count,
+                                   .hints_present = r->hints_present,
                                    .total_monsters = r->total_monsters,
                                    .killed_monsters = r->killed_monsters,
                                    .level_count = level_only ? 0 : r->level_count,
                                    .visited_count = level_only ? 0 : r->visited_count};
     if (!level_only) memcpy(s.levels, r->levels, sizeof(s.levels));
+    for (size_t i = 0; i < r->hint_count; ++i)
+        if (!q2_save_reference(g, r->hint_starts[i], &s.hint_starts[i], e)) return false;
     if (!q2_save_reference(g, r->poi, &s.poi, e) ||
         !q2_save_reference(g, r->poi_dynamic, &s.poi_dynamic, e))
         return false;
@@ -328,7 +338,8 @@ bool qa_q2_entities_restore(qa_q2_game *g, const qa_q2_entities_checkpoint *s, q
         !q2_saved_resource(g, s->poi_image) || !q2_saved_resource(g, s->story) ||
         !q2_saved_resource(g, s->sky) || !q2_saved_resource(g, s->goals) ||
         !q2_saved_resource(g, s->primary) || !q2_saved_resource(g, s->secondary) ||
-        (s->wind_count && !s->wind) || s->wind_count > SIZE_MAX / sizeof(q2_wind_time)) {
+        (s->wind_count && !s->wind) || s->wind_count > SIZE_MAX / sizeof(q2_wind_time) ||
+        s->hint_count > QA_Q2_HINT_CHAIN_LIMIT) {
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid Q2 map runtime checkpoint");
         return false;
     }
@@ -336,6 +347,11 @@ bool qa_q2_entities_restore(qa_q2_game *g, const qa_q2_entities_checkpoint *s, q
         return false;
     if (!q2_campaign_saved_valid(g, s, e)) return false;
     q2_entities next = *g->entity_runtime;
+    next.hint_count = s->hint_count;
+    next.hints_present = s->hints_present;
+    memset(next.hint_starts, 0, sizeof(next.hint_starts));
+    for (size_t i = 0; i < s->hint_count; ++i)
+        if (!q2_resolve_reference(g, s->hint_starts[i], &next.hint_starts[i], e)) return false;
     next.wind = NULL;
     next.wind_index = (qa_actor_index){0};
     next.wind_count = s->wind_count;

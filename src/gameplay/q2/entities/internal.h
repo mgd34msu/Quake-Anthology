@@ -23,6 +23,9 @@ bool q2_player_map_spawn(qa_q2_game *, q2_actor *, bool *, qa_error *);
 bool q2_player_map_think(qa_q2_game *, q2_actor *, q2_entity_think, qa_error *);
 typedef struct q2_entities {
     qa_q2_entity_services services;
+    qa_actor_id hint_starts[QA_Q2_HINT_CHAIN_LIMIT];
+    size_t hint_count;
+    bool hints_present;
     qa_actor_id poi, poi_dynamic;
     qa_vec3 poi_origin;
     bool poi_valid;

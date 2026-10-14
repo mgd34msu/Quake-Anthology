@@ -4,6 +4,8 @@
 #include "qa/targets.h"
 #include "qa/navigation.h"
 
+#define QA_Q2_HINT_CHAIN_LIMIT 100u
+
 typedef struct qa_q2_map_fields {
     const qa_entity_property *properties;
     size_t count;
@@ -330,7 +332,8 @@ typedef struct qa_q2_entity_state {
     qa_entity_visual visual;
     qa_actor_collision collision;
     qa_actor_id activator, owner, enemy, goal;
-    qa_actor_reference team_master, team_next;
+    qa_actor_reference team_master, team_next, hint_next;
+    int32_t hint_chain_id;
     qa_vec3 direction, beam_end, multicast_origin;
     float speed, accel, decel, wait, delay, damage, random, volume, attenuation;
     double health;
@@ -359,7 +362,7 @@ typedef struct qa_q2_entity_checkpoint {
     bool present;
     qa_q2_entity_state value;
     qa_q2_saved_reference activator, owner, enemy, goal;
-    qa_q2_saved_reference destination, turret_breach;
+    qa_q2_saved_reference destination, turret_breach, hint_next;
 } qa_q2_entity_checkpoint;
 typedef struct qa_q2_wind_checkpoint {
     qa_q2_saved_reference actor;
@@ -372,6 +375,9 @@ typedef struct qa_q2_healthbar_checkpoint {
 } qa_q2_healthbar_checkpoint;
 typedef struct qa_q2_entities_checkpoint {
     qa_q2_saved_reference poi, poi_dynamic;
+    qa_q2_saved_reference hint_starts[QA_Q2_HINT_CHAIN_LIMIT];
+    size_t hint_count;
+    bool hints_present;
     qa_vec3 poi_origin;
     bool poi_valid;
     qa_string_id poi_image, story;

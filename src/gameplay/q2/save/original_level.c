@@ -846,6 +846,27 @@ static bool level_links(qa_q2_game *g, const q2_original_level_file *file,
     return true;
 }
 
+static bool level_hints(qa_q2_game *game, qa_error *error)
+{
+    q2_entities *runtime = game->entity_runtime;
+    runtime->hints_present = false;
+    runtime->hint_count = 0;
+    memset(runtime->hint_starts, 0, sizeof(runtime->hint_starts));
+    for (q2_actor *actor = game->first_actor; actor; actor = actor->live_next) {
+        q2_entity_state *hint = actor->entity;
+        if (!hint || hint->classname != game->runtime_names[Q2_NAME_HINT_PATH]) continue;
+        runtime->hints_present = true;
+        if (hint->hint_chain_id < -1 || hint->hint_chain_id >= (int32_t)QA_Q2_HINT_CHAIN_LIMIT)
+            return level_error(error, actor->id.slot, "Original Q2 hint chain exceeds its node table");
+        if (hint->hint_chain_id < 0 || !(hint->spawnflags & 1u) || !hint->target || hint->targetname)
+            continue;
+        size_t chain = (size_t)hint->hint_chain_id;
+        runtime->hint_starts[chain] = actor->id;
+        if (chain >= runtime->hint_count) runtime->hint_count = chain + 1;
+    }
+    return true;
+}
+
 bool qa_q2_game_original_read_level(qa_q2_game *game, qa_bytes bytes,
     const qa_q2_save_level *engine, qa_error *error)
 {
@@ -869,7 +890,8 @@ bool qa_q2_game_original_read_level(qa_q2_game *game, qa_bytes bytes,
         q2_original_record_io io = {.reading = true, .edition = game->options.rules,
             .product = game->options.product, .document = file.document, .object = file.level_object,
             .input = file.level_fields, .strings = file.level_strings, .error = error};
-        okay = level_state(game, &io, engine, &file.state) && level_links(game, &file, engine, error);
+        okay = level_state(game, &io, engine, &file.state) && level_links(game, &file, engine, error) &&
+            level_hints(game, error);
     }
     q2_original_level_close(&file);
     return okay;

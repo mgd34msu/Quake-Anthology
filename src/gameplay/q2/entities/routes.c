@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "hints.h"
 #include "qa/game_q2_monsters.h"
 
 bool qa_q2_entity_set_target(qa_q2_game *g, qa_actor_id id, qa_string_id name, qa_error *e) {
@@ -70,6 +71,8 @@ static qa_actor_id external_activator(qa_q2_game *g, qa_actor_id actor,
     return actor;
 }
 bool q2_route_touch(qa_q2_game *g, q2_actor *a, qa_actor_id actor, qa_error *e) {
+    if (a->entity->classname == g->runtime_names[Q2_NAME_HINT_PATH])
+        return q2_hint_touch(g, a, actor, e);
     if (a->entity->classname == g->runtime_names[Q2_NAME_TARGET_ACTOR])
         return qa_q2_monster_touch_actor_target(g, actor, a->id, e);
     bool combat = a->entity->kind == Q2E_COMBAT_POINT;

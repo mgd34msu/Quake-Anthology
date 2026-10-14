@@ -187,6 +187,7 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
       .melee_ns = monster->melee_ns,
       .search_ns = monster->search_ns,
       .trail_ns = monster->trail_ns,
+      .last_hint_ns = monster->last_hint_ns,
       .hostile_ns = monster->hostile_ns,
       .air_ns = monster->air_ns,
       .environment_ns = monster->environment_ns,
@@ -307,6 +308,7 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
                       &saved.last_player_enemy, error) ||
       !q2_save_reference(game, monster->goal, &saved.goal, error) ||
       !q2_save_reference(game, monster->move_target, &saved.move_target, error) ||
+      !q2_save_reference(game, monster->goal_hint, &saved.goal_hint, error) ||
       !q2_save_reference(game, monster->commander, &saved.commander, error) ||
       !q2_save_reference(game, monster->activator, &saved.activator, error) ||
       !q2_save_reference(game, monster->resurrect_target, &saved.resurrect_target,
@@ -370,6 +372,7 @@ static bool resolve_all(qa_q2_game *game, const qa_q2_monster_checkpoint *saved,
          q2_resolve_reference(game, saved->goal, &monster->goal, error) &&
          q2_resolve_reference(game, saved->move_target, &monster->move_target,
                            error) &&
+         q2_resolve_reference(game, saved->goal_hint, &monster->goal_hint, error) &&
          q2_resolve_reference(game, saved->commander, &monster->commander,
                            error) &&
          q2_resolve_reference(game, saved->activator, &monster->activator,
@@ -600,6 +603,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   Q2M_RESTORE(melee_ns);
   Q2M_RESTORE(search_ns);
   Q2M_RESTORE(trail_ns);
+  Q2M_RESTORE(last_hint_ns);
   Q2M_RESTORE(hostile_ns);
   Q2M_RESTORE(air_ns);
   Q2M_RESTORE(environment_ns);

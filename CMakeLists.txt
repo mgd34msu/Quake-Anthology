@@ -429,6 +429,7 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/entities/q64.c
     src/gameplay/q2/entities/rerelease.c
     src/gameplay/q2/entities/routes.c
+  src/gameplay/q2/entities/hints.c
     src/gameplay/q2/entities/scenery.c
     src/gameplay/q2/entities/state.c
     src/gameplay/q2/entities/target_effects.c

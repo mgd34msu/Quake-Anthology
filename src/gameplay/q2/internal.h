@@ -161,6 +161,7 @@
     X(POINT_COMBAT, "point_combat") \
     X(PATH_CORNER, "path_corner") \
     X(TARGET_ACTOR, "target_actor") \
+    X(HINT_PATH, "hint_path") \
     X(TESLA, "tesla") \
     X(TESLA_MINE, "tesla_mine") \
     X(MONSTER_GEKK, "monster_gekk") \

@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "hints.h"
 #include "qa/text.h"
 
 static bool rotating_accelerated(const qa_q2_game *g, const q2_entity_state *s) {
@@ -37,6 +38,8 @@ static bool rotate_use(qa_q2_game *g, q2_actor *a, qa_error *e) {
     return q2_entity_show(g, a, e);
 }
 bool q2_mover_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
+    if (!q2_hint_spawn(g, a, handled, e)) return false;
+    if (*handled) return true;
     q2_entity_state *s = a->entity;
     const char *name = qa_strings_cstr(qa_session_strings(g->services.session), s->classname);
     bool actor_target = s->classname == g->runtime_names[Q2_NAME_TARGET_ACTOR];
