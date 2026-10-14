@@ -1924,6 +1924,10 @@ bool qa_q1_game_actor_traits(const qa_q1_game *g, qa_actor_id actor, qa_builtin_
     if (!entity && !player)
         return false;
     bool is_player = player && (player->source_client || player->character || player->arsenal);
+    uint32_t source_flags = !entity ? 0 :
+        entity->kind == Q1_SOURCE_CTF_FLAG ? entity->state.source_flag.movement_flags :
+        entity->kind == Q1_SOURCE_CTF_RUNE ? entity->state.source_rune.movement_flags :
+        entity->source_movement_flags;
     *out = (qa_builtin_actor_traits){
         .classname = entity ? entity->classname : 0,
         .owner = q1_ref_actor(g, entity ? entity->owner : (q1_ref){0}),
@@ -1937,6 +1941,8 @@ bool qa_q1_game_actor_traits(const qa_q1_game *g, qa_actor_id actor, qa_builtin_
         .no_target = player && player->source_client && player->source_no_target,
         .aimed_damage = entity && entity->aimed_damage,
         .grounded = entity && (entity->physics.flags & QA_PHYSICS_ONGROUND),
+        .in_water = player && player->character ? player->character_state.in_water :
+                    (source_flags & 16u) != 0,
         .max_health = entity ? entity->max_health : player->max_health,
         .gib_health =
             entity && entity->kind == Q1_MONSTER ? entity->state.monster.species->gib_health : -40,

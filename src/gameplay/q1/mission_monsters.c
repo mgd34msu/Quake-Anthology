@@ -48,8 +48,9 @@ static bool eel_pitch(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     return true;
 }
 static bool eel_zap(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    qa_actor_id inflictor = entity->id;
     qa_body_state self;
-    if (!qa_world_body_read(g->services.world, entity->id, &self, error))
+    if (!qa_world_body_read(g->services.world, inflictor, &self, error))
         return false;
     qa_world_actor_snapshot snapshot = {0};
     if (!q1_radius_snapshot(g, self.origin, 85, &snapshot, error))
@@ -57,9 +58,7 @@ static bool eel_zap(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     bool result = true;
     for (size_t i = snapshot.count; i > 0; --i) {
         qa_actor_id target = snapshot.actors[i - 1];
-        qa_q1_target traits;
-        if (q1_classnamed(g, target, g->runtime_names[Q1_NAME_MONSTER_EEL]) || !q1_target(g, target, &traits) ||
-            !traits.player || !q1_damageable(g, target))
+        if (!q1_damageable(g, target))
             continue;
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, target, &body, NULL))
@@ -70,19 +69,24 @@ static bool eel_zap(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         if (distance > 85)
             continue;
         float points = 45 - fmaxf(0, 0.5f * distance);
-        if (qa_actor_id_equal(target, entity->id))
+        if (qa_actor_id_equal(target, inflictor))
             points *= 0.5f;
         bool visible = false;
-        if (points > 0 && !q1_can_damage(g, target, entity->id, &visible, error)) {
+        if (points > 0 && !q1_can_damage(g, target, inflictor, &visible, error)) {
             result = false;
             break;
         }
-        if (visible &&
-            !q1_damage(g, target, entity->id, entity->id, points, QA_Q1_WEAPON_COUNT, error)) {
+        qa_builtin_actor_traits traits = {0};
+        bool observed = visible && (g->services.actor_traits
+            ? g->services.actor_traits(g->services.context, target, &traits)
+            : qa_q1_game_actor_traits(g, target, &traits));
+        if (observed &&
+            traits.classname != g->runtime_names[Q1_NAME_MONSTER_EEL] && traits.in_water &&
+            !q1_damage(g, target, inflictor, inflictor, points, QA_Q1_WEAPON_COUNT, error)) {
             result = false;
             break;
         }
-        if (!q1_alive(g, entity->id))
+        if (!q1_alive(g, inflictor))
             break;
     }
     qa_world_snapshot_release(&snapshot);

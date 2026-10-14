@@ -733,7 +733,8 @@ bool application_qc_actor_traits(application_provider *provider, qa_actor_id act
     if (!isfinite(flags) || (double)flags < INT32_MIN || (double)flags > INT32_MAX) return false;
     uint32_t bits = (uint32_t)(int32_t)flags;
     qa_builtin_actor_traits value = {.monster = (bits & 32u) != 0, .no_target = (bits & 128u) != 0,
-        .grounded = (bits & 512u) != 0, .aimed_damage = damage == 2, .damageable_target = damage != 0,
+        .grounded = (bits & 512u) != 0, .in_water = (bits & 16u) != 0,
+        .aimed_damage = damage == 2, .damageable_target = damage != 0,
         .max_health = health, .view_height = 22, .classname = identity};
     const application_qc_client *client = application_qc_client_for_actor(engine, actor);
     value.player = client && client->connected;

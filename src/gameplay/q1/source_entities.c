@@ -36,6 +36,11 @@ bool qa_q1_source_movement_flags_read(const qa_q1_game *game, qa_actor_id actor,
     if (physics & QA_PHYSICS_MONSTER) flags |= 32;
     if (physics & QA_PHYSICS_ONGROUND) flags |= 512;
     if (physics & QA_PHYSICS_PARTIAL_GROUND) flags |= 1024;
+    qa_builtin_actor_traits traits;
+    if (qa_q1_game_actor_traits(game, actor, &traits)) {
+        flags &= ~UINT32_C(16);
+        if (traits.in_water) flags |= 16;
+    }
     *out = flags;
     *found = true;
     return true;

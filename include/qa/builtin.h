@@ -134,7 +134,7 @@ typedef struct qa_builtin_actor_traits {
     qa_string_id classname;
     qa_actor_id owner;
     bool player, monster, spectator, no_target, invisible, aimed_damage, laser_immune;
-    bool damageable_target, no_source_friendly_fire, grounded;
+    bool damageable_target, no_source_friendly_fire, grounded, in_water;
     float view_height, gib_health;
     double max_health;
     uint64_t hostile_until_ns;

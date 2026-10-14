@@ -1147,6 +1147,7 @@ static bool builtin_traits(void *opaque, qa_actor_id actor,
     qa_application *application = opaque;
     application_provider *provider = application_provider_for(
         application, actor, QA_ROLE_CHARACTER, "");
+    application_provider *traits_owner = provider;
     bool matched = provider_traits(provider, actor, out);
     if (!matched) {
         application_provider **providers = application->routing_providers != NULL
@@ -1161,20 +1162,27 @@ static bool builtin_traits(void *opaque, qa_actor_id actor,
                 out->has_life = false;
                 out->birth_epoch = 0;
                 out->dead = false;
+                traits_owner = providers[index];
                 matched = true;
                 break;
             }
     }
     if (!matched) return false;
+    bool source_water = traits_owner->kind == APPLICATION_PROVIDER_Q1 ||
+                        traits_owner->kind == APPLICATION_PROVIDER_QC;
     qa_player_state player;
-    if (out->player && qa_application_control_read(application, actor, &player)) {
+    bool controlled = out->player && qa_application_control_read(application, actor, &player);
+    if (controlled) {
         out->light_level = player.light_level;
         out->has_light_level = player.has_light_level;
+        if (!source_water) out->in_water = player.water_level > 0;
     }
     qa_physics_properties physical;
-    if (out->player && application->physics && application->physics->services.read(
-            application->physics->services.context, actor, &physical))
-        out->grounded = (physical.flags & QA_PHYSICS_ONGROUND) != 0;
+    if ((out->player || (!source_water && !controlled)) && application->physics &&
+        application->physics->services.read(application->physics->services.context, actor, &physical)) {
+        if (out->player) out->grounded = (physical.flags & QA_PHYSICS_ONGROUND) != 0;
+        if (!source_water && !controlled) out->in_water = physical.water_level > 0;
+    }
     return true;
 }
 
