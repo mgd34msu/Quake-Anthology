@@ -46,6 +46,7 @@
 #include "network_q1_input.h"
 #include "network_q2_client.h"
 #include "network_gtv.h"
+#include "network_gtv_server.h"
 #include "network_q1_client.h"
 #include "neutral_config.h"
 #include "startup_menus.h"
@@ -220,6 +221,10 @@ struct qa_frontend_network {
     frontend_qw_host *qw_host;
     frontend_network_q2_client *q2_client_owner;
     frontend_gtv_watch *gtv;
+    frontend_gtv_server *gtv_server;
+    qa_cvar_handle gtv_policy[6];
+    uint64_t gtv_policy_view, gtv_policy_revision[6];
+    bool gtv_policy_ready;
     qa_event_ring *gtv_input;
     uint32_t gtv_seat;
     qa_string_id gtv_label;
@@ -276,6 +281,8 @@ struct qa_network_q3_round {
 };
 static bool gtv_close(qa_frontend_network *,qa_error *);
 static bool q2_record_source_prepare(qa_frontend_network *,qa_error *);
+static bool gtv_server_prepare(qa_frontend_network *,qa_error *);
+static bool gtv_server_output(void *,const frontend_demo_packet *,qa_error *);
 static frontend_q3_client *q3_client_seat(const qa_frontend *f, uint64_t receiver, uint32_t seat)
 {
     qa_frontend_network *n = f ? f->network : NULL;
@@ -6100,6 +6107,8 @@ bool frontend_network_destroy(qa_frontend *f, qa_error *error)
     if(!gtv_close(n,error)) return false;
     if(n->demo_q1_owner || n->demo_q3_sink.append || n->demo_playback)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Demo receivers must detach before Network retirement");
+    if(!frontend_network_q2_recording_broadcast(n->q2_recording,NULL,error)) return false;
+    frontend_gtv_server_destroy(n->gtv_server); n->gtv_server=NULL;
     if(!frontend_network_q2_recording_destroy(&n->q2_recording,error)) return false;
     qa_application_network_q2_destroy(n->q2_record_source); n->q2_record_source=NULL;
     if (!frontend_network_world_change_ready(f, error) || !qa_http_callbacks_idle(frontend_tools_http(f)))
@@ -6220,6 +6229,7 @@ bool frontend_network_prepare(qa_frontend *f, qa_error *error)
     if(!frontend_network_admin_resume(f,error)) return false;
     qa_frontend_network *n = f->network; if (!n) return true;
     if (!incomplete_output_close(n, error)) return false;
+    if (!gtv_server_prepare(n,error)) return false;
     if(!q2_local_groups_prepare(n,error) || !q2_timeout_sync(n,error)) return false;
     if(!q2_client_tick_returned(n,error)) return false;
     if(!q1_client_tick_returned(n,error)) return false;
@@ -6274,6 +6284,12 @@ bool frontend_network_intake(qa_frontend *f,qa_platform_events *events,uint64_t 
             frontend_network_q2_client_mvd_close(n->q2_client_owner,failure.message);
             if(failure.code!=QA_OK) frontend_console_print(f,NULL,failure.message);
         }
+    }
+    if(ok && n->gtv_server) {
+        qa_error failure={0};
+        if(!frontend_gtv_server_collect(n->gtv_server,events,now,
+            (double)f->wall_time_ns/1000000.0,&failure))
+            qa_application_feature_report(f->application,"GTV intake",&failure);
     }
     --n->busy;
     return ok;
@@ -6643,10 +6659,13 @@ bool frontend_network_publish(qa_frontend *f, qa_error *error)
 {
     if(f->qc_messages && !frontend_qc_messages_drain(f->qc_messages,error))return false;
     if (f->network && !incomplete_output_close(f->network, error)) return false;
-    if(f->network && f->network->q2_recording) {
+    if(f->network && (f->network->q2_recording || f->network->gtv_server)) {
         qa_error recording={0};
         if(!q2_record_source_prepare(f->network,&recording))
             qa_application_feature_report(f->application,"Q2 recording Source",&recording);
+        else if(f->network->gtv_server &&
+            !frontend_network_q2_recording_publish(f->network->q2_recording,&recording))
+            qa_application_feature_report(f->application,"GTV Source output",&recording);
     }
     if(!frontend_demo_dispatch_publish(f->demos,error))return false;
     if(!frontend_network_output_drain(f,error)) return false;
@@ -8331,6 +8350,81 @@ static bool local_q3_demo_record(qa_frontend *f,qa_actor_id actor,qa_fs_root *ro
         .root=root,.current=local_q3_demo_current,.seed=local_q3_demo_seed,.attach=local_q3_demo_attach,
         .detach=local_q3_demo_detach,.publish=local_q3_demo_publish,.release=local_q3_demo_release};return true;
 }
+static void gtv_server_report(void *context,uint64_t peer,const qa_error *error)
+{
+    qa_frontend_network *n=context;
+    (void)peer;
+    qa_application_feature_report(n->frontend->application,"GTV viewer",error);
+}
+static bool gtv_server_seed(void *context,const frontend_demo_sink *sink,qa_error *error)
+{
+    qa_frontend_network *n=context;
+    return frontend_network_q2_recording_broadcast_seed(n->q2_recording,sink,error);
+}
+static bool gtv_server_output(void *context,const frontend_demo_packet *packet,qa_error *error)
+{
+    qa_frontend_network *n=context;
+    qa_error failure={0};
+    (void)error;
+    if(!frontend_gtv_server_publish(n->gtv_server,packet->value.message,&failure))
+        qa_application_feature_report(n->frontend->application,"GTV output",&failure);
+    return true;
+}
+static bool gtv_server_prepare(qa_frontend_network *n,qa_error *error)
+{
+    qa_frontend *f=n->frontend;
+    const qa_cvars *cvars=qa_application_cvars(f->application);
+    static const char *const policy_names[]={"sv_mvd_enable","sv_mvd_maxclients","sv_mvd_bufsize",
+        "sv_mvd_password","sv_timeout","sv_ghostime"};
+    uint64_t identity=qa_cvars_view_identity(cvars);
+    if(n->gtv_policy_view!=identity) {
+        for(size_t i=0;i<6;++i) n->gtv_policy[i]=qa_cvars_resolve(cvars,policy_names[i]);
+        n->gtv_policy_view=identity; n->gtv_policy_ready=false;
+    }
+    const qa_cvar_view *values[6];
+    bool changed=!n->gtv_policy_ready;
+    for(size_t i=0;i<6;++i) {
+        values[i]=qa_cvars_read(cvars,n->gtv_policy[i]);
+        uint64_t revision=values[i]?values[i]->modification_count:0;
+        if(n->gtv_policy_revision[i]!=revision) changed=true;
+        n->gtv_policy_revision[i]=revision;
+    }
+    if(!changed) return true;
+    n->gtv_policy_ready=true;
+    if(!frontend_network_q2_recording_broadcast(n->q2_recording,NULL,error)) return false;
+    frontend_gtv_server_destroy(n->gtv_server); n->gtv_server=NULL;
+    /* q2repro enables capture at 1 and TCP viewers above 1 (server/mvd.c). */
+    if(!values[0] || values[0]->integer<=1 || frontend_network_client_only(f)) return true;
+    int viewers=values[1]?values[1]->integer:8;
+    if(viewers<1) viewers=1;
+    if(viewers>256) viewers=256;
+    int buffers=values[2]?values[2]->integer:2;
+    if(buffers<1) buffers=1;
+    if(buffers>4) buffers=4;
+    const qa_net_address *bound=qa_network_local_address(n->runtime);
+    qa_net_address endpoint=bound?*bound:(qa_net_address){.kind=QA_NET_IPV4,.port=f->options.network_port};
+    if(endpoint.kind==QA_NET_LOOPBACK) {
+        endpoint=(qa_net_address){.kind=QA_NET_IPV4,.port=f->options.network_port,
+            .host.ipv4={127,0,0,1}};
+    }
+    uint64_t timeout=values[4] && values[4]->integer>0?(uint32_t)values[4]->integer:90;
+    uint64_t ghost=values[5] && values[5]->integer>0?(uint32_t)values[5]->integer:6;
+    frontend_gtv_server_options options={.endpoint=endpoint,.max_viewers=(size_t)viewers,
+        .pending_bytes=(size_t)buffers*QA_Q2_MVD_MESSAGE_BYTES,
+        .timeout_ns=timeout*UINT64_C(1000000000),.ghost_timeout_ns=ghost*UINT64_C(1000000000),
+        .password=values[3]?values[3]->value:"",.context=n,.seed=gtv_server_seed,.report=gtv_server_report};
+    qa_error failure={0};
+    if(!frontend_gtv_server_create(&options,&n->gtv_server,&failure)) {
+        qa_application_feature_report(f->application,"GTV listener",&failure);
+        return true;
+    }
+    if(n->q2_recording) {
+        frontend_demo_sink sink={.owner=n,.append=gtv_server_output};
+        if(!frontend_network_q2_recording_broadcast(n->q2_recording,&sink,error)) return false;
+    }
+    frontend_console_print(f,NULL,"GTV listener ready.\n");
+    return true;
+}
 static bool q2_record_source_prepare(qa_frontend_network *n,qa_error *error)
 {
     qa_application *app=n->frontend->application;
@@ -8357,6 +8451,12 @@ static bool q2_record_source_prepare(qa_frontend_network *n,qa_error *error)
         }
     } else if(!frontend_network_q2_recording_rebind(n->q2_recording,publisher,error)) {
         qa_application_network_q2_destroy(publisher); return false;
+    }
+    if(n->gtv_server) {
+        frontend_demo_sink sink={.owner=n,.append=gtv_server_output};
+        if(!frontend_network_q2_recording_broadcast(n->q2_recording,&sink,error)) {
+            qa_application_network_q2_destroy(publisher); return false;
+        }
     }
     qa_application_network_q2_destroy(n->q2_record_source);
     n->q2_record_source=publisher; n->q2_record_namespace=actual;
@@ -8563,6 +8663,11 @@ bool frontend_network_stream_receive(qa_frontend *f,const qa_sys_event *event,qa
     (void)error;
     qa_frontend_network *n=f->network;
     qa_error failure={0};
+    if(n && n->gtv_server) {
+        if(!frontend_gtv_server_receive(n->gtv_server,event,payload,recognized,&failure))
+            qa_application_feature_report(f->application,"GTV viewer",&failure);
+        if(*recognized) return true;
+    }
     if(!frontend_gtv_watch_receive(n?n->gtv:NULL,event,payload,recognized,&failure) && n) {
         if(n->gtv_playback) frontend_network_q2_client_mvd_close(n->q2_client_owner,failure.message);
         if(failure.code!=QA_OK) frontend_console_print(f,NULL,failure.message);

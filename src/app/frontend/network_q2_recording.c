@@ -16,8 +16,8 @@ typedef struct q2_record_feed {
     qa_q2_mvd_header header;
     qa_q2_mvd_frame previous;
     uint64_t event_next, tick, source_frame, map_revision;
-    qa_error failure;
-    bool held, seeded, failed;
+    qa_error failure, sink_failure;
+    bool held, seeded, failed, sink_failed;
 } q2_record_feed;
 
 struct frontend_network_q2_recording {
@@ -28,6 +28,7 @@ struct frontend_network_q2_recording {
     qa_application_event_subscription events;
     qa_q2_messages *decoders[2];
     q2_record_feed feeds[Q2_RECORD_FEEDS];
+    frontend_demo_sink broadcast;
     uint64_t config_revision, match_revision, map_revision;
     bool header_ready;
     unsigned calls;
@@ -88,6 +89,7 @@ static void feed_state_clear(q2_record_feed *feed)
 
 static bool any_feed(const frontend_network_q2_recording *owner)
 {
+    if (owner->broadcast.append) return true;
     for (unsigned i = 0; i < Q2_RECORD_FEEDS; ++i)
         if (owner->feeds[i].held) return true;
     return false;
@@ -97,7 +99,9 @@ static void events_retire(frontend_network_q2_recording *owner)
 {
     uint64_t next = qa_application_events_next(owner->frontend->application);
     for (unsigned i = 0; i < Q2_RECORD_FEEDS; ++i)
-        if (owner->feeds[i].held && !owner->feeds[i].failed && owner->feeds[i].event_next < next)
+        if (((owner->feeds[i].held && !owner->feeds[i].sink_failed) ||
+                (i == Q2_RECORD_MVD && owner->broadcast.append)) &&
+            !owner->feeds[i].failed && owner->feeds[i].event_next < next)
             next = owner->feeds[i].event_next;
     if (owner->events.application) qa_application_events_consumed(&owner->events, next);
     if (!any_feed(owner)) qa_application_events_unsubscribe(&owner->events);
@@ -156,6 +160,26 @@ static bool packet(const frontend_demo_sink *sink, frontend_demo_format format,
     return sink->append(sink->owner, &value, error);
 }
 
+static bool feed_packet(q2_record_feed *feed, const qa_net_writer *writer, qa_error *error)
+{
+    if (feed->sink.append && !feed->sink_failed &&
+        !packet(&feed->sink, feed->format, writer, &feed->sink_failure)) feed->sink_failed = true;
+    if (feed->format == FRONTEND_DEMO_MVD && feed->owner->broadcast.append)
+        return packet(&feed->owner->broadcast, feed->format, writer, error);
+    return true;
+}
+
+static bool mvd_seed_write(frontend_network_q2_recording *owner,
+    const qa_q2_mvd_header *header, const qa_q2_mvd_frame *frame,
+    const frontend_demo_sink *sink, qa_error *error)
+{
+    qa_net_writer writer;
+    qa_net_writer_init(&writer, owner->mvd_bytes, sizeof(owner->mvd_bytes), error);
+    return qa_q2_mvd_write_header(&writer, header) &&
+        qa_q2_mvd_write_frame(&header->profile, &writer, NULL, frame) &&
+        packet(sink, FRONTEND_DEMO_MVD, &writer, error);
+}
+
 static bool server_signon(frontend_network_q2_recording *owner,
     const frontend_demo_sink *sink, uint8_t *bytes, qa_error *error)
 {
@@ -200,16 +224,15 @@ static bool feed_seed(void *context, const frontend_demo_sink *sink, qa_error *e
 {
     q2_record_feed *feed = context;
     frontend_network_q2_recording *owner = feed->owner;
+    if (feed->format == FRONTEND_DEMO_MVD && feed->seeded)
+        return mvd_seed_write(owner, &feed->header, &feed->previous, sink, error);
     q2_record_capture captured = {0};
     if (!capture(owner, &captured, error)) return false;
     ++owner->calls;
     bool ok;
     if (feed->format == FRONTEND_DEMO_MVD) {
-        qa_net_writer writer;
-        qa_net_writer_init(&writer, owner->mvd_bytes, sizeof(owner->mvd_bytes), error);
-        ok = qa_q2_mvd_write_header(&writer, &owner->header) &&
-            qa_q2_mvd_write_frame(&owner->header.profile, &writer, NULL, &captured.frame) &&
-            packet(sink, feed->format, &writer, error) && feed_frame_set(feed, &captured, error);
+        ok = mvd_seed_write(owner, &owner->header, &captured.frame, sink, error) &&
+            feed_frame_set(feed, &captured, error);
     } else ok = server_signon(owner, sink, owner->server_bytes, error);
     if (ok) ok = feed_header_set(feed, error);
     if (ok) {
@@ -250,10 +273,14 @@ static bool feed_release(void **context, qa_error *error)
     if (!feed) return true;
     if (feed->owner->calls || feed->sink.append)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 recording feed remains entered or attached");
-    feed_state_clear(feed);
     feed->held = false;
-    feed->failed = false;
-    feed->failure = (qa_error){0};
+    feed->sink_failed = false;
+    feed->sink_failure = (qa_error){0};
+    if (feed->format != FRONTEND_DEMO_MVD || !feed->owner->broadcast.append) {
+        feed_state_clear(feed);
+        feed->failed = false;
+        feed->failure = (qa_error){0};
+    }
     events_retire(feed->owner);
     *context = NULL;
     return true;
@@ -262,7 +289,7 @@ static bool feed_release(void **context, qa_error *error)
 static bool mvd_flush(q2_record_write *write, qa_error *error)
 {
     if (!qa_net_writer_size(&write->mvd_writer)) return true;
-    if (!packet(&write->mvd->sink, FRONTEND_DEMO_MVD, &write->mvd_writer, error)) return false;
+    if (!feed_packet(write->mvd, &write->mvd_writer, error)) return false;
     qa_net_writer_init(&write->mvd_writer, write->mvd_writer.data,
         write->mvd_writer.capacity, error);
     return true;
@@ -483,7 +510,7 @@ static bool frame_write(q2_record_write *write, const q2_record_capture *capture
             (qa_q2_entity_span){captured->frame.entities, captured->frame.entity_count}, (qa_bytes){0})) return false;
         if (!changed && !config_changes(write, write->server, error)) return false;
         if (!qa_net_write_data(&write->server_writer, server_events.data, server_events.size) ||
-            !packet(&write->server->sink, FRONTEND_DEMO_Q2_SERVER, &write->server_writer, error)) return false;
+            !feed_packet(write->server, &write->server_writer, error)) return false;
     }
     if (write->mvd) {
         uint8_t *bytes = qa_unified_frame_lease_alloc(captured->storage,
@@ -502,7 +529,7 @@ static bool frame_write(q2_record_write *write, const q2_record_capture *capture
         if (mvd_events.size) {
             qa_net_writer events = {.data = owner->mvd_bytes,
                 .capacity = mvd_events.size, .bit = mvd_events.size * 8};
-            if (!packet(&write->mvd->sink, FRONTEND_DEMO_MVD, &events, error)) return false;
+            if (!feed_packet(write->mvd, &events, error)) return false;
         }
     }
     return true;
@@ -515,7 +542,8 @@ bool frontend_network_q2_recording_publish(frontend_network_q2_recording *owner,
     qa_error failure = {0};
     qa_application_network_q2_metadata current;
     if (!metadata(owner, &current, &failure)) {
-        for (unsigned i = 0; i < Q2_RECORD_FEEDS; ++i) if (owner->feeds[i].sink.append) {
+        for (unsigned i = 0; i < Q2_RECORD_FEEDS; ++i) if (owner->feeds[i].sink.append ||
+            (i == Q2_RECORD_MVD && owner->broadcast.append)) {
             owner->feeds[i].failed = true;
             owner->feeds[i].failure = failure;
         }
@@ -525,8 +553,9 @@ bool frontend_network_q2_recording_publish(frontend_network_q2_recording *owner,
     q2_record_write write = {.owner = owner};
     q2_record_feed *mvd = &owner->feeds[Q2_RECORD_MVD], *server = &owner->feeds[Q2_RECORD_SERVER];
     uint64_t tick = current.server_time_ns / UINT64_C(100000000);
-    if (mvd->sink.append && !mvd->failed && (!mvd->seeded || mvd->tick != tick || mvd->map_revision != current.map_revision)) write.mvd = mvd;
-    if (server->sink.append && !server->failed && (!server->seeded || server->source_frame != current.clock.frame_number ||
+    if (((mvd->sink.append && !mvd->sink_failed) || owner->broadcast.append) && !mvd->failed &&
+        (!mvd->seeded || mvd->tick != tick || mvd->map_revision != current.map_revision)) write.mvd = mvd;
+    if (server->sink.append && !server->sink_failed && !server->failed && (!server->seeded || server->source_frame != current.clock.frame_number ||
         server->map_revision != current.map_revision)) write.server = server;
     if (!write.mvd && !write.server) return true;
     q2_record_capture captured = {.storage = application_control_storage_acquire(owner->frontend->application, &failure)};
@@ -593,6 +622,7 @@ static bool feed_publish(void *context, qa_error *error)
 {
     q2_record_feed *feed = context;
     if (!feed->failed && !frontend_network_q2_recording_publish(feed->owner, error)) return false;
+    if (feed->sink_failed) { if (error) *error = feed->sink_failure; return false; }
     if (!feed->failed) return true;
     if (error) *error = feed->failure;
     return false;
@@ -637,7 +667,7 @@ bool frontend_network_q2_recording_source(frontend_network_q2_recording *owner,
         (current.edition != QA_RULESET_Q2_CLASSIC || current.protocol.kind != QA_NET_Q2_34))
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "Original Q2 serverrecord requires the classic Source wire layout");
     feed->held = true;
-    feed->event_next = qa_application_events_next(owner->frontend->application);
+    if (!feed->seeded) feed->event_next = qa_application_events_next(owner->frontend->application);
     *out = (frontend_demo_record_source){.owner = feed, .format = feed->format,
         .protocol = current.protocol, .root = root, .current = feed_current,
         .seed = feed_seed, .attach = feed_attach, .detach = feed_detach,
@@ -656,6 +686,37 @@ bool frontend_network_q2_recording_rebind(frontend_network_q2_recording *owner,
     owner->header_ready = false;
     for (unsigned i = 0; i < Q2_RECORD_FEEDS; ++i) feed_state_clear(owner->feeds + i);
     return true;
+}
+
+bool frontend_network_q2_recording_broadcast(frontend_network_q2_recording *owner,
+    const frontend_demo_sink *sink, qa_error *error)
+{
+    if (!owner) return !sink;
+    if (owner->calls) return frontend_fail(error, QA_ERROR_ARGUMENT, "MVD capture is still entered");
+    q2_record_feed *feed = owner->feeds + Q2_RECORD_MVD;
+    bool was_active = owner->broadcast.append != NULL;
+    owner->broadcast = sink ? *sink : (frontend_demo_sink){0};
+    if (sink && !was_active && !feed->held) {
+        feed_state_clear(feed);
+        feed->failed = false;
+        feed->failure = (qa_error){0};
+        feed->event_next = qa_application_events_next(owner->frontend->application);
+    }
+    if (sink && !owner->events.application)
+        qa_application_events_subscribe(owner->frontend->application, &owner->events);
+    if (!sink && !feed->held) feed_state_clear(feed);
+    events_retire(owner);
+    return true;
+}
+
+bool frontend_network_q2_recording_broadcast_seed(frontend_network_q2_recording *owner,
+    const frontend_demo_sink *sink, qa_error *error)
+{
+    if (!owner) return true;
+    q2_record_feed *feed = owner->feeds + Q2_RECORD_MVD;
+    if (feed->failed) { if (error) *error = feed->failure; return false; }
+    if (!feed->seeded) return true;
+    return mvd_seed_write(owner, &feed->header, &feed->previous, sink, error);
 }
 
 bool frontend_network_q2_recording_idle(const frontend_network_q2_recording *owner)

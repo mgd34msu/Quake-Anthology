@@ -1838,6 +1838,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/component_scene.c
     src/app/frontend/network_q2_client.c
     src/app/frontend/network_gtv.c
+    src/app/frontend/network_gtv_server.c
     src/app/frontend/network_q2_host.c
     src/app/frontend/remote_q1_prediction.c
     src/app/frontend/remote_q1_sky_policy.c

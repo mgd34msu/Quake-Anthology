@@ -18,6 +18,12 @@ bool frontend_network_q2_recording_rebind(frontend_network_q2_recording *,
 bool frontend_network_q2_recording_source(frontend_network_q2_recording *,
     frontend_demo_action, qa_fs_root *, frontend_demo_record_source *, qa_error *);
 bool frontend_network_q2_recording_publish(frontend_network_q2_recording *, qa_error *);
+/* File output and live viewers share one MVD baseline. A joining viewer gets
+ * a full image of that baseline, never a fresh capture ahead of its deltas. */
+bool frontend_network_q2_recording_broadcast(frontend_network_q2_recording *,
+    const frontend_demo_sink *, qa_error *);
+bool frontend_network_q2_recording_broadcast_seed(frontend_network_q2_recording *,
+    const frontend_demo_sink *, qa_error *);
 bool frontend_network_q2_recording_idle(const frontend_network_q2_recording *);
 /* The demo service detaches/releases its feeds before the publisher closes. */
 bool frontend_network_q2_recording_destroy(frontend_network_q2_recording **, qa_error *);
