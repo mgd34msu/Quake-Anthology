@@ -4083,6 +4083,86 @@ static void test_dedicated_line_storage(void)
     free(invalid);qa_dedicated_console_destroy(first);
 }
 
+typedef struct client_input_receipt {
+    int32_t codes[16],mouse_x,mouse_y,handling;
+    bool down[16];
+    size_t keys,mice,handlings;
+} client_input_receipt;
+static bool client_input_key(void *context,int32_t key,bool down,qa_error *error)
+{
+    client_input_receipt *receipt=context;(void)error;
+    CHECK(receipt->keys<sizeof(receipt->codes)/sizeof(*receipt->codes));
+    receipt->codes[receipt->keys]=key;receipt->down[receipt->keys++]=down;return true;
+}
+static bool client_input_mouse(void *context,int32_t x,int32_t y,qa_error *error)
+{
+    client_input_receipt *receipt=context;(void)error;
+    receipt->mouse_x=x;receipt->mouse_y=y;++receipt->mice;return true;
+}
+static bool client_input_handling(void *context,int32_t type,qa_error *error)
+{
+    client_input_receipt *receipt=context;(void)error;
+    receipt->handling=type;++receipt->handlings;return true;
+}
+static void test_client_input_sink(void)
+{
+    qa_error error={0};
+    qa_cvars *cvars=qa_cvars_create(&(qa_cvar_options){.dialect=QA_RULESET_Q3,.side=QA_CVAR_SIDE_CLIENT},&error);
+    CHECK(cvars);
+    qa_command_context context={.dialect=QA_RULESET_Q3,.origin=QA_COMMAND_SEAT,.direct=true,
+        .cvar_view=qa_cvars_view_identity(cvars)};
+    qa_console *console=qa_console_create(&(qa_console_options){.context=context,.cvars=cvars,.disable_builtins=true},&error);
+    CHECK(console);
+    qa_input_seat *seat=qa_input_seat_create(&(qa_input_seat_options){.context=context,.console=console,
+        .cvars=cvars,.gamepad=qa_gamepad_defaults()},&error);
+    CHECK(seat);
+    bool held[256]={0},handled=false;
+    client_input_receipt receipt={.handling=-1};
+    qa_input_client_sink sink={.seat=seat,.owner=37,.catcher=QA_INPUT_CATCH_GAME,.held_keys=&held,
+        .context=&receipt,.key=client_input_key,.mouse=client_input_mouse,.handling=client_input_handling};
+    CHECK(qa_input_q3_catcher_from_source(8)==QA_INPUT_CATCH_GAME);
+    CHECK(qa_input_q3_catcher_to_source(QA_INPUT_CATCH_GAME)==8);
+    CHECK(qa_input_q3_catcher_from_source(4)==QA_INPUT_CATCH_CHAT);
+    CHECK(qa_input_q3_catcher_to_source(QA_INPUT_CATCH_CHAT)==4);
+    CHECK(qa_input_q3_catcher_to_source(qa_input_q3_catcher_from_source(15))==15);
+    CHECK(qa_input_seat_set_catcher(seat,37,QA_INPUT_CATCH_GAME,&error));
+    qa_input_event event={.kind=QA_INPUT_EVENT_KEY,.input={.kind=QA_PHYSICAL_KEY,.code='a'},.down=true};
+    CHECK(qa_input_client_event(&sink,&event,&handled,&error)&&handled&&held['a']);
+    qa_input_seat_retire_catcher(seat,37);
+    CHECK(qa_input_seat_set_focus(seat,QA_INPUT_CONSOLE,1,&error));
+    event.down=false;
+    CHECK(qa_input_client_event(&sink,&event,&handled,&error)&&handled&&!held['a']);
+    CHECK(receipt.keys==2&&receipt.codes[0]=='a'&&receipt.down[0]&&!receipt.down[1]);
+    event.down=true;
+    CHECK(qa_input_client_event(&sink,&event,&handled,&error)&&!handled&&receipt.keys==2);
+    CHECK(qa_input_seat_set_focus(seat,QA_INPUT_GAME,2,&error));
+    CHECK(qa_input_seat_set_catcher(seat,37,QA_INPUT_CATCH_GAME,&error));
+    event=(qa_input_event){.kind=QA_INPUT_EVENT_TEXT,.text="\xc3\xa9"};
+    CHECK(qa_input_client_event(&sink,&event,&handled,&error)&&handled);
+    CHECK(receipt.codes[2]==(0xe9|QA_KEY_CHAR_FLAG)&&receipt.down[2]);
+    event=(qa_input_event){.kind=QA_INPUT_EVENT_WHEEL,.delta={0,2.5f}};
+    CHECK(qa_input_client_event(&sink,&event,&handled,&error)&&handled&&receipt.keys==9);
+    for(size_t i=3;i<9;++i)CHECK(receipt.codes[i]==QA_KEY_WHEEL_UP&&receipt.down[i]==(i%2==1));
+    event=(qa_input_event){.kind=QA_INPUT_EVENT_MOUSE,.delta={1.9f,-2.9f}};
+    CHECK(qa_input_client_event(&sink,&event,&handled,&error)&&handled);
+    CHECK(receipt.mice==1&&receipt.mouse_x==1&&receipt.mouse_y==-2);
+    event=(qa_input_event){.kind=QA_INPUT_EVENT_KEY,.input={.kind=QA_PHYSICAL_KEY,.code=QA_KEY_ESCAPE},.down=true};
+    CHECK(qa_input_client_event(&sink,&event,&handled,&error)&&handled);
+    CHECK(receipt.handlings==1&&receipt.handling==0&&receipt.keys==9);
+    CHECK(!(qa_input_seat_catcher(seat,37)&QA_INPUT_CATCH_GAME));
+    sink.catcher=QA_INPUT_CATCH_UI;sink.handling=NULL;
+    CHECK(qa_input_seat_set_catcher(seat,37,QA_INPUT_CATCH_UI,&error));
+    event.input.code=QA_KEY_LEFT;
+    CHECK(qa_input_client_event(&sink,&event,&handled,&error)&&handled);
+    event.repeat=true;
+    CHECK(qa_input_client_event(&sink,&event,&handled,&error)&&handled);
+    CHECK(receipt.keys==11&&receipt.codes[9]==QA_KEY_LEFT&&receipt.codes[10]==QA_KEY_LEFT);
+    CHECK(qa_input_seat_set_focus(seat,QA_INPUT_CHAT,3,&error));
+    event.down=false;
+    CHECK(qa_input_client_event(&sink,&event,&handled,&error)&&handled&&!held[QA_KEY_LEFT]);
+    qa_input_seat_destroy(seat);qa_console_destroy(console);qa_cvars_destroy(cvars);
+}
+
 static void test_shared_input_menu_defaults(void)
 {
     qa_controller_selection a={.kind=QA_CONTROLLER_GUID,
@@ -5999,6 +6079,7 @@ int main(int argc, char **argv)
     test_medium_coverage();
     test_qw_shared_output();
     test_dedicated_line_storage();
+    test_client_input_sink();
     test_shared_input_menu_defaults();
     test_profiler_mode_changes();
     test_source_nonmipped_transparency();

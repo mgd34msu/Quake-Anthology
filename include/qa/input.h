@@ -435,6 +435,21 @@ enum qa_input_catcher_mask {
     QA_INPUT_CATCH_CONSOLE = 1, QA_INPUT_CATCH_UI = 2,
     QA_INPUT_CATCH_GAME = 4, QA_INPUT_CATCH_CHAT = 8
 };
+typedef struct qa_input_client_sink {
+    qa_input_seat *seat;
+    uint64_t owner;
+    uint32_t catcher;
+    bool (*held_keys)[256];
+    void *context;
+    bool (*key)(void *, int32_t, bool, qa_error *);
+    bool (*mouse)(void *, int32_t, int32_t, qa_error *);
+    bool (*handling)(void *, int32_t, qa_error *);
+} qa_input_client_sink;
+int32_t qa_input_client_key(const qa_input_event *);
+bool qa_input_client_event(const qa_input_client_sink *, const qa_input_event *,
+                           bool *handled, qa_error *);
+uint32_t qa_input_q3_catcher_from_source(uint32_t);
+uint32_t qa_input_q3_catcher_to_source(uint32_t);
 typedef struct qa_input_catcher { uint64_t owner; uint32_t mask; } qa_input_catcher;
 /* Nonzero owner reads only that provider's source mask. Owner zero reads the
  * composed mask, including current console/chat/UI focus. */

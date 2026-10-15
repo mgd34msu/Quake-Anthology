@@ -238,6 +238,30 @@ static bool acquired_draw(const frontend_remote_q3_session_view *view,uint32_t s
     return frontend_remote_q3_session_read(view->resources.owner,&returned,error) &&
         returned.module_owner==view->module_owner && returned.pure;
 }
+typedef struct session_input {
+    frontend_remote_q3_runtime *runtime;
+    const qa_input_event *event;
+    bool *handled;
+} session_input;
+static bool input_frame(void *context,const q3n_remote_frame *frame,qa_error *error)
+{
+    session_input *call=context;
+    return frontend_remote_q3_runtime_input(call->runtime,frame,call->event,call->handled,error);
+}
+bool frontend_remote_q3_session_input(frontend_remote_q3 *row,const qa_input_event *event,
+    bool *handled,qa_error *error)
+{
+    *handled=false;
+    frontend_remote_q3_session_view view;
+    if(!frontend_remote_q3_session_read(row,&view,error))return false;
+    if(view.pure)return qa_application_native_q3_client_modules_input(view.module_owner,event,handled,error);
+    if(!frontend_remote_q3_runtime_initialized_current(view.runtime))return true;
+    if(!(qa_input_client_key(event)>=0 && !event->down) &&
+        !(qa_input_seat_catcher(view.resources.input,
+            view.resources.domain.source.receiver.service_owner)&QA_INPUT_CATCH_GAME))return true;
+    session_input call={view.runtime,event,handled};
+    return frontend_remote_q3_frame_command(view.frames,&call,input_frame,error);
+}
 bool frontend_remote_q3_session_draw(frontend_remote_q3 *row,frontend_remote_prediction *predictor,
     uint32_t stereo,qa_audio_listener *listener,bool *has_listener,qa_error *error)
 {

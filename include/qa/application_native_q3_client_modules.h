@@ -72,6 +72,8 @@ bool qa_application_native_q3_client_modules_call(application_native_q3_client_m
     int32_t command, const int32_t *, size_t, int32_t *, qa_error *);
 bool qa_application_native_q3_client_modules_console_command(application_native_q3_client_modules *,
     qa_qvm_role, const qa_command_invocation *, int32_t milliseconds, int32_t *, qa_error *);
+bool qa_application_native_q3_client_modules_input(application_native_q3_client_modules *,
+    const qa_input_event *, bool *handled, qa_error *);
 bool qa_application_native_q3_client_modules_loading_screen(application_native_q3_client_modules *,
     bool *drawn, qa_error *);
 bool qa_application_native_q3_client_modules_artifact_read(const application_native_q3_client_modules *,

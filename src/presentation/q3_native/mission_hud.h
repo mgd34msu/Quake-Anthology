@@ -2,6 +2,7 @@
 #define QA_Q3_NATIVE_MISSION_HUD_H
 #include "hud.h"
 #include "qa/field.h"
+#include "qa/input.h"
 #include "qa/font.h"
 typedef struct q3n_mission_hud q3n_mission_hud;
 typedef struct q3n_mission_hud_options {
@@ -59,6 +60,8 @@ bool q3n_mission_hud_message(q3n_mission_hud *, const q3n_frame *, int32_t type,
 bool q3n_mission_hud_key(q3n_mission_hud *, const q3n_frame *, int32_t key, bool down, qa_error *);
 bool q3n_mission_hud_mouse(q3n_mission_hud *, const q3n_frame *, int32_t dx, int32_t dy, qa_error *);
 bool q3n_mission_hud_event(q3n_mission_hud *, const q3n_frame *, int32_t type, qa_error *);
+bool q3n_mission_hud_input(q3n_mission_hud *, const q3n_frame *, qa_input_seat *, uint64_t owner,
+    const qa_input_event *, bool *handled, qa_error *);
 bool q3n_mission_hud_team_menu(q3n_mission_hud *, const q3n_frame *, bool show, qa_error *);
 bool q3n_mission_hud_client_number(q3n_mission_hud *, const q3n_frame *, const char *, int32_t *, qa_error *);
 bool q3n_mission_hud_menu_buffer(q3n_mission_hud *, const q3n_frame *, const char *, qa_buffer *, bool *found, qa_error *);

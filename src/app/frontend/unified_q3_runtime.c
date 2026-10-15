@@ -923,42 +923,30 @@ bool frontend_unified_q3_runtime_load_deferred(frontend_unified_q3_runtime *o,co
 { return o && hud_deferred(o,f,e); }
 typedef struct unified_input_call {
     frontend_unified_q3_runtime *owner;
-    int32_t kind,first,second;
-    bool down;
+    const qa_input_event *event;
+    bool *handled;
 } unified_input_call;
 static bool input_command(void *ctx,const q3n_frame *f,const frontend_unified_q3_runtime_owners *children,qa_error *e)
 {
     unified_input_call *call=ctx;
+    *call->handled=false;
     if(!cut(call->owner,f,e))return false;
-    if(q3n_frame_product(f)!=QA_Q3_TEAM_ARENA)return true;
-    if(!children->mission)return fail(e,"Unified Team input lost its actual authored-menu owner");
-    bool okay;
-    switch(call->kind) {
-    case 0:okay=q3n_mission_hud_key(children->mission,f,call->first,call->down,e);break;
-    case 1:okay=q3n_mission_hud_mouse(children->mission,f,call->first,call->second,e);break;
-    case 2:okay=q3n_mission_hud_event(children->mission,f,call->first,e);break;
-    default:return fail(e,"Unknown Unified CG input operation");
-    }
-    return okay && cut(call->owner,f,e);
+    if(q3n_frame_product(f)!=QA_Q3_TEAM_ARENA || !children->mission)return true;
+    qa_input_seat *seat=call->owner->options.frontend->seats[f->physical_presentation_seat].input;
+    return q3n_mission_hud_input(children->mission,f,seat,f->compiled->source.basis.receiver,
+        call->event,call->handled,e) && cut(call->owner,f,e);
 }
 static bool input_scope(void *ctx,const q3n_compiled_frame *frame,qa_error *e)
 {
     unified_input_call *call=ctx;
     return frontend_unified_q3_runtime_command_call(call->owner,frame,call,input_command,e);
 }
-static bool input_enter(unified_input_call *call,qa_error *e)
+bool frontend_unified_q3_runtime_input(frontend_unified_q3_runtime *o,const qa_input_event *event,
+    bool *handled,qa_error *e)
 {
-    frontend_unified_q3_runtime *o=call->owner;
-    if(!frontend_unified_q3_runtime_current(o) || !o->initialized || o->prepared || o->video ||
-        !frontend_unified_q3_runtime_idle(o))return fail(e,"Unified input requires its returned initialized CG owner");
-    return frontend_unified_q3_snapshots_console(o->children.snapshots,input_scope,call,e);
+    unified_input_call call={o,event,handled};
+    return frontend_unified_q3_snapshots_console(o->children.snapshots,input_scope,&call,e);
 }
-bool frontend_unified_q3_runtime_key_event(frontend_unified_q3_runtime *o,int32_t key,bool down,qa_error *e)
-{ unified_input_call call={.owner=o,.kind=0,.first=key,.down=down};return input_enter(&call,e); }
-bool frontend_unified_q3_runtime_mouse_event(frontend_unified_q3_runtime *o,int32_t dx,int32_t dy,qa_error *e)
-{ unified_input_call call={.owner=o,.kind=1,.first=dx,.second=dy};return input_enter(&call,e); }
-bool frontend_unified_q3_runtime_event_handling(frontend_unified_q3_runtime *o,int32_t type,qa_error *e)
-{ unified_input_call call={.owner=o,.kind=2,.first=type};return input_enter(&call,e); }
 bool frontend_unified_q3_runtime_rebind_prepare(frontend_unified_q3_runtime *o,const frontend_unified_q3_client_frame *frame,qa_error *e)
 {
     const q3n_compiled_source_rebind_ticket *ticket=frontend_unified_q3_client_frame_rebind(frame);

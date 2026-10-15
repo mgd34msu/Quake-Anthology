@@ -38,6 +38,7 @@ typedef struct native_client_module {
     int32_t draw_arguments[3];
     uint64_t draw_revision;
     bool draw_entry;
+    bool input_keys[256];
     bool ready, initialized, init_succeeded, native_load_failed;
 } native_client_module;
 

@@ -353,63 +353,39 @@ bool qa_application_present(qa_application *app, uint32_t seat,
     return presentation_return(app, ok, initialized, error);
 }
 
-static bool key(q3g_role *role, int32_t code, bool down, qa_error *error)
+static bool key(void *context, int32_t code, bool down, qa_error *error)
 {
+    q3g_role *role = context;
     if (role->kind == QA_QVM_CGAME && role->abi == QA_QVM_Q3_116N)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Legacy Q3 cgame has no input event exports");
     int32_t args[] = {code, down ? 1 : 0}, result;
-    if (!q3g_call(role, role->kind == QA_QVM_UI ? 3 : 6, args, 2, &result, error)) return false;
-    if (code >= 0 && code < 256) role->input_keys[code] = down;
-    return true;
+    return initialize(role, error) &&
+        q3g_call(role, role->kind == QA_QVM_UI ? 3 : 6, args, 2, &result, error);
 }
-
-static int32_t physical_key(const qa_input_event *input)
+static bool mouse(void *context, int32_t x, int32_t y, qa_error *error)
 {
-    uint32_t code = input->input.code;
-    if (input->input.kind == QA_PHYSICAL_MOUSE) {
-        if (code < 1 || code > 255) return -1;
-        unsigned button = qa_input_mouse_button(code);
-        if (button < 1 || button > 5) return -1;
-        code = QA_KEY_MOUSE1 + button - 1;
-    } else if (input->input.kind != QA_PHYSICAL_KEY) return -1;
-    return code <= INT_MAX ? qa_input_source_key((int)code, QA_RULESET_Q3) : -1;
+    q3g_role *role = context;
+    int32_t args[] = {x, y}, result;
+    return initialize(role, error) &&
+        q3g_call(role, role->kind == QA_QVM_UI ? 4 : 7, args, 2, &result, error);
 }
-
+static bool handling(void *context, int32_t type, qa_error *error)
+{
+    q3g_role *role = context;
+    int32_t result;
+    return initialize(role, error) && q3g_call(role, 8, &type, 1, &result, error);
+}
 static bool event(q3g_role *role, const qa_input_event *input, bool *handled, qa_error *error)
 {
-    if (input->kind == QA_INPUT_EVENT_KEY || input->kind == QA_INPUT_EVENT_BUTTON) {
-        int32_t source = physical_key(input);
-        if (source < 0) return true;
-        *handled = true;
-        return key(role, source, input->down, error);
-    }
-    if (input->kind == QA_INPUT_EVENT_TEXT && input->text) {
-        qa_bytes text = {(const uint8_t *)input->text, strlen(input->text)};
-        if (!qa_utf8_valid(text)) return application_fail(error, QA_ERROR_ARGUMENT, "Guest text input is not UTF-8");
-        size_t cursor = 0;
-        uint32_t scalar;
-        while (qa_utf8_next(text, &cursor, &scalar))
-            if (!key(role, (int32_t)scalar | QA_KEY_CHAR_FLAG, true, error)) return false;
-        *handled = true;
-    } else if (input->kind == QA_INPUT_EVENT_MOUSE) {
-        if (!isfinite(input->delta.x) || !isfinite(input->delta.y) ||
-            (double)input->delta.x < INT32_MIN || (double)input->delta.x > INT32_MAX ||
-            (double)input->delta.y < INT32_MIN || (double)input->delta.y > INT32_MAX)
-            return application_fail(error, QA_ERROR_ARGUMENT, "Guest mouse delta exceeds source integer range");
-        int32_t args[] = {(int32_t)input->delta.x, (int32_t)input->delta.y}, result;
-        *handled = true;
-        return q3g_call(role, role->kind == QA_QVM_UI ? 4 : 7, args, 2, &result, error);
-    } else if (input->kind == QA_INPUT_EVENT_WHEEL) {
-        if (!isfinite(input->delta.y) || fabsf(input->delta.y) > UINT16_MAX)
-            return application_fail(error, QA_ERROR_ARGUMENT, "Guest wheel delta exceeds source range");
-        if (input->delta.y == 0.0f) return true;
-        int32_t code = input->delta.y > 0 ? QA_KEY_WHEEL_UP : QA_KEY_WHEEL_DOWN;
-        *handled = true;
-        unsigned count = (unsigned)ceilf(fabsf(input->delta.y));
-        for (unsigned i = 0; i < count; ++i)
-            if (!key(role, code, true, error) || !key(role, code, false, error)) return false;
-    }
-    return true;
+    qa_input_seat *source;
+    uint64_t owner;
+    *handled = false;
+    if (!qa_q3_host_source_input(role->host, &source, &owner)) return true;
+    qa_input_client_sink sink = {.seat=source, .owner=owner,
+        .catcher=role->kind == QA_QVM_UI ? QA_INPUT_CATCH_UI : QA_INPUT_CATCH_GAME,
+        .held_keys=&role->input_keys, .context=role, .key=key, .mouse=mouse,
+        .handling=role->kind == QA_QVM_CGAME ? handling : NULL};
+    return qa_input_client_event(&sink, input, handled, error);
 }
 
 bool qa_application_guest_input(qa_application *app, uint32_t seat,
@@ -422,7 +398,7 @@ bool qa_application_guest_input(qa_application *app, uint32_t seat,
         client_role(selected(app, seat, QA_ROLE_HUD), QA_QVM_CGAME, seat)
     };
     int32_t released = !input->down && (input->kind == QA_INPUT_EVENT_KEY ||
-        input->kind == QA_INPUT_EVENT_BUTTON) ? physical_key(input) : -1;
+        input->kind == QA_INPUT_EVENT_BUTTON) ? qa_input_client_key(input) : -1;
     if (released >= 0 && released < 256) {
         for (application_provider *provider = app->live_providers; provider; provider = provider->next_live) {
             struct application_q3_guest *engine = q3g_engine(provider);
@@ -432,30 +408,21 @@ bool qa_application_guest_input(qa_application *app, uint32_t seat,
                     role->seat != seat || !role->initialized ||
                     role->retired || !role->input_keys[released] || !client_ready(role)) continue;
                 app->operation = APPLICATION_ADVANCING;
-                bool ok = key(role, released, false, error);
+                bool accepted = false;
+                bool ok = event(role, input, &accepted, error);
                 if (!presentation_return(app, ok, true, error)) return false;
-                *handled = true;
+                *handled = *handled || accepted;
             }
         }
         if (*handled) return true;
     }
     for (size_t i = 0; i < 2; ++i) {
         q3g_role *role = roles[i];
-        qa_input_seat *source;
-        uint64_t owner;
-        if (!role || (role->kind == QA_QVM_CGAME && role->abi == QA_QVM_Q3_116N) || !client_ready(role) ||
-            !qa_q3_host_source_input(role->host, &source, &owner)) continue;
-        qa_input_focus focus = qa_input_seat_focus(source);
-        uint32_t composed = qa_input_seat_catcher(source, 0);
-        if (focus == QA_INPUT_CONSOLE || focus == QA_INPUT_CHAT || focus == QA_INPUT_UI ||
-            (composed & (QA_INPUT_CATCH_CONSOLE | QA_INPUT_CATCH_CHAT)) ||
-            (role->kind == QA_QVM_CGAME && (composed & QA_INPUT_CATCH_UI))) continue;
-        uint32_t catcher = qa_input_seat_catcher(source, owner);
-        if (!(catcher & (role->kind == QA_QVM_UI ? QA_INPUT_CATCH_UI : QA_INPUT_CATCH_GAME))) continue;
+        if (!role || (role->kind == QA_QVM_CGAME && role->abi == QA_QVM_Q3_116N) ||
+            !client_ready(role)) continue;
         app->operation = APPLICATION_ADVANCING;
-        bool initialized = initialize(role, error);
-        bool ok = initialized && event(role, input, handled, error);
-        if (!presentation_return(app, ok, initialized, error)) return false;
+        bool ok = event(role, input, handled, error);
+        if (!presentation_return(app, ok, role->initialized, error)) return false;
         if (*handled) return true;
     }
     return true;

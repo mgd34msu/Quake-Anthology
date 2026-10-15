@@ -304,34 +304,24 @@ bool frontend_remote_q3_runtime_command_call(frontend_remote_q3_runtime *o,const
 }
 typedef struct remote_input_call {
     frontend_remote_q3_runtime *owner;
-    int32_t kind, first, second;
-    bool down;
+    const qa_input_event *event;
+    bool *handled;
 } remote_input_call;
 static bool input_call(void *context,const q3n_frame *f,qa_error *e)
 {
     remote_input_call *call=context; frontend_remote_q3_runtime *o=call->owner;
+    *call->handled=false;
     if(!cut(o,f,e))return false;
-    if(q3n_frame_product(f)!=QA_Q3_TEAM_ARENA)return true;
-    if(!o->children.mission)return fail(e,QA_ERROR_ARGUMENT,"Team input lost its actual authored-menu child");
-    switch(call->kind) {
-    case 0:return q3n_mission_hud_key(o->children.mission,f,call->first,call->down,e) && cut(o,f,e);
-    case 1:return q3n_mission_hud_mouse(o->children.mission,f,call->first,call->second,e) && cut(o,f,e);
-    case 2:return q3n_mission_hud_event(o->children.mission,f,call->first,e) && cut(o,f,e);
-    default:return fail(e,QA_ERROR_ARGUMENT,"Unknown remote CGAME input operation");
-    }
+    if(q3n_frame_product(f)!=QA_Q3_TEAM_ARENA || !o->children.mission)return true;
+    return q3n_mission_hud_input(o->children.mission,f,o->services.resources.input,
+        f->remote->source.basis.client.service_owner,call->event,call->handled,e) && cut(o,f,e);
 }
-bool frontend_remote_q3_runtime_key_event(frontend_remote_q3_runtime *o,const q3n_remote_frame *r,
-    int32_t key,bool down,qa_error *e)
-{ remote_input_call call={.owner=o,.kind=0,.first=key,.down=down};
-    return frontend_remote_q3_runtime_command_call(o,r,&call,input_call,e); }
-bool frontend_remote_q3_runtime_mouse_event(frontend_remote_q3_runtime *o,const q3n_remote_frame *r,
-    int32_t dx,int32_t dy,qa_error *e)
-{ remote_input_call call={.owner=o,.kind=1,.first=dx,.second=dy};
-    return frontend_remote_q3_runtime_command_call(o,r,&call,input_call,e); }
-bool frontend_remote_q3_runtime_event_handling(frontend_remote_q3_runtime *o,const q3n_remote_frame *r,
-    int32_t type,qa_error *e)
-{ remote_input_call call={.owner=o,.kind=2,.first=type};
-    return frontend_remote_q3_runtime_command_call(o,r,&call,input_call,e); }
+bool frontend_remote_q3_runtime_input(frontend_remote_q3_runtime *o,const q3n_remote_frame *r,
+    const qa_input_event *event,bool *handled,qa_error *e)
+{
+    remote_input_call call={o,event,handled};
+    return frontend_remote_q3_runtime_command_call(o,r,&call,input_call,e);
+}
 bool frontend_remote_q3_runtime_teleport_take(frontend_remote_q3_runtime *o,bool *out,qa_error *e)
 { return o && out && !o->busy && o->initialized &&
     q3n_player_state_remote_teleport_take(o->children.player_state,out,e); }
@@ -375,7 +365,8 @@ static bool key_catcher(void *context,int32_t mask,qa_error *e)
 {
     frontend_remote_q3_runtime *o=context; qa_native_q3_remote_client_basis basis;
     return mask>=0 && qa_native_q3_remote_client_basis_read(o->services.client,&basis,e) &&
-        qa_input_seat_set_catcher(o->services.resources.input,basis.client.service_owner,(uint32_t)mask,e);
+        qa_input_seat_set_catcher(o->services.resources.input,basis.client.service_owner,
+            qa_input_q3_catcher_from_source((uint32_t)mask),e);
 }
 static bool stage(void *context,const q3n_frame *f,q3n_command_init_stage which,
     const char *mapname,int32_t physical,uint32_t *inline_models,qa_error *e)

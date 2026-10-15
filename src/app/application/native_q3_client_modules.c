@@ -550,6 +550,51 @@ bool qa_application_native_q3_client_modules_call(application_native_q3_client_m
         return application_fail(error, QA_ERROR_ARGUMENT, "Acquired CLIENT entry requires its lifecycle or console adapter");
     return invoke(role, command, arguments, count, result, false, error);
 }
+static bool module_input_key(void *context,int32_t key,bool down,qa_error *error)
+{
+    native_client_module *role=context;
+    int32_t arguments[]={key,down?1:0},result;
+    return qa_application_native_q3_client_modules_call(role->owner,role->kind,
+        role->kind==QA_QVM_UI?3:6,arguments,2,&result,error);
+}
+static bool module_input_mouse(void *context,int32_t x,int32_t y,qa_error *error)
+{
+    native_client_module *role=context;
+    int32_t arguments[]={x,y},result;
+    return qa_application_native_q3_client_modules_call(role->owner,role->kind,
+        role->kind==QA_QVM_UI?4:7,arguments,2,&result,error);
+}
+static bool module_input_handling(void *context,int32_t type,qa_error *error)
+{
+    native_client_module *role=context;
+    int32_t result;
+    return qa_application_native_q3_client_modules_call(role->owner,role->kind,8,&type,1,&result,error);
+}
+bool qa_application_native_q3_client_modules_input(application_native_q3_client_modules *owner,
+    const qa_input_event *input,bool *handled,qa_error *error)
+{
+    *handled=false;
+    if(!owner)return true;
+    bool release=qa_input_client_key(input)>=0 && !input->down;
+    native_client_module *roles[]={&owner->ui,&owner->cgame};
+    for(size_t i=0;i<2;++i) {
+        native_client_module *role=roles[i];
+        qa_input_seat *seat;
+        uint64_t source_owner;
+        if(!role->initialized || !role->init_succeeded ||
+            (role->kind==QA_QVM_CGAME && role->abi==QA_QVM_Q3_116N) ||
+            !qa_q3_host_source_input(role->host,&seat,&source_owner))continue;
+        qa_input_client_sink sink={.seat=seat,.owner=source_owner,
+            .catcher=role->kind==QA_QVM_UI?QA_INPUT_CATCH_UI:QA_INPUT_CATCH_GAME,
+            .held_keys=&role->input_keys,.context=role,.key=module_input_key,.mouse=module_input_mouse,
+            .handling=role->kind==QA_QVM_CGAME?module_input_handling:NULL};
+        bool accepted=false;
+        if(!qa_input_client_event(&sink,input,&accepted,error))return false;
+        *handled=*handled || accepted;
+        if(accepted && !release)break;
+    }
+    return true;
+}
 
 static bool console_current(native_client_module *role,
     const qa_command_invocation *call, qa_error *error)

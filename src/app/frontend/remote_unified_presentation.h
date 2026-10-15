@@ -47,6 +47,7 @@ bool frontend_remote_unified_presentation_media(const frontend_remote_unified *,
     frontend_unified_media **installed, frontend_unified_media **pending, qa_error *);
 frontend_unified_q3_sources *frontend_remote_unified_presentation_q3_sources(const frontend_remote_unified *);
 size_t frontend_remote_unified_presentation_q3_client_count(const frontend_remote_unified *);
+bool frontend_remote_unified_presentation_input(frontend_remote_unified *,const qa_input_event *,bool *handled,qa_error *);
 frontend_unified_q3_client *frontend_remote_unified_presentation_q3_client(
     const frontend_remote_unified *,size_t);
 frontend_unified_q3_runtime_factory *frontend_remote_unified_presentation_q3_factory(

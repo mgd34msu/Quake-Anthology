@@ -1385,6 +1385,28 @@ frontend_unified_q3_sources *frontend_remote_unified_presentation_q3_sources(con
     const unified_presentation *p=replica->options.consumers.context;
     return p && p->replica==replica ? p->q3_sources : NULL;
 }
+bool frontend_remote_unified_presentation_input(frontend_remote_unified *replica,const qa_input_event *event,
+    bool *handled,qa_error *error)
+{
+    *handled=false;
+    if(!replica || replica->options.consumers.input!=input)return true;
+    unified_presentation *p=replica->options.consumers.context;
+    bool release=qa_input_client_key(event)>=0 && !event->down;
+    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(replica);
+    if(!domain)return true;
+    qa_input_seat *seat=p->frontend->seats[domain->physical_seat].input;
+    for(unified_q3_client_row *row=p->q3_clients;row;row=row->next) {
+        if(row->born || !row->factory_initialized || !row->factory ||
+            !frontend_unified_q3_runtime_factory_current(row->factory))continue;
+        if(!release && !(qa_input_seat_catcher(seat,row->receiver)&QA_INPUT_CATCH_GAME))continue;
+        bool accepted=false;
+        if(!frontend_unified_q3_runtime_input(frontend_unified_q3_runtime_factory_runtime(row->factory),
+            event,&accepted,error))return false;
+        *handled=*handled || accepted;
+        if(accepted && !release)break;
+    }
+    return true;
+}
 size_t frontend_remote_unified_presentation_q3_client_count(const frontend_remote_unified *replica)
 {
     if (!replica || replica->options.consumers.input!=input) return 0;

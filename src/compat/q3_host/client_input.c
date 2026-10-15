@@ -60,10 +60,11 @@ q3_service_result q3_client_input(q3_call *call, int32_t *result, qa_error *erro
         *result = qa_input_seat_key_down(seat, physical(q3_integer(call, 0))); return Q3_COMPLETED;
     }
     if (code == (ui ? 40 : 61)) {
-        *result = (int32_t)qa_input_seat_catcher(seat, owner); return Q3_COMPLETED;
+        *result = (int32_t)qa_input_q3_catcher_to_source(qa_input_seat_catcher(seat, owner)); return Q3_COMPLETED;
     }
     if (code == (ui ? 41 : 62))
-        return qa_input_seat_set_catcher(seat, owner, (uint32_t)q3_integer(call, 0), error) ? Q3_COMPLETED : Q3_FAILED;
+        return qa_input_seat_set_catcher(seat, owner,
+            qa_input_q3_catcher_from_source((uint32_t)q3_integer(call, 0)), error) ? Q3_COMPLETED : Q3_FAILED;
     if (ui && (code == 37 || code == 38)) {
         qa_text_field *field = host->options.console_field;
         if (!field) { q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 console field is unbound"); return Q3_FAILED; }

@@ -584,7 +584,28 @@ static bool key_catcher(void *context,int32_t mask,qa_error *e)
 {
     frontend_native_q3 *row=context;
     return frontend_native_q3_current(row) && mask>=0 &&
-        qa_input_seat_set_catcher(row->view.input,row->view.service_owner,(uint32_t)mask,e);
+        qa_input_seat_set_catcher(row->view.input,row->view.service_owner,qa_input_q3_catcher_from_source((uint32_t)mask),e);
+}
+bool frontend_native_q3_input(qa_frontend *f,uint32_t physical,const qa_input_event *event,bool *handled,qa_error *e)
+{
+    *handled=false;
+    bool release=qa_input_client_key(event)>=0 && !event->down;
+    for(frontend_native_q3 *row=f->native_q3;row;row=row->next) {
+        if(!row->constructed || row->view.seat!=physical || !row->view.mission ||
+            !row->view.recipient || !row->view.recipient->initialized || !frontend_native_q3_current(row))continue;
+        if(!release && !(qa_input_seat_catcher(row->view.input,row->view.service_owner)&QA_INPUT_CATCH_GAME))continue;
+        q3n_frame frame;
+        ++row->callbacks;
+        bool accepted=false;
+        bool ok=q3n_native_command_frame(row->view.core,&frame,e) &&
+            frontend_native_q3_cut(row,&frame,e) && q3n_mission_hud_input(row->view.mission,&frame,
+                row->view.input,row->view.service_owner,event,&accepted,e) && frontend_native_q3_cut(row,&frame,e);
+        --row->callbacks;
+        if(!ok)return false;
+        *handled=*handled || accepted;
+        if(accepted && !release)break;
+    }
+    return true;
 }
 static bool update_loading(void *context,q3n_loading *loading,const q3n_frame *frame,qa_error *e)
 {

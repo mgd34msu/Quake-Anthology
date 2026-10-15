@@ -224,7 +224,7 @@ static bool key_catcher(void *context,int32_t mask,qa_error *e)
 {
     frontend_unified_q3_runtime_services *o=context;
     return mask>=0 && frontend_unified_q3_runtime_services_current(o) && qa_input_seat_set_catcher(
-        o->options.frontend->seats[o->physical_seat].input,o->options.receiver,(uint32_t)mask,e);
+        o->options.frontend->seats[o->physical_seat].input,o->options.receiver,qa_input_q3_catcher_from_source((uint32_t)mask),e);
 }
 static bool trace(void *context,const q3n_frame *f,qa_vec3 start,qa_vec3 end,qa_bounds bounds,
     int32_t skip,uint32_t mask,qa_trace_result *out,qa_error *e)

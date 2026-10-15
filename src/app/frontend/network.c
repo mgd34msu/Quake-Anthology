@@ -29,6 +29,7 @@
 #include "remote_config.h"
 #include "remote_input.h"
 #include "remote_unified_input.h"
+#include "remote_unified_presentation.h"
 #include "remote_prediction.h"
 #include "network_predictor.h"
 #include "network_session.h"
@@ -6018,6 +6019,25 @@ static bool q3_client_destroy(frontend_q3_client *n, qa_error *error)
         .physical=n->physical, .seat=n->seat, .q3_sensitivity=1};
     application_q3_command_init(&n->q3_commands,n->frontend->application);
     return true;
+}
+bool frontend_network_input(qa_frontend *f,uint32_t physical,const qa_input_event *event,bool *handled,qa_error *error)
+{
+    *handled=false;
+    qa_frontend_network *n=f->network;
+    if(!n || physical>=f->options.seats)return true;
+    frontend_network_unified *unified=n->local_clients[physical].unified;
+    if(!unified && physical==0 && n->unified && !frontend_network_unified_server(n->unified))unified=n->unified;
+    if(unified) {
+        qa_net_client_id client;
+        frontend_remote_unified *replica=NULL;
+        if(!frontend_network_unified_client(unified,&client,&replica) || !replica)return true;
+        return frontend_remote_unified_presentation_input(replica,event,handled,error);
+    }
+    frontend_q3_client *client=q3_client_physical(f,physical);
+    if(!client || !client->q3_client_requested || client->q3_client_retiring || client->q3_client_closed)return true;
+    if(client->q3_session)return frontend_remote_q3_session_input(client->q3_session,event,handled,error);
+    application_native_q3_client_modules *modules=frontend_remote_q3_modules_owner(client->q3_initial_modules);
+    return !modules || qa_application_native_q3_client_modules_input(modules,event,handled,error);
 }
 bool frontend_network_client_draw(qa_frontend *f,uint32_t physical,uint32_t stereo,
     bool *rendered,qa_audio_listener *listener,bool *has_listener,qa_error *error)

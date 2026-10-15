@@ -1,4 +1,7 @@
 #include "internal.h"
+#include "qa/text.h"
+#include <limits.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -134,6 +137,90 @@ int qa_input_source_key(int key, qa_ruleset_id dialect) {
     if (q2 && key >= QA_KEY_KP_HOME && key <= QA_KEY_KP_PLUS)
         return key;
     return -1;
+}
+uint32_t qa_input_q3_catcher_from_source(uint32_t mask) {
+    return (mask & ~UINT32_C(12)) | ((mask & 4u) ? QA_INPUT_CATCH_CHAT : 0u) |
+           ((mask & 8u) ? QA_INPUT_CATCH_GAME : 0u);
+}
+uint32_t qa_input_q3_catcher_to_source(uint32_t mask) {
+    return (mask & ~(uint32_t)(QA_INPUT_CATCH_CHAT | QA_INPUT_CATCH_GAME)) |
+           ((mask & QA_INPUT_CATCH_CHAT) ? 4u : 0u) |
+           ((mask & QA_INPUT_CATCH_GAME) ? 8u : 0u);
+}
+int32_t qa_input_client_key(const qa_input_event *input) {
+    if (!input || (input->kind != QA_INPUT_EVENT_KEY && input->kind != QA_INPUT_EVENT_BUTTON))
+        return -1;
+    uint32_t code = input->input.code;
+    if (input->input.kind == QA_PHYSICAL_MOUSE) {
+        if (code < 1 || code > 255) return -1;
+        unsigned button = qa_input_mouse_button(code);
+        if (button < 1 || button > 5) return -1;
+        code = QA_KEY_MOUSE1 + button - 1;
+    } else if (input->input.kind != QA_PHYSICAL_KEY) return -1;
+    return code <= INT_MAX ? qa_input_source_key((int)code, QA_RULESET_Q3) : -1;
+}
+static bool client_key(const qa_input_client_sink *sink, int32_t code, bool down, qa_error *error) {
+    if (!sink->key(sink->context, code, down, error)) return false;
+    if (sink->held_keys && code >= 0 && code < 256) (*sink->held_keys)[code] = down;
+    return true;
+}
+bool qa_input_client_event(const qa_input_client_sink *sink, const qa_input_event *input,
+                           bool *handled, qa_error *error) {
+    if (!sink || !sink->seat || !sink->key || !input || !handled) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Client input requires its seat and event services");
+        return false;
+    }
+    *handled = false;
+    int32_t code = qa_input_client_key(input);
+    bool release = code >= 0 && !input->down;
+    bool held = release && sink->held_keys && code < 256 && (*sink->held_keys)[code];
+    qa_input_focus focus = qa_input_seat_focus(sink->seat);
+    uint32_t composed = qa_input_seat_catcher(sink->seat, 0);
+    uint32_t catcher = qa_input_seat_catcher(sink->seat, sink->owner);
+    if (!held && (focus == QA_INPUT_CONSOLE || focus == QA_INPUT_CHAT || focus == QA_INPUT_UI ||
+        (composed & (QA_INPUT_CATCH_CONSOLE | QA_INPUT_CATCH_CHAT)) ||
+        (sink->catcher == QA_INPUT_CATCH_GAME && (composed & QA_INPUT_CATCH_UI)) ||
+        !(catcher & sink->catcher))) return true;
+    if (code >= 0) {
+        *handled = true;
+        if (code == QA_KEY_ESCAPE && input->down && sink->catcher == QA_INPUT_CATCH_GAME && sink->handling)
+            return qa_input_seat_set_catcher(sink->seat, sink->owner,
+                catcher & ~(uint32_t)QA_INPUT_CATCH_GAME, error) && sink->handling(sink->context, 0, error);
+        return client_key(sink, code, input->down, error);
+    }
+    if (input->kind == QA_INPUT_EVENT_TEXT && input->text) {
+        qa_bytes text = {(const uint8_t *)input->text, strlen(input->text)};
+        if (!qa_utf8_valid(text)) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Client text input is not UTF-8");
+            return false;
+        }
+        size_t cursor = 0;
+        uint32_t scalar;
+        while (qa_utf8_next(text, &cursor, &scalar))
+            if (!client_key(sink, (int32_t)scalar | QA_KEY_CHAR_FLAG, true, error)) return false;
+        *handled = true;
+    } else if (input->kind == QA_INPUT_EVENT_MOUSE && sink->mouse) {
+        if (!isfinite(input->delta.x) || !isfinite(input->delta.y) ||
+            (double)input->delta.x < INT32_MIN || (double)input->delta.x > INT32_MAX ||
+            (double)input->delta.y < INT32_MIN || (double)input->delta.y > INT32_MAX) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Client mouse delta exceeds source integer range");
+            return false;
+        }
+        *handled = true;
+        return sink->mouse(sink->context, (int32_t)input->delta.x, (int32_t)input->delta.y, error);
+    } else if (input->kind == QA_INPUT_EVENT_WHEEL) {
+        if (!isfinite(input->delta.y) || fabsf(input->delta.y) > UINT16_MAX) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Client wheel delta exceeds source range");
+            return false;
+        }
+        if (input->delta.y == 0.0f) return true;
+        code = input->delta.y > 0 ? QA_KEY_WHEEL_UP : QA_KEY_WHEEL_DOWN;
+        *handled = true;
+        unsigned count = (unsigned)ceilf(fabsf(input->delta.y));
+        for (unsigned i = 0; i < count; ++i)
+            if (!client_key(sink, code, true, error) || !client_key(sink, code, false, error)) return false;
+    }
+    return true;
 }
 int qa_input_sdl_key(int32_t code, uint16_t mod) {
     if ((code & INT32_C(0x40000000)) != 0) {

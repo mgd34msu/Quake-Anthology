@@ -27,6 +27,7 @@ typedef struct frontend_remote_q3_session_view {
  * constructor. It does not admit a Draw, transport send, or media publication. */
 bool frontend_remote_q3_session_read(const frontend_remote_q3 *,frontend_remote_q3_session_view *,qa_error *);
 bool frontend_remote_q3_session_current(const frontend_remote_q3_session_view *);
+bool frontend_remote_q3_session_input(frontend_remote_q3 *, const qa_input_event *, bool *handled, qa_error *);
 /* Actual content callbacks borrow the retained role media array. They do not
  * recollect journals, replace a module artifact, or change content readiness. */
 bool frontend_remote_q3_session_native_media_read(frontend_remote_q3 *,

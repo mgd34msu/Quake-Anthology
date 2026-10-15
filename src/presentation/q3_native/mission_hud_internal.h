@@ -25,6 +25,7 @@ struct q3n_mission_hud {
     int32_t selected_score, cursor_x, cursor_y, active_cursor, event_handling, voice_time;
     int32_t order_time, current_order;
     bool order_pending, busy, loaded, text_policy_active;
+    bool input_keys[256];
     int32_t scoreboard_menu, captured_menu;
     int32_t spectator_offset, spectator_time, spectator_paint_x, spectator_paint_x2;
     float spectator_width;

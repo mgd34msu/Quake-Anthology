@@ -195,6 +195,24 @@ bool q3n_mission_hud_key(q3n_mission_hud *o,const q3n_frame *f,int32_t key,bool 
                 if(m)o->captured_menu=(int)(m-o->menus->menus); } } }
     return q3nm_end(o,p,ok);
 }
+typedef struct mission_input {
+    q3n_mission_hud *owner;
+    const q3n_frame *frame;
+} mission_input;
+static bool input_key(void *context,int32_t key,bool down,qa_error *e)
+{ mission_input *call=context; return q3n_mission_hud_key(call->owner,call->frame,key,down,e); }
+static bool input_mouse(void *context,int32_t x,int32_t y,qa_error *e)
+{ mission_input *call=context; return q3n_mission_hud_mouse(call->owner,call->frame,x,y,e); }
+static bool input_handling(void *context,int32_t type,qa_error *e)
+{ mission_input *call=context; return q3n_mission_hud_event(call->owner,call->frame,type,e); }
+bool q3n_mission_hud_input(q3n_mission_hud *o,const q3n_frame *f,qa_input_seat *seat,uint64_t owner,
+    const qa_input_event *event,bool *handled,qa_error *e)
+{
+    mission_input call={o,f};
+    qa_input_client_sink sink={.seat=seat,.owner=owner,.catcher=QA_INPUT_CATCH_GAME,
+        .held_keys=&o->input_keys,.context=&call,.key=input_key,.mouse=input_mouse,.handling=input_handling};
+    return qa_input_client_event(&sink,event,handled,e);
+}
 bool q3n_mission_hud_scroll(q3n_mission_hud *o,const q3n_frame *f,bool down,qa_error *e)
 { q3menu_context *p; if(!q3nm_begin(o,f,e,&p))return false;
     if(o->scoreboard_menu>=0&&o->hud->state.scoreboard_showing) { menuDef_t *m=&o->menus->menus[o->scoreboard_menu];

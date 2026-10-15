@@ -80,6 +80,8 @@ bool frontend_native_q3_round_admit(qa_frontend *, qa_actor_owner source,
 bool frontend_native_q3_sync(qa_frontend *,const frontend_native_q3_factory *,qa_error *);
 bool frontend_native_q3_frame(qa_frontend *, uint32_t physical_seat, qa_scene_rect,
     bool *rendered, qa_error *);
+bool frontend_native_q3_input(qa_frontend *, uint32_t physical_seat,
+    const qa_input_event *, bool *handled, qa_error *);
 bool frontend_native_q3_listener(const qa_frontend *,uint32_t physical_seat,qa_audio_listener *);
 bool frontend_native_q3_actor_admitted(const qa_frontend *, uint32_t physical_seat, qa_actor_id);
 bool frontend_native_q3_weapon_snapshot(const qa_frontend *, uint32_t physical_seat,

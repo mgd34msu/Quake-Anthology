@@ -63,12 +63,8 @@ bool frontend_remote_q3_runtime_command_frame(frontend_remote_q3_runtime *,
     const q3n_remote_frame *, q3n_frame *, qa_error *);
 bool frontend_remote_q3_runtime_command_call(frontend_remote_q3_runtime *, const q3n_remote_frame *,
     void *, bool (*execute)(void *, const q3n_frame *, qa_error *), qa_error *);
-bool frontend_remote_q3_runtime_key_event(frontend_remote_q3_runtime *, const q3n_remote_frame *,
-    int32_t key, bool down, qa_error *);
-bool frontend_remote_q3_runtime_mouse_event(frontend_remote_q3_runtime *, const q3n_remote_frame *,
-    int32_t dx, int32_t dy, qa_error *);
-bool frontend_remote_q3_runtime_event_handling(frontend_remote_q3_runtime *, const q3n_remote_frame *,
-    int32_t type, qa_error *);
+bool frontend_remote_q3_runtime_input(frontend_remote_q3_runtime *, const q3n_remote_frame *,
+    const qa_input_event *, bool *handled, qa_error *);
 frontend_remote_q3_commands *frontend_remote_q3_runtime_console(const frontend_remote_q3_runtime *);
 bool frontend_remote_q3_runtime_load_deferred(frontend_remote_q3_runtime *, const q3n_frame *, qa_error *);
 bool frontend_remote_q3_runtime_teleport_take(frontend_remote_q3_runtime *, bool *, qa_error *);

@@ -21,6 +21,8 @@
 #include "campaign_menu.h"
 #include "campaign_cinematic.h"
 #include "network_recipient.h"
+#include "network_session.h"
+#include "native_q3_client.h"
 #include "equipment_media.h"
 #include "view_settings.h"
 #include "config_store.h"
@@ -84,6 +86,22 @@ static bool chat(void *context, const char *text, bool team, bool targeted, int3
 {
     return frontend_chat_send(context, text, team, targeted, target, error);
 }
+static bool client_input(frontend_seat *seat,const qa_input_event *event,bool *consumed,qa_error *error)
+{
+    uint32_t launch_seat;
+    bool release=qa_input_client_key(event)>=0 && !event->down,accepted=false;
+    *consumed=false;
+    if(frontend_seat_launch_id_read(seat->frontend,seat->id,&launch_seat) &&
+        !qa_application_guest_input(seat->frontend->application,launch_seat,event,&accepted,error))return false;
+    *consumed=accepted;
+    if(accepted && !release)return true;
+    if(!frontend_network_input(seat->frontend,seat->id,event,&accepted,error))return false;
+    *consumed=*consumed || accepted;
+    if(accepted && !release)return true;
+    if(!frontend_native_q3_input(seat->frontend,seat->id,event,&accepted,error))return false;
+    *consumed=*consumed || accepted;
+    return true;
+}
 static bool source_input(void *context, qa_input_seat *input, const qa_input_event *event, bool *consumed, qa_error *error)
 {
     frontend_seat *seat = context;
@@ -94,6 +112,11 @@ static bool source_input(void *context, qa_input_seat *input, const qa_input_eve
             ((event->repeat || qa_ui_close_all(seat->ui, now_ms(seat), error)) &&
              qa_seat_console_toggle(seat->console, true, event->repeat, error));
     }
+    bool release=qa_input_client_key(event)>=0 && !event->down;
+    if(release) {
+        if(!client_input(seat,event,consumed,error))return false;
+        if(*consumed)return true;
+    }
     if (!frontend_cinematic_input(seat->frontend,seat->id,qa_input_seat_focus(input),event,consumed,error)) return false;
     if (*consumed) return true;
     if (seat->library && qa_input_seat_focus(input) == QA_INPUT_UI &&
@@ -101,9 +124,7 @@ static bool source_input(void *context, qa_input_seat *input, const qa_input_eve
     if (*consumed) return true;
     if (!frontend_source_prompt_input(seat->source_prompt,event,consumed,error)) return false;
     if (*consumed) return true;
-    uint32_t launch_seat;
-    return !frontend_seat_launch_id_read(seat->frontend,seat->id,&launch_seat) ||
-        qa_application_guest_input(seat->frontend->application, launch_seat, event, consumed, error);
+    return release || client_input(seat,event,consumed,error);
 }
 static bool player_sources(void *,uint32_t,qa_ui_menu *,qa_error *);
 static bool player_sources_register(frontend_seat *seat,qa_error *error)
