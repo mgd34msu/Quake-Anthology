@@ -280,7 +280,7 @@ struct qa_network_q3_round {
     bool begun, bound, finished;
 };
 static bool gtv_close(qa_frontend_network *,qa_error *);
-static bool q2_record_source_prepare(qa_frontend_network *,qa_error *);
+static bool q2_source_prepare(qa_frontend_network *,bool recording,qa_error *);
 static bool gtv_server_prepare(qa_frontend_network *,qa_error *);
 static bool gtv_server_output(void *,const frontend_demo_packet *,qa_error *);
 static frontend_q3_client *q3_client_seat(const qa_frontend *f, uint64_t receiver, uint32_t seat)
@@ -2194,9 +2194,10 @@ bool frontend_network_q2_configs(qa_frontend *f,const qa_q2_config_entry **entri
     if (!n || n->frontend!=f)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Original Quake II save requires its actual Source configstrings");
     if (!q2_local_groups_prepare(n,error)) return false;
-    if (!n->q2_host)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Original Quake II save has no local Source host");
-    return frontend_network_q2_host_configs(n->q2_host,entries,count,error);
+    if (n->q2_host)
+        return frontend_network_q2_host_configs(n->q2_host,entries,count,error);
+    return q2_source_prepare(n,false,error) &&
+        qa_application_network_q2_configs(n->q2_record_source,entries,count,error);
 }
 bool frontend_network_remote(const qa_frontend *f)
 { return f && ((f->network&&f->network->demo_playback&&f->network->demo_format==FRONTEND_DEMO_Q3)||
@@ -6662,7 +6663,7 @@ bool frontend_network_publish(qa_frontend *f, qa_error *error)
     if (f->network && !incomplete_output_close(f->network, error)) return false;
     if(f->network && (f->network->q2_recording || f->network->gtv_server)) {
         qa_error recording={0};
-        if(!q2_record_source_prepare(f->network,&recording))
+        if(!q2_source_prepare(f->network,true,&recording))
             qa_application_feature_report(f->application,"Q2 recording Source",&recording);
         else if(f->network->gtv_server &&
             !frontend_network_q2_recording_publish(f->network->q2_recording,&recording))
@@ -8425,17 +8426,20 @@ static bool gtv_server_prepare(qa_frontend_network *n,qa_error *error)
     frontend_console_print(f,NULL,"GTV listener ready.\n");
     return true;
 }
-static bool q2_record_source_prepare(qa_frontend_network *n,qa_error *error)
+static bool q2_source_prepare(qa_frontend_network *n,bool recording,qa_error *error)
 {
+    recording=recording || n->gtv_server!=NULL;
     qa_application *app=n->frontend->application;
     qa_application_native_q2_presentation actual;
     bool found;
     if(!qa_application_native_q2_presentation_selected(app,&actual,&found,error)) return false;
-    if(!found) return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Recording requires a live Q2 Source game");
+    if(!found) return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Q2 metadata requires a live Source game");
     const qa_application_native_q2_presentation *old=&n->q2_record_namespace;
     if(n->q2_record_source && old->session==actual.session && old->source_owner==actual.source_owner &&
-        old->publication_generation==actual.publication_generation && old->map_revision==actual.map_revision)
-        return true;
+        old->publication_generation==actual.publication_generation && old->map_revision==actual.map_revision) {
+        return !recording || n->q2_recording || frontend_network_q2_recording_create(
+            n->frontend,n->q2_record_source,&n->q2_recording,error);
+    }
     qa_net_protocol_id protocol={.kind=actual.edition==QA_RULESET_Q2_RERELEASE?
         QA_NET_Q2REPRO_1038:QA_NET_Q2_34};
     if(actual.edition!=QA_RULESET_Q2_RERELEASE && q2_host_protocol(n->frontend->options.network_protocol))
@@ -8445,11 +8449,12 @@ static bool q2_record_source_prepare(qa_frontend_network *n,qa_error *error)
     memcpy(&server_count,&next_count,sizeof(server_count));
     qa_application_network_q2 *publisher=NULL;
     if(!qa_application_network_q2_create(app,protocol,server_count,&publisher,error)) return false;
-    if(!n->q2_recording) {
-        if(!frontend_network_q2_recording_create(n->frontend,publisher,&n->q2_recording,error)) {
+    if(n->q2_recording) {
+        if(!frontend_network_q2_recording_rebind(n->q2_recording,publisher,error)) {
             qa_application_network_q2_destroy(publisher); return false;
         }
-    } else if(!frontend_network_q2_recording_rebind(n->q2_recording,publisher,error)) {
+    } else if(recording &&
+        !frontend_network_q2_recording_create(n->frontend,publisher,&n->q2_recording,error)) {
         qa_application_network_q2_destroy(publisher); return false;
     }
     if(n->gtv_server) {
@@ -8476,7 +8481,7 @@ bool frontend_network_demo_record(qa_frontend *f,const qa_command_context *sourc
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Recording requires returned live Source receivers");
     if(server) {
         qa_fs_root *root=NULL;
-        if(!q2_record_source_prepare(n,error)) return false;
+        if(!q2_source_prepare(n,true,error)) return false;
         if(f->options.dedicated)
             root=qa_catalog_product_write_root(qa_application_catalog(f->application),
                 n->q2_record_namespace.content_product);
