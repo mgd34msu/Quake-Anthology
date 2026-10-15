@@ -12,7 +12,6 @@
 #include "qa/source_save.h"
 #include "guest_q3_console.h"
 #include "guest_q3_client_console.h"
-#include "qa/cvars_save.h"
 #include "startup_flow.h"
 #include "guest_q3_functions.h"
 #include "qa/persistence_content.h"
@@ -22,13 +21,6 @@
 #include "qa/map_sidecars.h"
 #include "save_private.h"
 #include <stdio.h>
-
-static bool level_only(const qa_application *app)
-{
-    return app->native_restore_image
-        ? qa_save_image_metadata(app->native_restore_image)->purpose==QA_SAVE_TRANSITION
-        : app->capture_purpose==QA_SAVE_TRANSITION;
-}
 
 static bool state_fail(qa_source_save_io *io, qa_status status, const char *message)
 {
@@ -434,7 +426,7 @@ typedef struct saved_role {
     q3g_role *actual;
 } saved_role;
 typedef struct q3g_restore {
-    qa_buffer storage, state_storage, cvar_storage;
+    qa_buffer storage, state_storage;
     qa_bytes state, cvars;
     char *entity_text;
     uint32_t product;
@@ -470,7 +462,6 @@ static void saved_free(q3g_restore *saved)
     if (saved->owns_text) free(saved->entity_text);
     free(saved->artifacts); free(saved->roles);
     qa_buffer_free(&saved->state_storage); qa_buffer_free(&saved->storage);
-    qa_buffer_free(&saved->cvar_storage);
     free(saved);
 }
 
@@ -647,7 +638,7 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved, const applic
                 return state_fail(io, QA_ERROR_FORMAT, "Native Q3 role changes its actual process/resource presence");
         }
     }
-    return (primaries == 1 && games == 1 && console != level_only(provider->application)) ||
+    return (primaries == 1 && games == 1) ||
         state_fail(io, QA_ERROR_FORMAT, "Q3 source inventory has no unique primary/game role");
 }
 
@@ -828,15 +819,8 @@ static bool saved_collect(application_provider *provider,
         saved_free(saved);
         return application_fail(error, QA_ERROR_FORMAT, "Original GAME console changes its actual engine ownership");
     }
-    if (cvars && !level_only(provider->application)) {
-        if (expected) {
-            if (!qa_cvars_save_matches(cvars, expected->cvars, error)) { saved_free(saved); return false; }
-            saved->cvars = expected->cvars;
-        } else {
-            if (!qa_cvars_save_capture(cvars, &saved->cvar_storage, error)) { saved_free(saved); return false; }
-            saved->cvars = (qa_bytes){saved->cvar_storage.data, saved->cvar_storage.size};
-        }
-    }
+    /* Preserve legacy nested bytes for record matching; QA_SAVE_CVARS owns values. */
+    if (expected) saved->cvars = expected->cvars;
     *out = saved; return true;
 }
 
@@ -1265,22 +1249,6 @@ bool application_guest_q3_save_declarations(application_provider *provider,
     }
     /* The separate normal Source supplies current declarations and reset
      * defaults. Saved values never become registration metadata. */
-    application_provider *current=application_save_current_provider(provider);
-    qa_buffer settings={0};
-    qa_bytes values=saved->cvars;
-    if (ok && current) {
-        qa_cvars *current_cvars=current->kind==provider->kind
-            ? application_guest_q3_console_registry(current) : NULL;
-        ok=current_cvars && qa_cvars_save_capture(current_cvars,&settings,error);
-        if (ok) values=(qa_bytes){settings.data,settings.size};
-        else if (!error || error->code==QA_OK)
-            application_fail(error,QA_ERROR_FORMAT,"Q3 level restore lacks its current GAME registry");
-    }
-    qa_cvars_restore *ticket = NULL;
-    if (ok) ok = qa_cvars_save_prepare(cvars, values, &ticket, error) &&
-        qa_cvars_save_commit(ticket, error);
-    if (!ok) qa_cvars_save_abort(ticket);
-    qa_buffer_free(&settings);
     if (ok && scratch) ok = application_native_q2_baselines_destroy(app, error);
     return ok;
 }

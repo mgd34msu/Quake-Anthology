@@ -77,6 +77,9 @@ bool qa_native_sysv_process_create(const qa_native_sysv_process_options *,
 bool qa_native_sysv_process_idle(const qa_native_sysv_process *);
 qa_native_guest *qa_native_sysv_process_guest(const qa_native_sysv_process *);
 bool qa_native_sysv_process_initialize(qa_native_sysv_process *, uint64_t, qa_error *);
+bool qa_native_sysv_process_initialize_begin(qa_native_sysv_process *, uint64_t, qa_error *);
+bool qa_native_sysv_process_initialize_advance(qa_native_sysv_process *, size_t quantum,
+    bool *complete, qa_error *);
 bool qa_native_sysv_process_finalize(qa_native_sysv_process *, uint64_t, qa_error *);
 bool qa_native_sysv_process_finalize_destructors(qa_native_sysv_process *, uint64_t, qa_error *);
 bool qa_native_sysv_process_finalize_all(qa_native_sysv_process *, qa_error *);

@@ -16,6 +16,7 @@
 #include "qa/unified_frame_events.h"
 #include "qa/console_cvars_prepare.h"
 #include "qa/console_buffer.h"
+#include "qa/console_release.h"
 #include "qa/console_dedicated_save.h"
 #include "qa/console_io.h"
 #include "qa/field.h"
@@ -59,6 +60,7 @@
 #include "qa/network_q2_mvd.h"
 #include "qa/network_q2_unicast.h"
 #include "../src/app/frontend/selected_effects_q1_temporary.h"
+#include "../src/app/frontend/shared_video.h"
 #include "../src/network/q2/session_internal.h"
 #include "../src/app/application/internal.h"
 #include "../src/app/application/unified_q3_events.h"
@@ -395,6 +397,72 @@ static void test_console_restore_pages(void)
     qa_buffer_free(&saved);qa_console_destroy(console);CHECK(qa_session_destroy(session,&error));
 }
 
+typedef struct release_command_counts { size_t completed, failed; } release_command_counts;
+static bool release_count_command(void *user,const qa_command_invocation *command,qa_error *error)
+{
+    (void)command;(void)error;
+    ++((release_command_counts *)user)->completed;
+    return true;
+}
+static bool release_fail_command(void *user,const qa_command_invocation *command,qa_error *error)
+{
+    (void)command;
+    ++((release_command_counts *)user)->failed;
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"command rejected");
+    return false;
+}
+static void test_console_failed_release(void)
+{
+    qa_error error={0};release_command_counts counts={0};
+    qa_command_context context={.owner=1,.dialect=QA_RULESET_Q3,.origin=QA_COMMAND_LOCAL};
+    qa_console *console=qa_console_create(&(qa_console_options){.context=context},&error);
+    CHECK(console);
+    CHECK(qa_console_register(console,"releasecount","",1,false,release_count_command,&counts,&error));
+    CHECK(qa_console_register(console,"releasefail","",1,false,release_fail_command,&counts,&error));
+    CHECK(qa_console_append(console,&context,"releasecount\n",&error));
+    qa_console_release *release=NULL;qa_console_release_outcome outcome;
+    CHECK(qa_console_release_prepare(console,&context,"releasefail; releasecount\n",&release,&error));
+    CHECK(!qa_console_release_advance(release,&outcome,&error));
+    CHECK(counts.failed==1 && counts.completed==0 && qa_console_pending(console));
+    error=(qa_error){0};
+    CHECK(qa_console_release_abort(release,&outcome,&error) && outcome==QA_CONSOLE_RELEASE_FAILED);
+    CHECK(qa_console_drain(console,0,NULL,&error));
+    CHECK(counts.failed==1 && counts.completed==1);
+    release=NULL;
+    CHECK(qa_console_release_prepare(console,&context,"wait 2; releasecount\n",&release,&error));
+    CHECK(qa_console_release_advance(release,&outcome,&error));
+    CHECK(qa_console_release_entered(release) && qa_console_pending(console));
+    CHECK(!qa_console_release_abort(release,&outcome,&error));
+    error=(qa_error){0};
+    for (size_t i=0;i<4 && outcome!=QA_CONSOLE_RELEASE_COMPLETED;++i)
+        CHECK(qa_console_release_advance(release,&outcome,&error));
+    CHECK(outcome==QA_CONSOLE_RELEASE_COMPLETED && counts.failed==1 && counts.completed==2);
+    CHECK(qa_console_release_abort(release,&outcome,&error));
+    CHECK(qa_console_destroy_ready(console));qa_console_destroy(console);
+}
+
+static void test_shared_video_mode_recovery(void)
+{
+    qa_error error={0};qa_cvar_video_mode mode;
+    qa_cvar_video_query query={.member="gl_mode",.dialect=QA_RULESET_Q2_CLASSIC,.index=5};
+    CHECK(frontend_shared_video_resolve(NULL,&query,&mode,&error));
+    CHECK(mode.index==5 && mode.width==960 && mode.height==720);
+    query.index=10;query.width=960;query.height=720;
+    CHECK(frontend_shared_video_resolve(NULL,&query,&mode,&error));
+    CHECK(mode.index==5 && mode.width==960 && mode.height==720);
+    query.width=query.height=0;
+    CHECK(frontend_shared_video_resolve(NULL,&query,&mode,&error));
+    CHECK(mode.index==3 && mode.width==640 && mode.height==480);
+    query.member="r_mode";query.index=10;
+    CHECK(frontend_shared_video_resolve(NULL,&query,&mode,&error));
+    CHECK(mode.index==10 && mode.width==2048 && mode.height==1536);
+    query.member="sw_mode";query.index=-1;query.width=320;query.height=200;
+    CHECK(frontend_shared_video_resolve(NULL,&query,&mode,&error));
+    CHECK(mode.index==-1 && mode.width==320 && mode.height==200);
+    query.width=32;
+    CHECK(!frontend_shared_video_resolve(NULL,&query,&mode,&error));
+}
+
 static void test_shared_campaign_modes(void)
 {
     CHECK(qa_mode_from_game_type(QA_GAME_TYPE_CAMPAIGN) == QA_MODE_SINGLE_PLAYER);
@@ -534,6 +602,43 @@ static void test_shared_bounds_and_transform(void)
         after.z==before.z && after.w==before.w);
     CHECK(weapon.projection.m[0]==world.projection.m[0] &&
         !memcmp(&weapon.viewport,&world.viewport,sizeof(world.viewport)));
+}
+static void construction_actor_released(void *state,qa_session *session,qa_actor_record actor)
+{
+    (void)session; (void)actor;
+    ++*(unsigned *)state;
+}
+static void test_component_construction_actors(void)
+{
+    qa_error error={0}; qa_session *session=NULL;
+    CHECK(qa_session_create(&(qa_session_options){.actor_capacity=2,.component_capacity=1},&session,&error));
+    qa_string_id owner,definition;
+    CHECK(qa_strings_intern_cstr(qa_session_strings(session),"construction-owner",&owner,&error));
+    CHECK(qa_strings_intern_cstr(qa_session_strings(session),"construction-actor",&definition,&error));
+    unsigned released=0;
+    qa_component source={.owner=owner,.state=&released,.clock=qa_clock_defaults(QA_RULESET_Q2_CLASSIC),
+        .actor_released=construction_actor_released};
+    qa_component_admission *admission=NULL;
+    CHECK(qa_session_prepare_component(session,&source,0,&admission,&error));
+    const qa_clock_state *prepared=qa_component_admission_clock(admission);
+    CHECK(prepared && prepared->frame.provider==owner && prepared->frame.kind==QA_RULESET_Q2_CLASSIC);
+    qa_clock_state clock;
+    CHECK(!qa_session_clock(session,owner,&clock));
+    qa_actor_id actor;
+    CHECK(qa_session_actor_allocation_ready(session,owner));
+    CHECK(qa_session_allocate(session,owner,definition,true,0,&actor,&error));
+    qa_actor_owner execution;
+    CHECK(qa_session_execution(session,actor,&execution) && execution==owner);
+    qa_component_admission_abort(admission);
+    CHECK(!qa_actors_get(qa_session_actors(session),actor) && released==1);
+    CHECK(!qa_session_actor_allocation_ready(session,owner));
+    CHECK(qa_session_prepare_component(session,&source,0,&admission,&error));
+    CHECK(qa_session_allocate(session,owner,definition,true,0,&actor,&error));
+    CHECK(qa_component_admission_commit(admission,&error));
+    CHECK(qa_session_clock(session,owner,&clock) && clock.frame.provider==owner);
+    CHECK(qa_actors_get(qa_session_actors(session),actor) && released==1);
+    CHECK(qa_session_remove(session,owner,&error) && released==2);
+    CHECK(qa_session_destroy(session,&error));
 }
 static void test_shared_vector_geometry(void)
 {
@@ -2823,19 +2928,23 @@ static void test_shared_cvar_archive(void)
     qa_cvars *client=qa_cvars_create_view(engine,&options,&error);
     CHECK(client && qa_cvars_register(client,"fov","90",QA_CVAR_ARCHIVE,0,"",&error));
     float original=qa_cvars_find(engine,"fov")->number;
+    CHECK(qa_cvars_revision(engine)!=0 && qa_cvars_revision(client)!=0);
     qa_cvars_edit *edit=NULL;
     CHECK(qa_cvars_edit_prepare(engine,&edit,&error));
+    CHECK(qa_cvars_revision(engine)==0 && qa_cvars_revision(client)==0);
     qa_cvar_archive_entry entry={.name="fov",.value="110"};
     qa_cvar_archive archive={.entries=&entry,.count=1};
     CHECK(qa_cvar_archive_apply(client,&archive,&error));
     CHECK(qa_cvars_find(engine,"cg_fov")->number==110 && qa_cvars_find(client,"fov")->number==110);
     qa_cvars_edit_abort(edit); edit=NULL;
+    CHECK(qa_cvars_revision(engine)!=0 && qa_cvars_revision(client)!=0);
     CHECK(qa_cvars_find(engine,"fov")->number==original && qa_cvars_find(client,"cg_fov")->number==original);
     CHECK(qa_cvars_edit_prepare(engine,&edit,&error));
     entry.value="120";
     CHECK(qa_cvar_archive_apply(client,&archive,&error) && qa_cvars_edit_ready(edit,&error));
     qa_cvars_edit_publish(edit);
     CHECK(qa_cvars_edit_finish(engine,&error));
+    CHECK(qa_cvars_revision(engine)!=0 && qa_cvars_revision(client)!=0);
     CHECK(qa_cvars_find(engine,"fov")->number==120 && qa_cvars_find(client,"cg_fov")->number==120);
     qa_cvars_destroy(client); qa_cvars_destroy(engine);
 }
@@ -4915,6 +5024,8 @@ int main(int argc, char **argv)
     test_q3_player_entity_projection();
     test_module_observation_storage();
     test_console_restore_pages();
+    test_console_failed_release();
+    test_shared_video_mode_recovery();
     test_chat_initial_aliases();
     test_physical_prediction_command();
     test_shared_campaign_modes();
@@ -4989,6 +5100,7 @@ int main(int argc, char **argv)
     test_q2_record_delivery();
     test_gtv_output_reuse();
     test_actor_index_lifetimes();
+    test_component_construction_actors();
     test_provider_identity_views();
     test_q1_gameplay();
     test_guest();

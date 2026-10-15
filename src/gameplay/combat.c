@@ -390,7 +390,7 @@ bool qa_combat_set_admission(qa_combat *combat, qa_actor_id actor,
                               const qa_combat_admission *admission, qa_error *error) {
     qa_combat_record *entry;
     if (!require_record(combat, actor, &entry, error)) return false;
-    if (entry->external || (admission && !admission->admit))
+    if (entry->external || (admission && !admission->admit && !admission->adjust))
         return qa_combat_argument(error, "damage admission requires local combat storage and a callback");
     if (entry->active_admissions || entry->power_admitting || cursor_for(combat, actor))
         return qa_combat_argument(error, "cannot change an active actor's damage admission");
@@ -1034,7 +1034,8 @@ static bool damage_canonical(void *context, const void *input, void *output, qa_
         for (size_t i = 0; i < combat->policy_count; ++i) if (combat->policies[i].provider == request->attack.combat_provider) { policy = combat->policies[i]; found = true; break; }
         if (!found) return qa_combat_argument(error, "attack names an unregistered combat policy");
         qa_combat_admission admission = entry->external
-            ? (qa_combat_admission){entry->binding.context, entry->binding.admit}
+            ? (qa_combat_admission){.context = entry->binding.context,
+                .admit = entry->binding.admit, .adjust = entry->binding.adjust}
             : entry->admission;
         if (admission.admit) {
             if (entry->active_admissions == SIZE_MAX)
@@ -1051,12 +1052,19 @@ static bool damage_canonical(void *context, const void *input, void *output, qa_
         }
         if (!qa_combat_live(combat, request->target)) { outcome->stale = true; goto confirm; }
         if (record(combat, request->target) != entry || entry->serial != serial) return qa_combat_argument(error, "damage admission changed its owner");
-        if (entry->external && entry->binding.adjust) {
-            qa_combat_binding binding = entry->binding;
+        if (admission.adjust) {
+            if (entry->active_admissions == SIZE_MAX)
+                return qa_combat_argument(error, "damage admission nesting exhausted");
+            ++entry->active_admissions;
             ++combat->active_calls;
-            bool ok = binding.adjust(binding.context, request, &request->amount, &request->knockback, error);
+            bool ok = admission.adjust(admission.context, request, &request->amount, &request->knockback, error);
             --combat->active_calls;
+            if (record(combat, request->target) == entry && entry->serial == serial)
+                --entry->active_admissions;
             if (!ok || !qa_damage_request_validate(request, error)) return false;
+            if (!qa_combat_live(combat, request->target)) { outcome->stale = true; goto confirm; }
+            if (record(combat, request->target) != entry || entry->serial != serial)
+                return qa_combat_argument(error, "damage adjustment changed its owner");
         }
     }
     bool allowed = true;

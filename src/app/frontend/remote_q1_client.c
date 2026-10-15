@@ -3,8 +3,6 @@
 #include "remote_q1_prediction.h"
 #include "remote_q1_effects.h"
 #include "remote_q1_skins.h"
-#include "remote_unified_q1.h"
-#include "qc_messages.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -618,34 +616,6 @@ bool frontend_remote_q1_metadata_read(const frontend_remote_q1 *row, frontend_re
 }
 bool frontend_remote_q1_read(const frontend_remote_q1 *row, frontend_remote_q1_view *out, qa_error *error)
 { return remote_q1_live(row, error) && frontend_remote_q1_metadata_read(row, out, error); }
-bool frontend_q1_save_client_read(const qa_frontend *f,uint32_t physical_seat,
-    qa_q1_save_client *out,qa_error *error)
-{
-    if (!f || !out || physical_seat>=f->options.seats)
-        return remote_q1_fail(error,QA_ERROR_ARGUMENT,"Save comment requires its actual local CLIENT");
-    for (size_t i=0;i<frontend_remote_unified_count(f);++i) {
-        frontend_remote_unified *replica=frontend_remote_unified_at(f,i);
-        const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(replica);
-        if (frontend_remote_unified_retired(replica) || !domain || domain->physical_seat!=physical_seat) continue;
-        const qa_unified_q1_world_state *world=frontend_unified_q1_world_read(replica);
-        if (!world) return remote_q1_fail(error,QA_ERROR_ARGUMENT,"Save comment requires received Q1 CLIENT world metadata");
-        *out=(qa_q1_save_client){world->level,world->killed_monsters,world->total_monsters};
-        return true;
-    }
-    for (frontend_remote_q1 *row=f->remote_q1;row;row=row->next) {
-        if (row->retired || row->options.domain.physical_seat!=physical_seat) continue;
-        frontend_remote_q1_view view;
-        if (!frontend_remote_q1_read(row,&view,error)) return false;
-        if (!view.loaded || !view.level_name)
-            return remote_q1_fail(error,QA_ERROR_ARGUMENT,"Save comment requires received CLIENT serverinfo");
-        *out=(qa_q1_save_client){view.level_name,view.stats[14],view.stats[12]};
-        return true;
-    }
-    qa_unified_q1_world_state world;bool present=false;
-    if(f->qc_messages && !frontend_qc_messages_q1_world_read(f->qc_messages,physical_seat,&world,&present,error)) return false;
-    if(present) { *out=(qa_q1_save_client){world.level,world.killed_monsters,world.total_monsters};return true; }
-    return remote_q1_fail(error,QA_ERROR_ARGUMENT,"Save comment has no received local CLIENT");
-}
 bool frontend_remote_q1_application_read(const frontend_remote_q1 *row,qa_application_client_source *out,qa_error *error)
 {
     return row && out && row->options.application_read && remote_q1_live(row,error) &&

@@ -43,7 +43,8 @@ static bool movement_fields(q2_save_io *io, q2_actor *actor, bool player)
     uint32_t hit = movement.ground.hit, model = movement.ground.model;
     if (!io->reading && !q2_save_reference(g, movement.ground.actor, &ground, io->error)) return false;
     if (!q2_save_u32(io, &hit) || !q2_save_u32(io, &model) || !q2_save_ref(io, &ground)) return false;
-    if (hit > QA_TRACE_HIT_ACTOR || ((hit == QA_TRACE_HIT_ACTOR) != ground.present))
+    if (hit > QA_TRACE_HIT_ACTOR || (hit == QA_TRACE_HIT_ACTOR && !ground.present) ||
+        (hit == QA_TRACE_HIT_NONE && ground.present))
         return q2_save_fail(io, "Q2 Source pmove continuation has invalid physical ground");
     if (movement.state.kind == QA_RULESET_Q2_CLASSIC) {
         qa_q2_movement_state *state = &movement.state.data.q2;

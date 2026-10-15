@@ -67,7 +67,7 @@ bool frontend_unified_material_movies_create(frontend_unified_media *owner, size
         return row->cinematic_audio_owner && owner->physical_seat < owner->frontend->options.seats &&
             frontend_source_cinematics_ensure(owner->frontend, row->images, error) &&
             frontend_material_movies_cinematic_attach(row->shader_movies, owner->frontend->source_cinematics,
-                owner->physical_seat, row->cinematic_audio_owner, error);
+                owner->physical_seat,row->cinematic_audio_owner,NULL,row->content,error);
     return true;
 }
 bool frontend_unified_material_cinematic_namespace_read(const frontend_unified_media *owner, size_t ordinal,

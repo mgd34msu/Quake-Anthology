@@ -291,6 +291,10 @@ bool frontend_unified_q3_runtime_factory_create(const frontend_unified_q3_runtim
             break;
         }}
     if(!o->sounds || !o->movies || !o->cinematics)return fail(e,"Compiled factory requires its already imported Source sound/movie and numeric role bank");
+    const qa_command_context *movie_command=frontend_unified_q3_client_context(options->client);
+    if (!qa_q3_cinematic_source_restore_bind(o->cinematics,options->source.provider->selection.instance,
+        NULL,QA_QVM_CGAME,movie_command->seat,e) ||
+        !qa_q3_cinematic_source_restore_finish(o->cinematics,NULL,NULL,e)) return false;
     frontend_unified_q3_runtime_options operations={.frontend=options->frontend,.replica=options->replica,.client=options->client,
         .scene_only=!options->primary_view,
         .context=o,.current=operation_current,.frame_settings=frame_settings,.trace_number=trace_number,.command_values=command_values,.timescale=timescale,

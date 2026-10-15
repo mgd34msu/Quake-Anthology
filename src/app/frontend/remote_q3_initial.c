@@ -159,7 +159,8 @@ static bool build_media(frontend_remote_q3_initial *owner,qa_error *error)
             !qa_material_library_set_source_upload(v->materials,frontend_q3_source_upload_read,f,error) ||
             !frontend_material_movies_create(&movie,&owner->shader_movies,error) ||
             !frontend_source_cinematics_ensure(f,v->images,error) ||
-            !frontend_material_movies_cinematic_attach(owner->shader_movies,f->source_cinematics,v->physical_seat,v->identity,error)) return false;
+            !frontend_material_movies_cinematic_attach(owner->shader_movies,f->source_cinematics,v->physical_seat,v->identity,
+                v->descriptor->selection.instance,NULL,error)) return false;
     }
     qa_scene_image_options images={.family=QA_GAME_Q3,.wrap=QA_SCENE_REPEAT,
         .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=-1};

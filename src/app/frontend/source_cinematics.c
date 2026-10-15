@@ -2,6 +2,7 @@
 #include "q3_render_policy.h"
 #include "qa/render_controls.h"
 #include "qa/material_source_scratch.h"
+#include "campaign_cinematic.h"
 
 static bool fullscreen_draw(void *context,const qa_scene_image *image,qa_scene_rect viewport,
     uint32_t seat,qa_scene_frame *frame,qa_error *error)
@@ -78,15 +79,17 @@ bool frontend_source_cinematics_ensure(qa_frontend *f,qa_scene_resources *images
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source cinematic construction requires its actual admitted image bank");
     if (f->source_cinematics) {
         qa_q3_cinematic_handles_options existing;
-        return frontend_source_cinematics_read(f,&existing,error);
+        return frontend_source_cinematics_read(f,&existing,error) && frontend_cinematic_save_reserve(f,error);
     }
     qa_q3_cinematic_handles_options options={.images=images,.context=f,.ui_limits=ui_limits,.upload=upload,
         .fullscreen_draw=fullscreen_draw};
-    return qa_q3_cinematic_handles_create(&options,&f->source_cinematics,error);
+    return qa_q3_cinematic_handles_create(&options,&f->source_cinematics,error) &&
+        frontend_cinematic_save_reserve(f,error);
 }
 bool frontend_source_cinematics_destroy(qa_frontend *f,qa_error *error)
 {
-    return !f || qa_q3_cinematic_handles_destroy(&f->source_cinematics,error);
+    if (!f || !qa_q3_cinematic_handles_destroy(&f->source_cinematics,error)) return !f;
+    frontend_cinematic_save_discard(f); return true;
 }
 bool frontend_source_cinematics_rebind_ready(const qa_frontend *owned,const qa_frontend *destination,qa_error *error)
 {

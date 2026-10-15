@@ -1178,7 +1178,8 @@ static bool construct_source(frontend_source *source, const qa_q3_host_options *
             !qa_material_library_set_source_upload(source->materials,frontend_q3_source_upload_read,frontend,error) ||
             !frontend_material_movies_create(&movie,&source->shader_movies,error) ||
             !frontend_source_cinematics_ensure(frontend,source->images,error) ||
-            !frontend_material_movies_cinematic_attach(source->shader_movies,frontend->source_cinematics,source->seat,source->identity,error)) return false;
+            !frontend_material_movies_cinematic_attach(source->shader_movies,frontend->source_cinematics,
+                source->seat,source->identity,qa_application_provider_instance(source->application,source->owner),NULL,error)) return false;
     }
     qa_scene_image_options images = {.family = QA_GAME_Q3, .wrap = QA_SCENE_REPEAT,
         .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = true, .transparent_index = -1};

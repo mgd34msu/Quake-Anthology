@@ -359,10 +359,49 @@ static bool execution_end(qa_native_sysv_process *owner, bool okay, qa_error *er
     return end(owner, okay);
 }
 
-bool qa_native_sysv_process_initialize(qa_native_sysv_process *owner, uint64_t provider, qa_error *error)
+bool qa_native_sysv_process_initialize_begin(qa_native_sysv_process *owner,
+    uint64_t provider, qa_error *error)
 {
-    if (!execution_begin(owner, error)) return false;
-    return execution_end(owner, guest_sysv_initialize(owner->runtime, provider, owner->options.instruction_budget, error), error);
+    if (!begin(owner, error)) return false;
+    bool okay = guest_sysv_initialize_begin(owner->runtime, provider,
+        owner->options.instruction_budget, error);
+    if (okay) { owner->initializing = true; return true; }
+    return end(owner, false);
+}
+bool qa_native_sysv_process_initialize_advance(qa_native_sysv_process *owner,
+    size_t quantum, bool *complete, qa_error *error)
+{
+    if (!owner || !complete)
+        return guest_fail(error, QA_ERROR_ARGUMENT, 0, "System V initialization requires its retained process and completion output");
+    *complete = !owner->initializing;
+    if (*complete) return true;
+    bool okay = sysv_process_current(owner, error);
+    bool timed = okay && owner->options.guest.backend != QA_NATIVE_GUEST_HOST_X86_64;
+    if (timed) okay = guest_cpu_clock_enter(&owner->clock, owner->guest, error);
+    bool entered = timed && okay;
+    if (okay) okay = guest_sysv_initialize_advance(owner->runtime, quantum, complete, error);
+    if (entered) {
+        qa_error first = error ? *error : (qa_error){0};
+        bool clock = guest_cpu_clock_leave(&owner->clock, owner->guest, error);
+        if (!okay && error) *error = first;
+        okay = okay && clock;
+    }
+    if (!okay || *complete) {
+        if (!okay) guest_sysv_initialize_cancel(owner->runtime);
+        owner->initializing = false;
+        return end(owner, okay);
+    }
+    return true;
+}
+bool qa_native_sysv_process_initialize(qa_native_sysv_process *owner,
+    uint64_t provider, qa_error *error)
+{
+    if (!qa_native_sysv_process_initialize_begin(owner, provider, error)) return false;
+    bool complete = false;
+    do {
+        if (!qa_native_sysv_process_initialize_advance(owner, 0, &complete, error)) return false;
+    } while (!complete);
+    return true;
 }
 bool qa_native_sysv_process_reload(qa_native_sysv_process *owner, uint64_t provider, qa_error *error)
 {
@@ -580,9 +619,13 @@ bool qa_native_sysv_process_dispose(qa_native_sysv_process **pointer, qa_error *
     if (!pointer) return guest_fail(error, QA_ERROR_ARGUMENT, 0, "System V disposal needs its owning pointer");
     qa_native_sysv_process *owner = *pointer;
     if (!owner) return true;
-    if (owner->busy || (owner->guest && (owner->guest->run || owner->guest->stepping ||
+    if ((owner->busy && !owner->initializing) || (owner->guest && (owner->guest->run || owner->guest->stepping ||
         owner->guest->callback_depth || owner->guest->publication_depth)))
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "System V disposal requires drained source and capability callbacks");
+    if (owner->initializing) {
+        guest_sysv_initialize_cancel(owner->runtime);
+        owner->initializing = false; owner->busy = false;
+    }
     if (owner->runtime && owner->guest && !owner->disposing && !owner->failed &&
         !owner->guest->failed && !owner->provisional) {
         owner->busy = true;

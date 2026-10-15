@@ -21,6 +21,11 @@ struct frontend_shared_video {
 };
 static bool fail(qa_error *error,const char *text)
 { return frontend_fail(error,QA_ERROR_ARGUMENT,text); }
+static bool custom_dimensions_valid(uint32_t width,uint32_t height)
+{
+    return (!width || (width>=64 && width<=16384)) &&
+        (!height || (height>=64 && height<=16384));
+}
 static bool modelist_token(const char *text,const char *end,qa_cvar_video_mode *mode)
 {
     if (end-text==7 && !memcmp(text,"desktop",7)) { mode->desktop=true; return true; }
@@ -90,11 +95,27 @@ bool frontend_shared_video_resolve(void *user,const qa_cvar_video_query *query,
             }
         return true;
     }
-    if (canonical && query->index==-1) return true;
-    /* Q2 VID_GetModeInfo and Q3 R_GetModeInfo reject indices outside their tables. */
-    if (query->index<0 || (size_t)query->index>=count) return fail(error,"Video mode index is outside its Source table");
-    *out=(qa_cvar_video_mode){.index=query->index,.width=frontend_video_modes[query->index].width,
-        .height=frontend_video_modes[query->index].height};
+    if (query->index==-1) {
+        if (!custom_dimensions_valid(query->width,query->height))
+            return fail(error,"Custom video dimensions are outside the native range");
+        return true;
+    }
+    int32_t index=query->index;
+    if (index<0 || (size_t)index>=count) {
+        /* Invalid legacy modes preserve the last valid canonical resolution.
+         * Cold initialization and an unavailable previous mode use the same
+         * 640x480 safe mode as Q2 ref_gl and Q3's driver fallback. */
+        if (query->width && query->height && custom_dimensions_valid(query->width,query->height)) {
+            for (size_t i=0;i<count;++i)
+                if (frontend_video_modes[i].width==query->width && frontend_video_modes[i].height==query->height) {
+                    out->index=(int32_t)i; break;
+                }
+            return true;
+        }
+        index=3;
+    }
+    *out=(qa_cvar_video_mode){.index=index,.width=frontend_video_modes[index].width,
+        .height=frontend_video_modes[index].height};
     return true;
 }
 bool frontend_shared_video_dimensions(const qa_cvars *registry,const qa_cvars_edit *edit,uint32_t fallback_width,
@@ -110,7 +131,7 @@ bool frontend_shared_video_dimensions(const qa_cvars *registry,const qa_cvars_ed
         if (!w || !h) return fail(error,"Display projection lost its canonical custom dimensions");
         double x=w->number!=0?(double)w->number:(double)fallback_width;
         double y=h->number!=0?(double)h->number:(double)fallback_height;
-        if (!isfinite(x) || !isfinite(y) || floor(x)!=x || floor(y)!=y || x<64 || x>16384 || y<64 || y>16384)
+        if (!isfinite(x) || !isfinite(y) || floor(x)!=x || floor(y)!=y || x<=0 || x>UINT32_MAX || y<=0 || y>UINT32_MAX)
             return fail(error,"Display settings require valid native dimensions");
         query.width=(uint32_t)x; query.height=(uint32_t)y;
     }

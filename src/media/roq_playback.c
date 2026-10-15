@@ -295,8 +295,8 @@ bool cinematic_roq_resume(qa_roq_playback *playback, double source_ms, uint64_t 
     qa_roq_decode_hooks hooks = {
         .context = playback, .before_stereo = before_stereo, .info = info, .audio = audio};
     bool ok = true;
-    while (ok && wanted >= 0 && playback->status == QA_MEDIA_PLAYING &&
-        (!playback->has_frame || (double)playback->frame.index < wanted ||
+    while (ok && playback->status == QA_MEDIA_PLAYING &&
+        ((double)playback->decoded <= wanted ||
         qa_roq_decoder_in_packet(playback->decoder))) {
         qa_roq_event event;
         ok = qa_roq_decoder_chunk(playback->decoder, &hooks, &event, error);
@@ -312,6 +312,7 @@ bool cinematic_roq_resume(qa_roq_playback *playback, double source_ms, uint64_t 
         ok = clock_sample((qa_media_clock){elapsed_ms, resume_clock}, &checked, error);
         if (ok) {
             playback->last = (uint32_t)(float)checked;
+            playback->pending_loop = false;
             *status = playback->status;
         }
     }

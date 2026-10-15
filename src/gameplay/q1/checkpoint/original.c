@@ -681,11 +681,23 @@ static bool projectile_fields(qa_q1_wire_receipt *receipt, const q1_actor *entit
 }
 static const char *const pickup_touches[] = {
     "health_touch", "armor_touch", "ammo_touch", "weapon_touch",
-    "key_touch", "powerup_touch", "BackpackTouch"
+    "key_touch", "powerup_touch", "BackpackTouch",
+    [Q1_ITEM_MG3_HEAD] = "touch_hellknight_head"
 };
+static const char *pickup_touch(const q1_pickup *item) {
+    if (item->kind == Q1_ITEM_MG3_HEAD && item->upgrade)
+        return "hug_tette";
+    return item->kind < sizeof(pickup_touches) / sizeof(*pickup_touches)
+        ? pickup_touches[item->kind] : NULL;
+}
+static bool pickup_bunny(const char *touch) {
+    return touch && !strcmp(touch, "hug_tette");
+}
 static uint32_t pickup_kind(const char *touch) {
+    if (pickup_bunny(touch))
+        return Q1_ITEM_MG3_HEAD;
     for (uint32_t i=0; i<sizeof(pickup_touches)/sizeof(*pickup_touches); ++i)
-        if (touch && !strcmp(touch,pickup_touches[i])) return i;
+        if (touch && pickup_touches[i] && !strcmp(touch,pickup_touches[i])) return i;
     return UINT32_MAX;
 }
 static bool pickup_mutable_noise(uint32_t kind) {
@@ -735,14 +747,17 @@ static bool pickup_items(const qa_q1_game *game,const q1_pickup *item,
 static bool pickup_fields(qa_q1_wire_receipt *receipt, const q1_actor *entity,
     qa_q1_save_record *record, qa_error *error) {
     const q1_pickup *p=&entity->state.pickup;
-    if (p->kind>=sizeof(pickup_touches)/sizeof(*pickup_touches))
+    const char *touch = pickup_touch(p);
+    if (!touch)
         return fail(error,"Original item requires its actual Source callback projection");
     q1_pickup source=*p;
     if ((entity->think==Q1_THINK_ITEM_PLACE && entity->next_think>0) || p->kind==6)
         source.original_model=0;
-    if (!callback(record,"touch",pickup_touches[p->kind],error) ||
+    if (!callback(record,"touch",touch,error) ||
         !FIELDS(receipt,record,&source,pickup_model_fields,error) ||
         (pickup_mutable_noise(p->kind) && !FIELDS(receipt,record,p,pickup_sound_fields,error))) return false;
+    if (p->kind == Q1_ITEM_MG3_HEAD && (entity->spawnflags & 4u) &&
+        !callback(record, "use", "SUB_regen", error)) return false;
     if (p->kind==0 && (!FIELDS(receipt,record,p,pickup_health_fields,error) ||
         !number(record,"healtype",p->mega?2:p->count==25?1:0,false,error))) return false;
     if (p->kind==2 && !FIELDS(receipt,record,p,pickup_ammo_fields,error)) return false;
@@ -1415,6 +1430,9 @@ static bool create_original(qa_q1_game *game, const qa_q1_save_record *record,
     }
     if (kind == Q1_PICKUP) {
         entity->spawnflags = (uint32_t)saved_number(record, "spawnflags");
+        const char *touch = saved(record, "touch");
+        if (pickup_kind(touch) == Q1_ITEM_MG3_HEAD)
+            entity->state.pickup.upgrade = pickup_bunny(touch);
         if (!q1_pickup_define(game, entity, error)) return false;
     }
     if (projectile) {
@@ -1662,7 +1680,13 @@ static bool admit_globals(original_admission *admission,const qa_qc_program *pro
 static bool admit_pickup(original_admission *admission,qa_q1_program program,
     q1_actor *entity,qa_q1_save_record *callbacks,qa_error *error) {
     q1_pickup *item=&entity->state.pickup;
-    item->kind=pickup_kind(saved(admission->record,"touch"));
+    const char *touch = saved(admission->record, "touch");
+    item->kind=pickup_kind(touch);
+    if (item->kind == Q1_ITEM_MG3_HEAD) {
+        if (program != QA_Q1_MG3)
+            return unsupported(error, "Bloody Nightmare pickup has no MG3 native rule");
+        item->upgrade = pickup_bunny(touch);
+    }
     if (item->kind==UINT32_MAX || !ADMIT_FIELDS(admission,item,pickup_model_fields,error) ||
         !admit_string(admission,"noise",error)) return false;
     if (!pickup_mutable_noise(item->kind) && !admit_text(admission,"noise","",error)) return false;
@@ -1700,7 +1724,9 @@ static bool admit_pickup(original_admission *admission,qa_q1_program program,
             }
         }
     }
-    return callback(callbacks,"touch",pickup_touches[item->kind],error);
+    return callback(callbacks,"touch",pickup_touch(item),error) &&
+        (item->kind != Q1_ITEM_MG3_HEAD || !(entity->spawnflags & 4u) ||
+         callback(callbacks, "use", "SUB_regen", error));
 }
 static bool original_map_supported(q1_map_kind kind) {
     switch (kind) {
@@ -2109,6 +2135,10 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
         !RESTORE_FIELDS(game,record,entity,body_queue_fields,slots,count,error)) return false;
     if (entity->kind == Q1_PICKUP) {
         q1_pickup *item = &entity->state.pickup;
+        if (item->kind == Q1_ITEM_MG3_HEAD) {
+            item->upgrade = pickup_bunny(source_touch);
+            item->sound = game->runtime_names[q1_mg3_head_sound(item->upgrade != 0)];
+        }
         if (!RESTORE_FIELDS(game,record,item,pickup_model_fields,slots,count,error) ||
             (pickup_mutable_noise(item->kind) &&
                 !RESTORE_FIELDS(game,record,item,pickup_sound_fields,slots,count,error)) ||
@@ -2224,15 +2254,30 @@ static bool original_pickup_fits(qa_q1_game *game,const qa_q1_save_data *save,
         if (slot>UINT32_MAX) return unsupported(error,"Original pickup leaves its physical Source ordinals");
         if (!original_classify(record,&source,error)) return false;
         const q1_actor *entity=qa_q1_wire_actor_at(receipt,(uint32_t)slot,&id)?q1_entity(game,id):NULL;
-        if (!entity || entity->kind!=Q1_PICKUP ||
-            strcmp(source.name,qa_strings_cstr(strings,entity->classname)))
-            return unsupported(error,"Original pickup lacks its retained same-class native definition");
-        const q1_pickup *item=&entity->state.pickup;
-        if (item->kind!=pickup_kind(saved(record,"touch")))
+        q1_pickup head;
+        const q1_pickup *item;
+        qa_string_id visible_model;
+        if (game->options.program == QA_Q1_MG3 &&
+            pickup_kind(saved(record, "touch")) == Q1_ITEM_MG3_HEAD &&
+            !strcmp(source.name, q1_runtime_name_text(Q1_NAME_CLASS_ITEM_HEAD_HELLKNIGHT))) {
+            bool bunny = pickup_bunny(saved(record, "touch"));
+            head = (q1_pickup){.kind = Q1_ITEM_MG3_HEAD, .upgrade = bunny,
+                .original_model = game->runtime_names[q1_mg3_head_model(bunny)]};
+            item = &head;
+            visible_model = head.original_model;
+        } else {
+            if (!entity || entity->kind!=Q1_PICKUP ||
+                strcmp(source.name,qa_strings_cstr(strings,entity->classname)))
+                return unsupported(error,"Original pickup lacks its retained same-class native definition");
+            item = &entity->state.pickup;
+            visible_model = entity->model;
+        }
+        const char *touch = pickup_touch(item);
+        if (!touch || strcmp(touch, saved(record, "touch")))
             return unsupported(error,"Original pickup touch differs from its actual native kind");
         const char *think=saved(record,"think");
         bool placing=think && !strcmp(think,"PlaceItem") && saved_number(record,"nextthink")>0;
-        const char *model=qa_strings_cstr(strings,item->original_model?item->original_model:entity->model);
+        const char *model=qa_strings_cstr(strings,item->original_model?item->original_model:visible_model);
         if (!original_pickup_text_fits(record,"mdl",placing || item->kind==6?"":model,error)) return false;
         char *visible=NULL;const char *value=saved(record,"model");
         if (!qa_q1_save_string_decode(value?value:"",&visible,error)) return false;

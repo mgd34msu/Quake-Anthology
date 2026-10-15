@@ -23,6 +23,8 @@ typedef struct q3cin_movie {
     int32_t play_on_walls;
     int32_t status;
     uint32_t width,height,draw_width,draw_height;
+    qa_q3_cinematic_restore_slot restore;
+    bool restore_pending;
 } q3cin_movie;
 struct qa_q3_cinematic_source {
     qa_q3_cinematic_handles *handles;
@@ -34,6 +36,9 @@ struct qa_q3_cinematic_source {
     bool (*diagnostic_current)(void *,const qa_q3_cinematic_source *);
     struct qa_q3_cinematic_source *next;
     unsigned users;
+    char *instance, *content;
+    int32_t role;
+    uint32_t seat;
 };
 struct qa_q3_cinematic_handles {
     qa_q3_cinematic_handles_options options;
@@ -43,11 +48,14 @@ struct qa_q3_cinematic_handles {
     qa_q3_cinematic_handles_stage *stage;
     qa_roq_scratch *decoder_scratch;
     int32_t selected_handle,decoder_handle;
+    int32_t restore_selected,restore_decoder;
+    bool restoring;
     bool busy;
 };
 bool q3cin_fail(qa_error *,qa_status,const char *);
 bool q3cin_enter(qa_q3_cinematic_source *,qa_error *);
 bool q3cin_close(qa_q3_cinematic_handles *,uint32_t,qa_cinematic_end,qa_error *);
+void q3cin_restore_dispose(q3cin_movie *);
 qa_cinematic_options q3cin_options(const qa_q3_cinematic_source *,uint32_t flags,uint64_t bus);
 bool q3cin_scratch_valid(const qa_q3_cinematic_handles *,uint32_t,const qa_scene_image *);
 bool q3cin_stage_retains_source(const qa_q3_cinematic_handles_stage *,const qa_q3_cinematic_source *);

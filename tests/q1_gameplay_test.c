@@ -447,6 +447,37 @@ static void edition_damage(qa_q1_edition edition)
 }
 
 
+static void foreign_shambler_resistance(void)
+{
+    qa_error error={0};q1_fixture fixture;
+    fixture_create(&fixture,QA_Q1_CLASSIC,1,true,QA_Q1_ID1);
+    qa_actor_id shambler=spawn(&fixture,"monster_shambler");
+    const struct { qa_cause_kind kind; int32_t mod; bool radius, half; } cases[]={
+        {QA_CAUSE_Q2,8,false,true},{QA_CAUSE_Q3,6,false,true},
+        {QA_CAUSE_Q2,1,true,true},{QA_CAUSE_Q3,1,true,true},
+        {QA_CAUSE_Q2,1,false,false},{QA_CAUSE_Q3,1,false,false},
+        {QA_CAUSE_Q1,0,true,false},{QA_CAUSE_ENVIRONMENT,0,true,false}};
+    for(size_t i=0;i<sizeof cases/sizeof *cases;++i) {
+        GAME_CHECK(qa_combat_set_health(fixture.combat,shambler,600,&error));
+        uint64_t time_ns;double elapsed;
+        GAME_CHECK(qa_q1_game_clock_read(fixture.game,&time_ns,&elapsed));
+        qa_damage_request request={.target=shambler,.amount=21,.knockback=41,
+            .radius=cases[i].radius,.attack={.sequence=++fixture.sequence,
+                .time_ns=time_ns,.combat_provider=fixture.owner,.cause={.kind=cases[i].kind}}};
+        if(cases[i].kind==QA_CAUSE_Q2)request.attack.cause.source.q2.means_of_death=cases[i].mod;
+        if(cases[i].kind==QA_CAUSE_Q3)request.attack.cause.source.q3.means_of_death=cases[i].mod;
+        qa_damage_outcome outcome={0};
+        GAME_CHECK(qa_combat_apply(fixture.combat,&request,&outcome,&error));
+        GAME_CHECK(outcome.request.amount==(cases[i].half?10.5:21));
+        GAME_CHECK(outcome.request.knockback==(cases[i].half?20.5:41));
+        qa_combat_state state;
+        GAME_CHECK(qa_combat_read(fixture.combat,shambler,&state,&error));
+        GAME_CHECK(state.health==(cases[i].half?589:579));
+        qa_damage_outcome_release(&outcome);
+    }
+    fixture_destroy(&fixture);
+}
+
 typedef struct mixed_check_client {
     q1_fixture *fixture;
     qa_actor_id player;
@@ -766,6 +797,7 @@ void test_q1_gameplay(void)
     movement_output_owner();
     donor_check_client();
     armor_and_protection();
+    foreign_shambler_resistance();
     pain_cooldown(1);
     pain_cooldown(3);
     edition_damage(QA_Q1_CLASSIC);

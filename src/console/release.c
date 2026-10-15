@@ -165,7 +165,7 @@ bool qa_console_release_state_read(const qa_console_release *owner,const qa_cons
 bool qa_console_release_abort(qa_console_release *owner,qa_console_release_outcome *out,qa_error *error)
 {
     if (!owner || !out || !qa_console_idle(owner->console) ||
-        (owner->entered && (!owner->complete || owner->fault.code!=QA_OK)))
+        (owner->entered && !owner->complete && owner->fault.code==QA_OK))
         return qac_fail(error,QA_ERROR_ARGUMENT,"source release abort requires unentered or terminal continuation");
     *out=!owner->entered?QA_CONSOLE_RELEASE_UNENTERED:
         owner->fault.code==QA_OK?QA_CONSOLE_RELEASE_COMPLETED:QA_CONSOLE_RELEASE_FAILED;

@@ -559,7 +559,7 @@ static bool q1_ambient(void *opaque, qa_vec3 origin, qa_string_id sound,
                           error);
 }
 
-static bool q1_integer_intent(void *opaque, int32_t value, qa_error *error)
+bool application_native_q1_set_skill(void *opaque, int32_t value, qa_error *error)
 {
     application_provider *provider = opaque;
     qa_cvars *cvars = application_native_q1_console_registry(provider);
@@ -1093,7 +1093,7 @@ static bool q1_map_options(application_provider *provider,
         .static_model = q1_static_model,
         .ambient = q1_ambient,
         .fog_player = q1_fog_player,
-        .set_skill = q1_integer_intent,
+        .set_skill = application_native_q1_set_skill,
         .player_exited = q1_player_exited,
         .secret_found = q1_secret,
         .alpha_read = q1_alpha_read,

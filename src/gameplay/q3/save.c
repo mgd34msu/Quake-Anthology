@@ -648,9 +648,6 @@ bool qa_q3_game_restore(qa_q3_game *game, qa_bytes input, qa_error *error)
     if (!game || game->source_restored || game->observation_depth || !qa_session_safe(game->options.services.session) ||
         !qa_world_idle(game->options.services.world) || !qa_combat_idle(game->options.services.combat))
         return q3_fail(error, "Q3 portable restore requires an idle candidate");
-    for (uint32_t i = 0; i < QA_Q3_SOURCE_ENTITIES; ++i)
-        if (q3_source_actor(game, i).registry)
-            return q3_fail(error, "Q3 portable restore requires an empty physical source candidate");
     for (uint32_t i = 0; i < game->capacity; ++i)
         if (game->actors[i].kind != Q3_ACTOR_NONE || game->player_binding_tokens[i] ||
             game->inventory_owners[i].actor.registry || game->item_observations[i].serial ||

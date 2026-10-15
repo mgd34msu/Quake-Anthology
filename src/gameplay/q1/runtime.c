@@ -2,6 +2,7 @@
 #include "qa/game_q1_checkpoint.h"
 #include "maps/internal.h"
 #include "qa/game_q1_bots.h"
+#include "qa/persistence_gameplay.h"
 #include "wire_internal.h"
 #include <float.h>
 
@@ -124,6 +125,46 @@ q1_actor *q1_entity(qa_q1_game *g, qa_actor_id actor) {
         return NULL;
     q1_actor *entity = g->actors[actor.slot];
     return entity && entity->active && qa_actor_id_equal(entity->id, actor) ? entity : NULL;
+}
+static bool damage_adjust(void *context, const qa_damage_request *request,
+                          double *amount, double *knockback, qa_error *error) {
+    (void)error;
+    qa_q1_game *g = context;
+    q1_actor *entity = q1_entity(g, request->target);
+    const qa_damage_cause *cause = &request->attack.cause;
+    if (!entity || entity->kind != Q1_MONSTER || !entity->state.monster.species ||
+        entity->state.monster.species->species != QA_Q1_SHAMBLER ||
+        cause->kind == QA_CAUSE_Q1 || cause->kind == QA_CAUSE_ENVIRONMENT)
+        return true;
+    bool rocket = cause->kind == QA_CAUSE_Q2
+        ? cause->source.q2.means_of_death == 8
+        : cause->source.q3.means_of_death == 6;
+    if (request->radius || rocket) {
+        *amount = (float)(*amount * 0.5);
+        *knockback = (float)(*knockback * 0.5);
+    }
+    return true;
+}
+bool qa_q1_game_damage_admission(qa_q1_game *g, qa_actor_id actor,
+                                qa_combat_admission *out, qa_error *error) {
+    q1_actor *entity = q1_entity(g, actor);
+    if (!out || !entity || !entity->native) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+                     "Q1 damage admission has no actual native Source actor");
+        return false;
+    }
+    *out = (qa_combat_admission){.context = g, .adjust = damage_adjust};
+    return true;
+}
+bool q1_bind_damage_admission(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+    qa_combat_admission expected, current;
+    if (!qa_q1_game_damage_admission(g, actor, &expected, error))
+        return false;
+    if (qa_persistence_combat_admission(g->services.combat, actor, &current) &&
+        current.context == expected.context && current.admit == expected.admit &&
+        current.adjust == expected.adjust)
+        return true;
+    return qa_combat_set_admission(g->services.combat, actor, &expected, error);
 }
 bool qa_q1_game_gravity(const qa_q1_game *g, float *out) {
     if (!g || g->destroy_pending || !out)
@@ -278,11 +319,11 @@ static bool record_pool_prepare(qa_q1_game *g, qa_pool *pool, size_t size,
     return true;
 }
 bool q1_records_prepare(qa_q1_game *g, qa_error *error) {
+    if (!g->map_records.stride)
+        g->retired_maps = NULL;
     return record_pool_prepare(g, &g->actor_records, sizeof(q1_actor), _Alignof(q1_actor), error) &&
-        record_pool_prepare(g, &g->player_records, sizeof(q1_player), _Alignof(q1_player), error);
-}
-bool q1_map_records_prepare(qa_q1_game *g, qa_error *error) {
-    return record_pool_prepare(g, &g->map_records, sizeof(q1_map_state), _Alignof(q1_map_state), error) &&
+        record_pool_prepare(g, &g->player_records, sizeof(q1_player), _Alignof(q1_player), error) &&
+        record_pool_prepare(g, &g->map_records, sizeof(q1_map_state), _Alignof(q1_map_state), error) &&
         record_pool_prepare(g, &g->door_records, sizeof(q1_door_group), _Alignof(q1_door_group), error);
 }
 void *q1_record_take(qa_q1_game *g, qa_pool *pool, size_t size, size_t *slot, qa_error *error) {
@@ -324,6 +365,7 @@ void q1_records_reset(qa_q1_game *g) {
     qa_pool_reset(&g->door_records);
     g->retired_actors = NULL;
     g->retired_players = NULL;
+    g->retired_maps = NULL;
 }
 void q1_records_destroy(qa_q1_game *g) {
     for (size_t i = 0; i < g->player_records.capacity; ++i)
@@ -335,6 +377,7 @@ void q1_records_destroy(qa_q1_game *g) {
     g->door_records = (qa_pool){0};
     g->retired_actors = NULL;
     g->retired_players = NULL;
+    g->retired_maps = NULL;
 }
 q1_player *q1_player_allocate(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     q1_player *player = q1_player_get(g, actor);
@@ -953,8 +996,13 @@ void qa_q1_game_destroy(qa_q1_game *g) {
                                               g->actors[i]->pickup_observation, NULL);
     for (uint32_t i = 0; i < g->capacity; ++i) {
         q1_actor *entity = g->actors[i];
-        if (entity && entity->native)
+        if (entity && entity->native) {
+            qa_combat_admission admission;
+            if (qa_persistence_combat_admission(g->services.combat, entity->id, &admission) &&
+                admission.context == g && admission.adjust == damage_adjust)
+                (void)qa_combat_set_admission(g->services.combat, entity->id, NULL, NULL);
             qa_targets_unbind_context(g->targets, entity->id, g);
+        }
     }
     if (g->owns_targets)
         qa_targets_destroy(g->targets);
@@ -1063,7 +1111,8 @@ static bool create_state(qa_q1_game *g, qa_string_id classname, q1_entity_kind k
     entity->kind = kind;
     entity->native = true;
     entity->physics = qa_physics_properties_default(g->options.rules);
-    if (!q1_source_rogue_state_publish(g, entity, error) ||
+    if (!q1_bind_damage_admission(g, actor, error) ||
+        !q1_source_rogue_state_publish(g, entity, error) ||
         !q1_bind_target(g, entity, error)) {
         (void)q1_remove(g, entity, NULL);
         return false;
@@ -1628,7 +1677,8 @@ static bool spawn_actor(qa_q1_game *g, const qa_q1_spawn *spawn, qa_actor_id *ou
             if (input[i] && !qa_strings_intern_cstr(qa_session_strings(g->services.session),
                 input[i], output[i], error)) goto fail;
     }
-    if (!q1_bind_target(g, entity, error))
+    if (!q1_bind_damage_admission(g, actor, error) ||
+        !q1_bind_target(g, entity, error))
         goto fail;
     if (!initialize_spawn(g, entity, spawn, &request.body, species, dormant_mine, NULL, error))
         goto fail;

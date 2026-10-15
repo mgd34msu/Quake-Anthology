@@ -161,11 +161,13 @@ static bool recognize(qa_catalog *catalog,const char *path,const qa_fs_listing *
 }
 static int entry_order(const void *left,const void *right)
 { return strcmp(((const qa_fs_entry *)left)->name,((const qa_fs_entry *)right)->name); }
+static bool location_unavailable(const qa_error *error)
+{ return error->code==QA_ERROR_NOT_FOUND || error->code==QA_ERROR_IO; }
 static bool queue_add(qa_catalog *catalog,search_directory **queue,size_t *count,size_t *capacity,
     const char *path,unsigned depth,qa_error *error)
 {
-    for (size_t i=0;i<*count;++i) if (!strcmp((*queue)[i].path,path)) return true;
     if (*count==8192) return true;
+    for (size_t i=0;i<*count;++i) if (!strcmp((*queue)[i].path,path)) return true;
     if (!catalog_grow((void **)queue,capacity,*count+1,sizeof(**queue),error)) return false;
     const char *owned=catalog_string(catalog,path,error); if (!owned) return false;
     (*queue)[(*count)++]=(search_directory){owned,depth}; return true;
@@ -188,14 +190,32 @@ bool catalog_discover_locations(qa_catalog *catalog,qa_error *error)
             qa_fs_listing_free(&list); continue;
         }
         if (list.count>1) qsort(list.entries,list.count,sizeof(*list.entries),entry_order);
-        ok=recognize(catalog,current.path,&list,error);
+        ok=recognize(catalog,current.path,&list,&issue);
+        if (!ok && location_unavailable(&issue)) {
+            qa_fs_listing_free(&list); continue;
+        }
+        if (!ok && error) *error=issue;
+        qa_fs_root *opened=NULL;
         if (ok && current.depth<4) for (size_t i=0;ok && i<list.count;++i) {
             const qa_fs_entry *entry=list.entries+i;
             if (entry->kind!=QA_FS_DIRECTORY || entry->name[0]=='.') continue;
-            const char *child=NULL;
-            if (!catalog_physical_path(catalog,current.path,entry->name,&child,error)) { ok=false; break; }
-            if (child) ok=queue_add(catalog,&queue,&count,&capacity,child,current.depth+1,error);
+            if (!opened && !qa_fs_root_open(current.path,&opened,&issue)) {
+                if (!location_unavailable(&issue)) { if (error) *error=issue; ok=false; }
+                break;
+            }
+            qa_fs_entry_kind kind;
+            if (!qa_fs_root_status(opened,entry->name,&kind,NULL,&issue)) {
+                if (location_unavailable(&issue)) continue;
+                if (error) *error=issue;
+                ok=false; break;
+            }
+            if (kind==QA_FS_MISSING) continue;
+            char *child=NULL;
+            ok=qa_fs_root_join(opened,entry->name,&child,error) &&
+                queue_add(catalog,&queue,&count,&capacity,child,current.depth+1,error);
+            free(child);
         }
+        qa_fs_root_close(opened);
         qa_fs_listing_free(&list);
     }
     free(queue); return ok;

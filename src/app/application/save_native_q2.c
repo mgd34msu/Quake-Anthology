@@ -111,7 +111,9 @@ bool application_source_baseline_prepare(application_provider *target,
     app->routing_snapshot = snapshot;
     app->current_map = candidate->current_map;
     if (!application_map_restore_identity(app, snapshot, error) ||
-        !application_provider_prepare(app, target->launch, &scratch->source, error)) return false;
+        !application_provider_prepare(app, target->launch, &scratch->source, error) ||
+        !application_provider_product_bind(scratch->source, target->product_catalog,
+            target->product, error)) return false;
     app->providers = calloc(1, sizeof(*app->providers));
     if (!app->providers) return application_fail(error, QA_ERROR_MEMORY, "retaining native baseline provider roster");
     app->providers[0] = scratch->source;

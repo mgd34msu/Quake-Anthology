@@ -539,6 +539,8 @@ typedef enum application_event_admission {
 } application_event_admission;
 application_event_admission application_emit_protocol(application_provider *, const qa_application_protocol_event *, qa_error *);
 bool application_map_server_command(application_provider *, qa_string_id, qa_error *);
+bool application_provider_product_bind(application_provider *,qa_catalog *,const qa_product *,qa_error *);
+bool application_native_q1_set_skill(void *,int32_t,qa_error *);
 bool application_guest_spawn_map(application_provider *, const qa_bsp_view *,
                                   const qa_entities *, qa_string_id, qa_string_id, qa_error *);
 bool application_construct_qc(qa_application *, application_provider *, qa_world *,

@@ -592,6 +592,8 @@ static bool construct_q1(qa_application *application,
     qa_targets_monsters_configure(application->targets, application, application_monster_mission);
     qa_q1_host host = {.context = provider,
                        .cvars = application_native_q1_console_registry(provider),
+                       .server_flags = &provider->q1_server_flags,
+                       .set_skill = application_native_q1_set_skill,
                        .source_console_print = application_native_q1_source_console_print,
                        .source_logfrag_write = application_native_q1_source_logfrag_write,
                        .world_info = application_native_q1_world_info,
@@ -987,7 +989,7 @@ static bool q3_console_prepare(application_provider *provider,
     return application_native_q3_settings_prepare_definitions(provider, product, error);
 }
 
-static bool provider_product_bind(application_provider *provider, qa_catalog *catalog,
+bool application_provider_product_bind(application_provider *provider, qa_catalog *catalog,
     const qa_product *product, qa_error *error)
 {
     if (!qa_application_content_names_bind(provider->application,catalog,error)) return false;
@@ -1017,7 +1019,7 @@ static bool provider_console_advance(qa_application *application,
     if (provider->native_q3_console)
         return application_native_q3_remote_roles_prepare(provider, choices, error) &&
             application_native_q3_console_at(provider, console, cvars, command);
-    if (!provider_product_bind(provider, catalog, product, error)) return false;
+    if (!application_provider_product_bind(provider, catalog, product, error)) return false;
     if (provider->client_only_owned || application_native_client_only(provider))
         return true;
     application_native_profile profile;
@@ -1073,7 +1075,7 @@ static bool provider_preparation_enter(qa_application *application,
     const qa_launch_instance *selected = provider && provider->launch && snapshot
         ? qa_launch_snapshot_find(snapshot, provider->launch->selection.instance) : NULL;
     if (!application || !provider || provider->application != application ||
-        !selected || selected->state != provider || selected->storage != provider->launch->storage ||
+        !selected || selected->storage != provider->launch->storage ||
         qa_launch_snapshot_choices(snapshot) != choices ||
         (application->startup_preinit_provider && application->startup_preinit_provider != provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Source constructor lost its actual candidate descriptor");
@@ -1541,7 +1543,7 @@ static bool construct_provider(qa_application *application,
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "invalid detached provider construction");
     provider->constructed = true;
-    if (!provider_product_bind(provider, catalog, product, error)) return false;
+    if (!application_provider_product_bind(provider, catalog, product, error)) return false;
     if (provider->client_only_owned || application_native_client_only(provider))
         return true;
     bool ok;
@@ -1615,7 +1617,7 @@ bool application_provider_construct_q3_restored(qa_application *application,
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Invalid detached saved original Q3 provider construction");
     provider->constructed = true;
-    if (!provider_product_bind(provider, catalog, product, error)) return false;
+    if (!application_provider_product_bind(provider, catalog, product, error)) return false;
     if (!application_guest_q3_save_prepare(provider, world, product, choices, record, error)) {
         qa_error ignored = {0};
         (void)application_provider_deconstruct(provider, &ignored);

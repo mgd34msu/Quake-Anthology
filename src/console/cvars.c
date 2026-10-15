@@ -312,7 +312,7 @@ bool qa_cvars_observer_idle(const qa_cvars *registry)
 }
 uint64_t qa_cvars_revision(const qa_cvars *registry)
 {
-    return qa_cvars_observer_idle(registry) ? registry->store->revision : 0;
+    return qa_cvars_observer_idle(registry) && !registry->store->edit ? registry->store->revision : 0;
 }
 uint64_t qa_cvars_declaration_revision(const qa_cvars *registry)
 { return registry ? registry->store->values.declaration_revision : 0; }

@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/source_save.h"
 #include "guest/sysv_libc_format.h"
+#include "guest/sysv_libc_private.h"
 #include "guest/internal.h"
 #include "guest/sysv_process_private.h"
 #include "guest/windows_process_private.h"
@@ -126,16 +127,77 @@ bool native_process_open(qa_native_instance *instance, const qa_native_process_o
     size_t pages = native_align(slots * 16, QA_NATIVE_GUEST_PAGE);
     if (!qa_native_guest_protect_range(instance->guest, instance->callback_base, pages,
         QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_EXECUTE, error)) return false;
-    if (options->kind == QA_NATIVE_PROCESS_SYSV) {
-        const qa_native_sysv_process_options *actual = options->fresh.sysv;
-        for (size_t i = 0; i < actual->artifact_count; ++i)
-            if (!qa_native_sysv_process_initialize(instance->sysv_process, actual->artifacts[i].provider, error)) return false;
-    } else {
-        const qa_native_windows_process_options *actual = options->fresh.windows;
-        for (size_t i = 0; i < actual->artifact_count; ++i)
-            if (!qa_native_windows_process_initialize(instance->windows_process, actual->artifacts[i].id, error)) return false;
+    instance->process_initialization_at = 0;
+    instance->process_initializing = true;
+    instance->process_image_initializing = false;
+    return true;
+}
+
+bool native_process_initialize_advance(qa_native_instance *instance, size_t quantum,
+    bool *complete, qa_error *error)
+{
+    if (!instance || !complete)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native process initialization requires its owner and completion output");
+    *complete = !instance->process_initializing;
+    if (*complete) return true;
+    bool sysv = instance->process_kind == QA_NATIVE_PROCESS_SYSV;
+    size_t count = sysv ? instance->sysv_process->image_count : instance->windows_process->image_count;
+    if (!instance->process_image_initializing) {
+        if (instance->process_initialization_at == count) {
+            instance->process_initializing = false; *complete = true; return true;
+        }
+        size_t at = instance->process_initialization_at;
+        bool okay = sysv ? qa_native_sysv_process_initialize_begin(instance->sysv_process,
+            instance->sysv_process->images[at].provider, error) :
+            qa_native_windows_process_initialize_begin(instance->windows_process,
+                instance->windows_process->images[at].id, error);
+        if (!okay) return false;
+        instance->process_image_initializing = true;
+    }
+    bool image_complete = false;
+    bool okay = sysv ? qa_native_sysv_process_initialize_advance(instance->sysv_process,
+        quantum, &image_complete, error) :
+        qa_native_windows_process_initialize_advance(instance->windows_process,
+            quantum, &image_complete, error);
+    if (!okay) { instance->process_image_initializing = false; return false; }
+    if (image_complete) {
+        instance->process_image_initializing = false;
+        ++instance->process_initialization_at;
+        *complete = instance->process_initialization_at == count;
+        if (*complete) instance->process_initializing = false;
     }
     return true;
+}
+
+bool native_process_initialization_paused(const qa_native_instance *instance)
+{
+    if (!instance || !instance->process_initializing) return false;
+    const qa_native_guest *guest = instance->guest;
+    const guest_abi_call *call = NULL;
+    if (instance->process_image_initializing) {
+        if (instance->process_kind == QA_NATIVE_PROCESS_SYSV)
+            call = instance->sysv_process->runtime->initialization.call;
+        else call = instance->windows_process->runtime->initialization.call.abi;
+    }
+    return guest && guest->call == call && !guest->run && !guest->callback_depth &&
+        !guest->publication_depth && !guest->stopped_write_calls && !guest->stopped_write_bindings &&
+        !guest->recovery && !guest->stepping && !guest->restoring && !guest->faulting;
+}
+
+void native_process_initialization_cancel(qa_native_instance *instance)
+{
+    if (!instance || !instance->process_initializing) return;
+    if (instance->process_image_initializing) {
+        if (instance->process_kind == QA_NATIVE_PROCESS_SYSV) {
+            guest_sysv_initialize_cancel(instance->sysv_process->runtime);
+            instance->sysv_process->initializing = false; instance->sysv_process->busy = false;
+        } else {
+            guest_windows_initialize_cancel(instance->windows_process->runtime);
+            instance->windows_process->initializing = false; instance->windows_process->busy = false;
+        }
+    }
+    instance->process_image_initializing = false;
+    instance->process_initializing = false;
 }
 
 bool native_process_close(qa_native_instance *instance, qa_error *error)

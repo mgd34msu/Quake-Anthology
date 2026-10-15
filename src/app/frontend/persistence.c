@@ -74,6 +74,10 @@ static bool prepare_services(void *context,qa_application *candidate,const qa_sa
     if (!f || f->application || !candidate)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend rebuild needs its fresh application owner");
     f->application=candidate;
+    const qa_save_record *movie=qa_save_image_find(image,QA_SAVE_MEDIA,"");
+    if (movie && strcmp(movie->owner.schema,"cinematic-state"))
+        return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Unknown cinematic state layout");
+    if (movie && !frontend_cinematic_save_prepare(f,movie->payload,error)) return false;
     f->audio_output_format=source->device?qa_audio_device_requested_configuration(source->device).format:source->audio_output_format;
     bool ok=(!source->cpu || qa_cpu_gamma_read(source->cpu,&f->options.gamma,error)) &&
         (!source->gl || qa_gl_gamma_read(source->gl,&f->options.gamma,error)) &&
@@ -325,7 +329,7 @@ bool frontend_persistence_capture(qa_frontend *f,const qa_application_persistenc
     frontend_persistence operation={0};
     bool ok=operation_init(&operation,f,services,error) &&
         qa_application_persistence_capture(f->application,&operation.ops,purpose,out,error);
-    if (ok && purpose!=QA_SAVE_TRANSITION && frontend_cinematic_running(f)) {
+    if (ok && purpose!=QA_SAVE_TRANSITION && frontend_cinematic_saved_state(f)) {
         qa_buffer movie={0};
         ok=frontend_cinematic_save_capture(f,&movie,error);
         if (ok) {

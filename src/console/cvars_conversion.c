@@ -195,6 +195,17 @@ static bool video_write(const qac_cvar_conversion_input *in,
     if (fullscreen && query.index==0) return result_number(out,0,error);
     if (fullscreen && query.index<0)
         return qac_fail(error,QA_ERROR_ARGUMENT,"fullscreen requires zero or a positive Source mode index");
+    if (!fullscreen) {
+        if (query.index==-1) {
+            if (!video_dimensions(in,&query,error)) return false;
+        } else {
+            qa_cvar_video_mode previous;
+            qa_error unavailable={0};
+            if (video_canonical_read(in,in->current,&previous,&unavailable)) {
+                query.width=previous.width; query.height=previous.height;
+            }
+        }
+    }
     qa_cvar_video_mode source;
     if (!video_lookup(in,&query,&source,error)) return false;
     if (!source.desktop && !video_canonical_write(in,&source,out,fullscreen,error)) return false;

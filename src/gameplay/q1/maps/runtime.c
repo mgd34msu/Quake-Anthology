@@ -110,8 +110,6 @@ bool qa_q1_game_maps_bind(qa_q1_game *g, const qa_q1_map_options *options, qa_er
     return true;
 }
 bool q1_map_storage_prepare(qa_q1_game *g, qa_error *error) {
-    if (!q1_map_records_prepare(g, error))
-        return false;
     q1_map_runtime *maps = g->maps;
     size_t alignment = _Alignof(max_align_t);
     size_t per_actor = sizeof(*maps->scores) + sizeof(*maps->rotated_targets) +
@@ -637,15 +635,15 @@ qa_string_id qa_q1_game_map_name(const qa_q1_game *g) {
     return g && g->maps ? g->maps->options.current_map : QA_STRING_NONE;
 }
 uint32_t qa_q1_game_campaign_flags(const qa_q1_game *g) {
-    return g && g->maps ? *g->maps->options.server_flags : 0;
+    const uint32_t *flags = q1_campaign_flags_owner(g);
+    return flags ? *flags : 0;
+}
+uint32_t *q1_campaign_flags_owner(const qa_q1_game *g) {
+    return g ? (g->maps ? g->maps->options.server_flags : g->host.server_flags) : NULL;
 }
 q1_map_state *q1_map_allocate(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (entity->map)
         return entity->map;
-    if (!g->maps) {
-        q1_map_fail(error, "Q1 authored map services are not bound");
-        return NULL;
-    }
     q1_map_state *state = q1_map_storage_take(g, error);
     if (!state)
         return NULL;
@@ -660,16 +658,14 @@ void q1_map_actor_released(qa_q1_game *g, q1_actor *entity) {
         qa_targets_unbind_context(g->targets, entity->id, g);
     if (!entity->map)
         return;
-    entity->map->pool_next = g->maps->retired;
-    g->maps->retired = entity->map;
+    entity->map->pool_next = g->retired_maps;
+    g->retired_maps = entity->map;
     entity->map = NULL;
 }
 void q1_map_frame_begin(qa_q1_game *g) {
-    if (!g->maps)
-        return;
-    while (g->maps->retired) {
-        q1_map_state *state = g->maps->retired;
-        g->maps->retired = state->pool_next;
+    while (g->retired_maps) {
+        q1_map_state *state = g->retired_maps;
+        g->retired_maps = state->pool_next;
         state->pool_next = NULL;
         qa_pool_release(&g->map_records, state->storage_slot);
     }
@@ -749,6 +745,7 @@ void q1_map_destroy(qa_q1_game *g) {
     }
     q1_door_groups_clear(g);
     qa_pool_reset(&g->map_records);
+    g->retired_maps = NULL;
     qa_arena_destroy(&g->maps->storage);
     free(g->maps);
     g->maps = NULL;
@@ -763,7 +760,7 @@ bool q1_map_clone(qa_q1_game *g, const q1_actor *source, q1_actor *destination, 
     *copy = *source->map;
     copy->storage_slot = storage_slot;
     copy->pool_next = NULL;
-    if (g->maps->rotated_targets) {
+    if (g->maps && g->maps->rotated_targets) {
         q1_rotate_target *row = &g->maps->rotated_targets[source->id.slot];
         if (qa_actor_id_equal(row->actor, source->id)) {
             g->maps->rotated_targets[destination->id.slot] = *row;
@@ -816,7 +813,7 @@ bool q1_map_player(qa_q1_game *g, qa_actor_id actor) {
            g->services.actor_traits(g->services.context, actor, &traits) && traits.player;
 }
 bool q1_map_targets(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_error *error) {
-    return qa_targets_use(g->maps->options.targets, entity->id, activator, g->time_ns, error);
+    return qa_targets_use(g->targets, entity->id, activator, g->time_ns, error);
 }
 bool q1_map_ambient(qa_q1_game *g, qa_vec3 origin, qa_string_id sound, float volume,
                     qa_error *error) {
@@ -1249,6 +1246,9 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     *handled = kind != Q1_MAP_FIELDS;
     if (!*handled && !spawn->map_fields && !entity->map)
         return true;
+    if (!g->maps && *handled &&
+        !q1_map_addon_effect_action_matches(kind, Q1_MAP_ADDON_PARTICLE_TICK))
+        return q1_map_fail(error, "Q1 authored map services are not bound");
     q1_map_state *state = q1_map_allocate(g, entity, error);
     if (!state)
         return false;

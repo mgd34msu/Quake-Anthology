@@ -1,5 +1,5 @@
-#include "internal.h"
-#include "qa/game_q1_maps.h"
+#include "maps/internal.h"
+#include "wire_internal.h"
 #include "qa/game_q1_checkpoint.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q1_supply.h"
@@ -8,24 +8,18 @@
 #include <float.h>
 #include <stdio.h>
 
-enum {
-    Q1_ITEM_HEALTH,
-    Q1_ITEM_ARMOR,
-    Q1_ITEM_AMMO,
-    Q1_ITEM_WEAPON,
-    Q1_ITEM_KEY,
-    Q1_ITEM_POWER,
-    Q1_ITEM_BACKPACK,
-    Q1_ITEM_HORN,
-    Q1_ITEM_SPHERE,
-    Q1_ITEM_MG3_SHARD,
-    Q1_ITEM_MG3_UPGRADE,
-    Q1_ITEM_MG3_BLOODY
-};
 static bool mg3_special(const q1_pickup *item) {
     return item->kind >= Q1_ITEM_MG3_SHARD || item->weapon == QA_Q1_MG3_LASER ||
            item->weapon == QA_Q1_MG3_MJOLNIR ||
            (item->kind == Q1_ITEM_POWER && item->count == (float)QA_Q1_LAVA_SUIT);
+}
+static bool mjolnir_teleport(const qa_q1_game *g, const q1_actor *entity) {
+    return g->options.program == QA_Q1_MG3 && entity->state.pickup.kind == Q1_ITEM_WEAPON &&
+           entity->state.pickup.weapon == QA_Q1_MG3_MJOLNIR && (entity->spawnflags & 128u);
+}
+static bool mg3_head_named(const qa_q1_game *g, const q1_actor *entity) {
+    return g->options.program == QA_Q1_MG3 &&
+           entity->classname == g->runtime_names[Q1_NAME_CLASS_ITEM_HEAD_HELLKNIGHT];
 }
 
 int q1_weapon_rank(const qa_q1_game *g, qa_q1_weapon weapon) {
@@ -607,7 +601,12 @@ static bool pickup_define(qa_q1_game *g, q1_actor *entity, bool *recognized,
     }
     if (!model && g->options.program == QA_Q1_MG3) {
         bounds = 1;
-        if (item_name(g, entity, "item_armor_shard")) {
+        if (mg3_head_named(g, entity)) {
+            item->kind = Q1_ITEM_MG3_HEAD;
+            bounds = 5;
+            model = q1_runtime_name_text(q1_mg3_head_model(item->upgrade != 0));
+            sound = q1_runtime_name_text(q1_mg3_head_sound(item->upgrade != 0));
+        } else if (item_name(g, entity, "item_armor_shard")) {
             item->kind = Q1_ITEM_MG3_SHARD;
             model = "progs/armorshard.mdl";
             sound = "items/armor1.wav";
@@ -662,6 +661,13 @@ static bool pickup_define(qa_q1_game *g, q1_actor *entity, bool *recognized,
                      "Q1 classname has no native pickup definition");
         return false;
     }
+    if (mjolnir_teleport(g, entity) && g->maps) {
+        q1_map_state *state = q1_map_allocate(g, entity, error);
+        if (!state)
+            return false;
+        if (!state->height)
+            state->height = Q1_SILENT_TELEPORT_HEIGHT;
+    }
     if (!item->item) {
         if (!id) {
             qa_bytes name =
@@ -689,7 +695,8 @@ static bool pickup_define(qa_q1_game *g, q1_actor *entity, bool *recognized,
                                        {{-16, -16, 0}, {16, 16, 56}},
                                        {{-16, -16, -24}, {16, 16, 32}},
                                        {{-16, -16, 0}, {16, 16, 32}},
-                                       {{-8, -8, -8}, {8, 8, 8}}};
+                                       {{-8, -8, -8}, {8, 8, 8}},
+                                       {{-16, -16, -16}, {16, 16, 40}}};
     body.bounds = shapes[bounds];
     if (item->kind == Q1_ITEM_MG3_UPGRADE && item->upgrade == 0) {
         body.origin.z += 8;
@@ -704,12 +711,65 @@ static bool pickup_define(qa_q1_game *g, q1_actor *entity, bool *recognized,
 bool q1_pickup_define(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     return pickup_define(g, entity, NULL, error);
 }
+static bool mg3_head_admit(qa_q1_game *g, q1_actor *entity, qa_body_state *body,
+                           qa_error *error) {
+    qa_actor_id actor = entity->id;
+    const uint32_t *campaign_flags = q1_campaign_flags_owner(g);
+    if (!campaign_flags)
+        return q1_map_fail(error, "MG3 head requires its campaign flag owner");
+    if (g->wire && g->wire->loading) {
+        if (!qa_q1_wire_declare_model(g,
+            q1_runtime_name_text(Q1_NAME_RESOURCE_PROGS_ITEM_H_HELLKN_MDL), error))
+            return false;
+        if (!q1_alive(g, actor))
+            return true;
+        if (!qa_q1_wire_declare_model(g,
+            q1_runtime_name_text(Q1_NAME_RESOURCE_PROGS_G_BUNNY_MDL), error))
+            return false;
+    }
+    if (!q1_alive(g, actor))
+        return true;
+    uint32_t flags = *campaign_flags;
+    q1_pickup *item = &entity->state.pickup;
+    item->upgrade = (flags & QA_Q1_BLOODY_NIGHTMARE_ACTIVE) != 0;
+    if (!item->upgrade)
+        return true;
+    if (!(flags & QA_Q1_BLOODY_NIGHTMARE_NEWGAME) || (flags & Q1_MG3_TETTE)) {
+        entity->classname = g->runtime_names[Q1_NAME_CLASS_ITEM_HEALTH];
+        entity->spawnflags = 2;
+        item->item = QA_STRING_NONE;
+        qa_angle_vectors(body->angles, &g->forward, &g->right, &g->up, QA_ANGLE_FLOAT_MATH);
+        body->origin = qa_vec_add(qa_vec_add(body->origin, qa_vec_scale(g->right, 16)),
+                                  qa_vec_scale(g->forward, -16));
+        qa_q1_spawn health = {.classname = q1_runtime_name_text(Q1_NAME_CLASS_ITEM_HEALTH),
+                              .spawnflags = 2};
+        return q1_wire_spawn_declarations(g, &health, error);
+    } else if (entity->map)
+        entity->map->netname = g->runtime_names[Q1_NAME_MG3_NEWGAMEPLUS_ITEM];
+    else
+        entity->source_netname = g->runtime_names[Q1_NAME_MG3_NEWGAMEPLUS_ITEM];
+    return true;
+}
 bool q1_pickup_spawn(qa_q1_game *g, q1_actor *entity, bool *recognized, qa_error *error) {
     if (recognized) *recognized = true;
     entity->kind = Q1_PICKUP;
     if (g->options.deathmatch == 0 &&
         (item_name(g, entity, "item_sphere") || item_name(g, entity, "item_random_powerup")))
         return q1_remove(g, entity, error);
+    if (mg3_head_named(g, entity)) {
+        qa_actor_id actor = entity->id;
+        qa_body_state body;
+        if (!qa_world_body_read(g->services.world, actor, &body, error) ||
+            !mg3_head_admit(g, entity, &body, error))
+            return false;
+        if (!q1_alive(g, actor))
+            return true;
+        if (entity->classname == g->runtime_names[Q1_NAME_CLASS_ITEM_HEALTH] &&
+            !qa_world_body_write(g->services.world, actor, &body, error))
+            return false;
+        if (!q1_alive(g, actor))
+            return true;
+    }
     if (!pickup_define(g, entity, recognized, error))
         return false;
     entity->physics.solid = QA_PHYSICS_NOT_SOLID;
@@ -1152,11 +1212,63 @@ static bool item_complete(void *context, const qa_pickup_offer *offer, bool take
     return dispatch_targets(touch, error);
 }
 
+static bool mg3_head_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id recipient,
+                           bool external, bool *accepted, qa_error *error) {
+    item_touch touch = {.game = g, .entity = entity, .recipient = recipient,
+                         .external = external, .original_ran = true};
+    bool bunny = entity->state.pickup.upgrade != 0;
+    if (!touch_live(&touch))
+        return true;
+    if (!bunny) {
+        qa_q1_target target;
+        if (!q1_target(g, recipient, &target) || !target.player || !touch_live(&touch))
+            return true;
+    }
+    uint32_t *flags = q1_campaign_flags_owner(g);
+    bool (*set_skill)(void *, int32_t, qa_error *) = g->maps
+        ? g->maps->options.set_skill : g->host.set_skill;
+    void *skill_context = g->maps ? g->maps->options.context : g->host.context;
+    if (!flags || (!bunny && !set_skill))
+        return q1_map_fail(error, "MG3 secret pickup requires its campaign and skill owners");
+    if (bunny) {
+        qa_builtin_message_arg argument = {.kind = QA_BUILTIN_MESSAGE_STRING,
+            .value.text = entity->map ? entity->map->netname : entity->source_netname};
+        if (!q1_message_resource_args(g, recipient, g->runtime_names[Q1_NAME_QC_GOT_ITEM],
+                                      2, &argument, 1, error))
+            return false;
+        if (!touch_live(&touch))
+            return true;
+        *flags |= Q1_MG3_TETTE;
+    } else {
+        qa_builtin_event event = {.kind = QA_BUILTIN_ACHIEVEMENT, .family = QA_GAME_Q1,
+            .provider = g->options.provider, .time_ns = g->time_ns,
+            .text = g->runtime_names[Q1_NAME_ACH_FIND_MG3_SECRET]};
+        if (!qa_builtin_emit(&g->services, &event, error) ||
+            !q1_message_resource_args(g, (qa_actor_id){0},
+                g->runtime_names[Q1_NAME_MG3_SELECTED_BLOODY_NIGHTMARE], 2, NULL, 0, error))
+            return false;
+        if (!touch_live(&touch))
+            return true;
+        *flags |= QA_Q1_BLOODY_NIGHTMARE_ACTIVE | QA_Q1_BLOODY_NIGHTMARE_DISCOVERED;
+        if (!set_skill(skill_context, 3, error))
+            return false;
+        if (!touch_live(&touch))
+            return true;
+        g->options.skill = 3;
+    }
+    *accepted = true;
+    return item_complete(&touch, NULL, true, error);
+}
 static bool pickup_grant(qa_q1_game *g, q1_actor *entity, qa_actor_id recipient, bool external,
                          bool *accepted, qa_error *error) {
     *accepted = false;
     if (entity->physics.solid != QA_PHYSICS_TRIGGER)
         return true;
+    if (entity->state.pickup.kind == Q1_ITEM_MG3_HEAD)
+        return mg3_head_touch(g, entity, recipient, external, accepted, error);
+    bool teleport = mjolnir_teleport(g, entity);
+    qa_actor_id pickup = entity->id;
+    float height = entity->map ? entity->map->height : Q1_SILENT_TELEPORT_HEIGHT;
     q1_pickup *item = &entity->state.pickup;
     item_touch touch = {.game = g, .entity = entity, .recipient = recipient, .external = external};
     if (item->kind == Q1_ITEM_BACKPACK)
@@ -1185,7 +1297,12 @@ static bool pickup_grant(qa_q1_game *g, q1_actor *entity, qa_actor_id recipient,
     if (!qa_pickups_touch(g->services.pickups, &offer, &continuation, &outcome, error))
         return false;
     *accepted = outcome == QA_PICKUP_ACCEPTED;
-    return true;
+    if (!teleport)
+        return true;
+    entity = q1_entity(g, pickup);
+    if (entity && entity->map)
+        height = entity->map->height;
+    return q1_map_silent_teleport(g, recipient, height, error);
 }
 static bool mg3_upgrade_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id recipient,
     q1_player *player, qa_error *error) {
@@ -1307,6 +1424,12 @@ static bool spawn_external(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_bod
     entity->spawnflags = spawn->spawnflags;
     entity->source_movement_flags = spawn->source_movement_flags;
     entity->count = spawn->count;
+    qa_body_state placed = *body;
+    if (mg3_head_named(g, entity) &&
+        !mg3_head_admit(g, entity, &placed, error))
+        goto fail;
+    if (!q1_alive(g, entity->id))
+        goto fail;
     if (!q1_pickup_define(g, entity, error))
         goto fail;
     entity->state.pickup.external = true;
@@ -1314,7 +1437,7 @@ static bool spawn_external(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_bod
     entity->physics.motion = bounce ? QA_PHYSICS_BOUNCE : QA_PHYSICS_TOSS;
     entity->physics.solid = QA_PHYSICS_TRIGGER;
     entity->physics.flags = QA_PHYSICS_KILL_VELOCITY;
-    if (!qa_world_body_write(g->services.world, entity->id, body, error) ||
+    if (!qa_world_body_write(g->services.world, entity->id, &placed, error) ||
         !q1_link(g, entity, error))
         goto fail;
     *out = entity->id;
@@ -1702,6 +1825,7 @@ static bool pickup_preview(qa_q1_game *g, qa_actor_id actor, const q1_pickup *it
     case Q1_ITEM_HORN:
     case Q1_ITEM_MG3_UPGRADE:
     case Q1_ITEM_MG3_BLOODY:
+    case Q1_ITEM_MG3_HEAD:
         *accepted = item->kind == Q1_ITEM_HORN || player != NULL;
         *utility = *accepted ? 1 : 0;
         return true;

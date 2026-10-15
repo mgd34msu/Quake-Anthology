@@ -193,6 +193,8 @@ const qa_cvar_view *qa_q1_source_read(const qa_q1_game *, qa_q1_source_setting);
 typedef struct qa_q1_host {
     void *context;
     const qa_cvars *cvars;
+    uint32_t *server_flags;
+    bool (*set_skill)(void *,int32_t,qa_error *);
     qa_monster_missions missions;
     bool (*monster_admit)(void *, qa_actor_id, const qa_authored_monster *, qa_error *);
     /* Read the admitted source client's current selected attack input. */
@@ -485,6 +487,7 @@ bool qa_q1_player_power(qa_q1_game *, qa_actor_id, qa_q1_power, double expires, 
 bool qa_q1_player_auto_switch(qa_q1_game *, qa_actor_id, qa_q1_auto_switch, qa_error *);
 bool qa_q1_game_damage_effect(qa_q1_game *, qa_damage_effect_stage, const qa_damage_request *,
                               qa_damage_effect *, qa_error *);
+bool qa_q1_game_damage_admission(qa_q1_game *,qa_actor_id,qa_combat_admission *,qa_error *);
 bool qa_q1_player_after_physics(qa_q1_game *, qa_actor_id, qa_error *);
 qa_actor_id qa_q1_horn_charmer(const qa_q1_game *);
 bool qa_q1_grapple_fire(qa_q1_game *, qa_actor_id, bool threewave, const qa_q1_input *, qa_error *);

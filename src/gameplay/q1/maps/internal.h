@@ -432,7 +432,6 @@ struct q1_map_state {
 };
 struct q1_map_runtime {
     qa_q1_map_options options;
-    q1_map_state *retired;
     q1_door_group *door_groups;
     q1_rotate_target *rotated_targets;
     qa_actor_id *frame_ticks;
@@ -569,6 +568,8 @@ bool q1_map_addon_control_spawn(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_addon_control_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_addon_control_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_addon_control_think(qa_q1_game *, q1_actor *, qa_error *);
+#define Q1_SILENT_TELEPORT_HEIGHT (-2048.0f)
+bool q1_map_silent_teleport(qa_q1_game *, qa_actor_id, float height, qa_error *);
 static inline bool q1_map_is_addon_effect(q1_map_kind kind) {
     return kind >= Q1_MAP_ADDON_SHAKE && kind <= Q1_MAP_ADDON_FOUNTAIN;
 }

@@ -179,9 +179,11 @@ bool qa_damage_observe(qa_damage_observer *, const qa_damage_mutation *, qa_erro
 bool qa_damage_before_reaction(qa_damage_observer *, const qa_damage_result *, qa_error *);
 typedef bool (*qa_source_damage_fn)(void *, qa_combat *, const qa_damage_request *, qa_damage_observer *, qa_damage_result *, qa_error *);
 typedef bool (*qa_damage_admit_fn)(void *, const qa_damage_request *, bool *handled, qa_error *);
+typedef bool (*qa_damage_adjust_fn)(void *, const qa_damage_request *, double *amount, double *knockback, qa_error *);
 typedef struct qa_combat_admission {
     void *context;
     qa_damage_admit_fn admit;
+    qa_damage_adjust_fn adjust;
 } qa_combat_admission;
 
 typedef struct qa_combat_binding {
@@ -194,7 +196,7 @@ typedef struct qa_combat_binding {
     bool (*empty_regular_armor)(void *, double points, qa_regular_armor *, bool *selected, qa_error *);
     bool (*normalize_legacy_armor)(void *, const qa_armor *, qa_armor *, qa_error *);
     qa_damage_admit_fn admit;
-    bool (*adjust)(void *, const qa_damage_request *, double *amount, double *knockback, qa_error *);
+    qa_damage_adjust_fn adjust;
     qa_source_damage_fn source_damage;
     bool source_armor_stages[2];
     bool has_primary_protection[2];

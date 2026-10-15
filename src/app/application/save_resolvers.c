@@ -70,6 +70,8 @@ static bool admission(void *opaque, qa_actor_id actor,
     application_provider *provider = record ? source_owner(app, record->owner) : NULL;
     if (provider && provider->kind == APPLICATION_PROVIDER_Q3)
         return qa_q3_game_damage_admission(provider->state.q3, actor, out, error);
+    if (provider && provider->kind == APPLICATION_PROVIDER_Q1)
+        return qa_q1_game_damage_admission(provider->state.q1, actor, out, error);
     return application_fail(error, QA_ERROR_UNSUPPORTED,
                             "Saved damage admission has no restored native callback owner");
 }

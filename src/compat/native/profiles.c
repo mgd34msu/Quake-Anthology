@@ -1029,6 +1029,7 @@ bool native_profile_bind_advance(qa_native_instance *instance, size_t quantum,
 
 void native_startup_cancel(qa_native_instance *instance)
 {
+    native_process_initialization_cancel(instance);
     native_process_call_abandon(&instance->startup_call);
     if (instance->profile_output && !qa_native_guest_terminal(instance->guest)) {
         qa_error cleanup = {0};
