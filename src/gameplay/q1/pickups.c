@@ -5,6 +5,7 @@
 #include "qa/game_q1_supply.h"
 #include "qa/game_q1_wire.h"
 #include "qa/game_q1_source_rogue_runes.h"
+#include "qa/text.h"
 #include <float.h>
 #include <stdio.h>
 
@@ -1077,9 +1078,56 @@ static bool dispatch_targets(item_touch *touch, qa_error *error) {
     return g->services.use_targets(g->services.context, entity->id, touch->recipient,
                                    entity->target, entity->killtarget, entity->delay, error);
 }
+static bool backpack_message(item_touch *touch, qa_error *error) {
+    qa_q1_game *g = touch->game;
+    const q1_pickup *item = &touch->entity->state.pickup;
+    qa_actor_id pickup = touch->entity->id, recipient = touch->recipient;
+    qa_q1_weapon weapon = item->weapon;
+    float ammo[QA_Q1_AMMO_COUNT];
+    memcpy(ammo, item->ammo, sizeof(ammo));
+    uint32_t flags = 2u | QA_BUILTIN_MESSAGE_STREAM;
+    if (!q1_message_resource_args(g, recipient, g->runtime_names[Q1_NAME_QC_BACKPACK_GOT],
+        flags, NULL, 0, error)) return false;
+    if (!q1_alive(g, pickup) || !q1_alive(g, recipient)) return true;
+    bool previous = false;
+    qa_string_id name = touch->new_backpack_weapon ? q1_weapon_pickup_name(g, weapon) : QA_STRING_NONE;
+    if (name) {
+        qa_builtin_message_arg argument = {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = name};
+        q1_runtime_name format = g->options.edition == QA_Q1_RERELEASE ? Q1_NAME_MESSAGE_STRING
+                                                                    : Q1_NAME_MESSAGE_BACKPACK_WEAPON;
+        if (!q1_message_resource_args(g, recipient, g->runtime_names[format], flags,
+            &argument, 1, error)) return false;
+        if (!q1_alive(g, pickup) || !q1_alive(g, recipient)) return true;
+        previous = true;
+    }
+    static const q1_runtime_name labels[QA_Q1_AMMO_COUNT] = {
+        Q1_NAME_QC_BACKPACK_SHELLS, Q1_NAME_QC_BACKPACK_NAILS,
+        Q1_NAME_QC_BACKPACK_ROCKETS, Q1_NAME_QC_BACKPACK_CELLS,
+        Q1_NAME_QC_BACKPACK_LAVA_NAILS, Q1_NAME_QC_BACKPACK_MULTI_ROCKETS,
+        Q1_NAME_QC_BACKPACK_PLASMA_BALLS};
+    for (size_t i = 0; i < QA_Q1_AMMO_COUNT; ++i) {
+        if (ammo[i] == 0) continue;
+        if (previous) {
+            if (!q1_message_resource_args(g, recipient, g->runtime_names[Q1_NAME_MESSAGE_COMMA],
+                flags, NULL, 0, error)) return false;
+            if (!q1_alive(g, pickup) || !q1_alive(g, recipient)) return true;
+        }
+        char count[64];
+        if (!qa_format_quake_float(ammo[i], count, error)) return false;
+        qa_builtin_message_arg argument = {.kind = QA_BUILTIN_MESSAGE_TEXT, .value.literal = count};
+        if (!q1_message_resource_args(g, recipient, g->runtime_names[labels[i]], flags,
+            &argument, 1, error)) return false;
+        if (!q1_alive(g, pickup) || !q1_alive(g, recipient)) return true;
+        previous = true;
+    }
+    return q1_message_resource_args(g, recipient, g->runtime_names[Q1_NAME_MESSAGE_NEWLINE],
+        flags, NULL, 0, error);
+}
 static bool mission_pickup_message(item_touch *touch, qa_error *error) {
     qa_q1_game *g = touch->game;
     const q1_pickup *item = &touch->entity->state.pickup;
+    if (item->kind == Q1_ITEM_BACKPACK)
+        return backpack_message(touch, error);
     if (touch->external && item->kind == Q1_ITEM_ARMOR &&
         (g->options.program == QA_Q1_MG1 || g->options.program == QA_Q1_DOPA))
         return q1_message_resource_args(g, touch->recipient,

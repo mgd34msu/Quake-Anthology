@@ -423,6 +423,7 @@ static bool rows_valid(frontend_unified_events *o,const qa_unified_frame_events 
         if (row->payload.kind==QA_UNIFIED_SIMULATION_DAMAGE) continue;
         if (row->payload.kind==QA_UNIFIED_SIMULATION_MESSAGE &&
             (row->payload.value.message.kind==QA_UNIFIED_MESSAGE_PRINT ||
+             row->payload.value.message.kind==QA_UNIFIED_MESSAGE_PRINT_STREAM ||
              row->payload.value.message.kind==QA_UNIFIED_MESSAGE_CENTER_PRINT)) continue;
         if (children && !o->options.simulation_validate(o->options.context,row,e)) return false;
     }
@@ -592,16 +593,18 @@ static bool mirrored(frontend_unified_events *o,uint64_t sequence)
         if (events->presentation[i].sequence==sequence) return o->delivery->mirrored[i];
     return false;
 }
-static bool message(frontend_unified_events *o,const char *text_value,qa_error *e)
+static bool message(frontend_unified_events *o,const char *text_value,bool stream,qa_error *e)
 {
     if (!current(o,e)) return false;
-    /* Decoded text fits the negotiated message envelope. Keep the newline in
-     * the same print call so notify, wrapping and redirects keep their policy. */
-    size_t length=strlen(text_value);
-    memcpy(o->message_line,text_value,length);
-    o->message_line[length]='\n'; o->message_line[length+1]=0;
+    const char *text=text_value;
+    if (!stream) {
+        size_t length=strlen(text_value);
+        memcpy(o->message_line,text_value,length);
+        o->message_line[length]='\n'; o->message_line[length+1]=0;
+        text=o->message_line;
+    }
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
-    qa_console_emit(domain->console,&domain->command_context,o->message_line);
+    qa_console_emit(domain->console,&domain->command_context,text);
     return true;
 }
 static bool resource_sound_asset(frontend_unified_events *o, unified_event_resource *r, qa_error *e)
@@ -664,8 +667,8 @@ static bool apply_simulation(frontend_unified_events *o,const qa_unified_simulat
     if (row->payload.kind==QA_UNIFIED_SIMULATION_MESSAGE) {
         if (row->payload.linked_presentation && mirrored(o,row->payload.source_presentation_sequence)) return true;
         qa_unified_message_kind kind=row->payload.value.message.kind;
-        if (kind==QA_UNIFIED_MESSAGE_PRINT)
-            return message(o,row->payload.value.message.text,e);
+        if (kind==QA_UNIFIED_MESSAGE_PRINT || kind==QA_UNIFIED_MESSAGE_PRINT_STREAM)
+            return message(o,row->payload.value.message.text,kind==QA_UNIFIED_MESSAGE_PRINT_STREAM,e);
         if (kind==QA_UNIFIED_MESSAGE_CENTER_PRINT) {
             const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
             const qa_cvar_view *duration=qa_cvars_read(domain->cvars,o->message_cvars.center_time);

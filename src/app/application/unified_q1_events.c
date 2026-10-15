@@ -120,7 +120,8 @@ bool application_unified_q1_event(qa_application *app, const qa_builtin_event *e
         bool center = event->kind == QA_BUILTIN_CENTERPRINT || !(event->flags & 2u);
         simulation.kind = QA_UNIFIED_SIMULATION_MESSAGE;
         simulation.value.message = (qa_unified_message_event){
-            .kind = center ? QA_UNIFIED_MESSAGE_CENTER_PRINT : QA_UNIFIED_MESSAGE_PRINT,
+            .kind = center ? QA_UNIFIED_MESSAGE_CENTER_PRINT :
+                event->flags & QA_BUILTIN_MESSAGE_STREAM ? QA_UNIFIED_MESSAGE_PRINT_STREAM : QA_UNIFIED_MESSAGE_PRINT,
             .text = (char *)qa_strings_cstr(qa_session_strings(app->session), event->text),
             .level = event->flags & QA_Q1_SOURCE_MESSAGE_LITERAL ? event->code : 2};
         sim = &simulation; linked = true; simulation_recipient = event->actor;

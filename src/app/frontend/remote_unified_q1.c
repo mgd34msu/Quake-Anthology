@@ -718,8 +718,9 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
         ok=retain_row(o,row,&next,e);if(ok) {continuation_replace(&o->weapon,&next);o->weapon_activation=owner;}else continuation_clear(&next);break;}
     case Q1_POWER:o->powers[p.index]=p.a;o->power_activations[p.index]=owner;break;
     case Q1_MESSAGE: {qa_buffer message={0};ok=localized(o,g,&p,&message,e);
-        if(ok) ok=p.flag?qa_hud_center_print(o->hud,(char *)message.data,ns(p.seconds),UINT64_C(3000000000),(qa_hud_center_policy){.instant=true,.character_ns=0,.columns=40},e):qa_hud_notify(o->hud,(char *)message.data,false,ns(p.seconds),UINT64_C(3000000000),e);
-        if(ok && !p.flag) {message.data[message.size]='\n';message.data[message.size+1]=0;
+        bool stream=(row->payload.value.builtin.flags & QA_BUILTIN_MESSAGE_STREAM)!=0;
+        if(ok && (p.flag || !stream)) ok=p.flag?qa_hud_center_print(o->hud,(char *)message.data,ns(p.seconds),UINT64_C(3000000000),(qa_hud_center_policy){.instant=true,.character_ns=0,.columns=40},e):qa_hud_notify(o->hud,(char *)message.data,false,ns(p.seconds),UINT64_C(3000000000),e);
+        if(ok && !p.flag) {if(!stream) {message.data[message.size]='\n';message.data[message.size+1]=0;}
             const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);qa_console_emit(domain->console,&domain->command_context,(char *)message.data);}
         if(ok) *mirrored=true;
         break;}

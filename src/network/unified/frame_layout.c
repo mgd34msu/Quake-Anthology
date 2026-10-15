@@ -2155,7 +2155,7 @@ bool qa_unified_events_check(const qa_unified_frame_events *events, size_t *byte
         if (!isfinite(row->time) || row->time<0 ||
             (row->payload.kind==QA_UNIFIED_SIMULATION_SOUND && !row->payload.value.sound.resource) ||
             (row->payload.kind==QA_UNIFIED_SIMULATION_MESSAGE &&
-                (row->payload.value.message.kind<QA_UNIFIED_MESSAGE_PRINT || row->payload.value.message.kind>QA_UNIFIED_MESSAGE_DISCONNECT)))
+                (row->payload.value.message.kind<QA_UNIFIED_MESSAGE_PRINT || row->payload.value.message.kind>QA_UNIFIED_MESSAGE_PRINT_STREAM)))
             return frame_bad(error,"Typed simulation lost its actual time or Source variant");
     }
     return true;
