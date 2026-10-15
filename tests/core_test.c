@@ -2928,19 +2928,23 @@ static void test_shared_cvar_archive(void)
     qa_cvars *client=qa_cvars_create_view(engine,&options,&error);
     CHECK(client && qa_cvars_register(client,"fov","90",QA_CVAR_ARCHIVE,0,"",&error));
     float original=qa_cvars_find(engine,"fov")->number;
+    CHECK(qa_cvars_revision(engine)!=0 && qa_cvars_revision(client)!=0);
     qa_cvars_edit *edit=NULL;
     CHECK(qa_cvars_edit_prepare(engine,&edit,&error));
+    CHECK(qa_cvars_revision(engine)==0 && qa_cvars_revision(client)==0);
     qa_cvar_archive_entry entry={.name="fov",.value="110"};
     qa_cvar_archive archive={.entries=&entry,.count=1};
     CHECK(qa_cvar_archive_apply(client,&archive,&error));
     CHECK(qa_cvars_find(engine,"cg_fov")->number==110 && qa_cvars_find(client,"fov")->number==110);
     qa_cvars_edit_abort(edit); edit=NULL;
+    CHECK(qa_cvars_revision(engine)!=0 && qa_cvars_revision(client)!=0);
     CHECK(qa_cvars_find(engine,"fov")->number==original && qa_cvars_find(client,"cg_fov")->number==original);
     CHECK(qa_cvars_edit_prepare(engine,&edit,&error));
     entry.value="120";
     CHECK(qa_cvar_archive_apply(client,&archive,&error) && qa_cvars_edit_ready(edit,&error));
     qa_cvars_edit_publish(edit);
     CHECK(qa_cvars_edit_finish(engine,&error));
+    CHECK(qa_cvars_revision(engine)!=0 && qa_cvars_revision(client)!=0);
     CHECK(qa_cvars_find(engine,"fov")->number==120 && qa_cvars_find(client,"cg_fov")->number==120);
     qa_cvars_destroy(client); qa_cvars_destroy(engine);
 }
