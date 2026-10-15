@@ -269,7 +269,6 @@ bool frontend_remote_q3_session_draw(frontend_remote_q3 *row,frontend_remote_pre
     frontend_remote_q3_session_view view;
     if(!listener || !has_listener || stereo>2 || !frontend_remote_q3_session_read(row,&view,error)) return false;
     if(view.pure) return acquired_draw(&view,stereo,listener,has_listener,error);
-    if(!predictor) return fail(error,"Compiled remote Draw requires its actual paired predictor");
     bool okay=frontend_remote_q3_runtime_prepare(view.runtime,stereo,error);
     bool information=false,active=false,predicted=false;
     if(okay) okay=frontend_remote_q3_frame_information(view.frames,view.runtime,
@@ -288,7 +287,8 @@ bool frontend_remote_q3_session_draw(frontend_remote_q3 *row,frontend_remote_pre
                 frontend_remote_q3_runtime_before_prediction(view.runtime,&active,error);
         }
         if(okay && active) {
-            okay=frontend_remote_q3_frame_predict(view.frames,predictor,&predicted,error);
+            okay=predictor ? frontend_remote_q3_frame_predict(view.frames,predictor,&predicted,error) :
+                fail(error,"Compiled remote Draw requires its actual paired predictor");
             if(okay && !predicted) okay=fail(error,"Active CGAME Draw lacks its genuine prediction completion");
             if(okay) okay=frontend_remote_q3_frame_draw(view.frames,view.runtime,frontend_remote_q3_runtime_draw,error);
         } else if(okay) okay=frontend_remote_q3_frame_waiting(view.frames,view.runtime,

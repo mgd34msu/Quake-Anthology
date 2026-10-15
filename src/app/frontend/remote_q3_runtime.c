@@ -418,7 +418,7 @@ static bool policy(frontend_remote_q3_runtime *o,const q3n_frame *f,qa_trace_pol
 {
     if(!cut(o,f,e) || !out)return false;
     *out=qa_collision_default_policy(QA_GAME_Q3);
-    const qa_cvars *cvars=f->remote->source.basis.client.source_cvars;
+    const qa_cvars *cvars=f->remote->source.basis.client.cvars;
     const qa_cvar_view *curves=qa_cvars_read(cvars,o->no_curves),
         *players=qa_cvars_read(cvars,o->player_curve_clip);
     if(!curves || !players)return fail(e,QA_ERROR_FORMAT,"Remote collision lost its actual source controls");
@@ -757,8 +757,8 @@ static bool create_runtime(frontend_remote_q3 *parent,bool restoring,frontend_re
     o->attached=true; *out=o;
     qa_native_q3_remote_client_basis basis;
     if(!qa_native_q3_remote_client_basis_read(services.client,&basis,e))return false;
-    o->no_curves=qa_cvars_resolve(basis.client.source_cvars,"cm_noCurves");
-    o->player_curve_clip=qa_cvars_resolve(basis.client.source_cvars,"cm_playerCurveClip");
+    o->no_curves=qa_cvars_resolve(basis.client.cvars,"cm_noCurves");
+    o->player_curve_clip=qa_cvars_resolve(basis.client.cvars,"cm_playerCurveClip");
     const frontend_remote_q3_resources *r=&services.resources;
     qa_q3_presentation_options backend={.assets=r->assets,.audio=f->audio, .audio_event=frontend_audio_event,.audio_event_context=f,.clock={o,clock_time},
         .world_scratch=r->world_scratch.view,.world_child_scratch=r->world_scratch.child,
