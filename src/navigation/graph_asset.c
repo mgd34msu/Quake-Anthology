@@ -104,6 +104,78 @@ static bool from_aas(qa_nav_graph *g, const qa_aas_view *asset, const qa_navigat
     }
     return true;
 }
+static bool fit_native_nodes(qa_nav_graph *g, const qa_nav_source_view *asset,
+                              const qa_navigation_services *s, qa_error *e) {
+    qa_navigation_services fitting = *s;
+    fitting.topology_geometry_only = false;
+    s = &fitting;
+    qa_world_actor_snapshot excluded = {0};
+    if (!qa_world_snapshot_acquire(s->world, &excluded, e))
+        return false;
+    bool ok = false;
+    uint32_t cursor = 0;
+    const qa_actor_record *record;
+    const qa_actor_registry *actors = qa_world_actors(s->world);
+    while (qa_actors_next(actors, &cursor, &record)) {
+        qa_actor_collision collision;
+        qa_error local = {0};
+        if (!qa_world_get_collision(s->world, record->id, &collision, &local)) {
+            if (local.code) {
+                if (e) *e = local;
+                goto done;
+            }
+            continue;
+        }
+        bool transient = !collision.inline_model;
+        if (!transient && s->entity) {
+            qa_linked_body body;
+            if (!qa_world_linked(s->world, record->id, &body))
+                continue;
+            qa_nav_binding binding = {.has_model = true, .model = (int32_t)collision.model,
+                .bounds = body.absolute_bounds};
+            qa_nav_entity_state entity;
+            bool found;
+            if (!s->entity(s->context, &binding, &entity, &found, e))
+                goto done;
+            transient = found && (entity.kind != QA_NAV_ENTITY_GENERIC ||
+                entity.has_destination || !qa_vec_equal(entity.velocity, qa_v3(0, 0, 0)));
+        }
+        if (transient)
+            excluded.actors[excluded.count++] = record->id;
+    }
+    for (size_t i = 0; i < g->view.node_count; ++i) {
+        qa_nav_node *node = g->nodes + i;
+        qa_nav_profile posture;
+        if (!nav_node_profile(&g->view.profile, node, &posture))
+            continue;
+        qa_trace_result trace;
+        if (!nav_trace_excluding(s, &posture, (qa_actor_id){0}, node->origin, node->origin,
+                false, excluded.actors, excluded.count, &trace, e))
+            goto done;
+        if (!trace.start_solid && !trace.all_solid && trace.fraction == 1)
+            continue;
+        qa_vec3 fitted;
+        bool found;
+        if (!nav_ground(s, &posture, asset->nodes[i].origin, false,
+                excluded.actors, excluded.count, &fitted, &found, e))
+            goto done;
+        if (!found || fabsf(fitted.z - node->origin.z) > posture.maximum_step)
+            continue;
+        if (!nav_trace_excluding(s, &posture, (qa_actor_id){0}, fitted, fitted,
+                false, excluded.actors, excluded.count, &trace, e))
+            goto done;
+        if (trace.start_solid || trace.all_solid || trace.fraction != 1)
+            continue;
+        node->origin = fitted;
+        node->bounds = qa_bounds_translate(posture.shape.bounds, fitted);
+        if (!nav_contents(s, &posture, (qa_actor_id){0}, fitted, false, &node->contents, e))
+            goto done;
+    }
+    ok = true;
+done:
+    qa_world_snapshot_release(&excluded);
+    return ok;
+}
 static bool from_kex(qa_nav_graph *g, const qa_nav_source_view *asset,
                      const qa_navigation_services *s, qa_error *e) {
     const qa_nav_profile *p = &g->view.profile;
@@ -122,6 +194,8 @@ static bool from_kex(qa_nav_graph *g, const qa_nav_source_view *asset,
             !nav_graph_node(g, &node, e))
             return false;
     }
+    if (!fit_native_nodes(g, asset, s, e))
+        return false;
     qa_arena storage; nav_arena_init(&storage, &g->storage);
     const qa_nav_source_entity **bindings =
         qa_arena_alloc(&storage, (asset->link_count ? asset->link_count : 1) * sizeof(*bindings), _Alignof(const qa_nav_source_entity *), e);

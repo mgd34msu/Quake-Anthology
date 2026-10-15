@@ -108,6 +108,11 @@ bool nav_profile_valid(const qa_nav_profile *, qa_error *);
 bool nav_services_valid(const qa_navigation_services *, bool prediction, qa_error *);
 bool nav_trace(const qa_navigation_services *, const qa_nav_profile *, qa_actor_id, qa_vec3,
                qa_vec3, bool geometry_only, qa_trace_result *, qa_error *);
+bool nav_trace_excluding(const qa_navigation_services *, const qa_nav_profile *, qa_actor_id,
+    qa_vec3, qa_vec3, bool geometry_only, const qa_actor_id *, size_t,
+    qa_trace_result *, qa_error *);
+bool nav_ground(const qa_navigation_services *, const qa_nav_profile *, qa_vec3,
+    bool geometry_only, const qa_actor_id *, size_t, qa_vec3 *, bool *, qa_error *);
 bool nav_clear(const qa_navigation_services *, const qa_nav_profile *, qa_actor_id, qa_vec3,
                qa_vec3, bool geometry_only, bool *, qa_error *);
 bool nav_contents(const qa_navigation_services *, const qa_nav_profile *, qa_actor_id, qa_vec3,

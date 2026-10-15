@@ -41,8 +41,10 @@ bool nav_services_valid(const qa_navigation_services *s, bool prediction, qa_err
     }
     return true;
 }
-bool nav_trace(const qa_navigation_services *s, const qa_nav_profile *p, qa_actor_id actor,
-               qa_vec3 start, qa_vec3 end, bool geometry, qa_trace_result *out, qa_error *e) {
+bool nav_trace_excluding(const qa_navigation_services *s, const qa_nav_profile *p,
+               qa_actor_id actor, qa_vec3 start, qa_vec3 end, bool geometry,
+               const qa_actor_id *excluded, size_t excluded_count,
+               qa_trace_result *out, qa_error *e) {
     qa_trace_query q = {
         .start = start, .end = end, .shape = p->shape, .policy = p->policy, .pass_actor = actor};
     if (geometry || s->topology_geometry_only) {
@@ -51,7 +53,34 @@ bool nav_trace(const qa_navigation_services *s, const qa_nav_profile *p, qa_acto
         qa_collision_geometry *map=qa_world_geometry(s->world);
         return qa_collision_trace(map, qa_world_trace_scratch(s->world,map), &q, out, e);
     }
-    return qa_world_trace(s->world, &q, out, e);
+    return qa_world_trace_excluding(s->world, &q, excluded, excluded_count, out, e);
+}
+bool nav_trace(const qa_navigation_services *s, const qa_nav_profile *p, qa_actor_id actor,
+               qa_vec3 start, qa_vec3 end, bool geometry, qa_trace_result *out, qa_error *e) {
+    return nav_trace_excluding(s, p, actor, start, end, geometry, NULL, 0, out, e);
+}
+bool nav_ground(const qa_navigation_services *s, const qa_nav_profile *p, qa_vec3 point,
+                bool geometry, const qa_actor_id *excluded, size_t excluded_count,
+                qa_vec3 *out, bool *found, qa_error *e) {
+    float height = -p->shape.bounds.mins.z;
+    qa_vec3 start = point, end = point;
+    start.z += height + p->maximum_step + 2;
+    end.z += height - p->maximum_step - 4;
+    qa_trace_result trace;
+    if (!nav_trace_excluding(s, p, (qa_actor_id){0}, start, end, geometry,
+            excluded, excluded_count, &trace, e))
+        return false;
+    if (trace.start_solid) {
+        start.z = point.z + height + 1;
+        if (!nav_trace_excluding(s, p, (qa_actor_id){0}, start, end, geometry,
+                excluded, excluded_count, &trace, e))
+            return false;
+    }
+    *found = !trace.start_solid && !trace.all_solid && trace.fraction < 1 && trace.contact &&
+             trace.contact_plane.normal.z >= p->minimum_floor_normal;
+    if (*found)
+        *out = trace.end;
+    return true;
 }
 bool nav_clear(const qa_navigation_services *s, const qa_nav_profile *p, qa_actor_id actor,
                qa_vec3 start, qa_vec3 end, bool geometry, bool *clear, qa_error *e) {

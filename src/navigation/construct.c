@@ -63,26 +63,6 @@ memory:
     qa_error_set(e, QA_ERROR_MEMORY, 0, "Growing navigation sample index");
     return false;
 }
-static bool ground(construction *c, const qa_nav_profile *p, qa_vec3 point, qa_vec3 *out,
-                   bool *found, qa_error *e) {
-    float height = -p->shape.bounds.mins.z;
-    qa_vec3 start = point, end = point;
-    start.z += height + p->maximum_step + 2;
-    end.z += height - p->maximum_step - 4;
-    qa_trace_result trace;
-    if (!nav_trace(c->services, p, (qa_actor_id){0}, start, end, true, &trace, e))
-        return false;
-    if (trace.start_solid) {
-        start.z = point.z + height + 1;
-        if (!nav_trace(c->services, p, (qa_actor_id){0}, start, end, true, &trace, e))
-            return false;
-    }
-    *found = !trace.start_solid && !trace.all_solid && trace.fraction < 1 && trace.contact &&
-             trace.contact_plane.normal.z >= p->minimum_floor_normal;
-    if (*found)
-        *out = trace.end;
-    return true;
-}
 static bool insert(construction *c, qa_vec3 point, qa_nav_origin source, const qa_nav_profile *p,
                    qa_error *e) {
     sample_key key = {.used = true};
@@ -130,13 +110,13 @@ static bool insert(construction *c, qa_vec3 point, qa_nav_origin source, const q
 static bool sample(construction *c, qa_vec3 point, qa_nav_origin source, qa_error *e) {
     qa_vec3 origin;
     bool found;
-    if (!ground(c, &c->options->profile, point, &origin, &found, e))
+    if (!nav_ground(c->services, &c->options->profile, point, true, NULL, 0, &origin, &found, e))
         return false;
     if (found)
         return insert(c, origin, source, &c->options->profile, e);
     if (!c->has_crouch)
         return true;
-    if (!ground(c, &c->crouched, point, &origin, &found, e))
+    if (!nav_ground(c->services, &c->crouched, point, true, NULL, 0, &origin, &found, e))
         return false;
     return !found || insert(c, origin, source, &c->crouched, e);
 }
@@ -375,7 +355,7 @@ static bool link_pair(construction *c, const qa_nav_node *from, const qa_nav_nod
         qa_vec3 foot = nav_midpoint(from->origin, to->origin), grounded;
         bool found;
         foot.z += p->shape.bounds.mins.z;
-        if (!ground(c, posture, foot, &grounded, &found, e))
+        if (!nav_ground(c->services, posture, foot, true, NULL, 0, &grounded, &found, e))
             return false;
         if (!found)
             return true;

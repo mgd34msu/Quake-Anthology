@@ -856,6 +856,90 @@ static void test_native_navigation_first_step(void)
     qa_collision_destroy(map.geometry);
 }
 
+static void test_native_navigation_ground_fit(void)
+{
+    qa_error error={0};gameplay_map map;
+    gameplay_map_create(&map);
+    qa_actor_registry *actors=NULL;qa_world *world=NULL;
+    CHECK(qa_actors_create(5,NULL,NULL,&actors,&error));
+    CHECK(qa_world_create(actors,map.geometry,NULL,0,&world,&error));
+    qa_actor_id raised,obstacle,wall;
+    CHECK(qa_actors_allocate(actors,1,1,&raised,&error));
+    CHECK(qa_world_body_create(world,raised,&(qa_body_state){
+        .origin={0,0,4},.bounds={{-24,-24,-4},{24,24,0}}},&error));
+    qa_actor_collision brush={.family=QA_GAME_Q1,.shape=QA_SHAPE_BOX,.inline_model=true,
+        .contents=qa_collision_bit(QA_CONTENT_SOLID),.role=QA_COLLISION_SOLID};
+    CHECK(qa_world_set_collision(world,raised,&brush,&error));
+    CHECK(qa_world_link(world,raised,NULL,&error));
+    CHECK(qa_actors_allocate(actors,1,1,&obstacle,&error));
+    CHECK(qa_world_body_create(world,obstacle,&(qa_body_state){
+        .origin={64,0,40},.bounds={{-20,-20,-40},{20,20,40}}},&error));
+    qa_actor_collision box=brush;box.inline_model=false;
+    CHECK(qa_world_set_collision(world,obstacle,&box,&error));
+    CHECK(qa_world_link(world,obstacle,NULL,&error));
+    CHECK(qa_actors_allocate(actors,1,1,&wall,&error));
+    CHECK(qa_world_body_create(world,wall,&(qa_body_state){
+        .origin={128,0,80},.bounds={{-24,-24,-80},{24,24,0}}},&error));
+    CHECK(qa_world_set_collision(world,wall,&brush,&error));
+    CHECK(qa_world_link(world,wall,NULL,&error));
+    qa_actor_id timer;
+    CHECK(qa_actors_allocate(actors,1,1,&timer,&error));
+    qa_actor_collision absent;
+    CHECK(!qa_world_get_collision(world,timer,&absent,&error) && error.code==QA_OK);
+    qa_nav_profile profile={.movement={.kind=QA_RULESET_Q3},
+        .shape={.kind=QA_SHAPE_BOX,.bounds={{-16,-16,-16},{16,16,16}}},
+        .policy=qa_collision_ruleset_policy(QA_RULESET_Q3),
+        .capabilities=QA_NAV_CAPABILITY(QA_NAV_WALK),.maximum_step=18,
+        .minimum_floor_normal=.7f,.maximum_drop=400};
+    qa_trace_query query={.start={0,0,16.5f},.end={0,0,16.5f},
+        .shape=profile.shape,.policy=profile.policy};
+    qa_trace_result trace;
+    CHECK(qa_world_trace(world,&query,&trace,&error));
+    CHECK(trace.start_solid && trace.all_solid && qa_actor_id_equal(trace.actor,raised));
+    uint8_t bytes[148]={0};memcpy(bytes,"NAV3",4);
+    qa_store_u32le(bytes+4,6);qa_store_u32le(bytes+8,3);
+    qa_store_u32le(bytes+12,2);qa_store_u32le(bytes+16,1);gameplay_float(bytes+20,1);
+    for(unsigned i=0;i<3;++i) {
+        qa_store_u16le(bytes+24+i*8+2,i?0:2);
+        qa_store_u16le(bytes+24+i*8+4,i?2:0);
+        qa_store_u16le(bytes+24+i*8+6,32);
+        gameplay_float(bytes+48+i*12,(float)i*64);
+        gameplay_float(bytes+48+i*12+8,.5f);
+    }
+    for(unsigned i=0;i<2;++i) {
+        qa_store_u16le(bytes+84+i*6,1);bytes[84+i*6+3]=3;
+        qa_store_u16le(bytes+84+i*6+4,i?0:UINT16_MAX);
+    }
+    gameplay_float(bytes+96+8,.5f);gameplay_float(bytes+96+20,.5f);
+    gameplay_float(bytes+96+24,64);gameplay_float(bytes+96+32,.5f);
+    qa_nav_asset *asset=NULL;qa_nav_graph *graph=NULL;qa_navigation *runtime=NULL;
+    CHECK(qa_nav_asset_read((qa_bytes){bytes,sizeof(bytes)},NULL,&asset,&error));
+    qa_navigation_services services={.world=world,.topology_geometry_only=true};
+    CHECK(qa_nav_graph_from_asset(&(qa_nav_map){.format=QA_BSP_IBSP38},asset,&profile,
+        &services,NULL,&graph,&error));
+    const qa_nav_graph_view *view=qa_nav_graph_read(graph);
+    CHECK(view->nodes[0].origin.z>19.5f && view->nodes[0].origin.z<=16.5f+profile.maximum_step);
+    CHECK(view->nodes[0].bounds.mins.z>4 && view->nodes[1].origin.z==16.5f &&
+        view->nodes[2].origin.z==16.5f);
+    CHECK(view->edges[0].start.z==view->nodes[0].origin.z && view->edges[1].start.z==16.5f);
+    services.topology_geometry_only=false;
+    CHECK(qa_navigation_create(graph,&services,NULL,&runtime,&error));
+    bool allowed;
+    CHECK(qa_navigation_node_allowed(runtime,(qa_actor_id){0},0,NULL,&allowed,&error) && allowed);
+    CHECK(qa_navigation_node_allowed(runtime,(qa_actor_id){0},1,NULL,&allowed,&error) && !allowed);
+    CHECK(qa_navigation_node_allowed(runtime,(qa_actor_id){0},2,NULL,&allowed,&error) && !allowed);
+    qa_actor_id late;
+    CHECK(qa_actors_allocate(actors,1,1,&late,&error));
+    CHECK(qa_world_body_create(world,late,&(qa_body_state){.origin=view->nodes[0].origin,
+        .bounds={{-8,-8,-8},{8,8,8}}},&error));
+    CHECK(qa_world_set_collision(world,late,&box,&error));
+    CHECK(qa_world_link(world,late,NULL,&error));
+    CHECK(qa_navigation_node_allowed(runtime,(qa_actor_id){0},0,NULL,&allowed,&error) && !allowed);
+    qa_navigation_destroy(runtime);qa_nav_graph_release(graph);qa_nav_asset_release(asset);
+    CHECK(qa_world_destroy(world,&error));CHECK(qa_actors_destroy(actors,&error));
+    qa_collision_destroy(map.geometry);
+}
+
 static void test_typewriter_centers(void)
 {
     qa_error error = {0};
@@ -7118,6 +7202,7 @@ int main(int argc, char **argv)
     test_aas_geometry_compaction();
     test_aas_clustering();
     test_native_navigation_first_step();
+    test_native_navigation_ground_fit();
     test_prediction_continuations();
     test_field_completion();
     test_source_text();
