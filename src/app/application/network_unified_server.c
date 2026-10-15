@@ -454,8 +454,7 @@ bool application_unified_source_drop_recipient(qa_application *app,qa_actor_owne
     qa_actor_id actual; const char *actual_reason=NULL; bool pending=false;
     qa_q3_source_binding binding; qa_q3_native_client native;
     if (!source || source->application!=app || source->kind!=APPLICATION_PROVIDER_Q3 ||
-        !source->constructed || !source->attached || source->close_pending || !source->launch ||
-        qa_launch_snapshot_find(qa_application_launch(app),source->launch->selection.instance)!=source->launch)
+        !source->constructed || !source->attached || source->close_pending || !source->launch)
         return application_fail(error,QA_ERROR_ARGUMENT,"Source DROP differs from its actual installed native provider");
     if (!application_native_q3_wire_drop_client_read(source,slot,&actual,&actual_reason,&pending,error) ||
         !qa_q3_source_binding_read(source->state.q3,slot,&binding,error) ||
@@ -490,7 +489,7 @@ bool application_unified_server_source_drop(application_unified_server *owner,qa
     application_provider *candidate;
     while ((candidate=application_provider_lookup_next(app,&cursor))) source=candidate;
     if (!source || !owner->offered.launch || app->publication_generation!=owner->offered.publication ||
-        app->map_revision!=owner->offered.map_revision || source->launch!=qa_launch_snapshot_find(owner->offered.launch,source->launch->selection.instance) ||
+        app->map_revision!=owner->offered.map_revision ||
         !owner->admitted || !owner->player_attached)
         return application_fail(error,QA_ERROR_ARGUMENT,"Unified DROP differs from its actual native Source request");
     if (owner->pending.frame || owner->pending_capture || owner->control_cursor)
@@ -527,8 +526,7 @@ bool application_unified_server_source_drop_current(const application_unified_se
     const qa_unified_session_player *receipt=&owner->admitted_player;
     if (!source || source->kind!=APPLICATION_PROVIDER_Q3 || source->application!=owner->application ||
         !source->constructed || !source->attached || source->close_pending || !source->launch || !owner->drop_source_launch ||
-        source->launch!=owner->drop_source_launch ||
-        qa_launch_snapshot_find(current.launch,source->launch->selection.instance)!=source->launch)
+        source->launch!=owner->drop_source_launch)
         return application_fail(error,QA_ERROR_ARGUMENT,"Unified DROP lost its actual requesting Source namespace");
     if (!qa_q3_source_binding_read(source->state.q3,owner->drop_source_slot,&binding,error) ||
         !qa_q3_client_slot_read(source->state.q3,owner->drop_source_slot,&player,error) ||

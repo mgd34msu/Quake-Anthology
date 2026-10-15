@@ -801,8 +801,7 @@ bool application_unified_source_command(qa_application *app,qa_net_client_id cli
         provider=candidate;
     }
     if (!provider || provider->application!=app || !provider->constructed || !provider->attached ||
-        provider->close_pending || provider->kind!=APPLICATION_PROVIDER_Q3 || !provider->state.q3 ||
-        qa_launch_snapshot_find(source.launch,value->instance)!=provider->launch)
+        provider->close_pending || provider->kind!=APPLICATION_PROVIDER_Q3 || !provider->state.q3)
         return application_fail(error,QA_ERROR_ARGUMENT,"Source command has no installed compiled GAME activation");
     uint32_t slot;
     qa_q3_native_client native;
