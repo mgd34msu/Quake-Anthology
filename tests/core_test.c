@@ -213,17 +213,47 @@ static void test_bot_authored_trigger(void)
     bot_ai_weapon_number_set(&state,8);
     bot_ai_flag_set(&state,BOT_AI_ATTACKED,true);
     bot_ai_fire_shoot_time_set(&state,10);bot_ai_fire_wait_time_set(&state,11);
+    qa_store_u32le(source+QA_BOT_SOURCE_PLAYER+BOT_PS_WEAPON,5);
     bot_ai_weapon_number_set(&state,8);
-    CHECK(bot_ai_flag(&state,BOT_AI_ATTACKED) && bot_ai_fire_wait_time(&state)==11);
+    CHECK(bot_ai_flag(&state,BOT_AI_ATTACKED) && bot_ai_fire_wait_time(&state)==11 &&
+        bot_ai_firing_weapon_number(&state)==5);
     bot_ai_weapon_number_set(&state,9);
+    CHECK(bot_ai_flag(&state,BOT_AI_ATTACKED) && bot_ai_fire_wait_time(&state)==11 &&
+        bot_ai_firing_weapon_number(&state)==5);
+    qa_store_u32le(source+QA_BOT_SOURCE_PLAYER+BOT_PS_WEAPON,6);
+    CHECK(bot_ai_firing_weapon_number(&state)==6);
+    bot_ai_trigger_clear(&state);
     CHECK(!bot_ai_flag(&state,BOT_AI_ATTACKED) && !bot_ai_fire_shoot_time(&state) && !bot_ai_fire_wait_time(&state));
     state.source_settings=NULL;bot_ai_flag_set(&state,BOT_AI_ATTACKED,true);
     bot_ai_fire_wait_time_set(&state,13);bot_ai_weapon_number_set(&state,10);
-    CHECK(bot_ai_flag(&state,BOT_AI_ATTACKED) && bot_ai_fire_wait_time(&state)==13);
+    CHECK(bot_ai_flag(&state,BOT_AI_ATTACKED) && bot_ai_fire_wait_time(&state)==13 &&
+        bot_ai_firing_weapon_number(&state)==10);
+}
+static void test_bot_authored_aim_point(void)
+{
+    qa_bot_source_weapon weapon={.aim_point=QA_BOT_AIM_CENTER};
+    qa_vec3 origin=qa_v3(100,200,50),from=qa_v3(0,0,50);
+    qa_bounds bounds={qa_v3(-20,-10,-30),qa_v3(30,40,70)};
+    CHECK(qa_vec_equal(qa_bot_weapon_aim_point(&weapon,false,origin,bounds,from),qa_v3(105,215,70)));
+    CHECK(qa_vec_equal(qa_bot_weapon_aim_point(NULL,true,origin,bounds,from),qa_v3(105,215,70)));
+    weapon.aim_point=QA_BOT_AIM_HEAD;
+    CHECK(qa_vec_equal(qa_bot_weapon_aim_point(&weapon,false,origin,bounds,from),qa_v3(100,200,120)));
+    weapon.aim_point=QA_BOT_AIM_FEET;
+    CHECK(qa_vec_equal(qa_bot_weapon_aim_point(&weapon,true,origin,bounds,from),qa_v3(100,200,20)));
+    weapon.aim_point=QA_BOT_AIM_BEST;
+    CHECK(qa_vec_equal(qa_bot_weapon_aim_point(&weapon,false,origin,bounds,from),qa_v3(105,215,70)));
+    CHECK(qa_vec_equal(qa_bot_weapon_aim_point(&weapon,true,origin,bounds,from),qa_v3(100,200,120)));
+    weapon.explosive=true;
+    CHECK(qa_vec_equal(qa_bot_weapon_aim_point(&weapon,true,origin,bounds,from),qa_v3(100,200,20)));
+    from.z=18;
+    CHECK(qa_vec_equal(qa_bot_weapon_aim_point(&weapon,true,origin,bounds,from),qa_v3(100,200,120)));
+    CHECK(qa_vec_equal(qa_bot_weapon_aim_point(&weapon,false,origin,bounds,from),qa_v3(105,215,70)));
+    from.z=81.5f;
+    CHECK(qa_vec_equal(qa_bot_weapon_aim_point(&weapon,false,origin,bounds,from),qa_v3(100,200,20)));
 }
 static void test_bot_source_knowledge(void)
 {
-    test_bot_authored_trigger();
+    test_bot_authored_trigger();test_bot_authored_aim_point();
     qa_error error={0};
     char directory[]="/tmp/qa-bot-source-XXXXXX",folder[128],paths[3][160];
     CHECK(mkdtemp(directory));
@@ -233,9 +263,10 @@ static void test_bot_source_knowledge(void)
     qa_mount_id mount;
     CHECK(qa_vfs_mount_directory(files,directory,QA_ARCHIVE_EXACT,true,&mount,&error));
     qa_strings *strings=NULL;CHECK(qa_strings_create(&strings,&error));
-    const char weapons[]="weapon \"laser\"\n{\n flags melee | starting\n bounds { -1 -2 -3 } { 1 2 3 }\n"
+    const char weapons[]="weapon \"laser\"\n{\n flags melee | starting | explosive\n bounds { -1 -2 -3 } { 1 2 3 }\n"
         " name weapon_blaster\n number 4096\n ideal_fov 25\n priority 5\n"
         " trigger_type hold_and_release\n trigger_hold 0.5\n trigger_cooldown 0.3\n"
+        " aim_point best\n"
         " min_range 10\n max_range 500\n min_height 50\n max_height 60\n min_ammo 5\n"
         " ammo cells\n ammo_name ammo_cells\n}\n"
         "weapon rail {\n name weapon_railgun\n number 1\n priority 5\n ammo_name none\n}\n"
@@ -254,7 +285,8 @@ static void test_bot_source_knowledge(void)
         " senses.fov_angle 110\n senses.sound_range 1000\n"
         " weapons.fov_angle 15\n weapons.fov_scalar 0.75\n"
         " custom.value \"a//b\" \"\377\200\"\n custom.value second\n}\n"
-        "skill hard {\n movement.walk_only false\n movement.allow_rocket_jumping true\n}\n\0\0";
+        "skill hard {\n movement.walk_only false\n movement.allow_rocket_jumping true\n}\n"
+        "skill expert\n{\n behaviors.allow_combat true\n}\n\0\0";
     const char optional[]="{\n name \"\376\201\"\n}\n";
     const char *names[]={"weapons.txt","settings_Consoles.txt","characters.txt"};
     const qa_bytes contents[]={
@@ -270,12 +302,12 @@ static void test_bot_source_knowledge(void)
     CHECK(!found && !knowledge); /* Q2 reads PC settings only. */
     CHECK(qa_bot_source_knowledge_load(files,strings,QA_RULESET_NETQUAKE,bot_source_fixture_weapon,strings,
         &knowledge,&found,&error));
-    CHECK(found && knowledge && qa_bot_source_skill_count(knowledge)==2 &&
+    CHECK(found && knowledge && qa_bot_source_skill_count(knowledge)==3 &&
         qa_bot_source_document_count(knowledge)==3);
     const qa_bot_source_skill *practice=qa_bot_source_skill_at(knowledge,0),
         *hard=qa_bot_source_skill_at(knowledge,1);
     CHECK(practice && !strcmp(qa_strings_cstr(strings,practice->name),"practice") &&
-        practice->allow_combat && practice->allow_melee && practice->lead_targets &&
+        practice->allow_combat && practice->allow_melee && practice->lead_targets && !practice->best_aim_head &&
         practice->movement.walk_only && practice->movement.allow_combat_jumping &&
         !practice->movement.allow_rocket_jumping && practice->movement.jump_chance==37.5f &&
         practice->movement.jump_cooldown==2.25f && practice->aiming.maximum_speed==360 &&
@@ -283,18 +315,20 @@ static void test_bot_source_knowledge(void)
         practice->senses.sound_range==1000 && practice->weapons.fov_angle==15 &&
         practice->weapon_fov_scalar==.75f);
     CHECK(hard && !strcmp(qa_strings_cstr(strings,hard->name),"hard") &&
-        !hard->movement.walk_only && hard->movement.allow_rocket_jumping);
+        !hard->movement.walk_only && hard->movement.allow_rocket_jumping && hard->best_aim_head &&
+        qa_bot_source_skill_at(knowledge,2)->best_aim_head);
     const qa_bot_source_document *document=qa_bot_source_document_at(knowledge,0);
     CHECK(document && document->source.size==sizeof(weapons)-3 &&
         !memcmp(document->source.data,weapons,document->source.size) && document->block_count==4);
     const qa_bot_source_block *block=document->blocks;
-    CHECK(block->header_count==2 && block->field_count==16 && block->fields[0].count==3 &&
+    CHECK(block->header_count==2 && block->field_count==17 && block->fields[0].count==5 &&
         block->fields[1].count==10);
     qa_item_id lava_nailgun;
     CHECK(qa_strings_intern_cstr(strings,qa_q1_weapon_identity(QA_Q1_LAVA_NAILGUN),&lava_nailgun,&error));
     const qa_bot_source_weapon *bound=qa_bot_source_weapon_read(knowledge,lava_nailgun);
     CHECK(bound && bound->ideal_fov==25 && bound->ordinal==0 && bound->melee && bound->needs_ammo &&
-        bound->hold_and_release && bound->trigger_hold==.5f && bound->trigger_cooldown==.3f);
+        bound->hold_and_release && bound->trigger_hold==.5f && bound->trigger_cooldown==.3f &&
+        bound->aim_point==QA_BOT_AIM_BEST && bound->explosive);
     document=qa_bot_source_document_at(knowledge,1);block=document->blocks;
     CHECK(block->field_count==17 && block->fields[0].key==block->fields[1].key &&
         block->fields[15].key==block->fields[16].key && block->fields[15].count==2);

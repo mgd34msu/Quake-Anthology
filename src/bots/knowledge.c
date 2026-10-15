@@ -131,6 +131,16 @@ static bool source_inventory_read(void *context,int32_t index,int32_t *out,qa_er
     }
     *out=inventory_value(*inventory,index);return true;
 }
+qa_vec3 qa_bot_weapon_aim_point(const qa_bot_source_weapon *weapon,bool best_aim_head,
+    qa_vec3 origin,qa_bounds bounds,qa_vec3 from)
+{
+    qa_bot_aim_point point=weapon?weapon->aim_point:QA_BOT_AIM_CENTER;
+    if(point==QA_BOT_AIM_BEST) point=weapon->explosive && fabsf(origin.z-from.z)<32?
+        QA_BOT_AIM_FEET:best_aim_head?QA_BOT_AIM_HEAD:QA_BOT_AIM_CENTER;
+    if(point==QA_BOT_AIM_HEAD) {origin.z+=bounds.maxs.z;return origin;}
+    if(point==QA_BOT_AIM_FEET) {origin.z+=bounds.mins.z;return origin;}
+    return qa_vec_add(origin,qa_vec_scale(qa_vec_add(bounds.mins,bounds.maxs),.5f));
+}
 bool qa_bot_weapon_trigger_step(qa_bot_trigger_state *state,const qa_bot_source_weapon *weapon,
     bool aimed,float now)
 {

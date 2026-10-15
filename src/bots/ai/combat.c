@@ -161,7 +161,7 @@ bool bot_ai_trigger(qa_bots *b,bot_ai_state *s,qa_error *e)
     const qa_bot_weapon_knowledge *weapons;size_t count;void *lease;
     if(!arsenal(b,s,&weapons,&count,&lease,e)) return false;
     const qa_bot_source_weapon *source=NULL;
-    for(size_t i=0;i<count;++i) if(weapons[i].weapon.number==bot_ai_weapon_number(s)) {
+    for(size_t i=0;i<count;++i) if(weapons[i].weapon.number==bot_ai_firing_weapon_number(s)) {
         source=qa_bot_source_weapon_read(b->services.source_knowledge,weapons[i].supply_weapon);break;
     }
     b->services.arsenal_end(b->services.context,lease);
@@ -748,7 +748,7 @@ static bool canonical_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error 
     const qa_bot_weapon_knowledge *weapons;size_t count;void *lease;
     if(!arsenal(b,s,&weapons,&count,&lease,e)) return false;
     qa_bot_weapon_knowledge selected={0};bool exists=false;
-    for(size_t i=0;i<count;++i) if(weapons[i].weapon.number==bot_ai_weapon_number(s)) {selected=weapons[i];exists=true;break;}
+    for(size_t i=0;i<count;++i) if(weapons[i].weapon.number==bot_ai_firing_weapon_number(s)) {selected=weapons[i];exists=true;break;}
     b->services.arsenal_end(b->services.context,lease);
     if(!exists || s->retired || !bot_ai_live(b,s->view.actor)) return true;
     if(selected.launch_velocity && (!selected.available || selected.grapple)) return true;
@@ -764,20 +764,28 @@ static bool canonical_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error 
         if(!allow_discharge) return true;
     }
     qa_bot_weapon_tactics tactics=qa_bot_weapon_tactics_for(&selected);
-    float accuracy,skill,reaction,throttle;
-    if(!bot_ai_character_float(b,s,tactics.accuracy_characteristic<0?BOT_C_ACCURACY:(uint32_t)tactics.accuracy_characteristic,0,1,&accuracy,e) ||
-       !bot_ai_character_float(b,s,tactics.skill_characteristic<0?BOT_C_AIM_SKILL:(uint32_t)tactics.skill_characteristic,0,1,&skill,e) ||
-       !bot_ai_character_float(b,s,BOT_C_REACTION,0,5,&reaction,e) ||
-       !bot_ai_character_float(b,s,BOT_C_FIRE_THROTTLE,0,1,&throttle,e)) return false;
+    float accuracy=1,skill=0,reaction=0,throttle=0;
+    if(!s->source_settings &&
+       (!bot_ai_character_float(b,s,tactics.accuracy_characteristic<0?BOT_C_ACCURACY:(uint32_t)tactics.accuracy_characteristic,0,1,&accuracy,e) ||
+        !bot_ai_character_float(b,s,tactics.skill_characteristic<0?BOT_C_AIM_SKILL:(uint32_t)tactics.skill_characteristic,0,1,&skill,e) ||
+        !bot_ai_character_float(b,s,BOT_C_REACTION,0,5,&reaction,e) ||
+        !bot_ai_character_float(b,s,BOT_C_FIRE_THROTTLE,0,1,&throttle,e))) return false;
     if(!s->source_settings && skill>.95f && bot_ai_enemy_sight_time(s)>b->time-reaction*.5f) return true;
     float random;
-    if(target.invisible) {
+    if(!s->source_settings && target.invisible) {
         if(!bot_ai_random(b,&random,e)) return false;
         if(random>.1f) accuracy*=.4f;
     }
     qa_vec3 aim=remembered?target.origin:qa_vec_add(target.origin,qa_v3(0,0,8));
+    if(s->source_settings && !remembered) {
+        qa_body_state body;
+        if(!qa_world_body_read(b->services.shared.world,enemy,&body,e)) return false;
+        if(s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_live(b,enemy)) return true;
+        const qa_bot_source_weapon *source=qa_bot_source_weapon_read(b->services.source_knowledge,selected.supply_weapon);
+        aim=qa_bot_weapon_aim_point(source,s->source_settings->best_aim_head,target.origin,body.bounds,bot_ai_origin(s));
+    }
     float distance=qa_vec_length(qa_vec_sub(aim,bot_ai_eye(s)));
-    if(!remembered && selected.launch_velocity && selected.deployable) {
+    if(!s->source_settings && !remembered && selected.launch_velocity && selected.deployable) {
         qa_trace_result floor;
         if(!trace(b,s,target.origin,qa_vec_add(target.origin,qa_v3(0,0,-64)),NULL,enemy,BOT_SHOT,&floor,e)) return false;
         if(s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_live(b,enemy)) return true;
@@ -815,11 +823,11 @@ static bool canonical_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error 
     qa_bounds shot_bounds={qa_v3(-4,-4,-4),qa_v3(4,4,4)};
     qa_vec3 muzzle=selected.muzzle_count?weapon_muzzle(&selected,s,bot_ai_view_angles(s)):
         qa_vec_add(bot_ai_eye(s),qa_v3(0,0,selected.weapon.offset.z));
-    if(!selected_predictable(&selected) || selected.gravity_acceleration==0) {
+    if(!s->source_settings && (!selected_predictable(&selected) || selected.gravity_acceleration==0)) {
         if(!trace(b,s,muzzle,aim,&shot_bounds,s->view.actor,BOT_SHOT,&hit,e)) return false;
         if(hit.fraction<1 && !qa_actor_id_equal(hit.actor,enemy)) aim.z+=16;
     }
-    if(skill>.6f && (selected.projectile.damage_type&BOT_RADIAL) &&
+    if(!s->source_settings && skill>.6f && (selected.projectile.damage_type&BOT_RADIAL) &&
        (!selected.launch_velocity || (!selected.deployable && !selected.homing)) && target.origin.z<bot_ai_origin(s).z+16) {
         qa_trace_result floor,impact,visible;
         if(!trace(b,s,target.origin,qa_vec_add(target.origin,qa_v3(0,0,-64)),NULL,enemy,BOT_SHOT,&floor,e)) return false;
@@ -831,21 +839,24 @@ static bool canonical_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error 
             if(visible.fraction==1) aim=ground;
         }
     }
-    if(!bot_ai_random(b,&random,e)) return false;
-    aim.x+=20*(random*2-1)*(1-accuracy);
-    if(!bot_ai_random(b,&random,e)) return false;
-    aim.y+=20*(random*2-1)*(1-accuracy);
-    if(!bot_ai_random(b,&random,e)) return false;
-    aim.z+=10*(random*2-1)*(1-accuracy);
-    if(selected_predictable(&selected)) bot_ai_aim_target_set(s,aim);
+    if(!s->source_settings) {
+        if(!bot_ai_random(b,&random,e)) return false;
+        aim.x+=20*(random*2-1)*(1-accuracy);
+        if(!bot_ai_random(b,&random,e)) return false;
+        aim.y+=20*(random*2-1)*(1-accuracy);
+        if(!bot_ai_random(b,&random,e)) return false;
+        aim.z+=10*(random*2-1)*(1-accuracy);
+    }
+    if(s->source_settings || selected_predictable(&selected)) bot_ai_aim_target_set(s,aim);
     else {
         if(!trace(b,s,bot_ai_eye(s),aim,NULL,s->view.actor,BOT_SHOT,&hit,e)) return false;
         bot_ai_aim_target_set(s,hit.end);
     }
     qa_vec3 direction=qa_vec_sub(aim,selected.muzzle_count?muzzle:bot_ai_eye(s));
     float aim_distance=qa_vec_length(direction);
-    if(!tactics.melee && selected.weapon.speed==0) accuracy=accuracy*.6f+fminf(distance,150)/150*.4f;
-    if(accuracy<.8f) {
+    if(!s->source_settings && !tactics.melee && selected.weapon.speed==0)
+        accuracy=accuracy*.6f+fminf(distance,150)/150*.4f;
+    if(!s->source_settings && accuracy<.8f) {
         direction=qa_vec_normalize(direction);
         if(!bot_ai_random(b,&random,e)) return false;
         direction.x+=.3f*(random*2-1)*(1-accuracy);
@@ -860,12 +871,14 @@ static bool canonical_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error 
         float flight;
         (void)qa_bot_weapon_launch_aim(&selected,muzzle,noisy,&ideal,&flight);
     }
-    if(!bot_ai_random(b,&random,e)) return false;
-    ideal.x=qa_angle_wrap(ideal.x+6*selected.weapon.vertical_spread*(random*2-1)*(1-accuracy));
-    if(!bot_ai_random(b,&random,e)) return false;
-    ideal.y=qa_angle_wrap(ideal.y+6*selected.weapon.horizontal_spread*(random*2-1)*(1-accuracy));
+    if(!s->source_settings) {
+        if(!bot_ai_random(b,&random,e)) return false;
+        ideal.x=qa_angle_wrap(ideal.x+6*selected.weapon.vertical_spread*(random*2-1)*(1-accuracy));
+        if(!bot_ai_random(b,&random,e)) return false;
+        ideal.y=qa_angle_wrap(ideal.y+6*selected.weapon.horizontal_spread*(random*2-1)*(1-accuracy));
+    }
     bot_ai_view_ideal_set(s,ideal);
-    if(b->controls.challenge && accuracy>.9f && bot_ai_enemy_sight_time(s)<b->time-1) {
+    if(!s->source_settings && b->controls.challenge && accuracy>.9f && bot_ai_enemy_sight_time(s)<b->time-1) {
         bot_ai_view_prepare(s);
         bot_ai_view_angles_set(s,bot_ai_view_ideal(s));
         if(!qa_bot_actions_view(qa_bot_runtime_actions(b->runtime),s->view.client,bot_ai_view_angles(s),e)) return false;

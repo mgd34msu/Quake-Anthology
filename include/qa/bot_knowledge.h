@@ -15,7 +15,7 @@ typedef struct qa_bot_source_movement {
 } qa_bot_source_movement;
 typedef struct qa_bot_source_skill {
     qa_string_id name;
-    bool allow_combat, allow_melee, lead_targets;
+    bool allow_combat, allow_melee, lead_targets, best_aim_head;
     qa_bot_senses senses;
     qa_bot_weapon_senses weapons;
     qa_bot_aiming aiming;
@@ -41,12 +41,18 @@ typedef struct qa_bot_source_document {
     const qa_bot_source_block *blocks;
     size_t block_count;
 } qa_bot_source_document;
+typedef enum qa_bot_aim_point {
+    QA_BOT_AIM_CENTER, QA_BOT_AIM_HEAD, QA_BOT_AIM_FEET, QA_BOT_AIM_BEST
+} qa_bot_aim_point;
 typedef struct qa_bot_source_weapon {
     float ideal_fov, priority, min_range, max_range, min_height, max_height, min_ammo;
     float trigger_hold, trigger_cooldown;
     size_t ordinal;
-    bool melee, electric, needs_ammo, hold_and_release;
+    bool melee, electric, needs_ammo, hold_and_release, explosive;
+    qa_bot_aim_point aim_point;
 } qa_bot_source_weapon;
+qa_vec3 qa_bot_weapon_aim_point(const qa_bot_source_weapon *, bool best_aim_head,
+                               qa_vec3 origin, qa_bounds bounds, qa_vec3 from);
 typedef struct qa_bot_trigger_state {
     float held_since, ready_at;
     bool held;

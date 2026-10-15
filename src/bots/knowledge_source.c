@@ -194,6 +194,8 @@ static bool skills_parse(qa_bot_source_knowledge *knowledge,const qa_bot_source_
             }
         }
     }
+    for(size_t i=0;i<knowledge->skill_count;++i)
+        knowledge->skills[i].best_aim_head=i+2>=knowledge->skill_count;
     return true;
 }
 static bool weapons_parse(qa_bot_source_knowledge *knowledge,const qa_bot_source_document *document,
@@ -214,20 +216,27 @@ static bool weapons_parse(qa_bot_source_knowledge *knowledge,const qa_bot_source
         {"min_ammo",offsetof(qa_bot_source_weapon,min_ammo)},
         {"trigger_hold",offsetof(qa_bot_source_weapon,trigger_hold)},
         {"trigger_cooldown",offsetof(qa_bot_source_weapon,trigger_cooldown)}};
-    qa_string_id name_key,number_key,flags_key,ammo_key,trigger_key,melee,electric,none,continuous,release;
+    qa_string_id name_key,number_key,flags_key,ammo_key,trigger_key,aim_key,
+        melee,electric,explosive,none,continuous,release;
+    qa_string_id points[QA_BOT_AIM_BEST+1];
+    static const char *const point_names[]={"center","head","feet","best"};
     qa_string_id keys[sizeof(numbers)/sizeof(*numbers)];
     if(!qa_strings_intern_cstr(knowledge->strings,"name",&name_key,error) ||
        !qa_strings_intern_cstr(knowledge->strings,"number",&number_key,error) ||
        !qa_strings_intern_cstr(knowledge->strings,"flags",&flags_key,error) ||
        !qa_strings_intern_cstr(knowledge->strings,"trigger_type",&trigger_key,error) ||
+       !qa_strings_intern_cstr(knowledge->strings,"aim_point",&aim_key,error) ||
        !qa_strings_intern_cstr(knowledge->strings,rules==QA_RULESET_NETQUAKE?"ammo":"ammo_name",&ammo_key,error) ||
        !qa_strings_intern_cstr(knowledge->strings,"melee",&melee,error) ||
        !qa_strings_intern_cstr(knowledge->strings,"electric",&electric,error) ||
+       !qa_strings_intern_cstr(knowledge->strings,"explosive",&explosive,error) ||
        !qa_strings_intern_cstr(knowledge->strings,"continuous",&continuous,error) ||
        !qa_strings_intern_cstr(knowledge->strings,"hold_and_release",&release,error) ||
        !qa_strings_intern_cstr(knowledge->strings,"none",&none,error)) return false;
     for(size_t i=0;i<sizeof(keys)/sizeof(*keys);++i)
         if(!qa_strings_intern_cstr(knowledge->strings,numbers[i].name,keys+i,error)) return false;
+    for(size_t i=0;i<sizeof(points)/sizeof(*points);++i)
+        if(!qa_strings_intern_cstr(knowledge->strings,point_names[i],points+i,error)) return false;
     for(size_t i=0;i<document->block_count;++i) {
         qa_string_id name=0;uint32_t number=0;
         qa_bot_source_weapon *weapon=knowledge->weapons+i;
@@ -236,15 +245,21 @@ static bool weapons_parse(qa_bot_source_knowledge *knowledge,const qa_bot_source
         for(size_t j=0;j<block->field_count;++j) {
             const qa_bot_source_field *field=block->fields+j;
             if(field->key==flags_key) {
-                weapon->melee=weapon->electric=false;
+                weapon->melee=weapon->electric=weapon->explosive=false;
                 for(size_t k=0;k<field->count;++k) {
                     weapon->melee|=field->values[k]==melee;
                     weapon->electric|=field->values[k]==electric;
+                    weapon->explosive|=field->values[k]==explosive;
                 }
                 continue;
             }
             if(field->count!=1) continue;
             if(field->key==name_key) name=field->values[0];
+            else if(field->key==aim_key) {
+                weapon->aim_point=QA_BOT_AIM_CENTER;
+                for(size_t k=0;k<sizeof(points)/sizeof(*points);++k)
+                    if(field->values[0]==points[k]) {weapon->aim_point=(qa_bot_aim_point)k;break;}
+            }
             else if(field->key==trigger_key) {
                 if(field->values[0]==continuous || field->values[0]==release)
                     weapon->hold_and_release=field->values[0]==release;

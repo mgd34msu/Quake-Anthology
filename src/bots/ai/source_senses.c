@@ -151,7 +151,7 @@ bool bot_ai_senses_update(qa_bots *b,bot_ai_state *s,float elapsed,qa_error *err
     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
     qa_item_id selected=0;const qa_bot_weapon_knowledge *weapons;size_t count;void *lease;
     if(!b->services.arsenal(b->services.context,s->view.actor,&weapons,&count,&lease,error)) return false;
-    for(size_t i=0;i<count;++i) if(weapons[i].weapon.number==bot_ai_weapon_number(s)) {selected=weapons[i].supply_weapon;break;}
+    for(size_t i=0;i<count;++i) if(weapons[i].weapon.number==bot_ai_firing_weapon_number(s)) {selected=weapons[i].supply_weapon;break;}
     b->services.arsenal_end(b->services.context,lease);
     qa_bot_weapon_senses cone=s->source_settings->weapons;
     cone.fov_angle=bot_ai_senses_weapon_cone(b,s,selected);

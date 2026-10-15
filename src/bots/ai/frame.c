@@ -44,6 +44,7 @@ static bool ready(qa_bots *b, bot_ai_state *s) {
 }
 static bool player(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if (!bot_ai_live(b, s->view.actor)) { s->retired = true; return true; }
+    int32_t held=bot_ai_firing_weapon_number(s);
     qa_q3_player source;
     qa_bot_player observed=bot_ai_player_sample(s);
     bool ok=b->services.player(b->services.context,s->view.actor,&observed,&source,e);
@@ -51,6 +52,7 @@ static bool player(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if(!ok) return false;
     if (!bot_ai_live(b,s->view.actor)) {s->retired=true;return true;}
     if(!bot_ai_source_player_copy(b,s,&source,e)) return false;
+    if(s->source_settings && held!=source.weapon) bot_ai_trigger_clear(s);
     if (!bot_ai_carrying(b,s,&s->player.carrying_objective,e)) return false;
     if (!bot_ai_live(b, s->view.actor)) s->retired = true;
     return true;
