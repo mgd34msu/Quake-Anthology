@@ -222,7 +222,7 @@ static float monster_bfg_radius(const q2m_context *context) {
 qa_vec3 q2m_project_offset(const q2m_context *context, qa_vec3 offset) {
   qa_vec3 forward, right;
   qa_angle_vectors(context->body.angles, &forward, &right, NULL,QA_ANGLE_FLOAT_MATH);
-  float scale = context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
+  float scale = context->monster->definition->source_rules == QA_RULESET_Q2_RERELEASE &&
                         context->monster->entity_scale != 0
                     ? context->monster->entity_scale
                     : 1.0f;
@@ -236,7 +236,7 @@ bool q2m_muzzle_offset(const q2m_context *context, int flash, qa_vec3 *offset,
                        qa_error *error) {
   const qa_vec3 *offsets;
   size_t count;
-  if (context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
+  if (context->monster->definition->source_rules == QA_RULESET_Q2_RERELEASE) {
     offsets = q2m_rerelease_muzzle_offsets;
     count = sizeof(q2m_rerelease_muzzle_offsets) /
             sizeof(q2m_rerelease_muzzle_offsets[0]);

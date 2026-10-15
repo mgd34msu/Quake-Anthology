@@ -239,7 +239,7 @@ static bool publish_duck(q2m_context *context, bool down, qa_error *error) {
 static bool set_duck(q2m_context *context, bool down, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   if (!down && !monster->ducked &&
-      !(context->game->options.rules == QA_RULESET_Q2_CLASSIC &&
+      !(monster->definition->source_rules == QA_RULESET_Q2_CLASSIC &&
         monster->definition->species == Q2M_GUN_COMMANDER))
     return true;
   return publish_duck(context, down, error);
@@ -254,7 +254,7 @@ static bool duck_action(q2m_context *context, q2m_callback_id callback,
       (callback == Q2M_CALLBACK_medic_duck_down) || (callback == Q2M_CALLBACK_monster_duck_down);
   bool hold = (callback == Q2M_CALLBACK_brain_duck_hold) || (callback == Q2M_CALLBACK_chick_duck_hold) ||
       (callback == Q2M_CALLBACK_medic_duck_hold) || (callback == Q2M_CALLBACK_monster_duck_hold);
-  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+  bool rerelease = context->monster->definition->source_rules == QA_RULESET_Q2_RERELEASE;
   if (down) {
     if (!shared && m->ducked) return true;
     if (shared) {
@@ -3562,12 +3562,12 @@ static bool mortar_direction(q2m_context *context, qa_vec3 target,
                              NULL,QA_ANGLE_FLOAT_MATH);
     velocity = qa_vec_scale(velocity, speed);
     qa_vec3 origin = start;
-    for (unsigned step = 0; step < 25; ++step) {
+    for (float remaining = 2.5f; remaining > 0; remaining -= .1f) {
       velocity.z -= gravity * 0.1f;
       qa_trace_query query = {
           .start = origin,
           .end = qa_vec_add(origin, qa_vec_scale(velocity, 0.1f)),
-          .policy = qa_collision_ruleset_policy(context->game->options.rules),
+          .policy = qa_collision_ruleset_policy(context->monster->definition->source_rules),
       };
       query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x46000003), QA_GAME_Q2);
       qa_trace_result trace;
@@ -3623,7 +3623,7 @@ static bool mortar_direction(q2m_context *context, qa_vec3 target,
 bool q2m_guncmdr_attack_move(q2m_context *context, q2m_move_id *move,
                             qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
-  monster->dodging = false;
+  finish_dodge_action(monster);
   *move = Q2M_MOVE_NONE;
   qa_body_state enemy;
   qa_builtin_actor_traits traits;
@@ -3631,7 +3631,7 @@ bool q2m_guncmdr_attack_move(q2m_context *context, q2m_move_id *move,
   if (!target_body(context, &enemy, &traits, &available) || !available ||
       !q2m_alive(context))
     return true;
-  float distance = q2m_body_distance(context->game->options.rules,
+  float distance = q2m_body_distance(monster->definition->source_rules,
                                      &context->body, &enemy);
   bool hazard = monster->hazard.registry != 0;
   if (!hazard && distance < 20.0f && monster->melee_ns < context->game->now_ns) {

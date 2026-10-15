@@ -535,6 +535,9 @@ bool q2m_definitions_bind(qa_q2_game *game, qa_error *error) {
       return false;
     }
     row->moves = definition_moves(game, row, &move_sets);
+    row->source_rules = row->moves &&
+        strncmp(row->moves->key, "rerelease/", sizeof("rerelease/") - 1) == 0
+            ? QA_RULESET_Q2_RERELEASE : game->options.rules;
     static const q2m_species medic_species[7] = {Q2M_SOLDIER_LIGHT, Q2M_SOLDIER,
         Q2M_SOLDIER_SS, Q2M_INFANTRY, Q2M_GUNNER, Q2M_MEDIC, Q2M_GLADIATOR};
     for (size_t j = 0; j < 7; ++j)

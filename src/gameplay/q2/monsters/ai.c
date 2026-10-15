@@ -972,7 +972,8 @@ float q2m_distance(q2m_context *context, qa_actor_id id) {
   qa_error ignored = {0};
   if (!qa_world_body_read(context->game->services.world, id, &target, &ignored))
     return FLT_MAX;
-  return q2m_body_distance(context->game->options.rules, &context->body, &target);
+  return q2m_body_distance(context->monster->definition->source_rules,
+                            &context->body, &target);
 }
 
 bool q2m_visible(q2m_context *context, qa_actor_id id, bool *visible,
@@ -1024,7 +1025,7 @@ bool q2m_clear_shot(q2m_context *context, qa_vec3 offset, bool *clear,
   *clear = false;
   struct qa_q2_monster *monster = context->monster;
   qa_actor_id target_id = monster->enemy;
-  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+  bool rerelease = context->monster->definition->source_rules == QA_RULESET_Q2_RERELEASE;
   qa_builtin_actor_traits traits;
   qa_body_state target;
   bool alive;
@@ -2917,16 +2918,7 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
                 : Q2M_MOVE_gunner_move_attack_grenade;
     break;
   case Q2M_GUN_COMMANDER:
-    if (rerelease)
-      return q2m_guncmdr_attack_move(context, move, error);
-    if (melee) {
-      *move = Q2M_MOVE_guncmdr_move_attack_kick;
-    } else if (blind || distance > 400.0f) {
-      *move = Q2M_MOVE_guncmdr_move_attack_mortar;
-    } else {
-      *move = Q2M_MOVE_guncmdr_move_attack_chain;
-    }
-    break;
+    return q2m_guncmdr_attack_move(context, move, error);
   case Q2M_HOVER:
   case Q2M_DAEDALUS:
     *move = monster->attack_state == Q2M_SLIDING &&
@@ -3292,7 +3284,7 @@ static bool apply_species_attack(q2m_context *context, q2m_move_id move,
                                  qa_error *error) {
   if (!q2m_alive(context) || move == Q2M_MOVE_NONE)
     return true;
-  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+  bool rerelease = context->monster->definition->source_rules == QA_RULESET_Q2_RERELEASE;
   q2m_species species = context->monster->definition->species;
   bool immediate = rerelease &&
       (species == Q2M_JORG || species == Q2M_MEDIC ||
@@ -3325,8 +3317,7 @@ bool q2m_source_attack(q2m_context *context, bool melee, qa_error *error) {
     return false;
   if (!q2m_alive(context) || !living)
     return true;
-  if (species != Q2M_GUN_COMMANDER ||
-      context->game->options.rules != QA_RULESET_Q2_RERELEASE)
+  if (species != Q2M_GUN_COMMANDER)
     context->monster->attack_state = melee ? Q2M_MELEE : Q2M_MISSILE;
   q2m_move_id move;
   if (!select_species_attack(context, &move, error))

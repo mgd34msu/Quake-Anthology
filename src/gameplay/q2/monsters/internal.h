@@ -274,6 +274,7 @@ typedef struct q2m_definition {
   const char *classname, *model, *move_set;
   qa_string_id classname_id;
   const q2m_move_set *moves;
+  qa_ruleset_id source_rules;
   q2m_species species;
   q2m_locomotion locomotion;
   qa_bounds bounds;
