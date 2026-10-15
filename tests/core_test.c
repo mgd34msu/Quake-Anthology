@@ -513,8 +513,14 @@ static void test_native_navigation_first_step(void)
     CHECK(qa_navigation_create(graph,&services,NULL,&runtime,&error));
     uint32_t area;bool found;
     CHECK(qa_navigation_area(runtime,(qa_actor_id){0},qa_v3(0,0,40),&area,&found,&error));
+    CHECK(found && area==0);
+    CHECK(qa_navigation_nearest(runtime,(qa_actor_id){0},qa_v3(0,0,40),512,&area,&found,&error));
     CHECK(found && area==1);
+    CHECK(qa_navigation_area(runtime,(qa_actor_id){0},qa_v3(32,12,40),&area,&found,&error));
+    CHECK(found && area==0);
     CHECK(qa_bot_navigation_create(runtime,world,(qa_actor_id){0},NULL,&navigation,&error));
+    CHECK(qa_bot_navigation_fuzzy(navigation,qa_v3(0,0,40),&area,&error));
+    CHECK(area==2);
     qa_nav_workspace *workspace=NULL;
     CHECK(qa_nav_workspace_create(NULL,&workspace,&error));
     CHECK(qa_nav_workspace_prepare(workspace,qa_nav_workspace_limits_read(qa_nav_graph_read(graph)),&error));
