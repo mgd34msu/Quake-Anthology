@@ -1052,7 +1052,8 @@ bool application_emit_q2_player(application_provider *provider,
         application_mode_layout_read(application, event->actor, NULL, NULL))
         projected.view.layouts |= 1;
     event = &projected;
-    bool wire = event->kind == QA_Q2_PLAYER_PRINT || event->kind == QA_Q2_PLAYER_LAYOUT;
+    bool wire = event->kind == QA_Q2_PLAYER_PRINT || event->kind == QA_Q2_PLAYER_STUFFTEXT ||
+        event->kind == QA_Q2_PLAYER_LAYOUT || event->kind == QA_Q2_PLAYER_INVENTORY;
     uint16_t channels = wire ? protocol_channels(provider) : QA_APPLICATION_OUTPUT_UNIFIED;
     if (!application_event_stream_begin(application, QA_APPLICATION_EVENT_Q2_PLAYER, &write, error))
         return q2_player_capacity(application, &write, recipient, channels, error);
