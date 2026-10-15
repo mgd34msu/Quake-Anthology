@@ -160,11 +160,7 @@ static bool capture(application_provider *source, qa_vec3 origin, qa_vec3 line_e
         (!original && (!qa_q2_combat_rules_read(source->state.q2,&rules) || rules.owner!=source->owner ||
             source_kind!=rules.edition ||
             !qa_q2_bot_clock_read(source->state.q2,&now,&intermission,&started,error) ||
-            now!=clock.frame.time_ns)) ||
-        (original && clock.frame.number &&
-            (engine->frame.provider!=clock.frame.provider || engine->frame.kind!=clock.frame.kind ||
-             engine->frame.number!=clock.frame.number || engine->frame.time_ns!=clock.frame.time_ns ||
-             engine->frame.start_ns!=clock.frame.start_ns || engine->frame.elapsed_ns!=clock.frame.elapsed_ns)))
+            now!=clock.frame.time_ns)))
         return application_fail(error,QA_ERROR_ARGUMENT,"Q2 delivery lost its real world or source clock");
     now=clock.frame.time_ns;
     bool physical_rerelease=false;
