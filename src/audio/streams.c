@@ -211,6 +211,47 @@ bool qa_audio_raw_set_rate(qa_audio_raw_stream *stream, uint32_t rate, qa_error 
     return true;
 }
 
+bool qa_audio_raw_cursor_read(const qa_audio_raw_stream *stream, qa_audio_raw_cursor *out) {
+    if (!stream || !out)
+        return false;
+    *out = (qa_audio_raw_cursor){.position = stream->position, .end = stream->end,
+        .fraction = stream->fraction, .input_rate = stream->input_rate,
+        .output_rate = stream->output_rate, .remainder = stream->remainder,
+        .channels = stream->channels, .paused = stream->paused};
+    return true;
+}
+
+bool qa_audio_raw_cursor_restore(qa_audio_raw_stream *stream, const qa_audio_raw_cursor *cursor,
+    qa_error *error) {
+    if (!stream || !cursor || !cursor->output_rate ||
+        !isfinite(cursor->fraction) || cursor->fraction < 0 || cursor->fraction >= 1 ||
+        cursor->remainder >= cursor->output_rate || stream->input_rate != cursor->input_rate ||
+        (cursor->channels != 1 && cursor->channels != 2) ||
+        stream->channels != cursor->channels || stream->end != cursor->end ||
+        (!cursor->input_rate && (cursor->position || cursor->end || cursor->fraction || cursor->remainder))) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "PCM cursor does not match its reconstructed source queue");
+        return false;
+    }
+    qa_audio_raw_stream phase = {.position = cursor->position, .fraction = cursor->fraction,
+        .remainder = cursor->remainder, .output_rate = cursor->output_rate};
+    uint64_t effective = qa_audio_raw_position(&phase);
+    if (stream->begin > (effective < cursor->end ? effective : cursor->end)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "PCM cursor precedes its reconstructed source queue");
+        return false;
+    }
+    uint32_t output_rate = stream->output_rate;
+    stream->position = cursor->position;
+    stream->fraction = cursor->fraction;
+    stream->remainder = cursor->remainder;
+    stream->output_rate = cursor->output_rate;
+    stream->paused = cursor->paused;
+    raw_steps(stream);
+    if (!qa_audio_raw_set_rate(stream, output_rate, error))
+        return false;
+    raw_discard_consumed(stream);
+    return true;
+}
+
 bool qa_audio_raw_clone_rate(const qa_audio_raw_stream *source, uint32_t rate,
                              qa_audio_raw_stream **out, qa_error *error) {
     if (!source || !rate || !out || *out) {

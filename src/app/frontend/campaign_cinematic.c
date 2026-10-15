@@ -407,22 +407,41 @@ static bool saved_progress(qa_source_save_io *io,qa_cinematic_checkpoint *playba
             qa_source_save_u64(io,&picture->loop) && qa_source_save_f64(io,&picture->source_ms) &&
             qa_source_save_f64(io,&picture->presentation_ms)));
 }
-static bool saved_progress_tail(qa_source_save_io *io,cinematic_request *command,bool present,
-    qa_q3_cinematic_restore_slot *slots,size_t count)
+static bool saved_audio(qa_source_save_io *io,qa_cinematic_checkpoint *playback)
+{
+    playback->audio.captured=true;
+    if (!qa_source_save_bool(io,&playback->audio.present)) return false;
+    if (!playback->audio.present) return true;
+    qa_audio_raw_cursor *cursor=&playback->audio.cursor;
+    uint32_t channels=(uint32_t)cursor->channels;
+    bool ok=qa_source_save_u64(io,&playback->audio.loop) &&
+        qa_source_save_u64(io,&cursor->position) && qa_source_save_u64(io,&cursor->end) &&
+        qa_source_save_f64(io,&cursor->fraction) && qa_source_save_u32(io,&cursor->input_rate) &&
+        qa_source_save_u32(io,&cursor->output_rate) && qa_source_save_u32(io,&cursor->remainder) &&
+        qa_source_save_u32(io,&channels) && qa_source_save_bool(io,&cursor->paused);
+    if (ok) cursor->channels=channels;
+    return ok;
+}
+static bool checkpoint_tail_present(const qa_cinematic_checkpoint *playback,bool audio)
+{
+    return audio?playback->audio.captured:playback->progress_kind!=QA_CINEMATIC_PROGRESS_TIME;
+}
+static bool saved_checkpoint_tail(qa_source_save_io *io,cinematic_request *command,bool present,
+    qa_q3_cinematic_restore_slot *slots,size_t count,bool audio,bool continuation)
 {
     bool writing=io->direction==QA_SOURCE_SAVE_WRITE;
-    size_t records=present && command->playback.progress_kind!=QA_CINEMATIC_PROGRESS_TIME;
+    size_t records=present && checkpoint_tail_present(&command->playback,audio);
     for (size_t i=0;i<count;++i)
-        if (slots[i].has_playback && slots[i].playback.progress_kind!=QA_CINEMATIC_PROGRESS_TIME) ++records;
-    if ((writing && !records) || (!writing && io->offset==io->input.size)) return true;
+        if (slots[i].has_playback && checkpoint_tail_present(&slots[i].playback,audio)) ++records;
+    if ((writing && !records && !continuation) || (!writing && io->offset==io->input.size)) return true;
     if (!qa_source_save_count(io,&records,17)) return false;
     bool seen_command=false,seen[16]={0};
     size_t next=0;
     for (size_t i=0;i<records;++i) {
         int32_t handle=-1;
-        if (writing && (seen_command || !present || command->playback.progress_kind==QA_CINEMATIC_PROGRESS_TIME)) {
+        if (writing && (seen_command || !present || !checkpoint_tail_present(&command->playback,audio))) {
             while (next<count && (!slots[next].has_playback ||
-                slots[next].playback.progress_kind==QA_CINEMATIC_PROGRESS_TIME)) ++next;
+                !checkpoint_tail_present(&slots[next].playback,audio))) ++next;
             handle=slots[next].handle;
         }
         if (!qa_source_save_i32(io,&handle)) return false;
@@ -438,7 +457,7 @@ static bool saved_progress_tail(qa_source_save_io *io,cinematic_request *command
         }
         if (!playback)
             return frontend_fail(io->error,QA_ERROR_FORMAT,"Saved cinematic progress has no unique playback");
-        if (!saved_progress(io,playback)) return false;
+        if (!(audio?saved_audio(io,playback):saved_progress(io,playback))) return false;
     }
     return true;
 }
@@ -486,10 +505,13 @@ bool frontend_cinematic_save_capture(qa_frontend *f,qa_buffer *out,qa_error *err
             slot.system->state(slot.system->context,&saved->system_state,error);
         if (ok && saved->has_playback) ok=qa_cinematic_checkpoint_read((qa_cinematic *)slot.playback,&saved->playback,error);
     }
-    bool progress=present && request.playback.progress_kind!=QA_CINEMATIC_PROGRESS_TIME;
-    for (size_t i=0;i<count;++i)
-        if (slots[i].has_playback && slots[i].playback.progress_kind!=QA_CINEMATIC_PROGRESS_TIME) progress=true;
-    if (ok && (count || progress)) {
+    bool progress=present && checkpoint_tail_present(&request.playback,false);
+    bool audio=present && checkpoint_tail_present(&request.playback,true);
+    for (size_t i=0;i<count;++i) if (slots[i].has_playback) {
+        if (checkpoint_tail_present(&slots[i].playback,false)) progress=true;
+        if (checkpoint_tail_present(&slots[i].playback,true)) audio=true;
+    }
+    if (ok && (count || progress || audio)) {
         /* One per-save association also covers owners not yet lazily created.
          * Runtime pointers qualify groups here but are never written. */
         for (size_t i=0;i<count;++i) {
@@ -501,8 +523,9 @@ bool frontend_cinematic_save_capture(qa_frontend *f,qa_buffer *out,qa_error *err
         }
         ok=qa_source_save_count(&io,&count,16);
         for (size_t i=0;ok && i<count;++i) ok=saved_slot(&io,slots+i);
-        if (ok) ok=saved_system_slots(&io,slots,count,progress);
-        if (ok) ok=saved_progress_tail(&io,&request,present,slots,count);
+        if (ok) ok=saved_system_slots(&io,slots,count,progress || audio);
+        if (ok) ok=saved_checkpoint_tail(&io,&request,present,slots,count,false,audio);
+        if (ok) ok=saved_checkpoint_tail(&io,&request,present,slots,count,true,false);
     }
     ok=ok && qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); return ok;
@@ -521,7 +544,8 @@ bool frontend_cinematic_save_prepare(qa_frontend *f,qa_bytes bytes,qa_error *err
         ok=qa_source_save_count(&io,&saved->count,16);
         for (size_t i=0;ok && i<saved->count;++i) ok=saved_slot(&io,saved->slots+i);
         if (ok) ok=saved_system_slots(&io,saved->slots,saved->count,false);
-        if (ok) ok=saved_progress_tail(&io,&saved->command,saved->present,saved->slots,saved->count);
+        if (ok) ok=saved_checkpoint_tail(&io,&saved->command,saved->present,saved->slots,saved->count,false,false);
+        if (ok) ok=saved_checkpoint_tail(&io,&saved->command,saved->present,saved->slots,saved->count,true,false);
     }
     ok=ok && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);

@@ -35,6 +35,7 @@
 #include "qa/hud_q2.h"
 #include "qa/vfs.h"
 #include "qa/audio.h"
+#include "qa/audio_save.h"
 #include "qa/cinematic.h"
 #include "../src/audio/mixer_internal.h"
 #include "qa/movement.h"
@@ -2270,6 +2271,7 @@ static void test_roq_prefix_checkpoint(void)
         qa_cinematic_destroy(restored); restored=NULL;
         CHECK(qa_cinematic_checkpoint_read(movie,&saved,&error));
         qa_cinematic_checkpoint legacy=saved; legacy.progress_kind=QA_CINEMATIC_PROGRESS_TIME;
+        legacy.audio.captured=false;
         CHECK(qa_cinematic_restore(&source,&resumed,&legacy,&restored,&error));
         CHECK(qa_cinematic_frame(restored) && qa_cinematic_frame(restored)->index==0);
         qa_cinematic_destroy(restored); restored=NULL;
@@ -2362,6 +2364,118 @@ static void test_raw_audio_custody(void)
         CHECK(a[2*i]==expected && a[2*i+1]==expected);
     }
     qa_audio_raw_destroy(copy); qa_audio_raw_destroy(restored);
+}
+
+static void test_raw_audio_scalar_cursor(void)
+{
+    qa_error error={0}; qa_audio_raw_stream *source=NULL,*restored=NULL;
+    int16_t samples[40]; float discarded[10]={0},a[32]={0},b[32]={0};
+    for (size_t i=0;i<40;++i) samples[i]=(int16_t)(100+i*7);
+    CHECK(qa_audio_raw_create(7,&source,&error));
+    CHECK(qa_audio_raw_queue(source,samples,40,1,5,0,true,&error));
+    CHECK(qa_audio_raw_mix(source,discarded,5,1)==5);
+    CHECK(qa_audio_raw_set_rate(source,3,&error));
+    CHECK(qa_audio_raw_mix(source,discarded,1,1)==1);
+    qa_audio_raw_cursor cursor;
+    qa_audio_raw_pause(source,true);
+    CHECK(qa_audio_raw_cursor_read(source,&cursor));
+    CHECK(cursor.position==4 && qa_audio_raw_position(source)==5 && cursor.fraction>0 && cursor.remainder==2);
+    CHECK(qa_audio_raw_create(3,&restored,&error));
+    CHECK(qa_audio_raw_queue(restored,samples+5,35,1,5,5,true,&error));
+    CHECK(qa_audio_raw_cursor_restore(restored,&cursor,&error));
+    CHECK(qa_audio_raw_mix(source,a,8,1)==0 && qa_audio_raw_mix(restored,b,8,1)==0);
+    qa_audio_raw_pause(source,false); qa_audio_raw_pause(restored,false);
+    CHECK(qa_audio_raw_cursor_read(source,&cursor));
+    CHECK(qa_audio_raw_mix(source,a,8,1)==8 && qa_audio_raw_mix(restored,b,8,1)==8);
+    CHECK(!memcmp(a,b,16*sizeof(*a)));
+    qa_audio_raw_destroy(restored); restored=NULL;
+    CHECK(qa_audio_raw_queue(source,samples,40,1,5,0,true,&error));
+    CHECK(qa_audio_raw_cursor_restore(source,&cursor,&error));
+    CHECK(qa_audio_raw_set_rate(source,11,&error));
+    CHECK(qa_audio_raw_create(11,&restored,&error));
+    CHECK(qa_audio_raw_queue(restored,samples+5,35,1,5,5,true,&error));
+    CHECK(qa_audio_raw_cursor_restore(restored,&cursor,&error));
+    memset(a,0,sizeof(a)); memset(b,0,sizeof(b));
+    CHECK(qa_audio_raw_mix(source,a,16,1)==16 && qa_audio_raw_mix(restored,b,16,1)==16);
+    CHECK(!memcmp(a,b,sizeof(a)));
+    qa_audio_raw_destroy(source); qa_audio_raw_destroy(restored); source=restored=NULL;
+    CHECK(qa_audio_raw_create(2,&source,&error));
+    CHECK(qa_audio_raw_queue(source,samples,1,1,5,0,true,&error));
+    CHECK(qa_audio_raw_mix(source,discarded,1,1)==1);
+    CHECK(qa_audio_raw_cursor_read(source,&cursor) && cursor.position>cursor.end);
+    CHECK(qa_audio_raw_create(2,&restored,&error));
+    CHECK(qa_audio_raw_queue(restored,samples,1,1,5,0,true,&error));
+    CHECK(qa_audio_raw_cursor_restore(restored,&cursor,&error));
+    CHECK(qa_audio_raw_mix(restored,discarded,1,1)==0);
+    CHECK(qa_audio_raw_queue(source,samples+1,10,1,5,1,false,&error));
+    CHECK(qa_audio_raw_queue(restored,samples+1,10,1,5,1,false,&error));
+    memset(a,0,sizeof(a)); memset(b,0,sizeof(b));
+    CHECK(qa_audio_raw_mix(source,a,3,1)==3 && qa_audio_raw_mix(restored,b,3,1)==3);
+    CHECK(!memcmp(a,b,6*sizeof(*a)));
+    qa_audio_raw_destroy(source); qa_audio_raw_destroy(restored); source=restored=NULL;
+    CHECK(qa_audio_raw_create(7,&source,&error) && qa_audio_raw_cursor_read(source,&cursor));
+    CHECK(qa_audio_raw_create(11,&restored,&error) && qa_audio_raw_cursor_restore(restored,&cursor,&error));
+    CHECK(qa_audio_raw_position(restored)==0 && qa_audio_raw_queued(restored)==0);
+    qa_audio_raw_destroy(source); qa_audio_raw_destroy(restored);
+}
+
+static void test_roq_audio_cursor(void)
+{
+    uint8_t bytes[196]={0};
+    qa_store_u16le(bytes,0x1084); qa_store_u16le(bytes+6,30);
+    qa_store_u16le(bytes+8,0x1001); qa_store_u32le(bytes+10,8);
+    qa_store_u16le(bytes+16,8); qa_store_u16le(bytes+18,8);
+    qa_store_u16le(bytes+24,0x1021); qa_store_u32le(bytes+26,64); memset(bytes+32,1,64);
+    qa_store_u16le(bytes+96,0x1011); qa_store_u32le(bytes+98,2);
+    qa_store_u16le(bytes+106,0x1021); qa_store_u32le(bytes+108,64); memset(bytes+114,1,64);
+    qa_store_u16le(bytes+178,0x1011); qa_store_u32le(bytes+180,2);
+    qa_store_u16le(bytes+188,0x1012);
+    qa_error error={0}; qa_media_input *input=NULL;
+    CHECK(qa_media_input_memory((qa_bytes){bytes,sizeof(bytes)},NULL,NULL,&input,&error));
+    qa_cinematic_source source={.name="audio-prefix.roq",.format=QA_CINEMATIC_ROQ,.data.roq=input};
+    for (unsigned looping=0;looping<2;++looping) {
+        qa_audio_engine *engine=NULL,*copy_engine=NULL;
+        qa_audio_engine_options engine_options={.sample_rate=48000,.output_channels=2,
+            .mix_frames=32,.initial_voices=8};
+        CHECK(qa_audio_engine_create(&engine_options,&engine,&error));
+        CHECK(qa_audio_engine_create(&engine_options,&copy_engine,&error));
+        double now=0,later=10000;
+        qa_cinematic_options options={.clock={&now,cinematic_test_clock},
+            .target={.kind=QA_CINEMATIC_SEAT},.loop=looping!=0,.hold=looping==0,
+            .audio=engine,.audio_bus=23,.gain=1,.audio_audience={.kind=QA_CINEMATIC_AUDIO_WORLD}};
+        qa_cinematic *movie=NULL,*restored=NULL; qa_cinematic_checkpoint saved,copy;
+        qa_media_tick tick; int16_t discarded[14],a[32],b[32];
+        qa_cinematic_options resumed=options; resumed.clock.context=&later; resumed.audio=copy_engine;
+        CHECK(qa_cinematic_create(&source,&options,&movie,&error));
+        CHECK(qa_cinematic_tick(movie,&tick,&error));
+        CHECK(qa_cinematic_checkpoint_read(movie,&saved,&error) && saved.audio.captured && !saved.audio.present);
+        CHECK(qa_cinematic_restore(&source,&resumed,&saved,&restored,&error));
+        CHECK(!qa_audio_engine_bus_stream(copy_engine,23));
+        qa_cinematic_destroy(restored); restored=NULL;
+        now=34;
+        CHECK(qa_cinematic_tick(movie,&tick,&error));
+        CHECK(qa_audio_engine_mix(engine,discarded,7,&error));
+        now=100; CHECK(qa_cinematic_tick(movie,&tick,&error));
+        CHECK(qa_cinematic_checkpoint_read(movie,&saved,&error));
+        CHECK(saved.audio.captured && saved.audio.present && saved.audio.loop==0 &&
+            saved.audio.cursor.position==3 && saved.audio.cursor.end==64 && saved.audio.cursor.remainder!=0 &&
+            !saved.audio.cursor.paused);
+        CHECK(looping?(saved.loop==1 && saved.progress.roq.source_sample==0):
+            (saved.status==QA_MEDIA_HELD && saved.paused));
+        qa_cinematic_checkpoint legacy=saved; legacy.audio.captured=false;
+        CHECK(qa_cinematic_restore(&source,&resumed,&legacy,&restored,&error));
+        qa_cinematic_destroy(restored); restored=NULL;
+        CHECK(qa_cinematic_restore(&source,&resumed,&saved,&restored,&error));
+        CHECK(qa_cinematic_checkpoint_read(restored,&copy,&error));
+        CHECK(copy.audio.present && copy.audio.loop==saved.audio.loop &&
+            copy.audio.cursor.position==saved.audio.cursor.position &&
+            copy.audio.cursor.remainder==saved.audio.cursor.remainder && !copy.audio.cursor.paused);
+        CHECK(qa_audio_engine_mix(engine,a,16,&error) && qa_audio_engine_mix(copy_engine,b,16,&error));
+        CHECK(!memcmp(a,b,sizeof(a)) && a[0]!=0);
+        qa_cinematic_destroy(restored); qa_cinematic_destroy(movie);
+        qa_audio_engine_destroy(copy_engine); qa_audio_engine_destroy(engine);
+    }
+    qa_media_input_release(input);
 }
 
 static bool audio_position_not_actor(void *opaque, const qa_audio_position *position)
@@ -5328,6 +5442,8 @@ int main(int argc, char **argv)
     test_shared_effect_cursor();
     test_roq_prefix_checkpoint();
     test_raw_audio_custody();
+    test_raw_audio_scalar_cursor();
+    test_roq_audio_cursor();
     test_shared_audio_preparation();
     test_retained_movement_result();
     test_q2_requested_body();

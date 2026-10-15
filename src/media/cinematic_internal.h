@@ -29,6 +29,7 @@ struct qa_cinematic {
     uint64_t audio_loop;
     qa_arena pcm_storage;
     bool restoring, restore_audio;
+    const qa_cinematic_checkpoint *restore_checkpoint;
     double restore_source_ms;
     uint64_t restore_loop;
 };

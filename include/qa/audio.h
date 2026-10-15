@@ -137,6 +137,16 @@ bool qa_audio_bank_music_cue(qa_audio_bank *bank, const char *name, qa_game_fami
                              qa_audio_stream **out, qa_error *error);
 
 typedef struct qa_audio_raw_stream qa_audio_raw_stream;
+typedef struct qa_audio_raw_cursor {
+    uint64_t position, end;
+    double fraction;
+    uint32_t input_rate, output_rate, remainder;
+    unsigned channels;
+    bool paused;
+} qa_audio_raw_cursor;
+bool qa_audio_raw_cursor_read(const qa_audio_raw_stream *, qa_audio_raw_cursor *);
+/* Apply after rebuilding the named source's queue through cursor.end. */
+bool qa_audio_raw_cursor_restore(qa_audio_raw_stream *, const qa_audio_raw_cursor *, qa_error *);
 bool qa_audio_raw_create(uint32_t output_rate, qa_audio_raw_stream **out, qa_error *error);
 bool qa_audio_raw_prepare(qa_audio_raw_stream *, size_t frames, unsigned channels, qa_error *);
 void qa_audio_raw_destroy(qa_audio_raw_stream *stream);

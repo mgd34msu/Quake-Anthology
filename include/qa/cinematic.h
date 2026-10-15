@@ -101,6 +101,11 @@ typedef struct qa_cinematic_checkpoint {
     bool paused;
     qa_cinematic_progress_kind progress_kind;
     qa_media_status status;
+    struct {
+        bool captured, present;
+        uint64_t loop;
+        qa_audio_raw_cursor cursor;
+    } audio;
     union {
         qa_cinematic_roq_progress roq;
     } progress;

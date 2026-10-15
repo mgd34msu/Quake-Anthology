@@ -65,6 +65,8 @@ static void reset_audio(qa_cinematic *movie) {
 }
 static bool before_audio_reset(void *context, qa_error *error) {
     qa_cinematic *movie = context;
+    if (movie->restoring && movie->restore_checkpoint && movie->restore_checkpoint->audio.captured)
+        return true;
     qa_audio_raw_stream *raw = current_raw(movie);
     if (!raw)
         return true;
@@ -80,6 +82,38 @@ static uint32_t audio_audience(const qa_cinematic_options *options) {
         return QA_AUDIO_WORLD;
     return options->target.kind == QA_CINEMATIC_SEAT ? options->target.id.seat : QA_AUDIO_WORLD;
 }
+static bool queue_samples(qa_cinematic *movie, const qa_media_audio *sound,
+    const int16_t *pcm, size_t frames, qa_error *error) {
+    qa_audio_raw_stream *raw = current_raw(movie);
+    bool installed = raw != NULL;
+    if (!raw)
+        raw = movie->prepared_raw;
+    bool prepared = raw && raw == movie->prepared_raw;
+    uint32_t rate = qa_audio_engine_rate(movie->options.audio);
+    if (!raw && !qa_audio_raw_create(rate, &raw, error))
+        return false;
+    if (!qa_audio_raw_set_rate(raw, rate, error) ||
+        !qa_audio_raw_queue(
+            raw, pcm, frames, sound->channels, sound->rate, sound->source_sample,
+            sound->reset || !installed || movie->audio_loop != sound->loop, error)) {
+        if (!installed && !prepared)
+            qa_audio_raw_destroy(raw);
+        return false;
+    }
+    if (!installed) {
+        uint32_t audience = audio_audience(&movie->options);
+        if (!qa_audio_engine_stream(movie->options.audio, movie->options.audio_bus, audience,
+                                    movie->options.gain, raw, error)) {
+            if (!prepared)
+                qa_audio_raw_destroy(raw);
+            return false;
+        }
+        movie->prepared_raw = NULL;
+    }
+    movie->raw_attached = true;
+    movie->audio_loop = sound->loop;
+    return true;
+}
 static bool queue_audio(void *context, const qa_media_audio *sound, qa_error *error) {
     qa_cinematic *movie = context;
     if (!movie->options.audio || (sound->channels != 1 && sound->channels != 2) ||
@@ -88,24 +122,43 @@ static bool queue_audio(void *context, const qa_media_audio *sound, qa_error *er
         (sound->pcm.size && !sound->pcm.data))
         return cinematic_fail(error, "Invalid cinematic audio");
     qa_media_audio resumed;
-    if (movie->restoring) {
-        if (!movie->restore_audio || sound->loop < movie->restore_loop) return true;
+    const qa_cinematic_checkpoint *checkpoint = movie->restore_checkpoint;
+    bool exact_audio = movie->restoring && checkpoint && checkpoint->audio.captured;
+    if (movie->restoring && !movie->restore_audio) return true;
+    if (exact_audio) {
+        if (!checkpoint->audio.present || sound->loop != checkpoint->audio.loop) return true;
+        const qa_audio_raw_cursor *cursor = &checkpoint->audio.cursor;
+        if (sound->source_sample >= cursor->end) return true;
+        size_t width = (size_t)sound->channels * sound->sample_bytes;
+        size_t frames = sound->pcm.size / width;
+        uint64_t remaining = cursor->end - sound->source_sample;
+        if (remaining < frames) frames = (size_t)remaining;
+        uint64_t first = cursor->position < cursor->end ? cursor->position : cursor->end;
+        uint64_t skip = first > sound->source_sample ? first - sound->source_sample : 0;
+        if (skip >= frames) return true;
+        resumed = *sound;
+        resumed.pcm.data += (size_t)skip * width;
+        resumed.pcm.size = (frames - (size_t)skip) * width;
+        resumed.source_sample += skip;
+        sound = &resumed;
+    } else if (movie->restoring) {
+        if (sound->loop < movie->restore_loop) return true;
         if (sound->loop > movie->restore_loop) movie->restoring = false;
-    }
-    if (movie->restoring) {
-        double sample = ceil(movie->restore_source_ms * sound->rate / 1000);
-        if (sample >= 0x1p64) return true;
-        uint64_t first = (uint64_t)sample;
-        size_t frames = sound->pcm.size / ((size_t)sound->channels * sound->sample_bytes);
-        if (first > sound->source_sample) {
-            uint64_t skip = first - sound->source_sample;
-            if (skip >= frames) return true;
-            resumed = *sound;
-            size_t bytes = (size_t)skip * sound->channels * sound->sample_bytes;
-            resumed.pcm.data += bytes;
-            resumed.pcm.size -= bytes;
-            resumed.source_sample = first;
-            sound = &resumed;
+        if (movie->restoring) {
+            double sample = ceil(movie->restore_source_ms * sound->rate / 1000);
+            if (sample >= 0x1p64) return true;
+            uint64_t first = (uint64_t)sample;
+            size_t frames = sound->pcm.size / ((size_t)sound->channels * sound->sample_bytes);
+            if (first > sound->source_sample) {
+                uint64_t skip = first - sound->source_sample;
+                if (skip >= frames) return true;
+                resumed = *sound;
+                size_t bytes = (size_t)skip * sound->channels * sound->sample_bytes;
+                resumed.pcm.data += bytes;
+                resumed.pcm.size -= bytes;
+                resumed.source_sample = first;
+                sound = &resumed;
+            }
         }
     }
     size_t samples = sound->pcm.size / sound->sample_bytes;
@@ -125,36 +178,22 @@ static bool queue_audio(void *context, const qa_media_audio *sound, qa_error *er
                                 : qa_load_i16le(sound->pcm.data + i * 2);
         pcm = converted;
     }
+    bool ok = queue_samples(movie, sound, pcm, samples / sound->channels, error);
+    if (ok && !exact_audio) movie->restoring = false;
+    return ok;
+}
+static bool restore_audio_cursor(qa_cinematic *movie, const qa_cinematic_checkpoint *checkpoint,
+    qa_error *error) {
+    if (!checkpoint->audio.present) return true;
+    const qa_audio_raw_cursor *cursor = &checkpoint->audio.cursor;
     qa_audio_raw_stream *raw = current_raw(movie);
-    bool installed = raw != NULL;
-    if (!raw)
-        raw = movie->prepared_raw;
-    bool prepared = raw && raw == movie->prepared_raw;
-    uint32_t rate = qa_audio_engine_rate(movie->options.audio);
-    if (!raw && !qa_audio_raw_create(rate, &raw, error))
-        return false;
-    if (!qa_audio_raw_set_rate(raw, rate, error) ||
-        !qa_audio_raw_queue(
-            raw, pcm, samples / sound->channels, sound->channels, sound->rate, sound->source_sample,
-            sound->reset || !installed || movie->audio_loop != sound->loop, error)) {
-        if (!installed && !prepared)
-            qa_audio_raw_destroy(raw);
-        return false;
+    if (!raw) {
+        qa_media_audio empty = {.rate = cursor->input_rate, .channels = (uint8_t)cursor->channels,
+            .sample_bytes = 2, .source_sample = cursor->end, .loop = checkpoint->audio.loop, .reset = true};
+        if (!queue_samples(movie, &empty, NULL, 0, error)) return false;
+        raw = current_raw(movie);
     }
-    if (!installed) {
-        uint32_t audience = audio_audience(&movie->options);
-        if (!qa_audio_engine_stream(movie->options.audio, movie->options.audio_bus, audience,
-                                    movie->options.gain, raw, error)) {
-            if (!prepared)
-                qa_audio_raw_destroy(raw);
-            return false;
-        }
-        movie->prepared_raw = NULL;
-    }
-    movie->raw_attached = true;
-    movie->audio_loop = sound->loop;
-    movie->restoring = false;
-    return true;
+    return qa_audio_raw_cursor_restore(raw, cursor, error);
 }
 static void diagnostic(void *context, const char *text) {
     qa_cinematic *movie = context;
@@ -233,6 +272,7 @@ static bool create(const qa_cinematic_source *source, const qa_cinematic_options
     movie->options = *options;
     if (checkpoint) {
         movie->restoring = true;
+        movie->restore_checkpoint = checkpoint;
         movie->restore_source_ms = checkpoint->source_ms;
         movie->restore_loop = checkpoint->loop;
     }
@@ -346,7 +386,10 @@ static bool create(const qa_cinematic_source *source, const qa_cinematic_options
                 &elapsed, &status, error); break;
         case QA_CINEMATIC_IMAGE: break;
         }
+        if (ok && checkpoint->audio.captured) ok = restore_audio_cursor(movie, checkpoint, error);
         if (!ok) { free_movie(movie); return false; }
+        if (checkpoint->audio.captured) movie->restoring = false;
+        movie->restore_checkpoint = NULL;
         double now = movie->start_ms;
         movie->source_clock_offset = elapsed - now;
         movie->start_ms = now - elapsed;
@@ -354,7 +397,7 @@ static bool create(const qa_cinematic_source *source, const qa_cinematic_options
         movie->paused = checkpoint->paused || status != QA_MEDIA_PLAYING;
         movie->paused_at = now;
         if (checkpoint->paused && status == QA_MEDIA_PLAYING) movie->status = QA_MEDIA_PAUSED;
-        qa_audio_raw_pause(current_raw(movie), movie->paused);
+        if (!checkpoint->audio.captured) qa_audio_raw_pause(current_raw(movie), movie->paused);
         if (status == QA_MEDIA_ENDED || status == QA_MEDIA_STOPPED) {
             movie->completed = true;
             reset_audio(movie);
@@ -556,7 +599,11 @@ bool qa_cinematic_checkpoint_read(qa_cinematic *movie, qa_cinematic_checkpoint *
     case QA_CINEMATIC_CIN:
         cinematic_cin_position(movie->movie.cin, elapsed, &checkpoint.source_ms, &checkpoint.loop); break;
     case QA_CINEMATIC_ROQ:
-        cinematic_roq_position(movie->movie.roq, elapsed, &checkpoint); break;
+        cinematic_roq_position(movie->movie.roq, elapsed, &checkpoint);
+        checkpoint.audio.captured = true;
+        checkpoint.audio.present = qa_audio_raw_cursor_read(current_raw(movie), &checkpoint.audio.cursor);
+        checkpoint.audio.loop = movie->audio_loop;
+        break;
     case QA_CINEMATIC_OGV:
         cinematic_ogv_position(movie->movie.ogv, elapsed, &checkpoint.source_ms, &checkpoint.loop); break;
     case QA_CINEMATIC_IMAGE: checkpoint.source_ms = elapsed; break;
