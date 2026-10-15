@@ -955,14 +955,18 @@ static void test_q2_donor_save_metadata(void)
 
     char directory[]="/tmp/qa-q2-donor-XXXXXX",slot[128];
     CHECK(mkdtemp(directory));
-    CHECK(snprintf(slot,sizeof(slot),"%s/slot",directory)>0 && mkdir(slot,0700)==0);
+    CHECK(snprintf(slot,sizeof(slot),"%s/slot",directory)>0);
     qa_fs_root *root=NULL;
     CHECK(qa_fs_root_open(directory,&root,&error));
+    CHECK(qa_fs_root_replace(root,"slot",(qa_bytes){(const uint8_t *)"previous shared save",20},1,&error));
     level.game=(qa_buffer){.data=(uint8_t *)strdup(level_game),.size=sizeof(level_game)-1};
     qa_q2_save_data save={.server={.comment="Donor",.map_command="base1"},
         .game={.data=(uint8_t *)strdup(game),.size=sizeof(game)-1},.levels=&level,.level_count=1};
     CHECK(level.game.data && save.game.data);
     CHECK(qa_q2_save_directory_write(root,"slot",&save,1,&error));
+    qa_fs_entry_kind kind=QA_FS_MISSING;
+    CHECK(qa_fs_root_status(root,"slot",&kind,NULL,&error) && kind==QA_FS_DIRECTORY);
+    CHECK(qa_q2_save_directory_write(root,"slot",&save,2,&error));
     CHECK(qa_fs_root_replace(root,"slot/base1.sv2",(qa_bytes){donor.data,donor.size},2,&error));
     qa_q2_save_data *read=NULL;
     CHECK(qa_q2_save_directory_read(root,"slot",&read,&error));

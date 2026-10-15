@@ -715,6 +715,9 @@ bool qa_q2_save_directory_write(qa_fs_root *root, const char *directory,
     }
     /* Publish the server entry last. Ordinary Source writes replace a named
      * slot's old per-level set; stale visited maps must not survive a new unit. */
+    qa_fs_entry_kind kind = QA_FS_MISSING;
+    if (ok) ok = qa_fs_root_status(root, directory, &kind, NULL, error);
+    if (ok && kind == QA_FS_REGULAR) ok = qa_fs_root_remove(root, directory, error);
     qa_fs_listing files = {0}; qa_error local = {0};
     if (ok && !qa_fs_root_list(root, directory, &files, &local) && local.code != QA_ERROR_NOT_FOUND) {
         ok = false; if (error) *error = local;
