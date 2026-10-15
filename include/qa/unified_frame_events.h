@@ -169,7 +169,7 @@ typedef struct qa_unified_presentation_event {
 } qa_unified_presentation_event;
 
 typedef struct qa_unified_sound_event {
-    qa_string_id resource;
+    qa_string_id resource; /* Zero: audible action whose waveform is chosen by the client module. */
     qa_actor_id actor;
     qa_vec3 origin;
     int32_t channel;

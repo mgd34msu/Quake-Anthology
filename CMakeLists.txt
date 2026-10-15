@@ -647,6 +647,7 @@ add_library(qa_bots STATIC
     src/bots/ai/source_command.c
     src/bots/ai/source_player.c
     src/bots/ai/source_setup.c
+    src/bots/ai/source_senses.c
     src/bots/ai/source_match.c
     src/bots/ai/source_memory.c
     src/bots/ai/source_alias.c

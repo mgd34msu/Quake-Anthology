@@ -236,6 +236,7 @@ bool application_bots_original_rebind(application_bots_original *cut,qa_error *e
     if(!qa_bot_runtime_rebind_round(bots->runtime,&map,error)) return false;
     for(application_bot_guest *guest=bots->guests;guest;guest=guest->next)
         if(!qa_bot_runtime_rebind_round(guest->runtime,&map,error)) return false;
+    qa_application_events_consumed(&bots->hearing_cursor,qa_application_events_next(bots->application));
     for(application_bot_guest *guest=bots->guests;guest;guest=guest->next)
         guest->provider=original_next(cut,guest->provider);
     bots->source=cut->next_source;
@@ -431,6 +432,7 @@ bool application_bots_round_bind(application_bots_round *cut,qa_error *error) {
     if(!qa_bot_runtime_rebind_round(bots->runtime,&map,error)) goto failed;
     for(application_bot_guest *guest=bots->guests;guest;guest=guest->next)
         if(!qa_bot_runtime_rebind_round(guest->runtime,&map,error)) goto failed;
+    qa_application_events_consumed(&bots->hearing_cursor,qa_application_events_next(bots->application));
     navigation_publish(bots,cut->graphs,cut->graph_count,&cut->map_navigation);
     qa_bot_services services=application_bots_services(bots);
     if(cut->had_population && !qa_bots_create_round(bots->runtime,&services,&bots->population,error)) goto failed;

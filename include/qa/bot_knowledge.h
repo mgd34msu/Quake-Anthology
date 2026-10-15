@@ -15,6 +15,7 @@ typedef struct qa_bot_source_movement {
 } qa_bot_source_movement;
 typedef struct qa_bot_source_skill {
     qa_string_id name;
+    bool allow_combat;
     qa_bot_senses senses;
     qa_bot_weapon_senses weapons;
     qa_bot_aiming aiming;
@@ -42,11 +43,15 @@ typedef struct qa_bot_source_document {
 } qa_bot_source_document;
 /* Load once from the selected mounted scope. Views borrow the knowledge owner;
  * strings belong to the caller's session table. Missing settings return found=false. */
+typedef bool (*qa_bot_source_weapon_resolve)(void *, qa_string_id authored_name,
+    uint32_t authored_number, qa_item_id *, qa_error *);
 bool qa_bot_source_knowledge_load(qa_vfs *, qa_strings *, qa_ruleset_id,
+    qa_bot_source_weapon_resolve, void *,
     qa_bot_source_knowledge **, bool *found, qa_error *);
 void qa_bot_source_knowledge_destroy(qa_bot_source_knowledge *);
 size_t qa_bot_source_skill_count(const qa_bot_source_knowledge *);
 const qa_bot_source_skill *qa_bot_source_skill_at(const qa_bot_source_knowledge *, size_t);
+float qa_bot_source_weapon_fov(const qa_bot_source_knowledge *, qa_item_id);
 size_t qa_bot_source_document_count(const qa_bot_source_knowledge *);
 const qa_bot_source_document *qa_bot_source_document_at(const qa_bot_source_knowledge *, size_t);
 

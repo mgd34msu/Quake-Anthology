@@ -13,6 +13,7 @@ bool qa_bots_source_begin(qa_bots *b,qa_actor_id actor,qa_vec3 angles,int32_t we
 }
 
 bool bot_ai_reset(qa_bots *b, bot_ai_state *s, qa_error *e) {
+    bot_ai_senses_clear_client(b,s->acquired_source_client,false);
     bot_ai_source_order_clear(b,s);
     if(!qa_bot_source_record_clear(&b->services.memory,s->source_record,true,e)) return false;
     bot_ai_state fresh = {.acquired_source_client=s->acquired_source_client,

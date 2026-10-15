@@ -76,6 +76,11 @@ typedef struct application_bots {
     qa_vfs *files;
     qa_ruleset_id behavior;
     qa_bot_source_knowledge *source_knowledge;
+    qa_application_event_subscription hearing_cursor;
+    qa_unified_frame_lease *hearing_storage;
+    struct application_bot_heard_sound *hearing_rows;
+    size_t hearing_count;
+    uint64_t hearing_retire,hearing_persist_ns;
     float walk_speed;
     application_bot_script_file *script_files;
     qa_vfs *navigation_files;

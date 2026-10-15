@@ -111,6 +111,7 @@ typedef struct qa_bot_source_memory {
     bool (*write)(void *,uint32_t,const void *,uint32_t,qa_error *);
     bool (*borrow_span)(void *,uint32_t,uint32_t,uint8_t **,qa_error *);
 } qa_bot_source_memory;
+typedef bool (*qa_bot_hearing_visit)(void *, qa_actor_id, const qa_bot_sound *, qa_error *);
 typedef struct qa_bot_services {
     void *context;
     qa_bot_source_memory memory;
@@ -119,6 +120,7 @@ typedef struct qa_bot_services {
     bool team_arena;
     qa_builtin_services shared;
     qa_modes *modes;
+    bool (*hearing)(void *, qa_actor_id listener, qa_bot_hearing_visit, void *, qa_error *);
     /* Optional source output is detached only until the BotAI copy stage. */
     bool (*player)(void *, qa_actor_id, qa_bot_player *, qa_q3_player *, qa_error *);
     bool (*inventory)(void *, qa_actor_id, const qa_bot_player *,

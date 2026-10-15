@@ -585,9 +585,14 @@ static bool enemy_state(qa_bots *b, bot_ai_state *s, bool remember,
     if(s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_live(b,enemy_actor)) return true;
     *alive=present && !enemy.dead && !enemy.observer && enemy.connected;
     if(!*alive) return true;
-    float visibility;
-    DECISION_CALL(bot_ai_source_entity_visible(b,s,bot_ai_enemy_number(s),360,&visibility,e));
-    *visible=visibility>0;
+    if(s->source_settings) {
+        const qa_bot_awareness *awareness=bot_ai_senses_awareness(b,s,enemy_actor);
+        *visible=awareness && awareness->sight>=1 && awareness->last_seen==b->time;
+    } else {
+        float visibility;
+        DECISION_CALL(bot_ai_source_entity_visible(b,s,bot_ai_enemy_number(s),360,&visibility,e));
+        *visible=visibility>0;
+    }
     if(*visible && remember) {
         bot_ai_enemy_visible_time_set(s,b->time);
         qa_bot_entity_info info;bool observed;
@@ -882,7 +887,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
             if(node!=QA_BOT_FIGHTING && bot_ai_enemy_number(s)<0) {
                 ENTER(node==QA_BOT_BATTLE_NEARBY?QA_BOT_SEEK_NEARBY:QA_BOT_SEEK_LONG_TERM);continue;
             }
-            bool source_combat=bot_ai_source_enemy(b,s),source_cached=false,source_travel=false;
+            bool source_combat=!s->source_settings && bot_ai_source_enemy(b,s),source_cached=false,source_travel=false;
             qa_bot_entity_info cached_enemy;
             if(source_combat && (node==QA_BOT_RETREATING || node==QA_BOT_BATTLE_NEARBY)) {
                 bool observed,dead;
@@ -893,7 +898,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
             }
             if(node==QA_BOT_FIGHTING || node==QA_BOT_RETREATING) {
                 DECISION_CALL(bot_ai_find_enemy(b,s,bot_ai_enemy_number(s),&found,e));
-                source_combat=bot_ai_source_enemy(b,s);
+                source_combat=!s->source_settings && bot_ai_source_enemy(b,s);
             }
             if(node==QA_BOT_FIGHTING) {
                 if(bot_ai_enemy_number(s)<0) {ENTER(QA_BOT_SEEK_LONG_TERM);continue;}

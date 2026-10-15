@@ -415,7 +415,7 @@ static bool rows_valid(frontend_unified_events *o,const qa_unified_frame_events 
             return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified simulation event changed its admitted wire client");
         if (row->payload.kind==QA_UNIFIED_SIMULATION_SOUND) {
             qa_actor_id actual;
-            if (!resource_find(o,row->payload.value.sound.resource) ||
+            if ((row->payload.value.sound.resource && !resource_find(o,row->payload.value.sound.resource)) ||
                 (children && !actor(o,row->payload.value.sound.actor,&actual,e)))
                 return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified sound has no declared resource or actual source actor");
             continue;
@@ -623,6 +623,7 @@ static bool resource_sound_asset(frontend_unified_events *o, unified_event_resou
 }
 static bool sound(frontend_unified_events *o,const qa_unified_sound_event *event,double ms,qa_error *e)
 {
+    if (!event->resource) return true;
     unified_event_resource *r=resource_find(o,event->resource);
     if (!r) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified sound precedes its actual resource declaration");
     qa_actor_id actual;
@@ -866,6 +867,7 @@ bool frontend_unified_events_sound_mirrored(frontend_unified_events *o,const qa_
         const qa_unified_simulation_event *simulation=events->simulation+i;
         if (simulation->payload.kind!=QA_UNIFIED_SIMULATION_SOUND) continue;
         const qa_unified_sound_event *sound_event=&simulation->payload.value.sound;
+        if (!sound_event->resource) continue;
         unified_event_resource *resource=resource_find(o,sound_event->resource);
         if (!resource) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Linked sound lost its declared resource");
         if (resource->content!=content) continue;

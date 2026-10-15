@@ -20,6 +20,8 @@ struct qa_bots_checkpoint {
     bot_checkpoint_record *records;
     bot_cooperative_cooldown *cooperative;
     size_t cooperative_count;
+    bot_awareness_record *awareness;
+    size_t awareness_count;
     qa_arena validation_storage;
     bot_ai_activation_scratch *activation_scratch;
     uint32_t count,bot_count,client_capacity;
@@ -57,7 +59,7 @@ void qa_bots_checkpoint_destroy(qa_bots_checkpoint *checkpoint) {
     bot_define_history_destroy(checkpoint->defines);
     qa_bot_memory_checkpoint_destroy(checkpoint->memory);
     qa_arena_destroy(&checkpoint->validation_storage);
-    free(checkpoint->cooperative);free(checkpoint->records);free(checkpoint);
+    free(checkpoint->awareness);free(checkpoint->cooperative);free(checkpoint->records);free(checkpoint);
 }
 static bool capture(qa_bots *b,qa_bots_checkpoint **out,qa_error *e) {
     qa_bots_checkpoint *checkpoint=calloc(1,sizeof(*checkpoint));
@@ -98,6 +100,18 @@ static bool capture(qa_bots *b,qa_bots_checkpoint **out,qa_error *e) {
         cursor=0;
         for(size_t i=0;i<checkpoint->cooperative_count;++i)
             (void)bot_ai_cooperative_cooldown_next(b,&cursor,&checkpoint->cooperative[i]);
+    }
+    cursor=0;bot_awareness_record awareness;
+    while(bot_ai_awareness_next(b,&cursor,&awareness)) ++checkpoint->awareness_count;
+    if(checkpoint->awareness_count) {
+        checkpoint->awareness=malloc(checkpoint->awareness_count*sizeof(*checkpoint->awareness));
+        if(!checkpoint->awareness) {
+            qa_error_set(e,QA_ERROR_MEMORY,checkpoint->awareness_count,"retaining active bot awareness");
+            goto failed;
+        }
+        cursor=0;
+        for(size_t i=0;i<checkpoint->awareness_count;++i)
+            (void)bot_ai_awareness_next(b,&cursor,checkpoint->awareness+i);
     }
     checkpoint->source_chat=b->source_chat;
     checkpoint->source_match=b->source_match;
@@ -341,6 +355,9 @@ bool qa_bots_restore(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
         for(size_t i=0;i<checkpoint->cooperative_count;++i)
             if(bot_ai_live(b,checkpoint->cooperative[i].actor))
                 bot_ai_cooperative_cooldown_set(b,&checkpoint->cooperative[i]);
+        for(size_t i=0;i<checkpoint->awareness_count;++i)
+            if(bot_ai_live(b,checkpoint->awareness[i].value.actor))
+                bot_ai_awareness_set(b,checkpoint->awareness+i);
         b->source_chat=checkpoint->source_chat;
         b->source_match=checkpoint->source_match;
     }

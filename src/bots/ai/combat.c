@@ -286,6 +286,17 @@ static void enemy_select(bot_ai_state *s,int32_t number,qa_actor_id actor,float 
 }
 bool bot_ai_find_enemy(qa_bots *b,bot_ai_state *s,int32_t current_enemy,bool *found,qa_error *e) {
     *found = false;
+    if(s->source_settings) {
+        qa_actor_id actor;bool selected;
+        if(!bot_ai_senses_enemy(b,s,&actor,&selected,e)) return false;
+        if(!selected || s->retired || !bot_ai_live(b,s->view.actor)) return true;
+        int32_t number=b->services.entity_number(b->services.context,actor);
+        if(number<0 || number==current_enemy) return true;
+        const qa_bot_awareness *awareness=bot_ai_senses_awareness(b,s,actor);
+        enemy_select(s,number,actor,b->time,current_enemy);
+        bot_ai_enemy_origin_set(s,awareness->last_known_origin);
+        *found=true;return true;
+    }
     float alertness, easy;
     if (!bot_ai_character_float(b, s, BOT_C_ALERTNESS, 0, 1, &alertness, e) ||
         !bot_ai_character_float(b, s, BOT_C_EASY_FRAGGER, 0, 1, &easy, e)) return false;
@@ -699,7 +710,7 @@ static bool canonical_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error 
        !bot_ai_character_float(b,s,tactics.skill_characteristic<0?BOT_C_AIM_SKILL:(uint32_t)tactics.skill_characteristic,0,1,&skill,e) ||
        !bot_ai_character_float(b,s,BOT_C_REACTION,0,5,&reaction,e) ||
        !bot_ai_character_float(b,s,BOT_C_FIRE_THROTTLE,0,1,&throttle,e)) return false;
-    if(skill>.95f && bot_ai_enemy_sight_time(s)>b->time-reaction*.5f) return true;
+    if(!s->source_settings && skill>.95f && bot_ai_enemy_sight_time(s)>b->time-reaction*.5f) return true;
     float random;
     if(target.invisible) {
         if(!bot_ai_random(b,&random,e)) return false;
@@ -794,12 +805,19 @@ static bool canonical_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error 
         bot_ai_view_angles_set(s,bot_ai_view_ideal(s));
         if(!qa_bot_actions_view(qa_bot_runtime_actions(b->runtime),s->view.client,bot_ai_view_angles(s),e)) return false;
     }
-    if(bot_ai_enemy_sight_time(s)>b->time-reaction || bot_ai_teleport_time(s)>b->time-reaction ||
-       bot_ai_weapon_change_time(s)>b->time-.1f || bot_ai_fire_wait_time(s)>b->time) return true;
-    if(bot_ai_fire_shoot_time(s)<b->time) {
-        if(!bot_ai_random(b,&random,e)) return false;
-        if(random>throttle) {bot_ai_fire_wait_time_set(s,b->time+throttle);bot_ai_fire_shoot_time_set(s,0);}
-        else {bot_ai_fire_shoot_time_set(s,b->time+1-throttle);bot_ai_fire_wait_time_set(s,0);}
+    if(s->source_settings) {
+        const qa_bot_awareness *awareness=bot_ai_senses_awareness(b,s,enemy);
+        if(!awareness || awareness->weapon<1 ||
+           !in_view(bot_ai_view_angles(s),qa_vec_sub(bot_ai_aim_target(s),bot_ai_eye(s)),
+               bot_ai_senses_weapon_cone(b,s,selected.supply_weapon))) return true;
+    } else {
+        if(bot_ai_enemy_sight_time(s)>b->time-reaction || bot_ai_teleport_time(s)>b->time-reaction ||
+           bot_ai_weapon_change_time(s)>b->time-.1f || bot_ai_fire_wait_time(s)>b->time) return true;
+        if(bot_ai_fire_shoot_time(s)<b->time) {
+            if(!bot_ai_random(b,&random,e)) return false;
+            if(random>throttle) {bot_ai_fire_wait_time_set(s,b->time+throttle);bot_ai_fire_shoot_time_set(s,0);}
+            else {bot_ai_fire_shoot_time_set(s,b->time+1-throttle);bot_ai_fire_wait_time_set(s,0);}
+        }
     }
     qa_vec3 to_enemy=qa_vec_sub(target.origin,bot_ai_origin(s));
     bool allowed;
@@ -809,9 +827,11 @@ static bool canonical_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error 
         qa_vec3 angles;float flight;
         if(!qa_bot_weapon_launch_aim(&selected,weapon_muzzle(&selected,s,bot_ai_view_angles(s)),
                 bot_ai_aim_target(s),&angles,&flight) ||
-           !qa_bot_field_of_vision(bot_ai_view_angles(s),distance<100?120:50,angles)) return true;
+           (!s->source_settings &&
+            !qa_bot_field_of_vision(bot_ai_view_angles(s),distance<100?120:50,angles))) return true;
     } else {
-        if(!in_view(bot_ai_view_angles(s),qa_vec_sub(bot_ai_aim_target(s),bot_ai_eye(s)),distance<100?120:50)) return true;
+        if(!s->source_settings &&
+           !in_view(bot_ai_view_angles(s),qa_vec_sub(bot_ai_aim_target(s),bot_ai_eye(s)),distance<100?120:50)) return true;
         if(!trace(b,s,bot_ai_eye(s),bot_ai_aim_target(s),NULL,s->view.actor,BOT_SOLID|BOT_PLAYERCLIP,&hit,e)) return false;
         if(hit.fraction<1 && !qa_actor_id_equal(hit.actor,enemy)) return true;
     }
@@ -1229,7 +1249,7 @@ bool bot_ai_source_enemy(qa_bots *b,const bot_ai_state *s) {
 bool bot_ai_attack(qa_bots *b,bot_ai_state *s,bool moving,qa_error *e) {
     qa_actor_id enemy=bot_ai_enemy_actor(b,s);
     s->view.enemy=enemy;
-    if(bot_ai_source_enemy(b,s)) {
+    if(!s->source_settings && bot_ai_source_enemy(b,s)) {
         if(!source_attack_live(b,s) || !bot_ai_live(b,enemy)) return true;
         SOURCE_ATTACK_CALL(bot_ai_source_aim(b,s,e));
         return bot_ai_source_check_attack(b,s,e);

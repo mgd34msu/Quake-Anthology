@@ -205,6 +205,7 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
             }
             if(ok) bot_ai_enter_game_chat_set(s,true);
         }
+        if (ok && !intermission && !observer) ok=bot_ai_senses_update(b,s,elapsed,e);
         if (ok) ok = bot_ai_decide(b, s, e);
         if(ok && !s->retired && bot_ai_live(b,s->view.actor)) {
             bot_ai_last_frame_health_set(s,bot_ai_inventory_value(s,QA_BOT_INV_HEALTH));

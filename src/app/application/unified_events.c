@@ -1281,6 +1281,7 @@ static bool events_project(qa_application *app, const application_unified_source
             qa_unified_simulation_event *target = events->simulation + events->simulation_count++;
             *target = borrowed;
             if (ok && borrowed.payload.kind == QA_UNIFIED_SIMULATION_SOUND &&
+                borrowed.payload.value.sound.resource &&
                 !application_unified_event_resource_read(app, borrowed.payload.value.sound.resource))
                 ok = application_fail(e, QA_ERROR_FORMAT, "Source sound lost its registered dictionary resource");
         }

@@ -17,6 +17,8 @@
 #include "bots_guests.h"
 #include "bots_knowledge.h"
 #include "bots_log.h"
+#include "control_frame.h"
+#include "unified_events.h"
 #include "qa/game_q3_configstrings.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
@@ -852,6 +854,8 @@ static bool close_bots(application_bots *bots,qa_error *error) {
         application_bot_script_file *file=bots->script_files;bots->script_files=file->next;
         qa_resource_release(file->resource);qa_vfs_acquisition_dispose(&file->acquisition);free(file);
     }
+    qa_application_events_unsubscribe(&bots->hearing_cursor);
+    qa_unified_frame_lease_release(bots->hearing_storage);
     qa_bot_source_knowledge_destroy(bots->source_knowledge);
     qa_resource_release(bots->source_map_resource);qa_resource_release(bots->map_resource);qa_vfs_destroy(bots->files);
     qa_vfs_destroy(bots->navigation_files);
@@ -910,6 +914,59 @@ bool application_bots_actor_released(qa_application *application,qa_actor_record
     qa_actor_index_remove(&bots->actor_targets, actor.id);
     return !bots->population || qa_bots_actor_released(bots->population,&actor,error);
 }
+typedef struct application_bot_heard_sound {
+    const qa_unified_sound_event *sound;
+    qa_actor_id recipient;
+    double time;
+} application_bot_heard_sound;
+static bool bot_hearing(void *opaque,qa_actor_id listener,qa_bot_hearing_visit visit,
+    void *context,qa_error *error)
+{
+    application_bots *bots=opaque;
+    for(size_t i=0;i<bots->hearing_count;++i) {
+        const application_bot_heard_sound *row=bots->hearing_rows+i;
+        if(row->recipient.registry && !qa_actor_id_equal(row->recipient,listener)) continue;
+        qa_bot_sound sound={.origin=row->sound->origin,.time=row->time,.loudness=row->sound->volume};
+        if(!visit(context,row->sound->actor,&sound,error)) return false;
+    }
+    return true;
+}
+static bool hearing_prepare(application_bots *bots,uint64_t now,qa_error *error)
+{
+    if(!bots->source_knowledge) return true;
+    qa_application *app=bots->application;
+    uint64_t end=qa_application_events_next(app),first=end;
+    qa_application_event_range range={.next=bots->hearing_cursor.next,.end=end};
+    const application_unified_event_record *event;size_t count=0;
+    while((event=qa_application_event_range_next(app,&range,NULL))) {
+        if(!event->simulation || event->simulation->kind!=QA_UNIFIED_SIMULATION_SOUND ||
+           (event->simulation_time_ns<=now && now-event->simulation_time_ns>bots->hearing_persist_ns)) continue;
+        if(range.id<first) first=range.id;
+        if(event->simulation_time_ns>now) continue;
+        ++count;
+    }
+    bots->hearing_retire=first;
+    if(!count) return true;
+    bots->hearing_storage=application_control_storage_acquire(app,error);
+    if(!bots->hearing_storage) return false;
+    bots->hearing_rows=qa_unified_frame_lease_alloc(bots->hearing_storage,count,
+        sizeof(*bots->hearing_rows),_Alignof(application_bot_heard_sound),error);
+    if(!bots->hearing_rows) return false;
+    range=(qa_application_event_range){.next=bots->hearing_cursor.next,.end=end};
+    while((event=qa_application_event_range_next(app,&range,NULL))) {
+        if(!event->simulation || event->simulation->kind!=QA_UNIFIED_SIMULATION_SOUND ||
+           event->simulation_time_ns>now || now-event->simulation_time_ns>bots->hearing_persist_ns) continue;
+        bots->hearing_rows[bots->hearing_count++]=(application_bot_heard_sound){
+            &event->simulation->value.sound,event->simulation_recipient,(double)event->simulation_time_ns/1e9};
+    }
+    return true;
+}
+static void hearing_finish(application_bots *bots)
+{
+    bots->hearing_rows=NULL;bots->hearing_count=0;
+    qa_unified_frame_lease_release(bots->hearing_storage);bots->hearing_storage=NULL;
+    if(bots->hearing_cursor.application) qa_application_events_consumed(&bots->hearing_cursor,bots->hearing_retire);
+}
 bool application_bots_frame_at(qa_application *application,const qa_source_frame *frames,
                                 size_t count,uint64_t host_ns,qa_error *error) {
     if(!application_bots_frame_request(application,frames,count,host_ns,error)) return false;
@@ -949,7 +1006,9 @@ bool application_bots_frame_at(qa_application *application,const qa_source_frame
     application_native_q3_bot_cycle *cycle=NULL;
     bool ok=!bots->population || source->kind!=APPLICATION_PROVIDER_Q3 ||
         application_native_q3_bot_cycle_begin(source,&admitted,host_ns,&cycle,error);
+    if(ok && bots->population) ok=hearing_prepare(bots,admitted.time_ns,error);
     if(ok && bots->population) ok=qa_bots_frame(bots->population,source_milliseconds(&admitted),error);
+    hearing_finish(bots);
     application_native_q3_bot_cycle_end(&cycle);
     --bots->calls;bots->producing=false;bots->producer_frame=(qa_source_frame){0};bots->producer_host_ns=0;
     return ok;
@@ -960,7 +1019,7 @@ qa_bot_services application_bots_services(application_bots *bots) {
     return (qa_bot_services){.context=bots,
         .memory={.context=bots,.allocate=bot_memory_allocate,.read=bot_memory_read,.write=bot_memory_write,
             .borrow_span=application_bots_memory_span},
-        .behavior=qa_ruleset_read(bots->behavior),.source_knowledge=bots->source_knowledge,
+        .behavior=qa_ruleset_read(bots->behavior),.source_knowledge=bots->source_knowledge,.hearing=bot_hearing,
         .team_arena=source && source->product && source->product->family==QA_GAME_Q3 &&
             (source->product->campaign_id == QA_CAMPAIGN_MISSIONPACK),
         .shared=application_builtin_services(application,application->world,application->physics),
@@ -988,6 +1047,15 @@ qa_bot_services application_bots_services(application_bots *bots) {
             application_bot_source_model_bounds:NULL,
         .predict_motion=application_bot_predict_motion};
 }
+static bool bot_weapon_resolve(void *context,qa_string_id name,uint32_t number,
+    qa_item_id *out,qa_error *error)
+{
+    application_provider *source=context;qa_q1_weapon weapon;
+    (void)name;*out=0;
+    if(!qa_q1_weapon_source(application_q1_program(source->product->campaign),number,&weapon)) return true;
+    return qa_strings_intern_cstr(qa_session_strings(source->application->session),
+        qa_q1_weapon_identity(weapon),out,error);
+}
 static bool bot_behavior_prepare(application_bots *bots,qa_error *error) {
     bots->behavior=QA_RULESET_Q3;
     bots->walk_speed=160;
@@ -997,21 +1065,32 @@ static bool bot_behavior_prepare(application_bots *bots,qa_error *error) {
     qa_ruleset_id behavior=family==QA_GAME_Q1?QA_RULESET_NETQUAKE:QA_RULESET_Q2_RERELEASE;
     qa_bot_source_knowledge *knowledge=NULL;bool found=false;
     qa_strings *strings=qa_session_strings(bots->application->session);
+    qa_bot_source_weapon_resolve resolve=family==QA_GAME_Q1?bot_weapon_resolve:NULL;
     if(source->launch && source->launch->content &&
-       !qa_bot_source_knowledge_load(source->launch->content,strings,behavior,&knowledge,&found,error)) return false;
+       !qa_bot_source_knowledge_load(source->launch->content,strings,behavior,resolve,source,
+           &knowledge,&found,error)) return false;
     if(!found && family!=QA_GAME_Q3) {
         const qa_product *sibling=qa_catalog_find(bots->application->catalog,
             family==QA_GAME_Q1?"q1-rerelease-id1":"q2-rerelease-baseq2");
         if(sibling && sibling->availability==QA_CONTENT_INSTALLED) {
             qa_vfs *files=NULL;
             if(!qa_catalog_open(bots->application->catalog,sibling->id,&files,error)) return false;
-            bool okay=qa_bot_source_knowledge_load(files,strings,behavior,&knowledge,&found,error);
+            bool okay=qa_bot_source_knowledge_load(files,strings,behavior,resolve,source,&knowledge,&found,error);
             qa_vfs_destroy(files);
             if(!okay) return false;
         }
     }
     qa_bot_source_knowledge_destroy(bots->source_knowledge);
     bots->source_knowledge=knowledge;
+    bots->hearing_persist_ns=0;
+    qa_application_events_unsubscribe(&bots->hearing_cursor);
+    if(knowledge) qa_application_events_subscribe(bots->application,&bots->hearing_cursor);
+    bots->hearing_retire=qa_application_events_next(bots->application);
+    for(size_t i=0;i<qa_bot_source_skill_count(knowledge);++i) {
+        double seconds=qa_bot_source_skill_at(knowledge,i)->senses.sound_persist_time;
+        uint64_t nanoseconds=seconds<=0?0:seconds>=(double)UINT64_MAX/1e9?UINT64_MAX:(uint64_t)(seconds*1e9);
+        if(nanoseconds>bots->hearing_persist_ns) bots->hearing_persist_ns=nanoseconds;
+    }
     if(found) bots->behavior=behavior;
     return true;
 }

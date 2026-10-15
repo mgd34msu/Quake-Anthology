@@ -285,7 +285,7 @@ static void clear(qa_bots *bots)
         free(bots->source_cells[i]);
     }
     free(bots->clients); qa_actor_index_destroy(&bots->actor_clients);
-    qa_actor_index_destroy(&bots->cooperative_actors);
+    qa_actor_index_destroy(&bots->actor_memory_index);
     qa_arena_destroy(&bots->observation_storage);
 }
 static bool fields(qa_source_save_io *io, qa_bots *bots,const bot_source_orders_state *waypoints)
@@ -437,6 +437,31 @@ static bool cooperative_fields(qa_source_save_io *io,qa_bots *bots) {
     }
     return true;
 }
+static bool awareness_fields(qa_source_save_io *io,qa_bots *bots)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    if(reading && io->offset==io->input.size) return true;
+    size_t count=0,cursor=0;bot_awareness_record row={0};
+    if(!reading) while(bot_ai_awareness_next(bots,&cursor,&row)) ++count;
+    if(!qa_source_save_count(io,&count,
+        qa_actors_capacity(qa_session_actors(bots->services.shared.session))*UINT64_C(64))) return false;
+    cursor=0;
+    for(size_t i=0;i<count;++i) {
+        if(reading) row=(bot_awareness_record){0};
+        else if(!bot_ai_awareness_next(bots,&cursor,&row)) return false;
+        qa_bot_awareness *value=&row.value;
+        U(row.client);A(value->actor);F(value->sight);F(value->weapon);
+        FIELD(f64,value->last_contact);FIELD(f64,value->last_seen);FIELD(f64,value->last_heard);
+        V(value->last_known_origin);
+        if(row.client>=64 || !bots->source_cells[row.client] || !value->actor.registry ||
+           !isfinite(value->sight) || value->sight<0 || value->sight>1 ||
+           !isfinite(value->weapon) || value->weapon<0 || value->weapon>1 ||
+           !isfinite(value->last_contact) || !isfinite(value->last_seen) || !isfinite(value->last_heard) ||
+           !qa_vec_finite(value->last_known_origin)) return false;
+        if(reading) bot_ai_awareness_set(bots,&row);
+    }
+    return true;
+}
 bool qa_bots_population_capture(const qa_bots *bots, qa_buffer *out, qa_error *error)
 {
     if (!bots || !out || bots->restore_pending || !qa_bots_can_destroy(bots) ||
@@ -444,7 +469,7 @@ bool qa_bots_population_capture(const qa_bots *bots, qa_buffer *out, qa_error *e
     qa_source_save_io io = {0}; qa_bots view = *bots;
     bool ok = qa_source_save_writer(&io, bots->services.shared.session, error) && signature(&io) &&
         fields(&io,&view,&bots->source_orders) && order_tolerance_fields(&io,&view) &&
-        cooperative_fields(&io,&view) && qa_source_save_finish(&io, out);
+        cooperative_fields(&io,&view) && awareness_fields(&io,&view) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); return ok;
 }
 bool qa_bots_population_restore(qa_bots *bots, qa_bytes bytes, qa_error *error)
@@ -460,7 +485,7 @@ bool qa_bots_population_restore(qa_bots *bots, qa_bytes bytes, qa_error *error)
     bool ok = bot_ai_observations_prepare(&scratch,error) &&
         qa_source_save_reader(&io, bots->services.shared.session, bytes, error) && signature(&io) &&
         fields(&io,&scratch,&scratch.source_orders) && order_tolerance_fields(&io,&scratch) &&
-        cooperative_fields(&io,&scratch) && scratch.client_capacity == bots->client_capacity &&
+        cooperative_fields(&io,&scratch) && awareness_fields(&io,&scratch) && scratch.client_capacity == bots->client_capacity &&
         qa_source_save_finish(&io, NULL) && topology(&scratch, error);
     for(uint32_t i=0;ok && i<64;++i) if(scratch.source_cells[i])
         ok=bot_ai_source_order_rebase(&scratch.source_orders,&scratch.source_cells[i]->source_order,
@@ -471,8 +496,8 @@ bool qa_bots_population_restore(qa_bots *bots, qa_bytes bytes, qa_error *error)
         for(size_t i=0;i<64;++i) if(scratch.source_cells[i])
             bot_ai_source_settings_bind(&scratch,scratch.source_cells[i]);
         qa_bots old = *bots; *bots = scratch;
-        if(bots->cooperative_actors.retained.storage)
-            bots->cooperative_actors.retained.storage=&bots->observation_storage;
+        if(bots->actor_memory_index.retained.storage)
+            bots->actor_memory_index.retained.storage=&bots->observation_storage;
         clear(&old);
     }
     else clear(&scratch);

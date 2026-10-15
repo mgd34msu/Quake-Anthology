@@ -227,35 +227,6 @@ bool bot_ai_cooperative(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
     *out=mode.rules.kind==QA_MODE_COOPERATIVE || mode.rules.kind==QA_MODE_HORDE;
     return true;
 }
-void bot_ai_cooperative_cooldowns_clear(qa_bots *b) {
-    qa_actor_index_clear(&b->cooperative_actors);
-    if(b->cooperative_cooldowns)
-        memset(b->cooperative_cooldowns,0,b->cooperative_actors.capacity*64*sizeof(float));
-}
-void bot_ai_cooperative_cooldown_set(qa_bots *b,const bot_cooperative_cooldown *row) {
-    if(!b->cooperative_cooldowns) return;
-    size_t slot;
-    if(!qa_actor_index_find(&b->cooperative_actors,row->actor,&slot)) {
-        slot=row->actor.slot;
-        memset(b->cooperative_cooldowns+slot*64,0,64*sizeof(float));
-        qa_actor_index_put(&b->cooperative_actors,row->actor,slot);
-    }
-    b->cooperative_cooldowns[slot*64+row->client]=row->until;
-}
-bool bot_ai_cooperative_cooldown_next(const qa_bots *b,size_t *cursor,bot_cooperative_cooldown *out) {
-    size_t limit=b->cooperative_cooldowns?b->cooperative_actors.capacity*64:0;
-    while(*cursor<limit) {
-        size_t at=(*cursor)++,slot=at/64;uint32_t client=(uint32_t)(at%64);
-        qa_actor_id actor=b->cooperative_actors.entries[slot].actor;
-        if(!actor.registry || !b->source_cells[client] || !b->source_cells[client]->inuse ||
-           !bot_ai_live(b,actor)) continue;
-        float until=b->cooperative_cooldowns[at];
-        if(until>b->time) {
-            *out=(bot_cooperative_cooldown){.actor=actor,.client=client,.until=until};return true;
-        }
-    }
-    return false;
-}
 void bot_ai_cooperative_failed(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goal) {
     qa_actor_id actor=s->cooperative.hunt;
     if(s->cooperative.goal!=BOT_COOP_HUNT || !bot_ai_live(b,actor) ||
@@ -308,9 +279,8 @@ bool bot_ai_cooperative_goal(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *f
         if(!bot_ai_live(b,actor) || !b->services.shared.actor_traits ||
            !b->services.shared.actor_traits(b->services.shared.context,actor,&traits) ||
            !traits.monster || !bot_ai_live(b,actor)) continue;
-        size_t slot;
-        if(qa_actor_index_find(&b->cooperative_actors,actor,&slot) &&
-           b->cooperative_cooldowns[slot*64+s->acquired_source_client]>b->time) continue;
+        const bot_actor_memory *memory=bot_ai_memory_read(b,actor);
+        if(memory && memory->unreachable_until[s->acquired_source_client]>b->time) continue;
         qa_body_state body;qa_combat_state combat;bool same;
         SOURCE_CALL(qa_world_body_read(b->services.shared.world,actor,&body,e));
         SOURCE_CALL(qa_combat_read(b->services.shared.combat,actor,&combat,e));

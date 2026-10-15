@@ -5,6 +5,7 @@
 #include "qa/bots_memory.h"
 #include "qa/arena.h"
 #include "qa/stamp.h"
+#include "qa/pool.h"
 #include "source_orders.h"
 #include "source_team_policy.h"
 #include "source_events.h"
@@ -77,6 +78,17 @@ typedef struct bot_cooperative_cooldown {
     uint32_t client;
     float until;
 } bot_cooperative_cooldown;
+typedef struct bot_actor_memory {
+    qa_actor_id actor;
+    qa_bot_awareness awareness[64];
+    float unreachable_until[64];
+    uint64_t aware;
+    size_t active;
+} bot_actor_memory;
+typedef struct bot_awareness_record {
+    qa_bot_awareness value;
+    uint32_t client;
+} bot_awareness_record;
 typedef struct bot_ai_state {
     uint32_t acquired_source_client;
     qa_bot_source_record source_record;
@@ -108,8 +120,10 @@ struct qa_bots {
     uint32_t source_clients[64];
     uint32_t client_capacity, count;
     qa_actor_index actor_clients;
-    qa_actor_index cooperative_actors;
-    float *cooperative_cooldowns;
+    qa_actor_index actor_memory_index;
+    qa_pool actor_memory;
+    size_t *actor_memory_active,actor_memory_count;
+    qa_stamp_set sense_visits,sound_contacts;
     /* Extent of the legacy slot/client words in population saves. */
     uint32_t actor_save_capacity;
     qa_bot_controls controls;
@@ -137,6 +151,15 @@ struct qa_bots {
 };
 bool bot_ai_fail(qa_error *, const char *);
 void bot_ai_source_settings_bind(qa_bots *,bot_ai_state *);
+bot_actor_memory *bot_ai_memory_read(const qa_bots *,qa_actor_id);
+bot_actor_memory *bot_ai_memory_admit(qa_bots *,qa_actor_id);
+void bot_ai_senses_clear_client(qa_bots *,uint32_t client,bool cooldowns);
+bool bot_ai_senses_update(qa_bots *,bot_ai_state *,float,qa_error *);
+bool bot_ai_senses_enemy(qa_bots *,bot_ai_state *,qa_actor_id *,bool *,qa_error *);
+const qa_bot_awareness *bot_ai_senses_awareness(const qa_bots *,const bot_ai_state *,qa_actor_id);
+float bot_ai_senses_weapon_cone(qa_bots *,bot_ai_state *,qa_item_id);
+bool bot_ai_awareness_next(const qa_bots *,size_t *,bot_awareness_record *);
+void bot_ai_awareness_set(qa_bots *,const bot_awareness_record *);
 static inline bool bot_ai_rerelease_behavior(const qa_bots *bots) {
     return bots->services.behavior==qa_ruleset_read(QA_RULESET_NETQUAKE) ||
         bots->services.behavior==qa_ruleset_read(QA_RULESET_Q2_RERELEASE);

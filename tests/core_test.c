@@ -79,6 +79,7 @@
 #include "../src/app/application/events_save.h"
 #include "../src/network/unified/frame_internal.h"
 #include "../src/bots/runtime/internal.h"
+#include "../src/bots/ai/internal.h"
 #include "qa/bot_observations_save.h"
 #include "qa/bot_knowledge.h"
 #include "qa/console_save.h"
@@ -101,6 +102,58 @@
     } \
 } while (0)
 
+static void test_bot_awareness_storage(void)
+{
+    qa_error error={0};qa_session *session=NULL;
+    CHECK(qa_session_create(&(qa_session_options){.actor_capacity=4,.component_capacity=1},&session,&error));
+    qa_bots bots={.services={.shared={.session=session},.behavior=qa_ruleset_read(QA_RULESET_Q2_RERELEASE)},.time=10};
+    CHECK(bot_ai_observations_prepare(&bots,&error));
+    bot_ai_state first={.acquired_source_client=0,.inuse=true},second={.acquired_source_client=1,.inuse=true};
+    bots.source_cells[0]=&first;bots.source_cells[1]=&second;
+    qa_actor_registry *actors=qa_session_actor_registry(session);qa_actor_id target;
+    CHECK(qa_actors_allocate(actors,1,1,&target,&error));
+    qa_bot_awareness awareness=qa_bot_awareness_new(target,10,qa_v3(1,2,3));
+    qa_bot_senses senses={.sight_time=.5f,.sight_decay_time=1,.sound_time=1,
+        .sound_decay_time=2,.forget_non_visible_time=3};
+    qa_bot_weapon_senses weapons={.sight_time=1,.decay_time=2};
+    qa_bot_contact visible={.line_of_sight=true,.in_sight_fov=true,.in_weapon_fov=true,.origin={4,5,6}};
+    qa_bot_sense_step(&awareness,&visible,&senses,&weapons,.25f,10.25);
+    CHECK(awareness.sight==.5f && awareness.weapon==.25f && awareness.last_seen==10.25);
+    bot_ai_awareness_set(&bots,&(bot_awareness_record){awareness,0});
+    awareness.sight=1;
+    bot_ai_awareness_set(&bots,&(bot_awareness_record){awareness,1});
+    bot_ai_cooperative_cooldown_set(&bots,&(bot_cooperative_cooldown){target,0,14});
+    CHECK(bots.actor_memory_count==1 && bots.actor_memory.active==1 &&
+        bot_ai_memory_read(&bots,target)->unreachable_until[0]==14);
+    bot_ai_senses_clear_client(&bots,0,false);
+    CHECK(!bot_ai_senses_awareness(&bots,&first,target) &&
+        bot_ai_senses_awareness(&bots,&second,target)->sight==1 &&
+        bot_ai_memory_read(&bots,target)->unreachable_until[0]==14);
+    size_t cursor=0;bot_awareness_record saved;
+    CHECK(bot_ai_awareness_next(&bots,&cursor,&saved) && saved.client==1 &&
+        qa_actor_id_equal(saved.value.actor,target) && !bot_ai_awareness_next(&bots,&cursor,&saved));
+    CHECK(qa_actors_release(actors,target,&error));
+    qa_actor_id reused;CHECK(qa_actors_allocate(actors,1,1,&reused,&error));
+    CHECK(reused.slot==target.slot && reused.generation!=target.generation);
+    bot_actor_memory *replacement=bot_ai_memory_admit(&bots,reused);
+    CHECK(replacement && bots.actor_memory_count==1 && bots.actor_memory.active==1 &&
+        !replacement->aware && replacement->unreachable_until[0]==0 && !bot_ai_memory_read(&bots,target));
+    bot_ai_awareness_set(&bots,&saved);
+    CHECK(!replacement->aware); /* Retired generations cannot reclaim a live slot. */
+    bot_ai_cooperative_cooldowns_clear(&bots);
+    CHECK(!bots.actor_memory_count && !bots.actor_memory.active);
+    qa_actor_index_destroy(&bots.actor_memory_index);qa_arena_destroy(&bots.observation_storage);
+    CHECK(qa_session_destroy(session,&error));
+}
+
+static bool bot_source_fixture_weapon(void *context,qa_string_id name,uint32_t number,
+    qa_item_id *out,qa_error *error)
+{
+    qa_strings *strings=context;qa_q1_weapon weapon;
+    (void)name;*out=0;
+    return !qa_q1_weapon_source(QA_Q1_ROGUE,number,&weapon) ||
+        qa_strings_intern_cstr(strings,qa_q1_weapon_identity(weapon),out,error);
+}
 static void test_bot_source_knowledge(void)
 {
     qa_error error={0};
@@ -112,10 +165,12 @@ static void test_bot_source_knowledge(void)
     qa_mount_id mount;
     CHECK(qa_vfs_mount_directory(files,directory,QA_ARCHIVE_EXACT,true,&mount,&error));
     qa_strings *strings=NULL;CHECK(qa_strings_create(&strings,&error));
-    const char weapons[]="weapon \"laser\"\n{\n flags melee | starting\n bounds { -1 -2 -3 } { 1 2 3 }\n}\n\0\0";
+    const char weapons[]="weapon \"laser\"\n{\n flags melee | starting\n bounds { -1 -2 -3 } { 1 2 3 }\n"
+        " name weapon_blaster\n number 4096\n ideal_fov 25\n}\n\0\0";
     const char settings[]="// A source skill may put its opening brace on the next line.\n"
         "skill \"practice\"\n{ // retained source order\n"
         " movement.walk_only false\n movement.walk_only true\n"
+        " behaviors.allow_combat true\n"
         " movement.allow_jumping_in_combat true\n movement.allow_rocket_jumping false\n"
         " movement.jump_chance 37.5\n movement.jump_cooldown 2.25\n"
         " aiming.max_acceleration 360\n aiming.spring_stiffness 48\n"
@@ -134,15 +189,16 @@ static void test_bot_source_knowledge(void)
         CHECK(qa_vfs_write(files,mount,paths[i],contents[i],&error));
     }
     qa_bot_source_knowledge *knowledge=NULL;bool found=true;
-    CHECK(qa_bot_source_knowledge_load(files,strings,QA_RULESET_Q2_RERELEASE,&knowledge,&found,&error));
+    CHECK(qa_bot_source_knowledge_load(files,strings,QA_RULESET_Q2_RERELEASE,NULL,NULL,&knowledge,&found,&error));
     CHECK(!found && !knowledge); /* Q2 reads PC settings only. */
-    CHECK(qa_bot_source_knowledge_load(files,strings,QA_RULESET_NETQUAKE,&knowledge,&found,&error));
+    CHECK(qa_bot_source_knowledge_load(files,strings,QA_RULESET_NETQUAKE,bot_source_fixture_weapon,strings,
+        &knowledge,&found,&error));
     CHECK(found && knowledge && qa_bot_source_skill_count(knowledge)==2 &&
         qa_bot_source_document_count(knowledge)==3);
     const qa_bot_source_skill *practice=qa_bot_source_skill_at(knowledge,0),
         *hard=qa_bot_source_skill_at(knowledge,1);
     CHECK(practice && !strcmp(qa_strings_cstr(strings,practice->name),"practice") &&
-        practice->movement.walk_only && practice->movement.allow_combat_jumping &&
+        practice->allow_combat && practice->movement.walk_only && practice->movement.allow_combat_jumping &&
         !practice->movement.allow_rocket_jumping && practice->movement.jump_chance==37.5f &&
         practice->movement.jump_cooldown==2.25f && practice->aiming.maximum_speed==360 &&
         practice->aiming.spring_stiffness==48 && practice->senses.fov_angle==110 &&
@@ -154,17 +210,27 @@ static void test_bot_source_knowledge(void)
     CHECK(document && document->source.size==sizeof(weapons)-3 &&
         !memcmp(document->source.data,weapons,document->source.size) && document->block_count==1);
     const qa_bot_source_block *block=document->blocks;
-    CHECK(block->header_count==2 && block->field_count==2 && block->fields[0].count==3 &&
+    CHECK(block->header_count==2 && block->field_count==5 && block->fields[0].count==3 &&
         block->fields[1].count==10);
+    qa_item_id lava_nailgun;
+    CHECK(qa_strings_intern_cstr(strings,qa_q1_weapon_identity(QA_Q1_LAVA_NAILGUN),&lava_nailgun,&error));
+    CHECK(qa_bot_source_weapon_fov(knowledge,lava_nailgun)==25);
     document=qa_bot_source_document_at(knowledge,1);block=document->blocks;
-    CHECK(block->field_count==14 && block->fields[0].key==block->fields[1].key &&
-        block->fields[12].key==block->fields[13].key && block->fields[12].count==2);
-    const qa_bytes byte_name=qa_strings_text(strings,block->fields[12].values[1]);
+    CHECK(block->field_count==15 && block->fields[0].key==block->fields[1].key &&
+        block->fields[13].key==block->fields[14].key && block->fields[13].count==2);
+    const qa_bytes byte_name=qa_strings_text(strings,block->fields[13].values[1]);
     CHECK(byte_name.size==2 && byte_name.data[0]==255 && byte_name.data[1]==128 &&
-        !strcmp(qa_strings_cstr(strings,block->fields[12].values[0]),"a//b"));
+        !strcmp(qa_strings_cstr(strings,block->fields[13].values[0]),"a//b"));
     document=qa_bot_source_document_at(knowledge,2);
     const qa_bytes optional_name=qa_strings_text(strings,document->blocks[0].fields[0].values[0]);
     CHECK(optional_name.size==2 && optional_name.data[0]==254 && optional_name.data[1]==129);
+    qa_bot_source_knowledge *pc=NULL;
+    CHECK(qa_vfs_write(files,mount,"bots/settings_PC.txt",contents[1],&error));
+    CHECK(qa_bot_source_knowledge_load(files,strings,QA_RULESET_Q2_RERELEASE,NULL,NULL,&pc,&found,&error) && found);
+    qa_string_id blaster;
+    CHECK(qa_strings_intern_cstr(strings,"q2:weapon_blaster",&blaster,&error));
+    CHECK(qa_bot_source_weapon_fov(pc,blaster)==25 && qa_bot_source_weapon_fov(pc,QA_STRING_NONE)==0);
+    qa_bot_source_knowledge_destroy(pc);
     qa_vfs_destroy(files);qa_resource_pool_destroy(pool);
     CHECK(practice->movement.jump_chance==37.5f && !memcmp(byte_name.data,"\377\200",2));
     qa_bot_source_knowledge_destroy(knowledge);qa_strings_destroy(strings);
@@ -172,7 +238,8 @@ static void test_bot_source_knowledge(void)
         char path[256];CHECK(snprintf(path,sizeof(path),"%s/%s",directory,paths[i])>0);
         CHECK(unlink(path)==0);
     }
-    CHECK(rmdir(folder)==0 && rmdir(directory)==0);
+    char pc_path[256];CHECK(snprintf(pc_path,sizeof(pc_path),"%s/bots/settings_PC.txt",directory)>0);
+    CHECK(unlink(pc_path)==0 && rmdir(folder)==0 && rmdir(directory)==0);
 }
 
 static void test_aas_geometry_compaction(void)
@@ -1883,6 +1950,27 @@ static void test_arena(void)
     CHECK(read && read->kind==control.kind && read->epoch==control.epoch);
     CHECK(!strcmp(read->value.disconnect,control.value.disconnect));
     qa_unified_document_destroy(retained);
+
+    qa_unified_frame_events *sounds=calloc(1,sizeof(*sounds));CHECK(sounds);
+    sounds->epoch=7;sounds->simulation_count=1;
+    sounds->simulation=calloc(1,sizeof(*sounds->simulation));CHECK(sounds->simulation);
+    sounds->simulation[0]=(qa_unified_simulation_event){.sequence=1,.time=1.25,
+        .payload={.kind=QA_UNIFIED_SIMULATION_SOUND,.value.sound={
+            .actor={.registry=7,.slot=4,.generation=3},.origin={12,24,36},.volume=1}}};
+    qa_unified_document *sound_source=NULL,*sound_decoded=NULL;
+    wire=(qa_buffer){0};
+    CHECK(qa_unified_document_create_events(&sounds,NULL,&sound_source,&error));
+    CHECK(qa_unified_document_encode(sound_source,&wire,&error));
+    CHECK(qa_unified_document_decode(QA_UNIFIED_CONTROL_DOCUMENT,
+        (qa_bytes){wire.data,wire.size},NULL,NULL,NULL,&sound_decoded,&error));
+    const qa_unified_frame_events *heard=qa_unified_document_events(sound_decoded);
+    CHECK(heard && heard->epoch==7 && heard->simulation_count==1);
+    const qa_unified_simulation_event *heard_row=heard->simulation;
+    CHECK(heard_row->payload.kind==QA_UNIFIED_SIMULATION_SOUND && heard_row->time==1.25);
+    CHECK(!heard_row->payload.value.sound.resource && heard_row->payload.value.sound.actor.slot==4 &&
+        heard_row->payload.value.sound.origin.y==24 && heard_row->payload.value.sound.volume==1);
+    qa_unified_document_destroy(sound_source);qa_unified_document_destroy(sound_decoded);
+    qa_buffer_free(&wire);
 }
 
 static void *tokens_frame_allocate(void *lease,size_t bytes,size_t alignment,qa_error *error)
@@ -6292,6 +6380,7 @@ int main(int argc, char **argv)
     int recovery_status;
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
+    test_bot_awareness_storage();
     test_bot_source_knowledge();
     test_aas_geometry_compaction();
     test_prediction_continuations();

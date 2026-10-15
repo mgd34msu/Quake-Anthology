@@ -39,13 +39,18 @@ bool bot_ai_observations_prepare(qa_bots *b,qa_error *e) {
     b->players=(qa_world_actor_snapshot){.actors=actors?actors+capacity:NULL,
         .world=b->services.shared.world,.borrowed=true};
     if(bot_ai_rerelease_behavior(b)) {
-        if(capacity>SIZE_MAX/(64*sizeof(float)) ||
-           !qa_actor_index_create(&b->cooperative_actors,
+        if(capacity>SIZE_MAX/(2*sizeof(uint32_t)) || capacity>SIZE_MAX/sizeof(size_t) ||
+           !qa_actor_index_create(&b->actor_memory_index,
                qa_session_actors(b->services.shared.session),&b->observation_storage,e)) return false;
-        b->cooperative_cooldowns=capacity?qa_arena_alloc(&b->observation_storage,
-            capacity*64*sizeof(float),_Alignof(float),e):NULL;
-        if(capacity && !b->cooperative_cooldowns) return false;
-        if(capacity) memset(b->cooperative_cooldowns,0,capacity*64*sizeof(float));
+        if(!qa_pool_prepare(&b->actor_memory,&b->observation_storage,capacity,
+                sizeof(bot_actor_memory),_Alignof(bot_actor_memory),e)) return false;
+        b->actor_memory_active=capacity?qa_arena_alloc(&b->observation_storage,
+            capacity*sizeof(size_t),_Alignof(size_t),e):NULL;
+        uint32_t *marks=capacity?qa_arena_alloc(&b->observation_storage,
+            capacity*2*sizeof(uint32_t),_Alignof(uint32_t),e):NULL;
+        if(capacity && (!b->actor_memory_active || !marks)) return false;
+        qa_stamp_set_init(&b->sense_visits,marks,capacity);
+        qa_stamp_set_init(&b->sound_contacts,marks?marks+capacity:NULL,capacity);
     }
     qa_arena_seal(&b->observation_storage);
     return true;
@@ -76,7 +81,7 @@ bool bot_ai_context_create(qa_bot_runtime *runtime, const qa_bot_services *servi
         free(b->clients);free(b);return false;
     }
     if(!bot_ai_observations_prepare(b,e)) {
-        qa_actor_index_destroy(&b->cooperative_actors);
+        qa_actor_index_destroy(&b->actor_memory_index);
         qa_arena_destroy(&b->observation_storage);
         qa_actor_index_destroy(&b->actor_clients);free(b->clients);free(b);return false;
     }
@@ -187,7 +192,7 @@ bool qa_bots_destroy(qa_bots *b, qa_error *e) {
         bot_ai_source_cell_clear(b,s);
         free(s);b->source_cells[i]=NULL;
     }
-    qa_actor_index_destroy(&b->cooperative_actors);
+    qa_actor_index_destroy(&b->actor_memory_index);
     qa_arena_destroy(&b->observation_storage);
     qa_bot_runtime_lease_end(b->runtime);
     free(b->clients); qa_actor_index_destroy(&b->actor_clients); free(b);
@@ -195,6 +200,7 @@ bool qa_bots_destroy(qa_bots *b, qa_error *e) {
 }
 void bot_ai_source_cell_clear(qa_bots *b,bot_ai_state *s) {
     uint32_t source=s->acquired_source_client;
+    bot_ai_senses_clear_client(b,source,true);
     qa_bot_source_record record=s->source_record;
     qa_bot_source_span span=s->source_span;
     qa_actor_index_remove(&b->actor_clients,s->view.actor);
@@ -435,9 +441,7 @@ static bool admit(qa_bots *b,const qa_bot_admission *a,bool *rejected,qa_error *
         qa_actor_index_remove(&b->actor_clients,s->view.actor);
         if(s->view.client<b->client_capacity && b->clients[s->view.client]==s) b->clients[s->view.client]=NULL;
     }
-    if(b->cooperative_cooldowns)
-        for(size_t i=0;i<b->cooperative_actors.capacity;++i)
-            b->cooperative_cooldowns[i*64+(uint32_t)source_client]=0;
+    bot_ai_senses_clear_client(b,(uint32_t)source_client,true);
     s->cooperative=(bot_cooperative_state){0};
     s->acquired_source_client=(uint32_t)source_client;
     s->view=(bot_ai_view){.actor=a->actor,.client=a->client,.entity=a->entity,
