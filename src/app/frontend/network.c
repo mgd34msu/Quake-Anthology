@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/text.h"
 #include "qa/application_network.h"
+#include "qa/application_client_prepare.h"
 #include "qa/local_lobby.h"
 #include "qa/application_network_qw.h"
 #include "qa/application_character_selection.h"
@@ -679,6 +680,7 @@ static bool local_clients_prepare(qa_frontend_network *n, qa_error *error)
     for (uint32_t i = 0; i < f->options.seats; ++i) {
         frontend_local_client *local = n->local_clients + i;
         if (local->runtime) continue;
+        if (qa_application_client_prepare_active(f->application)) break;
         uint32_t authored;
         qa_actor_id actor;
         if (!frontend_seat_launch_id_read(f, i, &authored) ||
