@@ -12,7 +12,8 @@ bool qa_persistence_combat_admission(const qa_combat *combat, qa_actor_id actor,
 {
     if (!combat || !out || !qa_actors_get(combat->actors, actor)) return false;
     const qa_combat_record *entry = combat->records + actor.slot;
-    if (!entry->active || !qa_actor_id_equal(entry->actor, actor) || !entry->admission.admit) return false;
+    if (!entry->active || !qa_actor_id_equal(entry->actor, actor) ||
+        (!entry->admission.admit && !entry->admission.adjust)) return false;
     *out = entry->admission; return true;
 }
 
@@ -193,7 +194,7 @@ static bool record(qa_source_save_io *io, qa_combat *combat, qa_inventory *inven
                    qa_combat_record *entry, const qa_persistence_gameplay_resolvers *resolve)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    bool admission = entry->admission.admit != NULL;
+    bool admission = entry->admission.admit != NULL || entry->admission.adjust != NULL;
     bool fuel = entry->power_inventory != NULL;
     qa_combat_state primary = entry->state;
     uint32_t mask = binding_mask(&entry->binding);
@@ -232,7 +233,8 @@ static bool record(qa_source_save_io *io, qa_combat *combat, qa_inventory *inven
     } else if (primary.armor.regular.kind == QA_ARMOR_SOURCE)
         return fail(io->error, "Local combat cannot own source armor");
     if (reading && admission && (!resolve || !resolve->admission ||
-        !resolve->admission(resolve->context, entry->actor, &entry->admission, io->error) || !entry->admission.admit))
+        !resolve->admission(resolve->context, entry->actor, &entry->admission, io->error) ||
+        (!entry->admission.admit && !entry->admission.adjust)))
         return fail(io->error, "Saved combat damage admission has no restored source callback");
     for (size_t channel = 0; channel < 2; ++channel) {
         qa_combat_protection *slot = entry->protection + channel;

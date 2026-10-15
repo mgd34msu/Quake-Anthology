@@ -522,6 +522,13 @@ bool qa_q1_game_restore_finish(qa_q1_game *g, qa_error *error) {
         q1_actor *actor = g->actors[i];
         if (!actor)
             continue;
+        if (actor->native) {
+            qa_combat_state primary;
+            bool local;
+            if (!qa_combat_primary_read(g->services.combat, actor->id, &primary, &local, error) ||
+                (local && !q1_bind_damage_admission(g, actor->id, error)))
+                return false;
+        }
         if (actor->pickup_observation.serial &&
             !qa_pickups_observation_current(g->services.pickups, actor->pickup_observation)) {
             qa_error_set(error, QA_ERROR_FORMAT, i, "Q1 saved pickup observation is missing");

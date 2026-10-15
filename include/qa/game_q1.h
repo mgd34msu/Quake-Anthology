@@ -487,6 +487,7 @@ bool qa_q1_player_power(qa_q1_game *, qa_actor_id, qa_q1_power, double expires, 
 bool qa_q1_player_auto_switch(qa_q1_game *, qa_actor_id, qa_q1_auto_switch, qa_error *);
 bool qa_q1_game_damage_effect(qa_q1_game *, qa_damage_effect_stage, const qa_damage_request *,
                               qa_damage_effect *, qa_error *);
+bool qa_q1_game_damage_admission(qa_q1_game *,qa_actor_id,qa_combat_admission *,qa_error *);
 bool qa_q1_player_after_physics(qa_q1_game *, qa_actor_id, qa_error *);
 qa_actor_id qa_q1_horn_charmer(const qa_q1_game *);
 bool qa_q1_grapple_fire(qa_q1_game *, qa_actor_id, bool threewave, const qa_q1_input *, qa_error *);

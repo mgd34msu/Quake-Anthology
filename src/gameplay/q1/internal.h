@@ -1929,4 +1929,6 @@ bool q1_best_weapon_before_read(qa_q1_game *, qa_actor_id, q1_player *,
     const qa_pickup_receipt *, size_t, qa_q1_weapon *, qa_error *);
 bool q1_player_select_read(qa_q1_game *, qa_actor_id, q1_player *, qa_q1_weapon, qa_error *);
 
+bool q1_bind_damage_admission(qa_q1_game *, qa_actor_id, qa_error *);
+
 #endif
