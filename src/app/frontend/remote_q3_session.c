@@ -115,7 +115,7 @@ bool frontend_remote_q3_session_read(const frontend_remote_q3 *row,
     frontend_remote_q3_frame *frames=frontend_remote_q3_frames_read(row);
     frontend_remote_q3_transport *transport=frontend_remote_q3_transport_read(row);
     frontend_remote_q3_module_media ui,cgame;
-    if(!modules || !owner || !frontend_remote_q3_modules_idle(modules) ||
+    if(!modules || !owner || !frontend_remote_q3_modules_capture_returned(modules,error) ||
         !qa_application_native_q3_client_modules_current(owner,&resources.domain.source) ||
         !frontend_remote_q3_modules_media_read(modules,QA_QVM_UI,&ui,error) ||
         !frontend_remote_q3_modules_media_current(&ui)) return fail(error,"Remote session lacks its actual initialized source UI");

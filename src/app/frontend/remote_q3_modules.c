@@ -984,7 +984,7 @@ bool frontend_remote_q3_modules_listener_begin(frontend_remote_q3_modules *owner
     qa_qvm_role role, qa_error *error)
 {
     frontend_remote_q3_module_media media;
-    if (!frontend_remote_q3_modules_idle(owner) ||
+    if (!frontend_remote_q3_modules_capture_returned(owner, error) ||
         !frontend_remote_q3_modules_media_read(owner, role, &media, error)) return false;
     for (remote_module_lease *lease = owner->leases; lease; lease = lease->next)
         if (lease->role == role && lease->service_owner == media.receipt.service_owner && !lease->released) {
@@ -996,7 +996,7 @@ bool frontend_remote_q3_modules_listener_read(const frontend_remote_q3_modules *
     qa_qvm_role role, qa_audio_listener *out, bool *present, qa_error *error)
 {
     frontend_remote_q3_module_media media;
-    if (!out || !present || !frontend_remote_q3_modules_idle(owner) ||
+    if (!out || !present || !frontend_remote_q3_modules_capture_returned(owner, error) ||
         !frontend_remote_q3_modules_media_read(owner, role, &media, error)) return false;
     *present = false;
     for (const remote_module_lease *lease = owner->leases; lease; lease = lease->next)
