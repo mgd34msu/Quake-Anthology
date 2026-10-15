@@ -45,7 +45,9 @@ static bool info(qa_server_entry *entry, const char *rules, qa_error *error) {
     if (!*value && !qa_q3_info_value(rules, "sv_hostname", value, sizeof(value), error)) return false;
     if (!text_copy(entry->name, sizeof(entry->name), value, error) ||
         !qa_q3_info_value(rules, "mapname", entry->map, sizeof(entry->map), error) ||
-        !qa_q3_info_value(rules, "sv_maxclients", value, sizeof(value), error) || !number(value, &entry->maximum_players)) return false;
+        !qa_q3_info_value(rules, "maxclients", value, sizeof(value), error)) return false;
+    if (!*value && !qa_q3_info_value(rules, "sv_maxclients", value, sizeof(value), error)) return false;
+    if (!number(value, &entry->maximum_players)) return false;
     return true;
 }
 static bool q2_player(void *context, int32_t score, int32_t ping, const char *name, qa_error *error) {

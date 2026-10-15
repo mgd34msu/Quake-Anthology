@@ -580,7 +580,7 @@ bool qa_application_network_q2_discovery(qa_application_network_q2 *owner,
     qa_q2_status *out, const char **name, const char **map, qa_error *error)
 {
     if (!name || !map || !qa_application_network_q2_status(owner, out, error)) return false;
-    const qa_cvar_view *hostname = qa_cvars_read(owner->host.cvars, owner->hostname);
+    const qa_cvar_view *hostname = qa_cvars_read(qa_application_cvars(owner->app), owner->hostname);
     *name = hostname ? hostname->value : "";
     *map = qa_strings_cstr(qa_session_strings(owner->app->session), owner->app->current_map);
     return *map || application_fail(error, QA_ERROR_FORMAT, "Q2 discovery has no actual Source map");

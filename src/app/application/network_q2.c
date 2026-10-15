@@ -2,6 +2,7 @@
 #include "network_q2_private.h"
 #include "guest_native_q2_original_save.h"
 #include "qa/text.h"
+#include "qa/network_q3.h"
 #include <math.h>
 #include <stdio.h>
 
@@ -388,7 +389,7 @@ bool qa_application_network_q2_create(qa_application *app, qa_net_protocol_id pr
         const application_provider *provider = application_network_q2_provider(owner);
         owner->sv_novis = provider->sv_novis;
         owner->sv_airaccelerate = provider->q2_airaccelerate;
-        owner->hostname = qa_cvars_resolve(owner->host.cvars,"hostname");
+        owner->hostname = qa_cvars_resolve(qa_application_cvars(app),"hostname");
         owner->download_server = qa_cvars_resolve(owner->host.cvars,"sv_downloadserver");
         const char *map = qa_strings_cstr(qa_session_strings(app->session), app->current_map);
         owner->source_instance = application_network_q2_copy(owner->host.source.launch->selection.instance, error);
@@ -613,6 +614,15 @@ bool qa_application_network_q2_status(qa_application_network_q2 *owner, qa_q2_st
     if (!out || !application_network_q2_current(owner, error)) return false;
     qa_buffer info = {0};
     if (!qa_cvars_info(owner->host.cvars, QA_CVAR_SERVERINFO, 8192, &info, error)) return false;
+    const qa_cvar_view *hostname = qa_cvars_read(qa_application_cvars(owner->app), owner->hostname);
+    const char *map = qa_strings_cstr(qa_session_strings(owner->app->session), owner->app->current_map);
+    char maximum[16]; snprintf(maximum, sizeof(maximum), "%u", owner->host.client_slots);
+    if (!qa_q3_info_set((char *)info.data, 8192, "hostname", hostname ? hostname->value : "", QA_Q3_INFO_STRICT, NULL, error) ||
+        !qa_q3_info_set((char *)info.data, 8192, "mapname", map ? map : "", QA_Q3_INFO_STRICT, NULL, error) ||
+        !qa_q3_info_set((char *)info.data, 8192, "maxclients", maximum, QA_Q3_INFO_STRICT, NULL, error)) {
+        qa_buffer_free(&info); return false;
+    }
+    info.size = strlen((const char *)info.data);
     size_t count = 0;
     struct application_player_roster *roster = owner->app->players;
     for (size_t i = 0; roster && i < roster->count; ++i) {

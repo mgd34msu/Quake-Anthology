@@ -8457,7 +8457,7 @@ static void test_browser_endpoint_probe(void)
 
     uint8_t bytes[1024]; qa_net_writer writer;
     qa_q2_status_player player = {.score = 1, .ping = 4, .name = "player"};
-    qa_q2_status status = {.server_info = "\\hostname\\fixture\\mapname\\base1\\sv_maxclients\\8",
+    qa_q2_status status = {.server_info = "\\hostname\\fixture\\mapname\\base1\\maxclients\\8",
         .players = &player, .player_count = 1};
     qa_net_writer_init(&writer, bytes, sizeof(bytes), &error);
     CHECK(qa_q2_oob_write(&writer, "print\nordinary console output\n"));
