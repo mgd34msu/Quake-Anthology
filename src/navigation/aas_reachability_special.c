@@ -485,11 +485,43 @@ static bool bobbing(aas_reach_build *work, qa_error *error) {
     }
     return true;
 }
-bool aas_reach_special(aas_reach_build *work, qa_error *error) {
+bool aas_reach_special_prepare(aas_reach_build *work, qa_error *error) {
     qa_entity_syntax syntax = work->geometry->family == QA_BSP_Q1 ? QA_ENTITY_Q1 :
         work->geometry->family == QA_BSP_Q3 ? QA_ENTITY_Q3 :
         work->geometry->format == QA_BSP_IBSP44 ? QA_ENTITY_Q2_RERELEASE : QA_ENTITY_Q2_CLASSIC;
     if (!qa_entities_parse(work->geometry->lumps[QA_BSP_ENTITIES].bytes, syntax, &work->entities, error)) return false;
+    static const char *const items[] = {"item_armor_body", "item_armor_combat", "item_health_mega",
+        "weapon_grenadelauncher", "weapon_rocketlauncher", "weapon_lightning", "weapon_plasmagun",
+        "weapon_railgun", "weapon_bfg", "item_quad", "item_regen", "item_invulnerability"};
+    const qa_bounds bounds = {{-15, -15, -15}, {15, 15, 15}};
+    for (size_t entity = 0; entity < work->entities.count; ++entity) {
+        qa_bytes classname;
+        if (!qa_entity_value(&work->entities, entity, "classname", &classname)) continue;
+        bool important = false;
+        for (size_t i = 0; i < sizeof(items) / sizeof(*items); ++i)
+            if (text_is(classname, items[i])) { important = true; break; }
+        if (!important) continue;
+        qa_vec3 origin; bool found; int32_t spawnflags;
+        if (!vector(work, entity, "origin", &origin, &found, error)) return false;
+        if (!found) continue;
+        if (!integer(work, entity, "spawnflags", &spawnflags, error)) return false;
+        if (!(spawnflags & 1)) {
+            qa_vec3 end = origin; end.z -= 100;
+            qa_trace_result drop;
+            if (!aas_reach_world_trace(work, origin, end, &bounds, &drop, error)) return false;
+            if (!drop.start_solid) origin = drop.end;
+        }
+        uint32_t area; qa_vec3 point;
+        if (!qa_navigation_best_reachable(work->navigation, work->workspace, origin, bounds,
+            &point, &area, &found, error)) return false;
+        work->settings[found ? area : 0].flags |= AAS_REACH_WEAPON_JUMP_AREA;
+    }
+    for (size_t i = 1; i < work->source->count[QA_AAS_AREAS]; ++i)
+        if (work->settings[i].contents & AAS_REACH_JUMPPAD)
+            work->settings[i].flags |= AAS_REACH_WEAPON_JUMP_AREA;
+    return true;
+}
+bool aas_reach_special(aas_reach_build *work, qa_error *error) {
     return jump_pad(work, error) && teleport(work, error) &&
         elevator(work, error) && bobbing(work, error);
 }

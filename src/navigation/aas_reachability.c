@@ -38,6 +38,7 @@ bool aas_reach_time(double time, uint16_t *out, qa_error *error) {
 }
 static bool generated_type(const aas_reach_build *work, int32_t type) {
     if (type == AAS_REACH_GRAPPLE && work->movement.grapple) return true;
+    if (type == AAS_REACH_ROCKET && work->geometry) return true;
     /* Authored restriction bits belong to the existing link until a generator
      * can reconstruct their source rule. */
     uint32_t base = (uint32_t)type & UINT32_C(0x00ffffff);
@@ -88,6 +89,16 @@ bool aas_reach_predict(aas_reach_build *work, qa_nav_prediction_query *query, qa
     query->omit_trajectory = true;
     query->environment = &work->environment;
     return qa_navigation_predict(work->navigation, work->workspace, query, &work->prediction, error);
+}
+bool aas_reach_world_trace(aas_reach_build *work, qa_vec3 start, qa_vec3 end,
+    const qa_bounds *bounds, qa_trace_result *out, qa_error *error) {
+    qa_nav_profile profile = work->navigation->graph->view.profile;
+    profile.shape = (qa_trace_shape){.kind = bounds ? QA_SHAPE_BOX : QA_SHAPE_POINT};
+    if (bounds) profile.shape.bounds = *bounds;
+    profile.policy.q1_hull = bounds ? -1 : 0;
+    profile.policy.contents_mask = qa_collision_contents_mask(1, QA_GAME_Q3);
+    return nav_trace(&work->navigation->services, &profile, (qa_actor_id){0},
+        start, end, true, out, error);
 }
 static bool finish(aas_reach_build *work, qa_nav_asset **out, qa_error *error) {
     size_t counts[QA_AAS_LUMP_COUNT];
@@ -163,12 +174,14 @@ bool qa_navigation_aas_reachability_build(qa_navigation *navigation, const qa_bs
     READ(start_elevator, "rs_startelevator", 50);
     READ(func_bob, "rs_funcbob", 300);
     READ(start_grapple, "rs_startgrapple", 500);
+    READ(rocket_jump, "rs_rocketjump", 500);
 #undef READ
     work.movement.grapple = variable && truncf(variable(context, "grapplereach", 0)) != 0;
     work.environment = qa_movement_environment_default();
     work.environment.gravity_multiplier = work.movement.gravity / 800;
     work.environment.speed_multiplier = work.movement.max_velocity / 320;
     bool okay = prepare(&work, error);
+    if (okay && geometry && source->count[QA_AAS_AREAS]) okay = aas_reach_special_prepare(&work, error);
     for (uint32_t from = 1; okay && from < source->count[QA_AAS_AREAS]; ++from) {
         uint32_t contents = (uint32_t)work.settings[from].contents;
         if (contents & AAS_REACH_JUMPPAD) continue;
@@ -179,10 +192,12 @@ bool qa_navigation_aas_reachability_build(qa_navigation *navigation, const qa_bs
             bool found;
             okay = aas_reach_geometry(&work, from, to, &found, error);
         }
-        if (!(contents & (AAS_REACH_TELEPORT | AAS_REACH_JUMPPAD)) && work.movement.grapple)
-            for (uint32_t to = 1; okay && to < source->count[QA_AAS_AREAS]; ++to)
-                if (from != to && !aas_reach_exists(&work, from, to))
-                    okay = aas_reach_grapple(&work, from, to, error);
+        if (!(contents & (AAS_REACH_TELEPORT | AAS_REACH_JUMPPAD)))
+            for (uint32_t to = 1; okay && to < source->count[QA_AAS_AREAS]; ++to) {
+                if (from == to || aas_reach_exists(&work, from, to)) continue;
+                if (work.movement.grapple) okay = aas_reach_grapple(&work, from, to, error);
+                if (okay && geometry) okay = aas_reach_weapon_jump(&work, from, to, error);
+            }
     }
     for (uint32_t area = 1; okay && area < source->count[QA_AAS_AREAS]; ++area)
         if (!(work.settings[area].contents & AAS_REACH_JUMPPAD))

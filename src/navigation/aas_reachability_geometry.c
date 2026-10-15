@@ -671,10 +671,6 @@ bool aas_reach_grapple(aas_reach_build *work, uint32_t from, uint32_t to, qa_err
     if (!qa_aas_trace_presence(world, work->query, source->center, end, 4, &floor, error)) return false;
     if (floor.start_solid) return true;
     qa_vec3 area_start = floor.end;
-    qa_nav_profile point = work->navigation->graph->view.profile;
-    point.shape = (qa_trace_shape){.kind = QA_SHAPE_POINT};
-    point.policy.q1_hull = 0;
-    point.policy.contents_mask = qa_collision_contents_mask(1, QA_GAME_Q3);
     float maximum_velocity = (float)sqrt(30 * 10000), fall_time = maximum_velocity / work->movement.gravity;
     int32_t fall_distance;
     if (!aas_reach_integer(.5 * work->movement.gravity * fall_time * fall_time, &fall_distance, error)) return false;
@@ -695,8 +691,7 @@ bool aas_reach_grapple(aas_reach_build *work, uint32_t from, uint32_t to, qa_err
             rise / horizontal_distance < tan(2 * 3.14159265358979323846 * 15 / 360)) continue;
         end = qa_vec_ma(center, -500, plane->normal);
         qa_trace_result impact;
-        if (!nav_trace(&work->navigation->services, &point, (qa_actor_id){0},
-            center, end, true, &impact, error)) return false;
+        if (!aas_reach_world_trace(work, center, end, NULL, &impact, error)) return false;
         qa_collision_bits sky = qa_collision_bits_union(qa_collision_bit(QA_SURFACE_SKY),
             qa_collision_bit(QA_SURFACE_SKY_NOIMPACT));
         if (qa_collision_bits_overlap(impact.surface_flags, sky) || impact.fraction * 500 > 32) continue;
@@ -720,6 +715,60 @@ bool aas_reach_grapple(aas_reach_build *work, uint32_t from, uint32_t to, qa_err
         if (!aas_reach_time(work->movement.start_grapple +
             qa_vec_length(qa_vec_sub(reach.end, reach.start)) * .25f, &reach.travel_time, error) ||
             !aas_reach_add(work, from, reach, error)) return false;
+    }
+    return true;
+}
+static bool rocket_velocity(aas_reach_build *work, qa_vec3 origin, float *out, qa_error *error) {
+    qa_vec3 forward, right;
+    qa_angle_vectors(qa_v3(90, 0, 0), &forward, &right, NULL, QA_ANGLE_NATIVE_MATH);
+    qa_vec3 start = origin;
+    start.z += 8;
+    start.x += forward.x * 8 + right.x * 8;
+    start.y += forward.y * 8 + right.y * 8;
+    start.z += forward.z * 8 + right.z * 8 - 8;
+    qa_trace_result impact;
+    if (!aas_reach_world_trace(work, start, qa_vec_ma(start, 500, forward), NULL, &impact, error)) return false;
+    qa_vec3 center = origin; center.z += 4;
+    /* This is the original cold botlib estimate, not a gameplay damage call. */
+    float points = (float)(120 - .5 * qa_vec_length(qa_vec_sub(impact.end, center)));
+    if (points < 0) points = 0;
+    points *= .5f;
+    qa_vec3 direction = qa_vec_normalize(qa_vec_sub(origin, impact.end));
+    qa_vec3 impulse = qa_vec_ma_wide((qa_vec3){0}, 1600.0 * points / 200, direction);
+    *out = impulse.z + work->movement.jump_velocity;
+    return true;
+}
+bool aas_reach_weapon_jump(aas_reach_build *work, uint32_t from, uint32_t to, qa_error *error) {
+    if (!aas_reach_grounded(work, from) || aas_reach_swimming(work, from) ||
+        !aas_reach_grounded(work, to) || !(work->settings[to].flags & AAS_REACH_WEAPON_JUMP_AREA)) return true;
+    const qa_aas_view *world = work->source;
+    const qa_aas_area *source = world->areas + from, *destination = world->areas + to;
+    if (destination->bounds.maxs.z < source->bounds.mins.z) return true;
+    qa_vec3 end = source->center; end.z -= 1000;
+    qa_aas_presence_trace floor;
+    if (!qa_aas_trace_presence(world, work->query, source->center, end, 4, &floor, error)) return false;
+    if (floor.start_solid) return true;
+    for (int32_t i = 0; i < destination->face_count; ++i) {
+        const qa_aas_face *face = area_face(world, destination, i, NULL);
+        if (!(face->flags & AAS_REACH_FACE_GROUND)) continue;
+        qa_vec3 center = aas_reach_face_center(world, face);
+        if (center.z < floor.end.z + 64) continue;
+        float velocity, speed;
+        if (!rocket_velocity(work, floor.end, &velocity, error)) return false;
+        if (!aas_reach_horizontal_jump_speed(work, velocity, floor.end, center, &speed) || speed >= 300) continue;
+        qa_vec3 direction = qa_vec_sub(center, floor.end); direction.z = 0;
+        qa_nav_prediction_query query = {.origin = floor.end, .presence = 2, .on_ground = true,
+            .velocity = {0, 0, velocity}, .command_move = qa_vec_scale(qa_vec_normalize(direction), speed),
+            .command_frames = 30, .maximum_frames = 30, .frame_ms = 100,
+            .stop_events = 1 | 4 | 8 | 16 | 32 | 128 | 1024, .stop_area = to};
+        if (!aas_reach_predict(work, &query, error)) return false;
+        if (aas_reach_prediction_frames(work) >= 30 || (work->prediction.stop_event & (8 | 16 | 32)) ||
+            !(work->prediction.stop_event & (1024 | 128))) continue;
+        qa_aas_reach reach = {.area = (int32_t)to, .start = floor.end, .end = center,
+            .travel_type = AAS_REACH_ROCKET};
+        if (!aas_reach_time(work->movement.rocket_jump, &reach.travel_time, error) ||
+            !aas_reach_add(work, from, reach, error)) return false;
+        return true;
     }
     return true;
 }

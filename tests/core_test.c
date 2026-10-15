@@ -1269,6 +1269,119 @@ static void test_aas_grapple(void)
     qa_collision_destroy(wall.geometry);
 }
 
+static void test_aas_weapon_jump(void)
+{
+    qa_error error={0};gameplay_map floor;gameplay_map_create(&floor);
+    uint8_t bytes[512]={0};memcpy(bytes,floor.bytes,sizeof(floor.bytes));
+    qa_collision_destroy(floor.geometry);floor.geometry=NULL;
+    uint32_t plane=qa_load_u32le(bytes+4+1*8),node=plane+60,clip=node+72;
+    memset(bytes+plane,0,sizeof(bytes)-plane);
+    qa_store_u32le(bytes+4+1*8,plane);qa_store_u32le(bytes+8+1*8,60);
+    qa_store_u32le(bytes+4+5*8,node);qa_store_u32le(bytes+8+5*8,72);
+    qa_store_u32le(bytes+4+9*8,clip);qa_store_u32le(bytes+8+9*8,24);
+    for(uint32_t i=0;i<3;++i) {
+        uint8_t *p=bytes+plane+i*20,*n=bytes+node+i*24,*c=bytes+clip+i*8;
+        gameplay_float(p+(i?8:0),1);gameplay_float(p+12,i==0?64:i==1?96:0);
+        qa_store_u32le(p+16,i?2:0);qa_store_u32le(n,i);qa_store_u32le(c,i);
+        qa_store_u16le(n+4,i?UINT16_MAX-1:1);qa_store_u16le(n+6,i?UINT16_MAX:2);
+        qa_store_u16le(c+4,i?UINT16_MAX:1);qa_store_u16le(c+6,i?UINT16_MAX-1:2);
+        for(unsigned axis=0;axis<3;++axis) {
+            qa_store_u16le(n+8+axis*2,(uint16_t)-1024);qa_store_u16le(n+14+axis*2,1024);
+        }
+    }
+    qa_bsp_view bsp;qa_collision_geometry *collision=NULL;
+    CHECK(qa_bsp_open((qa_bytes){bytes,sizeof(bytes)},&bsp,&error));
+    CHECK(qa_collision_create(&bsp,&collision,&error));
+    qa_trace_scratch *scratch=NULL;CHECK(qa_trace_scratch_create(collision,&scratch,&error));
+    qa_trace_query query={.start={96,0,256},.end={96,0,0},
+        .shape={.kind=QA_SHAPE_BOX,.bounds={{-16,-16,-24},{16,16,32}}},
+        .policy=qa_collision_ruleset_policy(QA_RULESET_Q3),.target={.inline_model=true}};
+    qa_trace_result hit;
+    CHECK(qa_collision_trace(collision,scratch,&query,&hit,&error));
+    CHECK(hit.hit==QA_TRACE_HIT_WORLD && hit.fraction<1 && hit.end.z>=120 && hit.end.z<121);
+    query.start.x=query.end.x=-96;
+    CHECK(qa_collision_trace(collision,scratch,&query,&hit,&error));
+    CHECK(hit.hit==QA_TRACE_HIT_WORLD && hit.fraction<1 && hit.end.z>=24 && hit.end.z<25);
+    qa_trace_scratch_destroy(scratch);
+
+    const qa_vec3 vertices[]={{64,-16,120},{64,16,120},{128,16,120},{128,-16,120}};
+    const qa_aas_edge edges[]={{{0,0}},{{0,1}},{{1,2}},{{2,3}},{{3,0}}};
+    const int32_t edge_index[]={1,2,3,4},face_index[]={1};
+    const qa_aas_face faces[]={{0},{.plane=2,.flags=5,.edge_count=4,.front_area=2}};
+    const qa_aas_plane planes[]={{{0,0,1},24,2},{{0,0,-1},-24,2},
+        {{0,0,1},120,2},{{0,0,-1},-120,2},{{1,0,0},48,0},{{-1,0,0},-48,0}};
+    const qa_aas_area areas[]={{0},
+        {.number=1,.bounds={{-256,-32,24},{48,32,384}},.center={-96,0,48}},
+        {.number=2,.face_count=1,.bounds={{48,-32,120},{256,32,384}},.center={96,0,144}}};
+    const qa_aas_setting settings[]={{0},{.flags=1,.presence=6,.first_reach=1,.reach_count=1},
+        {.flags=1,.presence=6}};
+    const qa_aas_node nodes[]={{0},{.plane=4,.children={2,3}},
+        {.plane=2,.children={-2,0}},{.plane=0,.children={-1,0}}};
+    const qa_aas_reach authored[]={{0},{.area=2,.face=9,.edge=17,.start={-96,0,25},
+        .end={96,0,120},.travel_type=12,.travel_time=99,.padding=12}};
+    const qa_aas_view source={.version=5,.bsp_checksum=102,
+        .count={[QA_AAS_VERTICES]=4,[QA_AAS_EDGES]=5,[QA_AAS_EDGE_INDEX]=4,
+            [QA_AAS_FACES]=2,[QA_AAS_FACE_INDEX]=1,[QA_AAS_PLANES]=6,
+            [QA_AAS_AREAS]=3,[QA_AAS_SETTINGS]=3,[QA_AAS_NODES]=4,[QA_AAS_REACHABILITY]=2},
+        .vertices=vertices,.edges=edges,.edge_index=edge_index,.faces=faces,.face_index=face_index,
+        .planes=planes,.areas=areas,.settings=settings,.nodes=nodes,.reachability=authored};
+    qa_buffer before={0},after={0};CHECK(qa_aas_write(&source,&before,&error));
+    qa_nav_asset *generated=NULL;
+    aas_reachability_generate(&source,false,NULL,collision,NULL,NULL,&generated);
+    const qa_aas_view *view=qa_nav_asset_aas(generated);
+    const qa_aas_reach *reach=aas_reachability_kind_to(view,1,2,12);
+    CHECK(reach && !memcmp(reach,authored+1,sizeof(*reach)));
+    qa_nav_asset_release(generated);generated=NULL;
+    const char item[]="{ \"classname\" \"worldspawn\" }\n"
+        "{ \"classname\" \"item_quad\" \"origin\" \"96 0 160\" }\n";
+    qa_bsp_view geometry={.family=QA_BSP_Q3,.format=QA_BSP_IBSP46,
+        .lumps={[QA_BSP_ENTITIES]={.bytes={(const uint8_t *)item,sizeof(item)-1},.present=true}}};
+    aas_reachability_generate(&source,false,&geometry,collision,NULL,NULL,&generated);
+    view=qa_nav_asset_aas(generated);reach=aas_reachability_kind_to(view,1,2,12);
+    CHECK((view->settings[2].flags&8192) && !reach);
+    qa_nav_asset_release(generated);generated=NULL;
+    CHECK(qa_aas_write(&source,&after,&error));
+    CHECK(before.size==after.size && !memcmp(before.data,after.data,before.size));
+    qa_buffer_free(&before);qa_buffer_free(&after);
+
+    qa_collision_destroy(collision);collision=NULL;
+    gameplay_float(bytes+plane+12,0);
+    CHECK(qa_bsp_open((qa_bytes){bytes,sizeof(bytes)},&bsp,&error));
+    CHECK(qa_collision_create(&bsp,&collision,&error));
+    CHECK(qa_trace_scratch_create(collision,&scratch,&error));
+    query.start.x=query.end.x=96;
+    CHECK(qa_collision_trace(collision,scratch,&query,&hit,&error));
+    CHECK(hit.hit==QA_TRACE_HIT_WORLD && hit.fraction<1 && hit.end.z>=120 && hit.end.z<121);
+    query.start.x=query.end.x=-96;
+    CHECK(qa_collision_trace(collision,scratch,&query,&hit,&error));
+    CHECK(hit.hit==QA_TRACE_HIT_WORLD && hit.fraction<1 && hit.end.z>=24 && hit.end.z<25);
+    qa_trace_scratch_destroy(scratch);
+    qa_vec3 near_vertices[4];memcpy(near_vertices,vertices,sizeof(near_vertices));
+    near_vertices[0].x=near_vertices[1].x=-16;near_vertices[2].x=near_vertices[3].x=208;
+    qa_aas_plane near_planes[6];memcpy(near_planes,planes,sizeof(near_planes));
+    near_planes[4].distance=-16;near_planes[5].distance=16;
+    qa_aas_area near_areas[3];memcpy(near_areas,areas,sizeof(near_areas));
+    near_areas[1].bounds.maxs.x=-16;near_areas[2].bounds.mins.x=-16;
+    qa_aas_view near_source=source;
+    near_source.vertices=near_vertices;near_source.planes=near_planes;near_source.areas=near_areas;
+    CHECK(qa_aas_write(&near_source,&before,&error));
+    aas_reachability_generate(&near_source,false,&geometry,collision,NULL,NULL,&generated);
+    view=qa_nav_asset_aas(generated);reach=aas_reachability_kind_to(view,1,2,12);
+    CHECK((view->settings[2].flags&8192) && reach && reach->face==0 && reach->edge==0 &&
+        reach->travel_time==500 && !reach->padding && reach->start.x==-96 &&
+        reach->start.z>=24 && reach->start.z<25 && qa_vec_equal(reach->end,qa_v3(96,0,120)));
+    qa_nav_asset_release(generated);generated=NULL;
+    const char ordinary[]="{ \"classname\" \"item_health\" \"origin\" \"96 0 160\" }\n";
+    geometry.lumps[QA_BSP_ENTITIES].bytes=(qa_bytes){(const uint8_t *)ordinary,sizeof(ordinary)-1};
+    aas_reachability_generate(&near_source,false,&geometry,collision,NULL,NULL,&generated);
+    view=qa_nav_asset_aas(generated);
+    CHECK(!(view->settings[2].flags&8192) && !aas_reachability_kind_to(view,1,2,12));
+    qa_nav_asset_release(generated);
+    CHECK(qa_aas_write(&near_source,&after,&error));
+    CHECK(before.size==after.size && !memcmp(before.data,after.data,before.size));
+    qa_buffer_free(&before);qa_buffer_free(&after);qa_collision_destroy(collision);
+}
+
 typedef struct navigation_step_fixture {
     qa_vec3 points[2];
     qa_actor_id actor;
@@ -7990,6 +8103,7 @@ int main(int argc, char **argv)
     test_aas_teleport_jump_pad();
     test_aas_elevator_bobbing();
     test_aas_grapple();
+    test_aas_weapon_jump();
     test_navigation_best_reachable();
     test_native_navigation_first_step();
     test_native_navigation_ground_fit();
