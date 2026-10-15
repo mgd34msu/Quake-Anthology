@@ -3012,6 +3012,8 @@ static bool client_physical_retirement(void *context,const qa_application_client
         !qa_net_client_id_equal(source->client,n->q3_client) &&
         !qa_net_connections_get(qa_network_connections(n->runtime),source->client);
 }
+static void client_physical_released(void *context)
+{ ((frontend_q3_client *)context)->physical_source=NULL; }
 static bool client_snapshot_entity(const qa_q3_snapshot *snapshot,uint32_t number)
 {
     if(!snapshot) return false;
@@ -3084,7 +3086,8 @@ static bool client_physical_create(frontend_q3_client *n,qa_error *error)
         .prepared=prepared,.instance="remote-q3-client",.seat=options.input_origin.seat,.clock=QA_RULESET_Q3};
     options.services=(frontend_client_source_services){.context=n,.initialize=client_physical_initialize,
         .connection_current=client_physical_connection,.entity_current=client_physical_entity,
-        .retirement_current=client_physical_retirement,.command=client_physical_command,.forward=client_physical_forward};
+        .retirement_current=client_physical_retirement,.command=client_physical_command,.forward=client_physical_forward,
+        .released=client_physical_released};
     bool ok=frontend_client_source_create(f,&options,&n->physical_source,error);
     qa_vfs_destroy(prepared);
     if(!ok) {
