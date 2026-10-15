@@ -414,6 +414,7 @@ bool qa_q3_client_activate_bot(qa_q3_game *game, qa_actor_id actor, qa_error *er
     qa_q3_source_binding *binding = &game->source_entities[slot];
     if (binding->client_slot != (int32_t)slot)
         return q3_fail(error, "Q3 bot activation lost its original fixed client pointer");
+    binding->number = (int32_t)slot;
     binding->server_flags |= 8u;
     q3_source_active_set(game, slot, true);
     return true;
