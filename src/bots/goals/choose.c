@@ -112,7 +112,7 @@ static bool choose(goal_choice *c, qa_error *e) {
     const qa_bot_items_view *items;
     bot_goal_weights *weights;int32_t client;
     if (!bot_goal_config_get(g,c->state,&weights,e)) return false;
-    if (!weights) return true;
+    if ((!weights || !g->configured) && !g->services.pickups) return true;
     if (!bot_goal_record_integer_read(&c->state->record,BOT_GOAL_CLIENT,&client,e)) return false;
     c->navigation = g->services.navigation(g->services.context, client);
     if (!c->navigation) return true;
@@ -125,9 +125,8 @@ static bool choose(goal_choice *c, qa_error *e) {
     if (c->query->nearby && c->query->long_term &&
         !travel(c, c->area, c->query->origin, (uint32_t)c->query->long_term->area,
                  &c->long_term_time, e)) return false;
-    if (!g->configured) return true;
     size_t steps = 0;
-    for (uint32_t id = g->level_head; id;) {
+    for (uint32_t id = weights && g->configured ? g->level_head : 0; id;) {
         bot_level_item value;
         if (++steps > g->level_capacity) return bot_goal_fail(e, "Goal choice level-item list has a cycle");
         if (!bot_goal_level_read(g, id, &value, e)) return false;

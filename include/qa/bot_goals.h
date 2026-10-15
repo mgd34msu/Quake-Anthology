@@ -82,7 +82,7 @@ bool qa_bot_goals_active(const qa_bot_goals *);
 bool qa_bot_goals_rebind_world(qa_bot_goals *, const qa_entities *, qa_error *);
 bool qa_bot_goals_reconfigure(qa_bot_goals *, qa_bot_items *, int32_t game_type,
                               uint32_t next_map_capacity, qa_error *);
-/* A NULL config suspends source item queries while retaining prior immutable
+/* A NULL config suspends fuzzy item queries while retaining prior immutable
  * metadata needed by existing checkpoints. Reconfiguration enables it again. */
 bool qa_bot_goals_time(qa_bot_goals *, float seconds, qa_error *);
 bool qa_bot_goals_allocate(qa_bot_goals *, int32_t client, uint32_t *handle, qa_error *);

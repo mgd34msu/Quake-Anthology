@@ -572,9 +572,9 @@ static void *q1_create_scratch(const void *opaque,qa_error *error) {
     }
     /* Retail 1024-unit cross-policy sweeps peak below 258 bytes per loaded
      * node. Reserve about four times that measured amount, scaling with map data. */
-    /* Cell, separating-plane and sweep arrays also have fixed bootstrap
-     * storage: the one-node gameplay floor uses 3291 bytes per query. */
-    const size_t bootstrap_bytes=4096;
+    /* Compound hull subtraction needs working cells and separating planes
+     * even on a one-node map, before the topology-dependent storage. */
+    const size_t bootstrap_bytes=64*1024;
     if(topology>(SIZE_MAX-bootstrap_bytes)/1024) { qa_error_set(error,QA_ERROR_MEMORY,0,"Quake collision scratch size overflow"); return NULL; }
     size_t query_bytes=bootstrap_bytes+topology*1024;
     size_t frame_count=(state->drawing_count>state->clip_count?state->drawing_count:state->clip_count)+1;

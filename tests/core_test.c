@@ -486,6 +486,73 @@ typedef struct navigation_step_fixture {
     qa_vec3 points[2];
     size_t admitted, rejected;
 } navigation_step_fixture;
+typedef struct canonical_goal_fixture {
+    qa_bot_navigation *navigation;
+    qa_bot_pickup_goal pickup;
+    qa_mt19937 random;
+    bool available, borrowed;
+} canonical_goal_fixture;
+static uint32_t canonical_goal_random(void *context)
+{
+    return qa_mt19937_next(&((canonical_goal_fixture *)context)->random);
+}
+static qa_bot_navigation *canonical_goal_navigation(void *context,int32_t client)
+{
+    (void)client;return ((canonical_goal_fixture *)context)->navigation;
+}
+static bool canonical_goal_list(void *context,int32_t client,const qa_actor_id **actors,
+    size_t *count,void **lease,qa_error *error)
+{
+    canonical_goal_fixture *fixture=context;
+    (void)client;(void)error;CHECK(!fixture->borrowed);fixture->borrowed=true;
+    *actors=&fixture->pickup.actor;*count=1;*lease=fixture;return true;
+}
+static void canonical_goal_end(void *context,void *lease)
+{
+    canonical_goal_fixture *fixture=context;
+    CHECK(lease==fixture && fixture->borrowed);fixture->borrowed=false;
+}
+static bool canonical_goal_read(void *context,int32_t client,qa_actor_id actor,
+    qa_bot_pickup_goal *out,bool *found,qa_error *error)
+{
+    canonical_goal_fixture *fixture=context;(void)client;(void)error;
+    *found=fixture->available && qa_actor_id_equal(actor,fixture->pickup.actor);
+    if(*found) *out=fixture->pickup;
+    return true;
+}
+static void test_bot_canonical_goal_without_weights(qa_bot_navigation *navigation,
+    qa_actor_registry *actors)
+{
+    qa_error error={0};qa_strings *strings=NULL;
+    CHECK(qa_strings_create(&strings,&error));
+    canonical_goal_fixture fixture={.navigation=navigation,.available=true,
+        .pickup={.entity=7,.origin={64,-128,40},.bounds={{-8,-8,-8},{8,8,8}},.utility=100}};
+    qa_mt19937_seed(&fixture.random,1);
+    CHECK(qa_strings_intern_cstr(strings,"canonical-pickup",&fixture.pickup.name,&error));
+    CHECK(qa_actors_allocate(actors,1,1,&fixture.pickup.actor,&error));
+    qa_bot_items *items=NULL;qa_bot_goals *goals=NULL;uint32_t handle=0;
+    CHECK(qa_bot_items_restore(&(qa_bot_items_view){.path="empty-items"},&items,&error));
+    qa_bot_goal_options options={.maximum_states=1,.maximum_level_items=1,
+        .random={&fixture,canonical_goal_random}};
+    qa_bot_goal_services services={.context=&fixture,.strings=strings,.actors=actors,
+        .navigation=canonical_goal_navigation,.pickups=canonical_goal_list,
+        .pickups_end=canonical_goal_end,.pickup=canonical_goal_read};
+    CHECK(qa_bot_goals_create(items,&options,&services,&goals,&error));
+    CHECK(qa_bot_goals_allocate(goals,0,&handle,&error) && handle);
+    qa_bot_goal_choice query={.origin={0,-128,40},.travel_flags=UINT32_MAX};bool found;
+    CHECK(qa_bot_goals_choose(goals,handle,&query,&found,&error) && found && !fixture.borrowed);
+    qa_bot_goal goal;
+    CHECK(qa_bot_goals_top(goals,handle,false,&goal,&found,&error) && found &&
+        goal.entity==fixture.pickup.entity && goal.number>=QA_BOT_SOURCE_GOAL_MIN &&
+        (goal.flags&QA_BOT_GOAL_ITEM));
+    CHECK(qa_bot_goals_empty(goals,handle,&error));
+    CHECK(qa_bot_goals_reconfigure(goals,NULL,0,0,&error));
+    CHECK(qa_bot_goals_choose(goals,handle,&query,&found,&error) && found && !fixture.borrowed);
+    CHECK(qa_bot_goals_empty(goals,handle,&error));fixture.available=false;
+    CHECK(qa_bot_goals_choose(goals,handle,&query,&found,&error) && !found && !fixture.borrowed);
+    qa_bot_goals_destroy(goals);qa_bot_items_release(items);qa_strings_destroy(strings);
+    CHECK(qa_actors_release(actors,fixture.pickup.actor,&error));
+}
 static bool navigation_step_begin(void *context,qa_actor_id actor,void **lease,qa_error *error)
 {
     (void)actor;(void)error;*lease=context;return true;
@@ -609,6 +676,7 @@ static void test_native_navigation_first_step(void)
     CHECK(qa_bot_memory_destroy(restored.memory,&error));
     qa_nav_route_free(&moves.trajectory);qa_nav_route_free(&whole);
     CHECK(qa_bot_memory_destroy(moves.memory,&error));
+    test_bot_canonical_goal_without_weights(navigation,actors);
     qa_nav_workspace_destroy(workspace);qa_bot_navigation_destroy(navigation);
     qa_navigation_destroy(runtime);qa_nav_graph_release(graph);
     CHECK(qa_world_destroy(world,&error));CHECK(qa_actors_destroy(actors,&error));
