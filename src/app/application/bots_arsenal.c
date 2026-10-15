@@ -1,5 +1,4 @@
 #include "bots_private.h"
-#include "bots_knowledge.h"
 #include "qa/game_q2_bots.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q3_bots.h"
@@ -37,10 +36,9 @@ static qa_vec3 q2_launch_velocity(const qa_bot_weapon_knowledge *knowledge,qa_ve
 static bool observe_arsenal(application_bots *bots,qa_actor_id actor,qa_error *error) {
     application_provider *provider=application_provider_for(bots->application,actor,QA_ROLE_ARSENAL,NULL);
     bots->knowledge_count=0;
-    uint32_t handle=0;
-    if(provider && !qa_bots_source_weapon_handle(bots->population,actor,&handle,error)) return false;
-    qa_actor_id observed=application_bots_knowledge_actor(bots,provider,handle);
     if(provider && provider->kind==APPLICATION_PROVIDER_Q3) {
+        uint32_t handle;
+        if(!qa_bots_source_weapon_handle(bots->population,actor,&handle,error)) return false;
         qa_q3_product product;
         if(!qa_q3_bot_arsenal_product_read(provider->state.q3,&product,error)) return false;
         int maximum=product==QA_Q3_ARENA?QA_Q3_W_GRAPPLE:QA_Q3_WEAPON_COUNT-1;
@@ -53,8 +51,8 @@ static bool observe_arsenal(application_bots *bots,qa_actor_id actor,qa_error *e
             value.supply_weapon=qa_q3_weapon_item(provider->state.q3,(qa_q3_weapon)source,false);
             value.supply_ammo=qa_q3_weapon_item(provider->state.q3,(qa_q3_weapon)source,true);
             value.ammo_per_shot=value.supply_ammo?1:0;
-            value.owned=count(bots,observed,value.supply_weapon)>0;
-            value.available=value.owned && (!value.supply_ammo || count(bots,observed,value.supply_ammo)!=0);
+            value.owned=count(bots,actor,value.supply_weapon)>0;
+            value.available=value.owned && (!value.supply_ammo || count(bots,actor,value.supply_ammo)!=0);
             value.melee=source==QA_Q3_W_GAUNTLET;
             value.ranged_limit=value.melee;
             value.maximum_range=value.melee?60:0;
@@ -66,7 +64,7 @@ static bool observe_arsenal(application_bots *bots,qa_actor_id actor,qa_error *e
     } else if(provider && provider->kind==APPLICATION_PROVIDER_Q1) {
         for(int source=0;source<QA_Q1_WEAPON_COUNT;++source) {
             qa_q1_weapon_view view;bool found;
-            if(!qa_q1_bot_weapon_read(provider->state.q1,observed,(qa_q1_weapon)source,&view,&found,error)) return false;
+            if(!qa_q1_bot_weapon_read(provider->state.q1,actor,(qa_q1_weapon)source,&view,&found,error)) return false;
             if(!found) continue;
             if(bots->knowledge_count>=sizeof(bots->knowledge)/sizeof(*bots->knowledge))
                 return application_fail(error,QA_ERROR_MEMORY,"native bot weapon observation capacity exceeded");
@@ -105,7 +103,7 @@ static bool observe_arsenal(application_bots *bots,qa_actor_id actor,qa_error *e
             const qa_q2_weapon_definition *definition;
             if(!qa_q2_bot_arsenal_definition_read(provider->state.q2,ordinal,&definition,error)) return false;
             qa_q2_bot_weapon_fact fact;bool found;
-            if(!qa_q2_bot_weapon_read(provider->state.q2,observed,definition->weapon,&fact,&found,error)) return false;
+            if(!qa_q2_bot_weapon_read(provider->state.q2,actor,definition->weapon,&fact,&found,error)) return false;
             if(!found) continue;
             if(bots->knowledge_count>=sizeof(bots->knowledge)/sizeof(*bots->knowledge))
                 return application_fail(error,QA_ERROR_MEMORY,"native bot weapon observation capacity exceeded");

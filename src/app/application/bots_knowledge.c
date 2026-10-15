@@ -101,14 +101,6 @@ bool application_bots_knowledge_update(application_bots *bots,qa_actor_id actor,
     return true;
 }
 
-qa_actor_id application_bots_knowledge_actor(const application_bots *bots,application_provider *provider,uint32_t handle)
-{
-    const application_bot_knowledge_owner *owner=bots?bots->knowledge_owner:NULL;
-    size_t at=owner?find(owner,handle):0;
-    return owner && at<owner->count && owner->actors[at].provider==provider?
-        owner->actors[at].actor:(qa_actor_id){0};
-}
-
 void application_bots_knowledge_dispose(application_bots *bots)
 {
     if(!bots || !bots->knowledge_owner) return;
