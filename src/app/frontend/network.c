@@ -68,6 +68,7 @@
 #include "remote_q2_client.h"
 #include "qa/application_native_q3_client_modules.h"
 #include "qa/application_native_q3_cvars.h"
+#include "qa/q3_product_policy.h"
 #include "remote_q3_client.h"
 #include "remote_q3_session.h"
 #include "qa/application_native_q3_remote_content.h"
@@ -3166,8 +3167,10 @@ static bool client_physical_create(frontend_q3_client *n,qa_error *error)
     qa_product_id profile_id=0; frontend_client_source_options options={0};
     if(!client_connection_content(f,QA_RULESET_Q3,&selected_id,&profile_id,error) ||
         !frontend_config_store_neutral_pending_options(f->config_store,n->physical,&options,error)) return false;
-    qa_catalog *catalog=qa_application_catalog(f->application); qa_vfs *prepared=NULL;
-    if(!qa_catalog_open(catalog,selected_id,&prepared,error)) {
+    qa_catalog *catalog=NULL; qa_vfs *prepared=NULL;
+    if(!qa_application_q3_client_catalog(f->application,selected_id,&catalog,error) ||
+        !qa_catalog_open(catalog,selected_id,&prepared,error)) {
+        qa_catalog_release(catalog);
         (void)frontend_config_store_neutral_options_cancel(f->config_store,&options,NULL); return false;
     }
     options.runtime=n->runtime; options.physical_seat=n->physical;
@@ -3183,6 +3186,9 @@ static bool client_physical_create(frontend_q3_client *n,qa_error *error)
         .released=client_physical_released};
     bool ok=frontend_client_source_create(f,&options,&n->physical_source,error);
     qa_vfs_destroy(prepared);
+    const qa_product *profile=qa_catalog_product(catalog,profile_id);
+    qa_q3_product product=profile->campaign_id==QA_CAMPAIGN_MISSIONPACK?QA_Q3_TEAM_ARENA:QA_Q3_ARENA;
+    qa_catalog_release(catalog);
     if(!ok) {
         if(!n->physical_source) (void)frontend_config_store_neutral_options_cancel(f->config_store,&options,NULL);
         return false;
@@ -3191,8 +3197,7 @@ static bool client_physical_create(frontend_q3_client *n,qa_error *error)
     if(!frontend_client_source_metadata_read(n->physical_source,&source,error) ||
         !frontend_config_store_neutral_movement_adopt(f->config_store,source.source.context.cvars,QA_RULESET_Q3,error)) return false;
     n->q3_cgame_owner=source.source.context.receiver; n->q3_client_launch_seat=source.source.context.seat;
-    const qa_product *profile=qa_catalog_product(catalog,profile_id);
-    n->q3_client_product=profile->campaign_id==QA_CAMPAIGN_MISSIONPACK?QA_Q3_TEAM_ARENA:QA_Q3_ARENA;
+    n->q3_client_product=product;
     return true;
 }
 static bool client_physical_advance(frontend_q3_client *n,bool *ready,qa_error *error)

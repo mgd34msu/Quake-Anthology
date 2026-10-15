@@ -861,6 +861,24 @@ bool qa_application_q3_product_policy_read(const qa_application *app, qa_q3_prod
     return true;
 }
 
+bool qa_application_q3_client_catalog(qa_application *app,uint32_t selected,
+    qa_catalog **out,qa_error *error)
+{
+    qa_q3_product_policy policy=*application_q3_product_source_policy(app);
+    if(policy.restriction_resolved &&
+        policy.filesystem_restricted==qa_catalog_q3_restricted(app->catalog)) {
+        qa_catalog_retain(app->catalog); *out=app->catalog; return true;
+    }
+    qa_catalog *catalog=NULL;
+    if(!qa_catalog_clone(app->catalog,&catalog,error)) return false;
+    if(!application_q3_product_prepare(catalog,selected,&policy,error)) {
+        qa_catalog_release(catalog); return false;
+    }
+    app->q3_product=policy;
+    *out=catalog;
+    return true;
+}
+
 void application_q3_cvar_controls_bind(qa_cvars *cvars,
     qa_cvar_handle controls[APPLICATION_Q3_CVAR_CONTROL_COUNT])
 {
