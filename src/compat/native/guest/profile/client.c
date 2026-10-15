@@ -42,6 +42,7 @@ typedef struct profile_instruction {
 } profile_instruction;
 static profile_scope *scope;
 static profile_instruction *instructions;
+static qa_id_index entry_addresses;
 static app_pc control_entry, fault_entry, import_entry;
 static thread_id_t owner_thread;
 static size_t pkru_offset;
@@ -56,14 +57,33 @@ static bool copy_to_app(void *address, const void *data, size_t bytes)
     size_t copied = 0;
     return dr_safe_write(address, bytes, data, &copied) && copied == bytes;
 }
+static void index_free(qa_id_index *index)
+{
+    if (index->entries) dr_global_free(index->entries, index->capacity * sizeof(*index->entries));
+    if (index->buckets) dr_global_free(index->buckets, index->capacity * 2 * sizeof(*index->buckets));
+    *index = (qa_id_index){0};
+}
+static bool index_reserve(qa_id_index *index, size_t required)
+{
+    if (required <= index->capacity) return true;
+    qa_id_index next = {.capacity = qa_id_index_capacity_for(required)};
+    if (!next.capacity) return false;
+    next.entries = dr_global_alloc(next.capacity * sizeof(*next.entries));
+    next.buckets = dr_global_alloc(next.capacity * 2 * sizeof(*next.buckets));
+    if (!next.entries || !next.buckets) { index_free(&next); return false; }
+    qa_id_index_clear(&next);
+    for (size_t i = 0; i < index->count; ++i) {
+        const qa_id_index_entry *entry = index->entries + i;
+        qa_id_index_insert(&next, entry->key, entry->discriminator, entry->value);
+    }
+    index_free(index); *index = next;
+    return true;
+}
 static void scope_free(profile_scope *row)
 {
     if (row->mappings) dr_global_free(row->mappings, row->mapping_count * sizeof(*row->mappings));
     if (row->callbacks) dr_global_free(row->callbacks, row->callback_count * sizeof(*row->callbacks));
-    if (row->callback_addresses.entries) dr_global_free(row->callback_addresses.entries,
-        row->callback_addresses.capacity * sizeof(*row->callback_addresses.entries));
-    if (row->callback_addresses.buckets) dr_global_free(row->callback_addresses.buckets,
-        row->callback_addresses.capacity * 2 * sizeof(*row->callback_addresses.buckets));
+    index_free(&row->callback_addresses);
     if (row->interests) dr_global_free(row->interests, row->interest_count * sizeof(*row->interests));
     if (row->pending) dr_global_free(row->pending, row->pending_capacity * sizeof(*row->pending));
     dr_global_free(row, sizeof(*row));
@@ -155,6 +175,31 @@ static bool scope_entry_valid(const profile_scope *row)
         (!row->stop || (scope_range(row, row->stop, 1, QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_EXECUTE, NULL) &&
         copy_from_app((void *)(ptr_uint_t)row->stop, &trap, 1) && trap == 0xcc));
 }
+static const qa_native_guest_mapping *entry_mapping(const profile_scope *row, uint64_t address)
+{
+    for (size_t i = 0; i < row->mapping_count; ++i) {
+        const qa_native_guest_mapping *mapping = &row->mappings[i].mapping;
+        if ((mapping->permissions & QA_NATIVE_GUEST_EXECUTE) && address >= mapping->base &&
+            address - mapping->base < mapping->bytes) return mapping;
+    }
+    return NULL;
+}
+static bool entry_current(void *context, const qa_id_index_entry *entry)
+{
+    const qa_native_guest_mapping *mapping = entry_mapping(context, entry->discriminator);
+    return mapping && mapping->id == entry->value;
+}
+static bool entry_register(const profile_scope *row, bool *added)
+{
+    *added = false;
+    qa_string_id key = (qa_string_id)(row->entry >> 4);
+    if (qa_id_index_find(&entry_addresses, key, row->entry)) return true;
+    if (!index_reserve(&entry_addresses, entry_addresses.count + 1)) return false;
+    const qa_native_guest_mapping *mapping = entry_mapping(row, row->entry);
+    qa_id_index_insert(&entry_addresses, key, row->entry, (size_t)mapping->id);
+    *added = true;
+    return true;
+}
 static profile_scope *scope_read(const guest_profile_guard_control *control)
 {
     profile_scope initial = {0};
@@ -162,15 +207,7 @@ static profile_scope *scope_read(const guest_profile_guard_control *control)
     profile_scope *row = dr_global_alloc(sizeof(*row));
     if (!row) return NULL;
     *row = initial;
-    if (row->callback_count) {
-        qa_id_index *index = &row->callback_addresses;
-        index->capacity = qa_id_index_capacity_for(row->callback_count);
-        if (!index->capacity) { scope_free(row); return NULL; }
-        index->entries = dr_global_alloc(index->capacity * sizeof(*index->entries));
-        index->buckets = dr_global_alloc(index->capacity * 2 * sizeof(*index->buckets));
-        if (!index->entries || !index->buckets) { scope_free(row); return NULL; }
-        qa_id_index_clear(index);
-    }
+    if (!index_reserve(&row->callback_addresses, row->callback_count)) { scope_free(row); return NULL; }
     row->mappings = dr_global_alloc(row->mapping_count * sizeof(*row->mappings));
     row->callbacks = row->callback_count ? dr_global_alloc(row->callback_count * sizeof(*row->callbacks)) : NULL;
     row->interests = row->interest_count ? dr_global_alloc(row->interest_count * sizeof(*row->interests)) : NULL;
@@ -235,6 +272,7 @@ static bool scope_synthetic_callback(const profile_scope *row, app_pc pc)
 static bool scope_point(const profile_scope *row, app_pc pc)
 {
     uint64_t address = (uint64_t)(ptr_uint_t)pc;
+    if (qa_id_index_find(&entry_addresses, (qa_string_id)(address >> 4), address)) return true;
     if (!row) return false;
     if (address == row->entry || address == row->stop) return true;
     if (scope_callback(row, address) && !synthetic_callback(address)) return true;
@@ -266,16 +304,14 @@ static void flush_executable(const profile_scope *row)
             !dr_unlink_flush_region((app_pc)(ptr_uint_t)mapping->base, (size_t)mapping->bytes)) dr_abort();
     }
 }
-static void scope_changed(const profile_scope *before, const profile_scope *after, bool flush_entry)
+static void scope_changed(const profile_scope *before, const profile_scope *after)
 {
     if (scope_stores(before) != scope_stores(after)) {
         flush_executable(before); flush_executable(after);
         return;
     }
     if (scope_stores(after)) return;
-    uint64_t old_entry = before ? before->entry : 0, new_entry = after ? after->entry : 0;
     uint64_t old_stop = before ? before->stop : 0, new_stop = after ? after->stop : 0;
-    if (flush_entry && old_entry != new_entry) { flush_point(old_entry); flush_point(new_entry); }
     if (old_stop != new_stop) { flush_point(old_stop); flush_point(new_stop); }
     size_t old_callbacks = before ? before->callback_count : 0;
     size_t new_callbacks = after ? after->callback_count : 0;
@@ -323,7 +359,7 @@ static bool control_apply(guest_profile_guard_control *control)
     if (control->operation == GUEST_PROFILE_GUARD_LEAVE) {
         if (!scope || scope->id != control->scope || scope->phase != PROFILE_STOPPED) return false;
         profile_scope *retired = scope; scope = scope->parent;
-        scope_changed(retired, scope, true); scope_free(retired); return true;
+        scope_changed(retired, scope); scope_free(retired); return true;
     }
     if (scope && scope->phase != PROFILE_STOPPED) return false;
     if (control->operation == GUEST_PROFILE_GUARD_RESUME && (!scope || scope->id != control->scope)) return false;
@@ -341,6 +377,11 @@ static bool control_apply(guest_profile_guard_control *control)
     }
     profile_scope *next = scope_read(control);
     if (!next) return false;
+    qa_id_index_retain(&entry_addresses, entry_current, next);
+    bool added = false;
+    if (control->operation == GUEST_PROFILE_GUARD_ENTER && !entry_register(next, &added)) {
+        scope_free(next); return false;
+    }
     profile_scope *previous = scope;
     if (control->operation == GUEST_PROFILE_GUARD_RESUME) {
         next->parent = scope->parent;
@@ -351,7 +392,9 @@ static bool control_apply(guest_profile_guard_control *control)
             next->boundary_bypass = scope->boundary_bypass;
         scope->pending = NULL;
     } else next->parent = scope;
-    scope = next; scope_changed(previous, next, control->operation != GUEST_PROFILE_GUARD_RESUME);
+    bool store_changed = scope_stores(previous) != scope_stores(next);
+    scope = next; scope_changed(previous, next);
+    if (added && !store_changed) flush_point(next->entry);
     if (control->operation == GUEST_PROFILE_GUARD_RESUME) scope_free(previous);
     return true;
 }
@@ -785,6 +828,7 @@ static bool syscall_pre(void *context, int number)
 static void process_exit(void)
 {
     while (scope) { profile_scope *next = scope->parent; scope_free(scope); scope = next; }
+    index_free(&entry_addresses);
     void *context = dr_get_current_drcontext();
     while (instructions) {
         profile_instruction *next = instructions->next;

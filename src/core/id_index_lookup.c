@@ -53,3 +53,21 @@ void qa_id_index_clear(qa_id_index *index)
     index->count = 0;
     if (index->capacity) memset(index->buckets, 0, index->capacity * 2 * sizeof(*index->buckets));
 }
+size_t qa_id_index_retain(qa_id_index *index,
+    bool (*keep)(void *, const qa_id_index_entry *), void *context)
+{
+    if (!index->count) return 0;
+    size_t previous = index->count;
+    size_t count = 0;
+    memset(index->buckets, 0, index->capacity * 2 * sizeof(*index->buckets));
+    for (size_t i = 0; i < index->count; ++i) {
+        qa_id_index_entry entry = index->entries[i];
+        if (!keep(context, &entry)) continue;
+        size_t slot = qa_id_index_bucket(entry.key, entry.discriminator, index->capacity);
+        entry.next = index->buckets[slot];
+        index->entries[count] = entry;
+        index->buckets[slot] = ++count;
+    }
+    index->count = count;
+    return previous - count;
+}
