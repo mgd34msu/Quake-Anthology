@@ -471,6 +471,7 @@ static const original_entity_think entity_thinks[] = {
     THINK("trigger_elevator_init", Q2ET_ELEVATOR, Q2E_ELEVATOR),
     THINK("force_wall_think", Q2ET_FORCEWALL, Q2E_FORCEWALL),
     ANIM("misc_banner_think", Q2S_BANNER, -1),
+    ANIM("misc_ctf_banner_think", Q2S_BANNER, -1),
     ANIM("misc_satellite_dish_think", Q2S_SATELLITE, -1),
     ANIM("misc_blackhole_think", Q2S_BLACKHOLE, -1),
     ANIM("TH_viewthing", Q2S_ANIMATION, -1),
@@ -614,6 +615,8 @@ static bool entity_think(qa_q2_game *g, q2_original_record_io *io, q2_entity_sta
             return entity_error(io, 436, "Q2 entity schedule has no original Source callback");
         return q2_original_function(g, io, "think", 436, name);
     }
+    /* SV_RunThink clears nextthink before calling, retaining the function. */
+    if (!s->due_ns) { s->think = Q2ET_NONE; return true; }
     bool empty;
     if (!q2_original_function_matches(g, io, "think", 436, NULL, &empty)) return false;
     if (empty) { s->think = Q2ET_NONE; return true; }
