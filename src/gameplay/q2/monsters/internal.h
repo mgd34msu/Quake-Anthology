@@ -442,6 +442,7 @@ bool q2m_find_target(q2m_context *, bool *found, qa_error *);
 bool q2m_found_target(q2m_context *, qa_actor_id, qa_error *);
 bool q2m_medic_acquire(q2m_context *, bool preserve_enemy, bool *, qa_error *);
 bool q2m_check_attack(q2m_context *, bool *selected, bool *started, bool *visible, qa_error *);
+bool q2m_stand_state(q2m_context *, qa_error *);
 bool q2m_run_state(q2m_context *, qa_error *);
 bool q2m_gekk_check_jump(q2m_context *, const qa_body_state *);
 bool q2m_gekk_check_attack(q2m_context *, bool *selected, qa_error *);
