@@ -19,12 +19,20 @@ bool qa_platform_clipboard_read(qa_buffer *out, qa_error *error)
     if (!text) {
         qa_error_set(error, QA_ERROR_IO, 0, "Reading clipboard: %s", SDL_GetError()); return false;
     }
-    size_t size = strlen(text);
+    /* Sys_GetClipboardData returns the buffer start after strtok, so leading
+     * delimiters survive and only the first delimiter after a token ends it. */
+    size_t size = 0;
+    bool token = false;
+    for (; text[size]; ++size) {
+        bool delimiter = text[size] == '\n' || text[size] == '\r' || text[size] == '\b';
+        if (delimiter && token) break;
+        if (!delimiter) token = true;
+    }
     uint8_t *copy = malloc(size + 1);
     if (!copy) {
         SDL_free(text); qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining clipboard text"); return false;
     }
-    memcpy(copy, text, size + 1); SDL_free(text);
+    memcpy(copy, text, size); copy[size] = 0; SDL_free(text);
     *out = (qa_buffer){copy, size}; return true;
 }
 bool qa_platform_clipboard_write(const char *text, qa_error *error)

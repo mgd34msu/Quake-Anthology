@@ -160,7 +160,7 @@ bool qa_text_field_key(qa_text_field *field, int key, const qa_field_controls *c
                 return false;
             }
             size_t n = 0;
-            while (n < text.size && text.data[n] && text.data[n] != '\r' && text.data[n] != '\n')
+            while (n < text.size && text.data[n])
                 ++n;
             qa_text_field_insert(field, (qa_bytes){text.data, n});
             qa_buffer_free(&text);
