@@ -82,9 +82,10 @@ static bool level_state_idle(qa_q3_game *game, bool require_empty, qa_error *err
     return true;
 }
 
-static bool provider_state_empty(const qa_q3_game *game) {
-    for (uint32_t i = 0; i < QA_Q3_SOURCE_ENTITIES; ++i)
-        if (q3_source_actor(game, i).registry) return false;
+static bool provider_state_empty(const qa_q3_game *game, bool restore) {
+    if (!restore)
+        for (uint32_t i = 0; i < QA_Q3_SOURCE_ENTITIES; ++i)
+            if (q3_source_actor(game, i).registry) return false;
     for (uint32_t i = 0; i < game->capacity; ++i)
         if (game->actors[i].kind || game->kamikaze_cooldowns[i].actor.registry ||
             game->player_binding_tokens[i])
@@ -114,7 +115,7 @@ static void level_state_reset(qa_q3_game *game, const qa_q3_map_options *options
 
 static bool maps_bind(qa_q3_game *game, const qa_q3_map_options *options,
                        bool restore, qa_error *error) {
-    if (!game || game->source_restored || game->map || !provider_state_empty(game))
+    if (!game || game->source_restored || game->map || !provider_state_empty(game, restore))
         return q3_map_fail(error, "invalid Q3 authored map binding");
     if (!level_state_idle(game, false, error))
         return false;
