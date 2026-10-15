@@ -1716,6 +1716,36 @@ static void test_component_construction_actors(void)
     CHECK(qa_actors_get(qa_session_actors(session),actor) && released==1);
     CHECK(qa_session_remove(session,owner,&error) && released==2);
     CHECK(qa_session_destroy(session,&error));
+    session=NULL;
+    CHECK(qa_session_create(&(qa_session_options){.actor_capacity=2,.component_capacity=3},&session,&error));
+    const qa_ruleset_id rules[]={QA_RULESET_NETQUAKE,QA_RULESET_Q2_CLASSIC,QA_RULESET_Q3};
+    const char *const names[]={"travel-q1","travel-q2","travel-q3"};
+    qa_actor_owner owners[3];qa_clock_state before[3],after;
+    for(size_t i=0;i<3;++i) {
+        CHECK(qa_strings_intern_cstr(qa_session_strings(session),names[i],owners+i,&error));
+        qa_component timed={.owner=owners[i],.clock=qa_clock_defaults(rules[i])};
+        timed.clock.initial_time_ns=UINT64_C(13000000000);
+        CHECK(qa_session_add(session,&timed,&error));
+    }
+    CHECK(qa_session_advance(session,UINT64_C(175000000),&error));
+    for(size_t i=0;i<3;++i)
+        CHECK(qa_session_clock(session,owners[i],before+i) &&
+            before[i].frame.time_ns>UINT64_C(13000000000));
+    CHECK(qa_session_retire_world(session,&error));
+    for(size_t i=0;i<2;++i)
+        CHECK(qa_session_clock(session,owners[i],&after) &&
+            after.frame.time_ns==UINT64_C(13000000000) && !after.elapsed_ns && !after.frame_number);
+    CHECK(qa_session_clock(session,owners[2],&after) &&
+        after.frame.time_ns==before[2].frame.time_ns && after.debt_ns==before[2].debt_ns &&
+        after.host_origin_ns==before[2].host_origin_ns && after.frame_number==before[2].frame_number);
+    CHECK(qa_session_advance(session,UINT64_C(25000000),&error));
+    CHECK(qa_session_clock(session,owners[2],&after) &&
+        after.frame.time_ns==before[2].frame.time_ns+UINT64_C(50000000) && !after.debt_ns);
+    before[2]=after;int replacement_world=0;
+    CHECK(qa_session_replace_world(session,&replacement_world,NULL,&error));
+    CHECK(qa_session_clock(session,owners[2],&after) &&
+        after.frame.time_ns==before[2].frame.time_ns && after.frame_number==before[2].frame_number);
+    CHECK(qa_session_destroy(session,&error));
 }
 static void test_shared_vector_geometry(void)
 {

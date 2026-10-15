@@ -1320,8 +1320,12 @@ static bool retire_world(qa_session *session, qa_error *error)
         if (error != NULL) *error = session->error;
         return false;
     }
-    for (uint32_t i = 0; i < session->options.component_capacity; ++i)
-        if (session->components[i].active) session->components[i].clock = initial_clock(session, &session->components[i].component);
+    /* Q3's svs.time survives map travel, including GAME_INIT and usercmd time. */
+    for (uint32_t i = 0; i < session->options.component_capacity; ++i) {
+        component_state *entry = &session->components[i];
+        if (entry->active && entry->component.clock.kind != QA_RULESET_Q3)
+            entry->clock = initial_clock(session, &entry->component);
+    }
     return true;
 }
 

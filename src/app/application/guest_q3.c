@@ -468,6 +468,9 @@ bool application_q3_guest_spawn_map(application_provider *provider, const qa_bsp
     engine->loaded_compatibility = false;
     engine->loaded_game_type = engine->loaded_max_clients = 0;
     if (!q3g_world_begin(engine, error)) return false;
+    qa_clock_state clock;
+    if (qa_session_clock(provider->application->session, provider->owner, &clock))
+        engine->milliseconds = (int32_t)(uint32_t)(clock.frame.time_ns / UINT64_C(1000000));
     int32_t arguments[] = {engine->milliseconds, engine->random_seed, engine->startup_restart ? 1 : 0}, result;
     bool ok = q3g_call(engine->game, 0, arguments, 3, &result, error);
     if (ok) { engine->game->initialized = true; engine->startup_restart = false; }

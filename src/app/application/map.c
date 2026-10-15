@@ -2949,14 +2949,18 @@ static qa_q3_map_options q3_map_options(application_provider *provider,
     application_q3_world_startup replacement;
     bool replacing = application_q3_world_restart_source(provider->application,
                                                           provider, &replacement);
+    qa_clock_state clock;
+    uint64_t start_ns = provider->component.clock.initial_time_ns;
+    if (qa_session_clock(provider->application->session, provider->owner, &clock))
+        start_ns = clock.frame.time_ns;
+    if (replacing) start_ns = replacement.initial_time_ns;
     return (qa_q3_map_options){
         .targets = provider->application->targets,
         .context = provider,
         .random_seed = replacing ? replacement.random_seed : (uint32_t)(
             provider->owner * UINT32_C(2246822519) ^
             (uint32_t)provider->application->publication_generation),
-        .start_time_ms = replacing
-            ? (int32_t)(uint32_t)(replacement.initial_time_ns / UINT64_C(1000000)) : 0,
+        .start_time_ms = (int32_t)(uint32_t)(start_ns / UINT64_C(1000000)),
         .warmup = replacing ? replacement.warmup : warmup,
         .restarted = replacing ? replacement.restarted : 0,
         .event = q3_event,

@@ -236,7 +236,8 @@ bool qa_session_adopt_restored_world(qa_session *, void *, qa_cleanup_fn, qa_err
 bool qa_session_replace_world(qa_session *session, void *candidate,
                                qa_cleanup_fn close, qa_error *error);
 /* Destructive map travel with a stable world object: releases every actor,
- * clears scheduled thinks and resets provider clocks. A release failure faults
+ * clears scheduled thinks and resets map-local clocks. Q3 retains its server
+ * timeline across maps. A release failure faults
  * the session after already committed retirements; world ownership is unchanged. */
 bool qa_session_retire_world(qa_session *, qa_error *);
 /* Retained-world round retirement preserves every clock and its pending debt. */
