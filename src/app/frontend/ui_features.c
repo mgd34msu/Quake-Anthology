@@ -206,7 +206,8 @@ static bool local_sound(frontend_seat *seat, qa_audio_bank *bank,
     qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset,
         .name = qa_audio_asset_name(asset), .family = family, .actor = QA_AUDIO_NO_ACTOR,
         .owner = QA_AUDIO_NO_OWNER, .audience = seat->id, .origin_kind = QA_AUDIO_LOCAL,
-        .channel = -1, .volume = 1, .attenuation = 0};
+        .channel = family == QA_GAME_Q1 ? -1 : family == QA_GAME_Q3 ? 6 : 0,
+        .volume = 1, .attenuation = 0};
     bool okay = frontend_audio_event(f, &(qa_audio_event){.kind = QA_AUDIO_EVENT_PLAY,
         .sound = sound, .milliseconds = (int32_t)((f->time_ns / 1000000) & INT32_MAX)}, error);
     qa_audio_asset_release(asset);
