@@ -115,14 +115,6 @@ bool qa_q2_game_random(qa_q2_game *g,float *out,qa_error *e) {
     *out=q2_random(g);return true;
 }
 float q2_crandom(qa_q2_game *g) { return q2_random(g) * 2.0f - 1.0f; }
-bool q2_noise_for_actor(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, bool secondary,
-                        qa_error *e) {
-    if (!q2_actor_live(g, id))
-        return true;
-    return q2_player_noise(g, id, origin, secondary, e) &&
-           (!q2_actor_live(g, id) || g->hooks.noise == NULL ||
-            g->hooks.noise(g->hooks.context, id, origin, secondary, e));
-}
 bool qa_q2_actor_released(qa_q2_game *g, qa_actor_record record, qa_error *e) {
     if (g)
         q2_monsters_release_actor(g, record.id);

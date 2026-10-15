@@ -41,11 +41,11 @@ struct q2_monsters_runtime {
   size_t alert_count, alert_capacity;
   size_t no_player_alert;
   qa_actor_index alert_index, observer_index;
-  qa_actor_id sight_client, sight_observer;
+  qa_actor_id sight_client, sight_observer, disguise_violator;
   qa_actor_reference classic_trail[Q2M_TRAIL_POINTS];
   uint32_t classic_trail_head;
   bool classic_trail_active;
-  uint64_t sight_time_ns, last_frame_ns;
+  uint64_t sight_time_ns, last_frame_ns, disguise_until_ns;
   bool began_frame;
 };
 
@@ -309,6 +309,7 @@ bool qa_q2_monsters_capture(qa_q2_game *game,
   qa_q2_monsters_checkpoint saved = {
       .sight_time_ns = runtime->sight_time_ns,
       .last_frame_ns = runtime->last_frame_ns,
+      .disguise_until_ns = runtime->disguise_until_ns,
       .began_frame = runtime->began_frame,
       .trail_count = game->options.rules == QA_RULESET_Q2_RERELEASE ? runtime->trail_count : 0,
       .alert_count = runtime->alert_count,
@@ -348,7 +349,9 @@ bool qa_q2_monsters_capture(qa_q2_game *game,
   if (!q2_save_reference(game, runtime->sight_client,
                          &saved.sight_client, error) ||
       !q2_save_reference(game, runtime->sight_observer,
-                         &saved.sight_observer, error)) {
+                         &saved.sight_observer, error) ||
+      !q2_save_reference(game, runtime->disguise_violator,
+                         &saved.disguise_violator, error)) {
     qa_q2_monsters_checkpoint_free(&saved);
     return false;
   }
@@ -397,9 +400,11 @@ bool qa_q2_monsters_restore(qa_q2_game *game,
   if (!perception_storage_prepare(game, &prepared, saved->trail_count,
                                   saved->alert_count, error)) goto failure;
 
-  qa_actor_id sight_client = {0}, sight_observer = {0};
+  qa_actor_id sight_client = {0}, sight_observer = {0}, disguise_violator = {0};
   if (!q2_resolve_reference(game, saved->sight_client, &sight_client, error) ||
       !q2_resolve_reference(game, saved->sight_observer, &sight_observer,
+                            error) ||
+      !q2_resolve_reference(game, saved->disguise_violator, &disguise_violator,
                             error))
     goto failure;
   for (size_t index = 0; index < saved->trail_count; ++index) {
@@ -441,6 +446,8 @@ bool qa_q2_monsters_restore(qa_q2_game *game,
   index_alerts(runtime);
   runtime->sight_client = sight_client;
   runtime->sight_observer = sight_observer;
+  runtime->disguise_violator = disguise_violator;
+  runtime->disguise_until_ns = saved->disguise_until_ns;
   runtime->sight_time_ns = saved->sight_time_ns;
   runtime->last_frame_ns = saved->last_frame_ns;
   runtime->began_frame = saved->began_frame;
@@ -483,6 +490,10 @@ void q2_monsters_release_actor(qa_q2_game *game, qa_actor_id actor) {
   if (qa_actor_id_equal(runtime->sight_observer, actor)) {
     runtime->sight_observer = (qa_actor_id){0};
     runtime->sight_time_ns = 0;
+  }
+  if (qa_actor_id_equal(runtime->disguise_violator, actor)) {
+    runtime->disguise_violator = (qa_actor_id){0};
+    runtime->disguise_until_ns = 0;
   }
   while (qa_actor_index_find(&runtime->trail_index, actor, &index))
     remove_trail(runtime, index);
@@ -803,6 +814,11 @@ static bool runtime_targetable(qa_q2_game *game, qa_actor_id actor,
          combat.health > 0.0f;
 }
 
+void qa_q2_monsters_disguise_violated(qa_q2_game *game, qa_actor_id actor) {
+  game->monster_runtime->disguise_violator = actor;
+  game->monster_runtime->disguise_until_ns = q2_deadline(game->now_ns, 500 * Q2_MS);
+}
+
 bool q2m_perception_begin(qa_q2_game *game, qa_error *error) {
   if (game == NULL || game->monster_runtime == NULL) {
     qa_error_set(error, QA_ERROR_NOT_FOUND, 0,
@@ -831,7 +847,7 @@ bool q2m_perception_begin(qa_q2_game *game, qa_error *error) {
   for (size_t offset = 1; offset <= count; ++offset) {
     size_t index = (size_t)(current + (ptrdiff_t)offset) % count;
     qa_builtin_actor_traits traits;
-    if (runtime_targetable(game, players.actors[index], &traits)) {
+    if (runtime_targetable(game, players.actors[index], &traits) && !traits.disguised) {
       runtime->sight_client = players.actors[index];
       break;
     }
@@ -1230,6 +1246,9 @@ bool q2m_found_target(q2m_context *context, qa_actor_id id, qa_error *error) {
     if (!q2m_alive(context) || !q2_actor_live(context->game, id) || !allowed)
       return true;
   }
+  qa_actor_player *player = qa_actors_player(qa_session_actors(context->game->services.session), id);
+  if (player)
+    player->disguised = false;
   if (!q2m_perception_alert(context, id, error))
     return false;
   if (!q2m_alive(context) || !q2_actor_live(context->game, id))
@@ -1804,7 +1823,7 @@ bool q2m_find_target(q2m_context *context, bool *found, qa_error *error) {
       qa_builtin_actor_traits traits;
       qa_body_state body;
       qa_error ignored = {0};
-      if (!runtime_targetable(context->game, id, &traits) ||
+      if (!runtime_targetable(context->game, id, &traits) || traits.disguised ||
           !qa_world_body_read(context->game->services.world, id, &body,
                               &ignored))
         continue;
@@ -1868,7 +1887,9 @@ bool q2m_find_target(q2m_context *context, bool *found, qa_error *error) {
     }
   }
 
-  if (candidate.registry == 0) {
+  if (candidate.registry == 0 && runtime->disguise_until_ns > context->game->now_ns) {
+    candidate = runtime->disguise_violator;
+  } else if (candidate.registry == 0) {
     bool heard;
     if (!hear_target(context, &heard, error))
       return false;

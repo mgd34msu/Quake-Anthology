@@ -1,6 +1,7 @@
 #ifndef QA_Q2_INTERNAL_H
 #define QA_Q2_INTERNAL_H
 #include "qa/game_q2.h"
+#include "qa/game_q2_monsters.h"
 #include "qa/q2_sound.h"
 #include "qa/target_keys.h"
 #include "qa/game_q2_wire.h"
@@ -774,7 +775,9 @@ bool q2_client_reaction(qa_q2_game *, const qa_damage_outcome *, qa_error *);
 bool q2_entity_reaction(qa_q2_game *, const qa_damage_outcome *, qa_error *);
 bool q2_client_traits(qa_q2_game *, qa_actor_id, qa_builtin_actor_traits *);
 bool q2_entity_traits(qa_q2_game *, qa_actor_id, qa_builtin_actor_traits *);
-bool q2_player_noise(qa_q2_game *, qa_actor_id, qa_vec3, bool secondary, qa_error *);
+typedef enum q2_noise_kind { Q2_NOISE_SELF, Q2_NOISE_WEAPON, Q2_NOISE_IMPACT } q2_noise_kind;
+bool q2_player_noise(qa_q2_game *, qa_actor_id, qa_vec3, q2_noise_kind, bool notify_hook,
+                     qa_error *);
 bool q2_player_tracker_pain(qa_q2_game *, qa_actor_id, uint64_t until_ns, qa_error *);
 bool q2_player_invisibility_reveal(qa_q2_game *, qa_actor_id, uint64_t until_ns, qa_error *);
 bool q2_player_nuke_blind(qa_q2_game *, qa_actor_id, uint64_t until_ns, bool inside, qa_error *);
@@ -784,7 +787,6 @@ bool q2_item_food_cube(qa_q2_game *, qa_actor_id source, qa_vec3, float scale, i
                        qa_vec3 velocity, qa_error *);
 bool q2_fire_nuke(qa_q2_game *, qa_actor_id owner, qa_vec3 origin, qa_vec3 direction, float speed,
                   float multiplier, qa_error *);
-bool q2_noise_for_actor(qa_q2_game *, qa_actor_id, qa_vec3, bool secondary, qa_error *);
 bool q2_nuke_think(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_nuke_reaction(qa_q2_game *, q2_actor *, const qa_damage_outcome *, qa_error *);
 bool q2_scratch_acquire(qa_q2_game *, qa_world_actor_snapshot *, qa_error *);

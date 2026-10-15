@@ -577,6 +577,7 @@ bool q2_client_traits(qa_q2_game *g, qa_actor_id id, qa_builtin_actor_traits *ou
         .dead = !s->rule.corpse && s->info.dead,
         .spectator = s->info.spectator,
         .no_target = s->info.notarget,
+        .disguised = s->player->disguised,
         .invisible = a->powers && a->powers->values.invisibility_until_ns > g->now_ns,
         .view_height = s->info.view_height,
         .gib_health = -40,

@@ -148,7 +148,7 @@ bool q2_client_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
 bool q2_player_jump(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_error *e) {
     if (!q2_player_sound(g, id, QA_Q2_SFX__JUMP1, 2, e)) return false;
     return g->options.rules == QA_RULESET_Q2_RERELEASE || !q2_actor_live(g, id) ||
-        q2_player_noise(g, id, origin, false, e);
+        q2_player_noise(g, id, origin, Q2_NOISE_SELF, false, e);
 }
 typedef struct q2_player_move_completion {
     qa_q2_game *game;
@@ -391,17 +391,29 @@ bool qa_q2_player_animation(qa_q2_game *g, qa_actor_id id, int priority, int fir
     a->client->rule.animation_ns = 0;
     return true;
 }
-bool q2_player_noise(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, bool secondary, qa_error *e) {
-    (void)e;
-    if (g->options.deathmatch || !q2_actor_live(g, id))
+bool q2_player_noise(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, q2_noise_kind kind,
+                     bool notify_hook, qa_error *e) {
+    if (!q2_actor_live(g, id))
         return true;
     qa_builtin_actor_traits traits = {0};
-    if (!g->services.actor_traits || !g->services.actor_traits(g->services.context, id, &traits) ||
-        !traits.player || traits.no_target)
+    bool record = !g->options.deathmatch && g->services.actor_traits &&
+        g->services.actor_traits(g->services.context, id, &traits) &&
+        traits.player && !traits.no_target;
+    if (!q2_actor_live(g, id))
         return true;
-    g->player_runtime->noise[secondary ? 1 : 0] = (qa_q2_player_noise_record){
-        .owner = id, .origin = origin, .time_ns = g->now_ns, .present = true};
-    return true;
+    if (record) {
+        const qa_actor_player *player = qa_actors_player(qa_session_actors(g->services.session), id);
+        if (player && player->disguised) {
+            if (kind != Q2_NOISE_WEAPON)
+                return true;
+            qa_q2_monsters_disguise_violated(g, id);
+        }
+        g->player_runtime->noise[kind == Q2_NOISE_IMPACT ? 1 : 0] =
+            (qa_q2_player_noise_record){
+                .owner = id, .origin = origin, .time_ns = g->now_ns, .present = true};
+    }
+    return !notify_hook || !q2_actor_live(g, id) || !g->hooks.noise ||
+        g->hooks.noise(g->hooks.context, id, origin, kind == Q2_NOISE_IMPACT, e);
 }
 bool qa_q2_player_noise_read(const qa_q2_game *g, bool secondary, qa_q2_player_noise_record *out) {
     if (!g || !out)

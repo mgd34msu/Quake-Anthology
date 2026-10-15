@@ -34,7 +34,7 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
     s->rule.old_water = level;
     bool breather = powers.breather_until_ns > now, suit = powers.enviro_until_ns > now;
     if ((old == 0 && level != 0) || (old != 0 && level == 0)) {
-        if (!q2_player_noise(g, a->id, body.origin, false, e))
+        if (!q2_player_noise(g, a->id, body.origin, Q2_NOISE_SELF, false, e))
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
@@ -58,7 +58,7 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
         if (s->rule.air_ns < now) {
             if (!q2_player_sound(g, a->id, QA_Q2_SFX_PLAYER_GASP1, 2, e))
                 return false;
-            if (q2_actor_live(g, a->id) && !q2_player_noise(g, a->id, body.origin, false, e))
+            if (q2_actor_live(g, a->id) && !q2_player_noise(g, a->id, body.origin, Q2_NOISE_SELF, false, e))
                 return false;
         } else if (s->rule.air_ns < q2_deadline(now, 11 * Q2_NS) &&
                    !q2_player_sound(g, a->id, QA_Q2_SFX_PLAYER_GASP2, 2, e))
@@ -84,7 +84,7 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
                 s->rule.breather_sound ^= 1;
                 if (!q2_actor_live(g, a->id))
                     return true;
-                if (!q2_player_noise(g, a->id, body.origin, false, e))
+                if (!q2_player_noise(g, a->id, body.origin, Q2_NOISE_SELF, false, e))
                     return false;
             }
         }
@@ -207,7 +207,7 @@ bool q2_player_falling(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *
             !qa_world_body_read(g->services.world, a->id, &body, e))
             return false;
         if (combat.health != 0)
-            return q2_player_noise(g, a->id, body.origin, false, e);
+            return q2_player_noise(g, a->id, body.origin, Q2_NOISE_SELF, false, e);
     }
     return true;
 }

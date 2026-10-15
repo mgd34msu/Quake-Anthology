@@ -92,3 +92,15 @@ bool q2_save_monsters(q2_save_io *io, qa_q2_monsters_checkpoint *s) {
     }
     return true;
 }
+
+bool q2_save_monsters_tail(q2_save_io *io, qa_q2_monsters_checkpoint *s) {
+    if (io->reading && io->offset == io->input.size) {
+        s->disguise_violator = (qa_q2_saved_reference){0};
+        s->disguise_until_ns = 0;
+        return true;
+    }
+    if (!io->reading && !s->disguise_violator.present && !s->disguise_until_ns)
+        return true;
+    return q2_save_ref(io, &s->disguise_violator) &&
+        q2_save_u64(io, &s->disguise_until_ns);
+}

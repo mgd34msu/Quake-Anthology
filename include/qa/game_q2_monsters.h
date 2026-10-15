@@ -33,6 +33,7 @@ bool qa_q2_campaign_monster_count(qa_q2_game *, qa_q2_monster_count, qa_error *)
 bool qa_q2_monsters_bind_missions(qa_q2_game *, const qa_monster_missions *, qa_error *);
 bool qa_q2_monsters_bind_services(qa_q2_game *, const qa_q2_monster_services *, qa_error *);
 bool qa_q2_monsters_end_frame(qa_q2_game *, qa_error *);
+void qa_q2_monsters_disguise_violated(qa_q2_game *, qa_actor_id);
 
 typedef struct qa_q2_monster_view {
   qa_string_id classname, model;
@@ -76,6 +77,8 @@ typedef struct qa_q2_monster_alert_checkpoint {
 typedef struct qa_q2_monsters_checkpoint {
   qa_q2_saved_reference sight_client, sight_observer;
   uint64_t sight_time_ns, last_frame_ns;
+  qa_q2_saved_reference disguise_violator;
+  uint64_t disguise_until_ns;
   bool began_frame;
   qa_actor_reference classic_trail[QA_Q2_MONSTER_TRAIL_POINTS];
   uint32_t classic_trail_head;

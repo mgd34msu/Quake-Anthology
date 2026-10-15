@@ -3845,6 +3845,8 @@ bool application_control_spawn_reset(qa_application *application, qa_actor_id ac
     application_control_record *record;
     if (!qa_world_body_read(application->world, actor, &body, error) ||
         !application_control_ensure(application, actor, body.angles, &record, error)) return false;
+    qa_actor_player *identity = qa_actors_player(qa_session_actors(application->session), actor);
+    if (identity) identity->disguised = false;
     record->player.flight = record->player.cutscene = false;
     record->cutscene_character = NULL;
     record->saved_mode_valid = false;

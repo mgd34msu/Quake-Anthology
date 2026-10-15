@@ -311,7 +311,7 @@ bool q2_grapple_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
         return false;
     qa_vec3 normal = contact->has_plane ? contact->plane.normal : qa_v3(0, 0, 0);
     if (!lm) {
-        if (!q2_noise_for_actor(g, owner_id, body.origin, true, e))
+        if (!q2_player_noise(g, owner_id, body.origin, Q2_NOISE_IMPACT, true, e))
             return false;
         if (!q2_actor_live(g, hook_id) || !q2_actor_live(g, owner_id))
             return true;

@@ -144,7 +144,6 @@ static const q2_original_field level_fields[] = {
     {"killed_monsters", MEMBER(q2_original_level_state, killed_monsters), 1, Q2_ORIGINAL_U32, {288, 288, 288}},
     {"body_que", MEMBER(q2_original_level_state, body_queue), 1, Q2_ORIGINAL_U32, {296, 296, 296}},
     {"power_cubes", MEMBER(q2_original_level_state, power_cubes), 1, Q2_ORIGINAL_U32, {300, 300, 300}},
-    {"disguise_violation_time", MEMBER(q2_original_level_state, disguise_ns), 1, Q2_ORIGINAL_FRAME_INDEX, {65535, 65535, 308}},
     {"coop_level_restart_time", MEMBER(q2_original_level_state, restart_ns), 1, Q2_ORIGINAL_TIME, {65535, 65535, 65535}},
     {"next_auto_save", MEMBER(q2_original_level_state, autosave_ns), 1, Q2_ORIGINAL_TIME, {65535, 65535, 65535}},
 };

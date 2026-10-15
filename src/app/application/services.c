@@ -1169,6 +1169,8 @@ static bool builtin_traits(void *opaque, qa_actor_id actor,
             }
     }
     if (!matched) return false;
+    const qa_actor_player *identity = qa_actors_player(qa_session_actors(application->session), actor);
+    if (identity) out->disguised = identity->disguised;
     bool source_water = traits_owner->kind == APPLICATION_PROVIDER_Q1 ||
                         traits_owner->kind == APPLICATION_PROVIDER_QC;
     qa_player_state player;

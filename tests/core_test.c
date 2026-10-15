@@ -34,6 +34,7 @@
 #include "qa/common_parse.h"
 #include "qa/q2_sound.h"
 #include "qa/hud_q2.h"
+#include "qa/game_q2_original_save.h"
 #include "qa/hud.h"
 #include "../src/ui/internal.h"
 #include "qa/vfs.h"
@@ -135,6 +136,27 @@ static void test_typewriter_centers(void)
     center = qa_hud_center_read(hud, 120);
     CHECK(center && center->starts_ns == 120 && !strcmp(center->text, "after blank"));
     CHECK(qa_hud_destroy(hud, &error));
+}
+
+static void test_saved_player_disguise(void)
+{
+    qa_error error = {0};
+    qa_actor_slot_checkpoint slots[2] = {
+        {.generation = 1, .owner = 1, .definition = 1, .active = true,
+            .player = {.disguised = true}},
+        {.generation = 2, .owner = 1, .definition = 1, .active = true,
+            .player = {.present = true, .bot = true, .disguised = true, .name = 3}}
+    };
+    qa_actor_checkpoint saved = {.slots = slots, .count = 2, .capacity = 2}, decoded = {0};
+    qa_buffer bytes = {0};
+    CHECK(qa_save_actors_encode(&saved, &bytes, &error));
+    CHECK(qa_save_actors_decode((qa_bytes){bytes.data, bytes.size}, &decoded, &error));
+    CHECK(decoded.count == 2 && decoded.slots[0].player.disguised &&
+        !decoded.slots[0].player.present);
+    CHECK(decoded.slots[1].player.disguised && decoded.slots[1].player.present &&
+        decoded.slots[1].player.bot && decoded.slots[1].player.name == 3);
+    qa_actor_checkpoint_free(&decoded);
+    qa_buffer_free(&bytes);
 }
 
 static void test_unicast_claim_storage(void)
@@ -897,6 +919,64 @@ static void test_q2_hud_configuration(void)
     CHECK(!strcmp(qa_strings_cstr(strings,names.players[0].skin),"tag"));
     qa_hud_q2_names_destroy(&names);qa_strings_destroy(strings);
 }
+static void test_q2_donor_save_metadata(void)
+{
+    const char game[]="{\"stamp\":\"quake-2-ts:g_save:v1\",\"maxclients\":1,\"maxentities\":1024,\"clients\":[{}]}";
+    const char level_game[]="{\"level\":{\"mapname\":\"base1\"},\"edicts\":[{\"index\":0,\"data\":{\"classname\":\"worldspawn\"}}]}";
+    CHECK(qa_q2_game_original_builtin_game((qa_bytes){(const uint8_t *)game,sizeof(game)-1}));
+    const char unknown[]="{\"stamp\":\"unsupported-source\",\"clients\":[]}";
+    CHECK(!qa_q2_game_original_builtin_game((qa_bytes){(const uint8_t *)unknown,sizeof(unknown)-1}));
+    qa_error error={0};
+    size_t configs=(size_t)QA_Q2_SAVE_CONFIGSTRINGS*QA_Q2_SAVE_CONFIGSTRING_BYTES;
+    qa_buffer donor={.size=configs+QA_Q2_SAVE_AREA_PORTALS};
+    donor.data=calloc(donor.size,1);CHECK(donor.data);
+    memcpy(donor.data,"Donor world",12);
+    donor.data[configs]=1;
+    donor.data[donor.size-1]=2;
+    qa_q2_save_level level={.name="base1"}, retail={0};
+    CHECK(qa_q2_save_level_decode((qa_bytes){donor.data,donor.size},&level,&error));
+    CHECK(!strcmp(qa_q2_save_configstring(&level,0),"Donor world"));
+    CHECK(level.portal_open[0]==1 && level.portal_open[1]==0 && level.portal_open[QA_Q2_SAVE_AREA_PORTALS-1]==1);
+    qa_buffer encoded={0};
+    CHECK(qa_q2_save_level_encode(&level,&encoded,&error));
+    CHECK(encoded.size==configs+QA_Q2_SAVE_AREA_PORTALS*4);
+    CHECK(qa_q2_save_level_decode((qa_bytes){encoded.data,encoded.size},&retail,&error));
+    CHECK(!strcmp(qa_q2_save_configstring(&retail,0),"Donor world"));
+    for (size_t i=0;i<QA_Q2_SAVE_AREA_PORTALS;++i)
+        CHECK(retail.portal_open[i]==level.portal_open[i]);
+    qa_q2_save_level invalid={0};
+    CHECK(!qa_q2_save_level_decode((qa_bytes){donor.data,donor.size-1},&invalid,&error));
+    qa_q2_save_level_dispose(&retail);qa_buffer_free(&encoded);
+
+    char directory[]="/tmp/qa-q2-donor-XXXXXX",slot[128];
+    CHECK(mkdtemp(directory));
+    CHECK(snprintf(slot,sizeof(slot),"%s/slot",directory)>0 && mkdir(slot,0700)==0);
+    qa_fs_root *root=NULL;
+    CHECK(qa_fs_root_open(directory,&root,&error));
+    level.game=(qa_buffer){.data=(uint8_t *)strdup(level_game),.size=sizeof(level_game)-1};
+    qa_q2_save_data save={.server={.comment="Donor",.map_command="base1"},
+        .game={.data=(uint8_t *)strdup(game),.size=sizeof(game)-1},.levels=&level,.level_count=1};
+    CHECK(level.game.data && save.game.data);
+    CHECK(qa_q2_save_directory_write(root,"slot",&save,1,&error));
+    CHECK(qa_fs_root_replace(root,"slot/base1.sv2",(qa_bytes){donor.data,donor.size},2,&error));
+    qa_q2_save_data *read=NULL;
+    CHECK(qa_q2_save_directory_read(root,"slot",&read,&error));
+    CHECK(read->game.size==sizeof(game)-1 && !memcmp(read->game.data,game,sizeof(game)-1));
+    CHECK(qa_q2_game_original_builtin_game((qa_bytes){read->game.data,read->game.size}));
+    CHECK(read->level_count==1 && read->levels[0].game.size==sizeof(level_game)-1 &&
+        !memcmp(read->levels[0].game.data,level_game,sizeof(level_game)-1));
+    for (size_t i=0;i<QA_Q2_SAVE_AREA_PORTALS;++i)
+        CHECK(read->levels[0].portal_open[i]==level.portal_open[i]);
+    qa_q2_save_destroy(read);
+    CHECK(qa_fs_root_remove(root,"slot/server.ssv",&error));
+    CHECK(qa_fs_root_remove(root,"slot/game.ssv",&error));
+    CHECK(qa_fs_root_remove(root,"slot/base1.sav",&error));
+    CHECK(qa_fs_root_remove(root,"slot/base1.sv2",&error));
+    qa_fs_root_close(root);
+    CHECK(rmdir(slot)==0 && rmdir(directory)==0);
+    qa_buffer_free(&save.game);qa_q2_save_level_dispose(&level);qa_buffer_free(&donor);
+}
+
 static void test_json_caller_storage(void)
 {
     static const struct { uint8_t bytes[4]; size_t size; } malformed[] = {
@@ -5579,6 +5659,7 @@ int main(int argc, char **argv)
     test_shared_random();
     test_q2_hud_configuration();
     test_typewriter_centers();
+    test_saved_player_disguise();
     test_compiled_sound_names();
     test_unicast_claim_storage();
     test_shared_team_values();
@@ -5631,6 +5712,7 @@ int main(int argc, char **argv)
     test_cached_world_surface();
     test_retained_patch_levels();
     test_json_caller_storage();
+    test_q2_donor_save_metadata();
     test_binary();
     test_spans();
     test_arena();

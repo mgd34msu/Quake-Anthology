@@ -343,7 +343,7 @@ static bool trigger_spawn(q2m_context *context, qa_error *error) {
     bool scripted_fixbot = monster->definition->species == Q2M_FIXBOT &&
         (monster->spawnflags & (Q2M_FIXBOT_LANDING | Q2M_FIXBOT_TAKEOFF | Q2M_FIXBOT_FIXIT));
     bool acquire = !scripted_fixbot && monster->enemy.registry != 0 && !(monster->spawnflags & 1u) &&
-                   traits(context, monster->enemy, &target) && !target.no_target;
+                   traits(context, monster->enemy, &target) && !target.no_target && !target.disguised;
     if (!q2m_alive(context))
         return true;
     if (acquire) {
@@ -423,7 +423,7 @@ bool q2m_lifecycle_use(q2m_context *context, qa_actor_id activator, qa_error *er
         return false;
     if (!q2m_alive(context) || handled || monster->enemy.registry || monster->dead)
         return true;
-    bool eligible = traits(context, activator, &target) && !target.no_target;
+    bool eligible = traits(context, activator, &target) && !target.no_target && !target.disguised;
     if (!q2m_alive(context) || !eligible)
         return true;
     q2_actor *native = q2_actor_get(context->game, activator, false, NULL);

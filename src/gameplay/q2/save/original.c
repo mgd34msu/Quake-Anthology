@@ -150,6 +150,14 @@ static bool json_component(q2_original_record_io *io, const q2_original_field *f
         uint64_t *word = value;
         if (io->reading) {
             if (id == QA_JSON_NONE) { *word = 0; return true; }
+            if (io->donor_json) {
+                int64_t source;
+                if (!qa_json_i64(io->document, id, &source, io->error)) return false;
+                if (source < INT32_MIN || source > UINT32_MAX)
+                    return fail(io, id, "Donor Q2 word exceeds its original 32-bit field");
+                *word = (uint32_t)source;
+                return true;
+            }
             return qa_json_u64(io->document, id, word, io->error);
         }
         qa_json_writer_u64(io->writer, *word);
@@ -186,13 +194,26 @@ static bool json_component(q2_original_record_io *io, const q2_original_field *f
         return written(io);
     }
     if (field->kind == Q2_ORIGINAL_BOOL) {
-        if (io->reading) return qa_json_bool(io->document, id, value, io->error);
+        if (io->reading) {
+            if (io->donor_json && qa_json_type(io->document, id) == QA_JSON_NUMBER) {
+                double number;
+                return qa_json_number(io->document, id, &number, io->error) &&
+                    value_store(io, field, value, number);
+            }
+            return qa_json_bool(io->document, id, value, io->error);
+        }
         qa_json_writer_bool(io->writer, *(bool *)value);
         return written(io);
     }
     if (field->kind == Q2_ORIGINAL_TIME || field->kind == Q2_ORIGINAL_FRAME_TIME ||
         field->kind == Q2_ORIGINAL_FRAME_INDEX) {
         if (io->reading) {
+            if (io->donor_json) {
+                double number;
+                if (!qa_json_number(io->document, id, &number, io->error)) return false;
+                number *= field->kind == Q2_ORIGINAL_TIME ? (double)Q2_NS : (double)(Q2_NS / 10);
+                return value_store(io, field, value, number);
+            }
             int64_t milliseconds;
             if (!qa_json_i64(io->document, id, &milliseconds, io->error)) return false;
             if (milliseconds < 0 || (uint64_t)milliseconds > UINT64_MAX / Q2_MS)
@@ -205,12 +226,15 @@ static bool json_component(q2_original_record_io *io, const q2_original_field *f
     }
     double number = value_number(field, value);
     if (io->reading && !qa_json_number(io->document, id, &number, io->error)) return false;
-    if (field->kind == Q2_ORIGINAL_SECONDS_TIME) {
+    if (field->kind == Q2_ORIGINAL_SECONDS_TIME && !io->donor_json) {
         if (io->reading) number /= 1000;
         else number = trunc(number * 1000);
     }
     if (field->kind == Q2_ORIGINAL_WEAPON_PHASE && (number < 0 || number > 3))
         return fail(io, field->offset, "Unknown Q2 Source weapon phase");
+    if (io->reading && io->donor_json && field->kind == Q2_ORIGINAL_U32 && number < 0 &&
+        number >= INT32_MIN && trunc(number) == number)
+        number = (uint32_t)(int32_t)number;
     if (io->reading) return value_store(io, field, value, number);
     if (!isfinite(number) && field->kind != Q2_ORIGINAL_F32)
         return fail(io, field->offset, "Nonfinite Q2 original field");
@@ -234,7 +258,7 @@ static bool json_field(q2_original_record_io *io, const q2_original_field *field
 {
     bool array = field->kind != Q2_ORIGINAL_TEXT && field->kind != Q2_ORIGINAL_VECTOR && field->count > 1;
     size_t count = array ? field->count : 1, stride = native_size(field);
-    qa_json_id id = io->reading ? qa_json_get(io->document, io->object, field->name) : QA_JSON_NONE;
+    qa_json_id id = io->reading ? q2_original_json_member(io, field->name) : QA_JSON_NONE;
     if (io->reading && array && id != QA_JSON_NONE &&
         (qa_json_type(io->document, id) != QA_JSON_ARRAY || qa_json_size(io->document, id) != count))
         return fail(io, id, "Q2 original array differs from its fixed Source extent");
@@ -352,8 +376,32 @@ static bool classic_field(q2_original_record_io *io, const q2_original_field *fi
 
 bool q2_original_value(q2_original_record_io *io, const q2_original_field *field, void *value)
 {
-    return io->edition == QA_RULESET_Q2_RERELEASE ? json_field(io, field, value) :
+    return io->document || io->edition == QA_RULESET_Q2_RERELEASE ? json_field(io, field, value) :
         classic_field(io, field, value);
+}
+
+qa_json_id q2_original_json_member(const q2_original_record_io *io, const char *name)
+{
+    if (!io->donor_json) return qa_json_get(io->document, io->object, name);
+    if (!strcmp(name, "help1changed")) name = "helpchanged";
+    else if (!strcmp(name, "game_help1changed")) name = "game_helpchanged";
+    else if (!strcmp(name, "cross_level_flags")) name = "serverflags";
+    else if (!strcmp(name, "disguise_violation_time")) name = "disguise_violation_framenum";
+    else if (!strcmp(name, "monsterinfo.quad_time")) name = "monsterinfo.quad_framenum";
+    else if (!strcmp(name, "monsterinfo.invincible_time")) name = "monsterinfo.invincible_framenum";
+    else if (!strcmp(name, "monsterinfo.double_time")) name = "monsterinfo.double_framenum";
+    qa_json_id object = io->object;
+    for (;;) {
+        const char *dot = strchr(name, '.');
+        if (!dot) return qa_json_get(io->document, object, name);
+        char member[64];
+        size_t size = (size_t)(dot - name);
+        if (size >= sizeof(member)) return QA_JSON_NONE;
+        memcpy(member, name, size); member[size] = 0;
+        object = qa_json_get(io->document, object, member);
+        if (qa_json_type(io->document, object) != QA_JSON_OBJECT) return QA_JSON_NONE;
+        name = dot + 1;
+    }
 }
 
 bool q2_original_record(q2_original_record_io *io, q2_original_record_kind kind, void *value)
@@ -362,7 +410,7 @@ bool q2_original_record(q2_original_record_io *io, q2_original_record_kind kind,
     if (!io || !value || !layout || (io->edition != QA_RULESET_Q2_CLASSIC && io->edition != QA_RULESET_Q2_RERELEASE) || (unsigned)io->product > QA_Q2_N64 ||
         (io->edition == QA_RULESET_Q2_CLASSIC && io->product > QA_Q2_ROGUE))
         return false;
-    if (io->edition == QA_RULESET_Q2_RERELEASE &&
+    if ((io->document || io->edition == QA_RULESET_Q2_RERELEASE) &&
         (io->reading ? qa_json_type(io->document, io->object) != QA_JSON_OBJECT : !io->writer))
         return fail(io, io->object, "Q2 original record requires an object");
     for (size_t i = 0; i < layout->count; ++i) {
@@ -386,7 +434,7 @@ bool q2_original_scalar(q2_original_record_io *io, const char *name,
 bool q2_original_source_text(q2_original_record_io *io, qa_q2_game *g, const char *name,
     qa_string_id *value, size_t capacity)
 {
-    if (io->edition != QA_RULESET_Q2_RERELEASE)
+    if (!io->document && io->edition != QA_RULESET_Q2_RERELEASE)
         return fail(io, 0, "Variable Q2 strings require their original string field");
     char *text = calloc(capacity, 1);
     if (!text) {
@@ -425,7 +473,8 @@ bool q2_original_item(qa_q2_game *g, q2_original_record_io *io, const char *name
     const qa_q2_item_definition *definition = *item ? q2_item_by_id(g, *item) : NULL;
     if (!io->reading && *item && !definition)
         return fail(io, *item, "Q2 original item has no actual GAME definition");
-    if (io->edition == QA_RULESET_Q2_CLASSIC) {
+    if (io->edition == QA_RULESET_Q2_CLASSIC &&
+        (!io->donor_json || !strcmp(name, "selected_item"))) {
         int32_t index = -1;
         if (!io->reading && definition &&
             !q2_original_symbol_encode(Q2_ORIGINAL_ITEM, g->options.product,
@@ -464,17 +513,18 @@ bool q2_original_item(qa_q2_game *g, q2_original_record_io *io, const char *name
 
 typedef struct original_ammo {
     const char *classname;
+    const char *donor_name;
     uint16_t offsets[3];
 } original_ammo;
 
 /* The same order is the original rerelease ammo_t/max_ammo array. */
 static const original_ammo ammo_fields[] = {
-    {"ammo_bullets", {1764, 1764, 1764}}, {"ammo_shells", {1768, 1768, 1768}},
-    {"ammo_rockets", {1772, 1772, 1772}}, {"ammo_grenades", {1776, 1776, 1776}},
-    {"ammo_cells", {1780, 1780, 1780}}, {"ammo_slugs", {1784, 1784, 1784}},
-    {"ammo_magslug", {65535, 1788, 65535}}, {"ammo_trap", {65535, 1792, 65535}},
-    {"ammo_flechettes", {65535, 65535, 1788}}, {"ammo_tesla", {65535, 65535, 1796}},
-    {"ammo_disruptor", {65535, 65535, 1800}}, {"ammo_prox", {65535, 65535, 1792}},
+    {"ammo_bullets", "max_bullets", {1764, 1764, 1764}}, {"ammo_shells", "max_shells", {1768, 1768, 1768}},
+    {"ammo_rockets", "max_rockets", {1772, 1772, 1772}}, {"ammo_grenades", "max_grenades", {1776, 1776, 1776}},
+    {"ammo_cells", "max_cells", {1780, 1780, 1780}}, {"ammo_slugs", "max_slugs", {1784, 1784, 1784}},
+    {"ammo_magslug", "max_magslug", {65535, 1788, 65535}}, {"ammo_trap", "max_trap", {65535, 1792, 65535}},
+    {"ammo_flechettes", "max_flechettes", {65535, 65535, 1788}}, {"ammo_tesla", "max_tesla", {65535, 65535, 1796}},
+    {"ammo_disruptor", "max_mines", {65535, 65535, 1800}}, {"ammo_prox", "max_prox", {65535, 65535, 1792}},
 };
 
 static qa_inventory_entry *inventory_entry(qa_q2_player_carry *carry, qa_item_id item)
@@ -500,7 +550,7 @@ static bool inventory_record(qa_q2_game *g, q2_original_record_io *io,
             carry->inventory[i] = (qa_inventory_entry){definition->item, 0,
                 definition->capacity, QA_COUNT_SOURCE_INT32};
         }
-        if (io->edition == QA_RULESET_Q2_CLASSIC) {
+        if (io->edition == QA_RULESET_Q2_CLASSIC && !io->donor_json) {
             for (int32_t ordinal = 0; ordinal < 256; ++ordinal) {
                 uint16_t offset = (uint16_t)(740 + ordinal * 4);
                 int32_t value = 0;
@@ -514,7 +564,25 @@ static bool inventory_record(qa_q2_game *g, q2_original_record_io *io,
             }
         }
     }
-    if (io->edition == QA_RULESET_Q2_RERELEASE && io->reading) {
+    if (io->donor_json) {
+        qa_json_id inventory = q2_original_json_member(io, "inventory");
+        if (qa_json_type(io->document, inventory) != QA_JSON_ARRAY ||
+            qa_json_size(io->document, inventory) != 256)
+            return fail(io, inventory, "Donor Q2 inventory requires its original fixed item array");
+        for (int32_t ordinal = 0; ordinal < 256; ++ordinal) {
+            int64_t count;
+            if (!qa_json_i64(io->document, qa_json_at(io->document, inventory, (size_t)ordinal),
+                &count, io->error)) return false;
+            if (count < INT32_MIN || count > INT32_MAX)
+                return fail(io, (unsigned)ordinal, "Donor Q2 inventory exceeds its Source count");
+            const char *name = q2_original_symbol_next(Q2_ORIGINAL_ITEM, io->product, ordinal, NULL);
+            const qa_q2_item_definition *definition = name ? qa_q2_item_lookup(g, name) : NULL;
+            qa_inventory_entry *entry = definition ? inventory_entry(carry, definition->item) : NULL;
+            if (count && !entry)
+                return fail(io, (unsigned)ordinal, "Donor Q2 inventory item has no actual GAME definition");
+            if (entry) entry->count = (double)count;
+        }
+    } else if (io->edition == QA_RULESET_Q2_RERELEASE && io->reading) {
         qa_json_id inventory = qa_json_get(io->document, io->object, "inventory");
         if (inventory != QA_JSON_NONE && qa_json_type(io->document, inventory) != QA_JSON_NULL) {
             if (qa_json_type(io->document, inventory) != QA_JSON_OBJECT)
@@ -621,7 +689,10 @@ static bool inventory_record(qa_q2_game *g, q2_original_record_io *io,
             entry->capacity > INT32_MAX || trunc(entry->capacity) != entry->capacity))
             return fail(io, i, "Q2 Source ammo capacity exceeds its original field");
         int32_t maximum = entry ? (int32_t)entry->capacity : 0;
-        if (io->edition == QA_RULESET_Q2_CLASSIC) {
+        if (io->donor_json) {
+            if (!q2_original_scalar(io, field->donor_name, Q2_ORIGINAL_I32,
+                UINT16_MAX, UINT16_MAX, UINT16_MAX, &maximum)) return false;
+        } else if (io->edition == QA_RULESET_Q2_CLASSIC) {
             uint16_t offset = field->offsets[io->product];
             if (offset == UINT16_MAX) continue;
             if (!q2_original_scalar(io, field->classname, Q2_ORIGINAL_I32, offset, offset, offset, &maximum)) return false;
@@ -979,6 +1050,15 @@ bool q2_original_object_end(q2_original_record_io *parent)
 bool q2_original_client_record(qa_q2_game *g, q2_original_record_io *io,
     const qa_q2_save_level *level, q2_original_client_state *state)
 {
+    if (io->donor_json) {
+        if (!persistent_record(g, io, &state->player, &state->persistent,
+            false, &state->weapon.last_weapon) ||
+            !q2_original_scalar(io, "connected", Q2_ORIGINAL_BOOL, 720, 720, 720,
+                &state->player.info.connected)) return false;
+        state->view.fov = 90;
+        state->movement.state.kind = io->edition;
+        goto client_defaults;
+    }
     q2_original_record_io child;
     bool present;
     if (!q2_original_object_begin(io, "ps", &child, &present)) return false;
@@ -1047,6 +1127,7 @@ bool q2_original_client_record(qa_q2_game *g, q2_original_record_io *io,
         if (!q2_original_scalar(io, "damage_from", Q2_ORIGINAL_VECTOR, 3552, 3568, 3584,
             &state->player.rule.damage_from)) return false;
     }
+client_defaults:
     if (io->reading) {
         state->weapon.weapon = state->persistent.weapon;
         state->weapon.gun_rate = 10;
@@ -1077,7 +1158,24 @@ bool qa_q2_game_original_builtin_game(qa_bytes bytes)
         const q2_original_library *library=q2_original_library_for((qa_q2_product)product);
         if (!memcmp(bytes.data,library->date,sizeof(library->date))) return true;
     }
+    if (q2_original_json_input(bytes)) {
+        qa_json_document *document = NULL;
+        if (!qa_json_parse(QA_JSON_SPECIAL_FLOATS, bytes, &document, NULL)) return false;
+        bool donor = qa_json_string_equal(document,
+            qa_json_get(document, qa_json_root(document), "stamp"), "quake-2-ts:g_save:v1");
+        qa_json_destroy(document);
+        return donor;
+    }
     return false;
+}
+
+bool q2_original_json_input(qa_bytes bytes)
+{
+    if (!bytes.data) return false;
+    size_t first = 0;
+    while (first < bytes.size && (bytes.data[first] == ' ' || bytes.data[first] == '\t' ||
+        bytes.data[first] == '\r' || bytes.data[first] == '\n')) ++first;
+    return first < bytes.size && bytes.data[first] == '{';
 }
 
 bool q2_original_game_open(qa_q2_game *g, qa_bytes bytes,
@@ -1086,11 +1184,15 @@ bool q2_original_game_open(qa_q2_game *g, qa_bytes bytes,
 {
     *io = (q2_original_record_io){.edition = g->options.rules, .product = g->options.product,
         .reading = true, .error = error};
-    if (io->edition == QA_RULESET_Q2_RERELEASE) {
+    if (io->edition == QA_RULESET_Q2_RERELEASE || q2_original_json_input(bytes)) {
         if (!qa_json_parse(QA_JSON_SPECIAL_FLOATS, bytes, document, error)) return false;
         io->document = *document;
         qa_json_id root = qa_json_root(*document);
-        io->object = qa_json_get(*document, root, "game");
+        io->donor_json = io->edition == QA_RULESET_Q2_CLASSIC;
+        if (io->donor_json && !qa_json_string_equal(*document,
+            qa_json_get(*document, root, "stamp"), "quake-2-ts:g_save:v1"))
+            return fail(io, root, "Donor Q2 GAME has an unsupported Source stamp");
+        io->object = io->donor_json ? root : qa_json_get(*document, root, "game");
         if (!q2_original_record(io, Q2_ORIGINAL_GAME, state)) return false;
         qa_json_id clients = qa_json_get(*document, root, "clients");
         if (qa_json_type(*document, clients) != QA_JSON_ARRAY ||
@@ -1257,6 +1359,8 @@ bool q2_original_client_capture(qa_q2_game *g, q2_actor *actor,
             count * sizeof(*state->player.rule.coop.inventory));
     }
     if (!qa_q2_player_carry_capture(g, actor->id, &state->persistent, error)) return false;
+    state->persistent.flags = (state->persistent.flags & ~UINT32_C(32768)) |
+        (actor->client->player->disguised ? UINT32_C(32768) : 0);
     for (size_t i = 0; i < state->persistent.count; ++i) {
         qa_inventory_entry *entry = state->persistent.inventory + i;
         const qa_q2_item_definition *definition = q2_item_by_id(g, entry->item);

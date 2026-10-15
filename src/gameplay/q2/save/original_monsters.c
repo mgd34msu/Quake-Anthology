@@ -249,7 +249,7 @@ static const char *const *callbacks_for(const qa_q2_game *game, const char *clas
 static bool callback(qa_q2_game *game, q2_original_record_io *io,
     const char *field, uint16_t offset, const char *name, bool data_relative)
 {
-    if (io->edition == QA_RULESET_Q2_RERELEASE || !data_relative) {
+    if (io->document || io->edition == QA_RULESET_Q2_RERELEASE || !data_relative) {
         if (!io->reading) return q2_original_function(game, io, field, offset, name);
         bool matches = false;
         return q2_original_function_matches(game, io, field, offset, name, &matches) &&
@@ -277,7 +277,7 @@ static bool callback(qa_q2_game *game, q2_original_record_io *io,
 static bool move_record(q2_original_record_io *io, const char *field, uint16_t offset,
     struct qa_q2_monster *m, const q2m_move **move)
 {
-    if (io->edition == QA_RULESET_Q2_RERELEASE) {
+    if (io->document || io->edition == QA_RULESET_Q2_RERELEASE) {
         if (!io->reading) {
             if (*move) {
                 qa_json_writer_key(io->writer, field);
@@ -285,7 +285,7 @@ static bool move_record(q2_original_record_io *io, const char *field, uint16_t o
             }
             return !io->writer->failed;
         }
-        qa_json_id id = qa_json_get(io->document, io->object, field);
+        qa_json_id id = q2_original_json_member(io, field);
         if (id == QA_JSON_NONE || qa_json_type(io->document, id) == QA_JSON_NULL) {
             *move = NULL;
             return true;

@@ -70,7 +70,7 @@ static bool feedback(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
-        if (rr && !q2_player_noise(g, a->id, body.origin, false, e))
+        if (rr && !q2_player_noise(g, a->id, body.origin, Q2_NOISE_SELF, false, e))
             return false;
     }
     float count = rr ? (blood != 0 ? fmaxf(total, 10) : fminf(total, 2)) : fmaxf(total, 10);

@@ -93,35 +93,50 @@ bool q2_original_level_open(qa_q2_game *game, qa_bytes bytes,
         .product = game->options.product, .error = error};
     size_t capacity = 0;
     bool okay = true;
-    if (io.edition == QA_RULESET_Q2_RERELEASE) {
+    if (io.edition == QA_RULESET_Q2_RERELEASE || q2_original_json_input(bytes)) {
         okay = qa_json_parse(QA_JSON_SPECIAL_FLOATS, bytes, &file.document, error);
         if (!okay) goto done;
         qa_json_id root = qa_json_root(file.document);
+        file.donor_json = io.edition == QA_RULESET_Q2_CLASSIC;
+        io.donor_json = file.donor_json;
         file.level_object = qa_json_get(file.document, root, "level");
-        qa_json_id entities = qa_json_get(file.document, root, "entities");
+        qa_json_id entities = qa_json_get(file.document, root, file.donor_json ? "edicts" : "entities");
         if (qa_json_type(file.document, file.level_object) != QA_JSON_OBJECT ||
-            qa_json_type(file.document, entities) != QA_JSON_OBJECT) {
-            okay = level_error(error, 0, "Original rerelease LEVEL requires level and entities objects");
+            qa_json_type(file.document, entities) != (file.donor_json ? QA_JSON_ARRAY : QA_JSON_OBJECT)) {
+            okay = level_error(error, 0, "Original JSON LEVEL requires its level object and physical edict table");
             goto done;
         }
         io.document = file.document;
         io.object = file.level_object;
         okay = q2_original_record(&io, Q2_ORIGINAL_LEVEL, &file.state);
+        if (okay && file.donor_json)
+            okay = q2_original_scalar(&io, "framenum", Q2_ORIGINAL_U32, 0, 0, 0, &file.state.frame) &&
+                q2_original_scalar(&io, "pic_health", Q2_ORIGINAL_I32, 264, 264, 264, &file.state.health_image);
         for (size_t i = 0; okay && i < qa_json_size(file.document, entities); ++i) {
-            qa_buffer key = {0};
-            okay = qa_json_string(file.document, qa_json_key_at(file.document, entities, i),
-                &key, error);
-            if (!okay) break;
             uint32_t number = 0;
-            if (!key.size) okay = false;
-            for (size_t j = 0; okay && j < key.size; ++j) {
-                uint8_t byte = key.data[j];
-                if (byte < '0' || byte > '9' || number > (UINT32_MAX - (uint32_t)(byte - '0')) / 10)
-                    okay = false;
-                else number = number * 10 + (uint32_t)(byte - '0');
-            }
-            qa_buffer_free(&key);
             qa_json_id object = qa_json_at(file.document, entities, i);
+            if (file.donor_json) {
+                uint64_t index;
+                okay = qa_json_type(file.document, object) == QA_JSON_OBJECT &&
+                    qa_json_u64(file.document, qa_json_get(file.document, object, "index"), &index, error);
+                if (okay) {
+                    okay = index <= UINT32_MAX;
+                    number = (uint32_t)index;
+                }
+                object = qa_json_get(file.document, object, "data");
+            } else {
+                qa_buffer key = {0};
+                okay = qa_json_string(file.document, qa_json_key_at(file.document, entities, i), &key, error);
+                if (!okay) break;
+                if (!key.size) okay = false;
+                for (size_t j = 0; okay && j < key.size; ++j) {
+                    uint8_t byte = key.data[j];
+                    if (byte < '0' || byte > '9' || number > (UINT32_MAX - (uint32_t)(byte - '0')) / 10)
+                        okay = false;
+                    else number = number * 10 + (uint32_t)(byte - '0');
+                }
+                qa_buffer_free(&key);
+            }
             if (!okay || number >= game->wire_capacity ||
                 qa_json_type(file.document, object) != QA_JSON_OBJECT) {
                 okay = level_error(error, i, "Original Q2 entity requires its physical edict number and object");
@@ -209,7 +224,8 @@ static q2_original_record_io edict_reader(qa_q2_game *game,
 {
     return (q2_original_record_io){.reading = true, .edition = game->options.rules,
         .product = game->options.product, .document = file->document,
-        .object = row->object, .input = row->fields, .strings = row->strings, .error = error};
+        .object = row->object, .input = row->fields, .strings = row->strings,
+        .donor_json = file->donor_json, .error = error};
 }
 
 static bool original_edict(qa_q2_game *, q2_original_record_io *, q2_actor *,
@@ -240,7 +256,7 @@ bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
     if (okay && slot >= globals.clients)
         okay = level_error(error, slot, "Original Q2 client is outside its GAME file");
     if (okay) {
-        if (game->options.rules == QA_RULESET_Q2_RERELEASE) {
+        if (document) {
             qa_json_id clients = qa_json_get(document, qa_json_root(document), "clients");
             io.object = qa_json_at(document, clients, slot);
         } else {
@@ -300,6 +316,7 @@ bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
         qa_q2_player_checkpoint saved = {.present = true, .value = client.player};
         okay = qa_q2_player_restore(game, actor, &saved, error) &&
             qa_q2_player_carry_restore(game, actor, &client.persistent, error);
+        if (okay) source->client->player->disguised = (flags & 32768u) != 0;
         if (okay && source->weapon_bound)
             okay = qa_q2_weapon_restore(game, actor, &client.weapon, error);
         if (okay) {
@@ -341,7 +358,8 @@ bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
     if (okay && live_level) {
         io = (q2_original_record_io){.reading = true, .edition = game->options.rules,
             .product = game->options.product, .document = level.document, .object = level.level_object,
-            .input = level.level_fields, .strings = level.level_strings, .error = error};
+            .input = level.level_fields, .strings = level.level_strings,
+            .donor_json = level.donor_json, .error = error};
         okay = level_perception(game, &io);
     }
     qa_json_destroy(document);
@@ -418,13 +436,15 @@ static bool level_perception(qa_q2_game *g, q2_original_record_io *io)
 {
     q2_players *players = g->player_runtime;
     if (io->edition != QA_RULESET_Q2_CLASSIC) return true;
-    qa_actor_id sight = {0}, observer = {0};
+    qa_actor_id sight = {0}, observer = {0}, violator = {0};
     int32_t sight_frame = 0;
     qa_q2_monsters_checkpoint perception = {0};
     if (!qa_q2_monsters_capture(g, &perception, io->error)) return false;
     if (!io->reading) {
         if (!q2_resolve_reference(g, perception.sight_client, &sight, io->error) ||
-            !q2_resolve_reference(g, perception.sight_observer, &observer, io->error)) {
+            !q2_resolve_reference(g, perception.sight_observer, &observer, io->error) ||
+            (g->options.product == QA_Q2_ROGUE &&
+             !q2_resolve_reference(g, perception.disguise_violator, &violator, io->error))) {
             qa_q2_monsters_checkpoint_free(&perception);
             return false;
         }
@@ -433,9 +453,15 @@ static bool level_perception(qa_q2_game *g, q2_original_record_io *io)
     bool okay = q2_original_reference(g, io, "sight_client", 236, &sight) &&
         q2_original_reference(g, io, "sight_entity", 240, &observer) &&
         q2_original_scalar(io, "sight_entity_framenum", Q2_ORIGINAL_I32, 244, 244, 244, &sight_frame);
+    if (okay && g->options.product == QA_Q2_ROGUE)
+        okay = q2_original_reference(g, io, "disguise_violator", 304, &violator) &&
+            q2_original_scalar(io, "disguise_violation_time", Q2_ORIGINAL_FRAME_INDEX,
+                UINT16_MAX, UINT16_MAX, 308, &perception.disguise_until_ns);
     if (okay && io->reading) {
         okay = q2_save_reference(g, sight, &perception.sight_client, io->error) &&
-            q2_save_reference(g, observer, &perception.sight_observer, io->error);
+            q2_save_reference(g, observer, &perception.sight_observer, io->error) &&
+            (g->options.product != QA_Q2_ROGUE ||
+             q2_save_reference(g, violator, &perception.disguise_violator, io->error));
         perception.sight_time_ns = sight_frame > 0 ?
             (uint64_t)(uint32_t)sight_frame * (Q2_NS / 10) : 0;
         perception.last_frame_ns = g->now_ns;
@@ -889,7 +915,8 @@ bool qa_q2_game_original_read_level(qa_q2_game *game, qa_bytes bytes,
     if (okay) {
         q2_original_record_io io = {.reading = true, .edition = game->options.rules,
             .product = game->options.product, .document = file.document, .object = file.level_object,
-            .input = file.level_fields, .strings = file.level_strings, .error = error};
+            .input = file.level_fields, .strings = file.level_strings,
+            .donor_json = file.donor_json, .error = error};
         okay = level_state(game, &io, engine, &file.state) && level_links(game, &file, engine, error) &&
             level_hints(game, error);
     }

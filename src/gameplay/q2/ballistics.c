@@ -230,7 +230,7 @@ static bool lead(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
                 shotgun ? Q2_NAME_RESOURCE_Q2_SHOTGUN : Q2_NAME_RESOURCE_Q2_GUNSHOT,
                 mod, trace.end, trace.contact_plane.normal, e))
                 return false;
-            if (!q2_noise_for_actor(c->game, c->actor->id, trace.end, true, e))
+            if (!q2_player_noise(c->game, c->actor->id, trace.end, Q2_NOISE_IMPACT, true, e))
                 return false;
         }
         break;
@@ -340,7 +340,7 @@ static bool rail_run(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float 
     return q2_event_named(c, QA_BUILTIN_BEAM, Q2_NAME_RESOURCE_Q2_RAIL, mod, start, trace.end, e) &&
            (!(water && c->rules != QA_RULESET_Q2_RERELEASE) || q2_event_named(c, QA_BUILTIN_BEAM,
                 Q2_NAME_RESOURCE_Q2_RAIL_WATER, 12, start, trace.end, e)) &&
-           q2_noise_for_actor(c->game, c->actor->id, trace.end, true, e);
+           q2_player_noise(c->game, c->actor->id, trace.end, Q2_NOISE_IMPACT, true, e);
 }
 bool q2_scratch_acquire(qa_q2_game *g, qa_world_actor_snapshot *out, qa_error *e) {
     if (!qa_world_snapshot_acquire(g->services.world, out, e))

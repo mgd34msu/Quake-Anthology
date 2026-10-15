@@ -101,7 +101,6 @@ typedef struct qa_q2_entity_services {
     bool (*actor_gravity)(void *, qa_actor_id, float, qa_error *);
     bool (*world_gravity)(void *, float, qa_error *);
     bool (*player_push)(void *, qa_actor_id, qa_vec3, qa_error *);
-    bool (*disguise)(void *, qa_actor_id, bool, qa_error *);
     bool (*target_name_changed)(void *, qa_actor_id, qa_string_id old_name, qa_string_id new_name,
                                 qa_error *);
     bool (*path_follower)(void *, qa_actor_id, qa_q2_path_follower *);

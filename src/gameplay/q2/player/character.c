@@ -48,6 +48,7 @@ static bool respawned(void *context, qa_actor_id id, qa_error *e) {
     }
     g->now_ns = clock.frame.time_ns;
     ++a->character_birth_epoch;
+    s->player->disguised = false;
     a->pickup_icon = a->pickup_text = a->selected_item_name = 0;
     a->pickup_until_ns = a->selected_item_name_until_ns = 0;
     a->character_no_damage_effects = false;

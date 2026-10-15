@@ -89,7 +89,7 @@ typedef struct qa_source_owner {
 typedef struct qa_actor_player {
     qa_string_id name, team, skin, model;
     int32_t ping;
-    bool present, bot, spectator;
+    bool present, bot, spectator, disguised;
 } qa_actor_player;
 
 typedef struct qa_actor_record {

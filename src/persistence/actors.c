@@ -31,7 +31,7 @@ bool qa_save_actors_encode(const qa_actor_checkpoint *value, qa_buffer *out, qa_
         qa_net_write_u32(&writer, slot->source_slot);
         qa_net_write_u8(&writer, slot->active ? 1 : 0);
         qa_net_write_u8(&writer, slot->has_source ? 1 : 0);
-        qa_net_write_u16(&writer, 0);
+        qa_net_write_u16(&writer, slot->player.disguised ? 1u : 0u);
     }
     if (players) {
         qa_net_write_data(&writer, "QAPL", 4);
@@ -77,10 +77,11 @@ bool qa_save_actors_decode(qa_bytes bytes, qa_actor_checkpoint *out, qa_error *e
         slot->definition = qa_net_read_u32(&reader);
         slot->source_slot = qa_net_read_u32(&reader);
         uint8_t active = qa_net_read_u8(&reader), source = qa_net_read_u8(&reader);
-        uint16_t reserved = qa_net_read_u16(&reader);
+        uint16_t conditions = qa_net_read_u16(&reader);
         slot->active = active != 0;
         slot->has_source = source != 0;
-        if (active > 1 || source > 1 || reserved ||
+        slot->player.disguised = (conditions & 1u) != 0;
+        if (active > 1 || source > 1 || (conditions & ~1u) ||
             (slot->active && slot->generation == UINT64_MAX) || (!slot->active && slot->has_source))
             qa_net_reader_fail(&reader, "Invalid saved actor generation or flags");
     }
@@ -102,7 +103,10 @@ bool qa_save_actors_decode(qa_bytes bytes, qa_actor_checkpoint *out, qa_error *e
             if (slot >= value.count || flags > 3 || pad || reserved ||
                 !value.slots[slot].active || value.slots[slot].player.present)
                 qa_net_reader_fail(&reader, "Invalid saved player component slot");
-            if (!reader.failed) value.slots[slot].player = player;
+            if (!reader.failed) {
+                player.disguised = value.slots[slot].player.disguised;
+                value.slots[slot].player = player;
+            }
         }
     }
     if (!qa_net_reader_finish(&reader)) { qa_actor_checkpoint_free(&value); return false; }

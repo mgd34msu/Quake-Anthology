@@ -54,7 +54,7 @@ typedef struct q2_original_record_io {
     struct q2_save_io *string_tail;
     qa_buffer output;
     qa_error *error;
-    bool reading, references_only;
+    bool reading, references_only, donor_json;
 } q2_original_record_io;
 
 /* Temporary Source values at the original file boundary, never a GAME owner. */
@@ -84,7 +84,7 @@ typedef struct q2_original_level_state {
     bool exit_intermission, intermission_clear;
     int32_t health_image, total_secrets, found_secrets, total_goals, found_goals;
     uint32_t total_monsters, killed_monsters, body_queue, power_cubes;
-    uint64_t disguise_ns, restart_ns, autosave_ns;
+    uint64_t restart_ns, autosave_ns;
 } q2_original_level_state;
 
 typedef struct q2_original_edict_row {
@@ -100,8 +100,11 @@ typedef struct q2_original_level_file {
     qa_json_id level_object;
     q2_original_edict_row *rows;
     size_t count;
+    bool donor_json;
 } q2_original_level_file;
 
+qa_json_id q2_original_json_member(const q2_original_record_io *, const char *);
+bool q2_original_json_input(qa_bytes);
 bool q2_original_source_text(q2_original_record_io *, qa_q2_game *, const char *,
     qa_string_id *, size_t);
 bool q2_original_scalar(q2_original_record_io *, const char *, q2_original_field_kind,

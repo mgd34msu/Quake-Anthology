@@ -98,7 +98,7 @@ bool q2_noise(q2_weapon_call *c, qa_vec3 origin, qa_error *e) {
     }
     if (c->game->options.deathmatch || c->input.notarget)
         return true;
-    return q2_noise_for_actor(c->game, c->actor->id, origin, false, e);
+    return q2_player_noise(c->game, c->actor->id, origin, Q2_NOISE_WEAPON, true, e);
 }
 bool q2_animation(q2_weapon_call *c, int priority, int first, int last, qa_error *e) {
     if (!q2_actor_live(c->game, c->actor->id))

@@ -89,7 +89,7 @@ static bool hint_reference(q2_save_io *io, qa_actor_id *actor) {
 
 /* The pre-existing continuation ends at the wire section. Only maps with
  * hint state append these sparse rows; a former end-of-file stays valid. */
-static bool save_hints(q2_save_io *io) {
+static bool save_hints(q2_save_io *io, bool has_tail) {
     qa_q2_game *g = io->game;
     q2_entities *runtime = g->entity_runtime;
     if (io->reading && io->offset == io->input.size) return true;
@@ -97,7 +97,7 @@ static bool save_hints(q2_save_io *io) {
     if (!io->reading) {
         for (q2_actor *actor = g->first_actor; actor; actor = actor->live_next)
             if (q2_actor_live(g, actor->id) && hint_fields(g, actor)) ++rows;
-        if (!rows && !runtime->hints_present && !runtime->hint_count) return true;
+        if (!rows && !runtime->hints_present && !runtime->hint_count && !has_tail) return true;
     }
     uint32_t roots = io->reading ? 0 : (uint32_t)runtime->hint_count;
     if (!q2_save_bool(io, &runtime->hints_present) || !q2_save_u32(io, &roots)) return false;
@@ -180,7 +180,9 @@ bool qa_q2_game_capture(qa_q2_game *g, qa_save_purpose purpose, qa_buffer *out, 
          qa_q2_players_capture(g, io.level_only, &players, e) && q2_save_players(&io, &players) &&
          qa_q2_entities_capture(g, io.level_only, &entities, e) && q2_save_entities(&io, &entities) &&
          qa_q2_monsters_capture(g, &monsters, e) && q2_save_monsters(&io, &monsters) &&
-         q2_save_wire(&io) && save_hints(&io);
+         q2_save_wire(&io) && save_hints(&io,
+             monsters.disguise_violator.present || monsters.disguise_until_ns != 0) &&
+         q2_save_monsters_tail(&io, &monsters);
     qa_q2_players_checkpoint_free(&players);
     qa_q2_entities_checkpoint_free(&entities);
     qa_q2_monsters_checkpoint_free(&monsters);
@@ -333,8 +335,8 @@ bool qa_q2_game_restore(qa_q2_game *g, qa_save_purpose purpose, const qa_q2_game
          qa_q2_players_restore(g, &players, e) &&
          q2_save_entities(&io, &entities) && (!transition || unit_entities(g, current, &entities, e)) &&
          qa_q2_entities_restore(g, &entities, e) &&
-         q2_save_monsters(&io, &monsters) && qa_q2_monsters_restore(g, &monsters, e) &&
-         q2_save_wire(&io) && save_hints(&io);
+         q2_save_monsters(&io, &monsters) && q2_save_wire(&io) && save_hints(&io, false) &&
+         q2_save_monsters_tail(&io, &monsters) && qa_q2_monsters_restore(g, &monsters, e);
     if (ok && io.offset != data.size) ok = q2_save_fail(&io, "Trailing Q2 continuation data");
     if (ok) ok = qa_q2_entities_validate_links(g, e);
     if (ok) g->actor_sequence = runtime.actor_sequence;

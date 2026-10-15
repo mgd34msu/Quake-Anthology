@@ -504,10 +504,38 @@ static bool native_console_preinit(application_provider *provider, qa_error *err
         : application_fail(error, QA_ERROR_ARGUMENT, "Native source lost its actual preinitialization console");
 }
 
-static bool q1_selected_fired(void *context, qa_actor_id actor, qa_item_id weapon, qa_error *error)
+static bool selected_weapon_noise(void *context, qa_actor_id actor, qa_vec3 origin,
+    bool secondary, qa_error *error)
 {
-    return application_q3_weapons_services_selected_fired(context, actor, weapon, error) &&
-        application_native_q1_source_fired(context, actor, weapon, error);
+    (void)origin; (void)error;
+    application_provider *source = context;
+    qa_application *app = source->application;
+    const qa_actor_player *player = qa_actors_player(qa_session_actors(app->session), actor);
+    if (secondary || !player || !player->disguised) return true;
+    qa_builtin_services services = application_builtin_services(app, app->world, app->physics);
+    qa_builtin_actor_traits traits;
+    if (!services.actor_traits(services.context, actor, &traits) || !traits.player || traits.no_target)
+        return true;
+    application_provider **providers = app->routing_providers ? app->routing_providers : app->providers;
+    size_t count = app->routing_providers ? app->routing_provider_count : app->provider_count;
+    for (size_t i = 0; i < count; ++i) {
+        application_provider *target = providers[i];
+        if (target != source && target->kind == APPLICATION_PROVIDER_Q2 && target->constructed &&
+            target->attached && !target->close_pending)
+            qa_q2_monsters_disguise_violated(target->state.q2, actor);
+    }
+    return true;
+}
+
+static bool selected_weapon_fired(void *context, qa_actor_id actor, qa_item_id weapon, qa_error *error)
+{
+    application_provider *source = context;
+    if (!application_q3_weapons_services_selected_fired(context, actor, weapon, error)) return false;
+    application_provider *world = application_world_provider(source->application, QA_ROLE_ENTITIES, "");
+    if (world && world->kind == APPLICATION_PROVIDER_Q1 &&
+        !application_native_q1_source_fired(context, actor, weapon, error)) return false;
+    return source->kind == APPLICATION_PROVIDER_Q2 ||
+        selected_weapon_noise(context, actor, qa_v3(0, 0, 0), false, error);
 }
 static bool q1_selected_attack_delay(void *context, qa_actor_id actor, qa_q1_weapon weapon,
     float *seconds, qa_error *error)
@@ -612,7 +640,7 @@ static bool construct_q1(qa_application *application,
                        .console_power = application_native_q1_console_power,
                        .cheat_arsenal = application_supplies_cheat_arsenal,
                        .weapon_changed = application_native_q1_weapon_changed,
-                       .fired = q1_selected_fired,
+                       .fired = selected_weapon_fired,
                        .base_team_health = application_native_q1_base_team_health,
                        .sound_precache = application_unified_q1_sound_precache,
                        .precache_reset = application_unified_q1_precache_reset,
@@ -891,7 +919,7 @@ static bool construct_q2(qa_application *application,
         .rotation_changed = application_native_q2_rotation_changed,
         .rotation_source = application_native_q2_rotation_source,
         .rotation_release = application_native_q2_rotation_release,
-        .fired = application_native_q1_source_fired};
+        .fired = selected_weapon_fired, .noise = selected_weapon_noise};
     if (!qa_q2_create(&services, &options, &hooks, &provider->state.q2,
                       error))
         return false;
@@ -1306,7 +1334,7 @@ static bool q3_selected_fired(void *context, qa_actor_id actor, qa_q3_weapon wea
     application_provider *provider = context;
     if (!provider || !provider->state.q3)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Selected Q3 shot lost its native weapon owner");
-    return application_q3_weapons_services_selected_fired(provider, actor,
+    return selected_weapon_fired(provider, actor,
         qa_q3_weapon_item(provider->state.q3, weapon, false), error);
 }
 static bool construct_q3(qa_application *application,

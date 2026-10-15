@@ -57,8 +57,8 @@ bool q2_original_function_matches(qa_q2_game *game, q2_original_record_io *io,
     const char *field, uint16_t offset, const char *name, bool *matches)
 {
     if (!io->reading) return malformed(io, offset, "Original Q2 callback reader requires its Source file");
-    if (io->edition == QA_RULESET_Q2_RERELEASE) {
-        qa_json_id id = qa_json_get(io->document, io->object, field);
+    if (io->document) {
+        qa_json_id id = q2_original_json_member(io, field);
         if (id == QA_JSON_NONE || qa_json_type(io->document, id) == QA_JSON_NULL) {
             *matches = name == NULL;
             return true;
@@ -98,7 +98,7 @@ bool q2_original_string_write(q2_original_record_io *io,const char *name,uint16_
 bool q2_original_string(qa_q2_game *game, q2_original_record_io *io,
     const char *name, uint16_t offset, qa_string_id *value)
 {
-    if (io->reading && io->edition == QA_RULESET_Q2_RERELEASE)
+    if (io->reading && io->document)
         return q2_original_source_text(io, game, name, value, 65536);
     if (offset == UINT16_MAX) {
         if (io->reading) *value = QA_STRING_NONE;
@@ -141,18 +141,19 @@ bool q2_original_string(qa_q2_game *game, q2_original_record_io *io,
 static bool physical_reference(qa_q2_game *game, q2_original_record_io *io,
     const char *name, uint16_t offset, int32_t *number)
 {
-    if (io->edition == QA_RULESET_Q2_RERELEASE) {
+    if (io->document || io->edition == QA_RULESET_Q2_RERELEASE) {
         if (!io->reading) {
             if (*number >= 0) { qa_json_writer_key(io->writer, name); qa_json_writer_number(io->writer, *number); }
             if (io->writer->failed) { if (io->error) *io->error = io->writer->failure; return false; }
             return true;
         }
-        qa_json_id id = qa_json_get(io->document, io->object, name);
+        qa_json_id id = q2_original_json_member(io, name);
         *number = -1;
         if (id != QA_JSON_NONE && qa_json_type(io->document, id) != QA_JSON_NULL) {
             int64_t integer;
             if (!qa_json_i64(io->document, id, &integer, io->error)) return false;
-            if (integer < 0 || (uint64_t)integer >= game->wire_capacity)
+            if (integer < (io->donor_json ? -1 : 0) ||
+                (integer >= 0 && (uint64_t)integer >= game->wire_capacity))
                 return malformed(io, id, "Original Q2 pointer exceeds its physical edict table");
             *number = (int32_t)integer;
         }
@@ -439,6 +440,9 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
     qa_body_state body;
     if (!qa_world_body_read(game->services.world, actor->id, &body, error) ||
         !q2_original_body(game, io, &body) || !physics_record(game, io, actor)) return false;
+    if (actor->client && io->edition == QA_RULESET_Q2_CLASSIC &&
+        (!q2_original_reference(game, io, "mynoise", 568, &actor->client->rule.noise[0]) ||
+         !q2_original_reference(game, io, "mynoise2", 572, &actor->client->rule.noise[1]))) return false;
     if (io->references_only)
         return qa_world_body_write(game->services.world, actor->id, &body, error);
     if (actor->client) {
@@ -446,12 +450,26 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
             qa_source_to_i32(actor->powers->maximum_health) : 0;
         int32_t height = io->reading ? 0 : qa_source_to_i32(actor->client->info.view_height);
         int32_t dead = io->reading ? 0 : actor->client->info.dead ? 2 : 0;
+        qa_builtin_player_control control = {0};
+        bool control_light = io->edition == QA_RULESET_Q2_CLASSIC &&
+            !actor->client->rule.corpse && game->services.player_control;
+        if (control_light && !game->services.player_control(game->services.context,
+                game->options.owner, actor->id, &control, error)) return false;
+        int32_t light = !io->reading && control.player ? control.player->light_level : 0;
         if (!q2_original_scalar(io, "max_health", Q2_ORIGINAL_I32, 484, 484, 484, &maximum) ||
             !q2_original_scalar(io, "viewheight", Q2_ORIGINAL_I32, 508, 508, 508, &height) ||
-            !q2_original_scalar(io, "deadflag", Q2_ORIGINAL_I32, 492, 492, 492, &dead)) return false;
+            !q2_original_scalar(io, "deadflag", Q2_ORIGINAL_I32, 492, 492, 492, &dead) ||
+            !q2_original_scalar(io, "powerarmor_time", Q2_ORIGINAL_TIME, 500, 500, 500,
+                &actor->client->rule.power_armor_ns) ||
+            (io->edition == QA_RULESET_Q2_CLASSIC &&
+             !q2_original_scalar(io, "light_level", Q2_ORIGINAL_I32, 640, 640, 640, &light))) return false;
         if (io->reading) {
             actor->client->info.dead = dead != 0;
             actor->client->info.view_height = (float)height;
+            if (control.player) {
+                control.player->light_level = (uint8_t)light;
+                control.player->has_light_level = true;
+            }
             if (actor->powers) actor->powers->maximum_health = maximum;
         } else if (!q2_original_function(game, io, "pain", 452,
                 actor->client->rule.corpse ? NULL : "player_pain") ||
@@ -499,7 +517,8 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
         (actor->physics.flags & QA_PHYSICS_PARTIAL_GROUND ? 256u : 0) |
         (actor->physics.flags & QA_PHYSICS_TEAM_SLAVE ? 1024u : 0) |
         (combat.no_knockback ? 2048u : 0) | (combat.armor.powered.kind ? 4096u : 0) |
-        (actor->environment_flags & 200u) | (actor->client && actor->client->rule.sphere_camera.registry ? 16384u : 0);
+        (actor->environment_flags & 200u) | (actor->client && actor->client->rule.sphere_camera.registry ? 16384u : 0) |
+        (actor->client && actor->client->player && actor->client->player->disguised ? 32768u : 0);
     qa_entity_visual visual = {.alpha = 1, .scale = 1};
     if (!io->reading) (void)qa_q2_presentation_read(game, actor->id, &visual);
     uint32_t svflags = io->reading ? 0 : (!visual.visible ? 1u : 0) |
@@ -541,6 +560,8 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
     if (!io->reading && !visual_record(game, io, actor, engine, &visual)) return false;
     if (io->reading) {
         actor->environment_flags = (uint32_t)flags & 200u;
+        if (actor->client && actor->client->player)
+            actor->client->player->disguised = (flags & 32768u) != 0;
         if (actor->client) actor->client->rule.sphere_vehicle = (flags & 16384u) != 0;
         actor->physics.flags = (flags & 1u ? QA_PHYSICS_FLYING : 0) |
             (flags & 2u ? QA_PHYSICS_SWIMMING : 0) |

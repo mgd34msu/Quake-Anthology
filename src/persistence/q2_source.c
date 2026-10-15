@@ -506,11 +506,13 @@ bool qa_q2_save_level_decode(qa_bytes bytes, qa_q2_save_level *level, qa_error *
     if (repro && (bytes.size < 8 || qa_load_u32le(bytes.data + 4) != 1))
         return persistence_fail(error, QA_ERROR_FORMAT, "Quake II SAV2 header is invalid");
     if (!repro && !level->rerelease) {
-        if (bytes.size != Q2_LEVEL_BYTES)
+        bool donor_portals = bytes.size == Q2_LEVEL_STRINGS + QA_Q2_SAVE_AREA_PORTALS;
+        if (bytes.size != Q2_LEVEL_BYTES && !donor_portals)
             return persistence_fail(error, QA_ERROR_FORMAT, "Quake II .sv2 has an invalid configstring/portal extent");
         if (!qa_q2_save_configstrings_capture(level, (qa_bytes){bytes.data, Q2_LEVEL_STRINGS}, error)) return false;
         for (size_t i = 0; i < QA_Q2_SAVE_AREA_PORTALS; ++i)
-            level->portal_open[i] = qa_load_i32le(bytes.data + Q2_LEVEL_STRINGS + i * 4);
+            level->portal_open[i] = donor_portals ? bytes.data[Q2_LEVEL_STRINGS + i] != 0 :
+                qa_load_i32le(bytes.data + Q2_LEVEL_STRINGS + i * 4);
         level->portal_count = 0; level->file_signature = 0; return true;
     }
     qa_q2_save_level format = *level;

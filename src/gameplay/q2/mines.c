@@ -668,9 +668,16 @@ bool q2_mine_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
             p->phase = MINE_OPENING;
         }
         if (p->frame == 10) {
-            if (q2_actor_live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner)) &&
-                !q2_noise_for_actor(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner), body.origin, false, e))
-                return false;
+            qa_actor_id owner = qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner);
+            q2_actor *source = q2_actor_get(g, owner, false, NULL);
+            if (source) {
+                q2_weapon_call call = {.game = g, .actor = source, .input = source->input,
+                    .rules = g->options.rules, .now_ns = g->now_ns};
+                if (!q2_noise(&call, body.origin, e))
+                    return false;
+            }
+            if (!q2_actor_live(g, a->id))
+                return true;
             p->skin = 1;
         } else if (p->frame == 12)
             p->skin = 2;

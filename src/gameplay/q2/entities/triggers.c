@@ -282,11 +282,10 @@ bool q2_trigger_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contac
     if (s->kind == Q2E_DISGUISE) {
         if (!traits.player)
             return true;
-        if (!services->disguise) {
-            qa_error_set(e, QA_ERROR_UNSUPPORTED, 0, "Q2 disguise service is not installed");
-            return false;
-        }
-        return services->disguise(services->context, id, (s->spawnflags & 4) == 0, e);
+        qa_actor_player *player = qa_actors_player(qa_session_actors(g->services.session), id);
+        if (player)
+            player->disguised = (s->spawnflags & 4) == 0;
+        return true;
     }
     if (s->kind == Q2E_GRAVITY) {
         float gravity = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_GRAVITY], 0);

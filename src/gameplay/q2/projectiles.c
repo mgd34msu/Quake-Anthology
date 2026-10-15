@@ -103,7 +103,7 @@ bool q2_projectile_loop(qa_q2_game *g, q2_actor *a, qa_string_id resource, bool 
     return q2_actor_loop(g,a->id,&a->projectile.loop_sound,resource,0,stop_previous,e);
 }
 bool q2_projectile_noise(qa_q2_game *g, const q2_projectile *p, qa_vec3 origin, qa_error *e) {
-    return !live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner)) || q2_noise_for_actor(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner), origin, true, e);
+    return !live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner)) || q2_player_noise(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner), origin, Q2_NOISE_IMPACT, true, e);
 }
 static bool check_dodge(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float speed,
                         qa_error *e) {
