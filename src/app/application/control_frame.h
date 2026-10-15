@@ -160,6 +160,8 @@ bool application_control_turn_abort(struct application_control_turn *, qa_error 
 bool application_control_turn_resume(struct application_control_turn *, qa_error *);
 bool application_control_group_post(qa_application *, qa_actor_id, qa_error *);
 qa_movement_input application_control_character_postures(const application_provider *, qa_actor_id);
+/* NULL refreshes world physics without projecting a player profile. */
+void application_control_world_gravity(qa_application *, qa_movement_profile *);
 bool application_control_outputs(const qa_application *, qa_actor_id,
     application_client_outputs *, qa_error *);
 bool application_control_body_request(qa_application *, qa_actor_id, qa_bounds current,

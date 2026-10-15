@@ -279,7 +279,7 @@ typedef struct qa_movement_call {
      * continuation. A no-op hook leaves computed ground/water output intact. */
     bool state_replaced;
     int32_t source_time_ms;
-    const qa_movement_profile *profile;
+    qa_movement_profile *profile;
     /* Callbacks refresh health, mode, stance and authored bounds here after
      * source code runs. The next source phase reads this command-local copy. */
     qa_movement_environment *environment;
