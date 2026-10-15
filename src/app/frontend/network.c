@@ -499,22 +499,20 @@ static bool unified_current(void *context,const frontend_network_unified *owner)
         (n->unified==owner || (receiver && receiver->unified==owner)) &&
         (!n->detached_transport || frontend_network_unified_imported(owner));
 }
-static bool unified_client_current(void *context,const frontend_network_unified_client_service *service)
+static bool client_service_current(void *context,const frontend_network_unified_client_service *service)
 {
-    const qa_frontend_network *n=context;
-    const frontend_client_connection *receiver=client_connection_runtime(n,n?n->runtime:NULL);
-    return receiver && n->frontend && n->frontend->network==n &&
-        receiver->service==service && !n->detached_transport;
+    const frontend_client_connection *client=context;
+    const qa_frontend_network *n=client->network;
+    return n->frontend->network==n && client->service==service &&
+        (client->runtime!=n->runtime || !n->detached_transport);
 }
-static bool unified_client_disconnected(void *context,const qa_application_client_source *source,
+static bool client_service_disconnected(void *context,const qa_application_client_source *source,
     const char *reason,qa_error *error)
 {
-    qa_frontend_network *n=context;
-    const frontend_client_connection *receiver=client_connection_runtime(n,n?n->runtime:NULL);
-    if(!source || !reason || !receiver || !unified_client_current(n,receiver->service) ||
-        !qa_application_client_current(n->frontend->application,source))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Unified disconnect lost its real CLIENT namespace");
-    frontend_console_print(n->frontend,&source->context.command,reason); return true;
+    const frontend_client_connection *client=context;
+    (void)error;
+    frontend_console_print(client->network->frontend,&source->context.command,reason);
+    return true;
 }
 static bool unified_source_input(void *context,qa_net_client_id client,qa_net_seat_id seat,
     qa_actor_id actor,uint64_t epoch,const qa_usercmd *input,qa_error *error)
@@ -565,19 +563,6 @@ static bool local_unified_current(void *context, const frontend_network_unified 
 {
     const frontend_client_connection *local = context;
     return local->network->frontend->network == local->network && local->unified == owner;
-}
-static bool local_service_current(void *context, const frontend_network_unified_client_service *service)
-{
-    const frontend_client_connection *local = context;
-    return local->network->frontend->network == local->network && local->service == service;
-}
-static bool local_service_disconnected(void *context, const qa_application_client_source *source,
-    const char *reason, qa_error *error)
-{
-    frontend_client_connection *local = context;
-    (void)error;
-    frontend_console_print(local->network->frontend, &source->context.command, reason);
-    return true;
 }
 static bool local_admit(void *context, const qa_net_connect *request, qa_error *error)
 {
@@ -710,6 +695,22 @@ static bool client_connection_q2_create(frontend_client_connection *receiver,
     options.restore_stage = q2_restore_stage;
     return frontend_network_q2_client_create(&options, &receiver->q2, error);
 }
+static bool client_connection_unified_create(frontend_client_connection *receiver,
+    const qa_net_address *remote, qa_product_id selected, qa_error *error)
+{
+    qa_frontend *f=receiver->network->frontend;
+    frontend_network_unified_client_options client={.frontend=f,.runtime=receiver->runtime,
+        .remote=*remote,.physical_seat=receiver->physical,.seat=receiver->client_seat,
+        .selected=selected,.context=receiver,.current=client_service_current,
+        .disconnected=client_service_disconnected};
+    if(!frontend_config_store_client_profile(f->config_store,selected,&client.profile,error) ||
+        !frontend_config_store_neutral_pending_options(f->config_store,receiver->physical,
+            &client.configuration,error)) return false;
+    if(frontend_network_unified_client_create(&client,&receiver->service,error)) return true;
+    if(!receiver->service)
+        (void)frontend_config_store_neutral_options_cancel(f->config_store,&client.configuration,NULL);
+    return false;
+}
 static qa_product_id local_client_selection(qa_frontend *f, uint32_t authored, qa_actor_id actor)
 {
     const qa_launch_snapshot *snapshot = qa_application_launch(f->application);
@@ -777,6 +778,10 @@ static bool clients_prepare(qa_frontend_network *n, qa_error *error)
                 selected, (uint16_t)(n->rotation_random + i), false, error)) return false;
             continue;
         }
+        if (f->options.network_protocol.kind == QA_NET_UNIFIED_1) {
+            if (!client_connection_unified_create(local, &n->loopback_server, selected, error)) return false;
+            continue;
+        }
         qa_product_id profile;
         if (!frontend_config_store_client_profile(f->config_store, selected, &profile, error)) return false;
         if (q2_host_protocol(f->options.network_protocol)) {
@@ -786,17 +791,6 @@ static bool clients_prepare(qa_frontend_network *n, qa_error *error)
             if (!client_connection_q2_create(local, client, error)) return false;
         } else if (f->options.network_protocol.kind == QA_NET_Q3_68) {
             if (!local_q3_prepare(local, actor, error)) return false;
-        } else if (f->options.network_protocol.kind == QA_NET_UNIFIED_1) {
-            frontend_network_unified_client_options client = {.frontend = f, .runtime = local->runtime,
-                .remote = n->loopback_server, .physical_seat = i, .seat = local->client_seat,
-                .selected = selected, .profile = profile, .context = local,
-                .current = local_service_current, .disconnected = local_service_disconnected};
-            if (!frontend_config_store_neutral_pending_options(f->config_store, i, &client.configuration, error)) return false;
-            if (!frontend_network_unified_client_create(&client, &local->service, error)) {
-                if (!local->service) (void)frontend_config_store_neutral_options_cancel(f->config_store,
-                    &client.configuration, NULL);
-                return false;
-            }
         }
     }
     return clients_tick(n, error);
@@ -4814,17 +4808,8 @@ static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *er
                 "Unified connection requires --game PRODUCT selecting an installed local client profile");
             goto failed;
         }
-        frontend_network_unified_client_options client_options={.frontend=f,.runtime=n->runtime,.remote=q2_remote,
-            .physical_seat=0,.seat={QA_NETWORK_COMMAND_OWNER,0},.selected=selected->id,
-            .context=n,.current=unified_client_current,
-            .disconnected=unified_client_disconnected};
-        if(!frontend_config_store_client_profile(f->config_store,selected->id,&client_options.profile,error) ||
-            !frontend_config_store_neutral_pending_options(f->config_store,0,&client_options.configuration,error)) goto failed;
-        if(!frontend_network_unified_client_create(&client_options,&n->clients[0].service,error)) {
-            if(!n->clients[0].service)
-                (void)frontend_config_store_neutral_options_cancel(f->config_store,&client_options.configuration,NULL);
-            goto failed;
-        }
+        n->clients[0].client_seat=(qa_net_seat_id){QA_NETWORK_COMMAND_OWNER,0};
+        if(!client_connection_unified_create(n->clients,&q2_remote,selected->id,error)) goto failed;
         if(!unified_tick(n,error)) goto failed;
     }
     if(n->clients[0].q3.q3_client_requested && !client_physical_create(&n->clients[0].q3,error)) goto failed;
