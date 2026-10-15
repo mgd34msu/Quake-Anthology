@@ -1303,6 +1303,7 @@ static bool map_receive(frontend_unified_q2 *o,const qa_unified_presentation_eve
             if (v->slot!=-1)fields[n++]=(qa_unified_q2_temp_field){.name=QA_Q2_TEMP_TIME,.kind=QA_Q2_TEMP_INTEGER,.integer=qa_source_to_i32(v->duration)};}
         qa_unified_q2_temporary t={.type=v->kind==QA_Q2_MAP_STEAM?QA_Q2_TE_STEAM:QA_Q2_TE_FORCEWALL,.rerelease=row->q2_profile==2,.fields=fields,.field_count=n};
         return temporary_receive(o,row,&t,e);}
+    case QA_Q2_MAP_IMAGE: /* Admission is projected through the Source configstrings. */return true;
     case QA_Q2_MAP_AUTOSAVE: /* The actual application save owner handles this synchronous Source request. */return true;
     default:return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q2 map presentation has no installed CLIENT handler");
     }
