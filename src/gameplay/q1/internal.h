@@ -527,6 +527,7 @@
     X(INFO_INTERMISSION, "info_intermission") \
     X(INFO_OVERLORD_DESTINATION, "info_overlord_destination") \
     X(INFO_PLAYER_DEATHMATCH, "info_player_deathmatch") \
+    X(INFO_PLAYER_START, "info_player_start") \
     X(INFO_PLAYER_START_HUB, "info_player_start_hub") \
     X(TESTPLAYERSTART, "testplayerstart") \
     X(HUB_SPAWN_RULE, "q1:hub-spawn") \

@@ -1011,15 +1011,15 @@ static void hub_spawn(qa_q1_program program)
     fixture_destroy(&fixture);
 }
 
-static void hub_multiplayer(bool coop)
+static void addon_spawn_multiplayer(qa_q1_program program, bool coop)
 {
     qa_error error = {0};
     q1_fixture fixture;
-    fixture_create_rules(&fixture, QA_Q1_RERELEASE, 1, false, QA_Q1_MG1, coop, coop ? 0 : 1);
+    fixture_create_rules(&fixture, QA_Q1_RERELEASE, 1, false, program, coop, coop ? 0 : 1);
     fixture_bind_maps(&fixture);
     qa_actor_id hub;
     GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
-        .classname = "info_player_start_hub", .origin = {30, 0, 64},
+        .classname = "info_player_start", .origin = {30, 0, 64},
         .map_fields = &(qa_q1_map_fields){.netname = "start_2"}}, &hub, &error));
     qa_q1_spawn_rule rule;
     GAME_CHECK(qa_q1_game_hub_spawn_rule(fixture.game, &rule));
@@ -1033,13 +1033,64 @@ static void hub_multiplayer(bool coop)
     fixture_destroy(&fixture);
 }
 
+static void mg3_spawn(void)
+{
+    qa_error error = {0};
+    q1_fixture fixture;
+    fixture_create(&fixture, QA_Q1_RERELEASE, 1, false, QA_Q1_MG3);
+    fixture_bind_maps(&fixture);
+    qa_actor_id returning, first, second, test;
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "info_player_start2", .origin = {0, 0, 64}}, &returning, &error));
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "info_player_start", .origin = {10, 0, 64}}, &first, &error));
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "info_player_start", .origin = {20, 0, 64}}, &second, &error));
+    qa_q1_spawn_rule rule;
+    GAME_CHECK(qa_q1_game_hub_spawn_rule(fixture.game, &rule));
+    qa_q1_spawn_point points[4] = {{.actor = returning, .kind = QA_Q1_SPAWN_RETURN},
+        {.actor = first, .kind = QA_Q1_SPAWN_START},
+        {.actor = second, .kind = QA_Q1_SPAWN_START}};
+    qa_q1_spawn_selector *selector = qa_q1_spawn_selector_create(&(qa_q1_spawn_options){
+        .services = {.session = fixture.session, .world = fixture.world, .combat = fixture.combat},
+        .server_flags = &fixture.server_flags, .rules = &rule, .rule_count = 1,
+        .context = &fixture, .random = hub_spawn_random}, &error);
+    GAME_CHECK(selector != NULL);
+    const uint32_t flags = 3u | 2u << QA_Q1_MG1_LAST_SIGIL_SHIFT;
+    fixture.server_flags = flags;
+    qa_actor_id selected;
+    GAME_CHECK(qa_q1_spawn_select(selector, points, 3, true, &selected, &error));
+    GAME_CHECK(qa_actor_id_equal(selected, first) && fixture.server_flags == flags);
+    fixture.server_flags = 0;
+    GAME_CHECK(qa_q1_spawn_select(selector, points, 3, true, &selected, &error));
+    GAME_CHECK(qa_actor_id_equal(selected, first) && fixture.server_flags == 0);
+    fixture.server_flags = flags;
+    GAME_CHECK(qa_session_release(fixture.session, first, &error));
+    GAME_CHECK(qa_q1_spawn_select(selector, points, 3, true, &selected, &error));
+    GAME_CHECK(qa_actor_id_equal(selected, second) && fixture.server_flags == flags);
+    GAME_CHECK(qa_session_release(fixture.session, second, &error));
+    GAME_CHECK(qa_q1_spawn_select(selector, points, 3, true, &selected, &error));
+    GAME_CHECK(!selected.registry && fixture.server_flags == flags);
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "testplayerstart", .origin = {30, 0, 64}}, &test, &error));
+    points[3] = (qa_q1_spawn_point){.actor = test, .kind = QA_Q1_SPAWN_TEST};
+    GAME_CHECK(qa_q1_spawn_select(selector, points, 4, true, &selected, &error));
+    GAME_CHECK(qa_actor_id_equal(selected, test) && fixture.server_flags == flags);
+    GAME_CHECK(fixture.sequence == 0);
+    qa_q1_spawn_selector_destroy(selector);
+    fixture_destroy(&fixture);
+}
+
 void test_q1_gameplay(void);
 void test_q1_gameplay(void)
 {
     hub_spawn(QA_Q1_MG1);
     hub_spawn(QA_Q1_DOPA);
-    hub_multiplayer(true);
-    hub_multiplayer(false);
+    addon_spawn_multiplayer(QA_Q1_MG1, true);
+    addon_spawn_multiplayer(QA_Q1_MG1, false);
+    addon_spawn_multiplayer(QA_Q1_MG3, true);
+    addon_spawn_multiplayer(QA_Q1_MG3, false);
+    mg3_spawn();
     draught_ring(false, 0, false);
     draught_ring(true, 0, true);
     draught_ring(false, 128, false);

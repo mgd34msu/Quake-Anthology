@@ -22,6 +22,16 @@ static bool hub_spawn_select(void *context, bool force, qa_q1_spawn_decision *de
         return false;
     if (horde != 0 || g->options.coop || g->options.deathmatch)
         return true;
+    if (g->options.program == QA_Q1_MG3) {
+        cursor = (qa_target_cursor){0};
+        if (qa_targets_next_authored(g->targets, g->runtime_names[Q1_NAME_INFO_PLAYER_START],
+                                     &cursor, &point)) {
+            *out = point;
+            *decision = QA_Q1_SPAWN_SELECTED;
+        } else
+            *decision = QA_Q1_SPAWN_DEFERRED;
+        return true;
+    }
     uint32_t *flags = q1_campaign_flags_owner(g);
     uint32_t last = flags ? qa_q1_mg1_last_sigil(*flags) : 0;
     if (!last)
@@ -53,7 +63,8 @@ static bool hub_spawn_select(void *context, bool force, qa_q1_spawn_decision *de
     return true;
 }
 bool qa_q1_game_hub_spawn_rule(qa_q1_game *g, qa_q1_spawn_rule *out) {
-    if (!g || !out || (g->options.program != QA_Q1_DOPA && g->options.program != QA_Q1_MG1))
+    if (!g || !out || (g->options.program != QA_Q1_DOPA && g->options.program != QA_Q1_MG1 &&
+                       g->options.program != QA_Q1_MG3))
         return false;
     *out = (qa_q1_spawn_rule){.id = g->runtime_names[Q1_NAME_HUB_SPAWN_RULE],
         .context = g, .select = hub_spawn_select};
