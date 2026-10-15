@@ -91,7 +91,10 @@ bool q2m_species_melee(q2m_context *context, q2m_callback_id callback, bool *han
         qa_trace_query query = {.start = start, .end = body.origin,
             .pass_actor = context->actor->id,
             .policy = qa_collision_ruleset_policy(context->game->options.rules)};
-        query.policy.contents_mask = qa_collision_contents_mask(Q2M_ATTACK_MASK, QA_GAME_Q2);
+        query.policy.contents_mask = qa_collision_contents_mask(
+            monster->definition->source_rules == QA_RULESET_Q2_RERELEASE
+                ? Q2_PROJECTILE_MASK : Q2_SHOT_MASK,
+            QA_GAME_Q2);
         qa_trace_result trace;
         if (!qa_world_trace(context->game->services.world, &query, &trace, error))
             return false;
