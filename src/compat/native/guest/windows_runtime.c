@@ -197,7 +197,7 @@ static bool windows_call_begin(guest_windows *owner, windows_call *call,
     guest_abi_layout parameters[16];
     for (size_t i = 0; i < count; ++i) parameters[i] = layout(owner, types[i]);
     guest_abi_signature signature = {.abi = owner->target.abi,
-        .convention = system && owner->target.pointer_bytes == 4 ? GUEST_ABI_STDCALL : GUEST_ABI_DEFAULT,
+        .convention = system && owner->target.pointer_bytes == 4 ? QA_NATIVE_CALL_STDCALL : QA_NATIVE_CALL_DEFAULT,
         .parameters = parameters, .parameter_count = count, .result = layout(owner, result_type)};
     qa_arena_init_pool(&call->storage, &owner->guest->scratch_pages);
     bool okay = guest_abi_plan_create(&signature, NULL, 0, &call->storage, &call->plan, error);
@@ -330,7 +330,7 @@ static bool bind_service(guest_windows *owner, windows_service *service, qa_erro
 
 bool windows_service_add(guest_windows *owner, uint64_t id, uint8_t family, uint32_t operation,
     const char *library, const char *name, const qa_native_value_type *types, size_t count,
-    qa_native_value_type result, guest_abi_convention convention, bool bind, qa_error *error)
+    qa_native_value_type result, qa_native_call_convention convention, bool bind, qa_error *error)
 {
     if (id < GUEST_WINDOWS_CALLBACK_MINIMUM || count > 16)
         return guest_fail(error, QA_ERROR_ARGUMENT, id, "Windows descriptor differs from its owned callback namespace or argument storage");
@@ -781,12 +781,12 @@ static bool prepare_cfg(guest_windows *owner, const guest_pe_view *image, qa_err
     }
     if (!owner->cfg_check) {
         if (!windows_service_add(owner, UINT64_C(0x57494e0400000001), 4, 1, "quake-runtime.dll", "guard-check", NULL, 0,
-            QA_NATIVE_VOID, width == 4 ? GUEST_ABI_STDCALL : GUEST_ABI_DEFAULT, true, error)) return false;
+            QA_NATIVE_VOID, width == 4 ? QA_NATIVE_CALL_STDCALL : QA_NATIVE_CALL_DEFAULT, true, error)) return false;
         owner->cfg_check = owner->services[owner->service_count - 1]->function.address;
         qa_native_value_type pointer_type = QA_NATIVE_ADDRESS;
         if (!windows_service_add(owner, UINT64_C(0x57494e0400000002), 4, 2, "quake-runtime.dll", "guard-dispatch-check",
             width == 8 ? &pointer_type : NULL, width == 8 ? 1 : 0, QA_NATIVE_VOID,
-            width == 4 ? GUEST_ABI_STDCALL : GUEST_ABI_DEFAULT, true, error)) return false;
+            width == 4 ? QA_NATIVE_CALL_STDCALL : QA_NATIVE_CALL_DEFAULT, true, error)) return false;
         uint64_t checker = owner->services[owner->service_count - 1]->function.address;
         if (width == 4) owner->cfg_dispatch = checker;
         else {
@@ -1291,7 +1291,7 @@ static bool codec_owner(windows_codec *io, guest_windows *owner,
             if (!windows_service_add(owner,id,4,dispatch ? 2 : 1,"quake-runtime.dll",
                 dispatch ? "guard-dispatch-check" : "guard-check",
                 dispatch && width == 8 ? &pointer : NULL,dispatch && width == 8 ? 1 : 0,
-                QA_NATIVE_VOID,width == 4 ? GUEST_ABI_STDCALL : GUEST_ABI_DEFAULT,false,io->error)) return false;
+                QA_NATIVE_VOID,width == 4 ? QA_NATIVE_CALL_STDCALL : QA_NATIVE_CALL_DEFAULT,false,io->error)) return false;
             service = owner->services[owner->service_count - 1];
         }
         if (!service) return guest_fail(io->error,QA_ERROR_FORMAT,id,"Windows saved callback has no immutable descriptor");

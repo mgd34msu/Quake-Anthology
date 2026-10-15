@@ -198,7 +198,7 @@ bool windows_invoke(guest_windows *, uint64_t, const qa_native_value_type *, siz
     qa_native_value_type, const qa_native_value *, bool, qa_native_value *, qa_error *);
 bool windows_service_add(guest_windows *, uint64_t, uint8_t, uint32_t,
     const char *, const char *, const qa_native_value_type *, size_t,
-    qa_native_value_type, guest_abi_convention, bool, qa_error *);
+    qa_native_value_type, qa_native_call_convention, bool, qa_error *);
 bool windows_library_handle(guest_windows *, const char *, uint64_t *, qa_error *);
 bool windows_load_library(guest_windows *, const char *, uint64_t *, qa_error *);
 bool windows_free_library(guest_windows *, uint64_t, bool *, qa_error *);

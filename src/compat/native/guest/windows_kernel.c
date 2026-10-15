@@ -106,7 +106,7 @@ bool windows_kernel_descriptors(guest_windows *owner, bool bind, qa_error *error
             owner->target.pointer_bytes == 4 ? QA_NATIVE_U32 : QA_NATIVE_U64 : entry->parameters[j];
         if (!windows_service_add(owner, UINT64_C(0x57494e0100000000) + i + 1, 1, entry->operation,
             "kernel32.dll", entry->name, types, entry->count, entry->result,
-            owner->target.pointer_bytes == 4 ? GUEST_ABI_STDCALL : GUEST_ABI_DEFAULT, bind, error)) return false;
+            owner->target.pointer_bytes == 4 ? QA_NATIVE_CALL_STDCALL : QA_NATIVE_CALL_DEFAULT, bind, error)) return false;
     }
     return true;
 }

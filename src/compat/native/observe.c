@@ -91,7 +91,8 @@ static bool signature_put_type(native_signature_buffer *buffer, const qa_native_
 
 static bool native_signature_put_signature(native_signature_buffer *buffer, const qa_native_signature *signature,
                                qa_error *error) {
-    if (!signature || signature->parameter_count > NATIVE_MAX_ARGUMENTS ||
+    if (!signature || (unsigned)signature->convention > QA_NATIVE_CALL_THISCALL ||
+        signature->parameter_count > NATIVE_MAX_ARGUMENTS ||
         (signature->parameter_count && !signature->parameters))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "valid native observer signature is required");
@@ -103,7 +104,9 @@ static bool native_signature_put_signature(native_signature_buffer *buffer, cons
     for (size_t index = 0; index < signature->parameter_count; ++index)
         if (!signature_put_type(buffer, &signature->parameters[index], 0, &count, error))
             return false;
-    return signature_put_type(buffer, &signature->result, 0, &count, error);
+    if (!signature_put_type(buffer, &signature->result, 0, &count, error)) return false;
+    return signature->convention == QA_NATIVE_CALL_DEFAULT ||
+        native_signature_put_u8(buffer, (uint8_t)signature->convention, error);
 }
 
 static bool signature_take(native_signature_reader *reader, size_t size, const uint8_t **out,
@@ -203,6 +206,12 @@ static bool native_signature_get_signature(native_signature_reader *reader, qa_a
         if (!signature_get_type(reader, storage, &parameters[index], 0, &count, error)) return false;
     }
     if (!signature_get_type(reader, storage, &signature.result, 0, &count, error)) return false;
+    if (reader->offset < reader->bytes.size) {
+        uint8_t convention;
+        if (!native_signature_get_u8(reader, &convention, error) || convention > QA_NATIVE_CALL_THISCALL)
+            return native_fail(error, QA_ERROR_FORMAT, reader->offset, "Invalid native calling convention");
+        signature.convention = (qa_native_call_convention)convention;
+    }
     *out = signature;
     return true;
 }

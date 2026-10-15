@@ -605,9 +605,9 @@ static bool layout(codec *c, guest_abi_layout *l)
 static bool signature(codec *c, guest_abi_signature *s)
 {
     unsigned abi = s->abi, convention = s->convention, variadic = s->variadic;
-    if (!enumeration(c, &abi, QA_NATIVE_ABI_AAPCS64) || !enumeration(c, &convention, GUEST_ABI_THISCALL) ||
+    if (!enumeration(c, &abi, QA_NATIVE_ABI_AAPCS64) || !enumeration(c, &convention, QA_NATIVE_CALL_THISCALL) ||
         !enumeration(c, &variadic, 1) || !size(c, &s->parameter_count, 32) || !layout(c, &s->result)) return false;
-    s->abi = (qa_native_abi)abi; s->convention = (guest_abi_convention)convention; s->variadic = variadic != 0;
+    s->abi = (qa_native_abi)abi; s->convention = (qa_native_call_convention)convention; s->variadic = variadic != 0;
     if (c->read && s->parameter_count) {
         if (s->parameter_count > SIZE_MAX / sizeof(*s->parameters)) return guest_fail(c->e, QA_ERROR_FORMAT, c->at, "import parameter table overflows");
         s->parameters = calloc(s->parameter_count, sizeof(*s->parameters));

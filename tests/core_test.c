@@ -7874,6 +7874,93 @@ static void test_native_resumable_budget(void)
     CHECK(qa_native_guest_destroy(&guest, &error) && !guest);
 }
 
+static void test_native_i386_call_conventions(void)
+{
+    qa_error error = {0};
+    qa_native_guest *guest = NULL;
+    qa_native_guest_options options = {
+        .image = {.format = QA_NATIVE_IMAGE_PE32,
+            .target = {.os = QA_NATIVE_OS_WINDOWS, .arch = QA_NATIVE_ARCH_I386,
+                .abi = QA_NATIVE_ABI_CDECL_I386, .pointer_bytes = 4}},
+        .allocation_base = UINT64_C(0x200000),
+        .maximum_backing_bytes = 2 * QA_NATIVE_GUEST_PAGE,
+        .backend = QA_NATIVE_GUEST_EMULATED};
+    CHECK(qa_native_guest_create(&options, &guest, &error));
+    const uint64_t entry = UINT64_C(0x100000), returned = entry + 128;
+    const uint64_t stack = UINT64_C(0x300000), caller_sp = stack + QA_NATIVE_GUEST_PAGE;
+    const uint8_t code[] = {
+        0x8b, 0x44, 0x24, 0x04,       /* mov eax, [esp+4] */
+        0x03, 0x44, 0x24, 0x08,       /* add eax, [esp+8] */
+        0x03, 0x44, 0x24, 0x0c, 0xc3, /* add eax, [esp+12]; ret */
+        [32] = 0x8b, 0x44, 0x24, 0x04,
+        0x03, 0x44, 0x24, 0x08,
+        0x03, 0x44, 0x24, 0x0c,
+        0xc2, 0x0c, 0x00,             /* stdcall ret 12 */
+        [64] = 0x8b, 0xc1,             /* mov eax, ecx */
+        0x03, 0xc2,                   /* add eax, edx */
+        0x03, 0x44, 0x24, 0x04,
+        0xc2, 0x04, 0x00,             /* fastcall ret 4 */
+        [96] = 0x8b, 0xc1,
+        0x03, 0x44, 0x24, 0x04,
+        0x03, 0x44, 0x24, 0x08,
+        0xc2, 0x08, 0x00,             /* thiscall ret 8 */
+        [128] = 0x90};
+    qa_native_guest_mapping mapping;
+    CHECK(qa_native_guest_map(guest, entry, QA_NATIVE_GUEST_PAGE,
+        QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_EXECUTE,
+        (qa_bytes){code, sizeof(code)}, &mapping, &error));
+    CHECK(qa_native_guest_map(guest, stack, QA_NATIVE_GUEST_PAGE,
+        QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE,
+        (qa_bytes){0}, &mapping, &error));
+    const qa_native_type parameters[] = {
+        {.kind = QA_NATIVE_ADDRESS, .count = 1},
+        {.kind = QA_NATIVE_I32, .count = 1},
+        {.kind = QA_NATIVE_I32, .count = 1}};
+    const qa_native_value arguments[] = {
+        {.type = QA_NATIVE_ADDRESS, .as.address = 17},
+        {.type = QA_NATIVE_I32, .as.i32 = 23},
+        {.type = QA_NATIVE_I32, .as.i32 = 31}};
+    const qa_native_call_convention conventions[] = {
+        QA_NATIVE_CALL_DEFAULT, QA_NATIVE_CALL_STDCALL,
+        QA_NATIVE_CALL_FASTCALL, QA_NATIVE_CALL_THISCALL};
+    const uint64_t callee_pop[] = {0, 12, 4, 8};
+    for (size_t i = 0; i < sizeof(conventions) / sizeof(*conventions); ++i) {
+        qa_native_guest_cpu cpu;
+        CHECK(qa_native_guest_cpu_read(guest, &cpu, &error));
+        cpu.instruction = returned;
+        cpu.registers[QA_NATIVE_RSP] = caller_sp;
+        cpu.registers[QA_NATIVE_RCX] = 101;
+        cpu.registers[QA_NATIVE_RDX] = 103;
+        cpu.flags = 2;
+        CHECK(qa_native_guest_cpu_write(guest, &cpu, &error));
+        const qa_native_signature signature = {.abi = QA_NATIVE_ABI_CDECL_I386,
+            .parameters = parameters, .parameter_count = 3,
+            .result = {.kind = QA_NATIVE_I32, .count = 1}, .convention = conventions[i]};
+        qa_arena storage = {0};
+        guest_abi_plan *plan = NULL;
+        CHECK(guest_abi_plan_native(&signature, NULL, 0, &storage, &plan, &error));
+        qa_native_value value = {.type = QA_NATIVE_I32, .as.i32 = -1};
+        guest_abi_call *call = NULL;
+        CHECK(guest_abi_call_begin(plan, guest, entry + i * 32, returned,
+            arguments, 3, &value, 32, false, 0, &storage, &call, &error));
+        CHECK(qa_native_guest_cpu_read(guest, &cpu, &error));
+        uint64_t entered_sp = cpu.registers[QA_NATIVE_RSP];
+        CHECK(cpu.registers[QA_NATIVE_RCX] == (i >= 2 ? 17u : 101u));
+        CHECK(cpu.registers[QA_NATIVE_RDX] == (i == 2 ? 23u : 103u));
+        bool call_returned = false;
+        CHECK(guest_abi_call_step(call, 32, &call_returned, &error) && call_returned);
+        CHECK(qa_native_guest_cpu_read(guest, &cpu, &error));
+        CHECK(cpu.registers[QA_NATIVE_RSP] == entered_sp + 4 + callee_pop[i]);
+        CHECK(guest_abi_call_finish(call, &error));
+        CHECK(value.type == QA_NATIVE_I32 && value.as.i32 == 71);
+        CHECK(qa_native_guest_cpu_read(guest, &cpu, &error));
+        CHECK(cpu.registers[QA_NATIVE_RSP] == caller_sp && cpu.instruction == returned);
+        guest_abi_call_close(&call);
+        qa_arena_destroy(&storage);
+    }
+    CHECK(qa_native_guest_destroy(&guest, &error) && !guest);
+}
+
 static void test_native_import_slot_identity(void)
 {
     CHECK(qa_native_q2_import_dispatch(QA_NATIVE_Q2_GAME_API3,12)==QA_NATIVE_Q2_IMPORT_trace);
@@ -8546,6 +8633,7 @@ int main(int argc, char **argv)
     test_native_import_slot_identity();
     test_native_string_boundaries();
     test_native_resumable_budget();
+    test_native_i386_call_conventions();
     test_q2_weapon_names();
     test_q2_player_media();
     test_literal_tokens();

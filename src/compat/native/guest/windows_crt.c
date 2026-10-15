@@ -127,12 +127,12 @@ bool windows_crt_descriptors(guest_windows *owner, bool bind, qa_error *error)
         else snprintf(library, sizeof(library), "api-ms-win-crt-%s-l1-1-0.dll", entry->family);
         uint64_t id = UINT64_C(0x57494e0200000000) + i * 3 + 1;
         if (!windows_service_add(owner, id, 2, entry->operation, library, entry->name, types,
-            entry->count, return_type, GUEST_ABI_DEFAULT, bind, error)) return false;
+            entry->count, return_type, QA_NATIVE_CALL_DEFAULT, bind, error)) return false;
         if (strcmp(entry->family, "msvcp") &&
             (!windows_service_add(owner, id + 1, 2, entry->operation, "ucrtbase.dll", entry->name, types,
-                entry->count, return_type, GUEST_ABI_DEFAULT, bind, error) ||
+                entry->count, return_type, QA_NATIVE_CALL_DEFAULT, bind, error) ||
              !windows_service_add(owner, id + 2, 2, entry->operation, "msvcrt.dll", entry->name, types,
-                entry->count, return_type, GUEST_ABI_DEFAULT, bind, error))) return false;
+                entry->count, return_type, QA_NATIVE_CALL_DEFAULT, bind, error))) return false;
     }
     return true;
 }

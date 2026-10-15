@@ -152,7 +152,8 @@ static qa_native_type scalar(qa_native_value_type kind)
 { return (qa_native_type){.kind = kind, .count = 1}; }
 static qa_native_signature signature(struct application_native_q2_attack *p,
     const qa_native_type *parameters, size_t count, qa_native_value_type result)
-{ return (qa_native_signature){p->abi, parameters, count, scalar(result), false}; }
+{ return (qa_native_signature){.abi = p->abi, .parameters = parameters,
+    .parameter_count = count, .result = scalar(result)}; }
 static bool source_actor(struct application_native_q2_attack *p, qa_native_address address,
     qa_actor_id *out, qa_error *error)
 {

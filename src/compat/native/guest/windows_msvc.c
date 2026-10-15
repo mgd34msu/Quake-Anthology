@@ -79,7 +79,7 @@ bool windows_msvc_descriptors(guest_windows *owner, bool bind, qa_error *error)
     for (size_t i = 0; i < sizeof(descriptors)/sizeof(*descriptors); ++i) {
         const msvc_descriptor *entry = descriptors + i;
         if (!windows_service_add(owner, UINT64_C(0x57494e0300000000) + i + 1, 3, entry->operation,
-            "msvcp140.dll", entry->name, entry->parameters, entry->count, entry->result, GUEST_ABI_DEFAULT, bind, error)) return false;
+            "msvcp140.dll", entry->name, entry->parameters, entry->count, entry->result, QA_NATIVE_CALL_DEFAULT, bind, error)) return false;
     }
     return true;
 }

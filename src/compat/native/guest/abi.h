@@ -4,9 +4,6 @@
 #include "qa/native_guest.h"
 #include "qa/arena.h"
 
-typedef enum guest_abi_convention {
-    GUEST_ABI_DEFAULT, GUEST_ABI_STDCALL, GUEST_ABI_FASTCALL, GUEST_ABI_THISCALL
-} guest_abi_convention;
 typedef struct guest_abi_field {
     qa_native_value_type kind;
     size_t offset, count;
@@ -24,7 +21,7 @@ typedef struct guest_abi_layout {
 } guest_abi_layout;
 typedef struct guest_abi_signature {
     qa_native_abi abi;
-    guest_abi_convention convention;
+    qa_native_call_convention convention;
     const guest_abi_layout *parameters;
     size_t parameter_count;
     guest_abi_layout result;

@@ -16,7 +16,7 @@ typedef struct argument {
 } argument;
 struct guest_abi_plan {
     qa_native_abi abi;
-    guest_abi_convention convention;
+    qa_native_call_convention convention;
     argument *arguments;
     size_t count, fixed, stack_bytes, stack_alignment, callee_pop;
     unsigned word, integers, vectors, ordinal;
@@ -251,13 +251,13 @@ static bool assign(guest_abi_plan *plan, argument *arg, bool hidden, size_t inde
         return true;
     }
     if (plan->abi == QA_NATIVE_ABI_CDECL_I386 && !plan->variadic) {
-        if (plan->convention == GUEST_ABI_THISCALL && !hidden && !index) {
+        if (plan->convention == QA_NATIVE_CALL_THISCALL && !hidden && !index) {
             if (arg->layout.kind != QA_NATIVE_ADDRESS)
                 return guest_fail(error, QA_ERROR_ARGUMENT, 0, "thiscall requires its explicit source this pointer");
             arg->locations[arg->location_count++] = (location){INTEGER, QA_NATIVE_RCX, 0, 4, 0};
             return true;
         }
-        if (plan->convention == GUEST_ABI_FASTCALL && arg->layout.kind != QA_NATIVE_BYTES &&
+        if (plan->convention == QA_NATIVE_CALL_FASTCALL && arg->layout.kind != QA_NATIVE_BYTES &&
             !floating && bytes <= 4 && plan->integers < 2) {
             arg->locations[arg->location_count++] = (location){INTEGER,
                 plan->integers++ ? QA_NATIVE_RDX : QA_NATIVE_RCX, 0, bytes < 4 ? 4 : bytes, 0};
@@ -273,8 +273,8 @@ bool guest_abi_plan_create(const guest_abi_signature *signature, const guest_abi
     if (!signature || !out || *out || (signature->parameter_count && !signature->parameters) ||
         (extra_count && (!extra || !signature->variadic)) ||
         extra_count > SIZE_MAX - signature->parameter_count ||
-        signature->convention < GUEST_ABI_DEFAULT || signature->convention > GUEST_ABI_THISCALL ||
-        (signature->abi != QA_NATIVE_ABI_CDECL_I386 && signature->convention != GUEST_ABI_DEFAULT) ||
+        signature->convention < QA_NATIVE_CALL_DEFAULT || signature->convention > QA_NATIVE_CALL_THISCALL ||
+        (signature->abi != QA_NATIVE_ABI_CDECL_I386 && signature->convention != QA_NATIVE_CALL_DEFAULT) ||
         (signature->abi != QA_NATIVE_ABI_CDECL_I386 && signature->abi != QA_NATIVE_ABI_MICROSOFT_X64 &&
          signature->abi != QA_NATIVE_ABI_SYSTEM_V_I386 && signature->abi != QA_NATIVE_ABI_SYSTEM_V_X64))
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "guest ABI plan requires its actual x86 convention and layouts");
@@ -308,12 +308,12 @@ bool guest_abi_plan_create(const guest_abi_signature *signature, const guest_abi
     unsigned classes[2] = {0};
     if (okay && result->kind == QA_NATIVE_BYTES)
         plan->memory_result = plan->abi == QA_NATIVE_ABI_SYSTEM_V_I386 ||
-            (plan->abi == QA_NATIVE_ABI_CDECL_I386 && plan->convention == GUEST_ABI_THISCALL) ||
+            (plan->abi == QA_NATIVE_ABI_CDECL_I386 && plan->convention == QA_NATIVE_CALL_THISCALL) ||
             (plan->abi == QA_NATIVE_ABI_SYSTEM_V_X64 ? !system_classes(result, classes) :
              result->bytes != 1 && result->bytes != 2 && result->bytes != 4 && result->bytes != 8);
     plan->x87_result = plan->word == 4 && (result->kind == QA_NATIVE_F32 || result->kind == QA_NATIVE_F64);
     bool first = plan->memory_result && plan->abi == QA_NATIVE_ABI_CDECL_I386 &&
-        plan->convention == GUEST_ABI_THISCALL && plan->variadic;
+        plan->convention == QA_NATIVE_CALL_THISCALL && plan->variadic;
     if (okay && first) {
         if (!count || plan->arguments[0].layout.kind != QA_NATIVE_ADDRESS)
             okay = guest_fail(error, QA_ERROR_ARGUMENT, 0, "variadic thiscall requires its explicit source this pointer");
@@ -343,7 +343,7 @@ bool guest_abi_plan_create(const guest_abi_signature *signature, const guest_abi
         }
     }
     plan->callee_pop = plan->abi == QA_NATIVE_ABI_SYSTEM_V_I386 && plan->memory_result ? 4 :
-        plan->abi == QA_NATIVE_ABI_CDECL_I386 && !plan->variadic && plan->convention != GUEST_ABI_DEFAULT ? plan->stack_bytes - plan->word : 0;
+        plan->abi == QA_NATIVE_ABI_CDECL_I386 && !plan->variadic && plan->convention != QA_NATIVE_CALL_DEFAULT ? plan->stack_bytes - plan->word : 0;
     if (!okay) { guest_abi_plan_destroy(plan); return false; }
     *out = plan; return true;
 }
@@ -429,7 +429,7 @@ bool guest_abi_plan_native(const qa_native_signature *source, const guest_abi_la
     guest_abi_layout *parameters = source->parameter_count ? abi_storage(arena, source->parameter_count * sizeof(*parameters), _Alignof(guest_abi_layout), error) : NULL;
     if (source->parameter_count && !parameters)
         return guest_fail(error, QA_ERROR_MEMORY, 0, "owning native ABI layouts");
-    guest_abi_signature signature = {source->abi, GUEST_ABI_DEFAULT, parameters,
+    guest_abi_signature signature = {source->abi, source->convention, parameters,
         source->parameter_count, {0}, source->variadic};
     bool okay = natural_type(&source->result, source->abi, NULL, &signature.result, arena, error);
     for (size_t i = 0; okay && i < source->parameter_count; ++i) {

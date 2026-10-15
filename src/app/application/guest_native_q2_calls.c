@@ -138,9 +138,18 @@ bool application_q2_call_read(const qa_json_document *doc, qa_json_id value,
     if (!doc || !out || !required(operation, target.pointer_bytes))
         return fail(error, QA_ERROR_ARGUMENT, "Native combat call requires its original source operation");
     qa_json_id convention = qa_json_get(doc, value, "convention"), rows = qa_json_get(doc, value, "arguments");
+    qa_native_call_convention call_convention = QA_NATIVE_CALL_DEFAULT;
+    bool known_convention = qa_json_string_equal(doc, convention, "cdecl");
+    if (qa_json_string_equal(doc, convention, "stdcall"))
+        call_convention = QA_NATIVE_CALL_STDCALL;
+    else if (qa_json_string_equal(doc, convention, "fastcall"))
+        call_convention = QA_NATIVE_CALL_FASTCALL;
+    else if (qa_json_string_equal(doc, convention, "thiscall"))
+        call_convention = QA_NATIVE_CALL_THISCALL;
+    known_convention = known_convention || call_convention != QA_NATIVE_CALL_DEFAULT;
     if (target.os != QA_NATIVE_OS_WINDOWS ||
         !((target.arch == QA_NATIVE_ARCH_I386 && target.pointer_bytes == 4 && target.abi == QA_NATIVE_ABI_CDECL_I386 &&
-            qa_json_string_equal(doc, convention, "cdecl")) ||
+            known_convention) ||
           (target.arch == QA_NATIVE_ARCH_X86_64 && target.pointer_bytes == 8 && target.abi == QA_NATIVE_ABI_MICROSOFT_X64 &&
             qa_json_string_equal(doc, convention, "microsoft-x64"))))
         return fail(error, QA_ERROR_UNSUPPORTED, "Native combat convention requires its declared Windows ABI backend");
@@ -153,8 +162,9 @@ bool application_q2_call_read(const qa_json_document *doc, qa_json_id value,
     call.arguments = calloc(count, sizeof(*call.arguments));
     if (!parameters || !call.arguments) { free(parameters); free(call.arguments);
         return fail(error, QA_ERROR_MEMORY, "Retaining original native combat call"); }
-    call.signature = (qa_native_signature){target.abi, parameters, count,
-        scalar(operation == APPLICATION_Q2_REGULAR_ARMOR || operation == APPLICATION_Q2_POWER_ARMOR ? QA_NATIVE_I32 : QA_NATIVE_VOID), false};
+    call.signature = (qa_native_signature){.abi = target.abi, .parameters = parameters, .parameter_count = count,
+        .result = scalar(operation == APPLICATION_Q2_REGULAR_ARMOR || operation == APPLICATION_Q2_POWER_ARMOR ? QA_NATIVE_I32 : QA_NATIVE_VOID),
+        .convention = call_convention};
     uint32_t seen = 0, needed = required(operation, target.pointer_bytes); bool ok = true;
     for (size_t i = 0; ok && i < count; ++i) {
         qa_json_id row = qa_json_at(doc, rows, i), kind = qa_json_get(doc, row, "kind");

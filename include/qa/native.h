@@ -139,12 +139,17 @@ typedef struct qa_native_type {
     size_t count;
 } qa_native_type;
 
+typedef enum qa_native_call_convention {
+    QA_NATIVE_CALL_DEFAULT, QA_NATIVE_CALL_STDCALL, QA_NATIVE_CALL_FASTCALL, QA_NATIVE_CALL_THISCALL
+} qa_native_call_convention;
+
 typedef struct qa_native_signature {
     qa_native_abi abi;
     const qa_native_type *parameters;
     size_t parameter_count;
     qa_native_type result;
     bool variadic;
+    qa_native_call_convention convention;
 } qa_native_signature;
 
 /* Shared import semantics; each ABI's existing declaration binds its slot. */
