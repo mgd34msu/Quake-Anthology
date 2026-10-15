@@ -44,6 +44,7 @@
 #include "qa/audio_acoustics_prepare.h"
 #include "qa/application_profile.h"
 #include "qa/http_save.h"
+#include "qa/settings.h"
 #include <SDL.h>
 
 typedef struct frontend_persistence {
@@ -67,6 +68,20 @@ static bool content_visit(void *context,const qa_application *application,
     return !operation->services || !operation->services->visit_content ||
         operation->services->visit_content(operation->services->context,application,visitor,error);
 }
+static bool settings_carry(const qa_frontend *source,qa_application *candidate,qa_error *error)
+{
+    qa_cvars *active=qa_application_cvars(source->application);
+    qa_cvars *target=qa_application_cvars(candidate);
+    for (const qa_cvar_view *row=qa_cvars_next(active,NULL);row;row=qa_cvars_next(active,row)) {
+        if (row->player_scoped || row->save_policy!=QA_CVAR_SAVE_SETTING) continue;
+        const char *value=qa_cvars_archive_value(active,row);
+        if (!value) continue;
+        qa_cvar_archive_entry entry={(char *)row->name,(char *)value};
+        qa_cvar_archive archive={.entries=&entry,.count=1};
+        if (!qa_cvar_archive_apply(target,&archive,error)) return false;
+    }
+    return true;
+}
 static bool prepare_services(void *context,qa_application *candidate,const qa_save_image *image,qa_error *error)
 {
     frontend_persistence *operation=context; qa_frontend *f=operation->candidate;
@@ -81,7 +96,8 @@ static bool prepare_services(void *context,qa_application *candidate,const qa_sa
     f->audio_output_format=source->device?qa_audio_device_requested_configuration(source->device).format:source->audio_output_format;
     bool ok=(!source->cpu || qa_cpu_gamma_read(source->cpu,&f->options.gamma,error)) &&
         (!source->gl || qa_gl_gamma_read(source->gl,&f->options.gamma,error)) &&
-        frontend_shared_register(qa_application_cvars(candidate),NULL,f->audio_output_format,f->options.gamma,error);
+        frontend_shared_register(qa_application_cvars(candidate),NULL,f->audio_output_format,f->options.gamma,error) &&
+        settings_carry(source,candidate,error);
     if (ok) {
         qa_application_ui_preferences_bind(candidate);
         frontend_engine_cvars_bind(f);
