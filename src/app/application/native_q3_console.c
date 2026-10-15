@@ -296,7 +296,7 @@ bool application_native_q3_source_command_begin(application_provider *provider,q
     if(!app||!scope||provider->kind!=APPLICATION_PROVIDER_Q3||!provider->state.q3||
         !provider->launch||!provider->launch->selection.instance||!command||!command->argc||!command->argv||
         !command->args_text||command->context.owner!=provider->owner||
-        command->context.origin!=QA_COMMAND_REMOTE||command->context.dialect!=QA_RULESET_Q3||
+        command->context.dialect!=QA_RULESET_Q3||
         !qa_actor_id_equal(command->context.actor,actor)||
         !qa_application_command_context_active(app,&command->context))
         return application_fail(error,QA_ERROR_ARGUMENT,"Source Q3 command lacks its actual captured client invocation");

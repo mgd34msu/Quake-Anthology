@@ -595,10 +595,11 @@ bool frontend_native_q3_input(qa_frontend *f,uint32_t physical,const qa_input_ev
             !row->view.recipient || !row->view.recipient->initialized || !frontend_native_q3_current(row))continue;
         if(!release && !(qa_input_seat_catcher(row->view.input,row->view.service_owner)&QA_INPUT_CATCH_GAME))continue;
         q3n_frame frame;
+        if(!q3n_native_command_frame(row->view.core,&frame,e) ||
+            !frontend_native_q3_cut(row,&frame,e))return false;
         ++row->callbacks;
         bool accepted=false;
-        bool ok=q3n_native_command_frame(row->view.core,&frame,e) &&
-            frontend_native_q3_cut(row,&frame,e) && q3n_mission_hud_input(row->view.mission,&frame,
+        bool ok=q3n_mission_hud_input(row->view.mission,&frame,
                 row->view.input,row->view.service_owner,event,&accepted,e) && frontend_native_q3_cut(row,&frame,e);
         --row->callbacks;
         if(!ok)return false;
