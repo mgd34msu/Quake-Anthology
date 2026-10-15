@@ -1034,6 +1034,56 @@ static void test_console_command_precedence(void)
     CHECK(!strcmp(qa_cvars_find(cvars,"qa_foreign_callback")->value,"fallback"));
     qa_console_destroy(console);
 
+    CHECK(qa_cvars_register(cvars,"qa_module_command","original",0,1,"",&error));
+    qa_cvars *module_cvars=qa_cvars_create_view(cvars,&(qa_cvar_options){
+        .dialect=QA_RULESET_Q3,.side=QA_CVAR_SIDE_CLIENT,.role=QA_CVAR_ROLE_CGAME},&error);
+    CHECK(module_cvars);
+    counts=(console_precedence_counts){.callback_result=QA_COMMAND_HANDLED,
+        .forward_result=QA_COMMAND_HANDLED};
+    console=qa_console_create(&(qa_console_options){.context=context,.cvars=cvars,
+        .user=&counts,.source_command=console_precedence_callback},&error);
+    CHECK(console);
+    qa_command_context module=context;
+    module.origin=QA_COMMAND_SEAT;module.cvar_view=qa_cvars_view_identity(module_cvars);
+    CHECK(qa_console_bind_source(console,&(qa_console_options){.context=module,.cvars=module_cvars},&error));
+    contribution=(qa_console_contribution){.receiver=1,.lifetime_owner=2,
+        .cvar_view=module.cvar_view,.callback=console_precedence_forward,.user=&counts};
+    CHECK(qa_console_contribute(console,"qa_module_command",&contribution,&error));
+    CHECK(qa_console_execute_now(console,&context,"qa_module_command local",&error));
+    qa_command_context seat=context;seat.origin=QA_COMMAND_SEAT;
+    CHECK(qa_console_execute_now(console,&seat,"qa_module_command seat",&error));
+    CHECK(counts.forwarded==2 && !counts.called);
+    CHECK(!strcmp(qa_cvars_find(cvars,"qa_module_command")->value,"original"));
+    qa_command_context module_remote=context;
+    module_remote.origin=QA_COMMAND_REMOTE;module_remote.actor=(qa_actor_id){.registry=1,.slot=7};
+    CHECK(qa_console_execute_now(console,&module_remote,"qa_module_command remote",&error));
+    CHECK(counts.forwarded==2 && counts.called==1);
+    CHECK(!strcmp(qa_cvars_find(cvars,"qa_module_command")->value,"original"));
+    seat.seat=1;
+    CHECK(qa_console_execute_now(console,&seat,"qa_module_command otherseat",&error));
+    CHECK(counts.forwarded==2 && counts.called==1);
+    CHECK(!strcmp(qa_cvars_find(cvars,"qa_module_command")->value,"otherseat"));
+    seat=context;seat.owner=2;
+    CHECK(qa_console_execute_now(console,&seat,"qa_module_command otherowner",&error));
+    CHECK(counts.forwarded==2 && counts.called==1);
+    CHECK(!strcmp(qa_cvars_find(cvars,"qa_module_command")->value,"otherowner"));
+    release_command_counts fallback_counts={0};
+    CHECK(qa_console_register_owned(console,"qa_module_fallback","",0,3,false,
+        release_count_command,&fallback_counts,&error));
+    CHECK(qa_console_contribute(console,"qa_module_fallback",&contribution,&error));
+    CHECK(qa_console_execute_now(console,&context,"qa_module_fallback",&error));
+    CHECK(counts.forwarded==3 && counts.called==1 && !fallback_counts.completed);
+    counts.forward_result=QA_COMMAND_UNHANDLED;
+    CHECK(qa_console_execute_now(console,&context,"qa_module_fallback",&error));
+    CHECK(counts.forwarded==4 && counts.called==1 && fallback_counts.completed==1);
+    counts.forward_result=QA_COMMAND_HANDLED;
+    CHECK(qa_console_register_owned(console,"qa_engine_control","",0,3,true,
+        release_count_command,&fallback_counts,&error));
+    CHECK(qa_console_contribute(console,"qa_engine_control",&contribution,&error));
+    CHECK(qa_console_execute_now(console,&context,"qa_engine_control",&error));
+    CHECK(counts.forwarded==4 && counts.called==1 && fallback_counts.completed==2);
+    qa_console_destroy(console);qa_cvars_destroy(module_cvars);
+
     CHECK(qa_cvars_register(cvars,"team","original",0,1,"",&error));
     CHECK(qa_cvars_set(cvars,"team","original",true,&error));
     CHECK(!strcmp(qa_cvars_find(cvars,"team")->value,"original"));

@@ -274,9 +274,11 @@ bool frontend_commands(qa_frontend *frontend, qa_error *error)
         "cinematic", "cinematicpause", "stopcinematic", "cd", "music", "sky", "actualimagegrid",
         "play", "soundinfo", "s_info", "soundlist", "s_list", "stopsound", "s_stop",
         "map", "devmap", "spmap", "spdevmap", "gamemap", "changelevel", "killserver"};
-    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        bool engine_command = !client_name(names[i], "weapnext") && !client_name(names[i], "weapprev");
         if (!qa_console_register_owned(console, names[i], "Native frontend command", 0,
-            QA_FRONTEND_COMMAND_OWNER, true, command, frontend, error)) return false;
+            QA_FRONTEND_COMMAND_OWNER, engine_command, command, frontend, error)) return false;
+    }
     if (frontend->options.dedicated) return true;
     qa_input_console_options input = {.console = console, .owner = QA_FRONTEND_COMMAND_OWNER,
         .user = frontend, .seat = input_seat, .print = frontend_print, .center = center, .wheel = frontend_wheel_command};

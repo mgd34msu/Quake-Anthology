@@ -710,8 +710,11 @@ static bool contribution_visible(const qa_console *console,const command_contrib
     if (!part->cvar_view || part->cvar_view==context->cvar_view) return true;
     const qa_console_options *options=options_for(console,&(qa_command_context){.cvar_view=part->cvar_view});
     if (!options) return false;
-    if (context->owner) return part->view.engine_command &&
-        options->context.owner==context->owner && options->context.origin==QA_COMMAND_SERVER;
+    if (context->owner) return options->context.owner==context->owner &&
+        ((part->view.engine_command && options->context.origin==QA_COMMAND_SERVER) ||
+         (part->callback && part->view.owner==context->owner &&
+          (context->origin==QA_COMMAND_LOCAL || context->origin==QA_COMMAND_SEAT) &&
+          (options->context.origin==QA_COMMAND_LOCAL || options->context.origin==QA_COMMAND_SEAT)));
     qa_command_context receiver;
     qa_error error={0};
     return source_context_current(console,&options->context,&receiver,&error);
