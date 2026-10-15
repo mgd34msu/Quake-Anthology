@@ -85,6 +85,8 @@ typedef struct qa_bot_admission {
 typedef struct qa_bot_view {
     qa_actor_id actor, enemy;
     uint32_t client;
+    uint32_t movement;
+    bool paused;
     int32_t source_client;
     int32_t entity, weapon;
     qa_mode_id mode;

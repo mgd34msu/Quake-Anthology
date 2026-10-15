@@ -238,6 +238,8 @@ typedef struct qa_nav_train_ride {
 } qa_nav_train_ride;
 bool qa_navigation_train_ride(const qa_nav_entity_state *, const qa_nav_edge *,
                               const qa_nav_profile *, qa_nav_train_ride *);
+bool qa_navigation_train_at_stop(const qa_nav_entity_state *, const qa_nav_train_stop *,
+                                 const qa_nav_profile *);
 typedef enum qa_nav_train_stage {
     QA_NAV_TRAIN_ABSENT,
     QA_NAV_TRAIN_APPROACH,

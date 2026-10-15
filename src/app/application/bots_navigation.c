@@ -158,6 +158,16 @@ static bool native_mover(application_bots *bots,qa_actor_id actor,application_bo
     }
     return true;
 }
+bool application_bot_lift_ground(application_bots *bots,qa_actor_id ground,qa_nav_entity_state *out,
+    bool *found,qa_error *error) {
+    application_bot_mover mover;
+    *found=false;
+    bool observed;
+    if(!native_mover(bots,ground,&mover,&observed,error)) return false;
+    *found=observed && (mover.kind==QA_BOT_MODEL_ELEVATOR || mover.kind==QA_BOT_MODEL_TRAIN);
+    if(*found) *out=mover.navigation;
+    return true;
+}
 bool application_bot_static_ground(void *opaque,int32_t entity,bool *out,qa_error *error) {
     application_bots *bots=opaque;*out=false;
     application_provider *source=application_bot_source(bots);

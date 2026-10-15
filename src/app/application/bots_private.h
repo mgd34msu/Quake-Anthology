@@ -74,6 +74,8 @@ typedef struct application_bots {
     struct application_bot_world_binding *shared_binding;
     struct application_bot_transport *transport;
     qa_vfs *files;
+    qa_ruleset_id behavior;
+    float walk_speed;
     application_bot_script_file *script_files;
     qa_vfs *navigation_files;
     bool files_launch;
@@ -186,6 +188,7 @@ bool application_bot_weapon_resolve(application_bots *,qa_actor_id,int32_t slot,
 qa_actor_id application_bot_actor(void *,int32_t);
 bool application_bot_travel_model(void *,int32_t,qa_bot_travel_model *,bool *,qa_error *);
 bool application_bot_static_ground(void *,int32_t,bool *,qa_error *);
+bool application_bot_lift_ground(application_bots *,qa_actor_id,qa_nav_entity_state *,bool *,qa_error *);
 bool application_bot_activation(void *,qa_actor_id,int32_t,qa_bot_activation *,bool *,qa_error *);
 bool application_bot_source_activation(void *,qa_actor_id,int32_t,const qa_bot_activation_query *,
     struct qa_bot_source_activation *,int32_t *,qa_error *);

@@ -486,7 +486,7 @@ bool qa_bots_read(const qa_bots *b, qa_actor_id actor, qa_bot_view *out, qa_erro
     if (!s || !s->inuse || !out || !bot_ai_live(b, actor)) return bot_ai_fail(e, "native bot actor is not live");
     *out=(qa_bot_view){.actor=s->view.actor,.enemy=s->view.enemy,.client=s->view.client,
         .source_client=s->view.source_client,.entity=s->view.entity,.weapon=bot_ai_weapon_number(s),
-        .mode=s->view.mode,.decision=s->view.decision,.order=s->view.order,
+        .mode=s->view.mode,.decision=s->view.decision,.order=s->view.order,.movement=s->movement,.paused=b->controls.paused,
         .enter_time=bot_ai_enter_time(s),.think_time=bot_ai_think_time(s)};
     out->enemy=bot_ai_enemy_actor(b,s);
     return true;

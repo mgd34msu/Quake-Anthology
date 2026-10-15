@@ -46,6 +46,10 @@ bool qa_navigation_train_ride(const qa_nav_entity_state *state, const qa_nav_edg
     }
     return false;
 }
+bool qa_navigation_train_at_stop(const qa_nav_entity_state *state,const qa_nav_train_stop *stop,
+    const qa_nav_profile *profile) {
+    return nav_distance(state->data.train.origin,stop->origin)<=profile->maximum_step;
+}
 bool nav_boarding(qa_navigation *n, uint32_t id, bool train, const qa_nav_edge **edge,
                   qa_nav_entity_state *state, qa_nav_train_ride *ride, bool *found, qa_error *e) {
     *found = false;
@@ -105,15 +109,14 @@ bool qa_navigation_train_step(qa_navigation *n, qa_nav_workspace *w, qa_actor_id
             return false;
         if (hazardous) return true;
     }
-    bool arrived = nav_distance(state.data.train.origin, ride.arrival.origin) <= p->maximum_step;
+    bool arrived = qa_navigation_train_at_stop(&state,&ride.arrival,p);
     if (aboard && !arrived) {
         if (state.data.train.running)
             out->stage = QA_NAV_TRAIN_RIDE;
         return true;
     }
     qa_vec3 staging = edge->has_hint ? edge->hint.funnel : edge->start;
-    bool at_boarding =
-        nav_distance(state.data.train.origin, ride.boarding.origin) <= p->maximum_step;
+    bool at_boarding = qa_navigation_train_at_stop(&state,&ride.boarding,p);
     qa_vec3 target = aboard ? edge->end : at_boarding ? edge->start : staging;
     if (!aboard && !at_boarding && nav_distance(origin, staging) <= 8) {
         out->stage = QA_NAV_TRAIN_WAIT;

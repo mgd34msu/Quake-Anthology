@@ -197,15 +197,14 @@ bool nav_edge_allowed(qa_navigation *n, qa_nav_workspace *w, qa_actor_id actor, 
         return false;
     if (!nav_boarding(n, edge->to, true, &boarding, &train, &ride, &has_train, e))
         return false;
-    bool awaiting_train = has_train && nav_distance(train.data.train.origin, ride.boarding.origin) >
-                                           n->graph->view.profile.maximum_step;
+    bool awaiting_train = has_train &&
+        !qa_navigation_train_at_stop(&train,&ride.boarding,&n->graph->view.profile);
     if (!nav_entity(n, edge, &source, &has_source, e))
         return false;
     if (edge->mode == QA_NAV_MOVER && has_source && source.kind == QA_NAV_ENTITY_TRAIN &&
         source.data.train.running &&
         qa_navigation_train_ride(&source, edge, &n->graph->view.profile, &ride) &&
-        nav_distance(source.data.train.origin, ride.arrival.origin) >
-            n->graph->view.profile.maximum_step)
+        !qa_navigation_train_at_stop(&source,&ride.arrival,&n->graph->view.profile))
         awaiting_train = true;
     if (awaiting_train) {
         bool clear;

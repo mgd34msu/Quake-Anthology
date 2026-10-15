@@ -177,7 +177,7 @@ static bool traverse(qa_navigation *n, nav_prediction *prediction, qa_actor_id a
         bool found;
         if (!nav_boarding(n, edge->to, true, &boarding, &state, &ride, &found, e))
             return false;
-        if (found && nav_distance(state.data.train.origin, ride.boarding.origin) > p->maximum_step)
+        if (found && !qa_navigation_train_at_stop(&state,&ride.boarding,p))
             landing = boarding->has_hint ? boarding->hint.funnel : edge->start;
         else if (edge->source.kind == QA_NAV_ORIGIN_NAV2 ||
                  edge->source.kind == QA_NAV_ORIGIN_NAV3) {

@@ -67,6 +67,45 @@ bool bot_on_mover(bot_travel *t, const bot_reach *r, bool *out, qa_error *e) {
            t->moves->services.entity_model(t->moves->services.context, entity) == (r->face & 65535);
     return true;
 }
+static bool moves_riding(qa_bot_moves *moves,uint32_t handle,const qa_nav_entity_state *ground,
+    bool *out,qa_error *e) {
+    *out=false;
+    if(!ground || !ground->actor.registry || !handle) return true;
+    bot_move_record *state=bot_move_state(moves,handle,e);
+    if(!state) return false;
+    if(!state->route.found || state->route_cursor>=state->route.edge_count ||
+       bot_move_float(state,BM_REACHABILITY_TIME)<=moves->time ||
+       bot_move_word(state,BM_AREA)==state->route_goal) return true;
+    bot_travel travel;
+    if(!bot_travel_begin(moves,state,&travel,e)) return false;
+    if(!qa_actor_id_equal(state->route_actor,travel.actor)) return true;
+    bot_reach reach;bool found;
+    if(!bot_reach_read(&travel,bot_move_word(state,BM_LAST_REACHABILITY),&reach,&found,e)) return false;
+    if(!found || reach.graph_edge->id!=state->route.edges[state->route_cursor] ||
+       reach.graph_edge->mode!=QA_NAV_MOVER || !reach.graph_edge->has_entity) return true;
+    const qa_nav_binding *binding=&reach.graph_edge->entity;
+    if(binding->has_model) {
+        int32_t entity=moves->services.entity_number?
+            moves->services.entity_number(moves->services.context,ground->actor):-1;
+        if(entity<0 || !moves->services.entity_model ||
+           moves->services.entity_model(moves->services.context,entity)!=binding->model) return true;
+    } else if(!qa_bounds_overlap(binding->bounds,ground->bounds)) return true;
+    if(ground->kind==QA_NAV_ENTITY_TRAIN) {
+        qa_nav_train_ride ride;
+        *out=ground->data.train.running &&
+            qa_navigation_train_ride(ground,reach.graph_edge,&travel.graph->profile,&ride) &&
+            !qa_navigation_train_at_stop(ground,&ride.arrival,&travel.graph->profile);
+    } else if(ground->kind==QA_NAV_ENTITY_ELEVATOR) {
+        *out=fabsf(truncf(bot_move_vector(state,BM_ORIGIN).z-reach.end.z))>=
+            bot_variable(&travel,BOT_BARRIER);
+    }
+    return true;
+}
+bool qa_bot_moves_riding(qa_bot_moves *moves,uint32_t handle,const qa_nav_entity_state *ground,
+    bool *out,qa_error *e) {
+    if(!moves || !out) return bot_move_fail(e,"missing bot mover observation");
+    BOT_MOVE_OPERATION(moves,e,moves_riding(moves,handle,ground,out,e));
+}
 bool bot_mover_down(bot_travel *t, const bot_reach *r, bool *out, qa_error *e) {
     qa_bot_travel_model model;
     bool found;

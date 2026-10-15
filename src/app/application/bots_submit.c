@@ -32,6 +32,37 @@ bool application_bot_weapon_apply(qa_application *application,qa_actor_id actor,
     return application_fail(error,QA_ERROR_NOT_FOUND,"queued bot weapon item is absent from its actual selected arsenal");
 }
 
+static bool idle_lift_input(application_bots *bots,qa_actor_id actor,const qa_player_state *view,
+    qa_usercmd *command,qa_error *error) {
+    if(bots->behavior==QA_RULESET_Q3 || !bots->population || view->cutscene ||
+       view->ground.hit!=QA_TRACE_HIT_ACTOR || command->forward_move!=0 || command->side_move!=0) return true;
+    qa_builtin_services services=application_builtin_services(bots->application,
+        bots->application->world,bots->application->physics);
+    qa_builtin_actor_traits traits;
+    if(!services.actor_traits(services.context,actor,&traits) || traits.spectator ||
+       (traits.has_life && traits.dead)) return true;
+    bool lift=false;qa_nav_entity_state ground;
+    if(!application_bot_lift_ground(bots,view->ground.actor,&ground,&lift,error)) return false;
+    if(!lift) return true;
+    qa_bot_view bot;bool riding=false;
+    if(!qa_bots_read(bots->population,actor,&bot,error)) return false;
+    if(bot.paused || bot.decision==QA_BOT_INTERMISSION || bot.decision==QA_BOT_OBSERVER ||
+       bot.decision==QA_BOT_RESPAWNING) return true;
+    if(!qa_bot_moves_riding(qa_bot_runtime_moves(bots->runtime),bot.movement,
+            &ground,&riding,error)) return false;
+    if(riding) return true;
+    qa_usercmd walk=*command;
+    walk.forward_move=bots->walk_speed;walk.side_move=0;
+    bool q3=command->kind==QA_RULESET_Q3;
+    qa_input_command_basis from={.kind=command->kind,.units=q3?320:1};
+    qa_input_command_basis to={.kind=command->kind,.units=q3?127:1};
+    qa_input_axis_rule axes={.quantization=command->kind==QA_RULESET_Q2_RERELEASE?
+        QA_INPUT_AXIS_EXACT:QA_INPUT_AXIS_TRUNCATE};
+    qa_input_command_convert(&walk,NULL,&from,&to,axes,&walk);
+    command->forward_move=walk.forward_move;command->side_move=walk.side_move;
+    return true;
+}
+
 bool application_bot_submit(void *opaque,qa_actor_id actor,const qa_bot_input *input,
                             const qa_usercmd *source,qa_error *error) {
     application_bots *bots=opaque;qa_application *application=bots->application;
@@ -80,6 +111,7 @@ bool application_bot_submit(void *opaque,qa_actor_id actor,const qa_bot_input *i
         qa_usercmd_build(&intent, &frame, (double)admitted.elapsed_ns / 1000000.0, &built);
         command = built;
     }
-    if(!application_control_frames_receive_bot(application,actor,&command,requested_owner,requested_item,error)) return false;
+    if(!idle_lift_input(bots,actor,&view,&command,error) ||
+       !application_control_frames_receive_bot(application,actor,&command,requested_owner,requested_item,error)) return false;
     return true;
 }

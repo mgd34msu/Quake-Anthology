@@ -986,6 +986,29 @@ qa_bot_services application_bots_services(application_bots *bots) {
             application_bot_source_model_bounds:NULL,
         .predict_motion=application_bot_predict_motion};
 }
+static bool bot_behavior_prepare(application_bots *bots,qa_error *error) {
+    bots->behavior=QA_RULESET_Q3;
+    bots->walk_speed=160;
+    application_provider *source=application_bot_source(bots);
+    if(!source || !source->product) return true;
+    qa_game_family family=source->product->family;
+    bool found=false;uint64_t size=0;
+    if(source->launch && source->launch->content &&
+       !qa_vfs_probe(source->launch->content,"bots/weapons.txt",&found,&size,error)) return false;
+    if(!found && family!=QA_GAME_Q3) {
+        const qa_product *sibling=qa_catalog_find(bots->application->catalog,
+            family==QA_GAME_Q1?"q1-rerelease-id1":"q2-rerelease-baseq2");
+        if(sibling && sibling->availability==QA_CONTENT_INSTALLED) {
+            qa_vfs *files=NULL;
+            if(!qa_catalog_open(bots->application->catalog,sibling->id,&files,error)) return false;
+            bool okay=qa_vfs_probe(files,"bots/weapons.txt",&found,&size,error);
+            qa_vfs_destroy(files);
+            if(!okay) return false;
+        }
+    }
+    if(found) bots->behavior=family==QA_GAME_Q1?QA_RULESET_NETQUAKE:QA_RULESET_Q2_RERELEASE;
+    return true;
+}
 static bool prepare_bots(qa_application *application,const qa_launch_choices *choices,
                                const qa_bsp_view *geometry,bool requested,qa_error *error) {
     uint32_t capacity=0;size_t count=0;size_t guest_count=0;
@@ -1026,6 +1049,7 @@ static bool prepare_bots(qa_application *application,const qa_launch_choices *ch
     bots->map_resource=application->map_resource;qa_resource_retain(bots->map_resource);
     if (!application_bots_seats_prepare(bots, error)) goto fail;
     const qa_launch_snapshot *snapshot=application->routing_snapshot?application->routing_snapshot:qa_application_launch(application);
+    if(!bot_behavior_prepare(bots,error)) goto fail;
     bots->files_launch=true;
     bots->files=qa_vfs_clone(qa_launch_snapshot_mounts(snapshot),error);
     if(!bots->files) goto fail;
@@ -1081,6 +1105,7 @@ bool application_bots_prepare_requested(qa_application *application,const qa_lau
     return prepare_bots(application,choices,geometry,true,error);
 }
 bool application_bots_construct_restored(application_bots *bots,qa_error *error) {
+    if(!bot_behavior_prepare(bots,error)) return false;
     if(!application_bots_runtime_create(bots,&bots->saved_requirements.runtime,&bots->runtime,error) ||
        !application_bots_guests_construct_restored(bots,error)) return false;
     if(!bots->saved_requirements.population) return true;
